@@ -4,6 +4,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -221,6 +222,49 @@ static void CheckShutReadUnconnected() {
     Require(close_nid_postfix(receiver) == 0 && close_nid_postfix(sender) == 0);
 }
 
+#ifndef __APPLE__
+static void CheckShutReadEndsBlockedReceive() {
+    for (const bool stamped : {false, true}) {
+        const int receiver = socket_nid_postfix(2, 2, 0);
+        const int sender = socket_nid_postfix(2, 2, 0);
+        Require(receiver >= 0 && sender >= 0);
+        std::array<unsigned char, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
+        Require(bind_nid_postfix(receiver, address.data(), address.size()) == 0);
+        std::uint32_t size = address.size();
+        Require(getsockname_nid_postfix(receiver, address.data(), &size) == 0);
+        const int enabled = 1;
+        if (stamped) Require(setsockopt_nid_postfix(receiver, 0xffff, 0x400, &enabled, sizeof(enabled)) == 0);
+        std::atomic<bool> entered{false};
+        std::atomic<bool> returned{false};
+        std::int64_t received = -2;
+        std::array<unsigned char, 64> control{};
+        std::uint32_t controlLength = 0;
+        std::chrono::steady_clock::duration waited{};
+        std::thread waiter([&] {
+            char buffer[4];
+            KernelIovec vector{buffer, sizeof(buffer)};
+            GuestMsghdr message{nullptr, 0, &vector, 1, control.data(), static_cast<std::uint32_t>(control.size()), -1};
+            const auto start = std::chrono::steady_clock::now();
+            entered = true;
+            received = stamped ? recvmsg_nid_postfix(receiver, &message, 0) : recv_nid_postfix(receiver, buffer, sizeof(buffer), 0);
+            waited = std::chrono::steady_clock::now() - start;
+            controlLength = message.controlLength;
+            returned = true;
+        });
+        while (!entered) std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        Require(!returned);
+        Require(shutdown_nid_postfix(receiver, 0) == -1 && *__error_nid_postfix() == 57);
+        for (int poll = 0; poll < 100 && !returned; ++poll) std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        if (!returned) Require(sendto_nid_postfix(sender, "x", 1, 0, address.data(), address.size()) == 1);
+        waiter.join();
+        Require(received == 0 && waited >= std::chrono::milliseconds(40) && waited < std::chrono::seconds(2));
+        if (stamped) Require(controlLength == 0);
+        Require(close_nid_postfix(receiver) == 0 && close_nid_postfix(sender) == 0);
+    }
+}
+#endif
+
 static void CheckDontWait() {
     const int receiver = socket_nid_postfix(2, 2, 0);
     const int sender = socket_nid_postfix(2, 2, 0);
@@ -337,6 +381,78 @@ static void CheckArrivalTimestamps(int family) {
         Require(message.controlLength == 0 && message.flags == 0);
     }
     Require(close_nid_postfix(sender) == 0 && close_nid_postfix(receiver) == 0);
+}
+
+static void CheckMsgPeekTimestamps() {
+    const int receiver = socket_nid_postfix(2, 2, 0);
+    const int sender = socket_nid_postfix(2, 2, 0);
+    Require(receiver >= 0 && sender >= 0);
+
+    std::array<unsigned char, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(bind_nid_postfix(receiver, address.data(), address.size()) == 0);
+    std::uint32_t size = address.size();
+    Require(getsockname_nid_postfix(receiver, address.data(), &size) == 0);
+    Require(connect_nid_postfix(sender, address.data(), address.size()) == 0);
+
+    int enable = 1;
+    Require(setsockopt_nid_postfix(receiver, 0xffff, 0x400, &enable, sizeof(enable)) == 0);
+
+    const char payload[] = "peekdatagram";
+    Require(sendto_nid_postfix(sender, payload, sizeof(payload), 0, nullptr, 0) == sizeof(payload));
+
+    char received[sizeof(payload)]{};
+    KernelIovec iov{received, sizeof(received)};
+    std::array<unsigned char, 64> controlBuffer;
+    controlBuffer.fill(0);
+    GuestMsghdr peekMsg{nullptr, 0, &iov, 1, controlBuffer.data(), static_cast<std::uint32_t>(controlBuffer.size()), -1};
+    Require(recvmsg_nid_postfix(receiver, &peekMsg, 2) == sizeof(payload));
+    Require(peekMsg.controlLength == 32 && peekMsg.flags == 2);
+    Require(std::memcmp(received, payload, sizeof(payload)) == 0);
+
+    std::memset(received, 0, sizeof(received));
+    controlBuffer.fill(0);
+    GuestMsghdr realMsg{nullptr, 0, &iov, 1, controlBuffer.data(), static_cast<std::uint32_t>(controlBuffer.size()), -1};
+    Require(recvmsg_nid_postfix(receiver, &realMsg, 0) == sizeof(payload));
+    Require(realMsg.controlLength == 32 && realMsg.flags == 0);
+    Require(std::memcmp(received, payload, sizeof(payload)) == 0);
+
+    Require(close_nid_postfix(sender) == 0 && close_nid_postfix(receiver) == 0);
+}
+
+static void CheckTcpStreamNoTimestamps() {
+    const int listener = socket_nid_postfix(2, 1, 0);
+    const int client = socket_nid_postfix(2, 1, 0);
+    Require(listener >= 0 && client >= 0);
+
+    std::array<unsigned char, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(bind_nid_postfix(listener, address.data(), address.size()) == 0);
+    Require(listen_nid_postfix(listener, 1) == 0);
+    std::uint32_t size = address.size();
+    Require(getsockname_nid_postfix(listener, address.data(), &size) == 0);
+    Require(connect_nid_postfix(client, address.data(), address.size()) == 0);
+
+    const int accepted = accept_nid_postfix(listener, nullptr, nullptr);
+    Require(accepted >= 0);
+
+    int enable = 1;
+    Require(setsockopt_nid_postfix(accepted, 0xffff, 0x400, &enable, sizeof(enable)) == 0);
+    Require(setsockopt_nid_postfix(accepted, 0xffff, 0x2000, &enable, sizeof(enable)) == 0);
+
+    const char payload[] = "streamdata";
+    Require(send_nid_postfix(client, payload, sizeof(payload), 0) == sizeof(payload));
+
+    char received[sizeof(payload)]{};
+    KernelIovec iov{received, sizeof(received)};
+    std::array<unsigned char, 128> controlBuffer;
+    controlBuffer.fill(0x77);
+    GuestMsghdr msg{nullptr, 0, &iov, 1, controlBuffer.data(), static_cast<std::uint32_t>(controlBuffer.size()), -1};
+    Require(recvmsg_nid_postfix(accepted, &msg, 0) == sizeof(payload));
+    Require(msg.controlLength == 0 && msg.flags == 0);
+    Require(std::all_of(controlBuffer.begin(), controlBuffer.end(), [](auto byte) { return byte == 0x77; }));
+
+    Require(close_nid_postfix(accepted) == 0);
+    Require(close_nid_postfix(client) == 0);
+    Require(close_nid_postfix(listener) == 0);
 }
 
 class GuardedPage {
@@ -498,9 +614,14 @@ int main() {
         for (int binding = 0; binding < 3; ++binding) CheckDissolvedName(family, binding);
     CheckArrivalTimestamps(2);
     CheckArrivalTimestamps(28);
+    CheckMsgPeekTimestamps();
+    CheckTcpStreamNoTimestamps();
     CheckDontWait();
     CheckSendToPortZero();
     CheckShutReadUnconnected();
+#ifndef __APPLE__
+    CheckShutReadEndsBlockedReceive();
+#endif
     const int receiver = socket_nid_postfix(2, 2, 0);
     const int sender = socket_nid_postfix(2, 2, 17);
     Require(receiver >= 0 && sender >= 0 && receiver != sender);

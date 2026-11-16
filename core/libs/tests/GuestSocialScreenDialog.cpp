@@ -1,5 +1,6 @@
 #include "prx/libSceSocialScreenDialog/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -31,6 +32,8 @@ int main() {
     Require(sceSocialScreenDialogClose() == kErrNotInitialized);
     Require(sceSocialScreenDialogGetResult(nullptr) == kErrNotInitialized);
     Require(sceSocialScreenDialogGetResult(result) == kErrNotInitialized);
+    Require(result[0] == kSentinel);
+    Require(result[1] == kSentinel);
     Require(sceSocialScreenDialogGetStatus() == kStatusNone);
     Require(sceSocialScreenDialogUpdateStatus() == kStatusNone);
 
@@ -51,6 +54,9 @@ int main() {
     Require(sceSocialScreenDialogUpdateStatus() == kStatusFinished);
 
     Require(sceSocialScreenDialogGetResult(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(sceSocialScreenDialogGetResult(reinterpret_cast<void*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceSocialScreenDialogGetResult(result) == 0);
     Require(result[0] == kResultUserCanceled);
     Require(result[1] == kSentinel);
@@ -71,6 +77,9 @@ int main() {
     Require(sceSocialScreenDialogGetResult(result) == 0);
     Require(result[0] == kResultUserCanceled);
     Require(result[1] == kSentinel);
+    errno = 71;
+    Require(sceSocialScreenDialogGetResult(reinterpret_cast<void*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceSocialScreenDialogTerminate() == 0);
     Require(sceSocialScreenDialogTerminate() == kErrNotInitialized);
     Require(sceSocialScreenDialogOpen(nullptr) == kErrNotInitialized);

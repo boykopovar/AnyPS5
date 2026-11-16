@@ -40,3 +40,13 @@ The 7 original exports listed below in [Export.cpp](../../../core/libs/prx/libSc
 | `Unknown` | `VNRuuZQx7gE` |
 | `Unknown` | `iy6ZcsdeoMk` |
 | `Unknown` | `k7gz608olKM` |
+
+- [Later callable exports](../../../core/libs/prx/libSceAvcap2/Export.cpp) - the function exports of `libSceAvcap2` listed below throw through `NotImplemented_nid_no_patch` on every call; their parameter lists, return types and behavior are unknown, and the parameterless `int` declarations only resolve imports. The [PS5 13.60 export inventory](https://github.com/xdCloudy/PS5-13.60-Function-Stub-Library/blob/ba1933f305f1934ed2a12c94479a977844bdbe5a/data/firmware-13.60/libsceavcap2-9035a2a4ef.jsonl) lists them as function exports of the 13.60-labelled image only, not of its 3.20 reference; the label does not authenticate retail firmware. `sceAvcap2ReadVideo3` is not in the pinned NID database; the [ps5rs catalogue](https://github.com/claimore22/ps5rs/blob/5f252a658ff470bcb2b6cd15205fd8ca64ae4477/data/nids.csv) gives it for `TyUnv8GHF0o`, and the name hashes to that NID. Neither source names the others, so they use literal NID aliases.
+
+| Name | NID |
+| --- | --- |
+| `sceAvcap2ReadVideo3` | `TyUnv8GHF0o` |
+| `Unknown` | `117ggZLcGc0` |
+| `Unknown` | `B+6003nL0AI` |
+| `Unknown` | `Ez6n05jUI1U` |
+| `Unknown` | `NEY5WpUI0Io` |

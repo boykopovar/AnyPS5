@@ -143,11 +143,27 @@ class ArgumentTests(unittest.TestCase):
         self.assertEqual(arguments, ["A", "x"])
         self.assertEqual(end, len(text) - 1)
 
+    def test_unterminated_quoted_and_bracket_arguments_are_split_errors(self):
+        for text in ('set(A "unfinished', 'set(A [=[unfinished', 'set(A #[=[unfinished'):
+            with self.subTest(text=text), self.assertRaisesRegex(agc_test_split.SplitError, "line 1: unterminated"):
+                agc_test_split.commands(text)
+
+    def test_final_line_comment_without_newline_does_not_loop(self):
+        code = ("import sys; sys.path.insert(0, %r); "
+                "from agc_test_split import SplitError, commands; "
+                "\ntry: commands('set(A #comment')"
+                "\nexcept SplitError as error: print(error)"
+                "\nelse: raise AssertionError('missing SplitError')") % str(TOOL.parent)
+        result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=2)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("line 1: unterminated", result.stdout)
+
 
 class ResolveTests(unittest.TestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp())
         self.git("init", "-q", "-b", "main")
+        self.git("config", "core.safecrlf", "false")
         self.write(LISTS, original())
         self.write(agc_test_split.EXECUTION + "/Image.cpp", "")
         self.commit("build: register tests")

@@ -6,6 +6,11 @@
 
 namespace AgcDriver::DriverDetail {
 
+DrainEpochs& DrainEpochCounts() {
+    static thread_local DrainEpochs counts;
+    return counts;
+}
+
 PacketTimer::~PacketTimer() {
     if (!enabled) return;
     const auto now = std::chrono::steady_clock::now();
@@ -43,7 +48,7 @@ PacketTimer::~PacketTimer() {
     auto& poll = Driver::pollStats();
     AgcDriver::ProfilePrint_nid_no_patch( "[poll] queue 0x%x (10 s): ticks %llu, table hits %llu, tries %llu / failed %llu, submits %llu, reaps %llu (%llu with work; by reason: behind completion %llu / other %llu), refusals: %s %llu, %s %llu, %s %llu, %s %llu, %s %llu; longest try hold %.1f us, try holds %.1f ms\n", queue, static_cast<unsigned long long>(poll.ticks), static_cast<unsigned long long>(poll.tableHits), static_cast<unsigned long long>(poll.tries), static_cast<unsigned long long>(poll.triesFailed), static_cast<unsigned long long>(poll.submits), static_cast<unsigned long long>(poll.reaps), static_cast<unsigned long long>(poll.reapsWithWork), static_cast<unsigned long long>(poll.reapsBehindCompletion), static_cast<unsigned long long>(poll.reapsOther), LabelRefusalNames[1], static_cast<unsigned long long>(poll.refusals[1]), LabelRefusalNames[2], static_cast<unsigned long long>(poll.refusals[2]), LabelRefusalNames[3], static_cast<unsigned long long>(poll.refusals[3]), LabelRefusalNames[4], static_cast<unsigned long long>(poll.refusals[4]), LabelRefusalNames[5], static_cast<unsigned long long>(poll.refusals[5]), poll.longestTryHoldUs, poll.tryHoldUs / 1000.0);
     poll = PollStats{};
-    AgcDriver::ProfilePrint_nid_no_patch( "[packets] queue 0x%x %llu submissions, time by packet (10 s):%s, flush %.0fms; DISPATCH_DIRECT by outcome:%s; per submission (%llu submitted): validate %.1f us, copy %.1f us, dequeue %.1f us, complete %.1f us; suspend points %llu x %.1f us, %llu skipped (nothing open); end submits %llu made, %llu skipped, %llu notifies skipped; waits satisfied: at entry %llu, from recorder %llu (%llu while polling, same queue %llu, %llu without the GPU mutex, %llu late-trusted), polled %llu (%llu entered without the GPU mutex, %llu entry tries failed; late candidates %llu: refused cpu-store %llu, overwritten %llu, unclosed %llu, queued %llu), timed out %llu; poll submits %llu, poll reaps %llu; epoch bumps: submissions %llu, waits %llu, drains %llu, reaps %llu, packets %llu\n", queue, static_cast<unsigned long long>(profile.submissions), report.c_str(), profile.flushMs, outcomes.c_str(), static_cast<unsigned long long>(submitted), validateUs, copyUs, dequeueUs, completeUs, static_cast<unsigned long long>(suspends), suspendUs, static_cast<unsigned long long>(costs.suspendsSkipped.exchange(0)), static_cast<unsigned long long>(costs.endSubmits.exchange(0)), static_cast<unsigned long long>(costs.endSkipped.exchange(0)), static_cast<unsigned long long>(costs.notifiesSkipped.exchange(0)), static_cast<unsigned long long>(waits.atEntry), static_cast<unsigned long long>(waits.fromRecorder + waits.fromRecorderPolling), static_cast<unsigned long long>(waits.fromRecorderPolling), static_cast<unsigned long long>(waits.fromRecorderSameQueue), static_cast<unsigned long long>(waits.fromRecorderUnlocked), static_cast<unsigned long long>(waits.fromRecorderLate), static_cast<unsigned long long>(waits.polled), static_cast<unsigned long long>(waits.entriesUnlocked), static_cast<unsigned long long>(waits.entryTriesFailed), static_cast<unsigned long long>(late.candidates - lateSeen.candidates), static_cast<unsigned long long>(waits.lateRefusedCpuStore), static_cast<unsigned long long>(late.overwritten - lateSeen.overwritten), static_cast<unsigned long long>(late.unclosed - lateSeen.unclosed), static_cast<unsigned long long>(late.queued - lateSeen.queued), static_cast<unsigned long long>(waits.timedOut), static_cast<unsigned long long>(waits.pollSubmits), static_cast<unsigned long long>(waits.pollReaps), static_cast<unsigned long long>(epochs.submissions), static_cast<unsigned long long>(epochs.waits), static_cast<unsigned long long>(epochs.drains), static_cast<unsigned long long>(epochs.reaps), static_cast<unsigned long long>(epochs.packets));
+    AgcDriver::ProfilePrint_nid_no_patch( "[packets] queue 0x%x %llu submissions, time by packet (10 s):%s, flush %.0fms; DISPATCH_DIRECT by outcome:%s; per submission (%llu submitted): validate %.1f us, copy %.1f us, dequeue %.1f us, complete %.1f us; suspend points %llu x %.1f us, %llu skipped (nothing open); end submits %llu made, %llu skipped, %llu notifies skipped; waits satisfied: at entry %llu, from recorder %llu (%llu while polling, same queue %llu, %llu without the GPU mutex, %llu late-trusted), polled %llu (%llu entered without the GPU mutex, %llu entry tries failed; late candidates %llu: refused cpu-store %llu, overwritten %llu, unclosed %llu, queued %llu), timed out %llu; poll submits %llu, poll reaps %llu; epoch bumps: submissions %llu, waits %llu (%llu ordered by an earlier wait), drains %llu, reaps %llu, packets %llu\n", queue, static_cast<unsigned long long>(profile.submissions), report.c_str(), profile.flushMs, outcomes.c_str(), static_cast<unsigned long long>(submitted), validateUs, copyUs, dequeueUs, completeUs, static_cast<unsigned long long>(suspends), suspendUs, static_cast<unsigned long long>(costs.suspendsSkipped.exchange(0)), static_cast<unsigned long long>(costs.endSubmits.exchange(0)), static_cast<unsigned long long>(costs.endSkipped.exchange(0)), static_cast<unsigned long long>(costs.notifiesSkipped.exchange(0)), static_cast<unsigned long long>(waits.atEntry), static_cast<unsigned long long>(waits.fromRecorder + waits.fromRecorderPolling), static_cast<unsigned long long>(waits.fromRecorderPolling), static_cast<unsigned long long>(waits.fromRecorderSameQueue), static_cast<unsigned long long>(waits.fromRecorderUnlocked), static_cast<unsigned long long>(waits.fromRecorderLate), static_cast<unsigned long long>(waits.polled), static_cast<unsigned long long>(waits.entriesUnlocked), static_cast<unsigned long long>(waits.entryTriesFailed), static_cast<unsigned long long>(late.candidates - lateSeen.candidates), static_cast<unsigned long long>(waits.lateRefusedCpuStore), static_cast<unsigned long long>(late.overwritten - lateSeen.overwritten), static_cast<unsigned long long>(late.unclosed - lateSeen.unclosed), static_cast<unsigned long long>(late.queued - lateSeen.queued), static_cast<unsigned long long>(waits.timedOut), static_cast<unsigned long long>(waits.pollSubmits), static_cast<unsigned long long>(waits.pollReaps), static_cast<unsigned long long>(epochs.submissions), static_cast<unsigned long long>(epochs.waits), static_cast<unsigned long long>(epochs.waitsOrdered), static_cast<unsigned long long>(epochs.drains), static_cast<unsigned long long>(epochs.reaps), static_cast<unsigned long long>(epochs.packets));
     lateSeen = late;
     waits = WaitOutcomes{};
     epochs = EpochBumps{};
@@ -51,6 +56,20 @@ PacketTimer::~PacketTimer() {
     profile.submissions = 0;
     profile.flushMs = 0;
     profile.dispatchOutcomes = {};
+    auto& drains = DrainEpochCounts();
+    std::vector<std::pair<std::size_t, std::uint64_t>> drained;
+    for (std::size_t i = 0; i < drains.packets.size(); ++i) {
+        if (drains.packets[i] != 0) drained.emplace_back(i, drains.packets[i]);
+    }
+    std::sort(drained.begin(), drained.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+    std::string byPacket;
+    for (const auto& [packet, count] : drained) {
+        char text[96];
+        std::snprintf(text, sizeof(text), " %s x%llu", packet == DrainEpochs::Flip ? "flip" : Pm4::Name(static_cast<std::uint32_t>(packet) << 8u).c_str(), static_cast<unsigned long long>(count));
+        byPacket += text;
+    }
+    AgcDriver::ProfilePrint_nid_no_patch("[drains] queue 0x%x epochs by site (10 s): interrupts %llu, queued label interrupts %llu, by packet:%s\n", queue, static_cast<unsigned long long>(drains.interrupts), static_cast<unsigned long long>(drains.queuedInterrupts), byPacket.c_str());
+    drains = DrainEpochs{};
 }
 
 }

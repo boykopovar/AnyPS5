@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -22,16 +23,23 @@ using Closer = bool (*)(int descriptor, int* error);
 using OptionSetter = bool (*)(int descriptor, int level, int option, const void* value, std::uint32_t length, int* error);
 using OptionGetter = bool (*)(int descriptor, int level, int option, void* value, std::uint32_t* length, int* error);
 using StatusControl = bool (*)(int descriptor, int command, int flags, int* result, int* error);
+using IoctlControl = bool (*)(int descriptor, std::uint32_t request, void* argument, int* error);
 struct Forwards {
     int (*family)(int descriptor);
+    int (*listen)(int descriptor, int backlog);
     int (*bind)(int descriptor, const void* address, std::uint32_t length);
+    int (*connect)(int descriptor, const void* address, std::uint32_t length);
     int (*getsockname)(int descriptor, void* address, std::uint32_t* length);
     std::int64_t (*sendto)(int descriptor, const void* buffer, std::uint64_t length, int flags, const void* address, std::uint32_t addressLength, int* error);
     std::int64_t (*recvfrom)(int descriptor, void* buffer, std::uint64_t length, int flags, void* address, std::uint32_t* addressLength, int* error);
+    int (*shutdown)(int descriptor, int how);
 };
 struct NativeOwner {
     int (*transfer)(NativeOwner* owner, bool send, void* buffer, int length) = nullptr;
+    std::atomic<unsigned> shutdownFlags{0};
 };
+constexpr unsigned ReceiveShut = 1;
+constexpr unsigned SendShut = 2;
 
 using NativeLookup = bool (*)(int descriptor, std::shared_ptr<void>* owner, std::uintptr_t* native);
 
@@ -54,6 +62,8 @@ extern "C" void KernelSetSocketOptionGetter_nid_no_patch(KernelSocketPoll::Optio
 extern "C" bool KernelGetSocketOption_nid_no_patch(int descriptor, int level, int option, void* value, std::uint32_t* length, int* error);
 extern "C" void KernelSetSocketStatusControl_nid_no_patch(KernelSocketPoll::StatusControl control);
 extern "C" bool KernelControlSocketStatus_nid_no_patch(int descriptor, int command, int flags, int* result, int* error);
+extern "C" void KernelSetSocketIoctlControl_nid_no_patch(KernelSocketPoll::IoctlControl control);
+extern "C" bool KernelControlSocketIoctl_nid_no_patch(int descriptor, std::uint32_t request, void* argument, int* error);
 extern "C" void KernelSetSocketNativeLookup_nid_no_patch(KernelSocketPoll::NativeLookup lookup);
 extern "C" bool KernelFindSocketNative_nid_no_patch(int descriptor, std::shared_ptr<void>* owner, std::uintptr_t* native);
 extern "C" bool KernelLookupSocketNative_nid_no_patch(int descriptor, std::shared_ptr<void>* owner, std::uintptr_t* native);

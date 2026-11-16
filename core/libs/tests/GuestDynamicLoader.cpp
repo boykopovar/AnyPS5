@@ -136,6 +136,7 @@ int main(int argc, char** argv) {
     Require(mainResult == 0 && mainSymbol != nullptr);
     using MainFunction = int (APS5_VABI *)(int, int);
     Require(reinterpret_cast<MainFunction>(mainSymbol)(6, 7) == 42);
+    Require(sceKernelDlsym(0, "GuestDefaultScopeOnly", reinterpret_cast<void**>(static_cast<std::uintptr_t>(0x10))) == static_cast<int>(0x8002000eu));
     Require(sceKernelDlsym(0, "anyps5_missing_main_symbol", &mainSymbol) == static_cast<int>(0x80020003u));
     dlerror_nid_postfix();
 
@@ -202,6 +203,27 @@ int main(int argc, char** argv) {
         Require(add && add(30, 12) == 42);
         Require(sceKernelStopUnloadModule(system, 0, nullptr, 0, nullptr, nullptr) == 0);
     }
+    {
+        const char* path = "/system/common/lib/anyps5-system-module-for-test.sprx";
+        KernelLoadModuleOpt loadOpt{};
+        int started = -1;
+        Require(sceKernelLoadStartModule(path, 0, nullptr, 1, nullptr, &started) == static_cast<int>(0x80020016u) && started == -1);
+        Require(sceKernelLoadStartModule(path, 0, nullptr, 0, &loadOpt, &started) == static_cast<int>(0x80020016u) && started == -1);
+        const int system = sceKernelLoadStartModule(path, 0, nullptr, 0, nullptr, &started);
+        Require(system > 0 && started == 0);
+        KernelUnloadModuleOpt unloadOpt{};
+        int stopped = -1;
+        Require(sceKernelStopUnloadModule(system, 0, nullptr, 1, nullptr, &stopped) == static_cast<int>(0x80020016u) && stopped == -1);
+        Require(sceKernelStopUnloadModule(system, 0, nullptr, 0, &unloadOpt, &stopped) == static_cast<int>(0x80020016u) && stopped == -1);
+        Require(sceKernelStopUnloadModule(0, 0, nullptr, 0, nullptr, &stopped) == static_cast<int>(0x80020016u) && stopped == -1);
+        for (const int badHandle : {0x7fffffff, -1, 0x7ffffff0}) {
+            Require(sceKernelStopUnloadModule(badHandle, 0, nullptr, 0, nullptr, &stopped) == static_cast<int>(0x80020003u) && stopped == -1);
+            Require(sceKernelStopUnloadModule(badHandle, 0, nullptr, 0, nullptr, nullptr) == static_cast<int>(0x80020003u));
+        }
+        add = reinterpret_cast<Add>(dlsym_nid_postfix(reinterpret_cast<void*>(static_cast<std::intptr_t>(system)), "GuestModuleAdd"));
+        Require(add && add(30, 12) == 42);
+        Require(sceKernelStopUnloadModule(system, 0, nullptr, 0, nullptr, nullptr) == 0);
+    }
     Require(sceKernelLoadStartModule("/gkbHtXc3Wq/common/lib/anyps5-missing-system-module.sprx", 0, nullptr, 0, nullptr, nullptr) == static_cast<int>(0x80020002u));
     Require(sceKernelLoadStartModule("/gkbHtXc3Wq/common/lib/anyps5-system-module-for-test.prx", 0, nullptr, 0, nullptr, nullptr) == static_cast<int>(0x80020002u));
     std::filesystem::copy_file(argv[1], "anyps5-escape-module-for-test.prx", std::filesystem::copy_options::overwrite_existing);
@@ -259,6 +281,21 @@ int main(int argc, char** argv) {
     Require(dlclose_nid_postfix(folded) == 0);
     std::filesystem::remove_all(foldedRoot);
 
+    const bool createdApp = !std::filesystem::exists("app0");
+    std::filesystem::create_directories("app0/prx");
+    std::filesystem::copy_file(argv[1], "app0/prx/anyps5-app-module-for-test.prx.guest.prx", std::filesystem::copy_options::overwrite_existing);
+    for (const char* bare : {"anyps5-app-module-for-test.prx", "ANYPS5-APP-MODULE-FOR-TEST.PRX"}) {
+        void* app = dlopen_nid_postfix(bare, 2);
+        Require(app != nullptr);
+        add = reinterpret_cast<Add>(dlsym_nid_postfix(app, "GuestModuleAdd"));
+        Require(add && add(21, 21) == 42);
+        Require(dlclose_nid_postfix(app) == 0);
+    }
+    Require(dlopen_nid_postfix("prx/anyps5-app-module-for-test.prx", 2) == nullptr);
+    Require(dlerror_nid_postfix() != nullptr);
+    std::filesystem::remove("app0/prx/anyps5-app-module-for-test.prx.guest.prx");
+    if (createdApp) std::filesystem::remove_all("app0");
+
     void* pinned = dlopen_nid_postfix(argv[1], 2);
     add = reinterpret_cast<Add>(dlsym_nid_postfix(pinned, "GuestModuleAdd"));
     Require(add && _sceKernelRtldThreadAtexitIncrement_nid_postfix(reinterpret_cast<const void*>(add)) == 0);
@@ -269,6 +306,7 @@ int main(int argc, char** argv) {
     Require(add(40, 2) == 42);
     Require(_sceKernelRtldThreadAtexitDecrement_nid_postfix(reinterpret_cast<const void*>(add)) == 0);
     Require(_sceKernelRtldThreadAtexitIncrement_nid_postfix(reinterpret_cast<const void*>(&ThrowsRuntimeError<void (*)()>)) == 0);
+    Require(_sceKernelRtldThreadAtexitDecrement_nid_postfix(reinterpret_cast<const void*>(&ThrowsRuntimeError<void (*)()>)) == 0);
     Require(_sceKernelRtldThreadAtexitDecrement_nid_postfix(reinterpret_cast<const void*>(&ThrowsRuntimeError<void (*)()>)) == 0);
     int local = 0;
     Require(_sceKernelRtldThreadAtexitIncrement_nid_postfix(&local) == -1);
