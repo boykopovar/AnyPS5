@@ -157,20 +157,80 @@ bool _known(std::uint32_t id) {
 constexpr std::uint32_t INVALID_FILE_ID = 0xFFFFFFFFu;
 constexpr int SCE_KERNEL_ERROR_ENOENT = static_cast<int>(0x80020002);
 
+struct PathPrefix {
+    bool present = false;
+    bool fits = true;
+    std::string text;
+};
+
+int _copyPrefix(const char* prefix, PathPrefix& copy) {
+    copy.present = prefix != nullptr;
+    if (!prefix) return 0;
+    const int error = CopyGuestPath_nid_no_patch(prefix, copy.text);
+    if (error == GUEST_EFAULT) return GUEST_EFAULT;
+    copy.fits = error == 0;
+    return 0;
+}
+
+int _entryPath(const PathPrefix& prefix, const char** paths, uint32_t index, std::string& path) {
+    path.clear();
+    const char* entry = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&entry, paths + index, sizeof(entry))) return GUEST_EFAULT;
+    if (!entry || !prefix.fits) return 0;
+    std::string tail;
+    const int error = CopyGuestPath_nid_no_patch(entry, tail);
+    if (error == GUEST_EFAULT) return GUEST_EFAULT;
+    if (error == 0) path = prefix.text + tail;
+    return 0;
+}
+
+template <typename T>
+bool _store(T* destination, T value) {
+    return GuestCopyOut_nid_no_patch(destination, &value, sizeof(value));
+}
+
 int _resolveForEach(const char* prefix, const char** paths, uint32_t count, uint32_t* ids, uint64_t* sizes, int* results) {
     if (!paths || !ids) return _fail(GUEST_EINVAL);
+    PathPrefix copiedPrefix;
+    if (const int error = _copyPrefix(prefix, copiedPrefix)) return _fail(error);
     std::uint32_t resolvedCount = 0;
     for (uint32_t index = 0; index < count; ++index) {
-        const std::string path = prefix ? (paths[index] ? std::string(prefix) + paths[index] : std::string()) : (paths[index] ? std::string(paths[index]) : std::string());
-        const bool resolved = !path.empty() && _resolve(path.c_str(), &ids[index], sizes ? &sizes[index] : nullptr);
+        std::string path;
+        if (const int error = _entryPath(copiedPrefix, paths, index, path)) return _fail(error);
+        std::uint32_t id = INVALID_FILE_ID;
+        std::uint64_t size = 0;
+        const bool resolved = !path.empty() && _resolve(path.c_str(), &id, sizes ? &size : nullptr);
         if (!resolved) {
-            ids[index] = INVALID_FILE_ID;
-            if (sizes) sizes[index] = 0;
+            id = INVALID_FILE_ID;
+            size = 0;
         }
+        if (!_store(&ids[index], id) || (sizes && !_store(&sizes[index], size))) return _fail(GUEST_EFAULT);
         if (resolved) ++resolvedCount;
-        if (results) results[index] = resolved ? 0 : SCE_KERNEL_ERROR_ENOENT;
+        if (results && !_store(&results[index], resolved ? 0 : SCE_KERNEL_ERROR_ENOENT)) return _fail(GUEST_EFAULT);
     }
     return static_cast<int>(resolvedCount);
+}
+
+int _resolveAll(const char* prefix, const char** paths, uint32_t count, uint32_t* ids, uint64_t* sizes, uint32_t* error_index) {
+    PathPrefix copiedPrefix;
+    if (const int error = _copyPrefix(prefix, copiedPrefix)) return _fail(error);
+    for (uint32_t index = 0; index < count; ++index) {
+        std::string path;
+        if (const int error = _entryPath(copiedPrefix, paths, index, path)) return _fail(error);
+        std::uint32_t id = INVALID_FILE_ID;
+        std::uint64_t size = 0;
+        const bool resolved = !path.empty() && _resolve(path.c_str(), &id, sizes ? &size : nullptr);
+        if (!resolved) {
+            id = INVALID_FILE_ID;
+            size = 0;
+        }
+        if (!_store(&ids[index], id) || (sizes && !_store(&sizes[index], size))) return _fail(GUEST_EFAULT);
+        if (!resolved) {
+            if (error_index && !_store(error_index, index)) return _fail(GUEST_EFAULT);
+            return _fail(GUEST_ENOENT);
+        }
+    }
+    return 0;
 }
 
 std::optional<AprFile> _findFile(std::uint32_t id) {
@@ -916,53 +976,17 @@ bool AmmSubmitted_nid_no_patch(std::uint32_t id) {
 
 int APS5_VABI sceKernelAprResolveFilepathsToIds(const char** paths, uint32_t count, uint32_t* ids, uint32_t* error_index) {
     if (!paths || !ids) return _fail(GUEST_EINVAL);
-    for (uint32_t index = 0; index < count; ++index) {
-        if (!_resolve(paths[index], &ids[index], nullptr)) {
-            ids[index] = INVALID_FILE_ID;
-            if (error_index) *error_index = index;
-            return _fail(GUEST_ENOENT);
-        }
-    }
-    return 0;
+    return _resolveAll(nullptr, paths, count, ids, nullptr, error_index);
 }
 
 int APS5_VABI sceKernelAprResolveFilepathsToIdsAndFileSizes(const char** paths, uint32_t count, uint32_t* ids, uint64_t* sizes, uint32_t* error_index) {
     if (!paths || !ids || !sizes) return _fail(GUEST_EINVAL);
-    for (uint32_t index = 0; index < count; ++index) {
-        uint32_t id = INVALID_FILE_ID;
-        uint64_t size = 0;
-        const bool resolved = _resolve(paths[index], &id, &size);
-        if (!resolved) {
-            id = INVALID_FILE_ID;
-            size = 0;
-        }
-        if (!GuestCopyOut_nid_no_patch(&ids[index], &id, sizeof(id)) || !GuestCopyOut_nid_no_patch(&sizes[index], &size, sizeof(size))) return _fail(GUEST_EFAULT);
-        if (!resolved) {
-            if (error_index && !GuestCopyOut_nid_no_patch(error_index, &index, sizeof(index))) return _fail(GUEST_EFAULT);
-            return _fail(GUEST_ENOENT);
-        }
-    }
-    return 0;
+    return _resolveAll(nullptr, paths, count, ids, sizes, error_index);
 }
 
 int APS5_VABI sceKernelAprResolveFilepathsWithPrefixToIdsAndFileSizes(const char* prefix, const char** paths, uint32_t count, uint32_t* ids, uint64_t* sizes, uint32_t* error_index) {
     if (!prefix || !paths || !ids) return _fail(GUEST_EINVAL);
-    for (uint32_t index = 0; index < count; ++index) {
-        const std::string path = paths[index] ? std::string(prefix) + paths[index] : std::string();
-        uint32_t id = INVALID_FILE_ID;
-        uint64_t size = 0;
-        const bool resolved = !path.empty() && _resolve(path.c_str(), &id, sizes ? &size : nullptr);
-        if (!resolved) {
-            id = INVALID_FILE_ID;
-            size = 0;
-        }
-        if (!GuestCopyOut_nid_no_patch(&ids[index], &id, sizeof(id)) || (sizes && !GuestCopyOut_nid_no_patch(&sizes[index], &size, sizeof(size)))) return _fail(GUEST_EFAULT);
-        if (!resolved) {
-            if (error_index && !GuestCopyOut_nid_no_patch(error_index, &index, sizeof(index))) return _fail(GUEST_EFAULT);
-            return _fail(GUEST_ENOENT);
-        }
-    }
-    return 0;
+    return _resolveAll(prefix, paths, count, ids, sizes, error_index);
 }
 
 int APS5_VABI sceKernelAprResolveFilepathsWithPrefixToIds(const char* prefix, const char** paths, uint32_t count, uint32_t* ids, uint32_t* error_index) {

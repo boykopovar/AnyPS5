@@ -806,6 +806,24 @@ void TestResolveFailures() {
         Require(sceKernelAprResolveFilepathsToIds(&invalid, 1, ids, &failed) == -1);
         Require(*__error_nid_postfix() == 2 && failed == 0 && ids[0] == 0xffffffffu);
     }
+    auto** const unreadableTable = reinterpret_cast<const char**>(0x10);
+    const char* unreadableEntry[]{reinterpret_cast<const char*>(0x10)};
+    const auto* const unreadablePrefix = reinterpret_cast<const char*>(0x10);
+    const auto faulted = [](int result) {
+        const bool fault = result == -1 && *__error_nid_postfix() == 14;
+        *__error_nid_postfix() = 0;
+        return fault;
+    };
+    Require(faulted(sceKernelAprResolveFilepathsToIds(unreadableTable, 1, ids, &failed)));
+    Require(faulted(sceKernelAprResolveFilepathsToIdsForEach(unreadableEntry, 1, ids, results)));
+    Require(faulted(sceKernelAprResolveFilepathsToIdsAndFileSizes(unreadableEntry, 1, ids, sizes, &failed)));
+    Require(faulted(sceKernelAprResolveFilepathsWithPrefixToIds(unreadablePrefix, paths, 1, ids, &failed)));
+    Require(faulted(sceKernelAprResolveFilepathsWithPrefixToIdsForEach(unreadablePrefix, paths, 1, ids, results)));
+    Require(faulted(sceKernelAprResolveFilepathsToIds(paths, 1, reinterpret_cast<std::uint32_t*>(0x10), &failed)));
+    Require(faulted(sceKernelAprResolveFilepathsToIdsAndFileSizesForEach(paths, 1, ids, reinterpret_cast<std::uint64_t*>(0x10), results)));
+    Require(faulted(sceKernelAprResolveFilepathsToIdsForEach(paths, 1, ids, reinterpret_cast<int*>(0x10))));
+    ids[1] = 123;
+    Require(faulted(sceKernelAprResolveFilepathsToIds(paths, 2, ids, reinterpret_cast<std::uint32_t*>(0x10))) && ids[1] == 0xffffffffu);
     std::remove(paths[0]);
 }
 
