@@ -86,6 +86,8 @@ therefore tests the previous binaries and can show no effect at all.
 
 [Relinker usage and runtime layout](../user/USAGE.md).
 
+`tools/public_headers_manifest.py [--root <dir>]` inventories the inputs of the public header package, with a content hash for each file, without creating an archive. `--root` defaults to the repository that contains the script.
+
 ## Windows setup and troubleshooting
 
 The full build also requires Python 3 for glslang and Git for Windows with Bash for libusb's version-header generation. A minimal Git installation without Bash is insufficient for the full build.
