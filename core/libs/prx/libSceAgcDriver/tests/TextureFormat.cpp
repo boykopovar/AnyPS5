@@ -85,12 +85,45 @@ int channelLowBit(VkFormat format, VkComponentSwizzle channel) {
         case VK_FORMAT_R5G5B5A1_UNORM_PACK16: return std::array{11, 6, 1, 0}[index];
         case VK_FORMAT_A1R5G5B5_UNORM_PACK16: return std::array{10, 5, 0, 15}[index];
         case VK_FORMAT_B4G4R4A4_UNORM_PACK16: return std::array{4, 8, 12, 0}[index];
+        case VK_FORMAT_R4G4_UNORM_PACK8: return std::array{4, 0, -1, -1}[index];
         default: throw std::runtime_error("no channel layout for packed format " + std::to_string(format));
     }
 }
 
+void sampledFormatProperties(VkPhysicalDevice, VkFormat, VkFormatProperties* properties) {
+    *properties = {};
+    properties->optimalTilingFeatures = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT;
+}
+
+void noSampledFormatProperties(VkPhysicalDevice, VkFormat, VkFormatProperties* properties) {
+    *properties = {};
+}
+
+void scaledFormatTests() {
+    constexpr std::array<std::uint32_t, 8> formats{4u, 10u, 17u, 26u, 52u, 53u, 59u, 68u};
+    Context context{};
+    context.scaledSampledFormats = ScaledSampledFormats(sampledFormatProperties, VK_NULL_HANDLE);
+    for (const auto format : formats) {
+        Require(SampledTextureFormat(context, format) == ResolveTextureFormat(format), "scaled format " + std::to_string(format) + " must sample natively where the host supports it");
+    }
+    context.scaledSampledFormats = ScaledSampledFormats(noSampledFormatProperties, VK_NULL_HANDLE);
+    for (const auto format : formats) {
+        reject([&] { SampledTextureFormat(context, format); }, "unsupported guest texture format");
+    }
+    for (const auto& [format, unorm] : {std::pair{3u, VK_FORMAT_R8_UNORM}, std::pair{9u, VK_FORMAT_R16_UNORM}, std::pair{16u, VK_FORMAT_R8G8_UNORM}, std::pair{25u, VK_FORMAT_R16G16_UNORM}, std::pair{58u, VK_FORMAT_R8G8B8A8_UNORM}, std::pair{67u, VK_FORMAT_R16G16B16A16_UNORM}}) {
+        Require(SampledTextureFormat(context, format) == unorm, "unsigned scaled format " + std::to_string(format) + " must sample through its UNORM view on a host that cannot sample scaled formats");
+    }
+    unsampledFormats[0] = VK_FORMAT_R8_SSCALED;
+    unsampledFormats[1] = VK_FORMAT_R16_SSCALED;
+    context.scaledSampledFormats = ScaledSampledFormats(unsampledFormatProperties, VK_NULL_HANDLE);
+    reject([&] { SampledTextureFormat(context, 4u); }, "unsupported guest texture format");
+    reject([&] { SampledTextureFormat(context, 10u); }, "unsupported guest texture format");
+    Require(SampledTextureFormat(context, 17u) == VK_FORMAT_R8G8_SSCALED && SampledTextureFormat(context, 52u) == VK_FORMAT_A2B10G10R10_USCALED_PACK32, "scaled formats the host samples must resolve");
+    Require(SampledTextureFormat(context, 128u) == VK_FORMAT_R8_SRGB, "a device without scaled-image support still samples sRGB");
+}
+
 void packedChannelTests() {
-    constexpr std::array<std::pair<std::uint32_t, std::array<int, 4>>, 4> packed{{{133u, {0, 5, 11, 0}}, {134u, {0, 5, 10, 15}}, {135u, {0, 1, 6, 11}}, {136u, {0, 4, 8, 12}}}};
+    constexpr std::array<std::pair<std::uint32_t, std::array<int, 4>>, 5> packed{{{133u, {0, 5, 11, 0}}, {134u, {0, 5, 10, 15}}, {135u, {0, 1, 6, 11}}, {136u, {0, 4, 8, 12}}, {137u, {0, 4, -1, -1}}}};
     constexpr std::array components{VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A};
     for (const auto& [format, lowBits] : packed) {
         for (std::size_t component = 0; component < components.size(); ++component) {
@@ -281,6 +314,7 @@ void guestFormatLookupTests() {
 void RunTextureFormatTests() {
     srgbDecodeTests();
     srgbTwinTests();
+    scaledFormatTests();
     packedChannelTests();
     repackedFormatTests();
     Require(ResolveTextureFormat(1) == VK_FORMAT_R8_UNORM, "format 1 must resolve to R8_UNORM");
@@ -300,6 +334,18 @@ void RunTextureFormatTests() {
 
     Require(ResolveTextureFormat(56) == VK_FORMAT_R8G8B8A8_UNORM, "format 56 must resolve to R8G8B8A8_UNORM");
     Require(BytesPerElement(56) == 4u, "format 56 must be four bytes wide");
+
+    const std::array<std::pair<std::uint32_t, VkFormat>, 8> scaled{{
+        {4u, VK_FORMAT_R8_SSCALED}, {10u, VK_FORMAT_R16_SSCALED},
+        {17u, VK_FORMAT_R8G8_SSCALED}, {26u, VK_FORMAT_R16G16_SSCALED},
+        {52u, VK_FORMAT_A2B10G10R10_USCALED_PACK32}, {53u, VK_FORMAT_A2B10G10R10_SSCALED_PACK32},
+        {59u, VK_FORMAT_R8G8B8A8_SSCALED}, {68u, VK_FORMAT_R16G16B16A16_SSCALED},
+    }};
+    for (const auto [format, vkFormat] : scaled) {
+        Require(ResolveTextureFormat(format) == vkFormat, "scaled format " + std::to_string(format) + " must resolve to its native Vulkan format");
+        Require(FindGuestTextureFormat(vkFormat, BytesPerElement(format)) == format, "scaled format " + std::to_string(format) + " must look up from its Vulkan format");
+        Require(ShaderRecompiler::SampledTextureNumericClass(static_cast<ShaderRecompiler::IrBufferFormat>(format)) == ShaderRecompiler::IrTextureNumericClass::Float, "scaled format " + std::to_string(format) + " must sample as float");
+    }
 
     Require(ResolveTextureFormat(6) == VK_FORMAT_R8_SINT, "format 6 must resolve to R8_SINT");
     Require(BytesPerElement(6) == 1u, "format 6 must be one byte wide");
@@ -336,7 +382,7 @@ void RunTextureFormatTests() {
     reject([] { ResolveTextureFormat(0); }, "unsupported guest texture format");
     reject([] { ResolveTextureFormat(183); }, "unsupported guest texture format");
     reject([] { ResolveTextureFormat(9999); }, "unsupported guest texture format");
-    reject([] { BytesPerElement(4); }, "unsupported guest texture format");
+    reject([] { BytesPerElement(78); }, "unsupported guest texture format");
     for (const auto& [scaled, unorm, bits] : {std::tuple{3u, 1u, 8u}, std::tuple{9u, 7u, 16u}, std::tuple{16u, 14u, 8u}, std::tuple{25u, 23u, 16u}, std::tuple{58u, 56u, 8u}, std::tuple{67u, 65u, 16u}}) {
         const auto name = "unsigned scaled format " + std::to_string(scaled);
         Require(ResolveTextureFormat(scaled) == ResolveTextureFormat(unorm) && BytesPerElement(scaled) == BytesPerElement(unorm), name + " must be stored and viewed like its UNORM layout");

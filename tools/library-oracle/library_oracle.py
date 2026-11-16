@@ -50,7 +50,7 @@ def load_known(path):
     known = {}
     if not path.is_file():
         return known
-    for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    for number, line in enumerate(path.read_text(encoding="utf-8-sig").splitlines(), 1):
         if not line.strip() or line.startswith("#"):
             continue
         fields = line.split("\t")
@@ -77,7 +77,7 @@ def text(value):
 def environment(modules):
     copy = dict(os.environ)
     for name in ("PATH", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH"):
-        copy[name] = str(modules) + os.pathsep + copy.get(name, "")
+        copy[name] = os.pathsep.join(part for part in (str(modules), copy.get(name, "")) if part)
     return copy
 
 
@@ -173,6 +173,9 @@ def missing_warning(binary, modules, findings, run=subprocess.run):
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="replay prosper's PS5 console measurements against the built AnyPS5 modules")
     parser.add_argument("families", nargs="*", metavar="FAMILY", help=f"measurement families to replay (default: all of {', '.join(sorted(FAMILIES))})")
     parser.add_argument("--build", type=Path, default=ROOT / "build")
