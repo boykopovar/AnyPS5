@@ -5230,17 +5230,10 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
         queuedReadHeld.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
-    std::unique_lock<GuestMemory::GpuMutexType> drawnHold;
-    if (auto& drawnPending = Pending(); drawnPending.drawnCount.load(std::memory_order_acquire) != 0 && !GuestMemory::GpuMutex().HeldByThisThread()) {
-        bool overlap = false;
-        {
-            std::lock_guard lock(drawnPending.mutex);
-            overlap = std::any_of(drawnPending.drawn.begin(), drawnPending.drawn.end(), [&](const PendingWrites::Drawn& entry) { return entry.texture->dirty && entry.texture->overlaps(address, bytes); });
-        }
-        if (overlap) {
-            GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Flush);
-            drawnHold = std::unique_lock(GuestMemory::GpuMutex());
-        }
+    std::unique_lock<GuestMemory::GpuMutexType> selectionHold;
+    if (!GuestMemory::GpuMutex().HeldByThisThread()) {
+        GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Flush);
+        selectionHold = std::unique_lock(GuestMemory::GpuMutex());
     }
     // The images stay alive across the scan: their last owner may be a batch's kept list, which
     // another thread releases outside the GPU mutex once the batch completed.
@@ -5295,17 +5288,13 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
         }
     }
     if (flush.empty()) {
-        if (drawnHold.owns_lock()) drawnHold.unlock();
+        if (selectionHold.owns_lock()) selectionHold.unlock();
         const bool stored = WaitForFlushing(address, bytes, except);
-        if (stored) {
-            static_cast<void>(FlushPending(address, bytes, except, reason, scope, published, true, device));
-            return true;
-        }
         // Units shadowed over the range (another image's results retiled into the import's unit
         // shadow, or an earlier flush's) still reach the import as the scope asks.
-        const bool units = PublishShadowsOnly(address, bytes, scope, reason, waited);
+        const bool units = PublishShadowsOnly(address, bytes, scope, reason, waited || stored);
         if (published != nullptr) *published = units;
-        return false;
+        return stored;
     }
     struct Unregister {
         const std::vector<std::shared_ptr<StorageTexture>>& flush;
