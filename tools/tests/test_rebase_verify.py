@@ -68,6 +68,40 @@ class RebaseVerifyTests(unittest.TestCase):
     def test_a_clean_rebase_keeps_every_line_author_and_commit(self):
         self.assertEqual(self.verify(), [])
 
+    def test_relative_diff_cannot_hide_lost_lines_from_a_subdirectory(self):
+        nested = self.root / "nested"
+        nested.mkdir()
+        self.git("config", "diff.relative", "true")
+        for text, message in (("a\nb\nc\ntail\n", "an added line is missing (1x): NEW"),
+                              ("a\nNEW\nc\ntail\n", "a line is deleted that the branch did not delete (1x): b")):
+            with self.subTest(text=text):
+                self.write("f.txt", text)
+                self.git("commit", "-q", "-a", "--amend", "--no-edit")
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    status = rebase_verify.main(["old", "new", "--onto", "main", "--repo", str(nested)])
+                self.assertEqual(status, 1)
+                self.assertIn("error: f.txt: " + message, output.getvalue())
+
+    def test_changed_lines_keep_repository_paths_from_a_subdirectory(self):
+        nested = self.root / "nested"
+        nested.mkdir()
+        self.write("nested/inside.txt", "inside\n")
+        self.git("add", "nested/inside.txt")
+        self.git("commit", "-q", "--amend", "--no-edit")
+        expected = rebase_verify.changed_lines(self.root, "main", "new")
+        self.assertEqual(set(expected[0]), {"f.txt", "nested/inside.txt"})
+        for relative in ("false", "true"):
+            with self.subTest(relative=relative):
+                self.git("config", "diff.relative", relative)
+                self.assertEqual(rebase_verify.changed_lines(nested, "main", "new"), expected)
+
+    def test_relative_diff_keeps_a_clean_rebase_clean_from_a_subdirectory(self):
+        nested = self.root / "nested"
+        nested.mkdir()
+        self.git("config", "diff.relative", "true")
+        self.assertEqual(rebase_verify.verify(nested, "old", "new", "main")[3], [])
+
     def test_an_executable_mode_change_must_survive_rebase(self):
         self.git("checkout", "-q", "old")
         self.amend_mode("f.txt", True)
