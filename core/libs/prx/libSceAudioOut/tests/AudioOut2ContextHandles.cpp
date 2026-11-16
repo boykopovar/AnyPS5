@@ -222,6 +222,15 @@ void FirmwareExSignatures() {
     setVolume.value = volume;
     setVolume.value_size = sizeof(volume);
     Require(sceAudioOut2LoPortSetAttributesEx(exPort, &setVolume, 1) == 0, "the extended attribute set was refused");
+    errno = EBUSY;
+    Require(sceAudioOut2LoPortSetAttributesEx(exPort, reinterpret_cast<const AudioOut2Attribute*>(std::uintptr_t{0x10}), 1) == errorInvalidArgument,
+            "an unreadable attribute list was refused");
+    Require(errno == EBUSY, "an unreadable attribute list preserves errno");
+    AudioOut2Attribute unreadableVolume = setVolume;
+    unreadableVolume.value = reinterpret_cast<const void*>(std::uintptr_t{0x10});
+    errno = EBUSY;
+    Require(sceAudioOut2LoPortSetAttributesEx(exPort, &unreadableVolume, 1) == errorInvalidArgument, "an unreadable volume was refused");
+    Require(errno == EBUSY, "an unreadable volume preserves errno");
 
     float readBack[2] = {0.0f, 0.0f};
     AudioOut2Attribute getVolume{};
