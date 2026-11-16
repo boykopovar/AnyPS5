@@ -19,9 +19,16 @@ void CheckInitValidation() {
     Require(sceMoveTrackerInit(nullptr, 0, 8, 8) == kErrInvalidArg);
 }
 
+void CheckVersionAndRecordStop() {
+    Require(sceMoveTrackerGetVersion() == 2);
+    Require(sceMoveTrackerRecordStop() == 0);
+    Require(sceMoveTrackerRecordStop() == 0);
+}
+
 }
 
 int main() {
+    CheckVersionAndRecordStop();
     CheckInitValidation();
     std::array<std::uint32_t, 2> total{kFill, kFill};
     std::array<std::uint32_t, 2> processing{kFill, kFill};
