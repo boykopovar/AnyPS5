@@ -357,7 +357,9 @@ extern "C" {
 
 int APS5_VABI sceNgs2JobSchedulerResetOption(Ngs2JobSchedulerOption* option) {
     if (option == nullptr) return static_cast<int>(0x804A8012u);
-    Ngs2ResetJobSchedulerOption(*option);
+    Ngs2JobSchedulerOption reset{};
+    Ngs2ResetJobSchedulerOption(reset);
+    if (!WriteGuest(option, reset)) return static_cast<int>(0x804A8012u);
     return SCE_NGS2_OK;
 }
 
@@ -377,17 +379,21 @@ int APS5_VABI sceNgs2SystemQueryBufferSize(const Ngs2SystemOption* option, Ngs2C
 }
 
 int APS5_VABI sceNgs2SystemCreate(const Ngs2SystemOption* option, const Ngs2ContextBufferInfo* buffer_info, uintptr_t* handle) {
-    if (buffer_info == nullptr || buffer_info->host_buffer == nullptr) return SCE_NGS2_ERROR_INVALID_BUFFER_INFO;
+    if (buffer_info == nullptr) return SCE_NGS2_ERROR_INVALID_BUFFER_INFO;
+    Ngs2ContextBufferInfo localBufferInfo{};
+    if (!ReadGuest(buffer_info, localBufferInfo) || localBufferInfo.host_buffer == nullptr) return SCE_NGS2_ERROR_INVALID_BUFFER_INFO;
     if (handle == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     Ngs2SystemOption checked{};
     const int result = CheckSystemOption(option, checked);
     if (result != SCE_NGS2_OK) return result;
     const Ngs2Lock lock;
-    return CreateSystem(checked, *buffer_info, {}, handle);
+    return CreateSystem(checked, localBufferInfo, {}, handle);
 }
 
 int APS5_VABI sceNgs2SystemCreateWithAllocator(const Ngs2SystemOption* option, const Ngs2BufferAllocator* allocator, uintptr_t* handle) {
-    if (allocator == nullptr || allocator->alloc_handler == nullptr) return SCE_NGS2_ERROR_INVALID_BUFFER_ALLOCATOR;
+    if (allocator == nullptr) return SCE_NGS2_ERROR_INVALID_BUFFER_ALLOCATOR;
+    Ngs2BufferAllocator localAllocator{};
+    if (!ReadGuest(allocator, localAllocator) || localAllocator.alloc_handler == nullptr) return SCE_NGS2_ERROR_INVALID_BUFFER_ALLOCATOR;
     if (handle == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     Ngs2SystemOption checked{};
     const int result = CheckSystemOption(option, checked);
@@ -395,21 +401,21 @@ int APS5_VABI sceNgs2SystemCreateWithAllocator(const Ngs2SystemOption* option, c
     Ngs2JobPlan plan;
     const int planned = PlanJobs(checked, plan);
     if (planned < 0) return planned;
-    const auto bufferInfo = Allocate(allocator, plan.size);
+    const auto bufferInfo = Allocate(&localAllocator, plan.size);
     const Ngs2Lock lock;
     try {
-        const int created = CreateSystem(checked, bufferInfo, *allocator, handle);
-        if (created < 0) Ngs2ReleaseBuffer(*allocator, bufferInfo, nullptr);
+        const int created = CreateSystem(checked, bufferInfo, localAllocator, handle);
+        if (created < 0) Ngs2ReleaseBuffer(localAllocator, bufferInfo, nullptr);
         return created;
     } catch (...) {
-        Ngs2ReleaseBuffer(*allocator, bufferInfo, nullptr);
+        Ngs2ReleaseBuffer(localAllocator, bufferInfo, nullptr);
         throw;
     }
 }
 
 int APS5_VABI sceNgs2SystemDestroy(uintptr_t system_handle, Ngs2ContextBufferInfo* buffer_info) {
     const Ngs2Lock lock;
-    if (buffer_info != nullptr) *buffer_info = {};
+    if (buffer_info != nullptr && !WriteGuest(buffer_info, Ngs2ContextBufferInfo{})) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     auto* system = Ngs2FindSystem(system_handle);
     while (system != nullptr && Ngs2ExclusiveElsewhere()) {
         Ngs2WaitOnce();

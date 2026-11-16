@@ -538,7 +538,10 @@ int APS5_VABI sceHidControlGetAuthInformation(std::uint16_t first, std::uint16_t
     if (kind < 1 || kind > 8 || first == 0 || output == nullptr) return ErrorInvalidArgument;
     constexpr std::size_t replyOffset = 0x610;
     constexpr std::size_t resultSize = 0x24;
-    std::memset(output, 0, resultSize);
+    std::array<std::uint8_t, resultSize> resultBytes{};
+    if (!StoreGuest(static_cast<std::array<std::uint8_t, resultSize>*>(output), resultBytes)) {
+        return ErrorInvalidArgument;
+    }
     std::array<std::uint8_t, 0x6b4> reply{};
     AuthRequest request{};
     request.first = first;
@@ -547,7 +550,12 @@ int APS5_VABI sceHidControlGetAuthInformation(std::uint16_t first, std::uint16_t
     request.reply = reply.data();
     request.mode = 1;
     const int result = Control<0x8020483f>(request);
-    if (result == 0) std::memcpy(output, reply.data() + replyOffset, resultSize);
+    if (result == 0) {
+        std::memcpy(resultBytes.data(), reply.data() + replyOffset, resultSize);
+        if (!StoreGuest(static_cast<std::array<std::uint8_t, resultSize>*>(output), resultBytes)) {
+            return ErrorInvalidArgument;
+        }
+    }
     return result;
 }
 
@@ -609,12 +617,20 @@ int APS5_VABI sceHidControlSetForceAdvancedVibrationMode(std::uint8_t enable) {
 int APS5_VABI sceHidControlPswUpdateIsUpdateNeeded(std::uint32_t device, const void* image, std::uint16_t* result) {
     if (!Initialized()) return ErrorNotInitialized;
     if (result == nullptr) return ErrorInvalidArgument;
-    *result = 0;
+    std::uint16_t initialResult = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(result, &initialResult, sizeof(initialResult));
+    errno = savedErrno;
+    if (!copied) return ErrorInvalidArgument;
     if (image == nullptr) return ErrorInvalidArgument;
     std::uint16_t reply = 0;
     UpdateCheck request{device, 0, image, UpdateImageSize, &reply, nullptr};
     const int status = Control<UpdateCheckCommand>(request);
-    if (status == 0) *result = reply;
+    if (status == 0) {
+        const int savedErrnoReply = errno;
+        GuestCopyOut_nid_no_patch(result, &reply, sizeof(reply));
+        errno = savedErrnoReply;
+    }
     return status;
 }
 

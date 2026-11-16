@@ -687,11 +687,6 @@ int APS5_VABI sceKernelExpectedHddFormat(void) {
     return 0;
 }
 
-int APS5_VABI sceKernelFlock(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceKernelGetACInfoAllForCoredump(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1079,11 +1074,6 @@ int APS5_VABI sceKernelGetSystemLevelDebuggerModeForRcmgr(void) {
 }
 
 int APS5_VABI sceKernelGetSystemSwBeta(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceKernelGetThreadName(uint32_t id, char* name) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -2009,7 +1999,12 @@ int APS5_VABI scePthreadBarrierDestroy(PthreadBarrierPrivate** barrier) {
 }
 
 int APS5_VABI scePthreadBarrierInit(PthreadBarrierPrivate** barrier, PthreadBarrierattrPrivate* const* attr, unsigned count, const char* name) {
-    if (name && std::strlen(name) >= 32) return SCE_KERNEL_ERROR_ENAMETOOLONG;
+    if (name) {
+        std::string copied;
+        const int error = CopyGuestString_nid_no_patch(name, 32, copied);
+        if (error == 63) return SCE_KERNEL_ERROR_ENAMETOOLONG;
+        if (error != 0) return SCE_KERNEL_ERROR_EFAULT;
+    }
     return SceResult(pthread_barrier_init_nid_postfix(barrier, attr, count));
 }
 

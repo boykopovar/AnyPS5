@@ -22,6 +22,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <exception>
 #include <optional>
 
@@ -577,6 +578,17 @@ void Driver::releaseFlipHold() {
     if (flipHolders.load(std::memory_order_acquire) != 0) changed.notify_all();
 }
 
+void Driver::beginFlipReady(std::uint32_t handle) {
+    std::lock_guard lock(mutex);
+    ++flipsReadying[handle];
+}
+
+void Driver::endFlipReady(std::uint32_t handle) {
+    std::lock_guard lock(mutex);
+    const auto found = flipsReadying.find(handle);
+    if (found != flipsReadying.end() && --found->second == 0) flipsReadying.erase(found);
+}
+
 void Driver::finishFlipWork(const std::shared_ptr<FlipWork>& work, std::uint64_t workSerial) {
     std::lock_guard lock(mutex);
     if (work != nullptr) {
@@ -620,6 +632,7 @@ void Driver::reserveOutputs(Submission& submission) {
                 require(submission.queue == 0, "EOP flips on async queues are not implemented");
                 require(eopTokens.insert(token).second, "EOP flip token repeated in a submission");
                 submission.flips.emplace(cursor, flip->second.request);
+                submission.flipHandles.emplace(cursor, flip->second.info.handle);
             }
         }
         noteHeldAtSubmit(submission, cursor);
@@ -630,6 +643,7 @@ void Driver::reserveOutputs(Submission& submission) {
             auto request = output->second->Reserve(info);
             require(request != nullptr, "video output returned a null flip reservation");
             submission.flips.emplace(cursor, std::move(request));
+            submission.flipHandles.emplace(cursor, words[1]);
         }
         cursor += Pm4::PacketWords(words[0]);
     }
@@ -717,6 +731,7 @@ void Driver::executeRewindTail(const Submission& stalled) {
         tail.enqueuedAt = std::chrono::steady_clock::now();
     }
     copyCommands(tail, stalled.rewindTail, stalled.rewindWords);
+    noteTailRead(stalled.rewindTail, tail.queue, tail.rewindTail);
     if (APS5_ENABLE_TIMING_LOG) tail.copiedAt = std::chrono::steady_clock::now();
     validate(tail, stalled.rewindTail);
     readRegisterLists(tail);
@@ -815,7 +830,7 @@ void Driver::Submit(const Packet* packet, std::uint32_t queue, bool cpuFlip) {
         checkStopping();
         require(accepted != std::numeric_limits<std::uint64_t>::max(), "submission serial overflow");
         reserveOutputs(submission);
-        if (unorderedFlip && capture == nullptr && accepted != 0 && flipsAhead.load(std::memory_order_acquire) == 0) {
+        if (unorderedFlip && capture == nullptr && accepted != 0 && flipsAhead.load(std::memory_order_acquire) == 0 && !flipsReadying.contains(submission.flipHandles.begin()->second)) {
             const auto now = FrameTiming::Clock::now();
             auto frame = std::make_shared<FrameTiming>(++frameSerial);
             frame->IncludeSubmission(accepted, now, now, now, true);
@@ -851,6 +866,7 @@ void Driver::Submit(const Packet* packet, std::uint32_t queue, bool cpuFlip) {
             lastFlipWork = submission.flipWork;
         }
         if (!submission.flips.empty()) ++flipSubmissionsOfThread();
+        if (submission.rewindTail != nullptr) noteTailRead(nullptr, queue, submission.rewindTail);
         enqueue(std::move(submission));
         ++accepted;
     }
@@ -948,6 +964,40 @@ bool Driver::orderReleased(std::uint32_t queue, std::uint64_t received) const {
     if (awaited == 0) return false;
     if (workers.at(queue).unfinishedWrites.contains(awaited & ~std::uint64_t{3})) return true;
     return runningWorkers.load(std::memory_order_acquire) == 0 && !completionsPending() && !Graphics::Recorder::SnapshotWriteOverlaps(awaited, 4);
+}
+
+void Driver::TrackRewindTails() {
+    tracksTails.store(true, std::memory_order_relaxed);
+}
+
+void Driver::noteTailRead(const std::uint32_t* read, std::uint32_t queue, const std::uint32_t* next) {
+    if (!tracksTails.load(std::memory_order_relaxed)) return;
+    std::lock_guard lock(tailsMutex);
+    if (read != nullptr) {
+        if (const auto copied = std::ranges::find(unreadTails, std::pair{queue, read}); copied != unreadTails.end()) unreadTails.erase(copied);
+    }
+    if (next != nullptr) unreadTails.emplace_back(queue, next);
+}
+
+bool Driver::RewindTailsUnread() {
+    CheckFailure();
+    std::lock_guard lock(tailsMutex);
+    return std::ranges::any_of(unreadTails, [&](const auto& tail) {
+        const auto [queue, words] = tail;
+        if ((std::atomic_ref<std::uint32_t>(*const_cast<std::uint32_t*>(words - 1)).load(std::memory_order_acquire) & Pm4::RewindValid) == 0) return false;
+        const auto& slot = awaitedSlots[queue == 0 ? 0 : queue - 0x20 + 1];
+        const auto awaited = slot.address.load(std::memory_order_acquire);
+        if (awaited == 0 || awaited == reinterpret_cast<std::uint64_t>(words - 1) || !awaitsTitle(awaited)) return true;
+        const auto shape = slot.shape.load(std::memory_order_relaxed);
+        const auto reference = slot.reference.load(std::memory_order_relaxed);
+        const auto mask = slot.mask.load(std::memory_order_relaxed);
+        if (slot.address.load(std::memory_order_acquire) != awaited) return true;
+        const auto bytes = static_cast<std::uint32_t>(shape >> 32u);
+        if (bytes == 0) return (std::atomic_ref<std::uint32_t>(*reinterpret_cast<std::uint32_t*>(awaited)).load(std::memory_order_acquire) & Pm4::RewindValid) != 0;
+        std::uint64_t value = 0;
+        std::memcpy(&value, reinterpret_cast<const void*>(awaited), bytes == 8 ? 8 : 4);
+        return Pm4::WaitCompares(static_cast<std::uint32_t>(shape), reference, mask, value);
+    });
 }
 
 void Driver::noteWaitFields(std::uint32_t queue, std::span<const std::uint32_t> packet) {
