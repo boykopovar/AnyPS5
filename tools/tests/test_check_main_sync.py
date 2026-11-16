@@ -426,6 +426,18 @@ class ResolveBaseTests(unittest.TestCase):
             self.assertEqual(check_main_sync.resolve_base(Path(directory), 'HEAD'), 'HEAD')
             with self.assertRaisesRegex(RuntimeError, 'no base ref found'):
                 check_main_sync.resolve_base(Path(directory), 'no-such-ref')
+class GitListTests(unittest.TestCase):
+    def make_repo(self, directory):
+        import subprocess as sp
+        sp.run(['git', '-C', directory, 'init', '-q'], check=True)
+        (Path(directory) / 'a.txt').write_text('x', encoding='utf-8')
+        sp.run(['git', '-C', directory, 'add', 'a.txt'], check=True)
+        sp.run(['git', '-C', directory, '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-q', '-m', 'base'], check=True)
+
+    def test_lines_returns_each_non_empty_output_line(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.make_repo(directory)
+            self.assertEqual(len(check_main_sync.lines(Path(directory), 'rev-list', 'HEAD')), 1)
 
 
 class ResolveBaseTests(unittest.TestCase):
