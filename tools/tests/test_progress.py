@@ -1231,6 +1231,11 @@ class LayoutTests(unittest.TestCase):
                 self.assertGreaterEqual(top, y - 1e-9)
                 self.assertLessEqual(left + width, x + w + 1e-9)
                 self.assertLessEqual(top + height, y + h + 1e-9)
+class BadgeTests(unittest.TestCase):
+    def test_badge_colour_follows_the_percentage_thresholds(self):
+        for percent, colour in ((95, "#4c1"), (60, "#97ca00"), (30, "#dfb317"), (29, "#fe7d37")):
+            with self.subTest(percent=percent):
+                self.assertIn(f'fill="{colour}"', progress.badge("x", {"percent": percent}))
 
 
 if __name__ == "__main__":
