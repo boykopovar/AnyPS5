@@ -559,7 +559,13 @@ void APS5_VABI sceUsbdClose(void* deviceHandle) {
 
 std::int32_t APS5_VABI sceUsbdControlTransfer(void* deviceHandle, std::uint8_t requestType, std::uint8_t request, std::uint16_t value, std::uint16_t index, std::uint8_t* data, std::uint16_t length, std::uint32_t timeout) {
     if (deviceHandle == nullptr || (length != 0 && data == nullptr)) return SCE_USBD_ERROR_INVALID_ARG;
-    return ToGuestError(libusb_control_transfer(KnownHandle(deviceHandle, __func__), requestType, request, value, index, data, length, timeout));
+    std::vector<std::uint8_t> host(length);
+    if (length != 0 && !GuestCopyIn_nid_no_patch(host.data(), data, length)) return SCE_USBD_ERROR_INVALID_ARG;
+    const bool deviceToHost = (requestType & LIBUSB_ENDPOINT_IN) != 0;
+    if (deviceToHost && length != 0 && !GuestCopyOut_nid_no_patch(data, host.data(), length)) return SCE_USBD_ERROR_INVALID_ARG;
+    const int result = libusb_control_transfer(KnownHandle(deviceHandle, __func__), requestType, request, value, index, host.data(), length, timeout);
+    if (deviceToHost && result > 0 && !GuestCopyOut_nid_no_patch(data, host.data(), static_cast<std::size_t>(result))) return SCE_USBD_ERROR_INVALID_ARG;
+    return ToGuestError(result);
 }
 
 std::int32_t APS5_VABI sceUsbdGetActiveConfigDescriptor(void* device, void** config) {
