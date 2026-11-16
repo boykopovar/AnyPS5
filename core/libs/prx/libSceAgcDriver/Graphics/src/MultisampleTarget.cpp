@@ -771,6 +771,16 @@ public:
         return twinView;
     }
 
+    bool TakesRegisterState(const ColorTarget& use) const {
+        return fromTexture && !drawn && !storageWritten && dccRanges.size() == 2 && use.address == target.address && use.dccAddress == target.dccAddress && use.dccAlphaOnMsb == target.dccAlphaOnMsb && use.dccPipeAligned == target.dccPipeAligned && use.tileMode == target.tileMode && use.elementBytes == target.elementBytes && use.pipeBankXor == target.pipeBankXor && (use.dccControl != target.dccControl || use.cmaskAddress != target.cmaskAddress || use.cmaskBytes != target.cmaskBytes);
+    }
+
+    void CheckTextureImport() const {
+        Require(metadataValid->load(std::memory_order_acquire), "multisampled DCC metadata was released while its color target remains resident");
+        const auto keys = dccFill ? LandedUniformMetadataByte(dccRanges[1].address, dccRanges[1].bytes) : std::nullopt;
+        checkDccWrites(keys && *dccFill == *keys * 0x01010101u ? std::size_t{1} : dccRanges.size());
+    }
+
     bool Serves(const ColorTarget& use) const {
         if (use.format == target.format) return sameTarget(target, use);
         auto twin = use;
@@ -1063,15 +1073,7 @@ private:
         Require(false, text);
     }
 
-    void checkDccCurrent(const ColorTarget& use, bool metadataRefilled) const {
-        if (dccRanges.empty()) {
-            Require(use.dccAddress == 0, "adding DCC to a resident multisampled color target is not implemented");
-            return;
-        }
-        Require(metadataValid->load(std::memory_order_acquire), "multisampled DCC metadata was released while its color target remains resident");
-        static_cast<void>(MultisampledDccBytes(use));
-        Require(use.address == target.address && use.dccAddress == target.dccAddress && use.dccControl == target.dccControl && use.dccAlphaOnMsb == target.dccAlphaOnMsb && use.dccPipeAligned == target.dccPipeAligned && use.cmaskAddress == target.cmaskAddress && use.cmaskBytes == target.cmaskBytes && use.tileMode == target.tileMode && use.elementBytes == target.elementBytes && use.pipeBankXor == target.pipeBankXor, "multisampled DCC target layout or metadata changed");
-        const auto ranges = metadataRefilled ? std::size_t{1} : dccRanges.size();
+    void checkDccWrites(std::size_t ranges) const {
         for (std::size_t index = 0; index < ranges; ++index) requireDccRange(compared(index) || GuestMemory::Watched(dccRanges[index].address, dccRanges[index].bytes), dccRanges[index], "multisampled DCC target reuse requires watched guest memory");
         for (std::size_t index = 0; index < ranges; ++index) {
             const auto& range = dccRanges[index];
@@ -1083,6 +1085,17 @@ private:
             }
             if (auto* recorder = Recorder::Active(); recorder != nullptr) requireDccRange(!recorder->PendingWriteOverlaps(range.address, range.bytes), range, "pending writes to a resident multisampled DCC target or its metadata are not implemented");
         }
+    }
+
+    void checkDccCurrent(const ColorTarget& use, bool metadataRefilled) const {
+        if (dccRanges.empty()) {
+            Require(use.dccAddress == 0, "adding DCC to a resident multisampled color target is not implemented");
+            return;
+        }
+        Require(metadataValid->load(std::memory_order_acquire), "multisampled DCC metadata was released while its color target remains resident");
+        static_cast<void>(MultisampledDccBytes(use));
+        Require(use.address == target.address && use.dccAddress == target.dccAddress && use.dccControl == target.dccControl && use.dccAlphaOnMsb == target.dccAlphaOnMsb && use.dccPipeAligned == target.dccPipeAligned && use.cmaskAddress == target.cmaskAddress && use.cmaskBytes == target.cmaskBytes && use.tileMode == target.tileMode && use.elementBytes == target.elementBytes && use.pipeBankXor == target.pipeBankXor, "multisampled DCC target layout or metadata changed");
+        checkDccWrites(metadataRefilled ? std::size_t{1} : dccRanges.size());
         if (fmaskRange) {
             Require(use.fmaskAddress == target.fmaskAddress && use.fmaskPipeBankXor == target.fmaskPipeBankXor, "native FMASK target layout changed");
             const auto& range = *fmaskRange;
@@ -1318,7 +1331,9 @@ MultisampleTarget& acquire(const Context& context, const ColorTarget& requested,
         if (target->context.device != context.device || !target->Serves(requested)) continue;
         auto use = requested;
         use.format = target->target.format;
-        if (recreated(target->target, use)) {
+        const bool takesRegisterState = target->TakesRegisterState(use);
+        if (takesRegisterState) target->CheckTextureImport();
+        if (takesRegisterState || recreated(target->target, use)) {
             {
                 std::unique_lock lock(guardedMutex());
                 if (!target->active->load(std::memory_order_acquire)) continue;
