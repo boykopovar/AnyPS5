@@ -86,7 +86,7 @@ std::uint32_t EmitUFloat6E4ToF32Bits(SpirvEmitterState& state, std::uint32_t raw
 
 std::uint32_t NormalizeFormatComponent(SpirvEmitterState& state, const SpirvBufferFormatInfo& info, std::uint32_t component, std::uint32_t raw) {
     const auto bits = info.componentBits[component];
-    if (info.format == IrBufferFormat::Format10_10_10_2Float) {
+    if (info.format == IrBufferFormat::Format6E4Float) {
         return component < 3u ? EmitUFloat6E4ToF32Bits(state, raw) : UnormToF32Bits(state, raw, bits);
     }
     switch (info.type) {
@@ -297,7 +297,7 @@ std::uint32_t EmitD16FormatComponent(SpirvEmitterState& state, const SpirvBuffer
 }
 
 std::uint32_t EmitFormatStoreComponent(SpirvEmitterState& state, const SpirvBufferFormatInfo& info, std::uint32_t component, std::uint32_t data) {
-    if (info.format == IrBufferFormat::Format10_10_10_2Float) {
+    if (info.format == IrBufferFormat::Format6E4Float) {
         FailEmit("stores a 10_10_10_2 float format, which is not implemented");
     }
     const auto bits = info.componentBits[component];

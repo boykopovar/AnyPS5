@@ -88,8 +88,12 @@ ImageType rawImageType(const DescriptorValue& descriptor) {
     return static_cast<ImageType>((descriptor.dwords[3] >> 28u) & 0xfu);
 }
 
+bool unboundTableSlot(const ImageResource& image, const DescriptorValue& descriptor) {
+    return image.table != NoTable && image.resourceClass == ImageResourceClass::Sampled && image.read && !image.written && !image.atomic && descriptor.dwordCount == 8u && (descriptor.availableDwordMask & 0xffu) == 0xffu && std::all_of(descriptor.dwords.begin(), descriptor.dwords.begin() + 8, [](std::uint32_t word) { return word == 0xffffffffu; });
+}
+
 bool nullImageDescriptor(const ImageResource& image, const DescriptorValue& descriptor) {
-    if (nullImageDescriptor(descriptor)) return true;
+    if (nullImageDescriptor(descriptor) || unboundTableSlot(image, descriptor)) return true;
     const auto type = rawImageType(descriptor);
     if (image.table == NoTable && image.resourceClass == ImageResourceClass::Sampled && image.read && !image.written && !image.atomic && type >= ImageType::Color1D && type <= ImageType::Color2DMsaa && imageFormatUnset(descriptor)) return true;
     return static_cast<std::uint32_t>(type) <= 1u && image.table == NoTable && (image.read || image.written) && !image.atomic;
@@ -311,7 +315,7 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
     }
     const bool nativeRepacked = (format == IrBufferFormat::Format10_11_11Float || format == IrBufferFormat::Format11_11_10Float) && !storage && !base.packed;
     const auto remappedFormat = storage ? RemapStorageTextureFormat(format) : RemapTextureFormat(format);
-    const bool alphaFloat = format == IrBufferFormat::Format10_10_10_2Float;
+    const bool alphaFloat = format == IrBufferFormat::Format6E4Float;
     decoded.conversionFormat = remappedFormat != format && !nativeRepacked ? format : IrBufferFormat::Invalid;
     if (IsConvertedUnormTextureFormat(format) || alphaFloat || ((format == IrBufferFormat::Format10_11_11Float || format == IrBufferFormat::Format11_11_10Float) && !nativeRepacked)) {
         const bool floating = alphaFloat || format == IrBufferFormat::Format10_11_11Float || format == IrBufferFormat::Format11_11_10Float;
@@ -2405,7 +2409,7 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
             if (image.srgbDecodeCompatible) {
                 append(IrTextureNumericClass::Uint, IrBufferFormat::Format11_11_10Float, IrBufferFormat::Invalid, false, false);
                 append(IrTextureNumericClass::Uint, IrBufferFormat::Format10_11_11Float, IrBufferFormat::Invalid, false, false);
-                if (!image.written) append(IrTextureNumericClass::Uint, IrBufferFormat::Format10_10_10_2Float, IrBufferFormat::Invalid, false, false);
+                if (!image.written) append(IrTextureNumericClass::Uint, IrBufferFormat::Format6E4Float, IrBufferFormat::Invalid, false, false);
             }
             if (storage) {
                 for (const auto format : {IrBufferFormat::Format5_6_5UNorm, IrBufferFormat::Format5_5_5_1UNorm, IrBufferFormat::Format1_5_5_5UNorm, IrBufferFormat::Format4_4_4_4UNorm}) {
@@ -2942,13 +2946,12 @@ void ResourceMaterializer::Materialize(const IrResourcePlan& program, const SrtR
                 TableSnapshotter(plan, runtime, walker, activeSources, nextSnapshot.tables).Run();
                 const auto afterTables = runtime.descriptorScope != nullptr ? runtime.descriptorScope(runtime.userContext, 0u) : 0u;
                 const auto afterImageGeneration = runtime.imageViewGeneration != nullptr ? runtime.imageViewGeneration(runtime.userContext) : 0u;
-                if (runtime.descriptorScope != nullptr && (afterTables != afterSnapshot || (plan.uniformFill.fill.kind != UniformFillKind::None && afterSnapshot != beforeSnapshot))) {
-                    continue;
-                }
                 for (const auto& table : nextSnapshot.tables.tables) {
                     for (const auto& view : table.resourceViews) nextSnapshot.registeredImages.insert(nextSnapshot.registeredImages.end(), view.identities.begin(), view.identities.end());
                 }
-                if (afterImageGeneration != beforeImageGeneration && (runtime.snapshotCurrent == nullptr || !runtime.snapshotCurrent(runtime.userContext, nextSnapshot.registeredImages))) {
+                const bool allocationsMoved = afterImageGeneration != beforeImageGeneration &&
+                                              (runtime.snapshotCurrent == nullptr || !runtime.snapshotCurrent(runtime.userContext, nextSnapshot.registeredImages));
+                if ((runtime.descriptorScope != nullptr && (afterTables != afterSnapshot || (plan.uniformFill.fill.kind != UniformFillKind::None && afterSnapshot != beforeSnapshot))) || allocationsMoved) {
                     continue;
                 }
                 nextSnapshot.imageAllocationGeneration = nextSnapshot.registeredImages.empty() ? 0u : afterImageGeneration;
@@ -2964,6 +2967,9 @@ void ResourceMaterializer::Materialize(const IrResourcePlan& program, const SrtR
             } catch (const std::runtime_error&) {
                 if (attempt == 2u) throw;
                 const auto afterImageGeneration = runtime.imageViewGeneration != nullptr ? runtime.imageViewGeneration(runtime.userContext) : 0u;
+                if (afterImageGeneration != beforeImageGeneration && runtime.snapshotCurrent != nullptr) {
+                    static_cast<void>(runtime.snapshotCurrent(runtime.userContext, {}));
+                }
                 if (runtime.descriptorScope == nullptr) {
                     if (runtime.imageViewGeneration == nullptr || afterImageGeneration == beforeImageGeneration) throw;
                 } else if (runtime.descriptorScope(runtime.userContext, 0u) == beforeSnapshot && (runtime.imageViewGeneration == nullptr || afterImageGeneration == beforeImageGeneration)) {

@@ -53,6 +53,7 @@ class PeModule:
             raise ValueError(f"{path}: not a PE32+ image")
         self.image_base = struct.unpack_from("<Q", data, optional + 24)[0]
         self.size = struct.unpack_from("<I", data, optional + 56)[0]
+        self.headers_size = struct.unpack_from("<I", data, optional + 60)[0]
         directories = struct.unpack_from("<I", data, optional + 108)[0]
         if directories > (optional_size - 112) // 8:
             raise ValueError(f"{path}: PE data directories exceed the optional header")
@@ -78,6 +79,8 @@ class PeModule:
 
     def mapped_range(self, rva):
         matches = [section for section in self.sections if section[0] <= rva < section[0] + section[1]]
+        if 0 <= rva < self.headers_size:
+            matches.append((0, self.headers_size, self.headers_size, 0, 0))
         if not matches:
             raise ValueError(f"RVA {rva:#x} is in no section")
         if len(matches) != 1:
