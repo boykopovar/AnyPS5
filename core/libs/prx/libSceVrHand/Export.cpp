@@ -1,5 +1,6 @@
 #include "prx/libSceVrHand/include/Api.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -36,11 +37,15 @@ int APS5_VABI sceVrHandInitialize() {
 int APS5_VABI sceVrHandQueryMemory(const void* param, void* result) {
     constexpr int errInvalidArg = static_cast<int>(0x8a870006);
     if (param == nullptr || result == nullptr) return errInvalidArg;
+    const int savedErrno = errno;
     std::uint32_t size = 0;
-    if (!GuestCopyIn_nid_no_patch(&size, param, sizeof(size))) return errInvalidArg;
-    if (size != 0x20) return errInvalidArg;
+    const bool sizeCopied = GuestCopyIn_nid_no_patch(&size, param, sizeof(size));
+    errno = savedErrno;
+    if (!sizeCopied || size != 0x20) return errInvalidArg;
     std::array<std::uint8_t, 0x20> input{};
-    if (!GuestCopyIn_nid_no_patch(input.data(), param, sizeof(input))) return errInvalidArg;
+    const bool inputCopied = GuestCopyIn_nid_no_patch(input.data(), param, sizeof(input));
+    errno = savedErrno;
+    if (!inputCopied) return errInvalidArg;
     for (std::size_t index = 4; index < 0x20; ++index) if (input[index] != 0) return errInvalidArg;
     struct MemoryInfo {
         std::uint32_t memorySize{0x3c00000};
@@ -49,7 +54,9 @@ int APS5_VABI sceVrHandQueryMemory(const void* param, void* result) {
     };
     static_assert(sizeof(MemoryInfo) == 28);
     const MemoryInfo info{};
-    if (!GuestCopyOut_nid_no_patch(result, &info, sizeof(info))) return errInvalidArg;
+    const bool resultCopied = GuestCopyOut_nid_no_patch(result, &info, sizeof(info));
+    errno = savedErrno;
+    if (!resultCopied) return errInvalidArg;
     return 0;
 }
 
