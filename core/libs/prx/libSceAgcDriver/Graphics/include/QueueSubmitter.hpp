@@ -7,7 +7,6 @@
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
-#include <exception>
 #include <mutex>
 #include <thread>
 
@@ -22,29 +21,30 @@ public:
         std::uint64_t waitValue = 0;
         VkSemaphore signal = VK_NULL_HANDLE;
         std::uint64_t signalValue = 0;
+        VkResult* result = nullptr;
     };
 
     static bool Enabled();
-    static QueueSubmitter& For(VkDevice device, VkQueue queue, PFN_vkQueueSubmit submit, PFN_vkDeviceWaitIdle waitIdle);
+    static QueueSubmitter& For(VkDevice device, VkQueue queue, PFN_vkQueueSubmit submit);
     static QueueSubmitter* Existing(VkQueue queue);
     static void RetireDevice(VkDevice device);
+    static std::uint64_t FailedSubmits();
 
     std::uint64_t Enqueue(const Job& job);
+    bool Returned(std::uint64_t position) const { return returned.load(std::memory_order_acquire) >= position; }
     void WaitSubmitReturned(std::uint64_t position) const;
     void Drain();
-    void RethrowFailure();
     AgcDriver::Mutex& QueueMutex() { return queueMutex; }
     std::uint64_t Submitted() const;
 
 private:
-    QueueSubmitter(VkDevice device, VkQueue queue, PFN_vkQueueSubmit submit, PFN_vkDeviceWaitIdle waitIdle);
+    QueueSubmitter(VkDevice device, VkQueue queue, PFN_vkQueueSubmit submit);
     void run();
     void stop();
 
     VkDevice device;
     VkQueue queue;
     PFN_vkQueueSubmit submit;
-    PFN_vkDeviceWaitIdle waitIdle;
     AgcDriver::Mutex queueMutex;
     mutable std::mutex mutex;
     std::condition_variable ready;
@@ -57,7 +57,6 @@ private:
     std::uint64_t enqueued = 0;
     std::uint64_t taken = 0;
     std::atomic<std::uint64_t> returned{0};
-    std::exception_ptr failure;
     std::thread thread;
 };
 

@@ -9,6 +9,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineCache.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/QueueSubmitter.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
@@ -677,7 +678,10 @@ public:
         function<PFN_vkGetPhysicalDeviceProperties>("vkGetPhysicalDeviceProperties")(context.physical, &properties);
         return properties;
     }
-    void WaitQueue() const { Check(context.Function<PFN_vkQueueWaitIdle>("vkQueueWaitIdle")(context.queue), "vkQueueWaitIdle"); }
+    void WaitQueue() const {
+        const AgcDriver::Graphics::QueueAccess access(context.queue);
+        Check(context.Function<PFN_vkQueueWaitIdle>("vkQueueWaitIdle")(context.queue), "vkQueueWaitIdle");
+    }
     struct HeapUsage {
         std::uint64_t deviceLocal = 0;
         std::uint64_t host = 0;
@@ -709,6 +713,7 @@ private:
         context.bufferPool.reset();
         if (context.device != VK_NULL_HANDLE) {
             DestroyShadows(context.device);
+            AgcDriver::Graphics::QueueSubmitter::RetireDevice(context.device);
             function<PFN_vkDestroyDevice>("vkDestroyDevice")(context.device, nullptr);
         }
         if (instance != VK_NULL_HANDLE) function<PFN_vkDestroyInstance>("vkDestroyInstance")(instance, nullptr);

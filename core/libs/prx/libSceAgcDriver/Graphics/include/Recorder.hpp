@@ -743,6 +743,7 @@ private:
         VkCommandBuffer commands = VK_NULL_HANDLE;
         QueueSubmitter* submitter = nullptr;
         std::uint64_t submitPosition = 0;
+        VkResult submitResult = VK_SUCCESS;
         CommandState graphicsState;
         VkFence fence = VK_NULL_HANDLE;
         std::vector<std::shared_ptr<void>> kept;
@@ -973,6 +974,7 @@ private:
         return resolved != nullptr ? resolved : context.Function<TFunction>(name);
     }
     VkResult fenceStatus(VkFence fence) const { return function(getFenceStatus, "vkGetFenceStatus")(context.device, fence); }
+    bool fenceReady(const Batch& batch) const;
     void recordBarrier(VkCommandBuffer commands, VkPipelineStageFlags sourceStage, VkPipelineStageFlags destinationStage, VkAccessFlags sourceAccess, VkAccessFlags destinationAccess) const;
     // Opens a batch when none is open, without closing a store run (Commands() does both).
     void ensureOpen();

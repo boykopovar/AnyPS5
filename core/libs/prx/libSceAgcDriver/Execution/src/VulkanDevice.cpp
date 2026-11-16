@@ -1195,6 +1195,7 @@ struct VulkanDevice::State {
             }
             Graphics::DestroyShadows(device);
             recorder.reset();
+            Graphics::QueueSubmitter::RetireDevice(device);
             // Cached graphics pipelines (with their framebuffers, modules, render passes and layouts)
             // belong to this device and must be destroyed while it lives.
             Graphics::ClearCachedPipelines(device);
@@ -1270,7 +1271,6 @@ struct VulkanDevice::State {
             }
             if (settlePool != VK_NULL_HANDLE) destroyPool(device, settlePool, nullptr);
             Graphics::DestroyDeferredObjects(device);
-            Graphics::QueueSubmitter::RetireDevice(device);
             destroyDevice(device, nullptr);
             Graphics::MemoryAccounting::ForgetDevice(device);
         }
