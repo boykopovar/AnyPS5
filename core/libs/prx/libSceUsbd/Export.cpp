@@ -289,6 +289,19 @@ bool GuestTransferDataUsable(std::uint8_t endpoint, std::uint8_t* data, std::int
     return true;
 }
 
+using SyncTransferFunction = int (LIBUSB_CALL*)(libusb_device_handle*, unsigned char, unsigned char*, int, int*, unsigned int);
+
+std::int32_t TransferThroughHostCopy(SyncTransferFunction transfer, libusb_device_handle* handle, std::uint8_t endpoint, std::uint8_t* data, std::int32_t length, std::int32_t& moved, std::uint32_t timeout) {
+    std::vector<std::uint8_t> host(length > 0 ? static_cast<std::size_t>(length) : 0);
+    const bool deviceToHost = (endpoint & LIBUSB_ENDPOINT_IN) != 0;
+    if (!deviceToHost && !host.empty() && !GuestCopyIn_nid_no_patch(host.data(), data, host.size())) return SCE_USBD_ERROR_INVALID_ARG;
+    int hostMoved = 0;
+    const int result = transfer(handle, endpoint, host.data(), length, &hostMoved, timeout);
+    moved = hostMoved;
+    if (deviceToHost && hostMoved > 0 && !GuestCopyOut_nid_no_patch(data, host.data(), static_cast<std::size_t>(hostMoved))) return SCE_USBD_ERROR_INVALID_ARG;
+    return ToGuestError(result);
+}
+
 }
 
 extern "C" {
@@ -496,7 +509,7 @@ std::int32_t APS5_VABI sceUsbdBulkTransfer(void* deviceHandle, std::uint8_t endp
     std::int32_t moved = 0;
     if (!GuestCopyOut_nid_no_patch(transferred, &moved, sizeof(moved))) return SCE_USBD_ERROR_INVALID_ARG;
     if (!GuestTransferDataUsable(endpoint, data, length)) return SCE_USBD_ERROR_INVALID_ARG;
-    const std::int32_t result = ToGuestError(libusb_bulk_transfer(KnownHandle(deviceHandle, __func__), endpoint, data, length, &moved, timeout));
+    const std::int32_t result = TransferThroughHostCopy(libusb_bulk_transfer, KnownHandle(deviceHandle, __func__), endpoint, data, length, moved, timeout);
     if (!GuestCopyOut_nid_no_patch(transferred, &moved, sizeof(moved))) return SCE_USBD_ERROR_INVALID_ARG;
     return result;
 }
