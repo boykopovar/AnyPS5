@@ -79,8 +79,8 @@ def registered_test_commands(build_dir):
             if match:
                 name = match.group(1) if match.group(1) is not None else match.group(2)
                 commands[re.sub(r"\\(.)", r"\1", name)] = [
-                    re.sub(r"\\(.)", r"\1", next(part for part in argument if part))
-                    for argument in TESTFILE_ARGUMENT.findall(match.group(3))]
+                    re.sub(r"\\(.)", r"\1", next(part for part in argument.groups() if part is not None))
+                    for argument in TESTFILE_ARGUMENT.finditer(match.group(3))]
     return commands
 
 

@@ -183,6 +183,14 @@ constexpr KernelClockid NP_SYSTEM_CLOCK = 4;
 
 static_assert(sizeof(SceKernelSystemSwVersion) == 0x28);
 
+template <typename T>
+void WriteOptionalGuest(T* output, T value) {
+    if (output == nullptr) return;
+    const int savedErrno = errno;
+    GuestCopyOut_nid_no_patch(output, &value, sizeof(value));
+    errno = savedErrno;
+}
+
 std::uint32_t SystemVersion() {
     SceKernelSystemSwVersion version {};
     version.size = sizeof(version);
@@ -754,12 +762,22 @@ void APS5_VABI sceNpHeapGetAllocator(NpHeap* heap, NpAllocator* allocator) {
 }
 
 int APS5_VABI sceNpHeapGetStat(const NpHeap* heap, NpHeapStat* stat) {
+    NpHeap local {};
+    int savedErrno = errno;
+    const bool read = GuestCopyIn_nid_no_patch(&local, heap, sizeof(local));
+    errno = savedErrno;
+    if (!read) return NP_ERROR_INVALID_ARGUMENT;
     MallocManagedSize stats {};
     stats.size = sizeof(stats);
     stats.version = 1;
-    const int result = sceLibcMspaceMallocStats_nid_postfix(heap->mspace, &stats);
-    if (result == 0) *stat = {stats.maxSystemSize, stats.maxInuseSize, stats.currentInuseSize};
-    return result;
+    const int result = sceLibcMspaceMallocStats_nid_postfix(local.mspace, &stats);
+    if (result != 0) return result;
+    const NpHeapStat value {stats.maxSystemSize, stats.maxInuseSize, stats.currentInuseSize};
+    savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(stat, &value, sizeof(value));
+    errno = savedErrno;
+    if (!copied) return NP_ERROR_INVALID_ARGUMENT;
+    return 0;
 }
 
 void APS5_VABI sceNpHeapShowStat(const NpHeap* heap) {
@@ -898,7 +916,10 @@ int APS5_VABI sceNpFreeKernelMemory(NpKernelMemory* memory) {
 
 void APS5_VABI sceNpGetSdkVersionUInt(std::uint32_t* version) {
     const std::uint32_t value = SystemVersion();
-    if (version != nullptr) *version = value;
+    if (version == nullptr) return;
+    const int savedErrno = errno;
+    GuestCopyOut_nid_no_patch(version, &value, sizeof(value));
+    errno = savedErrno;
 }
 
 int APS5_VABI sceNpRtcConvertToPosixTime(const RtcTick* tick, std::int64_t* seconds) {
@@ -936,7 +957,10 @@ int APS5_VABI _ZN3sce2np4Time11GetDateTimeEPNS0_8DateTimeE(const NpTime* self, R
     RtcDateTime converted {};
     const int result = sceRtcSetTick(&converted, self);
     if (result < 0) return result;
-    *dateTime = converted;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(dateTime, &converted, sizeof(converted));
+    errno = savedErrno;
+    if (!copied) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -975,7 +999,7 @@ bool APS5_VABI _ZNK3sce2np4Time27IsTimedoutSinceMicroSecondsERKS1_lPl(const NpTi
     const auto limit = static_cast<std::uint64_t>(timeout);
     const std::uint64_t elapsed = self->tick - since->tick;
     const bool timedOut = timeout < 0 || self->tick < since->tick || limit <= elapsed;
-    if (remaining != nullptr) *remaining = timedOut ? 0 : static_cast<std::int64_t>(limit - elapsed);
+    WriteOptionalGuest(remaining, timedOut ? std::int64_t{0} : static_cast<std::int64_t>(limit - elapsed));
     return timedOut;
 }
 
@@ -983,7 +1007,7 @@ bool APS5_VABI _ZNK3sce2np4Time27IsTimedoutSinceMicroSecondsERKS1_jPj(const NpTi
     std::uint32_t* remaining) {
     const std::uint64_t elapsed = self->tick - since->tick;
     const bool before = self->tick < since->tick;
-    if (remaining != nullptr) *remaining = before || elapsed > timeout ? 0 : timeout - static_cast<std::uint32_t>(elapsed);
+    WriteOptionalGuest(remaining, before || elapsed > timeout ? std::uint32_t{0} : timeout - static_cast<std::uint32_t>(elapsed));
     return before || timeout <= elapsed;
 }
 
@@ -997,7 +1021,7 @@ bool APS5_VABI _ZNK3sce2np4Time22IsTimedoutSinceSecondsERKS1_lPl(const NpTime* s
         timedOut = limit <= elapsed;
         left = (elapsed <= limit ? limit - elapsed : 0) / 1000000;
     }
-    if (remaining != nullptr) *remaining = static_cast<std::int64_t>(left);
+    WriteOptionalGuest(remaining, static_cast<std::int64_t>(left));
     return timedOut;
 }
 
@@ -1272,7 +1296,12 @@ bool APS5_VABI sceNpIntIsOnlineIdString(const char* text) {
 int APS5_VABI sceNpUtilGetNpLanguageCode(int language, char* code) {
     const NpLanguageCodes* codes = FindLanguageCodes(language);
     if (codes == nullptr || code == nullptr) return NP_ERROR_INVALID_ARGUMENT_UTIL;
-    CopyText(code, codes->code, NP_LANGUAGE_CODE_SIZE);
+    char localCode[NP_LANGUAGE_CODE_SIZE]{};
+    CopyText(localCode, codes->code, NP_LANGUAGE_CODE_SIZE);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(code, localCode, NP_LANGUAGE_CODE_SIZE);
+    errno = savedErrno;
+    if (!copied) return NP_ERROR_INVALID_ARGUMENT_UTIL;
     return 0;
 }
 
@@ -1889,9 +1918,13 @@ int APS5_VABI sceNpUtilParseTitleId(NpCommunicationId* parts, const char* titleI
     if (titleId == nullptr) return NP_ERROR_INVALID_ARGUMENT_UTIL;
     const std::size_t length = std::strlen(titleId);
     if (length < 10 || length >= NP_TITLE_ID_SIZE || titleId[9] != '_') return NP_UTIL_ERROR_OUT_OF_RANGE;
-    *parts = {};
-    std::memcpy(parts->data, titleId, sizeof(parts->data));
-    parts->num = static_cast<std::uint8_t>(std::strtol(titleId + 10, nullptr, 10));
+    NpCommunicationId value{};
+    std::memcpy(value.data, titleId, sizeof(value.data));
+    value.num = static_cast<std::uint8_t>(std::strtol(titleId + 10, nullptr, 10));
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(parts, &value, sizeof(value));
+    errno = savedErrno;
+    if (!copied) return NP_ERROR_INVALID_ARGUMENT_UTIL;
     return 0;
 }
 
