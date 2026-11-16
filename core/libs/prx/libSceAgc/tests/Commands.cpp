@@ -640,8 +640,8 @@ void testFlowPackets() {
     const std::array<std::uint32_t, 4> renderingExpected{0xc0021018u, 7, 2, 0};
     check(std::equal(renderingExpected.begin(), renderingExpected.end(), rendering.words.begin()), "rendering wait packet mismatch");
     Storage reset;
-    sceAgcAcbResetQueue(&reset.buffer, 5, 9);
-    check(reset.words[0] == 0xc0001024u && reset.words[1] == 5 && reset.words[2] == 0, "compute queue reset packet mismatch");
+    sceAgcAcbResetQueue(&reset.buffer, 5, 0);
+    check(reset.words[0] == 0xc0027900u && reset.words[1] == 0x342u && reset.words[2] == 0xce200005u, "compute queue reset packet mismatch");
     expectFailure([&] { sceAgcAcbResetQueue(nullptr, 5, 9); });
 }
 
