@@ -578,7 +578,7 @@ int main(int argc, char** argv) {
     std::int32_t configuration = -1;
     Require(sceUsbdGetConfiguration(nullptr, &configuration) == invalidArgument && sceUsbdGetConfiguration(&foreign, nullptr) == invalidArgument, "null configuration query accepted");
     Require(configuration == -1, "a rejected configuration query wrote the output");
-    Require(Throws([&] { sceUsbdGetConfiguration(&foreign, &configuration); }), "configuration of a handle that was never opened did not throw");
+    Require(Throws([&] { sceUsbdGetConfiguration(&foreign, &configuration); }) && configuration == 0, "configuration of a handle that was never opened did not throw after clearing the output");
     Require(sceUsbdGetConfigDescriptorByValue(nullptr, 1, &config) == invalidArgument && sceUsbdGetConfigDescriptorByValue(&foreign, 1, nullptr) == invalidArgument, "null config by value argument accepted");
     Require(Throws([&] { sceUsbdGetConfigDescriptorByValue(&foreign, 1, &config); }), "config by value of a device that was never listed did not throw");
     Require(Throws([&] { sceUsbdClaimInterface(&foreign, 0); }), "claiming on a handle that was never opened did not throw");
