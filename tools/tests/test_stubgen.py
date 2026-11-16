@@ -603,6 +603,16 @@ class ValidIdentTests(unittest.TestCase):
         self.assertTrue(stubgen.is_valid_ident("a1_"))
         for name in ("1a", "a-b", ""):
             self.assertFalse(stubgen.is_valid_ident(name), name)
+class TdTargetTests(unittest.TestCase):
+    def test_td_target_keeps_explicit_path_and_library(self):
+        self.assertEqual(stubgen.td_target("libSceFoo", "x/y.cpp", "libX"), ("x/y.cpp", "libX"))
+
+    def test_td_target_defaults_the_library_to_the_module_name(self):
+        path, library = stubgen.td_target("libSceFoo", "x/y.cpp", None)
+        self.assertEqual((path, library), ("x/y.cpp", "libSceFoo"))
+        path, library = stubgen.td_target("libSceFoo", None, None)
+        self.assertTrue(path.startswith("../../../core/libs/prx/libSceFoo/"))
+        self.assertEqual(library, "libSceFoo")
 
 
 if __name__ == "__main__":
