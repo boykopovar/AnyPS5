@@ -439,6 +439,11 @@ class GitListTests(unittest.TestCase):
             self.make_repo(directory)
             self.assertEqual(len(check_main_sync.lines(Path(directory), 'rev-list', 'HEAD')), 1)
 
+    def test_names_returns_the_tracked_file_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.make_repo(directory)
+            self.assertEqual(check_main_sync.names(Path(directory), 'ls-files', '-z'), ['a.txt'])
+
 
 class ResolveBaseTests(unittest.TestCase):
     @staticmethod
