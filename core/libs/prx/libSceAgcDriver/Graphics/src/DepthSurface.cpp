@@ -1926,8 +1926,8 @@ public:
     const Context context;
     const DepthTarget target;
     const VkFormat hostFormat;
-    const std::uint64_t depthPlaneBytes = DepthSliceBytes(target.extent, target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT ? 2u : 4u);
-    const std::uint64_t stencilPlaneBytes = DepthSliceBytes(target.extent, 1u);
+    const std::uint64_t depthPlaneBytes = target.samples == 1u ? DepthSliceBytes(target.extent, target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT ? 2u : 4u) : MultisampledDepthBytes_nid_no_patch(target.extent, target.format == VK_FORMAT_D16_UNORM || target.format == VK_FORMAT_D16_UNORM_S8_UINT ? 2u : 4u, target.samples);
+    const std::uint64_t stencilPlaneBytes = target.samples == 1u ? DepthSliceBytes(target.extent, 1u) : MultisampledDepthBytes_nid_no_patch(target.extent, 1u, target.samples);
     VkImage image = VK_NULL_HANDLE;
     VkImageView view = VK_NULL_HANDLE;
     VkDeviceMemory memory = VK_NULL_HANDLE;

@@ -1920,6 +1920,15 @@ public:
         return current != nullptr && current->version == changes.load(std::memory_order_acquire) && !Overlaps(current->ranges, address, bytes);
     }
 
+    bool SurelyClearAll(std::span<const std::pair<std::uint64_t, std::uint64_t>> wanted) const {
+        const auto current = published.load(std::memory_order_acquire);
+        if (current == nullptr) return false;
+        for (const auto& [begin, end] : wanted) {
+            if (end > begin && Overlaps(current->ranges, begin, static_cast<std::size_t>(end - begin))) return false;
+        }
+        return current->version == changes.load(std::memory_order_acquire);
+    }
+
 private:
     struct Snapshot {
         std::uint64_t version = 0;
@@ -5975,9 +5984,7 @@ bool StorageTexture::AnyPendingOverlaps(std::span<const std::pair<std::uint64_t,
     auto& pending = Pending();
     const auto surelyClear = [&] {
         if (pending.flushingCount.load(std::memory_order_acquire) != 0) return false;
-        for (const auto& [begin, end] : ranges) {
-            if (end > begin && !pending.textures.SurelyClear(begin, static_cast<std::size_t>(end - begin))) return false;
-        }
+        if (!pending.textures.SurelyClearAll(ranges)) return false;
         return pending.flushingCount.load(std::memory_order_acquire) == 0;
     };
     if (surelyClear()) return false;

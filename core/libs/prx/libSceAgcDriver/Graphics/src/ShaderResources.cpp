@@ -2067,12 +2067,22 @@ void ShaderResources::Complete() {
         prepareAddressBindings(shaders, deferredSnapshots);
         buildPrepare(shaders, nullptr, 0, 0, 0);
     }
-    buildComplete();
-    if (heapStage) {
-        layOutHeapStages(shaders);
-        RefreshHeapStage(shaders);
-    }
+    completeBuild(shaders);
     forgetDeferredInputs();
+}
+
+void ShaderResources::completeBuild(std::span<const CompiledShader> shaders) {
+    try {
+        buildComplete();
+        if (heapStage) {
+            layOutHeapStages(shaders);
+            RefreshHeapStage(shaders);
+        }
+    } catch (...) {
+        retireHeapTables();
+        release();
+        throw;
+    }
 }
 
 void ShaderResources::forgetDeferredInputs() {
@@ -2085,11 +2095,7 @@ void ShaderResources::forgetDeferredInputs() {
 
 void ShaderResources::build(std::span<const CompiledShader> shaders, const ColorTarget* target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::size_t indexBytes) {
     buildPrepare(shaders, target, colorAttachments, indexAddress, indexBytes);
-    buildComplete();
-    if (heapStage) {
-        layOutHeapStages(shaders);
-        RefreshHeapStage(shaders);
-    }
+    completeBuild(shaders);
     if (!GuestMemory::WriteIndexEnabled()) return;
     countIndex(IndexBuilds);
     subscribeBuilt(shaders);
@@ -7405,9 +7411,10 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedD
     for (const auto& binding : shader.program->bindings) {
         if (binding.role != ShaderRecompiler::DescriptorRole::GuestBuffers) continue;
         const auto kept = std::find_if(bindings.begin(), bindings.end(), [&](const Binding& item) { return item.layout.binding == binding.binding; });
-        if (kept == bindings.end() || kept->allocations.size() != binding.count || binding.guestDescriptor.size() != static_cast<std::size_t>(binding.count) * 4u) return refuse(MoveRefusal::Shape);
+        const auto& guestWords = DrawGuestWords(shader, binding);
+        if (kept == bindings.end() || kept->allocations.size() != binding.count || guestWords.size() != static_cast<std::size_t>(binding.count) * 4u) return refuse(MoveRefusal::Shape);
         for (std::uint32_t element = 0; element < binding.count; ++element) {
-            const auto* words = binding.guestDescriptor.data() + static_cast<std::size_t>(element) * 4u;
+            const auto* words = guestWords.data() + static_cast<std::size_t>(element) * 4u;
             const ShaderRecompiler::ShaderBufferResource descriptor{{words[0], words[1], words[2], words[3]}};
             const auto address = descriptor.Base48();
             const auto size = guestBufferBytes(std::span<const std::uint32_t>(words, 4));
@@ -8259,6 +8266,7 @@ VkImageView ShaderResources::heapSampledView(std::size_t index) const {
     if (textureSrgb[index]) return texture->SrgbView(textureFirstLayer[index], textureBaseLevel[index]);
     if (textureBaseLevel[index]) return texture->BaseLevelView();
     if (textureFirstLayer[index]) return texture->FirstLayerView();
+    if (arrayViewTextures.contains(index)) return texture->ArrayView();
     return texture->View();
 }
 
@@ -8700,8 +8708,7 @@ void ShaderResources::writeHeapDataBinding(const BindlessHeap::SpanScope& spans,
     const bool sameWords = sameShape && (sameOrigin || std::equal(words.begin() + userFront, words.end(), stageState.dataInput.begin() + userFront));
     if (verifySlots && sameOrigin && !std::equal(words.begin() + userFront, words.end(), stageState.dataInput.begin() + userFront))
         throw std::runtime_error("AGC graphics: a GPU-mode stage's shader data differs from the data of the same origin");
-    const auto userInput = stageState.dataInput.begin() + static_cast<std::ptrdiff_t>(words.size());
-    const bool sameInput = sameWords && std::equal(userData.begin(), userData.end(), userInput);
+    const bool sameInput = sameWords && std::equal(userData.begin(), userData.end(), stageState.dataInput.begin() + static_cast<std::ptrdiff_t>(words.size()));
     if (shaderData && stageState.splitUser) {
         const auto [dataAddress, userAddress] = writeSplitHeapStage(spans, heap, shader, stageState, words, userData, sameWords, current);
         heapOffsets[dataIndex] = dataAddress;
