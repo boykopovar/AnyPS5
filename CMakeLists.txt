@@ -507,6 +507,9 @@ if(BUILD_TESTING)
         add_test(NAME rebase_verify COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_rebase_verify.py)
         set_tests_properties(rebase_verify PROPERTIES TIMEOUT 60)
+        add_test(NAME check_test_registration_script COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_test_registration.py)
+        set_tests_properties(check_test_registration_script PROPERTIES TIMEOUT 60)
         add_test(NAME check_skips COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py
             SkipJsonTests RequiredTestsTests SkipReportTests NotRunTests)

@@ -117,8 +117,22 @@ bool descriptorIsShortCube(const DescriptorValue& descriptor) {
     return descriptorIsCube(descriptor) && descriptor.dwordCount == 8u && baseArray < depth && depth - baseArray < 5u;
 }
 
+bool oneFragmentImage(const DescriptorValue& descriptor) {
+    const auto type = rawImageType(descriptor);
+    if (type != ImageType::Color2DMsaa && type != ImageType::Color2DMsaaArray) return false;
+    const auto baseLevel = (descriptor.dwords[3] >> 12u) & 0xfu;
+    const auto fragments = (descriptor.dwords[3] >> 16u) & 0xfu;
+    const auto maxMip = descriptor.dwordCount == 8u ? (descriptor.dwords[5] >> 4u) & 0xfu : 0u;
+    return baseLevel == 0u && fragments == 0u && maxMip == 0u;
+}
+
+bool multisampledDimension(RdnaImageDimension dimension) {
+    return dimension == RdnaImageDimension::Dim2DMsaa || dimension == RdnaImageDimension::Dim2DMsaaArray;
+}
+
 RdnaImageDimension descriptorDimension(const DescriptorValue& descriptor, RdnaImageDimension requested) {
     const bool wantArray = requested == RdnaImageDimension::Dim1DArray || requested == RdnaImageDimension::Dim2DArray || requested == RdnaImageDimension::Dim2DMsaaArray;
+    if (oneFragmentImage(descriptor) && !multisampledDimension(requested)) return rawImageType(descriptor) == ImageType::Color2DMsaaArray && wantArray ? RdnaImageDimension::Dim2DArray : RdnaImageDimension::Dim2D;
     switch (rawImageType(descriptor)) {
         case ImageType::Color1D:
             return RdnaImageDimension::Dim1D;
@@ -163,7 +177,7 @@ bool validImageDescriptor(const DescriptorValue& descriptor, bool r128) {
         const auto baseLevel = (descriptor.dwords[3] >> 12u) & 0xfu;
         const auto fragments = (descriptor.dwords[3] >> 16u) & 0xfu;
         const auto maxMip = (descriptor.dwords[5] >> 4u) & 0xfu;
-        return baseLevel == 0u && fragments >= 1u && fragments <= 3u && (r128 || maxMip == fragments);
+        return oneFragmentImage(descriptor) || (baseLevel == 0u && fragments >= 1u && fragments <= 3u && (r128 || maxMip == fragments));
     }
     return true;
 }
@@ -250,6 +264,9 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
     }
     const bool queryLayers = base.dimension == RdnaImageDimension::Dim1D && base.dimensionQueryOnly && rawImageType(descriptor) == ImageType::Color2DArray;
     decoded.dimension = descriptorDimension(descriptor, queryLayers ? RdnaImageDimension::Dim2DArray : base.dimension);
+    if (oneFragmentImage(descriptor) && multisampledDimension(decoded.dimension)) {
+        return rejectImage(PoisonReason::Multisampled, "a multisample instruction reading a one-fragment multisampled descriptor is not implemented");
+    }
     if (GcnGuestShaders() && base.dimension == RdnaImageDimension::Dim2DArray && decoded.dimension == RdnaImageDimension::Dim3D) {
         return rejectImage(PoisonReason::Dimension, "a GCN image instruction with DA set through a 3D descriptor is not implemented: the ISA does not say whether an array index follows z");
     }
@@ -2337,7 +2354,7 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
         if (conversion == IrBufferFormat::Format11_11_10UNorm || conversion == IrBufferFormat::Format10_11_11UNorm || conversion == IrBufferFormat::Format11_11_10Float || conversion == IrBufferFormat::Format10_11_11Float) mode.shaderSwizzle = 0x2acu;
         modes.push_back(mode);
         if (GcnGuestShaders()) {
-            if (depth || conversion != IrBufferFormat::Invalid || packed != IrBufferFormat::Invalid || image.byElements != 0u) return;
+            if (depth || conversion == FmaskExpansion || packed != IrBufferFormat::Invalid || image.byElements != 0u) return;
             const bool declaredArray = image.dimension == RdnaImageDimension::Dim2DArray;
             const auto offer = [&](RdnaImageDimension dimension) {
                 auto other = mode;
