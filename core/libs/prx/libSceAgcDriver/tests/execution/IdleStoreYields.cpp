@@ -251,6 +251,7 @@ struct PieceReader {
     std::atomic<bool> started{false};
     std::atomic<bool> done{false};
     std::atomic<bool> sawStored{false};
+    std::atomic<bool> restPending{true};
     std::thread thread;
 };
 
@@ -271,6 +272,7 @@ void StartReaderInsidePiece(std::uint64_t, std::size_t) {
         const auto bytes = static_cast<std::size_t>(reader.end - reader.begin);
         if (reader.throughHook) AgcDriver::GuestMemory::FlushGpuWrites(reader.begin, bytes);
         else static_cast<void>(AgcDriver::Graphics::StorageTexture::FlushPending(reader.begin, bytes, nullptr, "idle yield fixture"));
+        reader.restPending.store(Pending(reader.split, reader.end), std::memory_order_release);
         reader.sawStored.store(RawContains(reader.split, reader.end), std::memory_order_release);
         reader.done.store(true, std::memory_order_release);
     });
@@ -307,8 +309,9 @@ void ReadDuringIdlePieceStoresRest(bool throughHook, std::atomic<std::uint32_t>&
     reader.thread.join();
     pieceReader = nullptr;
     Require(!finished, "the idle store did not yield to the read blocked behind its first piece");
-    Require(reader.sawStored.load(std::memory_order_acquire), throughHook ? "a guest memory read that waited for the idle store's first piece read the rest of the image without its results" : "a store that waited for the idle store's first piece left the rest of the image without its results");
-    Require(!Pending(reader.begin, reader.end), "a read that waited for the idle store's first piece left the rest of the image pending");
+    Require(!reader.restPending.load(std::memory_order_acquire), throughHook ? "a guest memory read that waited for the idle store's first piece left the rest of the image pending" : "a store that waited for the idle store's first piece left the rest of the image pending");
+    Require(!throughHook || reader.sawStored.load(std::memory_order_acquire), "a guest memory read that waited for the idle store's first piece read the rest of the image without its results");
+    Require(Contains(reader.split, reader.end), "the rest of the large image never reached guest memory");
 }
 
 void CountsMutexWaiters() {
