@@ -666,6 +666,7 @@ public:
     DeviceFunctions* UseFunctionTable() {
         FillDeviceFunctions(context, functions);
         context.functions = &functions;
+        context.dispatch = &dispatch;
         return &functions;
     }
     bool Graphics() const { return graphics; }
@@ -728,6 +729,7 @@ private:
     std::mutex settleMutex;
     bool nullDescriptors = false;
     DeviceFunctions functions{};
+    DeviceDispatch dispatch{&functions};
     bool memoryBudget = false;
     bool pushDescriptors = false;
 };
@@ -2023,8 +2025,14 @@ void encoderRuntimeSwitchTests(const Device& device, Recorder& recorder) {
     Require(encoded() > before, "a draw's commands did not go through the encoder with APS5_NO_RECORD_ENCODER unset");
     RuntimeSwitches::Assign(RuntimeSwitch::NoRecordEncoder, true);
     before = encoded();
+    const auto spanBefore = recorder.EncoderCounts();
     record();
+    Require(context.Table() == &context.dispatch->original, "a window recorded inline left the device on the encoder's table");
+    for (int window = 0; window < 3; ++window) record();
+    const auto spanAfter = recorder.EncoderCounts();
     Require(encoded() == before, "a draw's commands went through the encoder with APS5_NO_RECORD_ENCODER set");
+    Require(spanAfter.spans == spanBefore.spans + 1 && spanAfter.spanWindows == spanBefore.spanWindows + 3, "four inline windows opened " + std::to_string(spanAfter.spans - spanBefore.spans) + " inline spans of " + std::to_string(spanAfter.spanWindows - spanBefore.spanWindows) + " windows instead of one span of the three after the first");
+    Require(spanAfter.swaps == spanBefore.swaps + 1, "the inline windows swapped the device table " + std::to_string(spanAfter.swaps - spanBefore.swaps) + " times instead of once");
     recorder.Submit();
     recorder.Sync();
     Require(recorder.Idle(), "a batch recorded without the encoder did not complete");
@@ -2032,6 +2040,7 @@ void encoderRuntimeSwitchTests(const Device& device, Recorder& recorder) {
     before = encoded();
     record();
     Require(encoded() > before, "the encoder did not take over again when APS5_NO_RECORD_ENCODER was unset");
+    Require(context.Table() == context.dispatch->patched, "an encoded window ran with the device on its original table");
     recorder.Submit();
     recorder.Sync();
     Require(recorder.Idle(), "a batch recorded through the encoder after the switch was unset did not complete");

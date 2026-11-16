@@ -1351,7 +1351,7 @@ struct Recorder::ProgressWatcher {
 };
 
 Recorder::Recorder(const Context& context, bool timelineSemaphores, DeviceFunctions* encodedFunctions, std::uint32_t queueFamily) : context(context), id(nextRecorderId.fetch_add(1)) {
-    if (encodedFunctions != nullptr && CommandEncoder::Enabled()) encoder = CommandEncoder::Attach(context.device, *encodedFunctions);
+    if (encodedFunctions != nullptr && CommandEncoder::Enabled()) encoder = CommandEncoder::Attach(context.device, *encodedFunctions, context.dispatch);
     if (encoder != nullptr) encodedQueries = encodedFunctions;
     if (encoder != nullptr) encoderPool.Create(context, queueFamily);
     {
@@ -1375,12 +1375,6 @@ Recorder::Recorder(const Context& context, bool timelineSemaphores, DeviceFuncti
         cmdCopyQueryPoolResults = context.Function<PFN_vkCmdCopyQueryPoolResults>("vkCmdCopyQueryPoolResults");
         cmdPushConstants = context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants");
         cmdDispatch = context.Function<PFN_vkCmdDispatch>("vkCmdDispatch");
-        if (encoder != nullptr) {
-            if (encodedFunctions->cmdUpdateBuffer != nullptr) cmdUpdateBuffer = encodedFunctions->cmdUpdateBuffer;
-            if (encodedFunctions->cmdPipelineBarrier != nullptr) cmdPipelineBarrier = encodedFunctions->cmdPipelineBarrier;
-            if (encodedFunctions->cmdPushConstants != nullptr) cmdPushConstants = encodedFunctions->cmdPushConstants;
-            if (encodedFunctions->cmdDispatch != nullptr) cmdDispatch = encodedFunctions->cmdDispatch;
-        }
     }
     if (!timelineSemaphores) return;
     // The timeline starts at 0 and every Submit signals its serial (1, 2, ...): a value that only
@@ -2054,6 +2048,7 @@ VkCommandBuffer Recorder::Commands(VkAccessFlags* coveredAccess, std::source_loc
 
 Recorder::Encoding Recorder::BeginEncoding(std::source_location where) {
     if (encoder == nullptr || open == nullptr) return Encoding::None;
+    if (encoder->SpanWindow()) return Encoding::Span;
     if (!encoder->OpenOnThisThread()) {
         const auto handoff = RuntimeSwitches::Set(RuntimeSwitch::NoRecordEncoder) ? CommandEncoder::Handoff::Never : RuntimeSwitches::Set(RuntimeSwitch::NoAdaptiveEncoder) ? CommandEncoder::Handoff::Always : CommandEncoder::Handoff::Adaptive;
         if (!encoder->Admit(handoff, where)) {
@@ -2063,6 +2058,7 @@ Recorder::Encoding Recorder::BeginEncoding(std::source_location where) {
                 encoder->EndInline();
                 throw;
             }
+            encoder->StartSpan();
             return Encoding::Inline;
         }
     }
@@ -2353,13 +2349,13 @@ void Recorder::recordBarrier(VkCommandBuffer commands, VkPipelineStageFlags sour
         return;
     }
     const VkMemoryBarrier barrier{VK_STRUCTURE_TYPE_MEMORY_BARRIER, nullptr, sourceAccess, destinationAccess};
-    cmdPipelineBarrier(commands, sourceStage, destinationStage, 0, 1, &barrier, 0, nullptr, 0, nullptr);
+    encodedOr(cmdPipelineBarrier, &DeviceFunctions::cmdPipelineBarrier)(commands, sourceStage, destinationStage, 0, 1, &barrier, 0, nullptr, 0, nullptr);
 }
 
 void Recorder::flushPendingStore() {
     auto& run = open->run;
     if (run.bytes.empty()) return;
-    function(cmdUpdateBuffer, "vkCmdUpdateBuffer")(live(), run.buffer, run.offset, run.bytes.size(), run.bytes.data());
+    function(encodedOr(cmdUpdateBuffer, &DeviceFunctions::cmdUpdateBuffer), "vkCmdUpdateBuffer")(live(), run.buffer, run.offset, run.bytes.size(), run.bytes.data());
     run.recorded.emplace_back(run.buffer, run.offset, run.offset + run.bytes.size());
     run.storedBytes += run.bytes.size();
     run.bytes.clear();
@@ -2397,7 +2393,7 @@ bool Recorder::closeStoreRun(bool atSubmit) {
             recordBarrier(commands, LabelLeadingBarrier.srcStage, LabelLeadingBarrier.dstStage, LabelLeadingBarrier.srcAccess, LabelLeadingBarrier.dstAccess);
         }
         std::uint64_t storedBytes = 0;
-        const auto update = function(cmdUpdateBuffer, "vkCmdUpdateBuffer");
+        const auto update = function(encodedOr(cmdUpdateBuffer, &DeviceFunctions::cmdUpdateBuffer), "vkCmdUpdateBuffer");
         std::vector<QueuedWrite> writes;
         writes.reserve(stores.size());
         for (const auto& store : stores) writes.push_back({store.address, store.End(), store.dumpTarget != 0});
@@ -2790,8 +2786,8 @@ bool Recorder::RecordDispatchArguments(VkCommandBuffer commands, VkDeviceAddress
     } parameters{source, arguments, {limit[0], limit[1], limit[2], threadGroup != nullptr ? 1u : 0u}, {1u, 1u, 1u, 0u}};
     if (threadGroup != nullptr) std::copy(threadGroup->begin(), threadGroup->end(), parameters.group.begin());
     static_assert(sizeof(parameters) == PushBytes);
-    function(cmdPushConstants, "vkCmdPushConstants")(commands, dispatchArgumentLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, PushBytes, &parameters);
-    function(cmdDispatch, "vkCmdDispatch")(commands, 1, 1, 1);
+    function(encodedOr(cmdPushConstants, &DeviceFunctions::cmdPushConstants), "vkCmdPushConstants")(commands, dispatchArgumentLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, PushBytes, &parameters);
+    function(encodedOr(cmdDispatch, &DeviceFunctions::cmdDispatch), "vkCmdDispatch")(commands, 1, 1, 1);
     const VkPipelineStageFlags readers = VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | (threadGroup != nullptr ? VK_PIPELINE_STAGE_TRANSFER_BIT : 0u);
     const VkAccessFlags reads = VK_ACCESS_INDIRECT_COMMAND_READ_BIT | (threadGroup != nullptr ? VK_ACCESS_TRANSFER_READ_BIT : 0u);
     recordBarrier(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, readers, VK_ACCESS_SHADER_WRITE_BIT, reads);
@@ -3118,7 +3114,7 @@ void Recorder::recordQueuedDumps(VkCommandBuffer commands, std::span<const Batch
     }
     Require(list.size() <= 4u * DumpFoldCapacity, "queued occlusion dumps exceed the fold capacity");
     copySegments(commands, segments);
-    function(cmdUpdateBuffer, "vkCmdUpdateBuffer")(commands, sampleCounter->Handle(), DumpListOffset, list.size() * sizeof(std::uint32_t), list.data());
+    function(encodedOr(cmdUpdateBuffer, &DeviceFunctions::cmdUpdateBuffer), "vkCmdUpdateBuffer")(commands, sampleCounter->Handle(), DumpListOffset, list.size() * sizeof(std::uint32_t), list.data());
 }
 
 void Recorder::dispatchDumps(VkCommandBuffer commands, std::uint32_t firstDump, std::uint32_t dumps, std::uint32_t firstSegment, std::uint32_t lastSegment) {
@@ -3134,8 +3130,8 @@ void Recorder::dispatchDumps(VkCommandBuffer commands, std::uint32_t firstDump, 
         std::uint32_t phase;
     } parameters{sampleCounter->DeviceAddress(), sampleCounter->DeviceAddress() + DumpListOffset, firstDump, dumps, firstSegment, lastSegment, 0u};
     static_assert(sizeof(parameters) == SampleDumpPushBytes);
-    const auto push = function(cmdPushConstants, "vkCmdPushConstants");
-    const auto dispatch = function(cmdDispatch, "vkCmdDispatch");
+    const auto push = function(encodedOr(cmdPushConstants, &DeviceFunctions::cmdPushConstants), "vkCmdPushConstants");
+    const auto dispatch = function(encodedOr(cmdDispatch, &DeviceFunctions::cmdDispatch), "vkCmdDispatch");
     push(commands, dumpLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, SampleDumpPushBytes, &parameters);
     dispatch(commands, 1, 1, 1);
     if (dumps == 0) return;
@@ -3189,8 +3185,8 @@ void Recorder::foldSamples(Batch& batch, VkDeviceAddress target) {
     quiesce();
     const auto commands = batch.commands.Get(BatchCommands::Use::Quiesced);
     const auto copy = function(cmdCopyQueryPoolResults, "vkCmdCopyQueryPoolResults");
-    const auto push = function(cmdPushConstants, "vkCmdPushConstants");
-    const auto dispatch = function(cmdDispatch, "vkCmdDispatch");
+    const auto push = function(encodedOr(cmdPushConstants, &DeviceFunctions::cmdPushConstants), "vkCmdPushConstants");
+    const auto dispatch = function(encodedOr(cmdDispatch, &DeviceFunctions::cmdDispatch), "vkCmdDispatch");
     const auto bindCompute = context.ComputeBinding();
     std::size_t done = 0;
     do {
@@ -3307,8 +3303,8 @@ bool Recorder::RecordMeshArguments(VkCommandBuffer commands, VkDeviceAddress rec
         std::array<std::uint32_t, 8> rules;
     } parameters{record, arguments, {rules[0], rules[1], rules[2], rules[3], rules[4], rules[5], rules[6], 0u}};
     static_assert(sizeof(parameters) == PushBytes);
-    function(cmdPushConstants, "vkCmdPushConstants")(commands, meshArgumentLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, PushBytes, &parameters);
-    function(cmdDispatch, "vkCmdDispatch")(commands, 1, 1, 1);
+    function(encodedOr(cmdPushConstants, &DeviceFunctions::cmdPushConstants), "vkCmdPushConstants")(commands, meshArgumentLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, PushBytes, &parameters);
+    function(encodedOr(cmdDispatch, &DeviceFunctions::cmdDispatch), "vkCmdDispatch")(commands, 1, 1, 1);
     recordBarrier(commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_MESH_SHADER_BIT_EXT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_SHADER_READ_BIT);
     CountBarriers(CommandClass::Draw, 2);
     return true;
@@ -3359,8 +3355,8 @@ bool Recorder::RecordChangedCopy(VkCommandBuffer commands, VkDeviceAddress resul
             std::uint32_t always;
         } parameters{result + VkDeviceAddress{done} * 4u, snapshot + VkDeviceAddress{done} * 4u, target + VkDeviceAddress{done} * 4u, counter, count, alwaysCopy ? 1u : 0u};
         static_assert(sizeof(parameters) == PushBytes);
-        function(cmdPushConstants, "vkCmdPushConstants")(commands, changedCopyLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, PushBytes, &parameters);
-        function(cmdDispatch, "vkCmdDispatch")(commands, (count + GroupSize - 1) / GroupSize, 1, 1);
+        function(encodedOr(cmdPushConstants, &DeviceFunctions::cmdPushConstants), "vkCmdPushConstants")(commands, changedCopyLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, PushBytes, &parameters);
+        function(encodedOr(cmdDispatch, &DeviceFunctions::cmdDispatch), "vkCmdDispatch")(commands, (count + GroupSize - 1) / GroupSize, 1, 1);
         done += count;
     }
     return true;
@@ -3442,8 +3438,8 @@ bool Recorder::RecordBoundChangedCopy(VkCommandBuffer commands, BoundWords resul
         }
         context.Function<PFN_vkCmdPushDescriptorSetKHR>("vkCmdPushDescriptorSetKHR")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, boundChangedCopyLayout, 0, static_cast<std::uint32_t>(writes.size()), writes.data());
         const Parameters parameters{bases[0], bases[1], bases[2], count, alwaysCopy ? 1u : 0u, counter != VK_NULL_HANDLE ? 1u : 0u};
-        function(cmdPushConstants, "vkCmdPushConstants")(commands, boundChangedCopyLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(parameters), &parameters);
-        function(cmdDispatch, "vkCmdDispatch")(commands, (count + GroupSize - 1) / GroupSize, 1, 1);
+        function(encodedOr(cmdPushConstants, &DeviceFunctions::cmdPushConstants), "vkCmdPushConstants")(commands, boundChangedCopyLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(parameters), &parameters);
+        function(encodedOr(cmdDispatch, &DeviceFunctions::cmdDispatch), "vkCmdDispatch")(commands, (count + GroupSize - 1) / GroupSize, 1, 1);
         done += count;
     }
     return true;

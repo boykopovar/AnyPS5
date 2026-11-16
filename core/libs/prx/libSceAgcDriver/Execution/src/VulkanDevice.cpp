@@ -694,6 +694,7 @@ struct VulkanDevice::State {
     // built once after setup (see graphicsContext); the context's pool reference is dropped before
     // the pool at teardown.
     Graphics::DeviceFunctions deviceFunctions;
+    Graphics::DeviceDispatch deviceDispatch{&deviceFunctions};
     bool functionsReady = false;
     Graphics::Context context;
     bool contextReady = false;
@@ -4870,6 +4871,7 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.exactRobustLoads = state->exactRobustLoads;
     context.copiedWriters = state->copiedWriters.get();
     context.functions = state->functionsReady ? &state->deviceFunctions : nullptr;
+    context.dispatch = state->functionsReady ? &state->deviceDispatch : nullptr;
     context.descriptorIndexing = state->descriptorIndexing;
     context.descriptorIndexingLimits = state->descriptorIndexingProperties;
     context.imageInt64Atomics = state->imageInt64Atomics;

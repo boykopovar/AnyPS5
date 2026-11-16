@@ -594,7 +594,7 @@ public:
     // there must not have a publish recorded for it (UnitShadow), see SyncThrough.
     static bool InCompletion();
     void Activate();
-    enum class Encoding : std::uint8_t { None, Encoded, Inline };
+    enum class Encoding : std::uint8_t { None, Encoded, Inline, Span };
     Encoding BeginEncoding(std::source_location where = std::source_location::current());
     void EndEncoding(Encoding encoding, std::source_location where = std::source_location::current());
     bool Encodes() const { return encoder != nullptr; }
@@ -1002,6 +1002,10 @@ private:
     PFN_vkCmdPushConstants cmdPushConstants = nullptr;
     PFN_vkCmdDispatch cmdDispatch = nullptr;
     template<typename TFunction>
+    TFunction encodedOr(TFunction direct, TFunction DeviceFunctions::*member) const {
+        return direct != nullptr && encoder != nullptr && !encoder->Quiet() && encodedQueries->*member != nullptr ? encodedQueries->*member : direct;
+    }
+    template<typename TFunction>
     TFunction function(TFunction resolved, FunctionName name, std::source_location where = std::source_location::current()) const {
         return resolved != nullptr ? resolved : context.Function<TFunction>(name, where);
     }
@@ -1111,7 +1115,7 @@ private:
     std::unique_ptr<CommandEncoder> encoder;
     const DeviceFunctions* encodedQueries = nullptr;
     void quiesce(std::source_location where = std::source_location::current()) {
-        if (encoder == nullptr) return;
+        if (encoder == nullptr || encoder->Quiet()) return;
         encoder->Quiesce(where);
         if (open != nullptr) open->recording.Report();
     }
