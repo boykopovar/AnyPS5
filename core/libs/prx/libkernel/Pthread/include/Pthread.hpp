@@ -204,6 +204,7 @@ KernelCpumask LiveGuestThreadsAffinity();
 bool GuestThreadIsLive(const PthreadPrivate* thread);
 std::unique_lock<std::mutex> LockMainGuestThread_nid_no_patch(PthreadPrivate*& thread);
 std::unique_lock<std::mutex> LockLiveGuestThread(const PthreadPrivate* thread);
+std::unique_lock<std::mutex> LockRegisteredGuestThread(const PthreadPrivate* thread);
 extern "C" int ResumeGuestThread_nid_no_patch(PthreadPrivate* thread);
 #ifdef _WIN32
 extern "C" void DeliverPendingException_nid_no_patch(PthreadPrivate* thread);
