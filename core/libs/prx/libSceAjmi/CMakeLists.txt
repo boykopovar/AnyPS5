@@ -65,3 +65,4 @@ if(BUILD_TESTING)
 endif()
 
 include(Parsers.cmake)
+include(LifecycleAliases.cmake)

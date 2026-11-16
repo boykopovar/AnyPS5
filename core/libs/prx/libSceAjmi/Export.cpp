@@ -182,12 +182,12 @@ void* APS5_VABI sceAjmBatchJobRunBufferRa_nid_disambig1(void* position, uint32_t
 
 extern "C" {
 
-int APS5_VABI sceAjmiBatchCancel() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAjmiBatchCancel(std::uint32_t context, std::uint32_t batch) {
+    return sceAjmBatchCancel(context, batch);
 }
 
-int APS5_VABI sceAjmiBatchWait() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAjmiBatchWait(std::uint32_t context, std::uint32_t batch, std::uint32_t timeout, AjmBatchError* error) {
+    return sceAjmBatchWait(context, batch, timeout, error);
 }
 
 void* APS5_VABI sceAjmiBatchJobInlineBuffer_nid_no_patch(void* position, const void* data, std::size_t size, const void** address) {
@@ -223,8 +223,8 @@ int APS5_VABI sceAjmiDecAt9ParseConfigData(const void* configData, AjmDecAt9Conf
     return sceAjmDecAt9ParseConfigData(configData, configInfo);
 }
 
-int APS5_VABI sceAjmiInitialize() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAjmiInitialize(std::int64_t reserved, std::uint32_t* context) {
+    return sceAjmInitialize(reserved, context);
 }
 
 int APS5_VABI sceAjmiBatchErrorDump() {
@@ -239,8 +239,8 @@ int APS5_VABI sceAjmiMemoryUnregister() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceAjmiInstanceDestroy() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAjmiInstanceDestroy(std::uint32_t context, std::uint32_t instance) {
+    return sceAjmInstanceDestroy(context, instance);
 }
 
 int APS5_VABI sceAjmiDecMp3ParseFrame(const std::uint8_t* stream, std::uint32_t streamSize, int parseOfl, AjmDecMp3ParseFrame* frame) {
@@ -260,8 +260,8 @@ void* APS5_VABI sceAjmiBatchJobRunBufferRa_nid_no_patch(void* position, std::uin
 }
 APS5_EXPORT("m0xisYC6U2w", sceAjmiBatchJobRunBufferRa_nid_no_patch);
 
-int APS5_VABI sceAjmiInstanceCreate() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAjmiInstanceCreate(std::uint32_t context, std::uint32_t codec, std::uint64_t flags, std::uint32_t* instance) {
+    return sceAjmInstanceCreate(context, codec, flags, instance);
 }
 
 int APS5_VABI sceAjmiInstanceExtend() {
