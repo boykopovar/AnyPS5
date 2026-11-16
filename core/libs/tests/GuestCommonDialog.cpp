@@ -3,11 +3,14 @@
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
 #include "prx/libSceCommonDialog/include/DialogUse.hpp"
 #include "prx/libSceCommonDialog/include/Exports.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -22,6 +25,20 @@ namespace {
 
 void Require(bool value) {
     if (!value) std::abort();
+}
+
+void ClobberErrno(std::uintptr_t, std::size_t) {
+    errno = 99;
+}
+
+template <typename Fn>
+bool ThrowsInvalidArgument(Fn&& fn) {
+    try {
+        fn();
+        return false;
+    } catch (const std::invalid_argument&) {
+        return true;
+    }
 }
 
 constexpr int kErrAlreadySystemInitialized = static_cast<int>(0x80B80002);
@@ -119,9 +136,14 @@ int main() {
     base.reserved[35] = 0;
     Require(ValidateCommonDialogBaseParam(base));
 
-    Require(libSceCommonDialogUnknown_afLdI6i0lQw_nid_no_patch(&base) == COMMON_DIALOG_OK);
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
+
+    errno = 71;
+    Require(libSceCommonDialogUnknown_afLdI6i0lQw_nid_no_patch(&base) == COMMON_DIALOG_OK && errno == 71);
     base.size = sizeof(base) + 1;
-    Require(libSceCommonDialogUnknown_afLdI6i0lQw_nid_no_patch(&base) == COMMON_DIALOG_ERROR_INVALID_ARGUMENT);
+    errno = 71;
+    Require(libSceCommonDialogUnknown_afLdI6i0lQw_nid_no_patch(&base) == COMMON_DIALOG_ERROR_INVALID_ARGUMENT && errno == 71);
     base.size = sizeof(base);
     base.magic ^= 1u;
     Require(libSceCommonDialogUnknown_afLdI6i0lQw_nid_no_patch(&base) == COMMON_DIALOG_ERROR_INVALID_ARGUMENT);
@@ -135,7 +157,12 @@ int main() {
     unsigned char* straddling = guarded.data + guarded.size - 0x10;
     const std::uint32_t wrongMagic = static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(straddling)) - 1060003575u + 1u;
     std::memcpy(straddling + offsetof(CommonDialogBaseParam, magic), &wrongMagic, sizeof(wrongMagic));
-    Require(libSceCommonDialogUnknown_afLdI6i0lQw_nid_no_patch(straddling) == COMMON_DIALOG_ERROR_INVALID_ARGUMENT);
+    errno = 71;
+    Require(libSceCommonDialogUnknown_afLdI6i0lQw_nid_no_patch(straddling) == COMMON_DIALOG_ERROR_INVALID_ARGUMENT && errno == 71);
+    errno = 71;
+    Require(ThrowsInvalidArgument([] { libSceCommonDialogUnknown_afLdI6i0lQw_nid_no_patch(nullptr); }) && errno == 71);
+    errno = 71;
+    Require(ThrowsInvalidArgument([] { libSceCommonDialogUnknown_afLdI6i0lQw_nid_no_patch(reinterpret_cast<const void*>(std::uintptr_t{0x10})); }) && errno == 71);
 
     Require(libSceCommonDialogUnknown_D_minus_V35OhFeIM_nid_no_patch() == 0);
     Require(libSceCommonDialogUnknown_p9TTq4bLdFU_nid_no_patch() == 0);
@@ -143,7 +170,12 @@ int main() {
     std::array<std::uint64_t, 6> client{};
     client[0] = 0x1122334455667788u;
     client[2] = 0x99u;
-    Require(_ZNK3sce16CommonDialogUtil6Client8getAppIdEv(client.data()) == -1);
+    errno = 71;
+    Require(_ZNK3sce16CommonDialogUtil6Client8getAppIdEv(client.data()) == -1 && errno == 71);
+    errno = 71;
+    Require(ThrowsInvalidArgument([] { _ZNK3sce16CommonDialogUtil6Client8getAppIdEv(nullptr); }) && errno == 71);
+    errno = 71;
+    Require(ThrowsInvalidArgument([] { _ZNK3sce16CommonDialogUtil6Client8getAppIdEv(reinterpret_cast<const void*>(std::uintptr_t{0x10})); }) && errno == 71);
     Require(_ZNK3sce16CommonDialogUtil6Client14getClientStateEv(client.data()) == -1);
     Require(_ZN3sce16CommonDialogUtil6Client15launchCmnDialogEv(client.data()) == -1);
     Require(_ZN3sce16CommonDialogUtil6Client11updateStateEv(client.data()) == kResult80B8000E);
@@ -154,11 +186,19 @@ int main() {
     Require(_ZNK3sce16CommonDialogUtil6Client19isInitializedStatusEv(client.data()) == 0);
     Require(_ZNK3sce16CommonDialogUtil6Client8isFinishEv(client.data()) == 0);
     Require(_ZNK3sce16CommonDialogUtil6Client10isCloseReqEv(client.data()) == 0);
-    Require(libSceCommonDialogUnknown_Zaa6fhiKQDE_nid_no_patch(client.data()) == kResult80B8000E);
+    errno = 71;
+    Require(libSceCommonDialogUnknown_Zaa6fhiKQDE_nid_no_patch(client.data()) == kResult80B8000E && errno == 71);
+    errno = 71;
+    Require(ThrowsInvalidArgument([] { libSceCommonDialogUnknown_Zaa6fhiKQDE_nid_no_patch(nullptr); }) && errno == 71);
+    errno = 71;
+    Require(ThrowsInvalidArgument([] { libSceCommonDialogUnknown_Zaa6fhiKQDE_nid_no_patch(reinterpret_cast<const void*>(std::uintptr_t{0x10})); }) && errno == 71);
     Require(libSceCommonDialogUnknown_SDpCfY9uB0g_nid_no_patch(client.data()) == kResult80B8000E);
     Require(libSceCommonDialogUnknown_mVRnPerBcK0_nid_no_patch(client.data()) == kResult80B8000E);
     Require(libSceCommonDialogUnknown_yxjgDvqUbGQ_nid_no_patch(client.data()) == kResult80B8000E);
     Require(libSceCommonDialogUnknown_aUS4PgJye98_nid_no_patch(client.data()) == 0);
     Require(client[0] == 0x1122334455667788u && client[1] == 0 && client[2] == 0x99u);
     Require(finish == std::array<unsigned char, 16>{});
+
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
 }

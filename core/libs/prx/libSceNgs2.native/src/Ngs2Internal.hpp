@@ -3,6 +3,7 @@
 
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -14,6 +15,7 @@
 #include <variant>
 #include <vector>
 
+#include "prx/libc/include/General.hpp"
 #include "prx/libSceNgs2.native/include/Ngs2Types.hpp"
 #include "PitchShift.hpp"
 
@@ -316,6 +318,9 @@ struct Ngs2System {
     std::uintptr_t userData = 0;
     std::vector<Ngs2Rack*> racks;
     std::atomic<std::uint64_t> callbackSequence{0};
+    std::array<std::array<std::uint8_t, 24>, 32> slotData{};
+    std::array<bool, 32> slotSet{};
+    float unnamedParam = 0.0f;
 };
 
 std::string Ngs2Hex(std::uint32_t value);
@@ -429,5 +434,29 @@ int Ngs2GeomResetListenerParam(Ngs2GeomListenerParam* out_listener_param);
 int Ngs2GeomCalcListener(const Ngs2GeomListenerParam* param, Ngs2GeomListenerWork* outWork, std::uint32_t flags);
 int Ngs2GeomApply(const Ngs2GeomListenerWork* listener, const Ngs2GeomSourceParam* source, Ngs2GeomAttribute* outAttrib, std::uint32_t flags);
 int Ngs2GeomResetSourceParam(Ngs2GeomSourceParam* out_source_param);
+
+inline bool ReadGuestBytes(void* local, const void* guest, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(local, guest, bytes);
+    errno = savedErrno;
+    return copied;
+}
+
+inline bool WriteGuestBytes(void* guest, const void* local, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(guest, local, bytes);
+    errno = savedErrno;
+    return copied;
+}
+
+template <typename T>
+bool ReadGuest(const T* guest, T& local) {
+    return ReadGuestBytes(&local, guest, sizeof(local));
+}
+
+template <typename T>
+bool WriteGuest(T* guest, const T& local) {
+    return WriteGuestBytes(guest, &local, sizeof(local));
+}
 
 #endif

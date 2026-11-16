@@ -87,6 +87,7 @@ struct ColorTarget {
     std::uint32_t dccControl = 0;
     std::uint64_t fmaskAddress = 0;
     std::uint32_t fmaskPipeBankXor = 0;
+    std::uint32_t gcnFmaskBytes = 0;
     std::uint32_t partialWriteMask = 0;
     std::uint32_t mergeBlend = 0;
     bool staged = false;
@@ -276,6 +277,7 @@ struct DepthCopyPass {
     DepthTarget source;
     std::uint32_t sample;
     ColorTarget color;
+    bool stencil = false;
 };
 std::optional<DepthCopyPass> DecodeDepthCopyPass(const QueueState& queue);
 std::string DepthMaintenanceRejection(const QueueState& queue);
