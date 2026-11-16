@@ -447,10 +447,7 @@ const RegisterPthreadOnLoad gRegisterPthread;
 }
 
 int APS5_VABI pthread_rename_np_nid_postfix(Pthread thread, const char* name) {
-    if (!thread || !name) return PosixThread::ToErrno(scePthreadRename(thread, name));
-    std::string copy;
-    if (const int error = CopyGuestString_nid_no_patch(name, 32, copy)) return error;
-    return PosixThread::ToErrno(scePthreadRename(thread, copy.c_str()));
+    return PosixThread::ToErrno(scePthreadRename(thread, name));
 }
 
 int APS5_VABI pthread_getname_np_nid_postfix(Pthread thread, char* name) {
