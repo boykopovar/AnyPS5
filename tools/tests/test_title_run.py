@@ -971,6 +971,16 @@ class RunHelperTests(unittest.TestCase):
     def test_last_run_returns_the_most_recent_run(self):
         self.assertEqual(title_run.last_run({"runs": [{"n": 1}, {"n": 2}]}), {"n": 2})
 
+    def test_report_fields_read_missing_and_truncated_values_as_none(self):
+        run = {"report": {"shaders": {"x": 2}, "missing": ["f"], "truncated": {"functions": 3, "unsupported": 4},
+                          "unsupported": ["op"]}}
+        self.assertEqual(title_run.shader_count(run, "x"), 2)
+        self.assertEqual(title_run.missing_functions(run), ["f"])
+        self.assertEqual(title_run.truncated_functions(run), 3)
+        self.assertEqual(title_run.truncated_unsupported(run), 4)
+        self.assertEqual(title_run.unsupported_instructions(run), ["op"])
+        self.assertIsNone(title_run.report_field({}, "missing"))
+
 
 if __name__ == "__main__":
     unittest.main()
