@@ -1585,6 +1585,15 @@ class SummaryFileTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "summary record must be an object"):
             trace_digest.load_summary_lines(self.write("[1]\n"))
 
+    @unittest.skipIf(os.name == "nt", "symbolic link loops need POSIX symlinks here")
+    def test_resolve_summary_path_returns_a_regular_file_and_refuses_a_loop(self):
+        path = self.write("{}\n")
+        self.assertEqual(trace_digest.resolve_summary_path(path), path.resolve())
+        loop = path.with_name("loop.jsonl")
+        os.symlink(loop, loop)
+        with self.assertRaisesRegex(ValueError, "symbolic link loop"):
+            trace_digest.resolve_summary_path(loop)
+
 
 if __name__ == "__main__":
     unittest.main(defaultTest=os.environ.get("TRACE_DIGEST_TEST"))
