@@ -225,9 +225,8 @@ void testPictureInfoOfReusedFrameBuffer() {
     check(throws([&] { sceVdecswGetAvcPictureInfo(&output, &typed, nullptr); }), "picture info of a reused frame buffer outlived the reset of its last decoder");
 }
 
-void testDecode() {
+void testDecode(const std::vector<std::vector<std::uint8_t>>& units) {
     Session session;
-    const auto units = accessUnits(false);
     check(units.size() == PictureHashes.size(), "unexpected access unit count");
     std::array<std::vector<std::uint8_t>, 2> buffers{std::vector<std::uint8_t>(session.memory.maxFrameBufferSize), std::vector<std::uint8_t>(session.memory.maxFrameBufferSize)};
     InputResult result{sizeof(InputResult)};
@@ -259,7 +258,8 @@ void testDecode() {
             check(sceVdecswGetAvcPictureInfo(&output, &info, nullptr) == 0 && info.isValid, "picture info missing");
             checkGenericPictureInfo(output, info);
             const auto unit = DisplayOrderUnits[pictures];
-            check(info.ptsData == 1000 + unit && info.dtsData == unit && info.attachedData == 0xa0 + unit && info.idrPictureFlag == (pictures == 0 ? 1 : 0) && info.profileIdc == 100, "pictures out of display order");
+            check(info.ptsData == 1000 + unit && info.dtsData == unit && info.attachedData == 0xa0 + unit && info.profileIdc == 100, "pictures out of display order");
+            check(info.idrPictureFlag == (unit == 0 ? 1 : 0), "picture " + std::to_string(pictures) + " IDR flag differs from its nal_unit_type");
             check(info.picWidthInMbsMinus1 == Width / 16 - 1 && info.picHeightInMapUnitsMinus1 == CodedHeight / 16 - 1 && info.frameMbsOnlyFlag == 1 && info.frameCroppingFlag == 1 && info.frameCropLeftOffset == 0 && info.frameCropRightOffset == 0 && info.frameCropTopOffset == 0 && info.frameCropBottomOffset == (CodedHeight - Height) / 2, "picture geometry in the picture info is wrong");
             check(hashNv12(static_cast<const std::uint8_t*>(output.frameBuffer), output.framePitch, output.frameHeight) == PictureHashes[pictures], "picture " + std::to_string(pictures) + " differs from the reference");
             ++pictures;
@@ -280,6 +280,18 @@ void testDecode() {
     check(pictures == PictureHashes.size(), "missing pictures after finalizing the sequence");
     check(produced <= PictureHashes.size(), "more pictures counted than decoded");
     check(sceVdecswTrySyncDecodeInput(session.decoder, &result) == InputQueueEmpty, "a finalized decoder did not report an empty input queue");
+}
+
+void testDecode() {
+    testDecode(accessUnits(false));
+}
+
+void testDecodeRecoveryPoint() {
+    auto units = accessUnits(false);
+    constexpr std::array<std::uint8_t, 9> RecoveryPoint{0x00, 0x00, 0x00, 0x01, 0x06, 0x06, 0x01, 0x84, 0x80};
+    check((units[1][4] & 0x1fu) == 9 && (units[1][9] & 0x1fu) == 1, "the second access unit is not a delimited non-IDR picture");
+    units[1].insert(units[1].begin() + 6, RecoveryPoint.begin(), RecoveryPoint.end());
+    testDecode(units);
 }
 
 void testHevc() {
@@ -664,6 +676,7 @@ int main() {
         testGenericPictureInfoLifetime();
         testPictureInfoOfReusedFrameBuffer();
         testDecode();
+        testDecodeRecoveryPoint();
         testHevc();
         testHevcCrop();
         testHevcMain10();

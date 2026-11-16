@@ -469,7 +469,7 @@ void Guards(AgcDriver::VulkanDevice& device) {
     FillTexture(1u, good);
     FillInput(false);
     SetEntry(2u, {});
-    const auto unsupported = Descriptor(1u, Format{3u, 1u, 1u});
+    const auto unsupported = Descriptor(1u, Format{78u, 1u, 1u});
     SetEntry(3u, unsupported);
     for (const auto opcode : {2u, 0x42u, 0x70u, 10u}) {
         const auto dmask = opcode == 0x42u ? 3u : 1u;

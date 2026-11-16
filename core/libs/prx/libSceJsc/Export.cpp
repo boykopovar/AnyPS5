@@ -3,7 +3,9 @@
 #include "prx/libSceJsc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 
+#include <array>
 #include <atomic>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -124,7 +126,23 @@ std::size_t APS5_VABI JSStringGetMaximumUTF8CStringSize_nid_postfix(const GuestJ
 
 std::size_t APS5_VABI JSStringGetUTF8CString_nid_postfix(const GuestJSString* string, char* buffer, std::size_t bufferSize) {
     if (!string || !buffer || !bufferSize) return 0;
+    std::array<char, 4096> staging{};
+    std::size_t pending = 0;
     std::size_t written = 0;
+    const auto base = reinterpret_cast<std::uintptr_t>(buffer);
+    const auto flush = [&]() -> bool {
+        if (pending == 0) return true;
+        if (written > std::numeric_limits<std::uintptr_t>::max() - base) return false;
+        const auto address = base + written;
+        if (pending > std::numeric_limits<std::uintptr_t>::max() - address) return false;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(address), staging.data(), pending);
+        errno = savedErrno;
+        if (!copied) return false;
+        written += pending;
+        pending = 0;
+        return true;
+    };
     const auto count = string->characters.size() - 1;
     for (std::size_t index = 0; index < count; ++index) {
         std::uint32_t codepoint = string->characters[index];
@@ -136,18 +154,20 @@ std::size_t APS5_VABI JSStringGetUTF8CString_nid_postfix(const GuestJSString* st
             ++index;
         } else if (codepoint >= 0xDC00 && codepoint <= 0xDFFF) break;
         const std::size_t bytes = codepoint < 0x80 ? 1 : codepoint < 0x800 ? 2 : codepoint < 0x10000 ? 3 : 4;
-        if (bytes > bufferSize - 1 - written) break;
-        if (bytes == 1) buffer[written++] = static_cast<char>(codepoint);
+        if (bytes > bufferSize - 1 - written - pending) break;
+        if (bytes > staging.size() - pending && !flush()) return 0;
+        if (bytes == 1) staging[pending++] = static_cast<char>(codepoint);
         else {
             const unsigned prefix = bytes == 2 ? 0xC0 : bytes == 3 ? 0xE0 : 0xF0;
-            buffer[written++] = static_cast<char>(prefix | (codepoint >> (6 * (bytes - 1))));
+            staging[pending++] = static_cast<char>(prefix | (codepoint >> (6 * (bytes - 1))));
             for (auto remaining = bytes - 1; remaining > 0; --remaining) {
-                buffer[written++] = static_cast<char>(0x80 | ((codepoint >> (6 * (remaining - 1))) & 0x3F));
+                staging[pending++] = static_cast<char>(0x80 | ((codepoint >> (6 * (remaining - 1))) & 0x3F));
             }
         }
     }
-    buffer[written] = '\0';
-    return written + 1;
+    if (pending == staging.size() && !flush()) return 0;
+    staging[pending++] = '\0';
+    return flush() ? written : 0;
 }
 
 bool APS5_VABI JSStringIsEqual(const GuestJSString* first, const GuestJSString* second) {
@@ -425,14 +445,6 @@ int APS5_VABI _ZN9Inspector31NetworkBackendDispatcherHandler20LoadResourceCallba
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF14FileSystemImpl12readFromFileEiPci() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZNK3JSC14ProtoCallFrame9codeBlockEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3JSC11VMInspector9dumpValueENS_7JSValueE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -591,10 +603,6 @@ int APS5_VABI _ZN9Inspector28InspectorScriptProfilerAgentD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF14FileSystemImpl15getFileDeviceIdERKNS_7CStringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7bmalloc3api16freeLargeVirtualEPvmNS_8HeapKindE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -729,10 +737,6 @@ int APS5_VABI JSWeakObjectMapClear() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN10Deprecated11ScriptValueC1ERKS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN10Deprecated11ScriptValueC1ERN3JSC2VMENS1_7JSValueE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -741,28 +745,12 @@ void APS5_VABI _ZN10Deprecated11ScriptValueC1Ev(void* self) {
     std::memset(self, 0, 8);
 }
 
-int APS5_VABI _ZN10Deprecated11ScriptValueC2ERKS0_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN10Deprecated11ScriptValueC2ERN3JSC2VMENS1_7JSValueE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
 void APS5_VABI _ZN10Deprecated11ScriptValueC2Ev(void* self) {
     std::memset(self, 0, 8);
-}
-
-int APS5_VABI _ZN10Deprecated11ScriptValueD1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN10Deprecated11ScriptValueD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN10Deprecated11ScriptValueaSERKS0_() {
-    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI _ZN10Deprecated12ScriptObjectC1EPN3JSC14JSGlobalObjectEPNS1_8JSObjectE() {
@@ -1001,14 +989,6 @@ int APS5_VABI _ZN3JSC14LocalAllocator16allocateSlowCaseERNS_4HeapEPNS_17GCDeferr
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3JSC14ProtoCallFrame14needArityCheckEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3JSC14ProtoCallFrame4initEPNS_9CodeBlockEPNS_14JSGlobalObjectEPNS_8JSObjectENS_7JSValueEiPS7_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3JSC14StructureCache32emptyObjectStructureConcurrentlyEPNS_14JSGlobalObjectEPNS_8JSObjectEj() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -1206,10 +1186,6 @@ int APS5_VABI _ZN3JSC4Heap20addMarkingConstraintESt10unique_ptrINS_17MarkingCons
 }
 
 int APS5_VABI _ZN3JSC4Heap25protectedObjectTypeCountsEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3JSC4Yarr10parseFlagsEN3WTF10StringViewE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -1629,10 +1605,6 @@ int APS5_VABI _ZN3WTF4SHA19hexDigestERKSt5arrayIhLm20EE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF6Logger9observersEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF6String23make16BitFrom8BitSourceEPKhm() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -1690,10 +1662,6 @@ int APS5_VABI _ZN3WTF6StringC2EPKDs() {
 }
 
 int APS5_VABI _ZN3WTF6StringC2EPKh() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF7CPUTime3getEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 

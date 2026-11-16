@@ -53,6 +53,7 @@ class PeModule:
             raise ValueError(f"{path}: not a PE32+ image")
         self.image_base = struct.unpack_from("<Q", data, optional + 24)[0]
         self.size = struct.unpack_from("<I", data, optional + 56)[0]
+        self.headers_size = struct.unpack_from("<I", data, optional + 60)[0]
         directories = struct.unpack_from("<I", data, optional + 108)[0]
         if directories > (optional_size - 112) // 8:
             raise ValueError(f"{path}: PE data directories exceed the optional header")
@@ -78,6 +79,8 @@ class PeModule:
 
     def mapped_range(self, rva):
         matches = [section for section in self.sections if section[0] <= rva < section[0] + section[1]]
+        if 0 <= rva < self.headers_size:
+            matches.append((0, self.headers_size, self.headers_size, 0, 0))
         if not matches:
             raise ValueError(f"RVA {rva:#x} is in no section")
         if len(matches) != 1:
@@ -197,7 +200,9 @@ class Symbolizer:
         for directory in libs:
             for path in Path(directory).iterdir():
                 if path.is_file():
-                    self.files.setdefault(path.name.lower(), {}).setdefault(path.resolve(), path)
+                    info = path.stat()
+                    identity = (info.st_dev, info.st_ino) if info.st_ino else path.resolve()
+                    self.files.setdefault(path.name.lower(), {}).setdefault(identity, path)
         self.headers = {name.lower(): identity for name, identity in headers.items()}
         self.modules = {}
         self.demangle = demangle and shutil.which("c++filt") is not None
@@ -300,6 +305,7 @@ class Samples:
         self.self_counts = collections.Counter()
         self.inclusive = collections.Counter()
         self.total = collections.Counter()
+        self.threads = set()
 
 
 def load(path, thread=None):
@@ -323,6 +329,7 @@ def load(path, thread=None):
         if len(parts) == 4 and parts[0] == "thread" and parts[2] == "samples" and parts[1].isdigit() and parts[3].isdigit():
             record_format("address", number)
             current = parts[1]
+            samples.threads.add(current)
             if thread is None or current == thread:
                 samples.total["threads"] += int(parts[3])
             continue
@@ -463,6 +470,8 @@ def symbolize(parser, args):
                 if os.path.realpath(source) == os.path.realpath(output) or (source.exists() and output.exists() and source.samefile(output)):
                     parser.error("symbolized output must be separate from the sample captures")
     samples = load(args.samples, args.thread)
+    if args.thread is not None and samples.threads and args.thread not in samples.threads:
+        raise ValueError(f"{args.samples}: thread {args.thread} is not in the capture (threads: {', '.join(sorted(samples.threads, key=int))})")
     if args.out and not samples.stacks:
         parser.error("--out needs a collapsed-stack file")
     if args.since:

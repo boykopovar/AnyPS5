@@ -1,0 +1,5 @@
+# libSceNpScoreRanking
+
+## change [sceNpScoreCensorComment, sceNpScoreSanitizeComment, sceNpScoreRecordGameData and their async forms]
+
+- [sceNpScoreCensorComment, sceNpScoreSanitizeComment, sceNpScoreRecordGameData and their async forms](../../../core/libs/prx/libSceNpScoreRanking/Export.cpp) (libSceNpScoreRanking) - make the checks firmware 13.42 makes before queueing to its worker ([disassembly](https://github.com/boykopovar/AnyPS5/pull/12611#issuecomment-6507773030), not run): an option, then a null comment or data, then the request, then a comment longer than 255 characters. Valid calls then answer offline like the rest of the library. The module copies the score and sizes unchecked and leaves the chunk checks to the service, `sanitizedComment` is never written, and the async forms finish the request here instead of returning 0 for the worker to finish. A comment that cannot be read, or that runs into unreadable memory before its NUL, returns 0x80550704 (`SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT`) with errno kept, as a host-safety fallback; the console result for unmapped memory is unmeasured

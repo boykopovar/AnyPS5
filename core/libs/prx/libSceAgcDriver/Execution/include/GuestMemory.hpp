@@ -46,6 +46,7 @@ bool EqualsCommittedUnsynced(std::uint64_t address, std::span<const std::byte> b
 // space cannot be queried).
 enum class Compare : std::uint8_t { Equal, Differs, Unmapped };
 Compare CompareMapped(std::uint64_t address, std::span<const std::byte> bytes);
+void SetCompareMappedHook(void (*hook)(std::uint64_t address, std::size_t bytes));
 Compare CopyMapped(std::uint64_t address, std::span<std::byte> out);
 void WriteChangedCommitted(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original);
 void Write(std::uint64_t address, std::span<const std::byte> source, std::size_t alignment = 1);
@@ -76,6 +77,9 @@ using FreshCollectHook = bool (*)(std::uintptr_t address, std::size_t bytes, voi
 void SetFreshCollectHook(FreshCollectHook hook);
 #endif
 bool Watched(std::uint64_t address, std::size_t bytes);
+bool OnlyRewatchedSince(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
+bool Rewatched(std::uint64_t address, std::size_t bytes);
+void RewatchedBlocks(std::uint64_t address, std::size_t bytes, std::span<const std::uint64_t> since, std::span<std::uint8_t> rewatched);
 std::uint64_t CollectWrites(std::uint64_t address, std::size_t bytes);
 struct WriteSubscription;
 bool WriteIndexEnabled();
@@ -134,7 +138,12 @@ bool StoredAllSince_nid_no_patch(std::uint64_t address, std::size_t bytes, std::
 // submission runs. The driver's own writes (Write, WriteChanged, MarkWritten) stamp their blocks, so
 // they are never hidden. APS5_NO_COLLECT_MEMO=1 disables the memo. CollectWritesUncached always walks:
 // for decisions about which blocks the CPU wrote while a GPU result was pending (a stale answer there
-// stores old texels over reused memory).
+// stores old texels over reused memory). The collect that starts such a pending period
+// (StorageTexture::markLayersPending) may be memoized: its caller reads TrackerGeneration after it,
+// so a store the memoized walk missed is stamped above that generation by a later walk (at the
+// latest the decision's own uncached one) and counts as made while the result was pending, while a
+// store ordered before the draw was made before the epoch's ordering point, so the memoized walk,
+// which started after that point, stamped it. APS5_NO_MEMO_PENDING_COLLECT walks there again.
 // The epoch is per queue worker: BumpCollectEpoch advances the calling thread's epoch to a value no
 // other thread ever holds. Each 64 KiB block records the counter value read before its last complete
 // walk, and a request of epoch e is answered by any walk of the block made at or after e, by
@@ -206,18 +215,22 @@ public:
     // current acquisition is the outermost, so code that releases the mutex around a wait
     // (Recorder::SyncThrough for the flush hook) gives up no caller's hold.
     std::uint32_t DepthOnThisThread() const;
+    std::uint32_t Waiters() const { return waiters.load(std::memory_order_relaxed); }
 
 private:
     void enter();
+    void block();
     bool tryEnter();
     void acquired();
     Mutex mutex;
+    std::atomic<std::uint32_t> waiters{0};
     // The holder's thread token and recursion depth, written by the holder only; another thread
     // reads the owner just to see that it is not itself.
     std::atomic<const void*> owner{nullptr};
     std::uint32_t depth = 0;
 };
 GpuMutexType& GpuMutex();
+std::function<bool()> YieldToGpuMutexWaiters(std::function<bool()> stop);
 // Called on the thread that just gave up its outermost hold, right after the mutex was released:
 // work the hold deferred to run without it (the recorder's release of the objects completed batches
 // kept). One hook, set once; it must not take GpuMutex itself.
@@ -302,8 +315,9 @@ PacketTag CurrentPacket();
 // DrawCache: a draw entry's per-stage value validation (Driver.cpp drawCache), where a draw
 // capture's hook waits reappear on a hit.
 // Every enumerator needs its name in ReadSiteName's table (GuestMemory.cpp).
-enum class ReadSite : std::uint8_t { Unknown = 0, Capture, DispatchCache, TextureCompare, TextureRead, BufferUpload, IndexBuffer, VertexBuffer, Registers, IndirectArguments, Wait, Label, Scanout, Store, MirrorRefresh, DrawCache, Count };
+enum class ReadSite : std::uint8_t { Unknown = 0, Capture, DispatchCache, TextureCompare, TextureRead, BufferUpload, IndexBuffer, VertexBuffer, Registers, IndirectArguments, Wait, Label, Scanout, Store, MirrorRefresh, DrawCache, HostWrite, Count };
 const char* ReadSiteName(ReadSite site);
+bool WritesGuestMemory(ReadSite site);
 // Sets the calling thread's read site and returns the previous one (nested scopes restore it).
 ReadSite SetReadSite(ReadSite site);
 ReadSite CurrentReadSite();

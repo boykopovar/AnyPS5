@@ -65,8 +65,9 @@ void CheckEveryHeap() {
                                 continue;
                             }
                             const auto shape = AgcDriver::Graphics::PlaceholderImageShapeOf(heap);
-                            const auto withoutStorageMsaa = AgcDriver::Graphics::PlaceholderImageShapeForDevice(heap, false);
-                            const auto withStorageMsaa = AgcDriver::Graphics::PlaceholderImageShapeForDevice(heap, true);
+                            const auto withoutStorageMsaa = AgcDriver::Graphics::PlaceholderImageShapeForDevice(heap, false, true);
+                            const auto withStorageMsaa = AgcDriver::Graphics::PlaceholderImageShapeForDevice(heap, true, true);
+                            const auto withoutImageInt64 = AgcDriver::Graphics::PlaceholderImageShapeForDevice(heap, true, false);
                             const auto where = " for heap " + std::to_string(heap);
                             const bool storage = resourceClass == ImageResourceClass::Storage;
                             const bool multisampled = dimension == RdnaImageDimension::Dim2DMsaa || dimension == RdnaImageDimension::Dim2DMsaaArray;
@@ -80,6 +81,8 @@ void CheckEveryHeap() {
                             if (withoutStorageMsaa) Require(withoutStorageMsaa->samples == shape.samples && withoutStorageMsaa->viewType == shape.viewType && withoutStorageMsaa->usage == shape.usage,
                                                              "a device-specific placeholder changed the typed heap shape" + where);
                             Require(((shape.features & VK_FORMAT_FEATURE_STORAGE_IMAGE_ATOMIC_BIT) != 0) == atomic, "placeholder format features disagree with atomics" + where);
+                            Require(withoutImageInt64.has_value() && withoutImageInt64->format == (atomic64 ? VK_FORMAT_R32G32_UINT : shape.format) && ((withoutImageInt64->features & VK_FORMAT_FEATURE_STORAGE_IMAGE_ATOMIC_BIT) != 0) == (atomic && !atomic64) && withoutImageInt64->usage == shape.usage,
+                                    "a device without 64-bit image atomics does not hold a 64-bit atomic heap in two 32-bit components" + where);
                             heaps.insert(heap);
                         }
                     }
