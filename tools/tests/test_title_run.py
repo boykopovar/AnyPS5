@@ -1753,5 +1753,16 @@ class HostIsIntelTests(unittest.TestCase):
             self.assertIs(self.check(SimpleNamespace(name="posix")), False)
 
 
+class LinkFileTests(unittest.TestCase):
+    def test_link_file_gives_the_target_the_source_content(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, target = root / 'a.bin', root / 'b.bin'
+            source.write_bytes(b'data')
+            title_run.link_file(source, target)
+            self.assertEqual(target.read_bytes(), b'data')
+            self.assertTrue(source.exists())
+
+
 if __name__ == "__main__":
     unittest.main()
