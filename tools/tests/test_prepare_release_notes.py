@@ -31,6 +31,20 @@ class PrepareReleaseNotesTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 prepare_release_notes.prepare_notes(source, Path(directory) / "body.md", Path(directory) / "full.md")
 
+    def test_prepare_notes_writes_and_checks_both_outputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.json"
+            source.write_text(json.dumps({"body": "## Notes\nhello"}), encoding="utf-8")
+            body = root / "body.md"
+            full = root / "full.md"
+            prepare_release_notes.prepare_notes(source, body, full)
+            self.assertEqual(full.read_text(encoding="utf-8"), "## Notes\nhello")
+            self.assertEqual(body.read_text(encoding="utf-8"), "## Notes\nhello")
+            self.assertTrue(prepare_release_notes.prepare_notes(source, body, full, check=True))
+            body.write_text("changed", encoding="utf-8")
+            self.assertFalse(prepare_release_notes.prepare_notes(source, body, full, check=True))
+
 
 if __name__ == "__main__":
     unittest.main()
