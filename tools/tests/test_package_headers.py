@@ -16,6 +16,14 @@ class PackageHeadersTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "No public library headers found"):
                 package_headers.public_headers(root)
 
+    @unittest.skipIf(os.name == "nt", "symbolic link loops need POSIX symlinks here")
+    def test_resolved_path_refuses_a_symbolic_link_loop(self):
+        with tempfile.TemporaryDirectory() as directory:
+            loop = Path(directory) / "loop.hpp"
+            os.symlink(loop, loop)
+            with self.assertRaisesRegex(RuntimeError, "Symbolic link loop"):
+                package_headers.resolved_path(loop)
+
 
 if __name__ == "__main__":
     unittest.main()
