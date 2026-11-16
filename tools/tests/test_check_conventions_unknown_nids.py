@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import check_conventions
 from nid_names import compute_nid
 
 CHECKER = Path(__file__).resolve().parents[1] / "check_conventions.py"
@@ -134,6 +135,12 @@ class UnknownNidTests(unittest.TestCase):
             {"core/libs/prx/libSceA/tests/Helper.cpp": 'extern "C" bool Helper_nid_postfix() {\n    return true;\n}\n'},
             {"core/libs/prx/libSceB/Unimplemented.cpp": unknown_export(HELPER_NID)},
         ))
+
+
+class AsmExportTests(unittest.TestCase):
+    def test_asm_exports_keys_valid_names_by_line(self):
+        text = 'int x;\nAPS5_ASM_FUNCTION("sceFoo")\nAPS5_SIGNAL_ASM_FUNCTION("sceBar")\n'
+        self.assertEqual(dict(check_conventions.asm_exports(text)), {2: ["sceFoo"], 3: ["sceBar"]})
 
 
 if __name__ == "__main__":
