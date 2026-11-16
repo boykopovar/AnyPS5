@@ -446,6 +446,13 @@ extern "C" char APS5_VABI NumpunctThousandsSep_nid_no_patch(const GuestLocale::N
 extern "C" GuestLocale::String* APS5_VABI NumpunctGrouping_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
 extern "C" GuestLocale::String* APS5_VABI NumpunctFalsename_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
 extern "C" GuestLocale::String* APS5_VABI NumpunctTruename_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self);
+extern "C" void APS5_VABI NumpunctInit_nid_no_patch(GuestLocale::NumpunctFacet* self, const GuestLocale::LocinfoStorage* locinfo, bool isDefault);
+extern "C" void APS5_VABI NumpunctTidy_nid_no_patch(GuestLocale::NumpunctFacet* self);
+extern "C" void APS5_VABI NumpunctConstruct_nid_no_patch(GuestLocale::NumpunctFacet* self, std::size_t references);
+extern "C" void APS5_VABI NumpunctConstructFromLocinfo_nid_no_patch(GuestLocale::NumpunctFacet* self, const GuestLocale::LocinfoStorage* locinfo, std::size_t references, bool isDefault);
+extern "C" void APS5_VABI NumpunctConstructNamed_nid_no_patch(GuestLocale::NumpunctFacet* self, const char* name, std::size_t references, bool isDefault);
+extern "C" void APS5_VABI NumpunctDestroy_nid_no_patch(GuestLocale::NumpunctFacet* self);
+extern "C" void APS5_VABI NumpunctDelete_nid_no_patch(GuestLocale::NumpunctFacet* self);
 extern "C" char APS5_VABI CtypeDoTolower_nid_no_patch(const GuestLocale::CtypeFacet* self, char character);
 extern "C" const char* APS5_VABI CtypeDoTolowerRange_nid_no_patch(const GuestLocale::CtypeFacet* self, char* first, const char* last);
 extern "C" char APS5_VABI CtypeDoToupper_nid_no_patch(const GuestLocale::CtypeFacet* self, char character);

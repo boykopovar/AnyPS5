@@ -118,13 +118,39 @@ static void CheckCollateVtableObject() {
     Require(vtable->hash(&facet, "abc", "abc" + 3) == -1792535898324117685LL);
 }
 
+static bool StringEquals(const GuestLocale::String& value, const char* expected) {
+    const std::size_t length = std::strlen(expected);
+    return value.size == length && value.capacity == 15 && std::memcmp(value.buffer, expected, length + 1) == 0;
+}
+
 static void CheckNumpunctVtableObject() {
-    for (std::uintptr_t& slot : _ZTVSt8numpunctIcE_nid_postfix) {
-        Require(slot == 0);
-        slot = 0x1111;
-        Require(slot == 0x1111);
-        slot = 0;
-    }
+    const auto& slots = _ZTVSt8numpunctIcE_nid_postfix;
+    Require(sizeof(slots) == 88 && slots[0] == 0 && slots[1] == 0);
+    for (std::size_t index = 2; index < std::size(slots); ++index) Require(slots[index] != 0);
+    const auto* vtable = reinterpret_cast<const GuestLocale::NumpunctVtable*>(&slots[2]);
+    GuestLocale::NumpunctFacet facet{};
+    _ZNSt8numpunctIcEC2Em_nid_postfix(&facet, 0);
+    Require(facet.base.vtable == &vtable->facet && facet.base.references == 0);
+    vtable->facet.retain(&facet.base);
+    Require(facet.base.references == 1);
+    Require(vtable->facet.release(&facet.base) == &facet.base && facet.base.references == 0);
+    Require(vtable->decimalPoint(&facet) == '.' && vtable->thousandsSep(&facet) == ',');
+    GuestLocale::String grouping{};
+    GuestLocale::String falsename{};
+    GuestLocale::String truename{};
+    Require(vtable->grouping(&grouping, &facet) == &grouping && StringEquals(grouping, ""));
+    Require(vtable->falsename(&falsename, &facet) == &falsename && StringEquals(falsename, "false"));
+    Require(vtable->truename(&truename, &facet) == &truename && StringEquals(truename, "true"));
+    Require(_ZNKSt8numpunctIcE13decimal_pointEv_nid_postfix(&facet) == '.' && _ZNKSt8numpunctIcE13thousands_sepEv_nid_postfix(&facet) == ',');
+    GuestLocale::String publicTruename{};
+    Require(_ZNKSt8numpunctIcE8truenameEv_nid_postfix(&publicTruename, &facet) == &publicTruename && StringEquals(publicTruename, "true"));
+    vtable->facet.destroy(&facet.base);
+    auto* owned = static_cast<GuestLocale::NumpunctFacet*>(_Znwm_nid_postfix(sizeof(GuestLocale::NumpunctFacet)));
+    _ZNSt8numpunctIcEC1Em_nid_postfix(owned, 1);
+    Require(owned->base.vtable == &vtable->facet && owned->base.references == 1);
+    vtable->facet.deleteObject(&owned->base);
+    RequireException([&] { vtable->facet.destroy(nullptr); });
+    RequireException([&] { vtable->facet.deleteObject(nullptr); });
 }
 
 static void CheckMessagesVtableObject() {
