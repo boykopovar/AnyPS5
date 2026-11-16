@@ -24,7 +24,7 @@ void APS5_VABI hb_shape_nid_postfix(hb_font_t* font, hb_buffer_t* buffer, const 
     if (!hb_buffer_get_length(buffer)) return;
     if (!font || (!features && numFeatures)) NotImplemented_nid_no_patch(__func__);
     std::vector<hb_feature_t> nativeFeatures;
-    std::array<HarfBuzz::Feature, 4096> chunk;
+    std::array<HarfBuzz::Feature, 256> chunk;
     for (unsigned done = 0; done < numFeatures;) {
         const unsigned count = std::min<unsigned>(static_cast<unsigned>(chunk.size()), numFeatures - done);
         if (!GuestCopyIn_nid_no_patch(chunk.data(), features + done, count * sizeof(HarfBuzz::Feature))) NotImplemented_nid_no_patch(__func__);
