@@ -932,5 +932,11 @@ class NidEncodingTests(unittest.TestCase):
                 self.assertEqual(nid_names.compute_nid(name), expected)
 
 
+    def test_strip_nid_postfix_removes_postfix_and_disambig(self):
+        self.assertEqual(nid_names.strip_nid_postfix("foo_nid_postfix"), "foo")
+        self.assertEqual(nid_names.strip_nid_postfix("foo_nid_disambig3"), "foo")
+        self.assertEqual(nid_names.strip_nid_postfix("foo"), "foo")
+
+
 if __name__ == "__main__":
     unittest.main()
