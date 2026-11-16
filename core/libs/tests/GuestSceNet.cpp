@@ -864,6 +864,10 @@ static void CheckEmptyEpoll() {
     Require(epoll >= 0);
     NetEpollEvent event{};
     Require(sceNetEpollWait(epoll, &event, 1, 0) == 0);
+    Require(Failed(sceNetEpollControl(epoll, 4, 0, nullptr), 22));
+    Require(Failed(sceNetEpollControl(0x7fff, 4, 0, nullptr), 22));
+    NetEpollEvent zeroMask{};
+    Require(Failed(sceNetEpollControl(epoll, 1, 0, &zeroMask), 22));
     std::array<std::chrono::steady_clock::duration, 9> elapsed{};
     for (auto& sample : elapsed) {
         const auto start = std::chrono::steady_clock::now();
@@ -926,6 +930,7 @@ static void CheckResolverEpoll() {
     address = 0;
     Require(sceNetResolverStartNtoa(resolver, "guest-sce-net.resolver-epoll", &address, 0, 0, async) == 0);
     Require(address == 0x0100007fu);
+    Require(Failed(sceNetEpollWait(epoll, reinterpret_cast<NetEpollEvent*>(0x10), 1, 0), 14));
     Require(sceNetEpollWait(epoll, &ready, 1, 0) == 1);
     Require(ready.events == (in | descid) && ready.ident == static_cast<std::uint64_t>(resolver) && ready.data.u64 == 0x1234 && ready.reserved == 0);
     Require(sceNetEpollWait(epoll, &ready, 1, 0) == 0);
@@ -1378,6 +1383,7 @@ static void CheckEpollWritable() {
     registration.data.u32 = 41;
     Require(sceNetEpollControl(epoll, 1, sender, &registration) == 0);
     NetEpollEvent ready{};
+    Require(Failed(sceNetEpollWait(epoll, reinterpret_cast<NetEpollEvent*>(0x10), 1, 1000000), 14));
     Require(sceNetEpollWait(epoll, &ready, 1, 1000000) == 1);
     Require(ready.events == 2 && ready.ident == static_cast<std::uint64_t>(sender) && ready.data.u32 == 41);
     Require(sceNetEpollControl(epoll, 3, sender, nullptr) == 0);

@@ -59,6 +59,7 @@ constexpr std::size_t RUDP_STATUS_SIZE = 0xF8;
 constexpr std::size_t RUDP_CONTEXT_STATUS_SIZE = 0x30;
 constexpr std::size_t RUDP_CONTEXT_STATUS_PARENT = 4;
 constexpr std::size_t RUDP_CONTEXT_STATUS_STATE = 0;
+constexpr std::int32_t RUDP_CONTEXT_STATE_ACTIVATED = 1;
 constexpr std::int32_t RUDP_CONTEXT_STATE_LISTENING = 6;
 constexpr std::size_t RUDP_STATUS_CURRENT_CONTEXTS = 0x64;
 constexpr std::size_t RUDP_CONTEXT_BUFFER_STATUS_SIZE = 16;
@@ -97,6 +98,7 @@ struct RudpContext {
     uint16_t vport = 0;
     uint8_t muxMode = 0;
     bool listening = false;
+    bool activated = false;
     int backlog = 0;
     std::map<int, uint32_t> options = {
         {RUDP_OPTION_MAX_PAYLOAD, 1346},
@@ -216,7 +218,13 @@ int APS5_VABI sceRudpActivate(std::int32_t contextId, const void* address, std::
     if (!g_inited) return RUDP_ERROR_NOT_INITIALIZED;
     if (contextId < 0 || !address) return RUDP_ERROR_INVALID_ARGUMENT;
     static_cast<void>(addressLength);
-    NotImplemented_nid_no_patch(__func__);
+    if (g_handler == nullptr) return RUDP_ERROR_NO_EVENT_HANDLER;
+    if (!valid_ctx(contextId)) return RUDP_ERROR_INVALID_CONTEXT_ID;
+    auto& context = g_ctx.at(contextId);
+    if (!context.bound) return RUDP_ERROR_NOT_BOUND;
+    if (context.listening) return RUDP_ERROR_NOT_ACCEPTABLE;
+    if (context.activated) return RUDP_ERROR_IN_PROGRESS;
+    context.activated = true;
     return 0;
 }
 
@@ -442,6 +450,8 @@ int APS5_VABI sceRudpGetContextStatus(int ctx_id, void* status, std::size_t size
     std::memset(report + RUDP_CONTEXT_STATUS_PARENT, 0xFF, sizeof(std::int32_t));
     if (g_ctx.at(ctx_id).listening) {
         std::memcpy(report + RUDP_CONTEXT_STATUS_STATE, &RUDP_CONTEXT_STATE_LISTENING, sizeof(RUDP_CONTEXT_STATE_LISTENING));
+    } else if (g_ctx.at(ctx_id).activated) {
+        std::memcpy(report + RUDP_CONTEXT_STATUS_STATE, &RUDP_CONTEXT_STATE_ACTIVATED, sizeof(RUDP_CONTEXT_STATE_ACTIVATED));
     }
     const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(status, report, size);
@@ -772,6 +782,7 @@ int APS5_VABI sceRudpListen(int ctxId, int backlog) {
     if (!context.bound || context.muxMode != RUDP_MUXMODE_SERVER) {
         return RUDP_ERROR_NOT_ACCEPTABLE;
     }
+    if (context.activated) NotImplemented_nid_no_patch(__func__);
     if (context.listening) {
         return RUDP_ERROR_IN_PROGRESS;
     }
