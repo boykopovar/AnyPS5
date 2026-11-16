@@ -58,6 +58,12 @@ void TestTransferringMountPs4() {
     Check(result.mount_point.data[0] == '\0', "TransferringMount reports no mount point");
     Check(sceSaveDataTransferringMount(nullptr, nullptr) == SaveDataErrorNotFound, "TransferringMount handles null arguments");
     Check(sceSaveDataTransferringMountPs4(nullptr, nullptr) == SaveDataErrorNotFound, "TransferringMountPs4 handles null arguments");
+    errno = 71;
+    Check(sceSaveDataTransferringMount(&mount, reinterpret_cast<SaveDataMountResult*>(0x10)) == SaveDataErrorParameter, "TransferringMount handles unmapped result pointer");
+    Check(errno == 71, "TransferringMount preserves errno");
+    errno = 71;
+    Check(sceSaveDataTransferringMountPs4(&mount, reinterpret_cast<SaveDataMountResult*>(0x10)) == SaveDataErrorParameter, "TransferringMountPs4 handles unmapped result pointer");
+    Check(errno == 71, "TransferringMountPs4 preserves errno");
 }
 
 void TestDirNameSearchPs4() {
