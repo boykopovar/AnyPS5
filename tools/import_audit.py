@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 from collections import defaultdict
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import nid_names
 import progress
@@ -818,8 +818,10 @@ def always_stub_calls(text):
 
 def conditional_stubs(library):
     conditional = set()
+    flavor = PureWindowsPath if os.name == "nt" else Path
+    library_flavored = flavor(str(library))
     for source in library.rglob("*.cpp"):
-        if "tests" in source.relative_to(library).parts:
+        if "tests" in flavor(str(source)).relative_to(library_flavored).parts:
             continue
         text = progress.code(source.read_text(encoding="utf-8", errors="ignore"))
         calls = always_stub_calls(text)
