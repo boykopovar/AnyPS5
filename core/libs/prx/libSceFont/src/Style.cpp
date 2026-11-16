@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <cerrno>
 #include <cstring>
 #include <stdexcept>
 
@@ -129,9 +130,9 @@ void ResetDpiOutputs(std::uint32_t* hDpi, std::uint32_t* vDpi) {
 }
 
 void ResetWeightOutputs(float* weightXScale, float* weightYScale, std::uint32_t* mode) {
-    if (weightXScale) *weightXScale = 1.0f;
-    if (weightYScale) *weightYScale = 1.0f;
-    if (mode) *mode = 0;
+    if (weightXScale) CopyOutGuest(weightXScale, 1.0f);
+    if (weightYScale) CopyOutGuest(weightYScale, 1.0f);
+    if (mode) CopyOutGuest(mode, std::uint32_t{0});
 }
 
 float ClampWeightDelta(float scale) {
@@ -146,7 +147,13 @@ extern "C" {
 
 int APS5_VABI sceFontDefineAttribute(FontHandle fontHandle, int attribute, int* oldAttribute) {
     return AccessFontSettings(fontHandle, [&](FontState& state) {
-        if (oldAttribute) *oldAttribute = state.attribute;
+        if (oldAttribute) {
+            const int previous = state.attribute;
+            const int savedErrno = errno;
+            const bool copied = GuestCopyOut_nid_no_patch(oldAttribute, &previous, sizeof(previous));
+            errno = savedErrno;
+            if (!copied) return SCE_FONT_ERROR_INVALID_PARAMETER;
+        }
         state.attribute = attribute;
         return SCE_FONT_OK;
     });
@@ -262,9 +269,21 @@ int APS5_VABI sceFontGetEffectSlant(FontHandle fontHandle, float* slantRatio) {
 }
 
 int APS5_VABI sceFontGetEffectWeight(FontHandle fontHandle, float* weightXScale, float* weightYScale, std::uint32_t* mode) {
-    const int rc = ReadFontStyle(fontHandle, true, [&](FontHandleNative* font) { return StyleStateGetWeightScale(&font->style, weightXScale, weightYScale, mode); });
-    if (rc != SCE_FONT_OK) ResetWeightOutputs(weightXScale, weightYScale, mode);
-    return rc;
+    float localX = 1.0f;
+    float localY = 1.0f;
+    std::uint32_t localMode = 0;
+    const int rc = ReadFontStyle(fontHandle, true, [&](FontHandleNative* font) {
+        if (!weightXScale && !weightYScale && !mode) return SCE_FONT_ERROR_INVALID_PARAMETER;
+        return StyleStateGetWeightScale(&font->style, weightXScale ? &localX : nullptr, weightYScale ? &localY : nullptr, mode ? &localMode : nullptr);
+    });
+    if (rc != SCE_FONT_OK) {
+        ResetWeightOutputs(weightXScale, weightYScale, mode);
+        return rc;
+    }
+    if (weightXScale && !CopyOutGuest(weightXScale, localX)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (weightYScale && !CopyOutGuest(weightYScale, localY)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (mode && !CopyOutGuest(mode, localMode)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    return SCE_FONT_OK;
 }
 
 int APS5_VABI sceFontSetupRenderScalePixel(FontHandle fontHandle, float w, float h) {

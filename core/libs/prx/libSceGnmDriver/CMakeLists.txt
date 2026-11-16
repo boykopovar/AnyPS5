@@ -1,4 +1,4 @@
-add_library(libSceGnmDriver SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp)
+add_library(libSceGnmDriver SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp ${CMAKE_CURRENT_SOURCE_DIR}/Export.Draw.cpp)
 target_include_directories(libSceGnmDriver PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libSceGnmDriver PRIVATE libSceAgcDriver libSceVideoOut libkernel_sys)
 configure_windows_unwind(libSceGnmDriver)
@@ -33,10 +33,22 @@ if(BUILD_TESTING)
     target_include_directories(guest_gnm_driver_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_gnm_driver_tests PRIVATE libSceGnmDriver libSceAgcDriver libc)
     configure_windows_unwind(guest_gnm_driver_tests)
+    add_subdirectory(tests)
     add_test(NAME guest_gnm_driver COMMAND guest_gnm_driver_tests)
     set_tests_properties(guest_gnm_driver PROPERTIES TIMEOUT 60)
     if(WIN32)
         set_tests_properties(guest_gnm_driver PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceGnmDriver>")
+    endif()
+
+    add_test_executable(guest_gnm_eq_event_type_tests ${LIBS_INCLUDE_DIR}/tests/GuestGnmEqEventType.cpp)
+    target_include_directories(guest_gnm_eq_event_type_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_gnm_eq_event_type_tests PRIVATE libSceGnmDriver libSceAgcDriver libc)
+    configure_windows_unwind(guest_gnm_eq_event_type_tests)
+    add_test(NAME guest_gnm_eq_event_type COMMAND guest_gnm_eq_event_type_tests)
+    set_tests_properties(guest_gnm_eq_event_type PROPERTIES TIMEOUT 60)
+    if(WIN32)
+        set_tests_properties(guest_gnm_eq_event_type PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceGnmDriver>")
     endif()
 
