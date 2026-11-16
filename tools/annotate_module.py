@@ -34,6 +34,7 @@ DT_REL = 17
 DT_RELA_KIND = 7
 STT_FUNC = 2
 STT_TLS = 6
+STT_GNU_IFUNC = 10
 SHN_COMMON = 0xFFF2
 GHIDRA_MAX_NAME_LENGTH = 2000
 DT_GNU_HASH = 0x6ffffef5
@@ -263,9 +264,9 @@ def ghidra_symbols(module, namer):
     for symbol, section, address, kind in module.exported_symbols():
         if kind == STT_TLS or section == SHN_COMMON:
             continue
-        function = kind == STT_FUNC and any(flags & PF_X and start <= address < start + size and
-                                           offset + address - start < len(module.data)
-                                           for start, offset, size, flags in module.loads)
+        function = kind in (STT_FUNC, STT_GNU_IFUNC) and any(flags & PF_X and start <= address < start + size and
+                                                          offset + address - start < len(module.data)
+                                                          for start, offset, size, flags in module.loads)
         rows.add((address, function, namer.resolve(symbol), symbol))
     names, functions, lines = set(), set(), []
     for address, function, resolved, symbol in sorted(rows, key=lambda row: (row[0], not row[1], row[2] == row[3].split("#", 1)[0], row[2], row[3])):

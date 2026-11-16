@@ -697,10 +697,6 @@ int APS5_VABI _ZN9Inspector22InspectorDebuggerAgent24updatePauseReasonAndDataENS
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF9BitVector15resizeOutOfLineEm() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3JSC18GCActivityCallback18tryCreateFullTimerEPNS_4HeapE() {
     NotImplemented_nid_no_patch(__func__);
 }

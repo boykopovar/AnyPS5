@@ -8,6 +8,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 
 ### Unknown function info
 
+- [Smart replace exemptions](../../../core/libs/prx/libSceNKWebKit/src/SmartReplace.cpp) - console ABI and behavior are unmeasured. Follows [SmartReplace.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/editing/SmartReplace.cpp#L45-L109) at `80f77e94`: PlayStation uses `!USE(CF)` (`PlatformUse.h` enables CF only for Cocoa; `OptionsPlayStation.cmake` requires ICU). Inclusive CJK endpoints and direction-specific punctuation are preserved; whitespace and punctuation properties call existing libSceIcu `_nid_postfix` exports. Invalid Unicode values are passed through to ICU. The console ICU Unicode version remains unverified. Closes when: measured on console.
 - [VP codec parser](../../../core/libs/prx/libSceNKWebKit/src/VPCodec.cpp) (`nmGqNyrNQj0`) ports [VP9Utilities.cpp:37–276](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/VP9Utilities.cpp#L37-L276). Console ABI/layout is unmeasured. The [record header:107–119](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/VP9Utilities.h#L107-L119) with the existing eight-byte non-trivial WTF String gives a 16-byte record, fields at 8–15, and a 24-byte std::optional with engagement at 16 in a GCC 15 real-header/shim probe. Native non-trivial return uses hidden sret; StringView is passed by value. Closes when measured on console.
 
 - [VP codec splitting](../../../core/libs/prx/libSceNKWebKit/src/VPCodec.cpp) skips empty components per [StringView.h:1047–1099](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/text/StringView.h#L1047-L1099) and [StringView.cpp:140–165](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/text/StringView.cpp#L140-L165). Null accessed storage throws instead of invalid access; console execution is unverified.
@@ -194,7 +195,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 
 ### Known export names; ABI prototypes unverified
 
-- The 109 remaining WebCore, WebKit C API, JavaScriptCore, Inspector and WTF exports in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp) are present in the PS5 3.20 `libSceNKWebKit` export inventory from [PS5-3.20_Libs](https://github.com/DNNDHH/PS5-3.20_Libs). Each is named after the symbol the [verified NID name database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) gives for its NID, and the NID of that name matches. Prototypes and behavior are unverified; each uses the no-parameter import-resolution convention and throws through `NotImplemented_nid_no_patch`. These declarations make no ABI or behavior claim.
+- The 108 remaining WebCore, WebKit C API, JavaScriptCore, Inspector and WTF exports in [Export.cpp](../../../core/libs/prx/libSceNKWebKit/Export.cpp) are present in the PS5 3.20 `libSceNKWebKit` export inventory from [PS5-3.20_Libs](https://github.com/DNNDHH/PS5-3.20_Libs). Each is named after the symbol the [verified NID name database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) gives for its NID, and the NID of that name matches. Prototypes and behavior are unverified; each uses the no-parameter import-resolution convention and throws through `NotImplemented_nid_no_patch`. These declarations make no ABI or behavior claim.
 
 ### Older callable exports
 
@@ -251,7 +252,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKBundleFrameCreateHitTestResult` | `OuVGXFusQvs` |
 | `WKBundleFrameFocus` | `kgGUjo9h2ao` |
 | `WKBundleFrameForJavaScriptContext` | `26sRl2nNXaE` |
-| `WKBundleFrameGetContentBounds` | `NC762sOoy-g` |
 | `WKBundleFrameGetDocumentBackgroundColor` | `qXfTToOHVgs` |
 | `WKBundleFrameGetFrameLoadState` | `jB0PrHhQOZ8` |
 | `WKBundleFrameGetJavaScriptContextForWorld` | `dmRRBt+qPcs` |
@@ -261,11 +261,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKBundleFrameGetPage` | `P8y9OgqOGts` |
 | `WKBundleFrameGetParentFrame` | `v2hk1-AZ06A` |
 | `WKBundleFrameGetPendingUnloadCount` | `4ZQbnnW1z+Q` |
-| `WKBundleFrameGetScrollOffset` | `hYAhYYYeVZA` |
-| `WKBundleFrameGetVisibleContentBounds` | `53ZFAkGdDkU` |
-| `WKBundleFrameGetVisibleContentBoundsExcludingScrollbars` | `cPtt38dvZK8` |
-| `WKBundleFrameHasHorizontalScrollbar` | `PvA6Ayn4Kjk` |
-| `WKBundleFrameHasVerticalScrollbar` | `v1lCb6JzKZ0` |
 | `WKBundleFrameIsMainFrame` | `GJ+VEmIdxUQ` |
 | `WKBundleFrameSetAccessibleName` | `IVaowWLHMK0` |
 | `WKBundleFrameSetTextDirection` | `cwtdZPMOggg` |
@@ -5983,6 +5978,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [WTF StringBuilder](../../../core/libs/prx/libSceNKWebKit/src/StringBuilder.cpp) (libSceNKWebKit) - throws where WebKit crashes: an overflow of a builder that crashes on overflow, a length sum above `UINT32_MAX`, `toString` after an overflow, and null characters with a nonzero length. It also throws where a debug assertion guards memory WebKit would corrupt: `reserveCapacity` on an empty 16-bit builder without a buffer, and [`appendQuotedJSONString`](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/text/StringBuilderJSON.cpp#L127-L128) of a 16-bit string into an 8-bit builder that holds an adopted string and no buffer. A capacity above the tree's `StringImpl` limit records an overflow, as a failed allocation does. Growing or shrinking a buffer with one reference copies it instead of calling `fastRealloc`, so its address always changes.
 - [WTF TextStream pointers](../../../core/libs/prx/libSceNKWebKit/src/TextStream.cpp) (libSceNKWebKit) - `operator<<(const void*)` formats the pointer as the tree's libc formats `%p` ([`snprintf`](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/text/TextStream.cpp#L114-L119) in WebKit); the console libc's output is unverified.
 - [WKBundleNodeHandle document and frame getters](../../../core/libs/prx/libSceNKWebKit/src/BundleNodeHandle.cpp) (libSceNKWebKit) - no export creates a `WKBundleNodeHandle` or connects DOM bindings yet, so getters return null until DOM node and frame references are connected.
+- [WKBundleFrame bounds and scrollbar queries](../../../core/libs/prx/libSceNKWebKit/src/BundleFrameScroll.cpp) (libSceNKWebKit) - no export creates a `WKBundleFrame` or drives layout and scrolling yet, so queries always return the default zeros until frame layout is connected.
 - [WKBundleHitTestResult property getters](../../../core/libs/prx/libSceNKWebKit/src/BundleHitTestResult.cpp) (libSceNKWebKit) - `WKBundleHitTestResultCopyAbsoluteImageURL`, `WKBundleHitTestResultCopyAbsoluteLinkURL`, `WKBundleHitTestResultCopyAbsoluteMediaURL`, `WKBundleHitTestResultCopyAbsolutePDFURL`, `WKBundleHitTestResultCopyLinkLabel`, `WKBundleHitTestResultCopyLinkTitle`, `WKBundleHitTestResultCopyLinkSuggestedFilename`, `WKBundleHitTestResultGetIsSelected`, `WKBundleHitTestResultGetMediaType`, `WKBundleHitTestResultIsDownloadableMedia`, `WKBundleHitTestResultMediaHasAudio` and `WKBundleHitTestResultMediaIsInFullscreen` inspect hit test results test-driven until injected bundle hit testing produces them.
 - [WKBundleDOMWindowExtension creation and property accessors](../../../core/libs/prx/libSceNKWebKit/src/BundleDOMWindowExtension.cpp) (libSceNKWebKit) - DOM window extensions follow WebKit's Injected Bundle C API, retaining the frame and script world references; DOM window execution is test-driven.
 - [WKDownload property queries and cancellation](../../../core/libs/prx/libSceNKWebKit/src/Download.cpp) (libSceNKWebKit) - download properties and cancellation reflect host state until downloads are connected to network transfers.
