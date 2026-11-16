@@ -213,6 +213,12 @@ class QuietTests(unittest.TestCase):
         self.assertEqual(blanked, "sizeof(" + " " * 4 + ")")
         self.assertEqual(len(blanked), len(text))
 
+    def test_quiet_blanks_only_the_listed_arguments_of_safe_copies(self):
+        blanked = guest_pointer_audit.quiet("GuestCopyIn_nid_no_patch(dst, p->x, n)")
+        self.assertNotIn("p->x", blanked)
+        self.assertIn("n", blanked)
+        self.assertEqual(guest_pointer_audit.quiet("GuestCopyIn_nid_no_patch(a, b)", safe=False), "GuestCopyIn_nid_no_patch(a, b)")
+
 
 if __name__ == "__main__":
     unittest.main()
