@@ -24,6 +24,13 @@ class PrepareReleaseNotesTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 prepare_release_notes.prepare_notes(source, source, Path(directory) / "full.md")
 
+    def test_prepare_notes_rejects_non_object_payload(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.json"
+            source.write_text("[1, 2]", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                prepare_release_notes.prepare_notes(source, Path(directory) / "body.md", Path(directory) / "full.md")
+
 
 if __name__ == "__main__":
     unittest.main()
