@@ -611,6 +611,10 @@ class PageAndCacheHelperTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "non-array page"):
             pr_overlap.decode_pages("{}")
 
+    def test_repair_escapes_keeps_valid_escapes_and_doubles_invalid_ones(self):
+        self.assertEqual(pr_overlap.repair_escapes("a\\nb"), "a\\nb")
+        self.assertEqual(pr_overlap.repair_escapes("\\q"), "\\\\q")
+
 
 if __name__ == "__main__":
     unittest.main()
