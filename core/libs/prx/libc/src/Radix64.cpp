@@ -9,6 +9,7 @@
  */
 
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
@@ -33,8 +34,11 @@ extern "C" std::int64_t APS5_VABI a64l_nid_postfix(const char* s) {
     if (!s) return 0;
     std::uint32_t value = 0;
     int shift = 0;
-    for (int i = 0; i < 6 && s[i] != '\0'; ++i, shift += 6) {
-        value |= static_cast<std::uint32_t>(DecodeDigit(static_cast<signed char>(s[i]))) << shift;
+    for (int i = 0; i < 6; ++i, shift += 6) {
+        char c = '\0';
+        if (!GuestCopyIn_nid_no_patch(&c, s + i, sizeof(c))) return 0;
+        if (c == '\0') break;
+        value |= static_cast<std::uint32_t>(DecodeDigit(static_cast<signed char>(c))) << shift;
     }
     return static_cast<std::int64_t>(static_cast<std::int32_t>(value));
 }
@@ -43,11 +47,10 @@ extern "C" int APS5_VABI l64a_r_nid_postfix(std::int64_t value, char* buffer, in
     if (!buffer || buflen <= 0) return -1;
     auto v = static_cast<std::uint32_t>(value);
     while (buflen-- > 0) {
-        if (v == 0) {
-            *buffer = '\0';
-            return 0;
-        }
-        *buffer++ = kRadix64Table[v & 0x3f];
+        const char c = v == 0 ? '\0' : kRadix64Table[v & 0x3f];
+        if (!GuestCopyOut_nid_no_patch(buffer, &c, sizeof(c))) return -1;
+        if (v == 0) return 0;
+        ++buffer;
         v >>= 6;
     }
     return -1;

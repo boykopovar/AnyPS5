@@ -1,0 +1,5 @@
+# libwebrtc
+
+## add Public source implementations
+
+- [webrtc::SdpAudioFormat copy constructor, move constructor, copy assignment and destructor](../../../core/libs/prx/libwebrtc/src/SdpAudioFormat.cpp) (libwebrtc) - console layout, allocator large-block rule and fault behavior on invalid pointers are unverified. The 80-byte struct (`std::string` name at 0, `clockrate_hz` at 40, `num_channels` at 48, `CodecParameterMap` RB-tree at 56) and 112-byte map nodes match [audio_format.h](https://webrtc.googlesource.com/src/+/8d78f5de6c27b2c793039989ea381f1428fb0100/api/audio_codecs/audio_format.h) and [audio_format.cc](https://webrtc.googlesource.com/src/+/8d78f5de6c27b2c793039989ea381f1428fb0100/api/audio_codecs/audio_format.cc), identical at M127 and M134, using `GuestStringStorage` and guest `operator new`/`operator delete`. Null, unwritable or unmapped objects, malformed strings and inconsistent or cyclic trees throw `std::invalid_argument` while preserving `errno` and leaving the destination unchanged on assignment failure. Closes when: compared with the console.
