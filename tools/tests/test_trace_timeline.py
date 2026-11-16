@@ -327,6 +327,12 @@ class ArgumentValueTests(unittest.TestCase):
         for value in ('0', '-2', 'x', '1.5'):
             with self.subTest(value=value), self.assertRaises(argparse.ArgumentTypeError):
                 trace_timeline.positive_integer(value)
+class PageTests(unittest.TestCase):
+    def test_page_escapes_title_and_notes_and_keeps_the_svg(self):
+        text = trace_timeline.page('<svg id="s"></svg>', '<b>T</b>', ['a < b'])
+        self.assertIn('<title>&lt;b&gt;T&lt;/b&gt;</title>', text)
+        self.assertIn('<li>a &lt; b</li>', text)
+        self.assertIn('<svg id="s"></svg></body>', text)
 
 
 if __name__ == "__main__":
