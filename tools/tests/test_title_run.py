@@ -34,6 +34,8 @@ class TitlesTests(unittest.TestCase):
     def test_repository_file_is_valid(self):
         titles = title_run.load_titles(title_run.ROOT / "tools/titles.json")
         self.assertEqual(titles["PPSA85300"]["relink"], ["--registry"])
+        self.assertEqual(sorted(title_id for title_id, entry in titles.items() if entry.get("smoke")),
+                         ["PPSA17641", "PPSA85300", "PPSA98766", "PPSA99203", "PPSA99505", "PPSA99666"])
 
     def test_unknown_field_is_refused(self):
         with self.assertRaisesRegex(ValueError, "PPSA00001: unknown field rlink"):
@@ -42,6 +44,8 @@ class TitlesTests(unittest.TestCase):
     def test_wrong_type_is_refused(self):
         with self.assertRaisesRegex(ValueError, "PPSA00001: seconds must be a positive integer"):
             title_run.load_titles(self.write({"PPSA00001": {"seconds": "60"}}))
+        with self.assertRaisesRegex(ValueError, "PPSA00001: smoke must be bool"):
+            title_run.load_titles(self.write({"PPSA00001": {"smoke": 1}}))
 
     def test_catalog_seconds_must_be_a_positive_integer(self):
         for value in (True, False, 0, -1):
@@ -282,6 +286,13 @@ class ReportTests(unittest.TestCase):
         now["machine"] = {"os": "", "gpu": "", "driver": "", "cpu": "Ryzen AI 7 350"}
         self.assertTrue(title_run.render_markdown(now).startswith("AnyPS5 `abc1234`, main + #6814. CPU Ryzen AI 7 350. 2 runs"))
 
+    def test_render_markdown_states_the_run_length_of_the_titles(self):
+        for lengths, stated in (((90, 90), "90 s each."), ((30, 120, 45), "30 to 120 s each.")):
+            with self.subTest(lengths=lengths):
+                now = summary({f"PPSA0000{index}": {"name": "Game", "version": "1", "seconds": seconds, "runs": [run("rendering")]}
+                               for index, seconds in enumerate(lengths)})
+                self.assertIn(f" 2 runs per title, {stated}\n", title_run.render_markdown(now))
+
     def test_render_markdown_skips_runs_without_an_error(self):
         now = summary({"PPSA01325": {"name": "Playroom", "version": "01.905.000",
                                      "runs": [run("stalled"), run("crashed", "warm", error="vkQueueSubmit recorder: Vulkan result -4")]}})
@@ -332,6 +343,50 @@ class PreparationTests(unittest.TestCase):
         again = title_run.lock_work(out / "work/PPSA00001.lock")
         self.assertIsNotNone(again)
         again.close()
+
+    def test_unreadable_catalog_and_comparison_files_are_reported_without_a_traceback(self):
+        import contextlib
+        import io
+        package(self.root / "games/PPSA00001", "PPSA00001")
+        unknown = self.root / "unknown.json"
+        unknown.write_text(json.dumps({"PPSA00001": {"rlink": []}}), encoding="utf-8")
+        invalid = self.root / "invalid.json"
+        invalid.write_text("not json", encoding="utf-8")
+        for option, path, message in (("--titles", self.root / "missing.json", "No such file"), ("--titles", self.root / "games", ""),
+                                      ("--titles", unknown, "unknown field rlink"), ("--titles", invalid, "Expecting value"),
+                                      ("--compare", self.root / "missing.json", "No such file"), ("--compare", invalid, "Expecting value")):
+            with self.subTest(option=option, path=path.name):
+                errors = io.StringIO()
+                with contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as raised:
+                    title_run.main(["--games", str(self.root / "games"), "--out", str(self.root / "out"), option, str(path)])
+                self.assertEqual(raised.exception.code, 2)
+                self.assertIn(f"error: {option}: ", errors.getvalue())
+                self.assertIn(message, errors.getvalue())
+                self.assertFalse((self.root / "out").exists())
+
+    def test_smoke_runs_the_marked_titles(self):
+        for title_id in ("PPSA00001", "PPSA00002", "PPSA00003"):
+            package(self.root / "games" / title_id, title_id)
+        titles = self.root / "titles.json"
+        titles.write_text(json.dumps({"PPSA00001": {"smoke": True}, "PPSA00002": {}, "PPSA00003": {"smoke": True}}), encoding="utf-8")
+        out = self.root / "out"
+        held = [title_run.lock_work(out / f"work/{title_id}.lock") for title_id in ("PPSA00001", "PPSA00002", "PPSA00003")]
+        for handle in held:
+            self.addCleanup(handle.close)
+        with self.assertRaisesRegex(SystemExit, r"already running in .*: PPSA00001, PPSA00003$"):
+            title_run.main(["--games", str(self.root / "games"), "--out", str(out), "--titles", str(titles), "--smoke"])
+
+    def test_smoke_refuses_title_ids_and_an_empty_set(self):
+        package(self.root / "games/PPSA00001", "PPSA00001")
+        titles = self.root / "titles.json"
+        titles.write_text(json.dumps({"PPSA00001": {}}), encoding="utf-8")
+        common = ["--games", str(self.root / "games"), "--out", str(self.root / "out"), "--titles", str(titles), "--smoke"]
+        with unittest.mock.patch("sys.stderr"), self.assertRaises(SystemExit) as raised:
+            title_run.main(common + ["PPSA00001"])
+        self.assertEqual(raised.exception.code, 2)
+        with self.assertRaisesRegex(SystemExit, "no title in .* is marked smoke"):
+            title_run.main(common)
+        self.assertFalse((self.root / "out").exists())
 
     def test_discover(self):
         package(self.root / "a/src/PPSA00001", "PPSA00001", "01.000.110", "Light")
@@ -403,6 +458,18 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual(staged, ["Media/Modules/Il2CppUserAssemblies.prx", "Media/Plugins/lib_burst_generated.prx", "eboot.elf", "sce_module/libc.prx"])
         self.assertEqual(title_run.module_dirs({"relink": ["--module-dir"]}), [])
 
+    def test_standard_module_dirs_are_staged_without_a_module_dir(self):
+        source = package(self.root / "pkg", "PPSA00001")
+        elf = b"\x7fELF" + bytes(60)
+        for name in ("eboot.bin", "sce_module/libc.prx", "sce_modules/libfoo.prx", "prx/akcompressor.prx", "prx/readme.txt"):
+            (source / name).parent.mkdir(parents=True, exist_ok=True)
+            (source / name).write_bytes(elf if name.endswith((".bin", ".prx")) else b"text")
+        expected = ["eboot.elf", "prx/akcompressor.prx", "sce_module/libc.prx", "sce_modules/libfoo.prx"]
+        for index, entry in enumerate(({}, {"relink": ["--module-dir", "prx"]})):
+            target = self.root / f"input{index}"
+            title_run.stage_inputs(source, entry, target)
+            self.assertEqual(sorted(path.relative_to(target).as_posix() for path in target.rglob("*.*")), expected)
+
     def test_module_dirs_keep_every_module_and_empty_directories(self):
         source = package(self.root / "pkg", "PPSA00001")
         elf = b"\x7fELF" + bytes(60)
@@ -454,6 +521,51 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual((work / "app0/id1/pak0.pak").read_bytes(), b"PACK")
         self.assertFalse((work / "data/media/clip.mp4").exists())
         self.assertEqual(title_run.stage_files({"app0/id1/pak0.pak": {"content": "quake/pak0.pak"}}, work, None), ["quake/pak0.pak"])
+
+    def test_a_non_ascii_title_name_is_reported_as_utf8(self):
+        package(self.root / "games/PPSA00001", "PPSA00001", name="テスト")
+        out = self.root / "out"
+        build = self.root / "build"
+        build.mkdir()
+        done = subprocess.run([sys.executable, str(Path(title_run.__file__)), "--games", str(self.root / "games"), "--out", str(out),
+                               "--build", str(build), "--runs", "1", "PPSA00001"],
+                              capture_output=True, env={**os.environ, "PYTHONIOENCODING": "cp1252"}, timeout=120)
+        self.assertEqual(done.returncode, 0, done.stderr.decode("utf-8", "replace"))
+        stdout = done.stdout.decode("utf-8")
+        self.assertIn("| テスト | PPSA00001 |", stdout)
+        self.assertIn(f"written to {out.resolve()}", stdout)
+
+    def test_json_comparison_is_the_only_output_on_stdout(self):
+        package(self.root / "games/PPSA00001", "PPSA00001")
+        titles = self.root / "titles.json"
+        titles.write_text(json.dumps({"PPSA00001": {"files": {"app0/pak0.pak": {"content": "pak0.pak"}}}}), encoding="utf-8")
+        previous = self.root / "previous.json"
+        previous.write_text(json.dumps(summary({"PPSA00001": {"name": "Game", "version": "01.000.000", "runs": [run("rendering", fps=30.0)]}})),
+                            encoding="utf-8")
+
+        def prepare(title_id, found, entry, platform, build, work):
+            work.mkdir(parents=True, exist_ok=True)
+            (work / "relink.log").write_text("", encoding="utf-8")
+            return work / title_id
+
+        def run_title(executable, work, run_dir, seconds, extra_env, pad=None):
+            return {"outcome": "exited", "exit_code": 0, "seconds": 0.1, "presents": 0, "fps": 0.0, "first_error": "", "warnings": {},
+                    "frames": [], "report": None, "os": "", "gpu": "", "driver": "", "cpu": ""}
+
+        out = self.root / "out"
+        with tempfile.TemporaryFile("w+", encoding="utf-8") as stdout, tempfile.TemporaryFile("w+", encoding="utf-8") as stderr:
+            with unittest.mock.patch.object(title_run, "prepare", side_effect=prepare), \
+                    unittest.mock.patch.object(title_run, "run_title", side_effect=run_title), \
+                    unittest.mock.patch("sys.stdout", stdout), unittest.mock.patch("sys.stderr", stderr):
+                title_run.main(["--games", str(self.root / "games"), "--out", str(out), "--build", str(self.root / "build"), "--titles", str(titles),
+                                "--runs", "2", "--compare", str(previous), "--json", "PPSA00001"])
+            stdout.seek(0)
+            stderr.seek(0)
+            printed, progress = stdout.read(), stderr.read()
+        self.assertEqual(json.loads(printed)["titles"]["PPSA00001"]["fps"], {"before": 30.0, "now": 0.0})
+        self.assertIn("PPSA00001: --content lacks pak0.pak; running without\n", progress)
+        self.assertIn("PPSA00001 run1: exited\nPPSA00001 run2: exited\n", progress)
+        self.assertIn(f"written to {out.resolve()}", progress)
 
 
 def wait_until(condition, seconds=10):
@@ -561,7 +673,8 @@ class SessionTests(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "nt", "junctions are Windows-specific")
     def test_exit_code_follows_a_junctioned_interpreter(self):
-        target = Path(sys.executable).parent
+        interpreter = Path(getattr(sys, "_base_executable", sys.executable))
+        target = interpreter.parent
         directory = Path(tempfile.mkdtemp(prefix="title-run-junction-"))
         link = directory / "python"
         session = None
@@ -570,7 +683,7 @@ class SessionTests(unittest.TestCase):
             if made.returncode != 0:
                 self.skipTest("cannot create a junction: " + made.stderr.strip())
             child = "import subprocess, sys; subprocess.Popen([sys.executable, '-c', 'import time, sys; time.sleep(1); sys.exit(7)'])"
-            session = title_run.Session([str(link / Path(sys.executable).name), "-c", child], Path.cwd(), dict(os.environ), subprocess.DEVNULL, subprocess.DEVNULL, owned=link)
+            session = title_run.Session([str(link / interpreter.name), "-c", child], Path.cwd(), dict(os.environ), subprocess.DEVNULL, subprocess.DEVNULL, owned=link)
             self.assertTrue(wait_until(lambda: not session.alive()))
             self.assertEqual(session.exit_code(), 7)
         finally:
@@ -806,6 +919,28 @@ class RunReportTests(unittest.TestCase):
         document = self.report()
         document["run"]["averageFps"] = None
         self.assertIsNone(self.read(document)["averageFps"])
+
+    def test_frame_percentiles_reach_both_comparison_outputs(self):
+        def summary(run):
+            report = self.read(self.report(run=run))
+            return {"titles": {"PPSA00001": {"name": "Game", "runs": [{"outcome": "rendering", "report": report}]}}}
+
+        before = summary({"frameMs": {"p50": 12.0, "p90": 16.5, "p99": 41.7}})
+        now = summary({"frameMs": {"p50": 11.0, "p90": 16.0, "p99": 29.5}})
+        lines = title_run.render_compare(title_run.compare_runs(now, before))
+        expected = {"p50": {"before": 12.0, "now": 11.0}, "p90": {"before": 16.5, "now": 16.0},
+                    "p99": {"before": 41.7, "now": 29.5}}
+        self.assertEqual(json.loads(title_run.compare_json(now, before))["titles"]["PPSA00001"]["frameMs"], expected)
+        for percentile, values in expected.items():
+            self.assertIn(f"| Game | PPSA00001 | Frame time {percentile} (ms) | {values['before']} | {values['now']} |",
+                          lines)
+        for run in ({}, {"frameMs": None}):
+            with self.subTest(run=run):
+                unrecorded = summary(run)
+                missing = json.loads(title_run.compare_json(now, unrecorded))["titles"]["PPSA00001"]["frameMs"]
+                self.assertEqual(missing["p99"], {"before": None, "now": 29.5})
+                self.assertIn("| Game | PPSA00001 | Frame time p99 (ms) | not recorded | 29.5 |",
+                              title_run.render_compare(title_run.compare_runs(now, unrecorded)))
 
     def test_unreadable_reports_are_not_recorded(self):
         self.assertIsNone(feature("read_report")(self.root / "missing.json"))

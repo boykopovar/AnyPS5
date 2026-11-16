@@ -1,7 +1,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "prx/libSceNKWebKit/include/WtfExports.hpp"
 
-#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -145,7 +145,7 @@ static void TestContainers() {
 
 static void TestCachedPageExpiry() {
     HistoryItem item;
-    const double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    const double now = _ZN3WTF13MonotonicTime3nowEv().m_value;
     CachedPage page{nullptr, now + 60};
     item.cachedPage = &page;
     Require(!_ZNK7WebCore11HistoryItem20hasCachedPageExpiredEv(&item));

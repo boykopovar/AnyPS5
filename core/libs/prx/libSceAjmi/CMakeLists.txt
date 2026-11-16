@@ -3,6 +3,17 @@ target_include_directories(libSceAjmi PRIVATE ${LIBS_INCLUDE_DIR})
 configure_windows_unwind(libSceAjmi)
 
 if(BUILD_TESTING)
+    add_test_executable(guest_ajmi_inline_guest_pointers_tests ${LIBS_INCLUDE_DIR}/tests/GuestAjmiInlineGuestPointers.cpp)
+    target_include_directories(guest_ajmi_inline_guest_pointers_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_ajmi_inline_guest_pointers_tests PRIVATE libSceAjmi libc)
+    configure_windows_unwind(guest_ajmi_inline_guest_pointers_tests)
+    add_test(NAME guest_ajmi_inline_guest_pointers COMMAND guest_ajmi_inline_guest_pointers_tests)
+    set_tests_properties(guest_ajmi_inline_guest_pointers PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_ajmi_inline_guest_pointers PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAjmi>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
     add_test_executable(guest_ajmi_batch_aliases_tests ${LIBS_INCLUDE_DIR}/tests/GuestAjmiBatchAliases.cpp)
     target_include_directories(guest_ajmi_batch_aliases_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_ajmi_batch_aliases_tests PRIVATE libSceAjmi libc ${CMAKE_DL_LIBS})
@@ -38,7 +49,7 @@ if(BUILD_TESTING)
                     "PATH=path_list_prepend:${UNPATCHED_DIR};PATH=path_list_prepend:${ajmiAliasModuleDir}")
             elseif(APPLE)
                 set_tests_properties(guest_ajmi_batch_${operation}_${variant} PROPERTIES ENVIRONMENT_MODIFICATION
-                    "DYLD_LIBRARY_PATH=path_list_prepend:${UNPATCHED_DIR};DYLD_LIBRARY_PATH=path_list_prepend:${ajmiAliasModuleDir}")
+                    "DYLD_FALLBACK_LIBRARY_PATH=path_list_prepend:${UNPATCHED_DIR};DYLD_FALLBACK_LIBRARY_PATH=path_list_prepend:${ajmiAliasModuleDir}")
             else()
                 set_tests_properties(guest_ajmi_batch_${operation}_${variant} PROPERTIES ENVIRONMENT_MODIFICATION
                     "LD_LIBRARY_PATH=path_list_prepend:${UNPATCHED_DIR};LD_LIBRARY_PATH=path_list_prepend:${ajmiAliasModuleDir}")
