@@ -142,6 +142,10 @@ class AsmExportTests(unittest.TestCase):
         text = 'int x;\nAPS5_ASM_FUNCTION("sceFoo")\nAPS5_SIGNAL_ASM_FUNCTION("sceBar")\n'
         self.assertEqual(dict(check_conventions.asm_exports(text)), {2: ["sceFoo"], 3: ["sceBar"]})
 
+    def test_asm_exports_skips_invalid_names_and_comments(self):
+        self.assertEqual(dict(check_conventions.asm_exports('APS5_ASM_FUNCTION("bad name")\n')), {})
+        self.assertEqual(dict(check_conventions.asm_exports('// APS5_ASM_FUNCTION("sceNo")\n')), {})
+
 
 if __name__ == "__main__":
     unittest.main()
