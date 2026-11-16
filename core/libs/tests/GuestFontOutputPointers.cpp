@@ -6,6 +6,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
+#ifdef __linux__
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -15,11 +19,25 @@ static void Check(bool value, int line) {
 }
 #define Require(value) Check((value), __LINE__)
 
+static int liveAllocations = 0;
+#ifdef __linux__
+static void* lockOnAllocate = nullptr;
+#endif
+
 static void* APS5_VABI Allocate(void*, std::uint32_t size) {
-    return std::malloc(size);
+#ifdef __linux__
+    if (lockOnAllocate) {
+        Require(mprotect(lockOnAllocate, static_cast<std::size_t>(sysconf(_SC_PAGESIZE)), PROT_READ) == 0);
+        lockOnAllocate = nullptr;
+    }
+#endif
+    void* block = std::malloc(size);
+    if (block) ++liveAllocations;
+    return block;
 }
 
 static void APS5_VABI Release(void*, void* pointer) {
+    if (pointer) --liveAllocations;
     std::free(pointer);
 }
 
@@ -88,6 +106,27 @@ int main() {
     FontHandle font = nullptr;
     Require(sceFontOpenFontMemory(library, fontData.data(), static_cast<std::uint32_t>(fontData.size()), nullptr, &font) == SCE_FONT_OK);
     Require(sceFontSetScalePixel(font, 100.0f, 100.0f) == SCE_FONT_OK);
+    auto* const unmappedHandle = reinterpret_cast<FontHandle*>(0x10);
+    const auto fontSize = static_cast<std::uint32_t>(fontData.size());
+    FontHandle detailed = reinterpret_cast<FontHandle>(0x1);
+    errno = 71;
+    Require(sceFontOpenFontMemory(library, fontData.data(), fontSize, nullptr, unmappedHandle) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontOpenFontMemory(library, fontData.data(), fontSize, reinterpret_cast<const FontOpenDetail*>(0x10), &detailed) == SCE_FONT_ERROR_INVALID_PARAMETER && detailed == nullptr);
+    Require(sceFontOpenFontFile(library, "/app0/missing.ttf", 1, nullptr, unmappedHandle) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontOpenFontInstance(font, nullptr, unmappedHandle) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(sceFontOpenFontSet(library, 0, 1, nullptr, unmappedHandle) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
+#ifdef __linux__
+    const auto page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* const slotPage = mmap(nullptr, page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(slotPage != MAP_FAILED);
+    auto* const lateSlot = static_cast<FontHandle*>(slotPage);
+    const int allocationsBefore = liveAllocations;
+    lockOnAllocate = slotPage;
+    Require(sceFontOpenFontMemory(library, fontData.data(), fontSize, nullptr, lateSlot) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(lockOnAllocate == nullptr && *lateSlot == nullptr && liveAllocations == allocationsBefore);
+    Require(munmap(slotPage, page) == 0);
+#endif
     FontGlyph glyph = nullptr;
     Require(sceFontGenerateCharGlyph(font, 'A', nullptr, &glyph) == SCE_FONT_OK && glyph != nullptr);
 
