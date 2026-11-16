@@ -54,10 +54,12 @@ static void TestTypeIDs() {
     Require(WKPointGetTypeID() == 34);
     Require(WKSizeGetTypeID() == 35);
     Require(WKRectGetTypeID() == 36);
-    Require(WKCertificateInfoGetTypeID() == 0);
-    Require(WKApplicationCacheManagerGetTypeID() == 0);
-    Require(WKBundleBackForwardListGetTypeID() == 0);
-    Require(WKContextMenuItemGetTypeID() == 0);
+    Require(WKCertificateInfoGetTypeID() == static_cast<std::uint32_t>(NKWebKit::ObjectType::CertificateInfo));
+    Require(WKApplicationCacheManagerGetTypeID() == static_cast<std::uint32_t>(NKWebKit::ObjectType::ApplicationCacheManager));
+    Require(WKBundleBackForwardListGetTypeID() == static_cast<std::uint32_t>(NKWebKit::ObjectType::BundleBackForwardList));
+    Require(WKBundleBackForwardListItemGetTypeID() == static_cast<std::uint32_t>(NKWebKit::ObjectType::BundleBackForwardListItem));
+    Require(WKContextMenuItemGetTypeID() == static_cast<std::uint32_t>(NKWebKit::ObjectType::ContextMenuItem));
+    Require(WKKeyValueStorageManagerGetTypeID() == static_cast<std::uint32_t>(NKWebKit::ObjectType::KeyValueStorageManager));
     Require(WKUserContentExtensionStoreGetTypeID() == 0);
     Require(WKAXObjectGetTypeID() == 132);
     Require(WKRenderLayerGetTypeID() == static_cast<std::uint32_t>(NKWebKit::ObjectType::RenderLayer));
@@ -1883,7 +1885,7 @@ static void TestNotification() {
 }
 
 static void TestCertificateInfo() {
-    Require(WKCertificateInfoGetTypeID() == 0);
+    Require(WKCertificateInfoGetTypeID() == static_cast<std::uint32_t>(NKWebKit::ObjectType::CertificateInfo));
     Require(WKCertificateInfoCreateWithCertficateChain(nullptr) == nullptr);
     Require(WKCertificateInfoGetVerificationError(nullptr) == 0);
     Require(WKCertificateInfoCopyVerificationErrorDescription(nullptr) == nullptr);

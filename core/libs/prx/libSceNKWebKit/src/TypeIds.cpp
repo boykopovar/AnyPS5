@@ -7,7 +7,7 @@ std::uint32_t APS5_VABI WKAXObjectGetTypeID() {
 }
 
 std::uint32_t APS5_VABI WKApplicationCacheManagerGetTypeID() {
-    return 0;
+    return NKWebKit::TypeID(NKWebKit::ObjectType::ApplicationCacheManager);
 }
 
 std::uint32_t APS5_VABI WKArrayGetTypeID() {
@@ -35,11 +35,11 @@ std::uint32_t APS5_VABI WKBooleanGetTypeID() {
 }
 
 std::uint32_t APS5_VABI WKBundleBackForwardListGetTypeID() {
-    return 0;
+    return NKWebKit::TypeID(NKWebKit::ObjectType::BundleBackForwardList);
 }
 
 std::uint32_t APS5_VABI WKBundleBackForwardListItemGetTypeID() {
-    return 0;
+    return NKWebKit::TypeID(NKWebKit::ObjectType::BundleBackForwardListItem);
 }
 
 std::uint32_t APS5_VABI WKBundleDOMWindowExtensionGetTypeID() {
@@ -87,7 +87,7 @@ std::uint32_t APS5_VABI WKBundleScriptWorldGetTypeID() {
 }
 
 std::uint32_t APS5_VABI WKCertificateInfoGetTypeID() {
-    return 0;
+    return NKWebKit::TypeID(NKWebKit::ObjectType::CertificateInfo);
 }
 
 std::uint32_t APS5_VABI WKConnectionGetTypeID() {
@@ -99,7 +99,7 @@ std::uint32_t APS5_VABI WKContextGetTypeID() {
 }
 
 std::uint32_t APS5_VABI WKContextMenuItemGetTypeID() {
-    return 0;
+    return NKWebKit::TypeID(NKWebKit::ObjectType::ContextMenuItem);
 }
 
 std::uint32_t APS5_VABI WKCookieManagerGetTypeID() {
@@ -183,7 +183,7 @@ std::uint32_t APS5_VABI WKInspectorGetTypeID() {
 }
 
 std::uint32_t APS5_VABI WKKeyValueStorageManagerGetTypeID() {
-    return 0;
+    return NKWebKit::TypeID(NKWebKit::ObjectType::KeyValueStorageManager);
 }
 
 std::uint32_t APS5_VABI WKMessageListenerGetTypeID() {
