@@ -1128,6 +1128,9 @@ std::int64_t ReceiveForKernel(int descriptor, void* buffer, std::uint64_t length
 
 const KernelSocketPoll::Forwards g_socketForwards{
     FamilyOfSocket,
+    [](int descriptor, int backlog) {
+        return ErrorOf(sceNetListen(descriptor, backlog));
+    },
     [](int descriptor, const void* address, std::uint32_t length) {
         return ErrorOf(sceNetBind_nid_postfix(descriptor, address, length));
     },
