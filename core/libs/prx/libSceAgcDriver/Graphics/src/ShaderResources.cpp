@@ -11,6 +11,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/PlaceholderImages.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
@@ -510,6 +511,7 @@ struct TextureCounters {
     std::atomic<std::uint64_t> fromStorage{0};
     std::atomic<std::uint64_t> snapshots{0};
     std::atomic<std::uint64_t> cleared{0};
+    std::atomic<std::uint64_t> imported{0};
     std::atomic<std::uint64_t> pendingReads{0};
     std::atomic<std::uint64_t> storageFallbacks{0};
     std::atomic<std::uint64_t> records{0};
@@ -556,7 +558,7 @@ void reportTextureCounters() {
     auto last = counters.lastReport.load();
     if (nowMs - last < 10000 || !counters.lastReport.compare_exchange_strong(last, nowMs)) return;
     const auto count = [](const std::atomic<std::uint64_t>& value) { return static_cast<unsigned long long>(value.load(std::memory_order_relaxed)); };
-    AgcDriver::ProfilePrint_nid_no_patch("[textures] sampled created: %llu from storage images, %llu cleared on the GPU, %llu snapshots (%llu snapshot reads over recorded writes inside cachedTexture, %llu storage-path fallbacks); stage-A records %llu: %llu fast hits, %llu full lookups; storage images %llu hits, %llu created, %llu own-object refreshes; image tables %llu reused, %llu resolved; dynamic-resolution variants: %llu surfaces, %llu entries substituted, %llu entries rejected; %llu one-layer 2D array entries bound to the 2D texture of their surface; untracked snapshots %llu kept by the write-watch hint, %llu compared\n", count(counters.fromStorage), count(counters.cleared), count(counters.snapshots), count(counters.pendingReads), count(counters.storageFallbacks), count(counters.records), count(counters.fastHits), count(counters.fastMisses), count(counters.storageHits), count(counters.storageCreated), count(counters.ownRefreshes), count(counters.tablesReused), count(counters.tablesResolved), count(counters.variantSurfaces), count(counters.variantSubstituted), count(counters.variantRejected), count(counters.arrayViewsShared), count(counters.untrackedKept), count(counters.untrackedCompared));
+    AgcDriver::ProfilePrint_nid_no_patch("[textures] sampled created: %llu from storage images, %llu cleared on the GPU, %llu uploaded on the GPU from host imports, %llu snapshots (%llu snapshot reads over recorded writes inside cachedTexture, %llu storage-path fallbacks); stage-A records %llu: %llu fast hits, %llu full lookups; storage images %llu hits, %llu created, %llu own-object refreshes; image tables %llu reused, %llu resolved; dynamic-resolution variants: %llu surfaces, %llu entries substituted, %llu entries rejected; %llu one-layer 2D array entries bound to the 2D texture of their surface; untracked snapshots %llu kept by the write-watch hint, %llu compared\n", count(counters.fromStorage), count(counters.cleared), count(counters.imported), count(counters.snapshots), count(counters.pendingReads), count(counters.storageFallbacks), count(counters.records), count(counters.fastHits), count(counters.fastMisses), count(counters.storageHits), count(counters.storageCreated), count(counters.ownRefreshes), count(counters.tablesReused), count(counters.tablesResolved), count(counters.variantSurfaces), count(counters.variantSubstituted), count(counters.variantRejected), count(counters.arrayViewsShared), count(counters.untrackedKept), count(counters.untrackedCompared));
 }
 
 // What the sampled-texture lookups on this thread proved their returned objects current against,
@@ -638,9 +640,11 @@ bool MetadataMoved(const StorageTexture& image, const GuestTextureResource& reso
 // GPU-direct (a snapshot of such a surface reads and compares its bytes on the CPU, waiting for
 // the recorded work that wrote them). APS5_NO_SAMPLED_FROM_STORAGE=1 keeps every sampled texture a
 // snapshot as before.
+std::atomic<bool> sampledFromStorageForTest{true};
+
 bool SampledFromStorageEligible(const Context& context, std::uint32_t format, std::uint64_t address, std::uint64_t guestBytes) {
     static const bool disabled = std::getenv("APS5_NO_SAMPLED_FROM_STORAGE") != nullptr;
-    if (disabled || IsBlockCompressed(format) || !StorageFormatAvailable(context, format)) return false;
+    if (disabled || !sampledFromStorageForTest.load(std::memory_order_relaxed) || IsBlockCompressed(format) || !StorageFormatAvailable(context, format)) return false;
     return HostImportCovers(context, address, static_cast<std::size_t>(guestBytes));
 }
 
@@ -766,7 +770,8 @@ std::uint64_t storageBudget(const Context& context, std::uint64_t required = 0, 
             cached.read = now;
             const auto sampled = SampledTextureMemory();
             const auto storage = storageCacheBytes();
-            snapshot = CalculateStorageTextureBudget(context.memory, &*reported, sampled, storage);
+            const auto owned = UsageWithoutHostImports(context.memory, *reported, HostImportLiveBytes(), context.hostImportsInHeapUsage);
+            snapshot = CalculateStorageTextureBudget(context.memory, &owned, sampled, storage);
             cached.budget = snapshot.selectedBudget;
             cached.ceiling = snapshot.ceiling;
             cached.calculatedAt = std::chrono::steady_clock::now();
@@ -802,7 +807,8 @@ std::uint64_t sampledBudget(const Context& context, TextureCache& cache) {
     context.memoryProperties2(context.physical, &properties);
     const auto sampled = SampledTextureMemory();
     const auto storage = storageCacheBytes();
-    const auto budget = SampledTextureBudget(context.memory, &reported, sampled + storage, storage);
+    const auto owned = UsageWithoutHostImports(context.memory, reported, HostImportLiveBytes(), context.hostImportsInHeapUsage);
+    const auto budget = SampledTextureBudget(context.memory, &owned, sampled + storage, storage);
     const bool fresh = cache.budgetDevice != context.physical;
     std::optional<std::chrono::steady_clock::time_point> storageCalculatedAt;
     const auto storageLimit = storageBudget(context, 0, &storageCalculatedAt);
@@ -1265,7 +1271,10 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         ++cache.counts.stale;
     }
     const auto clear = source == nullptr ? SampledClearColor(context, resource, *keys, depthCompare) : std::nullopt;
-    if (source != nullptr || clear.has_value()) parkSnapshot(cache, recycled);
+    static const bool sampledImport = std::getenv("APS5_NO_SAMPLED_IMPORT") == nullptr;
+    const bool gpuWritten = sampledImport && source == nullptr && !clear && !depthCompare && !layerRows && !slabs.has_value() && *keys == DccKeys::Uncompressed && Recorder::SnapshotWriteOverlaps(address, bytes);
+    const HostImport* gpuSource = gpuWritten ? ExistingHostImportFor(context, address, bytes) : nullptr;
+    if (source != nullptr || clear.has_value() || gpuSource != nullptr) parkSnapshot(cache, recycled);
     CachedTexture entry{key, address, std::vector<std::byte>{}, nullptr, *keys, snapshotGeneration};
     entry.committed = std::move(committed);
     entry.surfaceBytes = bytes;
@@ -1298,6 +1307,10 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         entry.texture = createTexture(*context.detiler, resource, components, std::span<const std::byte>{}, false, layerRows, &*clear);
         entry.accounted = entry.texture->AllocationBytes();
         counters.cleared.fetch_add(1, std::memory_order_relaxed);
+    } else if (gpuSource != nullptr) {
+        entry.texture = createTexture(*context.detiler, resource, components, std::span<const std::byte>{}, false, false, nullptr, std::nullopt, gpuSource);
+        entry.accounted = entry.texture->AllocationBytes();
+        counters.imported.fetch_add(1, std::memory_order_relaxed);
     } else {
         // Snapshot before the upload so a write racing with it is caught by the next comparison.
         const bool pending = *keys == DccKeys::Uncompressed && Recorder::SnapshotWriteOverlaps(address, bytes);
@@ -1667,6 +1680,10 @@ std::optional<std::uint32_t> LargestDeviceLocalHeap(const VkPhysicalDeviceMemory
 
 std::uint64_t StorageTextureCacheBudget(const Context& context) {
     return storageBudget(context);
+}
+
+void SampledFromStorageForTest(bool enabled) {
+    sampledFromStorageForTest.store(enabled, std::memory_order_relaxed);
 }
 
 void OverrideCacheBudgetForTest(std::uint64_t bytes) {
@@ -2234,6 +2251,9 @@ struct ReusedTableElement {
     bool rejected = false;
     std::string message;
     bool live = false;
+    bool substitute = false;
+    std::uint32_t representative = NoRepresentative;
+    GuestTextureResource representativeResource{};
 };
 
 struct ReusedTable {
@@ -2250,6 +2270,7 @@ struct ReusedTable {
     std::vector<std::uint32_t> samplers;
     std::vector<std::string> bound;
     bool replayable = false;
+    std::vector<std::uint32_t> representatives;
 };
 
 constexpr std::size_t ReusedTableCount = 4;
@@ -2288,7 +2309,7 @@ bool CachedTableTextures(const ReusedTable& table, std::vector<std::shared_ptr<T
     std::vector<std::list<CachedTexture>::iterator> entries;
     entries.reserve(table.queries.size());
     for (const auto& element : table.elements) {
-        if (element.rejected || element.live) continue;
+        if (element.rejected || element.live || element.substitute) continue;
         const auto it = findTexture(cache, element.key);
         if (it == cache.entries.end() || it->texture != element.texture.lock()) return false;
         entries.push_back(it);
@@ -2305,7 +2326,7 @@ void logTableLookups(const ReusedTable& table, const std::vector<std::shared_ptr
     if (RuntimeSwitches::Set(RuntimeSwitch::NoExtendedFastProofs)) return;
     std::size_t kept = 0;
     for (const auto& element : table.elements) {
-        if (element.rejected || element.live) continue;
+        if (element.rejected || element.live || element.substitute) continue;
         if (kept >= cached.size() || kept >= table.queries.size()) return;
         logLookup({cached[kept].get(), element.resource, element.guestBytes, DccKeys::Uncompressed, table.queries[kept].generation, nullptr});
         ++kept;
@@ -3056,13 +3077,13 @@ bool LoopGuardEnabled() {
 }
 
 void ShaderResources::noteReusable() {
+    const bool spaceReusable = !htileClear.has_value() && drawBuild && usesBda && bdaReadOnly && !SpaceReuseDisabled() && guestMemory.SpaceOnly() && !guestMemory.HasCopiedWrites() && multisampleSources.empty() && !(bda != nullptr && LoopGuardEnabled());
     // Taken whether or not the object turns out reusable: the lookups' records are this build's.
-    captureValidation();
+    captureValidation(spaceReusable);
     reusable = false;
     importsReconcilable = false;
     spaceReuse = false;
     directRegions.clear();
-    const bool spaceReusable = !htileClear.has_value() && drawBuild && usesBda && bdaReadOnly && !SpaceReuseDisabled() && guestMemory.SpaceOnly() && !guestMemory.HasCopiedWrites() && multisampleSources.empty() && !(bda != nullptr && LoopGuardEnabled());
     if (!spaceReusable && (htileClear.has_value() || guestMemory.HasCopiedWrites() || HoldsLease() || usesBda || !multisampleSources.empty() || (bda != nullptr && LoopGuardEnabled()))) return;
     if (std::any_of(textures.begin(), textures.end(), [](const std::shared_ptr<Texture>& texture) { return texture != nullptr && texture->RefreshedPerUse(); })) return;
     if (TemplateDataRefresh() && std::any_of(allocations.begin(), allocations.end(), [](const Allocation& allocation) { return allocation.buffer != nullptr && !allocation.guest && allocation.role != ShaderRecompiler::DescriptorRole::ImageTableMap && allocation.size > MaxRefreshBytes; })) return;
@@ -3641,8 +3662,8 @@ bool ShaderResources::keepsTemplateRecords() const {
 
 // Turns the lookups' records into this object's per-texture validation records (see
 // ValidatedSurface); the last record of an object is the freshest.
-void ShaderResources::captureValidation() {
-    if (!keepsTemplateRecords()) {
+void ShaderResources::captureValidation(bool spaceReusable) {
+    if (!keepsTemplateRecords() && !(spaceReusable && !RuntimeSwitches::Set(RuntimeSwitch::NoSpaceReuseRecords))) {
         validatedTextures.clear();
         lookupLog().clear();
         return;
@@ -4450,7 +4471,8 @@ bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofR
         const auto epoch = GuestMemory::CollectEpoch();
         const auto proof = GuestMemory::ProofSerial();
         const auto pending = StorageTexture::PendingSerial();
-        if (epoch != 0 && provedEpoch == epoch && provedProof == proof && provedPending == pending) {
+        const auto retired = RetiredImportSerial();
+        if (epoch != 0 && provedEpoch == epoch && provedProof == proof && provedPending == pending && provedRetired == retired) {
             static const bool verify = std::getenv("APS5_VERIFY_DRAW_PIPELINE") != nullptr;
             thread_local std::uint64_t reuses = 0;
             if (verify && ++reuses % 64u == 0u) {
@@ -4468,6 +4490,7 @@ bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofR
             provedEpoch = std::any_of(textures.begin(), textures.end(), [](const std::shared_ptr<Texture>& texture) { return texture != nullptr && texture->HasReuseLookup(); }) ? 0 : epoch;
             provedProof = proof;
             provedPending = pending;
+            provedRetired = retired;
         } else {
             provedEpoch = 0;
         }
@@ -4568,6 +4591,7 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
             if (images == nullptr || images->count != table.elementTextures.size()) return false;
             std::vector<std::shared_ptr<Texture>> cached;
             if (auto* reused = FindReusedTable(context.device, *images, CurrentTableState()); reused != nullptr && TableCurrent(*reused) && CachedTableTextures(*reused, cached)) {
+                if (!reused->representatives.empty() && reused->representatives != variantRepresentatives(context.device, *images, table.elementBase, context.imageTableCapacity)) return false;
                 logTableLookups(*reused, cached);
                 auto next = cached.begin();
                 bool same = true;
@@ -4578,6 +4602,7 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
                         same = index == std::numeric_limits<std::size_t>::max();
                         continue;
                     }
+                    if (entry.substitute) continue;
                     if (entry.live) {
                         if (index == std::numeric_limits<std::size_t>::max()) continue;
                         same = index == textureIndex && currentTableEntry(*images, element);
@@ -4605,7 +4630,7 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
         // The walk proved every object current again: the records move to what it proved, or one
         // spurious stamp (a label sharing a 64 KiB block with a surface's edge) would keep this
         // object on the full walk for good.
-        captureValidation();
+        captureValidation(spaceReuse);
         return true;
     };
     struct OverlappingTag {};
@@ -6483,8 +6508,10 @@ void ShaderResources::resolveImageTables() {
             }
             if (landed && CurrentTableState() != state) reused = nullptr;
         }
+        if (reused != nullptr && !reused->representatives.empty() && reused->representatives != variantRepresentatives(context.device, binding, table.elementBase, context.imageTableCapacity)) reused = nullptr;
         if (reused != nullptr && TableCurrent(*reused) && CachedTableTextures(*reused, cached)) {
             logTableLookups(*reused, cached);
+            table.representatives = reused->representatives;
             const bool replay = TableReplay() && reused->replayable && reused->imageSamplers == binding.imageSamplers && reused->samplers == samplerKey;
             if (!replay) reused->bound.assign(binding.count, {});
             auto next = cached.begin();
@@ -6492,10 +6519,12 @@ void ShaderResources::resolveImageTables() {
                 const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8u, 8u);
                 const auto& entry = reused->elements[element];
                 if (static_cast<std::uint64_t>(table.elementBase) + element >= context.imageTableCapacity) {
-                    if (!entry.rejected && !entry.live) ++next;
+                    if (!entry.rejected && !entry.live && !entry.substitute) ++next;
                     table.map[faults + element] = rejectTableElement(table, words, capacityMessage());
                 } else if (entry.rejected) {
                     table.map[faults + element] = rejectTableElement(table, words, entry.message);
+                } else if (entry.substitute) {
+                    continue;
                 } else if (entry.live) {
                     auto message = resolveLive(element, words);
                     if (!replay) reused->bound[element] = std::move(message);
@@ -6509,6 +6538,22 @@ void ShaderResources::resolveImageTables() {
                         place(element, std::move(*next++), entry.resource, entry.guestBytes, entry.firstLayer);
                     }
                 }
+            }
+            for (std::uint32_t element = 0; element < binding.count; ++element) {
+                const auto& entry = reused->elements[element];
+                if (!entry.substitute || static_cast<std::uint64_t>(table.elementBase) + element >= context.imageTableCapacity) continue;
+                const auto words = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(element) * 8u, 8u);
+                const auto representativeWords = std::span<const std::uint32_t>(binding.guestDescriptor).subspan(static_cast<std::size_t>(entry.representative) * 8u, 8u);
+                const auto index = table.elementTextures[entry.representative];
+                const auto message = index == std::numeric_limits<std::size_t>::max() ? std::string("the dynamic-resolution variant this entry borrows from was rejected") : refusal(element, representativeWords, textures[index], entry.representativeResource);
+                if (!message.empty()) {
+                    table.map[faults + element] = rejectTableElement(table, words, message);
+                    counters.variantRejected.fetch_add(1, std::memory_order_relaxed);
+                    continue;
+                }
+                table.elementTextures[element] = index;
+                item->imageAllocations[static_cast<std::size_t>(table.elementBase) + element] = index;
+                counters.variantSubstituted.fetch_add(1, std::memory_order_relaxed);
             }
             if (!replay) {
                 reused->imageSamplers = binding.imageSamplers;
@@ -6551,7 +6596,12 @@ void ShaderResources::resolveImageTables() {
                 continue;
             }
             if (!representatives.empty() && representatives[element] != NoRepresentative) {
-                reusable = false;
+                if (reusable) {
+                    ReusedTableElement substitute;
+                    substitute.substitute = true;
+                    substitute.representative = representatives[element];
+                    fresh.elements.push_back(std::move(substitute));
+                }
                 substitutes.push_back(element);
                 continue;
             }
@@ -6652,6 +6702,10 @@ void ShaderResources::resolveImageTables() {
             const auto index = table.elementTextures[representative];
             const auto source = representativeSources.find(representative);
             const auto message = index == std::numeric_limits<std::size_t>::max() || source == representativeSources.end() ? std::string("the dynamic-resolution variant this entry borrows from was rejected") : refusal(element, words, textures[index], source->second);
+            if (reusable) {
+                if (fresh.elements[representative].rejected || source == representativeSources.end()) reusable = false;
+                else fresh.elements[element].representativeResource = source->second;
+            }
             if (!message.empty()) {
                 table.map[faults + element] = rejectTableElement(table, words, message);
                 counters.variantRejected.fetch_add(1, std::memory_order_relaxed);
@@ -6672,6 +6726,7 @@ void ShaderResources::resolveImageTables() {
                 fresh.imageSamplers = binding.imageSamplers;
                 fresh.samplers = std::move(samplerKey);
                 fresh.replayable = static_cast<std::uint64_t>(table.elementBase) + binding.count <= context.imageTableCapacity;
+                fresh.representatives = table.representatives;
                 RememberTable(std::move(fresh), binding);
             }
         }
@@ -6689,6 +6744,10 @@ std::uint64_t SampledLookupKeyProofs() {
 
 std::uint64_t SampledTexturesCleared() {
     return TextureCounts().cleared.load(std::memory_order_relaxed);
+}
+
+std::uint64_t SampledTexturesImported() {
+    return TextureCounts().imported.load(std::memory_order_relaxed);
 }
 
 ImageTableReuseCounts ImageTableReuses() {
@@ -7055,9 +7114,11 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
     requireGuestBuffers(moved);
     if ((_set == VK_NULL_HANDLE && fragment.set == VK_NULL_HANDLE) || (usesBda && !spaceReuse)) return {};
     prepareFaultSlot();
+    auto split = guestMemory.SplitInPlaceReads();
+    const bool sharedOnly = split && split->own.empty();
     thread_local std::vector<std::pair<std::uint64_t, std::uint64_t>>* readsSlot = nullptr;
     auto& reads = ShaderRecompiler::ThreadOwned(readsSlot);
-    guestMemory.InPlaceReads(reads);
+    if (!sharedOnly) guestMemory.InPlaceReads(reads);
     const auto maxSnapshotBytes = maxDrawSnapshotBytes;
     const auto uploadLimit = DrawUploadLimit();
     std::size_t totalSnapshotBytes = 0;
@@ -7114,7 +7175,14 @@ std::shared_ptr<ShaderResources::DrawBindings> ShaderResources::PrepareDrawBindi
             size = override->size;
         } else {
             if (movedOnly || !item.guest || item.written || guestMemory.WritesOverlap(item.address, item.size)) continue;
-            const bool direct = std::any_of(reads.begin(), reads.end(), [&](const auto& range) { return item.address >= range.first && item.address < range.second && item.size <= range.second - item.address; });
+            const bool direct = [&] {
+                if (sharedOnly) {
+                    const auto& ranges = *split->space;
+                    const auto found = std::partition_point(ranges.begin(), ranges.end(), [&](const auto& range) { return range.second <= item.address; });
+                    return found != ranges.end() && found->first <= item.address && item.address < found->second && item.size <= found->second - item.address;
+                }
+                return std::any_of(reads.begin(), reads.end(), [&](const auto& range) { return item.address >= range.first && item.address < range.second && item.size <= range.second - item.address; });
+            }();
             if (!direct || recorder.PendingWriteOverlaps(item.address, item.size)) continue;
         }
         const auto begin = address - item.adjustment;
@@ -7370,6 +7438,7 @@ void ShaderResources::MarkGpuWrites(Recorder& recorder) {
         recorder.NotePendingReach(reachable);
     }
     guestMemory.MarkDirectWrites();
+    guestMemory.NoteCarriedShadows(recorder);
     if (!BuildProfiled()) return;
     auto& counters = BufferWrites();
     // Recorded uses only (dispatches and recorded draws): a synchronous draw writes back in

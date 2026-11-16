@@ -48,6 +48,7 @@
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include "prx/libkernel/Socket/include/SocketPoll.hpp"
+#include "prx/libkernel/Socket/include/SocketBorrow.hpp"
 #include "prx/libkernel/Socket/include/SocketConnect.hpp"
 #include <algorithm>
 #include <array>
@@ -141,6 +142,7 @@ struct Socket : KernelSocketPoll::NativeOwner {
 #endif
     std::uint32_t inode = 0;
     std::weak_ptr<Socket> peer;
+    bool externalPeer = false;
     Socket(NativeSocket value, int family, int type) : value(value), family(family), type(type) {}
     ~Socket() {
         if (value == Invalid) return;
@@ -838,6 +840,7 @@ bool IsPipe(int descriptor, short events) {
     struct stat status{};
     if (::fstat(descriptor, &status) != 0 || !S_ISFIFO(status.st_mode)) return false;
     const int flags = ::fcntl(descriptor, F_GETFL);
+    if (flags < 0 && errno == EBADF) return false;
     if (flags < 0) throw std::runtime_error("poll: querying pipe descriptor " + std::to_string(descriptor) + " failed");
     if ((events & GuestPollWritable) && (flags & O_ACCMODE) == O_RDONLY) ThrowReadEndWritable(descriptor);
     return true;
@@ -911,7 +914,7 @@ constexpr int GuestNonBlocking = 0x20000000;
 constexpr std::uint32_t NoDevice = 0xFFFFFFFFu;
 std::uint32_t lastUnixInode = 0;
 bool PairPeerGone(const Socket& socket) {
-    return socket.family == GuestUnix && socket.peer.expired();
+    return socket.family == GuestUnix && !socket.externalPeer && socket.peer.expired();
 }
 bool RecordOverSendBuffer(Socket& socket, std::uint64_t length) {
     if (socket.family != GuestUnix || (socket.type != 2 && socket.type != 5) || socket.peer.expired()) return false;
@@ -1441,6 +1444,51 @@ extern "C" bool KernelDescribeSocket_nid_no_patch(int descriptor, KernelSocketPo
     return true;
 }
 
+extern "C" int KernelBorrowSocketNative_nid_no_patch(std::uintptr_t native, int family, int type, bool nonblocking, std::shared_ptr<void>* owner) {
+    try {
+        auto socket = std::make_shared<Socket>(Invalid, family, type);
+#ifdef _WIN32
+        WSAPROTOCOL_INFOW information{};
+        if (WSADuplicateSocketW(static_cast<NativeSocket>(native), GetCurrentProcessId(), &information) != 0) return -NativeError();
+        socket->value = WSASocketW(FROM_PROTOCOL_INFO, FROM_PROTOCOL_INFO, FROM_PROTOCOL_INFO, &information, 0, WSA_FLAG_OVERLAPPED);
+#else
+        socket->value = ::fcntl(static_cast<NativeSocket>(native), F_DUPFD_CLOEXEC, 0);
+#endif
+        if (socket->value == Invalid) return -NativeError();
+        socket->options.nonblocking = nonblocking;
+        socket->connectStarted = PeerConnected(*socket);
+        socket->externalPeer = true;
+        const int number = Install(socket);
+        if (number < 0) return -*__error_nid_postfix();
+        *owner = std::static_pointer_cast<KernelSocketPoll::NativeOwner>(std::move(socket));
+        return number;
+    } catch (const std::bad_alloc&) {
+        return -12;
+    }
+}
+
+extern "C" void KernelNoteSocketConnect_nid_no_patch(int descriptor, const std::shared_ptr<void>* owner) {
+    const auto socket = Find(descriptor);
+    if (!socket || static_cast<KernelSocketPoll::NativeOwner*>(socket.get()) != owner->get()) return;
+    std::lock_guard lock(socket->modeMutex);
+    socket->connectStarted = true;
+}
+
+extern "C" bool KernelReleaseBorrowedSocket_nid_no_patch(int descriptor, const std::shared_ptr<void>* owner) {
+    std::shared_ptr<Socket> released;
+    {
+        std::lock_guard lock(socketsMutex);
+        const auto found = sockets.find(descriptor);
+        if (found == sockets.end() || static_cast<KernelSocketPoll::NativeOwner*>(found->second.get()) != owner->get()) return false;
+        released = std::move(found->second);
+        sockets.erase(found);
+        closeOnExecDescriptors.erase(descriptor);
+    }
+    EqueueDescriptorClosed(descriptor);
+    ReleaseNumber(descriptor);
+    return true;
+}
+
 extern "C" void KernelListSockets_nid_no_patch(std::vector<int>* descriptors) {
     std::lock_guard lock(socketsMutex);
     for (const auto& [descriptor, socket] : sockets) descriptors->push_back(descriptor);
@@ -1766,7 +1814,8 @@ int APS5_VABI listen_nid_postfix(int descriptor, int backlog) {
     return Fail(error == 56 ? 22 : error);
 }
 int APS5_VABI accept_nid_postfix(int descriptor, void* address, std::uint32_t* length) {
-    if (address && !length) return Fail(14);
+    std::uint32_t capacity = 0;
+    if (address && !GuestCopyIn_nid_no_patch(&capacity, length, sizeof(capacity))) return Fail(14);
     const auto listener = Lookup(descriptor);
     if (!listener) return -1;
     if (listener->type != 1) return Fail(22);
@@ -1803,8 +1852,12 @@ int APS5_VABI accept_nid_postfix(int descriptor, void* address, std::uint32_t* l
         if (inheritNonblocking && SetNonBlocking(*accepted)) return -1;
         const int acceptedDescriptor = Install(std::move(accepted));
         if (acceptedDescriptor < 0) return -1;
-        if (address) GuestAddress(peer, address, length);
-        return acceptedDescriptor;
+        if (!address) return acceptedDescriptor;
+        unsigned char name[28]{};
+        GuestAddress(peer, name, &capacity);
+        if (ReportAddress(address, length, name, capacity)) return acceptedDescriptor;
+        GuestSockets::Close(acceptedDescriptor);
+        return Fail(14);
     } catch (const std::bad_alloc&) {
         return Fail(12);
     }
@@ -1970,7 +2023,7 @@ int APS5_VABI getpeername_nid_postfix(int descriptor, void* address, std::uint32
     const auto socket = forwarded ? nullptr : Lookup(descriptor);
     if (!forwarded && !socket) return -1;
     if (socket && socket->family == GuestUnix) {
-        if (socket->peer.expired()) return Fail(57);
+        if (!socket->externalPeer && socket->peer.expired()) return Fail(57);
         return CopyAddressOut({}, true, address, length, capacity);
     }
     const auto nativeSocket = forwarded ? static_cast<decltype(Socket::value)>(foreign) : socket->value;

@@ -14,6 +14,7 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Float16ConversionProbe.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Float16NanProbe.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FloatFlushProbe.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
@@ -594,6 +595,8 @@ struct VulkanDevice::State {
     bool float16WidenNans = false;
     bool float16NarrowNans = false;
     bool float32DenormPreserve = false;
+    bool float16HostNanCandidate = false;
+    bool float16HostNans = false;
     bool probingFloatControls = false;
     bool demoteToHelperInvocation = false;
     bool earlyFragmentSampleMaskTestBeforeSampleCounting = false;
@@ -627,11 +630,13 @@ struct VulkanDevice::State {
     bool pipelineExecutableInfo = false;
     bool maintenance8 = false;
     bool pushDescriptors = false;
+    bool depthUploadImage = false;
     bool maintenance5 = false;
     bool fillModeNonSolid = false;
     bool wideLines = false;
     std::uint32_t srgbDecodeFormats = 0;
     std::uint32_t srgbCopyFormats = 0;
+    std::uint32_t scaledSampledFormats = 0;
     bool storageImageWithoutFormat = false;
     VkSampleCountFlags sampleLocationSampleCounts = 0;
     VkSampleCountFlags sampleLocationGridSampleCounts = 0;
@@ -645,6 +650,7 @@ struct VulkanDevice::State {
     bool occlusionQueryPrecise = false;
     VkDeviceSize hostImportAlignment = 0;
     bool drawInputsInPlace = true;
+    bool hostPointerImport = false;
     bool dmaBufImport = false;
     bool sparseBinding = false;
     bool sparseResidencyBuffer = false;
@@ -1602,6 +1608,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         if (!warning.empty()) std::fprintf(stderr, "%s\n", warning.c_str());
     }
     state->srgbDecodeFormats = Graphics::SrgbDecodeFormats(state->InstanceFunction<PFN_vkGetPhysicalDeviceFormatProperties>("vkGetPhysicalDeviceFormatProperties"), selected);
+    state->scaledSampledFormats = Graphics::ScaledSampledFormats(state->InstanceFunction<PFN_vkGetPhysicalDeviceFormatProperties>("vkGetPhysicalDeviceFormatProperties"), selected);
     state->srgbCopyFormats = Graphics::SrgbCopyFormats(state->InstanceFunction<PFN_vkGetPhysicalDeviceFormatProperties>("vkGetPhysicalDeviceFormatProperties"), selected, state->srgbDecodeFormats);
     if ((state->subgroup.supportedOperations & VK_SUBGROUP_FEATURE_BASIC_BIT) != 0) {
         state->capabilities.push_back(spv::CapabilityGroupNonUniform);
@@ -1629,6 +1636,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->deferDestruction = driver.driverID == VK_DRIVER_ID_MOLTENVK && std::getenv("APS5_NO_DEFERRED_DESTRUCTION") == nullptr;
         state->driverInfo = std::string(driver.driverName) + " " + driver.driverInfo;
         state->driverId = driver.driverID;
+        state->depthUploadImage = driver.driverID == VK_DRIVER_ID_AMD_PROPRIETARY && state->properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU && std::getenv("APS5_NO_DEPTH_UPLOAD_IMAGE") == nullptr;
         state->individuallyFreeDescriptorSets = driver.driverID == VK_DRIVER_ID_MESA_LLVMPIPE;
         state->fusedExactArithmetic = driver.driverID == VK_DRIVER_ID_MOLTENVK;
         state->tessellationPipelineCache = TessellationPipelineCacheUsable(driver.driverID);
@@ -1815,6 +1823,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         floatControls.shaderDenormPreserveFloat16 == VK_TRUE && floatControls.shaderSignedZeroInfNanPreserveFloat16 == VK_TRUE;
     float16Features = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES_KHR};
     float16Features.shaderFloat16 = VK_TRUE;
+    state->float16HostNanCandidate = float16Rte && std::getenv("APS5_NO_HOST_F16_NANS") == nullptr;
     if (float16Rte) {
         deviceExtensions.push_back(VK_KHR_SHADER_FLOAT16_INT8_EXTENSION_NAME);
         state->capabilities.push_back(spv::CapabilityFloat16);
@@ -1910,22 +1919,30 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     state->memoryBudget = hasExtension(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
     // Guest memory is host memory: importing it lets address-based shaders use it in place instead of
     // copying every registered allocation per draw.
-    if (hasExtension(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME) && std::getenv("APS5_NO_HOST_IMPORT") == nullptr) {
-        VkPhysicalDeviceMaintenance3Properties maintenance3{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_3_PROPERTIES};
-        VkPhysicalDeviceDriverProperties driverProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES, &maintenance3};
-        VkPhysicalDeviceExternalMemoryHostPropertiesEXT hostProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_MEMORY_HOST_PROPERTIES_EXT, &driverProperties};
-        VkPhysicalDeviceProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &hostProperties};
+    const bool importsAllowed = std::getenv("APS5_NO_HOST_IMPORT") == nullptr;
+    VkPhysicalDeviceMaintenance3Properties maintenance3{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_3_PROPERTIES};
+    VkPhysicalDeviceDriverProperties driverProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES, &maintenance3};
+    VkPhysicalDeviceExternalMemoryHostPropertiesEXT hostProperties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_MEMORY_HOST_PROPERTIES_EXT, &driverProperties};
+    state->hostPointerImport = importsAllowed && hasExtension(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
+    if (importsAllowed) {
+        VkPhysicalDeviceProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, state->hostPointerImport ? static_cast<void*>(&hostProperties) : static_cast<void*>(&driverProperties)};
         state->InstanceFunction<PFN_vkGetPhysicalDeviceProperties2>("vkGetPhysicalDeviceProperties2")(selected, &properties);
-        state->hostImportAlignment = hostProperties.minImportedHostPointerAlignment;
+    }
+#ifndef _WIN32
+    state->dmaBufImport = importsAllowed && driverProperties.driverID != VK_DRIVER_ID_NVIDIA_PROPRIETARY && hasExtension(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME) && hasExtension(VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME);
+#endif
+    if (state->hostPointerImport || state->dmaBufImport) {
 #ifdef _WIN32
+        state->hostImportAlignment = hostProperties.minImportedHostPointerAlignment;
         constexpr bool windows = true;
 #else
+        state->hostImportAlignment = state->hostPointerImport ? hostProperties.minImportedHostPointerAlignment : static_cast<VkDeviceSize>(sysconf(_SC_PAGESIZE));
         constexpr bool windows = false;
 #endif
         state->drawInputsInPlace = std::getenv("APS5_NO_DRAW_INPUTS_IN_PLACE") == nullptr && (std::getenv("APS5_DRAW_INPUTS_IN_PLACE") != nullptr || DrawInputsInPlaceUsable(driverProperties.driverID, windows));
         if (!compileOnly) Graphics::SetHostImportWindow(8ull << 20u);
         if (!compileOnly) Graphics::SetHostImportMaxBytes(maintenance3.maxMemoryAllocationSize);
-        if (!compileOnly) Pm4::RequestImportableGds(state->properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU);
+        if (!compileOnly) Pm4::RequestImportableGds(state->hostPointerImport && state->properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU);
 #ifdef _WIN32
         // Imported pages are locked; locking is bounded by the process working-set minimum.
         if (const char* value = std::getenv("APS5_WORKING_SET_MIB"); value != nullptr && !compileOnly) {
@@ -1933,9 +1950,8 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
             if (!SetProcessWorkingSetSizeEx(GetCurrentProcess(), bytes, bytes * 2, QUOTA_LIMITS_HARDWS_MIN_DISABLE | QUOTA_LIMITS_HARDWS_MAX_DISABLE)) std::fprintf(stderr, "[gpu] SetProcessWorkingSetSizeEx failed: %lu\n", GetLastError());
         }
 #endif
-        deviceExtensions.push_back(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
+        if (state->hostPointerImport) deviceExtensions.push_back(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
 #ifndef _WIN32
-        state->dmaBufImport = driverProperties.driverID != VK_DRIVER_ID_NVIDIA_PROPRIETARY && hasExtension(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME) && hasExtension(VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME);
         if (state->dmaBufImport) {
             deviceExtensions.push_back(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
             deviceExtensions.push_back(VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME);
@@ -2811,6 +2827,14 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         };
         std::fprintf(stderr, "[float-controls] f16 to f32 NaN results: %s; f32 to f16 NaN results: %s (%.0f ms)\n", describe(probe.widen, state->float16WidenNans).c_str(), describe(probe.narrow, state->float16NarrowNans).c_str(), std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - probeStart).count());
     }
+    if (state->float16HostNanCandidate) {
+        const auto probeStart = std::chrono::steady_clock::now();
+        state->probingFloatControls = true;
+        const auto probe = ProbeFloat16HostNans(*this, Target());
+        state->probingFloatControls = false;
+        state->float16HostNans = probe.mismatches == 0u;
+        std::fprintf(stderr, "[float-controls] f16 NaN results with IEEE_MODE clear: %s (%u of %u probe results differ from the selected NaN, %.0f ms)\n", state->float16HostNans ? "host" : "selected", probe.mismatches, probe.compared, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - probeStart).count());
+    }
     // A device without a window is usually replaced by the window's device before the title draws
     // (Driver::AttachWindow): its replay starts at its first draw or dispatch instead, so the
     // journal is replayed once, on the device the title draws with.
@@ -2954,6 +2978,10 @@ void VulkanDevice::WaitIdle() {
     }
     std::unique_lock presentQueueLock(state->presentQueueMutex, std::defer_lock);
     if (state->presentQueue != VK_NULL_HANDLE) presentQueueLock.lock();
+    std::unique_lock settleQueueLock(state->settleQueueMutex, std::defer_lock);
+    if (state->settleQueue != VK_NULL_HANDLE) settleQueueLock.lock();
+    std::unique_lock sparseQueueLock(state->sparseQueueMutex, std::defer_lock);
+    if (state->sparseQueue != VK_NULL_HANDLE) sparseQueueLock.lock();
     check(state->DeviceFunction<PFN_vkDeviceWaitIdle>("vkDeviceWaitIdle")(state->device), "vkDeviceWaitIdle");
     Graphics::CheckPixelFunctionLds(graphicsContext());
     APS5_LOG_CHARS_OUT_DEBUG("VulkanDevice::WaitIdle complete");
@@ -2973,7 +3001,7 @@ void VulkanDevice::StoreIdleResults(bool reapFirst, const std::function<bool()>&
     GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Flush);
     std::lock_guard gpuLock(GuestMemory::GpuMutex());
     const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
-    static_cast<void>(Graphics::StorageTexture::FlushAllPendingUntil("idle", stop, state->device));
+    static_cast<void>(Graphics::StorageTexture::FlushAllPendingUntil("idle", GuestMemory::YieldToGpuMutexWaiters(stop), state->device));
     SubmitRecorded(reapFirst);
 }
 
@@ -4670,6 +4698,7 @@ ShaderRecompiler::SpirvTarget VulkanDevice::Target() const {
     require(state->shaderProfile != nullptr, "shader device profile is unavailable");
     auto target = state->shaderProfile->Target();
     target.float32FlushToZero = state->float32FlushToZero && !state->float32FlushComputeOnly;
+    target.float16HostNans = state->float16HostNans;
     target.fusedExactArithmetic = state->fusedExactArithmetic;
     target.hostInterpolationFirst = state->hostInterpolationFirst;
     target.float32DenormPreserve = state->float32DenormPreserve;
@@ -4804,7 +4833,9 @@ Graphics::Context VulkanDevice::buildContext() const {
     };
     context.pipelineCacheSynchronization = state->pipelineCache ? &state->pipelineCache->Synchronization() : nullptr;
     context.individuallyFreeDescriptorSets = state->individuallyFreeDescriptorSets;
+    context.hostImportsInHeapUsage = Graphics::HostImportsInHeapUsage(state->driverId);
     context.tessellationPipelineCache = state->tessellationPipelineCache;
+    context.hostPointerImport = state->hostPointerImport;
     context.dmaBufImport = state->dmaBufImport;
     context.sparseBinding = state->sparseBinding;
     context.sparseResidencyBuffer = state->sparseResidencyBuffer;
@@ -4890,8 +4921,10 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.pipelineExecutableInfo = state->pipelineExecutableInfo;
     context.maintenance8 = state->maintenance8;
     context.pushDescriptors = state->pushDescriptors;
+    context.depthUploadImage = state->depthUploadImage;
     context.srgbDecodeFormats = state->srgbDecodeFormats;
     context.srgbCopyFormats = state->srgbCopyFormats;
+    context.scaledSampledFormats = state->scaledSampledFormats;
     context.sampleLocationSampleCounts = state->sampleLocationSampleCounts;
     context.sampleLocationGridSampleCounts = state->sampleLocationGridSampleCounts;
     context.sampleLocationGridSizes = state->sampleLocationGridSizes;
@@ -6531,7 +6564,7 @@ VulkanDevice::IndirectOutcome VulkanDevice::recordCompletedDispatch(const Shader
         const auto syncStart = std::chrono::steady_clock::now();
         recorder.Sync();
         timer.phase(PhaseSync);
-        if (resources->HoldsLease()) Graphics::CountLeaseOutcome(true, 0);
+        if (resources->HoldsLease()) Graphics::CountLeaseOutcome(true, 0, !resources->BdaReadOnly());
         if (profile) {
             // APS5_PROFILE_DRAW: the [recorder] line's "address-based" syncs by program, every 10 s,
             // so the programs still waiting here are known (under the GpuMutex, like the rest).
@@ -6560,7 +6593,7 @@ VulkanDevice::IndirectOutcome VulkanDevice::recordCompletedDispatch(const Shader
     } else if (resources->HoldsLease()) {
         // The lease is in the open batch (kept above, nothing submitted since): the pin waiter
         // finishes the recorder up to that batch's serial. Prints the [address-sync] leases line.
-        Graphics::CountLeaseOutcome(false, recorder.Submissions() + 1);
+        Graphics::CountLeaseOutcome(false, recorder.Submissions() + 1, !resources->BdaReadOnly());
     }
     if (TraceDispatchIo()) std::fprintf(stderr, "[dispatch-io] %s:%s\n", groupsText, resources->Describe().c_str());
     WatchMemory(programAddress);
