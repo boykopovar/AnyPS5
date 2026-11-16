@@ -509,6 +509,11 @@ class ValueHelperTests(unittest.TestCase):
         with self.assertRaisesRegex(shader_scan.ScanError, "no count"):
             shader_scan.need(None, "count")
 
+    def test_throw_areas_counts_sites_by_first_path_part_most_first(self):
+        sites = [{"file": "a/x.cpp"}, {"file": "a/y.cpp"}, {"file": "b.cpp"}]
+        self.assertEqual(shader_scan.throw_areas(sites),
+                         [{"name": "a", "count": 2}, {"name": "Recompiler", "count": 1}])
+
 
 if __name__ == "__main__":
     unittest.main()
