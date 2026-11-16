@@ -621,5 +621,12 @@ class PatchAdvisorTests(unittest.TestCase):
         run.assert_not_called()
 
 
+    def test_relative_path_rejects_unsafe_names(self):
+        self.assertEqual(suggest_patches.relative_path("a/b.txt"), Path("a", "b.txt"))
+        for name in ("", "/abs/x", "../x", "a/../x", "a\\b", "C:/x", None, "a\x00b"):
+            with self.assertRaises(ValueError, msg=repr(name)):
+                suggest_patches.relative_path(name)
+
+
 if __name__ == "__main__":
     unittest.main()
