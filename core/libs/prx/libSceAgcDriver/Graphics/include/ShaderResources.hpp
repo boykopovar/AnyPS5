@@ -493,7 +493,6 @@ private:
         VkDescriptorSetLayoutBinding layout;
         std::vector<std::size_t> allocations;
         std::vector<std::size_t> imageAllocations;
-        std::vector<bool> imageUintStorage;
         VkDescriptorBindingFlags flags = 0;
         std::int32_t set = -1;
     };
@@ -776,6 +775,7 @@ private:
     std::vector<bool> storageWritten;
     std::vector<bool> storageAtomic;
     std::vector<bool> storageAtomic64;
+    std::vector<bool> storageUint;
     std::vector<std::shared_ptr<Sampler>> samplers;
     std::shared_ptr<Sampler> paddingSampler;
     struct SamplerSource {

@@ -1225,31 +1225,44 @@ static int getSaveDataMemory2(SaveDataMemoryGet2* get_param, int* traceUser = nu
     if (!file_size_of(path, &size)) {
         return SAVE_DATA_ERROR_MEMORY_NOT_READY;
     }
-    const SaveDataMemoryData* d = localParam.data;
-    if (d != nullptr && d->buf_size != 0) {
-        if (d->buf == nullptr || d->offset > size || d->buf_size > size - d->offset) {
+    SaveDataMemoryData localData{};
+    if (localParam.data != nullptr && !GuestCopyIn_nid_no_patch(&localData, localParam.data, sizeof(localData))) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    if (localParam.data != nullptr && localData.buf_size != 0) {
+        if (localData.buf == nullptr || localData.offset > size || localData.buf_size > size - localData.offset) {
             return SAVE_DATA_ERROR_PARAMETER;
         }
         std::ifstream f(path, std::ios::binary);
         if (!f) {
             return SAVE_DATA_ERROR_INTERNAL;
         }
-        f.seekg(static_cast<std::streamoff>(d->offset));
-        const GuestArena::HostWrite destination(d->buf, d->buf_size);
+        f.seekg(static_cast<std::streamoff>(localData.offset));
+        const GuestArena::HostWrite destination(localData.buf, localData.buf_size);
         if (!destination.Open()) {
             throw std::runtime_error("SaveData: the memory buffer is not writable");
         }
-        f.read(static_cast<char*>(d->buf), static_cast<std::streamsize>(d->buf_size));
+        f.read(static_cast<char*>(localData.buf), static_cast<std::streamsize>(localData.buf_size));
         if (!f) {
             return SAVE_DATA_ERROR_INTERNAL;
         }
     }
     if (localParam.param != nullptr) {
-        std::memset(localParam.param, 0, sizeof(SaveDataParam));
-        read_param_file(mem_path(localParam.user_id, localParam.slot_id, "param"), localParam.param);
+        SaveDataParam param{};
+        read_param_file(mem_path(localParam.user_id, localParam.slot_id, "param"), &param);
+        if (!GuestCopyOut_nid_no_patch(localParam.param, &param, sizeof(param))) {
+            return SAVE_DATA_ERROR_PARAMETER;
+        }
     }
     if (localParam.icon != nullptr) {
-        localParam.icon->data_size = 0;
+        SaveDataIcon icon{};
+        if (!GuestCopyIn_nid_no_patch(&icon, localParam.icon, sizeof(icon))) {
+            return SAVE_DATA_ERROR_PARAMETER;
+        }
+        icon.data_size = 0;
+        if (!GuestCopyOut_nid_no_patch(localParam.icon, &icon, sizeof(icon))) {
+            return SAVE_DATA_ERROR_PARAMETER;
+        }
     }
     return SAVE_DATA_OK;
 }

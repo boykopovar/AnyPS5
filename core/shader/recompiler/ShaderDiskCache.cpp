@@ -469,10 +469,10 @@ void encodeBinding(Writer& writer, const DescriptorBinding& binding) {
     writer.Value(binding.imageShape.value_or(DescriptorImageShape::Image1D));
     writer.Flags(binding.samplerDepthCompare);
     writer.Flags(binding.imageWritten);
-    writer.Flags(binding.imageUintStorage);
     writer.Flags(binding.imageDepthCompare);
     writer.Flags(binding.imageAtomic);
     writer.Flags(binding.imageAtomic64);
+    writer.Flags(binding.imageUintStorage);
     writer.List(binding.imageShapes, [](Writer& out, DescriptorImageShape shape) { out.Value(shape); });
     writer.Flags(binding.bufferAtomic);
     writer.Flags(binding.bufferWritten);
@@ -499,10 +499,10 @@ void decodeBinding(Reader& reader, DescriptorBinding& binding) {
     binding.imageShape = hasShape ? std::optional(shape) : std::nullopt;
     reader.Flags(binding.samplerDepthCompare);
     reader.Flags(binding.imageWritten);
-    reader.Flags(binding.imageUintStorage);
     reader.Flags(binding.imageDepthCompare);
     reader.Flags(binding.imageAtomic);
     reader.Flags(binding.imageAtomic64);
+    reader.Flags(binding.imageUintStorage);
     reader.List(binding.imageShapes, 4, [](Reader& in, DescriptorImageShape& shape) { in.Value(shape); });
     reader.Flags(binding.bufferAtomic);
     reader.Flags(binding.bufferWritten);

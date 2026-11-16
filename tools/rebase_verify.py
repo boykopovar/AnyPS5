@@ -39,7 +39,7 @@ def changed_lines(root, base, tip):
     added = collections.defaultdict(collections.Counter)
     deleted = collections.defaultdict(collections.Counter)
     old_path, new_path, in_hunk = None, None, False
-    for line in git(root, "diff", "-U0", "--no-renames", "--no-color", "--no-ext-diff", "--no-textconv",
+    for line in git(root, "diff", "-U0", "--no-renames", "--no-relative", "--no-color", "--no-ext-diff", "--no-textconv",
                     "--src-prefix=a/", "--dst-prefix=b/", base, tip).split("\n"):
         if line.startswith("diff --git "):
             old_path, new_path, in_hunk = None, None, False
