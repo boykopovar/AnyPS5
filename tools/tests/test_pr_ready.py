@@ -351,5 +351,15 @@ class MainTests(unittest.TestCase):
             pr_ready.closed_with_label("o/r")
 
 
+class PaginationTests(unittest.TestCase):
+    def test_pagination_cursor_returns_each_new_cursor_once(self):
+        seen = set()
+        self.assertEqual(pr_ready.pagination_cursor({'pageInfo': {'endCursor': 'c1'}}, seen, 'x'), 'c1')
+        with self.assertRaisesRegex(ValueError, 'did not advance'):
+            pr_ready.pagination_cursor({'pageInfo': {'endCursor': 'c1'}}, seen, 'x')
+        with self.assertRaisesRegex(ValueError, 'has no cursor'):
+            pr_ready.pagination_cursor({'pageInfo': {'endCursor': ''}}, set(), 'x')
+
+
 if __name__ == "__main__":
     unittest.main()
