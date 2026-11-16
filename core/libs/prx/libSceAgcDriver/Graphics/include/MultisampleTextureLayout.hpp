@@ -26,6 +26,7 @@ public:
     std::uint64_t Offset(std::uint32_t x, std::uint32_t y, std::uint32_t layer, std::uint32_t fragment) const;
     void Detile(std::span<const std::byte> source, std::span<std::byte> destination) const;
     void Tile(std::span<const std::byte> source, std::span<std::byte> destination) const;
+    void TileHoisted(std::span<const std::byte> source, std::span<std::byte> destination) const;
 
 private:
     std::uint64_t offset(std::uint32_t x, std::uint32_t y, std::uint32_t layer, std::uint32_t fragment) const;
@@ -48,6 +49,8 @@ private:
     std::vector<std::uint32_t> layerOffsets;
     std::vector<std::uint32_t> fragmentOffsets;
 };
+
+std::vector<std::byte> ExpandPagedSnapshot(std::size_t bytes, std::span<const std::uint32_t> words, std::span<const std::size_t> starts, std::span<const std::byte> stored, std::size_t pageBytes, std::size_t repeated);
 
 }
 

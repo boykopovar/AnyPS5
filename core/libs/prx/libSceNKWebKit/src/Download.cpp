@@ -18,4 +18,9 @@ bool APS5_VABI WKDownloadGetWasUserInitiated(const void* downloadRef) {
     return download->wasUserInitiated;
 }
 
+void APS5_VABI WKDownloadCancel(const void* downloadRef) {
+    auto* download = const_cast<NKWebKit::Download*>(NKWebKit::Cast<NKWebKit::Download>(downloadRef, __func__));
+    download->isCancelled = true;
+}
+
 }

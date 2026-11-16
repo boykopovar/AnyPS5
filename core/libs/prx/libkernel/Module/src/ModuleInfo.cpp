@@ -1,4 +1,5 @@
 #include "prx/libkernel/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -519,7 +520,9 @@ bool SystemImage(const GuestImage& image) {
 template<typename TInfo>
 int FillModuleInfo(KernelModule handle, TInfo* info, bool titleOnly) {
     if (!info) return SCE_KERNEL_ERROR_EFAULT;
-    if (info->st_size != sizeof(TInfo)) return SCE_KERNEL_ERROR_EINVAL;
+    std::uint64_t size = 0;
+    if (!GuestCopyIn_nid_no_patch(&size, &info->st_size, sizeof(size))) return SCE_KERNEL_ERROR_EFAULT;
+    if (size != sizeof(TInfo)) return SCE_KERNEL_ERROR_EINVAL;
     for (const auto& image : GuestImages()) {
         if (ModuleIdForImage_nid_no_patch(image.native) != handle) continue;
         if (titleOnly && SystemImage(image)) return SCE_KERNEL_ERROR_EPERM;
@@ -533,7 +536,7 @@ int FillModuleInfo(KernelModule handle, TInfo* info, bool titleOnly) {
         if (!search.found) return SCE_KERNEL_ERROR_ESRCH;
         if constexpr (std::is_same_v<TInfo, ModuleInfoEx>) result.id = handle;
 #endif
-        *info = result;
+        if (!GuestCopyOut_nid_no_patch(info, &result, sizeof(result))) return SCE_KERNEL_ERROR_EFAULT;
         return 0;
     }
     return SCE_KERNEL_ERROR_ESRCH;
@@ -543,10 +546,15 @@ int FillModuleList(KernelModule* handles, std::size_t count, std::size_t* actual
     if (!handles) return SCE_KERNEL_ERROR_EFAULT;
     auto images = GuestImages();
     if (titleOnly) std::erase_if(images, SystemImage);
-    for (std::size_t i = 0; i < images.size() && i < count; ++i) handles[i] = ModuleIdForImage_nid_no_patch(images[i].native);
+    std::vector<KernelModule> localHandles;
+    const std::size_t copyCount = std::min(images.size(), count);
+    localHandles.reserve(copyCount);
+    for (std::size_t i = 0; i < copyCount; ++i) localHandles.push_back(ModuleIdForImage_nid_no_patch(images[i].native));
+    if (copyCount > 0 && !GuestCopyOut_nid_no_patch(handles, localHandles.data(), copyCount * sizeof(KernelModule))) return SCE_KERNEL_ERROR_EFAULT;
     if (images.size() > count) return SCE_KERNEL_ERROR_ENOMEM;
     if (!actual) return SCE_KERNEL_ERROR_EFAULT;
-    *actual = images.size();
+    const std::size_t actualSize = images.size();
+    if (!GuestCopyOut_nid_no_patch(actual, &actualSize, sizeof(actualSize))) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
@@ -557,7 +565,8 @@ extern "C" {
 int APS5_VABI sceKernelGetModuleInfoFromAddr(std::uint64_t address, int flags, ModuleInfoEx* info) {
     if (flags != 1 && flags != 2) {
         if (!info) throw std::invalid_argument("sceKernelGetModuleInfoFromAddr: null info with flags " + std::to_string(flags));
-        *info = {};
+        ModuleInfoEx empty{};
+        if (!GuestCopyOut_nid_no_patch(info, &empty, sizeof(empty))) return SCE_KERNEL_ERROR_EFAULT;
         return SCE_KERNEL_ERROR_EINVAL;
     }
     if (!info) return SCE_KERNEL_ERROR_EFAULT;
@@ -583,10 +592,11 @@ int APS5_VABI sceKernelGetModuleInfoFromAddr(std::uint64_t address, int flags, M
     const GuestImage image{native, 0};
 #endif
     if (!found || (flags == 2 && SystemImage(image))) {
-        *info = {};
+        ModuleInfoEx empty{};
+        if (!GuestCopyOut_nid_no_patch(info, &empty, sizeof(empty))) return SCE_KERNEL_ERROR_EFAULT;
         return SCE_KERNEL_ERROR_ESRCH;
     }
-    *info = result;
+    if (!GuestCopyOut_nid_no_patch(info, &result, sizeof(result))) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
@@ -630,8 +640,15 @@ std::int32_t APS5_VABI sceKernelGetLibkernelTextLocation_nid_postfix(void** addr
 #endif
     if (!found || info.segment_count == 0)
         throw std::runtime_error("sceKernelGetLibkernelTextLocation: the main program has no segments");
-    *address = reinterpret_cast<void*>(static_cast<std::uintptr_t>(info.segments[0].address));
-    *size = info.segments[0].size;
+    void* localAddress = reinterpret_cast<void*>(static_cast<std::uintptr_t>(info.segments[0].address));
+    std::size_t localSize = info.segments[0].size;
+    const int savedErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(address, &localAddress, sizeof(localAddress)) ||
+        !GuestCopyOut_nid_no_patch(size, &localSize, sizeof(localSize))) {
+        errno = savedErrno;
+        throw std::invalid_argument("sceKernelGetLibkernelTextLocation: unmapped argument");
+    }
+    errno = savedErrno;
     return 0;
 }
 
@@ -641,7 +658,13 @@ std::int32_t APS5_VABI sceKernelInternalMemoryGetModuleSegmentInfo_nid_postfix(I
     std::size_t size = 0;
     const auto status = sceKernelGetLibkernelTextLocation_nid_postfix(&address, &size);
     if (status != 0) return status;
-    *result = {reinterpret_cast<std::uintptr_t>(address), size};
+    const InternalSegmentInfo localResult{reinterpret_cast<std::uintptr_t>(address), size};
+    const int savedErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(result, &localResult, sizeof(localResult))) {
+        errno = savedErrno;
+        throw std::invalid_argument("sceKernelInternalMemoryGetModuleSegmentInfo: unmapped result");
+    }
+    errno = savedErrno;
     return 0;
 }
 

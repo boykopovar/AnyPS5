@@ -5,6 +5,7 @@
 #include <bit>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <vector>
 
 struct PcmFixture {
@@ -234,6 +235,33 @@ static void TestSkipWindowContract() {
     Require(callbacks.size() == 1 && callbacks.front().flag == SCE_NGS2_VOICE_CALLBACK_FLAG_BLOCK_END && callbacks.front().user_data == 101);
 }
 
+static void TestLoopPastData(const PcmFixture& fixture) {
+    constexpr std::uint32_t channels = 2;
+    constexpr std::uint32_t frames = 4;
+    const auto canonical = Canonical(fixture);
+    const auto framesOf = [&](const PcmFixture& input, const std::vector<std::uint32_t>& order) {
+        std::vector<std::uint8_t> data;
+        for (const auto frame : order) for (std::uint32_t channel = 0; channel < channels; ++channel) {
+            const auto first = input.data.begin() + (frame + channel) % input.samples.size() * input.bytes;
+            data.insert(data.end(), first, first + input.bytes);
+        }
+        return data;
+    };
+    const auto data = framesOf(fixture, {0, 1, 2, 3, 4, 5, 6, 7});
+    const auto frameBytes = fixture.bytes * channels;
+    for (const std::uint32_t samples : {frames * 2, frames + frames / 2}) {
+        std::vector<std::uint32_t> order;
+        while (order.size() < PcmGrain * 4) for (std::uint32_t sample = 0; sample < samples; ++sample) order.push_back(sample % frames);
+        const auto expected = framesOf(canonical, order);
+        Playback playback(fixture.type, channels), reference(canonical.type, channels);
+        const Ngs2WaveformBlock blocks[] = {{0, frameBytes * frames, UINT32_MAX, 0, samples, 0, 0}, {frameBytes * frames, frameBytes * frames, UINT32_MAX, 0, samples, 0, 0}};
+        const Ngs2WaveformBlock expectedBlock{0, expected.size(), 0, 0, static_cast<std::uint32_t>(order.size()), 0, 0};
+        playback.Add(data.data(), blocks, 2);
+        reference.Add(expected.data(), &expectedBlock, 1);
+        for (unsigned pass = 0; pass < 3; ++pass) Require(playback.Render() == reference.Render());
+    }
+}
+
 static void TestResampling(const PcmFixture& fixture) {
     const auto canonical = Canonical(fixture);
     Playback playback(fixture.type, 1, 24000), reference(canonical.type, 1, 24000);
@@ -290,16 +318,76 @@ static void TestNumericEdges() {
     TestFramesAndPositions(floating64, 1);
 }
 
-int main() {
+static void TestReportedInputLifetime(const PcmFixture& fixture, std::uint32_t channels, std::uint32_t rate, float pitch) {
+    constexpr std::uint32_t Frames = 16384;
+    constexpr std::uint32_t LateFrame = 512;
+    const auto frameBytes = channels * fixture.bytes;
+    std::vector<std::uint8_t> data(Frames * frameBytes), expected(data.size()), original(data.size());
+    for (std::uint32_t frame = 0; frame < Frames; ++frame) {
+        for (std::uint32_t channel = 0; channel < channels; ++channel) {
+            const auto index = (frame + channel) % fixture.samples.size();
+            const auto lateIndex = (index + (frame >= LateFrame ? 3u : 0u)) % fixture.samples.size();
+            const auto offset = static_cast<std::size_t>(frame * channels + channel) * fixture.bytes;
+            std::copy_n(fixture.data.data() + index * fixture.bytes, fixture.bytes, data.data() + offset);
+            std::copy_n(fixture.data.data() + lateIndex * fixture.bytes, fixture.bytes, expected.data() + offset);
+        }
+    }
+    original = data;
+    Playback playback(fixture.type, channels, rate), reference(fixture.type, channels, rate), unchanged(fixture.type, channels, rate);
+    for (const auto voice : {playback.voice, reference.voice, unchanged.voice})
+        Control(voice, SCE_NGS2_SAMPLER_VOICE_PARAM_PITCH, Ngs2SamplerVoicePitchParam{{}, pitch});
+    const Ngs2WaveformBlock block{0, data.size(), 0, 0, Frames, 0, 0};
+    playback.Add(data.data(), &block, 1);
+    reference.Add(expected.data(), &block, 1);
+    unchanged.Add(original.data(), &block, 1);
+    bool lateWriteVisible = false;
+    std::uint64_t previous = 0;
+    for (unsigned grain = 0; grain < 32; ++grain) {
+        const auto output = playback.Render();
+        Require(output == reference.Render());
+        const auto baseline = unchanged.Render();
+        lateWriteVisible = lateWriteVisible || output != baseline;
+        const auto state = playback.State();
+        const auto expectedState = reference.State();
+        Require(state.decoded_data_size == expectedState.decoded_data_size);
+        if (state.decoded_data_size < previous || state.decoded_data_size > data.size())
+            std::fprintf(stderr, "PCM lifetime type=%#x channels=%u rate=%u pitch=%g grain=%u decoded=%llu previous=%llu size=%zu\n", fixture.type, channels, rate, pitch, grain, static_cast<unsigned long long>(state.decoded_data_size), static_cast<unsigned long long>(previous), data.size());
+        Require(state.decoded_data_size >= previous && state.decoded_data_size <= data.size());
+        Require(state.decoded_data_size % frameBytes == 0);
+        if (grain == 0) {
+            Require(state.decoded_data_size > 0 && state.decoded_data_size <= LateFrame * frameBytes);
+            std::copy(expected.begin() + LateFrame * frameBytes, expected.end(), data.begin() + LateFrame * frameBytes);
+        }
+        std::fill(data.begin(), data.begin() + state.decoded_data_size, 0);
+        previous = state.decoded_data_size;
+    }
+    Require(lateWriteVisible);
+}
+
+static void TestReportedInputLifetimes() {
+    for (const auto& fixture : Fixtures)
+        for (const auto channels : {1u, 2u})
+            for (const auto rate : {44100u, 48000u, 96000u})
+                for (const auto pitch : {0.75f, 1.0f, 2.0f})
+                    TestReportedInputLifetime(fixture, channels, rate, pitch);
+}
+
+int main(int argc, char** argv) {
+    if (argc == 2 && std::strcmp(argv[1], "--reported-lifetime") == 0) {
+        TestReportedInputLifetimes();
+        return 0;
+    }
     TestSkipWindowContract();
     for (const auto& fixture : Fixtures) {
         TestConstantConversions(fixture);
         for (const auto channels : {1u, 2u, 6u, 8u}) TestFramesAndPositions(fixture, channels);
         TestRepeatAndTransition(fixture);
+        TestLoopPastData(fixture);
         TestResampling(fixture);
         TestPitch(fixture);
         TestBounds(fixture);
     }
     TestNumericEdges();
+    TestReportedInputLifetimes();
     return 0;
 }

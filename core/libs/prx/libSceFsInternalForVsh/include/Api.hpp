@@ -128,7 +128,7 @@ int APS5_VABI sceFsTransactionCancel();
 int APS5_VABI sceFsTransactionSaveDataInitMountOpt();
 int APS5_VABI sceFsTransactionSaveDataMount();
 int APS5_VABI sceFsTransactionStart();
-int APS5_VABI sceFsTrophyImageError();
+int APS5_VABI sceFsTrophyImageError(int error);
 int APS5_VABI sceFsUfsAllocateAdditionalContents();
 int APS5_VABI sceFsUfsAllocateAligned();
 int APS5_VABI sceFsUfsAllocateDownloadData();

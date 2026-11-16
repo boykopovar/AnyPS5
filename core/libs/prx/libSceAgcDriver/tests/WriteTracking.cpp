@@ -20,15 +20,19 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <iostream>
 #include <limits>
+#include <mutex>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -39,12 +43,15 @@ constexpr std::size_t Block = 65536;
 #ifdef _WIN32
 constexpr wchar_t MetadataCommitMode[] = L"--metadata-commit";
 constexpr wchar_t HostHoleMode[] = L"--host-hole";
+constexpr wchar_t HostRegionIndexMode[] = L"--host-region-index";
 constexpr wchar_t ResidentRemapMode[] = L"--resident-direct-remap";
 constexpr wchar_t RewatchImportPagesMode[] = L"--rewatch-import-pages";
 constexpr wchar_t RewatchedSharedMode[] = L"--rewatched-direct-shared";
 constexpr wchar_t ImportAliasSharedMode[] = L"--import-alias-shared";
 constexpr wchar_t SharedGenerationsMode[] = L"--compared-shared-generations";
 constexpr wchar_t CpuWritePinMode[] = L"--cpu-write-pin";
+constexpr wchar_t FreshViewMode[] = L"--fresh-view";
+constexpr wchar_t OwnStoreImagesMode[] = L"--own-store-images";
 #endif
 
 void Require(bool condition, const std::string& message) {
@@ -516,6 +523,80 @@ void CheckOwnStore() {
     Require(!UnchangedSince(base, 64, beforeCpu), "a CPU write after the driver store is not seen");
 }
 
+void CheckGpuWriteNotListed() {
+    void* memory = AllocateWatched(Block);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    std::memset(memory, 0x11, Block);
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> written;
+    const auto since = CollectWrittenBlocks(base, Block, std::numeric_limits<std::uint64_t>::max(), written);
+    Require(since != 0 && written.empty(), "the block of the GPU write was not collected");
+    Require(MarkWritten(base + 0x100, 4) > since, "the GPU write was not stamped");
+    CollectWrittenBlocks(base, Block, since, written);
+    Require(written.empty(), "a block only a GPU write stamped was listed as written by the CPU");
+}
+
+void CheckOwnStoreImages() {
+    void* memory = AllocateWatched(Block);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    auto* guest = static_cast<volatile std::uint8_t*>(memory);
+    std::memset(memory, 0x11, Block);
+    guest[0x4123] = 0x6d;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> written;
+    auto since = CollectWrittenBlocks(base, Block, std::numeric_limits<std::uint64_t>::max(), written);
+    Require(since != 0 && written.empty(), "the own-store image block was not collected");
+    std::string failures;
+    const auto expect = [&](const std::vector<std::pair<std::uint64_t, std::uint64_t>>& expected, const char* message) {
+        since = CollectWrittenBlocks(base, Block, since, written);
+        if (written != expected) failures += std::string(failures.empty() ? "" : "; ") + message;
+    };
+    const auto page = [&](std::uint64_t offset) { return std::vector<std::pair<std::uint64_t, std::uint64_t>>{{base + offset, base + offset + 4096}}; };
+    StoreOwnBytes(base + 0xc100, 8, [&] { std::atomic_ref(*reinterpret_cast<std::uint64_t*>(base + 0xc100)).fetch_add(1); });
+    expect({}, "a driver store made while no capture compares was listed");
+    SetOwnStoreCompare(true);
+    const std::array<std::byte, 8> eight{std::byte{1}, std::byte{2}, std::byte{3}, std::byte{4}, std::byte{5}, std::byte{6}, std::byte{7}, std::byte{8}};
+    Write(base + 0x100, eight);
+    expect({}, "a Write no other store met in its page was listed as a CPU write");
+    StoreOwnBytes(base + 0x1100, std::span<const std::byte>(eight));
+    expect({}, "a store of given bytes no other store met in its page was listed as a CPU write");
+    AgcDriverStoreGuestLabel_nid_postfix(reinterpret_cast<std::uint64_t*>(base + 0x2100), 7);
+    expect({}, "a guest label store no other store met in its page was listed as a CPU write");
+    const std::vector<std::byte> original(4096, std::byte{0x11});
+    auto current = original;
+    current[0x10] = std::byte{0x5a};
+    WriteChanged(base + 0x4000, current, original);
+    expect({}, "a write-back no other store met in its page was listed as a CPU write");
+    guest[0xd020] = 0x33;
+    expect(page(0xd000), "a CPU write before a keep-guest write-back was not listed");
+    auto kept = original;
+    kept[0x20] = std::byte{0x5b};
+    kept[0x30] = std::byte{0x5c};
+    WriteChangedKeepingGuest(base + 0xd000, kept, original);
+    if (guest[0xd020] != 0x33 || guest[0xd030] != 0x5c) failures += std::string(failures.empty() ? "" : "; ") + "the keep-guest write-back did not keep the guest byte and store the other";
+    expect({}, "a keep-guest write-back that kept a guest byte was listed as a CPU write");
+    StoreOwnBytes(base + 0x5f00, 0x200, [&](std::span<std::byte> image) {
+        std::memset(reinterpret_cast<void*>(base + 0x5f00), 0x44, 0x200);
+        if (!image.empty()) std::memset(image.data(), 0x44, image.size());
+        std::thread([&] { guest[0x5800] = 0x7e; }).join();
+    });
+    expect(page(0x5000), "a store another thread made beside a driver store during the store did not list exactly its page");
+    StoreOwnBytes(base + 0x8100, 4, [&](std::span<std::byte> image) {
+        const std::uint32_t stored = 4;
+        std::memcpy(reinterpret_cast<void*>(base + 0x8100), &stored, sizeof(stored));
+        if (!image.empty()) std::memcpy(image.data(), &stored, sizeof(stored));
+        std::thread([&] { *reinterpret_cast<volatile std::uint32_t*>(base + 0x8100) = 9; }).join();
+    });
+    expect(page(0x8000), "a store another thread made over a driver store's bytes during the store was not listed");
+    StoreOwnBytes(base + 0xa100, 8, [&] {
+        std::atomic_ref word(*reinterpret_cast<std::uint64_t*>(base + 0xa100));
+        word.fetch_add(1);
+        std::thread([&] { word.fetch_sub(1); }).join();
+    });
+    expect(page(0xa000), "a store another thread made that undid a driver store which gives no bytes was not listed");
+    expect({}, "a page listed after a driver store was listed again");
+    SetOwnStoreCompare(false);
+    Require(failures.empty(), failures);
+}
+
 void CheckUnwatch() {
     void* memory = AllocateWatched(3 * Block);
     const auto base = reinterpret_cast<std::uint64_t>(memory);
@@ -716,6 +797,25 @@ void CheckDeferredSharedImports() {
     CloseHandle(section);
 }
 
+
+void CheckFreshViewPagesListed() {
+    HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE | SEC_RESERVE, 0, Block, nullptr);
+    Require(section != nullptr, "cannot create the fresh view backing");
+    auto* memory = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(Block, Block));
+    Require(memory != nullptr, "cannot allocate the fresh view address");
+    GuestArena::GuestArenaMap_nid_postfix(memory, Block, section, 0, PAGE_READWRITE);
+    const auto base = reinterpret_cast<std::uintptr_t>(memory);
+    Require(ImportWatched(base, Block, [] { return true; }), "the fresh view import failed");
+    const auto before = CollectWritesUncached(base, 4096);
+    Require(before != 0, "the first page of the fresh view was not collected");
+    Require(MarkWritten(base, 4) != 0, "the GPU write next to the fresh pages was not stamped");
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> written;
+    CollectWrittenBlocks(base, Block, before, written);
+    Require(written.size() == 1 && written.front() == std::pair<std::uint64_t, std::uint64_t>{base + 4096, base + Block}, "pages only a fresh collect took were not listed");
+    GuestArena::GuestArenaReset_nid_postfix(memory, Block);
+    GuestArena::GuestArenaRelease_nid_postfix(memory, Block);
+    CloseHandle(section);
+}
 
 void CheckPrivateMappingReuse() {
     void* memory = AllocateWatched(3 * Block);
@@ -1350,7 +1450,63 @@ void CheckHostHoleInChild(const wchar_t* mode, std::uint64_t hole) {
     Require(reported && exitCode == 0, "the host-hole child failed");
 }
 
+bool ScanHostRegions(const std::vector<std::pair<std::uintptr_t, std::uintptr_t>>& regions, std::uintptr_t start, std::size_t bytes) {
+    for (const auto& [regionStart, regionEnd] : regions) {
+        if (regionStart < start + bytes && start < regionEnd) return true;
+    }
+    return false;
+}
+
+void CheckHostRegionIndex(bool needRegions) {
+    const bool expectIndex = std::getenv("APS5_NO_HOST_REGION_INDEX") == nullptr;
+    Require(GuestArena::GuestArenaHostRegionIndexActive_nid_no_patch() == expectIndex, "the host region index does not follow its switch");
+    const auto count = GuestArena::GuestArenaHostRegions_nid_no_patch(nullptr, 0);
+    std::vector<std::uintptr_t> flat(2 * count);
+    Require(GuestArena::GuestArenaHostRegions_nid_no_patch(flat.data(), count) == count, "the host region list changed while it was read");
+    std::vector<std::pair<std::uintptr_t, std::uintptr_t>> regions;
+    for (std::size_t index = 0; index < count; ++index) regions.emplace_back(flat[2 * index], flat[2 * index + 1]);
+    Require(!needRegions || !regions.empty(), "the arena has no host region to check");
+    std::size_t touching = 0;
+    for (std::size_t first = 0; first < regions.size(); ++first) {
+        for (std::size_t second = 0; second < regions.size(); ++second) touching += regions[first].second == regions[second].first;
+    }
+    const auto compare = [&](std::uintptr_t start, std::size_t bytes) {
+        Require(GuestArena::GuestArenaHostRegionOverlaps_nid_postfix(start, bytes) == ScanHostRegions(regions, start, bytes), "the host region test differs from a scan of the region list");
+    };
+    std::vector<std::uintptr_t> edges;
+    for (const auto& [regionStart, regionEnd] : regions) {
+        for (const std::uintptr_t offset : {std::uintptr_t{0}, std::uintptr_t{1}, std::uintptr_t{2}}) {
+            for (const auto edge : {regionStart, regionEnd}) {
+                edges.push_back(edge + offset);
+                edges.push_back(edge - offset);
+            }
+        }
+        edges.push_back(regionStart + (regionEnd - regionStart) / 2);
+    }
+    std::sort(edges.begin(), edges.end());
+    edges.erase(std::unique(edges.begin(), edges.end()), edges.end());
+    const auto stride = edges.size() / 500 + 1;
+    const std::array<std::size_t, 9> sizes{0, 1, 2, 4096, Block, std::size_t{1} << 20, std::size_t{1} << 32, std::size_t{1} << 40, std::numeric_limits<std::size_t>::max()};
+    for (std::size_t index = 0; index < edges.size(); index += stride) {
+        for (const auto bytes : sizes) {
+            compare(edges[index], bytes);
+            compare(edges[index] - bytes, bytes);
+            compare(edges[index] - bytes, bytes + 1);
+        }
+        for (std::size_t other = 0; other < edges.size(); other += stride) compare(edges[index], static_cast<std::size_t>(edges[other] - edges[index]));
+    }
+    std::mt19937_64 random(0x4e6f);
+    for (unsigned query = 0; query < 200000; ++query) {
+        std::uintptr_t start = random() % (std::uintptr_t{1} << 47);
+        if (!edges.empty() && random() % 2 == 0) start = edges[random() % edges.size()] + random() % 5 - 2;
+        const std::size_t bytes = random() % 8 == 0 ? random() : (std::size_t{1} << (random() % 41)) + random() % 3;
+        compare(start, bytes);
+    }
+    std::cout << "host region index: " << regions.size() << " regions, " << touching << " touching pairs, index " << (expectIndex ? "on" : "off") << "\n";
+}
+
 void CheckHostHole() {
+    CheckHostRegionIndex(true);
     constexpr std::size_t bytes = 64;
     const auto hole = ChildHostHole();
     Require(GuestArena::GuestArenaHostRegionOverlaps_nid_postfix(hole, bytes), "the range reserved before the arena is not an arena host region");
@@ -1759,6 +1915,45 @@ void CheckImportWindow() {
     Require(!UnchangedSince(base, Block, after), "a store after the import window was missed");
 }
 
+#ifdef __APPLE__
+void ResolveUnderGpuMutex(std::uintptr_t begin, std::uintptr_t end) {
+    const std::lock_guard held(GpuMutex());
+    std::memset(reinterpret_cast<void*>(begin), 0x33, end - begin);
+    GuestWriteWatch::GuestWriteWatchReleaseReads_nid_postfix(begin, end - begin);
+}
+
+std::size_t TrappedBytes(std::uint64_t address, std::size_t bytes) {
+    std::size_t trapped = 0;
+    GuestWriteWatch::GuestWriteWatchReadTraps_nid_postfix(static_cast<std::uintptr_t>(address), bytes, +[](void* context, std::uintptr_t begin, std::uintptr_t end) { *static_cast<std::size_t*>(context) += end - begin; }, &trapped);
+    return trapped;
+}
+
+void CheckImportOverReadTraps() {
+    ::alarm(20);
+    constexpr std::size_t bytes = 256 * Block;
+    void* memory = AllocateWatched(bytes);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    std::memset(memory, 0x11, bytes);
+    const auto synced = CollectWritesUncached(base, bytes);
+    Require(synced != 0, "the read-trapped import range is not collected");
+    Require(GuestWriteWatch::GuestWriteWatchSetReadTrapResolver_nid_postfix(&ResolveUnderGpuMutex), "cannot set the read trap resolver");
+    {
+        const std::lock_guard held(GpuMutex());
+        Require(ImportWatched(base, bytes, [&] {
+            std::memset(memory, 0x22, bytes);
+            return GuestWriteWatch::GuestWriteWatchTrapReads_nid_postfix(base, bytes);
+        }, true, false), "the import under the GPU mutex failed");
+        Require(TrappedBytes(base, bytes) == bytes, "the import took read traps off its range");
+    }
+    Require(Watched(base, bytes), "the import under the GPU mutex left its range unwatched");
+    Require(WrittenSince(base, bytes, synced), "the stores within the import were missed");
+    std::uint8_t seen = 0;
+    std::thread reader([&] { seen = *static_cast<const volatile std::uint8_t*>(memory); });
+    reader.join();
+    Require(seen == 0x33, "a read after the import did not see the bytes its trap stores");
+}
+#endif
+
 void CheckImportWindowOtherThread() {
     void* memory = AllocateWatched(2 * Block);
     const auto base = reinterpret_cast<std::uint64_t>(memory);
@@ -1780,6 +1975,9 @@ void CheckImportWindowOtherThread() {
     Require(ChangedBlocks(base, 2 * Block, generations, changed, cpu), "the other-thread import window block is not tracked");
     Require(changed[0] == BlockUnchanged && cpu[0] == 1, "a same-value store from another thread within an import window lost its possible CPU touch");
     Require(changed[1] == BlockWritten && WrittenSince(base + Block, Block, synced) && cpu[1] == 1, "a store of new bytes from another thread within an import window was missed");
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> written;
+    CollectWrittenBlocks(base, Block, synced, written);
+    Require(written.size() == 1 && written.front() == std::pair<std::uint64_t, std::uint64_t>{base, base + 4096}, "a page only an import window stamped as a possible CPU touch was not listed");
 }
 
 void CheckImportWindowZeroPages() {
@@ -1877,6 +2075,38 @@ void CheckImportWindowAcrossThreads() {
         else Require(UnchangedSince(base + block * Block, Block, since(block)), "a page a large import window resolved without changing its bytes reads as written in block " + std::to_string(block));
     }
 }
+
+#if defined(__linux__)
+void CheckImportWindowOverAlias() {
+    const int file = memfd_create("aps5-import-window-alias", 0);
+    Require(file >= 0 && ftruncate(file, Block) == 0, "cannot create the aliased import window backing");
+    void* raw = mmap(nullptr, 3 * Block, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(raw != MAP_FAILED, "cannot reserve the aliased import window");
+    const auto low = (reinterpret_cast<std::uintptr_t>(raw) + Block - 1) & ~static_cast<std::uintptr_t>(Block - 1);
+    const auto high = low + Block;
+    for (const auto view : {low, high}) {
+        Require(mmap(reinterpret_cast<void*>(view), Block, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, file, 0) != MAP_FAILED, "cannot map an import window alias");
+        GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(reinterpret_cast<void*>(view), Block);
+    }
+    if (GuestWriteWatch::GuestWriteWatchAlias_nid_postfix(reinterpret_cast<void*>(low), reinterpret_cast<void*>(high), Block)) {
+        auto* bytes = reinterpret_cast<volatile std::uint8_t*>(low);
+        std::memset(reinterpret_cast<void*>(low), 0x11, Block);
+        const auto synced = CollectWritesUncached(low, 2 * Block);
+        Require(synced != 0, "the aliased import window is not collected");
+        Require(ImportWatched(high, Block, [&] {
+            bytes[0x100] = 0x22;
+            return true;
+        }, true, false), "the aliased import window import failed");
+        Require(Watched(low, 2 * Block), "an import window over an alias left a view unwatched");
+        Require(WrittenSince(high, Block, synced) && WrittenSince(low, Block, synced), "a store through an alias during an import window was missed at one of its views");
+    } else {
+        std::cout << "write watch aliases unavailable: import window over an alias skipped\n";
+    }
+    GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(reinterpret_cast<void*>(low), 2 * Block);
+    munmap(raw, 3 * Block);
+    close(file);
+}
+#endif
 
 void CheckImportWindowFootprint() {
 #ifdef __GLIBC__
@@ -2436,6 +2666,13 @@ int main(int argc, char** argv) {
             std::cout << "generation wrap test passed\n";
             return 0;
         }
+#ifdef __APPLE__
+        if (argc == 2 && std::string_view(argv[1]) == "--import-over-read-traps") {
+            CheckImportOverReadTraps();
+            std::cout << "import over read traps test passed\n";
+            return 0;
+        }
+#endif
         if (argc == 2 && std::string_view(argv[1]) == "--mark-order") {
             CheckMarkPossiblyWrittenOrder();
             std::cout << "mark order test passed\n";
@@ -2444,6 +2681,10 @@ int main(int argc, char** argv) {
 #ifdef _WIN32
         if (std::wstring_view(GetCommandLineW()).ends_with(HostHoleMode)) {
             CheckHostHole();
+            return 0;
+        }
+        if (std::wstring_view(GetCommandLineW()).ends_with(HostRegionIndexMode)) {
+            CheckHostRegionIndex(false);
             return 0;
         }
         if (std::wstring_view(GetCommandLineW()).ends_with(ResidentRemapMode)) {
@@ -2471,6 +2712,14 @@ int main(int argc, char** argv) {
             CheckCpuWritePin();
             return 0;
         }
+        if (std::wstring_view(GetCommandLineW()).ends_with(FreshViewMode)) {
+            CheckFreshViewPagesListed();
+            return 0;
+        }
+        if (std::wstring_view(GetCommandLineW()).ends_with(OwnStoreImagesMode)) {
+            CheckOwnStoreImages();
+            return 0;
+        }
 #endif
         CheckSharedBlock();
         CheckStoredOverUsesPageEvidence();
@@ -2479,6 +2728,7 @@ int main(int argc, char** argv) {
         CheckSharedBlockProofs();
         CheckRepeatedPossibleStores();
         CheckOwnStore();
+        CheckGpuWriteNotListed();
         CheckUnwatch();
         CheckNewestStamp();
         CheckPartlyWatchedStore();
@@ -2507,6 +2757,9 @@ int main(int argc, char** argv) {
         CheckImportWindowOtherThread();
         CheckImportWindowOverUnwatchedBlock();
         CheckImportWindowAcrossThreads();
+#if defined(__linux__)
+        CheckImportWindowOverAlias();
+#endif
         CheckStoreAcrossImports();
         CheckImportWindowFootprint();
         CheckUnwatchedImport();
@@ -2515,6 +2768,9 @@ int main(int argc, char** argv) {
         CheckUnwatchHooks();
         CheckCommittedRanges();
         CheckAdoptLatestEpoch();
+#ifndef _WIN32
+        CheckOwnStoreImages();
+#endif
     } catch (const std::exception& error) {
         std::cerr << "write tracking test failed: " << error.what() << "\n";
         return 1;
