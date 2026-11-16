@@ -96,6 +96,9 @@ void* X509StoreNew() { return X509_STORE_new(); }
 void X509StoreFree(void* store) { X509_STORE_free(static_cast<X509_STORE*>(store)); }
 int X509StoreAddCert(void* store, void* certificate) { return X509_STORE_add_cert(static_cast<X509_STORE*>(store), static_cast<X509*>(certificate)); }
 void* X509StoreObjects(void* store) { return static_cast<X509_STORE*>(store)->objs; }
+void* X509InfoNew() { return X509_INFO_new(); }
+void X509InfoFree(void* info) { X509_INFO_free(static_cast<X509_INFO*>(info)); }
+void* Malloc(std::size_t size) { return malloc(size); }
 unsigned long ErrGetError() { return ERR_get_error(); }
 void ErrClearError() { ERR_clear_error(); }
 
