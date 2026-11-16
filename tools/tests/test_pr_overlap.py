@@ -615,6 +615,11 @@ class HelperPathTests(unittest.TestCase):
         self.assertEqual(pr_overlap.library_for_path("core/libs/prx"), "")
         self.assertEqual(pr_overlap.library_for_path("tools/pr_overlap.py"), "")
 
+    def test_canonical_drops_the_postfix_and_the_disambiguator(self):
+        self.assertEqual(pr_overlap.canonical("sceFoo_nid_postfix"), "sceFoo")
+        self.assertEqual(pr_overlap.canonical("sceFoo_nid_disambig2_nid_postfix"), "sceFoo")
+        self.assertEqual(pr_overlap.canonical("sceFoo"), "sceFoo")
+
 
 if __name__ == "__main__":
     unittest.main()
