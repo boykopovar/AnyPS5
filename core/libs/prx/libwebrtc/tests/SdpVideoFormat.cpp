@@ -280,6 +280,21 @@ void TestMoveConstructor() {
 
     _ZN6webrtc14SdpVideoFormatD1Ev_nid_postfix(&source);
     _ZN6webrtc14SdpVideoFormatD1Ev_nid_postfix(&moved);
+
+    WebRtcSdpVideoFormat singleSource{};
+    InitFormat(singleSource, "VP8", {{"key", "val"}}, {});
+    const auto* singleRoot = singleSource.parameters.root;
+    Require(singleSource.parameters.beginNode == singleRoot);
+    WebRtcSdpVideoFormat singleMoved{};
+    _ZN6webrtc14SdpVideoFormatC1EOS0__nid_postfix(&singleMoved, &singleSource);
+    Require(singleMoved.parameters.root == singleRoot);
+    Require(singleMoved.parameters.beginNode == singleRoot);
+    Require(singleMoved.parameters.root->links.parent == EndNode(singleMoved));
+    Require(singleSource.parameters.size == 0 && singleSource.parameters.root == nullptr);
+    Require(singleSource.parameters.beginNode == EndNode(singleSource));
+    _ZN6webrtc14SdpVideoFormatD1Ev_nid_postfix(&singleSource);
+    Require(ReadHostMap(singleMoved) == std::map<std::string, std::string>{{"key", "val"}});
+    _ZN6webrtc14SdpVideoFormatD1Ev_nid_postfix(&singleMoved);
 }
 
 void TestIsCodecInList() {
