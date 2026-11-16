@@ -1532,6 +1532,11 @@ class SampleFileLoadTests(unittest.TestCase):
         self.assertEqual(samples.stacks, collections.Counter({"main;work": 3, "main;idle": 1}))
         self.assertEqual(samples.capture_format, "collapsed")
 
+    def test_load_refuses_collapsed_and_address_records_in_one_capture(self):
+        path = self.write("main;work 3\nlibA 0x10 2 3\n")
+        with self.assertRaisesRegex(ValueError, "cannot mix collapsed-stack and address records"):
+            symbolize_samples.load(path)
+
 
 if __name__ == "__main__":
     unittest.main()
