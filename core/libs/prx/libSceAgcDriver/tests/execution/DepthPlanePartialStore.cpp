@@ -26,6 +26,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <mutex>
 #include <cstring>
 #include <exception>
 #include <iostream>
@@ -130,10 +131,12 @@ std::vector<std::pair<std::uint64_t, std::uint64_t>> ReadStart(AgcDriver::Vulkan
 
 int main(int argc, char** argv) {
     try {
-        const bool bufferCopy = argc > 1 && std::string(argv[1]) == "--buffer-copy";
+        const bool uploadImage = argc > 1 && std::string(argv[1]) == "--upload-image";
+        const bool bufferCopy = uploadImage || (argc > 1 && std::string(argv[1]) == "--buffer-copy");
         const bool imageCopy = argc > 1 && std::string(argv[1]) == "--image-copy";
         if (bufferCopy || imageCopy) AgcDriver::Graphics::SetDepthTransferPasses(false);
         if (bufferCopy) AgcDriver::Graphics::SetDirectDepthCopy(false);
+        if (uploadImage) AgcDriver::Graphics::SetDepthUploadImage(true);
         const bool forcedOff = bufferCopy || std::getenv("APS5_NO_DIRECT_DEPTH_COPY") != nullptr;
         const bool passesOff = bufferCopy || imageCopy || std::getenv("APS5_NO_DEPTH_TRANSFER_PASS") != nullptr;
         const auto device = OpenVulkanTestDevice();
@@ -185,6 +188,22 @@ int main(int argc, char** argv) {
             RequireUnit(plane, 0, 0.5f, UnitTexels, "the untouched unit retains its GPU depth results");
             Require(std::memcmp(table, descriptor.data(), sizeof(descriptor)) == 0, "storing an untouched depth unit changed the CPU descriptors");
             std::puts(partialWatch ? "depth plane CPU descriptors with partial write watch tests passed" : "depth plane CPU descriptors after memoized collect tests passed");
+            return 0;
+        }
+
+        if (argc == 2 && std::string_view(argv[1]) == "--cpu-store-after-idle-flush") {
+            Fill(plane, 1.0f);
+            Require(draw(depth, writeHalf) == PlaneTexels, "the draw writing depth 0.5 before the idle flush did not cover the plane");
+            const auto before = AgcDriver::Graphics::DepthPlaneStoreCounts();
+            {
+                std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+                AgcDriver::Graphics::StorageTexture::FlushAllPending("idle");
+            }
+            Require(Since(before).units != 0, "the idle flush stored no depth unit");
+            Fill(plane, 0.25f);
+            device->WaitIdle();
+            for (std::size_t unit = 0; unit < Units; ++unit) RequireUnit(plane, unit, 0.25f, UnitTexels, "a CPU store made after the idle flush returned was overwritten by its depth plane store");
+            std::puts("depth plane CPU store after idle flush test passed");
             return 0;
         }
 
@@ -420,7 +439,9 @@ int main(int argc, char** argv) {
         Require(!forcedOff || direct == 0, "depth plane copies went directly with the buffer path forced");
         Require(forcedOff || !passesOff || !device->graphicsContext().maintenance8 || direct > 0, "the device enables VK_KHR_maintenance8 but no depth plane copy went directly");
         if (!forcedOff && passesOff && direct == 0) std::puts("direct depth copies not exercised: the device lacks VK_KHR_maintenance8 or no storage format pairs with the depth plane");
-        std::printf("depth plane partial store tests passed (%s, %llu shader passes, %llu direct depth copies)\n", forcedOff ? "buffer path" : passesOff ? "image copies" : "default path", static_cast<unsigned long long>(passes), static_cast<unsigned long long>(direct));
+        const auto uploads = AgcDriver::Graphics::DepthUploadCount();
+        Require(!uploadImage || uploads > 0, "no depth plane load went through the upload image with it forced");
+        std::printf("depth plane partial store tests passed (%s, %llu shader passes, %llu direct depth copies, %llu upload image loads)\n", forcedOff ? "buffer path" : passesOff ? "image copies" : "default path", static_cast<unsigned long long>(passes), static_cast<unsigned long long>(direct), static_cast<unsigned long long>(uploads));
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
