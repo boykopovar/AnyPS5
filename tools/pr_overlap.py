@@ -17,6 +17,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, urlencode, urlsplit
 
 import nid_names
+import pr_overlap_evidence
 
 PARENT = 'if .parent then "\\(.parent.owner.login)/\\(.parent.name)" else .nameWithOwner end'
 EXPORT = re.compile(r"^[+-].*\bAPS5_VABI\s+(\w+)\s*\(")
@@ -861,6 +862,7 @@ def main(argv=None):
     parser.add_argument("--base", default="main")
     parser.add_argument("--out", type=Path, help="write <number>.md for every open pull request (empty when clean)")
     parser.add_argument("--branch", help="check a local branch against the open pull requests instead")
+    parser.add_argument("--review-dir", type=Path, help="export pinned overlap evidence to a new directory (requires --branch)")
     parser.add_argument("--names", nargs="+", metavar="NAME",
                         help="before writing code, show whether each function is implemented on the base and which open pull requests add it or edit its body")
     parser.add_argument("--repo", help="owner/name; defaults to the upstream of the current checkout")
@@ -870,6 +872,13 @@ def main(argv=None):
         parser.error("pass exactly one of --out, --branch or --names")
     if args.jobs < 1:
         parser.error("--jobs must be at least 1")
+    if args.review_dir and not args.branch:
+        parser.error("--review-dir requires --branch")
+    if args.review_dir:
+        try:
+            args.review_dir = pr_overlap_evidence.validate_review_directory(args.review_dir, _repository_root())
+        except (ValueError, OSError) as error:
+            parser.error(str(error))
     global REPO
     try:
         REPO = args.repo or upstream()
@@ -901,14 +910,26 @@ def main(argv=None):
     except ValueError as error:
         raise SystemExit(f"pr_overlap: {error}")
     if args.branch:
-        print(report(rows[0], blob, main_exports.get(0)) or "No overlap with open pull requests.", end="")
+        rendered = report(rows[0], blob, main_exports.get(0)) or "No overlap with open pull requests."
+        print(rendered, end="")
         unresolved = unverified_overlaps(rows[0])
         if unresolved:
             for number, files in sorted(unresolved.items()):
                 progress(f"cannot confirm overlap with PR {number}: {', '.join(sorted(files))}")
             progress("overlap check failed closed; manually compare every reported PR branch before opening this one")
-            return 2
-        return 0
+        result = 2 if unresolved else 0
+        if args.review_dir:
+            try:
+                manifest = pr_overlap_evidence.write_review_evidence(
+                    args.review_dir, _repository_root(), BASE_REF, prs, rows[0], main_exports.get(0), rendered, REPO)
+                progress(f"pinned overlap evidence written to {args.review_dir}")
+                if not manifest["complete"]:
+                    progress("overlap evidence is incomplete; inspect manifest.json")
+                    return 2
+            except (ValueError, OSError) as error:
+                progress(f"cannot export overlap evidence: {error}")
+                return result or 1
+        return result
     write_reports(args.out, rows, blob, main_exports)
     return 0
 

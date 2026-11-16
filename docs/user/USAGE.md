@@ -876,3 +876,19 @@ By default, imports use the library export naming rules: `_nid_no_patch` and `SD
 `nid_patcher --exec --only-sce <file>` restricts renaming to names starting with `sce` (case-insensitive) or ending with `_nid_postfix`. Both modes accept `--preserve-exports <unpatched-library>` or `--preserve-export-list <export-list>` for explicit exclusions. The existing `nid_patcher <library_name> <file>` mode is unchanged.
 
 Unsupported layouts fail before the input file is written.
+
+## Pull request overlap evidence
+
+`tools/pr_overlap.py` checks a local branch against open pull requests. With `--review-dir`, it also saves pinned source bytes and patches to review reported overlaps and shared files:
+
+```sh
+python3 tools/pr_overlap.py --branch codex/change --review-dir ../overlap-review
+```
+
+The parent directory must exist; the destination must not exist, including as a dangling symlink, and cannot be inside the worktree's Git directory or common Git directory. Choose a new destination for each check. The checker uses Git and the GitHub CLI to collect pull request metadata and commits. The exporter reads already fetched objects; it does not check out or execute pull request source, run external diff or text conversion commands, or fetch additional objects. The command posts nothing.
+
+Open `index.md` first. `manifest.json` records the local and pull request heads, base commit, all original merge bases, selected paths, file modes and object IDs. Original patches compare each merge base with its pinned head; normalized patches compare the base tree with the checker's merged tree and are labelled separately. Binary files, symlink contents and patches are stored by content hash under `objects/`. Hashes and byte counts permit checking the copied packet without Git or network access; they do not establish authenticity or compatibility.
+
+`READY` is written last and means the collector finished. Check `complete` and `incomplete` in the manifest: missing objects and size limits can leave a finished packet incomplete. A directory without `READY` is unfinished and is never reused or overwritten. A failed write can leave such a directory behind.
+
+The packet retains the checker's findings, exact stdout and original gate exit code. It does not clear an overlap or approve a pull request. An unresolved comparison still exits `2`; incomplete evidence also exits `2`, and an export write failure exits `1` unless the gate already exits `2`. Without `--review-dir`, behavior is unchanged. The option is accepted only with `--branch`.

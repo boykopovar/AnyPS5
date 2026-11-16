@@ -736,6 +736,36 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_export_cache.py)
         add_test(NAME pr_overlap_fail_closed COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_fail_closed.py)
+        set(pr_overlap_evidence_cases
+            ByteEvidenceTests.test_original_patch_and_blobs_keep_binary_non_utf8_crlf_and_literal_paths
+            ByteEvidenceTests.test_add_delete_rename_and_executable_modes_are_not_lost
+            ByteEvidenceTests.test_symlink_blob_and_gitlink_are_recorded_without_materializing_targets
+            ByteEvidenceTests.test_file_directory_transitions_preserve_legitimate_absent_file_snapshots
+            ByteEvidenceTests.test_raw_path_encoding_is_preserved_when_platform_cannot_represent_the_name
+            ByteEvidenceTests.test_complete_packet_can_be_verified_without_git_or_source_repository
+            HistoryEvidenceTests.test_normalized_tree_is_distinct_from_original_and_synthetic_commit_is_not_serialized
+            HistoryEvidenceTests.test_all_criss_cross_merge_bases_have_original_views
+            HistoryEvidenceTests.test_unrelated_peer_is_not_archived_and_unavailable_normalization_stays_explicit
+            HistoryEvidenceTests.test_movable_refs_are_incomplete_and_pinned_heads_ignore_alias_drift
+            HistoryEvidenceTests.test_shared_path_selection_happens_before_peer_path_cap
+            HistoryEvidenceTests.test_missing_pinned_object_is_explicitly_incomplete
+            PublicationEvidenceTests.test_preflight_is_read_only_and_refuses_existing_or_git_destinations
+            PublicationEvidenceTests.test_dangling_symlink_and_existing_completed_packet_are_never_reused
+            PublicationEvidenceTests.test_artifact_and_inventory_caps_are_explicit_without_truncated_stored_objects
+            PublicationEvidenceTests.test_packet_and_metadata_caps_never_publish_ready_when_required_metadata_cannot_fit
+            PublicationEvidenceTests.test_binary_subprocess_timeout_and_output_limit_do_not_return_partial_bytes
+            PublicationEvidenceTests.test_midway_write_failure_never_creates_ready
+            PublicationEvidenceTests.test_external_diff_and_textconv_are_disabled_and_worktree_is_unchanged
+            CliEvidenceTests.test_option_absent_and_complete_export_keep_stdout_and_gate_outcomes
+            CliEvidenceTests.test_invalid_option_usage_and_output_are_rejected_before_network
+            CliEvidenceTests.test_incomplete_export_never_turns_an_unresolved_gate_green
+            CliEvidenceTests.test_export_write_failure_keeps_gate_failure_and_never_publishes_ready)
+        foreach(test_case IN LISTS pr_overlap_evidence_cases)
+            string(REPLACE "." "_" test_name "${test_case}")
+            add_test(NAME pr_overlap_evidence_${test_name} COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_evidence.py "${test_case}")
+            set_tests_properties(pr_overlap_evidence_${test_name} PROPERTIES TIMEOUT 30)
+        endforeach()
         add_test(NAME pr_overlap_names COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_pr_overlap_names.py)
         add_test(NAME nid_database_cache COMMAND ${Python3_EXECUTABLE}
