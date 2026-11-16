@@ -182,6 +182,10 @@ class UniqueKeyTests(unittest.TestCase):
     def test_unique_json_keys_keeps_distinct_names(self):
         self.assertEqual(validate_patch_catalog.unique_json_keys([('a', 1), ('b', 2)]), {'a': 1, 'b': 2})
 
+    def test_unique_json_keys_refuses_a_duplicate_name(self):
+        with self.assertRaisesRegex(ValueError, 'duplicate JSON key'):
+            validate_patch_catalog.unique_json_keys([('a', 1), ('a', 2)])
+
 
 if __name__ == "__main__":
     unittest.main()
