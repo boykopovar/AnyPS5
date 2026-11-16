@@ -406,6 +406,15 @@ class HostOnlyTargets(unittest.TestCase):
         )
         self.assertEqual(selected, ["second_tests"])
 
+    def test_list_only_reads_the_first_changed_path_after_a_bom(self):
+        build = self.fixture([self.target("host_tests")])
+        changed = Path(self.temporary.name) / "changed.txt"
+        changed.write_bytes(b"\xef\xbb\xbfcore/libs/tests/HostOnly.cpp\r\n")
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(build_mingw_host_only_tests.main([str(build), str(changed), "--list-only"]), 0)
+        self.assertIn("host_tests", output.getvalue().splitlines())
+
     def test_cmake_or_header_changes_check_all_host_targets(self):
         first = self.target("first_tests")
         second = self.target("second_tests", source="core/libs/tests/Second.cpp")
