@@ -219,18 +219,17 @@ int DecodeNative(WebRtcOpusDecInst* inst, const std::uint8_t* encoded, std::size
     return res;
 }
 
-int OpusDecode(WebRtcOpusDecInst* inst, const std::uint8_t* encoded, std::size_t encodedBytes, std::int16_t* decoded, std::int16_t* audioType) {
+int OpusDecode(WebRtcOpusDecInst* inst, const std::uint8_t* encoded, std::size_t encodedBytes, int expectedDuration, std::int16_t* decoded, std::int16_t* audioType) {
     int decodedSamplesPerChannel;
     if (encodedBytes == 0) {
         *audioType = DetermineAudioType(inst, encodedBytes);
         std::int16_t plcAudioType = 0;
-        const int plcSamples = PlcDuration(inst);
-        decodedSamplesPerChannel = DecodeNative(inst, nullptr, 0, plcSamples, decoded, &plcAudioType, 0);
+        decodedSamplesPerChannel = DecodeNative(inst, nullptr, 0, expectedDuration, decoded, &plcAudioType, 0);
     } else {
-        decodedSamplesPerChannel = DecodeNative(inst, encoded, encodedBytes, MaxFrameSizePerChannel(inst->sampleRateHz), decoded, audioType, 0);
+        decodedSamplesPerChannel = DecodeNative(inst, encoded, encodedBytes, expectedDuration, decoded, audioType, 0);
         inst->lastPacketNumChannels = opus_packet_get_nb_channels(encoded);
     }
-    if (decodedSamplesPerChannel < 0)
+    if (decodedSamplesPerChannel < 0 || decodedSamplesPerChannel > expectedDuration)
         return -1;
     if (inst->channels == 2 && inst->lastPacketNumChannels == 1) {
         for (int i = 0; i < (decodedSamplesPerChannel << 1); i += 2)
@@ -291,12 +290,11 @@ std::vector<std::uint8_t> CopyEncodedBytes(const std::uint8_t* encoded, std::siz
     return bytes;
 }
 
-int DecodeRedundantBytes(WebRtcOpusDecInst* inst, const std::uint8_t* encoded, std::size_t encodedBytes, std::int16_t* decoded, std::int16_t* audioType) {
+int DecodeRedundantBytes(WebRtcOpusDecInst* inst, const std::uint8_t* encoded, std::size_t encodedBytes, int expectedDuration, std::int16_t* decoded, std::int16_t* audioType) {
     if (!PacketHasFecBytes(encoded, encodedBytes))
         return 0;
-    const int fecSamples = opus_packet_get_samples_per_frame(encoded, inst->sampleRateHz);
-    const int decodedSamples = DecodeNative(inst, encoded, encodedBytes, fecSamples, decoded, audioType, 1);
-    return decodedSamples < 0 ? -1 : decodedSamples;
+    const int decodedSamples = DecodeNative(inst, encoded, encodedBytes, expectedDuration, decoded, audioType, 1);
+    return (decodedSamples < 0 || decodedSamples > expectedDuration) ? -1 : decodedSamples;
 }
 
 int DurationEstBytes(const WebRtcOpusDecInst* inst, const std::uint8_t* payload, std::size_t payloadLengthBytes) {
@@ -365,15 +363,17 @@ WebRtcDecodeResultOptional* APS5_VABI OpusFrameDecode_nid_no_patch(WebRtcDecodeR
     auto* sampleRateFn = reinterpret_cast<SampleRateFn>(ReadVtableSlot(vtable, 11, "OpusFrame::Decode requires SampleRateHz"));
     const int sampleRateHz = sampleRateFn(hostFrame.decoder);
     std::int32_t speechType = static_cast<std::int32_t>(SpeechSpeech);
-    const std::size_t maxDecodedBytes = decodedSamples * sizeof(std::int16_t);
-    const int ret = hostFrame.isPrimaryPayload
-        ? _ZN6webrtc12AudioDecoder6DecodeEPKhmimPsPNS0_10SpeechTypeE_nid_postfix(hostFrame.decoder, hostFrame.payload.data, hostFrame.payload.size, sampleRateHz, maxDecodedBytes, decoded, &speechType)
-        : _ZN6webrtc12AudioDecoder15DecodeRedundantEPKhmimPsPNS0_10SpeechTypeE_nid_postfix(hostFrame.decoder, hostFrame.payload.data, hostFrame.payload.size, sampleRateHz, maxDecodedBytes, decoded, &speechType);
     WebRtcDecodeResultOptional out{};
-    if (ret >= 0) {
-        out.value.numDecodedSamples = static_cast<std::size_t>(ret);
-        out.value.speechType = speechType;
-        out.engaged = true;
+    if (decodedSamples <= std::numeric_limits<std::size_t>::max() / sizeof(std::int16_t)) {
+        const std::size_t maxDecodedBytes = decodedSamples * sizeof(std::int16_t);
+        const int ret = hostFrame.isPrimaryPayload
+            ? _ZN6webrtc12AudioDecoder6DecodeEPKhmimPsPNS0_10SpeechTypeE_nid_postfix(hostFrame.decoder, hostFrame.payload.data, hostFrame.payload.size, sampleRateHz, maxDecodedBytes, decoded, &speechType)
+            : _ZN6webrtc12AudioDecoder15DecodeRedundantEPKhmimPsPNS0_10SpeechTypeE_nid_postfix(hostFrame.decoder, hostFrame.payload.data, hostFrame.payload.size, sampleRateHz, maxDecodedBytes, decoded, &speechType);
+        if (ret >= 0 && static_cast<std::size_t>(ret) <= decodedSamples) {
+            out.value.numDecodedSamples = static_cast<std::size_t>(ret);
+            out.value.speechType = speechType;
+            out.engaged = true;
+        }
     }
     WriteGuest(result, out, "OpusFrame::Decode requires a writable result");
     return result;
@@ -483,14 +483,31 @@ int DecodeInternalImpl(WebRtcAudioDecoderOpusImpl* decoder, const std::uint8_t* 
     if (!decoded || !speechType || !GuestWritable_nid_no_patch(speechType, sizeof(*speechType)))
         throw std::invalid_argument("AudioDecoderOpusImpl::Decode requires writable output pointers");
     const auto bytes = CopyEncodedBytes(encoded, encodedLen);
+    if (redundant && (bytes.empty() || !PacketHasFecBytes(bytes.data(), bytes.size()))) {
+        WriteGuest(speechType, ConvertSpeechType(1), "AudioDecoderOpusImpl::Decode requires a writable speech type");
+        return 0;
+    }
     const int maxSamplesPerChannel = MaxFrameSizePerChannel(host.sampleRateHz);
-    const std::size_t totalCapacity = static_cast<std::size_t>(maxSamplesPerChannel) * host.channels;
-    std::vector<std::int16_t> hostDecoded(totalCapacity);
+    const int expectedDuration = redundant
+        ? FecDurationEstBytes(bytes.data(), bytes.size(), host.sampleRateHz)
+        : DurationEstBytes(host.decState, bytes.empty() ? nullptr : bytes.data(), bytes.size());
+    if (expectedDuration <= 0 || expectedDuration > maxSamplesPerChannel) {
+        WriteGuest(speechType, ConvertSpeechType(1), "AudioDecoderOpusImpl::Decode requires a writable speech type");
+        return -1;
+    }
+    const std::size_t maxTotalSamples = static_cast<std::size_t>(expectedDuration) * host.channels;
+    if (!GuestWritable_nid_no_patch(decoded, maxTotalSamples * sizeof(std::int16_t)))
+        throw std::invalid_argument("AudioDecoderOpusImpl::Decode requires a writable decoded buffer");
+    std::vector<std::int16_t> hostDecoded(maxTotalSamples);
     std::int16_t tempType = 1;
     int ret = redundant
-        ? DecodeRedundantBytes(host.decState, bytes.empty() ? nullptr : bytes.data(), bytes.size(), hostDecoded.data(), &tempType)
-        : OpusDecode(host.decState, bytes.empty() ? nullptr : bytes.data(), bytes.size(), hostDecoded.data(), &tempType);
+        ? DecodeRedundantBytes(host.decState, bytes.data(), bytes.size(), expectedDuration, hostDecoded.data(), &tempType)
+        : OpusDecode(host.decState, bytes.empty() ? nullptr : bytes.data(), bytes.size(), expectedDuration, hostDecoded.data(), &tempType);
     if (ret > 0) {
+        if (ret > expectedDuration) {
+            WriteGuest(speechType, ConvertSpeechType(1), "AudioDecoderOpusImpl::Decode requires a writable speech type");
+            return -1;
+        }
         ret *= static_cast<int>(host.channels);
         if (!GuestBytes(decoded).CopyOut(hostDecoded.data(), static_cast<std::size_t>(ret) * sizeof(std::int16_t)))
             throw std::invalid_argument("AudioDecoderOpusImpl::Decode requires a writable decoded buffer");
@@ -536,11 +553,12 @@ void APS5_VABI AudioDecoderOpusGeneratePlc_nid_no_patch(WebRtcAudioDecoderOpusIm
     auto hostBuffer = ReadGuest(guestBuffer, "AudioDecoderOpusImpl::GeneratePlc requires a concealment buffer");
     if (hostBuffer.size > hostBuffer.capacity || (hostBuffer.capacity != 0 && !hostBuffer.data))
         throw std::invalid_argument("AudioDecoderOpusImpl::GeneratePlc received an inconsistent buffer");
-    const std::size_t plcSize = static_cast<std::size_t>(PlcDuration(host.decState)) * host.channels;
+    const int plcPerChannel = PlcDuration(host.decState);
+    const std::size_t plcSize = static_cast<std::size_t>(plcPerChannel) * host.channels;
     std::vector<std::int16_t> plcSamples(plcSize);
     std::int16_t tempType = 1;
-    const int ret = OpusDecode(host.decState, nullptr, 0, plcSamples.data(), &tempType);
-    const std::size_t appended = ret < 0 ? 0 : static_cast<std::size_t>(ret);
+    const int ret = OpusDecode(host.decState, nullptr, 0, plcPerChannel, plcSamples.data(), &tempType);
+    const std::size_t appended = ret < 0 ? 0 : std::min(static_cast<std::size_t>(ret) * host.channels, plcSamples.size());
     if (appended == 0)
         return;
     const std::size_t newSize = hostBuffer.size + appended;

@@ -262,7 +262,7 @@ void TestFieldTrialsAndLifecycle() {
     _ZN6webrtc20AudioDecoderOpusImplC1ERKNS_15FieldTrialsViewEmi_nid_postfix(heapDec, reinterpret_cast<const WebRtcFieldTrialsView*>(&onHeap), 2, 48000);
     Require(heapDec->generatePlc && heapDec->channels == 2 && heapDec->sampleRateHz == 48000);
     Slot<GeneratePlcFn>(heapDec->vtable, 5)(heapDec, 960, reinterpret_cast<WebRtcInt16Buffer*>(&plc));
-    Require(plc.size == 960 && plc.capacity >= 960 && plc.data != nullptr);
+    Require(plc.size == 960 * 2 && plc.capacity >= 960 * 2 && plc.data != nullptr);
     _ZdaPv_nid_postfix(plc.data);
     Slot<DestroyFn>(heapDec->vtable, 1)(heapDec);
     Require(allocations.empty());
@@ -386,6 +386,35 @@ void TestValidationAndGuardedPointers() {
     std::int32_t speechType = 0;
     RequireThrows<std::invalid_argument>([&] { Slot<DecodeInternalFn>(dec.vtable, 13)(&dec, noEncoded.As<const std::uint8_t>(), 4, 48000, pcm, &speechType); });
     RequireThrows<std::invalid_argument>([&] { Slot<DecodeInternalFn>(dec.vtable, 13)(&dec, nullptr, 0, 16000, pcm, &speechType); });
+
+    GuardedPage roOut;
+    roOut.SetReadOnly();
+    const auto mono48k = EncodeTonePacket(48000, 1, 960, OPUS_APPLICATION_AUDIO);
+    RequireThrows<std::invalid_argument>([&] { Slot<DecodeInternalFn>(dec.vtable, 13)(&dec, mono48k.data(), mono48k.size(), 48000, roOut.As<std::int16_t>(), &speechType); });
+
+    std::array<std::int16_t, 160> smallOut{};
+    smallOut.fill(0x1234);
+    auto* baseDec = reinterpret_cast<WebRtcAudioDecoder*>(&dec);
+    Require(_ZN6webrtc12AudioDecoder6DecodeEPKhmimPsPNS0_10SpeechTypeE_nid_postfix(baseDec, mono48k.data(), mono48k.size(), 48000, smallOut.size() * sizeof(std::int16_t), smallOut.data(), &speechType) == -1);
+    Require(smallOut[0] == 0x1234);
+
+    const std::array<std::uint8_t, 2> malformedCode3 {0xff, 0x00};
+    Require(Slot<DecodeInternalFn>(dec.vtable, 13)(&dec, malformedCode3.data(), malformedCode3.size(), 48000, smallOut.data(), &speechType) == -1);
+    Require(smallOut[0] == 0x1234);
+
+    auto* parseBuf = static_cast<std::uint8_t*>(_Znam_nid_postfix(mono48k.size()));
+    std::memcpy(parseBuf, mono48k.data(), mono48k.size());
+    WebRtcBuffer payload {mono48k.size(), mono48k.size(), parseBuf};
+    WebRtcParseResultVector parsed{};
+    Slot<ParsePayloadFn>(dec.vtable, 2)(&parsed, &dec, &payload, 96000);
+    void* const* frameVtable = *reinterpret_cast<void* const* const*>(parsed.begin[0].frame);
+    WebRtcDecodeResultOptional smallRes{};
+    Slot<FrameDecodeFn>(frameVtable, 4)(&smallRes, parsed.begin[0].frame, smallOut.data(), smallOut.size());
+    Require(!smallRes.engaged);
+    Require(smallOut[0] == 0x1234);
+    _ZN6webrtc12AudioDecoder11ParseResultD1Ev_nid_postfix(&parsed.begin[0]);
+    _ZdlPv_nid_postfix(parsed.begin);
+
     _ZN6webrtc20AudioDecoderOpusImplD1Ev_nid_postfix(&dec);
     Require(allocations.empty());
 }
