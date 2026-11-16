@@ -202,8 +202,8 @@ void VerifyTessellationInstancePatches() {
 
 std::string SerializeVersion56(const ShaderRecompiler::RecompileRequest& request) {
     auto bytes = DecodeBase64(ShaderRecompiler::RequestSerializer{}.Serialize(request));
-    Require(bytes.size() > 13u && bytes[4] == 57u);
-    bytes.resize(bytes.size() - 5u);
+    Require(bytes.size() > 13u && bytes[4] == 58u);
+    bytes.resize(bytes.size() - 6u);
     bytes[4] = 56u;
     return EncodeBase64(bytes);
 }
@@ -219,15 +219,17 @@ void VerifyTargetOptions() {
                     request.target.maxImageArrayLayers = layers;
                     request.target.float16WidenNans = widen;
                     request.target.float16NarrowNans = narrow;
+                    request.target.tessellationPrimitiveIdPerInstance = !fixed;
                     const auto encoded = serializer.Serialize(request);
                     const auto replay = serializer.Deserialize(encoded);
                     if (replay.request.target.fixedPushSlots != fixed) throw std::runtime_error("shader request changed fixedPushSlots");
                     Require(replay.request.target.maxImageArrayLayers == layers);
                     Require(replay.request.target.float16WidenNans == widen && replay.request.target.float16NarrowNans == narrow);
+                    Require(replay.request.target.tessellationPrimitiveIdPerInstance == !fixed);
                     Require(serializer.Serialize(replay.request) == encoded);
                     auto bytes = DecodeBase64(encoded);
-                    Require(bytes[4] == 57u);
-                    for (std::size_t missing = 1u; missing <= 5u; ++missing) {
+                    Require(bytes[4] == 58u && bytes.back() == (fixed ? 0u : 1u));
+                    for (std::size_t missing = 1u; missing <= 6u; ++missing) {
                         auto truncated = bytes;
                         truncated.resize(truncated.size() - missing);
                         bool rejected = false;
@@ -238,6 +240,10 @@ void VerifyTargetOptions() {
                         }
                         Require(rejected);
                     }
+                    bytes.pop_back();
+                    bytes[4] = 57u;
+                    const auto legacy57 = serializer.Deserialize(EncodeBase64(bytes));
+                    Require(legacy57.request.target.tessellationPrimitiveIdPerInstance && legacy57.request.target.fixedPushSlots == fixed && legacy57.request.target.maxImageArrayLayers == layers);
                     bytes.resize(bytes.size() - 5u);
                     bytes[4] = 56u;
                     const auto legacy56 = serializer.Deserialize(EncodeBase64(bytes));
@@ -772,7 +778,7 @@ int VerifyVersion56Compatibility() {
         const auto replay40 = serializer.Deserialize(EncodeBase64(version40));
         Require(!replay40.request.target.float32DenormPreserve && replay40.request.target.float32FlushToZero == !preserve);
         auto future = bytes;
-        future[4] = 58u;
+        future[4] = 59u;
         bool futureRejected = false;
         try {
             static_cast<void>(serializer.Deserialize(EncodeBase64(future)));

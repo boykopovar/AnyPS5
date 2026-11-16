@@ -4725,6 +4725,7 @@ ShaderRecompiler::SpirvTarget VulkanDevice::buildTarget() const {
     target.spannedWaves = state->spannedWaves;
     target.depthRangeRemap = !state->depthRangeUnrestricted;
     target.fixedPushSlots = state->graphicsPipelineLibrary;
+    target.tessellationPrimitiveIdPerInstance = state->driverId != VK_DRIVER_ID_MOLTENVK;
     target.registrationModules = state->graphicsPipelineLibrary;
     target.robustBufferAccess2 = state->robustBufferAccess2;
     target.exactRobustLoads = state->exactRobustLoads;
