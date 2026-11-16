@@ -4112,6 +4112,7 @@ bool CompletePendingCpuWrites(const Context& context, std::uint64_t address, std
     if ((context.copiedWriters != nullptr && overlaps(*context.copiedWriters)) || overlaps(*drawWriters) || (labels && recorder->CompletionLabelIn(address, bytes))) {
         Recorder::CountSync(4);
         recorder->SyncThrough(address, bytes);
+        ProofWorkTrace::Note(ProofWork::CpuWriteSync);
         return true;
     }
     return false;
@@ -4129,6 +4130,32 @@ const ShaderRecompiler::DescriptorBinding* ShaderResources::tableImages(std::spa
 
 bool ShaderResources::EpochProofs() {
     return !RuntimeSwitches::Set(RuntimeSwitch::NoEpochProofs) && DriverDetail::DrawPipeline::Depth() != 0;
+}
+
+namespace {
+thread_local ProofWorkTrace* proofWorkTrace = nullptr;
+}
+
+ProofWorkTrace::ProofWorkTrace() : previous(proofWorkTrace) {
+    proofWorkTrace = this;
+}
+
+ProofWorkTrace::~ProofWorkTrace() {
+    proofWorkTrace = previous;
+}
+
+bool ProofWorkTrace::Active() {
+    return proofWorkTrace != nullptr;
+}
+
+void ProofWorkTrace::Note(ProofWork work) {
+    if (proofWorkTrace != nullptr) ++proofWorkTrace->counts[static_cast<std::size_t>(work)];
+}
+
+std::uint64_t ProofWorkTrace::Total() const {
+    std::uint64_t total = 0;
+    for (const auto count : counts) total += count;
+    return total;
 }
 
 EpochProofCounters& EpochProofCounts() {
@@ -4222,7 +4249,9 @@ struct ExitVerification {
     std::atomic<std::uint64_t> failures{0};
     std::atomic<std::uint64_t> stores{0};
     std::atomic<std::uint64_t> concurrent{0};
+    std::atomic<std::uint64_t> worked{0};
     std::atomic<std::uint64_t> reported{0};
+    std::atomic<std::uint64_t> workReported{0};
     std::atomic<std::uint64_t> misses{0};
     std::array<std::atomic<std::uint64_t>, ExitInputs.size()> moved{};
     std::array<std::atomic<std::uint64_t>, ExitInputs.size()> alone{};
@@ -4254,16 +4283,17 @@ void printExitVerification() {
         alone += alone.empty() ? "" : ", ";
         alone += std::string(ExitInputs[input]) + " " + std::to_string(verification.alone[input].load(std::memory_order_relaxed));
     }
-    std::fprintf(stderr, "[epoch-proofs] verify: %llu reused resource proofs checked, %llu failed, %llu where the full proof stored to guest memory, %llu where only other threads broke proofs meanwhile; %llu proved builds missed the exit, by input moved: %s; moved alone: %s\n", static_cast<unsigned long long>(verification.checks.load(std::memory_order_relaxed)), static_cast<unsigned long long>(verification.failures.load(std::memory_order_relaxed)), static_cast<unsigned long long>(verification.stores.load(std::memory_order_relaxed)), static_cast<unsigned long long>(verification.concurrent.load(std::memory_order_relaxed)), static_cast<unsigned long long>(verification.misses.load(std::memory_order_relaxed)), moved.c_str(), alone.c_str());
+    std::fprintf(stderr, "[epoch-proofs] verify: %llu reused resource proofs checked, %llu failed, %llu where the full proof stored to guest memory, %llu where only other threads broke proofs meanwhile, %llu where the full proof did work the exit skipped; %llu proved builds missed the exit, by input moved: %s; moved alone: %s\n", static_cast<unsigned long long>(verification.checks.load(std::memory_order_relaxed)), static_cast<unsigned long long>(verification.failures.load(std::memory_order_relaxed)), static_cast<unsigned long long>(verification.stores.load(std::memory_order_relaxed)), static_cast<unsigned long long>(verification.concurrent.load(std::memory_order_relaxed)), static_cast<unsigned long long>(verification.worked.load(std::memory_order_relaxed)), static_cast<unsigned long long>(verification.misses.load(std::memory_order_relaxed)), moved.c_str(), alone.c_str());
 }
 
-void noteEpochProof(bool reused, bool verified, bool failed, bool stored = false, bool concurrent = false) {
+void noteEpochProof(bool reused, bool verified, bool failed, bool stored = false, bool concurrent = false, bool worked = false) {
     (reused ? EpochProofCounts().resourceReuses : EpochProofCounts().resourceProofs).Add();
     if (!verified) return;
     auto& verification = exitVerification();
     if (failed) verification.failures.fetch_add(1, std::memory_order_relaxed);
     if (stored) verification.stores.fetch_add(1, std::memory_order_relaxed);
     if (concurrent) verification.concurrent.fetch_add(1, std::memory_order_relaxed);
+    if (worked) verification.worked.fetch_add(1, std::memory_order_relaxed);
     if (reportDue(verification.checks.fetch_add(1, std::memory_order_relaxed) + 1u)) printExitVerification();
 }
 
@@ -4701,6 +4731,19 @@ void ShaderResources::reportVerifiedStore(std::uint64_t exitSerial, std::uint64_
     std::fprintf(stderr, "[epoch-proofs] verify: the full proof behind a reused proof broke proofs %llu times (the serial moved %llu times since the exit, %llu before the full proof started): %s\n", static_cast<unsigned long long>(trace.Count()), static_cast<unsigned long long>(endSerial - exitSerial), static_cast<unsigned long long>(startSerial - exitSerial), breaks.c_str());
 }
 
+void ShaderResources::reportVerifiedWork(const ProofWorkTrace& work) const {
+    auto& verification = exitVerification();
+    if (verification.workReported.fetch_add(1, std::memory_order_relaxed) >= 64u) return;
+    std::string images;
+    for (const auto& image : storageTextures) {
+        if (image == nullptr) continue;
+        char text[64];
+        std::snprintf(text, sizeof(text), "%s0x%llx+0x%llx", images.empty() ? "" : ", ", static_cast<unsigned long long>(image->Descriptor().baseAddress), static_cast<unsigned long long>(image->GuestBytes()));
+        images += text;
+    }
+    std::fprintf(stderr, "[epoch-proofs] verify: the full proof behind a reused proof did work the exit skipped: %llu CPU write syncs, %llu storage image uploads (the set's storage images: %s; %zu sampled textures)\n", static_cast<unsigned long long>(work.Count(ProofWork::CpuWriteSync)), static_cast<unsigned long long>(work.Count(ProofWork::StorageUpload)), images.empty() ? "none" : images.c_str(), textures.size());
+}
+
 bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofReport* report) {
     if (!registeredImageViewsCurrent(registeredImageViews)) {
         if (report != nullptr) *report = {ProofPath::Full, ProofFailure::Other};
@@ -4716,11 +4759,14 @@ bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofR
             if (verifyingExits()) {
                 const auto startSerial = GuestMemory::ProofSerial();
                 GuestMemory::ProofBreakTrace trace;
+                ProofWorkTrace work;
                 const bool ok = revalidateFull(shaders, report);
                 const auto endSerial = GuestMemory::ProofSerial();
                 const bool stored = trace.Count() != 0;
+                const bool worked = work.Total() != 0;
                 if (stored) reportVerifiedStore(stamp.proof, startSerial, endSerial, trace);
-                noteEpochProof(true, true, !ok, stored, !stored && endSerial != stamp.proof);
+                if (worked) reportVerifiedWork(work);
+                noteEpochProof(true, true, !ok, stored, !stored && endSerial != stamp.proof, worked);
                 return ok;
             }
             if (report != nullptr) *report = {ProofPath::Full, ProofFailure::None};

@@ -163,6 +163,7 @@ struct ProofBreakCounts {
     std::uint64_t unchangedWriteBacks = 0;
 };
 bool ProofBreaksCounted();
+void HoldProofBreaksForTest(bool held);
 ProofBreakCounts TakeProofBreakCounts();
 void BreakProofs(ProofBreakSite site = ProofBreakSite::Other, std::uint64_t address = 0, std::uint64_t bytes = 0);
 struct ProofBreak {

@@ -2306,6 +2306,12 @@ ProofBreakCounters& proofBreakCounters() {
     static ProofBreakCounters counters;
     return counters;
 }
+
+std::atomic<bool> proofBreaksHeldForTest{false};
+}
+
+void HoldProofBreaksForTest(bool held) {
+    proofBreaksHeldForTest.store(held, std::memory_order_relaxed);
 }
 
 bool ProofBreaksCounted() {
@@ -2323,6 +2329,7 @@ ProofBreakCounts TakeProofBreakCounts() {
 }
 
 void BreakProofs(ProofBreakSite site, std::uint64_t address, std::uint64_t bytes) {
+    if (proofBreaksHeldForTest.load(std::memory_order_relaxed)) return;
     proofSerial.fetch_add(1, std::memory_order_acq_rel);
     if (ProofBreaksCounted()) proofBreakCounters().sites[static_cast<std::size_t>(site)].Add();
     if (proofBreakTrace != nullptr) proofBreakTrace->Note({site, address, bytes});

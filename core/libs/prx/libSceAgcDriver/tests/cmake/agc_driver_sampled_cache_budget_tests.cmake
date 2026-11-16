@@ -35,6 +35,14 @@ if(BUILD_TESTING)
     add_test(NAME agc_driver_resource_cache_released_epoch COMMAND agc_driver_sampled_cache_budget_tests resource-released-epoch)
     add_test(NAME agc_driver_resource_cache_unwatched_epoch COMMAND agc_driver_sampled_cache_budget_tests resource-unwatched-epoch)
     add_test(NAME agc_driver_resource_cache_epoch_reuse COMMAND agc_driver_sampled_cache_budget_tests resource-epoch-reuse)
+    add_test(NAME agc_driver_resource_cache_epoch_verify_work COMMAND agc_driver_sampled_cache_budget_tests resource-epoch-verify-work)
+    set_tests_properties(agc_driver_resource_cache_epoch_verify_work PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_VERIFY_DRAW_PIPELINE=1;APS5_WRITE_WATCH_IMPORTS=watch" SKIP_RETURN_CODE 77 TIMEOUT 30
+        PASS_REGULAR_EXPRESSION "verify: the full proof behind a reused proof did work the exit skipped: 0 CPU write syncs, 1 storage image uploads[^\n]*\n.*verify: 2 reused resource proofs checked, 0 failed, 0 where the full proof stored to guest memory, 0 where only other threads broke proofs meanwhile, 1 where the full proof did work the exit skipped.*resource cache epoch verify work tests passed"
+        FAIL_REGULAR_EXPRESSION "AGC graphics:")
+    if(WIN32)
+        set_tests_properties(agc_driver_resource_cache_epoch_verify_work PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test(NAME agc_driver_resource_cache_lookup_changed COMMAND agc_driver_sampled_cache_budget_tests resource-lookup-changed)
     add_test(NAME agc_driver_resource_cache_collect_refusals COMMAND agc_driver_sampled_cache_budget_tests collect-refusals)
     add_test(NAME agc_driver_resource_cache_collect_refusals_index COMMAND agc_driver_sampled_cache_budget_tests collect-refusals)

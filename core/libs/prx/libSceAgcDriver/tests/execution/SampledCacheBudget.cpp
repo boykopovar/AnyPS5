@@ -1,6 +1,8 @@
 #include "../PortabilitySubset.hpp"
+#include "../WatchedBlock.hpp"
 #include "prx/libSceAgcDriver/Execution/include/BdaFeatures.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/EpochProofCounters.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
@@ -752,6 +754,85 @@ void epochReuseTests(Context context) {
     advanced.reset();
     ClearCachedTextures(context.device);
     std::puts("resource proof reuse and invalidation passed");
+}
+
+void epochVerifyWorkTests(Context context) {
+    PlaceholderImages placeholders(context);
+    context.placeholderImages = &placeholders;
+    TextureCache textures(context);
+    context.textureCache = &textures;
+    auto* memory = static_cast<std::uint8_t*>(AllocateWatched(SurfaceBytes, 65536));
+    Require(memory != nullptr, "the verify-work fixture needs the guest write watch");
+    std::memset(memory, 0x5a, SurfaceBytes);
+    GuestAllocations::Mutation().Add(memory, SurfaceBytes, true, true, false);
+    struct Cleanup {
+        std::uint8_t* memory;
+        ~Cleanup() {
+            GuestAllocations::Mutation().Remove(memory);
+            ReleaseWatched(memory, SurfaceBytes);
+        }
+    } cleanup{memory};
+    const auto address = reinterpret_cast<std::uint64_t>(memory);
+    ClearCachedTextures(context.device);
+    Require(ShaderResources::EpochProofs(), "the verify-work fixture needs epoch proofs on");
+    AgcDriver::GuestMemory::BumpCollectEpoch();
+    ShaderRecompiler::DescriptorBinding binding{};
+    binding.kind = ShaderRecompiler::DescriptorKind::StorageImage;
+    binding.role = ShaderRecompiler::DescriptorRole::GuestImages;
+    binding.descriptorSet = 0;
+    binding.binding = ShaderRecompiler::RuntimeAbi::FirstStorageImageBinding + PlaceholderDimensionsPerClass + 2u;
+    binding.count = 1;
+    binding.imageShape = ShaderRecompiler::DescriptorImageShape::Image2D;
+    binding.imageWritten.assign(1, false);
+    binding.imageSamplers.assign(1, 0u);
+    const auto words = Descriptor(address);
+    binding.guestDescriptor.assign(words.begin(), words.end());
+    ShaderRecompiler::RecompileResult program;
+    program.bindings.push_back(std::move(binding));
+    const CompiledShader shader{ShaderRecompiler::ShaderStage::Compute, &program, 0};
+    auto resources = std::make_shared<ShaderResources>(context, shader);
+    struct Release {
+        std::shared_ptr<ShaderResources>& resources;
+        VkDevice device;
+        ~Release() {
+            resources.reset();
+            ClearCachedTextures(device);
+        }
+    } release{resources, context.device};
+    Require(resources->Reusable() && resources->StorageImages().size() == 1, "the storage image template is not reusable");
+    const bool tracked = AgcDriver::GuestMemory::Watched(address, SurfaceBytes);
+#ifndef _WIN32
+    Require(tracked, "the storage image's host import left its memory unwatched under APS5_WRITE_WATCH_IMPORTS=watch");
+#endif
+    ShaderResources::ProofReport report{};
+    Require(resources->Revalidate(shader, &report), "the storage image template did not prove current through the full proof");
+    bool settled = false;
+    for (int round = 0; round < 4 && !settled; ++round) {
+        const auto proofs = EpochProofCounts().resourceProofs.Sum();
+        Require(resources->Revalidate(shader, &report), "an unchanged storage image template stopped proving current");
+        settled = EpochProofCounts().resourceProofs.Sum() == proofs;
+    }
+    Require(settled, "an unchanged storage image template in the same collect epoch never took the epoch exit");
+    if (tracked) {
+        const auto image = CachedStorageSurface(context, DecodeTextureResource(words));
+        Require(image != nullptr && image->Refresh(), "the set's storage image did not refresh in the collect epoch");
+        const auto reusedBefore = EpochProofCounts().storageReuses.Sum();
+        Require(image->Refresh() && EpochProofCounts().storageReuses.Sum() != reusedBefore, "the set's storage image did not take its epoch proof");
+        std::puts("the set's storage image took its own epoch proof before the held store");
+    } else {
+        std::puts("the set's storage image cannot take its own epoch proof: its host import left the memory unwatched on this device (direct host imports use comparisons)");
+    }
+    const std::vector<std::byte> fill(SurfaceBytes, std::byte{0x21});
+    {
+        struct Held {
+            Held() { AgcDriver::GuestMemory::HoldProofBreaksForTest(true); }
+            ~Held() { AgcDriver::GuestMemory::HoldProofBreaksForTest(false); }
+        } held;
+        AgcDriver::GuestMemory::Write(address, fill, 4);
+    }
+    const auto proofs = EpochProofCounts().resourceProofs.Sum();
+    Require(resources->Revalidate(shader, &report) && EpochProofCounts().resourceProofs.Sum() == proofs, "a storage image template whose guest store held its proof break did not take the epoch exit");
+    std::puts("epoch exit over a storage image stored to with its proof break held: taken");
 }
 
 bool lookupChangedTests(Context context) {
@@ -1673,6 +1754,12 @@ int main(int argc, char** argv) {
             std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
             epochReuseTests(context);
             std::puts("resource cache epoch reuse tests passed");
+            return 0;
+        }
+        if (mode == "resource-epoch-verify-work") {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            epochVerifyWorkTests(context);
+            std::puts("resource cache epoch verify work tests passed");
             return 0;
         }
         if (mode == "resource-lookup-changed") {

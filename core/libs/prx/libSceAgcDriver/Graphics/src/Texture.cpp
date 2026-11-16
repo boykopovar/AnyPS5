@@ -2516,7 +2516,7 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
     const bool profile = LookupOutcomes::Profiled();
     auto start = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     const bool scoped = firstLayer != 0 || lastLayer != trackedLayers;
-    const bool epochProofs = ShaderResources::EpochProofs();
+    const bool epochProofs = ShaderResources::EpochProofs() && !ProofWorkTrace::Active();
     const auto epoch = epochProofs ? GuestMemory::CollectEpoch() : 0;
     if (epoch != 0 && provedEpoch.load(std::memory_order_relaxed) == epoch && provedProof.load(std::memory_order_relaxed) == GuestMemory::ProofSerial() && provedPending.load(std::memory_order_relaxed) == PendingSerial()) {
         NoteProved();
@@ -2794,6 +2794,7 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
         if (profile) LookupOutcomes::Add(stamped ? LookupOutcomes::RefreshUnchanged : LookupOutcomes::RefreshCompared, start);
         return true;
     }
+    ProofWorkTrace::Note(ProofWork::StorageUpload);
     CaptureTrace::Log("refresh image=%llx bytes=%llu generation=%llu dirty=%d keysChanged=%d cpuWrote=%d", static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), static_cast<unsigned long long>(generation), dirty, keysChanged, cpuWrote);
     // Debug aid: APS5_TRACE_UPLOAD names why a storage image is uploaded again.
     static const bool traceUpload = std::getenv("APS5_TRACE_UPLOAD") != nullptr;
