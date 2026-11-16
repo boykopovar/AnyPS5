@@ -1,3 +1,5 @@
+#include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/exceptions/Unwind.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "SceTypes.hpp"
@@ -5,6 +7,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <dlfcn.h>
 #include <stdexcept>
 #include <string>
 
@@ -17,6 +21,7 @@ static constexpr std::uintptr_t ConsoleMainStackTop = 0x00000007EEFFC000ull + Gu
 static constexpr std::uintptr_t SmallestStack = 0x100000;
 static int marker = 0;
 static bool expectRefusal = false;
+static Pthread initialThread = nullptr;
 
 #define Require(value) do { if (!(value)) { std::fprintf(stderr, "GuestMainStack failed at line %d\n", __LINE__); std::_Exit(1); } } while (false)
 
@@ -54,6 +59,21 @@ static void* APS5_VABI Worker(void* arg) {
     return nullptr;
 }
 
+struct Walk {
+    unsigned frames = 0;
+    std::uintptr_t highestCfa = 0;
+    std::uintptr_t lastIp = 0;
+};
+
+static _Unwind_Reason_Code APS5_VABI CountFrame(_Unwind_Context* context, void* argument) {
+    auto& walk = *static_cast<Walk*>(argument);
+    ++walk.frames;
+    const auto cfa = static_cast<std::uintptr_t>(_Unwind_GetCFA_nid_postfix(context));
+    if (cfa > walk.highestCfa) walk.highestCfa = cfa;
+    walk.lastIp = static_cast<std::uintptr_t>(_Unwind_GetIP_nid_postfix(context));
+    return _URC_NO_REASON;
+}
+
 static void APS5_VABI Entry(void* arguments) {
     Require(!expectRefusal);
     Require(arguments == &marker);
@@ -70,12 +90,34 @@ static void APS5_VABI Entry(void* arguments) {
     Require(Permissions(low) == 'w' && Permissions(high - 1) == 'w');
     Require(Permissions(low - 1) == '-');
 
+    const auto self = scePthreadSelf();
+    Require(!initialThread || self == initialThread);
+    PthreadAttr attributes = nullptr;
+    Require(scePthreadAttrInit(&attributes) == 0);
+    Require(scePthreadAttrGet(self, &attributes) == 0);
+    void* reportedStart = nullptr;
+    std::size_t reportedSize = 0;
+    Require(scePthreadAttrGetstack(&attributes, &reportedStart, &reportedSize) == 0);
+    Require(reinterpret_cast<std::uintptr_t>(reportedStart) == low && reportedSize == high - low);
+    Require(pthread_attr_get_np_nid_postfix(self, &attributes) == 0);
+    Require(pthread_attr_getstack_nid_postfix(&attributes, &reportedStart, &reportedSize) == 0);
+    Require(reinterpret_cast<std::uintptr_t>(reportedStart) == low && reportedSize == high - low);
+    Require(scePthreadAttrDestroy(&attributes) == 0);
+
     WorkerContext context;
     Pthread thread = nullptr;
     Require(scePthreadCreate(&thread, nullptr, Worker, &context, nullptr) == 0);
     Require(scePthreadJoin(thread, nullptr) == 0);
     Require(context.queried.load() && context.result == 0);
     Require(reinterpret_cast<std::uintptr_t>(context.end) <= low || reinterpret_cast<std::uintptr_t>(context.start) >= high);
+
+    Walk walk;
+    Require(_Unwind_Backtrace_nid_postfix(CountFrame, &walk) == _URC_END_OF_STACK);
+    Require(walk.frames >= 2);
+    Require(walk.highestCfa <= high);
+    Dl_info outermost{};
+    Require(dladdr(reinterpret_cast<void*>(walk.lastIp - 1), &outermost) != 0 && outermost.dli_sname != nullptr);
+    Require(std::strcmp(outermost.dli_sname, "Aps5CallOnGuestMainStack_nid_no_patch") == 0);
     std::exit(0);
 }
 
@@ -101,7 +143,9 @@ static void RefusesAnOverlap() {
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(sentinel), Bytes) == 0);
 }
 
-int main() {
+int main(int argc, char** argv) {
+    Require(argc == 1 || (argc == 2 && std::string(argv[1]) == "adopted"));
+    if (argc == 2) initialThread = scePthreadSelf();
     RefusesAnOverlap();
     EnterGuestMainStack_nid_no_patch(&marker, Entry);
 }

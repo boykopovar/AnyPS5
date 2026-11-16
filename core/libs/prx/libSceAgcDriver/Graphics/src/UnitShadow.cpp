@@ -4,9 +4,12 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
+#include "prx/libc/include/general/AtomicSharedPtr.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ThreadScratch.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -24,13 +27,24 @@ namespace {
 
 constexpr std::uint64_t UnitBytes = 65536;
 constexpr std::size_t ReasonCount = static_cast<std::size_t>(PublishReason::Count);
-constexpr const char* ReasonNames[ReasonCount] = {"hook", "region", "indirect", "copy-src", "copy-dst", "fill", "fill-clear", "label", "keys", "scanout", "validate", "upload", "tail", "evict", "retire", "teardown", "address"};
+constexpr const char* ReasonNames[ReasonCount] = {"hook", "region", "indirect", "copy-src", "copy-dst", "fill", "fill-clear", "label", "keys", "scanout", "validate", "upload", "tail", "evict", "retire", "teardown", "address", "other"};
 
-std::uint64_t BudgetBytes() {
-    static const std::uint64_t budget = [] {
-        const char* text = std::getenv("APS5_UNIT_SHADOW_MIB");
-        return (text != nullptr ? std::strtoull(text, nullptr, 10) : 1024ull) << 20u;
-    }();
+std::uint64_t BudgetBytes(const Context& context) {
+    static const char* text = std::getenv("APS5_UNIT_SHADOW_MIB");
+    if (text != nullptr) return std::strtoull(text, nullptr, 10) << 20u;
+    static std::once_flag once;
+    static std::uint64_t budget = 0;
+    std::call_once(once, [&] {
+        if (context.memoryProperties2 == nullptr || context.physical == VK_NULL_HANDLE) {
+            budget = UnitShadowBudget(context.memory, nullptr);
+            return;
+        }
+        VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+        VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2};
+        properties.pNext = &reported;
+        context.memoryProperties2(context.physical, &properties);
+        budget = UnitShadowBudget(context.memory, &reported);
+    });
     return budget;
 }
 
@@ -115,6 +129,18 @@ Shadows& Registry() {
     return shadows;
 }
 
+struct LiveRanges {
+    std::uint64_t serial = 0;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
+};
+struct LiveRangesTag {};
+alignas(64) std::atomic<std::uint64_t> liveSerial{0};
+AtomicSharedPtr<const LiveRanges> publishedLive;
+
+void liveChanged() {
+    liveSerial.fetch_add(1, std::memory_order_release);
+}
+
 VkDeviceSize SlabBytes(const ShadowSlab& slab) {
     return static_cast<VkDeviceSize>(slab.units) * UnitBytes;
 }
@@ -159,6 +185,7 @@ std::shared_ptr<UnitShadow> findOrCreate(Shadows& registry, const Context& conte
             --registry.liveSlabs;
         }
         registry.byBase.erase(found);
+        liveChanged();
     }
     auto shadow = std::make_shared<UnitShadow>();
     shadow->context = context;
@@ -320,7 +347,7 @@ void recordCopies(const UnitShadow& shadow, const std::vector<SlabCopies>& copie
     recorder->MarkCovered(publishedAccess);
     for (const auto& entry : copies) recorder->Keep(entry.slab);
     // CPU readers reach the import's bytes only after the hook's SyncThrough waits by this note.
-    recorder->NotePendingWrites(ranges);
+    recorder->NoteStampedWrites(ranges);
 }
 
 // APS5_SHADOW_VERIFY=1: the published bytes read back from the slabs equal the guest bytes.
@@ -349,8 +376,19 @@ void verifyPublished(const UnitShadow& shadow, const std::vector<SlabCopies>& co
     }
 }
 
+std::atomic<std::uint64_t> publishesInProgress{0};
+
+class PublishInProgress {
+public:
+    PublishInProgress() { publishesInProgress.fetch_add(1, std::memory_order_seq_cst); }
+    ~PublishInProgress() { publishesInProgress.fetch_sub(1, std::memory_order_seq_cst); }
+    PublishInProgress(const PublishInProgress&) = delete;
+    PublishInProgress& operator=(const PublishInProgress&) = delete;
+};
+
 // The publish of one shadow: `selected[k]` (k = unit - first) names the units the scope chose.
 std::size_t publishUnits(const std::shared_ptr<UnitShadow>& shadow, std::uint64_t first, std::uint64_t last, const std::vector<std::uint8_t>& selected, PublishReason reason) {
+    const PublishInProgress inProgress;
     auto& registry = Registry();
     std::vector<SlabCopies> copies;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
@@ -415,6 +453,7 @@ std::size_t publishUnits(const std::shared_ptr<UnitShadow>& shadow, std::uint64_
             ++units;
         }
         shadow->liveUnits -= ended;
+        if (ended != 0) liveChanged();
     }
     if (units == 0) return 0;
     Stats().published[static_cast<std::size_t>(reason)].fetch_add(1, std::memory_order_relaxed);
@@ -481,6 +520,7 @@ bool evictOne(Shadows& registry) {
         victim->published[unit] = 0;
     }
     victim->Recount();
+    liveChanged();
     registry.liveBytes -= SlabBytes(*slab);
     --registry.liveSlabs;
     slab.reset();
@@ -488,6 +528,14 @@ bool evictOne(Shadows& registry) {
     return true;
 }
 
+}
+
+std::uint64_t UnitShadowBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported) {
+    constexpr std::uint64_t Ceiling = std::uint64_t{1024} << 20u;
+    constexpr std::uint64_t Floor = std::uint64_t{128} << 20u;
+    const auto heap = LargestDeviceLocalHeap(memory);
+    if (reported == nullptr || !heap || reported->heapBudget[*heap] == 0) return Ceiling;
+    return std::clamp<std::uint64_t>(reported->heapBudget[*heap] / 8u, Floor, Ceiling);
 }
 
 bool UnitShadowEnabled() {
@@ -518,7 +566,7 @@ PublishReason PublishReasonFor(const char* flushReason) {
     if (is("buffer copy count") || is("dispatch-cache entry")) return PublishReason::Validate;
     if (is("storage image creation") || is("storage refresh")) return PublishReason::Upload;
     if (is("address-based heaps")) return PublishReason::Address;
-    return PublishReason::Hook;
+    return PublishReason::Other;
 }
 
 ShadowSlab::ShadowSlab(const Context& context, VkBuffer buffer, VkDeviceMemory memory, std::uint64_t firstUnit, std::uint32_t units) : context(context), buffer(buffer), memory(memory), firstUnit(firstUnit), units(units) {}
@@ -582,6 +630,46 @@ bool anyShadowedLocked(const Shadows& registry, std::uint64_t address, std::size
     });
 }
 
+std::shared_ptr<const LiveRanges> currentLiveRanges() {
+    auto& registry = Registry();
+    std::lock_guard lock(registry.mutex);
+    const auto serial = liveSerial.load(std::memory_order_relaxed);
+    if (auto published = publishedLive.load(std::memory_order_acquire); published != nullptr && published->serial == serial) return published;
+    auto built = std::make_shared<LiveRanges>();
+    built->serial = serial;
+    auto& ranges = built->ranges;
+    for (const auto& [base, shadow] : registry.byBase) {
+        if (shadow->liveUnits == 0) continue;
+        for (std::uint64_t unit = 0; unit < shadow->Units(); ++unit) {
+            if (!shadow->Live(unit)) continue;
+            const auto [begin, end] = shadow->UnitRange(unit);
+            if (end <= begin) continue;
+            if (!ranges.empty() && ranges.back().second >= begin) ranges.back().second = std::max(ranges.back().second, end);
+            else ranges.emplace_back(begin, end);
+        }
+    }
+    std::shared_ptr<const LiveRanges> result = std::move(built);
+    publishedLive.store(result, std::memory_order_release);
+    return result;
+}
+
+}
+
+bool LiveUnitsClear(std::uint64_t address, std::size_t bytes) {
+    if (!UnitShadowEnabled() || bytes == 0) return true;
+    auto& copy = ThreadScratch<std::shared_ptr<const LiveRanges>, LiveRangesTag>();
+    const auto serial = liveSerial.load(std::memory_order_acquire);
+    if (copy == nullptr || copy->serial != serial) {
+        auto published = publishedLive.load(std::memory_order_acquire);
+        copy = published != nullptr && published->serial == serial ? std::move(published) : currentLiveRanges();
+    }
+    const auto end = bytes > std::numeric_limits<std::uint64_t>::max() - address ? std::numeric_limits<std::uint64_t>::max() : address + bytes;
+    const auto it = std::upper_bound(copy->ranges.begin(), copy->ranges.end(), address, [](std::uint64_t value, const std::pair<std::uint64_t, std::uint64_t>& range) { return value < range.second; });
+    return it == copy->ranges.end() || it->first >= end;
+}
+
+bool AnyPublishInProgress() {
+    return publishesInProgress.load(std::memory_order_seq_cst) != 0;
 }
 
 bool AnyShadowedOverlaps(std::uint64_t address, std::size_t bytes) {
@@ -660,7 +748,7 @@ std::optional<ShadowDestination> ShadowDestinationFor(const Context& context, co
         for (;;) {
             {
                 std::lock_guard lock(registry.mutex);
-                if (registry.liveBytes + needed <= BudgetBytes()) break;
+                if (registry.liveBytes + needed <= BudgetBytes(context)) break;
             }
             if (!evictOne(registry)) {
                 Stats().refused.fetch_add(1, std::memory_order_relaxed);
@@ -817,6 +905,7 @@ void MarkShadowed(const HostImport& import, std::span<const ShadowedRange> range
         const auto shadow = find(registry, import);
         if (shadow == nullptr) return;
         const auto present = Recorder::Presents();
+        bool turnedLive = false;
         for (const auto& [begin, end, slab] : ranges) {
             if (end <= begin) continue;
             bytes += end - begin;
@@ -828,12 +917,16 @@ void MarkShadowed(const HostImport& import, std::span<const ShadowedRange> range
                     ++lost;
                     continue;
                 }
-                if (!shadow->Live(unit)) ++shadow->liveUnits;
+                if (!shadow->Live(unit)) {
+                    ++shadow->liveUnits;
+                    turnedLive = true;
+                }
                 shadow->generation[unit] = generation;
                 shadow->published[unit] = 0;
                 current->lastUse = present;
             }
         }
+        if (turnedLive) liveChanged();
     }
     if (lost != 0) {
         Stats().slabLost.fetch_add(lost, std::memory_order_relaxed);
@@ -873,6 +966,7 @@ void RetireShadow(VkDevice device, const HostImport& import, const std::function
             }
         }
         shadow->Recount();
+        if (dropped != 0) liveChanged();
     }
     if (dropped != 0) Stats().droppedOnRetire.fetch_add(dropped, std::memory_order_relaxed);
     std::size_t published = 0;
@@ -896,6 +990,7 @@ void RetireShadow(VkDevice device, const HostImport& import, const std::function
     ++registry.retired;
     if (TraceEnabled()) std::fprintf(stderr, "[shadow] retire import 0x%llx+0x%llx: %zu units published, %llu dropped (memory no longer registered)\n", static_cast<unsigned long long>(import.base), static_cast<unsigned long long>(import.bytes), published, static_cast<unsigned long long>(dropped));
     registry.byBase.erase(found);
+    liveChanged();
 }
 
 void PublishAllShadows(const Context& context, PublishReason reason) {
@@ -925,6 +1020,7 @@ void DestroyShadows(VkDevice device) {
             --registry.liveSlabs;
         }
         it = registry.byBase.erase(it);
+        liveChanged();
     }
 }
 

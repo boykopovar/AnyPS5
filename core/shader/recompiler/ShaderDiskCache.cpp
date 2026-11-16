@@ -1,5 +1,6 @@
 #include "ShaderDiskCache.hpp"
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
+#include "prx/libc/include/HostThread.hpp"
 #include "CacheKey.hpp"
 #include "ShaderCachePack.hpp"
 #include "ShaderCacheDirectory.hpp"
@@ -23,6 +24,7 @@
 #include <unistd.h>
 #endif
 #include "ShaderCacheSourceVersion.hpp"
+#include "prx/libc/include/RemoveTree.hpp"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -90,7 +92,7 @@ static_assert(sizeof(ShaderInvocation) == 216, "ShaderInvocation changed: update
 #if defined(__cpp_lib_atomic_shared_ptr)
 static_assert(sizeof(RecompileResult) == 552, "RecompileResult changed: update EncodeResult and DecodeResult");
 #endif
-static_assert(sizeof(DescriptorBinding) == 656, "DescriptorBinding changed: update the binding encoder");
+static_assert(sizeof(DescriptorBinding) == 920, "DescriptorBinding changed: update the binding encoder");
 static_assert(sizeof(VertexAttribute) == 32, "VertexAttribute changed: update the attribute encoder");
 static_assert(sizeof(VertexInput) == 16, "VertexInput changed: update the vertex input encoder");
 static_assert(sizeof(FragmentParameter) == 16, "FragmentParameter changed: update the parameter encoder");
@@ -99,7 +101,7 @@ static_assert(sizeof(ShaderInfo) == 232, "ShaderInfo changed: update the info en
 static_assert(sizeof(BufferResource) == 32, "BufferResource changed: update the info encoder");
 static_assert(sizeof(ImageResource) == 108, "ImageResource changed: update the info encoder");
 static_assert(sizeof(SamplerResource) == 24, "SamplerResource changed: update the info encoder");
-static_assert(sizeof(SampledResourcePair) == 12, "SampledResourcePair changed: update the info encoder");
+static_assert(sizeof(SampledResourcePair) == 16, "SampledResourcePair changed: update the info encoder");
 static_assert(sizeof(StageInput) == 56, "StageInput changed: update the info encoder");
 static_assert(sizeof(StageOutput) == 48, "StageOutput changed: update the info encoder");
 static_assert(sizeof(IrBindingLayout) == 80, "IrBindingLayout changed: update the layout encoder");
@@ -143,16 +145,16 @@ constexpr std::size_t fieldCount() {
 
 static_assert(fieldCount<ShaderInfo>() == 24, "ShaderInfo changed: update the info encoder");
 static_assert(fieldCount<BufferResource>() == 12, "BufferResource changed: update the info encoder");
-static_assert(fieldCount<ImageResource>() == 49, "ImageResource changed: update the info encoder");
+static_assert(fieldCount<ImageResource>() == 51, "ImageResource changed: update the info encoder");
 static_assert(fieldCount<SamplerResource>() == 8, "SamplerResource changed: update the info encoder");
-static_assert(fieldCount<SampledResourcePair>() == 3, "SampledResourcePair changed: update the info encoder");
+static_assert(fieldCount<SampledResourcePair>() == 4, "SampledResourcePair changed: update the info encoder");
 static_assert(fieldCount<StageInput>() == 5, "StageInput changed: update the info encoder");
 static_assert(fieldCount<StageOutput>() == 4, "StageOutput changed: update the info encoder");
 static_assert(fieldCount<IrResourcePlan>() == 25, "IrResourcePlan changed: update EncodePlan and DecodePlan");
 static_assert(fieldCount<GuestRegister>() == 2, "GuestRegister changed: update the plan value encoder");
 static_assert(fieldCount<MemoryInfo>() == 32, "MemoryInfo changed: update the plan encoder");
 static_assert(fieldCount<DescriptorSource>() == 4, "DescriptorSource changed: update the plan encoder");
-static_assert(fieldCount<TableColumn>() == 18, "TableColumn changed: update the plan encoder");
+static_assert(fieldCount<TableColumn>() == 19, "TableColumn changed: update the plan encoder");
 static_assert(fieldCount<KeyDomain>() == 4, "KeyDomain changed: update the plan encoder");
 static_assert(fieldCount<ResourceBlock>() == 5, "ResourceBlock changed: update the plan encoder");
 static_assert(fieldCount<SrtRead>() == 2, "SrtRead changed: update the plan encoder");
@@ -179,7 +181,8 @@ std::size_t PayloadOffset(std::size_t keyBytes) {
 class SharedPlanTable {
 public:
     std::shared_ptr<const IrResourcePlan> Get(std::span<const std::byte> payload, std::uint64_t shaderHash) {
-        const Key key{HashBytes(payload), HashBytes(payload, 0x5eed0003ull), payload.size(), shaderHash};
+        const auto hashes = HashBytes<2>(payload, {0u, 0x5eed0003ull});
+        const Key key{hashes[0], hashes[1], payload.size(), shaderHash};
         {
             std::lock_guard lock(mutex);
             if (const auto found = plans.find(key); found != plans.end()) {
@@ -303,7 +306,7 @@ public:
         out.insert(out.end(), bytes.begin(), bytes.end());
     }
 
-    void Flags(const std::vector<bool>& flags) {
+    void Flags(const ElementFlags& flags) {
         Value<std::uint64_t>(flags.size());
         for (const bool flag : flags) Value(flag);
     }
@@ -404,10 +407,10 @@ public:
         return SharedSpirv(std::move(words));
     }
 
-    void Flags(std::vector<bool>& flags) {
+    void Flags(ElementFlags& flags) {
         const auto count = Count(1);
-        flags.assign(count, false);
-        for (std::size_t i = 0; i < count; ++i) flags[i] = Get<bool>();
+        flags.clear();
+        for (std::size_t i = 0; i < count; ++i) flags.push_back(Get<bool>());
     }
 
     void Text(std::string& text) {
@@ -469,6 +472,7 @@ void encodeBinding(Writer& writer, const DescriptorBinding& binding) {
     writer.Flags(binding.imageDepthCompare);
     writer.Flags(binding.imageAtomic);
     writer.Flags(binding.imageAtomic64);
+    writer.Flags(binding.imageUintStorage);
     writer.List(binding.imageShapes, [](Writer& out, DescriptorImageShape shape) { out.Value(shape); });
     writer.Flags(binding.bufferAtomic);
     writer.Flags(binding.bufferWritten);
@@ -498,6 +502,7 @@ void decodeBinding(Reader& reader, DescriptorBinding& binding) {
     reader.Flags(binding.imageDepthCompare);
     reader.Flags(binding.imageAtomic);
     reader.Flags(binding.imageAtomic64);
+    reader.Flags(binding.imageUintStorage);
     reader.List(binding.imageShapes, 4, [](Reader& in, DescriptorImageShape& shape) { in.Value(shape); });
     reader.Flags(binding.bufferAtomic);
     reader.Flags(binding.bufferWritten);
@@ -815,10 +820,12 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
         out.Value(image.foldTexelOffsetsOnly);
         out.Value(image.convertedSamples);
         out.Value(image.remappedDepth1D);
+        out.Value(image.gathered);
         out.Value(image.layerRowsCompatible);
         out.Value(image.layerRows);
         out.Value(image.maxArrayLayers);
         out.Value(image.optionalDescriptor);
+        out.Value(image.volumeGather);
         out.Value(image.byElements);
         out.Value(image.byComponents);
         out.Value(image.packedFormat);
@@ -842,6 +849,7 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
         out.Value(pair.image);
         out.Value(pair.sampler);
         out.Value(pair.firstUsePc);
+        out.Value(pair.volumeGather);
     });
     writer.List(info.inputs, [](Writer& out, const StageInput& input) {
         out.Value(input.kind);
@@ -929,10 +937,12 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         in.Value(image.foldTexelOffsetsOnly);
         in.Value(image.convertedSamples);
         in.Value(image.remappedDepth1D);
+        in.Value(image.gathered);
         in.Value(image.layerRowsCompatible);
         in.Value(image.layerRows);
         in.Value(image.maxArrayLayers);
         in.Value(image.optionalDescriptor);
+        in.Value(image.volumeGather);
         in.Value(image.byElements);
         in.Value(image.byComponents);
         in.Value(image.packedFormat);
@@ -954,10 +964,11 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         in.Value(sampler.foldTexelOffsetsOnly);
         in.Value(sampler.table);
     });
-    reader.List(info.sampledPairs, 12, [](Reader& in, SampledResourcePair& pair) {
+    reader.List(info.sampledPairs, 13, [](Reader& in, SampledResourcePair& pair) {
         in.Value(pair.image);
         in.Value(pair.sampler);
         in.Value(pair.firstUsePc);
+        in.Value(pair.volumeGather);
     });
     reader.List(info.inputs, 21, [](Reader& in, StageInput& input) {
         in.Value(input.kind);
@@ -1163,6 +1174,7 @@ bool encodePlan(Writer& writer, const IrResourcePlan& plan) {
         out.Value(column.maxKey);
         out.Value(column.sampler);
         out.Value(column.address);
+        out.Value(column.buffer);
         out.List(column.keyDomains, [](Writer& domains, const KeyDomain& domain) {
             domains.Value(domain.source);
             domains.Value(domain.offset);
@@ -1265,12 +1277,13 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
             }
             const auto zigzag = code - 1u;
             const auto delta = static_cast<std::int64_t>(zigzag >> 1u) ^ -static_cast<std::int64_t>(zigzag & 1u);
-            const auto index = static_cast<std::int64_t>(current) + delta;
-            if (index < 0 || index >= static_cast<std::int64_t>(records.size())) {
+            const auto base = static_cast<std::int64_t>(current);
+            const auto limit = static_cast<std::int64_t>(records.size());
+            if (delta < -base || delta >= limit - base) {
                 in.Fail();
                 return;
             }
-            argument = static_cast<std::uint32_t>(index);
+            argument = static_cast<std::uint32_t>(base + delta);
         }
         if (record.opcode == IrOpcode::Phi) {
             record.phiBlocks.resize(record.arguments.size());
@@ -1314,7 +1327,7 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
         value.SetDetachedOperands(std::move(arguments), std::move(phiBlocks));
     }
     reader.List(plan.memoryInfo, 79, decodeMemoryInfo);
-    reader.List(plan.descriptorSources, 80, [&](Reader& in, DescriptorSource& source) {
+    reader.List(plan.descriptorSources, 81, [&](Reader& in, DescriptorSource& source) {
         for (auto& dword : source.dwords) dword = valueAt(in.Get<std::uint32_t>());
         in.Value(source.dwordCount);
         const bool table = in.Get<bool>();
@@ -1327,6 +1340,7 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
         in.Value(column.maxKey);
         in.Value(column.sampler);
         in.Value(column.address);
+        in.Value(column.buffer);
         in.List(column.keyDomains, 13, [](Reader& domains, KeyDomain& domain) {
             domains.Value(domain.source);
             domains.Value(domain.offset);
@@ -1381,6 +1395,13 @@ bool decodePlan(Reader& reader, IrResourcePlan& plan) {
     if (!std::ranges::all_of(plan.descriptorSources, [&](const DescriptorSource& source) { return std::ranges::all_of(source.requiredBlocks, [&](std::uint32_t block) { return block < plan.controlFlow.size(); }); })) return false;
     if (!std::ranges::all_of(plan.materializationSources, knownSource)) return false;
     if (!std::ranges::all_of(plan.descriptorSources, [&](const DescriptorSource& source) { return source.dwordCount <= source.dwords.size() && (!source.tableColumn.has_value() || (knownSource(source.tableColumn->heapSource) && (!source.tableColumn->selected || knownSource(source.tableColumn->selection)) && std::ranges::all_of(source.tableColumn->keyDomains, [&](const KeyDomain& domain) { return knownSource(domain.source); }))); })) return false;
+    for (const auto& source : plan.descriptorSources) {
+        if (!source.tableColumn.has_value()) continue;
+        const auto& column = *source.tableColumn;
+        if (column.buffer && (column.sampler || column.dwordCount != 4u)) return false;
+        const auto& parent = plan.descriptorSources[column.heapSource].tableColumn;
+        if (parent.has_value() && (column.buffer || column.sampler || column.address || column.indirect || !parent->buffer || !parent->indirect || plan.descriptorSources[parent->heapSource].tableColumn.has_value())) return false;
+    }
     if (!std::ranges::all_of(plan.info.buffers, [&](const BufferResource& buffer) { return knownSource(buffer.source); })) return false;
     if (!std::ranges::all_of(plan.info.images, [&](const ImageResource& image) { return knownSource(image.source); })) return false;
     if (!std::ranges::all_of(plan.info.samplers, [&](const SamplerResource& sampler) { return knownSource(sampler.source); })) return false;
@@ -1410,6 +1431,7 @@ constexpr std::string_view NeutralSwitches[] = {
     "APS5_NO_RESULT_MEMO",
     "APS5_NO_TABLE_RESOLUTION_REUSE",
     "APS5_NO_TABLE_SNAPSHOT_REUSE",
+    "APS5_RESOURCE_PLAN_MB",
     "APS5_RESULT_MEMO_MB",
 };
 
@@ -1476,7 +1498,7 @@ public:
         discoverPrebuilt();
         stopping = stopped;
         if (stopping) return;
-        writer = std::thread([this] { run(); });
+        writer = Libc::StartHostThread([this] { run(); });
         runningWriters.fetch_add(1, std::memory_order_acq_rel);
     }
 
@@ -1523,6 +1545,7 @@ public:
         auto persisted = std::make_shared<CompiledVariant>();
         const auto bytes = mapped->Bytes();
         if (DecodeEntry(bytes, key, *persisted, std::move(mapped)) != LoadStatus::Loaded) return nullptr;
+        ReleaseMapped(persisted->artifact.spirv);
         persisted->layout = variant.layout;
         persisted->artifact.variantId = variant.artifact.variantId;
         persisted->substitutes = variant.substitutes;
@@ -1815,7 +1838,7 @@ private:
             if (!used) used = lastWriteTime(it->path());
             if (used && now - *used > std::chrono::hours(24 * 14)) {
                 std::error_code removeError;
-                std::filesystem::remove_all(it->path(), removeError);
+                RemoveTree(it->path(), removeError);
             }
         }
         error.clear();
@@ -1945,7 +1968,8 @@ void BuildPlanKey(const RecompileRequest& request, std::uint32_t hostSubgroupSiz
 }
 
 std::string EntryName(std::span<const std::byte> key) {
-    return hex(HashBytes(key, 0x5eed0001ull)) + hex(HashBytes(key, 0x5eed0002ull)) + ".bin";
+    const auto hashes = HashBytes<2>(key, {0x5eed0001ull, 0x5eed0002ull});
+    return hex(hashes[0]) + hex(hashes[1]) + ".bin";
 }
 
 void EncodeResult(const RecompileResult& result, std::vector<std::byte>& out) {
@@ -2059,6 +2083,20 @@ std::shared_ptr<const CompiledVariant> Persist(std::span<const std::byte> key, c
 void Flush() {
     auto& instance = store();
     if (instance.Enabled()) instance.Flush();
+}
+
+void ReleaseMapped(const SharedSpirv& spirv) noexcept {
+    if (!spirv.Mapped()) return;
+    const auto words = spirv.Words();
+    if (words.empty()) return;
+#ifdef _WIN32
+    VirtualUnlock(const_cast<std::uint32_t*>(words.data()), words.size_bytes());
+#else
+    const auto page = static_cast<std::uintptr_t>(sysconf(_SC_PAGESIZE));
+    const auto first = reinterpret_cast<std::uintptr_t>(words.data());
+    const auto begin = first / page * page;
+    madvise(reinterpret_cast<void*>(begin), first + words.size_bytes() - begin, MADV_DONTNEED);
+#endif
 }
 
 void Shutdown() {

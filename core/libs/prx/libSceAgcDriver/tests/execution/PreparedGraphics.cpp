@@ -150,16 +150,13 @@ void Check(AgcDriver::VulkanDevice& device, AgcDriver::Graphics::ShaderPath path
             Require(after.linked == before.linked, "registration modules: a prebuild linked a pipeline");
             return std::pair{after.built[1] - before.built[1], after.built[2] - before.built[2]};
         };
-        const auto vertexOnly = prebuild(stages, {0u});
-        Require(vertexOnly.first == 1u, "registration modules: the vertex stage alone did not build its pre-rasterization library");
+        Require(stages.front().registration == nullptr && !GetPreparedArtifact(*stages.front().entry.handle).registrationModule, "registration modules: the vertex stage was prepared in registration form");
         const auto pixelOnly = prebuild(stages, {1u});
         Require(pixelOnly.second == 1u, "registration modules: the pixel stage alone did not build its fragment library");
-        const auto pair = prebuild(stages, {0u, 1u});
-        Require(pair.first == 0u && pair.second == 0u, "registration modules: the pair of stages did not find the libraries prebuilt one stage at a time");
         const auto again = PrepareGraphicsStages(prepared, target);
-        Require(again.front().registration != stages.front().registration, "registration modules: the second preparation reused the first result object");
-        const auto repeated = prebuild(again, {0u, 1u});
-        Require(repeated.first == 0u && repeated.second == 0u, "registration modules: another materialization of the same stages did not find the prebuilt libraries");
+        Require(again.back().registration != stages.back().registration, "registration modules: the second preparation reused the first result object");
+        const auto repeated = prebuild(again, {1u});
+        Require(repeated.first == 0u && repeated.second == 0u, "registration modules: another materialization of the same stage did not find the prebuilt library");
     }
     for (const auto& stage : stages) stage.snapshot->prepared->entries.push_back(stage.entry);
     const auto& pixelArtifact = GetPreparedArtifact(*stages.back().entry.handle);
@@ -321,6 +318,60 @@ void Check(AgcDriver::VulkanDevice& device, AgcDriver::Graphics::ShaderPath path
     Reject([&] { DecodeGraphicsPrograms(invalid, queue, registry, true, true); }, "reserved graphics program address");
 }
 
+void PushBudgetBoundaries(AgcDriver::VulkanDevice& device) {
+    using namespace AgcDriver::DriverDetail;
+    using namespace ShaderRecompiler;
+    const auto prepare = [&](std::uint32_t vertexWords, std::uint32_t pixelWords, bool fixedSlots) {
+        DrawDecode decoded{};
+        decoded.state.stages = {AgcDriver::Graphics::ShaderPath::Vertex, 0u, 32u, 32u, {}, {}};
+        decoded.pixel.wave32 = true;
+        decoded.pixel.targetOutputMode[0] = 9u;
+        decoded.pixel.targetExportMapping.fill(0xe4u);
+        const auto append = [&](ShaderStage stage, std::uint32_t words) {
+            std::vector<std::uint32_t> code{0x7e000200u};
+            for (std::uint32_t word = 1u; word < words; ++word) code.push_back(0x06000000u | word);
+            if (stage == ShaderStage::Vertex) code.insert(code.end(), {0x7e020280u, 0x7e040280u, 0x7e0602f2u, 0xf80008cfu, 0x03020100u});
+            else code.insert(code.end(), {0xf800180fu, 0x00000000u});
+            code.push_back(0xbf810000u);
+            auto snapshot = std::make_shared<ShaderSnapshot>();
+            snapshot->type = stage == ShaderStage::Vertex ? 2u : 1u;
+            snapshot->code.assign(code.begin(), code.end());
+            snapshot->codeAddress = reinterpret_cast<std::uintptr_t>(snapshot->code.data());
+            DrawProgram program{{stage, snapshot->codeAddress, snapshot->code, 0u, {}}, 0u, 0u, std::vector<std::uint32_t>(words, 0u), {{{snapshot->codeAddress, std::as_bytes(std::span(snapshot->code))}, {0u, {}}}}, snapshot, 0u};
+            decoded.programs.push_back(std::move(program));
+            decoded.roles.push_back(stage == ShaderStage::Vertex ? ProgramRole::Main : ProgramRole::Fragment);
+        };
+        append(ShaderStage::Vertex, vertexWords);
+        if (pixelWords != 0u) append(ShaderStage::Fragment, pixelWords);
+        auto target = device.Target();
+        target.fixedPushSlots = fixedSlots;
+        target.registrationModules = false;
+        auto stages = PrepareGraphicsStages(decoded, target);
+        Require(stages.size() == decoded.programs.size(), "push budget preparation lost a graphics stage");
+        for (std::size_t index = 0u; index < stages.size(); ++index) {
+            Require(stages[index].entry.handle != nullptr, "push budget preparation lost its source handle");
+            const auto& layout = stages[index].entry.handle->artifact->bindings.layout;
+            const auto words = index == 0u ? vertexWords : pixelWords;
+            Require(layout.ShaderDataDwords() == words && layout.userDataRegisters.size() == words, "push budget fixture did not retain every shader-data word");
+            for (std::uint32_t word = 0u; word < words; ++word) Require(layout.userDataRegisters[word] == word, "push budget fixture dropped an active user-data register");
+        }
+        return stages;
+    };
+    const auto crowded = prepare(32u, 1u, false);
+    const auto& crowdedVertex = crowded.front().entry.handle->artifact->bindings;
+    const auto& crowdedPixel = crowded.back().entry.handle->artifact->bindings;
+    Require(!crowdedVertex.layout.UsesPushData() && crowdedVertex.pushConstantSizeBytes == 0u, "a legacy vertex stage consumed the fragment stage's last push dword");
+    Require(crowded.back().pushOffset == 0u && crowdedPixel.layout.UsesPushData() && crowdedPixel.pushConstantSizeBytes == 4u, "a legacy fragment stage did not retain its push budget after vertex data spilled");
+    const auto vertexOnly = prepare(32u, 0u, false);
+    Require(vertexOnly.front().entry.handle->artifact->bindings.layout.UsesPushData() && vertexOnly.front().entry.handle->artifact->bindings.pushConstantSizeBytes == 128u, "a legacy vertex-only pipeline lost its complete push block");
+    const auto adjacent = prepare(31u, 1u, false);
+    Require(adjacent.front().entry.handle->artifact->bindings.layout.UsesPushData() && adjacent.front().entry.handle->artifact->bindings.pushConstantSizeBytes == 124u, "a legacy vertex stage lost a fitting 124-byte push payload");
+    Require(adjacent.back().pushOffset == 124u && adjacent.back().entry.handle->artifact->bindings.layout.UsesPushData() && adjacent.back().entry.handle->artifact->bindings.pushConstantSizeBytes == 4u, "a legacy fragment stage did not use the final push dword");
+    const auto separate = prepare(32u, 32u, true);
+    Require(separate.front().pushOffset == 0u && separate.back().pushOffset == 128u, "fixed graphics push slots did not use separate stage offsets");
+    for (const auto& stage : separate) Require(stage.entry.handle->artifact->bindings.layout.UsesPushData() && stage.entry.handle->artifact->bindings.pushConstantSizeBytes == 128u, "fixed graphics push slots lost a complete stage payload");
+}
+
 void PrebuildPolicyReadback(AgcDriver::VulkanDevice& device, bool disabled) {
     using namespace AgcDriver::DriverDetail;
     using namespace ShaderRecompiler;
@@ -352,7 +403,7 @@ void PrebuildPolicyReadback(AgcDriver::VulkanDevice& device, bool disabled) {
     Require(stages.size() == 2u, "prebuild policy lost a required graphics stage");
     for (const auto& stage : stages) {
         Require(stage.entry.handle != nullptr && stage.snapshot != nullptr, "prebuild policy lost a required source handle");
-        Require(disabled ? stage.registration == nullptr : stage.registration != nullptr, "prebuild policy retained or skipped registration-default materialization");
+        Require(disabled || stage.stage == ShaderStage::Vertex ? stage.registration == nullptr : stage.registration != nullptr, "prebuild policy retained or skipped registration-default materialization");
         stage.snapshot->prepared->entries.push_back(stage.entry);
     }
     std::vector<LinkedProgram> linked;
@@ -400,6 +451,21 @@ void PrebuildPolicyReadback(AgcDriver::VulkanDevice& device, bool disabled) {
     device.Draw(state, {0u, 3u, 0u, 1u, 0u, false}, shaders);
     device.WaitIdle();
     Require(std::ranges::all_of(pixels, [](const auto value) { return value == 0xffffffffu; }), "prebuild policy changed native prepared-shader readback");
+    if (!disabled && device.GraphicsPipelineLibraries()) {
+        ShaderRecompiler::RecompileResult pushless;
+        pushless.spirv = {0x07230203u, 0x00010000u, 0u, 6u, 0u, 0x00020011u, 1u, 0x0003000eu, 0u, 1u, 0x0005000fu, 4u, 4u, 0x6e69616du, 0u, 0x00030010u, 4u, 7u, 0x00020013u, 2u, 0x00030021u, 3u, 2u, 0x00050036u, 2u, 4u, 0u, 3u, 0x000200f8u, 5u, 0x000100fdu, 0x00010038u};
+        pushless.variantId = 0x70757368u;
+        pushless.runtimeAbiVersion = ShaderRecompiler::RuntimeAbi::Version;
+        const std::array<AgcDriver::Graphics::CompiledShader, 1> pixelOnly{{{ShaderStage::Fragment, &pushless, AgcDriver::Graphics::PipelinePushSlotBytes}}};
+        const auto prebuilt = AgcDriver::Graphics::PipelineLibraryCountersOf(device.Device()).built[2];
+        Require(device.PrebuildGraphicsLibraries(decoded.state.stages, pixelOnly), "prebuild policy: a pixel stage's libraries were not prebuilt");
+        const auto built = AgcDriver::Graphics::PipelineLibraryCountersOf(device.Device()).built[2];
+        Require(built == prebuilt + 1u, "prebuild policy: a pixel stage without push constants did not build its fragment library");
+        shaders.back() = {ShaderStage::Fragment, &pushless, 0u};
+        device.Draw(state, {0u, 3u, 0u, 1u, 0u, false}, shaders);
+        device.WaitIdle();
+        Require(AgcDriver::Graphics::PipelineLibraryCountersOf(device.Device()).built[2] == built, "prebuild policy: a draw built the fragment library its pixel stage had prebuilt");
+    }
 }
 
 void RetainedPixelMatchesNullProgram(AgcDriver::VulkanDevice& device) {
@@ -729,6 +795,7 @@ int main(int argc, char** argv) {
             return 0;
         }
         const auto dump = argc == 2 ? std::filesystem::path(argv[1]) : std::filesystem::path{};
+        PushBudgetBoundaries(*device);
         RetainedPixelMatchesNullProgram(*device);
         NullPixelMatchesRegistration(*device);
         Check(*device, AgcDriver::Graphics::ShaderPath::Vertex, dump);

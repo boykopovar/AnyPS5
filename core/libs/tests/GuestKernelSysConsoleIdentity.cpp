@@ -73,6 +73,16 @@ void CheckAuthInfo() {
         for (std::size_t i = 16; i < bytes.size(); ++i) Require(bytes[i] == 0, "the rest of the result must be cleared");
         Require(info.guard == 0x5a5a5a5a5a5a5a5a, "get_authinfo wrote past its 0x88-byte result");
     }
+    *__error_nid_postfix() = 0;
+    Require(get_self_auth_info_nid_postfix(nullptr) == -1 && *__error_nid_postfix() == GuestEperm, "a null result must fail with EPERM");
+    Require(get_self_auth_info_nid_postfix(reinterpret_cast<KernelAuthInfo*>(0x10)) == -1 && *__error_nid_postfix() == GuestEfault,
+            "an unwritable store must fail with EFAULT");
+    std::memset(&info, 0x5a, sizeof(info));
+    Require(get_self_auth_info_nid_postfix(&info.value) == 0, "the calling process auth info must be returned");
+    Require(info.value.programAuthorityId == 0 && info.value.capabilities[0] == 0x2000000000000000, "the self authority ID or first capability word is wrong");
+    const auto selfBytes = std::bit_cast<std::array<std::uint8_t, sizeof(KernelAuthInfo)>>(info.value);
+    for (std::size_t i = 16; i < selfBytes.size(); ++i) Require(selfBytes[i] == 0, "the rest of the self result must be cleared");
+    Require(info.guard == 0x5a5a5a5a5a5a5a5a, "get_self_auth_info wrote past its 0x88-byte result");
 }
 
 void CheckOpenPsId() {
@@ -87,6 +97,15 @@ void CheckOpenPsId() {
     Require(sceKernelGetOpenPsIdForSystem(system.data()) == 0, "the system OpenPSID must be readable");
     Require(std::memcmp(plain.data(), system.data(), plain.size()) == 0, "both OpenPSID queries must agree");
     for (std::size_t i = plain.size(); i < system.size(); ++i) Require(system[i] == 0xa5, "the system OpenPSID wrote past 16 bytes");
+    bool threwNull = false;
+    try {
+        sceKernelGetOpenPsId(nullptr);
+    } catch (const std::invalid_argument&) {
+        threwNull = true;
+    }
+    Require(threwNull, "a null OpenPSID must throw invalid_argument");
+    Require(sceKernelGetOpenPsId(reinterpret_cast<void*>(0x10)) == static_cast<int>(0x8002000eu), "an unwritable OpenPSID store must return EFAULT");
+    Require(sceKernelGetOpenPsIdForSystem(reinterpret_cast<void*>(0x10)) == static_cast<int>(0x8002000eu), "an unwritable system OpenPSID store must return EFAULT");
 }
 
 }

@@ -172,10 +172,12 @@ bool SpirvFaultReportOnly(std::span<const std::uint32_t> words, std::uint32_t se
     std::unordered_map<std::uint32_t, std::uint32_t> sets;
     std::unordered_map<std::uint32_t, std::uint32_t> bindings;
     std::unordered_map<std::uint32_t, std::uint32_t> constants;
+    std::unordered_map<std::uint32_t, std::pair<std::uint32_t, std::uint32_t>> selects;
     const bool readable = forEachInstruction(words, [&](std::uint32_t opcode, std::span<const std::uint32_t> instruction) {
         if (opcode == spv::OpDecorate && instruction.size() == 4 && instruction[2] == spv::DecorationDescriptorSet) sets[instruction[1]] = instruction[3];
         if (opcode == spv::OpDecorate && instruction.size() == 4 && instruction[2] == spv::DecorationBinding) bindings[instruction[1]] = instruction[3];
         if (opcode == spv::OpConstant && instruction.size() == 4) constants[instruction[2]] = instruction[3];
+        if (opcode == spv::OpSelect && instruction.size() == 6) selects[instruction[2]] = {instruction[4], instruction[5]};
     });
     if (!readable) return false;
     std::unordered_set<std::uint32_t> buffers;
@@ -183,8 +185,12 @@ bool SpirvFaultReportOnly(std::span<const std::uint32_t> words, std::uint32_t se
         if (const auto found = sets.find(id); number == binding && found != sets.end() && found->second == set) buffers.insert(id);
     }
     const auto constantBelow = [&](std::uint32_t id, std::uint32_t limit) {
-        const auto found = constants.find(id);
-        return found != constants.end() && found->second < limit;
+        const auto below = [&](std::uint32_t value) {
+            const auto found = constants.find(value);
+            return found != constants.end() && found->second < limit;
+        };
+        const auto selected = selects.find(id);
+        return below(id) || (selected != selects.end() && below(selected->second.first) && below(selected->second.second));
     };
     const auto chainsBuffer = [&](std::uint32_t opcode, std::span<const std::uint32_t> instruction) {
         return (opcode == spv::OpAccessChain || opcode == spv::OpInBoundsAccessChain) && instruction.size() > 3 && buffers.contains(instruction[3]);
@@ -244,8 +250,9 @@ void ShaderResources::prepareAddressBindings(std::span<const CompiledShader> sha
 VkDescriptorBufferInfo ShaderResources::descriptor(Allocation& allocation) {
     if (allocation.guest) return wholeDwordRange(guestMemory.Descriptor(allocation.address, allocation.size, allocation.adjustment));
     if (allocation.role == ShaderRecompiler::DescriptorRole::GuestBuffers) {
-        Require(context.emptyBuffer != VK_NULL_HANDLE, "no placeholder buffer for a null V#");
-        return {context.emptyBuffer, 0, allocation.size};
+        const auto placeholder = allocation.oversized ? context.oversizedBuffer : context.emptyBuffer;
+        Require(placeholder != VK_NULL_HANDLE, "no placeholder buffer for a null V#");
+        return {placeholder, 0, allocation.size};
     }
     if (allocation.role == ShaderRecompiler::DescriptorRole::BdaPagetable || allocation.role == ShaderRecompiler::DescriptorRole::FaultBuffer) {
         Require(bda != nullptr, "BDA descriptors have no memory owner");

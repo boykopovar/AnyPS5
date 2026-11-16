@@ -169,13 +169,13 @@ public:
                 }
                 require(found, "SPIR-V phi has no incoming edge for the executed path");
             }
-            if (opcode == spv::OpLoad && isGuestPointer(instruction[3])) {
+            if ((opcode == spv::OpLoad || opcode == spv::OpAtomicLoad) && isGuestPointer(instruction[3])) {
                 const auto pointer = definition(instruction[3]);
                 require((pointer[0] & 0xffff) == spv::OpAccessChain, "guest read is not an indexed access");
                 reads.push_back(value(pointer.back()));
                 if (rootName(instruction[3]) == "scratch_dwords") require(pointerStorage(instruction[3]) == spv::StorageClassFunction, "scratch selection accessed non-private storage");
                 if (rootName(instruction[3]) == "scratch_pool") require(pointerStorage(instruction[3]) == spv::StorageClassStorageBuffer, "scratch pool accessed outside a storage buffer");
-                if (rootName(instruction[3]).starts_with("buffers")) require(instruction.size() == 5 && (instruction[4] & spv::MemoryAccessVolatileMask), "coherent buffer read lost its volatile access");
+                if (rootName(instruction[3]).starts_with("buffers")) require(opcode == spv::OpAtomicLoad ? instruction.size() == 6 : instruction.size() == 5 && (instruction[4] & spv::MemoryAccessVolatileMask), "coherent buffer read lost its volatile access");
             }
             if (opcode == spv::OpBranch || opcode == spv::OpBranchConditional) {
                 const auto destination = opcode == spv::OpBranch ? instruction[1] : instruction[value(instruction[1]) ? 2 : 3];
@@ -229,6 +229,7 @@ private:
             const auto spec = specializations.at(id);
             if (spec == PipelineSpecialization::BufferBase) return 0;
             if (spec == PipelineSpecialization::BufferBase + 1) return 0x30001000;
+            if (spec == PipelineSpecialization::BufferBase + 2) return 0;
             if (spec == PipelineSpecialization::BufferBase + 3) return misalignment;
             if (spec == PipelineSpecialization::PushDataOffset) return 0;
             throw std::runtime_error("unexpected specialization in access fixture");

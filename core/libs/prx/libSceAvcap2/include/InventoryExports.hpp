@@ -16,5 +16,10 @@ int APS5_VABI libSceAvcap2Unknown_Tzk7_minus_W5mp0A_nid_no_patch();
 int APS5_VABI libSceAvcap2Unknown_VNRuuZQx7gE_nid_no_patch();
 int APS5_VABI libSceAvcap2Unknown_iy6ZcsdeoMk_nid_no_patch();
 int APS5_VABI libSceAvcap2Unknown_k7gz608olKM_nid_no_patch();
+int APS5_VABI libSceAvcap2Unknown_117ggZLcGc0_nid_no_patch();
+int APS5_VABI libSceAvcap2Unknown_B_plus_6003nL0AI_nid_no_patch();
+int APS5_VABI libSceAvcap2Unknown_Ez6n05jUI1U_nid_no_patch();
+int APS5_VABI libSceAvcap2Unknown_NEY5WpUI0Io_nid_no_patch();
+int APS5_VABI sceAvcap2ReadVideo3();
 
 }

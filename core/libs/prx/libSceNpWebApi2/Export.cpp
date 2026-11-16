@@ -1,5 +1,6 @@
 #include "prx/libSceNpWebApi2/include/InventoryExports.hpp"
 #include "prx/libSceNpWebApi2/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include "SceTypes.hpp"
@@ -8,7 +9,10 @@
 #include <cstring>
 #include <mutex>
 #include <stdexcept>
+#include <string>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceNpWebApi2/include/Firmware320Exports.hpp"
 
@@ -17,6 +21,7 @@ static constexpr int SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT = static_cast<int>(0x
 static constexpr int SCE_NP_WEBAPI2_ERROR_UNAVAILABLE = static_cast<int>(0x80553406);
 static constexpr int SCE_NP_WEBAPI2_ERROR_INVALID_CONTEXT = static_cast<int>(0x80553404);
 static constexpr int SCE_NP_WEBAPI2_ERROR_INVALID_HANDLE = static_cast<int>(0x8055340D);
+static constexpr int SCE_NP_WEBAPI2_ERROR_INVALID_CONTENT_PARAMETER = static_cast<int>(0x80553408);
 static std::atomic<int> g_nextHandle{1};
 
 static_assert(sizeof(NpWebApi2PushContextId) == 37);
@@ -40,6 +45,39 @@ struct PushHandle {
 };
 
 static std::unordered_map<int, PushHandle> pushHandles;
+
+struct MultipartRequest {
+    std::vector<std::size_t> parts;
+    std::string contentType;
+    std::string boundary;
+};
+
+static std::mutex g_multipartMutex;
+static std::unordered_map<std::int64_t, MultipartRequest> g_multipartRequests;
+
+static bool CopyOutRequestId(int64_t* requestId, int64_t created) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(requestId, &created, sizeof(created));
+    errno = savedErrno;
+    return copied;
+}
+
+static void RegisterRequest(std::int64_t requestId) {
+    std::lock_guard lock(g_multipartMutex);
+    g_multipartRequests.try_emplace(requestId);
+}
+
+static void ForgetRequest(std::int64_t requestId) {
+    std::lock_guard lock(g_multipartMutex);
+    g_multipartRequests.erase(requestId);
+}
+
+static int CopyGuestStringPreservingErrno(const char* source, std::size_t maximum, std::string& out) {
+    const int savedErrno = errno;
+    const int status = CopyGuestString_nid_no_patch(source, maximum, out);
+    errno = savedErrno;
+    return status;
+}
 
 extern "C" {
 
@@ -67,6 +105,8 @@ int APS5_VABI sceNpWebApi2AddHttpRequestHeader(int64_t request_id, const char* f
 int APS5_VABI sceNpWebApi2AddWebTraceTag(std::int64_t requestId, const char* value) {
     (void)requestId;
     if (!value) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
+    std::string tagCopy;
+    if (CopyGuestStringPreservingErrno(value, 4096, tagCopy) != 0) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -75,12 +115,22 @@ void APS5_VABI sceNpWebApi2CheckTimeout(void) {
 
 int APS5_VABI sceNpWebApi2CreateRequest(int user_context_id, const char* api_group, const char* path, const char* method, const void* content_parameter, int64_t* request_id) {
     (void)user_context_id;
-    (void)api_group;
-    (void)path;
-    (void)method;
-    (void)content_parameter;
+    if (!api_group || !path || !method) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
+    if (content_parameter) {
+        const auto* fields = static_cast<const std::uint64_t*>(content_parameter);
+        std::uint64_t first = 0;
+        std::uint64_t second = 0;
+        const int savedErrno = errno;
+        const bool firstCopied = GuestCopyIn_nid_no_patch(&first, &fields[0], sizeof(first));
+        const bool secondCopied = !firstCopied || first == 0 || GuestCopyIn_nid_no_patch(&second, &fields[1], sizeof(second));
+        errno = savedErrno;
+        if (!firstCopied || !secondCopied) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
+        if (first != 0 && second == 0) return SCE_NP_WEBAPI2_ERROR_INVALID_CONTENT_PARAMETER;
+    }
     if (!request_id) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
-    *request_id = g_nextHandle.fetch_add(1, std::memory_order_relaxed);
+    const int64_t created = g_nextHandle.fetch_add(1, std::memory_order_relaxed);
+    if (!CopyOutRequestId(request_id, created)) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
+    RegisterRequest(created);
     return 0;
 }
 
@@ -91,7 +141,7 @@ int APS5_VABI sceNpWebApi2CreateUserContext(int lib_ctx_id, int user_id) {
 }
 
 int APS5_VABI sceNpWebApi2DeleteRequest(int64_t request_id) {
-    (void)request_id;
+    ForgetRequest(request_id);
     return 0;
 }
 
@@ -125,8 +175,12 @@ int APS5_VABI sceNpWebApi2GetMemoryPoolStats(int libraryContextId, NpWebApi2Memo
     const auto pool = g_pools.find(libraryContextId);
     if (pool == g_pools.end()) return SCE_NP_WEBAPI2_ERROR_INVALID_CONTEXT;
     if (!stats) return 0;
-    std::memset(stats, 0, sizeof(*stats));
-    stats->pool_size = pool->second;
+    NpWebApi2MemoryPoolStats localStats{};
+    localStats.pool_size = pool->second;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(stats, &localStats, sizeof(localStats));
+    errno = savedErrno;
+    if (!copied) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -175,8 +229,8 @@ int APS5_VABI sceNpWebApi2PushEventDeletePushContext(int user_context_id, const 
 int APS5_VABI sceNpWebApi2PushEventRegisterCallback(int user_context_id, int filter_id, void* callback, void* user_arg) {
     (void)user_context_id;
     (void)filter_id;
-    (void)callback;
     (void)user_arg;
+    if (!callback) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
     return g_nextHandle.fetch_add(1, std::memory_order_relaxed);
 }
 
@@ -197,12 +251,15 @@ int APS5_VABI sceNpWebApi2SendRequest(int64_t request_id, const void* data, size
 
 int APS5_VABI sceNpWebApi2Terminate(int lib_ctx_id) {
     std::lock_guard lock(g_poolsMutex);
+    if (!g_pools.contains(lib_ctx_id)) return SCE_NP_WEBAPI2_ERROR_INVALID_CONTEXT;
     std::erase_if(pushHandles, [lib_ctx_id](const auto& item) { return item.second.libraryContextId == lib_ctx_id; });
     g_pools.erase(lib_ctx_id);
     return 0;
 }
 
 int APS5_VABI sceNpWebApi2PushEventCreatePushContext(std::int32_t userContextId, NpWebApi2PushContextId* pushContextId) {
+    (void)userContextId;
+    if (!pushContextId) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
     return SCE_NP_WEBAPI2_ERROR_UNAVAILABLE;
 }
 
@@ -220,10 +277,18 @@ int APS5_VABI sceNpWebApi2PushEventSetHandleTimeout(int libraryContextId, int ha
 }
 
 int APS5_VABI sceNpWebApi2PushEventRegisterPushContextCallback(std::int32_t userContextId, std::int32_t filterId, void* callback, void* userArg) {
+    if (!callback) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
     return g_nextHandle.fetch_add(1, std::memory_order_relaxed);
 }
 
 int APS5_VABI sceNpWebApi2PushEventStartPushContextCallback(std::int32_t userContextId, const NpWebApi2PushContextId* pushContextId) {
+    (void)userContextId;
+    if (!pushContextId) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
+    NpWebApi2PushContextId localPushContextId{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localPushContextId, pushContextId, sizeof(localPushContextId));
+    errno = savedErrno;
+    if (!copied) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -241,8 +306,28 @@ int APS5_VABI sceNpWebApi2SetRequestTimeout(int64_t request_id, uint32_t timeout
     return 0;
 }
 
-int APS5_VABI sceNpWebApi2AddMultipartPart() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpWebApi2AddMultipartPart(int64_t request_id, const void* part_parameter, int32_t* part_index) {
+    if (!part_parameter) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
+    std::uint64_t parameter[3]{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(parameter, part_parameter, sizeof(parameter));
+    errno = savedErrno;
+    if (!copied) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
+    if (parameter[1] != 0 && parameter[0] == 0) NotImplemented_nid_no_patch(__func__);
+    std::lock_guard lock(g_multipartMutex);
+    const auto request = g_multipartRequests.find(request_id);
+    if (request == g_multipartRequests.end()) return SCE_NP_WEBAPI2_ERROR_INVALID_HANDLE;
+    request->second.parts.push_back(static_cast<std::size_t>(parameter[2]));
+    if (part_index != nullptr) {
+        const std::int32_t index = static_cast<std::int32_t>(request->second.parts.size());
+        const int outputErrno = errno;
+        const bool written = GuestCopyOut_nid_no_patch(part_index, &index, sizeof(index));
+        errno = outputErrno;
+        if (!written) {
+            request->second.parts.pop_back();
+            return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
+        }
+    }
     return 0;
 }
 
@@ -250,7 +335,8 @@ int APS5_VABI sceNpWebApi2CreateMultipartRequest(int user_ctx_id, const char* ap
     (void)user_ctx_id;
     if (!api_group || !path || !method) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
     const int64_t created = g_nextHandle.fetch_add(1, std::memory_order_relaxed);
-    if (request_id) *request_id = created;
+    if (request_id && !CopyOutRequestId(request_id, created)) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
+    RegisterRequest(created);
     return 0;
 }
 
@@ -265,13 +351,21 @@ int APS5_VABI sceNpWebApi2IntCreateRequest() {
 }
 
 int APS5_VABI sceNpWebApi2IntInitialize(const NpWebApi2IntInitializeArgs* args) {
-    if (args == nullptr || args->struct_size != sizeof(NpWebApi2IntInitializeArgs)) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
-    return CreateLibraryContext(args->pool_size);
+    NpWebApi2IntInitializeArgs local{};
+    const int savedErrno = errno;
+    const bool copied = args != nullptr && GuestCopyIn_nid_no_patch(&local, args, sizeof(local));
+    errno = savedErrno;
+    if (!copied || local.struct_size != sizeof(NpWebApi2IntInitializeArgs)) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
+    return CreateLibraryContext(local.pool_size);
 }
 
 int APS5_VABI sceNpWebApi2IntInitialize2(const NpWebApi2IntInitialize2Args* args) {
-    if (args == nullptr || args->struct_size != sizeof(NpWebApi2IntInitialize2Args)) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
-    return CreateLibraryContext(args->pool_size);
+    NpWebApi2IntInitialize2Args local{};
+    const int savedErrno = errno;
+    const bool copied = args != nullptr && GuestCopyIn_nid_no_patch(&local, args, sizeof(local));
+    errno = savedErrno;
+    if (!copied || local.struct_size != sizeof(NpWebApi2IntInitialize2Args)) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
+    return CreateLibraryContext(local.pool_size);
 }
 
 int APS5_VABI sceNpWebApi2IntPushEventCreateCtxIndFilter() {
@@ -291,8 +385,17 @@ int APS5_VABI sceNpWebApi2SendMultipartRequest(int64_t request_id, int part_inde
     return SCE_NP_WEBAPI2_ERROR_UNAVAILABLE;
 }
 
-int APS5_VABI sceNpWebApi2SetMultipartContentType() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceNpWebApi2SetMultipartContentType(int64_t request_id, const char* type_name, const char* boundary) {
+    if (!type_name) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
+    std::string contentType;
+    std::string boundaryCopy;
+    if (CopyGuestStringPreservingErrno(type_name, 64, contentType) != 0) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
+    if (boundary != nullptr && CopyGuestStringPreservingErrno(boundary, 64, boundaryCopy) != 0) return SCE_NP_WEBAPI2_ERROR_INVALID_ARGUMENT;
+    std::lock_guard lock(g_multipartMutex);
+    const auto request = g_multipartRequests.find(request_id);
+    if (request == g_multipartRequests.end()) return SCE_NP_WEBAPI2_ERROR_INVALID_HANDLE;
+    request->second.contentType = std::move(contentType);
+    request->second.boundary = std::move(boundaryCopy);
     return 0;
 }
 
