@@ -377,6 +377,15 @@ IrValue* TranslationContext::nanResultF32(std::initializer_list<IrValue*> source
         const std::uint32_t exponent = (constant->ImmediateU32() >> 23u) & 0xffu;
         return exponent != 0u && exponent != 0xffu;
     });
+    if (!normalFactor) {
+        std::array<IrValue*, 3> operands{};
+        std::uint32_t count = 0u;
+        for (IrValue* source : sources) operands.at(count++) = source;
+        for (auto index = count; index < operands.size(); ++index) operands[index] = operands[0];
+        const std::uint32_t flags = (ieeeMode ? 1u : 0u) | (count << 1u);
+        IrValue& invalid = invalidProduct != nullptr && count == 3u ? *invalidProduct : ir.ConstantBool(false);
+        return &ir.Emit(IrOpcode::NanPropagateF32, IrType::F32, {result, &ir.Constant(flags), &invalid, operands[0], operands[1], operands[2]});
+    }
     for (auto source = sources.end(); source != sources.begin();) {
         --source;
         IrValue& sourceBits = ir.BitCastU32(**source);
