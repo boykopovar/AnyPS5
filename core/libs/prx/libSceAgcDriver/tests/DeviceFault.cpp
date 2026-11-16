@@ -91,7 +91,38 @@ void ClaimBracketToken(AgcDriver::FaultTokenRing& ring, AgcDriver::FaultToken to
     slot->programAddress = program;
     slot->variantId = variant;
     std::snprintf(slot->desc, sizeof(slot->desc), "%s", desc);
+    slot->stage = 0;
+    slot->argBuffer = 0;
+    slot->argOffset = 0;
+    slot->argStride = 0;
+    for (std::uint32_t i = 0; i < 4; ++i) slot->argWords[i] = 0;
+    slot->argCount = 0;
     std::atomic_ref<AgcDriver::FaultToken>(slot->token).store(token, std::memory_order_release);
+}
+
+void ClaimBracketTokenWithArgs(AgcDriver::FaultTokenRing& ring, AgcDriver::FaultToken token, std::uint64_t serial, std::uint64_t program, std::uint64_t variant, const char* desc, std::uint32_t stage, std::uint64_t argBuffer, std::uint32_t argOffset, std::uint32_t argStride, const std::uint32_t* argWords, std::uint32_t argCount) {
+    AgcDriver::FaultTokenEntry* slot = ring.Mutable(token);
+    Require(slot != nullptr, "the claimed token has no slot");
+    slot->submitSerial = serial;
+    slot->programAddress = program;
+    slot->variantId = variant;
+    std::snprintf(slot->desc, sizeof(slot->desc), "%s", desc);
+    slot->stage = stage;
+    slot->argBuffer = argBuffer;
+    slot->argOffset = argOffset;
+    slot->argStride = argStride;
+    for (std::uint32_t i = 0; i < 4; ++i) slot->argWords[i] = 0;
+    const std::uint32_t words = argCount < 4 ? argCount : 4;
+    for (std::uint32_t i = 0; i < words; ++i) slot->argWords[i] = argWords[i];
+    slot->argCount = words;
+    std::atomic_ref<AgcDriver::FaultToken>(slot->token).store(token, std::memory_order_release);
+}
+
+AgcDriver::DeviceFaultResidencyProbe ResidencyProbeUnboundNow(std::uint64_t va) {
+    static_cast<void>(va);
+    AgcDriver::DeviceFaultResidencyProbe probe{};
+    probe.boundNow = false;
+    return probe;
 }
 
 VkDevice FakeDevice() {
@@ -531,6 +562,154 @@ void AddressKinds() {
     Require(std::strcmp(AgcDriver::DeviceFaultAddressKind(static_cast<VkDeviceFaultAddressTypeEXT>(99)), "unknown") == 0, "an unknown kind");
 }
 
+void IndirectRoundTrip() {
+    AgcDriver::FaultTokenRing& ring = AgcDriver::FaultTokenRing::Instance();
+    const AgcDriver::FaultToken token = ring.Claim();
+    Require(token != 0, "the indirect token is invalid");
+    const std::uint32_t words[4] = {3, 1, 1, 0};
+    ClaimBracketTokenWithArgs(ring, token, 7, 0x12000ull, 9, "dispatch indirect", static_cast<std::uint32_t>(AgcDriver::FaultStage::compute), 0x80000ull, 16, 12, words, 3);
+    emitCmd = VK_NULL_HANDLE;
+    emitMarker = nullptr;
+    emitCalls = 0;
+    static VkCommandBuffer fakeCmd = reinterpret_cast<VkCommandBuffer>(static_cast<std::uintptr_t>(0xC0FFEE2));
+    AgcDriver::Graphics::EmitNvCheckpointToken(fakeCmd, token, MockEmitCheckpoint);
+    Require(emitCalls == 1, "the indirect checkpoint backend was not called once");
+    Require(emitCmd == fakeCmd, "the indirect checkpoint backend got the wrong command buffer");
+    Require(emitMarker == reinterpret_cast<const void*>(static_cast<std::uintptr_t>(token)), "the indirect checkpoint backend got the wrong token");
+    const auto found = ring.Find(token);
+    Require(found.has_value() && found->token == token, "an indirect token missed its ring entry");
+    Require(found->stage == static_cast<std::uint32_t>(AgcDriver::FaultStage::compute), "an indirect token lost its stage");
+    Require(found->argBuffer == 0x80000ull && found->argOffset == 16 && found->argStride == 12 && found->argCount == 3, "an indirect token lost its args summary");
+    Require(found->argWords[0] == 3 && found->argWords[1] == 1 && found->argWords[2] == 1 && found->argWords[3] == 0, "an indirect token lost its arg words");
+    const AgcDriver::SubmitBracket bracket{7, 5, token, token};
+    const auto lines = AgcDriver::DeviceFaultBracketLines(bracket, ring, VK_NULL_HANDLE, AgcDriver::DeviceFaultStageLinesTag{});
+    Require(lines.size() == 3, "an indirect bracket does not report the window, the token and the args");
+    char expectedToken[320];
+    std::snprintf(expectedToken, sizeof(expectedToken), "[device-fault] token %u in batch 7: program 0x12000 variant 9 stage compute dispatch indirect", static_cast<unsigned>(token));
+    Require(lines[1] == expectedToken, "the indirect token stage line changed");
+    char expectedIndirect[192];
+    std::snprintf(expectedIndirect, sizeof(expectedIndirect), "[device-fault] indirect token %u args 3 words from 0x80000+16 stride 12: 00000003 00000001 00000001 (record-time)", static_cast<unsigned>(token));
+    Require(lines[2] == expectedIndirect, "the indirect args line changed");
+}
+
+void MeshStageLine() {
+    AgcDriver::FaultTokenRing& ring = AgcDriver::FaultTokenRing::Instance();
+    const AgcDriver::FaultToken token = ring.Claim();
+    Require(token != 0, "the mesh token is invalid");
+    const std::uint32_t words[4] = {};
+    ClaimBracketTokenWithArgs(ring, token, 7, 0x13000ull, 11, "mesh main", static_cast<std::uint32_t>(AgcDriver::FaultStage::mesh), 0, 0, 0, words, 0);
+    const AgcDriver::SubmitBracket bracket{7, 5, token, token};
+    const auto lines = AgcDriver::DeviceFaultBracketLines(bracket, ring, VK_NULL_HANDLE, AgcDriver::DeviceFaultStageLinesTag{});
+    Require(lines.size() == 2, "a mesh bracket does not report the window and the token");
+    char expected[320];
+    std::snprintf(expected, sizeof(expected), "[device-fault] token %u in batch 7: program 0x13000 variant 11 stage mesh mesh main", static_cast<unsigned>(token));
+    Require(lines[1] == expected, "the mesh stage line changed");
+    Require(std::strcmp(AgcDriver::DeviceFaultStageName(static_cast<std::uint32_t>(AgcDriver::FaultStage::mesh)), "mesh") == 0, "mesh stage name changed");
+    Require(std::strcmp(AgcDriver::DeviceFaultStageName(static_cast<std::uint32_t>(AgcDriver::FaultStage::task)), "task") == 0, "task stage name changed");
+    Require(std::strcmp(AgcDriver::DeviceFaultStageName(static_cast<std::uint32_t>(AgcDriver::FaultStage::compute)), "compute") == 0, "compute stage name changed");
+    Require(std::strcmp(AgcDriver::DeviceFaultStageName(static_cast<std::uint32_t>(AgcDriver::FaultStage::graphics)), "graphics") == 0, "graphics stage name changed");
+    Require(std::strcmp(AgcDriver::DeviceFaultStageName(static_cast<std::uint32_t>(AgcDriver::FaultStage::copy)), "copy") == 0, "copy stage name changed");
+    Require(std::strcmp(AgcDriver::DeviceFaultStageName(static_cast<std::uint32_t>(AgcDriver::FaultStage::unknown)), "unknown") == 0, "unknown stage name changed");
+}
+
+void ResidencyNeverBound() {
+    AgcDriver::SubmissionSnapshots snapshots;
+    snapshots.NoteSubmit(7, 3, std::make_shared<const std::vector<ShaderRecompiler::BdaAbi::Range>>(SnapshotRanges()));
+    AgcDriver::DeviceFaultResidencyProbe probe{};
+    probe.boundNow = false;
+    const auto lines = AgcDriver::DeviceFaultResidencyLines(0x50000ull, 7, &snapshots, probe);
+    Require(lines.size() == 1 && lines[0] == "[device-fault] residency 0x50000 never bound", "a never-bound address missed its verdict");
+}
+
+void ResidencyNoHistory() {
+    AgcDriver::SubmissionSnapshots snapshots;
+    snapshots.NoteSubmit(7, 3, std::make_shared<const std::vector<ShaderRecompiler::BdaAbi::Range>>(SnapshotRanges()));
+    AgcDriver::DeviceFaultResidencyProbe probe{};
+    probe.boundNow = false;
+    const auto lines = AgcDriver::DeviceFaultResidencyLines(0x50000ull, 0, &snapshots, probe);
+    Require(lines.size() == 1 && lines[0] == "[device-fault] residency 0x50000 unknown", "an address without history claimed never bound");
+}
+
+void ResidencyEvictedWithSerial() {
+    AgcDriver::DeviceFaultResidencyProbe probe{};
+    probe.boundNow = true;
+    probe.evicted = true;
+    probe.evictedAtSerial = 7;
+    const auto lines = AgcDriver::DeviceFaultResidencyLines(0x12000ull, 7, nullptr, probe);
+    Require(lines.size() == 1 && lines[0] == "[device-fault] residency 0x12000 evicted at serial 7", "an evicted address missed its serial");
+}
+
+void ResidencyEvictedFallback() {
+    AgcDriver::DeviceFaultResidencyProbe probe{};
+    probe.boundNow = true;
+    probe.evicted = true;
+    probe.evictedAtSerial = 0;
+    const auto lines = AgcDriver::DeviceFaultResidencyLines(0x12000ull, 7, nullptr, probe);
+    Require(lines.size() == 1 && lines[0] == "[device-fault] residency 0x12000 evicted", "an evicted address without a serial missed its fallback");
+}
+
+void ResidencyImportInFlight() {
+    AgcDriver::DeviceFaultResidencyProbe probe{};
+    probe.boundNow = true;
+    probe.importInFlight = true;
+    const auto lines = AgcDriver::DeviceFaultResidencyLines(0x12000ull, 7, nullptr, probe);
+    Require(lines.size() == 1 && lines[0] == "[device-fault] residency 0x12000 import in flight", "an import in flight missed its verdict");
+}
+
+void ResidencyWriteWatchRefused() {
+    AgcDriver::DeviceFaultResidencyProbe probe{};
+    probe.boundNow = true;
+    probe.writeWatchRefused = true;
+    const auto lines = AgcDriver::DeviceFaultResidencyLines(0x12000ull, 7, nullptr, probe);
+    Require(lines.size() == 1 && lines[0] == "[device-fault] residency 0x12000 write-watch refused", "a write-watch refusal missed its verdict");
+}
+
+void ResidencyUnknown() {
+    AgcDriver::SubmissionSnapshots snapshots;
+    snapshots.NoteSubmit(7, 3, std::make_shared<const std::vector<ShaderRecompiler::BdaAbi::Range>>(SnapshotRanges()));
+    AgcDriver::DeviceFaultResidencyProbe probe{};
+    probe.boundNow = true;
+    const auto lines = AgcDriver::DeviceFaultResidencyLines(0x50000ull, 7, &snapshots, probe);
+    Require(lines.size() == 1 && lines[0] == "[device-fault] residency 0x50000 unknown", "an unknown address missed its verdict");
+}
+
+void ReportResidencyIntegration() {
+    faultCalls = 0;
+    faultFails = false;
+    faultDataResult = VK_SUCCESS;
+    faultDataAddressCount = 2;
+    faultDataVendorBinarySize = 0;
+    AgcDriver::FaultTokenRing& ring = AgcDriver::FaultTokenRing::Instance();
+    const AgcDriver::SubmitBracket bracket{};
+    const auto lines = AgcDriver::DeviceFaultReport(FakeDevice(), MockFaultInfo, VK_NULL_HANDLE, nullptr, 0, nullptr, bracket, ring, static_cast<AgcDriver::DeviceFaultResidencyProbe (*)(std::uint64_t)>(nullptr));
+    bool first = false;
+    bool second = false;
+    for (const auto& line : lines) {
+        if (line == "[device-fault] residency 0x1234000 unknown") first = true;
+        if (line == "[device-fault] residency 0xabcd unknown") second = true;
+    }
+    Require(first && second, "a residency report missed one verdict per fault address");
+    const auto routed = AgcDriver::DeviceFaultReport(FakeDevice(), MockFaultInfo, VK_NULL_HANDLE, nullptr, 0, nullptr, bracket, ring, ResidencyProbeUnboundNow);
+    bool routedFirst = false;
+    bool routedSecond = false;
+    for (const auto& line : routed) {
+        if (line == "[device-fault] residency 0x1234000 unknown") routedFirst = true;
+        if (line == "[device-fault] residency 0xabcd unknown") routedSecond = true;
+    }
+    Require(routedFirst && routedSecond, "a snapshot-less residency report missed its unknown verdicts");
+    AgcDriver::SubmissionSnapshots boundSnapshots;
+    boundSnapshots.NoteSubmit(9, 3, std::make_shared<const std::vector<ShaderRecompiler::BdaAbi::Range>>(SnapshotRanges()));
+    const auto found = AgcDriver::DeviceFaultReport(FakeDevice(), MockFaultInfo, VK_NULL_HANDLE, nullptr, 9, &boundSnapshots, bracket, ring, ResidencyProbeUnboundNow);
+    bool foundFirst = false;
+    bool foundSecond = false;
+    for (const auto& line : found) {
+        if (line == "[device-fault] residency 0x1234000 never bound") foundFirst = true;
+        if (line == "[device-fault] residency 0xabcd never bound") foundSecond = true;
+    }
+    Require(foundFirst && foundSecond, "a found-but-uncovering snapshot missed its never-bound verdicts");
+    faultDataAddressCount = 2;
+}
+
 }
 
 int main() {
@@ -562,6 +741,16 @@ int main() {
         ExtraQueueEmptyBracket();
         TokenReuse();
         TokenEmission();
+        IndirectRoundTrip();
+        MeshStageLine();
+        ResidencyNeverBound();
+        ResidencyNoHistory();
+        ResidencyEvictedWithSerial();
+        ResidencyEvictedFallback();
+        ResidencyImportInFlight();
+        ResidencyWriteWatchRefused();
+        ResidencyUnknown();
+        ReportResidencyIntegration();
         LiveResourceEmpty();
         LiveResourceHit();
         LiveResourceInReport();

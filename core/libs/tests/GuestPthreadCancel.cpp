@@ -8,12 +8,12 @@
 #include "SceTypes.hpp"
 #include <atomic>
 #include <chrono>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <thread>
 
 static constexpr int SCE_OK = 0;
-static constexpr int GUEST_ESRCH = 3;
 static constexpr int GUEST_EINVAL = 22;
 static constexpr int CANCEL_ENABLE = 0;
 static constexpr int CANCEL_DISABLE = 1;
@@ -206,11 +206,24 @@ static void JoinCanceled(Pthread thread) {
 }
 
 int main() {
-    Require(scePthreadCancel(nullptr) == SCE_KERNEL_ERROR_ESRCH);
-    Require(pthread_cancel_nid_postfix(nullptr) == GUEST_ESRCH);
+    Require(scePthreadCancel(nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(pthread_cancel_nid_postfix(nullptr) == GUEST_EINVAL);
     Require(scePthreadSetcancelstate(7, nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(scePthreadSetcanceltype(1, nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(pthread_setcanceltype_nid_postfix(1, nullptr) == GUEST_EINVAL);
+    errno = 0;
+    Require(scePthreadSetcancelstate(CANCEL_DISABLE, reinterpret_cast<int*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
+    Require(errno == 0);
+    Require(scePthreadSetcanceltype(CANCEL_ASYNCHRONOUS, reinterpret_cast<int*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
+    Require(errno == 0);
+    Require(pthread_setcancelstate_nid_postfix(CANCEL_DISABLE, reinterpret_cast<int*>(0x10)) == 14);
+    Require(errno == 0);
+    Require(pthread_setcanceltype_nid_postfix(CANCEL_ASYNCHRONOUS, reinterpret_cast<int*>(0x10)) == 14);
+    Require(errno == 0);
+    int cancelState = -1;
+    Require(scePthreadSetcancelstate(CANCEL_ENABLE, &cancelState) == SCE_OK && cancelState == CANCEL_ENABLE);
+    int cancelType = -1;
+    Require(scePthreadSetcanceltype(CANCEL_DEFERRED, &cancelType) == SCE_OK && cancelType == CANCEL_DEFERRED);
 
     Require(scePthreadMutexInit(&shared.mutex, nullptr, nullptr) == SCE_OK);
     Require(scePthreadCondInit(&shared.cond, nullptr, nullptr) == SCE_OK);
