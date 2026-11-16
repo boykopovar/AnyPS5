@@ -197,5 +197,13 @@ def trace_timeline_slices(items):
     return trace_timeline.window_slices(trace_of(items), 0, 10**12)
 
 
+class PageTests(unittest.TestCase):
+    def test_page_escapes_title_and_notes_and_keeps_the_svg(self):
+        text = trace_timeline.page('<svg id="s"></svg>', '<b>T</b>', ['a < b'])
+        self.assertIn('<title>&lt;b&gt;T&lt;/b&gt;</title>', text)
+        self.assertIn('<li>a &lt; b</li>', text)
+        self.assertIn('<svg id="s"></svg></body>', text)
+
+
 if __name__ == "__main__":
     unittest.main()
