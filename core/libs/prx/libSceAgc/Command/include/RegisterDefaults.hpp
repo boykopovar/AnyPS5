@@ -5,7 +5,6 @@
 
 #include <cstdint>
 #include <span>
-#include <vector>
 
 namespace Agc::Command {
 
@@ -20,7 +19,7 @@ struct QueueResetState {
     std::uint32_t instance;
     std::uint32_t version;
     bool external;
-    std::vector<std::uint32_t> commands;
+    std::span<const std::uint32_t> commands;
 };
 
 QueueResetState GetQueueResetState(std::uint32_t instance, bool active);

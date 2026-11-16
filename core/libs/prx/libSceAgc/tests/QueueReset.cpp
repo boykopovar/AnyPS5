@@ -55,6 +55,17 @@ void uninitialized() {
     }
 }
 
+void invalidSelection() {
+    for (const auto flags : {0u, 0x8000u}) {
+        Storage storage;
+        const auto before = storage.words;
+        bool rejected = false;
+        try { sceAgcAcbResetQueue(&storage.buffer, flags, 2); }
+        catch (const std::runtime_error&) { rejected = true; }
+        check(rejected && storage.count() == 0 && storage.words == before, "invalid or unavailable context selection wrote a packet");
+    }
+}
+
 std::vector<ShaderRegister> expectedRegisters(std::uint32_t version) {
     std::vector<ShaderRegister> result;
     for (const auto* root : {sceAgcGetRegisterDefaults2(version), sceAgcGetRegisterDefaults2Internal(version)}) {
@@ -157,7 +168,7 @@ int main(int argc, char** argv) {
     try {
         check(argc == 2, "expected one queue-reset test mode");
         const std::string mode = argv[1];
-        if (mode == "uninitialized") uninitialized();
+        if (mode == "uninitialized") { uninitialized(); invalidSelection(); }
         else if (mode == "initialized") initialized();
         else if (mode == "growth") growth();
         else if (mode == "cache") cache();
