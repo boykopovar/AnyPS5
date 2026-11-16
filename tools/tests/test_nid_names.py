@@ -964,6 +964,16 @@ class PureHelperTests(unittest.TestCase):
         self.assertIsNone(nid_names.option_name("-", options))
         self.assertIsNone(nid_names.option_name("--unknown", options))
         self.assertEqual(nid_names.option_name("--n", options), "--n")
+class SourceScanHelperTests(unittest.TestCase):
+    def test_source_files_lists_cpp_files_outside_test_folders(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ("a.cpp", "sub/d.cpp", "test/b.cpp", "Tests/c.cpp", "e.h"):
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("", encoding="utf-8")
+            found = [path.relative_to(root).as_posix() for path in nid_names.source_files(root)]
+            self.assertEqual(found, ["a.cpp", "sub/d.cpp"])
 
 
 if __name__ == "__main__":
