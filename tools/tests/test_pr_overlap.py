@@ -621,6 +621,15 @@ class PageAndCacheHelperTests(unittest.TestCase):
             pr_overlap.save_export_cache(path, 2, {"libA": ["x"]})
             self.assertEqual(pr_overlap.load_export_cache(path, 2), {"libA": ["x"]})
 
+    def test_export_cache_is_ignored_when_stale_or_unreadable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "cache.json"
+            pr_overlap.save_export_cache(path, 2, {"libA": ["x"]})
+            self.assertEqual(pr_overlap.load_export_cache(path, 3), {})
+            path.write_text("[not json", encoding="utf-8")
+            self.assertEqual(pr_overlap.load_export_cache(path, 2), {})
+            self.assertEqual(pr_overlap.load_export_cache(Path(directory) / "missing.json", 2), {})
+
 
 if __name__ == "__main__":
     unittest.main()
