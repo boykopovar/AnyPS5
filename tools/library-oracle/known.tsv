@@ -4,15 +4,15 @@ agcbuild_AcbAtomicGds_c	diff	more than six arguments; the console's stack argume
 agcbuild_AcbCondExec_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_AcbCondExec_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_AcbCondExec_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_AcbCopyData_a	throw	more than six arguments; the console's stack arguments are not known
-agcbuild_AcbCopyData_b	throw	more than six arguments; the console's stack arguments are not known
-agcbuild_AcbCopyData_c	throw	more than six arguments; the console's stack arguments are not known
+agcbuild_AcbCopyData_a	diff	the recording passes six of the export's nine arguments; the console's item size and write confirm are not recorded
+agcbuild_AcbCopyData_b	diff	the recording passes six of the export's nine arguments; the console's item size and write confirm are not recorded
+agcbuild_AcbCopyData_c	diff	the recording passes six of the export's nine arguments; the console's item size and write confirm are not recorded
 agcbuild_AcbDispatchIndirect_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_AcbDispatchIndirect_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_AcbDispatchIndirect_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_AcbDmaData_a	throw	more than six arguments; the console's stack arguments are not known
-agcbuild_AcbDmaData_b	throw	more than six arguments; the console's stack arguments are not known
-agcbuild_AcbDmaData_c	throw	more than six arguments; the console's stack arguments are not known
+agcbuild_AcbDmaData_a	diff	the recording passes six of the export's ten arguments; the console's source address and byte count are not recorded
+agcbuild_AcbDmaData_b	diff	the recording passes six of the export's ten arguments; the console's source address and byte count are not recorded
+agcbuild_AcbDmaData_c	diff	the recording passes six of the export's ten arguments; the console's source address and byte count are not recorded
 agcbuild_AcbInitializeDefaultHardwareState_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_AcbInitializeDefaultHardwareState_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_AcbInitializeDefaultHardwareState_c	throw	AnyPS5 throws for arguments the console encodes
@@ -56,15 +56,15 @@ agcbuild_DcbCondExec_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbContextStateOp_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbContextStateOp_b	diff	the packet differs from the console's; not yet analysed
 agcbuild_DcbContextStateOp_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbCopyData_a	throw	more than six arguments; the console's stack arguments are not known
-agcbuild_DcbCopyData_b	throw	more than six arguments; the console's stack arguments are not known
-agcbuild_DcbCopyData_c	throw	more than six arguments; the console's stack arguments are not known
+agcbuild_DcbCopyData_a	diff	the recording passes six of the export's nine arguments; the console's item size and write confirm are not recorded
+agcbuild_DcbCopyData_b	diff	the recording passes six of the export's nine arguments; the console's item size and write confirm are not recorded
+agcbuild_DcbCopyData_c	diff	the recording passes six of the export's nine arguments; the console's item size and write confirm are not recorded
 agcbuild_DcbDispatchIndirect_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbDispatchIndirect_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbDispatchIndirect_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbDmaData_a	throw	more than six arguments; the console's stack arguments are not known
-agcbuild_DcbDmaData_b	throw	more than six arguments; the console's stack arguments are not known
-agcbuild_DcbDmaData_c	throw	more than six arguments; the console's stack arguments are not known
+agcbuild_DcbDmaData_a	diff	the recording passes six of the export's ten arguments; the console's source address and byte count are not recorded
+agcbuild_DcbDmaData_b	diff	the recording passes six of the export's ten arguments; the console's source address and byte count are not recorded
+agcbuild_DcbDmaData_c	diff	the recording passes six of the export's ten arguments; the console's source address and byte count are not recorded
 agcbuild_DcbDrawIndexAuto_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbDrawIndexIndirect_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbDrawIndexIndirect_b	throw	AnyPS5 throws for arguments the console encodes
