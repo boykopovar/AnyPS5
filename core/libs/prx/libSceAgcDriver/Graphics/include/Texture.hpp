@@ -528,6 +528,7 @@ public:
     // Keeps the image current with guest memory (see GuestMemory::CollectWrites).
     bool Refresh();
     bool RefreshLayers(std::uint32_t first, std::uint32_t count);
+    static void SetRefreshUnchangedHookForTest(void (*hook)(std::uint64_t address, std::size_t bytes));
     inline static std::atomic<std::uint64_t> epochRefreshes{0};
     static std::uint64_t SinglePassMoves();
     static std::uint64_t SlabRetiles();
@@ -539,6 +540,7 @@ public:
     static std::uint64_t HandedOverSuperseded();
     static void SetClearHandOver(bool enabled);
     static std::uint64_t UntrackedCompares();
+    static std::uint64_t RewatchedConfirms();
     static std::uint64_t GuestSnapshots();
     static std::uint64_t OccasionalLabelStores();
     std::uint64_t GuestBytes() const;
@@ -584,6 +586,9 @@ private:
     bool originalHolds(std::uint64_t address, std::size_t bytes) const;
     bool guestBytesStillHeld() const;
     bool compareUntracked(std::uint64_t address, std::size_t bytes, std::span<std::uint8_t> changed, bool memoize = false) const;
+    enum class RewatchProof { None, Unchanged, Changed };
+    RewatchProof rewatchProof(std::uint64_t begin, std::uint64_t end, bool queried) const;
+    void confirmRewatched(std::uint64_t spanBegin, std::span<std::uint8_t> stamped, std::span<std::uint8_t> cpu, std::vector<bool>* comparedUnits) const;
     // Stores the pending tracked layers overlapping [address, address + bytes) to guest memory; in
     // each, 64 KiB blocks the CPU wrote since the layer's generation keep the CPU's bytes. Block
     // units asked for in pieces too often are all stored at once for a while (the hysteresis:
@@ -715,6 +720,7 @@ private:
     bool refresh(std::uint32_t firstLayer, std::uint32_t lastLayer);
     void noteLayersBehind(std::uint32_t firstLayer, std::uint32_t lastLayer, const std::vector<bool>& outside);
     void refreshGeneration();
+    std::uint64_t advanceUnchanged(std::uint32_t unit, std::uint64_t to);
     std::uint64_t collectedLayerGeneration(std::uint32_t layer, std::uint64_t whole, bool uncached = false) const;
     bool refreshProved();
     bool keysReplacedByClear() const;

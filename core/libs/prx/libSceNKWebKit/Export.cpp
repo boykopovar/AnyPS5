@@ -9,10 +9,6 @@
 
 extern "C" {
 
-int APS5_VABI WKURLRequestSetDefaultTimeoutInterval() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKErrorCopyDomain() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -6050,9 +6046,6 @@ int APS5_VABI _ZN7Nicosia5Scene5StateD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient32assignIdentifierToInitialRequestEmPNS_14DocumentLoaderERKNS_15ResourceRequestE() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZN7WebCore4PathC1EOS0_() {
     NotImplemented_nid_no_patch(__func__);
@@ -9172,10 +9165,6 @@ int APS5_VABI _ZN7WebCore10ISOFullBoxD0Ev() {
 }
 
 int APS5_VABI _ZN7WebCore15AsyncFileStream4readEPci() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore9GLContext20isExtensionSupportedEPKcS2_() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -17928,10 +17917,6 @@ int APS5_VABI _ZN7WebCore14ScrollableArea32computeScrollbarValueAndOverhangEfffR
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore14ScrollableArea34constrainScrollPositionForOverhangERKNS_10LayoutRectERKNS_10LayoutSizeERKNS_11LayoutPointES9_ii() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore14ScrollableAreaC2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -21789,9 +21774,6 @@ int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient25setMainFrameDocumentReadyEb()
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient26updateCachedDocumentLoaderERNS_14DocumentLoaderE() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient29savePlatformDataToCachedFrameEPNS_11CachedFrameE() {
     NotImplemented_nid_no_patch(__func__);
@@ -21801,18 +21783,12 @@ int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient31dispatchDidReachLayoutMilesto
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient31dispatchUnableToImplementPolicyERKNS_13ResourceErrorE() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient33dispatchWillPerformClientRedirectERKN3WTF3URLEdNS1_8WallTimeENS_19LockBackForwardListE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
 
-int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient8setTitleERKNS_19StringWithDirectionERKN3WTF3URLE() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClientC1ERKS0_() {
     NotImplemented_nid_no_patch(__func__);
