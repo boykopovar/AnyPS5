@@ -908,12 +908,12 @@ int VerifyVersion56Compatibility() {
         const auto replay35 = serializer.Deserialize(EncodeBase64(version35));
         Require(replay35.request.target.spannedWaves == spanned && !replay35.request.target.float32FlushToZero);
         request.target.spannedAnySubgroup = spanned;
-        const auto version62 = DecodeBase64(serializer.Serialize(request));
-        Require(version62[4] == 62u && version62.back() == (spanned ? 1u : 0u));
-        Require(serializer.Deserialize(EncodeBase64(version62)).request.target.spannedAnySubgroup == spanned);
-        auto version57 = version62;
+        const auto version63 = DecodeBase64(serializer.Serialize(request));
+        Require(version63[4] == 63u && version63[version63.size() - 5u] == (spanned ? 1u : 0u));
+        Require(serializer.Deserialize(EncodeBase64(version63)).request.target.spannedAnySubgroup == spanned);
+        auto version57 = version63;
         version57[4] = 57u;
-        version57.pop_back();
+        version57.resize(version57.size() - 5u);
         const auto replay57 = serializer.Deserialize(EncodeBase64(version57));
         Require(replay57.request.target.float32FlushToZero && !replay57.request.target.spannedAnySubgroup);
         const auto replay56 = serializer.Deserialize(SerializeVersion56(request));
