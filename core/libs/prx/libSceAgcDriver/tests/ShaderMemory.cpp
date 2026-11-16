@@ -1342,6 +1342,30 @@ void verifyMayEvaluate() {
     require(bitEvaluator.Evaluate(Detail::IrNode(&countBits), bitResult) && bitResult == 1u, "Evaluator evaluated BitCount32 incorrectly");
     require(bitEvaluator.Evaluate(Detail::IrNode(&findILsb), bitResult) && bitResult == 2u, "Evaluator evaluated FindILsb32 incorrectly");
     require(bitEvaluator.Evaluate(Detail::IrNode(&findUMsb), bitResult) && bitResult == 2u, "Evaluator evaluated FindUMsb32 incorrectly");
+    struct NanCase {
+        std::uint32_t result;
+        bool quiet;
+        std::uint32_t invalid;
+        std::array<std::uint32_t, 3> sources;
+        std::uint32_t count;
+        std::uint32_t expected;
+        const char* name;
+    };
+    for (const auto& [result, quiet, invalid, sources, count, expected, name] : std::array<NanCase, 7>{{
+             {0x40400000u, true, 0u, {0x3f800000u, 0x40000000u, 0u}, 2u, 0x40400000u, "a number result"},
+             {0x7fc00000u, true, 0u, {0x7f800000u, 0u, 0u}, 2u, 0xffc00000u, "an invalid result of number sources"},
+             {0x7fc00000u, true, 0u, {0x3f800000u, 0x7f812345u, 0u}, 2u, 0x7fc12345u, "a signaling NaN source quieted"},
+             {0x7fc00000u, false, 0u, {0x3f800000u, 0x7f812345u, 0u}, 2u, 0x7f812345u, "a signaling NaN source kept"},
+             {0x7fc00000u, true, 0u, {0x7fc00001u, 0x7fc00002u, 0u}, 2u, 0x7fc00001u, "the first NaN source"},
+             {0x7fc00000u, true, 1u, {0x7f800000u, 0u, 0x7fc00003u}, 3u, 0xffc00000u, "an invalid product before a NaN addend"},
+             {0x7fc00000u, true, 0u, {0x3f800000u, 0x40000000u, 0x7f800003u}, 3u, 0x7fc00003u, "a NaN addend"},
+         }}) {
+        auto& propagated = make(IrOpcode::NanPropagateF32, IrType::F32, {&constant(result), &constant((quiet ? 1u : 0u) | count << 1u), &constant(invalid), &constant(sources[0]), &constant(sources[1]), &constant(sources[2])});
+        require(Detail::Evaluator::MayEvaluate(plan, &propagated), (std::string("MayEvaluate rejected NanPropagateF32 for ") + name).c_str());
+        Detail::Evaluator nanEvaluator(plan, runtime);
+        std::uint32_t bits = 0;
+        require(nanEvaluator.Evaluate(Detail::IrNode(&propagated), bits) && bits == expected, (std::string("Evaluator propagated NaN incorrectly for ") + name).c_str());
+    }
     const std::array<IrOpcode, 7> takenAsEvaluable{IrOpcode::Identity, IrOpcode::Phi, IrOpcode::Void, IrOpcode::GetUserData, IrOpcode::GetShaderBase, IrOpcode::LoadAddressU32, IrOpcode::ReadConstBuffer};
     for (std::uint16_t raw = 0; raw < static_cast<std::uint16_t>(IrOpcode::Count); ++raw) {
         const auto opcode = static_cast<IrOpcode>(raw);
@@ -8867,7 +8891,7 @@ void verifyPixelRequestSerialization() {
     minimal.context.pixel->layerExported = true;
     minimal.context.pixel->ditheredAlphaToCoverage = true;
     const auto encoded = serializer.Serialize(minimal);
-    require(requestPrefix(encoded, 8u) == "NVNQQTkAAAA=", "new requests did not use serialization version 57");
+    require(requestPrefix(encoded, 8u) == "NVNQQT4AAAA=", "new requests did not use serialization version 62");
     auto withBarycentric = minimal;
     withBarycentric.target.fragmentBarycentricBuiltins = true;
     require(serializer.Deserialize(serializer.Serialize(withBarycentric)).request.target.fragmentBarycentricBuiltins && !serializer.Deserialize(encoded).request.target.fragmentBarycentricBuiltins, "barycentric built-ins were lost in serialization");
@@ -8988,7 +9012,7 @@ void verifyPixelRequestSerialization() {
     for (std::size_t bytes = 0; bytes < 45u; ++bytes) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(requestPrefix(encoded, mappingOffset + bytes))); }, "truncated data", "a truncated pixel mapping, packing, dual-source, alpha-to-coverage, stencil reference export flag, primitive class, layer export, dither or front-face flag, quad pixel mask or quad sample mask was accepted");
     }
-    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTIAAAA=", "NVNQQToAAAA="}) {
+    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTIAAAA=", "NVNQQToAAAA=", "NVNQQT0AAAA=", "NVNQQT8AAAA="}) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(unsupported)); }, "serialization version", "an unsupported request version was accepted");
     }
     static constexpr std::string_view version18Request{
@@ -9046,8 +9070,8 @@ std::vector<std::uint8_t> decodeBase64(std::string_view text) {
 }
 
 std::vector<std::uint8_t> version56Bytes(std::vector<std::uint8_t> bytes) {
-    require(bytes.size() > 13u && bytes[4] == 57u, "a legacy fixture did not start from serialization version 57");
-    bytes.resize(bytes.size() - 5u);
+    require(bytes.size() > 14u && bytes[4] == 62u, "a legacy fixture did not start from serialization version 62");
+    bytes.resize(bytes.size() - 6u);
     bytes[4] = 56u;
     return bytes;
 }
@@ -9314,7 +9338,7 @@ void verifyVertexInfoVersion19() {
     require(mergingBytes.size() == plainPixel.size() && std::equal(plainPixel.begin(), plainPixel.begin() + mergeOffset, mergingBytes.begin()) && mergingBytes[mergeOffset] == 3u && mergingBytes[mergeOffset + 1] == 0x0fu && mergingBytes[mergeOffset + 2] == 0xf0u && mergingBytes[mergeOffset + 5] == 2u && mergingBytes[mergeOffset + 6] == 1u && mergingBytes[mergeOffset + 34] == 0xefu && mergingBytes[mergeOffset + 37] == 0x89u && mergingBytes[mergeOffset + 38] == 1u && mergingBytes[mergeOffset + 39] == 1u && mergingBytes[mergeOffset + 40] == 0u && mergingBytes[mergeOffset + 41] == static_cast<std::uint8_t>(ColorExportPacking::Float11_11_10) && mergingBytes[mergeOffset + 42] == 0x01u && mergingBytes[mergeOffset + 45] == 0x20u && mergingBytes[mergeOffset + 46] == 1u && mergingBytes[mergeOffset + 47] == 2u && mergingBytes[mergeOffset + 51] == 0x05u && mergingBytes[mergeOffset + 52] == 0x01u && std::equal(plainPixel.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes), plainPixel.end(), mergingBytes.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes)), "the color target merge is not the 55 bytes the version 54 pixel info adds after the sample order");
     require(serializer.Deserialize(serializer.Serialize(merging)).request.context.pixel->targetMerges == merging.context.pixel->targetMerges, "a serialized request lost its color target merge");
     auto version54 = mergingBytes;
-    version54.resize(version54.size() - 5u);
+    version54.resize(version54.size() - 6u);
     version54.erase(version54.begin() + mergeOffset + 40, version54.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes));
     version54[4] = 54u;
     auto version53 = version54;
@@ -9351,7 +9375,7 @@ void verifyVertexInfoVersion19() {
         at[3] = flags;
     };
     auto blendVersion49 = blendMergingBytes;
-    blendVersion49.resize(blendVersion49.size() - 5u);
+    blendVersion49.resize(blendVersion49.size() - 6u);
     blendRecordToVersion49(blendVersion49, mergeOffset);
     blendVersion49.resize(blendVersion49.size() - 5u);
     blendVersion49[4] = 49u;
@@ -9363,7 +9387,7 @@ void verifyVertexInfoVersion19() {
     require(twoMergingBytes.size() == blendMergingBytes.size() + mergeBytes + blendPayloadBytes && twoMergingBytes[static_cast<std::size_t>(twoMergingFlags)] == 0x03u && std::equal(blendMergingBytes.begin() + mergeOffset, blendMergingBytes.begin() + twoMergingFlags, twoMergingBytes.begin() + mergeOffset) && std::equal(blendMergingBytes.begin() + twoMergingFlags + 1, blendMergingBytes.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes + blendPayloadBytes), twoMergingBytes.begin() + twoMergingFlags + 1), "a second color target merge did not follow the first, counted in the first merge's flags");
     require(serializer.Deserialize(serializer.Serialize(twoMerging)).request.context.pixel->targetMerges == twoMerging.context.pixel->targetMerges, "a serialized request lost its second color target merge");
     auto twoVersion49 = twoMergingBytes;
-    twoVersion49.resize(twoVersion49.size() - 5u);
+    twoVersion49.resize(twoVersion49.size() - 6u);
     blendRecordToVersion49(twoVersion49, mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes + blendPayloadBytes));
     blendRecordToVersion49(twoVersion49, mergeOffset);
     twoVersion49.resize(twoVersion49.size() - 5u);
@@ -12842,6 +12866,129 @@ void verifyRuntimeImageSwitchDeduplication() {
     require(mipTargets.at(0u) != mipTargets.at(1u), "runtime image switch deduplication: storage image modes with different mip modes shared an OpSwitch target");
 }
 
+void verifyTableKeep() {
+    using namespace ShaderRecompiler;
+    std::vector<std::uint32_t> code{0xf40c0200u, 0xfa000000u, 0xf4080500u, 0xfa000020u, 0xf4080600u, 0xfa000040u, 0xf4000400u, 0xfa000050u, 0xf4080a00u, 0xfa000080u, 0xbf8cc07fu, 0xf42c0814u, 0xfa000000u, 0xbf8cc07fu, 0xbf068010u, 0xbf850008u};
+    for (std::uint32_t dword = 0; dword < 8u; dword++) {
+        code.push_back(0xbe800300u | ((8u + dword) << 16u) | (32u + dword));
+    }
+    code.insert(code.end(), {0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf810000u});
+    constexpr std::uint32_t Format8888UNorm = 56;
+    constexpr std::uint32_t Type2D = 9;
+    struct alignas(256) Texture { std::array<std::uint8_t, 256> bytes{}; };
+    static Texture textures[2];
+    const auto makeImage = [&](const Texture& texture, std::uint32_t extent) {
+        const auto base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(texture.bytes.data()));
+        return std::array<std::uint32_t, 8>{static_cast<std::uint32_t>(base >> 8u), static_cast<std::uint32_t>((base >> 40u) & 0xffu) | (Format8888UNorm << 20u) | (extent << 30u), extent << 14u, 0xfacu | (Type2D << 28u), 0u, 0u, 0u, 0u};
+    };
+    const auto oldT = makeImage(textures[0], 3u);
+    const auto newT = makeImage(textures[1], 7u);
+    std::array<std::uint32_t, 4> output{};
+    const auto outputAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(output.data()));
+    alignas(4096) static std::array<std::uint32_t, 1024> srt{};
+    static const auto srtAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(srt.data()));
+    const std::array<std::uint32_t, 4> outputV{static_cast<std::uint32_t>(outputAddress), static_cast<std::uint32_t>((outputAddress >> 32u) & 0xffffu), 16u, 0xfacu};
+    const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(srtAddress), static_cast<std::uint32_t>(srtAddress >> 32u)};
+    const std::array<std::uint32_t, 4> capabilities{29u, spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess};
+    const std::array<std::string_view, 2> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
+    RecompileRequest request{};
+    request.shader = {ShaderStage::Compute, 0x23001u, code, 0, {}};
+    request.context.waveSize = 32u;
+    request.context.userDataBaseRegister = 0;
+    request.context.userData = userData;
+    request.context.compute = ShaderComputeStageInfo{{32u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+    request.target.vulkanVersion = 0x00401000u;
+    request.target.spirvVersion = 0x00010300u;
+    request.target.subgroupSize = 32;
+    request.target.supportedCapabilities = capabilities;
+    request.target.supportedExtensions = extensions;
+    request.target.bdaAbiVersion = BdaAbi::Version;
+    request.target.fragmentShaderBarycentricEnabled = false;
+    request.layout.pushConstantSizeBytes = 128;
+    static bool tableWritePending = false;
+    const auto pendingSpan = +[](std::uint64_t address, std::size_t bytes, std::span<std::byte>) -> AgcDriver::ShaderMemory::PendingWrite {
+        using Pending = AgcDriver::ShaderMemory::PendingWrite;
+        return tableWritePending && address < srtAddress + 256u && srtAddress < address + bytes ? Pending::Sync : Pending::None;
+    };
+    const auto fill = [&] {
+        srt.fill(0u);
+        std::copy(oldT.begin(), oldT.end(), srt.begin());
+        std::copy(outputV.begin(), outputV.end(), srt.begin() + 16);
+        srt[20] = 1u;
+    };
+    const auto holds = [&](const std::shared_ptr<const ResourceCapture>& capture, const std::array<std::uint32_t, 8>& words) {
+        return std::ranges::any_of(capture->snapshot.images, [&](const DescriptorValue& value) {
+            return std::equal(words.begin(), words.end(), value.dwords.begin());
+        });
+    };
+
+    fill();
+    tableWritePending = false;
+    {
+        AgcDriver::ShaderMemory memory({}, pendingSpan, nullptr, nullptr, pendingSpan);
+        std::copy(newT.begin(), newT.end(), srt.begin());
+        const auto capture = memory.Capture(request);
+        require(holds(capture, newT) && !holds(capture, oldT), "table keep: a capture without a keep did not read the table the game wrote after the packet");
+    }
+
+    fill();
+    {
+        AgcDriver::ShaderMemory memory({}, pendingSpan, nullptr, nullptr, pendingSpan);
+        require(memory.KeepTable(srtAddress), "table keep: a table with no GPU write over it was not kept");
+        require(!memory.KeepTable(srtAddress + 64u), "table keep: a block that overlaps a kept block was kept");
+        std::copy(newT.begin(), newT.end(), srt.begin());
+        const auto capture = memory.Capture(request);
+        require(holds(capture, oldT) && !holds(capture, newT), "table keep: the capture read the table the game wrote after the packet instead of the kept one");
+        const auto regions = memory.Regions();
+        const bool listed = std::ranges::any_of(regions, [&](const MemoryRegion& region) {
+            return region.guestAddress <= srtAddress && srtAddress + sizeof(oldT) <= region.guestAddress + region.bytes.size() &&
+                   std::memcmp(region.bytes.data() + (srtAddress - region.guestAddress), oldT.data(), sizeof(oldT)) == 0;
+        });
+        require(listed, "table keep: the kept words are not among the capture's regions, so the draw cache would not compare them with memory");
+    }
+
+    fill();
+    tableWritePending = true;
+    {
+        AgcDriver::ShaderMemory memory({}, pendingSpan, nullptr, nullptr, pendingSpan);
+        require(!memory.KeepTable(srtAddress), "table keep: a table with a GPU write over it was kept");
+        std::copy(newT.begin(), newT.end(), srt.begin());
+        const auto capture = memory.Capture(request);
+        require(holds(capture, newT) && !holds(capture, oldT), "table keep: a table with a GPU write over it was not read from memory");
+    }
+    tableWritePending = false;
+
+    fill();
+    static bool wordwiseTableWrite = false;
+    wordwiseTableWrite = false;
+    {
+        const auto wordwiseQuery = +[](std::uint64_t address, std::size_t bytes, std::span<std::byte>) -> AgcDriver::ShaderMemory::PendingWrite {
+            using Pending = AgcDriver::ShaderMemory::PendingWrite;
+            if (bytes > AgcDriver::ShaderMemory::KeepBytes) return Pending::Sync;
+            return wordwiseTableWrite && address < srtAddress + 256u && srtAddress < address + bytes ? Pending::Sync : Pending::None;
+        };
+        AgcDriver::ShaderMemory memory({}, wordwiseQuery, nullptr, nullptr, wordwiseQuery);
+        require(memory.KeepTable(srtAddress), "table keep: a table on a page read word by word was not kept");
+        wordwiseTableWrite = true;
+        std::copy(newT.begin(), newT.end(), srt.begin());
+        const auto capture = memory.Capture(request);
+        wordwiseTableWrite = false;
+        require(holds(capture, oldT) && !holds(capture, newT), "table keep: a kept word on a page read word by word was read from memory after a GPU write was recorded over the table");
+    }
+
+    fill();
+    {
+        const std::array<MemoryRegion, 1> registered{{{srtAddress, std::as_bytes(std::span(srt).first(16))}}};
+        AgcDriver::ShaderMemory memory(registered, pendingSpan, nullptr, nullptr, pendingSpan);
+        require(!memory.KeepTable(srtAddress), "table keep: a block that overlaps a registered region was kept");
+    }
+    {
+        AgcDriver::ShaderMemory memory({}, nullptr, nullptr, nullptr, nullptr);
+        require(!memory.KeepTable(srtAddress), "table keep: a block was kept although nothing can say whether a GPU write is pending over it");
+        require(!memory.KeepTable(srtAddress + 2u), "table keep: a block that is not word aligned was kept");
+    }
+}
+
 int main(int argc, char** argv) {
     try {
 #ifdef _WIN32
@@ -12850,6 +12997,11 @@ int main(int argc, char** argv) {
         setenv("ANYPS5_NO_SHADER_CACHE", "1", 1);
 #endif
         using namespace ShaderRecompiler;
+        if (argc == 2 && std::string_view(argv[1]) == "--table-keep") {
+            verifyTableKeep();
+            std::cout << "A kept table is read as it was at the draw packet and listed with the capture's regions\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--layer-specialization-release") {
             verifyLayerSpecializationRelease();
             std::cout << "Layer specialization metadata survives SPIR-V release and rebuild\n";
@@ -13249,6 +13401,12 @@ int main(int argc, char** argv) {
         std::vector<std::uint64_t> float32PreserveKey;
         RecompileCacheKey::Build(float32Preserve, float32PreserveKey);
         require(plainKey != float32PreserveKey && float32FlushKey != float32PreserveKey, "f32 denormal preservation did not change the cache key");
+        auto anySubgroup = uncached;
+        anySubgroup.target.spannedAnySubgroup = true;
+        require(RequestSerializer{}.Deserialize(RequestSerializer{}.Serialize(anySubgroup)).request.target.spannedAnySubgroup, "spanned waves of any subgroup size were lost in serialization");
+        std::vector<std::uint64_t> anySubgroupKey;
+        RecompileCacheKey::Build(anySubgroup, anySubgroupKey);
+        require(plainKey != anySubgroupKey, "spanned waves of any subgroup size did not change the cache key");
         auto changedLayout = request;
         changedLayout.layout.pushConstantSizeBytes = 64;
         require(!Recompile(changedLayout).cacheHit, "binding layout change reused an incompatible variant");

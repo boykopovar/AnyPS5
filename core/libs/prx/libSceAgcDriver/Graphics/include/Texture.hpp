@@ -370,6 +370,7 @@ public:
     // as it was, and one that finds it unchanged since an earlier read knows the registry is what
     // it was then.
     static std::uint64_t PendingSerial();
+    static bool PendingClearOnThread(std::uint64_t address, std::size_t bytes);
     // One registry scan for several ranges (the fast Revalidate): each query's `overlaps` receives
     // whether an image other than `except` has results pending, or is being stored right now, over
     // [begin, end), and `found` the image FindPending would return for the range (null: none);
@@ -665,6 +666,16 @@ private:
         std::uint64_t end;
     };
     std::vector<ImportSegment> importSegments() const;
+    struct SegmentMemo {
+        bool valid = false;
+        std::uint64_t generation = 0;
+        VkDevice device = VK_NULL_HANDLE;
+        std::uint64_t importEpoch = 0;
+        std::uint64_t importRefreshed = 0;
+        std::vector<ImportSegment> segments;
+    };
+    mutable std::mutex segmentMemoMutex;
+    mutable SegmentMemo segmentMemo;
     PaddingSeeds paddingSeeds(std::span<const ImportSegment> segments, const std::vector<CopiedBytes>& copied) const;
     // The direct upload and GPU-direct write-back of the runs through their windows (block units);
     // both return the bytes moved. The upload reads each unit from its unit shadow while fresh,

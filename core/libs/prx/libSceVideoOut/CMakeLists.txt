@@ -208,6 +208,12 @@ if(BUILD_TESTING)
         set_tests_properties(video_out_flip_fps_limit PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test(NAME video_out_flip_backlog COMMAND video_out_flip_tests backlog)
+    set_tests_properties(video_out_flip_backlog PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0 ENVIRONMENT "SDL_VIDEODRIVER=${ANYPS5_VIDEO_OUT_TEST_DRIVER};ANYPS5_FPS_LIMIT=20")
+    if(WIN32)
+        set_tests_properties(video_out_flip_backlog PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test(NAME video_out_flip_cpuflip_in_order COMMAND video_out_flip_tests cpuflip)
     set_tests_properties(video_out_flip_cpuflip_in_order PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77 RESOURCE_LOCK videoout_app0 ENVIRONMENT "APS5_NO_WGI=1;SDL_VIDEODRIVER=${ANYPS5_VIDEO_OUT_TEST_DRIVER};APS5_CPU_FLIP_IN_ORDER=1")
     if(WIN32)
