@@ -290,6 +290,13 @@ class TokenHelperTests(unittest.TestCase):
         self.assertFalse(agc_test_split.literal("${X}"))
         self.assertFalse(agc_test_split.literal("$<CONFIG>"))
 
+    def test_expand_substitutes_every_listed_value(self):
+        self.assertEqual(agc_test_split.expand("lib${X}", {"X": ["a", "b"]}), ["liba", "libb"])
+        self.assertEqual(agc_test_split.expand("plain", {}), ["plain"])
+
+    def test_expand_yields_nothing_for_an_unknown_variable(self):
+        self.assertEqual(agc_test_split.expand("lib${Y}", {"X": ["a"]}), [])
+
 
 if __name__ == "__main__":
     unittest.main()
