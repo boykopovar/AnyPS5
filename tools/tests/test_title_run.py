@@ -1753,5 +1753,17 @@ class HostIsIntelTests(unittest.TestCase):
             self.assertIs(self.check(SimpleNamespace(name="posix")), False)
 
 
+class PositiveArgumentTests(unittest.TestCase):
+    def test_positive_accepts_integers_from_one_up(self):
+        self.assertEqual(title_run.positive('1'), 1)
+        self.assertEqual(title_run.positive('12'), 12)
+
+    def test_positive_refuses_zero_negatives_and_non_integers(self):
+        import argparse
+        for value in ('0', '-1', '0.5', 'nan', 'x'):
+            with self.subTest(value=value), self.assertRaises(argparse.ArgumentTypeError):
+                title_run.positive(value)
+
+
 if __name__ == "__main__":
     unittest.main()
