@@ -308,6 +308,8 @@ void APS5_VABI sceUsbdExit() {
 
 std::int64_t APS5_VABI sceUsbdGetDeviceList(void*** list) {
     if (list == nullptr) return SCE_USBD_ERROR_INVALID_ARG;
+    void** const cleared = nullptr;
+    if (!GuestCopyOut_nid_no_patch(list, &cleared, sizeof(cleared))) return SCE_USBD_ERROR_INVALID_ARG;
     auto& state = State();
     std::lock_guard lock(state.mutex);
     if (state.context == nullptr) {
