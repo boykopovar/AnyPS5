@@ -191,9 +191,16 @@ class PadInputTests(unittest.TestCase):
         self.assertEqual(self.queue(1000, "cross", "--left-stick", "0", "255", "--touch", "0", "0", "0", "1"),
                          [1003, 16384, 300, 0, 255, 128, 128, "touch(0,0,0,1)"])
 
+    def test_full_dualsense_touch_height_preserves_sequence(self):
+        for y in (942, 943, 1079):
+            with self.subTest(y=y):
+                self.path.write_text(f"2000 0 300 touch(1919,{y},127,1)\n", encoding="utf-8")
+                self.assertEqual(self.queue(1000, "release", "--touch", "1919", str(y), "127", "1"),
+                                 [2001, 0, 300, f"touch(1919,{y},127,1)"])
+
     def test_invalid_touch_arguments_preserve_command(self):
         original = "2000 0 300 touch(100,200,3,1)\n"
-        for coordinates in [(1920, 0, 0, 1), (0, 943, 0, 1), (0, 0, 128, 1), (0, 0, 0, 2), (-1, 0, 0, 1)]:
+        for coordinates in [(1920, 0, 0, 1), (0, 1080, 0, 1), (0, 0, 128, 1), (0, 0, 0, 2), (-1, 0, 0, 1), (0, -1, 0, 1)]:
             with self.subTest(coordinates=coordinates):
                 self.path.write_text(original, encoding="utf-8")
                 with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
@@ -202,7 +209,7 @@ class PadInputTests(unittest.TestCase):
                 self.assertEqual(self.path.read_text(encoding="utf-8"), original)
 
     def test_invalid_touch_file_does_not_preserve_sequence(self):
-        for token in ["touch(1920,0,0,1)", "touch(0,943,0,1)", "touch(0,0,128,1)", "touch(0,0,0,2)",
+        for token in ["touch(1920,0,0,1)", "touch(0,1080,0,1)", "touch(0,0,128,1)", "touch(0,0,0,2)",
                       "touch(-1,0,0,1)", "touch(0,0,0)", "touch(0,0,0,1,1)", "touch(0,,0,1)", "touch(0,0,0,1)x"]:
             with self.subTest(token=token):
                 self.path.write_text(f"2000 0 300 {token}\n", encoding="utf-8")
