@@ -13,6 +13,7 @@
 #include "SceTypes.hpp"
 #include "prx/libSceNpTrophy2/include/TrophyStore.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
 namespace {
 
@@ -54,14 +55,21 @@ int APS5_VABI sceNpUniversalDataSystemCreateEvent(
     NpUniversalDataSystemEvent** new_event,
     NpUniversalDataSystemEventPropertyObject** prop_ptr)
 {
-    if (event_name == nullptr || event_name[0] == '\0') return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_EVENT_NAME;
+    if (event_name == nullptr) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_EVENT_NAME;
     if (new_event == nullptr) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
+    std::string name;
+    if (CopyGuestString_nid_no_patch(event_name, 4096, name) != 0) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
+    if (name.empty()) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_EVENT_NAME;
+    if (!GuestWritable_nid_no_patch(new_event, sizeof(*new_event))) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
+    if (prop_ptr != nullptr && !GuestWritable_nid_no_patch(prop_ptr, sizeof(*prop_ptr))) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
     auto event = std::make_unique<NpUniversalDataSystemEvent>();
-    event->name = event_name;
+    event->name = std::move(name);
     if (prop != nullptr) event->properties = prop->Clone();
-    *new_event = events().Adopt(std::move(event));
+    NpUniversalDataSystemEvent* created = events().Adopt(std::move(event));
+    GuestPtr<NpUniversalDataSystemEvent*>(new_event).CopyOut(created);
     if (prop_ptr != nullptr) {
-        *prop_ptr = &(*new_event)->properties;
+        NpUniversalDataSystemEventPropertyObject* properties = &created->properties;
+        GuestPtr<NpUniversalDataSystemEventPropertyObject*>(prop_ptr).CopyOut(properties);
     }
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
@@ -86,7 +94,8 @@ int APS5_VABI sceNpUniversalDataSystemPostEvent(int context, int handle, const v
 int APS5_VABI sceNpUniversalDataSystemEventEstimateSize(const NpUniversalDataSystemEvent* event, size_t* size) {
     if (event == nullptr) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_EVENT;
     if (size == nullptr) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
-    *size = Uds::MessagePackSize(*event);
+    const size_t estimate = Uds::MessagePackSize(*event);
+    if (!GuestPtr<size_t>(size).CopyOut(estimate)) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
@@ -102,12 +111,18 @@ int APS5_VABI sceNpUniversalDataSystemEventToString(
         buf_size = 0;
     }
     const std::string text = Uds::DebugString(*event);
+    if (string_size != nullptr && !GuestWritable_nid_no_patch(string_size, sizeof(*string_size))) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
     if (buf_size != 0) {
         const size_t copied = std::min(text.size(), buf_size - 1);
-        std::memcpy(buf, text.data(), copied);
-        buf[copied] = '\0';
+        if (!GuestWritable_nid_no_patch(buf, copied + 1)) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
+        GuestCopyOut_nid_no_patch(buf, text.data(), copied);
+        const char terminator = '\0';
+        GuestCopyOut_nid_no_patch(buf + copied, &terminator, 1);
     }
-    if (string_size != nullptr) *string_size = text.size();
+    if (string_size != nullptr) {
+        const size_t full = text.size();
+        GuestPtr<size_t>(string_size).CopyOut(full);
+    }
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
