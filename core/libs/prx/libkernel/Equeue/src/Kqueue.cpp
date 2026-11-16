@@ -541,6 +541,8 @@ int ModifyKnote(const KernelEqueueRef& queue, KernelEvent& change) {
         }
         if (change.filter == EVFILT_USER) {
             TouchUserKnote(event, change);
+        } else if (change.filter == EVFILT_AIO) {
+            event.triggered = event.triggered || (event.enabled && (event.event.flags & EV_EOF) != 0);
         } else if (change.filter == EVFILT_VNODE) {
             SetVnodeNotes(event, change.fflags);
         }
@@ -554,7 +556,8 @@ int Register(const KernelEqueueRef& queue, int kqueueDescriptor, KernelEvent& ch
     if (change.filter > 0) {
         return GUEST_EINVAL;
     }
-    if (change.filter == EVFILT_AIO || change.filter == EVFILT_LIO || change.filter == EVFILT_SENDFILE) {
+    const bool aioKnote = change.filter == EVFILT_AIO && queue->HasEvent(change.ident, EVFILT_AIO);
+    if ((change.filter == EVFILT_AIO && !aioKnote) || change.filter == EVFILT_LIO || change.filter == EVFILT_SENDFILE) {
         if ((change.flags & EV_ADD) == 0) {
             return GUEST_ENOENT;
         }
@@ -580,7 +583,7 @@ int Register(const KernelEqueueRef& queue, int kqueueDescriptor, KernelEvent& ch
         if (!DefinedProcessChange(queue, change)) {
             NotImplemented_nid_no_patch("kevent: EVFILT_PROC on another process or with notes other than NOTE_EXIT");
         }
-    } else if (change.filter != EVFILT_READ && change.filter != EVFILT_WRITE && change.filter != EVFILT_VNODE && change.filter != EVFILT_TIMER && change.filter != EVFILT_USER && change.filter != EVFILT_FS && change.filter != EVFILT_SIGNAL) {
+    } else if (change.filter != EVFILT_READ && change.filter != EVFILT_WRITE && change.filter != EVFILT_VNODE && change.filter != EVFILT_TIMER && change.filter != EVFILT_USER && change.filter != EVFILT_FS && change.filter != EVFILT_SIGNAL && !aioKnote) {
         NotImplemented_nid_no_patch(("kevent: filter " + std::to_string(change.filter)).c_str());
     }
     if (change.filter == EVFILT_READ || change.filter == EVFILT_WRITE || change.filter == EVFILT_VNODE) {
@@ -694,6 +697,63 @@ void KqueueSignalSent(int guest) {
             ++event.event.data;
             event.triggered = true;
         });
+    }
+}
+
+static std::vector<KernelEqueueRef> AllKqueues() {
+    std::vector<KernelEqueueRef> queues;
+    std::lock_guard lock(g_kqueueMutex);
+    for (const auto& [kqueueDescriptor, queue] : g_kqueues) {
+        queues.push_back(queue);
+    }
+    return queues;
+}
+
+static void* AioToken(std::uint64_t token) {
+    return reinterpret_cast<void*>(static_cast<std::uintptr_t>(token));
+}
+
+int KqueueAddAio_nid_no_patch(int descriptor, std::uintptr_t ident, std::uint16_t flags, void* udata, std::uint64_t token) {
+    const auto queue = FindKqueue(descriptor);
+    if (!queue) {
+        return GUEST_EBADF;
+    }
+    if (queue->HasEvent(ident, EVFILT_AIO)) {
+        return GuestErrno(queue->EditEvent(ident, EVFILT_AIO, [udata](KernelEqueueEvent& event) {
+            event.event.udata = udata;
+            event.enabled = true;
+            event.triggered = event.triggered || (event.event.flags & EV_EOF) != 0;
+        }));
+    }
+    KernelEqueueEvent event{};
+    event.event.ident = ident;
+    event.event.filter = EVFILT_AIO;
+    event.event.flags = flags;
+    event.event.udata = udata;
+    event.filter.data = AioToken(token);
+    return GuestErrno(queue->AddEvent(event));
+}
+
+void KqueueAioDone_nid_no_patch(std::uintptr_t ident, std::uint64_t token, std::int64_t error) {
+    for (const auto& queue : AllKqueues()) {
+        queue->EditEvent(ident, EVFILT_AIO, [token, error](KernelEqueueEvent& event) {
+            if (event.filter.data != AioToken(token)) {
+                return;
+            }
+            event.event.data = static_cast<std::intptr_t>(error);
+            event.event.flags = static_cast<std::uint16_t>(event.event.flags | EV_EOF);
+            event.triggered = true;
+        });
+    }
+}
+
+void KqueueAioFree_nid_no_patch(std::uintptr_t ident, std::uint64_t token) {
+    for (const auto& queue : AllKqueues()) {
+        bool bound = false;
+        queue->EditEvent(ident, EVFILT_AIO, [token, &bound](KernelEqueueEvent& event) { bound = event.filter.data == AioToken(token); });
+        if (bound) {
+            queue->DeleteEvent(ident, EVFILT_AIO);
+        }
     }
 }
 

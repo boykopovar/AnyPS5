@@ -77,6 +77,7 @@ constexpr int GuestEagain = 35;
 constexpr int GuestErange = 34;
 constexpr std::int32_t GuestSiUser = 0x10001;
 constexpr std::int32_t GuestSiTimer = 0x10003;
+constexpr std::int32_t GuestSiAsyncio = 0x10004;
 constexpr std::int32_t GuestSiKernel = 0x10006;
 constexpr std::int32_t GuestSiLwp = 0x10007;
 struct GuestSiginfo {
@@ -453,7 +454,8 @@ bool FillSiginfo(GuestSiginfo* info, int guest, const QueuedSignal& entry) {
     GuestSiginfo local{};
     local.signo = guest;
     local.code = entry.code;
-    local.pid = local.code == GuestSiKernel || local.code == GuestSiTimer ? 0 : getpid_nid_postfix();
+    local.pid = local.code == GuestSiKernel || local.code == GuestSiTimer || local.code == GuestSiAsyncio ? 0 : getpid_nid_postfix();
+    if (local.code == GuestSiAsyncio) local.value = entry.value;
     if (local.code == GuestSiTimer) {
         local.error = entry.error;
         local.value = entry.value;
@@ -765,6 +767,52 @@ int TimerSignalOverrun(int timer) {
     auto& pending = Pending();
     std::lock_guard lock(pending.lock);
     return pending.timers[timer].last;
+}
+
+namespace {
+
+bool QueueValueSignal(int guest, std::int32_t code, std::int64_t value) {
+    auto& pending = Pending();
+    {
+        std::lock_guard lock(pending.lock);
+        auto& queued = pending.queued[guest];
+        const bool merged = code == GuestSiKernel && std::any_of(queued.begin(), queued.end(), [](const QueuedSignal& entry) { return entry.code == GuestSiKernel; });
+        if (merged) return false;
+        queued.push_back({code, -1, value});
+        pending.words[SignalWord(guest)].fetch_or(SignalBit(guest), std::memory_order_relaxed);
+    }
+    pending.changed.NotifyAll();
+    return true;
+}
+
+bool RemoveValueSignalLocked(int guest, std::int32_t code, std::int64_t value) {
+    auto& pending = Pending();
+    auto& queued = pending.queued[guest];
+    const auto found = std::find_if(queued.rbegin(), queued.rend(), [&](const QueuedSignal& entry) { return entry.code == code && entry.timer == -1 && entry.value == value; });
+    if (found == queued.rend()) return false;
+    queued.erase(std::next(found).base());
+    if (queued.empty()) pending.words[SignalWord(guest)].fetch_and(~SignalBit(guest), std::memory_order_relaxed);
+    return true;
+}
+
+}
+
+extern "C" int SendValueSignal_nid_no_patch(int guest, std::int32_t code, std::int64_t value, std::int64_t thread, bool directed) {
+    if (directed && !LiveGuestThreadExists(thread)) return SignalSendNoThread;
+    GuestSigaction action = Disposition(guest);
+    KqueueSignalSent(guest);
+    if (IgnoredOnSend(guest, action)) return SignalSendDone;
+    ThreadSignals* target = SignalThread(thread);
+    if (target == nullptr || !SignalBlocked(*target, guest)) return SignalSendUnblocked;
+    const bool queued = QueueValueSignal(guest, code, value);
+    std::atomic_thread_fence(std::memory_order_seq_cst);
+    if (!queued || SignalBlocked(*target, guest)) return SignalSendDone;
+    auto& pending = Pending();
+    {
+        std::lock_guard lock(pending.lock);
+        if (!RemoveValueSignalLocked(guest, code, value)) return SignalSendDone;
+    }
+    return IgnoredOnSend(guest, Disposition(guest)) ? SignalSendDone : SignalSendUnblocked;
 }
 
 static_assert(sizeof(GuestStack) == 24 && offsetof(GuestStack, flags) == 16);
