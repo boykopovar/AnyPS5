@@ -52,7 +52,8 @@ FcFontSet* APS5_VABI FcFontList(FcConfig* config, FcPattern*, FcObjectSet*) {
 
 FcPattern* APS5_VABI FcFontSetMatch(FcConfig* config, FcFontSet** sets, int, FcPattern* pattern, FcResult* result) {
     if (!sets || !pattern || !result) NotImplemented_nid_no_patch(__func__);
-    *result = FcResultNoMatch;
+    const FcResult noMatch = FcResultNoMatch;
+    if (!CopyGuestOut(result, &noMatch, sizeof(noMatch))) NotImplemented_nid_no_patch(__func__);
     if (FcConfigReference(config)) NotImplemented_nid_no_patch(__func__);
     return nullptr;
 }
@@ -77,7 +78,8 @@ int APS5_VABI FcFontRenderPrepare() {
 
 FcPattern* APS5_VABI FcFontMatch(FcConfig* config, FcPattern* pattern, FcResult* result) {
     if (!pattern || !result) NotImplemented_nid_no_patch(__func__);
-    *result = FcResultNoMatch;
+    const FcResult noMatch = FcResultNoMatch;
+    if (!CopyGuestOut(result, &noMatch, sizeof(noMatch))) NotImplemented_nid_no_patch(__func__);
     if (FcConfigReference(config)) NotImplemented_nid_no_patch(__func__);
     return nullptr;
 }
@@ -97,7 +99,8 @@ uint32_t APS5_VABI FcCharSetSubtractCount(const FcCharSet* first, const FcCharSe
 
 FcFontSet* APS5_VABI FcFontSort(FcConfig* config, FcPattern* pattern, FcBool, FcCharSet**, FcResult* result) {
     if (!pattern || !result) NotImplemented_nid_no_patch(__func__);
-    *result = FcResultNoMatch;
+    const FcResult noMatch = FcResultNoMatch;
+    if (!CopyGuestOut(result, &noMatch, sizeof(noMatch))) NotImplemented_nid_no_patch(__func__);
     if (FcConfigReference(config)) NotImplemented_nid_no_patch(__func__);
     return nullptr;
 }

@@ -77,16 +77,19 @@ Inventory prose retains historical counts; use the [generated progress report](h
 
 - [WTF::SymbolImpl::nextHashForSymbol](../../../core/libs/prx/libSceNKWebKit/src/WtfSymbolImpl.cpp) (libSceNKWebKit) - not compared with a console module. It follows the pinned [SymbolImpl.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/text/SymbolImpl.cpp#L37-L43): each call adds `1 << 8` (the eight `StringImpl` flag bits) to a counter starting at 0 and sets bit 31. The console counter is also advanced by the module's own symbol creation, none of which is implemented here, so hashes are unique only among callers of this export. The update is atomic, where the source uses a plain static. Closes when: the `SymbolImpl::create` exports are implemented on the same counter and compared with a console module.
 
+- [WebCore::ScrollableArea::constrainScrollPositionForOverhang](../../../core/libs/prx/libSceNKWebKit/src/ScrollableArea.cpp) has no console ABI or behavior verification. It follows [ScrollableArea.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/ScrollableArea.cpp), [LayoutRect.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/LayoutRect.cpp) and [LayoutUnit.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/LayoutUnit.h) at revision `80f77e94c6` using 1/64-pixel saturated `LayoutUnit` arithmetic and `SysV` 8-byte struct return for `LayoutPoint`. Closes when: compared with a console module.
 - [WebCore content-type validation](../../../core/libs/prx/libSceNKWebKit/src/ContentTypeValidation.cpp) - console ABI and execution remain unverified. The one-pointer String, 32-bit Mode (Rfc2045 = 0, MimeSniff = 1) and boolean result follow the pinned [ParsedContentType.cpp and paired header](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/network/ParsedContentType.cpp). Validation preserves the source parser's token, whitespace and quoted-string cursor rules, including RFC acceptance of trailing subtype text and its extra advance after a closing quote. Null String is invalid; null accessed character storage throws. Parameter storage is omitted because it does not affect create success. Closes when: compared with a console module.
 
 - [WTF URL escaping](../../../core/libs/prx/libSceNKWebKit/src/WtfUrlEscape.cpp) has no console ABI or behavior verification. `encodeWithURLEscapeSequences` follows [URL.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/URL.cpp#L553) and the user-info encode set in URLParser.cpp at the same revision. Lenient UTF-8 conversion follows StringImpl.cpp: interior unpaired surrogates and lone low surrogates become U+FFFD; a trailing unpaired high surrogate retains its three-byte encoding. Unchanged strings share StringImpl through the existing copy helper; encoded strings use the existing guest allocator. Null accessed storage and overflowing output lengths throw. Closes when: compared with a console module.
 
 ### Functional
+- [EmptyFrameLoaderClient resource callbacks](../../../core/libs/prx/libSceNKWebKit/src/EmptyClients.cpp) follow pinned [PS5 WebKit 11.x EmptyClients.cpp at 80f77e94c63ee7202eec3d4b5b1a021dd89011ba](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/loader/EmptyClients.cpp): `prefetchDNS` 1084-1086, `startDownload` 839-841, `makeRepresentation` 637-639, `dispatchDidFailLoad` 786-788, `convertMainResourceLoadToDownload` 666-668. Console ABI parity is unverified.
 - [WebCore color space conversions and serialization](../../../core/libs/prx/libSceNKWebKit/src/WebCoreColorSpaces.cpp) (libSceNKWebKit) - not checked against a console module. They follow WebKit c55364d53f97 [ColorConversion.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WebCore/platform/graphics/ColorConversion.cpp) and [ColorSerialization.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f971f63a709976f168d932d558b8909/Source/WebCore/platform/graphics/ColorSerialization.cpp), whose declarations match the exported names. Matrix products are not fused into FMA, so a console build that fuses them may differ in the last bit. The `Color` overloads of `serializationForCSS` and `serializationForRenderTreeAsText` and `Color::colorSpaceAndComponents` still throw: that revision packs `Color` differently from the 11.x packing `WebCoreColor.cpp` decodes.
 - [WKSerializedScriptValue](../../../core/libs/prx/libSceNKWebKit/src/SerializedScriptValue.cpp) (libSceNKWebKit) - `WKSerializedScriptValueCreate` and `WKSerializedScriptValueDeserialize` serialize and deserialize JavaScript values via JSON representation (`JSValueCreateJSONString` and `JSValueMakeFromJSONString`) rather than WebKit's full structured clone algorithm; non-serializable objects (such as functions, symbols and circular structures) fail serialization and report errors through the exception pointer on create, deserialization failures set exception to an Error object if provided, and `undefined`, `NaN`, `+Infinity` and `-Infinity` are preserved through explicit markers.
 - [FloatSize from IntSize constructors](../../../core/libs/prx/libSceNKWebKit/src/FloatSize.cpp) (libSceNKWebKit) - both constructor ABI entry points convert the source width and height to `float`, following the pinned [`FloatSize.h`](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebCore/platform/graphics/FloatSize.h). This adapter is built and tested on Linux; console ABI and runtime behavior are unverified.
 - [WKRunLoop main run loop dispatch](../../../core/libs/prx/libSceNKWebKit/src/RunLoop.cpp) (libSceNKWebKit) - `WKRunLoopInitializeMain`, `WKRunLoopRunMain`, `WKRunLoopStopMain` and `WKRunLoopCallOnMainThread` run main-thread callbacks via a dedicated FIFO queue and WakeUp-driven pump; nesting loops and non-main run loop targets are unmodelled, tasks still queued when the loop stops are dropped silently at the next InitializeMain, and console execution is unverified.
 - [RFC 2822 date formatting](../../../core/libs/prx/libSceNKWebKit/DateParsing.cpp) (libSceNKWebKit) - `WTF::makeRFC2822DateString` follows [DateMath.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/DateMath.cpp#L1033-L1051) at commit `80f77e94c63ee7202eec3d4b5b1a021dd89011ba`. The output formats using a local stack buffer and constructs a `WTF::String` via `String::fromUTF8`. Out-of-range parameters (`dayOfWeek > 6`, `day == 0 || day > 31`, `month > 11`, `hours > 23`, `minutes > 59`, `seconds > 59`, or `|utcOffset| > 5999`) throw `std::invalid_argument` to prevent array bounds violations and enforce the two-digit hour boundary (`number < 100`) of `appendTwoDigitNumber`. Runtime behavior on PS5 hardware has not been measured.
+- [WKUserContentExtensionStore create, compile and lookup](../../../core/libs/prx/libSceNKWebKit/src/UserContentExtensionStore.cpp) (libSceNKWebKit) - `WKUserContentExtensionStoreCreate` returns an in-memory host store instance without disk persistence for `pathRef`; user content extension store compilation and lookup operate on host-managed rule lists; only the outer `[]` or `{}` delimiters are checked, so inputs such as `[garbage]` still compile into an empty rule list that applies no rules to page requests or resources, while delimiter failures report `kWKUserContentExtensionStoreCompileFailed` (`3`).
 - [WTF ICU version queries](../../../core/libs/prx/libSceNKWebKit/src/WtfPrimitives.cpp) (libSceNKWebKit) - `WTF::ICU::majorVersion` and `WTF::ICU::minorVersion` follow [ICUHelpers.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/unicode/icu/ICUHelpers.cpp) at commit `80f77e94c63ee7202eec3d4b5b1a021dd89011ba`. Both functions query the underlying ICU version via `u_getVersion_nid_postfix` with `std::call_once` synchronization and return version components `[0]` and `[1]`. Runtime version values reflect `libSceIcu`'s reported ICU 78.1 release and have not been measured against console hardware traces.
 
 - [WKURL URL component and comparison helpers](../../../core/libs/prx/libSceNKWebKit/src/URL.cpp) (libSceNKWebKit) - `WKURLCopyHostName`, `WKURLCopyPath`, `WKURLCopyScheme`, `WKURLCopyLastPathComponent`, `WKURLCreateWithBaseURL` and `WKURLIsEqual` create and inspect `WKURLRef` host objects, resolving relative URLs against base URLs and comparing canonical URL strings; console execution is unverified.
@@ -101,7 +104,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [Process pool process termination and visited links](../../../core/libs/prx/libSceNKWebKit/src/ContextTermination.cpp) (libSceNKWebKit) - `WKContextDisableProcessTermination`, `WKContextEnableProcessTermination`, `WKContextAddVisitedLink` and `WKContextClearVisitedLinks` control process termination policy and visited link cache on the process pool in host memory.
 - [Context configuration settings](../../../core/libs/prx/libSceNKWebKit/src/ContextConfiguration.cpp) (libSceNKWebKit) - WKContextConfigurationCopyCookieStoragePath, WKContextConfigurationSetCookieStoragePath, WKContextConfigurationProcessSwapsOnWindowOpenWithOpener and WKContextConfigurationSetProcessSwapsOnWindowOpenWithOpener configure cookie storage path and window open opener process swap policy on the process pool configuration in host memory; disk persistence and multi-process swaps are unmodeled.
 - [User media permission requests](../../../core/libs/prx/libSceNKWebKit/src/UserMediaPermissionRequest.cpp) (libSceNKWebKit) - `WKUserMediaPermissionRequestAllow` and `WKUserMediaPermissionRequestDeny` record user media permission decisions in host memory; UI prompt interaction is unmodeled.
-- [Frame state queries](../../../core/libs/prx/libSceNKWebKit/src/Frame.cpp) (libSceNKWebKit) - WKFrameCanProvideSource, WKFrameIsDisplayingMarkupDocument, WKFrameIsDisplayingStandaloneImageDocument and WKFrameIsMainFrame query state from host WKFrame instances following [WebFrameProxy.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebKit/UIProcess/WebFrameProxy.cpp#L189-L192) where canProvideSource returns isDisplayingMarkupDocument(). Upstream isMainFrame and markup/image queries derive from the page's main frame and MIME types; currently these flags are only set in test instances. Null or mismatched pointers throw.
+- [Frame state queries and accessors](../../../core/libs/prx/libSceNKWebKit/src/Frame.cpp) (libSceNKWebKit) - WKFrameCanProvideSource, WKFrameIsDisplayingMarkupDocument, WKFrameIsDisplayingStandaloneImageDocument, WKFrameIsMainFrame, WKFrameCopyURL, WKFrameCopyTitle, WKFrameCopyMIMEType, WKFrameCopyProvisionalURL, WKFrameCopyUnreachableURL, WKFrameCreateFrameHandle and WKFrameGetFrameLoadState query frame properties and load state from host WKFrame instances following [WebFrameProxy.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebKit/UIProcess/WebFrameProxy.cpp#L189-L192) and [WKFrame.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebKit/UIProcess/API/C/WKFrame.cpp). URLs return a retained copy when set and null when unset; the title and MIME type return a retained copy, empty when unset (as the source does); a new frame reports Finished. Unmatched pointers throw.
 - [Page navigation queries](../../../core/libs/prx/libSceNKWebKit/src/PageNavigation.cpp) (libSceNKWebKit) - `WKPageCanGoBack` and `WKPageCanGoForward` return false for every page until page navigation is implemented; no export creates or navigates a page yet.
 - [WKImage size handling](../../../core/libs/prx/libSceNKWebKit/src/Image.cpp) (libSceNKWebKit) - `WKImageCreate` stores truncated integer dimensions matching `toIntSize` in `WKSharedAPICast.h` / `WebImage::create` without allocating pixel backing; `options` is ignored, `WKImageCreateCairoSurface` and `WKImageCreateFromCairoSurface` still throw, and device behavior for zero or failed allocations is unverified.
 - [WKOpenPanelParametersCopyAllowedMIMETypes](../../../core/libs/prx/libSceNKWebKit/src/OpenPanelParameters.cpp) (libSceNKWebKit) - derives allowed MIME types from `acceptMIMETypes` and `acceptFileExtensions` via `WebCore::MIMETypeRegistry::allowedMIMETypes` in [Mime.cpp](../../../core/libs/prx/libSceNKWebKit/src/Mime.cpp) following `API::OpenPanelParameters::allowedMIMETypes` (`Source/WebKit/UIProcess/API/APIOpenPanelParameters.cpp`) and `MIMETypeRegistry::allowedMIMETypes` (`Source/WebCore/platform/MIMETypeRegistry.cpp`), ASCII-lowercasing accept MIME types, mapping known extensions (leading dot trimmed) through `Mime.cpp`'s extension table, deduplicating in order, and skipping unknown extensions; extension coverage is bounded by that table, no export creates an open panel instance in host execution yet, and console ABI and behavior are unverified.
@@ -110,6 +113,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [AuthenticationChallenge and AuthenticationDecisionListener](../../../core/libs/prx/libSceNKWebKit/src/AuthenticationChallenge.cpp) (libSceNKWebKit) - WKAuthenticationChallenge* and WKAuthenticationDecisionListener* track challenge URL, counts, credentials, protection space and client decision in host memory; this does not establish integration with the authentication or network producer. The signatures and behaviours of WKAuthenticationChallengCopyRequestURL, WKAuthenticationChallengeIsForMainResource and WKAuthenticationChallengeIsInMainFrame are inferred from export names, not taken from upstream WebKit source or measured on a console.
 - [Resource cache manager cache clearance operations](../../../core/libs/prx/libSceNKWebKit/src/ResourceCacheManager.cpp) (libSceNKWebKit) - `WKResourceCacheManagerClearCacheForAllOrigins`, `WKResourceCacheManagerClearCacheForOrigin` and `WKResourceCacheManagerGetCacheOrigins` manage host-memory origin clearance and return `WKSecurityOrigin` objects; no live cache subsystem populates origins automatically, unrecognized origin types throw `std::invalid_argument`, and disk/network cache integration is unmodeled.
 - [WKImeEvent helpers](../../../core/libs/prx/libSceNKWebKit/src/ImeEvent.cpp) (libSceNKWebKit) - `WKImeEventMake`, `WKImeEventRelease` and `WKImeEventGetInputLanguage` follow [WKImeEvent.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebKit/UIProcess/API/C/neko/WKImeEvent.h) and [WKImeEvent.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebKit/UIProcess/API/C/neko/WKImeEvent.cpp) at revision `80f77e94c6`. Because `libSceIcu` lacks `uloc_addLikelySubtags`, `WKImeEventGetInputLanguage` expands language/script/region likely subtags locally before matching the 33-entry table (outside-table tags still return undefined); `WKImeEventMake` sets `caretIndex` using the UTF-8 character count rather than calling `mbstowcs_s`. Console ABI and runtime behavior have not been measured. Closes when: compared with a console module and backed by `uloc_addLikelySubtags`.
+- [WKPage zoom factor controls](../../../core/libs/prx/libSceNKWebKit/src/PageZoom.cpp) (libSceNKWebKit) - `WKPageGetPageZoomFactor`, `WKPageSetPageZoomFactor`, `WKPageGetTextZoomFactor`, `WKPageSetTextZoomFactor`, `WKPageSetPageAndTextZoomFactors` and `WKPageSupportsTextZoom` configure and query page and text zoom multipliers on the page in host memory following [WebPageProxy.cpp:1894-1914](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebKit/UIProcess/WebPageProxy.cpp#L1894-L1914); non-positive or non-finite zoom factors are rejected, and layout viewport zoom rendering and text reflow are unmodeled.
 - [WTF main thread and run loop identification](../../../core/libs/prx/libSceNKWebKit/src/WtfMainThread.cpp) (libSceNKWebKit) - `initializeMainThread`, `isMainThread`, `isMainRunLoop` and `isMainThreadOrGCThread` identify the initialising thread as the WebKit main thread and query whether the current thread is the main thread; garbage-collection worker threads are unmodelled and console execution is unverified.
 - [WTF callOnMainThread and callOnMainRunLoop](../../../core/libs/prx/libSceNKWebKit/src/WtfMainThread.cpp) (libSceNKWebKit) - console execution is unverified. The 8-byte `Function` and `[D1, D0, call]` vtable follow the pinned [Function.h](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/Function.h#L37-L121). A null or empty `Function` throws. A cross-thread `AndWait` rethrows the callable's exception after destroying it. An `AndWait` blocks forever if the WKRunLoop stops or is reinitialised first, or if called from the `WKRunLoopInitializeMain` thread when `initializeMainThread` ran on another thread or never ran, which upstream's single main thread rules out. Otherwise follows [MainThread.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf/MainThread.cpp#L66-L145) without `USE(WEB_THREAD)`. Closes when: compared with a console module.
 - [WKApplicationCacheManager](../../../core/libs/prx/libSceNKWebKit/src/ApplicationCacheManager.cpp) (libSceNKWebKit) - `WKApplicationCacheManagerDeleteAllEntries`, `WKApplicationCacheManagerDeleteEntriesForOrigin` and `WKApplicationCacheManagerGetApplicationCacheOrigins` are empty no-ops following [WKApplicationCacheManager.cpp](https://github.com/neonmodder123/PS5-WebKit-11.x/blob/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WebKit/UIProcess/API/C/WKApplicationCacheManager.cpp) at revision `80f77e94c6`; console runtime binaries have not been measured. Closes when: compared with a console module.
@@ -209,7 +213,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 - [WKPage visited links controls](../../../core/libs/prx/libSceNKWebKit/src/PageVisitedLinks.cpp) (libSceNKWebKit) - `WKPageGetAddsVisitedLinks` and `WKPageSetAddsVisitedLinks` read and set the visited links state on the host `Page` object without visited link store notifications.
 - [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - 5927 of the 8703 inventory declarations listed below throw through `NotImplemented_nid_no_patch`; signatures and behavior are unverified. The later 13.60-labelled image contains all 8703; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
 - [Additional callable exports](../../../core/libs/prx/libSceNKWebKit/Export.cpp) - the inventory declarations listed below throw through NotImplemented_nid_no_patch, and a pull request that implements one removes its row; signatures and behavior are unverified. The [generated progress report](https://boykopovar.github.io/AnyPS5/progress.html) counts the throwing exports. The later 13.60-labelled image contains all 8703 inventory declarations; 8448 match the public 3.20 catalogue, while 255 are absent and their presence in retail 3.20 is unverified. Per-image records show the latter in a separate 3.20-labelled image, but neither image label is authenticated. Identified names match NIDs in the [public symbol database](https://github.com/zecoxao/sce_symbols/blob/2883963a0a514ba6e77407a08ef4730a65e88254/aerolib.csv) or [supplemental catalog](https://github.com/claimore22/ps5rs/blob/2304be5131221bae0dac24b9767cabffda33f747/data/nids.csv). Data exports need separate analysis.
-
 | Name | NID |
 | --- | --- |
 | `JSContextCreateBacktrace` | `s77ZLU-juKw` |
@@ -451,13 +454,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKErrorCopyFailingURL` | `Rcz4V01xRBo` |
 | `WKErrorGetErrorCode` | `Jx+jaw-BVuE` |
 | `WKFormSubmissionListenerContinue` | `NRF4gBL1p9o` |
-| `WKFrameCopyMIMEType` | `UwMYQFss8oM` |
-| `WKFrameCopyProvisionalURL` | `dAKWNwkRfZw` |
-| `WKFrameCopyTitle` | `kEags+FqdZQ` |
-| `WKFrameCopyURL` | `3PiMrWNwmgw` |
-| `WKFrameCopyUnreachableURL` | `U4g7RC9mWd8` |
-| `WKFrameCreateFrameHandle` | `3MUp7-9-xkg` |
-| `WKFrameGetFrameLoadState` | `82n4LwLnE3s` |
 | `WKFrameGetMainResourceData` | `wd3NsMeiyj4` |
 | `WKFrameGetPage` | `pAEazR4ifq8` |
 | `WKFrameGetResourceData` | `heyzb1EgSYg` |
@@ -535,7 +531,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKPageGetMediaCaptureEnabled` | `c4qOBt1+nO8` |
 | `WKPageGetMediaState` | `F4AnS9A-OSc` |
 | `WKPageGetPageLength` | `FeYrnuEZxkI` |
-| `WKPageGetPageZoomFactor` | `fPJ3h4AHMkU` |
 | `WKPageGetPaginationBehavesLikeColumns` | `QyAWkI0ffLQ` |
 | `WKPageGetPaginationMode` | `kk2zHgt--8E` |
 | `WKPageGetProcessIdentifier` | `llISO4CgRb8` |
@@ -546,7 +541,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKPageGetSessionBackForwardListItemValueType` | `Xadpbt8wQXo` |
 | `WKPageGetSessionHistoryURLValueType` | `lfWRbhGF-vQ` |
 | `WKPageGetSourceForFrame` | `plbxmi4Te84` |
-| `WKPageGetTextZoomFactor` | `pNy9E8Now3M` |
 | `WKPageGoBack` | `o2fPZBklfHg` |
 | `WKPageGoForward` | `T2GU7yBLQNA` |
 | `WKPageGoToBackForwardListItem` | `YE3MRmCjo0Y` |
@@ -620,7 +614,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKPageSetMediaVolume` | `UC703hx3DrM` |
 | `WKPageSetMockCameraOrientation` | `VHxoAYeD2q4` |
 | `WKPageSetMuted` | `XUBgIGb3ae0` |
-| `WKPageSetPageAndTextZoomFactors` | `k+0t4ZFxfT0` |
 | `WKPageSetPageContextMenuClient` | `LddfS0Uiwr0` |
 | `WKPageSetPageDiagnosticLoggingClient` | `cdYzqB96vXg` |
 | `WKPageSetPageFindClient` | `tWIbltNkRvU` |
@@ -633,7 +626,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKPageSetPagePolicyClient` | `pJ4iBZ6LEA0` |
 | `WKPageSetPageStateClient` | `8dbxlsbVzdY` |
 | `WKPageSetPageUIClient` | `6RXuTZIVqIg` |
-| `WKPageSetPageZoomFactor` | `pCJUJOonjAM` |
 | `WKPageSetPaginationBehavesLikeColumns` | `iUarLNk0Dkg` |
 | `WKPageSetPaginationLineGridEnabled` | `uqcmh9mV7sI` |
 | `WKPageSetPaginationMode` | `JjOoUWau3hA` |
@@ -644,11 +636,9 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKPageSetScaleFactor` | `LDsNIDCwcLY` |
 | `WKPageSetScrollPinningBehavior` | `XxfxrsCBl5o` |
 | `WKPageSetSuppressScrollbarAnimations` | `mCIjZT8nfvg` |
-| `WKPageSetTextZoomFactor` | `f-vSeWHQsW4` |
 | `WKPageSetUseFixedLayout` | `0M-vF0rurfc` |
 | `WKPageStopLoading` | `BGuvmFH0-Uo` |
 | `WKPageSupportsTextEncoding` | `3tolGFkslb4` |
-| `WKPageSupportsTextZoom` | `vq8FBoJCd7c` |
 | `WKPageSuspendActiveDOMObjectsAndAnimations` | `WtwJKh+NPQU` |
 | `WKPageTerminate` | `x5CgqP9ManE` |
 | `WKPageTryClose` | `DxUrwaURmnw` |
@@ -665,8 +655,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKSendDisplayConfigurationChangedMessageForTesting` | `CQsllLq8d7I` |
 | `WKTextCheckerSetTestingMode` | `uhbwdrVWKnk` |
 | `WKURLRequestSetDefaultTimeoutInterval` | `YXTIbI-WYtE` |
-| `WKUserContentExtensionStoreCompile` | `6g8aRptom6Y` |
-| `WKUserContentExtensionStoreLookup` | `l8gsEeVfp+s` |
 | `WKUserMediaPermissionCheckSetUserMediaAccessInfo` | `MBwkZncofuk` |
 | `WKViewAccessibilityFocusedObject` | `mQOmuuuwvXk` |
 | `WKViewAccessibilityHitTest` | `9XouNrl+xF0` |
@@ -1367,7 +1355,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF11ThreadGroupD2Ev` | `6L90iL-CjWA` |
 | `_ZN3WTF11TimingScope11scopeDidEndEv` | `vNFWwy493LY` |
 | `_ZN3WTF11setDataFileEPKc` | `mxYK3TBPDro` |
-| `_ZN3WTF11setNonBlockEi` | `ZH232ViZnko` |
 | `_ZN3WTF12CountingLock10unlockSlowEv` | `y9CL7tutRKQ` |
 | `_ZN3WTF12CountingLock8lockSlowEv` | `QSRjO+sqoFU` |
 | `_ZN3WTF13MetaAllocator17addFreshFreeSpaceEPvm` | `RPLKRR7vgYE` |
@@ -1435,7 +1422,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF14SymbolRegistryD2Ev` | `l8UKHjO29+w` |
 | `_ZN3WTF14createIteratorENS_10StringViewE` | `svIkqWCw-LU` |
 | `_ZN3WTF14dataLogFStringEPKc` | `xQQ4VSubx-k` |
-| `_ZN3WTF14dupCloseOnExecEi` | `wQ9-tXakN90` |
 | `_ZN3WTF15AtomStringTableD1Ev` | `YHjoCx7QaOs` |
 | `_ZN3WTF15AtomStringTableD2Ev` | `JxkGFAxlPa8` |
 | `_ZN3WTF15AutomaticThread14threadDidStartEv` | `WgCZ0HyfQ3I` |
@@ -1510,11 +1496,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF21MemoryPressureHandler33setShouldUsePeriodicMemoryMonitorEb` | `9Xx7YdPMoFY` |
 | `_ZN3WTF21MemoryPressureHandler7installEv` | `guwl-qH06sY` |
 | `_ZN3WTF21MemoryPressureHandler9singletonEv` | `uLAfeeY2T2Y` |
-| `_ZN3WTF21RefCountedLeakCounter24cancelMessageSuppressionEPKc` | `SM0Cf+K17Yw` |
-| `_ZN3WTF21RefCountedLeakCounter9decrementEv` | `rtWWBSqgRzo` |
-| `_ZN3WTF21RefCountedLeakCounter9incrementEv` | `FpxnD+vtdFQ` |
-| `_ZN3WTF21RefCountedLeakCounterC1EPKc` | `7l4jBeWiHI4` |
-| `_ZN3WTF21RefCountedLeakCounterC2EPKc` | `opqf3CJzhms` |
 | `_ZN3WTF21sentenceBreakIteratorENS_10StringViewE` | `poSZevJzCfA` |
 | `_ZN3WTF22CrossThreadTaskHandler13postTaskReplyEONS_15CrossThreadTaskE` | `ygkwGUwd8fE` |
 | `_ZN3WTF22CrossThreadTaskHandler21setCompletionCallbackEONS_8FunctionIFvvEEE` | `3QQmCLX9eCA` |
@@ -1563,7 +1544,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN3WTF5MutexC2Ev` | `ut8I892aPW8` |
 | `_ZN3WTF5MutexD1Ev` | `SVYZa9hbTh8` |
 | `_ZN3WTF5MutexD2Ev` | `WBxQfbet+nY` |
-| `_ZN3WTF5sleepENS_7SecondsE` | `gsFoqQ-R5js` |
 | `_ZN3WTF6String24numberToStringFixedWidthEdj` | `EIwwRbyxZTM` |
 | `_ZN3WTF6String28numberToStringFixedPrecisionEdjNS_29TrailingZerosTruncatingPolicyE` | `KtgcveZxnco` |
 | `_ZN3WTF6String28numberToStringFixedPrecisionEfjNS_29TrailingZerosTruncatingPolicyE` | `16H0tI43iL8` |
@@ -2278,7 +2258,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore14ScrollableArea28setScrollOffsetFromInternalsERKNS_8IntPointE` | `IqcrfZx0zKs` |
 | `_ZN7WebCore14ScrollableArea30scrollToOffsetWithoutAnimationERKNS_10FloatPointENS_14ScrollClampingE` | `3JU1ZUdvOO8` |
 | `_ZN7WebCore14ScrollableArea32computeScrollbarValueAndOverhangEfffRfS1_` | `kRCyhNPMrpg` |
-| `_ZN7WebCore14ScrollableArea34constrainScrollPositionForOverhangERKNS_10LayoutRectERKNS_10LayoutSizeERKNS_11LayoutPointES9_ii` | `I3Cm2PthpHQ` |
 | `_ZN7WebCore14ScrollableAreaC2Ev` | `8DA2XBZ-VqY` |
 | `_ZN7WebCore14ScrollableAreaD0Ev` | `BVaird4y-R8` |
 | `_ZN7WebCore14ScrollableAreaD1Ev` | `OC-U7LadwqI` |
@@ -3236,10 +3215,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore22CryptoAlgorithmAES_CBC15platformDecryptERKNS_30CryptoAlgorithmAesCbcCfbParamsERKNS_12CryptoKeyAESERKN3WTF6VectorIhLm0ENS7_15CrashOnOverflowELm16ENS7_10FastMallocEEENS0_7PaddingE` | `lC6NyPIlPns` |
 | `_ZN7WebCore22CryptoAlgorithmAES_CBC15platformEncryptERKNS_30CryptoAlgorithmAesCbcCfbParamsERKNS_12CryptoKeyAESERKN3WTF6VectorIhLm0ENS7_15CrashOnOverflowELm16ENS7_10FastMallocEEENS0_7PaddingE` | `D4Jb9-xqqBk` |
 | `_ZN7WebCore22EmptyFrameLoaderClient10sendH2PingERKN3WTF3URLEONS1_17CompletionHandlerIFvONSt12experimental15fundamentals_v38expectedINS1_7SecondsENS_13ResourceErrorEEEEEE` | `aQZkTZSB9Q4` |
-| `_ZN7WebCore22EmptyFrameLoaderClient11prefetchDNSERKN3WTF6StringE` | `mkI7vGRy-U4` |
-| `_ZN7WebCore22EmptyFrameLoaderClient13startDownloadERKNS_15ResourceRequestERKN3WTF6StringE` | `fBhl01ZwcGc` |
-| `_ZN7WebCore22EmptyFrameLoaderClient18makeRepresentationEPNS_14DocumentLoaderE` | `xCC2+A1QU2M` |
-| `_ZN7WebCore22EmptyFrameLoaderClient19dispatchDidFailLoadERKNS_13ResourceErrorE` | `3Q1Rm8ZQILU` |
 | `_ZN7WebCore22EmptyFrameLoaderClient20createDocumentLoaderERKNS_15ResourceRequestERKNS_14SubstituteDataE` | `HxybCxtAU6k` |
 | `_ZN7WebCore22EmptyFrameLoaderClient22dispatchWillSubmitFormERNS_9FormStateEON3WTF17CompletionHandlerIFvvEEE` | `doi98SgdAqA` |
 | `_ZN7WebCore22EmptyFrameLoaderClient23createNetworkingContextEv` | `HKQJY7aViYI` |
@@ -3248,7 +3223,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `_ZN7WebCore22EmptyFrameLoaderClient29savePlatformDataToCachedFrameEPNS_11CachedFrameE` | `DF2bDNLQbUM` |
 | `_ZN7WebCore22EmptyFrameLoaderClient31dispatchDidReachLayoutMilestoneEN3WTF9OptionSetINS_15LayoutMilestoneEEE` | `SwNTIE7lkj4` |
 | `_ZN7WebCore22EmptyFrameLoaderClient31dispatchUnableToImplementPolicyERKNS_13ResourceErrorE` | `Ctm-m3Y326Q` |
-| `_ZN7WebCore22EmptyFrameLoaderClient33convertMainResourceLoadToDownloadEPNS_14DocumentLoaderERKNS_15ResourceRequestERKNS_16ResourceResponseE` | `Ts-nQ4c4kTg` |
 | `_ZN7WebCore22EmptyFrameLoaderClient33dispatchWillPerformClientRedirectERKN3WTF3URLEdNS1_8WallTimeENS_19LockBackForwardListE` | `6q1eUV0OZoE` |
 | `_ZN7WebCore22EmptyFrameLoaderClient8setTitleERKNS_19StringWithDirectionERKN3WTF3URLE` | `2oNey8Gkn4M` |
 | `_ZN7WebCore22EmptyFrameLoaderClientC1ERKS0_` | `E2pRXDTKB68` |
@@ -6000,6 +5974,8 @@ Inventory prose retains historical counts; use the [generated progress report](h
 
 - [parseDateFromNullTerminatedCharacters(const char*)](../../../core/libs/prx/libSceNKWebKit/DateParsing.cpp) (libSceNKWebKit) - is source-guided by pinned [DateMath.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/DateMath.cpp#L345-L386), not console-measured; the device's WebKit revision is unverified. For local dates, it subtracts calculateLocalTimeOffset evaluated for the parsed date. A null argument faults in WebKit and throws invalid_argument.
 - [parseDateFromNullTerminatedCharacters(const char*, bool&)](../../../core/libs/prx/libSceNKWebKit/DateParsing.cpp) (libSceNKWebKit) - is not measured on a device, and throws where pinned [DateMath.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/DateMath.cpp#L684-L988) overflows a signed integer, which is undefined there (the `YYYY/MM/DD` day count, the `GMT+hh:mm` minute total and comment nesting), and for a null argument, where WebKit faults.
+- [WTF::RefCountedLeakCounter](../../../core/libs/prx/libSceNKWebKit/src/NoOpExports.cpp) (libSceNKWebKit) - the constructors, `increment`, `decrement`, `suppressMessages` and `cancelMessageSuppression` are not checked against a console binary. They are empty because they follow the release (`NDEBUG`) build of pinned [RefCountedLeakCounter.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/RefCountedLeakCounter.cpp#L24-L36); a debug build counts instances and logs leaks from the destructor. Release is assumed because the module's `RefCountedLeakCounter` destructors are bare `ret` bodies (see No-op exports), which only the release build produces, and the tree's other WTF layouts follow the release build.
+- [WTF::setNonBlock, dupCloseOnExec and sleep(Seconds)](../../../core/libs/prx/libSceNKWebKit/src/WtfUniStd.cpp) (libSceNKWebKit) - are source-guided by pinned [UniStdExtrasUnix.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/unix/UniStdExtrasUnix.cpp#L33-L75) and [Seconds.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/Seconds.cpp#L80-L91), not console-measured; the device's WebKit revision is unverified. The descriptor calls go through the guest `fcntl`, `dup` and `close`, so `F_DUPFD_CLOEXEC` (17) answers as the guest layer models it.
 - [WTF::FileSystemImpl::encodeForFileName, decodeFromFilename and lastComponentOfPathIgnoringTrailingSlash](../../../core/libs/prx/libSceNKWebKit/src/WtfString.cpp) - are source-guided by pinned [FileSystem.cpp](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/FileSystem.cpp#L66-L210), not console-measured; the device's WebKit revision is unverified. A null `String` reference, or an encoded result above 2^31-1 units, throws where WebKit has undefined behaviour or a release assertion.
 - [WTF decimal parsing](../../../core/libs/prx/libSceNKWebKit/CharactersToNumber.cpp) - the device's WebKit revision is unverified; `charactersToDouble`, `charactersToFloat` and `StringToDoubleConverter` follow pinned WebKit [toDoubleType](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/text/WTFString.cpp#L1040-L1098) and [StringToIeee](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/dtoa/double-conversion.cc#L459-L664). Under a rounding mode other than round-to-nearest, WebKit's [exact-power fast path](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/dtoa/strtod.cc#L219-L254) and the double-to-float cast in [Strtof](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/dtoa/strtod.cc#L485-L588) round in the current mode and the host conversion may round differently.
 - [WTF decimal parsing limits](../../../core/libs/prx/libSceNKWebKit/CharactersToNumber.cpp) - inputs of about 1 GiB or more whose decimal exponent leaves the range of WebKit's [`int` exponent](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/dtoa/double-conversion.cc#L488-L490) throw, where WebKit overflows. A UTF-16 `charactersTo*` length above `UINT32_MAX` after leading spaces throws where WebKit's [conversion Vector](https://github.com/WebKit/WebKit/blob/c55364d53f97/Source/WTF/wtf/Vector.h#L291-L293) crashes.

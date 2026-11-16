@@ -50,16 +50,22 @@ bool WriteGuest(T* destination, const T& value) {
 int DecodeInternal(void* context, std::uint32_t handle, AudiodecCtrl* ctrl, std::int32_t priority, std::uint32_t decode2) {
     if (context == nullptr) return AudiodecErrorArgument;
     if (ctrl == nullptr) return AudiodecErrorInvalidCtrlPointer;
-    if (ctrl->pParam == nullptr) return AudiodecErrorInvalidParamPointer;
-    if (ctrl->pBsiInfo == nullptr) return AudiodecErrorInvalidBsiInfoPointer;
-    if (ctrl->pAuInfo == nullptr) return AudiodecErrorInvalidAuInfoPointer;
-    if (ctrl->pAuInfo->p_au_addr == nullptr) return AudiodecErrorInvalidAuPointer;
-    if (ctrl->pPcmItem == nullptr) return AudiodecErrorInvalidPcmItemPointer;
-    if (ctrl->pPcmItem->p_pcm_addr == nullptr) return AudiodecErrorInvalidPcmPointer;
-    if (ctrl->pAuInfo->ui_au_size == 0 || ctrl->pAuInfo->ui_au_size == 0xFFFFFFFFu) return AudiodecErrorInvalidAuSize;
-    if (ctrl->pPcmItem->ui_pcm_size == 0 || ctrl->pPcmItem->ui_pcm_size == 0xFFFFFFFFu) return AudiodecErrorInvalidPcmSize;
-    if (ctrl->pAuInfo->ui_size != 0x18) return AudiodecErrorInvalidAuInfoSize;
-    if (ctrl->pPcmItem->ui_size != 0x18) return AudiodecErrorInvalidPcmItemSize;
+    AudiodecCtrl localCtrl{};
+    if (!ReadGuest(localCtrl, ctrl)) return AudiodecErrorInvalidCtrlPointer;
+    if (localCtrl.pParam == nullptr) return AudiodecErrorInvalidParamPointer;
+    if (localCtrl.pBsiInfo == nullptr) return AudiodecErrorInvalidBsiInfoPointer;
+    if (localCtrl.pAuInfo == nullptr) return AudiodecErrorInvalidAuInfoPointer;
+    AudiodecAuInfo auInfo{};
+    if (!ReadGuest(auInfo, localCtrl.pAuInfo)) return AudiodecErrorInvalidAuInfoPointer;
+    if (auInfo.p_au_addr == nullptr) return AudiodecErrorInvalidAuPointer;
+    if (localCtrl.pPcmItem == nullptr) return AudiodecErrorInvalidPcmItemPointer;
+    AudiodecPcmItem pcmItem{};
+    if (!ReadGuest(pcmItem, localCtrl.pPcmItem)) return AudiodecErrorInvalidPcmItemPointer;
+    if (pcmItem.p_pcm_addr == nullptr) return AudiodecErrorInvalidPcmPointer;
+    if (auInfo.ui_au_size == 0 || auInfo.ui_au_size == 0xFFFFFFFFu) return AudiodecErrorInvalidAuSize;
+    if (pcmItem.ui_pcm_size == 0 || pcmItem.ui_pcm_size == 0xFFFFFFFFu) return AudiodecErrorInvalidPcmSize;
+    if (auInfo.ui_size != 0x18) return AudiodecErrorInvalidAuInfoSize;
+    if (pcmItem.ui_size != 0x18) return AudiodecErrorInvalidPcmItemSize;
     if (static_cast<std::uint32_t>(priority - 20) > 80u) return AudiodecErrorInvalidPriority;
     static_cast<void>(handle);
     static_cast<void>(decode2);
@@ -179,16 +185,22 @@ int APS5_VABI sceAudiodecRegisterCodec(void* context, std::uint32_t codecType) {
     default: return AudiodecErrorInvalidType;
     }
     if (codecType >= 11) {
-        auto* bytes = static_cast<unsigned char*>(context);
-        auto* lock = reinterpret_cast<unsigned char*>((reinterpret_cast<std::uintptr_t>(bytes) + 0xFu) & ~static_cast<std::uintptr_t>(7u));
+        const auto address = reinterpret_cast<std::uintptr_t>(context);
+        if (address > UINTPTR_MAX - 0x1Fu) return AudiodecErrorArgument;
+        const auto lock = (address + 0xFu) & ~static_cast<std::uintptr_t>(7u);
+        auto* const selfAddress = reinterpret_cast<std::uint32_t*>(lock + (codecType == 11 ? 8u : 0xCu));
+        const auto* const otherAddress = reinterpret_cast<const std::uint32_t*>(lock + (codecType == 11 ? 0xCu : 8u));
         std::uint32_t selfFlag = 0;
         std::uint32_t otherFlag = 0;
-        std::memcpy(&selfFlag, lock + (codecType == 11 ? 8 : 0xC), sizeof(selfFlag));
-        std::memcpy(&otherFlag, lock + (codecType == 11 ? 0xC : 8), sizeof(otherFlag));
+        if (!ReadGuest(selfFlag, selfAddress) || !ReadGuest(otherFlag, otherAddress)) {
+            return AudiodecErrorArgument;
+        }
         if (selfFlag != 0) return AudiodecErrorAlreadyRegistered;
         if (otherFlag != 0) {
             selfFlag = 1;
-            std::memcpy(lock + (codecType == 11 ? 8 : 0xC), &selfFlag, sizeof(selfFlag));
+            if (!WriteGuest(selfAddress, selfFlag)) {
+                return AudiodecErrorArgument;
+            }
             return 0;
         }
     }
@@ -209,10 +221,12 @@ int APS5_VABI sceAudiodecUnregisterCodec(const void* context, std::uint32_t code
     default: return AudiodecErrorInvalidType;
     }
     if (codecType >= 11) {
-        const auto bytes = static_cast<const unsigned char*>(context);
-        const auto lock = reinterpret_cast<const unsigned char*>((reinterpret_cast<std::uintptr_t>(bytes) + 0xFu) & ~static_cast<std::uintptr_t>(7u));
-        std::uint32_t flag;
-        std::memcpy(&flag, lock + (codecType == 11 ? 8 : 0xC), sizeof(flag));
+        const auto address = reinterpret_cast<std::uintptr_t>(context);
+        if (address > UINTPTR_MAX - 0x1Fu) return AudiodecErrorArgument;
+        const auto lock = (address + 0xFu) & ~static_cast<std::uintptr_t>(7u);
+        const auto* const flagAddress = reinterpret_cast<const std::uint32_t*>(lock + (codecType == 11 ? 8u : 0xCu));
+        std::uint32_t flag = 0;
+        if (!ReadGuest(flag, flagAddress)) return AudiodecErrorArgument;
         if (flag == 0) return AudiodecErrorNotRegistered;
     }
     throw std::runtime_error("sceAudiodecUnregisterCodec: the Ajm service call for the accepted codec type");

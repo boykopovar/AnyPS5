@@ -264,11 +264,149 @@ void AppendPathCommand(std::vector<std::uint8_t>& out, const std::uint32_t cmd, 
     out.resize(start + size, 0);
 }
 
+constexpr std::uint8_t NoGsRegister = 0xff;
+constexpr std::uint8_t StackRegister = 4;
+constexpr std::int32_t GsStubStackShift = 0x88;
+
+struct GsRewrite {
+    std::vector<std::uint8_t> Replay;
+    std::uint8_t Scratch;
+    std::uint8_t Base;
+    std::uint8_t Index;
+    std::uint8_t Scale;
+    std::int32_t Displacement;
+};
+
 struct GsTrap {
     std::uint32_t Rva;
     std::size_t Length;
     std::optional<Domain::FileByteOffset> Entry;
+    std::optional<GsRewrite> Rewrite;
 };
+
+std::optional<GsRewrite> PlanGsRewrite(const std::uint8_t* bytes, const Codegen::DecodedInstructionInfo& info) {
+    if (info.Length < 5 || info.Length > 15 || info.HasRipRelativeDisp || info.AddressSize32) return std::nullopt;
+    GsRewrite rewrite{{}, 0, NoGsRegister, NoGsRegister, 0, 0};
+    std::uint8_t rex = 0;
+    bool vectorPrefix = false;
+    for (std::size_t index = 0; index < info.OpcodeOffset; ++index) {
+        const auto prefix = bytes[index];
+        if (prefix == 0x65) continue;
+        if (prefix == 0x66 || prefix == 0xf3) vectorPrefix = true;
+        if (prefix >= 0x40 && prefix <= 0x4f && index + 1 == info.OpcodeOffset) rex = prefix;
+        else if (prefix == 0x66 || prefix == 0xf0 || prefix == 0xf2 || prefix == 0xf3) rewrite.Replay.push_back(prefix);
+        else return std::nullopt;
+    }
+    const auto opcode = info.Opcode;
+    const auto group = info.ModRmRegField;
+    const auto opcodeBytes = info.IsTwoByteOpcode ? std::size_t{2} : std::size_t{1};
+    if (info.OpcodeOffset + opcodeBytes > info.Length || bytes[info.OpcodeOffset + opcodeBytes - 1] != opcode ||
+        (info.IsTwoByteOpcode && bytes[info.OpcodeOffset] != 0x0f)) return std::nullopt;
+    std::optional<std::uint8_t> registerOperand;
+    if (!info.IsTwoByteOpcode && opcode >= 0xa0 && opcode <= 0xa3) {
+        if (info.Length - info.OpcodeOffset != 9) return std::nullopt;
+        std::uint64_t address = 0;
+        for (unsigned byte = 0; byte < 8; ++byte) address |= static_cast<std::uint64_t>(bytes[info.OpcodeOffset + 1 + byte]) << (byte * 8);
+        const auto signedAddress = std::bit_cast<std::int64_t>(address);
+        if (signedAddress < std::numeric_limits<std::int32_t>::min() || signedAddress > std::numeric_limits<std::int32_t>::max()) return std::nullopt;
+        rewrite.Displacement = static_cast<std::int32_t>(signedAddress);
+        rewrite.Scratch = 3;
+        if (rex != 0) rewrite.Replay.push_back(static_cast<std::uint8_t>(rex & 0xf8));
+        rewrite.Replay.push_back(static_cast<std::uint8_t>(0x88 + ((opcode & 2) == 0 ? 2 : 0) + (opcode & 1)));
+        rewrite.Replay.push_back(rewrite.Scratch);
+        return rewrite;
+    }
+    if (!info.HasModRm || (info.ModRmByte >> 6) == 3 || info.ModRmOffset <= info.OpcodeOffset) return std::nullopt;
+    const auto byteRegister = [&](const bool byteOperand) {
+        return static_cast<std::uint8_t>(byteOperand && rex == 0 && group >= 4 ? group - 4 : group | ((rex & 4) << 1));
+    };
+    if (!info.IsTwoByteOpcode) {
+        if (opcode <= 0x3b && (opcode & 7) <= 3) registerOperand = byteRegister((opcode & 1) == 0);
+        else if (opcode >= 0x84 && opcode <= 0x8b) registerOperand = byteRegister((opcode & 1) == 0);
+        else if (opcode == 0x80 || opcode == 0x81 || opcode == 0x83) {}
+        else if ((opcode == 0xc0 || opcode == 0xc1 || (opcode >= 0xd0 && opcode <= 0xd3)) && group != 6) {}
+        else if ((opcode == 0xc6 || opcode == 0xc7) && group == 0) {}
+        else if ((opcode == 0xf6 || opcode == 0xf7) && group != 1) {}
+        else if ((opcode == 0xfe || opcode == 0xff) && group <= 1) {}
+        else return std::nullopt;
+    } else {
+        if ((opcode >= 0x40 && opcode <= 0x4f) || opcode == 0xaf || opcode == 0xb1 || opcode == 0xc1 ||
+            opcode == 0xb6 || opcode == 0xb7 || opcode == 0xbe || opcode == 0xbf) registerOperand = byteRegister(false);
+        else if (opcode == 0xb0 || opcode == 0xc0) registerOperand = byteRegister(true);
+        else if ((opcode >= 0x90 && opcode <= 0x9f) || opcode == 0x10 || opcode == 0x11 || opcode == 0x28 || opcode == 0x29) {}
+        else if (vectorPrefix && (opcode == 0x6e || opcode == 0x6f || opcode == 0x7e || opcode == 0x7f || opcode == 0xd6)) {}
+        else return std::nullopt;
+    }
+    const auto mod = info.ModRmByte >> 6;
+    const auto rm = info.ModRmByte & 7;
+    auto position = info.ModRmOffset + 1;
+    rewrite.Base = static_cast<std::uint8_t>(rm | ((rex & 1) << 3));
+    bool displacement32 = mod == 2;
+    if (rm == 4) {
+        if (position >= info.Length) return std::nullopt;
+        const auto sib = bytes[position++];
+        rewrite.Base = static_cast<std::uint8_t>((sib & 7) | ((rex & 1) << 3));
+        rewrite.Index = static_cast<std::uint8_t>(((sib >> 3) & 7) | ((rex & 2) << 2));
+        if (rewrite.Index == StackRegister) rewrite.Index = NoGsRegister;
+        rewrite.Scale = static_cast<std::uint8_t>(sib >> 6);
+        if (mod == 0 && (sib & 7) == 5) {
+            rewrite.Base = NoGsRegister;
+            displacement32 = true;
+        }
+    } else if (mod == 0 && rm == 5) {
+        return std::nullopt;
+    }
+    if (mod == 1) {
+        if (position >= info.Length) return std::nullopt;
+        rewrite.Displacement = std::bit_cast<std::int8_t>(bytes[position++]);
+    }
+    if (displacement32) {
+        if (position + 4 > info.Length) return std::nullopt;
+        std::uint32_t value = 0;
+        for (unsigned byte = 0; byte < 4; ++byte) value |= static_cast<std::uint32_t>(bytes[position++]) << (byte * 8);
+        rewrite.Displacement = std::bit_cast<std::int32_t>(value);
+    }
+    if (registerOperand && *registerOperand == StackRegister) return std::nullopt;
+    bool chosen = false;
+    for (const std::uint8_t candidate : {std::uint8_t{3}, std::uint8_t{6}, std::uint8_t{7}}) {
+        if (candidate == rewrite.Base || candidate == rewrite.Index || (registerOperand && candidate == *registerOperand)) continue;
+        rewrite.Scratch = candidate;
+        chosen = true;
+        break;
+    }
+    if (!chosen) return std::nullopt;
+    if (rex != 0) rewrite.Replay.push_back(static_cast<std::uint8_t>(rex & 0xfc));
+    rewrite.Replay.insert(rewrite.Replay.end(), bytes + info.OpcodeOffset, bytes + info.ModRmOffset);
+    rewrite.Replay.push_back(static_cast<std::uint8_t>((info.ModRmByte & 0x38) | rewrite.Scratch));
+    rewrite.Replay.insert(rewrite.Replay.end(), bytes + position, bytes + info.Length);
+    return rewrite;
+}
+
+void EmitGsStub(Windows::WindowsStubEmitter& code, const GsRewrite& rewrite, const std::uint32_t keySlotRva, const std::uint32_t resumeRva) {
+    const auto scratch = rewrite.Scratch;
+    code.Emit({0x48, 0x8d, 0x64, 0x24, 0x80});
+    code.Emit({static_cast<std::uint8_t>(0x50 | scratch)});
+    code.Rip({0x48, 0x8b, static_cast<std::uint8_t>(0x05 | (scratch << 3))}, keySlotRva);
+    code.Emit({0x48, 0x8b, static_cast<std::uint8_t>((scratch << 3) | scratch)});
+    code.Emit({0x65, 0x48, 0x8b, static_cast<std::uint8_t>(0x04 | (scratch << 3)), static_cast<std::uint8_t>(0xc5 | (scratch << 3)), 0, 0, 0, 0});
+    if (rewrite.Index != NoGsRegister) {
+        code.Emit({static_cast<std::uint8_t>(0x48 | ((rewrite.Index >> 3) << 1)), 0x8d, static_cast<std::uint8_t>(0x84 | (scratch << 3)),
+                   static_cast<std::uint8_t>((rewrite.Scale << 6) | ((rewrite.Index & 7) << 3) | scratch)});
+        code.U32(static_cast<std::uint32_t>(rewrite.Displacement));
+    } else if (rewrite.Displacement != 0) {
+        code.Emit({0x48, 0x8d, static_cast<std::uint8_t>(0x80 | (scratch << 3) | scratch)});
+        code.U32(static_cast<std::uint32_t>(rewrite.Displacement));
+    }
+    if (rewrite.Base != NoGsRegister) {
+        code.Emit({static_cast<std::uint8_t>(0x48 | (rewrite.Base >> 3)), 0x8d, static_cast<std::uint8_t>(0x84 | (scratch << 3)),
+                   static_cast<std::uint8_t>((scratch << 3) | (rewrite.Base & 7))});
+        code.U32(static_cast<std::uint32_t>(rewrite.Base == StackRegister ? GsStubStackShift : 0));
+    }
+    for (const auto byte : rewrite.Replay) code.Emit({byte});
+    code.Emit({static_cast<std::uint8_t>(0x58 | scratch)});
+    code.Emit({0x48, 0x8d, 0xa4, 0x24, 0x80, 0, 0, 0});
+    code.Rip({0xe9}, resumeRva);
+}
 
 struct TlsAccess {
     std::uint32_t Rva;
@@ -318,7 +456,7 @@ TlsScan ScanTls(const std::vector<std::uint8_t>& source, const std::vector<Domai
             if (info.SegmentPrefix == 0x65) {
                 if (info.HasMemoryOperand) {
                     const auto entry = entryRoots.upper_bound(*instruction);
-                    scan.GsTraps.push_back({rva, info.Length, entry != entryRoots.end() && *entry - *instruction < info.Length ? std::optional<Domain::FileByteOffset>(header.Offset + *entry - header.MappedAddress) : std::nullopt});
+                    scan.GsTraps.push_back({rva, info.Length, entry != entryRoots.end() && *entry - *instruction < info.Length ? std::optional<Domain::FileByteOffset>(header.Offset + *entry - header.MappedAddress) : std::nullopt, PlanGsRewrite(bytes, info)});
                 }
                 continue;
             }
@@ -488,6 +626,7 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
         if (section == sections.end()) throw Domain::RelinkerException("Guest GS instruction is outside the image", trap.Rva);
         const auto offset = trap.Rva - section->Rva;
         if (trap.Length > section->Data.size() - offset) throw Domain::RelinkerException("Guest GS instruction crosses a section boundary", trap.Rva);
+        if (trap.Rewrite) continue;
         std::fill_n(section->Data.begin() + offset, trap.Length, 0x90);
         std::copy(std::begin(kStubOpUd2), std::end(kStubOpUd2), section->Data.begin() + offset);
     }
@@ -547,6 +686,13 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
         slot = metaEnd;
         metaEnd += 8;
         input.Binds.push_back({symbol, metaRva + static_cast<std::uint32_t>(slot)});
+    }
+    const bool hasGsRewrites = std::any_of(tls.GsTraps.begin(), tls.GsTraps.end(), [](const GsTrap& trap) { return trap.Rewrite.has_value(); });
+    std::uint64_t gsKeySlot = 0;
+    if (hasGsRewrites) {
+        gsKeySlot = metaEnd;
+        metaEnd += 8;
+        input.Binds.push_back({"_Aps5GuestGsKey_nid_no_patch", metaRva + static_cast<std::uint32_t>(gsKeySlot)});
     }
     std::uint64_t moduleArgsSlot = 0;
     std::uint64_t moduleResultSlot = 0;
@@ -649,6 +795,18 @@ std::vector<std::uint8_t> WriteMacOsImage(MacOsImageInput& input) {
             site.Data[at] = 0xe9;
             Io::WriteU32(site.Data, at + 1, static_cast<std::uint32_t>(static_cast<std::int32_t>(displacement)));
         }
+    }
+
+    for (const auto& trap : tls.GsTraps) {
+        if (!trap.Rewrite) continue;
+        const auto stub = code.GetRva();
+        EmitGsStub(code, *trap.Rewrite, metaRva + static_cast<std::uint32_t>(gsKeySlot), static_cast<std::uint32_t>(trap.Rva + trap.Length));
+        auto& site = SegmentAt(segments, trap.Rva, trap.Length);
+        const auto at = trap.Rva - site.Rva;
+        const auto displacement = static_cast<std::int64_t>(stub) - static_cast<std::int64_t>(trap.Rva + 5);
+        std::fill_n(site.Data.begin() + static_cast<std::ptrdiff_t>(at), trap.Length, 0x90);
+        site.Data[at] = 0xe9;
+        Io::WriteU32(site.Data, at + 1, static_cast<std::uint32_t>(static_cast<std::int32_t>(displacement)));
     }
 
     const bool hasFini = input.FiniRva != 0 || !input.FiniArrayRvas.empty();
