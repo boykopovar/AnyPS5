@@ -1,13 +1,20 @@
 #include "prx/libScePlayGoDialog/include/Api.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 
+static void ClobberErrno(std::uintptr_t, std::size_t) { errno = 99; }
+
 static void Require(bool value) { if (!value) std::abort(); }
 
 int main() {
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     constexpr std::int32_t notInitialized = static_cast<std::int32_t>(0x80B80003);
     constexpr std::int32_t alreadyInitialized = static_cast<std::int32_t>(0x80B80004);
     constexpr std::int32_t paramInvalid = static_cast<std::int32_t>(0x80B8000D);
@@ -58,17 +65,23 @@ int main() {
     Require(scePlayGoDialogUpdateStatus() == 3);
     Require(scePlayGoDialogOpen(nullptr) == paramInvalid);
     Require(scePlayGoDialogOpen(&openParam) == 0);
+    errno = 71;
     Require(scePlayGoDialogGetResult(reinterpret_cast<PlayGoDialogResult*>(0x10)) == paramInvalid);
+    Require(errno == 71);
 
     PlayGoDialogResult result{};
+    errno = 71;
     Require(scePlayGoDialogGetResult(&result) == 0);
+    Require(errno == 71);
     Require(result.result == 0 && result.errorCode == 0);
     for (const auto byte : result.reserved) Require(byte == 0);
 
     result.errorCode = 7;
     result.result = 9;
     result.reserved[0] = 1;
+    errno = 71;
     Require(scePlayGoDialogGetResult(&result) == static_cast<std::int32_t>(0x80B8000Au));
+    Require(errno == 71);
     Require(result.errorCode == 7 && result.result == 9 && result.reserved[0] == 1);
     Require(scePlayGoDialogClose() == static_cast<std::int32_t>(0x80B8000Bu));
     Require(scePlayGoDialogTerminate() == 0);
@@ -88,5 +101,7 @@ int main() {
     Require(scePlayGoDialogTerminate() == 0);
     Require(scePlayGoDialogGetStatus() == 0);
     Require(scePlayGoDialogTerminate() == notInitialized);
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     return 0;
 }

@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libkernel/File/include/File.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <climits>
 #include <cstdint>
@@ -96,6 +97,17 @@ static void BadDescriptors() {
     Require(close_nid_postfix(closed) == 0);
     RequireFailure(close_nid_postfix(closed), GuestEbadf);
     RequireFailure(close_nid_postfix(-1), GuestEbadf);
+    char byte = 0;
+    KernelIovec pieces[2]{{&byte, 1}, {&byte, 0}};
+    for (const int descriptor : {-1, closed, Unopened, INT_MAX}) {
+        Require(sceKernelRead(descriptor, &byte, 1) == static_cast<std::int32_t>(0x80020009u));
+        Require(sceKernelWrite(descriptor, &byte, 1) == static_cast<std::int32_t>(0x80020009u));
+        Require(sceKernelLseek(descriptor, 0, 0) == static_cast<std::int32_t>(0x80020009u));
+        Require(sceKernelReadv(descriptor, pieces, 1) == static_cast<std::int32_t>(0x80020009u));
+        Require(sceKernelWritev(descriptor, pieces, 1) == static_cast<std::int32_t>(0x80020009u));
+        Require(sceKernelReadv(descriptor, pieces + 1, 1) == static_cast<std::int32_t>(0x80020009u));
+        Require(sceKernelWritev(descriptor, pieces + 1, 1) == static_cast<std::int32_t>(0x80020009u));
+    }
 #ifdef _WIN32
     _set_invalid_parameter_handler(previous);
     Require(!g_invalidParameter);

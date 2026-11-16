@@ -203,6 +203,17 @@ void stringControlRoundTrip() {
     }
 }
 
+void invalidUtf8() {
+    const std::vector<std::string> sequences{
+        "\x80", "\xc2", "\xc3(", "\xe0\x80\x80", "\xed\xa0\x80", "\xf4\x90\x80\x80"
+    };
+    for (const auto& sequence : sequences) {
+        rejects([&] { ParsePatchFile("format = 1\n# " + sequence + "\n"); }, "line 2: invalid UTF-8");
+        rejects([&] { ParsePatchFile("format = 1\nconfig = \"" + sequence + "\"\n"); }, "line 2: invalid UTF-8");
+        rejects([&] { ParsePatchFile(header("[[patch]]\ntarget = \"main.elf\"\nva = 0x1000\nexpected = \"00\"\nvalue = \"01\"\ndescription = \"" + sequence + "\"\n")); }, "line 7: invalid UTF-8");
+    }
+}
+
 void grammarRejected() {
     rejects([] { ParsePatchFile(""); }, "format = 1");
     rejectsText("format = 2\n", 1, "unsupported format");
@@ -671,6 +682,7 @@ int main() {
         stringControls();
         commentControls();
         stringControlRoundTrip();
+        invalidUtf8();
         integerRanges();
         boundsAndWidth();
         names();

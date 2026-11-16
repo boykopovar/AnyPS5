@@ -22,6 +22,8 @@ int main() {
     std::string secondEntry = "EXECVP_LARGE_SECOND=" + secondVector;
     char* largeEnvironment[] = {&firstEntry[0], &secondEntry[0], nullptr};
     Require(execvp_nid_postfix(nullptr, nullptr) == -1 && *__error_nid_postfix() == 9);
+    Require(execvp_nid_postfix(name, nullptr) == -1 && *__error_nid_postfix() == 14);
+    Require(execvp_nid_postfix("", arguments) == -1 && *__error_nid_postfix() == 2);
     Require(execv_nid_postfix(nullptr, arguments) == -1 && *__error_nid_postfix() == 9);
     Require(execv_nid_postfix(name, nullptr) == -1 && *__error_nid_postfix() == 14);
     Require(execv_nid_postfix("", arguments) == -1 && *__error_nid_postfix() == 2);
