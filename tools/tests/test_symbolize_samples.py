@@ -1549,6 +1549,14 @@ class WindowHelperTests(unittest.TestCase):
         self.assertTrue(any("75.0%" in line and "WORK" in line for line in lines))
         self.assertFalse(any("IDLE" in line for line in lines))
 
+    def test_json_report_lists_totals_and_symbols(self):
+        samples = symbolize_samples.Samples()
+        samples.stacks = collections.Counter({"main;work": 3, "main;idle": 1})
+        report = symbolize_samples.json_report(FakeSymbolizer(), samples, top=1)
+        self.assertEqual(report["samples"], 4)
+        self.assertEqual(report["self"], [{"symbol": "WORK", "count": 3}])
+        self.assertEqual(report["modules"], [])
+
 
 if __name__ == "__main__":
     unittest.main()
