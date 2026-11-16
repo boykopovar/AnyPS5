@@ -508,6 +508,10 @@ class BodyAfterTests(unittest.TestCase):
         self.assertEqual(shader_scan.body_after('int f() { return 1; }', re.compile(r'int f\(\)')), ' return 1; ')
         self.assertEqual(shader_scan.body_after('int f() { if (a) { b(); } }', re.compile(r'int f\(\)')), ' if (a) { b(); } ')
 
+    def test_body_after_is_none_without_a_header_or_a_body(self):
+        self.assertIsNone(shader_scan.body_after('int g();', re.compile(r'int g\(\)')))
+        self.assertIsNone(shader_scan.body_after('x', re.compile(r'int h\(')))
+
 
 if __name__ == "__main__":
     unittest.main()
