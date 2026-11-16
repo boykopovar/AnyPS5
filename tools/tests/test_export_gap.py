@@ -831,5 +831,11 @@ class ExportGapTests(unittest.TestCase):
         self.assertIsNone(export_gap.helper_reason("abc"))
 
 
+    def test_is_safe_module_rejects_path_like_names(self):
+        for name in ("", ".", "..", "../x", "a/b", "a\\b"):
+            self.assertFalse(export_gap.is_safe_module(name), name)
+        self.assertTrue(export_gap.is_safe_module("libSceFoo"))
+
+
 if __name__ == "__main__":
     unittest.main()
