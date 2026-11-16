@@ -81,6 +81,12 @@ std::string FlippableList() {
 
 namespace RuntimeSwitches {
 
+namespace {
+
+std::atomic<std::uint64_t> generation{0};
+
+}
+
 const char* Name(RuntimeSwitch id) {
     return SwitchNames.at(static_cast<std::size_t>(id));
 }
@@ -90,7 +96,11 @@ bool Set(RuntimeSwitch id) {
 }
 
 void Assign(RuntimeSwitch id, bool set) {
-    Values().set.at(static_cast<std::size_t>(id)).store(set, std::memory_order_relaxed);
+    if (Values().set.at(static_cast<std::size_t>(id)).exchange(set, std::memory_order_relaxed) != set) generation.fetch_add(1, std::memory_order_release);
+}
+
+std::uint64_t Generation() {
+    return generation.load(std::memory_order_acquire);
 }
 
 std::optional<RuntimeSwitch> Find(std::string_view name) {

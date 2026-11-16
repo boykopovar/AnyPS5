@@ -197,6 +197,17 @@ struct DeviceFunctions {
     PFN_vkUnmapMemory unmapMemory = nullptr;
 };
 
+struct DeviceDispatch {
+    explicit DeviceDispatch(const DeviceFunctions* patched) : patched(patched), active(patched) {}
+    DeviceDispatch(const DeviceDispatch&) = delete;
+    DeviceDispatch& operator=(const DeviceDispatch&) = delete;
+    const DeviceFunctions* const patched;
+    std::atomic<const DeviceFunctions*> active;
+    DeviceFunctions original;
+    std::mutex mutex;
+    unsigned encoders = 0;
+};
+
 // Per-thread count of vkGetDeviceProcAddr lookups made through Context::Function (the [vk] line).
 std::uint64_t& DeviceProcLookups();
 void BeforeCommandLookup(VkDevice device, std::source_location where = std::source_location::current());
@@ -286,6 +297,7 @@ struct Context {
     const std::vector<std::shared_ptr<ShaderResources>>* copiedWriters = nullptr;
     // The device's resolved entry points (see DeviceFunctions); null until the device set up.
     const DeviceFunctions* functions = nullptr;
+    DeviceDispatch* dispatch = nullptr;
     // VK_EXT_descriptor_indexing with non-uniform sampled/storage image array indexing enabled
     // (bindless image tables in graphics stages).
     bool descriptorIndexing = false;
@@ -353,9 +365,11 @@ struct Context {
     }
 
     // The table's entry point, or a per-call lookup while the table is absent or lacks it.
+    const DeviceFunctions* Table() const { return dispatch != nullptr && functions == dispatch->patched ? dispatch->active.load(std::memory_order_acquire) : functions; }
+
     template<typename TFunction>
     TFunction Resolved(TFunction DeviceFunctions::*member, FunctionName name) const {
-        if (functions != nullptr && functions->*member != nullptr) return functions->*member;
+        if (const auto* table = Table(); table != nullptr && table->*member != nullptr) return table->*member;
         return lookup<TFunction>(name.Value());
     }
 
@@ -497,7 +511,7 @@ private:
 
     template<typename TFunction>
     TFunction tracked(TrackedFunction<TFunction> DeviceFunctions::*member, const char* name) const {
-        if (functions != nullptr && (functions->*member).function != nullptr) return (functions->*member).function;
+        if (const auto* table = Table(); table != nullptr && (table->*member).function != nullptr) return (table->*member).function;
         return lookup<TFunction>(name);
     }
 };

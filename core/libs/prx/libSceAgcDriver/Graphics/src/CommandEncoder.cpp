@@ -524,11 +524,11 @@ std::size_t CommandEncoder::claim() {
     return Slots;
 }
 
-std::unique_ptr<CommandEncoder> CommandEncoder::Attach(VkDevice device, DeviceFunctions& table) {
+std::unique_ptr<CommandEncoder> CommandEncoder::Attach(VkDevice device, DeviceFunctions& table, DeviceDispatch* dispatch) {
     const auto slot = claim();
     if (slot == Slots) return nullptr;
     try {
-        return std::unique_ptr<CommandEncoder>(new CommandEncoder(device, table, slot));
+        return std::unique_ptr<CommandEncoder>(new CommandEncoder(device, table, slot, dispatch != nullptr && dispatch->patched == &table ? dispatch : nullptr));
     } catch (...) {
         std::lock_guard lock(slotMutex());
         slots()[slot].claimed = false;
@@ -536,7 +536,7 @@ std::unique_ptr<CommandEncoder> CommandEncoder::Attach(VkDevice device, DeviceFu
     }
 }
 
-CommandEncoder::CommandEncoder(VkDevice device, DeviceFunctions& table, std::size_t slot) : table(table), real(table), device(device), slot(slot), profiled(SiteProfileRequested()), printedAt(std::chrono::steady_clock::now()) {
+CommandEncoder::CommandEncoder(VkDevice device, DeviceFunctions& table, std::size_t slot, DeviceDispatch* dispatch) : table(table), real(table), dispatch(dispatch), device(device), slot(slot), profiled(SiteProfileRequested()), printedAt(std::chrono::steady_clock::now()) {
     static_cast<void>(HandoffSpinWindow());
     static_cast<void>(EncoderIdleSpin());
     struct PoolOwner {
@@ -558,6 +558,11 @@ CommandEncoder::CommandEncoder(VkDevice device, DeviceFunctions& table, std::siz
     std::lock_guard lock(slotMutex());
     slots()[slot].real = real;
     slots()[slot].device = device;
+    if (dispatch != nullptr) {
+        std::lock_guard dispatchLock(dispatch->mutex);
+        if (dispatch->encoders++ == 0) dispatch->original = real;
+        dispatch->active.store(dispatch->patched, std::memory_order_release);
+    }
     installAt(slot, table, std::make_index_sequence<Slots>{});
     slots()[slot].encoder.store(this, std::memory_order_release);
 }
@@ -571,6 +576,11 @@ CommandEncoder::~CommandEncoder() {
     if (profiled) printSites(true);
     delete filling;
     freeChunks(spare);
+    if (dispatch != nullptr) {
+        std::lock_guard dispatchLock(dispatch->mutex);
+        --dispatch->encoders;
+        dispatch->active.store(dispatch->patched, std::memory_order_release);
+    }
     std::lock_guard lock(slotMutex());
     table = real;
     slots()[slot].encoder.store(nullptr, std::memory_order_release);
@@ -588,6 +598,10 @@ void CommandEncoder::Recording::refuse() {
 }
 
 void CommandEncoder::Open(VkCommandBuffer commands, Recording& recording, std::source_location where) {
+    useTable(false);
+    quiet = false;
+    spanRemaining = 0;
+    pendingSpan = PendingSpan::None;
     if (recent.load(std::memory_order_relaxed) != commands) Quiesce(WaitSite::At(Wait::Open, where));
     windows.push_back({commands, &recording});
     owner.store(std::this_thread::get_id(), std::memory_order_relaxed);
@@ -695,6 +709,7 @@ bool CommandEncoder::decline(std::source_location where) noexcept {
 }
 
 bool CommandEncoder::Admit(Handoff handoff, std::source_location where) {
+    pendingSpan = PendingSpan::None;
     if (inlineDepth != 0) {
         ++inlineDepth;
         return false;
@@ -703,6 +718,8 @@ bool CommandEncoder::Admit(Handoff handoff, std::source_location where) {
         policy = HandoffPolicy{};
         if (handoff == Handoff::Always) return true;
         decline(where);
+        useTable(true);
+        pendingSpan = PendingSpan::Forced;
         ++inlineDepth;
         return false;
     }
@@ -713,9 +730,29 @@ bool CommandEncoder::Admit(Handoff handoff, std::source_location where) {
         return true;
     }
     decline(where);
+    useTable(true);
     ++inlineDepth;
     if (choice.timed) startTimedWindow();
+    else pendingSpan = PendingSpan::Settled;
     return false;
+}
+
+void CommandEncoder::StartSpan() noexcept {
+    const auto pending = std::exchange(pendingSpan, PendingSpan::None);
+    spanRemaining = pending == PendingSpan::Forced ? SettledSpanMax : pending == PendingSpan::Settled ? policy.TakeSettled() : 0;
+    if (spanRemaining == 0) return;
+    spanGeneration = RuntimeSwitches::Generation();
+    quiet = true;
+    spanCount.store(spanCount.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+}
+
+void CommandEncoder::useTable(bool original) noexcept {
+    if (dispatch == nullptr || usingOriginal == original) return;
+    std::lock_guard lock(dispatch->mutex);
+    if (original && dispatch->encoders != 1) return;
+    dispatch->active.store(original ? &dispatch->original : dispatch->patched, std::memory_order_release);
+    usingOriginal = original;
+    swapCount.fetch_add(1, std::memory_order_relaxed);
 }
 
 void CommandEncoder::EndInline() noexcept {
@@ -813,7 +850,7 @@ void CommandEncoder::note(const WaitSite& site, std::uint64_t ns, bool waited, b
 void CommandEncoder::printSites(bool final) noexcept {
     const auto totals = Counts();
     try {
-        AgcDriver::ProfilePrint_nid_no_patch("[encoder] %s: %llu chunks, %llu commands, %.1f ms recording, %llu parks; %llu waits, %.1f ms; waits by site (waits/ms/flushes):%s\n", final ? "at teardown" : "so far", static_cast<unsigned long long>(totals.posts), static_cast<unsigned long long>(totals.commands), static_cast<double>(totals.encodeNs) / 1e6, static_cast<unsigned long long>(totals.parks), static_cast<unsigned long long>(totals.waits), static_cast<double>(totals.waitNs) / 1e6, Report(WaitsBySite(), PrintedSites).c_str());
+        AgcDriver::ProfilePrint_nid_no_patch("[encoder] %s: %llu chunks, %llu commands, %.1f ms recording, %llu parks; %llu inline spans, %llu span windows, %llu table swaps; %llu waits, %.1f ms; waits by site (waits/ms/flushes):%s\n", final ? "at teardown" : "so far", static_cast<unsigned long long>(totals.posts), static_cast<unsigned long long>(totals.commands), static_cast<double>(totals.encodeNs) / 1e6, static_cast<unsigned long long>(totals.parks), static_cast<unsigned long long>(totals.spans), static_cast<unsigned long long>(totals.spanWindows), static_cast<unsigned long long>(totals.swaps), static_cast<unsigned long long>(totals.waits), static_cast<double>(totals.waitNs) / 1e6, Report(WaitsBySite(), PrintedSites).c_str());
     } catch (const std::exception& error) {
         std::fprintf(stderr, "[encoder] the wait-site profile could not be printed: %s\n", error.what());
     }
@@ -897,7 +934,7 @@ void CommandEncoder::run() {
 }
 
 CommandEncoder::Statistics CommandEncoder::Counts() const {
-    return {postCount.load(std::memory_order_relaxed), commandCount.load(std::memory_order_relaxed), waitCount.load(std::memory_order_relaxed), waitNs.load(std::memory_order_relaxed), encodeNs.load(std::memory_order_relaxed), parkCount.load(std::memory_order_relaxed), postNs.load(std::memory_order_relaxed), inlinedCount.load(std::memory_order_relaxed)};
+    return {postCount.load(std::memory_order_relaxed), commandCount.load(std::memory_order_relaxed), waitCount.load(std::memory_order_relaxed), waitNs.load(std::memory_order_relaxed), encodeNs.load(std::memory_order_relaxed), parkCount.load(std::memory_order_relaxed), postNs.load(std::memory_order_relaxed), inlinedCount.load(std::memory_order_relaxed), spanCount.load(std::memory_order_relaxed), spanWindowCount.load(std::memory_order_relaxed), swapCount.load(std::memory_order_relaxed)};
 }
 
 std::vector<CommandEncoder::SiteWaits> CommandEncoder::WaitsBySite() const {

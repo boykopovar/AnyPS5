@@ -1491,6 +1491,178 @@ void HandoffPolicyDecidesFromTheCostItIsGiven() {
     }
 }
 
+void InlineSpansRunOnTheOriginalTable() {
+    Reset();
+    auto table = FakeTable();
+    AgcDriver::Graphics::DeviceDispatch dispatch{&table};
+    const auto device = Handle<VkDevice>(0x46);
+    std::mt19937 random(23);
+    CommandEncoder::SetDelayForTesting([] {
+        thread_local std::mt19937 delay(5);
+        if (delay() % 3 == 0) std::this_thread::sleep_for(std::chrono::microseconds(delay() % 120));
+    });
+    {
+        auto attached = CommandEncoder::Attach(device, table, &dispatch);
+        Require(attached != nullptr, "no command encoder slot was free");
+        auto& encoder = *attached;
+        DeviceFunctions current{};
+        Oracle oracle{current, {}};
+        const auto buffer = Handle<VkCommandBuffer>(0x300);
+        auto& recording = RecordingOf(buffer);
+        std::uint64_t inlineWindows = 0;
+        for (int block = 0; block < 120; ++block) {
+            const bool encoded = block % 2 == 0;
+            const auto windows = 1 + random() % 12;
+            if (!encoded) {
+                Require(!encoder.Admit(CommandEncoder::Handoff::Never), "a window was handed off with hand-off off");
+                Require(dispatch.active.load() == &dispatch.original, "an inline window ran on the encoder's table");
+                current = *dispatch.active.load();
+                for (std::uint32_t step = 0, steps = random() % 6; step < steps; ++step) oracle.call(random, buffer);
+                encoder.StartSpan();
+                encoder.EndInline();
+                Require(encoder.Quiet(), "an inline span did not start quiet");
+                for (std::uint32_t window = 1; window < windows; ++window) {
+                    Require(encoder.SpanWindow(), "window " + std::to_string(window) + " of an inline span was not granted");
+                    ++inlineWindows;
+                    current = *dispatch.active.load();
+                    Require(current.cmdDraw == &FakeDraw, "a window in an inline span reached the encoder's entry points");
+                    for (std::uint32_t step = 0, steps = 1 + random() % 6; step < steps; ++step) oracle.call(random, buffer);
+                }
+                continue;
+            }
+            const auto before = encoder.Counts().commands;
+            for (std::uint32_t window = 0; window < windows; ++window) {
+                Require(encoder.Admit(CommandEncoder::Handoff::Always), "a window was not handed off with hand-off forced");
+                encoder.Open(buffer, recording);
+                Require(!encoder.Quiet() && dispatch.active.load() == &table, "an encoded window ran on the original table");
+                current = *dispatch.active.load();
+                for (std::uint32_t step = 0, steps = 1 + random() % 6; step < steps; ++step) oracle.call(random, buffer);
+                encoder.Close();
+            }
+            encoder.Quiesce();
+            Require(encoder.Counts().commands > before, "the encoded windows after an inline span deferred nothing");
+        }
+        encoder.Quiesce();
+        Compare(oracle.expected, "inline spans between encoded windows");
+        const auto counts = encoder.Counts();
+        Require(counts.spans == 60 && counts.spanWindows == inlineWindows, "60 inline spans of " + std::to_string(inlineWindows) + " windows were counted as " + std::to_string(counts.spans) + " spans of " + std::to_string(counts.spanWindows));
+        Require(counts.swaps == 119, "119 changes between inline and encoded windows swapped the device table " + std::to_string(counts.swaps) + " times");
+    }
+    CommandEncoder::SetDelayForTesting({});
+    Require(dispatch.active.load() == &table && dispatch.encoders == 0, "the device kept the original table after its encoder was destroyed");
+}
+
+void SwitchFlipEndsTheInlineSpan() {
+    Reset();
+    auto table = FakeTable();
+    AgcDriver::Graphics::DeviceDispatch dispatch{&table};
+    const auto attached = CommandEncoder::Attach(Handle<VkDevice>(0x47), table, &dispatch);
+    Require(attached != nullptr, "no command encoder slot was free");
+    auto& encoder = *attached;
+    Require(!encoder.Admit(CommandEncoder::Handoff::Never), "a window was handed off with hand-off off");
+    encoder.StartSpan();
+    encoder.EndInline();
+    Require(encoder.SpanWindow() && encoder.SpanWindow(), "an inline span granted no window");
+    const auto id = AgcDriver::Graphics::RuntimeSwitch::NoAdaptiveEncoder;
+    const bool initial = AgcDriver::Graphics::RuntimeSwitches::Set(id);
+    AgcDriver::Graphics::RuntimeSwitches::Assign(id, !initial);
+    const bool granted = encoder.SpanWindow();
+    const bool quiet = encoder.Quiet();
+    AgcDriver::Graphics::RuntimeSwitches::Assign(id, initial);
+    Require(!granted, "an inline span outlived a runtime switch flip, so an APS5_AB phase would keep the previous arm");
+    Require(!quiet, "an inline span ended by a switch flip still reported nothing posted");
+    AgcDriver::Graphics::RuntimeSwitches::Assign(id, initial);
+    Require(!encoder.SpanWindow(), "a switch assigned its current value restarted an ended span");
+}
+
+void UnwindAfterASpanStillSettles() {
+    Reset();
+    auto table = FakeTable();
+    AgcDriver::Graphics::DeviceDispatch dispatch{&table};
+    const auto attached = CommandEncoder::Attach(Handle<VkDevice>(0x48), table, &dispatch);
+    Require(attached != nullptr, "no command encoder slot was free");
+    auto& encoder = *attached;
+    const auto commands = Handle<VkCommandBuffer>(0x910);
+    Require(!encoder.Admit(CommandEncoder::Handoff::Never), "a window was handed off with hand-off off");
+    encoder.StartSpan();
+    encoder.EndInline();
+    CommandEncoder::SetDelayForTesting([] { std::this_thread::sleep_for(std::chrono::milliseconds(30)); });
+    std::size_t recordedAtCatch = 0;
+    try {
+        const CommandEncoder::UnwindQuiesce guard(attached.get());
+        Require(encoder.Admit(CommandEncoder::Handoff::Always), "a window was not handed off with hand-off forced");
+        encoder.Open(commands, RecordingOf(commands));
+        dispatch.active.load()->cmdDraw(commands, 1, 1, 0, 0);
+        dispatch.active.load()->cmdDraw(commands, 2, 1, 0, 0);
+        encoder.Close();
+        throw std::runtime_error("injected failure after the window closed");
+    } catch (const std::runtime_error&) {
+        std::lock_guard lock(logMutex);
+        recordedAtCatch = recorded[commands].size();
+    }
+    CommandEncoder::SetDelayForTesting({});
+    Require(recordedAtCatch == 2, "a guard made during an inline span skipped the unwind drain after an encoded window: " + std::to_string(recordedAtCatch) + " of 2 commands recorded");
+}
+
+void SharedTableKeepsTheEncoderEntries() {
+    Reset();
+    auto table = FakeTable();
+    AgcDriver::Graphics::DeviceDispatch dispatch{&table};
+    auto first = CommandEncoder::Attach(Handle<VkDevice>(0x49), table, &dispatch);
+    {
+        const auto second = CommandEncoder::Attach(Handle<VkDevice>(0x49), table, &dispatch);
+        Require(first != nullptr && second != nullptr, "no command encoder slot was free");
+        Require(!first->Admit(CommandEncoder::Handoff::Never), "a window was handed off with hand-off off");
+        first->EndInline();
+        Require(dispatch.active.load() == &table && first->Counts().swaps == 0, "an encoder swapped a device table another encoder also patches");
+    }
+    Require(!first->Admit(CommandEncoder::Handoff::Never), "a window was handed off with hand-off off");
+    first->EndInline();
+    Require(dispatch.active.load() == &dispatch.original, "the last encoder on a device table did not swap it for an inline window");
+    Require(dispatch.original.cmdDraw == &FakeDraw, "the original table holds an encoder entry");
+}
+
+void ForeignCallsDuringSwaps() {
+    Reset();
+    auto table = FakeTable();
+    AgcDriver::Graphics::DeviceDispatch dispatch{&table};
+    const auto attached = CommandEncoder::Attach(Handle<VkDevice>(0x4a), table, &dispatch);
+    Require(attached != nullptr, "no command encoder slot was free");
+    auto& encoder = *attached;
+    const auto own = Handle<VkCommandBuffer>(0x920);
+    const auto foreign = Handle<VkCommandBuffer>(0x930);
+    constexpr std::uint32_t Calls = 20000;
+    std::atomic<bool> started{false};
+    std::thread other([&] {
+        started.store(true);
+        for (std::uint32_t call = 0; call < Calls; ++call) dispatch.active.load(std::memory_order_acquire)->cmdDraw(foreign, call, 1, 0, 0);
+    });
+    while (!started.load()) std::this_thread::yield();
+    std::uint32_t drawn = 0;
+    for (int round = 0; round < 400; ++round) {
+        if (round % 2 == 0) {
+            static_cast<void>(encoder.Admit(CommandEncoder::Handoff::Never));
+            encoder.StartSpan();
+            dispatch.active.load()->cmdDraw(own, drawn++, 1, 0, 0);
+            encoder.EndInline();
+            continue;
+        }
+        static_cast<void>(encoder.Admit(CommandEncoder::Handoff::Always));
+        encoder.Open(own, RecordingOf(own));
+        dispatch.active.load()->cmdDraw(own, drawn++, 1, 0, 0);
+        encoder.Close();
+    }
+    other.join();
+    encoder.Quiesce();
+    std::lock_guard lock(logMutex);
+    const auto& calls = recorded[foreign];
+    Require(calls.size() == Calls, "a thread recording its own command buffer while the device table swapped recorded " + std::to_string(calls.size()) + " of " + std::to_string(Calls) + " draws");
+    for (std::uint32_t call = 0; call < Calls; ++call) Require(calls[call] == "draw " + std::to_string(call) + " 1 0 0", "a draw on another thread's command buffer was reordered while the device table swapped");
+    const auto& mine = recorded[own];
+    Require(mine.size() == drawn, "the producer recorded " + std::to_string(mine.size()) + " of " + std::to_string(drawn) + " draws across swaps");
+    for (std::uint32_t call = 0; call < drawn; ++call) Require(mine[call] == "draw " + std::to_string(call) + " 1 0 0", "the producer's draws were reordered across table swaps");
+}
+
 int main(int argc, char** argv) {
     try {
         if (argc > 1 && std::string(argv[1]) == "--bench") return HandoffBench();
@@ -1535,6 +1707,11 @@ int main(int argc, char** argv) {
         HandoffPolicyFollowsItsMeasuredCost();
         HandoffChargesTheLastProbeBlocksBacklog();
         HandoffPolicyDecidesFromTheCostItIsGiven();
+        InlineSpansRunOnTheOriginalTable();
+        SwitchFlipEndsTheInlineSpan();
+        UnwindAfterASpanStillSettles();
+        SharedTableKeepsTheEncoderEntries();
+        ForeignCallsDuringSwaps();
         std::cout << "command encoder tests passed\n";
         return 0;
     } catch (const std::exception& error) {

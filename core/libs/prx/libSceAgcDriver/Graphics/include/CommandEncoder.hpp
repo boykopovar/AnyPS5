@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_COMMANDENCODER_HPP
 
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -20,6 +21,7 @@
 #include <string>
 #include <thread>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace AgcDriver::Graphics {
@@ -125,6 +127,7 @@ public:
             return HandoffDecision{encode, encodedNs, inlineNs, ProbeBlock, span};
         }
         bool Encodes() const { return encode; }
+        std::uint64_t TakeSettled() { return probing ? 0 : span - std::exchange(settled, span); }
 
     private:
         bool probeEncodes() const { return ((probed / ProbeBlock) % 2 == 0) == encode; }
@@ -139,7 +142,7 @@ public:
     };
     static bool Enabled();
     static constexpr std::size_t Slots = 4;
-    static std::unique_ptr<CommandEncoder> Attach(VkDevice device, DeviceFunctions& table);
+    static std::unique_ptr<CommandEncoder> Attach(VkDevice device, DeviceFunctions& table, DeviceDispatch* dispatch = nullptr);
     ~CommandEncoder();
     CommandEncoder(const CommandEncoder&) = delete;
     CommandEncoder& operator=(const CommandEncoder&) = delete;
@@ -147,6 +150,20 @@ public:
     void Close(std::source_location where = std::source_location::current());
     bool Admit(Handoff handoff, std::source_location where = std::source_location::current());
     void EndInline() noexcept;
+    bool SpanWindow() noexcept {
+        if (spanRemaining == 0) return false;
+        if (RuntimeSwitches::Generation() != spanGeneration) {
+            spanRemaining = 0;
+            quiet = false;
+            return false;
+        }
+        --spanRemaining;
+        spanWindowCount.store(spanWindowCount.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+        inlinedCount.store(inlinedCount.load(std::memory_order_relaxed) + 1, std::memory_order_relaxed);
+        return true;
+    }
+    void StartSpan() noexcept;
+    bool Quiet() const { return quiet; }
     void Quiesce(std::source_location where = std::source_location::current()) noexcept { Quiesce(WaitSite::At(Wait::Quiesce, where)); }
     void Quiesce(WaitSite site) noexcept;
     bool Direct(const char* command) noexcept;
@@ -189,6 +206,9 @@ public:
         std::uint64_t parks = 0;
         std::uint64_t postNs = 0;
         std::uint64_t inlined = 0;
+        std::uint64_t spans = 0;
+        std::uint64_t spanWindows = 0;
+        std::uint64_t swaps = 0;
     };
     Statistics Counts() const;
     std::vector<SiteWaits> WaitsBySite() const;
@@ -198,9 +218,11 @@ public:
     static std::size_t LiveChunks();
     class UnwindQuiesce {
     public:
-        explicit UnwindQuiesce(CommandEncoder* encoder, std::source_location where = std::source_location::current()) : encoder(encoder), exceptions(std::uncaught_exceptions()), where(where) {}
+        explicit UnwindQuiesce(CommandEncoder* encoder, std::source_location where = std::source_location::current()) : encoder(encoder), exceptions(encoder != nullptr && !encoder->Quiet() ? std::uncaught_exceptions() : -1), where(where) {}
         ~UnwindQuiesce() {
-            if (encoder != nullptr && std::uncaught_exceptions() > exceptions) encoder->Quiesce(WaitSite::At(Wait::Unwind, where));
+            if (encoder == nullptr || encoder->Quiet()) return;
+            const int unwinding = std::uncaught_exceptions();
+            if (exceptions < 0 ? unwinding > 0 : unwinding > exceptions) encoder->Quiesce(WaitSite::At(Wait::Unwind, where));
         }
         UnwindQuiesce(const UnwindQuiesce&) = delete;
         UnwindQuiesce& operator=(const UnwindQuiesce&) = delete;
@@ -229,7 +251,8 @@ private:
         VkCommandBuffer commands;
         Recording* recording;
     };
-    CommandEncoder(VkDevice device, DeviceFunctions& table, std::size_t slot);
+    CommandEncoder(VkDevice device, DeviceFunctions& table, std::size_t slot, DeviceDispatch* dispatch);
+    void useTable(bool original) noexcept;
     static std::size_t claim();
     bool post() noexcept;
     std::byte* reserve(Run run, std::size_t bytes);
@@ -247,6 +270,16 @@ private:
     void note(const WaitSite& site, std::uint64_t ns, bool waited, bool flushed) noexcept;
     DeviceFunctions& table;
     DeviceFunctions real;
+    DeviceDispatch* dispatch = nullptr;
+    bool usingOriginal = false;
+    bool quiet = false;
+    std::uint64_t spanRemaining = 0;
+    std::uint64_t spanGeneration = 0;
+    enum class PendingSpan : std::uint8_t { None, Settled, Forced };
+    PendingSpan pendingSpan = PendingSpan::None;
+    std::atomic<std::uint64_t> spanCount{0};
+    std::atomic<std::uint64_t> spanWindowCount{0};
+    std::atomic<std::uint64_t> swapCount{0};
     VkDevice device = VK_NULL_HANDLE;
     std::size_t slot = Slots;
     std::vector<Window> windows;
