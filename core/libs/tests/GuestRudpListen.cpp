@@ -206,6 +206,16 @@ int main() {
     const int fresh = NewContext();
     Require(sceRudpBind(fresh, 5, 0, 2) == 0, "binding after sceRudpEnd failed");
     Require(listen(fresh, 1) == NoEventHandler, "the event handler survived sceRudpEnd");
+    Require(sceRudpSetEventHandler(Handler, nullptr) == 0 && listen(fresh, 1) == 0, "listen after sceRudpEnd failed");
+    Require(sceRudpSetOption(fresh, NonBlockOption, &blocking, sizeof(blocking)) == 0, "clearing the non-blocking option after sceRudpEnd failed");
+    int endedResult = 0;
+    int endedAccepted = -1;
+    std::thread endWaiter([&] { endedResult = accept(fresh, Handler, nullptr, &endedAccepted, nullptr, nullptr, nullptr); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    Require(sceRudpEnd() == 0, "sceRudpEnd with a waiting accept failed");
+    endWaiter.join();
+    Require(endedResult == Cancelled && endedAccepted == -1, "a blocking accept was not cancelled by sceRudpEnd");
+    Require(sceRudpInit_nid_postfix(pool.data(), static_cast<int>(pool.size())) == 0, "sceRudpInit after ending a waiting accept failed");
     Require(sceRudpEnd() == 0, "the last sceRudpEnd failed");
 
     std::puts("Rudp listen tests passed");
