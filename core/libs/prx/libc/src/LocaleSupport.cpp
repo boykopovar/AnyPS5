@@ -24,6 +24,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/SonyCrt.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "prx/libc/include/CodecvtUtf.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
 #include "prx/libc/GuestStringStorage.hpp"
 #include "SceTypes.hpp"
@@ -848,6 +849,38 @@ std::uintptr_t _ZTVSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE_ni
 std::uintptr_t _ZTVSt7num_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE_nid_postfix[17] {};
 std::uintptr_t _ZTVSt9money_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kMoneyGetCharVtableSlots] {};
 std::uintptr_t _ZTVSt9money_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kMoneyPutCharVtableSlots] {};
+std::uint64_t _ZNSt7codecvtIDsc9_MbstatetE2idE_nid_postfix = 0;
+std::uintptr_t _ZTVSt7codecvtIDsc9_MbstatetE_nid_postfix[kCodecvtUtfVtableSlots] {
+    0,
+    0,
+    reinterpret_cast<std::uintptr_t>(&CodecvtUtf16Destroy_nid_no_patch),
+    reinterpret_cast<std::uintptr_t>(&_ZNSt7codecvtIDsc9_MbstatetED0Ev_nid_postfix),
+    reinterpret_cast<std::uintptr_t>(&RetainFacet),
+    reinterpret_cast<std::uintptr_t>(&ReleaseFacet),
+    reinterpret_cast<std::uintptr_t>(&_ZNKSt7codecvtIDsc9_MbstatetE16do_always_noconvEv_nid_postfix),
+    reinterpret_cast<std::uintptr_t>(&CodecvtUtf16MaxLength_nid_no_patch),
+    reinterpret_cast<std::uintptr_t>(&_ZNKSt7codecvtIDsc9_MbstatetE11do_encodingEv_nid_postfix),
+    reinterpret_cast<std::uintptr_t>(&_ZNKSt7codecvtIDsc9_MbstatetE5do_inERS0_PKcS4_RS4_PDsS6_RS6__nid_postfix),
+    reinterpret_cast<std::uintptr_t>(&_ZNKSt7codecvtIDsc9_MbstatetE6do_outERS0_PKDsS4_RS4_PcS6_RS6__nid_postfix),
+    reinterpret_cast<std::uintptr_t>(&CodecvtUtf16Unshift_nid_no_patch),
+    reinterpret_cast<std::uintptr_t>(&CodecvtUtf16Length_nid_no_patch),
+};
+std::uint64_t _ZNSt7codecvtIDic9_MbstatetE2idE_nid_postfix = 0;
+std::uintptr_t _ZTVSt7codecvtIDic9_MbstatetE_nid_postfix[kCodecvtUtfVtableSlots] {
+    0,
+    0,
+    reinterpret_cast<std::uintptr_t>(&_ZNSt7codecvtIDic9_MbstatetED1Ev_nid_postfix),
+    reinterpret_cast<std::uintptr_t>(&_ZNSt7codecvtIDic9_MbstatetED0Ev_nid_postfix),
+    reinterpret_cast<std::uintptr_t>(&RetainFacet),
+    reinterpret_cast<std::uintptr_t>(&ReleaseFacet),
+    reinterpret_cast<std::uintptr_t>(&_ZNKSt7codecvtIDic9_MbstatetE16do_always_noconvEv_nid_postfix),
+    reinterpret_cast<std::uintptr_t>(&CodecvtUtf32MaxLength_nid_no_patch),
+    reinterpret_cast<std::uintptr_t>(&CodecvtUtf32Encoding_nid_no_patch),
+    reinterpret_cast<std::uintptr_t>(&_ZNKSt7codecvtIDic9_MbstatetE5do_inERS0_PKcS4_RS4_PDiS6_RS6__nid_postfix),
+    reinterpret_cast<std::uintptr_t>(&_ZNKSt7codecvtIDic9_MbstatetE6do_outERS0_PKDiS4_RS4_PcS6_RS6__nid_postfix),
+    reinterpret_cast<std::uintptr_t>(&CodecvtUtf32Unshift_nid_no_patch),
+    reinterpret_cast<std::uintptr_t>(&_ZNKSt7codecvtIDic9_MbstatetE9do_lengthERS0_PKcS4_m_nid_postfix),
+};
 
 std::streamoff _ZSt7_BADOFF_nid_postfix = -1;
 std::fpos_t _ZSt4_Fpz_nid_postfix {};

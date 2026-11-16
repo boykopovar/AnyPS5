@@ -2,6 +2,7 @@
 
 #include "prx/libc/include/specifics/linux/ElfTypes.hpp"
 #include "prx/libc/include/specifics/itanium/UnwindAbi.hpp"
+#include "prx/libc/include/CodecvtUtf.hpp"
 #include "prx/libc/include/MallocManagedSize.hpp"
 #include "prx/libc/include/GuestTime.hpp"
 #include "prx/libc/include/GuestLocale.hpp"

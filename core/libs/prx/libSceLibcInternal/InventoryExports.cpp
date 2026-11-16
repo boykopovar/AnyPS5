@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceLibcInternal/include/InventoryExports.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/CodecvtUtf.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceLibcInternal/include/InventoryExports6.hpp"
 #include <mutex>
@@ -414,8 +415,8 @@ int APS5_VABI libSceLibcInternalInventory_089_nid_no_patch() {
 }
 APS5_EXPORT("0TADyPWrobI", libSceLibcInternalInventory_089_nid_no_patch);
 
-int APS5_VABI libSceLibcInternalInventory_090_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI libSceLibcInternalInventory_090_nid_no_patch(void* self) {
+    CodecvtUtf32Delete_nid_no_patch(self);
 }
 APS5_EXPORT("vwMx2NhWdLw", libSceLibcInternalInventory_090_nid_no_patch);
 
@@ -424,8 +425,8 @@ void APS5_VABI libSceLibcInternalInventory_091_nid_no_patch(void* self) {
 }
 APS5_EXPORT("TuhGCIxgLvA", libSceLibcInternalInventory_091_nid_no_patch);
 
-int APS5_VABI libSceLibcInternalInventory_092_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI libSceLibcInternalInventory_092_nid_no_patch(void* self) {
+    CodecvtUtf16Delete_nid_no_patch(self);
 }
 APS5_EXPORT("zYHryd8vd0w", libSceLibcInternalInventory_092_nid_no_patch);
 
