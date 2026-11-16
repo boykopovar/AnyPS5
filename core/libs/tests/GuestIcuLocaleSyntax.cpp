@@ -76,7 +76,14 @@ void CheckVariant() {
     Require(std::all_of(buffer.begin(), buffer.end(), [](char value) { return value == 'Q'; }));
     RequireThrow<std::invalid_argument>([&] { uloc_getVariant_nid_postfix("en_US", buffer.data(), 32, nullptr); });
     status = 0;
-    RequireThrow<std::runtime_error>([&] { uloc_getVariant_nid_postfix(nullptr, buffer.data(), 32, &status); });
+    std::array<char, 32> expected{};
+    const std::int32_t expectedLength = uloc_getVariant_nid_postfix(uloc_getDefault(), expected.data(), 32, &status);
+    Require(status <= 0);
+    status = 0;
+    buffer.fill('Q');
+    Require(uloc_getVariant_nid_postfix(nullptr, buffer.data(), 32, &status) == expectedLength && status <= 0);
+    Require(std::equal(buffer.begin(), buffer.begin() + expectedLength + 1, expected.begin()));
+    status = 0;
     RequireThrow<std::invalid_argument>([&] { uloc_getVariant_nid_postfix("en_US", nullptr, 1, &status); });
 }
 
