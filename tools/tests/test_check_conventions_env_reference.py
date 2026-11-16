@@ -271,5 +271,10 @@ class EnvReferenceDiffTests(unittest.TestCase):
                                                               "APS5_DOCUMENTED is still read by the code but this pull request removes its row")])
 
 
+class LibraryNameTests(unittest.TestCase):
+    def test_library_names_the_prx_library_folder(self):
+        self.assertEqual(check_conventions.library('core/libs/prx/libX/Export.cpp'), 'libX')
+
+
 if __name__ == "__main__":
     unittest.main()
