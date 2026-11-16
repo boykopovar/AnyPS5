@@ -123,7 +123,7 @@ static void CheckInputCommands() {
     const auto lifted = commands.Poll(4201000);
     Require(lifted.hasTouch && !lifted.touchActive && lifted.touchId == 127 && lifted.buttons == 0);
     std::uint64_t poll = 4301000;
-    for (const char* invalid : {"touch(1920,0,0,1)", "touch(0,943,0,1)", "touch(0,0,128,1)",
+    for (const char* invalid : {"touch(1920,0,0,1)", "touch(0,1080,0,1)", "touch(0,0,128,1)",
             "touch(0,0,0,2)", "touch(-1,0,0,1)", "touch(0,0,0)", "touch(0,0,0,1,1)",
             "touch(0,,0,1)", "touch(0,0,0,1)x", "touch(0,0,0,1) trailing"}) {
         std::ofstream(path) << "13 0 5000 " << invalid << '\n';
