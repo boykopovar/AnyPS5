@@ -128,6 +128,17 @@ Events start relative to when the application first observes the new command. Bu
 
 The runtime evaluates scheduled events at each controller read, including their automatic releases. A new pulse or timeline replaces the remaining sequence. Physical controller buttons still add to injected buttons. Existing commands at the application's first controller read are ignored. This schedules wall-time input: events can be missed while the application is not reading its controller, and it does not reproduce frame timing or game state. Use gaps and holds long enough for the title's input loop.
 
+## Recording and replaying controller input
+
+Set `APS5_PAD_RECORD` to a file path to record what a title reads from controller port 0 while you play: every change of its buttons, sticks and analog triggers, whatever device produced it, timed in milliseconds from the title's first controller read. Set `APS5_PAD_REPLAY` to that file on a later run to feed the same states back at the same times from that run's first read, without any device. A replay replaces port 0's buttons, sticks and analog triggers at every read; after the last recorded change it keeps the last state. A recording path that cannot be written, or a replay file that cannot be read or is not in the format below, stops the title at its first controller read with an error naming the variable.
+
+```sh
+APS5_PAD_RECORD=/tmp/fight.txt ./app.elf
+APS5_PAD_REPLAY=/tmp/fight.txt APS5_NO_PAD_INPUT=1 ./app.elf
+```
+
+The file starts with the line `APS5_PAD_RECORDING 1`, followed by one line per change: the time in milliseconds, the buttons in hexadecimal (the values of `pad_input.py`), the left and right stick x and y, and L2 and R2, each 0 to 255. A replay follows the recorded times, not the title's frames: a run that loads more slowly or runs at another frame rate, or a title that draws different random numbers, drifts from the recorded session, so compare runs by scene rather than by second.
+
 ## Controller vibration strength
 
 Vibration is not part of the input mapping file. The host-side strength of a controller's vibration is set with `ANYPS5_RUMBLE`, described in [Controller vibration strength](USAGE.md#controller-vibration-strength); `0` turns it off for every connected controller. Vibration also pauses while the window has no focus unless `ANYPS5_RUMBLE_ON_FOCUS_LOSS=0` is set, see [Vibration while the window has no focus](USAGE.md#vibration-while-the-window-has-no-focus).
@@ -211,3 +222,8 @@ The translation button selects one of 22 interface and FAQ languages. First visi
 Keyboard capture converts physical browser key codes to SDL scancode names. Escape cancels capture; select Escape manually to assign it. Composition, ambiguous keys and some browser or system shortcuts require manual selection. Names containing `#` or `;` cannot be exported because those characters start INI comments. The key catalogue follows SDL commit `4b69833bc54abf3dd3288d4aa7afbba527775e5b`. The source-contract tests compare actions, restrictions and defaults with the current native input code.
 
 For static hosting, serve `index.html`, `styles.css`, `app.js`, `mapping.js`, `keys.js`, `capture.js`, `validation.js`, `i18n.js` and `dropdown.js` from one directory. The configurator is not published on the project's GitHub Pages site yet.
+
+## Checking a timeline without a controller
+
+- `tools/preview_pad_timeline.py <timeline> [--repeat N] [--gap-ms MS] [--json]` validates a controller timeline and previews it without touching a controller command file. `--json` prints the preview as JSON.
+- `tools/preview_pad_input.py <path> <button> [--hold-ms MS] [--left-stick X Y] [--right-stick X Y] [--touch X Y ID ACTIVE]` prints one controller pulse without modifying the command file at `<path>`.
