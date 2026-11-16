@@ -1,3 +1,4 @@
+import collections
 import contextlib
 import io
 import os
@@ -297,6 +298,23 @@ class RebaseDiffTextTests(unittest.TestCase):
 class CountHelperTests(unittest.TestCase):
     def test_default_onto_returns_an_explicit_name_without_asking_git(self):
         self.assertEqual(rebase_verify.default_onto(Path("."), "origin/main"), "origin/main")
+
+    def test_commits_and_people_count_the_commits_between_two_refs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_git(root, "init", "-q")
+            run_git(root, "-c", "user.name=Base", "-c", "user.email=base@example.invalid",
+                    "commit", "-q", "--allow-empty", "-m", "base")
+            base = run_git(root, "rev-parse", "HEAD").strip()
+            for name, email in (("Alice", "alice@example.invalid"), ("Bob", "bob@example.invalid"),
+                                ("Alice", "alice@example.invalid")):
+                run_git(root, "-c", f"user.name={name}", "-c", f"user.email={email}",
+                        "commit", "-q", "--allow-empty", "-m", f"change by {name}")
+            tip = run_git(root, "rev-parse", "HEAD").strip()
+            self.assertEqual(rebase_verify.commits(root, base, tip), 3)
+            self.assertEqual(rebase_verify.people(root, base, tip), collections.Counter({
+                "Alice <alice@example.invalid>\x1fchange by Alice": 2,
+                "Bob <bob@example.invalid>\x1fchange by Bob": 1}))
 
 
 if __name__ == "__main__":
