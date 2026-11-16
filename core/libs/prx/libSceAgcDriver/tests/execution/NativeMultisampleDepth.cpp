@@ -538,7 +538,7 @@ public:
     }
     ~Fetch() { release(); }
     void Run(VkCommandBuffer commands, std::uint32_t groups) const {
-        context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+        context.BindComputePipeline(commands, pipeline);
         context.Function<PFN_vkCmdBindDescriptorSets>("vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, layout, 0u, 1u, &set, 0u, nullptr);
         const auto push = context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants");
         const auto dispatch = context.Function<PFN_vkCmdDispatch>("vkCmdDispatch");
@@ -830,9 +830,11 @@ public:
         begin.framebuffer = framebuffer;
         begin.renderArea = {{0, 0}, extent};
         context.Function<PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
+        CommandState state;
+        state.Begin(commands, false);
         for (std::uint32_t sample = 0u; sample < samples; ++sample) {
             const auto value = offset + static_cast<float>(sample + 1u) / 16.0f;
-            context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines[sample]);
+            state.BindPipeline(context, pipelines[sample], 0);
             context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0u, 4u, &value);
             context.Function<PFN_vkCmdDraw>("vkCmdDraw")(commands, 3u, 1u, 0u, 0u);
         }
@@ -847,16 +849,18 @@ public:
         begin.framebuffer = framebuffer;
         begin.renderArea = {{0, 0}, extent};
         context.Function<PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
+        CommandState state;
+        state.Begin(commands, false);
         for (std::uint32_t sample = 0u; sample < samples; ++sample) {
             const auto value = offset + static_cast<float>(sample + 1u) / 16.0f;
-            context.Function<PFN_vkCmdBindPipeline>("vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines[sample]);
+            state.BindPipeline(context, pipelines[sample], 0);
             context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0u, 4u, &value);
             for (std::uint32_t row = extent.height; row-- > 0u;) {
                 for (std::uint32_t column = extent.width; column-- > 0u;) {
                     const auto x = column, y = row;
                     const VkRect2D scissor{{static_cast<std::int32_t>(x), static_cast<std::int32_t>(y)}, {1u, 1u}};
-                    context.Function<PFN_vkCmdSetScissor>("vkCmdSetScissor")(commands, 0u, 1u, &scissor);
-                    context.Function<PFN_vkCmdSetStencilReference>("vkCmdSetStencilReference")(commands, VK_STENCIL_FACE_FRONT_AND_BACK, reference(x, y, sample));
+                    state.SetScissor(context, scissor);
+                    state.SetStencilReference(context, VK_STENCIL_FACE_FRONT_AND_BACK, reference(x, y, sample));
                     context.Function<PFN_vkCmdDraw>("vkCmdDraw")(commands, 3u, 1u, 0u, 0u);
                 }
             }
@@ -1628,7 +1632,7 @@ void CheckStorageAliasRetirement() {
     std::puts("cached storage span retires only intersecting native depth owners");
 }
 
-enum class ClearFault { None, PartialStore, CpuWrite, DepthWrite, BadMetadata, UnprovenDispatch, PendingWrite, Overlap, PossibleStore, CompletedPossibleStore, DriverDispatch, ImportWindowWrite, FillDuringClear, DriverBufferDispatch };
+enum class ClearFault { None, PartialStore, CpuWrite, DepthWrite, BadMetadata, UnprovenDispatch, PendingWrite, Overlap, PossibleStore, CompletedPossibleStore, DriverDispatch, ImportWindowWrite, FillDuringClear, DriverBufferDispatch, SupersededClear };
 enum class ClearSource { HtileDispatch, Fill, QueuedFill };
 
 void CheckClearDispatch() {
@@ -1877,6 +1881,15 @@ void CheckDepthTarget(Context context, VkFormat format, std::uint32_t fragments,
                             TargetRefuses([&] { RequireNoResidentDepthRead_nid_no_patch(target.htileAddress, metadataBytes, std::pair{target.htileAddress, static_cast<std::size_t>(metadataBytes)}); }, "sample-preserving guest publication");
                         }
                         if (fault == ClearFault::Overlap) NoteHtileDepthClear(target.htileAddress, static_cast<std::size_t>(metadataBytes), nativeBytes);
+                        if (fault == ClearFault::SupersededClear) {
+                            QueueHtileDepthClear(target.htileAddress, static_cast<std::size_t>(metadataBytes));
+                            recorder.NotePendingWrite(target.htileAddress, static_cast<std::size_t>(metadataBytes));
+                            Require(NoteHtileDepthClear(target.htileAddress, static_cast<std::size_t>(metadataBytes), nativeBytes), "a superseding native HTILE clear dispatch was not noted");
+                            ArmHtileDepthClear(target.htileAddress, static_cast<std::size_t>(metadataBytes));
+                            QueueHtileDepthClear(target.htileAddress, static_cast<std::size_t>(metadataBytes));
+                            recorder.NotePendingWrite(target.htileAddress, static_cast<std::size_t>(metadataBytes));
+                            CompleteHtileDepthClear(target.htileAddress, static_cast<std::size_t>(metadataBytes));
+                        }
                         const auto storedBytes = fault == ClearFault::PartialStore ? 4u : static_cast<std::size_t>(metadataBytes);
                         if (fault == ClearFault::PossibleStore || fault == ClearFault::CompletedPossibleStore) {
                             const auto generation = AgcDriver::GuestMemory::TrackerGeneration();
@@ -1899,7 +1912,7 @@ void CheckDepthTarget(Context context, VkFormat format, std::uint32_t fragments,
                         AgcDriver::GuestMemory::StoreOwnBytes(target.htileAddress, static_cast<std::size_t>(metadataBytes), [&] {
                             for (std::size_t i = 0u; i < metadataBytes / 4u; ++i) std::memcpy(metadata.Data() + i * 4u, &queuedPattern, 4u);
                         });
-                        QueueTargetFill(context, recorder, target.htileAddress, static_cast<std::size_t>(metadataBytes), queuedPattern);
+                        QueueTargetWordFill(context, recorder, target.htileAddress, static_cast<std::size_t>(metadataBytes), queuedPattern);
                         NoteDepthMetadataFill(target.htileAddress, static_cast<std::size_t>(metadataBytes), queuedPattern);
                     } else {
                         NoteDepthMetadataFill(target.htileAddress, static_cast<std::size_t>(metadataBytes), clearPattern);
@@ -3871,6 +3884,105 @@ void CheckOverwrittenPlanes(Context context, std::uint32_t samples, OverwrittenP
     std::printf("Native depth overwritten planes samples=%u mode=%u: imported after its first draw wrote every sample, sampled and published\n", samples, static_cast<std::uint32_t>(mode));
 }
 
+void CheckOverwriteOverStorage(Context context, std::uint32_t samples, bool overwrites) {
+    constexpr VkExtent2D extent{200u, 130u};
+    constexpr std::uint8_t reference = 0x21u;
+    const auto depthBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, samples));
+    const auto stencilBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 1u, samples));
+    TargetMemory memory(depthBytes, true), stencil(stencilBytes, true);
+    const auto one = std::bit_cast<std::uint32_t>(1.0f);
+    for (std::size_t offset = 0u; offset < depthBytes; offset += 4u) std::memcpy(memory.Data() + offset, &one, 4u);
+    std::memset(stencil.Data(), 0x5a, stencilBytes);
+    DepthTarget target{memory.Address(), stencil.Address(), extent, VK_FORMAT_D32_SFLOAT_S8_UINT, 1.0f, 0u, 0u, false, samples};
+    target.depthSwizzle = 24u;
+    target.pipeBankXor = samples == 2u ? 0u : 0x8c00u;
+    Recorder recorder(context);
+    recorder.Activate();
+    std::unique_ptr<DepthRaster> first, second;
+    std::shared_ptr<StorageTexture> image;
+    std::shared_ptr<Texture> texture;
+    struct Cleanup {
+        Recorder& recorder;
+        Context context;
+        ~Cleanup() { recorder.Sync(); ClearCachedTextures(context.device); ClearDepthSurfaces(context.device); ClearMultisampleTargets(context.device); }
+    } cleanup{recorder, context};
+    const auto view = DepthSurfaceView(context, target);
+    Require(view != VK_NULL_HANDLE && DepthSurfaceAt(target.address), "the published-owner fixture was not imported");
+    first = std::make_unique<DepthRaster>(context, target, view, StencilUse{VK_COMPARE_OP_ALWAYS, VK_STENCIL_OP_REPLACE, reference}, false, false);
+    NoteDepthSurfaceWrite(context, target);
+    first->Run(recorder.Commands(), 0.25f);
+    std::array<std::byte, 1> probe;
+    AgcDriver::GuestMemory::Read(target.stencilAddress, probe);
+    constexpr std::size_t skipped = 65536u;
+    GuestTextureResource storage{};
+    storage.baseAddress = memory.Address() + skipped;
+    storage.width = 256u;
+    storage.height = static_cast<std::uint32_t>((depthBytes - skipped) / 1024u);
+    storage.mipCount = storage.allocatedMipCount = 1u;
+    storage.dimension = TextureDimension::k2D;
+    storage.tileMode = TextureTileMode::kLinear;
+    storage.format = 22u;
+    storage.dstSelX = 4u;
+    storage.dstSelY = storage.dstSelZ = 0u;
+    storage.dstSelW = 1u;
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> written{{{storage.baseAddress, storage.baseAddress + depthBytes - skipped}}};
+    RequireNoMultisampleTarget(storage.baseAddress, depthBytes - skipped, "a storage image access");
+    RetireCoveredDepthSurfaces(context.device, written, {});
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        image = StorageTexture::Create(context, *context.detiler, storage, 0u);
+        const auto commands = recorder.Commands();
+        recorder.Keep(image);
+        const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0u, 1u, 0u, 1u};
+        VkClearColorValue value{};
+        value.uint32[0] = 0x3c3c3c3cu;
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+        context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, image->Image(), VK_IMAGE_LAYOUT_GENERAL, &value, 1u, &range);
+        RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
+        image->MarkWholeWritten();
+    }
+    recorder.Sync();
+    Require(StorageTexture::AnyPendingOverlaps(written), "the storage results over the published owner were not left pending");
+    if (!overwrites) {
+        Require(DepthSurfaceView(context, target) == view, "a published owner under storage results was not reused by a draw that does not overwrite it");
+        second = std::make_unique<DepthRaster>(context, target, view, StencilUse{VK_COMPARE_OP_ALWAYS, VK_STENCIL_OP_REPLACE, reference}, false, false);
+        NoteDepthSurfaceWrite(context, target);
+        second->Run(recorder.Commands(), 0.5f);
+        TargetRefuses([&] { AgcDriver::GuestMemory::Read(target.stencilAddress, probe); }, "native multisample depth publication over pending storage image writes is not implemented");
+        std::printf("Native depth published owner under storage results samples=%u: a draw that does not prove an overwrite still refuses its publication\n", samples);
+        return;
+    }
+    const auto fresh = DepthSurfaceViewWithStencilWriteIntent(context, target, true, true, true, reference);
+    Require(fresh != VK_NULL_HANDLE && fresh != view && DepthSurfaceAt(target.address), "an overwriting draw over a published owner under storage results did not start a new owner");
+    Require(!StorageTexture::AnyPendingOverlaps(written), "the storage results under the new owner were not stored before its import");
+    second = std::make_unique<DepthRaster>(context, target, fresh, StencilUse{VK_COMPARE_OP_ALWAYS, VK_STENCIL_OP_REPLACE, reference}, false, false);
+    NoteDepthSurfaceWrite(context, target);
+    second->Run(recorder.Commands(), 0.5f);
+    recorder.Sync();
+    auto words = DepthSampleWords(target);
+    words[6] &= ~((1u << 19u) | (1u << 21u));
+    texture = DepthSurfaceTexture(context, words, DecodeTextureResource(words), VkComponentMapping{});
+    Require(texture != nullptr && texture->View() != VK_NULL_HANDLE, "the new owner over stored storage results was not sampled natively after its overwriting draw");
+    const auto count = extent.width * extent.height * samples;
+    Buffer output(context, (count + 2u) * 16u, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
+    {
+        const Fetch fetch(context, *texture, output, FetchShader(extent.width, extent.height, samples, false, true));
+        CommandBatch batch(context);
+        fetch.Run(batch.Handle(), count);
+        RecordMemoryBarrier(context, batch.Handle(), VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+        batch.SubmitAndWait();
+    }
+    output.Invalidate();
+    for (std::uint32_t index = 0u; index < count; ++index) {
+        float sampled = 0.0f;
+        std::memcpy(&sampled, output.Bytes().data() + (index + 1u) * 16u, 4u);
+        Require(sampled == 0.5f + static_cast<float>(index % samples + 1u) / 16.0f, "the new owner does not hold the samples of its overwriting draw at element " + std::to_string(index));
+    }
+    texture.reset();
+    AgcDriver::GuestMemory::Read(target.stencilAddress, probe);
+    std::printf("Native depth published owner under storage results samples=%u: an overwriting draw started a new owner over the stored results\n", samples);
+}
+
 void CheckSingleSampleView(Context context, std::uint32_t samples) {
     constexpr VkExtent2D extent{200u, 130u};
     const auto depthBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, samples));
@@ -4229,14 +4341,14 @@ void CheckStoredRepeatFill(Context context, std::uint32_t samples) {
     reset(0.0f);
     NoteDepthMetadataFill(target.htileAddress, metadataBytes, 0u);
     NoteDepthMetadataFill(target.htileAddress, metadataBytes, 0u);
-    TargetRefuses([&] { CachedSampledTexture(context, words); }, "overlapping native multisample depth clear transitions are not implemented");
+    TargetRefuses([&] { CachedSampledTexture(context, words); }, "native multisample depth clear has no complete tracked HTILE store");
 
     reset(0.0f);
     target.clearDepth = 1.0f;
     NoteDepthMetadataFill(target.htileAddress, metadataBytes, one);
     store(one, 4u);
     NoteDepthMetadataFill(target.htileAddress, metadataBytes, one);
-    TargetRefuses([&] { CachedSampledTexture(context, words); }, "overlapping native multisample depth clear transitions are not implemented");
+    TargetRefuses([&] { CachedSampledTexture(context, words); }, "native multisample depth clear has no complete tracked HTILE store");
 
     reset(0.0f);
     target.clearDepth = 1.0f;
@@ -4253,7 +4365,69 @@ void CheckStoredRepeatFill(Context context, std::uint32_t samples) {
     store(one, metadataBytes);
     NoteDepthMetadataFill(target.htileAddress, metadataBytes, one);
     sample(1.0f);
-    std::printf("Native D32S8 with HTILE, samples=%u: a stored whole-HTILE fill was accepted, an unstored or partially stored one was refused and a stored refill after a draw was accepted\n", samples);
+
+    reset(0.0f);
+    target.clearDepth = 1.0f;
+    NoteDepthMetadataFill(target.htileAddress, metadataBytes, 0u);
+    NoteDepthMetadataFill(target.htileAddress, metadataBytes, one);
+    store(one, metadataBytes);
+    sample(1.0f);
+
+    reset(0.0f);
+    target.clearDepth = 1.0f;
+    QueueTargetWordFill(context, recorder, target.htileAddress, metadataBytes, one);
+    NoteDepthMetadataFill(target.htileAddress, metadataBytes, one);
+    QueueTargetWordFill(context, recorder, target.htileAddress, metadataBytes, one);
+    NoteDepthMetadataFill(target.htileAddress, metadataBytes, one);
+    sample(1.0f);
+
+    reset(0.0f);
+    QueueTargetWordFill(context, recorder, stencil.Address(), stencilBytes, 0u);
+    NoteDepthMetadataFill(stencil.Address(), stencilBytes, 0u);
+    QueueTargetWordFill(context, recorder, stencil.Address(), stencilBytes, 0u);
+    NoteDepthMetadataFill(stencil.Address(), stencilBytes, 0u);
+    sample(0.0f);
+    std::printf("Native D32S8 with HTILE, samples=%u: a stored whole-HTILE fill was accepted, an unstored or partially stored one was refused, a stored refill after a draw was accepted, a superseding fill was applied and repeated recorded HTILE and stencil fills were consumed before a sync\n", samples);
+}
+
+void CheckElidedFillOverArmedClear(Context context, std::uint32_t samples) {
+    constexpr VkExtent2D extent{5u, 3u};
+    const auto depthBytes = static_cast<std::size_t>(MultisampledDepthBytes_nid_no_patch(extent, 4u, samples));
+    const auto metadataBytes = static_cast<std::size_t>(HtileMetadataBytes(extent));
+    TargetMemory memory(depthBytes), metadata(65536u);
+    std::memset(memory.Data(), 0, depthBytes);
+    const std::uint32_t pattern = 0xfffffff0u;
+    for (std::size_t offset = 0u; offset + 4u <= metadataBytes; offset += 4u) std::memcpy(metadata.Data() + offset, &pattern, 4u);
+    DepthTarget target{memory.Address(), 0u, extent, VK_FORMAT_D32_SFLOAT, 1.0f, 0u, metadata.Address(), false, samples};
+    target.depthSwizzle = 24u;
+    target.iterate256 = target.htilePipeAligned = target.htileDepthOnly = true;
+    Recorder recorder(context);
+    recorder.Activate();
+    struct Cleanup {
+        Recorder& recorder;
+        Context context;
+        ~Cleanup() { recorder.Sync(); ClearCachedTextures(context.device); ClearDepthSurfaces(context.device); }
+    } cleanup{recorder, context};
+    const auto words = DepthSampleWords(target);
+    Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE, "the elided fill over an armed clear fixture has no attachment view");
+    auto texture = CachedSampledTexture(context, words);
+    Require(texture != nullptr, "the elided fill over an armed clear fixture was not imported");
+    recorder.Sync();
+    Require(NoteHtileDepthClear(target.htileAddress, metadataBytes, metadataBytes), "a native HTILE clear dispatch over a stored plane was not noted");
+    ArmHtileDepthClear(target.htileAddress, metadataBytes);
+    recorder.NotePendingWrite(target.htileAddress, metadataBytes);
+    CompleteHtileDepthClear(target.htileAddress, metadataBytes);
+    QueueTargetWordFill(context, recorder, target.htileAddress, metadataBytes, pattern);
+    NoteDepthMetadataFill(target.htileAddress, metadataBytes, pattern);
+    Require(CachedSampledTexture(context, words) != nullptr, "a recorded fill over an armed native HTILE clear dispatch was not consumed");
+    recorder.Sync();
+    Require(NoteHtileDepthClear(target.htileAddress, metadataBytes, metadataBytes), "a second native HTILE clear dispatch was not noted");
+    ArmHtileDepthClear(target.htileAddress, metadataBytes);
+    recorder.NotePendingWrite(target.htileAddress, metadataBytes);
+    CompleteHtileDepthClear(target.htileAddress, metadataBytes);
+    NoteDepthMetadataFill(target.htileAddress, metadataBytes, pattern);
+    TargetRefuses([&] { CachedSampledTexture(context, words); }, "external GPU writes over native multisample depth are not implemented");
+    std::printf("Native D32 with HTILE, samples=%u: a recorded fill superseded an armed clear dispatch while an elided fill kept its pending-write refusal\n", samples);
 }
 
 
@@ -4341,11 +4515,12 @@ int main(int argc, char** argv) {
                      std::pair{ClearFault::PossibleStore, "no complete tracked HTILE store"},
                      std::pair{ClearFault::UnprovenDispatch, "incomplete or unproven"},
                      std::pair{ClearFault::PendingWrite, "external GPU writes"},
-                     std::pair{ClearFault::Overlap, "overlapping native multisample depth"},
-                     std::pair{ClearFault::FillDuringClear, "metadata fill over a pending HTILE clear dispatch"}}) {
+                     std::pair{ClearFault::Overlap, "native multisample depth clear has not been recorded"}}) {
                 TargetRefuses([&] { CheckDepthTarget(context, VK_FORMAT_D32_SFLOAT, 4u, false, true, false, fault, ClearSource::HtileDispatch, lock); }, expected);
                 std::printf("Native depth clear fault=%u refused: %s\n", static_cast<std::uint32_t>(fault), expected);
             }
+            CheckDepthTarget(context, VK_FORMAT_D32_SFLOAT, 4u, false, true, false, ClearFault::FillDuringClear, ClearSource::HtileDispatch, lock);
+            std::puts("Native depth clear superseded by a metadata fill before arming was accepted");
             for (const auto& [fault, expected] : std::array{
                      std::pair{ClearFault::CpuWrite, "CPU writes raced"},
                      std::pair{ClearFault::DepthWrite, "guest writes"},
@@ -4404,6 +4579,19 @@ int main(int argc, char** argv) {
             }
             return checked != 0u ? 0 : VulkanTestSkipped;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--overwritten-published") {
+            TextureDetiler detiler(context);
+            auto publishing = context;
+            publishing.detiler = &detiler;
+            std::uint32_t checked = 0u;
+            for (const auto samples : {2u, 4u, 8u}) {
+                if (!DepthSupported(context, VK_FORMAT_D32_SFLOAT_S8_UINT, samples) || (context.limits.framebufferStencilSampleCounts & samples) == 0u) continue;
+                CheckOverwriteOverStorage(publishing, samples, false);
+                CheckOverwriteOverStorage(publishing, samples, true);
+                ++checked;
+            }
+            return checked != 0u ? 0 : VulkanTestSkipped;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--single-sample-view") {
             TextureDetiler detiler(context);
             auto publishing = context;
@@ -4435,6 +4623,7 @@ int main(int argc, char** argv) {
             for (const auto samples : {2u, 4u, 8u}) {
                 if (!supported(samples)) { ++unavailable; continue; }
                 CheckStoredRepeatFill(context, samples);
+                if (DepthSupported(context, VK_FORMAT_D32_SFLOAT, samples)) CheckElidedFillOverArmedClear(context, samples);
                 ++checked;
             }
             std::printf("Native depth stored repeated HTILE fill cases checked=%u unavailable=%u\n", checked, unavailable);
@@ -4488,6 +4677,7 @@ int main(int argc, char** argv) {
                 }
             }
             CheckDepthTarget(context, VK_FORMAT_D32_SFLOAT, 4u, false, true, false, ClearFault::CompletedPossibleStore, ClearSource::HtileDispatch, lock);
+            CheckDepthTarget(context, VK_FORMAT_D32_SFLOAT, 4u, false, true, false, ClearFault::SupersededClear, ClearSource::HtileDispatch, lock);
             ++checked;
             CheckDepthTarget(context, VK_FORMAT_D32_SFLOAT, 4u, false, true, false, ClearFault::ImportWindowWrite, ClearSource::HtileDispatch, lock);
             ++checked;
@@ -4520,11 +4710,12 @@ int main(int argc, char** argv) {
                      std::tuple{StencilFault::FillPartialStore, true, "no complete tracked HTILE store"},
                      std::tuple{StencilFault::FillCpuWrite, true, "CPU writes raced"},
                      std::tuple{StencilFault::FillStencilWrite, true, "guest writes over native multisample depth"},
-                     std::tuple{StencilFault::FillOverlap, true, "overlapping native multisample depth"},
                      std::tuple{StencilFault::MaskClear, true, "HTILE mask clear of a stencil surface"}}) {
                 TargetRefuses([&] { CheckStencilTarget(context, 4u, false, filling, fault); }, expected);
                 std::printf("Native depth-stencil fault=%u refused: %s\n", static_cast<std::uint32_t>(fault), expected);
             }
+            CheckStencilTarget(context, 4u, false, true, StencilFault::FillOverlap);
+            std::puts("Native depth-stencil superseding repeated HTILE fill was accepted");
             std::printf("Native depth-stencil cases checked=%u unavailable=%u\n", checked, unavailable);
             return 0;
         }
@@ -4584,8 +4775,8 @@ int main(int argc, char** argv) {
             TargetRefuses([&] { CheckGhostSequence(context, 4u, GhostFill::Stored, GhostFault::WrittenReach); }, "external GPU writes over native multisample depth are not implemented");
             std::puts("Native depth after HTILE and stencil plane fills refused a pending raw-pointer reach whose use stored into the depth plane: external GPU writes over native multisample depth are not implemented");
             for (const auto path : {GhostFill::Stored, GhostFill::QueuedNotedTwice}) {
-                TargetRefuses([&] { CheckGhostSequence(context, 4u, path, GhostFault::RepeatedStencilNote); }, "overlapping native multisample stencil plane fills are not implemented");
-                std::printf("Native depth after HTILE and stencil plane fills path=%u refused a stencil plane fill noted twice without a write between: overlapping native multisample stencil plane fills are not implemented\n", static_cast<std::uint32_t>(path));
+                CheckGhostSequence(context, 4u, path, GhostFault::RepeatedStencilNote);
+                std::printf("Native depth after HTILE and stencil plane fills path=%u superseded a stencil plane fill noted twice without a write between\n", static_cast<std::uint32_t>(path));
             }
             for (const auto path : {GhostFill::Stored, GhostFill::QueuedAfterNote}) {
                 TargetRefuses([&] { CheckGhostSequence(context, 4u, path, GhostFault::CreationRefused); }, "native multisample depth HTILE that is not pipe-aligned holds more than one word");

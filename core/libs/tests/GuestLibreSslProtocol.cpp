@@ -4,10 +4,12 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <exception>
 #include <filesystem>
 #include <initializer_list>
@@ -17,6 +19,12 @@
 #include <vector>
 
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
 #include <windows.h>
 #else
 #include <dlfcn.h>
@@ -39,6 +47,52 @@ template<typename TAction> void RequireInvalidArgument(TAction action, std::sour
     try { action(); } catch (const std::invalid_argument&) { return; } catch (const std::exception&) {}
     Require(false, location);
 }
+
+template<typename TAction> void RequireNotImplemented(TAction action, std::source_location location = std::source_location::current()) {
+    try { action(); } catch (const std::runtime_error&) { return; }
+    Require(false, location);
+}
+
+class ReadOnlyPage {
+public:
+    explicit ReadOnlyPage(const void* initial = nullptr, std::size_t size = 0) {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        _size = info.dwPageSize != 0 ? info.dwPageSize : 4096u;
+        _page = VirtualAlloc(nullptr, _size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        Require(_page != nullptr);
+        if (initial && size > 0) std::memcpy(_page, initial, size);
+        DWORD oldProtect = 0;
+        Require(VirtualProtect(_page, _size, PAGE_READONLY, &oldProtect) != 0);
+#else
+        const long pageSize = sysconf(_SC_PAGESIZE);
+        _size = pageSize > 0 ? static_cast<std::size_t>(pageSize) : 4096u;
+        _page = mmap(nullptr, _size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(_page != MAP_FAILED);
+        if (initial && size > 0) std::memcpy(_page, initial, size);
+        Require(mprotect(_page, _size, PROT_READ) == 0);
+#endif
+    }
+
+    ~ReadOnlyPage() {
+        if (!_page) return;
+#ifdef _WIN32
+        VirtualFree(_page, 0, MEM_RELEASE);
+#else
+        munmap(_page, _size);
+#endif
+    }
+
+    ReadOnlyPage(const ReadOnlyPage&) = delete;
+    ReadOnlyPage& operator=(const ReadOnlyPage&) = delete;
+
+    template<typename T> T* As() const { return static_cast<T*>(_page); }
+
+private:
+    void* _page = nullptr;
+    std::size_t _size = 0;
+};
 
 class GuardedPages {
 public:
@@ -208,9 +262,38 @@ void RunReported(SelectProtocol select) {
     Require(output == nullptr && length == 0);
 }
 
+void RunGuestFaults(SelectProtocol select) {
+    GuardedPages peerPages;
+    GuardedPages supportedPages;
+    const unsigned char validList[]{2, 'h', '2'};
+    unsigned char sentinelByte = 0x5A;
+    unsigned char* const sentinelOutput = &sentinelByte;
+    unsigned char* output = sentinelOutput;
+    unsigned char length = 0xA5;
+    ReadOnlyPage roOut(&sentinelOutput, sizeof(sentinelOutput));
+    ReadOnlyPage roLen(&length, sizeof(length));
+
+    errno = 73;
+    RequireNotImplemented([&] { select(&output, &length, peerPages.End(), 1, validList, sizeof(validList)); });
+    Require(errno == 73 && output == sentinelOutput && length == 0xA5);
+
+    errno = 73;
+    RequireNotImplemented([&] { select(&output, &length, validList, sizeof(validList), supportedPages.End(), 1); });
+    Require(errno == 73 && output == sentinelOutput && length == 0xA5);
+
+    errno = 73;
+    RequireNotImplemented([&] { select(roOut.As<unsigned char*>(), &length, validList, sizeof(validList), validList, sizeof(validList)); });
+    Require(errno == 73 && length == 0xA5);
+
+    errno = 73;
+    RequireNotImplemented([&] { select(&output, roLen.As<unsigned char>(), validList, sizeof(validList), validList, sizeof(validList)); });
+    Require(errno == 73 && output == sentinelOutput);
+}
+
 void Run(SelectProtocol select) {
     RunValid(select);
     RunReported(select);
+    RunGuestFaults(select);
     std::printf("LibreSSL protocol selection: 7056 generated pairs, valid-list boundaries and the reported unvalidated lists passed\n");
 }
 

@@ -1,6 +1,7 @@
 #include "prx/libSceAvPlayerStreaming/libSceAvPlayerStreaming.hpp"
 
 #include <array>
+#include <cerrno>
 #include <climits>
 #include <cstdint>
 #include <cstdlib>
@@ -65,6 +66,9 @@ void NullArgumentAnswers() {
 int main() {
     NullArgumentAnswers();
     for (int call = 0; call < 2; ++call) Require(MvpHttpGetLastError_nid_postfix(nullptr) == -1);
+    errno = 71;
+    Require(MvpHttpGetLastError_nid_postfix(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(0x10))) == -1);
+    Require(errno == 71);
 
     for (const std::int32_t error : {0, 1, -1, static_cast<std::int32_t>(0x80020016), INT32_MAX}) {
         std::array<unsigned char, 0x40> context{};

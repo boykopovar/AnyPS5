@@ -1,5 +1,6 @@
 #include <relinker/guest/GuestImage.hpp>
 #include <relinker/analysis/RelativeJumpTables.hpp>
+#include <relinker/analysis/ReplacedPltStubs.hpp>
 #include <relinker/analysis/SceCodeExtent.hpp>
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
 #include <elfpatcher/general/GuestModuleWriter.hpp>
@@ -207,7 +208,6 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
             if (symbol.Section == 0 || symbol.Section == AbsoluteSection || (symbol.Info >> 4) == 0 || symbol.Visibility == 1 || symbol.Visibility == 2) continue;
             auto& providers = exports[symbol.Name];
             const bool repeated = !providers.empty() && providers.back().Provider == images.size();
-            if (!windows && repeated) fail("Duplicate guest export after stripping #: " + symbol.Name + " in " + Io::Utf8Path(path) + " and " + Io::Utf8Path(images[providers.front().Provider].SourcePath));
             if (!repeated) providers.push_back({images.size(), static_cast<std::uint8_t>(symbol.Info & 15)});
             if (!windows && providers.size() > 1)
                 for (const auto& provider : providers) sharedExports[symbol.Name].insert(provider.Provider);
@@ -450,7 +450,7 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     const auto hostLibrary = [&](const std::string& name) { return windows || macos ? name : Domain::NeededLibraryName(name); };
     std::vector<std::filesystem::path> runDirectories;
     bool runDirectoriesExist = !windows && !macos;
-    for (std::size_t begin = 0; runDirectoriesExist && begin <= runPath.size();) {
+    for (std::size_t begin = 0; !windows && !macos && begin <= runPath.size();) {
         const auto end = std::min(runPath.find(':', begin), runPath.size());
         const auto component = std::string_view(runPath).substr(begin, end - begin);
         std::filesystem::path directory;
@@ -458,7 +458,8 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
         else if (component.starts_with("$ORIGIN/")) directory = outputPath.parent_path() / std::string(component.substr(8));
         else if (component.starts_with('/')) directory = std::string(component);
         std::error_code error;
-        runDirectoriesExist = !directory.empty() && std::filesystem::is_directory(directory, error);
+        const bool exists = !directory.empty() && std::filesystem::is_directory(directory, error) && !error;
+        runDirectoriesExist = runDirectoriesExist && exists;
         runDirectories.push_back(std::move(directory));
         begin = end + 1;
     }
@@ -502,6 +503,14 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
             std::find(hosts.begin(), hosts.end(), "libc.prx") == hosts.end()) hosts.push_back("libc.prx");
     }
     if (uniqueHosts.contains("libSceLibcInternal.prx") && uniqueHosts.insert("libc.prx").second) hostLibraries.push_back("libc.prx");
+    if (uniqueHosts.contains("libkernel.prx")) {
+        const std::string provider = "libkernel_sys.prx";
+        const bool available = std::any_of(runDirectories.begin(), runDirectories.end(), [&](const auto& directory) {
+            std::error_code error;
+            return std::filesystem::exists(directory / provider, error) && !error;
+        });
+        if (available && uniqueHosts.insert(provider).second) hostLibraries.push_back(provider);
+    }
     dynamic.NeededLibraries = hostLibraries;
     dynamic.DynamicSegmentData.clear();
     const auto addNeeded = [&](const std::string& name) {
@@ -542,6 +551,15 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
             if (sceImage)
                 if (const auto end = FindSceCodeEnd(code, header.MappedAddress, unwindFunctions, image.Got, image.Dynamic.RelaPltData.size()))
                     code.resize(*end - header.MappedAddress);
+            const auto replacedStubs = FindReplacedPltStubs(code, header.MappedAddress, image.Got, image.Dynamic.RelaPltData.size());
+            for (const auto& stub : replacedStubs) {
+                std::string import;
+                for (std::size_t position = 0; position < image.Dynamic.RelaPltData.size(); position += 24)
+                    if (Io::ReadU64(image.Dynamic.RelaPltData, position) == stub.GotEntry) import = image.Symbols[Io::ReadU64(image.Dynamic.RelaPltData, position + 8) >> 32].Name;
+                auto target = Io::Utf8Path(image.SourcePath.lexically_relative(root));
+                std::replace(target.begin(), target.end(), '\\', '/');
+                progress.Message(DescribeReplacedPltStub(stub, target, import));
+            }
             auto scanCode = code;
             for (const auto& table : FindRelativeJumpTables(code, header.MappedAddress, unwindRanges)) {
                 if (table.Begin >= header.MappedAddress && table.End >= table.Begin) {
@@ -552,7 +570,17 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
             }
             const auto scanUnwindRanges = sceImage ? SceUnwindRanges(code, header.MappedAddress, unwindFunctions) : std::vector<CodeRange>{};
             std::vector<RoutedSyscallStub> routedStubs;
-            for (const auto offset : syscallScanner.ScanCodeSectionForSyscalls(scanCode, header.MappedAddress, scanCode.size(), Io::Utf8Path(image.SourcePath), scanUnwindRanges, &routedStubs)) {
+            std::vector<std::size_t> syscallTraps;
+            try {
+                syscallTraps = syscallScanner.ScanCodeSectionForSyscalls(scanCode, header.MappedAddress, scanCode.size(), Io::Utf8Path(image.SourcePath), scanUnwindRanges, &routedStubs);
+            } catch (const Domain::RelinkerException& error) {
+                const auto cause = DescribeReplacedPltStubReaching(replacedStubs, code, header.MappedAddress, error.FailureOffset);
+                if (cause.empty()) throw;
+                Domain::RelinkerException explained(error.what() + cause, error.FailureOffset);
+                explained.InputPath = error.InputPath;
+                throw explained;
+            }
+            for (const auto offset : syscallTraps) {
                 if (offset > code.size() || code.size() - offset < 2u)
                     throw Domain::RelinkerException("Syscall trap patch exceeds guest executable segment", header.MappedAddress + offset);
                 if (!image.PatchedRanges.empty()) {
