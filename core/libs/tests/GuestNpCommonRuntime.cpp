@@ -1141,6 +1141,11 @@ void TestJsonText() {
     Require(sceNpUtilJsonUnescape(text, 3, "abc", 3, &length) == NpUtilBufferTooSmall, "unescaping needs room for the terminator");
     length = 0;
     Require(sceNpUtilJsonUnescape(nullptr, 0, "abc", 3, &length) == 0 && length == 4, "a size query with no buffer and no size reports the size");
+    errno = 71;
+    Require(sceNpUtilJsonUnescape(reinterpret_cast<char*>(0x10), sizeof(text), "a\\nb", 4, &length) == NpUtilInvalid && errno == 71,
+        "unescaping into an unwritable buffer is refused and keeps errno");
+    Require(sceNpUtilJsonUnescape(nullptr, sizeof(text), "abc", 3, reinterpret_cast<std::size_t*>(0x10)) == NpUtilInvalid && errno == 71,
+        "an unwritable unescaped length is refused and keeps errno");
 
     char one[4] = {};
     std::size_t consumed = 0;
@@ -1199,6 +1204,9 @@ void TestXmlText() {
     Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), nullptr, 1, &length) == NpUtilInvalid, "xml escaping needs a source");
     Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), "a", 0, &length) == NpUtilInvalid, "xml escaping needs a source length");
     Require(sceNpUtilXmlEscape(nullptr, 0, "a", 1, nullptr) == NpUtilInvalid, "xml escaping needs a buffer or a length");
+    errno = 71;
+    Require(sceNpUtilXmlEscape(reinterpret_cast<char*>(0x10), sizeof(escaped), "a&b", 3, &length) == NpUtilInvalid && errno == 71, "xml escaping refuses an unwritable buffer");
+    Require(sceNpUtilXmlEscape(nullptr, 0, "a&b", 3, reinterpret_cast<std::size_t*>(0x10)) == NpUtilInvalid && errno == 71, "xml escaping refuses an unwritable length");
 
     char unescaped[64] = {};
     const char* entities = "x&lt;&gt;&amp;&quot;&apos;y";
@@ -1220,6 +1228,9 @@ void TestXmlText() {
     Require(sceNpUtilXmlUnescape(unescaped, sizeof(unescaped), nullptr, 1, &length) == NpUtilInvalid, "xml unescaping needs a source");
     Require(sceNpUtilXmlUnescape(unescaped, sizeof(unescaped), "a", 0, &length) == NpUtilInvalid, "xml unescaping needs a source length");
     Require(sceNpUtilXmlUnescape(nullptr, 0, "a", 1, nullptr) == NpUtilInvalid, "xml unescaping needs a buffer or a length");
+    errno = 71;
+    Require(sceNpUtilXmlUnescape(reinterpret_cast<char*>(0x10), sizeof(unescaped), "a&amp;b", 7, &length) == NpUtilInvalid && errno == 71, "xml unescaping refuses an unwritable buffer");
+    Require(sceNpUtilXmlUnescape(nullptr, 0, "a&amp;b", 7, reinterpret_cast<std::size_t*>(0x10)) == NpUtilInvalid && errno == 71, "xml unescaping refuses an unwritable length");
     struct {
         char buffer[4];
         char canary[4];
@@ -1542,6 +1553,10 @@ void TestLanguagesAndDebugIds() {
         "language strings are returned directly");
     Require(sceNpUtilGetNpLanguageCode(31, code) == NpUtilInvalid && sceNpUtilGetNpLanguageCodeStr(31) == nullptr,
         "unknown languages are refused");
+    Require(sceNpUtilGetNpLanguageCode(0, nullptr) == NpUtilInvalid, "a language code needs a buffer");
+    errno = 71;
+    Require(sceNpUtilGetNpLanguageCode(1, reinterpret_cast<char*>(0x10)) == NpUtilInvalid && errno == 71,
+        "an unwritable code buffer is refused and errno is kept");
     Require(sceNpUtilGetNpLanguageCode2(0, nullptr) == NpUtilInvalid, "a language code needs a buffer");
     const std::uint32_t first = sceNpDbgAssignDebugId();
     Require(first != 0 && sceNpDbgAssignDebugId() == first + 1, "debug ids count up");
@@ -1618,6 +1633,11 @@ void TestNumbers() {
     std::uint64_t unsigned64 = 0;
     Require(sceNpStrToUInt64("0xFFFFFFFFFFFFFFFF", &unsigned64, 0, nullptr) == 0 && unsigned64 == UINT64_MAX, "the 64-bit maximum parses");
     Require(sceNpStrToUInt64("18446744073709551616", &unsigned64, 10, nullptr) == NpOutOfRange, "64-bit unsigned overflow is an error");
+    Require(sceNpStrToInt32("12", reinterpret_cast<std::int32_t*>(0x10), 10, &parsed) == NpInvalidArgument, "an unwritable 32-bit value is refused");
+    Require(sceNpStrToInt32("12", &value32, 10, reinterpret_cast<std::size_t*>(0x10)) == NpInvalidArgument, "an unwritable parsed length is refused");
+    Require(sceNpStrToInt64("12", reinterpret_cast<std::int64_t*>(0x10), 10, nullptr) == NpInvalidArgument, "an unwritable 64-bit value is refused");
+    Require(sceNpStrToUInt32("12", reinterpret_cast<std::uint32_t*>(0x10), 10, nullptr) == NpInvalidArgument, "an unwritable unsigned 32-bit value is refused");
+    Require(sceNpStrToUInt64("12", reinterpret_cast<std::uint64_t*>(0x10), 10, nullptr) == NpInvalidArgument, "an unwritable unsigned 64-bit value is refused");
 }
 
 void TestHexAndCopies() {

@@ -79,6 +79,8 @@ public:
     std::uint64_t FlipSubmissions() const;
     std::uint64_t RewindTailFlips() const;
     std::vector<AwaitedWait> AwaitedWaits();
+    void TrackRewindTails();
+    bool RewindTailsUnread();
     void WaitForPipelineJournal();
     bool WaitIdleFor(std::chrono::milliseconds timeout);
     bool WaitIdleUnlessTitleWaitsFor(std::chrono::milliseconds timeout);
@@ -163,6 +165,8 @@ private:
     bool parkedOnTitle() const;
     void noteAwaitingTitle(std::uint32_t queue, std::uint64_t awaited);
     void releaseFlipHold();
+    void beginFlipReady(std::uint32_t handle);
+    void endFlipReady(std::uint32_t handle);
     void finishFlipWork(const std::shared_ptr<FlipWork>& work, std::uint64_t workSerial);
     std::uint64_t submitFlipWork(std::uint32_t queue);
     void waitFlipWork(std::uint64_t workSerial);
@@ -186,6 +190,7 @@ private:
     static bool stampValidate();
     static bool dataHits();
     static bool verifyDataHits();
+    static std::vector<ShaderRecompiler::MemoryRegion> dispatchRegions(std::span<const ShaderRecompiler::MemoryRegion> memory, std::span<const ShaderRecompiler::MemoryRegion> captured, const PreparedShaderState::UserDataLink* linking);
     static bool pipelineDispatch();
     static std::size_t dispatchVariants();
     static bool insertCompare();
@@ -196,7 +201,7 @@ private:
     void classifyDiffering(std::uint64_t program, std::uint64_t key, const DispatchVariant& old, const DispatchVariant& fresh, const ShaderRecompiler::ResourceCapture* capture, EntryCounters& counters);
     void reportDispatchCache(EntryCounters& counters);
     void lookupDispatch(std::uint64_t address, const Submission& submission, std::uint64_t key, bool noDispatchCache, bool traceCache, bool profile, std::span<const ShaderRecompiler::MemoryRegion> memory, DispatchPhaseTiming& phaseTiming, std::array<double, DriverPhaseCount>& phaseMs, std::shared_ptr<const ShaderRecompiler::RecompileResult>& compiledResult, std::shared_ptr<DispatchVariant>& keepVariant, std::vector<ShaderRecompiler::MemoryRegion>& captured, std::vector<std::uint32_t>& liveWords, bool& dataHit, bool& cached, bool& validated, std::shared_ptr<DispatchEntry>& missedEntry, bool& missedDiffering);
-    void insertDispatch(std::uint64_t address, std::uint64_t key, bool noDispatchCache, bool profile, const std::shared_ptr<const ShaderSnapshot>& registeredShader, std::uint64_t forgetAtCapture, std::span<const ShaderRecompiler::MemoryRegion> memory, const std::shared_ptr<ShaderMemory>& shaderMemory, const std::vector<ShaderRecompiler::MemoryRegion>& captured, const std::shared_ptr<const ShaderRecompiler::ResourceCapture>& capture, const std::shared_ptr<const ShaderRecompiler::RecompileResult>& compiledResult, const std::shared_ptr<DispatchEntry>& missedEntry, bool missedDiffering, std::shared_ptr<DispatchVariant>& attachVariant, DispatchPhaseTiming& phaseTiming);
+    void insertDispatch(std::uint64_t address, std::uint64_t key, bool noDispatchCache, bool profile, const std::shared_ptr<const ShaderSnapshot>& registeredShader, std::uint64_t forgetAtCapture, std::span<const ShaderRecompiler::MemoryRegion> memory, const std::shared_ptr<ShaderMemory>& shaderMemory, const std::vector<ShaderRecompiler::MemoryRegion>& captured, const std::shared_ptr<const ShaderRecompiler::ResourceCapture>& capture, const std::shared_ptr<const ShaderRecompiler::RecompileResult>& compiledResult, const std::shared_ptr<DispatchEntry>& missedEntry, bool missedDiffering, std::shared_ptr<DispatchVariant>& attachVariant, DispatchPhaseTiming& phaseTiming, const std::shared_ptr<const PreparedShaderState::UserDataLink>& linking = {});
     void dispatch(QueueState& queue, std::span<const std::uint32_t> packet, const Submission& submission, std::uint64_t indirectArguments = 0);
     void verifyDataHit(const ShaderSnapshot& snapshot, std::size_t codeOffset, ShaderRecompiler::RecompileRequest request, std::span<const ShaderRecompiler::MemoryRegion> memory, std::uint64_t address, const DispatchVariant& variant, std::span<const std::uint32_t> liveWords, const ShaderRecompiler::RecompileResult& patched);
     static bool drawEntries();
@@ -322,7 +327,7 @@ private:
     void noteForeignWriter(std::uint64_t begin, std::uint64_t end, std::uint32_t queue);
     void noteDrawWriters(std::span<const Graphics::CompiledShader> stages, std::uint32_t queue);
     static std::vector<std::pair<std::uint64_t, std::uint64_t>> drawWriteRanges(const Graphics::State& graphics, std::span<const Graphics::CompiledShader> stages);
-    void commitDraw(std::shared_ptr<VulkanDevice> localDevice, std::uint32_t queue, const Graphics::State& graphics, const Pm4::DrawParameters& drawParameters, std::span<const Graphics::CompiledShader> stages, std::span<const Graphics::GuestMemorySnapshot> snapshots, const std::shared_ptr<const DrawRecipe>& recipe, const std::vector<std::shared_ptr<DispatchVariant>>& recipeStages, std::uint64_t drawKey, const std::shared_ptr<DrawEntry>& recipeDonor, VulkanDevice::DrawTraceContext trace = {}, std::uint64_t shape = 0);
+    void commitDraw(std::shared_ptr<VulkanDevice> localDevice, std::uint32_t queue, const Graphics::State& graphics, const Pm4::DrawParameters& drawParameters, std::span<const Graphics::CompiledShader> stages, std::span<const Graphics::GuestMemorySnapshot> snapshots, const std::shared_ptr<const DrawRecipe>& recipe, const std::vector<std::shared_ptr<DispatchVariant>>& recipeStages, std::uint64_t drawKey, const std::shared_ptr<DrawEntry>& recipeDonor, VulkanDevice::DrawTraceContext trace = {}, std::uint64_t shape = 0, const std::vector<std::uint32_t>* contentKey = nullptr);
     bool labelPacketQueues(std::span<const std::uint32_t> packet, std::uint32_t opcode);
     bool enqueueLabelPacket(std::span<const std::uint32_t> packet, std::uint32_t opcode, std::uint32_t queue, std::optional<std::uint32_t> interrupt);
     bool enqueueDmaPacket(std::span<const std::uint32_t> packet, std::uint32_t opcode, std::uint32_t queue, const QueueState& state);
@@ -342,7 +347,7 @@ private:
     bool validateCaptured(std::uint64_t program, std::uint32_t queue, std::span<const ShaderRecompiler::MemoryRegion> captured, const ShaderRecompiler::RecompileResult& compiled, bool inPlace, const PendingView& view, bool* unmapped = nullptr, std::optional<SampledReadScope>* sampling = nullptr, const DataMask* data = nullptr, std::span<const VouchedRegions> vouched = {});
     static void appendEntryRegions(const DispatchVariant& variant, std::vector<ShaderRecompiler::MemoryRegion>& regions, const std::vector<std::uint32_t>* words = nullptr);
     static std::shared_ptr<const ShaderRecompiler::RecompileResult> patchDataWords(const DispatchVariant& variant, const std::vector<std::uint32_t>& words);
-    bool syncPendingRuns(std::uint64_t program, std::uint32_t queue, const ShaderRecompiler::RecompileResult& compiled, std::span<const ShaderRecompiler::MemoryRegion> regions, std::uint64_t& synced, PendingView& pending, std::optional<SampledReadScope>& sampling, std::span<const VouchedRegions> skipped = {});
+    bool syncPendingRuns(std::uint64_t program, std::uint32_t queue, const ShaderRecompiler::RecompileResult& compiled, std::span<const ShaderRecompiler::MemoryRegion> regions, std::uint64_t& synced, PendingView& pending, std::optional<SampledReadScope>& sampling, std::span<const VouchedRegions> skipped = {}, const PreparedShaderState::UserDataLink* linking = nullptr);
     EntryOutcome validateVariant(std::uint64_t program, std::uint32_t queue, const DispatchVariant& variant, std::span<const ShaderRecompiler::MemoryRegion> regions, std::uint64_t& imagesFlushed, std::uint64_t& runsSynced, std::optional<SampledReadScope>& sampling, std::vector<std::pair<std::uint32_t, std::uint32_t>>* live = nullptr);
     static int waitTimeoutMs();
     static bool pollReapAll();
@@ -365,6 +370,7 @@ private:
         std::shared_ptr<DispatchVariant> keepVariant, attachVariant;
         std::shared_ptr<DispatchEntry> missedEntry;
         std::shared_ptr<ShaderMemory> shaderMemory;
+        std::shared_ptr<const PreparedShaderState::UserDataLink> linking;
         std::vector<ShaderRecompiler::MemoryRegion> captured;
         std::vector<std::uint32_t> liveWords;
         std::shared_ptr<const ShaderRecompiler::ResourceCapture> capture;
@@ -405,7 +411,8 @@ private:
     void recordQueuedLabelsBeforeRead(std::uint32_t queue);
     bool recordQueuedLabelsAfterCapture(std::uint32_t queue, std::span<const ShaderRecompiler::MemoryRegion> regions);
     static void runCaptureCheckHook();
-    static bool capturedMemoryChanged(std::span<const ShaderRecompiler::MemoryRegion> regions, std::span<Graphics::GuestMemorySnapshot> compared = {});
+    static bool capturedCurrent(std::span<const ShaderRecompiler::MemoryRegion> captured, const ShaderSnapshot& code, const PreparedShaderState::UserDataLink* linking);
+    static bool capturedMemoryChanged(std::span<const ShaderRecompiler::MemoryRegion> regions, std::span<Graphics::GuestMemorySnapshot> compared = {}, const PreparedShaderState::UserDataLink* linking = nullptr);
     void noteQueuedLabels(std::uint32_t queue);
     void recordQueuedLabelsByTry(std::uint32_t queue, std::atomic<std::uint64_t>& counter);
     static void recordQueuedLabelsFromHook();
@@ -442,6 +449,10 @@ private:
         std::atomic<std::uint64_t> shape{0};
     };
     std::array<AwaitedSlot, SubmissionQueueEnd - 0x20 + 1> awaitedSlots{};
+    std::atomic<bool> tracksTails{false};
+    std::mutex tailsMutex;
+    std::vector<std::pair<std::uint32_t, const std::uint32_t*>> unreadTails;
+    void noteTailRead(const std::uint32_t* read, std::uint32_t queue, const std::uint32_t* next);
     static bool stillAwaited(const AwaitedSlot& slot, std::uint64_t awaited);
     void noteWaitFields(std::uint32_t queue, std::span<const std::uint32_t> packet);
     std::atomic<bool> captureHold{false};
@@ -530,6 +541,7 @@ private:
     std::atomic<std::uint64_t> idleEpoch{0};
     std::atomic<std::uint64_t> queue0Awaited{0};
     std::atomic<std::uint32_t> flipsAhead{0};
+    std::map<std::uint32_t, std::uint32_t> flipsReadying;
     std::atomic<std::uint32_t> flipHolders{0};
     std::shared_ptr<FlipWork> lastFlipWork;
     std::atomic<bool> queue0AwaitsTitle{false};

@@ -230,7 +230,8 @@ int ParseInteger(const char* str, std::size_t* parsedLength, Parse parse, bool* 
     parse(str, &end);
     if (end == str) return NP_ERROR_OUT_OF_RANGE;
     if (*saturated && errno == ERANGE) return NP_ERROR_OUT_OF_RANGE;
-    if (parsedLength != nullptr) *parsedLength = static_cast<std::size_t>(end - str);
+    const std::size_t length = static_cast<std::size_t>(end - str);
+    if (parsedLength != nullptr && !GuestCopyOut_nid_no_patch(parsedLength, &length, sizeof(length))) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -438,7 +439,8 @@ int APS5_VABI sceNpStrToInt32(const char* str, std::int32_t* value, int base, st
     }, &saturated);
     if (result < 0) return result;
     if (parsed != static_cast<std::int32_t>(parsed)) return NP_ERROR_OUT_OF_RANGE;
-    *value = static_cast<std::int32_t>(parsed);
+    const auto narrowed = static_cast<std::int32_t>(parsed);
+    if (!GuestCopyOut_nid_no_patch(value, &narrowed, sizeof(narrowed))) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -450,7 +452,8 @@ int APS5_VABI sceNpStrToInt64(const char* str, std::int64_t* value, int base, st
         saturated = parsed == LLONG_MIN || parsed == LLONG_MAX;
     }, &saturated);
     if (result < 0) return result;
-    *value = parsed;
+    const std::int64_t wide = parsed;
+    if (!GuestCopyOut_nid_no_patch(value, &wide, sizeof(wide))) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -463,7 +466,8 @@ int APS5_VABI sceNpStrToUInt32(const char* str, std::uint32_t* value, int base, 
     }, &saturated);
     if (result < 0) return result;
     if ((parsed >> 32) != 0) return NP_ERROR_OUT_OF_RANGE;
-    *value = static_cast<std::uint32_t>(parsed);
+    const auto narrowed = static_cast<std::uint32_t>(parsed);
+    if (!GuestCopyOut_nid_no_patch(value, &narrowed, sizeof(narrowed))) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -475,7 +479,8 @@ int APS5_VABI sceNpStrToUInt64(const char* str, std::uint64_t* value, int base, 
         saturated = parsed == ULLONG_MAX;
     }, &saturated);
     if (result < 0) return result;
-    *value = parsed;
+    const std::uint64_t wide = parsed;
+    if (!GuestCopyOut_nid_no_patch(value, &wide, sizeof(wide))) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -549,15 +554,17 @@ int APS5_VABI sceNpUtilJsonUnescape(char* dst, std::size_t dstSize, const char* 
     std::size_t count = 0;
     int status = 0;
     char* out = dst;
+    bool unwritable = false;
     auto emit = [&](const char* bytes, std::size_t length, std::size_t consumed) {
         if (out != nullptr) {
-            std::memcpy(out, bytes, length);
+            unwritable = unwritable || !GuestCopyOut_nid_no_patch(out, bytes, length);
             out += length;
         }
         count += length;
         src += consumed;
     };
     while (src < end) {
+        if (unwritable) return NP_UTIL_ERROR_INVALID_ARGUMENT;
         if (dst != nullptr && count + 1 > dstSize) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
         const std::size_t remaining = static_cast<std::size_t>(end - src);
         if (src[0] != '\\' || remaining < 2) {
@@ -606,10 +613,12 @@ int APS5_VABI sceNpUtilJsonUnescape(char* dst, std::size_t dstSize, const char* 
         if (dst != nullptr && count + length > dstSize) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
         emit(encoded, length, JSON_SURROGATE_PAIR_LENGTH);
     }
+    if (unwritable) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     ++count;
     if (dst != nullptr && count > dstSize) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
-    if (dstLength != nullptr) *dstLength = count;
-    if (out != nullptr) *out = '\0';
+    if (dstLength != nullptr && !GuestCopyOut_nid_no_patch(dstLength, &count, sizeof(count))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    const char terminator = '\0';
+    if (out != nullptr && !GuestCopyOut_nid_no_patch(out, &terminator, sizeof(terminator))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     return status;
 }
 
@@ -688,16 +697,18 @@ int APS5_VABI sceNpUtilXmlEscape(char* dst, std::size_t dstSize, const char* src
         }
         if (dst != nullptr) {
             if (length + pieceLength > dstSize) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
-            std::memcpy(dst + length, piece, pieceLength);
+            if (!GuestCopyOut_nid_no_patch(dst + length, piece, pieceLength)) return NP_UTIL_ERROR_INVALID_ARGUMENT;
         }
         length += pieceLength;
         src += consumed;
     } while (src < end);
     if (dst != nullptr) {
         if (length + 1 > dstSize) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
-        dst[length] = '\0';
+        const char terminator = '\0';
+        if (!GuestCopyOut_nid_no_patch(dst + length, &terminator, sizeof(terminator))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     }
-    if (required != nullptr) *required = length + 1;
+    const std::size_t needed = length + 1;
+    if (required != nullptr && !GuestCopyOut_nid_no_patch(required, &needed, sizeof(needed))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -715,15 +726,17 @@ int APS5_VABI sceNpUtilXmlUnescape(char* dst, std::size_t dstSize, const char* s
                 consumed = std::strlen(entity->text);
             }
         }
-        if (dst != nullptr) dst[length] = character;
+        if (dst != nullptr && !GuestCopyOut_nid_no_patch(dst + length, &character, sizeof(character))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
         ++length;
         src += consumed;
     } while (src < end);
     if (dst != nullptr) {
         if (length + 1 > dstSize) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
-        dst[length] = '\0';
+        const char terminator = '\0';
+        if (!GuestCopyOut_nid_no_patch(dst + length, &terminator, sizeof(terminator))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     }
-    if (required != nullptr) *required = length + 1;
+    const std::size_t needed = length + 1;
+    if (required != nullptr && !GuestCopyOut_nid_no_patch(required, &needed, sizeof(needed))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
