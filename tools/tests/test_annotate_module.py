@@ -1017,5 +1017,14 @@ class ReferencedAddressTests(unittest.TestCase):
         self.assertIsNone(annotate_module.referenced_address("    mov %fs:0x28, %rax"))
 
 
+class LineNoteTests(unittest.TestCase):
+    def test_line_note_is_empty_for_plain_instructions(self):
+        import annotate_module
+        class Namer:
+            def resolve(self, value):
+                raise AssertionError("not expected for a plain instruction")
+        self.assertEqual(annotate_module.line_note("    nop", {}, {}, Namer()), "")
+
+
 if __name__ == "__main__":
     unittest.main(defaultTest=os.environ.get("ANNOTATE_MODULE_TEST"))
