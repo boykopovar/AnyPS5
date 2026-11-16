@@ -179,10 +179,10 @@ int APS5_VABI sceFontGetHorizontalLayout(FontHandle fontHandle, FontHorizontalLa
     auto* font = GetNativeFont(fontHandle);
     std::uint32_t fontLock = 0;
     if (!font || font->magic != HANDLE_MAGIC || !AcquireFontLock(font, fontLock)) {
-        if (layout) *layout = {};
+        if (layout) Font::CopyOutGuest(layout, FontHorizontalLayout{});
         return SCE_FONT_ERROR_INVALID_FONT_HANDLE;
     }
-    if (!layout) {
+    if (!layout || !Font::CopyOutGuest(layout, FontHorizontalLayout{})) {
         ReleaseFontLock(font, fontLock);
         return SCE_FONT_ERROR_INVALID_PARAMETER;
     }
@@ -190,12 +190,14 @@ int APS5_VABI sceFontGetHorizontalLayout(FontHandle fontHandle, FontHorizontalLa
     const int rc = ComputeHorizontalLayout(fontHandle, &font->style, blocks);
     ReleaseFontLock(font, fontLock);
     if (rc != SCE_FONT_OK) {
-        *layout = {};
+        Font::CopyOutGuest(layout, FontHorizontalLayout{});
         return rc;
     }
-    layout->baselineOffset = LoadFloat(blocks, HORIZONTAL_BASELINE);
-    layout->lineAdvance = LoadFloat(blocks, HORIZONTAL_LINE_ADVANCE);
-    layout->decorationExtent = LoadFloat(blocks, HORIZONTAL_EFFECT_HEIGHT);
+    FontHorizontalLayout localLayout{};
+    localLayout.baselineOffset = LoadFloat(blocks, HORIZONTAL_BASELINE);
+    localLayout.lineAdvance = LoadFloat(blocks, HORIZONTAL_LINE_ADVANCE);
+    localLayout.decorationExtent = LoadFloat(blocks, HORIZONTAL_EFFECT_HEIGHT);
+    if (!Font::CopyOutGuest(layout, localLayout)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SCE_FONT_OK;
 }
 
