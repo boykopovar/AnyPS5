@@ -128,6 +128,17 @@ bool CancelQueued(const std::shared_ptr<Op>& op) {
     return true;
 }
 
+void RunIfQueued(const std::shared_ptr<Op>& op) {
+    {
+        const std::lock_guard lock(Global().mutex);
+        if (op->done || !op->queued) return;
+        auto& pending = Global().pending;
+        pending.erase(std::remove(pending.begin(), pending.end(), op->id), pending.end());
+        op->queued = false;
+    }
+    Run(op);
+}
+
 }
 
 std::int32_t FromKernelError(std::int64_t kernelResult) {
@@ -216,6 +227,14 @@ std::int32_t Wait(SceFiosOp op) {
     return found->error;
 }
 
+std::int32_t WaitUntil(SceFiosOp op, SceFiosTime deadline) {
+    std::unique_lock lock(Global().mutex);
+    const auto found = FindOp(Global(), op);
+    if (!found) return SCE_FIOS_ERROR_BAD_OP;
+    if (!Global().finished.wait_until(lock, std::chrono::steady_clock::time_point(std::chrono::nanoseconds(deadline)), [&] { return found->done; })) return SCE_FIOS_ERROR_TIMEOUT;
+    return found->error;
+}
+
 std::int32_t SyncStatus(SceFiosOp op) {
     if (op < 0) return op;
     Completion completion;
@@ -232,9 +251,13 @@ std::int64_t SyncCount(SceFiosOp op) {
 bool SyncWait(SceFiosOp op, Completion& completion) {
     std::shared_ptr<Op> found;
     {
-        std::unique_lock lock(Global().mutex);
+        const std::lock_guard lock(Global().mutex);
         found = FindOp(Global(), op);
-        if (!found) return false;
+    }
+    if (!found) return false;
+    RunIfQueued(found);
+    {
+        std::unique_lock lock(Global().mutex);
         Global().finished.wait(lock, [&] { return found->done; });
         completion.error = found->error;
         completion.result = found->result;
@@ -297,6 +320,15 @@ bool OpError(SceFiosOp op, std::int32_t& error) {
     if (!found) return false;
     error = found->done ? found->error : 1;
     return true;
+}
+
+std::int32_t SetOpBuffer(SceFiosOp op, void* buffer) {
+    const std::lock_guard lock(Global().mutex);
+    const auto found = FindOp(Global(), op);
+    if (!found) return SCE_FIOS_ERROR_BAD_OP;
+    if (found->queued) return SCE_FIOS_ERROR_BUSY;
+    found->buffer = buffer;
+    return SCE_FIOS_OK;
 }
 
 const SceFiosOpAttr* OpAttr(SceFiosOp op) {
