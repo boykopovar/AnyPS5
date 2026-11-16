@@ -475,6 +475,7 @@ if(BUILD_TESTING)
         set_tests_properties(winlibs_digest PROPERTIES TIMEOUT 30)
         add_test(NAME progress_comment_concurrency COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_comment_concurrency.py)
+        set_tests_properties(progress_comment_concurrency PROPERTIES TIMEOUT 30)
         add_test(NAME eligibility_paths COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_eligibility_paths.py)
         add_test(NAME release_workflow COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_release_workflow.py)
