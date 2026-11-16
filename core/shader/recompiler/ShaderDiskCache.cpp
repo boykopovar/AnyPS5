@@ -472,6 +472,7 @@ void encodeBinding(Writer& writer, const DescriptorBinding& binding) {
     writer.Flags(binding.imageDepthCompare);
     writer.Flags(binding.imageAtomic);
     writer.Flags(binding.imageAtomic64);
+    writer.Flags(binding.imageUintStorage);
     writer.List(binding.imageShapes, [](Writer& out, DescriptorImageShape shape) { out.Value(shape); });
     writer.Flags(binding.bufferAtomic);
     writer.Flags(binding.bufferWritten);
@@ -502,6 +503,7 @@ void decodeBinding(Reader& reader, DescriptorBinding& binding) {
     reader.Flags(binding.imageDepthCompare);
     reader.Flags(binding.imageAtomic);
     reader.Flags(binding.imageAtomic64);
+    reader.Flags(binding.imageUintStorage);
     reader.List(binding.imageShapes, 4, [](Reader& in, DescriptorImageShape& shape) { in.Value(shape); });
     reader.Flags(binding.bufferAtomic);
     reader.Flags(binding.bufferWritten);
@@ -1551,6 +1553,7 @@ public:
         auto persisted = std::make_shared<CompiledVariant>();
         const auto bytes = mapped->Bytes();
         if (DecodeEntry(bytes, key, *persisted, std::move(mapped)) != LoadStatus::Loaded) return nullptr;
+        ReleaseMapped(persisted->artifact.spirv);
         persisted->layout = variant.layout;
         persisted->artifact.variantId = variant.artifact.variantId;
         persisted->substitutes = variant.substitutes;
@@ -2088,6 +2091,20 @@ std::shared_ptr<const CompiledVariant> Persist(std::span<const std::byte> key, c
 void Flush() {
     auto& instance = store();
     if (instance.Enabled()) instance.Flush();
+}
+
+void ReleaseMapped(const SharedSpirv& spirv) noexcept {
+    if (!spirv.Mapped()) return;
+    const auto words = spirv.Words();
+    if (words.empty()) return;
+#ifdef _WIN32
+    VirtualUnlock(const_cast<std::uint32_t*>(words.data()), words.size_bytes());
+#else
+    const auto page = static_cast<std::uintptr_t>(sysconf(_SC_PAGESIZE));
+    const auto first = reinterpret_cast<std::uintptr_t>(words.data());
+    const auto begin = first / page * page;
+    madvise(reinterpret_cast<void*>(begin), first + words.size_bytes() - begin, MADV_DONTNEED);
+#endif
 }
 
 void Shutdown() {

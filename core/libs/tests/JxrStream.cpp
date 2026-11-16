@@ -4,6 +4,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -522,6 +523,9 @@ void MemoryPosition() {
     RequireInvalidArgument([] { SetPosWS_Memory_nid_postfix(nullptr, 0); }, "set position accepted a null stream");
     RequireInvalidArgument([&] { GetPosWS_Memory_nid_postfix(nullptr, &position); }, "get position accepted a null stream");
     RequireInvalidArgument([&] { GetPosWS_Memory_nid_postfix(stream, nullptr); }, "get position accepted a null result");
+    errno = 71;
+    RequireInvalidArgument([&] { GetPosWS_Memory_nid_postfix(stream, reinterpret_cast<std::size_t*>(0x10)); }, "get position accepted an inaccessible guest result");
+    Require(errno == 71, "get position invalid guest result changed errno");
     CloseMemory(stream);
 }
 
