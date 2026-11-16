@@ -15,6 +15,11 @@ class IsaProfilesTests(unittest.TestCase):
         self.assertEqual(isa_profiles.canonical_encoding("VOP2_VOP_DPP16", "VOP2"), ("VOP2", "dpp16"))
         self.assertIsNone(isa_profiles.canonical_encoding("NOT_AN_ENCODING", "VOP2"))
 
+    def test_validate_forms_accepts_known_rows(self):
+        encoding = next(iter(sorted(isa_profiles.ENCODINGS)))
+        form = isa_profiles.FORMS[0]
+        isa_profiles.validate_forms([("V_ADD_F32", encoding, form, 3)])
+
 
 if __name__ == "__main__":
     unittest.main()
