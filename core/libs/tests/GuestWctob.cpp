@@ -5,5 +5,6 @@ static void Require(bool value) { if (!value) std::abort(); }
 
 int main() {
     Require(_Wctob_nid_postfix(static_cast<std::uint32_t>(L'A')) == 'A');
+    Require(_Wctob_nid_postfix(0x4E2D) == -1);
     return 0;
 }
