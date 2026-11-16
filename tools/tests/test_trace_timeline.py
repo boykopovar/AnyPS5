@@ -1,4 +1,5 @@
 import gzip
+import argparse
 import json
 import os
 import subprocess
@@ -195,6 +196,24 @@ class TimelineTests(unittest.TestCase):
 
 def trace_timeline_slices(items):
     return trace_timeline.window_slices(trace_of(items), 0, 10**12)
+
+
+class ArgumentValueTests(unittest.TestCase):
+    def test_nonnegative_number_accepts_values_from_zero_below_1e300(self):
+        self.assertEqual(trace_timeline.nonnegative_number('0.5'), 0.5)
+        self.assertEqual(trace_timeline.nonnegative_number('1'), 1.0)
+        for value in ('-1', 'abc', '1e300', 'nan', 'inf'):
+            with self.subTest(value=value), self.assertRaises(argparse.ArgumentTypeError):
+                trace_timeline.nonnegative_number(value)
+
+
+class ArgumentValueTests(unittest.TestCase):
+    def test_nonnegative_number_accepts_values_from_zero_below_1e300(self):
+        self.assertEqual(trace_timeline.nonnegative_number('0.5'), 0.5)
+        self.assertEqual(trace_timeline.nonnegative_number('1'), 1.0)
+        for value in ('-1', 'abc', '1e300', 'nan', 'inf'):
+            with self.subTest(value=value), self.assertRaises(argparse.ArgumentTypeError):
+                trace_timeline.nonnegative_number(value)
 
 
 if __name__ == "__main__":
