@@ -367,5 +367,13 @@ class TimelineTests(unittest.TestCase):
             self.assertIn("\\udcff", result.stdout)
 
 
+class TimelineLoadTests(unittest.TestCase):
+    def test_load_timeline_reads_a_json_document(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'timeline.json'
+            path.write_text('{"version": 1, "events": []}', encoding='utf-8')
+            self.assertEqual(pad_timeline.load_timeline(path), {'version': 1, 'events': []})
+
+
 if __name__ == "__main__":
     unittest.main()
