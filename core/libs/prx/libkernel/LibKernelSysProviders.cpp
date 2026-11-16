@@ -32,8 +32,8 @@ int APS5_VABI __Ux86_64_setcontext_nid_no_patch(void) {
     return __Ux86_64_setcontext();
 }
 
-int APS5_VABI __elf_phdr_match_addr_nid_no_patch(dl_phdr_info* phdrInfo, void* addr) {
-    return __elf_phdr_match_addr_nid_postfix(phdrInfo, addr);
+int APS5_VABI __elf_phdr_match_addr_nid_no_patch(const ModuleInfoEx* module, void* addr) {
+    return __elf_phdr_match_addr_nid_postfix(module, addr);
 }
 
 int* APS5_VABI __error_nid_no_patch(void) {

@@ -22,7 +22,7 @@
 extern "C" {
 
 int APS5_VABI __Ux86_64_setcontext_nid_disambig1_nid_postfix(void);
-int APS5_VABI __elf_phdr_match_addr_nid_disambig1_nid_postfix(dl_phdr_info* phdrInfo, void* addr);
+int APS5_VABI __elf_phdr_match_addr_nid_disambig1_nid_postfix(const ModuleInfoEx* module, void* addr);
 int* APS5_VABI __error_nid_disambig2_nid_postfix(void);
 const char* APS5_VABI __inet_ntop_nid_disambig1_nid_postfix(int family, const void* source, char* destination, std::uint32_t capacity);
 int APS5_VABI __inet_pton_nid_disambig1_nid_postfix(int family, const char* text, void* destination);
@@ -247,7 +247,7 @@ int APS5_VABI pthread_create_name_np_nid_disambig1_nid_postfix(Pthread* thread, 
 int APS5_VABI pthread_detach_nid_disambig1_nid_postfix(Pthread thread);
 int APS5_VABI pthread_equal_nid_disambig1_nid_postfix(Pthread first, Pthread second);
 void APS5_VABI pthread_exit_nid_disambig1_nid_postfix(void* value);
-int APS5_VABI pthread_get_specificarray_np_nid_disambig1_nid_postfix(void);
+int APS5_VABI pthread_get_specificarray_np_nid_disambig1_nid_postfix(PthreadKey key, int total, void** array);
 int APS5_VABI pthread_get_user_context_np_nid_disambig1_nid_postfix(void);
 int APS5_VABI pthread_getaffinity_np_nid_disambig1_nid_postfix(Pthread thread, std::size_t cpusetSize, void* cpuset);
 int APS5_VABI pthread_getconcurrency_nid_disambig1_nid_postfix(void);
@@ -480,7 +480,7 @@ int APS5_VABI sceKernelExtendMaximumModuleNumber_nid_disambig1_nid_postfix(void)
 int APS5_VABI sceKernelFchmod_nid_disambig1_nid_postfix(int d, std::uint16_t mode);
 int APS5_VABI sceKernelFcntl_nid_disambig1_nid_postfix(int d, int command, std::uint64_t v0, std::uint64_t v1);
 int APS5_VABI sceKernelFdatasync_nid_disambig1_nid_postfix(int fd);
-int APS5_VABI sceKernelFlock_nid_disambig1_nid_postfix(void);
+int APS5_VABI sceKernelFlock_nid_disambig1_nid_postfix(int d, int operation);
 int APS5_VABI sceKernelFstat_nid_disambig1_nid_postfix(int d, FileStat* sb);
 int APS5_VABI sceKernelFsync_nid_disambig1_nid_postfix(int fd);
 int APS5_VABI sceKernelFtruncate_nid_disambig1_nid_postfix(int d, int64_t length);
@@ -537,7 +537,7 @@ int APS5_VABI sceKernelGetForceUpdateModeForRcmgr_nid_disambig1_nid_postfix(void
 const char* APS5_VABI sceKernelGetFsSandboxRandomWord_nid_disambig1_nid_postfix(void);
 std::uint64_t APS5_VABI sceKernelGetGPI_nid_disambig1_nid_postfix(void);
 int APS5_VABI sceKernelGetGPO_nid_disambig1_nid_postfix(void);
-int APS5_VABI sceKernelGetGenuineProsperoSystemSwVersion_nid_disambig1_nid_postfix(void);
+int APS5_VABI sceKernelGetGenuineProsperoSystemSwVersion_nid_disambig1_nid_postfix(SceKernelProsperoSystemSwVersion* version);
 int APS5_VABI sceKernelGetHwFeatureInfoForDecid_nid_disambig1_nid_postfix(void);
 int APS5_VABI sceKernelGetIdPs_nid_disambig1_nid_postfix(void);
 int APS5_VABI sceKernelGetIdTableCurrentCount_nid_disambig1_nid_postfix(void);

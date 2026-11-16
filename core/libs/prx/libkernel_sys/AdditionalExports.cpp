@@ -2045,8 +2045,8 @@ int APS5_VABI pthread_attr_setstackaddr_nid_no_patch(PthreadAttr* attr, void* st
     return pthread_attr_setstackaddr_nid_postfix(attr, stack_addr);
 }
 
-int APS5_VABI pthread_get_specificarray_np_nid_no_patch(void) {
-    return pthread_get_specificarray_np_nid_postfix();
+int APS5_VABI pthread_get_specificarray_np_nid_no_patch(PthreadKey key, int total, void** array) {
+    return pthread_get_specificarray_np_nid_postfix(key, total, array);
 }
 
 int APS5_VABI pthread_get_user_context_np_nid_no_patch(void) {
@@ -2359,8 +2359,8 @@ int APS5_VABI sceKernelExtendMaximumModuleNumber_nid_no_patch(void) {
     return sceKernelExtendMaximumModuleNumber();
 }
 
-int APS5_VABI sceKernelFlock_nid_no_patch(void) {
-    return sceKernelFlock();
+int APS5_VABI sceKernelFlock_nid_no_patch(int d, int operation) {
+    return sceKernelFlock(d, operation);
 }
 
 int APS5_VABI sceKernelGetAmprCounter_nid_no_patch(void) {
@@ -2503,8 +2503,8 @@ int APS5_VABI sceKernelGetGPO_nid_no_patch(void) {
     return sceKernelGetGPO();
 }
 
-int APS5_VABI sceKernelGetGenuineProsperoSystemSwVersion_nid_no_patch(void) {
-    return sceKernelGetGenuineProsperoSystemSwVersion();
+int APS5_VABI sceKernelGetGenuineProsperoSystemSwVersion_nid_no_patch(SceKernelProsperoSystemSwVersion* version) {
+    return sceKernelGetGenuineProsperoSystemSwVersion(version);
 }
 
 int APS5_VABI sceKernelGetHwFeatureInfoForDecid_nid_no_patch(void) {

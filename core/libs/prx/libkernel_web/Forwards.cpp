@@ -14,8 +14,8 @@ int APS5_VABI __Ux86_64_setcontext_nid_disambig1_nid_postfix(void) {
     return __Ux86_64_setcontext_nid_no_patch();
 }
 
-int APS5_VABI __elf_phdr_match_addr_nid_disambig1_nid_postfix(dl_phdr_info* phdrInfo, void* addr) {
-    return __elf_phdr_match_addr_nid_no_patch(phdrInfo, addr);
+int APS5_VABI __elf_phdr_match_addr_nid_disambig1_nid_postfix(const ModuleInfoEx* module, void* addr) {
+    return __elf_phdr_match_addr_nid_no_patch(module, addr);
 }
 
 int* APS5_VABI __error_nid_disambig2_nid_postfix(void) {
@@ -914,8 +914,8 @@ void APS5_VABI pthread_exit_nid_disambig1_nid_postfix(void* value) {
     pthread_exit_nid_no_patch(value);
 }
 
-int APS5_VABI pthread_get_specificarray_np_nid_disambig1_nid_postfix(void) {
-    return pthread_get_specificarray_np_nid_no_patch();
+int APS5_VABI pthread_get_specificarray_np_nid_disambig1_nid_postfix(PthreadKey key, int total, void** array) {
+    return pthread_get_specificarray_np_nid_no_patch(key, total, array);
 }
 
 int APS5_VABI pthread_get_user_context_np_nid_disambig1_nid_postfix(void) {
@@ -1846,8 +1846,8 @@ int APS5_VABI sceKernelFdatasync_nid_disambig1_nid_postfix(int fd) {
     return sceKernelFdatasync_nid_no_patch(fd);
 }
 
-int APS5_VABI sceKernelFlock_nid_disambig1_nid_postfix(void) {
-    return sceKernelFlock_nid_no_patch();
+int APS5_VABI sceKernelFlock_nid_disambig1_nid_postfix(int d, int operation) {
+    return sceKernelFlock_nid_no_patch(d, operation);
 }
 
 int APS5_VABI sceKernelFstat_nid_disambig1_nid_postfix(int d, FileStat* sb) {
@@ -2074,8 +2074,8 @@ int APS5_VABI sceKernelGetGPO_nid_disambig1_nid_postfix(void) {
     return sceKernelGetGPO_nid_no_patch();
 }
 
-int APS5_VABI sceKernelGetGenuineProsperoSystemSwVersion_nid_disambig1_nid_postfix(void) {
-    return sceKernelGetGenuineProsperoSystemSwVersion_nid_no_patch();
+int APS5_VABI sceKernelGetGenuineProsperoSystemSwVersion_nid_disambig1_nid_postfix(SceKernelProsperoSystemSwVersion* version) {
+    return sceKernelGetGenuineProsperoSystemSwVersion_nid_no_patch(version);
 }
 
 int APS5_VABI sceKernelGetHwFeatureInfoForDecid_nid_disambig1_nid_postfix(void) {
