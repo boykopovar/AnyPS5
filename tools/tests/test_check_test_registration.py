@@ -27,6 +27,10 @@ class CheckTestRegistrationTests(unittest.TestCase):
         for value in ("0", "OFF", "", "NO", None):
             self.assertFalse(check_test_registration.is_disabled(value), value)
 
+    def test_disabled_value_replace_and_unresolved_variables(self):
+        self.assertEqual(check_test_registration.disabled_value((None, False), "replace", "ON"), ("ON", True))
+        self.assertEqual(check_test_registration.disabled_value((None, False), "replace", "${SOME_VAR}"), (None, False))
+
 
 if __name__ == "__main__":
     unittest.main()
