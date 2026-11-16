@@ -116,12 +116,12 @@ static void SuspendErrorsThrow() {
     Worker recorded;
     const Pthread joined = Start(Record, recorded, "joined");
     Require(scePthreadJoin(joined, nullptr) == SCE_OK, "scePthreadJoin failed");
+    Require(Throws([joined] { scePthreadSuspend(joined); }), "scePthreadSuspend of a joined thread did not throw");
     std::array<Worker, 1> workers;
     const Pthread spin = Start(Spin, workers[0], "spin");
     WaitForProgress(workers[0], 0, "the spinner never started");
     Require(Throws([] { scePthreadSuspend(nullptr); }), "scePthreadSuspend of a null thread did not throw");
     Require(Throws([] { scePthreadSuspend(scePthreadSelf()); }), "scePthreadSuspend of the calling thread did not throw");
-    Require(Throws([joined] { scePthreadSuspend(joined); }), "scePthreadSuspend of a joined thread did not throw");
     const std::uint64_t before = workers[0].progress.load();
     WaitForProgress(workers[0], before, "a failed scePthreadSuspend stopped another thread");
     Finish(spin, workers[0]);
@@ -132,7 +132,7 @@ static void SuspendAllStopsEveryOtherThread() {
     const std::array<Pthread, 2> threads{Start(Spin, workers[0], "spin"), Start(Nap, workers[1], "nap")};
     for (auto& worker : workers) WaitForProgress(worker, 0, "a worker never started");
     for (int round = 0; round < ROUNDS; ++round) {
-        Require(scePthreadSuspendAll() == SCE_OK, "scePthreadSuspendAll did not return SCE_OK");
+        scePthreadSuspendAll();
         const auto stopped = RequireStopped(workers, "a thread kept running after scePthreadSuspendAll");
         scePthreadResumeAll();
         RequireRunning(workers, stopped, "a thread did not continue after scePthreadResumeAll");
@@ -158,7 +158,7 @@ static void SuspendedThreadStaysStoppedThroughSuspendAll() {
     const std::array<Pthread, 2> threads{Start(Spin, workers[0], "early"), Start(Spin, workers[1], "late")};
     for (auto& worker : workers) WaitForProgress(worker, 0, "a worker never started");
     Require(scePthreadSuspend(threads[0]) == SCE_OK, "scePthreadSuspend did not return SCE_OK");
-    Require(scePthreadSuspendAll() == SCE_OK, "scePthreadSuspendAll did not return SCE_OK");
+    scePthreadSuspendAll();
     const auto stopped = RequireStopped(workers, "a thread kept running after scePthreadSuspendAll");
     scePthreadResumeAll();
     RequireRunning(workers, stopped, "a thread did not continue after scePthreadResumeAll");

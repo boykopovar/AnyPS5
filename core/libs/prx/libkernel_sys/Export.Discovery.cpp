@@ -2088,9 +2088,8 @@ int APS5_VABI scePthreadSuspend(Pthread thread) {
     return 0;
 }
 
-int APS5_VABI scePthreadSuspendAll(void) {
+void APS5_VABI scePthreadSuspendAll(void) {
     pthread_suspend_all_np_nid_postfix();
-    return 0;
 }
 
 int APS5_VABI scePthreadTimedjoin(Pthread thread, void** value, KernelUseconds usec) {
