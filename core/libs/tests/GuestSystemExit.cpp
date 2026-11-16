@@ -335,6 +335,8 @@ int main(int argc, char** argv) {
     try { sceLncUtilLoadExec("", nullptr); }
     catch (const std::runtime_error&) { emptyRejected = true; }
     Require(emptyRejected);
+    Require(sceSystemServiceLoadExec(reinterpret_cast<const char*>(0x10), nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    Require(sceLncUtilLoadExec(reinterpret_cast<const char*>(0x10), nullptr) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
     for (const auto loadExec : {sceSystemServiceLoadExec, sceLncUtilLoadExec}) {
         for (const char* path : {"/app0/another.bin", "/data/eboot.bin", "/app0/../eboot.bin", "/app0//eboot.bin"}) {
             bool rejected = false;

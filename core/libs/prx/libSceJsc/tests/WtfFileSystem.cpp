@@ -5,6 +5,7 @@
 #include "prx/libSceJsc/libSceJsc.hpp"
 
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -70,6 +71,49 @@ void TestFailures(const std::string& path) {
     Check(close_nid_postfix(writer) == 0, __LINE__);
 }
 
+struct TestCString {
+    Jsc::WtfAbi::CStringBuffer header;
+    char data[256];
+};
+
+Jsc::WtfAbi::CString MakeCString(TestCString& storage, const std::string& text) {
+    Check(text.size() < sizeof(storage.data), __LINE__);
+    storage.header = {1, text.size()};
+    std::memcpy(storage.data, text.c_str(), text.size() + 1);
+    return {&storage.header};
+}
+
+Jsc::WtfAbi::OptionalInt32 DeviceId(const std::string& path) {
+    TestCString storage{};
+    const Jsc::WtfAbi::CString string = MakeCString(storage, path);
+    return _ZN3WTF14FileSystemImpl15getFileDeviceIdERKNS_7CStringE(&string);
+}
+
+std::int32_t GuestDevice(const std::string& path) {
+    FileStat status{};
+    Check(stat_nid_postfix(path.c_str(), &status) == 0, __LINE__);
+    return static_cast<std::int32_t>(status.st_dev);
+}
+
+void TestDeviceId(const std::string& directory) {
+    const std::string file = directory + "/digits.bin";
+    const std::string nested = directory + "/nested/other.bin";
+    const Jsc::WtfAbi::OptionalInt32 fileDevice = DeviceId(file);
+    Check(fileDevice.hasValue, __LINE__);
+    Check(fileDevice.value == GuestDevice(file), __LINE__);
+    const Jsc::WtfAbi::OptionalInt32 nestedDevice = DeviceId(nested);
+    Check(nestedDevice.hasValue, __LINE__);
+    Check(nestedDevice.value == GuestDevice(nested), __LINE__);
+    Check(nestedDevice.value == fileDevice.value, __LINE__);
+    const Jsc::WtfAbi::OptionalInt32 directoryDevice = DeviceId(directory);
+    Check(directoryDevice.hasValue, __LINE__);
+    Check(directoryDevice.value == GuestDevice(directory), __LINE__);
+    Check(!DeviceId(directory + "/missing.bin").hasValue, __LINE__);
+    Check(!DeviceId("").hasValue, __LINE__);
+    const Jsc::WtfAbi::CString nullString{nullptr};
+    Check(!_ZN3WTF14FileSystemImpl15getFileDeviceIdERKNS_7CStringE(&nullString).hasValue, __LINE__);
+}
+
 } // namespace
 
 int main() {
@@ -79,11 +123,17 @@ int main() {
         std::ofstream file(root / "digits.bin", std::ios::binary);
         file << "0123456789";
     }
+    Check(std::filesystem::create_directory(root / "nested"), __LINE__);
+    {
+        std::ofstream file(root / "nested" / "other.bin", std::ios::binary);
+        file << "x";
+    }
     const auto hostPath = root.u8string();
     AddPathAlias_nid_no_patch("/jsc-read-from-file", reinterpret_cast<const char*>(hostPath.c_str()));
     const std::string path = "/jsc-read-from-file/digits.bin";
     TestReadsInOrder(path);
     TestFailures(path);
+    TestDeviceId("/jsc-read-from-file");
     std::filesystem::remove_all(root);
     return 0;
 }
