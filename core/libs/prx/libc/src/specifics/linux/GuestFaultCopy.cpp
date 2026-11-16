@@ -40,11 +40,13 @@ __asm__(
 namespace {
 
 constexpr int CopySignals[] = {SIGSEGV, SIGBUS};
+constexpr unsigned SegvSlot = 1u << 0;
+constexpr unsigned AllSlots = (1u << std::size(CopySignals)) - 1;
 
 struct sigaction g_previous[2][std::size(CopySignals)]{};
 std::atomic<int> g_active{0};
 std::atomic<pid_t> g_installer{0};
-std::atomic<bool> g_again{false};
+std::atomic<unsigned> g_pending{0};
 std::atomic<bool> g_ready{false};
 
 void Chain(int signal, siginfo_t* info, void* context) {
@@ -60,6 +62,7 @@ void Chain(int signal, siginfo_t* info, void* context) {
         previous.sa_handler(signal);
         return;
     }
+    if (info->si_code <= 0 && previous.sa_handler == SIG_IGN) return;
     struct sigaction fallback{};
     fallback.sa_handler = SIG_DFL;
     sigemptyset(&fallback.sa_mask);
@@ -72,21 +75,23 @@ void OnCopyFault(int signal, siginfo_t* info, void* context) {
     Chain(signal, info, context);
 }
 
-bool InstallOwned() {
+bool InstallOwned(unsigned slots) {
     const int next = 1 - g_active.load(std::memory_order_relaxed);
     struct sigaction current[std::size(CopySignals)]{};
     bool ours = true;
     for (std::size_t slot = 0; slot < std::size(CopySignals); ++slot) {
+        if ((slots & (1u << slot)) == 0) continue;
         if (sigaction(CopySignals[slot], nullptr, &current[slot]) != 0) return false;
         ours = ours && (current[slot].sa_flags & SA_SIGINFO) != 0 && current[slot].sa_sigaction == OnCopyFault;
     }
     if (ours) return true;
     for (std::size_t slot = 0; slot < std::size(CopySignals); ++slot) {
-        const bool installed = (current[slot].sa_flags & SA_SIGINFO) != 0 && current[slot].sa_sigaction == OnCopyFault;
+        const bool installed = (slots & (1u << slot)) == 0 || ((current[slot].sa_flags & SA_SIGINFO) != 0 && current[slot].sa_sigaction == OnCopyFault);
         g_previous[next][slot] = installed ? g_previous[1 - next][slot] : current[slot];
     }
     g_active.store(next, std::memory_order_release);
     for (std::size_t slot = 0; slot < std::size(CopySignals); ++slot) {
+        if ((slots & (1u << slot)) == 0) continue;
         struct sigaction action{};
         action.sa_sigaction = OnCopyFault;
         action.sa_flags = SA_SIGINFO | SA_ONSTACK | SA_NODEFER | (g_previous[next][slot].sa_flags & SA_RESTART);
@@ -96,19 +101,19 @@ bool InstallOwned() {
     return true;
 }
 
-bool Install() {
+bool Install(unsigned slots) {
     const auto self = static_cast<pid_t>(syscall(SYS_gettid));
     for (pid_t expected = 0; !g_installer.compare_exchange_weak(expected, self, std::memory_order_acquire); expected = 0) {
         if (expected == self) {
-            g_again.store(true, std::memory_order_release);
+            g_pending.fetch_or(slots, std::memory_order_release);
             return true;
         }
     }
     bool installed = false;
     do {
-        g_again.store(false, std::memory_order_relaxed);
-        installed = InstallOwned();
-    } while (installed && g_again.load(std::memory_order_acquire));
+        installed = InstallOwned(slots);
+        slots = g_pending.exchange(0, std::memory_order_acquire);
+    } while (installed && slots != 0);
     g_installer.store(0, std::memory_order_release);
     return installed;
 }
@@ -123,7 +128,7 @@ namespace GuestFaultCopy {
 
 bool Ready() {
     static const bool ready = [] {
-        const bool installed = Enabled() && Install();
+        const bool installed = Enabled() && Install(AllSlots);
         g_ready.store(installed, std::memory_order_release);
         return installed;
     }();
@@ -131,7 +136,7 @@ bool Ready() {
 }
 
 void Reinstall() {
-    if (g_ready.load(std::memory_order_acquire)) static_cast<void>(Install());
+    if (g_ready.load(std::memory_order_acquire)) static_cast<void>(Install(SegvSlot));
 }
 
 bool Copy(void* destination, const void* source, std::size_t bytes) {

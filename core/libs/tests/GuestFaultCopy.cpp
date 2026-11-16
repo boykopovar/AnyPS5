@@ -85,16 +85,16 @@ static void RequireLaterHandlerChains() {
 static void IgnoredSegvHandler(int) {}
 
 static void RequireGuestRegistrationKeepsCopyFaults() {
-    for (const int mode : {0, 1, 2, 3, 4}) {
+    for (const int mode : {0, 1, 2, 3, 4, 5}) {
         const pid_t child = fork();
         Require(child >= 0);
         if (child == 0) {
             alarm(10);
             GuestSigaction action{};
-            action.handler = mode == 2 ? 1 : reinterpret_cast<std::uintptr_t>(&IgnoredSegvHandler);
+            action.handler = mode == 2 || mode == 5 ? 1 : reinterpret_cast<std::uintptr_t>(&IgnoredSegvHandler);
             action.flags = mode == 1 ? 0x40 : mode == 4 ? 0x4 : 0;
             if (sigaction_nid_postfix(11, &action, nullptr) != 0) _exit(2);
-            if (mode == 4 && raise(SIGSEGV) != 0) _exit(3);
+            if ((mode == 4 || mode == 5) && raise(SIGSEGV) != 0) _exit(3);
             if (mode == 3) {
                 const GuestSigaction reset{};
                 if (sigaction_nid_postfix(11, &reset, nullptr) != 0) _exit(2);
@@ -106,6 +106,27 @@ static void RequireGuestRegistrationKeepsCopyFaults() {
         }
         RequireExit(child, 0);
     }
+}
+
+static void RequireBusChainAfterGuestRegistration() {
+    const pid_t child = fork();
+    Require(child >= 0);
+    if (child == 0) {
+        alarm(10);
+        int value = 0;
+        if (GuestCopyIn_nid_no_patch(&value, Unmapped, sizeof(value))) _exit(4);
+        if (sceKernelInstallExceptionHandler(10, reinterpret_cast<void*>(&IgnoredSegvHandler)) != 0) _exit(2);
+        GuestSigaction action{};
+        action.handler = reinterpret_cast<std::uintptr_t>(&IgnoredSegvHandler);
+        if (sigaction_nid_postfix(11, &action, nullptr) != 0) _exit(2);
+        if (GuestCopyIn_nid_no_patch(&value, Unmapped, sizeof(value))) _exit(4);
+        if (GuestCopyOut_nid_no_patch(Unmapped, &value, sizeof(value))) _exit(5);
+        raise(SIGBUS);
+        _exit(6);
+    }
+    int status = 0;
+    Require(waitpid(child, &status, 0) == child);
+    Require(WIFSIGNALED(status) && WTERMSIG(status) == SIGBUS);
 }
 
 static void RequireCopies() {
@@ -175,6 +196,7 @@ int main() {
     RequireThreads();
     RequireLaterHandlerChains();
     RequireGuestRegistrationKeepsCopyFaults();
+    RequireBusChainAfterGuestRegistration();
     std::puts("guest fault copy tests passed");
     return 0;
 }
