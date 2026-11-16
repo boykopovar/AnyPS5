@@ -8,7 +8,7 @@ int APS5_VABI _ZNSt10filesystem5_StatEPKcPNS_5permsEPi_nid_postfix(const char* p
 }
 
 int APS5_VABI _ZNSt10filesystem6_LstatEPKcPNS_5permsEPi_nid_postfix(const char* path, int* perms, int* error) {
-    return GuestFilesystem::StatType(path, perms, error);
+    return GuestFilesystem::LinkStatType(path, perms, error);
 }
 
 std::uint64_t APS5_VABI _ZNSt10filesystem10_File_sizeEPKcPi_nid_postfix(const char* path, int* error) {

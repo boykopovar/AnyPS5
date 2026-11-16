@@ -18,6 +18,7 @@ namespace {
 constexpr int TypeNotFound = -1;
 constexpr int TypeRegular = 1;
 constexpr int TypeDirectory = 2;
+constexpr int TypeSymlink = 3;
 constexpr int NoSuchFile = 2;
 constexpr int IsDirectory = 21;
 constexpr int NotSupported = 45;
@@ -68,7 +69,10 @@ void TestStatus() {
     Require(_ZNSt10filesystem6_LstatEPKcPNS_5permsE_nid_postfix("missing", nullptr) == TypeNotFound, "_Lstat of a missing path");
     std::error_code link;
     std::filesystem::create_symlink("f", "link", link);
-    if (!link) Require(_ZNSt10filesystem6_LstatEPKcPNS_5permsE_nid_postfix("link", nullptr) == TypeRegular, "_Lstat follows a link as the overload with an error output does");
+    if (!link) {
+        Require(_ZNSt10filesystem5_StatEPKcPNS_5permsE_nid_postfix("link", nullptr) == TypeRegular, "_Stat follows a link");
+        Require(_ZNSt10filesystem6_LstatEPKcPNS_5permsE_nid_postfix("link", nullptr) == TypeSymlink, "_Lstat of a symlink");
+    }
 }
 
 void TestSizeAndTime() {

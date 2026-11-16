@@ -19,6 +19,7 @@ constexpr int NoSuchFile = 2;
 constexpr int TypeNotFound = -1;
 constexpr int TypeRegular = 1;
 constexpr int TypeDirectory = 2;
+constexpr int TypeSymlink = 3;
 constexpr int TypeUnknown = 8;
 
 void Require(bool condition, const char* message) {
@@ -54,7 +55,11 @@ void TestStat() {
     Require(_ZNSt10filesystem6_LstatEPKcPNS_5permsEPi_nid_postfix(At("file").c_str(), nullptr, &error) == TypeRegular && error == 0, "lstat of a regular file");
     std::error_code link;
     std::filesystem::create_symlink("file", At("link"), link);
-    if (!link) Require(_ZNSt10filesystem6_LstatEPKcPNS_5permsEPi_nid_postfix(At("link").c_str(), nullptr, &error) == TypeRegular, "lstat follows a link as the console does");
+    if (!link) {
+        Require(_ZNSt10filesystem5_StatEPKcPNS_5permsEPi_nid_postfix(At("link").c_str(), nullptr, &error) == TypeRegular && error == 0, "stat follows a link to a regular file");
+        Require(_ZNSt10filesystem6_LstatEPKcPNS_5permsEPi_nid_postfix(At("link").c_str(), nullptr, &error) == TypeSymlink && error == 0, "lstat of a symlink");
+        Require(_ZNSt10filesystem6_LstatEPKcPNS_5permsE_nid_postfix(At("link").c_str(), &perms) == TypeSymlink, "lstat without an error output of a symlink");
+    }
 }
 
 void TestSizeAndTime() {

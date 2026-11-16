@@ -51,11 +51,11 @@ inline int TypeOfMode(std::uint16_t mode) {
     }
 }
 
-inline int StatType(const char* path, int* perms, int* error) {
+inline int StatTypeOf(int (*statCall)(const char*, FileStat*), const char* path, int* perms, int* error) {
     GuestErrno() = 0;
     FileStat status{};
     int type;
-    if (stat_nid_postfix(path, &status) == 0) {
+    if (statCall(path, &status) == 0) {
         GuestErrno() = 0;
         const int permissions = status.st_mode & PermissionBits;
         if (perms) GuestCopyOut_nid_no_patch(perms, &permissions, sizeof(permissions));
@@ -67,6 +67,14 @@ inline int StatType(const char* path, int* perms, int* error) {
     const int failure = GuestErrno();
     if (error) GuestCopyOut_nid_no_patch(error, &failure, sizeof(failure));
     return type;
+}
+
+inline int StatType(const char* path, int* perms, int* error) {
+    return StatTypeOf(stat_nid_postfix, path, perms, error);
+}
+
+inline int LinkStatType(const char* path, int* perms, int* error) {
+    return StatTypeOf(lstat_nid_postfix, path, perms, error);
 }
 
 inline void CopyName(char* target, const char* source) {
