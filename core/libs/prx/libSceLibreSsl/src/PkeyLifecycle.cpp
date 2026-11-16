@@ -5,6 +5,7 @@
 #include <stdexcept>
 #include <string>
 #include "prx/libSceLibreSsl/include/Api.hpp"
+#include "prx/libSceLibreSsl/include/Ec.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
@@ -32,13 +33,18 @@ constexpr int ReasonExpectingAnRsaKey = 127;
 constexpr int ReasonExpectingAnEcKey = 142;
 
 const int RsaMethod = PkeyRsa;
+const int EcMethod = PkeyEc;
 
 void FreeKey(Pkey& pkey) {
     if (pkey.engine) NotImplemented_nid_no_patch("EVP_PKEY_free_it of a key with an ENGINE");
-    if (pkey.ameth == &RsaMethod) {
+    if (pkey.ameth == &RsaMethod || (pkey.type == PkeyRsa && !pkey.ameth)) {
         auto* rsa = static_cast<LibreSslRsa*>(pkey.key);
         pkey.key = nullptr;
-        RSA_free_nid_postfix(rsa);
+        if (rsa) RSA_free_nid_postfix(rsa);
+    } else if (pkey.ameth == &EcMethod || (pkey.type == PkeyEc && !pkey.ameth)) {
+        auto* ec = static_cast<EcKey*>(pkey.key);
+        pkey.key = nullptr;
+        if (ec) EC_KEY_free_nid_postfix(ec);
     } else if (pkey.ameth) {
         NotImplemented_nid_no_patch("EVP_PKEY_free_it of a key with an unknown algorithm method");
     }
@@ -61,10 +67,11 @@ void APS5_VABI EVP_PKEY_free_nid_postfix(void* value) {
     auto* pkey = static_cast<Pkey*>(value);
     auto references = std::atomic_ref<int>(pkey->references);
     if (references.fetch_sub(1, std::memory_order_acq_rel) - 1 > 0) return;
-    const bool rsaKey = pkey->ameth == &RsaMethod;
-    if ((!rsaKey && (pkey->ameth || pkey->key)) || pkey->engine || pkey->attributes) {
+    const bool knownMethod = pkey->ameth == &RsaMethod || pkey->ameth == &EcMethod ||
+        (pkey->ameth == nullptr && ((pkey->type == 0 && !pkey->key) || pkey->type == PkeyRsa || pkey->type == PkeyEc));
+    if (!knownMethod || pkey->engine || pkey->attributes) {
         references.fetch_add(1, std::memory_order_relaxed);
-        NotImplemented_nid_no_patch("EVP_PKEY_free of a key that holds non-RSA algorithm data, an engine or attributes");
+        NotImplemented_nid_no_patch("EVP_PKEY_free of a key that holds non-RSA/EC algorithm data, an engine or attributes");
     }
     FreeKey(*pkey);
     free_nid_postfix(pkey);
@@ -102,13 +109,16 @@ LibreSslRsa* APS5_VABI EVP_PKEY_get1_RSA_nid_postfix(void* value) {
 }
 
 EcKey* APS5_VABI EVP_PKEY_get1_EC_KEY_nid_postfix(void* value) {
-    if (!value) NotImplemented_nid_no_patch(__func__);
+    if (!value) throw std::invalid_argument(std::string(__func__) + ": null key");
     const auto& pkey = *static_cast<const Pkey*>(value);
     if (pkey.type != PkeyEc) {
         LibreSslPutError_nid_no_patch(LibraryEvp, FunctionUnknown, ReasonExpectingAnEcKey);
         return nullptr;
     }
-    NotImplemented_nid_no_patch(__func__);
+    auto* ec = static_cast<EcKey*>(pkey.key);
+    if (!ec) throw std::invalid_argument(std::string(__func__) + ": EC key without an EC_KEY object");
+    std::atomic_ref<std::int32_t>(ec->references).fetch_add(1);
+    return ec;
 }
 
 int APS5_VABI EVP_PKEY_copy_parameters_nid_postfix(void* to, const void* from) {

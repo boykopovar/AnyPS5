@@ -17,6 +17,23 @@ int liveAllocations = 0;
 int allocationAttempts = 0;
 int frees = 0;
 
+struct TestPkey {
+    int type;
+    int saveType;
+    int references;
+    const void* ameth;
+    void* engine;
+    void* key;
+    int saveParameters;
+    void* attributes;
+};
+
+std::int32_t EcReferences(const EcKey* key) {
+    std::int32_t references = 0;
+    std::memcpy(&references, reinterpret_cast<const std::byte*>(key) + 48, sizeof(references));
+    return references;
+}
+
 constexpr std::uint64_t ErrorCode(int library, int function, int reason) {
     return (static_cast<std::uint64_t>(library) << 24) |
            (static_cast<std::uint64_t>(function) << 12) |
@@ -129,5 +146,69 @@ int main() {
     Require(allocationAttempts == allocationsBeforeFailure + 1, "the OOM path attempts one EVP_PKEY allocation");
     Require(frees == freesBeforeFailure, "the OOM path does not free an unallocated key");
     Require(liveAllocations == 0, "a failed key allocation leaves no live key");
+
+    try {
+        EVP_PKEY_get1_EC_KEY_nid_postfix(nullptr);
+        Require(false, "null pkey throws invalid_argument");
+    } catch (const std::invalid_argument&) {}
+
+    void* const nonEcKey = EVP_PKEY_new_nid_postfix();
+    Require(nonEcKey != nullptr, "allocates non-EC key");
+    Require(EVP_PKEY_get1_EC_KEY_nid_postfix(nonEcKey) == nullptr, "non-EC key returns nullptr");
+    Require(ERR_get_error_nid_postfix() == ErrorCode(6, 0xfff, 142), "queues ReasonExpectingAnEcKey");
+    EVP_PKEY_free_nid_postfix(nonEcKey);
+
+    void* const emptyEcKey = EVP_PKEY_new_nid_postfix();
+    Require(emptyEcKey != nullptr, "allocates empty EC key");
+    auto* const emptyTestPkey = static_cast<TestPkey*>(emptyEcKey);
+    emptyTestPkey->type = 408;
+    emptyTestPkey->saveType = 408;
+    try {
+        EVP_PKEY_get1_EC_KEY_nid_postfix(emptyEcKey);
+        Require(false, "EC key without object throws");
+    } catch (const std::invalid_argument&) {}
+    EVP_PKEY_free_nid_postfix(emptyEcKey);
+
+    EcKey* const createdEc = EC_KEY_new_by_curve_name_nid_postfix(415);
+    Require(createdEc != nullptr, "allocates curve key");
+    Require(EcReferences(createdEc) == 1, "new EC key has one reference");
+
+    void* const validEcPkey = EVP_PKEY_new_nid_postfix();
+    Require(validEcPkey != nullptr, "allocates valid EC pkey");
+    auto* const validTestPkey = static_cast<TestPkey*>(validEcPkey);
+    validTestPkey->type = 408;
+    validTestPkey->saveType = 408;
+    validTestPkey->key = createdEc;
+
+    EcKey* const retrievedEc = EVP_PKEY_get1_EC_KEY_nid_postfix(validEcPkey);
+    Require(retrievedEc == createdEc, "retrieves same EC key pointer");
+    Require(EcReferences(retrievedEc) == 2, "increments EC key references");
+
+    EVP_PKEY_free_nid_postfix(validEcPkey);
+    Require(liveAllocations == 0, "freeing valid EC pkey releases its EVP_PKEY allocation");
+    Require(EcReferences(retrievedEc) == 1, "EVP_PKEY_free drops one EC key reference");
+    EC_KEY_free_nid_postfix(retrievedEc);
+
+    EcKey* const soleEc = EC_KEY_new_by_curve_name_nid_postfix(415);
+    Require(soleEc != nullptr, "allocates sole curve key");
+    void* const soleEcPkey = EVP_PKEY_new_nid_postfix();
+    Require(soleEcPkey != nullptr, "allocates sole EC pkey");
+    auto* const soleTestPkey = static_cast<TestPkey*>(soleEcPkey);
+    soleTestPkey->type = 408;
+    soleTestPkey->saveType = 408;
+    soleTestPkey->key = soleEc;
+    EVP_PKEY_free_nid_postfix(soleEcPkey);
+    Require(liveAllocations == 0, "freeing sole EC pkey releases all allocations");
+
+    void* const pkeyA = EVP_PKEY_new_nid_postfix();
+    void* const pkeyB = EVP_PKEY_new_nid_postfix();
+    static_cast<TestPkey*>(pkeyA)->type = 408;
+    static_cast<TestPkey*>(pkeyB)->type = 6;
+    Require(EVP_PKEY_copy_parameters_nid_postfix(pkeyA, pkeyB) == 0, "mismatched types return zero");
+    Require(ERR_get_error_nid_postfix() == ErrorCode(6, 0xfff, 101), "queues ReasonDifferentKeyTypes");
+    EVP_PKEY_free_nid_postfix(pkeyA);
+    EVP_PKEY_free_nid_postfix(pkeyB);
+    Require(liveAllocations == 0, "cleanup leaves no live allocations");
+
     return 0;
 }
