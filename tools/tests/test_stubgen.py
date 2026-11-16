@@ -1,4 +1,5 @@
 import contextlib
+import errno
 import io
 import os
 import stat
@@ -587,6 +588,15 @@ class TdTargetTests(unittest.TestCase):
                 except OSError:
                     self.skipTest("symbolic links are not available")
                 self.assertEqual(stubgen.resolved_path(link), target.resolve())
+
+    @unittest.skipIf(os.name == "nt", "symbolic link loops need POSIX symlinks here")
+    def test_resolved_path_refuses_a_symbolic_link_loop_with_eloop(self):
+        with tempfile.TemporaryDirectory() as directory:
+            loop = Path(directory) / "loop.txt"
+            os.symlink(loop, loop)
+            with self.assertRaises(OSError) as caught:
+                stubgen.resolved_path(loop)
+            self.assertEqual(caught.exception.errno, errno.ELOOP)
 
 
 if __name__ == "__main__":
