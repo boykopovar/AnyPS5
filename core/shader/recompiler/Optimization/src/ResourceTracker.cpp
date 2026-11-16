@@ -212,8 +212,22 @@ public:
         for (const auto& plan : m_tableColumns) {
             const auto& column = *m_sources[plan.source].tableColumn;
             IrValue* offset = column.selected ? &m_builder.Constant(column.addend) : plan.offset;
+            if (plan.laneLoaded != nullptr) {
+                const std::vector<IrValue*> users(plan.handle->Uses().begin(), plan.handle->Uses().end());
+                for (IrValue* user : users) {
+                    if (ImageOpcodeInfoOf(user->Opcode()).access == ImageAccess::None) {
+                        fail("a lane-loaded image table handle has a user that is not an image operation");
+                    }
+                    const std::array<IrValue*, 2> compare {plan.laneLoaded, &m_builder.Constant(0u)};
+                    IrValue* skipped = EmitBefore(*user, IrOpcode::IEqual32, IrType::Bool, compare);
+                    EmitDescriptorFault(*user, *skipped, m_builder.Constant(0u), m_builder.Constant(0u));
+                }
+            }
             for (std::uint32_t argument = 0; argument < plan.handle->ArgumentCount(); argument++) {
-                const auto value = plan.parentPointer != nullptr && (argument == 1u || argument == 2u) ? plan.parentPointer->Argument(argument - 1u) : offset;
+                auto value = plan.parentPointer != nullptr && (argument == 1u || argument == 2u) ? plan.parentPointer->Argument(argument - 1u) : offset;
+                if (plan.laneStrideWord != nullptr && argument == 1u) {
+                    value = plan.laneStrideWord;
+                }
                 plan.handle->ReplaceArgument(argument, value);
             }
             KeepSourceAlive(*plan.handle, m_sources[column.heapSource], referenced);
@@ -259,6 +273,8 @@ private:
         std::vector<std::uint32_t> hopMemory;
         std::vector<const IrValue*> hopReads;
         std::optional<KeyDomain> keyDomain;
+        IrValue* laneLoaded = nullptr;
+        IrValue* laneStrideWord = nullptr;
     };
 
     void MakeSource(const IrValue& handle, std::uint32_t width, bool sampler, bool sampleAdjust, DescriptorSource& descriptor) {
@@ -1169,9 +1185,160 @@ private:
         }
         TableColumnPlan plan;
         if (!TryMakeTableColumn(handle, sampler, r128, plan)) {
-            return false;
+            plan = {};
+            if (sampler || !TryMakeLaneColumn(handle, r128, plan)) {
+                return false;
+            }
         }
         m_tableColumns.push_back(std::move(plan));
+        return true;
+    }
+
+    struct LaneLoadDword {
+        IrValue* load = nullptr;
+        std::uint32_t offset = 0;
+        std::vector<IrValue*> conditions;
+    };
+
+    bool ParseLaneLoadDword(IrValue* value, IrValue*& lane, LaneLoadDword& dword) const {
+        value = value->Resolve();
+        if (value->Opcode() != IrOpcode::ReadLane || value->ArgumentCount() != 2u || value->Type() != IrType::U32) {
+            return false;
+        }
+        IrValue* laneIndex = value->Argument(1)->Resolve();
+        if (lane != nullptr && lane != laneIndex && !EquivalentValue(m_program.Resources(), lane, laneIndex)) {
+            return false;
+        }
+        lane = laneIndex;
+        IrValue* source = value->Argument(0)->Resolve();
+        while (Detail::IsRuntimeSelect(source->Opcode()) && source->ArgumentCount() == 3u) {
+            dword.conditions.push_back(source->Argument(0)->Resolve());
+            source = source->Argument(1)->Resolve();
+        }
+        std::uint32_t component = 0;
+        IrValue* load = source;
+        const auto extract = source->Opcode();
+        if (extract == IrOpcode::CompositeExtractU32x2 || extract == IrOpcode::CompositeExtractU32x3 || extract == IrOpcode::CompositeExtractU32x4) {
+            if (source->ArgumentCount() != 2u || !immediateU32(source->Argument(1), component)) {
+                return false;
+            }
+            load = source->Argument(0)->Resolve();
+        }
+        switch (load->Opcode()) {
+            case IrOpcode::LoadBufferU32:
+            case IrOpcode::LoadBufferU32x2:
+            case IrOpcode::LoadBufferU32x3:
+            case IrOpcode::LoadBufferU32x4: break;
+            default: return false;
+        }
+        if (load->ArgumentCount() != 5u || (load->Opcode() == IrOpcode::LoadBufferU32) != (load == source)) {
+            return false;
+        }
+        const auto index = load->Flags<MemoryFlags>().index;
+        const auto& memoryInfo = m_program.Resources().memoryInfo;
+        if (index >= memoryInfo.size()) {
+            return false;
+        }
+        const auto& memory = memoryInfo[index];
+        if (memory.kind != ResourceKind::Buffer || !memory.idxen || memory.offen || memory.typed || memory.formatted || memory.d16 || memory.dataBits != 32u || component >= memory.dataDwords) {
+            return false;
+        }
+        std::uint32_t soffset = 0;
+        if (!immediateU32(load->Argument(3), soffset)) {
+            return false;
+        }
+        const std::uint64_t offset = static_cast<std::uint64_t>(memory.offset) + soffset + component * static_cast<std::uint32_t>(sizeof(std::uint32_t));
+        if (offset > 0x7fffffffu) {
+            return false;
+        }
+        dword.load = load;
+        dword.offset = static_cast<std::uint32_t>(offset);
+        dword.conditions.push_back(load->Argument(4)->Resolve());
+        return true;
+    }
+
+    bool TryMakeLaneColumn(IrValue& handle, bool r128, TableColumnPlan& plan) {
+        if (handle.Opcode() != IrOpcode::GetImageResource || handle.ArgumentCount() != 8u) {
+            return false;
+        }
+        std::uint32_t words = 8u;
+        if (r128) {
+            bool zeroTail = true;
+            for (std::uint32_t dword = 4u; dword < 8u; dword++) {
+                std::uint32_t immediate = 0;
+                zeroTail = zeroTail && immediateU32(handle.Argument(dword), immediate) && immediate == 0u;
+            }
+            if (zeroTail) {
+                words = 4u;
+            }
+        }
+        IrValue* lane = nullptr;
+        IrValue* heap = nullptr;
+        IrValue* key = nullptr;
+        std::uint32_t first = 0;
+        std::vector<IrValue*> conditions;
+        for (std::uint32_t dword = 0; dword < words; dword++) {
+            LaneLoadDword parsed;
+            if (!ParseLaneLoadDword(handle.Argument(dword), lane, parsed)) {
+                return false;
+            }
+            IrValue* currentHeap = parsed.load->Argument(0)->Resolve();
+            IrValue* currentKey = parsed.load->Argument(1)->Resolve();
+            if (dword == 0u) {
+                heap = currentHeap;
+                key = currentKey;
+                first = parsed.offset;
+            } else if ((currentHeap != heap && !EquivalentValue(m_program.Resources(), heap, currentHeap)) || (currentKey != key && !EquivalentValue(m_program.Resources(), key, currentKey)) || parsed.offset != first + dword * static_cast<std::uint32_t>(sizeof(std::uint32_t))) {
+                return false;
+            }
+            for (IrValue* condition : parsed.conditions) {
+                if (std::ranges::none_of(conditions, [&](IrValue* known) { return known == condition || EquivalentValue(m_program.Resources(), known, condition); })) {
+                    conditions.push_back(condition);
+                }
+            }
+        }
+        if (heap->Opcode() != IrOpcode::GetBufferResource) {
+            return false;
+        }
+        DescriptorSource heapSource;
+        std::uint32_t heapIndex = 0;
+        if (!MakeRuntimeSource(*heap, IrOpcode::GetBufferResource, 4u, heapIndex, heapSource)) {
+            return false;
+        }
+        auto& emitted = m_laneColumnValues[&handle];
+        if (emitted.first == nullptr) {
+            IrValue& position = *handle.Argument(0)->Resolve();
+            const auto flags = position.Flags<std::uint64_t>();
+            const std::array<IrValue*, 2> keyArguments {key, lane};
+            emitted.first = EmitBefore(position, IrOpcode::ReadLane, IrType::U32, keyArguments, flags);
+            IrValue* loaded = conditions.front();
+            for (std::size_t index = 1; index < conditions.size(); index++) {
+                const std::array<IrValue*, 2> both {loaded, conditions[index]};
+                loaded = EmitBefore(position, IrOpcode::LogicalAnd, IrType::Bool, both);
+            }
+            const std::array<IrValue*, 3> flag {loaded, &m_builder.Constant(1u), &m_builder.Constant(0u)};
+            IrValue* bit = EmitBefore(position, IrOpcode::SelectU32, IrType::U32, flag);
+            const std::array<IrValue*, 2> laneArguments {bit, lane};
+            emitted.second = EmitBefore(position, IrOpcode::ReadLane, IrType::U32, laneArguments, flags);
+        }
+        TableColumn column;
+        column.heapSource = heapIndex;
+        column.stride = 1u;
+        column.offset = first;
+        column.dwordCount = words;
+        column.maxKey = possibleU32UpperBound(key);
+        column.indexed = true;
+        DescriptorSource columnSource = heapSource;
+        columnSource.tableColumn = column;
+        plan.handle = &handle;
+        plan.source = InternSource(columnSource);
+        plan.offset = emitted.first;
+        plan.laneLoaded = emitted.second;
+        plan.laneStrideWord = heap->Argument(1)->Resolve();
+        auto& shared = *m_sources[plan.source].tableColumn;
+        shared.maxKey = std::max(shared.maxKey, column.maxKey);
+        shared.unkeyed = true;
+        shared.keyDomains.clear();
         return true;
     }
 
@@ -2615,6 +2782,7 @@ private:
     };
     std::vector<EdgeSelectorEntry> m_edgeSelectors;
     std::unordered_map<const IrValue*, std::string> m_splitFailures;
+    std::unordered_map<const IrValue*, std::pair<IrValue*, IrValue*>> m_laneColumnValues;
     bool m_foldedWeb = false;
 };
 

@@ -5406,6 +5406,83 @@ void verifyImageTableLateKey() {
     require(images != nullptr && images->count == 2u, "image table late key: the binding does not hold the two distinct images of the selected records");
 }
 
+const std::vector<std::uint32_t> TableLaneLoadCode{
+    0xf4080100u, 0xfa000000u, 0xf4080200u, 0xfa000010u, 0xf4080700u, 0xfa000030u, 0xbf8cc07fu, 0x36020083u,
+    0xe0382010u, 0x80010201u, 0xe0382020u, 0x80010601u, 0x7e140280u, 0x7e160280u, 0xbf8c3f70u, 0xbea0047eu,
+    0xbea2147eu, 0xd7600014u, 0x02004502u, 0xd7600015u, 0x02004503u, 0xd7600016u, 0x02004504u, 0xd7600017u,
+    0x02004505u, 0xd7600018u, 0x02004506u, 0xd7600019u, 0x02004507u, 0xd760001au, 0x02004508u, 0xd760001bu,
+    0x02004509u, 0xbea4047eu, 0x7da40414u, 0x7da40615u, 0x7da40816u, 0x7da40a17u, 0x7da40c18u, 0x7da40e19u,
+    0x7da4101au, 0x7da4121bu, 0xf09c0f08u, 0x00450c0au, 0x89fe7e24u, 0xbf89ffe2u, 0xbefe0420u, 0xbf8c3f70u,
+    0xe0700000u, 0x80070c00u, 0xbf810000u,
+};
+
+void verifyImageTableLaneLoads() {
+    using namespace ShaderRecompiler;
+    namespace Abi = ImageTableAbi;
+    static TableTexture textures[2];
+    alignas(4096) static TableGuest guest;
+    alignas(4096) static std::array<std::uint32_t, 4u * 12u> records{};
+    records.fill(0u);
+    const auto first = TableT(textures[0].bytes.data(), TableFormat8888UNorm, TableType2D);
+    const auto second = TableT(textures[1].bytes.data(), TableFormat32UInt, TableType2D);
+    const auto write = [&](std::uint32_t record, const std::array<std::uint32_t, 8>& words) { std::copy(words.begin(), words.end(), records.begin() + record * 12u + 4u); };
+    write(0u, first);
+    write(1u, second);
+    write(3u, first);
+    FillTableSrt(guest, records.data(), 48u, 4u);
+    const auto userData = TableUserData(guest);
+    const auto request = TableRequest(TableLaneLoadCode, userData);
+
+    const auto plan = GetResourcePlan(request);
+    require(plan->info.images.size() == 1u && plan->info.images[0].table == 0u, "lane-loaded image tables: a T# read back with v_readlane from per-lane idxen loads was not planned as a table");
+    const auto& column = plan->descriptorSources.at(plan->info.images[0].source).tableColumn;
+    require(column.has_value() && column->indexed && column->stride == 1u && column->addend == 0u && column->offset == 16u && column->dwordCount == 8u && column->unkeyed && !column->selected, "lane-loaded image tables: the column is wrong");
+    require(plan->info.usesFaultBuffer, "lane-loaded image tables: the guard for a lane that did not load has no fault buffer");
+
+    const auto compiled = CompileTable(request);
+    const auto& snapshot = compiled.capture->snapshot.tables.tables.at(0);
+    require(snapshot.fault == 0u && snapshot.records == 4u && snapshot.keys == 4u && snapshot.size == 4u * 48u && !snapshot.outside, "lane-loaded image tables: the snapshot does not hold NUM_RECORDS records at the V# stride");
+    require(snapshot.codes.size() == 4u && snapshot.codes[0] == snapshot.codes[3] && snapshot.codes[0] != snapshot.codes[1], "lane-loaded image tables: the record codes are wrong");
+    require(snapshot.words.at(snapshot.codes[0]).dwords == first && snapshot.words.at(snapshot.codes[1]).dwords == second, "lane-loaded image tables: a record was not read at its index times the V# stride plus the instruction offset");
+    for (const auto record : {0u, 1u, 3u}) require(TableCovered(compiled.regions, records.data() + record * 12u + 4u, 32u), "lane-loaded image tables: a record was not captured");
+    const auto& map = TableMap(*compiled.result);
+    require(map[Abi::TableHeader(0) + Abi::TableSizeLow] == 4u * 48u && map[Abi::TableHeader(0) + Abi::TableSizeHigh] == 0u, "lane-loaded image tables: the map does not hold the byte span the driver watches for writes");
+    require(std::ranges::any_of(compiled.capture->plan->descriptorSources, [](const DescriptorSource& source) { return source.tableColumn.has_value() && source.tableColumn->indexed; }), "lane-loaded image tables: the captured plan lost the indexed column");
+    const auto codes = TableCodes(map, 0);
+    require(codes.size() == 4u && codes[2] == Abi::NullCode && codes[0] == codes[3] && (codes[1] & Abi::PoisonFlag) == 0u, "lane-loaded image tables: the map codes are wrong");
+    require(TableBinding(*compiled.result, DescriptorRole::FaultBuffer) != nullptr, "lane-loaded image tables: the result has no fault buffer");
+#if ANYPS5_ENABLE_SPIRV_TOOLS
+    static_cast<void>(ValidateAndOptimizeSpirv(compiled.result->spirv, request.target.vulkanVersion, request.target.spirvVersion));
+#endif
+
+    const auto refused = [&](const char* message) {
+        const auto faulted = CompileTable(request);
+        require(faulted.capture->snapshot.tables.tables.at(0).fault == Abi::PoisonCode(static_cast<std::uint32_t>(Abi::PoisonReason::UnsupportedOperation)), message);
+    };
+    FillTableSrt(guest, records.data(), 40u, 4u);
+    refused("lane-loaded image tables: a V# stride shorter than the record was read");
+    FillTableSrt(guest, records.data(), 48u, 4u);
+    guest.srt[1] |= 1u << 31u;
+    refused("lane-loaded image tables: a swizzled V# was read");
+    FillTableSrt(guest, records.data(), 48u, 4u);
+    guest.srt[3] |= 1u << 23u;
+    refused("lane-loaded image tables: an ADD_TID V# was read");
+    FillTableSrt(guest, records.data(), 48u, 4u);
+    guest.srt[3] = (guest.srt[3] & ~(3u << 28u)) | (2u << 28u);
+    refused("lane-loaded image tables: a V# with raw bounds was read");
+    FillTableSrt(guest, records.data(), 48u, 4u);
+
+    auto otherIndex = TableLaneLoadCode;
+    otherIndex[11] = 0x80010600u;
+    bool rejected = false;
+    try {
+        static_cast<void>(GetResourcePlan(TableRequest(otherIndex, userData)));
+    } catch (const std::runtime_error& error) {
+        rejected = std::string_view(error.what()).find("is not a valid runtime value") != std::string_view::npos;
+    }
+    require(rejected, "lane-loaded image tables: T# halves loaded at different indices became one record");
+}
+
 void verifyImageTableUnkeyedAccess() {
     for (const auto* code : {&TableMixedKeyCode, &TableMixedKeyFirstCode}) {
         using namespace ShaderRecompiler;
@@ -13223,6 +13300,7 @@ int main(int argc, char** argv) {
             verifyImageTableKeyBounds();
             verifyImageTableKeyUnion();
             verifyImageTableLateKey();
+            verifyImageTableLaneLoads();
             verifyImageTableUnkeyedAccess();
             verifyImageTableRegistration();
             verifyImageTableUintStorage();

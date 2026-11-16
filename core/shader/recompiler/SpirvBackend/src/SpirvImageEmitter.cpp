@@ -2169,7 +2169,7 @@ struct TableWord {
     std::uint32_t poisoned = 0;
 };
 
-TableWord LookupTableWord(SpirvEmitterState& state, const TableColumn& column, std::uint32_t offset, std::uint32_t header, bool dynamicHeader = false) {
+TableWord LookupTableWord(SpirvEmitterState& state, const TableColumn& column, std::uint32_t offset, std::uint32_t header, bool dynamicHeader = false, std::uint32_t strideWord = 0) {
     const auto u32 = TypeU32(state);
     const auto boolean = TypeBool(state);
     const auto field = [&](std::uint32_t index) { return dynamicHeader ? TableMapAt(state, header, index) : LoadTableMap(state, ConstantU32(state, header + index)); };
@@ -2187,6 +2187,24 @@ TableWord LookupTableWord(SpirvEmitterState& state, const TableColumn& column, s
     const auto aligned = Binary(state, spv::OpIEqual, boolean, remainder, ConstantU32(state, 0u));
     const auto inMap = Binary(state, spv::OpLogicalAnd, boolean, aligned, Binary(state, spv::OpULessThan, boolean, record, keys));
     const auto mapped = LoadTableMap(state, Select(state, u32, inMap, Binary(state, spv::OpIAdd, u32, mapStart, record), ConstantU32(state, 0u)));
+    if (column.indexed) {
+        const auto stride = Binary(state, spv::OpBitwiseAnd, u32, Binary(state, spv::OpShiftRightLogical, u32, strideWord, ConstantU32(state, 16u)), ConstantU32(state, 0x3fffu));
+        const auto product = state.module.AllocateId();
+        state.module.AddFunction(spv::OpUMulExtended, TypeU32Pair(state), product, record, stride);
+        const auto productLow = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, u32, productLow, product, 0u);
+        const auto productHigh = state.module.AllocateId();
+        state.module.AddFunction(spv::OpCompositeExtract, u32, productHigh, product, 1u);
+        const auto below = Binary(state, spv::OpLogicalAnd, boolean, Binary(state, spv::OpIEqual, boolean, productHigh, sizeHigh), Binary(state, spv::OpULessThan, boolean, productLow, sizeLow));
+        const auto inRange = Binary(state, spv::OpLogicalOr, boolean, Binary(state, spv::OpULessThan, boolean, productHigh, sizeHigh), below);
+        const auto outside = Select(state, u32, inRange, ConstantU32(state, ImageTableAbi::PoisonCode(ImageTableAbi::OutsideSnapshotPoison)), outsideCode);
+        TableWord word;
+        word.code = Select(state, u32, Binary(state, spv::OpINotEqual, boolean, tableFault, ConstantU32(state, 0u)), tableFault, Select(state, u32, inMap, mapped, outside));
+        word.addressLow = baseLow;
+        word.addressHigh = baseHigh;
+        word.poisoned = Binary(state, spv::OpINotEqual, boolean, Binary(state, spv::OpBitwiseAnd, u32, word.code, ConstantU32(state, ImageTableAbi::PoisonFlag)), ConstantU32(state, 0u));
+        return word;
+    }
     if (column.address) {
         TableWord word;
         word.code = Select(state, u32, Binary(state, spv::OpINotEqual, boolean, tableFault, ConstantU32(state, 0u)), tableFault, Select(state, u32, inMap, mapped, ConstantU32(state, ImageTableAbi::PoisonCode(ImageTableAbi::OutsideSnapshotPoison))));
@@ -2286,6 +2304,10 @@ TableWord EmitTableWord(SpirvValueEmitContext& ctx, const IrValue& inst, std::ui
     const auto offset = ctx.Def(handle->Argument(0));
     const auto header = ImageTableAbi::TableHeader(table);
     const auto& parent = sources.at(column.heapSource).tableColumn;
+    if (column.indexed) {
+        if (handle->ArgumentCount() < 2u || parent.has_value()) ctx.Fail(inst, "has an indexed image table handle without its V# stride word");
+        return LookupTableWord(state, column, offset, header, false, ctx.Def(handle->Argument(1)));
+    }
     if (!parent.has_value()) return LookupTableWord(state, column, offset, header);
     if (!parent->buffer || !parent->indirect || handle->ArgumentCount() < 3u) ctx.Fail(inst, "has a nested image table without its buffer pointer");
     const auto root = LookupTablePointer(state, ctx.Def(handle->Argument(1)), ctx.Def(handle->Argument(2)), header);

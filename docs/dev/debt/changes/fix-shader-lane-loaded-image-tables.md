@@ -1,0 +1,5 @@
+# shader
+
+## add Functional
+
+- [Lane-loaded image tables](../../../core/shader/recompiler/Optimization/src/ResourceTracker.cpp) (shader recompiler) - not compared with hardware, and the V# format is not checked. A T# whose dwords `v_readlane_b32` reads at one lane from untyped 32-bit `buffer_load_dword*` results with IDXEN, without OFFEN and with an immediate SOFFSET, all of one V# and one index, is bound through an [image table](../../../core/shader/recompiler/Optimization/src/ResourceMaterializer.cpp) keyed by that lane's index, with records at the V# base plus the index times the V# stride plus the instruction offset. The access faults when the read lane's registers were not written by those loads. A table V# that is swizzled, has ADD_TID, OOB_SELECT 2 or 3, a zero stride or a stride shorter than the record faults when selected; an index at or past NUM_RECORDS reads a null T#. `v_readlane_b32` of S#s, of scalar or address loads, or of dwords loaded at different indices still throws.

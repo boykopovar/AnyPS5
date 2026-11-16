@@ -1118,6 +1118,10 @@ private:
                 Select(column, records);
                 return;
             }
+            if (column.indexed) {
+                IndexedColumn(column, heap, records);
+                return;
+            }
             records.records = ImageTableAbi::ScalarBufferRecords(column.addend, column.stride, column.offset + (column.indirect ? 4u : 0u), records.size);
             if (records.size != 0u) {
                 tables.ranges.emplace_back(records.base, records.size);
@@ -1126,6 +1130,21 @@ private:
         }
         ReadColumn(column, records, column.buffer ? parentKeysRemaining : ImageTableAbi::MaxKeys);
         if (column.buffer) parentKeysRemaining -= records.keys;
+    }
+
+    void IndexedColumn(const TableColumn& column, const ShaderBufferResource& heap, ColumnRecords& records) {
+        const std::uint64_t end = static_cast<std::uint64_t>(column.offset) + static_cast<std::uint64_t>(column.dwordCount) * sizeof(std::uint32_t);
+        if (heap.Stride() == 0u || heap.SwizzleEnabled() || heap.AddTid() || heap.OutOfBounds() > 1u || (column.offset & 3u) != 0u || end > heap.Stride()) {
+            records.fault = ImageTableAbi::PoisonCode(static_cast<std::uint32_t>(PoisonReason::UnsupportedOperation));
+            return;
+        }
+        TableColumn record = column;
+        record.stride = heap.Stride();
+        records.records = ImageTableAbi::ScalarBufferRecords(0u, record.stride, record.offset, records.size);
+        if (records.size != 0u) {
+            tables.ranges.emplace_back(records.base, records.size);
+        }
+        ReadColumn(record, records, ImageTableAbi::MaxKeys);
     }
 
     void ReadColumn(const TableColumn& column, ColumnRecords& records, std::uint32_t limit) {
