@@ -1,5 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "VulkanTestDevice.hpp"
@@ -486,6 +488,15 @@ void FullVertexPushDataLeavesRoomForTheFragment(bool libraries) {
 
 }
 
+void PlansCameFromTheFinisher(const char* arm, bool on) {
+    const auto counts = AgcDriver::Graphics::TakePreparedDrawCounts();
+    const auto text = std::string(arm) + ": the finisher planned " + std::to_string(counts.planned) + " draws (" + std::to_string(counts.failed) + " refused), the committer took " + std::to_string(counts.used) + " plans (" + std::to_string(counts.otherDevice) + " for another device) and planned " + std::to_string(counts.inlinePlans) + " draws itself";
+    std::cout << text << '\n';
+    Require(counts.failed == 0 && counts.otherDevice == 0, text + ", expected no refused plan and none for another device");
+    if (on) Require(counts.planned != 0 && counts.used == counts.planned, text + ", expected the committer to take every plan the finisher made");
+    else Require(counts.planned == 0 && counts.used == 0 && counts.inlinePlans != 0, text + ", expected the committer to plan every draw itself");
+}
+
 int main(int argc, char** argv) {
 #ifdef _WIN32
     _putenv_s("APS5_NO_GPU_UNFOLDED_INDIRECT", "1");
@@ -508,7 +519,22 @@ int main(int argc, char** argv) {
         if (!libraries && std::getenv("APS5_NO_GPL") == nullptr) return VulkanTestSkipped;
         if (std::getenv("APS5_VERIFY_DRAW_ENTRIES") != nullptr) {
             RefreshedStageDataVerifies();
+        } else if (argc == 2 && std::string_view(argv[1]) == "--finisher-prepare-switch") {
+            using AgcDriver::Graphics::RuntimeSwitch;
+            namespace Switches = AgcDriver::Graphics::RuntimeSwitches;
+            Require(!Switches::Set(RuntimeSwitch::FinisherPrepare), "the finisher-prepare switch started set");
+            static_cast<void>(AgcDriver::Graphics::TakePreparedDrawCounts());
+            ThirdDrawHitsTheCache(libraries);
+            UserDataDrawsReuseTheirShape(libraries);
+            PlansCameFromTheFinisher("with the finisher-prepare switch clear", false);
+            Switches::Assign(RuntimeSwitch::FinisherPrepare, true);
+            StageDataHitsRefreshTheirWords(libraries);
+            RetainedPixelCacheTransitions();
+            Switches::Assign(RuntimeSwitch::FinisherPrepare, false);
+            PlansCameFromTheFinisher("after the finisher-prepare switch was set mid-run", true);
         } else {
+            const bool finisherPrepare = std::getenv("APS5_FINISHER_PREPARE") != nullptr && std::getenv("APS5_DRAW_PIPELINE") != nullptr;
+            static_cast<void>(AgcDriver::Graphics::TakePreparedDrawCounts());
             ThirdDrawHitsTheCache(libraries);
             UserDataDrawsReuseTheirShape(libraries);
             StageDataHitsRefreshTheirWords(libraries);
@@ -518,6 +544,7 @@ int main(int argc, char** argv) {
             FullVertexPushDataLeavesRoomForTheFragment(libraries);
             RecordWordsReachTheShader(libraries);
             IndirectPointsKeepTheirPointSize(libraries);
+            if (finisherPrepare) PlansCameFromTheFinisher("with APS5_FINISHER_PREPARE", true);
         }
         AgcDriverShutdown_nid_postfix();
         Require(AgcDriver::Graphics::PipelineLibraryWorkers() == 0, "the driver's shutdown left the pipeline library worker running");

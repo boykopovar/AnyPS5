@@ -9,6 +9,7 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/WorkerSampler.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include <algorithm>
 #include <array>
@@ -452,6 +453,11 @@ void DrawPipeline::report(std::chrono::steady_clock::time_point now) {
     AgcDriver::ProfilePrint_nid_no_patch("[commits] by kind (10 s):%s\n", kindText.c_str());
     const auto vk = Graphics::TakeVkDrawCounts();
     AgcDriver::ProfilePrint_nid_no_patch("[vkdraw] (10 s): %llu vkCmdDraw, %llu vkCmdDrawIndexed, %llu vkCmdDrawIndirect calls, %llu mesh; draw keys %llu, same as the previous draw %llu, seen within the last 4096 draws %llu; draw shapes (state without per-draw user words) same as the previous %llu, seen within the last 4096 %llu\n", static_cast<unsigned long long>(vk.direct), static_cast<unsigned long long>(vk.indexed), static_cast<unsigned long long>(vk.indirect), static_cast<unsigned long long>(vk.mesh), static_cast<unsigned long long>(drawKeys.Take()), static_cast<unsigned long long>(drawKeysSameAsPrevious.Take()), static_cast<unsigned long long>(drawKeysSeenRecently.Take()), static_cast<unsigned long long>(drawShapesSameAsPrevious.Take()), static_cast<unsigned long long>(drawShapesSeenRecently.Take()));
+    const auto plans = Graphics::TakePreparedDrawCounts();
+    if (plans.planned != 0 || plans.failed != 0 || plans.used != 0 || plans.otherDevice != 0 || plans.inlinePlans != 0) {
+        const auto per = [](std::uint64_t ns, std::uint64_t count) { return count == 0 ? 0.0 : static_cast<double>(ns) / 1e3 / static_cast<double>(count); };
+        AgcDriver::ProfilePrint_nid_no_patch("[finisher-prepare] (10 s, %s): the finisher planned %llu draws at %.2f us each, %llu plans refused; the committer took %llu plans, %llu for another device, and planned %llu draws itself at %.2f us each\n", Graphics::RuntimeSwitches::Set(Graphics::RuntimeSwitch::FinisherPrepare) ? "on" : "off", static_cast<unsigned long long>(plans.planned), per(plans.planNs, plans.planned), static_cast<unsigned long long>(plans.failed), static_cast<unsigned long long>(plans.used), static_cast<unsigned long long>(plans.otherDevice), static_cast<unsigned long long>(plans.inlinePlans), per(plans.inlinePlanNs, plans.inlinePlans));
+    }
     commits = commitNs = commitErrors = enqueued = fullWaitNs = depthSum = wakes = lockWaitNs = 0;
     drains = {};
     drainWaitNs = {};
