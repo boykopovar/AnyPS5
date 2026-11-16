@@ -30,6 +30,7 @@
 
 namespace {
 constexpr int kSaveDataNotInitialized = -2137063423;
+constexpr int kSaveDataParameter = -2137063424;
 }
 
 static void Check(bool value, int line) {
@@ -88,6 +89,23 @@ static int FailWrite(const std::filesystem::path& path, [[maybe_unused]] std::si
     return result;
 }
 
+static void CheckUnmappedGetMemoryArguments() {
+    SaveDataMemoryGet2 get{};
+    get.user_id = 7531;
+    get.slot_id = 0;
+    Require(sceSaveDataGetSaveDataMemory2(reinterpret_cast<SaveDataMemoryGet2*>(0x10)) == kSaveDataParameter);
+    get.data = reinterpret_cast<SaveDataMemoryData*>(0x10);
+    Require(sceSaveDataGetSaveDataMemory2(&get) == kSaveDataParameter);
+    get.data = nullptr;
+    get.param = reinterpret_cast<SaveDataParam*>(0x10);
+    Require(sceSaveDataGetSaveDataMemory2(&get) == kSaveDataParameter);
+    get.param = nullptr;
+    get.icon = reinterpret_cast<SaveDataIcon*>(0x10);
+    Require(sceSaveDataGetSaveDataMemory2(&get) == kSaveDataParameter);
+    get.icon = nullptr;
+    Require(sceSaveDataGetSaveDataMemory2(&get) == 0);
+}
+
 int main() {
     Require(sceSaveDataCreateTransactionResource(1024) == kSaveDataNotInitialized);
     Require(sceSaveDataDeleteTransactionResource(1) == kSaveDataNotInitialized);
@@ -112,6 +130,7 @@ int main() {
         Require(static_cast<bool>(file));
     }
     Require(sceSaveDataInitialize3(nullptr) == 0);
+    CheckUnmappedGetMemoryArguments();
     const int tx0 = sceSaveDataCreateTransactionResource(0);
     Require(tx0 > 0);
     Require(sceSaveDataDeleteTransactionResource(tx0) == 0);

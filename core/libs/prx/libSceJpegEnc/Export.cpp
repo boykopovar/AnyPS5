@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
+#include <limits>
 #include <new>
 #include <optional>
 #include <stdexcept>
@@ -11,6 +12,7 @@
 #include "Decoder/Jpeg.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 static_assert(sizeof(JpegEncCreateParam) == 0x8);
 static_assert(sizeof(JpegEncEncodeParam) == 0x30);
@@ -52,6 +54,11 @@ struct Encoder {
     Encoder* self;
 };
 
+struct ErrnoGuard {
+    int saved = errno;
+    ~ErrnoGuard() { errno = saved; }
+};
+
 bool copyIn(void* dst, const void* src, std::size_t size) {
     const int savedErrno = errno;
     const bool copied = GuestCopyIn_nid_no_patch(dst, src, size);
@@ -64,6 +71,17 @@ bool copyOut(void* dst, const void* src, std::size_t size) {
     const bool copied = GuestCopyOut_nid_no_patch(dst, src, size);
     errno = savedErrno;
     return copied;
+}
+
+bool canCopyOut(void* dst, std::size_t size) {
+    if (size == 0) return true;
+    const auto start = reinterpret_cast<std::uintptr_t>(dst);
+    if (start == 0 || size > std::numeric_limits<std::uintptr_t>::max() - start) return false;
+    const int savedErrno = errno;
+    const GuestArena::HostWrite guard(dst, size);
+    const bool writable = guard.Open() && GuestWritable_nid_no_patch(dst, size);
+    errno = savedErrno;
+    return writable;
 }
 
 std::int32_t validateCreateParam(const JpegEncCreateParam* param, JpegEncCreateParam* outParam = nullptr) {
@@ -202,6 +220,7 @@ Decoder::Jpeg::Sampling toSampling(const JpegEncEncodeParam& param) {
 extern "C" {
 
 int32_t APS5_VABI sceJpegEncCreate(const JpegEncCreateParam* param, void* memory, uint32_t memory_size, void** handle) {
+    const ErrnoGuard errnoGuard;
     JpegEncCreateParam localParam{};
     const std::int32_t result = validateCreateParam(param, &localParam);
     if (result != 0) return result;
@@ -210,6 +229,9 @@ int32_t APS5_VABI sceJpegEncCreate(const JpegEncCreateParam* param, void* memory
     if (!handle) return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
     const auto address = reinterpret_cast<std::uintptr_t>(memory);
     const std::uintptr_t aligned = (address + HANDLE_ALIGNMENT - 1) & ~(HANDLE_ALIGNMENT - 1);
+    if (!canCopyOut(handle, sizeof(void*))) {
+        return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
+    }
     Encoder localEncoder{};
     localEncoder.self = reinterpret_cast<Encoder*>(aligned);
     if (!copyOut(reinterpret_cast<void*>(aligned), &localEncoder, sizeof(localEncoder))) {
@@ -225,6 +247,7 @@ int32_t APS5_VABI sceJpegEncCreate(const JpegEncCreateParam* param, void* memory
 }
 
 int32_t APS5_VABI sceJpegEncDelete(void* handle) {
+    const ErrnoGuard errnoGuard;
     Encoder* encoder = toEncoder(handle);
     if (!encoder) return SCE_JPEG_ENC_ERROR_INVALID_HANDLE;
     Encoder cleared{};
@@ -233,6 +256,7 @@ int32_t APS5_VABI sceJpegEncDelete(void* handle) {
 }
 
 int32_t APS5_VABI sceJpegEncEncode(void* handle, const JpegEncEncodeParam* param, JpegEncOutputInfo* outputInfo) {
+    const ErrnoGuard errnoGuard;
     if (!toEncoder(handle)) return SCE_JPEG_ENC_ERROR_INVALID_HANDLE;
     JpegEncEncodeParam localParam{};
     const std::int32_t result = validateEncodeParam(param, &localParam);
@@ -247,6 +271,8 @@ int32_t APS5_VABI sceJpegEncEncode(void* handle, const JpegEncEncodeParam* param
     const std::vector<std::uint8_t> jpeg = Decoder::Jpeg::Encode(*pixels, localParam.image_width, localParam.image_height, channels, toQuality(localParam), toSampling(localParam), restartBlocks, restartRows);
     if (jpeg.size() > localParam.jpeg_size) return SCE_JPEG_ENC_ERROR_INVALID_SIZE;
 
+    if (!canCopyOut(localParam.jpeg, jpeg.size())) return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
+    if (outputInfo != nullptr && !canCopyOut(outputInfo, sizeof(*outputInfo))) return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
     if (!copyOut(localParam.jpeg, jpeg.data(), jpeg.size())) return SCE_JPEG_ENC_ERROR_INVALID_ADDR;
     if (outputInfo) {
         JpegEncOutputInfo localOutput{};
@@ -258,6 +284,7 @@ int32_t APS5_VABI sceJpegEncEncode(void* handle, const JpegEncEncodeParam* param
 }
 
 int32_t APS5_VABI sceJpegEncQueryMemorySize(const JpegEncCreateParam* param) {
+    const ErrnoGuard errnoGuard;
     JpegEncCreateParam localParam{};
     const std::int32_t result = validateCreateParam(param, &localParam);
     if (result != 0) return result;

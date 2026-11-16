@@ -158,7 +158,7 @@ class FetchTests(unittest.TestCase):
                 pr_overlap._REPO_ROOTS.clear()
                 redirect = {
                     "GIT_CONFIG_COUNT": "1",
-                    "GIT_CONFIG_KEY_0": f"url.{remote.as_uri()}.insteadOf",
+                    "GIT_CONFIG_KEY_0": f"url.{remote.as_posix()}.insteadOf",
                     "GIT_CONFIG_VALUE_0": "https://github.com/owner/project.git",
                 }
                 with patch.object(pr_overlap, "REPO", "owner/project", create=True), patch.dict(os.environ, redirect):
