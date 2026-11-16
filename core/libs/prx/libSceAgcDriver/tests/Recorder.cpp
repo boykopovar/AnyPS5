@@ -7647,6 +7647,10 @@ bool hookClearAccessTests(const Device& device, Recorder& recorder) {
         std::cout << "skipped, the device reports watched host memory written when it imports or reads it\n";
         return false;
     }
+    if (device.Properties().deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU) {
+        std::cout << "skipped, the device reports a CPU rasterizer, whose GPU copies are host writes the write watch cannot tell from CPU stores\n";
+        return false;
+    }
     SetImportWatch(base, ImportWatch::Watch);
 #endif
     struct Restore {
