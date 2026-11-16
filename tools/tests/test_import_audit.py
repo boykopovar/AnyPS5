@@ -3832,6 +3832,11 @@ class LocateAndNamesTests(unittest.TestCase):
             self.assertIn('libA.prx', found)
             self.assertNotIn('libB.prx', found)
 
+    def test_load_names_refuses_a_missing_file_without_downloading(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(import_audit.AuditError, 'names file not found'):
+                import_audit.load_names(Path(directory) / 'missing.csv')
+
 
 if __name__ == "__main__":
     unittest.main()
