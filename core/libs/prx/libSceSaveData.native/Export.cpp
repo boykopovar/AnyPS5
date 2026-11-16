@@ -1542,27 +1542,24 @@ static int setSaveDataMemory2(const SaveDataMemorySet2* set_param, SetMemoryTrac
         return SAVE_DATA_ERROR_MEMORY_NOT_READY;
     }
     const std::uint32_t n = localSet.data != nullptr ? (localSet.data_num != 0 ? localSet.data_num : 1u) : 0u;
-    std::vector<SaveDataMemoryData> localData(n);
-    if (n != 0) {
-        if (!GuestCopyIn_nid_no_patch(localData.data(), localSet.data, n * sizeof(SaveDataMemoryData))) {
-            errno = savedErrno;
-            return SAVE_DATA_ERROR_PARAMETER;
-        }
-    }
-    for (std::uint32_t i = 0; i < n; i++) {
-        const SaveDataMemoryData& d = localData[i];
-        if (d.buf_size == 0) {
-            continue;
-        }
-        if (d.buf == nullptr || d.offset > size || d.buf_size > size - d.offset) {
-            errno = savedErrno;
-            return SAVE_DATA_ERROR_PARAMETER;
-        }
-    }
     std::vector<MemoryWrite> writes;
-    for (std::uint32_t i = 0; i < n; i++) {
-        const SaveDataMemoryData& d = localData[i];
-        if (d.buf_size != 0) {
+    constexpr std::size_t kChunkSize = 64;
+    std::array<SaveDataMemoryData, kChunkSize> chunk{};
+    for (std::uint32_t offset = 0; offset < n; offset += kChunkSize) {
+        const std::uint32_t count = std::min<std::uint32_t>(kChunkSize, n - offset);
+        if (!GuestCopyIn_nid_no_patch(chunk.data(), localSet.data + offset, count * sizeof(SaveDataMemoryData))) {
+            errno = savedErrno;
+            return SAVE_DATA_ERROR_PARAMETER;
+        }
+        for (std::uint32_t i = 0; i < count; i++) {
+            const SaveDataMemoryData& d = chunk[i];
+            if (d.buf_size == 0) {
+                continue;
+            }
+            if (d.buf == nullptr || d.offset > size || d.buf_size > size - d.offset) {
+                errno = savedErrno;
+                return SAVE_DATA_ERROR_PARAMETER;
+            }
             writes.push_back({d.offset, d.buf_size, static_cast<const char*>(d.buf)});
         }
     }
@@ -1823,7 +1820,10 @@ static int getConvertProgress(float* progress) {
         return SAVE_DATA_ERROR_NOT_INITIALIZED;
     }
     const float current = g_convertProgress.load();
-    if (!GuestCopyOut_nid_no_patch(progress, &current, sizeof(current))) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(progress, &current, sizeof(current));
+    errno = savedErrno;
+    if (!copied) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
     return SAVE_DATA_OK;
@@ -2163,7 +2163,10 @@ static int getProgress(float* progress) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
     const float current = g_backupProgress.load();
-    if (!GuestCopyOut_nid_no_patch(progress, &current, sizeof(current))) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(progress, &current, sizeof(current));
+    errno = savedErrno;
+    if (!copied) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
     return SAVE_DATA_OK;
