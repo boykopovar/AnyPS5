@@ -575,6 +575,19 @@ class TdTargetTests(unittest.TestCase):
         self.assertTrue(path.startswith("../../../core/libs/prx/libSceFoo/"))
         self.assertEqual(library, "libSceFoo")
 
+    def test_resolved_path_returns_a_plain_file_and_follows_one_link(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "real.txt"
+            target.write_text("x", encoding="utf-8")
+            self.assertEqual(stubgen.resolved_path(target), target.resolve())
+            link = Path(directory) / "link.txt"
+            if hasattr(os, "symlink"):
+                try:
+                    os.symlink(target, link)
+                except OSError:
+                    self.skipTest("symbolic links are not available")
+                self.assertEqual(stubgen.resolved_path(link), target.resolve())
+
 
 if __name__ == "__main__":
     unittest.main()
