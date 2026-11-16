@@ -1,3 +1,4 @@
+import argparse
 import json
 import os
 import subprocess
@@ -418,5 +419,18 @@ class AbSplitTests(unittest.TestCase):
                         self.assertEqual(run.stdout, "")
                         self.assertIn("settled does not match active phase", run.stderr)
                         self.assertNotIn("Traceback", run.stderr)
+
+
+class FiniteHelperTests(unittest.TestCase):
+    def test_finite_returns_finite_values_unchanged(self):
+        self.assertEqual(ab_split.finite({"a": [1.5, 2.0], "b": (3,)}), {"a": [1.5, 2.0], "b": (3,)})
+
+    def test_finite_refuses_non_finite_values_inside_containers(self):
+        with self.assertRaisesRegex(ValueError, "non-finite"):
+            ab_split.finite({"a": [1.0, float("inf")]})
+        with self.assertRaisesRegex(ValueError, "non-finite"):
+            ab_split.finite((float("nan"),))
+
+
 if __name__ == "__main__":
     unittest.main()
