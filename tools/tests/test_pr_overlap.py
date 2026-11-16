@@ -611,6 +611,13 @@ class ExportScanTests(unittest.TestCase):
     def test_exports_skips_unpatched_names(self):
         self.assertEqual(pr_overlap.exports("+APS5_VABI sceFoo_nid_no_patch(int a) {\n", "+"), set())
 
+    def test_source_exports_keys_each_export_by_library_and_nid(self):
+        import nid_names
+        text = "int APS5_VABI sceFoo(int a) { return a; }\n"
+        self.assertEqual(pr_overlap.source_exports(text, "libA"),
+                         {("libA", nid_names.compute_nid("sceFoo")): {"sceFoo"}})
+        self.assertEqual(pr_overlap.source_exports("int APS5_VABI sceFoo_nid_no_patch(int a) { return a; }\n", "libA"), {})
+
 
 if __name__ == "__main__":
     unittest.main()
