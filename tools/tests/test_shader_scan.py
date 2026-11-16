@@ -528,5 +528,13 @@ class FunctionBodyTests(unittest.TestCase):
         self.assertIsNone(shader_scan.function_body(source, "missing"))
 
 
+class ArrayAndCaseTests(unittest.TestCase):
+    def test_array_body_and_case_names(self):
+        source = "static const int arr[] = { 1, 2 };"
+        self.assertEqual(shader_scan.array_body(source, "arr"), " 1, 2 ")
+        body = "case Kind::A: case Kind::B: case Other::C:"
+        self.assertEqual(shader_scan.case_names(body, "Kind"), {"A", "B"})
+
+
 if __name__ == "__main__":
     unittest.main()
