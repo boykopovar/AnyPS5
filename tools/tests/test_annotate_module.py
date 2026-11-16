@@ -1010,5 +1010,16 @@ class PathResolutionTests(unittest.TestCase):
             self.assertTrue(loop.is_symlink())
 
 
+class FakeNamer:
+    def resolve(self, name):
+        return name.upper()
+
+
+class ListingHelperTests(unittest.TestCase):
+    def test_export_lines_lists_exports_then_thread_local_offsets(self):
+        self.assertEqual(annotate_module.export_lines({0x10: ["a"]}, {0x4: ["tl"]}, FakeNamer()),
+                         ["0x10 a A", "tls+0x4 tl TL"])
+
+
 if __name__ == "__main__":
     unittest.main(defaultTest=os.environ.get("ANNOTATE_MODULE_TEST"))
