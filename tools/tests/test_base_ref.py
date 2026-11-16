@@ -78,6 +78,12 @@ class ResolveTests(unittest.TestCase):
             self.make_repo(directory)
             self.assertEqual(base_ref.resolve(Path(directory)), 'main')
 
+    def test_resolve_refuses_a_repository_with_no_base_branch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            subprocess.run(['git', '-C', directory, 'init', '-q'], check=True)
+            with self.assertRaisesRegex(ValueError, 'no base branch found'):
+                base_ref.resolve(Path(directory))
+
 
 if __name__ == "__main__":
     unittest.main()
