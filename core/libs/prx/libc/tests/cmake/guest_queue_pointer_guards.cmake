@@ -1,0 +1,12 @@
+add_test_executable(guest_queue_pointer_guards_tests ${LIBS_INCLUDE_DIR}/tests/GuestQueuePointerGuards.cpp)
+target_include_directories(guest_queue_pointer_guards_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(guest_queue_pointer_guards_tests PRIVATE libc)
+configure_windows_unwind(guest_queue_pointer_guards_tests)
+foreach(mode insque remque valid)
+    add_test(NAME guest_queue_pointer_guards_${mode} COMMAND guest_queue_pointer_guards_tests ${mode})
+    set_tests_properties(guest_queue_pointer_guards_${mode} PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_queue_pointer_guards_${mode} PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endforeach()
