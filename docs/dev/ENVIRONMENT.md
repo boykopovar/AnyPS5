@@ -240,6 +240,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_LAND_WAITS_ALL_QUEUES` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Synchronization/WaitMemory.cpp` |  | notes pending waits on queue 0 as well |
 | `APS5_LAZY_SHADER_PREPARE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Shaders/ShaderRegistry.cpp` |  | prepares a registered shader on its first use instead of while registering it |
 | `APS5_LDS_SLACK` | integer | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderInputState.cpp` | 0 | dwords added to every dispatch's LDS allocation |
+| `APS5_LINEAR_IMPORT_RETILE_HOST` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/Texture.cpp` |  | also retiles a whole-layer write-back of a linear storage image directly into a host import outside a device-local heap (discrete GPUs), skipping the device scratch and its copy |
 | `APS5_LOCKED_BUILD` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | builds the whole dispatch preparation under the GpuMutex, skipping the split path |
 | `APS5_LOCKED_DRAW_PREPARE` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/Draw.cpp` |  | takes the GpuMutex before preparing a draw |
 | `APS5_LOG_STATS` | string | `core/libs/prx/libSceAgcDriver/Execution/include/AsyncLog.hpp` |  | prints the AGC log's line, byte and coalescing statistics every 10 s window by default, when unset or set to anything but `0`; `0` turns them off |

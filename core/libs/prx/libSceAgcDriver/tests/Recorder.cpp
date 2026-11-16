@@ -9702,10 +9702,11 @@ void writeBackPaddingTests(const Device& device, Recorder& recorder, bool watche
                 static const bool importRetile = std::getenv("APS5_NO_LINEAR_IMPORT_RETILE") == nullptr;
                 const auto* surfaceImport = watched ? HostImportFor(context, address, surfaceBytes) : nullptr;
                 const bool deviceLocalImport = surfaceImport != nullptr && HostImportDeviceLocal(context, *surfaceImport);
-                const bool expectImportRetile = importRetile && deviceLocalImport && test.tileMode == TextureTileMode::kLinear && watched && AgcDriver::GuestMemory::Watched(address, surfaceBytes);
+                static const bool hostRetile = std::getenv("APS5_LINEAR_IMPORT_RETILE_HOST") != nullptr;
+                const bool expectImportRetile = importRetile && (deviceLocalImport || hostRetile) && test.tileMode == TextureTileMode::kLinear && watched && AgcDriver::GuestMemory::Watched(address, surfaceBytes);
                 if (expectImportRetile && importRetiled == 0) failures += what + ": the linear write-back went through its scratch instead of retiling into the import\n";
                 if (!importRetile && importRetiled != 0) failures += what + ": the linear write-back retiled into the import with APS5_NO_LINEAR_IMPORT_RETILE set\n";
-                if (watched && !deviceLocalImport && importRetiled != 0) failures += what + ": the linear write-back retiled into an import outside a device-local heap\n";
+                if (watched && !deviceLocalImport && !hostRetile && importRetiled != 0) failures += what + ": the linear write-back retiled into an import outside a device-local heap\n";
                 std::vector<std::byte> read(bytes);
                 if (watched) AgcDriver::GuestMemory::Read(blockAddress, read);
                 else std::memcpy(read.data(), memory, bytes);

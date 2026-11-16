@@ -137,6 +137,17 @@ thread_local const char* uploadReason = "first";
 // (DiscardPendingInside) and units an alias's own results superseded (markLayersPending); relaxed,
 // reported only.
 std::atomic<std::uint64_t> singlePassMoves{0}, slabRetiles{0}, paddingSeedCopies{0}, linearImportRetiles{0};
+std::atomic<std::uint64_t> importRouteDirect{0}, importRouteHostBlocked{0}, importRouteOther{0};
+
+static void noteImportRoute(std::atomic<std::uint64_t>& route) {
+    route.fetch_add(1, std::memory_order_relaxed);
+    static const bool stats = std::getenv("APS5_PIPELINE_STATS") != nullptr;
+    if (!stats) return;
+    static std::atomic<std::int64_t> reportedAt{0};
+    const auto tenSeconds = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count() / 10;
+    if (reportedAt.exchange(tenSeconds, std::memory_order_relaxed) == tenSeconds) return;
+    std::fprintf(stderr, "[import-writeback] (10 s): %llu retiled into the import, %llu eligible but copied (host-memory import), %llu other\n", static_cast<unsigned long long>(importRouteDirect.exchange(0)), static_cast<unsigned long long>(importRouteHostBlocked.exchange(0)), static_cast<unsigned long long>(importRouteOther.exchange(0)));
+}
 std::atomic<std::uint64_t> partialUploads{0}, partialUploadBytes{0}, partialWriteBacks{0}, partialWriteBackBytes{0}, emptyWriteBacks{0}, coalescedWriteBacks{0}, unitsDropped{0}, unitsSuperseded{0}, clearHandOvers{0}, creationHandOvers{0}, handedOverSuperseded{0};
 // FlushPending listings skipped because no pending unit of the image lay inside the range, images
 // whose selected pending units were dropped because their memory is no longer registered (see
@@ -7621,6 +7632,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
         std::vector<std::pair<std::uint64_t, std::uint64_t>> importStores(keep.begin(), keep.end());
         const bool linearRows = descriptor.tileMode == TextureTileMode::kLinear && !geometry.thick && std::none_of(mips.begin(), mips.end(), [](const TileMipLayout& mip) { return mip.tail; });
         const HostImport* directImport = nullptr;
+        bool routed = false;
         if (linearRows && !padding.copies.empty() && padding.slabs.empty() && saveUnits.empty()) {
             std::vector<std::pair<std::uint64_t, std::uint64_t>> runs;
             for (const auto& range : copied) runs.emplace_back(range.begin, range.end);
@@ -7637,9 +7649,15 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
                     if (!wholeLayers.empty() && wholeLayers.back().second == begin) wholeLayers.back().second = end;
                     else wholeLayers.emplace_back(begin, end);
                 }
-                if (wholeLayers == keep && HostImportDeviceLocal(context, *segments.front().import)) directImport = segments.front().import;
+                static const bool hostRetile = std::getenv("APS5_LINEAR_IMPORT_RETILE_HOST") != nullptr;
+                if (wholeLayers == keep) {
+                    if (HostImportDeviceLocal(context, *segments.front().import) || hostRetile) directImport = segments.front().import;
+                    noteImportRoute(directImport != nullptr ? importRouteDirect : importRouteHostBlocked);
+                    routed = true;
+                }
             }
         }
+        if (!routed) noteImportRoute(importRouteOther);
         const auto tiledScratch = directImport == nullptr ? std::make_shared<DeviceBuffer>(context, static_cast<std::size_t>(guestBytes), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT) : nullptr;
         detiler.BeginBatch();
         auto* recorder = recorderFor(context);
