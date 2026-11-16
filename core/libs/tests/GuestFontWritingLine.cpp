@@ -1,5 +1,6 @@
 #include "prx/libSceFont/include/Api.hpp"
 #include "prx/libSceFont/include/FontTypes.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -101,6 +102,9 @@ int main() {
     Require(sceFontCreateWritingLine(&memory, 0x12, nullptr, &line) == SCE_FONT_ERROR_INVALID_MEMORY);
     memory.iface = &memoryInterface;
     Require(sceFontCreateWritingLine(&memory, 0x12, nullptr, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontCreateWritingLine(&memory, 0x12, nullptr, reinterpret_cast<void**>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     for (int form : {0, 0x10, 0x13}) Require(sceFontCreateWritingLine(&memory, form, nullptr, &line) == SCE_FONT_ERROR_INVALID_PARAMETER && !line);
     std::uint16_t detail = 0x0FD5;
     Require(sceFontCreateWritingLine(&memory, 0x12, &detail, &line) == SCE_FONT_ERROR_INVALID_PARAMETER && !line);
@@ -133,6 +137,9 @@ int main() {
     Require(sceFontWritingLineWritesOrder(line, 0x1FB, &runA, &a) == SCE_FONT_ERROR_INVALID_PARAMETER);
     Require(sceFontWritingLineWritesOrder(line, Attribute(0), &runA, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
     Require(sceFontWritingLineWritesOrder(line, Attribute(0x7F), &runA, &a) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontWritingLineWritesOrder(line, Attribute(0), reinterpret_cast<const FontWritingMetrics*>(0x10), &a) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     Require(sceFontWritingLineRefersRenderStep(line) == nullptr);
 
     Require(sceFontWritingLineWritesOrder(line, 0, &runA, &a) == SCE_FONT_ERROR_INVALID_PARAMETER);
@@ -267,6 +274,11 @@ int main() {
     Require(sceFontWritingLineGetOrderingSpace(nullptr, &space, nullptr, nullptr, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER && space == 0.0f);
     Require(sceFontWritingLineGetRenderMetrics(nullptr, &metrics) == SCE_FONT_ERROR_INVALID_PARAMETER && Same(metrics, {}));
     Require(sceFontWritingLineGetRenderMetrics(rtl, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontWritingLineGetRenderMetrics(ltr, reinterpret_cast<FontWritingMetrics*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER && errno == 71);
+    Require(sceFontWritingLineGetRenderMetrics(nullptr, reinterpret_cast<FontWritingMetrics*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER && errno == 71);
+    Require(sceFontWritingLineGetOrderingSpace(rtl, nullptr, nullptr, reinterpret_cast<float*>(0x10), nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER && errno == 71);
+    Require(sceFontWritingLineGetOrderingSpace(rtl, reinterpret_cast<float*>(0x10), nullptr, nullptr, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER && errno == 71);
     Require(sceFontWritingLineClear(nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
 
     int notALine = 0;

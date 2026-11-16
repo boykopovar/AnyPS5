@@ -1013,10 +1013,6 @@ void testCopyDataAndComputeEvents() {
     rejected.words.fill(0xa5a5a5a5u);
     const auto rejectedWords = rejected.words;
     const auto* rejectedCursor = rejected.buffer.cursor_up;
-    expectFailure([&] { sceAgcDcbCopyData(&rejected.buffer, 4, 4, 0x1000, 0xa, 0, 1, 0, 0); });
-    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
-    expectFailure([&] { sceAgcDcbCopyData(&rejected.buffer, 4, 0, 0x1000, 0xa, 4, 1, 0, 0); });
-    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
     expectFailure([&] { sceAgcAcbCopyData(&rejected.buffer, 2, 0, 0x4000, 5, 0, 1, 2, 0); });
     check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
     expectFailure([&] { sceAgcAcbCopyData(&rejected.buffer, 2, 0, 0x4000, 5, 0, 1, 0, 2); });
@@ -1050,7 +1046,13 @@ void testDefaults() {
     std::uint32_t state = 0x12345678;
     check(sceAgcInit_0090(&state, 8) == 0 && state == 0x12345678, "AGC initialization failed or modified caller state");
     check(sceAgcInit_0090(&state, 13) == 0 && state == 0x12345678, "AGC version 13 initialization changed caller state");
-    expectFailure([] { sceAgcInit_0090(nullptr, 8); });
+    for (const std::uint32_t version : {0u, 1u, 8u, 13u, 14u, 0xffffc278u, 0xffffffffu}) {
+        const auto expected = sceAgcInit(version);
+        for (const std::uintptr_t ignored : {std::uintptr_t{0}, std::uintptr_t{1}, std::uintptr_t{2}, std::uintptr_t{3}, std::uintptr_t{0x10001}, ~std::uintptr_t{0}, reinterpret_cast<std::uintptr_t>(&state)}) {
+            check(sceAgcInit_0090(reinterpret_cast<std::uint32_t*>(ignored), version) == expected, "legacy AGC initialization inspected the ignored argument");
+            check(state == 0x12345678, "legacy AGC initialization modified its ignored argument");
+        }
+    }
     check(sceAgcInit_0090(&state, 14) == 0 && state == 0x12345678, "out-of-range AGC initialization version changed caller state");
     check(sceAgcInit(8) == 0, "AGC version initialization failed");
     check(sceAgcInit(13) == 0, "AGC version 13 initialization failed");

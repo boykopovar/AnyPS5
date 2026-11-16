@@ -88,6 +88,9 @@ void TestRunningAppUser() {
 
 void TestShellCoreUtilLeafCalls() {
     sceShellCoreUtilLaunchByUriParamInit(nullptr);
+    errno = 71;
+    sceShellCoreUtilLaunchByUriParamInit(reinterpret_cast<void*>(0x10));
+    Require(errno == 71);
     Require(sceShellCoreUtilDebugGetNumberOfCffItems(nullptr) == static_cast<int>(0x80e30005u));
     errno = 71;
     Require(sceShellCoreUtilDebugGetNumberOfCffItems(reinterpret_cast<std::uint32_t*>(0x10)) == static_cast<int>(0x80e30005u));
@@ -113,6 +116,9 @@ void TestRunningAppState() {
     TestRunningAppAnswer<bool>(sceLncUtilIsAppSuspended, false, true, LNC_UTIL_ERROR_INVALID_ARGUMENT);
     TestRunningAppAnswer<bool>(sceSystemServiceIsAppSuspended, false, true, LNC_UTIL_ERROR_INVALID_ARGUMENT);
     TestRunningAppAnswer<bool>(sceLncUtilIsSpeculativeLaunch, false, true, LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    errno = 71;
+    Require(sceLncUtilIsSpeculativeLaunch(sceSystemServiceGetAppIdOfRunningBigApp(), reinterpret_cast<bool*>(0x10)) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
 }
 
 void TestRunningBigApp() {

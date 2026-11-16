@@ -186,6 +186,7 @@ private:
     static bool stampValidate();
     static bool dataHits();
     static bool verifyDataHits();
+    static std::vector<ShaderRecompiler::MemoryRegion> dispatchRegions(std::span<const ShaderRecompiler::MemoryRegion> memory, std::span<const ShaderRecompiler::MemoryRegion> captured, const PreparedShaderState::UserDataLink* linking);
     static bool pipelineDispatch();
     static std::size_t dispatchVariants();
     static bool insertCompare();
@@ -196,7 +197,7 @@ private:
     void classifyDiffering(std::uint64_t program, std::uint64_t key, const DispatchVariant& old, const DispatchVariant& fresh, const ShaderRecompiler::ResourceCapture* capture, EntryCounters& counters);
     void reportDispatchCache(EntryCounters& counters);
     void lookupDispatch(std::uint64_t address, const Submission& submission, std::uint64_t key, bool noDispatchCache, bool traceCache, bool profile, std::span<const ShaderRecompiler::MemoryRegion> memory, DispatchPhaseTiming& phaseTiming, std::array<double, DriverPhaseCount>& phaseMs, std::shared_ptr<const ShaderRecompiler::RecompileResult>& compiledResult, std::shared_ptr<DispatchVariant>& keepVariant, std::vector<ShaderRecompiler::MemoryRegion>& captured, std::vector<std::uint32_t>& liveWords, bool& dataHit, bool& cached, bool& validated, std::shared_ptr<DispatchEntry>& missedEntry, bool& missedDiffering);
-    void insertDispatch(std::uint64_t address, std::uint64_t key, bool noDispatchCache, bool profile, const std::shared_ptr<const ShaderSnapshot>& registeredShader, std::uint64_t forgetAtCapture, std::span<const ShaderRecompiler::MemoryRegion> memory, const std::shared_ptr<ShaderMemory>& shaderMemory, const std::vector<ShaderRecompiler::MemoryRegion>& captured, const std::shared_ptr<const ShaderRecompiler::ResourceCapture>& capture, const std::shared_ptr<const ShaderRecompiler::RecompileResult>& compiledResult, const std::shared_ptr<DispatchEntry>& missedEntry, bool missedDiffering, std::shared_ptr<DispatchVariant>& attachVariant, DispatchPhaseTiming& phaseTiming);
+    void insertDispatch(std::uint64_t address, std::uint64_t key, bool noDispatchCache, bool profile, const std::shared_ptr<const ShaderSnapshot>& registeredShader, std::uint64_t forgetAtCapture, std::span<const ShaderRecompiler::MemoryRegion> memory, const std::shared_ptr<ShaderMemory>& shaderMemory, const std::vector<ShaderRecompiler::MemoryRegion>& captured, const std::shared_ptr<const ShaderRecompiler::ResourceCapture>& capture, const std::shared_ptr<const ShaderRecompiler::RecompileResult>& compiledResult, const std::shared_ptr<DispatchEntry>& missedEntry, bool missedDiffering, std::shared_ptr<DispatchVariant>& attachVariant, DispatchPhaseTiming& phaseTiming, const std::shared_ptr<const PreparedShaderState::UserDataLink>& linking = {});
     void dispatch(QueueState& queue, std::span<const std::uint32_t> packet, const Submission& submission, std::uint64_t indirectArguments = 0);
     void verifyDataHit(const ShaderSnapshot& snapshot, std::size_t codeOffset, ShaderRecompiler::RecompileRequest request, std::span<const ShaderRecompiler::MemoryRegion> memory, std::uint64_t address, const DispatchVariant& variant, std::span<const std::uint32_t> liveWords, const ShaderRecompiler::RecompileResult& patched);
     static bool drawEntries();
@@ -342,7 +343,7 @@ private:
     bool validateCaptured(std::uint64_t program, std::uint32_t queue, std::span<const ShaderRecompiler::MemoryRegion> captured, const ShaderRecompiler::RecompileResult& compiled, bool inPlace, const PendingView& view, bool* unmapped = nullptr, std::optional<SampledReadScope>* sampling = nullptr, const DataMask* data = nullptr, std::span<const VouchedRegions> vouched = {});
     static void appendEntryRegions(const DispatchVariant& variant, std::vector<ShaderRecompiler::MemoryRegion>& regions, const std::vector<std::uint32_t>* words = nullptr);
     static std::shared_ptr<const ShaderRecompiler::RecompileResult> patchDataWords(const DispatchVariant& variant, const std::vector<std::uint32_t>& words);
-    bool syncPendingRuns(std::uint64_t program, std::uint32_t queue, const ShaderRecompiler::RecompileResult& compiled, std::span<const ShaderRecompiler::MemoryRegion> regions, std::uint64_t& synced, PendingView& pending, std::optional<SampledReadScope>& sampling, std::span<const VouchedRegions> skipped = {});
+    bool syncPendingRuns(std::uint64_t program, std::uint32_t queue, const ShaderRecompiler::RecompileResult& compiled, std::span<const ShaderRecompiler::MemoryRegion> regions, std::uint64_t& synced, PendingView& pending, std::optional<SampledReadScope>& sampling, std::span<const VouchedRegions> skipped = {}, const PreparedShaderState::UserDataLink* linking = nullptr);
     EntryOutcome validateVariant(std::uint64_t program, std::uint32_t queue, const DispatchVariant& variant, std::span<const ShaderRecompiler::MemoryRegion> regions, std::uint64_t& imagesFlushed, std::uint64_t& runsSynced, std::optional<SampledReadScope>& sampling, std::vector<std::pair<std::uint32_t, std::uint32_t>>* live = nullptr);
     static int waitTimeoutMs();
     static bool pollReapAll();
@@ -365,6 +366,7 @@ private:
         std::shared_ptr<DispatchVariant> keepVariant, attachVariant;
         std::shared_ptr<DispatchEntry> missedEntry;
         std::shared_ptr<ShaderMemory> shaderMemory;
+        std::shared_ptr<const PreparedShaderState::UserDataLink> linking;
         std::vector<ShaderRecompiler::MemoryRegion> captured;
         std::vector<std::uint32_t> liveWords;
         std::shared_ptr<const ShaderRecompiler::ResourceCapture> capture;
@@ -405,7 +407,8 @@ private:
     void recordQueuedLabelsBeforeRead(std::uint32_t queue);
     bool recordQueuedLabelsAfterCapture(std::uint32_t queue, std::span<const ShaderRecompiler::MemoryRegion> regions);
     static void runCaptureCheckHook();
-    static bool capturedMemoryChanged(std::span<const ShaderRecompiler::MemoryRegion> regions, std::span<Graphics::GuestMemorySnapshot> compared = {});
+    static bool capturedCurrent(std::span<const ShaderRecompiler::MemoryRegion> captured, const ShaderSnapshot& code, const PreparedShaderState::UserDataLink* linking);
+    static bool capturedMemoryChanged(std::span<const ShaderRecompiler::MemoryRegion> regions, std::span<Graphics::GuestMemorySnapshot> compared = {}, const PreparedShaderState::UserDataLink* linking = nullptr);
     void noteQueuedLabels(std::uint32_t queue);
     void recordQueuedLabelsByTry(std::uint32_t queue, std::atomic<std::uint64_t>& counter);
     static void recordQueuedLabelsFromHook();

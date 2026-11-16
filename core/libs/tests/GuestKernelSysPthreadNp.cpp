@@ -13,12 +13,13 @@
 #include <initializer_list>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace {
 
 constexpr int GUEST_EDEADLK = 11;
-constexpr int GUEST_EINVAL = 22;
 constexpr int GUEST_EFAULT = 14;
+constexpr int GUEST_EINVAL = 22;
 constexpr int GUEST_ERANGE = 34;
 constexpr int SCE_FAILED_CALL = static_cast<int>(0x8001ffffu);
 constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016u);
@@ -207,6 +208,45 @@ void TestAttr() {
         }
         if (errno != 71) return false;
         return pthread_attr_destroy_nid_postfix(&attr) == 0;
+    });
+    Case("pthread_get_specificarray_np", [] {
+        void* array[4] = {nullptr};
+        if (pthread_get_specificarray_np_nid_postfix(0, 1, array) != GUEST_EINVAL) return false;
+        if (pthread_get_specificarray_np_nid_postfix(1, 0, array) != GUEST_EINVAL) return false;
+        if (pthread_get_specificarray_np_nid_postfix(1, -1, array) != GUEST_EINVAL) return false;
+        if (pthread_get_specificarray_np_nid_postfix(513, 1, array) != GUEST_EINVAL) return false;
+        if (pthread_get_specificarray_np_nid_postfix(512, 2, array) != GUEST_EINVAL) return false;
+        if (pthread_get_specificarray_np_nid_postfix(1, 1, nullptr) != GUEST_EFAULT) return false;
+        PthreadKey key1 = 0;
+        PthreadKey key2 = 0;
+        std::vector<PthreadKey> createdKeys;
+        if (scePthreadKeyCreate(&key1, nullptr) != 0) return false;
+        createdKeys.push_back(key1);
+        while (true) {
+            if (scePthreadKeyCreate(&key2, nullptr) != 0) {
+                for (auto k : createdKeys) scePthreadKeyDelete(k);
+                return false;
+            }
+            createdKeys.push_back(key2);
+            if (key2 == key1 + 1) break;
+            key1 = key2;
+        }
+        int val1 = 111, val2 = 222;
+        if (scePthreadSetspecific(key1, &val1) != 0) {
+            for (auto k : createdKeys) scePthreadKeyDelete(k);
+            return false;
+        }
+        if (scePthreadSetspecific(key2, &val2) != 0) {
+            for (auto k : createdKeys) scePthreadKeyDelete(k);
+            return false;
+        }
+        void* pair[2] = {nullptr};
+        if (pthread_get_specificarray_np_nid_postfix(key1, 2, pair) != 0 || pair[0] != &val1 || pair[1] != &val2) {
+            for (auto k : createdKeys) scePthreadKeyDelete(k);
+            return false;
+        }
+        for (auto k : createdKeys) scePthreadKeyDelete(k);
+        return true;
     });
 }
 
