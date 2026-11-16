@@ -573,5 +573,13 @@ class SanitizeIdentifierTests(unittest.TestCase):
         self.assertEqual(stubgen.sanitize_identifier(""), "_")
 
 
+class ModulePrefixTests(unittest.TestCase):
+    def test_module_prefix_drops_lib_before_a_capital(self):
+        import stubgen
+        self.assertEqual(stubgen.module_prefix("libSceFoo"), "sceFoo")
+        self.assertEqual(stubgen.module_prefix("libc"), "libc")
+        self.assertEqual(stubgen.module_prefix("my-lib"), "my_lib")
+
+
 if __name__ == "__main__":
     unittest.main()
