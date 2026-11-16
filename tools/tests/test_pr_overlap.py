@@ -620,5 +620,12 @@ class CommentStateTests(unittest.TestCase):
         self.run_step(first, None)
         self.assertEqual(self.run_step(self.report("b" * 40, (5, 6)), first), [["api", "repos/owner/project/issues/42/comments", "--paginate"], ["api", "-X", "PATCH"]])
 
+
+class HelperPathTests(unittest.TestCase):
+    def test_code_span_uses_a_longer_delimiter_when_the_item_has_backticks(self):
+        self.assertEqual(pr_overlap.code_span("plain"), "`plain`")
+        self.assertEqual(pr_overlap.code_span("a`b"), "`` a`b ``")
+
+
 if __name__ == "__main__":
     unittest.main()
