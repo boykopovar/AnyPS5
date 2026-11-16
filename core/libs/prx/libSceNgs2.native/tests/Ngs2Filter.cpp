@@ -630,7 +630,9 @@ static uintptr_t CustomFilterVoice(uintptr_t system, std::uint32_t modules = 1) 
     const auto info = Buffer(query);
     uintptr_t rack = 0;
     Require(sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_CUSTOM_SAMPLER, &option.custom_rack_option.rack_option, &info, &rack) == SCE_NGS2_OK);
-    return Voice(rack);
+    const auto voice = Voice(rack);
+    Require(sceNgs2VoiceGetState(voice, reinterpret_cast<Ngs2VoiceState*>(0x10), sizeof(Ngs2CustomSamplerVoiceState)) == SCE_NGS2_ERROR_INVALID_OUT_ADDRESS);
+    return voice;
 }
 
 static std::vector<std::int16_t> OraclePcm() {

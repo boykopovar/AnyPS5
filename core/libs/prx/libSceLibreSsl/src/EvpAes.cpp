@@ -289,9 +289,10 @@ int APS5_VABI AesGcmControl(LibreSslEvpCipherCtx* ctx, int type, int arg, void* 
     case ControlGcmSetIvLength:
         if (arg <= 0) return 0;
         if (arg > static_cast<int>(sizeof(ctx->iv)) && arg > state.ivLength) {
+            auto* const nextIv = static_cast<unsigned char*>(malloc_nid_postfix(static_cast<std::size_t>(arg)));
+            if (!nextIv) return 0;
             if (state.iv != ctx->iv) free_nid_postfix(state.iv);
-            state.iv = static_cast<unsigned char*>(malloc_nid_postfix(static_cast<std::size_t>(arg)));
-            if (!state.iv) return 0;
+            state.iv = nextIv;
         }
         state.ivLength = arg;
         return 1;
