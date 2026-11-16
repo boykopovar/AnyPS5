@@ -415,13 +415,6 @@ int RenamePath(const std::filesystem::path& source, const std::filesystem::path&
 
 extern "C" {
 
-int APS5_VABI sceKernelGetCompiledSdkVersion(std::int32_t* version) {
-    if (version == nullptr) return SCE_KERNEL_ERROR_EINVAL;
-    static const auto* parameters = static_cast<const std::byte*>(ApplicationProcessParameters_nid_no_patch());
-    if (!GuestCopyOut_nid_no_patch(version, parameters + 0x10, sizeof(*version))) return SCE_KERNEL_ERROR_EFAULT;
-    return 0;
-}
-
 int APS5_VABI is_in_sandbox_nid_postfix(void) {
     return 1;
 }
@@ -1323,26 +1316,6 @@ void APS5_VABI scePthreadSetName(Pthread thread, const char* name) {
 
 }
 
-static int QueryTitleWorkaround(const KernelTitleWorkaround* workaround, std::int32_t bit, std::int32_t* enabled) {
-    if (!workaround || !enabled) return static_cast<int>(0x8002000E);
-    if (static_cast<std::uint32_t>(bit) > 0x78) return static_cast<int>(0x80020016);
-    KernelTitleWorkaround localWorkaround{};
-    const int saved = errno;
-    if (!GuestCopyIn_nid_no_patch(&localWorkaround, workaround, sizeof(localWorkaround))) {
-        errno = saved;
-        return static_cast<int>(0x8002000E);
-    }
-    const std::int32_t value = static_cast<std::int32_t>((localWorkaround.ids[bit >> 6] >> (bit & 0x3F)) & 1);
-    const bool copied = GuestCopyOut_nid_no_patch(enabled, &value, sizeof(value));
-    errno = saved;
-    if (!copied) return static_cast<int>(0x8002000E);
-    return 0;
-}
-
-int APS5_VABI sceKernelTitleWorkaroundIsEnabled(const KernelTitleWorkaround* workaround, std::int32_t bit, std::int32_t* enabled) {
-    return QueryTitleWorkaround(workaround, bit, enabled);
-}
-
 int APS5_VABI sceKernelTitleWorkdaroundIsEnabled(const KernelTitleWorkaround* workaround, std::int32_t bit, std::int32_t* enabled) {
     return sceKernelTitleWorkaroundIsEnabled(workaround, bit, enabled);
 }
@@ -1350,7 +1323,7 @@ int APS5_VABI sceKernelTitleWorkdaroundIsEnabled(const KernelTitleWorkaround* wo
 int APS5_VABI sceKernelTitleWorkaroundIsEnabled2(const KernelTitleWorkaround* workaround, std::uint64_t selector, std::uint32_t bit, std::int32_t* enabled) {
     if (!workaround || !enabled) return static_cast<int>(0x8002000E);
     if (selector >= 0x29) return static_cast<int>(0x80020016);
-    return QueryTitleWorkaround(workaround, static_cast<std::int32_t>(bit), enabled);
+    return sceKernelTitleWorkaroundIsEnabled(workaround, static_cast<std::int32_t>(bit), enabled);
 }
 
 int APS5_VABI sceKernelGetProcessType(int pid) {
