@@ -267,6 +267,7 @@ struct ReverbRoutingGraph {
         custom.rack_option.max_voices = voiceCount;
         custom.rack_option.max_matrices = 1;
         custom.rack_option.max_ports = bufferCount;
+        custom.state_size = SCE_NGS2_CUSTOM_SUBMIXER_MIN_STATE_SIZE;
         custom.num_buffers = bufferCount;
         custom.num_modules = modules.size() + moduleOffset;
         option.max_channels = channels;
