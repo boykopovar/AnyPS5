@@ -236,9 +236,17 @@ int ParseInteger(const char* str, std::size_t* parsedLength, Parse parse, bool* 
 
 int CopyToBuffer(char* dst, std::size_t size, const char* src, std::size_t length) {
     if (size < length + 1) return NP_ERROR_BUFFER_TOO_SMALL;
-    std::string padded(size, '\0');
+    constexpr std::size_t Chunk = 64 * 1024;
+    const std::size_t head = std::min(size, length + Chunk);
+    std::string padded(head, '\0');
     std::memcpy(padded.data(), src, length);
-    return GuestCopyOut_nid_no_patch(dst, padded.data(), size) ? 0 : NP_ERROR_INVALID_ARGUMENT;
+    if (!GuestCopyOut_nid_no_patch(dst, padded.data(), head)) return NP_ERROR_INVALID_ARGUMENT;
+    for (std::size_t done = head; done < size;) {
+        const std::size_t step = std::min(Chunk, size - done);
+        if (!GuestCopyOut_nid_no_patch(dst + done, padded.data() + length, step)) return NP_ERROR_INVALID_ARGUMENT;
+        done += step;
+    }
+    return 0;
 }
 
 constexpr int NP_UTIL_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80550601);
