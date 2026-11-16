@@ -557,5 +557,15 @@ class DebtSplitTests(unittest.TestCase):
         self.assertNotEqual(before, "")
 
 
+    def test_parse_groups_headings_entries_and_text(self):
+        text = "# libX\n\n### change\n\n- [a](../../../core/libs/prx/libX/a.cpp) (libX) gap\n  continued\n\nplain text\n"
+        items = debt_split.parse(text)
+        kinds = [kind for kind, _, _ in items]
+        self.assertEqual(kinds, ["heading", "heading", "entry", "text"])
+        self.assertEqual(items[2][1], "change")
+        self.assertIn("continued", items[2][2])
+        self.assertEqual(items[3][2], "plain text")
+
+
 if __name__ == "__main__":
     unittest.main()
