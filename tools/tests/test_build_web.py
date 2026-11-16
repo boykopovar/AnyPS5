@@ -777,5 +777,13 @@ class WebReleaseValidationTests(unittest.TestCase):
                 build_web.release_web_files("0" * 40)
 
 
+class MetadataAcceptTests(unittest.TestCase):
+    def test_valid_asset_and_release_metadata_are_returned_unchanged(self):
+        asset = {'name': 'a.zip', 'size': 5, 'browser_download_url': 'https://example.invalid/a.zip', 'digest': 'sha256:' + '0' * 64}
+        self.assertEqual(build_web.asset_metadata(asset, 10), asset)
+        release = {'tag_name': 'v1.0', 'html_url': 'https://example.invalid/r', 'assets': [asset]}
+        self.assertEqual(build_web.release_metadata(release), release)
+
+
 if __name__ == "__main__":
     unittest.main()
