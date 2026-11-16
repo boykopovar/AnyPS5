@@ -117,6 +117,18 @@ std::uint32_t Expected(std::uint32_t op, std::uint32_t a, std::uint32_t b, std::
     constexpr std::uint32_t one = 0x3f800000u;
     constexpr std::uint32_t constant = 0x33800000u;
     const std::uint32_t inner = rounding == 0u ? denorm : 3u;
+    if (rounding != 0u && (denorm & 2u) == 0u && (op == 3u || op == 4u)) {
+        const std::uint32_t fa = (denorm & 1u) == 0u ? Flush(a) : a;
+        const std::uint32_t fb = (denorm & 1u) == 0u ? Flush(b) : b;
+        const std::uint32_t fc = (denorm & 1u) == 0u ? Flush(c) : c;
+        const auto finiteNonZero = [](std::uint32_t value) {
+            const std::uint32_t biased = value & 0x7f800000u;
+            return biased != 0u && biased != 0x7f800000u;
+        };
+        if (finiteNonZero(fa) && finiteNonZero(fb) && std::abs(F32(fa) * F32(fb)) < 0x1.0p-126 && (op == 3u || Magnitude(fc) == 0u)) {
+            return (fa ^ fb) & 0x80000000u;
+        }
+    }
     switch (op) {
     case 0u: return Fma(a, one, b, rounding, denorm, ieee);
     case 1u: return Fma(a, one, b ^ 0x80000000u, rounding, denorm, ieee);
