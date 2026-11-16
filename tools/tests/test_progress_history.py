@@ -859,6 +859,13 @@ class LocationAndSeriesTests(unittest.TestCase):
         points = [{"shaders": 3}, {"shader_metric": "legacy", "shaders": 4}]
         self.assertEqual(progress_history.used_shader_metrics(points), ["decoded", "legacy"])
 
+    def test_same_location_compares_real_paths(self):
+        with tempfile.TemporaryDirectory() as directory:
+            file = Path(directory) / "history.json"
+            file.write_text("{}", encoding="utf-8")
+            self.assertTrue(progress_history.same_location(file, Path(directory) / "." / "history.json"))
+            self.assertFalse(progress_history.same_location(file, Path(directory) / "other.json"))
+
 
 if __name__ == "__main__":
     unittest.main()
