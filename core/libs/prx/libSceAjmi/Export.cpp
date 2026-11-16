@@ -1,6 +1,7 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceAjmi/include/InventoryExports.hpp"
 #include "prx/libSceAjmi/include/Api.hpp"
+#include "prx/libSceAjm.native/include/Api.hpp"
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -206,8 +207,8 @@ int APS5_VABI sceAjmiFinalize() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceAjmiStrError() {
-    NotImplemented_nid_no_patch(__func__);
+const char* APS5_VABI sceAjmiStrError(int error) {
+    return sceAjmStrError(error);
 }
 
 int APS5_VABI sceAjmiBatchJobControlBufferRa() {
@@ -218,8 +219,8 @@ int APS5_VABI sceAjmiInstanceSwitch() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceAjmiDecAt9ParseConfigData() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAjmiDecAt9ParseConfigData(const void* configData, AjmDecAt9ConfigDataInfo* configInfo) {
+    return sceAjmDecAt9ParseConfigData(configData, configInfo);
 }
 
 int APS5_VABI sceAjmiInitialize() {
@@ -242,8 +243,8 @@ int APS5_VABI sceAjmiInstanceDestroy() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceAjmiDecMp3ParseFrame() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAjmiDecMp3ParseFrame(const std::uint8_t* stream, std::uint32_t streamSize, int parseOfl, AjmDecMp3ParseFrame* frame) {
+    return sceAjmDecMp3ParseFrame(stream, streamSize, parseOfl, frame);
 }
 
 int APS5_VABI sceAjmiMemoryRegister() {
