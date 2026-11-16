@@ -1,6 +1,7 @@
 #include "VulkanTestDevice.hpp"
 #include "../../tools/ComputePipelineFixture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Pipeline.hpp"
+#include <array>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -155,6 +156,15 @@ std::vector<std::string> StatisticLines(const std::string& text) {
     return lines;
 }
 
+std::vector<std::string> ReportLines(const std::string& text) {
+    std::istringstream stream(text);
+    std::vector<std::string> lines;
+    for (std::string line; std::getline(stream, line);) {
+        if (line.starts_with("[pipeline-source]") || line.starts_with("[pipeline-stats]")) lines.push_back(std::move(line));
+    }
+    return lines;
+}
+
 void CheckShape(const std::vector<std::string>& report, const std::vector<std::size_t>& shape) {
     Require(!shape.empty(), "the pipeline reports no executables");
     std::size_t line = 0;
@@ -231,14 +241,20 @@ int main() {
         const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
         Require(context.pipelineExecutableInfo, "APS5_PIPELINE_STATS=1 did not enable pipeline executable statistics");
         const StatisticsPipeline pipeline(context);
+        ShaderRecompiler::RecompileResult program;
+        program.variantId = 0x1234;
+        program.specializationId = 0x5678;
+        const std::array shaders{AgcDriver::Graphics::CompiledShader{ShaderRecompiler::ShaderStage::Compute, &program, 0}};
         std::vector<std::string> reference;
         {
             StderrCapture output;
-            AgcDriver::Graphics::LogPipelineStatistics_nid_no_patch(context, pipeline.pipeline);
-            reference = StatisticLines(output.Finish());
+            AgcDriver::Graphics::LogPipelineStatistics_nid_no_patch(context, pipeline.pipeline, shaders);
+            const auto text = output.Finish();
+            reference = ReportLines(text);
+            Require(!reference.empty() && reference.front() == "[pipeline-source] stage=0x20 variant=0x1234 pipelineVariant=0x5678 identity=00000000000000000000000000000000", "the report lost its compiled stage or specialization identity");
+            CheckShape(StatisticLines(text), ExecutableShape(context, pipeline.pipeline));
         }
         const auto shape = ExecutableShape(context, pipeline.pipeline);
-        CheckShape(reference, shape);
         constexpr unsigned threads = 8;
         constexpr unsigned reportsPerThread = 64;
         std::vector<std::exception_ptr> failures(threads);
@@ -248,7 +264,7 @@ int main() {
             for (unsigned thread = 0; thread < threads; ++thread) {
                 workers.emplace_back([&, thread] {
                     try {
-                        for (unsigned report = 0; report < reportsPerThread; ++report) AgcDriver::Graphics::LogPipelineStatistics_nid_no_patch(context, pipeline.pipeline);
+                        for (unsigned report = 0; report < reportsPerThread; ++report) AgcDriver::Graphics::LogPipelineStatistics_nid_no_patch(context, pipeline.pipeline, shaders);
                     } catch (...) {
                         failures[thread] = std::current_exception();
                     }
@@ -259,7 +275,7 @@ int main() {
         for (const auto& failure : failures) {
             if (failure) std::rethrow_exception(failure);
         }
-        const auto reports = CountReports(StatisticLines(text), reference);
+        const auto reports = CountReports(ReportLines(text), reference);
         Require(reports == threads * reportsPerThread, "a pipeline statistics report is missing");
         std::printf("pipeline statistics: %zu reports of %zu executables and %zu lines each from %u threads, each in one piece\n", reports, shape.size(), reference.size(), threads);
         return 0;

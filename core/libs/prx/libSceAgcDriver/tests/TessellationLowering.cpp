@@ -786,6 +786,40 @@ bool run(const char* name, const std::function<bool()>& body) {
 int main() {
     bool passed = true;
 
+    passed &= run("a conjunction proves a selected control point is zero for a factor write", [] {
+        Hull hull;
+        auto& lane = hull.builder.Emit(IrOpcode::LaneId, IrType::U32, {});
+        auto& active = hull.builder.Emit(IrOpcode::ULessThan32, IrType::Bool, {&lane, &hull.builder.Constant(4u)});
+        auto& selected = hull.builder.Emit(IrOpcode::SelectU32, IrType::U32, {&active, &hull.invocation(), &hull.builder.Constant(0u)});
+        auto& first = hull.builder.Emit(IrOpcode::UGreaterThan32, IrType::Bool, {&hull.builder.Constant(1u), &selected});
+        auto& predicate = hull.builder.Emit(IrOpcode::LogicalAnd, IrType::Bool, {&active, &first});
+        auto& base = hull.builder.Emit(IrOpcode::TessellationBase, IrType::U32, {&hull.builder.Constant(static_cast<std::uint32_t>(TessellationBaseKind::Factor))});
+        auto& offset = hull.builder.IMul(hull.relativePatch(), hull.builder.Constant(16u));
+        static_cast<void>(hull.builder.Emit(IrOpcode::StoreBufferU32, IrType::Void, {&hull.ringResource(), &hull.builder.Constant(0u), &offset, &base, &hull.builder.Constant(1u), &predicate}, MemoryFlags{RingMemory, RingWritePc}));
+        auto tessellation = Tessellation;
+        tessellation.domain = 1u;
+        const auto outcome = Lower(hull.program, tessellation);
+        if (!outcome.lowered) std::fprintf(stderr, "lowering failed: %s\n", outcome.reason.c_str());
+        return outcome.lowered;
+    });
+
+    passed &= run("an unrelated conjunction does not prove a selected control point is zero", [] {
+        Hull hull;
+        auto& lane = hull.builder.Emit(IrOpcode::LaneId, IrType::U32, {});
+        auto& active = hull.builder.Emit(IrOpcode::ULessThan32, IrType::Bool, {&lane, &hull.builder.Constant(4u)});
+        auto& other = hull.builder.Emit(IrOpcode::ULessThan32, IrType::Bool, {&lane, &hull.builder.Constant(3u)});
+        auto& selected = hull.builder.Emit(IrOpcode::SelectU32, IrType::U32, {&other, &hull.invocation(), &hull.builder.Constant(0u)});
+        auto& first = hull.builder.Emit(IrOpcode::UGreaterThan32, IrType::Bool, {&hull.builder.Constant(1u), &selected});
+        auto& predicate = hull.builder.Emit(IrOpcode::LogicalAnd, IrType::Bool, {&active, &first});
+        auto& base = hull.builder.Emit(IrOpcode::TessellationBase, IrType::U32, {&hull.builder.Constant(static_cast<std::uint32_t>(TessellationBaseKind::Factor))});
+        auto& offset = hull.builder.IMul(hull.relativePatch(), hull.builder.Constant(16u));
+        static_cast<void>(hull.builder.Emit(IrOpcode::StoreBufferU32, IrType::Void, {&hull.ringResource(), &hull.builder.Constant(0u), &offset, &base, &hull.builder.Constant(1u), &predicate}, MemoryFlags{RingMemory, RingWritePc}));
+        auto tessellation = Tessellation;
+        tessellation.domain = 1u;
+        const auto outcome = Lower(hull.program, tessellation);
+        return !outcome.lowered && outcome.reason.find("not written by control point 0 alone") != std::string::npos;
+    });
+
     passed &= run("a hull read at a computed control-point index keeps the program's address", [] {
         Hull hull;
         auto& address = hull.inPatch(hull.computed(2u, LocalStride));
@@ -1068,6 +1102,109 @@ int main() {
         const ModelResult result = CompareWithConsole(console, hull.program, 300u);
         std::fprintf(stderr, "unguarded model: %zu quad-helper block runs, %zu stores compared, %zu mismatches\n", result.helpers, result.compared, result.mismatches);
         return result.helpers > 0u && result.mismatches > 0u;
+    });
+
+    passed &= run("a domain shader with primitive VGPR use in a phi export lowers with constant zero", [] {
+        IrProgram program;
+        IrBuilder builder{program};
+        program.Resources().stage = IrShaderStage::TessellationEvaluation;
+        auto makeBlock = [&](IrBlock*& blk) -> IrBlock& {
+            auto& created = program.CreateBlock();
+            program.BlockOrder().push_back(&created);
+            BlockInfo info;
+            info.id = created.Id();
+            program.Metadata().blockInfo.push_back(info);
+            blk = &created;
+            return created;
+        };
+        IrBlock* entryPtr = nullptr;
+        IrBlock* firstPtr = nullptr;
+        IrBlock* secondPtr = nullptr;
+        IrBlock* togetherPtr = nullptr;
+        auto& entry = makeBlock(entryPtr);
+        auto& first = makeBlock(firstPtr);
+        auto& second = makeBlock(secondPtr);
+        auto& together = makeBlock(togetherPtr);
+        program.SetEntryBlock(entry);
+        builder.SetInsertionPoint(entry);
+        builder.BranchConditional(builder.ConstantBool(true), first, second);
+        builder.SetInsertionPoint(first);
+        auto& prim = builder.Emit(IrOpcode::TessellationBase, IrType::U32, {&builder.Constant(static_cast<std::uint32_t>(TessellationBaseKind::PassthroughPrimitive))});
+        builder.Branch(together);
+        builder.SetInsertionPoint(second);
+        auto& alt = builder.Constant(1u);
+        builder.Branch(together);
+        builder.SetInsertionPoint(together);
+        auto& phi = builder.Emit(IrOpcode::Phi, IrType::U32, {});
+        phi.AddPhiOperand(&first, &prim);
+        phi.AddPhiOperand(&second, &alt);
+        auto& comp = builder.Emit(IrOpcode::CompositeConstructU32x4, IrType::U32x4, {&phi, &builder.Constant(0u), &builder.Constant(0u), &builder.Constant(0u)});
+        program.Metadata().exportInfo.push_back(ExportInfo{.kind = ExportTargetKind::Parameter, .index = 5u, .en = 0xFu, .done = true, .vm = true});
+        auto& exportInst = builder.Emit(IrOpcode::SetAttribute, IrType::Void, {&comp, &builder.ConstantBool(true)}, ExportFlags{0u, 0u});
+        static_cast<void>(exportInst);
+        const Outcome outcome = Lower(program);
+        if (!outcome.lowered) return false;
+        return phi.Argument(0)->HasImmediate() && phi.Argument(0)->ImmediateU32() == 0u;
+    });
+
+    passed &= run("a domain shader with primitive VGPR use in arithmetic fails lowering", [] {
+        IrProgram program;
+        IrBuilder builder{program};
+        program.Resources().stage = IrShaderStage::TessellationEvaluation;
+        auto& block = program.CreateBlock();
+        program.SetEntryBlock(block);
+        program.BlockOrder().push_back(&block);
+        BlockInfo info;
+        info.id = block.Id();
+        program.Metadata().blockInfo.push_back(info);
+        builder.SetInsertionPoint(block);
+        auto& prim = builder.Emit(IrOpcode::TessellationBase, IrType::U32, {&builder.Constant(static_cast<std::uint32_t>(TessellationBaseKind::PassthroughPrimitive))});
+        auto& add = builder.Emit(IrOpcode::IAdd32, IrType::U32, {&prim, &builder.Constant(1u)});
+        auto& ref = builder.Emit(IrOpcode::ReferenceU32, IrType::Void, {&add});
+        static_cast<void>(ref);
+        const Outcome outcome = Lower(program);
+        if (outcome.lowered) return false;
+        return outcome.reason.find("the primitive VGPR is used other than as the passthrough primitive export") != std::string::npos;
+    });
+
+    passed &= run("a domain shader with primitive VGPR use in a position export fails lowering", [] {
+        IrProgram program;
+        IrBuilder builder{program};
+        program.Resources().stage = IrShaderStage::TessellationEvaluation;
+        auto& block = program.CreateBlock();
+        program.SetEntryBlock(block);
+        program.BlockOrder().push_back(&block);
+        BlockInfo info;
+        info.id = block.Id();
+        program.Metadata().blockInfo.push_back(info);
+        builder.SetInsertionPoint(block);
+        auto& prim = builder.Emit(IrOpcode::TessellationBase, IrType::U32, {&builder.Constant(static_cast<std::uint32_t>(TessellationBaseKind::PassthroughPrimitive))});
+        auto& comp = builder.Emit(IrOpcode::CompositeConstructU32x4, IrType::U32x4, {&prim, &builder.Constant(0u), &builder.Constant(0u), &builder.Constant(0u)});
+        program.Metadata().exportInfo.push_back(ExportInfo{.kind = ExportTargetKind::Position, .index = 0u, .en = 0xFu, .done = true, .vm = true});
+        auto& exportInst = builder.Emit(IrOpcode::SetAttribute, IrType::Void, {&comp, &builder.ConstantBool(true)}, ExportFlags{0u, 0u});
+        static_cast<void>(exportInst);
+        const Outcome outcome = Lower(program);
+        if (outcome.lowered) return false;
+        return outcome.reason.find("the primitive VGPR is used other than as the passthrough primitive export") != std::string::npos;
+    });
+
+    passed &= run("a hull shader with primitive VGPR use fails lowering", [] {
+        IrProgram program;
+        IrBuilder builder{program};
+        program.Resources().stage = IrShaderStage::TessellationControl;
+        auto& block = program.CreateBlock();
+        program.SetEntryBlock(block);
+        program.BlockOrder().push_back(&block);
+        BlockInfo info;
+        info.id = block.Id();
+        program.Metadata().blockInfo.push_back(info);
+        builder.SetInsertionPoint(block);
+        auto& prim = builder.Emit(IrOpcode::TessellationBase, IrType::U32, {&builder.Constant(static_cast<std::uint32_t>(TessellationBaseKind::PassthroughPrimitive))});
+        auto& ref = builder.Emit(IrOpcode::ReferenceU32, IrType::Void, {&prim});
+        static_cast<void>(ref);
+        const Outcome outcome = Lower(program);
+        if (outcome.lowered) return false;
+        return outcome.reason.find("the primitive VGPR is used other than as the passthrough primitive export") != std::string::npos;
     });
 
     return passed ? 0 : 1;

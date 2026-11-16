@@ -11,7 +11,7 @@ else()
     target_sources(libSceSystemService PRIVATE HostUrlLauncherPosix.cpp)
 endif()
 target_include_directories(libSceSystemService PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_SDL2_INCLUDE_DIR})
-target_link_libraries(libSceSystemService PRIVATE libSceAgcDriver libSceUsbStorage system_service_host_locale SDL2-static)
+target_link_libraries(libSceSystemService PRIVATE libSceAgcDriver libSceUsbStorage libc system_service_host_locale SDL2-static)
 configure_windows_unwind(libSceSystemService)
 if(APPLE)
     target_link_libraries(libSceSystemService PRIVATE "-framework CoreFoundation")
@@ -85,6 +85,11 @@ if(BUILD_TESTING)
         target_link_libraries(guest_system_load_exec_standard_error_tests PRIVATE libSceSystemService libkernel libc)
         add_test(NAME guest_system_load_exec_standard_error COMMAND guest_system_load_exec_standard_error_tests)
         set_tests_properties(guest_system_load_exec_standard_error PROPERTIES TIMEOUT 20)
+        add_test_executable(guest_system_load_exec_secondary_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemServiceLoadExecSecondary.cpp)
+        target_include_directories(guest_system_load_exec_secondary_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_system_load_exec_secondary_tests PRIVATE libSceSystemService libkernel libc)
+        add_test(NAME guest_system_load_exec_secondary COMMAND guest_system_load_exec_secondary_tests)
+        set_tests_properties(guest_system_load_exec_secondary PROPERTIES TIMEOUT 20)
     endif()
     if(WIN32)
         set_tests_properties(guest_system_exit guest_lnc_util_load_exec_exit guest_requested_exit guest_system_exit_parameters guest_immediate_exit guest_immediate_exit_drain guest_return_from_main guest_quick_exit guest_system_relaunch guest_nested_exit guest_exit_finalizers_before_shutdown PROPERTIES ENVIRONMENT_MODIFICATION
@@ -154,6 +159,10 @@ if(BUILD_TESTING)
                 "17,-,-,pt_BR.UTF-8,-,AUTO,0"
                 "10,-,-,zh_TW.UTF-8,-,Auto,0"
                 "11,-,-,zh_CN.UTF-8,-,auto,0"
+                "10,-,-,zh_cmn_Hant_TW.UTF-8,-,auto,0"
+                "10,-,-,zh_cmn_Hant_TW.UTF-8@latin,-,auto,0"
+                "11,-,-,zh-cmn-Hans-TW,-,auto,0"
+                "10,-,-,en_US.UTF-8,zh-yue:en,auto,0"
                 "20,es_MX.UTF-8,fr_FR.UTF-8,de_DE.UTF-8,-,auto,0"
                 "2,-,fr_FR.UTF-8,de_DE.UTF-8,-,auto,0"
                 "3,-,-,en_US.UTF-8,es:fr,auto,0"
@@ -253,6 +262,32 @@ if(BUILD_TESTING)
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
         endif()
     endforeach()
+    add_test_executable(guest_system_service_app_category_type_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemServiceAppCategoryType.cpp)
+    target_include_directories(guest_system_service_app_category_type_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_system_service_app_category_type_tests PRIVATE libSceSystemService libkernel libc)
+    configure_windows_unwind(guest_system_service_app_category_type_tests)
+    foreach(appCategoryTypeCase IN ITEMS known:7 absent:none missing:none)
+        string(REPLACE ":" ";" appCategoryTypeCase ${appCategoryTypeCase})
+        list(GET appCategoryTypeCase 0 appCategoryTypeName)
+        list(GET appCategoryTypeCase 1 appCategoryTypeValue)
+        set(appCategoryTypeRun ${CMAKE_CURRENT_BINARY_DIR}/guest_system_service_app_category_type_${appCategoryTypeName})
+        if(appCategoryTypeName STREQUAL "missing")
+            file(MAKE_DIRECTORY ${appCategoryTypeRun})
+        elseif(appCategoryTypeName STREQUAL "absent")
+            file(WRITE ${appCategoryTypeRun}/app0/sce_sys/param.json
+                "{\"titleId\":\"PPSA00000\",\"localizedParameters\":{\"en-US\":{\"titleName\":\"Example\"}}}")
+        else()
+            file(WRITE ${appCategoryTypeRun}/app0/sce_sys/param.json
+                "{\"titleId\":\"PPSA00000\",\"applicationCategoryType\":${appCategoryTypeValue},\"localizedParameters\":{\"en-US\":{\"titleName\":\"Example\"}}}")
+        endif()
+        add_test(NAME guest_system_service_app_category_type_${appCategoryTypeName} COMMAND guest_system_service_app_category_type_tests ${appCategoryTypeName}
+            WORKING_DIRECTORY ${appCategoryTypeRun})
+        set_tests_properties(guest_system_service_app_category_type_${appCategoryTypeName} PROPERTIES TIMEOUT 20)
+        if(WIN32)
+            set_tests_properties(guest_system_service_app_category_type_${appCategoryTypeName} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
+        endif()
+    endforeach()
     add_test_executable(guest_system_service_activation_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemServiceActivation.cpp)
     target_include_directories(guest_system_service_activation_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_system_service_activation_tests PRIVATE libSceSystemService libc)
@@ -260,6 +295,26 @@ if(BUILD_TESTING)
     add_test(NAME guest_system_service_activation COMMAND guest_system_service_activation_tests)
     if(WIN32)
         set_tests_properties(guest_system_service_activation PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_system_service_accessibility_zoom_lock_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemServiceAccessibilityZoomLock.cpp)
+    target_include_directories(guest_system_service_accessibility_zoom_lock_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_system_service_accessibility_zoom_lock_tests PRIVATE libSceSystemService libc)
+    configure_windows_unwind(guest_system_service_accessibility_zoom_lock_tests)
+    add_test(NAME guest_system_service_accessibility_zoom_lock COMMAND guest_system_service_accessibility_zoom_lock_tests)
+    set_tests_properties(guest_system_service_accessibility_zoom_lock PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_system_service_accessibility_zoom_lock PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_system_service_notice_screen_skip_flag_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemServiceNoticeScreenSkipFlag.cpp)
+    target_include_directories(guest_system_service_notice_screen_skip_flag_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_system_service_notice_screen_skip_flag_tests PRIVATE libSceSystemService libc)
+    configure_windows_unwind(guest_system_service_notice_screen_skip_flag_tests)
+    add_test(NAME guest_system_service_notice_screen_skip_flag COMMAND guest_system_service_notice_screen_skip_flag_tests)
+    set_tests_properties(guest_system_service_notice_screen_skip_flag PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_system_service_notice_screen_skip_flag PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_system_service_free_size_tests ${LIBS_INCLUDE_DIR}/tests/GuestSystemServiceFreeSize.cpp)

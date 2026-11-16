@@ -1,4 +1,5 @@
 #include "prx/libkernel/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <atomic>
@@ -16,7 +17,6 @@
 #include <thread>
 #include <unordered_map>
 #include <cstdio>
-#include <cstring>
 #include <cstdlib>
 
 static constexpr int SCE_OK = 0;
@@ -43,10 +43,18 @@ static constexpr uint32_t EVF_WAITMODE_CLEAR_ALL = 0x10;
 static constexpr uint32_t EVF_WAITMODE_CLEAR_PAT = 0x20;
 
 struct WaiterNode {
+    enum class Outcome {
+        Pending,
+        Satisfied,
+        Canceled,
+        Deleted,
+    };
+
     uint64_t bitPattern = 0;
     uint32_t waitMode = 0;
     uint64_t resultPattern = 0;
-    bool satisfied = false;
+    Outcome outcome = Outcome::Pending;
+    TimedWait::Condition wake;
     WaiterNode* prev = nullptr;
     WaiterNode* next = nullptr;
 };
@@ -60,7 +68,6 @@ struct KernelEventFlagPrivate {
     bool _shared = false;
     bool _deleted = false;
     int _waiters = 0;
-    uint64_t _cancelGeneration = 0;
     WaiterNode* _waiterHead = nullptr;
     WaiterNode* _waiterTail = nullptr;
 
@@ -108,9 +115,13 @@ std::shared_ptr<EventFlagHandle> ResolveEventFlag(KernelEventFlag handle) {
     return it == eventFlagRegistry.end() ? std::shared_ptr<EventFlagHandle>{} : it->second;
 }
 
-KernelEventFlag RegisterEventFlag(const std::shared_ptr<EventFlagHandle>& entry) {
+KernelEventFlag RegisterEventFlag(const std::shared_ptr<EventFlagHandle>& entry, KernelEventFlag* output) {
     const auto handle = reinterpret_cast<KernelEventFlag>(entry.get());
     eventFlagRegistry.emplace(handle, entry);
+    if (!GuestCopyOut_nid_no_patch(output, &handle, sizeof(handle))) {
+        eventFlagRegistry.erase(handle);
+        return nullptr;
+    }
     return handle;
 }
 
@@ -139,6 +150,21 @@ static bool IsSatisfied(uint64_t pattern, uint64_t bitPattern, uint32_t waitMode
     return (waitMode & EVF_WAITMODE_AND) ? (pattern & bitPattern) == bitPattern : (pattern & bitPattern) != 0;
 }
 
+static int CopyEventFlagName(const char* name, std::string& copy) {
+    const int error = CopyGuestString_nid_no_patch(name, EVF_NAME_CAPACITY, copy);
+    if (error == 0) return SCE_OK;
+    if (error == 63) return SCE_KERNEL_ERROR_ENAMETOOLONG;
+    if (error == 12) return SCE_KERNEL_ERROR_ENOMEM;
+    return SCE_KERNEL_ERROR_EFAULT;
+}
+
+static bool StoreWaitCount(int* destination, int value) {
+    const int savedErrno = errno;
+    const bool stored = GuestCopyOut_nid_no_patch(destination, &value, sizeof(value));
+    errno = savedErrno;
+    return stored;
+}
+
 static void Consume(KernelEventFlagPrivate* flag, uint64_t bitPattern, uint32_t waitMode, uint64_t* resultPattern) {
     if (resultPattern) *resultPattern = flag->_pattern;
     if (waitMode & EVF_WAITMODE_CLEAR_ALL) flag->_pattern = 0;
@@ -153,12 +179,13 @@ int APS5_VABI sceKernelCreateEventFlag(KernelEventFlag* ef, const char* name, ui
     if ((attr & EVF_ATTR_SINGLE) && (attr & EVF_ATTR_MULTI)) return SCE_KERNEL_ERROR_EINVAL;
     if ((attr & EVF_ATTR_TH_FIFO) && (attr & EVF_ATTR_TH_PRIO)) return SCE_KERNEL_ERROR_EINVAL;
     if ((attr & ~(EVF_ATTR_TH_FIFO | EVF_ATTR_TH_PRIO | EVF_ATTR_SINGLE | EVF_ATTR_MULTI | EVF_ATTR_SHARED)) != 0) return SCE_KERNEL_ERROR_EINVAL;
-    if (std::strlen(name) >= EVF_NAME_CAPACITY) return SCE_KERNEL_ERROR_ENAMETOOLONG;
+    std::string nameCopy;
+    if (const int error = CopyEventFlagName(name, nameCopy)) return error;
     KernelEventFlag handle = nullptr;
     std::shared_ptr<KernelEventFlagPrivate> flag;
     try {
         flag = std::make_shared<KernelEventFlagPrivate>();
-        flag->_name = name;
+        flag->_name = nameCopy;
         flag->_pattern = init_pattern;
         flag->_multipleWaiters = (attr & EVF_ATTR_MULTI) != 0;
         flag->_shared = (attr & EVF_ATTR_SHARED) != 0;
@@ -171,31 +198,33 @@ int APS5_VABI sceKernelCreateEventFlag(KernelEventFlag* ef, const char* name, ui
                 if (!otherEntry->flag->_deleted && otherEntry->flag->_name == flag->_name) return SCE_KERNEL_ERROR_EPERM;
             }
         }
-        handle = RegisterEventFlag(entry);
+        handle = RegisterEventFlag(entry, ef);
     } catch (const std::bad_alloc&) {
         return SCE_KERNEL_ERROR_ENOMEM;
     }
-    *ef = handle;
-    if (TraceSync()) std::fprintf(stderr, "[evf] create %p '%s' attr=0x%x init=0x%llx\n", static_cast<void*>(handle), name, attr, static_cast<unsigned long long>(init_pattern));
+    if (!handle) return SCE_KERNEL_ERROR_EFAULT;
+    if (TraceSync()) std::fprintf(stderr, "[evf] create %p '%s' attr=0x%x init=0x%llx\n", static_cast<void*>(handle), nameCopy.c_str(), attr, static_cast<unsigned long long>(init_pattern));
     return SCE_OK;
 }
 
 int APS5_VABI sceKernelOpenEventFlag(KernelEventFlag* ef, const char* name) {
     if (!name) return SCE_KERNEL_ERROR_EFAULT;
-    if (std::strlen(name) >= EVF_NAME_CAPACITY) return SCE_KERNEL_ERROR_ENAMETOOLONG;
+    std::string nameCopy;
+    if (const int error = CopyEventFlagName(name, nameCopy)) return error;
     try {
         std::unique_lock lock(eventFlagRegistryMutex);
         std::shared_ptr<KernelEventFlagPrivate> target;
         for (const auto& [handle, entry] : eventFlagRegistry) {
             if (entry->opened || !entry->flag->_shared) continue;
             std::lock_guard flagLock(entry->flag->_mutex);
-            if (entry->flag->_deleted || entry->flag->_name != name) continue;
+            if (entry->flag->_deleted || entry->flag->_name != nameCopy) continue;
             target = entry->flag;
             break;
         }
         if (!target) return SCE_KERNEL_ERROR_ESRCH;
         if (!ef) return SCE_KERNEL_ERROR_EFAULT;
-        *ef = RegisterEventFlag(std::make_shared<EventFlagHandle>(EventFlagHandle{std::move(target), true}));
+        if (!RegisterEventFlag(std::make_shared<EventFlagHandle>(EventFlagHandle{std::move(target), true}), ef))
+            return SCE_KERNEL_ERROR_EFAULT;
     } catch (const std::bad_alloc&) {
         return SCE_KERNEL_ERROR_ENOMEM;
     }
@@ -217,7 +246,12 @@ int APS5_VABI sceKernelDeleteEventFlag(KernelEventFlag ef) {
     std::unique_lock lock(flag->_mutex);
     if (flag->_deleted) return SCE_KERNEL_ERROR_ESRCH;
     flag->_deleted = true;
-    flag->_changed.NotifyAll();
+    for (auto* waiter = flag->_waiterHead; waiter != nullptr; waiter = waiter->next) {
+        if (waiter->outcome == WaiterNode::Outcome::Pending) {
+            waiter->outcome = WaiterNode::Outcome::Deleted;
+            waiter->wake.NotifyOne();
+        }
+    }
     flag->_changed.Wait(lock, [&] { return flag->_waiters == 0; });
     lock.unlock();
     RetireEventFlag(ef, entry);
@@ -233,17 +267,17 @@ int APS5_VABI sceKernelSetEventFlag(KernelEventFlag ef, uint64_t bit_pattern) {
     flag->_pattern |= bit_pattern;
     if (TraceSync()) std::fprintf(stderr, "[evf] set %p '%s' |=0x%llx -> 0x%llx\n", static_cast<void*>(ef), flag->_name.c_str(), static_cast<unsigned long long>(bit_pattern), static_cast<unsigned long long>(flag->_pattern));
     for (auto* waiter = flag->_waiterHead; waiter != nullptr; waiter = waiter->next) {
-        if (!waiter->satisfied && IsSatisfied(flag->_pattern, waiter->bitPattern, waiter->waitMode)) {
-            waiter->satisfied = true;
+        if (waiter->outcome == WaiterNode::Outcome::Pending && IsSatisfied(flag->_pattern, waiter->bitPattern, waiter->waitMode)) {
+            waiter->outcome = WaiterNode::Outcome::Satisfied;
             waiter->resultPattern = flag->_pattern;
             if (waiter->waitMode & EVF_WAITMODE_CLEAR_ALL) {
                 flag->_pattern = 0;
             } else if (waiter->waitMode & EVF_WAITMODE_CLEAR_PAT) {
                 flag->_pattern &= ~waiter->bitPattern;
             }
+            waiter->wake.NotifyOne();
         }
     }
-    flag->_changed.NotifyAll();
     return SCE_OK;
 }
 
@@ -264,13 +298,17 @@ int APS5_VABI sceKernelCancelEventFlag(KernelEventFlag ef, uint64_t set_pattern,
     std::lock_guard lock(flag->_mutex);
     if (flag->_deleted) {
         if (!entry->opened) return SCE_KERNEL_ERROR_ESRCH;
-        if (num_wait_threads) *num_wait_threads = 0;
+        if (num_wait_threads && !StoreWaitCount(num_wait_threads, 0)) return SCE_KERNEL_ERROR_EFAULT;
         return SCE_OK;
     }
-    if (num_wait_threads) *num_wait_threads = flag->_waiters;
+    if (num_wait_threads && !StoreWaitCount(num_wait_threads, flag->_waiters)) return SCE_KERNEL_ERROR_EFAULT;
     flag->_pattern = set_pattern;
-    ++flag->_cancelGeneration;
-    flag->_changed.NotifyAll();
+    for (auto* waiter = flag->_waiterHead; waiter != nullptr; waiter = waiter->next) {
+        if (waiter->outcome == WaiterNode::Outcome::Pending) {
+            waiter->outcome = WaiterNode::Outcome::Canceled;
+            waiter->wake.NotifyOne();
+        }
+    }
     return SCE_OK;
 }
 
@@ -316,7 +354,6 @@ int APS5_VABI sceKernelWaitEventFlag(KernelEventFlag ef, uint64_t bit_pattern, u
         Consume(flag, bit_pattern, wait_mode, result_pat);
         return SCE_OK;
     }
-    const uint64_t generation = flag->_cancelGeneration;
     if (TraceSync()) std::fprintf(stderr, "[evf] wait %p '%s' want=0x%llx mode=0x%x have=0x%llx timeout=%d caller=%p outer=%p\n", static_cast<void*>(ef), flag->_name.c_str(), static_cast<unsigned long long>(bit_pattern), wait_mode, static_cast<unsigned long long>(flag->_pattern), timeout ? static_cast<int>(*timeout) : -1, __builtin_return_address(0), static_cast<void**>(static_cast<void**>(__builtin_frame_address(0))[0])[1]);
     ++flag->_waiters;
     WaiterNode waiter;
@@ -329,29 +366,33 @@ int APS5_VABI sceKernelWaitEventFlag(KernelEventFlag ef, uint64_t bit_pattern, u
         ~WaiterGuard() {
             flag->removeWaiter(node);
             --flag->_waiters;
-            flag->_changed.NotifyAll();
+            if (flag->_deleted) flag->_changed.NotifyAll();
         }
     } waiterGuard{flag, &waiter};
-    const auto released = [&] { return flag->_deleted || flag->_cancelGeneration != generation || waiter.satisfied; };
+    const auto released = [&] { return waiter.outcome != WaiterNode::Outcome::Pending; };
     bool timedOut = false;
     const auto waitStart = std::chrono::steady_clock::now();
     if (timeout) {
         const std::uint64_t deadline = TimedWait::DeadlineNanos(*timeout);
-        timedOut = !flag->_changed.WaitUntil(lock, deadline, released);
+        timedOut = !waiter.wake.WaitUntil(lock, deadline, released);
         *timeout = static_cast<KernelUseconds>(TimedWait::RemainingMicros(deadline));
     } else {
-        flag->_changed.Wait(lock, released);
+        waiter.wake.Wait(lock, released);
     }
     KernelTraceWait_nid_postfix("evf", __builtin_return_address(0), static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - waitStart).count()), timedOut);
-    if (flag->_deleted) {
+    if (waiter.outcome == WaiterNode::Outcome::Satisfied) {
+        if (result_pat) *result_pat = waiter.resultPattern;
+        return SCE_OK;
+    }
+    if (waiter.outcome == WaiterNode::Outcome::Deleted) {
         if (result_pat) *result_pat = 0;
         return SCE_KERNEL_ERROR_EACCES;
     }
-    if (flag->_cancelGeneration != generation) {
+    if (waiter.outcome == WaiterNode::Outcome::Canceled) {
         if (result_pat) *result_pat = 0;
         return SCE_KERNEL_ERROR_ECANCELED;
     }
-    if (timedOut && !waiter.satisfied) {
+    if (timedOut) {
         if (result_pat) *result_pat = flag->_pattern;
         return SCE_KERNEL_ERROR_ETIMEDOUT;
     }
