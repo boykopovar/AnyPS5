@@ -602,5 +602,12 @@ class CommentStateTests(unittest.TestCase):
         self.run_step(first, None)
         self.assertEqual(self.run_step(self.report("b" * 40, (5, 6)), first), [["api", "repos/owner/project/issues/42/comments", "--paginate"], ["api", "-X", "PATCH"]])
 
+
+class CellAndDependencyTests(unittest.TestCase):
+    def test_cell_lists_sorted_code_spans_joined_by_breaks(self):
+        self.assertEqual(pr_overlap.cell({"b", "a"}), "`a`<br>`b`")
+        self.assertEqual(pr_overlap.cell(None), "")
+
+
 if __name__ == "__main__":
     unittest.main()
