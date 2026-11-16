@@ -3783,6 +3783,17 @@ class RegistryAndLabelTests(unittest.TestCase):
                                              "name_verified": False}),
                          "abc  sceFoo (name does not hash to this NID)")
 
+    def test_directory_files_lists_matching_files_only_and_refuses_non_directories(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "b.txt").write_text("", encoding="utf-8")
+            (root / "a.txt").write_text("", encoding="utf-8")
+            (root / "c.bin").write_text("", encoding="utf-8")
+            (root / "sub.txt").mkdir()
+            self.assertEqual([path.name for path in import_audit.directory_files(root, "*.txt")], ["a.txt", "b.txt"])
+            with self.assertRaisesRegex(import_audit.AuditError, "not a directory"):
+                import_audit.directory_files(root / "a.txt", "*")
+
 
 if __name__ == "__main__":
     unittest.main()
