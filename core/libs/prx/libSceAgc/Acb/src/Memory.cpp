@@ -11,7 +11,7 @@
 extern "C" {
 
 std::uint32_t* APS5_VABI sceAgcAcbAcquireMem(CommandBuffer* buf, std::uint32_t gcrControl, const volatile void* base, std::uint64_t sizeBytes, std::uint32_t pollCycles) {
-    return sceAgcDcbAcquireMem(buf, 1, 0, gcrControl, base, sizeBytes, pollCycles);
+    return Agc::Command::WriteAcquireMem(buf, 0, 0, gcrControl, base, sizeBytes, pollCycles, __func__);
 }
 
 uint32_t APS5_VABI sceAgcAcbAcquireMemGetSize(void) {
