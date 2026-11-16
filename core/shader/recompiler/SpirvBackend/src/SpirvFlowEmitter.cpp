@@ -13,6 +13,8 @@
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
+#include <algorithm>
+#include <map>
 
 namespace ShaderRecompiler {
 namespace {
@@ -751,16 +753,168 @@ void EmitStructuredInstruction(SpirvValueEmitContext& ctx, StructuredFunctionSta
     EmitDirectInstruction(ctx, inst);
 }
 
+bool SelectArmArithmetic(IrOpcode opcode) {
+    switch (opcode) {
+    case IrOpcode::BitCastF32U32: case IrOpcode::BitCastU32F32:
+    case IrOpcode::BitwiseAnd32: case IrOpcode::BitwiseOr32: case IrOpcode::BitwiseXor32:
+    case IrOpcode::IAdd32: case IrOpcode::ISub32: case IrOpcode::IMul32:
+    case IrOpcode::IEqual32: case IrOpcode::INotEqual32:
+    case IrOpcode::UGreaterThan32: case IrOpcode::ULessThan32:
+    case IrOpcode::LogicalAnd: case IrOpcode::LogicalOr: case IrOpcode::LogicalNot:
+    case IrOpcode::FPIsNan32: case IrOpcode::FPOrdLessThan32: case IrOpcode::FPUnordGreaterThanEqual32:
+    case IrOpcode::SelectU32: case IrOpcode::SelectF32: case IrOpcode::NanPropagateF32:
+    case IrOpcode::FPMul32: case IrOpcode::FPMad32: case IrOpcode::FPFma32:
+    case IrOpcode::FPAdd32: case IrOpcode::FPSub32: case IrOpcode::FPMin32: case IrOpcode::FPMinTri32:
+    case IrOpcode::FPFract32: case IrOpcode::FPFloor32: case IrOpcode::FPSaturate32:
+    case IrOpcode::FPSin: case IrOpcode::FPCos: case IrOpcode::FPSqrt:
+    case IrOpcode::CompositeExtractU32x4:
+        return true;
+    default: return false;
+    }
+}
+
+bool SelectConditionOperation(IrOpcode opcode) {
+    switch (opcode) {
+    case IrOpcode::GetUserData: case IrOpcode::GetShaderBase: case IrOpcode::GetSrtResource:
+    case IrOpcode::GetBufferResource: case IrOpcode::ReadConst: case IrOpcode::ReadConstBuffer:
+    case IrOpcode::BitCastF32U32: case IrOpcode::BitCastU32F32:
+    case IrOpcode::BitwiseAnd32: case IrOpcode::BitwiseOr32: case IrOpcode::BitwiseXor32:
+    case IrOpcode::IEqual32: case IrOpcode::INotEqual32:
+    case IrOpcode::UGreaterThan32: case IrOpcode::ULessThan32:
+    case IrOpcode::LogicalAnd: case IrOpcode::LogicalOr: case IrOpcode::LogicalNot:
+    case IrOpcode::FPIsNan32: case IrOpcode::FPOrdLessThan32: case IrOpcode::FPUnordGreaterThanEqual32:
+        return true;
+    default: return false;
+    }
+}
+
+bool SelectEntryOperation(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    if (SelectArmArithmetic(inst.Opcode()) || SelectConditionOperation(inst.Opcode())) return true;
+    switch (inst.Opcode()) {
+    case IrOpcode::InstPrefetch: case IrOpcode::Waitcnt:
+    case IrOpcode::GetInterpolationParameter:
+    case IrOpcode::GetAttribute: case IrOpcode::GetBuiltin: case IrOpcode::GetAddressResource:
+    case IrOpcode::GetImageResource: case IrOpcode::GetSamplerResource: case IrOpcode::MakeImageAddress:
+    case IrOpcode::ImageSampleRaw:
+        return true;
+    case IrOpcode::LoadAddressU32:
+        return ctx.Memory(inst).planningOnly;
+    default: return false;
+    }
+}
+
+struct UniformSelectRegion {
+    const IrValue* condition = nullptr;
+    std::size_t arm = 1u;
+    std::vector<const IrValue*> outputs;
+    std::vector<const IrValue*> body;
+    std::unordered_set<const IrValue*> deferred;
+};
+
+UniformSelectRegion FindUniformSelectRegion(SpirvValueEmitContext& ctx, const IrBlock* block) {
+    auto& state = ctx.state;
+    UniformSelectRegion best;
+    if (state.laneCount != 1u || !state.requirements.readOnlyStorage || state.requirements.coherentBuffers || state.faultBufferVariable != 0u) return best;
+    const auto& info = state.program.Info();
+    if (std::ranges::any_of(info.images, [](const ImageResource& image) { return image.table != NoTable; }) ||
+        std::ranges::any_of(info.samplers, [](const SamplerResource& sampler) { return sampler.table != NoTable; })) return best;
+    std::vector<const IrBlock*> prefix;
+    for (auto* at = block;;) {
+        prefix.push_back(at);
+        if (at == state.program.BlockOrder().front()) break;
+        if (at->Predecessors().size() != 1u || at->Predecessors().front()->Successors().size() != 1u || std::ranges::find(prefix, at->Predecessors().front()) != prefix.end()) return best;
+        at = at->Predecessors().front();
+    }
+    std::ranges::reverse(prefix);
+    std::unordered_set<const IrValue*> uniform;
+    std::map<std::uint32_t, std::vector<const IrValue*>> groups;
+    std::unordered_map<const IrValue*, std::size_t> positions;
+    std::vector<const IrValue*> order;
+    for (const auto* prior : prefix) {
+        for (const auto* inst : prior->Instructions()) {
+            if (!SelectEntryOperation(ctx, *inst)) {
+                if (prior != block) return best;
+                break;
+            }
+            if (inst->Opcode() == IrOpcode::GetUserData || (SelectConditionOperation(inst->Opcode()) && std::ranges::all_of(inst->Arguments(), [&](const IrValue* value) { value = value->Resolve(); return value->HasImmediate() || uniform.contains(value); }))) uniform.insert(inst);
+            if (prior != block) continue;
+            positions.emplace(inst, order.size());
+            order.push_back(inst);
+            if (inst->Opcode() == IrOpcode::SelectU32 && uniform.contains(inst->Argument(0)->Resolve())) groups[inst->Argument(0)->Resolve()->Id()].push_back(inst);
+        }
+    }
+    for (const auto& [id, outputs] : groups) {
+        const auto* condition = outputs.front()->Argument(0)->Resolve();
+        const auto insertion = positions.at(outputs.front());
+        for (const auto arm : {1u, 2u}) {
+            std::unordered_set<const IrValue*> members;
+            std::vector<const IrValue*> pending;
+            for (const auto* output : outputs) pending.push_back(output->Argument(arm)->Resolve());
+            while (!pending.empty()) {
+                const auto* value = pending.back();
+                pending.pop_back();
+                if (value->HasImmediate() || !positions.contains(value) || members.contains(value)) continue;
+                if (!SelectArmArithmetic(value->Opcode()) && value->Opcode() != IrOpcode::ImageSampleRaw && value->Opcode() != IrOpcode::MakeImageAddress) continue;
+                members.insert(value);
+                for (const auto* argument : value->Arguments()) pending.push_back(argument->Resolve());
+            }
+            for (const auto* output : outputs) members.erase(output);
+            for (bool changed = true; changed;) {
+                changed = false;
+                for (auto it = members.begin(); it != members.end();) {
+                    const auto* value = *it;
+                    const bool escapes = std::ranges::any_of(value->Uses(), [&](const IrValue* user) {
+                        if (members.contains(user)) return false;
+                        return std::ranges::find(outputs, user) == outputs.end() || user->Argument(0)->Resolve() == value || user->Argument(3u - arm)->Resolve() == value;
+                    }) || std::ranges::any_of(state.program.Metadata().blockInfo, [&](const BlockInfo& blockInfo) { return blockInfo.condition != nullptr && blockInfo.condition->Resolve() == value; });
+                    if (escapes) { it = members.erase(it); changed = true; }
+                    else ++it;
+                }
+            }
+            if (members.size() <= best.body.size() || std::ranges::none_of(members, [](const IrValue* value) { return value->Opcode() == IrOpcode::ImageSampleRaw; })) continue;
+            const auto available = [&](const IrValue* value) { value = value->Resolve(); return value->HasImmediate() || members.contains(value) || value->Parent() != block || (positions.contains(value) && positions.at(value) < insertion); };
+            if (std::ranges::any_of(members, [&](const IrValue* value) { return !std::ranges::all_of(value->Arguments(), available); }) ||
+                std::ranges::any_of(outputs, [&](const IrValue* value) { return !std::ranges::all_of(value->Arguments(), available); })) continue;
+            best = {condition, arm, outputs, {}, std::move(members)};
+            for (const auto* value : order) if (best.deferred.contains(value)) best.body.push_back(value);
+        }
+    }
+    return best;
+}
+
+void EmitUniformSelectRegion(SpirvValueEmitContext& ctx, const UniformSelectRegion& region) {
+    auto& state = ctx.state;
+    const auto outside = state.currentLabel;
+    const auto body = state.module.AllocateId();
+    const auto merge = state.module.AllocateId();
+    state.module.AddFunction(spv::OpSelectionMerge, merge, spv::SelectionControlDontFlattenMask);
+    state.module.AddFunction(spv::OpBranchConditional, ctx.Def(region.condition), region.arm == 1u ? body : merge, region.arm == 1u ? merge : body);
+    EmitLabel(state, body);
+    for (const auto* value : region.body) EmitDirectInstruction(ctx, *value);
+    const auto inside = state.currentLabel;
+    state.module.AddFunction(spv::OpBranch, merge);
+    EmitLabel(state, merge);
+    for (const auto* output : region.outputs) {
+        const auto result = state.module.AllocateId();
+        state.module.AddFunction(spv::OpPhi, TypeU32(state), result, ctx.Def(output->Argument(region.arm)), inside, ctx.Def(output->Argument(3u - region.arm)), outside);
+        ctx.Define(*output, result);
+    }
+}
+
 void EmitStructuredBlock(SpirvValueEmitContext& ctx, StructuredFunctionState& functionState, const IrBlock* block) {
     auto& state = ctx.state;
     state.currentBlock = block;
     EmitLabel(state, ctx.Label(block));
+    const auto selected = FindUniformSelectRegion(ctx, block);
     bool emittedNonPhi = false;
     // Wave LDS ordering (see WaveLdsScope): a barrier separates an LDS write from the next LDS access
     // and a read from the next write. The block may be entered right after a write.
     bool ldsWritten = true;
     bool ldsRead = false;
     for (const IrValue* inst : block->Instructions()) {
+        if (selected.deferred.contains(inst)) continue;
+        if (!selected.outputs.empty() && inst == selected.outputs.front()) EmitUniformSelectRegion(ctx, selected);
+        if (std::ranges::find(selected.outputs, inst) != selected.outputs.end()) continue;
         if (inst->Opcode() == IrOpcode::Phi) {
             if (emittedNonPhi) {
                 ctx.Fail(*inst, "appears after a non-Phi instruction");
