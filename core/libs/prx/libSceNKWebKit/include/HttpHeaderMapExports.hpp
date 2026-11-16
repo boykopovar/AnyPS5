@@ -14,6 +14,8 @@ void APS5_VABI _ZN7WebCore13HTTPHeaderMapC1Ev(NKWebKit::HttpAbi::HTTPHeaderMap* 
 void APS5_VABI _ZN7WebCore13HTTPHeaderMapC2Ev(NKWebKit::HttpAbi::HTTPHeaderMap* self);
 NKWebKit::HttpAbi::ASCIILiteral APS5_VABI _ZN7WebCore20httpHeaderNameStringENS_14HTTPHeaderNameE(NKWebKit::HttpAbi::HTTPHeaderName name);
 NKWebKit::WtfAbi::String APS5_VABI _ZNK7WebCore13HTTPHeaderMap3getENS_14HTTPHeaderNameE(const NKWebKit::HttpAbi::HTTPHeaderMap* self, NKWebKit::HttpAbi::HTTPHeaderName name);
+NKWebKit::WtfAbi::String APS5_VABI _ZNK7WebCore13HTTPHeaderMap3getERKN3WTF6StringE(const NKWebKit::HttpAbi::HTTPHeaderMap* self, const NKWebKit::WtfAbi::String& name);
+NKWebKit::WtfAbi::String APS5_VABI _ZNK7WebCore13HTTPHeaderMap17getUncommonHeaderERKN3WTF6StringE(const NKWebKit::HttpAbi::HTTPHeaderMap* self, const NKWebKit::WtfAbi::String& name);
 bool APS5_VABI _ZNK7WebCore13HTTPHeaderMap8containsENS_14HTTPHeaderNameE(const NKWebKit::HttpAbi::HTTPHeaderMap* self, NKWebKit::HttpAbi::HTTPHeaderName name);
 bool APS5_VABI _ZNK7WebCore13HTTPHeaderMap8containsERKN3WTF6StringE(const NKWebKit::HttpAbi::HTTPHeaderMap* self, const NKWebKit::WtfAbi::String& name);
 

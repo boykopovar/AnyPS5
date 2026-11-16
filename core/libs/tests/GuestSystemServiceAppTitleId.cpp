@@ -86,6 +86,7 @@ void CheckNullBuffers(int runningAppId) {
     Require(Throws([&] { static_cast<void>(sceSystemServiceGetAppTitleId(runningAppId, nullptr)); }));
     Require(Throws([&] { static_cast<void>(sceLncUtilGetAppTitleId(runningAppId, nullptr)); }));
     Require(Throws([&] { static_cast<void>(sceSystemServiceGetAppTitleId(runningAppId + 1, nullptr)); }));
+    Require(sceSystemServiceGetMainAppTitleId(nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
     Require(GetAppIdRejects(nullptr));
     Require(IsAppLaunchedRejects(nullptr));
 }
@@ -119,10 +120,23 @@ void CheckKnownTitle(int runningAppId) {
     Require(std::memcmp(lncBuffer.bytes, "PPSA00000", titleId.size() + 1) == 0);
     Require(lncBuffer.GuardIntact());
 
+    GuardedBuffer mainBuffer;
+    Require(sceSystemServiceGetMainAppTitleId(mainBuffer.bytes) == 0);
+    Require(std::memcmp(mainBuffer.bytes, "PPSA00000", titleId.size() + 1) == 0);
+    Require(mainBuffer.GuardIntact());
+
     GuardedBuffer dirty;
     std::memset(dirty.bytes, 'x', 10);
     Require(sceSystemServiceGetAppTitleId(runningAppId, dirty.bytes) == 0);
     Require(std::strcmp(dirty.bytes, "PPSA00000") == 0 && dirty.GuardIntact());
+    auto* const inaccessible = reinterpret_cast<char*>(0x10);
+    Require(Throws([&] { static_cast<void>(sceSystemServiceGetAppTitleId(runningAppId, inaccessible)); }));
+    Require(Throws([&] { static_cast<void>(sceLncUtilGetAppTitleId(runningAppId, inaccessible)); }));
+    Require(sceSystemServiceGetAppTitleId(runningAppId, dirty.bytes) == 0);
+    Require(std::strcmp(dirty.bytes, "PPSA00000") == 0 && dirty.GuardIntact());
+    Require(sceSystemServiceGetMainAppTitleId(dirty.bytes) == 0);
+    Require(std::strcmp(dirty.bytes, "PPSA00000") == 0 && dirty.GuardIntact());
+    Require(Throws([&] { static_cast<void>(sceSystemServiceGetMainAppTitleId(inaccessible)); }));
 
     CheckOtherApplications(runningAppId);
     CheckNullBuffers(runningAppId);
@@ -136,6 +150,8 @@ void CheckLongTitle(int runningAppId) {
     GuardedBuffer buffer;
     Require(GetAppTitleIdThrows(runningAppId, buffer));
     Require(LncGetAppTitleIdThrows(static_cast<std::uint32_t>(runningAppId), buffer));
+    GuardedBuffer mainBuffer;
+    Require(Throws([&] { static_cast<void>(sceSystemServiceGetMainAppTitleId(mainBuffer.bytes)); }) && mainBuffer.Untouched());
 }
 
 void CheckMissingMetadata(int runningAppId) {
@@ -145,6 +161,8 @@ void CheckMissingMetadata(int runningAppId) {
     GuardedBuffer buffer;
     Require(GetAppTitleIdThrows(runningAppId, buffer));
     Require(LncGetAppTitleIdThrows(static_cast<std::uint32_t>(runningAppId), buffer));
+    GuardedBuffer mainBuffer;
+    Require(Throws([&] { static_cast<void>(sceSystemServiceGetMainAppTitleId(mainBuffer.bytes)); }) && mainBuffer.Untouched());
 }
 
 }

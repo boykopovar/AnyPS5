@@ -9,7 +9,7 @@ import sys
 import tempfile
 import urllib.request
 from base64 import b64encode
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 ROOT = Path(__file__).resolve().parent.parent
 PRX = ROOT / "core" / "libs" / "prx"
@@ -73,13 +73,18 @@ def load_db(path):
             return db
         finally:
             temporary.unlink(missing_ok=True)
-    return read_db(path)
+    db = read_db(path)
+    if not any(re.fullmatch(r"[A-Za-z0-9+\-]{11}", nid) for nid in db):
+        raise ValueError(f"{path}: database contains no valid NID records")
+    return db
 
 
 def source_files(root):
+    flavor = PureWindowsPath if os.name == "nt" else Path
+    root_flavored = flavor(str(root))
     return (path for path in sorted(root.rglob("*.cpp"))
             if not any(part.lower() in {"test", "tests"}
-                       for part in path.relative_to(root).parts[:-1]))
+                       for part in flavor(str(path)).relative_to(root_flavored).parts[:-1]))
 
 
 def source_aliases(text):
@@ -350,6 +355,7 @@ def main(argv=None):
                         help="find source exports matching requested NIDs or symbol names")
     parser.add_argument("--json", action="store_true",
                         help="emit machine-readable JSON")
+    parser.add_argument("--offline", action="store_true", help="require an existing database; never download a missing cache")
     options = [option for action in parser._actions for option in action.option_strings]
     arguments = sys.argv[1:] if argv is None else argv
     args = parser.parse_args(nid_arguments(arguments, options))
@@ -400,8 +406,10 @@ def main(argv=None):
             parser.error(f"invalid NID {nid!r}: expected 11 characters from A-Z, a-z, 0-9, + or -")
 
     db_path = Path(args.db) if args.db else DEFAULT_CACHE
+    if args.offline and not (requested_nids and not args.nid) and not db_path.is_file():
+        parser.error(f"offline database is not a file: {db_path}")
     try:
-        db = {} if requested_nids and not args.nid else load_db(db_path)
+        db = {} if requested_nids and not args.nid else (read_db(db_path) if args.offline else load_db(db_path))
         if requested_nids:
             unknowns = {nid: "<cli>" for nid in (args.nid or [])}
         else:

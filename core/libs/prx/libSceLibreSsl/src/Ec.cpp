@@ -251,6 +251,7 @@
 
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include <atomic>
+#include <bit>
 #include <climits>
 #include <cstddef>
 #include <cstdint>
@@ -491,6 +492,14 @@ void RequireUsablePublicKey(const EcGroup& group, const EcPoint& point, const ch
     if (AtInfinity(point.point) || mbedtls_ecp_check_pubkey(&group.group, &point.point) != 0) NotImplemented_nid_no_patch(what);
 }
 
+void ReadScalar(const Bignum& scalar, const mbedtls_mpi& order, mbedtls_mpi& out) {
+    static_assert(std::endian::native == std::endian::little);
+    const std::size_t size = scalar.top > 0 ? static_cast<std::size_t>(scalar.top) * sizeof(*scalar.d) : 0;
+    Check(mbedtls_mpi_read_binary_le(&out, reinterpret_cast<const unsigned char*>(scalar.d), size), "EC_POINT_mul");
+    Check(mbedtls_mpi_mod_mpi(&out, &out, &order), "EC_POINT_mul");
+    if (scalar.neg && mbedtls_mpi_cmp_int(&out, 0) != 0) Check(mbedtls_mpi_sub_mpi(&out, &order, &out), "EC_POINT_mul");
+}
+
 }
 
 extern "C" {
@@ -576,6 +585,35 @@ int APS5_VABI EC_POINT_oct2point_nid_postfix(const EcGroup* group, EcPoint* poin
     return mbedtls_ecp_check_pubkey(&curve, &point->point) == 0 ? 1 : 0;
 }
 
+int APS5_VABI EC_POINT_mul_nid_postfix(const EcGroup* group, EcPoint* result, const Bignum* generatorScalar, const EcPoint* point, const Bignum* pointScalar, BignumContext*) {
+    if (group == nullptr || result == nullptr) APS5_INVALID_ARG_EX;
+    RequireSameCurve(*group, result->curve, "EC_POINT_mul: a result point of another curve");
+    EcGroup local(group->curve);
+    mbedtls_ecp_group& curve = local.group;
+    Mpi generatorFactor;
+    Mpi pointFactor;
+    if (generatorScalar != nullptr) ReadScalar(*generatorScalar, curve.N, generatorFactor.value);
+    if (point != nullptr && pointScalar != nullptr) {
+        RequireSameCurve(*group, point->curve, "EC_POINT_mul: a point of another curve");
+        if (!AtInfinity(point->point)) {
+            if (mbedtls_ecp_check_pubkey(&curve, &point->point) != 0) NotImplemented_nid_no_patch("EC_POINT_mul: a point off the curve");
+            ReadScalar(*pointScalar, curve.N, pointFactor.value);
+        }
+    }
+    const bool withGenerator = mbedtls_mpi_cmp_int(&generatorFactor.value, 0) != 0;
+    const bool withPoint = mbedtls_mpi_cmp_int(&pointFactor.value, 0) != 0;
+    Point sum;
+    if (withGenerator && withPoint) {
+        Check(mbedtls_ecp_muladd(&curve, &sum.value, &generatorFactor.value, &curve.G, &pointFactor.value, &point->point), __func__);
+    } else if (withGenerator) {
+        Check(mbedtls_ecp_mul(&curve, &sum.value, &generatorFactor.value, &curve.G, HostRandom, nullptr), __func__);
+    } else if (withPoint) {
+        Check(mbedtls_ecp_mul(&curve, &sum.value, &pointFactor.value, &point->point, HostRandom, nullptr), __func__);
+    }
+    Check(mbedtls_ecp_copy(&result->point, &sum.value), __func__);
+    return 1;
+}
+
 EcKey* APS5_VABI EC_KEY_new_nid_postfix(void) {
     return new EcKey;
 }
@@ -606,6 +644,7 @@ int APS5_VABI EC_KEY_set_group_nid_postfix(EcKey* key, const EcGroup* group) {
         if (key->privateKey) RequireSameCurve(*group, key->privateKey->curve, "EC_KEY_set_group: a curve other than the one of the key's private key");
     }
     EcGroup* copy = group ? new EcGroup(group->curve) : nullptr;
+    if (copy) copy->asn1Flag = group->asn1Flag;
     delete key->group;
     key->group = copy;
     return copy ? 1 : 0;
