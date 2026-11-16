@@ -605,6 +605,14 @@ class LinkTextHelperTests(unittest.TestCase):
         self.assertEqual(build_mingw_host_only_tests.source_relative_path(root, root / "a" / "b.cpp"), "a/b.cpp")
         self.assertIsNone(build_mingw_host_only_tests.source_relative_path(root, Path(os.path.abspath(os.sep + "other")) / "x.cpp"))
 
+    def test_is_core_libs_test_source_needs_a_tests_folder_under_core_libs(self):
+        root = Path(os.path.abspath(os.sep + "r"))
+        core_libs = (root / "core" / "libs").resolve()
+        self.assertTrue(build_mingw_host_only_tests.is_core_libs_test_source(
+            root / "core" / "libs" / "libA" / "tests" / "x.cpp", core_libs))
+        self.assertFalse(build_mingw_host_only_tests.is_core_libs_test_source(
+            root / "core" / "libs" / "libA" / "src" / "x.cpp", core_libs))
+
 
 if __name__ == "__main__":
     unittest.main()
