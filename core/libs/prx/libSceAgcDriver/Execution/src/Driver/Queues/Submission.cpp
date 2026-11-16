@@ -577,6 +577,17 @@ void Driver::releaseFlipHold() {
     if (flipHolders.load(std::memory_order_acquire) != 0) changed.notify_all();
 }
 
+void Driver::beginFlipReady(std::uint32_t handle) {
+    std::lock_guard lock(mutex);
+    ++flipsReadying[handle];
+}
+
+void Driver::endFlipReady(std::uint32_t handle) {
+    std::lock_guard lock(mutex);
+    const auto found = flipsReadying.find(handle);
+    if (found != flipsReadying.end() && --found->second == 0) flipsReadying.erase(found);
+}
+
 void Driver::finishFlipWork(const std::shared_ptr<FlipWork>& work, std::uint64_t workSerial) {
     std::lock_guard lock(mutex);
     if (work != nullptr) {
@@ -620,6 +631,7 @@ void Driver::reserveOutputs(Submission& submission) {
                 require(submission.queue == 0, "EOP flips on async queues are not implemented");
                 require(eopTokens.insert(token).second, "EOP flip token repeated in a submission");
                 submission.flips.emplace(cursor, flip->second.request);
+                submission.flipHandles.emplace(cursor, flip->second.info.handle);
             }
         }
         noteHeldAtSubmit(submission, cursor);
@@ -630,6 +642,7 @@ void Driver::reserveOutputs(Submission& submission) {
             auto request = output->second->Reserve(info);
             require(request != nullptr, "video output returned a null flip reservation");
             submission.flips.emplace(cursor, std::move(request));
+            submission.flipHandles.emplace(cursor, words[1]);
         }
         cursor += Pm4::PacketWords(words[0]);
     }
@@ -815,7 +828,7 @@ void Driver::Submit(const Packet* packet, std::uint32_t queue, bool cpuFlip) {
         checkStopping();
         require(accepted != std::numeric_limits<std::uint64_t>::max(), "submission serial overflow");
         reserveOutputs(submission);
-        if (unorderedFlip && capture == nullptr && accepted != 0 && flipsAhead.load(std::memory_order_acquire) == 0) {
+        if (unorderedFlip && capture == nullptr && accepted != 0 && flipsAhead.load(std::memory_order_acquire) == 0 && !flipsReadying.contains(submission.flipHandles.begin()->second)) {
             const auto now = FrameTiming::Clock::now();
             auto frame = std::make_shared<FrameTiming>(++frameSerial);
             frame->IncludeSubmission(accepted, now, now, now, true);
