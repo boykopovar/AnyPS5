@@ -3592,6 +3592,8 @@ constexpr std::uint32_t TableFormat16UNorm = 7;
 constexpr std::uint32_t TableFormat8888UNorm = 56;
 constexpr std::uint32_t TableFormat32UInt = 20;
 constexpr std::uint32_t TableFormat16SInt = 12;
+constexpr std::uint32_t TableFormat16Float = 13;
+constexpr std::uint32_t TableFormat32SInt = 21;
 constexpr std::uint32_t TableFormat11_11_10UInt = 34;
 constexpr std::uint32_t TableFormat32_32UInt = 62;
 constexpr std::uint32_t TableType2D = 9;
@@ -5028,14 +5030,14 @@ void verifyImageTableBindingGrowth() {
             require(allocation.bindings.size() == 2u, "image table bindings: a prepared binding was lost");
             const auto& images = allocation.bindings[0];
             const auto& samplers = allocation.bindings[1];
-            require(images.count == count && images.guestDescriptor.size() == count * 8u && images.imageShapes.size() == count && images.imageDepthCompare.size() == count && images.imageWritten.size() == count && images.imageAtomic.size() == count && images.imageAtomic64.size() == count && images.imageSamplers.size() == count, "image table bindings: image metadata count differs from the descriptors");
+            require(images.count == count && images.guestDescriptor.size() == count * 8u && images.imageShapes.size() == count && images.imageDepthCompare.size() == count && images.imageWritten.size() == count && images.imageAtomic.size() == count && images.imageAtomic64.size() == count && images.imageUintStorage.size() == count && images.imageSamplers.size() == count, "image table bindings: image metadata count differs from the descriptors");
             require(samplers.count == count && samplers.guestDescriptor.size() == count * 4u && samplers.samplerDepthCompare.size() == count, "image table bindings: sampler metadata count differs from the descriptors");
             for (std::uint32_t index = 0; index < count; ++index) {
                 require(std::equal(tables.elements[index].words.begin(), tables.elements[index].words.end(), images.guestDescriptor.begin() + index * 8u), "image table bindings: image words changed");
                 require(images.imageShapes[index] == DescriptorImageShape::Image2D && images.imageDepthCompare[index] == tables.elements[index].depthCompare && images.imageWritten[index] == ((index + pass) % 2u != 0u) && !images.imageAtomic[index] && images.imageSamplers[index] == 0u, "image table bindings: an element inherited another element's metadata");
                 require(std::equal(tables.samplers[index].words.begin(), tables.samplers[index].words.end(), samplers.guestDescriptor.begin() + index * 4u) && samplers.samplerDepthCompare[index] == tables.samplers[index].compare, "image table bindings: sampler words or comparison state changed");
             }
-            require(allocations <= 10u, ("image table bindings: " + std::to_string(count) + " elements required " + std::to_string(allocations) + " allocations, expected at most one per output array").c_str());
+            require(allocations <= 11u, ("image table bindings: " + std::to_string(count) + " elements required " + std::to_string(allocations) + " allocations, expected at most one per output array").c_str());
         }
     }
 }
@@ -6566,6 +6568,28 @@ void verifySelectedRecordDirectOperations() {
     require(mixed->info.images.size() == 2u && std::ranges::all_of(mixed->info.images, [&](const ImageResource& image) { return image.table == NoTable && !mixed->descriptorSources.at(image.source).tableColumn.has_value(); }), "selected record direct operations: a T# sampled and stored was planned through an image table for one of its operations");
     const auto sampled = GetResourcePlan(TableRequest(TableSrtKeyCode, userData));
     require(sampled->info.images.size() == 1u && sampled->info.images[0].table == 0u && sampled->descriptorSources.at(sampled->info.images[0].source).tableColumn->selected, "selected record direct operations: a T# that is only sampled no longer selects its record");
+}
+
+void verifyImageTableUintStorage() {
+    using namespace ShaderRecompiler;
+    static TableTexture textures[5];
+    alignas(4096) static TableGuest guest;
+    std::fill(guest.heap.begin(), guest.heap.end(), std::array<std::uint32_t, 8>{});
+    const std::array<std::pair<std::uint32_t, bool>, 5> formats{{{TableFormat16Float, true}, {TableFormat16SInt, true}, {TableFormat32SInt, true}, {TableFormat32UInt, true}, {TableFormat8888UNorm, false}}};
+    for (std::size_t index = 0; index < formats.size(); ++index) guest.heap[index] = TableT(textures[index].bytes.data(), formats[index].first, TableType2D);
+    FillTableSrt(guest, guest.heap.data(), 32u, static_cast<std::uint32_t>(formats.size()));
+    const auto userData = TableUserData(guest);
+    const auto compiled = CompileTable(TableRequest(WithImageOperation(TableWholeCode, 0xf0200f08u, false), userData));
+    const auto* binding = TableBinding(*compiled.result, DescriptorRole::ImageStorageTable);
+    require(binding != nullptr && binding->kind == DescriptorKind::StorageImage && binding->count == formats.size() && binding->imageUintStorage.size() == formats.size(), "image table uint storage: the storage table does not hold one flag per element");
+    for (std::size_t index = 0; index < formats.size(); ++index) {
+        std::size_t found = formats.size();
+        for (std::size_t candidate = 0; candidate < formats.size(); ++candidate) {
+            if (binding->guestDescriptor[candidate * 8u] == guest.heap[index][0]) found = candidate;
+        }
+        require(found < formats.size(), "image table uint storage: a stored element is missing from the table");
+        require(binding->imageUintStorage[found] == formats[index].second, "image table uint storage: the UINT view flag of a written-only element is wrong for its format");
+    }
 }
 
 void verifyEvaluableHeapSamplerDirect() {
@@ -13086,6 +13110,7 @@ int main(int argc, char** argv) {
             verifyImageTableLateKey();
             verifyImageTableUnkeyedAccess();
             verifyImageTableRegistration();
+            verifyImageTableUintStorage();
             verifyScalarAddressRule();
             verifyPointerImageTable();
             verifyPointerTableUnwrittenReuse();
@@ -13200,6 +13225,7 @@ int main(int argc, char** argv) {
         verifySpecializedModuleRelease();
         verifyLayerSpecializationRelease();
         verifyImageTableRegistration();
+        verifyImageTableUintStorage();
         verifyScalarAddressRule();
         verifyPointerImageTable();
         verifyPointerTableUnwrittenReuse();
