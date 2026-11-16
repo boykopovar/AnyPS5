@@ -66,7 +66,7 @@ static void MutexBasics() {
     _Cnd_destroy_nid_postfix(&foreignCondition);
     _Mtx_destroy_nid_postfix(&mutex);
 
-    Require(mutex == nullptr);
+    Require(_Mtx_trylock_nid_postfix(&mutex) == 4);
     RequireThrows<std::invalid_argument>([&] { _Mtx_lock_nid_postfix(&mutex); });
     void* emptyMutex = nullptr;
     _Mtx_destroy_nid_postfix(&emptyMutex);
@@ -106,7 +106,7 @@ static void DefaultNameOverrideMutex() {
     Require(_Mtx_lock_nid_postfix(&mutex) == success && _Mtx_lock_nid_postfix(&mutex) == busy);
     Require(_Mtx_unlock_nid_postfix(&mutex) == success);
     _Mtx_destroy_nid_postfix(&mutex);
-    Require(mutex == nullptr);
+    Require(_Mtx_trylock_nid_postfix(&mutex) == 4);
 
     void* unnamedMutex = nullptr;
     Require(_Mtx_init_with_default_name_override_nid_postfix(&unnamedMutex, 0, nullptr) == success && unnamedMutex != nullptr);

@@ -31,10 +31,10 @@ int main() {
     RequireThrows<std::logic_error>([&] { _Mtx_destroy_nid_postfix(&mutex); });
     Require(_Mtx_unlock_nid_postfix(&mutex) == success);
     _Mtx_destroy_nid_postfix(&mutex);
-    Require(mutex == nullptr);
+    Require(_Mtx_trylock_nid_postfix(&mutex) == 4);
 
     _Mtx_destroy_nid_postfix(&mutex);
-    Require(mutex == nullptr);
+    Require(_Mtx_trylock_nid_postfix(&mutex) == 4);
 
     void* unnamed = nullptr;
     Require(_Mtx_init_with_name_nid_postfix(&unnamed, plain, nullptr) == success);
@@ -42,13 +42,13 @@ int main() {
     Require(_Mtx_trylock_nid_postfix(&unnamed) == success);
     Require(_Mtx_unlock_nid_postfix(&unnamed) == success);
     _Mtx_destroy_nid_postfix(&unnamed);
-    Require(unnamed == nullptr);
+    Require(_Mtx_trylock_nid_postfix(&unnamed) == 4);
 
     void* overridden = nullptr;
     Require(_Mtx_init_with_default_name_override_nid_postfix(&overridden, plain, "OverrideMutex") == success);
     Require(overridden != nullptr);
     _Mtx_destroy_nid_postfix(&overridden);
-    Require(overridden == nullptr);
+    Require(_Mtx_trylock_nid_postfix(&overridden) == 4);
 
     void* recMutex = nullptr;
     Require(_Mtx_init_with_name_nid_postfix(&recMutex, plain | recursive, "RecursiveMutex") == success);
@@ -71,7 +71,7 @@ int main() {
     Require(_Mtx_unlock_nid_postfix(&recMutex) == success);
     contender.join();
     _Mtx_destroy_nid_postfix(&recMutex);
-    Require(recMutex == nullptr);
+    Require(_Mtx_trylock_nid_postfix(&recMutex) == 4);
 
     RequireThrows<std::invalid_argument>([] {
         _Mtx_init_with_name_nid_postfix(nullptr, plain, "NullHandle");

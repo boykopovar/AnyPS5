@@ -130,6 +130,13 @@ void TestMtxTrylock() {
     Require(_Mtx_trylock_nid_postfix(&lazyHandle) == threadBusy);
     Require(_Mtx_unlock_nid_postfix(&lazyHandle) == threadSuccess);
     _Mtx_destroy_nid_postfix(&lazyHandle);
+
+    void* destroyedHandle = nullptr;
+    Require(_Mtx_init_nid_postfix(&destroyedHandle, mutexTryable) == threadSuccess && destroyedHandle != nullptr);
+    _Mtx_destroy_nid_postfix(&destroyedHandle);
+    Require(_Mtx_trylock_nid_postfix(&destroyedHandle) == 4);
+    _Mtx_destroy_nid_postfix(&destroyedHandle);
+    Require(_Mtx_trylock_nid_postfix(&destroyedHandle) == 4);
 }
 
 void TestThrdSleep() {
