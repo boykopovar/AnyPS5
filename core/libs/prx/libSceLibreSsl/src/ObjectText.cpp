@@ -2,6 +2,7 @@
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <charconv>
 #include <cstddef>
 #include <cstdint>
@@ -197,6 +198,24 @@ int ObjectText(char* buffer, int space, const LibreSslAsn1Object* object, const 
     }
 }
 
+std::string GuestShortName(const char* name, const char* function) {
+    constexpr std::uintptr_t Page = 4096;
+    std::string text;
+    auto address = reinterpret_cast<std::uintptr_t>(name);
+    char chunk[Page];
+    for (;;) {
+        const std::size_t size = Page - address % Page;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(chunk, reinterpret_cast<const void*>(address), size);
+        errno = savedErrno;
+        if (!copied) throw std::invalid_argument(std::string(function) + ": unreadable name");
+        const auto* end = static_cast<const char*>(std::memchr(chunk, '\0', size));
+        text.append(chunk, end ? static_cast<std::size_t>(end - chunk) : size);
+        if (end) return text;
+        address += size;
+    }
+}
+
 } // namespace
 
 extern "C" {
@@ -240,13 +259,14 @@ const char* APS5_VABI OBJ_nid2sn_nid_postfix(int nid) {
 
 int APS5_VABI OBJ_sn2nid_nid_postfix(const char* name) {
     if (!name) throw std::invalid_argument(std::string(__func__) + ": null name");
-    if (const int added = LibreSslAddedObjectShortNameNid_nid_no_patch(name)) return added;
+    const std::string text = GuestShortName(name, __func__);
+    if (const int added = LibreSslAddedObjectShortNameNid_nid_no_patch(text.c_str())) return added;
     int low = 0;
     int high = LibreSslObjectShortNameOrderCount;
     while (low < high) {
         const int middle = (low + high) / 2;
         const auto& entry = LibreSslObjects_nid_no_patch[LibreSslObjectShortNameOrder_nid_no_patch[middle]];
-        const int comparison = std::strcmp(name, entry.shortName);
+        const int comparison = std::strcmp(text.c_str(), entry.shortName);
         if (comparison < 0) high = middle;
         else if (comparison > 0) low = middle + 1;
         else return entry.nid;
