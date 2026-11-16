@@ -415,3 +415,4 @@ On Linux x86-64, omit `CMAKE_OSX_ARCHITECTURES`; the full `BUILD_TESTING` build 
 ## Release and seed tools
 
 - `tools/package_release.py --platform {linux,windows,web,headers} --output <dir>` packages a release for one platform from a build directory (`--build`, `--version`, `--revision`, `--docs` are optional).
+- `tools/prepare_release_notes.py --input <file> --body <file> --full <file>` prepares size-safe GitHub release notes; `--check` is the verification mode.
