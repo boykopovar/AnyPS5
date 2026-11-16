@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -197,6 +198,26 @@ static void TestSetResult() {
     ui.flags = 0x0001;
     Require(UI_set_result_nid_postfix(&ui, &info, "a") == 0 && ui.flags == 0 && !std::strcmp(buffer, "kept"));
     Require(ERR_peek_error_nid_postfix() == 0);
+
+    errno = 71;
+    const auto* unreadable = reinterpret_cast<const char*>(0x10);
+    ui.flags = 0x0101;
+    RequireThrows([&] { UI_set_result_nid_postfix(&ui, &prompt, unreadable); });
+    Require(errno == 71 && ui.flags == 0x0101 && !std::strcmp(buffer, "kept"));
+    LibreSslUiString unwritable = prompt;
+    unwritable.resultBuffer = reinterpret_cast<char*>(0x10);
+    RequireThrows([&] { UI_set_result_nid_postfix(&ui, &unwritable, "abc"); });
+    unwritable.type = 3;
+    unwritable.data.booleanData.okCharacters = "yY";
+    unwritable.data.booleanData.cancelCharacters = "nN";
+    RequireThrows([&] { UI_set_result_nid_postfix(&ui, &unwritable, "y"); });
+    Require(errno == 71 && ERR_peek_error_nid_postfix() == 0);
+    alignas(4096) static char pages[8192];
+    std::memcpy(pages + 4094, "wxyz", 5);
+    Require(UI_set_result_nid_postfix(&ui, &prompt, pages + 4094) == 0 && !std::strcmp(buffer, "wxyz"));
+    boolean.resultBuffer = buffer;
+    std::memcpy(pages + 4094, "xxN", 4);
+    Require(UI_set_result_nid_postfix(&ui, &boolean, pages + 4094) == 0 && buffer[0] == 'n');
 }
 
 int main() {
