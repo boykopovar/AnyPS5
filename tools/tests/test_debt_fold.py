@@ -349,5 +349,11 @@ class FoldTests(unittest.TestCase):
         self.assertEqual((self.root / "docs/dev/debt/changes/mixed.md").read_text(encoding="utf-8"), mixed_frag)
 
 
+class TargetTests(unittest.TestCase):
+    def test_target_is_none_without_a_target_marker(self):
+        import debt_fold
+        self.assertIsNone(debt_fold.target("- plain entry with no target"))
+
+
 if __name__ == "__main__":
     unittest.main()
