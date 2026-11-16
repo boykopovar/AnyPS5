@@ -178,7 +178,7 @@ std::uint32_t TranslationContext::f32DenormalFlushFor(const RdnaInstruction& ins
     }
     if (!ExactF32Arithmetic()) return 0u;
     if (denormals != 0u) return 0u;
-    return flush == 3u && float32FlushToZero && flushesInHardware(inst) ? 0u : flush;
+    return flush == 3u && float32FlushToZero && flushesInHardware(inst) ? 4u : flush;
 }
 
 bool TranslationContext::emitVector(const RdnaInstruction& inst) {
