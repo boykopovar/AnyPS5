@@ -309,8 +309,14 @@ bool APS5_VABI sceLibcInternalPending3_023_nid_no_patch(const void* self);
 int APS5_VABI sceLibcInternalPending3_037_nid_no_patch(const void* self);
 int APS5_VABI sceLibcInternalPending3_038_nid_no_patch(const void* self);
 bool APS5_VABI sceLibcInternalPending3_039_nid_no_patch(const void* self);
+void APS5_VABI sceLibcInternalPending4_005_nid_no_patch(const void* self, int catalog);
+void* APS5_VABI sceLibcInternalPending4_006_nid_no_patch(void* result, const void* self, int catalog, int set, int message, const void* fallback);
 int APS5_VABI sceLibcInternalPending4_007_nid_no_patch(const void* self, const void* name, const void* locale);
 void APS5_VABI sceLibcInternalPending4_008_nid_no_patch(const void* self, int catalog);
+void* APS5_VABI sceLibcInternalPending4_009_nid_no_patch(void* result, const void* self, int catalog, int set, int message, const void* fallback);
+int APS5_VABI sceLibcInternalPending4_010_nid_no_patch(const void* self, const void* name, const void* locale);
+void APS5_VABI sceLibcInternalPending4_011_nid_no_patch(const void* self, int catalog);
+void* APS5_VABI sceLibcInternalPending4_012_nid_no_patch(void* result, const void* self, int catalog, int set, int message, const void* fallback);
 int APS5_VABI sceLibcInternalPending4_013_nid_no_patch(const void* self, const void* name, const void* locale);
 void APS5_VABI sceLibcInternalPending4_014_nid_no_patch(const void* self, int catalog);
 
