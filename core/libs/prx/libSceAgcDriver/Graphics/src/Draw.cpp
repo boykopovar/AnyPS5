@@ -3206,10 +3206,10 @@ struct TargetBinding {
     std::unique_ptr<Buffer> dump;
 };
 
-struct PreparedDraw {
-    explicit PreparedDraw(bool profile) : timer(profile) {}
-    PreparedDraw(const PreparedDraw&) = delete;
-    PreparedDraw& operator=(const PreparedDraw&) = delete;
+struct DrawWork {
+    explicit DrawWork(bool profile) : timer(profile) {}
+    DrawWork(const DrawWork&) = delete;
+    DrawWork& operator=(const DrawWork&) = delete;
     std::shared_ptr<const DrawRecipe>* recipeOut = nullptr;
     const DrawTraceContext* trace = nullptr;
     std::uint64_t shape = 0;
@@ -3249,7 +3249,7 @@ struct PreparedDraw {
     std::shared_ptr<std::shared_ptr<const void>> spaceKeep;
 };
 
-void keepHeldSpace(PreparedDraw& prepared) {
+void keepHeldSpace(DrawWork& prepared) {
     const auto& resources = prepared.resolved.resources;
     if (prepared.spaceKeep != nullptr || prepared.recorder == nullptr || resources == nullptr || !resources->SpaceReuse() || !resources->SpaceHeld()) return;
     prepared.spaceKeep = reserveSpaceKeep(*prepared.recorder, *resources);
@@ -3447,7 +3447,7 @@ void noteAttachments(AttachmentEvent event) {
     AgcDriver::ProfilePrint_nid_no_patch("[pass-attachments] 10 s: %llu hits; misses: %llu no memo, %llu pass, %llu serials, %llu targets, %llu images, %llu depth; %llu stored, %llu ineligible; verify %llu checked, %llu differed\n", taken[0], taken[1], taken[2], taken[3], taken[4], taken[5], taken[6], taken[7], taken[8], taken[9], taken[10]);
 }
 
-bool memoAttachments(const Context& context, const State& state, PreparedDraw& prepared, bool fill) {
+bool memoAttachments(const Context& context, const State& state, DrawWork& prepared, bool fill) {
     const auto& memo = attachmentMemo();
     const auto miss = [](AttachmentEvent why) { noteAttachments(why); return false; };
     if (!memo.valid || memo.device != context.device) return miss(AttachmentEvent::NoMemo);
@@ -3486,7 +3486,7 @@ bool memoAttachments(const Context& context, const State& state, PreparedDraw& p
     return true;
 }
 
-void checkAttachments(const State& state, const PreparedDraw& prepared) {
+void checkAttachments(const State& state, const DrawWork& prepared) {
     const auto& memo = attachmentMemo();
     bool same = prepared.targetViews.size() == memo.views.size() + (memo.depth ? 1u : 0u);
     for (std::size_t index = 0; same && index < memo.views.size(); ++index) same = prepared.targets[index].resident == memo.residents[index].lock() && prepared.targetViews[index] == memo.views[index];
@@ -3498,7 +3498,7 @@ void checkAttachments(const State& state, const PreparedDraw& prepared) {
     }
 }
 
-void rememberAttachments(const Context& context, const State& state, const PreparedDraw& prepared) {
+void rememberAttachments(const Context& context, const State& state, const DrawWork& prepared) {
     auto& memo = attachmentMemo();
     const auto* recorder = prepared.recorder;
     const auto epoch = GuestMemory::CollectEpoch();
@@ -3806,7 +3806,7 @@ const char* targetObligation(const Context& context, const State& state, std::sp
     return repeatedDepth ? DepthTargetObligation(context, *state.depth, state.depthWrite) : nullptr;
 }
 
-bool prepareDraw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, PreparedDraw& prepared) {
+bool prepareDraw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, DrawWork& prepared) {
     auto*& recipeOut = prepared.recipeOut;
     auto& stencilReferences = prepared.stencilReferences;
     for (const auto& shader : shaders) {
@@ -4338,7 +4338,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     return true;
 }
 
-void recordPreparedDraw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, PreparedDraw& prepared) {
+void recordDrawWork(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, DrawWork& prepared) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     static const bool traceDraws = std::getenv("APS5_TRACE_DRAWS") != nullptr;
     static AgcDriver::Mutex dumpMutex;
@@ -4839,14 +4839,14 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         return;
     }
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
-    PreparedDraw prepared(profile);
+    DrawWork prepared(profile);
     prepared.recipeOut = recipeOut;
     prepared.trace = trace;
     prepared.shape = shape;
     prepared.contentKey = contentKey;
     prepared.passAttachments = PassAttachmentMemoEnabled();
     const struct HeldSpace {
-        PreparedDraw& prepared;
+        DrawWork& prepared;
         ~HeldSpace() {
             const auto& resources = prepared.resolved.resources;
             if (resources == nullptr || !resources->SpaceReuse() || !resources->SpaceHeld()) return;
@@ -4856,7 +4856,7 @@ void Draw(const Context& context, const State& state, const Pm4::DrawParameters&
         }
     } heldSpace{prepared};
     try {
-        if (prepareDraw(context, state, draw, shaders, snapshots, prepared)) recordPreparedDraw(context, state, draw, shaders, prepared);
+        if (prepareDraw(context, state, draw, shaders, snapshots, prepared)) recordDrawWork(context, state, draw, shaders, prepared);
     } catch (...) {
         ThreadTargetMemo().Invalidate();
         keepHeldSpace(prepared);
