@@ -675,6 +675,11 @@ class CellAndDependencyTests(unittest.TestCase):
         self.assertEqual(pr_overlap.cell({"b", "a"}), "`a`<br>`b`")
         self.assertEqual(pr_overlap.cell(None), "")
 
+    def test_dependencies_follow_chains_and_ignore_unknown_numbers(self):
+        prs = {1: {"depends": {2}}, 2: {"depends": {3}}, 3: {"depends": set()}}
+        self.assertEqual(pr_overlap.dependencies(prs, 1), {2, 3})
+        self.assertEqual(pr_overlap.dependencies({1: {"depends": {9}}}, 1), set())
+
 
 if __name__ == "__main__":
     unittest.main()
