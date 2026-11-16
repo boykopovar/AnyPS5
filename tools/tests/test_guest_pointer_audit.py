@@ -206,5 +206,13 @@ class CommandLineTests(unittest.TestCase):
                 self.assertIn("not a library under core/libs/prx:", errors.getvalue())
 
 
+class ClosingTests(unittest.TestCase):
+    def test_closing_matches_nested_parentheses(self):
+        text = "f(a(b), c) x"
+        self.assertEqual(guest_pointer_audit.closing(text, 1), 9)
+        self.assertEqual(text[9], ")")
+        self.assertEqual(guest_pointer_audit.closing("f(a", 1), len("f(a") - 1)
+
+
 if __name__ == "__main__":
     unittest.main()
