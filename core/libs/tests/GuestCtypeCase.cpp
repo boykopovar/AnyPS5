@@ -1,4 +1,5 @@
 #include "prx/libSceLibcInternal/include/Ctype.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/Api.hpp"
 #include <array>
 #include <cstddef>
@@ -27,10 +28,42 @@ struct Methods {
     bool upper;
 };
 
-constexpr std::array<Methods, 2> CaseMethods{{
+constexpr std::array<Methods, 4> CaseMethods{{
     {_ZNKSt5ctypeIcE10do_tolowerEc_nid_postfix, _ZNKSt5ctypeIcE10do_tolowerEPcPKc_nid_postfix, false},
-    {_ZNKSt5ctypeIcE10do_toupperEc_nid_postfix, _ZNKSt5ctypeIcE10do_toupperEPcPKc_nid_postfix, true}
+    {_ZNKSt5ctypeIcE10do_toupperEc_nid_postfix, _ZNKSt5ctypeIcE10do_toupperEPcPKc_nid_postfix, true},
+    {sceLibcInternalCtypeDoTolower_nid_no_patch, sceLibcInternalCtypeDoTolowerRange_nid_no_patch, false},
+    {sceLibcInternalCtypeDoToupper_nid_no_patch, sceLibcInternalCtypeDoToupperRange_nid_no_patch, true}
 }};
+
+using Destructor = void (APS5_VABI *)(Facet*);
+
+struct Destructors {
+    Destructor destroy;
+    Destructor deleteObject;
+};
+
+constexpr std::array<Destructors, 2> DestructorMethods{{
+    {_ZNSt5ctypeIcED1Ev_nid_postfix, _ZNSt5ctypeIcED0Ev_nid_postfix},
+    {sceLibcInternalCtypeDestroy_nid_no_patch, sceLibcInternalCtypeDelete_nid_no_patch}
+}};
+
+std::array<void*, 4> released{};
+std::size_t releasedCount = 0;
+
+void* APS5_VABI HeapAllocate(std::size_t bytes) { return std::malloc(bytes); }
+void APS5_VABI HeapFree(void* pointer) {
+    if (releasedCount < released.size()) released[releasedCount] = pointer;
+    ++releasedCount;
+    std::free(pointer);
+}
+void* APS5_VABI HeapCalloc(std::size_t count, std::size_t bytes) { return std::calloc(count, bytes); }
+void* APS5_VABI HeapReallocate(void* pointer, std::size_t bytes) { return std::realloc(pointer, bytes); }
+void* APS5_VABI HeapAlign(std::size_t, std::size_t bytes) { return std::malloc(bytes); }
+void* APS5_VABI HeapRealign(void* pointer, std::size_t bytes, std::size_t) { return std::realloc(pointer, bytes); }
+int APS5_VABI HeapPosixAlign(void** pointer, std::size_t, std::size_t bytes) {
+    *pointer = std::malloc(bytes);
+    return *pointer == nullptr ? 12 : 0;
+}
 
 void Require(bool value, std::source_location location = std::source_location::current()) {
     if (value) return;
@@ -263,13 +296,90 @@ void CheckTablePointerReload() {
     }
 }
 
+std::int16_t* MallocTable() {
+    return static_cast<std::int16_t*>(malloc_nid_postfix(256 * sizeof(std::int16_t)));
+}
+
+std::int16_t* ArrayTable() {
+    return static_cast<std::int16_t*>(_Znam_nid_postfix(256 * sizeof(std::int16_t)));
+}
+
+void CheckDestructors() {
+    const Tables tables;
+    for (const auto& methods : DestructorMethods) {
+        Facet facet = tables.MakeFacet();
+        facet.classification = _Getpctype_nid_postfix();
+        releasedCount = 0;
+        methods.destroy(&facet);
+        Require(releasedCount == 0);
+
+        for (const std::int32_t flag : {1, 2, INT32_MAX}) {
+            facet.classification = MallocTable();
+            facet.deleteTable = flag;
+            const void* table = facet.classification;
+            releasedCount = 0;
+            methods.destroy(&facet);
+            Require(releasedCount == 1 && released[0] == table);
+        }
+        for (const std::int32_t flag : {-1, INT32_MIN}) {
+            facet.classification = ArrayTable();
+            facet.deleteTable = flag;
+            const void* table = facet.classification;
+            releasedCount = 0;
+            methods.destroy(&facet);
+            Require(releasedCount == 1 && released[0] == table);
+        }
+
+        facet.classification = _Getpctype_nid_postfix();
+        facet.deleteTable = 0;
+        facet.lower = MallocTable();
+        facet.upper = MallocTable();
+        releasedCount = 0;
+        methods.destroy(&facet);
+        Require(releasedCount == 0);
+        free_nid_postfix(const_cast<std::int16_t*>(facet.lower));
+        free_nid_postfix(const_cast<std::int16_t*>(facet.upper));
+
+        auto* owned = static_cast<Facet*>(_Znwm_nid_postfix(sizeof(Facet)));
+        *owned = tables.MakeFacet();
+        owned->classification = ArrayTable();
+        owned->deleteTable = -1;
+        const void* ownedTable = owned->classification;
+        releasedCount = 0;
+        methods.deleteObject(owned);
+        Require(releasedCount == 2 && released[0] == ownedTable && released[1] == owned);
+
+        owned = static_cast<Facet*>(_Znwm_nid_postfix(sizeof(Facet)));
+        *owned = tables.MakeFacet();
+        owned->classification = _Getpctype_nid_postfix();
+        releasedCount = 0;
+        methods.deleteObject(owned);
+        Require(releasedCount == 1 && released[0] == owned);
+
+        releasedCount = 0;
+        RequireInvalid([&] { methods.destroy(nullptr); });
+        RequireInvalid([&] { methods.deleteObject(nullptr); });
+        Require(releasedCount == 0);
+    }
+}
+
 }
 
 int main() {
+    std::array<void*, 10> heapApi{};
+    heapApi[0] = reinterpret_cast<void*>(&HeapAllocate);
+    heapApi[1] = reinterpret_cast<void*>(&HeapFree);
+    heapApi[2] = reinterpret_cast<void*>(&HeapCalloc);
+    heapApi[3] = reinterpret_cast<void*>(&HeapReallocate);
+    heapApi[4] = reinterpret_cast<void*>(&HeapAlign);
+    heapApi[5] = reinterpret_cast<void*>(&HeapRealign);
+    heapApi[6] = reinterpret_cast<void*>(&HeapPosixAlign);
+    ApplicationHeapRegister_nid_no_patch(heapApi.data());
     CheckEveryByte();
     CheckClassicTables();
     CheckEmptyAndInvalidRanges();
     CheckPointerFaults();
     CheckMappedReads();
     CheckTablePointerReload();
+    CheckDestructors();
 }

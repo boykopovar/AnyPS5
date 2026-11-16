@@ -625,12 +625,52 @@ static void CheckWideCtypeVtableObject() {
 }
 
 static void CheckCtypeVtableObject() {
-    for (std::uintptr_t& slot : _ZTVSt5ctypeIcE_nid_postfix) {
-        Require(slot == 0);
-        slot = 0x1111;
-        Require(slot == 0x1111);
-        slot = 0;
-    }
+    const auto& slots = _ZTVSt5ctypeIcE_nid_postfix;
+    Require(sizeof(slots) == 112 && slots[0] == 0 && slots[1] == 0);
+    const std::uintptr_t methods[] = {
+        reinterpret_cast<std::uintptr_t>(&_ZNSt5ctypeIcED1Ev_nid_postfix),
+        reinterpret_cast<std::uintptr_t>(&_ZNSt5ctypeIcED0Ev_nid_postfix),
+        reinterpret_cast<std::uintptr_t>(&_ZNKSt5ctypeIcE10do_tolowerEc_nid_postfix),
+        reinterpret_cast<std::uintptr_t>(&_ZNKSt5ctypeIcE10do_tolowerEPcPKc_nid_postfix),
+        reinterpret_cast<std::uintptr_t>(&_ZNKSt5ctypeIcE10do_toupperEc_nid_postfix),
+        reinterpret_cast<std::uintptr_t>(&_ZNKSt5ctypeIcE10do_toupperEPcPKc_nid_postfix),
+        reinterpret_cast<std::uintptr_t>(&_ZNKSt5ctypeIcE8do_widenEc_nid_postfix),
+        reinterpret_cast<std::uintptr_t>(&_ZNKSt5ctypeIcE8do_widenEPKcS2_Pc_nid_postfix),
+        reinterpret_cast<std::uintptr_t>(&_ZNKSt5ctypeIcE9do_narrowEcc_nid_postfix),
+        reinterpret_cast<std::uintptr_t>(&_ZNKSt5ctypeIcE9do_narrowEPKcS2_cPc_nid_postfix),
+    };
+    Require(slots[2] == methods[0] && slots[3] == methods[1] && slots[4] != 0 && slots[5] != 0);
+    for (std::size_t index = 2; index < std::size(methods); ++index) Require(slots[index + 4] == methods[index]);
+    const auto* vtable = reinterpret_cast<const GuestLocale::CtypeVtable*>(&slots[2]);
+    GuestLocale::CtypeFacet facet{};
+    facet.base = {&vtable->facet, 0, 0};
+    facet.classification = _Getpctype_nid_postfix();
+    facet.lower = _Getptolower_nid_postfix();
+    facet.upper = _Getptoupper_nid_postfix();
+    vtable->facet.retain(&facet.base);
+    Require(facet.base.references == 1);
+    Require(vtable->facet.release(&facet.base) == &facet.base && facet.base.references == 0);
+    using Scalar = char (APS5_VABI *)(const GuestLocale::CtypeFacet*, char);
+    using Range = const char* (APS5_VABI *)(const GuestLocale::CtypeFacet*, char*, const char*);
+    const auto tolower = reinterpret_cast<Scalar>(slots[6]);
+    const auto tolowerRange = reinterpret_cast<Range>(slots[7]);
+    const auto toupper = reinterpret_cast<Scalar>(slots[8]);
+    const auto toupperRange = reinterpret_cast<Range>(slots[9]);
+    Require(tolower(&facet, 'Q') == 'q' && tolower(&facet, '[') == '[' && toupper(&facet, 'q') == 'Q' && toupper(&facet, '7') == '7');
+    char text[] = "Mixed Case 42!";
+    const char* end = text + std::strlen(text);
+    Require(tolowerRange(&facet, text, end) == end && std::strcmp(text, "mixed case 42!") == 0);
+    Require(toupperRange(&facet, text, end) == end && std::strcmp(text, "MIXED CASE 42!") == 0);
+    Require(vtable->widen(&facet.base, 'x') == 'x' && vtable->narrow(&facet.base, '\xe4', '?') == '\xe4');
+    char copy[4] = {'#', '#', '#', '#'};
+    Require(vtable->widenRange(&facet.base, text, text + 3, copy) == text + 3 && std::memcmp(copy, "MIX#", 4) == 0);
+    Require(vtable->narrowRange(&facet.base, text + 1, text + 3, '?', copy) == text + 3 && std::memcmp(copy, "IXX#", 4) == 0);
+    vtable->facet.destroy(&facet.base);
+    Require(facet.classification == _Getpctype_nid_postfix());
+    auto* owned = static_cast<GuestLocale::CtypeFacet*>(_Znwm_nid_postfix(sizeof(GuestLocale::CtypeFacet)));
+    *owned = facet;
+    vtable->facet.deleteObject(&owned->base);
+    RequireException([&] { vtable->facet.destroy(nullptr); });
 }
 
 static void CheckTimePutVtableObject() {
