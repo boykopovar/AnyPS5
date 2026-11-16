@@ -679,6 +679,9 @@ class CellAndDependencyTests(unittest.TestCase):
         prs = {1: {"depends": {2}}, 2: {"depends": {3}}, 3: {"depends": set()}}
         self.assertEqual(pr_overlap.dependencies(prs, 1), {2, 3})
         self.assertEqual(pr_overlap.dependencies({1: {"depends": {9}}}, 1), set())
+    def test_dependencies_terminate_on_a_cycle(self):
+        prs = {1: {"depends": {2}}, 2: {"depends": {1}}}
+        self.assertEqual(pr_overlap.dependencies(prs, 1), {1, 2})
 
 
 if __name__ == "__main__":
