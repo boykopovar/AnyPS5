@@ -19,18 +19,20 @@ int main() {
     auto* const unwritableLeonardoUniqueData = reinterpret_cast<PadLeonardoUniqueData*>(0x10);
     std::int32_t deviceId = 7;
     std::uint16_t status = 7;
-    PadLeonardoData leonardoData{};
-    PadLeonardoUniqueData leonardoUniqueData{};
-    for (std::uint8_t& byte : leonardoUniqueData.data) byte = 0xaa;
+    std::uint8_t leonardoData[128]{};
+    std::uint8_t leonardoUniqueData[24]{};
+    for (std::uint8_t& byte : leonardoUniqueData) byte = 0xaa;
+    const auto* const localData = reinterpret_cast<const PadLeonardoData*>(leonardoData);
+    auto* const localUniqueData = reinterpret_cast<PadLeonardoUniqueData*>(leonardoUniqueData);
 
     Require(scePadGetDeviceId(12345, unreadableDeviceId) == PAD_ERROR_NOT_INITIALIZED);
     Require(scePadControllerUpdateIsUpdateNeeded2(12345, nullptr, unwritableStatus) == PAD_ERROR_INVALID_ARG);
     Require(scePadControllerUpdateIsUpdateNeeded2(12345, nullptr, &status) == PAD_ERROR_INVALID_ARG && status == 0);
     Require(scePadParseUniqueDataLeonardo(12345, unreadableLeonardoData, unwritableLeonardoUniqueData) == PAD_ERROR_NOT_INITIALIZED);
-    Require(scePadParseUniqueDataLeonardo(12345, unreadableLeonardoData, &leonardoUniqueData) == PAD_ERROR_NOT_INITIALIZED);
-    Require(scePadParseUniqueDataLeonardo(12345, &leonardoData, unwritableLeonardoUniqueData) == PAD_ERROR_NOT_INITIALIZED);
-    Require(scePadParseUniqueDataLeonardo(12345, &leonardoData, &leonardoUniqueData) == PAD_ERROR_NOT_INITIALIZED);
-    for (std::uint8_t byte : leonardoUniqueData.data) Require(byte == 0xaa);
+    Require(scePadParseUniqueDataLeonardo(12345, unreadableLeonardoData, localUniqueData) == PAD_ERROR_NOT_INITIALIZED);
+    Require(scePadParseUniqueDataLeonardo(12345, localData, unwritableLeonardoUniqueData) == PAD_ERROR_NOT_INITIALIZED);
+    Require(scePadParseUniqueDataLeonardo(12345, localData, localUniqueData) == PAD_ERROR_NOT_INITIALIZED);
+    for (std::uint8_t byte : leonardoUniqueData) Require(byte == 0xaa);
     Require(scePadInit_nid_postfix() == PAD_OK);
 
     errno = 71;
@@ -43,21 +45,24 @@ int main() {
     Require(scePadControllerUpdateIsUpdateNeeded2(12345, nullptr, &status) == PAD_ERROR_INVALID_ARG && status == 0);
     Require(scePadParseUniqueDataLeonardo(12345, unreadableLeonardoData, unwritableLeonardoUniqueData) == PAD_ERROR_INVALID_ARG);
     Require(errno == 71);
-    Require(scePadParseUniqueDataLeonardo(12345, unreadableLeonardoData, &leonardoUniqueData) == PAD_ERROR_INVALID_ARG);
+    for (std::uint8_t& byte : leonardoUniqueData) byte = 0xaa;
+    Require(scePadParseUniqueDataLeonardo(12345, unreadableLeonardoData, localUniqueData) == PAD_ERROR_INVALID_ARG);
     Require(errno == 71);
-    for (std::uint8_t byte : leonardoUniqueData.data) Require(byte == 0xaa);
-    Require(scePadParseUniqueDataLeonardo(12345, &leonardoData, unwritableLeonardoUniqueData) == PAD_ERROR_INVALID_ARG);
+    for (std::uint8_t byte : leonardoUniqueData) Require(byte == 0);
+    Require(scePadParseUniqueDataLeonardo(12345, localData, unwritableLeonardoUniqueData) == PAD_ERROR_INVALID_ARG);
     Require(errno == 71);
 
 #ifdef _WIN32
     SYSTEM_INFO info{};
     GetSystemInfo(&info);
-    void* page = VirtualAlloc(nullptr, info.dwPageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READONLY);
+    const std::size_t pageSize = info.dwPageSize;
+    void* page = VirtualAlloc(nullptr, pageSize, MEM_RESERVE | MEM_COMMIT, PAGE_READONLY);
     Require(page != nullptr);
 #else
     const long size = sysconf(_SC_PAGESIZE);
     Require(size > 0);
-    void* page = mmap(nullptr, static_cast<std::size_t>(size), PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    const std::size_t pageSize = static_cast<std::size_t>(size);
+    void* page = mmap(nullptr, pageSize, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     Require(page != MAP_FAILED);
 #endif
     Require(scePadGetDeviceId(12345, static_cast<std::int32_t*>(page)) == PAD_ERROR_INVALID_ARG);
@@ -65,15 +70,21 @@ int main() {
     Require(errno == 71);
     Require(scePadParseUniqueDataLeonardo(12345, static_cast<const PadLeonardoData*>(page), static_cast<PadLeonardoUniqueData*>(page)) == PAD_ERROR_INVALID_ARG);
     Require(errno == 71);
-    Require(scePadParseUniqueDataLeonardo(12345, &leonardoData, static_cast<PadLeonardoUniqueData*>(page)) == PAD_ERROR_INVALID_ARG);
+    Require(scePadParseUniqueDataLeonardo(12345, localData, static_cast<PadLeonardoUniqueData*>(page)) == PAD_ERROR_INVALID_ARG);
     Require(errno == 71);
-    Require(scePadParseUniqueDataLeonardo(12345, static_cast<const PadLeonardoData*>(page), &leonardoUniqueData) == PAD_ERROR_INVALID_HANDLE);
+    for (std::uint8_t& byte : leonardoUniqueData) byte = 0xaa;
+    Require(scePadParseUniqueDataLeonardo(12345, static_cast<const PadLeonardoData*>(page), localUniqueData) == PAD_ERROR_INVALID_HANDLE);
     Require(errno == 71);
-    for (std::uint8_t byte : leonardoUniqueData.data) Require(byte == 0);
-    for (std::uint8_t& byte : leonardoUniqueData.data) byte = 0xaa;
-    Require(scePadParseUniqueDataLeonardo(12345, &leonardoData, &leonardoUniqueData) == PAD_ERROR_INVALID_HANDLE);
+    for (std::uint8_t byte : leonardoUniqueData) Require(byte == 0);
+    const auto* const lastByteData = reinterpret_cast<const PadLeonardoData*>(static_cast<const char*>(page) + pageSize - 1);
+    for (std::uint8_t& byte : leonardoUniqueData) byte = 0xaa;
+    Require(scePadParseUniqueDataLeonardo(12345, lastByteData, localUniqueData) == PAD_ERROR_INVALID_HANDLE);
     Require(errno == 71);
-    for (std::uint8_t byte : leonardoUniqueData.data) Require(byte == 0);
+    for (std::uint8_t byte : leonardoUniqueData) Require(byte == 0);
+    for (std::uint8_t& byte : leonardoUniqueData) byte = 0xaa;
+    Require(scePadParseUniqueDataLeonardo(12345, localData, localUniqueData) == PAD_ERROR_INVALID_HANDLE);
+    Require(errno == 71);
+    for (std::uint8_t byte : leonardoUniqueData) Require(byte == 0);
     const int special = scePadOpen_nid_postfix(200, PAD_PORT_TYPE_SPECIAL, 0, nullptr);
     Require(special > 0);
     Require(scePadGetExtControllerInformation(special, reinterpret_cast<void*>(0x10)) == PAD_ERROR_INVALID_ARG);
