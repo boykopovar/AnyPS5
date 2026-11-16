@@ -2422,7 +2422,7 @@ void EmitImageMode(SpirvValueEmitContext& ctx, const IrValue& inst, const ImageR
         const auto& to = RdnaImageDimensionInfoFor(addressed);
         const bool gradients = (mem.imageSampleFlags & RdnaImageSampleFlagDerivative) != 0u;
         const auto removed = from.coordinateComponents + (gradients ? 2u * from.spatialComponents : 0u);
-        const auto added = to.coordinateComponents + (gradients ? 2u * to.spatialComponents : 0u);
+        const auto added = to.coordinateComponents + to.multisampled + (gradients ? 2u * to.spatialComponents : 0u);
         if (mem.imageAddressComponents < removed) ctx.Fail(inst, "has fewer GCN image address components than its coordinates");
         gcnMemory.imageDimension = addressed;
         gcnMemory.imageAddressComponents = mem.imageAddressComponents - removed + added;

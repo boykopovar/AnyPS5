@@ -12148,11 +12148,19 @@ constexpr std::uint32_t GcnType3D = 10u;
 constexpr std::uint32_t GcnTypeCube = 11u;
 constexpr std::uint32_t GcnType1DArray = 12u;
 constexpr std::uint32_t GcnType2DArray = 13u;
+constexpr std::uint32_t GcnType2DMsaa = 14u;
 
 std::array<std::uint32_t, 8> gcnDescriptor(std::uint32_t type, std::uint32_t slices = 6u) {
     auto words = GcnVolumeDescriptor;
     words[3] = (words[3] & 0x0fffffffu) | (type << 28u);
     if (type == GcnTypeCube || type == GcnType1DArray || type == GcnType2DArray) words[5] = (slices - 1u) << 13u;
+    return words;
+}
+
+std::array<std::uint32_t, 8> gcnMultisampleDescriptor() {
+    auto words = gcnDescriptor(GcnType2DMsaa);
+    words[3] = (words[3] & ~0x000f0000u) | (1u << 16u);
+    words[4] &= ~0x1fffu;
     return words;
 }
 
@@ -12224,6 +12232,26 @@ void verifyGcnRuntimeImageDimensions() {
     require(!offers(gatherModes, RdnaImageDimension::Dim1D, false) && !offers(gatherModes, RdnaImageDimension::Dim1DArray, false) && !offers(gatherModes, RdnaImageDimension::Dim3D, false), "GCN dimensions: a gathered image offered a dimension SPIR-V cannot gather");
     require(offers(gatherModes, RdnaImageDimension::Dim2DArray, true), "GCN dimensions: a gathered image does not offer a cube");
     expectFailure([&] { static_cast<void>(selected(gathered, gcnDescriptor(GcnType3D))); }, "incompatible with the static runtime image interface", "GCN dimensions: a gather through a 3D T# was accepted");
+    auto loaded = image;
+    loaded.read = true;
+    loaded.sampledOnly = false;
+    require(offers(ResourceMaterializer::RuntimeImageModes(loaded), RdnaImageDimension::Dim2DMsaa, false), "GCN dimensions: an image only loaded does not offer a 2D MSAA mode");
+    require(!offers(modes, RdnaImageDimension::Dim2DMsaa, false), "GCN dimensions: an image that is not read offered a 2D MSAA mode");
+    require(selected(loaded, gcnMultisampleDescriptor()).dimension == RdnaImageDimension::Dim2DMsaa, "GCN dimensions: a load through a 2D MSAA T# did not select a multisampled mode");
+    auto loadedArray = loaded;
+    loadedArray.dimension = RdnaImageDimension::Dim2DArray;
+    const auto loadedArrayModes = ResourceMaterializer::RuntimeImageModes(loadedArray);
+    require(!offers(loadedArrayModes, RdnaImageDimension::Dim2DMsaa, false) && !offers(loadedArrayModes, RdnaImageDimension::Dim2DMsaaArray, false), "GCN dimensions: a load with DA offered a multisampled mode");
+    auto notOnlyLoaded = loaded;
+    notOnlyLoaded.fmaskCompatible = false;
+    require(!offers(ResourceMaterializer::RuntimeImageModes(notOnlyLoaded), RdnaImageDimension::Dim2DMsaa, false), "GCN dimensions: an image with a use other than a 32-bit load offered a 2D MSAA mode");
+    auto notPlainLoad = loaded;
+    notPlainLoad.cubeFaceCompatible = false;
+    require(!offers(ResourceMaterializer::RuntimeImageModes(notPlainLoad), RdnaImageDimension::Dim2DMsaa, false), "GCN dimensions: an image loaded with a mip, a sample flag or packing offered a 2D MSAA mode");
+    auto loadedTable = loaded;
+    loadedTable.table = 0u;
+    require(!offers(ResourceMaterializer::RuntimeImageModes(loadedTable), RdnaImageDimension::Dim2DMsaa, false), "GCN dimensions: a table image offered a 2D MSAA mode");
+    expectFailure([&] { static_cast<void>(selected(image, gcnMultisampleDescriptor())); }, "incompatible with the static runtime image interface", "GCN dimensions: a sample through a 2D MSAA T# was accepted");
     auto compared = image;
     compared.depthCompare = true;
     require(!offers(ResourceMaterializer::RuntimeImageModes(compared), RdnaImageDimension::Dim3D, false), "GCN dimensions: a depth comparison offered a volume mode");
@@ -12335,6 +12363,8 @@ public:
             if (op == spv::OpTypeSampledImage) sampledImages[words[cursor + 1]] = words[cursor + 2];
             if (op == spv::OpImageSampleExplicitLod) samples.push_back({words[cursor + 3], words[cursor + 4], words[cursor + 6]});
             if (op == spv::OpImageWrite) writes.push_back({words[cursor + 1], words[cursor + 2]});
+            if (op == spv::OpTypeImage) multisampled[words[cursor + 1]] = words[cursor + 6];
+            if (op == spv::OpImageFetch) fetches.push_back({words[cursor + 3], words[cursor + 4], length > 6u && (words[cursor + 5] & spv::ImageOperandsSampleMask) != 0u ? words[cursor + 6] : 0u});
             if (op == spv::OpImageQuerySizeLod) querySize = words[cursor + 2];
             if (op == spv::OpIEqual) comparisons.push_back({words[cursor + 3], words[cursor + 4]});
             if (op == spv::OpCompositeExtract) extracted[words[cursor + 2]] = words[cursor + 3];
@@ -12354,6 +12384,11 @@ public:
     struct Write {
         std::uint32_t image;
         std::uint32_t coordinate;
+    };
+    struct Fetch {
+        std::uint32_t image;
+        std::uint32_t coordinate;
+        std::uint32_t sample;
     };
 
     std::uint32_t Root(std::uint32_t id) const {
@@ -12375,6 +12410,7 @@ public:
 
     std::pair<std::uint32_t, std::uint32_t> SampledImageKind(const Sample& sample) const { return images.at(sampledImages.at(resultTypes.at(sample.sampledImage))); }
     std::pair<std::uint32_t, std::uint32_t> WrittenImageKind(const Write& write) const { return images.at(resultTypes.at(write.image)); }
+    bool FetchesMultisampled(const Fetch& fetch) const { return multisampled.at(resultTypes.at(fetch.image)) == 1u; }
 
     bool ComparesConstants(std::uint32_t left, std::uint32_t right) const {
         return std::ranges::any_of(comparisons, [&](const std::pair<std::uint32_t, std::uint32_t>& pair) { return Root(pair.first) == left && Root(pair.second) == right; });
@@ -12390,10 +12426,12 @@ public:
 
     std::vector<Sample> samples;
     std::vector<Write> writes;
+    std::vector<Fetch> fetches;
 
 private:
     std::map<std::uint32_t, std::pair<std::uint32_t, std::uint32_t>> images;
     std::map<std::uint32_t, std::uint32_t> sampledImages;
+    std::map<std::uint32_t, std::uint32_t> multisampled;
     std::map<std::uint32_t, std::uint32_t> resultTypes;
     std::map<std::uint32_t, std::uint32_t> constants;
     std::map<std::uint32_t, std::uint32_t> sources;
@@ -12445,6 +12483,23 @@ void verifyGcnSampleAddresses() {
             require(module.Root(sample.lod) == addressCase.lod, addressCase.what);
         }
     }
+}
+
+void verifyGcnMultisampleLoadAddress() {
+    using namespace ShaderRecompiler;
+    GcnGuestShaderScope gcn;
+    constexpr std::array<std::uint32_t, 4> sources{0x81u, 0x82u, 0x83u, 0x84u};
+    const auto code = gcnImageProgram(sources, 0xf0000f00u, 0x00020400u);
+    const GcnImageModule module(code, gcnMultisampleDescriptor());
+    require(!module.fetches.empty(), "GCN MSAA load: no image fetch was emitted");
+    for (const auto& fetch : module.fetches) {
+        require(module.FetchesMultisampled(fetch), "GCN MSAA load: the fetched image is not multisampled");
+        require(module.Components(fetch.coordinate) == std::vector<std::uint32_t>{1u, 2u}, "GCN MSAA load: the coordinate is not the first two address registers");
+        require(fetch.sample != 0u && module.Root(fetch.sample) == 3u, "GCN MSAA load: the sample index is not the third address register");
+    }
+    expectFailure([&] { static_cast<void>(GcnImageModule(gcnImageProgram(sources, 0xf0040f00u, 0x00020400u), gcnMultisampleDescriptor())); }, "incompatible with the static runtime image interface", "GCN MSAA load: a mip load through a 2D MSAA T# was accepted");
+    constexpr std::array<std::uint32_t, 4> sampleSources{0xf0u, 0xf2u, 0xf4u, 0xf6u};
+    expectFailure([&] { static_cast<void>(GcnImageModule(gcnImageProgram(sampleSources, 0xf0900f00u, 0x00820400u), gcnMultisampleDescriptor())); }, "incompatible with the static runtime image interface", "GCN MSAA load: a sample through a 2D MSAA T# was accepted");
 }
 
 void verifyGcnStoreAddresses() {
@@ -13408,6 +13463,7 @@ int main(int argc, char** argv) {
         verifyGcnSampleThroughVolume();
         verifyGcnSampleAddresses();
         verifyGcnStoreAddresses();
+        verifyGcnMultisampleLoadAddress();
         verifyGcnDimensionQueries();
         verifySrgbDepthCompareModes();
         verifyRuntimeImageSwitchDeduplication();
