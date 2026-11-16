@@ -2,6 +2,7 @@
 #include <bit>
 #include <cstdint>
 #include <cstring>
+#include "GuestAccess.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 namespace {
@@ -149,8 +150,8 @@ int APS5_VABI sceCesUtf8ToUcs2(const uint8_t* source, uint32_t available, uint32
     if (const int result = decodeUtf8(source, available, code, length); result != 0) return result;
     if (!target) return INVALID_DST_BUFFER;
     if (code > 0xFFFF) return UNASSIGNED_CODE;
-    *target = static_cast<uint16_t>(code);
-    if (sourceLength) *sourceLength = length;
+    if (!CesGuest::Store(target, static_cast<uint16_t>(code))) return INVALID_DST_BUFFER;
+    if (sourceLength && !CesGuest::Store(sourceLength, length)) return INVALID_DST_BUFFER;
     return 0;
 }
 

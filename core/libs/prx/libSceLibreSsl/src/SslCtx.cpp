@@ -12,6 +12,7 @@
 #include "prx/libc/include/General.hpp"
 
 static_assert(sizeof(LibreSslCtxInternal) == 464);
+static_assert(offsetof(LibreSslCtxInternal, exData) == 248);
 static_assert(offsetof(LibreSslCtxInternal, quietShutdown) == 292);
 static_assert(sizeof(LibreSslCtx) == 120);
 static_assert(offsetof(LibreSslCtx, certStore) == 16);
@@ -391,6 +392,14 @@ int APS5_VABI SSL_CTX_set_session_id_context_nid_postfix(LibreSslCtx* ctx, const
     context.sidCtxLength = length;
     std::copy_n(sidCtx, length, context.sidCtx);
     return 1;
+}
+
+void* APS5_VABI SSL_CTX_get_ex_data_nid_postfix(const LibreSslCtx* ctx, int index) {
+    if (!ctx) throw std::invalid_argument(std::string(__func__) + ": null context");
+    if (!ctx->internal) throw std::invalid_argument(std::string(__func__) + ": null internal state");
+    const auto* const data = static_cast<const LibreSslStack*>(ctx->internal->exData);
+    if (!data || index >= sk_num_nid_postfix(data)) return nullptr;
+    return sk_value_nid_postfix(data, index);
 }
 
 }
