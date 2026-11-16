@@ -6,6 +6,7 @@
 #include <cstring>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
 static constexpr int SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN = static_cast<int>(0x80552907);
 static constexpr std::size_t ReferenceCountOffset = 0;
@@ -70,6 +71,21 @@ static int InitializeParameterWithBody(void* self, const std::uint64_t* context,
 }
 
 static constexpr int ParameterOutOfMemory = static_cast<int>(0x80553504);
+
+static bool ReadGuestFlag(const void* self, const std::size_t offset) {
+    std::uint8_t flag = 0;
+    return GuestBytes(static_cast<const std::uint8_t*>(self) + offset).CopyIn(&flag, sizeof(flag)) && flag != 0;
+}
+
+static void* ReadGuestObject(const IntrusivePtr* self) {
+    IntrusivePtr host{};
+    return GuestPtr<IntrusivePtr>(self).CopyIn(host) ? host.object : nullptr;
+}
+
+static void* ReadGuestIteratorElement(const void* self) {
+    CommonIterator host{};
+    return GuestPtr<CommonIterator>(static_cast<const CommonIterator*>(self)).CopyIn(host) ? host.element : nullptr;
+}
 
 static constexpr std::size_t BoardDefinitionImplementationSize = 0x40;
 static constexpr std::size_t ContainerImplementationSize = 0x88;
@@ -8259,7 +8275,7 @@ std::uint32_t APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V120PlayerSessionF
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V120PlayerSessionForRead18maxSpectatorsIsSetEv(const void* self) {
-    return static_cast<const std::uint8_t*>(self)[0x68] != 0;
+    return ReadGuestFlag(self, 0x68);
 }
 
 const void* APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V120PlayerSessionForRead19getCreatedTimestampEv(const void* self) {
@@ -8271,11 +8287,11 @@ std::uint32_t APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V120PlayerSessionF
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V120PlayerSessionForRead21createdTimestampIsSetEv(const void* self) {
-    return static_cast<const std::uint8_t*>(self)[0x58] != 0;
+    return ReadGuestFlag(self, 0x58);
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V120PlayerSessionForRead23supportedPlatformsIsSetEv(const void* self) {
-    return static_cast<const std::uint8_t*>(self)[0xa8] != 0;
+    return ReadGuestFlag(self, 0xa8);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V120PlayerSessionForRead9getMemberEv(void* out, const void* self) {
@@ -8299,7 +8315,7 @@ const void* APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V122PlayerSessionSpe
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V122PlayerSessionSpectator16customData1IsSetEv(const void* self) {
-    return static_cast<const std::uint8_t*>(self)[0x88] != 0;
+    return ReadGuestFlag(self, 0x88);
 }
 
 const void* APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V122PlayerSessionSpectator16getJoinTimestampEv(const void* self) {
@@ -8307,11 +8323,11 @@ const void* APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V122PlayerSessionSpe
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V126PlayerSessionMemberForRead12playersIsSetEv(const void* self) {
-    return static_cast<const std::uint8_t*>(self)[0x28] != 0;
+    return ReadGuestFlag(self, 0x28);
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V126PlayerSessionMemberForRead15spectatorsIsSetEv(const void* self) {
-    return static_cast<const std::uint8_t*>(self)[0x48] != 0;
+    return ReadGuestFlag(self, 0x48);
 }
 
 const void* APS5_VABI _ZNK3sce2Np9CppWebApi14SessionManager2V131JoinedPlayerSessionWithPlatform12getSessionIdEv(const void* self) {
@@ -8335,55 +8351,55 @@ int APS5_VABI _ZNK3sce2Np9CppWebApi6Common11TransactionINS2_12IntrusivePtrINS1_1
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V119PlayerSessionPlayerEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return ReadGuestObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V122PlayerSessionSpectatorEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return ReadGuestObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V126PlayerSessionMemberForReadEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return ReadGuestObject(self);
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V127GetGameSessionsResponseBodyEEcvbEv(const IntrusivePtr* self) {
-    return self->object != nullptr;
+    return ReadGuestObject(self) != nullptr;
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V129GetPlayerSessionsResponseBodyEEcvbEv(const IntrusivePtr* self) {
-    return self->object != nullptr;
+    return ReadGuestObject(self) != nullptr;
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V131JoinedPlayerSessionWithPlatformEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return ReadGuestObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V132RequestCreatePlayerSessionPlayerEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return ReadGuestObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V143GetUsersAccountIdPlayerSessionsResponseBodyEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return ReadGuestObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_14SessionManager2V155PatchPlayerSessionsSessionIdMembersAccountIdRequestBodyEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return ReadGuestObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_14SessionManager2V119PlayerSessionPlayerEEEEEEdeEv(const IntrusivePtr* self) {
-    return self->object;
+    return ReadGuestObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_14SessionManager2V122PlayerSessionSpectatorEEEEEEdeEv(const IntrusivePtr* self) {
-    return self->object;
+    return ReadGuestObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_14SessionManager2V131JoinedPlayerSessionWithPlatformEEEEEEdeEv(const IntrusivePtr* self) {
-    return self->object;
+    return ReadGuestObject(self);
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS3_INS1_14SessionManager2V131JoinedPlayerSessionWithPlatformEEEEEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return ReadGuestObject(self);
 }
 
 std::uint64_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrINS1_14SessionManager2V131JoinedPlayerSessionWithPlatformEEEE4sizeEv(const void* self) {
@@ -8391,7 +8407,7 @@ std::uint64_t APS5_VABI _ZNK3sce2Np9CppWebApi6Common6VectorINS2_12IntrusivePtrIN
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_14SessionManager2V119PlayerSessionPlayerEEEEdeEv(const void* self) {
-    return static_cast<const CommonIterator*>(self)->element;
+    return ReadGuestIteratorElement(self);
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_14SessionManager2V119PlayerSessionPlayerEEEEneERKS9_(const void* self, const void* other) {
@@ -8399,7 +8415,7 @@ bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_14Se
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_14SessionManager2V122PlayerSessionSpectatorEEEEdeEv(const void* self) {
-    return static_cast<const CommonIterator*>(self)->element;
+    return ReadGuestIteratorElement(self);
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_14SessionManager2V122PlayerSessionSpectatorEEEEneERKS9_(const void* self, const void* other) {
@@ -8419,20 +8435,20 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6BinaryEED1Ev(Intru
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_30CommunicationRestrictionStatus2V338CommunicationRestrictionStatusResponseEEcvbEv(const IntrusivePtr* self) {
-    return self->object != nullptr;
+    return ReadGuestObject(self) != nullptr;
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS2_6VectorINS2_6StringEEEEdeEv(const IntrusivePtr* self) {
-    return self->object;
+    return ReadGuestObject(self);
 }
 
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V113PlayerForReadEEcvbEv(const IntrusivePtr* self) {
-    return self->object != nullptr;
+    return ReadGuestObject(self) != nullptr;
 }
 
 void* APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V113PlayerForReadEEptEv(const IntrusivePtr* self) {
-    return self->object;
+    return ReadGuestObject(self);
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi6Common12IntrusivePtrINS1_11Matchmaking2V118PlayerForOfferReadEEcvbEv(const IntrusivePtr* self) {
