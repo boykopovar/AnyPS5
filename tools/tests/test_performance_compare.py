@@ -707,6 +707,11 @@ class CompareHelperTests(unittest.TestCase):
         self.assertEqual(performance_compare.cell('<x> & y'), '&lt;x&gt; &amp; y')
         self.assertEqual(performance_compare.cell('x\ny'), 'x y')
         self.assertEqual(performance_compare.cell(1.5), '1.5')
+class GraphicsEmptyTests(unittest.TestCase):
+    def test_graphics_metrics_without_a_track_has_every_label_empty(self):
+        metrics = performance_compare.graphics_metrics({'graphics_track': None})
+        self.assertEqual(set(metrics), set(performance_compare.GRAPHICS_LABELS))
+        self.assertTrue(all(value is None for value in metrics.values()))
 
 
 if __name__ == "__main__":
