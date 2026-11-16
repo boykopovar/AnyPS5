@@ -64,5 +64,20 @@ class BaseRefTests(unittest.TestCase):
             self.assertIn(candidate, str(caught.exception))
 
 
+class ResolveTests(unittest.TestCase):
+    def make_repo(self, directory):
+        subprocess.run(['git', '-C', directory, 'init', '-q'], check=True)
+        subprocess.run(['git', '-C', directory, '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-q', '--allow-empty', '-m', 'base'], check=True)
+        subprocess.run(['git', '-C', directory, 'branch', '-q', '-M', 'main'], check=True)
+
+    def test_resolve_returns_a_given_name_unchanged(self):
+        self.assertEqual(base_ref.resolve(Path('.'), 'release-1'), 'release-1')
+
+    def test_resolve_picks_main_when_no_upstream_ref_exists(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.make_repo(directory)
+            self.assertEqual(base_ref.resolve(Path(directory)), 'main')
+
+
 if __name__ == "__main__":
     unittest.main()
