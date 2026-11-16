@@ -39,8 +39,6 @@ static_assert(offsetof(UDataSwapper, printErrorContext) == 88);
 }
 
 extern "C" {
-std::int32_t APS5_VABI uprv_int32Comparator_nid_postfix(const void*, const void*, const void*);
-std::int32_t APS5_VABI uprv_uint32Comparator_nid_postfix(const void*, const void*, const void*);
 std::int32_t APS5_VABI uprv_stableBinarySearch_nid_postfix(char*, std::int32_t, void*, std::int32_t, Icu::ArrayComparator, const void*);
 void APS5_VABI uprv_sortArray_nid_postfix(void*, std::int32_t, std::int32_t, Icu::ArrayComparator, const void*, std::int8_t, std::int32_t*);
 char APS5_VABI uprv_toupper_nid_postfix(char);

@@ -205,6 +205,15 @@ void Iteration() {
     Require(utext_current32_nid_postfix(&text) == 0xd800);
     Require(provider.accesses == std::vector<std::pair<std::int64_t, int>>({{9, 1}, {9, 0}}));
     Require(utext_getNativeIndex_nid_postfix(&text) == 8);
+    provider.scale = 2;
+    provider.mappedOffsets.clear();
+    text.chunkNativeStart = 4;
+    text.chunkNativeLimit = 8;
+    text.chunkLength = 2;
+    text.chunkOffset = 2;
+    text.nativeIndexingLimit = 2;
+    Require(utext_getNativeIndex_nid_postfix(&text) == 8);
+    Require(provider.mappedOffsets == std::vector<std::int32_t>{2});
 }
 
 void Dispatch() {
@@ -231,7 +240,7 @@ void Dispatch() {
     Require(!utext_equals_nid_postfix(&text, &other));
     other = text;
     other.chunkOffset = 1;
-    other.nativeIndexingLimit = 1;
+    other.nativeIndexingLimit = 2;
     Require(!utext_equals_nid_postfix(&text, &other));
     Require(!utext_equals_nid_postfix(nullptr, nullptr));
     std::int32_t status = 7;
@@ -281,7 +290,7 @@ void Errors() {
     Invalid([&] { utext_extract_nid_postfix(&text, 0, 0, nullptr, 0, nullptr); });
     text.chunkNativeStart = std::numeric_limits<std::int64_t>::max();
     text.chunkOffset = 1;
-    text.nativeIndexingLimit = 1;
+    text.nativeIndexingLimit = 2;
     Invalid([&] { utext_getNativeIndex_nid_postfix(&text); });
     text.chunkOffset = std::numeric_limits<std::int32_t>::min();
     Invalid([&] { utext_getPreviousNativeIndex_nid_postfix(&text); });

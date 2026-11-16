@@ -135,7 +135,7 @@ void Sorting() {
     std::int32_t minimum = std::numeric_limits<std::int32_t>::min();
     std::int32_t maximum = std::numeric_limits<std::int32_t>::max();
     Require(uprv_int32Comparator_nid_postfix(nullptr, &minimum, &minimum) == 0);
-    Invalid([&] { uprv_int32Comparator_nid_postfix(nullptr, &minimum, &maximum); });
+    Require(uprv_int32Comparator_nid_postfix(nullptr, &minimum, &maximum) == 1);
     std::uint32_t high = 0xffffffff;
     std::uint32_t low = 0;
     Require(uprv_uint32Comparator_nid_postfix(nullptr, &high, &low) == 1);
