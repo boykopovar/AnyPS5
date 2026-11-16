@@ -431,6 +431,11 @@ class FiniteHelperTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "non-finite"):
             ab_split.finite((float("nan"),))
 
+    def test_finite_sum_adds_finite_values_and_refuses_an_overflowing_total(self):
+        self.assertEqual(ab_split.finite_sum([1.5, 2.5]), 4.0)
+        with self.assertRaisesRegex(ValueError, "non-finite"):
+            ab_split.finite_sum([1e308, 1e308])
+
 
 if __name__ == "__main__":
     unittest.main()
