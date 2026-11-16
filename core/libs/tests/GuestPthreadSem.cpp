@@ -1,7 +1,9 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -104,10 +106,18 @@ static void CheckBadPointers() {
     Require(scePthreadSemInit(&sem, 0, 3, nullptr) == SCE_OK);
     int value = -1;
     Require(scePthreadSemGetvalue(&sem, nullptr) == SCE_KERNEL_ERROR_EFAULT);
+    errno = 42;
+    *__error_nid_postfix() = 42;
+    Require(scePthreadSemDestroy(nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(errno == 42 && *__error_nid_postfix() == 42);
     for (void* pointer : bad) {
         Require(scePthreadSemInit(static_cast<PthreadSem*>(pointer), 0, 1, nullptr) == SCE_KERNEL_ERROR_EFAULT);
         Require(scePthreadSemGetvalue(static_cast<PthreadSem*>(pointer), &value) == SCE_KERNEL_ERROR_EFAULT && value == -1);
         Require(scePthreadSemGetvalue(&sem, static_cast<int*>(pointer)) == SCE_KERNEL_ERROR_EFAULT);
+        errno = 42;
+        *__error_nid_postfix() = 42;
+        Require(scePthreadSemDestroy(static_cast<PthreadSem*>(pointer)) == SCE_KERNEL_ERROR_EFAULT);
+        Require(errno == 42 && *__error_nid_postfix() == 42);
     }
     Require(scePthreadSemGetvalue(&sem, &value) == SCE_OK && value == 3);
     Require(scePthreadSemDestroy(&sem) == SCE_OK);
