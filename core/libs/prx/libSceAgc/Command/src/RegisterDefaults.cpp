@@ -10,6 +10,7 @@
 #include <mutex>
 #include <limits>
 #include <vector>
+#include <utility>
 
 namespace Agc::Command {
 
@@ -61,10 +62,13 @@ struct DefaultContext {
     std::array<ShaderRegister, 1024> registers{};
     std::uint32_t count = 0;
     std::uint32_t version = 0;
+    bool external = false;
+    std::vector<std::uint32_t> resetCommands;
 };
 
 std::mutex defaultStateMutex;
 std::array<DefaultContext, 2> defaultContexts;
+std::uint32_t activeDefaultInstance = 0;
 
 }
 
@@ -117,8 +121,12 @@ void* GetRegisterDefaults(std::uint32_t version, bool internal, const char* func
 int InitializeDefaultCxState(std::uint32_t version) {
     Require(version < 14, __func__, "unsupported context defaults version");
     std::lock_guard lock(defaultStateMutex);
-    for (const auto& context : defaultContexts) {
-        if (context.version == version) return 0;
+    for (std::uint32_t index = 0; index < defaultContexts.size(); ++index) {
+        if (defaultContexts[index].version == version) {
+            defaultContexts[index].external = true;
+            activeDefaultInstance = index;
+            return 0;
+        }
     }
     auto slot = std::find_if(defaultContexts.begin(), defaultContexts.end(), [](const auto& context) { return context.version == 0; });
     if (slot == defaultContexts.end()) return static_cast<int>(0x8a6c0004u);
@@ -141,9 +149,38 @@ int InitializeDefaultCxState(std::uint32_t version) {
         Require(found != end, __func__, "missing Trinity context register default");
         found->value = 0x2400u;
     }
+    std::vector<ShaderRegister> compute;
+    for (const auto* source : {static_cast<const RegisterDefaults*>(GetRegisterDefaults(version, false, __func__)), static_cast<const RegisterDefaults*>(GetRegisterDefaults(version, true, __func__))}) {
+        if (source->tables[1] == nullptr || source->registerCounts[1] == 0) continue;
+        Require(source->tables[1][0] != nullptr, __func__, "missing shader register defaults");
+        for (std::uint32_t index = 0; index < source->registerCounts[1]; ++index) {
+            const auto& entry = source->tables[1][0][index];
+            if (entry.offset >= 0x201u) compute.push_back(entry);
+        }
+    }
+    std::sort(compute.begin(), compute.end(), [](const auto& left, const auto& right) { return left.offset < right.offset; });
+    for (std::size_t begin = 0; begin < compute.size();) {
+        auto end = begin + 1;
+        while (end < compute.size() && compute[end].offset == compute[end - 1].offset + 1) ++end;
+        next.resetCommands.push_back(Header(0x76u, static_cast<std::uint32_t>(end - begin) + 2));
+        next.resetCommands.push_back(compute[begin].offset);
+        for (auto index = begin; index < end; ++index) next.resetCommands.push_back(compute[index].value);
+        begin = end;
+    }
+    if (next.resetCommands.size() * sizeof(std::uint32_t) >= 0x180u) return static_cast<int>(0x8a6c0001u);
     next.version = version;
-    *slot = next;
+    next.external = true;
+    activeDefaultInstance = static_cast<std::uint32_t>(slot - defaultContexts.begin());
+    *slot = std::move(next);
     return 0;
+}
+
+QueueResetState GetQueueResetState(std::uint32_t instance, bool active) {
+    std::lock_guard lock(defaultStateMutex);
+    if (active) instance = activeDefaultInstance;
+    Require(instance < defaultContexts.size(), __func__, "invalid context defaults instance");
+    const auto& context = defaultContexts[instance];
+    return {instance, context.version, context.external, context.resetCommands};
 }
 
 int CopyDefaultCxStateRange(void* destination, std::uint32_t first, std::uint32_t last, std::span<const ShaderRegister> registers) {
