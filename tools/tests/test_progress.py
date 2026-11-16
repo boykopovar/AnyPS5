@@ -686,10 +686,39 @@ class ProgressTests(unittest.TestCase):
                 "int APS5_VABI Exported() { return 1; }\n"
                 "int APS5_VABI ExportedPending() { NotImplemented_nid_no_patch(__func__); }\n", encoding="utf-8")
             group = progress.scan_library(library)
-            self.assertEqual(group["done_names"], ["Exported"])
+            self.assertEqual(group["done_names"], ["Exported", "MemberDone"])
             self.assertEqual(group["todo_names"], ["ExportedPending"])
             self.assertEqual(group["inert_names"], ["Exported"])
-            self.assertEqual((group["done"], group["todo"]), (1, 1))
+            self.assertEqual((group["done"], group["todo"]), (2, 1))
+
+    def test_anonymous_namespace_extern_c_definitions_are_counted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            library = Path(directory) / "libSceExample"
+            library.mkdir()
+            (library / "Export.cpp").write_text(
+                "namespace {\n"
+                'extern "C" int APS5_VABI CExported(int value) { return value; }\n'
+                'extern "C" int APS5_VABI CPending() { NotImplemented_nid_no_patch(__func__); }\n'
+                "}\n"
+                'extern "C" {\n'
+                "int APS5_VABI BlockDone() { return 1; }\n"
+                "}\n", encoding="utf-8")
+            group = progress.scan_library(library)
+            self.assertEqual(group["done_names"], ["BlockDone", "CExported"])
+            self.assertEqual(group["todo_names"], ["CPending"])
+            self.assertEqual((group["done"], group["todo"]), (2, 1))
+
+    def test_macro_declared_static_before_an_export_keeps_the_export_counted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            library = Path(directory) / "libSceExample"
+            library.mkdir()
+            (library / "Export.cpp").write_text(
+                "#define CALLBACK static\n"
+                "int APS5_VABI Exported() { return 1; }\n"
+                "int APS5_VABI Placeholder() { return 2; }\n", encoding="utf-8")
+            group = progress.scan_library(library)
+            self.assertEqual(group["done_names"], ["Exported", "Placeholder"])
+            self.assertEqual(group["todo_names"], [])
 
     def test_internal_callback_sharing_an_exported_name_keeps_the_export_counted(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -226,24 +226,46 @@ def shared_source_owners(path):
     return list(dict.fromkeys(owner for owner in owners if owner != path.name and (path.parent / owner).is_dir()))
 
 
-def anon_namespaces(text):
-    ranges, stack, previous = [], [], ""
+def without_directives(text):
+    return re.sub(r"(?m)^[ \t]*#[^\n]*", lambda match: " " * len(match.group()), text)
+
+
+def scope_ranges(text):
+    anon, classes, cblocks, stack, previous, statement = [], [], [], [], "", []
     for match in CPP_TOKEN.finditer(text):
         token = match.group()
         if token == "{":
-            stack.append((previous == "namespace", match.start()))
-        elif token == "}" and stack:
-            anonymous, start = stack.pop()
-            if anonymous:
-                ranges.append((start, match.end()))
+            opens_class = (any(kind in statement for kind in ("struct", "class", "union"))
+                           and "(" not in statement and ")" not in statement)
+            stack.append((previous == "namespace", opens_class, previous == "LITERAL", match.start()))
+            statement = []
+        elif token == "}":
+            if stack:
+                anonymous, is_class, c_block, start = stack.pop()
+                if anonymous:
+                    anon.append((start, match.end()))
+                if is_class:
+                    classes.append((start, match.end()))
+                if c_block:
+                    cblocks.append((start, match.end()))
+            statement = []
+        elif token == ";":
+            statement = []
+        else:
+            statement.append(token)
         previous = token
-    return ranges
+    return anon, classes, cblocks
 
 
-def internal_linkage(text, end, ranges):
+def internal_linkage(text, end, scopes):
+    anon, classes, cblocks = scopes
     begin = max(text.rfind(";", 0, end), text.rfind("}", 0, end), text.rfind("{", 0, end)) + 1
     tokens = [match.group() for match in CPP_TOKEN.finditer(text[begin:end]) if match.group("code") is not None]
-    return "static" in tokens or any(start <= end < stop for start, stop in ranges)
+    c_linkage = "extern" in tokens and "LITERAL" in tokens
+    in_anon = any(start <= end < stop for start, stop in anon)
+    if in_anon and not c_linkage and not any(start <= end < stop for start, stop in cblocks):
+        return True
+    return "static" in tokens and not any(start <= end < stop for start, stop in classes)
 
 
 def scan_library(path):
@@ -268,12 +290,13 @@ def scan_library(path):
     for text in texts:
         calls = stub_calls(text)
         wrappers = inert_wrappers(text)
-        ranges = anon_namespaces(text)
-        for match in DEFINITION.finditer(text):
+        linkage_text = without_directives(text)
+        scopes = scope_ranges(linkage_text)
+        for match in DEFINITION.finditer(linkage_text):
             name = match.group(1)
             if name.endswith(("_nid_no_patch", "_nid_no_patch_cut")) and name not in exported:
                 continue
-            if internal_linkage(text, match.start(), ranges) and name not in exported:
+            if internal_linkage(linkage_text, match.start(), scopes) and name not in exported:
                 continue
             body = text[match.end() - 1:body_end(text, match.end() - 1)]
             if any(call.group(1) in calls and not QUALIFIED.search(body, 0, call.start())
