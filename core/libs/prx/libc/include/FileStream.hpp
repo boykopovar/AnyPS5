@@ -111,6 +111,10 @@ std::pair<FileStream*, std::shared_ptr<std::recursive_mutex>>
     PinNextFileStream_nid_no_patch(std::uint64_t& cursor);
 void DetachFileStreamAliasesForNative_nid_no_patch(FileStream* source, std::FILE* native);
 void SynchronizeFileStreamAliases_nid_no_patch(FileStream* source);
+extern "C" void NoteExplicitNativeLock_nid_no_patch(std::FILE* native);
+extern "C" bool ForgetExplicitNativeLock_nid_no_patch(std::FILE* native);
+extern "C" void ReleaseExplicitNativeLocks_nid_no_patch(std::FILE* native);
+extern "C" int CloseNativeReleasingExplicitLocks_nid_no_patch(std::FILE* native);
 
 class FileStream {
     GuestFilePrefix _guest{};
@@ -325,7 +329,7 @@ public:
                 StoreHandleAtomic_nid_no_patch(nullptr);
                 std::erase(wideMode, L'x');
                 std::unique_ptr<std::FILE, int (*)(std::FILE*)> original(
-                    ::_wfreopen(L"NUL", wideMode.c_str(), previous), std::fclose);
+                    ::_wfreopen(L"NUL", wideMode.c_str(), previous), CloseNativeReleasingExplicitLocks_nid_no_patch);
                 closing.reset();
                 if (original) {
                     std::unique_ptr<std::FILE, int (*)(std::FILE*)> replacement(open(filename, mode), std::fclose);
@@ -407,6 +411,7 @@ public:
         errno = error;
         if (kept >= 0) ::flockfile(previous);
         StoreHandleAtomic_nid_no_patch(std::freopen(filename.c_str(), mode, previous));
+        if (!LoadHandleAtomic_nid_no_patch()) ReleaseExplicitNativeLocks_nid_no_patch(previous);
         if (kept >= 0) RestoreHostStandard(previous, kept);
 #endif
         return Adopt(LoadHandleAtomic_nid_no_patch());
@@ -596,7 +601,7 @@ public:
         lowSurrogate = 0;
         pushedBack = 0;
         DetachFileStreamAliasesForNative_nid_no_patch(this, native);
-        return std::fclose(native);
+        return CloseNativeReleasingExplicitLocks_nid_no_patch(native);
     }
 
     int Close() {

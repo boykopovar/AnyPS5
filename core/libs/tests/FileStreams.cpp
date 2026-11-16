@@ -1502,6 +1502,60 @@ static int FcloseallLockChild(const std::string& base) {
     return 0;
 }
 
+static int OwnerLockedCloseChild(const std::string& base) {
+    const std::string closeAllPath = base + ".owner-locked.fcloseall";
+    const std::string closePath = base + ".owner-locked.fclose";
+    const std::string laterPath = base + ".owner-locked.later";
+    std::promise<void> finished;
+    std::thread watchdog([done = finished.get_future()] {
+        if (done.wait_for(std::chrono::seconds(5)) == std::future_status::ready) return;
+#ifdef _WIN32
+        ::TerminateProcess(::GetCurrentProcess(), 155);
+#else
+        ::_exit(155);
+#endif
+    });
+    watchdog.detach();
+    FileStream* closedByAll = fopen_nid_postfix(closeAllPath.c_str(), "wb");
+    if (!closedByAll) return 150;
+    flockfile_nid_postfix(closedByAll);
+    flockfile_nid_postfix(closedByAll);
+    fcloseall_nid_postfix();
+    try {
+        funlockfile_nid_postfix(closedByAll);
+        funlockfile_nid_postfix(closedByAll);
+    } catch (const std::exception&) {
+        return 151;
+    }
+    FileStream* closedDirectly = fopen_nid_postfix(closePath.c_str(), "wb");
+    if (!closedDirectly) return 152;
+    flockfile_nid_postfix(closedDirectly);
+    if (fclose_nid_postfix(closedDirectly) != 0) return 153;
+    try {
+        funlockfile_nid_postfix(closedDirectly);
+    } catch (const std::exception&) {
+        return 154;
+    }
+    auto later = std::async(std::launch::async, [&] {
+        int reopened = 0;
+        for (int i = 0; i < 8; ++i) {
+            FileStream* stream = fopen_nid_postfix(laterPath.c_str(), "wb");
+            if (!stream) return false;
+            const bool written = fputc_nid_postfix('L', stream) == 'L';
+            if (fclose_nid_postfix(stream) != 0 || !written) return false;
+            ++reopened;
+        }
+        return reopened == 8;
+    });
+    if (later.wait_for(std::chrono::seconds(2)) != std::future_status::ready) return 156;
+    if (!later.get()) return 157;
+    finished.set_value();
+    std::remove(closeAllPath.c_str());
+    std::remove(closePath.c_str());
+    std::remove(laterPath.c_str());
+    return 0;
+}
+
 static int ClosedStreamReopenChild(const std::string& base) {
     const std::string path = base + ".closed-reopen";
     const std::string missing = base + ".closed-reopen-missing";
@@ -1982,6 +2036,7 @@ int main(int argc, char** argv) {
     if (argc == 3 && std::strcmp(argv[2], "--fcloseall-exhausted-host-standard-child") == 0) return FcloseallExhaustedHostStandardChild(argv[1]);
     if (argc == 3 && std::strcmp(argv[2], "--fcloseall-fclose-race-child") == 0) return FcloseallFcloseRaceChild(argv[1]);
     if (argc == 3 && std::strcmp(argv[2], "--freopen-lock-child") == 0) return FreopenLockChild(argv[1]);
+    if (argc == 3 && std::strcmp(argv[2], "--owner-locked-close-child") == 0) return OwnerLockedCloseChild(argv[1]);
     if (argc == 3 && std::strcmp(argv[2], "--closed-reopen-child") == 0) return ClosedStreamReopenChild(argv[1]);
     if (argc == 3 && std::strcmp(argv[2], "--reopen-snapshot-child") == 0) return ReopenSnapshotChild(argv[1]);
     if (argc == 3 && std::strcmp(argv[2], "--freopen-exception-child") == 0) return FreopenExceptionCleanupChild(argv[1]);
@@ -2126,6 +2181,9 @@ int main(int argc, char** argv) {
     Require(childResult == 0, "fcloseall child failed");
     const int lockResult = RunFcloseallChild(argv[0], argv[1], "--fcloseall-lock-child");
     Require(lockResult == 0, "fcloseall locked-stream child failed");
+    const int ownerLocked = RunFcloseallChild(argv[0], argv[1], "--owner-locked-close-child");
+    if (ownerLocked != 0) std::cerr << "owner-locked close child exit " << ownerLocked << '\n';
+    Require(ownerLocked == 0, "closing a stream its own thread has locked child failed");
     const int closedHostStandard = RunFcloseallChild(argv[0], argv[1], "--fcloseall-closed-host-standard-child");
     Require(closedHostStandard == 0, "fcloseall with closed host standard descriptors child failed");
     const int exhaustedHostStandard = RunFcloseallChild(argv[0], argv[1], "--fcloseall-exhausted-host-standard-child");
