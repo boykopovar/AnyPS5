@@ -1,5 +1,6 @@
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeTypeOt/include/Calc.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -17,6 +18,15 @@ template <typename TCall> bool Throws(TCall call) {
     try {
         call();
     } catch (const std::runtime_error&) {
+        return true;
+    }
+    return false;
+}
+
+template <typename TCall> bool ThrowsInvalidArgument(TCall call) {
+    try {
+        call();
+    } catch (const std::invalid_argument&) {
         return true;
     }
     return false;
@@ -104,6 +114,12 @@ void CheckMatrixMultiplyScaled() {
     Require(Throws([&] { FT_Matrix_Multiply_Scaled_nid_postfix(nullptr, &target, 1LL << 47); }) &&
             Throws([&] { FT_Matrix_Multiply_Scaled_nid_postfix(&identity, nullptr, -(1LL << 47) - 1); }) && SameMatrix(target, matrix),
         "FT_Matrix_Multiply_Scaled checks 0x10000 * scaling before the null test");
+    errno = 71;
+    Require(ThrowsInvalidArgument([&] { FT_Matrix_Multiply_Scaled_nid_postfix(&identity, reinterpret_cast<FreeType::GuestMatrix*>(0x10), 1); }) &&
+            errno == 71, "FT_Matrix_Multiply_Scaled rejects an inaccessible output without changing errno");
+    errno = 71;
+    Require(ThrowsInvalidArgument([&] { FT_Matrix_Multiply_Scaled_nid_postfix(reinterpret_cast<const FreeType::GuestMatrix*>(0x10), &target, 1); }) &&
+            errno == 71 && SameMatrix(target, matrix), "FT_Matrix_Multiply_Scaled rejects an inaccessible input without changing the result");
 }
 
 void CheckVectorTransformScaled() {
