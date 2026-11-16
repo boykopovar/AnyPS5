@@ -954,6 +954,11 @@ int main(int argc, char** argv) {
     errno = 71;
     Require(sceHttpUriSweepPath(reinterpret_cast<char*>(0x10), "/foo", 5) == invalidValue && errno == 71);
     Require(sceHttpUriSweepPath(sweptPath, reinterpret_cast<const char*>(0x10), 5) == invalidValue && errno == 71);
+    Require(sceHttpUriSweepPath(sweptPath, reinterpret_cast<const char*>(0x10), std::size_t{1} << 40) == invalidValue && errno == 71);
+    std::string longPath(70000, 'a');
+    longPath[0] = '/';
+    std::string longSwept(longPath.size() + 1, 'x');
+    Require(sceHttpUriSweepPath(longSwept.data(), longPath.c_str(), longPath.size() + 1) == 0 && std::strcmp(longSwept.c_str(), longPath.c_str()) == 0);
     Require(sweep("foo/../bar", "foo/../bar"));
     Require(sweep("/foo/../bar", "/bar"));
     Require(sweep("/foo/./bar", "/foo/bar"));

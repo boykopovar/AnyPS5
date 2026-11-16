@@ -519,8 +519,14 @@ int APS5_VABI sceHttpUriCopy(SceHttpUriElement* out, const SceHttpUriElement* sr
 int APS5_VABI sceHttpUriSweepPath(char* dst, const char* src, size_t srcSize) {
     if (srcSize == 0) return 0;
     if (!dst || !src) return ERROR_INVALID_VALUE;
-    std::string source(srcSize, '\0');
-    if (!GuestCopyIn_nid_no_patch(source.data(), src, srcSize)) return ERROR_INVALID_VALUE;
+    constexpr size_t Chunk = 64 * 1024;
+    std::string source;
+    for (size_t done = 0; done < srcSize;) {
+        const size_t step = std::min(Chunk, srcSize - done);
+        source.resize(done + step);
+        if (!GuestCopyIn_nid_no_patch(source.data() + done, src + done, step)) return ERROR_INVALID_VALUE;
+        done += step;
+    }
     const size_t touched = source[0] == '/' ? std::max<size_t>(srcSize, 2) : srcSize;
     std::string swept(touched, '\0');
     if (!GuestCopyIn_nid_no_patch(swept.data(), dst, touched)) return ERROR_INVALID_VALUE;
