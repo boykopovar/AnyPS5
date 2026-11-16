@@ -14,7 +14,7 @@
 - Avoid non-standard extensions (`__attribute__`, etc.) where standard C++ is enough. Helper symbols that must not become NIDs use the `_nid_no_patch` or `_nid_no_patch_cut` suffix.
 - `alignas` takes at most 8192: MinGW GCC, the Windows compiler, rejects static objects aligned above it. A larger block is aligned at run time inside a bigger buffer.
 - The relinker uses only the C++20 standard library.
-- Third-party code is added as a submodule under `3rdparty/` and built from source, not found on the system. With `ANYPS5_USE_SYSTEM_DEPS=ON` the packages packaged by the distributions (SDL2, freetype, Vulkan-Headers, SPIRV-Headers, glslang and SPIRV-Tools) come from the system instead; that resolution lives in [cmake/SystemDeps.cmake](cmake/SystemDeps.cmake) and the default build never reads the system.
+- Third-party code is added as a submodule under `3rdparty/` and built from source, not found on the system. With `ANYPS5_USE_SYSTEM_DEPS=ON` the packages packaged by the distributions (SDL2, freetype, Vulkan-Headers, SPIRV-Headers, glslang and SPIRV-Tools, the last only with `ANYPS5_ENABLE_SPIRV_TOOLS=ON`) come from the system instead; that resolution lives in [cmake/SystemDeps.cmake](cmake/SystemDeps.cmake) and the default build never reads the system.
 - Don't add tests that only check that a symbol is exported: a missing export already fails at startup.
 - Each test finishes in 30 s on the CI runners, Vulkan tests included (Linux runs them on lavapipe), counting the first run with no shader cache. ctest runs in parallel there, so a slow test competes for the cores and times out on some runs and not others. Split or shrink a test that gets close instead of raising its timeout. CI reports every test over 30 s as a warning on the pull request.
 
@@ -58,7 +58,8 @@ The [pull request template](.github/pull_request_template.md) is the checklist f
 
 - One branch per topic, based on current `main`. Follow-up work goes in a new pull request, not into an open one.
 - Open pull requests per author are limited by how many of theirs are merged into `main`: 1 with none merged, 20 with at least 1, no limit from 20. A pull request opened or reopened over the limit is closed automatically; reopen it once another one is merged or closed.
-- Before starting, check that no open pull request already implements the same functions.
+- Before starting, check that no open pull request already implements the same functions: `python3 tools/pr_overlap.py --names <function>...` prints, for each name, whether `main` implements it or still stubs it and which open pull requests add it.
+- Technical debt entries are added, changed and removed through a fragment in `docs/dev/debt/changes/`, not by editing the debt files; the format is in [technical debt](docs/dev/TechnicalDebt.md#fragments).
 - Keep the branch up to date with `main` and resolve conflicts yourself; rebasing and force-pushing is fine.
 - An AGC test executable and its tests are registered in `core/libs/prx/libSceAgcDriver/tests/cmake/<executable>.cmake`; the tests of an execution test in `tests/execution/` go in the fragment of its `agc_driver_<name>_tests` executable. `CMakeLists.txt` includes the fragments in sorted order, so a fragment uses nothing another fragment defines. A pull request whose change to `libSceAgcDriver/CMakeLists.txt` conflicts after the split rebases and runs `python3 tools/agc_test_split.py resolve` during the stopped rebase, which moves its registrations to their fragments and leaves conflict markers where `main` changed the same lines.
 - A new libc or libkernel test executable and its tests are registered in `core/libs/prx/libc/tests/cmake/<executable>.cmake` or `core/libs/prx/libkernel/tests/cmake/<executable>.cmake`. That library's `CMakeLists.txt` includes the fragments in sorted order after its own registrations, so a fragment can use what `CMakeLists.txt` defines but nothing another fragment defines. Tests already registered in `CMakeLists.txt` stay there.
@@ -80,3 +81,9 @@ The [pull request template](.github/pull_request_template.md) is the checklist f
 ## Documentation
 
 Text in the repository is dry, strict and concise. Record known gaps, unknown NIDs and signatures in [technical debt](docs/dev/TechnicalDebt.md) instead of new files. An entry states the gap first (what differs from the console, what is unverified, what throws) and describes the implemented behaviour only as far as the gap needs it. A pull request that closes a gap removes its entry, or cuts it to what is still open, instead of rewriting it to describe the corrected behaviour. An entry goes in `docs/dev/debt/<name>.md`, named after the first `core/` path it links (`<name>` for `core/libs/prx/<name>/...`, otherwise for `core/<name>/...`), under the same `###` sections as the index; entries that link neither stay in the index. A pull request whose `TechnicalDebt.md` change conflicts after the split rebases and runs `python3 tools/debt_split.py resolve` during the stopped rebase, which moves its added, edited and removed entries to their files; `python3 tools/debt_split.py split` moves entries left in the index.
+
+## Maintainer scripts
+
+- `tools/rebase_verify.py <old> <new> [--onto BRANCH] [--repo REPO]` checks that a rebased branch kept its added and deleted lines, file modes, authors and commits. `--onto` names the branch the new commits sit on; by default it is `upstream/main`, then `origin/main`.
+- `tools/pr_labels.py (--pr N | --all) [--dry-run] [--json]` labels pull requests from their title and template fields. `--dry-run` prints the planned changes and writes nothing.
+- `tools/pr_unchanged.py [--dry-run]` labels open pull requests whose merge would not change `main`. `--dry-run` prints the planned changes and writes nothing.

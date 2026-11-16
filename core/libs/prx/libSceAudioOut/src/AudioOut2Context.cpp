@@ -310,11 +310,22 @@ static void TraceSummary(AudioOut2Context& context, Clock::time_point now) {
 }
 
 static Clock::time_point WaitForRoom(AudioOut2Context& context, std::unique_lock<std::mutex>& lock) {
+    constexpr auto stepUs = std::chrono::microseconds(FULL_WAIT_STEP).count();
     auto now = Now(context);
     const auto waitStart = now;
     while (QueueLevel(context, now) >= context.queueDepth && now - waitStart <= FULL_WAIT_TIMEOUT) {
+#ifdef _WIN32
+        const bool timerOnly = context.device != 0;
+#endif
         lock.unlock();
-        PreciseSleepUs(std::chrono::microseconds(FULL_WAIT_STEP).count());
+#ifdef _WIN32
+        if (timerOnly) {
+            PreciseSleepWaitableTimerWithHandle(PreciseWaitThreadTimer(), stepUs * 10ULL);
+        } else
+#endif
+        {
+            PreciseSleepUs(stepUs);
+        }
         lock.lock();
         now = Now(context);
     }
