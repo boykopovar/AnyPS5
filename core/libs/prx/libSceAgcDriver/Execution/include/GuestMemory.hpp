@@ -46,6 +46,7 @@ bool EqualsCommittedUnsynced(std::uint64_t address, std::span<const std::byte> b
 // space cannot be queried).
 enum class Compare : std::uint8_t { Equal, Differs, Unmapped };
 Compare CompareMapped(std::uint64_t address, std::span<const std::byte> bytes);
+void SetCompareMappedHook(void (*hook)(std::uint64_t address, std::size_t bytes));
 Compare CopyMapped(std::uint64_t address, std::span<std::byte> out);
 void WriteChangedCommitted(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original);
 void Write(std::uint64_t address, std::span<const std::byte> source, std::size_t alignment = 1);
@@ -76,6 +77,9 @@ using FreshCollectHook = bool (*)(std::uintptr_t address, std::size_t bytes, voi
 void SetFreshCollectHook(FreshCollectHook hook);
 #endif
 bool Watched(std::uint64_t address, std::size_t bytes);
+bool OnlyRewatchedSince(std::uint64_t address, std::size_t bytes, std::uint64_t generation);
+bool Rewatched(std::uint64_t address, std::size_t bytes);
+void RewatchedBlocks(std::uint64_t address, std::size_t bytes, std::span<const std::uint64_t> since, std::span<std::uint8_t> rewatched);
 std::uint64_t CollectWrites(std::uint64_t address, std::size_t bytes);
 struct WriteSubscription;
 bool WriteIndexEnabled();
