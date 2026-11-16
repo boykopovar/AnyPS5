@@ -534,6 +534,11 @@ class ArrayAndCaseTests(unittest.TestCase):
         self.assertEqual(shader_scan.array_body(source, "arr"), " 1, 2 ")
         body = "case Kind::A: case Kind::B: case Other::C:"
         self.assertEqual(shader_scan.case_names(body, "Kind"), {"A", "B"})
+class ValueHelperTests(unittest.TestCase):
+    def test_need_returns_a_value_and_refuses_none(self):
+        self.assertEqual(shader_scan.need(3, "count"), 3)
+        with self.assertRaisesRegex(shader_scan.ScanError, "no count"):
+            shader_scan.need(None, "count")
 
 
 if __name__ == "__main__":
