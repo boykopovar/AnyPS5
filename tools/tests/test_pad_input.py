@@ -324,6 +324,12 @@ class TimelineHeaderTests(unittest.TestCase):
         import io
         self.assertEqual(pad_input.timeline_sequence(io.BytesIO(b''), b'junk\n'), 0)
         self.assertEqual(pad_input.timeline_sequence(io.BytesIO(b''), b'APS5_PAD_TIMELINE 2 5 1\n'), 0)
+class NextSequenceTests(unittest.TestCase):
+    def test_next_sequence_is_positive_and_fits_64_bits_without_a_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            value = pad_input.next_sequence(Path(directory) / 'missing.cmd')
+        self.assertGreater(value, 0)
+        self.assertLess(value, 2 ** 64)
 
 
 if __name__ == "__main__":
