@@ -634,17 +634,25 @@ bool RunUnimportedBufferRead(TexelReader& reader, bool watched) {
             WatchedBlocks = false;
         }
     } unimported(watched);
-    const auto mirrorsBefore = MirrorCounters().heapMirrors;
     const auto surfaces = NewSurfaces();
     const auto copy = Address(NewBlock(PlaneBytes()));
+    // Count only heap mirrors of this case's own write base. The process-global
+    // MirrorCounters().heapMirrors also sees the driver's internal write-watched memory
+    // and earlier cases' live mirrors, so its delta here depends on what ran before: run
+    // standalone, this case is the first to drive an address-based copy with no import
+    // room, so the driver's own memory is heap-mirrored and the delta is 1 even though
+    // the write base itself is served by a copy (see issue #21562).
+    const auto writeBaseBegin = surfaces.written;
+    const auto writeBaseEnd = surfaces.written + PlaneBytes();
+    const auto mirrorsBefore = HeapMirrorsWithin(writeBaseBegin, writeBaseEnd).mirrors;
     std::printf("%s: read base 0x%llx, write base 0x%llx, copy at 0x%llx\n", name.c_str(), static_cast<unsigned long long>(surfaces.depth), static_cast<unsigned long long>(surfaces.written), static_cast<unsigned long long>(copy));
     Submit(DepthDraw(surfaces, false, false), name + ": depth draw at the read base");
     reader.CopyBuffer(surfaces.written, copy, static_cast<std::uint32_t>(PlaneBytes()), true, name + ": copy of the write base before the expand");
     Fill(copy, PlaneBytes(), 0xffffffffu);
     Submit(DepthDraw(surfaces, true, true), name + ": DB expand from the read base to the write base");
     reader.CopyBuffer(surfaces.written, copy, static_cast<std::uint32_t>(PlaneBytes()), true, name + ": raw buffer copy of the write base");
-    const auto mirrors = MirrorCounters().heapMirrors - mirrorsBefore;
-    std::printf("  heap mirrors made for the case's blocks: %llu (expected %s)\n", static_cast<unsigned long long>(mirrors), watched ? "some" : "none");
+    const auto mirrors = HeapMirrorsWithin(writeBaseBegin, writeBaseEnd).mirrors - mirrorsBefore;
+    std::printf("  heap mirrors made for the write base: %llu (expected %s)\n", static_cast<unsigned long long>(mirrors), watched ? "some" : "none");
     const auto depth = DrawnDepth(reader, surfaces, name);
     const bool copied = Compare(DetileRaw(surfaces.written, GuestBytes(copy, PlaneBytes())), depth, "  buffer copy of the write base, detiled with the SW_64KB_Z_X equation") == Texels;
     return copied && (mirrors != 0) == watched;
