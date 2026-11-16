@@ -615,6 +615,12 @@ class PageAndCacheHelperTests(unittest.TestCase):
         self.assertEqual(pr_overlap.repair_escapes("a\\nb"), "a\\nb")
         self.assertEqual(pr_overlap.repair_escapes("\\q"), "\\\\q")
 
+    def test_export_cache_round_trips_files_for_the_same_version(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "cache.json"
+            pr_overlap.save_export_cache(path, 2, {"libA": ["x"]})
+            self.assertEqual(pr_overlap.load_export_cache(path, 2), {"libA": ["x"]})
+
 
 if __name__ == "__main__":
     unittest.main()
