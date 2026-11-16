@@ -425,8 +425,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKContextGetGlobalStatistics` | `cLN+-CVotuU` |
 | `WKContextGetNotificationManager` | `ZGEEHCN2FvE` |
 | `WKContextPostMessageToInjectedBundle` | `N93Nb5-YJsw` |
-| `WKContextPreconnectToServer` | `MQI+nL6CJkU` |
-| `WKContextSetCanHandleHTTPSServerTrustEvaluation` | `L205EzJvP-Q` |
 | `WKContextSetClient` | `s19dG0nY-dE` |
 | `WKContextSetConnectionClient` | `S4qCVFS2p1Y` |
 | `WKContextSetDomainRelaxationForbiddenForURLScheme` | `WxgH0vvD708` |
@@ -436,7 +434,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKContextSetInjectedBundleClient` | `VULFTpwEXW0` |
 | `WKContextSetInvalidMessageFunction` | `v+TCMUBUWog` |
 | `WKContextSetJavaScriptConfigurationFileEnabled` | `NkDv+zQRTXw` |
-| `WKContextSetMaximumNumberOfProcesses` | `zgt5jBUZjPw` |
 | `WKContextSetMemoryCacheDisabled` | `Gy--AnYjtr8` |
 | `WKContextSetPrewarmsProcessesAutomatically` | `9LzZhiXxOL8` |
 | `WKContextSetUseSeparateServiceWorkerProcess` | `nd01aT+29+Y` |
