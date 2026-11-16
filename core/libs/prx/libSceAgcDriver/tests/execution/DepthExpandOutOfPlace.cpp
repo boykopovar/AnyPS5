@@ -634,7 +634,6 @@ bool RunUnimportedBufferRead(TexelReader& reader, bool watched) {
             WatchedBlocks = false;
         }
     } unimported(watched);
-    const auto mirrorsBefore = MirrorCounters().heapMirrors;
     const auto surfaces = NewSurfaces();
     const auto copy = Address(NewBlock(PlaneBytes()));
     std::printf("%s: read base 0x%llx, write base 0x%llx, copy at 0x%llx\n", name.c_str(), static_cast<unsigned long long>(surfaces.depth), static_cast<unsigned long long>(surfaces.written), static_cast<unsigned long long>(copy));
@@ -643,7 +642,13 @@ bool RunUnimportedBufferRead(TexelReader& reader, bool watched) {
     Fill(copy, PlaneBytes(), 0xffffffffu);
     Submit(DepthDraw(surfaces, true, true), name + ": DB expand from the read base to the write base");
     reader.CopyBuffer(surfaces.written, copy, static_cast<std::uint32_t>(PlaneBytes()), true, name + ": raw buffer copy of the write base");
-    const auto mirrors = MirrorCounters().heapMirrors - mirrorsBefore;
+    // Count only the mirrors on this case's blocks. Every address-based build leases all registered
+    // ranges, so when this case runs first its refused build also heap-mirrors the write-watched
+    // 2 MiB AGC driver memory at 0xfe0000000, which an earlier case's build has otherwise imported.
+    std::uint64_t mirrors = 0;
+    for (const auto& [block, bytes] : {std::pair{surfaces.depth, PlaneBytes()}, std::pair{surfaces.stencil, static_cast<std::size_t>(DepthSliceBytes({Width, Height}, 1u))}, std::pair{surfaces.htile, Block}, std::pair{surfaces.written, PlaneBytes()}, std::pair{copy, PlaneBytes()}}) {
+        mirrors += HeapMirrorsWithin(block, block + bytes).mirrors;
+    }
     std::printf("  heap mirrors made for the case's blocks: %llu (expected %s)\n", static_cast<unsigned long long>(mirrors), watched ? "some" : "none");
     const auto depth = DrawnDepth(reader, surfaces, name);
     const bool copied = Compare(DetileRaw(surfaces.written, GuestBytes(copy, PlaneBytes())), depth, "  buffer copy of the write base, detiled with the SW_64KB_Z_X equation") == Texels;
