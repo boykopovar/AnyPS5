@@ -285,6 +285,11 @@ class TokenHelperTests(unittest.TestCase):
         self.assertEqual(agc_test_split.until(["a", "--", "b"], {"--"}), ["a"])
         self.assertEqual(agc_test_split.until(["a", "b"], {"--"}), ["a", "b"])
 
+    def test_literal_refuses_names_with_variables_or_generator_expressions(self):
+        self.assertTrue(agc_test_split.literal("abc"))
+        self.assertFalse(agc_test_split.literal("${X}"))
+        self.assertFalse(agc_test_split.literal("$<CONFIG>"))
+
 
 if __name__ == "__main__":
     unittest.main()
