@@ -141,7 +141,10 @@ int APS5_VABI kmq_open_nid_postfix(const char* path, int flags, unsigned int mod
     const bool create = (flags & GuestOCreat) != 0;
     GuestMqAttr localAttr{};
     if (attr != nullptr) {
-        if (!GuestCopyIn_nid_no_patch(&localAttr, attr, sizeof(localAttr))) return Fail(GuestEfault);
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&localAttr, attr, sizeof(localAttr));
+        errno = savedErrno;
+        if (!copied) return Fail(GuestEfault);
         if (create) {
             if (localAttr.maxmsg <= 0 || localAttr.maxmsg > MaxMessages) return Fail(GuestEinval);
             if (localAttr.msgsize <= 0 || localAttr.msgsize > MaxMessageSize) return Fail(GuestEinval);
@@ -185,7 +188,10 @@ int APS5_VABI kmq_unlink_nid_postfix(const char* path) {
 int APS5_VABI kmq_setattr_nid_postfix(int descriptor, const GuestMqAttr* attr, GuestMqAttr* oattr) {
     GuestMqAttr localAttr{};
     if (attr != nullptr) {
-        if (!GuestCopyIn_nid_no_patch(&localAttr, attr, sizeof(localAttr))) return Fail(GuestEfault);
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&localAttr, attr, sizeof(localAttr));
+        errno = savedErrno;
+        if (!copied) return Fail(GuestEfault);
         if ((localAttr.flags & ~static_cast<std::int64_t>(GuestONonblock)) != 0) return Fail(GuestEinval);
     }
     const auto open = Find(descriptor);
@@ -194,7 +200,10 @@ int APS5_VABI kmq_setattr_nid_postfix(int descriptor, const GuestMqAttr* attr, G
     if (oattr != nullptr) {
         const GuestMqAttr previous{open->nonblocking ? GuestONonblock : 0, open->queue->maxmsg, open->queue->msgsize,
                                    static_cast<std::int64_t>(open->queue->messages.size()), {}};
-        if (!GuestCopyOut_nid_no_patch(oattr, &previous, sizeof(previous))) return Fail(GuestEfault);
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(oattr, &previous, sizeof(previous));
+        errno = savedErrno;
+        if (!copied) return Fail(GuestEfault);
     }
     if (attr != nullptr) open->nonblocking = (localAttr.flags & GuestONonblock) != 0;
     return 0;
