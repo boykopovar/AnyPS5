@@ -88,8 +88,12 @@ ImageType rawImageType(const DescriptorValue& descriptor) {
     return static_cast<ImageType>((descriptor.dwords[3] >> 28u) & 0xfu);
 }
 
+bool unboundTableSlot(const ImageResource& image, const DescriptorValue& descriptor) {
+    return image.table != NoTable && image.resourceClass == ImageResourceClass::Sampled && image.read && !image.written && !image.atomic && descriptor.dwordCount == 8u && (descriptor.availableDwordMask & 0xffu) == 0xffu && std::all_of(descriptor.dwords.begin(), descriptor.dwords.begin() + 8, [](std::uint32_t word) { return word == 0xffffffffu; });
+}
+
 bool nullImageDescriptor(const ImageResource& image, const DescriptorValue& descriptor) {
-    if (nullImageDescriptor(descriptor)) return true;
+    if (nullImageDescriptor(descriptor) || unboundTableSlot(image, descriptor)) return true;
     const auto type = rawImageType(descriptor);
     if (image.table == NoTable && image.resourceClass == ImageResourceClass::Sampled && image.read && !image.written && !image.atomic && type >= ImageType::Color1D && type <= ImageType::Color2DMsaa && imageFormatUnset(descriptor)) return true;
     return static_cast<std::uint32_t>(type) <= 1u && image.table == NoTable && (image.read || image.written) && !image.atomic;
@@ -134,15 +138,6 @@ RdnaImageDimension descriptorDimension(const DescriptorValue& descriptor, RdnaIm
             return RdnaImageDimension::Dim2DMsaa;
         default:
             throw std::runtime_error("image descriptor has an unsupported type");
-    }
-}
-
-std::uint32_t imageCoordinates(RdnaImageDimension dimension) {
-    switch (dimension) {
-        case RdnaImageDimension::Dim1D: return 1u;
-        case RdnaImageDimension::Dim1DArray: case RdnaImageDimension::Dim2D: return 2u;
-        case RdnaImageDimension::Dim2DMsaaArray: return 4u;
-        default: return 3u;
     }
 }
 
@@ -255,6 +250,12 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
     }
     const bool queryLayers = base.dimension == RdnaImageDimension::Dim1D && base.dimensionQueryOnly && rawImageType(descriptor) == ImageType::Color2DArray;
     decoded.dimension = descriptorDimension(descriptor, queryLayers ? RdnaImageDimension::Dim2DArray : base.dimension);
+    if (GcnGuestShaders() && base.dimension == RdnaImageDimension::Dim2DArray && decoded.dimension == RdnaImageDimension::Dim3D) {
+        return rejectImage(PoisonReason::Dimension, "a GCN image instruction with DA set through a 3D descriptor is not implemented: the ISA does not say whether an array index follows z");
+    }
+    if (GcnGuestShaders() && base.depthCompare && (decoded.dimension == RdnaImageDimension::Dim1D || decoded.dimension == RdnaImageDimension::Dim1DArray)) {
+        return rejectImage(PoisonReason::Dimension, "a GCN depth comparison through a 1D descriptor is not implemented: its address would be read as 2D");
+    }
     if (base.depthCompare) {
         if (decoded.dimension == RdnaImageDimension::Dim1D) {
             decoded.dimension = RdnaImageDimension::Dim2D;
@@ -262,16 +263,13 @@ ImageDecode inspectImageDescriptor(const DescriptorValue& descriptor, const Imag
             decoded.dimension = RdnaImageDimension::Dim2DArray;
         }
     }
-    if (GcnGuestShaders() && imageCoordinates(decoded.dimension) != imageCoordinates(base.dimension)) {
-        throw std::runtime_error("GCN image instruction on a descriptor of type " + std::to_string(static_cast<std::uint32_t>(rawImageType(descriptor))) + " needs a different address count than its inferred dimension; not implemented");
-    }
     if (decoded.dimension == RdnaImageDimension::Dim1DArray && layerRowsCandidate(base) && viewsPastLayerLimit(descriptor, base.maxArrayLayers)) {
         decoded.dimension = RdnaImageDimension::Dim2D;
         decoded.layerRows = true;
     }
     decoded.cube = descriptorIsCube(descriptor);
     const auto format = rawImageFormat(descriptor);
-    if (decoded.dimension == RdnaImageDimension::Dim2DMsaa && rawImageType(descriptor) == ImageType::Color2DMsaa && multisamplePlaneRead(base) && !IsFmaskTextureFormat(format) && !IsDepthBitsTexture(descriptor.dwords[1], descriptor.dwords[3])) decoded.dimension = RdnaImageDimension::Dim2D;
+    if (!GcnGuestShaders() && decoded.dimension == RdnaImageDimension::Dim2DMsaa && rawImageType(descriptor) == ImageType::Color2DMsaa && multisamplePlaneRead(base) && !IsFmaskTextureFormat(format) && !IsDepthBitsTexture(descriptor.dwords[1], descriptor.dwords[3])) decoded.dimension = RdnaImageDimension::Dim2D;
     if (base.atomic64 && format != IrBufferFormat::Format32_32UInt && format != IrBufferFormat::Format32_32SInt && format != IrBufferFormat::Format32_32Float) {
         return rejectImage(PoisonReason::InvalidFormat, "64-bit atomic image descriptor uses an unsupported format " + std::to_string(static_cast<std::uint32_t>(format)));
     }
@@ -2338,6 +2336,25 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
         mode.shaderSwizzle = ShaderImageIdentitySwizzle;
         if (conversion == IrBufferFormat::Format11_11_10UNorm || conversion == IrBufferFormat::Format10_11_11UNorm || conversion == IrBufferFormat::Format11_11_10Float || conversion == IrBufferFormat::Format10_11_11Float) mode.shaderSwizzle = 0x2acu;
         modes.push_back(mode);
+        if (GcnGuestShaders()) {
+            if (depth || conversion != IrBufferFormat::Invalid || packed != IrBufferFormat::Invalid || image.byElements != 0u) return;
+            const bool declaredArray = image.dimension == RdnaImageDimension::Dim2DArray;
+            const auto offer = [&](RdnaImageDimension dimension) {
+                auto other = mode;
+                other.dimension = dimension;
+                modes.push_back(other);
+            };
+            if (!image.gathered && !image.depthCompare) {
+                offer(RdnaImageDimension::Dim1D);
+                offer(declaredArray ? RdnaImageDimension::Dim1DArray : RdnaImageDimension::Dim3D);
+            }
+            if (declaredArray) offer(RdnaImageDimension::Dim2D);
+            auto cube = mode;
+            cube.dimension = RdnaImageDimension::Dim2DArray;
+            cube.cube = true;
+            modes.push_back(cube);
+            return;
+        }
         const bool volumeLoad = (image.dimension == RdnaImageDimension::Dim2D || image.dimension == RdnaImageDimension::Dim2DArray) && image.fmaskCompatible && conversion != FmaskExpansion;
         const bool volumeStore = image.dimension == RdnaImageDimension::Dim2DArray && storage && image.written && !image.read && !image.atomic && image.mipMode != ImageMipMode::DynamicStorage;
         const bool volumePlaneBias = image.dimension == RdnaImageDimension::Dim2D && image.singleMipPlaneBiasCompatible && !storage && image.table == NoTable && conversion == IrBufferFormat::Invalid;
@@ -2993,13 +3010,12 @@ void ResourceMaterializer::Materialize(const IrResourcePlan& program, const SrtR
                 TableSnapshotter(plan, runtime, walker, activeSources, nextSnapshot.tables).Run();
                 const auto afterTables = runtime.descriptorScope != nullptr ? runtime.descriptorScope(runtime.userContext, 0u) : 0u;
                 const auto afterImageGeneration = runtime.imageViewGeneration != nullptr ? runtime.imageViewGeneration(runtime.userContext) : 0u;
-                if (runtime.descriptorScope != nullptr && (afterTables != afterSnapshot || (plan.uniformFill.fill.kind != UniformFillKind::None && afterSnapshot != beforeSnapshot))) {
-                    continue;
-                }
                 for (const auto& table : nextSnapshot.tables.tables) {
                     for (const auto& view : table.resourceViews) nextSnapshot.registeredImages.insert(nextSnapshot.registeredImages.end(), view.identities.begin(), view.identities.end());
                 }
-                if (afterImageGeneration != beforeImageGeneration && (runtime.snapshotCurrent == nullptr || !runtime.snapshotCurrent(runtime.userContext, nextSnapshot.registeredImages))) {
+                const bool allocationsMoved = afterImageGeneration != beforeImageGeneration &&
+                                              (runtime.snapshotCurrent == nullptr || !runtime.snapshotCurrent(runtime.userContext, nextSnapshot.registeredImages));
+                if ((runtime.descriptorScope != nullptr && (afterTables != afterSnapshot || (plan.uniformFill.fill.kind != UniformFillKind::None && afterSnapshot != beforeSnapshot))) || allocationsMoved) {
                     continue;
                 }
                 nextSnapshot.imageAllocationGeneration = nextSnapshot.registeredImages.empty() ? 0u : afterImageGeneration;
@@ -3015,6 +3031,9 @@ void ResourceMaterializer::Materialize(const IrResourcePlan& program, const SrtR
             } catch (const std::runtime_error&) {
                 if (attempt == 2u) throw;
                 const auto afterImageGeneration = runtime.imageViewGeneration != nullptr ? runtime.imageViewGeneration(runtime.userContext) : 0u;
+                if (afterImageGeneration != beforeImageGeneration && runtime.snapshotCurrent != nullptr) {
+                    static_cast<void>(runtime.snapshotCurrent(runtime.userContext, {}));
+                }
                 if (runtime.descriptorScope == nullptr) {
                     if (runtime.imageViewGeneration == nullptr || afterImageGeneration == beforeImageGeneration) throw;
                 } else if (runtime.descriptorScope(runtime.userContext, 0u) == beforeSnapshot && (runtime.imageViewGeneration == nullptr || afterImageGeneration == beforeImageGeneration)) {

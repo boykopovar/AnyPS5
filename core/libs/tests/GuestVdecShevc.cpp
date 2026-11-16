@@ -1,6 +1,9 @@
 #include "prx/libSceVdecShevc/libSceVdecShevc.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 #include <array>
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -8,6 +11,8 @@
 namespace {
 
 using HandleCall = decltype(&sceSdecExecuteSwHevc);
+
+void ClobberErrno(std::uintptr_t, std::size_t) { errno = 99; }
 
 void Require(bool value) {
     if (!value) std::abort();
@@ -47,7 +52,9 @@ void NoDecoderAnswers() {
     for (const HandleCall call : calls) {
         for (int round = 0; round < 2; ++round) {
             Require(call(nullptr) == 1);
+            errno = 71;
             Require(call(handle.data()) == 1);
+            Require(errno == 71);
         }
     }
     Require(handle == before);
@@ -58,7 +65,11 @@ void CreateRejects() {
         auto param = Block();
         std::memcpy(param.data(), &first, sizeof(first));
         const auto before = param;
-        for (int round = 0; round < 2; ++round) Require(sceSdecCreateSwHevc(param.data()) == 3);
+        for (int round = 0; round < 2; ++round) {
+            errno = 71;
+            Require(sceSdecCreateSwHevc(param.data()) == 3);
+            Require(errno == 71);
+        }
         Require(param == before);
     }
 }
@@ -70,10 +81,14 @@ void DestroyWithoutDecoder() {
     PutQuad(handle, 0x10, 0);
     auto expected = handle;
     PutQuad(expected, 0x8, 0);
+    errno = 71;
     Require(sceSdecDestroySwHevc(handle.data()) == 0);
+    Require(errno == 71);
     Require(handle == expected);
     Require(GetQuad(handle, 0x8) == 0);
+    errno = 71;
     Require(sceSdecDestroySwHevc(handle.data()) == 0);
+    Require(errno == 71);
     Require(handle == expected);
 
     auto cleared = Block();
@@ -87,8 +102,12 @@ void DestroyWithoutDecoder() {
 } // namespace
 
 int main() {
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     NoDecoderAnswers();
     CreateRejects();
     DestroyWithoutDecoder();
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     return 0;
 }

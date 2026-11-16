@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <cstring>
 #include <atomic>
+#include <array>
+#include <cerrno>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "AudioOut2Internal.hpp"
@@ -48,6 +50,23 @@ constexpr std::size_t AUDIO_OUT_MASTERING_LIMITER_INPUT_PEAK_OFFSET = 240;
 constexpr std::size_t AUDIO_OUT_MASTERING_LIMITER_OUTPUT_PEAK_OFFSET = 272;
 constexpr std::size_t AUDIO_OUT_MASTERING_LIMITER_GAIN_PEAK_OFFSET = 304;
 
+bool ReadMasteringId(const void* source, std::uint32_t& id) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&id, source, sizeof(id));
+    errno = savedErrno;
+    return copied;
+}
+
+bool ClearMasteringMeter(void* state, std::size_t offset, std::size_t bytes) {
+    constexpr std::array<std::byte, 96> zeros{};
+    const auto address = reinterpret_cast<std::uintptr_t>(state);
+    if (bytes > zeros.size() || address > UINTPTR_MAX - offset) return false;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(address + offset), zeros.data(), bytes);
+    errno = savedErrno;
+    return copied;
+}
+
 static_assert(sizeof(AudioOut2MasteringStates) == 336);
 static_assert(offsetof(AudioOut2MasteringStates, compressor_states) + offsetof(AudioOut2MasteringCompressorStates, input_rms) == AUDIO_OUT_MASTERING_COMPRESSOR_INPUT_RMS_OFFSET);
 static_assert(offsetof(AudioOut2MasteringStates, compressor_states) + offsetof(AudioOut2MasteringCompressorStates, compression_coeff) == AUDIO_OUT_MASTERING_COMPRESSOR_GAIN_OFFSET);
@@ -72,21 +91,24 @@ int APS5_VABI sceAudioOutMasteringTerm(void) {
 
 int APS5_VABI sceAudioOutMasteringGetState(AudioOut2MasteringStatesHeader* state) {
     if (state == nullptr) APS5_INVALID_ARG_EX;
-    if (state->states_id != AUDIO_OUT_MASTERING_STATES_ID_DEFAULT) return SCE_AUDIO_OUT_ERROR_MASTERING_INVALID_STATES_ID;
+    std::uint32_t id = 0;
+    if (!ReadMasteringId(state, id)) APS5_INVALID_ARG_EX;
+    if (id != AUDIO_OUT_MASTERING_STATES_ID_DEFAULT) return SCE_AUDIO_OUT_ERROR_MASTERING_INVALID_STATES_ID;
     if (!g_legacyMasteringInitialized.load()) return SCE_AUDIO_OUT_ERROR_MASTERING_NOT_INITIALIZED;
-    auto* full = static_cast<AudioOut2MasteringStates*>(static_cast<void*>(state));
-    std::memset(full->compressor_states.input_rms, 0, sizeof(full->compressor_states.input_rms));
-    std::memset(full->compressor_states.compression_coeff, 0, sizeof(full->compressor_states.compression_coeff));
-    std::memset(full->limiter_states.input_peak, 0, sizeof(full->limiter_states.input_peak));
-    std::memset(full->limiter_states.output_peak, 0, sizeof(full->limiter_states.output_peak));
-    std::memset(full->limiter_states.gain_peak, 0, sizeof(full->limiter_states.gain_peak));
+    if (!ClearMasteringMeter(state, AUDIO_OUT_MASTERING_COMPRESSOR_INPUT_RMS_OFFSET, 96) ||
+        !ClearMasteringMeter(state, AUDIO_OUT_MASTERING_COMPRESSOR_GAIN_OFFSET, 96) ||
+        !ClearMasteringMeter(state, AUDIO_OUT_MASTERING_LIMITER_INPUT_PEAK_OFFSET, 32) ||
+        !ClearMasteringMeter(state, AUDIO_OUT_MASTERING_LIMITER_OUTPUT_PEAK_OFFSET, 32) ||
+        !ClearMasteringMeter(state, AUDIO_OUT_MASTERING_LIMITER_GAIN_PEAK_OFFSET, 32)) APS5_INVALID_ARG_EX;
     return 0;
 }
 
 int APS5_VABI sceAudioOutMasteringSetParam(const AudioOut2MasteringParamsHeader* param, uint32_t flags) {
     if (param == nullptr) APS5_INVALID_ARG_EX;
     if (flags != 0) NotImplemented_nid_no_patch(__func__);
-    if (param->params_id != AUDIO_OUT_MASTERING_PARAMS_ID_DEFAULT) NotImplemented_nid_no_patch(__func__);
+    std::uint32_t id = 0;
+    if (!ReadMasteringId(param, id)) APS5_INVALID_ARG_EX;
+    if (id != AUDIO_OUT_MASTERING_PARAMS_ID_DEFAULT) NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 

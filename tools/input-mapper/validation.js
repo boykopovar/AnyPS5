@@ -34,7 +34,8 @@ export function settingValue(setting, value) {
         if (canonicalValue(text, ['LEFT', 'RIGHT']) === undefined) return `${setting.name} must be LEFT or RIGHT.`;
         return '';
     }
-    if (parsed === undefined || !Number.isFinite(parsed) || parsed < setting.minimum || parsed > setting.maximum) {
+    const underflows = parsed === 0 && /[1-9]/u.test(text.split(/e/iu, 1)[0]);
+    if (parsed === undefined || !Number.isFinite(parsed) || underflows || parsed < setting.minimum || parsed > setting.maximum) {
         return `${setting.name} must be a number from ${setting.minimum} to ${setting.maximum}.`;
     }
     return '';

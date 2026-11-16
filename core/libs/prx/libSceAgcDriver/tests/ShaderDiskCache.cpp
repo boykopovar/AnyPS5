@@ -361,6 +361,7 @@ CompiledVariant sampleVariant() {
     image.sampledOnly = false;
     image.foldTexelOffsetsOnly = true;
     image.remappedDepth1D = true;
+    image.gathered = true;
     image.layerRowsCompatible = false;
     image.layerRows = true;
     image.maxArrayLayers = 0x01020304u;
@@ -917,6 +918,7 @@ void verifyKeySensitivity() {
     changes("device-scope LDS memory barriers", [](SampleRequest& sample) { sample.request.target.deviceScopeLdsMemoryBarriers = true; });
     changes("LDS lock fences", [](SampleRequest& sample) { sample.request.target.ldsLockFences = true; });
     changes("mesh window buffers", [](SampleRequest& sample) { sample.request.target.meshWindowBuffer = true; });
+    changes("mesh function inlining", [](SampleRequest& sample) { sample.request.target.meshInlineFunctions = true; });
     changes("the workgroup size limit", [](SampleRequest& sample) { sample.request.target.maxWorkgroupSize[2] = 128; });
     changes("the invocation limit", [](SampleRequest& sample) { sample.request.target.maxWorkgroupInvocations = 512; });
     changes("the shared memory limit", [](SampleRequest& sample) { sample.request.target.maxWorkgroupSharedMemoryBytes = 32768; });
@@ -1255,6 +1257,24 @@ void verifyPersist() {
     std::filesystem::remove(path, error);
     require(!error, "cannot remove the replaced cache entry");
     requireSameArtifact(variant.artifact, persisted->artifact, "a persisted entry whose file was replaced and removed");
+}
+
+void verifyReleaseMapped() {
+    const std::vector<std::uint32_t> words{0x07230203u, 0x00010000u, 1u, 2u, 3u};
+    const SharedSpirv owned(words);
+    ShaderDiskCache::ReleaseMapped(owned);
+    require(!owned.Mapped() && std::ranges::equal(words, owned.Words()), "releasing an owned module changed its words");
+    SampleRequest sample;
+    const auto key = sample.Key();
+    const auto variant = sampleVariant();
+    const auto persisted = ShaderDiskCache::Persist(key, variant);
+    require(persisted != nullptr, "a persisted entry was not read back");
+#ifdef _WIN32
+    require(persisted->artifact.spirv.Mapped(), "persisted SPIR-V is not a mapped cache entry");
+#endif
+    ShaderDiskCache::ReleaseMapped(persisted->artifact.spirv);
+    ShaderDiskCache::ReleaseMapped(persisted->artifact.spirv);
+    requireSameArtifact(variant.artifact, persisted->artifact, "a mapped entry whose pages were released");
 }
 
 #ifdef _WIN32
@@ -1943,6 +1963,7 @@ std::vector<PlanFixture> planFixtures() {
     place(palette, 0x18u, imageWords(PlanTextureAddress + 0x100u));
     add("pointer image table", 64, {0xf4080200u, 0xfa000000u, 0xf4080700u, 0xfa000010u, 0xf4080800u, 0xfa000020u, 0x7e200500u, 0x8f108210u, 0xf4200444u, 0x20000000u, 0x8711ff11u, 0x000000ffu, 0x8f128511u, 0xf40c0900u, 0x24000040u, 0xf09c0f08u, 0x01090000u, 0xe0700000u, 0x80070000u, 0xbf810000u}, srtPointer, {{PlanSrtAddress, palette}, {PlanMaterialAddress, {0u, 1u, 0u, 1u, 0u, 0u, 0u, 0u}}});
 
+    add("descriptor phi deferred sampler", 32, {0xf40c0200u, 0xfa000000u, 0xf4000400u, 0xfa000050u, 0xbf8cc07fu, 0xbf068010u, 0xbf850003u, 0xf4080500u, 0xfa000020u, 0xbf820002u, 0xf4080500u, 0x20000000u, 0xf4080600u, 0xfa000040u, 0xbf8cc07fu, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf810000u}, srtPointer, {{PlanSrtAddress, guarded}});
     std::vector<std::uint32_t> nestedSrt(16u, 0u);
     place(nestedSrt, 0u, bufferWords(PlanTableAddress, 16u, 4u));
     place(nestedSrt, 4u, bufferWords(PlanMaterialAddress, 0u, 32u));
@@ -2621,6 +2642,177 @@ void verifyPlanRoundTrip() {
     require(covers([](const IrResourcePlan& plan) { return std::any_of(plan.pureFlatSlots.begin(), plan.pureFlatSlots.end(), [](std::uint8_t pure) { return pure != 0u; }); }), "no fixture plans a pure flat slot");
 }
 
+void verifyPlanBudget() {
+    auto base = planFixtures().front();
+    base.waveSize = 32u;
+    std::vector<PlanFixture> fixtures;
+    for (std::uint32_t index = 0; index < 4u; ++index) {
+        auto fixture = base;
+        fixture.code.insert(fixture.code.begin(), 0xbf800006u + index);
+        fixture.codeAddress += 0x1000u * (index + 1u);
+        fixtures.push_back(std::move(fixture));
+    }
+    const auto planOf = [&](std::size_t index) { return GetResourcePlan(fixtures[index].Request(true)); };
+    SetResourcePlanBudget(1u);
+    SetResourcePlanBudget(0u);
+    std::vector<std::uint64_t> sizes;
+    std::vector<std::vector<std::byte>> encoded;
+    for (std::size_t index = 0; index < fixtures.size(); ++index) {
+        const auto before = ResourcePlanTotals();
+        const auto plan = planOf(index);
+        const auto after = ResourcePlanTotals();
+        require(after.heldPlans == before.heldPlans + 1u && after.heldBytes > before.heldBytes + plan->valueStorage.Size() * sizeof(IrValue), "plan budget: a loaded plan was not accounted with its values");
+        sizes.push_back(after.heldBytes - before.heldBytes);
+        encoded.push_back(encodedPlan(*plan));
+    }
+    ShaderDiskCache::Flush();
+    static_cast<void>(planOf(0));
+    const auto beforeTrim = ResourcePlanTotals();
+    const auto budget = ((beforeTrim.heldBytes - sizes[1] - sizes[2] + std::min(sizes[1], sizes[2]) / 2u) / 3u + 1u) * 4u;
+    SetResourcePlanBudget(budget);
+    const auto afterTrim = ResourcePlanTotals();
+    require(afterTrim.evictions == beforeTrim.evictions + 2u && afterTrim.heldBytes == beforeTrim.heldBytes - sizes[1] - sizes[2] && afterTrim.heldBytes <= budget / 4u * 3u, "plan budget: the trim did not drop exactly the two least recently used plans down to three quarters of the budget");
+    const auto residentDisk = ShaderDiskCache::Totals();
+    static_cast<void>(planOf(3));
+    static_cast<void>(planOf(0));
+    require(ShaderDiskCache::Totals().planHits == residentDisk.planHits && ResourcePlanTotals().reloads == afterTrim.reloads, "plan budget: a recently used plan was evicted");
+    const auto beforeReload = ShaderDiskCache::Totals();
+    const auto reloaded = planOf(1);
+    const auto afterReload = ShaderDiskCache::Totals();
+    require(afterReload.planHits == beforeReload.planHits + 1u && afterReload.planMisses == beforeReload.planMisses && afterReload.planWrites == beforeReload.planWrites, "plan budget: an evicted plan did not reload as a disk cache hit without a new write");
+    require(ResourcePlanTotals().reloads == afterTrim.reloads + 1u && encodedPlan(*reloaded) == encoded[1], "plan budget: the reloaded plan differs from the evicted one");
+    SetResourcePlanBudget(0u);
+    static_cast<void>(planOf(2));
+    static_cast<void>(planOf(3));
+    const auto owned = planOf(0);
+    const auto beforeOwned = ResourcePlanTotals();
+    SetResourcePlanBudget(1u);
+    const auto afterOwned = ResourcePlanTotals();
+    require(afterOwned.evictions >= beforeOwned.evictions + 2u && afterOwned.heldPlans >= 2u, "plan budget: a budget of one byte did not evict the unowned plans or evicted the owned ones");
+    const auto beforeOwnedHits = ShaderDiskCache::Totals().planHits;
+    require(planOf(0) == owned && planOf(1) == reloaded && ShaderDiskCache::Totals().planHits == beforeOwnedHits, "plan budget: a plan with another owner was evicted");
+    SetResourcePlanBudget(0u);
+    auto preparedFixture = base;
+    preparedFixture.code.insert(preparedFixture.code.begin(), 0xbf80000au);
+    preparedFixture.codeAddress += 0x10000u;
+    const auto preparedRequest = preparedFixture.Request(true);
+    const auto preparedHandle = PrepareShader(preparedRequest);
+    auto drawn = preparedRequest;
+    drawn.layout.pushConstantOffsetBytes = 16u;
+    drawn.layout.pushConstantSizeBytes = 112u;
+    const auto invocation = PreparedShaderInvocation::TryCreate(drawn, preparedHandle);
+    require(invocation.has_value(), "plan budget: the prepared artifact refused a relocated push layout");
+    RequestMemoryView drawnMemory(drawn.context.memory);
+    static_cast<void>(invocation->Capture(drawnMemory.MakeRuntime(drawn.context.userData, drawn.shader.codeAddress)));
+    ShaderDiskCache::Flush();
+    const auto beforePreparedTrim = ResourcePlanTotals();
+    SetResourcePlanBudget(1u);
+    require(ResourcePlanTotals().evictions > beforePreparedTrim.evictions, "plan budget: the captured plan of a prepared shader was not evicted");
+    const auto beforePrepared = ShaderDiskCache::Totals();
+    static_cast<void>(invocation->Capture(drawnMemory.MakeRuntime(drawn.context.userData, drawn.shader.codeAddress)));
+    const auto afterPrepared = ShaderDiskCache::Totals();
+    require(afterPrepared.planHits == beforePrepared.planHits + 1u && afterPrepared.planMisses == beforePrepared.planMisses && afterPrepared.planWrites == beforePrepared.planWrites && afterPrepared.misses == beforePrepared.misses && afterPrepared.writes == beforePrepared.writes && ResourcePlanTotals().reloads == beforePreparedTrim.reloads + 1u, "plan budget: a prepared shader's evicted plan did not reload from its own disk cache entry");
+    SetResourcePlanBudget(0u);
+}
+
+void verifySharedPlanBudget() {
+    auto base = planFixtures().front();
+    base.waveSize = 32u;
+    base.codeAddress += 0x30000u;
+    std::vector<PlanFixture> fixtures;
+    for (std::uint32_t index = 0; index < 2u; ++index) {
+        auto fixture = base;
+        fixture.code.insert(fixture.code.begin(), 0xbf800001u + index);
+        fixtures.push_back(std::move(fixture));
+    }
+    const auto planOf = [&](std::size_t index) { return GetResourcePlan(fixtures[index].Request(true)); };
+    SetResourcePlanBudget(0u);
+    const auto encoded = encodedPlan(*planOf(0));
+    require(encodedPlan(*planOf(1)) == encoded, "shared plan budget: the two sources did not build the same plan");
+    ShaderDiskCache::Flush();
+    SetResourcePlanBudget(1u);
+    SetResourcePlanBudget(0u);
+    auto first = planOf(0);
+    auto second = planOf(1);
+    require(first == second, "shared plan budget: the two sources did not receive one shared plan from the disk cache");
+    const auto heldHits = ShaderDiskCache::Totals().planHits;
+    SetResourcePlanBudget(1u);
+    require(planOf(0) == first && planOf(1) == first && ShaderDiskCache::Totals().planHits == heldHits, "shared plan budget: a shared plan that a caller holds was evicted");
+    SetResourcePlanBudget(0u);
+    first.reset();
+    second.reset();
+    const auto beforeTrim = ResourcePlanTotals();
+    SetResourcePlanBudget(1u);
+    const auto afterTrim = ResourcePlanTotals();
+    require(afterTrim.evictions == beforeTrim.evictions + 2u && afterTrim.heldPlans + 2u == beforeTrim.heldPlans, "shared plan budget: a plan shared by two idle sources was not evicted from both");
+    SetResourcePlanBudget(0u);
+    const auto beforeReload = ShaderDiskCache::Totals();
+    const auto reloadedFirst = planOf(0);
+    const auto reloadedSecond = planOf(1);
+    const auto afterReload = ShaderDiskCache::Totals();
+    require(afterReload.planHits == beforeReload.planHits + 2u && afterReload.planMisses == beforeReload.planMisses && afterReload.planWrites == beforeReload.planWrites && ResourcePlanTotals().reloads == afterTrim.reloads + 2u, "shared plan budget: the evicted shared plan did not reload from the disk cache without a miss or a write");
+    require(reloadedFirst == reloadedSecond && encodedPlan(*reloadedFirst) == encoded, "shared plan budget: the reloaded sources do not share the plan they held before");
+}
+
+void verifyQueuedPlanWrite() {
+    auto fixture = planFixtures().front();
+    fixture.waveSize = 32u;
+    fixture.code.insert(fixture.code.begin(), 0xbf800003u);
+    fixture.codeAddress += 0x40000u;
+    SetResourcePlanBudget(0u);
+    ShaderDiskCache::Flush();
+    const auto filler = GetResourcePlan(planFixtures().front().Request(true));
+    constexpr std::uint32_t fillers = 4096u;
+    const auto writesBefore = ShaderDiskCache::Totals().planWrites;
+    for (std::uint32_t index = 0; index < fillers; ++index) ShaderDiskCache::StorePlan(std::vector<std::byte>(16u, std::byte{0x5a}), filler);
+    static_cast<void>(GetResourcePlan(fixture.Request(true)));
+    const auto beforeTrim = ResourcePlanTotals();
+    SetResourcePlanBudget(1u);
+    const auto trimmed = ShaderDiskCache::Totals();
+    require(trimmed.planWrites < writesBefore + fillers + 1u, "queued plan write: the writer emptied its queue before the trim, so the plan's write was not pending");
+    auto held = GetResourcePlan(fixture.Request(true));
+    require(ShaderDiskCache::Totals().planMisses == trimmed.planMisses && ResourcePlanTotals().reloads == beforeTrim.reloads, "queued plan write: a plan whose disk write was still queued was evicted and missed on its next use");
+    SetResourcePlanBudget(0u);
+    held.reset();
+    ShaderDiskCache::Flush();
+    SetResourcePlanBudget(1u);
+    SetResourcePlanBudget(0u);
+    const auto beforeReload = ShaderDiskCache::Totals();
+    static_cast<void>(GetResourcePlan(fixture.Request(true)));
+    const auto afterReload = ShaderDiskCache::Totals();
+    require(afterReload.planHits == beforeReload.planHits + 1u && afterReload.planMisses == beforeReload.planMisses && afterReload.planWrites == beforeReload.planWrites, "queued plan write: the plan evicted after its write finished did not reload as a disk cache hit");
+}
+
+void verifyPlanReport() {
+    auto fixture = planFixtures().front();
+    fixture.waveSize = 32u;
+    fixture.code.insert(fixture.code.begin(), 0xbf800004u);
+    fixture.codeAddress += 0x50000u;
+    SetResourcePlanBudget(0u);
+    static_cast<void>(GetResourcePlan(fixture.Request(true)));
+    ShaderDiskCache::Flush();
+    static_cast<void>(TakeResourcePlanInterval());
+    const auto before = ResourcePlanTotals();
+    ResourcePlanInterval overlapping;
+    std::future<void> next;
+    SetResourcePlanReportHook([&] {
+        SetResourcePlanBudget(1u);
+        SetResourcePlanBudget(0u);
+        static_cast<void>(GetResourcePlan(fixture.Request(true)));
+        next = std::async(std::launch::async, [&] { overlapping = TakeResourcePlanInterval(); });
+        static_cast<void>(next.wait_for(std::chrono::milliseconds(250)));
+    });
+    const auto delayed = TakeResourcePlanInterval();
+    next.get();
+    const auto after = ResourcePlanTotals();
+    const auto evicted = after.evictions - before.evictions;
+    const auto reloaded = after.reloads - before.reloads;
+    require(evicted != 0u && reloaded == 1u, "plan report: the delayed reporter's hook did not evict and reload a plan");
+    require(delayed.evictions <= evicted && overlapping.evictions <= evicted && delayed.evictions + overlapping.evictions == evicted && delayed.reloads <= reloaded && overlapping.reloads <= reloaded && delayed.reloads + overlapping.reloads == reloaded, "plan report: a reporter delayed past the next interval counted it twice or underflowed");
+    const auto later = TakeResourcePlanInterval();
+    require(later.evictions == 0u && later.reloads == 0u, "plan report: the interval after two overlapping reporters is not empty");
+}
+
 void verifyPlanKey() {
     auto fixtures = planFixtures();
     auto& fixture = fixtures[1];
@@ -2792,7 +2984,7 @@ void verifyPlanAcrossProcesses(const char* self) {
     for (std::size_t index = 0; index < outputs.size(); ++index) require(WriteFileAtomically(planOutputPath(index), outputs[index]), "cannot write the first process's output");
     auto refused = fixtures[1];
     refused.codeAddress = 0x200000u;
-    refused.code = {0xf40c0200u, 0xfa000000u, 0xf4000400u, 0xfa000050u, 0xbf8cc07fu, 0xbf068010u, 0xbf850003u, 0xf4080500u, 0xfa000020u, 0xbf820002u, 0xf4080500u, 0x20000000u, 0xf4080600u, 0xfa000040u, 0xbf8cc07fu, 0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf810000u};
+    refused.code = {0xf40c0200u};
     bool threw = false;
     try {
         static_cast<void>(PrepareShader(refused.Request(true)));
@@ -2907,6 +3099,7 @@ int main(int argc, char** argv) {
         verifySharedPlans();
         verifyStore();
         verifyPersist();
+        verifyReleaseMapped();
         verifyAcrossProcesses(argv[0]);
         verifyPrebuiltAcrossProcesses(argv[0], directory);
         verifyPlanAcrossProcesses(argv[0]);
@@ -2918,6 +3111,10 @@ int main(int argc, char** argv) {
         verifyVertexTypeSpecialization();
         verifyBuiltinSpecialization();
         verifySpecializationLiveness();
+        verifyPlanBudget();
+        verifySharedPlanBudget();
+        verifyQueuedPlanWrite();
+        verifyPlanReport();
         ShaderRecompiler::ShaderDiskCache::Flush();
         removeCacheDirectory(directory);
         std::cout << "shader disk cache tests passed\n";
