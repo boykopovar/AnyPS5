@@ -376,6 +376,10 @@ class CheckMappingTests(unittest.TestCase):
         self.assertEqual(run, {'id': 7, 'name': 'build', 'done': True, 'conclusion': 'success'})
         with self.assertRaisesRegex(ValueError, 'check is not an object'):
             pr_ready.check_of([])
+class LatestCheckTests(unittest.TestCase):
+    def test_latest_checks_keeps_the_newest_run_and_drops_bot_checks(self):
+        checks = [{'name': 'a', 'id': 1}, {'name': 'a', 'id': 3}, {'name': 'b', 'id': 2}, {'name': 'labels', 'id': 9}]
+        self.assertEqual(pr_ready.latest_checks(checks), [{'name': 'a', 'id': 3}, {'name': 'b', 'id': 2}])
 
 
 if __name__ == "__main__":
