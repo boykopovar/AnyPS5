@@ -52,6 +52,36 @@ class PerformanceCsvTests(unittest.TestCase):
                 expected = report["metrics_ms"][row["name"]][field]
                 self.assertEqual(None if row[field] == "" else float(row[field]), expected)
 
+    def test_graphics_track_rates_are_not_lost_by_csv_export(self):
+        self.before["graphics_track"] = {"Graphics.RenderPass": 8, "Graphics.RenderPass.Continued": 40,
+                                        "Graphics.Barrier.draw": 80, "Graphics.BarrierMerged.draw": 16,
+                                        "Graphics.Copy": 4, "Graphics.Copy.bytes": 4 * 1024 * 1024}
+        self.after["graphics_track"] = {"Graphics.RenderPass": 12, "Graphics.RenderPass.Continued": 20,
+                                       "Graphics.Barrier.draw": 120, "Graphics.BarrierMerged.draw": 0,
+                                       "Graphics.Copy": 6, "Graphics.Copy.bytes": 2 * 1024 * 1024}
+        rows = {row["name"]: row for row in self.rows(self.run_csv()) if row["kind"] == "graphics"}
+        expected = {"render_passes": [2, 3, 1, 50], "continued_draws": [10, 5, -5, -50],
+                    "barriers": [20, 30, 10, 50], "merged_barriers": [4, 0, -4, -100],
+                    "copies": [1, 1.5, 0.5, 50], "copy_mib": [1, 0.5, -0.5, -50]}
+        self.assertEqual(set(rows), set(expected))
+        for name, values in expected.items():
+            self.assertEqual(rows[name]["unit"], "MiB/present" if name == "copy_mib" else "count/present")
+            self.assertEqual([float(rows[name][key]) for key in ("baseline", "candidate", "change", "change_pct")], values)
+
+    def test_missing_graphics_track_is_empty_while_reported_zero_is_zero(self):
+        self.before.pop("graphics_track", None)
+        self.after["graphics_track"] = {}
+        rows = [row for row in self.rows(self.run_csv()) if row["kind"] == "graphics"]
+        self.assertEqual(len(rows), 6)
+        for row in rows:
+            self.assertEqual((row["baseline"], row["change"], row["change_pct"]), ("", "", ""))
+            self.assertEqual(float(row["candidate"]), 0)
+
+    def test_absent_graphics_tracks_add_no_csv_rows(self):
+        self.before.pop("graphics_track", None)
+        self.after.pop("graphics_track", None)
+        self.assertFalse([row for row in self.rows(self.run_csv()) if row["kind"] == "graphics"])
+
     def test_worker_rows_keep_percentage_points_and_missing_values(self):
         name = 'queue, "worker"\n\u6e2c\u8a66'
         self.before["worker_busy_pct"] = {name: 50, "gone": 10, "idle": 0}

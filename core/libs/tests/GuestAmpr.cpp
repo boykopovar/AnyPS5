@@ -8,6 +8,7 @@
 #include "prx/libkernel/Apr/include/AprCommandBuffer.hpp"
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -151,6 +152,7 @@ void TestRejectedArguments() {
     Require(sceAmprAprCommandBufferConstructor(&recorder.buffer, reinterpret_cast<std::uint64_t*>(0x10), &scatterState) == invalidPointer);
     Require(sceAmprAprCommandBufferConstructor(&recorder.buffer, &gatherState, reinterpret_cast<std::uint64_t*>(0x10)) == invalidPointer);
     Require(sceAmprCommandBufferReset(nullptr) == invalidArgument);
+    Require(sceAmprCommandBufferReset(reinterpret_cast<Apr::CommandBufferObject*>(0x10)) == invalidPointer);
     Require(sceAmprCommandBufferSetBuffer(nullptr, memory.data(), memory.size()) == invalidArgument);
     alignas(8) std::uint64_t target = 0;
     Require(sceAmprCommandBufferWriteAddress_04_00(nullptr, &target, 0x1122334455667788ull, 0) == invalidArgument);
@@ -1710,6 +1712,10 @@ void TestKernelWriteCommands() {
     Require(sceAmprAmmCommandBufferModifyMtypeProtect(&sibling.buffer, target, 2 * page, 5, 0x13, 0x10) == 0);
     Require(std::memcmp(written.data(), sibling.memory.data(), sizeof(Apr::AmmProtectCommand)) == 0);
     Require(sceKernelWriteModifyMtypeProtectCommand(written.data(), target, 2 * page, 5, 0x13, 0x10, nullptr) == 0);
+    constexpr int kernelEfault = static_cast<int>(0x8002000E);
+    errno = 71;
+    Require(sceKernelWriteModifyMtypeProtectCommand(reinterpret_cast<void*>(0x10), target, 2 * page, 5, 0x13, 0x10, &reported) == kernelEfault && errno == 71);
+    Require(sceKernelWriteModifyMtypeProtectCommand(written.data(), target, 2 * page, 5, 0x13, 0x10, reinterpret_cast<std::uint64_t*>(0x10)) == kernelEfault && errno == 71);
     std::uint32_t id = 0;
     Require(sceAmprAmmSubmitCommandBuffer3(written.data(), static_cast<std::uint32_t>(reported), 0, &id) == 0);
     Require(sceAmprAmmWaitCommandBufferCompletion(id) == 0);
@@ -1727,6 +1733,8 @@ void TestKernelWriteCommands() {
     Require(remap.header.opcode == Apr::Opcode::AmmRemapIntoPrt && remap.header.bytes == sizeof(remap));
     Require(remap.address == prt + page && remap.source == source && remap.size == page && remap.protection == cpuReadWrite && remap.reserved == 1011);
     Require(sceKernelWriteRemapIntoPrtCommand(reinterpret_cast<std::uint32_t*>(prtWritten.data()), prt + page, source, page, cpuReadWrite, 42, &prtMeasured) == 0);
+    Require(sceKernelWriteRemapIntoPrtCommand(reinterpret_cast<std::uint32_t*>(0x10), prt + page, source, page, cpuReadWrite, 0, &prtMeasured) == kernelEfault && errno == 71);
+    Require(sceKernelWriteRemapIntoPrtCommand(reinterpret_cast<std::uint32_t*>(prtWritten.data()), prt + page, source, page, cpuReadWrite, 42, reinterpret_cast<std::uint64_t*>(0x10)) == kernelEfault && errno == 71);
     std::memcpy(&remap, prtWritten.data(), sizeof(remap));
     Require(remap.reserved == 42);
     Recorder prtSibling;
@@ -1929,6 +1937,43 @@ void TestConstructNopPayloadIntoBuffer() {
     Require(sceAmprCommandBufferDestructor(&buffer) == 0);
 }
 
+static void TestGuestPointerAndErrnoPreservation() {
+    Require(sceAmprCommandBufferClearBuffer(nullptr) == nullptr);
+    Require(sceAmprCommandBufferGetBufferBaseAddress(nullptr) == nullptr);
+    Require(sceAmprCommandBufferGetCurrentOffset(nullptr) == 0);
+    Require(sceAmprCommandBufferGetNumCommands(nullptr) == 0);
+    Require(sceAmprCommandBufferGetSize(nullptr) == 0);
+    Require(sceAmprCommandBufferGetType(nullptr) == 0);
+
+    Apr::CommandBufferObject buffer{};
+    std::array<std::uint8_t, 512> storage{};
+    const std::uint32_t color = 0x11223344u;
+    AmmUsageStatsData stats{sizeof(AmmUsageStatsData), 0, 0};
+
+    errno = EILSEQ;
+    Require(sceAmprCommandBufferConstructor(&buffer) == 0);
+    Require(errno == EILSEQ);
+    Require(sceAmprCommandBufferSetBuffer(&buffer, storage.data(), static_cast<std::uint32_t>(storage.size())) == 0);
+    Require(errno == EILSEQ);
+    Require(sceAmprCommandBufferGetBufferBaseAddress(&buffer) == storage.data());
+    Require(sceAmprCommandBufferGetSize(&buffer) == storage.size());
+    Require(sceAmprCommandBufferGetCurrentOffset(&buffer) == 0);
+    Require(sceAmprCommandBufferGetNumCommands(&buffer) == 0);
+    Require(sceAmprCommandBufferGetType(&buffer) == static_cast<std::uint32_t>(Apr::BufferType::Generic));
+    Require(errno == EILSEQ);
+    Require(sceAmprCommandBufferSetMarkerWithColor(&buffer, "marker", &color) == 0);
+    Require(errno == EILSEQ);
+    Require(sceAmprCommandBufferConstructMarker(&buffer, 5, "marker2", &color) == 0);
+    Require(errno == EILSEQ);
+    Require(sceAmprCommandBufferGetNumCommands(&buffer) == 2);
+    Require(sceAmprCommandBufferClearBuffer(&buffer) == storage.data());
+    Require(errno == EILSEQ);
+    Require(sceAmprCommandBufferGetBufferBaseAddress(&buffer) == nullptr);
+    Require(sceAmprAmmGetUsageStatsData(&stats) == 0);
+    Require(errno == EILSEQ);
+    Require(sceAmprCommandBufferDestructor(&buffer) == 0);
+}
+
 int main() {
     TestRecording("frame");
     TestRecording("");
@@ -1976,5 +2021,6 @@ int main() {
     TestAmmSubmitAfterGrowth();
     TestExpandedBufferLifecycle();
     TestConstructNopPayloadIntoBuffer();
+    TestGuestPointerAndErrnoPreservation();
     return 0;
 }

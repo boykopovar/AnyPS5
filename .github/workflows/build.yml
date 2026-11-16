@@ -356,7 +356,13 @@ jobs:
       - run: |
           repeat=()
           if [ "$RUNNER_OS" = Windows ]; then repeat=(--repeat after-timeout:2); fi
-          ctest --test-dir build-relinker --output-on-failure --timeout 120 --parallel 4 --no-tests=error "${repeat[@]}"
+          ctest --test-dir build-relinker --output-on-failure --timeout 120 --parallel 4 --no-tests=error "${repeat[@]}" --output-log ctest.log
+      - name: Report tests slower than 30 s
+        if: ${{ !cancelled() }}
+        run: |
+          [ -f ctest.log ] || exit 0
+          awk '/Test +#[0-9]+: / && $NF == "sec" { for (i = 1; i <= NF; i++) if ($i ~ /^#[0-9]+:$/) name = $(i + 1); t = $(NF - 1) + 0; if (t > max[name]) max[name] = t }
+            END { for (name in max) if (max[name] > 30) printf "::warning title=Slow test::%s took %.1f s on %s; tests must finish in 30 s (CONTRIBUTING.md)\n", name, max[name], ENVIRON["RUNNER_OS"] }' ctest.log
 
   relinker-asan:
     needs: eligibility
@@ -828,7 +834,7 @@ jobs:
         if: github.event_name == 'pull_request'
         shell: cmd
         run: python tools/build_mingw_host_only_tests.py build changed.txt
-      - name: Build and run changed guest core/libs tests
+      - name: Build and run changed core/libs tests
         if: github.event_name == 'pull_request'
         shell: cmd
         run: python tools/build_changed_guest_tests.py build changed.txt --output-log ctest.log

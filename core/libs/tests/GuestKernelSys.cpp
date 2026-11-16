@@ -20,6 +20,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <limits>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -573,6 +574,13 @@ void CheckSigreturn() {
     _mm_setcsr(savedMxcsr);
 }
 
+void CheckReboot() {
+    for (const int options : {std::numeric_limits<std::int32_t>::min(), -1, 0, 1, 2, 0x10000, std::numeric_limits<std::int32_t>::max()}) {
+        *__error_nid_postfix() = 73;
+        Require(reboot_nid_postfix(options) == -1 && Error() == 1);
+    }
+}
+
 void CheckSchedSetscheduler() {
     const Pthread self = scePthreadSelf();
     int savedPolicy = 0;
@@ -1083,6 +1091,21 @@ void DirectoryRenameTests(const std::filesystem::path& parent) {
     Require(std::filesystem::remove(original) && std::filesystem::remove(moved) && std::filesystem::remove(fixture));
 }
 
+static void SceKernelFlock() {
+    const auto path = "anyps5-sce-flock-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".bin";
+    const int first = open_nid_postfix(path.c_str(), 0x602, 0644);
+    const int second = open_nid_postfix(path.c_str(), 2, 0);
+    Require(first >= 0 && second >= 0);
+    Require(sceKernelFlock(first, 2 | 4) == 0);
+    Require(sceKernelFlock(second, 2 | 4) == static_cast<int>(0x80020023u));
+    Require(sceKernelFlock(first, 8) == 0);
+    Require(sceKernelFlock(second, 2 | 4) == 0);
+    Require(sceKernelFlock(second, 8) == 0);
+    Require(sceKernelFlock(-1, 2) == static_cast<int>(0x80020009u));
+    Require(close_nid_postfix(second) == 0 && close_nid_postfix(first) == 0);
+    std::filesystem::remove(path);
+}
+
 static void CheckKqueueFromEqueue() {
     KernelEqueue eq = 0;
     Require(sceKernelCreateEqueue(&eq, "kqueue from equeue") == 0);
@@ -1091,6 +1114,9 @@ static void CheckKqueueFromEqueue() {
     const KernelEvent change{9, -11, 0x0001, 0, 0, nullptr};
     Require(kevent_nid_postfix(kq, &change, 1, nullptr, 0, nullptr) == 0);
     Require(sceKernelGetKqueueFromEqueue(eq, nullptr) == static_cast<int>(0x80020016));
+    errno = 71;
+    Require(sceKernelGetKqueueFromEqueue(eq, reinterpret_cast<int*>(0x10)) == static_cast<int>(0x80020016));
+    Require(errno == 71);
     Require(sceKernelDeleteEqueue(eq) == 0);
 }
 
@@ -1391,6 +1417,7 @@ int main() {
     CheckRawGetcwd();
     CheckKqueueFromEqueue();
     Require(setsid_nid_postfix() == -1 && Error() == 1);
+    SceKernelFlock();
     Require(profil_nid_postfix(nullptr, 0, 0, (1u << 16) + 1) == -1 && Error() == 22);
     Require(profil_nid_postfix(nullptr, 0, 0, 0xFFFFFFFFu) == -1 && Error() == 22);
     Require(profil_nid_postfix(reinterpret_cast<void*>(0x10), 4096, 0, 0) == 0);
@@ -1407,6 +1434,7 @@ int main() {
     CheckAmmWrittenWaitsRun();
     CheckAmmMapperCalls();
     CheckAmmWaitConcurrentSubmits();
+    CheckReboot();
     CheckSchedSetscheduler();
     CheckSigreturn();
     CheckKernelEnvironment();
@@ -2222,6 +2250,10 @@ int main() {
     Require(fchown_nid_postfix(-1, 1, 0) == -1 && Error() == 9);
     Require(fchown_nid_postfix(-1, 0, 1) == -1 && Error() == 9);
     Require(fchown_nid_postfix(-1, 1, 1) == -1 && Error() == 9);
+    const int fchownKqueueDescriptor = kqueue_nid_postfix();
+    Require(fchownKqueueDescriptor >= 0);
+    Require(fchown_nid_postfix(fchownKqueueDescriptor, 0, 0) == -1 && Error() == 22);
+    Require(close_nid_postfix(fchownKqueueDescriptor) == 0);
     bool fchownThrew = false;
     try { fchown_nid_postfix(base, 1, 0); } catch (const std::exception&) { fchownThrew = true; }
     Require(fchownThrew);

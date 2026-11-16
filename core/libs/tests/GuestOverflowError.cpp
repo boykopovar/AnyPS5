@@ -4,6 +4,10 @@
 #include <cstdlib>
 #include <cstring>
 #include <typeinfo>
+#ifdef __APPLE__
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
 
 struct TypeRecord { const void* const* vtable; const char* name; const TypeRecord* base; };
 struct Vtable {
@@ -22,6 +26,29 @@ extern const Vtable _ZTVSt14overflow_error_nid_postfix;
 }
 
 static void Require(bool value) { if (!value) std::abort(); }
+
+#ifdef __APPLE__
+static const char* expectedName = nullptr;
+
+static void ExitWithThrownType() {
+    const auto* type = __cxa_current_exception_type_nid_postfix();
+    _exit(type != nullptr && type->name() != nullptr && std::strcmp(type->name(), expectedName) == 0 ? 0 : 1);
+}
+
+static bool TerminateSeesType(void (*call)(), const char* name) {
+    expectedName = name;
+    const pid_t child = fork();
+    Require(child >= 0);
+    if (child == 0) {
+        _ZSt13set_terminatePFvvE_nid_postfix(ExitWithThrownType);
+        call();
+        _exit(2);
+    }
+    int status = 0;
+    Require(waitpid(child, &status, 0) == child);
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+#endif
 
 int main() {
     const auto& type = _ZTISt14overflow_error_nid_postfix;
@@ -63,6 +90,9 @@ int main() {
     Require(std::strcmp(table.what(allocated), "heap overflow") == 0);
     table.deleteObject(allocated);
 
+#ifdef __APPLE__
+    Require(TerminateSeesType([] { LibcThrowOverflowError_nid_no_patch("arith overflow"); }, type.name));
+#else
     const std::type_info* caught = nullptr;
     try {
         LibcThrowOverflowError_nid_no_patch("arith overflow");
@@ -70,5 +100,6 @@ int main() {
         caught = __cxa_current_exception_type_nid_postfix();
     }
     Require(caught != nullptr && caught->name() != nullptr && std::strcmp(caught->name(), type.name) == 0);
+#endif
     return 0;
 }

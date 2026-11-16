@@ -17,6 +17,7 @@ constexpr int ErrorFault = 14;
 constexpr int ErrorInvalid = 22;
 constexpr int ErrorNotTerminal = 25;
 constexpr int ErrorAgain = 35;
+constexpr short PollIn = 0x1;
 
 constexpr std::uint64_t NonblockingRequest = 0x8004667e;
 constexpr std::uint64_t ReadableRequest = 0x4004667f;
@@ -242,6 +243,9 @@ void AuditEmptySocketReadableQuery() {
     const char payload[] = "12345678";
     constexpr std::int64_t payloadSize = 8;
     Require(send_nid_postfix(client, payload, payloadSize, 0) == payloadSize, "send payload failed");
+
+    GuestPollDescriptor arrival{server, PollIn, 0};
+    Require(poll_nid_postfix(&arrival, 1, 5000) == 1, "the payload did not arrive at the server socket");
 
     int queuedBytes = -1;
     Require(ioctl_nid_postfix(server, ReadableRequest, &queuedBytes) == 0 && queuedBytes == payloadSize,

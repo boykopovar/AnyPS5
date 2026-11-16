@@ -3,6 +3,7 @@
 #include "PadSimulation.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <cstdio>
@@ -690,6 +691,87 @@ void testMouseStickTarget() {
     check(stateLeft.sticks[3] == 90, "mouse must preserve right stick Y when targeting left stick");
 }
 
+void testPadChordRequests() {
+    auto configuration = defaults();
+    configuration.bindings.push_back(Pad::InputBinding{SDL_SCANCODE_UNKNOWN, Pad::MouseButton::None, Pad::InputControl::Screenshot, Pad::PadButton::None, 0, 0,
+        static_cast<std::uint32_t>(Pad::PadButton::Options) | static_cast<std::uint32_t>(Pad::PadButton::R1)});
+    Pad::KeyboardMouse keyboardMouse(configuration);
+    const auto options = static_cast<std::uint32_t>(Pad::PadButton::Options);
+    const auto r1 = static_cast<std::uint32_t>(Pad::PadButton::R1);
+    check(!keyboardMouse.PadChordRequests(options).screenshot, "one button of a chord does not fire it");
+    check(keyboardMouse.PadChordRequests(options | r1).screenshot, "the full chord fires once it is held");
+    check(!keyboardMouse.PadChordRequests(options | r1).screenshot, "a held chord does not fire again");
+    check(!keyboardMouse.PadChordRequests(0).screenshot, "releasing the chord does not fire");
+    check(keyboardMouse.PadChordRequests(options | r1 | static_cast<std::uint32_t>(Pad::PadButton::Cross)).screenshot, "extra buttons do not block a chord");
+}
+
+}
+
+void testMouseTouchpad() {
+    Pad::KeyboardMouse keyboard(defaults());
+    keyboard.SetViewport(960, 540);
+    const PadInputState idle{};
+    auto press = [&](int x, int y, Uint8 button, Uint32 type, std::chrono::steady_clock::time_point now) {
+        SDL_Event event{};
+        event.type = type;
+        event.button.button = button;
+        event.button.x = x;
+        event.button.y = y;
+        keyboard.HandleEvent(event, now);
+    };
+    auto move = [&](int x, int y, std::chrono::steady_clock::time_point now) {
+        SDL_Event event{};
+        event.type = SDL_MOUSEMOTION;
+        event.motion.x = x;
+        event.motion.y = y;
+        keyboard.HandleEvent(event, now);
+    };
+    const auto now = std::chrono::steady_clock::now();
+    keyboard.SetMouseTouchpad(false);
+    press(480, 270, SDL_BUTTON_LEFT, SDL_MOUSEBUTTONDOWN, now);
+    check(!keyboard.Compose(idle).touch[0].active, "the mouse does not touch the pad unless the touchpad option is on");
+    press(480, 270, SDL_BUTTON_LEFT, SDL_MOUSEBUTTONUP, now);
+    keyboard.SetMouseTouchpad(true);
+    press(480, 270, SDL_BUTTON_LEFT, SDL_MOUSEBUTTONDOWN, now);
+    const auto pressed = keyboard.Compose(idle).touch[0];
+    check(pressed.active && pressed.x == 960 && pressed.y == 540, "a left press at the middle of a 960x540 window touches the middle of the pad");
+    move(0, 0, now);
+    const auto dragged = keyboard.Compose(idle).touch[0];
+    check(dragged.active && dragged.x == 0 && dragged.y == 0, "a drag moves the touch point with the cursor");
+    press(5000, -10, SDL_BUTTON_LEFT, SDL_MOUSEBUTTONDOWN, now);
+    const auto clamped = keyboard.Compose(idle).touch[0];
+    check(clamped.active && clamped.x == 1918 && clamped.y == 0, "a press outside the window is clamped to the pad edge");
+    press(5000, -10, SDL_BUTTON_LEFT, SDL_MOUSEBUTTONUP, now);
+    check(!keyboard.Compose(idle).touch[0].active, "releasing the left button lifts the touch point");
+    press(480, 270, SDL_BUTTON_LEFT, SDL_MOUSEBUTTONDOWN, now);
+    SDL_Event lost{};
+    lost.type = SDL_WINDOWEVENT;
+    lost.window.event = SDL_WINDOWEVENT_FOCUS_LOST;
+    keyboard.HandleEvent(lost, now);
+    check(!keyboard.Compose(idle).touch[0].active, "losing the window focus lifts a touch point the mouse holds");
+}
+
+void testMouseGyro() {
+    Pad::KeyboardMouse keyboard(defaults());
+    const auto start = std::chrono::steady_clock::now();
+    const auto near = [](double value, double expected) { return std::abs(value - expected) < 1e-4; };
+    keyboard.SetMouseGyro(true);
+    keyboard.SetMouseMode(true);
+    keyboard.Advance(start);
+    SDL_Event motion{};
+    motion.type = SDL_MOUSEMOTION;
+    motion.motion.xrel = 10;
+    motion.motion.yrel = -5;
+    keyboard.HandleEvent(motion, start);
+    keyboard.Advance(start + std::chrono::milliseconds(10));
+    const auto moving = keyboard.Compose(PadInputState{});
+    check(moving.hasMotion && near(moving.gyro[2], 1.0) && near(moving.gyro[1], -0.5), "a mouse drag in mouse mode turns the gyro by counts per second");
+    keyboard.Advance(start + std::chrono::milliseconds(20));
+    check(!keyboard.Compose(PadInputState{}).hasMotion, "a still mouse leaves the gyro idle");
+    keyboard.SetMouseGyro(false);
+    keyboard.HandleEvent(motion, start);
+    keyboard.Advance(start + std::chrono::milliseconds(30));
+    check(!keyboard.Compose(PadInputState{}).hasMotion, "the gyro option off leaves the mouse off the gyro");
 }
 
 int main() {
@@ -705,6 +787,8 @@ int main() {
             {"report rate smoothing", testReportRateSmoothing},
             {"poll rate independence", testPollRateIndependence},
             {"vertical scale", testVerticalScale},
+            {"mouse touchpad", testMouseTouchpad},
+            {"mouse gyro", testMouseGyro},
             {"mouse mode off", testMouseModeOff},
             {"keyboard sticks unchanged", testKeyboardSticksUnchanged},
             {"stick modifier", testStickModifier},
@@ -726,7 +810,8 @@ int main() {
             {"ToggleMute default key", testToggleMuteDefaultKey},
             {"default L2", testDefaultL2},
             {"title reads the mouse", testTitleReadsMouse},
-            {"mouse stick target", testMouseStickTarget}
+            {"mouse stick target", testMouseStickTarget},
+            {"pad chord requests", testPadChordRequests}
         };
         for (const auto& [name, test] : tests) {
             test();
