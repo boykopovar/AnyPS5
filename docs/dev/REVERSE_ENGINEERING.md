@@ -149,3 +149,4 @@ debt entry, never in code or test names.
 
 - `tools/export_gap.py --module <name> --export-table <file> --nids <file> --db <nid-db>` lists the console exports an AnyPS5 library does not provide.
 - `tools/stubgen.py --module <name> --nids <file> --db <nid-db> --out <dir>` writes an `Export.cpp` skeleton and the matching technical-debt lines for the exports it is given.
+- `tools/audit_nid_names.py <database>` audits the hash consistency of a local NID/name database with the stub generator's first-record policy.
