@@ -279,6 +279,48 @@ int main() {
     parameter[0] = 0x21;
     Require(sceVrTracker2QueryMemory(reinterpret_cast<const VrTracker2MemoryParameter*>(parameter.data()), reinterpret_cast<VrTracker2MemoryRequirement*>(requirement.data())) == InvalidArgument, "query size");
 
+    {
+        std::array<std::uint8_t, 32> diagnostic{};
+        diagnostic.fill(0xAA);
+        Require(VrTracker2GetDiagnosticResult(reinterpret_cast<VrTracker2DiagnosticResult*>(diagnostic.data())) == NotInitialized, "diagnostic result return");
+        Require(AllEqual(diagnostic.data(), diagnostic.data() + diagnostic.size(), 0xAA), "diagnostic result untouched");
+        Require(VrTracker2GetDiagnosticResult(nullptr) == NotInitialized, "diagnostic result null");
+
+        std::array<std::uint8_t, 32> extended{};
+        extended.fill(0xAA);
+        Require(VrTracker2GetExtendedResult(reinterpret_cast<VrTracker2ExtendedResult*>(extended.data())) == NotInitialized, "extended result return");
+        Require(AllEqual(extended.data(), extended.data() + extended.size(), 0xAA), "extended result untouched");
+        Require(VrTracker2GetExtendedResult(nullptr) == NotInitialized, "extended result null");
+
+        std::array<std::uint8_t, 16> counter{};
+        counter.fill(0xAA);
+        for (const std::uint32_t selector : {0u, 1u, 0xffffffffu}) {
+            Require(VrTracker2GetCounter(reinterpret_cast<std::uint64_t*>(counter.data()), selector) == NotInitialized, "get counter return");
+            Require(AllEqual(counter.data(), counter.data() + counter.size(), 0xAA), "get counter untouched");
+        }
+        Require(VrTracker2GetCounter(nullptr, 0u) == NotInitialized, "get counter null");
+
+        std::array<std::uint8_t, sizeof(VrTracker2DiagnosticText)> text{};
+        text.fill(0xAA);
+        Require(VrTracker2GetDiagnosticText(reinterpret_cast<VrTracker2DiagnosticText*>(text.data())) == NotInitialized, "diagnostic text return");
+        Require(AllEqual(text.data(), text.data() + text.size(), 0xAA), "diagnostic text untouched");
+        Require(VrTracker2GetDiagnosticText(nullptr) == NotInitialized, "diagnostic text null");
+
+        std::array<std::uint8_t, 32> coordinate{};
+        coordinate.fill(0xAA);
+        Require(VrTracker2UnsupportedCoordinateOperation(reinterpret_cast<const VrTracker2UnsupportedCoordinateParameter*>(coordinate.data())) == NotInitialized, "unsupported coordinate return");
+        Require(AllEqual(coordinate.data(), coordinate.data() + coordinate.size(), 0xAA), "unsupported coordinate untouched");
+        Require(VrTracker2UnsupportedCoordinateOperation(nullptr) == NotInitialized, "unsupported coordinate null");
+
+        std::array<std::uint8_t, 40> frame{};
+        frame.fill(0xAA);
+        for (const std::uint32_t selector : {0u, 1u}) {
+            Require(VrTracker2AcquireCameraFrame(selector, reinterpret_cast<VrTracker2CameraFrame*>(frame.data())) == NotInitialized, "acquire camera frame return");
+            Require(AllEqual(frame.data(), frame.data() + frame.size(), 0xAA), "acquire camera frame untouched");
+        }
+        Require(VrTracker2AcquireCameraFrame(0u, nullptr) == NotInitialized, "acquire camera frame null");
+    }
+
     auto rawMeshReq = Filled();
     Require(sceVrTracker2GetRawCameraMeshSize(nullptr, 0) == NotInitialized, "raw camera mesh size null");
     Require(sceVrTracker2GetRawCameraMeshSize(reinterpret_cast<VrTracker2MeshRequirement*>(rawMeshReq.data()), 0) == NotInitialized, "raw camera mesh size return");
