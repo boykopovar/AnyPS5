@@ -59,5 +59,12 @@ class DebtLabelTests(unittest.TestCase):
         self.assertEqual(status, 0)
 
 
+class ListedTests(unittest.TestCase):
+    def test_listed_accepts_the_exact_path_and_a_same_library_mention(self):
+        debt = [("sceFoo entry", [(0, "core/libs/prx/libA/x.cpp")])]
+        self.assertTrue(check_conventions.listed(debt, "sceFoo", "core/libs/prx/libA/x.cpp"))
+        self.assertTrue(check_conventions.listed(debt, "sceFoo", "core/libs/prx/libA/y.cpp"))
+
+
 if __name__ == "__main__":
     unittest.main()
