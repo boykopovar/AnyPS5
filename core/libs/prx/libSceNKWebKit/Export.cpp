@@ -75,10 +75,6 @@ int APS5_VABI _ZN7WebCore11JSDOMWindow15setOpenDatabaseERN3JSC14JSGlobalObjectEN
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK7WebCore30InvertLightnessFilterOperation21inverseTransformColorERNS_5SRGBAIfEE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore11DisplayList8FillPathD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -524,10 +520,6 @@ int APS5_VABI _ZN7WebCore8Settings25setMinimumLogicalFontSizeEi() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore22DefaultFilterOperation6createENS_15FilterOperation13OperationTypeE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore12EventHandler12selectCursorERKNS_13HitTestResultEb() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -541,10 +533,6 @@ int APS5_VABI _ZNK7WebCore11MediaSample8hasAlphaEv() {
 }
 
 int APS5_VABI _ZN7WebCore20HTMLFrameElementBase6heightEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore30InvertLightnessFilterOperation5blendEPKNS_15FilterOperationEdb() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -6514,10 +6502,6 @@ int APS5_VABI _ZNK7WebCore18ImageBufferBackend10toBGRADataEPv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore22DefaultFilterOperationC2ENS_15FilterOperation13OperationTypeE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore10Pasteboard4readERNS_20PasteboardFileReaderEN3WTF8OptionalImEE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -7059,10 +7043,6 @@ int APS5_VABI _ZN7WebCore9FrameView18setViewExposedRectEN3WTF8OptionalINS_9Float
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZNK7WebCore30InvertLightnessFilterOperation14transformColorERNS_5SRGBAIfEE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKCookieManagerSetCookieForHostname() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -7333,10 +7313,6 @@ int APS5_VABI _ZN7WebCore11DisplayList12PutImageDataD1Ev() {
 }
 
 int APS5_VABI _ZN7WebCore12SharedBufferC2EON3WTF6VectorIcLm0ENS1_15CrashOnOverflowELm16ENS1_10FastMallocEEE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7WebCore22DefaultFilterOperationC1ENS_15FilterOperation13OperationTypeE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
