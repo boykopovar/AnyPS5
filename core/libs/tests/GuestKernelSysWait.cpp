@@ -85,6 +85,8 @@ int main(int argc, char** argv) {
             int expected = (options & ~0x8000003fu) ? 22 : 10;
 #ifdef __linux__
             if ((options & ~0x8000003fu) == 0 && test != "wait3" && pid == std::numeric_limits<int>::min()) expected = 3;
+#elif defined(__APPLE__)
+            if ((options & ~0x8000003fu) == 0 && test != "wait3" && pid == std::numeric_limits<int>::min()) expected = 22;
 #endif
             if (result != -1 || *error() != expected)
                 std::fprintf(stderr, "pid=%d options=%u result=%d errno=%d expected=%d\n", pid, options, result, *error(), expected);
