@@ -42,7 +42,7 @@ namespace AgcDriver::Graphics {
         info.addressModeU = descriptor.addressModeU;
         info.addressModeV = descriptor.addressModeV;
         info.addressModeW = descriptor.addressModeW;
-        info.mipLodBias = ShaderAppliesLodBias(descriptor) ? 0.0f : descriptor.lodBias;
+        info.mipLodBias = ShaderAppliesLodBias(descriptor) || !context.samplerLodBias ? 0.0f : descriptor.lodBias;
         info.anisotropyEnable = descriptor.anisotropyEnable ? VK_TRUE : VK_FALSE;
         info.maxAnisotropy = descriptor.maxAnisotropy;
         info.compareEnable = descriptor.compareEnable ? VK_TRUE : VK_FALSE;

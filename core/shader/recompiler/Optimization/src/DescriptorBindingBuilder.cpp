@@ -437,7 +437,7 @@ BufferSubstitute BufferSpecializationFields(const DescriptorValue& descriptor, s
     return {descriptor.dwords[1] & 0xffff0000u, descriptor.dwords[3], present ? descriptor.dwords[0] & 3u : 0u, present ? tail : 0u, present};
 }
 
-DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& layout, const ShaderInfo& info, IrShaderStage stage, const ResourceSnapshot& snapshot, std::span<const std::uint8_t> exportMappings, bool registrationModules, bool fragmentDescriptorSet, std::span<const BufferSubstitute> substitutes, bool shaderImageMinLod) const {
+DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& layout, const ShaderInfo& info, IrShaderStage stage, const ResourceSnapshot& snapshot, std::span<const std::uint8_t> exportMappings, bool registrationModules, bool fragmentDescriptorSet, std::span<const BufferSubstitute> substitutes, bool shaderImageMinLod, bool samplerLodBias) const {
     if (stage == IrShaderStage::Pixel && exportMappings.size() != 8u) fail("fragment runtime export mappings are missing");
     if (info.images.size() > ShaderInfo::MaxImages) fail("runtime image count exceeds the static capacity (" + std::to_string(info.images.size()) + " of " + std::to_string(ShaderInfo::MaxImages) + ")");
     DescriptorBindingPlan plan;
@@ -453,7 +453,10 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
         for (const auto& pair : info.sampledPairs) {
             if (beyondThreshold && pair.sampler == index && info.images.at(pair.image).cube) fail("a guest sampler LOD bias beyond the sampler limit on a cube image is not implemented");
         }
-        if (AppliesLodBiasInShader(info.samplers[index])) plan.specialization.push_back({PipelineSpecialization::SamplerLodBiasBase + index, beyondThreshold ? std::bit_cast<std::uint32_t>(bias) : 0u});
+        const bool cubeSampled = std::ranges::any_of(info.sampledPairs, [&](const auto& pair) { return pair.sampler == index && info.images.at(pair.image).cube; });
+        const bool shaderCanApply = AppliesLodBiasInShader(info.samplers[index]) && (info.samplers[index].uses & (SamplerUseQueryLod | SamplerUseAdjust)) == 0u && !cubeSampled;
+        const bool samplerDropsBias = !samplerLodBias && bias != 0.0f && shaderCanApply;
+        if (AppliesLodBiasInShader(info.samplers[index])) plan.specialization.push_back({PipelineSpecialization::SamplerLodBiasBase + index, beyondThreshold || samplerDropsBias ? std::bit_cast<std::uint32_t>(bias) : 0u});
     }
     std::vector<std::uint32_t> compareStates(info.images.size());
     for (std::uint32_t index = 0; index < info.images.size(); ++index) {

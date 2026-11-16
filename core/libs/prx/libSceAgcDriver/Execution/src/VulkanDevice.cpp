@@ -627,6 +627,7 @@ struct VulkanDevice::State {
     bool imageViewMinLod = false;
     bool shaderResourceMinLod = false;
     bool shaderImageMinLod = false;
+    bool samplerLodBias = true;
     bool pipelineExecutableInfo = false;
     bool maintenance8 = false;
     bool pushDescriptors = false;
@@ -2023,6 +2024,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &portabilityFeatures};
         state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(selected, &features);
         deviceExtensions.push_back(VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME);
+        state->samplerLodBias = portabilityFeatures.samplerMipLodBias == VK_TRUE;
     }
     nonSeamlessCubeFeatures.nonSeamlessCubeMap = VK_TRUE;
     VkPhysicalDeviceCoverageReductionModeFeaturesNV coverageReductionFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COVERAGE_REDUCTION_MODE_FEATURES_NV};
@@ -4719,6 +4721,7 @@ ShaderRecompiler::SpirvTarget VulkanDevice::buildTarget() const {
     target.fragmentBarycentricBuiltins = state->fragmentBarycentricBuiltins;
     target.nonConstantImageOffsets = state->maintenance8;
     target.shaderImageMinLod = state->shaderImageMinLod;
+    target.samplerLodBias = state->samplerLodBias;
     target.narrowSubgroupClock = state->narrowSubgroupClock;
     target.float64DenormPreserve = state->float64DenormPreserve;
     target.float16DenormPreserve = state->float16DenormPreserve;
@@ -4918,6 +4921,7 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.imageViewMinLod = state->imageViewMinLod;
     context.shaderResourceMinLod = state->shaderResourceMinLod;
     context.shaderImageMinLod = state->shaderImageMinLod;
+    context.samplerLodBias = state->samplerLodBias;
     context.pipelineExecutableInfo = state->pipelineExecutableInfo;
     context.maintenance8 = state->maintenance8;
     context.pushDescriptors = state->pushDescriptors;
