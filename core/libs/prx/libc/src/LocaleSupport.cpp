@@ -648,6 +648,10 @@ int ConvertCharacter(int value, bool upper) {
 
 }
 
+extern "C" GuestLocale::OutputIterator LibcTimePutDoPut_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const GuestTm* time, char format, char modifier) {
+    return TimePutDoPut(self, out, stream, fill, time, format, modifier);
+}
+
 extern "C" GuestLocale::String* LibcAssignCString_nid_no_patch(GuestLocale::String* result, const char* source) {
     return AssignCString(result, source);
 }
