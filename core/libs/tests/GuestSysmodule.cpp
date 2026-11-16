@@ -4,6 +4,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceSysmodule/ModuleTable.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -121,6 +122,9 @@ void CheckUnwindInfo() {
     }
     Require(threw);
     Require(ThrowsRuntimeError([] { sceSysmoduleGetModuleInfoForUnwind(reinterpret_cast<std::uint64_t>(&sceSysmoduleGetModuleInfoForUnwind), 0, nullptr); }));
+    errno = 71;
+    Require(ThrowsRuntimeError([] { sceSysmoduleGetModuleInfoForUnwind(reinterpret_cast<std::uint64_t>(&sceSysmoduleGetModuleInfoForUnwind), 0, reinterpret_cast<ModuleInfoForUnwind*>(0x10)); }));
+    Require(errno == 71);
 }
 #endif
 
@@ -213,6 +217,11 @@ void CheckUnwindInfo() {
     RequireUnwindMatchesRegion(memory + 2 * page);
     Require(VirtualFree(memory, 0, MEM_RELEASE) != 0);
     RequireUnwindMatchesRegion(memory);
+    errno = 71;
+    Require(ThrowsRuntimeError([] { sceSysmoduleGetModuleInfoForUnwind(reinterpret_cast<std::uint64_t>(&sceSysmoduleGetModuleInfoForUnwind), 0, nullptr); }));
+    Require(errno == 71);
+    Require(ThrowsRuntimeError([] { sceSysmoduleGetModuleInfoForUnwind(reinterpret_cast<std::uint64_t>(&sceSysmoduleGetModuleInfoForUnwind), 0, reinterpret_cast<ModuleInfoForUnwind*>(0x10)); }));
+    Require(errno == 71);
 }
 #elif defined(__APPLE__)
 void RequireUnwindMatchesRegion(const void* pointer, const char* nameEnd) {
@@ -249,7 +258,7 @@ void CheckUnwindInfo() {
     Require(anonymous != MAP_FAILED);
     RequireUnwindMatchesRegion(anonymous, nullptr);
     Require(munmap(anonymous, page) == 0);
-    void* gap = mmap(nullptr, page, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    void* gap = mmap(reinterpret_cast<void*>(std::uintptr_t{0x400000000000}), page, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     Require(gap != MAP_FAILED && munmap(gap, page) == 0);
     ModuleInfoForUnwind info{};
     bool threw = false;
@@ -259,6 +268,11 @@ void CheckUnwindInfo() {
         threw = true;
     }
     Require(threw);
+    errno = 71;
+    Require(ThrowsRuntimeError([] { sceSysmoduleGetModuleInfoForUnwind(reinterpret_cast<std::uint64_t>(&sceSysmoduleGetModuleInfoForUnwind), 0, nullptr); }));
+    Require(errno == 71);
+    Require(ThrowsRuntimeError([] { sceSysmoduleGetModuleInfoForUnwind(reinterpret_cast<std::uint64_t>(&sceSysmoduleGetModuleInfoForUnwind), 0, reinterpret_cast<ModuleInfoForUnwind*>(0x10)); }));
+    Require(errno == 71);
 }
 #endif
 

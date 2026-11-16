@@ -225,6 +225,7 @@ void TestQueries() {
     constexpr int GuestEinval = 22;
     constexpr int GuestEnoent = 2;
     constexpr int GuestEfault = 14;
+    constexpr int GuestEnotsup = 45;
     const char* names[] = {"generated.bin", "missing.bin"};
     std::array<std::uint32_t, 2> ids{0, 0};
     std::array<std::uint64_t, 2> sizes{1, 1};
@@ -236,12 +237,34 @@ void TestQueries() {
     sizes = {1, 1};
     Require(sceKernelAprResolveFilepathsWithPrefixToIdsAndFileSizes("apr_read_", names, 2, ids.data(), sizes.data(), &failed) == -1 && *__error_nid_postfix() == GuestEnoent, "APR resolved a missing prefixed path");
     Require(failed == 1 && ids[0] == id && sizes[0] == FileBytes && ids[1] == 0xFFFFFFFFu && sizes[1] == 0, "APR did not mark only the missing prefixed path");
+    Require(sceKernelAprResolveFilepathsWithPrefixToIdsAndFileSizes("apr_read_", names, 1, reinterpret_cast<std::uint32_t*>(0x10), sizes.data(), &failed) == -1 && *__error_nid_postfix() == GuestEfault, "APR accepted an unwritable prefixed id array");
+    Require(sceKernelAprResolveFilepathsWithPrefixToIdsAndFileSizes("apr_read_", names, 1, ids.data(), reinterpret_cast<std::uint64_t*>(0x10), &failed) == -1 && *__error_nid_postfix() == GuestEfault, "APR accepted an unwritable prefixed size array");
+    Require(sceKernelAprResolveFilepathsWithPrefixToIdsAndFileSizes("apr_read_", names, 2, ids.data(), sizes.data(), reinterpret_cast<std::uint32_t*>(0x10)) == -1 && *__error_nid_postfix() == GuestEfault, "APR accepted an unwritable prefixed error index");
+    const char* paths[] = {"apr_read_generated.bin", "apr_read_missing.bin"};
+    ids = {0, 0};
+    sizes = {1, 1};
+    failed = 7;
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(paths, 2, ids.data(), sizes.data(), &failed) == -1 && *__error_nid_postfix() == GuestEnoent, "APR resolved a missing path");
+    Require(failed == 1 && ids[0] == id && sizes[0] == FileBytes && ids[1] == 0xFFFFFFFFu && sizes[1] == 0, "APR did not mark only the missing path");
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(paths, 1, reinterpret_cast<std::uint32_t*>(0x10), sizes.data(), &failed) == -1 && *__error_nid_postfix() == GuestEfault, "APR accepted an unwritable id array");
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(paths, 1, ids.data(), reinterpret_cast<std::uint64_t*>(0x10), &failed) == -1 && *__error_nid_postfix() == GuestEfault, "APR accepted an unwritable size array");
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(paths, 2, ids.data(), sizes.data(), reinterpret_cast<std::uint32_t*>(0x10)) == -1 && *__error_nid_postfix() == GuestEfault, "APR accepted an unwritable error index");
     std::uint64_t size = 0;
     Require(sceKernelAprGetFileSize(id, nullptr) == -1 && *__error_nid_postfix() == GuestEinval, "APR accepted a null file size");
     Require(sceKernelAprGetFileSize(id, &size) == 0 && size == FileBytes, "APR reported a wrong file size");
     FileStat stat{};
     Require(sceKernelAprGetFileStat(id, nullptr) == -1 && *__error_nid_postfix() == GuestEinval, "APR accepted a null file stat");
     Require(sceKernelAprGetFileStat(id, &stat) == 0 && stat.st_size == static_cast<std::int64_t>(FileBytes), "APR reported a wrong file stat size");
+    for (const std::uint32_t badId : {0xFFFFFFFFu, 0x7FFFFFFFu}) {
+        *__error_nid_postfix() = 0;
+        Require(sceKernelAprGetFileSize(badId, &size) == -1 && *__error_nid_postfix() == GuestEnotsup, "APR accepted an unknown file id for the size");
+        *__error_nid_postfix() = 0;
+        Require(sceKernelAprGetFileSize(badId, nullptr) == -1 && *__error_nid_postfix() == GuestEnotsup, "APR did not fail an unknown file id first for the size");
+        *__error_nid_postfix() = 0;
+        Require(sceKernelAprGetFileStat(badId, &stat) == -1 && *__error_nid_postfix() == GuestEnotsup, "APR accepted an unknown file id for the stat");
+        *__error_nid_postfix() = 0;
+        Require(sceKernelAprGetFileStat(badId, nullptr) == -1 && *__error_nid_postfix() == GuestEnotsup, "APR did not fail an unknown file id first for the stat");
+    }
     for (const bool readable : {true, false}) {
 #ifdef _WIN32
         void* page = VirtualAlloc(nullptr, 4096, MEM_COMMIT | MEM_RESERVE, readable ? PAGE_READONLY : PAGE_NOACCESS);

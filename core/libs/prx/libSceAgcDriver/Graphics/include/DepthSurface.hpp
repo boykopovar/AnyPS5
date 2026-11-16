@@ -37,6 +37,9 @@ std::uint64_t DepthSurfacesReleased();
 std::uint64_t DepthSliceBytes(VkExtent2D extent, std::uint32_t bytesPerTexel);
 bool DirectDepthCopy(const Context& context, VkFormat depthFormat, VkImageAspectFlagBits aspect, VkFormat colorFormat);
 void SetDirectDepthCopy(bool enabled);
+bool DepthUploadImage(const Context& context);
+void SetDepthUploadImage(bool enabled);
+std::uint64_t DepthUploadCount();
 std::uint64_t DirectDepthCopyCount();
 void SetDepthTransferPasses(bool enabled);
 std::uint64_t DepthTransferPassCount();
@@ -111,7 +114,7 @@ struct DepthExpandStatistics {
     std::uint64_t stored = 0;
 };
 DepthExpandStatistics DepthExpandCounts();
-std::array<std::uint32_t, 8> DepthCopySourceWords(const DepthTarget& target);
+std::array<std::uint32_t, 8> DepthCopySourceWords(const DepthTarget& target, bool stencil = false);
 class DepthCopySourceScope {
 public:
     explicit DepthCopySourceScope(bool active);

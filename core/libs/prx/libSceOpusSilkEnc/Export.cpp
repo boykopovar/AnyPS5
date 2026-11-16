@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceOpusCeltEnc/include/OpusEncoder.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
@@ -65,7 +66,10 @@ int encoderError(std::uint32_t offset) {
 
 std::uint32_t guestStateWord(const void* state, std::size_t offset) {
     std::uint32_t word = 0;
-    if (!GuestCopyIn_nid_no_patch(&word, static_cast<const std::uint8_t*>(state) + offset, sizeof word)) throw std::runtime_error("OpusSilkEnc: unreadable state");
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&word, static_cast<const std::uint8_t*>(state) + offset, sizeof word);
+    errno = savedErrno;
+    if (!copied) throw std::runtime_error("OpusSilkEnc: unreadable state");
     return word;
 }
 
@@ -179,7 +183,15 @@ int APS5_VABI sceOpusSilkEncEncodeFloatWithPriorityAndTimeout(OpusSilkEncoder* s
 int APS5_VABI sceOpusSilkEncGetAjmContext(const OpusSilkEncoder* state, std::uint32_t* context) {
     if (state == nullptr) return encoderError(codes.nullErrorOffset);
     if (context == nullptr) return 0;
-    NotImplemented_nid_no_patch(__func__);
+    std::uint32_t value = 0;
+    const int savedErrno = errno;
+    const bool readable = GuestCopyIn_nid_no_patch(&value, reinterpret_cast<const std::uint8_t*>(state) + 0xF0, sizeof(value));
+    errno = savedErrno;
+    if (!readable) throw std::runtime_error("OpusSilkEnc: unreadable AJM context");
+    const bool writable = GuestCopyOut_nid_no_patch(context, &value, sizeof(value));
+    errno = savedErrno;
+    if (!writable) throw std::runtime_error("OpusSilkEnc: unwritable AJM context");
+    return 0;
 }
 
 } // extern "C"

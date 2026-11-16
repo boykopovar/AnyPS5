@@ -98,6 +98,15 @@ GRID_COLUMNS, GRID_ROW = 12, 28
 DONE_COLOR, TODO_COLOR, BORDER, TEXT = "#2ea043", "#6e7681", "#0d1117", "#ffffff"
 
 
+def unique_json_keys(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key {key!r}")
+        result[key] = value
+    return result
+
+
 def blank(match):
     if match.group("code") is not None:
         return match.group()
@@ -298,7 +307,10 @@ def collect_shaders():
             name, encoding = parts
             isa[name] = encoding
     by_camel = {camel(name): name for name in isa}
-    enum = re.search(r"enum class RdnaOpcode[^{]*\{(.*?)\};", OPCODES.read_text(encoding="utf-8", errors="ignore"), re.S).group(1)
+    enum = re.search(r"enum class RdnaOpcode[^{]*\{(.*?)\};", OPCODES.read_text(encoding="utf-8", errors="ignore"), re.S)
+    if not enum:
+        raise ValueError(f"{OPCODES} has no enum class RdnaOpcode")
+    enum = enum.group(1)
     opcodes = [o for o in re.findall(r"^\s*([A-Z]\w*)\s*[,=]", enum, re.M) if o not in OPCODE_SENTINELS]
     supported, extra = set(), []
     for opcode in opcodes:
@@ -791,7 +803,8 @@ def compare(title, column, unit, base, head):
     icon = "📈" if (exact or delta) > 0 else "📉" if (exact or delta) < 0 else "➖"
     counts = [f"{n:+} {label}" for n, label in ((len(implemented), "implemented"), (len(declared), "declared"),
                                                 (-len(regressed), "reverted"), (-len(removed), "removed")) if n]
-    changes = f', {", ".join(counts)} {unit}' if counts else ""
+    unit = unit[:-1] if len(implemented) + len(declared) + len(regressed) + len(removed) == 1 else unit
+    changes =f', {", ".join(counts)} {unit}' if counts else ""
     lines = [f'{icon} **{title}**: {head["percent"]}% ({shown}%{changes})', ""]
     lines += details("✅", "implemented", column, implemented)
     lines += details("⚪", "behaviourally empty (constant return or throw)", column, inert)
@@ -1060,7 +1073,7 @@ def main(argv=None):
             snapshots = []
             for path in args.compare:
                 try:
-                    snapshots.append(json.loads(path.read_text(encoding="utf-8-sig")))
+                    snapshots.append(json.loads(path.read_text(encoding="utf-8-sig"), object_pairs_hook=unique_json_keys))
                 except (OSError, ValueError, RecursionError) as error:
                     parser.error(f"{path}: {error}")
             for path, snapshot in zip(args.compare, snapshots):
@@ -1087,7 +1100,7 @@ def main(argv=None):
         open_pr_progress = None
         if args.open_pr_estimate:
             try:
-                open_pr_progress = json.loads(args.open_pr_estimate.read_text(encoding="utf-8-sig"))
+                open_pr_progress = json.loads(args.open_pr_estimate.read_text(encoding="utf-8-sig"), object_pairs_hook=unique_json_keys)
                 validate_open_pr_progress(open_pr_progress)
             except (OSError, ValueError, RecursionError) as error:
                 parser.error(f"{args.open_pr_estimate}: {error}")
@@ -1095,6 +1108,10 @@ def main(argv=None):
             libraries, shaders = collect_libraries(), collect_shaders()
         except FileNotFoundError as error:
             parser.error(f"{args.root or ROOT} is not a source tree: {error.filename} not found")
+        except OSError as error:
+            parser.error(f"{args.root or ROOT} is not a source tree: {error.filename}: {error.strerror}")
+        except ValueError as error:
+            parser.error(f"{args.root or ROOT} is not a source tree: {error}")
         try:
             shader_source = collect_shader_source(args.root)
         except shader_scan.ScanError as error:

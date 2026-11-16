@@ -176,6 +176,7 @@ int APS5_VABI _ZN3sce2np7RingBuf5WriteEPKvm(NpRingBuf* self, const void* data, s
 }
 
 void* APS5_VABI _ZN3sce2np7RingBuf15CheckoutForReadEPm(NpRingBuf* self, std::size_t* blockSize) {
+    Require(blockSize != nullptr, "sce::np::RingBuf::CheckoutForRead: null block size");
     if (self->size == 0) return nullptr;
     return ReadBlock(*self, *blockSize);
 }
