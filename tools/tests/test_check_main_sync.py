@@ -404,6 +404,16 @@ class CheckMainSyncJsonTests(CheckMainSyncFixture):
         self.assertEqual(json.loads(strict.stdout)["conflicts"], [])
 
 
+class ResolveBaseTests(unittest.TestCase):
+    def test_resolve_base_returns_an_existing_ref_and_refuses_a_missing_one(self):
+        import subprocess as sp
+        with tempfile.TemporaryDirectory() as directory:
+            sp.run(['git', '-C', directory, 'init', '-q'], check=True)
+            sp.run(['git', '-C', directory, '-c', 'user.name=t', '-c', 'user.email=t@example.invalid', 'commit', '-q', '--allow-empty', '-m', 'base'], check=True)
+            self.assertEqual(check_main_sync.resolve_base(Path(directory), 'HEAD'), 'HEAD')
+            with self.assertRaisesRegex(RuntimeError, 'no base ref found'):
+                check_main_sync.resolve_base(Path(directory), 'no-such-ref')
+
 
 if __name__ == "__main__":
     unittest.main()
