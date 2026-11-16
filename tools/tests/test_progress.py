@@ -1063,5 +1063,12 @@ class ProgressConstantReturnTests(unittest.TestCase):
         self.assertEqual(group["inert_names"], ["Discarded"])
 
 
+class SvgHelperTests(unittest.TestCase):
+    def test_rect_formats_coordinates_and_colour(self):
+        markup = progress.rect(1, 2, 3, 4, "#fff")
+        self.assertTrue(markup.startswith('<rect x="1.00" y="2.00" width="3.00" height="4.00" fill="#fff"'))
+        self.assertTrue(markup.endswith('stroke-width="0.5"/>'))
+
+
 if __name__ == "__main__":
     unittest.main()
