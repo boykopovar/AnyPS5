@@ -1,6 +1,7 @@
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -580,6 +581,19 @@ class WindowsPullRequestGateTests(unittest.TestCase):
                      "'tools/select_tests.py'", "'tools/configure_seed.py'"):
             with self.subTest(item=item):
                 self.assertIn(item, gate)
+
+
+class LinkTextHelperTests(unittest.TestCase):
+    def test_link_command_joins_the_command_fragments(self):
+        target = {"link": {"commandFragments": [{"fragment": "a.o"}, {"fragment": "-lc"}]}}
+        self.assertEqual(build_mingw_host_only_tests.link_command(target), "a.o -lc")
+        self.assertEqual(build_mingw_host_only_tests.link_command({}), "")
+
+    def test_is_libc_link_by_target_name_or_by_libc_in_the_command(self):
+        self.assertTrue(build_mingw_host_only_tests.is_libc_link("libc", {}))
+        linked = {"link": {"commandFragments": [{"fragment": "build/libc.prx"}]}}
+        self.assertTrue(build_mingw_host_only_tests.is_libc_link("x", linked))
+        self.assertFalse(build_mingw_host_only_tests.is_libc_link("x", {"link": {"commandFragments": [{"fragment": "-lfoo"}]}}))
 
 
 if __name__ == "__main__":
