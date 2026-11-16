@@ -3990,13 +3990,6 @@ int APS5_VABI _ZN7WebCore9CookieJar29cookieRequestHeaderFieldProxyERKNS_8Documen
 int APS5_VABI _ZN7WebCore9CookieJarD0Ev();
 int APS5_VABI _ZN7WebCore9CookieJarD1Ev();
 int APS5_VABI _ZN7WebCore9CookieJarD2Ev();
-int APS5_VABI _ZN7WebCore9DragImageC1EOS0_();
-int APS5_VABI _ZN7WebCore9DragImageC1Ev();
-int APS5_VABI _ZN7WebCore9DragImageC2EOS0_();
-int APS5_VABI _ZN7WebCore9DragImageC2Ev();
-int APS5_VABI _ZN7WebCore9DragImageD1Ev();
-int APS5_VABI _ZN7WebCore9DragImageD2Ev();
-int APS5_VABI _ZN7WebCore9DragImageaSEOS0_();
 int APS5_VABI _ZN7WebCore9FontCache17inactiveFontCountEv();
 int APS5_VABI _ZN7WebCore9FontCache19fontForPlatformDataERKNS_16FontPlatformDataE();
 int APS5_VABI _ZN7WebCore9FontCache21purgeInactiveFontDataEj();
