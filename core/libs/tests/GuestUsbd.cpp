@@ -507,6 +507,8 @@ int main(int argc, char** argv) {
     for (std::int64_t index = 0; index < count; ++index) {
         std::uint8_t deviceDescriptor[18] = {};
         Require(sceUsbdGetDeviceDescriptor(list[index], deviceDescriptor) == 0 && deviceDescriptor[0] == 18 && deviceDescriptor[1] == 1, "listed device has no device descriptor");
+        errno = 71;
+        Require(sceUsbdGetDeviceDescriptor(list[index], reinterpret_cast<void*>(0x10)) == invalidArgument && errno == 71, "unwritable device descriptor output accepted");
         Require(sceUsbdRefDevice(list[index]) == list[index], "listed device was not referenced");
         sceUsbdUnrefDevice(list[index]);
 
