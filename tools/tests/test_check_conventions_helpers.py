@@ -47,5 +47,10 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(check_conventions.link_base("docs/dev/BUILD.md"), "docs/dev/BUILD.md")
 
 
+    def test_utf8_accepts_valid_utf8_and_refuses_invalid_bytes(self):
+        self.assertTrue(check_conventions.utf8("ñ".encode("utf-8")))
+        self.assertFalse(check_conventions.utf8(b"\xff\xfe"))
+
+
 if __name__ == "__main__":
     unittest.main()
