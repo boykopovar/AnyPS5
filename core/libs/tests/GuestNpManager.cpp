@@ -580,6 +580,8 @@ void CheckManagerIntProfileGetters() {
     Require(sceNpManagerIntGetNpEnv(npEnv.bytes) == SignedOut, "sceNpManagerIntGetNpEnv must report NP as signed out");
     for (std::size_t i = 0; i < 0x18; ++i) Require(npEnv.bytes[i] == 0, "sceNpManagerIntGetNpEnv must zero the environment block");
     for (std::size_t i = 0x18; i < sizeof(npEnv.bytes); ++i) Require(npEnv.bytes[i] == 0x5a, "sceNpManagerIntGetNpEnv must leave the tail untouched");
+    errno = 71;
+    Require(sceNpManagerIntGetNpEnv(reinterpret_cast<void*>(0x10)) == InvalidArgument && errno == 71, "sceNpManagerIntGetNpEnv unwritable output");
     Require(sceNpManagerIntGetVshClientId(nullptr) == InvalidArgument, "sceNpManagerIntGetVshClientId must refuse a null output");
     Require(sceNpManagerIntGetVshClientId(out.bytes) == SignedOut && out.Untouched(), "sceNpManagerIntGetVshClientId must report NP as signed out and write nothing");
     std::uint64_t offlineAccountId = 0x5a5a5a5a5a5a5a5a;
@@ -724,6 +726,8 @@ void CheckOnlineIdQueries() {
     Require(sceNpGetAccountId(&onlineId, &accountId) == SignedOut, "sceNpGetAccountId must report NP as signed out");
     Require(sceNpGetAccountId(nullptr, &accountId) == InvalidArgument, "sceNpGetAccountId must reject a null online id");
     Require(sceNpGetAccountId(&onlineId, nullptr) == InvalidArgument, "sceNpGetAccountId must reject a null output");
+    errno = 71;
+    Require(sceNpGetAccountId(reinterpret_cast<const NpOnlineId*>(0x10), &accountId) == InvalidArgument && errno == 71, "sceNpGetAccountId must reject an unmapped online id and keep errno");
     const int presenceRequest = sceNpCreateRequest();
     Require(presenceRequest > 0, "sceNpCreateRequest must return a positive request id");
     Require(sceNpSetGamePresenceOnline(presenceRequest, &onlineId, 0) == SignedOut, "sceNpSetGamePresenceOnline must report NP as signed out");
@@ -776,6 +780,12 @@ void CheckUserIdQueries() {
     Require(sceNpCheckNpAvailabilityA(0, InitialUserId) == InvalidArgument, "sceNpCheckNpAvailabilityA must reject request id 0");
     Require(sceNpCheckNpAvailabilityA(NeverCreated, InitialUserId) == RequestNotFound, "sceNpCheckNpAvailabilityA must reject a request that was never created");
     Require(sceNpCheckNpAvailabilityA(NeverCreated, InvalidUserId) == InvalidArgument, "sceNpCheckNpAvailabilityA must check the user before the request");
+    NpOnlineId availabilityId{};
+    std::uint8_t available = 0xff;
+    Require(sceNpCheckNpAvailability(1, &availabilityId, &available) == UserNotFound && available == 0, "sceNpCheckNpAvailability must report the online id as unavailable");
+    Require(sceNpCheckNpAvailability(1, &availabilityId, nullptr) == UserNotFound, "sceNpCheckNpAvailability must allow a null availability output");
+    errno = 71;
+    Require(sceNpCheckNpAvailability(1, &availabilityId, reinterpret_cast<std::uint8_t*>(0x10)) == InvalidArgument && errno == 71, "sceNpCheckNpAvailability must refuse an unwritable availability output and keep errno");
     Require(sceNpGetAccountLanguageA(request, InitialUserId, nullptr) == InvalidArgument, "sceNpGetAccountLanguageA must reject a null output");
     Require(sceNpGetAccountLanguageA(request, InvalidUserId, output) == InvalidArgument, "sceNpGetAccountLanguageA must reject the invalid user id");
     Require(sceNpGetAccountLanguageA(0, InitialUserId, output) == InvalidArgument, "sceNpGetAccountLanguageA must reject request id 0");
@@ -888,6 +898,9 @@ static void CheckSandboxInfo() {
     for (std::size_t index = 0x2d; index < 0x50; ++index) Require(info[index] == 0, "sceNpGetSandboxInfo must clear the rest of the 0x50-byte block");
     for (std::size_t index = 0x50; index < sizeof(info); ++index) Require(info[index] == 0xa5, "sceNpGetSandboxInfo must not write past 0x50 bytes");
     Require(sceNpGetSandboxInfo(nullptr) == InvalidArgument, "sceNpGetSandboxInfo must reject a null buffer");
+    errno = 71;
+    Require(sceNpGetSandboxInfo(reinterpret_cast<void*>(0x10)) == InvalidArgument, "sceNpGetSandboxInfo must reject an unmapped buffer");
+    Require(errno == 71, "errno must be preserved");
 }
 
 void CheckValueClasses() {
@@ -907,6 +920,9 @@ void CheckValueClasses() {
     Require(_ZN3sce2np10NpOnlineId16SetNpOnlineIdStrEPKc(&onlineId, "0123456789abcdefg") == OnlineIdTooLong, "a longer online id must be refused");
     Require(std::memcmp(onlineId.data, "0123456789abcdef", 16) == 0, "a refused online id must leave the text untouched");
     Require(_ZN3sce2np10NpOnlineId16SetNpOnlineIdStrEPKc(&onlineId, nullptr) == InvalidArgument, "a null online id text must be refused");
+    Require(_ZN3sce2np10NpOnlineId16SetNpOnlineIdStrEPKc(&onlineId, reinterpret_cast<const char*>(0x10)) == InvalidArgument
+            && std::memcmp(onlineId.data, "0123456789abcdef", 16) == 0,
+        "an unreadable online id text must be refused and leave the text untouched");
 
     NpOnlineIdObject onlineIdCopy;
     _ZN3sce2np10NpOnlineIdC1ERKS1_(&onlineIdCopy, &onlineId);
@@ -989,9 +1005,14 @@ void CheckValueClasses() {
     Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEP13SceNpOnlineId(&user, &onlineIdOut) == UserNotFound, "GetNpOnlineId must refuse the invalid user");
     Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEP13SceNpOnlineId(&guestUser, &onlineIdOut) == SignedOut, "GetNpOnlineId must report a signed-out user");
     Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEP13SceNpOnlineId(&guestUser, nullptr) == InvalidArgument, "GetNpOnlineId must refuse a null SDK output");
+    errno = 71;
+    Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEP13SceNpOnlineId(reinterpret_cast<const UserObject*>(0x10), &onlineIdOut) == InvalidArgument && errno == 71, "an unmapped user must be refused");
+    Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEP13SceNpOnlineId(&guestUser, reinterpret_cast<SceNpOnlineId*>(0x10)) == InvalidArgument && errno == 71, "an unwritable SDK output must be refused");
     NpOnlineIdObject onlineIdObjectOut;
     Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEPS1_(&guestUser, &onlineIdObjectOut) == SignedOut, "GetNpOnlineId must report a signed-out object output");
     Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEPS1_(nullptr, &onlineIdObjectOut) == InvalidArgument, "GetNpOnlineId must refuse a null user");
+    Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEPS1_(reinterpret_cast<const UserObject*>(0x10), &onlineIdObjectOut) == InvalidArgument && errno == 71, "an unmapped user must be refused");
+    Require(_ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEPS1_(&guestUser, reinterpret_cast<NpOnlineIdObject*>(0x10)) == InvalidArgument && errno == 71, "an unwritable object output must be refused");
 
     NpTitleTokenObject titleToken;
     _ZN3sce2np12NpTitleTokenC1Ev(&titleToken);
@@ -1197,10 +1218,13 @@ int main() {
     std::memset(&onlineId, 0x5a, sizeof(onlineId));
     NpOnlineId untouchedOnlineId{};
     std::memset(&untouchedOnlineId, 0x5a, sizeof(untouchedOnlineId));
+    Require(sceNpGetOnlineId(-1, &onlineId) == InvalidArgument, "sceNpGetOnlineId must reject an invalid user id");
     Require(sceNpGetOnlineId(0x10000, &onlineId) == SignedOut, "sceNpGetOnlineId must report the user as signed out");
     Require(std::memcmp(&onlineId, &untouchedOnlineId, sizeof(onlineId)) == 0, "sceNpGetOnlineId must leave the online id untouched");
     Require(sceNpGetOnlineId(0x10000, nullptr) == InvalidArgument, "sceNpGetOnlineId must reject a null online id");
     std::uint64_t accountIdA = 0x5a5a5a5a5a5a5a5aull;
+    Require(sceNpGetAccountIdA(-1, &accountIdA) == InvalidArgument, "sceNpGetAccountIdA must reject an invalid user id");
+    Require(sceNpGetAccountIdA(0x10000, nullptr) == InvalidArgument, "sceNpGetAccountIdA must reject a null output");
     Require(sceNpGetAccountIdA(0x10000, &accountIdA) == SignedOut, "sceNpGetAccountIdA must report the user as signed out");
     Require(accountIdA == 0x5a5a5a5a5a5a5a5aull, "sceNpGetAccountIdA must leave the account id untouched");
     int userId = 0x5a5a;

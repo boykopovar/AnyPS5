@@ -20,6 +20,30 @@ TITLE = "PPSA00001"
 OTHER = "PPSA00002"
 
 
+REAL_DATETIME = datetime.datetime
+TOOL = None
+
+
+def load_tool():
+    global TOOL
+    if TOOL is None:
+        scripts = str(SCRIPT.parent)
+        if scripts not in sys.path:
+            sys.path.insert(0, scripts)
+        spec = importlib.util.spec_from_file_location("title_run_under_test", SCRIPT)
+        TOOL = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(TOOL)
+    return TOOL
+
+
+def frozen_datetime(instant):
+    class FrozenDateTime(REAL_DATETIME):
+        @classmethod
+        def now(cls, tz=None):
+            return cls.fromtimestamp(instant.timestamp(), tz)
+    return FrozenDateTime
+
+
 def snapshot(root):
     found = {}
     if not root.exists() and not root.is_symlink():
@@ -80,8 +104,29 @@ class TitleRunPathsTests(unittest.TestCase):
             arguments.extend(("--games", str(package)))
         return arguments + list(extra) + list(ids)
 
-    def run_cli(self, ids=(TITLE,), *, default_out=False, extra=(), frozen_time=None):
+    def run_in_process(self, arguments, frozen_time):
+        tool = load_tool()
+        out, err = io.StringIO(), io.StringIO()
+        clock = mock.patch.object(datetime, "datetime", frozen_datetime(frozen_time)) if frozen_time is not None else contextlib.nullcontext()
+        previous = os.getcwd()
+        os.chdir(self.root)
+        try:
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), clock:
+                try:
+                    code = tool.main(arguments)
+                except SystemExit as stop:
+                    code = stop.code
+                    if isinstance(code, str):
+                        err.write(code + "\n")
+                        code = 1
+        finally:
+            os.chdir(previous)
+        return subprocess.CompletedProcess(arguments, 0 if code is None else code, out.getvalue(), err.getvalue())
+
+    def run_cli(self, ids=(TITLE,), *, default_out=False, extra=(), frozen_time=None, real_process=False):
         command = self.command(ids, default_out=default_out, extra=extra)
+        if not real_process:
+            return self.run_in_process(command[2:], frozen_time)
         if frozen_time is not None:
             bootstrap = """import datetime
 import runpy
@@ -98,9 +143,9 @@ runpy.run_path(sys.argv[0], run_name="__main__")
             command = [command[0], "-c", bootstrap, frozen_time.isoformat(), *command[1:]]
         return subprocess.run(command, cwd=self.root, capture_output=True, text=True, timeout=15)
 
-    def refuse(self, ids=(TITLE,), *, extra=()):
+    def refuse(self, ids=(TITLE,), *, extra=(), real_process=False):
         before = snapshot(self.root)
-        result = self.run_cli(ids, extra=extra)
+        result = self.run_cli(ids, extra=extra, real_process=real_process)
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertRegex(result.stderr.lower(), r"overlap|unsafe")
         self.assertEqual(snapshot(self.root), before, result.stdout + result.stderr)
@@ -118,7 +163,7 @@ runpy.run_path(sys.argv[0], run_name="__main__")
 
     def test_package_equals_work_directory(self):
         self.package(self.out / "work" / TITLE)
-        self.refuse()
+        self.refuse(real_process=True)
 
     def test_package_is_below_work_directory(self):
         self.package(self.out / "work" / TITLE / "original-dump")
@@ -147,7 +192,7 @@ runpy.run_path(sys.argv[0], run_name="__main__")
         self.fake_relinker()
         self.stale_work()
         inputs = [(path, snapshot(path)) for path in packages]
-        result = self.run_cli()
+        result = self.run_cli(real_process=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         for path, before in inputs:
             self.assertEqual(snapshot(path), before)
@@ -542,7 +587,7 @@ runpy.run_path(sys.argv[0], run_name="__main__")
         old = self.report_name(instant)
         self.symlink(package, self.out / old, directory=True)
         before = snapshot(package)
-        result = self.run_cli(frozen_time=instant)
+        result = self.run_cli(frozen_time=instant, real_process=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(snapshot(package), before)
         self.assertEqual(len(self.reports()), 1)

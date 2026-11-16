@@ -866,6 +866,8 @@ int main(int argc, char** argv) {
     Require(sceHttpsSetSslVersion(1, 0) == 0);
     Require(sceHttpSetRedirectCallback(1, nullptr, nullptr) == 0);
     Require(sceHttpSetCookieRecvCallback(1, nullptr, nullptr) == 0);
+    Require(sceHttpSetCookieSendCallback(1, nullptr, nullptr) == 0);
+    Require(sceHttpAddQuery(1, "a=b") == 0);
     int sslError = -1;
     std::uint32_t sslDetail = 0xFFFFFFFFu;
     Require(sceHttpsGetSslError(1, &sslError, &sslDetail) == 0);
@@ -950,6 +952,9 @@ int main(int argc, char** argv) {
     Require(sceHttpUriSweepPath(nullptr, "/foo", 5) == invalidValue);
     char sweptPath[16];
     Require(sceHttpUriSweepPath(sweptPath, nullptr, 5) == invalidValue);
+    errno = 71;
+    Require(sceHttpUriSweepPath(reinterpret_cast<char*>(0x10), "/foo", 5) == invalidValue && errno == 71);
+    Require(sceHttpUriSweepPath(sweptPath, reinterpret_cast<const char*>(0x10), 5) == invalidValue && errno == 71);
     Require(sweep("foo/../bar", "foo/../bar"));
     Require(sweep("/foo/../bar", "/bar"));
     Require(sweep("/foo/./bar", "/foo/bar"));

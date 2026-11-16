@@ -45,6 +45,7 @@
 #include "Optimization/include/Optimization/ResourceMaterializer.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include "Optimization/include/Optimization/ResourceTracker.hpp"
+#include "Optimization/include/Optimization/VectorWindowIndexNarrower.hpp"
 #include "Optimization/include/Optimization/VectorWindowStoreEliminator.hpp"
 #include "Optimization/include/Optimization/ShaderInfoCollector.hpp"
 #include "Optimization/include/Optimization/SrtWalker.hpp"
@@ -310,6 +311,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     constexpr DeadCodeEliminator deadCodeEliminator;
     constexpr ReadLaneEliminator readLaneEliminator;
     constexpr MaskedSelectEliminator maskedSelectEliminator;
+    constexpr VectorWindowIndexNarrower vectorWindowIndexNarrower;
     constexpr VectorWindowStoreEliminator vectorWindowStoreEliminator;
     const auto simplify = [&] {
         dumpIr("translate");
@@ -327,6 +329,11 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
             constantFolder.Fold(program);
             ResolveControlFlowIdentities(program);
             deadCodeEliminator.RemoveIdentities(program);
+            deadCodeEliminator.Eliminate(program);
+        }
+
+        if (vectorWindowIndexNarrower.Narrow(program).narrowedLoads != 0u) {
+            constantFolder.Fold(program);
             deadCodeEliminator.Eliminate(program);
         }
 
@@ -828,6 +835,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     targetOptions.fragmentDescriptorSet = request.target.registrationModules;
     targetOptions.float16DenormPreserve = request.target.float16DenormPreserve;
     targetOptions.spannedWaves = request.target.spannedWaves;
+    targetOptions.spannedAnySubgroup = request.target.spannedAnySubgroup;
     targetOptions.robustBufferAccess2 = request.target.robustBufferAccess2;
     targetOptions.exactRobustLoads = request.target.exactRobustLoads;
     targetOptions.float32FlushToZero = HardwareFloat32Flush(request);
@@ -912,7 +920,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     result.shaderDataDwords = bindings.layout.ShaderDataDwords();
     result.imageMetadataDword = bindings.layout.ImageMetadataDword();
     result.runtimeImageCount = bindings.layout.runtimeImageCount;
-    result.hostSubgroupSize = HostSubgroupSize(request);
+    result.hostSubgroupSize = emitted.anySubgroupSize ? 0u : HostSubgroupSize(request);
     result.fullSubgroups = emitted.fullSubgroups;
     result.functionLdsBuffer = emitted.functionLdsBuffer;
     result.meshWindowBuffer = emitted.meshWindowBuffer;
@@ -1014,6 +1022,12 @@ std::vector<std::uint32_t> specializeWords(const CompiledShaderArtifact& artifac
                 cursor += count;
                 continue;
             }
+            if (PipelineSpecialization::IsAtomicLockTable(words[cursor + 3u])) {
+                if (supplied.contains(words[cursor + 3u])) throw std::runtime_error("the atomic lock table is supplied with the pipeline, not prepared");
+                if (!retained.insert(words[cursor + 1u]).second) throw std::runtime_error("duplicate atomic lock table specialization");
+                cursor += count;
+                continue;
+            }
             const auto found = supplied.find(words[cursor + 3u]);
             if (found == supplied.end()) throw std::runtime_error("missing prepared specialization value");
             if (found->first == PipelineSpecialization::MeshLayerBase || found->first == PipelineSpecialization::MeshLayerCount) {
@@ -1106,7 +1120,7 @@ SpecializedSpirv buildSpecializedModule(const CompiledShaderArtifact& artifact, 
         if (op == spv::OpDecorate && count == 4u && materialized[cursor + 2u] == spv::DecorationDescriptorSet && (materialized[cursor + 3u] == PixelFunctionLdsDescriptorSet || materialized[cursor + 3u] == MeshWindowDescriptorSet || (compute && materialized[cursor + 3u] == WorkgroupMemoryDescriptorSet))) ldsBuffers.insert(materialized[cursor + 1u]);
         if (op == spv::OpDecorate && count == 4u && materialized[cursor + 2u] == spv::DecorationSpecId) {
             const auto id = materialized[cursor + 3u];
-            if (!PipelineSpecialization::IsWorkgroupOffset(id)) module->specialization.push_back({id, supplied.at(id)});
+            if (!PipelineSpecialization::IsWorkgroupOffset(id) && !PipelineSpecialization::IsAtomicLockTable(id)) module->specialization.push_back({id, supplied.at(id)});
         }
         if (op == spv::OpVariable && count >= 4u && !ldsBuffers.contains(materialized[cursor + 2u])) {
             if (const auto found = bindingNumbers.find(materialized[cursor + 2u]); found != bindingNumbers.end()) module->bindings.push_back(found->second);
@@ -1130,14 +1144,25 @@ SharedSpirv specializedWords(const SpecializedModule& module, const CompiledShad
     return spirv;
 }
 
+template <typename Entry, typename Function>
+void runOnce(Entry& entry, Function&& function) {
+    if (entry.done.load(std::memory_order_acquire)) return;
+    std::call_once(entry.ready, [&] {
+        function();
+        entry.done.store(true, std::memory_order_release);
+    });
+}
+
 struct SpecializedModuleEntry {
     std::once_flag ready;
+    std::atomic<bool> done{false};
     std::exception_ptr failure;
     std::shared_ptr<const SpecializedModule> module;
 };
 
 struct PreparedModuleEntry {
     std::once_flag ready;
+    std::atomic<bool> done{false};
     std::exception_ptr failure;
     std::shared_ptr<const SpecializedModule> module;
     DescriptorBindingPlan bindings;
@@ -1145,6 +1170,7 @@ struct PreparedModuleEntry {
 
 struct PreparedBindingPlan {
     std::once_flag ready;
+    std::atomic<bool> done{false};
     std::exception_ptr failure;
     DescriptorBindingPlan bindings;
     PrimedSharedMutex mutex;
@@ -1153,6 +1179,7 @@ struct PreparedBindingPlan {
 
 struct RegistrationModuleEntry {
     std::once_flag ready;
+    std::atomic<bool> done{false};
     std::exception_ptr failure;
     std::shared_ptr<const SpecializedModule> module;
 };
@@ -1178,7 +1205,7 @@ SpecializedSpirv registrationModule(std::uint64_t variantId, std::span<const std
         entry = found != modules.end() ? found->second : modules.emplace(key, std::make_shared<RegistrationModuleEntry>()).first->second;
     }
     SharedSpirv built;
-    std::call_once(entry->ready, [&] {
+    runOnce(*entry, [&] {
         try {
             auto specialized = specialize();
             entry->module = std::move(specialized.module);
@@ -1237,7 +1264,7 @@ std::shared_ptr<PreparedBindingPlan> preparedBindingPlan(const CompiledVariant& 
         const auto found = plans.find(key);
         plan = found != plans.end() ? found->second : plans.emplace(key, std::make_shared<PreparedBindingPlan>()).first->second;
     }
-    std::call_once(plan->ready, [&] {
+    runOnce(*plan, [&] {
         try {
             plan->bindings = DescriptorBindingBuilder{}.Prepare(variant.bindings.layout, variant.info.info, variant.info.stage, snapshot, exports, variant.artifact.registrationModule, fragmentDescriptorSet, substitutes, shaderImageMinLod);
         } catch (...) {
@@ -1271,7 +1298,7 @@ SpecializedSpirv specializeModule(const CompiledShaderArtifact& artifact, std::s
         entry = found != modules.end() ? found->second : modules.emplace(key, std::make_shared<SpecializedModuleEntry>()).first->second;
     }
     SharedSpirv built;
-    std::call_once(entry->ready, [&] {
+    runOnce(*entry, [&] {
         try {
             auto specialized = buildSpecializedModule(artifact, classes, constants, target);
             entry->module = std::move(specialized.module);
@@ -1323,6 +1350,17 @@ void recordMemoPatch(MemoPatch& patch, const DescriptorBindingPlan& plan, const 
         for (const auto reg : layout.userDataRegisters) patch.userWords.push_back(reg - variant.info.userDataBase);
     }
     patch.valid = layout.userDataRegisters.size() <= layout.DispatchThreadLimitDword() && (patch.userWords.empty() || patch.pushData || patch.shaderData != MemoPatch::NoBinding);
+}
+
+bool declaresAtomicLockTable(std::span<const std::uint32_t> words) {
+    for (std::size_t cursor = 5; cursor < words.size();) {
+        const auto count = words[cursor] >> 16u;
+        const auto op = static_cast<spv::Op>(words[cursor] & 0xffffu);
+        if (count == 0u || op == spv::OpFunction) break;
+        if (op == spv::OpDecorate && count == 4u && cursor + 3u < words.size() && words[cursor + 2u] == spv::DecorationSpecId && PipelineSpecialization::IsAtomicLockTable(words[cursor + 3u])) return true;
+        cursor += count;
+    }
+    return false;
 }
 
 RecompileResult materializeResult(const CompiledVariant& variant, const RecompileRequest& request, const ResourceSnapshot& captured, bool registrationDefaults = false, MemoPatch* patch = nullptr, const std::vector<BufferSubstitute>* substituteSnapshot = nullptr) {
@@ -1475,7 +1513,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
             entry->module = module;
             built = std::move(specialized.spirv);
         };
-        std::call_once(entry->ready, [&] {
+        runOnce(*entry, [&] {
             try {
                 prepare();
             } catch (...) {
@@ -1517,6 +1555,9 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
     result.readsDepthRemapPush = depthRemap;
     if (request.shader.stage == ShaderStage::Compute) {
         for (std::uint32_t component = 0; component < PipelineSpecialization::WorkgroupOffsetWords; ++component) result.specialization.push_back({PipelineSpecialization::WorkgroupOffsetBase + component, 0u});
+    }
+    if (declaresAtomicLockTable(artifact.spirv.Words())) {
+        for (std::uint32_t word = 0; word < PipelineSpecialization::AtomicLockTableWords; ++word) result.specialization.push_back({PipelineSpecialization::AtomicLockTableBase + word, 0u});
     }
     if (!artifact.stencilReferences.empty()) {
         if (artifact.stencilReferenceDword * sizeof(std::uint32_t) != result.pushConstants.size() || result.pushConstants.size() + sizeof(std::uint32_t) > request.layout.pushConstantSizeBytes) throw std::runtime_error("stencil replay push constant lies outside the stage range");
@@ -1864,7 +1905,7 @@ std::uint64_t vectorBytes(const ElementFlags& values) {
 }
 
 std::uint64_t descriptorBindingBytes(const DescriptorBinding& binding) {
-    return vectorBytes(binding.guestDescriptor) + vectorBytes(binding.imageShapes) + vectorBytes(binding.imageSamplers) + vectorBytes(binding.bufferExtent) + vectorBytes(binding.samplerDepthCompare) + vectorBytes(binding.imageWritten) + vectorBytes(binding.imageDepthCompare) + vectorBytes(binding.imageAtomic) + vectorBytes(binding.imageAtomic64) + vectorBytes(binding.bufferAtomic) + vectorBytes(binding.bufferWritten) + vectorBytes(binding.samplerUnnormalized) + vectorBytes(binding.samplerIntegerBorder) + vectorBytes(binding.samplerCoordinatesIgnored) + vectorBytes(binding.imageUnnormalized) + vectorBytes(binding.imageUnnormalizedBaseLevel) + vectorBytes(binding.bufferRead);
+    return vectorBytes(binding.guestDescriptor) + vectorBytes(binding.imageShapes) + vectorBytes(binding.imageSamplers) + vectorBytes(binding.bufferExtent) + vectorBytes(binding.samplerDepthCompare) + vectorBytes(binding.imageWritten) + vectorBytes(binding.imageDepthCompare) + vectorBytes(binding.imageAtomic) + vectorBytes(binding.imageAtomic64) + vectorBytes(binding.imageUintStorage) + vectorBytes(binding.bufferAtomic) + vectorBytes(binding.bufferWritten) + vectorBytes(binding.samplerUnnormalized) + vectorBytes(binding.samplerIntegerBorder) + vectorBytes(binding.samplerCoordinatesIgnored) + vectorBytes(binding.imageUnnormalized) + vectorBytes(binding.imageUnnormalizedBaseLevel) + vectorBytes(binding.bufferRead);
 }
 
 std::uint64_t resultBytes(const RecompileResult& result) {
@@ -2401,7 +2442,9 @@ bool MatchesPreparedShader(const RecompileRequest& request, const SourceHandle& 
     if (layout.descriptorSet != handle.artifact->layout.descriptorSet || layout.firstBinding != handle.artifact->layout.firstBinding) return false;
     if (layout.pushConstantOffsetBytes % 4u != 0u || layout.pushConstantSizeBytes % 4u != 0u || layout.pushConstantOffsetBytes > NativePushConstantSize || layout.pushConstantSizeBytes > NativePushConstantSize - layout.pushConstantOffsetBytes) return false;
     const auto words = prepared.ShaderDataDwords();
-    const bool usesPush = prepared.runtimeImageCount == 0u && words != 0u && words <= layout.pushConstantSizeBytes / 4u;
+    const auto pushSize = layout.pushConstantSizeBytes / 4u;
+    const auto dataSize = !handle.artifact->artifact.stencilReferences.empty() && pushSize != 0u ? pushSize - 1u : pushSize;
+    const bool usesPush = prepared.runtimeImageCount == 0u && words != 0u && words <= dataSize;
     if (prepared.UsesPushData() != usesPush) return false;
     if (!handle.artifact->artifact.stencilReferences.empty() && (prepared.stencilReferenceDword >= layout.pushConstantSizeBytes / 4u || prepared.stencilReferenceDword != (usesPush ? words : 0u))) return false;
     if (!std::ranges::equal(key, handle.staticKey) || handle.source->code.size() != request.shader.code.size()) return false;

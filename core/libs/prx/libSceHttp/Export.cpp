@@ -750,7 +750,9 @@ int APS5_VABI sceHttpGetCookieEnabled(int id, int* enable) {
 }
 
 int APS5_VABI sceHttpSetCookieSendCallback(std::int32_t id, HttpCookieSendCallback callback, void* userArg) {
-    NotImplemented_nid_no_patch(__func__);
+    (void)id;
+    (void)callback;
+    (void)userArg;
     return 0;
 }
 
@@ -819,7 +821,8 @@ int APS5_VABI sceHttpGetConnectionStat(std::int32_t connectionId, HttpConnection
 }
 
 int APS5_VABI sceHttpAddQuery(int id, const char* query) {
-    NotImplemented_nid_no_patch(__func__);
+    (void)id;
+    (void)query;
     return 0;
 }
 
