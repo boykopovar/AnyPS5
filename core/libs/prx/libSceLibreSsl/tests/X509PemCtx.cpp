@@ -1786,41 +1786,44 @@ void Allocator() {
 }
 
 void ConcurrentCache() {
-    constexpr int Rounds = 40;
     constexpr int Workers = 4;
-    int roundsWithSeveralCandidates = 0;
-    for (int round = 0; round < Rounds; ++round) {
-        auto* certificate = ReadCertificate(RsaCertificatePem);
-        Require(certificate && certificate->certificateInfo && certificate->certificateInfo->key, "the concurrent certificate decodes");
-        std::array<void*, Workers> returned{};
-        std::array<std::thread, Workers> workers{};
-        std::barrier start(Workers);
-        const std::uint64_t baseline = generation;
-        const std::size_t candidatesBefore = KeyShapeAllocations();
-        for (int index = 0; index < Workers; ++index)
-            workers[index] = std::thread([&, index] {
-                start.arrive_and_wait();
-                returned[index] = X509_get_pubkey_nid_postfix(certificate);
-            });
-        for (auto& worker : workers)
-            worker.join();
-        if (KeyShapeAllocations() - candidatesBefore > 1) ++roundsWithSeveralCandidates;
-        void* shared = nullptr;
-        for (void* pointer : returned) {
-            Require(pointer, "every worker returns a public key");
-            if (!shared) shared = pointer;
-            Require(pointer == shared, "every worker reaches the same cached public key");
+    auto run = [&](const char* pem, int rounds, bool requireRaceAndPkeyShape) {
+        int roundsWithSeveralCandidates = 0;
+        for (int round = 0; round < rounds; ++round) {
+            auto* certificate = ReadCertificate(pem);
+            Require(certificate && certificate->certificateInfo && certificate->certificateInfo->key, "the concurrent certificate decodes");
+            std::array<void*, Workers> returned{};
+            std::array<std::thread, Workers> workers{};
+            std::barrier start(Workers);
+            const std::uint64_t baseline = generation;
+            const std::size_t candidatesBefore = KeyShapeAllocations();
+            for (int index = 0; index < Workers; ++index)
+                workers[index] = std::thread([&, index] {
+                    start.arrive_and_wait();
+                    returned[index] = X509_get_pubkey_nid_postfix(certificate);
+                });
+            for (auto& worker : workers)
+                worker.join();
+            if (KeyShapeAllocations() - candidatesBefore > 1) ++roundsWithSeveralCandidates;
+            void* shared = nullptr;
+            for (void* pointer : returned) {
+                Require(pointer, "every worker returns a public key");
+                if (!shared) shared = pointer;
+                Require(pointer == shared, "every worker reaches the same cached public key");
+            }
+            RequireNoCodes("decoding the public key concurrently queues nothing");
+            Require(static_cast<Pkey*>(shared)->references == Workers + 1, "the cache and every worker hold the public key");
+            if (requireRaceAndPkeyShape) Require(OutstandingSince(baseline, sizeof(Pkey)) == 1, "the losing candidate of the race is released");
+            for (void* pointer : returned)
+                EVP_PKEY_free_nid_postfix(pointer);
+            X509_free_nid_postfix(certificate);
+            Require(OutstandingSince(baseline) == 0, "the concurrent cache and the certificate release every allocation");
+            RequireNoCodes("the concurrent sequence queues nothing");
         }
-        RequireNoCodes("decoding the public key concurrently queues nothing");
-        Require(static_cast<Pkey*>(shared)->references == Workers + 1, "the cache and every worker hold the public key");
-        Require(OutstandingSince(baseline, sizeof(Pkey)) == 1, "the losing candidate of the race is released");
-        for (void* pointer : returned)
-            EVP_PKEY_free_nid_postfix(pointer);
-        X509_free_nid_postfix(certificate);
-        Require(OutstandingSince(baseline) == 0, "the concurrent cache and the certificate release every allocation");
-        RequireNoCodes("the concurrent sequence queues nothing");
-    }
-    Require(roundsWithSeveralCandidates > 0, "the concurrent readers really create more than one candidate");
+        if (requireRaceAndPkeyShape) Require(roundsWithSeveralCandidates > 0, "the concurrent readers really create more than one candidate");
+    };
+    run(RsaCertificatePem, 40, true);
+    run(EcCertificatePem, 16, false);
 }
 
 }  // namespace

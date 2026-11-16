@@ -1,12 +1,13 @@
 #include <atomic>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <new>
 #include <stdexcept>
 #include <string>
 #include "prx/libSceLibreSsl/include/Api.hpp"
-#include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libSceLibreSsl/include/Ec.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -43,9 +44,9 @@ void FreeKey(Pkey& pkey) {
         pkey.key = nullptr;
         RSA_free_nid_postfix(rsa);
     } else if (pkey.ameth == &EcMethod) {
-        auto* ecKey = static_cast<EcKey*>(pkey.key);
+        auto* ec = static_cast<EcKey*>(pkey.key);
         pkey.key = nullptr;
-        EC_KEY_free_nid_postfix(ecKey);
+        EC_KEY_free_nid_postfix(ec);
     } else if (pkey.ameth) {
         NotImplemented_nid_no_patch("EVP_PKEY_free_it of a key with an unknown algorithm method");
     }
@@ -56,12 +57,17 @@ void FreeKey(Pkey& pkey) {
 namespace LibreSsl {
 
 bool PkeyAssignEcKey_nid_no_patch(void* value, EcKey* key) {
+    if (!value) throw std::invalid_argument(std::string(__func__) + ": null key");
     auto& pkey = *static_cast<Pkey*>(value);
+    if (key && pkey.key == key && std::atomic_ref<std::int32_t>(key->references).load() == 1)
+        throw std::invalid_argument(std::string(__func__) + ": the key holds the only reference to this EC_KEY object");
     if (pkey.key) FreeKey(pkey);
     if (pkey.engine) NotImplemented_nid_no_patch("EVP_PKEY_assign_EC_KEY of a key with an ENGINE");
-    pkey.ameth = &EcMethod;
-    pkey.type = PkeyEc;
-    pkey.saveType = PkeyEc;
+    if (pkey.saveType != PkeyEc || !pkey.ameth) {
+        pkey.ameth = &EcMethod;
+        pkey.type = PkeyEc;
+        pkey.saveType = PkeyEc;
+    }
     pkey.key = key;
     return key != nullptr;
 }
@@ -125,16 +131,16 @@ LibreSslRsa* APS5_VABI EVP_PKEY_get1_RSA_nid_postfix(void* value) {
 }
 
 EcKey* APS5_VABI EVP_PKEY_get1_EC_KEY_nid_postfix(void* value) {
-    if (!value) NotImplemented_nid_no_patch(__func__);
+    if (!value) throw std::invalid_argument(std::string(__func__) + ": null key");
     const auto& pkey = *static_cast<const Pkey*>(value);
     if (pkey.type != PkeyEc) {
         LibreSslPutError_nid_no_patch(LibraryEvp, FunctionUnknown, ReasonExpectingAnEcKey);
         return nullptr;
     }
-    auto* ecKey = static_cast<EcKey*>(pkey.key);
-    if (!ecKey) throw std::invalid_argument(std::string(__func__) + ": EC key without an EC_KEY object");
-    std::atomic_ref<std::int32_t>(ecKey->references).fetch_add(1, std::memory_order_relaxed);
-    return ecKey;
+    auto* ec = static_cast<EcKey*>(pkey.key);
+    if (!ec) throw std::invalid_argument(std::string(__func__) + ": EC key without an EC_KEY object");
+    std::atomic_ref<std::int32_t>(ec->references).fetch_add(1);
+    return ec;
 }
 
 int APS5_VABI EVP_PKEY_copy_parameters_nid_postfix(void* to, const void* from) {

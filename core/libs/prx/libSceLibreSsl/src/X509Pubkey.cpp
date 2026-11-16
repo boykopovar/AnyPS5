@@ -642,23 +642,20 @@ bool EcPubDecode(void* pkey, LibreSslX509PublicKey* key) {
         Queue(EcLibrary, EcLibraryError);
         return false;
     }
-    const EcGroup* curve = EC_KEY_get0_group_nid_postfix(ecKey);
-    EcPoint* point = EC_POINT_new_nid_postfix(curve);
-    if (!point) {
-        Queue(EcLibrary, MallocFailure);
-        Queue(EcLibrary, EcLibraryError);
-        EC_KEY_free_nid_postfix(ecKey);
-        return false;
-    }
-    const unsigned char* data = key->publicKey->data;
-    const std::int64_t length = key->publicKey->length;
-    if (!data && length != 0) {
-        EC_POINT_free_nid_postfix(point);
-        EC_KEY_free_nid_postfix(ecKey);
-        throw std::invalid_argument("X509_get_pubkey: public key bits without content");
-    }
-    bool assigned = false;
+    EcPoint* point = nullptr;
     try {
+        const EcGroup* curve = EC_KEY_get0_group_nid_postfix(ecKey);
+        point = EC_POINT_new_nid_postfix(curve);
+        if (!point) {
+            Queue(EcLibrary, MallocFailure);
+            Queue(EcLibrary, EcLibraryError);
+            EC_KEY_free_nid_postfix(ecKey);
+            return false;
+        }
+        const unsigned char* data = key->publicKey->data;
+        const std::int64_t length = key->publicKey->length;
+        if (length < 0) throw std::invalid_argument("X509_get_pubkey: negative public key bit length");
+        if (!data && length != 0) throw std::invalid_argument("X509_get_pubkey: public key bits without content");
         if (EC_POINT_oct2point_nid_postfix(curve, point, data, static_cast<std::size_t>(length), nullptr) != 1) {
             EC_POINT_free_nid_postfix(point);
             EC_KEY_free_nid_postfix(ecKey);
@@ -667,19 +664,20 @@ bool EcPubDecode(void* pkey, LibreSslX509PublicKey* key) {
             return false;
         }
         ecKey->conversionForm = data[0] & ~0x01;
-        assigned = EC_KEY_set_public_key_nid_postfix(ecKey, point) == 1 && LibreSsl::PkeyAssignEcKey_nid_no_patch(pkey, ecKey);
-    } catch (...) {
+        const bool assigned = EC_KEY_set_public_key_nid_postfix(ecKey, point) == 1 && LibreSsl::PkeyAssignEcKey_nid_no_patch(pkey, ecKey);
         EC_POINT_free_nid_postfix(point);
+        point = nullptr;
+        if (!assigned) {
+            EC_KEY_free_nid_postfix(ecKey);
+            Queue(EcLibrary, EcLibraryError);
+            return false;
+        }
+        return true;
+    } catch (...) {
+        if (point) EC_POINT_free_nid_postfix(point);
         EC_KEY_free_nid_postfix(ecKey);
         throw;
     }
-    EC_POINT_free_nid_postfix(point);
-    if (!assigned) {
-        EC_KEY_free_nid_postfix(ecKey);
-        Queue(EcLibrary, EcLibraryError);
-        return false;
-    }
-    return true;
 }
 
 void* PubkeyGet(LibreSslX509PublicKey* key) {
