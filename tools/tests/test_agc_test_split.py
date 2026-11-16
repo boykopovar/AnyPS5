@@ -280,5 +280,11 @@ class ResolveTests(unittest.TestCase):
         self.assertIn("already includes", result.stderr)
 
 
+class TokenHelperTests(unittest.TestCase):
+    def test_until_returns_the_arguments_before_the_first_keyword(self):
+        self.assertEqual(agc_test_split.until(["a", "--", "b"], {"--"}), ["a"])
+        self.assertEqual(agc_test_split.until(["a", "b"], {"--"}), ["a", "b"])
+
+
 if __name__ == "__main__":
     unittest.main()
