@@ -1070,6 +1070,10 @@ class TileAndPercentTests(unittest.TestCase):
         self.assertEqual(progress.tile_label(group, 100, 20), '')
         self.assertEqual(progress.tile_label({'label': 'Abcdefghijklmnop'}, 30, 40), '')
 
+    def test_shader_source_percent_is_the_decoded_share(self):
+        self.assertEqual(progress.shader_source_percent({'instructions': {'decoded': 1, 'total': 4}}), 25.0)
+        self.assertEqual(progress.shader_source_percent({'instructions': {'decoded': 0, 'total': 0}}), 0)
+
 
 if __name__ == "__main__":
     unittest.main()
