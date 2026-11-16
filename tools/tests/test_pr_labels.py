@@ -527,6 +527,13 @@ class CommentAndScopeTests(unittest.TestCase):
         self.assertTrue(pr_labels.needs_capture('perf(libc): speed up'))
         self.assertFalse(pr_labels.needs_capture('perf(tools): x'))
         self.assertFalse(pr_labels.needs_capture('fix: x'))
+class PageDecodeTests(unittest.TestCase):
+    def test_decode_pages_joins_consecutive_pages(self):
+        self.assertEqual(pr_labels.decode_pages('[1]\n[2]'), [1, 2])
+
+    def test_decode_pages_refuses_output_with_no_pages(self):
+        with self.assertRaisesRegex(Exception, 'no JSON pages'):
+            pr_labels.decode_pages('  ')
 
 
 if __name__ == "__main__":
