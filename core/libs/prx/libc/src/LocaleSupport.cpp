@@ -1464,7 +1464,9 @@ std::size_t APS5_VABI _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIw
 }
 
 void APS5_VABI _ZNSt8_LocinfoC1EPKc_nid_postfix(GuestLocale::LocinfoStorage* self, const char* localeName) {
-    if (self == nullptr || localeName == nullptr || std::strcmp(localeName, "C") != 0) throw std::invalid_argument("_Locinfo: only the C locale is supported");
+    std::string name;
+    if (self == nullptr || localeName == nullptr || CopyGuestString_nid_no_patch(localeName, 2, name) != 0 || name != "C")
+        throw std::invalid_argument("_Locinfo: only the C locale is supported");
     new (self) GuestLocale::LocinfoStorage{};
 }
 
