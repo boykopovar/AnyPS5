@@ -280,6 +280,13 @@ class ScopeTests(unittest.TestCase):
         for start, end, _ in scopes:
             self.assertLess(start, end)
 
+    def test_scope_chain_lists_enclosing_scopes_innermost_first(self):
+        scopes = check_conventions.brace_scopes("namespace A { namespace B { int x = 1; } }\n")
+        chain = check_conventions.scope_chain(scopes, 35)
+        self.assertEqual(chain[0], ("namespace", "::A::B"))
+        self.assertIn(("namespace", "::A"), chain)
+        self.assertEqual(check_conventions.scope_chain(scopes, 0), [("namespace", "")])
+
 
 if __name__ == "__main__":
     unittest.main()
