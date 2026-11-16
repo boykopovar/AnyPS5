@@ -272,18 +272,23 @@ int APS5_VABI sceNpGetSystemClockUsec(std::int64_t* usec) {
 }
 
 void APS5_VABI sceNpGetSdkVersion(char* version) {
-    std::memset(version, 0, 8);
     SceKernelSystemSwVersion swVersion{};
     swVersion.size = sizeof(swVersion);
     sceKernelGetSystemSwVersion_nid_postfix(&swVersion);
 
     const std::uint32_t hex = swVersion.version;
-    std::snprintf(version, 8, "%u.%02u", ((hex >> 24) & 0xF) + (hex >> 28) * 10, ((hex >> 16) & 0xF) + ((hex >> 20) & 0xF) * 10);
+    char text[8] = {};
+    std::snprintf(text, sizeof(text), "%u.%02u", ((hex >> 24) & 0xF) + (hex >> 28) * 10, ((hex >> 16) & 0xF) + ((hex >> 20) & 0xF) * 10);
+    const int savedErrno = errno;
+    GuestCopyOut_nid_no_patch(version, text, sizeof(text));
+    errno = savedErrno;
 }
 
 void APS5_VABI sceNpGetNavSdkVersion(char* version) {
     constexpr char NAV_SDK_VERSION[8] = "00.82";
-    std::memcpy(version, NAV_SDK_VERSION, sizeof(NAV_SDK_VERSION));
+    const int savedErrno = errno;
+    GuestCopyOut_nid_no_patch(version, NAV_SDK_VERSION, sizeof(NAV_SDK_VERSION));
+    errno = savedErrno;
 }
 
 }
