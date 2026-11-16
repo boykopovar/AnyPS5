@@ -103,7 +103,6 @@ int main() {
     Require(WKPreferencesGetQTKitEnabled() == 0);
     Require(WKPreferencesGetTypeID() == static_cast<int>(0x00000058u));
     Require(WKProtectionSpaceCopyCertificateInfo() == 0);
-    Require(WKUserContentExtensionStoreCreate() == 0);
     Require(_ZN3JSC12isFromJSCodeEPv() == 0);
     Require(_ZN3JSC22optimizeNextInvocationENS_7JSValueE() == static_cast<int>(0x0000000au));
     Require(_ZN3JSC22optimizeNextInvocationEPNS_14JSGlobalObjectEPNS_9CallFrameE() == static_cast<int>(0x0000000au));

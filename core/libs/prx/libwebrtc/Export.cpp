@@ -1,5 +1,6 @@
 #include "prx/libwebrtc/include/Api.hpp"
 #include <charconv>
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -61,16 +62,25 @@ int APS5_VABI libwebrtcUnknown03(void) {
 char* APS5_VABI _ZN4absl16numbers_internal15FastIntToBufferEiPc_nid_postfix(int value, char* buffer) {
     if (!buffer)
         throw std::invalid_argument("FastIntToBuffer requires a buffer");
+    char staged[16]{};
+    char* digits = staged;
     std::uint32_t magnitude = static_cast<std::uint32_t>(value);
     if (value < 0) {
-        *buffer++ = '-';
+        *digits++ = '-';
         magnitude = 0u - magnitude;
     }
-    if (magnitude >= 10u && magnitude < 100000000u)
-        std::memset(buffer, 0, 8);
-    buffer = std::to_chars(buffer, buffer + 10, magnitude).ptr;
-    *buffer = '\0';
-    return buffer;
+    const bool padded = magnitude >= 10u && magnitude < 100000000u;
+    if (padded) std::memset(digits, 0, 8);
+    char* const end = std::to_chars(digits, digits + 10, magnitude).ptr;
+    *end = '\0';
+    const auto length = static_cast<std::size_t>(end - staged);
+    const auto paddedLength = static_cast<std::size_t>(digits - staged) + (padded ? 8u : 0u);
+    const auto bytes = length + 1 > paddedLength ? length + 1 : paddedLength;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(buffer, staged, bytes);
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument("FastIntToBuffer requires a writable buffer");
+    return buffer + length;
 }
 
 int APS5_VABI _ZN3rtc13SocketAddressC1Ev_nid_postfix(void) {
@@ -681,21 +691,6 @@ int APS5_VABI libwebrtcUnknown37(void) {
 
 void APS5_VABI _ZN6webrtc12AudioEncoder45OnReceivedUplinkRecoverablePacketLossFractionEf_nid_postfix(void*, float) {}
 
-int APS5_VABI _ZN6webrtc14SdpAudioFormataSERKS0__nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc14SdpAudioFormatC1ERKS0__nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc14SdpAudioFormatC1EOS0__nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 APS5_EXPORT("qGXgWFIHHgk", libwebrtcUnknown38);
 int APS5_VABI libwebrtcUnknown38(void) {
     NotImplemented_nid_no_patch("qGXgWFIHHgk");
@@ -711,11 +706,6 @@ int APS5_VABI libwebrtcUnknown39(void) {
 APS5_EXPORT("OnkJ4kSZYkk", libwebrtcUnknown40);
 int APS5_VABI libwebrtcUnknown40(void) {
     NotImplemented_nid_no_patch("OnkJ4kSZYkk");
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc14SdpAudioFormatD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -848,32 +838,7 @@ int APS5_VABI libwebrtcUnknown42(void) {
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc11AudioBufferC1Emmmmmm_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc11AudioBuffer8CopyFromEPKsRKNS_12StreamConfigE_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc11AudioBuffer6CopyToERKNS_12StreamConfigEPs_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN6webrtc7rnn_vad17FeaturesExtractorC1ERKNS_20AvailableCpuFeaturesE_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc7rnn_vad6RnnVadC1ERKNS_20AvailableCpuFeaturesE_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc7rnn_vad6RnnVadD1Ev_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -886,11 +851,6 @@ int APS5_VABI _ZN6webrtc7rnn_vad17FeaturesExtractorD1Ev_nid_postfix(void) {
 APS5_EXPORT("lQyI5UWffS8", libwebrtcUnknown43);
 int APS5_VABI libwebrtcUnknown43(void) {
     NotImplemented_nid_no_patch("lQyI5UWffS8");
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc7rnn_vad6RnnVad21ComputeVadProbabilityEN3rtc9ArrayViewIKfLl42EEEb_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 

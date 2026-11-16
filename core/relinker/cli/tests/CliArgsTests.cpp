@@ -121,6 +121,9 @@ void rpath() {
 void omitUnavailableDependencies() {
     require(!parse({"input.elf", "output.elf"}).omitUnavailableDependencies, "dependencies were left out by default");
     require(parse({"--omit-unavailable-dependencies", "input.elf", "output.elf"}).omitUnavailableDependencies, "--omit-unavailable-dependencies was ignored");
+    const std::string message = "--omit-unavailable-dependencies cannot be used with --windows or --macos";
+    expectThrows({"--windows", "--omit-unavailable-dependencies", "input.elf", "output.exe"}, message);
+    expectThrows({"--omit-unavailable-dependencies", "--macos", "input.elf", "output"}, message);
 }
 
 void rpathConsumesNextTokenVerbatim() {

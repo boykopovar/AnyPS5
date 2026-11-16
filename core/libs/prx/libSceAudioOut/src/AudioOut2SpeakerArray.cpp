@@ -106,15 +106,18 @@ static bool WriteGuest(void* guest, const void* local, std::size_t bytes) {
 extern "C" {
 
 int APS5_VABI sceAudioOut2SpeakerArrayCreate(AudioOut2SpeakerArrayHandle* handle, const void* vbap_params, const void* ambi_params) {
-    const auto* params = static_cast<const GuestVbapParams*>(vbap_params);
-    if (handle == nullptr || params == nullptr || params->positions == nullptr ||
-        params->numSpeakers == 0 || params->numSpeakers > MaxSpeakers || params->memory == nullptr ||
-        params->memorySize < sizeof(SpeakerArray) || reinterpret_cast<std::uintptr_t>(params->memory) % alignof(SpeakerArray) != 0) {
+    if (handle == nullptr || vbap_params == nullptr) APS5_INVALID_ARG_EX;
+    GuestVbapParams params{};
+    if (!ReadGuest(&params, vbap_params, sizeof(params))) APS5_INVALID_ARG_EX;
+    if (params.positions == nullptr || params.numSpeakers == 0 || params.numSpeakers > MaxSpeakers || params.memory == nullptr ||
+        params.memorySize < sizeof(SpeakerArray) || reinterpret_cast<std::uintptr_t>(params.memory) % alignof(SpeakerArray) != 0) {
         APS5_INVALID_ARG_EX;
     }
-    auto* array = new (params->memory) SpeakerArray{SpeakerArrayMagic, params->numSpeakers, {}};
-    std::copy_n(params->positions, params->numSpeakers, array->directions);
-    *handle = array;
+    SpeakerArray array{SpeakerArrayMagic, params.numSpeakers, {}};
+    if (!ReadGuest(array.directions, params.positions, params.numSpeakers * sizeof(AudioOut2Position))) APS5_INVALID_ARG_EX;
+    if (!WriteGuest(params.memory, &array, sizeof(array))) APS5_INVALID_ARG_EX;
+    const AudioOut2SpeakerArrayHandle created = params.memory;
+    if (!WriteGuest(handle, &created, sizeof(created))) APS5_INVALID_ARG_EX;
     return 0;
 }
 
@@ -132,9 +135,11 @@ int APS5_VABI sceAudioOut2GetSpeakerArrayAmbisonicsCoefficients(AudioOut2Speaker
     }
     const auto order = static_cast<std::uint32_t>(std::sqrt(static_cast<double>(acn)));
     const std::uint32_t decodable = std::max<std::uint32_t>(1, (array.numSpeakers - 1) / 2);
+    std::array<float, MaxSpeakers> local{};
     for (std::uint32_t speaker = 0; speaker < array.numSpeakers; ++speaker) {
-        coefficients[speaker] = order > decodable ? 0.0f : Sn3d(acn, array.directions[speaker]) / static_cast<float>(array.numSpeakers);
+        local[speaker] = order > decodable ? 0.0f : Sn3d(acn, array.directions[speaker]) / static_cast<float>(array.numSpeakers);
     }
+    if (!WriteGuest(coefficients, local.data(), array.numSpeakers * sizeof(float))) APS5_INVALID_ARG_EX;
     return 0;
 }
 

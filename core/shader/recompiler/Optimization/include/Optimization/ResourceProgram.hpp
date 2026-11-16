@@ -65,6 +65,9 @@ public:
     const RecompileRequest& Request() const { return request; }
     std::shared_ptr<const ResourceCapture> Capture(const SrtRuntime& runtime) const;
     std::shared_ptr<const RecompileResult> Materialize(const ResourceCapture& capture) const;
+    [[nodiscard]] std::shared_ptr<const RecompileResult> MaterializeIfMemoized(const ResourceCapture& capture, bool* contended = nullptr) const;
+    [[nodiscard]] PreparedShaderInvocation Rebound(const RecompileRequest& request) const;
+    [[nodiscard]] std::uint64_t SnapshotKey(const ResourceCapture& capture) const;
 
 private:
     PreparedShaderInvocation(const RecompileRequest& request, const std::shared_ptr<const SourceHandle>& handle);

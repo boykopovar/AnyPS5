@@ -217,19 +217,19 @@ void VerifyMeshReuseLimits() {
     Require(replay.request.graphics->mesh->reuseVertexLimit == 14u && replay.request.graphics->mesh->reusePrimitiveLimit == 13u);
     Require(serializer.Serialize(replay.request) == encoded);
     auto bytes = DecodeBase64(encoded);
-    Require(bytes[4] == 58u);
+    Require(bytes[4] == 63u);
     bytes.resize(bytes.size() - 8u);
-    bytes[4] = 57u;
-    const auto version57 = serializer.Deserialize(EncodeBase64(bytes));
-    Require(version57.request.graphics->mesh->reuseVertexLimit == 0u && version57.request.graphics->mesh->reusePrimitiveLimit == 0u);
-    Require(version57.request.graphics->mesh->verticesPerGroup == 12u);
+    bytes[4] = 62u;
+    const auto version62 = serializer.Deserialize(EncodeBase64(bytes));
+    Require(version62.request.graphics->mesh->reuseVertexLimit == 0u && version62.request.graphics->mesh->reusePrimitiveLimit == 0u);
+    Require(version62.request.graphics->mesh->verticesPerGroup == 12u);
 }
 
 std::string SerializeVersion56(const ShaderRecompiler::RecompileRequest& request) {
     auto bytes = DecodeBase64(ShaderRecompiler::RequestSerializer{}.Serialize(request));
-    Require(bytes.size() > 13u && bytes[4] == 58u);
+    Require(bytes.size() > 14u && bytes[4] == 63u);
     const bool mesh = request.graphics.has_value() && request.graphics->mesh.has_value();
-    bytes.resize(bytes.size() - 5u - (mesh ? 8u : 0u));
+    bytes.resize(bytes.size() - 6u - (mesh ? 8u : 0u));
     bytes[4] = 56u;
     return EncodeBase64(bytes);
 }
@@ -252,8 +252,8 @@ void VerifyTargetOptions() {
                     Require(replay.request.target.float16WidenNans == widen && replay.request.target.float16NarrowNans == narrow);
                     Require(serializer.Serialize(replay.request) == encoded);
                     auto bytes = DecodeBase64(encoded);
-                    Require(bytes[4] == 58u);
-                    for (std::size_t missing = 1u; missing <= 5u; ++missing) {
+                    Require(bytes[4] == 63u && bytes.back() == 0u);
+                    for (std::size_t missing = 1u; missing <= 6u; ++missing) {
                         auto truncated = bytes;
                         truncated.resize(truncated.size() - missing);
                         bool rejected = false;
@@ -264,6 +264,11 @@ void VerifyTargetOptions() {
                         }
                         Require(rejected);
                     }
+                    bytes.pop_back();
+                    bytes[4] = 57u;
+                    const auto legacy57 = serializer.Deserialize(EncodeBase64(bytes));
+                    Require(legacy57.request.target.fixedPushSlots == fixed && legacy57.request.target.maxImageArrayLayers == layers && !legacy57.request.target.spannedAnySubgroup);
+                    Require(legacy57.request.target.float16WidenNans == widen && legacy57.request.target.float16NarrowNans == narrow);
                     bytes.resize(bytes.size() - 5u);
                     bytes[4] = 56u;
                     const auto legacy56 = serializer.Deserialize(EncodeBase64(bytes));
@@ -797,15 +802,17 @@ int VerifyVersion56Compatibility() {
         version40[4] = 40u;
         const auto replay40 = serializer.Deserialize(EncodeBase64(version40));
         Require(!replay40.request.target.float32DenormPreserve && replay40.request.target.float32FlushToZero == !preserve);
-        auto future = bytes;
-        future[4] = 59u;
-        bool futureRejected = false;
-        try {
-            static_cast<void>(serializer.Deserialize(EncodeBase64(future)));
-        } catch (const std::runtime_error& error) {
-            futureRejected = std::string_view(error.what()) == "unsupported recompile request serialization version";
+        for (const std::uint8_t unwritten : {58u, 59u, 60u, 61u, 64u}) {
+            auto future = bytes;
+            future[4] = unwritten;
+            bool futureRejected = false;
+            try {
+                static_cast<void>(serializer.Deserialize(EncodeBase64(future)));
+            } catch (const std::runtime_error& error) {
+                futureRejected = std::string_view(error.what()) == "unsupported recompile request serialization version";
+            }
+            Require(futureRejected);
         }
-        Require(futureRejected);
         bytes.pop_back();
         bool rejected = false;
         try {
@@ -909,6 +916,18 @@ int VerifyVersion56Compatibility() {
         version35.pop_back();
         const auto replay35 = serializer.Deserialize(EncodeBase64(version35));
         Require(replay35.request.target.spannedWaves == spanned && !replay35.request.target.float32FlushToZero);
+        request.target.spannedAnySubgroup = spanned;
+        const auto version62 = DecodeBase64(serializer.Serialize(request));
+        Require(version62[4] == 62u && version62.back() == (spanned ? 1u : 0u));
+        Require(serializer.Deserialize(EncodeBase64(version62)).request.target.spannedAnySubgroup == spanned);
+        auto version57 = version62;
+        version57[4] = 57u;
+        version57.pop_back();
+        const auto replay57 = serializer.Deserialize(EncodeBase64(version57));
+        Require(replay57.request.target.float32FlushToZero && !replay57.request.target.spannedAnySubgroup);
+        const auto replay56 = serializer.Deserialize(SerializeVersion56(request));
+        Require(replay56.request.target.float32FlushToZero && !replay56.request.target.spannedAnySubgroup);
+        request.target.spannedAnySubgroup = false;
     }
     ShaderRecompiler::RecompileRequest pointRequest{};
     pointRequest.context.vertex = ShaderRecompiler::ShaderVertexStageInfo{};

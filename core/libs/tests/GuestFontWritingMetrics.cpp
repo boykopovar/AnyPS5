@@ -2,6 +2,7 @@
 #include "prx/libSceFont/include/Api.hpp"
 #include "prx/libSceFont/include/FontTypes.hpp"
 #include "tests/FontFixture.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -94,6 +95,9 @@ int main() {
     FontWritingMetrics metrics{1.0f, 1.0f, {1.0f, 1.0f, 1.0f, 1.0f}};
     Require(sceFontWritingGetRenderMetrics(&writing, &metrics) == SCE_FONT_OK && SameMetrics(metrics, {}));
     Require(sceFontWritingGetRenderMetrics(&writing, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontWritingGetRenderMetrics(&writing, reinterpret_cast<FontWritingMetrics*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     metrics = {1.0f, 1.0f, {1.0f, 1.0f, 1.0f, 1.0f}};
     Require(sceFontWritingGetRenderMetrics(nullptr, &metrics) == SCE_FONT_ERROR_INVALID_PARAMETER && SameMetrics(metrics, {}));
     FontWriting notWriting{};
@@ -144,6 +148,8 @@ int main() {
     Require(sceFontDestroyString(&formatString) == SCE_FONT_OK);
 
     Require(sceFontDestroyString(&string) == SCE_FONT_OK);
+    errno = 71;
+    Require(sceFontDestroyString(reinterpret_cast<FontString*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER && errno == 71);
     Require(sceFontCloseFont(font) == SCE_FONT_OK);
     Require(sceFontDestroyLibrary(&library) == SCE_FONT_OK);
     Require(allocations == 0);
