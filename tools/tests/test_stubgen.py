@@ -564,5 +564,14 @@ class SymlinkLoopTests(unittest.TestCase):
             self.assertFalse((root / "code.cpp").exists())
 
 
+class SanitizeIdentifierTests(unittest.TestCase):
+    def test_sanitize_identifier_replaces_and_prefixes(self):
+        import stubgen
+        self.assertEqual(stubgen.sanitize_identifier("a-b.c"), "a_b_c")
+        self.assertEqual(stubgen.sanitize_identifier("1x"), "_1x")
+        self.assertEqual(stubgen.sanitize_identifier("ok_1"), "ok_1")
+        self.assertEqual(stubgen.sanitize_identifier(""), "_")
+
+
 if __name__ == "__main__":
     unittest.main()
