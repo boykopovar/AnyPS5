@@ -1777,12 +1777,24 @@ void Allocator() {
     WriteFile(files.Host("sweep-key-after.pem"),
         std::string(RsaCertificatePem) + Record("RSA PRIVATE KEY", SignedCertificate(RsaKey(64, 0x24), "Leaf")));
     WriteFile(files.Host("sweep-broken-after-good.pem"), std::string(RsaCertificatePem) + Record("CERTIFICATE", Bytes{0x10, 0x00}));
+    const std::string sweepOne = Record("CERTIFICATE", SignedCertificate(RsaKey(64, 0x28), "One"));
+    const std::string sweepTwo = Record("CERTIFICATE", SignedCertificate(RsaKey(64, 0x29), "Two"));
+    const std::string sweepThree = Record("CERTIFICATE", SignedCertificate(RsaKey(64, 0x2a), "Three"));
+    const std::string sweepFour = Record("CERTIFICATE", SignedCertificate(RsaKey(64, 0x2b), "Four"));
+    WriteFile(files.Host("sweep-bundle4.pem"), sweepOne + sweepTwo + sweepThree + sweepFour);
+    WriteFile(files.Host("sweep-three-with-duplicate.pem"),
+        sweepOne + sweepTwo + Record("CERTIFICATE", SignedCertificate(RsaKey(64, 0x2c), "One")));
+    WriteFile(files.Host("sweep-three-then-encrypted.pem"), sweepOne + sweepTwo + sweepThree +
+        RecordWithHeader("CERTIFICATE", "Proc-Type: 4,ENCRYPTED\nDEK-Info: AES-128-CBC,00112233445566778899AABBCCDDEEFF", Bytes{0x30, 0x00}));
     SweepStoreLoad(files.Path("sweep-single.pem"), false, "the store built from one file releases the certificate and the file");
     SweepStoreLoad(files.Path("sweep-same-subject.pem"), true, "the store guard of a duplicate subject releases the list and the read certificate");
     SweepStoreLoad(files.Path("sweep-trusted.pem"), false, "the store guard frees the auxiliary data of the trusted certificate");
     SweepStoreLoad(files.Path("sweep-crl.pem"), true, "a revocation list in the file releases the list built before it");
     SweepStoreLoad(files.Path("sweep-key-after.pem"), true, "a private key after a certificate releases the certificate read before it");
     SweepStoreLoad(files.Path("sweep-broken-after-good.pem"), false, "a record that cannot be decoded releases the record read before it");
+    SweepStoreLoad(files.Path("sweep-bundle4.pem"), false, "a four-certificate bundle grows and releases its info stack cleanly");
+    SweepStoreLoad(files.Path("sweep-three-with-duplicate.pem"), true, "a duplicate third record frees every item in the info stack");
+    SweepStoreLoad(files.Path("sweep-three-then-encrypted.pem"), true, "an encrypted fourth record frees the preceding info stack cleanly");
 }
 
 void ConcurrentCache() {
@@ -1823,6 +1835,107 @@ void ConcurrentCache() {
     Require(roundsWithSeveralCandidates > 0, "the concurrent readers really create more than one candidate");
 }
 
+void StoreInfoReconciliation() {
+    {
+        const std::uint64_t baseline = generation;
+        auto* certificate = ReadTrusted(TrustedCertificatePem);
+        Require(certificate && certificate->auxiliary, "a trusted certificate is created for X509_INFO_free");
+        auto* info = static_cast<LibreSslX509Info*>(calloc_nid_postfix(1, sizeof(LibreSslX509Info)));
+        Require(info, "a LibreSslX509Info structure is allocated");
+        info->certificate = certificate;
+        info->references = 1;
+        info->encryptedLength = 4;
+        info->encryptedData = static_cast<char*>(malloc_nid_postfix(4));
+        Require(info->encryptedData, "encrypted data buffer is allocated");
+        int marker = 0;
+        info->crl = &marker;
+        RequireThrows([&] { X509_INFO_free_nid_postfix(info); }, "X509_INFO_free refuses a held CRL on the last reference");
+        Require(info->references == 1 && certificate->references == 1 && OutstandingSince(baseline) > 0,
+            "a thrown CRL check leaves references and allocations untouched");
+        info->crl = nullptr;
+        info->privateKey = &marker;
+        RequireThrows([&] { X509_INFO_free_nid_postfix(info); }, "X509_INFO_free refuses a held X509_PKEY on the last reference");
+        Require(info->references == 1 && certificate->references == 1 && OutstandingSince(baseline) > 0,
+            "a thrown X509_PKEY check leaves references and allocations untouched");
+        info->privateKey = nullptr;
+        X509_INFO_free_nid_postfix(info);
+        Require(OutstandingSince(baseline) == 0, "X509_INFO_free releases the trusted certificate, encrypted data and info");
+        RequireNoCodes("X509_INFO_free cleanup queues nothing");
+    }
+
+    const GuestFiles files;
+    const std::string certOne = Record("CERTIFICATE", SignedCertificate(RsaKey(64, 0x31), "One"));
+    const std::string certTwo = Record("CERTIFICATE", SignedCertificate(RsaKey(64, 0x32), "Two"));
+    const std::string certThree = Record("CERTIFICATE", SignedCertificate(RsaKey(64, 0x33), "Three"));
+    const std::string certFour = Record("CERTIFICATE", SignedCertificate(RsaKey(64, 0x34), "Four"));
+    const std::string certOneDup = Record("CERTIFICATE", SignedCertificate(RsaKey(64, 0x35), "One"));
+    WriteFile(files.Host("bundle4.pem"), certOne + certTwo + certThree + certFour);
+    WriteFile(files.Host("three-then-crl.pem"), certOne + certTwo + certThree + CertificateListPem);
+    WriteFile(files.Host("three-then-encrypted.pem"), certOne + certTwo + certThree +
+        RecordWithHeader("CERTIFICATE", "Proc-Type: 4,ENCRYPTED\nDEK-Info: AES-128-CBC,00112233445566778899AABBCCDDEEFF", Bytes{0x30, 0x00}));
+    WriteFile(files.Host("three-then-broken.pem"), certOne + certTwo + certThree + Record("CERTIFICATE", Bytes{0x10, 0x00}));
+    WriteFile(files.Host("three-with-dup.pem"), certOne + certTwo + certOneDup);
+
+    {
+        const std::uint64_t baseline = generation;
+        StoreFixture store("a store for a four-certificate bundle");
+        Require(store.Load(files.Path("bundle4.pem")) == 1, "a four-certificate bundle loads past initial stack capacity");
+        RequireNoCodes("loading a four-certificate bundle queues nothing");
+        Require(StackCount(store.Objects()) == 4, "all four certificates reach the store");
+        for (int index = 0; index < 4; ++index) {
+            auto* stored = StoredCertificate(store.Objects(), index);
+            Require(stored && stored->references == 1, "the store owns each certificate from the grown stack");
+        }
+        store.Close();
+        Require(OutstandingSince(baseline) == 0, "the four-certificate bundle releases every info, stack and store allocation");
+    }
+
+    {
+        const std::uint64_t baseline = generation;
+        StoreFixture store("a store for three certs before a CRL");
+        RequireThrows([&] { store.Load(files.Path("three-then-crl.pem")); }, "a CRL after three certificates throws");
+        ERR_clear_error_nid_postfix();
+        Require(StackCount(store.Objects()) == 0, "a CRL failure leaves the store empty per by_file.c");
+        store.Close();
+        Require(OutstandingSince(baseline) == 0, "a CRL after three certificates releases every allocation");
+    }
+
+    {
+        const std::uint64_t baseline = generation;
+        StoreFixture store("a store for three certs before an encrypted record");
+        RequireThrows([&] { store.Load(files.Path("three-then-encrypted.pem")); }, "an encrypted record after three certificates throws");
+        ERR_clear_error_nid_postfix();
+        Require(StackCount(store.Objects()) == 0, "an encrypted record leaves the store empty per by_file.c");
+        store.Close();
+        Require(OutstandingSince(baseline) == 0, "an encrypted record after three certificates releases every allocation");
+    }
+
+    {
+        const std::uint64_t baseline = generation;
+        StoreFixture store("a store for three certs before a malformed record");
+        Require(store.Load(files.Path("three-then-broken.pem")) == 0, "a malformed fourth record refuses the file");
+        RequireCodes({Code(Asn1Library, SequenceNotConstructed), Code(PemLibrary, Asn1LibraryError), Code(X509Library, PemLibraryFailure)},
+            "a malformed fourth record queues the reference reasons");
+        Require(StackCount(store.Objects()) == 0, "a malformed fourth record leaves the store empty per by_file.c");
+        store.Close();
+        Require(OutstandingSince(baseline) == 0, "a malformed fourth record releases every allocation");
+    }
+
+    {
+        const std::uint64_t baseline = generation;
+        StoreFixture store("a store for a duplicate third certificate");
+        RequireThrows([&] { store.Load(files.Path("three-with-dup.pem")); }, "a duplicate third subject reaches the store guard");
+        ERR_clear_error_nid_postfix();
+        Require(StackCount(store.Objects()) == 2, "the two distinct certificates inserted before the duplicate stay in the store");
+        for (int index = 0; index < 2; ++index) {
+            auto* stored = StoredCertificate(store.Objects(), index);
+            Require(stored && stored->references == 1, "each kept certificate keeps a single store reference");
+        }
+        store.Close();
+        Require(OutstandingSince(baseline) == 0, "the duplicate-subject unwind releases the uninserted cert, info items and stack");
+    }
+}
+
 }  // namespace
 
 void* operator new(std::size_t size) { return Track(std::malloc(size), size, "new"); }
@@ -1851,6 +1964,7 @@ int main(int argc, char**) {
     TrustedFields();
     TrustedErrors();
     StoreLocations();
+    StoreInfoReconciliation();
     ClientCa();
     return 0;
 }

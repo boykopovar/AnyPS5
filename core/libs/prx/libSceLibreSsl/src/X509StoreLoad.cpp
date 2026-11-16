@@ -129,6 +129,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <exception>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -161,30 +163,6 @@ constexpr const char* RsaPrivateKeyLabel = "RSA PRIVATE KEY";
 constexpr const char* DsaPrivateKeyLabel = "DSA PRIVATE KEY";
 constexpr const char* EcPrivateKeyLabel = "EC PRIVATE KEY";
 
-struct Stack {
-    std::int32_t num;
-    char** data;
-    std::int32_t sorted;
-    std::int32_t numAlloc;
-    int (APS5_VABI* compare)(const void*, const void*);
-};
-
-struct X509Info {
-    LibreSslX509* certificate;
-    void* crl;
-    void* privateKey;
-    const void* cipher;
-    unsigned char iv[16];
-    std::int32_t encryptedLength;
-    char* encryptedData;
-    std::int32_t references;
-};
-
-static_assert(sizeof(X509Info) == 72 && offsetof(X509Info, crl) == 8 && offsetof(X509Info, privateKey) == 16);
-static_assert(offsetof(X509Info, iv) == 32 && offsetof(X509Info, encryptedLength) == 48);
-static_assert(offsetof(X509Info, encryptedData) == 56 && offsetof(X509Info, references) == 64);
-static_assert(sizeof(Stack) == 32 && offsetof(Stack, data) == 8 && offsetof(Stack, numAlloc) == 20);
-
 using LookupControl = int (APS5_VABI*)(LibreSslX509Lookup*, int, const char*, std::int64_t, char**);
 
 int Reason(std::uint64_t code) {
@@ -195,8 +173,8 @@ void PutX509Error(int reason) {
     LibreSslPutError_nid_no_patch(X509Library, AnyFunction, reason, __FILE__, __LINE__);
 }
 
-Stack* NewStack() {
-    auto* const stack = static_cast<Stack*>(malloc_nid_postfix(sizeof(Stack)));
+LibreSslStack* NewStack() {
+    auto* const stack = static_cast<LibreSslStack*>(malloc_nid_postfix(sizeof(LibreSslStack)));
     if (!stack) return nullptr;
     stack->data = static_cast<char**>(malloc_nid_postfix(sizeof(char*) * MinimumNodes));
     if (!stack->data) {
@@ -207,12 +185,14 @@ Stack* NewStack() {
     stack->num = 0;
     stack->sorted = 0;
     stack->numAlloc = MinimumNodes;
-    stack->compare = nullptr;
+    stack->comp = nullptr;
     return stack;
 }
 
-bool PushElement(Stack* stack, void* element) {
+bool PushElement(LibreSslStack* stack, void* element) {
+    if (!stack || !stack->data || stack->numAlloc <= 0 || stack->num < 0) return false;
     if (stack->numAlloc <= stack->num + 1) {
+        if (stack->numAlloc > std::numeric_limits<int>::max() / 2) return false;
         auto* const grown = static_cast<char**>(realloc_nid_postfix(stack->data, static_cast<std::size_t>(stack->numAlloc) * 2 * sizeof(char*)));
         if (!grown) return false;
         stack->data = grown;
@@ -224,22 +204,22 @@ bool PushElement(Stack* stack, void* element) {
     return true;
 }
 
-void FreeStack(Stack* stack) {
+void FreeStack(LibreSslStack* stack) {
     if (!stack) return;
     free_nid_postfix(stack->data);
     free_nid_postfix(stack);
 }
 
-int ElementCount(const Stack* stack) {
-    return stack->num;
+int ElementCount(const LibreSslStack* stack) {
+    return stack ? stack->num : 0;
 }
 
-X509Info* InfoAt(const Stack* stack, int index) {
-    return reinterpret_cast<X509Info*>(stack->data[index]);
+LibreSslX509Info* InfoAt(const LibreSslStack* stack, int index) {
+    return reinterpret_cast<LibreSslX509Info*>(stack->data[index]);
 }
 
-X509Info* InfoNew() {
-    auto* const info = static_cast<X509Info*>(malloc_nid_postfix(sizeof(X509Info)));
+LibreSslX509Info* InfoNew() {
+    auto* const info = static_cast<LibreSslX509Info*>(malloc_nid_postfix(sizeof(LibreSslX509Info)));
     if (!info) {
         LibreSslPutError_nid_no_patch(Asn1Library, AnyFunction, MallocFailure, __FILE__, __LINE__);
         return nullptr;
@@ -254,17 +234,8 @@ X509Info* InfoNew() {
     return info;
 }
 
-void InfoFree(X509Info* info) {
-    if (!info) return;
-    if (--info->references > 0) return;
-    if (info->crl) NotImplemented_nid_no_patch("X509_INFO_free of an X509 CRL");
-    if (info->privateKey) NotImplemented_nid_no_patch("X509_INFO_free of a private key");
-    X509_free_nid_postfix(info->certificate);
-    free_nid_postfix(info->encryptedData);
-    free_nid_postfix(info);
-}
-
 LibreSsl::Bio* NewFileBio(const char* file) {
+    if (!file) throw std::invalid_argument("X509_load_cert_crl_file: null file path");
     auto* const stream = fopen_nid_postfix(file, "r");
     if (!stream) {
         const int openError = errno;
@@ -281,14 +252,26 @@ LibreSsl::Bio* NewFileBio(const char* file) {
     return bio;
 }
 
-void ReleaseInfos(Stack* infos) {
-    for (int index = 0; index < ElementCount(infos); ++index)
-        InfoFree(InfoAt(infos, index));
-    FreeStack(infos);
+void ReleaseInfos(LibreSslStack* infos, bool freeStack, bool rethrowFirst) {
+    if (!infos) return;
+    std::exception_ptr firstError;
+    if (infos->data) {
+        for (int index = 0; index < infos->num; ++index) {
+            try {
+                X509_INFO_free_nid_postfix(InfoAt(infos, index));
+            } catch (...) {
+                if (!firstError) firstError = std::current_exception();
+            }
+            infos->data[index] = nullptr;
+        }
+    }
+    infos->num = 0;
+    if (freeStack) FreeStack(infos);
+    if (rethrowFirst && firstError) std::rethrow_exception(firstError);
 }
 
-Stack* ReadInfoBio(LibreSsl::Bio* bio, Stack* list) {
-    Stack* result = list;
+LibreSslStack* ReadInfoBio(LibreSsl::Bio* bio, LibreSslStack* list) {
+    LibreSslStack* result = list;
     if (!result) {
         result = NewStack();
         if (!result) {
@@ -296,14 +279,29 @@ Stack* ReadInfoBio(LibreSsl::Bio* bio, Stack* list) {
             return nullptr;
         }
     }
-    const auto release = [&] {
-        for (int index = 0; index < ElementCount(result); ++index)
-            InfoFree(InfoAt(result, index));
-        if (result != list) FreeStack(result);
+    const auto release = [&](LibreSslX509Info*& pending, bool rethrowFirst) -> LibreSslStack* {
+        std::exception_ptr firstError;
+        LibreSslX509Info* const pendingInfo = pending;
+        pending = nullptr;
+        if (pendingInfo) {
+            try {
+                X509_INFO_free_nid_postfix(pendingInfo);
+            } catch (...) {
+                firstError = std::current_exception();
+            }
+        }
+        LibreSslStack* const released = result;
+        result = nullptr;
+        try {
+            ReleaseInfos(released, released != list, true);
+        } catch (...) {
+            if (!firstError) firstError = std::current_exception();
+        }
+        if (rethrowFirst && firstError) std::rethrow_exception(firstError);
         return nullptr;
     };
-    X509Info* info = InfoNew();
-    if (!info) return release();
+    LibreSslX509Info* info = InfoNew();
+    if (!info) return release(info, true);
     try {
         for (;;) {
             LibreSsl::PemBuffers buffers;
@@ -313,38 +311,26 @@ Stack* ReadInfoBio(LibreSsl::Bio* bio, Stack* list) {
                     ERR_clear_error_nid_postfix();
                     break;
                 }
-                InfoFree(info);
-                info = nullptr;
-                return release();
+                return release(info, true);
             }
             for (;;) {
                 const char* name = buffers.name->data;
                 const bool trusted = std::strcmp(name, TrustedCertificateLabel) == 0;
                 if (trusted || std::strcmp(name, CertificateLabel) == 0 || std::strcmp(name, OldCertificateLabel) == 0) {
                     if (info->certificate) {
-                        if (!PushElement(result, info)) {
-                            InfoFree(info);
-                            info = nullptr;
-                            return release();
-                        }
+                        if (!PushElement(result, info)) return release(info, true);
                         info = InfoNew();
-                        if (!info) return release();
+                        if (!info) return release(info, true);
                         continue;
                     }
-                    if (!LibreSsl::ReadCipherInfo(buffers.header->data, "PEM_X509_INFO_read_bio")) {
-                        InfoFree(info);
-                        info = nullptr;
-                        return release();
-                    }
+                    if (!LibreSsl::ReadCipherInfo(buffers.header->data, "PEM_X509_INFO_read_bio")) return release(info, true);
                     const unsigned char* input = reinterpret_cast<const unsigned char*>(buffers.data->data);
                     LibreSslX509* read =
                         trusted ? LibreSsl::X509AuxRead_nid_no_patch(&info->certificate, &input, static_cast<std::int64_t>(length))
                                 : d2i_X509_nid_postfix(&info->certificate, &input, static_cast<std::int64_t>(length));
                     if (!read) {
                         LibreSsl::PutPemError(Asn1LibraryFailure);
-                        InfoFree(info);
-                        info = nullptr;
-                        return release();
+                        return release(info, true);
                     }
                     info->certificate = read;
                     break;
@@ -356,20 +342,14 @@ Stack* ReadInfoBio(LibreSsl::Bio* bio, Stack* list) {
             }
         }
     } catch (...) {
-        if (info) try { InfoFree(info); } catch (...) {}
-        for (int index = 0; index < ElementCount(result); ++index)
-            InfoFree(InfoAt(result, index));
-        if (result != list) FreeStack(result);
+        release(info, false);
         throw;
     }
     if (info->certificate || info->crl || info->privateKey || info->encryptedData) {
-        if (!PushElement(result, info)) {
-            InfoFree(info);
-            return release();
-        }
+        if (!PushElement(result, info)) return release(info, true);
         info = nullptr;
     }
-    InfoFree(info);
+    X509_INFO_free_nid_postfix(info);
     return result;
 }
 
@@ -379,7 +359,7 @@ int LoadCertCrlFile(LibreSslX509Lookup* lookup, const char* file) {
         PutX509Error(SystemLibraryFailure);
         return 0;
     }
-    Stack* infos = nullptr;
+    LibreSslStack* infos = nullptr;
     try {
         infos = ReadInfoBio(input, nullptr);
     } catch (...) {
@@ -394,7 +374,7 @@ int LoadCertCrlFile(LibreSslX509Lookup* lookup, const char* file) {
     int count = 0;
     try {
         for (int index = 0; index < ElementCount(infos); ++index) {
-            X509Info* const item = InfoAt(infos, index);
+            LibreSslX509Info* const item = InfoAt(infos, index);
             if (item->certificate) {
                 X509_STORE_add_cert_nid_postfix(lookup->storeContext, item->certificate);
                 ++count;
@@ -402,10 +382,10 @@ int LoadCertCrlFile(LibreSslX509Lookup* lookup, const char* file) {
             if (item->crl) NotImplemented_nid_no_patch("X509_load_cert_crl_file: a certificate revocation list in the file");
         }
     } catch (...) {
-        try { ReleaseInfos(infos); } catch (...) {}
+        ReleaseInfos(infos, true, false);
         throw;
     }
-    ReleaseInfos(infos);
+    ReleaseInfos(infos, true, true);
     return count;
 }
 

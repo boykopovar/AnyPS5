@@ -44,6 +44,9 @@ void* X509StoreNew();
 void X509StoreFree(void* store);
 int X509StoreAddCert(void* store, void* certificate);
 void* X509StoreObjects(void* store);
+void* X509InfoNew();
+void X509InfoFree(void* info);
+void* Malloc(std::size_t size);
 int ObjCreate(const char* oid, const char* shortName, const char* longName);
 void ObjCleanup();
 void AddAllAlgorithms();
@@ -706,6 +709,62 @@ void CompareStores() {
     }
 }
 
+std::string FreeInfo(LibreSslX509Info* info, LibreSslX509* certificate, int references, bool data, const std::function<void(LibreSslX509Info*)>& release) {
+    const int extra = static_cast<int>(certificate ? certificate->references : 0);
+    std::string text = "info " + std::to_string(info->references) + " cert " + std::to_string(extra);
+    release(info);
+    text += " -> cert " + (references == 1 && extra == 1 ? std::string("released") : std::to_string(certificate ? certificate->references : 0));
+    if (references > 1) text += " info " + std::to_string(info->references) + " cipher " + std::to_string(reinterpret_cast<std::uintptr_t>(info->cipher)) + " length " + std::to_string(info->encryptedLength);
+    return text + (data ? " data" : "");
+}
+
+void CompareInfoFrees() {
+    faulty = false;
+    for (int round = 0; round < 3000; ++round) {
+        const Der der = Certificate();
+        const unsigned char* in = der.data();
+        LibreSslX509* mine = Chance(80) ? d2i_X509_nid_postfix(nullptr, &in, static_cast<std::int64_t>(der.size())) : nullptr;
+        in = der.data();
+        auto* theirs = mine ? static_cast<LibreSslX509*>(LibreSslReference::D2iX509(nullptr, &in, static_cast<long>(der.size()))) : nullptr;
+        if (mine && !theirs) {
+            X509_free_nid_postfix(mine);
+            mine = nullptr;
+        }
+        const int certificateReferences = 1 + static_cast<int>(Pick(3));
+        if (mine) {
+            mine->references = certificateReferences;
+            theirs->references = certificateReferences;
+        }
+        const int references = 1 + static_cast<int>(Pick(3));
+        const bool data = Chance(60);
+        auto* mineInfo = static_cast<LibreSslX509Info*>(calloc_nid_postfix(1, sizeof(LibreSslX509Info)));
+        auto* theirInfo = static_cast<LibreSslX509Info*>(LibreSslReference::X509InfoNew());
+        for (auto* info : {mineInfo, theirInfo}) {
+            info->references = references;
+            info->encryptedLength = data ? 5 : 0;
+        }
+        mineInfo->certificate = mine;
+        theirInfo->certificate = theirs;
+        mineInfo->encryptedData = data ? static_cast<char*>(malloc_nid_postfix(5)) : nullptr;
+        theirInfo->encryptedData = data ? static_cast<char*>(LibreSslReference::Malloc(5)) : nullptr;
+        const std::string mineText = FreeInfo(mineInfo, mine, references, data, [](LibreSslX509Info* info) { X509_INFO_free_nid_postfix(info); });
+        const std::string theirText = FreeInfo(theirInfo, theirs, references, data, [](LibreSslX509Info* info) { LibreSslReference::X509InfoFree(info); });
+        Record("X509_INFO_free", mineText == theirText, [&] { return "\n      mine   " + mineText + "\n      theirs " + theirText; });
+        if (references > 1) {
+            mineInfo->references = 1;
+            theirInfo->references = 1;
+            X509_INFO_free_nid_postfix(mineInfo);
+            LibreSslReference::X509InfoFree(theirInfo);
+        }
+        if (mine && certificateReferences > 1) {
+            mine->references = 1;
+            theirs->references = 1;
+            X509_free_nid_postfix(mine);
+            LibreSslReference::X509Free(theirs);
+        }
+    }
+}
+
 struct Oid {
     std::string text;
     std::vector<unsigned char> content;
@@ -1259,8 +1318,11 @@ int main() {
     CompareDigestVerify();
     CompareDesParity();
     CompareStrings();
-    CompareCertificates();
-    CompareStores();
+    if (sizeof(long) == 8) {
+        CompareCertificates();
+        CompareStores();
+        CompareInfoFrees();
+    }
     CompareCreatedObjects();
     CompareCipherLists();
     CompareCipherTable();

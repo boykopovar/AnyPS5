@@ -227,6 +227,39 @@ void Errors() {
         {134, 58, 58, 58}, "an invalid UTF8String name value");
 }
 
+LibreSslX509Info* NewInfo(LibreSslX509* certificate, int references) {
+    auto* info = static_cast<LibreSslX509Info*>(calloc_nid_postfix(1, sizeof(LibreSslX509Info)));
+    info->certificate = certificate;
+    info->references = references;
+    info->encryptedLength = 3;
+    info->encryptedData = static_cast<char*>(malloc_nid_postfix(3));
+    return info;
+}
+
+void InfoFree() {
+    X509_INFO_free_nid_postfix(nullptr);
+    LibreSslX509* certificate = Decode(Signed(Info()));
+    certificate->references = 3;
+    LibreSslX509Info* info = NewInfo(certificate, 2);
+    X509_INFO_free_nid_postfix(info);
+    Require(info->references == 1 && certificate->references == 3, "a shared X509_INFO only loses a reference");
+    X509_INFO_free_nid_postfix(info);
+    Require(certificate->references == 2, "the last X509_INFO_free releases its certificate");
+    info = NewInfo(nullptr, 1);
+    free_nid_postfix(info->encryptedData);
+    info->encryptedData = nullptr;
+    X509_INFO_free_nid_postfix(info);
+    info = NewInfo(certificate, 1);
+    certificate->references = 1;
+    int crl = 0;
+    info->crl = &crl;
+    info->references = 2;
+    X509_INFO_free_nid_postfix(info);
+    Require(info->references == 1, "a shared X509_INFO with a CRL only loses a reference");
+    info->crl = nullptr;
+    X509_INFO_free_nid_postfix(info);
+}
+
 std::set<void*> live;
 int failAt = 0;
 int calls = 0;
@@ -269,6 +302,11 @@ int APS5_VABI PosixAlign_nid_no_patch(void**, std::size_t, std::size_t) {
     std::abort();
 }
 
+void InfoFreeReleases(LibreSslX509* certificate) {
+    X509_INFO_free_nid_postfix(NewInfo(certificate, 1));
+    Require(live.empty(), "X509_INFO_free frees the info, its encrypted data and its only certificate");
+}
+
 void Allocator() {
     std::array<void*, 10> api{
         reinterpret_cast<void*>(Allocate_nid_no_patch), reinterpret_cast<void*>(Free_nid_no_patch), reinterpret_cast<void*>(Calloc_nid_no_patch),
@@ -300,6 +338,8 @@ void Allocator() {
     }
     failAt = 0;
     Require(failures > 50, "most allocations are checked");
+    LibreSslX509* certificate = Decode(encoded);
+    InfoFreeReleases(certificate);
 }
 
 } // namespace
@@ -316,4 +356,5 @@ int main(int argc, char**) {
     References();
     Ber();
     Errors();
+    InfoFree();
 }

@@ -3,7 +3,7 @@
  * src/lib/libcrypto/asn1/asn1_lib.c (v 1.38); src/lib/libcrypto/asn1/a_object.c (v 1.29); src/lib/libcrypto/asn1/a_int.c (v 1.31);
  * src/lib/libcrypto/asn1/a_bitstr.c (v 1.24); src/lib/libcrypto/asn1/x_name.c (v 1.33); src/lib/libcrypto/asn1/x_x509.c (v 1.24);
  * src/lib/libcrypto/asn1/x_pubkey.c (v 1.26); src/lib/libcrypto/asn1/x_algor.c (v 1.21); src/lib/libcrypto/asn1/x_val.c (v 1.11);
- * src/lib/libcrypto/asn1/x_exten.c (v 1.16) */
+ * src/lib/libcrypto/asn1/x_exten.c (v 1.16); src/lib/libcrypto/asn1/x_info.c (v 1.17) */
 /* Written by Dr Stephen N Henson (steve@openssl.org) for the OpenSSL
  * project 2000.
  */
@@ -144,6 +144,8 @@ static_assert(sizeof(LibreSslX509CertInfo) == 104 && offsetof(LibreSslX509CertIn
     && offsetof(LibreSslX509CertInfo, subject) == 40 && offsetof(LibreSslX509CertInfo, extensions) == 72 && offsetof(LibreSslX509CertInfo, encoding) == 80);
 static_assert(sizeof(LibreSslX509) == 176 && offsetof(LibreSslX509, references) == 28 && offsetof(LibreSslX509, name) == 32);
 static_assert(offsetof(LibreSslX509, exData) == 40 && offsetof(LibreSslX509, pathLength) == 48 && offsetof(LibreSslX509, extensionFlags) == 64);
+static_assert(sizeof(LibreSslX509Info) == 72 && offsetof(LibreSslX509Info, iv) == 32 && offsetof(LibreSslX509Info, encryptedLength) == 48);
+static_assert(offsetof(LibreSslX509Info, encryptedData) == 56 && offsetof(LibreSslX509Info, references) == 64);
 static_assert(offsetof(LibreSslX509, subjectKeyId) == 96 && offsetof(LibreSslX509, nameConstraints) == 136 && offsetof(LibreSslX509, sha1Hash) == 144 && offsetof(LibreSslX509, auxiliary) == 168);
 
 namespace {
@@ -1877,6 +1879,17 @@ LibreSslX509* APS5_VABI d2i_X509_nid_postfix(LibreSslX509** certificate, const u
 
 void APS5_VABI X509_free_nid_postfix(LibreSslX509* certificate) {
     FreeValue(certificate, CertificateItem);
+}
+
+void APS5_VABI X509_INFO_free_nid_postfix(LibreSslX509Info* info) {
+    if (!info) return;
+    std::atomic_ref<std::int32_t> references(info->references);
+    if (references.load() <= 1 && info->crl) NotImplemented_nid_no_patch("X509_INFO_free of an X509_CRL");
+    if (references.load() <= 1 && info->privateKey) NotImplemented_nid_no_patch("X509_INFO_free of an X509_PKEY");
+    if (references.fetch_sub(1) - 1 > 0) return;
+    X509_free_nid_postfix(info->certificate);
+    free_nid_postfix(info->encryptedData);
+    free_nid_postfix(info);
 }
 
 void* APS5_VABI X509_get_issuer_name_nid_postfix(const LibreSslX509* certificate) {
