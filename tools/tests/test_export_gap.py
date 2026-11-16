@@ -822,5 +822,14 @@ class ExportGapTests(unittest.TestCase):
         self.assertEqual(export_gap.strip_token("   "), "")
 
 
+    def test_mangled_and_identifier_reasons(self):
+        self.assertTrue(export_gap.is_mangled("_Z3foo"))
+        self.assertFalse(export_gap.is_mangled("_Zx"))
+        self.assertFalse(export_gap.is_mangled("foo"))
+        self.assertEqual(export_gap.helper_reason("_Z3foo"), "is a C++ mangled name")
+        self.assertEqual(export_gap.helper_reason("1abc"), "is not a valid C identifier")
+        self.assertIsNone(export_gap.helper_reason("abc"))
+
+
 if __name__ == "__main__":
     unittest.main()
