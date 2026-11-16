@@ -3706,6 +3706,13 @@ class PureHelperTests(unittest.TestCase):
         with self.assertRaisesRegex(import_audit.AuditError, "overflow"):
             import_audit.macho_uleb(bytes([0x80] * 11 + [0x01]), 0, 12, "x")
 
+    def test_nids_of_prefers_an_explicit_alias(self):
+        self.assertEqual(import_audit.nids_of("sceFoo", {"sceFoo": {"ABC"}}), {"ABC"})
+
+    def test_nids_of_computes_the_nid_without_an_alias(self):
+        name = "sceMsgDialogProgressBarSetValue"
+        self.assertEqual(import_audit.nids_of(name, {}), {nid_names.compute_nid(name)})
+
 
 if __name__ == "__main__":
     unittest.main()
