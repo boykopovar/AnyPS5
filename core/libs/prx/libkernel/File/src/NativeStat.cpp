@@ -175,8 +175,6 @@ static void CopyNativeStat(const NativeStat& st, FileStat* sb) {
     sb->st_dev = static_cast<std::uint32_t>(st.st_dev);
     sb->st_ino = static_cast<std::uint32_t>(st.st_ino);
     sb->st_nlink = static_cast<std::uint16_t>(st.st_nlink);
-    sb->st_uid = 0;
-    sb->st_gid = 0;
     sb->st_rdev = static_cast<std::uint32_t>(st.st_rdev);
     sb->st_blksize = 512;
     sb->st_blocks = (sb->st_size + 511LL) / 512LL;
@@ -203,8 +201,6 @@ static void CopyNativeStat(const NativeStat& st, FileStat* sb) {
     sb->st_dev = static_cast<std::uint32_t>(st.st_dev);
     sb->st_ino = static_cast<std::uint32_t>(st.st_ino);
     sb->st_nlink = static_cast<std::uint16_t>(st.st_nlink);
-    sb->st_uid = st.st_uid;
-    sb->st_gid = st.st_gid;
     sb->st_rdev = static_cast<std::uint32_t>(st.st_rdev);
     sb->st_blksize = static_cast<std::uint32_t>(st.st_blksize);
     sb->st_blocks = static_cast<std::int64_t>(st.st_blocks);

@@ -116,13 +116,17 @@ int EnterFrame(GuestStreamRec* stream, std::uint64_t count, const char* function
         if (readBytes < count) {
             Free(memory, record.base, function);
             record.base = nullptr;
-            error = InvalidStreamOperation;
+            record.cursor = nullptr;
+            record.limit = nullptr;
+            record.pos += readBytes;
+            return InvalidStreamOperation;
         }
         record.cursor = record.base;
         record.limit = Offset(record.cursor, count);
         record.pos += readBytes;
     } else {
         if (record.pos >= record.size || record.size - record.pos < count) return InvalidStreamOperation;
+        if (!record.base && record.pos != 0) Unsupported(function, "null memory stream base");
         record.cursor = Offset(record.base, record.pos);
         record.limit = Offset(record.cursor, count);
         record.pos += count;
@@ -382,7 +386,7 @@ std::uint64_t APS5_VABI FT_Stream_ReadULongLE_nid_postfix(GuestStreamRec* stream
 
 int APS5_VABI FT_Stream_ReadFields_nid_postfix(GuestStreamRec* stream, const GuestFrameField* fields, void* structure) {
     const char* function = __func__;
-    if (!fields) return InvalidArgument;
+    if (!fields || !stream) return InvalidArgument;
     auto& record = Stream(stream, function);
     int error = 0;
     bool frameAccessed = false;

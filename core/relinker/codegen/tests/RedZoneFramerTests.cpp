@@ -1,6 +1,8 @@
 #include <codegen/x86/RedZoneFramer.hpp>
 #include <algorithm>
+#include <codegen/x86/StubBodyBuilder.hpp>
 #include <cstdint>
+#include <span>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -266,6 +268,35 @@ void stubsOperandsAtRspWithTheInstructionsBeforeThem() {
     const auto store = Base + 0x40 + FramelessPrologue.size();
     require(sites[2].Address == store && sites[2].Length == StoreBelowRsp.size() + LoadAtRsp.size(), "the stub site does not start at the store before the operand at rsp");
     require(sites[2].Body == stubBody({0x48, 0x89, 0x7c, 0x24, 0x00, 0x48, 0x8b, 0x44, 0x24, 0x10}), "the store before the operand and the operand at rsp were not both moved by the shift");
+}
+
+void stubsOperandsAtRspBetweenRipRelativeInstructions() {
+    const std::vector<std::uint8_t> loadRipRelative{0x48, 0x8b, 0x05, 0x34, 0x12, 0x00, 0x00};
+    const std::vector<std::uint8_t> otherRipRelative{0x8b, 0x05, 0x78, 0x56, 0x00, 0x00};
+    std::vector<std::uint8_t> body = StoreBelowRsp;
+    append(body, otherRipRelative);
+    append(body, LoadAtRsp);
+    append(body, loadRipRelative);
+    const auto input = image({framelessLeaf(FramelessPrologue, body, FramelessExit)});
+    Codegen::RedZoneFrameReport report;
+    std::vector<Codegen::RedZoneDisplacement> displacements;
+    const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
+    require(report.Framed == 1 && report.OperandStubs == 1 && report.StubbedOperands == 1 && sites.size() == 3 && report.Skipped.empty(), "a leaf whose operand at rsp sits between rip-relative instructions was not framed with an operand stub");
+    const auto operand = Base + 0x40 + FramelessPrologue.size() + StoreBelowRsp.size() + otherRipRelative.size();
+    const auto& stub = sites[2];
+    require(stub.Address == operand && stub.Length == LoadAtRsp.size() + loadRipRelative.size(), "the stub site does not run from the operand at rsp over the rip-relative load after it");
+    std::vector<std::uint8_t> expected{0x48, 0x8b, 0x44, 0x24, 0x10};
+    append(expected, loadRipRelative);
+    require(stub.Body == stubBody(expected) && stub.ReturnBranchOffset == expected.size(), "the operand at rsp was not moved by the shift ahead of the rip-relative load");
+    require(stub.Relocations.size() == 1, "the rip-relative load in the stub has no relocation");
+    const auto& relocation = stub.Relocations[0];
+    require(relocation.DisplacementOffset == 8 && relocation.InstructionEnd == 12 && !relocation.AddressSize32, "the relocation does not cover the displacement of the rip-relative load");
+    require(relocation.SiteTarget == static_cast<std::int64_t>(LoadAtRsp.size() + loadRipRelative.size()) + 0x1234, "the relocation does not keep the rip-relative load's original target");
+    auto relocated = stub.Body;
+    const std::uint64_t stubAddress = 0x200000;
+    Codegen::ApplyStubRelocations(std::span<std::uint8_t>(relocated.data(), stub.ReturnBranchOffset), stub.Relocations, stub.Address, stubAddress, 0);
+    const auto displacement = static_cast<std::int32_t>(static_cast<std::uint32_t>(relocated[8]) | static_cast<std::uint32_t>(relocated[9]) << 8 | static_cast<std::uint32_t>(relocated[10]) << 16 | static_cast<std::uint32_t>(relocated[11]) << 24);
+    require(stubAddress + 12 + static_cast<std::int64_t>(displacement) == stub.Address + stub.Length + 0x1234, "the relocated load in the stub does not read the address the original load read");
 }
 
 void skipsLeavesWithOperandsThatCannotMove() {
@@ -998,6 +1029,114 @@ void leavesCodeWithoutAFunctionRange() {
     require(sites.empty() && report.Functions == 0, "code without a function range was framed");
 }
 
+void skipsModRmAndVectorRspOperands() {
+    const std::vector<std::vector<std::uint8_t>> uses{
+        {0x48, 0x63, 0x27},
+        {0x48, 0x6b, 0x27, 0x02},
+        {0x48, 0x69, 0x27, 0x34, 0x12, 0x00, 0x00},
+        {0xf3, 0x48, 0x0f, 0x2a, 0xc4},
+        {0xf2, 0x48, 0x0f, 0x2a, 0xc4},
+        {0xf3, 0x48, 0x0f, 0x2c, 0xe0},
+        {0xf2, 0x48, 0x0f, 0x2d, 0x27},
+        {0x0f, 0x50, 0xe0},
+        {0x66, 0x0f, 0x50, 0xe0},
+        {0x40, 0x0f, 0x94, 0xc4},
+        {0xf3, 0x48, 0x0f, 0xae, 0xc4},
+        {0xf3, 0x48, 0x0f, 0xae, 0xdc},
+        {0x66, 0x0f, 0xc4, 0xc4, 0x01},
+        {0x66, 0x0f, 0xc5, 0xe0, 0x01},
+        {0x48, 0x0f, 0xc7, 0xf4},
+        {0x48, 0x0f, 0xc7, 0xfc},
+        {0xf3, 0x0f, 0xc7, 0xfc},
+        {0x66, 0x0f, 0xd7, 0xe0},
+        {0x48, 0x0f, 0x02, 0x27},
+        {0x48, 0x0f, 0x03, 0xc4},
+        {0x0f, 0x00, 0xc4},
+        {0x0f, 0x01, 0xe4},
+        {0x48, 0x0f, 0x38, 0xf0, 0x27},
+        {0x48, 0x0f, 0x38, 0xf1, 0x27},
+        {0xf2, 0x0f, 0x38, 0xf0, 0x27},
+        {0xf2, 0x40, 0x0f, 0x38, 0xf0, 0xc4},
+        {0xf2, 0x48, 0x0f, 0x38, 0xf1, 0xc4},
+        {0x66, 0x48, 0x0f, 0x38, 0xf6, 0xc4},
+        {0xf3, 0x48, 0x0f, 0x38, 0xf6, 0x27},
+        {0x66, 0x0f, 0x3a, 0x14, 0xc4, 0x00},
+        {0x66, 0x0f, 0x3a, 0x15, 0xc4, 0x00},
+        {0x66, 0x48, 0x0f, 0x3a, 0x16, 0xc4, 0x00},
+        {0x66, 0x0f, 0x3a, 0x17, 0xc4, 0x00},
+        {0x66, 0x0f, 0x3a, 0x20, 0xc4, 0x00},
+        {0x66, 0x48, 0x0f, 0x3a, 0x22, 0xc4, 0x00},
+        {0xc5, 0xf9, 0x6e, 0xc4},
+        {0xc4, 0xe1, 0xf9, 0x6e, 0xc4},
+        {0xc5, 0xf9, 0x7e, 0xc4},
+        {0xc4, 0xe1, 0xf9, 0x7e, 0xc4},
+        {0xc4, 0xe1, 0xfb, 0x2a, 0xc4},
+        {0xc4, 0xe1, 0xfb, 0x2c, 0xe0},
+        {0xc5, 0xfc, 0x50, 0xe0},
+        {0xc5, 0xfd, 0xd7, 0xe0},
+        {0xc5, 0xf9, 0xc4, 0xc4, 0x01},
+        {0xc5, 0xf9, 0xc5, 0xe0, 0x01},
+        {0xc4, 0xe3, 0xf9, 0x16, 0xc4, 0x01},
+        {0xc4, 0xe3, 0xf9, 0x22, 0xc4, 0x01},
+        {0xc4, 0xe3, 0x79, 0x17, 0xc4, 0x01},
+        {0x62, 0xf1, 0xfd, 0x08, 0x6e, 0xc4},
+        {0x62, 0xf1, 0xfd, 0x08, 0x7e, 0xc4},
+        {0x62, 0xf3, 0xfd, 0x08, 0x16, 0xc4, 0x01},
+        {0x62, 0xf3, 0xfd, 0x08, 0x22, 0xc4, 0x01},
+        {0x62, 0xf1, 0xff, 0x08, 0x2a, 0xc4},
+        {0x62, 0xf1, 0xff, 0x08, 0x2c, 0xe0},
+        {0x62, 0xf1, 0x7d, 0x08, 0xc4, 0xc4, 0x01},
+        {0x62, 0xf1, 0x7d, 0x08, 0xc5, 0xe0, 0x01},
+        {0x62, 0xf3, 0x7d, 0x08, 0x17, 0xc4, 0x01},
+        {0x8f, 0xe9, 0x58, 0x01, 0xc8},
+        {0x8f, 0xe9, 0x78, 0x01, 0xcc},
+        {0x8f, 0xea, 0x78, 0x10, 0xe0, 0x01, 0x00, 0x00, 0x00},
+    };
+    for (std::size_t index = 0; index < uses.size(); ++index) {
+        auto framelessBody = StoreBelowRsp;
+        append(framelessBody, uses[index]);
+        auto framePointerBody = StoreBelowPushes;
+        append(framePointerBody, uses[index]);
+        const auto input = image({framelessLeaf(FramelessPrologue, framelessBody, FramelessExit), leaf(framePointerBody)});
+        Codegen::RedZoneFrameReport report;
+        std::vector<Codegen::RedZoneDisplacement> displacements;
+        const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
+        require(sites.empty() && displacements.empty() && report.RedZoneFunctions == 2 && report.Framed == 0 && report.Skipped.at("other use of rsp") == 2,
+                "direct rsp operand case " + std::to_string(index) + " was framed");
+    }
+}
+
+void framesModRmAndVectorNonStackOperands() {
+    const std::vector<std::vector<std::uint8_t>> uses{
+        {0x4c, 0x63, 0x27},
+        {0x4c, 0x6b, 0x27, 0x02},
+        {0x0f, 0x2a, 0xc4},
+        {0x0f, 0x2c, 0xe0},
+        {0x0f, 0x94, 0xc4},
+        {0xf3, 0x0f, 0x7e, 0xc4},
+        {0x66, 0x0f, 0xc5, 0xc4, 0x01},
+        {0x66, 0x0f, 0xd7, 0xc4},
+        {0x4c, 0x0f, 0x38, 0xf0, 0x27},
+        {0xf2, 0x0f, 0x38, 0xf0, 0xc4},
+        {0x66, 0x0f, 0x3a, 0x21, 0xc4, 0x00},
+        {0xc4, 0xc1, 0xf9, 0x6e, 0xc4},
+        {0xc5, 0xfa, 0x7e, 0xc4},
+        {0xc4, 0xe3, 0xd9, 0x22, 0xc0, 0x01},
+        {0x62, 0xd1, 0xfd, 0x08, 0x6e, 0xc4},
+        {0x62, 0xf1, 0xfe, 0x08, 0x7e, 0xc4},
+    };
+    for (std::size_t index = 0; index < uses.size(); ++index) {
+        auto body = StoreBelowRsp;
+        append(body, uses[index]);
+        const auto input = image({framelessLeaf(FramelessPrologue, body, FramelessExit)});
+        Codegen::RedZoneFrameReport report;
+        std::vector<Codegen::RedZoneDisplacement> displacements;
+        const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
+        require(report.Framed == 1 && sites.size() == 2 && report.Skipped.empty(),
+                "non-stack register case " + std::to_string(index) + " prevented framing");
+    }
+}
+
 }
 
 int main() {
@@ -1018,6 +1157,7 @@ int main() {
         stubsOperandsAtRspWithTheInstructionsAfterThem();
         stubsVexOperandsAtRsp();
         stubsOperandsAtRspWithTheInstructionsBeforeThem();
+        stubsOperandsAtRspBetweenRipRelativeInstructions();
         stubsShortOperandsAtRspBeforeABranchWithTheInstructionsBeforeThem();
         skipsShortOperandsAtRspWhoseWidenedStubCoversABranchTarget();
         skipsLeavesWithOperandsThatCannotMove();
@@ -1052,6 +1192,8 @@ int main() {
         framesAPointerOnlyFunctionByItsOwnBounds();
         leavesCodeWithoutAFunctionRange();
         tellsPopsWithoutRexFromXop();
+        skipsModRmAndVectorRspOperands();
+        framesModRmAndVectorNonStackOperands();
         std::cout << "red-zone framer tests passed\n";
         return 0;
     } catch (const std::exception& error) {

@@ -189,22 +189,22 @@ std::uint32_t SpirvValueEmitContext::ShuffleInHalf(const IrValue& inst, std::siz
 }
 
 std::uint32_t SpirvValueEmitContext::Result(const IrValue& inst) {
-    if (const auto found = definitions.find(&inst); found != definitions.end()) {
-        return found->second;
+    if (const auto* found = definitions.Find(&inst)) {
+        return *found;
     }
     const auto id = state.module.AllocateId();
-    definitions.emplace(&inst, id);
+    definitions.Emplace(&inst, id);
     return id;
 }
 
 std::uint32_t SpirvValueEmitContext::Define(const IrValue& inst, std::uint32_t value) {
-    if (const auto found = definitions.find(&inst); found != definitions.end()) {
-        if (found->second != value) {
-            state.module.AddFunction(spv::OpCopyObject, TypeId(state, inst.Type()), found->second, value);
+    if (const auto* found = definitions.Find(&inst)) {
+        if (*found != value) {
+            state.module.AddFunction(spv::OpCopyObject, TypeId(state, inst.Type()), *found, value);
         }
-        return found->second;
+        return *found;
     }
-    definitions.emplace(&inst, value);
+    definitions.Emplace(&inst, value);
     return value;
 }
 
@@ -285,6 +285,8 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.fusedExactArithmetic = target.fusedExactArithmetic;
     state.deviceScopeLdsMemoryBarriers = target.deviceScopeLdsMemoryBarriers;
     state.ldsLockFences = target.ldsLockFences;
+    state.float16WidenNans = target.float16WidenNans;
+    state.float16NarrowNans = target.float16NarrowNans;
     state.hostSubgroupSize = target.subgroupSize;
     if (target.largePixelFunctionLdsBuffer && program.Resources().stage == IrShaderStage::Pixel && state.requirements.functionLds && state.requirements.functionLdsDwords > target.pixelFunctionStorageDwords) {
         state.pixelFunctionLdsBuffer = true;
@@ -300,7 +302,10 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
         state.requirements.bufferInt64Atomics = false;
         state.requirements.bufferInt64AtomicsSplit = true;
     }
-    state.requirements.bufferU64View = state.requirements.bufferInt64Atomics || (state.requirements.coherentBufferPairs && int64Atomics);
+    state.requirements.bufferAtomicLocks = state.requirements.bufferInt64Atomics && !state.requirements.addressInt64Atomics && !int64Atomics;
+    state.requirements.bufferU64View = (state.requirements.bufferInt64Atomics && !state.requirements.bufferAtomicLocks) || (state.requirements.coherentBufferPairs && int64Atomics);
+    state.requirements.imageAtomicLocks = state.requirements.imageInt64Atomics && std::ranges::find(state.supportedCapabilities, static_cast<std::uint32_t>(spv::CapabilityInt64ImageEXT)) == state.supportedCapabilities.end();
+    if (state.requirements.imageAtomicLocks || state.requirements.bufferAtomicLocks) state.requirements.subgroupBallot = true;
     if (HostSubgroupSingleLane(state)) {
         state.requirements.subgroupBallot = false;
         state.requirements.subgroupShuffle = false;
@@ -312,6 +317,7 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     const bool halfHost = workgroup != nullptr && program.WaveSize() == 64u && workgroup->hostSubgroupSize == 32u;
     state.spannedWave = halfHost && target.spannedWaves && program.Resources().stage == IrShaderStage::Compute && !state.requirements.computeDerivatives && std::max(workgroup->threadsNum[0], 1u) * std::max(workgroup->threadsNum[1], 1u) * std::max(workgroup->threadsNum[2], 1u) == 64u;
     state.laneCount = halfHost && !state.spannedWave ? 2u : 1u;
+    state.spannedAnySubgroup = state.spannedWave && target.spannedAnySubgroup;
     if (state.spannedWave) {
         state.requirements.subgroupLocalInvocationId = true;
         state.requirements.subgroupBallot = true;
@@ -331,6 +337,7 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     // Stopped invocations would leave the wave LDS barriers incomplete.
     state.bdaStopsInvocations = state.waveLdsScope == 0 && !state.spannedWave && BdaInvocationsMayStop(program) && program.Resources().stage != IrShaderStage::Mesh;
     state.meshWindowBuffer = target.meshWindowBuffer && program.Resources().stage == IrShaderStage::Mesh && program.Metadata().vectorWindowSize != 0u && state.laneCount * MeshWindowInvocations(state) * program.Metadata().vectorWindowSize <= MeshWindowSlotDwords;
+    if (target.meshInlineFunctions && program.Resources().stage == IrShaderStage::Mesh) state.module.InlineFunctions();
     EmitModuleHeader(state, bindings);
     EmitProgram(state);
     state.module.EmitEntryPoint(ExecutionModelForStage(state.program.Resources().stage), state.mainFunc, "main", state.interfaceVariables);
@@ -343,6 +350,7 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
         info->functionLdsBuffer = state.pixelFunctionLdsBuffer;
         info->meshWindowBuffer = state.meshWindowBuffer;
         info->scratchPoolSlotDwords = ScratchPoolActive(state) ? ScratchPoolSlotDwords(state) : 0u;
+        info->anySubgroupSize = state.spannedAnySubgroup;
     }
     VerifyScratchPoolReturns(state, words);
     return words;

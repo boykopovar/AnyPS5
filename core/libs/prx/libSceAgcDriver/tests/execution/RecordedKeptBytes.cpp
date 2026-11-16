@@ -209,6 +209,7 @@ void Draw(AgcDriver::VulkanDevice& device, GuestBuffer& pixels, GuestBuffer& ver
         {ShaderStage::Fragment, &pixelResult, PixelPushOffset(vertexPush, target)}
     }};
 
+    std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
     AgcDriver::Graphics::State state{};
     state.stages = {AgcDriver::Graphics::ShaderPath::Vertex, 0u, 64u, 64u, std::nullopt, std::nullopt};
     state.color = {AddressOf(pixels.Data()), {Width, Height}, VK_FORMAT_R8G8B8A8_UNORM, TargetLayout.Bytes(), 0xe4u, ColorTileMode::RenderTarget};

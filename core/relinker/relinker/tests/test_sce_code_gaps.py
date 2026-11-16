@@ -137,6 +137,8 @@ def main():
         run(relinker, work, "sce-gap-syscall-bytes-after-slot", executable(SLOT + SYSCALL), [],
             expected_output=SKIPPED % (1, 0x220))
         run(relinker, work, "sce-gap-table-with-syscall-bytes", executable(TABLE), [], expected_output=SKIPPED % (1, 0x214))
+        run(relinker, work, "sce-gap-interrupt-table-is-skipped", executable(bytes.fromhex("cd 7f c3 cd 80 c3 cd 81 c3")), [],
+            expected_output=SKIPPED % (1, 0x213))
         run(relinker, work, "sce-gap-syscall-bytes-at-function-end", executable(SYSCALL), [], expected_output=SKIPPED % (1, GAP))
         run(relinker, work, "sce-gap-sysret-bytes", executable(SLOT + bytes.fromhex("0f 07")), [],
             expected_output=SKIPPED % (1, 0x220))

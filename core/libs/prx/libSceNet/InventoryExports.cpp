@@ -1,6 +1,30 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
+#include "prx/libSceNet/include/Net.hpp"
+#include <algorithm>
+#include <cerrno>
+#include <cstddef>
+
+static_assert(sizeof(NetDhcpOption) == 16 && offsetof(NetDhcpOption, code) == 8 && offsetof(NetDhcpOption, length) == 9 && offsetof(NetDhcpOption, declaredLength) == 10);
+
+namespace {
+
+bool CopyInPreservingErrno(void* destination, const void* source, std::size_t size) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(destination, source, size);
+    errno = savedErrno;
+    return ok;
+}
+
+bool CopyOutPreservingErrno(void* destination, const void* source, std::size_t size) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(destination, source, size);
+    errno = savedErrno;
+    return ok;
+}
+
+}
 
 extern "C" {
 
@@ -14,8 +38,32 @@ int APS5_VABI libSceNetUnknown__minus_qjsa0xOWMc_nid_no_patch() {
 }
 APS5_EXPORT("-qjsa0xOWMc", libSceNetUnknown__minus_qjsa0xOWMc_nid_no_patch);
 
-int APS5_VABI libSceNetUnknown_DnB6WJ91HGg_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI libSceNetUnknown_DnB6WJ91HGg_nid_no_patch(const std::uint8_t* options, std::int32_t length, NetDhcpOption* option) {
+    constexpr int invalid = static_cast<int>(0x80411506u);
+    if (options == nullptr || option == nullptr) return invalid;
+    std::uint8_t wanted = 0;
+    const std::uint8_t cleared[2] = {0, 0};
+    if (!CopyInPreservingErrno(&wanted, &option->code, sizeof(wanted)) || !CopyOutPreservingErrno(&option->length, cleared, sizeof(cleared))) return invalid;
+    if (length < 2) return invalid;
+    for (std::int32_t offset = 0; offset < length;) {
+        if (length - offset < 2) return invalid;
+        offset += 2;
+        const std::int32_t remaining = length - offset;
+        std::uint8_t header[2] = {};
+        if (!CopyInPreservingErrno(header, options, sizeof(header))) return invalid;
+        const std::uint8_t code = header[0];
+        const std::uint8_t size = header[1];
+        options += 2;
+        if (code == wanted) {
+            const std::uint8_t lengths[2] = {static_cast<std::uint8_t>(std::min<std::int32_t>(size, remaining)), size};
+            if (!CopyOutPreservingErrno(&option->length, lengths, sizeof(lengths)) || !CopyOutPreservingErrno(&option->value, &options, sizeof(options))) return invalid;
+            return 0;
+        }
+        if (size == 0 || remaining <= size) return invalid;
+        offset += size;
+        options += size;
+    }
+    return 0;
 }
 APS5_EXPORT("DnB6WJ91HGg", libSceNetUnknown_DnB6WJ91HGg_nid_no_patch);
 

@@ -27,13 +27,22 @@ int main() {
         Require(sceKernelClose(fd) == SceKernelErrorEperm);
         Require(Open(fd));
     }
+    *__error_nid_postfix() = 0;
+    Require(dup_nid_postfix(-1) == -1 && *__error_nid_postfix() == GuestEbadf);
+
     int pipe[2];
     Require(pipe_nid_postfix(pipe) == 0);
     for (const int fd : pipe) Require(fd >= 3 || !open[fd]);
+    const int dupRead = dup_nid_postfix(pipe[0]);
+    Require(dupRead >= 0 && dupRead != pipe[0]);
+    Require(close_nid_postfix(dupRead) == 0);
     Require(close_nid_postfix(pipe[0]) == 0 && close_nid_postfix(pipe[1]) == 0);
     Require(close_nid_postfix(pipe[0]) == -1 && *__error_nid_postfix() == GuestEbadf);
+    *__error_nid_postfix() = 0;
+    Require(dup_nid_postfix(pipe[0]) == -1 && *__error_nid_postfix() == GuestEbadf);
     Require(sceKernelClose(pipe[1]) == SceKernelErrorEbadf);
     Require(close_nid_postfix(-1) == -1 && *__error_nid_postfix() == GuestEbadf);
     Require(sceKernelClose(-1) == SceKernelErrorEbadf);
+    Require(sceKernelClose(-2) == SceKernelErrorEbadf);
     return 0;
 }

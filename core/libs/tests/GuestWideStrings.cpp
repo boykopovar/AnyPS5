@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <climits>
 #include <cstddef>
 #include <cstdio>
@@ -239,6 +240,67 @@ int main() {
     require(wcsstr_nid_postfix(haystack, u"") == haystack);
     require(wcsstr_nid_postfix(haystack, u"three") == nullptr);
     require(wcsstr_nid_postfix(u"tw", u"two") == nullptr);
+    {
+        std::uint32_t seed = 54321;
+        const auto next = [&seed](std::uint32_t bound) {
+            seed = seed * 1103515245u + 12345u;
+            return (seed >> 16) % bound;
+        };
+        for (int round = 0; round < 4000; ++round) {
+            const std::uint32_t alphabet = 1 + next(3);
+            char16_t text[1537] = {};
+            char16_t pattern[41] = {};
+            const std::size_t textLength = next(2) == 0 ? next(64) : next(1536 + 1);
+            const std::size_t patternLength = next(40 + 1);
+            for (std::size_t i = 0; i < textLength; ++i) text[i] = static_cast<char16_t>(0xfffd + next(alphabet));
+            for (std::size_t i = 0; i < patternLength; ++i) pattern[i] = static_cast<char16_t>(0xfffd + next(alphabet));
+            if (patternLength != 0 && patternLength <= textLength && next(2) == 0) {
+                std::memcpy(text + next(static_cast<std::uint32_t>(textLength - patternLength + 1)), pattern, patternLength * sizeof(char16_t));
+            }
+            if (textLength != 0 && next(4) == 0) text[next(static_cast<std::uint32_t>(textLength))] = 0;
+            std::size_t effective = 0;
+            while (text[effective] != 0) ++effective;
+            const char16_t* expected = patternLength == 0 ? text : nullptr;
+            for (std::size_t i = 0; expected == nullptr && i + patternLength <= effective; ++i) {
+                if (same(text + i, pattern, patternLength)) expected = text + i;
+            }
+            require(wcsstr_nid_postfix(text, pattern) == expected);
+        }
+        for (int round = 0; round < 4000; ++round) {
+            char16_t word[4];
+            const std::size_t wordLength = 1 + next(4);
+            for (std::size_t i = 0; i < wordLength; ++i) word[i] = static_cast<char16_t>(0xfff0 + next(3));
+            std::u16string needle;
+            const std::size_t needleLength = 2 + next(60);
+            for (std::size_t i = 0; i < needleLength; ++i) needle.push_back(word[i % wordLength]);
+            needle.back() = static_cast<char16_t>(0xfff0 + next(4));
+            std::u16string haystack;
+            const std::size_t haystackLength = 300 + next(3000);
+            while (haystack.size() < haystackLength) {
+                if (next(64) == 0) {
+                    haystack += needle;
+                } else if (next(16) == 0) {
+                    haystack.push_back(static_cast<char16_t>(0xfff0 + next(4)));
+                } else {
+                    haystack.push_back(word[haystack.size() % wordLength]);
+                }
+            }
+            if (next(4) == 0) haystack[next(static_cast<std::uint32_t>(haystack.size()))] = 0;
+            std::size_t effective = 0;
+            while (effective < haystack.size() && haystack[effective] != 0) ++effective;
+            const char16_t* expected = nullptr;
+            for (std::size_t i = 0; expected == nullptr && i + needle.size() <= effective; ++i) {
+                if (same(haystack.c_str() + i, needle.c_str(), needle.size())) expected = haystack.c_str() + i;
+            }
+            require(wcsstr_nid_postfix(haystack.c_str(), needle.c_str()) == expected);
+        }
+        std::u16string periodic(1 << 20, u'a');
+        std::u16string unmatched(1 << 12, u'a');
+        unmatched.back() = u'b';
+        require(wcsstr_nid_postfix(periodic.c_str(), unmatched.c_str()) == nullptr);
+        periodic.back() = u'b';
+        require(wcsstr_nid_postfix(periodic.c_str(), unmatched.c_str()) == periodic.c_str() + periodic.size() - unmatched.size());
+    }
 
     require(wcspbrk_nid_postfix(haystack, u"wt") == haystack + 4);
     require(wcspbrk_nid_postfix(haystack, u"xyz") == nullptr);
@@ -364,6 +426,45 @@ int main() {
     const char16_t* wideDigit = u"12١";
     require(wcstoll_nid_postfix(wideDigit, &end, 10) == 12 && end == wideDigit + 2);
     require(wcstoull_nid_postfix(u"18446744073709551615", nullptr, 10) == ULLONG_MAX);
+    struct UnsignedCase {
+        const char16_t* text;
+        int base;
+        unsigned long long value;
+        std::size_t consumed;
+        int error;
+    };
+    const UnsignedCase unsignedCases[] = {
+        {u"-18446744073709551616!", 10, ULLONG_MAX, 21, ERANGE},
+        {u"18446744073709551616!", 10, ULLONG_MAX, 20, ERANGE},
+        {u"-0x10000000000000000!", 0, ULLONG_MAX, 20, ERANGE},
+        {u"-0x10000000000000000!", 16, ULLONG_MAX, 20, ERANGE},
+        {u"-18446744073709551615!", 10, 1, 21, 0},
+        {u"42!", 10, 42, 2, 0},
+        {u"0!", 10, 0, 1, 0},
+        {u"", 10, 0, 0, 0},
+        {u"words", 10, 0, 0, 0},
+        {u" \t-!", 10, 0, 0, 0}
+    };
+    const auto checkUnsigned = [&](auto parse, const char* name) {
+        for (const auto& test : unsignedCases) {
+            for (const int saved : {0, 13, ERANGE}) {
+                const int expectedError = test.error != 0 ? test.error : saved;
+                char16_t* parsedEnd = nullptr;
+                *__error_nid_postfix() = saved;
+                const auto value = parse(test.text, &parsedEnd, test.base);
+                if (value != test.value || parsedEnd != test.text + test.consumed || *__error_nid_postfix() != expectedError) {
+                    std::fprintf(stderr, "Guest %s failed at expected offset %zu in base %d with incoming errno %d\n", name, test.consumed, test.base, saved);
+                    std::abort();
+                }
+                *__error_nid_postfix() = saved;
+                require(parse(test.text, nullptr, test.base) == test.value && *__error_nid_postfix() == expectedError);
+            }
+        }
+    };
+    checkUnsigned(wcstoul_nid_postfix, "wcstoul");
+    checkUnsigned(wcstoull_nid_postfix, "wcstoull");
+    checkUnsigned(wcstoumax_nid_postfix, "wcstoumax");
+    checkUnsigned(_WStoul_nid_postfix, "_WStoul");
     const char16_t* letters = u"abc";
     require(wcstol_nid_postfix(letters, &end, 10) == 0 && end == letters);
     const char16_t* binary = u" -0b101";

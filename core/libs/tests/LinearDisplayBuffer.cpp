@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <stdexcept>
 #include <tuple>
+#include <vector>
 
 static void Require(bool condition) { if (!condition) std::abort(); }
 template<typename TAction> static void Reject(TAction action) {
@@ -170,6 +171,25 @@ static void PqDisplay() {
     }
 }
 
+static void GcnDisplay() {
+    AgcDriver::DisplayBuffer buffer{65536, 0x8000000000000000ull, 1920, 1024, AgcDriver::DisplayTilingGcn, 1920};
+    Require(AgcDriver::DisplayBufferOffset(buffer, 4, 0) == 32 && AgcDriver::DisplayBufferOffset(buffer, 0, 1) == 16);
+    std::vector<std::byte> source(AgcDriver::DisplayBufferSize(buffer));
+    for (std::uint32_t y = 0; y < buffer.height; ++y) {
+        for (std::uint32_t x = 0; x < buffer.width; ++x) {
+            const std::uint32_t texel = x | y << 16u;
+            std::memcpy(source.data() + AgcDriver::DisplayBufferOffset(buffer, x, y), &texel, sizeof(texel));
+        }
+    }
+    const auto pixels = AgcDriver::DecodeDisplayBuffer(buffer, source);
+    for (std::uint32_t y = 0; y < buffer.height; ++y) {
+        for (std::uint32_t x = 0; x < buffer.width; ++x) {
+            const std::uint32_t texel = x | y << 16u;
+            Require(std::memcmp(pixels.data() + (static_cast<std::size_t>(y) * buffer.width + x) * 4u, &texel, sizeof(texel)) == 0);
+        }
+    }
+}
+
 int main() {
     AgcDriver::DisplayBuffer buffer{65536, 0x8000000000000000ull, 2, 2, 1, 3};
     const std::array<unsigned char, 24> input{1,2,3,4, 5,6,7,8, 99,99,99,99,
@@ -195,4 +215,5 @@ int main() {
     HalfFloatCodes();
     HalfFloatDisplay();
     PqDisplay();
+    GcnDisplay();
 }

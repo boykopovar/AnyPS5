@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <utility>
 #include <cstdint>
 #include <cstddef>
@@ -24,6 +25,9 @@ struct UcrtStreamState {
     char* base;
     int count;
     long flags;
+    long descriptor;
+    int characterBuffer;
+    int bufferSize;
 };
 extern "C" void LibcRegisterDirectoryStreams_nid_no_patch(int (*open)(const wchar_t* path), void (*forget)(int descriptor), void (*duplicate)(int from, int to));
 extern "C" void ForgetDirectoryStream_nid_no_patch(int descriptor);
@@ -86,9 +90,8 @@ static constexpr const char* FOPEN_MSG_NULL_ARG = "null argument";
 static constexpr const char* FOPEN_MSG_NOT_FOUND = "file not found";
 static constexpr const char* FOPEN_MSG_OPEN_FAILED = "open failed";
 
-#ifndef _WIN32
 extern "C" int KeepHostStandardError_nid_no_patch();
-#endif
+extern "C" int KeepHostStandardOutput_nid_no_patch();
 
 class FileStream {
     // Only the macro-accessed FreeBSD prefix is exposed. The remaining guest
@@ -144,7 +147,11 @@ public:
 
     GuestFilePrefix& GuestState() { return _guest; }
     bool IsHostStandard() const {
+#ifdef _WIN32
+        return _handle == __acrt_iob_func(0) || _handle == __acrt_iob_func(1) || _handle == __acrt_iob_func(2);
+#else
         return _handle == stdin || _handle == stdout || _handle == stderr;
+#endif
     }
 
     void Detach() {
@@ -232,6 +239,8 @@ public:
         if (std::exchange(directory, false)) ForgetDirectoryStream_nid_no_patch(replaced);
         auto* const standard = HostStandardHandle_nid_no_patch(replaced);
         GuestFileLockForget_nid_no_patch(replaced);
+        if (IsHostStandard() && replaced == 1) KeepHostStandardOutput_nid_no_patch();
+        if (IsHostStandard() && replaced == 2) KeepHostStandardError_nid_no_patch();
         std::optional<ClosingDescriptor> closing(std::in_place, previous, replaced);
         if (open && !filename.empty()) {
             if (!IsHostStandard()) {
@@ -279,9 +288,18 @@ public:
         }
         KeepStandardHandle_nid_no_patch(replaced, standard);
 #else
-        if (::fileno(previous) == 2) KeepHostStandardError_nid_no_patch();
+        const int error = errno;
+        try {
+#ifndef __EMSCRIPTEN__
+            if (::fileno(previous) == 1) KeepHostStandardOutput_nid_no_patch();
+#endif
+            if (::fileno(previous) == 2) KeepHostStandardError_nid_no_patch();
+        } catch (const std::system_error&) {
+            errno = error;
+        }
         const ClosingDescriptor closing(previous, ::fileno(previous));
         const int kept = IsHostStandard() ? DuplicateHostDescriptor_nid_no_patch(::fileno(previous)) : -1;
+        errno = error;
         if (kept >= 0) ::flockfile(previous);
         _handle = std::freopen(filename.c_str(), mode, previous);
         if (kept >= 0) RestoreHostStandard(previous, kept);
@@ -336,6 +354,8 @@ public:
         constexpr long UcrtUpdate = 0x0004;
         std::atomic_ref<long> state(reinterpret_cast<UcrtStreamState*>(GetHandle())->flags);
         return (state.load() & (UcrtReading | UcrtUpdate)) != 0;
+#elif defined(__GLIBC__)
+        return ::__freadable(GetHandle()) != 0;
 #else
         return true;
 #endif
@@ -356,12 +376,21 @@ public:
         }
         if ((state.load() & (UcrtReading | UcrtUpdate)) != UcrtUpdate) return true;
         const bool switched = (state.load() & UcrtWriting) == 0 || ::_fflush_nolock(native) == 0;
-        if (switched) state.fetch_or(UcrtReading);
+        if (switched) {
+            state.fetch_and(~UcrtWriting);
+            state.fetch_or(UcrtReading);
+        }
         SyncUnlockedStatus();
         return switched;
 #elif defined(__GLIBC__)
         auto* native = GetHandle();
-        if (!::__freadable(native) || !::__fwriting(native)) return true;
+        if (!::__freadable(native)) {
+            errno = 9;
+            guestError = true;
+            SyncUnlockedStatus();
+            return false;
+        }
+        if (!::__fwriting(native)) return true;
         const bool switched = ::_IO_switch_to_get_mode(native) == 0;
         SyncUnlockedStatus();
         return switched;
@@ -474,6 +503,7 @@ inline std::FILE* GetNativeStream(FileStream* stream) {
 }
 
 extern "C" {
+extern FileStream* __stdinp_nid_postfix;
 extern FileStream _Stdout_nid_postfix;
 extern FileStream _Stderr_nid_postfix;
 }
