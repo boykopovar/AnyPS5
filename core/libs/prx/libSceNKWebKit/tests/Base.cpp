@@ -1126,6 +1126,34 @@ static void TestBundleScriptWorld() {
     Require(threw);
 }
 
+static void TestBundlePageGroup() {
+    Require(WKBundlePageGroupGetTypeID() == static_cast<std::uint32_t>(NKWebKit::ObjectType::BundlePageGroup));
+
+    auto group = NKWebKit::Make<NKWebKit::BundlePageGroup>();
+    const void* ref = group.Get();
+
+    auto* defaultId = WKBundlePageGroupCopyIdentifier(ref);
+    Require(defaultId != nullptr);
+    Require(WKGetTypeID(defaultId) == WKStringGetTypeID());
+    Require(WKStringGetLength(defaultId) == 0);
+    WKRelease(defaultId);
+
+    group->identifier = NKWebKit::String::FromUtf8("group-identifier-42");
+    auto* id = WKBundlePageGroupCopyIdentifier(ref);
+    Require(id != nullptr);
+    Require(WKGetTypeID(id) == WKStringGetTypeID());
+    Require(WKStringIsEqualToUTF8CString(id, "group-identifier-42"));
+    WKRelease(id);
+
+    bool threw = false;
+    try {
+        WKBundlePageGroupCopyIdentifier(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 static void TestBundleDOMWindowExtension() {
     Require(WKBundleDOMWindowExtensionGetTypeID() == 118);
     auto frame = NKWebKit::Make<NKWebKit::BundleFrame>();
@@ -2754,6 +2782,7 @@ int main() {
     TestHitTestResult();
     TestBackForwardList();
     TestBundleScriptWorld();
+    TestBundlePageGroup();
     TestBundleDOMWindowExtension();
     TestBundleHitTestResult();
     TestBundleNodeHandle();

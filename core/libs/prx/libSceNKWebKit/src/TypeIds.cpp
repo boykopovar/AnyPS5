@@ -74,6 +74,10 @@ std::uint32_t APS5_VABI WKBundlePageGetTypeID() {
     return NKWebKit::TypeID(NKWebKit::ObjectType::BundlePage);
 }
 
+std::uint32_t APS5_VABI WKBundlePageGroupGetTypeID() {
+    return NKWebKit::TypeID(NKWebKit::ObjectType::BundlePageGroup);
+}
+
 std::uint32_t APS5_VABI WKBundlePageOverlayGetTypeID() {
     return NKWebKit::TypeID(NKWebKit::ObjectType::BundlePageOverlay);
 }

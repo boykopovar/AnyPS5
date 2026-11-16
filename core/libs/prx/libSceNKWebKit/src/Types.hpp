@@ -166,6 +166,11 @@ public:
     bool isContentEditable = false;
 };
 
+class BundlePageGroup final : public ObjectOf<ObjectType::BundlePageGroup> {
+public:
+    Retained<String> identifier;
+};
+
 class BundleScriptWorld final : public ObjectOf<ObjectType::BundleScriptWorld> {
 public:
     Retained<String> name;

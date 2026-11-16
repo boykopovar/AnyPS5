@@ -3110,10 +3110,6 @@ int APS5_VABI _ZN7WebCore9Scrollbar21createNativeScrollbarERNS_14ScrollableAreaE
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundlePageGroupCopyIdentifier() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK7WebCore26Matrix3DTransformOperationeqERKNS_18TransformOperationE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -4508,10 +4504,6 @@ int APS5_VABI libSceNKWebKitLegacyUnknown_THYrKHts64I_nid_no_patch() {
 APS5_EXPORT("THYrKHts64I", libSceNKWebKitLegacyUnknown_THYrKHts64I_nid_no_patch);
 
 int APS5_VABI _ZThn176_N7WebCore8Document8postTaskEONS_22ScriptExecutionContext4TaskE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundlePageGroupGetTypeID() {
     NotImplemented_nid_no_patch(__func__);
 }
 

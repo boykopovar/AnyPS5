@@ -89,6 +89,8 @@ std::uint32_t APS5_VABI WKBundleNodeHandleGetTypeID();
 const void* APS5_VABI WKBundleNodeHandleCopyDocument(const void* nodeHandleRef);
 const void* APS5_VABI WKBundleNodeHandleCopyDocumentFrame(const void* nodeHandleRef);
 const void* APS5_VABI WKBundleNodeHandleCopyHTMLIFrameElementContentFrame(const void* nodeHandleRef);
+const void* APS5_VABI WKBundlePageGroupCopyIdentifier(const void* pageGroupRef);
+std::uint32_t APS5_VABI WKBundlePageGroupGetTypeID();
 std::uint32_t APS5_VABI WKBundlePageGetTypeID();
 std::uint32_t APS5_VABI WKBundlePageOverlayGetTypeID();
 std::uint32_t APS5_VABI WKBundleRangeHandleGetTypeID();

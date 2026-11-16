@@ -143,6 +143,7 @@ enum class ObjectType : std::uint32_t {
     View,
     PopupMenuItem,
     AccessibilityObject,
+    BundlePageGroup,
 };
 
 class Object {
