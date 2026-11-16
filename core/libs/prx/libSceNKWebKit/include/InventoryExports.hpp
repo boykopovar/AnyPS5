@@ -1196,8 +1196,6 @@ int APS5_VABI _ZN3WTF10ParkingLot13unparkOneImplEPKvRKNS_12ScopedLambdaIFlNS0_12
 int APS5_VABI _ZN3WTF10ParkingLot21parkConditionallyImplEPKvRKNS_12ScopedLambdaIFbvEEERKNS3_IFvvEEERKNS_24TimeWithDynamicClockTypeE();
 int APS5_VABI _ZN3WTF10ParkingLot9unparkAllEPKv();
 int APS5_VABI _ZN3WTF10ParkingLot9unparkOneEPKv();
-int APS5_VABI _ZN3WTF10StringImpl17utf8ForCharactersEPKDsjNS_14ConversionModeE();
-int APS5_VABI _ZN3WTF10StringImpl17utf8ForCharactersEPKhj();
 int APS5_VABI _ZN3WTF10StringImpl5adoptEONS_12StringBufferIDsEE();
 int APS5_VABI _ZN3WTF10StringImpl5adoptEONS_12StringBufferIhEE();
 int APS5_VABI _ZN3WTF10StringImpl7destroyEPS0_();
@@ -1279,7 +1277,6 @@ int APS5_VABI _ZN3WTF14FileSystemImpl10deleteFileERKNS_6StringE();
 int APS5_VABI _ZN3WTF14FileSystemImpl10fileExistsERKNS_6StringE();
 int APS5_VABI _ZN3WTF14FileSystemImpl18createSymbolicLinkERKNS_6StringES3_();
 int APS5_VABI _ZN3WTF14FileSystemImpl18hardLinkOrCopyFileERKNS_6StringES3_();
-int APS5_VABI _ZN3WTF14FileSystemImpl18makeAllDirectoriesERKNS_6StringE();
 int APS5_VABI _ZN3WTF14FileSystemImpl19filesHaveSameVolumeERKNS_6StringES3_();
 int APS5_VABI _ZN3WTF14FileSystemImpl20deleteEmptyDirectoryERKNS_6StringE();
 int APS5_VABI _ZN3WTF14FileSystemImpl24fileSystemRepresentationERKNS_6StringE();
