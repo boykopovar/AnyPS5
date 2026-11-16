@@ -16,6 +16,11 @@ class CheckTestRegistrationTests(unittest.TestCase):
         self.assertNotIn("block", masked)
         self.assertEqual(masked.count("\n"), text.count("\n"))
 
+    def test_cpp_source_masks_strings_unless_kept(self):
+        text = 'const char* s = "ANYPS5_X";\n'
+        self.assertNotIn("ANYPS5_X", check_test_registration.cpp_source(text))
+        self.assertIn("ANYPS5_X", check_test_registration.cpp_source(text, keep_strings=True))
+
 
 if __name__ == "__main__":
     unittest.main()
