@@ -107,9 +107,13 @@ NativeModules ReadModules(const std::filesystem::path& inputPath, const std::fil
                 continue;
             }
             if (Io::SameFile(entry.path(), inputPath)) continue;
-            const auto header = ReadCandidateHeader(entry.path());
-            if (header.Elf) paths.push_back(entry.path());
-            else if (header.Self)
+            const auto header = TryReadCandidateHeader(entry.path());
+            if (!header) {
+                std::cout << "Skipping unreadable file: " << entry.path().lexically_relative(root).generic_string() << '\n';
+                continue;
+            }
+            if (header->Elf) paths.push_back(entry.path());
+            else if (header->Self)
                 std::cout << "Skipping SELF container: " << entry.path().lexically_relative(root).generic_string()
                           << " (unwrap it before relinking)\n";
         }
