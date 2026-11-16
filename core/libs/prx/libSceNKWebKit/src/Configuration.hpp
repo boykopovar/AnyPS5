@@ -20,6 +20,12 @@ public:
     bool isPinnedToTopSide = true;
     bool isPinnedToBottomSide = true;
     bool addsVisitedLinks = true;
+    bool horizontalRubberBanding = true;
+    bool verticalRubberBanding = true;
+    bool rubberBandsAtBottom = true;
+    bool rubberBandsAtLeft = true;
+    bool rubberBandsAtRight = true;
+    bool rubberBandsAtTop = true;
     double pageZoomFactor = 1.0;
     double textZoomFactor = 1.0;
     bool supportsTextZoom = true;
