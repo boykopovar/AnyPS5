@@ -110,6 +110,21 @@ def main():
                 result, output = relink(relinker, work, f"partial-{name}", fixture([load, standalone[0]]), options)
                 assert result.returncode == 2 and "PT_SCE_RELRO partially overlaps a PT_LOAD segment" in result.stderr, (name, result.stderr)
                 assert not output.exists()
+        merged_load = (PT_LOAD, 6, 0x1000, 0x1000, 0x1000, 0x1000, 0x1000)
+        merged_relro = (PT_SCE_RELRO, 4, 0x1000, 0x1000, 0x1000, 0x1000, 0x1000)
+        for name, extra in (("overlap", [merged_load, merged_relro, (PT_SCE_RELRO, 4, 0x1800, 0x1800, 0x800, 0x800, 0x1000)]),
+                            ("identical", [merged_load, merged_relro, merged_relro]),
+                            ("disjoint", [merged_load, merged_relro,
+                                          (PT_LOAD, 6, 0x2000, 0x2000, 0x1000, 0x1000, 0x1000),
+                                          (PT_SCE_RELRO, 4, 0x2000, 0x2000, 0x1000, 0x1000, 0x1000)])):
+            result, output = relink(relinker, work, f"merged-{name}", fixture(extra), [])
+            if name == "disjoint":
+                assert result.returncode == 2 and "Multiple RELRO ranges are not supported" in result.stderr, (name, result.returncode, result.stderr)
+                assert not output.exists()
+                continue
+            assert result.returncode == 0, (name, result.stdout, result.stderr)
+            gnu_relro = gnu_relro_headers(output.read_bytes())
+            assert len(gnu_relro) == 1 and gnu_relro[0][1] == 4 and gnu_relro[0][3] == DEFAULT_BASE + 0x1000 and gnu_relro[0][5:7] == (0x1000, 0x1000), (name, gnu_relro)
     print("PT_SCE_RELRO tests passed")
 
 

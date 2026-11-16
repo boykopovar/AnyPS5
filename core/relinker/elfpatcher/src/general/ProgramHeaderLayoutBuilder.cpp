@@ -153,8 +153,51 @@ std::vector<Domain::ProgramHeader> ProgramHeaderLayoutBuilder::_keptHeaders(cons
     return kept;
 }
 
+void mergeRelroHeaders(std::vector<Domain::ProgramHeader>& headers) {
+    const std::uint64_t pageMask = kDefaultLoadAlignment - 1;
+    const auto pageSpan = [&](const Domain::ProgramHeader& ph) -> std::pair<std::uint64_t, std::uint64_t> {
+        if (ph.MemorySize > std::numeric_limits<std::uint64_t>::max() - ph.MappedAddress)
+            throw Domain::RelinkerException("PT_GNU_RELRO memory range overflowed");
+        const std::uint64_t start = ph.MappedAddress & ~pageMask;
+        const std::uint64_t endBytes = ph.MappedAddress + ph.MemorySize;
+        if (endBytes > std::numeric_limits<std::uint64_t>::max() - pageMask)
+            throw Domain::RelinkerException("PT_GNU_RELRO memory range overflowed");
+        return {start, (endBytes + pageMask) & ~pageMask};
+    };
+    const auto fileEnd = [](const Domain::ProgramHeader& ph) {
+        if (ph.FileSize > std::numeric_limits<std::uint64_t>::max() - ph.Offset)
+            throw Domain::RelinkerException("PT_GNU_RELRO file range overflowed");
+        return ph.Offset + ph.FileSize;
+    };
+    for (bool merged = true; merged;) {
+        merged = false;
+        for (auto first = headers.begin(); first != headers.end() && !merged; ++first) {
+            if (first->Type != PT_GNU_RELRO) continue;
+            const auto [firstStart, firstEnd] = pageSpan(*first);
+            for (auto second = first + 1; second != headers.end(); ++second) {
+                if (second->Type != PT_GNU_RELRO) continue;
+                const auto [secondStart, secondEnd] = pageSpan(*second);
+                if (firstStart == firstEnd || secondStart == secondEnd || firstStart >= secondEnd || secondStart >= firstEnd) continue;
+                const std::uint64_t start = std::min(firstStart, secondStart);
+                const std::uint64_t end = std::max(firstEnd, secondEnd);
+                const std::uint64_t offset = std::min(first->Offset, second->Offset);
+                const std::uint64_t endOffset = std::max(fileEnd(*first), fileEnd(*second));
+                first->Offset = offset;
+                first->FileSize = endOffset - offset;
+                first->MappedAddress = start;
+                first->PhysicalAddress = start;
+                first->MemorySize = end - start;
+                headers.erase(second);
+                merged = true;
+                break;
+            }
+        }
+    }
+}
+
 std::vector<Domain::ProgramHeader> ProgramHeaderLayoutBuilder::_outputHeaders(const std::vector<Domain::ProgramHeader>& originalHeaders) const {
     auto kept = _keptHeaders(originalHeaders);
+    mergeRelroHeaders(kept);
     if (std::count_if(kept.begin(), kept.end(), [](const Domain::ProgramHeader& ph) { return ph.Type == PT_GNU_RELRO; }) > 1)
         throw Domain::RelinkerException("Multiple RELRO ranges are not supported on Linux output: the loader only protects one PT_GNU_RELRO segment");
     if (std::none_of(kept.begin(), kept.end(), [](const Domain::ProgramHeader& ph) { return ph.Type == PT_GNU_STACK; }))
