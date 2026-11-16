@@ -137,6 +137,20 @@ struct JidParts {
     std::string_view resource;
 };
 
+bool ReadJidText(const char* text, std::string& host) {
+    constexpr std::uintptr_t Page = 4096;
+    auto address = reinterpret_cast<std::uintptr_t>(text);
+    char chunk[Page];
+    for (;;) {
+        const std::size_t size = Page - address % Page;
+        if (!GuestCopyIn_nid_no_patch(chunk, reinterpret_cast<const void*>(address), size)) return false;
+        const auto* end = static_cast<const char*>(std::memchr(chunk, '\0', size));
+        host.append(chunk, end ? static_cast<std::size_t>(end - chunk) : size);
+        if (end) return true;
+        address += size;
+    }
+}
+
 JidParts SplitJid(std::string_view text) {
     JidParts parts;
     std::size_t user = 0;
@@ -761,38 +775,38 @@ int APS5_VABI sceNpUtilGetNthChar(std::size_t index, const char* text, const cha
 int APS5_VABI sceNpUtilParseJid(NpJid* jid, const char* text, char* buffer, std::size_t bufferSize, std::size_t* required) {
     if (text == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     const bool fill = jid != nullptr && buffer != nullptr;
-    if (fill) {
-        *jid = {};
-    } else if (required == nullptr) {
-        return NP_UTIL_ERROR_INVALID_ARGUMENT;
-    }
-    const std::string_view whole(text);
+    if (!fill && required == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    const int savedErrno = errno;
+    const auto finish = [savedErrno](int result) {
+        errno = savedErrno;
+        return result;
+    };
+    const NpJid cleared{};
+    if (fill && !GuestCopyOut_nid_no_patch(jid, &cleared, sizeof(cleared))) return finish(NP_UTIL_ERROR_INVALID_ARGUMENT);
+    std::string whole;
+    if (!ReadJidText(text, whole)) return finish(NP_UTIL_ERROR_INVALID_ARGUMENT);
     const std::size_t start = whole.find_first_not_of(' ');
-    if (start == std::string_view::npos) return NP_UTIL_ERROR_INVALID_JID;
-    const JidParts parts = SplitJid(whole.substr(start));
+    if (start == std::string::npos) return finish(NP_UTIL_ERROR_INVALID_JID);
+    const JidParts parts = SplitJid(std::string_view(whole).substr(start));
     const std::string_view pieces[] = {parts.user, parts.domain, parts.resource};
-    const char* copies[3] = {};
+    NpJid parsed{};
+    const char** fields[] = {&parsed.user, &parsed.domain, &parsed.resource};
+    std::string packed;
     std::size_t used = 0;
     for (std::size_t i = 0; i < 3; ++i) {
         const std::size_t size = pieces[i].size() + 1;
         if (fill) {
-            if (bufferSize - used < size) {
-                *jid = {};
-                return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
-            }
-            std::copy(pieces[i].begin(), pieces[i].end(), buffer + used);
-            buffer[used + pieces[i].size()] = '\0';
-            copies[i] = buffer + used;
+            if (bufferSize - used < size) return finish(NP_UTIL_ERROR_BUFFER_TOO_SMALL);
+            packed.append(pieces[i]);
+            packed.push_back('\0');
+            *fields[i] = buffer + used;
         }
         used += size;
     }
-    if (fill) {
-        jid->user = copies[0];
-        jid->domain = copies[1];
-        jid->resource = copies[2];
-    }
-    if (required != nullptr) *required = used;
-    return 0;
+    if (fill && (!GuestCopyOut_nid_no_patch(buffer, packed.data(), packed.size()) || !GuestCopyOut_nid_no_patch(jid, &parsed, sizeof(parsed))))
+        return finish(NP_UTIL_ERROR_INVALID_ARGUMENT);
+    if (required != nullptr && !GuestCopyOut_nid_no_patch(required, &used, sizeof(used))) return finish(NP_UTIL_ERROR_INVALID_ARGUMENT);
+    return finish(0);
 }
 
 int APS5_VABI sceNpUtilJidToNpId(NpIdFull* npId, const NpJid* jid) {

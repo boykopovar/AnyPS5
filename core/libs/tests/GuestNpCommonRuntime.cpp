@@ -1529,6 +1529,18 @@ void TestJid() {
         "a refused jid is cleared");
     Require(sceNpUtilParseJid(&jid, nullptr, buffer, sizeof(buffer), &length) == NpUtilInvalid, "parsing needs text");
     Require(sceNpUtilParseJid(&jid, "a@b", nullptr, 0, nullptr) == NpUtilInvalid, "parsing needs a buffer or a length");
+    errno = 71;
+    Require(sceNpUtilParseJid(&jid, reinterpret_cast<const char*>(0x10), buffer, sizeof(buffer), &length) == NpUtilInvalid && errno == 71,
+        "unreadable jid text is refused and errno is kept");
+    Require(sceNpUtilParseJid(reinterpret_cast<NpJid*>(0x10), "a@b", buffer, sizeof(buffer), &length) == NpUtilInvalid
+            && sceNpUtilParseJid(&jid, "a@b", reinterpret_cast<char*>(0x10), sizeof(buffer), &length) == NpUtilInvalid
+            && sceNpUtilParseJid(&jid, "a@b", buffer, sizeof(buffer), reinterpret_cast<std::size_t*>(0x10)) == NpUtilInvalid && errno == 71,
+        "an unwritable jid, buffer or length is refused");
+    alignas(4096) static char pages[8192];
+    std::memcpy(pages + 4090, "user@dom/res", 13);
+    Require(sceNpUtilParseJid(&jid, pages + 4090, buffer, sizeof(buffer), &length) == 0 && Equals(jid.user, "user") && Equals(jid.domain, "dom")
+            && Equals(jid.resource, "res") && length == 13,
+        "jid text across a page boundary is read whole");
 
     NpIdFull npId{};
     std::memset(&npId, 0xCC, sizeof(npId));
