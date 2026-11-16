@@ -434,6 +434,14 @@ class TextReportTests(unittest.TestCase):
         self.assertIn("1/2/3/4", phase_line)
         self.assertTrue(phase_line.endswith("5.00"))
 
+    def test_text_report_formats_a_metric_row_without_noise(self):
+        lines = ab_split.text_report(self.result(rows=[{"metric": "m", "a": 1.0, "b": 2.0, "change": 1.0,
+                                                        "change_pct": 100.0, "noise": None}])).split("\n")
+        metric_line = next(line for line in lines if line.startswith("m "))
+        self.assertIn("+1.00", metric_line)
+        self.assertIn("+100.0%", metric_line)
+        self.assertTrue(metric_line.endswith("-"))
+
 
 if __name__ == "__main__":
     unittest.main()
