@@ -478,6 +478,9 @@ if(BUILD_TESTING)
         add_test(NAME conventions_debt_labels COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_debt_labels.py)
         set_tests_properties(conventions_debt_labels PROPERTIES TIMEOUT 20)
+        add_test(NAME conventions_helpers COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_helpers.py)
+        set_tests_properties(conventions_helpers PROPERTIES TIMEOUT 20)
         add_test(NAME test_registration COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_test_registration.py)
         set_tests_properties(test_registration PROPERTIES TIMEOUT 60)
