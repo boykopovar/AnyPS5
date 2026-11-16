@@ -70,6 +70,13 @@ def build_pe(path, with_symbols=True, with_exports=False, second_code=False, tim
     Path(path).write_bytes(bytes(image))
 
 
+class FakeSymbolizer:
+    modules = {}
+
+    def frame(self, frame):
+        return frame.upper()
+
+
 class SymbolizeSamplesTests(unittest.TestCase):
     def test_exports_can_mix_headers_and_section_data(self):
         path = self.libs / "header-exports.dll"
