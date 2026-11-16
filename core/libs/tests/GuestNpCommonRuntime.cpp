@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <stdexcept>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <thread>
 #include <vector>
@@ -1709,6 +1710,9 @@ void TestGuestHexPointers() {
         "parsing counted hex into an unmapped buffer is refused");
     Require(sceNpStrnParseHex(unmapped, 3, bytes, 2) == NpInvalidArgument && sceNpStrnParseHex(unmapped, 6, bytes, 2) == NpBufferTooSmall,
         "counted hex lengths are checked before the text is read");
+    const std::size_t huge = std::numeric_limits<std::size_t>::max() - 1;
+    Require(sceNpStrnParseHex(unmapped, huge, bytes, huge) == NpInvalidArgument && errno == 71,
+        "a large counted length over unreadable hex is refused before it is allocated");
 
     GuardedPage text;
     char* hex = text.End() - 5;

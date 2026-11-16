@@ -199,6 +199,19 @@ bool CopyHexText(const char* hex, std::string& text) {
     }
 }
 
+bool CopyHexRange(const char* hex, std::size_t length, std::string& text) {
+    constexpr std::size_t Chunk = 4096;
+    std::array<char, Chunk> bytes {};
+    auto address = reinterpret_cast<std::uintptr_t>(hex);
+    while (text.size() < length) {
+        const std::size_t count = std::min(Chunk - address % Chunk, length - text.size());
+        if (!CopyHexIn(bytes.data(), reinterpret_cast<const void*>(address), count)) return false;
+        text.append(bytes.data(), count);
+        address += count;
+    }
+    return true;
+}
+
 int HexLengthError(std::size_t length, std::size_t capacity) {
     if ((length & 1) != 0) return NP_ERROR_INVALID_ARGUMENT;
     if (capacity < length / 2) return NP_ERROR_BUFFER_TOO_SMALL;
@@ -548,8 +561,8 @@ int APS5_VABI sceNpStrParseHex(const char* hex, void* out, std::size_t capacity)
 
 int APS5_VABI sceNpStrnParseHex(const char* hex, std::size_t length, void* out, std::size_t capacity) {
     if (const int error = HexLengthError(length, capacity)) return error;
-    std::string text(length, '\0');
-    if (length != 0 && !CopyHexIn(text.data(), hex, length)) return NP_ERROR_INVALID_ARGUMENT;
+    std::string text;
+    if (!CopyHexRange(hex, length, text)) return NP_ERROR_INVALID_ARGUMENT;
     return ParseHex(text, out, capacity);
 }
 
