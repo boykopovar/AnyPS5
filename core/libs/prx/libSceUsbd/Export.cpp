@@ -605,7 +605,11 @@ std::uint8_t APS5_VABI sceUsbdGetDeviceAddress(void* device) {
 
 std::int32_t APS5_VABI sceUsbdGetDeviceDescriptor(void* device, void* descriptor) {
     if (device == nullptr || descriptor == nullptr) return SCE_USBD_ERROR_INVALID_ARG;
-    return ToGuestError(libusb_get_device_descriptor(KnownDevice(device, __func__), static_cast<libusb_device_descriptor*>(descriptor)));
+    libusb_device_descriptor host{};
+    const int result = libusb_get_device_descriptor(KnownDevice(device, __func__), &host);
+    if (result != 0) return ToGuestError(result);
+    if (!GuestCopyOut_nid_no_patch(descriptor, &host, sizeof(host))) return SCE_USBD_ERROR_INVALID_ARG;
+    return 0;
 }
 
 std::int32_t APS5_VABI sceUsbdGetStringDescriptor(void* deviceHandle, std::uint8_t descriptorIndex, std::uint16_t languageId, std::uint8_t* data, std::int32_t length) {
