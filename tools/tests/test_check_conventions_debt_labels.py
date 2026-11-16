@@ -59,5 +59,11 @@ class DebtLabelTests(unittest.TestCase):
         self.assertEqual(status, 0)
 
 
+class DebtEntryLineTests(unittest.TestCase):
+    def test_debt_entries_lists_items_by_line_number_and_skips_headings(self):
+        text = '### Silent stubs\n\n- [sceFoo](x) - a\n- [sceBar](y) - b\n'
+        self.assertEqual(check_conventions.debt_entries(text), {3: '- [sceFoo](x) - a', 4: '- [sceBar](y) - b'})
+
+
 if __name__ == "__main__":
     unittest.main()
