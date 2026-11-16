@@ -277,6 +277,13 @@ bool RequestStringDescriptor(libusb_device_handle* handle, std::uint8_t descript
     return result >= 0 && descriptor[1] == LIBUSB_DT_STRING;
 }
 
+bool GuestTransferDataUsable(std::uint8_t endpoint, std::uint8_t* data, std::int32_t length) {
+    if (length <= 0) return true;
+    std::vector<std::uint8_t> copy(static_cast<std::size_t>(length));
+    if (!GuestCopyIn_nid_no_patch(copy.data(), data, copy.size())) return false;
+    return (endpoint & LIBUSB_ENDPOINT_IN) == 0 || GuestCopyOut_nid_no_patch(data, copy.data(), copy.size());
+}
+
 }
 
 extern "C" {
@@ -484,6 +491,7 @@ std::int32_t APS5_VABI sceUsbdBulkTransfer(void* deviceHandle, std::uint8_t endp
     if (transferred == nullptr) throw std::runtime_error(std::string(__func__) + ": null transferred output");
     std::int32_t moved = 0;
     if (!GuestCopyOut_nid_no_patch(transferred, &moved, sizeof(moved))) return SCE_USBD_ERROR_INVALID_ARG;
+    if (!GuestTransferDataUsable(endpoint, data, length)) return SCE_USBD_ERROR_INVALID_ARG;
     const std::int32_t result = ToGuestError(libusb_bulk_transfer(KnownHandle(deviceHandle, __func__), endpoint, data, length, &moved, timeout));
     if (!GuestCopyOut_nid_no_patch(transferred, &moved, sizeof(moved))) return SCE_USBD_ERROR_INVALID_ARG;
     return result;
