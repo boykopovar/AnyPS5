@@ -74,7 +74,16 @@ int APS5_VABI sceKernelMemoryPoolBatch(const KernelMemoryPoolBatchEntry* entries
  int done = 0;
  int ret = 0;
  for (; done < num_entries; ++done) {
-  const KernelMemoryPoolBatchEntry& e = entries[done];
+  KernelMemoryPoolBatchEntry e;
+  {
+   const int savedErrno = errno;
+   const bool read = GuestCopyIn_nid_no_patch(&e, entries + done, sizeof(e));
+   errno = savedErrno;
+   if (!read) {
+    ret = SCE_KERNEL_ERROR_EFAULT;
+    break;
+   }
+  }
   ret = Guarded([&] {
    switch (e.op) {
     case 1: return PoolCommit(e.commit.addr, e.commit.len, e.commit.type, e.commit.prot);

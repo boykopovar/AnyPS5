@@ -182,7 +182,8 @@ int APS5_VABI sceKernelCancelSema(KernelSema sem, int count, int* threads) {
   return SCE_KERNEL_ERROR_EINVAL;
  }
  if (threads != nullptr) {
-  *threads = static_cast<int>(sem->queue.size());
+  const int waiting = static_cast<int>(sem->queue.size());
+  if (!GuestCopyOut_nid_no_patch(threads, &waiting, sizeof(waiting))) return SCE_KERNEL_ERROR_EFAULT;
  }
  sem->tokenCount = count < 0 ? sem->initCount : count;
  sem->queue.clear();

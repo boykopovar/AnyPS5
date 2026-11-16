@@ -108,13 +108,6 @@ int APS5_VABI cairo_pattern_set_filter() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-
-int APS5_VABI cairo_ft_font_options_substitute() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-
-
 int APS5_VABI cairo_font_face_reference() {
     NotImplemented_nid_no_patch(__func__);
 }

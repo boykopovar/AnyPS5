@@ -200,7 +200,9 @@ class Symbolizer:
         for directory in libs:
             for path in Path(directory).iterdir():
                 if path.is_file():
-                    self.files.setdefault(path.name.lower(), {}).setdefault(path.resolve(), path)
+                    info = path.stat()
+                    identity = (info.st_dev, info.st_ino) if info.st_ino else path.resolve()
+                    self.files.setdefault(path.name.lower(), {}).setdefault(identity, path)
         self.headers = {name.lower(): identity for name, identity in headers.items()}
         self.modules = {}
         self.demangle = demangle and shutil.which("c++filt") is not None

@@ -620,7 +620,7 @@ def report(rows, blob, main_exports=None):
             if other_libraries:
                 lines.append(f"- {code_span(name)} (also exported by another library in `main`: {cell(other_libraries)}; may be intentional)")
     if uncompared:
-        if confirmed:
+        if confirmed or main_exports:
             lines.append("")
         lines.extend([
             "Some comparisons could not be completed because a pull request conflicts with the base branch. "
@@ -849,7 +849,7 @@ def main(argv=None):
     parser.add_argument("--names", nargs="+", metavar="NAME",
                         help="before writing code, show whether each function is implemented on the base and which open pull requests add it or edit its body")
     parser.add_argument("--repo", help="owner/name; defaults to the upstream of the current checkout")
-    parser.add_argument("--jobs", type=int, default=4, help="number of pull request comparisons to run at once")
+    parser.add_argument("--jobs", type=int, default=8, help="number of pull request comparisons to run at once")
     args = parser.parse_args(argv)
     if sum(map(bool, (args.out, args.branch, args.names))) != 1:
         parser.error("pass exactly one of --out, --branch or --names")

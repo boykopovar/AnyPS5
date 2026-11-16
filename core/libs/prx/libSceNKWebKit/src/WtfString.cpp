@@ -784,6 +784,16 @@ CString APS5_VABI _ZNK3WTF10StringImpl4utf8ENS_14ConversionModeE(const StringImp
     return ToUTF8(View(&Checked(self)), mode);
 }
 
+CString APS5_VABI _ZN3WTF10StringImpl17utf8ForCharactersEPKDsjNS_14ConversionModeE(const char16_t* characters, unsigned length, unsigned mode) {
+    if (!characters && length) throw std::invalid_argument("null WTF UTF-16 character buffer");
+    return ToUTF8({characters, length, false}, mode);
+}
+
+CString APS5_VABI _ZN3WTF10StringImpl17utf8ForCharactersEPKhj(const unsigned char* characters, unsigned length) {
+    if (!characters && length) throw std::invalid_argument("null WTF Latin-1 character buffer");
+    return ToUTF8({characters, length, true}, 0);
+}
+
 String APS5_VABI _ZNK3WTF6String23convertToASCIILowercaseEv(const String* self) {
     return String(ConvertCase(View(Checked(self).impl), true, Checked(self).impl));
 }
