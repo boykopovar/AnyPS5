@@ -1566,5 +1566,25 @@ class IntervalSchemaTests(unittest.TestCase):
         self.assertIn("0-0", trace_digest.markdown_intervals(digest))
 
 
+class SummaryFileTests(unittest.TestCase):
+    def write(self, text):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        path = Path(directory.name) / "summary.jsonl"
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_load_summary_lines_skips_blank_lines_and_numbers_records_on_request(self):
+        path = self.write('{"a": 1}\n\n{"b": 2}\n')
+        self.assertEqual(trace_digest.load_summary_lines(path), [{"a": 1}, {"b": 2}])
+        self.assertEqual(trace_digest.load_summary_lines(path, numbered=True), [(1, {"a": 1}), (3, {"b": 2})])
+
+    def test_load_summary_lines_names_the_bad_line_by_label(self):
+        with self.assertRaisesRegex(ValueError, "run.jsonl:2: invalid JSON"):
+            trace_digest.load_summary_lines(self.write('{"a": 1}\n{bad\n'), label="run.jsonl")
+        with self.assertRaisesRegex(ValueError, "summary record must be an object"):
+            trace_digest.load_summary_lines(self.write("[1]\n"))
+
+
 if __name__ == "__main__":
     unittest.main(defaultTest=os.environ.get("TRACE_DIGEST_TEST"))
