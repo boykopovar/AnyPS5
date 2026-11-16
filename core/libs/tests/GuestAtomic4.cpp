@@ -10,5 +10,7 @@ int main() {
     volatile unsigned int value = 8;
     Require(_Atomic_fetch_sub_4_nid_postfix(&value, 3u, 0) == 8u);
     Require(value == 5u);
+    volatile unsigned int value = 42;
+    Require(_Atomic_load_4_nid_postfix(&value, 0) == 42u);
     return 0;
 }
