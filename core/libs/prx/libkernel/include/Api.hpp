@@ -388,7 +388,7 @@ int APS5_VABI sceKernelDlsym(KernelModule handle, const char* symbol, void** add
 int APS5_VABI sceKernelGetModuleInfoForUnwind(uint64_t addr, int flags, ModuleInfoForUnwind* info);
 KernelModule APS5_VABI sceKernelLoadStartModule(const char* moduleFileName, size_t args, const void* argp, uint32_t flags, const KernelLoadModuleOpt* opt, int* res);
 int APS5_VABI sceKernelStopUnloadModule(KernelModule handle, size_t args, const void* argp, uint32_t flags, const KernelUnloadModuleOpt* opt, int* res);
-int APS5_VABI __elf_phdr_match_addr_nid_postfix(dl_phdr_info* phdrInfo, void* addr);
+int APS5_VABI __elf_phdr_match_addr_nid_postfix(const ModuleInfoEx* module, void* addr);
 int APS5_VABI sceKernelGetModuleInfoFromAddr(std::uint64_t address, int flags, ModuleInfoEx* info);
 int APS5_VABI sceKernelGetModuleList(KernelModule* handles, std::size_t count, std::size_t* actual);
 int APS5_VABI sceKernelGetModuleList2(KernelModule* handles, std::size_t count, std::size_t* actual);

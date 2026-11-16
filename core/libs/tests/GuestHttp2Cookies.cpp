@@ -172,6 +172,42 @@ static void CheckDateTokens(int box) {
     }
 }
 
+static void CheckStoreValidation() {
+    const int box = sceHttp2CreateCookieBox(0x10000);
+    Require(box > 0);
+
+    Require(sceHttp2AddCookie(box, "http://example.com/", "   ", 3) == InvalidValue);
+    Require(sceHttp2AddCookie(box, "http://example.com/", "=", 1) == InvalidValue);
+    Require(sceHttp2AddCookie(box, "http://example.com/", " = ; Path=/", 11) == InvalidValue);
+    Require(sceHttp2AddCookie(box, "http://example.com/", "; Path=/; Domain=example.com", 28) == InvalidValue);
+    const char leadingNul[] = {'\0', 'a', '=', '1'};
+    Require(sceHttp2AddCookie(box, "http://example.com/", leadingNul, sizeof(leadingNul)) == InvalidValue);
+    const char spaceBeforeNul[] = {' ', ' ', '\0', 'a', '=', '1'};
+    Require(sceHttp2AddCookie(box, "http://example.com/", spaceBeforeNul, sizeof(spaceBeforeNul)) == InvalidValue);
+
+    Require(Add(box, "http://example.com/", "bad=1; Domain=.") == Rejected);
+    Require(Add(box, "http://example.com/", "bad=1; Domain=..") == Rejected);
+    Require(Add(box, "http://sub.example.com/", "bad=1; Domain=..example.com") == Rejected);
+    Require(Add(box, "http://example.com/", "bad=1; Domain=example.com.") == Rejected);
+    Require(Add(box, "http://example.com/", "bad=1; Domain=.example.com.") == Rejected);
+    Require(Add(box, "http://a..example.com/", "bad=1; Domain=a..example.com") == Rejected);
+    Require(Add(box, "http://example.com/", "bad=1; Domain=.example.com; Domain=.") == Rejected);
+    Require(NoMatch(box, "http://example.com/"));
+    Require(NoMatch(box, "http://sub.example.com/"));
+
+    const char trailingAfterNul[] = "sid=abc\0; Domain=other.com; Max-Age=0";
+    Require(sceHttp2AddCookie(box, "http://example.com/", trailingAfterNul, sizeof(trailingAfterNul) - 1) == 0);
+    Require(Get(box, "http://example.com/") == "sid=abc");
+    Require(sceHttp2AddCookie(box, "http://example.com/", "plain=ok", sizeof("plain=ok")) == 0);
+    Require(Get(box, "http://example.com/") == "plain=ok; sid=abc");
+
+    Require(Add(box, "http://sub.other.com/", "hostonly=1; Domain=") == 0);
+    Require(Get(box, "http://sub.other.com/") == "hostonly=1");
+    Require(NoMatch(box, "http://other.com/"));
+
+    Require(sceHttp2DeleteCookieBox(box) == 0);
+}
+
 int main() {
     static_assert(sizeof(Http2CookieStats) == 32);
     static_assert(offsetof(Http2CookieStats, currentInuseNum) == 8 && offsetof(Http2CookieStats, maxInuseSize) == 16);
@@ -180,6 +216,7 @@ int main() {
     Require(dates > 0);
     CheckDateTokens(dates);
     Require(sceHttp2DeleteCookieBox(dates) == 0);
+    CheckStoreValidation();
     constexpr std::size_t maxSize = static_cast<std::size_t>(-1);
     Require(sceHttp2CreateCookieBox(maxSize) < 0);
     Require(sceHttp2CreateCookieBox(maxSize - 0x3fff) < 0);

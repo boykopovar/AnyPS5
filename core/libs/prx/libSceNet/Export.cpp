@@ -1243,6 +1243,16 @@ int APS5_VABI sceNetPoolDestroy(int memid) {
     return g_pools.erase(memid) != 0 ? 0 : fail(NET_EBADF);
 }
 
+static int ReadNetworkObjectName(const char* name, std::string& guestName) {
+    constexpr std::size_t NameCapacity = 31;
+    const int error = CopyGuestString_nid_no_patch(name, NameCapacity, guestName);
+    if (error != NET_ENAMETOOLONG) return error;
+    std::array<char, NameCapacity> prefix;
+    if (!GuestCopyIn_nid_no_patch(prefix.data(), name, prefix.size())) return NET_EFAULT;
+    guestName.assign(prefix.begin(), std::find(prefix.begin(), prefix.end(), '\0'));
+    return 0;
+}
+
 int APS5_VABI sceNetSocket(const char* name, int family, int type, int protocol) {
     if (family != NET_AF_INET && family != NET_AF_INET6) {
         return fail(NET_EAFNOSUPPORT);
@@ -1280,6 +1290,10 @@ int APS5_VABI sceNetSocket(const char* name, int family, int type, int protocol)
         close_socket(native);
         return fail(12);
     }
+    std::string guestName;
+    if (name != nullptr) {
+        if (const int error = ReadNetworkObjectName(name, guestName)) return fail(error);
+    }
     const int fd = KernelReserveSocketNumber_nid_no_patch(static_cast<std::uintptr_t>(handle->value));
     if (fd < 0) return fail(-fd);
     std::lock_guard lk(g_mutex);
@@ -1291,7 +1305,7 @@ int APS5_VABI sceNetSocket(const char* name, int family, int type, int protocol)
     if (protocol == 0 && type == NET_SOCK_DGRAM) s.protocol = IPPROTO_UDP;
     s.tcpMaximumSegment = family == NET_AF_INET6 ? NET_TCP_DEFAULT_MAXSEG6 : NET_TCP_DEFAULT_MAXSEG;
     s.native = std::move(handle);
-    if (name != nullptr) s.name = std::string(name).substr(0, 31);
+    s.name = std::move(guestName);
     g_socks[fd] = s;
     return fd;
 }
@@ -2486,10 +2500,12 @@ int APS5_VABI sceNetGetSockInfo6(std::int32_t s, NetSockInfo6* info, std::uint32
 
 int APS5_VABI sceNetEpollCreate(const char* name, int flags) {
     if (!name || flags != 0) return fail(NET_EINVAL);
+    std::string guestName;
+    if (const int error = ReadNetworkObjectName(name, guestName)) return fail(error);
     std::lock_guard lk(g_mutex);
     const int id = g_next_epoll++;
     g_epolls.insert(id);
-    g_epoll_names[id] = name != nullptr ? std::string(name).substr(0, 31) : std::string();
+    g_epoll_names[id] = std::move(guestName);
     g_epoll_socks.emplace(id, EpollRegistrations{});
     return id;
 }
@@ -2633,17 +2649,18 @@ int APS5_VABI sceNetEpollControl(int eid, int op, int id, const NetEpollEvent* e
     const bool resolver = g_resolvers.count(id) != 0;
     if (!kernel && !resolver && g_socks.count(id) == 0) return fail(NET_EBADF);
     auto& registrations = g_epoll_socks[eid];
-    if (op == NET_EPOLL_CTL_ADD) {
-        if (registrations.count(id) != 0) return fail(NET_EADDRINUSE);
-        registrations.emplace(id, std::make_shared<const NetEpollEvent>(*event));
-        if (resolver) g_epoll_resolvers_reported[eid][id] = 0;
-    } else if (op == NET_EPOLL_CTL_DEL) {
+    if (op == NET_EPOLL_CTL_DEL) {
         if (registrations.erase(id) == 0) return fail(NET_ENOENT);
         g_epoll_resolvers_reported[eid].erase(id);
     } else {
-        auto registration = registrations.find(id);
-        if (registration == registrations.end()) return fail(NET_ENOENT);
-        registration->second = std::make_shared<const NetEpollEvent>(*event);
+        const bool adding = op == NET_EPOLL_CTL_ADD;
+        const bool exists = registrations.count(id) != 0;
+        if (adding && exists) return fail(NET_EADDRINUSE);
+        if (!adding && !exists) return fail(NET_ENOENT);
+        NetEpollEvent snapshot{};
+        if (!GuestCopyIn_nid_no_patch(&snapshot, event, sizeof(snapshot))) return fail(NET_EFAULT);
+        registrations.insert_or_assign(id, std::make_shared<const NetEpollEvent>(snapshot));
+        if (adding && resolver) g_epoll_resolvers_reported[eid][id] = 0;
     }
     g_cv.NotifyAll();
     return 0;
@@ -3633,10 +3650,11 @@ int APS5_VABI sceNetSysctl(const int* name, std::uint32_t nameLength, void* oldV
 
 int APS5_VABI sceNetThreadCreate(Pthread* thread, const NetThreadParameter* parameter, const char* name) {
     if (!parameter) return fail(NET_EINVAL);
+    if (thread && !GuestWritable_nid_no_patch(thread, sizeof(*thread))) return fail(NET_EFAULT);
     Pthread created = nullptr;
     const int result = scePthreadCreate(&created, nullptr, RunNetThread, const_cast<NetThreadParameter*>(parameter), name != nullptr ? name : "");
     if (result != 0) return result;
-    if (thread) *thread = created;
+    if (thread && !GuestCopyOut_nid_no_patch(thread, &created, sizeof(created))) return fail(NET_EFAULT);
     return 0;
 }
 
