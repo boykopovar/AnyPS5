@@ -3672,5 +3672,16 @@ class StrictProviderTests(unittest.TestCase):
         self.assertEqual(err.errors, "backslashreplace")
 
 
+
+class PureHelperTests(unittest.TestCase):
+    def test_origin_name_keeps_only_the_basename_after_origin(self):
+        self.assertEqual(import_audit.origin_name("$ORIGIN/lib/libfoo.prx"), "libfoo.prx")
+        self.assertEqual(import_audit.origin_name("${ORIGIN}/a/../libbar.sprx"), "libbar.sprx")
+
+    def test_origin_name_leaves_other_names_unchanged(self):
+        self.assertEqual(import_audit.origin_name("libplain.prx"), "libplain.prx")
+        self.assertIsNone(import_audit.origin_name(None))
+
+
 if __name__ == "__main__":
     unittest.main()
