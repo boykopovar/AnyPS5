@@ -810,5 +810,34 @@ class ArgumentTests(unittest.TestCase):
                 gate.positive(value)
 
 
+
+class IdentityTests(unittest.TestCase):
+    def make_repo(self, directory):
+        root = Path(directory).resolve()
+        subprocess.run(["git", "-C", str(root), "init", "-q"], check=True)
+        subprocess.run(["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+                        "commit", "-q", "--allow-empty", "-m", "base"], check=True)
+        head = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True,
+                              text=True, check=True).stdout.strip()
+        return root, head
+
+    def test_identity_refuses_an_abbreviated_commit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, _ = self.make_repo(directory)
+            with self.assertRaisesRegex(gate.GateError, "full lowercase"):
+                gate.identity(root, "abc123")
+
+    def test_identity_refuses_a_head_that_differs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, _ = self.make_repo(directory)
+            with self.assertRaisesRegex(gate.GateError, "HEAD differs"):
+                gate.identity(root, "0" * 40)
+
+    def test_identity_accepts_the_expected_clean_head(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root, head = self.make_repo(directory)
+            self.assertEqual(gate.identity(root, head), {"source": str(root), "commit": head})
+
+
 if __name__ == "__main__":
     unittest.main()
