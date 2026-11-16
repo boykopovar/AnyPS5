@@ -791,9 +791,12 @@ std::int32_t APS5_VABI sceUsbdGetConfiguration(void* deviceHandle, std::int32_t*
 
 std::int32_t APS5_VABI sceUsbdGetDescriptor(void* deviceHandle, std::uint8_t descriptorType, std::uint8_t descriptorIndex, std::uint8_t* data, std::int32_t length) {
     if (deviceHandle == nullptr || data == nullptr || length < 1) return SCE_USBD_ERROR_INVALID_ARG;
-    auto* handle = KnownHandle(deviceHandle, __func__);
     if (length > 65535) length = 65535;
-    return ToGuestError(libusb_get_descriptor(handle, descriptorType, descriptorIndex, data, length));
+    std::vector<std::uint8_t> host(static_cast<std::size_t>(length));
+    if (!GuestCopyIn_nid_no_patch(host.data(), data, host.size()) || !GuestCopyOut_nid_no_patch(data, host.data(), host.size())) return SCE_USBD_ERROR_INVALID_ARG;
+    const int result = libusb_get_descriptor(KnownHandle(deviceHandle, __func__), descriptorType, descriptorIndex, host.data(), length);
+    if (result > 0 && !GuestCopyOut_nid_no_patch(data, host.data(), static_cast<std::size_t>(result))) return SCE_USBD_ERROR_INVALID_ARG;
+    return ToGuestError(result);
 }
 
 void* APS5_VABI sceUsbdGetDevice(void* deviceHandle) {
