@@ -16,6 +16,7 @@
 #include <condition_variable>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <mutex>
 #include <new>
 #include <stdexcept>
@@ -294,14 +295,15 @@ using SyncTransferFunction = int (LIBUSB_CALL*)(libusb_device_handle*, unsigned 
 
 std::int32_t TransferThroughHostCopy(SyncTransferFunction transfer, libusb_device_handle* handle, std::uint8_t endpoint, std::uint8_t* data, std::int32_t length, std::int32_t& moved, std::uint32_t timeout) {
     const std::int32_t requested = std::max(length, 0);
-    std::vector<std::uint8_t> host(static_cast<std::size_t>(requested) + HID_REPORT_ID_SLACK);
+    const std::unique_ptr<std::uint8_t[]> host(new (std::nothrow) std::uint8_t[static_cast<std::size_t>(requested) + HID_REPORT_ID_SLACK]);
+    if (host == nullptr) return ToGuestError(LIBUSB_ERROR_NO_MEM);
     const bool deviceToHost = (endpoint & LIBUSB_ENDPOINT_IN) != 0;
-    if (!deviceToHost && requested > 0 && !GuestCopyIn_nid_no_patch(host.data(), data, static_cast<std::size_t>(requested))) return SCE_USBD_ERROR_INVALID_ARG;
+    if (!deviceToHost && requested > 0 && !GuestCopyIn_nid_no_patch(host.get(), data, static_cast<std::size_t>(requested))) return SCE_USBD_ERROR_INVALID_ARG;
     int hostMoved = 0;
-    const int result = transfer(handle, endpoint, host.data(), length, &hostMoved, timeout);
+    const int result = transfer(handle, endpoint, host.get(), length, &hostMoved, timeout);
     const std::int32_t received = std::clamp(hostMoved, 0, requested);
     moved = received;
-    if (deviceToHost && received > 0 && !GuestCopyOut_nid_no_patch(data, host.data(), static_cast<std::size_t>(received))) return SCE_USBD_ERROR_INVALID_ARG;
+    if (deviceToHost && received > 0 && !GuestCopyOut_nid_no_patch(data, host.get(), static_cast<std::size_t>(received))) return SCE_USBD_ERROR_INVALID_ARG;
     return ToGuestError(result);
 }
 
