@@ -1,6 +1,7 @@
 #include "prx/libSceHmd2/include/Api.hpp"
 #include "prx/libSceHmd2/Hmd2.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -41,6 +42,8 @@ void CheckGazeResult() {
 
     Require(sceHmd2GazeGetResult(nullptr, reinterpret_cast<Hmd2::GazeResult*>(result)) == ParameterNull, "null param");
     Require(sceHmd2GazeGetResult(&param, nullptr) == ParameterNull, "null result");
+    Require(sceHmd2GazeGetResult(reinterpret_cast<const Hmd2::GazeResultParameter*>(0x10), reinterpret_cast<Hmd2::GazeResult*>(result)) == ParameterNull, "unmapped param");
+    Require(sceHmd2GazeGetResult(&param, reinterpret_cast<Hmd2::GazeResult*>(0x10)) == ParameterNull, "unmapped result");
     Hmd2::GazeResultParameter wrongParam = param;
     wrongParam.size = 0x18;
     Require(sceHmd2GazeGetResult(&wrongParam, reinterpret_cast<Hmd2::GazeResult*>(result)) == ParameterInvalid, "param size");
@@ -72,6 +75,8 @@ void CheckFoveatedResult() {
 
     Require(sceHmd2GazeGetResultForFoveatedRendering(nullptr, reinterpret_cast<Hmd2::FoveatedRenderingResult*>(result)) == ParameterNull, "foveated null param");
     Require(sceHmd2GazeGetResultForFoveatedRendering(&param, nullptr) == ParameterNull, "foveated null result");
+    Require(sceHmd2GazeGetResultForFoveatedRendering(reinterpret_cast<const Hmd2::GazeResultParameter*>(0x10), reinterpret_cast<Hmd2::FoveatedRenderingResult*>(result)) == ParameterNull, "foveated unmapped param");
+    Require(sceHmd2GazeGetResultForFoveatedRendering(&param, reinterpret_cast<Hmd2::FoveatedRenderingResult*>(0x10)) == ParameterNull, "foveated unmapped result");
     unsigned char large[0x38] = {};
     const std::uint32_t largeSize = 0x38;
     std::memcpy(large, &largeSize, sizeof(largeSize));
@@ -107,8 +112,10 @@ void CheckGazeStatus() {
 
 int main() {
     Require(sceHmd2Initialize(nullptr) != 0, "initialize reports no headset");
+    errno = EILSEQ;
     CheckGazeResult();
     CheckFoveatedResult();
+    Require(errno == EILSEQ, "gaze guest copy preserves errno");
     CheckGazeStatus();
     std::puts("guest Hmd2 gaze results without a headset: PASS");
     return 0;
