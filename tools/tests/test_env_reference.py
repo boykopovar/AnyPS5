@@ -717,6 +717,11 @@ class SourceFileFilterTests(unittest.TestCase):
             (root / "src" / "d.hpp").write_text("x", encoding="utf-8")
             names = [path.name for path in env_reference.source_files(root)]
             self.assertEqual(names, ["a.cpp", "d.hpp"])
+class HelperTests(unittest.TestCase):
+    def test_library_of_names_the_library_or_core_component(self):
+        self.assertEqual(env_reference.library_of("core/libs/prx/libSceFoo/Export.cpp"), "libSceFoo")
+        self.assertEqual(env_reference.library_of("core/kernel/x.cpp"), "core/kernel")
+        self.assertEqual(env_reference.library_of("tools/env_reference.py"), "tools")
 
 
 if __name__ == "__main__":
