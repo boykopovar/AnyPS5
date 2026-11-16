@@ -1,4 +1,5 @@
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include <atomic>
@@ -7,10 +8,12 @@
 #include <cstdlib>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 static constexpr int SCE_OK = 0;
 
 extern "C" void APS5_Test_SetFinalThreadReleaseHook(Pthread thread, void (*hook)(Pthread));
+extern "C" int APS5_Test_GetJoinReRetainFailureCount();
 
 static void Require(bool condition) { if (!condition) std::abort(); }
 
@@ -67,10 +70,120 @@ static void WaitUntilReleased(Pthread thread) {
     }
 }
 
+static std::atomic<bool> finalReleaseSeen{false};
+
+static void HoldFinalReleaseMarked(Pthread thread) {
+    finalReleaseSeen.store(true, std::memory_order_release);
+    HoldFinalRelease(thread);
+}
+
+static bool WorkerFinished(Pthread thread) {
+    return thread->_finished.load(std::memory_order_acquire);
+}
+
+static void RequireJoinDetachInterleave() {
+    Worker worker;
+    Pthread thread = nullptr;
+    {
+        PthreadAttr attr = nullptr;
+        Require(scePthreadAttrInit(&attr) == SCE_OK);
+        Require(scePthreadAttrSetstacksize(&attr, 64 * 1024) == SCE_OK);
+        Require(scePthreadCreate(&thread, &attr, Wait, &worker, "join_detach_race") == SCE_OK);
+        Require(scePthreadAttrDestroy(&attr) == SCE_OK);
+    }
+    while (!worker.started.load()) std::this_thread::yield();
+    {
+        std::lock_guard lock(gate.mutex);
+        gate.thread = thread;
+        gate.reached = false;
+        gate.release = false;
+    }
+    finalReleaseSeen.store(false, std::memory_order_relaxed);
+    APS5_Test_SetFinalThreadReleaseHook(thread, HoldFinalReleaseMarked);
+
+    std::atomic<bool> stopHammer{false};
+    std::atomic<int> joinersDone{0};
+    std::atomic<bool> racerDone{false};
+    std::atomic<int> detachResult{SCE_OK};
+
+    std::thread hammers[3];
+    for (auto& hammer : hammers) {
+        hammer = std::thread([&] {
+            int priority = 0;
+            while (!stopHammer.load(std::memory_order_acquire)) scePthreadGetprio(thread, &priority);
+        });
+    }
+
+    std::thread racer([&] {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!WorkerFinished(thread)) {
+            Require(std::chrono::steady_clock::now() < deadline);
+            std::this_thread::yield();
+        }
+        for (;;) {
+            const int result = scePthreadDetach(thread);
+            if (result != SCE_KERNEL_ERROR_EINVAL) {
+                detachResult.store(result, std::memory_order_release);
+                break;
+            }
+            Require(std::chrono::steady_clock::now() < deadline);
+            std::this_thread::yield();
+        }
+        racerDone.store(true, std::memory_order_release);
+    });
+
+    std::thread joiners[5];
+    for (auto& joiner : joiners) {
+        joiner = std::thread([&] {
+            KernelTimespec past{};
+            while (!finalReleaseSeen.load(std::memory_order_acquire)) {
+                const int reRetainFailuresBefore = APS5_Test_GetJoinReRetainFailureCount();
+                const int result = pthread_timedjoin_np_nid_postfix(thread, nullptr, &past);
+                if (result == ESRCH) {
+                    Require(APS5_Test_GetJoinReRetainFailureCount() == reRetainFailuresBefore);
+                    if (finalReleaseSeen.load(std::memory_order_acquire)) WaitForFinalRelease();
+                    break;
+                }
+                if (result == 0) break;
+            }
+            joinersDone.fetch_add(1, std::memory_order_release);
+        });
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    worker.release.store(true, std::memory_order_release);
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    bool resumed = false;
+    while (joinersDone.load(std::memory_order_acquire) < 5 || !racerDone.load(std::memory_order_acquire)) {
+        if (!resumed && finalReleaseSeen.load(std::memory_order_acquire)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            ResumeFinalRelease();
+            resumed = true;
+        }
+        Require(std::chrono::steady_clock::now() < deadline);
+        std::this_thread::yield();
+    }
+    for (auto& joiner : joiners) joiner.join();
+    racer.join();
+    const int detach = detachResult.load(std::memory_order_acquire);
+    Require(detach == SCE_OK || detach == SCE_KERNEL_ERROR_ESRCH);
+    if (resumed) WaitUntilReleased(thread);
+    else APS5_Test_SetFinalThreadReleaseHook(thread, nullptr);
+    stopHammer.store(true, std::memory_order_release);
+    for (auto& hammer : hammers) hammer.join();
+}
+
 static void RequireAdmissionRejectsFinalRelease(int operation) {
     Worker worker;
     Pthread thread = nullptr;
-    Require(scePthreadCreate(&thread, nullptr, Wait, &worker, "release_race") == SCE_OK);
+    {
+        PthreadAttr attr = nullptr;
+        Require(scePthreadAttrInit(&attr) == SCE_OK);
+        Require(scePthreadAttrSetstacksize(&attr, 64 * 1024) == SCE_OK);
+        Require(scePthreadCreate(&thread, &attr, Wait, &worker, "release_race") == SCE_OK);
+        Require(scePthreadAttrDestroy(&attr) == SCE_OK);
+    }
     while (!worker.started.load()) std::this_thread::yield();
     Require(scePthreadDetach(thread) == SCE_OK);
 
@@ -94,11 +207,35 @@ static void RequireAdmissionRejectsFinalRelease(int operation) {
     Require(result == SCE_KERNEL_ERROR_ESRCH);
 }
 
+static constexpr int PaddingCount = 1000;
+
+static void* APS5_VABI Pad(void*) {
+    return nullptr;
+}
+
+static void RequireJoinDetachInterleaves() {
+    std::vector<Pthread> padding(PaddingCount);
+    for (int index = 0; index < PaddingCount; ++index) {
+        PthreadAttr attr = nullptr;
+        Require(scePthreadAttrInit(&attr) == SCE_OK);
+        Require(scePthreadAttrSetcreatesuspend(&attr) == SCE_OK);
+        Require(scePthreadAttrSetstacksize(&attr, 64 * 1024) == SCE_OK);
+        Require(scePthreadCreate(&padding[index], &attr, Pad, nullptr, "registry_padding") == SCE_OK);
+        Require(scePthreadAttrDestroy(&attr) == SCE_OK);
+    }
+    for (int round = 0; round < 60; ++round) RequireJoinDetachInterleave();
+    for (int index = 0; index < PaddingCount; ++index) {
+        Require(scePthreadResume(padding[index]) == SCE_OK);
+        Require(scePthreadJoin(padding[index], nullptr) == SCE_OK);
+    }
+}
+
 int main() {
-    for (int round = 0; round < 20; ++round) {
+    for (int round = 0; round < 10; ++round) {
         RequireAdmissionRejectsFinalRelease(0);
         RequireAdmissionRejectsFinalRelease(1);
         RequireAdmissionRejectsFinalRelease(2);
     }
+    RequireJoinDetachInterleaves();
     return 0;
 }

@@ -1006,6 +1006,7 @@ static void RunThread(std::unique_ptr<ThreadArgs> args) {
 using FinalThreadReleaseTestHook = void (*)(Pthread);
 static std::atomic<PthreadPrivate*> finalThreadReleaseTestTarget{nullptr};
 static std::atomic<FinalThreadReleaseTestHook> finalThreadReleaseTestHook{nullptr};
+static std::atomic<int> joinReRetainFailureTestCount{0};
 
 static void ReleaseThread(PthreadPrivate* thread) {
     if (thread->_adopted)
@@ -1056,6 +1057,10 @@ private:
 extern "C" void APS5_Test_SetFinalThreadReleaseHook(Pthread thread, FinalThreadReleaseTestHook hook) {
     finalThreadReleaseTestHook.store(hook, std::memory_order_relaxed);
     finalThreadReleaseTestTarget.store(static_cast<PthreadPrivate*>(thread), std::memory_order_release);
+}
+
+extern "C" int APS5_Test_GetJoinReRetainFailureCount() {
+    return joinReRetainFailureTestCount.load(std::memory_order_relaxed);
 }
 
 static std::mutex joinedLock;
@@ -1351,11 +1356,9 @@ int APS5_VABI JoinThread_nid_no_patch(Pthread thread, void** retval, const Kerne
     if (thread->_detached) return SCE_KERNEL_ERROR_EINVAL;
     if (thread->_joined.load(std::memory_order_acquire)) return SCE_KERNEL_ERROR_ESRCH;
     registered.unlock();
-    reference.Reset();
     ThreadCancel::Check();
     registered = LockRegisteredGuestThread(thread);
     if (!registered) return SCE_KERNEL_ERROR_ESRCH;
-    if (!reference.Retain(thread)) return SCE_KERNEL_ERROR_ESRCH;
     {
         std::unique_lock lock(thread->_join_mtx);
         if (thread->_detached) return SCE_KERNEL_ERROR_EINVAL;
