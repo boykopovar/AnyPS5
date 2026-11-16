@@ -309,5 +309,11 @@ class PadInputTests(unittest.TestCase):
         self.assertIn("is a directory", errors.getvalue())
 
 
+class ButtonMaskTests(unittest.TestCase):
+    def test_button_mask_ors_joined_button_names(self):
+        self.assertEqual(pad_input.button_mask('l3'), pad_input.BUTTONS['l3'])
+        self.assertEqual(pad_input.button_mask('cross+circle'), pad_input.BUTTONS['cross'] | pad_input.BUTTONS['circle'])
+
+
 if __name__ == "__main__":
     unittest.main()
