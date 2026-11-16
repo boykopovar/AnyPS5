@@ -4395,10 +4395,6 @@ int APS5_VABI sceIcuLegacyUnknown_QjkkOo0rsYg_nid_no_patch() {
 }
 APS5_EXPORT("QjkkOo0rsYg", sceIcuLegacyUnknown_QjkkOo0rsYg_nid_no_patch);
 
-int APS5_VABI uprv_getDefaultLocaleID_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN6icu_685Edits8Iterator8previousER10UErrorCode_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -6827,10 +6823,6 @@ int APS5_VABI sceIcuLegacyUnknown_h6L3lSaKl0k_nid_no_patch() {
 APS5_EXPORT("h6L3lSaKl0k", sceIcuLegacyUnknown_h6L3lSaKl0k_nid_no_patch);
 
 int APS5_VABI utrace_setFunctions_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI uloc_setDefault_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 

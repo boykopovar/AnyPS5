@@ -1469,27 +1469,23 @@ static void CheckSinhMsunBits() {
     }
 }
 
-static bool SinhWithinUlps(std::uint64_t result, std::uint64_t expected, std::uint64_t ulps) {
-    return ((result ^ expected) >> 63) == 0 && (result > expected ? result - expected : expected - result) <= ulps;
-}
-
 static void CheckSinhLargeArguments() {
     constexpr std::uint64_t cases[][2] = {
         {0x4036000000000000ull, 0x41dab5adb9c43600ull}, {0x4036000000000001ull, 0x41dab5adb9c4361aull},
         {0x4059000000000000ull, 0x48e3494a9b171bf5ull}, {0x4062c00000000000ull, 0x4d652cac29822593ull},
         {0x40862e41ffffffffull, 0x7fdffc045692fc9eull}, {0x40862e4200000000ull, 0x7fdffc045693009eull},
-        {0x40862e4200000001ull, 0x7fdffc045693049eull}, {0x40862e42ffffffffull, 0x7fe000020b8c410bull},
-        {0x4086330000000000ull, 0x7fecee0e3df7d1f3ull},
-        {0x408633cdffffffffull, 0x7feffdc12c49df1cull}, {0x408633ce00000000ull, 0x7feffdc12c49e31cull},
-        {0x408633ce8fb9e87dull, 0x7fefffffffbffd3cull}, {0x408633ce8fba087dull, 0x7ff0000000000000ull},
+        {0x40862e4200000001ull, 0x7fdffc045693049cull}, {0x40862e42ffffffffull, 0x7fe000020b8c410bull},
+        {0x4086330000000000ull, 0x7fecee0e3df7d1f2ull},
+        {0x408633cdffffffffull, 0x7feffdc12c49df1bull}, {0x408633ce00000000ull, 0x7feffdc12c49e31bull},
+        {0x408633ce8fb9e87dull, 0x7fefffffffbffd3cull}, {0x408633ce8fb9f87dull, 0x7feffffffffffd3bull},
+        {0x408633ce8fb9f87eull, 0x7ff0000000000000ull}, {0x408633ce8fba087dull, 0x7ff0000000000000ull},
         {0x408633ceffffffffull, 0x7ff0000000000000ull}, {0x408633cf00000000ull, 0x7ff0000000000000ull},
         {0x7fefffffffffffffull, 0x7ff0000000000000ull},
     };
     for (const auto& [input, expected] : cases) {
         for (const std::uint64_t sign : {std::uint64_t{0}, std::uint64_t{1} << 63}) {
             const std::uint64_t result = std::bit_cast<std::uint64_t>(sinh_nid_postfix(std::bit_cast<double>(input | sign)));
-            const bool overflow = expected == 0x7ff0000000000000ull;
-            if (overflow ? result != (expected | sign) : !SinhWithinUlps(result, expected | sign, 4)) {
+            if (result != (expected | sign)) {
                 std::fprintf(stderr, "Guest sinh failed for %016llx: got %016llx, expected %016llx\n", static_cast<unsigned long long>(input | sign), static_cast<unsigned long long>(result), static_cast<unsigned long long>(expected | sign));
                 std::abort();
             }
@@ -1500,7 +1496,7 @@ static void CheckSinhLargeArguments() {
 static void CheckSinhOverflowErrno() {
     constexpr int sentinel = 1234;
     for (const std::uint64_t sign : {std::uint64_t{0}, std::uint64_t{1} << 63}) {
-        for (const std::uint64_t input : {0x408633cf00000000ull, 0x7fefffffffffffffull}) {
+        for (const std::uint64_t input : {0x408633ce8fb9f87eull, 0x408633ceffffffffull, 0x408633cf00000000ull, 0x7fefffffffffffffull}) {
             errno = sentinel;
             const std::uint64_t result = std::bit_cast<std::uint64_t>(sinh_nid_postfix(std::bit_cast<double>(input | sign)));
             if (result != (0x7ff0000000000000ull | sign) || errno != ERANGE) {
@@ -3003,6 +2999,39 @@ static void CheckScaledSineBits() {
         Require(std::bit_cast<std::uint32_t>(_FSinh_nid_postfix(test.x, test.y)) == std::bit_cast<std::uint32_t>(test.expected));
 }
 
+static void CheckScaledCosineBits() {
+    const struct {
+        float x;
+        std::array<std::uint32_t, 3> bits;
+    } cases[] = {
+        {0.0f, {0x3f800000u, 0x40000000u, 0x3f000000u}},
+        {-0.0f, {0x3f800000u, 0x40000000u, 0x3f000000u}},
+        {0.5f, {0x3f90560cu, 0x4010560cu, 0x3f10560cu}},
+        {1.0f, {0x3fc583aau, 0x404583aau, 0x3f4583aau}},
+        {-1.0f, {0x3fc583aau, 0x404583aau, 0x3f4583aau}},
+        {2.0f, {0x4070c7d0u, 0x40f0c7d0u, 0x3ff0c7d0u}},
+        {10.0f, {0x462c14eeu, 0x46ac14eeu, 0x45ac14eeu}},
+        {88.0f, {0x7e7882b7u, 0x7ef882b7u, 0x7df882b7u}},
+        {89.0f, {0x7f28e166u, 0x7f800000u, 0x7ea8e166u}},
+        {90.0f, {0x7f800000u, 0x7f800000u, 0x7f658848u}},
+        {1e-20f, {0x3f800000u, 0x40000000u, 0x3f000000u}},
+        {3.0f, {0x41211525u, 0x41a11525u, 0x40a11525u}},
+    };
+    const float scales[] = {1.0f, 2.0f, 0.5f};
+    const int rounding = std::fegetround();
+    Require(std::fesetround(FE_TONEAREST) == 0);
+    for (const auto& test : cases) {
+        for (std::size_t index = 0; index < test.bits.size(); ++index) {
+            const auto result = std::bit_cast<std::uint32_t>(_FCosh_nid_postfix(test.x, scales[index]));
+            if (result != test.bits[index])
+                std::fprintf(stderr, "_FCosh(%a, %a): got %08x, console %08x\n", static_cast<double>(test.x),
+                    static_cast<double>(scales[index]), result, test.bits[index]);
+            Require(result == test.bits[index]);
+        }
+    }
+    Require(std::fesetround(rounding) == 0);
+}
+
 static void CheckLog10fLog2fConsoleBits() {
     constexpr struct {
         std::uint32_t input;
@@ -3045,8 +3074,9 @@ static void CheckScaledHyperbolic() {
             float expected = static_cast<float>(value * static_cast<long double>(y));
             bool exact = expected == 0.0f || std::isinf(expected);
             for (const auto& measured : MeasuredScaledSines) {
-                if (sine && measured.x == std::fabs(x) && measured.y == std::fabs(y)) {
-                    expected = std::bit_cast<float>(measured.bits | (std::signbit(x) != std::signbit(y) ? 0x80000000u : 0u));
+                if ((sine || measured.x >= 8.675f) && measured.x == std::fabs(x) && measured.y == std::fabs(y)) {
+                    const bool negative = sine ? std::signbit(x) != std::signbit(y) : std::signbit(y);
+                    expected = std::bit_cast<float>(measured.bits | (negative ? 0x80000000u : 0u));
                     exact = true;
                 }
             }
@@ -4843,6 +4873,7 @@ int main() {
     CheckCoshfMsunBoundaries();
     CheckExp2fConsoleBits();
     CheckAsinhfMsunBoundaries();
+    CheckScaledCosineBits();
     CheckScaledHyperbolic();
     CheckScaledSineBits();
     CheckLog10fLog2fConsoleBits();

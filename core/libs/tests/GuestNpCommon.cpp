@@ -350,6 +350,15 @@ static int testClock() {
 
     ok &= expect(std::memcmp(version, "00.82\0\0\0", 8) == 0, "the nav SDK version is not 00.82 padded with zeros");
     ok &= expect(version[8] == 'x', "the nav SDK version was written past 8 bytes");
+
+    std::uint32_t sdkVersion = 0;
+    sceNpGetSdkVersionUInt(&sdkVersion);
+    ok &= expect((sdkVersion >> 16) == 0x0100, "the numeric SDK version is not 1.00");
+    errno = 71;
+    sceNpGetSdkVersion(reinterpret_cast<char*>(0x10));
+    sceNpGetNavSdkVersion(reinterpret_cast<char*>(0x10));
+    sceNpGetSdkVersionUInt(reinterpret_cast<std::uint32_t*>(0x10));
+    ok &= expect(errno == 71, "an unwritable version output changed errno");
     return ok ? 0 : 1;
 }
 
