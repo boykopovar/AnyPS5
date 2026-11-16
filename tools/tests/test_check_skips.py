@@ -646,7 +646,10 @@ class NotRunTests(unittest.TestCase):
                     self.assertNotIn("Traceback", checked.stderr)
 
 
-
+class LimitationTests(unittest.TestCase):
+    def test_environment_loader_retention_needs_exactly_the_known_reason(self):
+        self.assertTrue(check_skips.environment_loader_retention(check_skips.ENVIRONMENT_LOADER_RETENTION))
+        self.assertFalse(check_skips.environment_loader_retention('skipped: other reason'))
 
 
 if __name__ == "__main__":
