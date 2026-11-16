@@ -46,9 +46,11 @@
 
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -367,27 +369,52 @@ extern "C" {
 void APS5_VABI _ZN6webrtc17PushSincResamplerC1Emm_nid_postfix(WebRtcPushSincResampler* push, std::size_t sourceFrames, std::size_t destinationFrames) {
     if (!push)
         throw std::invalid_argument("PushSincResampler constructor requires an object");
+    {
+        const int savedErrno = errno;
+        const bool writable = GuestWritable_nid_no_patch(push, sizeof(*push));
+        errno = savedErrno;
+        if (!writable)
+            throw std::invalid_argument("PushSincResampler constructor requires a writable object");
+    }
     if (sourceFrames <= SincResampler::KernelSize + SincResampler::KernelSize / 2 || sourceFrames > MaxSamplesPerChannel || destinationFrames == 0 ||
         destinationFrames > MaxSamplesPerChannel)
         throw std::invalid_argument("PushSincResampler needs 49 to 3840 source frames and 1 to 3840 destination frames");
-    push->vtable = PushSincResamplerVtable + 2;
-    push->resampler = nullptr;
-    push->floatBuffer = nullptr;
-    push->sourcePtr = nullptr;
-    push->sourcePtrInt = nullptr;
-    push->destinationFrames = destinationFrames;
-    push->firstPass = true;
-    push->sourceAvailable = 0;
-    push->resampler = new SincResampler(static_cast<double>(sourceFrames) / static_cast<double>(destinationFrames), sourceFrames, push);
+    WebRtcPushSincResampler host{};
+    host.vtable = PushSincResamplerVtable + 2;
+    host.destinationFrames = destinationFrames;
+    host.firstPass = true;
+    host.resampler = new SincResampler(static_cast<double>(sourceFrames) / static_cast<double>(destinationFrames), sourceFrames, push);
+    const int savedErrno = errno;
+    const bool copiedOut = GuestPtr<WebRtcPushSincResampler>(push).CopyOut(host);
+    errno = savedErrno;
+    if (!copiedOut) {
+        delete static_cast<SincResampler*>(host.resampler);
+        throw std::invalid_argument("PushSincResampler constructor requires a writable object");
+    }
 }
 
 void APS5_VABI _ZN6webrtc17PushSincResamplerD1Ev_nid_postfix(WebRtcPushSincResampler* push) {
     if (!push)
         throw std::invalid_argument("PushSincResampler destructor requires an object");
-    delete Sinc(push);
-    delete[] push->floatBuffer;
-    push->resampler = nullptr;
-    push->floatBuffer = nullptr;
+    WebRtcPushSincResampler host{};
+    {
+        const int savedErrno = errno;
+        const bool ok = GuestWritable_nid_no_patch(push, sizeof(*push)) &&
+                        GuestPtr<const WebRtcPushSincResampler>(push).CopyIn(host);
+        errno = savedErrno;
+        if (!ok)
+            throw std::invalid_argument("PushSincResampler destructor requires a writable object");
+    }
+    delete static_cast<SincResampler*>(host.resampler);
+    delete[] host.floatBuffer;
+    host.resampler = nullptr;
+    host.floatBuffer = nullptr;
+    const int savedErrno = errno;
+    if (!GuestPtr<WebRtcPushSincResampler>(push).CopyOut(host)) {
+        errno = savedErrno;
+        throw std::invalid_argument("PushSincResampler destructor requires a writable object");
+    }
+    errno = savedErrno;
 }
 
 std::size_t APS5_VABI _ZN6webrtc17PushSincResampler8ResampleEPKfmPfm_nid_postfix(WebRtcPushSincResampler* push, const float* source, std::size_t sourceLength, float* destination, std::size_t destinationCapacity) {
@@ -424,10 +451,25 @@ void APS5_VABI _ZN6webrtc13PushResamplerIsEC1Emmm_nid_postfix(WebRtcPushResample
 void APS5_VABI _ZN6webrtc13PushResamplerIsED1Ev_nid_postfix(WebRtcPushResampler16* resampler) {
     if (!resampler)
         throw std::invalid_argument("PushResampler destructor requires an object");
-    ReleaseResamplers(resampler);
-    delete[] resampler->source;
-    delete[] resampler->destination;
-    Clear(resampler);
+    WebRtcPushResampler16 host{};
+    {
+        const int savedErrno = errno;
+        const bool ok = GuestWritable_nid_no_patch(resampler, sizeof(*resampler)) &&
+                        GuestPtr<const WebRtcPushResampler16>(resampler).CopyIn(host);
+        errno = savedErrno;
+        if (!ok)
+            throw std::invalid_argument("PushResampler destructor requires a writable object");
+    }
+    ReleaseResamplers(&host);
+    delete[] host.source;
+    delete[] host.destination;
+    Clear(&host);
+    const int savedErrno = errno;
+    if (!GuestPtr<WebRtcPushResampler16>(resampler).CopyOut(host)) {
+        errno = savedErrno;
+        throw std::invalid_argument("PushResampler destructor requires a writable object");
+    }
+    errno = savedErrno;
 }
 
 int APS5_VABI _ZN6webrtc13PushResamplerIsE8ResampleENS_15InterleavedViewIKsEENS2_IsEE_nid_postfix(WebRtcPushResampler16* resampler, WebRtcInterleavedView source, WebRtcMutableInterleavedView16 destination) {

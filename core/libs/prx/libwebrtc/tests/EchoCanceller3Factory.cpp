@@ -2,6 +2,13 @@
 #include "prx/libc/libc.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -120,6 +127,33 @@ void TestDelete() {
     WebRtcEchoCanceller3Factory local;
     RequireThrows<std::invalid_argument>([&] { _ZN6webrtc21EchoCanceller3FactoryC1ERKNS_20EchoCanceller3ConfigE_nid_postfix(nullptr, &config); });
     RequireThrows<std::invalid_argument>([&] { _ZN6webrtc21EchoCanceller3FactoryC1ERKNS_20EchoCanceller3ConfigE_nid_postfix(&local, nullptr); });
+
+#ifdef _WIN32
+    SYSTEM_INFO sys{};
+    GetSystemInfo(&sys);
+    const std::size_t pageSize = sys.dwPageSize;
+    void* page = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    Require(page != nullptr);
+    DWORD oldProtect = 0;
+    Require(VirtualProtect(page, pageSize, PAGE_READONLY, &oldProtect) != 0);
+#else
+    const std::size_t pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED);
+    Require(mprotect(page, pageSize, PROT_READ) == 0);
+#endif
+    RequireThrows<std::invalid_argument>([&] { _ZN6webrtc21EchoCanceller3FactoryC1ERKNS_20EchoCanceller3ConfigE_nid_postfix(static_cast<WebRtcEchoCanceller3Factory*>(page), &config); });
+#ifdef _WIN32
+    Require(VirtualProtect(page, pageSize, PAGE_NOACCESS, &oldProtect) != 0);
+#else
+    Require(mprotect(page, pageSize, PROT_NONE) == 0);
+#endif
+    RequireThrows<std::invalid_argument>([&] { _ZN6webrtc21EchoCanceller3FactoryC1ERKNS_20EchoCanceller3ConfigE_nid_postfix(&local, static_cast<const WebRtcEchoCanceller3Config*>(page)); });
+#ifdef _WIN32
+    VirtualFree(page, 0, MEM_RELEASE);
+#else
+    munmap(page, pageSize);
+#endif
 }
 
 }

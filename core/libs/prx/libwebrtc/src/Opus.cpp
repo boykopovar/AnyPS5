@@ -41,11 +41,15 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <mutex>
 #include <opus.h>
 #include <stdexcept>
+#include <unordered_set>
 
 struct WebRtcOpusEncInst {
     OpusEncoder* encoder;
@@ -60,6 +64,22 @@ constexpr std::size_t SamplesPerMillisecondAt48Khz = 48;
 constexpr std::size_t MaxFrameMillisecondsWithout120Ms = 60;
 constexpr std::size_t MaxFrameMillisecondsWith120Ms = 120;
 
+struct ErrnoGuard {
+    int savedErrno = errno;
+    ~ErrnoGuard() { errno = savedErrno; }
+};
+
+std::mutex g_liveEncodersMutex;
+std::unordered_set<WebRtcOpusEncInst*> g_liveEncoders;
+
+void DestroyUnregisteredEncoder(WebRtcOpusEncInst* state) {
+    if (!state)
+        return;
+    if (state->encoder)
+        opus_encoder_destroy(state->encoder);
+    delete state;
+}
+
 }
 
 extern "C" {
@@ -67,8 +87,20 @@ extern "C" {
 std::int16_t APS5_VABI WebRtcOpus_EncoderFree_nid_postfix(WebRtcOpusEncInst* inst) {
     if (!inst)
         return -1;
-    if (inst->encoder)
-        opus_encoder_destroy(inst->encoder);
+    WebRtcOpusEncInst host{};
+    {
+        ErrnoGuard guard;
+        if (!GuestWritable_nid_no_patch(inst, sizeof(*inst)) ||
+            !GuestPtr<const WebRtcOpusEncInst>(inst).CopyIn(host))
+            return -1;
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_liveEncodersMutex);
+        if (g_liveEncoders.erase(inst) == 0)
+            return -1;
+    }
+    if (host.encoder)
+        opus_encoder_destroy(host.encoder);
     delete inst;
     return 0;
 }
@@ -76,6 +108,11 @@ std::int16_t APS5_VABI WebRtcOpus_EncoderFree_nid_postfix(WebRtcOpusEncInst* ins
 std::int16_t APS5_VABI WebRtcOpus_EncoderCreate_nid_postfix(WebRtcOpusEncInst** inst, std::size_t channels, std::int32_t application, int sampleRateHz) {
     if (!inst)
         return -1;
+    {
+        ErrnoGuard guard;
+        if (!GuestWritable_nid_no_patch(inst, sizeof(*inst)))
+            return -1;
+    }
     if (channels != 1 && channels != 2)
         return -1;
     int opusApplication = 0;
@@ -93,13 +130,23 @@ std::int16_t APS5_VABI WebRtcOpus_EncoderCreate_nid_postfix(WebRtcOpusEncInst** 
     int error = OPUS_OK;
     state->encoder = opus_encoder_create(sampleRateHz, static_cast<int>(channels), opusApplication, &error);
     if (error != OPUS_OK || !state->encoder) {
-        WebRtcOpus_EncoderFree_nid_postfix(state);
+        DestroyUnregisteredEncoder(state);
         return -1;
     }
     state->inDtxMode = 0;
     state->channels = channels;
     state->sampleRateHz = sampleRateHz;
-    *inst = state;
+    {
+        ErrnoGuard guard;
+        if (!GuestPtr<WebRtcOpusEncInst*>(inst).CopyOut(state)) {
+            DestroyUnregisteredEncoder(state);
+            return -1;
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_liveEncodersMutex);
+        g_liveEncoders.insert(state);
+    }
     return 0;
 }
 

@@ -43,7 +43,9 @@
 
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <stdexcept>
 
@@ -55,11 +57,21 @@ constexpr std::size_t AddRefSlot = 0;
 constexpr std::size_t ReleaseSlot = 1;
 constexpr std::int64_t MicrosecondsPerMillisecond = 1000;
 
+struct ErrnoGuard {
+    int savedErrno = errno;
+    ~ErrnoGuard() { errno = savedErrno; }
+};
+
 void CallBuffer(void* buffer, std::size_t slot, const char* function) {
-    const void* const* vtable;
-    if (!GuestCopyIn_nid_no_patch(&vtable, buffer, sizeof(vtable)) || !vtable || !vtable[slot])
-        throw std::invalid_argument(function);
-    reinterpret_cast<BufferReference>(const_cast<void*>(vtable[slot]))(buffer);
+    const void* const* vtable = nullptr;
+    const void* entry = nullptr;
+    {
+        ErrnoGuard guard;
+        if (!GuestCopyIn_nid_no_patch(&vtable, buffer, sizeof(vtable)) || !vtable ||
+            !GuestCopyIn_nid_no_patch(&entry, vtable + slot, sizeof(entry)) || !entry)
+            throw std::invalid_argument(function);
+    }
+    reinterpret_cast<BufferReference>(const_cast<void*>(entry))(buffer);
 }
 
 }
@@ -72,37 +84,55 @@ void APS5_VABI _ZN6webrtc10VideoFrameC1ERKNS_13scoped_refptrINS_16VideoFrameBuff
         throw std::invalid_argument("VideoFrame constructor requires a frame");
     if (!buffer)
         throw std::invalid_argument("VideoFrame constructor requires a buffer reference");
-    void* const frameBuffer = *buffer;
+    void* frameBuffer = nullptr;
+    WebRtcVideoFrame hostFrame{};
+    {
+        ErrnoGuard guard;
+        if (!GuestWritable_nid_no_patch(frame, sizeof(*frame)) ||
+            !GuestPtr<const WebRtcVideoFrame>(frame).CopyIn(hostFrame))
+            throw std::invalid_argument("VideoFrame constructor requires a writable frame");
+        if (!GuestPtr<void* const>(buffer).CopyIn(frameBuffer))
+            throw std::invalid_argument("VideoFrame constructor requires a readable buffer reference");
+    }
     if (frameBuffer)
         CallBuffer(frameBuffer, AddRefSlot, "VideoFrame constructor requires a buffer with AddRef");
-    frame->videoFrameBuffer = frameBuffer;
-    frame->timestampRtp = timestampRtp;
-    frame->ntpTimeMs = 0;
-    frame->timestampUs = static_cast<std::int64_t>(static_cast<std::uint64_t>(renderTimeMs) * MicrosecondsPerMillisecond);
-    reinterpret_cast<unsigned char*>(&frame->presentationTimestamp.value)[0] = 0;
-    frame->presentationTimestamp.engaged = false;
-    reinterpret_cast<unsigned char*>(&frame->referenceTime.value)[0] = 0;
-    frame->referenceTime.engaged = false;
-    frame->rotation = rotation;
-    frame->colorSpace[0] = 0;
-    frame->colorSpace[68] = 0;
-    frame->useLowLatencyRendering = false;
-    reinterpret_cast<unsigned char*>(&frame->maxCompositionDelayInFrames)[0] = 0;
-    frame->hasMaxCompositionDelayInFrames = false;
-    reinterpret_cast<unsigned char*>(frame->updateRect)[0] = 0;
-    frame->hasUpdateRect = false;
-    frame->packetInfos = nullptr;
-    reinterpret_cast<unsigned char*>(frame->processingTime)[0] = 0;
-    frame->hasProcessingTime = false;
+    hostFrame.videoFrameBuffer = frameBuffer;
+    hostFrame.timestampRtp = timestampRtp;
+    hostFrame.ntpTimeMs = 0;
+    hostFrame.timestampUs = static_cast<std::int64_t>(static_cast<std::uint64_t>(renderTimeMs) * MicrosecondsPerMillisecond);
+    reinterpret_cast<unsigned char*>(&hostFrame.presentationTimestamp.value)[0] = 0;
+    hostFrame.presentationTimestamp.engaged = false;
+    reinterpret_cast<unsigned char*>(&hostFrame.referenceTime.value)[0] = 0;
+    hostFrame.referenceTime.engaged = false;
+    hostFrame.rotation = rotation;
+    hostFrame.colorSpace[0] = 0;
+    hostFrame.colorSpace[68] = 0;
+    hostFrame.useLowLatencyRendering = false;
+    reinterpret_cast<unsigned char*>(&hostFrame.maxCompositionDelayInFrames)[0] = 0;
+    hostFrame.hasMaxCompositionDelayInFrames = false;
+    reinterpret_cast<unsigned char*>(hostFrame.updateRect)[0] = 0;
+    hostFrame.hasUpdateRect = false;
+    hostFrame.packetInfos = nullptr;
+    reinterpret_cast<unsigned char*>(hostFrame.processingTime)[0] = 0;
+    hostFrame.hasProcessingTime = false;
+    ErrnoGuard guard;
+    if (!GuestPtr<WebRtcVideoFrame>(frame).CopyOut(hostFrame))
+        throw std::invalid_argument("VideoFrame constructor requires a writable frame");
 }
 
 void APS5_VABI _ZN6webrtc10VideoFrameD1Ev_nid_postfix(WebRtcVideoFrame* frame) {
     if (!frame)
         throw std::invalid_argument("VideoFrame destructor requires a frame");
-    if (frame->packetInfos)
+    WebRtcVideoFrame hostFrame{};
+    {
+        ErrnoGuard guard;
+        if (!GuestPtr<const WebRtcVideoFrame>(frame).CopyIn(hostFrame))
+            throw std::invalid_argument("VideoFrame destructor requires a readable frame");
+    }
+    if (hostFrame.packetInfos)
         NotImplemented_nid_no_patch("VideoFrame destructor with packet infos: releasing the guest packet info vector");
-    if (frame->videoFrameBuffer)
-        CallBuffer(frame->videoFrameBuffer, ReleaseSlot, "VideoFrame destructor requires a buffer with Release");
+    if (hostFrame.videoFrameBuffer)
+        CallBuffer(hostFrame.videoFrameBuffer, ReleaseSlot, "VideoFrame destructor requires a buffer with Release");
 }
 
 }

@@ -42,7 +42,9 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
+#include <cerrno>
 #include <cstddef>
 #include <stdexcept>
 
@@ -52,11 +54,17 @@ constexpr std::size_t AddRefSlot = 0;
 constexpr std::size_t TypeSlot = 4;
 constexpr std::int32_t NativeType = 0;
 
+struct ErrnoGuard {
+    int savedErrno = errno;
+    ~ErrnoGuard() { errno = savedErrno; }
+};
+
 const void* Slot(const WebRtcVideoFrameBuffer* buffer, std::size_t slot, const char* function) {
-    if (!buffer || !buffer->vtable)
-        throw std::invalid_argument(function);
-    const void* const entry = static_cast<const void* const*>(buffer->vtable)[slot];
-    if (!entry)
+    const void* const* vtable = nullptr;
+    const void* entry = nullptr;
+    ErrnoGuard guard;
+    if (!buffer || !GuestPtr<const void* const*>(buffer).CopyIn(vtable) || !vtable ||
+        !GuestCopyIn_nid_no_patch(&entry, vtable + slot, sizeof(entry)) || !entry)
         throw std::invalid_argument(function);
     return entry;
 }
@@ -68,11 +76,19 @@ extern "C" {
 void** APS5_VABI _ZN6webrtc19I420BufferInterface6ToI420Ev_nid_postfix(void** result, WebRtcVideoFrameBuffer* buffer) {
     if (!result)
         throw std::invalid_argument("I420BufferInterface::ToI420 requires a result");
+    {
+        ErrnoGuard guard;
+        if (!GuestWritable_nid_no_patch(result, sizeof(*result)))
+            throw std::invalid_argument("I420BufferInterface::ToI420 requires a writable result");
+    }
     if (buffer) {
         using AddRef = void(APS5_VABI*)(const WebRtcVideoFrameBuffer*);
         reinterpret_cast<AddRef>(const_cast<void*>(Slot(buffer, AddRefSlot, "I420BufferInterface::ToI420 requires a buffer with AddRef")))(buffer);
     }
-    *result = buffer;
+    void* out = buffer;
+    ErrnoGuard guard;
+    if (!GuestPtr<void*>(result).CopyOut(out))
+        throw std::invalid_argument("I420BufferInterface::ToI420 requires a writable result");
     return result;
 }
 
@@ -83,11 +99,19 @@ const void* APS5_VABI _ZNK6webrtc19I420BufferInterface7GetI420Ev_nid_postfix(con
 void** APS5_VABI _ZN6webrtc16VideoFrameBuffer20GetMappedFrameBufferEN3rtc9ArrayViewINS0_4TypeELln4711EEE_nid_postfix(void** result, WebRtcVideoFrameBuffer* buffer, WebRtcVideoFrameBufferTypes) {
     if (!result)
         throw std::invalid_argument("VideoFrameBuffer::GetMappedFrameBuffer requires a result");
+    {
+        ErrnoGuard guard;
+        if (!GuestWritable_nid_no_patch(result, sizeof(*result)))
+            throw std::invalid_argument("VideoFrameBuffer::GetMappedFrameBuffer requires a writable result");
+    }
     using GetType = std::int32_t(APS5_VABI*)(const WebRtcVideoFrameBuffer*);
     const std::int32_t type = reinterpret_cast<GetType>(const_cast<void*>(Slot(buffer, TypeSlot, "VideoFrameBuffer::GetMappedFrameBuffer requires a buffer with type")))(buffer);
     if (type != NativeType)
         throw std::runtime_error("VideoFrameBuffer::GetMappedFrameBuffer requires a native buffer");
-    *result = nullptr;
+    void* out = nullptr;
+    ErrnoGuard guard;
+    if (!GuestPtr<void*>(result).CopyOut(out))
+        throw std::invalid_argument("VideoFrameBuffer::GetMappedFrameBuffer requires a writable result");
     return result;
 }
 

@@ -43,7 +43,9 @@
 
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
+#include <cerrno>
 #include <stdexcept>
 
 namespace {
@@ -51,12 +53,24 @@ namespace {
 constexpr std::uint64_t GuestStringInlineCapacity = 15;
 constexpr std::uint64_t GuestStringLargeAllocation = 0x1000;
 
-void ReleaseGuestString(WebRtcGuestString& string) {
+struct ErrnoGuard {
+    int savedErrno = errno;
+    ~ErrnoGuard() { errno = savedErrno; }
+};
+
+void ReleaseGuestString(const WebRtcGuestString& string) {
     if (string.capacity <= GuestStringInlineCapacity)
         return;
     void* storage = string.pointer;
-    if (string.capacity + 1 >= GuestStringLargeAllocation)
-        storage = static_cast<void**>(storage)[-1];
+    if (!storage)
+        throw std::invalid_argument("RtpExtension destructor requires a valid heap URI");
+    if (string.capacity + 1 >= GuestStringLargeAllocation) {
+        void* raw = nullptr;
+        ErrnoGuard guard;
+        if (!GuestPtr<void* const>(static_cast<void* const*>(storage) - 1).CopyIn(raw))
+            throw std::invalid_argument("RtpExtension destructor requires a valid large URI header");
+        storage = raw;
+    }
     _ZdlPv_nid_postfix(storage);
 }
 
@@ -67,7 +81,14 @@ extern "C" {
 void APS5_VABI _ZN6webrtc12RtpExtensionD1Ev_nid_postfix(WebRtcRtpExtension* extension) {
     if (!extension)
         throw std::invalid_argument("RtpExtension destructor requires an extension");
-    ReleaseGuestString(extension->uri);
+    WebRtcRtpExtension host{};
+    {
+        ErrnoGuard guard;
+        if (!GuestWritable_nid_no_patch(extension, sizeof(*extension)) ||
+            !GuestPtr<const WebRtcRtpExtension>(extension).CopyIn(host))
+            throw std::invalid_argument("RtpExtension destructor requires a writable extension");
+    }
+    ReleaseGuestString(host.uri);
 }
 
 }

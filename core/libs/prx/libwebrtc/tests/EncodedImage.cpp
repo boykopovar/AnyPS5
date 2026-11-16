@@ -2,6 +2,13 @@
 #include "prx/libc/libc.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -241,6 +248,39 @@ void TestDestructor() {
     Construct(image);
     map.beginNode = nullptr;
     ExpectInvalid([&] { _ZN6webrtc12EncodedImageD1Ev_nid_postfix(&image); });
+
+#ifdef _WIN32
+    SYSTEM_INFO sys{};
+    GetSystemInfo(&sys);
+    const std::size_t pageSize = sys.dwPageSize;
+    void* page = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    Require(page != nullptr);
+    DWORD oldProtect = 0;
+    Require(VirtualProtect(page, pageSize, PAGE_READONLY, &oldProtect) != 0);
+#else
+    const std::size_t pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED);
+    Require(mprotect(page, pageSize, PROT_READ) == 0);
+#endif
+    ExpectInvalid([&] { _ZN6webrtc18EncodedImageBuffer6CreateEPKhm_nid_postfix(static_cast<WebRtcEncodedImageBuffer**>(page), bytes, sizeof(bytes)); });
+    ExpectInvalid([&] { _ZN6webrtc12EncodedImageC1Ev_nid_postfix(static_cast<WebRtcEncodedImage*>(page)); });
+    ExpectInvalid([&] { _ZN6webrtc12EncodedImageD1Ev_nid_postfix(static_cast<WebRtcEncodedImage*>(page)); });
+#ifdef _WIN32
+    Require(VirtualProtect(page, pageSize, PAGE_NOACCESS, &oldProtect) != 0);
+#else
+    Require(mprotect(page, pageSize, PROT_NONE) == 0);
+#endif
+    WebRtcEncodedImageBuffer* outBuf = nullptr;
+    ExpectInvalid([&] { _ZN6webrtc18EncodedImageBuffer6CreateEPKhm_nid_postfix(&outBuf, static_cast<const std::uint8_t*>(page), 16); });
+    Require(outBuf == nullptr);
+    ExpectInvalid([&] { _ZN6webrtc18EncodedImageBuffer6CreateEPKhm_nid_postfix(&outBuf, static_cast<const std::uint8_t*>(page), std::size_t{1} << 40); });
+    Require(allocations.empty());
+#ifdef _WIN32
+    VirtualFree(page, 0, MEM_RELEASE);
+#else
+    munmap(page, pageSize);
+#endif
 }
 
 }

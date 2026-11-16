@@ -94,7 +94,12 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libc/libc.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
+#include <algorithm>
+#include <array>
+#include <cerrno>
+#include <cstdint>
 #include <cstring>
 #include <new>
 #include <stdexcept>
@@ -105,6 +110,11 @@ namespace {
 constexpr std::int32_t DroppedLastRef = 0;
 constexpr std::int32_t OtherRefsRemained = 1;
 constexpr std::size_t ReleaseSlot = 1;
+
+struct ErrnoGuard {
+    int savedErrno = errno;
+    ~ErrnoGuard() { errno = savedErrno; }
+};
 
 using ReleaseFunction = std::int32_t(APS5_VABI*)(const void*);
 
@@ -166,27 +176,66 @@ std::size_t Count(TValue* begin, TValue* end, TValue* capacity, const char* mess
     return (last - first) / sizeof(TValue);
 }
 
-void ReleasePacketInfos(WebRtcRtpPacketInfosData* data) {
-    if (!data || data->refCount.fetch_sub(1, std::memory_order_acq_rel) != 1)
-        return;
-    const auto count = Count(data->begin, data->end, data->capacity, "EncodedImage destructor requires a valid packet info vector");
-    for (std::size_t i = 0; i < count; ++i) {
-        auto& entry = data->begin[i];
-        Count(entry.csrcsBegin, entry.csrcsEnd, entry.csrcsCapacity, "EncodedImage destructor requires a valid CSRC vector");
+bool ProbeReadableBytes(const std::uint8_t* source, std::size_t size) {
+    if (size == 0)
+        return true;
+    if (!source)
+        return false;
+    std::array<std::uint8_t, 4096> scratch{};
+    std::size_t offset = 0;
+    ErrnoGuard guard;
+    while (offset < size) {
+        const std::size_t chunk = std::min(size - offset, scratch.size());
+        if (!GuestBytes(source + offset).CopyIn(scratch.data(), chunk))
+            return false;
+        offset += chunk;
     }
+    return true;
+}
+
+void ReleasePacketInfos(WebRtcRtpPacketInfosData* data) {
+    if (!data)
+        return;
+    {
+        ErrnoGuard guard;
+        if (!GuestWritable_nid_no_patch(data, sizeof(*data)))
+            throw std::invalid_argument("EncodedImage destructor requires writable packet infos");
+    }
+    struct PacketInfosRange {
+        WebRtcRtpPacketInfoEntry* begin;
+        WebRtcRtpPacketInfoEntry* end;
+        WebRtcRtpPacketInfoEntry* capacity;
+    } range{};
+    {
+        ErrnoGuard guard;
+        if (!GuestCopyIn_nid_no_patch(&range, reinterpret_cast<const std::uint8_t*>(data) + offsetof(WebRtcRtpPacketInfosData, begin), sizeof(range)))
+            throw std::invalid_argument("EncodedImage destructor requires readable packet infos");
+    }
+    const auto count = Count(range.begin, range.end, range.capacity, "EncodedImage destructor requires a valid packet info vector");
+    std::vector<WebRtcRtpPacketInfoEntry> entries(count);
+    if (count > 0) {
+        ErrnoGuard guard;
+        if (!GuestPtr<const WebRtcRtpPacketInfoEntry>(range.begin).CopyIn(entries.data(), count))
+            throw std::invalid_argument("EncodedImage destructor requires readable packet info entries");
+    }
+    for (std::size_t i = 0; i < count; ++i)
+        Count(entries[i].csrcsBegin, entries[i].csrcsEnd, entries[i].csrcsCapacity, "EncodedImage destructor requires a valid CSRC vector");
+    if (data->refCount.fetch_sub(1, std::memory_order_acq_rel) != 1)
+        return;
     for (std::size_t i = count; i > 0; --i)
-        if (data->begin[i - 1].csrcsBegin)
-            _ZdlPv_nid_postfix(data->begin[i - 1].csrcsBegin);
-    if (data->begin)
-        _ZdlPv_nid_postfix(data->begin);
+        if (entries[i - 1].csrcsBegin)
+            _ZdlPv_nid_postfix(entries[i - 1].csrcsBegin);
+    if (range.begin)
+        _ZdlPv_nid_postfix(range.begin);
     _ZdlPv_nid_postfix(data);
 }
 
-WebRtcEncodedImageMapNode* EndNode(WebRtcEncodedImageMap& map) {
-    return reinterpret_cast<WebRtcEncodedImageMapNode*>(&map.root);
+const WebRtcEncodedImageMapNode* EndNode(const WebRtcEncodedImage* image) {
+    return reinterpret_cast<const WebRtcEncodedImageMapNode*>(
+        reinterpret_cast<std::uintptr_t>(image) + offsetof(WebRtcEncodedImage, spatialLayerFrameSizeBytes) + offsetof(WebRtcEncodedImageMap, root));
 }
 
-std::vector<WebRtcEncodedImageMapNode*> CollectNodes(WebRtcEncodedImageMap& map) {
+std::vector<WebRtcEncodedImageMapNode*> CollectNodes(const WebRtcEncodedImageMap& map, const WebRtcEncodedImageMapNode* expectedEnd) {
     std::vector<WebRtcEncodedImageMapNode*> nodes;
     std::vector<WebRtcEncodedImageMapNode*> pending;
     if (map.root)
@@ -196,13 +245,20 @@ std::vector<WebRtcEncodedImageMapNode*> CollectNodes(WebRtcEncodedImageMap& map)
         pending.pop_back();
         if (nodes.size() >= map.size)
             throw std::invalid_argument("EncodedImage destructor requires a valid spatial layer size map");
+        WebRtcEncodedImageMapNode nodeCopy{};
+        {
+            ErrnoGuard guard;
+            if (!node || !GuestWritable_nid_no_patch(node, sizeof(*node)) ||
+                !GuestPtr<const WebRtcEncodedImageMapNode>(node).CopyIn(nodeCopy))
+                throw std::invalid_argument("EncodedImage destructor requires a valid spatial layer size map");
+        }
         nodes.push_back(node);
-        if (node->links.right)
-            pending.push_back(node->links.right);
-        if (node->links.left)
-            pending.push_back(node->links.left);
+        if (nodeCopy.links.right)
+            pending.push_back(nodeCopy.links.right);
+        if (nodeCopy.links.left)
+            pending.push_back(nodeCopy.links.left);
     }
-    if (nodes.size() != map.size || (map.size == 0 && map.beginNode != EndNode(map)))
+    if (nodes.size() != map.size || (map.size == 0 && map.beginNode != expectedEnd))
         throw std::invalid_argument("EncodedImage destructor requires a valid spatial layer size map");
     return nodes;
 }
@@ -210,10 +266,15 @@ std::vector<WebRtcEncodedImageMapNode*> CollectNodes(WebRtcEncodedImageMap& map)
 void ReleaseEncodedData(void* buffer) {
     if (!buffer)
         return;
-    const void* const* vtable;
-    if (!GuestCopyIn_nid_no_patch(&vtable, buffer, sizeof(vtable)) || !vtable || !vtable[ReleaseSlot])
-        throw std::invalid_argument("EncodedImage destructor requires a buffer virtual function");
-    reinterpret_cast<ReleaseFunction>(const_cast<void*>(vtable[ReleaseSlot]))(buffer);
+    const void* const* vtable = nullptr;
+    const void* releaseFn = nullptr;
+    {
+        ErrnoGuard guard;
+        if (!GuestCopyIn_nid_no_patch(&vtable, buffer, sizeof(vtable)) || !vtable ||
+            !GuestCopyIn_nid_no_patch(&releaseFn, vtable + ReleaseSlot, sizeof(releaseFn)) || !releaseFn)
+            throw std::invalid_argument("EncodedImage destructor requires a buffer virtual function");
+    }
+    reinterpret_cast<ReleaseFunction>(const_cast<void*>(releaseFn))(buffer);
 }
 
 }
@@ -223,7 +284,12 @@ extern "C" {
 WebRtcEncodedImageBuffer** APS5_VABI _ZN6webrtc18EncodedImageBuffer6CreateEPKhm_nid_postfix(WebRtcEncodedImageBuffer** result, const std::uint8_t* data, std::size_t size) {
     if (!result)
         throw std::invalid_argument("EncodedImageBuffer::Create requires a result");
-    if (!data && size > 0)
+    {
+        ErrnoGuard guard;
+        if (!GuestWritable_nid_no_patch(result, sizeof(*result)))
+            throw std::invalid_argument("EncodedImageBuffer::Create requires a writable result");
+    }
+    if (!ProbeReadableBytes(data, size))
         throw std::invalid_argument("EncodedImageBuffer::Create requires data");
     auto* storage = _Znwm_nid_postfix(sizeof(WebRtcEncodedImageBuffer));
     std::uint8_t* bytes = nullptr;
@@ -234,31 +300,62 @@ WebRtcEncodedImageBuffer** APS5_VABI _ZN6webrtc18EncodedImageBuffer6CreateEPKhm_
         _ZdlPv_nid_postfix(storage);
         throw;
     }
-    if (size > 0)
-        std::memcpy(bytes, data, size);
-    *result = new (storage) WebRtcEncodedImageBuffer{BufferVtable + 2, {size, size, bytes}, 1};
+    if (size > 0) {
+        bool copied = false;
+        {
+            ErrnoGuard guard;
+            copied = GuestBytes(data).CopyIn(bytes, size);
+        }
+        if (!copied) {
+            _ZdaPv_nid_postfix(bytes);
+            _ZdlPv_nid_postfix(storage);
+            throw std::invalid_argument("EncodedImageBuffer::Create requires readable data");
+        }
+    }
+    auto* buffer = new (storage) WebRtcEncodedImageBuffer{BufferVtable + 2, {size, size, bytes}, 1};
+    bool written = false;
+    {
+        ErrnoGuard guard;
+        written = GuestPtr<WebRtcEncodedImageBuffer*>(result).CopyOut(buffer);
+    }
+    if (!written) {
+        if (bytes)
+            _ZdaPv_nid_postfix(bytes);
+        _ZdlPv_nid_postfix(storage);
+        throw std::invalid_argument("EncodedImageBuffer::Create requires a writable result");
+    }
     return result;
 }
 
 void APS5_VABI _ZN6webrtc12EncodedImageC1Ev_nid_postfix(WebRtcEncodedImage* image) {
     if (!image)
         throw std::invalid_argument("EncodedImage requires an object");
-    std::memset(image, 0, sizeof(WebRtcEncodedImage));
-    image->frameType = 4;
-    image->qp = -1;
-    image->timing.flags = 0xff;
-    image->spatialLayerFrameSizeBytes.beginNode = EndNode(image->spatialLayerFrameSizeBytes);
-    image->retransmissionAllowed = true;
+    WebRtcEncodedImage host{};
+    host.frameType = 4;
+    host.qp = -1;
+    host.timing.flags = 0xff;
+    host.spatialLayerFrameSizeBytes.beginNode = const_cast<WebRtcEncodedImageMapNode*>(EndNode(image));
+    host.retransmissionAllowed = true;
+    ErrnoGuard guard;
+    if (!GuestPtr<WebRtcEncodedImage>(image).CopyOut(host))
+        throw std::invalid_argument("EncodedImage requires a writable object");
 }
 
 void APS5_VABI _ZN6webrtc12EncodedImageD1Ev_nid_postfix(WebRtcEncodedImage* image) {
     if (!image)
         throw std::invalid_argument("EncodedImage destructor requires an object");
-    const auto nodes = CollectNodes(image->spatialLayerFrameSizeBytes);
-    ReleasePacketInfos(image->packetInfos);
+    WebRtcEncodedImage host{};
+    {
+        ErrnoGuard guard;
+        if (!GuestWritable_nid_no_patch(image, sizeof(*image)) ||
+            !GuestPtr<const WebRtcEncodedImage>(image).CopyIn(host))
+            throw std::invalid_argument("EncodedImage destructor requires a writable object");
+    }
+    const auto nodes = CollectNodes(host.spatialLayerFrameSizeBytes, EndNode(image));
+    ReleasePacketInfos(host.packetInfos);
     for (auto* node : nodes)
         _ZdlPv_nid_postfix(node);
-    ReleaseEncodedData(image->encodedData);
+    ReleaseEncodedData(host.encodedData);
 }
 
 }

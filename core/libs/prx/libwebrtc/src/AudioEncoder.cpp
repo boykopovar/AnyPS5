@@ -41,7 +41,9 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
@@ -50,6 +52,11 @@
 namespace {
 
 constexpr std::size_t OnReceivedUplinkBandwidthSlot = 21;
+
+struct ErrnoGuard {
+    int savedErrno = errno;
+    ~ErrnoGuard() { errno = savedErrno; }
+};
 
 std::int64_t DivideRoundToNearest(std::int64_t dividend, std::int64_t divisor) {
     if (dividend < 0) {
@@ -90,20 +97,32 @@ void ConstructAnaStats(WebRtcAnaStats& stats) {
     stats.uplinkPacketLossFraction.engaged = false;
 }
 
+void InitAnaStatsTarget(WebRtcAnaStats* target, const char* message) {
+    if (!target)
+        throw std::invalid_argument(message);
+    WebRtcAnaStats host{};
+    {
+        ErrnoGuard guard;
+        if (!GuestWritable_nid_no_patch(target, sizeof(*target)) ||
+            !GuestPtr<const WebRtcAnaStats>(target).CopyIn(host))
+            throw std::invalid_argument(message);
+    }
+    ConstructAnaStats(host);
+    ErrnoGuard guard;
+    if (!GuestPtr<WebRtcAnaStats>(target).CopyOut(host))
+        throw std::invalid_argument(message);
+}
+
 }
 
 extern "C" {
 
 void APS5_VABI _ZN6webrtc8ANAStatsC1Ev_nid_postfix(WebRtcAnaStats* stats) {
-    if (!stats)
-        throw std::invalid_argument("ANAStats::ANAStats requires stats");
-    ConstructAnaStats(*stats);
+    InitAnaStatsTarget(stats, "ANAStats::ANAStats requires stats");
 }
 
 WebRtcAnaStats* APS5_VABI _ZNK6webrtc12AudioEncoder11GetANAStatsEv_nid_postfix(WebRtcAnaStats* result, const WebRtcAudioEncoder*) {
-    if (!result)
-        throw std::invalid_argument("AudioEncoder::GetANAStats requires a result");
-    ConstructAnaStats(*result);
+    InitAnaStatsTarget(result, "AudioEncoder::GetANAStats requires a result");
     return result;
 }
 

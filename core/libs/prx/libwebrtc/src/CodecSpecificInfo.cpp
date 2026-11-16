@@ -43,11 +43,19 @@
 
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libc/libc.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
+#include <cerrno>
 #include <cstring>
 #include <stdexcept>
+#include <vector>
 
 namespace {
+
+struct ErrnoGuard {
+    int savedErrno = errno;
+    ~ErrnoGuard() { errno = savedErrno; }
+};
 
 template<std::size_t TInlineBytes>
 void Release(WebRtcInlinedVector<TInlineBytes>& vector) {
@@ -79,9 +87,9 @@ void Release(WebRtcGenericFrameInfo& info) {
     Release(info.frameDependency);
 }
 
-void Release(WebRtcFrameDependencyStructure& structure, std::size_t count) {
-    for (std::size_t i = 0; i < count; ++i)
-        Release(structure.templatesBegin[i]);
+void Release(WebRtcFrameDependencyStructure& structure, std::vector<WebRtcFrameDependencyTemplate>& templates) {
+    for (auto& entry : templates)
+        Release(entry);
     if (structure.templatesBegin)
         _ZdlPv_nid_postfix(structure.templatesBegin);
     Release(structure.resolutions);
@@ -104,26 +112,49 @@ extern "C" {
 
 void APS5_VABI _ZN6webrtc17CodecSpecificInfoC1Ev_nid_postfix(WebRtcCodecSpecificInfo* info) {
     if (!info) throw std::invalid_argument("CodecSpecificInfo requires an object");
-    info->codecType = 0;
-    std::memset(info->codecSpecific, 0, sizeof(info->codecSpecific));
-    info->endOfPicture = true;
-    info->hasGenericFrameInfo = false;
-    info->hasTemplateStructure = false;
-    info->hasScalabilityMode = false;
-    info->hasFrameInstrumentationData = false;
+    WebRtcCodecSpecificInfo host{};
+    {
+        ErrnoGuard guard;
+        if (!GuestWritable_nid_no_patch(info, sizeof(*info)) ||
+            !GuestPtr<const WebRtcCodecSpecificInfo>(info).CopyIn(host))
+            throw std::invalid_argument("CodecSpecificInfo requires a writable object");
+    }
+    host.codecType = 0;
+    std::memset(host.codecSpecific, 0, sizeof(host.codecSpecific));
+    host.endOfPicture = true;
+    host.hasGenericFrameInfo = false;
+    host.hasTemplateStructure = false;
+    host.hasScalabilityMode = false;
+    host.hasFrameInstrumentationData = false;
+    ErrnoGuard guard;
+    if (!GuestPtr<WebRtcCodecSpecificInfo>(info).CopyOut(host))
+        throw std::invalid_argument("CodecSpecificInfo requires a writable object");
 }
 
 void APS5_VABI _ZN6webrtc17CodecSpecificInfoD1Ev_nid_postfix(WebRtcCodecSpecificInfo* info) {
     if (!info) throw std::invalid_argument("CodecSpecificInfo destructor requires an object");
-    const bool holdsData = info->hasFrameInstrumentationData && HoldsData(info->frameInstrumentationData);
-    const auto& structure = info->templateStructure;
-    const auto templates = info->hasTemplateStructure ? Count(structure.templatesBegin, structure.templatesEnd, structure.templatesCapacity) : 0;
-    if (holdsData && info->frameInstrumentationData.data.sampleValuesBegin)
-        _ZdlPv_nid_postfix(info->frameInstrumentationData.data.sampleValuesBegin);
-    if (info->hasTemplateStructure)
-        Release(info->templateStructure, templates);
-    if (info->hasGenericFrameInfo)
-        Release(info->genericFrameInfo);
+    WebRtcCodecSpecificInfo host{};
+    {
+        ErrnoGuard guard;
+        if (!GuestWritable_nid_no_patch(info, sizeof(*info)) ||
+            !GuestPtr<const WebRtcCodecSpecificInfo>(info).CopyIn(host))
+            throw std::invalid_argument("CodecSpecificInfo destructor requires a writable object");
+    }
+    const bool holdsData = host.hasFrameInstrumentationData && HoldsData(host.frameInstrumentationData);
+    const auto& structure = host.templateStructure;
+    const auto templateCount = host.hasTemplateStructure ? Count(structure.templatesBegin, structure.templatesEnd, structure.templatesCapacity) : 0;
+    std::vector<WebRtcFrameDependencyTemplate> templates(templateCount);
+    if (templateCount > 0) {
+        ErrnoGuard guard;
+        if (!GuestPtr<const WebRtcFrameDependencyTemplate>(structure.templatesBegin).CopyIn(templates.data(), templateCount))
+            throw std::invalid_argument("CodecSpecificInfo requires a readable template vector");
+    }
+    if (holdsData && host.frameInstrumentationData.data.sampleValuesBegin)
+        _ZdlPv_nid_postfix(host.frameInstrumentationData.data.sampleValuesBegin);
+    if (host.hasTemplateStructure)
+        Release(host.templateStructure, templates);
+    if (host.hasGenericFrameInfo)
+        Release(host.genericFrameInfo);
 }
 
 }
