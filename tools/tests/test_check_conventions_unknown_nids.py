@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import check_conventions
 from nid_names import compute_nid
 
 CHECKER = Path(__file__).resolve().parents[1] / "check_conventions.py"
@@ -134,6 +135,15 @@ class UnknownNidTests(unittest.TestCase):
             {"core/libs/prx/libSceA/tests/Helper.cpp": 'extern "C" bool Helper_nid_postfix() {\n    return true;\n}\n'},
             {"core/libs/prx/libSceB/Unimplemented.cpp": unknown_export(HELPER_NID)},
         ))
+
+
+class NidSymbolTests(unittest.TestCase):
+    def test_nid_symbols_lists_exported_names_and_skips_comments(self):
+        text = "int APS5_VABI sceFoo(int a) {}\n// APS5_VABI sceNo(\nAPS5_VABI sceBar(void)\n"
+        self.assertEqual(check_conventions.nid_symbols(text), ["sceFoo", "sceBar"])
+
+    def test_nid_symbols_ignores_a_name_that_is_not_an_identifier(self):
+        self.assertEqual(check_conventions.nid_symbols("APS5_VABI 1bad(\n"), [])
 
 
 if __name__ == "__main__":
