@@ -646,7 +646,17 @@ class NotRunTests(unittest.TestCase):
                     self.assertNotIn("Traceback", checked.stderr)
 
 
+class JUnitRefusalTests(unittest.TestCase):
+    def write(self, text):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        path = Path(directory.name) / 'report.xml'
+        path.write_text(text, encoding='utf-8')
+        return path
 
+    def test_skips_refuses_a_root_that_is_not_a_testsuite(self):
+        with self.assertRaisesRegex(ValueError, 'expected a JUnit testsuite'):
+            list(check_skips.skips(self.write('<other/>')))
 
 
 if __name__ == "__main__":
