@@ -28,6 +28,12 @@ class IsaProfilesTests(unittest.TestCase):
             with self.assertRaises(ValueError, msg=repr(row)):
                 isa_profiles.validate_forms([row])
 
+    def test_validate_isa_xml_refuses_unknown_architecture_and_bad_xml(self):
+        with self.assertRaisesRegex(ValueError, "unknown ISA architecture"):
+            isa_profiles.validate_isa_xml("<ISA/>", "rdna9")
+        with self.assertRaisesRegex(ValueError, "invalid ISA XML"):
+            isa_profiles.validate_isa_xml("<ISA>", "rdna1")
+
 
 if __name__ == "__main__":
     unittest.main()
