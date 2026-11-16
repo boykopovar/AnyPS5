@@ -817,6 +817,29 @@ static void TestError() {
     WKRelease(domain);
 }
 
+static void TestPluginInformation() {
+    auto checkKey = [](const void* key, const char* expected) {
+        Require(key != nullptr);
+        Require(WKGetTypeID(key) == WKStringGetTypeID());
+        Require(WKStringIsEqualToUTF8CString(key, expected));
+        WKRelease(key);
+    };
+    checkKey(WKPlugInInformationReplacementObscuredKey(), "WKPlugInInformationReplacementObscuredKey");
+    checkKey(WKPluginInformationBundleIdentifierKey(), "WKPluginInformationBundleIdentifierKey");
+    checkKey(WKPluginInformationBundleShortVersionKey(), "WKPluginInformationBundleShortVersionKey");
+    checkKey(WKPluginInformationBundleVersionKey(), "WKPluginInformationBundleVersionKey");
+    checkKey(WKPluginInformationDefaultLoadPolicyKey(), "WKPluginInformationDefaultLoadPolicyKey");
+    checkKey(WKPluginInformationDisplayNameKey(), "WKPluginInformationDisplayNameKey");
+    checkKey(WKPluginInformationFrameURLKey(), "WKPluginInformationFrameURLKey");
+    checkKey(WKPluginInformationHasSandboxProfileKey(), "WKPluginInformationHasSandboxProfileKey");
+    checkKey(WKPluginInformationMIMETypeKey(), "WKPluginInformationMIMETypeKey");
+    checkKey(WKPluginInformationPageURLKey(), "WKPluginInformationPageURLKey");
+    checkKey(WKPluginInformationPathKey(), "WKPluginInformationPathKey");
+    checkKey(WKPluginInformationPluginURLKey(), "WKPluginInformationPluginURLKey");
+    checkKey(WKPluginInformationPluginspageAttributeURLKey(), "WKPluginInformationPluginspageAttributeURLKey");
+    checkKey(WKPluginInformationUpdatePastLastBlockedVersionIsKnownAvailableKey(), "WKPluginInformationUpdatePastLastBlockedVersionIsKnownAvailableKey");
+}
+
 template<typename Function>
 static bool ThrowsNavigationData(Function function, const void* ref) {
     try {
@@ -2750,6 +2773,7 @@ int main() {
     TestUserContentURLPattern();
     TestURLRequestResponse();
     TestError();
+    TestPluginInformation();
     TestNavigationData();
     TestHitTestResult();
     TestBackForwardList();
