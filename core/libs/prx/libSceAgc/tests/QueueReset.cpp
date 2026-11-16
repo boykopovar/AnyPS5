@@ -2,6 +2,7 @@
 #include "prx/libSceAgc/DcbState/include/Init.hpp"
 #include "prx/libSceAgc/Misc/include/RegisterDefaults.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "prx/libc/include/General.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdio>
@@ -60,9 +61,11 @@ void invalidSelection() {
         Storage storage;
         const auto before = storage.words;
         bool rejected = false;
+        const auto missing = NotImplementedCalls_nid_no_patch();
         try { sceAgcAcbResetQueue(&storage.buffer, flags, 2); }
         catch (const std::runtime_error&) { rejected = true; }
         check(rejected && storage.count() == 0 && storage.words == before, "invalid or unavailable context selection wrote a packet");
+        if (flags == 0) check(NotImplementedCalls_nid_no_patch() == missing + 1, "unsupported retail instance did not use the standard missing-function path");
     }
 }
 

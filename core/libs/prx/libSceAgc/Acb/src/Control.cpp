@@ -73,6 +73,7 @@ uint32_t APS5_VABI sceAgcAcbJumpGetSize(void) {
 std::uint32_t* APS5_VABI sceAgcAcbResetQueue(CommandBuffer* buf, std::uint32_t flags, std::uint32_t instance) {
     Agc::Command::Require(buf != nullptr, __func__, "null command buffer");
     flags &= 0xffffu;
+    if ((flags & 0x8000u) == 0 && instance >= 2) NotImplemented_nid_no_patch(__func__);
     const auto state = Agc::Command::GetQueueResetState(instance, (flags & 0x8000u) != 0);
     instance = state.instance;
     const auto marker = 0xce000000u | (!state.external ? 0x200000u : 0u) | flags;
