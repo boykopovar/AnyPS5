@@ -3672,5 +3672,13 @@ class StrictProviderTests(unittest.TestCase):
         self.assertEqual(err.errors, "backslashreplace")
 
 
+class ClassifyTests(unittest.TestCase):
+    def test_classify_gives_guest_absent_and_stub_states(self):
+        self.assertEqual(import_audit.classify('n', 'libX', set(), set(), {'g'}), 'module')
+        self.assertEqual(import_audit.classify('n', '', {'p'}, set(), {'g'}), 'implemented')
+        self.assertEqual(import_audit.classify('n', '', set(), set(), set()), 'absent')
+        self.assertEqual(import_audit.classify('n', '', {'p'}, {('p', 'n')}, set()), 'stub')
+
+
 if __name__ == "__main__":
     unittest.main()
