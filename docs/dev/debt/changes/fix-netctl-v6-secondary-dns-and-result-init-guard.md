@@ -1,0 +1,5 @@
+# libSceNetCtl
+
+## change [sceNetCtlGetInfoV6]
+
+- [sceNetCtlGetInfoV6](../../../core/libs/prx/libSceNetCtl/Export.cpp) (libSceNetCtl, NID `Jy1EO5GdlcM`) - imported by PPSA08587. `(int code, SceNetCtlInfoV6* info)` with codes 1-5 comes from [SharpProspero](https://github.com/SvenGDK/SharpProspero) `NetCtl.cs`, source unknown. The 13.42 module checks initialisation, then the pointer (`0x80412107`), then sends the code to the network service with no local range check. Its 256-byte union takes a member at offset zero, rest untouched: a 46-byte NUL-terminated string, prefix byte at 46 for addresses. Codes 1 and 2 answer the host: the global address and the link-local of the same up non-loopback interface (else the first link-local), netmask bits as prefix; a missing kind is `NOT_CONNECTED`; on Windows the global can be a temporary privacy address. Codes 4 and 5 answer the first two host IPv6 DNS servers or `::` when absent (unmeasured on hardware). Code 3 (route) throws, console answer unknown

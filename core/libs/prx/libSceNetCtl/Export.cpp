@@ -103,6 +103,7 @@ static constexpr int NET_CTL_INFO_HTTP_PROXY_SERVER = 20;
 static constexpr int NET_CTL_INFO_HTTP_PROXY_PORT = 21;
 static constexpr int NET_CTL_INFO_V6_IP_ADDRESS = 1;
 static constexpr int NET_CTL_INFO_V6_LINK_LOCAL = 2;
+static constexpr int NET_CTL_INFO_V6_PRIMARY_DNS = 4;
 static constexpr int NET_CTL_INFO_V6_SECONDARY_DNS = 5;
 static constexpr std::uint32_t NET_CTL_DEVICE_WIRED = 0;
 static constexpr std::uint32_t NET_CTL_LINK_CONNECTED = 1;
@@ -892,13 +893,23 @@ struct HostIpv6Selection {
     HostIpv6Address global;
     HostIpv6Address linkLocalOfGlobal;
     HostIpv6Address linkLocal;
+    std::vector<in6_addr> dns;
 };
 
 #ifdef _WIN32
+static std::vector<in6_addr> CollectAdapterDnsV6(const IP_ADAPTER_ADDRESSES* adapter) {
+    std::vector<in6_addr> dns;
+    for (auto* server = adapter->FirstDnsServerAddress; server; server = server->Next) {
+        if (!server->Address.lpSockaddr || server->Address.lpSockaddr->sa_family != AF_INET6) continue;
+        dns.push_back(reinterpret_cast<const sockaddr_in6*>(server->Address.lpSockaddr)->sin6_addr);
+    }
+    return dns;
+}
+
 static HostIpv6Selection QueryHostIpv6Selection() {
     HostIpv6Selection found;
     ULONG size = 0;
-    const ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST | GAA_FLAG_SKIP_DNS_SERVER;
+    const ULONG flags = GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST;
     if (GetAdaptersAddresses(AF_INET6, flags, nullptr, nullptr, &size) != ERROR_BUFFER_OVERFLOW) return found;
     std::vector<std::uint8_t> storage(size);
     auto* adapters = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(storage.data());
@@ -923,12 +934,32 @@ static HostIpv6Selection QueryHostIpv6Selection() {
         if (adapterGlobal.valid && !found.global.valid) {
             found.global = adapterGlobal;
             found.linkLocalOfGlobal = adapterLinkLocal;
+            found.dns = CollectAdapterDnsV6(adapter);
         }
-        if (!found.linkLocal.valid && adapterLinkLocal.valid) found.linkLocal = adapterLinkLocal;
+        if (!found.linkLocal.valid && adapterLinkLocal.valid) {
+            found.linkLocal = adapterLinkLocal;
+            if (!found.global.valid) found.dns = CollectAdapterDnsV6(adapter);
+        }
     }
     return found;
 }
 #else
+static std::vector<in6_addr> HostDnsServersV6() {
+    const int savedErrno = errno;
+    std::ifstream config("/etc/resolv.conf");
+    std::vector<in6_addr> servers;
+    std::string line;
+    while (std::getline(config, line)) {
+        std::istringstream fields(line);
+        std::string keyword;
+        std::string value;
+        in6_addr server{};
+        if (fields >> keyword >> value && keyword == "nameserver" && inet_pton(AF_INET6, value.c_str(), &server) == 1) servers.push_back(server);
+    }
+    errno = savedErrno;
+    return servers;
+}
+
 static HostIpv6Address ReadHostIpv6Address(const ifaddrs* item) {
     HostIpv6Address address;
     address.address = reinterpret_cast<const sockaddr_in6*>(item->ifa_addr)->sin6_addr;
@@ -962,6 +993,7 @@ static HostIpv6Selection QueryHostIpv6Selection() {
             found.linkLocalOfGlobal = candidate;
         }
     }
+    found.dns = HostDnsServersV6();
     return found;
 }
 #endif
@@ -1220,6 +1252,18 @@ int APS5_VABI sceNetCtlGetInfoV6(std::uint32_t code, NetCtlInfoV6* info) {
         if (!WriteInfoV6Address(info, chosen)) return SCE_NET_CTL_ERROR_INVALID_ADDR;
         return 0;
     }
+    if (code == NET_CTL_INFO_V6_PRIMARY_DNS || code == NET_CTL_INFO_V6_SECONDARY_DNS) {
+        const HostIpv6Selection selection = QueryHostIpv6Selection();
+        const std::size_t index = code == NET_CTL_INFO_V6_PRIMARY_DNS ? 0 : 1;
+        const in6_addr address = index < selection.dns.size() ? selection.dns[index] : in6_addr{};
+        char buffer[NET_CTL_IPV6_ADDR_STR_LEN] = {};
+        inet_ntop(AF_INET6, &address, buffer, sizeof(buffer));
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(info->opaque, buffer, sizeof(buffer));
+        errno = savedErrno;
+        if (!copied) return SCE_NET_CTL_ERROR_INVALID_ADDR;
+        return 0;
+    }
     throw std::runtime_error("sceNetCtlGetInfoV6: info code " + std::to_string(code) + " is not implemented");
 }
 
@@ -1376,6 +1420,7 @@ int APS5_VABI sceNetCtlUnregisterCallbackV6IpcInt(int callbackId) {
 }
 
 int APS5_VABI sceNetCtlGetResultV6(int event_type, int* error_code) {
+    if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
     if (!error_code) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     if (event_type < NET_CTL_EVENT_DISCONNECTED || event_type > NET_CTL_EVENT_IPOBTAINED) {
         throw std::runtime_error("sceNetCtlGetResultV6: event type " + std::to_string(event_type) + " is not implemented");

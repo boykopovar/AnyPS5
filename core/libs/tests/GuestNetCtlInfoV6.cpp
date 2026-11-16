@@ -13,6 +13,7 @@
 #include <unistd.h>
 #endif
 #include "SceTypes.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -117,6 +118,23 @@ static void CheckCode(std::uint32_t code, const std::vector<HostIpv6Address>& ki
     for (std::size_t index = kAddressLength + 1; index < sizeof(info.opaque); ++index) Require(info.opaque[index] == kFill);
 }
 
+static void CheckDnsCode(std::uint32_t code) {
+    NetCtlInfoV6 info;
+    std::memset(&info, kFill, sizeof(info));
+    errno = 71;
+    Require(sceNetCtlGetInfoV6(code, &info) == 0);
+    Require(errno == 71);
+    char text[kAddressLength];
+    std::memcpy(text, info.opaque, sizeof(text));
+    const void* terminator = std::memchr(text, '\0', sizeof(text));
+    Require(terminator != nullptr);
+    const auto length = static_cast<std::size_t>(static_cast<const char*>(terminator) - text);
+    for (std::size_t index = length + 1; index < kAddressLength; ++index) Require(info.opaque[index] == 0);
+    in6_addr parsed{};
+    Require(inet_pton(AF_INET6, text, &parsed) == 1);
+    for (std::size_t index = kAddressLength; index < sizeof(info.opaque); ++index) Require(info.opaque[index] == kFill);
+}
+
 int main() {
 #ifdef _WIN32
     WSADATA data{};
@@ -126,6 +144,19 @@ int main() {
     Require(sceNetCtlGetInfoV6(0, &info) == kErrInvalidCode);
     Require(sceNetCtlGetInfoV6(6, &info) == kErrInvalidCode);
     Require(sceNetCtlGetInfoV6(1, nullptr) == kErrInvalidAddr);
+    int resultV6 = 0;
+    errno = 71;
+    Require(sceNetCtlGetResultV6(1, nullptr) == kErrInvalidAddr);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceNetCtlGetResultV6(1, &resultV6) == 0);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceNetCtlGetResultV6(2, &resultV6) == 0);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceNetCtlGetResultV6(3, &resultV6) == 0);
+    Require(errno == 71);
 
     std::memset(&info, kFill, sizeof(info));
     const int first = sceNetCtlGetInfoV6(1, &info);
@@ -153,5 +184,7 @@ int main() {
     Require(!global.empty() || !linkLocal.empty());
     CheckCode(1, global);
     CheckCode(2, linkLocal);
+    CheckDnsCode(4);
+    CheckDnsCode(5);
     return 0;
 }
