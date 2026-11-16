@@ -528,7 +528,9 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
             capped = wanted == 0 || wanted > limit;
             terminatorAt = limit;
             const std::uint64_t scanWidth = wanted == 0 ? limit : std::min(wanted, limit);
-            width = static_cast<unsigned long>(std::min<std::uint64_t>(scanWidth, consoleSizes ? static_cast<std::uint64_t>(INT_MAX) : std::uint64_t{ULONG_MAX}));
+            std::uint64_t hostWidth = std::min<std::uint64_t>(scanWidth, consoleSizes ? static_cast<std::uint64_t>(INT_MAX) : std::uint64_t{ULONG_MAX});
+            if constexpr (TSource::Contiguous) if (conversion != 'c') hostWidth = std::min<std::uint64_t>(hostWidth, std::strlen(source.Remaining()));
+            width = static_cast<unsigned long>(hostWidth);
         }
         const bool narrowInteger = !suppress && std::strchr("diouxX", conversion) != nullptr && (length.empty() || length == "h" || length == "hh");
         std::uint64_t wideInteger = 0;
