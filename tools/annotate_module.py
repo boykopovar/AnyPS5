@@ -73,9 +73,9 @@ class Module:
         self.address(self.tags[DT_STRTAB], self.strsz)
         if self.require_tag(DT_SYMENT, "DT_SYMENT") != SYMBOL_SIZE:
             raise ModuleError("DT_SYMENT is not %d" % SYMBOL_SIZE)
+        self.check_relocation_tags()
         self.symbol_count = self.count_symbols()
         self.address(self.tags[DT_SYMTAB], self.symbol_count * SYMBOL_SIZE)
-        self.check_relocation_tags()
 
     def unpack(self, form, offset):
         size = struct.calcsize(form)
@@ -164,6 +164,9 @@ class Module:
         chains_at = buckets_at + buckets * 4
         self.address(table, chains_at - table)
         last = max((self.unpack("<I", self.address(buckets_at + 4 * index, 4))[0] for index in range(buckets)), default=0)
+        if last == 0:
+            referenced = max((info >> 32 for _, info, _ in self.relocations()), default=0)
+            return max(symoffset, referenced + 1)
         if last < symoffset:
             return symoffset
         while not self.unpack("<I", self.address(chains_at + 4 * (last - symoffset), 4))[0] & 1:
@@ -200,8 +203,7 @@ class Module:
         if DT_JMPREL in self.tags:
             yield self.tags[DT_JMPREL], self.tags[DT_PLTRELSZ]
 
-    def imports(self):
-        slots = {}
+    def relocations(self):
         for table, size in self.relocation_tables():
             if size % RELA_SIZE:
                 raise ModuleError("relocation table at %#x has %d bytes, not a multiple of %d" % (table, size, RELA_SIZE))
@@ -209,11 +211,15 @@ class Module:
                 continue
             start = self.address(table, size)
             for position in range(start, start + size, RELA_SIZE):
-                offset, info, _ = self.unpack("<QQq", position)
-                if (info & 0xFFFFFFFF) == R_X86_64_NONE:
-                    continue
-                if info >> 32:
-                    slots[offset] = self.symbol(info >> 32)[0]
+                entry = self.unpack("<QQq", position)
+                if (entry[1] & 0xFFFFFFFF) != R_X86_64_NONE:
+                    yield entry
+
+    def imports(self):
+        slots = {}
+        for offset, info, _ in self.relocations():
+            if info >> 32:
+                slots[offset] = self.symbol(info >> 32)[0]
         return slots
 
     def exported_symbols(self):

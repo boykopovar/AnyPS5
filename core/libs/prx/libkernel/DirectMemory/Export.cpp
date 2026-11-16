@@ -145,7 +145,7 @@ void ApplyRangeName(uintptr_t address, VirtualQueryInfo* info) {
 
 void ReleaseClaimedDirectMemory(int64_t start, size_t len) {
  try {
-  UnmapDirectMemoryViews(DirectMemoryViews(start, len));
+  UnmapDirectMemoryRange(start, len);
  } catch (...) {
   DirectMemoryAbandonRelease(start, len);
   throw;
@@ -432,8 +432,7 @@ int APS5_VABI sceKernelReserveVirtualRange(void** addr, size_t len, int flags, s
  return result;
 }
 
-int APS5_VABI sceKernelVirtualQuery(const void* addr, int flags, VirtualQueryInfo* info, uint64_t info_size) {
- if (!info || info_size < sizeof(VirtualQueryInfo)) return SCE_KERNEL_ERROR_EINVAL;
+static int QueryVirtualRange(const void* addr, int flags, VirtualQueryInfo* info) {
  memset(info, 0, sizeof(VirtualQueryInfo));
  const auto address = reinterpret_cast<uintptr_t>(addr);
  constexpr int findNext = 1;
@@ -524,6 +523,21 @@ int APS5_VABI sceKernelVirtualQuery(const void* addr, int flags, VirtualQueryInf
  info->is_flexible = 1;
  info->is_committed = 1;
  ApplyRangeName(std::max<uintptr_t>(address, info->start), info);
+ return 0;
+}
+
+int APS5_VABI sceKernelVirtualQuery(const void* addr, int flags, VirtualQueryInfo* info, uint64_t info_size) {
+ constexpr int findNext = 1;
+ constexpr std::uintptr_t firstRejectedAddress = 0x800000004000;
+ if ((flags & ~findNext) != 0) return SCE_KERNEL_ERROR_EINVAL;
+ const auto address = reinterpret_cast<std::uintptr_t>(addr);
+ if (address >= firstRejectedAddress) return SCE_KERNEL_ERROR_EINVAL;
+ if (address >= 0x800000000000) return SCE_KERNEL_ERROR_EACCES;
+ VirtualQueryInfo found{};
+ const int result = QueryVirtualRange(addr, flags, &found);
+ if (result != 0) return result;
+ const auto bytes = std::min<std::uint64_t>(info_size, sizeof(found));
+ if (bytes != 0 && !GuestCopyOut_nid_no_patch(info, &found, bytes)) return SCE_KERNEL_ERROR_EFAULT;
  return 0;
 }
 

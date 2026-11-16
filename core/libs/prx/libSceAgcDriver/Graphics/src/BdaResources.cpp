@@ -569,12 +569,12 @@ void BdaResources::checkFault(const BdaResources& record) const {
     ShaderRecompiler::BdaAbi::Fault report{};
     std::memcpy(&report, record.faultBytes().data(), sizeof(report));
     if (report.state == ShaderRecompiler::BdaAbi::FaultState::Empty) {
-        Require(static_cast<std::uint32_t>(report.reason) == 0 && report.address == 0 && report.bytes == 0 && report.stage == 0 && report.instruction == 0 && report.otherFaults == 0, "BDA fault record has data without publication");
+        Require(static_cast<std::uint32_t>(report.reason) == 0 && report.address == 0 && report.bytes == 0 && report.stage == 0 && report.instruction == 0 && report.claim == 0, "BDA fault record has data without publication");
         Require(!record.pagesOverflowed, "the GPU stored to more pages of resident heap mirrors in one use than the " + std::to_string(record.pageSlots) + " store pages hold (APS5_BDA_STORE_PAGES)");
         if (!reportOnly) checkSrtGuard(record);
         return;
     }
-    Require(report.state == ShaderRecompiler::BdaAbi::FaultState::Ready && report.otherFaults <= 1, "incomplete or invalid BDA fault record");
+    Require(report.state == ShaderRecompiler::BdaAbi::FaultState::Ready && (report.claim & ~(ShaderRecompiler::BdaAbi::FaultClaimed | ShaderRecompiler::BdaAbi::FaultClaimOtherFaults)) == 0, "incomplete or invalid BDA fault record");
     Require(report.reason != ShaderRecompiler::BdaAbi::FaultReason::InvalidRectangle, "rect-list requires finite nondegenerate axis-aligned positions with equal positive W");
     if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::LoopLimit) {
         // APS5_LOOP_GUARD: the shader left a loop that ran past the guard; the dispatch result is kept.
@@ -630,7 +630,7 @@ void BdaResources::checkFault(const BdaResources& record) const {
         }
     }
     if (report.reason == ShaderRecompiler::BdaAbi::FaultReason::Unaligned) {
-        if (report.otherFaults == 0) throw BdaUnalignedAccess(message.str(), report.instruction);
+        if (ShaderRecompiler::BdaAbi::OtherFaults(report) == 0) throw BdaUnalignedAccess(message.str(), report.instruction);
         message << "; a fault of another kind was recorded in the same dispatch";
     }
     throw std::runtime_error(message.str());

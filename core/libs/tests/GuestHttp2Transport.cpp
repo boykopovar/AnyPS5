@@ -1649,6 +1649,35 @@ void Cancellation(int ssl, Mode mode, int teardown) {
     if (teardown) Require(sceHttp2DeleteRequest(client.request) == static_cast<int>(0x817b1100), "deleted request stays invalid");
 }
 
+std::atomic<bool> stopBetweenLoadsArmed{false};
+
+void StopBetweenLoads(std::atomic<bool>& stopped, std::atomic<bool>& cancelled) {
+    if (!stopBetweenLoadsArmed.exchange(false)) return;
+    stopped.store(true);
+    cancelled.store(true);
+}
+
+void DeleteBetweenCheckLoads(int ssl) {
+    std::fprintf(stderr, "HTTP2 delete between the cancelled and stopped loads\n");
+    Server server(Mode::StallHeaders);
+    Client client(ssl);
+    client.Create(server.Url());
+    auto pending = std::async(std::launch::async, [&] {
+        try {
+            return sceHttp2SendRequest(client.request, nullptr, 0);
+        } catch (const std::exception&) { return static_cast<int>(0x817b1100); }
+    });
+    server.WaitStage(2);
+    Require(pending.wait_for(std::chrono::milliseconds(0)) == std::future_status::timeout, "operation is pending");
+    Http2SetCheckHook_nid_no_patch(StopBetweenLoads);
+    stopBetweenLoadsArmed.store(true);
+    Require(pending.wait_for(std::chrono::seconds(5)) == std::future_status::ready, "the pending call returns after the delete");
+    Http2SetCheckHook_nid_no_patch(nullptr);
+    const int result = pending.get();
+    Require(result != static_cast<int>(0x817b1080), "a delete between the two loads is reported as an abort");
+    Require(sceHttp2DeleteRequest(client.request) == 0, "delete the request");
+}
+
 void EarlyResponse(int ssl, Mode mode) {
     std::fprintf(stderr, "HTTP2 early response scenario %d\n", static_cast<int>(mode));
     Server server(mode);
@@ -2128,6 +2157,7 @@ int main(int argc, char** argv) {
             Deadline(ssl, mode, true);
             for (int teardown = 0; teardown < 4; ++teardown) Cancellation(ssl, mode, teardown);
         }
+        DeleteBetweenCheckLoads(ssl);
         HostNotFound(ssl);
         Refused(ssl);
         Capacity(ssl);
