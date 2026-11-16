@@ -1586,6 +1586,15 @@ class MarkdownTextTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaisesRegex(ValueError, "finite non-negative"):
                 trace_digest.interval_number(value, "start")
 
+    def test_nonnegative_integer_accepts_zero_and_positive_values(self):
+        self.assertEqual(trace_digest.nonnegative_integer("0"), 0)
+        self.assertEqual(trace_digest.nonnegative_integer("7"), 7)
+
+    def test_nonnegative_integer_refuses_negative_values(self):
+        import argparse
+        with self.assertRaises(argparse.ArgumentTypeError):
+            trace_digest.nonnegative_integer("-1")
+
 
 if __name__ == "__main__":
     unittest.main(defaultTest=os.environ.get("TRACE_DIGEST_TEST"))
