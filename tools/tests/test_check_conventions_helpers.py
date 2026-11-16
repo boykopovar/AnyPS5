@@ -16,5 +16,18 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(check_conventions.integer_literal("10"), 10)
 
 
+    def test_symbol_nid_computes_the_nid_of_a_plain_export(self):
+        self.assertEqual(check_conventions.symbol_nid("sceFoo_nid_postfix"),
+                         check_conventions.compute_nid("sceFoo"))
+        self.assertEqual(check_conventions.symbol_nid("sceFoo_nid_disambig2_nid_postfix"),
+                         check_conventions.compute_nid("sceFoo"))
+
+    def test_symbol_nid_skips_unpatched_and_non_export_names(self):
+        self.assertIsNone(check_conventions.symbol_nid("sceFoo_nid_no_patch"))
+        self.assertIsNone(check_conventions.symbol_nid("sceFoo_nid_no_patch_cut"))
+        self.assertIsNone(check_conventions.symbol_nid("SDL_Init"))
+        self.assertIsNone(check_conventions.symbol_nid("_nid_postfix"))
+
+
 if __name__ == "__main__":
     unittest.main()
