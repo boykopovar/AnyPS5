@@ -3,6 +3,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
 #include "prx/libc/include/ScanQuadLength.hpp"
+#include "prx/libc/include/ScanDanglingExponent.hpp"
 #include <bit>
 #include <algorithm>
 #include <array>
@@ -123,6 +124,23 @@ static void CheckFloatingScanRange() {
     Require(scan("1e5000") == std::pair{1, ERANGE});
     Require(scan("1e-5000") == std::pair{1, ERANGE});
     Require(scan("1e300") == std::pair{1, 0});
+}
+
+static void CheckDanglingExponentMantissa() {
+    struct Case {
+        const char* field;
+        unsigned long width;
+        std::size_t mantissa;
+        std::size_t span;
+    };
+    for (const Case test : {Case{"1e+", 0, 1, 3}, Case{"1ex", 0, 1, 2}, Case{"100ergs", 0, 3, 4}, Case{"-1e", 0, 2, 3}, Case{"1.5E-x", 0, 3, 5}, Case{"1e+", 2, 1, 2}, Case{"0x1p", 0, 3, 4}, Case{"0x1.8p+", 0, 5, 7}}) {
+        std::size_t span = 0;
+        Require(LibcDetail::DanglingExponentMantissa(test.field, test.width, span) == test.mantissa && span == test.span);
+    }
+    for (const Case test : {Case{"1e5", 0, 0, 0}, Case{"1e+5", 0, 0, 0}, Case{"e5", 0, 0, 0}, Case{".e1", 0, 0, 0}, Case{".", 0, 0, 0}, Case{"15", 0, 0, 0}, Case{"0x1p3", 0, 0, 0}, Case{"1e", 1, 0, 0}}) {
+        std::size_t span = 77;
+        Require(LibcDetail::DanglingExponentMantissa(test.field, test.width, span) == 0 && span == 77);
+    }
 }
 
 static void CheckDanglingExponentScan() {
@@ -1082,6 +1100,7 @@ int main(int argc, char** argv) {
         return 0;
     }
     CheckPositionalUnknownConversion();
+    CheckDanglingExponentMantissa();
     CheckDanglingExponentScan();
     CheckSecureCountBeforeInputFailure();
     CheckFloatingScanRange();
