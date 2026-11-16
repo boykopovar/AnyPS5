@@ -355,5 +355,16 @@ class TargetTests(unittest.TestCase):
         self.assertIsNone(debt_fold.target("- plain entry with no target"))
 
 
+class ParseFragmentTests(unittest.TestCase):
+    def test_parse_refuses_a_library_with_no_debt_file(self):
+        import debt_fold
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fragment = root / "fragment.md"
+            fragment.write_text("# libMissing\n", encoding="utf-8")
+            with self.assertRaisesRegex(debt_fold.FoldError, "no debt file for libMissing"):
+                debt_fold.parse(fragment, root)
+
+
 if __name__ == "__main__":
     unittest.main()
