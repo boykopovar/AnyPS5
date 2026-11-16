@@ -290,5 +290,13 @@ class LoopListTests(unittest.TestCase):
         self.assertEqual(agc_test_split.loop_list("FOREACH(ITEMS a b)"), ["a", "b"])
 
 
+class FindLoopTests(unittest.TestCase):
+    def test_find_loop_returns_none_or_refuses_duplicates(self):
+        lines = ["x", "y"]
+        self.assertIsNone(agc_test_split.find_loop(lines, lambda index, text: False, "marker"))
+        with self.assertRaises(agc_test_split.SplitError):
+            agc_test_split.find_loop(lines, lambda index, text: True, "marker")
+
+
 if __name__ == "__main__":
     unittest.main()
