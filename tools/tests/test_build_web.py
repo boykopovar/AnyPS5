@@ -777,5 +777,13 @@ class WebReleaseValidationTests(unittest.TestCase):
                 build_web.release_web_files("0" * 40)
 
 
+class LoadReleaseTests(unittest.TestCase):
+    def test_load_release_parses_json_and_refuses_deep_nesting(self):
+        import io
+        self.assertEqual(build_web.load_release(io.StringIO('{"tag_name": "v1"}')), {'tag_name': 'v1'})
+        with self.assertRaisesRegex(ValueError, 'Invalid release metadata'):
+            build_web.load_release(io.StringIO('[' * 100000 + ']' * 100000))
+
+
 if __name__ == "__main__":
     unittest.main()
