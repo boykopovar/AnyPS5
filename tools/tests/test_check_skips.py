@@ -646,7 +646,11 @@ class NotRunTests(unittest.TestCase):
                     self.assertNotIn("Traceback", checked.stderr)
 
 
-
+class DeviceLimitTests(unittest.TestCase):
+    def test_device_limitations_needs_every_skip_to_match_a_pattern(self):
+        self.assertTrue(check_skips.device_limitations('skipped, no display here', [check_skips.NO_DISPLAY]))
+        self.assertFalse(check_skips.device_limitations('skipped, other', [check_skips.NO_DISPLAY]))
+        self.assertFalse(check_skips.device_limitations('no skip line here', [check_skips.NO_DISPLAY]))
 
 
 if __name__ == "__main__":
