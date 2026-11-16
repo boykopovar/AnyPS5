@@ -1513,7 +1513,15 @@ struct SharePlayConnectionInfo {
     std::int32_t visitorUserId;
 };
 static_assert(sizeof(SharePlayConnectionInfo) == 56 && offsetof(SharePlayConnectionInfo, hostUserId) == 48);
-struct NpId { NpOnlineId online_id; std::uint8_t opaque[4]; };
+struct NpId {
+    union {
+        NpOnlineId handle;
+        NpOnlineId online_id;
+    };
+    std::uint8_t opt[8];
+    std::uint8_t reserved[8];
+};
+static_assert(sizeof(NpId) == 36);
 struct NpCreateAsyncRequestParameter { std::uint8_t opaque[64]; };
 struct NpCheckPremiumParameter { std::uint8_t opaque[64]; };
 struct NpCheckPremiumResult { std::uint8_t opaque[64]; };
@@ -2025,6 +2033,32 @@ struct PngDecImageInfo {
     std::uint16_t color_space;
     std::uint16_t bit_depth;
     std::uint32_t image_flag;
+};
+
+struct PngDecInputChunk {
+    const void* data;
+    std::uint32_t size;
+    std::uint32_t reserved;
+};
+
+using PngDecInputCallback = std::int32_t (APS5_VABI *)(PngDecInputChunk*, void*);
+
+struct PngDecInputControlParam {
+    PngDecInputCallback input;
+    void* input_argument;
+    void* image_mem_addr;
+    std::uint32_t image_mem_size;
+    std::uint16_t operation;
+    std::uint16_t pixel_format;
+    std::uint16_t alpha_value;
+    std::uint16_t reserved;
+    std::uint32_t image_pitch;
+};
+
+struct SystemLoggerLogData {
+    std::uint8_t data[0x40];
+    std::uint32_t size;
+    std::uint8_t reserved[0x20];
 };
 
 struct JpegEncCreateParam {

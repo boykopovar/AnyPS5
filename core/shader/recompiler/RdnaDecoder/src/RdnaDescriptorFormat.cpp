@@ -14,18 +14,24 @@ struct FormatInfo {
     bool sint32;
 };
 
-constexpr std::array<FormatInfo, 82> kFormatInfoTable {{
+constexpr std::array<FormatInfo, 101> kFormatInfoTable {{
     {IrBufferFormat::Format8UNorm, true, false, false},
     {IrBufferFormat::Format8SNorm, true, false, false},
+    {IrBufferFormat::Format8UScaled, true, false, false},
+    {IrBufferFormat::Format8SScaled, true, false, false},
     {IrBufferFormat::Format8UInt, true, true, false},
     {IrBufferFormat::Format8SInt, true, false, true},
     {IrBufferFormat::Format16UNorm, true, false, false},
     {IrBufferFormat::Format16SNorm, true, false, false},
+    {IrBufferFormat::Format16UScaled, true, false, false},
+    {IrBufferFormat::Format16SScaled, true, false, false},
     {IrBufferFormat::Format16UInt, true, true, false},
     {IrBufferFormat::Format16SInt, true, false, true},
     {IrBufferFormat::Format16Float, true, false, false},
     {IrBufferFormat::Format8_8UNorm, true, false, false},
     {IrBufferFormat::Format8_8SNorm, true, false, false},
+    {IrBufferFormat::Format8_8UScaled, true, false, false},
+    {IrBufferFormat::Format8_8SScaled, true, false, false},
     {IrBufferFormat::Format8_8UInt, true, true, false},
     {IrBufferFormat::Format8_8SInt, true, false, true},
     {IrBufferFormat::Format32UInt, true, true, false},
@@ -33,19 +39,29 @@ constexpr std::array<FormatInfo, 82> kFormatInfoTable {{
     {IrBufferFormat::Format32Float, true, false, false},
     {IrBufferFormat::Format16_16UNorm, true, false, false},
     {IrBufferFormat::Format16_16SNorm, true, false, false},
+    {IrBufferFormat::Format16_16UScaled, true, false, false},
+    {IrBufferFormat::Format16_16SScaled, true, false, false},
     {IrBufferFormat::Format16_16UInt, true, true, false},
     {IrBufferFormat::Format16_16SInt, true, false, true},
     {IrBufferFormat::Format16_16Float, true, false, false},
     {IrBufferFormat::Format11_11_10UNorm, true, true, false},
     {IrBufferFormat::Format11_11_10UInt, true, true, false},
     {IrBufferFormat::Format11_11_10Float, true, true, false},
+    {IrBufferFormat::Format10_11_11UNorm, true, true, false},
+    {IrBufferFormat::Format10_11_11UInt, true, true, false},
     {IrBufferFormat::Format10_11_11Float, true, true, false},
+    {IrBufferFormat::Format2_10_10_10UNorm, true, true, false},
+    {IrBufferFormat::Format2_10_10_10UInt, true, true, false},
     {IrBufferFormat::Format10_10_10_2UNorm, true, false, false},
     {IrBufferFormat::Format10_10_10_2SNorm, true, false, false},
+    {IrBufferFormat::Format10_10_10_2UScaled, true, false, false},
+    {IrBufferFormat::Format10_10_10_2SScaled, true, false, false},
     {IrBufferFormat::Format10_10_10_2UInt, true, true, false},
     {IrBufferFormat::Format10_10_10_2SInt, true, false, true},
     {IrBufferFormat::Format8_8_8_8UNorm, true, false, false},
     {IrBufferFormat::Format8_8_8_8SNorm, true, false, false},
+    {IrBufferFormat::Format8_8_8_8UScaled, true, false, false},
+    {IrBufferFormat::Format8_8_8_8SScaled, true, false, false},
     {IrBufferFormat::Format8_8_8_8UInt, true, true, false},
     {IrBufferFormat::Format8_8_8_8SInt, true, false, true},
     {IrBufferFormat::Format32_32UInt, true, true, false},
@@ -53,6 +69,8 @@ constexpr std::array<FormatInfo, 82> kFormatInfoTable {{
     {IrBufferFormat::Format32_32Float, true, false, false},
     {IrBufferFormat::Format16_16_16_16UNorm, true, false, false},
     {IrBufferFormat::Format16_16_16_16SNorm, true, false, false},
+    {IrBufferFormat::Format16_16_16_16UScaled, true, false, false},
+    {IrBufferFormat::Format16_16_16_16SScaled, true, false, false},
     {IrBufferFormat::Format16_16_16_16UInt, true, true, false},
     {IrBufferFormat::Format16_16_16_16SInt, true, false, true},
     {IrBufferFormat::Format16_16_16_16Float, true, false, false},
@@ -68,8 +86,9 @@ constexpr std::array<FormatInfo, 82> kFormatInfoTable {{
     {IrBufferFormat::Format9_9_9_5Float, true, false, false},
     {IrBufferFormat::Format5_6_5UNorm, true, false, false},
     {IrBufferFormat::Format5_5_5_1UNorm, true, false, false},
-    {IrBufferFormat::Format1_5_5_5UNorm, false, false, false},
+    {IrBufferFormat::Format1_5_5_5UNorm, true, false, false},
     {IrBufferFormat::Format4_4_4_4UNorm, true, false, false},
+    {IrBufferFormat::Format8_24UNorm, true, false, false},
     {IrBufferFormat::Fmask8_S2_F1, true, false, false},
     {IrBufferFormat::Fmask8_S4_F1, true, false, false},
     {IrBufferFormat::Fmask8_S8_F1, true, false, false},
@@ -143,14 +162,19 @@ IrTextureNumericClass SampledTextureNumericClass(IrBufferFormat format) {
     return info->uint32 ? IrTextureNumericClass::Uint : IrTextureNumericClass::Float;
 }
 
+bool IsConvertedUnormTextureFormat(IrBufferFormat format) {
+    return format == IrBufferFormat::Format11_11_10UNorm || format == IrBufferFormat::Format10_11_11UNorm || format == IrBufferFormat::Format2_10_10_10UNorm;
+}
+
 IrBufferFormat RemapTextureFormat(IrBufferFormat format) {
-    return format == IrBufferFormat::Format11_11_10UNorm || format == IrBufferFormat::Format11_11_10UInt || format == IrBufferFormat::Format11_11_10Float || format == IrBufferFormat::Format10_11_11Float ? IrBufferFormat::Format32UInt : format;
+    return IsConvertedUnormTextureFormat(format) || format == IrBufferFormat::Format10_11_11UInt || format == IrBufferFormat::Format2_10_10_10UInt || format == IrBufferFormat::Format11_11_10UInt || format == IrBufferFormat::Format11_11_10Float || format == IrBufferFormat::Format10_11_11Float ? IrBufferFormat::Format32UInt : format;
 }
 
 IrBufferFormat RemapStorageTextureFormat(IrBufferFormat format) {
     switch (format) {
         case IrBufferFormat::Format5_6_5UNorm:
         case IrBufferFormat::Format5_5_5_1UNorm:
+        case IrBufferFormat::Format1_5_5_5UNorm:
         case IrBufferFormat::Format4_4_4_4UNorm:
             return IrBufferFormat::Format16UInt;
         default:

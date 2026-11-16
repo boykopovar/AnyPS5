@@ -1,5 +1,6 @@
 #include "prx/libSceNpCommon/include/Api.hpp"
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <climits>
 #include <cstddef>
@@ -7,8 +8,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include <string_view>
 #include "SceTypes.hpp"
+#include "prx/libc/include/General.hpp"
 
 namespace {
 
@@ -40,7 +43,7 @@ struct Base64Block {
 
 int DecodeLastBlock(const char* src, std::size_t length, const char* alphabet, Base64Block* block) {
     char c[4] = {BASE64_PAD, BASE64_PAD, BASE64_PAD, BASE64_PAD};
-    std::memcpy(c, src, length);
+    if (length != 0) std::memcpy(c, src, length);
     const int v0 = Base64Value(c[0], alphabet);
     const int v1 = Base64Value(c[1], alphabet);
     if (v0 < 0 || v1 < 0) return NP_ERROR_INVALID_CHARACTER;
@@ -194,18 +197,21 @@ int FormatInteger(char* buf, std::size_t size, std::uint64_t magnitude, char sig
     if (radix > 1) {
         for (std::uint64_t rest = magnitude; rest >= radix; rest /= radix) ++digits;
     }
+    const std::size_t outputLength = prefixLength + digits;
     if (buf != nullptr) {
-        if (size < prefixLength + digits + 1) return NP_ERROR_BUFFER_TOO_SMALL;
-        std::memcpy(buf, prefix, prefixLength);
-        char* end = buf + prefixLength + digits;
+        if (size < outputLength + 1) return NP_ERROR_BUFFER_TOO_SMALL;
+        std::array<char, 3 + sizeof(magnitude) * CHAR_BIT + 1> formatted{};
+        std::memcpy(formatted.data(), prefix, prefixLength);
+        char* end = formatted.data() + outputLength;
         *end = '\0';
         std::uint64_t rest = magnitude;
         for (std::size_t i = 0; i < digits; ++i) {
             *--end = HexDigit(static_cast<std::uint32_t>(rest % radix), (flags & NP_FORMAT_UPPERCASE) != 0);
             rest /= radix;
         }
+        if (!GuestCopyOut_nid_no_patch(buf, formatted.data(), outputLength + 1)) return NP_ERROR_INVALID_ARGUMENT;
     }
-    if (length != nullptr) *length = prefixLength + digits;
+    if (length != nullptr && !GuestCopyOut_nid_no_patch(length, &outputLength, sizeof(outputLength))) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -224,7 +230,8 @@ int ParseInteger(const char* str, std::size_t* parsedLength, Parse parse, bool* 
     parse(str, &end);
     if (end == str) return NP_ERROR_OUT_OF_RANGE;
     if (*saturated && errno == ERANGE) return NP_ERROR_OUT_OF_RANGE;
-    if (parsedLength != nullptr) *parsedLength = static_cast<std::size_t>(end - str);
+    const std::size_t length = static_cast<std::size_t>(end - str);
+    if (parsedLength != nullptr && !GuestCopyOut_nid_no_patch(parsedLength, &length, sizeof(length))) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -432,7 +439,8 @@ int APS5_VABI sceNpStrToInt32(const char* str, std::int32_t* value, int base, st
     }, &saturated);
     if (result < 0) return result;
     if (parsed != static_cast<std::int32_t>(parsed)) return NP_ERROR_OUT_OF_RANGE;
-    *value = static_cast<std::int32_t>(parsed);
+    const auto narrowed = static_cast<std::int32_t>(parsed);
+    if (!GuestCopyOut_nid_no_patch(value, &narrowed, sizeof(narrowed))) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -444,7 +452,8 @@ int APS5_VABI sceNpStrToInt64(const char* str, std::int64_t* value, int base, st
         saturated = parsed == LLONG_MIN || parsed == LLONG_MAX;
     }, &saturated);
     if (result < 0) return result;
-    *value = parsed;
+    const std::int64_t wide = parsed;
+    if (!GuestCopyOut_nid_no_patch(value, &wide, sizeof(wide))) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -457,7 +466,8 @@ int APS5_VABI sceNpStrToUInt32(const char* str, std::uint32_t* value, int base, 
     }, &saturated);
     if (result < 0) return result;
     if ((parsed >> 32) != 0) return NP_ERROR_OUT_OF_RANGE;
-    *value = static_cast<std::uint32_t>(parsed);
+    const auto narrowed = static_cast<std::uint32_t>(parsed);
+    if (!GuestCopyOut_nid_no_patch(value, &narrowed, sizeof(narrowed))) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -469,12 +479,13 @@ int APS5_VABI sceNpStrToUInt64(const char* str, std::uint64_t* value, int base, 
         saturated = parsed == ULLONG_MAX;
     }, &saturated);
     if (result < 0) return result;
-    *value = parsed;
+    const std::uint64_t wide = parsed;
+    if (!GuestCopyOut_nid_no_patch(value, &wide, sizeof(wide))) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
 int APS5_VABI sceNpStrBuildHex(char* dst, std::size_t size, const void* src, std::size_t length, bool uppercase) {
-    if (size <= length * 2) return NP_ERROR_BUFFER_TOO_SMALL;
+    if (size == 0 || length > (size - 1) / 2) return NP_ERROR_BUFFER_TOO_SMALL;
     const auto* bytes = static_cast<const std::uint8_t*>(src);
     for (std::size_t i = 0; i < length; ++i) {
         dst[i * 2] = HexDigit(bytes[i] >> 4, uppercase);
@@ -493,22 +504,34 @@ int APS5_VABI sceNpStrnParseHex(const char* hex, std::size_t length, void* out, 
 }
 
 int APS5_VABI sceNpStrcpyToBuf(char* dst, std::size_t size, const char* src) {
+    if (src == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     return CopyToBuffer(dst, size, src, std::strlen(src));
 }
 
 int APS5_VABI sceNpStrncpyToBuf(char* dst, std::size_t size, const char* src, std::size_t maxLength) {
+    if (src == nullptr && maxLength == 0) return CopyToBuffer(dst, size, "", 0);
+    if (src == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     return CopyToBuffer(dst, size, src, strnlen(src, maxLength));
 }
 
 int APS5_VABI sceNpUtilJsonEscape(char* dst, std::size_t dstSize, const char* src, std::size_t srcLength) {
     if (dst == nullptr || dstSize == 0 || src == nullptr || srcLength == 0) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     if (dstSize < JSON_ESCAPE_MARGIN) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
-    std::size_t written = ::strnlen(dst, dstSize);
-    if (written >= dstSize) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
+    std::string existing;
+    const int copyError = CopyGuestString_nid_no_patch(dst, dstSize, existing);
+    if (copyError == 63) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
+    if (copyError != 0) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    const std::size_t start = existing.size();
+    std::size_t written = start;
+    std::string appended;
+    const auto finish = [&](int result) {
+        if (appended.empty()) return result;
+        return GuestCopyOut_nid_no_patch(dst + start, appended.c_str(), appended.size() + 1) ? result : NP_UTIL_ERROR_INVALID_ARGUMENT;
+    };
     for (std::size_t i = 0; i < srcLength; ++i) {
-        if (written > dstSize - JSON_ESCAPE_MARGIN) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
+        if (written > dstSize - JSON_ESCAPE_MARGIN) return finish(NP_UTIL_ERROR_BUFFER_TOO_SMALL);
         const auto c = static_cast<unsigned char>(src[i]);
-        if (c == 0) return 0;
+        if (c == 0) return finish(0);
         char piece[JSON_ESCAPE_MARGIN] = {};
         if (const char* escape = JsonShortEscape(c)) {
             std::strcpy(piece, escape);
@@ -517,10 +540,10 @@ int APS5_VABI sceNpUtilJsonEscape(char* dst, std::size_t dstSize, const char* sr
         } else {
             std::snprintf(piece, sizeof(piece), "\\u%04x", c);
         }
-        std::strcat(dst, piece);
+        appended += piece;
         written += std::strlen(piece);
     }
-    return 0;
+    return finish(0);
 }
 
 int APS5_VABI sceNpUtilJsonUnescape(char* dst, std::size_t dstSize, const char* src, std::size_t srcLength,
@@ -531,15 +554,17 @@ int APS5_VABI sceNpUtilJsonUnescape(char* dst, std::size_t dstSize, const char* 
     std::size_t count = 0;
     int status = 0;
     char* out = dst;
+    bool unwritable = false;
     auto emit = [&](const char* bytes, std::size_t length, std::size_t consumed) {
         if (out != nullptr) {
-            std::memcpy(out, bytes, length);
+            unwritable = unwritable || !GuestCopyOut_nid_no_patch(out, bytes, length);
             out += length;
         }
         count += length;
         src += consumed;
     };
     while (src < end) {
+        if (unwritable) return NP_UTIL_ERROR_INVALID_ARGUMENT;
         if (dst != nullptr && count + 1 > dstSize) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
         const std::size_t remaining = static_cast<std::size_t>(end - src);
         if (src[0] != '\\' || remaining < 2) {
@@ -588,10 +613,12 @@ int APS5_VABI sceNpUtilJsonUnescape(char* dst, std::size_t dstSize, const char* 
         if (dst != nullptr && count + length > dstSize) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
         emit(encoded, length, JSON_SURROGATE_PAIR_LENGTH);
     }
+    if (unwritable) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     ++count;
     if (dst != nullptr && count > dstSize) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
-    if (dstLength != nullptr) *dstLength = count;
-    if (out != nullptr) *out = '\0';
+    if (dstLength != nullptr && !GuestCopyOut_nid_no_patch(dstLength, &count, sizeof(count))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    const char terminator = '\0';
+    if (out != nullptr && !GuestCopyOut_nid_no_patch(out, &terminator, sizeof(terminator))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     return status;
 }
 
@@ -782,14 +809,15 @@ int APS5_VABI sceNpUtilJidToNpId(NpIdFull* npId, const NpJid* jid) {
     if (std::strcmp(label + 1, "playstation.net") != 0) return NP_UTIL_ERROR_INVALID_JID;
     const std::size_t resourceLength = jid->resource != nullptr ? std::strlen(jid->resource) : 0;
     if (resourceLength > NP_ID_RESOURCE_MAX_LENGTH) return NP_UTIL_ERROR_INVALID_JID;
-    *npId = {};
-    std::memcpy(npId->handle.data, jid->user, userLength);
-    npId->opt[0] = static_cast<std::uint8_t>(domain[0]);
-    npId->opt[1] = static_cast<std::uint8_t>(domain[1]);
-    npId->opt[2] = static_cast<std::uint8_t>(domain[3]);
-    npId->opt[3] = static_cast<std::uint8_t>(domain[4]);
-    if (resourceLength != 0) std::memcpy(npId->opt + 4, jid->resource, resourceLength);
-    npId->reserved[0] = 1;
+    NpIdFull local{};
+    std::memcpy(local.handle.data, jid->user, userLength);
+    local.opt[0] = static_cast<std::uint8_t>(domain[0]);
+    local.opt[1] = static_cast<std::uint8_t>(domain[1]);
+    local.opt[2] = static_cast<std::uint8_t>(domain[3]);
+    local.opt[3] = static_cast<std::uint8_t>(domain[4]);
+    if (resourceLength != 0) std::memcpy(local.opt + 4, jid->resource, resourceLength);
+    local.reserved[0] = 1;
+    if (!GuestCopyOut_nid_no_patch(npId, &local, sizeof(local))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 

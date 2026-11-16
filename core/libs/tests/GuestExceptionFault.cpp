@@ -1,5 +1,6 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/general/AsmMacros.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include <atomic>
@@ -60,45 +61,45 @@ void FaultTestSimdDivideResume();
 }
 
 asm(".text\n"
-    ".globl FaultTestRead\n"
-    "FaultTestRead:\n"
+    ".globl " APS5_ASM_SYMBOL("FaultTestRead") "\n"
+    APS5_ASM_SYMBOL("FaultTestRead") ":\n"
     "    xorl %eax, %eax\n"
-    ".globl FaultTestReadSite\n"
-    "FaultTestReadSite:\n"
+    ".globl " APS5_ASM_SYMBOL("FaultTestReadSite") "\n"
+    APS5_ASM_SYMBOL("FaultTestReadSite") ":\n"
     "    movq (%rdi), %rax\n"
-    ".globl FaultTestReadResume\n"
-    "FaultTestReadResume:\n"
+    ".globl " APS5_ASM_SYMBOL("FaultTestReadResume") "\n"
+    APS5_ASM_SYMBOL("FaultTestReadResume") ":\n"
     "    ret\n"
-    ".globl FaultTestWrite\n"
-    "FaultTestWrite:\n"
+    ".globl " APS5_ASM_SYMBOL("FaultTestWrite") "\n"
+    APS5_ASM_SYMBOL("FaultTestWrite") ":\n"
     "    xorl %eax, %eax\n"
-    ".globl FaultTestWriteSite\n"
-    "FaultTestWriteSite:\n"
+    ".globl " APS5_ASM_SYMBOL("FaultTestWriteSite") "\n"
+    APS5_ASM_SYMBOL("FaultTestWriteSite") ":\n"
     "    movq %rsi, (%rdi)\n"
-    ".globl FaultTestWriteResume\n"
-    "FaultTestWriteResume:\n"
+    ".globl " APS5_ASM_SYMBOL("FaultTestWriteResume") "\n"
+    APS5_ASM_SYMBOL("FaultTestWriteResume") ":\n"
     "    ret\n"
-    ".globl FaultTestIllegal\n"
-    "FaultTestIllegal:\n"
+    ".globl " APS5_ASM_SYMBOL("FaultTestIllegal") "\n"
+    APS5_ASM_SYMBOL("FaultTestIllegal") ":\n"
     "    xorl %eax, %eax\n"
-    ".globl FaultTestIllegalSite\n"
-    "FaultTestIllegalSite:\n"
+    ".globl " APS5_ASM_SYMBOL("FaultTestIllegalSite") "\n"
+    APS5_ASM_SYMBOL("FaultTestIllegalSite") ":\n"
     "    ud2\n"
-    ".globl FaultTestIllegalResume\n"
-    "FaultTestIllegalResume:\n"
+    ".globl " APS5_ASM_SYMBOL("FaultTestIllegalResume") "\n"
+    APS5_ASM_SYMBOL("FaultTestIllegalResume") ":\n"
     "    ret\n"
-    ".globl FaultTestDivide\n"
-    "FaultTestDivide:\n"
+    ".globl " APS5_ASM_SYMBOL("FaultTestDivide") "\n"
+    APS5_ASM_SYMBOL("FaultTestDivide") ":\n"
     "    movl %edi, %eax\n"
     "    cltd\n"
-    ".globl FaultTestDivideSite\n"
-    "FaultTestDivideSite:\n"
+    ".globl " APS5_ASM_SYMBOL("FaultTestDivideSite") "\n"
+    APS5_ASM_SYMBOL("FaultTestDivideSite") ":\n"
     "    idivl %esi\n"
-    ".globl FaultTestDivideResume\n"
-    "FaultTestDivideResume:\n"
+    ".globl " APS5_ASM_SYMBOL("FaultTestDivideResume") "\n"
+    APS5_ASM_SYMBOL("FaultTestDivideResume") ":\n"
     "    ret\n"
-    ".globl FaultTestRegisters\n"
-    "FaultTestRegisters:\n"
+    ".globl " APS5_ASM_SYMBOL("FaultTestRegisters") "\n"
+    APS5_ASM_SYMBOL("FaultTestRegisters") ":\n"
     "    pushq %r12\n"
     "    pushq %r13\n"
     "    pushq %rbx\n"
@@ -112,11 +113,11 @@ asm(".text\n"
     "1:\n"
     "    movdqu 0(%rbx), %xmm8\n"
     "2:\n"
-    ".globl FaultTestRegistersSite\n"
-    "FaultTestRegistersSite:\n"
+    ".globl " APS5_ASM_SYMBOL("FaultTestRegistersSite") "\n"
+    APS5_ASM_SYMBOL("FaultTestRegistersSite") ":\n"
     "    movq (%rdi), %rax\n"
-    ".globl FaultTestRegistersResume\n"
-    "FaultTestRegistersResume:\n"
+    ".globl " APS5_ASM_SYMBOL("FaultTestRegistersResume") "\n"
+    APS5_ASM_SYMBOL("FaultTestRegistersResume") ":\n"
     "    movq %r12, 72(%rbx)\n"
     "    movq %r13, 80(%rbx)\n"
     "    cmpl $0, 64(%rbx)\n"
@@ -131,8 +132,8 @@ asm(".text\n"
     "    popq %r13\n"
     "    popq %r12\n"
     "    ret\n"
-    ".globl FaultTestJump\n"
-    "FaultTestJump:\n"
+    ".globl " APS5_ASM_SYMBOL("FaultTestJump") "\n"
+    APS5_ASM_SYMBOL("FaultTestJump") ":\n"
     "    pushq %rbx\n"
     "    pushq %rbp\n"
     "    pushq %r12\n"
@@ -151,8 +152,8 @@ asm(".text\n"
     "    movq %r15, 56(%rsi)\n"
     "    stmxcsr 64(%rsi)\n"
     "    fnstcw 68(%rsi)\n"
-    ".globl FaultTestJumpSite\n"
-    "FaultTestJumpSite:\n"
+    ".globl " APS5_ASM_SYMBOL("FaultTestJumpSite") "\n"
+    APS5_ASM_SYMBOL("FaultTestJumpSite") ":\n"
     "    movq (%rdi), %rax\n"
     "    xorl %eax, %eax\n"
     "5:\n"
@@ -164,8 +165,8 @@ asm(".text\n"
     "    popq %rbp\n"
     "    popq %rbx\n"
     "    ret\n"
-    ".globl FaultTestSimdDivide\n"
-    "FaultTestSimdDivide:\n"
+    ".globl " APS5_ASM_SYMBOL("FaultTestSimdDivide") "\n"
+    APS5_ASM_SYMBOL("FaultTestSimdDivide") ":\n"
     "    subq $8, %rsp\n"
     "    stmxcsr (%rsp)\n"
     "    movl $0x1d80, 4(%rsp)\n"
@@ -174,11 +175,11 @@ asm(".text\n"
     "    cvtsi2ss %eax, %xmm0\n"
     "    xorps %xmm1, %xmm1\n"
     "    xorl %eax, %eax\n"
-    ".globl FaultTestSimdDivideSite\n"
-    "FaultTestSimdDivideSite:\n"
+    ".globl " APS5_ASM_SYMBOL("FaultTestSimdDivideSite") "\n"
+    APS5_ASM_SYMBOL("FaultTestSimdDivideSite") ":\n"
     "    divss %xmm1, %xmm0\n"
-    ".globl FaultTestSimdDivideResume\n"
-    "FaultTestSimdDivideResume:\n"
+    ".globl " APS5_ASM_SYMBOL("FaultTestSimdDivideResume") "\n"
+    APS5_ASM_SYMBOL("FaultTestSimdDivideResume") ":\n"
     "    ldmxcsr (%rsp)\n"
     "    addq $8, %rsp\n"
     "    ret\n");
@@ -218,7 +219,13 @@ static constexpr const char* HandledMarker = "[guest_exception_fault] handler re
 
 enum class Mode { Resume, Registers, Nested, Jump, Retry, Unprotect, Remove };
 
-static void Require(bool value) { if (!value) std::abort(); }
+static void RequireFailed(const char* expression, const char* file, int line) {
+    std::fprintf(stderr, "[guest_exception_fault] Require failed: %s at %s:%d\n", expression, file, line);
+    std::fflush(stderr);
+    std::abort();
+}
+
+#define Require(...) do { if (!(__VA_ARGS__)) RequireFailed(#__VA_ARGS__, __FILE__, __LINE__); } while (false)
 
 template <typename TValue>
 static TValue Field(void* context, std::size_t offset) {
@@ -493,6 +500,11 @@ static int RemoveAndReturnChild() {
     return EXIT_SUCCESS;
 }
 
+static void ReportChild(unsigned long code, const std::string& output) {
+    std::fprintf(stderr, "[guest_exception_fault] child status 0x%lx, %zu bytes of output:\n%s\n[guest_exception_fault] end of child output\n", code, output.size(), output.c_str());
+    std::fflush(stderr);
+}
+
 static void TestRemoveAndReturn(const char* self) {
     std::string output;
 #ifdef _WIN32
@@ -512,7 +524,7 @@ static void TestRemoveAndReturn(const char* self) {
     startup.dwFlags = STARTF_USESTDHANDLES;
     startup.hStdInput = nul;
     startup.hStdOutput = writeEnd;
-    startup.hStdError = nul;
+    startup.hStdError = writeEnd;
     PROCESS_INFORMATION child{};
     Require(CreateProcessW(path, command.data(), nullptr, nullptr, TRUE, 0, nullptr, nullptr, &startup, &child) != 0);
     CloseHandle(writeEnd);
@@ -525,9 +537,11 @@ static void TestRemoveAndReturn(const char* self) {
     const DWORD waited = WaitForSingleObject(child.hProcess, ChildTimeoutSeconds * 1000);
     if (waited != WAIT_OBJECT_0) TerminateProcess(child.hProcess, 1);
     reader.join();
+    if (waited != WAIT_OBJECT_0) ReportChild(waited, output);
     Require(waited == WAIT_OBJECT_0);
     DWORD code = 0;
     Require(GetExitCodeProcess(child.hProcess, &code) != 0);
+    if (code != static_cast<DWORD>(EXCEPTION_ACCESS_VIOLATION)) ReportChild(code, output);
     Require(code == static_cast<DWORD>(EXCEPTION_ACCESS_VIOLATION));
     CloseHandle(readEnd);
     CloseHandle(child.hThread);
@@ -562,6 +576,7 @@ static void TestRemoveAndReturn(const char* self) {
     close(pipeEnds[0]);
 #endif
     const auto first = output.find(HandledMarker);
+    if (first == std::string::npos || output.find(HandledMarker, first + 1) != std::string::npos) ReportChild(0, output);
     Require(first != std::string::npos && output.find(HandledMarker, first + 1) == std::string::npos);
 }
 

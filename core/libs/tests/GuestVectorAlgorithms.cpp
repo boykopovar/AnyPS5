@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <stdexcept>
 #include <vector>
 
 
@@ -167,6 +168,36 @@ static void CheckFindAndCount() {
     words[3] = 42;
     words[12] = 42;
     Require(__std_find_trivial_unsized_4_nid_postfix(words + 8, 42) == words + 12);
+}
+
+static void CheckFindLast() {
+    const std::uint8_t bytes[] = {3, 0xff, 3, 9, 0xff, 7};
+    Require(__std_find_last_trivial_1_nid_postfix(bytes, bytes + 6, 0xff) == bytes + 4);
+    Require(__std_find_last_trivial_1_nid_postfix(bytes, bytes + 6, 3) == bytes + 2);
+    Require(__std_find_last_trivial_1_nid_postfix(bytes, bytes + 6, 42) == bytes + 6);
+    Require(__std_find_last_trivial_1_nid_postfix(bytes, bytes, 3) == bytes);
+    Require(__std_find_last_trivial_1_nid_postfix(nullptr, nullptr, 3) == nullptr);
+
+    const std::uint16_t halves[] = {0x8000, 5, 0x7fff, 5, 0x8000};
+    Require(__std_find_last_trivial_2_nid_postfix(halves, halves + 5, 5) == halves + 3);
+    Require(__std_find_last_trivial_2_nid_postfix(halves, halves + 5, 0x8000) == halves + 4);
+    Require(__std_find_last_trivial_2_nid_postfix(halves, halves + 5, 0x1234) == halves + 5);
+    Require(__std_find_last_trivial_2_nid_postfix(halves, halves, 5) == halves);
+    Require(__std_find_last_trivial_2_nid_postfix(nullptr, nullptr, 5) == nullptr);
+
+    const std::uint32_t words[] = {7, 0xfffffff0u, 1, 1, 0xfffffff0u, 9};
+    Require(__std_find_last_trivial_4_nid_postfix(words, words + 6, 0xfffffff0u) == words + 4);
+    Require(__std_find_last_trivial_4_nid_postfix(words, words + 6, 1) == words + 3);
+    Require(__std_find_last_trivial_4_nid_postfix(words, words + 6, 2) == words + 6);
+    Require(__std_find_last_trivial_4_nid_postfix(words, words, 1) == words);
+    Require(__std_find_last_trivial_4_nid_postfix(nullptr, nullptr, 1) == nullptr);
+
+    const std::uint64_t wides[] = {0x8000000000000000ull, 2, 0x7fffffffffffffffull, 0x8000000000000000ull, 2};
+    Require(__std_find_last_trivial_8_nid_postfix(wides, wides + 5, 0x8000000000000000ull) == wides + 3);
+    Require(__std_find_last_trivial_8_nid_postfix(wides, wides + 5, 2) == wides + 4);
+    Require(__std_find_last_trivial_8_nid_postfix(wides, wides + 5, 999) == wides + 5);
+    Require(__std_find_last_trivial_8_nid_postfix(wides, wides, 2) == wides);
+    Require(__std_find_last_trivial_8_nid_postfix(nullptr, nullptr, 2) == nullptr);
 }
 
 static void CheckSignedMax64Value() {
@@ -432,11 +463,71 @@ static void CheckMaxValue() {
     Require(__std_max_8u_nid_postfix(repeated, repeated + 4) == 9);
 }
 
+template <typename Function>
+static void RequireInvalidRange(Function function, const void* first, const void* last) {
+    try {
+        function(first, last);
+    } catch (const std::invalid_argument&) {
+        return;
+    }
+    std::abort();
+}
+
+template <typename Element, typename Function>
+static void CheckFaultingRanges(Function function) {
+    const Element values[] = {5, 3, 7, 2};
+    const auto* bytes = reinterpret_cast<const unsigned char*>(values);
+    RequireInvalidRange(function, values + 2, values + 2);
+    RequireInvalidRange(function, nullptr, nullptr);
+    RequireInvalidRange(function, values + 3, values + 2);
+    RequireInvalidRange(function, values, bytes + 2 * sizeof(Element) + sizeof(Element) / 2);
+    RequireInvalidRange(function, values + 1, bytes + sizeof(Element) + sizeof(Element) - 1);
+    Require(function(values + 1, values + 2) == 3);
+}
+
+template <typename Function, typename Value>
+static void RequireInvalidFindLastRange(Function function, const void* first, const void* last, Value value) {
+    try {
+        function(first, last, value);
+    } catch (const std::invalid_argument&) {
+        return;
+    }
+    std::abort();
+}
+
+template <typename Element, typename Function, typename Value>
+static void CheckFaultingFindLastRanges(Function function, Value value) {
+    const Element values[] = {5, 3, 7, 2};
+    const auto* bytes = reinterpret_cast<const unsigned char*>(values);
+    RequireInvalidFindLastRange(function, nullptr, values + 1, value);
+    RequireInvalidFindLastRange(function, values + 1, nullptr, value);
+    RequireInvalidFindLastRange(function, values + 3, values + 2, value);
+    if constexpr (sizeof(Element) > 1) {
+        RequireInvalidFindLastRange(function, values, bytes + 2 * sizeof(Element) + 1, value);
+    }
+}
+
+static void CheckInvalidRanges() {
+    CheckFaultingRanges<std::int32_t>(__std_min_4i_nid_postfix);
+    CheckFaultingRanges<std::uint32_t>(__std_min_4u_nid_postfix);
+    CheckFaultingRanges<std::int32_t>(__std_max_4i_nid_postfix);
+    CheckFaultingRanges<std::uint32_t>(__std_max_4u_nid_postfix);
+    CheckFaultingRanges<std::int64_t>(__std_min_8i_nid_postfix);
+    CheckFaultingRanges<std::uint64_t>(__std_min_8u_nid_postfix);
+    CheckFaultingRanges<std::int64_t>(__std_max_8i_nid_postfix);
+    CheckFaultingRanges<std::uint64_t>(__std_max_8u_nid_postfix);
+    CheckFaultingFindLastRanges<std::uint8_t>(__std_find_last_trivial_1_nid_postfix, 3);
+    CheckFaultingFindLastRanges<std::uint16_t>(__std_find_last_trivial_2_nid_postfix, 5);
+    CheckFaultingFindLastRanges<std::uint32_t>(__std_find_last_trivial_4_nid_postfix, 7);
+    CheckFaultingFindLastRanges<std::uint64_t>(__std_find_last_trivial_8_nid_postfix, 9);
+}
+
 int main() {
     CheckMinValue();
     CheckSizedHelpers();
     CheckUnsignedMax32Value();
     CheckFindAndCount();
+    CheckFindLast();
     CheckUnsignedMin32Value();
     CheckUnsizedRescan();
     CheckSignedMax64Value();
@@ -444,5 +535,6 @@ int main() {
     CheckMaxValue();
     CheckReverseAndSwap();
     CheckSignedMin64Value();
+    CheckInvalidRanges();
     return 0;
 }

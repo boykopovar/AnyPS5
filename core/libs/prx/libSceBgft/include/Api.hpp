@@ -78,7 +78,7 @@ int APS5_VABI sceBgftServiceIntDownloadGetExtUsbUserStorageSize(void);
 int APS5_VABI sceBgftServiceIntDownloadGetUserStorageSize(void);
 int APS5_VABI sceBgftServiceIntDownloadPauseTaskAll(void);
 int APS5_VABI sceBgftServiceIntDownloadQueryTask(void);
-int APS5_VABI sceBgftServiceIntDownloadRegisterTaskByStorage(void);
+int APS5_VABI sceBgftServiceIntDownloadRegisterTaskByStorage(const BgftStorageTaskParam* params, int32_t* taskId);
 int APS5_VABI sceBgftServiceIntDownloadRestartTask(void);
 int APS5_VABI sceBgftServiceIntDownloadResumeTaskAll(void);
 int APS5_VABI sceBgftServiceIntDownloadStartTaskAll(void);

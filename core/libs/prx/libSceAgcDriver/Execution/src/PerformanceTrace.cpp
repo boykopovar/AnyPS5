@@ -43,11 +43,13 @@ struct Session {
     std::optional<TraceWindow> window;
     bool windowOpen = false;
     std::vector<std::vector<TraceThread::Total>> windowBase;
+    std::uint64_t windowOwnedUnbound = 0;
     std::optional<TraceInterval> interval;
     bool intervalOpen = false;
     std::uint64_t intervalFirstPresent = 0;
     double intervalGpuBusy = 0;
     std::vector<std::vector<TraceThread::Total>> intervalBase;
+    std::uint64_t intervalOwnedUnbound = 0;
     std::vector<Clock::time_point> intervalPresents;
     Clock::time_point first{};
     std::uint64_t present = 0;
@@ -81,8 +83,7 @@ std::unique_ptr<TraceBenchWriter>& benchWriter() {
 }
 
 std::filesystem::path traceDirectory() {
-    const char* directory = std::getenv("APS5_TRACE_DIR");
-    return std::filesystem::path(directory != nullptr ? directory : ".");
+    return TraceFile::Directory();
 }
 
 std::uint64_t processId() {
@@ -267,6 +268,7 @@ void PerformanceTrace::OpenInterval(Clock::time_point now, std::uint64_t present
     state.intervalOpen = true;
     state.intervalFirstPresent = present;
     state.intervalGpuBusy = VulkanDevice::PresentCounts().gpuBusyMs;
+    state.intervalOwnedUnbound = OwnedDrawUnbound();
     state.intervalPresents.assign(1, now);
     if (summaryWriter()) return;
     summaryWriter() = std::make_unique<ProfileOutput>([directory = traceDirectory()](std::string_view text) {
@@ -295,6 +297,7 @@ void PerformanceTrace::FlushInterval(Clock::time_point now, std::uint32_t width,
         snapshots.push_back(std::move(snapshot));
     }
     auto summary = identity(width, height, device);
+    summary.ownedDrawUnbound = OwnedDrawUnbound() - state.intervalOwnedUnbound;
     summary.window = state.interval->Describe();
     summary.firstPresent = state.intervalFirstPresent;
     summary.gpuBusyMs = VulkanDevice::PresentCounts().gpuBusyMs - state.intervalGpuBusy;
@@ -325,7 +328,7 @@ void PerformanceTrace::Present(std::uint32_t width, std::uint32_t height, const 
     auto& state = session();
     std::lock_guard lock(state.mutex);
     if (!state.started) {
-        state.window = TraceWindow::Parse(std::getenv("APS5_TRACE_FRAMES"), std::getenv("APS5_TRACE_SECONDS"));
+        state.window = TraceWindow::FromEnvironment();
         state.interval = TraceInterval::Parse(std::getenv("APS5_TRACE_SUMMARY_EVERY"));
         state.bench = TraceBench::Parse(std::getenv("APS5_TRACE_BENCH"), state.interval.has_value());
         state.first = now;
@@ -347,6 +350,7 @@ void PerformanceTrace::Present(std::uint32_t width, std::uint32_t height, const 
     if (edge == TraceWindow::Edge::Open) {
         state.windowOpen = true;
         state.windowBase = totalsOf(state.threads);
+        state.windowOwnedUnbound = OwnedDrawUnbound();
         state.firstPresent = present;
         state.gpuBusyAtOpen = VulkanDevice::PresentCounts().gpuBusyMs;
         TraceClockSample clock;
@@ -394,6 +398,7 @@ void PerformanceTrace::Present(std::uint32_t width, std::uint32_t height, const 
     }
     const auto process = processId();
     auto summary = identity(width, height, device);
+    summary.ownedDrawUnbound = OwnedDrawUnbound() - state.windowOwnedUnbound;
     summary.window = state.window->Describe();
     summary.firstPresent = state.firstPresent;
     summary.gpuBusyMs = VulkanDevice::PresentCounts().gpuBusyMs - state.gpuBusyAtOpen;

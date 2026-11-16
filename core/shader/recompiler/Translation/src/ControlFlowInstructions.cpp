@@ -1,4 +1,3 @@
-#include "Translation/ControlFlowInstructions.hpp"
 #include "Translation/TranslationContext.hpp"
 #include <array>
 #include <cstdint>
@@ -7,10 +6,6 @@
 #include <string>
 
 namespace ShaderRecompiler {
-
-void TranslateControlFlowInstruction(IrBuilder& builder, const RdnaInstruction& instruction, const ControlFlowGraph& cfg) {
-    throw std::runtime_error("TranslateControlFlowInstruction not implemented");
-}
 
 void TranslationContext::sSubvectorLoop(const RdnaInstruction& inst, bool begin) {
     if (program.WaveSize() != 64u) {
@@ -65,12 +60,18 @@ void TranslationContext::sSaveexec(const RdnaInstruction& inst, IrOpcode operati
     else if (operation == IrOpcode::LogicalXor) operation = IrOpcode::BitwiseXor32;
     const bool writeFirst = SaveexecWritesDestinationFirst() && !writeResult;
     const bool execSource = sourceAt(inst, 0u).kind == RdnaOperandKind::ExecLo;
+    const bool pixel = program.Resources().stage == IrShaderStage::Pixel;
     if (write64) {
         const std::array<IrU32, 2> oldExec{IrU32(ir.GetExecLo()), IrU32(ir.GetExecHi())};
+        const IrU1 oldLane(ir.GetExec());
         const std::array<IrU32, 2> savedExec{hostExecWord(0u), hostExecWord(1u)};
-        if (writeFirst) writeU32Pair(inst.destination, savedExec);
+        const auto writeSaved = [&](const std::array<IrU32, 2>& words, IrU1 lane) {
+            writeU32Pair(inst.destination, words);
+            if (pixel) writeMaskLanes(inst.destination, lane, IrU1(ir.ConstantBool(true)));
+        };
+        if (writeFirst) writeSaved(savedExec, oldLane);
         const std::array<IrU32, 2> source = execSource ? oldExec : readU32Pair(sourceAt(inst, 0u));
-        if (!writeFirst && !writeResult) writeU32Pair(inst.destination, savedExec);
+        if (!writeFirst && !writeResult) writeSaved(savedExec, oldLane);
         IrValue& lowExecOperand = negateExec ? ir.BitwiseNot(oldExec[0].Value()) : oldExec[0].Value();
         IrValue& lowSourceOperand = negateSource ? ir.BitwiseNot(source[0].Value()) : source[0].Value();
         IrValue& highExecOperand = negateExec ? ir.BitwiseNot(oldExec[1].Value()) : oldExec[1].Value();
@@ -81,10 +82,11 @@ void TranslationContext::sSaveexec(const RdnaInstruction& inst, IrOpcode operati
         const IrU32 newExecHi(negateResult ? ir.BitwiseNot(highCombined) : highCombined);
         ir.SetExecLo(newExecLo.Value());
         ir.SetExecHi(newExecHi.Value());
-        if (writeResult) writeU32Pair(inst.destination, {hostExecWord(0u), hostExecWord(1u)});
+        const IrU1 newLane = threadBit({newExecLo, newExecHi});
+        if (writeResult) writeSaved({hostExecWord(0u), hostExecWord(1u)}, newLane);
         const IrU1 nonZero(ir.LogicalOr(ir.INotEqual(newExecLo.Value(), ir.Constant(0u)), ir.INotEqual(newExecHi.Value(), ir.Constant(0u))));
         ir.SetScc(nonZero.Value());
-        ir.SetExec(threadBit({newExecLo, newExecHi}).Value());
+        ir.SetExec(newLane.Value());
         return;
     }
     const IrU32 oldExec(ir.GetExecLo());
@@ -93,11 +95,7 @@ void TranslationContext::sSaveexec(const RdnaInstruction& inst, IrOpcode operati
     const bool lanes = program.WaveSize() == 32u && (execSource || maskLanesExact(sourceAt(inst, 0u)));
     const auto writeSaved = [&](IrU32 word, IrU1 lane) {
         writeRawU32(inst.destination, word);
-        if (lanes && inst.destination.kind == RdnaOperandKind::ScalarRegister) {
-            const auto reg = static_cast<ScalarReg>(inst.destination.reg);
-            ir.SetThreadBitScalarReg(reg, lane.Value());
-            ir.SetScalarMaskTag(reg, ir.ConstantBool(true));
-        }
+        if (pixel || (lanes && inst.destination.kind == RdnaOperandKind::ScalarRegister)) writeMaskLanes(inst.destination, lane, IrU1(ir.ConstantBool(true)));
     };
     if (writeFirst) writeSaved(savedExec, oldLane);
     const IrU32 source = execSource ? oldExec : readU32(sourceAt(inst, 0u));
@@ -332,8 +330,16 @@ void TranslationContext::movB32(const RdnaInstruction& inst, bool applyFloatModi
 }
 
 void TranslationContext::sMovB64(const RdnaInstruction& inst) {
-    const std::array<IrU32, 2> value = readU32Pair(sourceAt(inst, 0u));
+    const RdnaOperand& source = sourceAt(inst, 0u);
+    const std::array<IrU32, 2> value = readU32Pair(source);
+    if (program.Resources().stage != IrShaderStage::Pixel || !maskLanesExact(source)) {
+        writeU32Pair(inst.destination, value);
+        return;
+    }
+    const IrU1 lane = readMask(source);
+    const IrU1 valid = readMaskValid(source);
     writeU32Pair(inst.destination, value);
+    writeMaskLanes(inst.destination, lane, valid);
 }
 
 void TranslationContext::sWqm(const RdnaInstruction& inst, bool wide) {
@@ -376,6 +382,7 @@ IrU32 TranslationContext::readRelativeVector(const RdnaOperand& base, IrValue& o
         throw std::runtime_error(std::string(name) + " source is not a vector register");
     }
     const auto access = relativeWindowAccess(ir, program, base.reg, offset, name, currentVectorLimit);
+    relativeVectorRead = true;
     if (access.index == nullptr) {
         IrU32 result(ir.GetVectorReg(static_cast<VectorReg>(0)));
         for (std::uint32_t reg = base.reg; reg < currentVectorLimit; ++reg) {
@@ -389,6 +396,7 @@ IrU32 TranslationContext::readRelativeVector(const RdnaOperand& base, IrValue& o
 }
 
 void TranslationContext::writeRelativeVector(const RdnaOperand& base, IrValue& offset, IrU32 value, const char* name, IrValue* enable) {
+    if (sharedVectorCount != 0u) throw std::runtime_error(std::string(name) + " in a program with wave-shared VGPRs is not modeled");
     const RdnaOperand& destination = base;
     if (destination.kind != RdnaOperandKind::VectorRegister) {
         throw std::runtime_error(std::string(name) + " destination is not a vector register");
@@ -473,6 +481,7 @@ void TranslationContext::vReadlaneB32(const RdnaInstruction& inst) {
 void TranslationContext::vWritelaneB32(const RdnaInstruction& inst) {
     const IrU32 value = readU32(sourceAt(inst, 0u));
     const IrU32 lane = readU32(sourceAt(inst, 1u));
+    if (sharedVectorRegister(inst.destination.reg)) throw std::runtime_error("v_writelane_b32 to wave-shared VGPR v" + std::to_string(inst.destination.reg) + " is not modeled");
     const IrU32 previous = readRawU32(plainOperand(inst.destination));
     const IrU32 result(ir.Emit(IrOpcode::WriteLane, IrType::U32, {&value.Value(), &lane.Value(), &previous.Value()}));
     ir.SetVectorReg(static_cast<VectorReg>(inst.destination.reg), result.Value());
@@ -486,10 +495,6 @@ void TranslationContext::vPermlane16B32(const RdnaInstruction& inst, bool x16) {
     const PermlaneFlags flags{x16, inst.destination.opSel, inst.destination.opSelHi};
     const IrU32 result(ir.Emit(IrOpcode::Permlane16U32, IrType::U32, {&value.Value(), &selectLow.Value(), &selectHigh.Value(), &ir.GetExec(), &previous.Value()}, flags));
     writeRawU32(inst.destination, result);
-}
-
-void TranslateControlFlowInstruction(TranslationContext& context, const RdnaInstruction& instruction) {
-    throw std::runtime_error("TranslateControlFlowInstruction not implemented");
 }
 
 }

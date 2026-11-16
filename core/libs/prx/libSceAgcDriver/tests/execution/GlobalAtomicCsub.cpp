@@ -31,6 +31,8 @@ constexpr std::uint32_t Inputs = 4;
 constexpr std::uint32_t Results = 4;
 constexpr std::uint32_t Written = 3;
 constexpr std::uint32_t SharedOffset = Threads * 4u;
+constexpr std::uint32_t MaskedOffset = 0x200u;
+constexpr std::uint32_t MaskedExecLo = 0x55555555u;
 constexpr std::uint32_t Untouched = 0xdeadbeefu;
 constexpr std::uint32_t SharedPartial = 0x800186a0u;
 constexpr std::uint32_t SharedExhausted = 1000u;
@@ -48,6 +50,12 @@ alignas(256) constexpr std::array<std::uint32_t, 25> Code{
 
 alignas(256) constexpr std::array<std::uint32_t, 3> NoReturnCode{
     0xdcd08000, 0x00080a03, 0xbf810000,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 21> NoReturnRunCode{
+    0x34020084, 0x34060082, 0x4a0806ff, 0x00000200, 0xe0301000, 0x80000a01, 0xbf8c3f70, 0xdcd08000,
+    0x00080a03, 0xbefe03ff, 0x55555555, 0xdcd08000, 0x00080a04, 0xbefe03c1, 0xbf8c3f70, 0xbbfd0000,
+    0xe0701000, 0x80010001, 0xe0701004, 0x80010a01, 0xbf810000,
 };
 
 alignas(256) constexpr std::array<std::uint32_t, 3> FlatSegmentCode{
@@ -218,6 +226,46 @@ void Run(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::uint32_t waveS
     }
 }
 
+void RunNoReturn(AgcDriver::VulkanDevice& device, GuestBlock& guest, std::uint32_t waveSize) {
+    auto initial = Initial();
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) Put(initial, MaskedOffset + tid * 4u, RowOf(tid).memory);
+    std::memcpy(guest.Data(), initial.data(), BlockBytes);
+    Input.fill(0u);
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) Input[tid * Inputs] = RowOf(tid).subtrahend;
+    Output.fill(Untouched);
+    const auto userData = UserData(guest.Data());
+    const std::span<const std::uint32_t> code(NoReturnRunCode);
+    const auto result = Recompile(device, code, waveSize, userData);
+    device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.WaitIdle();
+
+    const auto wave = "global atomic csub without glc: wave" + std::to_string(waveSize) + " thread ";
+    auto expected = initial;
+    for (std::uint32_t tid = 0; tid < Threads; ++tid) {
+        const Row row = RowOf(tid);
+        const std::uint32_t lane = tid % waveSize;
+        const bool active = lane >= 32u || ((MaskedExecLo >> lane) & 1u) != 0u;
+        Put(expected, tid * 4u, SubtractClamped(row.memory, row.subtrahend));
+        if (active) Put(expected, MaskedOffset + tid * 4u, SubtractClamped(row.memory, row.subtrahend));
+        const auto* out = &Output[tid * Results];
+        Require(out[0] == tid, wave + std::to_string(tid) + " v0, the vdst field, is " + Hex(out[0]) + ", expected its thread id");
+        Require(out[1] == row.subtrahend, wave + std::to_string(tid) + " data register is " + Hex(out[1]) + ", expected " + Hex(row.subtrahend));
+        for (std::uint32_t j = 2; j < Results; ++j) {
+            Require(out[j] == Untouched, wave + std::to_string(tid) + " result " + std::to_string(j) + " was written");
+        }
+    }
+    for (std::uint32_t offset = 0; offset < BlockBytes; ++offset) {
+        const auto actual = guest.Data()[offset];
+        Require(actual == expected[offset], "global atomic csub without glc: wave" + std::to_string(waveSize) + " byte " + std::to_string(offset) + " is " + std::to_string(actual) + ", expected " + std::to_string(expected[offset]));
+    }
+}
+
+void CheckNoReturnAccepted(const AgcDriver::VulkanDevice& device, GuestBlock& guest) {
+    const auto userData = UserData(guest.Data());
+    const auto recompiled = Recompile(device, NoReturnCode, 32, userData);
+    Require(!recompiled.spirv.empty(), "global atomic csub: expected valid SPIR-V for instruction without glc");
+}
+
 void CheckRejected(const AgcDriver::VulkanDevice& device, GuestBlock& guest, std::span<const std::uint32_t> code, const std::string& reason) {
     const auto userData = UserData(guest.Data());
     std::string failure;
@@ -238,7 +286,9 @@ int main() {
         GuestBlock guest;
         Run(*device, guest, 32);
         Run(*device, guest, 64);
-        CheckRejected(*device, guest, NoReturnCode, "global_atomic_csub without glc is not supported");
+        RunNoReturn(*device, guest, 32);
+        RunNoReturn(*device, guest, 64);
+        CheckNoReturnAccepted(*device, guest);
         CheckRejected(*device, guest, FlatSegmentCode, "global_atomic_csub is available only in the global segment");
         std::puts("global atomic csub tests passed");
         return 0;

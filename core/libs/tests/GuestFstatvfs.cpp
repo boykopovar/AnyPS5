@@ -82,6 +82,8 @@ int main() {
     RequireVolume(file, filePath);
     Require(sceKernelLseek(file, 0, 1) == 3);
     Require(fstatvfs_nid_postfix(file, nullptr) == -1 && *__error_nid_postfix() == 14);
+    *__error_nid_postfix() = 0;
+    Require(fstatvfs_nid_postfix(file, reinterpret_cast<LibcStatvfs*>(0x10)) == -1 && *__error_nid_postfix() == 14);
 
     const int directory = sceKernelOpen("/anyps5-fstatvfs-test", SCE_KERNEL_O_RDONLY | SCE_KERNEL_O_DIRECTORY, 0);
     Require(directory >= 0);

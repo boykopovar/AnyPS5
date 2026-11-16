@@ -1,4 +1,6 @@
 #include "prx/libSceNpScoreRanking/include/Api.hpp"
+#include <cerrno>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -53,6 +55,7 @@ struct Request {
 };
 
 std::mutex scoreMutex;
+std::condition_variable& requestFinished = *new std::condition_variable();
 std::unordered_set<int> titleContexts;
 std::unordered_map<int, Request> requests;
 int nextTitleContext = 1;
@@ -77,7 +80,10 @@ int Finish(int reqId, int error) {
     const auto request = requests.find(reqId);
     if (request == requests.end()) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
     if (request->second.result == SCE_NP_COMMUNITY_ERROR_ABORTED) return SCE_NP_COMMUNITY_ERROR_ABORTED;
-    if (!request->second.result) request->second.result = error;
+    if (!request->second.result) {
+        request->second.result = error;
+        requestFinished.notify_all();
+    }
     return error;
 }
 
@@ -107,7 +113,13 @@ int RecordGameData(int reqId, const void* data, void* option) {
 
 int RecordScore(int reqId, const NpScoreGameInfo* gameInfo, void* option) {
     if (option) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
-    if (gameInfo && gameInfo->infoSize > GAME_INFO_MAX_SIZE) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (gameInfo) {
+        NpScoreGameInfo localInfo{};
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&localInfo, gameInfo, sizeof(localInfo));
+        errno = savedErrno;
+        if (!copied || localInfo.infoSize > GAME_INFO_MAX_SIZE) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    }
     return Offline(reqId);
 }
 
@@ -137,8 +149,19 @@ int GetFriendsRanking(int reqId, int includeSelf, void* rankArray, std::uint64_t
     if (includeSelf == 0) {
         if (option) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     } else if (option) {
-        if (option->size != FRIEND_RANKING_OPTION_SIZE) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
-        if (option->startSerialRank) startSerialRank = *option->startSerialRank;
+        NpScoreFriendRankingOption localOption{};
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&localOption, option, sizeof(localOption));
+        errno = savedErrno;
+        if (!copied || localOption.size != FRIEND_RANKING_OPTION_SIZE) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+        if (localOption.startSerialRank) {
+            std::uint32_t rank = 0;
+            const int savedRankErrno = errno;
+            const bool copiedRank = GuestCopyIn_nid_no_patch(&rank, localOption.startSerialRank, sizeof(rank));
+            errno = savedRankErrno;
+            if (!copiedRank) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+            startSerialRank = rank;
+        }
     }
     if (arrayNum > MAX_RANGE_PER_REQUEST) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     if (startSerialRank == 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
@@ -186,7 +209,10 @@ int APS5_VABI sceNpScoreAbortRequest(int reqId) {
     std::lock_guard lock(scoreMutex);
     const auto request = requests.find(reqId);
     if (request == requests.end()) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
-    if (!request->second.result) request->second.result = SCE_NP_COMMUNITY_ERROR_ABORTED;
+    if (!request->second.result) {
+        request->second.result = SCE_NP_COMMUNITY_ERROR_ABORTED;
+        requestFinished.notify_all();
+    }
     return 0;
 }
 
@@ -533,11 +559,13 @@ int APS5_VABI sceNpScoreSetTimeout(int id, int resolveRetry, int resolveTimeout,
 }
 
 int APS5_VABI sceNpScoreWaitAsync(int reqId, int* result) {
-    std::lock_guard lock(scoreMutex);
-    const auto request = requests.find(reqId);
-    if (request == requests.end()) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
-    if (!request->second.result) NotImplemented_nid_no_patch("sceNpScoreWaitAsync (a request with no operation started)");
-    if (result) *result = *request->second.result;
+    std::unique_lock lock(scoreMutex);
+    if (!requests.contains(reqId)) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
+    requestFinished.wait(lock, [reqId] {
+        const auto request = requests.find(reqId);
+        return request != requests.end() && request->second.result;
+    });
+    if (result) *result = *requests.at(reqId).result;
     return 0;
 }
 

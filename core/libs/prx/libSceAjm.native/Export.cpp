@@ -32,6 +32,7 @@ constexpr std::size_t VORBIS_IDENTIFICATION_SIZE = 30;
 constexpr std::size_t VORBIS_COMMENT_SIZE = 16;
 constexpr std::size_t WVORBIS_SETUP_MIN_SIZE = 9;
 constexpr std::size_t WVORBIS_SETUP_PART1_LENGTH_OFFSET = 7;
+constexpr std::size_t WVORBIS_LENGTH_FIELD_MAX = 0xFFFF;
 constexpr std::int32_t VORBIS_BLOCK_SIZE_MIN = 64;
 constexpr std::int32_t VORBIS_BLOCK_SIZE_MAX = 8192;
 constexpr std::uint8_t VORBIS_MAGIC[] {'v', 'o', 'r', 'b', 'i', 's'};
@@ -115,12 +116,13 @@ int APS5_VABI sceAjmDecWVorbisCreateHeaderPacket(WVorbisHeaderPacketParameter* p
 
     const auto* setup = static_cast<const std::uint8_t*>(param->setupPacket);
     const auto part1 = static_cast<std::uint16_t>(setup[WVORBIS_SETUP_PART1_LENGTH_OFFSET] | setup[WVORBIS_SETUP_PART1_LENGTH_OFFSET + 1] << 8);
+    if (part1 > param->setupPacketSize || param->setupPacketSize - part1 > WVORBIS_LENGTH_FIELD_MAX) return AJM_WVORBIS_ERROR_INVALID_SETUP;
     auto* out = static_cast<std::uint8_t*>(param->output);
     out = PutLittle(out, 0, 2);
     out = PutLittle(out, VORBIS_IDENTIFICATION_SIZE, 2);
     out = PutLittle(out, VORBIS_COMMENT_SIZE, 2);
     out = PutLittle(out, part1, 2);
-    out = PutLittle(out, static_cast<std::uint16_t>(param->setupPacketSize) - part1, 2);
+    out = PutLittle(out, static_cast<std::uint32_t>(param->setupPacketSize - part1), 2);
 
     out = PutVorbisHeaderStart(out, 1);
     out = PutLittle(out, 0, 4);

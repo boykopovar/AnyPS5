@@ -816,18 +816,21 @@ RdnaInstruction DecodeRdnaMubuf(std::uint32_t programCounter, std::span<const st
     const auto vaddr = word1 & 0xFFu;
     const auto srsrc = (word1 >> 16u) & 0x1Fu;
     const auto soffsetCode = (word1 >> 24u) & 0xFFu;
+    const bool lds = ((word0 >> 16u) & 1u) != 0u;
     if (const auto cacheOp = cacheControlOpcode(RdnaInstructionFamily::MUBUF, opcode); cacheOp != RdnaOpcode::Invalid) {
+        if (lds) throw std::runtime_error("unsupported MUBUF lds modifier on cache control");
         return cacheControlInstruction(RdnaInstructionFamily::MUBUF, cacheOp, opcode, programCounter, code, wordIndex);
     }
     const auto& info = lookupOpcode(mubufOpcodes, opcode, "MUBUF opcode is not supported");
-    if (((word0 >> 16u) & 1u) != 0u) {
-        throw std::runtime_error("unsupported MUBUF lds modifier");
+    if (lds && (info.opcode != RdnaOpcode::BufferLoadDword || vdata != 0u || (word0 & (1u << 17u)) != 0u || (word1 & ((1u << 23u) | (1u << 21u))) != 0u)) {
+        throw std::runtime_error("unsupported MUBUF lds modifier: requires untyped dword load, zero VDATA, no TFE or reserved bits");
     }
 
     RdnaInstruction instruction{};
     instruction.programCounter = programCounter;
     instruction.family = RdnaInstructionFamily::MUBUF;
     instruction.opcodeId = opcode;
+    instruction.lds = lds;
     instruction.memoryOffset = word0 & 0xFFFu;
     instruction.offen = ((word0 >> 12u) & 1u) != 0u;
     instruction.idxen = ((word0 >> 13u) & 1u) != 0u;
@@ -837,7 +840,7 @@ RdnaInstruction DecodeRdnaMubuf(std::uint32_t programCounter, std::span<const st
     applyMemoryInfo(instruction, info);
     setRawWords(instruction, code, wordIndex, 2u);
 
-    instruction.destination = d16Half(vectorRegister(vdata), instruction.op);
+    instruction.destination = lds ? RdnaOperand{} : d16Half(vectorRegister(vdata), instruction.op);
     instruction.source0 = vectorRegister(vaddr);
     instruction.source1 = scalarDescriptorBase(srsrc * 4u, 4u, "MUBUF resource descriptor register range overflow");
     instruction.source2 = scalarSource(soffsetCode);
@@ -991,9 +994,6 @@ RdnaInstruction DecodeRdnaDs(std::uint32_t programCounter, std::span<const std::
     const auto addr = word1 & 0xFFu;
     const auto& info = lookupOpcode(dsOpcodes, opcode, "DS opcode is not supported");
     const auto combinedOffset = offset0 | (offset1 << 8u);
-    if (info.opcode == RdnaOpcode::DsSwizzleB32 && combinedOffset >= 0xE000u) {
-        throw std::runtime_error("DS swizzle FFT mode is not supported");
-    }
     if (gds && (info.opcode == RdnaOpcode::DsSwizzleB32 || info.opcode == RdnaOpcode::DsBpermuteB32 || info.opcode == RdnaOpcode::DsPermuteB32 || info.opcode == RdnaOpcode::DsWriteAddtidB32 || info.opcode == RdnaOpcode::DsReadAddtidB32)) {
         throw std::runtime_error("DS lane operation is available only for LDS");
     }
@@ -1005,9 +1005,6 @@ RdnaInstruction DecodeRdnaDs(std::uint32_t programCounter, std::span<const std::
             throw std::runtime_error("DS write exchange destination register range overflow");
         }
     }
-    if (info.opcode == RdnaOpcode::DsWriteAddtidB32 && data1 != 0u) {
-        throw std::runtime_error("DS write addtid data1 operand is not supported");
-    }
     if (info.opcode == RdnaOpcode::DsCondxchg32RtnB64) {
         if (data0 + 2u > 256u) {
             throw std::runtime_error("DS conditional exchange source register range overflow");
@@ -1015,9 +1012,6 @@ RdnaInstruction DecodeRdnaDs(std::uint32_t programCounter, std::span<const std::
         if (vdst + 2u > 256u) {
             throw std::runtime_error("DS conditional exchange destination register range overflow");
         }
-    }
-    if (info.opcode == RdnaOpcode::DsReadAddtidB32 && (data0 != 0u || data1 != 0u)) {
-        throw std::runtime_error("DS read addtid data operands are not supported");
     }
 
     RdnaInstruction instruction{};

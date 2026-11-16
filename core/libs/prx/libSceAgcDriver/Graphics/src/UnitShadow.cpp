@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
@@ -24,13 +25,24 @@ namespace {
 
 constexpr std::uint64_t UnitBytes = 65536;
 constexpr std::size_t ReasonCount = static_cast<std::size_t>(PublishReason::Count);
-constexpr const char* ReasonNames[ReasonCount] = {"hook", "region", "indirect", "copy-src", "copy-dst", "fill", "fill-clear", "label", "keys", "scanout", "validate", "upload", "tail", "evict", "retire", "teardown", "address"};
+constexpr const char* ReasonNames[ReasonCount] = {"hook", "region", "indirect", "copy-src", "copy-dst", "fill", "fill-clear", "label", "keys", "scanout", "validate", "upload", "tail", "evict", "retire", "teardown", "address", "other"};
 
-std::uint64_t BudgetBytes() {
-    static const std::uint64_t budget = [] {
-        const char* text = std::getenv("APS5_UNIT_SHADOW_MIB");
-        return (text != nullptr ? std::strtoull(text, nullptr, 10) : 1024ull) << 20u;
-    }();
+std::uint64_t BudgetBytes(const Context& context) {
+    static const char* text = std::getenv("APS5_UNIT_SHADOW_MIB");
+    if (text != nullptr) return std::strtoull(text, nullptr, 10) << 20u;
+    static std::once_flag once;
+    static std::uint64_t budget = 0;
+    std::call_once(once, [&] {
+        if (context.memoryProperties2 == nullptr || context.physical == VK_NULL_HANDLE) {
+            budget = UnitShadowBudget(context.memory, nullptr);
+            return;
+        }
+        VkPhysicalDeviceMemoryBudgetPropertiesEXT reported{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+        VkPhysicalDeviceMemoryProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2};
+        properties.pNext = &reported;
+        context.memoryProperties2(context.physical, &properties);
+        budget = UnitShadowBudget(context.memory, &reported);
+    });
     return budget;
 }
 
@@ -320,7 +332,7 @@ void recordCopies(const UnitShadow& shadow, const std::vector<SlabCopies>& copie
     recorder->MarkCovered(publishedAccess);
     for (const auto& entry : copies) recorder->Keep(entry.slab);
     // CPU readers reach the import's bytes only after the hook's SyncThrough waits by this note.
-    recorder->NotePendingWrites(ranges);
+    recorder->NoteStampedWrites(ranges);
 }
 
 // APS5_SHADOW_VERIFY=1: the published bytes read back from the slabs equal the guest bytes.
@@ -349,8 +361,19 @@ void verifyPublished(const UnitShadow& shadow, const std::vector<SlabCopies>& co
     }
 }
 
+std::atomic<std::uint64_t> publishesInProgress{0};
+
+class PublishInProgress {
+public:
+    PublishInProgress() { publishesInProgress.fetch_add(1, std::memory_order_seq_cst); }
+    ~PublishInProgress() { publishesInProgress.fetch_sub(1, std::memory_order_seq_cst); }
+    PublishInProgress(const PublishInProgress&) = delete;
+    PublishInProgress& operator=(const PublishInProgress&) = delete;
+};
+
 // The publish of one shadow: `selected[k]` (k = unit - first) names the units the scope chose.
 std::size_t publishUnits(const std::shared_ptr<UnitShadow>& shadow, std::uint64_t first, std::uint64_t last, const std::vector<std::uint8_t>& selected, PublishReason reason) {
+    const PublishInProgress inProgress;
     auto& registry = Registry();
     std::vector<SlabCopies> copies;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
@@ -490,6 +513,14 @@ bool evictOne(Shadows& registry) {
 
 }
 
+std::uint64_t UnitShadowBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported) {
+    constexpr std::uint64_t Ceiling = std::uint64_t{1024} << 20u;
+    constexpr std::uint64_t Floor = std::uint64_t{128} << 20u;
+    const auto heap = LargestDeviceLocalHeap(memory);
+    if (reported == nullptr || !heap || reported->heapBudget[*heap] == 0) return Ceiling;
+    return std::clamp<std::uint64_t>(reported->heapBudget[*heap] / 8u, Floor, Ceiling);
+}
+
 bool UnitShadowEnabled() {
     static const bool enabled = std::getenv("APS5_NO_UNIT_SHADOW") == nullptr && GuestMemory::WriteWatched();
     return enabled;
@@ -518,7 +549,7 @@ PublishReason PublishReasonFor(const char* flushReason) {
     if (is("buffer copy count") || is("dispatch-cache entry")) return PublishReason::Validate;
     if (is("storage image creation") || is("storage refresh")) return PublishReason::Upload;
     if (is("address-based heaps")) return PublishReason::Address;
-    return PublishReason::Hook;
+    return PublishReason::Other;
 }
 
 ShadowSlab::ShadowSlab(const Context& context, VkBuffer buffer, VkDeviceMemory memory, std::uint64_t firstUnit, std::uint32_t units) : context(context), buffer(buffer), memory(memory), firstUnit(firstUnit), units(units) {}
@@ -582,6 +613,10 @@ bool anyShadowedLocked(const Shadows& registry, std::uint64_t address, std::size
     });
 }
 
+}
+
+bool AnyPublishInProgress() {
+    return publishesInProgress.load(std::memory_order_seq_cst) != 0;
 }
 
 bool AnyShadowedOverlaps(std::uint64_t address, std::size_t bytes) {
@@ -660,7 +695,7 @@ std::optional<ShadowDestination> ShadowDestinationFor(const Context& context, co
         for (;;) {
             {
                 std::lock_guard lock(registry.mutex);
-                if (registry.liveBytes + needed <= BudgetBytes()) break;
+                if (registry.liveBytes + needed <= BudgetBytes(context)) break;
             }
             if (!evictOne(registry)) {
                 Stats().refused.fetch_add(1, std::memory_order_relaxed);

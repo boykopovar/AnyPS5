@@ -239,12 +239,115 @@ int main() {
     require(wcsstr_nid_postfix(haystack, u"") == haystack);
     require(wcsstr_nid_postfix(haystack, u"three") == nullptr);
     require(wcsstr_nid_postfix(u"tw", u"two") == nullptr);
+    {
+        std::uint32_t seed = 54321;
+        const auto next = [&seed](std::uint32_t bound) {
+            seed = seed * 1103515245u + 12345u;
+            return (seed >> 16) % bound;
+        };
+        for (int round = 0; round < 4000; ++round) {
+            const std::uint32_t alphabet = 1 + next(3);
+            char16_t text[1537] = {};
+            char16_t pattern[41] = {};
+            const std::size_t textLength = next(2) == 0 ? next(64) : next(1536 + 1);
+            const std::size_t patternLength = next(40 + 1);
+            for (std::size_t i = 0; i < textLength; ++i) text[i] = static_cast<char16_t>(0xfffd + next(alphabet));
+            for (std::size_t i = 0; i < patternLength; ++i) pattern[i] = static_cast<char16_t>(0xfffd + next(alphabet));
+            if (patternLength != 0 && patternLength <= textLength && next(2) == 0) {
+                std::memcpy(text + next(static_cast<std::uint32_t>(textLength - patternLength + 1)), pattern, patternLength * sizeof(char16_t));
+            }
+            if (textLength != 0 && next(4) == 0) text[next(static_cast<std::uint32_t>(textLength))] = 0;
+            std::size_t effective = 0;
+            while (text[effective] != 0) ++effective;
+            const char16_t* expected = patternLength == 0 ? text : nullptr;
+            for (std::size_t i = 0; expected == nullptr && i + patternLength <= effective; ++i) {
+                if (same(text + i, pattern, patternLength)) expected = text + i;
+            }
+            require(wcsstr_nid_postfix(text, pattern) == expected);
+        }
+        for (int round = 0; round < 4000; ++round) {
+            char16_t word[4];
+            const std::size_t wordLength = 1 + next(4);
+            for (std::size_t i = 0; i < wordLength; ++i) word[i] = static_cast<char16_t>(0xfff0 + next(3));
+            std::u16string needle;
+            const std::size_t needleLength = 2 + next(60);
+            for (std::size_t i = 0; i < needleLength; ++i) needle.push_back(word[i % wordLength]);
+            needle.back() = static_cast<char16_t>(0xfff0 + next(4));
+            std::u16string haystack;
+            const std::size_t haystackLength = 300 + next(3000);
+            while (haystack.size() < haystackLength) {
+                if (next(64) == 0) {
+                    haystack += needle;
+                } else if (next(16) == 0) {
+                    haystack.push_back(static_cast<char16_t>(0xfff0 + next(4)));
+                } else {
+                    haystack.push_back(word[haystack.size() % wordLength]);
+                }
+            }
+            if (next(4) == 0) haystack[next(static_cast<std::uint32_t>(haystack.size()))] = 0;
+            std::size_t effective = 0;
+            while (effective < haystack.size() && haystack[effective] != 0) ++effective;
+            const char16_t* expected = nullptr;
+            for (std::size_t i = 0; expected == nullptr && i + needle.size() <= effective; ++i) {
+                if (same(haystack.c_str() + i, needle.c_str(), needle.size())) expected = haystack.c_str() + i;
+            }
+            require(wcsstr_nid_postfix(haystack.c_str(), needle.c_str()) == expected);
+        }
+        std::u16string periodic(1 << 20, u'a');
+        std::u16string unmatched(1 << 12, u'a');
+        unmatched.back() = u'b';
+        require(wcsstr_nid_postfix(periodic.c_str(), unmatched.c_str()) == nullptr);
+        periodic.back() = u'b';
+        require(wcsstr_nid_postfix(periodic.c_str(), unmatched.c_str()) == periodic.c_str() + periodic.size() - unmatched.size());
+    }
 
     require(wcspbrk_nid_postfix(haystack, u"wt") == haystack + 4);
     require(wcspbrk_nid_postfix(haystack, u"xyz") == nullptr);
     require(wcsspn_nid_postfix(u"aabbc", u"ab") == 4);
     require(wcsspn_nid_postfix(u"abc", u"") == 0);
     require(wcscspn_nid_postfix(u"abcde", u"dx") == 3 && wcscspn_nid_postfix(u"abc", u"") == 3 && wcscspn_nid_postfix(u"", u"a") == 0 && wcscspn_nid_postfix(u"abc", u"a") == 0);
+    {
+        std::uint32_t seed = 2468;
+        const auto next = [&seed](std::uint32_t bound) {
+            seed = seed * 1103515245u + 12345u;
+            return (seed >> 16) % bound;
+        };
+        for (int round = 0; round < 20000; ++round) {
+            const std::uint32_t pages = 1 + next(48);
+            const auto unit = [&] { return static_cast<char16_t>(((next(pages) * 0x0507u) & 0xff00u) | (1 + next(255))); };
+            char16_t set[81] = {};
+            char16_t text[65] = {};
+            const std::size_t setLength = next(80 + 1);
+            const std::size_t textLength = next(64 + 1);
+            for (std::size_t i = 0; i < setLength; ++i) set[i] = unit();
+            for (std::size_t i = 0; i < textLength; ++i) text[i] = next(2) == 0 && setLength != 0 ? set[next(static_cast<std::uint32_t>(setLength))] : unit();
+            const auto member = [&](char16_t value) {
+                for (std::size_t i = 0; i < setLength; ++i) {
+                    if (set[i] == value) return true;
+                }
+                return false;
+            };
+            std::size_t span = 0;
+            while (span < textLength && member(text[span])) ++span;
+            std::size_t complement = 0;
+            while (complement < textLength && !member(text[complement])) ++complement;
+            require(wcsspn_nid_postfix(text, set) == span);
+            require(wcscspn_nid_postfix(text, set) == complement);
+            require(wcspbrk_nid_postfix(text, set) == (complement < textLength ? text + complement : nullptr));
+            char16_t copy[65] = {};
+            std::memcpy(copy, text, sizeof(copy));
+            char16_t* state = nullptr;
+            std::size_t position = 0;
+            for (char16_t* token = wcstok_nid_postfix(copy, set, &state); token != nullptr; token = wcstok_nid_postfix(nullptr, set, &state)) {
+                while (position < textLength && member(text[position])) ++position;
+                require(token == copy + position);
+                while (position < textLength && !member(text[position])) ++position;
+                ++position;
+            }
+            while (position < textLength && member(text[position])) ++position;
+            require(position >= textLength);
+        }
+    }
 
     char16_t tokens[] = u",,one,,two;three,";
     char16_t* last = tokens;

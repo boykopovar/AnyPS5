@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include <csignal>
+#include "prx/libc/include/HostThread.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -18,6 +19,7 @@
 #include <atomic>
 #include <stdexcept>
 #include "prx/libc/include/Shutdown.hpp"
+#include "prx/libc/include/RunReport.hpp"
 
 #include "prx/libc/include/General.hpp"
 #include "SceTypes.hpp"
@@ -54,7 +56,7 @@ extern "C" void LibcRequestShutdown_nid_postfix() {
 extern "C" void LibcRequestExit_nid_postfix(int code) {
     if (exitRequested.exchange(true)) return;
     LibcRequestShutdown_nid_postfix();
-    std::thread([code] { LibcExitWithoutHandlers_nid_no_patch(code); }).detach();
+    Libc::StartHostThread([code] { LibcExitWithoutHandlers_nid_no_patch(code); }).detach();
 }
 
 extern "C" [[noreturn]] void LibcAwaitExit_nid_postfix() {
@@ -183,6 +185,7 @@ extern "C" {
             std::fputs("[libc] host exit drain failed\n", stderr);
         }
     }
+    LibcRunReportFinishExit_nid_no_patch(code);
     LibcRunEndFlush_nid_no_patch();
 #ifdef _WIN32
     TerminateProcess(GetCurrentProcess(), static_cast<UINT>(code));
@@ -198,6 +201,7 @@ void LibcStartExit_nid_postfix() {
     StartExit();
     CxaFinalize_nid_no_patch(nullptr);
     LibcRunShutdown_nid_postfix();
+    LibcRunReportFinishExit_nid_no_patch(code);
     std::exit(code);
 }
 
@@ -314,7 +318,7 @@ extern "C" void RegisterChildProcess_nid_no_patch(std::int32_t processId, std::i
     childProcesses.push_back({processId, processHandle});
 }
 
-extern "C" std::int64_t WaitChildProcess_nid_no_patch(std::int32_t processId, unsigned options, int* status) {
+extern "C" std::int64_t WaitChildProcess_nid_no_patch(std::int32_t processId, unsigned options, int* status, bool requireUsage) {
     const bool noWait = (options & 1u) != 0;
     const auto matches = [&](const ChildProcess& child) { return processId <= 0 || child.processId == processId; };
     {
@@ -336,6 +340,7 @@ extern "C" std::int64_t WaitChildProcess_nid_no_patch(std::int32_t processId, un
                     *__error_nid_postfix() = 14;
                     return -1;
                 }
+                if (requireUsage) NotImplemented_nid_no_patch("wait4: child resource accounting on Windows");
                 encoded = ChildProcessWaitStatus(code);
                 CloseHandle(handle);
                 reaped = child.processId;

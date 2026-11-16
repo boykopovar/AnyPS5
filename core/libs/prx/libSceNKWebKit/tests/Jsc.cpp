@@ -790,6 +790,13 @@ void TestGcProtectWeakAndWatchdog() {
     JSContextGroupClearExecutionTimeLimit(group);
     Require(JSValueToNumber(ctx, EvalUtf8(ctx, "2 + 2"), nullptr) == 4.0);
 
+    JSContextGroupSetExecutionTimeLimit(group, 1.0e12, nullptr, nullptr);
+    JSValueRef hugeLimitExc = nullptr;
+    JSValueRef hugeLimitRes = EvalUtf8(ctx, "var s = 0; for (var i = 0; i < 100000; i++) s += i; s", &hugeLimitExc);
+    Require(hugeLimitExc == nullptr && hugeLimitRes != nullptr);
+    Require(JSValueToNumber(ctx, hugeLimitRes, nullptr) == 4999950000.0);
+    JSContextGroupClearExecutionTimeLimit(group);
+
     JSGlobalContextRelease(ctx);
     JSContextGroupRelease(group);
 }

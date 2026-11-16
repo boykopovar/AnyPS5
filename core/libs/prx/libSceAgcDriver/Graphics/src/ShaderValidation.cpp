@@ -137,6 +137,7 @@ struct Module {
                 return;
             }
             if (stage == Stage::TessellationControl || stage == Stage::TessellationEvaluation) {
+                if (stage == Stage::TessellationEvaluation && !input && value == spv::BuiltInLayer && layerOutput && (signature == "u32" || signature == "i32")) return;
                 const bool clipInput = value == spv::BuiltInClipDistance && signature.size() == 6 && signature.starts_with("f32[") && signature[4] >= '1' && signature[4] <= '8' && signature[5] == ']';
                 Require(input && (clipInput || (value == spv::BuiltInPosition && signature == "f32x4") || (value == spv::BuiltInTessCoord && stage == Stage::TessellationEvaluation && signature == "f32x3") || ((value == spv::BuiltInInvocationId || value == spv::BuiltInPrimitiveId || value == spv::BuiltInPatchVertices) && (signature == "i32" || signature == "u32"))), "unsupported tessellation built-in");
                 return;
@@ -231,6 +232,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
                     case spv::CapabilityGroupNonUniformBallot: subgroupOperations = VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_BALLOT_BIT; break;
                     case spv::CapabilityGroupNonUniformShuffle: subgroupOperations = VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_SHUFFLE_BIT; break;
                     case spv::CapabilityGroupNonUniformArithmetic: subgroupOperations = VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_ARITHMETIC_BIT; break;
+                    case spv::CapabilityGroupNonUniformQuad: subgroupOperations = VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_QUAD_BIT; break;
                     default: break;
                 }
                 const bool isSubgroupCapability = subgroupOperations != 0;
@@ -650,7 +652,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
     if (mesh) Require(module.primitiveIndices == state.stages.mesh->outputPrimitiveSize, "mesh shader does not export primitive indices");
     if (fragment) Require(module.primitiveInputs == 0 || !primitiveLocations.empty(), "per-primitive pixel inputs need the barycentric emulation layout");
     if (fragment) Require(!module.meshCapability || module.primitiveInputs != 0, "a pixel shader declares mesh shading without a per-primitive input");
-    if (stage == Stage::Vertex || mesh || ((evaluation || geometry) && !state.rasterizerDiscard)) Require(module.position, "vertex shader does not export position");
+    if (mesh || ((stage == Stage::Vertex || evaluation || geometry) && !state.rasterizerDiscard)) Require(module.position, "vertex shader does not export position");
     return module;
 }
 

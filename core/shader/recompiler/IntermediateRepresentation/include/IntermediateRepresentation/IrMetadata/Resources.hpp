@@ -112,6 +112,7 @@ struct ImageResource {
     bool foldTexelOffsetsOnly = false;
     bool convertedSamples = false;
     bool remappedDepth1D = false;
+    bool gathered = false;
     bool layerRowsCompatible = true;
     bool layerRows = false;
     std::uint32_t maxArrayLayers = 0u;
@@ -169,6 +170,10 @@ inline bool SamplesBaseLevelIfUnnormalized(const SamplerResource& sampler) {
 
 inline bool MirrorsIfUnnormalized(const SamplerResource& sampler) {
     return sampler.table == NoTable && !sampler.depthCompare && sampler.uses != 0u && ((sampler.uses & ~static_cast<std::uint32_t>(SamplerUseExplicitLod | SamplerUseOffset | SamplerUseNonZeroLod)) == 0u || SamplesBaseLevelIfUnnormalized(sampler));
+}
+
+inline bool AppliesLodBiasInShader(const SamplerResource& sampler) {
+    return sampler.table == NoTable && (sampler.uses & (SamplerUseExplicitLod | SamplerUseImplicitLod | SamplerUseGradient)) != 0u;
 }
 
 struct SampledResourcePair {

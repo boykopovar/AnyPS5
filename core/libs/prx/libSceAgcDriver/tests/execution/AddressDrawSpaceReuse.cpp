@@ -6,6 +6,8 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
@@ -99,8 +101,26 @@ constexpr std::array<std::uint32_t, 12> StoringPixelCode{
     0xbf810000u,
 };
 
+constexpr std::array<std::uint32_t, 17> SampledPixelCode{
+    0xbe94047eu, 0xbefe0a7eu,
+    0x100000ffu, 0x3c800000u,
+    0x100202ffu, 0x3c800000u,
+    0xf0800f08u, 0x00610200u,
+    0x7e0c0280u,
+    0xdc308000u, 0x07000006u,
+    0xbf8c3f70u,
+    0x87fe147eu,
+    0x100e0f02u,
+    0xf800180fu, 0x07070707u,
+    0xbf810000u,
+};
+
 constexpr std::size_t StoringCodeOffset = 768;
+constexpr std::size_t SampledCodeOffset = 1024;
 constexpr std::size_t MultisampleTargetOffset = 32768;
+constexpr std::uint32_t TexelSide = 64;
+constexpr std::uint32_t Format8888Unorm = 56;
+constexpr std::uint32_t Type2D = 9;
 
 alignas(16) constexpr std::array<std::uint32_t, 4> OutsideWords{0x11111111u, 0x22222222u, 0x33333333u, 0x44444444u};
 
@@ -112,6 +132,17 @@ const ColorTargetLayout TargetLayout(Width, Height, ColorTileMode::RenderTarget,
 
 std::uint64_t AddressOf(const void* data) {
     return static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(data));
+}
+
+std::array<std::uint32_t, 12> SampledResources(std::uint64_t texels) {
+    return {
+        static_cast<std::uint32_t>(texels >> 8u),
+        static_cast<std::uint32_t>((texels >> 40u) & 0xffu) | (Format8888Unorm << 20u) | (((TexelSide - 1u) & 3u) << 30u),
+        ((TexelSide - 1u) >> 2u) | ((TexelSide - 1u) << 14u),
+        0xfacu | (Type2D << 28u),
+        0u, 0u, 0u, 0u,
+        0u, 0xfffu << 12u, 1u << 26u, 0u,
+    };
 }
 
 class Pages {
@@ -309,7 +340,7 @@ struct Scene {
     Pages pixels{TargetLayout.Bytes()};
     Pages vertices{BlockBytes};
     Pages code{BlockBytes};
-    Pages constants{BlockBytes * 2};
+    Pages constants{BlockBytes};
     Pages spare{BlockBytes};
     Pages ring{BlockBytes};
     bool cachedVertex = false;
@@ -329,6 +360,7 @@ struct Scene {
         std::memcpy(code.Data() + PixelCodeOffset, PixelCode.data(), sizeof(PixelCode));
         std::memcpy(code.Data() + IndirectCodeOffset, IndirectPixelCode.data(), sizeof(IndirectPixelCode));
         std::memcpy(code.Data() + StoringCodeOffset, StoringPixelCode.data(), sizeof(StoringPixelCode));
+        std::memcpy(code.Data() + SampledCodeOffset, SampledPixelCode.data(), sizeof(SampledPixelCode));
         code.Register(false);
         constants.Register(true);
         spare.Register(true);
@@ -372,7 +404,7 @@ struct Scene {
         shaders[0] = {ShaderStage::Vertex, &vertexResults.back(), 0};
     }
 
-    void Point(std::uint64_t slot, std::span<const std::uint32_t> program = PixelCode, std::size_t offset = PixelCodeOffset) {
+    void Point(std::uint64_t slot, std::span<const std::uint32_t> program = PixelCode, std::size_t offset = PixelCodeOffset, std::span<const std::uint32_t> resources = {}) {
         const auto target = device.Target();
         ShaderRecompiler::ShaderPixelStageInfo pixel{};
         pixel.inputAddr = ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionX) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionY);
@@ -380,7 +412,8 @@ struct Scene {
         pixel.posY = true;
         pixel.targetOutputMode[0] = 9;
         pixel.targetExportMapping.fill(0xe4u);
-        const std::vector<std::uint32_t> userData{static_cast<std::uint32_t>(slot), static_cast<std::uint32_t>(slot >> 32u), 0u, 0u};
+        std::vector<std::uint32_t> userData{static_cast<std::uint32_t>(slot), static_cast<std::uint32_t>(slot >> 32u), 0u, 0u};
+        userData.insert(userData.end(), resources.begin(), resources.end());
         const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{code.Address(offset), std::as_bytes(program)}}};
         ShaderRecompiler::RecompileRequest fragment{
             {ShaderStage::Fragment, code.Address(offset), program, 0, {}},
@@ -727,6 +760,7 @@ void RingOldSlotWrite(Scene& scene) {
 
 void RingRefusals(Scene& scene) {
     using AgcDriver::Graphics::AddressDrawReuse;
+    const bool inPlace = std::getenv("APS5_NO_MOVED_BUFFERS_IN_PLACE") == nullptr;
     {
         Ring ring(scene);
         Require(ring.Draw(90) == 90, "address draw space reuse: the first draw of the ring did not read its slot");
@@ -764,7 +798,27 @@ void RingRefusals(Scene& scene) {
         }
         const auto color = scene.Color();
         Require(color == 170, "address draw space reuse: the draw whose moved vertex buffer a pending fill overlaps read " + std::to_string(color) + " instead of 170");
-        Require(outcomes[AddressDrawReuse::MovedBuffer] == 1 && outcomes.Total() == 1, "address draw space reuse: a draw whose moved read-only vertex buffer a pending GPU write overlaps counted " + outcomes.Text() + ", expected one refusal for a moved GuestBuffers element");
+        Require(outcomes[inPlace ? AddressDrawReuse::Reused : AddressDrawReuse::MovedBuffer] == 1 && outcomes.Total() == 1, "address draw space reuse: a draw whose moved read-only vertex buffer a pending GPU write overlaps counted " + outcomes.Text() + (inPlace ? ", expected one reuse with the buffer read in place" : ", expected one refusal for a moved GuestBuffers element"));
+    }
+    {
+        constexpr std::size_t Offset = 4096;
+        auto flat = Triangle;
+        flat[2] = flat[0];
+        std::memcpy(scene.spare.Data() + Offset, flat.data(), sizeof(flat));
+        std::array<std::uint32_t, 4> third;
+        std::memcpy(third.data(), Triangle[2].data(), sizeof(third));
+        scene.Store(scene.constants, 0, 110);
+        const Outcomes outcomes;
+        scene.Fetch(scene.spare, Offset);
+        {
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            Require(scene.device.FillBuffer(scene.spare.Address(Offset + 2 * sizeof(Triangle[0])), sizeof(third), third), "address draw space reuse: the fill of the moved vertex buffer's third vertex was not recorded on the GPU");
+            const AgcDriver::Pm4::DrawParameters draw{0, static_cast<std::uint32_t>(Triangle.size()), 0, 1, 0, false};
+            scene.device.Draw(scene.state, draw, scene.shaders, scene.snapshots);
+        }
+        const auto color = scene.Color();
+        Require(color == 110, "address draw space reuse: the draw whose moved vertex buffer a pending fill completes read " + std::to_string(color) + " instead of 110: it did not see the vertex the GPU wrote");
+        Require(outcomes[inPlace ? AddressDrawReuse::Reused : AddressDrawReuse::MovedBuffer] == 1 && outcomes.Total() == 1, "address draw space reuse: a draw whose moved vertex buffer a pending fill completes counted " + outcomes.Text() + (inPlace ? ", expected one reuse with the buffer read in place" : ", expected one refusal for a moved GuestBuffers element"));
     }
     scene.Fetch(0);
     scene.cachedVertex = false;
@@ -842,6 +896,36 @@ void MultisampleTargetOutside(Scene& scene) {
     RetireMultisampleTargets(scene);
     Require(color == 160, "address draw space reuse: the draw after a resident multisample target appeared outside its space read " + std::to_string(color) + " instead of 160");
     Require(outcomes[AddressDrawReuse::Reused] == 1 && outcomes.Total() == 1 && Builds() == built, "address draw space reuse: a draw after a resident multisample target appeared outside its space counted " + outcomes.Text() + " and " + std::to_string(Builds() - built) + " builds, expected one reuse");
+}
+
+void SampledTexture(Scene& scene) {
+    using AgcDriver::Graphics::AddressDrawReuse;
+    using AgcDriver::Graphics::ShaderResources;
+    const bool records = !AgcDriver::Graphics::RuntimeSwitches::Set(AgcDriver::Graphics::RuntimeSwitch::NoSpaceReuseRecords);
+    const bool profiled = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+    const bool watched = AgcDriver::GuestMemory::WriteWatched();
+    Pages texels{BlockBytes};
+    std::memset(texels.Data(), 255, BlockBytes);
+    Require(!watched || AgcDriver::GuestMemory::Watched(texels.Address(), BlockBytes), "address draw space reuse: the texture's pages are not write-watched");
+    const auto resources = SampledResources(texels.Address());
+    scene.Store(scene.constants, 0, 150);
+    scene.Point(scene.constants.Address(), SampledPixelCode, SampledCodeOffset, resources);
+    Require(scene.DrawnColor() == 150 && scene.DrawnColor() == 150, "address draw space reuse: the draws that sample a texture did not read the guest constant");
+    const Outcomes outcomes;
+    const auto walks = ShaderResources::FullWalkNanoseconds();
+    for (int draw = 0; draw < 2; ++draw) {
+        const auto color = scene.DrawnColor();
+        Require(color == 150, "address draw space reuse: a repeated draw that samples a texture read " + std::to_string(color) + " instead of 150");
+    }
+    const auto walked = ShaderResources::FullWalkNanoseconds();
+    Require(outcomes[AddressDrawReuse::Reused] == 2 && outcomes.Total() == 2, "address draw space reuse: repeated draws that sample a texture counted " + outcomes.Text() + ", expected both reused");
+    constexpr auto noRecord = static_cast<std::size_t>(ShaderResources::FastFail::NoRecord);
+    if (profiled && records && watched) Require(walked == walks, "address draw space reuse: a reused build that samples a texture took the full walk instead of the fast proof of its validation records");
+    if (profiled && !records) Require(walked[noRecord] > walks[noRecord], "address draw space reuse: with APS5_NO_SPACE_REUSE_RECORDS=1 a reused build that samples a texture did not take the full walk for want of a validation record");
+    std::memset(texels.Data(), 128, BlockBytes);
+    const auto color = scene.DrawnColor();
+    Require(color == 75, "address draw space reuse: the draw after a CPU write into its texture read " + std::to_string(color) + " instead of 75");
+    scene.Point(scene.constants.Address());
 }
 
 class InjectedFailures {
@@ -974,7 +1058,7 @@ struct NamedCase {
     Case run;
 };
 
-constexpr std::array<NamedCase, 14> DefaultCases{{
+constexpr std::array<NamedCase, 15> DefaultCases{{
     {"unchanged", UnchangedInputs},
     {"cpu-write", CpuWrite},
     {"idle-free", IdleFree},
@@ -989,6 +1073,7 @@ constexpr std::array<NamedCase, 14> DefaultCases{{
     {"ring-refusals", RingRefusals},
     {"multisample-target-inside", MultisampleTargetInside},
     {"multisample-target-outside", MultisampleTargetOutside},
+    {"sampled-texture", SampledTexture},
 }};
 
 constexpr std::array<NamedCase, 2> HeldCases{{
