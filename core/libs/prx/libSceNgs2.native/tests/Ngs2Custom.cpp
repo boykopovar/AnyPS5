@@ -11,6 +11,16 @@
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 struct Calls {
     std::vector<std::uint32_t> setupVoices;
     std::vector<std::uint32_t> cleanupVoices;
@@ -1567,6 +1577,28 @@ static void TestMasteringPeakMeterState() {
     plain.Destroy();
 }
 
+static void TestMasteringPeakMeterStateLargerThanTheBuffer() {
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    const std::size_t page = info.dwPageSize;
+    auto* region = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, 2 * page, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    DWORD previous = 0;
+    Require(region != nullptr && VirtualProtect(region + page, page, PAGE_NOACCESS, &previous) != 0);
+#else
+    const auto page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* mapping = mmap(nullptr, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(mapping != MAP_FAILED);
+    auto* region = static_cast<std::uint8_t*>(mapping);
+    Require(mprotect(region + page, page, PROT_NONE) == 0);
+#endif
+    const MasteringFixture fixture(TitleRackOption(2), 2, 0);
+    for (const std::size_t size : {std::size_t{0x80000000}, std::numeric_limits<std::size_t>::max()}) {
+        Require(sceNgs2VoiceGetState(fixture.voice, reinterpret_cast<Ngs2VoiceState*>(region), size) == SCE_NGS2_ERROR_INVALID_OUT_ADDRESS);
+    }
+    fixture.Destroy();
+}
+
 static void TestMasteringOutputModule() {
     const MasteringFixture fixture(OutputRackOption(2), 2, 0);
     auto out = RenderChannels(fixture.system, 2);
@@ -1585,6 +1617,7 @@ static void TestCustomMasteringModules() {
     TestMixMatrixModule();
     TestMasteringModuleParams();
     TestMasteringPeakMeterState();
+    TestMasteringPeakMeterStateLargerThanTheBuffer();
     TestMasteringOutputModule();
 }
 #endif

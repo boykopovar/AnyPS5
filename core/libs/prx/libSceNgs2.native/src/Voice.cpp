@@ -1,5 +1,6 @@
 #include "prx/libSceNgs2.native/include/Api.hpp"
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cmath>
 #include <cstddef>
@@ -1374,11 +1375,17 @@ int APS5_VABI sceNgs2VoiceGetState(uintptr_t voice_handle, Ngs2VoiceState* state
             const bool meter = Ngs2HasCustomModule(*voice.rack, SCE_NGS2_CUSTOM_MODULE_ID_PEAK_METER);
             if (state_size != sizeof(Ngs2VoiceState) && !(meter && state_size >= SCE_NGS2_CUSTOM_PEAK_METER_VOICE_STATE_SIZE)) return SCE_NGS2_ERROR_INVALID_OUT_SIZE;
             if (state_size > sizeof(Ngs2VoiceState) && voice.peakMeterMode != 0) throw std::runtime_error("NGS2: the peak meter module state of mode " + std::to_string(voice.peakMeterMode) + " is not implemented");
-            std::vector<std::uint8_t> mastering(state_size, 0);
             Ngs2VoiceState common{};
             common.state_flags = voice.stateFlags;
-            std::memcpy(mastering.data(), &common, sizeof(common));
-            if (!WriteGuestBytes(state, mastering.data(), state_size)) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+            if (!WriteGuest(state, common)) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+            static constexpr std::array<std::uint8_t, 4096> zeros{};
+            auto* tail = reinterpret_cast<std::uint8_t*>(state) + sizeof(common);
+            for (std::size_t left = state_size - sizeof(common); left != 0;) {
+                const auto chunk = std::min(left, zeros.size());
+                if (!WriteGuestBytes(tail, zeros.data(), chunk)) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
+                tail += chunk;
+                left -= chunk;
+            }
             return SCE_NGS2_OK;
         }
         default: throw std::runtime_error("NGS2: voice state of rack " + Ngs2Hex(voice.rack->rackId) + " is not implemented");
