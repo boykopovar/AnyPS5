@@ -119,6 +119,8 @@ int main() {
     Require(sceKernelWaitSema(sem, 4, nullptr) == SCE_KERNEL_ERROR_EINVAL);
     remaining = 1000;
     Require(sceKernelWaitSema(sem, 4, &remaining) == SCE_KERNEL_ERROR_EINVAL && remaining == 1000);
+    Require(sceKernelWaitSema(sem, 0, &remaining) == SCE_KERNEL_ERROR_EINVAL && remaining == 1000);
+    Require(sceKernelWaitSema(sem, -1, &remaining) == SCE_KERNEL_ERROR_EINVAL && remaining == 1000);
 
     Require(sceKernelSignalSema(sem, 1) == SCE_OK);
     Require(sceKernelWaitSema(sem, 1, nullptr) == SCE_OK);

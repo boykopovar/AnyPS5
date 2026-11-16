@@ -35,6 +35,7 @@
 #include <sys/stat.h>
 #ifdef __linux__
 #include <sys/uio.h>
+#include "prx/libc/include/specifics/linux/HostMapping.hpp"
 #elif defined(__APPLE__)
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
@@ -823,6 +824,43 @@ extern "C" std::filesystem::path ResolveArchivedPath_nid_no_patch(const char* pa
     return ResolveLocked(path, module, true);
 }
 
+extern "C" bool GuestWritable_nid_no_patch(void* destination, std::size_t bytes) {
+    struct RestoreErrno {
+        int value = errno;
+        ~RestoreErrno() { errno = value; }
+    } restore;
+    if (bytes == 0) return true;
+    const auto start = reinterpret_cast<std::uintptr_t>(destination);
+    if (start == 0 || bytes > UINTPTR_MAX - start) return false;
+    for (auto address = start; address < start + bytes;) {
+#ifdef _WIN32
+        MEMORY_BASIC_INFORMATION memory{};
+        if (VirtualQuery(reinterpret_cast<LPCVOID>(address), &memory, sizeof(memory)) != sizeof(memory) || memory.State != MEM_COMMIT ||
+            (memory.Protect & PAGE_GUARD) != 0 ||
+            (memory.Protect & (PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) == 0) return false;
+        address = reinterpret_cast<std::uintptr_t>(memory.BaseAddress) + memory.RegionSize;
+#elif defined(__linux__)
+        const auto mapping = HostMapping::Find(address, "GuestWritable");
+        if (!mapping || !mapping->writable) return false;
+        address = mapping->end;
+#elif defined(__APPLE__)
+        mach_vm_address_t region = address;
+        mach_vm_size_t size = 0;
+        vm_region_basic_info_data_64_t info{};
+        mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
+        mach_port_t object = MACH_PORT_NULL;
+        const auto result = mach_vm_region(mach_task_self(), &region, &size, VM_REGION_BASIC_INFO_64,
+            reinterpret_cast<vm_region_info_t>(&info), &count, &object);
+        if (object != MACH_PORT_NULL) mach_port_deallocate(mach_task_self(), object);
+        if (result != KERN_SUCCESS || region > address || (info.protection & VM_PROT_WRITE) == 0) return false;
+        address = region + size;
+#else
+        throw std::runtime_error("GuestWritable: no checked write is available on this host");
+#endif
+    }
+    return true;
+}
+
 extern "C" bool GuestCopyOut_nid_no_patch(void* destination, const void* source, std::size_t bytes) {
     if (bytes == 0) return true;
     const auto start = reinterpret_cast<std::uintptr_t>(destination);
@@ -857,6 +895,67 @@ extern "C" bool GuestCopyOut_nid_no_patch(void* destination, const void* source,
         reinterpret_cast<vm_offset_t>(source), static_cast<mach_msg_type_number_t>(bytes)) == KERN_SUCCESS;
 #else
     throw std::runtime_error("GuestCopyOut: no checked write is available on this host");
+#endif
+}
+
+extern "C" bool GuestCopyOutRows_nid_no_patch(void* destination, std::size_t destinationPitch, const void* source, std::size_t sourcePitch, std::size_t rowBytes, std::size_t rows) {
+    if (rows == 0 || rowBytes == 0) return true;
+    const auto start = reinterpret_cast<std::uintptr_t>(destination);
+    if (start == 0 || rowBytes > UINTPTR_MAX - start || (rows > 1 && destinationPitch > (UINTPTR_MAX - start - rowBytes) / (rows - 1))) return false;
+    auto* target = static_cast<std::uint8_t*>(destination);
+    const auto* from = static_cast<const std::uint8_t*>(source);
+#if defined(_WIN32) || defined(__linux__)
+    const GuestArena::HostWrite guard(destination, (rows - 1) * destinationPitch + rowBytes);
+    if (!guard.Open()) return false;
+#endif
+#ifdef _WIN32
+    std::uintptr_t writableStart = 0;
+    std::uintptr_t writableEnd = 0;
+    for (std::size_t row = 0; row < rows; ++row) {
+        const auto rowStart = start + row * destinationPitch;
+        for (auto address = rowStart; address < rowStart + rowBytes;) {
+            if (address >= writableStart && address < writableEnd) {
+                address = writableEnd;
+                continue;
+            }
+            MEMORY_BASIC_INFORMATION memory{};
+            if (VirtualQuery(reinterpret_cast<LPCVOID>(address), &memory, sizeof(memory)) != sizeof(memory) || memory.State != MEM_COMMIT ||
+                (memory.Protect & PAGE_GUARD) != 0 ||
+                (memory.Protect & (PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) == 0) return false;
+            writableStart = reinterpret_cast<std::uintptr_t>(memory.BaseAddress);
+            writableEnd = writableStart + memory.RegionSize;
+            address = writableEnd;
+        }
+    }
+    for (std::size_t row = 0; row < rows; ++row) std::memcpy(target + row * destinationPitch, from + row * sourcePitch, rowBytes);
+    return true;
+#elif defined(__linux__)
+    constexpr std::size_t Batch = 1024;
+    std::array<iovec, Batch> local{};
+    std::array<iovec, Batch> remote{};
+    const int saved = errno;
+    for (std::size_t first = 0; first < rows;) {
+        const std::size_t count = std::min(Batch, rows - first);
+        for (std::size_t index = 0; index < count; ++index) {
+            local[index] = {const_cast<std::uint8_t*>(from + (first + index) * sourcePitch), rowBytes};
+            remote[index] = {target + (first + index) * destinationPitch, rowBytes};
+        }
+        const ssize_t copied = ::process_vm_writev(::getpid(), local.data(), count, remote.data(), count, 0);
+        if (copied < 0) {
+            if (errno == EFAULT) {
+                errno = saved;
+                return false;
+            }
+            throw std::runtime_error("GuestCopyOutRows: process_vm_writev failed with errno " + std::to_string(errno));
+        }
+        if (static_cast<std::size_t>(copied) != count * rowBytes) return false;
+        first += count;
+    }
+    return true;
+#else
+    for (std::size_t row = 0; row < rows; ++row)
+        if (!GuestCopyOut_nid_no_patch(target + row * destinationPitch, from + row * sourcePitch, rowBytes)) return false;
+    return true;
 #endif
 }
 
@@ -925,13 +1024,15 @@ extern "C" bool FinalPathComponentIsDot_nid_no_patch(const char* path) {
 
 extern "C" int APS5_VABI chdir_nid_postfix(const char* path) {
     if (!path) { errno = 14; return -1; }
-    if (!*path) { errno = 2; return -1; }
+    std::string copy;
+    if (const int error = CopyGuestPath_nid_no_patch(path, copy)) { errno = error; return -1; }
+    if (copy.empty()) { errno = 2; return -1; }
     try {
         AppArchiveReady_nid_no_patch();
         auto& state = Directories();
         std::lock_guard lock(state.mutex);
-        const auto resolved = Resolve(state, path, false, true);
-        AppArchiveRefuseOnly_nid_no_patch(resolved, path, "changing the working directory to");
+        const auto resolved = Resolve(state, copy.c_str(), false, true);
+        AppArchiveRefuseOnly_nid_no_patch(resolved, copy.c_str(), "changing the working directory to");
         const int error = SetWorkingDirectory(state, resolved);
         if (error) { errno = error == 2 ? NotFoundError_nid_no_patch(resolved) : error; return -1; }
         return 0;

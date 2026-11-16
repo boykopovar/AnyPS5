@@ -1,6 +1,6 @@
 add_library(libSceMsgDialog SHARED EXCLUDE_FROM_ALL ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp)
 target_include_directories(libSceMsgDialog PRIVATE ${LIBS_INCLUDE_DIR})
-target_link_libraries(libSceMsgDialog PRIVATE libSceIme)
+target_link_libraries(libSceMsgDialog PRIVATE libSceIme libc)
 configure_windows_unwind(libSceMsgDialog)
 
 if(BUILD_TESTING)
@@ -26,6 +26,6 @@ if(BUILD_TESTING)
     add_test(NAME guest_msg_dialog COMMAND guest_msg_dialog_tests)
     if(WIN32)
         set_tests_properties(guest_msg_dialog PROPERTIES ENVIRONMENT_MODIFICATION
-            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceMsgDialog>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIme>")
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceMsgDialog>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIme>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
