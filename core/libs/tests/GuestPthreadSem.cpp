@@ -93,6 +93,25 @@ public:
     GuardPage& operator=(const GuardPage&) = delete;
 
     void* Unreadable() const { return memory + page; }
+    void* Writable() const { return memory; }
+
+    void MakeReadOnly() {
+#ifdef _WIN32
+        DWORD previous = 0;
+        Require(VirtualProtect(memory, page, PAGE_READONLY, &previous) != 0);
+#else
+        Require(mprotect(memory, page, PROT_READ) == 0);
+#endif
+    }
+
+    void MakeReadWrite() {
+#ifdef _WIN32
+        DWORD previous = 0;
+        Require(VirtualProtect(memory, page, PAGE_READWRITE, &previous) != 0);
+#else
+        Require(mprotect(memory, page, PROT_READ | PROT_WRITE) == 0);
+#endif
+    }
 
 private:
     char* memory = nullptr;
@@ -121,6 +140,19 @@ static void CheckBadPointers() {
     }
     Require(scePthreadSemGetvalue(&sem, &value) == SCE_OK && value == 3);
     Require(scePthreadSemDestroy(&sem) == SCE_OK);
+    auto* const readOnlySem = static_cast<PthreadSem*>(guard.Writable());
+    Require(scePthreadSemInit(readOnlySem, 0, 5, nullptr) == SCE_OK);
+    guard.MakeReadOnly();
+    errno = 42;
+    *__error_nid_postfix() = 42;
+    Require(scePthreadSemDestroy(readOnlySem) == SCE_KERNEL_ERROR_EFAULT);
+    Require(errno == 42 && *__error_nid_postfix() == 42);
+    Require(scePthreadSemGetvalue(readOnlySem, &value) == SCE_OK && value == 5);
+    Require(scePthreadSemPost(readOnlySem) == SCE_OK);
+    Require(scePthreadSemGetvalue(readOnlySem, &value) == SCE_OK && value == 6);
+    guard.MakeReadWrite();
+    Require(scePthreadSemDestroy(readOnlySem) == SCE_OK);
+    Require(scePthreadSemDestroy(readOnlySem) == SCE_KERNEL_ERROR_EINVAL);
 }
 
 struct CancellableWaitContext {
