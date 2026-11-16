@@ -6,50 +6,6 @@
 
 extern "C" {
 
-int APS5_VABI _ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEP13SceNpOnlineId(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np10NpOnlineId13GetNpOnlineIdERKNS0_4UserEPS1_(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np10NpOnlineId16SetNpOnlineIdStrEPKc(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np10NpOnlineId5ClearEv(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np10NpOnlineIdC1ERK13SceNpOnlineId(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np10NpOnlineIdC1ERKS1_(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np10NpOnlineIdC1Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np10NpOnlineIdC2ERK13SceNpOnlineId(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np10NpOnlineIdC2ERKS1_(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np10NpOnlineIdC2Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np10NpOnlineIdD0Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 void APS5_VABI _ZN3sce2np10NpOnlineIdD1Ev(void* self) {
     (void)self;
 }
@@ -96,67 +52,11 @@ int APS5_VABI _ZN3sce2np12NpHttpClientD2Ev(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI _ZN3sce2np12NpTitleToken5ClearEv(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np12NpTitleTokenC1ERKS1_(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np12NpTitleTokenC1Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np12NpTitleTokenC2ERKS1_(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np12NpTitleTokenC2Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np12NpTitleTokenD0Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 void APS5_VABI _ZN3sce2np12NpTitleTokenD1Ev(void* self) {
     (void)self;
 }
 void APS5_VABI _ZN3sce2np12NpTitleTokenD2Ev(void* self) {
     (void)self;
-}
-int APS5_VABI _ZN3sce2np13NpAccessToken5ClearEv(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np13NpAccessTokenC1ERK16SceNpAccessToken(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np13NpAccessTokenC1ERKS1_(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np13NpAccessTokenC1Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np13NpAccessTokenC2ERK16SceNpAccessToken(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np13NpAccessTokenC2ERKS1_(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np13NpAccessTokenC2Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np13NpAccessTokenD0Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 void APS5_VABI _ZN3sce2np13NpAccessTokenD1Ev(void* self) {
     (void)self;
@@ -208,189 +108,17 @@ int APS5_VABI _ZN3sce2np3ipc14service_client14PollEventQueueEiPvm(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI _ZN3sce2np4NpId5ClearEv(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np4NpIdC1ERK7SceNpId(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np4NpIdC1ERKS1_(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np4NpIdC1Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np4NpIdC2ERK7SceNpId(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np4NpIdC2ERKS1_(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np4NpIdC2Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np4NpIdD0Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 void APS5_VABI _ZN3sce2np4NpIdD1Ev(void* self) {
     (void)self;
 }
 void APS5_VABI _ZN3sce2np4NpIdD2Ev(void* self) {
     (void)self;
 }
-int APS5_VABI _ZN3sce2np4User5ClearEv(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np4User7GetUserEiPS1_(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np4UserC1ERKS1_(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np4UserC1Ei(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np4UserC1Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np4UserC2ERKS1_(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np4UserC2Ei(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np4UserC2Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np4UserD0Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 void APS5_VABI _ZN3sce2np4UserD1Ev(void* self) {
     (void)self;
 }
 void APS5_VABI _ZN3sce2np4UserD2Ev(void* self) {
     (void)self;
-}
-int APS5_VABI _ZN3sce2np8NpTicket5ClearEv(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np8NpTicketD0Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np8NpTicketD1Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2np8NpTicketD2Ev(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2npeqERK13SceNpOnlineIdRKNS0_10NpOnlineIdE(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2npeqERKNS0_10NpOnlineIdERK13SceNpOnlineId(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2npeqERKNS0_10NpOnlineIdES3_(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2npeqERKNS0_4UserERKi(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2npeqERKNS0_4UserES3_(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2npneERK13SceNpOnlineIdRKNS0_10NpOnlineIdE(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2npneERKNS0_10NpOnlineIdERK13SceNpOnlineId(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2npneERKNS0_10NpOnlineIdES3_(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2npneERKNS0_4UserERKi(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZN3sce2npneERKNS0_4UserES3_(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZNK3sce2np10NpOnlineId7IsEmptyEv(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZNK3sce2np12NpTitleToken6GetStrEv(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZNK3sce2np13NpAccessToken7IsEmptyEv(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZNK3sce2np4User10IsLoggedInEv(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZNK3sce2np4User12GetAccountIdEPm(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZNK3sce2np4User12HasAccountIdEPb(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZNK3sce2np4User25GetAccountIdFromRegistoryEPm(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZNK3sce2np4User7IsEmptyEv(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZNK3sce2np4User7IsGuestEv(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZNK3sce2np4User9GetUserIdEv(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZNK3sce2np8NpTicket13GetTicketDataEv(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI _ZNK3sce2np8NpTicket13GetTicketSizeEv(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 int APS5_VABI _ZThn16_N3sce2np11NpHttpTransD0Ev(void) {
     NotImplemented_nid_no_patch(__func__);
@@ -464,10 +192,7 @@ int APS5_VABI _sceNpManagerReallocImpl(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpManagerIntGetOnlineIdByAccountId(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
+
 int APS5_VABI sceNpManagerIntLoginGetAccessTokenViaImplicitFlow(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -588,18 +313,6 @@ int APS5_VABI sceNpPush2DeleteUserContext(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpPush2Init(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceNpPush2IsInit(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceNpPush2OptionalCheckCallback(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 int APS5_VABI sceNpPush2RegisterDataType(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -616,19 +329,7 @@ int APS5_VABI sceNpPush2SendPushStatisticsDataSystemTelemetry(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpPush2SetGlobalMutex(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 int APS5_VABI sceNpPush2SetNpCommunicationId(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceNpPush2Term(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceNpPush2TriggerEmptyUserEvent(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -652,14 +353,6 @@ int APS5_VABI sceNpPush2WaitCallback(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpPushCheckCallback(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceNpPushInit(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 int APS5_VABI sceNpPushIntBeginInactive(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -669,10 +362,6 @@ int APS5_VABI sceNpPushIntEndInactive(void) {
     return 0;
 }
 int APS5_VABI sceNpPushIntGetBindUserState(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceNpPushIntGetConnectionState(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -708,19 +397,11 @@ int APS5_VABI sceNpPushStopNotificationA(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpPushTerm(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 int APS5_VABI sceNpPushUnregisterExtendedDataFilter(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpPushUnregisterNotificationCallback(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceNpRegisterStateCallbackForToolkit(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -737,10 +418,6 @@ int APS5_VABI sceNpSetAdditionalScope(void) {
     return 0;
 }
 int APS5_VABI sceNpSetNpTitleIdVsh(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceNpUnregisterStateCallbackForToolkit(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

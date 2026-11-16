@@ -2,6 +2,7 @@
 #include "prx/libSceIme/include/ModalDialog.hpp"
 #include "prx/libSceIme/include/PsnDialogNotice.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -155,6 +156,11 @@ int main() {
 
     Require(sceNpProfileDialogOpen(nullptr) == kErrArgNull);
     Require(sceNpProfileDialogOpenA(nullptr) == kErrArgNull);
+    errno = 0;
+    Require(sceNpProfileDialogOpen(reinterpret_cast<const SceNpProfileDialogParam*>(0x10)) == kErrArgNull);
+    Require(errno == 0);
+    Require(sceNpProfileDialogOpenA(reinterpret_cast<const SceNpProfileDialogParamA*>(0x10)) == kErrArgNull);
+    Require(errno == 0);
     Require(sceNpProfileDialogGetStatus() == kStatusInitialized);
 
     alignas(8) std::uint8_t wrong[kParamSize + 16];
@@ -166,6 +172,12 @@ int main() {
     RequireThrows([&] { sceNpProfileDialogOpen(reinterpret_cast<const SceNpProfileDialogParam*>(wrong)); });
     MakeParam(wrong, sizeof(wrong), kParamASize, 5, kParamAUserData, &second);
     RequireThrows([&] { sceNpProfileDialogOpenA(reinterpret_cast<const SceNpProfileDialogParamA*>(wrong)); });
+    alignas(8) std::uint8_t shortBuffer[56];
+    std::memset(shortBuffer, 0, sizeof(shortBuffer));
+    std::uint64_t smallSize = sizeof(shortBuffer);
+    std::memcpy(shortBuffer + 48, &smallSize, sizeof(smallSize));
+    RequireThrows([&] { sceNpProfileDialogOpen(reinterpret_cast<const SceNpProfileDialogParam*>(shortBuffer)); });
+    RequireThrows([&] { sceNpProfileDialogOpenA(reinterpret_cast<const SceNpProfileDialogParamA*>(shortBuffer)); });
     Require(sceNpProfileDialogGetStatus() == kStatusInitialized);
     Require(sceNpProfileDialogGetResult(reinterpret_cast<SceNpProfileDialogResult*>(result)) == kErrNotFinished);
 
