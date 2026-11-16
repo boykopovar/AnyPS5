@@ -1,5 +1,9 @@
 #include "prx/libSceFreeTypeOt/include/Stream.hpp"
+#include "prx/libc/include/General.hpp"
 
+#include <array>
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
@@ -20,6 +24,37 @@ constexpr std::uint8_t FrameSigned = 1;
 
 [[noreturn]] void Unsupported(const char* function, const char* what) {
     throw std::invalid_argument(std::string(function) + ": " + what);
+}
+
+bool CopyInPreservingErrno(void* destination, const void* source, std::size_t bytes) {
+    const int saved = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(destination, source, bytes);
+    errno = saved;
+    return ok;
+}
+
+template <class T>
+T Load(const T* source, const char* function) {
+    T value{};
+    if (!CopyInPreservingErrno(&value, source, sizeof(value))) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return value;
+}
+
+template <class T>
+void Put(T* destination, const T& value, const char* function) {
+    if (!GuestCopyOut_nid_no_patch(destination, &value, sizeof(value))) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+std::uint8_t** CursorOf(GuestStreamRec* stream) {
+    return &stream->cursor;
+}
+
+std::uint8_t** LimitOf(GuestStreamRec* stream) {
+    return &stream->limit;
+}
+
+std::uint64_t* PosOf(GuestStreamRec* stream) {
+    return &stream->pos;
 }
 
 GuestStreamRec& Stream(GuestStreamRec* stream, const char* function) {
@@ -185,10 +220,10 @@ std::uint64_t Read(GuestStreamRec* stream, int* error, const char* function) {
     return value;
 }
 
-template <class T>
-void Store(std::uint8_t* target, std::uint64_t value) {
+template <class T, class CopyOut>
+void Store(std::uint8_t* target, std::uint64_t value, const CopyOut& copyOut) {
     const auto stored = static_cast<T>(value);
-    std::memcpy(target, &stored, sizeof(stored));
+    copyOut(target, &stored, sizeof(stored));
 }
 
 }
@@ -206,7 +241,9 @@ void APS5_VABI FT_Stream_OpenMemory_nid_postfix(GuestStreamRec* stream, const st
 }
 
 void APS5_VABI FT_Stream_Close_nid_postfix(GuestStreamRec* stream) {
-    if (stream && stream->close) stream->close(stream);
+    if (!stream) return;
+    const GuestStreamCloseFunc close = Load(stream, __func__).close;
+    if (close) close(stream);
 }
 
 int APS5_VABI FT_Stream_Seek_nid_postfix(GuestStreamRec* stream, std::uint64_t pos) {
@@ -256,19 +293,26 @@ void APS5_VABI FT_Stream_ExitFrame_nid_postfix(GuestStreamRec* stream) {
 
 int APS5_VABI FT_Stream_ExtractFrame_nid_postfix(GuestStreamRec* stream, std::uint64_t count, std::uint8_t** bytes) {
     if (!bytes) Unsupported(__func__, "null frame pointer");
+    if (!GuestWritable_nid_no_patch(bytes, sizeof(*bytes)) || (stream && !GuestWritable_nid_no_patch(stream, sizeof(*stream)))) {
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    }
     const int error = EnterFrame(stream, count, __func__);
     if (!error) {
-        *bytes = stream->cursor;
-        stream->cursor = nullptr;
-        stream->limit = nullptr;
+        Put(bytes, Load(CursorOf(stream), __func__), __func__);
+        Put<std::uint8_t*>(CursorOf(stream), nullptr, __func__);
+        Put<std::uint8_t*>(LimitOf(stream), nullptr, __func__);
     }
     return error;
 }
 
 void APS5_VABI FT_Stream_ReleaseFrame_nid_postfix(GuestStreamRec* stream, std::uint8_t** bytes) {
     if (!bytes) Unsupported(__func__, "null frame pointer");
-    if (stream && stream->read) Free(stream->memory, *bytes, __func__);
-    *bytes = nullptr;
+    if (!GuestWritable_nid_no_patch(bytes, sizeof(*bytes))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (stream) {
+        const GuestStreamRec record = Load(stream, __func__);
+        if (record.read) Free(record.memory, Load(bytes, __func__), __func__);
+    }
+    Put<std::uint8_t*>(bytes, nullptr, __func__);
 }
 
 std::int8_t APS5_VABI FT_Stream_GetChar_nid_postfix(GuestStreamRec* stream) {
@@ -323,24 +367,25 @@ std::uint64_t APS5_VABI FT_Stream_GetULongLE_nid_postfix(GuestStreamRec* stream)
 }
 
 std::int8_t APS5_VABI FT_Stream_ReadChar_nid_postfix(GuestStreamRec* stream, int* error) {
-    auto& record = Stream(stream, __func__);
+    if (!stream) Unsupported(__func__, "null stream");
     if (!error) Unsupported(__func__, "null error");
-    *error = 0;
+    Put(error, 0, __func__);
+    const GuestStreamRec record = Load(stream, __func__);
     std::uint8_t value = 0;
     if (record.read) {
         if (record.read(stream, record.pos, &value, 1) != 1) {
-            *error = InvalidStreamOperation;
+            Put(error, InvalidStreamOperation, __func__);
             return 0;
         }
     } else {
         if (record.pos >= record.size) {
-            *error = InvalidStreamOperation;
+            Put(error, InvalidStreamOperation, __func__);
             return 0;
         }
         if (!record.base) Unsupported(__func__, "null memory stream base");
-        value = record.base[record.pos];
+        value = Load(record.base + record.pos, __func__);
     }
-    record.pos += 1;
+    Put(PosOf(stream), Load(PosOf(stream), __func__) + 1, __func__);
     return static_cast<std::int8_t>(value);
 }
 
@@ -387,10 +432,8 @@ std::uint64_t APS5_VABI FT_Stream_ReadULongLE_nid_postfix(GuestStreamRec* stream
 int APS5_VABI FT_Stream_ReadFields_nid_postfix(GuestStreamRec* stream, const GuestFrameField* fields, void* structure) {
     const char* function = __func__;
     if (!fields || !stream) return InvalidArgument;
-    auto& record = Stream(stream, function);
     int error = 0;
     bool frameAccessed = false;
-    auto* cursor = record.cursor;
     const auto finish = [&] {
         if (frameAccessed) ExitFrame(stream, function);
         return error;
@@ -399,12 +442,27 @@ int APS5_VABI FT_Stream_ReadFields_nid_postfix(GuestStreamRec* stream, const Gue
         if (frameAccessed) ExitFrame(stream, function);
         Unsupported(function, what);
     };
+    const auto copyIn = [&](void* destination, const void* source, std::size_t bytes) {
+        if (CopyInPreservingErrno(destination, source, bytes)) return;
+        if (frameAccessed) ExitFrame(stream, function);
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    };
+    const auto copyOut = [&](void* destination, const void* source, std::size_t bytes) {
+        if (GuestCopyOut_nid_no_patch(destination, source, bytes)) return;
+        if (frameAccessed) ExitFrame(stream, function);
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    };
+    GuestStreamRec record{};
+    copyIn(&record, stream, sizeof(record));
+    auto* cursor = record.cursor;
     for (;; ++fields) {
-        const GuestFrameField field = *fields;
+        GuestFrameField field{};
+        copyIn(&field, fields, sizeof(field));
         if (field.value == FrameStart) {
             error = EnterFrame(stream, field.offset, function);
             if (error) return finish();
             frameAccessed = true;
+            copyIn(&record, stream, sizeof(record));
             cursor = record.cursor;
             continue;
         }
@@ -417,7 +475,9 @@ int APS5_VABI FT_Stream_ReadFields_nid_postfix(GuestStreamRec* stream, const Gue
             if (field.value == FrameBytes && length != 0) {
                 if (!structure) refuse("null structure");
                 if (!cursor) refuse("null frame cursor");
-                std::memmove(static_cast<std::uint8_t*>(structure) + field.offset, cursor, length);
+                std::array<std::uint8_t, 255> copy{};
+                copyIn(copy.data(), cursor, length);
+                copyOut(static_cast<std::uint8_t*>(structure) + field.offset, copy.data(), length);
             }
             cursor = Offset(cursor, length);
             continue;
@@ -433,11 +493,13 @@ int APS5_VABI FT_Stream_ReadFields_nid_postfix(GuestStreamRec* stream, const Gue
         case 20: case 21: bytes = 3; break;
         case 22: case 23: bytes = 3; little = true; break;
         default:
-            record.cursor = cursor;
+            copyOut(CursorOf(stream), &cursor, sizeof(cursor));
             return finish();
         }
         if (!cursor) refuse("null frame cursor");
-        std::uint64_t value = little ? LittleEndian(cursor, bytes) : BigEndian(cursor, bytes);
+        std::uint8_t raw[4]{};
+        copyIn(raw, cursor, bytes);
+        std::uint64_t value = little ? LittleEndian(raw, bytes) : BigEndian(raw, bytes);
         cursor += bytes;
         if (field.value & FrameSigned) {
             const unsigned shift = 32 - bytes * 8;
@@ -446,18 +508,18 @@ int APS5_VABI FT_Stream_ReadFields_nid_postfix(GuestStreamRec* stream, const Gue
         if (!structure) refuse("null structure");
         auto* target = static_cast<std::uint8_t*>(structure) + field.offset;
         switch (field.size) {
-        case 1: Store<std::uint8_t>(target, value); break;
-        case 2: Store<std::uint16_t>(target, value); break;
-        case 4: Store<std::uint32_t>(target, value); break;
-        default: Store<std::uint64_t>(target, value); break;
+        case 1: Store<std::uint8_t>(target, value, copyOut); break;
+        case 2: Store<std::uint16_t>(target, value, copyOut); break;
+        case 4: Store<std::uint32_t>(target, value, copyOut); break;
+        default: Store<std::uint64_t>(target, value, copyOut); break;
         }
     }
 }
 
 void APS5_VABI FT_Stream_Free_nid_postfix(GuestStreamRec* stream, std::int32_t external) {
     if (!stream) return;
-    auto* memory = stream->memory;
-    if (!external && (!memory || !memory->free)) Unsupported(__func__, "null memory release");
+    auto* memory = Load(stream, __func__).memory;
+    if (!external && (!memory || !Load(memory, __func__).free)) Unsupported(__func__, "null memory release");
     FT_Stream_Close_nid_postfix(stream);
     if (!external) Free(memory, stream, __func__);
 }
