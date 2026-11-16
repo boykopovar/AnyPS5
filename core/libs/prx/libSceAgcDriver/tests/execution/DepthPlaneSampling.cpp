@@ -182,6 +182,8 @@ std::uint32_t Bits(float value) {
 
 // Draws a full-target triangle at depth `z` into the depth surface at `address`, which makes the driver create the
 // surface (the base slice a later plane copy reads from the surface instead of from guest memory).
+alignas(256) constexpr std::array<std::uint32_t, 4> NullPixelCode{0x7e0002f2u, 0xf8001890u, 0x00000000u, 0xbf810000u};
+
 void DrawDepth(AgcDriver::VulkanDevice& device, std::uint64_t address, VkExtent2D extent, VkFormat format, float z, std::uint32_t swizzle = 0, bool color = true, bool write = true) {
     static std::deque<std::vector<std::array<float, 4>>> vertexData;
     vertexData.push_back({{-1.0f, -1.0f, z, 1.0f}, {3.0f, -1.0f, z, 1.0f}, {-1.0f, 3.0f, z, 1.0f}});
@@ -205,12 +207,13 @@ void DrawDepth(AgcDriver::VulkanDevice& device, std::uint64_t address, VkExtent2
     pixelInfo.inputAddr = ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionX) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionY);
     pixelInfo.posX = true;
     pixelInfo.posY = true;
-    pixelInfo.targetOutputMode[0] = 9;
+    pixelInfo.targetOutputMode[0] = color ? 9u : 0u;
     pixelInfo.targetExportMapping.fill(0xe4u);
     std::vector<std::uint32_t> pixelUserData(4, 0u);
-    const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{reinterpret_cast<std::uintptr_t>(PixelCode.data()), std::as_bytes(std::span(PixelCode))}}};
+    const auto pixelCode = color ? std::span<const std::uint32_t>(PixelCode) : std::span<const std::uint32_t>(NullPixelCode);
+    const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{reinterpret_cast<std::uintptr_t>(pixelCode.data()), std::as_bytes(pixelCode)}}};
     ShaderRecompiler::RecompileRequest fragmentRequest{
-        {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(PixelCode.data()), PixelCode, 0, {}},
+        {ShaderStage::Fragment, reinterpret_cast<std::uintptr_t>(pixelCode.data()), pixelCode, 0, {}},
         {32, 0, pixelUserData, std::nullopt, pixelInfo, std::nullopt, pixelMemory},
         target,
         PixelPushLayout(vertexPush, target)

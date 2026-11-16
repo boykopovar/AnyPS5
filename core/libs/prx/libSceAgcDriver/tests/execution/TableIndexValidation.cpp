@@ -72,7 +72,7 @@ alignas(256) constexpr std::array<std::uint32_t, 11> PixelArrayCode{
     0xf42c0300u, 0xfa000060u, 0x7e140280u, 0x7e160280u, 0xbf8cc07fu, 0xf0000f08u, 0x0003100au, 0xbf8c3f70u, 0xf800180fu, 0x13121110u, 0xbf810000u,
 };
 
-alignas(256) constexpr std::array<std::uint32_t, 4> DepthPixelCode{0x7e0002f2u, 0xf800180fu, 0x00000000u, 0xbf810000u};
+alignas(256) constexpr std::array<std::uint32_t, 4> DepthPixelCode{0x7e0002f2u, 0xf8001890u, 0x00000000u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 7> StoreCode{
     0x7e040300u, 0x7e060280u, 0x7e0202ffu, 0x12345678u, 0xf0200108u, 0x00020102u, 0xbf810000u,
 };
@@ -356,7 +356,6 @@ void DepthPlane(AgcDriver::VulkanDevice& device) {
     pixel.inputAddr = ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionX) | ShaderRecompiler::PixelInputBit(ShaderRecompiler::PixelInput::PositionY);
     pixel.posX = true;
     pixel.posY = true;
-    pixel.targetOutputMode[0] = 9;
     pixel.targetExportMapping.fill(0xe4u);
     const std::vector<std::uint32_t> pixelUserData(4, 0u);
     const std::array<ShaderRecompiler::MemoryRegion, 1> pixelMemory{{{reinterpret_cast<std::uintptr_t>(DepthPixelCode.data()), std::as_bytes(std::span(DepthPixelCode))}}};

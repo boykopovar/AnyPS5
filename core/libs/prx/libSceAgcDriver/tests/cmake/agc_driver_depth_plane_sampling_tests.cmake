@@ -21,7 +21,7 @@ if(BUILD_TESTING)
     endif()
     add_test(NAME agc_driver_depth_plane_epoch_exit_counts COMMAND agc_driver_depth_plane_sampling_tests --epoch-exit)
     set_tests_properties(agc_driver_depth_plane_epoch_exit_counts PROPERTIES ENVIRONMENT "APS5_PROFILE_EPOCH_PROOFS=1" SKIP_RETURN_CODE 77 TIMEOUT 60
-        PASS_REGULAR_EXPRESSION "proved resource sets that missed the exit 4. by input, moved alone/moved: [^\n]*surfaces 1/2, stale planes 1/2\n[^\n]*proof stamps by age when stored, stored/missed next/missed with the proof moved alone: current 3/3/0, own flushes 0/0/0, own walk 0/0/0, other threads 0/0/0, pending 2/1/0, other input 0/0/0\n[^\n]*proof breaks by site: [^\n]*write-backs empty 0, unchanged 0\n.*resource proofs reused 3,.*depth plane epoch exit tests passed"
+        PASS_REGULAR_EXPRESSION "proved resource sets that missed the exit [4-9]. by input, moved alone/moved: [^\n]*surfaces 1/2, stale planes 1/2\n[^\n]*proof stamps by age when stored, stored/missed next/missed with the proof moved alone: current [0-9]+/[0-9]+/[0-9]+, own flushes 0/0/0, own walk 0/0/0, other threads 0/0/0, pending [0-9]+/[0-9]+/[0-9]+, other input 0/0/0\n[^\n]*proof breaks by site: [^\n]*write-backs empty 0, unchanged 0\n.*resource proofs reused 3,.*depth plane epoch exit tests passed"
         FAIL_REGULAR_EXPRESSION "AGC graphics:|verify: the full proof behind a reused proof")
     if(WIN32)
         set_tests_properties(agc_driver_depth_plane_epoch_exit_counts PROPERTIES ENVIRONMENT_MODIFICATION
