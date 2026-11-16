@@ -280,5 +280,10 @@ class ResolveTests(unittest.TestCase):
         self.assertIn("already includes", result.stderr)
 
 
+class DedentTests(unittest.TestCase):
+    def test_dedent_removes_the_amount_only_where_present(self):
+        self.assertEqual(agc_test_split.dedent(["    a", "  b", "c"], 2), ["  a", "b", "c"])
+
+
 if __name__ == "__main__":
     unittest.main()
