@@ -642,9 +642,6 @@ bool RunUnimportedBufferRead(TexelReader& reader, bool watched) {
     Fill(copy, PlaneBytes(), 0xffffffffu);
     Submit(DepthDraw(surfaces, true, true), name + ": DB expand from the read base to the write base");
     reader.CopyBuffer(surfaces.written, copy, static_cast<std::uint32_t>(PlaneBytes()), true, name + ": raw buffer copy of the write base");
-    // Count only the mirrors on this case's blocks. Every address-based build leases all registered
-    // ranges, so when this case runs first its refused build also heap-mirrors the write-watched
-    // 2 MiB AGC driver memory at 0xfe0000000, which an earlier case's build has otherwise imported.
     std::uint64_t mirrors = 0;
     for (const auto& [block, bytes] : {std::pair{surfaces.depth, PlaneBytes()}, std::pair{surfaces.stencil, static_cast<std::size_t>(DepthSliceBytes({Width, Height}, 1u))}, std::pair{surfaces.htile, Block}, std::pair{surfaces.written, PlaneBytes()}, std::pair{copy, PlaneBytes()}}) {
         mirrors += HeapMirrorsWithin(block, block + bytes).mirrors;
