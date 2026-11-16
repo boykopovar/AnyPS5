@@ -1875,6 +1875,12 @@ class EntropyTests(unittest.TestCase):
         self.assertEqual(unwrap_self.entropy(b''), 0.0)
         self.assertEqual(unwrap_self.entropy(b'ab'), 1.0)
         self.assertEqual(unwrap_self.entropy(b'aaaa'), 0.0)
+class DecryptedCheckTests(unittest.TestCase):
+    def test_check_decrypted_refuses_when_every_load_segment_is_encrypted(self):
+        uniform = bytes(range(256)) * 256
+        headers = [{'type': 1, 'size': len(uniform), 'source': 0, 'index': 0}]
+        with self.assertRaisesRegex(unwrap_self.Refused, 'every load segment looks encrypted'):
+            unwrap_self.check_decrypted(uniform, headers)
 
 
 if __name__ == "__main__":
