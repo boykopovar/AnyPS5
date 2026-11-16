@@ -16,5 +16,14 @@ class PackageTests(unittest.TestCase):
                     package_headers.package(root, output, version)
 
 
+    def test_package_refuses_a_tree_without_library_headers(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "core" / "libs" / "prx").mkdir(parents=True)
+            (root / "LICENSE").write_text("license\n", encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "No public library headers found"):
+                package_headers.package(root, root / "out", "v1.0")
+
+
 if __name__ == "__main__":
     unittest.main()
