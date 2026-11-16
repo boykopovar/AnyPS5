@@ -2629,10 +2629,6 @@ int APS5_VABI _ZN7WebCore8Document13setAlinkColorERKN3WTF6StringE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKMediaSessionMetadataCopyTitle() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore11MediaPlayer26paintCurrentFrameInContextERNS_15GraphicsContextERKNS_9FloatRectE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -4893,10 +4889,6 @@ int APS5_VABI _ZNK7WebCore17HTMLCanvasElement23replayDisplayListAsTextEj() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKMediaSessionMetadataGetTypeID() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore18TextureMapperLayer21computeOverlapRegionsERNS_6RegionES2_NS0_22ResolveSelfOverlapModeE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -5416,10 +5408,6 @@ int APS5_VABI _ZN7WebCore4toJSEPN3JSC14JSGlobalObjectERNS_9DOMWindowE() {
 }
 
 int APS5_VABI _ZN7Nicosia5Scene5StateC2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKMediaSessionMetadataCopyAlbum() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -6413,10 +6401,6 @@ int APS5_VABI _ZN7WebCore16DatabaseProviderC1Ev() {
 }
 
 int APS5_VABI _ZNK7WebCore6Editor16fontForSelectionERb() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKMediaSessionMetadataCopyArtist() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -9234,10 +9218,6 @@ int APS5_VABI _ZN7WebCore16ResourceResponseC1ERKS0_() {
 }
 
 int APS5_VABI _ZN7WebCore24GraphicsContextImplCairo13createFactoryEP6_cairo() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKMediaSessionMetadataCopyArtworkURL() {
     NotImplemented_nid_no_patch(__func__);
 }
 
