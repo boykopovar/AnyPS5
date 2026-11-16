@@ -69,20 +69,14 @@ void Attach(XmlHandle* self, void* block, State* state) {
     self->impl = block;
 }
 
-std::string ReadBytes(const char* source, std::size_t size, const char* function) {
-    std::string text(size, '\0');
-    if (size != 0 && !GuestCopyIn_nid_no_patch(text.data(), source, size)) Fault(function, "reading a string where it is not readable");
-    return text;
-}
-
-std::string ReadTerminated(const char* source, std::size_t limit, const char* function) {
+std::string ReadChunks(const char* source, std::size_t limit, bool terminated, const char* function) {
     std::string text;
     auto address = reinterpret_cast<std::uintptr_t>(source);
     char chunk[ChunkSize];
     while (text.size() < limit) {
         const std::size_t count = std::min(ChunkSize - static_cast<std::size_t>(address % ChunkSize), limit - text.size());
         if (!GuestCopyIn_nid_no_patch(chunk, reinterpret_cast<const void*>(address), count)) Fault(function, "reading a string where it is not readable");
-        if (const void* end = std::memchr(chunk, 0, count)) {
+        if (const void* end = terminated ? std::memchr(chunk, 0, count) : nullptr) {
             text.append(chunk, static_cast<std::size_t>(static_cast<const char*>(end) - chunk));
             return text;
         }
@@ -90,6 +84,14 @@ std::string ReadTerminated(const char* source, std::size_t limit, const char* fu
         address += count;
     }
     return text;
+}
+
+std::string ReadBytes(const char* source, std::size_t size, const char* function) {
+    return ReadChunks(source, size, false, function);
+}
+
+std::string ReadTerminated(const char* source, std::size_t limit, const char* function) {
+    return ReadChunks(source, limit, true, function);
 }
 
 bool Usable(const XmlString* string) {

@@ -409,6 +409,16 @@ void TestUnreadableString() {
     XmlHandle attr{nullptr};
     Require(_ZN3sce3Xml4Attr10initializeEPKNS0_11InitializerE(&attr, &f.initializer) == 0, "initialize an Attr");
     Require(Throws([&] { _ZN3sce3Xml4Attr7setNameEPKNS0_6StringE(&attr, &past); }), "setName past the readable page");
+    const XmlString name = Text("kept");
+    Require(_ZN3sce3Xml4Attr7setNameEPKNS0_6StringE(&attr, &name) == 0, "setName");
+    const XmlString unmapped{page.data + page.size, 0x7fffffff};
+    Require(Throws([&] { _ZN3sce3Xml4Attr7setNameEPKNS0_6StringE(&attr, &unmapped); }), "setName with a large size on an unreadable buffer");
+    Require(Throws([&] { _ZN3sce3Xml4Attr8setValueEPKNS0_6StringE(&attr, &unmapped); }), "setValue with a large size on an unreadable buffer");
+    const XmlString prefix{page.data, 0x7fffffff};
+    Require(Throws([&] { _ZN3sce3Xml4Attr7setNameEPKNS0_6StringE(&attr, &prefix); }), "setName with a large size that runs past the readable page");
+    XmlString got{};
+    _ZNK3sce3Xml4Attr7getNameEv(&got, &attr);
+    Require(std::string(got.buffer, got.size) == "kept", "a failed setName leaves the name as it was");
     _ZN3sce3Xml4AttrD1Ev(&attr);
     _ZN3sce3Xml13AttributeListD1Ev(&list);
 }
