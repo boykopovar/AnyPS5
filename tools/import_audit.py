@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 from collections import defaultdict
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import nid_names
 import progress
@@ -28,7 +28,12 @@ PE_DIRECTORY_OFFSET = {0x20b: 112, 0x10b: 96}
 ELF_SYMBOL_TAGS = {
     4: "DT_HASH", 5: "DT_STRTAB", 6: "DT_SYMTAB",
     10: "DT_STRSZ", 11: "DT_SYMENT", 0x6ffffef5: "DT_GNU_HASH",
+    0x61000035: "DT_SCE_STRTAB", 0x61000037: "DT_SCE_STRSZ", 0x61000039: "DT_SCE_SYMTAB",
+    0x6100003b: "DT_SCE_SYMENT",
 }
+SCE_DYNLIBDATA = 0x61000000
+SCE_SYMTABSZ = 0x6100003f
+SCE_TABLE_TAGS = (0x61000035, 0x61000037, 0x61000039, 0x6100003b)
 
 
 class AuditError(Exception):
@@ -111,12 +116,15 @@ def elf_program_dynamic_symbols(path, data, section_symbol_count=None):
     take(data, dynamic_offset, dynamic_size, path, "dynamic segment")
     dynamic = {}
     needed_offsets = []
+    symbol_table_sizes = set()
     terminated = False
     for position in range(0, dynamic_size - 15, 16):
         tag, value = unpack("<qQ", data, dynamic_offset + position, path, "dynamic entry")
         if tag == 0:
             terminated = True
             break
+        if tag == SCE_SYMTABSZ:
+            symbol_table_sizes.add(value)
         if tag == 1:
             needed_offsets.append(value)
         elif tag in ELF_SYMBOL_TAGS and dynamic.get(tag, value) != value:
@@ -125,6 +133,10 @@ def elf_program_dynamic_symbols(path, data, section_symbol_count=None):
             dynamic[tag] = value
     if not terminated:
         raise AuditError(f"{path}: dynamic segment is not terminated by DT_NULL")
+    if any(tag in dynamic for tag in SCE_TABLE_TAGS):
+        if len(symbol_table_sizes) > 1:
+            raise AuditError(f"{path}: conflicting duplicate DT_SCE_SYMTABSZ")
+        return sce_dynamic_symbols(path, data, segments, dynamic, needed_offsets)
     string_address = dynamic.get(5)
     string_size = dynamic.get(10)
     symbol_address = dynamic.get(6)
@@ -177,10 +189,14 @@ def elf_program_dynamic_symbols(path, data, section_symbol_count=None):
             raise AuditError(f"{path}: dynamic symbol table has no supported hash table")
         symbol_count = section_symbol_count
     symbol_offset = file_offset(symbol_address, symbol_count * symbol_size, "dynamic symbol table")
+    return dynamic_symbol_entries(path, data, string_offset, string_size, symbol_offset, symbol_count, needed_offsets)
+
+
+def dynamic_symbol_entries(path, data, string_offset, string_size, symbol_offset, symbol_count, needed_offsets):
     imports = {}
     exports = set()
     for index in range(symbol_count):
-        name, info, other, section_index, _, _ = unpack("<IBBHQQ", data, symbol_offset + index * symbol_size, path, "dynamic symbol")
+        name, info, other, section_index, _, _ = unpack("<IBBHQQ", data, symbol_offset + index * 24, path, "dynamic symbol")
         if name == 0:
             continue
         symbol = cstring(data, string_offset + name, string_offset + string_size, path, "dynamic symbol name").split(MODULE_SUFFIX, 1)[0]
@@ -190,6 +206,29 @@ def elf_program_dynamic_symbols(path, data, section_symbol_count=None):
             exports.add(symbol)
     needed = {cstring(data, string_offset + value, string_offset + string_size, path, "needed library name") for value in needed_offsets}
     return imports, exports, needed
+
+
+def sce_dynamic_symbols(path, data, segments, dynamic, needed_offsets):
+    if any(tag in dynamic for tag in (5, 6, 10, 11)):
+        raise AuditError(f"{path}: dynamic segment names both standard and SCE string or symbol tables")
+    blocks = [segment for segment in segments if segment[0] == SCE_DYNLIBDATA]
+    if len(blocks) != 1:
+        raise AuditError(f"{path}: SCE string and symbol tables need one SCE dynamic library data segment, found {len(blocks)}")
+    _, _, block_offset, _, _, block_size, _, _ = blocks[0]
+    take(data, block_offset, block_size, path, "SCE dynamic library data segment")
+    string_value, string_size = dynamic.get(0x61000035), dynamic.get(0x61000037)
+    symbol_value, symbol_entry, symbol_bytes = dynamic.get(0x61000039), dynamic.get(0x6100003b), dynamic.get(SCE_SYMTABSZ)
+    if None in (string_value, string_size, symbol_value, symbol_entry, symbol_bytes) or symbol_entry != 24 or symbol_bytes % 24 or string_size == 0:
+        raise AuditError(f"{path}: incomplete SCE dynamic string or symbol table")
+
+    def inside(value, size, what):
+        if value > block_size or size > block_size - value:
+            raise AuditError(f"{path}: {what} at 0x{value:x} with size {size} lies outside the SCE dynamic library data segment")
+        return block_offset + value
+
+    string_offset = inside(string_value, string_size, "SCE dynamic string table")
+    symbol_offset = inside(symbol_value, symbol_bytes, "SCE dynamic symbol table")
+    return dynamic_symbol_entries(path, data, string_offset, string_size, symbol_offset, symbol_bytes // 24, needed_offsets)
 
 
 def elf_has_dynamic_segment(path, data, header):
@@ -779,8 +818,10 @@ def always_stub_calls(text):
 
 def conditional_stubs(library):
     conditional = set()
+    flavor = PureWindowsPath if os.name == "nt" else Path
+    library_flavored = flavor(str(library))
     for source in library.rglob("*.cpp"):
-        if "tests" in source.relative_to(library).parts:
+        if "tests" in flavor(str(source)).relative_to(library_flavored).parts:
             continue
         text = progress.code(source.read_text(encoding="utf-8", errors="ignore"))
         calls = always_stub_calls(text)
@@ -949,6 +990,8 @@ def audit(imports, exports, stubs, libraries, modules, module_imports=None, modu
 
     def system_library(name):
         if name:
+            if name in tuple("libSceGnmDriver_padebug" + suffix for suffix in (".prx", ".sprx", ".suprx", ".debug_prx")):
+                name = "libSceGnmDriver.prx"
             for suffix in (".sprx", ".suprx", ".debug_prx"):
                 if name.endswith(suffix):
                     normalized = name[:-len(suffix)] + ".prx"

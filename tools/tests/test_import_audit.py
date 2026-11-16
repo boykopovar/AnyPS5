@@ -134,6 +134,42 @@ def build_sectionless_elf(symbols, needed=(), gnu_hash=False, gnu_buckets=(1,), 
     return bytes(image)
 
 
+def build_sce_module(symbols, needed=(), extra_dynamic=(), table_tags=None, block_types=(0x61000000,)):
+    strings = b"\0"
+    entries = [struct.pack("<IBBHQQ", 0, 0, 0, 0, 0, 0)]
+    for name, index, info in symbols:
+        entries.append(struct.pack("<IBBHQQ", len(strings), info, 0, index, 0, 0))
+        strings += name.encode() + b"\0"
+    libraries = []
+    for library in needed:
+        libraries.append(len(strings))
+        strings += library.encode() + b"\0"
+    symbol_table = b"".join(entries)
+    program_offset = 64
+    count = 2 + len(block_types)
+    block_offset = program_offset + count * 56
+    strings_in_block = 0x18
+    symbols_in_block = (strings_in_block + len(strings) + 7) & ~7
+    dynamic_in_block = (symbols_in_block + len(symbol_table) + 7) & ~7
+    if table_tags is None:
+        table_tags = ((0x61000035, strings_in_block), (0x61000037, len(strings)), (0x61000039, symbols_in_block), (0x6100003b, 24), (0x6100003f, len(symbol_table)))
+    dynamic = b"".join(struct.pack("<qQ", 1, value) for value in libraries)
+    dynamic += b"".join(struct.pack("<qQ", tag, value) for tag, value in (*table_tags, *extra_dynamic, (0, 0)))
+    block = bytearray(dynamic_in_block + len(dynamic))
+    block[strings_in_block:strings_in_block + len(strings)] = strings
+    block[symbols_in_block:symbols_in_block + len(symbol_table)] = symbol_table
+    block[dynamic_in_block:] = dynamic
+    dynamic_offset = block_offset + dynamic_in_block
+    image = bytearray(block_offset + len(block))
+    image[block_offset:] = block
+    headers = [struct.pack("<IIQQQQQQ", 1, 5, 0, 0x400000, 0x400000, block_offset, block_offset, 0x1000),
+               struct.pack("<IIQQQQQQ", 2, 6, dynamic_offset, 0, 0, len(dynamic), len(dynamic), 8)]
+    headers += [struct.pack("<IIQQQQQQ", kind, 4, block_offset, 0, 0, len(block), len(block), 16) for kind in block_types]
+    image[program_offset:block_offset] = b"".join(headers)
+    image[:64] = struct.pack("<16sHHIQQQIHHHHHH", b"\x7fELF\x02\x01\x01" + bytes(9), 0xfe18, 0x3e, 1, 0, program_offset, 0, 0, 64, 56, count, 64, 0, 0)
+    return bytes(image)
+
+
 def gnu_hash_chain_offset(image):
     header = struct.unpack_from("<16sHHIQQQIHHHHHH", image)
     segments = [struct.unpack_from("<IIQQQQQQ", image, header[5] + index * header[9])
@@ -402,6 +438,22 @@ class ImportAuditTests(unittest.TestCase):
                 self.assertEqual(data["missing_libraries"], {})
                 self.assertEqual(data["library_mismatch"], 0)
                 self.assertEqual(data["imports"][0]["providers"], ["libSceA.prx"])
+
+    def test_gnm_padebug_dependency_uses_libscegnmdriver(self):
+        work = self.work
+        registry, result = work.root / "game.registry.json", work.root / "audit.json"
+        for kind, provider in (("pe", build_pe(["AAAAAAAAAAA"])), ("elf", exporting("AAAAAAAAAAA"))):
+            (work.libs / "libSceGnmDriver.prx").write_bytes(provider)
+            for name in ("libSceGnmDriver_padebug.prx", "libSceGnmDriver_padebug.sprx"):
+                with self.subTest(kind=kind, name=name):
+                    write_registry(registry, [("AAAAAAAAAAA", name)])
+                    registry.with_name("game.needed.json").write_text(json.dumps([name]))
+                    code, _, err = work.run(registry, "--strict-providers", "--json", str(result))
+                    self.assertEqual((code, err), (0, ""))
+                    data = json.loads(result.read_text())
+                    self.assertEqual(data["missing_libraries"], {})
+                    self.assertEqual(data["library_mismatch"], 0)
+                    self.assertEqual(data["imports"][0]["providers"], ["libSceGnmDriver.prx"])
 
     def test_elf_suffix_lookup_keeps_the_suffix_case_and_missing_libraries(self):
         work = self.work
@@ -1619,6 +1671,65 @@ class ImportAuditTests(unittest.TestCase):
                 image = build_sectionless_elf(symbols, needed, gnu_hash, extra_dynamic=((11, 16), (11, 24)))
                 with self.assertRaisesRegex(import_audit.AuditError, r"module\.prx: conflicting duplicate DT_SYMENT"):
                     import_audit.elf_program_dynamic_symbols(path, image)
+
+    def test_sce_dynamic_tables_are_read_from_the_dynamic_library_data_segment(self):
+        path = Path("libSceFios2.prx")
+        image = build_sce_module([
+            ("AAAAAAAAAAA#B#C", 0, GLOBAL_FUNCTION), ("DDDDDDDDDDD#B#C", 0, 0x22), ("EEEEEEEEEEE#C#C", 1, GLOBAL_FUNCTION),
+            ("FFFFFFFFFFF#C#C", 2, LOCAL_FUNCTION)], ["libkernel.prx", "libSceSysmodule.prx"])
+        expected = ({"AAAAAAAAAAA": False, "DDDDDDDDDDD": True}, {"EEEEEEEEEEE"}, {"libkernel.prx", "libSceSysmodule.prx"})
+        self.assertEqual(import_audit.elf_program_dynamic_symbols(path, image), expected)
+        self.assertEqual(import_audit.elf_imports(path, image), (expected[0], expected[2]))
+        self.assertEqual(import_audit.elf_exports(path, image), expected[1])
+
+    def test_standard_tables_beside_an_sce_symbol_table_size_are_read_as_standard(self):
+        path = Path("module.prx")
+        symbols = [("AAAAAAAAAAA#A#A", 0, GLOBAL_FUNCTION), ("BBBBBBBBBBB#A#A", 1, GLOBAL_FUNCTION)]
+        expected = ({"AAAAAAAAAAA": False}, {"BBBBBBBBBBB"}, {"libSceA.prx"})
+        for extra in (((0x6100003f, 72),), ((0x6100003f, 72), (0x6100003f, 48))):
+            with self.subTest(extra=extra):
+                for gnu_hash in (False, True):
+                    image = build_sectionless_elf(symbols, ["libSceA.prx"], gnu_hash, extra_dynamic=extra)
+                    self.assertEqual(import_audit.elf_program_dynamic_symbols(path, image), expected)
+
+    def test_sce_dynamic_tables_are_validated(self):
+        path = Path("module.prx")
+        symbols = [("AAAAAAAAAAA#A#A", 0, GLOBAL_FUNCTION), ("BBBBBBBBBBB#A#A", 1, GLOBAL_FUNCTION)]
+        size = len(build_sce_module(symbols))
+        cases = (
+            ("both standard and SCE", {"extra_dynamic": ((5, 0),)}),
+            ("need one SCE dynamic library data segment, found 0", {"block_types": ()}),
+            ("need one SCE dynamic library data segment, found 2", {"block_types": (0x61000000, 0x61000000)}),
+            ("incomplete SCE dynamic string or symbol table", {"table_tags": ((0x61000035, 0), (0x61000037, 1), (0x61000039, 8), (0x6100003b, 24))}),
+            ("incomplete SCE dynamic string or symbol table", {"table_tags": ((0x61000035, 0), (0x61000037, 1), (0x61000039, 8), (0x6100003b, 16), (0x6100003f, 48))}),
+            ("incomplete SCE dynamic string or symbol table", {"table_tags": ((0x61000035, 0), (0x61000037, 1), (0x61000039, 8), (0x6100003b, 24), (0x6100003f, 40))}),
+            ("incomplete SCE dynamic string or symbol table", {"table_tags": ((0x61000035, 0), (0x61000037, 0), (0x61000039, 8), (0x6100003b, 24), (0x6100003f, 48))}),
+            ("SCE dynamic string table at 0x0 with size 4096 lies outside", {"table_tags": ((0x61000035, 0), (0x61000037, 4096), (0x61000039, 32), (0x6100003b, 24), (0x6100003f, 72))}),
+            ("SCE dynamic symbol table at 0x1000 with size 72 lies outside", {"table_tags": ((0x61000035, 0), (0x61000037, 1), (0x61000039, 4096), (0x6100003b, 24), (0x6100003f, 72))}),
+            ("conflicting duplicate DT_SCE_SYMTABSZ", {"extra_dynamic": ((0x6100003f, 48),)}),
+        )
+        self.assertLess(size, 4096)
+        for message, options in cases:
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(import_audit.AuditError, rf"module\.prx: .*{message}"):
+                    import_audit.elf_program_dynamic_symbols(path, build_sce_module(symbols, **options))
+
+    def test_sce_module_imports_and_exports_are_audited(self):
+        work = self.work
+        (work.libs / "libSceA.prx").write_bytes(exporting("AAAAAAAAAAA"))
+        (work.modules / "libSceFios2.prx").write_bytes(build_sce_module([
+            ("AAAAAAAAAAA#B#B", 0, GLOBAL_FUNCTION), ("BBBBBBBBBBB#C#C", 1, GLOBAL_FUNCTION)], ["libSceA.prx"]))
+        (work.modules / "main.prx").write_bytes(build_elf([("BBBBBBBBBBB", 0, GLOBAL_FUNCTION)], []))
+        registry = work.root / "game.json"
+        write_registry(registry, [])
+        result = work.root / "audit.json"
+        code, out, err = work.run(registry, "--json", str(result))
+        self.assertEqual((code, err), (0, ""))
+        data = json.loads(result.read_text())
+        self.assertEqual(data["references"], 2)
+        records = {(record["nid"], record["module"]): record for record in data["imports"]}
+        self.assertEqual(records[("AAAAAAAAAAA", "libSceFios2.prx")]["class"], "implemented")
+        self.assertEqual(records[("BBBBBBBBBBB", "main.prx")]["class"], "implemented")
 
     def test_elf_sections_must_agree_with_runtime_symbol_inventory(self):
         symbols = [("alpha", 0, GLOBAL_FUNCTION), ("beta", 1, GLOBAL_FUNCTION)]
