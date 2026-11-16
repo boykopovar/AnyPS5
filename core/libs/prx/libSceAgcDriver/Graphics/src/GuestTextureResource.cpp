@@ -321,7 +321,7 @@ GuestTextureResource DecodeTextureResource(std::span<const std::uint32_t> descri
         case TextureDimension::k1DArray:
             Require(height == 1, "guest 1D array texture descriptor has a nonzero height");
             Require(baseArray <= depth, "guest 1D array texture descriptor has a base array past its last array slice");
-            Require(tileMode == TextureTileMode::kLinear || tileMode == TextureTileMode::kZ64KBX || tileMode == TextureTileMode::kR64KBX, "guest 1D array texture descriptor uses a tile mode other than linear, Z or R, which 1D resources cannot use");
+            Require(gcn || tileMode == TextureTileMode::kLinear || tileMode == TextureTileMode::kZ64KBX || tileMode == TextureTileMode::kR64KBX, "guest 1D array texture descriptor uses a tile mode other than linear, Z or R, which 1D resources cannot use" + describe());
             break;
         case TextureDimension::kCube:
             Require(width == height, "guest cube texture descriptor is not square");
