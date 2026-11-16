@@ -1719,6 +1719,10 @@ class WindowHelperTests(unittest.TestCase):
         self.assertEqual(report["samples"], 4)
         self.assertEqual(report["self"], [{"symbol": "WORK", "count": 3}])
         self.assertEqual(report["modules"], [])
+class HeaderWindowTests(unittest.TestCase):
+    def test_read_headers_marks_a_repeated_module_name_as_ambiguous(self):
+        lines = ["# module libA 0x10 0x20", "# module libB 0x1 0x2", "# module liba 0x9 0x9", "not a header"]
+        self.assertEqual(symbolize_samples.read_headers(lines), {"liba": False, "libb": (1, 2)})
 
 
 if __name__ == "__main__":
