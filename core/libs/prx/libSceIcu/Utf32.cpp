@@ -32,8 +32,16 @@ bool CopyOut(void* destination, const void* source, std::size_t bytes) {
 template <typename Unit>
 bool CopySource(const Unit* source, std::int32_t sourceLength, std::vector<Unit>& units) {
     if (sourceLength >= 0) {
-        units.resize(static_cast<std::size_t>(sourceLength));
-        return units.empty() || CopyIn(units.data(), source, units.size() * sizeof(Unit));
+        units.clear();
+        const auto total = static_cast<std::size_t>(sourceLength);
+        for (std::size_t offset = 0; offset < total;) {
+            const auto address = reinterpret_cast<std::uintptr_t>(source + offset);
+            const std::size_t count = (std::min)(total - offset, (std::max)(std::size_t{1}, (0x1000 - address % 0x1000) / sizeof(Unit)));
+            units.resize(offset + count);
+            if (!CopyIn(units.data() + offset, source + offset, count * sizeof(Unit))) return false;
+            offset += count;
+        }
+        return true;
     }
     units.clear();
     for (std::size_t offset = 0;;) {

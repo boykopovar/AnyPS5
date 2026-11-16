@@ -10,6 +10,9 @@
 #include <source_location>
 #include <string>
 #include <vector>
+#ifdef __linux__
+#include <sys/resource.h>
+#endif
 
 namespace {
 
@@ -331,6 +334,16 @@ void ToStatus() {
 
 }
 
+long PeakKilobytes() {
+#ifdef __linux__
+    rusage usage{};
+    getrusage(RUSAGE_SELF, &usage);
+    return usage.ru_maxrss;
+#else
+    return 0;
+#endif
+}
+
 void GuestBuffers() {
     const std::int32_t wide[] = {0x41, 0x1f600, 0};
     const char16_t narrow[] = {0x41, 0xd83d, 0xde00, 0};
@@ -355,7 +368,18 @@ void GuestBuffers() {
     Require(u_strToUTF32WithSub_nid_postfix(unmappedScalars, 8, &length, narrow, -1, 0xfffd, nullptr, &status) == nullptr && status == 1);
     status = 0;
     Require(u_strToUTF32WithSub_nid_postfix(scalars.data(), 8, &length, narrow, -1, 0xfffd, unmappedScalars, &status) == nullptr && status == 1);
+    const long peakBefore = PeakKilobytes();
+    status = 0;
+    Require(u_strFromUTF32WithSub_nid_postfix(units.data(), 8, &length, reinterpret_cast<const std::int32_t*>(0x10), 0x7fffffff, 0xfffd, nullptr, &status) == nullptr && status == 1);
+    status = 0;
+    Require(u_strToUTF32WithSub_nid_postfix(scalars.data(), 8, &length, reinterpret_cast<const char16_t*>(0x10), 0x7fffffff, 0xfffd, nullptr, &status) == nullptr && status == 1);
+    Require(PeakKilobytes() - peakBefore < 64 * 1024);
     Require(errno == 71);
+    const std::vector<std::int32_t> many(3000, 0x42);
+    std::vector<char16_t> converted(3001, 0xffff);
+    status = 0;
+    Require(u_strFromUTF32WithSub_nid_postfix(converted.data(), 3001, &length, many.data(), 3000, 0xfffd, nullptr, &status) == converted.data());
+    Require(status == 0 && length == 3000 && converted[0] == 0x42 && converted[2999] == 0x42 && converted[3000] == 0);
     status = 0;
     Require(u_strFromUTF32WithSub_nid_postfix(units.data(), 8, &length, wide, -1, 0xfffd, &substitutions, &status) == units.data());
     Require(status == 0 && length == 3 && substitutions == 0 && units[0] == 0x41 && units[1] == 0xd83d && units[2] == 0xde00 && units[3] == 0);
