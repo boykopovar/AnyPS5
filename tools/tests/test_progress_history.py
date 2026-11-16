@@ -871,6 +871,16 @@ class SpreadTests(unittest.TestCase):
         import progress_history
         self.assertEqual(progress_history.spread([0, 5, 100], gap=15), [0, 15, 100])
         self.assertEqual(progress_history.spread([10, 10, 10], gap=5), [10, 15, 20])
+class LabelledTests(unittest.TestCase):
+    def test_labelled_depends_on_span_and_weekday(self):
+        import datetime
+        import progress_history
+        day = datetime.date(2026, 1, 5)
+        self.assertEqual(day.weekday(), 0)
+        self.assertEqual(progress_history.labelled(day, 10), "Jan 5")
+        self.assertEqual(progress_history.labelled(day, 100), "Jan 5")
+        self.assertEqual(progress_history.labelled(day, 200), "Jan 2026")
+        self.assertEqual(progress_history.labelled(datetime.date(2026, 1, 12), 200), "")
 
 
 if __name__ == "__main__":
