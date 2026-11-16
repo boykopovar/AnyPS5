@@ -28,10 +28,10 @@ struct SamplerRecord {
 };
 
 PFN_vkVoidFunction DescriptorHeapObjectFunction(VkDevice device, PFN_vkGetDeviceProcAddr deviceProc, const char* name);
-std::optional<ImageViewRecord> FindImageView(VkImageView view);
-std::optional<SamplerRecord> FindSampler(VkSampler sampler);
-bool CopyEncodedImageView(VkImageView view, std::uint32_t key, std::span<std::byte> target);
-void KeepEncodedImageView(VkImageView view, std::uint64_t generation, std::uint32_t key, std::span<const std::byte> bytes);
+std::optional<ImageViewRecord> FindImageView(VkDevice device, VkImageView view);
+std::optional<SamplerRecord> FindSampler(VkDevice device, VkSampler sampler);
+bool CopyEncodedImageView(VkDevice device, VkImageView view, std::uint32_t key, std::span<std::byte> target);
+void KeepEncodedImageView(VkDevice device, VkImageView view, std::uint64_t generation, std::uint32_t key, std::span<const std::byte> bytes);
 
 }
 

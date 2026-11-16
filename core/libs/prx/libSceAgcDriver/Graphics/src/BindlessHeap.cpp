@@ -945,7 +945,7 @@ std::pair<VkBuffer, VkDeviceSize> BindlessHeap::DataLocation(VkDeviceAddress add
 }
 
 void BindlessHeap::writeSamplerSlot(std::uint32_t slot, VkSampler sampler) {
-    auto record = FindSampler(sampler);
+    auto record = FindSampler(context.device, sampler);
     Require(record.has_value(), "a GPU heap sampler has no recorded create info");
     const auto offset = static_cast<VkDeviceSize>(slot) * samplerHeapStride;
     Require(offset + samplerHeapStride <= samplerHeapUsed, "a GPU heap sampler slot lies outside the sampler heap");
@@ -965,11 +965,11 @@ void BindlessHeap::writeImageSlot(std::uint32_t kind, std::uint32_t slot, VkImag
     const bool storage = Abi::GpuHeapStorageKind(kind);
     const auto key = static_cast<std::uint32_t>(layout) | (storage ? 0x80000000u : 0u);
     const auto stride = static_cast<std::size_t>(imageHeapStride);
-    if (CopyEncodedImageView(view, key, std::span<std::byte>(target, stride))) {
+    if (CopyEncodedImageView(context.device, view, key, std::span<std::byte>(target, stride))) {
         ++counts.encodedCopies;
         return;
     }
-    auto record = FindImageView(view);
+    auto record = FindImageView(context.device, view);
     Require(record.has_value(), "a GPU heap image view has no recorded create info");
     const VkImageDescriptorInfoEXT imageInfo{VK_STRUCTURE_TYPE_IMAGE_DESCRIPTOR_INFO_EXT, nullptr, record->Chain(), layout};
     VkResourceDescriptorInfoEXT resource{VK_STRUCTURE_TYPE_RESOURCE_DESCRIPTOR_INFO_EXT};
@@ -979,7 +979,7 @@ void BindlessHeap::writeImageSlot(std::uint32_t kind, std::uint32_t slot, VkImag
     const VkHostAddressRangeEXT range{encodeScratch.data(), stride};
     Check(writeResourceDescriptors(context.device, 1, &resource, &range), "vkWriteResourceDescriptorsEXT");
     std::memcpy(target, encodeScratch.data(), stride);
-    KeepEncodedImageView(view, record->generation, key, encodeScratch);
+    KeepEncodedImageView(context.device, view, record->generation, key, encodeScratch);
     ++counts.encodes;
 }
 

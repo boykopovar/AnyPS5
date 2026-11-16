@@ -3,6 +3,7 @@
 #include <array>
 #include <atomic>
 #include <cstring>
+#include <functional>
 #include <mutex>
 #include <unordered_map>
 #include <vector>
@@ -11,15 +12,43 @@ namespace AgcDriver::Graphics {
 
 namespace {
 
-std::atomic<PFN_vkCreateImageView> realCreateImageView{nullptr};
-std::atomic<PFN_vkDestroyImageView> realDestroyImageView{nullptr};
-std::atomic<PFN_vkCreateSampler> realCreateSampler{nullptr};
-std::atomic<PFN_vkDestroySampler> realDestroySampler{nullptr};
+enum class Hook : std::size_t { CreateImageView, DestroyImageView, CreateSampler, DestroySampler, Count };
+
+using RealFunctions = std::array<PFN_vkVoidFunction, static_cast<std::size_t>(Hook::Count)>;
 
 std::mutex& recordsMutex() {
     static auto& mutex = *new std::mutex();
     return mutex;
 }
+
+std::unordered_map<VkDevice, RealFunctions>& realFunctions() {
+    static auto& map = *new std::unordered_map<VkDevice, RealFunctions>();
+    return map;
+}
+
+template <typename TFunction>
+TFunction realFunction(VkDevice device, Hook hook) {
+    std::lock_guard lock(recordsMutex());
+    const auto found = realFunctions().find(device);
+    if (found == realFunctions().end()) return nullptr;
+    return reinterpret_cast<TFunction>(found->second[static_cast<std::size_t>(hook)]);
+}
+
+template <typename THandle>
+struct DeviceHandle {
+    VkDevice device;
+    THandle handle;
+    bool operator==(const DeviceHandle& other) const { return device == other.device && handle == other.handle; }
+};
+
+template <typename THandle>
+struct DeviceHandleHash {
+    std::size_t operator()(const DeviceHandle<THandle>& key) const {
+        const auto device = std::hash<VkDevice>{}(key.device);
+        const auto handle = std::hash<THandle>{}(key.handle);
+        return device ^ (handle + 0x9e3779b97f4a7c15ull + (device << 6u) + (device >> 2u));
+    }
+};
 
 struct EncodedImageView {
     std::uint32_t key = 0;
@@ -31,13 +60,16 @@ struct ViewEntry {
     std::vector<EncodedImageView> encoded;
 };
 
-std::unordered_map<VkImageView, ViewEntry>& views() {
-    static auto& map = *new std::unordered_map<VkImageView, ViewEntry>();
+using ViewKey = DeviceHandle<VkImageView>;
+using SamplerKey = DeviceHandle<VkSampler>;
+
+std::unordered_map<ViewKey, ViewEntry, DeviceHandleHash<VkImageView>>& views() {
+    static auto& map = *new std::unordered_map<ViewKey, ViewEntry, DeviceHandleHash<VkImageView>>();
     return map;
 }
 
-std::unordered_map<VkSampler, SamplerRecord>& samplers() {
-    static auto& map = *new std::unordered_map<VkSampler, SamplerRecord>();
+std::unordered_map<SamplerKey, SamplerRecord, DeviceHandleHash<VkSampler>>& samplers() {
+    static auto& map = *new std::unordered_map<SamplerKey, SamplerRecord, DeviceHandleHash<VkSampler>>();
     return map;
 }
 
@@ -72,13 +104,15 @@ SamplerRecord recordOf(const VkSamplerCreateInfo& info) {
 
 VKAPI_ATTR VkResult VKAPI_CALL createImageView(VkDevice device, const VkImageViewCreateInfo* info, const VkAllocationCallbacks* allocator,
                                                VkImageView* view) {
-    const auto result = realCreateImageView.load(std::memory_order_acquire)(device, info, allocator, view);
+    const auto real = realFunction<PFN_vkCreateImageView>(device, Hook::CreateImageView);
+    if (real == nullptr) return VK_ERROR_INITIALIZATION_FAILED;
+    const auto result = real(device, info, allocator, view);
     if (result == VK_SUCCESS) {
         auto record = recordOf(*info);
         static std::atomic<std::uint64_t> generations{0};
         record.generation = generations.fetch_add(1, std::memory_order_relaxed) + 1u;
         std::lock_guard lock(recordsMutex());
-        views()[*view] = ViewEntry{std::move(record), {}};
+        views()[{device, *view}] = ViewEntry{std::move(record), {}};
     }
     return result;
 }
@@ -86,18 +120,20 @@ VKAPI_ATTR VkResult VKAPI_CALL createImageView(VkDevice device, const VkImageVie
 VKAPI_ATTR void VKAPI_CALL destroyImageView(VkDevice device, VkImageView view, const VkAllocationCallbacks* allocator) {
     {
         std::lock_guard lock(recordsMutex());
-        views().erase(view);
+        views().erase({device, view});
     }
-    realDestroyImageView.load(std::memory_order_acquire)(device, view, allocator);
+    if (const auto real = realFunction<PFN_vkDestroyImageView>(device, Hook::DestroyImageView)) real(device, view, allocator);
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL createSampler(VkDevice device, const VkSamplerCreateInfo* info, const VkAllocationCallbacks* allocator,
                                              VkSampler* sampler) {
-    const auto result = realCreateSampler.load(std::memory_order_acquire)(device, info, allocator, sampler);
+    const auto real = realFunction<PFN_vkCreateSampler>(device, Hook::CreateSampler);
+    if (real == nullptr) return VK_ERROR_INITIALIZATION_FAILED;
+    const auto result = real(device, info, allocator, sampler);
     if (result == VK_SUCCESS) {
         auto record = recordOf(*info);
         std::lock_guard lock(recordsMutex());
-        samplers()[*sampler] = std::move(record);
+        samplers()[{device, *sampler}] = std::move(record);
     }
     return result;
 }
@@ -105,35 +141,22 @@ VKAPI_ATTR VkResult VKAPI_CALL createSampler(VkDevice device, const VkSamplerCre
 VKAPI_ATTR void VKAPI_CALL destroySampler(VkDevice device, VkSampler sampler, const VkAllocationCallbacks* allocator) {
     {
         std::lock_guard lock(recordsMutex());
-        samplers().erase(sampler);
+        samplers().erase({device, sampler});
     }
-    realDestroySampler.load(std::memory_order_acquire)(device, sampler, allocator);
-}
-
-template <typename TFunction>
-bool resolve(std::atomic<TFunction>& real, VkDevice device, PFN_vkGetDeviceProcAddr deviceProc, const char* name) {
-    const auto function = reinterpret_cast<TFunction>(deviceProc(device, name));
-    if (function == nullptr) return false;
-    real.store(function, std::memory_order_release);
-    return true;
+    if (const auto real = realFunction<PFN_vkDestroySampler>(device, Hook::DestroySampler)) real(device, sampler, allocator);
 }
 
 struct ObjectHook {
     const char* name;
-    bool (*resolveReal)(VkDevice, PFN_vkGetDeviceProcAddr, const char*);
+    Hook slot;
     PFN_vkVoidFunction hook;
 };
 
-template <typename TFunction, std::atomic<TFunction>& Real>
-bool resolveRealFunction(VkDevice device, PFN_vkGetDeviceProcAddr deviceProc, const char* name) {
-    return resolve(Real, device, deviceProc, name);
-}
-
 const std::array<ObjectHook, 4> ObjectHooks{{
-    {"vkCreateImageView", &resolveRealFunction<PFN_vkCreateImageView, realCreateImageView>, reinterpret_cast<PFN_vkVoidFunction>(&createImageView)},
-    {"vkDestroyImageView", &resolveRealFunction<PFN_vkDestroyImageView, realDestroyImageView>, reinterpret_cast<PFN_vkVoidFunction>(&destroyImageView)},
-    {"vkCreateSampler", &resolveRealFunction<PFN_vkCreateSampler, realCreateSampler>, reinterpret_cast<PFN_vkVoidFunction>(&createSampler)},
-    {"vkDestroySampler", &resolveRealFunction<PFN_vkDestroySampler, realDestroySampler>, reinterpret_cast<PFN_vkVoidFunction>(&destroySampler)},
+    {"vkCreateImageView", Hook::CreateImageView, reinterpret_cast<PFN_vkVoidFunction>(&createImageView)},
+    {"vkDestroyImageView", Hook::DestroyImageView, reinterpret_cast<PFN_vkVoidFunction>(&destroyImageView)},
+    {"vkCreateSampler", Hook::CreateSampler, reinterpret_cast<PFN_vkVoidFunction>(&createSampler)},
+    {"vkDestroySampler", Hook::DestroySampler, reinterpret_cast<PFN_vkVoidFunction>(&destroySampler)},
 }};
 
 }
@@ -164,14 +187,18 @@ PFN_vkVoidFunction DescriptorHeapObjectFunction(VkDevice device, PFN_vkGetDevice
     if (device == VK_NULL_HANDLE) return nullptr;
     for (const auto& entry : ObjectHooks) {
         if (std::strcmp(name, entry.name) != 0) continue;
-        return entry.resolveReal(device, deviceProc, name) ? entry.hook : nullptr;
+        const auto function = deviceProc(device, name);
+        if (function == nullptr) return nullptr;
+        std::lock_guard lock(recordsMutex());
+        realFunctions()[device][static_cast<std::size_t>(entry.slot)] = function;
+        return entry.hook;
     }
     return nullptr;
 }
 
-bool CopyEncodedImageView(VkImageView view, std::uint32_t key, std::span<std::byte> target) {
+bool CopyEncodedImageView(VkDevice device, VkImageView view, std::uint32_t key, std::span<std::byte> target) {
     std::lock_guard lock(recordsMutex());
-    const auto found = views().find(view);
+    const auto found = views().find({device, view});
     if (found == views().end()) return false;
     for (const auto& encoded : found->second.encoded) {
         if (encoded.key != key || encoded.bytes.size() != target.size()) continue;
@@ -181,9 +208,9 @@ bool CopyEncodedImageView(VkImageView view, std::uint32_t key, std::span<std::by
     return false;
 }
 
-void KeepEncodedImageView(VkImageView view, std::uint64_t generation, std::uint32_t key, std::span<const std::byte> bytes) {
+void KeepEncodedImageView(VkDevice device, VkImageView view, std::uint64_t generation, std::uint32_t key, std::span<const std::byte> bytes) {
     std::lock_guard lock(recordsMutex());
-    const auto record = views().find(view);
+    const auto record = views().find({device, view});
     if (record == views().end() || record->second.record.generation != generation) return;
     auto& entries = record->second.encoded;
     for (auto& encoded : entries) {
@@ -195,16 +222,16 @@ void KeepEncodedImageView(VkImageView view, std::uint64_t generation, std::uint3
     entries.push_back({key, std::vector<std::byte>(bytes.begin(), bytes.end())});
 }
 
-std::optional<ImageViewRecord> FindImageView(VkImageView view) {
+std::optional<ImageViewRecord> FindImageView(VkDevice device, VkImageView view) {
     std::lock_guard lock(recordsMutex());
-    const auto found = views().find(view);
+    const auto found = views().find({device, view});
     if (found == views().end()) return std::nullopt;
     return found->second.record;
 }
 
-std::optional<SamplerRecord> FindSampler(VkSampler sampler) {
+std::optional<SamplerRecord> FindSampler(VkDevice device, VkSampler sampler) {
     std::lock_guard lock(recordsMutex());
-    const auto found = samplers().find(sampler);
+    const auto found = samplers().find({device, sampler});
     if (found == samplers().end()) return std::nullopt;
     return found->second;
 }

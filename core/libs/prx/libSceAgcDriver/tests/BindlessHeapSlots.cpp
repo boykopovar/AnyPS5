@@ -124,10 +124,10 @@ void encodedViews(const Context& context) {
         require(encodes() == 1u && copies() == 0u, "a view's first heap slot encodes its descriptor");
         heap.AbsentSlot(Abi::FirstStorageImageBinding + 3u, view);
         require(encodes() == 1u && copies() == 1u, "another slot for the same view copies the encoded descriptor");
-        require(CopyEncodedImageView(view, storageKey, bytes), "a live view keeps its encoded descriptor");
+        require(CopyEncodedImageView(context.device, view, storageKey, bytes), "a live view keeps its encoded descriptor");
         destroyed = view;
     }
-    require(!CopyEncodedImageView(destroyed, storageKey, bytes), "a destroyed view drops its encoded descriptor");
+    require(!CopyEncodedImageView(context.device, destroyed, storageKey, bytes), "a destroyed view drops its encoded descriptor");
     const PlaceholderImages again(context);
     heap.AbsentSlot(Abi::FirstStorageImageBinding + 4u, again.View(Abi::FirstStorageImageBinding));
     require(encodes() == 2u && copies() == 1u, "a destroyed view's encoded descriptor is not copied to a new view");
