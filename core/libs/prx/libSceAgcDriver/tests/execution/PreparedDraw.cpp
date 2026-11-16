@@ -5,6 +5,7 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <cstdlib>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -118,6 +119,19 @@ void Run(AgcDriver::VulkanDevice& device) {
     scene.Draw(prepared.get(), empty, false, "an empty draw with its plan");
     counts = AgcDriver::Graphics::TakePreparedDrawCounts();
     Require(counts.planned == 1 && counts.used == 1 && counts.inlinePlans == 0, "prepared draw: the plan of an empty draw was not taken (" + Counts(counts) + ")");
+
+    if (std::getenv("APS5_VERIFY_DRAW_PLAN") != nullptr) {
+        prepared = device.PrepareDraw(scene.state, empty, scene.shaders, true);
+        std::string verifyError;
+        try {
+            scene.Draw(prepared.get(), scene.draw, true, "a draw given the plan of an empty draw");
+        } catch (const std::exception& error) {
+            verifyError = error.what();
+        }
+        Require(verifyError.find("APS5_VERIFY_DRAW_PLAN") != std::string::npos, "prepared draw: a draw given the empty plan of another draw was not caught by the plan verifier (got '" + verifyError + "')");
+        counts = AgcDriver::Graphics::TakePreparedDrawCounts();
+        Require(counts.planned == 1 && counts.used == 1 && counts.inlinePlans == 0, "prepared draw: the wrongly empty plan was not the one the committer took (" + Counts(counts) + ")");
+    }
 
     auto modified = scene.draw;
     modified.flags = 1u;

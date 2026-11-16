@@ -3969,7 +3969,10 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
     auto& inputs = prepared.inputs;
     std::optional<DrawPlan> inlinePlan;
     const DrawPlan& plan = takePlan(context, state, draw, shaders, prepared.preparedDraw, inlinePlan, outcome, timer);
-    if (plan.nothing) return false;
+    if (plan.nothing) {
+        if (VerifyDrawPlan()) requireDrawPlanRepeats(context, state, draw, shaders, plan);
+        return false;
+    }
     inputs = prepareDrawInputs(context, state, draw, shaders, plan, timer, timing);
     if (inputs.nothing) {
         if (VerifyDrawPlan()) requireDrawPlanRepeats(context, state, draw, shaders, plan);
