@@ -578,5 +578,9 @@ class DebtSplitTests(unittest.TestCase):
         self.assertEqual(debt_split.debt_file("libc"), "docs/dev/debt/libc.md")
 
 
+    def test_separated_puts_a_blank_between_entries_and_text(self):
+        self.assertEqual(debt_split.separated(["- a", "- b", "text"]), ["- a", "- b", "", "text"])
+
+
 if __name__ == "__main__":
     unittest.main()
