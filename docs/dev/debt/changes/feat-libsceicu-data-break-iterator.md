@@ -1,9 +1,5 @@
 # libSceIcu
 
-## change [Additional callable exports]
-
-- [Additional callable exports](../../../core/libs/prx/libSceIcu/Export.cpp) - 31 remaining throwing functions match NIDs in the public 3.20 catalogue and both version-labelled images; image labels do not authenticate retail firmware provenance. Their prototypes and behavior are unverified and retain `NotImplemented_nid_no_patch`. The 14 `ubrk_*` and two `udata_set*` exports moved to [BreakIterator.cpp](../../../core/libs/prx/libSceIcu/BreakIterator.cpp) and [Data.cpp](../../../core/libs/prx/libSceIcu/Data.cpp). Existing locale, character, normalization and property-map implementations remain outside this throwing inventory. Three resource readers moved to [ResourceBundle.cpp](../../../core/libs/prx/libSceIcu/ResourceBundle.cpp).
-
 ## remove -Hc6XkAq-eU
 
 ## remove bZT8JIrrg3I
