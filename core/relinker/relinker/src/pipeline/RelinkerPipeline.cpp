@@ -406,6 +406,8 @@ RelinkResult RelinkerPipeline::Relink() {
         return definedTlsSymbolValue(symIdx, pos).has_value();
     };
 
+    std::vector<std::pair<std::uint64_t, std::int64_t>> localRelocations;
+
     auto extractRela = [&](const FileByteOffset relaOff, const ByteCount relaSize, const bool plt) {
         for (ByteCount off = 0; relaSize >= relaEntSize && off <= relaSize - relaEntSize; off += relaEntSize) {
             const FileByteOffset pos = relaEntryPos(relaOff, off);
@@ -457,12 +459,34 @@ RelinkResult RelinkerPipeline::Relink() {
             std::memcpy(&section, raw.data() + symOff + 6, sizeof(section));
             if (section == SHN_UNDEF && (raw[symOff + 4] >> 4) != STB_WEAK && (raw[symOff + 5] & 3) != 0)
                 throw RelinkerException("Undefined non-weak symbol has non-default visibility: " + name, symOff);
+            if (section != SHN_UNDEF && ((raw[symOff + 4] >> 4) < STB_GLOBAL || (raw[symOff + 5] & 3) == 1 || (raw[symOff + 5] & 3) == 2)) {
+                if (plt)
+                    throw RelinkerException("PLT relocation names a defined symbol that is local, hidden or internal: " + name, symOff);
+                if (section >= SHN_LORESERVE)
+                    throw RelinkerException("Relocation names a defined symbol that is local, hidden or internal in an unsupported section: " + name, symOff);
+                std::uint64_t value = 0;
+                std::memcpy(&value, raw.data() + symOff + 8, sizeof(value));
+                const bool mapped = value == 0 || std::any_of(programHeaders.begin(), programHeaders.end(), [&](const ProgramHeader& ph) {
+                    return ph.Type == PT_LOAD && value >= ph.MappedAddress && value - ph.MappedAddress < ph.MemorySize;
+                });
+                if (!mapped)
+                    throw RelinkerException("Relocation names a defined symbol that is local, hidden or internal outside a PT_LOAD segment: " + name, symOff);
+                if (relType == R_X86_64_64) {
+                    localRelocations.emplace_back(rOffset, static_cast<std::int64_t>(value + static_cast<std::uint64_t>(rAddend)));
+                    continue;
+                }
+                if (relType == R_X86_64_GLOB_DAT) {
+                    if (rAddend != 0)
+                        throw RelinkerException("GLOB_DAT relocation against a defined symbol that is local, hidden or internal has a nonzero addend: " + name, symOff);
+                    localRelocations.emplace_back(rOffset, static_cast<std::int64_t>(value));
+                    continue;
+                }
+                throw RelinkerException("Relocation names a defined symbol that is local, hidden or internal with an unsupported relocation type: " + name, symOff);
+            }
             if (name.empty() && (raw.size() - symOff < symEntSize
                                  || std::any_of(raw.begin() + static_cast<std::ptrdiff_t>(symOff), raw.begin() + static_cast<std::ptrdiff_t>(symOff + symEntSize),
                                                 [](const std::uint8_t byte) { return byte != 0; })))
                 throw RelinkerException("Unnamed import symbol is not a null symbol entry", symOff);
-            if (section != SHN_UNDEF && ((raw[symOff + 4] >> 4) < STB_GLOBAL || (raw[symOff + 5] & 3) == 1 || (raw[symOff + 5] & 3) == 2))
-                throw RelinkerException("Relocation names a defined symbol that is local, hidden or internal: " + name, symOff);
             const bool weak = (raw[symOff + 4] >> 4) == STB_WEAK;
             const auto symbolType = static_cast<std::uint8_t>(raw[symOff + 4] & 15);
             const bool function = symbolType == STT_FUNC;
@@ -707,6 +731,8 @@ RelinkResult RelinkerPipeline::Relink() {
 
     extractLocal(dynRelaOffset, dynRelaSize, false);
     extractLocal(dynJmpRelOffset, dynJmpRelSize, true);
+    for (const auto& [target, addend] : localRelocations)
+        appendRela(dynSection.RelaData, target, R_X86_64_RELATIVE, addend);
     for (const auto& [target, addend] : relrRelocations)
         appendRela(dynSection.RelaData, target, R_X86_64_RELATIVE, static_cast<std::int64_t>(addend));
 
