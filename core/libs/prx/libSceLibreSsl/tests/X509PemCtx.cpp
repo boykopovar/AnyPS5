@@ -1503,18 +1503,31 @@ const char* trackedOrigin[TrackerSlots];
 std::size_t trackedCount = 0;
 std::uint64_t generation = 0;
 std::size_t keyShapeAllocations = 0;
+#ifdef _WIN32
+SRWLOCK trackerLock = SRWLOCK_INIT;
+struct TrackerGuard {
+    TrackerGuard() noexcept { AcquireSRWLockExclusive(&trackerLock); }
+    ~TrackerGuard() noexcept { ReleaseSRWLockExclusive(&trackerLock); }
+    TrackerGuard(const TrackerGuard&) = delete;
+    TrackerGuard& operator=(const TrackerGuard&) = delete;
+};
+#else
 std::mutex trackerMutex;
+struct TrackerGuard {
+    std::lock_guard<std::mutex> lock{trackerMutex};
+};
+#endif
 int failAt = 0;
 std::atomic<int> calls{0};
 
 std::uint64_t CurrentGeneration() {
-    const std::lock_guard guard(trackerMutex);
+    const TrackerGuard guard;
     return generation;
 }
 
 void* Track(void* pointer, std::size_t size, const char* origin) {
     if (!pointer) return nullptr;
-    const std::lock_guard guard(trackerMutex);
+    const TrackerGuard guard;
     Require(trackedCount < TrackerSlots, "the tracker has room for every live allocation");
     ++generation;
     trackedPointer[trackedCount] = pointer;
@@ -1528,7 +1541,7 @@ void* Track(void* pointer, std::size_t size, const char* origin) {
 
 void Untrack(void* pointer) {
     if (!pointer) return;
-    const std::lock_guard guard(trackerMutex);
+    const TrackerGuard guard;
     for (std::size_t index = 0; index < trackedCount; ++index) {
         if (trackedPointer[index] != pointer) continue;
         --trackedCount;
@@ -1542,7 +1555,7 @@ void Untrack(void* pointer) {
 }
 
 std::size_t OutstandingSince(std::uint64_t baseline) {
-    const std::lock_guard guard(trackerMutex);
+    const TrackerGuard guard;
     std::size_t outstanding = 0;
     for (std::size_t index = 0; index < trackedCount; ++index)
         if (trackedGeneration[index] > baseline) ++outstanding;
@@ -1550,7 +1563,7 @@ std::size_t OutstandingSince(std::uint64_t baseline) {
 }
 
 std::size_t OutstandingSince(std::uint64_t baseline, std::size_t size) {
-    const std::lock_guard guard(trackerMutex);
+    const TrackerGuard guard;
     std::size_t outstanding = 0;
     for (std::size_t index = 0; index < trackedCount; ++index)
         if (trackedGeneration[index] > baseline && trackedSize[index] == size) ++outstanding;
@@ -1559,7 +1572,7 @@ std::size_t OutstandingSince(std::uint64_t baseline, std::size_t size) {
 
 void ReportOutstanding(std::uint64_t baseline, int injection, const char* message) {
     {
-        const std::lock_guard guard(trackerMutex);
+        const TrackerGuard guard;
         for (std::size_t index = 0; index < trackedCount; ++index)
             if (trackedGeneration[index] > baseline)
                 std::fprintf(stderr, "%s: allocation %d is still live origin=%s size=%zu\n", message, injection,
@@ -1614,7 +1627,7 @@ struct InjectionResult {
 };
 
 std::size_t KeyShapeAllocations() {
-    const std::lock_guard guard(trackerMutex);
+    const TrackerGuard guard;
     return keyShapeAllocations;
 }
 
@@ -1963,12 +1976,14 @@ void StoreInfoReconciliation() {
 
 }  // namespace
 
+#ifndef _WIN32
 void* operator new(std::size_t size) { return Track(std::malloc(size), size, "new"); }
 void* operator new[](std::size_t size) { return Track(std::malloc(size), size, "new"); }
 void operator delete(void* pointer) noexcept { Untrack(pointer); std::free(pointer); }
 void operator delete[](void* pointer) noexcept { Untrack(pointer); std::free(pointer); }
 void operator delete(void* pointer, std::size_t) noexcept { Untrack(pointer); std::free(pointer); }
 void operator delete[](void* pointer, std::size_t) noexcept { Untrack(pointer); std::free(pointer); }
+#endif
 
 int main(int argc, char**) {
     if (argc > 1) {
