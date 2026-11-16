@@ -159,6 +159,7 @@ void ReportUnconvertedNeeded(const NativeModules& modules, const std::vector<std
         })) continue;
         for (const auto& name : stem->second) found.push_back({entry->path().lexically_relative(modules.Root), name, header->Self});
     }
+    if (error) out << "Warning: the scan of " << Io::Utf8Path(modules.Root) << " stopped early: " << error.message() << '\n';
     std::sort(found.begin(), found.end(), [](const auto& left, const auto& right) { return std::tie(left.Relative, left.Name) < std::tie(right.Relative, right.Name); });
     for (const auto& [relative, name, self] : found) {
         const auto directory = relative.parent_path().generic_string();
