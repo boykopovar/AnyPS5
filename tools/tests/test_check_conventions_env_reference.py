@@ -287,6 +287,13 @@ class ScopeTests(unittest.TestCase):
         self.assertIn(("namespace", "::A"), chain)
         self.assertEqual(check_conventions.scope_chain(scopes, 0), [("namespace", "")])
 
+    def test_constant_value_uses_a_definition_visible_from_the_position(self):
+        scopes = check_conventions.brace_scopes("namespace A { namespace B { int x = 1; } }\n")
+        outer = ("namespace", "::A")
+        self.assertEqual(check_conventions.constant_value(([("K", 5, 0, outer)], scopes), "K", 35), 5)
+        self.assertEqual(check_conventions.constant_value(([("K", 5, 0, ("namespace", "::Z"))], scopes), "K", 35), 0)
+        self.assertEqual(check_conventions.constant_value(([("K", 5, 0, outer)], scopes), "Missing", 35), 0)
+
 
 if __name__ == "__main__":
     unittest.main()
