@@ -302,6 +302,27 @@ void UChars() {
     Close(text);
 }
 
+void ChunkEnd() {
+    const char16_t units[] = {u'a', u'b', 0};
+    std::int32_t status = Success;
+    Text* empty = utext_openUChars_nid_postfix(nullptr, nullptr, 0, &status);
+    Require(status == Success && utext_getNativeIndex_nid_postfix(empty) == 0, "empty UChars index");
+    Require(utext_equals_nid_postfix(empty, empty), "empty UChars equals itself");
+    Text* text = utext_openUChars_nid_postfix(nullptr, units, 2, &status);
+    Require(status == Success && (Points(text) == std::vector<std::int32_t>{u'a', u'b'}), "UChars iteration to the end");
+    Require(text->chunkOffset == 2 && utext_getNativeIndex_nid_postfix(text) == 2, "UChars index at the chunk end");
+    Require(utext_equals_nid_postfix(text, text), "UChars equals itself at the chunk end");
+    String string{};
+    _ZN6icu_6813UnicodeStringC1EPKDsi_nid_postfix(&string, units, 2);
+    Text* unicode = utext_openConstUnicodeString_nid_postfix(nullptr, &string, &status);
+    Require(status == Success && (Points(unicode) == std::vector<std::int32_t>{u'a', u'b'}), "UnicodeString iteration to the end");
+    Require(utext_getNativeIndex_nid_postfix(unicode) == 2, "UnicodeString index at the chunk end");
+    Close(unicode);
+    Close(text);
+    Close(empty);
+    _ZN6icu_6813UnicodeStringD1Ev_nid_postfix(&string);
+}
+
 void UnicodeStrings() {
     const char16_t units[] = {u'a', 0xd83d, 0xde00, u'b', u'c'};
     String string{};
@@ -380,6 +401,7 @@ int main() {
     Require(status == Success, "memory functions");
     Setup();
     UChars();
+    ChunkEnd();
     UnicodeStrings();
     Require(heap.live.empty(), "every block released");
     std::puts("ICU text provider tests passed");
