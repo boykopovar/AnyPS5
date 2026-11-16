@@ -522,18 +522,19 @@ int main(int argc, char** argv) {
         } else if (argc == 2 && std::string_view(argv[1]) == "--finisher-prepare-switch") {
             using AgcDriver::Graphics::RuntimeSwitch;
             namespace Switches = AgcDriver::Graphics::RuntimeSwitches;
-            Require(!Switches::Set(RuntimeSwitch::FinisherPrepare), "the finisher-prepare switch started set");
+            Require(Switches::Set(RuntimeSwitch::NoFinisherPrepare), "the run did not start with APS5_NO_FINISHER_PREPARE set");
             static_cast<void>(AgcDriver::Graphics::TakePreparedDrawCounts());
             ThirdDrawHitsTheCache(libraries);
             UserDataDrawsReuseTheirShape(libraries);
-            PlansCameFromTheFinisher("with the finisher-prepare switch clear", false);
-            Switches::Assign(RuntimeSwitch::FinisherPrepare, true);
+            PlansCameFromTheFinisher("with APS5_NO_FINISHER_PREPARE set", false);
+            Switches::Assign(RuntimeSwitch::NoFinisherPrepare, false);
             StageDataHitsRefreshTheirWords(libraries);
             RetainedPixelCacheTransitions();
-            Switches::Assign(RuntimeSwitch::FinisherPrepare, false);
-            PlansCameFromTheFinisher("after the finisher-prepare switch was set mid-run", true);
+            Switches::Assign(RuntimeSwitch::NoFinisherPrepare, true);
+            PlansCameFromTheFinisher("after APS5_NO_FINISHER_PREPARE was cleared mid-run", true);
         } else {
-            const bool finisherPrepare = std::getenv("APS5_FINISHER_PREPARE") != nullptr && std::getenv("APS5_DRAW_PIPELINE") != nullptr;
+            const std::string_view arm = argc == 2 ? std::string_view(argv[1]) : std::string_view{};
+            Require(arm.empty() || arm == "--finisher-prepare" || arm == "--no-finisher-prepare", "unknown draw cache reuse argument");
             static_cast<void>(AgcDriver::Graphics::TakePreparedDrawCounts());
             ThirdDrawHitsTheCache(libraries);
             UserDataDrawsReuseTheirShape(libraries);
@@ -544,7 +545,8 @@ int main(int argc, char** argv) {
             FullVertexPushDataLeavesRoomForTheFragment(libraries);
             RecordWordsReachTheShader(libraries);
             IndirectPointsKeepTheirPointSize(libraries);
-            if (finisherPrepare) PlansCameFromTheFinisher("with APS5_FINISHER_PREPARE", true);
+            if (arm == "--finisher-prepare") PlansCameFromTheFinisher("by default", true);
+            if (arm == "--no-finisher-prepare") PlansCameFromTheFinisher("with APS5_NO_FINISHER_PREPARE set", false);
         }
         AgcDriverShutdown_nid_postfix();
         Require(AgcDriver::Graphics::PipelineLibraryWorkers() == 0, "the driver's shutdown left the pipeline library worker running");
