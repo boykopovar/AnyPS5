@@ -1752,6 +1752,18 @@ class HostIsIntelTests(unittest.TestCase):
             path.return_value.read_text.side_effect = OSError("missing")
             self.assertIs(self.check(SimpleNamespace(name="posix")), False)
 
+class LinkedPathTests(unittest.TestCase):
+    @unittest.skipIf(os.name == 'nt', 'symbolic links need extra privileges on Windows')
+    def test_linked_path_is_true_only_for_a_symbolic_link(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / 'real.bin'
+            target.write_bytes(b'x')
+            link = root / 'link.bin'
+            os.symlink(target, link)
+            self.assertFalse(title_run.linked_path(target))
+            self.assertTrue(title_run.linked_path(link))
+
 
 if __name__ == "__main__":
     unittest.main()
