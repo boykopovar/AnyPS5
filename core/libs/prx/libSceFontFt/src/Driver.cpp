@@ -1100,8 +1100,7 @@ int APS5_VABI LibraryGetOutlineProfile(FontObj* obj, FontOutlineProfile* profile
     if (!face) return SCE_FONT_ERROR_INVALID_FONT_HANDLE;
     if (!profile) return SCE_FONT_ERROR_INVALID_PARAMETER;
     const auto* maxp = static_cast<const TT_MaxProfile*>(FT_Get_Sfnt_Table(face, FT_SFNT_MAXP));
-    if (!maxp) throw std::runtime_error("FontFt: outline profile of a face without a maxp table");
-    if (maxp->version < 0x10000) return SCE_FONT_ERROR_NO_SUPPORT_FUNCTION;
+    if (!maxp || maxp->version < 0x10000) return SCE_FONT_ERROR_NO_SUPPORT_FUNCTION;
     FontOutlineProfile localProfile{};
     localProfile.maxContours = maxp->maxContours;
     localProfile.maxPoints = maxp->maxPoints;
@@ -1120,7 +1119,6 @@ int APS5_VABI LibraryGetFontStyleInformation(FontObj* obj, FontStyleInformation*
     const FT_Face face = CopyInGuest(localObj, obj) ? FaceOf(&localObj) : nullptr;
     if (!face || !information) return SCE_FONT_ERROR_FATAL;
     const auto* header = static_cast<const TT_Header*>(FT_Get_Sfnt_Table(face, FT_SFNT_HEAD));
-    if (!header) throw std::runtime_error("FontFt: style information of a face without a head table");
     const auto* os2 = static_cast<const TT_OS2*>(FT_Get_Sfnt_Table(face, FT_SFNT_OS2));
     if (os2 && os2->version == 0xFFFF) os2 = nullptr;
     FontStyleInformation localInformation{};
@@ -1129,7 +1127,7 @@ int APS5_VABI LibraryGetFontStyleInformation(FontObj* obj, FontStyleInformation*
     localInformation.styleFlags = static_cast<std::uint16_t>(face->style_flags & (FT_STYLE_FLAG_ITALIC | FT_STYLE_FLAG_BOLD));
     localInformation.weight = os2 ? WeightClass(os2->usWeightClass) : 0;
     localInformation.width = os2 && os2->usWidthClass < 10 ? os2->usWidthClass : 0;
-    localInformation.layoutFlags = static_cast<std::uint16_t>(1 + (header->Font_Direction < 0 ? 1 : 0) + (FT_HAS_VERTICAL(face) ? 0x80 : 0));
+    localInformation.layoutFlags = static_cast<std::uint16_t>(1 + (header && header->Font_Direction < 0 ? 1 : 0) + (FT_HAS_VERTICAL(face) ? 0x80 : 0));
     if (!CopyOutGuest(information, localInformation)) return SCE_FONT_ERROR_FATAL;
     return SCE_FONT_OK;
 }
