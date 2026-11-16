@@ -62,7 +62,7 @@ void CheckLoads(AgcDriver::VulkanDevice& device, bool atomic) {
         Require(volatileLoads == 0u, "coherent atomic loads: a glc buffer load is still a volatile load");
         Require(atomicLoads >= 2u, "coherent atomic loads: the glc flag load in the waiting loop is not an atomic load");
     } else {
-        Require(volatileLoads >= 2u, "coherent atomic loads: the glc flag load in the waiting loop is not a volatile load without APS5_COHERENT_ATOMIC_LOADS");
+        Require(volatileLoads >= 2u, "coherent atomic loads: the glc flag load in the waiting loop is not a volatile load without APS5_COHERENT_ATOMIC_LOADS or the coherent buffer atomics target");
     }
 }
 
@@ -86,15 +86,16 @@ void Dispatch() {
 
 int main() {
     try {
-        const bool atomic = std::getenv("APS5_COHERENT_ATOMIC_LOADS") != nullptr;
+        bool atomic = std::getenv("APS5_COHERENT_ATOMIC_LOADS") != nullptr;
         {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
+            atomic = atomic || device->Target().coherentBufferAtomics;
             CheckLoads(*device, atomic);
         }
         if (!atomic) {
             AgcDriverShutdown_nid_postfix();
-            std::puts("coherent atomic loads tests passed (volatile loads; the waiting dispatch runs only with APS5_COHERENT_ATOMIC_LOADS)");
+            std::puts("coherent atomic loads tests passed (volatile loads; the waiting dispatch runs only with atomic loads)");
             return 0;
         }
         Flags.fill(0u);
