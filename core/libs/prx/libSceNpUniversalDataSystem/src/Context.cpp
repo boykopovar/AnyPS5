@@ -9,6 +9,7 @@
 #include "NpUniversalDataSystem.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
 namespace Uds {
 
@@ -45,8 +46,10 @@ int APS5_VABI sceNpUniversalDataSystemCreateContext(int* context, int user_id, u
     }
     auto& table = Uds::contexts();
     std::lock_guard lock(table.mutex);
-    *context = table.next++;
-    table.owners[*context] = {user_id, service_label};
+    const int created = table.next;
+    if (!GuestPtr<int>(context).CopyOut(created)) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
+    table.next++;
+    table.owners[created] = {user_id, service_label};
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
 
