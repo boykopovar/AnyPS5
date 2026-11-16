@@ -179,6 +179,12 @@ class BundleFrame final : public ObjectOf<ObjectType::BundleFrame> {
 public:
 };
 
+class BundlePage final : public ObjectOf<ObjectType::BundlePage> {
+public:
+    double pageZoomFactor = 1.0;
+    double textZoomFactor = 1.0;
+};
+
 class BundleDOMWindowExtension final : public ObjectOf<ObjectType::BundleDOMWindowExtension> {
 public:
     BundleDOMWindowExtension() = default;

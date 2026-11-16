@@ -95,6 +95,49 @@ int main() {
     RequireInvalidArgument([] { WKPageSetPageAndTextZoomFactors(nullptr, 1.5, 1.5); });
     RequireInvalidArgument([] { WKPageSupportsTextZoom(nullptr); });
 
+    auto bundlePage = NKWebKit::Make<NKWebKit::BundlePage>();
+    const void* bundlePageRef = NKWebKit::ToRef(bundlePage);
+
+    Require(WKBundlePageGetPageZoomFactor(bundlePageRef) == 1.0);
+    Require(WKBundlePageGetTextZoomFactor(bundlePageRef) == 1.0);
+
+    WKBundlePageSetPageZoomFactor(bundlePageRef, 1.5);
+    Require(WKBundlePageGetPageZoomFactor(bundlePageRef) == 1.5);
+
+    WKBundlePageSetTextZoomFactor(bundlePageRef, 2.0);
+    Require(WKBundlePageGetTextZoomFactor(bundlePageRef) == 2.0);
+
+    WKBundlePageSetPageZoomFactor(bundlePageRef, 0.0);
+    Require(WKBundlePageGetPageZoomFactor(bundlePageRef) == 1.5);
+    WKBundlePageSetPageZoomFactor(bundlePageRef, -0.5);
+    Require(WKBundlePageGetPageZoomFactor(bundlePageRef) == 1.5);
+
+    WKBundlePageSetTextZoomFactor(bundlePageRef, 0.0);
+    Require(WKBundlePageGetTextZoomFactor(bundlePageRef) == 2.0);
+    WKBundlePageSetTextZoomFactor(bundlePageRef, -1.0);
+    Require(WKBundlePageGetTextZoomFactor(bundlePageRef) == 2.0);
+
+    WKBundlePageSetPageZoomFactor(bundlePageRef, nanValue);
+    Require(WKBundlePageGetPageZoomFactor(bundlePageRef) == 1.5);
+    WKBundlePageSetPageZoomFactor(bundlePageRef, infValue);
+    Require(WKBundlePageGetPageZoomFactor(bundlePageRef) == 1.5);
+
+    WKBundlePageSetTextZoomFactor(bundlePageRef, nanValue);
+    Require(WKBundlePageGetTextZoomFactor(bundlePageRef) == 2.0);
+    WKBundlePageSetTextZoomFactor(bundlePageRef, infValue);
+    Require(WKBundlePageGetTextZoomFactor(bundlePageRef) == 2.0);
+
+    RequireInvalidArgument([] { WKBundlePageGetPageZoomFactor(nullptr); });
+    RequireInvalidArgument([] { WKBundlePageGetTextZoomFactor(nullptr); });
+    RequireInvalidArgument([] { WKBundlePageSetPageZoomFactor(nullptr, 1.5); });
+    RequireInvalidArgument([] { WKBundlePageSetTextZoomFactor(nullptr, 1.5); });
+
+    RequireInvalidArgument([&] { WKBundlePageGetPageZoomFactor(pageRef); });
+    RequireInvalidArgument([&] { WKBundlePageGetTextZoomFactor(pageRef); });
+    RequireInvalidArgument([&] { WKBundlePageSetPageZoomFactor(pageRef, 1.5); });
+    RequireInvalidArgument([&] { WKBundlePageSetTextZoomFactor(pageRef, 1.5); });
+
+    WKRelease(bundlePageRef);
     WKRelease(pageRef);
     return 0;
 }
