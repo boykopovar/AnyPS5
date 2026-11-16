@@ -1755,6 +1755,18 @@ class HeaderWindowTests(unittest.TestCase):
             symbolize_samples.validate_window(later, earlier)
         later.stacks = collections.Counter({"s": 7})
         symbolize_samples.validate_window(later, earlier)
+class SampleFileLoadTests(unittest.TestCase):
+    def write(self, text):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        path = Path(directory.name) / "samples.txt"
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_load_reads_collapsed_stacks_and_their_format(self):
+        samples = symbolize_samples.load(self.write("main;work 3\nmain;idle 1\n"))
+        self.assertEqual(samples.stacks, collections.Counter({"main;work": 3, "main;idle": 1}))
+        self.assertEqual(samples.capture_format, "collapsed")
 
 
 if __name__ == "__main__":
