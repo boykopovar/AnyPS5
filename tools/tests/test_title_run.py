@@ -1067,5 +1067,13 @@ class InsideTests(unittest.TestCase):
         self.assertFalse(title_run.inside("b/c", roots=("a",)))
 
 
+class SectionTests(unittest.TestCase):
+    def test_section_returns_dict_or_empty(self):
+        import title_run
+        self.assertEqual(title_run.section({"x": {"k": 1}}, "x"), {"k": 1})
+        self.assertEqual(title_run.section({"x": 5}, "x"), {})
+        self.assertEqual(title_run.section({}, "x"), {})
+
+
 if __name__ == "__main__":
     unittest.main()
