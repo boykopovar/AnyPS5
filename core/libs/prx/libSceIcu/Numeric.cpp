@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include <bit>
+#include <cerrno>
 #include <cfloat>
 #include <cstdint>
 #include <limits>
@@ -13,6 +14,13 @@ constexpr std::int64_t NaNBits = 0x7ff8000000000000;
 
 std::int64_t Magnitude(double value) {
     return std::bit_cast<std::int64_t>(value) & std::numeric_limits<std::int64_t>::max();
+}
+
+bool StoreResult(std::int32_t* destination, std::int32_t value) {
+    const int savedErrno = errno;
+    const bool stored = GuestCopyOut_nid_no_patch(destination, &value, sizeof(value));
+    errno = savedErrno;
+    return stored;
 }
 
 bool SignBit(double value) {
@@ -95,15 +103,17 @@ double APS5_VABI uprv_fmin_nid_postfix(double x, double y) {
 std::int8_t APS5_VABI uprv_add32_overflow_nid_postfix(std::int32_t a, std::int32_t b, std::int32_t* res) {
     if (!res) APS5_INVALID_ARG_EX;
     const std::int64_t result = static_cast<std::int64_t>(a) + b;
-    *res = static_cast<std::int32_t>(result);
-    return result != *res;
+    const auto wrapped = static_cast<std::int32_t>(result);
+    if (!StoreResult(res, wrapped)) APS5_INVALID_ARG_EX;
+    return result != wrapped;
 }
 
 std::int8_t APS5_VABI uprv_mul32_overflow_nid_postfix(std::int32_t a, std::int32_t b, std::int32_t* res) {
     if (!res) APS5_INVALID_ARG_EX;
     const std::int64_t result = static_cast<std::int64_t>(a) * b;
-    *res = static_cast<std::int32_t>(result);
-    return result != *res;
+    const auto wrapped = static_cast<std::int32_t>(result);
+    if (!StoreResult(res, wrapped)) APS5_INVALID_ARG_EX;
+    return result != wrapped;
 }
 
 double APS5_VABI uprv_trunc_nid_postfix(double d) {

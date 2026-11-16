@@ -1,6 +1,7 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include <array>
 #include <bit>
+#include <cerrno>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -118,6 +119,10 @@ void Overflow() {
     Require(uprv_mul32_overflow_nid_postfix(low, -1, &result) == 1 && result == low, "negating the minimum overflows");
     Require(Rejects([] { uprv_add32_overflow_nid_postfix(1, 2, nullptr); }), "addition rejects a null result");
     Require(Rejects([] { uprv_mul32_overflow_nid_postfix(1, 2, nullptr); }), "multiplication rejects a null result");
+    errno = 71;
+    Require(Rejects([] { uprv_add32_overflow_nid_postfix(1, 2, reinterpret_cast<std::int32_t*>(0x10)); }), "addition rejects an unwritable result");
+    Require(Rejects([] { uprv_mul32_overflow_nid_postfix(1, 2, reinterpret_cast<std::int32_t*>(0x10)); }), "multiplication rejects an unwritable result");
+    Require(errno == 71, "unwritable overflow results keep errno");
 }
 
 void MaximumPointer() {
