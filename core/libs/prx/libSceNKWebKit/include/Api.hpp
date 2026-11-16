@@ -21,7 +21,6 @@ int APS5_VABI _ZN7WebCore28InspectorFrontendClientLocal11isUnderTestEv();
 int APS5_VABI _ZN7WebCore15JSDOMWindowBaseD1Ev();
 int APS5_VABI _ZN9Inspector22InspectorDebuggerAgent24continueUntilNextRunLoopERN3WTF6StringE();
 int APS5_VABI _ZN7WebCore8Settings27setLoadsImagesAutomaticallyEb();
-int APS5_VABI WKPreferencesGetApplicationChromeModeEnabled();
 int APS5_VABI _ZN7WebCore18JSHTMLInputElementC2ERKS0_();
 int APS5_VABI _ZN9Inspector21InspectorConsoleAgent5resetEv();
 int APS5_VABI _ZN7WebCore4Node16addEventListenerERKN3WTF10AtomStringEONS1_3RefINS_13EventListenerENS1_13DumbPtrTraitsIS6_EEEERKNS_11EventTarget23AddEventListenerOptionsE();

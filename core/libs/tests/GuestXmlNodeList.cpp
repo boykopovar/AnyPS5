@@ -210,6 +210,14 @@ void TestDocumentLists() {
     const XmlString missing{"z", 1};
     Require(_ZNK3sce3Xml3Dom8Document20getElementsByTagNameENS1_6NodeIdEPKNS0_6StringEPNS1_8NodeListE(&document, root, &missing, &list) == 0 && _ZNK3sce3Xml3Dom8NodeList9getLengthEv(&list) == 0, "a name that matches nothing");
     Require(_ZNK3sce3Xml3Dom8Document20getElementsByTagNameENS1_6NodeIdEPKNS0_6StringEPNS1_8NodeListE(&document, root, nullptr, &list) == 0 && _ZNK3sce3Xml3Dom8NodeList9getLengthEv(&list) == 0, "a null name");
+    const XmlString unreadableName{reinterpret_cast<const char*>(0x10), std::size_t{1} << 40};
+    bool refusedName = false;
+    try {
+        _ZNK3sce3Xml3Dom8Document20getElementsByTagNameENS1_6NodeIdEPKNS0_6StringEPNS1_8NodeListE(&document, root, &unreadableName, &list);
+    } catch (const std::logic_error&) {
+        refusedName = true;
+    }
+    Require(refusedName, "an unreadable name with a huge size is refused without sizing a buffer from it");
 
     const XmlString wholeDocument{"b", 1};
     XmlNodeId docRoot{};

@@ -233,6 +233,7 @@ void APS5_VABI _ZN3WTF14FileSystemImpl14MappedFileDataD1Ev(WTF::MappedFileData* 
 void APS5_VABI _ZN3WTF14FileSystemImpl14MappedFileDataD2Ev(WTF::MappedFileData* self);
 int APS5_VABI _ZN3WTF14FileSystemImpl8openFileERKNS_6StringENS0_12FileOpenModeENS0_20FileAccessPermissionEb(const NKWebKit::WtfAbi::String& path, int mode, bool permission, bool failIfFileExists);
 void APS5_VABI _ZN3WTF14FileSystemImpl9closeFileERi(int& handle);
+bool APS5_VABI _ZN3WTF14FileSystemImpl18makeAllDirectoriesERKNS_6StringE(const NKWebKit::WtfAbi::String& path);
 long long APS5_VABI _ZN3WTF14FileSystemImpl8seekFileEixNS0_14FileSeekOriginE(int handle, long long offset, int origin);
 bool APS5_VABI _ZN3WTF14FileSystemImpl12truncateFileEix(int handle, long long offset);
 int APS5_VABI _ZN3WTF14FileSystemImpl15openAndLockFileERKNS_6StringENS0_12FileOpenModeENS_9OptionSetINS0_12FileLockModeEEE(const NKWebKit::WtfAbi::String& path, int mode, unsigned lockMode);
@@ -296,6 +297,8 @@ bool APS5_VABI _ZNK3WTF10StringImpl10startsWithEPKcj(const NKWebKit::WtfAbi::Str
 std::size_t APS5_VABI _ZNK3WTF10StringImpl11sizeInBytesEv(const NKWebKit::WtfAbi::StringImpl* self);
 unsigned APS5_VABI _ZNK3WTF10StringImpl12hashSlowCaseEv(const NKWebKit::WtfAbi::StringImpl* self);
 unsigned APS5_VABI _ZNK3WTF10StringImpl14concurrentHashEv(const NKWebKit::WtfAbi::StringImpl* self);
+NKWebKit::WtfAbi::CString APS5_VABI _ZN3WTF10StringImpl17utf8ForCharactersEPKDsjNS_14ConversionModeE(const char16_t* characters, unsigned length, unsigned mode);
+NKWebKit::WtfAbi::CString APS5_VABI _ZN3WTF10StringImpl17utf8ForCharactersEPKhj(const unsigned char* characters, unsigned length);
 NKWebKit::WtfAbi::CString APS5_VABI _ZNK3WTF10StringImpl4utf8ENS_14ConversionModeE(const NKWebKit::WtfAbi::StringImpl* self, unsigned mode);
 bool APS5_VABI _ZNK3WTF10StringImpl8endsWithEDs(const NKWebKit::WtfAbi::StringImpl* self, char16_t value);
 bool APS5_VABI _ZNK3WTF10StringImpl8endsWithEPKcj(const NKWebKit::WtfAbi::StringImpl* self, const char* data, unsigned length);

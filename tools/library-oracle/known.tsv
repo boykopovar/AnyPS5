@@ -1,6 +1,3 @@
-agcbuild_AcbAcquireMem_a	throw	the ACQUIRE_MEM encoding; #18479
-agcbuild_AcbAcquireMem_b	diff	the ACQUIRE_MEM encoding; #18479
-agcbuild_AcbAcquireMem_c	throw	the ACQUIRE_MEM encoding; #18479
 agcbuild_AcbAtomicGds_a	diff	more than six arguments; the console's stack arguments are not known
 agcbuild_AcbAtomicGds_b	diff	more than six arguments; the console's stack arguments are not known
 agcbuild_AcbAtomicGds_c	diff	more than six arguments; the console's stack arguments are not known
@@ -58,9 +55,6 @@ agcbuild_CbReleaseMem_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_CbReleaseMem_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_CbSetShRegisterRangeDirect_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_CbSetUcRegisterRangeDirect_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbAcquireMem_a	throw	the ACQUIRE_MEM encoding; #18479
-agcbuild_DcbAcquireMem_b	diff	the ACQUIRE_MEM encoding; #18479
-agcbuild_DcbAcquireMem_c	throw	the ACQUIRE_MEM encoding; #18479
 agcbuild_DcbAtomicGds_a	diff	more than six arguments; the console's stack arguments are not known
 agcbuild_DcbAtomicGds_b	diff	more than six arguments; the console's stack arguments are not known
 agcbuild_DcbAtomicGds_c	diff	more than six arguments; the console's stack arguments are not known
@@ -86,7 +80,6 @@ agcbuild_DcbDrawIndexAuto_c	throw	AnyPS5 throws for arguments the console encode
 agcbuild_DcbDrawIndexIndirect_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbDrawIndexIndirect_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbDrawIndexIndirect_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbDrawIndexMultiInstanced_a	diff	the packet differs from the console's; not yet analysed
 agcbuild_DcbDrawIndirect_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbDrawIndirect_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbDrawIndirect_c	throw	AnyPS5 throws for arguments the console encodes
@@ -143,7 +136,6 @@ agcbuild_DcbWaitUntilSafeForRendering_a	diff	the console returns null and writes
 agcbuild_DcbWaitUntilSafeForRendering_b	diff	the console returns null and writes nothing for these arguments
 agcbuild_DcbWaitUntilSafeForRendering_c	diff	the console returns null and writes nothing for these arguments
 kx_attr_getstack_default	diff	a 1 MiB default stack on purpose, see docs/dev/debt/libkernel.md
-kx_eq_wait_zero_events	diff	the count is left unwritten on EINVAL; #15123 zeroes it on every failure
 nh_escape_buffer_too_small	diff	a short buffer is left unfilled and the required size written; #12056 fills it as the console does
 nh_ntop_v6	diff	the console leaves stale bytes after the string, which are not modelled
 nh_player_dialog_param_init	diff	returns void, so the console's return register is not a result

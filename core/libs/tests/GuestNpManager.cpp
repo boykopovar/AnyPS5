@@ -724,6 +724,8 @@ void CheckOnlineIdQueries() {
     Require(sceNpGetAccountId(&onlineId, &accountId) == SignedOut, "sceNpGetAccountId must report NP as signed out");
     Require(sceNpGetAccountId(nullptr, &accountId) == InvalidArgument, "sceNpGetAccountId must reject a null online id");
     Require(sceNpGetAccountId(&onlineId, nullptr) == InvalidArgument, "sceNpGetAccountId must reject a null output");
+    errno = 71;
+    Require(sceNpGetAccountId(reinterpret_cast<const NpOnlineId*>(0x10), &accountId) == InvalidArgument && errno == 71, "sceNpGetAccountId must reject an unmapped online id and keep errno");
     const int presenceRequest = sceNpCreateRequest();
     Require(presenceRequest > 0, "sceNpCreateRequest must return a positive request id");
     Require(sceNpSetGamePresenceOnline(presenceRequest, &onlineId, 0) == SignedOut, "sceNpSetGamePresenceOnline must report NP as signed out");
@@ -776,6 +778,12 @@ void CheckUserIdQueries() {
     Require(sceNpCheckNpAvailabilityA(0, InitialUserId) == InvalidArgument, "sceNpCheckNpAvailabilityA must reject request id 0");
     Require(sceNpCheckNpAvailabilityA(NeverCreated, InitialUserId) == RequestNotFound, "sceNpCheckNpAvailabilityA must reject a request that was never created");
     Require(sceNpCheckNpAvailabilityA(NeverCreated, InvalidUserId) == InvalidArgument, "sceNpCheckNpAvailabilityA must check the user before the request");
+    NpOnlineId availabilityId{};
+    std::uint8_t available = 0xff;
+    Require(sceNpCheckNpAvailability(1, &availabilityId, &available) == UserNotFound && available == 0, "sceNpCheckNpAvailability must report the online id as unavailable");
+    Require(sceNpCheckNpAvailability(1, &availabilityId, nullptr) == UserNotFound, "sceNpCheckNpAvailability must allow a null availability output");
+    errno = 71;
+    Require(sceNpCheckNpAvailability(1, &availabilityId, reinterpret_cast<std::uint8_t*>(0x10)) == InvalidArgument && errno == 71, "sceNpCheckNpAvailability must refuse an unwritable availability output and keep errno");
     Require(sceNpGetAccountLanguageA(request, InitialUserId, nullptr) == InvalidArgument, "sceNpGetAccountLanguageA must reject a null output");
     Require(sceNpGetAccountLanguageA(request, InvalidUserId, output) == InvalidArgument, "sceNpGetAccountLanguageA must reject the invalid user id");
     Require(sceNpGetAccountLanguageA(0, InitialUserId, output) == InvalidArgument, "sceNpGetAccountLanguageA must reject request id 0");
@@ -1208,10 +1216,13 @@ int main() {
     std::memset(&onlineId, 0x5a, sizeof(onlineId));
     NpOnlineId untouchedOnlineId{};
     std::memset(&untouchedOnlineId, 0x5a, sizeof(untouchedOnlineId));
+    Require(sceNpGetOnlineId(-1, &onlineId) == InvalidArgument, "sceNpGetOnlineId must reject an invalid user id");
     Require(sceNpGetOnlineId(0x10000, &onlineId) == SignedOut, "sceNpGetOnlineId must report the user as signed out");
     Require(std::memcmp(&onlineId, &untouchedOnlineId, sizeof(onlineId)) == 0, "sceNpGetOnlineId must leave the online id untouched");
     Require(sceNpGetOnlineId(0x10000, nullptr) == InvalidArgument, "sceNpGetOnlineId must reject a null online id");
     std::uint64_t accountIdA = 0x5a5a5a5a5a5a5a5aull;
+    Require(sceNpGetAccountIdA(-1, &accountIdA) == InvalidArgument, "sceNpGetAccountIdA must reject an invalid user id");
+    Require(sceNpGetAccountIdA(0x10000, nullptr) == InvalidArgument, "sceNpGetAccountIdA must reject a null output");
     Require(sceNpGetAccountIdA(0x10000, &accountIdA) == SignedOut, "sceNpGetAccountIdA must report the user as signed out");
     Require(accountIdA == 0x5a5a5a5a5a5a5a5aull, "sceNpGetAccountIdA must leave the account id untouched");
     int userId = 0x5a5a;

@@ -528,8 +528,8 @@ int APS5_VABI putwchar_nid_postfix(char16_t value) {
 }
 
 char16_t* APS5_VABI fgetws_nid_postfix(char16_t* buffer, int size, FileStream* stream) {
-    if (stream != nullptr) stream->Orientation(1);
     if (size < 2) return nullptr;
+    if (stream != nullptr) stream->Orientation(1);
     if (buffer == nullptr || stream == nullptr) {
         if (stream != nullptr) stream->SetError();
         errno = 22;

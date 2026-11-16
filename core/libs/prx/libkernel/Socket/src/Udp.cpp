@@ -1393,7 +1393,13 @@ int GuestSockets::Poll(KernelSocketPoll::Entry* entries, int count, int timeoutM
     int result = 0;
     for (;;) {
         for (std::size_t index = 0; index < held.size(); ++index) {
-            if (Find(entries[index].descriptor) != held[index]) return -9;
+            const auto current = Find(entries[index].descriptor);
+            if (current == held[index]) continue;
+            if (current || DescriptorIsOpen_nid_no_patch(entries[index].descriptor)) {
+                entries[index].revents = KernelSocketPoll::Unknown;
+                return 0;
+            }
+            return -9;
         }
         int slice = SocketCloseCheckMilliseconds;
         if (timeoutMilliseconds >= 0) {
@@ -1407,7 +1413,13 @@ int GuestSockets::Poll(KernelSocketPoll::Entry* entries, int count, int timeoutM
 #endif
         if (result < 0) return -NativeError();
         for (std::size_t index = 0; index < held.size(); ++index) {
-            if (Find(entries[index].descriptor) != held[index]) return -9;
+            const auto current = Find(entries[index].descriptor);
+            if (current == held[index]) continue;
+            if (current || DescriptorIsOpen_nid_no_patch(entries[index].descriptor)) {
+                entries[index].revents = KernelSocketPoll::Unknown;
+                return result;
+            }
+            return -9;
         }
         if (result != 0 || (timeoutMilliseconds >= 0 && std::chrono::steady_clock::now() >= deadline)) break;
     }
@@ -1800,6 +1812,10 @@ bool BindUnboundStream(Socket& socket) {
 }
 #endif
 int APS5_VABI listen_nid_postfix(int descriptor, int backlog) {
+    if (const auto* forwards = ForwardsFor(descriptor).forwards; forwards != nullptr) {
+        if (const int error = forwards->listen(descriptor, backlog)) return Fail(error);
+        return 0;
+    }
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
     if (socket->type != 1) return Fail(45);
@@ -1957,6 +1973,14 @@ bool AlreadyShut(NativeSocket socket, int how) {
 }
 
 int APS5_VABI shutdown_nid_postfix(int descriptor, int how) {
+    if (const auto* forwards = ForwardsFor(descriptor).forwards; forwards != nullptr) {
+        if (const int error = forwards->shutdown(descriptor, how)) return Fail(error);
+        if (how != 1) {
+            EqueueDescriptorReadShut(descriptor);
+            WakeReadWatchers(descriptor);
+        }
+        return 0;
+    }
     const auto socket = Lookup(descriptor);
     if (!socket) return -1;
     if (how < 0 || how > 2) return Fail(22);
@@ -2156,7 +2180,7 @@ std::int64_t APS5_VABI recvfrom_nid_postfix(int descriptor, void* buffer, std::u
     if (const auto* forwards = ForwardsFor(descriptor).forwards; forwards != nullptr) {
         if ((flags & ~GuestReceiveFlags) != 0) return Fail(45);
         if (length > INT_MAX) return Fail(40);
-        if ((!buffer && length) || (address && !addressLength)) return Fail(14);
+        if (!buffer && length) return Fail(14);
         unsigned char name[28]{};
         std::uint32_t reported = std::min<std::uint32_t>(capacity, sizeof(name));
         int error = 0;
@@ -2169,7 +2193,7 @@ std::int64_t APS5_VABI recvfrom_nid_postfix(int descriptor, void* buffer, std::u
     if (!socket) return -1;
     if ((flags & ~GuestReceiveFlags) != 0) return Fail(45);
     if (length > INT_MAX) return Fail(40);
-    if ((!buffer && length) || (address && !addressLength)) return Fail(14);
+    if (!buffer && length) return Fail(14);
     const GuestArena::HostWrite destination(length == 0 ? nullptr : buffer, static_cast<std::size_t>(length));
     if (!destination.Open()) return Fail(14);
     if (const int answered = ReceiveAnsweredHere(*socket, length); answered >= 0) {
@@ -2776,6 +2800,7 @@ static int PollDescriptors(GuestPollDescriptor* descriptors, std::uint32_t count
     std::vector<std::uint32_t> kqueues;
     std::vector<int> readers;
     std::vector<std::pair<std::size_t, std::shared_ptr<Socket>>> guestSockets;
+    std::vector<std::size_t> forwardedSockets;
     int ready = 0;
     for (std::uint32_t i = 0; i < count; ++i) {
         auto& entry = descriptors[i];
@@ -2832,6 +2857,9 @@ static int PollDescriptors(GuestPollDescriptor* descriptors, std::uint32_t count
             }
             pipes.push_back(i);
             continue;
+        } else {
+            if (entry.events & GuestPollReadable) readers.push_back(entry.descriptor);
+            forwardedSockets.push_back(native.size());
         }
         NativePollDescriptor request{};
         request.fd = static_cast<decltype(request.fd)>(value);
@@ -2873,12 +2901,20 @@ static int PollDescriptors(GuestPollDescriptor* descriptors, std::uint32_t count
     std::vector<short> shutAt(watched, 0);
     const auto refreshShut = [&] {
         int shut = 0;
-        for (const auto& [index, socket] : guestSockets) {
-            std::lock_guard lock(socket->modeMutex);
-            const short readable = socket->receiveShut ? static_cast<short>(descriptors[owners[index]].events & GuestPollReadable) : short{0};
-            const short hangUp = socket->receiveShut && socket->sendShut ? GuestPollHangUp : short{0};
+        const auto refresh = [&](std::size_t index, bool receiveShut, bool sendShut) {
+            const short readable = receiveShut ? static_cast<short>(descriptors[owners[index]].events & GuestPollReadable) : short{0};
+            const short hangUp = receiveShut && sendShut ? GuestPollHangUp : short{0};
             shutAt[index] = static_cast<short>(readable | hangUp);
             if (shutAt[index]) ++shut;
+        };
+        for (const auto& [index, socket] : guestSockets) {
+            std::lock_guard lock(socket->modeMutex);
+            refresh(index, socket->receiveShut, socket->sendShut);
+        }
+        for (const auto index : forwardedSockets) {
+            const auto* socket = static_cast<const KernelSocketPoll::NativeOwner*>(held[index].get());
+            const unsigned flags = socket->shutdownFlags.load();
+            refresh(index, (flags & KernelSocketPoll::ReceiveShut) != 0, (flags & KernelSocketPoll::SendShut) != 0);
         }
         return shut;
     };
@@ -2914,6 +2950,11 @@ static int PollDescriptors(GuestPollDescriptor* descriptors, std::uint32_t count
         if (entry.revents) ++ready;
     };
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout < 0 ? 0 : timeout);
+    const auto repollAfterReuse = [&] {
+        if (timeout < 0) return poll_nid_postfix(descriptors, count, -1);
+        const auto left = std::chrono::duration_cast<std::chrono::microseconds>(deadline - std::chrono::steady_clock::now()).count();
+        return poll_nid_postfix(descriptors, count, static_cast<int>(std::max<long long>(0, (left + 999) / 1000)));
+    };
 #ifdef __APPLE__
     bool waitsForUrgent = false;
     for (std::size_t i = 0; i < socketCount && !waitsForUrgent; ++i) {
@@ -2943,6 +2984,7 @@ static int PollDescriptors(GuestPollDescriptor* descriptors, std::uint32_t count
         bool closed = false;
         for (std::size_t i = 0; i < held.size(); ++i) {
             if (SocketStillHeld(descriptors[owners[i]].descriptor, held[i].get())) continue;
+            if (Find(descriptors[owners[i]].descriptor)) return repollAfterReuse();
             descriptors[owners[i]].revents = GuestPollInvalid;
             closed = true;
         }
@@ -2989,6 +3031,7 @@ static int PollDescriptors(GuestPollDescriptor* descriptors, std::uint32_t count
         }
         for (std::size_t i = 0; i < held.size(); ++i) {
             if (SocketStillHeld(descriptors[owners[i]].descriptor, held[i].get())) continue;
+            if (Find(descriptors[owners[i]].descriptor)) return repollAfterReuse();
             descriptors[owners[i]].revents = GuestPollInvalid;
             closed = true;
         }
