@@ -3672,5 +3672,29 @@ class StrictProviderTests(unittest.TestCase):
         self.assertEqual(err.errors, "backslashreplace")
 
 
+class RegistryAndLabelTests(unittest.TestCase):
+    def test_read_needed_registry_accepts_a_list_of_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "needed.json"
+            path.write_text('["libA.prx", "libB.prx"]', encoding="utf-8")
+            self.assertEqual(import_audit.read_needed_registry(path), ["libA.prx", "libB.prx"])
+
+    def test_read_needed_registry_refuses_a_non_list_or_empty_names(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "needed.json"
+            for text in ('{"a": 1}', '["", "x"]', '[1]'):
+                with self.subTest(text=text):
+                    path.write_text(text, encoding="utf-8")
+                    with self.assertRaisesRegex(import_audit.AuditError, "JSON list of nonempty strings"):
+                        import_audit.read_needed_registry(path)
+
+    def test_read_needed_registry_refuses_unreadable_json(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "needed.json"
+            path.write_text("[not json", encoding="utf-8")
+            with self.assertRaisesRegex(import_audit.AuditError, "cannot read needed libraries"):
+                import_audit.read_needed_registry(path)
+
+
 if __name__ == "__main__":
     unittest.main()
