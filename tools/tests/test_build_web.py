@@ -777,5 +777,11 @@ class WebReleaseValidationTests(unittest.TestCase):
                 build_web.release_web_files("0" * 40)
 
 
+class MetadataRefusalTests(unittest.TestCase):
+    def test_release_metadata_refuses_a_non_object(self):
+        with self.assertRaisesRegex(ValueError, 'must be a JSON object'):
+            build_web.release_metadata([])
+
+
 if __name__ == "__main__":
     unittest.main()
