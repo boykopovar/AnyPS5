@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <string>
 
 static constexpr int SCE_OK = 0;
 
@@ -30,10 +31,17 @@ static void RequireInvalidArguments() {
     Require(sceKernelCreateSema(&rejected, "rejected", 0, 0, 0, nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelCreateSema(&rejected, "rejected", 0, -1, 3, nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelCreateSema(&rejected, nullptr, 0, 0, 1, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelCreateSema(&rejected, reinterpret_cast<const char*>(1), 0, 0, 1, nullptr) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelCreateSema(reinterpret_cast<KernelSema*>(1), "bad output", 0, 0, 1, nullptr) == SCE_KERNEL_ERROR_EFAULT);
     Require(sceKernelCreateSema(&rejected, "rejected", 0, 0, -1, nullptr) == SCE_KERNEL_ERROR_EINVAL);
     for (std::uint32_t attr = 3; attr <= 0x320; ++attr) {
         if (attr >= 0x100 && attr <= 0x102) continue;
         Require(sceKernelCreateSema(&rejected, "rejected", attr, 0, 1, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    }
+    for (const auto& name : {std::string{}, std::string(80, 'x')}) {
+        KernelSema accepted = nullptr;
+        Require(sceKernelCreateSema(&accepted, name.c_str(), 0, 0, 1, nullptr) == SCE_OK && accepted != nullptr);
+        Require(sceKernelDeleteSema(accepted) == SCE_OK);
     }
     for (const std::uint32_t attr : {0x100u, 0x101u, 0x102u}) {
         KernelSema accepted = nullptr;
@@ -76,6 +84,7 @@ int main() {
     int waiters = -1;
     Require(sceKernelCancelSema(sem, 4, &waiters) == SCE_KERNEL_ERROR_EINVAL);
     Require(waiters == -1);
+    Require(sceKernelCancelSema(sem, 2, reinterpret_cast<int*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
     Require(sceKernelPollSema(sem, 1) == SCE_OK);
     Require(sceKernelPollSema(sem, 1) == SCE_KERNEL_ERROR_EBUSY);
 
@@ -119,6 +128,8 @@ int main() {
     Require(sceKernelWaitSema(sem, 4, nullptr) == SCE_KERNEL_ERROR_EINVAL);
     remaining = 1000;
     Require(sceKernelWaitSema(sem, 4, &remaining) == SCE_KERNEL_ERROR_EINVAL && remaining == 1000);
+    Require(sceKernelWaitSema(sem, 0, &remaining) == SCE_KERNEL_ERROR_EINVAL && remaining == 1000);
+    Require(sceKernelWaitSema(sem, -1, &remaining) == SCE_KERNEL_ERROR_EINVAL && remaining == 1000);
 
     Require(sceKernelSignalSema(sem, 1) == SCE_OK);
     Require(sceKernelWaitSema(sem, 1, nullptr) == SCE_OK);

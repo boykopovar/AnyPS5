@@ -79,16 +79,16 @@ int APS5_VABI sceNpWebApiTerminate(int libCtxId);
 int APS5_VABI sceNpWebApiUnregisterExtdPushEventCallback(int titleUserCtxId, int callbackId);
 int APS5_VABI sceNpWebApiUnregisterPushEventCallback(int titleUserCtxId, int callbackId);
 int APS5_VABI sceNpWebApiUnregisterServicePushEventCallback(int titleUserCtxId, int callbackId);
-int APS5_VABI sceNpWebApiUtilityParseNpId();
+int APS5_VABI sceNpWebApiUtilityParseNpId(const char* jsonNpId, NpId* npId);
 
 int APS5_VABI sceNpWebApiAbortHandle(int libCtxId, int handleId);
 int APS5_VABI sceNpWebApiAddHttpRequestHeader(std::int64_t requestId, const char* fieldName, const char* value);
 int APS5_VABI sceNpWebApiAddMultipartPart(std::int64_t requestId, const NpWebApiMultipartPartParameter* parameter, int* partIndex);
 void APS5_VABI sceNpWebApiCheckTimeout();
 int APS5_VABI sceNpWebApiClearAllUnusedConnection();
-int APS5_VABI sceNpWebApiClearUnusedConnection();
+int APS5_VABI sceNpWebApiClearUnusedConnection(int titleUserCtxId, const void* target, bool keep);
 int APS5_VABI sceNpWebApiCreateMultipartRequest(int titleUserCtxId, const char* apiGroup, const char* path, int method, std::int64_t* requestId);
-int APS5_VABI sceNpWebApiGetConnectionStats();
+int APS5_VABI sceNpWebApiGetConnectionStats(int titleUserCtxId, const void* target, void* result);
 int APS5_VABI sceNpWebApiGetErrorCode();
 int APS5_VABI sceNpWebApiInitializeForPresence(int libHttpCtxId, std::size_t poolSize);
 int APS5_VABI sceNpWebApiIntCreateCtxIndExtdPushEventFilter(int libCtxId, int handleId, const void* filterParam, std::size_t filterParamNum);
@@ -108,5 +108,7 @@ int APS5_VABI sceNpWebApiSetMultipartContentType(std::int64_t requestId, const c
 int APS5_VABI sceNpWebApiSetRequestTimeout(std::int64_t requestId, std::uint32_t timeout);
 int APS5_VABI sceNpWebApiUnregisterNotificationCallback(int titleUserCtxId);
 int APS5_VABI sceNpWebApiVshInitialize(int libHttpCtxId, std::size_t poolSize);
+bool APS5_VABI libSceNpWebApiUnknown_ojGP5vur_plus_qM_nid_no_patch(const void* object);
+bool APS5_VABI libSceNpWebApiUnknown_zQE2rxZdLy8_nid_no_patch(const void* object);
 
 }
