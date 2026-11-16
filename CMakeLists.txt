@@ -329,6 +329,7 @@ if(BUILD_TESTING)
         get_property(windows_tooling_before DIRECTORY PROPERTY TESTS)
         add_test(NAME mingw_host_only_test_targets COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_mingw_host_only_test_targets.py)
+        set_tests_properties(mingw_host_only_test_targets PROPERTIES TIMEOUT 30)
         add_test(NAME patch_lib_atrac9 COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_patch_lib_atrac9.py ${CMAKE_COMMAND})
         set_tests_properties(patch_lib_atrac9 PROPERTIES TIMEOUT 60)
