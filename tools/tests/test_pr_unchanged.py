@@ -258,6 +258,13 @@ class PaginationTests(unittest.TestCase):
         self.assertEqual(pr_unchanged.listed({'nodes': [1, 2]}), [1, 2])
         with self.assertRaisesRegex(ValueError, 'expected a connection'):
             pr_unchanged.listed([])
+class CommentTextTests(unittest.TestCase):
+    def test_comment_starts_with_the_marker_and_names_the_base(self):
+        base = 'a' * 40
+        text = pr_unchanged.comment(base)
+        self.assertTrue(text.startswith(pr_unchanged.MARKER))
+        self.assertIn('at ' + 'a' * 10, text)
+        self.assertIn('Nothing is closed automatically', text)
 
 
 if __name__ == "__main__":
