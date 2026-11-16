@@ -1063,5 +1063,11 @@ class ProgressConstantReturnTests(unittest.TestCase):
         self.assertEqual(group["inert_names"], ["Discarded"])
 
 
+class HelperValueTests(unittest.TestCase):
+    def test_camel_capitalises_each_underscore_part(self):
+        self.assertEqual(progress.camel("a_b_c"), "ABC")
+        self.assertEqual(progress.camel("libsce_foo"), "LibsceFoo")
+
+
 if __name__ == "__main__":
     unittest.main()
