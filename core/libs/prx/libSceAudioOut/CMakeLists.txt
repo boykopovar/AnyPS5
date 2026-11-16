@@ -307,6 +307,17 @@ if(BUILD_TESTING)
         set_tests_properties(audio_out2_port_buffers PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
     endif()
+    add_test_executable(audio_out2_mastering_state_tests tests/GuestAudioOut2MasteringState.cpp)
+    target_include_directories(audio_out2_mastering_state_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(audio_out2_mastering_state_tests PRIVATE libSceAudioOut libc)
+    configure_windows_unwind(audio_out2_mastering_state_tests)
+    add_test(NAME audio_out2_mastering_state COMMAND audio_out2_mastering_state_tests)
+    set_tests_properties(audio_out2_mastering_state PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(audio_out2_mastering_state PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
+    endif()
+
     add_test_executable(audio_out2_device_state_tests tests/AudioOut2DeviceState.cpp)
     target_include_directories(audio_out2_device_state_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(audio_out2_device_state_tests PRIVATE libSceAudioOut libc)
@@ -369,6 +380,15 @@ if(BUILD_TESTING)
         set_tests_properties(guest_audio_out_ports PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
     endif()
+    add_test_executable(guest_audio_out_ex_monitor_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestAudioOutExMonitorBounds.cpp)
+    target_include_directories(guest_audio_out_ex_monitor_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_audio_out_ex_monitor_bounds_tests PRIVATE libSceAudioOut libc)
+    configure_windows_unwind(guest_audio_out_ex_monitor_bounds_tests)
+    add_test(NAME guest_audio_out_ex_monitor_bounds COMMAND guest_audio_out_ex_monitor_bounds_tests)
+    if(WIN32)
+        set_tests_properties(guest_audio_out_ex_monitor_bounds PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
+    endif()
 
     add_test_executable(audio_out2_context_handles_tests tests/AudioOut2ContextHandles.cpp)
     target_include_directories(audio_out2_context_handles_tests PRIVATE ${LIBS_INCLUDE_DIR})
@@ -392,3 +412,14 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
+
+    add_test_executable(guest_audio_out_port_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestAudioOutPortBounds.cpp)
+    target_include_directories(guest_audio_out_port_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_audio_out_port_bounds_tests PRIVATE libSceAudioOut libc)
+    configure_windows_unwind(guest_audio_out_port_bounds_tests)
+    add_test(NAME guest_audio_out_port_bounds COMMAND guest_audio_out_port_bounds_tests)
+    if(WIN32)
+        set_tests_properties(guest_audio_out_port_bounds PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAudioOut>")
+    endif()
+

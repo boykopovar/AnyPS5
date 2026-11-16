@@ -98,4 +98,14 @@ if(BUILD_TESTING)
         set_tests_properties(guest_ajm guest_ajm_aac_multichannel guest_ajm_vibration guest_ajm_wvorbis guest_ajm_driver_queries guest_ajm_initialize_context_pointer PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAjm.native>")
     endif()
+
+    add_test_executable(guest_ajm_batch_error_dump_tests ${LIBS_INCLUDE_DIR}/tests/GuestAjmBatchErrorDump.cpp)
+    target_include_directories(guest_ajm_batch_error_dump_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_ajm_batch_error_dump_tests PRIVATE libSceAjm.native libc)
+    configure_windows_unwind(guest_ajm_batch_error_dump_tests)
+    add_test(NAME guest_ajm_batch_error_dump COMMAND guest_ajm_batch_error_dump_tests)
+    if(WIN32)
+        set_tests_properties(guest_ajm_batch_error_dump PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAjm.native>")
+    endif()
 endif()
