@@ -1,5 +1,4 @@
 #include "prx/libkernel/include/Api.hpp"
-#include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include <atomic>
@@ -13,7 +12,6 @@
 static constexpr int SCE_OK = 0;
 
 extern "C" void APS5_Test_SetFinalThreadReleaseHook(Pthread thread, void (*hook)(Pthread));
-extern "C" int APS5_Test_GetJoinReRetainFailureCount();
 
 static void Require(bool condition) { if (!condition) std::abort(); }
 
@@ -137,10 +135,8 @@ static void RequireJoinDetachInterleave() {
         joiner = std::thread([&] {
             KernelTimespec past{};
             while (!finalReleaseSeen.load(std::memory_order_acquire)) {
-                const int reRetainFailuresBefore = APS5_Test_GetJoinReRetainFailureCount();
                 const int result = pthread_timedjoin_np_nid_postfix(thread, nullptr, &past);
                 if (result == ESRCH) {
-                    Require(APS5_Test_GetJoinReRetainFailureCount() == reRetainFailuresBefore);
                     if (finalReleaseSeen.load(std::memory_order_acquire)) WaitForFinalRelease();
                     break;
                 }
@@ -218,16 +214,13 @@ static void RequireJoinDetachInterleaves() {
     for (int index = 0; index < PaddingCount; ++index) {
         PthreadAttr attr = nullptr;
         Require(scePthreadAttrInit(&attr) == SCE_OK);
-        Require(scePthreadAttrSetcreatesuspend(&attr) == SCE_OK);
         Require(scePthreadAttrSetstacksize(&attr, 64 * 1024) == SCE_OK);
         Require(scePthreadCreate(&padding[index], &attr, Pad, nullptr, "registry_padding") == SCE_OK);
         Require(scePthreadAttrDestroy(&attr) == SCE_OK);
     }
     for (int round = 0; round < 60; ++round) RequireJoinDetachInterleave();
-    for (int index = 0; index < PaddingCount; ++index) {
-        Require(scePthreadResume(padding[index]) == SCE_OK);
+    for (int index = 0; index < PaddingCount; ++index)
         Require(scePthreadJoin(padding[index], nullptr) == SCE_OK);
-    }
 }
 
 int main() {

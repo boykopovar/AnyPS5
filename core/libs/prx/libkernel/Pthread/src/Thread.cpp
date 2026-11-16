@@ -1006,7 +1006,6 @@ static void RunThread(std::unique_ptr<ThreadArgs> args) {
 using FinalThreadReleaseTestHook = void (*)(Pthread);
 static std::atomic<PthreadPrivate*> finalThreadReleaseTestTarget{nullptr};
 static std::atomic<FinalThreadReleaseTestHook> finalThreadReleaseTestHook{nullptr};
-static std::atomic<int> joinReRetainFailureTestCount{0};
 
 static void ReleaseThread(PthreadPrivate* thread) {
     if (thread->_adopted)
@@ -1057,10 +1056,6 @@ private:
 extern "C" void APS5_Test_SetFinalThreadReleaseHook(Pthread thread, FinalThreadReleaseTestHook hook) {
     finalThreadReleaseTestHook.store(hook, std::memory_order_relaxed);
     finalThreadReleaseTestTarget.store(static_cast<PthreadPrivate*>(thread), std::memory_order_release);
-}
-
-extern "C" int APS5_Test_GetJoinReRetainFailureCount() {
-    return joinReRetainFailureTestCount.load(std::memory_order_relaxed);
 }
 
 static std::mutex joinedLock;
