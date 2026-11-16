@@ -1,10 +1,21 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <stdexcept>
 #include <string>
 #include <vector>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -236,6 +247,137 @@ void Utf8Samples() {
     }
 }
 
+template<class TCall>
+void RequiresRuntimeErrorKeepingErrno(TCall call, const char* message) {
+    errno = 71;
+    bool threw = false;
+    try {
+        call();
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw && errno == 71, message);
+}
+
+void GuestPointers() {
+#ifdef _WIN32
+    const std::size_t pageSize = 4096;
+    auto* base = static_cast<char*>(VirtualAlloc(nullptr, pageSize * 4, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+    Require(base != nullptr, "allocate guest pointer pages");
+#else
+    const std::size_t pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE) > 0 ? sysconf(_SC_PAGESIZE) : 4096);
+    void* mapping = mmap(nullptr, pageSize * 4, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(mapping != MAP_FAILED, "allocate guest pointer pages");
+    auto* base = static_cast<char*>(mapping);
+#endif
+    char* pages = base + pageSize;
+    char* guard = pages + pageSize;
+    char* readOnly = pages + pageSize * 2;
+    const std::int32_t failing = IllegalArgument;
+    std::memcpy(readOnly, &failing, sizeof(failing));
+    std::memset(readOnly + 8, 0, 8);
+    std::memcpy(readOnly + 16, "\xf0\x9f\x98\x80", 4);
+#ifdef _WIN32
+    DWORD oldProtect = 0;
+    Require(VirtualProtect(guard, pageSize, PAGE_NOACCESS, &oldProtect) != 0, "protect guard page");
+    Require(VirtualProtect(readOnly, pageSize, PAGE_READONLY, &oldProtect) != 0, "protect read-only page");
+#else
+    Require(mprotect(guard, pageSize, PROT_NONE) == 0, "protect guard page");
+    Require(mprotect(readOnly, pageSize, PROT_READ) == 0, "protect read-only page");
+#endif
+    auto* readOnlyFailing = reinterpret_cast<std::int32_t*>(readOnly);
+    auto* readOnlyZero = reinterpret_cast<std::int32_t*>(readOnly + 8);
+    auto* readOnlyIterator = reinterpret_cast<UCharIterator*>(readOnly + 8);
+    const char* readOnlyEmoji = readOnly + 16;
+    auto* unmappedIterator = reinterpret_cast<UCharIterator*>(std::uintptr_t{0x10});
+    auto* unmappedError = reinterpret_cast<std::int32_t*>(std::uintptr_t{0x10});
+    const auto* unmappedUnits = reinterpret_cast<const char16_t*>(std::uintptr_t{0x10});
+    const auto* unmappedBytes = reinterpret_cast<const char*>(std::uintptr_t{0x10});
+
+    auto* guest = reinterpret_cast<UCharIterator*>(guard - sizeof(UCharIterator));
+    uiter_setString_nid_postfix(guest, u"abc", 3);
+    Require(guest->getState(guest) == 0 && guest->limit == 3, "string iterator ending at the guard page");
+    std::int32_t error = Success;
+    guest->setState(guest, 2, &error);
+    Require(error == Success && guest->getState(guest) == 2 && guest->next(guest) == u'c', "string state round-trips in guest memory");
+    guest->setState(guest, 4, &error);
+    Require(error == IndexOutOfBounds && guest->getState(guest) == 3, "string state outside the text reports an error");
+    guest->setState(guest, 1, readOnlyFailing);
+    Require(guest->getState(guest) == 3, "string state with a failing read-only error returns early");
+
+    std::memcpy(pages, "\xf0\x9f\x98\x80!", 6);
+    uiter_setUTF8_nid_postfix(guest, pages, -1);
+    Require(guest->limit == 5 && guest->next(guest) == 0xd83d, "UTF-8 iterator in guest memory");
+    const std::uint32_t inside = guest->getState(guest);
+    Require(inside == ((4u << 1) | 1u), "UTF-8 state inside a supplementary character");
+    error = Success;
+    guest->setState(guest, 0, &error);
+    Require(error == Success && guest->getState(guest) == 0, "UTF-8 state resets in guest memory");
+    guest->setState(guest, inside, &error);
+    Require(error == Success && guest->getState(guest) == inside && guest->next(guest) == 0xde00, "UTF-8 state restores a split character");
+    guest->setState(guest, 2u << 1, &error);
+    guest->setState(guest, 9u << 1, &error);
+    Require(error == IndexOutOfBounds, "UTF-8 state past the limit reports an error");
+
+    UCharIterator iterator{};
+    char16_t* unitsAtGuard = reinterpret_cast<char16_t*>(guard - 4);
+    unitsAtGuard[0] = u'z';
+    unitsAtGuard[1] = 0;
+    uiter_setString_nid_postfix(&iterator, unitsAtGuard, -1);
+    Require(iterator.length == 1 && iterator.limit == 1, "terminated string length stops before the guard page");
+    std::memcpy(guard - 3, "xy", 3);
+    uiter_setUTF8_nid_postfix(&iterator, guard - 3, -1);
+    Require(iterator.limit == 2 && iterator.length == -1, "terminated UTF-8 length stops before the guard page");
+    std::memcpy(pages - 1, u"abcd", 10);
+    uiter_setString_nid_postfix(&iterator, reinterpret_cast<const char16_t*>(pages - 1), -1);
+    Require(iterator.length == 4, "odd-aligned string length reads units straddling a page");
+
+    uiter_setString_nid_postfix(&iterator, u"ab", 2);
+    const UCharIterator saved = iterator;
+    unitsAtGuard[1] = u'z';
+    RequiresRuntimeErrorKeepingErrno([&] { uiter_setString_nid_postfix(&iterator, unitsAtGuard + 1, -1); }, "unterminated string throws at the guard page");
+    RequiresRuntimeErrorKeepingErrno([&] { uiter_setString_nid_postfix(&iterator, unmappedUnits, -1); }, "unreadable string throws and keeps errno");
+    std::memcpy(guard - 1, "x", 1);
+    RequiresRuntimeErrorKeepingErrno([&] { uiter_setUTF8_nid_postfix(&iterator, guard - 1, -1); }, "unterminated UTF-8 throws at the guard page");
+    RequiresRuntimeErrorKeepingErrno([&] { uiter_setUTF8_nid_postfix(&iterator, unmappedBytes, -1); }, "unreadable UTF-8 throws and keeps errno");
+    Require(std::memcmp(&iterator, &saved, sizeof(iterator)) == 0, "unreadable text leaves the iterator unchanged");
+    RequiresRuntimeErrorKeepingErrno([&] { uiter_setString_nid_postfix(unmappedIterator, u"a", 1); }, "unwritable string iterator throws and keeps errno");
+    RequiresRuntimeErrorKeepingErrno([&] { uiter_setUTF8_nid_postfix(unmappedIterator, "a", 1); }, "unwritable UTF-8 iterator throws and keeps errno");
+    RequiresRuntimeErrorKeepingErrno([&] { uiter_setString_nid_postfix(readOnlyIterator, nullptr, 0); }, "read-only noop iterator throws and keeps errno");
+
+    RequiresRuntimeErrorKeepingErrno([&] { iterator.getState(unmappedIterator); }, "unreadable string state throws and keeps errno");
+    RequiresRuntimeErrorKeepingErrno([&] { iterator.setState(&iterator, 1, unmappedError); }, "unreadable string error throws and keeps errno");
+    RequiresRuntimeErrorKeepingErrno([&] { iterator.setState(&iterator, 9, readOnlyZero); }, "unwritable string error throws and keeps errno");
+    error = Success;
+    RequiresRuntimeErrorKeepingErrno([&] { iterator.setState(unmappedIterator, 1, &error); }, "unreadable string iterator throws and keeps errno");
+    Require(error == Success, "unreadable string iterator leaves the error unchanged");
+
+    UCharIterator utf8{};
+    uiter_setUTF8_nid_postfix(&utf8, readOnlyEmoji, 4);
+    RequiresRuntimeErrorKeepingErrno([&] { utf8.getState(unmappedIterator); }, "unreadable UTF-8 state throws and keeps errno");
+    RequiresRuntimeErrorKeepingErrno([&] { utf8.setState(&utf8, 1u << 1, unmappedError); }, "unreadable UTF-8 error throws and keeps errno");
+    RequiresRuntimeErrorKeepingErrno([&] { utf8.setState(&utf8, 9u << 1, readOnlyZero); }, "unwritable UTF-8 error throws and keeps errno");
+    RequiresRuntimeErrorKeepingErrno([&] { utf8.setState(unmappedIterator, 1u << 1, &error); }, "unreadable UTF-8 iterator throws and keeps errno");
+    utf8.setState(&utf8, (4u << 1) | 1u, &error);
+    Require(error == Success && utf8.getState(&utf8) == ((4u << 1) | 1u), "UTF-8 state reads a split character from read-only text");
+    UCharIterator unreadableText = utf8;
+    unreadableText.context = unmappedBytes;
+    unreadableText.reservedField = 0;
+    const UCharIterator before = unreadableText;
+    RequiresRuntimeErrorKeepingErrno([&] { unreadableText.setState(&unreadableText, (4u << 1) | 1u, &error); }, "unreadable UTF-8 text throws and keeps errno");
+    Require(std::memcmp(&unreadableText, &before, sizeof(before)) == 0 && error == Success, "unreadable UTF-8 text leaves the iterator unchanged");
+
+    UCharIterator noop{};
+    uiter_setUTF8_nid_postfix(&noop, nullptr, 0);
+    RequiresRuntimeErrorKeepingErrno([&] { noop.setState(&noop, 0, unmappedError); }, "unwritable noop error throws and keeps errno");
+
+#ifdef _WIN32
+    VirtualFree(base, 0, MEM_RELEASE);
+#else
+    munmap(base, pageSize * 4);
+#endif
+}
+
 }
 
 int main() {
@@ -243,5 +385,6 @@ int main() {
     Noop();
     Utf8Known();
     Utf8Samples();
+    GuestPointers();
     return 0;
 }
