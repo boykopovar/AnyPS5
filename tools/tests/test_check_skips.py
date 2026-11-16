@@ -652,6 +652,10 @@ class DeviceLimitTests(unittest.TestCase):
         self.assertFalse(check_skips.device_limitations('skipped, other', [check_skips.NO_DISPLAY]))
         self.assertFalse(check_skips.device_limitations('no skip line here', [check_skips.NO_DISPLAY]))
 
+    def test_high_refresh_limitation_matches_only_the_refresh_message(self):
+        self.assertTrue(check_skips.high_refresh_limitation('test: skipped, current display does not provide 120 Hz\n'))
+        self.assertFalse(check_skips.high_refresh_limitation('test: skipped, other reason\n'))
+
 
 if __name__ == "__main__":
     unittest.main()
