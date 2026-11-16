@@ -20,6 +20,14 @@ if(BUILD_TESTING)
             set_tests_properties(agc_driver_frame_replay PROPERTIES ENVIRONMENT_MODIFICATION
                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         endif()
+        add_test(NAME agc_driver_frame_replay_subpage COMMAND agc_driver_frame_replay_tests $<TARGET_FILE:agc_frame_replay> subpage)
+        set_tests_properties(agc_driver_frame_replay_subpage PROPERTIES
+                ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_FRAME_CAPTURE=${CMAKE_CURRENT_BINARY_DIR}/frame replay subpage capture;APS5_FRAME_CAPTURE_AT_FLIP=1;APS5_FRAME_CAPTURE_FRAMES=2;APS5_FRAME_CAPTURE_MIN_FREE_BYTES=0"
+                TIMEOUT 120 SKIP_RETURN_CODE 77)
+        if(WIN32)
+            set_tests_properties(agc_driver_frame_replay_subpage PROPERTIES ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
         add_test(NAME agc_driver_frame_replay_cold_pipelines COMMAND agc_driver_frame_replay_tests $<TARGET_FILE:agc_frame_replay> pipelines)
         set_tests_properties(agc_driver_frame_replay_cold_pipelines PROPERTIES
                 ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=0;APS5_HEADLESS_PIPELINE_CACHE=1;ANYPS5_SHADER_CACHE_DIR=${CMAKE_CURRENT_BINARY_DIR}/frame replay pipeline cache;APS5_FRAME_CAPTURE=${CMAKE_CURRENT_BINARY_DIR}/frame replay cold capture;APS5_FRAME_CAPTURE_AT_FLIP=1;APS5_FRAME_CAPTURE_FRAMES=2;APS5_FRAME_CAPTURE_MIN_FREE_BYTES=0"
