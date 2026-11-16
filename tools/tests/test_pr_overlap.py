@@ -691,6 +691,13 @@ class TruncationTests(unittest.TestCase):
     def test_truncated_output_stays_within_the_report_limit(self):
         lines = ["x" * 30000, "y" * 30000, "z" * 30000]
         self.assertLessEqual(len(pr_overlap.truncated(lines)), pr_overlap.MAX_REPORT_CHARS)
+class ExportScanTests(unittest.TestCase):
+    def test_exports_reads_added_export_names_only(self):
+        diff = "+APS5_VABI sceFoo(int a) {\n-APS5_VABI sceBar(int b) {\n+ other\n"
+        self.assertEqual(pr_overlap.exports(diff, "+"), {"sceFoo"})
+
+    def test_exports_skips_unpatched_names(self):
+        self.assertEqual(pr_overlap.exports("+APS5_VABI sceFoo_nid_no_patch(int a) {\n", "+"), set())
 
 
 if __name__ == "__main__":
