@@ -1063,5 +1063,12 @@ class ProgressConstantReturnTests(unittest.TestCase):
         self.assertEqual(group["inert_names"], ["Discarded"])
 
 
+class BadgeTests(unittest.TestCase):
+    def test_badge_colour_follows_the_percentage_thresholds(self):
+        for percent, colour in ((95, "#4c1"), (60, "#97ca00"), (30, "#dfb317"), (29, "#fe7d37")):
+            with self.subTest(percent=percent):
+                self.assertIn(f'fill="{colour}"', progress.badge("x", {"percent": percent}))
+
+
 if __name__ == "__main__":
     unittest.main()
