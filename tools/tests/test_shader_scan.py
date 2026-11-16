@@ -503,5 +503,11 @@ class ReportTests(unittest.TestCase):
             self.assertIn("no SOP1 opcode table", err)
 
 
+class BodyAfterTests(unittest.TestCase):
+    def test_body_after_returns_the_text_between_the_matching_braces(self):
+        self.assertEqual(shader_scan.body_after('int f() { return 1; }', re.compile(r'int f\(\)')), ' return 1; ')
+        self.assertEqual(shader_scan.body_after('int f() { if (a) { b(); } }', re.compile(r'int f\(\)')), ' if (a) { b(); } ')
+
+
 if __name__ == "__main__":
     unittest.main()
