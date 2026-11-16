@@ -212,5 +212,13 @@ class CommandLineTests(unittest.TestCase):
         self.assertEqual(parts[0][0], 0)
 
 
+    def test_split_top_level_angles_flag_controls_angle_nesting(self):
+        text = "a<b, c>, d"
+        with_angles = [part for _, part in guest_pointer_audit.split_top_level(text)]
+        self.assertEqual(with_angles, ["a<b, c>", " d"])
+        without = [part for _, part in guest_pointer_audit.split_top_level(text, angles=False)]
+        self.assertEqual(without, ["a<b", " c>", " d"])
+
+
 if __name__ == "__main__":
     unittest.main()
