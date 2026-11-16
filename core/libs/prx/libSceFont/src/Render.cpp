@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <cerrno>
 #include <cmath>
 #include <cstddef>
 #include <cstring>
@@ -416,23 +417,30 @@ void APS5_VABI sceFontRenderSurfaceInit(FontRenderSurface* renderSurface, void* 
     if (!renderSurface) return;
     const auto width = static_cast<std::uint32_t>(std::max(widthPixel, 0));
     const auto height = static_cast<std::uint32_t>(std::max(heightPixel, 0));
-    renderSurface->buffer = buffer;
-    renderSurface->widthByte = bufWidthByte;
-    renderSurface->pixelSizeByte = static_cast<std::int8_t>(pixelSizeByte);
-    renderSurface->pad0 = 0;
-    renderSurface->styleFlag = 0;
-    renderSurface->pad2 = 0;
-    renderSurface->width = static_cast<std::int32_t>(width);
-    renderSurface->height = static_cast<std::int32_t>(height);
-    renderSurface->sc_x0 = 0;
-    renderSurface->sc_y0 = 0;
-    renderSurface->sc_x1 = width;
-    renderSurface->sc_y1 = height;
+    FontRenderSurface surface{};
+    surface.buffer = buffer;
+    surface.widthByte = bufWidthByte;
+    surface.pixelSizeByte = static_cast<std::int8_t>(pixelSizeByte);
+    surface.width = static_cast<std::int32_t>(width);
+    surface.height = static_cast<std::int32_t>(height);
+    surface.sc_x1 = width;
+    surface.sc_y1 = height;
+    const int savedErrno = errno;
+    GuestCopyOut_nid_no_patch(renderSurface, &surface, offsetof(FontRenderSurface, reserved_q));
+    errno = savedErrno;
 }
 
 void APS5_VABI sceFontRenderSurfaceSetScissor(FontRenderSurface* renderSurface, int x0, int y0, int w, int h) {
     if (!renderSurface) return;
-    const auto surfaceW = static_cast<std::uint32_t>(renderSurface->width);
+    std::int32_t extent[2] = {};
+    static_assert(offsetof(FontRenderSurface, height) == offsetof(FontRenderSurface, width) + sizeof(std::int32_t));
+    {
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(extent, &renderSurface->width, sizeof(extent));
+        errno = savedErrno;
+        if (!copied) return;
+    }
+    const auto surfaceW = static_cast<std::uint32_t>(extent[0]);
     if (surfaceW != 0) {
         std::uint32_t x1;
         std::uint32_t left;
@@ -452,10 +460,10 @@ void APS5_VABI sceFontRenderSurfaceSetScissor(FontRenderSurface* renderSurface, 
                 if (surfaceW < x1) x1 = surfaceW;
             }
         }
-        renderSurface->sc_x0 = left;
-        renderSurface->sc_x1 = x1;
+        Font::CopyOutGuest(&renderSurface->sc_x0, left);
+        Font::CopyOutGuest(&renderSurface->sc_x1, x1);
     }
-    const auto surfaceH = static_cast<std::uint32_t>(renderSurface->height);
+    const auto surfaceH = static_cast<std::uint32_t>(extent[1]);
     if (surfaceH == 0) return;
     std::uint32_t top;
     std::uint32_t y1 = surfaceH;
@@ -463,14 +471,14 @@ void APS5_VABI sceFontRenderSurfaceSetScissor(FontRenderSurface* renderSurface, 
     if (y0 < 0) {
         top = 0;
         if (height <= static_cast<std::uint32_t>(-y0)) {
-            renderSurface->sc_y0 = 0;
-            renderSurface->sc_y1 = 0;
+            Font::CopyOutGuest(&renderSurface->sc_y0, std::uint32_t{0});
+            Font::CopyOutGuest(&renderSurface->sc_y1, std::uint32_t{0});
             return;
         }
     } else {
         if (surfaceH < static_cast<std::uint32_t>(y0)) {
-            renderSurface->sc_y0 = surfaceH;
-            renderSurface->sc_y1 = y1;
+            Font::CopyOutGuest(&renderSurface->sc_y0, surfaceH);
+            Font::CopyOutGuest(&renderSurface->sc_y1, y1);
             return;
         }
         top = static_cast<std::uint32_t>(y0);
@@ -478,22 +486,23 @@ void APS5_VABI sceFontRenderSurfaceSetScissor(FontRenderSurface* renderSurface, 
     }
     const std::uint32_t candidate = height + static_cast<std::uint32_t>(y0);
     if (candidate <= surfaceH) y1 = candidate;
-    renderSurface->sc_y0 = top;
-    renderSurface->sc_y1 = y1;
+    Font::CopyOutGuest(&renderSurface->sc_y0, top);
+    Font::CopyOutGuest(&renderSurface->sc_y1, y1);
 }
 
 int APS5_VABI sceFontRenderSurfaceSetStyleFrame(FontRenderSurface* renderSurface, FontStyleFrame* styleFrame) {
     if (!renderSurface) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    if (!styleFrame) {
-        renderSurface->styleFlag &= static_cast<std::uint8_t>(~0x1u);
-        renderSurface->reserved_q[0] = 0;
-        renderSurface->reserved_q[1] = 0;
-        return SCE_FONT_OK;
-    }
-    if (styleFrame->magic != STYLE_FRAME_MAGIC) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    renderSurface->styleFlag |= 0x1;
-    renderSurface->reserved_q[0] = reinterpret_cast<std::uint64_t>(styleFrame);
-    renderSurface->reserved_q[1] = 0;
+    std::uint8_t styleFlag = 0;
+    if (!Font::CopyInGuest(styleFlag, &renderSurface->styleFlag)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    std::uint16_t magic = STYLE_FRAME_MAGIC;
+    if (styleFrame && (!Font::CopyInGuest(magic, &styleFrame->magic) || magic != STYLE_FRAME_MAGIC)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    styleFlag = styleFrame ? static_cast<std::uint8_t>(styleFlag | 0x1) : static_cast<std::uint8_t>(styleFlag & ~0x1u);
+    const std::uint64_t frameSlot[2] = {reinterpret_cast<std::uint64_t>(styleFrame), 0};
+    if (!Font::CopyOutGuest(&renderSurface->styleFlag, styleFlag)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    const int savedErrno = errno;
+    const bool stored = GuestCopyOut_nid_no_patch(&renderSurface->reserved_q[0], frameSlot, sizeof(frameSlot));
+    errno = savedErrno;
+    if (!stored) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SCE_FONT_OK;
 }
 
