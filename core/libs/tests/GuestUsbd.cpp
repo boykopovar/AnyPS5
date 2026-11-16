@@ -14,6 +14,16 @@
 #include <stdexcept>
 #include <vector>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 namespace {
 
 }
@@ -38,6 +48,27 @@ void Require(bool condition, const char* message) {
         std::fprintf(stderr, "USBD: %s\n", message);
         std::abort();
     }
+}
+
+std::uint8_t* PageBeforeGuard() {
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    const std::size_t pageSize = info.dwPageSize;
+    auto* memory = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+    Require(memory != nullptr, "the guarded page was not allocated");
+    DWORD previous;
+    Require(VirtualProtect(memory + pageSize, pageSize, PAGE_NOACCESS, &previous) != 0, "the guard page was not protected");
+#else
+    const long nativePageSize = sysconf(_SC_PAGESIZE);
+    Require(nativePageSize > 0, "the page size is unknown");
+    const std::size_t pageSize = static_cast<std::size_t>(nativePageSize);
+    void* allocation = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(allocation != MAP_FAILED, "the guarded page was not mapped");
+    auto* memory = static_cast<std::uint8_t*>(allocation);
+    Require(mprotect(memory + pageSize, pageSize, PROT_NONE) == 0, "the guard page was not protected");
+#endif
+    return memory;
 }
 
 template<typename TCall>
@@ -586,6 +617,11 @@ int main(int argc, char** argv) {
     Require(sceUsbdBulkTransfer(&foreign, 0x81, readOnlyBuffer, sizeof(readOnlyData), &transferred, 1000) == invalidArgument && errno == 71, "read-only bulk IN data accepted");
     Require(sceUsbdInterruptTransfer(&foreign, 0x01, reinterpret_cast<std::uint8_t*>(0x10), 18, &transferred, 1000) == invalidArgument && errno == 71, "unreadable interrupt OUT data accepted");
     Require(sceUsbdInterruptTransfer(&foreign, 0x81, readOnlyBuffer, sizeof(readOnlyData), &transferred, 1000) == invalidArgument && errno == 71, "read-only interrupt IN data accepted");
+    std::uint8_t* const page = PageBeforeGuard();
+    for (const std::uint8_t endpoint : {std::uint8_t{0x01}, std::uint8_t{0x81}}) {
+        Require(sceUsbdBulkTransfer(&foreign, endpoint, page, 0x7fffffff, &transferred, 1000) == invalidArgument && errno == 71, "bulk data running past a mapping accepted");
+        Require(sceUsbdInterruptTransfer(&foreign, endpoint, page, 0x7fffffff, &transferred, 1000) == invalidArgument && errno == 71, "interrupt data running past a mapping accepted");
+    }
     Require(sceUsbdGetStringDescriptor(nullptr, 1, 0x409, descriptor, 18) == invalidArgument, "null handle string descriptor accepted");
     Require(sceUsbdGetStringDescriptor(&foreign, 1, 0x409, descriptor, 0) == invalidArgument, "empty string descriptor buffer accepted");
     descriptor[0] = 0x55;
