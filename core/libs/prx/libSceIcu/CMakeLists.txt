@@ -1003,3 +1003,18 @@ if(BUILD_TESTING)
 endif()
 
 target_sources(libSceIcu PRIVATE Object.cpp)
+
+target_sources(libSceIcu PRIVATE TextProviders.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_text_providers_tests ${LIBS_INCLUDE_DIR}/tests/GuestIcuTextProviders.cpp)
+    target_include_directories(guest_icu_text_providers_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_text_providers_tests PRIVATE libSceIcu)
+    configure_windows_unwind(guest_icu_text_providers_tests)
+    add_test(NAME guest_icu_text_providers COMMAND guest_icu_text_providers_tests)
+    set_tests_properties(guest_icu_text_providers PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_icu_text_providers PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+endif()

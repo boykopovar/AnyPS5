@@ -38,6 +38,7 @@
 #include "Terminate.hpp"
 #include "Trie2.hpp"
 #include "Text.hpp"
+#include "TextProviders.hpp"
 #include "Vector.hpp"
 #include "Vector32.hpp"
 #include "Edits.hpp"
