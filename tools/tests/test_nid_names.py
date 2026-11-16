@@ -945,6 +945,13 @@ class NidEncodingTests(unittest.TestCase):
             db = nid_names.read_db(path)
             self.assertEqual(db, {"AAAAAAAAAAA": "first", "CCCCCCCCCCC": "third"})
 
+class PureHelperTests(unittest.TestCase):
+    def test_strip_nid_postfix_removes_the_postfix_and_disambiguator(self):
+        self.assertEqual(nid_names.strip_nid_postfix("sceFoo_nid_postfix"), "sceFoo")
+        self.assertEqual(nid_names.strip_nid_postfix("sceFoo_nid_disambig3_nid_postfix"), "sceFoo")
+        self.assertEqual(nid_names.strip_nid_postfix("sceFoo_nid_disambig3"), "sceFoo")
+        self.assertEqual(nid_names.strip_nid_postfix("plain"), "plain")
+
 
 if __name__ == "__main__":
     unittest.main()
