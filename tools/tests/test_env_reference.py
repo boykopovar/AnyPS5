@@ -636,5 +636,16 @@ class KindOfTests(unittest.TestCase):
         self.assertEqual(env_reference.kind_of("getenv", "use(v)"), "string")
 
 
+class DefaultOfTests(unittest.TestCase):
+    def test_default_of_prefers_explicit_then_ternary(self):
+        import re
+        import env_reference
+        explicit = re.compile(r"(?P<default>\d+)").match("42")
+        self.assertEqual(env_reference.default_of(explicit, ""), "42")
+        plain = re.compile(r"x").match("x")
+        self.assertEqual(env_reference.default_of(plain, "v ? 1 : 7"), "7")
+        self.assertEqual(env_reference.default_of(plain, "no ternary"), "")
+
+
 if __name__ == "__main__":
     unittest.main()
