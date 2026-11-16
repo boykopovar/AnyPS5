@@ -529,7 +529,7 @@ static void CheckRenderEffects(FontHandle font, FontRenderer renderer) {
     Require(sceFontGetRenderScalePixel(font, &scaleW, &scaleH) == SCE_FONT_ERROR_NOT_BOUND_RENDERER && scaleW == 0.0f && scaleH == 0.0f);
     float fontSlant = 0.0f;
     Require(sceFontSetEffectSlant(font, 0.25f) == SCE_FONT_OK);
-    Require(sceFontGetEffectSlant(font, &fontSlant) == SCE_FONT_OK && near(fontSlant, 0.25f));
+    Require(sceFontGetEffectSlant(font, &fontSlant) == SCE_FONT_OK && approximately(fontSlant, 0.25f));
     Require(sceFontGetEffectSlant(font, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
     Require(sceFontGetEffectSlant(nullptr, reinterpret_cast<float*>(0x10)) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
     errno = 71;
