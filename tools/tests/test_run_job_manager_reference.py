@@ -20,6 +20,14 @@ class CliPathTests(unittest.TestCase):
             with self.assertRaises(FileNotFoundError):
                 run_job_manager_reference.resolve_existing_cli_path(Path(directory) / 'missing.exe')
 
+    @unittest.skipIf(os.name == 'nt', 'symbolic link loops need POSIX symlinks here')
+    def test_resolve_cli_path_refuses_a_symbolic_link_loop(self):
+        with tempfile.TemporaryDirectory() as directory:
+            loop = Path(directory) / 'tool'
+            os.symlink(loop, loop)
+            with self.assertRaisesRegex(ValueError, 'symbolic link loop'):
+                run_job_manager_reference.resolve_cli_path(loop)
+
 
 if __name__ == "__main__":
     unittest.main()
