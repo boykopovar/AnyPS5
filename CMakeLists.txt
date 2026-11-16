@@ -335,6 +335,7 @@ if(BUILD_TESTING)
         set_tests_properties(patch_lib_atrac9 PROPERTIES TIMEOUT 60)
         add_test(NAME build_changed_guest_tests COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_build_changed_guest_tests.py)
+        set_tests_properties(build_changed_guest_tests PROPERTIES TIMEOUT 30)
         add_test(NAME shader_cache_native_paths COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/core/shader/recompiler/tests/test_shader_cache_native_paths.py
             ${CMAKE_CURRENT_SOURCE_DIR}/core/shader/recompiler/ShaderCacheVersion.cmake ${CMAKE_COMMAND})
