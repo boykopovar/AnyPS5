@@ -1,13 +1,19 @@
 #define SPV_ENABLE_UTILITY_CODE
 #include <spirv/unified1/spirv.hpp>
 #undef SPV_ENABLE_UTILITY_CODE
+#include "ControlFlow/GraphBuilder.hpp"
+#include "ControlFlow/Structurizer.hpp"
 #include "IntermediateRepresentation/IrProgram.hpp"
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
+#include "Translation/InstructionTranslator.hpp"
+#include "Translation/ShaderInputInfoBuilder.hpp"
 #include "Optimization/ShaderStageInputInfo.hpp"
 #include "SpirvBackend/SpirvEmitter.hpp"
 #include "SpirvBackend/SpirvAnalysis.hpp"
 #include "SpirvBackend/SpirvBda.hpp"
 #include "SpirvBackend/SpirvEmitterState.hpp"
 #include "PipelineSpecialization.hpp"
+#include "Recompiler.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -549,8 +555,8 @@ int main() {
         const bool atomicWithoutFlag = std::getenv("APS5_COHERENT_ATOMIC_LOADS") != nullptr;
         require(plain.atomicStores == 0u && plain.volatileStores == 3u && (atomicWithoutFlag ? plain.volatileLoads == 0u && plain.atomicLoads != 0u : plain.volatileLoads != 0u) && plain.atomicLoads + plain.volatileLoads == fenced.atomicLoads, "without the flag, the coherent stores of a publication are not volatile or its loads do not follow APS5_COHERENT_ATOMIC_LOADS");
     });
-    run("coherent loads either side of a guest fence are not read as one vector", [] {
-        const auto readSites = [](std::initializer_list<IrOpcode> between) {
+    run("coherent loads either side of a guest fence are read as one vector only without the coherent buffer atomics target", [] {
+        const auto readSites = [](std::initializer_list<IrOpcode> between, bool flag) {
             IrProgram program;
             program.Resources().stage = IrShaderStage::Compute;
             program.Info().usesDma = true;
@@ -590,12 +596,109 @@ int main() {
             }
             load(1u);
             SpirvEmitterState state(program, {});
+            state.coherentBufferAtomics = flag;
             return BdaReadSites(state).size();
         };
-        require(readSites({}) == 1u, "control: two coherent loads 4 bytes apart with nothing between them were not read as one vector, so this case cannot show the fence");
-        require(readSites({IrOpcode::Barrier}) == 2u, "a barrier between two coherent loads must keep them apart");
-        require(readSites({IrOpcode::GuestAcquire}) == 2u, "a guest acquire between two coherent loads must keep them apart");
-        require(readSites({IrOpcode::GuestRelease}) == 2u, "a guest release between two coherent loads must keep them apart");
+        for (const bool flag : {false, true}) {
+            require(readSites({}, flag) == 1u, "control: two coherent loads 4 bytes apart with nothing between them were not read as one vector, so this case cannot show the fence");
+            require(readSites({IrOpcode::Barrier}, flag) == 2u, "a barrier between two coherent loads must keep them apart");
+            require(readSites({IrOpcode::Waitcnt}, flag) == 1u, "a waitcnt between two coherent loads split them");
+            require(readSites({IrOpcode::GuestAcquire}, flag) == (flag ? 2u : 1u), flag ? "a guest acquire between two coherent loads must keep them apart" : "without the coherent buffer atomics target, a guest acquire split two coherent loads");
+            require(readSites({IrOpcode::GuestRelease}, flag) == (flag ? 2u : 1u), flag ? "a guest release between two coherent loads must keep them apart" : "without the coherent buffer atomics target, a guest release split two coherent loads");
+        }
+    });
+    run("s_waitcnt_vscnt and buffer_gl0_inv/gl1_inv translate to Waitcnt and ControlNop without the coherent buffer atomics target", [] {
+        const auto opcodes = [](std::initializer_list<std::uint32_t> body, bool flag) {
+            std::vector<std::uint32_t> code(body);
+            code.push_back(0xbf810000u);
+            const auto decoded = RdnaInstructionDecoder{}.Decode(code);
+            auto cfg = GraphBuilder{}.Build(decoded);
+            Structurizer{}.Structurize(cfg);
+            GuestContext context{};
+            context.waveSize = 32;
+            context.compute = ShaderComputeStageInfo{{32u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+            TranslateOptions options{};
+            options.stage = ShaderStageKind::Compute;
+            options.waveSize = 32;
+            options.userDataCount = 0;
+            options.inputInfo = BuildShaderStageInputInfo(ShaderStageKind::Compute, context, 32);
+            options.coherentBufferAtomics = flag;
+            const auto program = InstructionTranslator{}.Translate(decoded, cfg, options);
+            std::map<IrOpcode, unsigned> found;
+            for (const IrBlock* block : program.BlockOrder()) {
+                for (const IrValue* inst : block->Instructions()) ++found[inst->Opcode()];
+            }
+            return found;
+        };
+        for (const bool flag : {false, true}) {
+            auto base = opcodes({}, flag);
+            auto fenced = opcodes({0xbbfd0000u, 0xe1c40000u, 0u, 0xe1c80000u, 0u}, flag);
+            const auto added = [&](IrOpcode opcode) { return fenced[opcode] - base[opcode]; };
+            if (flag) require(added(IrOpcode::GuestRelease) == 1u && added(IrOpcode::GuestAcquire) == 2u && added(IrOpcode::Waitcnt) == 0u && added(IrOpcode::ControlNop) == 0u, "with the coherent buffer atomics target, s_waitcnt_vscnt is not one GuestRelease or buffer_gl0_inv and buffer_gl1_inv are not two GuestAcquire");
+            else require(added(IrOpcode::GuestRelease) == 0u && added(IrOpcode::GuestAcquire) == 0u && added(IrOpcode::Waitcnt) == 1u && added(IrOpcode::ControlNop) == 2u, "without the coherent buffer atomics target, s_waitcnt_vscnt is not one Waitcnt or buffer_gl0_inv and buffer_gl1_inv are not two ControlNop");
+        }
+        require(!IrOpcodeHasSideEffects(IrOpcode::ControlNop), "ControlNop has side effects, so dead-code elimination keeps buffer_gl0_inv and buffer_gl1_inv");
+    });
+    run("s_waitcnt_vscnt and buffer_gl0_inv/gl1_inv change the module only on the coherent buffer atomics target", [] {
+        constexpr std::uint32_t Wait = 0xbf8c3f70u;
+        constexpr std::uint32_t Release = 0xbbfd0000u;
+        constexpr std::uint32_t Dcache = 0xf4800000u;
+        constexpr std::uint32_t Gl0 = 0xe1c40000u;
+        constexpr std::uint32_t Gl1 = 0xe1c80000u;
+        const auto compile = [](std::initializer_list<std::uint32_t> between, bool flag) {
+            std::vector<std::uint32_t> code{0x7e040280u, 0xdc308000u, 0x00000002u};
+            code.insert(code.end(), between);
+            code.insert(code.end(), {0xdc308004u, 0x01000002u, Wait, 0x4a000300u, 0xdc708010u, 0x00000002u, 0xbf810000u});
+            static constexpr std::array<std::uint32_t, 7> capabilities{spv::CapabilityShader, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle, spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess};
+            static constexpr std::array<std::string_view, 2> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
+            static constexpr std::array<std::uint32_t, 4> userData{0x10000u, 0u, 0u, 0u};
+            RecompileRequest request{};
+            request.shader = {ShaderStage::Compute, 0x20000u, code, 0, {}};
+            request.context.waveSize = 32;
+            request.context.userData = userData;
+            request.context.compute = ShaderComputeStageInfo{{32u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+            request.target.vulkanVersion = 0x00403000u;
+            request.target.spirvVersion = 0x00010600u;
+            request.target.subgroupSize = 32;
+            request.target.bdaAbiVersion = 1;
+            request.target.supportedCapabilities = capabilities;
+            request.target.supportedExtensions = extensions;
+            request.target.maxWorkgroupSize = {1024u, 1024u, 64u};
+            request.target.maxWorkgroupInvocations = 1024;
+            request.target.maxWorkgroupSharedMemoryBytes = 32768;
+            request.target.coherentBufferAtomics = flag;
+            request.layout = {0, 0, 0, 128};
+            request.useCache = false;
+            const auto result = Recompile(request);
+            const auto words = result.spirv.Words();
+            return std::vector<std::uint32_t>(words.begin(), words.end());
+        };
+        const auto count = [](const std::vector<std::uint32_t>& module, spv::Op op, std::string_view callee) {
+            std::uint32_t function = 0;
+            unsigned found = 0;
+            for (std::size_t offset = 5; offset < module.size(); offset += module[offset] >> 16u) {
+                const auto opcode = module[offset] & 0xffffu;
+                if (opcode == spv::OpName && std::string_view(reinterpret_cast<const char*>(module.data() + offset + 2)) == callee) function = module[offset + 1];
+                found += opcode == op && (op != spv::OpFunctionCall || module[offset + 3] == function);
+            }
+            return found;
+        };
+        const auto reads = [&](const std::vector<std::uint32_t>& module) { return count(module, spv::OpFunctionCall, "read_bda_span_stop"); };
+        const auto fences = [&](const std::vector<std::uint32_t>& module) { return count(module, spv::OpMemoryBarrier, {}); };
+        for (const bool flag : {false, true}) {
+            const auto none = compile({}, flag);
+            const auto wait = compile({Wait}, flag);
+            const auto release = compile({Release}, flag);
+            const auto dcache = compile({Dcache, 0u}, flag);
+            require(reads(none) == 1u && reads(wait) == 1u && reads(dcache) == 1u && fences(none) == 0u && fences(wait) == 0u && fences(dcache) == 0u, "control: two global_load_dword 4 bytes apart, alone or with s_waitcnt or s_dcache_inv between them, were not one BDA read without a fence");
+            require(reads(release) == (flag ? 2u : 1u) && fences(release) == (flag ? 1u : 0u), flag ? "with the coherent buffer atomics target, s_waitcnt_vscnt null, 0 between two global_load_dword 4 bytes apart did not make two BDA reads with a fence between them" : "without the coherent buffer atomics target, s_waitcnt_vscnt null, 0 between two global_load_dword 4 bytes apart split them or added a fence");
+            if (!flag) require(release == wait, "without the coherent buffer atomics target, s_waitcnt_vscnt null, 0 compiled differently from s_waitcnt");
+            for (const auto invalidate : {Gl0, Gl1}) {
+                const auto module = compile({invalidate, 0u}, flag);
+                require(reads(module) == (flag ? 2u : 1u) && fences(module) == (flag ? 1u : 0u), flag ? "with the coherent buffer atomics target, buffer_gl0_inv or buffer_gl1_inv between two global_load_dword 4 bytes apart did not make two BDA reads with a fence between them" : "without the coherent buffer atomics target, buffer_gl0_inv or buffer_gl1_inv between two global_load_dword 4 bytes apart split them or added a fence");
+                if (!flag) require(module == dcache, "without the coherent buffer atomics target, buffer_gl0_inv or buffer_gl1_inv compiled differently from s_dcache_inv");
+            }
+        }
     });
     run("exact robust loads read what the checked variant reads", [] {
         const LoadCase test{ResourceKind::Buffer, IrOpcode::LoadBufferU32, IrType::U32};

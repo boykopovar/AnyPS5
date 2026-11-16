@@ -286,6 +286,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     translateOptions.inputInfo = inputInfo;
     translateOptions.float32DenormPreserve = request.target.float32DenormPreserve;
     translateOptions.float64 = supports(spv::CapabilityFloat64);
+    translateOptions.coherentBufferAtomics = request.target.coherentBufferAtomics;
 
     constexpr InstructionTranslator translator;
 

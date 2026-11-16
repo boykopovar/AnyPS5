@@ -24,13 +24,11 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
     switch (inst.op) {
     case RdnaOpcode::SGl1Inv:
     case RdnaOpcode::SDcacheInv:
-        program.Metadata().invalidatesCaches = true;
-        emitControlNop();
-        return true;
     case RdnaOpcode::BufferGl0Inv:
     case RdnaOpcode::BufferGl1Inv:
         program.Metadata().invalidatesCaches = true;
-        (void)ir.Emit(IrOpcode::GuestAcquire, IrType::Void, {});
+        if (coherentBufferAtomics && (inst.op == RdnaOpcode::BufferGl0Inv || inst.op == RdnaOpcode::BufferGl1Inv)) (void)ir.Emit(IrOpcode::GuestAcquire, IrType::Void, {});
+        else emitControlNop();
         return true;
     case RdnaOpcode::SDcacheWb:
     case RdnaOpcode::SAtcProbe:

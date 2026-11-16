@@ -358,7 +358,7 @@ bool OwnControlPoint(const IrValue* address, std::uint32_t stride) {
     return invocation->Opcode() == IrOpcode::GetBuiltin && invocation->Argument(0)->Resolve()->ImmediateU32() == static_cast<std::uint32_t>(StageInputKind::InvocationId);
 }
 
-enum class Walk { Exact, StoreInBlock, NeighbourRead, UnresetValue, CountMask, ExitOnMask };
+enum class Walk { Exact, StoreInBlock, NeighbourRead, UnresetValue, CountMask, ExitOnMask, WaitInBlock };
 
 constexpr std::uint32_t RectCountOffset = 0u;
 constexpr std::uint32_t ValidLanesOffset = 4u;
@@ -377,7 +377,7 @@ struct QuadWalk {
     IrValue* blockExec = nullptr;
     IrValue* strict = nullptr;
 
-    explicit QuadWalk(Walk walk) {
+    explicit QuadWalk(Walk walk, IrOpcode wait = IrOpcode::Waitcnt) {
         program.SetWaveSize(64);
         program.Resources().stage = IrShaderStage::TessellationControl;
         program.Resources().memoryInfo.push_back(MemoryInfo{.kind = ResourceKind::Lds});
@@ -453,6 +453,7 @@ struct QuadWalk {
         IrValue& fetched = read(b.IAdd(b.IMul(b.BitwiseAnd(x, u(63u)), u(4u)), u(TableBase)));
         IrValue* value = &b.IAdd(fetched, b.IMul(index, u(1000u)));
         if (walk == Walk::NeighbourRead) value = &b.IAdd(*value, op(IrOpcode::DppMoveU32, IrType::U32, {&v13Test, &b.ConstantBool(true)}));
+        if (walk == Walk::WaitInBlock) static_cast<void>(b.Emit(wait, IrType::Void, {}));
         if (walk == Walk::StoreInBlock) static_cast<void>(b.Emit(IrOpcode::WriteSharedU32, IrType::Void, {&b.IMul(lane, u(4u)), value, blockExec}, std::bit_cast<std::uint64_t>(MemoryFlags{0u, 0x200u})));
         IrValue& v4New = select(*blockExec, *value, v4Reset);
         IrValue& v13New = select(*blockExec, select(walk == Walk::ExitOnMask ? *ownBit : *strict, u(4u), u(3u)), v13Test);
@@ -1043,6 +1044,19 @@ int main() {
         const Outcome outcome = Lower(hull.program);
         if (!outcome.lowered) std::fprintf(stderr, "refused: %s\n", outcome.reason.c_str());
         return outcome.lowered && !Contains(hull.program, IrOpcode::Ballot) && !Contains(hull.program, IrOpcode::WqmU64) && choice->Argument(0)->Resolve() == predicate->Resolve();
+    });
+
+    passed &= run("a whole-quad mask read lowers with s_waitcnt, s_waitcnt_vscnt, buffer_gl0_inv or buffer_gl1_inv in the block it gates", [] {
+        for (const auto wait : {IrOpcode::Waitcnt, IrOpcode::ControlNop, IrOpcode::GuestRelease, IrOpcode::GuestAcquire}) {
+            QuadWalk hull(Walk::WaitInBlock, wait);
+            const Outcome outcome = Lower(hull.program);
+            if (!outcome.lowered) {
+                std::fprintf(stderr, "%s refused: %s\n", std::string(IrOpcodeName(wait)).c_str(), outcome.reason.c_str());
+                return false;
+            }
+            if ((wait != IrOpcode::ControlNop && !Contains(hull.program, wait)) || Contains(hull.program, IrOpcode::WqmU64)) return false;
+        }
+        return true;
     });
 
     passed &= run("a whole-quad mask read refuses an LDS write in the block it gates", [] {
