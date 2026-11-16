@@ -5,6 +5,7 @@
 #include "prx/libkernel/Pthread/include/Rwlock.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -555,6 +556,8 @@ int main() {
     int waitThreads = -1;
     Require(sceKernelCancelEventFlag(ef, 0x42, &waitThreads) == SCE_OK);
     Require(waitThreads == 0);
+    errno = 71;
+    Require(sceKernelCancelEventFlag(ef, 0x99, reinterpret_cast<int*>(0x10)) == SCE_KERNEL_ERROR_EFAULT && errno == 71);
     Require(sceKernelPollEventFlag(ef, 0x42, EVF_WAITMODE_AND, &pattern) == SCE_OK);
     Require(pattern == 0x42);
 
