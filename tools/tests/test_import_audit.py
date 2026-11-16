@@ -3800,6 +3800,11 @@ class ClassifyTests(unittest.TestCase):
         self.assertEqual(import_audit.classify('n', '', set(), set(), set()), 'absent')
         self.assertEqual(import_audit.classify('n', '', {'p'}, {('p', 'n')}, set()), 'stub')
 
+    def test_classify_gives_partial_and_implemented_states(self):
+        self.assertEqual(import_audit.classify('n', '', {'p'}, {('p', 'n')}, {('p', 'n')}), 'implemented')
+        self.assertEqual(import_audit.classify('n', '', {'p'}, {('p', 'n')}, set(), partial={('p', 'n')}), 'partial')
+        self.assertEqual(import_audit.classify('n', '', {'p'}, set(), set()), 'implemented')
+
 
 if __name__ == "__main__":
     unittest.main()
