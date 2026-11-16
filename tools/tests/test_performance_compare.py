@@ -651,5 +651,16 @@ class GraphicsTrackComparisonTests(unittest.TestCase):
             performance_compare.validate(dict(SUMMARY, graphics_track={"bad": -1}))
 
 
+class CompareHelperTests(unittest.TestCase):
+    def test_delta_gives_absolute_and_percentage_change(self):
+        self.assertEqual(performance_compare.delta(100, 150), {'baseline': 100, 'candidate': 150, 'change': 50, 'change_pct': 50.0})
+        self.assertIsNone(performance_compare.delta(None, 5)['change'])
+        self.assertIsNone(performance_compare.delta(0, 5)['change_pct'])
+
+    def test_delta_refuses_an_overflowing_difference(self):
+        with self.assertRaisesRegex(ValueError, 'finite numeric range'):
+            performance_compare.delta(1e308, -1e308)
+
+
 if __name__ == "__main__":
     unittest.main()
