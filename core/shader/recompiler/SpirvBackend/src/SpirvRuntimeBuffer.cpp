@@ -335,6 +335,16 @@ std::uint32_t readBuffer(SpirvValueEmitContext& context, const IrValue& instruct
     return (access.memoryAccess & spv::MemoryAccessVolatileMask) != 0u || (state.requirements.readOnlyStorage && access.memoryAccess == 0u) ? value : EmitValueOrZero(state, inBounds, value);
 }
 
+std::uint32_t readBufferHalf(SpirvValueEmitContext& context, const IrValue& instruction, std::uint32_t address, std::uint32_t enable) {
+    auto& state = context.state;
+    const auto u32 = TypeU32(state);
+    const auto low = readBuffer(context, instruction, address, 16u, enable);
+    const auto straddles = equal(state, EmitAndConstant(state, address, 3u), ConstantU32(state, 3u));
+    const auto high = EmitValueOrZeroIfCondition(state, straddles, [&] { return readBuffer(context, instruction, EmitAddU32(state, address, ConstantU32(state, 1u)), 8u, enable); });
+    const auto joined = EmitOrU32(state, EmitAndConstant(state, low, 0xffu), Binary(state, spv::OpShiftLeftLogical, u32, high, ConstantU32(state, 8u)));
+    return Select(state, u32, straddles, joined, low);
+}
+
 std::uint32_t byteBuffers(SpirvEmitterState& state) {
     if (state.storageBufferU8Variable != 0u) return state.storageBufferU8Variable;
     if (state.program.Resources().stage != IrShaderStage::Compute) return 0u;
@@ -1064,7 +1074,8 @@ std::uint32_t EmitRuntimeBufferLoad(SpirvValueEmitContext& context, const IrValu
             for (std::uint32_t component = 0; component < components; ++component) {
                 const auto access = spanRead ? spanAddresses[component] : address(context, instruction, resource, component * 4u, memory.dataBits / 8u);
                 values[component] = memory.gpuDescriptor ? EmitValueOrZeroIfCondition(state, access.inBounds, [&] { return readBuffer(context, instruction, access.guest, memory.dataBits); })
-                                                         : readBuffer(context, instruction, access.guest, memory.dataBits, access.inBounds);
+                                                         : memory.dataBits == 16u ? readBufferHalf(context, instruction, access.guest, access.inBounds)
+                                                                                  : readBuffer(context, instruction, access.guest, memory.dataBits, access.inBounds);
             }
             return composite(state, components, values);
         };
