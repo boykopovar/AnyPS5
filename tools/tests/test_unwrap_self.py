@@ -1870,6 +1870,11 @@ class JobManagerModuleRefusalTests(unittest.TestCase):
         process.assert_not_called()
 
 
+class RecordReadTests(unittest.TestCase):
+    def test_read_records_returns_nothing_for_an_empty_table(self):
+        self.assertEqual(unwrap_self.read_records(bytes(unwrap_self.FIRST_REGION)), [])
+
+
 if __name__ == "__main__":
     selected_test = os.environ.get("UNWRAP_SELF_TEST")
     unittest.main(argv=[sys.argv[0], selected_test] if selected_test else None)
