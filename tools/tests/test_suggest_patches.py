@@ -634,5 +634,14 @@ class PatchAdvisorTests(unittest.TestCase):
             suggest_patches.unique_json_keys([("a", 1), ("a", 2)])
 
 
+    def test_confined_keeps_files_under_the_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            (root / "inside.txt").write_text("x", encoding="utf-8")
+            self.assertEqual(suggest_patches.confined(root, "inside.txt"), root / "inside.txt")
+            with self.assertRaises(ValueError):
+                suggest_patches.confined(root, "../outside.txt")
+
+
 if __name__ == "__main__":
     unittest.main()
