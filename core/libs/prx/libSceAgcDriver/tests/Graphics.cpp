@@ -3443,11 +3443,14 @@ void DepthBoundsBiasTests() {
     d16Bias.context[0x011] = 0;
     d16Bias.context[0x2de] = 0x1e9u;
     auto scaledBias = AgcDriver::Graphics::DecodeState(d16Bias);
-    Require(scaledBias.depthBias && scaledBias.depthBiasSlope == 2.0f && scaledBias.depthBiasConstant == 4.0f / 256.0f && scaledBias.depthBiasClamp == 0.5f, "a D16 target with 24-bit bias units scaled the constant bias the wrong way");
+    Require(scaledBias.depthBias && scaledBias.depthBiasSlope == 2.0f && scaledBias.depthBiasConstant == 4.0f / 256.0f && scaledBias.depthBiasClamp == 0.5f, "a D16 target with float bias units scaled the constant bias the wrong way");
+    d16Bias.context[0x2de] = 0xf0u;
+    scaledBias = AgcDriver::Graphics::DecodeState(d16Bias);
+    Require(scaledBias.depthBias && scaledBias.depthBiasSlope == 2.0f && scaledBias.depthBiasConstant == 4.0f && scaledBias.depthBiasClamp == 0.5f, "a D16 target with 16-bit bias units changed the constant bias");
     auto downBias = queue;
     downBias.context[0x2de] = 0xf0u;
     scaledBias = AgcDriver::Graphics::DecodeState(downBias);
-    Require(scaledBias.depthBias && scaledBias.depthBiasConstant == 1024.0f, "a 24-bit target with 16-bit bias units scaled the constant bias the wrong way");
+    Require(scaledBias.depthBias && scaledBias.depthBiasConstant == 1024.0f, "a float target with 16-bit bias units scaled the constant bias the wrong way");
     queue.context[0x2e2] = bits(-64.0f);
     queue.context[0x2e3] = bits(8.0f);
     state = AgcDriver::Graphics::DecodeState(queue);
