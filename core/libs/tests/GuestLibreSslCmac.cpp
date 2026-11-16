@@ -423,6 +423,23 @@ void Callbacks() {
 }
 }
 
+void GuestPointerProbes() {
+    Context context = NewContext();
+    const std::array<unsigned char, 16> key{};
+    Require(CMAC_Init_nid_postfix(context.get(), key.data(), key.size(), Methods[0], nullptr) == 1, "probe context init");
+
+    const auto* unreadable = reinterpret_cast<const void*>(0x10);
+    RequireThrows([&] { CMAC_Update_nid_postfix(context.get(), unreadable, 16); });
+    RequireThrows([&] { CMAC_Update_nid_postfix(context.get(), unreadable, 1); });
+    Require(CMAC_Update_nid_postfix(context.get(), "a", 1) == 1, "context still usable after a rejected update");
+
+    unsigned char tag[16];
+    std::fill(std::begin(tag), std::end(tag), 0xa5);
+    RequireThrows([&] { CMAC_Final_nid_postfix(context.get(), tag, reinterpret_cast<std::size_t*>(0x10)); });
+    RequireThrows([&] { CMAC_Final_nid_postfix(context.get(), reinterpret_cast<unsigned char*>(0x10), nullptr); });
+    Require(std::all_of(std::begin(tag), std::end(tag), [](auto value) { return value == 0xa5; }), "rejected final leaves the tag alone");
+}
+
 int main(int argc, char** argv) {
 #ifdef ANYPS5_CMAC_DYNAMIC
     Require(argc == 2, "patched test needs the library directory");
@@ -439,6 +456,7 @@ int main(int argc, char** argv) {
     AllocationFailures();
     CipherCallbacks();
     GuestDes();
+    GuestPointerProbes();
     Require(allocations.empty(), "all guest allocations released");
     std::puts("CMAC vectors, streaming, lifecycle and callback checks passed");
 }
