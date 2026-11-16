@@ -297,12 +297,21 @@ int APS5_VABI sceAudioOut2PortSetAttributes(AudioOut2PortHandle port, const Audi
     if (!entry) return SCE_AUDIO_OUT2_ERROR_INVALID_HANDLE;
     if (!attributes && num != 0) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
     for (uint32_t index = 0; index < num; index++) {
-        const auto& attribute = attributes[index];
+        AudioOut2Attribute attribute{};
+        const int savedAttributeErrno = errno;
+        const bool attributeRead = GuestCopyIn_nid_no_patch(&attribute, attributes + index, sizeof(attribute));
+        errno = savedAttributeErrno;
+        if (!attributeRead) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
         const char* verdict = "ignored";
         if (attribute.value == nullptr) {
             verdict = "null value";
         } else if (attribute.attribute_id == ATTRIBUTE_DATA && attribute.value_size == sizeof(entry->data)) {
-            std::memcpy(&entry->data, attribute.value, sizeof(entry->data));
+            const void* data = nullptr;
+            const int savedDataErrno = errno;
+            const bool dataRead = GuestCopyIn_nid_no_patch(&data, attribute.value, sizeof(data));
+            errno = savedDataErrno;
+            if (!dataRead) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
+            entry->data = data;
             MarkBufferReused(*entry);
             AudioOut2QueuedData queued{entry->data, CopyGrain(*entry)};
             entry->repeatedData = entry->data != nullptr && entry->lastBuffer == nullptr ? entry->data : nullptr;
@@ -314,7 +323,12 @@ int APS5_VABI sceAudioOut2PortSetAttributes(AudioOut2PortHandle port, const Audi
             entry->dataSets++;
             verdict = "pcm data pointer";
         } else if (attribute.attribute_id == ATTRIBUTE_VOLUME && entry->channels != 0 && attribute.value_size == entry->channels * sizeof(float)) {
-            std::memcpy(entry->volume, attribute.value, attribute.value_size);
+            float volume[AUDIO_OUT2_PORT_CHANNELS_MAX]{};
+            const int savedVolumeErrno = errno;
+            const bool volumeRead = GuestCopyIn_nid_no_patch(volume, attribute.value, attribute.value_size);
+            errno = savedVolumeErrno;
+            if (!volumeRead) return SCE_AUDIO_OUT2_ERROR_INVALID_ARGUMENT;
+            std::memcpy(entry->volume, volume, attribute.value_size);
             verdict = "volume";
         }
         const auto traces = entry->attributeTraces++;
