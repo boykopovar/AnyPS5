@@ -69,6 +69,10 @@ class ListedTests(unittest.TestCase):
         debt = [("sceFoo entry", [(0, "core/libs/prx/libA/x.cpp")])]
         self.assertFalse(check_conventions.listed(debt, "sceBar", "core/libs/prx/libA/y.cpp"))
         self.assertFalse(check_conventions.listed(debt, "sceFoo", "core/libs/prx/libB/y.cpp"))
+class DebtEntryLineTests(unittest.TestCase):
+    def test_debt_entries_lists_items_by_line_number_and_skips_headings(self):
+        text = '### Silent stubs\n\n- [sceFoo](x) - a\n- [sceBar](y) - b\n'
+        self.assertEqual(check_conventions.debt_entries(text), {3: '- [sceFoo](x) - a', 4: '- [sceBar](y) - b'})
 
 
 if __name__ == "__main__":
