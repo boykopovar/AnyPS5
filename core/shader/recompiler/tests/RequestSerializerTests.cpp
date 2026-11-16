@@ -917,10 +917,10 @@ int VerifyVersion56Compatibility() {
         const auto replay35 = serializer.Deserialize(EncodeBase64(version35));
         Require(replay35.request.target.spannedWaves == spanned && !replay35.request.target.float32FlushToZero);
         request.target.spannedAnySubgroup = spanned;
-        const auto version62 = DecodeBase64(serializer.Serialize(request));
-        Require(version62[4] == 62u && version62.back() == (spanned ? 1u : 0u));
-        Require(serializer.Deserialize(EncodeBase64(version62)).request.target.spannedAnySubgroup == spanned);
-        auto version57 = version62;
+        const auto current = DecodeBase64(serializer.Serialize(request));
+        Require(current[4] == 63u && current.back() == (spanned ? 1u : 0u));
+        Require(serializer.Deserialize(EncodeBase64(current)).request.target.spannedAnySubgroup == spanned);
+        auto version57 = current;
         version57[4] = 57u;
         version57.pop_back();
         const auto replay57 = serializer.Deserialize(EncodeBase64(version57));
