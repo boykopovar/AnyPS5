@@ -265,6 +265,14 @@ class TextHelperTests(unittest.TestCase):
         self.assertEqual(run_report_summary.count_text(0, "file"), "0 files")
         self.assertEqual(run_report_summary.count_text("x", "file"), "unknown files")
 
+    def test_total_count_sums_dict_items_and_skips_others(self):
+        self.assertEqual(run_report_summary.total_count([{"a": 1}, {"a": 2}, {}, 5], "a"), 3)
+
+    def test_total_count_refuses_non_finite_totals_and_counts(self):
+        self.assertIsNone(run_report_summary.total_count([{"a": float("inf")}], "a"))
+        self.assertIsNone(run_report_summary.total_count([{"a": 1e308}, {"a": 1e308}], "a"))
+        self.assertIsNone(run_report_summary.total_count([{"a": "2"}], "a"))
+
 
 if __name__ == "__main__":
     unittest.main()
