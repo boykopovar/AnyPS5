@@ -1130,6 +1130,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
         // marks the keys uncompressed): a surface that stays a snapshot re-reads them behind that
         // flush, as it does behind its own. APS5_NO_KEYS_RESCAN=1 keeps the keys scanned above.
         if (source != nullptr && IsRepackedTextureFormat(resource.format) && !Texture::CanRepackCopyFrom(*source, resource)) source.reset();
+        if (source != nullptr && !depthCompare && !srgbExpand && !Texture::CanCopyFrom(*source, resource)) source.reset();
         static const bool rescan = std::getenv("APS5_NO_KEYS_RESCAN") == nullptr;
         if (rescan && source == nullptr) keys.reset();
     }
