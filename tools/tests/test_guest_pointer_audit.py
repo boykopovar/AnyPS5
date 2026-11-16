@@ -287,5 +287,17 @@ class SpliceTests(unittest.TestCase):
         self.assertEqual(guest_pointer_audit.splice_lines("one\r\ntwo"), "one\ntwo")
 
 
+
+class SourceCodeTests(unittest.TestCase):
+    def test_source_code_blanks_line_comments_and_keeps_code(self):
+        text = "a = 1; // hi\n"
+        blanked = guest_pointer_audit.source_code(text)
+        self.assertEqual(blanked.rstrip("\n"), "a = 1;" + " " * 6)
+        self.assertEqual(len(blanked), len(text))
+
+    def test_source_code_replaces_string_literals(self):
+        self.assertEqual(guest_pointer_audit.source_code('x = "ab";\n'), "x = LITERAL;\n")
+
+
 if __name__ == "__main__":
     unittest.main()
