@@ -870,5 +870,15 @@ class AuditDumpTests(unittest.TestCase):
         self.assertIn(f"{dump}: no eboot.bin", result.stderr.decode("utf-8"))
 
 
+class ModuleListTests(unittest.TestCase):
+    def test_modules_of_keeps_regular_module_files_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'libA.prx').write_bytes(b'x')
+            (root / 'notes.txt').write_text('x', encoding='utf-8')
+            (root / 'folder.prx').mkdir()
+            self.assertEqual(sorted(path.name for path in audit_dump.modules_of(root)), ['libA.prx'])
+
+
 if __name__ == "__main__":
     unittest.main()
