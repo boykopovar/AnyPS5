@@ -819,6 +819,62 @@ Exit codes: `0` nothing blocks loading, `1` there are `absent` imports, import n
 
 A module registry lists `nid`, `library` and `targetOffset` for each relocation against a function that no other bundled module exports, without the `#` suffix of the executable's NIDs.
 
+### Cross-title census
+
+[`tools/import_census.py`](../../tools/import_census.py) combines saved import audits, original run reports and explicitly reported log stops. It reads local JSON and text; it does not collect audits, launch titles or fetch URLs. Use `audit_dump.py` or `import_audit.py` to collect each title separately.
+
+Create a manifest beside the evidence files:
+
+```json
+{
+  "format": "anyps5-import-corpus",
+  "version": 1,
+  "titles": [
+    {
+      "title_id": "PPSA00001",
+      "guest_platform": "ps5",
+      "audit": {"path": "title-import-audit.json"},
+      "runtime_reports": [{"path": "run1/anyps5-report.json"}]
+    }
+  ]
+}
+```
+
+```sh
+python3 tools/import_census.py build corpus.json --json census.json
+python3 tools/import_census.py show census.json --symbol SYMBOL
+```
+
+`build` accepts several manifest paths. `--format json` writes only JSON to stdout; diagnostics go to stderr. `--json <file>` writes a result atomically. `show` selects an import symbol or function name and retains its title facts, evidence pointers, provider uncertainty and next verification actions.
+
+JSON output is compact. `build` limits each input to 64 MiB; `show` accepts saved censuses up to 256 MiB. Both limit output to 256 MiB. `--max-input-bytes` and `--max-output-bytes` change those limits. Native version-1 run reports retain their 64 KiB format limit. Exceeding a limit fails instead of truncating evidence.
+
+Every entry needs `title_id`, `guest_platform` and at least one audit, original runtime report or checked log claim. `content_version`, `target_platform` and `identity_source` are optional; missing facts remain unknown. An explicitly selected version or host target must agree with the native reports; otherwise leave it unknown and retain each report's own facts. Paths are relative to the manifest. Each artifact reference can include `expected_sha256`; the reader always hashes the bytes it consumes. This pins ingestion, not the historical capture or provider build. An entry with runtime evidence and no audit is valid.
+
+Select one audit per `(guest_platform, title_id)` in a corpus. Exact-byte repeated inputs are idempotent; different reports for the same title require an explicit selection. Other versions and host-target audits are alternative selections, not additional titles. PS4 and PS5 identities, requested libraries, title modules and plain/native provider candidates remain distinct. Counts describe selected title IDs, not distinct commercial games or the full title catalog. Original audit references are retained separately from title counts and runtime calls.
+
+For a log without an original runtime report, add `stop_claims` to its title entry:
+
+```json
+"stop_claims": [
+  {
+    "log": {"path": "run1/stderr.log"},
+    "line_start": 42,
+    "line_end": 42,
+    "excerpt": "example function is not implemented",
+    "subject": {"kind": "function-name", "name": "example"}
+  }
+]
+```
+
+The exact line range and excerpt must match the selected log. A claim remains manually reported; checking its bytes does not certify causality. Omit `subject` for an unassigned stop. Internal operation failures do not become missing exports. Native reports must be original `anyps5-report` version 1 files; reduced `title_run` summaries are not accepted as substitutes.
+
+Imported absent/stub/partial rows, observed missing calls, native-attributed stops and manually reported stops are separate evidence. A caught missing call can exit cleanly. Missing reports, disabled coverage, truncated diagnostics and incomplete runs remain unknown or lower bounds. The audit's registry-order `stops` field is static evidence. Neither a static import nor an empty runtime list proves a title reaches or avoids a function.
+
+Source commits and dirty flags are reported as recorded. They do not attest the audit producer, built libraries, relinker or runtime build. Attaching a run to an audit asserts the same title only. Historical and dirty evidence remains visible with unverified current status; the census does not infer a current-main fix, implementation readiness or a title unblock. Follow its next actions to refresh evidence, resolve identity, inspect semantics and run `pr_overlap` before implementation.
+
+Invalid input, conflicting selection, a failed expected hash or an output failure exits `2` and preserves the previous output. `--allow-incomplete` can write an explicitly incomplete report with failed/excluded input accounting and still exits `2`. Valid reports exit `0`, including those containing gaps. Output files cannot replace input artifacts. Portable output uses artifact hashes and evidence positions; full logs and original host paths remain in the inputs. Review supplied text before sharing.
+
 ## Patching imports of native applications
 
 `nid_patcher --exec <file> [file2 ...]` patches imports in place and preserves the application's exports. It detects PE, ELF64 and Mach-O64 from file contents. No library name is required. Build a separate executable for each target platform.

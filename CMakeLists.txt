@@ -348,6 +348,8 @@ if(BUILD_TESTING)
         set_tests_properties(tools_audit_strict_partial PROPERTIES TIMEOUT 20)
         add_test(NAME import_audit COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_import_audit.py)
+        add_test(NAME import_census COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_import_census.py)
         add_test(NAME guest_pointer_audit COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_guest_pointer_audit.py)
         if(Python3_VERSION VERSION_GREATER_EQUAL 3.11)
@@ -889,6 +891,7 @@ if(BUILD_TESTING)
             endfunction()
             cmake_language(DEFER CALL raise_windows_deferred_tooling_test_timeouts)
         endif()
+        set_tests_properties(import_census PROPERTIES TIMEOUT 30)
     endif()
 endif()
 
