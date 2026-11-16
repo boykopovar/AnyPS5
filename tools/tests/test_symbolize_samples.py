@@ -1537,6 +1537,14 @@ class SampleFileLoadTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "cannot mix collapsed-stack and address records"):
             symbolize_samples.load(path)
 
+    def test_load_reads_address_records_and_refuses_a_non_hex_offset(self):
+        samples = symbolize_samples.load(self.write("# module libA 0x10 0x20\nlibA 0x10 2 5\n"))
+        self.assertEqual(samples.self_counts[("libA", "0x10")], 2)
+        self.assertEqual(samples.inclusive[("libA", "0x10")], 5)
+        self.assertEqual(samples.headers, {"liba": (0x10, 0x20)})
+        with self.assertRaisesRegex(ValueError, "hexadecimal offset"):
+            symbolize_samples.load(self.write("libA 10 2 5\n"))
+
 
 if __name__ == "__main__":
     unittest.main()
