@@ -581,5 +581,14 @@ class ModulePrefixTests(unittest.TestCase):
         self.assertEqual(stubgen.module_prefix("my-lib"), "my_lib")
 
 
+class RuntimeNameTests(unittest.TestCase):
+    def test_is_runtime_name_excludes_sce_exports(self):
+        import stubgen
+        self.assertTrue(stubgen.is_runtime_name("_init"))
+        self.assertTrue(stubgen.is_runtime_name("memcpy"))
+        self.assertFalse(stubgen.is_runtime_name("sceFoo"))
+        self.assertFalse(stubgen.is_runtime_name("SceFoo"))
+
+
 if __name__ == "__main__":
     unittest.main()
