@@ -418,5 +418,13 @@ class AbSplitTests(unittest.TestCase):
                         self.assertEqual(run.stdout, "")
                         self.assertIn("settled does not match active phase", run.stderr)
                         self.assertNotIn("Traceback", run.stderr)
+
+
+class ReadLogRefusalTests(unittest.TestCase):
+    def test_read_log_refuses_two_runs_in_one_log(self):
+        with self.assertRaisesRegex(ValueError, 'multiple A/B runs in one log'):
+            ab_split.read_log(['[ab] in-run A/B: first', '[ab] in-run A/B: second'])
+
+
 if __name__ == "__main__":
     unittest.main()
