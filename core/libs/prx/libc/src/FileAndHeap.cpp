@@ -948,10 +948,9 @@ void APS5_VABI fcloseall_nid_postfix() {
         std::lock_guard<std::recursive_mutex> gateLock(*gate);
         if (IsFileStreamInSnapshot_nid_no_patch(selected, snapshot)) {
             std::FILE* const native = selected->RawHandle_nid_no_patch();
-            if (native == originalStdout && KeepHostStandardOutput_nid_no_patch() < 0)
-                throw std::runtime_error("fcloseall: cannot preserve the host standard output");
-            if (native == originalStderr && KeepHostStandardError_nid_no_patch() < 0)
-                throw std::runtime_error("fcloseall: cannot preserve the host standard error");
+            const int error = errno;
+            if (native == originalStdout && KeepHostStandardOutput_nid_no_patch() < 0) errno = error;
+            if (native == originalStderr && KeepHostStandardError_nid_no_patch() < 0) errno = error;
         }
         if (preservationCursor == 0) break;
     }

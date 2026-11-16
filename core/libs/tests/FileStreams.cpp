@@ -1734,6 +1734,26 @@ static int FreopenExceptionCleanupChild(const std::string& base) {
     return 0;
 }
 
+static int FcloseallClosedHostStandardChild() {
+#ifdef _WIN32
+    static_cast<void>(::_close(1));
+    static_cast<void>(::_close(2));
+    if (::_get_osfhandle(1) != -1 || ::_get_osfhandle(2) != -1) return 200;
+#else
+    static_cast<void>(::close(1));
+    static_cast<void>(::close(2));
+    errno = 0;
+    if (::fcntl(1, F_GETFD) != -1 || ::fcntl(2, F_GETFD) != -1 || errno != EBADF) return 200;
+#endif
+    try {
+        fcloseall_nid_postfix();
+    } catch (...) {
+        return 201;
+    }
+    if (__stdoutp_nid_postfix->IsOpen() || __stderrp_nid_postfix->IsOpen() || __stdinp_nid_postfix->IsOpen()) return 202;
+    return 0;
+}
+
 static int RunFcloseallChild(const char* self, const char* base, const char* mode = "--fcloseall-child") {
 #ifdef _WIN32
     static_cast<void>(self);
@@ -1949,6 +1969,7 @@ int main(int argc, char** argv) {
     if (argc == 3 && std::strcmp(argv[2], "--fcloseall-child") == 0) return FcloseallChild(argv[1]);
     if (argc == 3 && std::strcmp(argv[2], "--fcloseall-descriptor-reuse-child") == 0) return FcloseallDescriptorReuseChild(argv[1]);
     if (argc == 3 && std::strcmp(argv[2], "--fcloseall-lock-child") == 0) return FcloseallLockChild(argv[1]);
+    if (argc == 3 && std::strcmp(argv[2], "--fcloseall-closed-host-standard-child") == 0) return FcloseallClosedHostStandardChild();
     if (argc == 3 && std::strcmp(argv[2], "--fcloseall-fclose-race-child") == 0) return FcloseallFcloseRaceChild(argv[1]);
     if (argc == 3 && std::strcmp(argv[2], "--freopen-lock-child") == 0) return FreopenLockChild(argv[1]);
     if (argc == 3 && std::strcmp(argv[2], "--closed-reopen-child") == 0) return ClosedStreamReopenChild(argv[1]);
@@ -2095,6 +2116,8 @@ int main(int argc, char** argv) {
     Require(childResult == 0, "fcloseall child failed");
     const int lockResult = RunFcloseallChild(argv[0], argv[1], "--fcloseall-lock-child");
     Require(lockResult == 0, "fcloseall locked-stream child failed");
+    const int closedHostStandard = RunFcloseallChild(argv[0], argv[1], "--fcloseall-closed-host-standard-child");
+    Require(closedHostStandard == 0, "fcloseall with closed host standard descriptors child failed");
     const int raceResult = RunFcloseallChild(argv[0], argv[1], "--fcloseall-fclose-race-child");
     Require(raceResult == 0, "fcloseall racing fclose child failed");
     const int freopenLock = RunFcloseallChild(argv[0], argv[1], "--freopen-lock-child");
