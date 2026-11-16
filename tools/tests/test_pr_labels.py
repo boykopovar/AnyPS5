@@ -518,5 +518,11 @@ class AmbiguousSummaryTests(unittest.TestCase):
         self.assertTrue(pr_labels.has_numbers(summary("a") + "\n" + ambiguous + "\n" + summary("b")))
 
 
+class CommentAndScopeTests(unittest.TestCase):
+    def test_strip_comments_removes_html_comments_and_keeps_the_rest(self):
+        self.assertEqual(pr_labels.strip_comments('a<!-- x -->b'), 'ab')
+        self.assertEqual(pr_labels.strip_comments(None), '')
+
+
 if __name__ == "__main__":
     unittest.main()
