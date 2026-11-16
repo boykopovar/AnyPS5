@@ -485,14 +485,6 @@ struct StoreObject {
 
 static_assert(sizeof(StoreObject) == 16 && offsetof(StoreObject, certificate) == 8);
 
-struct NameCache {
-    std::uint64_t length;
-    char* data;
-    std::uint64_t max;
-};
-
-static_assert(sizeof(NameCache) == 24 && offsetof(NameCache, data) == 8 && offsetof(NameCache, max) == 16);
-
 void* StackElement(const void* pointer, int index) {
     const auto* stack = static_cast<const LibreSslStack*>(pointer);
     if (!stack || index < 0 || StackCount(pointer) <= index) return nullptr;
@@ -1399,93 +1391,6 @@ void StoreLocations() {
     }
 }
 
-const LibreSslX509NameEntry* NameEntryAt(const LibreSslX509Name* name, int index) {
-    if (!name || !name->entries || index < 0 || index >= name->entries->num) return nullptr;
-    return reinterpret_cast<const LibreSslX509NameEntry*>(name->entries->data[index]);
-}
-
-void RequireSameName(const LibreSslX509Name* copy, const LibreSslX509Name* original, const char* message) {
-    Require(copy && original && copy != original, message);
-    Require(copy->modified == 0, message);
-    Require(copy->entries != original->entries && copy->entries->num == original->entries->num, message);
-    Require(copy->entries->num > 0, message);
-    for (int index = 0; index < original->entries->num; ++index) {
-        const auto* left = NameEntryAt(original, index);
-        const auto* right = NameEntryAt(copy, index);
-        Require(left && right && left != right && right->set == left->set && right->size == left->size, message);
-        const auto* leftObject = static_cast<const LibreSslAsn1Object*>(left->object);
-        const auto* rightObject = static_cast<const LibreSslAsn1Object*>(right->object);
-        Require(rightObject && rightObject != leftObject && rightObject->nid == leftObject->nid, message);
-        Require(rightObject->length == leftObject->length && rightObject->data != leftObject->data, message);
-        Require(rightObject->data && std::memcmp(rightObject->data, leftObject->data, static_cast<std::size_t>(leftObject->length)) == 0, message);
-        const auto* leftValue = static_cast<const Asn1String*>(left->value);
-        const auto* rightValue = static_cast<const Asn1String*>(right->value);
-        Require(rightValue && rightValue != leftValue && rightValue->type == leftValue->type, message);
-        Require(rightValue->length == leftValue->length && rightValue->data != leftValue->data, message);
-        Require(rightValue->data && std::memcmp(rightValue->data, leftValue->data, static_cast<std::size_t>(leftValue->length)) == 0, message);
-    }
-    const auto* leftBytes = static_cast<const NameCache*>(original->bytes);
-    const auto* rightBytes = static_cast<const NameCache*>(copy->bytes);
-    Require(rightBytes && rightBytes != leftBytes && rightBytes->length == leftBytes->length, message);
-    Require(rightBytes->data != leftBytes->data &&
-        std::memcmp(rightBytes->data, leftBytes->data, static_cast<std::size_t>(leftBytes->length)) == 0, message);
-    Require(copy->canonEnclen == original->canonEnclen && copy->canonEnc != original->canonEnc, message);
-    Require(std::memcmp(copy->canonEnc, original->canonEnc, static_cast<std::size_t>(original->canonEnclen)) == 0, message);
-}
-
-std::size_t OutstandingSince(std::uint64_t baseline);
-extern std::uint64_t generation;
-
-void ClientCa() {
-    const std::uint64_t baseline = generation;
-    auto* certificate = ReadCertificate(RsaCertificatePem);
-    Require(certificate, "the client certificate authority is decoded");
-    const auto* subject = static_cast<const LibreSslX509Name*>(X509_get_subject_name_nid_postfix(certificate));
-    Require(subject, "the authority has a subject");
-
-    LibreSslCtxInternal internal{};
-    LibreSslCtx context{};
-    context.internal = &internal;
-
-    Require(SSL_CTX_add_client_CA_nid_postfix(&context, nullptr) == 0, "a null certificate adds nothing");
-    RequireNoCodes("a null certificate queues nothing");
-    Require(internal.clientCa == nullptr, "a null certificate leaves the authority stack uncreated");
-
-    Require(SSL_CTX_add_client_CA_nid_postfix(&context, certificate) == 1, "a certificate authority is added");
-    RequireNoCodes("adding a certificate authority queues nothing");
-    const auto* stack = static_cast<const LibreSslStack*>(internal.clientCa);
-    Require(stack && StackCount(stack) == 1, "the stack holds one name");
-    const auto* copy = reinterpret_cast<const LibreSslX509Name*>(stack->data[0]);
-    RequireSameName(copy, subject, "the stack holds a deep copy of the subject");
-    char* copyLine = X509_NAME_oneline_nid_postfix(copy, nullptr, 0);
-    char* subjectLine = X509_NAME_oneline_nid_postfix(subject, nullptr, 0);
-    Require(copyLine && subjectLine && std::strcmp(copyLine, subjectLine) == 0, "the copy reads as the subject");
-    free_nid_postfix(copyLine);
-
-    Require(SSL_CTX_add_client_CA_nid_postfix(&context, certificate) == 1, "the same authority is added again");
-    RequireNoCodes("the second authority queues nothing");
-    Require(StackCount(stack) == 2, "LibreSSL keeps one entry per call");
-    Require(stack->data[1] != stack->data[0] && stack->data[1] != reinterpret_cast<char*>(const_cast<LibreSslX509Name*>(subject)),
-        "the second entry is another copy");
-    RequireSameName(reinterpret_cast<const LibreSslX509Name*>(stack->data[1]), subject, "the second copy holds the subject too");
-
-    auto* other = ReadCertificate(EcCertificatePem);
-    Require(SSL_CTX_add_client_CA_nid_postfix(&context, other) == 1, "a second authority is added");
-    Require(StackCount(stack) == 3, "both authorities are kept");
-    const auto* ecCopy = reinterpret_cast<const LibreSslX509Name*>(stack->data[2]);
-    Require(ecCopy != copy && static_cast<const void*>(ecCopy) != static_cast<const void*>(stack->data[1]), "each authority brings its own copy");
-    char* ecLine = X509_NAME_oneline_nid_postfix(ecCopy, nullptr, 0);
-    Require(ecLine && std::strcmp(ecLine, subjectLine) != 0, "the second authority keeps its own subject");
-    free_nid_postfix(ecLine);
-    free_nid_postfix(subjectLine);
-
-    X509_free_nid_postfix(certificate);
-    X509_free_nid_postfix(other);
-    RequireThrows([] { SSL_CTX_add_client_CA_nid_postfix(nullptr, nullptr); }, "a null context is refused");
-    Require(OutstandingSince(baseline) > 0,
-        "the authority stack and its name copies stay allocated until the context release of the client CA list exists");
-}
-
 constexpr std::size_t TrackerSlots = 65536;
 
 void* trackedPointer[TrackerSlots];
@@ -1968,6 +1873,5 @@ int main(int argc, char**) {
     TrustedErrors();
     StoreLocations();
     StoreInfoReconciliation();
-    ClientCa();
     return 0;
 }

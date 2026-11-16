@@ -1,7 +1,6 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "StoreLoad.hpp"
-#include "X509NameDup.hpp"
 #include <algorithm>
 #include <climits>
 #include <cstddef>
@@ -378,18 +377,9 @@ void APS5_VABI SSL_CTX_set_verify_nid_postfix(LibreSslCtx* ctx, int mode, void* 
 }
 
 int APS5_VABI SSL_CTX_add_client_CA_nid_postfix(LibreSslCtx* ctx, void* certificate) {
-    LibreSslCtxInternal& internal = Internal(ctx, __func__);
+    Internal(ctx, __func__);
     if (!certificate) return 0;
-    if (!internal.clientCa && !(internal.clientCa = LibreSsl::X509NameStackNew_nid_no_patch())) return 0;
-    auto* stack = static_cast<LibreSslStack*>(internal.clientCa);
-    auto* const subject = static_cast<const LibreSslX509Name*>(X509_get_subject_name_nid_postfix(static_cast<const LibreSslX509*>(certificate)));
-    auto* const name = LibreSsl::X509NameDup_nid_no_patch(subject);
-    if (!name) return 0;
-    if (!LibreSsl::X509NameStackPush_nid_no_patch(stack, name)) {
-        LibreSsl::X509NameFree_nid_no_patch(name);
-        return 0;
-    }
-    return 1;
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI SSL_CTX_set_session_id_context_nid_postfix(LibreSslCtx* ctx, const unsigned char* sidCtx, unsigned int length) {

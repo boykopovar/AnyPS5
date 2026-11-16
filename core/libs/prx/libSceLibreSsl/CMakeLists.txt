@@ -813,7 +813,7 @@ if(BUILD_TESTING)
 endif()
 
 target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/X509Pubkey.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/X509Aux.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/X509StoreLoad.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/X509NameDup.cpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/X509StoreLoad.cpp)
 
 if(BUILD_TESTING)
     add_test_executable(guest_libressl_x509_pem_ctx_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/X509PemCtx.cpp)
