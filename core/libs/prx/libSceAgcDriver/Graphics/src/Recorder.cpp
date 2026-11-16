@@ -1091,7 +1091,7 @@ void FlushForAccess(std::uint64_t address, std::size_t bytes) {
             record();
         }
     }
-    if (HookClearAccess() && HookSnapshotEnabled() && !HookFlushCpuBlocks() && ClearAccess(address, bytes)) {
+    if (HookClearAccess() && HookSnapshotEnabled() && !HookFlushCpuBlocks() && ClearAccess(address, bytes) && !(GuestMemory::CurrentReadSite() == GuestMemory::ReadSite::HostWrite && AnyPublishInProgress())) {
         ClearAccesses::Set(ClearAccesses::Get() + 1);
         return;
     }
