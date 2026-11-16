@@ -1267,6 +1267,12 @@ class TileAndPercentTests(unittest.TestCase):
     def test_shader_source_percent_is_the_decoded_share(self):
         self.assertEqual(progress.shader_source_percent({'instructions': {'decoded': 1, 'total': 4}}), 25.0)
         self.assertEqual(progress.shader_source_percent({'instructions': {'decoded': 0, 'total': 0}}), 0)
+class DetailsBlockTests(unittest.TestCase):
+    def test_details_is_empty_without_items_and_summarises_items_otherwise(self):
+        self.assertEqual(progress.details('!', 'x', 'Group', []), [])
+        text = '\n'.join(progress.details('!', 'x', 'Group', [('g', 'n')]))
+        self.assertIn('<summary>! 1 x</summary>', text)
+        self.assertIn('| g | `n` |', text)
 
 
 if __name__ == "__main__":
