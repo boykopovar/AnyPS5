@@ -584,7 +584,7 @@ void decodeDepthBias(const Registers& cx, std::uint32_t raster, State& result) {
     const auto format = find(cx, 0x2de) == cx.end() ? (d16 ? 0xf0u : 0x1e9u) : read(cx, 0x2de);
     const bool bias16 = format == 0xf0u;
     if (!bias16 && format != 0x1e9u) throw std::runtime_error("AGC graphics: " + zeroMessage(0x2de, format, "depth bias in units other than the depth format"));
-    const float constantScale = bias16 == d16 ? 1.0f : (d16 ? 256.0f : 1.0f / 256.0f);
+    const float constantScale = bias16 == d16 ? 1.0f : (d16 ? 1.0f / 256.0f : 256.0f);
     const auto scale = front && frontBias ? 0x2e0u : 0x2e2u;
     result.depthBias = true;
     result.depthBiasSlope = frontBias || !perFace ? readFloat(cx, scale) / 16.0f : 0.0f;
