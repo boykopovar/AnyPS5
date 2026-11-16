@@ -20,5 +20,13 @@ int main() {
     Require(_Atomic_compare_exchange_weak_4_nid_postfix(&value, &expected, 1u, 0, 0) == 0);
     Require(value == 9u);
     Require(expected == 9u);
+    volatile std::uint32_t value = 11;
+    std::uint32_t expected = 11;
+    Require(__atomic_compare_exchange_4_nid_postfix(&value, &expected, 12u, 0, 0) != 0);
+    Require(value == 12u);
+    expected = 11;
+    Require(__atomic_compare_exchange_4_nid_postfix(&value, &expected, 13u, 0, 0) == 0);
+    Require(value == 12u);
+    Require(expected == 12u);
     return 0;
 }
