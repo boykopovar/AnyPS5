@@ -2,6 +2,7 @@
 #define CORE_LIBS_PRX_LIBC_INCLUDE_GUESTPTR_HPP
 
 #include "prx/libc/include/General.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <limits>
 #include <type_traits>
@@ -18,25 +19,39 @@ public:
     const void* Address() const { return address; }
 
     bool CopyIn(Value& value) const {
-        return address != nullptr && GuestCopyIn_nid_no_patch(&value, address, sizeof(Value));
+        if (address == nullptr) return false;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&value, address, sizeof(Value));
+        errno = savedErrno;
+        return copied;
     }
 
     bool CopyIn(Value* values, std::size_t count) const {
         if (count == 0) return true;
-        return address != nullptr && count <= std::numeric_limits<std::size_t>::max() / sizeof(Value) &&
-               GuestCopyIn_nid_no_patch(values, address, count * sizeof(Value));
+        if (address == nullptr || count > std::numeric_limits<std::size_t>::max() / sizeof(Value)) return false;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(values, address, count * sizeof(Value));
+        errno = savedErrno;
+        return copied;
     }
 
     bool CopyOut(const Value& value) const {
         static_assert(!std::is_const_v<T>, "a const guest pointer cannot be written");
-        return address != nullptr && GuestCopyOut_nid_no_patch(const_cast<void*>(address), &value, sizeof(Value));
+        if (address == nullptr) return false;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(const_cast<void*>(address), &value, sizeof(Value));
+        errno = savedErrno;
+        return copied;
     }
 
     bool CopyOut(const Value* values, std::size_t count) const {
         static_assert(!std::is_const_v<T>, "a const guest pointer cannot be written");
         if (count == 0) return true;
-        return address != nullptr && count <= std::numeric_limits<std::size_t>::max() / sizeof(Value) &&
-               GuestCopyOut_nid_no_patch(const_cast<void*>(address), values, count * sizeof(Value));
+        if (address == nullptr || count > std::numeric_limits<std::size_t>::max() / sizeof(Value)) return false;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(const_cast<void*>(address), values, count * sizeof(Value));
+        errno = savedErrno;
+        return copied;
     }
 
 private:
@@ -52,12 +67,20 @@ public:
 
     bool CopyIn(void* destination, std::size_t bytes) const {
         if (bytes == 0) return true;
-        return address != nullptr && GuestCopyIn_nid_no_patch(destination, address, bytes);
+        if (address == nullptr) return false;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(destination, address, bytes);
+        errno = savedErrno;
+        return copied;
     }
 
     bool CopyOut(const void* source, std::size_t bytes) const {
         if (bytes == 0) return true;
-        return address != nullptr && GuestCopyOut_nid_no_patch(const_cast<void*>(address), source, bytes);
+        if (address == nullptr) return false;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(const_cast<void*>(address), source, bytes);
+        errno = savedErrno;
+        return copied;
     }
 
 private:

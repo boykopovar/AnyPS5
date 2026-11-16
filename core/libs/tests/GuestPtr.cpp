@@ -1,5 +1,6 @@
 #include "prx/libc/include/GuestPtr.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -74,9 +75,33 @@ void CheckFaults() {
 
 }  // namespace
 
+void CheckErrno() {
+    Payload value{};
+    const auto* unmapped = reinterpret_cast<const void*>(1);
+    errno = 71;
+    Require(!GuestPtr<const Payload>(unmapped).CopyIn(value), "an unreadable guest pointer was copied in");
+    Require(errno == 71, "a failed value CopyIn changed errno");
+    errno = 71;
+    Require(!GuestPtr<Payload>(unmapped).CopyOut(value), "an unwritable guest pointer was copied out");
+    Require(errno == 71, "a failed value CopyOut changed errno");
+    errno = 71;
+    Require(!GuestPtr<Payload>(unmapped).CopyIn(&value, 1), "an unreadable guest array was copied in");
+    Require(errno == 71, "a failed array CopyIn changed errno");
+    errno = 71;
+    Require(!GuestBytes(unmapped).CopyOut(&value, sizeof(value)), "an unwritable guest byte range was copied out");
+    Require(errno == 71, "a failed byte CopyOut changed errno");
+    errno = 71;
+    Require(GuestPtr<const Payload>(&value).CopyIn(value), "a readable guest pointer was not copied in");
+    Require(errno == 71, "a successful CopyIn changed errno");
+    errno = 71;
+    Require(GuestBytes(&value).CopyOut(&value, sizeof(value)), "a writable guest byte range was not copied out");
+    Require(errno == 71, "a successful CopyOut changed errno");
+}
+
 int main() {
     CheckMapped();
     CheckArraysAndBytes();
     CheckFaults();
+    CheckErrno();
     std::puts("guest pointer tests passed");
 }
