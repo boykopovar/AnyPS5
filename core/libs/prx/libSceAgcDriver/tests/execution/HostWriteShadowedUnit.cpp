@@ -246,7 +246,7 @@ int main() {
             std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
             import = HostImportFor(context, address, MappingBytes);
         }
-        if (import == nullptr || !import->dmaBuf) return Skip("the device imported the mapping through a host pointer, which is compared, not watched");
+        if (import == nullptr || !import->dmaBuf) return Skip("the device imports shared memory through host pointers here, which are compared, not watched");
         if (!AgcDriver::GuestMemory::Watched(firstUnit, 8 * Unit)) return Skip("the imported units are not write-watched");
 
         landHook = AgcDriver::GuestMemory::CurrentFlushHook();

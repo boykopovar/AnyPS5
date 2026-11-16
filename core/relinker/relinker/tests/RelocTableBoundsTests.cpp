@@ -23,8 +23,12 @@ constexpr std::size_t kEntryPointOffset = 24;
 constexpr std::uint64_t kEntryVaddr = 0x100;
 constexpr std::size_t kRelaTag = 4;
 constexpr std::size_t kRelaSzTag = 5;
+constexpr std::size_t kStrTabTag = 0;
+constexpr std::size_t kStrSzTag = 1;
 constexpr std::int64_t kDtRela = 7;
 constexpr std::int64_t kDtRelaSz = 8;
+constexpr std::int64_t kDtOsStrTab = 0x61000035;
+constexpr std::int64_t kDtOsStrSz = 0x61000037;
 constexpr std::int64_t kDtOsRela = 0x6100002f;
 constexpr std::int64_t kDtOsRelaSz = 0x61000031;
 constexpr std::uint64_t kImageSize = 0x8000;
@@ -33,6 +37,7 @@ constexpr std::uint64_t kOffsetPastEnd = kImageSize + 0x1000;
 constexpr std::uint64_t kOffsetBeforeEnd = kImageSize - 16;
 constexpr std::size_t kRelaEntry = kCodeOffset + 0x700;
 constexpr std::uint64_t kRelativeEntryInfo = 8;
+constexpr std::uint32_t kPtSceDynlibData = 0x61000000;
 
 struct OutputMode {
     std::string Flag;
@@ -62,6 +67,13 @@ Bytes ImageWithRelocationTable(const std::int64_t offsetTag, const std::int64_t 
     Write<std::uint8_t>(image, kCodeOffset + kEntryVaddr, 0xC3);
     WriteTag(image, kRelaTag, offsetTag, offset);
     WriteTag(image, kRelaSzTag, sizeTag, size);
+    return image;
+}
+
+Bytes ImageWithStringTable(const std::uint64_t offset, const std::uint64_t size) {
+    auto image = ImageWithRelocationTable(kDtRela, kDtRelaSz, 0x700, 0);
+    WriteTag(image, kStrTabTag, kDtOsStrTab, offset);
+    WriteTag(image, kStrSzTag, kDtOsStrSz, size);
     return image;
 }
 
@@ -99,6 +111,30 @@ int main(const int argc, char** argv) {
         for (const auto& mode : OutputModes()) {
             RunAndRequireAccepted(binary, ImageWithRelocationTable(kDtRela, kDtRelaSz, 0x700, 0), mode, "an empty relocation table in the file");
             RunAndRequireAccepted(binary, ImageWithRelocationTable(kDtOsRela, kDtOsRelaSz, kRelaEntry, 0), mode, "an empty DT_OS_RELA table in the file");
+
+            {
+                auto image = ImageWithRelocationTable(kDtOsRela, kDtOsRelaSz, 0x700, 24);
+                WriteProgramHeader(image, 2, kPtSceDynlibData, 0, kCodeOffset, 0, 0x718, 1);
+                RunAndRequireAccepted(binary, image, mode, "a DT_OS_RELA table inside PT_SCE_DYNLIBDATA");
+            }
+
+            {
+                auto image = ImageWithRelocationTable(kDtOsRela, kDtOsRelaSz, 0x700, 24);
+                WriteProgramHeader(image, 2, kPtSceDynlibData, 0, kCodeOffset, 0, 0x700, 1);
+                RunAndRequireRejected(binary, image, mode, "a DT_OS_RELA table outside PT_SCE_DYNLIBDATA", "outside PT_SCE_DYNLIBDATA");
+            }
+
+            {
+                auto image = ImageWithStringTable(0x700, 24);
+                WriteProgramHeader(image, 2, kPtSceDynlibData, 0, kCodeOffset, 0, 0x718, 1);
+                RunAndRequireAccepted(binary, image, mode, "a DT_OS_STRTAB table inside PT_SCE_DYNLIBDATA");
+            }
+
+            {
+                auto image = ImageWithStringTable(0x700, 24);
+                WriteProgramHeader(image, 2, kPtSceDynlibData, 0, kCodeOffset, 0, 0x700, 1);
+                RunAndRequireRejected(binary, image, mode, "a DT_OS_STRTAB table outside PT_SCE_DYNLIBDATA", "outside PT_SCE_DYNLIBDATA");
+            }
 
             {
                 Bytes image = ImageWithRelocationTable(kDtRela, kDtRelaSz, 0x700, 24);
