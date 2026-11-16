@@ -1188,6 +1188,12 @@ class HelperValueTests(unittest.TestCase):
         self.assertIsNone(progress.exact_delta({}, {"done": 2, "total": 4}))
         self.assertIsNone(progress.exact_delta({"done": 0, "total": 0}, {"done": 2, "total": 4}))
 
+    def test_small_delta_trims_zeros_and_keeps_the_sign(self):
+        from fractions import Fraction
+        self.assertEqual(progress.small_delta(Fraction(1, 2)), "+0.5")
+        self.assertEqual(progress.small_delta(Fraction(-1, 3)), "-0.3333")
+        self.assertEqual(progress.small_delta(Fraction(1, 100000)), "+<0.0001")
+
 
 if __name__ == "__main__":
     unittest.main()
