@@ -2864,9 +2864,32 @@ static void CheckSockInfo6() {
     Require(RequireSockInfo6List(0) == earlier);
     Require(RequireSockInfo6List(0x1000) == WithSockets(earlierAll, {datagram}));
 
+    const int kernel = socket_nid_postfix(2, 2, 0);
+    std::array<std::uint8_t, 16> kernelAddress{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(kernel >= 0 && bind_nid_postfix(kernel, kernelAddress.data(), kernelAddress.size()) == 0);
+    size = kernelAddress.size();
+    Require(getsockname_nid_postfix(kernel, kernelAddress.data(), &size) == 0 && size == 16);
+    Require(RequireSockInfo6List(0) == earlier);
+    Require(RequireSockInfo6List(0x1000) == WithSockets(earlierAll, {datagram, kernel}));
+    Require(RequireSockInfo6List(0x1040) == WithSockets(earlierAll, {datagram, kernel}));
+    Require(Failed(sceNetGetSockInfo6(kernel, reinterpret_cast<NetSockInfo6*>(record.data()), 1, 0), 47));
+    Require(sceNetGetSockInfo6(kernel, reinterpret_cast<NetSockInfo6*>(record.data()), 1, 0x1000) == 1);
+    std::array<std::uint8_t, 0xa0> kernelExpected{};
+    std::memcpy(kernelExpected.data() + 0x24, &kernel, sizeof(kernel));
+    kernelExpected[0x28] = 2;
+    std::memcpy(kernelExpected.data() + 0x34, kernelAddress.data() + 4, 4);
+    std::memcpy(kernelExpected.data() + 0x3c, kernelAddress.data() + 2, 2);
+    kernelExpected[0x48] = 1;
+    std::int32_t kernelBuffers[2] = {};
+    std::memcpy(kernelBuffers, record.data() + 0x64, sizeof(kernelBuffers));
+    Require(kernelBuffers[0] > 0 && kernelBuffers[1] > 0);
+    std::memcpy(kernelExpected.data() + 0x64, record.data() + 0x64, 8);
+    Require(std::equal(kernelExpected.begin(), kernelExpected.end(), record.begin()));
+
     if (ipv6Unavailable) {
         Require(sceNetSocketClose(datagram) == 0);
         Require(Failed(sceNetGetSockInfo6(datagram, reinterpret_cast<NetSockInfo6*>(record.data()), 1, 0x1000), 9));
+        Require(close_nid_postfix(kernel) == 0);
         Require(RequireSockInfo6List(0x1000) == earlierAll);
         return;
     }
@@ -2922,13 +2945,15 @@ static void CheckSockInfo6() {
 
     Require(RequireSockInfo6List(0) == WithSockets(earlier, {udp, listener, client, accepted, peer}));
     Require(RequireSockInfo6List(0x40) == WithSockets(earlier, {udp, listener, client, accepted, peer}));
-    Require(RequireSockInfo6List(0x1000) == WithSockets(earlierAll, {datagram, udp, listener, client, accepted, peer}));
+    Require(RequireSockInfo6List(0x1000) == WithSockets(earlierAll, {datagram, kernel, udp, listener, client, accepted, peer}));
     Require(Failed(sceNetGetSockInfo6(datagram, reinterpret_cast<NetSockInfo6*>(record.data()), 1, 0), 47));
 
     for (const int descriptor : {peer, accepted, client, listener, udp}) Require(sceNetSocketClose(descriptor) == 0);
     Require(Failed(sceNetGetSockInfo6(udp, reinterpret_cast<NetSockInfo6*>(record.data()), 1, 0), 9));
     Require(RequireSockInfo6List(0) == earlier);
     Require(sceNetSocketClose(datagram) == 0);
+    Require(close_nid_postfix(kernel) == 0);
+    Require(Failed(sceNetGetSockInfo6(kernel, reinterpret_cast<NetSockInfo6*>(record.data()), 1, 0x1000), 9));
     Require(RequireSockInfo6List(0x1000) == earlierAll);
 }
 
