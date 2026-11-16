@@ -1069,6 +1069,12 @@ class BadgeTests(unittest.TestCase):
             with self.subTest(percent=percent):
                 self.assertIn(f'fill="{colour}"', progress.badge("x", {"percent": percent}))
 
+    def test_badge_accepts_an_explicit_value_and_colour(self):
+        markup = progress.badge("x", {"percent": 95}, value="3/4", color="#000")
+        self.assertIn('fill="#000"', markup)
+        self.assertNotIn("#4c1", markup)
+        self.assertIn('aria-label="x: 3/4"', markup)
+
 
 if __name__ == "__main__":
     unittest.main()
