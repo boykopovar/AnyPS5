@@ -300,6 +300,9 @@ class ScopeTests(unittest.TestCase):
         self.assertEqual(check_conventions.constant_value(([("K", 5, 0, outer)], scopes), "K", 35), 5)
         self.assertEqual(check_conventions.constant_value(([("K", 5, 0, ("namespace", "::Z"))], scopes), "K", 35), 0)
         self.assertEqual(check_conventions.constant_value(([("K", 5, 0, outer)], scopes), "Missing", 35), 0)
+class LibraryNameTests(unittest.TestCase):
+    def test_library_names_the_prx_library_folder(self):
+        self.assertEqual(check_conventions.library('core/libs/prx/libX/Export.cpp'), 'libX')
 
 
 if __name__ == "__main__":
