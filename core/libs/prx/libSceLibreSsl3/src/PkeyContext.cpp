@@ -1,6 +1,7 @@
 /* Derived from LibreSSL 4.0.0 (openbsd ce488b78e0bd994780569df718596b9776ff681a) src/lib/libcrypto/ec/ec_pmeth.c (ec_pmeth.c,v 1.22),
- * src/lib/libcrypto/ec/ec_ameth.c (ec_ameth.c,v 1.69)
- * and src/lib/libcrypto/evp/pmeth_fn.c (pmeth_fn.c,v 1.11) */
+ * src/lib/libcrypto/ec/ec_ameth.c (ec_ameth.c,v 1.69),
+ * src/lib/libcrypto/evp/pmeth_fn.c (pmeth_fn.c,v 1.11)
+ * and src/lib/libcrypto/hmac/hm_ameth.c (hm_ameth.c,v 1.20) */
 /* $OpenBSD: ec_pmeth.c,v 1.22 2024/08/26 22:01:28 op Exp $ */
 /* Written by Dr Stephen N Henson (steve@openssl.org) for the OpenSSL
  * project 2006.
@@ -464,6 +465,63 @@
  * copied and put under another distribution licence
  * [including the GNU Public Licence.]
  */
+/* $OpenBSD: hm_ameth.c,v 1.20 2024/01/04 17:01:26 tb Exp $ */
+/* Written by Dr Stephen N Henson (steve@openssl.org) for the OpenSSL
+ * project 2007.
+ */
+/* ====================================================================
+ * Copyright (c) 2007 The OpenSSL Project.  All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in
+ *    the documentation and/or other materials provided with the
+ *    distribution.
+ *
+ * 3. All advertising materials mentioning features or use of this
+ *    software must display the following acknowledgment:
+ *    "This product includes software developed by the OpenSSL Project
+ *    for use in the OpenSSL Toolkit. (http://www.OpenSSL.org/)"
+ *
+ * 4. The names "OpenSSL Toolkit" and "OpenSSL Project" must not be used to
+ *    endorse or promote products derived from this software without
+ *    prior written permission. For written permission, please contact
+ *    licensing@OpenSSL.org.
+ *
+ * 5. Products derived from this software may not be called "OpenSSL"
+ *    nor may "OpenSSL" appear in their names without prior written
+ *    permission of the OpenSSL Project.
+ *
+ * 6. Redistributions of any form whatsoever must retain the following
+ *    acknowledgment:
+ *    "This product includes software developed by the OpenSSL Project
+ *    for use in the OpenSSL Toolkit (http://www.OpenSSL.org/)"
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE OpenSSL PROJECT ``AS IS'' AND ANY
+ * EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE OpenSSL PROJECT OR
+ * ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ * ====================================================================
+ *
+ * This product includes cryptographic software written by Eric Young
+ * (eay@cryptsoft.com).  This product includes software written by Tim
+ * Hudson (tjh@cryptsoft.com).
+ *
+ */
 
 #include "prx/libSceLibreSsl3/include/PkeyContext.hpp"
 
@@ -543,6 +601,8 @@ constexpr int Sha224Type = 675;
 constexpr int Sha256Type = 672;
 constexpr int Sha384Type = 673;
 constexpr int Sha512Type = 674;
+
+constexpr int MaxDigestSize = 64;
 
 void QueueEvpError(int reason) {
     LibreSslPutError_nid_no_patch(EvpLibrary, AnyFunction, reason);
@@ -1223,6 +1283,56 @@ const LibreSsl3PkeyAsn1Method RsaPssAsn1Method {
     nullptr,
 };
 
+int APS5_VABI HmacCompare_nid_no_patch(const LibreSsl3EvpPkey* first, const LibreSsl3EvpPkey* second) {
+    const auto* firstOctets = static_cast<const Asn1String*>(first->key);
+    const auto* secondOctets = static_cast<const Asn1String*>(second->key);
+    return ASN1_OCTET_STRING_cmp_nid_postfix(firstOctets, secondOctets) == 0;
+}
+
+int APS5_VABI HmacSize_nid_no_patch(const LibreSsl3EvpPkey*) {
+    return MaxDigestSize;
+}
+
+void APS5_VABI HmacFree_nid_no_patch(LibreSsl3EvpPkey* key) {
+    ASN1_OCTET_STRING_free_nid_postfix(static_cast<Asn1String*>(key->key));
+}
+
+const LibreSsl3PkeyAsn1Method HmacAsn1Method {
+    &HmacAsn1Method,
+    LibreSsl3PkeyHmac,
+    0,
+    "HMAC",
+    "OpenSSL HMAC method",
+    nullptr,
+    nullptr,
+    &HmacCompare_nid_no_patch,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    &HmacSize_nid_no_patch,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    &HmacFree_nid_no_patch,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+};
+
 int DigestInitialize(LibreSsl3::DigestContext* context, const DigestMethod* type) {
     context->flags &= ~DigestCleanedFlag;
 
@@ -1380,11 +1490,12 @@ const LibreSsl3PkeyMethod* FindNativePkeyMethod_nid_no_patch(std::int32_t keyTyp
 const LibreSsl3PkeyAsn1Method* FindNativePkeyAsn1Method_nid_no_patch(std::int32_t keyType) {
     if (keyType == LibreSsl3PkeyRsa) return &RsaAsn1Method;
     if (keyType == LibreSsl3PkeyRsaPss) return &RsaPssAsn1Method;
+    if (keyType == LibreSsl3PkeyHmac) return &HmacAsn1Method;
     return nullptr;
 }
 
 bool IsNativePkeyMethod_nid_no_patch(const void* method) {
-    return method == &RsaAsn1Method || method == &RsaPssAsn1Method;
+    return method == &RsaAsn1Method || method == &RsaPssAsn1Method || method == &HmacAsn1Method;
 }
 
 namespace {
