@@ -373,6 +373,10 @@ class SpacedTests(unittest.TestCase):
         touching = [(0, 1, "- a"), (1, 2, "- b")]
         self.assertTrue(debt_fold.spaced(apart))
         self.assertFalse(debt_fold.spaced(touching))
+class TargetTests(unittest.TestCase):
+    def test_target_is_none_without_a_target_marker(self):
+        import debt_fold
+        self.assertIsNone(debt_fold.target("- plain entry with no target"))
 
 
 if __name__ == "__main__":
