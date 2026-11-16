@@ -914,8 +914,20 @@ void testRewindFilledAcrossChunks(const std::filesystem::path& tool) {
     check(replayed(tool, checkCapture(0), layout.label, 4) == std::vector<std::byte>{std::byte{Done}, std::byte{0}, std::byte{0}, std::byte{0}}, "the replay resumed the REWIND before the delta restored the buffer its tail jumps to");
 }
 
-void testGpuStoreBehindRewind(const std::filesystem::path& tool) {
+bool deltaStoredBytes(const FrameCaptureReader& reader, const std::uint32_t* address) {
+    return std::any_of(reader.Chunks().begin(), reader.Chunks().end(), [&](const auto& chunk) {
+        if (chunk.kind != FrameMemoryKind::Delta || chunk.address >= at(address) + 4 || at(address) >= chunk.address + chunk.bytes) return false;
+        const auto bytes = reader.Read(chunk);
+        const auto first = std::max(chunk.address, at(address));
+        const auto last = std::min(chunk.address + chunk.bytes, at(address) + 4);
+        return std::any_of(bytes.begin() + static_cast<std::ptrdiff_t>(first - chunk.address), bytes.begin() + static_cast<std::ptrdiff_t>(last - chunk.address), [](std::byte value) { return value != std::byte{0}; });
+    });
+}
+
+void checkGpuStoreBehindRewind(const std::filesystem::path& tool, bool halfStored) {
     constexpr std::uint32_t ComputeQueue = 0x20;
+    constexpr std::uint32_t Half = 0x5a5au;
+    const std::uint32_t releasedValue = halfStored ? Done | (Half << 16u) : Done;
     constexpr std::uint32_t Filled = 0x5a5a5a5au;
     constexpr std::size_t FillBytes = 0x3fff000u;
     constexpr std::size_t Fills = 4;
@@ -937,12 +949,13 @@ void testGpuStoreBehindRewind(const std::filesystem::path& tool) {
     sceAgcDcbWaitRegMem(&graphics, 0, 3, 0, 0, filled, Filled, 0xffffffffu, 0);
     sceAgcDcbDmaData(&graphics, 0, DmaMemory, 0, at(layout.firstTarget), DmaMemory, 0, at(layout.source), DataBytes, 0, 1, 0);
     releaseMem(graphics, released);
+    if (halfStored) sceAgcDcbDmaData(&graphics, 0, DmaMemory, 0, at(released) + 2, 2, 0, Half, 2, 0, 1, 0);
     auto* const second = sceAgcDcbRewind(&graphics, 0) + 1;
     writeDone(graphics, layout.label);
     Packet producer{layout.firstCommands, static_cast<std::uint32_t>(graphics.cursor_up - layout.firstCommands), 0, {}};
     check(sceAgcDriverSubmitDcb(&producer) == 0, "graphics submission failed");
     auto compute = commands(layout.secondCommands);
-    sceAgcAcbWaitRegMem(&compute, 0, 3, 0, released, Done, 0xffffffffu, 0);
+    sceAgcAcbWaitRegMem(&compute, 0, 3, 0, released, Done, 0xffffu, 0);
     sceAgcAcbDmaData(&compute, DmaMemory, 0, at(layout.secondTarget), DmaMemory, 0, at(layout.firstTarget), DataBytes, 0, 1);
     sceAgcAcbWriteData(&compute, ComputeMemory, 0, at(copied), &Done, 1, 0, 1);
     Packet consumer{layout.secondCommands, static_cast<std::uint32_t>(compute.cursor_up - layout.secondCommands), 0, {}};
@@ -966,9 +979,18 @@ void testGpuStoreBehindRewind(const std::filesystem::path& tool) {
             return value == Done;
         });
     };
+    check(std::atomic_ref<std::uint32_t>(*released).load(std::memory_order_acquire) == releasedValue, "the graphics queue did not store the label the test expects");
     check(delta(title), "the memory delta lost the word the title wrote beside the label");
-    check(!delta(released), "the memory delta holds the label the graphics queue's RELEASE_MEM wrote, so the replay releases the compute queue before the graphics queue copies");
+    check(!deltaStoredBytes(reader, released), "the memory delta holds bytes of the label the graphics queue's RELEASE_MEM and DMA_DATA wrote, so the replay restores them before the work that produces them");
     check(replayed(tool, capture, layout.secondTarget, DataBytes) == read, "the replay released the compute queue before the copy ahead of the label it waits on");
+}
+
+void testGpuStoreBehindRewind(const std::filesystem::path& tool) {
+    checkGpuStoreBehindRewind(tool, false);
+}
+
+void testGpuStoreOverHalfLabel(const std::filesystem::path& tool) {
+    checkGpuStoreBehindRewind(tool, true);
 }
 
 void checkUnwatchedTitleStores(const std::filesystem::path& tool, bool initiallyUnwatched, const std::function<void(std::byte*)>& prepare = {}) {
@@ -1199,6 +1221,44 @@ void testFillRewrittenByTitle(const std::filesystem::path& tool) {
     check(value == Filled, "the replay kept the title's earlier store over its later one, which wrote the value the fill had left");
 }
 
+void testFillWordHalfStored(const std::filesystem::path& tool) {
+    constexpr std::uint32_t Filled = 0x5a5a5a5au;
+    constexpr std::uint32_t Half = 0x1234u;
+    constexpr std::uint32_t Stored = 0x77u;
+    constexpr std::size_t FillBytes = 512u * 1024u;
+    const auto layout = allocate();
+    const auto bulk = allocate();
+    auto* const word = reinterpret_cast<std::uint32_t*>(bulk.base + FillBytes / 2);
+    auto* const title = word + 1;
+    auto output = std::make_shared<Output>();
+    AgcDriverRegisterVideoOutput_nid_postfix(Handle, output);
+
+    flip();
+    auto graphics = commands(layout.firstCommands);
+    sceAgcDcbDmaData(&graphics, 0, DmaMemory, 0, at(bulk.base), 2, 0, Filled, FillBytes, 0, 1, 0);
+    sceAgcDcbDmaData(&graphics, 0, DmaMemory, 0, at(word) + 2, 2, 0, Half, 2, 0, 1, 0);
+    writeDone(graphics, layout.label);
+    Packet packet{layout.firstCommands, static_cast<std::uint32_t>(graphics.cursor_up - layout.firstCommands), 0, {}};
+    check(sceAgcDriverSubmitDcb(&packet) == 0, "graphics submission failed");
+    AgcDriverWaitIdle_nid_postfix();
+    const std::uint32_t expected = (Filled & 0xffffu) | (Half << 16u);
+    check(std::atomic_ref<std::uint32_t>(*word).load(std::memory_order_acquire) == expected, "the driver did not fill the buffer and store half of the word");
+    std::atomic_ref<std::uint32_t>(*title).store(Stored, std::memory_order_release);
+    flip();
+    flip();
+    AgcDriverWaitIdle_nid_postfix();
+    const auto capture = checkCapture(0);
+    const FrameCaptureReader reader(capture);
+    check(std::any_of(reader.Chunks().begin(), reader.Chunks().end(), [&](const auto& chunk) {
+        return chunk.kind == FrameMemoryKind::Delta && chunk.address <= at(title) && at(title) + 4 <= chunk.address + chunk.bytes;
+    }), "the memory delta lost the word the title wrote beside the filled word");
+    check(!deltaStoredBytes(reader, word), "the memory delta holds bytes of a word the fill and a later 2-byte store wrote, so the replay restores them before that work");
+    const auto replayedWord = replayed(tool, capture, word, 4);
+    std::uint32_t value = 0;
+    std::memcpy(&value, replayedWord.data(), sizeof(value));
+    check(value == expected, "the replay did not reproduce the filled word with its stored half");
+}
+
 void testFenceReused(const std::filesystem::path& tool) {
     const auto layout = allocate();
     const auto copied = pattern(53);
@@ -1414,9 +1474,9 @@ void testFillClearedBeforeRange(const std::filesystem::path& tool) {
 int main(int argc, char** argv) {
     const std::string mode = argc == 3 ? argv[2] : "";
     const std::map<std::string, void (*)(const std::filesystem::path&)> rewound{
-        {"rewind_store", testStoreAfterGatedCopy}, {"store_idle", testStoreAfterGatedCopyIdle}, {"store_idle_rewind", testStoreAfterRewoundCopyIdle}, {"store_idle_unwatched", testUnwatchedStoreBeforeReservation}, {"store_second_wait", testStoreBeforeSecondWaitOnGate}, {"rewind_copy", testCopyInFlightAtDelta}, {"rewind_copy_held", testStoreBesideHeldCopy}, {"rewind_compute", testComputeWaitBehindRewind}, {"rewind_release", testReleaseDuringDelta}, {"rewind_fill", testFilledRewindTail}, {"rewind_split", testRewindFilledAcrossChunks}, {"wait_label", testLabelFromLaterSubmission}, {"gpu_store", testGpuStoreBehindRewind}, {"gpu_fill", testFillRewrittenByTitle}, {"gpu_restore_cached", testGpuFillRestoredToCachedValue}, {"unwatched_start", testInitiallyUnwatchedTitleStores}, {"unwatched_late", testLaterUnwatchedTitleStores}, {"unwatched_shared", testSharedTitleStores}, {"section_once", testUnchangedSectionStoredOnce}, {"partly_watched_once", testPartlyWatchedBlockOnce}, {"gpu_cleared", testFillClearedBeforeRange}, {"fence_reuse", testFenceReused}, {"busy_queue", testQueueBusyPastPacing}, {"rewind_page", testRewindPageRestored}, {"allocation_ranges", testRegisteredRangeBoundaries}};
+        {"rewind_store", testStoreAfterGatedCopy}, {"store_idle", testStoreAfterGatedCopyIdle}, {"store_idle_rewind", testStoreAfterRewoundCopyIdle}, {"store_idle_unwatched", testUnwatchedStoreBeforeReservation}, {"store_second_wait", testStoreBeforeSecondWaitOnGate}, {"rewind_copy", testCopyInFlightAtDelta}, {"rewind_copy_held", testStoreBesideHeldCopy}, {"rewind_compute", testComputeWaitBehindRewind}, {"rewind_release", testReleaseDuringDelta}, {"rewind_fill", testFilledRewindTail}, {"rewind_split", testRewindFilledAcrossChunks}, {"wait_label", testLabelFromLaterSubmission}, {"gpu_store", testGpuStoreBehindRewind}, {"gpu_store_half", testGpuStoreOverHalfLabel}, {"gpu_fill", testFillRewrittenByTitle}, {"gpu_fill_half", testFillWordHalfStored}, {"gpu_restore_cached", testGpuFillRestoredToCachedValue}, {"unwatched_start", testInitiallyUnwatchedTitleStores}, {"unwatched_late", testLaterUnwatchedTitleStores}, {"unwatched_shared", testSharedTitleStores}, {"section_once", testUnchangedSectionStoredOnce}, {"partly_watched_once", testPartlyWatchedBlockOnce}, {"gpu_cleared", testFillClearedBeforeRange}, {"fence_reuse", testFenceReused}, {"busy_queue", testQueueBusyPastPacing}, {"rewind_page", testRewindPageRestored}, {"allocation_ranges", testRegisteredRangeBoundaries}};
     if (argc != 2 && !(argc == 3 && (mode == "concurrent" || mode == "pipelines" || mode == "reservation_error" || mode == "rewind" || mode == "rewind_reuse" || mode == "rewind_shared_tail" || mode == "rewind_settled_tail" || rewound.contains(mode)))) {
-        std::fprintf(stderr, "usage: agc_driver_frame_replay_tests <agc_frame_replay> [concurrent|pipelines|reservation_error|rewind|rewind_store|store_idle|store_idle_rewind|store_idle_unwatched|store_second_wait|rewind_copy|rewind_compute|rewind_release|rewind_fill|rewind_split|wait_label|gpu_store|gpu_fill|gpu_restore_cached|unwatched_start|unwatched_late|unwatched_shared|section_once|partly_watched_once|gpu_cleared|fence_reuse|busy_queue|rewind_reuse|rewind_shared_tail|rewind_settled_tail|rewind_page|allocation_ranges]\n");
+        std::fprintf(stderr, "usage: agc_driver_frame_replay_tests <agc_frame_replay> [concurrent|pipelines|reservation_error|rewind|rewind_store|store_idle|store_idle_rewind|store_idle_unwatched|store_second_wait|rewind_copy|rewind_compute|rewind_release|rewind_fill|rewind_split|wait_label|gpu_store|gpu_store_half|gpu_fill|gpu_fill_half|gpu_restore_cached|unwatched_start|unwatched_late|unwatched_shared|section_once|partly_watched_once|gpu_cleared|fence_reuse|busy_queue|rewind_reuse|rewind_shared_tail|rewind_settled_tail|rewind_page|allocation_ranges]\n");
         return 2;
     }
     int status = 0;

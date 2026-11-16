@@ -73,6 +73,10 @@ private:
         std::uint64_t end = 0;
         std::array<std::uint32_t, 4> pattern{};
     };
+    struct GpuWord {
+        std::uint32_t value = 0;
+        std::uint8_t known = 0;
+    };
     static constexpr std::size_t GpuStoreWordLimit = 64u * 1024u;
 
     struct Span {
@@ -123,7 +127,7 @@ private:
     std::map<std::pair<std::uint64_t, std::uint64_t>, std::pair<std::uint64_t, std::uint64_t>> unwatchedHashes;
     inline static std::atomic<bool> notingGpuStores{false};
     std::mutex gpuStoresMutex;
-    std::map<std::uint64_t, std::uint32_t> gpuWords;
+    std::map<std::uint64_t, GpuWord> gpuWords;
     std::map<std::uint64_t, GpuFill> gpuFills;
     std::uint64_t gpuStoreBytes = 0;
     std::mutex displayMutex;

@@ -609,10 +609,14 @@ void FrameRecorder::noteGpuStore(std::uint64_t address, std::span<const std::byt
     std::lock_guard lock(gpuStoresMutex);
     forgetGpuStores(address, end);
     if (bytes.size() > GpuStoreWordLimit) return;
-    for (auto word = (address + 3) & ~std::uint64_t{3}; word + 4 <= end; word += 4) {
-        std::uint32_t value = 0;
-        std::memcpy(&value, bytes.data() + (word - address), sizeof(value));
-        gpuWords.emplace_hint(gpuWords.end(), word, value);
+    for (auto at = address; at < end;) {
+        const auto word = at & ~std::uint64_t{3};
+        auto& stored = gpuWords[word];
+        for (; at < end && at < word + 4; ++at) {
+            const auto shift = static_cast<std::uint32_t>(at - word) * 8u;
+            stored.value = (stored.value & ~(0xffu << shift)) | (std::to_integer<std::uint32_t>(bytes[at - address]) << shift);
+            stored.known |= static_cast<std::uint8_t>(1u << (at - word));
+        }
     }
 }
 
@@ -626,7 +630,18 @@ void FrameRecorder::noteGpuFill(std::uint64_t address, std::uint64_t bytes, cons
 void FrameRecorder::forgetGpuStores(std::uint64_t begin, std::uint64_t end) {
     const auto low = begin & ~std::uint64_t{3};
     const auto high = (end + 3) & ~std::uint64_t{3};
-    gpuWords.erase(gpuWords.lower_bound(low), gpuWords.lower_bound(end));
+    const auto outside = [&](std::uint64_t word) {
+        std::uint8_t mask = 0;
+        for (std::uint64_t byte = 0; byte < 4; ++byte) {
+            if (word + byte < begin || word + byte >= end) mask |= static_cast<std::uint8_t>(1u << byte);
+        }
+        return mask;
+    };
+    for (auto word = gpuWords.lower_bound(low); word != gpuWords.end() && word->first < end;) {
+        word->second.known &= outside(word->first);
+        if (word->second.known == 0) word = gpuWords.erase(word);
+        else ++word;
+    }
     auto fill = gpuFills.upper_bound(begin);
     if (fill != gpuFills.begin()) --fill;
     while (fill != gpuFills.end() && fill->first < end) {
@@ -639,6 +654,10 @@ void FrameRecorder::forgetGpuStores(std::uint64_t begin, std::uint64_t end) {
         fill = gpuFills.erase(fill);
         if (start < low) gpuFills.emplace(start, GpuFill{low, kept.pattern});
         if (high < kept.end) gpuFills.emplace(high, GpuFill{kept.end, kept.pattern});
+        for (const auto word : {low, high - 4}) {
+            const auto mask = outside(word);
+            if (mask != 0 && start <= word && word < kept.end) gpuWords[word] = GpuWord{kept.pattern[(word % 16) / 4], mask};
+        }
     }
 }
 
@@ -646,36 +665,47 @@ void FrameRecorder::keepTitleWords(std::uint64_t address, std::span<const std::b
     runs.clear();
     const auto end = address + bytes.size();
     std::lock_guard lock(gpuStoresMutex);
-    auto word = gpuWords.lower_bound(address);
+    auto word = gpuWords.lower_bound(address & ~std::uint64_t{3});
     auto fill = gpuFills.upper_bound(address);
     if (fill != gpuFills.begin()) --fill;
     if (fill != gpuFills.end() && fill->second.end <= address) ++fill;
     const bool words = word != gpuWords.end() && word->first < end;
     const bool fills = fill != gpuFills.end() && fill->first < end;
     if (zero && !words && !fills) return;
-    if (address % 4 != 0 || bytes.size() % 4 != 0 || (!words && !fills)) {
+    if (!words && !fills) {
         if (!bytes.empty()) runs.emplace_back(0, bytes.size());
         return;
     }
     std::size_t open = bytes.size();
-    for (std::size_t offset = 0; offset < bytes.size(); offset += 4) {
-        const auto at = address + offset;
-        std::uint32_t current = 0;
-        std::memcpy(&current, bytes.data() + offset, sizeof(current));
-        bool driver = false;
+    for (auto at = address & ~std::uint64_t{3}; at < end; at += 4) {
+        std::uint32_t expected = 0;
+        std::uint8_t known = 0;
         if (word != gpuWords.end() && word->first == at) {
-            driver = word->second == current;
+            expected = word->second.value;
+            known = word->second.known;
             ++word;
         } else {
             while (fill != gpuFills.end() && fill->second.end <= at) ++fill;
-            driver = fill != gpuFills.end() && fill->first <= at && fill->second.pattern[(at % 16) / 4] == current;
+            if (fill != gpuFills.end() && fill->first <= at) {
+                expected = fill->second.pattern[(at % 16) / 4];
+                known = 0xf;
+            }
         }
-        if (driver) {
-            gpuStoreBytes += 4;
-            if (open != bytes.size()) runs.emplace_back(open, offset - open);
-            open = bytes.size();
-        } else if (open == bytes.size()) {
-            open = offset;
+        const auto first = std::max(at, address);
+        const auto last = std::min(at + 4, end);
+        std::uint32_t current = 0;
+        std::memcpy(reinterpret_cast<std::byte*>(&current) + (first - at), bytes.data() + (first - address), static_cast<std::size_t>(last - first));
+        const auto differs = current ^ expected;
+        for (auto byte = first; byte < last; ++byte) {
+            const auto offset = static_cast<std::size_t>(byte - address);
+            const bool driver = (known & (1u << (byte - at))) != 0 && ((differs >> ((byte - at) * 8u)) & 0xffu) == 0;
+            if (driver) {
+                ++gpuStoreBytes;
+                if (open != bytes.size()) runs.emplace_back(open, offset - open);
+                open = bytes.size();
+            } else if (open == bytes.size()) {
+                open = offset;
+            }
         }
     }
     if (open != bytes.size()) runs.emplace_back(open, bytes.size() - open);
