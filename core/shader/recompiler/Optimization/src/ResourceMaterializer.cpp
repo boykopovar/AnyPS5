@@ -2287,7 +2287,7 @@ std::vector<ImageResource> ResourceMaterializer::RuntimeImageModes(const ImageRe
         if (conversion == IrBufferFormat::Format11_11_10UNorm || conversion == IrBufferFormat::Format10_11_11UNorm || conversion == IrBufferFormat::Format11_11_10Float || conversion == IrBufferFormat::Format10_11_11Float) mode.shaderSwizzle = 0x2acu;
         modes.push_back(mode);
         if (GcnGuestShaders()) {
-            if (depth || conversion != IrBufferFormat::Invalid || packed != IrBufferFormat::Invalid || image.byElements != 0u) return;
+            if (depth || conversion == FmaskExpansion || packed != IrBufferFormat::Invalid || image.byElements != 0u) return;
             const bool declaredArray = image.dimension == RdnaImageDimension::Dim2DArray;
             const auto offer = [&](RdnaImageDimension dimension) {
                 auto other = mode;
