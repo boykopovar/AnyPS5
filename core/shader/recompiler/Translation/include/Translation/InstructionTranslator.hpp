@@ -43,6 +43,7 @@ struct TranslateOptions {
     bool float64 = false;
     bool gcnLegacyVertexInputs = false;
     bool nativeFloat16Fma = false;
+    bool float16HostNans = false;
     bool nativeInteger16 = false;
     std::optional<ShaderFloatMode> floatMode;
     ShaderStageInputInfo inputInfo;

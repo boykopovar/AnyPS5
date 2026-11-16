@@ -4,10 +4,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <cstring>
 #include <mutex>
 #include <optional>
 #include <stdexcept>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include "SceTypes.hpp"
@@ -100,7 +100,11 @@ int CheckComment(int reqId, const char* comment, void* option) {
     if (option) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     if (!comment) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
     if (!KnownRequest(reqId)) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
-    if (strnlen(comment, COMMENT_MAX_LENGTH + 1) > COMMENT_MAX_LENGTH) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    std::string copy;
+    const int savedErrno = errno;
+    const int status = CopyGuestString_nid_no_patch(comment, COMMENT_MAX_LENGTH + 1, copy);
+    errno = savedErrno;
+    if (status != 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     return Offline(reqId);
 }
 

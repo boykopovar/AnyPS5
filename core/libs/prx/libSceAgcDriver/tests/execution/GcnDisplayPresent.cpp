@@ -197,6 +197,9 @@ int Run(bool fileTrigger) {
     SetEnvironment("APS5_SCREENSHOT_TRIGGER", fileTrigger ? trigger.string() : "");
 
     SDL_SetMainReady();
+#ifdef __linux__
+    SDL_SetHint(SDL_HINT_VIDEODRIVER, "wayland,x11");
+#endif
     const auto noDisplay = [](const char* error) {
         if (std::getenv("ANYPS5_REQUIRE_DISPLAY") != nullptr) throw std::runtime_error(error);
         std::printf("skipped, no display: %s\n", error);
