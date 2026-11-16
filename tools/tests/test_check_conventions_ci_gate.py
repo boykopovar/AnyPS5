@@ -224,6 +224,13 @@ class YamlHelperTests(unittest.TestCase):
     def test_field_joins_indented_continuation_lines_into_one_value(self):
         self.assertEqual(check_conventions.field(["key: a", "  b", "  c", "next: 1"], (1, 0, "key", "a")), "a b c")
 
+    def test_pull_request_filtered_reads_scalar_and_flow_triggers(self):
+        lines = [(1, 0, "on", "")]
+        self.assertTrue(check_conventions.pull_request_filtered(lines, (1, 0, "on", "push")))
+        self.assertFalse(check_conventions.pull_request_filtered(lines, (1, 0, "on", "pull_request")))
+        self.assertTrue(check_conventions.pull_request_filtered(lines, (1, 0, "on", "{pull_request: {paths: [x]}}")))
+        self.assertFalse(check_conventions.pull_request_filtered(lines, (1, 0, "on", "{pull_request: {branches: [main]}}")))
+
 
 if __name__ == "__main__":
     unittest.main()
