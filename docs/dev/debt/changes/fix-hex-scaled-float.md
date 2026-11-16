@@ -1,0 +1,9 @@
+# libc
+
+## change [_Stod, _Stodx, _Stofx, _Stoldx, _Stof and _Stold]
+
+- [_Stod, _Stodx, _Stofx, _Stoldx, _Stof and _Stold](../../../core/libs/prx/libc/src/DinkumwareInternals.cpp) (libSceLibcInternal, implemented in libc) - a nonzero subnormal result of decimal text sets neither `errno` nor the error argument, as measured in firmware 13.60's `libSceLibcInternal.sprx` run in a Linux host process, not on a console; there about a fifth of decimal inputs with a subnormal result come out one unit apart in the last place (`_Stodx("2.2250738585072014e-308", 0)` is the largest subnormal), which is not reproduced. Hexadecimal underflow and subnormal results with a zero scale are unverified for `libSceLibcInternal.sprx`; they follow the `strtod` rule of PPSA08329's `libc.prx`, so `_Stodx("0x1.00000000000001p-1075", 0)` gives 0 with an error of 1, not 2^-1074
+
+## add Functional
+
+- [_Stodx, _Stofx and _Stoldx scaled hexadecimal conversion](../../../core/libs/prx/libc/src/DinkumwareInternals.cpp) (libc) is not measured on a console, and in firmware 13.60's `libSceLibcInternal.sprx` only for `0x3` with a scale of -1 (0.29999999999999999, as here). Unmeasured in any module: a product that is subnormal (rounded to the type first, no error), a coefficient wider than the result type, an inexact subnormal result and rounding or flush-to-zero modes other than the default. Exception flags are the host conversion's; the modules raise underflow and inexact for `_Stofx("0x3", -30)`. The rest follows [two title-bundled `libc.prx`](https://github.com/boykopovar/AnyPS5/pull/14915#issuecomment-6756461357) run in a Linux host process (189 rows, all reproduced): the unscaled conversion's coefficient times the power of ten is rounded once to the result type, with `ERANGE` and an error of 1 if it overflows or reaches zero; the binary exponent is then applied and reports nothing
