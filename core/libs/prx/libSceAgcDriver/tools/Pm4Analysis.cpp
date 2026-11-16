@@ -113,7 +113,9 @@ std::string describe(std::span<const std::uint32_t> p) {
         }
         case 0x45: {
             const auto write = Pm4::DecodeConditionalWrite(p);
-            return format("[%s] %s 0x%x mask 0x%x: store 0x%x to %s", hex(write.compared).c_str(), CompareNames[p[1] & 7u], p[4], p[5], write.value, hex(write.destination).c_str());
+            const auto polled = (p[1] & 0x10u) != 0 ? hex(write.compared) : format("register 0x%x", p[2]);
+            const auto target = ((p[1] >> 8u) & 3u) == 0 ? format("register 0x%x", p[6]) : hex(write.destination);
+            return format("[%s] %s 0x%x mask 0x%x: store 0x%x to %s", polled.c_str(), CompareNames[p[1] & 7u], p[4], p[5], write.value, target.c_str());
         }
         case 0x83: {
             const auto dump = Pm4::DecodeConstantRamDump(p);

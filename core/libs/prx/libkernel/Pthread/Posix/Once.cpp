@@ -2,6 +2,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/Pthread/include/Cancel.hpp"
+#include <cerrno>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -14,10 +15,26 @@ static_assert(offsetof(GuestOnce, mutex) == 8 && sizeof(GuestOnce) == 16);
 std::mutex onceMutex;
 std::condition_variable onceChanged;
 
+bool ReadControlState(const GuestOnce* control, std::int32_t& state) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(
+        &state, reinterpret_cast<const std::uint8_t*>(control) + offsetof(GuestOnce, state), sizeof(state));
+    errno = savedErrno;
+    return copied;
+}
+
+bool WriteControlState(GuestOnce* control, std::int32_t state) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(
+        reinterpret_cast<std::uint8_t*>(control) + offsetof(GuestOnce, state), &state, sizeof(state));
+    errno = savedErrno;
+    return copied;
+}
+
 void APS5_VABI ResetOnce(void* control) {
     {
         std::lock_guard lock(onceMutex);
-        static_cast<GuestOnce*>(control)->state = 0;
+        WriteControlState(static_cast<GuestOnce*>(control), 0);
     }
     onceChanged.notify_all();
 }
@@ -27,10 +44,16 @@ extern "C" int APS5_VABI pthread_once_nid_postfix(
     GuestOnce* control, void (APS5_VABI *initialize)()) {
     if (!control || !initialize) return 22;
     std::unique_lock lock(onceMutex);
-    onceChanged.wait(lock, [&] { return control->state != 2; });
-    if (control->state == 1) return 0;
-    if (control->state != 0) return 22;
-    control->state = 2;
+    std::int32_t state = 0;
+    bool readable = true;
+    onceChanged.wait(lock, [&] {
+        readable = ReadControlState(control, state);
+        return !readable || state != 2;
+    });
+    if (!readable) return 14;
+    if (state == 1) return 0;
+    if (state != 0) return 22;
+    if (!WriteControlState(control, 2)) return 14;
     lock.unlock();
     // Initializers may initialize other once controls. Never run guest code
     // under the shared lock. The lock publishes all initializer writes.
@@ -47,8 +70,8 @@ extern "C" int APS5_VABI pthread_once_nid_postfix(
     }
     ThreadCancel::CleanupRestore(mark);
     lock.lock();
-    control->state = 1;
+    const bool updated = WriteControlState(control, 1);
     lock.unlock();
     onceChanged.notify_all();
-    return 0;
+    return updated ? 0 : 14;
 }
