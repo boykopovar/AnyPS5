@@ -442,36 +442,46 @@ WebRtcParseResultVector* APS5_VABI AudioDecoderOpusParsePayload_nid_no_patch(Web
     const bool hasFec = !payloadBytes.empty() && PacketHasFecBytes(payloadBytes.data(), payloadBytes.size());
     std::array<WebRtcAudioDecoderParseResult, 2> results{};
     std::size_t count = 0;
-    if (hasFec) {
-        const auto* vtable = hostDecoder.vtable;
-        using DurationFn = int(APS5_VABI*)(const WebRtcAudioDecoderOpusImpl*, const std::uint8_t*, std::size_t);
-        auto* redundantDurationFn = reinterpret_cast<DurationFn>(ReadVtableSlot(vtable, PacketDurationRedundantSlot, "AudioDecoderOpusImpl::ParsePayload requires PacketDurationRedundant"));
-        const int duration = redundantDurationFn(decoder, hostPayload.data, hostPayload.size);
-        if (duration < 0)
-            throw std::runtime_error("AudioDecoderOpusImpl::ParsePayload redundant duration cannot be negative");
-        WebRtcBuffer fecBuffer{};
-        auto* fecData = static_cast<std::uint8_t*>(_Znam_nid_postfix(payloadBytes.size()));
-        if (!GuestBytes(fecData).CopyOut(payloadBytes.data(), payloadBytes.size())) {
-            _ZdaPv_nid_postfix(fecData);
-            throw std::invalid_argument("AudioDecoderOpusImpl::ParsePayload failed to copy FEC payload");
+    std::uint8_t* fecData = nullptr;
+    WebRtcOpusFrame* fecFrame = nullptr;
+    WebRtcOpusFrame* primaryFrame = nullptr;
+    WebRtcAudioDecoderParseResult* storage = nullptr;
+    try {
+        if (hasFec) {
+            const auto* vtable = hostDecoder.vtable;
+            using DurationFn = int(APS5_VABI*)(const WebRtcAudioDecoderOpusImpl*, const std::uint8_t*, std::size_t);
+            auto* redundantDurationFn = reinterpret_cast<DurationFn>(ReadVtableSlot(vtable, PacketDurationRedundantSlot, "AudioDecoderOpusImpl::ParsePayload requires PacketDurationRedundant"));
+            const int duration = redundantDurationFn(decoder, hostPayload.data, hostPayload.size);
+            if (duration < 0)
+                throw std::runtime_error("AudioDecoderOpusImpl::ParsePayload redundant duration cannot be negative");
+            fecData = static_cast<std::uint8_t*>(_Znam_nid_postfix(payloadBytes.size()));
+            if (!GuestBytes(fecData).CopyOut(payloadBytes.data(), payloadBytes.size()))
+                throw std::invalid_argument("AudioDecoderOpusImpl::ParsePayload failed to copy FEC payload");
+            const WebRtcBuffer fecBuffer{payloadBytes.size(), payloadBytes.size(), fecData};
+            fecFrame = CreateOpusFrame(reinterpret_cast<WebRtcAudioDecoder*>(decoder), fecBuffer, false);
+            fecData = nullptr;
+            results[count++] = WebRtcAudioDecoderParseResult{timestamp - static_cast<std::uint32_t>(duration), 1, fecFrame};
         }
-        fecBuffer.data = fecData;
-        fecBuffer.size = payloadBytes.size();
-        fecBuffer.capacity = payloadBytes.size();
-        auto* fecFrame = CreateOpusFrame(reinterpret_cast<WebRtcAudioDecoder*>(decoder), fecBuffer, false);
-        results[count++] = WebRtcAudioDecoderParseResult{timestamp - static_cast<std::uint32_t>(duration), 1, fecFrame};
+        primaryFrame = CreateOpusFrame(reinterpret_cast<WebRtcAudioDecoder*>(decoder), hostPayload, true);
+        results[count++] = WebRtcAudioDecoderParseResult{timestamp, 0, primaryFrame};
+        storage = static_cast<WebRtcAudioDecoderParseResult*>(_Znwm_nid_postfix(count * sizeof(WebRtcAudioDecoderParseResult)));
+        if (!GuestPtr<WebRtcAudioDecoderParseResult>(storage).CopyOut(results.data(), count))
+            throw std::invalid_argument("AudioDecoderOpusImpl::ParsePayload storage is not writable");
+        const WebRtcParseResultVector hostResult{storage, storage + count, storage + count};
+        WriteGuest(result, hostResult, "AudioDecoderOpusImpl::ParsePayload requires a writable result");
+        WriteGuest(payload, WebRtcBuffer{}, "AudioDecoderOpusImpl::ParsePayload requires a writable payload");
+        return result;
+    } catch (...) {
+        if (storage)
+            _ZdlPv_nid_postfix(storage);
+        if (primaryFrame)
+            _ZdlPv_nid_postfix(primaryFrame);
+        if (fecFrame)
+            OpusFrameD0_nid_no_patch(fecFrame);
+        else if (fecData)
+            _ZdaPv_nid_postfix(fecData);
+        throw;
     }
-    auto* primaryFrame = CreateOpusFrame(reinterpret_cast<WebRtcAudioDecoder*>(decoder), hostPayload, true);
-    results[count++] = WebRtcAudioDecoderParseResult{timestamp, 0, primaryFrame};
-    WriteGuest(payload, WebRtcBuffer{}, "AudioDecoderOpusImpl::ParsePayload requires a writable payload");
-    auto* storage = static_cast<WebRtcAudioDecoderParseResult*>(_Znwm_nid_postfix(count * sizeof(WebRtcAudioDecoderParseResult)));
-    if (!GuestPtr<WebRtcAudioDecoderParseResult>(storage).CopyOut(results.data(), count)) {
-        _ZdlPv_nid_postfix(storage);
-        throw std::invalid_argument("AudioDecoderOpusImpl::ParsePayload storage is not writable");
-    }
-    WebRtcParseResultVector hostResult{storage, storage + count, storage + count};
-    WriteGuest(result, hostResult, "AudioDecoderOpusImpl::ParsePayload requires a writable result");
-    return result;
 }
 
 int DecodeInternalImpl(WebRtcAudioDecoderOpusImpl* decoder, const std::uint8_t* encoded, std::size_t encodedLen, int sampleRateHz, std::int16_t* decoded, std::int32_t* speechType, bool redundant) {

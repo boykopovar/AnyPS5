@@ -42,8 +42,13 @@ void RequireThrows(TAction action, std::source_location location = std::source_l
 }
 
 std::unordered_set<void*> allocations;
+std::size_t failAfterAllocations = static_cast<std::size_t>(-1);
 
 void* APS5_VABI TestAllocate(std::size_t size) {
+    if (failAfterAllocations == 0)
+        return nullptr;
+    if (failAfterAllocations != static_cast<std::size_t>(-1))
+        --failAfterAllocations;
     auto* p = std::malloc(size);
     Require(p != nullptr);
     allocations.insert(p);
@@ -419,6 +424,29 @@ void TestValidationAndGuardedPointers() {
     Require(allocations.empty());
 }
 
+void TestParsePayloadAllocationFailure() {
+    FakeFieldTrials trials {FakeFieldTrialsVtable + 2, ""};
+    WebRtcAudioDecoderOpusImpl dec{};
+    _ZN6webrtc20AudioDecoderOpusImplC1ERKNS_15FieldTrialsViewEmi_nid_postfix(&dec, reinterpret_cast<const WebRtcFieldTrialsView*>(&trials), 1, 16000);
+    const auto redPkt = EncodeTonePacket(16000, 1, 320, OPUS_APPLICATION_VOIP, true, 5);
+    const bool hasFec = Slot<PacketHasFecFn>(dec.vtable, 10)(&dec, redPkt.data(), redPkt.size());
+    const std::size_t allocCount = hasFec ? 4 : 2;
+    auto* redData = static_cast<std::uint8_t*>(_Znam_nid_postfix(redPkt.size()));
+    std::memcpy(redData, redPkt.data(), redPkt.size());
+    WebRtcBuffer payload {redPkt.size(), redPkt.size(), redData};
+    WebRtcParseResultVector parsed{};
+    for (std::size_t failAt = 0; failAt < allocCount; ++failAt) {
+        failAfterAllocations = failAt;
+        RequireThrows<std::exception>([&] { Slot<ParsePayloadFn>(dec.vtable, 2)(&parsed, &dec, &payload, 64000); });
+        failAfterAllocations = static_cast<std::size_t>(-1);
+        Require(payload.data == redData && payload.size == redPkt.size() && payload.capacity == redPkt.size());
+        Require(parsed.begin == nullptr && parsed.end == nullptr);
+    }
+    _ZdaPv_nid_postfix(redData);
+    _ZN6webrtc20AudioDecoderOpusImplD1Ev_nid_postfix(&dec);
+    Require(allocations.empty());
+}
+
 }
 
 int main() {
@@ -432,6 +460,7 @@ int main() {
     TestDecodeAndPacketMetadata();
     TestParsePayloadAndOpusFrame();
     TestValidationAndGuardedPointers();
+    TestParsePayloadAllocationFailure();
     std::puts("libwebrtc AudioDecoderOpusImpl tests passed");
     return 0;
 }
