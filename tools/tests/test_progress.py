@@ -1068,6 +1068,13 @@ class BarAndRatioTests(unittest.TestCase):
         self.assertEqual(progress.worst_ratio([4], 2), 1.0)
         self.assertGreater(progress.worst_ratio([1, 9], 2), 1.0)
 
+    def test_bar_row_has_a_fill_only_with_a_count_and_defaults_the_caption(self):
+        self.assertEqual(len(progress.bar_row(0, 0, 'a', 0, 4, '#f')), 3)
+        row = progress.bar_row(0, 0, 'a', 2, 4, '#f')
+        self.assertEqual(len(row), 4)
+        self.assertIn('fill="#f"', row[2])
+        self.assertTrue(row[3].endswith('>2</text>'))
+
 
 if __name__ == "__main__":
     unittest.main()
