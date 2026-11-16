@@ -12,5 +12,13 @@ int main() {
     Require(value == 5u);
     volatile unsigned int value = 42;
     Require(_Atomic_load_4_nid_postfix(&value, 0) == 42u);
+    volatile unsigned int value = 7;
+    unsigned int expected = 7;
+    Require(_Atomic_compare_exchange_weak_4_nid_postfix(&value, &expected, 9u, 0, 0) != 0);
+    Require(value == 9u);
+    expected = 7;
+    Require(_Atomic_compare_exchange_weak_4_nid_postfix(&value, &expected, 1u, 0, 0) == 0);
+    Require(value == 9u);
+    Require(expected == 9u);
     return 0;
 }
