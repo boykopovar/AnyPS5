@@ -1172,6 +1172,11 @@ class HelperValueTests(unittest.TestCase):
         self.assertEqual(progress.camel("a_b_c"), "ABC")
         self.assertEqual(progress.camel("libsce_foo"), "LibsceFoo")
 
+    def test_template_open_needs_a_name_before_and_no_comparison_after(self):
+        self.assertTrue(progress.template_open(["foo", "<", "int"], 1))
+        self.assertFalse(progress.template_open(["foo", "<", "="], 1))
+        self.assertFalse(progress.template_open(["<"], 0))
+
 
 if __name__ == "__main__":
     unittest.main()
