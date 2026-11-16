@@ -22,6 +22,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 
@@ -2958,31 +2959,74 @@ ObjectIterator* APS5_VABI _ZNK3sce4Json6Object4findERKNS0_6StringE(ObjectIterato
     if (self->items && key->text && !self->items->head) { Release(result->state); result->state = nullptr; }
     return result;
 }
+namespace {
+bool ReadIteratorPosition(const ObjectIterator* iterator, ObjectLink*& position) {
+    ObjectIterator handle{};
+    if (!GuestPtr<ObjectIterator>{iterator}.CopyIn(handle) || !handle.state) return false;
+    ObjectIteratorState state{};
+    if (!GuestPtr<ObjectIteratorState>{handle.state}.CopyIn(state)) return false;
+    position = state.position;
+    return true;
+}
+}
 bool APS5_VABI _ZNK3sce4Json6Object8iteratoreqERKS2_(const ObjectIterator* self, const ObjectIterator* other) {
-    return self->state && other->state && self->state->position == other->state->position;
+    ObjectLink* left = nullptr;
+    ObjectLink* right = nullptr;
+    return ReadIteratorPosition(self, left) && ReadIteratorPosition(other, right) && left == right;
 }
 bool APS5_VABI _ZNK3sce4Json6Object8iteratorneERKS2_(const ObjectIterator* self, const ObjectIterator* other) {
-    return self->state && other->state && self->state->position != other->state->position;
+    ObjectLink* left = nullptr;
+    ObjectLink* right = nullptr;
+    return ReadIteratorPosition(self, left) && ReadIteratorPosition(other, right) && left != right;
 }
 void APS5_VABI _ZN3sce4Json6Object8iteratorC1ERKS2_(ObjectIterator* self, const ObjectIterator* other) {
-    self->state = other->state ? static_cast<ObjectIteratorState*>(Allocate(sizeof(ObjectIteratorState))) : nullptr;
-    if (self->state) *self->state = *other->state;
+    ObjectIterator source{};
+    if (!GuestPtr<ObjectIterator>{other}.CopyIn(source)) return;
+    ObjectIterator copy{};
+    if (source.state) {
+        ObjectIteratorState state{};
+        if (!GuestPtr<ObjectIteratorState>{source.state}.CopyIn(state)) return;
+        copy.state = static_cast<ObjectIteratorState*>(Allocate(sizeof(ObjectIteratorState)));
+        if (copy.state) *copy.state = state;
+    }
+    if (!GuestPtr<ObjectIterator>{self}.CopyOut(copy)) Release(copy.state);
 }
 void APS5_VABI _ZN3sce4Json6Object8iterator7advanceEm(ObjectIterator* self, std::size_t count) {
-    if (self->state) while (count--) self->state->position = NextObjectLink(self->state->position);
+    ObjectIterator handle{};
+    if (!GuestPtr<ObjectIterator>{self}.CopyIn(handle) || !handle.state) return;
+    ObjectIteratorState state{};
+    if (!GuestPtr<ObjectIteratorState>{handle.state}.CopyIn(state)) return;
+    while (count--) state.position = NextObjectLink(state.position);
+    GuestPtr<ObjectIteratorState>{handle.state}.CopyOut(state);
 }
-bool APS5_VABI _ZNK3sce4Json6Object5emptyEv(const Object* self) { return !self->items || self->items->empty(); }
-std::size_t APS5_VABI _ZNK3sce4Json6Object4sizeEv(const Object* self) { return self->items ? self->items->size() : 0; }
+bool APS5_VABI _ZNK3sce4Json6Object5emptyEv(const Object* self) {
+    Object object{};
+    if (!GuestPtr<Object>{self}.CopyIn(object)) return true;
+    return !object.items || object.items->empty();
+}
+std::size_t APS5_VABI _ZNK3sce4Json6Object4sizeEv(const Object* self) {
+    Object object{};
+    if (!GuestPtr<Object>{self}.CopyIn(object)) return 0;
+    return object.items ? object.items->size() : 0;
+}
 void APS5_VABI _ZN3sce4Json6Object5eraseERKNS0_6StringE(Object* self, const String* key) {
     if (!self->items || !key->text) return;
     self->items->Erase(self->items->Find(Characters(*key)));
 }
 
-void APS5_VABI _ZN3sce4Json5ValueC1Ev(Value* self) { Construct(*self); }
-void APS5_VABI _ZN3sce4Json5ValueC1Eb(Value* self, bool value) { Construct(*self); self->type = TypeBoolean; self->boolean = value; }
-void APS5_VABI _ZN3sce4Json5ValueC1El(Value* self, std::int64_t value) { Construct(*self); self->type = TypeInteger; self->integer = value; }
-void APS5_VABI _ZN3sce4Json5ValueC1Em(Value* self, std::uint64_t value) { Construct(*self); self->type = TypeUInteger; self->uinteger = value; }
-void APS5_VABI _ZN3sce4Json5ValueC1Ed(Value* self, double value) { Construct(*self); AssignReal(*self, value); }
+namespace {
+void StoreValue(Value* self, const Value& value) { GuestPtr<Value>{self}.CopyOut(value); }
+}
+void APS5_VABI _ZN3sce4Json5ValueC1Ev(Value* self) { Value value{}; Construct(value); StoreValue(self, value); }
+void APS5_VABI _ZN3sce4Json5ValueC1Eb(Value* self, bool boolean) { Value value{}; Construct(value); value.type = TypeBoolean; value.boolean = boolean; StoreValue(self, value); }
+void APS5_VABI _ZN3sce4Json5ValueC1El(Value* self, std::int64_t integer) { Value value{}; Construct(value); value.type = TypeInteger; value.integer = integer; StoreValue(self, value); }
+void APS5_VABI _ZN3sce4Json5ValueC1Em(Value* self, std::uint64_t integer) { Value value{}; Construct(value); value.type = TypeUInteger; value.uinteger = integer; StoreValue(self, value); }
+void APS5_VABI _ZN3sce4Json5ValueC1Ed(Value* self, double real) {
+    Value value{};
+    Construct(value);
+    AssignReal(value, real);
+    StoreValue(self, value);
+}
 void APS5_VABI _ZN3sce4Json5ValueC1EPKc(Value* self, const char* text) {
     Construct(*self);
     std::size_t length = 0;
