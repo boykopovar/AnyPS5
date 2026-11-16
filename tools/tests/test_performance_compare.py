@@ -661,6 +661,17 @@ class CompareHelperTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'finite numeric range'):
             performance_compare.delta(1e308, -1e308)
 
+    def test_number_accepts_finite_non_negative_numbers_only(self):
+        self.assertEqual(performance_compare.number(3, 'x'), 3)
+        for value in (-1, True, float('nan')):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'x must be'):
+                performance_compare.number(value, 'x')
+
+    def test_unique_json_object_refuses_a_duplicate_field(self):
+        self.assertEqual(performance_compare.unique_json_object([('a', 1), ('b', 2)]), {'a': 1, 'b': 2})
+        with self.assertRaisesRegex(ValueError, 'duplicate JSON field'):
+            performance_compare.unique_json_object([('a', 1), ('a', 2)])
+
 
 if __name__ == "__main__":
     unittest.main()
