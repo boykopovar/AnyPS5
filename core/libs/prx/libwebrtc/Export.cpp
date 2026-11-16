@@ -965,21 +965,6 @@ int APS5_VABI _ZN6webrtc14AudioMixerImpl6CreateEv_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc13FrameCombinerC1Eb_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc13FrameCombinerD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc13FrameCombiner7CombineEN3rtc9ArrayViewIKPNS_10AudioFrameELln4711EEEmimS4__nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN6webrtc29BuiltinAudioProcessingBuilder5BuildERKNS_11EnvironmentE_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
