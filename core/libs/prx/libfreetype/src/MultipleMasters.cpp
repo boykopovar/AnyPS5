@@ -32,7 +32,7 @@ bool CopyOut(void* destination, const void* source, std::size_t bytes) {
 }
 
 bool WriteValues(std::int64_t* destination, std::uint32_t count, const std::vector<FT_Fixed>& native, std::uint32_t used) {
-    std::array<std::int64_t, 4096> chunk;
+    std::array<std::int64_t, 512> chunk;
     for (std::uint32_t base = 0; base < count;) {
         const std::uint32_t size = std::min<std::uint32_t>(static_cast<std::uint32_t>(chunk.size()), count - base);
         for (std::uint32_t index = 0; index < size; ++index) chunk[index] = native[std::min(base + index, used - 1)];
