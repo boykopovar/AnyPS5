@@ -11338,6 +11338,56 @@ void verifyFunctionLdsBound() {
     }).first;
     require(joined == 256u, "function LDS: a phi of bounded addresses must take its largest");
 
+    const auto bitCount = build([](IrProgram&, IrBlock&, auto& emit, auto& constant, IrValue& active) {
+        auto& mask = emit(IrOpcode::GetUserData, IrType::U32, {&constant(0u)});
+        auto& count = emit(IrOpcode::BitCount32, IrType::U32, {&mask});
+        auto& address = emit(IrOpcode::ShiftLeftLogical32, IrType::U32, {&count, &constant(2u)});
+        emit(IrOpcode::WriteSharedU32, IrType::Void, {&address, &constant(1u), &active}, 0u);
+    }).first;
+    require(bitCount == 64u, "function LDS: a 32-bit count scaled by 4 bytes must take 33 dwords, rounded to 64");
+
+    const auto passAlong = build([](IrProgram& program, IrBlock& block, auto& emit, auto& constant, IrValue& active) {
+        auto& phi = program.CreateValue(IrOpcode::Phi, IrType::U32);
+        block.AppendInstruction(&phi);
+        auto& base = emit(IrOpcode::LaneId, IrType::U32, {});
+        auto& scaled = emit(IrOpcode::ShiftLeftLogical32, IrType::U32, {&base, &constant(2u)});
+        phi.AddPhiOperand(&block, &scaled);
+        phi.AddPhiOperand(&block, &phi);
+        emit(IrOpcode::WriteSharedU32, IrType::Void, {&phi, &constant(1u), &active}, 0u);
+    }).first;
+    require(passAlong == 64u, "function LDS: an address passed through a loop must keep its bound");
+
+    const auto activeSelect = build([](IrProgram&, IrBlock&, auto& emit, auto& constant, IrValue& active) {
+        auto& lane = emit(IrOpcode::LaneId, IrType::U32, {});
+        auto& activeLane = emit(IrOpcode::IEqual32, IrType::U1, {&lane, &constant(0u)});
+        auto& scaled = emit(IrOpcode::ShiftLeftLogical32, IrType::U32, {&lane, &constant(2u)});
+        auto& unbounded = emit(IrOpcode::GetUserData, IrType::U32, {&constant(0u)});
+        auto& chosen = emit(IrOpcode::SelectU32, IrType::U32, {&activeLane, &scaled, &unbounded});
+        emit(IrOpcode::WriteSharedU32, IrType::Void, {&chosen, &constant(1u), &activeLane}, 0u);
+    }).first;
+    require(activeSelect == 64u, "function LDS: a select whose condition matches the active lane condition must bound by its taken branch");
+
+    const auto structuralActiveSelect = build([](IrProgram&, IrBlock&, auto& emit, auto& constant, IrValue& active) {
+        auto& lane = emit(IrOpcode::LaneId, IrType::U32, {});
+        auto& condA = emit(IrOpcode::IEqual32, IrType::U1, {&lane, &constant(5u)});
+        auto& condB = emit(IrOpcode::IEqual32, IrType::U1, {&lane, &constant(5u)});
+        auto& scaled = emit(IrOpcode::ShiftLeftLogical32, IrType::U32, {&lane, &constant(2u)});
+        auto& unbounded = emit(IrOpcode::GetUserData, IrType::U32, {&constant(0u)});
+        auto& chosen = emit(IrOpcode::SelectU32, IrType::U32, {&condA, &scaled, &unbounded});
+        emit(IrOpcode::WriteSharedU32, IrType::Void, {&chosen, &constant(1u), &condB}, 0u);
+    }).first;
+    require(structuralActiveSelect == 64u, "function LDS: a select with a structurally identical active condition must bound by its taken branch");
+
+    const auto differentSelect = build([](IrProgram&, IrBlock&, auto& emit, auto& constant, IrValue& active) {
+        auto& otherCondition = emit(IrOpcode::GetUserData, IrType::U1, {&constant(1u)});
+        auto& lane = emit(IrOpcode::LaneId, IrType::U32, {});
+        auto& scaled = emit(IrOpcode::ShiftLeftLogical32, IrType::U32, {&lane, &constant(2u)});
+        auto& unbounded = emit(IrOpcode::GetUserData, IrType::U32, {&constant(0u)});
+        auto& chosen = emit(IrOpcode::SelectU32, IrType::U32, {&otherCondition, &scaled, &unbounded});
+        emit(IrOpcode::WriteSharedU32, IrType::Void, {&chosen, &constant(1u), &active}, 0u);
+    }).first;
+    require(differentSelect == FunctionLdsDwordLimit, "function LDS: a select under an unrelated condition must stay unbounded if a branch is unbounded");
+
     const auto unsized = build([](IrProgram&, IrBlock&, auto& emit, auto& constant, IrValue& active) {
         emit(IrOpcode::LoadShared, IrType::U32, {&constant(0u), &active}, 0u);
     }).first;
