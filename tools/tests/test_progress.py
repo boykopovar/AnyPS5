@@ -1161,5 +1161,13 @@ class UniqueJsonKeysTests(unittest.TestCase):
             progress.unique_json_keys([("a", 1), ("a", 2)])
 
 
+class BodyEndTests(unittest.TestCase):
+    def test_body_end_matches_nested_braces(self):
+        text = "x{a{b}c}d"
+        self.assertEqual(progress.body_end(text, 1), 7)
+        self.assertEqual(text[progress.body_end(text, 1)], "}")
+        self.assertEqual(progress.body_end("x{a", 1), len("x{a"))
+
+
 if __name__ == "__main__":
     unittest.main()
