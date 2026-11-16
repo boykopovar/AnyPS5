@@ -947,6 +947,10 @@ class SourceScanHelperTests(unittest.TestCase):
         self.assertEqual(list(nid_names.source_assembly_definitions('APS5_ASM_FUNCTION("sceFoo")\n')), ["sceFoo"])
         self.assertEqual(list(nid_names.source_assembly_definitions('APS5_SIGNAL_ASM_FUNCTION("sceBar")\n')), ["sceBar"])
 
+    def test_source_assembly_definitions_ignore_invalid_names_and_other_macros(self):
+        self.assertEqual(list(nid_names.source_assembly_definitions('APS5_ASM_FUNCTION("bad name")\n')), [])
+        self.assertEqual(list(nid_names.source_assembly_definitions('OTHER_MACRO("sceFoo")\n')), [])
+
 
 if __name__ == "__main__":
     unittest.main()
