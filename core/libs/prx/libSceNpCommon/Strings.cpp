@@ -237,8 +237,16 @@ int ParseInteger(const char* str, std::size_t* parsedLength, Parse parse, bool* 
 
 int CopyToBuffer(char* dst, std::size_t size, const char* src, std::size_t length) {
     if (size < length + 1) return NP_ERROR_BUFFER_TOO_SMALL;
-    std::memcpy(dst, src, length);
-    std::memset(dst + length, 0, size - length);
+    constexpr std::size_t Chunk = 64 * 1024;
+    const std::size_t head = std::min(size, length + Chunk);
+    std::string padded(head, '\0');
+    std::memcpy(padded.data(), src, length);
+    if (!GuestCopyOut_nid_no_patch(dst, padded.data(), head)) return NP_ERROR_INVALID_ARGUMENT;
+    for (std::size_t done = head; done < size;) {
+        const std::size_t step = std::min(Chunk, size - done);
+        if (!GuestCopyOut_nid_no_patch(dst + done, padded.data() + length, step)) return NP_ERROR_INVALID_ARGUMENT;
+        done += step;
+    }
     return 0;
 }
 
@@ -367,6 +375,24 @@ const XmlEntity* XmlEntityAt(const char* text) {
     return nullptr;
 }
 
+bool ReadXmlSource(const char* src, std::size_t length, std::string& host) {
+    constexpr std::size_t Chunk = 64 * 1024;
+    constexpr std::size_t Tail = 8;
+    host.clear();
+    for (std::size_t done = 0; done < length;) {
+        const std::size_t step = std::min(Chunk, length - done);
+        host.resize(done + step);
+        if (!GuestCopyIn_nid_no_patch(host.data() + done, src + done, step)) return false;
+        done += step;
+    }
+    char tail[Tail]{};
+    if (!GuestCopyIn_nid_no_patch(tail, src + length, Tail)) {
+        for (std::size_t index = 0; index < Tail && GuestCopyIn_nid_no_patch(tail + index, src + length + index, 1); ++index) {}
+    }
+    host.append(tail, Tail);
+    return true;
+}
+
 bool IsUrlSafe(unsigned char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.'
         || c == '*';
@@ -486,12 +512,20 @@ int APS5_VABI sceNpStrToUInt64(const char* str, std::uint64_t* value, int base, 
 
 int APS5_VABI sceNpStrBuildHex(char* dst, std::size_t size, const void* src, std::size_t length, bool uppercase) {
     if (size == 0 || length > (size - 1) / 2) return NP_ERROR_BUFFER_TOO_SMALL;
-    const auto* bytes = static_cast<const std::uint8_t*>(src);
-    for (std::size_t i = 0; i < length; ++i) {
-        dst[i * 2] = HexDigit(bytes[i] >> 4, uppercase);
-        dst[i * 2 + 1] = HexDigit(bytes[i] & 0xF, uppercase);
+    constexpr std::size_t chunk = 256;
+    std::array<std::uint8_t, chunk> bytes{};
+    std::array<char, chunk * 2> hex{};
+    for (std::size_t offset = 0; offset < length; offset += chunk) {
+        const std::size_t count = std::min(chunk, length - offset);
+        if (!GuestCopyIn_nid_no_patch(bytes.data(), static_cast<const std::uint8_t*>(src) + offset, count)) return NP_ERROR_INVALID_ARGUMENT;
+        for (std::size_t i = 0; i < count; ++i) {
+            hex[i * 2] = HexDigit(bytes[i] >> 4, uppercase);
+            hex[i * 2 + 1] = HexDigit(bytes[i] & 0xF, uppercase);
+        }
+        if (!GuestCopyOut_nid_no_patch(dst + offset * 2, hex.data(), count * 2)) return NP_ERROR_INVALID_ARGUMENT;
     }
-    dst[length * 2] = '\0';
+    const char terminator = '\0';
+    if (!GuestCopyOut_nid_no_patch(dst + length * 2, &terminator, sizeof(terminator))) return NP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -505,13 +539,28 @@ int APS5_VABI sceNpStrnParseHex(const char* hex, std::size_t length, void* out, 
 
 int APS5_VABI sceNpStrcpyToBuf(char* dst, std::size_t size, const char* src) {
     if (src == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
-    return CopyToBuffer(dst, size, src, std::strlen(src));
+    std::string text;
+    const int error = CopyGuestString_nid_no_patch(src, size, text);
+    if (error == 63) return NP_ERROR_BUFFER_TOO_SMALL;
+    if (error != 0) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    return CopyToBuffer(dst, size, text.data(), text.size());
 }
 
 int APS5_VABI sceNpStrncpyToBuf(char* dst, std::size_t size, const char* src, std::size_t maxLength) {
     if (src == nullptr && maxLength == 0) return CopyToBuffer(dst, size, "", 0);
     if (src == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
-    return CopyToBuffer(dst, size, src, strnlen(src, maxLength));
+    if (size == 0) return NP_ERROR_BUFFER_TOO_SMALL;
+    const std::size_t window = std::min(maxLength, size);
+    std::string text;
+    const int error = CopyGuestString_nid_no_patch(src, window, text);
+    if (error == 63 && window == size) return NP_ERROR_BUFFER_TOO_SMALL;
+    if (error == 63) {
+        text.resize(maxLength);
+        if (!GuestCopyIn_nid_no_patch(text.data(), src, maxLength)) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    } else if (error != 0) {
+        return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    }
+    return CopyToBuffer(dst, size, text.data(), text.size());
 }
 
 int APS5_VABI sceNpUtilJsonEscape(char* dst, std::size_t dstSize, const char* src, std::size_t srcLength) {
@@ -678,34 +727,42 @@ int APS5_VABI sceNpUtilJsonGetOneChar(char* dst, std::size_t dstSize, const char
 
 int APS5_VABI sceNpUtilXmlEscape(char* dst, std::size_t dstSize, const char* src, std::size_t srcLength, std::size_t* required) {
     if (src == nullptr || srcLength == 0 || (dst == nullptr && required == nullptr)) return NP_UTIL_ERROR_INVALID_ARGUMENT;
-    const char* const end = src + srcLength;
+    std::string source;
+    if (!ReadXmlSource(src, srcLength, source)) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    std::string out;
+    const auto flush = [&](int result) {
+        if (dst != nullptr && !out.empty() && !GuestCopyOut_nid_no_patch(dst, out.data(), out.size())) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+        return result;
+    };
+    const char* text = source.data();
+    const char* const end = text + srcLength;
     std::size_t length = 0;
     do {
-        const auto lead = static_cast<unsigned char>(*src);
-        const char* piece = src;
+        const auto lead = static_cast<unsigned char>(*text);
+        const char* piece = text;
         std::size_t pieceLength = 1;
         std::size_t consumed = 1;
         if (lead < 0x80) {
-            if (!IsAllowedTextByte(lead)) return NP_UTIL_ERROR_INVALID_CHARACTER;
-            if (const char* entity = XmlEntityOf(*src)) {
+            if (!IsAllowedTextByte(lead)) return flush(NP_UTIL_ERROR_INVALID_CHARACTER);
+            if (const char* entity = XmlEntityOf(*text)) {
                 piece = entity;
                 pieceLength = std::strlen(entity);
             }
         } else {
             consumed = pieceLength = Utf8SequenceLength(lead);
-            if (pieceLength == 0 || !IsValidSequence(src, pieceLength)) return NP_UTIL_ERROR_INVALID_CHARACTER;
+            if (pieceLength == 0 || !IsValidSequence(text, pieceLength)) return flush(NP_UTIL_ERROR_INVALID_CHARACTER);
         }
         if (dst != nullptr) {
-            if (length + pieceLength > dstSize) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
-            if (!GuestCopyOut_nid_no_patch(dst + length, piece, pieceLength)) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+            if (length + pieceLength > dstSize) return flush(NP_UTIL_ERROR_BUFFER_TOO_SMALL);
+            out.append(piece, pieceLength);
         }
         length += pieceLength;
-        src += consumed;
-    } while (src < end);
+        text += consumed;
+    } while (text < end);
     if (dst != nullptr) {
-        if (length + 1 > dstSize) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
-        const char terminator = '\0';
-        if (!GuestCopyOut_nid_no_patch(dst + length, &terminator, sizeof(terminator))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+        if (length + 1 > dstSize) return flush(NP_UTIL_ERROR_BUFFER_TOO_SMALL);
+        out.push_back('\0');
+        if (flush(0) != 0) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     }
     const std::size_t needed = length + 1;
     if (required != nullptr && !GuestCopyOut_nid_no_patch(required, &needed, sizeof(needed))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
@@ -714,26 +771,34 @@ int APS5_VABI sceNpUtilXmlEscape(char* dst, std::size_t dstSize, const char* src
 
 int APS5_VABI sceNpUtilXmlUnescape(char* dst, std::size_t dstSize, const char* src, std::size_t srcLength, std::size_t* required) {
     if (src == nullptr || srcLength == 0 || (dst == nullptr && required == nullptr)) return NP_UTIL_ERROR_INVALID_ARGUMENT;
-    const char* const end = src + srcLength;
+    std::string source;
+    if (!ReadXmlSource(src, srcLength, source)) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+    std::string out;
+    const auto flush = [&](int result) {
+        if (dst != nullptr && !out.empty() && !GuestCopyOut_nid_no_patch(dst, out.data(), out.size())) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+        return result;
+    };
+    const char* text = source.data();
+    const char* const end = text + srcLength;
     std::size_t length = 0;
     do {
-        if (dst != nullptr && length + 1 > dstSize) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
-        char character = *src;
+        if (dst != nullptr && length + 1 > dstSize) return flush(NP_UTIL_ERROR_BUFFER_TOO_SMALL);
+        char character = *text;
         std::size_t consumed = 1;
         if (character == '&') {
-            if (const XmlEntity* entity = XmlEntityAt(src)) {
+            if (const XmlEntity* entity = XmlEntityAt(text)) {
                 character = entity->character;
                 consumed = std::strlen(entity->text);
             }
         }
-        if (dst != nullptr && !GuestCopyOut_nid_no_patch(dst + length, &character, sizeof(character))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+        if (dst != nullptr) out.push_back(character);
         ++length;
-        src += consumed;
-    } while (src < end);
+        text += consumed;
+    } while (text < end);
     if (dst != nullptr) {
-        if (length + 1 > dstSize) return NP_UTIL_ERROR_BUFFER_TOO_SMALL;
-        const char terminator = '\0';
-        if (!GuestCopyOut_nid_no_patch(dst + length, &terminator, sizeof(terminator))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
+        if (length + 1 > dstSize) return flush(NP_UTIL_ERROR_BUFFER_TOO_SMALL);
+        out.push_back('\0');
+        if (flush(0) != 0) return NP_UTIL_ERROR_INVALID_ARGUMENT;
     }
     const std::size_t needed = length + 1;
     if (required != nullptr && !GuestCopyOut_nid_no_patch(required, &needed, sizeof(needed))) return NP_UTIL_ERROR_INVALID_ARGUMENT;

@@ -16,7 +16,10 @@ extern "C" {
 long long APS5_VABI strtonum_nid_postfix(const char* text, long long minimum, long long maximum, const char** error) {
     const int savedError = errno;
     const auto fail = [error](const char* message, int number) -> long long {
-        if (error) *error = message;
+        if (error != nullptr && !GuestCopyOut_nid_no_patch(error, &message, sizeof(message))) {
+            errno = 14;
+            return 0;
+        }
         errno = number;
         return 0;
     };
@@ -27,7 +30,13 @@ long long APS5_VABI strtonum_nid_postfix(const char* text, long long minimum, lo
     if (errno == EINVAL || end == text || *end != '\0') return fail("invalid", 22);
     if ((value == LLONG_MIN && errno == ERANGE) || value < minimum) return fail("too small", 34);
     if ((value == LLONG_MAX && errno == ERANGE) || value > maximum) return fail("too large", 34);
-    if (error) *error = nullptr;
+    if (error != nullptr) {
+        const char* nullPtr = nullptr;
+        if (!GuestCopyOut_nid_no_patch(error, &nullPtr, sizeof(nullPtr))) {
+            errno = 14;
+            return 0;
+        }
+    }
     errno = savedError;
     return value;
 }

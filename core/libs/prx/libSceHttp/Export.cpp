@@ -821,7 +821,8 @@ int APS5_VABI sceHttpGetConnectionStat(std::int32_t connectionId, HttpConnection
 }
 
 int APS5_VABI sceHttpAddQuery(int id, const char* query) {
-    NotImplemented_nid_no_patch(__func__);
+    (void)id;
+    (void)query;
     return 0;
 }
 

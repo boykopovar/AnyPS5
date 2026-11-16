@@ -177,6 +177,12 @@ public:
 
 class BundleFrame final : public ObjectOf<ObjectType::BundleFrame> {
 public:
+    RectValue contentBounds{{0.0, 0.0}, {0.0, 0.0}};
+    RectValue visibleContentBounds{{0.0, 0.0}, {0.0, 0.0}};
+    RectValue visibleContentBoundsExcludingScrollbars{{0.0, 0.0}, {0.0, 0.0}};
+    SizeValue scrollOffset{0.0, 0.0};
+    bool hasHorizontalScrollbar = false;
+    bool hasVerticalScrollbar = false;
 };
 
 class BundleDOMWindowExtension final : public ObjectOf<ObjectType::BundleDOMWindowExtension> {
@@ -226,6 +232,14 @@ public:
     Retained<String> description;
     Retained<String> helpText;
     Retained<String> url;
+};
+
+class MediaSessionMetadata final : public ObjectOf<ObjectType::MediaSessionMetadata> {
+public:
+    Retained<String> title;
+    Retained<String> album;
+    Retained<String> artist;
+    Retained<URL> artworkURL;
 };
 
 class PopupMenuItem final : public ObjectOf<ObjectType::PopupMenuItem> {
