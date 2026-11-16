@@ -271,6 +271,10 @@ if(BUILD_TESTING)
     target_include_directories(pad_command_file_tests PRIVATE core/libs)
     add_test(NAME pad_command_file COMMAND pad_command_file_tests)
     set_tests_properties(pad_command_file PROPERTIES TIMEOUT 20)
+    add_test_executable(pad_recording_tests core/libs/prx/libScePad/tests/PadRecording.cpp)
+    target_include_directories(pad_recording_tests PRIVATE core/libs)
+    add_test(NAME pad_recording COMMAND pad_recording_tests)
+    set_tests_properties(pad_recording PROPERTIES TIMEOUT 20)
     if(Python3_Interpreter_FOUND)
         get_property(windows_tooling_before DIRECTORY PROPERTY TESTS)
         add_test(NAME mingw_host_only_test_targets COMMAND ${Python3_EXECUTABLE}
@@ -511,6 +515,9 @@ if(BUILD_TESTING)
         add_test(NAME rebase_verify COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_rebase_verify.py)
         set_tests_properties(rebase_verify PROPERTIES TIMEOUT 60)
+        add_test(NAME check_test_registration_script COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_test_registration.py)
+        set_tests_properties(check_test_registration_script PROPERTIES TIMEOUT 60)
         add_test(NAME check_skips COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_skips.py
             SkipJsonTests RequiredTestsTests SkipReportTests NotRunTests)

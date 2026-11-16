@@ -346,7 +346,8 @@ UnnormalizedProof ProveUnnormalized(const ShaderInfo& info, const ResourceSnapsh
         proof.samplers[r] = true;
         const auto clampX = snapshot.samplers[r].dwords[0] & 7u;
         const auto clampY = (snapshot.samplers[r].dwords[0] >> 3u) & 7u;
-        proof.mirroredAxes[r] = (clampX == 1u || clampX == 3u ? 1u : 0u) | (clampY == 1u || clampY == 3u ? 2u : 0u);
+        const auto mirrors = [](std::uint32_t clamp) { return clamp == 1u || clamp == 3u || clamp == 7u; };
+        proof.mirroredAxes[r] = (mirrors(clampX) ? 1u : 0u) | (mirrors(clampY) ? 2u : 0u);
     }
     for (std::uint32_t resource = 0; resource < info.images.size(); resource++) {
         bool exact = proof.images[resource];
@@ -875,6 +876,7 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
             physical.imageWritten.reserve(physical.imageWritten.size() + tables->elements.size());
             physical.imageAtomic.reserve(physical.imageAtomic.size() + tables->elements.size());
             physical.imageAtomic64.reserve(physical.imageAtomic64.size() + tables->elements.size());
+            physical.imageUintStorage.reserve(physical.imageUintStorage.size() + tables->elements.size());
             physical.imageSamplers.reserve(physical.imageSamplers.size() + tables->elements.size());
             for (const auto& element : tables->elements) {
                 ImageResource shape;
@@ -884,6 +886,7 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
                 physical.imageWritten.push_back(ImageBindingResourceClass(element.kind) == ImageResourceClass::Storage);
                 physical.imageAtomic.push_back(element.atomic || RuntimeAbi::AtomicImageKind(static_cast<std::uint32_t>(element.kind)));
                 physical.imageAtomic64.push_back(element.atomic64 || RuntimeAbi::Atomic64ImageKind(static_cast<std::uint32_t>(element.kind)));
+                physical.imageUintStorage.push_back(ImageBindingResourceClass(element.kind) == ImageResourceClass::Storage && RuntimeAbi::UintStorageImageBinding(static_cast<std::uint32_t>(element.kind)));
                 std::uint64_t samplers = 0;
                 for (std::uint32_t sampler = 0; sampler < entry.tableSamplerMasks.size(); ++sampler) {
                     if (((element.samplers >> sampler) & 1u) != 0u) samplers |= entry.tableSamplerMasks[sampler];

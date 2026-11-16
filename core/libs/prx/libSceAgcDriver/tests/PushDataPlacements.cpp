@@ -262,12 +262,12 @@ int main() {
             StagePushPlacement placement;
             placement.items.fill(Abi::NoPushPosition);
             placement.items[static_cast<std::uint32_t>(Item::ShaderData)] = 4u;
-            AgcDriver::Graphics::PipelineSpecialization optionalUser(module);
+            AgcDriver::Graphics::PipelineSpecialization optionalUser(module, 0u);
             optionalUser.PlacePushData(placement);
             placement.items[static_cast<std::uint32_t>(Item::ShaderData)] = Abi::NoPushPosition;
             bool refused = false;
             try {
-                AgcDriver::Graphics::PipelineSpecialization required(module);
+                AgcDriver::Graphics::PipelineSpecialization required(module, 0u);
                 required.PlacePushData(placement);
             } catch (const std::runtime_error&) {
                 refused = true;

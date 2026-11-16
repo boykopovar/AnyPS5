@@ -167,9 +167,9 @@ void CheckBindings(const IrProgram& program, const CompiledBindingLayout& bindin
     }
 }
 
-void EmitBaseHeader(SpirvModule& module, const IrProgram& program) {
+void EmitBaseHeader(SpirvModule& module, const IrProgram& program, bool atomicLockTable) {
     module.EmitCapability(spv::CapabilityShader);
-    const bool physical = program.Info().usesDma || program.Resources().stage == IrShaderStage::Mesh || program.Metadata().bindings.bufferAddressDwords != 0u || program.Metadata().bindings.UsesDataAddress();
+    const bool physical = program.Info().usesDma || program.Resources().stage == IrShaderStage::Mesh || program.Metadata().bindings.bufferAddressDwords != 0u || program.Metadata().bindings.UsesDataAddress() || atomicLockTable;
     if (physical) {
         module.EmitCapability(spv::CapabilityInt64);
         module.EmitCapability(spv::CapabilityPhysicalStorageBufferAddresses);
@@ -721,6 +721,7 @@ void DefineDescriptors(SpirvEmitterState& state) {
                     } else {
                         state.tableImageVariables.push_back({kind, Define(state.module.Type(spv::OpTypeRuntimeArray, ImageType(state, mode)), name.c_str(), spv::StorageClassUniformConstant)});
                     }
+                    if (mode.atomic64 && state.requirements.imageAtomicLocks) state.module.AddAnnotation(spv::OpDecorate, state.tableImageVariables.back().variable, spv::DecorationCoherent);
                     if (mode.dimension == RdnaImageDimension::Dim1D || mode.dimension == RdnaImageDimension::Dim1DArray) state.module.EmitCapability(binding.kind == DescriptorBindingKind::ImageStorageTable ? spv::CapabilityImage1D : spv::CapabilitySampled1D);
                 }
             }
@@ -752,7 +753,7 @@ void DefineDescriptors(SpirvEmitterState& state) {
             const auto& image = *selected;
             const auto name = "image_" + std::to_string(static_cast<std::uint32_t>(binding.kind));
             state.imageVariables.at(ImageBindingIndex(binding.kind)) = Define(ArrayType(ImageType(state, image)), name.c_str(), spv::StorageClassUniformConstant);
-            if (std::ranges::any_of(binding.resources, [&](std::uint32_t resource) { return state.program.Info().images.at(resource).targetMerge; })) state.module.AddAnnotation(spv::OpDecorate, state.imageVariables.at(ImageBindingIndex(binding.kind)), spv::DecorationCoherent);
+            if ((image.atomic64 && state.requirements.imageAtomicLocks) || std::ranges::any_of(binding.resources, [&](std::uint32_t resource) { return state.program.Info().images.at(resource).targetMerge; })) state.module.AddAnnotation(spv::OpDecorate, state.imageVariables.at(ImageBindingIndex(binding.kind)), spv::DecorationCoherent);
             if (image.dimension == RdnaImageDimension::Dim1D || image.dimension == RdnaImageDimension::Dim1DArray) {
                 state.module.EmitCapability(image.resourceClass == ImageResourceClass::Sampled ? spv::CapabilitySampled1D : spv::CapabilityImage1D);
             }

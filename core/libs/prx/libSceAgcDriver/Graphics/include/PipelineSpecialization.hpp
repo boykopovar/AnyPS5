@@ -52,18 +52,20 @@ public:
         }
     }
 
-    explicit PipelineSpecialization(const ShaderRecompiler::RecompileResult& shader, std::uint32_t layerBase = 0u, std::uint32_t layerCount = 0xffffffffu) {
-        values = shader.specialization;
+    PipelineSpecialization(const ShaderRecompiler::RecompileResult& shader, VkDeviceAddress atomicLockTable, std::uint32_t layerBase, std::uint32_t layerCount) : PipelineSpecialization(shader, atomicLockTable) {
         for (auto& constant : values) {
             if (constant.id == ShaderRecompiler::PipelineSpecialization::MeshLayerBase) constant.value = layerBase;
             if (constant.id == ShaderRecompiler::PipelineSpecialization::MeshLayerCount) constant.value = layerCount;
         }
-        Validate(shader);
-        describe(values);
     }
 
-    PipelineSpecialization(const ShaderRecompiler::RecompileResult& shader, std::span<const ShaderRecompiler::PipelineSpecializationConstant> replaced) : values(shader.specialization) {
+    PipelineSpecialization(const ShaderRecompiler::RecompileResult& shader, VkDeviceAddress atomicLockTable, std::span<const ShaderRecompiler::PipelineSpecializationConstant> replaced = {}) : values(shader.specialization) {
         Validate(shader);
+        for (auto& constant : values) {
+            if (!ShaderRecompiler::PipelineSpecialization::IsAtomicLockTable(constant.id)) continue;
+            Require(atomicLockTable != 0, "a shader emulates 64-bit atomics, but the device has no atomic lock table");
+            constant.value = static_cast<std::uint32_t>(atomicLockTable >> (32u * (constant.id - ShaderRecompiler::PipelineSpecialization::AtomicLockTableBase)));
+        }
         for (const auto& constant : replaced) {
             const auto found = std::ranges::find(values, constant.id, &ShaderRecompiler::PipelineSpecializationConstant::id);
             Require(found != values.end(), "a replaced pipeline specialization ID is not supplied by the shader");

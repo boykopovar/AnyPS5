@@ -52,30 +52,29 @@ void DefineBdaFaultFunction(SpirvEmitterState& state) {
     state.module.AddFunction(spv::OpFunctionParameter, u32, bytes);
     state.module.AddFunction(spv::OpFunctionParameter, u32, instruction);
     EmitLabel(state, state.module.AllocateId());
-    const auto pointer = BdaWord(state, state.faultBufferVariable, ConstantU32(state, 0u));
-    const auto previous = state.module.AllocateId();
+    const auto word = [&](std::size_t offset) { return static_cast<std::uint32_t>(offset / sizeof(std::uint32_t)); };
     const auto scope = ConstantU32(state, spv::ScopeDevice);
     const auto relaxed = ConstantU32(state, spv::MemorySemanticsMaskNone);
     const auto notUnaligned = Binary(state, spv::OpINotEqual, TypeBool(state), reason, ConstantU32(state, static_cast<std::uint32_t>(BdaAbi::FaultReason::Unaligned)));
-    EmitIfCondition(state, notUnaligned, [&] {
-        state.module.AddFunction(spv::OpAtomicOr, u32, state.module.AllocateId(), BdaWord(state, state.faultBufferVariable, ConstantU32(state, static_cast<std::uint32_t>(offsetof(BdaAbi::Fault, otherFaults) / sizeof(std::uint32_t)))), scope, relaxed, ConstantU32(state, 1u));
-    });
-    state.module.AddFunction(spv::OpAtomicCompareExchange, TypeU32(state), previous, pointer, scope, relaxed, relaxed, ConstantU32(state, static_cast<std::uint32_t>(BdaAbi::FaultState::Writing)), ConstantU32(state, 0u));
-    const auto won = Binary(state, spv::OpIEqual, TypeBool(state), previous, ConstantU32(state, 0u));
-    EmitIfCondition(state, won, [&] {
-        const auto store = [&](std::uint32_t index, std::uint32_t value) {
-            if (state.BdaAddressed()) state.module.AddFunction(spv::OpStore, BdaWord(state, state.faultBufferVariable, ConstantU32(state, index)), value, spv::MemoryAccessAlignedMask, 4u);
-            else state.module.AddFunction(spv::OpStore, BdaWord(state, state.faultBufferVariable, ConstantU32(state, index)), value);
-        };
-        store(1, reason);
-        store(2, words ? address : Unary(state, spv::OpUConvert, TypeU32(state), address));
-        store(3, words ? addressHigh : Unary(state, spv::OpUConvert, TypeU32(state), Binary(state, spv::OpShiftRightLogical, TypeScalarU64(state), address, BdaConstant(state, 32u))));
-        store(4, bytes);
-        store(5, ConstantU32(state, static_cast<std::uint32_t>(state.program.Resources().stage)));
-        store(6, instruction);
-        const auto release = ConstantU32(state, spv::MemorySemanticsReleaseMask | spv::MemorySemanticsUniformMemoryMask);
-        state.module.AddFunction(spv::OpAtomicStore, pointer, scope, release, ConstantU32(state, static_cast<std::uint32_t>(BdaAbi::FaultState::Ready)));
-    });
+    const auto claimBits = state.module.AllocateId();
+    state.module.AddFunction(spv::OpSelect, u32, claimBits, notUnaligned, ConstantU32(state, BdaAbi::FaultClaimed | BdaAbi::FaultClaimOtherFaults), ConstantU32(state, BdaAbi::FaultClaimed));
+    const auto previous = state.module.AllocateId();
+    state.module.AddFunction(spv::OpAtomicOr, u32, previous, BdaWord(state, state.faultBufferVariable, ConstantU32(state, word(offsetof(BdaAbi::Fault, claim)))), scope, relaxed, claimBits);
+    const auto won = Binary(state, spv::OpIEqual, TypeBool(state), Binary(state, spv::OpBitwiseAnd, u32, previous, ConstantU32(state, BdaAbi::FaultClaimed)), ConstantU32(state, 0u));
+    const auto discard = ConstantU32(state, word(offsetof(BdaAbi::Fault, discard)));
+    const auto store = [&](std::uint32_t index, std::uint32_t value) {
+        const auto target = state.module.AllocateId();
+        state.module.AddFunction(spv::OpSelect, u32, target, won, ConstantU32(state, index), discard);
+        if (state.BdaAddressed()) state.module.AddFunction(spv::OpStore, BdaWord(state, state.faultBufferVariable, target), value, spv::MemoryAccessAlignedMask, 4u);
+        else state.module.AddFunction(spv::OpStore, BdaWord(state, state.faultBufferVariable, target), value);
+    };
+    store(1, reason);
+    store(2, words ? address : Unary(state, spv::OpUConvert, TypeU32(state), address));
+    store(3, words ? addressHigh : Unary(state, spv::OpUConvert, TypeU32(state), Binary(state, spv::OpShiftRightLogical, TypeScalarU64(state), address, BdaConstant(state, 32u))));
+    store(4, bytes);
+    store(5, ConstantU32(state, static_cast<std::uint32_t>(state.program.Resources().stage)));
+    store(6, instruction);
+    store(0, ConstantU32(state, static_cast<std::uint32_t>(BdaAbi::FaultState::Ready)));
     state.module.AddFunction(spv::OpReturn);
     state.module.AddFunction(spv::OpFunctionEnd);
 }

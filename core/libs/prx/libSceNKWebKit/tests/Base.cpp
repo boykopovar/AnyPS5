@@ -1473,6 +1473,99 @@ static void TestPopupMenuItem() {
     Require(threw);
 }
 
+static void TestMediaSessionMetadata() {
+    Require(WKMediaSessionMetadataGetTypeID() == static_cast<std::uint32_t>(NKWebKit::ObjectType::MediaSessionMetadata));
+    auto meta = NKWebKit::Make<NKWebKit::MediaSessionMetadata>();
+    const void* ref = meta.Get();
+    Require(WKGetTypeID(ref) == WKMediaSessionMetadataGetTypeID());
+
+    auto* unsetTitle = WKMediaSessionMetadataCopyTitle(ref);
+    Require(unsetTitle != nullptr);
+    Require(WKStringGetLength(unsetTitle) == 0);
+    WKRelease(unsetTitle);
+
+    auto* unsetAlbum = WKMediaSessionMetadataCopyAlbum(ref);
+    Require(unsetAlbum != nullptr);
+    Require(WKStringGetLength(unsetAlbum) == 0);
+    WKRelease(unsetAlbum);
+
+    auto* unsetArtist = WKMediaSessionMetadataCopyArtist(ref);
+    Require(unsetArtist != nullptr);
+    Require(WKStringGetLength(unsetArtist) == 0);
+    WKRelease(unsetArtist);
+
+    Require(WKMediaSessionMetadataCopyArtworkURL(ref) == nullptr);
+
+    meta->title = NKWebKit::String::FromUtf8("Test Song");
+    meta->album = NKWebKit::String::FromUtf8("Test Album");
+    meta->artist = NKWebKit::String::FromUtf8("Test Artist");
+    meta->artworkURL = NKWebKit::Make<NKWebKit::URL>("https://example.com/artwork.jpg");
+
+    auto* title = WKMediaSessionMetadataCopyTitle(ref);
+    Require(title != nullptr);
+    Require(WKStringIsEqualToUTF8CString(title, "Test Song"));
+    WKRelease(title);
+
+    auto* album = WKMediaSessionMetadataCopyAlbum(ref);
+    Require(album != nullptr);
+    Require(WKStringIsEqualToUTF8CString(album, "Test Album"));
+    WKRelease(album);
+
+    auto* artist = WKMediaSessionMetadataCopyArtist(ref);
+    Require(artist != nullptr);
+    Require(WKStringIsEqualToUTF8CString(artist, "Test Artist"));
+    WKRelease(artist);
+
+    auto* artworkURL = WKMediaSessionMetadataCopyArtworkURL(ref);
+    Require(artworkURL != nullptr);
+    Require(WKGetTypeID(artworkURL) == WKURLGetTypeID());
+    auto* urlStr = WKURLCopyString(artworkURL);
+    Require(WKStringIsEqualToUTF8CString(urlStr, "https://example.com/artwork.jpg"));
+    WKRelease(urlStr);
+    WKRelease(artworkURL);
+
+    bool threw = false;
+    try {
+        WKMediaSessionMetadataCopyTitle(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKMediaSessionMetadataCopyAlbum(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKMediaSessionMetadataCopyArtist(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKMediaSessionMetadataCopyArtworkURL(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    auto wrongObj = NKWebKit::Make<NKWebKit::String>();
+    threw = false;
+    try {
+        WKMediaSessionMetadataCopyTitle(wrongObj.Get());
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 static void TestOpenPanelResultListener() {
     Require(WKOpenPanelResultListenerGetTypeID() == 80);
 
@@ -1911,6 +2004,36 @@ static void TestEmptyFrameLoaderClient() {
     _ZN7WebCore22EmptyFrameLoaderClient21didRunInsecureContentERNS_14SecurityOriginERKN3WTF3URLE();
     _ZN7WebCore22EmptyFrameLoaderClient23dispatchDidReceiveTitleERKNS_19StringWithDirectionE();
     _ZN7WebCore22EmptyFrameLoaderClient36transitionToCommittedFromCachedFrameEPNS_11CachedFrameE();
+
+    const auto reportsNotImplemented = [](const char* symbol, auto call) {
+        try {
+            call();
+        } catch (const std::runtime_error& error) {
+            const std::string expected = std::string(symbol) + " not implemented";
+            if (expected == error.what()) {
+                std::fprintf(stderr, "NotImplemented: %s\n", symbol);
+            } else {
+                std::fprintf(stderr, "Unexpected exception for %s: %s\n", symbol, error.what());
+            }
+            return true;
+        }
+        return false;
+    };
+
+    const bool assignIdentifier = reportsNotImplemented(
+        "_ZN7WebCore22EmptyFrameLoaderClient32assignIdentifierToInitialRequestEmPNS_14DocumentLoaderERKNS_15ResourceRequestE",
+        [] { _ZN7WebCore22EmptyFrameLoaderClient32assignIdentifierToInitialRequestEmPNS_14DocumentLoaderERKNS_15ResourceRequestE(); });
+    const bool updateCachedLoader = reportsNotImplemented(
+        "_ZN7WebCore22EmptyFrameLoaderClient26updateCachedDocumentLoaderERNS_14DocumentLoaderE",
+        [] { _ZN7WebCore22EmptyFrameLoaderClient26updateCachedDocumentLoaderERNS_14DocumentLoaderE(); });
+    const bool unableToImplementPolicy = reportsNotImplemented(
+        "_ZN7WebCore22EmptyFrameLoaderClient31dispatchUnableToImplementPolicyERKNS_13ResourceErrorE",
+        [] { _ZN7WebCore22EmptyFrameLoaderClient31dispatchUnableToImplementPolicyERKNS_13ResourceErrorE(); });
+    const bool setTitle = reportsNotImplemented(
+        "_ZN7WebCore22EmptyFrameLoaderClient8setTitleERKNS_19StringWithDirectionERKN3WTF3URLE",
+        [] { _ZN7WebCore22EmptyFrameLoaderClient8setTitleERKNS_19StringWithDirectionERKN3WTF3URLE(); });
+
+    Require(!assignIdentifier && !updateCachedLoader && !unableToImplementPolicy && !setTitle);
 }
 
 template <typename Function>
@@ -2218,6 +2341,82 @@ static void TestFrame() {
         caught = true;
     }
     Require(caught);
+
+    Require(WKFrameCopyURL(ref) == nullptr);
+    auto* defaultTitle = WKFrameCopyTitle(ref);
+    Require(defaultTitle != nullptr && WKGetTypeID(defaultTitle) == WKStringGetTypeID() && WKStringGetLength(defaultTitle) == 0);
+    WKRelease(defaultTitle);
+    auto* defaultMime = WKFrameCopyMIMEType(ref);
+    Require(defaultMime != nullptr && WKGetTypeID(defaultMime) == WKStringGetTypeID() && WKStringGetLength(defaultMime) == 0);
+    WKRelease(defaultMime);
+    Require(WKFrameCopyProvisionalURL(ref) == nullptr);
+    Require(WKFrameCopyUnreachableURL(ref) == nullptr);
+    Require(WKFrameGetFrameLoadState(ref) == 2);
+
+    auto* defaultHandle = WKFrameCreateFrameHandle(ref);
+    Require(defaultHandle != nullptr);
+    Require(WKGetTypeID(defaultHandle) == WKFrameHandleGetTypeID());
+    Require(WKFrameHandleGetFrameID(defaultHandle) == 0);
+    WKRelease(defaultHandle);
+
+    frame->frameID = 1001;
+    frame->loadState = 1;
+    frame->url = NKWebKit::Make<NKWebKit::URL>("https://anyps5.org/index.html");
+    frame->title = NKWebKit::String::FromUtf8("AnyPS5 Main Frame");
+    frame->mimeType = NKWebKit::String::FromUtf8("text/html");
+    frame->provisionalURL = NKWebKit::Make<NKWebKit::URL>("https://anyps5.org/provisional");
+    frame->unreachableURL = NKWebKit::Make<NKWebKit::URL>("https://anyps5.org/unreachable");
+
+    Require(WKFrameGetFrameLoadState(ref) == 1);
+
+    auto* handle = WKFrameCreateFrameHandle(ref);
+    Require(handle != nullptr);
+    Require(WKGetTypeID(handle) == WKFrameHandleGetTypeID());
+    Require(WKFrameHandleGetFrameID(handle) == 1001);
+    WKRelease(handle);
+
+    auto* urlRef = WKFrameCopyURL(ref);
+    Require(urlRef != nullptr);
+    Require(WKGetTypeID(urlRef) == WKURLGetTypeID());
+    WKRelease(urlRef);
+
+    auto* titleRef = WKFrameCopyTitle(ref);
+    Require(titleRef != nullptr);
+    Require(WKGetTypeID(titleRef) == WKStringGetTypeID());
+    WKRelease(titleRef);
+
+    auto* mimeRef = WKFrameCopyMIMEType(ref);
+    Require(mimeRef != nullptr);
+    Require(WKGetTypeID(mimeRef) == WKStringGetTypeID());
+    WKRelease(mimeRef);
+
+    auto* provUrlRef = WKFrameCopyProvisionalURL(ref);
+    Require(provUrlRef != nullptr);
+    Require(WKGetTypeID(provUrlRef) == WKURLGetTypeID());
+    WKRelease(provUrlRef);
+
+    auto* unreachUrlRef = WKFrameCopyUnreachableURL(ref);
+    Require(unreachUrlRef != nullptr);
+    Require(WKGetTypeID(unreachUrlRef) == WKURLGetTypeID());
+    WKRelease(unreachUrlRef);
+
+    auto checkThrows = [](auto fn) {
+        bool threw = false;
+        try {
+            fn(nullptr);
+        } catch (const std::invalid_argument&) {
+            threw = true;
+        }
+        Require(threw);
+    };
+
+    checkThrows(WKFrameCopyURL);
+    checkThrows(WKFrameCopyTitle);
+    checkThrows(WKFrameCopyMIMEType);
+    checkThrows(WKFrameCopyProvisionalURL);
+    checkThrows(WKFrameCopyUnreachableURL);
+    checkThrows(WKFrameCreateFrameHandle);
+    checkThrows(WKFrameGetFrameLoadState);
 }
 
 static void TestImage() {
@@ -2684,6 +2883,7 @@ int main() {
     TestDownload();
     TestAXObject();
     TestPopupMenuItem();
+    TestMediaSessionMetadata();
     TestOpenPanelResultListener();
     TestProtectionSpace();
     TestPermissionRequests();

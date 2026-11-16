@@ -116,6 +116,7 @@ function(add_shader_recompiler target runtimeTarget)
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/DescriptorBindingBuilder.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/ShaderInfoCollector.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/DenormalFlushEliminator.cpp
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/VectorWindowIndexNarrower.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/NanPayloadEliminator.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/VectorWindowStoreEliminator.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/RedundantValueEliminator.cpp
@@ -262,6 +263,7 @@ function(add_shader_recompiler target runtimeTarget)
             HeapVerifyEvery
             HeapOnlyCacheCount
             ParseHeapCacheBypass
+            BdaAbi::OtherFaults
             BdaAbi::RangesOrdered
             RuntimeAbi::GpuHeapStorageKind
             RuntimeAbi::StageGroup
@@ -291,6 +293,7 @@ function(add_shader_recompiler target runtimeTarget)
             ImageTableAbi::TableHeader
             FmaskLayoutOf
             IsFmaskTextureFormat
+            PipelineSpecialization::IsAtomicLockTable
             PipelineSpecialization::IsWorkgroupOffset
             PipelineSpecialization::WorkgroupOffsetBase
             PipelineSpecialization::WorkgroupOffsetWords

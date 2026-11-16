@@ -42,8 +42,10 @@ inline constexpr std::uint32_t DepthRemapBase = 8240u;
 inline constexpr std::uint32_t DepthRemapWords = 1u;
 inline constexpr std::uint32_t WorkgroupOffsetBase = 8241u;
 inline constexpr std::uint32_t WorkgroupOffsetWords = 3u;
-inline constexpr std::uint32_t PushedDataBase = 8244u;
-inline constexpr std::uint32_t PushedDataCount = 8245u;
+inline constexpr std::uint32_t AtomicLockTableBase = 8244u;
+inline constexpr std::uint32_t AtomicLockTableWords = 2u;
+inline constexpr std::uint32_t PushedDataBase = 8246u;
+inline constexpr std::uint32_t PushedDataCount = 8247u;
 inline constexpr std::uint32_t RootItemPositionBase = 8448u;
 inline constexpr std::uint32_t RootItemPositions = 16u;
 inline constexpr std::uint32_t HeapCountBase = 8256u;
@@ -76,6 +78,10 @@ inline constexpr bool IsPushPlacement(std::uint32_t id) {
 
 inline constexpr bool IsWorkgroupOffset(std::uint32_t id) {
     return id >= WorkgroupOffsetBase && id < WorkgroupOffsetBase + WorkgroupOffsetWords;
+}
+
+inline constexpr bool IsAtomicLockTable(std::uint32_t id) {
+    return id >= AtomicLockTableBase && id < AtomicLockTableBase + AtomicLockTableWords;
 }
 
 }

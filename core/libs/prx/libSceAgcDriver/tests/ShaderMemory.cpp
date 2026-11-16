@@ -1372,6 +1372,30 @@ void verifyMayEvaluate() {
     require(bitEvaluator.Evaluate(Detail::IrNode(&countBits), bitResult) && bitResult == 1u, "Evaluator evaluated BitCount32 incorrectly");
     require(bitEvaluator.Evaluate(Detail::IrNode(&findILsb), bitResult) && bitResult == 2u, "Evaluator evaluated FindILsb32 incorrectly");
     require(bitEvaluator.Evaluate(Detail::IrNode(&findUMsb), bitResult) && bitResult == 2u, "Evaluator evaluated FindUMsb32 incorrectly");
+    struct NanCase {
+        std::uint32_t result;
+        bool quiet;
+        std::uint32_t invalid;
+        std::array<std::uint32_t, 3> sources;
+        std::uint32_t count;
+        std::uint32_t expected;
+        const char* name;
+    };
+    for (const auto& [result, quiet, invalid, sources, count, expected, name] : std::array<NanCase, 7>{{
+             {0x40400000u, true, 0u, {0x3f800000u, 0x40000000u, 0u}, 2u, 0x40400000u, "a number result"},
+             {0x7fc00000u, true, 0u, {0x7f800000u, 0u, 0u}, 2u, 0xffc00000u, "an invalid result of number sources"},
+             {0x7fc00000u, true, 0u, {0x3f800000u, 0x7f812345u, 0u}, 2u, 0x7fc12345u, "a signaling NaN source quieted"},
+             {0x7fc00000u, false, 0u, {0x3f800000u, 0x7f812345u, 0u}, 2u, 0x7f812345u, "a signaling NaN source kept"},
+             {0x7fc00000u, true, 0u, {0x7fc00001u, 0x7fc00002u, 0u}, 2u, 0x7fc00001u, "the first NaN source"},
+             {0x7fc00000u, true, 1u, {0x7f800000u, 0u, 0x7fc00003u}, 3u, 0xffc00000u, "an invalid product before a NaN addend"},
+             {0x7fc00000u, true, 0u, {0x3f800000u, 0x40000000u, 0x7f800003u}, 3u, 0x7fc00003u, "a NaN addend"},
+         }}) {
+        auto& propagated = make(IrOpcode::NanPropagateF32, IrType::F32, {&constant(result), &constant((quiet ? 1u : 0u) | count << 1u), &constant(invalid), &constant(sources[0]), &constant(sources[1]), &constant(sources[2])});
+        require(Detail::Evaluator::MayEvaluate(plan, &propagated), (std::string("MayEvaluate rejected NanPropagateF32 for ") + name).c_str());
+        Detail::Evaluator nanEvaluator(plan, runtime);
+        std::uint32_t bits = 0;
+        require(nanEvaluator.Evaluate(Detail::IrNode(&propagated), bits) && bits == expected, (std::string("Evaluator propagated NaN incorrectly for ") + name).c_str());
+    }
     const std::array<IrOpcode, 7> takenAsEvaluable{IrOpcode::Identity, IrOpcode::Phi, IrOpcode::Void, IrOpcode::GetUserData, IrOpcode::GetShaderBase, IrOpcode::LoadAddressU32, IrOpcode::ReadConstBuffer};
     for (std::uint16_t raw = 0; raw < static_cast<std::uint16_t>(IrOpcode::Count); ++raw) {
         const auto opcode = static_cast<IrOpcode>(raw);
@@ -3598,6 +3622,8 @@ constexpr std::uint32_t TableFormat16UNorm = 7;
 constexpr std::uint32_t TableFormat8888UNorm = 56;
 constexpr std::uint32_t TableFormat32UInt = 20;
 constexpr std::uint32_t TableFormat16SInt = 12;
+constexpr std::uint32_t TableFormat16Float = 13;
+constexpr std::uint32_t TableFormat32SInt = 21;
 constexpr std::uint32_t TableFormat11_11_10UInt = 34;
 constexpr std::uint32_t TableFormat32_32UInt = 62;
 constexpr std::uint32_t TableType2D = 9;
@@ -5034,14 +5060,14 @@ void verifyImageTableBindingGrowth() {
             require(allocation.bindings.size() == 2u, "image table bindings: a prepared binding was lost");
             const auto& images = allocation.bindings[0];
             const auto& samplers = allocation.bindings[1];
-            require(images.count == count && images.guestDescriptor.size() == count * 8u && images.imageShapes.size() == count && images.imageDepthCompare.size() == count && images.imageWritten.size() == count && images.imageAtomic.size() == count && images.imageAtomic64.size() == count && images.imageSamplers.size() == count, "image table bindings: image metadata count differs from the descriptors");
+            require(images.count == count && images.guestDescriptor.size() == count * 8u && images.imageShapes.size() == count && images.imageDepthCompare.size() == count && images.imageWritten.size() == count && images.imageAtomic.size() == count && images.imageAtomic64.size() == count && images.imageUintStorage.size() == count && images.imageSamplers.size() == count, "image table bindings: image metadata count differs from the descriptors");
             require(samplers.count == count && samplers.guestDescriptor.size() == count * 4u && samplers.samplerDepthCompare.size() == count, "image table bindings: sampler metadata count differs from the descriptors");
             for (std::uint32_t index = 0; index < count; ++index) {
                 require(std::equal(tables.elements[index].words.begin(), tables.elements[index].words.end(), images.guestDescriptor.begin() + index * 8u), "image table bindings: image words changed");
                 require(images.imageShapes[index] == DescriptorImageShape::Image2D && images.imageDepthCompare[index] == tables.elements[index].depthCompare && images.imageWritten[index] == ((index + pass) % 2u != 0u) && !images.imageAtomic[index] && images.imageSamplers[index] == 0u, "image table bindings: an element inherited another element's metadata");
                 require(std::equal(tables.samplers[index].words.begin(), tables.samplers[index].words.end(), samplers.guestDescriptor.begin() + index * 4u) && samplers.samplerDepthCompare[index] == tables.samplers[index].compare, "image table bindings: sampler words or comparison state changed");
             }
-            require(allocations <= 10u, ("image table bindings: " + std::to_string(count) + " elements required " + std::to_string(allocations) + " allocations, expected at most one per output array").c_str());
+            require(allocations <= 11u, ("image table bindings: " + std::to_string(count) + " elements required " + std::to_string(allocations) + " allocations, expected at most one per output array").c_str());
         }
     }
 }
@@ -6572,6 +6598,28 @@ void verifySelectedRecordDirectOperations() {
     require(mixed->info.images.size() == 2u && std::ranges::all_of(mixed->info.images, [&](const ImageResource& image) { return image.table == NoTable && !mixed->descriptorSources.at(image.source).tableColumn.has_value(); }), "selected record direct operations: a T# sampled and stored was planned through an image table for one of its operations");
     const auto sampled = GetResourcePlan(TableRequest(TableSrtKeyCode, userData));
     require(sampled->info.images.size() == 1u && sampled->info.images[0].table == 0u && sampled->descriptorSources.at(sampled->info.images[0].source).tableColumn->selected, "selected record direct operations: a T# that is only sampled no longer selects its record");
+}
+
+void verifyImageTableUintStorage() {
+    using namespace ShaderRecompiler;
+    static TableTexture textures[5];
+    alignas(4096) static TableGuest guest;
+    std::fill(guest.heap.begin(), guest.heap.end(), std::array<std::uint32_t, 8>{});
+    const std::array<std::pair<std::uint32_t, bool>, 5> formats{{{TableFormat16Float, true}, {TableFormat16SInt, true}, {TableFormat32SInt, true}, {TableFormat32UInt, true}, {TableFormat8888UNorm, false}}};
+    for (std::size_t index = 0; index < formats.size(); ++index) guest.heap[index] = TableT(textures[index].bytes.data(), formats[index].first, TableType2D);
+    FillTableSrt(guest, guest.heap.data(), 32u, static_cast<std::uint32_t>(formats.size()));
+    const auto userData = TableUserData(guest);
+    const auto compiled = CompileTable(TableRequest(WithImageOperation(TableWholeCode, 0xf0200f08u, false), userData));
+    const auto* binding = TableBinding(*compiled.result, DescriptorRole::ImageStorageTable);
+    require(binding != nullptr && binding->kind == DescriptorKind::StorageImage && binding->count == formats.size() && binding->imageUintStorage.size() == formats.size(), "image table uint storage: the storage table does not hold one flag per element");
+    for (std::size_t index = 0; index < formats.size(); ++index) {
+        std::size_t found = formats.size();
+        for (std::size_t candidate = 0; candidate < formats.size(); ++candidate) {
+            if (binding->guestDescriptor[candidate * 8u] == guest.heap[index][0]) found = candidate;
+        }
+        require(found < formats.size(), "image table uint storage: a stored element is missing from the table");
+        require(binding->imageUintStorage[found] == formats[index].second, "image table uint storage: the UINT view flag of a written-only element is wrong for its format");
+    }
 }
 
 void verifyEvaluableHeapSamplerDirect() {
@@ -8919,7 +8967,7 @@ void verifyPixelRequestSerialization() {
     minimal.context.pixel->layerExported = true;
     minimal.context.pixel->ditheredAlphaToCoverage = true;
     const auto encoded = serializer.Serialize(minimal);
-    require(requestPrefix(encoded, 8u) == "NVNQQTwAAAA=", "new requests did not use serialization version 60");
+    require(requestPrefix(encoded, 8u) == "NVNQQT8AAAA=", "new requests did not use serialization version 63");
     auto withBarycentric = minimal;
     withBarycentric.target.fragmentBarycentricBuiltins = true;
     require(serializer.Deserialize(serializer.Serialize(withBarycentric)).request.target.fragmentBarycentricBuiltins && !serializer.Deserialize(encoded).request.target.fragmentBarycentricBuiltins, "barycentric built-ins were lost in serialization");
@@ -9040,7 +9088,7 @@ void verifyPixelRequestSerialization() {
     for (std::size_t bytes = 0; bytes < 45u; ++bytes) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(requestPrefix(encoded, mappingOffset + bytes))); }, "truncated data", "a truncated pixel mapping, packing, dual-source, alpha-to-coverage, stencil reference export flag, primitive class, layer export, dither or front-face flag, quad pixel mask or quad sample mask was accepted");
     }
-    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTIAAAA=", "NVNQQT0AAAA="}) {
+    for (const auto unsupported : {"NVNQQQAAAAA=", "NVNQQTIAAAA=", "NVNQQToAAAA=", "NVNQQTwAAAA=", "NVNQQT0AAAA=", "NVNQQUAAAAA="}) {
         expectFailure([&] { static_cast<void>(serializer.Deserialize(unsupported)); }, "serialization version", "an unsupported request version was accepted");
     }
     static constexpr std::string_view version18Request{
@@ -9094,25 +9142,25 @@ std::vector<std::uint8_t> decodeBase64(std::string_view text) {
             bytes.push_back(static_cast<std::uint8_t>((chunk >> bits) & 0xffu));
         }
     }
-    if (bytes.size() > 26u && bytes[4] == 60u) {
-        require(std::all_of(bytes.end() - 18, bytes.end() - 5, [](std::uint8_t value) { return value == 0u; }), "a version 60 request in these checks set a GPU heap target field");
-        bytes.erase(bytes.end() - 18, bytes.end() - 5);
-        bytes[4] = 57u;
+    if (bytes.size() > 26u && bytes[4] == 63u) {
+        require(std::all_of(bytes.end() - 19, bytes.end() - 6, [](std::uint8_t value) { return value == 0u; }), "a version 63 request in these checks set a GPU heap target field");
+        bytes.erase(bytes.end() - 19, bytes.end() - 6);
+        bytes[4] = 62u;
     }
     return bytes;
 }
 
 std::vector<std::uint8_t> version56Bytes(std::vector<std::uint8_t> bytes) {
-    require(bytes.size() > 13u && bytes[4] == 57u, "a legacy fixture did not start from serialization version 57");
-    bytes.resize(bytes.size() - 5u);
+    require(bytes.size() > 14u && bytes[4] == 62u, "a legacy fixture did not start from serialization version 62");
+    bytes.resize(bytes.size() - 6u);
     bytes[4] = 56u;
     return bytes;
 }
 
 std::string encodeBase64(std::vector<std::uint8_t> bytes) {
-    if (bytes.size() > 13u && bytes[4] == 57u) {
-        bytes[4] = 60u;
-        bytes.insert(bytes.end() - 5, 13u, 0u);
+    if (bytes.size() > 13u && bytes[4] == 62u) {
+        bytes[4] = 63u;
+        bytes.insert(bytes.end() - 6, 13u, 0u);
     }
     constexpr std::string_view alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     std::string text;
@@ -9375,7 +9423,7 @@ void verifyVertexInfoVersion19() {
     require(mergingBytes.size() == plainPixel.size() && std::equal(plainPixel.begin(), plainPixel.begin() + mergeOffset, mergingBytes.begin()) && mergingBytes[mergeOffset] == 3u && mergingBytes[mergeOffset + 1] == 0x0fu && mergingBytes[mergeOffset + 2] == 0xf0u && mergingBytes[mergeOffset + 5] == 2u && mergingBytes[mergeOffset + 6] == 1u && mergingBytes[mergeOffset + 34] == 0xefu && mergingBytes[mergeOffset + 37] == 0x89u && mergingBytes[mergeOffset + 38] == 1u && mergingBytes[mergeOffset + 39] == 1u && mergingBytes[mergeOffset + 40] == 0u && mergingBytes[mergeOffset + 41] == static_cast<std::uint8_t>(ColorExportPacking::Float11_11_10) && mergingBytes[mergeOffset + 42] == 0x01u && mergingBytes[mergeOffset + 45] == 0x20u && mergingBytes[mergeOffset + 46] == 1u && mergingBytes[mergeOffset + 47] == 2u && mergingBytes[mergeOffset + 51] == 0x05u && mergingBytes[mergeOffset + 52] == 0x01u && std::equal(plainPixel.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes), plainPixel.end(), mergingBytes.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes)), "the color target merge is not the 55 bytes the version 54 pixel info adds after the sample order");
     require(serializer.Deserialize(serializer.Serialize(merging)).request.context.pixel->targetMerges == merging.context.pixel->targetMerges, "a serialized request lost its color target merge");
     auto version54 = mergingBytes;
-    version54.resize(version54.size() - 5u);
+    version54.resize(version54.size() - 6u);
     version54.erase(version54.begin() + mergeOffset + 40, version54.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes));
     version54[4] = 54u;
     auto version53 = version54;
@@ -9412,7 +9460,7 @@ void verifyVertexInfoVersion19() {
         at[3] = flags;
     };
     auto blendVersion49 = blendMergingBytes;
-    blendVersion49.resize(blendVersion49.size() - 5u);
+    blendVersion49.resize(blendVersion49.size() - 6u);
     blendRecordToVersion49(blendVersion49, mergeOffset);
     blendVersion49.resize(blendVersion49.size() - 5u);
     blendVersion49[4] = 49u;
@@ -9424,7 +9472,7 @@ void verifyVertexInfoVersion19() {
     require(twoMergingBytes.size() == blendMergingBytes.size() + mergeBytes + blendPayloadBytes && twoMergingBytes[static_cast<std::size_t>(twoMergingFlags)] == 0x03u && std::equal(blendMergingBytes.begin() + mergeOffset, blendMergingBytes.begin() + twoMergingFlags, twoMergingBytes.begin() + mergeOffset) && std::equal(blendMergingBytes.begin() + twoMergingFlags + 1, blendMergingBytes.begin() + mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes + blendPayloadBytes), twoMergingBytes.begin() + twoMergingFlags + 1), "a second color target merge did not follow the first, counted in the first merge's flags");
     require(serializer.Deserialize(serializer.Serialize(twoMerging)).request.context.pixel->targetMerges == twoMerging.context.pixel->targetMerges, "a serialized request lost its second color target merge");
     auto twoVersion49 = twoMergingBytes;
-    twoVersion49.resize(twoVersion49.size() - 5u);
+    twoVersion49.resize(twoVersion49.size() - 6u);
     blendRecordToVersion49(twoVersion49, mergeOffset + static_cast<std::ptrdiff_t>(mergeBytes + blendPayloadBytes));
     blendRecordToVersion49(twoVersion49, mergeOffset);
     twoVersion49.resize(twoVersion49.size() - 5u);
@@ -10177,7 +10225,7 @@ void verifyInt64AtomicCapabilities() {
     const std::vector<std::uint32_t> bufferOrTwice{0xe1685000u, 0x80010003u, 0xe1685000u, 0x80010203u, 0xbf810000u};
     const std::vector<std::uint32_t> bufferOrAnd{0xe1685000u, 0x80010003u, 0xe1645000u, 0x80010203u, 0xbf810000u};
     const auto compile = [&](std::span<const std::uint32_t> code, spv::Capability added) {
-        const std::array<std::uint32_t, 4> capabilities{spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess, static_cast<std::uint32_t>(added)};
+        const std::array<std::uint32_t, 8> capabilities{spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityStorageImageReadWithoutFormat, spv::CapabilityStorageImageWriteWithoutFormat, static_cast<std::uint32_t>(added)};
         RecompileRequest request{};
         request.shader = {ShaderStage::Compute, 0x58000u, code, 0, {}};
         request.context.waveSize = 32;
@@ -10193,7 +10241,7 @@ void verifyInt64AtomicCapabilities() {
         request.target.fragmentShaderBarycentricEnabled = false;
         request.layout.pushConstantSizeBytes = 128;
         request.useCache = false;
-        return Recompile(request).spirv;
+        return Recompile(request);
     };
     const auto declares = [](std::span<const std::uint32_t> words, spv::Capability capability) {
         for (std::size_t cursor = 5; cursor < words.size();) {
@@ -10240,20 +10288,31 @@ void verifyInt64AtomicCapabilities() {
         require(words[add + 3] == words[lowChain + 5] && constants.contains(words[add + 4]) && constants.at(words[add + 4]) == 1u, "64-bit atomics: the high half of a split buffer atomic is not one dword after the low half");
         require(words[low + 6] != words[high + 6] && opcodeOf(words[low + 6]) == spv::OpUConvert && opcodeOf(words[high + 6]) == spv::OpUConvert, "64-bit atomics: the halves of a split buffer atomic do not take the low and high dwords of the operand");
     };
-    expectFailure([&] { static_cast<void>(compile(bufferAtomic, spv::CapabilityShader)); }, "64-bit buffer atomics need shaderBufferInt64Atomics", "64-bit atomics: a buffer_atomic_inc_x2 compiled without shaderBufferInt64Atomics");
-    require(declares(compile(bufferAtomic, spv::CapabilityInt64Atomics), spv::CapabilityInt64Atomics), "64-bit atomics: a buffer_atomic_inc_x2 does not declare Int64Atomics");
+    const auto asksForLockTable = [](const RecompileResult& result) {
+        return std::ranges::count_if(result.specialization, [](const PipelineSpecializationConstant& constant) { return PipelineSpecialization::IsAtomicLockTable(constant.id); }) == PipelineSpecialization::AtomicLockTableWords;
+    };
+    const auto lockedBuffer = compile(bufferAtomic, spv::CapabilityShader);
+    require(!declares(lockedBuffer.spirv, spv::CapabilityInt64Atomics), "64-bit atomics: a buffer_atomic_inc_x2 compiled without shaderBufferInt64Atomics declares Int64Atomics");
+    require(asksForLockTable(lockedBuffer), "64-bit atomics: a buffer_atomic_inc_x2 compiled without shaderBufferInt64Atomics does not ask for the atomic lock table");
+    require(declares(compile(bufferAtomic, spv::CapabilityInt64Atomics).spirv, spv::CapabilityInt64Atomics), "64-bit atomics: a buffer_atomic_inc_x2 does not declare Int64Atomics");
     const std::array<std::pair<const std::vector<std::uint32_t>*, spv::Op>, 3> bitwise{{{&bufferOr, spv::OpAtomicOr}, {&bufferAnd, spv::OpAtomicAnd}, {&bufferXor, spv::OpAtomicXor}}};
     for (const auto& [code, atomic] : bitwise) {
         const auto split = compile(*code, spv::CapabilityShader);
-        require(!declares(split, spv::CapabilityInt64Atomics), "64-bit atomics: an unused-result bitwise buffer atomic declares Int64Atomics on a device without it");
-        verifySplit(split, atomic);
-        require(declares(compile(*code, spv::CapabilityInt64Atomics), spv::CapabilityInt64Atomics), "64-bit atomics: an unused-result bitwise buffer atomic does not use the 64-bit atomic where the device has it");
+        require(!declares(split.spirv, spv::CapabilityInt64Atomics), "64-bit atomics: an unused-result bitwise buffer atomic declares Int64Atomics on a device without it");
+        require(!asksForLockTable(split), "64-bit atomics: an unused-result bitwise buffer atomic asks for the atomic lock table on a device without Int64Atomics");
+        verifySplit(split.spirv, atomic);
+        require(declares(compile(*code, spv::CapabilityInt64Atomics).spirv, spv::CapabilityInt64Atomics), "64-bit atomics: an unused-result bitwise buffer atomic does not use the 64-bit atomic where the device has it");
     }
-    require(!declares(compile(bufferOrTwice, spv::CapabilityShader), spv::CapabilityInt64Atomics), "64-bit atomics: two buffer_atomic_or_x2 of one program declare Int64Atomics on a device without it");
-    expectFailure([&] { static_cast<void>(compile(bufferOrAnd, spv::CapabilityShader)); }, "64-bit buffer atomics need shaderBufferInt64Atomics", "64-bit atomics: a buffer_atomic_or_x2 and a buffer_atomic_and_x2 of one program compiled without shaderBufferInt64Atomics");
-    require(declares(compile(bufferOrAnd, spv::CapabilityInt64Atomics), spv::CapabilityInt64Atomics), "64-bit atomics: a buffer_atomic_or_x2 and a buffer_atomic_and_x2 of one program do not use the 64-bit atomics where the device has them");
-    expectFailure([&] { static_cast<void>(compile(imageAtomic, spv::CapabilityShader)); }, "64-bit image atomics need VK_EXT_shader_image_atomic_int64", "64-bit atomics: an image_atomic_swap on a 32_32 image compiled without shaderImageInt64Atomics");
-    require(declares(compile(imageAtomic, spv::CapabilityInt64ImageEXT), spv::CapabilityInt64ImageEXT), "64-bit atomics: an image_atomic_swap on a 32_32 image does not declare Int64ImageEXT");
+    require(!declares(compile(bufferOrTwice, spv::CapabilityShader).spirv, spv::CapabilityInt64Atomics), "64-bit atomics: two buffer_atomic_or_x2 of one program declare Int64Atomics on a device without it");
+    const auto lockedPair = compile(bufferOrAnd, spv::CapabilityShader);
+    require(!declares(lockedPair.spirv, spv::CapabilityInt64Atomics) && asksForLockTable(lockedPair), "64-bit atomics: a buffer_atomic_or_x2 and a buffer_atomic_and_x2 of one program compiled without shaderBufferInt64Atomics do not take the atomic lock table");
+    require(declares(compile(bufferOrAnd, spv::CapabilityInt64Atomics).spirv, spv::CapabilityInt64Atomics), "64-bit atomics: a buffer_atomic_or_x2 and a buffer_atomic_and_x2 of one program do not use the 64-bit atomics where the device has them");
+    const auto locked = compile(imageAtomic, spv::CapabilityShader);
+    require(!declares(locked.spirv, spv::CapabilityInt64ImageEXT) && !declares(locked.spirv, spv::CapabilityInt64Atomics), "64-bit atomics: an image_atomic_swap on a 32_32 image compiled without shaderImageInt64Atomics declares 64-bit atomics");
+    require(asksForLockTable(locked), "64-bit atomics: an image_atomic_swap on a 32_32 image compiled without shaderImageInt64Atomics does not ask for the atomic lock table");
+    const auto native = compile(imageAtomic, spv::CapabilityInt64ImageEXT);
+    require(declares(native.spirv, spv::CapabilityInt64ImageEXT), "64-bit atomics: an image_atomic_swap on a 32_32 image does not declare Int64ImageEXT");
+    require(!asksForLockTable(native), "64-bit atomics: an image_atomic_swap on a 32_32 image compiled with shaderImageInt64Atomics asks for the atomic lock table");
 }
 
 void verifySpecializedBufferAtomicBindings(bool finalAbiOnly = false) {
@@ -11048,7 +11107,7 @@ void verifyBdaReadFallbackFunctions() {
             const auto span = std::string("read_bda_span") + (barrier ? "" : "_stop") + (coherent ? "_coherent" : "");
             const auto loader = std::string("load_bda_span") + (coherent ? "_coherent" : "");
             std::string function;
-            std::size_t compareExchanges = 0;
+            std::size_t faultClaims = 0;
             std::size_t mainLookups = 0;
             std::size_t mainProbes = 0;
             std::size_t spanCalls = 0;
@@ -11057,6 +11116,8 @@ void verifyBdaReadFallbackFunctions() {
             std::size_t loaderLoads = 0;
             std::size_t loaderCalls = 0;
             std::array<std::size_t, 2> readerLoads{};
+            std::size_t readerLoops = 0;
+            std::size_t readerLoopsKept = 0;
             std::size_t lookupFaults = 0;
             std::size_t lookupVariables = 0;
             std::size_t readerLookups = 0;
@@ -11072,7 +11133,7 @@ void verifyBdaReadFallbackFunctions() {
                         ++definitions[function];
                     }
                 }
-                if (op == spv::OpAtomicCompareExchange) ++compareExchanges;
+                if (op == spv::OpAtomicCompareExchange || op == spv::OpAtomicOr) ++faultClaims;
                 if (op == spv::OpFunctionCall && function == "main" && names[five[cursor + 3]] == "get_bda_pointer") ++mainLookups;
                 if (op == spv::OpFunctionCall && function == "main") {
                     const auto& callee = names[five[cursor + 3]];
@@ -11087,18 +11148,23 @@ void verifyBdaReadFallbackFunctions() {
                 if (op == spv::OpFunctionCall && function == "get_bda_pointer" && names[five[cursor + 3]] == "record_bda_fault") ++lookupFaults;
                 if (op == spv::OpVariable && function == "get_bda_pointer") ++lookupVariables;
                 if (op == spv::OpFunctionCall && function == reader && names[five[cursor + 3]] == "get_bda_pointer") ++readerLookups;
+                if (op == spv::OpLoopMerge && function == reader) {
+                    ++readerLoops;
+                    if ((five[cursor + 3] & spv::LoopControlDontUnrollMask) != 0u) ++readerLoopsKept;
+                }
                 cursor += length;
             }
             require(definitions["record_bda_fault"] == 1u && definitions[reader] == 1u && definitions[span] == 1u, "BDA read functions: the fault, byte read and span read functions are not defined");
             require(definitions[loader] == 1u && loaderLoads == 4u && loaderCalls == 0u, "BDA read functions: the span load function does not hold the four in-place loads and nothing else");
             require(spanLoads == 0u && spanLoaderCalls == 1u, "BDA read functions: a span read function loads in place itself");
             for (const auto& [name, count] : definitions) require(count == 1u, "BDA read functions: a function is defined twice");
-            require(compareExchanges == 1u, "BDA read functions: a fault is recorded outside record_bda_fault");
+            require(faultClaims == 1u, "BDA read functions: a fault is recorded outside record_bda_fault");
             require(mainLookups == 0u, "BDA read functions: a read site looks up its bytes inline");
             require(readerLoads[coherent] == 1u && readerLoads[!coherent] == 0u, "BDA read functions: the byte loads do not keep the access's coherence");
             require(lookupFaults <= 4u, "BDA read functions: the page-table lookup records its faults from more than 4 call sites");
             require(lookupVariables == 0u, "BDA read functions: the page-table lookup keeps its search bounds in function variables");
             require(readerLookups == 1u, "BDA read functions: the byte read does not look up its bytes once, in a loop");
+            require(readerLoops == 1u && readerLoopsKept == 1u, "BDA read functions: the byte loop may be unrolled, which copies its page-table lookup once per byte");
             require(mainProbes == 0u, "BDA read functions: a read site probes or reads bytes outside its span read function");
             require(spanCalls == 5u, "BDA read functions: a read site does not call its span read function once");
             require(five.size() - one.size() < 4u * 150u, "BDA read functions: a read site takes 150 SPIR-V words or more");
@@ -11355,6 +11421,56 @@ void verifyFunctionLdsBound() {
         emit(IrOpcode::WriteSharedU32, IrType::Void, {&phi, &constant(1u), &active}, 0u);
     }).first;
     require(joined == 256u, "function LDS: a phi of bounded addresses must take its largest");
+
+    const auto bitCount = build([](IrProgram&, IrBlock&, auto& emit, auto& constant, IrValue& active) {
+        auto& mask = emit(IrOpcode::GetUserData, IrType::U32, {&constant(0u)});
+        auto& count = emit(IrOpcode::BitCount32, IrType::U32, {&mask});
+        auto& address = emit(IrOpcode::ShiftLeftLogical32, IrType::U32, {&count, &constant(2u)});
+        emit(IrOpcode::WriteSharedU32, IrType::Void, {&address, &constant(1u), &active}, 0u);
+    }).first;
+    require(bitCount == 64u, "function LDS: a 32-bit count scaled by 4 bytes must take 33 dwords, rounded to 64");
+
+    const auto passAlong = build([](IrProgram& program, IrBlock& block, auto& emit, auto& constant, IrValue& active) {
+        auto& phi = program.CreateValue(IrOpcode::Phi, IrType::U32);
+        block.AppendInstruction(&phi);
+        auto& base = emit(IrOpcode::LaneId, IrType::U32, {});
+        auto& scaled = emit(IrOpcode::ShiftLeftLogical32, IrType::U32, {&base, &constant(2u)});
+        phi.AddPhiOperand(&block, &scaled);
+        phi.AddPhiOperand(&block, &phi);
+        emit(IrOpcode::WriteSharedU32, IrType::Void, {&phi, &constant(1u), &active}, 0u);
+    }).first;
+    require(passAlong == 64u, "function LDS: an address passed through a loop must keep its bound");
+
+    const auto activeSelect = build([](IrProgram&, IrBlock&, auto& emit, auto& constant, IrValue& active) {
+        auto& lane = emit(IrOpcode::LaneId, IrType::U32, {});
+        auto& activeLane = emit(IrOpcode::IEqual32, IrType::U1, {&lane, &constant(0u)});
+        auto& scaled = emit(IrOpcode::ShiftLeftLogical32, IrType::U32, {&lane, &constant(2u)});
+        auto& unbounded = emit(IrOpcode::GetUserData, IrType::U32, {&constant(0u)});
+        auto& chosen = emit(IrOpcode::SelectU32, IrType::U32, {&activeLane, &scaled, &unbounded});
+        emit(IrOpcode::WriteSharedU32, IrType::Void, {&chosen, &constant(1u), &activeLane}, 0u);
+    }).first;
+    require(activeSelect == 64u, "function LDS: a select whose condition matches the active lane condition must bound by its taken branch");
+
+    const auto structuralActiveSelect = build([](IrProgram&, IrBlock&, auto& emit, auto& constant, IrValue& active) {
+        auto& lane = emit(IrOpcode::LaneId, IrType::U32, {});
+        auto& condA = emit(IrOpcode::IEqual32, IrType::U1, {&lane, &constant(5u)});
+        auto& condB = emit(IrOpcode::IEqual32, IrType::U1, {&lane, &constant(5u)});
+        auto& scaled = emit(IrOpcode::ShiftLeftLogical32, IrType::U32, {&lane, &constant(2u)});
+        auto& unbounded = emit(IrOpcode::GetUserData, IrType::U32, {&constant(0u)});
+        auto& chosen = emit(IrOpcode::SelectU32, IrType::U32, {&condA, &scaled, &unbounded});
+        emit(IrOpcode::WriteSharedU32, IrType::Void, {&chosen, &constant(1u), &condB}, 0u);
+    }).first;
+    require(structuralActiveSelect == 64u, "function LDS: a select with a structurally identical active condition must bound by its taken branch");
+
+    const auto differentSelect = build([](IrProgram&, IrBlock&, auto& emit, auto& constant, IrValue& active) {
+        auto& otherCondition = emit(IrOpcode::GetUserData, IrType::U1, {&constant(1u)});
+        auto& lane = emit(IrOpcode::LaneId, IrType::U32, {});
+        auto& scaled = emit(IrOpcode::ShiftLeftLogical32, IrType::U32, {&lane, &constant(2u)});
+        auto& unbounded = emit(IrOpcode::GetUserData, IrType::U32, {&constant(0u)});
+        auto& chosen = emit(IrOpcode::SelectU32, IrType::U32, {&otherCondition, &scaled, &unbounded});
+        emit(IrOpcode::WriteSharedU32, IrType::Void, {&chosen, &constant(1u), &active}, 0u);
+    }).first;
+    require(differentSelect == FunctionLdsDwordLimit, "function LDS: a select under an unrelated condition must stay unbounded if a branch is unbounded");
 
     const auto unsized = build([](IrProgram&, IrBlock&, auto& emit, auto& constant, IrValue& active) {
         emit(IrOpcode::LoadShared, IrType::U32, {&constant(0u), &active}, 0u);
@@ -12190,7 +12306,27 @@ void verifyGcnRuntimeImageDimensions() {
     packedFloat[3] = (packedFloat[3] & 0xfffff000u) | 0x3acu;
     require(selected(stored, packedFloat).dimension == RdnaImageDimension::Dim2D, "GCN dimensions: a store through an 11_11_10 float 2D T# did not select a plane mode");
     packedFloat[3] = (packedFloat[3] & 0x0fffffffu) | (GcnType3D << 28u);
-    expectFailure([&] { static_cast<void>(selected(stored, packedFloat)); }, "incompatible with the static runtime image interface", "GCN dimensions: a store through an 11_11_10 float 3D T# was accepted, though converted formats keep the inferred dimension");
+    require(selected(stored, packedFloat).dimension == RdnaImageDimension::Dim3D, "GCN dimensions: a store through an 11_11_10 float 3D T# did not select a volume mode");
+    packedFloat[3] = (packedFloat[3] & 0x0fffffffu) | (GcnType1D << 28u);
+    require(selected(stored, packedFloat).dimension == RdnaImageDimension::Dim1D, "GCN dimensions: a store through an 11_11_10 float 1D T# did not select a line mode");
+    packedFloat[3] = (packedFloat[3] & 0x0fffffffu) | (GcnTypeCube << 28u);
+    const auto cube1110 = selected(stored, packedFloat);
+    require(cube1110.dimension == RdnaImageDimension::Dim2DArray && cube1110.cube, "GCN dimensions: a store through an 11_11_10 float cube T# did not select a cube mode");
+    auto fmask = image;
+    fmask.fmaskCompatible = true;
+    const auto fmaskModes = ResourceMaterializer::RuntimeImageModes(fmask);
+    const auto offersFormat = [](const std::vector<ImageResource>& list, IrBufferFormat conversion, RdnaImageDimension dimension) {
+        return std::ranges::any_of(list, [&](const ImageResource& mode) {
+            return mode.conversionFormat == conversion && mode.dimension == dimension;
+        });
+    };
+    require(!offersFormat(fmaskModes, FmaskExpansion, RdnaImageDimension::Dim1D) && !offersFormat(fmaskModes, FmaskExpansion, RdnaImageDimension::Dim3D), "GCN dimensions: FMASK expansion offered non-plane dimensions");
+    auto packed = image;
+    packed.packed = true;
+    const auto packedModes = ResourceMaterializer::RuntimeImageModes(packed);
+    require(std::ranges::none_of(packedModes, [](const ImageResource& mode) {
+        return mode.packedFormat != IrBufferFormat::Invalid && mode.dimension != RdnaImageDimension::Dim2D;
+    }), "GCN dimensions: a packed format offered a non-plane dimension");
 }
 
 std::vector<std::uint32_t> gcnImageProgram(std::span<const std::uint32_t, 4> addressSources, std::uint32_t word0, std::uint32_t word1) {
@@ -12405,6 +12541,16 @@ void verifyGcnStoreAddresses() {
         }
         require(!module.ComparesConstants(3u, 0u), "GCN store address: a store is skipped by a nonzero array index, which a non-indexed T# ignores");
     }
+    auto convertedVolume = gcnDescriptor(GcnType3D);
+    convertedVolume[1] = (7u << 20u) | (7u << 26u);
+    convertedVolume[3] = (convertedVolume[3] & 0xfffff000u) | 0x3acu;
+    const auto convertedCode = gcnImageProgram(sources, 0xf0201f00u, 0x00020400u);
+    const GcnImageModule convertedModule(convertedCode, convertedVolume);
+    require(!convertedModule.writes.empty(), "GCN store address: a converted 3D store did not emit an image write");
+    for (const auto& write : convertedModule.writes) {
+        const auto [dim, arrayed] = convertedModule.WrittenImageKind(write);
+        require(dim == spv::Dim3D && !arrayed, "GCN store address: a converted 3D store did not select a volume write");
+    }
 }
 
 void verifyGcnDimensionQueries() {
@@ -12586,6 +12732,23 @@ void verifyMultisamplePlaneReadMode() {
     other.resourceClass = ImageResourceClass::Storage;
     other.written = true;
     refused(other, "a 2D storage access to a 2D MSAA T# was accepted");
+}
+
+void verifyOneFragmentMultisampleRead() {
+    using namespace ShaderRecompiler;
+    const DescriptorValue descriptor{{0x148e2800u, 0xc1400000u, 0x010dc1dfu, 0xe1800204u, 0u, 0x00700000u, 0u, 0u}, 8u};
+    ImageResource image{};
+    image.resourceClass = ImageResourceClass::Sampled;
+    image.dimension = RdnaImageDimension::Dim2D;
+    image.read = true;
+    for (const bool faceCompatible : {true, false}) {
+        image.cubeFaceCompatible = faceCompatible;
+        const auto modes = ResourceMaterializer::RuntimeImageModes(image);
+        require(modes[ResourceMaterializer::RuntimeImageMode(image, descriptor, modes)].dimension == RdnaImageDimension::Dim2D, "a 2D read of a one-fragment 2D MSAA T# (PPSA34299's) did not select a 2D runtime mode");
+    }
+    auto multisample = image;
+    multisample.dimension = RdnaImageDimension::Dim2DMsaa;
+    expectFailure([&] { static_cast<void>(ResourceMaterializer::RuntimeImageMode(multisample, descriptor, ResourceMaterializer::RuntimeImageModes(multisample))); }, "one-fragment multisampled descriptor is not implemented", "a multisample read of a one-fragment 2D MSAA T# was accepted");
 }
 
 void verifyVolumeBiasTableRejection() {
@@ -13024,6 +13187,129 @@ void verifyRegistrationStorageMipSlots() {
     require(writes.size() >= Mips && slotVariables.size() >= Mips, "registration slot words: the storage image writes of a dynamic mip chain do not each read their own heap slot word");
 }
 
+void verifyTableKeep() {
+    using namespace ShaderRecompiler;
+    std::vector<std::uint32_t> code{0xf40c0200u, 0xfa000000u, 0xf4080500u, 0xfa000020u, 0xf4080600u, 0xfa000040u, 0xf4000400u, 0xfa000050u, 0xf4080a00u, 0xfa000080u, 0xbf8cc07fu, 0xf42c0814u, 0xfa000000u, 0xbf8cc07fu, 0xbf068010u, 0xbf850008u};
+    for (std::uint32_t dword = 0; dword < 8u; dword++) {
+        code.push_back(0xbe800300u | ((8u + dword) << 16u) | (32u + dword));
+    }
+    code.insert(code.end(), {0xf09c0f08u, 0x00a20000u, 0xbf8c3f70u, 0xe0700000u, 0x80060000u, 0xbf810000u});
+    constexpr std::uint32_t Format8888UNorm = 56;
+    constexpr std::uint32_t Type2D = 9;
+    struct alignas(256) Texture { std::array<std::uint8_t, 256> bytes{}; };
+    static Texture textures[2];
+    const auto makeImage = [&](const Texture& texture, std::uint32_t extent) {
+        const auto base = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(texture.bytes.data()));
+        return std::array<std::uint32_t, 8>{static_cast<std::uint32_t>(base >> 8u), static_cast<std::uint32_t>((base >> 40u) & 0xffu) | (Format8888UNorm << 20u) | (extent << 30u), extent << 14u, 0xfacu | (Type2D << 28u), 0u, 0u, 0u, 0u};
+    };
+    const auto oldT = makeImage(textures[0], 3u);
+    const auto newT = makeImage(textures[1], 7u);
+    std::array<std::uint32_t, 4> output{};
+    const auto outputAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(output.data()));
+    alignas(4096) static std::array<std::uint32_t, 1024> srt{};
+    static const auto srtAddress = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(srt.data()));
+    const std::array<std::uint32_t, 4> outputV{static_cast<std::uint32_t>(outputAddress), static_cast<std::uint32_t>((outputAddress >> 32u) & 0xffffu), 16u, 0xfacu};
+    const std::array<std::uint32_t, 2> userData{static_cast<std::uint32_t>(srtAddress), static_cast<std::uint32_t>(srtAddress >> 32u)};
+    const std::array<std::uint32_t, 4> capabilities{29u, spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess};
+    const std::array<std::string_view, 2> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
+    RecompileRequest request{};
+    request.shader = {ShaderStage::Compute, 0x23001u, code, 0, {}};
+    request.context.waveSize = 32u;
+    request.context.userDataBaseRegister = 0;
+    request.context.userData = userData;
+    request.context.compute = ShaderComputeStageInfo{{32u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+    request.target.vulkanVersion = 0x00401000u;
+    request.target.spirvVersion = 0x00010300u;
+    request.target.subgroupSize = 32;
+    request.target.supportedCapabilities = capabilities;
+    request.target.supportedExtensions = extensions;
+    request.target.bdaAbiVersion = BdaAbi::Version;
+    request.target.fragmentShaderBarycentricEnabled = false;
+    request.layout.pushConstantSizeBytes = 128;
+    static bool tableWritePending = false;
+    const auto pendingSpan = +[](std::uint64_t address, std::size_t bytes, std::span<std::byte>) -> AgcDriver::ShaderMemory::PendingWrite {
+        using Pending = AgcDriver::ShaderMemory::PendingWrite;
+        return tableWritePending && address < srtAddress + 256u && srtAddress < address + bytes ? Pending::Sync : Pending::None;
+    };
+    const auto fill = [&] {
+        srt.fill(0u);
+        std::copy(oldT.begin(), oldT.end(), srt.begin());
+        std::copy(outputV.begin(), outputV.end(), srt.begin() + 16);
+        srt[20] = 1u;
+    };
+    const auto holds = [&](const std::shared_ptr<const ResourceCapture>& capture, const std::array<std::uint32_t, 8>& words) {
+        return std::ranges::any_of(capture->snapshot.images, [&](const DescriptorValue& value) {
+            return std::equal(words.begin(), words.end(), value.dwords.begin());
+        });
+    };
+
+    fill();
+    tableWritePending = false;
+    {
+        AgcDriver::ShaderMemory memory({}, pendingSpan, nullptr, nullptr, pendingSpan);
+        std::copy(newT.begin(), newT.end(), srt.begin());
+        const auto capture = memory.Capture(request);
+        require(holds(capture, newT) && !holds(capture, oldT), "table keep: a capture without a keep did not read the table the game wrote after the packet");
+    }
+
+    fill();
+    {
+        AgcDriver::ShaderMemory memory({}, pendingSpan, nullptr, nullptr, pendingSpan);
+        require(memory.KeepTable(srtAddress), "table keep: a table with no GPU write over it was not kept");
+        require(!memory.KeepTable(srtAddress + 64u), "table keep: a block that overlaps a kept block was kept");
+        std::copy(newT.begin(), newT.end(), srt.begin());
+        const auto capture = memory.Capture(request);
+        require(holds(capture, oldT) && !holds(capture, newT), "table keep: the capture read the table the game wrote after the packet instead of the kept one");
+        const auto regions = memory.Regions();
+        const bool listed = std::ranges::any_of(regions, [&](const MemoryRegion& region) {
+            return region.guestAddress <= srtAddress && srtAddress + sizeof(oldT) <= region.guestAddress + region.bytes.size() &&
+                   std::memcmp(region.bytes.data() + (srtAddress - region.guestAddress), oldT.data(), sizeof(oldT)) == 0;
+        });
+        require(listed, "table keep: the kept words are not among the capture's regions, so the draw cache would not compare them with memory");
+    }
+
+    fill();
+    tableWritePending = true;
+    {
+        AgcDriver::ShaderMemory memory({}, pendingSpan, nullptr, nullptr, pendingSpan);
+        require(!memory.KeepTable(srtAddress), "table keep: a table with a GPU write over it was kept");
+        std::copy(newT.begin(), newT.end(), srt.begin());
+        const auto capture = memory.Capture(request);
+        require(holds(capture, newT) && !holds(capture, oldT), "table keep: a table with a GPU write over it was not read from memory");
+    }
+    tableWritePending = false;
+
+    fill();
+    static bool wordwiseTableWrite = false;
+    wordwiseTableWrite = false;
+    {
+        const auto wordwiseQuery = +[](std::uint64_t address, std::size_t bytes, std::span<std::byte>) -> AgcDriver::ShaderMemory::PendingWrite {
+            using Pending = AgcDriver::ShaderMemory::PendingWrite;
+            if (bytes > AgcDriver::ShaderMemory::KeepBytes) return Pending::Sync;
+            return wordwiseTableWrite && address < srtAddress + 256u && srtAddress < address + bytes ? Pending::Sync : Pending::None;
+        };
+        AgcDriver::ShaderMemory memory({}, wordwiseQuery, nullptr, nullptr, wordwiseQuery);
+        require(memory.KeepTable(srtAddress), "table keep: a table on a page read word by word was not kept");
+        wordwiseTableWrite = true;
+        std::copy(newT.begin(), newT.end(), srt.begin());
+        const auto capture = memory.Capture(request);
+        wordwiseTableWrite = false;
+        require(holds(capture, oldT) && !holds(capture, newT), "table keep: a kept word on a page read word by word was read from memory after a GPU write was recorded over the table");
+    }
+
+    fill();
+    {
+        const std::array<MemoryRegion, 1> registered{{{srtAddress, std::as_bytes(std::span(srt).first(16))}}};
+        AgcDriver::ShaderMemory memory(registered, pendingSpan, nullptr, nullptr, pendingSpan);
+        require(!memory.KeepTable(srtAddress), "table keep: a block that overlaps a registered region was kept");
+    }
+    {
+        AgcDriver::ShaderMemory memory({}, nullptr, nullptr, nullptr, nullptr);
+        require(!memory.KeepTable(srtAddress), "table keep: a block was kept although nothing can say whether a GPU write is pending over it");
+        require(!memory.KeepTable(srtAddress + 2u), "table keep: a block that is not word aligned was kept");
+    }
+}
+
 int main(int argc, char** argv) {
     try {
 #ifdef _WIN32
@@ -13032,6 +13318,11 @@ int main(int argc, char** argv) {
         setenv("ANYPS5_NO_SHADER_CACHE", "1", 1);
 #endif
         using namespace ShaderRecompiler;
+        if (argc == 2 && std::string_view(argv[1]) == "--table-keep") {
+            verifyTableKeep();
+            std::cout << "A kept table is read as it was at the draw packet and listed with the capture's regions\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--layer-specialization-release") {
             verifyLayerSpecializationRelease();
             std::cout << "Layer specialization metadata survives SPIR-V release and rebuild\n";
@@ -13116,6 +13407,7 @@ int main(int argc, char** argv) {
             verifyImageTableLateKey();
             verifyImageTableUnkeyedAccess();
             verifyImageTableRegistration();
+            verifyImageTableUintStorage();
             verifyScalarAddressRule();
             verifyPointerImageTable();
             verifyPointerTableUnwrittenReuse();
@@ -13231,6 +13523,7 @@ int main(int argc, char** argv) {
         verifyRebuiltModuleKeepsWords();
         verifyLayerSpecializationRelease();
         verifyImageTableRegistration();
+        verifyImageTableUintStorage();
         verifyScalarAddressRule();
         verifyPointerImageTable();
         verifyPointerTableUnwrittenReuse();
@@ -13291,6 +13584,7 @@ int main(int argc, char** argv) {
         verifyVolumeArrayLoadMode();
         verifyArrayVolumeStoreMode();
         verifyMultisamplePlaneReadMode();
+        verifyOneFragmentMultisampleRead();
         verifyVolumeBiasTableRejection();
         verifySamplerTableDeduplication();
         verifyDynamicStorageMipChain();
@@ -13434,6 +13728,12 @@ int main(int argc, char** argv) {
         std::vector<std::uint64_t> float32PreserveKey;
         RecompileCacheKey::Build(float32Preserve, float32PreserveKey);
         require(plainKey != float32PreserveKey && float32FlushKey != float32PreserveKey, "f32 denormal preservation did not change the cache key");
+        auto anySubgroup = uncached;
+        anySubgroup.target.spannedAnySubgroup = true;
+        require(RequestSerializer{}.Deserialize(RequestSerializer{}.Serialize(anySubgroup)).request.target.spannedAnySubgroup, "spanned waves of any subgroup size were lost in serialization");
+        std::vector<std::uint64_t> anySubgroupKey;
+        RecompileCacheKey::Build(anySubgroup, anySubgroupKey);
+        require(plainKey != anySubgroupKey, "spanned waves of any subgroup size did not change the cache key");
         auto changedLayout = request;
         changedLayout.layout.pushConstantSizeBytes = 64;
         require(!Recompile(changedLayout).cacheHit, "binding layout change reused an incompatible variant");
