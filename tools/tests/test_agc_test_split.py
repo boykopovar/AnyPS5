@@ -290,6 +290,18 @@ class GraphHelperTests(unittest.TestCase):
         join(1, 3)
         self.assertEqual(find(0), find(2))
 
+    def test_flatten_yields_each_branch_header_before_its_children(self):
+        header = agc_test_split.Command("if", [], 1, 1)
+        inner = agc_test_split.Command("set", [], 2, 2)
+        other_header = agc_test_split.Command("else", [], 3, 3)
+        other = agc_test_split.Command("unset", [], 4, 4)
+        end = agc_test_split.Command("endif", [], 5, 5)
+        block = agc_test_split.Block(header)
+        block.branches = [(header, [inner]), (other_header, [other])]
+        block.end = end
+        self.assertEqual(list(agc_test_split.flatten(block)), [header, inner, other_header, other, end])
+        self.assertEqual(list(agc_test_split.flatten(inner)), [inner])
+
 
 if __name__ == "__main__":
     unittest.main()
