@@ -9,11 +9,16 @@
 #include <exception>
 #include <limits>
 #include <source_location>
+#include <stdexcept>
 #include <string>
 #include <vector>
 #ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <windows.h>
 #else
 #include <sys/mman.h>
@@ -359,6 +364,14 @@ void RequireRefused(TAction action) {
     Require(errno == 71);
 }
 
+template<typename TAction>
+void RequireRefusedAsInvalid(TAction action) {
+    errno = 71;
+    bool refused = false;
+    try { action(); } catch (const std::invalid_argument&) { refused = true; }
+    Require(refused && errno == 71);
+}
+
 void GuestPointers() {
     auto* badInt = reinterpret_cast<std::int32_t*>(std::uintptr_t{0x10});
     auto* badText = reinterpret_cast<const char*>(std::uintptr_t{0x10});
@@ -372,6 +385,7 @@ void GuestPointers() {
     RequireRefused([&] { u_strFromJavaModifiedUTF8WithSub_nid_postfix(units.data(), 8, &length, "a", 1, -1, nullptr, badInt); });
     RequireRefused([&] { u_strFromJavaModifiedUTF8WithSub_nid_postfix(units.data(), 8, &length, badText, 1, -1, nullptr, &status); });
     RequireRefused([&] { u_strFromJavaModifiedUTF8WithSub_nid_postfix(units.data(), 8, &length, badText, -1, -1, nullptr, &status); });
+    RequireRefusedAsInvalid([&] { u_strFromJavaModifiedUTF8WithSub_nid_postfix(units.data(), 8, &length, badText, std::numeric_limits<std::int32_t>::max(), -1, nullptr, &status); });
     RequireRefused([&] { u_strFromJavaModifiedUTF8WithSub_nid_postfix(reinterpret_cast<char16_t*>(std::uintptr_t{0x10}), 8, &length, "a", 1, -1, nullptr, &status); });
     RequireRefused([&] { u_strFromJavaModifiedUTF8WithSub_nid_postfix(units.data(), 8, badInt, "a", 1, -1, nullptr, &status); });
     RequireRefused([&] { u_strFromJavaModifiedUTF8WithSub_nid_postfix(units.data(), 8, &length, "a", 1, -1, badInt, &status); });
@@ -380,6 +394,7 @@ void GuestPointers() {
     RequireRefused([&] { u_strToJavaModifiedUTF8_nid_postfix(bytes.data(), 8, &length, u"a", 1, badInt); });
     RequireRefused([&] { u_strToJavaModifiedUTF8_nid_postfix(bytes.data(), 8, &length, badUnits, 1, &status); });
     RequireRefused([&] { u_strToJavaModifiedUTF8_nid_postfix(bytes.data(), 8, &length, badUnits, -1, &status); });
+    RequireRefusedAsInvalid([&] { u_strToJavaModifiedUTF8_nid_postfix(bytes.data(), 8, &length, badUnits, std::numeric_limits<std::int32_t>::max(), &status); });
     RequireRefused([&] { u_strToJavaModifiedUTF8_nid_postfix(reinterpret_cast<char*>(std::uintptr_t{0x10}), 8, &length, u"a", 1, &status); });
     RequireRefused([&] { u_strToJavaModifiedUTF8_nid_postfix(bytes.data(), 8, badInt, u"a", 1, &status); });
     Require(status == 0);

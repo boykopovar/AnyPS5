@@ -73,33 +73,35 @@ void WriteStatus(std::int32_t* status, std::int32_t incoming, std::int32_t outgo
 
 template<class T>
 std::vector<T> CopySource(const T* source, std::int32_t length, const char* caller) {
-    std::vector<T> units;
-    if (length >= 0) {
-        units.resize(static_cast<std::size_t>(length));
-        if (length != 0 && !CopyIn(units.data(), source, units.size() * sizeof(T)))
-            throw std::invalid_argument(std::string(caller) + ": unreadable source");
-        return units;
-    }
     constexpr std::uintptr_t Chunk = 4096;
+    const bool counted = length >= 0;
+    const std::size_t limit = counted ? static_cast<std::size_t>(length) * sizeof(T) : 0;
     std::vector<unsigned char> bytes;
     auto address = reinterpret_cast<std::uintptr_t>(source);
     std::size_t scanned = 0;
-    while (true) {
-        const std::size_t count = Chunk - address % Chunk;
+    bool terminated = false;
+    while (counted ? bytes.size() < limit : !terminated) {
+        std::size_t count = Chunk - address % Chunk;
+        if (counted) count = std::min(count, limit - bytes.size());
         const std::size_t offset = bytes.size();
         bytes.resize(offset + count);
         if (!CopyIn(bytes.data() + offset, reinterpret_cast<const void*>(address), count))
             throw std::invalid_argument(std::string(caller) + ": unreadable source");
         address += count;
+        if (counted) continue;
         for (; scanned + sizeof(T) <= bytes.size(); scanned += sizeof(T)) {
             T unit {};
             std::memcpy(&unit, bytes.data() + scanned, sizeof(T));
-            if (unit != 0) continue;
-            units.resize(scanned / sizeof(T));
-            if (scanned != 0) std::memcpy(units.data(), bytes.data(), scanned);
-            return units;
+            if (unit == 0) {
+                bytes.resize(scanned);
+                terminated = true;
+                break;
+            }
         }
     }
+    std::vector<T> units(bytes.size() / sizeof(T));
+    if (!bytes.empty()) std::memcpy(units.data(), bytes.data(), bytes.size());
+    return units;
 }
 
 template<class T>
