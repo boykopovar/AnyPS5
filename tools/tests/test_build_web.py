@@ -570,6 +570,29 @@ class LocalNativeArtifactTests(unittest.TestCase):
             self.assertTrue((build / "web/.nojekyll").exists())
 
 
+    def test_copy_sources_removes_stale_files_without_touching_native_artifacts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "source"
+            source = root / "demo/web"
+            output = Path(directory) / "build/web"
+            native = output / "native"
+            source.mkdir(parents=True)
+            native.mkdir(parents=True)
+            (source / "keep.mjs").write_bytes(b"keep")
+            removed = source / "removed.mjs"
+            removed.write_bytes(b"removed")
+            wasm = native / "relinker_wasm.wasm"
+            wasm.write_bytes(b"native")
+            with patch.object(build_web, "ROOT", root):
+                build_web.copy_sources(output)
+                removed.unlink()
+                build_web.copy_sources(output)
+            self.assertEqual((output / "keep.mjs").read_bytes(), b"keep")
+            self.assertFalse((output / "removed.mjs").exists())
+            self.assertEqual(wasm.read_bytes(), b"native")
+            self.assertTrue((output / ".nojekyll").is_file())
+
+
 class WebReleaseValidationTests(unittest.TestCase):
     HISTORICAL_FILES = (
         "index.html", "app.css", "app.mjs", "archive.mjs", "batch.mjs",

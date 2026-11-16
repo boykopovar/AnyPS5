@@ -282,6 +282,30 @@ int main() {
     Require(sceUserServiceGetUserGroupName(0, homePath, 128) == USER_SERVICE_ERROR_BUFFER_TOO_SHORT);
     char oversizedGroupName[256]{};
     Require(sceUserServiceGetUserGroupName(0, oversizedGroupName, sizeof(oversizedGroupName)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    char nameListBuf[0x110]{};
+    std::int32_t nameCount = 0;
+    Require(sceUserServiceGetUserGroupNameList(0, nullptr, sizeof(nameListBuf), &nameCount) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserGroupNameList(0, nameListBuf, sizeof(nameListBuf), nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserGroupNameList(0, nameListBuf, 0x100, &nameCount) == USER_SERVICE_ERROR_BUFFER_TOO_SHORT);
+    errno = 71;
+    Require(sceUserServiceGetUserGroupNameList(0, reinterpret_cast<char*>(0x10), sizeof(nameListBuf), &nameCount) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserGroupNameList(0, nameListBuf, sizeof(nameListBuf), reinterpret_cast<std::int32_t*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
+
+    char defaultGroupName[0x110]{};
+    std::memset(defaultGroupName, 'Q', sizeof(defaultGroupName));
+    Require(sceUserServiceGetDefaultNewUserGroupName(nullptr, sizeof(defaultGroupName)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetDefaultNewUserGroupName(defaultGroupName, sizeof(defaultGroupName)) == USER_SERVICE_OK);
+    Require(std::strcmp(defaultGroupName, "User Group 1") == 0);
+
+    char groupNameList[0x110]{};
+    std::int32_t groupNameCount = -7;
+    Require(sceUserServiceGetUserGroupNameList(-1, nullptr, sizeof(groupNameList), &groupNameCount) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserGroupNameList(-1, groupNameList, sizeof(groupNameList), nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    std::int32_t currentGroup = -7;
+    const int globalListError = sceUserServiceGetUserGroupNameList(-1, groupNameList, sizeof(groupNameList), &groupNameCount);
+    Require(globalListError == sceUserServiceGetCurrentUserGroupIndex(&currentGroup));
+    Require(static_cast<unsigned>(globalListError) >> 16 == 0x8002u);
 
     SetLanguage(nullptr);
     using KeyboardSetting = decltype(&sceUserServiceGetKeyboardType);
