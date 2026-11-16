@@ -625,5 +625,12 @@ class EnvReferenceTests(unittest.TestCase):
         self.assertIn("APS5_PYTHON", env_reference.reads([root / "core"]))
 
 
+class ConstantTableTests(unittest.TestCase):
+    def test_declared_constants_maps_identifiers_to_prefixed_names(self):
+        text = 'static const char* kName = "ANYPS5_FOO";\nconst char* kBar = u8"APS5_BAR";\nx = "OTHER";\n'
+        self.assertEqual(env_reference.declared_constants(text),
+                         {"kName": {"ANYPS5_FOO"}, "kBar": {"APS5_BAR"}})
+
+
 if __name__ == "__main__":
     unittest.main()
