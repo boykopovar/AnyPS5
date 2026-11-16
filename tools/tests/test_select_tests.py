@@ -916,6 +916,10 @@ class PathHelperTests(unittest.TestCase):
     def test_escape_doubles_dollars_and_escapes_colons_and_spaces(self):
         self.assertEqual(select_tests.escape("a b:c$d"), "a$ b$:c$$d")
 
+    def test_paths_yields_only_absolute_values_including_defines(self):
+        absolute = os.path.abspath(os.path.join(os.sep, "tmp", "x"))
+        self.assertEqual(list(select_tests.paths(["-DX=" + absolute, "rel/x", absolute])), [absolute, absolute])
+
 
 if __name__ == "__main__":
     unittest.main(defaultTest=os.environ.get("ANYPS5_SELECT_TEST_CLASS"))
