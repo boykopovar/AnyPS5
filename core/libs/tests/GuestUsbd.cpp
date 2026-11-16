@@ -582,6 +582,9 @@ int main(int argc, char** argv) {
     Require(sceUsbdControlTransfer(&foreign, 0x80, 0x06, 0x0100, 0, unwritable, 8, 0) == invalidArgument && errno == 71, "unwritable device-to-host control data accepted");
     Require(sceUsbdGetDescriptor(&foreign, 1, 0, reinterpret_cast<std::uint8_t*>(0x10), 18) == invalidArgument && errno == 71, "unreadable descriptor buffer accepted");
     Require(sceUsbdGetDescriptor(&foreign, 1, 0, unwritable, sizeof(readOnly)) == invalidArgument && errno == 71, "read-only descriptor buffer accepted");
+    std::uint8_t* const descriptorPage = PageBeforeGuard();
+    Require(sceUsbdGetDescriptor(&foreign, 1, 0, descriptorPage, -1) == invalidArgument && errno == 71, "negative descriptor length accepted");
+    Require(sceUsbdGetDescriptor(&foreign, 1, 0, descriptorPage, 0x7fffffff) == invalidArgument && errno == 71, "descriptor length running past a mapping accepted");
     sceUsbdUnrefDevice(nullptr);
 
     Require(Throws([&] { sceUsbdRefDevice(&foreign); }), "referencing a device that was never listed did not throw");
