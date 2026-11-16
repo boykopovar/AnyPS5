@@ -67,6 +67,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/MediaExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfTimeDumpExports.hpp"
+#include "SceTypes.hpp"
 
 #include <cstdarg>
 #include <cstddef>
@@ -77,13 +78,7 @@ namespace {
 
 using NKWebKit::WtfDumpAbi::PrintStream;
 
-#ifdef _WIN32
-using GuestVaList = __builtin_sysv_va_list;
-#else
-using GuestVaList = std::va_list;
-#endif
-
-using VprintfFunction = void (APS5_VABI*)(PrintStream*, const char*, GuestVaList);
+using VprintfFunction = void (APS5_VABI*)(PrintStream*, const char*, VaList*);
 using BeginFunction = PrintStream* (APS5_VABI*)(PrintStream*);
 using EndFunction = void (APS5_VABI*)(PrintStream*);
 
@@ -96,12 +91,12 @@ void APS5_VABI Printf_nid_no_patch(PrintStream& out, const char* format, ...) {
 #ifdef _WIN32
     __builtin_sysv_va_list arguments;
     __builtin_sysv_va_start(arguments, format);
-    Slot<VprintfFunction>(out, NKWebKit::WtfDumpAbi::PrintStreamVprintf)(&out, format, arguments);
+    Slot<VprintfFunction>(out, NKWebKit::WtfDumpAbi::PrintStreamVprintf)(&out, format, reinterpret_cast<VaList*>(arguments));
     __builtin_sysv_va_end(arguments);
 #else
     std::va_list arguments;
     va_start(arguments, format);
-    Slot<VprintfFunction>(out, NKWebKit::WtfDumpAbi::PrintStreamVprintf)(&out, format, arguments);
+    Slot<VprintfFunction>(out, NKWebKit::WtfDumpAbi::PrintStreamVprintf)(&out, format, reinterpret_cast<VaList*>(arguments));
     va_end(arguments);
 #endif
 }
