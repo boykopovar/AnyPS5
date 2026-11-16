@@ -181,9 +181,9 @@ int APS5_VABI sceFontSetScriptLanguage(FontHandle fontHandle, int fontScript, in
 }
 
 int APS5_VABI sceFontGetScriptLanguage(FontHandle fontHandle, int fontScript, int* fontLanguage) {
-    if (fontLanguage) *fontLanguage = 0;
+    const bool cleared = fontLanguage && CopyOutGuest(fontLanguage, 0);
     const int result = AccessFontSettings(fontHandle, [&](FontState&) {
-        if (!fontLanguage) return SCE_FONT_ERROR_INVALID_PARAMETER;
+        if (!cleared) return SCE_FONT_ERROR_INVALID_PARAMETER;
         return fontScript == 0x100 || fontScript == 0x600 || fontScript == 0x3000 ? SCE_FONT_OK : SCE_FONT_ERROR_INVALID_PARAMETER;
     });
     if (result != SCE_FONT_OK) return result;
@@ -205,7 +205,7 @@ int APS5_VABI sceFontGetTypographicDesign(FontHandle fontHandle, int typographic
         const int validation = CheckTypography(font, typographic, false);
         return feature ? validation : SCE_FONT_ERROR_INVALID_PARAMETER;
     });
-    if (feature) *feature = 0;
+    if (feature && !CopyOutGuest(feature, 0) && result == SCE_FONT_OK) return SCE_FONT_ERROR_INVALID_PARAMETER;
     if (result != SCE_FONT_OK) return result;
     throw std::logic_error("sceFontGetTypographicDesign: driver typography query is not implemented");
 }
