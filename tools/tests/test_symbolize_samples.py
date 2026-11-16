@@ -1724,6 +1724,16 @@ class HeaderWindowTests(unittest.TestCase):
         lines = ["# module libA 0x10 0x20", "# module libB 0x1 0x2", "# module liba 0x9 0x9", "not a header"]
         self.assertEqual(symbolize_samples.read_headers(lines), {"liba": False, "libb": (1, 2)})
 
+    def test_window_subtracts_counters_and_keeps_the_later_headers(self):
+        later = symbolize_samples.Samples()
+        earlier = symbolize_samples.Samples()
+        later.headers = {"liba": (1, 2)}
+        later.stacks = collections.Counter({"s": 5})
+        earlier.stacks = collections.Counter({"s": 2})
+        result = symbolize_samples.window(later, earlier)
+        self.assertEqual(result.stacks, collections.Counter({"s": 3}))
+        self.assertEqual(result.headers, {"liba": (1, 2)})
+
 
 if __name__ == "__main__":
     unittest.main()
