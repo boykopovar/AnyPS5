@@ -1154,6 +1154,11 @@ class ProgressOverloadTests(unittest.TestCase):
             "int APS5_VABI TwiceAlias() { return Twice(); }\n"})
         self.assertEqual(group["done_names"], ["Twice", "TwiceAlias"])
         self.assertEqual(group["todo_names"], [])
+class UniqueJsonKeysTests(unittest.TestCase):
+    def test_unique_json_keys_rejects_duplicates(self):
+        self.assertEqual(progress.unique_json_keys([("a", 1), ("b", 2)]), {"a": 1, "b": 2})
+        with self.assertRaises(ValueError):
+            progress.unique_json_keys([("a", 1), ("a", 2)])
 
 
 if __name__ == "__main__":
