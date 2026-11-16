@@ -89,6 +89,9 @@ int main() {
     Require(sceFontOpenFontMemory(library, reinterpret_cast<const void*>(0x10), 64, nullptr, &badFont) == SCE_FONT_ERROR_INVALID_PARAMETER);
     Require(errno == 71);
     Require(badFont == nullptr);
+    const unsigned char malformedFont[64]{};
+    Require(sceFontOpenFontMemory(library, malformedFont, sizeof(malformedFont), nullptr, &badFont) == SCE_FONT_ERROR_NO_SUPPORT_FORMAT);
+    Require(badFont == nullptr);
     const std::vector<unsigned char> fontData = BuildCharacterFont();
     FontHandle font = nullptr;
     Require(sceFontOpenFontMemory(library, fontData.data(), static_cast<std::uint32_t>(fontData.size()), nullptr, &font) == SCE_FONT_OK);

@@ -315,15 +315,21 @@ void CloseMemoryFontStream(FT_Stream stream) {
 
 FT_Error OpenMemoryFace(FT_Library library, std::unique_ptr<MemoryFontStream> memoryStream, FT_Long subFontIndex, FT_Face* face) {
     if (!library || !memoryStream || !face) return FT_Err_Invalid_Argument;
-    MemoryFontStream* raw = memoryStream.release();
+    MemoryFontStream* raw = memoryStream.get();
     raw->stream.base = raw->data.data();
     raw->stream.size = static_cast<unsigned long>(raw->data.size());
-    raw->stream.close = &CloseMemoryFontStream;
+    raw->stream.close = nullptr;
     raw->stream.descriptor.pointer = raw;
     FT_Open_Args args{};
     args.flags = FT_OPEN_STREAM;
     args.stream = &raw->stream;
-    return FT_Open_Face(library, &args, subFontIndex, face);
+    const FT_Error error = FT_Open_Face(library, &args, subFontIndex, face);
+    if (error != 0 || !*face) {
+        return error != 0 ? error : FT_Err_Invalid_Argument;
+    }
+    raw->stream.close = &CloseMemoryFontStream;
+    memoryStream.release();
+    return 0;
 }
 
 int APS5_VABI LibraryOpenFont(FontLibNative* library, std::uint32_t mode, const void* fontAddress, std::uint32_t fontSize, std::uint32_t subFontIndex, std::uint32_t uniqueWord, FontObj** inoutFontObj) {
@@ -343,8 +349,12 @@ int APS5_VABI LibraryOpenFont(FontLibNative* library, std::uint32_t mode, const 
     std::unique_ptr<MemoryFontStream> memoryStream;
     if (fromMemory) {
         if (fontSize == 0) return SCE_FONT_ERROR_INVALID_PARAMETER;
-        memoryStream = std::make_unique<MemoryFontStream>();
-        memoryStream->data.resize(fontSize);
+        try {
+            memoryStream = std::make_unique<MemoryFontStream>();
+            memoryStream->data.resize(fontSize);
+        } catch (const std::bad_alloc&) {
+            return SCE_FONT_ERROR_ALLOCATION_FAILED;
+        }
         if (!CopyInGuestBytes(memoryStream->data.data(), fontAddress, fontSize)) {
             return SCE_FONT_ERROR_INVALID_PARAMETER;
         }
