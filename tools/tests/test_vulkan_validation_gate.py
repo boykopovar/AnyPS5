@@ -1,3 +1,4 @@
+import argparse
 import contextlib
 import io
 import json
@@ -796,6 +797,17 @@ class NestedContainmentTests(FixtureTests):
         self.assertTrue(ready.exists())
         time.sleep(1.2)
         self.assertFalse(ctest_marker.exists())
+
+
+
+class ArgumentTests(unittest.TestCase):
+    def test_positive_accepts_finite_positive_numbers(self):
+        self.assertEqual(gate.positive("2.5"), 2.5)
+
+    def test_positive_refuses_zero_negative_and_non_finite_values(self):
+        for value in ("0", "-1", "nan", "inf"):
+            with self.subTest(value=value), self.assertRaises(argparse.ArgumentTypeError):
+                gate.positive(value)
 
 
 if __name__ == "__main__":
