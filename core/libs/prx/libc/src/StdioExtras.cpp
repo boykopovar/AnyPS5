@@ -62,17 +62,7 @@ extern "C" {
 
 #ifdef _WIN32
 
-int APS5_VABI vsprintf_s_nid_postfix(char* buffer, size_t size, const char* format, VaList* args) {
-    return LibcDetail::FormatWindows(buffer, size, format, args);
-}
 
-int APS5_VABI sprintf_s_nid_postfix(char* buffer, size_t size, const char* format, ...) {
-    __builtin_sysv_va_list args;
-    __builtin_sysv_va_start(args, format);
-    const int result = LibcDetail::FormatWindows(buffer, size, format, args);
-    __builtin_sysv_va_end(args);
-    return result;
-}
 
 #endif
 
