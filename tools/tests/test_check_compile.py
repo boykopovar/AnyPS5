@@ -1449,6 +1449,13 @@ class CheckCompileEntryKeyTests(unittest.TestCase):
             outside = Path(other) / "c.cpp"
             entry = {"directory": name, "file": str(outside)}
             self.assertEqual(check_compile.entry_key(entry, Path(name)), check_compile.real(outside).as_posix())
+    def test_entry_key_is_relative_to_root_or_absolute(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            inside = {"directory": str(root / "build"), "file": "../src/a.cpp"}
+            self.assertEqual(check_compile.entry_key(inside, root), "src/a.cpp")
+            outside = {"directory": str(root), "file": "/elsewhere/b.cpp"}
+            self.assertEqual(check_compile.entry_key(outside, root), "/elsewhere/b.cpp")
 
 
 class CheckCompileResolveSourceTests(unittest.TestCase):
