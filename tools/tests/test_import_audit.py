@@ -3815,6 +3815,14 @@ class FunctionExitTests(unittest.TestCase):
     def test_function_exit_detects_an_explicit_return(self):
         self.assertTrue(import_audit.function_exit('{ foo(); return 1; }'))
         self.assertFalse(import_audit.function_exit('{ foo(); }'))
+class AttachNameTests(unittest.TestCase):
+    def test_attach_names_marks_whether_the_name_hashes_to_the_nid(self):
+        nid = nid_names.compute_nid('sceFoo')
+        records = [{'nid': nid, 'name': None, 'class': 'absent'}, {'nid': 'AAAAAAAAAAA', 'name': None, 'class': 'absent'}, {'nid': nid, 'name': None, 'class': 'stub'}]
+        import_audit.attach_names(records, {nid: 'sceFoo', 'AAAAAAAAAAA': 'sceBar'})
+        self.assertEqual((records[0]['name'], records[0]['name_verified']), ('sceFoo', True))
+        self.assertEqual((records[1]['name'], records[1]['name_verified']), ('sceBar', False))
+        self.assertIsNone(records[2]['name'])
 
 
 if __name__ == "__main__":
