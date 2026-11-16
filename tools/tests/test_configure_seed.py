@@ -655,5 +655,13 @@ class ChecksParsingTests(unittest.TestCase):
         self.assertEqual(err.errors, "backslashreplace")
 
 
+class WriteSeedTests(unittest.TestCase):
+    def test_write_seed_creates_the_parent_folder_and_the_exact_text(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / 'sub' / 'seed.cmake'
+            configure_seed.write_seed(target, 'set(A 1)\n')
+            self.assertEqual(target.read_text(encoding='utf-8'), 'set(A 1)\n')
+
+
 if __name__ == "__main__":
     unittest.main()
