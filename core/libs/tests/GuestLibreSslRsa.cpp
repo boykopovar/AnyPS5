@@ -487,6 +487,15 @@ static bool Pkcs1Block(const Bytes& block, const Bytes& message) {
     return block[separator] == 0 && Bytes(block.begin() + static_cast<long>(separator) + 1, block.end()) == message;
 }
 
+static bool Sslv23Block(const Bytes& block, const Bytes& message) {
+    if (!Pkcs1Block(block, message)) return false;
+    const std::size_t separator = block.size() - message.size() - 1;
+    if (separator < 10) return false;
+    for (std::size_t index = separator - 8; index < separator; ++index)
+        if (block[index] != 3) return false;
+    return true;
+}
+
 static bool OaepBlock(const Bytes& block, const Bytes& message) {
     if (block[0]) return false;
     const Bytes maskedSeed(block.begin() + 1, block.begin() + 21);
@@ -626,6 +635,28 @@ static void TestPublicEncrypt() {
     for (int padding : {0, PaddingX931, 6, 7}) Require(RSA_public_encrypt_nid_postfix(32, message.data(), first.data(), rsa, padding) == -1);
     RequireThrows([&] { RSA_public_encrypt_nid_postfix(32, message.data(), nullptr, rsa, PaddingPkcs1); });
     RequireThrows([&] { RSA_public_encrypt_nid_postfix(32, nullptr, first.data(), rsa, PaddingPkcs1); });
+    RSA_free_nid_postfix(rsa);
+}
+
+static void TestPublicEncryptSslv23() {
+    const auto spki = Hex(CavpSpki);
+    auto* rsa = Decode(spki, static_cast<long>(spki.size()));
+    const auto message = Pattern(32, 5);
+    Bytes first(256);
+    Bytes second(256);
+    Require(RSA_public_encrypt_nid_postfix(32, message.data(), first.data(), rsa, PaddingSslv23) == 256);
+    Require(RSA_public_encrypt_nid_postfix(32, message.data(), second.data(), rsa, PaddingSslv23) == 256);
+    Require(first != second);
+    Require(Sslv23Block(Recover(first), message) && Sslv23Block(Recover(second), message));
+    const auto longMessage = Pattern(246, 9);
+    Require(RSA_public_encrypt_nid_postfix(245, longMessage.data(), first.data(), rsa, PaddingSslv23) == 256);
+    const auto longest = Recover(first);
+    Require(Sslv23Block(longest, Bytes(longMessage.begin(), longMessage.begin() + 245)) && longest[2] == 3);
+    Require(RSA_public_encrypt_nid_postfix(246, longMessage.data(), first.data(), rsa, PaddingSslv23) == -1);
+    Require(RSA_public_encrypt_nid_postfix(0, nullptr, first.data(), rsa, PaddingSslv23) == 256);
+    Require(Sslv23Block(Recover(first), {}));
+    RequireThrows([&] { RSA_public_encrypt_nid_postfix(-1, message.data(), first.data(), rsa, PaddingSslv23); });
+    RequireThrows([&] { RSA_public_encrypt_nid_postfix(32, nullptr, first.data(), rsa, PaddingSslv23); });
     RSA_free_nid_postfix(rsa);
 }
 
@@ -868,6 +899,7 @@ int main() {
     TestPublicDecrypt();
     TestPublicDecryptX931();
     TestPublicEncrypt();
+    TestPublicEncryptSslv23();
     TestPublicKeyChecks();
     TestVerify();
     TestAddedDigestObjects();

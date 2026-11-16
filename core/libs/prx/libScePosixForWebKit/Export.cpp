@@ -7,8 +7,10 @@
 #include "prx/libc/include/HostEntropy.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
-#include <cerrno>
+#include <algorithm>
+#include <array>
 #include <cctype>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -185,7 +187,20 @@ char* APS5_VABI strcasestr_nid_postfix(const char* text, const char* needle) {
 }
 
 void APS5_VABI arc4random_buf_nid_postfix(void* buffer, std::size_t size) {
-    HostEntropy_nid_no_patch(buffer, size);
+    if (!buffer || size == 0) return;
+    std::array<std::uint8_t, 256> chunk;
+    std::size_t offset = 0;
+    const int savedErrno = errno;
+    while (offset < size) {
+        const std::size_t current = std::min(size - offset, chunk.size());
+        HostEntropy_nid_no_patch(chunk.data(), current);
+        if (!GuestCopyOut_nid_no_patch(static_cast<char*>(buffer) + offset, chunk.data(), current)) {
+            errno = savedErrno;
+            return;
+        }
+        offset += current;
+    }
+    errno = savedErrno;
 }
 
 std::uint32_t APS5_VABI arc4random_nid_postfix() {
@@ -292,18 +307,18 @@ int APS5_VABI pthread_setname_np_nid_postfix(Pthread thread, const char* name) {
 }
 
 void* APS5_VABI opendir_nid_disambig1_nid_postfix(const char* path) {
-    return opendir_nid_postfix(path);
+    return OpenDirectory_nid_no_patch(path);
 }
 
 int APS5_VABI closedir_nid_disambig1_nid_postfix(void* handle) {
-    return closedir_nid_postfix(handle);
+    return CloseDirectory_nid_no_patch(handle);
 }
 
 GuestDirectoryEntry* APS5_VABI readdir_nid_disambig1_nid_postfix(void* handle) {
-    return readdir_nid_postfix(handle);
+    return ReadDirectory_nid_no_patch(handle);
 }
 
 int APS5_VABI readdir_r_nid_disambig1_nid_postfix(void* handle, GuestDirectoryEntry* entry, GuestDirectoryEntry** result) {
-    return readdir_r_nid_postfix(handle, entry, result);
+    return ReadDirectoryEntry_nid_no_patch(handle, entry, result);
 }
 }

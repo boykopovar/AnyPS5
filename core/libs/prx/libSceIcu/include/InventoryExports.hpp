@@ -64,6 +64,8 @@ int APS5_VABI uloc_toUnicodeLocaleType();
 int APS5_VABI unorm2_getNFKCInstance();
 int APS5_VABI unorm2_getNFKDInstance();
 const char* APS5_VABI uprv_getDefaultLocaleID_nid_postfix();
+double APS5_VABI uprv_getRawUTCtime_nid_postfix();
+double APS5_VABI uprv_getUTCtime_nid_postfix();
 int APS5_VABI ures_getByKey();
 int APS5_VABI ures_getStringByKey();
 int APS5_VABI ures_open();
