@@ -74,6 +74,7 @@
 #include "prx/libc/include/RunReportComponent.hpp"
 #include "RdnaDecoder/DiagnosticSink.hpp"
 #ifdef _WIN32
+#include <set>
 #include <windows.h>
 #else
 #include <unistd.h>
@@ -726,6 +727,8 @@ struct VulkanDevice::State {
     AgcDriver::Mutex computePipelinesMutex;
     std::map<ComputePipelineKey, std::shared_ptr<ComputePipelineObjects>> computePipelines;
     std::map<ComputePipelineKey, std::shared_future<std::shared_ptr<ComputePipelineObjects>>> computePipelinesBuilding;
+    std::set<ComputePipelineKey> computePipelinesQueued;
+    std::set<ComputePipelineKey> computePipelinesFailed;
     // The journal replay building this device's pipelines on its own threads; drained first at teardown.
     std::shared_ptr<Graphics::PipelineJournalReplay> journalReplay;
     std::atomic<bool> journalReplayPending{false};
@@ -1203,6 +1206,8 @@ struct VulkanDevice::State {
                 std::lock_guard pipelines(computePipelinesMutex);
                 computePipelines.clear();
                 computePipelinesBuilding.clear();
+                computePipelinesQueued.clear();
+                computePipelinesFailed.clear();
             }
             // Every ShaderResources (kept by the recorder or the resource cache) is gone now, so the
             // sets and samplers they borrowed can go.
@@ -2938,19 +2943,64 @@ bool VulkanDevice::HasComputePipeline(const ShaderRecompiler::RecompileResult& s
     return !key.identity.Empty() && (state->computePipelines.contains(key) || state->computePipelinesBuilding.contains(key));
 }
 
+namespace {
+thread_local bool buildingAhead = false;
+}
+
 void VulkanDevice::PrebuildComputePipeline(const ShaderRecompiler::RecompileResult& shader, std::uint64_t programAddress) {
     if (shader.spirv.size() < 5 || shader.spirv[0] != 0x07230203u) return;
-    ShaderRecompiler::RuntimeAbi::RequireVersion(shader.runtimeAbiVersion);
-    const auto context = graphicsContext();
-    if (context.descriptorCache == nullptr) return;
     const std::array<Graphics::CompiledShader, 1> shaders{{{ShaderRecompiler::ShaderStage::Compute, &shader, 0}}};
     const auto pushStages = Graphics::PushConstantStages(shaders);
-    if (pushStages != 0 && state->properties.limits.maxPushConstantsSize < Graphics::ComputePushConstantBytes) return;
-    if (HasComputePipeline(shader)) return;
-    const CompileBudget::Hold hold(BackgroundCompileBudget(), shader.spirv.size() * sizeof(std::uint32_t));
-    if (HasComputePipeline(shader)) return;
-    const auto layouts = Graphics::DescribeSetLayouts(context, shaders);
-    static_cast<void>(computePipeline(context, shader, layouts.layouts.main, layouts.mainKey, pushStages, programAddress));
+    const auto key = ComputePipelineKey::Of(shader, pushStages != 0);
+    const auto settle = [&](bool failed) {
+        if (key.identity.Empty()) return;
+        std::lock_guard pipelines(state->computePipelinesMutex);
+        state->computePipelinesQueued.erase(key);
+        if (failed) state->computePipelinesFailed.insert(key);
+    };
+    try {
+        ShaderRecompiler::RuntimeAbi::RequireVersion(shader.runtimeAbiVersion);
+        const auto context = graphicsContext();
+        if (context.descriptorCache == nullptr || (pushStages != 0 && state->properties.limits.maxPushConstantsSize < Graphics::ComputePushConstantBytes) || HasComputePipeline(shader)) {
+            settle(false);
+            return;
+        }
+        const CompileBudget::Hold hold(BackgroundCompileBudget(), shader.spirv.size() * sizeof(std::uint32_t));
+        if (HasComputePipeline(shader)) {
+            settle(false);
+            return;
+        }
+        const auto layouts = Graphics::DescribeSetLayouts(context, shaders);
+        buildingAhead = true;
+        std::shared_ptr<ComputePipelineObjects> built;
+        try {
+            built = computePipeline(context, shader, layouts.layouts.main, layouts.mainKey, pushStages, programAddress);
+        } catch (...) {
+            buildingAhead = false;
+            throw;
+        }
+        buildingAhead = false;
+        settle(built == nullptr);
+    } catch (...) {
+        settle(true);
+        throw;
+    }
+}
+
+VulkanDevice::PipelineAhead VulkanDevice::ComputePipelineAhead(const ShaderRecompiler::RecompileResult& shader) {
+    if (shader.spirv.size() < 5 || shader.spirv[0] != 0x07230203u) return PipelineAhead::Unavailable;
+    const std::array<Graphics::CompiledShader, 1> shaders{{{ShaderRecompiler::ShaderStage::Compute, &shader, 0}}};
+    const auto pushStages = Graphics::PushConstantStages(shaders);
+    if (pushStages != 0 && state->properties.limits.maxPushConstantsSize < Graphics::ComputePushConstantBytes) return PipelineAhead::Unavailable;
+    if (graphicsContext().descriptorCache == nullptr) return PipelineAhead::Unavailable;
+    const auto key = ComputePipelineKey::Of(shader, pushStages != 0);
+    if (key.identity.Empty()) return PipelineAhead::Unavailable;
+    std::lock_guard pipelines(state->computePipelinesMutex);
+    if (state->computePipelines.contains(key)) return PipelineAhead::Built;
+    if (state->computePipelinesFailed.contains(key)) return PipelineAhead::Unavailable;
+    if (state->computePipelinesBuilding.contains(key) || state->computePipelinesQueued.contains(key)) return PipelineAhead::Building;
+    state->computePipelinesQueued.insert(key);
+    return PipelineAhead::Start;
 }
 
 bool VulkanDevice::ImportGuestMemory(const GuestAllocations::Mapped& ranges, std::uint64_t generation, bool adoptDevice) {
@@ -3498,10 +3548,11 @@ VulkanDevice::CopyVerification VulkanDevice::CopyVerifyCounts() {
 namespace {
 std::atomic<std::uint64_t> computePipelinesCreated{0};
 std::atomic<std::uint64_t> computePipelinesCreatedLocked{0};
+std::atomic<std::uint64_t> computePipelinesCreatedAhead{0};
 }
 
 VulkanDevice::ComputePipelineCreation VulkanDevice::ComputePipelineCounts() {
-    return {computePipelinesCreated.load(std::memory_order_relaxed), computePipelinesCreatedLocked.load(std::memory_order_relaxed)};
+    return {computePipelinesCreated.load(std::memory_order_relaxed), computePipelinesCreatedLocked.load(std::memory_order_relaxed), computePipelinesCreatedAhead.load(std::memory_order_relaxed)};
 }
 
 VulkanDevice::CopyAliasing VulkanDevice::CopyAliasCounts() {
@@ -6224,6 +6275,7 @@ std::shared_ptr<ComputePipelineObjects> VulkanDevice::createComputePipeline(cons
         computePipelinesCreated.fetch_add(1, std::memory_order_relaxed);
         state->computePipelinesCreated.fetch_add(1, std::memory_order_relaxed);
         if (GuestMemory::GpuMutex().HeldByThisThread()) computePipelinesCreatedLocked.fetch_add(1, std::memory_order_relaxed);
+        if (buildingAhead) computePipelinesCreatedAhead.fetch_add(1, std::memory_order_relaxed);
     }
     Graphics::LogPipelineStatistics_nid_no_patch(context, objects->pipeline);
     if (profile && shader.spirv.size() > 100000) std::fprintf(stderr, "[dispatch] created a pipeline for %zu SPIR-V words in %.0f ms (program 0x%llx)\n", shader.spirv.size(), std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count(), static_cast<unsigned long long>(programAddress));

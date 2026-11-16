@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "VulkanTestDevice.hpp"
 #include <array>
@@ -55,6 +56,7 @@ int main() {
         }
         Output.fill(Untouched);
         const bool async = AgcDriver::DriverDetail::AsyncDrawCompile();
+        const auto before = AgcDriver::VulkanDevice::ComputePipelineCounts();
         std::size_t attempts = 0;
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(60);
         do {
@@ -67,6 +69,10 @@ int main() {
         } while (std::chrono::steady_clock::now() < deadline);
         Require(Done(), "the dispatch never stored after its shader was prepared and specialized in the background");
         Require(async || attempts == 1, "a dispatch without APS5_ASYNC_DRAW_COMPILE needed more than one attempt");
+        const auto after = AgcDriver::VulkanDevice::ComputePipelineCounts();
+        Require(after.created > before.created, "the dispatch stored without creating a compute pipeline");
+        if (async) Require(after.created - before.created == after.ahead - before.ahead, "a dispatch with APS5_ASYNC_DRAW_COMPILE created its compute pipeline itself (" + std::to_string(after.created - before.created) + " created, " + std::to_string(after.ahead - before.ahead) + " on the library prebuild pool)");
+        else Require(after.ahead == before.ahead, "a dispatch without APS5_ASYNC_DRAW_COMPILE built its compute pipeline on the library prebuild pool");
         AgcDriverShutdown_nid_postfix();
         std::printf("async draw compile tests passed (%s, %zu dispatches)\n", async ? "enabled" : "disabled", attempts);
         return 0;
