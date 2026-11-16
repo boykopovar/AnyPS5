@@ -202,5 +202,28 @@ class ClosedDependencyStatusTests(unittest.TestCase):
                 progress_prs.closed_dependency_status("owner/repo", 7)
 
 
+
+class MakeCommitTests(unittest.TestCase):
+    def test_make_commit_records_both_parents_and_the_estimate_message(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = ["-c", "user.name=t", "-c", "user.email=t@example.invalid"]
+            subprocess.run(["git", "-C", str(root), "init", "-q"], check=True)
+            subprocess.run(["git", "-C", str(root), *env, "commit", "-q", "--allow-empty", "-m", "base"], check=True)
+            base = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True,
+                                  check=True).stdout.strip()
+            tree = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD^{tree}"], capture_output=True, text=True,
+                                  check=True).stdout.strip()
+            subprocess.run(["git", "-C", str(root), *env, "commit", "-q", "--allow-empty", "-m", "head"], check=True)
+            head = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True,
+                                  check=True).stdout.strip()
+            commit = progress_prs.make_commit(root, tree, base, head)
+            body = subprocess.run(["git", "-C", str(root), "cat-file", "-p", commit], capture_output=True, text=True,
+                                  check=True).stdout
+            parents = [line.split()[1] for line in body.splitlines() if line.startswith("parent ")]
+            self.assertEqual(parents, [base, head])
+            self.assertIn("open PR progress estimate", body)
+
+
 if __name__ == "__main__":
     unittest.main()
