@@ -643,5 +643,20 @@ class PatchAdvisorTests(unittest.TestCase):
                 suggest_patches.confined(root, "../outside.txt")
 
 
+    def test_finite_json_number_rejects_non_finite_values(self):
+        self.assertEqual(suggest_patches.finite_json_number("1.5"), 1.5)
+        self.assertEqual(suggest_patches.finite_json_number("-0"), 0.0)
+        for token in ("NaN", "Infinity", "-Infinity", "1e999", "-1e999"):
+            with self.assertRaises(ValueError, msg=token):
+                suggest_patches.finite_json_number(token)
+
+
+    def test_single_line_rejects_blank_and_nonprintable_values(self):
+        self.assertEqual(suggest_patches.single_line("valid text", "name"), "valid text")
+        for value in (None, 7, "", "   ", "line\nbreak", "line\rbreak", "tab\tvalue", "nul\x00byte"):
+            with self.assertRaises(ValueError, msg=repr(value)):
+                suggest_patches.single_line(value, "name")
+
+
 if __name__ == "__main__":
     unittest.main()
