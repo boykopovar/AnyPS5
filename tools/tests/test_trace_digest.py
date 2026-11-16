@@ -1808,5 +1808,12 @@ class SummaryFileTests(unittest.TestCase):
             trace_digest.resolve_summary_path(loop)
 
 
+class TableCellTests(unittest.TestCase):
+    def test_table_cell_escapes_pipes_and_html_so_rows_keep_their_columns(self):
+        self.assertEqual(trace_digest.table_cell('a|b'), 'a&#124;b')
+        self.assertEqual(trace_digest.table_cell('<x>'), '&lt;x&gt;')
+        self.assertEqual(trace_digest.table_cell('plain'), 'plain')
+
+
 if __name__ == "__main__":
     unittest.main(defaultTest=os.environ.get("TRACE_DIGEST_TEST"))
