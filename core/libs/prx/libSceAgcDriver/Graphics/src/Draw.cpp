@@ -2010,8 +2010,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         inputs.indexOffset = 0;
         inputs.expandedIndexCount = outputIndexCount;
         inputs.indices = std::move(indexCopy);
-    } else if (draw.indexed && state.primitiveRestart && !context.primitiveListRestart && (state.topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_LINE_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)) {
-        Require(!state.stages.mesh, "AGC graphics: primitive restart in a mesh list draw needs VK_EXT_primitive_topology_list_restart");
+    } else if (draw.indexed && state.primitiveRestart && !context.primitiveListRestart && !state.stages.mesh && (state.topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_LINE_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)) {
         if (indexBytes == 0) {
             inputs.nothing = true;
             return inputs;
@@ -2044,7 +2043,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         inputs.indexOffset = 0;
     } else if (draw.indexed) {
         const bool listTopology = state.topology == VK_PRIMITIVE_TOPOLOGY_POINT_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_LINE_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-        const bool skipRestart = state.primitiveRestart && (!listTopology || context.primitiveListRestart);
+        const bool skipRestart = state.primitiveRestart && (!listTopology || context.primitiveListRestart || state.stages.mesh);
         const auto use = draw.indexSize == 2 ? (skipRestart ? Recorder::SnapshotUse::Index16Restart : Recorder::SnapshotUse::Index16) : (skipRestart ? Recorder::SnapshotUse::Index32Restart : Recorder::SnapshotUse::Index32);
         const bool restartTable = skipRestart && state.stages.mesh && (state.stages.mesh->inputPrimitive == 5 || state.stages.mesh->inputPrimitive == 6);
         const auto* import = InPlaceDrawInput(context, draw.indexAddress, static_cast<std::size_t>(indexBytes), draw.indexSize);
@@ -2729,7 +2728,7 @@ void keepRecordedDraw(Recorder& recorder, const std::shared_ptr<ShaderResources>
     // Counted for the [address-sync] line: a lease released by the completion (the pin waiter
     // finishes the recorder up to the open batch, which holds the kept resources and gets the
     // next serial), or waited for by the caller (any wait releases it at once).
-    if (resources->HoldsLease()) CountLeaseOutcome(outcome.waited, outcome.waited ? 0 : recorder.Submissions() + 1);
+    if (resources->HoldsLease()) CountLeaseOutcome(outcome.waited, outcome.waited ? 0 : recorder.Submissions() + 1, !resources->BdaReadOnly());
     // Every use of a (possibly shared) resources object registers its GPU writes anew.
     resources->MarkGpuWrites(recorder);
     if (spaceKeep != nullptr) *spaceKeep = resources->ReleaseSpace();
@@ -3980,6 +3979,7 @@ bool prepareDraw(const Context& context, const State& state, const Pm4::DrawPara
             // The reads wait for the producing batch through the flush hook, as the driver's
             // resolve did for every indirect dispatch before its GPU path.
             const auto readStart = std::chrono::steady_clock::now();
+            FinishLeaseWrites();
             const auto count = std::min(args->countIndirect ? Pm4::ReadDrawCount(*args) : args->count, args->count);
             records.reserve(count);
             for (std::uint32_t record = 0; record < count; ++record) records.push_back(Pm4::ReadDrawArguments(*args, record));

@@ -76,6 +76,15 @@ int main() {
     _ZN3WTF11Persistence7DecoderD2Ev();
     _ZN3WTF18FunctionDispatcherD1Ev();
     _ZN3WTF18FunctionDispatcherD2Ev();
+    unsigned char leakCounter = 0xA5;
+    _ZN3WTF21RefCountedLeakCounter16suppressMessagesEPKc("reason");
+    _ZN3WTF21RefCountedLeakCounterC1EPKc(&leakCounter, "counter");
+    _ZN3WTF21RefCountedLeakCounterC2EPKc(&leakCounter, nullptr);
+    _ZN3WTF21RefCountedLeakCounter9incrementEv(&leakCounter);
+    _ZN3WTF21RefCountedLeakCounter9decrementEv(&leakCounter);
+    _ZN3WTF21RefCountedLeakCounter24cancelMessageSuppressionEPKc("reason");
+    _ZN3WTF21RefCountedLeakCounter24cancelMessageSuppressionEPKc(nullptr);
+    Require(leakCounter == 0xA5);
     _ZN3WTF21RefCountedLeakCounterD1Ev();
     _ZN3WTF21RefCountedLeakCounterD2Ev();
     _ZN7WebCore11FileMonitorD1Ev();

@@ -281,6 +281,7 @@ function(add_shader_recompiler target runtimeTarget)
             DebugProbeActive
             DecodeRdnaInstruction
             DepthBitsTextureWidth
+            ExactF32Arithmetic
             HashBytes
             LayoutBarycentricEmulation
             MeshBarycentricLayoutOf
@@ -352,6 +353,7 @@ function(add_shader_recompiler target runtimeTarget)
             FindTableCalls
             LinkCalls
             LoadStamp
+            StoreStamp
             WriteFileAtomically
     )
     set(shaderCacheManifest)

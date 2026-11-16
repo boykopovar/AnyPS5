@@ -726,8 +726,8 @@ void testControls() {
         std::lock_guard lock(cfg->mutex);
         check(cfg->flipEvents.empty(), "flip event unsubscription did not clear registration");
     }
-    check(sceVideoOutDeleteFlipEvent(queue, handle) == 0, "duplicate flip event unsubscription failed");
-    expectFailure([&] { sceVideoOutDeleteFlipEvent(0, handle); });
+    check(sceVideoOutDeleteFlipEvent(queue, handle) == VIDEO_OUT_ERROR_INVALID_EVENT, "duplicate flip event unsubscription did not return INVALID_EVENT");
+    check(sceVideoOutDeleteFlipEvent(0, handle) == VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE, "flip event unsubscription from queue 0 did not return INVALID_EVENT_QUEUE");
     check(sceVideoOutDeleteFlipEvent(queue, -1) == VIDEO_OUT_ERROR_INVALID_HANDLE, "flip event unsubscription on an invalid handle was accepted");
     constexpr int slotOccupied = static_cast<int>(0x80290010u);
     VideoOutBuffers again{storage.data(), nullptr, {nullptr, nullptr}};
@@ -1248,8 +1248,8 @@ void testUnopenedEventRegistration() {
         check(sceVideoOutDeleteFlipEvent(0, unopened) == VIDEO_OUT_ERROR_INVALID_HANDLE, "unopened handle check did not take precedence on delete");
     }
     const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
-    expectFailure([&] { sceVideoOutAddFlipEvent(0, handle, nullptr); });
-    expectFailure([&] { sceVideoOutDeleteFlipEvent(0, handle); });
+    check(sceVideoOutAddFlipEvent(0, handle, nullptr) == VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE, "flip event on queue 0 did not return INVALID_EVENT_QUEUE");
+    check(sceVideoOutDeleteFlipEvent(0, handle) == VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE, "flip event deletion from queue 0 did not return INVALID_EVENT_QUEUE");
     expectFailure([&] { sceVideoOutAddVblankEvent(0, handle, nullptr); });
     expectFailure([&] { sceVideoOutDeleteVblankEvent(0, handle); });
     expectFailure([&] { sceVideoOutAddPreVblankStartEvent(0, handle, nullptr); });
@@ -1271,7 +1271,7 @@ void testUnopenedEventRegistration() {
     check(sceVideoOutDeleteOutputModeEvent(eq, handle) == 0, "registered output mode event was not deleted");
     check(sceVideoOutDeleteVrrActiveStatusEvent(eq, handle) == 0, "registered vrr active status event was not deleted");
 
-    check(sceVideoOutDeleteFlipEvent(eq, handle) == 0, "duplicate flip event deletion on an open port failed");
+    check(sceVideoOutDeleteFlipEvent(eq, handle) == VIDEO_OUT_ERROR_INVALID_EVENT, "duplicate flip event deletion on an open port did not return INVALID_EVENT");
     check(sceVideoOutDeleteVblankEvent(eq, handle) == 0, "duplicate vblank event deletion on an open port failed");
     check(sceVideoOutDeletePreVblankStartEvent(eq, handle) == 0, "duplicate pre-vblank event deletion on an open port failed");
     check(sceVideoOutDeleteOutputModeEvent(eq, handle) == 0, "duplicate output mode event deletion on an open port failed");
@@ -1532,6 +1532,16 @@ void testOutputResolutionOverride() {
     SDL_DisplayMode mode{};
     check(SDL_GetCurrentDisplayMode(0, &mode) == 0, "the display mode could not be read");
     const std::uint32_t following = (mode.w >= 3840 || mode.h >= 2160) ? 2u : 1u;
+    std::array<std::byte, 80> fresh{};
+    check(sceVideoOutGetOutputStatusWithVrr(handle, fresh.data()) == static_cast<int>(0x8029001Cu), "the VRR status of a handle without buffers was not refused");
+    std::vector<std::byte> allocation(65536 + 65535);
+    const auto storage = alignedBuffer(allocation);
+    VideoOutBuffers buffers{storage.data(), nullptr, {nullptr, nullptr}};
+    VideoOutBufferAttribute2 attribute{};
+    attribute.width = 64;
+    attribute.height = 64;
+    attribute.pixel_format = 0x8000000000000000ull;
+    check(sceVideoOutRegisterBuffers2(handle, 0, 0, &buffers, 1, &attribute, 0, nullptr) == 0, "the buffer registration failed");
     const auto reported = [&] {
         VideoOutOutputStatus status{};
         check(sceVideoOutGetOutputStatus(handle, &status) == 0, "the output status was not returned");
