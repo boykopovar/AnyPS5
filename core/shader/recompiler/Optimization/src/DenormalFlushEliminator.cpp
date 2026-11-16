@@ -145,9 +145,11 @@ private:
                 return true;
             case IrOpcode::BitCastU32F32:
             case IrOpcode::BitCastF32U32:
+            case IrOpcode::FPFract32:
             case IrOpcode::FPAbs32:
             case IrOpcode::FPNeg32:
             case IrOpcode::FPSaturate32:
+            case IrOpcode::NanPropagateF32:
                 return Contains(value.Argument(0));
             case IrOpcode::BitwiseXor32:
                 if (const IrValue* operand = maskedOperand(&value, IrOpcode::BitwiseXor32, 0x80000000u)) return Contains(operand);

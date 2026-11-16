@@ -1,14 +1,29 @@
 #include "prx/libSceCdlgUtilServer/libSceCdlgUtilServer.hpp"
 
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <stdexcept>
 
 namespace {
 
 void Require(bool value) {
     if (!value) std::abort();
+}
+
+template <typename Callable>
+void RequireInvalidArgument(Callable&& callable) {
+    errno = 71;
+    bool threw = false;
+    try {
+        callable();
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+    Require(errno == 71);
 }
 
 std::array<unsigned char, 32> NullServer() {
@@ -63,6 +78,10 @@ int main() {
         object[0x10] = value;
         for (int call = 0; call < 2; ++call) Require(libSceCdlgUtilServerUnknown_W4zcizD4i3I_nid_no_patch(object.data()) == value);
         for (std::size_t i = 0; i < object.size(); ++i) Require(object[i] == (i == 0x10 ? value : 0x5A));
+    }
+    for (const void* invalid : {static_cast<const void*>(nullptr), reinterpret_cast<const void*>(0x10)}) {
+        RequireInvalidArgument([&] { (void)libSceCdlgUtilServerUnknown_W4zcizD4i3I_nid_no_patch(invalid); });
+        RequireInvalidArgument([&] { (void)_ZNK3sce16CommonDialogUtil6Server14getServerStateEv(invalid); });
     }
     CheckNullServer();
     return 0;

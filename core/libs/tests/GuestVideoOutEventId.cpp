@@ -2,6 +2,7 @@
 #include "prx/libkernel/Equeue/Equeue.hpp"
 #include <cstdint>
 #include <cstdio>
+#include <cerrno>
 #include <exception>
 #include <functional>
 #include <stdexcept>
@@ -111,6 +112,12 @@ int main() {
     passed = Returns("sceVideoOutGetEventId of a null event", [] { return sceVideoOutGetEventId(nullptr); }, InvalidAddress) && passed;
     passed = Returns("sceVideoOutGetEventData of a null event", [&] { return sceVideoOutGetEventData(nullptr, &data); }, InvalidAddress) && passed;
     passed = Returns("sceVideoOutGetEventData with a null data pointer", [&] { return sceVideoOutGetEventData(&flip, nullptr); }, InvalidAddress) && passed;
+    errno = 71;
+    passed = Returns("sceVideoOutGetEventData with an unreadable event pointer", [&] { return sceVideoOutGetEventData(reinterpret_cast<const KernelEvent*>(0x10), &data); }, InvalidAddress) && passed;
+    passed = (errno == 71) && passed;
+    errno = 71;
+    passed = Returns("sceVideoOutGetEventData with an unwritable data pointer", [&] { return sceVideoOutGetEventData(&flip, reinterpret_cast<int64_t*>(0x10)); }, InvalidAddress) && passed;
+    passed = (errno == 71) && passed;
     if (data != Unwritten) {
         std::fprintf(stderr, "sceVideoOutGetEventData of a null event wrote 0x%llx\n", static_cast<unsigned long long>(data));
         passed = false;

@@ -17,7 +17,7 @@ struct Call {
 
 std::array<std::uint32_t, 15> expected(const Call& call) {
     return {0xc0017904u, 0x342u, 0xc6000006u, 0xc0073a00u, call.first, static_cast<std::uint32_t>(call.second), static_cast<std::uint32_t>(call.second >> 32u),
-            call.fourth == 0 ? 1u : call.fourth, static_cast<std::uint32_t>(call.third), static_cast<std::uint32_t>(call.third >> 32u), call.fourth, 0x80u,
+            call.fourth == 0 ? 1u : call.fourth, static_cast<std::uint32_t>(call.third), static_cast<std::uint32_t>(call.third >> 32u), call.fourth, 0x80u | ((call.modifier & 0x100000000ull) != 0 ? 0u : static_cast<std::uint32_t>((call.modifier >> 3u) & 0x20u)),
             0xc0017904u, 0x342u, 0xc6000000u};
 }
 
@@ -30,10 +30,11 @@ int main() {
     }
     constexpr std::uint64_t ia = 0x123456789a00ull;
     constexpr std::uint64_t oa = 0x222233334440ull;
-    const std::array<Call, 12> calls{{
+    const std::array<Call, 15> calls{{
         {100, ia, 0, 3, 0}, {100, ia, 0, 1, 0}, {0, ia, 0, 3, 0}, {100, ia, oa, 3, 0},
         {100, ia, oa, 3, 0x10}, {100, ia, oa, 3, 0x8 | (3ull << 24)}, {100, ia, oa, 3, 0x1 | (2ull << 9) | 0x4 | (5ull << 19)}, {100, ia, oa, 3, 0x100000000ull},
         {100, 0, 0, 3, 0}, {100, ia + 1, oa + 2, 3, 0}, {100, ia, oa, 0, 0}, {0xffffffffu, ia, oa, 0xffffffffu, 0},
+        {100, ia, oa, 3, 0x100}, {0x11111111, 0x22222222, 0x33333333, 0x44444444, 0x55555555}, {100, ia, oa, 3, 0x100000100ull},
     }};
     for (const auto& call : calls) {
         std::array<std::uint32_t, 32> words{};
