@@ -494,6 +494,11 @@ void EventTimeoutsWithoutContext() {
 
 int main(int argc, char** argv) {
     EventTimeoutsWithoutContext();
+    void** emptyList = nullptr;
+    Require(sceUsbdGetDeviceList(&emptyList) == 0 && emptyList != nullptr && emptyList[0] == nullptr, "device list without a context is not empty");
+    sceUsbdFreeDeviceList(emptyList, 1);
+    errno = 71;
+    Require(sceUsbdGetDeviceList(reinterpret_cast<void***>(0x10)) == invalidArgument && errno == 71, "unwritable device list output accepted without a context");
     Require(sceUsbdInit() == 0, "initialization failed");
     CheckTransferFillers();
     void** list = nullptr;
