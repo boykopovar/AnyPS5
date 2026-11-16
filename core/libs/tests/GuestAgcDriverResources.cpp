@@ -4,12 +4,23 @@
 #include "prx/libSceAgcDriver/include/AgcDriver.hpp"
 #include "SceTypes.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 #include <string_view>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static constexpr int Unavailable = static_cast<int>(0x8A6C9018);
 static void Require(bool value) { if (!value) std::abort(); }
@@ -24,6 +35,58 @@ struct ResourceDescriptor {
 };
 
 static_assert(sizeof(ResourceDescriptor) == 40);
+
+static void CheckRegistrationLifecycle() {
+    constexpr std::uint32_t InvalidOutput = 0x80020065u;
+    constexpr std::uint32_t RegistrationUnavailable = 0x8A6C9018u;
+    constexpr std::uint64_t Sentinel = 0xa5b6c7d8e9fa1021ull;
+    for (unsigned int iteration = 0; iteration != 2; ++iteration) {
+        errno = 71;
+        Require(sceAgcDriverInitResourceRegistration() == RegistrationUnavailable && errno == 71);
+        std::array<std::uint64_t, 3> output{Sentinel, Sentinel, Sentinel};
+        Require(sceAgcDriverQueryResourceRegistrationUserMemoryRequirements(&output[1]) == RegistrationUnavailable);
+        Require(output[0] == Sentinel && output[1] == 0 && output[2] == Sentinel && errno == 71);
+        Require(sceAgcDriverQueryResourceRegistrationUserMemoryRequirements(nullptr) == RegistrationUnavailable && errno == 71);
+    }
+    errno = 71;
+    Require(sceAgcDriverQueryResourceRegistrationUserMemoryRequirements(reinterpret_cast<std::uint64_t*>(0x10)) == InvalidOutput);
+    Require(errno == 71);
+    std::array<unsigned char, 10> unaligned{};
+    unaligned.fill(0xa5);
+    Require(sceAgcDriverQueryResourceRegistrationUserMemoryRequirements(reinterpret_cast<std::uint64_t*>(unaligned.data() + 1)) == RegistrationUnavailable);
+    Require(unaligned.front() == 0xa5 && unaligned.back() == 0xa5 && errno == 71);
+    for (std::size_t index = 1; index != 9; ++index) Require(unaligned[index] == 0);
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    const std::size_t pageSize = info.dwPageSize;
+    void* page = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    Require(page != nullptr);
+#else
+    const long size = sysconf(_SC_PAGESIZE);
+    Require(size > 0);
+    const std::size_t pageSize = static_cast<std::size_t>(size);
+    void* page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED);
+#endif
+    std::memcpy(page, &Sentinel, sizeof(Sentinel));
+#ifdef _WIN32
+    DWORD previous = 0;
+    Require(VirtualProtect(page, pageSize, PAGE_READONLY, &previous) != 0);
+#else
+    Require(mprotect(page, pageSize, PROT_READ) == 0);
+#endif
+    errno = 71;
+    Require(sceAgcDriverQueryResourceRegistrationUserMemoryRequirements(static_cast<std::uint64_t*>(page)) == InvalidOutput);
+    std::uint64_t unchanged = 0;
+    std::memcpy(&unchanged, page, sizeof(unchanged));
+    Require(unchanged == Sentinel && errno == 71);
+#ifdef _WIN32
+    Require(VirtualFree(page, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(page, pageSize) == 0);
+#endif
+}
 
 int main() {
     std::uint32_t owner = 7u;
@@ -125,11 +188,5 @@ int main() {
     Require(sceAgcDriverRegisterOwnerForSystem() == Unavailable);
     Require(sceAgcDriverInitResourceRegistrationInterface() == Unavailable);
     Require(sceAgcDriverSetResourceRegistrationInfo() == 0);
-    Require(sceAgcDriverInitResourceRegistration() == 0);
-    std::uint64_t userMemSize = 0;
-    Require(sceAgcDriverQueryResourceRegistrationUserMemoryRequirements(&userMemSize) == 0 && userMemSize == 0x4000ull);
-    Require(sceAgcDriverQueryResourceRegistrationUserMemoryRequirements(nullptr) == 0x80020065u);
-    errno = 71;
-    Require(sceAgcDriverQueryResourceRegistrationUserMemoryRequirements(reinterpret_cast<uint64_t*>(0x10)) == 0x80020065u);
-    Require(errno == 71);
+    CheckRegistrationLifecycle();
 }
