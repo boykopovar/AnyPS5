@@ -679,6 +679,15 @@ class LiteralStartTests(unittest.TestCase):
         self.assertIsNotNone(pattern.search('x = "A.B_Z"'))
         self.assertIsNone(pattern.search('x = "AxB_Z"'))
 
+    def test_kind_of_by_reader_and_window(self):
+        import env_reference
+        self.assertEqual(env_reference.kind_of("IsEnvironmentSet", ""), "presence")
+        self.assertEqual(env_reference.kind_of("EnvInt", ""), "integer")
+        self.assertEqual(env_reference.kind_of("GetEnvironmentVariableA", ""), "string")
+        self.assertEqual(env_reference.kind_of("getenv", "p != nullptr"), "presence")
+        self.assertEqual(env_reference.kind_of("getenv", "strtol(v, 0, 10)"), "integer")
+        self.assertEqual(env_reference.kind_of("getenv", "use(v)"), "string")
+
 
 if __name__ == "__main__":
     unittest.main()
