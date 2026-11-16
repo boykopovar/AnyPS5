@@ -445,6 +445,12 @@ if(BUILD_TESTING)
     if(ANYPS5_ENABLE_ASAN)
         set_tests_properties(agc_driver_recorder PROPERTIES TIMEOUT 120)
     endif()
+    add_test(NAME agc_driver_recorder_async_submit COMMAND agc_driver_recorder_tests)
+    set_tests_properties(agc_driver_recorder_async_submit PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30 ENVIRONMENT "APS5_ASYNC_SUBMIT=1")
+    if(WIN32)
+        set_tests_properties(agc_driver_recorder_async_submit PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     if(WIN32)
         add_test(NAME agc_storage_cpu_snapshot COMMAND agc_driver_recorder_tests --storage-cpu-snapshot-only)
         set_tests_properties(agc_storage_cpu_snapshot PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" TIMEOUT 30 SKIP_RETURN_CODE 77

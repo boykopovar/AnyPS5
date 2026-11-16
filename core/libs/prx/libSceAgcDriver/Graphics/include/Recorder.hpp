@@ -30,6 +30,7 @@ namespace AgcDriver::Graphics {
 
 class Buffer;
 class DeviceBuffer;
+class QueueSubmitter;
 
 class CommandState {
 public:
@@ -740,6 +741,8 @@ private:
     };
     struct Batch {
         VkCommandBuffer commands = VK_NULL_HANDLE;
+        QueueSubmitter* submitter = nullptr;
+        std::uint64_t submitPosition = 0;
         CommandState graphicsState;
         VkFence fence = VK_NULL_HANDLE;
         std::vector<std::shared_ptr<void>> kept;
