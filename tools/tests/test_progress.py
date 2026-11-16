@@ -1167,6 +1167,10 @@ class BodyEndTests(unittest.TestCase):
         self.assertEqual(progress.body_end(text, 1), 7)
         self.assertEqual(text[progress.body_end(text, 1)], "}")
         self.assertEqual(progress.body_end("x{a", 1), len("x{a"))
+class HelperValueTests(unittest.TestCase):
+    def test_camel_capitalises_each_underscore_part(self):
+        self.assertEqual(progress.camel("a_b_c"), "ABC")
+        self.assertEqual(progress.camel("libsce_foo"), "LibsceFoo")
 
 
 if __name__ == "__main__":
