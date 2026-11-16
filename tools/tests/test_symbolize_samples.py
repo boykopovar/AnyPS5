@@ -1546,6 +1546,16 @@ class HeaderWindowTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "module identity differs"):
             symbolize_samples.validate_window(later, earlier)
 
+    def test_validate_window_refuses_counters_that_decrease(self):
+        later = symbolize_samples.Samples()
+        earlier = symbolize_samples.Samples()
+        earlier.stacks = collections.Counter({"s": 5})
+        later.stacks = collections.Counter({"s": 3})
+        with self.assertRaisesRegex(ValueError, "cumulative sample counters decreased"):
+            symbolize_samples.validate_window(later, earlier)
+        later.stacks = collections.Counter({"s": 7})
+        symbolize_samples.validate_window(later, earlier)
+
 
 if __name__ == "__main__":
     unittest.main()
