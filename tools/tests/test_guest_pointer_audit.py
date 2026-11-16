@@ -239,7 +239,7 @@ class SourceCodeTests(unittest.TestCase):
 
 
 
-class AccessTests(unittest.TestCase):
+class AccessKindTests(unittest.TestCase):
     def test_accesses_reports_each_kind_for_the_named_pointer(self):
         kinds = [kind for _, kind in guest_pointer_audit.accesses("p->x; *p = 1; p[2] = 0; q->y;", "p")]
         self.assertEqual(kinds, ["member", "dereference", "index"])
