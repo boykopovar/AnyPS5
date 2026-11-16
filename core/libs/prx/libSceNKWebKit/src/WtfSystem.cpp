@@ -3,6 +3,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
 #include <stdexcept>
+#include <string>
 #ifndef _WIN32
 #include <unistd.h>
 #endif
@@ -135,6 +136,22 @@ long long APS5_VABI _ZN3WTF14FileSystemImpl8seekFileEixNS0_14FileSeekOriginE(int
 
 bool APS5_VABI _ZN3WTF14FileSystemImpl12truncateFileEix(int handle, long long offset) {
     return ftruncate_nid_postfix(handle, offset) == 0;
+}
+
+bool APS5_VABI _ZN3WTF14FileSystemImpl18makeAllDirectoriesERKNS_6StringE(const NKWebKit::WtfAbi::String& path) {
+    const auto representation = _ZNK3WTF6String4utf8ENS_14ConversionModeE(&path, 0);
+    if (!representation.buffer) return false;
+    const std::string full(reinterpret_cast<const char*>(representation.buffer + 1));
+    if (full.empty()) return false;
+    FileStat status{};
+    const auto exists = [&status](const std::string& candidate) { return stat_nid_postfix(candidate.c_str(), &status) == 0; };
+    if (exists(full)) return true;
+    for (std::size_t index = 1; index < full.size(); ++index) {
+        if (full[index] != '/') continue;
+        const std::string prefix = full.substr(0, index);
+        if (!exists(prefix) && mkdir_nid_postfix(prefix.c_str(), 0700) != 0) return false;
+    }
+    return exists(full) || mkdir_nid_postfix(full.c_str(), 0700) == 0;
 }
 
 int APS5_VABI _ZN3WTF14FileSystemImpl15openAndLockFileERKNS_6StringENS0_12FileOpenModeENS_9OptionSetINS0_12FileLockModeEEE(const NKWebKit::WtfAbi::String& path, int mode, unsigned lockMode) {
