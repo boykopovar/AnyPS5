@@ -3804,6 +3804,13 @@ class ClassifyTests(unittest.TestCase):
         self.assertEqual(import_audit.classify('n', '', {'p'}, {('p', 'n')}, {('p', 'n')}), 'implemented')
         self.assertEqual(import_audit.classify('n', '', {'p'}, {('p', 'n')}, set(), partial={('p', 'n')}), 'partial')
         self.assertEqual(import_audit.classify('n', '', {'p'}, set(), set()), 'implemented')
+class VariantCallTests(unittest.TestCase):
+    def test_unconditional_calls_skip_calls_inside_a_conditional(self):
+        self.assertEqual(import_audit.unconditional_calls('{ foo(1); if (x) { bar(); } baz(); }'), {'foo', 'baz'})
+
+    def test_variant_calls_give_one_call_list_per_arm(self):
+        body = '{\n#if X\n b();\n#else\n c();\n#endif\n}'
+        self.assertEqual([sorted(calls) for calls in import_audit.variant_calls(body)], [['b'], ['c']])
 
 
 if __name__ == "__main__":
