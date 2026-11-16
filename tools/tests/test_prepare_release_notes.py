@@ -45,6 +45,14 @@ class PrepareReleaseNotesTests(unittest.TestCase):
             body.write_text("changed", encoding="utf-8")
             self.assertFalse(prepare_release_notes.prepare_notes(source, body, full, check=True))
 
+    @unittest.skipIf(os.name == "nt", "symbolic link loops need POSIX symlinks here")
+    def test_resolve_output_path_rejects_symlink_loop(self):
+        with tempfile.TemporaryDirectory() as directory:
+            loop = Path(directory) / "loop.md"
+            os.symlink(loop, loop)
+            with self.assertRaises(ValueError):
+                prepare_release_notes.resolve_output_path(loop)
+
 
 if __name__ == "__main__":
     unittest.main()
