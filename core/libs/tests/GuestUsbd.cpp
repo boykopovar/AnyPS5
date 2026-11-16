@@ -562,6 +562,10 @@ int main(int argc, char** argv) {
     errno = 71;
     Require(sceUsbdBulkTransfer(&foreign, 0x81, descriptor, 18, reinterpret_cast<std::int32_t*>(0x10), 1000) == invalidArgument && errno == 71, "unwritable bulk transfer count accepted");
     Require(sceUsbdInterruptTransfer(&foreign, 0x81, descriptor, 18, reinterpret_cast<std::int32_t*>(0x10), 1000) == invalidArgument && errno == 71, "unwritable interrupt transfer count accepted");
+    static const std::uint8_t readOnlyData[18] = {};
+    auto* readOnlyBuffer = const_cast<std::uint8_t*>(readOnlyData);
+    Require(sceUsbdBulkTransfer(&foreign, 0x01, reinterpret_cast<std::uint8_t*>(0x10), 18, &transferred, 1000) == invalidArgument && errno == 71, "unreadable bulk OUT data accepted");
+    Require(sceUsbdBulkTransfer(&foreign, 0x81, readOnlyBuffer, sizeof(readOnlyData), &transferred, 1000) == invalidArgument && errno == 71, "read-only bulk IN data accepted");
     Require(sceUsbdGetStringDescriptor(nullptr, 1, 0x409, descriptor, 18) == invalidArgument, "null handle string descriptor accepted");
     Require(sceUsbdGetStringDescriptor(&foreign, 1, 0x409, descriptor, 0) == invalidArgument, "empty string descriptor buffer accepted");
     descriptor[0] = 0x55;
