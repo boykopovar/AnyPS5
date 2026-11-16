@@ -349,5 +349,13 @@ class FoldTests(unittest.TestCase):
         self.assertEqual((self.root / "docs/dev/debt/changes/mixed.md").read_text(encoding="utf-8"), mixed_frag)
 
 
+class SpaceTests(unittest.TestCase):
+    def test_space_adds_blank_before_entries_after_text(self):
+        import debt_fold
+        self.assertEqual(debt_fold.space(["- a", "- b"]), ["- a", "", "- b"])
+        self.assertEqual(debt_fold.space(["text", "- a"]), ["text", "", "- a"])
+        self.assertEqual(debt_fold.space(["- a", "", "- b"]), ["- a", "", "- b"])
+
+
 if __name__ == "__main__":
     unittest.main()
