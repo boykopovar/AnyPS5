@@ -132,16 +132,20 @@ static int FirstLoadedImage(dl_phdr_info* info, std::size_t, void* data) {
 static void CheckProgramImageStaysRegistered() {
     std::uintptr_t base = 0;
     dl_iterate_phdr(FirstLoadedImage, &base);
-    Require(base != 0);
+    const void* code = reinterpret_cast<const void*>(&CheckProgramImageStaysRegistered);
     {
         GuestAllocations::Mutation mutation;
-        mutation.RegisterImage(reinterpret_cast<const void*>(base));
-        Require(mutation.Overlaps(reinterpret_cast<const void*>(base), 1));
+        if (base != 0) {
+            mutation.RegisterImage(reinterpret_cast<const void*>(base));
+        } else {
+            mutation.RegisterMainImage();
+        }
+        Require(mutation.Overlaps(code, 1));
     }
     void* self = dlopen_nid_postfix(nullptr, 2);
     Require(self != nullptr && dlclose_nid_postfix(self) == 0);
     GuestAllocations::Mutation mutation;
-    Require(mutation.Overlaps(reinterpret_cast<const void*>(base), 1));
+    Require(mutation.Overlaps(code, 1));
 }
 #endif
 int main(int argc, char** argv) {
