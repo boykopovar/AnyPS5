@@ -1075,6 +1075,10 @@ class BarAndRatioTests(unittest.TestCase):
         self.assertIn('fill="#f"', row[2])
         self.assertTrue(row[3].endswith('>2</text>'))
 
+    def test_statements_split_on_top_level_semicolons_only(self):
+        texts = [text for text in progress.statements('{ a; if (x) { y; } z; }')]
+        self.assertIn(' if (x) { y; } z;', texts)
+
 
 if __name__ == "__main__":
     unittest.main()
