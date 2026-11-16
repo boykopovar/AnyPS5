@@ -243,7 +243,7 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* memory, std::size_t by
 
 alignas(256) std::array<std::uint8_t, 1024> SampledTexture{};
 
-std::vector<std::uint32_t> Frame(std::span<const std::size_t> slices, std::optional<std::size_t> filled = std::nullopt) {
+std::vector<std::uint32_t> Frame(std::span<const std::size_t> slices, std::optional<std::size_t> filled = std::nullopt, std::optional<std::size_t> stored = std::nullopt) {
     const auto color = reinterpret_cast<std::uintptr_t>(MergedTarget(0).data());
     const std::vector<std::pair<std::uint32_t, std::uint32_t>> context{
         {0x2d5, 0x2000},
@@ -317,6 +317,10 @@ std::vector<std::uint32_t> Frame(std::span<const std::size_t> slices, std::optio
             const auto destination = reinterpret_cast<std::uintptr_t>(SliceAt(slice));
             Append(commands, 0x50, {0u, static_cast<std::uint32_t>(source), static_cast<std::uint32_t>(source >> 32u), static_cast<std::uint32_t>(destination), static_cast<std::uint32_t>(destination >> 32u), 16u});
         }
+        if (stored.has_value() && slice == *stored) {
+            const auto label = reinterpret_cast<std::uintptr_t>(SliceAt(slice));
+            commands.insert(commands.end(), {0xc0033700u, 0x00100200u, static_cast<std::uint32_t>(label), static_cast<std::uint32_t>(label >> 32u), std::bit_cast<std::uint32_t>(FilledAlpha)});
+        }
         std::array<std::uint32_t, 16> words{};
         const auto image = ImageDescriptor(SampledTexture.data());
         std::copy(image.begin(), image.end(), words.begin());
@@ -340,9 +344,9 @@ unsigned DrawnAlpha() {
     throw std::runtime_error("the draws covered no pixel");
 }
 
-unsigned Submit(std::span<const std::size_t> slices, std::optional<std::size_t> filled = std::nullopt) {
+unsigned Submit(std::span<const std::size_t> slices, std::optional<std::size_t> filled = std::nullopt, std::optional<std::size_t> stored = std::nullopt) {
     std::ranges::fill(MergedTarget(0), Kept);
-    auto commands = Frame(slices, filled);
+    auto commands = Frame(slices, filled, stored);
     Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
     Require(sceAgcDriverSubmitDcb(&packet) == 0, "the draw submission failed");
     AgcDriverWaitIdle_nid_postfix();
@@ -422,6 +426,13 @@ int main() {
         const auto shiftedAlpha = Submit(shiftedSlices, Shifted);
         Require(shiftedAlpha == FilledAlphaByte, "a draw whose buffer moved to another view alignment behind a GPU copy did not read the copied value (alpha " + std::to_string(shiftedAlpha) + ")");
         Require(AgcDriver::Graphics::ShaderResources::MovedBehindGpuWrites() == shiftedBefore, "a draw whose buffer moved to another view alignment was read in place through its template's view");
+        OtherMemory.fill(0.0f);
+        constexpr std::size_t Stored = First + 128;
+        BufferMemory[Stored] = 0.0f;
+        const std::array<std::size_t, 2> storedSlices{First, Stored};
+        const auto storedAlpha = Submit(storedSlices, std::nullopt, Stored);
+        Require(storedAlpha == FilledAlphaByte, "a draw whose buffer moved onto a range a label store queued earlier in its batch did not read the stored value (alpha " + std::to_string(storedAlpha) + ")");
+        BufferMemory[Stored] = 0.0f;
         OtherMemory.fill(0.0f);
         std::puts("draws whose read-only buffer moved from their template's replayed recipes that read the buffer's current contents");
         AgcDriverShutdown_nid_postfix();
