@@ -51,6 +51,7 @@ public:
     static std::uint64_t DrainRequestsByOpcode(std::uint32_t opcode);
     static std::uint64_t DrainRequestsByReason(DrainReason reason);
     bool Busy() const;
+    std::uint32_t FullWaiters();
     std::size_t Outstanding() const { return outstanding.load(std::memory_order_acquire); }
     bool Overlaps(std::uint64_t address, std::size_t bytes);
     bool OverlapsAny(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges);

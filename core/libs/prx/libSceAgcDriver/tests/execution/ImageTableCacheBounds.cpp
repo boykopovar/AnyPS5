@@ -500,14 +500,14 @@ void AtomicTable(const GuestBlock& block) {
 }
 
 bool StoreTable(const GuestBlock& block) {
-    PrepareAtomicRecords(block, StoreTableCode.data(), sizeof(StoreTableCode), Format16x4Float, StoreSurfaceBytes,
-                         [](std::uint32_t, std::uint8_t* surface) { std::memset(surface, 0, StoreSurfaceBytes); });
-    const auto heapStages = AgcDriver::Graphics::HeapComputeStages();
-    Dispatch(block, 0, AtomicKernelOffset);
     if (!AgcDriver::Graphics::DescriptorHeapEnabled()) {
         std::puts("image table store skipped: per-dispatch image tables have no uint storage view (docs/dev/debt/libSceAgcDriver.md)");
         return false;
     }
+    PrepareAtomicRecords(block, StoreTableCode.data(), sizeof(StoreTableCode), Format16x4Float, StoreSurfaceBytes,
+                         [](std::uint32_t, std::uint8_t* surface) { std::memset(surface, 0, StoreSurfaceBytes); });
+    const auto heapStages = AgcDriver::Graphics::HeapComputeStages();
+    Dispatch(block, 0, AtomicKernelOffset);
     std::array<std::uint64_t, AtomicWidth> texels{};
     AgcDriver::GuestMemory::Read(block.At(TexturesOffset + static_cast<std::size_t>(AtomicElement) * StoreSurfaceBytes), std::as_writable_bytes(std::span(texels)));
     for (std::uint32_t texel = 0; texel < AtomicWidth; ++texel) {

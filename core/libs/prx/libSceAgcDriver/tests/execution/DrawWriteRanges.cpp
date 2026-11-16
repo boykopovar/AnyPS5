@@ -104,6 +104,32 @@ int main() {
             Require(typedBounded && Contains(typedRanges, written, written + surfaceBytes), "a dispatch whose written images are a real one and a TYPE 0 or 1 one lost the real one");
             Require(!Touches(typedRanges, base, base + surfaceBytes), "a TYPE 0 or 1 storage image is a dispatch write range");
         }
+        {
+            constexpr std::uint64_t heapWritten = 0x600000000ull;
+            constexpr std::uint64_t heapReadOnly = 0x700000000ull;
+            ShaderRecompiler::RecompileResult heapProgram;
+            heapProgram.gpuResolvedImages = true;
+            ShaderRecompiler::DescriptorBinding heapImages;
+            heapImages.kind = ShaderRecompiler::DescriptorKind::StorageImage;
+            heapImages.role = ShaderRecompiler::DescriptorRole::GuestImages;
+            heapImages.count = 2;
+            heapImages.imageWritten = {true, false};
+            heapProgram.bindings.push_back(heapImages);
+            ShaderRecompiler::HeapStageWords heapWords;
+            heapWords.bindings.resize(1);
+            for (const auto base : {heapWritten, heapReadOnly}) {
+                const auto words = ImageWords(base, 256, 128);
+                heapWords.bindings[0].insert(heapWords.bindings[0].end(), words.begin(), words.end());
+            }
+            const std::array<AgcDriver::Graphics::CompiledShader, 1> heapStages{{{ShaderRecompiler::ShaderStage::Fragment, &heapProgram, 0, nullptr, &heapWords}}};
+            const std::array<AgcDriver::Graphics::CompiledShader, 1> bareStages{{{ShaderRecompiler::ShaderStage::Fragment, &heapProgram, 0}}};
+            for (const bool exact : {false, true}) {
+                const auto ranges = DrawWriteRanges(state, heapStages, exact);
+                Require(Contains(ranges, heapWritten, heapWritten + surfaceBytes), "a heap-backed storage image the draw stores to is not a write range");
+                Require(!Touches(ranges, heapReadOnly, heapReadOnly + surfaceBytes), "a heap-backed storage image the draw only reads is a write range");
+                Require(!Touches(DrawWriteRanges(state, bareStages, exact), heapWritten, heapWritten + surfaceBytes), "a heap-backed stage's ranges came from somewhere other than its heap words");
+            }
+        }
         AgcDriver::Graphics::State targets{};
         targets.hasColorTarget = true;
         auto& color = targets.color;

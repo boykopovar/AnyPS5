@@ -33,23 +33,44 @@ struct FakeOwner : HeapSlotOwner {
     FakeOwner() = default;
 };
 
-alignas(Texture) std::array<std::array<std::byte, sizeof(Texture)>, 12> fakeTextures{};
-
-std::shared_ptr<Texture> fakeTexture(std::size_t index) {
-    return std::shared_ptr<Texture>(reinterpret_cast<Texture*>(fakeTextures[index].data()), [](Texture*) {});
+std::shared_ptr<Texture> fakeTexture(const Context& context, std::size_t) {
+    VkImageCreateInfo info{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+    info.imageType = VK_IMAGE_TYPE_2D;
+    info.format = VK_FORMAT_R8G8B8A8_UNORM;
+    info.extent = {1u, 1u, 1u};
+    info.mipLevels = 1u;
+    info.arrayLayers = 1u;
+    info.samples = VK_SAMPLE_COUNT_1_BIT;
+    info.tiling = VK_IMAGE_TILING_OPTIMAL;
+    info.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
+    info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    VkImage image = VK_NULL_HANDLE;
+    require(context.Function<PFN_vkCreateImage>("vkCreateImage")(context.device, &info, nullptr, &image) == VK_SUCCESS, "a texture fixture image is created");
+    std::unique_ptr<Texture> texture;
+    try {
+        texture = std::make_unique<Texture>(context, image, info.format, VK_IMAGE_ASPECT_COLOR_BIT, VkComponentMapping{});
+    } catch (...) {
+        context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
+        throw;
+    }
+    return std::shared_ptr<Texture>(texture.release(), [context, image](Texture* released) {
+        delete released;
+        context.Function<PFN_vkDestroyImage>("vkDestroyImage")(context.device, image, nullptr);
+    });
 }
 
 void textureSlots(const Context& context, VkImageView view) {
     BindlessHeap heap(context);
     const auto kind = Abi::FirstImageBinding;
-    auto first = fakeTexture(0);
+    auto first = fakeTexture(context, 0);
     const auto slot = heap.TextureSlot(kind, first.get(), view, VK_IMAGE_LAYOUT_GENERAL);
     require(slot.has_value(), "the first texture takes a slot");
     require(heap.SlotTexture(kind, *slot) == first.get(), "the slot names the first texture");
     require(first.use_count() == 1, "a heap slot holds a reference to its texture");
     const auto generation = heap.SlotGeneration(*slot);
 
-    auto second = fakeTexture(1);
+    auto second = fakeTexture(context, 1);
     require(!heap.TextureSlot(kind, second.get(), view, VK_IMAGE_LAYOUT_GENERAL).has_value(), "the slot of a live texture is not reused");
     heap.ReleaseSlots(first.get());
     const auto reused = heap.TextureSlot(kind, second.get(), view, VK_IMAGE_LAYOUT_GENERAL);
@@ -59,7 +80,7 @@ void textureSlots(const Context& context, VkImageView view) {
     const auto counts = heap.Statistics();
     require(counts.slotsFreed == 1u, "one slot freed");
 
-    auto shared = fakeTexture(2);
+    auto shared = fakeTexture(context, 2);
     const auto otherKind = kind + 1u;
     require(!heap.TextureSlot(otherKind, shared.get(), view, VK_IMAGE_LAYOUT_GENERAL).has_value(),
             "another kind finds the capped heap's only slot taken");
@@ -311,7 +332,7 @@ void heapComesBack(const Context& context, VkImageView view) {
     const auto kind = Abi::FirstImageBinding;
     std::vector<std::shared_ptr<Texture>> held;
     for (std::size_t index = 0; index < 7u; ++index) {
-        held.push_back(fakeTexture(index));
+        held.push_back(fakeTexture(context, index));
         require(heap.TextureSlot(kind, held.back().get(), view, VK_IMAGE_LAYOUT_GENERAL).has_value(),
                 "a texture takes one of the eight capped slots");
     }
@@ -339,7 +360,7 @@ bool idleSlotsEvicted(const Context& context, VkImageView view) {
     std::vector<std::uint32_t> slots;
     const auto take = [&](std::size_t index) {
         if (held.size() <= index) held.resize(index + 1u);
-        if (held[index] == nullptr) held[index] = fakeTexture(index);
+        if (held[index] == nullptr) held[index] = fakeTexture(context, index);
         std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
         return heap.TextureSlot(kind, held[index].get(), view, VK_IMAGE_LAYOUT_GENERAL);
     };
@@ -412,7 +433,7 @@ void mixedComesBack(const Context& context, VkImageView sampledView, VkImageView
     auto& heap = BindlessHeap::For(context);
     std::vector<std::shared_ptr<Texture>> textures;
     for (std::size_t index = 0; index < 4u; ++index) {
-        textures.push_back(fakeTexture(index));
+        textures.push_back(fakeTexture(context, index));
         require(heap.TextureSlot(Abi::FirstImageBinding, textures.back().get(), sampledView, VK_IMAGE_LAYOUT_GENERAL).has_value(),
                 "a texture takes one of the eight capped slots");
     }
@@ -470,7 +491,7 @@ bool slotPressureSubmits(const Context& context, VkImageView view) {
     std::vector<std::shared_ptr<Texture>> held;
     std::vector<std::uint32_t> slots;
     for (std::size_t index = 0; index < 7u; ++index) {
-        held.push_back(fakeTexture(index));
+        held.push_back(fakeTexture(context, index));
         const auto slot = heap.TextureSlot(kind, held.back().get(), view, VK_IMAGE_LAYOUT_GENERAL);
         require(slot.has_value(), "a texture takes one of the eight capped slots");
         slots.push_back(*slot);
@@ -491,7 +512,7 @@ bool slotPressureSubmits(const Context& context, VkImageView view) {
     require(!heap.TakeSlotPressure() && !BindlessHeap::NearlyFull(), "slots the submission covers clear the nearly full state");
     require(heap.SlotGeneration(slots[0]) != generation && heap.SlotTexture(kind, slots[0]) == nullptr, "an evicted slot moves its generation and names no texture");
     for (std::size_t index = 7; index < 12u; ++index) {
-        held.push_back(fakeTexture(index));
+        held.push_back(fakeTexture(context, index));
         const auto slot = heap.TextureSlot(kind, held.back().get(), view, VK_IMAGE_LAYOUT_GENERAL);
         require(slot.has_value(), "a new texture takes a slot after the pressure submission, waiting for it when none is free");
     }
@@ -551,6 +572,7 @@ bool samplersEvicted(const Context& context) {
         slots.push_back(*slot);
     }
     require(BindlessHeap::NearlyFull(), "too few free sampler slots mark the heap nearly full");
+    submit();
     const auto generation = heap.SamplerGeneration(slots[0]);
     {
         std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());

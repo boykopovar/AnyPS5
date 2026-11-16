@@ -6,6 +6,8 @@
 #include "VulkanTestDevice.hpp"
 #include <array>
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdio>
 #include <deque>
@@ -74,6 +76,7 @@ std::vector<std::unique_ptr<Variant>> Prepare(AgcDriver::VulkanDevice& device) {
 
 struct Inbox {
     std::mutex mutex;
+    std::condition_variable ready;
     std::deque<AgcDriver::DriverDetail::HeapStageMaterialized> stages;
 };
 
@@ -97,6 +100,7 @@ void Work(const std::vector<std::unique_ptr<Variant>>& variants, std::size_t fir
                     std::lock_guard lock(peer.mutex);
                     peer.stages.push_back(std::move(stage));
                 }
+                peer.ready.notify_one();
                 std::deque<AgcDriver::DriverDetail::HeapStageMaterialized> received;
                 {
                     std::lock_guard lock(own.mutex);
@@ -107,13 +111,27 @@ void Work(const std::vector<std::unique_ptr<Variant>>& variants, std::size_t fir
                     held.push_back(std::move(item));
                 }
                 while (held.size() > Held) held.pop_front();
-                if (failed.load(std::memory_order_relaxed)) return;
+                if (failed.load(std::memory_order_acquire)) return;
             }
         }
-        Require(touched != 0, "a heap walk thread received no stage from the other thread");
+        while (touched == 0) {
+            std::deque<AgcDriver::DriverDetail::HeapStageMaterialized> received;
+            {
+                std::unique_lock lock(own.mutex);
+                own.ready.wait_for(lock, std::chrono::seconds(60), [&] { return !own.stages.empty() || failed.load(std::memory_order_acquire); });
+                received.swap(own.stages);
+            }
+            if (failed.load(std::memory_order_acquire)) return;
+            Require(!received.empty(), "a heap walk thread received no stage from the other thread");
+            for (auto& item : received) touched += Touch(item);
+        }
     } catch (const std::exception& caught) {
         error = caught.what();
-        failed.store(true, std::memory_order_relaxed);
+        failed.store(true, std::memory_order_release);
+        for (auto* inbox : {&own, &peer}) {
+            std::lock_guard lock(inbox->mutex);
+            inbox->ready.notify_all();
+        }
     }
 }
 

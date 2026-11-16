@@ -32,8 +32,9 @@ void TestStopReleasesFullProducer() {
         returned.store(true, std::memory_order_release);
     });
     const auto producerId = producer.get_id();
-    std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    const bool waitedForRoom = !returned.load(std::memory_order_acquire);
+    const auto waiting = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (pipeline.FullWaiters() == 0 && !returned.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < waiting) std::this_thread::yield();
+    const bool waitedForRoom = pipeline.FullWaiters() != 0 && !returned.load(std::memory_order_acquire);
     std::thread stopper([&] { pipeline.Stop(); });
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
     while (!returned.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));

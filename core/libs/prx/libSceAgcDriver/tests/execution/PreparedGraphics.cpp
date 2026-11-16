@@ -671,8 +671,12 @@ void CheckMergedHull(AgcDriver::VulkanDevice& device) {
         RecompileRequest request{program.binary, {64u, program.firstUserSgpr, program.userData, {}, std::nullopt, vertex, memory}, device.Target(), {0, 0, 0, 128u}, GraphicsCompileContext{program.firstUserSgpr, linked, std::nullopt, draw.state.stages.tessellation, {0, 3, 4, 1}}};
         static_cast<void>(InvocationFor(*program.snapshot, program.codeOffset, request));
         Require(merged.snapshot->prepared->entries.size() == predicted, "a merged hull stage prepared at ABI resolution was prepared again at its draw");
+        const auto wanted = index == 0u ? ShaderRecompiler::ShaderStage::Local : ShaderRecompiler::ShaderStage::TessellationControl;
+        const auto regular = std::find_if(stages.begin(), stages.end(), [&](const auto& stage) { return !stage.heapVariant && stage.stage == wanted; });
+        Require(regular != stages.end(), "a merged hull draw prepared no regular stage for its program");
+        Require(MatchesPreparedShader(request, *regular->entry.handle), "an unchanged merged hull request did not match its prepared artifact");
         request.graphics->tessellation->mergedHull = false;
-        Require(!MatchesPreparedShader(request, *stages[index].entry.handle), "a separate hull configuration matched a merged hull artifact");
+        Require(!MatchesPreparedShader(request, *regular->entry.handle), "a separate hull configuration matched a merged hull artifact");
     }
     Fixture front;
     front.Initialize(5u);

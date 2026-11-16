@@ -30,7 +30,6 @@ alignas(256) constexpr std::array<std::uint32_t, 10> PixelCode{0xf4000100u, 0xfa
 alignas(256) std::array<float, 4> PixelConstant{};
 alignas(256) std::array<std::byte, 1024> ColorMemory{};
 constexpr std::uint32_t Rounds = 8;
-alignas(256) std::array<std::uint8_t, 1024> TextureMemory{};
 alignas(4096) std::array<std::array<float, 4>, Rounds> Outputs{};
 alignas(256) std::array<std::uint64_t, 32 * Rounds> SampleMemory{};
 
@@ -111,7 +110,7 @@ void Sample(std::vector<std::uint32_t>& commands, float* output) {
     SetShaderRegister(commands, 0x212, 0);
     SetShaderRegister(commands, 0x213, 16u << 1u);
     std::uint32_t offset = 0x240;
-    for (const auto value : SampleUserData(TextureMemory.data(), output)) SetShaderRegister(commands, offset++, value);
+    for (const auto value : SampleUserData(ColorMemory.data(), output)) SetShaderRegister(commands, offset++, value);
     Append(commands, 0x15, {1, 1, 1, 0x8041u});
 }
 
@@ -136,10 +135,13 @@ int main() {
         Registered(VertexHeader, VertexCode.data(), sizeof(VertexCode), 2);
         Registered(PixelHeader, PixelCode.data(), sizeof(PixelCode), 1);
         PixelConstant[0] = 0.25f;
-        FillTexels(TextureMemory, SampleTexel);
         for (auto& output : Outputs) output.fill(-1.0f);
         std::string drains;
+        constexpr std::array<float, 2> Constants{0.25f, 0.125f};
+        unsigned expected = 0;
         for (std::uint32_t pass = 0; pass < 2; ++pass) {
+            PixelConstant[0] = Constants[pass];
+            expected = static_cast<unsigned>((Constants[pass] + 0.25f) * 255.0f + 0.5f);
             static_cast<void>(DrawFinisher::DrainText());
             auto commands = Setup();
             for (std::uint32_t round = 0; round < Rounds; ++round) {
@@ -152,13 +154,18 @@ int main() {
             Require(sceAgcDriverSubmitDcb(&packet) == 0, "the draw submission failed");
             AgcDriverWaitIdle_nid_postfix();
             drains = DrawFinisher::DrainText();
+            AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Outputs.data()), sizeof(Outputs));
+            for (std::uint32_t round = 0; round < Rounds; ++round) {
+                const auto where = "pass " + std::to_string(pass) + " round " + std::to_string(round);
+                const auto texel = [&](std::size_t channel) { return static_cast<unsigned>(Outputs[round][channel] * 255.0f + 0.5f); };
+                Require(texel(0) + 1 >= expected && texel(0) <= expected + 1 && texel(3) + 1 >= expected && texel(3) <= expected + 1 && texel(1) == 0u && texel(2) == 0u,
+                        "the dispatch after the draw in " + where + " sampled " + std::to_string(texel(0)) + "," + std::to_string(texel(1)) + "," + std::to_string(texel(2)) + "," + std::to_string(texel(3)) + " from the draw's target, expected " + std::to_string(expected) + ",0,0," + std::to_string(expected));
+            }
         }
-        AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Outputs.data()), sizeof(Outputs));
         AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(ColorMemory.data()), ColorMemory.size());
-        for (std::uint32_t round = 0; round < Rounds; ++round) RequireSampled(Outputs[round].data(), SampleTexel, "the dispatch after finisher draws in round " + std::to_string(round));
         unsigned brightest = 0;
         for (const auto value : ColorMemory) brightest = std::max(brightest, static_cast<unsigned>(std::to_integer<std::uint8_t>(value)));
-        Require(brightest + 2 >= 128 && brightest <= 130, "the draws around the dispatches wrote " + std::to_string(brightest) + ", expected 128");
+        Require(brightest + 2 >= expected && brightest <= expected + 2, "the draws around the dispatches wrote " + std::to_string(brightest) + ", expected " + std::to_string(expected));
         if (finisher) Require(drains.find(" 0x15 x") == std::string::npos, "a pipelined dispatch after a draw handed to the finisher drained the finisher:" + drains);
         if (finisher) Require(drains.find(" 0x46 x") == std::string::npos, "a sample dump after a draw handed to the finisher drained the finisher:" + drains);
         AgcDriverShutdown_nid_postfix();

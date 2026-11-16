@@ -411,8 +411,8 @@ void LiveRecorderMaskIsolation(AgcDriver::VulkanDevice& device) {
     auto* previous = Recorder::Active();
     {
         auto& htile = NewBlock();
-        Recorder first(context, true);
-        Recorder second(context, true);
+        Recorder first(context, device.TimelineSemaphores());
+        Recorder second(context, device.TimelineSemaphores());
         RecordHtileWords(context, first, htile, 0xf0u);
         NoteHtileMaskOnGpu(context, {htile.Address(), HtileBytes, 0x3f0u, 0u});
         RecordHtileWords(context, second, htile, 0xfu);
@@ -437,8 +437,8 @@ void MaskCleanupIsolation(AgcDriver::VulkanDevice& device, AgcDriver::VulkanDevi
         auto& firstHtile = NewBlock();
         auto& secondHtile = NewBlock();
         std::optional<Recorder> first;
-        first.emplace(context, true);
-        Recorder second(context, true);
+        first.emplace(context, device.TimelineSemaphores());
+        Recorder second(context, device.TimelineSemaphores());
         RecordHtileWords(context, *first, firstHtile, 0xf0u);
         NoteHtileMaskOnGpu(context, {firstHtile.Address(), HtileBytes, 0x3f0u, 0u});
         RecordHtileWords(context, second, secondHtile, 0xf0u);
@@ -450,9 +450,9 @@ void MaskCleanupIsolation(AgcDriver::VulkanDevice& device, AgcDriver::VulkanDevi
         auto& firstHtile = NewBlock();
         auto& secondHtile = NewBlock();
         auto& otherHtile = NewBlock();
-        Recorder first(context, true);
-        Recorder second(context, true);
-        Recorder other(otherContext, true);
+        Recorder first(context, device.TimelineSemaphores());
+        Recorder second(context, device.TimelineSemaphores());
+        Recorder other(otherContext, otherDevice.TimelineSemaphores());
         RecordHtileWords(context, first, firstHtile, 0xf0u);
         NoteHtileMaskOnGpu(context, {firstHtile.Address(), HtileBytes, 0x3f0u, 0u});
         RecordHtileWords(context, second, secondHtile, 0xf0u);

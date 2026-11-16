@@ -10661,7 +10661,7 @@ bool refreshProofTests(const Device& device, Recorder& recorder) {
         std::memset(keys, 0x00, keyCount);
         Require(resources.Revalidate(std::span(&compute, 1), &report), "a set over a fast-cleared keyed storage image did not revalidate");
         Require(report.path == ShaderResources::ProofPath::OwnRefreshed, "a fast clear of a storage image's keys took the full walk instead of the image's own refresh");
-        Require(image->UploadedKeys() != DccKeys::Uncompressed, "the own refresh did not apply the fast clear");
+        Require(image->UploadedKeys() == DccKeys::Clear0000, "the own refresh did not apply the fast clear");
         Require(resources.Revalidate(std::span(&compute, 1), &report) && report.path == ShaderResources::ProofPath::Fast, "the set did not return to the fast proof after the fast clear");
         recorder.Submit();
         device.WaitQueue();

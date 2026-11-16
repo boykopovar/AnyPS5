@@ -318,6 +318,11 @@ void DrawPipeline::rethrowFailure() {
     std::rethrow_exception(error);
 }
 
+std::uint32_t DrawPipeline::FullWaiters() {
+    std::lock_guard lock(mutex);
+    return fullWaiters;
+}
+
 void DrawPipeline::Enqueue(Commit commit, std::vector<Range> writes, std::uint64_t labelAddress, std::vector<std::byte> labelBytes, std::vector<Range> reads, bool draw) {
     enqueue({std::move(commit), std::move(writes), labelAddress, std::move(labelBytes), std::move(reads), draw});
 }

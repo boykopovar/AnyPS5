@@ -129,8 +129,11 @@ int main() {
         PixelConstant[0] = 0.25f;
         SubmitDraws(8);
         static_cast<void>(DrawFinisher::DrainText());
+        const auto cacheBefore = AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
         SubmitDraws(64);
+        const auto cacheAfter = AgcDriver::DriverDetail::Driver::Get().DrawCacheCounters();
         const auto drains = DrawFinisher::DrainText();
+        Require(cacheAfter.hits > cacheBefore.hits, "the measured submission's repeated draws never hit the draw cache (" + std::to_string(cacheAfter.lookups - cacheBefore.lookups) + " lookups)");
         AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(ColorMemory.data()), ColorMemory.size());
         unsigned brightest = 0;
         for (const auto value : ColorMemory) brightest = std::max(brightest, static_cast<unsigned>(std::to_integer<std::uint8_t>(value)));

@@ -4935,6 +4935,10 @@ const Graphics::Context& VulkanDevice::contextRef(std::optional<Graphics::Contex
     return scratch.emplace(buildContext());
 }
 
+bool VulkanDevice::TimelineSemaphores() const {
+    return state->timelineSemaphores;
+}
+
 Graphics::Context VulkanDevice::graphicsContext() const {
     std::optional<Graphics::Context> scratch;
     return contextRef(scratch);

@@ -43,7 +43,6 @@ namespace {
 
 using AgcDriver::Graphics::Require;
 
-constexpr std::byte Kept{0x40};
 constexpr std::array<std::uint8_t, 4> Texel{0x10u, 0x80u, 0xc0u, 0xffu};
 
 alignas(256) constexpr std::array<std::uint32_t, 16> VertexCode{
@@ -53,55 +52,10 @@ alignas(256) constexpr std::array<std::uint32_t, 16> VertexCode{
 alignas(256) constexpr std::array<std::uint32_t, 12> PixelCode{0x7e0002f0u, 0x7e0202f0u, 0xf09c0f08u, 0x00400000u,
                                                                0xbf8c0000u, 0xf800180fu, 0x03020100u, 0xbf810000u,
                                                                0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u};
-alignas(256) constexpr std::array<std::uint32_t, 16> ConstantSamplerPixelCode{
-    0xbe8803ffu, 6u | (6u << 3u) | (6u << 6u), 0xbe8903ffu, 0u, 0xbe8a03ffu, 0u, 0xbe8b03ffu, 2u << 30u,
-    0x7e0002f0u, 0x7e0202f0u, 0xf09c0f08u, 0x00400000u, 0xbf8c0000u, 0xf800180fu, 0x03020100u, 0xbf810000u};
-alignas(256) constexpr std::array<std::uint32_t, 16> BorderSamplerPixelCode{
-    0xbe8803ffu, 6u | (6u << 3u) | (6u << 6u), 0xbe8903ffu, 0u, 0xbe8a03ffu, 0u, 0xbe8b03ffu, 2u << 30u,
-    0x7e0002f3u, 0x7e0202f0u, 0xf09c0f08u, 0x00400000u, 0xbf8c0000u, 0xf800180fu, 0x03020100u, 0xbf810000u};
-alignas(256) constexpr std::array<std::uint32_t, 16> WrapSamplerPixelCode{
-    0xbe8803ffu, 0u, 0xbe8903ffu, 0u, 0xbe8a03ffu, 0u, 0xbe8b03ffu, 2u << 30u,
-    0x7e0002f3u, 0x7e0202f0u, 0xf09c0f08u, 0x00400000u, 0xbf8c0000u, 0xf800180fu, 0x03020100u, 0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 16> BufferPixelCode{
     0x7e0002f0u, 0x7e0202f0u, 0xf4200506u, 0xfa000000u, 0xf09c0f08u, 0x00400000u, 0xbf8c0000u, 0x7e060214u,
     0xf800180fu, 0x03020100u, 0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u};
-alignas(256) constexpr std::array<std::uint32_t, 16> GdsPixelCode{
-    0xbefc03ffu, 0x0000ffffu, 0x7e0002f0u, 0x7e0202f0u, 0xd8fa0010u, 0x04000000u, 0xf09c0f08u, 0x00400000u,
-    0xbf8c0000u, 0xf800180fu, 0x03020100u, 0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u};
-alignas(256) constexpr std::array<std::uint32_t, 16> StoragePixelCode{
-    0x7e0002f0u, 0x7e0202f0u, 0xf09c0f08u, 0x00400000u, 0xbf8c0000u, 0x7e100280u, 0x7e120280u, 0xf0201f08u,
-    0x00040008u, 0xbf8c0000u, 0xf800180fu, 0x03020100u, 0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u};
-alignas(256) constexpr std::array<std::uint32_t, 16> LdsPixelCode{
-    0x7e0002f0u, 0x7e0202f0u, 0xf09c0f08u, 0x00400000u, 0xbf8c0000u, 0x7e080280u, 0xd8344400u, 0x00000004u,
-    0xbf8cc07fu, 0xd8d84400u, 0x00000004u, 0xbf8cc07fu, 0xf800180fu, 0x03020100u, 0xbf810000u, 0xbf810000u};
-alignas(4096) std::array<std::uint8_t, 4096> StorageMemory{};
-alignas(256) constexpr std::array<std::uint32_t, 24> SamplingVertexCode{
-    0x7e1402f0u, 0x7e1602f0u, 0xf09c0f08u, 0x00820c0au, 0xbf8c0000u, 0xf800020fu, 0x0f0e0d0cu, 0x7e000d05u,
-    0x080200f4u, 0x10020300u, 0x100202f4u, 0x060202f3u, 0x060400f3u, 0x10040500u, 0x060404f3u, 0x7e060280u,
-    0x7e0802f2u, 0xf80008cfu, 0x04030201u, 0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u,
-};
-alignas(256) constexpr std::array<std::uint32_t, 8> InterpolantPixelCode{0xc8020002u, 0xc8060102u, 0xc80a0202u, 0xc80e0302u,
-                                                                         0xf800180fu, 0x03020100u, 0xbf810000u, 0xbf810000u};
-alignas(256) constexpr std::array<std::uint32_t, 16> BdaPixelCode{
-    0x7e0002f0u, 0x7e0202f0u, 0x7e08020cu, 0x7e0a020du, 0xdc308000u, 0x067d0004u, 0xf09c0f08u, 0x00400000u,
-    0xbf8c0000u, 0x7e060306u, 0xf800180fu, 0x03020100u, 0xbf810000u, 0xbf810000u, 0xbf810000u, 0xbf810000u};
-alignas(256) constexpr std::array<std::uint32_t, 16> TablePixelCode{
-    0xf4200404u, 0xfa000000u, 0xbf8cc07fu, 0x8f108510u, 0xf42c0500u, 0x20000000u, 0xbf8cc07fu, 0x7e0002f0u,
-    0x7e0202f0u, 0xf09c0f08u, 0x00250000u, 0xbf8c0000u, 0xf800180fu, 0x03020100u, 0xbf810000u, 0xbf810000u};
-alignas(256) constexpr std::array<std::uint32_t, 28> TableVertexCode{
-    0xf4200508u, 0xfa000000u, 0xbf8cc07fu, 0x8f148514u, 0xf42c0604u, 0x28000000u, 0xbf8cc07fu, 0x7e1402f0u, 0x7e1602f0u, 0xf09c0f08u,
-    0x00660c0au, 0xbf8c0000u, 0xf800020fu, 0x0f0e0d0cu, 0x7e000d05u, 0x080200f4u, 0x10020300u, 0x100202f4u, 0x060202f3u, 0x060400f3u,
-    0x10040500u, 0x060404f3u, 0x7e060280u, 0x7e0802f2u, 0xf80008cfu, 0x04030201u, 0xbf810000u, 0xbf810000u,
-};
-alignas(256) std::array<std::uint32_t, 16> TableMemory{};
-alignas(256) std::array<std::uint32_t, 24> FreshVertexCode{};
-alignas(256) std::array<std::uint32_t, 8> FreshPixelCode{};
-alignas(256) std::array<std::uint32_t, 4> MaterialMemory{};
-alignas(256) std::array<std::uint8_t, 1024> OtherTextureMemory{};
 constexpr float BufferAlpha = 0.2f;
-constexpr std::uint8_t BufferAlphaByte = 51u;
-constexpr float SecondAlpha = 0.6f;
-constexpr std::uint8_t SecondAlphaByte = 153u;
 alignas(4096) std::array<float, 1024> BufferMemory{};
 alignas(256) std::array<std::byte, 1024> ColorMemory{};
 
@@ -128,7 +82,6 @@ std::span<std::byte> MergedTarget(std::size_t index) {
     }();
     return {data[index], ColorMemory.size()};
 }
-alignas(256) std::array<std::uint8_t, 1024> TextureMemory{};
 
 struct Header {
     Shader shader{};
@@ -154,62 +107,6 @@ void Append(std::vector<std::uint32_t>& commands, std::uint32_t opcode, std::ini
     commands.insert(commands.end(), payload);
 }
 
-enum class Mode { Texture, Buffer, Storage, Gds, Vertex, Bda, Table, VertexTable, MovedBuffer, MovedTexture, PixelLds, ConstantSampler, BorderSampler, WrapSampler, MergedBlend, MergedBlendOther };
-
-const std::uint32_t* VertexProgram(Mode mode) {
-    if (mode == Mode::VertexTable) return TableVertexCode.data();
-    if (mode == Mode::Vertex) return SamplingVertexCode.data();
-    return VertexCode.data();
-}
-
-std::uint32_t PixelUserWords(Mode mode, bool vertexSampling) {
-    switch (mode) {
-    case Mode::Storage:
-        return 24u;
-    case Mode::Buffer:
-    case Mode::MovedBuffer:
-        return 16u;
-    case Mode::Bda:
-        return 14u;
-    default:
-        return vertexSampling ? 0u : 12u;
-    }
-}
-
-unsigned ExpectedChannel(Mode mode, bool buffer, std::size_t channel) {
-    if (mode == Mode::MovedTexture) return 0x33u;
-    if ((mode == Mode::Bda || mode == Mode::MovedBuffer) && channel == 3) return SecondAlphaByte;
-    if (buffer && channel == 3) return BufferAlphaByte;
-    if (mode == Mode::BorderSampler) return 0xffu;
-    if (mode == Mode::MergedBlend || mode == Mode::MergedBlendOther) return std::min(2u * Texel[channel] + static_cast<unsigned>(Kept), 0xffu);
-    return Texel[channel];
-}
-
-const char* DrawnWhat(Mode mode, bool buffer) {
-    if (mode == Mode::Bda) return " (texture and BDA)";
-    if (mode == Mode::MovedBuffer) return " (texture and a buffer moved between two draws)";
-    if (mode == Mode::MovedTexture) return " (a texture changed between two draws)";
-    if (buffer) return " (texture and buffer)";
-    if (mode == Mode::Table) return " (image table)";
-    if (mode == Mode::ConstantSampler) return " (texture with a constant sampler)";
-    if (mode == Mode::BorderSampler) return " (constant border-clamp sampler outside the texture)";
-    if (mode == Mode::WrapSampler) return " (constant wrapping sampler outside the texture, after a border-clamp draw of the same shader)";
-    if (mode == Mode::MergedBlend) return " (texture blended unclamped into the color target)";
-    if (mode == Mode::MergedBlendOther) return " (texture blended unclamped into a second color target)";
-    return " (texture)";
-}
-
-const char* TakenWhat(Mode mode, bool buffer) {
-    if (buffer) return " reading a buffer";
-    if (mode == Mode::Vertex) return " (vertex stage)";
-    if (mode == Mode::Bda) return " loading through BDA";
-    if (mode == Mode::Table) return " reading an image table";
-    if (mode == Mode::VertexTable) return " (vertex stage reading an image table)";
-    if (mode == Mode::ConstantSampler || mode == Mode::BorderSampler || mode == Mode::WrapSampler) return " sampling with a constant sampler";
-    if (mode == Mode::MergedBlend || mode == Mode::MergedBlendOther) return " merging into its color target";
-    return "";
-}
-
 std::array<std::uint32_t, 8> ImageDescriptor(const void* memory) {
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(memory));
     return {static_cast<std::uint32_t>(address >> 8u),
@@ -227,7 +124,6 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* memory, std::size_t by
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), static_cast<std::uint32_t>(bytes),
             0xfacu};
 }
-
 
 constexpr std::size_t Textures = 16;
 constexpr std::size_t Buffers = 32;

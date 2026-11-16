@@ -69,7 +69,7 @@ PFN_vkVoidFunction VKAPI_CALL Resolve(VkDevice device, const char* name) {
     return originalProc(device, name);
 }
 
-void Scenario(Graphics::Context context, bool fail) {
+void Scenario(Graphics::Context context, bool fail, bool timeline) {
     constexpr std::size_t blockBytes = 65536;
     constexpr auto usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
     constexpr auto properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
@@ -94,7 +94,7 @@ void Scenario(Graphics::Context context, bool fail) {
     bool caught = false;
     bool earlyReuse = false;
     {
-        Graphics::Recorder recorder(context, true);
+        Graphics::Recorder recorder(context, timeline);
         recorder.Activate();
         try {
             Graphics::GuestBufferMemory memory(context);
@@ -151,8 +151,8 @@ int main() {
         originalFree = context.Function<PFN_vkFreeMemory>("vkFreeMemory");
         originalCopy = context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer");
         originalBarrier = context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier");
-        Scenario(context, false);
-        Scenario(context, true);
+        Scenario(context, false, device->TimelineSemaphores());
+        Scenario(context, true, device->TimelineSemaphores());
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
