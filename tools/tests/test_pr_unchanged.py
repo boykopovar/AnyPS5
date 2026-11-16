@@ -254,6 +254,11 @@ class PaginationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'has no cursor'):
             pr_unchanged.pagination_cursor({'pageInfo': {'endCursor': ''}}, set(), 'x')
 
+    def test_listed_returns_nodes_and_refuses_other_shapes(self):
+        self.assertEqual(pr_unchanged.listed({'nodes': [1, 2]}), [1, 2])
+        with self.assertRaisesRegex(ValueError, 'expected a connection'):
+            pr_unchanged.listed([])
+
 
 if __name__ == "__main__":
     unittest.main()
