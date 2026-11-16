@@ -943,6 +943,10 @@ class SourceScanHelperTests(unittest.TestCase):
             found = [path.relative_to(root).as_posix() for path in nid_names.source_files(root)]
             self.assertEqual(found, ["a.cpp", "sub/d.cpp"])
 
+    def test_source_assembly_definitions_yield_the_quoted_function_name(self):
+        self.assertEqual(list(nid_names.source_assembly_definitions('APS5_ASM_FUNCTION("sceFoo")\n')), ["sceFoo"])
+        self.assertEqual(list(nid_names.source_assembly_definitions('APS5_SIGNAL_ASM_FUNCTION("sceBar")\n')), ["sceBar"])
+
 
 if __name__ == "__main__":
     unittest.main()
