@@ -332,8 +332,6 @@ VkImageViewType ViewTypeFor(TextureDimension dimension, [[maybe_unused]] std::ui
 
 namespace {
 
-// Technical debt: a sampled view of guest levels past the image's (SurfaceGeometry::imageLevels)
-// reads the image's last level instead of their own texels.
 std::pair<std::uint32_t, std::uint32_t> ViewLevels(const GuestTextureResource& descriptor, std::uint32_t imageLevels) {
     const auto last = std::min({descriptor.lastLevel, descriptor.mipCount - 1u, imageLevels - 1u});
     const auto base = std::min(descriptor.baseLevel, last);
