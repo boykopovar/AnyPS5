@@ -602,5 +602,15 @@ class CommentStateTests(unittest.TestCase):
         self.run_step(first, None)
         self.assertEqual(self.run_step(self.report("b" * 40, (5, 6)), first), [["api", "repos/owner/project/issues/42/comments", "--paginate"], ["api", "-X", "PATCH"]])
 
+
+class PageAndCacheHelperTests(unittest.TestCase):
+    def test_decode_pages_reads_consecutive_json_arrays(self):
+        self.assertEqual(pr_overlap.decode_pages("[1]\n[2, 3] [] "), [[1], [2, 3], []])
+
+    def test_decode_pages_refuses_a_non_array_page(self):
+        with self.assertRaisesRegex(ValueError, "non-array page"):
+            pr_overlap.decode_pages("{}")
+
+
 if __name__ == "__main__":
     unittest.main()
