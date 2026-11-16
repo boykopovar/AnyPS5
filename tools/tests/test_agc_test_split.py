@@ -297,6 +297,10 @@ class TokenHelperTests(unittest.TestCase):
     def test_expand_yields_nothing_for_an_unknown_variable(self):
         self.assertEqual(agc_test_split.expand("lib${Y}", {"X": ["a"]}), [])
 
+    def test_leading_walks_back_over_comment_lines_only(self):
+        self.assertEqual(agc_test_split.leading(["x", "# a", "# b", "code"], 3), 1)
+        self.assertEqual(agc_test_split.leading(["code", "y"], 1), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
