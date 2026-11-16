@@ -655,5 +655,12 @@ class ChecksParsingTests(unittest.TestCase):
         self.assertEqual(err.errors, "backslashreplace")
 
 
+class SelectionTests(unittest.TestCase):
+    def test_selected_keeps_everything_without_filters_and_matches_includes(self):
+        results = {'APS5_A': 1, 'APS5_B': 2, 'OTHER': 3}
+        self.assertEqual(configure_seed.selected(results, [], []), results)
+        self.assertEqual(configure_seed.selected(results, ['APS5_*'], []), {'APS5_A': 1, 'APS5_B': 2})
+
+
 if __name__ == "__main__":
     unittest.main()
