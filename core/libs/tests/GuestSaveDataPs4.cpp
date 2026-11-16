@@ -2,6 +2,7 @@
 #include "prx/libSceSaveData.native/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
@@ -82,6 +83,10 @@ void TestDirNameSearchPs4() {
 
     Check(sceSaveDataDirNameSearchPs4(nullptr, &result) == SaveDataErrorParameter, "null cond returns PARAMETER in sceSaveDataDirNameSearchPs4");
     Check(sceSaveDataDirNameSearchPs4(&cond, nullptr) == SaveDataErrorParameter, "null result returns PARAMETER in sceSaveDataDirNameSearchPs4");
+    errno = 71;
+    Check(sceSaveDataDirNameSearchPs4(reinterpret_cast<const SaveDataDirNameSearchCond*>(0x10), &result) == SaveDataErrorParameter, "unmapped cond returns PARAMETER in sceSaveDataDirNameSearchPs4");
+    Check(sceSaveDataDirNameSearchPs4(&cond, reinterpret_cast<SaveDataDirNameSearchResult*>(0x10)) == SaveDataErrorParameter, "unmapped result returns PARAMETER in sceSaveDataDirNameSearchPs4");
+    Check(errno == 71, "sceSaveDataDirNameSearchPs4 preserves errno");
 }
 
 void TestMount2() {
@@ -158,8 +163,10 @@ void TestSaveDataMemoryV1() {
     Check(sceSaveDataSetupSaveDataMemory(7, 0x1000, nullptr) == SaveDataErrorNotInitialized, "v1 SetupSaveDataMemory before v1 Initialize");
     Check(sceSaveDataGetSaveDataMemory(7, nullptr, 0, 0) == SaveDataErrorNotInitialized, "v1 GetSaveDataMemory before v1 Initialize");
     Check(sceSaveDataSetSaveDataMemory(7, nullptr, 0, 0) == SaveDataErrorNotInitialized, "v1 SetSaveDataMemory before v1 Initialize");
+    Check(sceSaveDataGetSaveDataMemory2(reinterpret_cast<SaveDataMemoryGet2*>(0x10)) == SaveDataErrorNotInitialized, "unmapped get_param before Initialize returns NOT_INITIALIZED");
     Check(sceSaveDataInitialize(nullptr) == 0, "v1 Initialize");
     Check(sceSaveDataSetupSaveDataMemory(7, 0x1000, nullptr) == 0, "v1 SetupSaveDataMemory");
+    Check(sceSaveDataGetSaveDataMemory2(reinterpret_cast<SaveDataMemoryGet2*>(0x10)) == SaveDataErrorParameter, "unmapped get_param returns PARAMETER");
     char written[16] = "settings-v1";
     Check(sceSaveDataSetSaveDataMemory(7, written, sizeof(written), 0x100) == 0, "v1 SetSaveDataMemory at an offset");
     char read[16] = {};

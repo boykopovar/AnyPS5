@@ -30,6 +30,7 @@
 #include "SceTypes.hpp"
 #include "prx/libSceAvPlayer/include/AvPlayer.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libSceAvPlayer/include/AvPlayer.hpp"
 
 namespace {
@@ -1896,6 +1897,78 @@ void TestVideoSyncTolerance() {
     Check(allocations.blocks.empty(), "sync tolerance allocations leaked");
 }
 
+void TestSyncedVideoFollowsClockWithSlowConsumer() {
+    Events events;
+    AvPlayerInitData init = InitData(&events);
+    auto* player = sceAvPlayerInit(&init);
+    Check(player != nullptr, "slow consumer init failed");
+    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "slow consumer source failed");
+    Check(WaitFor([&] { return events.Seen(EventReady); }), "slow consumer ready missing");
+    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "slow consumer video failed");
+    Check(sceAvPlayerStart(player) == 0, "slow consumer start failed");
+    AvPlayerFrameInfoEx frame{};
+    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "slow consumer first frame missing");
+    const auto start = std::chrono::steady_clock::now();
+    const auto first = static_cast<std::int64_t>(frame.timestamp);
+    std::int64_t worst = 0;
+    for (int poll = 1; poll <= 2; ++poll) {
+        std::this_thread::sleep_until(start + std::chrono::milliseconds(400 * poll));
+        Check(sceAvPlayerGetVideoDataEx(player, &frame) != 0, "slow consumer frame " + std::to_string(poll) + " missing");
+        CheckVideoFrame(frame);
+        const auto elapsed = static_cast<std::int64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count());
+        worst = std::max(worst, first + elapsed - static_cast<std::int64_t>(frame.timestamp));
+    }
+    Check(worst <= 150, "the picture handed out fell " + std::to_string(worst) + " ms behind the presentation clock");
+    Check(sceAvPlayerClose(player) == 0, "slow consumer close failed");
+}
+
+std::int64_t VideoLagBehindClock(AvPlayerInternal* player, const std::string& what) {
+    AvPlayerFrameInfoEx frame{};
+    Check(sceAvPlayerGetVideoDataEx(player, &frame) != 0, what + " frame missing");
+    CheckVideoFrame(frame);
+    return static_cast<std::int64_t>(sceAvPlayerCurrentTime(player)) - static_cast<std::int64_t>(frame.timestamp);
+}
+
+void TestSyncedVideoCatchesUpAfterResume() {
+    Events events;
+    AvPlayerInitData init = InitData(&events);
+    auto* player = sceAvPlayerInit(&init);
+    Check(player != nullptr, "resume catch-up init failed");
+    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "resume catch-up source failed");
+    Check(WaitFor([&] { return events.Seen(EventReady); }), "resume catch-up ready missing");
+    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "resume catch-up video failed");
+    Check(sceAvPlayerStart(player) == 0, "resume catch-up start failed");
+    AvPlayerFrameInfoEx frame{};
+    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "resume catch-up first frame missing");
+    Check(sceAvPlayerPause(player) == 0, "resume catch-up pause failed");
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    Check(sceAvPlayerResume(player) == 0, "resume catch-up resume failed");
+    std::this_thread::sleep_for(std::chrono::milliseconds(600));
+    const auto lag = VideoLagBehindClock(player, "resume catch-up");
+    Check(lag <= 150, "after resume the picture handed out fell " + std::to_string(lag) + " ms behind the presentation clock");
+    Check(sceAvPlayerClose(player) == 0, "resume catch-up close failed");
+}
+
+void TestVideoCatchesUpAfterSwitchToSyncedMode() {
+    Events events;
+    AvPlayerInitData init = InitData(&events);
+    auto* player = sceAvPlayerInit(&init);
+    Check(player != nullptr, "sync switch init failed");
+    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "sync switch source failed");
+    Check(WaitFor([&] { return events.Seen(EventReady); }), "sync switch ready missing");
+    Check(sceAvPlayerSetAvSyncMode(player, 1) == 0, "sync switch no-sync mode rejected");
+    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "sync switch video failed");
+    Check(sceAvPlayerStart(player) == 0, "sync switch start failed");
+    AvPlayerFrameInfoEx frame{};
+    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "sync switch first frame missing");
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    Check(sceAvPlayerSetAvSyncMode(player, 0) == 0, "sync switch default mode rejected");
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    const auto lag = VideoLagBehindClock(player, "sync switch");
+    Check(lag <= 150, "after switching to default sync the picture handed out fell " + std::to_string(lag) + " ms behind the presentation clock");
+    Check(sceAvPlayerClose(player) == 0, "sync switch close failed");
+}
+
 void TestAudioClockDriftGating() {
     const auto open = [](Events& events) {
         AvPlayerInitData init = InitData(&events);
@@ -2394,6 +2467,163 @@ void TestHttpSources(const std::string& base) {
 
 }
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
+namespace {
+
+void ClobberSourceReadErrno(std::uintptr_t, std::size_t) {
+    errno = 99;
+}
+
+class SourceGuardedPage {
+public:
+    SourceGuardedPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = static_cast<std::size_t>(info.dwPageSize);
+        base = static_cast<char*>(VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Check(base != nullptr, "allocate guarded page");
+        DWORD previous = 0;
+        Check(VirtualProtect(base + pageSize, pageSize, PAGE_NOACCESS, &previous) != 0, "protect guard page");
+#else
+        const long configured = sysconf(_SC_PAGESIZE);
+        Check(configured > 0, "query page size");
+        pageSize = static_cast<std::size_t>(configured);
+        void* mapping = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Check(mapping != MAP_FAILED, "allocate guarded page");
+        base = static_cast<char*>(mapping);
+        Check(mprotect(base + pageSize, pageSize, PROT_NONE) == 0, "protect guard page");
+#endif
+    }
+
+    ~SourceGuardedPage() {
+        if (base == nullptr) return;
+#ifdef _WIN32
+        if (VirtualFree(base, 0, MEM_RELEASE) == 0) std::abort();
+#else
+        if (munmap(base, pageSize * 2) != 0) std::abort();
+#endif
+    }
+
+    SourceGuardedPage(const SourceGuardedPage&) = delete;
+    SourceGuardedPage& operator=(const SourceGuardedPage&) = delete;
+
+    char* GuardStart() const {
+        return base + pageSize;
+    }
+
+private:
+    char* base = nullptr;
+    std::size_t pageSize = 0;
+};
+
+struct SourceReadHookGuard {
+    ~SourceReadHookGuard() { GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr); }
+};
+
+void TestAddSourceGuestBounds() {
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberSourceReadErrno);
+    const SourceReadHookGuard hookGuard;
+
+    AvPlayerInitData init{};
+    init.num_output_video_framebuffers = 2;
+    AvPlayerInternal* player = sceAvPlayerInit(&init);
+    Check(player != nullptr, "init player for AddSource bounds test");
+
+    constexpr int savedErrno = 71;
+
+    errno = savedErrno;
+    Check(sceAvPlayerAddSource(nullptr, "/app0/missing.mp4") == AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS &&
+              errno == savedErrno,
+          "null handle preserves errno");
+
+    errno = savedErrno;
+    Check(sceAvPlayerAddSource(player, nullptr) == AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS &&
+              errno == savedErrno,
+          "null filename preserves errno");
+
+    errno = savedErrno;
+    Check(sceAvPlayerAddSource(player, reinterpret_cast<const char*>(std::uintptr_t{0x10})) ==
+                  AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS &&
+              errno == savedErrno,
+          "unmapped filename returns invalid params without mutating errno");
+
+    SourceGuardedPage guarded;
+    char* const unterminated = guarded.GuardStart() - 16;
+    std::memset(unterminated, 'a', 16);
+    errno = savedErrno;
+    Check(sceAvPlayerAddSource(player, unterminated) == AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS &&
+              errno == savedErrno,
+          "unterminated filename hitting guard page returns invalid params without mutating errno");
+
+    const char* const missing = "/app0/missing.mp4";
+    const std::size_t missingSize = std::strlen(missing) + 1;
+    char* const validAtBoundary = guarded.GuardStart() - missingSize;
+    std::memcpy(validAtBoundary, missing, missingSize);
+    errno = savedErrno;
+    Check(sceAvPlayerAddSource(player, validAtBoundary) == AvPlayer::SCE_AVPLAYER_ERROR_OPERATION_FAILED &&
+              errno == savedErrno,
+          "terminated filename before guard page reaches AddSource cleanly");
+
+    const std::string oversized(65537, 'a');
+    errno = savedErrno;
+    Check(sceAvPlayerAddSource(player, oversized.c_str()) == AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS &&
+              errno == savedErrno,
+          "oversized filename returns invalid params without mutating errno");
+
+    const std::string maxAllowed(65536, 'a');
+    errno = savedErrno;
+    Check(sceAvPlayerAddSource(player, maxAllowed.c_str()) == AvPlayer::SCE_AVPLAYER_ERROR_OPERATION_FAILED &&
+              errno == savedErrno,
+          "maximum length filename passes copy step");
+
+    errno = savedErrno;
+    Check(sceAvPlayerAddSource(player, "") == AvPlayer::SCE_AVPLAYER_ERROR_OPERATION_FAILED &&
+              errno == savedErrno,
+          "empty filename fails as operation failed without mutating errno");
+
+    errno = savedErrno;
+    Check(sceAvPlayerAddSourceEx(player, 0, reinterpret_cast<const AvPlayerSourceDetails*>(guarded.GuardStart() - 4)) ==
+                  AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS &&
+              errno == savedErrno,
+          "guard-page-straddling source details return invalid params without mutating errno");
+
+    AvPlayerSourceDetails guardUri{};
+    guardUri.uri.name = unterminated;
+    guardUri.uri.length = 32;
+    errno = savedErrno;
+    Check(sceAvPlayerAddSourceEx(player, 0, &guardUri) == AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS &&
+              errno == savedErrno,
+          "guard-page-straddling sourceDetails URI returns invalid params without mutating errno");
+
+    const std::size_t unterminatedLength = std::strlen(missing);
+    char* const boundaryBytes = guarded.GuardStart() - unterminatedLength;
+    std::memcpy(boundaryBytes, missing, unterminatedLength);
+    AvPlayerSourceDetails exactBoundary{};
+    exactBoundary.uri.name = boundaryBytes;
+    exactBoundary.uri.length = static_cast<uint32_t>(unterminatedLength);
+    errno = savedErrno;
+    Check(sceAvPlayerAddSourceEx(player, 0, &exactBoundary) == AvPlayer::SCE_AVPLAYER_ERROR_OPERATION_FAILED &&
+              errno == savedErrno,
+          "bounded sourceDetails URI right before guard page reaches AddSource cleanly");
+
+    Check(sceAvPlayerClose(player) == AvPlayer::SCE_OK, "close player after AddSource bounds test");
+}
+
+}
+
 int main(int argc, char** argv) {
     try {
         if (argc == 3 && std::strcmp(argv[1], "--http") == 0) {
@@ -2441,6 +2671,9 @@ int main(int argc, char** argv) {
         TestLoopWarningWaitsForPlayback();
         TestEofStopLatency();
         TestVideoSyncTolerance();
+        TestSyncedVideoFollowsClockWithSlowConsumer();
+        TestSyncedVideoCatchesUpAfterResume();
+        TestVideoCatchesUpAfterSwitchToSyncedMode();
         TestAudioClockDriftGating();
         TestAudioEofClockRebase();
         TestAudioClockAdvancesAfterEof();
@@ -2478,6 +2711,7 @@ int main(int argc, char** argv) {
                   "oversized source URI length must fail without allocating");
             Check(sceAvPlayerClose(player) == 0, "close player");
         }
+        TestAddSourceGuestBounds();
         std::puts("AvPlayer tests passed");
         return 0;
     } catch (const std::exception& error) {

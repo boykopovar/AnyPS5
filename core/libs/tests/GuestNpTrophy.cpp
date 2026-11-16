@@ -227,6 +227,12 @@ int main() {
     Require(sceNpTrophyGetGroupIcon(context, handle, 0, icon, nullptr) == InvalidArgument, "null group icon size pointer");
     Require(sceNpTrophyGetTrophyIcon(context, handle, 0, icon, nullptr) == InvalidArgument, "null trophy icon size pointer");
     errno = 71;
+    Require(sceNpTrophyGetGameIcon(context, handle, nullptr, reinterpret_cast<std::uint64_t*>(0x10)) == InvalidArgument && errno == 71, "unwritable game icon size pointer");
+    errno = 71;
+    Require(sceNpTrophyGetGameIcon(context, handle, icon, reinterpret_cast<std::uint64_t*>(0x10)) == InvalidArgument && errno == 71, "unreadable game icon size pointer");
+    errno = 71;
+    Require(sceNpTrophyGetTrophyIcon(context, handle, 1, icon, reinterpret_cast<std::uint64_t*>(0x10)) == InvalidArgument && errno == 71, "unreadable trophy icon size pointer");
+    errno = 71;
     Require(sceNpTrophyGetGameInfo(context, handle, reinterpret_cast<GameDetails*>(0x10), nullptr) == InvalidArgument, "unmapped game details refused");
     Require(errno == 71, "errno preserved across unmapped game details");
     errno = 71;

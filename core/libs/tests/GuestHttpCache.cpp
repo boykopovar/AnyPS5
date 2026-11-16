@@ -3,10 +3,12 @@
 #include "prx/libSceRtc/libSceRtc.hpp"
 #include "prx/libSceUserService/libSceUserService.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -347,6 +349,25 @@ void TestRevalidation() {
     Request query{0, 0, "http://stale/a", 0, nullptr};
     std::int32_t result = -1;
     Require(sceHttpCacheRetrieve(exchange.request, &query, nullptr, nullptr, &result) == InvalidValue && result == 2);
+    {
+        const Header badHeaders[] = {{"Cache-Control", "max-age=999"}};
+        const ResponseHeader badReval{304, 0, 1, badHeaders};
+        errno = 71;
+        Require(sceHttpCacheRevalidate(exchange.request, &badReval, &exchange.response,
+                                       reinterpret_cast<std::int32_t*>(static_cast<std::uintptr_t>(0x10))) == InvalidValue &&
+                errno == 71);
+        std::int32_t untouched = -1;
+        errno = 71;
+        Require(sceHttpCacheRevalidate(exchange.request,
+                                       reinterpret_cast<const ResponseHeader*>(static_cast<std::uintptr_t>(0x10)),
+                                       &exchange.response, &untouched) == InvalidValue &&
+                errno == 71);
+        errno = 71;
+        Require(sceHttpCacheRevalidate(exchange.request, &badReval,
+                                       reinterpret_cast<Response*>(static_cast<std::uintptr_t>(0x10)),
+                                       &untouched) == InvalidValue &&
+                errno == 71);
+    }
     Require(exchange.Revalidate(304, {{"Cache-Control", "max-age=600"}, {"ETag", "e2"}, {"X-New", "1"}}) == 0 && exchange.result == 1);
     Require(exchange.response.statusCode == 200 && exchange.response.contentLength == 8);
     Require(Value(exchange.response, "Cache-Control") == "max-age=600" && Value(exchange.response, "ETag") == "e1" && Value(exchange.response, "X-New").empty());
@@ -529,5 +550,75 @@ int main() {
     TestSystemPathMemory();
     TestPublicResponses();
     TestTags();
+    {
+        const int cache = sceHttpCacheInit(0);
+        Require(cache > 0);
+        const int request = sceHttpCacheCreateRequest(cache, InitialUser);
+        Require(request > 0);
+        std::int32_t result = 0;
+        Response response{};
+        Request next{};
+        errno = 71;
+        Require(sceHttpCacheRetrieve(request, reinterpret_cast<const Request*>(static_cast<std::uintptr_t>(0x10)),
+                                     &response, &next, &result) == InvalidValue && errno == 71);
+        Request badUrlRequest{};
+        badUrlRequest.method = 1;
+        badUrlRequest.url = reinterpret_cast<const char*>(static_cast<std::uintptr_t>(0x10));
+        errno = 71;
+        Require(sceHttpCacheRetrieve(request, &badUrlRequest, &response, &next, &result) == InvalidValue && errno == 71);
+        Request goodRequest{};
+        goodRequest.method = 0;
+        goodRequest.url = "https://example.com/item";
+        errno = 71;
+        Require(sceHttpCacheRetrieve(request, &goodRequest, &response, &next,
+                                     reinterpret_cast<std::int32_t*>(static_cast<std::uintptr_t>(0x10))) == InvalidValue && errno == 71);
+        errno = 71;
+        Require(sceHttpCacheSetData(request, reinterpret_cast<const void*>(static_cast<std::uintptr_t>(0x10)), 16) == 0 && errno == 71);
+        Require(sceHttpCacheRetrieve(request, &goodRequest, &response, &next, &result) == 0 && result == 0);
+        ResponseHeader pendingHeader{};
+        pendingHeader.statusCode = 200;
+        Header cacheHeaders[] = {{"Cache-Control", "max-age=60"}};
+        pendingHeader.headerCount = 1;
+        pendingHeader.headers = cacheHeaders;
+        Require(sceHttpCacheSetResponseHeader(request, &pendingHeader) == 0);
+        errno = 71;
+        Require(sceHttpCacheSetData(request, reinterpret_cast<const void*>(static_cast<std::uintptr_t>(0x10)), 16) == InvalidValue && errno == 71);
+        const char sampleByte = 'x';
+        errno = 71;
+        Require(sceHttpCacheSetData(request, &sampleByte, std::numeric_limits<std::size_t>::max()) == InvalidValue && errno == 71);
+        Require(sceHttpCacheSetData(request, "ok", 2) == 0);
+        Require(sceHttpCacheCompleteRequest(request) == 0);
+        const int hitRequest = sceHttpCacheCreateRequest(cache, InitialUser);
+        Require(hitRequest > 0);
+        Require(sceHttpCacheRetrieve(hitRequest, &goodRequest,
+                                     reinterpret_cast<Response*>(static_cast<std::uintptr_t>(0x10)),
+                                     &next, &result) == InvalidValue);
+        Require(sceHttpCacheRetrieve(hitRequest, &goodRequest, &response, &next, &result) == 0 && result == 1);
+        errno = 71;
+        Require(sceHttpCacheReadData(hitRequest, 2, reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x10))) == InvalidValue && errno == 71);
+        Require(ReadAll(hitRequest) == "ok");
+        Require(sceHttpCacheDeleteRequest(hitRequest) == 0);
+        Quota badCountQuota{};
+        badCountQuota.count = 0xFFFFFFFFu;
+        badCountQuota.entries = reinterpret_cast<const QuotaEntry*>(static_cast<std::uintptr_t>(0x10));
+        errno = 71;
+        Require(sceHttpCacheSetQuota(cache, &badCountQuota) == InvalidValue && errno == 71);
+        Quota badEntriesQuota{};
+        badEntriesQuota.count = 1;
+        badEntriesQuota.entries = reinterpret_cast<const QuotaEntry*>(static_cast<std::uintptr_t>(0x10));
+        errno = 71;
+        Require(sceHttpCacheSetQuota(cache, &badEntriesQuota) == InvalidValue && errno == 71);
+        QuotaEntry badNameEntry{};
+        badNameEntry.name = reinterpret_cast<const char*>(static_cast<std::uintptr_t>(0x10));
+        Quota badNameQuota{};
+        badNameQuota.count = 1;
+        badNameQuota.entries = &badNameEntry;
+        errno = 71;
+        Require(sceHttpCacheSetQuota(cache, &badNameQuota) == InvalidValue && errno == 71);
+        errno = 71;
+        Require(sceHttpCacheSetQuota(cache, reinterpret_cast<const Quota*>(static_cast<std::uintptr_t>(0x10))) == InvalidValue && errno == 71);
+        Require(sceHttpCacheDeleteRequest(request) == 0);
+        Require(sceHttpCacheTerm(cache) == 0);
+    }
     return 0;
 }
