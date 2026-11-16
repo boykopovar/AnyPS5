@@ -27,6 +27,5 @@ int APS5_VABI u_enumCharNames_nid_postfix();
 int APS5_VABI u_flushDefaultConverter_nid_postfix();
 int APS5_VABI u_getDefaultConverter_nid_postfix();
 int APS5_VABI u_getFC_NFKC_Closure_nid_postfix();
-int APS5_VABI u_getIntPropertyMap_nid_postfix();
 int APS5_VABI u_releaseDefaultConverter_nid_postfix();
 }

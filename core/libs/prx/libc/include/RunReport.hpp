@@ -30,7 +30,7 @@ extern "C" void LibcRunReportFinishExit_nid_no_patch(int exitCode) noexcept;
 extern "C" void LibcRunReportTerminate_nid_no_patch(const char* what) noexcept;
 extern "C" void LibcRunReportRegisterComponent_nid_no_patch(const char* name, const char* commit, int modified) noexcept;
 extern "C" void LibcRunReportMissingFunction_nid_no_patch(const char* name, const char* file, int line) noexcept;
-extern "C" void LibcRunReportQuitRequested_nid_no_patch() noexcept;
+extern "C" void LibcRunReportQuitRequested_nid_no_patch(bool windowClosed) noexcept;
 extern "C" bool LibcRunReportEnabled_nid_no_patch() noexcept;
 extern "C" void LibcRunReportMilestone_nid_no_patch(int milestone) noexcept;
 extern "C" void LibcRunReportFramePresented_nid_no_patch() noexcept;
@@ -280,7 +280,7 @@ public:
     bool Finished() const noexcept;
     const std::filesystem::path& ReportPath() const noexcept { return reportPath; }
     Report Snapshot(Exit exit, Stop stop, std::optional<std::int64_t> exitCode) const;
-    void NoteQuitRequested() noexcept;
+    void NoteQuitRequested(bool windowClosed) noexcept;
     void NoteMilestone(int milestone);
     void NoteFramePresented();
     std::vector<double> FrameTimesMilliseconds() const;
@@ -313,6 +313,7 @@ private:
     std::condition_variable changed;
     std::atomic<int> state{0};
     bool quitRequested = false;
+    bool quitWithoutWindowClose = false;
     bool started_ = false;
     struct GameState;
     std::shared_ptr<GameState> game;
