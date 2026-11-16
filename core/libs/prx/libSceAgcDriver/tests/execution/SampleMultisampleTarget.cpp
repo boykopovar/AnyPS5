@@ -2306,7 +2306,9 @@ std::vector<std::array<std::uint32_t, 4>> RasterMovedSnapshot(const AgcDriver::G
     VkClearColorValue clear{};
     context.Resolved(&DeviceFunctions::cmdClearColorImage, "vkCmdClearColorImage")(commands, target->Image(), VK_IMAGE_LAYOUT_GENERAL, &clear, 1u, &initialize.subresourceRange);
     RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_MEMORY_WRITE_BIT | VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
-    pipeline.Begin(commands, *framebuffer, state.renderExtent, state);
+    CommandState recording;
+    recording.Begin(commands, false);
+    pipeline.Begin(recording, *framebuffer, state.renderExtent, state);
     auto pushes = AssemblePushConstants(shaders);
     resources.PatchPushConstants(pushes);
     pipeline.PushConstants(commands, PushConstantStages(shaders), pushes);
