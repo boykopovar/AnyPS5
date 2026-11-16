@@ -309,5 +309,12 @@ class PadInputTests(unittest.TestCase):
         self.assertIn("is a directory", errors.getvalue())
 
 
+class TimelineHeaderTests(unittest.TestCase):
+    def test_timeline_sequence_refuses_a_non_timeline_header_and_other_versions(self):
+        import io
+        self.assertEqual(pad_input.timeline_sequence(io.BytesIO(b''), b'junk\n'), 0)
+        self.assertEqual(pad_input.timeline_sequence(io.BytesIO(b''), b'APS5_PAD_TIMELINE 2 5 1\n'), 0)
+
+
 if __name__ == "__main__":
     unittest.main()
