@@ -1,6 +1,8 @@
 #include "prx/libSceXml/include/Api.hpp"
+#include "prx/libSceXml/include/InventoryExports.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -90,20 +92,31 @@ int APS5_VABI OnStartDocument(Handler* h, void* u) {
     return Record(h, u, "SD");
 }
 
+std::string Read(XmlHandle* attr) {
+    if (attr->impl == nullptr) return "-";
+    XmlString name{};
+    XmlString value{};
+    _ZNK3sce3Xml4Attr7getNameEv(&name, attr);
+    _ZNK3sce3Xml4Attr8getValueEv(&value, attr);
+    const std::string text = Text(&name) + "=" + Text(&value);
+    _ZN3sce3Xml4AttrD1Ev(attr);
+    return text;
+}
+
 int APS5_VABI OnStartElement(Handler* h, void* u, const XmlString* name, const XmlHandle* attributes) {
     std::string event = "SE:" + Text(name);
     const int count = _ZNK3sce3Xml13AttributeList9getLengthEv(attributes);
     for (int i = 0; i < count; ++i) {
-        XmlString value{};
-        _ZNK3sce3Xml13AttributeList12getAttributeEj(&value, attributes, static_cast<std::uint32_t>(i));
-        event += "," + std::to_string(i) + "=" + Text(&value);
+        XmlHandle attr{nullptr};
+        _ZNK3sce3Xml13AttributeList12getAttributeEj(&attr, attributes, static_cast<std::uint32_t>(i));
+        event += "," + Read(&attr);
     }
     if (h->lookupNames) {
         for (const char* wanted : {"x", "y", "z", "w"}) {
             const XmlString key{wanted, 1};
-            XmlString value{};
-            _ZNK3sce3Xml13AttributeList12getAttributeEPKNS0_6StringE(&value, attributes, &key);
-            event += std::string(";") + wanted + "=" + Text(&value);
+            XmlHandle attr{nullptr};
+            _ZNK3sce3Xml13AttributeList12getAttributeEPKNS0_6StringE(&attr, attributes, &key);
+            event += ";" + Read(&attr);
         }
     }
     return Record(h, u, event);
@@ -256,7 +269,7 @@ void TestDocument() {
     f.Start();
     _ZN3sce3Xml3Sax6Parser11setUserDataEPv(&f.parser, f.handler.expectedUserData);
     Require(f.Parse("<?xml version=\"1.0\"?>\n<root a=\"1\" b='two'>\n  <item/>  text <b>x</b>\n</root>\n", true) == 0, "a document parses");
-    Require(f.Take() == "SD|N7:xml version=\"1.0\"?>|SE:root,0=1,1=two|SE:item|EE:item|CH:text |SE:b|CH:x|EE:b|EE:root|ED|", "events of a document with the default white space skipping");
+    Require(f.Take() == "SD|N7:xml version=\"1.0\"?>|SE:root,a=1,b=two|SE:item|EE:item|CH:text |SE:b|CH:x|EE:b|EE:root|ED|", "events of a document with the default white space skipping");
     Require(f.Parse("<a><!-- c --><![CDATA[<z>]]></a>", true) == 0, "comments and CDATA");
     Require(f.Take() == "SD|SE:a|N11: c -->|N9:<z>]]>|EE:a|ED|", "comment and CDATA events");
     Require(f.Parse("\xEF\xBB\xBF<a/>", true) == 0, "a byte order mark");
@@ -271,9 +284,23 @@ void TestAttributeLookup() {
     f.handler.lookupNames = true;
     f.Start();
     Require(f.Parse("<e y='two' x=\"1\" z=\"\"/>", true) == 0, "attributes parse");
-    Require(f.Take() == "SD|SE:e,0=two,1=1,2=;x=1;y=two;z=;w=|EE:e|ED|", "each attribute is found by its name");
+    Require(f.Take() == "SD|SE:e,y=two,x=1,z=;x=1;y=two;z=;-|EE:e|ED|", "each attribute is found by its index and by its name");
     Require(f.Parse("<e/>", true) == 0, "no attributes");
-    Require(f.Take() == "SD|SE:e;x=;y=;z=;w=|EE:e|ED|", "a name that is absent gives an empty string");
+    Require(f.Take() == "SD|SE:e;-;-;-;-|EE:e|ED|", "a name that is absent gives an empty Attr");
+}
+
+void TestAttributeAllocations() {
+    Fixture f;
+    f.Start();
+    f.Mark();
+    Require(f.Parse("<e x='1'/>", true) == 0, "an element with an attribute");
+    Require(f.Take() == "SD|SE:e,x=1|EE:e|ED|", "the attribute is delivered");
+    Require(f.allocator.log == "a32 a40 f1 a32 f2 f0 ", "the list allocates its object and table, frees the table to share the parser's, and frees the object after the callback");
+    f.allocator.failAt = f.allocator.allocations + 1;
+    Require(f.Parse("<e x='1'/>", true) == 0, "the list object cannot be allocated");
+    Require(f.Take() == "SD|SE:e|EE:e|ED|", "the element is delivered with an empty list");
+    f.allocator.failAt = f.allocator.allocations + 2;
+    Require(Throws(f, "<e x='1'/>", true), "a failed table allocation faults in the module");
 }
 
 void TestStreaming() {
@@ -311,9 +338,9 @@ void TestUnmeasured() {
     Require(Throws(f, "<!DOCTYPE a><a/>", true), "a document type declaration");
     f.Take();
     Require(f.Parse("<a x=\"&amp;\">&amp; &lt;</a>", true) == 0, "references stay raw without the resolve-entity option");
-    Require(f.Take() == "SD|SE:a,0=&amp;|CH:&amp; &lt;|EE:a|ED|", "raw references");
+    Require(f.Take() == "SD|SE:a,x=&amp;|CH:&amp; &lt;|EE:a|ED|", "raw references");
     Require(f.Parse("<a x=\"a<b\tc\"/>", true) == 0, "an attribute value is taken raw");
-    Require(f.Take() == "SD|SE:a,0=a<b\tc|EE:a|ED|", "raw attribute value");
+    Require(f.Take() == "SD|SE:a,x=a<b\tc|EE:a|ED|", "raw attribute value");
     _ZN3sce3Xml3Sax6Parser16setResolveEntityEb(&f.parser, true);
     Require(Throws(f, "<a>&amp;</a>", true), "a reference with the resolve-entity option on");
     Require(Throws(f, "<a x=\"&amp;\"/>", true), "a reference in an attribute with the resolve-entity option on");
@@ -351,6 +378,7 @@ int main() {
     TestAllocationFailure();
     TestDocument();
     TestAttributeLookup();
+    TestAttributeAllocations();
     TestStreaming();
     TestErrors();
     TestUnmeasured();

@@ -287,23 +287,23 @@ void APS5_VABI _ZN3sce3Xml12MemAllocatorD2Ev(void*) {
 }
 
 int APS5_VABI _ZN3sce3Xml13AttributeList10initializeEPKNS0_11InitializerE(XmlHandle* self, const XmlHandle* initializer) {
-    return XmlDom::ContainerInitialize(self, initializer);
+    return XmlDom::ListInitialize(self, initializer);
 }
 
 int APS5_VABI _ZN3sce3Xml13AttributeList12addAttributeEPKNS0_6StringES4_(XmlHandle* self, const XmlString* name, const XmlString* value) {
-    return XmlDom::ContainerAddAttribute(self, name, value);
+    return XmlDom::ListAddAttribute(self, name, value);
 }
 
-int APS5_VABI _ZN3sce3Xml13AttributeList5clearEv(XmlHandle* self) {
-    return XmlDom::ContainerClear(self);
+void APS5_VABI _ZN3sce3Xml13AttributeList5clearEv(XmlHandle* self) {
+    XmlDom::ListClear(self);
 }
 
 int APS5_VABI _ZN3sce3Xml13AttributeList9terminateEv(XmlHandle* self) {
-    return XmlDom::ContainerTerminate(self);
+    return XmlDom::ListTerminate(self);
 }
 
 void APS5_VABI _ZN3sce3Xml13AttributeListC1ERKS1_(XmlHandle* self, const XmlHandle* other) {
-    XmlDom::ContainerCopy(self, other);
+    XmlDom::ListCopy(self, other);
 }
 
 void APS5_VABI _ZN3sce3Xml13AttributeListC1Ev(XmlHandle* self) {
@@ -311,7 +311,7 @@ void APS5_VABI _ZN3sce3Xml13AttributeListC1Ev(XmlHandle* self) {
 }
 
 void APS5_VABI _ZN3sce3Xml13AttributeListC2ERKS1_(XmlHandle* self, const XmlHandle* other) {
-    XmlDom::ContainerCopy(self, other);
+    XmlDom::ListCopy(self, other);
 }
 
 void APS5_VABI _ZN3sce3Xml13AttributeListC2Ev(XmlHandle* self) {
@@ -319,11 +319,11 @@ void APS5_VABI _ZN3sce3Xml13AttributeListC2Ev(XmlHandle* self) {
 }
 
 void APS5_VABI _ZN3sce3Xml13AttributeListD1Ev(XmlHandle* self) {
-    XmlDom::ContainerDestroy(self);
+    XmlDom::ListDestroy(self);
 }
 
 void APS5_VABI _ZN3sce3Xml13AttributeListD2Ev(XmlHandle* self) {
-    XmlDom::ContainerDestroy(self);
+    XmlDom::ListDestroy(self);
 }
 
 void APS5_VABI _ZN3sce3Xml18SerializeParameterC1Ev(XmlSerializeParameter* self) {
@@ -674,23 +674,23 @@ void APS5_VABI _ZN3sce3Xml3Sax6ParserD2Ev(XmlHandle* self) {
 }
 
 int APS5_VABI _ZN3sce3Xml4Attr10initializeEPKNS0_11InitializerE(XmlHandle* self, const XmlHandle* initializer) {
-    return XmlDom::ContainerInitialize(self, initializer);
+    return XmlDom::AttrInitialize(self, initializer);
 }
 
 int APS5_VABI _ZN3sce3Xml4Attr7setNameEPKNS0_6StringE(XmlHandle* self, const XmlString* name) {
-    return XmlDom::ContainerSetName(self, name);
+    return XmlDom::AttrSetName(self, name);
 }
 
 int APS5_VABI _ZN3sce3Xml4Attr8setValueEPKNS0_6StringE(XmlHandle* self, const XmlString* value) {
-    return XmlDom::ContainerSetValue(self, value);
+    return XmlDom::AttrSetValue(self, value);
 }
 
 int APS5_VABI _ZN3sce3Xml4Attr9terminateEv(XmlHandle* self) {
-    return XmlDom::ContainerTerminate(self);
+    return XmlDom::AttrTerminate(self);
 }
 
 void APS5_VABI _ZN3sce3Xml4AttrC1ERKS1_(XmlHandle* self, const XmlHandle* other) {
-    XmlDom::ContainerCopy(self, other);
+    XmlDom::AttrCopy(self, other);
 }
 
 void APS5_VABI _ZN3sce3Xml4AttrC1Ev(XmlHandle* self) {
@@ -698,7 +698,7 @@ void APS5_VABI _ZN3sce3Xml4AttrC1Ev(XmlHandle* self) {
 }
 
 void APS5_VABI _ZN3sce3Xml4AttrC2ERKS1_(XmlHandle* self, const XmlHandle* other) {
-    XmlDom::ContainerCopy(self, other);
+    XmlDom::AttrCopy(self, other);
 }
 
 void APS5_VABI _ZN3sce3Xml4AttrC2Ev(XmlHandle* self) {
@@ -706,15 +706,15 @@ void APS5_VABI _ZN3sce3Xml4AttrC2Ev(XmlHandle* self) {
 }
 
 void APS5_VABI _ZN3sce3Xml4AttrD1Ev(XmlHandle* self) {
-    XmlDom::ContainerDestroy(self);
+    XmlDom::AttrDestroy(self);
 }
 
 void APS5_VABI _ZN3sce3Xml4AttrD2Ev(XmlHandle* self) {
-    XmlDom::ContainerDestroy(self);
+    XmlDom::AttrDestroy(self);
 }
 
 XmlHandle* APS5_VABI _ZN3sce3Xml4AttraSERKS1_(XmlHandle* self, const XmlHandle* other) {
-    return XmlDom::ContainerAssign(self, other);
+    return XmlDom::AttrAssign(self, other);
 }
 
 const char* APS5_VABI _ZN3sce3Xml4Util9strResultEi(int result) {
@@ -848,19 +848,19 @@ XmlString* APS5_VABI _ZN3sce3Xml6StringaSERKS1_(XmlString* self, const XmlString
 }
 
 bool APS5_VABI _ZNK3sce3Xml13AttributeList11isAvailableEv(const XmlHandle* self) {
-    return XmlDom::ContainerIsAvailable(self);
+    return XmlDom::ListIsAvailable(self);
 }
 
-XmlString* APS5_VABI _ZNK3sce3Xml13AttributeList12getAttributeEPKNS0_6StringE(XmlString* result, const XmlHandle* self, const XmlString* name) {
-    return XmlDom::ContainerGetAttributeByName(result, self, name);
+XmlHandle* APS5_VABI _ZNK3sce3Xml13AttributeList12getAttributeEPKNS0_6StringE(XmlHandle* result, const XmlHandle* self, const XmlString* name) {
+    return XmlDom::ListGetAttributeByName(result, self, name);
 }
 
-XmlString* APS5_VABI _ZNK3sce3Xml13AttributeList12getAttributeEj(XmlString* result, const XmlHandle* self, std::uint32_t index) {
-    return XmlDom::ContainerGetAttributeByIndex(result, self, index);
+XmlHandle* APS5_VABI _ZNK3sce3Xml13AttributeList12getAttributeEj(XmlHandle* result, const XmlHandle* self, std::uint32_t index) {
+    return XmlDom::ListGetAttributeByIndex(result, self, index);
 }
 
 int APS5_VABI _ZNK3sce3Xml13AttributeList9getLengthEv(const XmlHandle* self) {
-    return XmlDom::ContainerGetLength(self);
+    return XmlDom::ListGetLength(self);
 }
 
 int APS5_VABI _ZNK3sce3Xml3Dom4Node11getNodeNameEv() {
@@ -1030,7 +1030,7 @@ int APS5_VABI _ZNK3sce3Xml3Dom8Document20getElementsByTagNameENS1_6NodeIdEPKNS0_
 }
 
 XmlString* APS5_VABI _ZNK3sce3Xml4Attr7getNameEv(XmlString* result, const XmlHandle* self) {
-    return XmlDom::ContainerGetName(result, self);
+    return XmlDom::AttrGetName(result, self);
 }
 
 int APS5_VABI _ZNK3sce3Xml3Dom8NodeList8findItemENS1_6NodeIdE() {
@@ -1046,7 +1046,7 @@ XmlNodeId APS5_VABI _ZNK3sce3Xml3Dom8NodeList4itemEj(const XmlHandle* self, std:
 }
 
 XmlString* APS5_VABI _ZNK3sce3Xml4Attr8getValueEv(XmlString* result, const XmlHandle* self) {
-    return XmlDom::ContainerGetValue(result, self);
+    return XmlDom::AttrGetValue(result, self);
 }
 
 XmlNodeId APS5_VABI _ZNK3sce3Xml3Dom8NodeListixEj(const XmlHandle* self, std::uint32_t index) {
@@ -1070,7 +1070,7 @@ std::uint32_t APS5_VABI _ZNK3sce3Xml3Dom8NodeList9getLengthEv(const XmlHandle* s
 }
 
 bool APS5_VABI _ZNK3sce3Xml4Attr11isAvailableEv(const XmlHandle* self) {
-    return XmlDom::ContainerIsAvailable(self);
+    return XmlDom::AttrIsAvailable(self);
 }
 
 }

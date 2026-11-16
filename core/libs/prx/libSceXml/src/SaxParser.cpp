@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace XmlSax {
@@ -201,17 +202,14 @@ bool CallNode(ParserState* state, int kind, std::string_view text) {
 
 bool CallStartElement(ParserState* state, const Tag& tag) {
     XmlHandle list{nullptr};
-    const int status = XmlDom::ContainerInitialize(&list, state->initializer);
-    if (status == 0) {
-        for (const auto& attribute : tag.attributes) {
-            const XmlString name = Make(attribute.first);
-            const XmlString value = Make(attribute.second);
-            XmlDom::ContainerAddAttribute(&list, &name, &value);
-        }
+    if (XmlDom::ListInitialize(&list, state->initializer) == 0) {
+        std::vector<XmlDom::AttributeEntry> entries;
+        for (const auto& attribute : tag.attributes) entries.push_back(XmlDom::AttributeEntry{std::string(attribute.first), std::string(attribute.second)});
+        XmlDom::ListShare(&list, std::move(entries));
     }
     const XmlString name = Make(tag.name);
     const int result = Vtable(state).startElement(state->handler, state->userData, &name, &list);
-    XmlDom::ContainerTerminate(&list);
+    XmlDom::ListDestroy(&list);
     return result != 0;
 }
 
