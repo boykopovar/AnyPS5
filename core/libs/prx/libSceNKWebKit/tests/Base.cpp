@@ -2277,6 +2277,31 @@ static void TestFrame() {
     Require(WKGetTypeID(unreachUrlRef) == WKURLGetTypeID());
     WKRelease(unreachUrlRef);
 
+    Require(WKFrameGetMainResourceData(ref) == nullptr);
+    Require(WKFrameGetPage(ref) == nullptr);
+    Require(WKFrameGetWebArchive(ref) == nullptr);
+    Require(!frame->isStopped);
+    WKFrameStopLoading(ref);
+    Require(frame->isStopped);
+
+    auto dummyData = NKWebKit::Make<NKWebKit::Data>(std::vector<std::uint8_t>{1, 2, 3});
+    frame->mainResourceData = std::move(dummyData);
+    auto* mainData = WKFrameGetMainResourceData(ref);
+    Require(mainData != nullptr);
+    Require(WKGetTypeID(mainData) == WKDataGetTypeID());
+
+    auto dummyPage = NKWebKit::Make<NKWebKit::ObjectOf<NKWebKit::ObjectType::Page>>();
+    frame->page = std::move(dummyPage);
+    auto* page = WKFrameGetPage(ref);
+    Require(page != nullptr);
+    Require(WKGetTypeID(page) == WKPageGetTypeID());
+
+    auto dummyArchive = NKWebKit::Make<NKWebKit::Data>(std::vector<std::uint8_t>{4, 5, 6});
+    frame->webArchive = std::move(dummyArchive);
+    auto* archive = WKFrameGetWebArchive(ref);
+    Require(archive != nullptr);
+    Require(WKGetTypeID(archive) == WKDataGetTypeID());
+
     auto checkThrows = [](auto fn) {
         bool threw = false;
         try {
@@ -2294,6 +2319,10 @@ static void TestFrame() {
     checkThrows(WKFrameCopyUnreachableURL);
     checkThrows(WKFrameCreateFrameHandle);
     checkThrows(WKFrameGetFrameLoadState);
+    checkThrows(WKFrameGetMainResourceData);
+    checkThrows(WKFrameGetPage);
+    checkThrows(WKFrameGetWebArchive);
+    checkThrows(WKFrameStopLoading);
 }
 
 static void TestImage() {

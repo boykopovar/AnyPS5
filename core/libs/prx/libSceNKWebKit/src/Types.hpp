@@ -354,6 +354,10 @@ public:
     Retained<String> mimeType;
     Retained<URL> provisionalURL;
     Retained<URL> unreachableURL;
+    Retained<Object> page;
+    Retained<Data> mainResourceData;
+    Retained<Data> webArchive;
+    bool isStopped = false;
 };
 
 class Image final : public ObjectOf<ObjectType::Image> {
