@@ -813,6 +813,21 @@ class ProgressTests(unittest.TestCase):
                     self.assertEqual(raised.exception.code, 2)
                     self.assertIn(str(path), stderr.getvalue())
 
+    def test_snapshots_with_a_duplicate_json_key_are_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            good = Path(directory) / "good.json"
+            good.write_text("{}", encoding="utf-8")
+            repeated = Path(directory) / "repeated.json"
+            repeated.write_text('{"libraries": {}, "nested": {"done_names": ["a", "b"], "done_names": ["a"]}}', encoding="utf-8")
+            for arguments in (["--compare", str(good), str(repeated)], ["--compare", str(repeated), str(good)],
+                              ["--open-pr-estimate", str(repeated), str(Path(directory) / "output")]):
+                with self.subTest(arguments[0], first=arguments[1] == str(repeated)):
+                    stderr = io.StringIO()
+                    with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as raised:
+                        progress.main(arguments)
+                    self.assertEqual(raised.exception.code, 2)
+                    self.assertIn(f"{repeated}: duplicate JSON key 'done_names'", stderr.getvalue())
+
     def test_output_directory_that_cannot_be_written_is_named(self):
         libraries, shaders = self.library_snapshot()
         with tempfile.TemporaryDirectory() as directory:

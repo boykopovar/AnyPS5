@@ -852,7 +852,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
         const bool quantizeDepth16 = QuantizesDepth16(context, state);
         for (std::uint32_t i = 0; i < shaders.size(); ++i) {
             const auto& shader = *shaders[i].program;
-            const auto patched = barycentricPatches && shaders[i].stage == ShaderRecompiler::ShaderStage::Vertex ? DemoteVertexLayerOutput(shader.spirv.Words()) : quantizeDepth16 && shaders[i].stage == ShaderRecompiler::ShaderStage::Fragment ? QuantizeFragmentDepth16(shaders[i]) : std::vector<std::uint32_t>{};
+            const auto patched = (barycentricPatches || state.rectList) && shaders[i].stage == ShaderRecompiler::ShaderStage::Vertex ? DemoteVertexLayerOutput(shader.spirv.Words()) : quantizeDepth16 && shaders[i].stage == ShaderRecompiler::ShaderStage::Fragment ? QuantizeFragmentDepth16(shaders[i]) : std::vector<std::uint32_t>{};
             const auto words = patched.empty() ? shader.spirv.Words() : std::span<const std::uint32_t>(patched);
             _modules[i] = CreateShaderModule(context, words.data(), words.size() * sizeof(std::uint32_t), "vkCreateShaderModule graphics");
             const auto stage = VulkanStage(shaders[i].stage);
@@ -1094,7 +1094,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
             prebuilt = true;
             return;
         }
-        const VkPipelineCache pipelineCache = (state.stages.tessellation || barycentricPatches) && !context.tessellationPipelineCache ? VK_NULL_HANDLE : context.pipelineCache;
+        const VkPipelineCache pipelineCache = (state.stages.tessellation || barycentricPatches || state.rectList) && !context.tessellationPipelineCache ? VK_NULL_HANDLE : context.pipelineCache;
         if (libraries) pipeline = LinkPipelineFromLibraries(context, pipelineInfo, rendering, layoutInfo, keys, &optimized, false, _modules);
         else {
             auto pipelineCacheLock = context.LockPipelineCacheForUse();

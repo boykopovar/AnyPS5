@@ -33,6 +33,16 @@ class UnbuiltExportTests(unittest.TestCase):
         })
         self.assertEqual(self.unbuilt(root, ["core/libs/prx/libSceExample/src/Built.cpp"]), [Path("core/libs/prx/libSceExample/Export.cpp")])
 
+    def test_a_trailing_return_type_still_counts_as_a_definition(self):
+        root = self.tree({
+            "core/libs/prx/libSceExample/Built.cpp": "",
+            "core/libs/prx/libSceExample/Trailing.cpp": "auto APS5_VABI sceExampleTrailing(int value) -> int {\n    return value;\n}\n",
+            "core/libs/prx/libSceExample/Noexcept.cpp": "auto APS5_VABI sceExampleQuiet(int value) noexcept -> const int* try {\n    return nullptr;\n} catch (...) {\n    return nullptr;\n}\n",
+            "core/libs/prx/libSceExample/Declared.cpp": "auto APS5_VABI sceExampleDeclared(int value) -> int;\n",
+        })
+        self.assertEqual(self.unbuilt(root, ["core/libs/prx/libSceExample/Built.cpp"]),
+                         [Path("core/libs/prx/libSceExample/Noexcept.cpp"), Path("core/libs/prx/libSceExample/Trailing.cpp")])
+
     def test_a_sanitizer_build_skips_the_address_sanitizer_library(self):
         for flag in ("ANYPS5_ENABLE_ASAN", "ANYPS5_ENABLE_TSAN"):
             with self.subTest(flag=flag):

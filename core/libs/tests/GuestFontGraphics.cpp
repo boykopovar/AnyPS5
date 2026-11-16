@@ -3,6 +3,7 @@
 #include "prx/libSceFont/libSceFont.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -185,6 +186,12 @@ void FillPlots() {
 void FillRates() {
     FontGraphicsFillRates rates;
     Fill(rates, 0xa5);
+    errno = 71;
+    RequireError(sceFontGraphicsFillRatesInit(reinterpret_cast<FontGraphicsFillRates*>(0x10), nullptr, 0), InvalidParameter);
+    Require(errno == 71);
+    errno = 71;
+    RequireError(sceFontGraphicsFillRatesInit(&rates, reinterpret_cast<const FontGraphicsFill*>(0x10), 0), InvalidFill);
+    Require(errno == 71 && AllBytes(rates, 0, sizeof(rates), 0));
     std::array<std::uint8_t, 8> fill{0x30};
     const auto* fillPointer = reinterpret_cast<const FontGraphicsFill*>(fill.data());
     Require(sceFontGraphicsFillRatesInit(&rates, fillPointer, 9) == 0);
@@ -209,6 +216,9 @@ void FillRates() {
     Require(sceFontGraphicsFillRatesInit(&rates, nullptr, 0) == 0);
     Require(sceFontGraphicsFillRatesSetFillEffect(&rates, fillPointer, 16) == 0);
     Require(rates.fill == fillPointer && rates.effect == 16 && rates.flags == 2 && rates.layout == 0xf77);
+    errno = 71;
+    RequireError(sceFontGraphicsFillRatesSetFillEffect(&rates, reinterpret_cast<const FontGraphicsFill*>(0x10), 0), InvalidFill);
+    Require(errno == 71 && rates.fill == fillPointer && rates.effect == 16);
     RequireError(sceFontGraphicsFillRatesSetFillEffect(&rates, nullptr, 17), InvalidParameter);
     Require(rates.fill == fillPointer && rates.effect == 16);
 
@@ -958,6 +968,9 @@ void GraphicsServiceValidation() {
     param.tag = 0x0e09;
     RequireError(sceFontCreateGraphicsService(&f.memory, &param, &service), InvalidParameter);
     RequireError(sceFontCreateGraphicsService(&f.memory, &f.param, nullptr), InvalidParameter);
+    errno = 71;
+    RequireError(sceFontCreateGraphicsService(&f.memory, &f.param, reinterpret_cast<FontGraphicsService**>(0x10)), InvalidParameter);
+    Require(errno == 71);
     param = f.param;
     param.level = 0xff;
     RequireError(sceFontCreateGraphicsServiceWithEdition(&f.memory, &param, 0, &service), Uninitialized);

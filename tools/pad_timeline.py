@@ -8,6 +8,8 @@ import tempfile
 
 from pad_input import BUTTONS, next_sequence
 
+COMMAND_FILE_BYTES = 64 * 1024
+
 
 def load_timeline(path):
     def unique_fields(pairs):
@@ -73,7 +75,11 @@ def compile_timeline(document, sequence, repeat=1, gap_ms=200):
     rows = [f"APS5_PAD_TIMELINE 1 {sequence} {len(events) * repeat}"]
     for iteration in range(repeat):
         rows.extend(f"{start + iteration * period} {duration} {buttons}{axes}" for start, duration, buttons, axes in events)
-    return "\n".join(rows) + "\n"
+    text = "\n".join(rows) + "\n"
+    size = len(text.encode("ascii"))
+    if size > COMMAND_FILE_BYTES:
+        raise ValueError(f"timeline command file is {size} bytes; the runtime reads at most {COMMAND_FILE_BYTES}")
+    return text
 
 
 def queue_timeline(path, text):

@@ -1080,7 +1080,10 @@ def current_stop(imports, records):
 def load_names(path):
     if not Path(path).is_file():
         raise AuditError(f"{path}: names file not found; the audit never downloads one (see tools/nid_names.py for the source)")
-    return nid_names.load_db(Path(path))
+    try:
+        return nid_names.load_db(Path(path))
+    except ValueError as error:
+        raise AuditError(str(error)) from error
 
 
 def attach_names(records, names):
@@ -1089,6 +1092,13 @@ def attach_names(records, names):
             name = names[record["nid"]]
             record["name"] = name
             record["name_verified"] = nid_names.compute_nid(name) == record["nid"]
+
+
+def windows_extended_path(path):
+    absolute = os.path.abspath(path).replace("/", "\\")
+    if absolute.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + absolute[2:]
+    return "\\\\?\\" + absolute
 
 
 def write_json(path, result):
@@ -1103,7 +1113,10 @@ def write_json(path, result):
             temporary.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
             if destination.exists():
                 temporary.chmod(destination.stat().st_mode & 0o7777)
-            temporary.replace(destination)
+            if os.name == "nt":
+                os.replace(windows_extended_path(temporary), windows_extended_path(destination))
+            else:
+                temporary.replace(destination)
         finally:
             if temporary.exists():
                 temporary.chmod(0o600)

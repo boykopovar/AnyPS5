@@ -554,6 +554,8 @@ void testDecode() {
     sceVideoOutRemoveBufferAttributeOption(&group.attribute, VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_STRICT_COLORIMETRY);
     check(group.attribute.option == VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_NONE, "removing the last buffer option did not clear it");
     check(expectFailure([&] { sceVideoOutRemoveBufferAttributeOption(nullptr, 0x20); }).find("null attribute") != std::string::npos, "a null attribute was accepted for removal");
+    check(expectFailure([&] { sceVideoOutSetBufferAttribute(nullptr, 0x80000000u, 0, 0, 1920, 1080, 0); }).find("null attribute") != std::string::npos, "a null attribute was accepted");
+    check(expectFailure([&] { sceVideoOutSetBufferAttribute2(nullptr, 0x8000000000000000ull, 0, 1920, 1080, 0, 0, 0); }).find("null attribute") != std::string::npos, "a null attribute was accepted");
     VideoOutBuffer dccBuffer{0, reinterpret_cast<uint64_t>(tiled.data()), 0x7f0000};
     sceVideoOutSetBufferAttribute2(&group.attribute, 0x8000000000000000ull, 0, 259, 137, VIDEO_OUT_BUFFER_ATTRIBUTE_OPTION_NONE, 0x208, 0x11223344);
     group.category = VIDEO_OUT_BUFFER_ATTRIBUTE_CATEGORY_COMPRESSED;
@@ -1437,6 +1439,7 @@ void testFreshHandleCalls() {
     check(sceVideoOutCursorEnable(handle, 0, nullptr) == VIDEO_OUT_ERROR_INVALID_ADDRESS, "a cursor was enabled without an image address");
     check(sceVideoOutCursorSetPosition(handle, 0, 100, 100) == 0, "the cursor position was refused");
     check(sceVideoOutCursorSet2xMagnify(handle, 0, true) == 0, "2x cursor magnification was refused");
+    check(sceVideoOutCursorSet2xMagnify(handle, 0, false) == 0, "2x cursor magnification reset was refused");
     check(sceVideoOutCursorSetImageAddress(handle, 0, nullptr) == VIDEO_OUT_ERROR_INVALID_ADDRESS, "a null cursor image address was accepted");
     check(sceVideoOutCursorDisable(handle, 0) == 0, "the cursor was not disabled");
     check(sceVideoOutSetFlipMaster(handle, 0) == VIDEO_OUT_ERROR_INVALID_HANDLE, "a fresh handle was made flip master of handle 0");
@@ -1464,11 +1467,18 @@ void testFreshHandleCalls() {
     check(sceVideoOutCursorEnable(-1, 0, image) == VIDEO_OUT_ERROR_INVALID_HANDLE, "a cursor was enabled on an invalid handle");
     check(sceVideoOutCursorSetPosition(-1, 0, 100, 100) == VIDEO_OUT_ERROR_INVALID_HANDLE, "an invalid handle's cursor was positioned");
     check(sceVideoOutCursorSet2xMagnify(-1, 0, true) == VIDEO_OUT_ERROR_INVALID_HANDLE, "an invalid handle's cursor was magnified");
+    check(sceVideoOutCursorSet2xMagnify(-1, 0, false) == VIDEO_OUT_ERROR_INVALID_HANDLE, "an invalid handle's cursor magnification reset was accepted");
     check(sceVideoOutCursorSetImageAddress(-1, 0, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "an invalid handle's cursor image was set");
     check(sceVideoOutCursorDisable(-1, 0) == VIDEO_OUT_ERROR_INVALID_HANDLE, "an invalid handle's cursor was disabled");
     check(sceVideoOutSetFlipMaster(-1, 0) == VIDEO_OUT_ERROR_INVALID_HANDLE, "an invalid handle was made flip master");
     check(sceVideoOutClearFlipMaster(-1) == VIDEO_OUT_ERROR_INVALID_HANDLE, "an invalid handle's flip master was cleared");
     check(sceVideoOutClose(handle) == 0, "the fresh handle was not closed");
+    check(sceVideoOutCursorSet2xMagnify(handle, 0, true) == VIDEO_OUT_ERROR_INVALID_HANDLE, "a closed handle's cursor was magnified");
+    check(sceVideoOutCursorSet2xMagnify(handle, 0, false) == VIDEO_OUT_ERROR_INVALID_HANDLE, "a closed handle's cursor magnification was cleared");
+    check(sceVideoOutCursorDisable(handle, 0) == VIDEO_OUT_ERROR_INVALID_HANDLE, "a closed handle's cursor was disabled");
+    check(sceVideoOutCursorSetPosition(handle, 0, 100, 100) == VIDEO_OUT_ERROR_INVALID_HANDLE, "a closed handle's cursor was positioned");
+    check(sceVideoOutCursorEnable(handle, 0, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "a closed handle's cursor was enabled");
+    check(sceVideoOutCursorSetImageAddress(handle, 0, nullptr) == VIDEO_OUT_ERROR_INVALID_HANDLE, "a closed handle's cursor image was set");
     check(sceVideoOutGetFlipStatus(handle, reinterpret_cast<VideoOutFlipStatus*>(raw.data())) == VIDEO_OUT_ERROR_INVALID_HANDLE, "closed handle flip status was accepted");
     check(sceVideoOutIsFlipPending(handle) == VIDEO_OUT_ERROR_INVALID_HANDLE, "closed handle pending flip was accepted");
     expectFailure([&] { sceVideoOutSubmitFlip(handle, 0, 1, 0); });
@@ -1522,6 +1532,16 @@ void testOutputResolutionOverride() {
     SDL_DisplayMode mode{};
     check(SDL_GetCurrentDisplayMode(0, &mode) == 0, "the display mode could not be read");
     const std::uint32_t following = (mode.w >= 3840 || mode.h >= 2160) ? 2u : 1u;
+    std::array<std::byte, 80> fresh{};
+    check(sceVideoOutGetOutputStatusWithVrr(handle, fresh.data()) == static_cast<int>(0x8029001Cu), "the VRR status of a handle without buffers was not refused");
+    std::vector<std::byte> allocation(65536 + 65535);
+    const auto storage = alignedBuffer(allocation);
+    VideoOutBuffers buffers{storage.data(), nullptr, {nullptr, nullptr}};
+    VideoOutBufferAttribute2 attribute{};
+    attribute.width = 64;
+    attribute.height = 64;
+    attribute.pixel_format = 0x8000000000000000ull;
+    check(sceVideoOutRegisterBuffers2(handle, 0, 0, &buffers, 1, &attribute, 0, nullptr) == 0, "the buffer registration failed");
     const auto reported = [&] {
         VideoOutOutputStatus status{};
         check(sceVideoOutGetOutputStatus(handle, &status) == 0, "the output status was not returned");

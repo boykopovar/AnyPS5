@@ -322,6 +322,17 @@ static void CheckNetstat() {
     CheckDiagnostics();
     Require(sceNetShowPolicy() == 0);
     Require(sceNetShowNetstatEx(0) == 0);
+    for (unsigned bit = 0; bit < 32; ++bit) {
+        const std::uint32_t flags = std::uint32_t{1} << bit;
+        *sceNetErrnoLoc() = 123;
+        if (bit == 16) Require(Failed(sceNetShowNetstatEx(flags), 22));
+        else Require(sceNetShowNetstatEx(flags) == 0 && *sceNetErrnoLoc() == 123);
+    }
+    for (const std::uint32_t flags : {0xfffeffffu, 0xffff0000u, 0x10001u, 0x1ffffu, 0x20001u, 0x7fffffffu, 0x8000ffffu}) {
+        *sceNetErrnoLoc() = 123;
+        if ((flags & 0x10000) != 0) Require(Failed(sceNetShowNetstatEx(flags), 22));
+        else Require(sceNetShowNetstatEx(flags) == 0 && *sceNetErrnoLoc() == 123);
+    }
     Require(sceNetShowRoute() == 0);
     Require(sceNetShowRoute6() == 0);
     Require(Failed(sceNetShowNetstatWithMemory(-1), 9));
@@ -551,6 +562,9 @@ static void CheckDefaultRoute() {
         threw = true;
     }
     Require(threw);
+    errno = 71;
+    Require(Failed(sceNetConfigGetDefaultRoute(reinterpret_cast<std::uint32_t*>(0x10)), 14));
+    Require(errno == 14);
 }
 
 static void CheckIfNameIndex() {
@@ -566,12 +580,14 @@ static void CheckIfNameIndex() {
     std::array<std::uint32_t, 16> ids{};
     const int withLoopback = sceNetGetIfnameNumList(ids.data(), ids.size(), 1);
     Require(withLoopback >= 1);
-    Require(ids[0] == 0);
-    for (int i = 1; i < withLoopback; ++i) Require(ids[i] > ids[i - 1] && ids[i] < 10);
+    const int firstAscending = primary > 0 ? 2 : 1;
+    Require(ids[0] == (primary > 0 ? 1u : 0u));
+    if (primary > 0) Require(withLoopback >= 2 && ids[1] == 0);
+    for (int i = firstAscending; i < withLoopback; ++i) Require(ids[i] > ids[i - 1] && ids[i] < 10);
     const int withoutLoopback = sceNetGetIfnameNumList(ids.data(), ids.size(), 0);
     Require(withoutLoopback <= withLoopback);
     for (int i = 0; i < withoutLoopback; ++i) Require(ids[i] >= 1 && ids[i] <= 8);
-    Require(sceNetGetIfnameNumList(ids.data(), 1, 1) == 1 && ids[0] == 0);
+    Require(sceNetGetIfnameNumList(ids.data(), 1, 1) == 1 && ids[0] == (primary > 0 ? 1u : 0u));
     Require(Failed(sceNetGetIfnameNumList(ids.data(), 1, 2), 22));
 }
 
@@ -893,8 +909,11 @@ static void CheckResolverEpoll() {
     NetEpollEvent registration{};
     registration.events = in;
     registration.data.u64 = 0x1234;
+    const auto* const unreadable = reinterpret_cast<const NetEpollEvent*>(0x10);
+    Require(Failed(sceNetEpollControl(epoll, 1, resolver, unreadable), 14));
     Require(sceNetEpollControl(epoll, 1, resolver, &registration) == 0);
     Require(Failed(sceNetEpollControl(epoll, 1, resolver, &registration), 48));
+    Require(Failed(sceNetEpollControl(epoll, 2, resolver, unreadable), 14));
     NetEpollEvent ready{};
     Require(sceNetEpollWait(epoll, &ready, 1, 0) == 0);
 
@@ -1842,6 +1861,9 @@ static void CheckSystemTime() {
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
     sceNetGetSystemTime(&output[1]);
     Require(output[1] > previous);
+    errno = 71;
+    sceNetGetSystemTime(reinterpret_cast<std::uint64_t*>(0x10));
+    Require(*sceNetErrnoLoc() == 22 && errno == 71);
 }
 
 static void CheckUsleep() {
@@ -2792,7 +2814,7 @@ int main(int argc, char** argv) {
     Require(Failed(sceNetUsleep(-1), 200));
     Require(Failed(sceNetShowNetstat(), 200));
     Require(Failed(sceNetShowIfconfig(), 200));
-    Require(Failed(sceNetGetNameToIndex(0), 200));
+    Require(sceNetGetNameToIndex(0) > 0);
     Require(Failed(sceNetGetIfnameNumList(nullptr, 0, 0), 200));
     Require(sceNetInit_nid_postfix() == 0);
     CheckInitParam();
