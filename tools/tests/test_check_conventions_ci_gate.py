@@ -222,6 +222,9 @@ class JobListTests(unittest.TestCase):
         lines = [(1, 0, 'jobs', ''), (2, 2, 'build', ''), (3, 4, 'runs-on', 'ubuntu'), (4, 2, 'test', ''), (5, 4, 'needs', '[build]'), (6, 4, 'if', 'always()'), (7, 0, 'top', '')]
         self.assertEqual(check_conventions.jobs(lines, source), [(2, 'build', [], ''), (4, 'test', ['build'], 'always()')])
 
+    def test_jobs_is_empty_without_a_jobs_section(self):
+        self.assertEqual(check_conventions.jobs([(1, 0, 'other', '')], []), [])
+
 
 if __name__ == "__main__":
     unittest.main()
