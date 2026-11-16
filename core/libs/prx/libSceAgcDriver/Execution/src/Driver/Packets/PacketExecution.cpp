@@ -475,6 +475,14 @@ void Driver::execute(Submission& submission) {
             if (queueTiming) frame->CollectBackground();
             frame->NoteFlipBatches(batchesAtFlip, unsignaledAtFlip);
             CaptureTrace::Log("flip frame=%llu submission=%llu offset=%zu batch=%llu unsignaled=%llu", static_cast<unsigned long long>(frameSerial.load()), static_cast<unsigned long long>(submission.serial), cursor, static_cast<unsigned long long>(batchesAtFlip), static_cast<unsigned long long>(unsignaledAtFlip));
+            struct FlipReadying {
+                Driver& driver;
+                std::uint32_t handle;
+                FlipReadying(Driver& owner, std::uint32_t flipHandle) : driver(owner), handle(flipHandle) { driver.beginFlipReady(handle); }
+                FlipReadying(const FlipReadying&) = delete;
+                FlipReadying& operator=(const FlipReadying&) = delete;
+                ~FlipReadying() { driver.endFlipReady(handle); }
+            } readying(*this, submission.flipHandles.at(cursor));
             flipHold.Release();
             submission.flips.at(cursor)->GpuReady(frame);
         } else if (opcode == 0x15 || opcode == 0x16) {
@@ -483,10 +491,7 @@ void Driver::execute(Submission& submission) {
             currentPacketOffset() = cursor;
             if (gateOpened()) {
                 gateOpened() = false;
-                if (!pipelineDispatch() || submission.queue != 0) {
-                    if (pipelined && DrawPipeline::Queue0().Busy()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, opcode);
-                    timed(&WorkerProfile::dispatchMs, [&] { resolveGroupAhead(submission, queue, cursor); });
-                }
+                if (!pipelineDispatch() || submission.queue != 0) timed(&WorkerProfile::dispatchMs, [&] { resolveGroupAhead(submission, queue, cursor); });
             }
             const bool ringOverlap = submission.queue != 0 && Graphics::Recorder::DispatchOverlapEnabled();
             if (ringOverlap) Graphics::Recorder::SetDispatchOrder(submission.queue + 1u, ringOrder.afterDispatch);
