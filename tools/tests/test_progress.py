@@ -1074,6 +1074,15 @@ class LayoutTests(unittest.TestCase):
         self.assertAlmostEqual(rects[0][2] * rects[0][3], 12)
         self.assertAlmostEqual(rects[1][2] * rects[1][3], 4)
 
+    def test_squarify_keeps_every_tile_inside_its_bounds(self):
+        for x, y, w, h, rects in ((0, 0, 4, 4, progress.squarify([3, 1], 0, 0, 4, 4)),
+                                  (2, 5, 10, 6, progress.squarify([5, 2, 2, 1], 2, 5, 10, 6))):
+            for left, top, width, height in rects:
+                self.assertGreaterEqual(left, x - 1e-9)
+                self.assertGreaterEqual(top, y - 1e-9)
+                self.assertLessEqual(left + width, x + w + 1e-9)
+                self.assertLessEqual(top + height, y + h + 1e-9)
+
 
 if __name__ == "__main__":
     unittest.main()
