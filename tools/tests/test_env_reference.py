@@ -631,6 +631,13 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(env_reference.library_of("core/kernel/x.cpp"), "core/kernel")
         self.assertEqual(env_reference.library_of("tools/env_reference.py"), "tools")
 
+    def test_uncommented_blanks_comments_and_keeps_code_width(self):
+        text = 'x = getenv("ANYPS5_A"); // ANYPS5_B\n'
+        blanked = env_reference.uncommented(text)
+        self.assertEqual(len(blanked), len(text))
+        self.assertIn('getenv("ANYPS5_A")', blanked)
+        self.assertNotIn("ANYPS5_B", blanked)
+
 
 if __name__ == "__main__":
     unittest.main()
