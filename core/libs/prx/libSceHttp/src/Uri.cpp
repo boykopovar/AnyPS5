@@ -445,7 +445,8 @@ int APS5_VABI sceHttpUriParse(SceHttpUriElement* out, const char* src_url, void*
         if (!written) return ERROR_INVALID_VALUE;
         next += spaces[i] + 1;
     }
-    SceHttpUriElement element{};
+    SceHttpUriElement element;
+    std::memset(static_cast<void*>(&element), 0, sizeof(element));
     element.opaque = parts.opaque;
     element.scheme = strings[0];
     element.username = strings[1];
@@ -469,8 +470,7 @@ int APS5_VABI sceHttpUriCopy(SceHttpUriElement* out, const SceHttpUriElement* sr
 
     if (write) {
         if (!ZeroGuest(pool, prepare)) return ERROR_INVALID_VALUE;
-        const SceHttpUriElement cleared{};
-        if (!WriteGuestBytes(out, &cleared, sizeof(cleared))) return ERROR_INVALID_VALUE;
+        if (!ZeroGuest(out, sizeof(SceHttpUriElement))) return ERROR_INVALID_VALUE;
     }
     SceHttpUriElement source{};
     const int savedErrno = errno;
@@ -504,7 +504,8 @@ int APS5_VABI sceHttpUriCopy(SceHttpUriElement* out, const SceHttpUriElement* sr
         if (!WriteGuestBytes(next, segment.data(), segment.size())) return ERROR_INVALID_VALUE;
         next += lengths[i] + 1;
     }
-    SceHttpUriElement element{};
+    SceHttpUriElement element;
+    std::memset(static_cast<void*>(&element), 0, sizeof(element));
     element.scheme = strings[0];
     element.hostname = strings[1];
     element.path = strings[2];
