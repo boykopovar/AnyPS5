@@ -554,6 +554,10 @@ class ValueHelperTests(unittest.TestCase):
     def test_classify_reads_dpp_forms_of_vector_encodings(self):
         self.assertEqual(shader_scan.classify("VOP2_VOP_DPP16", "x"), ("VOP2", "dpp16"))
         self.assertEqual(shader_scan.classify("VOPC_VOP_DPP8", "x"), ("VOPC", "dpp8"))
+class BodyAfterTests(unittest.TestCase):
+    def test_body_after_returns_the_text_between_the_matching_braces(self):
+        self.assertEqual(shader_scan.body_after('int f() { return 1; }', re.compile(r'int f\(\)')), ' return 1; ')
+        self.assertEqual(shader_scan.body_after('int f() { if (a) { b(); } }', re.compile(r'int f\(\)')), ' if (a) { b(); } ')
 
 
 if __name__ == "__main__":
