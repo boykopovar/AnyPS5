@@ -2,8 +2,17 @@
  * Derived from Source/WTF/wtf/DataLog.cpp, FilePrintStream.cpp, LockedPrintStream.cpp and PrintStream.cpp
  * at https://github.com/neonmodder123/PS5-WebKit-11.x/tree/80f77e94c63ee7202eec3d4b5b1a021dd89011ba/Source/WTF/wtf
  *
- * Copyright (C) 2012-2023 Apple Inc. All rights reserved.
+ * DataLog.cpp:
+ * Copyright (C) 2012-2022 Apple Inc. All rights reserved.
+ *
+ * FilePrintStream.cpp:
+ * Copyright (C) 2012 Apple Inc. All rights reserved.
+ *
+ * LockedPrintStream.cpp:
  * Copyright (C) 2016 Apple Inc. All rights reserved.
+ *
+ * PrintStream.cpp:
+ * Copyright (C) 2012-2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -47,7 +56,6 @@ struct LockedPrintStream {
     PrintStream* target;
 };
 
-using Destructor = void (APS5_VABI*)(PrintStream*);
 using Vprintf = void (APS5_VABI*)(PrintStream*, const char*, VaList*);
 using Flush = void (APS5_VABI*)(PrintStream*);
 
@@ -94,15 +102,16 @@ PrintStream* APS5_VABI PrintStreamBegin_nid_no_patch(PrintStream* stream) {
 void APS5_VABI PrintStreamEnd_nid_no_patch(PrintStream*) {
 }
 
-void APS5_VABI LockedPrintStreamCompleteDestructor_nid_no_patch(PrintStream* stream) {
-    auto* locked = RequireLocked(stream);
-    PrintStream* target = locked->target;
-    locked->target = nullptr;
-    Slot<Destructor>(target, Jsc::WtfAbi::PrintStreamDeletingDestructor)(target);
+[[noreturn]] void ThrowStaticLockedStreamDestroyed() {
+    throw std::logic_error("WTF::LockedPrintStream: the data log stream lives in static storage and cannot be destroyed");
+}
+
+void APS5_VABI LockedPrintStreamCompleteDestructor_nid_no_patch(PrintStream*) {
+    ThrowStaticLockedStreamDestroyed();
 }
 
 void APS5_VABI LockedPrintStreamDeletingDestructor_nid_no_patch(PrintStream*) {
-    throw std::logic_error("WTF::LockedPrintStream: the data log stream lives in static storage and cannot be deleted");
+    ThrowStaticLockedStreamDestroyed();
 }
 
 void APS5_VABI LockedPrintStreamVprintf_nid_no_patch(PrintStream* stream, const char* format, VaList* args) {
