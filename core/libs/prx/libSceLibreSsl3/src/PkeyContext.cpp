@@ -1,3 +1,122 @@
+/* Derived from LibreSSL 4.0.0 (openbsd ce488b78e0bd994780569df718596b9776ff681a) src/lib/libcrypto/ec/ec_pmeth.c (ec_pmeth.c,v 1.22),
+ * src/lib/libcrypto/ec/ec_ameth.c (ec_ameth.c,v 1.69)
+ * and src/lib/libcrypto/evp/pmeth_fn.c (pmeth_fn.c,v 1.11) */
+/* $OpenBSD: ec_pmeth.c,v 1.22 2024/08/26 22:01:28 op Exp $ */
+/* Written by Dr Stephen N Henson (steve@openssl.org) for the OpenSSL
+ * project 2006.
+ */
+/* ====================================================================
+ * Copyright (c) 2006 The OpenSSL Project.  All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in
+ *    the documentation and/or other materials provided with the
+ *    distribution.
+ *
+ * 3. All advertising materials mentioning features or use of this
+ *    software must display the following acknowledgment:
+ *    "This product includes software developed by the OpenSSL Project
+ *    for use in the OpenSSL Toolkit. (http://www.OpenSSL.org/)"
+ *
+ * 4. The names "OpenSSL Toolkit" and "OpenSSL Project" must not be used to
+ *    endorse or promote products derived from this software without
+ *    prior written permission. For written permission, please contact
+ *    licensing@OpenSSL.org.
+ *
+ * 5. Products derived from this software may not be called "OpenSSL"
+ *    nor may "OpenSSL" appear in their names without prior written
+ *    permission of the OpenSSL Project.
+ *
+ * 6. Redistributions of any form whatsoever must retain the following
+ *    acknowledgment:
+ *    "This product includes software developed by the OpenSSL Project
+ *    for use in the OpenSSL Toolkit (http://www.OpenSSL.org/)"
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE OpenSSL PROJECT ``AS IS'' AND ANY
+ * EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE OpenSSL PROJECT OR
+ * ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ * ====================================================================
+ *
+ * This product includes cryptographic software written by Eric Young
+ * (eay@cryptsoft.com).  This product includes software written by Tim
+ * Hudson (tjh@cryptsoft.com).
+ *
+ */
+
+/* $OpenBSD: ec_ameth.c,v 1.69 2024/08/29 16:58:19 tb Exp $ */
+/* Written by Dr Stephen N Henson (steve@openssl.org) for the OpenSSL
+ * project 2006.
+ */
+/* ====================================================================
+ * Copyright (c) 2006 The OpenSSL Project.  All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in
+ *    the documentation and/or other materials provided with the
+ *    distribution.
+ *
+ * 3. All advertising materials mentioning features or use of this
+ *    software must display the following acknowledgment:
+ *    "This product includes software developed by the OpenSSL Project
+ *    for use in the OpenSSL Toolkit. (http://www.OpenSSL.org/)"
+ *
+ * 4. The names "OpenSSL Toolkit" and "OpenSSL Project" must not be used to
+ *    endorse or promote products derived from this software without
+ *    prior written permission. For written permission, please contact
+ *    licensing@OpenSSL.org.
+ *
+ * 5. Products derived from this software may not be called "OpenSSL"
+ *    nor may "OpenSSL" appear in their names without prior written
+ *    permission of the OpenSSL Project.
+ *
+ * 6. Redistributions of any form whatsoever must retain the following
+ *    acknowledgment:
+ *    "This product includes software developed by the OpenSSL Project
+ *    for use in the OpenSSL Toolkit (http://www.OpenSSL.org/)"
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE OpenSSL PROJECT ``AS IS'' AND ANY
+ * EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE OpenSSL PROJECT OR
+ * ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ * ====================================================================
+ *
+ * This product includes cryptographic software written by Eric Young
+ * (eay@cryptsoft.com).  This product includes software written by Tim
+ * Hudson (tjh@cryptsoft.com).
+ *
+ */
+
 /* $OpenBSD: rsa_pmeth.c,v 1.41 2024/08/26 22:01:28 op Exp $ */
 /* Written by Dr Stephen N Henson (steve@openssl.org) for the OpenSSL
  * project 2006.
@@ -348,6 +467,7 @@
 
 #include "prx/libSceLibreSsl3/include/PkeyContext.hpp"
 
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -361,8 +481,11 @@
 #include "prx/libSceLibreSsl3/include/PkeyMethod.hpp"
 #include "prx/libSceLibreSsl3/include/PkeyState.hpp"
 #include "prx/libSceLibreSsl3/include/RsaCrypto.hpp"
+#include "prx/libSceLibreSsl/include/Ec.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
+#include <algorithm>
+#include <array>
 
 namespace {
 
@@ -370,6 +493,7 @@ using LibreSsl3::DigestMethod;
 
 constexpr int EvpLibrary = 6;
 constexpr int RsaLibrary = 4;
+constexpr int EcLibrary = 16;
 constexpr int AnyFunction = 0xfff;
 constexpr int AllocationFailure = 65;
 
@@ -380,6 +504,11 @@ constexpr int ReasonOperationNotSupported = 150;
 constexpr int ReasonOperationNotInitialized = 151;
 constexpr int ReasonBufferTooSmall = 155;
 constexpr int ReasonUnsupportedAlgorithm = 156;
+constexpr int ReasonDifferentKeyTypes = 101;
+constexpr int ReasonDifferentParameters = 153;
+constexpr int ReasonMissingParameters = 103;
+constexpr int ReasonNoKeySet = 154;
+constexpr int ReasonKeysNotSet = 140;
 
 constexpr int ReasonKeySizeTooSmall = 120;
 constexpr int ReasonBadExponentValue = 101;
@@ -483,19 +612,36 @@ bool SetupTemporaryBuffer(LibreSsl3RsaKeyContext* keyContext, const LibreSsl3Rsa
 }
 
 std::optional<int> CheckAutomaticLength(LibreSsl3PkeyContext* context, const LibreSsl3PkeyMethod* method,
-    const unsigned char* output, std::size_t* outputLength, const char* function) {
-    if (!outputLength) Reject(std::string(function) + " without an output length");
+    const unsigned char* output, std::size_t& outputLength) {
     if ((method->flags & LibreSsl3PkeyMethodFlagAutomaticArgumentLength) == 0) return std::nullopt;
     const auto keySize = static_cast<std::size_t>(EVP_PKEY_size_nid_postfix(static_cast<LibreSsl3EvpPkey*>(context->key)));
     if (!output) {
-        *outputLength = keySize;
+        outputLength = keySize;
         return 1;
     }
-    if (*outputLength < keySize) {
+    if (outputLength < keySize) {
         QueueEvpError(ReasonBufferTooSmall);
         return 0;
     }
     return std::nullopt;
+}
+
+template<typename TOperation>
+int WithOutputLength(std::size_t* outputLength, const char* function, TOperation operation) {
+    if (!outputLength) Reject(std::string(function) + " without an output length");
+    std::size_t length = 0;
+    int saved = errno;
+    const bool readable = GuestCopyIn_nid_no_patch(&length, outputLength, sizeof(length));
+    errno = saved;
+    if (!readable) Reject(std::string(function) + " with an unreadable output length");
+    const std::size_t incoming = length;
+    const int result = operation(length);
+    if (length == incoming) return result;
+    saved = errno;
+    const bool writable = GuestCopyOut_nid_no_patch(outputLength, &length, sizeof(length));
+    errno = saved;
+    if (!writable) Reject(std::string(function) + " with an unwritable output length");
+    return result;
 }
 
 int APS5_VABI RsaSign(LibreSsl3PkeyContext* context, unsigned char* signature, std::size_t* signatureLength,
@@ -926,6 +1072,85 @@ const LibreSsl3PkeyMethod RsaPssMethod {
     nullptr,
 };
 
+int APS5_VABI EcContextInitialize(LibreSsl3PkeyContext*) {
+    return 1;
+}
+
+void APS5_VABI EcContextClear(LibreSsl3PkeyContext*) {}
+
+int APS5_VABI EcControl(LibreSsl3PkeyContext*, int command, int, void*) {
+    if (command == LibreSsl3PkeyControlPeerKey) return 1;
+    return -2;
+}
+
+int APS5_VABI EcDerive(LibreSsl3PkeyContext* context, unsigned char* output, std::size_t* outputLength) {
+    auto* key = static_cast<LibreSsl3EvpPkey*>(context->key);
+    auto* peer = static_cast<LibreSsl3EvpPkey*>(context->peerKey);
+    if (!key || !peer) {
+        LibreSslPutError_nid_no_patch(EcLibrary, AnyFunction, ReasonKeysNotSet);
+        return 0;
+    }
+    auto* ecKey = static_cast<EcKey*>(key->key);
+    auto* peerEcKey = static_cast<EcKey*>(peer->key);
+    if (!ecKey || !peerEcKey || !ecKey->group || !peerEcKey->group) {
+        LibreSslPutError_nid_no_patch(EcLibrary, AnyFunction, ReasonKeysNotSet);
+        return 0;
+    }
+    if (!output) {
+        if (!outputLength) return 0;
+        const int degree = EC_GROUP_get_degree_nid_postfix(ecKey->group);
+        if (degree <= 0) return 0;
+        *outputLength = static_cast<std::size_t>((degree + 7) / 8);
+        return 1;
+    }
+    if (!outputLength) return 0;
+    if (!peerEcKey->publicKey) {
+        LibreSslPutError_nid_no_patch(EcLibrary, AnyFunction, ReasonKeysNotSet);
+        return 0;
+    }
+    if (!ecKey->privateKey) {
+        LibreSslPutError_nid_no_patch(EcLibrary, AnyFunction, ReasonKeysNotSet);
+        return 0;
+    }
+    const int degree = EC_GROUP_get_degree_nid_postfix(ecKey->group);
+    if (degree <= 0) return 0;
+    const auto fieldSize = static_cast<std::size_t>((degree + 7) / 8);
+    std::array<unsigned char, 66> secret {};
+    if (fieldSize > secret.size()) return 0;
+    const int result = ECDH_compute_key_nid_postfix(secret.data(), fieldSize, peerEcKey->publicKey, ecKey, nullptr);
+    if (result <= 0) return 0;
+    const auto copied = std::min(*outputLength, static_cast<std::size_t>(result));
+    std::copy_n(secret.data(), copied, output);
+    *outputLength = copied;
+    std::fill(secret.begin(), secret.end(), 0);
+    return 1;
+}
+
+const LibreSsl3PkeyMethod EcMethod {
+    LibreSsl3PkeyEc,
+    0,
+    &EcContextInitialize,
+    nullptr,
+    &EcContextClear,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    nullptr,
+    &EcContextInitialize,
+    &EcDerive,
+    &EcControl,
+    nullptr,
+    nullptr,
+    nullptr,
+};
+
 const LibreSsl3PkeyAsn1Method RsaAsn1Method {
     &RsaAsn1Method,
     LibreSsl3PkeyRsa,
@@ -1148,6 +1373,7 @@ int DigestFinal(LibreSsl3::DigestContext* ctx, unsigned char* md, unsigned int* 
 const LibreSsl3PkeyMethod* FindNativePkeyMethod_nid_no_patch(std::int32_t keyType) {
     if (keyType == LibreSsl3PkeyRsa) return &RsaMethod;
     if (keyType == LibreSsl3PkeyRsaPss) return &RsaPssMethod;
+    if (keyType == LibreSsl3PkeyEc) return &EcMethod;
     return nullptr;
 }
 
@@ -1165,9 +1391,10 @@ extern "C" {
 
 LibreSsl3PkeyContext* APS5_VABI EVP_PKEY_CTX_new_nid_postfix(LibreSsl3EvpPkey* key, void* engine) {
     (void) engine;
-    if (!key || !key->method) return nullptr;
+    if (!key || (!key->method && key->type != LibreSsl3PkeyEc)) return nullptr;
     const auto* asn1Method = static_cast<const LibreSsl3PkeyAsn1Method*>(key->method);
-    const auto* method = FindNativePkeyMethod_nid_no_patch(asn1Method->keyType);
+    const auto* method = key->type == LibreSsl3PkeyEc ? &EcMethod :
+        FindNativePkeyMethod_nid_no_patch(asn1Method->keyType);
     if (!method) {
         QueueEvpError(ReasonUnsupportedAlgorithm);
         return nullptr;
@@ -1185,6 +1412,70 @@ LibreSsl3PkeyContext* APS5_VABI EVP_PKEY_CTX_new_nid_postfix(LibreSsl3EvpPkey* k
         return nullptr;
     }
     return context;
+}
+
+int APS5_VABI EVP_PKEY_derive_init_nid_postfix(LibreSsl3PkeyContext* context) {
+    const auto* method = context ? MethodOf(context) : nullptr;
+    if (!context || !method || !method->derivation) {
+        QueueEvpError(ReasonOperationNotSupported);
+        return -2;
+    }
+    context->operation = LibreSsl3PkeyOperationDerive;
+    if (!method->derivationInitialize) return 1;
+    const int result = method->derivationInitialize(context);
+    if (result <= 0) context->operation = LibreSsl3PkeyOperationUndefined;
+    return result;
+}
+
+int APS5_VABI EVP_PKEY_derive_set_peer_nid_postfix(LibreSsl3PkeyContext* context, LibreSsl3EvpPkey* peer) {
+    const auto* method = context ? MethodOf(context) : nullptr;
+    if (!context || !method || (!method->derivation && !method->encryption && !method->decryption) ||
+        !method->control) {
+        QueueEvpError(ReasonOperationNotSupported);
+        return -2;
+    }
+    if (context->operation != LibreSsl3PkeyOperationDerive &&
+        context->operation != LibreSsl3PkeyOperationEncrypt && context->operation != LibreSsl3PkeyOperationDecrypt) {
+        QueueEvpError(ReasonOperationNotInitialized);
+        return -1;
+    }
+    int result = method->control(context, LibreSsl3PkeyControlPeerKey, 0, peer);
+    if (result <= 0) return result;
+    if (!context->key) {
+        QueueEvpError(ReasonNoKeySet);
+        return -1;
+    }
+    if (!peer || static_cast<LibreSsl3EvpPkey*>(context->key)->type != peer->type) {
+        QueueEvpError(ReasonDifferentKeyTypes);
+        return -1;
+    }
+    if (peer->type == LibreSsl3PkeyEc) {
+        const auto* ownKey = static_cast<const EcKey*>(static_cast<LibreSsl3EvpPkey*>(context->key)->key);
+        const auto* peerKey = static_cast<const EcKey*>(peer->key);
+        if (ownKey && peerKey && ownKey->group && peerKey->group &&
+            ownKey->group->curve.nid != peerKey->group->curve.nid) {
+            QueueEvpError(ReasonDifferentParameters);
+            return -1;
+        }
+    }
+    EVP_PKEY_free_nid_disambig1_nid_postfix(static_cast<LibreSsl3EvpPkey*>(context->peerKey));
+    context->peerKey = peer;
+    EVP_PKEY_up_ref_nid_postfix(peer);
+    return 1;
+}
+
+int APS5_VABI EVP_PKEY_derive_nid_postfix(LibreSsl3PkeyContext* context, unsigned char* key,
+    std::size_t* keyLength) {
+    const auto* method = context ? MethodOf(context) : nullptr;
+    if (!context || !method || !method->derivation) {
+        QueueEvpError(ReasonOperationNotSupported);
+        return -2;
+    }
+    if (context->operation != LibreSsl3PkeyOperationDerive) {
+        QueueEvpError(ReasonOperationNotInitialized);
+        return -1;
+    }
+    return method->derivation(context, key, keyLength);
 }
 
 void APS5_VABI EVP_PKEY_CTX_free_nid_postfix(LibreSsl3PkeyContext* context) {
@@ -1238,10 +1529,10 @@ int APS5_VABI EVP_PKEY_encrypt_nid_postfix(LibreSsl3PkeyContext* context, unsign
         QueueEvpError(ReasonOperationNotInitialized);
         return -1;
     }
-    if (const auto result = CheckAutomaticLength(context, method, output, outputLength, "EVP_PKEY_encrypt")) {
-        return *result;
-    }
-    return method->encryption(context, output, outputLength, input, inputLength);
+    return WithOutputLength(outputLength, "EVP_PKEY_encrypt", [&](std::size_t& length) {
+        if (const auto result = CheckAutomaticLength(context, method, output, length)) return *result;
+        return method->encryption(context, output, &length, input, inputLength);
+    });
 }
 
 int APS5_VABI EVP_PKEY_decrypt_init_nid_postfix(LibreSsl3PkeyContext* context) {
@@ -1265,10 +1556,10 @@ int APS5_VABI EVP_PKEY_decrypt_nid_postfix(LibreSsl3PkeyContext* context, unsign
         QueueEvpError(ReasonOperationNotInitialized);
         return -1;
     }
-    if (const auto result = CheckAutomaticLength(context, method, output, outputLength, "EVP_PKEY_decrypt")) {
-        return *result;
-    }
-    return method->decryption(context, output, outputLength, input, inputLength);
+    return WithOutputLength(outputLength, "EVP_PKEY_decrypt", [&](std::size_t& length) {
+        if (const auto result = CheckAutomaticLength(context, method, output, length)) return *result;
+        return method->decryption(context, output, &length, input, inputLength);
+    });
 }
 
 int APS5_VABI EVP_PKEY_sign_init_nid_postfix(LibreSsl3PkeyContext* context) {
@@ -1295,10 +1586,10 @@ int APS5_VABI EVP_PKEY_sign_nid_postfix(LibreSsl3PkeyContext* context, unsigned 
         QueueEvpError(ReasonOperationNotInitialized);
         return -1;
     }
-    if (const auto result = CheckAutomaticLength(context, method, signature, signatureLength, "EVP_PKEY_sign")) {
-        return *result;
-    }
-    return method->signature(context, signature, signatureLength, content, contentLength);
+    return WithOutputLength(signatureLength, "EVP_PKEY_sign", [&](std::size_t& length) {
+        if (const auto result = CheckAutomaticLength(context, method, signature, length)) return *result;
+        return method->signature(context, signature, &length, content, contentLength);
+    });
 }
 
 int APS5_VABI EVP_PKEY_verify_init_nid_postfix(LibreSsl3PkeyContext* context) {

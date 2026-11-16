@@ -300,7 +300,7 @@ int ReadLine(Bio* bio, std::array<char, 256>& line) {
     line[254] = '\0';
     int index = BioGets(bio, line.data(), 254);
     if (index <= 0) return index;
-    if (index > 254) throw std::invalid_argument("PEM_read_bio BIO_gets returned an oversized line");
+    if (index >= 254) throw std::invalid_argument("PEM_read_bio BIO_gets returned an oversized line");
     while (index >= 0 && line[static_cast<std::size_t>(index)] <= ' ') --index;
     line[static_cast<std::size_t>(++index)] = '\n';
     line[static_cast<std::size_t>(++index)] = '\0';
