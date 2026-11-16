@@ -632,6 +632,9 @@ long double Extended(std::uint64_t mantissa, std::uint16_t signExponent) {
     unsigned char bytes[sizeof(long double)]{};
     std::memcpy(bytes, &mantissa, sizeof(mantissa));
     std::memcpy(bytes + sizeof(mantissa), &signExponent, sizeof(signExponent));
+    volatile unsigned char opaque[sizeof(long double)]{};
+    for (std::size_t index = 0; index < sizeof(bytes); ++index) opaque[index] = bytes[index];
+    for (std::size_t index = 0; index < sizeof(bytes); ++index) bytes[index] = opaque[index];
     long double value;
     std::memcpy(&value, bytes, sizeof(value));
     return value;
