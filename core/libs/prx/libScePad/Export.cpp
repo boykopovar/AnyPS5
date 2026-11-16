@@ -33,6 +33,8 @@ static_assert(sizeof(PadVolumeGain) == 4);
 static_assert(offsetof(PadVolumeGain, micGain) == 3);
 static_assert(sizeof(PadButtonRemappingInfo) == 16);
 static_assert(offsetof(PadButtonRemappingInfo, mode) == 15);
+static_assert(sizeof(PadLeonardoData) == 0x80);
+static_assert(sizeof(PadLeonardoUniqueData) == 0x18);
 
 namespace {
 
@@ -1034,7 +1036,15 @@ int APS5_VABI scePadParseUniqueDataLeonardo(std::int32_t handle, const PadLeonar
     (void)handle;
     if (!Pad::IsInitialized()) return PAD_ERROR_NOT_INITIALIZED;
     if (data == nullptr || uniqueData == nullptr) return PAD_ERROR_INVALID_ARG;
-    std::memset(static_cast<void*>(uniqueData), 0, PAD_LEONARDO_UNIQUE_DATA_SIZE);
+    PadLeonardoData localData{};
+    const int savedErrno = errno;
+    const bool copiedIn = GuestCopyIn_nid_no_patch(&localData, data, sizeof(localData));
+    errno = savedErrno;
+    if (!copiedIn) return PAD_ERROR_INVALID_ARG;
+    PadLeonardoUniqueData zeroData{};
+    const bool copiedOut = GuestCopyOut_nid_no_patch(uniqueData, &zeroData, sizeof(zeroData));
+    errno = savedErrno;
+    if (!copiedOut) return PAD_ERROR_INVALID_ARG;
     return PAD_ERROR_INVALID_HANDLE;
 }
 

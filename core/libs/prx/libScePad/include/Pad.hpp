@@ -105,8 +105,12 @@ struct PadVersionInfo;
 struct PadTelemetryInfo;
 struct PadPortInfo;
 struct PadVrControllerCombinedState;
-struct PadLeonardoData;
-struct PadLeonardoUniqueData;
+struct PadLeonardoData {
+    std::uint8_t data[0x80];
+};
+struct PadLeonardoUniqueData {
+    std::uint8_t data[0x18];
+};
 struct PadHistoryData;
 struct PadUpdateParameter;
 struct PadVirtualDeviceParameter;
