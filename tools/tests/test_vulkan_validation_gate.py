@@ -798,5 +798,31 @@ class NestedContainmentTests(FixtureTests):
         self.assertFalse(ctest_marker.exists())
 
 
+class WaitTests(unittest.TestCase):
+    class FinishingProcess:
+        def __init__(self):
+            self.calls = 0
+            self.args = ["cmd"]
+
+        def wait(self, timeout):
+            self.calls += 1
+            if self.calls == 1:
+                raise subprocess.TimeoutExpired(self.args, timeout)
+            return 3
+
+    class StuckProcess(FinishingProcess):
+        def wait(self, timeout):
+            raise subprocess.TimeoutExpired(self.args, timeout)
+
+    def test_wait_in_slices_returns_the_exit_code_after_a_slice_times_out(self):
+        process = self.FinishingProcess()
+        self.assertEqual(gate.wait_in_slices(process, 5), 3)
+        self.assertEqual(process.calls, 2)
+
+    def test_wait_in_slices_raises_once_the_deadline_passes(self):
+        with self.assertRaises(subprocess.TimeoutExpired):
+            gate.wait_in_slices(self.StuckProcess(), 0.05)
+
+
 if __name__ == "__main__":
     unittest.main()
