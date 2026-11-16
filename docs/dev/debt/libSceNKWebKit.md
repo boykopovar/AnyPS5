@@ -5,6 +5,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 ### Silent stubs
 
 - [Navigation helpers](../../../core/libs/prx/libSceNKWebKit/src/NavigationHelpers.cpp) (libSceNKWebKit) - `WKNavigationActionShouldPerformDownload`, `WKNavigationDataCopyOriginalRequest` and `WKNavigationResponseCanShowMIMEType` answer the default object values (`false`, `nullptr` and `true` respectively) until navigation is modelled and creates populated `NavigationAction`, `NavigationData` and `NavigationResponse` objects.
+- [WKBundleInspector controls](../../../core/libs/prx/libSceNKWebKit/src/BundleInspector.cpp) (libSceNKWebKit) - `WKBundleInspectorShow`, `WKBundleInspectorClose`, `WKBundleInspectorSetPageProfilingEnabled` and `WKBundleInspectorEvaluateScriptForTest` record inspector state on the host object without forwarding messages to the UI process; `WKBundlePageGetInspector` provides access to the page's inspector.
 
 ### Unknown function info
 
@@ -275,10 +276,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKBundleHitTestResultGetFrame` | `mGM-NRBuZvE` |
 | `WKBundleHitTestResultGetImageRect` | `CHPZFRIZO7o` |
 | `WKBundleHitTestResultGetTargetFrame` | `w32pxSSQ4Rs` |
-| `WKBundleInspectorClose` | `xTfnxYXtinY` |
-| `WKBundleInspectorEvaluateScriptForTest` | `b6+hAoAkJl8` |
-| `WKBundleInspectorSetPageProfilingEnabled` | `-r23ePSw30o` |
-| `WKBundleInspectorShow` | `KVehJeKp2gE` |
 | `WKBundleIsPageBoxVisible` | `ysYpNHM+f2U` |
 | `WKBundleIsProcessingUserGesture` | `flLt+xWYloc` |
 | `WKBundleNodeHandleCopySnapshotWithOptions` | `splXjoRt+jY` |
@@ -332,7 +329,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKBundlePageForceRepaint` | `jaQ3h3J4zd4` |
 | `WKBundlePageGetAppCacheUsageForOrigin` | `qjrn0E95Tak` |
 | `WKBundlePageGetBackingScaleFactor` | `PS5n3xxFDXQ` |
-| `WKBundlePageGetInspector` | `Gl9UFzi54FQ` |
 | `WKBundlePageGetPageZoomFactor` | `bNfhkICjfEk` |
 | `WKBundlePageGetRenderTreeSize` | `U2LcSWAxv6I` |
 | `WKBundlePageGetTextZoomFactor` | `YYbrGICsiyQ` |
