@@ -987,6 +987,15 @@ class RunHelperTests(unittest.TestCase):
         self.assertEqual(title_run.distinct(entries, ["a", "b"]), 3)
         self.assertIsNone(title_run.distinct(None, ["a"]))
 
+    def test_display_formats_values_for_the_report(self):
+        self.assertEqual(title_run.display(None), "not recorded")
+        self.assertEqual(title_run.display(12.34), "12.3")
+        self.assertEqual(title_run.display(7), "7")
+
+    def test_last_line_skips_trailing_blank_lines(self):
+        self.assertEqual(title_run.last_line("a\n\n  b  \n\n"), "b")
+        self.assertEqual(title_run.last_line(""), "")
+
 
 if __name__ == "__main__":
     unittest.main()
