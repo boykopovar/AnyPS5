@@ -186,10 +186,14 @@ int APS5_VABI sceKernelCreateEventFlag(KernelEventFlag* ef, const char* name, ui
             }
         }
         handle = RegisterEventFlag(entry);
+        lock.unlock();
+        if (!GuestCopyOut_nid_no_patch(ef, &handle, sizeof(handle))) {
+            RetireEventFlag(handle, entry);
+            return SCE_KERNEL_ERROR_EFAULT;
+        }
     } catch (const std::bad_alloc&) {
         return SCE_KERNEL_ERROR_ENOMEM;
     }
-    *ef = handle;
     if (TraceSync()) std::fprintf(stderr, "[evf] create %p '%s' attr=0x%x init=0x%llx\n", static_cast<void*>(handle), nameCopy.c_str(), attr, static_cast<unsigned long long>(init_pattern));
     return SCE_OK;
 }
@@ -210,7 +214,13 @@ int APS5_VABI sceKernelOpenEventFlag(KernelEventFlag* ef, const char* name) {
         }
         if (!target) return SCE_KERNEL_ERROR_ESRCH;
         if (!ef) return SCE_KERNEL_ERROR_EFAULT;
-        *ef = RegisterEventFlag(std::make_shared<EventFlagHandle>(EventFlagHandle{std::move(target), true}));
+        auto entry = std::make_shared<EventFlagHandle>(EventFlagHandle{std::move(target), true});
+        const KernelEventFlag handle = RegisterEventFlag(entry);
+        lock.unlock();
+        if (!GuestCopyOut_nid_no_patch(ef, &handle, sizeof(handle))) {
+            RetireEventFlag(handle, entry);
+            return SCE_KERNEL_ERROR_EFAULT;
+        }
     } catch (const std::bad_alloc&) {
         return SCE_KERNEL_ERROR_ENOMEM;
     }
