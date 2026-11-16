@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <clocale>
 #include <cctype>
+#include <cstdint>
 #include <string>
 
 struct Case {
@@ -147,5 +148,15 @@ int main() {
         threw = true;
     }
     if (!threw) std::abort();
+    const char text[] = "Hello World";
+    Require(strcasestr_nid_postfix(text, "world") == text + 6);
+    Require(strcasestr_nid_postfix(text, "") == text);
+    Require(strcasestr_nid_postfix("", "x") == nullptr);
+    const char* badText = reinterpret_cast<const char*>(std::uintptr_t(1));
+    const char* badNeedle = reinterpret_cast<const char*>(~std::uintptr_t(0xFFF));
+    Require(strcasestr_nid_postfix(badText, "world") == nullptr);
+    Require(strcasestr_nid_postfix(text, badNeedle) == nullptr);
+    Require(strcasestr_nid_postfix(nullptr, "world") == nullptr);
+    Require(strcasestr_nid_postfix("Hello", nullptr) == nullptr);
     return 0;
 }
