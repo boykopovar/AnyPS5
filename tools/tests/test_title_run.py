@@ -963,5 +963,18 @@ class RunReportTests(unittest.TestCase):
         self.assertEqual(title_run.tally(report["missing"], ["name"], "calls"), {'["f"]': 0})
 
 
+class ReportFileTests(unittest.TestCase):
+    def write(self, directory, name, text):
+        path = Path(directory) / name
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_read_report_returns_the_run_average_from_a_well_formed_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.write(directory, "report.json",
+                              json.dumps({"format": "anyps5-report", "run": {"averageFps": 60}}))
+            self.assertEqual(title_run.read_report(path)["averageFps"], 60)
+
+
 if __name__ == "__main__":
     unittest.main()
