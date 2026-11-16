@@ -419,3 +419,4 @@ On Linux x86-64, omit `CMAKE_OSX_ARCHITECTURES`; the full `BUILD_TESTING` build 
 - `tools/public_headers_manifest.py [--root <dir>]` inventories the public header package inputs and their content hashes without creating an archive.
 - `tools/relinker_seed_manifest.py <corpus>` describes the files of a flat relinker fuzz corpus as JSON (see the fuzzing section above).
 - `tools/configure_seed.py <cache> [seed] [--include GLOB] [--exclude GLOB] [--stdout]` writes the configure check results of a CMake cache as an initial cache file.
+- `tools/check_configure_seed.py <cache> <seed>` checks an unfiltered configure seed against its source CMake cache without writing anything.
