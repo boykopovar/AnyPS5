@@ -529,9 +529,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKPageGetIsControlledByAutomation` | `+uRH8ci2Zu8` |
 | `WKPageGetMediaCaptureEnabled` | `c4qOBt1+nO8` |
 | `WKPageGetMediaState` | `F4AnS9A-OSc` |
-| `WKPageGetPageLength` | `FeYrnuEZxkI` |
-| `WKPageGetPaginationBehavesLikeColumns` | `QyAWkI0ffLQ` |
-| `WKPageGetPaginationMode` | `kk2zHgt--8E` |
 | `WKPageGetProcessIdentifier` | `llISO4CgRb8` |
 | `WKPageGetSamplingProfilerOutput` | `tnytRb-rZp4` |
 | `WKPageGetScaleFactor` | `is2FV8Y-bMc` |
@@ -619,17 +616,11 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKPageSetPagePolicyClient` | `pJ4iBZ6LEA0` |
 | `WKPageSetPageStateClient` | `8dbxlsbVzdY` |
 | `WKPageSetPageUIClient` | `6RXuTZIVqIg` |
-| `WKPageSetPaginationBehavesLikeColumns` | `iUarLNk0Dkg` |
-| `WKPageSetPaginationLineGridEnabled` | `uqcmh9mV7sI` |
-| `WKPageSetPaginationMode` | `JjOoUWau3hA` |
 | `WKPageSetRubberBandsAtBottom` | `078ew7gQLwA` |
 | `WKPageSetRubberBandsAtLeft` | `E6OA1UUy8+4` |
 | `WKPageSetRubberBandsAtRight` | `GuIr1eWRunc` |
 | `WKPageSetRubberBandsAtTop` | `Nn6eNKOy98M` |
 | `WKPageSetScaleFactor` | `LDsNIDCwcLY` |
-| `WKPageSetScrollPinningBehavior` | `XxfxrsCBl5o` |
-| `WKPageSetSuppressScrollbarAnimations` | `mCIjZT8nfvg` |
-| `WKPageSetUseFixedLayout` | `0M-vF0rurfc` |
 | `WKPageStopLoading` | `BGuvmFH0-Uo` |
 | `WKPageSupportsTextEncoding` | `3tolGFkslb4` |
 | `WKPageSuspendActiveDOMObjectsAndAnimations` | `WtwJKh+NPQU` |
