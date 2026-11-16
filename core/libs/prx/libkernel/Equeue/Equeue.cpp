@@ -786,23 +786,21 @@ int APS5_VABI sceKernelWaitEqueue(KernelEqueue eq, KernelEvent* ev, int num, int
     const auto waitStart = std::chrono::steady_clock::now();
     int result = 0;
     constexpr int STACK_EVENTS = 64;
+    constexpr int MAX_WAIT_EVENTS = 1024;
     KernelEvent stackEvents[STACK_EVENTS];
     std::unique_ptr<KernelEvent[]> heapEvents;
+    const int capacity = std::min(num, MAX_WAIT_EVENTS);
     KernelEvent* target = stackEvents;
-    try {
-        if (num > STACK_EVENTS) {
-            heapEvents = std::make_unique<KernelEvent[]>(static_cast<std::size_t>(num));
-            target = heapEvents.get();
-        }
-    } catch (const std::bad_alloc&) {
-        return fail(SCE_KERNEL_ERROR_ENOMEM);
+    if (capacity > STACK_EVENTS) {
+        heapEvents = std::make_unique<KernelEvent[]>(static_cast<std::size_t>(capacity));
+        target = heapEvents.get();
     }
     if (timo == nullptr) {
-        result = owner->WaitForEvents(target, num, 0);
+        result = owner->WaitForEvents(target, capacity, 0);
     } else if (localTimo == 0) {
-        result = owner->GetTriggeredEvents(target, num);
+        result = owner->GetTriggeredEvents(target, capacity);
     } else {
-        result = owner->WaitForEvents(target, num, localTimo);
+        result = owner->WaitForEvents(target, capacity, localTimo);
     }
     if (timo == nullptr || localTimo != 0) {
         KernelTraceWait_nid_postfix("equeue", __builtin_return_address(0), static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - waitStart).count()), result == 0);
