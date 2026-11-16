@@ -254,6 +254,12 @@ class CommandLineTests(unittest.TestCase):
         self.assertEqual(with_angles, ["a<b, c>", " d"])
         without = [part for _, part in guest_pointer_audit.split_top_level(text, angles=False)]
         self.assertEqual(without, ["a<b", " c>", " d"])
+class ClosingTests(unittest.TestCase):
+    def test_closing_matches_nested_parentheses(self):
+        text = "f(a(b), c) x"
+        self.assertEqual(guest_pointer_audit.closing(text, 1), 9)
+        self.assertEqual(text[9], ")")
+        self.assertEqual(guest_pointer_audit.closing("f(a", 1), len("f(a") - 1)
 
 
 if __name__ == "__main__":
