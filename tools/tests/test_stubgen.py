@@ -590,5 +590,13 @@ class RuntimeNameTests(unittest.TestCase):
         self.assertFalse(stubgen.is_runtime_name("SceFoo"))
 
 
+class ValidIdentTests(unittest.TestCase):
+    def test_is_valid_ident_accepts_c_identifiers_only(self):
+        import stubgen
+        self.assertTrue(stubgen.is_valid_ident("a1_"))
+        for name in ("1a", "a-b", ""):
+            self.assertFalse(stubgen.is_valid_ident(name), name)
+
+
 if __name__ == "__main__":
     unittest.main()
