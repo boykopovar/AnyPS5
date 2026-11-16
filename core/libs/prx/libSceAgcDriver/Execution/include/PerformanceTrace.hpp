@@ -527,7 +527,7 @@ private:
 class TraceFormat {
 public:
     using Clock = std::chrono::steady_clock;
-    static constexpr std::array<std::string_view, 5> WorkerBusyScopes{"Driver.Packet", "Driver.Suspend", "Driver.EndSubmission", "Driver.Rewind", "Driver.Completion"};
+    static constexpr std::array<std::string_view, 6> WorkerBusyScopes{"Driver.Packet", "Driver.Suspend", "Driver.EndSubmission", "Driver.Rewind", "Driver.Completion", "Driver.FinisherDrain"};
     static constexpr std::string_view WorkerWaitScope = "Driver.WorkerWait";
     static constexpr std::string_view WorkerPrefix = "queue worker ";
     static constexpr std::size_t TopPhases = 8;
