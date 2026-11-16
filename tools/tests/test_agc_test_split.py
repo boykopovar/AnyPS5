@@ -285,5 +285,10 @@ class DedentTests(unittest.TestCase):
         self.assertEqual(agc_test_split.dedent(["    a", "  b", "c"], 2), ["  a", "b", "c"])
 
 
+class LoopListTests(unittest.TestCase):
+    def test_loop_list_returns_the_items_after_items(self):
+        self.assertEqual(agc_test_split.loop_list("FOREACH(ITEMS a b)"), ["a", "b"])
+
+
 if __name__ == "__main__":
     unittest.main()
