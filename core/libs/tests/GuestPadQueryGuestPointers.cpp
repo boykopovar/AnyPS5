@@ -46,6 +46,18 @@ int main() {
     Require(scePadGetDeviceId(12345, static_cast<std::int32_t*>(page)) == PAD_ERROR_INVALID_ARG);
     Require(scePadControllerUpdateIsUpdateNeeded2(12345, nullptr, static_cast<std::uint16_t*>(page)) == PAD_ERROR_INVALID_ARG);
     Require(errno == 71);
+    const int special = scePadOpen_nid_postfix(200, PAD_PORT_TYPE_SPECIAL, 0, nullptr);
+    Require(special > 0);
+    Require(scePadGetExtControllerInformation(special, reinterpret_cast<void*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
+    Require(scePadGetExtControllerInformation(special, page) == PAD_ERROR_INVALID_ARG);
+    Require(errno == 71);
+    unsigned char extInfo[0x30]{};
+    for (unsigned char& byte : extInfo) byte = 0x5a;
+    Require(scePadGetExtControllerInformation(special, extInfo) == PAD_OK);
+    for (std::size_t i = 0; i < 0x2c; ++i) Require(extInfo[i] == 0);
+    for (std::size_t i = 0x2c; i < sizeof(extInfo); ++i) Require(extInfo[i] == 0x5a);
+    Require(scePadClose_nid_postfix(special) == PAD_OK);
 #ifdef _WIN32
     Require(VirtualFree(page, 0, MEM_RELEASE) != 0);
 #else

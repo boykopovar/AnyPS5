@@ -45,6 +45,7 @@ namespace {
 
 constexpr int GUEST_ENOENT = 2;
 constexpr int GUEST_EFAULT = 14;
+constexpr int GUEST_ENOTSUP = 45;
 constexpr int GUEST_EINVAL = 22;
 
 struct AprFile {
@@ -148,6 +149,11 @@ AprFile _file(std::uint32_t id) {
     return g_files[id];
 }
 
+bool _known(std::uint32_t id) {
+    std::lock_guard lock(g_filesLock);
+    return id < g_files.size();
+}
+
 constexpr std::uint32_t INVALID_FILE_ID = 0xFFFFFFFFu;
 constexpr int SCE_KERNEL_ERROR_ENOENT = static_cast<int>(0x80020002);
 
@@ -177,7 +183,6 @@ void _readFile(const Apr::ReadFileCommand& command) {
     stream.seekg(static_cast<std::streamoff>(command.offset));
     const GuestArena::HostWrite destination(reinterpret_cast<void*>(command.destination), command.size);
     if (!destination.Open()) throw std::runtime_error("APR: the read destination of " + file.path.string() + " is not writable guest memory");
-#ifdef _WIN32
     std::vector<char> staging(static_cast<std::size_t>(std::min<std::uint64_t>(command.size, 64u * 1024u)));
     std::uint64_t read = 0;
     while (read < command.size) {
@@ -189,11 +194,6 @@ void _readFile(const Apr::ReadFileCommand& command) {
         if (stream.bad()) throw std::runtime_error("APR: read failed for " + file.path.string());
         if (obtained != static_cast<std::uint64_t>(wanted)) break;
     }
-#else
-    stream.read(reinterpret_cast<char*>(command.destination), static_cast<std::streamsize>(command.size));
-    if (stream.bad()) throw std::runtime_error("APR: read failed for " + file.path.string());
-    const auto read = static_cast<std::uint64_t>(stream.gcount());
-#endif
     if (read != command.size && (!stream.eof() || command.offset + read < std::filesystem::file_size(hostPath))) throw std::runtime_error("APR: read of " + file.path.string() + " at offset " + std::to_string(command.offset) + " returned " + std::to_string(read) + " of " + std::to_string(command.size) + " bytes");
     if (read != command.size) std::memset(reinterpret_cast<char*>(command.destination) + read, 0, static_cast<std::size_t>(command.size - read));
 }
@@ -934,6 +934,7 @@ int APS5_VABI sceKernelAprResolveFilepathsWithPrefixToIds(const char* prefix, co
 }
 
 int APS5_VABI sceKernelAprGetFileSize(uint32_t id, uint64_t* size) {
+    if (!_known(id)) return _fail(GUEST_ENOTSUP);
     if (!size) return _fail(GUEST_EINVAL);
     const std::uint64_t bytes = _file(id).size;
     if (!GuestCopyOut_nid_no_patch(size, &bytes, sizeof(bytes))) return _fail(GUEST_EFAULT);
@@ -941,6 +942,7 @@ int APS5_VABI sceKernelAprGetFileSize(uint32_t id, uint64_t* size) {
 }
 
 int APS5_VABI sceKernelAprGetFileStat(uint32_t id, FileStat* stat) {
+    if (!_known(id)) return _fail(GUEST_ENOTSUP);
     if (!stat) return _fail(GUEST_EINVAL);
     FileStat result{};
     File::FillFileStat(_file(id).path, &result);
@@ -1021,16 +1023,18 @@ bool _validWriteProtection(std::uint64_t protection) {
 int APS5_VABI sceKernelWriteModifyMtypeProtectCommand(void* dst, std::uint64_t address, std::uint64_t size, std::uint64_t type, std::uint64_t protection, std::uint64_t mask, std::uint64_t* outSize) {
     if (!_validWriteRange(address, size) || !_validWriteProtection(protection) || !_validWriteProtection(mask)) return SCE_KERNEL_ERROR_EINVAL;
     const Apr::AmmProtectCommand command{{Apr::Opcode::AmmModifyMtypeProtect, sizeof(command)}, address, size, static_cast<std::int32_t>(type), static_cast<std::int32_t>(protection), static_cast<std::int32_t>(mask), 0};
-    if (dst) std::memcpy(dst, &command, sizeof(command));
-    if (outSize) *outSize = sizeof(command);
+    if (dst && !GuestCopyOut_nid_no_patch(dst, &command, sizeof(command))) return SCE_KERNEL_ERROR_EFAULT;
+    const std::uint64_t commandSize = sizeof(command);
+    if (outSize && !GuestCopyOut_nid_no_patch(outSize, &commandSize, sizeof(commandSize))) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
 int APS5_VABI sceKernelWriteRemapIntoPrtCommand(std::uint32_t* dst, std::uint64_t address, std::uint64_t source, std::uint64_t size, int protection, int opcode, std::uint64_t* outSize) {
     if (!_validWriteRange(address, size) || !_validWriteRange(source, size) || !_validWriteProtection(static_cast<std::uint32_t>(protection))) return SCE_KERNEL_ERROR_EINVAL;
     const Apr::AmmRemapCommand command{{Apr::Opcode::AmmRemapIntoPrt, sizeof(command)}, address, source, size, protection, opcode ? opcode : 1011};
-    if (dst) std::memcpy(dst, &command, sizeof(command));
-    if (outSize) *outSize = sizeof(command);
+    if (dst && !GuestCopyOut_nid_no_patch(dst, &command, sizeof(command))) return SCE_KERNEL_ERROR_EFAULT;
+    const std::uint64_t commandSize = sizeof(command);
+    if (outSize && !GuestCopyOut_nid_no_patch(outSize, &commandSize, sizeof(commandSize))) return SCE_KERNEL_ERROR_EFAULT;
     return 0;
 }
 
