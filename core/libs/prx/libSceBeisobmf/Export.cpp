@@ -1,6 +1,7 @@
 #include "SceTypes.hpp"
 #include "prx/libSceBeisobmf/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <array>
@@ -47,12 +48,15 @@ std::array<char, 0x40> CopyRequestedName(const char *name) {
     std::array<char, 0x40> result{};
     const auto address = reinterpret_cast<std::uintptr_t>(name);
     if (address == 0) throw std::invalid_argument("isobmf member name is null");
-    for (std::size_t i = 0; i < result.size(); ++i) {
+    for (std::size_t i = 0; i <= result.size(); ++i) {
+        char value = '\0';
         if (i > std::numeric_limits<std::uintptr_t>::max() - address ||
-            !GuestCopyIn_nid_no_patch(&result[i], reinterpret_cast<const void *>(address + i),
-                                      sizeof(result[i])))
+            !GuestCopyIn_nid_no_patch(&value, reinterpret_cast<const void *>(address + i),
+                                      sizeof(value)))
             throw std::runtime_error("isobmf member name is unreadable");
-        if (result[i] == '\0') break;
+        if (value == '\0') return result;
+        if (i == result.size()) throw std::invalid_argument("isobmf member name is too long");
+        result[i] = value;
     }
     return result;
 }
@@ -99,13 +103,18 @@ void LogGuestAccessFailure(const char *function, const char *message) noexcept {
 
 template <typename TValue, typename TFunction>
 TValue CallSafely(const char *function, TValue fallback, TFunction operation) noexcept {
+    const int savedErrno = errno;
     try {
-        return operation();
+        const TValue result = operation();
+        errno = savedErrno;
+        return result;
     } catch (const std::exception &error) {
         LogGuestAccessFailure(function, error.what());
+        errno = savedErrno;
         return fallback;
     } catch (...) {
         LogGuestAccessFailure(function, "unknown guest memory error");
+        errno = savedErrno;
         return fallback;
     }
 }
