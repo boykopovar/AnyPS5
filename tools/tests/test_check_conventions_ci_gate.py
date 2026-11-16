@@ -8,6 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from check_conventions import Check
+import check_conventions
 
 CHECKER = Path(__file__).resolve().parents[1] / "check_conventions.py"
 WORKFLOWS = Path(__file__).resolve().parents[2] / ".github/workflows"
@@ -213,6 +214,13 @@ class CiGateTests(unittest.TestCase):
         self.assertIn("build.yml", files)
         result = run_checker(files)
         self.assertNotIn("ci-gate", result.stdout, result.stdout + result.stderr)
+
+
+class JobListTests(unittest.TestCase):
+    def test_jobs_reports_each_job_with_its_needs_and_condition(self):
+        source = ['jobs:', '  build:', '    runs-on: ubuntu', '  test:', '    needs: [build]', '    if: always()', 'top:']
+        lines = [(1, 0, 'jobs', ''), (2, 2, 'build', ''), (3, 4, 'runs-on', 'ubuntu'), (4, 2, 'test', ''), (5, 4, 'needs', '[build]'), (6, 4, 'if', 'always()'), (7, 0, 'top', '')]
+        self.assertEqual(check_conventions.jobs(lines, source), [(2, 'build', [], ''), (4, 'test', ['build'], 'always()')])
 
 
 if __name__ == "__main__":
