@@ -17,8 +17,8 @@ constexpr int VideoOutErrorDeviceFailure = static_cast<int>(0x802900FFu);
 constexpr int VideoOutErrorNoDevice = static_cast<int>(0x80290018u);
 
 std::uint32_t ModeFlags(const void* mode) {
-    std::uint32_t flags;
-    std::memcpy(&flags, static_cast<const std::uint8_t*>(mode) + 0x20, sizeof(flags));
+    std::uint32_t flags = 0;
+    if (mode == nullptr || !GuestBytes(static_cast<const std::uint8_t*>(mode) + 0x20).CopyIn(&flags, sizeof(flags))) return 0;
     return flags;
 }
 }
@@ -460,8 +460,8 @@ void APS5_VABI sceVideoOutSysInitMode(void* mode) {
 }
 
 int APS5_VABI sceVideoOutSysIsModeS3d(const void* mode) {
-    std::uint64_t value;
-    std::memcpy(&value, static_cast<const std::uint8_t*>(mode) + 0x10, sizeof(value));
+    std::uint64_t value = 0;
+    if (mode == nullptr || !GuestBytes(static_cast<const std::uint8_t*>(mode) + 0x10).CopyIn(&value, sizeof(value))) return 0;
     return value - 0xA0u < 2u || value == 0xFFFFFFFF81FFFFFFull ? 1 : 0;
 }
 

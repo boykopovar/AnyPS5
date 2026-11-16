@@ -62,6 +62,11 @@ int main() {
     Require(sceVideoOutGetEventData(&valid, data) == InvalidAddress, "GetEventData accepted an unmapped output");
     Require(Throws([&] { sceVideoOutSysInitMode(unmapped); }), "SysInitMode wrote an unmapped mode");
     Require(sceVideoOutSysModeIsHdr(unmapped) == 0, "SysModeIsHdr read an unmapped mode");
+    Require(sceVideoOutSysIsModeS3d(unmapped) == 0, "SysIsModeS3d read an unmapped mode");
+    Require(sceVideoOutSysModeIsVrLegacy(unmapped) == 0, "SysModeIsVrLegacy read an unmapped mode");
+    Require(sceVideoOutSysModeIsVrNative(unmapped) == 0, "SysModeIsVrNative read an unmapped mode");
+    Require(sceVideoOutSysModeIsVr(unmapped) == 0, "SysModeIsVr read an unmapped mode");
+    Require(sceVideoOutSysModeIsSystemDefault(unmapped) == 1, "SysModeIsSystemDefault read an unmapped mode");
     Require(sceVideoOutInitializeOutputOptions(options) == InvalidAddress, "InitializeOutputOptions wrote an unmapped options block");
     Require(Throws([&] { sceVideoOutColorSettingsSetGamma(color, 1.0f); }), "ColorSettingsSetGamma wrote an unmapped setting");
     Require(Throws([&] { sceVideoOutColorSpaceConversionSettingsSetDefaultSdrToHdrConversion(conversion); }), "the conversion defaults wrote an unmapped setting");
