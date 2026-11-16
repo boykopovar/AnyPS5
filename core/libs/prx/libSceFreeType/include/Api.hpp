@@ -112,6 +112,7 @@ int APS5_VABI FT_Stroker_GetBorderCounts_nid_postfix(void* stroker, std::int32_t
 int APS5_VABI FT_Stroker_ParseOutline_nid_postfix(void* stroker, const FreeType::GuestOutline* outline, std::uint8_t opened);
 void APS5_VABI FT_Stroker_ExportBorder_nid_postfix(void* stroker, std::int32_t border, FreeType::GuestOutline* outline);
 void APS5_VABI FT_Stroker_Export_nid_postfix(void* stroker, FreeType::GuestOutline* outline);
+void StrokerExport_nid_no_patch(void* stroker, FreeType::GuestOutline* outline);
 int APS5_VABI FT_Stroker_EndSubPath_nid_postfix(void* stroker);
 int APS5_VABI FT_Stroker_LineTo_nid_postfix(void* stroker, const FreeType::GuestVector* to);
 int APS5_VABI FT_Stroker_New_nid_postfix(FreeType::GuestLibrary* library, void** stroker);
@@ -129,6 +130,7 @@ std::uint8_t APS5_VABI FT_Face_CheckTrueTypePatents_nid_postfix(FreeType::GuestF
 std::uint8_t APS5_VABI FT_Face_SetUnpatentedHinting_nid_postfix(FreeType::GuestFaceRec* face, std::uint8_t value);
 int APS5_VABI FT_Get_Track_Kerning_nid_postfix(FreeType::GuestFaceRec* face, std::int64_t pointSize, std::int32_t degree, std::int64_t* kerning);
 int APS5_VABI FT_Outline_Get_Bitmap_nid_postfix(FreeType::GuestLibrary* library, FreeType::GuestOutline* outline, const FreeType::GuestBitmap* bitmap);
+int APS5_VABI FreeTypeOutlineGetBitmap_nid_no_patch(FreeType::GuestLibrary* library, FreeType::GuestOutline* outline, const FreeType::GuestBitmap* bitmap);
 void* APS5_VABI FT_Get_Sfnt_Table_nid_postfix(FreeType::GuestFaceRec* face, std::int32_t tag);
 void APS5_VABI FT_GlyphSlot_Oblique_nid_postfix(FreeType::GuestGlyphSlotRec* slot);
 void APS5_VABI FT_GlyphSlot_Embolden_nid_postfix(FreeType::GuestGlyphSlotRec* slot);
