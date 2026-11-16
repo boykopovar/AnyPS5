@@ -26,6 +26,7 @@ int main() {
 
     Require(sceSigninDialogTerminate() == kErrNotInitialized);
     Require(sceSigninDialogOpen(nullptr) == kErrNotInitialized);
+    Require(sceSigninDialogOpen(reinterpret_cast<const void*>(0x10)) == kErrNotInitialized);
     Require(sceSigninDialogOpen(&param) == kErrNotInitialized);
     Require(sceSigninDialogClose() == kErrNotInitialized);
     Require(sceSigninDialogGetResult(nullptr) == kErrNotInitialized);
@@ -38,6 +39,9 @@ int main() {
     Require(sceSigninDialogGetStatus() == kStatusInitialized);
 
     Require(sceSigninDialogOpen(nullptr) == kErrArgNull);
+    errno = 71;
+    Require(sceSigninDialogOpen(reinterpret_cast<const void*>(0x10)) == kErrArgNull);
+    Require(errno == 71);
     Require(sceSigninDialogGetResult(nullptr) == kErrNotFinished);
     Require(sceSigninDialogGetResult(result) == kErrNotFinished);
     Require(result[0] == 0x5a);
