@@ -682,6 +682,11 @@ class CellAndDependencyTests(unittest.TestCase):
     def test_dependencies_terminate_on_a_cycle(self):
         prs = {1: {"depends": {2}}, 2: {"depends": {1}}}
         self.assertEqual(pr_overlap.dependencies(prs, 1), {1, 2})
+class TruncationTests(unittest.TestCase):
+    def test_truncated_keeps_the_longest_prefix_that_fits_and_names_the_rest(self):
+        lines = ["x" * 30000, "y" * 30000, "z" * 30000]
+        text = pr_overlap.truncated(lines)
+        self.assertTrue(text.startswith("x" * 30000 + "\n_Report truncated: 2 more lines omitted._"))
 
 
 if __name__ == "__main__":
