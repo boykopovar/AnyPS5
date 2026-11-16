@@ -37,12 +37,13 @@ struct QueuedWaiter {
     int priority = 0;
     int result = -1;
     std::atomic<int> order{0};
+    KernelUseconds timeout = 5000000;
 };
 
 static void* APS5_VABI WaitInQueue(void* arg) {
     auto& waiter = *static_cast<QueuedWaiter*>(arg);
     if (waiter.priority != 0) Require(scePthreadSetprio(scePthreadSelf(), waiter.priority) == SCE_OK);
-    KernelUseconds timeout = 5000000;
+    KernelUseconds timeout = waiter.timeout;
     waiter.result = sceKernelWaitSema(waiter.sem, waiter.need, &timeout);
     waiter.order = ++released;
     return nullptr;
@@ -86,6 +87,28 @@ static void CheckStopsAtALargerNeed(std::uint32_t attr) {
     Require(small.order == 2 && small.result == SCE_OK);
     Require(scePthreadJoin(largeThread, nullptr) == SCE_OK && scePthreadJoin(smallThread, nullptr) == SCE_OK);
     Require(sceKernelPollSema(sem, 1) == SCE_KERNEL_ERROR_EBUSY);
+    Require(sceKernelDeleteSema(sem) == SCE_OK);
+}
+
+static void CheckTimedOutHeadStaysBlocking(std::uint32_t attr) {
+    released = 0;
+    KernelSema sem = nullptr;
+    Require(sceKernelCreateSema(&sem, "handoff-timed-out", attr, 0, 4, nullptr) == SCE_OK);
+    QueuedWaiter head{sem, 3};
+    head.timeout = 400000;
+    QueuedWaiter next{sem, 1};
+    next.timeout = 1000000;
+    const Pthread headThread = StartQueued(head, 1);
+    const Pthread nextThread = StartQueued(next, 2);
+    Require(sceKernelSignalSema(sem, 1) == SCE_OK);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    Require(released.load() == 0 && QueuedCount(sem) == 2);
+    WaitForReleased(1);
+    Require(head.order == 1 && head.result == SCE_KERNEL_ERROR_ETIMEDOUT && QueuedCount(sem) == 1);
+    WaitForReleased(2);
+    Require(next.order == 2 && next.result == SCE_KERNEL_ERROR_ETIMEDOUT);
+    Require(scePthreadJoin(headThread, nullptr) == SCE_OK && scePthreadJoin(nextThread, nullptr) == SCE_OK);
+    Require(sceKernelPollSema(sem, 1) == SCE_OK && sceKernelPollSema(sem, 1) == SCE_KERNEL_ERROR_EBUSY);
     Require(sceKernelDeleteSema(sem) == SCE_OK);
 }
 
@@ -142,6 +165,9 @@ int main() {
     CheckStopsAtALargerNeed(SemaFifo);
     CheckStopsAtALargerNeed(SemaPriority);
     CheckStopsAtALargerNeed(0);
+    CheckTimedOutHeadStaysBlocking(SemaFifo);
+    CheckTimedOutHeadStaysBlocking(SemaPriority);
+    CheckTimedOutHeadStaysBlocking(0);
     CheckDeletedRefusesFreeTokens();
     CheckServesInOrder(SemaFifo, 700, 700, true);
     CheckServesInOrder(SemaFifo, 767, 256, true);
