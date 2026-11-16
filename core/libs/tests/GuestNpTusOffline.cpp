@@ -146,6 +146,29 @@ void CheckTss(const char* name, int accepted, const std::function<int(int, int, 
     sceNpTusDeleteRequest(req);
 }
 
+void CheckTssStorage(const char* name, int accepted, const std::function<int(int, int, void*, std::uint64_t, std::uint64_t*, const TssOption*)>& call) {
+    const int req = NewRequest();
+    unsigned char data[16];
+    std::memset(data, 0x5a, sizeof(data));
+    std::uint64_t content = 0x5a5a5a5a5a5a5a5aull;
+    TssOption shortOption{sizeof(TssOption) - 8, nullptr, nullptr, nullptr};
+    Require(call(9999, -1, data, sizeof(data), &content, &shortOption) == InvalidAlignment, name, "the option size was not checked first");
+    Require(call(9999, -1, data, sizeof(data), &content, nullptr) == InvalidArgument, name, "a negative slot was not checked before the request lookup");
+    Require(call(9999, 0, nullptr, sizeof(data), nullptr, nullptr) == InvalidId, name, "null outputs did not reach the request lookup");
+    Require(call(9999, 0x7fffffff, data, 1ull << 40, &content, nullptr) == InvalidId, name, "a large slot or size was refused before the request lookup");
+    errno = 71;
+    Require(call(req, 0, data, sizeof(data), &content, reinterpret_cast<const TssOption*>(0x10)) == InvalidArgument, name, "an unreadable option was taken");
+    Require(errno == 71, name, "errno was changed");
+    std::uint64_t offset = 4;
+    TssOption option{sizeof(TssOption), &offset, &offset, nullptr};
+    Require(call(req, 0x7fffffff, data, 1ull << 40, &content, &option) == accepted, name, "slot 0x7fffffff with a 2^40-byte size and a valid option was refused");
+    Require(call(req, 16, data, sizeof(data), &content, nullptr) == accepted, name, "slot 16 was refused");
+    Require(content == 0x5a5a5a5a5a5a5a5aull && data[0] == 0x5a && data[15] == 0x5a, name, "an output was written offline");
+    int result = 0;
+    if (accepted == 0) Require(sceNpTusWaitAsync(req, &result) == 0 && result == SignedOut, name, "the request did not finish signed out");
+    sceNpTusDeleteRequest(req);
+}
+
 }
 
 int main() {
@@ -260,6 +283,9 @@ int main() {
     CheckAsync("sceNpTusDeleteMultiSlotDataVUserAsync", [&](int req) { return sceNpTusDeleteMultiSlotDataVUserAsync(req, &virtualUser, slots, 2, nullptr); }, [&]() { return sceNpTusDeleteMultiSlotDataVUserAsync(9999, &virtualUser, slots, 2, nullptr); }, [&](int req) { return sceNpTusDeleteMultiSlotDataVUserAsync(req, &virtualUser, slots, 2, &buffer); });
     CheckSync("sceNpTusDeleteMultiSlotDataVUser", [&](int req) { return sceNpTusDeleteMultiSlotDataVUser(req, &virtualUser, slots, 2, nullptr); });
     CheckTss("sceNpTssGetDataAsync", 0, [&](int req, int slotId, void* status, std::uint64_t statusSize, const TssOption* option) { return sceNpTssGetDataAsync(req, slotId, status, statusSize, buffer, 16, option); });
+    CheckTssStorage("sceNpTssGetStorageAsync", 0, [&](int req, int slot, void* data, std::uint64_t maxSize, std::uint64_t* contentLength, const TssOption* option) { return sceNpTssGetStorageAsync(req, slot, data, maxSize, contentLength, option); });
+    CheckTssStorage("sceNpTssGetStorage", SignedOut, [&](int req, int slot, void* data, std::uint64_t maxSize, std::uint64_t* contentLength, const TssOption* option) { return sceNpTssGetStorage(req, slot, data, maxSize, contentLength, option); });
+    Require(sceNpTusSetThreadParam(0x300, 0x3f) == 0 && sceNpTusSetThreadParam(0, 0) == 0 && sceNpTusSetThreadParam(-1, 1ull << 63) == 0, "sceNpTusSetThreadParam", "a priority and affinity were refused");
     CheckTss("sceNpTssGetData", SignedOut, [&](int req, int slotId, void* status, std::uint64_t statusSize, const TssOption* option) { return sceNpTssGetData(req, slotId, status, statusSize, buffer, 16, option); });
     {
         const int req = NewRequest();
