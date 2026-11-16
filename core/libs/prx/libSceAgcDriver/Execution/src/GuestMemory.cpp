@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/HandoffSpin.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ProfileCounter.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/WriteWatchCoverage.hpp"
@@ -2294,8 +2295,36 @@ const char* ProofBreakSiteName(ProofBreakSite site) {
     return "other";
 }
 
+namespace {
+struct ProofBreakCounters {
+    std::array<ProfileCounter, ProofBreakSiteCount> sites;
+    ProfileCounter emptyWriteBacks;
+    ProfileCounter unchangedWriteBacks;
+};
+
+ProofBreakCounters& proofBreakCounters() {
+    static ProofBreakCounters counters;
+    return counters;
+}
+}
+
+bool ProofBreaksCounted() {
+    static const bool counted = std::getenv("APS5_PROFILE_EPOCH_PROOFS") != nullptr;
+    return counted;
+}
+
+ProofBreakCounts TakeProofBreakCounts() {
+    auto& counters = proofBreakCounters();
+    ProofBreakCounts counts;
+    for (std::size_t site = 0; site < ProofBreakSiteCount; ++site) counts.sites[site] = counters.sites[site].Take();
+    counts.emptyWriteBacks = counters.emptyWriteBacks.Take();
+    counts.unchangedWriteBacks = counters.unchangedWriteBacks.Take();
+    return counts;
+}
+
 void BreakProofs(ProofBreakSite site, std::uint64_t address, std::uint64_t bytes) {
     proofSerial.fetch_add(1, std::memory_order_acq_rel);
+    if (ProofBreaksCounted()) proofBreakCounters().sites[static_cast<std::size_t>(site)].Add();
     if (proofBreakTrace != nullptr) proofBreakTrace->Note({site, address, bytes});
 }
 
@@ -3743,7 +3772,10 @@ void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std
 static void writeChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original, [[maybe_unused]] std::uint32_t byteStoreLimit, bool keepGuest) {
     require(current.size() == original.size(), "write-back snapshot sizes differ");
     BreakProofs(ProofBreakSite::WriteBack, address, current.size());
-    if (current.empty()) return;
+    if (current.empty()) {
+        if (ProofBreaksCounted()) proofBreakCounters().emptyWriteBacks.Add();
+        return;
+    }
     // A store: the hook sync it makes orders this write after a pending GPU write, whatever a read
     // site above it was doing (the [hooksync] line counts stores apart).
     const ReadSiteScope site(ReadSite::Store);
@@ -3752,6 +3784,7 @@ static void writeChanged(std::uint64_t address, std::span<const std::byte> curre
     auto* destination = reinterpret_cast<std::byte*>(address);
     const auto size = current.size();
     // Stamped like a GPU write: a collect memoized for this packet would not see the page fault.
+    bool changed = false;
     storeOwn(address, size, true, [&](std::span<std::byte> image) {
         CheckRange(destination, size, 1, true);
         std::size_t firstChanged = size;
@@ -3791,8 +3824,10 @@ static void writeChanged(std::uint64_t address, std::span<const std::byte> curre
         for (std::size_t index = 0; index < image.size(); ++index) {
             image[index] = current[index] != original[index] && !(keepGuest && image[index] != original[index]) ? current[index] : image[index];
         }
+        changed = firstChanged < lastChanged;
         return firstChanged < lastChanged ? std::pair<std::uint64_t, std::uint64_t>{address + firstChanged, address + lastChanged} : std::pair<std::uint64_t, std::uint64_t>{0, 0};
     });
+    if (!changed && ProofBreaksCounted()) proofBreakCounters().unchangedWriteBacks.Add();
 }
 
 void WriteChanged(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original, std::uint32_t byteStoreLimit) {
@@ -3808,12 +3843,16 @@ static_assert(std::atomic_ref<std::uint64_t>::is_always_lock_free && std::atomic
 std::size_t WriteChangedIfHeld(std::uint64_t address, std::span<const std::byte> current, std::span<const std::byte> original, std::uint64_t unchangedSince) {
     require(current.size() == original.size(), "write-back snapshot sizes differ");
     BreakProofs(ProofBreakSite::WriteBackIfHeld, address, current.size());
-    if (current.empty()) return 0;
+    if (current.empty()) {
+        if (ProofBreaksCounted()) proofBreakCounters().emptyWriteBacks.Add();
+        return 0;
+    }
     const ReadSiteScope site(ReadSite::Store);
     FlushGpuWrites(address, current.size());
     const TimedAccess timed(CounterChangedWrite, current.size());
     auto* destination = reinterpret_cast<std::uint8_t*>(address);
     const auto size = current.size();
+    bool changed = false;
     std::size_t lost = 0;
     storeOwn(address, size, false, [&](std::span<std::byte>) {
         CheckRange(destination, size, 1, true);
@@ -3846,8 +3885,10 @@ std::size_t WriteChangedIfHeld(std::uint64_t address, std::span<const std::byte>
             for (std::size_t index = at; index < at + 8; ++index) exchange(index);
         }
         for (; at < size && lost == 0; ++at) exchange(at);
+        changed = firstChanged < lastChanged;
         return firstChanged < lastChanged ? std::pair<std::uint64_t, std::uint64_t>{address + firstChanged, address + lastChanged} : std::pair<std::uint64_t, std::uint64_t>{0, 0};
     }, false);
+    if (!changed && lost == 0 && ProofBreaksCounted()) proofBreakCounters().unchangedWriteBacks.Add();
     return lost;
 }
 

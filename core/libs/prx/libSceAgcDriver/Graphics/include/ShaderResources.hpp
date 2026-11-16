@@ -214,6 +214,7 @@ public:
         std::uint64_t surfaces = 0;
         bool operator==(const ExitStamp&) const = default;
     };
+    enum class StampAge : std::uint8_t { Current, OwnFlushes, OwnWalk, OtherThreads, Pending, OtherInput, Count };
     ShaderResources(const Context& context, const ShaderRecompiler::RecompileResult& vertex, const ShaderRecompiler::RecompileResult& fragment, const ColorTarget& target, std::uint64_t indexAddress, std::size_t indexBytes);
     ShaderResources(const Context& context, std::span<const CompiledShader> shaders, const ColorTarget& target, std::uint32_t colorAttachments, std::uint64_t indexAddress, std::size_t indexBytes, std::span<const GuestMemorySnapshot> snapshots = {}, bool deviceStaging = false);
     ShaderResources(const Context& context, const CompiledShader& compute, std::span<const GuestMemorySnapshot> snapshots = {});
@@ -820,7 +821,8 @@ private:
     std::string rangeOwner(std::uint64_t address, std::uint64_t bytes) const;
     void reportVerifiedStore(std::uint64_t exitSerial, std::uint64_t startSerial, std::uint64_t endSerial, const GuestMemory::ProofBreakTrace& trace) const;
     bool refreshPerUseCopies();
-    bool revalidateFull(std::span<const CompiledShader> shaders, ProofReport* report);
+    StampAge provedAge = StampAge::Current;
+    bool revalidateFull(std::span<const CompiledShader> shaders, ProofReport* report, std::uint64_t* flushBreaks = nullptr, const GuestMemory::ProofBreakTrace* trace = nullptr);
     // The import table's identity when the direct regions' serials were last proved.
     HostImportsProof importsProof;
     bool importsReconcilable = false;

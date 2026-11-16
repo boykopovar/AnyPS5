@@ -4145,10 +4145,17 @@ namespace {
 
 constexpr std::array<const char*, 10> ExitInputs{"epoch", "proof", "pending", "releases", "unwatch", "imports", "allocations", "surfaces", "stale planes", "per-use copies"};
 
+constexpr std::size_t StampAges = static_cast<std::size_t>(ShaderResources::StampAge::Count);
+
+constexpr std::array<const char*, StampAges> StampAgeNames{"current", "own flushes", "own walk", "other threads", "pending", "other input"};
+
 struct ExitMisses {
     ProfileCounter misses;
     std::array<ProfileCounter, ExitInputs.size()> moved;
     std::array<ProfileCounter, ExitInputs.size()> alone;
+    std::array<ProfileCounter, StampAges> stored;
+    std::array<ProfileCounter, StampAges> missed;
+    std::array<ProfileCounter, StampAges> proofAlone;
 };
 
 bool exitMissesCounted() {
@@ -4172,6 +4179,32 @@ void reportExitMisses() {
         inputs += std::string(ExitInputs[input]) + " " + std::to_string(alone) + "/" + std::to_string(moved);
     }
     AgcDriver::ProfilePrint_nid_no_patch("[epoch-proofs] (10 s) proved resource sets that missed the exit %llu; by input, moved alone/moved: %s\n", static_cast<unsigned long long>(misses.misses.Take()), inputs.empty() ? "none" : inputs.c_str());
+    std::string ages;
+    for (std::size_t age = 0; age < StampAges; ++age) {
+        ages += ages.empty() ? "" : ", ";
+        ages += std::string(StampAgeNames[age]) + " " + std::to_string(misses.stored[age].Take()) + "/" + std::to_string(misses.missed[age].Take()) + "/" + std::to_string(misses.proofAlone[age].Take());
+    }
+    AgcDriver::ProfilePrint_nid_no_patch("[epoch-proofs] (10 s) proof stamps by age when stored, stored/missed next/missed with the proof moved alone: %s\n", ages.c_str());
+    if (!GuestMemory::ProofBreaksCounted()) return;
+    const auto breaks = GuestMemory::TakeProofBreakCounts();
+    std::string sites;
+    for (std::size_t site = 0; site < GuestMemory::ProofBreakSiteCount; ++site) {
+        sites += sites.empty() ? "" : ", ";
+        sites += std::string(GuestMemory::ProofBreakSiteName(static_cast<GuestMemory::ProofBreakSite>(site))) + " " + std::to_string(breaks.sites[site]);
+    }
+    AgcDriver::ProfilePrint_nid_no_patch("[epoch-proofs] (10 s) proof breaks by site: %s; write-backs empty %llu, unchanged %llu\n", sites.c_str(), static_cast<unsigned long long>(breaks.emptyWriteBacks), static_cast<unsigned long long>(breaks.unchangedWriteBacks));
+}
+
+ShaderResources::StampAge stampAge(const ShaderResources::ExitStamp& stamp, const ShaderResources::ExitStamp& end, std::uint64_t flushBreaks, std::uint64_t ownBreaks) {
+    using Age = ShaderResources::StampAge;
+    if (end == stamp) return Age::Current;
+    auto others = end;
+    others.proof = stamp.proof;
+    others.pending = stamp.pending;
+    if (others != stamp) return Age::OtherInput;
+    if (end.pending != stamp.pending) return Age::Pending;
+    if (end.proof - stamp.proof != ownBreaks) return Age::OtherThreads;
+    return ownBreaks == flushBreaks ? Age::OwnFlushes : Age::OwnWalk;
 }
 
 }
@@ -4234,12 +4267,14 @@ void noteEpochProof(bool reused, bool verified, bool failed, bool stored = false
     if (reportDue(verification.checks.fetch_add(1, std::memory_order_relaxed) + 1u)) printExitVerification();
 }
 
-void noteExitMiss(const ShaderResources::ExitStamp& proved, const ShaderResources::ExitStamp& current, bool stalePlanes, bool copies) {
+void noteExitMiss(const ShaderResources::ExitStamp& proved, const ShaderResources::ExitStamp& current, bool stalePlanes, bool copies, ShaderResources::StampAge age) {
     const std::array<bool, ExitInputs.size()> moved{proved.epoch != current.epoch, proved.proof != current.proof, proved.pending != current.pending, proved.releases != current.releases, proved.unwatch != current.unwatch, proved.importSet != current.importSet, proved.allocations != current.allocations, proved.surfaces != current.surfaces, stalePlanes, copies};
     const bool alone = std::ranges::count(moved, true) == 1;
     if (exitMissesCounted()) {
         auto& misses = exitMisses();
         misses.misses.Add();
+        misses.missed[static_cast<std::size_t>(age)].Add();
+        if (alone && moved[1]) misses.proofAlone[static_cast<std::size_t>(age)].Add();
         for (std::size_t input = 0; input < moved.size(); ++input) {
             if (!moved[input]) continue;
             misses.moved[input].Add();
@@ -4692,18 +4727,26 @@ bool ShaderResources::Revalidate(std::span<const CompiledShader> shaders, ProofR
             noteEpochProof(true, false, false);
             return true;
         }
-        if (proved.epoch != 0 && (verifyingExits() || exitMissesCounted())) noteExitMiss(proved, stamp, stalePlanes, copies);
-        const bool ok = revalidateFull(shaders, report);
+        const bool counted = exitMissesCounted();
+        if (proved.epoch != 0 && (verifyingExits() || counted)) noteExitMiss(proved, stamp, stalePlanes, copies, provedAge);
+        std::optional<GuestMemory::ProofBreakTrace> trace;
+        if (counted) trace.emplace();
+        std::uint64_t flushBreaks = 0;
+        const bool ok = revalidateFull(shaders, report, counted ? &flushBreaks : nullptr, counted ? &*trace : nullptr);
         noteEpochProof(false, false, false);
         proved = stamp;
         recordFlushRanges();
         if (!ok || std::any_of(textures.begin(), textures.end(), [](const std::shared_ptr<Texture>& texture) { return texture != nullptr && texture->HasReuseLookup(); })) proved.epoch = 0;
+        if (counted) {
+            provedAge = stampAge(stamp, currentExitStamp(), flushBreaks, trace->Count());
+            if (proved.epoch != 0) exitMisses().stored[static_cast<std::size_t>(provedAge)].Add();
+        }
         return ok;
     }
     return revalidateFull(shaders, report);
 }
 
-bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, ProofReport* report) {
+bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, ProofReport* report, std::uint64_t* flushBreaks, const GuestMemory::ProofBreakTrace* trace) {
     if (report != nullptr) *report = {ProofPath::Full, ProofFailure::Other};
     if (!reusable || shaders.empty()) return false;
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
@@ -4727,6 +4770,7 @@ bool ShaderResources::revalidateFull(std::span<const CompiledShader> shaders, Pr
         CompletePendingCpuWrites(context, image->Descriptor().baseAddress, static_cast<std::size_t>(image->GuestBytes()));
         if (image->Descriptor().dccAddress != 0) CompletePendingCpuWrites(context, image->Descriptor().dccAddress, DccKeyBytes(image->GuestBytes()));
     }
+    if (flushBreaks != nullptr && trace != nullptr) *flushBreaks = trace->Count();
     // APS5_NO_FAST_REVALIDATE=1 always repeats the lookups.
     static const bool noFast = std::getenv("APS5_NO_FAST_REVALIDATE") != nullptr;
     const auto finish = [&](bool fast, bool ok, ProofFailure failure = ProofFailure::Other) {
