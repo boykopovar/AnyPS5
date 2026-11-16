@@ -625,5 +625,12 @@ class EnvReferenceTests(unittest.TestCase):
         self.assertIn("APS5_PYTHON", env_reference.reads([root / "core"]))
 
 
+class HelperTests(unittest.TestCase):
+    def test_library_of_names_the_library_or_core_component(self):
+        self.assertEqual(env_reference.library_of("core/libs/prx/libSceFoo/Export.cpp"), "libSceFoo")
+        self.assertEqual(env_reference.library_of("core/kernel/x.cpp"), "core/kernel")
+        self.assertEqual(env_reference.library_of("tools/env_reference.py"), "tools")
+
+
 if __name__ == "__main__":
     unittest.main()
