@@ -280,5 +280,17 @@ class ResolveTests(unittest.TestCase):
         self.assertIn("already includes", result.stderr)
 
 
+class SubjectNameTests(unittest.TestCase):
+    class Facts:
+        def __init__(self):
+            self.subject_targets, self.subject_tests, self.dynamic, self.test_patterns = set(), set(), set(), set()
+
+    def test_subject_records_literal_targets_and_variable_uses(self):
+        facts = self.Facts()
+        agc_test_split.subject(facts, ['libA', 'lib${X}'], 'target')
+        self.assertEqual(facts.subject_targets, {'libA'})
+        self.assertEqual(facts.dynamic, {'X'})
+
+
 if __name__ == "__main__":
     unittest.main()
