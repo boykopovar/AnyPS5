@@ -21,6 +21,7 @@
 #else
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <sys/mman.h>
 #include <unistd.h>
 #endif
 
@@ -44,12 +45,137 @@ static void RequireCloseOnExec(int fd, bool closeOnExec) {
 #endif
 }
 
-int main() {
+class ProtectedTemporaryMemory {
+public:
+    std::size_t page = 0;
+    char* data = nullptr;
+
+    ProtectedTemporaryMemory() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        page = info.dwPageSize;
+        data = static_cast<char*>(VirtualAlloc(nullptr, 2 * page, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(data != nullptr);
+#else
+        page = static_cast<std::size_t>(::sysconf(_SC_PAGESIZE));
+        data = static_cast<char*>(::mmap(nullptr, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+        Require(data != MAP_FAILED);
+#endif
+        Require(page >= 1024);
+    }
+
+    ~ProtectedTemporaryMemory() {
+#ifdef _WIN32
+        VirtualFree(data, 0, MEM_RELEASE);
+#else
+        ::munmap(data, 2 * page);
+#endif
+    }
+
+    void Protect(unsigned index, bool readable, bool writable) {
+#ifdef _WIN32
+        DWORD previous = 0;
+        const DWORD access = writable ? PAGE_READWRITE : readable ? PAGE_READONLY : PAGE_NOACCESS;
+        Require(VirtualProtect(data + index * page, page, access, &previous) != FALSE);
+#else
+        const int access = (readable ? PROT_READ : 0) | (writable ? PROT_WRITE : 0);
+        Require(::mprotect(data + index * page, page, access) == 0);
+#endif
+    }
+};
+
+static void CheckProtectedTemporary(const std::filesystem::path& root, const char* mode, bool flagged) {
+    ProtectedTemporaryMemory memory;
+    const std::string initial = std::strcmp(mode, "fixed_read_only") == 0
+        ? "/anyps5-posix-test/protected-fixed" : "/anyps5-posix-test/protected-XXXXXX";
+    char* pattern = nullptr;
+    int expectedError = 0;
+    bool immutable = false;
+    if (std::strcmp(mode, "unreadable_tail") == 0) {
+        pattern = memory.data + memory.page - 8;
+        std::memset(pattern, 'X', 8);
+        memory.Protect(1, false, false);
+        std::array<char, 8> bytes{};
+        Require(GuestCopyIn_nid_no_patch(bytes.data(), pattern, bytes.size()));
+        Require(!GuestCopyIn_nid_no_patch(bytes.data(), pattern + 8, 1));
+        expectedError = 14;
+    } else if (std::strcmp(mode, "length_bound") == 0) {
+        pattern = memory.data + memory.page - 1024;
+        std::memset(pattern, 'A', 1024);
+        memory.Protect(1, false, false);
+        std::array<char, 1024> bytes{};
+        Require(GuestCopyIn_nid_no_patch(bytes.data(), pattern, bytes.size()));
+        Require(!GuestCopyIn_nid_no_patch(bytes.data(), pattern + 1024, 1));
+        expectedError = 63;
+    } else {
+        if (std::strcmp(mode, "read_only") == 0 || std::strcmp(mode, "fixed_read_only") == 0)
+            pattern = memory.data + memory.page;
+        else if (std::strcmp(mode, "suffix_straddle") == 0)
+            pattern = memory.data + memory.page - (initial.size() - 3);
+        else if (std::strcmp(mode, "prefix_read_only") == 0)
+            pattern = memory.data + memory.page - (initial.size() - 6);
+        else {
+            Require(std::strcmp(mode, "boundary_nul") == 0);
+            pattern = memory.data + memory.page - initial.size() - 1;
+        }
+        std::memcpy(pattern, initial.c_str(), initial.size() + 1);
+        if (std::strcmp(mode, "read_only") == 0 || std::strcmp(mode, "fixed_read_only") == 0) {
+            memory.Protect(1, true, false);
+            Require(!GuestWritable_nid_no_patch(pattern, initial.size() + 1));
+            immutable = true;
+            if (std::strcmp(mode, "read_only") == 0) expectedError = 14;
+        } else if (std::strcmp(mode, "suffix_straddle") == 0) {
+            memory.Protect(1, true, false);
+            Require(GuestWritable_nid_no_patch(pattern + initial.size() - 6, 3));
+            Require(!GuestWritable_nid_no_patch(pattern + initial.size() - 6, 6));
+            immutable = true;
+            expectedError = 14;
+        } else if (std::strcmp(mode, "prefix_read_only") == 0) {
+            memory.Protect(0, true, false);
+            Require(!GuestWritable_nid_no_patch(pattern, 1));
+            Require(GuestWritable_nid_no_patch(pattern + initial.size() - 6, 6));
+        } else {
+            memory.Protect(1, false, false);
+            char byte = 1;
+            Require(GuestCopyIn_nid_no_patch(&byte, pattern + initial.size(), 1) && byte == 0);
+            Require(!GuestCopyIn_nid_no_patch(&byte, pattern + initial.size() + 1, 1));
+        }
+    }
+    if (flagged) {
+        Require(mkostemp_nid_postfix(reinterpret_cast<char*>(0x10), 4) == -1);
+        Require(*__error_nid_postfix() == 22);
+    }
+    std::fprintf(stderr, "temporary template stage=%s export=%s qualified=1 expectedError=%d\n", mode, flagged ? "mkostemp" : "mkstemp", expectedError);
+    const int descriptor = flagged ? mkostemp_nid_postfix(pattern, 0) : mkstemp_nid_postfix(pattern);
+    if (expectedError) {
+        Require(descriptor == -1 && *__error_nid_postfix() == expectedError);
+        Require(std::filesystem::is_empty(root));
+    } else {
+        Require(descriptor >= 0);
+        Require(close_nid_postfix(descriptor) == 0);
+        Require(std::filesystem::is_regular_file(root / std::filesystem::path(pattern).filename()));
+    }
+    if (immutable) {
+        memory.Protect(0, true, true);
+        memory.Protect(1, true, true);
+        Require(std::memcmp(pattern, initial.c_str(), initial.size() + 1) == 0);
+    }
+}
+
+int main(int argc, char** argv) {
     std::random_device random;
     const auto root = std::filesystem::temp_directory_path() /
         ("anyps5-posix-test-" + std::to_string(random()) + "-" + std::to_string(random()));
     Require(std::filesystem::create_directory(root));
     AddPathAlias_nid_no_patch("/anyps5-posix-test", root.string().c_str());
+    if (argc == 4 && std::strcmp(argv[1], "--protected") == 0) {
+        Require(std::strcmp(argv[3], "mkstemp") == 0 || std::strcmp(argv[3], "mkostemp") == 0);
+        CheckProtectedTemporary(root, argv[2], std::strcmp(argv[3], "mkostemp") == 0);
+        RemovePathAlias_nid_no_patch("/anyps5-posix-test");
+        Require(std::filesystem::remove_all(root) > 0);
+        return 0;
+    }
     constexpr int shared = 0x10;
     constexpr int exclusive = 0x20;
     constexpr int closeOnExec = SCE_KERNEL_O_CLOEXEC;

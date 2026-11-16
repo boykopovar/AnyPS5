@@ -6,6 +6,8 @@ namespace {
 struct AtomicWaitForwardsRegistration {
     AtomicWaitForwardsRegistration() {
         static const AtomicWaitForwards_nid_no_patch forwards{
+            sceKernelSyncOnAddressWait8,
+            sceKernelSyncOnAddressWait16,
             sceKernelSyncOnAddressWait32,
             sceKernelSyncOnAddressWait64,
             sceKernelSyncOnAddressWake,

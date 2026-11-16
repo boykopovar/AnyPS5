@@ -9,6 +9,7 @@
 #include <cstdarg>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <vector>
@@ -27,9 +28,36 @@ void Require(bool value) {
 }
 
 bool failAllocation = false;
+std::size_t allocations = 0;
+std::size_t releases = 0;
+std::uintptr_t lastAllocated = 0;
+std::uintptr_t lastReleased = 0;
+bool clobberFreeErrno = false;
+int writeCalls = 0;
+int failureCall = 0;
+struct WriteFailure {};
 
-void* APS5_VABI Allocate(std::size_t size) { return failAllocation ? nullptr : std::malloc(size); }
-void APS5_VABI Free(void* ptr) { std::free(ptr); }
+void* APS5_VABI Allocate(std::size_t size) {
+    void* pointer = failAllocation ? nullptr : std::malloc(size);
+    if (pointer) {
+        ++allocations;
+        lastAllocated = reinterpret_cast<std::uintptr_t>(pointer);
+    }
+    return pointer;
+}
+void APS5_VABI Free(void* ptr) {
+    if (ptr) {
+        ++releases;
+        lastReleased = reinterpret_cast<std::uintptr_t>(ptr);
+    }
+    std::free(ptr);
+    if (clobberFreeErrno) *__error_nid_postfix() = 77;
+}
+
+std::int64_t APS5_VABI ThrowingWrite(int, const void*, std::size_t count) {
+    if (++writeCalls == failureCall) throw WriteFailure{};
+    return count > 5 ? 5 : static_cast<std::int64_t>(count);
+}
 void* APS5_VABI Reallocate(void* ptr, std::size_t size) { return std::realloc(ptr, size); }
 void* APS5_VABI Calloc(std::size_t count, std::size_t size) { return std::calloc(count, size); }
 void* APS5_VABI Align(std::size_t, std::size_t size) { return std::malloc(size); }
@@ -88,7 +116,17 @@ static int APS5_VABI CallVdprintf(int descriptor, const char* format, ...) {
     std::va_list args;
     va_start(args, format);
 #endif
-    const int result = vdprintf_nid_postfix(descriptor, format, reinterpret_cast<VaList*>(args));
+    int result;
+    try {
+        result = vdprintf_nid_postfix(descriptor, format, reinterpret_cast<VaList*>(args));
+    } catch (...) {
+#ifdef _WIN32
+        __builtin_sysv_va_end(args);
+#else
+        va_end(args);
+#endif
+        throw;
+    }
 #ifdef _WIN32
     __builtin_sysv_va_end(args);
 #else
@@ -278,6 +316,38 @@ int main() {
     Require(CallVdprintf(1, "deadlock %s", "va") == -1);
     Require(*__error_nid_postfix() == 11);
 
+    for (const bool useVaList : {false, true}) {
+        LibcSetGuestWriteHook_nid_no_patch(ThrowingWrite);
+        for (const int failAt : {1, 2}) {
+            failureCall = failAt;
+            writeCalls = 0;
+            const auto allocatedBefore = allocations;
+            const auto releasedBefore = releases;
+            bool caught = false;
+            try {
+                if (useVaList) CallVdprintf(1, "abcdefghijk");
+                else dprintf_nid_postfix(1, "abcdefghijk");
+            } catch (const WriteFailure&) {
+                caught = true;
+            }
+            if (!caught || writeCalls != failAt || allocations != allocatedBefore + 1 || releases != releasedBefore + 1 || lastReleased != lastAllocated) {
+                std::fprintf(stderr, "vdprintf cleanup failed: va=%d write=%d caught=%d allocations=%zu releases=%zu\n",
+                    useVaList, failAt, caught, allocations - allocatedBefore, releases - releasedBefore);
+                Require(false);
+            }
+        }
+        LibcSetGuestWriteHook_nid_no_patch(+[](int, const void*, std::size_t) APS5_VABI -> std::int64_t {
+            *__error_nid_postfix() = 35;
+            return -1;
+        });
+        const auto allocatedBefore = allocations;
+        const auto releasedBefore = releases;
+        clobberFreeErrno = true;
+        const int error = useVaList ? CallVdprintf(1, "nonblocking") : dprintf_nid_postfix(1, "nonblocking");
+        clobberFreeErrno = false;
+        Require(error == -1 && *__error_nid_postfix() == 35);
+        Require(allocations == allocatedBefore + 1 && releases == releasedBefore + 1 && lastReleased == lastAllocated);
+    }
     LibcSetGuestWriteHook_nid_no_patch(origHook);
 
 #ifndef _WIN32
