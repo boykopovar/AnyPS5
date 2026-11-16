@@ -1349,6 +1349,12 @@ class CheckCompileValidateArgumentsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             check_compile.validate_arguments(["cc", 1])
 
+    def test_validate_arguments_requires_a_nonempty_string_list(self):
+        check_compile.validate_arguments(["cc", "-c", "a.cpp"])
+        for bad in ([], ["", "x"], "cc -c a.cpp", [1, "x"]):
+            with self.assertRaises(ValueError, msg=repr(bad)):
+                check_compile.validate_arguments(bad)
+
 
 class CheckCompileWindowsResponseTextTests(unittest.TestCase):
     def test_decodes_utf16_with_either_byte_order_mark(self):
