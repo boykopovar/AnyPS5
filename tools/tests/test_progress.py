@@ -1071,6 +1071,12 @@ class InertStatementTests(unittest.TestCase):
     def test_inert_statement_refuses_returning_a_parameter(self):
         self.assertFalse(progress.inert_statement('return x;', set(), {'x'}))
 
+    def test_inert_statement_follows_known_wrapper_calls(self):
+        self.assertTrue(progress.inert_statement('return helper();', {'helper'}, set()))
+        self.assertFalse(progress.inert_statement('return other();', {'helper'}, set()))
+        self.assertIn('a', progress.inert_parameters('int f(int a, const char* b)'))
+        self.assertIn('b', progress.inert_parameters('int f(int a, const char* b)'))
+
 
 if __name__ == "__main__":
     unittest.main()
