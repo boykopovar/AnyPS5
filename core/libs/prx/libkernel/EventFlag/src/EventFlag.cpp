@@ -1,4 +1,5 @@
 #include "prx/libkernel/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <atomic>
@@ -157,6 +158,13 @@ static int CopyEventFlagName(const char* name, std::string& copy) {
     return SCE_KERNEL_ERROR_EFAULT;
 }
 
+static bool StoreWaitCount(int* destination, int value) {
+    const int savedErrno = errno;
+    const bool stored = GuestCopyOut_nid_no_patch(destination, &value, sizeof(value));
+    errno = savedErrno;
+    return stored;
+}
+
 static void Consume(KernelEventFlagPrivate* flag, uint64_t bitPattern, uint32_t waitMode, uint64_t* resultPattern) {
     if (resultPattern) *resultPattern = flag->_pattern;
     if (waitMode & EVF_WAITMODE_CLEAR_ALL) flag->_pattern = 0;
@@ -290,10 +298,10 @@ int APS5_VABI sceKernelCancelEventFlag(KernelEventFlag ef, uint64_t set_pattern,
     std::lock_guard lock(flag->_mutex);
     if (flag->_deleted) {
         if (!entry->opened) return SCE_KERNEL_ERROR_ESRCH;
-        if (num_wait_threads) *num_wait_threads = 0;
+        if (num_wait_threads && !StoreWaitCount(num_wait_threads, 0)) return SCE_KERNEL_ERROR_EFAULT;
         return SCE_OK;
     }
-    if (num_wait_threads) *num_wait_threads = flag->_waiters;
+    if (num_wait_threads && !StoreWaitCount(num_wait_threads, flag->_waiters)) return SCE_KERNEL_ERROR_EFAULT;
     flag->_pattern = set_pattern;
     for (auto* waiter = flag->_waiterHead; waiter != nullptr; waiter = waiter->next) {
         if (waiter->outcome == WaiterNode::Outcome::Pending) {
