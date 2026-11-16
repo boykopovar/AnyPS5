@@ -1,6 +1,7 @@
 #include "prx/libSceNpCommon/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libSceRtc/include/Rtc.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -21,6 +22,12 @@ int main() {
     std::int64_t seconds = -1;
     const RtcTick zero{0};
     CHECK(sceNpRtcConvertToPosixTime(&zero, &seconds) == invalidArgument && seconds == -1);
+    errno = 71;
+    CHECK(sceNpRtcConvertToPosixTime(nullptr, &seconds) == invalidArgument);
+    CHECK(sceNpRtcConvertToPosixTime(&zero, nullptr) == invalidArgument);
+    CHECK(sceNpRtcConvertToPosixTime(reinterpret_cast<const RtcTick*>(0x10), &seconds) == invalidArgument);
+    CHECK(sceNpRtcConvertToPosixTime(reinterpret_cast<const RtcTick*>(0x10), reinterpret_cast<std::int64_t*>(0x10)) == invalidArgument);
+    CHECK(errno == 71);
     const RtcTick epoch{unixEpochTick};
     CHECK(sceNpRtcConvertToPosixTime(&epoch, &seconds) == 0 && seconds == 0);
     const RtcTick dayLater{unixEpochTick + 86400000000ull + 1500000ull};
@@ -42,6 +49,8 @@ int main() {
     CHECK(_ZN3sce2np4Time11SetDateTimeERKNS0_8DateTimeE(&time, &secondDay) == 0 && time.tick == unixEpochTick + 97445000006ull);
     RtcDateTime dateTime{};
     CHECK(_ZN3sce2np4Time11GetDateTimeEPNS0_8DateTimeE(&time, &dateTime) == 0 && std::memcmp(&dateTime, &secondDay, sizeof(dateTime)) == 0);
+    errno = 71;
+    CHECK(_ZN3sce2np4Time11GetDateTimeEPNS0_8DateTimeE(&time, reinterpret_cast<RtcDateTime*>(0x10)) == invalidArgument && errno == 71);
     CHECK(_ZNK3sce2np4Time18ConvertToPosixTimeEPl(&time, &seconds) == 0 && seconds == 97445);
     CHECK(_ZNK3sce2np4Time18ConvertToPosixTimeEPl(&zero, &seconds) == invalidArgument);
 
@@ -78,6 +87,10 @@ int main() {
     CHECK(_ZNK3sce2np4Time27IsTimedoutSinceMicroSecondsERKS1_jPj(&later, &start, 2500000, &remainingShort) && remainingShort == 0);
     CHECK(!_ZNK3sce2np4Time22IsTimedoutSinceSecondsERKS1_lPl(&later, &start, 4, &remaining) && remaining == 1);
     CHECK(_ZNK3sce2np4Time22IsTimedoutSinceSecondsERKS1_lPl(&later, &start, 2, &remaining) && remaining == 0);
+    errno = 71;
+    CHECK(!_ZNK3sce2np4Time27IsTimedoutSinceMicroSecondsERKS1_lPl(&later, &start, 3000000, reinterpret_cast<std::int64_t*>(0x10)));
+    CHECK(!_ZNK3sce2np4Time27IsTimedoutSinceMicroSecondsERKS1_jPj(&later, &start, 2500001, reinterpret_cast<std::uint32_t*>(0x10)));
+    CHECK(!_ZNK3sce2np4Time22IsTimedoutSinceSecondsERKS1_lPl(&later, &start, 4, reinterpret_cast<std::int64_t*>(0x10)) && errno == 71);
 
     std::memset(text, 'x', sizeof(text));
     CHECK(_ZNK3sce2np4Time13FormatRFC3339EPcmi(&epoch, text, sizeof(text) - 1, 0) == bufferTooSmall && text[0] == 'x');

@@ -355,12 +355,12 @@ void SummaryFields() {
         "\"worker_busy_pct\":{\"queue worker 0x0\":35.000},"
         "\"phase_totals_ms\":{\"Driver.Completion\":2.000,\"Driver.Packet\":12.000,\"Driver.Packet.draw\":10.000,\"Driver.Present\":6.000,\"Driver.Present.inflight_wait\":4.000},"
         "\"top_phases_ms_per_frame\":{\"Driver.Packet\":6.000,\"Driver.Packet.draw\":5.000,\"Driver.Present\":3.000,\"Driver.Present.inflight_wait\":2.000,\"Driver.Completion\":1.000},"
-        "\"owned_draw_counts\":{},\"trace_dropped\":false,\"trace\":\"aps5-trace-abc-7.json.gz\"}\n";
+        "\"owned_draw_counts\":{},\"graphics_track\":{},\"trace_dropped\":false,\"trace\":\"aps5-trace-abc-7.json.gz\"}\n";
     Check(line == expected, "summary line changed");
     auto unboundSummary = summary;
     unboundSummary.ownedDrawUnbound = 3;
     const auto unboundLine = TraceFormat::Summary(unboundSummary, threads, presents);
-    Check(unboundLine.find("\"owned_draw_counts\":{\"OwnedDraw.unbound\":3},\"trace_dropped\":true") != std::string::npos, "unbound draw counts were not marked as incomplete");
+    Check(unboundLine.find("\"owned_draw_counts\":{\"OwnedDraw.unbound\":3},\"graphics_track\":{},\"trace_dropped\":true") != std::string::npos, "unbound draw counts were not marked as incomplete");
     auto counted = threads;
     counted[0].totals.push_back({"OwnedDraw.arm_attempt", nullptr, {}, 5});
     counted[1].totals.push_back({"OwnedDraw.arm_attempt", nullptr, {}, 3});
@@ -368,6 +368,14 @@ void SummaryFields() {
     counted[0].totals.push_back({"OwnedDraw.arm_blocks_requested", nullptr, {}, 17});
     const auto countedLine = TraceFormat::Summary(summary, counted, presents);
     Check(countedLine.find("\"owned_draw_counts\":{\"OwnedDraw.arm_attempt\":8,\"OwnedDraw.arm_blocks_requested\":17,\"OwnedDraw.reused\":2}") != std::string::npos, "named owned counts were not summed across threads");
+    counted[0].totals.push_back({"Graphics.Barrier.draw", nullptr, {}, 4});
+    counted[1].totals.push_back({"Graphics.Barrier.draw", nullptr, {}, 3});
+    counted[1].totals.push_back({"Graphics.Copy.bytes", nullptr, {}, 65536});
+    counted[0].totals.push_back({"Graphics.RenderPass", nullptr, {}, 2});
+    counted[0].totals.push_back({"Graphics.Draw", nullptr, milliseconds(5), 1});
+    const auto graphicsLine = TraceFormat::Summary(summary, counted, presents);
+    Check(graphicsLine.find("\"graphics_track\":{\"Graphics.Barrier.draw\":7,\"Graphics.Copy.bytes\":65536,\"Graphics.RenderPass\":2}") != std::string::npos, "graphics counts were not summed across threads");
+    Check(graphicsLine.find("\"Graphics.Draw\":2.500") != std::string::npos, "a timed Graphics scope was taken out of the phases");
     const std::vector<TraceThread::Total> before{{"OwnedDraw.arm_attempt", nullptr, {}, 2}};
     const std::vector<TraceThread::Total> after{{"OwnedDraw.arm_attempt", nullptr, {}, 5}};
     const auto countDelta = TraceFormat::Since(after, before);
@@ -494,7 +502,7 @@ void IntervalSummaryFields() {
         "\"worker_busy_pct\":{\"queue worker 0x0\":30.000},"
         "\"phase_totals_ms\":{\"Driver.Packet\":12.000},"
         "\"top_phases_ms_per_frame\":{\"Driver.Packet\":6.000},"
-        "\"owned_draw_counts\":{},\"trace_dropped\":false,\"trace\":\"\"}\n";
+        "\"owned_draw_counts\":{},\"graphics_track\":{},\"trace_dropped\":false,\"trace\":\"\"}\n";
     Check(line == expected, "interval summary line changed");
 }
 
@@ -657,16 +665,10 @@ void ReplaceGzipFile() {
     const bool blockedKept = std::filesystem::is_directory(blocked);
     const bool temporaryLeft = std::filesystem::exists(blockedTemporary);
     const auto kept = ReadGzip(path);
-#ifndef _WIN32
-    // A directory at <name>.tmp makes the write itself fail, which is the case ReplaceGzip exists
-    // for: the previous file must survive, so an in-place rewrite fails this check. The failure is
-    // a std::ios_base::failure thrown inside libstdc++'s ofstream, which MinGW builds could not
-    // unwind to this catch, so the case runs on the other platforms only.
     std::filesystem::create_directory(temporary);
     bool writeFailed = false;
-    try { AgcDriver::TraceFile::ReplaceGzip(path, "{\"third\":3}\n"); } catch (const std::exception&) { writeFailed = true; }
+    try { AgcDriver::TraceFile::ReplaceGzip(path, "{\"third\":3}\n"); } catch (const std::ios_base::failure&) { writeFailed = true; }
     const auto keptAfterWrite = ReadGzip(path);
-#endif
 #ifdef __linux__
     bool fullFailed = false;
     bool fullLeft = false;
@@ -688,9 +690,7 @@ void ReplaceGzipFile() {
 #ifdef __linux__
     Check(fullFailed && !fullLeft, "a replace whose write failed left its temporary file behind");
 #endif
-#ifndef _WIN32
     Check(writeFailed && keptAfterWrite == "{\"second\":2}\n", "a failed rewrite damaged the previous benchmark file");
-#endif
 }
 
 void BenchSwitch() {

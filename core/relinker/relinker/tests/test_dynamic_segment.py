@@ -88,6 +88,14 @@ def main():
         convert("empty", empty, "Unterminated dynamic segment")
 
         strict_modes = (["unused-filter=2"], ["--windows", "unused-filter=2"], ["--macos", "unused-filter=2"])
+        for name, offset, address, size in (("file-offset", 0xffffffffffffffff, 0, 0),
+                                           ("address-overflow", 0, 0xffffffffffffffff, 1)):
+            ignored_stack = strict_fixture()
+            struct.pack_into("<H", ignored_stack, 56, 3)
+            struct.pack_into("<IIQQQQQQ", ignored_stack, 64 + 2 * 56,
+                             0x6474e551, 6, offset, address, 0, 0, size, 16)
+            convert("strict-gnu-stack-" + name, ignored_stack,
+                    modes=([], ["--windows"], ["--macos"], *strict_modes))
         strict_size = struct.unpack_from("<Q", strict_fixture(), 120 + 32)[0]
         strict = strict_fixture()
         struct.pack_into("<QQ", strict, 120 + 32, strict_size + 0x18, strict_size + 0x18)
@@ -97,6 +105,20 @@ def main():
         strict = strict_fixture()
         struct.pack_into("<QQ", strict, 120 + 32, strict_size - 8, strict_size - 8)
         convert("strict-partial-terminator", strict, "Unterminated dynamic segment", strict_modes)
+
+        strict = strict_fixture()
+        extra_tags = ((4, 0x6a0), (21, 0), (21, 0))
+        expanded_size = strict_size + 16 * len(extra_tags)
+        struct.pack_into("<QQ", strict, 120 + 32, expanded_size, expanded_size)
+        terminator = 0x400 + strict_size - 16
+        for index, entry in enumerate((*extra_tags, (0, 0))):
+            struct.pack_into("<qQ", strict, terminator + index * 16, *entry)
+        convert("strict-identical-tags", strict, modes=(["unused-filter=2"],))
+        repeated_debug = terminator + 16 * (len(extra_tags) - 1)
+        struct.pack_into("<Q", strict, repeated_debug + 8, 1)
+        convert("strict-conflicting-tags", strict,
+                f"Strict filter: conflicting duplicate dynamic tag (offset 0x{repeated_debug:x})",
+                modes=(["unused-filter=2"],))
 
         for name, delta, error in (("module-trailing-bytes", 8, None),
                                    ("module-partial-terminator", -8, "Unterminated dynamic segment")):

@@ -629,7 +629,7 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
             output.Value(PaddedStringSpec(spec), conversion == '%' ? "%" : text);
             continue;
         }
-        if (!secure) length = ApplicableLength(length, conversion);
+        length = ApplicableLength(length, conversion);
         const bool integerLength = length.empty() || length == "h" || length == "hh" ||
             length == "l" || length == "ll" || length == "j" || length == "z" || length == "t";
         if (conversion == 'd' || conversion == 'i') {
@@ -692,7 +692,10 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
         } else if (conversion == 's' && (length.empty() || length == "h")) {
             const char* value = args.Next<const char*>();
             if (!value && secure) throw FormatConstraintViolation("Null string argument");
-            if (!value) value = "(null)";
+            if (!value) {
+                value = "(null)";
+                spec = spec.substr(0, spec.find('.'));
+            }
             output.Value(spec + 's', value);
         } else if ((conversion == 's' && length == "l") || (conversion == 'S' && length.empty())) {
             const char16_t* value = args.Next<const char16_t*>();

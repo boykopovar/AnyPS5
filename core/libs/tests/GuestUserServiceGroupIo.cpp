@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <climits>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <string>
@@ -54,6 +55,19 @@ int main() {
     Require(sceUserServiceGetUserGroupName(0, name, sizeof(name)) == USER_SERVICE_OK);
     Require(std::strcmp(name, "User Group 1") == 0);
     openResult = 7;
+    const int opensBeforeInvalidName = opens;
+    const int closesBeforeInvalidName = closes;
+    const std::string writtenBeforeInvalidName = written;
+    Require(sceUserServiceSetUserGroupName(0, reinterpret_cast<const char*>(static_cast<std::uintptr_t>(0x10))) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(opens == opensBeforeInvalidName && closes == closesBeforeInvalidName);
+    Require(written == writtenBeforeInvalidName);
+    Require(sceUserServiceSetUserGroupName(0, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    const std::string longestName(128, 'N');
+    writeResult = 128;
+    Require(sceUserServiceSetUserGroupName(0, longestName.c_str()) == USER_SERVICE_OK);
+    Require(written == longestName);
+    Require(sceUserServiceSetUserGroupName(0, (longestName + 'N').c_str()) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    writeResult = 4;
     Require(sceUserServiceSetUserGroupName(0, "Team") == USER_SERVICE_OK);
     Require(written == "Team");
     writeResult = 2;
