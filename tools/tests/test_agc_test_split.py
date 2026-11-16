@@ -291,6 +291,13 @@ class SubjectNameTests(unittest.TestCase):
         self.assertEqual(facts.subject_targets, {'libA'})
         self.assertEqual(facts.dynamic, {'X'})
 
+    def test_subject_keeps_a_variable_test_name_as_a_pattern(self):
+        facts = self.Facts()
+        agc_test_split.subject(facts, ['t${Y}'], 'test')
+        self.assertEqual(facts.subject_tests, set())
+        self.assertEqual(facts.dynamic, {'Y'})
+        self.assertEqual(facts.test_patterns, {'t${Y}'})
+
 
 if __name__ == "__main__":
     unittest.main()
