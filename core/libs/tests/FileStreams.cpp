@@ -1332,27 +1332,6 @@ static int FcloseallChild(const std::string& base) {
     if (!sentinelFile) return 25;
 #endif
 
-#ifdef _WIN32
-    std::vector<std::FILE*> exhaustedStreams;
-    const int streamLimit = ::_getmaxstdio();
-    exhaustedStreams.reserve(static_cast<std::size_t>(streamLimit));
-    for (int i = 0; i < streamLimit; ++i) {
-        std::FILE* extra = std::fopen("NUL", "w");
-        if (!extra) break;
-        exhaustedStreams.push_back(extra);
-    }
-    bool preservationFailed = false;
-    try {
-        fcloseall_nid_postfix();
-    } catch (const std::runtime_error&) {
-        preservationFailed = true;
-    }
-    for (std::FILE* extra : exhaustedStreams) std::fclose(extra);
-    if (!preservationFailed) return 62;
-    if (!flushStream->IsOpen() || !reopenStream->IsOpen() || !dupStream->IsOpen()) return 63;
-    if (!__stdoutp_nid_postfix->IsOpen() || !__stderrp_nid_postfix->IsOpen() || !__stdinp_nid_postfix->IsOpen()) return 64;
-#endif
-
     fcloseall_nid_postfix();
 
 #ifdef _WIN32
@@ -1754,6 +1733,36 @@ static int FcloseallClosedHostStandardChild() {
     return 0;
 }
 
+static int FcloseallExhaustedHostStandardChild(const std::string& base) {
+#ifdef _WIN32
+    const std::string path = base + ".fcloseall.exhausted";
+    FileStream* const stream = fopen_nid_postfix(path.c_str(), "wb");
+    if (!stream) return 210;
+    std::vector<std::FILE*> exhaustedStreams;
+    const int streamLimit = ::_getmaxstdio();
+    exhaustedStreams.reserve(static_cast<std::size_t>(streamLimit));
+    for (int i = 0; i < streamLimit; ++i) {
+        std::FILE* extra = std::fopen("NUL", "w");
+        if (!extra) break;
+        exhaustedStreams.push_back(extra);
+    }
+    bool threw = false;
+    try {
+        fcloseall_nid_postfix();
+    } catch (...) {
+        threw = true;
+    }
+    for (std::FILE* extra : exhaustedStreams) std::fclose(extra);
+    std::remove(path.c_str());
+    if (threw) return 211;
+    if (stream->IsOpen()) return 212;
+    if (__stdoutp_nid_postfix->IsOpen() || __stderrp_nid_postfix->IsOpen() || __stdinp_nid_postfix->IsOpen()) return 213;
+#else
+    static_cast<void>(base);
+#endif
+    return 0;
+}
+
 static int RunFcloseallChild(const char* self, const char* base, const char* mode = "--fcloseall-child") {
 #ifdef _WIN32
     static_cast<void>(self);
@@ -1970,6 +1979,7 @@ int main(int argc, char** argv) {
     if (argc == 3 && std::strcmp(argv[2], "--fcloseall-descriptor-reuse-child") == 0) return FcloseallDescriptorReuseChild(argv[1]);
     if (argc == 3 && std::strcmp(argv[2], "--fcloseall-lock-child") == 0) return FcloseallLockChild(argv[1]);
     if (argc == 3 && std::strcmp(argv[2], "--fcloseall-closed-host-standard-child") == 0) return FcloseallClosedHostStandardChild();
+    if (argc == 3 && std::strcmp(argv[2], "--fcloseall-exhausted-host-standard-child") == 0) return FcloseallExhaustedHostStandardChild(argv[1]);
     if (argc == 3 && std::strcmp(argv[2], "--fcloseall-fclose-race-child") == 0) return FcloseallFcloseRaceChild(argv[1]);
     if (argc == 3 && std::strcmp(argv[2], "--freopen-lock-child") == 0) return FreopenLockChild(argv[1]);
     if (argc == 3 && std::strcmp(argv[2], "--closed-reopen-child") == 0) return ClosedStreamReopenChild(argv[1]);
@@ -2118,6 +2128,8 @@ int main(int argc, char** argv) {
     Require(lockResult == 0, "fcloseall locked-stream child failed");
     const int closedHostStandard = RunFcloseallChild(argv[0], argv[1], "--fcloseall-closed-host-standard-child");
     Require(closedHostStandard == 0, "fcloseall with closed host standard descriptors child failed");
+    const int exhaustedHostStandard = RunFcloseallChild(argv[0], argv[1], "--fcloseall-exhausted-host-standard-child");
+    Require(exhaustedHostStandard == 0, "fcloseall with exhausted host stream slots child failed");
     const int raceResult = RunFcloseallChild(argv[0], argv[1], "--fcloseall-fclose-race-child");
     Require(raceResult == 0, "fcloseall racing fclose child failed");
     const int freopenLock = RunFcloseallChild(argv[0], argv[1], "--freopen-lock-child");
