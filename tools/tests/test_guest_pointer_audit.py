@@ -206,5 +206,13 @@ class CommandLineTests(unittest.TestCase):
                 self.assertIn("not a library under core/libs/prx:", errors.getvalue())
 
 
+class QuietTests(unittest.TestCase):
+    def test_quiet_blanks_the_operand_of_sizeof_keeping_the_width(self):
+        text = "sizeof(p->x)"
+        blanked = guest_pointer_audit.quiet(text)
+        self.assertEqual(blanked, "sizeof(" + " " * 4 + ")")
+        self.assertEqual(len(blanked), len(text))
+
+
 if __name__ == "__main__":
     unittest.main()
