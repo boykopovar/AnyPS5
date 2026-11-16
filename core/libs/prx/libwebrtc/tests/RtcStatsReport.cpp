@@ -9,10 +9,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <set>
 #include <source_location>
 #include <stdexcept>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 #ifdef _WIN32
@@ -292,7 +294,50 @@ void TestInvalidInputs() {
     Require(live == liveBaseline);
     report->stats.size = 4;
 
+    report->refCount.store(0, std::memory_order_relaxed);
+    Require(ThrowsInvalid([&] { _ZNK6webrtc14RTCStatsReport5beginEv_nid_postfix(&endIt, report); }));
+    Require(report->refCount.load() == 0);
+    report->refCount.store(std::numeric_limits<std::int32_t>::max(), std::memory_order_relaxed);
+    Require(ThrowsInvalid([&] { _ZNK6webrtc14RTCStatsReport3endEv_nid_postfix(&endIt, report); }));
+    Require(report->refCount.load() == std::numeric_limits<std::int32_t>::max());
+    report->refCount.store(1, std::memory_order_relaxed);
+
+    alignas(WebRtcRtcStatsReport) std::byte unalignedStorage[sizeof(WebRtcRtcStatsReport) + 4]{};
+    const auto* misalignedReport = reinterpret_cast<const WebRtcRtcStatsReport*>(unalignedStorage + 1);
+    Require(ThrowsInvalid([&] { _ZNK6webrtc14RTCStatsReport5beginEv_nid_postfix(&endIt, misalignedReport); }));
+
+    WebRtcRtcStatsMapNode* leftLeaf = const_cast<WebRtcRtcStatsMapNode*>(report->stats.beginNode);
+    leftLeaf->links.left = leftLeaf;
+    Require(ThrowsInvalid([&] { _ZN6webrtc14RTCStatsReport13ConstIteratorD1Ev_nid_postfix(&invalidDtor); }));
+    leftLeaf->links.left = nullptr;
+
     _ZN6webrtc14RTCStatsReport13ConstIteratorD1Ev_nid_postfix(&invalidDtor);
+    Require(live.empty());
+}
+
+void TestConcurrentIterators() {
+    statsDestructorCalls = 0;
+    destroyedIds.clear();
+    auto* report = CreatePopulatedReport();
+    std::vector<std::thread> workers;
+    for (int t = 0; t < 4; ++t) {
+        workers.emplace_back([report] {
+            for (int i = 0; i < 64; ++i) {
+                WebRtcRtcStatsReportConstIterator beginIt{};
+                WebRtcRtcStatsReportConstIterator endIt{};
+                _ZNK6webrtc14RTCStatsReport5beginEv_nid_postfix(&beginIt, report);
+                _ZNK6webrtc14RTCStatsReport3endEv_nid_postfix(&endIt, report);
+                Require(_ZNK6webrtc14RTCStatsReport13ConstIteratorneERKS1__nid_postfix(&beginIt, &endIt));
+                _ZN6webrtc14RTCStatsReport13ConstIteratorD1Ev_nid_postfix(&beginIt);
+                _ZN6webrtc14RTCStatsReport13ConstIteratorD1Ev_nid_postfix(&endIt);
+            }
+        });
+    }
+    for (auto& worker : workers)
+        worker.join();
+    Require(report->refCount.load() == 1);
+    ReleaseReportRef(report);
+    Require(statsDestructorCalls == 4);
     Require(live.empty());
 }
 
@@ -308,6 +353,7 @@ int main() {
     TestEmptyReport();
     TestIterationAndLifetime();
     TestInvalidInputs();
+    TestConcurrentIterators();
     std::puts("libwebrtc RTCStatsReport tests passed");
     return 0;
 }

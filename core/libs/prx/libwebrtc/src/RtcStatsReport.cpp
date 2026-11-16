@@ -44,6 +44,7 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libc/GuestStringStorage.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 #include "prx/libc/libc.hpp"
 
 #include <atomic>
@@ -51,6 +52,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <mutex>
 #include <stdexcept>
 #include <vector>
 
@@ -60,6 +62,8 @@ constexpr std::size_t DeletingDestructorSlot = 1;
 constexpr std::size_t MaxUnboundedWalkSteps = std::size_t{1} << 20;
 
 using DeleteStatsFunction = void(APS5_VABI*)(const WebRtcRtcStats*);
+
+std::mutex g_reportMutex;
 
 struct ErrnoGuard {
     int savedErrno = errno;
@@ -79,6 +83,19 @@ void CopyInChecked(void* destination, const void* source, std::size_t bytes, con
         throw std::invalid_argument(message);
     ErrnoGuard guard;
     if (!GuestCopyIn_nid_no_patch(destination, source, bytes))
+        throw std::invalid_argument(message);
+}
+
+void CopyOutChecked(void* destination, const void* source, std::size_t bytes, const char* message) {
+    if (!destination)
+        throw std::invalid_argument(message);
+    ErrnoGuard guard;
+    if (!GuestCopyOut_nid_no_patch(destination, source, bytes))
+        throw std::invalid_argument(message);
+}
+
+void RequireAlignedReport(const WebRtcRtcStatsReport* report, const char* message) {
+    if (!report || reinterpret_cast<std::uintptr_t>(report) % alignof(WebRtcRtcStatsReport) != 0)
         throw std::invalid_argument(message);
 }
 
@@ -128,7 +145,8 @@ void ValidateDeleteSlot(const WebRtcRtcStats* stats, const char* message) {
 void CollectValidatedNodes(const WebRtcRtcStatsReport* reportPtr, const char* message, std::vector<WebRtcRtcStatsMapNode*>& outNodes) {
     outNodes.clear();
     const WebRtcRtcStatsMapNode* const end = EndNode(reportPtr);
-    const WebRtcRtcStatsMap& map = reportPtr->stats;
+    WebRtcRtcStatsMap map{};
+    CopyInChecked(&map, &reportPtr->stats, sizeof(map), message);
     if (map.size == 0) {
         if (map.root != nullptr || map.beginNode != end)
             throw std::invalid_argument(message);
@@ -147,6 +165,7 @@ void CollectValidatedNodes(const WebRtcRtcStatsReport* reportPtr, const char* me
         pending.pop_back();
         if (outNodes.size() >= map.size)
             throw std::invalid_argument(message);
+        RequireWritable(current.node, sizeof(*current.node), message);
         WebRtcRtcStatsMapNode nodeCopy{};
         CopyInChecked(&nodeCopy, current.node, sizeof(nodeCopy), message);
         if (nodeCopy.links.parent != current.expectedParent)
@@ -162,28 +181,43 @@ void CollectValidatedNodes(const WebRtcRtcStatsReport* reportPtr, const char* me
     if (outNodes.size() != map.size)
         throw std::invalid_argument(message);
     const WebRtcRtcStatsMapNode* leftmost = map.root;
-    while (leftmost->links.left)
-        leftmost = leftmost->links.left;
+    std::size_t leftSteps = 0;
+    while (true) {
+        if (++leftSteps > map.size)
+            throw std::invalid_argument(message);
+        WebRtcRtcStatsMapNode leftCopy{};
+        CopyInChecked(&leftCopy, leftmost, sizeof(leftCopy), message);
+        if (!leftCopy.links.left)
+            break;
+        leftmost = leftCopy.links.left;
+    }
     if (leftmost != map.beginNode)
         throw std::invalid_argument(message);
 }
 
 WebRtcRtcStatsReportConstIterator* MakeIterator(WebRtcRtcStatsReportConstIterator* result, const WebRtcRtcStatsReport* report, bool isBegin, const char* message) {
     RequireWritable(result, sizeof(*result), message);
+    RequireAlignedReport(report, message);
+    std::lock_guard lock(g_reportMutex);
     RequireWritable(const_cast<WebRtcRtcStatsReport*>(report), sizeof(*report), message);
-    alignas(WebRtcRtcStatsReport) std::byte reportStorage[sizeof(WebRtcRtcStatsReport)]{};
-    CopyInChecked(reportStorage, report, sizeof(reportStorage), message);
-    const auto* reportView = reinterpret_cast<const WebRtcRtcStatsReport*>(reportStorage);
+    WebRtcRtcStatsMap statsCopy{};
+    CopyInChecked(&statsCopy, &report->stats, sizeof(statsCopy), message);
     const WebRtcRtcStatsMapNode* const end = EndNode(report);
-    if (reportView->stats.size == 0) {
-        if (reportView->stats.root != nullptr || reportView->stats.beginNode != end)
+    if (statsCopy.size == 0) {
+        if (statsCopy.root != nullptr || statsCopy.beginNode != end)
             throw std::invalid_argument(message);
-    } else if (!reportView->stats.root || !reportView->stats.beginNode || reportView->stats.beginNode == end) {
+    } else if (!statsCopy.root || !statsCopy.beginNode || statsCopy.beginNode == end) {
         throw std::invalid_argument(message);
     }
-    report->refCount.fetch_add(1, std::memory_order_relaxed);
-    result->report = report;
-    result->it = isBegin ? reportView->stats.beginNode : end;
+    std::int32_t expectedRef = report->refCount.load(std::memory_order_acquire);
+    while (true) {
+        if (expectedRef <= 0 || expectedRef == std::numeric_limits<std::int32_t>::max())
+            throw std::invalid_argument(message);
+        if (report->refCount.compare_exchange_weak(expectedRef, expectedRef + 1, std::memory_order_acq_rel, std::memory_order_acquire))
+            break;
+    }
+    const WebRtcRtcStatsReportConstIterator out{report, isBegin ? statsCopy.beginNode : end};
+    CopyOutChecked(result, &out, sizeof(out), message);
     return result;
 }
 
@@ -193,8 +227,8 @@ const WebRtcRtcStats* DereferenceIterator(const WebRtcRtcStatsReportConstIterato
     if (!itCopy.it)
         throw std::invalid_argument(message);
     if (itCopy.report) {
-        alignas(WebRtcRtcStatsReport) std::byte reportStorage[sizeof(WebRtcRtcStatsReport)]{};
-        CopyInChecked(reportStorage, itCopy.report, sizeof(reportStorage), message);
+        WebRtcRtcStatsMap statsCopy{};
+        CopyInChecked(&statsCopy, &itCopy.report->stats, sizeof(statsCopy), message);
         if (itCopy.it == EndNode(itCopy.report))
             throw std::invalid_argument(message);
     }
@@ -235,12 +269,11 @@ WebRtcRtcStatsReportConstIterator* APS5_VABI _ZN6webrtc14RTCStatsReport13ConstIt
         throw std::invalid_argument(message);
     std::size_t maxSteps = MaxUnboundedWalkSteps;
     if (itCopy.report) {
-        alignas(WebRtcRtcStatsReport) std::byte reportStorage[sizeof(WebRtcRtcStatsReport)]{};
-        CopyInChecked(reportStorage, itCopy.report, sizeof(reportStorage), message);
-        const auto* reportView = reinterpret_cast<const WebRtcRtcStatsReport*>(reportStorage);
+        WebRtcRtcStatsMap statsCopy{};
+        CopyInChecked(&statsCopy, &itCopy.report->stats, sizeof(statsCopy), message);
         if (itCopy.it == EndNode(itCopy.report))
             throw std::invalid_argument(message);
-        maxSteps = static_cast<std::size_t>(reportView->stats.size) + 1;
+        maxSteps = static_cast<std::size_t>(statsCopy.size) + 1;
     }
     WebRtcRtcStatsMapNode nodeCopy{};
     CopyInChecked(&nodeCopy, itCopy.it, sizeof(nodeCopy), message);
@@ -256,7 +289,8 @@ WebRtcRtcStatsReportConstIterator* APS5_VABI _ZN6webrtc14RTCStatsReport13ConstIt
                 break;
             next = childCopy.links.left;
         }
-        iterator->it = next;
+        const WebRtcRtcStatsReportConstIterator updated{itCopy.report, next};
+        CopyOutChecked(iterator, &updated, sizeof(updated), message);
         return iterator;
     }
     const WebRtcRtcStatsMapNode* current = itCopy.it;
@@ -276,7 +310,8 @@ WebRtcRtcStatsReportConstIterator* APS5_VABI _ZN6webrtc14RTCStatsReport13ConstIt
     }
     if (!parent)
         throw std::invalid_argument(message);
-    iterator->it = parent;
+    const WebRtcRtcStatsReportConstIterator updated{itCopy.report, parent};
+    CopyOutChecked(iterator, &updated, sizeof(updated), message);
     return iterator;
 }
 
@@ -299,30 +334,44 @@ void APS5_VABI _ZN6webrtc14RTCStatsReport13ConstIteratorD1Ev_nid_postfix(WebRtcR
     CopyInChecked(&itCopy, iterator, sizeof(itCopy), message);
     if (itCopy.report) {
         auto* report = const_cast<WebRtcRtcStatsReport*>(itCopy.report);
-        RequireWritable(report, sizeof(*report), message);
-        const std::int32_t currentRef = report->refCount.load(std::memory_order_acquire);
-        if (currentRef <= 0)
-            throw std::invalid_argument(message);
+        RequireAlignedReport(report, message);
         std::vector<WebRtcRtcStatsMapNode*> nodes;
-        if (currentRef == 1)
-            CollectValidatedNodes(report, message, nodes);
-        if (report->refCount.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-            if (currentRef != 1)
-                CollectValidatedNodes(report, message, nodes);
+        bool shouldDestroy = false;
+        {
+            std::lock_guard lock(g_reportMutex);
+            RequireWritable(report, sizeof(*report), message);
+            std::int32_t currentRef = report->refCount.load(std::memory_order_acquire);
+            while (true) {
+                if (currentRef <= 0)
+                    throw std::invalid_argument(message);
+                if (currentRef == 1) {
+                    if (nodes.empty())
+                        CollectValidatedNodes(report, message, nodes);
+                } else {
+                    nodes.clear();
+                }
+                if (report->refCount.compare_exchange_weak(currentRef, currentRef - 1, std::memory_order_acq_rel, std::memory_order_acquire)) {
+                    shouldDestroy = (currentRef == 1);
+                    break;
+                }
+            }
+            if (shouldDestroy) {
+                const WebRtcRtcStatsMap emptyMap{EndNode(report), nullptr, 0};
+                CopyOutChecked(&report->stats, &emptyMap, sizeof(emptyMap), message);
+            }
+        }
+        if (shouldDestroy) {
             for (WebRtcRtcStatsMapNode* node : nodes) {
                 if (node->value)
                     reinterpret_cast<DeleteStatsFunction>(const_cast<void*>(node->value->vtable[DeletingDestructorSlot]))(node->value);
                 ReleaseString(node->key);
                 _ZdlPv_nid_postfix(node);
             }
-            report->stats.beginNode = EndNode(report);
-            report->stats.root = nullptr;
-            report->stats.size = 0;
             _ZdlPv_nid_postfix(report);
         }
     }
-    iterator->report = nullptr;
-    iterator->it = nullptr;
+    const WebRtcRtcStatsReportConstIterator cleared{};
+    CopyOutChecked(iterator, &cleared, sizeof(cleared), message);
 }
 
 }
