@@ -26,6 +26,15 @@ int main() {
     Require(sceKernelAllocateDirectMemoryForApp(0, size, page, 0, 0, nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelAllocateDirectMemoryForApp(size, 0, page, 0, 0, &phys) == SCE_KERNEL_ERROR_EINVAL);
 
+    Require(sceKernelAllocateDirectMemoryForApp(0, size, page, 0, 0, &phys) == 0);
+    const auto freePage = phys;
+    const auto pageEnd = freePage + static_cast<int64_t>(page);
+    Require(sceKernelReleaseDirectMemory(phys, page) == 0);
+    auto* const badOutput = reinterpret_cast<int64_t*>(1);
+    Require(sceKernelAllocateDirectMemoryForApp(freePage, pageEnd, page, 0, 0, badOutput) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelAllocateDirectMemoryForApp(freePage, pageEnd, page, 0, 0, &phys) == 0 && phys == freePage);
+    Require(sceKernelReleaseDirectMemory(phys, page) == 0);
+
     phys = -1;
     Require(sceKernelAllocateDirectMemoryForApp(0, size, page * 4, 0, 0, &phys) == 0);
     Require(phys >= 0);
@@ -33,6 +42,14 @@ int main() {
     Require(phys + static_cast<int64_t>(page * 4) <= size);
     std::printf("allocated for-app phys=%lld len=%zu\n", static_cast<long long>(phys), page * 4);
     Require(sceKernelReleaseDirectMemory(phys, page * 4) == 0);
+
+    constexpr int64_t mib = 1024 * 1024;
+    phys = -1;
+    Require(sceKernelAllocateDirectMemory(mib, 0, mib, 0, 12, &phys) == 0);
+    Require(phys >= mib);
+    Require((phys % static_cast<int64_t>(page)) == 0);
+    Require(phys + mib <= size);
+    Require(sceKernelReleaseDirectMemory(phys, mib) == 0);
 
     return 0;
 }

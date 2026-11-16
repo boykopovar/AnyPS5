@@ -1,4 +1,3 @@
-#include "Translation/AttributeInstructions.hpp"
 #include "Translation/TranslationContext.hpp"
 #include "Recompiler.hpp"
 #include <algorithm>
@@ -33,10 +32,6 @@ ExportTargetKind exportTargetKindFromTarget(std::uint32_t target, std::uint32_t&
     return ExportTargetKind::Unknown;
 }
 
-}
-
-void TranslateAttributeInstruction(IrBuilder& builder, const RdnaInstruction& instruction, const TranslateOptions& options) {
-    throw std::runtime_error("TranslateAttributeInstruction not implemented");
 }
 
 ExportFlags TranslationContext::addExportInfo(const RdnaInstruction& inst) {
@@ -181,10 +176,6 @@ void TranslationContext::TranslateEmbeddedFetch(const RdnaInstruction& instructi
         value.SetFlags<std::uint32_t>(1u);
         writeOperand(offsetOperand(instruction.destination, component), &value);
     }
-}
-
-void TranslateAttributeInstruction(TranslationContext& context, const RdnaInstruction& instruction) {
-    throw std::runtime_error("TranslateAttributeInstruction not implemented");
 }
 
 }
