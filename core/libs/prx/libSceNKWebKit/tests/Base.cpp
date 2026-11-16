@@ -65,6 +65,7 @@ static void TestTypeIDs() {
     Require(WKSessionStateGetTypeID() == 19);
     Require(WKSerializedScriptValueGetTypeID() == 20);
     Require(WKContextGetTypeID() == 85);
+    Require(WKPreferencesGetTypeID() == static_cast<std::uint32_t>(NKWebKit::ObjectType::Preferences));
 }
 
 static void TestRetainRelease() {
