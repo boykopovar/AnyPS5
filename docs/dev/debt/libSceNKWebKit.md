@@ -425,12 +425,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKContextGetGlobalStatistics` | `cLN+-CVotuU` |
 | `WKContextGetNotificationManager` | `ZGEEHCN2FvE` |
 | `WKContextPostMessageToInjectedBundle` | `N93Nb5-YJsw` |
-| `WKContextRegisterURLSchemeAsBypassingContentSecurityPolicy` | `FTDt5KHGsco` |
-| `WKContextRegisterURLSchemeAsCachePartitioned` | `DHbAda1fa1k` |
-| `WKContextRegisterURLSchemeAsCanDisplayOnlyIfCanRequest` | `rAU9SRsnG3E` |
-| `WKContextRegisterURLSchemeAsEmptyDocument` | `ad1-t6xKVtA` |
-| `WKContextRegisterURLSchemeAsSecure` | `6P04fQkPVec` |
-| `WKContextSetAlwaysUsesComplexTextCodePath` | `Y3Z2695WJ8E` |
 | `WKContextPreconnectToServer` | `MQI+nL6CJkU` |
 | `WKContextSetCanHandleHTTPSServerTrustEvaluation` | `L205EzJvP-Q` |
 | `WKContextSetClient` | `s19dG0nY-dE` |
@@ -442,7 +436,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKContextSetInjectedBundleClient` | `VULFTpwEXW0` |
 | `WKContextSetInvalidMessageFunction` | `v+TCMUBUWog` |
 | `WKContextSetJavaScriptConfigurationFileEnabled` | `NkDv+zQRTXw` |
-| `WKContextSetJavaScriptGarbageCollectorTimerEnabled` | `CDa5R6cq2+M` |
 | `WKContextSetMaximumNumberOfProcesses` | `zgt5jBUZjPw` |
 | `WKContextSetMemoryCacheDisabled` | `Gy--AnYjtr8` |
 | `WKContextSetPrewarmsProcessesAutomatically` | `9LzZhiXxOL8` |
