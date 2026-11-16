@@ -2757,11 +2757,29 @@ std::uint64_t StoreOwnBytes(std::uint64_t address, std::size_t bytes, const std:
     });
 }
 
+static void storeGuestBytes(std::uint64_t address, std::span<const std::byte> source) {
+    if (source.size() == sizeof(std::uint64_t) && address % sizeof(std::uint64_t) == 0) {
+        std::uint64_t word = 0;
+        std::memcpy(&word, source.data(), sizeof(word));
+        std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(address)).store(word, std::memory_order_release);
+        return;
+    }
+    if ((source.size() == sizeof(std::uint32_t) || source.size() == sizeof(std::uint64_t)) && address % sizeof(std::uint32_t) == 0) {
+        for (std::size_t at = 0; at < source.size(); at += sizeof(std::uint32_t)) {
+            std::uint32_t word = 0;
+            std::memcpy(&word, source.data() + at, sizeof(word));
+            std::atomic_ref<std::uint32_t>(*reinterpret_cast<std::uint32_t*>(address + at)).store(word, std::memory_order_release);
+        }
+        return;
+    }
+    std::memcpy(reinterpret_cast<void*>(address), source.data(), source.size());
+}
+
 static void copyOwnBytes(std::uint64_t address, std::span<const std::byte> source) {
 #ifndef _WIN32
     if (GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix() && GuestArena::GuestArenaWriteSharedBacking_nid_no_patch(address, source.data(), source.size())) return;
 #endif
-    std::memcpy(reinterpret_cast<void*>(address), source.data(), source.size());
+    storeGuestBytes(address, source);
 }
 
 std::uint64_t StoreOwnBytes(std::uint64_t address, std::span<const std::byte> source) {
@@ -3915,7 +3933,7 @@ void Write(std::uint64_t address, std::span<const std::byte> source, std::size_t
     StoreOwnBytes(address, source.size(), [&](std::span<std::byte> image) {
         CheckRange(destination, source.size(), alignment, true);
         if (source.size() >= PageBytes) copyOwnBytes(address, source);
-        else std::memcpy(destination, source.data(), source.size());
+        else storeGuestBytes(address, source);
         if (!image.empty()) std::memcpy(image.data(), source.data(), source.size());
     });
 }
