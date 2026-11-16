@@ -53,6 +53,25 @@ class AccessTests(unittest.TestCase):
             ("sceExampleNested", "table", ["dereference"]),
         ])
 
+    def test_accesses_through_a_cast_and_offset_are_reported(self):
+        source = (
+            "int APS5_VABI sceExampleOffset(const void* mode) { unsigned long long v;\n"
+            "  memcpy(&v, static_cast<const unsigned char*>(mode) + 0x10, sizeof(v)); return static_cast<int>(v); }\n"
+            "int APS5_VABI sceExampleParen(const void* mode) { unsigned int v;\n"
+            "  memcpy(&v, (mode) + 4, sizeof(v)); return static_cast<int>(v); }\n"
+        )
+        self.assertEqual(findings(source), [
+            ("sceExampleOffset", "mode", ["library call"]),
+            ("sceExampleParen", "mode", ["library call"]),
+        ])
+
+    def test_an_offset_on_another_pointer_is_not_reported(self):
+        source = (
+            "int APS5_VABI sceExampleOther(const void* mode) { unsigned long long v;\n"
+            "  memcpy(&v, other + 0x10, sizeof(v)); return static_cast<int>(v); }\n"
+        )
+        self.assertEqual(findings(source), [])
+
     def test_safe_helpers_and_non_pointer_parameters_are_not_reported(self):
         source = (
             "int APS5_VABI sceExampleOut(std::uint64_t* out) { const std::uint64_t v = 7;\n"
