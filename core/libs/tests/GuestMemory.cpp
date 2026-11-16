@@ -219,6 +219,27 @@ static void CheckNamedAndHintedMappings() {
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(first), length) == 0);
 }
 
+static void CheckVirtualRangeNameBounds() {
+    constexpr std::uint64_t top = std::uint64_t{1} << 47;
+    const auto at = [](std::uint64_t address) { return reinterpret_cast<const void*>(static_cast<std::uintptr_t>(address)); };
+    struct Case { std::uint64_t address; std::uint64_t length; bool accepted; };
+    const Case cases[] = {
+        {0x1, 0x1000, false}, {0x1000, 0x1000, false}, {0x3000, 0x1000, false}, {0x4000, 0x1000, true}, {0x4001, 0x1000, true},
+        {0xffff, 0x1000, true}, {0x10000, 0x1000, true},
+        {top - 0x4000, 0x4000, true}, {top - 0x4000, 0x4001, false}, {top - 0x4000, 0x3fff, true}, {top - 0x1000, 0x1000, true}, {top - 0x1000, 0x1001, false},
+        {top - 1, 1, true}, {top - 1, 2, false}, {top - 2, 1, true}, {top, 1, false}, {top, 0, false},
+        {0x10000, top - 0x10000, true}, {0x10000, top - 0x10000 + 1, false}, {0x10000, top - 0x10000 - 1, true},
+        {0x20000, 0, true}, {0x1000, 0, false}, {0, 0, false},
+        {0x200020000, 0x400000000000, true}, {0x200020000, 0x7fffffffffff, false}, {0x200020000, ~std::uint64_t{0}, false},
+        {0x7ffffffff000, 0x4000, false}, {0xffff800000000000, 0x4000, false}, {0xfffffffffffff000, 0x4000, false},
+    };
+    for (const auto& test : cases) {
+        const int expected = test.accepted ? 0 : static_cast<int>(0x80020016u);
+        Require(sceKernelSetVirtualRangeName(at(test.address), test.length, "bounds") == expected);
+        Require(sceKernelClearVirtualRangeName(at(test.address), test.length) == expected);
+    }
+}
+
 static void CheckVirtualRangeNames() {
     constexpr std::size_t length = 0x4000;
     void* mapping = nullptr;
@@ -4666,6 +4687,7 @@ int main(int argc, char** argv) {
     CheckVirtualQueryWireLayout();
     CheckNamedAndHintedMappings();
     CheckVirtualRangeNames();
+    CheckVirtualRangeNameBounds();
     CheckInternalNamedFlexibleMapping();
     CheckFlexibleFixedReplacement();
     CheckMunmapScopedFlexibleRelease();

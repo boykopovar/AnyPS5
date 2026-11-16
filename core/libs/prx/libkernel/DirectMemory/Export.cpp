@@ -117,6 +117,13 @@ void EraseRangeNames(uintptr_t start, uintptr_t end) {
  }
 }
 
+constexpr uintptr_t RangeNameLowest = 0x4000;
+constexpr uint64_t RangeNameEnd = 1ULL << 47;
+
+bool RangeNameBoundsValid(uintptr_t start, uint64_t len) {
+ return start >= RangeNameLowest && start < RangeNameEnd && len <= RangeNameEnd - start;
+}
+
 int NameVirtualRange(const void* addr, uint64_t len, const char* name) {
  const auto start = reinterpret_cast<uintptr_t>(addr);
  if (!name) return SCE_KERNEL_ERROR_EFAULT;
@@ -625,13 +632,15 @@ int APS5_VABI sceKernelInternalMemoryGetAvailableSize(std::size_t* size) {
 int APS5_VABI sceKernelSetVirtualRangeName(const void* addr, uint64_t len, const char* name) {
  if (!name) return SCE_KERNEL_ERROR_EFAULT;
  if (strnlen(name, 32) > 31) return SCE_KERNEL_ERROR_ENAMETOOLONG;
- if (addr && len == 0) return 0;
+ if (!RangeNameBoundsValid(reinterpret_cast<uintptr_t>(addr), len)) return SCE_KERNEL_ERROR_EINVAL;
+ if (len == 0) return 0;
  return NameVirtualRange(addr, len, name);
 }
 
 int APS5_VABI sceKernelClearVirtualRangeName(const void* addr, uint64_t len) {
  const auto start = reinterpret_cast<uintptr_t>(addr);
- if (!addr || len == 0 || len > UINTPTR_MAX - start) return SCE_KERNEL_ERROR_EINVAL;
+ if (!RangeNameBoundsValid(start, len)) return SCE_KERNEL_ERROR_EINVAL;
+ if (len == 0) return 0;
  std::lock_guard lock(g_rangeNameLock);
  EraseRangeNames(start, start + len);
  return 0;
