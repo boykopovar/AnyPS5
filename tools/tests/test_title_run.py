@@ -1053,5 +1053,19 @@ class RunReportTests(unittest.TestCase):
         self.assertEqual(title_run.tally(report["missing"], ["name"], "calls"), {'["f"]': 0})
 
 
+class InsideTests(unittest.TestCase):
+    def test_inside_rejects_absolute_and_traversing_paths(self):
+        import title_run
+        self.assertTrue(title_run.inside("a/b"))
+        for path in ("/abs/x", "a/../b", "a\\b", "C:x", ""):
+            self.assertFalse(title_run.inside(path), path)
+
+    def test_inside_requires_a_listed_root_when_given(self):
+        import title_run
+        self.assertTrue(title_run.inside("a/b", roots=("a",)))
+        self.assertFalse(title_run.inside("a", roots=("a",)))
+        self.assertFalse(title_run.inside("b/c", roots=("a",)))
+
+
 if __name__ == "__main__":
     unittest.main()
