@@ -36,6 +36,7 @@ constexpr int RUDP_ERROR_CANCELLED = static_cast<int>(0x80770014u);
 constexpr int RUDP_ERROR_INVALID_VPORT = static_cast<int>(0x80770015u);
 constexpr int RUDP_ERROR_WOULDBLOCK = static_cast<int>(0x80770016u);
 constexpr int RUDP_ERROR_VPORT_IN_USE = static_cast<int>(0x80770017u);
+constexpr int RUDP_ERROR_VPORT_EXHAUSTED = static_cast<int>(0x80770018u);
 constexpr int RUDP_ERROR_ALREADY_BOUND = static_cast<int>(0x8077001Du);
 constexpr int RUDP_ERROR_INVALID_POLL_ID = static_cast<int>(0x8077001Fu);
 constexpr int RUDP_ERROR_TOO_MANY_CONTEXTS = static_cast<int>(0x80770020u);
@@ -44,6 +45,7 @@ constexpr int RUDP_ERROR_NO_EVENT_HANDLER = static_cast<int>(0x80770022u);
 constexpr uint8_t RUDP_MUXMODE_P2P = 1;
 constexpr uint8_t RUDP_MUXMODE_SERVER = 2;
 constexpr uint16_t RUDP_AUTO_VPORT_BASE = 0x2710;
+constexpr std::size_t RUDP_AUTO_VPORT_COUNT = 0x10000 - RUDP_AUTO_VPORT_BASE;
 constexpr int RUDP_MAX_BACKLOG = 0x80;
 
 constexpr int RUDP_POLL_OP_ADD = 1;
@@ -359,11 +361,10 @@ int APS5_VABI sceRudpBind(int ctxId, int socketId, uint16_t vport, uint8_t muxMo
     if (muxMode == RUDP_MUXMODE_SERVER) {
         if (vport == 0) {
             vport = socket.lastVport;
+            std::size_t tried = 0;
             do {
-                if (vport == std::numeric_limits<uint16_t>::max()) {
-                    throw std::runtime_error("sceRudpBind: an automatic vport past 0xFFFF");
-                }
-                ++vport;
+                if (tried++ == RUDP_AUTO_VPORT_COUNT) return RUDP_ERROR_VPORT_EXHAUSTED;
+                vport = vport == std::numeric_limits<uint16_t>::max() ? RUDP_AUTO_VPORT_BASE : static_cast<uint16_t>(vport + 1);
             } while (socket.vports.count(vport) != 0);
             socket.lastVport = vport;
         }

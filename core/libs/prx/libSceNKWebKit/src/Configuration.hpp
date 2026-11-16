@@ -26,6 +26,9 @@ public:
     bool rubberBandsAtLeft = true;
     bool rubberBandsAtRight = true;
     bool rubberBandsAtTop = true;
+    double pageZoomFactor = 1.0;
+    double textZoomFactor = 1.0;
+    bool supportsTextZoom = true;
 };
 class Preferences : public ObjectOf<ObjectType::Preferences> {};
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
