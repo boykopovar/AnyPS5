@@ -665,6 +665,17 @@ class LimitationTests(unittest.TestCase):
         self.assertTrue(check_skips.symlink_privilege_limitation('guest_kernel_sys_paths_symlinkat', message))
         self.assertFalse(check_skips.symlink_privilege_limitation('other_test', message))
         self.assertFalse(check_skips.symlink_privilege_limitation('guest_kernel_sys_paths_symlinkat', 'SKIP: something else\n'))
+class JUnitRefusalTests(unittest.TestCase):
+    def write(self, text):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        path = Path(directory.name) / 'report.xml'
+        path.write_text(text, encoding='utf-8')
+        return path
+
+    def test_skips_refuses_a_root_that_is_not_a_testsuite(self):
+        with self.assertRaisesRegex(ValueError, 'expected a JUnit testsuite'):
+            list(check_skips.skips(self.write('<other/>')))
 
 
 class DeviceLimitationsTests(unittest.TestCase):
