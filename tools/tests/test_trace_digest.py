@@ -1577,6 +1577,15 @@ class MarkdownTextTests(unittest.TestCase):
         self.assertEqual(trace_digest.markdown_text("a_b"), "a_b")
         self.assertEqual(trace_digest.markdown_text("_x"), "&#95;x")
 
+    def test_interval_number_accepts_finite_non_negative_numbers(self):
+        self.assertEqual(trace_digest.interval_number(0, "start"), 0)
+        self.assertEqual(trace_digest.interval_number(1.5, "start"), 1.5)
+
+    def test_interval_number_refuses_strings_booleans_and_non_finite_values(self):
+        for value in ("3", True, -1, float("nan"), float("inf")):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "finite non-negative"):
+                trace_digest.interval_number(value, "start")
+
 
 if __name__ == "__main__":
     unittest.main(defaultTest=os.environ.get("TRACE_DIGEST_TEST"))
