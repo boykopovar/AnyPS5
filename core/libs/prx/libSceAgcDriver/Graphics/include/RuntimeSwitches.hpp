@@ -20,6 +20,7 @@ enum class RuntimeSwitch : std::size_t {
     PipelineDispatchMisses,
     NoMemoPendingCollect,
     NoExtendedFastProofs,
+    TableSnapshot,
     Count,
 };
 
