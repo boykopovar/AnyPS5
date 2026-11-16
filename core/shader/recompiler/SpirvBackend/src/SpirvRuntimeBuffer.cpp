@@ -34,6 +34,7 @@ struct RuntimeDescriptor {
 struct RuntimeAddress {
     std::uint32_t guest;
     std::uint32_t inBounds;
+    std::uint32_t relative = 0u;
 };
 
 std::uint32_t field(SpirvEmitterState& state, std::uint32_t word, std::uint32_t offset, std::uint32_t count) {
@@ -223,7 +224,7 @@ RuntimeAddress byteAddress(SpirvValueEmitContext& context, const IrValue& instru
     auto inBounds = Select(state, boolean, equal(state, mode, constant(0u)), structured, indexInBounds);
     inBounds = Select(state, boolean, less(mode, constant(2u)), inBounds, Select(state, boolean, equal(state, mode, constant(2u)), nonzero(state, resource.records), raw));
     inBounds = both(state, resource.valid, both(state, nonzero(state, field(state, resource.word3, 12u, 7u)), inBounds));
-    return {byte, inBounds};
+    return {byte, inBounds, byte};
 }
 
 RuntimeAddress address(SpirvValueEmitContext& context, const IrValue& instruction, const RuntimeDescriptor& resource, std::uint32_t componentOffset, std::uint32_t bytes) {
@@ -231,7 +232,7 @@ RuntimeAddress address(SpirvValueEmitContext& context, const IrValue& instructio
     const auto offset = Binary(state, spv::OpIAdd, TypeU32(state), resource.offset != 0u ? resource.offset : context.Arg(instruction, 2u), ConstantU32(state, resource.offset != 0u ? componentOffset : context.Memory(instruction).offset + componentOffset));
     const auto bytesAddress = byteAddress(context, instruction, resource, offset, ConstantU32(state, bytes));
     if (!context.Memory(instruction).gpuDescriptor) return bytesAddress;
-    return {AddBdaAddress(context, instruction, resource.base, Unary(state, spv::OpUConvert, TypeScalarU64(state), bytesAddress.guest), false), bytesAddress.inBounds};
+    return {AddBdaAddress(context, instruction, resource.base, Unary(state, spv::OpUConvert, TypeScalarU64(state), bytesAddress.guest), false), bytesAddress.inBounds, bytesAddress.guest};
 }
 
 MemoryResourceAccess directAccess(SpirvValueEmitContext& context, const IrValue& instruction, bool wide = false, bool plainLoad = false) {
@@ -268,6 +269,24 @@ std::uint32_t baseMisalignment(SpirvValueEmitContext& context, const IrValue& in
     if (memory.kind == ResourceKind::ScalarBuffer) return ConstantU32(context.state, 0u);
     auto& state = context.state;
     return state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::BufferBase + memory.resource * PipelineSpecialization::BufferWords + 3u, 0u);
+}
+
+std::uint32_t elementAligned(SpirvValueEmitContext& context, const IrValue& instruction, const RuntimeDescriptor& resource, std::uint32_t relative, std::uint32_t alignment) {
+    auto& state = context.state;
+    const auto u32 = TypeU32(state);
+    const auto base = context.Memory(instruction).gpuDescriptor ? Unary(state, spv::OpUConvert, u32, resource.base) : baseMisalignment(context, instruction);
+    const auto mask = Binary(state, spv::OpISub, u32, alignment, ConstantU32(state, 1u));
+    return equal(state, Binary(state, spv::OpBitwiseAnd, u32, EmitAddU32(state, relative, base), mask), ConstantU32(state, 0u));
+}
+
+std::uint32_t genericAlignment(SpirvEmitterState& state, std::uint32_t packed, const std::array<std::uint32_t, 4>& bits) {
+    const auto u32 = TypeU32(state);
+    const auto four = ConstantU32(state, 4u);
+    auto total = bits[0];
+    for (std::uint32_t component = 1u; component < bits.size(); ++component) total = EmitAddU32(state, total, bits[component]);
+    const auto element = Select(state, u32, packed, four, Binary(state, spv::OpShiftRightLogical, u32, total, ConstantU32(state, 3u)));
+    const auto capped = Select(state, u32, Binary(state, spv::OpUGreaterThan, TypeBool(state), element, four), four, element);
+    return Select(state, u32, equal(state, capped, ConstantU32(state, 0u)), ConstantU32(state, 1u), capped);
 }
 
 std::uint32_t directWordIndex(SpirvEmitterState& state, const MemoryResourceAccess& access, std::uint32_t address) {
@@ -469,6 +488,7 @@ std::uint32_t formatted(SpirvValueEmitContext& context, const IrValue& instructi
         addresses[component] = address(context, instruction, resource, GetFormatComponentByteOffset(info, component), info.packedBitfield ? 4u : info.componentBits[component] / 8u);
         inBounds = both(state, inBounds, Binary(state, spv::OpLogicalOr, TypeBool(state), Unary(state, spv::OpLogicalNot, TypeBool(state), required[component]), addresses[component].inBounds));
     }
+    if (const auto alignment = std::min(info.byteSize, 4u); alignment > 1u) inBounds = both(state, inBounds, elementAligned(context, instruction, resource, addresses[0].relative, ConstantU32(state, alignment)));
     if (store) {
         const auto values = storeValues(state, data, components);
         EmitIfCondition(state, inBounds, [&] {
@@ -572,6 +592,7 @@ std::uint32_t genericFormattedStore(SpirvValueEmitContext& context, const IrValu
         }, [&] { return BdaConstant(state, 0u); });
         inBounds = Select(state, boolean, active, both(state, inBounds, addresses[component].inBounds), inBounds);
     }
+    inBounds = both(state, inBounds, elementAligned(context, instruction, resource, addresses[0].relative, genericAlignment(state, packed, bits)));
     const auto values = storeValues(state, data, components);
     EmitIfCondition(state, inBounds, [&] {
         std::array<std::uint32_t, 4> encoded{};
@@ -697,6 +718,7 @@ std::uint32_t genericFormattedLoad(SpirvValueEmitContext& context, const IrValue
         }
         inBounds = Select(state, boolean, required[component], both(state, inBounds, addresses[component].inBounds), inBounds);
     }
+    inBounds = both(state, inBounds, elementAligned(context, instruction, resource, addresses[0].relative, genericAlignment(state, packed, bits)));
     std::array<std::uint32_t, 4> values{};
     for (std::uint32_t component = 0; component < 4u; ++component) {
         values[component] = EmitValueOrZeroIfCondition(state, Select(state, boolean, required[component], inBounds, ConstantBool(state, false)), [&] {
