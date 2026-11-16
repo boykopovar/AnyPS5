@@ -1588,7 +1588,6 @@ int APS5_VABI _ZN6icu_6816ReorderingBuffer12skipPreviousEv_nid_postfix();
 int APS5_VABI _ZNK6icu_6810CharString11lastIndexOfEc_nid_postfix();
 int APS5_VABI _ZN6icu_6810Appendable15appendCodePointEi_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_h1PNh26pQx4_nid_no_patch();
-int APS5_VABI uprv_itou_nid_postfix();
 int APS5_VABI _ZN6icu_6822RuleBasedBreakIterator10dumpTablesEv_nid_postfix();
 int APS5_VABI udata_openSwapperForInputData_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_h6L3lSaKl0k_nid_no_patch();

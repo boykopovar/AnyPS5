@@ -6797,10 +6797,6 @@ int APS5_VABI sceIcuLegacyUnknown_h1PNh26pQx4_nid_no_patch() {
 }
 APS5_EXPORT("h1PNh26pQx4", sceIcuLegacyUnknown_h1PNh26pQx4_nid_no_patch);
 
-int APS5_VABI uprv_itou_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN6icu_6822RuleBasedBreakIterator10dumpTablesEv_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }

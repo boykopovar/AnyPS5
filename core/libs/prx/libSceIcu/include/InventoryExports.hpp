@@ -66,6 +66,7 @@ int APS5_VABI unorm2_getNFKDInstance();
 const char* APS5_VABI uprv_getDefaultLocaleID_nid_postfix();
 double APS5_VABI uprv_getRawUTCtime_nid_postfix();
 double APS5_VABI uprv_getUTCtime_nid_postfix();
+std::int32_t APS5_VABI uprv_itou_nid_postfix(char16_t* buffer, std::int32_t capacity, std::uint32_t value, std::uint32_t radix, std::int32_t minimumWidth);
 int APS5_VABI ures_getByKey();
 int APS5_VABI ures_getStringByKey();
 int APS5_VABI ures_open();
