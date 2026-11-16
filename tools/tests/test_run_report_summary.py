@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from tools import run_report_summary
 from tools.run_report_summary import render
 
 
@@ -310,6 +311,19 @@ class RunReportSummaryTests(unittest.TestCase):
                     self.assertEqual(result.returncode, 2)
                     self.assertEqual(result.stdout, "")
                     self.assertIn("run_report_summary:", result.stderr)
+
+
+class TextHelperTests(unittest.TestCase):
+    def test_text_replaces_control_characters_and_names_missing_values(self):
+        self.assertEqual(run_report_summary.text("a\tb\x01"), "a b ")
+        self.assertEqual(run_report_summary.text(""), "unknown")
+        self.assertEqual(run_report_summary.text(None), "unknown")
+
+    def test_number_text_prints_finite_numbers_and_names_the_rest(self):
+        self.assertEqual(run_report_summary.number_text(3), "3")
+        self.assertEqual(run_report_summary.number_text(2.5), "2.5")
+        self.assertEqual(run_report_summary.number_text(float("nan")), "unknown")
+        self.assertEqual(run_report_summary.number_text(True), "unknown")
 
 
 if __name__ == "__main__":
