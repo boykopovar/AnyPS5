@@ -415,3 +415,4 @@ On Linux x86-64, omit `CMAKE_OSX_ARCHITECTURES`; the full `BUILD_TESTING` build 
 ## Checker scripts
 
 - `tools/check_test_registration.py [build]` fails when a test executable is built but no ctest test runs it, or when a library source that defines exports is never compiled. `--list` and `--json` print the findings.
+- `tools/check_skips.py <junit> [--job linux|windows] [--require-tests]` fails when a test is skipped for a reason the job's device is not expected to hit.
