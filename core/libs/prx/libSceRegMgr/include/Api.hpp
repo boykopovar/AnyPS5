@@ -16,13 +16,13 @@ std::int32_t APS5_VABI sceRegMgrNonSysGetInt(std::int64_t key, std::int32_t type
 int APS5_VABI sceRegMgrCheckError(void);
 int APS5_VABI sceRegMgrCheckIntVal(void);
 int APS5_VABI sceRegMgrGetBinInitVal(void);
-int APS5_VABI sceRegMgrGetIntInitVal(void);
+int APS5_VABI sceRegMgrGetIntInitVal(std::uint32_t optionId, std::int32_t* outInt);
 int APS5_VABI sceRegMgrGetStrInitVal(void);
 int APS5_VABI sceRegMgrGetVersion(void);
-int APS5_VABI sceRegMgrIsChange(void);
+int APS5_VABI sceRegMgrIsChange(std::uint32_t optionId, std::uint32_t consumer);
 int APS5_VABI sceRegMgrEvtGetCnt(void);
 int APS5_VABI sceRegMgrEvtGetRegId(void);
-int APS5_VABI sceRegMgrResetVal(void);
+int APS5_VABI sceRegMgrResetVal(std::int32_t optionId, std::int32_t unk);
 int APS5_VABI sceRegMgrSetInitLevel(void);
 int APS5_VABI sceRegMgrSrvCnvRegionInt(void);
 int APS5_VABI sceRegMgrSrvCnvRegionStr(void);

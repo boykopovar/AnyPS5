@@ -38,11 +38,13 @@ def timeline_sequence(command, header):
                 line = line[:-2] + b"\n"
         if not line or len(line.rstrip(b"\n")) > 127:
             return 0
-        fields = re.fullmatch(rb"\s*(\+?[0-9]+)(?:\s+|(?=\+))(\+?[0-9]+)(?:\s+|(?=\+))(\+?[0-9]+)\s*", line.split(b"\0", 1)[0])
+        fields = re.fullmatch(rb"\s*(\+?[0-9]+)(?:\s+|(?=\+))(\+?[0-9]+)(?:\s+|(?=\+))(\+?[0-9]+)((?:(?:\s+|(?=\+))\+?[0-9]+){4})?\s*", line.split(b"\0", 1)[0])
         if fields is None:
             return 0
-        start, duration, buttons = [int(token) for token in fields.groups()]
+        start, duration, buttons = [int(token) for token in fields.groups()[:3]]
         if buttons & ~0x70fffe or not 1 <= duration <= 5000 or start < previous_end or start + duration > 3600000:
+            return 0
+        if fields.group(4) and any(int(axis) > 255 for axis in re.findall(rb"\+?[0-9]+", fields.group(4))):
             return 0
         previous_end = start + duration
     while tail := command.read(4096):

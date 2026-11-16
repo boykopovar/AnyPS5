@@ -1,5 +1,6 @@
 import argparse
 import collections
+import functools
 import importlib.util
 import json
 import os
@@ -37,7 +38,12 @@ class Build:
                               encoding=self.encoding, check=True).stdout
 
     def absolute(self, path):
-        return os.path.normpath(path if os.path.isabs(path) else os.path.join(self.path, path))
+        absolute = os.path.normpath(path if os.path.isabs(path) else os.path.join(self.path, path))
+        for root in (self.path, self.source):
+            real = real_path(root)
+            if inside(absolute, real) and not inside(absolute, root):
+                return root.rstrip(os.sep) + absolute[len(real.rstrip(os.sep)):]
+        return absolute
 
     def key(self, path):
         return os.path.normcase(self.absolute(path))
@@ -76,17 +82,13 @@ class Build:
         return nodes
 
     def leaves(self):
-        nodes = self.walk(["all"])
         leaves, todo, seen = set(), ["all"], set()
         while todo:
-            name = todo.pop()
-            if name in seen or name not in nodes:
-                continue
-            seen.add(name)
-            if nodes[name]["phony"]:
-                todo.extend(nodes[name]["inputs"])
-            else:
-                leaves.add(name)
+            batch = sorted(set(todo) - seen)
+            seen.update(batch)
+            nodes = self.query(batch) if batch else {}
+            todo = [i for t in batch if nodes.get(t, {}).get("phony") for i in nodes[t]["inputs"]]
+            leaves.update(t for t in batch if t in nodes and not nodes[t]["phony"])
         return sorted(leaves)
 
     def outputs(self, paths):
@@ -138,6 +140,11 @@ class Build:
     def target(self, test):
         command = test.get("command") or []
         return self.output(command[0]) if command else None
+
+
+@functools.lru_cache(maxsize=None)
+def real_path(path):
+    return os.path.realpath(path)
 
 
 def inside(path, root):

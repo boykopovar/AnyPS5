@@ -1,0 +1,15 @@
+add_library(libSceAc3Enc SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceAc3Enc PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceAc3Enc)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_ac3_enc_tests ${LIBS_INCLUDE_DIR}/tests/GuestAc3Enc.cpp)
+    target_include_directories(guest_ac3_enc_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_ac3_enc_tests PRIVATE libSceAc3Enc libc)
+    configure_windows_unwind(guest_ac3_enc_tests)
+    add_test(NAME guest_ac3_enc COMMAND guest_ac3_enc_tests)
+    if(WIN32)
+        set_tests_properties(guest_ac3_enc PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAc3Enc>")
+    endif()
+endif()

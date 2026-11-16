@@ -24,25 +24,22 @@ int APS5_VABI sceUserServiceSetA11yControllerLedBrightness_nid_no_patch() {
 }
 APS5_EXPORT("Aspwt4NNVto", sceUserServiceSetA11yControllerLedBrightness_nid_no_patch);
 
-int APS5_VABI sceUserServiceSetAccessibilityKeyremapEnableAston_nid_no_patch() {
+int APS5_VABI sceUserServiceSetAccessibilityKeyremapEnableAston() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("Q89EQaIzT0o", sceUserServiceSetAccessibilityKeyremapEnableAston_nid_no_patch);
 
-int APS5_VABI sceUserServiceSetHmd2CinematicAudioRotation_nid_no_patch() {
+int APS5_VABI sceUserServiceSetHmd2CinematicAudioRotation() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("1NGArQcf8aA", sceUserServiceSetHmd2CinematicAudioRotation_nid_no_patch);
 
 int APS5_VABI sceUserServiceSetHmd2HideCameraImage_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("jNsBCHVryzs", sceUserServiceSetHmd2HideCameraImage_nid_no_patch);
 
-int APS5_VABI sceUserServiceSetIsPersonalizedHrtfEnabled_nid_no_patch() {
+int APS5_VABI sceUserServiceSetIsPersonalizedHrtfEnabled() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("enesn4WCCAc", sceUserServiceSetIsPersonalizedHrtfEnabled_nid_no_patch);
 
 int APS5_VABI sceUserServiceSetNotificationSettings_4_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -59,10 +56,9 @@ int APS5_VABI sceUserServiceSetProControllerBtAddress_nid_no_patch() {
 }
 APS5_EXPORT("aKx9SVQFoXo", sceUserServiceSetProControllerBtAddress_nid_no_patch);
 
-int APS5_VABI sceUserServiceSetUserWithHearingAssist_nid_no_patch() {
+int APS5_VABI sceUserServiceSetUserWithHearingAssist() {
     NotImplemented_nid_no_patch(__func__);
 }
-APS5_EXPORT("O8g8pltXaSU", sceUserServiceSetUserWithHearingAssist_nid_no_patch);
 
 int APS5_VABI libSceUserServiceUnknown_0VWuaS7yx4Q_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);

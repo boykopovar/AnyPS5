@@ -85,6 +85,12 @@ void ElfReader::ValidateMagic() const {
     if (magic == 0x1d3d154f || magic == 0xeef51454) {
         throw RelinkerException("The input is a SELF container, not an ELF");
     }
+    if (magic == 0x4849467f) {
+        throw RelinkerException("The input is a PS5 package (FIH), not an ELF; use an extracted, decrypted ELF executable");
+    }
+    if (magic == 0x544e437f) {
+        throw RelinkerException("The input is a package container (CNT), not an ELF; use an extracted, decrypted ELF executable");
+    }
 
     if (_fileBuffer[0] != 0x7f || _fileBuffer[1] != 'E' ||
         _fileBuffer[2] != 'L' || _fileBuffer[3] != 'F') {
@@ -156,6 +162,10 @@ std::vector<ProgramHeader> ElfReader::ReadProgramHeaders() const {
     std::vector<ProgramHeader> relroProtections;
     for (auto& relro : headers) {
         if (relro.Type != PT_OS_RELRO || relro.MemorySize == 0) continue;
+        if (relro.FileSize > relro.MemorySize)
+            throw RelinkerException("PT_SCE_RELRO file size exceeds memory size", relro.Offset);
+        if (!_rangeFits(relro.Offset, relro.FileSize, _fileBuffer.size()))
+            throw RelinkerException("Segment offset out of bounds", relro.Offset);
         bool covered = false;
         for (const auto& load : headers) {
             if (load.Type != PT_LOAD || load.MemorySize == 0) continue;
@@ -166,10 +176,6 @@ std::vector<ProgramHeader> ElfReader::ReadProgramHeaders() const {
             covered = true;
         }
         if (!covered) {
-            if (relro.FileSize > relro.MemorySize)
-                throw RelinkerException("PT_SCE_RELRO file size exceeds memory size", relro.Offset);
-            if (!_rangeFits(relro.Offset, relro.FileSize, _fileBuffer.size()))
-                throw RelinkerException("Segment offset out of bounds", relro.Offset);
             auto protection = relro;
             protection.Type = PT_GNU_RELRO;
             protection.Flags = PF_R;
@@ -200,6 +206,17 @@ std::vector<ProgramHeader> ElfReader::ReadProgramHeaders() const {
         });
         if (!covered)
             throw RelinkerException("PT_TLS initialization image is outside PT_LOAD memory", tls.Offset);
+        const bool matches = std::any_of(headers.begin(), headers.end(), [&](const ProgramHeader& load) {
+            if (load.Type != PT_LOAD || tls.MappedAddress < load.MappedAddress) return false;
+            const auto relative = tls.MappedAddress - load.MappedAddress;
+            if (relative > load.MemorySize || tls.FileSize > load.MemorySize - relative) return false;
+            const auto fileBytes = relative < load.FileSize ? std::min(tls.FileSize, load.FileSize - relative) : 0;
+            const auto tlsBegin = _fileBuffer.begin() + tls.Offset;
+            if (fileBytes != 0 && !std::equal(tlsBegin, tlsBegin + fileBytes, _fileBuffer.begin() + load.Offset + relative)) return false;
+            return std::all_of(tlsBegin + fileBytes, tlsBegin + tls.FileSize, [](std::uint8_t value) { return value == 0; });
+        });
+        if (!matches)
+            throw RelinkerException("PT_TLS initialization image differs from PT_LOAD memory", tls.Offset);
     }
 
     return headers;
