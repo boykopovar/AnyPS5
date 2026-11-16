@@ -2,13 +2,10 @@
 
 namespace Agc::Command {
 
-std::uint32_t* WriteJump(CommandBuffer* buffer, std::uint8_t chain, std::uint8_t cachePolicy, const std::uint32_t* target, std::uint32_t sizeInDwords, const char* function) {
+std::uint32_t* WriteJump(CommandBuffer* buffer, bool compute, std::uint8_t chain, std::uint8_t cachePolicy, const std::uint32_t* target, std::uint32_t sizeInDwords, const char* function) {
     const auto guestAddress = reinterpret_cast<std::uintptr_t>(target);
-    CheckBits(chain, 1, function);
-    CheckBits(cachePolicy, 3, function);
-    CheckBits(sizeInDwords, 0xfffffu, function);
-    Require((guestAddress & 3u) == 0, function, "misaligned jump target");
-    return Emit(buffer, 0x3fu, {static_cast<std::uint32_t>(guestAddress) & ~3u, static_cast<std::uint32_t>(guestAddress >> 32u), 0x0f200000u | (static_cast<std::uint32_t>(cachePolicy) << 28u) | (static_cast<std::uint32_t>(chain) << 20u) | sizeInDwords}, function);
+    const auto control = (compute ? 0x0f800000u : 0x0f200000u) | ((static_cast<std::uint32_t>(cachePolicy) & 3u) << 28u) | ((static_cast<std::uint32_t>(chain) & 1u) << 20u) | (sizeInDwords & 0xfffffu);
+    return Emit(buffer, 0x3fu, {static_cast<std::uint32_t>(guestAddress) & ~3u, static_cast<std::uint32_t>(guestAddress >> 32u), control}, function);
 }
 
 std::uint32_t* WriteRewind(CommandBuffer* buffer, std::uint32_t initialState, const char* function) {
