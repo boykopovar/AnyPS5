@@ -1238,6 +1238,11 @@ void CheckKernelEnvironment() {
     Require(Kenv(get, "anyps5.alpha", buffer, sizeof(buffer)) == -1 && Error() == 2);
     Require(Kenv(get, longestName.c_str(), buffer, sizeof(buffer)) == -1 && Error() == 2);
     Require(Kenv(get, longName.c_str(), buffer, sizeof(buffer)) == -1 && Error() == 63);
+    GuardedPaths guards;
+    char* const unterminated = guards.Unreadable() - longName.size();
+    std::memcpy(unterminated, longName.data(), longName.size());
+    Require(Kenv(get, unterminated, buffer, sizeof(buffer)) == -1 && Error() == 63);
+    Require(Kenv(get, unterminated + 1, buffer, sizeof(buffer)) == -1 && Error() == 14);
     Require(Kenv(get, nullptr, buffer, sizeof(buffer)) == -1 && Error() == 14);
     Require(Kenv(get, reinterpret_cast<const char*>(0x10), buffer, sizeof(buffer)) == -1 && Error() == 14);
     Require(Kenv(4, "anyps5.alpha", buffer, sizeof(buffer)) == -1 && Error() == 22);
