@@ -358,6 +358,12 @@ class CheckMappingTests(unittest.TestCase):
         self.assertEqual(pr_ready.check_of({'__typename': 'StatusContext', 'context': 'ci', 'state': 'SUCCESS'})['conclusion'], 'success')
         self.assertEqual(pr_ready.check_of({'__typename': 'StatusContext', 'context': 'ci', 'state': 'ERROR'})['conclusion'], 'failure')
 
+    def test_check_of_maps_check_runs_and_refuses_non_objects(self):
+        run = pr_ready.check_of({'databaseId': 7, 'name': 'build', 'status': 'COMPLETED', 'conclusion': 'SUCCESS'})
+        self.assertEqual(run, {'id': 7, 'name': 'build', 'done': True, 'conclusion': 'success'})
+        with self.assertRaisesRegex(ValueError, 'check is not an object'):
+            pr_ready.check_of([])
+
 
 if __name__ == "__main__":
     unittest.main()
