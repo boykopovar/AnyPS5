@@ -249,7 +249,7 @@ int APS5_VABI OCSP_cert_to_id_nid_postfix(void);
 int APS5_VABI OCSP_resp_find_status_nid_postfix(LibreSslOcspBasicResponse* bs, OCSP_CERTID* id, int* status, int* reason, Asn1String** revtime, Asn1String** thisupd, Asn1String** nextupd);
 const char* APS5_VABI OpenSSL_version_nid_postfix(int type);
 int APS5_VABI PEM_read_RSAPrivateKey_nid_disambig1_nid_postfix(void);
-int APS5_VABI PKCS7_free_nid_postfix(void);
+void APS5_VABI PKCS7_free_nid_postfix(void* pkcs7);
 void APS5_VABI PKCS8_PRIV_KEY_INFO_free_nid_postfix(LibreSsl3Pkcs8PrivKeyInfo* info);
 int APS5_VABI RSA_check_key_nid_postfix(const LibreSsl3Rsa* rsa);
 void APS5_VABI RSA_get0_key_nid_postfix(const LibreSsl3Rsa* rsa, const void** n, const void** e, const void** d);
