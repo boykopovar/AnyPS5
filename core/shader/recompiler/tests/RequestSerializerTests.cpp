@@ -891,12 +891,13 @@ int VerifyVersion56Compatibility() {
         const auto replay35 = serializer.Deserialize(EncodeBase64(version35));
         Require(replay35.request.target.spannedWaves == spanned && !replay35.request.target.float32FlushToZero);
         request.target.spannedAnySubgroup = spanned;
-        const auto version62 = DecodeBase64(serializer.Serialize(request));
-        Require(version62[4] == 62u && version62.back() == (spanned ? 1u : 0u));
-        Require(serializer.Deserialize(EncodeBase64(version62)).request.target.spannedAnySubgroup == spanned);
-        auto version57 = version62;
+        const auto version64 = DecodeBase64(serializer.Serialize(request));
+        const auto constantBytes = 16u * static_cast<std::size_t>(std::ranges::count_if(request.context.pixel->targetMerges, [](const auto& merge) { return merge.mask != 0u; }));
+        Require(version64[4] == 64u && version64[version64.size() - 1u - constantBytes] == (spanned ? 1u : 0u));
+        Require(serializer.Deserialize(EncodeBase64(version64)).request.target.spannedAnySubgroup == spanned);
+        auto version57 = version64;
         version57[4] = 57u;
-        version57.pop_back();
+        version57.resize(version57.size() - 1u - constantBytes);
         const auto replay57 = serializer.Deserialize(EncodeBase64(version57));
         Require(replay57.request.target.float32FlushToZero && !replay57.request.target.spannedAnySubgroup);
         const auto replay56 = serializer.Deserialize(SerializeVersion56(request));
