@@ -1870,6 +1870,14 @@ class JobManagerModuleRefusalTests(unittest.TestCase):
         process.assert_not_called()
 
 
+class DecryptedCheckTests(unittest.TestCase):
+    def test_check_decrypted_refuses_when_every_load_segment_is_encrypted(self):
+        uniform = bytes(range(256)) * 256
+        headers = [{'type': 1, 'size': len(uniform), 'source': 0, 'index': 0}]
+        with self.assertRaisesRegex(unwrap_self.Refused, 'every load segment looks encrypted'):
+            unwrap_self.check_decrypted(uniform, headers)
+
+
 if __name__ == "__main__":
     selected_test = os.environ.get("UNWRAP_SELF_TEST")
     unittest.main(argv=[sys.argv[0], selected_test] if selected_test else None)
