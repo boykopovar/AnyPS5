@@ -7368,7 +7368,7 @@ void ShaderResources::requireGuestBuffers(std::span<const MovedBuffer> moved) co
         const auto override = std::find_if(moved.begin(), moved.end(), [&](const MovedBuffer& entry) { return entry.allocation == index; });
         const auto address = override != moved.end() ? override->address : item.address;
         const auto bytes = override != moved.end() ? override->size : item.size;
-        RequireNoResidentDepthRead_nid_no_patch(address, bytes, htileClear);
+        RequireNoResidentDepthRead_nid_no_patch(address, bytes, htileClear, true, item.written ? DepthReadCause::Write : DepthReadCause::Access);
         RequireNoMultisampleColorTarget(address, bytes, "a shader buffer access");
     }
 }

@@ -1430,6 +1430,14 @@ public:
         capturePublication();
     }
 
+    bool GuestReplacedSincePublication() {
+        if (target.samples == 1u || !samplingActive || !sampling.refusal.empty() || hostWritten->load(std::memory_order_acquire) || publicationInProgress) return false;
+        if (clearPending || clearGeneration != 0u || stencilClearGeneration != 0u || pendingClear != 0u) return false;
+        if (sampling.aliasDepth || sampling.aliasStencil || sampling.depthAlias || sampling.stencilAlias) return false;
+        for (const auto& range : sampling.initial) GuestMemory::CollectWrites(range.address, range.bytes);
+        return !GuestMemory::UnchangedSinceAll(sampling.initial);
+    }
+
     bool GuestHoldsSamples() const {
         return target.samples != 1u && uniformPlaneTarget(target) && samplingActive && sampling.refusal.empty() && !hostWritten->load(std::memory_order_acquire);
     }
@@ -3245,7 +3253,7 @@ bool DepthSurface::PublishToGuest(DepthReadCause cause) {
                             if (current[index][offset] != result[index][offset]) tookGuest[index] = true;
                             result[index][offset] = current[index][offset];
                         } else if (!GuestMemory::UnchangedSinceLastCollect(plane.range.address + offset, 1u, plane.range.generation)) {
-                            Require(cause != DepthReadCause::Access, "native multisample depth publication cannot distinguish an unwritten byte from a same-value guest store");
+                            Require(cause != DepthReadCause::Access && cause != DepthReadCause::Write, "native multisample depth publication cannot distinguish an unwritten byte from a same-value guest store");
                             tookGuest[index] = true;
                             result[index][offset] = current[index][offset];
                         }
@@ -3824,7 +3832,7 @@ void RequireNoResidentDepthRead_nid_no_patch(std::uint64_t address, std::size_t 
     }
     for (const auto& range : depthGuards()) {
         if (!overlaps(range) || !range.active->load(std::memory_order_acquire)) continue;
-        const bool replaced = cause == DepthReadCause::Attachment || (cause == DepthReadCause::Reuse && std::ranges::find(tookGuest, range.active) != tookGuest.end());
+        const bool replaced = cause == DepthReadCause::Attachment || cause == DepthReadCause::Write || (cause == DepthReadCause::Reuse && std::ranges::find(tookGuest, range.active) != tookGuest.end());
         if (replaced || !range.hostEverWritten->load(std::memory_order_acquire)) range.active->store(false, std::memory_order_release);
     }
     const auto removed = std::erase_if(depthGuards(), [](const auto& range) { return !range.active->load(std::memory_order_acquire); });
@@ -3968,7 +3976,7 @@ VkImageView DepthSurfaceViewWithStencilWriteIntent(const Context& context, const
     for (const auto& candidate : surfaces()) {
         if (surface == nullptr && candidate->active->load(std::memory_order_acquire) && candidate->context.device == context.device && sameLayoutWithin(candidate->target, target)) surface = candidate.get();
     }
-    if (surface != nullptr && overwrittenStencil && surface->PublishedUnderStorage()) {
+    if (surface != nullptr && ((overwrittenStencil && surface->PublishedUnderStorage()) || surface->GuestReplacedSincePublication())) {
         std::unique_lock guardLock(depthGuardMutex());
         surface->active->store(false, std::memory_order_release);
         std::erase_if(depthGuards(), [&](const auto& range) { return range.active == surface->active; });

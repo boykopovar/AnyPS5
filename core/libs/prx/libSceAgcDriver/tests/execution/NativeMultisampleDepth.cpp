@@ -1455,7 +1455,10 @@ void CheckDepthPublication(Context context, std::uint32_t samples, PublicationWr
         } else AgcDriver::GuestMemory::Read(addresses[trigger] + (first == 0u ? last : 0u), probe);
         Require(DepthSurfaceAt(target.address), "a published native D32S8 owner was retired");
         if (importedAlias) Require(!MultisampleColorTargetOver(alias.address, aliasBytes).has_value(), "a publication over a colour target the depth surface had taken in kept that colour target resident");
-        if (write == PublicationWrite::Pages || write == PublicationWrite::Queued || (write >= PublicationWrite::DriverSameDepth && write <= PublicationWrite::DriverSameHtile)) TargetRefuses([&] { DepthSurfaceView(context, target); }, "guest writes over native multisample depth are not implemented");
+        if (write == PublicationWrite::Pages || write == PublicationWrite::Queued || (write >= PublicationWrite::DriverSameDepth && write <= PublicationWrite::DriverSameHtile)) {
+            const auto before = DepthSurfacesSerial();
+            Require(DepthSurfaceView(context, target) != view && DepthSurfacesSerial() == before + 1u, "a published native D32S8 owner whose planes the guest wrote since was not imported again");
+        }
         else if (unmap == PublicationUnmap::None) Require(DepthSurfaceView(context, target) == view, "a published native D32S8 owner was not reused");
         protectedHoles.Restore();
         for (std::size_t index = 0u; index < addresses.size(); ++index) {
@@ -4782,7 +4785,7 @@ void CheckElidedFillOverArmedClear(Context context, std::uint32_t samples) {
     std::printf("Native D32 with HTILE, samples=%u: a recorded fill superseded an armed clear dispatch while an elided fill kept its pending-write refusal\n", samples);
 }
 
-enum class ReuseCase { VertexRead, IndexRead, StorageTexture, NewDepthTarget, CpuRead, DmaCopy, Rebind, ShaderBufferRead, TextureRead, DecidedVertexRead, DecidedNewDepthTarget };
+enum class ReuseCase { VertexRead, IndexRead, StorageTexture, NewDepthTarget, CpuRead, DmaCopy, Rebind, ShaderBufferRead, ShaderBufferWrite, GuestWriteAfterRead, UndecidedShaderBufferWrite, TextureRead, DecidedVertexRead, DecidedNewDepthTarget };
 void CheckReusePublication(Context context, ReuseCase use) {
     constexpr std::uint32_t samples = 4u;
     constexpr VkExtent2D extent{256u, 64u};
@@ -4824,8 +4827,11 @@ void CheckReusePublication(Context context, ReuseCase use) {
     const auto drawn = guestStencil();
     const auto serial = DepthSurfacesSerial();
     if (use == ReuseCase::Rebind) Require(DepthSurfaceView(context, target) == view && DepthSurfacesSerial() == serial && guestStencil() == drawn, "rebinding the same native depth identity imported or published it");
-    if (use == ReuseCase::ShaderBufferRead || use == ReuseCase::TextureRead || use == ReuseCase::DecidedVertexRead || use == ReuseCase::DecidedNewDepthTarget) {
-        if (use == ReuseCase::ShaderBufferRead) {
+    if (use == ReuseCase::ShaderBufferRead || use == ReuseCase::ShaderBufferWrite || use == ReuseCase::GuestWriteAfterRead || use == ReuseCase::TextureRead || use == ReuseCase::DecidedVertexRead || use == ReuseCase::DecidedNewDepthTarget) {
+        if (use == ReuseCase::ShaderBufferWrite) {
+            RequireNoResidentDepthRead_nid_no_patch(target.address, depthBytes, std::nullopt, true, DepthReadCause::Write);
+            RequireNoMultisampleColorTarget(target.address, depthBytes, "a shader buffer write");
+        } else if (use == ReuseCase::ShaderBufferRead || use == ReuseCase::GuestWriteAfterRead) {
             RequireNoResidentDepthRead_nid_no_patch(target.address, depthBytes, std::nullopt);
             RequireNoMultisampleColorTarget(target.address, depthBytes, "a shader buffer access");
         } else if (use == ReuseCase::TextureRead) RequireNoMultisampleTarget(target.address, depthBytes, "a texture read");
@@ -4845,6 +4851,23 @@ void CheckReusePublication(Context context, ReuseCase use) {
                 }
             }
         }
+        if (use == ReuseCase::ShaderBufferWrite) {
+            Require(!DepthSurfaceAt(target.address), "a shader buffer write over a published native depth owner left it resident");
+            const float written = 0.5f;
+            std::memcpy(reinterpret_cast<void*>(target.address + depthLayout.Offset(0u, 0u, 0u, 0u)), &written, sizeof(written));
+            const auto before = DepthSurfacesSerial();
+            Require(DepthSurfaceView(context, target) != VK_NULL_HANDLE && DepthSurfacesSerial() == before + 1u, "binding a native depth target after a shader buffer write over its planes did not import the guest bytes");
+            return;
+        }
+        if (use == ReuseCase::GuestWriteAfterRead) {
+            Require(DepthSurfaceAt(target.address), "a shader buffer read retired the published native depth owner");
+            const float written = 0.5f;
+            std::memcpy(reinterpret_cast<void*>(target.address + depthLayout.Offset(0u, 0u, 0u, 0u)), &written, sizeof(written));
+            const auto before = DepthSurfacesSerial();
+            const auto rebound = DepthSurfaceView(context, target);
+            Require(rebound != VK_NULL_HANDLE && rebound != view && DepthSurfacesSerial() == before + 1u, "binding a published native depth owner after a guest write over its planes did not import the guest bytes");
+            return;
+        }
         if (use == ReuseCase::DecidedNewDepthTarget) {
             const auto before = DepthSurfacesSerial();
             Require(DepthSurfaceView(context, target) != view && DepthSurfacesSerial() == before + 1u, "a new native depth attachment over the planes of a kept owner of another identity left it resident");
@@ -4858,9 +4881,10 @@ void CheckReusePublication(Context context, ReuseCase use) {
     const auto held = guestStencil();
     constexpr std::string_view refusal = "native multisample depth publication cannot distinguish an unwritten byte from a same-value guest store";
     std::vector<std::byte> page(4096u);
-    if (use == ReuseCase::CpuRead || use == ReuseCase::DmaCopy || use == ReuseCase::Rebind) {
-        if (use != ReuseCase::DmaCopy) TargetRefuses([&] { AgcDriver::GuestMemory::Read(target.stencilAddress, page); }, refusal);
-        else TargetRefuses([&] { RequireNoMultisampleTarget(target.stencilAddress, page.size(), "a DMA copy"); }, refusal);
+    if (use == ReuseCase::CpuRead || use == ReuseCase::DmaCopy || use == ReuseCase::Rebind || use == ReuseCase::UndecidedShaderBufferWrite) {
+        if (use == ReuseCase::DmaCopy) TargetRefuses([&] { RequireNoMultisampleTarget(target.stencilAddress, page.size(), "a DMA copy"); }, refusal);
+        else if (use == ReuseCase::UndecidedShaderBufferWrite) TargetRefuses([&] { RequireNoResidentDepthRead_nid_no_patch(target.stencilAddress, page.size(), std::nullopt, true, DepthReadCause::Write); }, refusal);
+        else TargetRefuses([&] { AgcDriver::GuestMemory::Read(target.stencilAddress, page); }, refusal);
         Require(guestStencil() == held, "a refused native depth publication committed guest bytes");
         Require(DepthSurfaceAt(target.address), "a refused native depth publication retired its owner");
         return;
@@ -4974,7 +4998,7 @@ int main(int argc, char** argv) {
                 if (!supported(samples) || (context.limits.framebufferColorSampleCounts & samples) == 0u) continue;
                 for (const auto write : {PublicationWrite::AliasImported, PublicationWrite::AliasDrawnAfterImport, PublicationWrite::StencilAliasImported, PublicationWrite::StencilAliasRefilled, PublicationWrite::StencilAliasDrawnAfterImport}) CheckDepthPublication(publishing, samples, write, true);
             }
-            for (const auto use : {ReuseCase::VertexRead, ReuseCase::IndexRead, ReuseCase::StorageTexture, ReuseCase::NewDepthTarget, ReuseCase::CpuRead, ReuseCase::DmaCopy, ReuseCase::Rebind, ReuseCase::ShaderBufferRead, ReuseCase::TextureRead, ReuseCase::DecidedVertexRead, ReuseCase::DecidedNewDepthTarget}) CheckReusePublication(publishing, use);
+            for (const auto use : {ReuseCase::VertexRead, ReuseCase::IndexRead, ReuseCase::StorageTexture, ReuseCase::NewDepthTarget, ReuseCase::CpuRead, ReuseCase::DmaCopy, ReuseCase::Rebind, ReuseCase::ShaderBufferRead, ReuseCase::ShaderBufferWrite, ReuseCase::GuestWriteAfterRead, ReuseCase::UndecidedShaderBufferWrite, ReuseCase::TextureRead, ReuseCase::DecidedVertexRead, ReuseCase::DecidedNewDepthTarget}) CheckReusePublication(publishing, use);
             return 0;
         }
         CheckDrawFeedback();
