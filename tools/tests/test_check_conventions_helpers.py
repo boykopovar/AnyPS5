@@ -29,5 +29,23 @@ class HelperTests(unittest.TestCase):
         self.assertIsNone(check_conventions.symbol_nid("_nid_postfix"))
 
 
+    def test_is_debt_accepts_only_top_level_debt_files(self):
+        self.assertTrue(check_conventions.is_debt(check_conventions.DEBT))
+        self.assertTrue(check_conventions.is_debt("docs/dev/debt/libSceFoo.md"))
+        self.assertFalse(check_conventions.is_debt("docs/dev/debt/changes/x.md"))
+        self.assertFalse(check_conventions.is_debt("docs/dev/debt/sub/x.md"))
+        self.assertFalse(check_conventions.is_debt("docs/other.md"))
+
+    def test_is_debt_fragment_accepts_only_direct_fragments(self):
+        self.assertTrue(check_conventions.is_debt_fragment("docs/dev/debt/changes/x.md"))
+        self.assertFalse(check_conventions.is_debt_fragment("docs/dev/debt/changes/sub/x.md"))
+        self.assertFalse(check_conventions.is_debt_fragment("docs/dev/debt/libSceFoo.md"))
+
+    def test_link_base_resolves_fragment_links_as_if_in_the_debt_folder(self):
+        self.assertEqual(check_conventions.link_base("docs/dev/debt/changes/x.md"),
+                         f"{check_conventions.DEBT_DIR}fragment.md")
+        self.assertEqual(check_conventions.link_base("docs/dev/BUILD.md"), "docs/dev/BUILD.md")
+
+
 if __name__ == "__main__":
     unittest.main()
