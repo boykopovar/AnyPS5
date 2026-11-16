@@ -2363,9 +2363,12 @@ bool Recorder::closeStoreRun(bool atSubmit) {
                 if (store.dumpTarget != 0) continue;
                 const VkDeviceSize storeEnd = store.offset + store.bytes.size();
                 if (std::any_of(run.recorded.begin(), run.recorded.end(), [&](const auto& earlier) { return std::get<0>(earlier) == store.buffer && store.offset < std::get<2>(earlier) && std::get<1>(earlier) < storeEnd; })) {
-                    recordBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+                    recordBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_READ_BIT);
                     ++barriers;
                     storeWawBarriers.fetch_add(1, std::memory_order_relaxed);
+                } else if (i != first) {
+                    recordBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_HOST_READ_BIT);
+                    ++barriers;
                 }
                 update(commands, store.buffer, store.offset, store.bytes.size(), store.bytes.data());
                 run.recorded.emplace_back(store.buffer, store.offset, storeEnd);
@@ -3894,6 +3897,21 @@ void Recorder::OnComplete(std::function<void()> action) {
     ensureOpen();
     open->completions.push_back(std::move(action));
     ++open->writeBackCompletionCount;
+    writeBackCompletions.fetch_add(1, std::memory_order_acq_rel);
+}
+
+void Recorder::OnWriteComplete(std::uint64_t address, std::size_t bytes, std::function<void()> action) {
+    const auto end = address + bytes;
+    Batch* holder = open != nullptr && overlaps(*open, address, end) ? open.get() : nullptr;
+    for (auto batch = inFlight.rbegin(); holder == nullptr && batch != inFlight.rend(); ++batch) {
+        if (overlaps(**batch, address, end)) holder = batch->get();
+    }
+    if (holder == nullptr) {
+        action();
+        return;
+    }
+    holder->completions.push_back(std::move(action));
+    ++holder->writeBackCompletionCount;
     writeBackCompletions.fetch_add(1, std::memory_order_acq_rel);
 }
 

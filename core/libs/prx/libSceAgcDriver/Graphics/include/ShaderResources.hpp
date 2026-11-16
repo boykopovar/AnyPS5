@@ -212,6 +212,7 @@ public:
         std::uint64_t unwatch = 0;
         std::uint64_t importSet = 0;
         std::uint64_t allocations = 0;
+        std::uint64_t retired = 0;
         std::uint64_t surfaces = 0;
         bool operator==(const ExitStamp&) const = default;
     };

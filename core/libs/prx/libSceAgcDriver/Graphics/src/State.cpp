@@ -1359,9 +1359,10 @@ std::optional<ShaderRecompiler::MeshConfiguration> StageMeshConfiguration(const 
 
 std::uint32_t StagePushLimit(const ShaderStages& stages, std::uint32_t pushOffset, bool depthRemap) {
     const bool preRasterization = pushOffset < PipelinePushSlotBytes;
-    if (stages.mesh || (stages.tessellationGeometry && preRasterization)) return ShaderRecompiler::MeshDrawPushOffsetBytes;
-    if (stages.tessellation && preRasterization) return ShaderRecompiler::TessellationLevelPushOffsetBytes;
-    return depthRemap ? ShaderRecompiler::DepthRemapPushOffsetBytes : PipelinePushSlotBytes;
+    auto limit = PipelinePushSlotBytes;
+    if (stages.mesh || (stages.tessellationGeometry && preRasterization)) limit = ShaderRecompiler::MeshDrawPushOffsetBytes;
+    else if (stages.tessellation && preRasterization) limit = ShaderRecompiler::TessellationLevelPushOffsetBytes;
+    return depthRemap ? std::min(limit, ShaderRecompiler::DepthRemapPushOffsetBytes) : limit;
 }
 
 bool DepthResummarizeDrawsNothing(const QueueState& queue) {
