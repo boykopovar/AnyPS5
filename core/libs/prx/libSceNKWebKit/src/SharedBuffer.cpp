@@ -191,7 +191,9 @@ void AppendSegment(SharedBuffer& buffer, CharVector&& data) {
     auto& segments = buffer.segments;
     if (segments.size == segments.capacity) Reserve(segments, std::max<std::size_t>(std::size_t(segments.size) + 1, std::max<std::size_t>(MinimumCapacity, segments.capacity + segments.capacity / 4 + 1)));
     const std::size_t length = data.size;
-    segments.buffer[segments.size++] = {buffer.size, CreateSegment(std::move(data))};
+    DataSegment* segment = CreateSegment(std::move(data));
+    segments.buffer[segments.size] = {buffer.size, segment};
+    ++segments.size;
     buffer.size += length;
 }
 
@@ -219,7 +221,9 @@ void Combine(const SharedBuffer& constBuffer) {
         combined.size += static_cast<unsigned>(size);
     }
     ClearSegments(buffer.segments);
-    buffer.segments.buffer[buffer.segments.size++] = {0, CreateSegment(std::move(combined))};
+    DataSegment* segment = CreateSegment(std::move(combined));
+    buffer.segments.buffer[0] = {0, segment};
+    buffer.segments.size = 1;
 }
 
 const char* Data(const SharedBuffer& buffer) {
