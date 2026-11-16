@@ -1566,5 +1566,17 @@ class IntervalSchemaTests(unittest.TestCase):
         self.assertIn("0-0", trace_digest.markdown_intervals(digest))
 
 
+class MarkdownTextTests(unittest.TestCase):
+    def test_markdown_text_escapes_a_leading_heading_or_list_marker(self):
+        self.assertEqual(trace_digest.markdown_text("# heading"), "&#35; heading")
+        self.assertEqual(trace_digest.markdown_text("- item"), "&#45; item")
+        self.assertEqual(trace_digest.markdown_text("1. item"), "&#49;. item")
+
+    def test_markdown_text_escapes_html_and_keeps_inner_underscores(self):
+        self.assertEqual(trace_digest.markdown_text("<b>"), "&lt;b&gt;")
+        self.assertEqual(trace_digest.markdown_text("a_b"), "a_b")
+        self.assertEqual(trace_digest.markdown_text("_x"), "&#95;x")
+
+
 if __name__ == "__main__":
     unittest.main(defaultTest=os.environ.get("TRACE_DIGEST_TEST"))
