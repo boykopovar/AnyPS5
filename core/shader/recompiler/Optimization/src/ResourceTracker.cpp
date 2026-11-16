@@ -1738,6 +1738,14 @@ private:
         return &selector;
     }
 
+    bool LaneInvariantDword(const IrValue& value) const {
+        if (value.Type() != IrType::U32) {
+            return false;
+        }
+        constexpr SrtWalker walker;
+        return walker.ValidateRuntimeValue(m_program.Resources(), &value);
+    }
+
     IrValue* LaneSelector(const std::vector<IrValue*>& tuple, IrValue& first, DescriptorWeb& web, IrValue& position) {
         IrBlock* block = first.Parent();
         const auto op = first.Opcode();
@@ -1757,7 +1765,7 @@ private:
                 if (select) {
                     right.push_back(value->Argument(2u));
                 }
-            } else if (value->HasImmediate() || (select && !value->IsPhi() && value->Opcode() != IrOpcode::ReadFirstLane)) {
+            } else if (value->HasImmediate() || LaneInvariantDword(*value) || (select && !value->IsPhi() && value->Opcode() != IrOpcode::ReadFirstLane)) {
                 left.push_back(value);
                 if (select) {
                     right.push_back(value);
