@@ -144,9 +144,26 @@ void Setup() {
     status = Success;
     utext_setup_nid_postfix(&stack, 8, &status);
     Require(closes == 2 && stack.extra == extra && stack.extraSize == 16 && static_cast<unsigned char*>(extra)[15] == 0, "setup keeps larger extra and zeroes it");
+    const auto releases = heap.releases;
+    const auto allocations = heap.allocations;
+    status = Success;
+    utext_setup_nid_postfix(&stack, 32, &status);
+    Require(status == Success && closes == 3 && heap.releases == releases + 1 && heap.allocations == allocations + 1 && heap.lastSize == 32, "setup frees a separate extra block before growing it");
+    Require(stack.flags == 6 && stack.extraSize == 32 && Live(stack.extra) && static_cast<unsigned char*>(stack.extra)[31] == 0, "setup grows separate extra space");
+    extra = stack.extra;
     stack.functions = nullptr;
     Close(&stack);
     Require(!Live(extra), "separate extra space released");
+
+    status = Success;
+    text = utext_setup_nid_postfix(nullptr, 8, &status);
+    void* inlineExtra = text->extra;
+    text->functions = &functions;
+    const auto inlineReleases = heap.releases;
+    utext_setup_nid_postfix(text, 16, &status);
+    Require(status == Success && closes == 4 && heap.releases == inlineReleases && text->extra != inlineExtra && Live(text->extra), "setup does not free inline extra space when growing");
+    Require(text->flags == 7 && text->extraSize == 16, "setup marks grown extra space as separate");
+    Close(text);
 
     Text closed = Initializer();
     status = Success;
@@ -186,6 +203,11 @@ void UChars() {
     Require(utext_extract_nid_postfix(text, 3, 1, buffer, 8, &status) == 0 && status == IllegalArgument, "extract reversed range");
     status = Success;
     Require(utext_extract_nid_postfix(text, 0, 1, nullptr, 1, &status) == 0 && status == IllegalArgument, "extract null buffer");
+    status = Success;
+    Require(utext_extract_nid_postfix(text, 0, 5, nullptr, 0, &status) == 5 && status == BufferOverflow, "preflight extract counts the units");
+    Require(text->chunkOffset == 5, "preflight extract moves the index to the limit");
+    status = Success;
+    Require(utext_extract_nid_postfix(text, 1, 1, nullptr, 0, &status) == 0 && status == NotTerminated, "empty preflight extract");
     Require(!text->functions->replace && !text->functions->copy && !text->functions->mapOffsetToNative, "UChars is read only");
 
     status = Success;
@@ -229,6 +251,43 @@ void UChars() {
     Close(&reused);
 
     status = Success;
+    utext_openUChars_nid_postfix(&reused, units, -1, &status);
+    clone = utext_clone_nid_postfix(nullptr, &reused, 1, 0, &status);
+    Require(status == Success && reused.a == -1 && utext_isLengthExpensive_nid_postfix(&reused), "deep clone leaves the source unscanned");
+    Require(clone->a == 5 && !utext_isLengthExpensive_nid_postfix(clone) && clone->context != units && Live(clone->context), "deep clone measures an unscanned text");
+    const auto* measured = static_cast<const char16_t*>(clone->context);
+    Require(std::equal(units, units + 5, measured) && measured[5] == 0, "deep clone copies up to the terminator");
+    Require((Points(clone) == std::vector<std::int32_t>{u'a', 0x1f600, u'b', 0xdc00}), "deep clone of an unscanned text iterates");
+    Close(clone);
+    status = Success;
+    Require(utext_extract_nid_postfix(&reused, 0, 100, nullptr, 0, &status) == 5 && status == BufferOverflow, "preflight extract of an unscanned text");
+    Require(reused.a == 5 && reused.chunkNativeLimit == 5, "preflight extract finds the terminator");
+    Close(&reused);
+
+    char16_t inner[8];
+    Text holderText = Initializer();
+    holderText.extra = inner;
+    holderText.extraSize = sizeof(inner);
+    Text* holder = &holderText;
+    status = Success;
+    utext_openUChars_nid_postfix(holder, inner, 2, &status);
+    inner[0] = u'h';
+    inner[1] = u'i';
+    holder->p = inner + 3;
+    holder->q = &holder->b;
+    holder->r = units;
+    status = Success;
+    clone = utext_clone_nid_postfix(nullptr, holder, 0, 0, &status);
+    Require(status == Success && clone->extraSize == 16 && clone->extra == reinterpret_cast<char*>(clone) + 144, "clone allocates the source's extra space");
+    Require(clone->context == clone->extra && clone->chunkContents == clone->extra, "clone moves pointers into the extra space");
+    Require(clone->p == static_cast<char16_t*>(clone->extra) + 3 && clone->q == &clone->b, "clone moves pointers into the extra space and the UText");
+    Require(clone->r == units && holder->context == inner, "clone keeps outside pointers and the source");
+    inner[0] = u'X';
+    Require((Points(clone) == std::vector<std::int32_t>{u'h', u'i'}), "clone reads its own extra space");
+    Close(clone);
+    Close(holder);
+
+    status = Success;
     Text* empty = utext_openUChars_nid_postfix(nullptr, nullptr, 0, &status);
     Require(status == Success && utext_nativeLength_nid_postfix(empty) == 0 && utext_next32_nid_postfix(empty) == -1, "null string of length 0 is empty");
     Close(empty);
@@ -263,7 +322,18 @@ void UnicodeStrings() {
     status = Success;
     Require(utext_extract_nid_postfix(text, -1, 2, buffer, 8, &status) == 0 && status == IndexOutOfBounds, "extract negative start");
     status = Success;
+    Require(utext_extract_nid_postfix(text, 0, 9, nullptr, 0, &status) == 5 && status == BufferOverflow && text->chunkOffset == 0, "preflight extract counts the units");
+    status = Success;
+    Require(utext_extract_nid_postfix(text, 2, 2, nullptr, 0, &status) == 0 && status == NotTerminated && text->chunkOffset == 1, "empty preflight extract snaps the index");
+    status = Success;
     Require(utext_replace_nid_postfix(text, 0, 1, u"z", 1, &status) == 0 && status == NoWritePermission, "const UnicodeString is not writable");
+
+    status = Success;
+    Text* shallow = utext_clone_nid_postfix(nullptr, text, 0, 0, &status);
+    Require(status == Success && shallow->context == &string && !(shallow->providerProperties & 32) && !utext_isWritable_nid_postfix(shallow), "shallow clone shares the string");
+    Require(shallow->chunkContents == string.Buffer() && (Points(shallow) == std::vector<std::int32_t>{u'a', 0x1f600, u'b', u'c'}), "shallow clone reads the source");
+    Close(shallow);
+    Require(string.Length() == 5 && string.Buffer()[0] == u'a', "closing a shallow clone keeps the string");
 
     status = Success;
     Text* clone = utext_clone_nid_postfix(nullptr, text, 1, 0, &status);
