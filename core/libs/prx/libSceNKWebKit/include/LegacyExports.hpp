@@ -1475,7 +1475,7 @@ int APS5_VABI _ZN7WebCore10ISOFullBoxD2Ev();
 int APS5_VABI _ZN7WebCore11DisplayList4ItemD1Ev();
 int APS5_VABI _ZN7WebCore11DisplayList14DrawingContextC1ERKNS_9FloatSizeEPNS0_8Recorder8ObserverE();
 int APS5_VABI _ZN7Nicosia5Scene5StateD2Ev();
-int APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient32assignIdentifierToInitialRequestEmPNS_14DocumentLoaderERKNS_15ResourceRequestE();
+void APS5_VABI _ZN7WebCore22EmptyFrameLoaderClient32assignIdentifierToInitialRequestEmPNS_14DocumentLoaderERKNS_15ResourceRequestE();
 int APS5_VABI _ZN7WebCore4PathC1EOS0_();
 int APS5_VABI _ZN7WebCore33pageConfigurationWithEmptyClientsEN3PAL9SessionIDE();
 int APS5_VABI WKViewPaintToCurrentGLContext();
@@ -2249,7 +2249,6 @@ int APS5_VABI _ZN7WebCore15JSSVGSVGElementC1EPN3JSC9StructureERNS_17JSDOMGlobalO
 int APS5_VABI _ZN7WebCore10ISOFullBoxD0Ev();
 void APS5_VABI _ZN7WebCore17LibWebRTCProvider24registerWebKitVP9DecoderEv();
 int APS5_VABI _ZN7WebCore15AsyncFileStream4readEPci();
-int APS5_VABI _ZN7WebCore9GLContext20isExtensionSupportedEPKcS2_();
 int APS5_VABI _ZN7WebCore9FrameView29layoutOrVisualViewportChangedEv();
 int APS5_VABI _ZN7WebCore11DisplayList7ClipOutD0Ev();
 int APS5_VABI _ZN7WebCore16JSXMLHttpRequest6createEPN3JSC9StructureEPNS_17JSDOMGlobalObjectEON3WTF3RefINS_14XMLHttpRequestENS6_13DumbPtrTraitsIS8_EEEE();
