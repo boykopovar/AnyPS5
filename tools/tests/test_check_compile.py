@@ -1209,5 +1209,10 @@ class CheckCompileLauncherTests(unittest.TestCase):
             self.assertEqual(check_compile.entry_key(outside, root), "/elsewhere/b.cpp")
 
 
+    @unittest.skipIf(os.name == "nt", "the POSIX command splitter is used off Windows")
+    def test_command_arguments_splits_quoted_words(self):
+        self.assertEqual(check_compile.command_arguments("cc -c 'a b.cpp' -o x.o"), ["cc", "-c", "a b.cpp", "-o", "x.o"])
+
+
 if __name__ == "__main__":
     unittest.main()
