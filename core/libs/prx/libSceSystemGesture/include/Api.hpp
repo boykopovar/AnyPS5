@@ -26,6 +26,7 @@ int APS5_VABI sceSystemGestureUpdateAllTouchRecognizer(int32_t gestureHandle);
 int APS5_VABI sceSystemGestureUpdatePrimitiveTouchRecognizer(int32_t gestureHandle, const SystemGestureTouchPadData* input);
 int APS5_VABI sceSystemGestureUpdateTouchRecognizer(int32_t gestureHandle, SystemGestureTouchRecognizer* recognizer);
 int APS5_VABI sceSystemGestureUpdateTouchRecognizerRectangle(int32_t gestureHandle, SystemGestureTouchRecognizer* recognizer, const SystemGestureRectangle* rectangle);
+int APS5_VABI sceSystemGestureSetTouchAreaInformation(int32_t gestureHandle, const void* information);
 int APS5_VABI sceSystemGestureDebugGetVersion();
 
 }

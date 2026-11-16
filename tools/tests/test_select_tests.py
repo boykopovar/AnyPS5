@@ -23,8 +23,8 @@ PROJECT = {
                             "add_test(NAME alpha_data COMMAND alpha_tests ${CMAKE_SOURCE_DIR}/data/input.txt)\n",
     "alpha/main.c": "#include \"alpha.h\"\nint main(void) { return ALPHA; }\n",
     "alpha/alpha.h": "#define ALPHA 0\n",
-    "beta/CMakeLists.txt": "add_executable(beta_tests main.c)\nadd_executable(setup_tests setup.c)\n"
-                           "add_test(NAME beta COMMAND beta_tests)\nadd_test(NAME beta_setup COMMAND setup_tests)\n"
+    "beta/CMakeLists.txt": "add_executable(beta_tests main.c)\nadd_executable(fixture_prepare_tests setup.c)\n"
+                           "add_test(NAME beta COMMAND beta_tests)\nadd_test(NAME beta_setup COMMAND fixture_prepare_tests)\n"
                            "set_tests_properties(beta_setup PROPERTIES FIXTURES_SETUP beta_fixture)\n"
                            "set_tests_properties(beta PROPERTIES FIXTURES_REQUIRED beta_fixture)\n",
     "beta/main.c": "int main(void) { return 0; }\n",
@@ -33,14 +33,18 @@ PROJECT = {
 }
 
 
+def child_decoder_rejects(text):
+    probe = "import json, sys\ntry:\n    json.loads(sys.stdin.read())\nexcept RecursionError:\n    sys.exit(3)\n"
+    return subprocess.run([sys.executable, "-c", probe], input=text, text=True, encoding="utf-8",
+                          capture_output=True).returncode == 3
+
+
 def excessively_nested_json(test):
     depth = sys.getrecursionlimit() + 64
     while True:
         text = "[" * depth + "]" * depth
-        try:
-            json.loads(text)
-        except RecursionError:
-            return text
+        if child_decoder_rejects(text):
+            return "[" * (depth + 128) + "]" * (depth + 128)
         depth *= 2
         if depth > 10_000_000:
             test.fail("the JSON decoder accepts every probed nesting depth")
@@ -330,7 +334,7 @@ class SelectArgumentTests(SelectFixture):
             self.select("beta/main.c")
             subprocess.run(["ninja", "-C", str(self.build), "-f", "select.ninja", "selected"], check=True, capture_output=True)
             built = {path.stem for path in self.build.rglob("*_tests*") if path.is_file() and os.access(path, os.X_OK)}
-            self.assertEqual(built, {"alpha_tests", "beta_tests", "setup_tests"})
+            self.assertEqual(built, {"alpha_tests", "beta_tests", "fixture_prepare_tests"})
         finally:
             cmake.write_text(original, encoding="utf-8")
             subprocess.run(["cmake", "-S", str(self.source), "-B", str(self.build)], check=True, capture_output=True)
@@ -467,15 +471,12 @@ class NonAsciiDirectoryTests(unittest.TestCase):
         except (UnicodeEncodeError, UnicodeDecodeError):
             self.skipTest("the ANSI code page does not make the fixture directory valid UTF-8")
         with tempfile.TemporaryDirectory() as directory:
+            recorded = os.path.join(name, "alpha.h").encode("mbcs")
+            self.assertEqual(select_tests.dependency_path(recorded, directory), os.path.join(utf8, "alpha.h"))
             header = Path(directory, name, "alpha.h")
-            try:
-                recorded = str(header).encode("mbcs", "strict")
-            except UnicodeEncodeError:
-                self.skipTest("the ANSI code page cannot represent the temporary directory")
-            self.assertEqual(select_tests.dependency_path(recorded, directory), str(Path(directory, utf8, "alpha.h")))
             header.parent.mkdir()
             header.write_text("", encoding="utf-8")
-            self.assertEqual(select_tests.dependency_path(recorded, directory), str(header))
+            self.assertEqual(select_tests.dependency_path(recorded, directory), os.path.join(name, "alpha.h"))
             relative = os.path.join("..", name, "alpha.h")
             self.assertEqual(select_tests.dependency_path(relative.encode("mbcs"), os.path.join(directory, "build")),
                              relative)

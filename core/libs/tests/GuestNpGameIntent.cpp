@@ -6,6 +6,7 @@
 #include <cerrno>
 #include <chrono>
 #include <cstdio>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
@@ -61,10 +62,14 @@ int main() {
     Require(info.user_id == -1, "info user_id mismatch");
 
     char preBuf[64]{};
+    const auto* invalidKey = reinterpret_cast<const char*>(std::uintptr_t{0x10});
+    auto* invalidOutput = reinterpret_cast<char*>(std::uintptr_t{0x10});
     Require(sceNpGameIntentGetPropertyValueString(nullptr, "key", preBuf, sizeof(preBuf)) == kNotInitialized,
             "uninitialized get property string with null data must report not-initialized");
     Require(sceNpGameIntentGetPropertyValueString(&info.intent_data, "key", preBuf, sizeof(preBuf)) == kNotInitialized,
             "uninitialized get property string with valid data must report not-initialized");
+    Require(sceNpGameIntentGetPropertyValueString(&info.intent_data, invalidKey, invalidOutput, 1) == kNotInitialized,
+            "uninitialized get property string must not read or write guest addresses");
     Require(sceNpGameIntentReceiveIntent(nullptr) == kNotInitialized,
             "uninitialized receive intent with null pointer must report not-initialized");
     errno = 71;
@@ -123,9 +128,22 @@ int main() {
             "empty key canary call did not fail");
     Require(canaryBuf[0] == 'X', "buffer was modified on empty key error");
 
+    errno = EINTR;
+    Require(sceNpGameIntentGetPropertyValueString(&info.intent_data, invalidKey, canaryBuf, sizeof(canaryBuf)) == kInvalidArgument,
+            "unreadable non-null key must report invalid argument");
+    Require(errno == EINTR, "unreadable key changed host errno");
+    Require(canaryBuf[0] == 'X', "unreadable key modified output");
+    errno = EINTR;
+    Require(sceNpGameIntentGetPropertyValueString(&info.intent_data, "key", invalidOutput, 1) == kInvalidArgument,
+            "unwritable non-null output must report invalid argument");
+    Require(errno == EINTR, "unwritable output changed host errno");
+
+    errno = EINTR;
     Require(sceNpGameIntentGetPropertyValueString(&info.intent_data, "key", canaryBuf, sizeof(canaryBuf)) == kValueNotFound,
             "get property value mismatch");
+    Require(errno == EINTR, "valid property query changed host errno");
     Require(canaryBuf[0] == '\0', "valid call did not write terminator");
+    Require(canaryBuf[1] == 'X', "valid call modified output after terminator");
 
     canaryBuf[0] = 'Y';
     Require(sceNpGameIntentGetPropertyValueString(&info.intent_data, "key", canaryBuf, 1) == kValueNotFound,

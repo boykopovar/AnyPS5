@@ -46,13 +46,13 @@ static int NativeOpen(const std::filesystem::path& p, int nativeFlags, std::uint
     if (nativeFlags & _O_CREAT) disposition = (nativeFlags & _O_EXCL) ? CREATE_NEW : (nativeFlags & _O_TRUNC) ? CREATE_ALWAYS : OPEN_ALWAYS;
     else if (nativeFlags & _O_TRUNC) disposition = TRUNCATE_EXISTING;
     const DWORD attributes = (nativeFlags & _O_CREAT) && !(mode & _S_IWRITE) ? FILE_ATTRIBUTE_READONLY : FILE_ATTRIBUTE_NORMAL;
-    SECURITY_ATTRIBUTES security{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
+    SECURITY_ATTRIBUTES security{sizeof(SECURITY_ATTRIBUTES), nullptr, (nativeFlags & _O_NOINHERIT) == 0};
     const auto handle = CreateFileW(p.c_str(), desired, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, &security, disposition, attributes, nullptr);
     if (handle == INVALID_HANDLE_VALUE) {
         errno = WindowsOpenError_nid_no_patch(GetLastError());
         return -1;
     }
-    const int descriptor = ::_open_osfhandle(reinterpret_cast<std::intptr_t>(handle), nativeFlags & (_O_APPEND | _O_RDONLY | _O_BINARY));
+    const int descriptor = ::_open_osfhandle(reinterpret_cast<std::intptr_t>(handle), nativeFlags & (_O_APPEND | _O_RDONLY | _O_BINARY | _O_NOINHERIT));
     if (descriptor < 0) CloseHandle(handle);
     return descriptor;
 }
@@ -151,6 +151,7 @@ static int MapFlags(int sceFlags) {
     if (sceFlags & SCE_KERNEL_O_CREAT) f |= _O_CREAT;
     if (sceFlags & SCE_KERNEL_O_TRUNC) f |= _O_TRUNC;
     if (sceFlags & SCE_KERNEL_O_EXCL) f |= _O_EXCL;
+    if (sceFlags & SCE_KERNEL_O_CLOEXEC) f |= _O_NOINHERIT;
     f |= _O_BINARY;
     return f;
 }
@@ -191,6 +192,7 @@ static int MapFlags(int sceFlags) {
     if (sceFlags & SCE_KERNEL_O_EXCL) f |= O_EXCL;
     if (sceFlags & SCE_KERNEL_O_SYNC) f |= O_SYNC;
     if (sceFlags & SCE_KERNEL_O_DIRECTORY) f |= O_DIRECTORY;
+    if (sceFlags & SCE_KERNEL_O_CLOEXEC) f |= O_CLOEXEC;
     return f;
 }
 #endif

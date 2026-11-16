@@ -3,6 +3,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "Decoder/Png.hpp"
 #include <algorithm>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -94,6 +95,20 @@ std::int32_t APS5_VABI ReadChunk(PngDecInputChunk* chunk, void* argument) {
     chunk->data = source->png->data() + source->offset;
     chunk->size = static_cast<std::uint32_t>(count);
     source->offset += count;
+    return 0;
+}
+
+struct UnreadableChunk {
+    const void* data = nullptr;
+    std::size_t calls = 0;
+};
+
+std::int32_t APS5_VABI UnmappedChunk(PngDecInputChunk* chunk, void* argument) {
+    auto* source = static_cast<UnreadableChunk*>(argument);
+    ++source->calls;
+    chunk->data = source->data;
+    chunk->size = 16;
+    chunk->reserved = 0;
     return 0;
 }
 
@@ -287,6 +302,27 @@ void CheckIncompleteBoundary(const std::vector<std::uint8_t>& png, bool callback
         == (callbackError ? -123 : static_cast<std::int32_t>(0x80690012)));
 }
 
+void CheckUnreadableChunk(const std::vector<std::uint8_t>& png) {
+    constexpr auto invalidAddr = static_cast<std::int32_t>(0x80690001);
+    GuardedPage page;
+    std::memcpy(page.End(8), png.data(), 8);
+    for (const void* address : {reinterpret_cast<const void*>(static_cast<std::uintptr_t>(0x10)), static_cast<const void*>(page.End(8))}) {
+        TestDecoder decoder(IMAGE_WIDTH);
+        UnreadableChunk source{address};
+        PngDecInputControlParam param{};
+        param.input = &UnmappedChunk;
+        param.input_argument = &source;
+        param.operation = 0x10;
+        PngDecImageInfo info{};
+        errno = 71;
+        Require(scePngDecDecodeWithInputControl(decoder.handle, &param, &info) == invalidAddr);
+        Require(errno == 71);
+        Require(source.calls == 1);
+        Require(scePngDecDelete(decoder.handle) == 0);
+        decoder.handle = nullptr;
+    }
+}
+
 }
 
 int main() {
@@ -313,6 +349,7 @@ int main() {
     Require(expectedInfo.color_space == 3 && expectedInfo.bit_depth == 8 && expectedInfo.image_flag == 0);
 
     CheckGuestMemory(png, expectedImage);
+    CheckUnreadableChunk(png);
 
     TestDecoder decoder(width);
     std::vector<std::uint8_t> image(width * height * 4, 0);

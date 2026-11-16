@@ -33,6 +33,10 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
+#ifdef __APPLE__
+#include <pthread.h>
+#include <sys/qos.h>
+#endif
 
 namespace AgcDriver::Graphics {
 
@@ -52,7 +56,7 @@ static_assert(sizeof(ShaderRecompiler::TessellationConfiguration) == 40, "Tessel
 constexpr std::uint32_t FileMagic = 0x4c4a5041u;
 // Bumped when the recipe codec, CanonicalPipelineState or the store key change in a way the
 // layout guards above do not catch (a field renumbered or reinterpreted at the same size).
-constexpr std::uint32_t FileFormat = 17u;
+constexpr std::uint32_t FileFormat = 18u;
 constexpr std::uint32_t ModuleRecord = 1u;
 constexpr std::uint32_t GraphicsRecord = 2u;
 constexpr std::uint32_t ComputeRecord = 3u;
@@ -827,7 +831,7 @@ public:
 
     void RecordCompute(const ShaderRecompiler::RecompileResult& shader, bool pushConstants) {
         if (!Enabled() || !bound.load(std::memory_order_acquire)) return;
-        const auto identity = shader.Identity();
+        const auto identity = DescribedPipelineIdentity(shader);
         if (identity.Empty()) return;
         Pending pending;
         pending.kind = ComputeRecord;
@@ -946,7 +950,7 @@ private:
                     if (decode && !loaded.indexModules.contains(identity)) {
                         ShaderRecompiler::RecompileResult result;
                         std::vector<std::byte> module;
-                        decoded = expandModule(payload, module) && ShaderRecompiler::ShaderDiskCache::DecodeResult(module, result) && result.Identity() == identity;
+                        decoded = expandModule(payload, module) && ShaderRecompiler::ShaderDiskCache::DecodeResult(module, result) && (static_cast<ShaderRecompiler::ShaderStage>(stage) == ShaderRecompiler::ShaderStage::Compute ? DescribedPipelineIdentity(result) : result.Identity()) == identity;
                         if (decoded) loaded.modules.emplace(identity, LoadedModule{static_cast<ShaderRecompiler::ShaderStage>(stage), payloadOffset, record.payloadBytes, record.payloadHash, static_cast<std::uint32_t>(module.size())});
                         else ++dropped;
                     }
@@ -1392,6 +1396,8 @@ private:
     void run() {
 #ifdef _WIN32
         if (!SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL)) std::fprintf(stderr, "[pipeline-journal] replay thread priority not lowered (error %lu)\n", GetLastError());
+#elif defined(__APPLE__)
+        if (const int error = pthread_set_qos_class_self_np(QOS_CLASS_UTILITY, 0); error != 0) std::fprintf(stderr, "[pipeline-journal] replay thread priority not lowered (error %d)\n", error);
 #endif
         std::call_once(loadOnce, [&] {
             try {
@@ -1448,7 +1454,7 @@ private:
         auto bytes = std::make_shared<std::vector<std::byte>>();
         if (!expandModule(payload, *bytes)) return nullptr;
         auto result = std::make_shared<ShaderRecompiler::RecompileResult>();
-        if (!ShaderRecompiler::ShaderDiskCache::DecodeResult(*bytes, *result, bytes) || !(result->Identity() == identity)) return nullptr;
+        if (!ShaderRecompiler::ShaderDiskCache::DecodeResult(*bytes, *result, bytes) || !((module.stage == ShaderRecompiler::ShaderStage::Compute ? DescribedPipelineIdentity(*result) : result->Identity()) == identity)) return nullptr;
         return result;
     }
 

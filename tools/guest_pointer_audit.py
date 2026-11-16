@@ -20,6 +20,7 @@ PARAMETER = re.compile(r"([A-Za-z_][\w:<>,\s]*?(?:[*&]+\s*(?:const\b\s*)?)+)\s*(
 RAW_CALL = re.compile(rf"\b(?:std::|::)?({'|'.join(RAW_CALLS)})\s*\(")
 QUIET_CALL = re.compile(rf"\b({'|'.join((*SAFE, *UNEVALUATED))})\s*\(")
 CAST = re.compile(r"^(?:\(\s*[\w\s:*<>]+\)(?=\s*\S)|(?:reinterpret|static|const)_cast\s*<[^>]*>|\()\s*")
+CAST_TYPE = r"<(?:[^<>]|<(?:[^<>]|<[^<>]*>)*>)*>"
 
 
 def split_top_level(text, angles=True):
@@ -107,9 +108,10 @@ def names_parameter(argument, name):
 
 def accesses(body, name):
     word = re.escape(name)
+    operand = rf"(?:\b{word}\b|\b(?:reinterpret|static|const)_cast\s*{CAST_TYPE}\s*\(\s*{word}\s*\))"
     found = []
-    for kind, pattern in (("member", rf"\b{word}\s*->"), ("index", rf"\b{word}\s*\["),
-                          ("dereference", rf"(?:^|[=(,;{{}}!&|?:+\-]|\breturn)\s*\*\s*{word}\b")):
+    for kind, pattern in (("member", rf"{operand}\s*->"), ("index", rf"{operand}\s*\["),
+                          ("dereference", rf"(?:^|[=(,;{{}}!&|?:+\-]|\breturn)\s*\*\s*{operand}")):
         found += [(match.end() - 1, kind) for match in re.finditer(pattern, body)]
     for match in RAW_CALL.finditer(body):
         open_paren = match.end() - 1
@@ -183,8 +185,9 @@ def main(argv=None):
     parser.add_argument("libraries", nargs="*", help="library directories under core/libs/prx (default: all)")
     parser.add_argument("--json", action="store_true", help="print the findings as JSON")
     args = parser.parse_args(argv)
-    names = args.libraries or sorted(path.name for path in PRX.iterdir() if path.is_dir())
-    missing = [name for name in names if not (PRX / name).is_dir()]
+    available = {path.name for path in PRX.iterdir() if path.is_dir() and not path.is_symlink()}
+    names = args.libraries or sorted(available)
+    missing = [name for name in names if name not in available]
     if missing:
         parser.error(f"not a library under core/libs/prx: {', '.join(missing)}")
     report = audit([PRX / name for name in names])
