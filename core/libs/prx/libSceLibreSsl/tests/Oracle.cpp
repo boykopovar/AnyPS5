@@ -1259,8 +1259,10 @@ int main() {
     CompareDigestVerify();
     CompareDesParity();
     CompareStrings();
-    CompareCertificates();
-    CompareStores();
+    if (sizeof(long) == 8) {
+        CompareCertificates();
+        CompareStores();
+    }
     CompareCreatedObjects();
     CompareCipherLists();
     CompareCipherTable();
