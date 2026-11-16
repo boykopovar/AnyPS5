@@ -363,6 +363,14 @@ class LabelApplyTests(unittest.TestCase):
         self.assertIn(f'would change #2: -{pr_ready.QUEUE_LABEL}', text)
         self.assertIn(f'would change #3: -{pr_ready.QUEUE_LABEL}', text)
 
+    def test_apply_edits_the_label_through_gh_when_not_dry_run(self):
+        import contextlib, io
+        from unittest import mock
+        prs = [{'number': 1, 'labels': []}]
+        with mock.patch.object(pr_ready.pr_labels, 'gh') as gh, mock.patch.object(pr_ready.time, 'sleep'), contextlib.redirect_stdout(io.StringIO()):
+            pr_ready.apply('owner/repo', prs, [{'number': 1}], False)
+        gh.assert_called_once_with('pr', 'edit', '1', '-R', 'owner/repo', '--add-label', pr_ready.QUEUE_LABEL)
+
 
 if __name__ == "__main__":
     unittest.main()
