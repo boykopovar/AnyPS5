@@ -228,6 +228,14 @@ public:
     Retained<String> url;
 };
 
+class MediaSessionMetadata final : public ObjectOf<ObjectType::MediaSessionMetadata> {
+public:
+    Retained<String> title;
+    Retained<String> album;
+    Retained<String> artist;
+    Retained<URL> artworkURL;
+};
+
 class PopupMenuItem final : public ObjectOf<ObjectType::PopupMenuItem> {
 public:
     Retained<String> text;
