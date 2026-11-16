@@ -727,11 +727,6 @@ int APS5_VABI _FLogpoly_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _FPow_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _FQuad_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -922,11 +917,6 @@ int APS5_VABI _LLogpoly_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _LPow_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _LQuad_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -1013,11 +1003,6 @@ int APS5_VABI _Mbtowc_nid_postfix() {
 }
 
 int APS5_VABI _Nnl_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _Pow_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
