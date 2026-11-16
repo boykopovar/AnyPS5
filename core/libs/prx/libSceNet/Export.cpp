@@ -3586,7 +3586,6 @@ int APS5_VABI sceNetSyncCreate(NetSyncObject* sync, std::uint32_t signals, const
     if (!sync) return fail(NET_EINVAL);
     const int savedErrno = errno;
     if (!GuestWritable_nid_no_patch(sync, sizeof(*sync))) {
-        errno = savedErrno;
         return fail(NET_EFAULT);
     }
     errno = savedErrno;
@@ -3599,7 +3598,6 @@ int APS5_VABI sceNetSyncDestroy(NetSyncObject* sync) {
     if (!sync) return fail(NET_EINVAL);
     const int savedErrno = errno;
     if (!GuestWritable_nid_no_patch(sync, sizeof(*sync))) {
-        errno = savedErrno;
         return fail(NET_EFAULT);
     }
     errno = savedErrno;
@@ -3616,7 +3614,6 @@ int APS5_VABI sceNetSyncSignal(NetSyncObject* sync, std::uint32_t signals) {
     if (!sync) return fail(NET_EINVAL);
     const int savedErrno = errno;
     if (!GuestWritable_nid_no_patch(sync, sizeof(*sync))) {
-        errno = savedErrno;
         return fail(NET_EFAULT);
     }
     errno = savedErrno;
@@ -3633,14 +3630,12 @@ int APS5_VABI sceNetSyncWait(NetSyncObject* sync, std::uint32_t* timeout) {
     if (!sync) return fail(NET_EINVAL);
     const int savedErrno = errno;
     if (!GuestWritable_nid_no_patch(sync, sizeof(*sync))) {
-        errno = savedErrno;
         return fail(NET_EFAULT);
     }
     std::uint32_t localTimeout = 0;
     if (timeout != nullptr) {
         if (!GuestCopyIn_nid_no_patch(&localTimeout, timeout, sizeof(localTimeout)) ||
             !GuestWritable_nid_no_patch(timeout, sizeof(*timeout))) {
-            errno = savedErrno;
             return fail(NET_EFAULT);
         }
     }
