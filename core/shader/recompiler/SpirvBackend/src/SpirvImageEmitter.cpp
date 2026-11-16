@@ -7,6 +7,7 @@
 #include "SpirvBackend/SpirvMemory/SpirvDescriptors.hpp"
 #include "RdnaDecoder/RdnaDescriptorFormat.hpp"
 #include "RdnaDecoder/RdnaImageOpDecoder.hpp"
+#include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "ImageTableAbi.hpp"
 #include <span>
 #include <initializer_list>
@@ -24,6 +25,14 @@
 
 namespace ShaderRecompiler {
 namespace {
+
+void EmitImageAtomicOrdering(SpirvEmitterState& state) {
+#ifdef __APPLE__
+    state.module.AddFunction(spv::OpMemoryBarrier, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsAcquireReleaseMask | spv::MemorySemanticsImageMemoryMask));
+#else
+    static_cast<void>(state);
+#endif
+}
 
 struct ImageEmitAccess {
     const IrValue& inst;
@@ -486,7 +495,7 @@ std::uint32_t QueryDimensions(SpirvValueEmitContext& ctx, const ImageEmitAccess&
         result[2] = ConstantU32(state, 1);
     }
     const auto requested = access.mem.imageDimension;
-    if ((requested == RdnaImageDimension::Dim1D || requested == RdnaImageDimension::Dim2D || requested == RdnaImageDimension::Dim2DMsaa) && dimension != RdnaImageDimension::Dim3D) {
+    if ((requested == RdnaImageDimension::Dim1D || requested == RdnaImageDimension::Dim2D || requested == RdnaImageDimension::Dim2DMsaa) && dimension != RdnaImageDimension::Dim3D && !(GcnGuestShaders() && access.image.cube)) {
         result[2] = ConstantU32(state, 0);
     }
     if (info.multisampled == 0u) {
@@ -1405,6 +1414,7 @@ void EmitAtomicOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
             state.module.AddFunction(spv::OpImageTexelPointer, TypePointer(state, spv::StorageClassImage, scalar), pointer, StorageImageDescriptorPointer(state, access.mem.resource), CoordU32(ctx, access), ConstantU32(state, 0));
             const auto value = Unary(state, spv::OpBitcast, scalar, ctx.Arg(access.inst, 2));
             const auto old = state.module.AllocateId();
+            EmitImageAtomicOrdering(state);
             if (opcode == IrOpcode::ImageAtomicCmpSwap64) {
                 const auto comparator = Unary(state, spv::OpBitcast, scalar, ctx.Arg(access.inst, 3));
                 state.module.AddFunction(spv::OpAtomicCompareExchange, scalar, old, pointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsMaskNone), ConstantU32(state, spv::MemorySemanticsMaskNone), value, comparator);
@@ -1437,6 +1447,7 @@ void EmitAtomicOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
                 return AtomicFloatCompareSwap(state, current, value, comparator, access.mem.flushDenormals);
             });
         }
+        EmitImageAtomicOrdering(state);
         const auto old = state.module.AllocateId();
         if (opcode == IrOpcode::ImageAtomicCmpSwap32) {
             state.module.AddFunction(spv::OpAtomicCompareExchange, TypeU32(state), old, pointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsMaskNone), ConstantU32(state, spv::MemorySemanticsMaskNone), value, ctx.Arg(access.inst, 3));
@@ -2326,7 +2337,20 @@ void EmitImageMode(SpirvValueEmitContext& ctx, const IrValue& inst, const ImageR
     if (address == nullptr) {
         ctx.Fail(inst, "has no image address");
     }
-    const ImageEmitAccess access{inst, mem, image, *address};
+    MemoryInfo gcnMemory = mem;
+    if (GcnGuestShaders() && irOpcode != IrOpcode::ImageQueryDimensions) {
+        const bool line = image.dimension == RdnaImageDimension::Dim1D || image.dimension == RdnaImageDimension::Dim1DArray;
+        const auto addressed = mem.imageDimension != RdnaImageDimension::Dim2DArray ? image.dimension : line ? RdnaImageDimension::Dim1DArray : mem.imageDimension;
+        const auto& from = RdnaImageDimensionInfoFor(mem.imageDimension);
+        const auto& to = RdnaImageDimensionInfoFor(addressed);
+        const bool gradients = (mem.imageSampleFlags & RdnaImageSampleFlagDerivative) != 0u;
+        const auto removed = from.coordinateComponents + (gradients ? 2u * from.spatialComponents : 0u);
+        const auto added = to.coordinateComponents + (gradients ? 2u * to.spatialComponents : 0u);
+        if (mem.imageAddressComponents < removed) ctx.Fail(inst, "has fewer GCN image address components than its coordinates");
+        gcnMemory.imageDimension = addressed;
+        gcnMemory.imageAddressComponents = mem.imageAddressComponents - removed + added;
+    }
+    const ImageEmitAccess access{inst, gcnMemory, image, *address};
     if (imageInfo.access == ImageAccess::Atomic) {
         EmitAtomicOp(ctx, access);
         return;

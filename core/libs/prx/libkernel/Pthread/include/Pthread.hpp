@@ -123,7 +123,7 @@ struct PthreadAttrPrivate {
     int _schedpolicy;
     int _inheritsched;
     bool _createSuspended = false;
-    KernelCpumask _affinity = DEFAULT_THREAD_AFFINITY;
+    KernelCpumask _affinity = ~KernelCpumask{0};
     bool _affinityExplicit = false;
     std::size_t _guardsize = 0x1000;
     int _solosched = 0;

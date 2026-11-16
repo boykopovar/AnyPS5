@@ -893,15 +893,35 @@ std::int64_t APS5_VABI ftell_nid_postfix(FileStream* stream) { return ftello_nid
 
 int APS5_VABI fgetpos_nid_postfix(FileStream* stream, std::int64_t* position) {
     if (!position) throw std::invalid_argument("fgetpos: null position");
+    const int savedErrno = errno;
+    std::int64_t current = 0;
+    if (!GuestCopyIn_nid_no_patch(&current, position, sizeof(current)) ||
+        !GuestCopyOut_nid_no_patch(position, &current, sizeof(current))) {
+        errno = savedErrno;
+        throw std::invalid_argument("fgetpos: unwritable position");
+    }
+    errno = savedErrno;
     const auto result = ftello_nid_postfix(stream);
     if (result == -1) return -1;
-    *position = result;
+    const int ftellErrno = errno;
+    if (!GuestCopyOut_nid_no_patch(position, &result, sizeof(result))) {
+        errno = ftellErrno;
+        throw std::invalid_argument("fgetpos: unwritable position");
+    }
+    errno = ftellErrno;
     return 0;
 }
 
 int APS5_VABI fsetpos_nid_postfix(FileStream* stream, const std::int64_t* position) {
     if (!position) throw std::invalid_argument("fsetpos: null position");
-    return fseeko_nid_postfix(stream, *position, SEEK_SET);
+    const int savedErrno = errno;
+    std::int64_t target = 0;
+    if (!GuestCopyIn_nid_no_patch(&target, position, sizeof(target))) {
+        errno = savedErrno;
+        throw std::invalid_argument("fsetpos: unreadable position");
+    }
+    errno = savedErrno;
+    return fseeko_nid_postfix(stream, target, SEEK_SET);
 }
 
 void APS5_VABI rewind_nid_postfix(FileStream* stream) {

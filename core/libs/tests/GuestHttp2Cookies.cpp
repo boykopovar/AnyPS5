@@ -1,4 +1,5 @@
 #include "prx/libSceHttp2/include/Http2.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -35,6 +36,24 @@ static bool NoMatch(int box, const char* url) {
     char buffer[16] = {'x'};
     return sceHttp2GetCookie(box, url, nullptr, &required, 0) == NotFound && required == 7 &&
            sceHttp2GetCookie(box, url, buffer, &required, sizeof(buffer)) == NotFound && required == 7 && buffer[0] == 'x';
+}
+
+static void CheckUnmappedOutputs(int box) {
+    const char* url = "http://example.com/a/b";
+    auto* badSize = reinterpret_cast<std::size_t*>(0x10);
+    auto* badCookie = reinterpret_cast<char*>(0x10);
+    std::size_t required = 0;
+    char header[0x1000];
+    errno = 71;
+    Require(sceHttp2GetCookie(box, url, nullptr, badSize, 0) == InvalidValue);
+    Require(sceHttp2GetCookie(box, url, badCookie, &required, 1) == InvalidValue);
+    Require(sceHttp2GetCookie(box, url, badCookie, &required, sizeof(header)) == InvalidValue);
+    Require(sceHttp2GetCookie(box, url, header, badSize, sizeof(header)) == InvalidValue);
+    const char* const badText = reinterpret_cast<const char*>(0x10);
+    Require(sceHttp2GetCookie(box, badText, header, &required, sizeof(header)) == InvalidValue);
+    Require(sceHttp2AddCookie(box, badText, "a=b", 3) == InvalidValue);
+    Require(sceHttp2AddCookie(box, url, badText, 3) == InvalidValue);
+    Require(errno == 71);
 }
 
 static Http2CookieStats Stats(int box) {
@@ -114,6 +133,7 @@ int main() {
     Require(Add(box, "http://Example.COM:8080/", "lang=fr; Path=/; Domain=.example.com") == 0);
     Require(Add(box, "https://example.com/", "token=x; Secure; HttpOnly; Path=/") == 0);
     Require(Add(box, "http://example.com/", "wide=1; Path=/a; Max-Age=3600") == 0);
+    CheckUnmappedOutputs(box);
     Require(Get(box, "http://example.com/a/c") == "sid=1; wide=1; lang=fr");
     Require(Get(box, "https://example.com/a/b?q#f") == "sid=1; wide=1; token=x; lang=fr");
     Require(Get(box, "HTTPS://example.com/") == "token=x; lang=fr");

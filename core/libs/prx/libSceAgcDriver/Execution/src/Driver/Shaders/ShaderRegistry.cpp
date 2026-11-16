@@ -53,6 +53,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <thread>
+#include <tuple>
 #include <unordered_map>
 #include "Optimization/ShaderStageInputInfo.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/RegistrationPreparationBudget.hpp"
@@ -1156,7 +1157,107 @@ bool StageLinksUserDataCallees(const ShaderSnapshot& snapshot, std::size_t codeO
     });
 }
 
-ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request) {
+std::shared_ptr<OwnedRecompileRequest> OwnRecompileRequest(const ShaderRecompiler::RecompileRequest& source, ShaderRecompiler::MemoryRegionView memory) {
+    auto owned = std::make_shared<OwnedRecompileRequest>();
+    owned->request = source;
+    owned->code.assign(source.shader.code.begin(), source.shader.code.end());
+    owned->header.assign(source.shader.header.begin(), source.shader.header.end());
+    owned->userData.assign(source.context.userData.begin(), source.context.userData.end());
+    owned->request.shader.code = owned->code;
+    owned->request.shader.header = owned->header;
+    owned->request.context.userData = owned->userData;
+    owned->fallbacks.assign(source.context.linkedCallFallbacks.begin(), source.context.linkedCallFallbacks.end());
+    owned->request.context.linkedCallFallbacks = owned->fallbacks;
+    owned->regionBytes.reserve(memory.size());
+    owned->regions.reserve(memory.size());
+    for (const auto& region : memory) {
+        const auto& bytes = owned->regionBytes.emplace_back(region.bytes.begin(), region.bytes.end());
+        owned->regions.push_back({region.guestAddress, bytes});
+    }
+    owned->request.context.memory = std::span<const ShaderRecompiler::MemoryRegion>(owned->regions);
+    if (owned->request.graphics) {
+        const auto programs = owned->request.graphics->linkedPrograms;
+        owned->linkedWords.reserve(programs.size() * 2u);
+        owned->linkedHeaders.reserve(programs.size());
+        owned->linked.reserve(programs.size());
+        for (const auto& program : programs) {
+            auto copy = program;
+            copy.binary.code = owned->linkedWords.emplace_back(program.binary.code.begin(), program.binary.code.end());
+            copy.binary.header = owned->linkedHeaders.emplace_back(program.binary.header.begin(), program.binary.header.end());
+            copy.userData = owned->linkedWords.emplace_back(program.userData.begin(), program.userData.end());
+            owned->linked.push_back(copy);
+        }
+        owned->request.graphics->linkedPrograms = owned->linked;
+    }
+    return owned;
+}
+
+namespace {
+
+struct PendingPreparation {
+    std::mutex mutex;
+    bool finished = false;
+    std::shared_ptr<const ShaderRecompiler::SourceHandle> handle;
+    std::exception_ptr failure;
+};
+
+struct PendingPreparations {
+    std::mutex mutex;
+    std::map<std::tuple<const ShaderSnapshot*, std::size_t, std::uint64_t>, std::shared_ptr<PendingPreparation>> byKey;
+};
+
+PendingPreparations& pendingPreparations() {
+    static auto* pending = new PendingPreparations();
+    return *pending;
+}
+
+std::shared_ptr<const ShaderRecompiler::SourceHandle> PrepareInBackground(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& source, std::span<const std::uint64_t> key) {
+    const auto keyWords = std::span<const std::uint32_t>(reinterpret_cast<const std::uint32_t*>(key.data()), key.size() * 2u);
+    const auto flags = (source.context.convertedSamples ? 1u : 0u) | (source.context.layerRowSamples ? 2u : 0u);
+    const std::tuple id{&snapshot, codeOffset, ShaderRecompiler::HashSpirvWords(source.shader.code, ShaderRecompiler::HashSpirvWords(keyWords, flags))};
+    auto& pending = pendingPreparations();
+    std::shared_ptr<PendingPreparation> job;
+    bool started = false;
+    {
+        std::lock_guard lock(pending.mutex);
+        auto& slot = pending.byKey[id];
+        if (slot == nullptr) {
+            slot = std::make_shared<PendingPreparation>();
+            started = true;
+        }
+        job = slot;
+    }
+    if (started) {
+        const auto owned = OwnRecompileRequest(source, source.context.memory);
+        SubmitLibraryPrebuild([job, owned] {
+            std::shared_ptr<const ShaderRecompiler::SourceHandle> handle;
+            std::exception_ptr failure;
+            try {
+                handle = PrepareShaderWithDiagnostics(owned->request);
+            } catch (...) {
+                failure = std::current_exception();
+            }
+            std::lock_guard lock(job->mutex);
+            job->handle = std::move(handle);
+            job->failure = failure;
+            job->finished = true;
+        });
+    }
+    {
+        std::lock_guard lock(job->mutex);
+        if (!job->finished) throw DrawCompilePending("the draw's shader is still being prepared in the background");
+    }
+    {
+        std::lock_guard lock(pending.mutex);
+        if (const auto found = pending.byKey.find(id); found != pending.byKey.end() && found->second == job) pending.byKey.erase(found);
+    }
+    if (job->failure != nullptr) std::rethrow_exception(job->failure);
+    return job->handle;
+}
+
+}
+
+ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, bool deferPreparation) {
     require(codeOffset < snapshot.code.size(), "prepared shader code offset is outside the snapshot");
     const auto code = std::span(snapshot.code).subspan(codeOffset);
     require(request.shader.code.data() == code.data() && request.shader.code.size() == code.size(), "prepared invocation does not refer to registered code");
@@ -1190,10 +1291,15 @@ ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& s
     }
     NoteOwnPreparation(preparedAtUse);
     ReportPreparedAtUse(snapshot, source);
-    auto handle = PrepareShaderWithDiagnostics(source);
+    std::shared_ptr<const ShaderRecompiler::SourceHandle> handle = deferPreparation ? PrepareInBackground(snapshot, codeOffset, source, key) : PrepareShaderWithDiagnostics(source);
     invocationRequest = source;
     invocationRequest.shader.code = ShaderRecompiler::GetPreparedCode(*handle);
     auto invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(invocationRequest, handle, key);
+    if (!invocation.has_value() && deferPreparation) {
+        handle = PrepareShaderWithDiagnostics(source);
+        invocationRequest.shader.code = ShaderRecompiler::GetPreparedCode(*handle);
+        invocation = ShaderRecompiler::PreparedShaderInvocation::TryCreate(invocationRequest, handle, key);
+    }
     if (!invocation.has_value()) throw std::runtime_error("AGC driver: an artifact prepared at use does not match its invocation");
     snapshot.prepared->entries.push_back({codeOffset, std::move(handle)});
     return std::move(*invocation);
@@ -2445,6 +2551,20 @@ std::uint64_t NullPixelProgramAddress() {
 
 alignas(256) static const std::uint32_t DepthCopyMultisamplePixelCode[64] = {0x360604ffu, 0x0000ffffu, 0x2c080490u, 0x7e0a0208u, 0xf0000130u, 0x00000603u, 0xbf8c3f70u, 0xf8001801u, 0x00000006u, 0xbf810000u};
 alignas(256) static const std::uint32_t DepthCopySinglePixelCode[64] = {0x360604ffu, 0x0000ffffu, 0x2c080490u, 0xf0000108u, 0x00000603u, 0xbf8c3f70u, 0xf8001801u, 0x00000006u, 0xbf810000u};
+alignas(256) static const std::uint32_t StencilCopyMultisamplePixelCode[64] = {0x360604ffu, 0x0000ffffu, 0x2c080490u, 0x7e0a0208u, 0xf0000130u, 0x00000603u, 0xbf8c3f70u, 0xf8001803u, 0x00000606u, 0xbf810000u};
+alignas(256) static const std::uint32_t StencilCopySinglePixelCode[64] = {0x360604ffu, 0x0000ffffu, 0x2c080490u, 0xf0000108u, 0x00000603u, 0xbf8c3f70u, 0xf8001803u, 0x00000606u, 0xbf810000u};
+static Shader StencilCopyPixelHeader(const std::uint32_t* code) {
+    Shader shader{};
+    shader.file_header = 0x34333231u;
+    shader.version = 0x18u;
+    shader.code = code;
+    shader.header_size = sizeof(Shader);
+    shader.shader_size = 64u * sizeof(std::uint32_t);
+    shader.type = 1;
+    return shader;
+}
+static const Shader StencilCopyMultisamplePixelShader = StencilCopyPixelHeader(StencilCopyMultisamplePixelCode);
+static const Shader StencilCopySinglePixelShader = StencilCopyPixelHeader(StencilCopySinglePixelCode);
 static const Shader DepthCopyMultisamplePixelShader = [] {
     Shader shader{};
     shader.file_header = 0x34333231u;
@@ -2470,12 +2590,16 @@ std::uint64_t DepthCopyPixelProgramAddress(bool multisampled) {
     return reinterpret_cast<std::uintptr_t>(multisampled ? DepthCopyMultisamplePixelCode : DepthCopySinglePixelCode);
 }
 
+std::uint64_t StencilCopyPixelProgramAddress(bool multisampled) {
+    return reinterpret_cast<std::uintptr_t>(multisampled ? StencilCopyMultisamplePixelCode : StencilCopySinglePixelCode);
+}
+
 std::uint32_t DepthCopyPixelUserWords(bool multisampled) {
     return multisampled ? 9u : 8u;
 }
 
 bool DriverOwnedProgram(std::uint64_t codeAddress) {
-    return codeAddress == NullPixelProgramAddress() || codeAddress == DepthCopyPixelProgramAddress(false) || codeAddress == DepthCopyPixelProgramAddress(true);
+    return codeAddress == NullPixelProgramAddress() || codeAddress == DepthCopyPixelProgramAddress(false) || codeAddress == DepthCopyPixelProgramAddress(true) || codeAddress == StencilCopyPixelProgramAddress(false) || codeAddress == StencilCopyPixelProgramAddress(true);
 }
 
 void Driver::ResolveGraphicsAbi(const Shader* vertex, const Shader* pixel, std::uint32_t primitiveType) {
@@ -2637,6 +2761,25 @@ ShaderSnapshot PrepareDepthCopyPixelProgram(bool multisampled) {
     return copy;
 }
 
+ShaderSnapshot PrepareStencilCopyPixelProgram(bool multisampled) {
+    const auto& shader = multisampled ? StencilCopyMultisamplePixelShader : StencilCopySinglePixelShader;
+    const auto* code = multisampled ? StencilCopyMultisamplePixelCode : StencilCopySinglePixelCode;
+    ShaderSnapshot copy{StencilCopyPixelProgramAddress(multisampled), reinterpret_cast<std::uintptr_t>(&shader), shader.type, {}, {}};
+    copy.code.assign(code, code + 64);
+    copy.header.resize(sizeof(Shader));
+    std::memcpy(copy.header.data(), &shader, sizeof(Shader));
+    auto state = DecodeRegisteredState(copy);
+    state.shader.insert_or_assign(0x008u, static_cast<std::uint32_t>(copy.codeAddress >> 8u));
+    state.shader.insert_or_assign(0x009u, static_cast<std::uint32_t>(copy.codeAddress >> 40u));
+    state.shader.insert_or_assign(0x00bu, DepthCopyPixelUserWords(multisampled) << 1u);
+    state.context.insert_or_assign(0x1b3u, 0x8002u);
+    state.context.insert_or_assign(0x1b4u, 0x8002u);
+    state.context.insert_or_assign(0x1c5u, 2u);
+    copy.registeredState = std::make_shared<const RegisteredShaderState>(std::move(state));
+    copy.prepared->deferred = true;
+    return copy;
+}
+
 std::shared_ptr<const ShaderRegistry> Driver::RegisteredShaders() {
     std::lock_guard lock(mutex);
     return shaders;
@@ -2749,6 +2892,7 @@ void Driver::RegisterShader(const Shader* shader) {
     }
     for (const bool multisampled : {false, true}) {
         if (shaders->find(DepthCopyPixelProgramAddress(multisampled)) == shaders->end()) PublishRegisteredShader(shaders, std::make_shared<const ShaderSnapshot>(PrepareDepthCopyPixelProgram(multisampled)));
+        if (shaders->find(StencilCopyPixelProgramAddress(multisampled)) == shaders->end()) PublishRegisteredShader(shaders, std::make_shared<const ShaderSnapshot>(PrepareStencilCopyPixelProgram(multisampled)));
     }
     transaction.Commit();
     if (preparation != nullptr) PrepareRegisteredInBackground(published, std::move(preparation));
