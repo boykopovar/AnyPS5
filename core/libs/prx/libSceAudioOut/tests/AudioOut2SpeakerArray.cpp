@@ -3,6 +3,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <cmath>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -89,6 +90,10 @@ int main() {
     float speakerCoefficients[4] = {3.0f, 3.0f, 3.0f, 3.0f};
     Require(RejectsArgument([&] { sceAudioOut2GetSpeakerArrayCoefficients(array, square[0], 0.0f, nullptr, 4, 0, 0.0f); }),
         "null speaker-array coefficients were accepted");
+    errno = EBUSY;
+    Require(RejectsArgument([&] { sceAudioOut2GetSpeakerArrayCoefficients(array, square[0], 0.0f, reinterpret_cast<float*>(std::uintptr_t{0x10}), 4, 0, 0.0f); }),
+        "unmapped speaker-array coefficients were accepted");
+    Require(errno == EBUSY, "unmapped speaker-array coefficients preserve errno");
     Require(RejectsArgument([&] { sceAudioOut2GetSpeakerArrayCoefficients(array, square[0], 0.0f, coefficients, 3, 0, 0.0f); }),
         "a coefficient count other than the speaker count was accepted for the speaker array");
     Require(RejectsArgument([&] { sceAudioOut2GetSpeakerArrayCoefficients(notArray, square[0], 0.0f, coefficients, 4, 0, 0.0f); }),
