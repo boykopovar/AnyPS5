@@ -13,10 +13,12 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <mutex>
@@ -219,6 +221,17 @@ int main() {
         auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         if (!UnitShadowEnabled()) return Skip("unit shadows are off");
+        constexpr std::size_t ProbeBytes = 65536;
+        auto* probe = static_cast<std::uint8_t*>(std::aligned_alloc(ProbeBytes, ProbeBytes));
+        Require(probe != nullptr, "host write over a shadowed unit: cannot allocate the device probe");
+        GuestAllocations::Mutation().Add(probe, ProbeBytes, true, true, true);
+        bool adopted = false;
+        {
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            adopted = device->FillBuffer(reinterpret_cast<std::uint64_t>(probe), ProbeBytes, std::array<std::uint32_t, 4>{1u, 2u, 3u, 4u});
+            device->WaitIdle();
+        }
+        if (!adopted) return Skip("the device does not import guest memory");
 
         backing = memfd_create("anyps5-host-write-shadowed-unit", MFD_CLOEXEC | MFD_ALLOW_SEALING);
         Require(backing >= 0 && ftruncate(backing, static_cast<off_t>(MappingBytes)) == 0, "host write over a shadowed unit: cannot make the backing file");
