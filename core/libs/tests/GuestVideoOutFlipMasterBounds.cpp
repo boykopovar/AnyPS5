@@ -31,16 +31,15 @@ constexpr int VIDEO_OUT_ERROR_0x8029001C = static_cast<int>(0x8029001Cu);
 int main() {
     VideoOutTestEnvironment environment;
 
-    const int unopenedHandles[] = {-1, 0, 1, 2, 42, 9999, -9999, 0x7FFFFFFF};
-    for (const int unopened : unopenedHandles) {
-        for (const int master : {-1, 0, 1, 2, 3, 42, 0x7FFFFFFF}) {
-            Require(sceVideoOutSetFlipMaster(unopened, master) == VIDEO_OUT_ERROR_INVALID_HANDLE);
-        }
-        Require(sceVideoOutClearFlipMaster(unopened) == VIDEO_OUT_ERROR_INVALID_HANDLE);
-    }
-
     int handle = 0;
     try {
+        const int unopenedHandles[] = {-1, 0, 1, 2, 42, 9999, -9999, 0x7FFFFFFF};
+        for (const int unopened : unopenedHandles) {
+            for (const int master : {-1, 0, 1, 2, 3, 42, 0x7FFFFFFF}) {
+                Require(sceVideoOutSetFlipMaster(unopened, master) == VIDEO_OUT_ERROR_INVALID_HANDLE);
+            }
+            Require(sceVideoOutClearFlipMaster(unopened) == VIDEO_OUT_ERROR_INVALID_HANDLE);
+        }
         handle = sceVideoOutOpen(SYSTEM_USER, MAIN_BUS, 0, nullptr);
     } catch (const std::runtime_error& error) {
         if (std::getenv("ANYPS5_REQUIRE_DISPLAY") != nullptr) throw;
