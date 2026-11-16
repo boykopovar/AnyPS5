@@ -89,6 +89,27 @@ class EnvReferenceDiffTests(unittest.TestCase):
             with self.subTest(directory=directory):
                 self.assertEqual(findings_of(root, base, head, "target", directory), expected)
 
+    def test_a_unicode_line_separator_inside_a_line_does_not_split_git_output(self):
+        base = {DOC: DOC_TEXT, SAMPLE: "int unrelated;\n"}
+        for separator in (" ", " ", "\x85", "\x0c", "\x0b"):
+            with self.subTest(separator=repr(separator)):
+                head = {SAMPLE: base[SAMPLE] + f'auto text = "a{separator}b"; auto value = std::getenv("APS5_NEW_READ");\n'}
+                root = self.create_repository(base, head)
+                self.assertEqual(findings_of(root, base, head), [("env-reference", SAMPLE, 2,
+                                                                  f"APS5_NEW_READ is read here but has no row in {DOC}")])
+                subject = f"fix(tools): keep{separator}going with more"
+                subprocess.run(["git", "-c", f"safe.directory={root}", "-c", "user.name=Conventions Test", "-c", "user.email=test@example.com",
+                                "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", subject],
+                               cwd=root, capture_output=True, check=True)
+                previous = os.getcwd()
+                os.chdir(root)
+                try:
+                    check = Check("base", "HEAD")
+                    check.commits()
+                    self.assertEqual(check.findings, [])
+                finally:
+                    os.chdir(previous)
+
     def test_a_new_read_of_a_name_only_mentioned_in_a_description_is_reported(self):
         base = {DOC: "| `APS5_DOCUMENTED` | presence | replaces `APS5_NEW_READ` |\n", SAMPLE: "int unrelated;\n"}
         head = {SAMPLE: base[SAMPLE] + 'auto value = std::getenv("APS5_NEW_READ");\n'}

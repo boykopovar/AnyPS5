@@ -68,16 +68,24 @@ int AllocateContext(std::uint16_t* ctxId, std::uint16_t flag) {
     return SCE_NP_MATCHING2_ERROR_CONTEXT_MAX;
 }
 
+template <typename T>
+bool CopyInGuestValue(T& dst, const void* src) {
+    const int savedErrno = errno;
+    const bool read = GuestCopyIn_nid_no_patch(&dst, src, sizeof(dst));
+    errno = savedErrno;
+    return read;
+}
+
 int CheckRequest(const void* request, const std::uint32_t* requestId, Leading leading) {
     if (!matching2Initialized) return SCE_NP_MATCHING2_ERROR_NOT_INITIALIZED;
     if (!request || !requestId) return SCE_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
     if (leading == Leading::ServerId) {
-        std::uint16_t serverId;
-        std::memcpy(&serverId, request, sizeof(serverId));
+        std::uint16_t serverId = 0;
+        if (!CopyInGuestValue(serverId, request)) return SCE_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
         return serverId == 0 ? SCE_NP_MATCHING2_ERROR_INVALID_SERVER_ID : 0;
     }
-    std::uint64_t roomId;
-    std::memcpy(&roomId, request, sizeof(roomId));
+    std::uint64_t roomId = 0;
+    if (!CopyInGuestValue(roomId, request)) return SCE_NP_MATCHING2_ERROR_INVALID_ARGUMENT;
     return roomId == 0 ? SCE_NP_MATCHING2_ERROR_INVALID_ROOM_ID : 0;
 }
 
