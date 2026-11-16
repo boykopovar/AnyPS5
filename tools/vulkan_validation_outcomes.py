@@ -128,10 +128,11 @@ def summarize_outcomes(iterations, selected, repeat, declarations=None):
                 observations[side] = observed
                 state = observed["state"] if observed else "missing"
                 pair[side] = state
-                states[side].append(state)
-                detail_states[side].append(json.dumps(observed.get("details", []) if observed else None, sort_keys=True))
                 if observed is None:
                     missing.append({"test": name, "side": side, "iteration": iteration})
+                else:
+                    states[side].append(state)
+                    detail_states[side].append(json.dumps(observed.get("details", []), sort_keys=True))
                 if state in ("unknown", "missing"):
                     complete = False
                 if state not in ("passed", "failed"):

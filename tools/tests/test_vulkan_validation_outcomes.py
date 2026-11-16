@@ -291,6 +291,53 @@ class SummaryTests(Fixtures):
         self.assertFalse(found["cases"]["probe"]["state_variation"]["baseline"])
         self.assertEqual(found["cases"]["probe"]["expectation"], "mismatched")
 
+    def test_missing_case_observations_do_not_create_variation(self):
+        for recorded in (0, 1):
+            for missing in ("case", "iteration"):
+                with self.subTest(recorded=recorded, missing=missing):
+                    runs = [self.iteration("candidate", iteration, testcase()) for iteration in (1, 2)]
+                    for iteration in (1, 2):
+                        if iteration <= recorded:
+                            runs.append(self.iteration("baseline", iteration, testcase()))
+                        elif missing == "case":
+                            path = self.junit([])
+                            tests, problems = gate.parse_report(path, {"probe"})
+                            runs.append({"side": "baseline", "iteration": iteration, "returncode": 0,
+                                         "tests": tests, "problems": problems, "outcomes": outcomes.read_outcomes(path)})
+                    found = outcomes.summarize_outcomes(runs, {"probe"}, 2)
+                    self.assertFalse(found["observations_complete"])
+                    self.assertFalse(found["execution_coverage_complete"])
+                    self.assertEqual(found["missing_observations"], [
+                        {"test": "probe", "side": "baseline", "iteration": iteration}
+                        for iteration in range(recorded + 1, 3)])
+                    pairs = found["cases"]["probe"]["pairs"]
+                    self.assertEqual([pair["baseline"] for pair in pairs],
+                                     ["passed", "missing"] if recorded else ["missing", "missing"])
+                    self.assertTrue(all(pair["candidate"] == "passed" for pair in pairs))
+                    if missing == "case":
+                        self.assertEqual(gate.compare(runs)["exit_code"], 1)
+                    for field in ("state_variation", "detail_variation"):
+                        with self.subTest(field=field):
+                            self.assertEqual(found["cases"]["probe"][field], {"baseline": False, "candidate": False})
+                    self.assertEqual(found["state_variation_tests"], [])
+
+    def test_recorded_variation_survives_missing_repetitions(self):
+        runs = [self.iteration("baseline", 1, testcase(kind="failure", detail="first failure"), code=8),
+                self.iteration("candidate", 1, testcase(kind="failure", detail="first failure"), code=8),
+                self.iteration("baseline", 3, testcase()),
+                self.iteration("candidate", 3, testcase(kind="failure", detail="second failure"), code=8)]
+        found = outcomes.summarize_outcomes(runs, {"probe"}, 3)
+        self.assertFalse(found["observations_complete"])
+        self.assertFalse(found["execution_coverage_complete"])
+        self.assertEqual(found["cases"]["probe"]["pairs"][1]["transition"], "missing -> missing")
+        self.assertEqual(found["missing_observations"], [
+            {"test": "probe", "side": "baseline", "iteration": 2},
+            {"test": "probe", "side": "candidate", "iteration": 2}])
+        self.assertEqual(found["cases"]["probe"]["state_variation"], {"baseline": True, "candidate": False})
+        self.assertEqual(found["cases"]["probe"]["detail_variation"], {"baseline": True, "candidate": True})
+        self.assertEqual(found["state_variation_tests"], ["probe"])
+        self.assertEqual(gate.compare(runs)["exit_code"], 1)
+
     def test_absent_duplicate_extra_and_invalid_iterations_are_incomplete(self):
         baseline = self.iteration("baseline", 1, testcase())
         candidate = self.iteration("candidate", 1, testcase())
