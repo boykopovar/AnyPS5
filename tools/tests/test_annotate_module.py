@@ -1020,6 +1020,12 @@ class ListingHelperTests(unittest.TestCase):
         self.assertEqual(annotate_module.export_lines({0x10: ["a"]}, {0x4: ["tl"]}, FakeNamer()),
                          ["0x10 a A", "tls+0x4 tl TL"])
 
+    def test_write_lines_terminates_each_line_with_lf(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "out.txt"
+            annotate_module.write_lines(path, ["a", "b"])
+            self.assertEqual(path.read_bytes(), b"a\nb\n")
+
 
 if __name__ == "__main__":
     unittest.main(defaultTest=os.environ.get("ANNOTATE_MODULE_TEST"))
