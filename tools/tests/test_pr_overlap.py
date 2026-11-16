@@ -670,6 +670,10 @@ class PageAndCacheHelperTests(unittest.TestCase):
             path.write_text("[not json", encoding="utf-8")
             self.assertEqual(pr_overlap.load_export_cache(path, 2), {})
             self.assertEqual(pr_overlap.load_export_cache(Path(directory) / "missing.json", 2), {})
+class CellAndDependencyTests(unittest.TestCase):
+    def test_cell_lists_sorted_code_spans_joined_by_breaks(self):
+        self.assertEqual(pr_overlap.cell({"b", "a"}), "`a`<br>`b`")
+        self.assertEqual(pr_overlap.cell(None), "")
 
 
 if __name__ == "__main__":
