@@ -3682,6 +3682,18 @@ class PureHelperTests(unittest.TestCase):
         self.assertEqual(import_audit.origin_name("libplain.prx"), "libplain.prx")
         self.assertIsNone(import_audit.origin_name(None))
 
+    def test_module_stem_strips_the_known_suffix(self):
+        self.assertEqual(import_audit.module_stem("Foo.sprx", fold=False), "Foo")
+        self.assertEqual(import_audit.module_stem("Foo.debug_prx", fold=False), "Foo")
+
+    def test_module_stem_folds_case_only_when_asked(self):
+        self.assertEqual(import_audit.module_stem("Foo.PRX", fold=True), "foo")
+        self.assertIsNone(import_audit.module_stem("Foo.PRX", fold=False))
+
+    def test_module_stem_refuses_a_bare_suffix(self):
+        self.assertIsNone(import_audit.module_stem(".prx", fold=False))
+        self.assertIsNone(import_audit.module_stem("plain.txt", fold=False))
+
 
 if __name__ == "__main__":
     unittest.main()
