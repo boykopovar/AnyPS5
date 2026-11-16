@@ -866,5 +866,12 @@ class UtcDayTests(unittest.TestCase):
                 progress_history.utc_day(value)
 
 
+class SpreadTests(unittest.TestCase):
+    def test_spread_pushes_close_values_apart(self):
+        import progress_history
+        self.assertEqual(progress_history.spread([0, 5, 100], gap=15), [0, 15, 100])
+        self.assertEqual(progress_history.spread([10, 10, 10], gap=5), [10, 15, 20])
+
+
 if __name__ == "__main__":
     unittest.main()
