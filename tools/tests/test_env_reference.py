@@ -625,5 +625,16 @@ class EnvReferenceTests(unittest.TestCase):
         self.assertIn("APS5_PYTHON", env_reference.reads([root / "core"]))
 
 
+class KindOfTests(unittest.TestCase):
+    def test_kind_of_by_reader_and_window(self):
+        import env_reference
+        self.assertEqual(env_reference.kind_of("IsEnvironmentSet", ""), "presence")
+        self.assertEqual(env_reference.kind_of("EnvInt", ""), "integer")
+        self.assertEqual(env_reference.kind_of("GetEnvironmentVariableA", ""), "string")
+        self.assertEqual(env_reference.kind_of("getenv", "p != nullptr"), "presence")
+        self.assertEqual(env_reference.kind_of("getenv", "strtol(v, 0, 10)"), "integer")
+        self.assertEqual(env_reference.kind_of("getenv", "use(v)"), "string")
+
+
 if __name__ == "__main__":
     unittest.main()
