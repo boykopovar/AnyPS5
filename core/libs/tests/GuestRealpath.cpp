@@ -14,9 +14,23 @@
 #include <vector>
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
 #endif
 
 static void Require(bool value) { if (!value) std::abort(); }
+
+static const char* UnreadablePage() {
+#ifdef _WIN32
+    void* page = VirtualAlloc(nullptr, 4096, MEM_RESERVE | MEM_COMMIT, PAGE_NOACCESS);
+    Require(page != nullptr);
+#else
+    void* page = mmap(nullptr, static_cast<std::size_t>(sysconf(_SC_PAGESIZE)), PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED);
+#endif
+    return static_cast<const char*>(page);
+}
 
 static bool Resolves(const std::string& path, const std::string& expected) {
     char out[1024];
@@ -78,6 +92,20 @@ int main() {
     free_nid_postfix(allocated);
 
     Require(Fails(nullptr, 22));
+    for (const char* unusable : {reinterpret_cast<const char*>(0x10), UnreadablePage()}) {
+        *__error_nid_postfix() = 0;
+        Require(realpath_nid_postfix(unusable, nullptr) == nullptr && *__error_nid_postfix() == 14);
+        char out[1024];
+        *__error_nid_postfix() = 0;
+        Require(realpath_nid_postfix(unusable, out) == nullptr && *__error_nid_postfix() == 14);
+        *__error_nid_postfix() = 0;
+        Require(realpath_nid_postfix((guest + "/file.txt").c_str(), const_cast<char*>(unusable)) == nullptr && *__error_nid_postfix() == 14);
+        *__error_nid_postfix() = 0;
+        Require(realpath_nid_postfix((guest + "/missing").c_str(), const_cast<char*>(unusable)) == nullptr && *__error_nid_postfix() == 2);
+    }
+    const std::string unbounded(4096, 'a');
+    *__error_nid_postfix() = 0;
+    Require(realpath_nid_postfix(unbounded.c_str(), nullptr) == nullptr && *__error_nid_postfix() == 63);
     Require(Fails("", 2));
     Require(Fails((guest + "/missing").c_str(), 2, guest + "/missing"));
     Require(Fails((guest + "/missing/../file.txt").c_str(), 2, guest + "/missing"));
@@ -139,6 +167,26 @@ int main() {
         Require(Fails((guest + "/loop-a").c_str(), 62));
         Require(Fails((guest + "/file-link/x").c_str(), 20));
         Require(Fails((guest + "/file-link/").c_str(), 20));
+        const std::string seg(200, 'a');
+        const std::string p1 = "rp-" + std::string(197, 'a');
+        const std::string p2 = p1 + "/" + seg;
+        const std::string p3 = p2 + "/" + seg;
+        const std::string p4 = p3 + "/" + seg;
+        const std::string p5 = p4 + "/" + std::string(214, 'a');
+        const std::string deepParent = "/" + p5;
+        const std::string deepGuest = deepParent + "/sub";
+        for (const auto* a : {&p5, &p4, &p3, &p2, &p1}) AddPathAlias_nid_no_patch(a->c_str(), directory.string().c_str());
+        directories.push_back(directory / "hop1");
+        directories.push_back(directory / "hop2");
+        Require(createLink(directory / "hop1", "../" + p2 + "/hop2", true));
+        Require(createLink(directory / "hop2", seg + "/" + seg + "/" + std::string(214, 'a') + "/sub", true));
+        Require(Resolves(guest + "/hop1" + std::string(2, '/'), deepGuest));
+        Require(Resolves(guest + "/hop1/.", deepGuest));
+        Require(Resolves(guest + "/hop1/./", deepGuest));
+        Require(Resolves(guest + "/hop1/..", deepParent));
+        Require(Resolves(guest + "/hop1/../sub", deepGuest));
+        Require(Fails((guest + "/hop1/x").c_str(), 63));
+        for (const auto* a : {&p5, &p4, &p3, &p2, &p1}) RemovePathAlias_nid_no_patch(a->c_str());
         for (int index = 0; index < 34; ++index) {
             Require(fileLink(directory / ("long-" + std::to_string(index)), index == 33 ? "file.txt" : "long-" + std::to_string(index + 1)));
         }

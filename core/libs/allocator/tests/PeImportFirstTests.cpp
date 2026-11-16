@@ -40,7 +40,7 @@ std::uint32_t get32(const std::vector<unsigned char>& bytes, std::size_t offset)
     return value;
 }
 
-std::vector<unsigned char> image(const std::vector<std::string>& dlls, std::uint16_t magic = 0x20b, std::uint32_t directories = 16, std::uint16_t optionalBytes = OptionalBytes) {
+std::vector<unsigned char> image(const std::vector<std::string>& dlls, std::uint16_t magic = 0x20b, std::uint32_t directories = 16, std::uint16_t optionalBytes = OptionalBytes, std::uint32_t sectionRva = SectionRva) {
     std::vector<unsigned char> bytes(SectionOffset + SectionBytes, 0);
     bytes[0] = 'M';
     bytes[1] = 'Z';
@@ -51,30 +51,30 @@ std::vector<unsigned char> image(const std::vector<std::string>& dlls, std::uint
     put16(bytes, PeOffset + 20, optionalBytes);
     put16(bytes, OptionalOffset, magic);
     put32(bytes, OptionalOffset + 108, directories);
-    put32(bytes, OptionalOffset + 112 + 8, SectionRva);
+    put32(bytes, OptionalOffset + 112 + 8, sectionRva);
     put32(bytes, OptionalOffset + 112 + 12, static_cast<std::uint32_t>((dlls.size() + 1) * DescriptorBytes));
     const auto sectionTable = OptionalOffset + optionalBytes;
     std::memcpy(bytes.data() + sectionTable, ".idata", 6);
     put32(bytes, sectionTable + 8, SectionBytes);
-    put32(bytes, sectionTable + 12, SectionRva);
+    put32(bytes, sectionTable + 12, sectionRva);
     put32(bytes, sectionTable + 16, SectionBytes);
     put32(bytes, sectionTable + 20, SectionOffset);
     auto name = (dlls.size() + 1) * DescriptorBytes;
     for (std::size_t index = 0; index < dlls.size(); ++index) {
         const auto descriptor = SectionOffset + index * DescriptorBytes;
-        put32(bytes, descriptor, static_cast<std::uint32_t>(SectionRva + 0x100 + index * 0x10));
+        put32(bytes, descriptor, static_cast<std::uint32_t>(sectionRva + 0x100 + index * 0x10));
         put32(bytes, descriptor + 4, static_cast<std::uint32_t>(index + 1));
-        put32(bytes, descriptor + 12, static_cast<std::uint32_t>(SectionRva + name));
-        put32(bytes, descriptor + 16, static_cast<std::uint32_t>(SectionRva + 0x180 + index * 0x10));
+        put32(bytes, descriptor + 12, static_cast<std::uint32_t>(sectionRva + name));
+        put32(bytes, descriptor + 16, static_cast<std::uint32_t>(sectionRva + 0x180 + index * 0x10));
         std::memcpy(bytes.data() + SectionOffset + name, dlls[index].c_str(), dlls[index].size() + 1);
         name += dlls[index].size() + 1;
     }
     return bytes;
 }
 
-std::string importName(const std::vector<unsigned char>& bytes, std::size_t index) {
+std::string importName(const std::vector<unsigned char>& bytes, std::size_t index, std::uint32_t sectionRva = SectionRva) {
     const auto rva = get32(bytes, SectionOffset + index * DescriptorBytes + 12);
-    return reinterpret_cast<const char*>(bytes.data() + SectionOffset + (rva - SectionRva));
+    return reinterpret_cast<const char*>(bytes.data() + SectionOffset + (rva - sectionRva));
 }
 
 std::vector<unsigned char> descriptor(const std::vector<unsigned char>& bytes, std::size_t index) {
@@ -132,6 +132,16 @@ void movesTheImportFirstWithATwoDirectoryOptionalHeader(const std::filesystem::p
     require(readFile(path) == moved, "repeating the move changed the file with a 128-byte optional header");
 }
 
+void movesTheImportInASectionEndingAboveFourGiB() {
+    constexpr std::uint32_t highSectionRva = 0xFFFFF000u;
+    auto original = image({"kernel32.dll", "mimalloc-redirect.dll", "advapi32.dll"}, 0x20b, 16, OptionalBytes, highSectionRva);
+    put32(original, OptionalOffset + OptionalBytes + 8, 0x2000);
+    auto moved = original;
+    Allocator::MoveImportFirst(moved, "mimalloc-redirect.dll");
+    require(importName(moved, 0, highSectionRva) == "mimalloc-redirect.dll" && importName(moved, 1, highSectionRva) == "kernel32.dll" && importName(moved, 2, highSectionRva) == "advapi32.dll",
+        "the import in a section ending above 4 GiB did not move first");
+}
+
 void movesTheImportInAFile(const std::filesystem::path& directory) {
     const auto path = directory / "moved.dll";
     writeFile(path, image({"kernel32.dll", "mimalloc-redirect.dll"}));
@@ -173,6 +183,7 @@ int main() {
     try {
         std::filesystem::create_directories(directory);
         movesTheNamedImportFirst();
+        movesTheImportInASectionEndingAboveFourGiB();
         movesTheImportFirstWithATwoDirectoryOptionalHeader(directory);
         movesTheImportInAFile(directory);
         failsWithoutTouchingTheFile(directory, "missing-import", image({"kernel32.dll", "ucrtbase.dll"}), "does not import mimalloc-redirect.dll");

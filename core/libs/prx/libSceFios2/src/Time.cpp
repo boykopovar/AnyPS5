@@ -3,6 +3,7 @@
 #include "prx/libc/include/General.hpp"
 #include <chrono>
 #include <cstring>
+#include <limits>
 
 namespace {
 
@@ -53,7 +54,8 @@ SceFiosDate APS5_VABI sceFiosDateFromComponents(const SceFiosTm* components) {
     }
     const std::int64_t days = DaysFromCivil(year, month + 1, 1) + tm.tm_mday - 1;
     const std::int64_t seconds = days * SecondsPerDay + static_cast<std::int64_t>(tm.tm_hour) * 3600 + static_cast<std::int64_t>(tm.tm_min) * 60 + tm.tm_sec;
-    return seconds < 0 ? 0 : static_cast<SceFiosDate>(seconds) * NanosecondsPerSecond;
+    if (seconds < 0 || seconds > static_cast<std::int64_t>(std::numeric_limits<SceFiosDate>::max() / NanosecondsPerSecond)) return 0;
+    return static_cast<SceFiosDate>(seconds) * NanosecondsPerSecond;
 }
 
 SceFiosTm* APS5_VABI sceFiosDateToComponents(SceFiosDate date, SceFiosTm* outComponents) {

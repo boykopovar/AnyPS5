@@ -1,6 +1,7 @@
 #include "prx/libSceNpEntitlementAccess/include/Api.hpp"
 #include "SceTypes.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -125,21 +126,68 @@ int main(int argc, char** argv) {
     std::filesystem::create_directories(directory);
     {
         std::ofstream ini(file, std::ios::binary);
-        ini << "# owned add-ons\nFIRSTADDON0000\n  SECONDADDON ; second\n";
+        ini << "# owned add-ons\nFIRSTADDON0000\n  SECONDADDON ; second\nSIXTEENCHARLABEL\n";
         Require(static_cast<bool>(ini));
     }
     SetEntitlements(file);
+    errno = 71;
+    Require(sceNpEntitlementAccessGetSkuFlag(reinterpret_cast<std::uint32_t*>(0x10)) == static_cast<int>(0x80558003));
+    Require(sceNpEntitlementAccessGetPftFlag(reinterpret_cast<std::uint32_t*>(0x10)) == static_cast<int>(0x817D0002));
+    Require(sceNpEntitlementAccessGetGameTrialsFlag(reinterpret_cast<std::uint32_t*>(0x10)) == static_cast<int>(0x817D0002));
+    Require(errno == 71);
+    Require(sceNpEntitlementAccessInitialize(nullptr, nullptr) == static_cast<int>(0x817D0002));
+    NpEntitlementAccessInitParam initParam{};
+    NpEntitlementAccessBootParam bootParam{};
+    initParam.reserved[7] = 1;
+    Require(sceNpEntitlementAccessInitialize(&initParam, &bootParam) == static_cast<int>(0x817D0002));
+    initParam.reserved[7] = 0;
+    bootParam.reserved[31] = 1;
+    Require(sceNpEntitlementAccessInitialize(&initParam, &bootParam) == static_cast<int>(0x817D0002));
+    bootParam.reserved[31] = 0;
+    Require(sceNpEntitlementAccessInitialize(&initParam, nullptr) == static_cast<int>(0x817D0002));
+    errno = 71;
+    Require(sceNpEntitlementAccessInitialize(reinterpret_cast<const NpEntitlementAccessInitParam*>(0x10), &bootParam) == static_cast<int>(0x817D0002));
+    Require(sceNpEntitlementAccessInitialize(&initParam, reinterpret_cast<NpEntitlementAccessBootParam*>(0x10)) == static_cast<int>(0x817D0002));
+    Require(errno == 71);
+    Require(sceNpEntitlementAccessInitialize(&initParam, &bootParam) == 0);
+    Require(sceNpEntitlementAccessInitialize(&initParam, &bootParam) == static_cast<int>(0x817D0003));
     NpEntitlementAccessAddcontEntitlementInfo list[3]{};
     std::uint32_t hits = 0;
+    Require(sceNpEntitlementAccessGetAddcontEntitlementInfoList(0, nullptr, 3, &hits) == static_cast<int>(0x80558003));
+    Require(sceNpEntitlementAccessGetAddcontEntitlementInfoList(0, list, 3, nullptr) == static_cast<int>(0x80558003));
+    Require(sceNpEntitlementAccessGetAddcontEntitlementInfoList(0, nullptr, 0, &hits) == 0 && hits == 3);
+    hits = 0;
     Require(sceNpEntitlementAccessGetAddcontEntitlementInfoList(0, list, 3, &hits) == 0);
-    Require(hits == 2);
+    Require(hits == 3);
     Require(std::strcmp(list[0].entitlement_label.data, "FIRSTADDON0000") == 0);
     Require(std::strcmp(list[1].entitlement_label.data, "SECONDADDON") == 0);
+    Require(std::strcmp(list[2].entitlement_label.data, "SIXTEENCHARLABEL") == 0);
+    errno = 71;
+    Require(sceNpEntitlementAccessGetAddcontEntitlementInfoList(0, list, 3,
+        reinterpret_cast<std::uint32_t*>(0x10)) == static_cast<int>(0x80558003));
+    Require(errno == 71);
+    hits = 0;
+    Require(sceNpEntitlementAccessGetAddcontEntitlementInfoList(0,
+        reinterpret_cast<NpEntitlementAccessAddcontEntitlementInfo*>(0x10), 3, &hits) == static_cast<int>(0x80558003));
+    Require(hits == 3 && errno == 71);
     NpUnifiedEntitlementLabel label{};
     std::memcpy(label.data, "SECONDADDON", 11);
     NpEntitlementAccessAddcontEntitlementInfo info{};
+    Require(sceNpEntitlementAccessGetAddcontEntitlementInfo(0, nullptr, &info) == static_cast<int>(0x80558003));
+    Require(sceNpEntitlementAccessGetAddcontEntitlementInfo(0, &label, nullptr) == static_cast<int>(0x80558003));
     Require(sceNpEntitlementAccessGetAddcontEntitlementInfo(0, &label, &info) == 0);
     Require(std::strcmp(info.entitlement_label.data, "SECONDADDON") == 0 && info.package_type == 3 && info.download_status == 4);
+    errno = 71;
+    Require(sceNpEntitlementAccessGetAddcontEntitlementInfo(0,
+        reinterpret_cast<const NpUnifiedEntitlementLabel*>(0x10), &info) == static_cast<int>(0x80558003));
+    Require(sceNpEntitlementAccessGetAddcontEntitlementInfo(0, &label,
+        reinterpret_cast<NpEntitlementAccessAddcontEntitlementInfo*>(0x10)) == static_cast<int>(0x80558003));
+    Require(errno == 71);
+    NpUnifiedEntitlementLabel sixteen{};
+    std::memcpy(sixteen.data, "SIXTEENCHARLABEL", 16);
+    NpEntitlementAccessAddcontEntitlementInfo sixteenInfo{};
+    Require(sceNpEntitlementAccessGetAddcontEntitlementInfo(0, &sixteen, &sixteenInfo) == 0);
+    Require(std::strcmp(sixteenInfo.entitlement_label.data, "SIXTEENCHARLABEL") == 0 && sixteenInfo.package_type == 3 && sixteenInfo.download_status == 4);
     const auto log = CaptureStderr(QueryUnlistedTwiceAndListedOnce);
     Require(Occurrences(log, "[entitlements] the title asked for the add-on LOGGEDADDON, which ") == 1);
     Require(log.find(file.filename().string() + " does not list, so it is reported as not installed\n") != std::string::npos);
@@ -188,6 +236,9 @@ int main(int argc, char** argv) {
         Require(sceNpEntitlementAccessDeleteRequest(requestId) == 0);
         Require(sceNpEntitlementAccessDeleteRequest(requestId) == 0);
     }
+    std::int64_t consumeReq = 0;
+    Require(sceNpEntitlementAccessRequestConsumeUnifiedEntitlement(1, 0, &label, nullptr, 1, &consumeReq) == static_cast<int>(0x80550006));
+    Require(sceNpEntitlementAccessPollConsumeEntitlement(1, nullptr, nullptr) == static_cast<int>(0x80550006));
     std::filesystem::remove_all(root);
     std::puts("Guest entitlements passed");
     return 0;

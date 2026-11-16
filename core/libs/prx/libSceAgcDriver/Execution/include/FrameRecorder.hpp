@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
 #include "SceShaders.hpp"
 #include "SceTypes.hpp"
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <deque>
@@ -43,6 +44,8 @@ public:
     void Suspend(const std::function<void()>& accept);
     void PresentBuffer(const DisplayBuffer& buffer);
     void FrameBoundary();
+    void RewindTailFlips(std::uint64_t flips);
+    static void SetStartIdleWaitForTest(std::function<bool()> wait);
 
 private:
     enum class State { Waiting, Recording, Done };
@@ -54,6 +57,7 @@ private:
         std::uint32_t protection = 0;
         std::uint32_t access = 0;
         bool readable = false;
+        std::uint64_t since = 0;
     };
 
     FrameRecorder(std::filesystem::path directory, std::filesystem::path trigger, std::uint64_t atBoundary, std::uint64_t frames);
@@ -69,18 +73,20 @@ private:
     void emitDelta();
     static void collectShaderPages(std::span<const Shader* const> shaders, std::set<std::uint64_t>& blocks, std::set<std::uint64_t>& hostPages);
     void emitShaderDelta(std::span<const Shader* const> shaders);
-    void writeDelta(std::span<const Span> spans, std::span<const std::uint64_t> hostPages, std::span<const Range> added = {});
+    void writeDelta(std::span<Span> spans, std::span<const std::uint64_t> hostPages, std::span<const Range> added = {});
+    void frameBoundaryLocked();
     bool triggered();
     void start();
     void finish();
     void snapshot(const Range& range);
-    void readGuest(std::uint64_t address, std::span<std::byte> bytes, GuestRead read);
+    void readGuest(std::uint64_t address, std::span<std::byte> bytes);
     void writeReferenceFrames();
     bool abandonIfDiskLow();
     void stop(const char* reason);
     std::string header() const;
     std::vector<Range> committedRanges();
     std::vector<Range> newRanges();
+    std::uint64_t blockSince(std::uint64_t block) const;
 
     std::filesystem::path directory;
     std::filesystem::path trigger;
@@ -99,14 +105,17 @@ private:
     std::map<std::uint64_t, DisplayBuffer> displayBuffers;
     std::uint64_t ordinal = 0;
     std::uint64_t boundaries = 0;
+    std::uint64_t rewindTailFlips = 0;
     std::uint64_t startBoundary = 0;
     std::uint64_t recordedFrames = 0;
-    std::uint64_t generation = 0;
+    std::uint64_t startGeneration = 0;
     std::uint64_t deltaGroups = 0;
     std::uint64_t deltaBytes = 0;
     std::uint64_t snapshotBytes = 0;
     std::uint64_t recordedCalls = 0;
     std::uint64_t startAttempts = 0;
+    std::atomic<std::uint64_t> unrecordedAccepts{0};
+    inline static std::function<bool()> startIdleWaitForTest;
     std::uint64_t unreadableBytes = 0;
     std::uint64_t hostOnlySampleBytes = 0;
     std::uint64_t allocationsGeneration = 0;
