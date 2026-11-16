@@ -807,6 +807,7 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
             physical.imageWritten.reserve(physical.imageWritten.size() + tables->elements.size());
             physical.imageAtomic.reserve(physical.imageAtomic.size() + tables->elements.size());
             physical.imageAtomic64.reserve(physical.imageAtomic64.size() + tables->elements.size());
+            physical.imageUintStorage.reserve(physical.imageUintStorage.size() + tables->elements.size());
             physical.imageSamplers.reserve(physical.imageSamplers.size() + tables->elements.size());
             for (const auto& element : tables->elements) {
                 physical.guestDescriptor.insert(physical.guestDescriptor.end(), element.words.begin(), element.words.end());
@@ -817,6 +818,7 @@ void DescriptorBindingBuilder::Populate(BindingAllocationResult& allocation, con
                 physical.imageWritten.push_back(ImageBindingResourceClass(element.kind) == ImageResourceClass::Storage);
                 physical.imageAtomic.push_back(element.atomic);
                 physical.imageAtomic64.push_back(element.atomic64);
+                physical.imageUintStorage.push_back(ImageBindingResourceClass(element.kind) == ImageResourceClass::Storage && RuntimeAbi::UintStorageImageBinding(static_cast<std::uint32_t>(element.kind)));
                 std::uint64_t samplers = 0;
                 for (std::uint32_t sampler = 0; sampler < entry.tableSamplerMasks.size(); ++sampler) {
                     if (((element.samplers >> sampler) & 1u) != 0u) samplers |= entry.tableSamplerMasks[sampler];
