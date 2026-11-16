@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -63,6 +64,9 @@ int main() {
     query.fill(Sentinel);
     Require(Throws([&] { _sceVideoRecordingQueryParam_nid_postfix(reinterpret_cast<VideoRecordingQueryParam*>(query.data())); }), "the default parameters were produced");
 
+    errno = 71;
+    Require(sceVideoRecordingQueryMemSize(reinterpret_cast<const VideoRecordingParam*>(0x10)) == InvalidArgument, "an unmapped parameter block was refused");
+    Require(errno == 71, "errno was preserved across unmapped query");
     Require(sceVideoRecordingQueryMemSize(nullptr) == InvalidArgument, "a heap size was reported for no parameters");
     for (std::uint32_t format = 0x3; format <= 0x44; ++format) {
         if (format == 0x10 || format == 0x11 || format == 0x28 || format == 0x40 || format == 0x41) continue;
@@ -121,6 +125,9 @@ int main() {
     VideoRecordingParam refused = RecordingParam(1);
     refused.duration = 0;
     Require(sceVideoRecordingOpen(nullptr, &video, heap.data(), static_cast<int>(heap.size())) == InvalidArgument, "the recorder opened without a path");
+    errno = 71;
+    Require(sceVideoRecordingOpen("clip.mp4", reinterpret_cast<const VideoRecordingParam*>(0x10), heap.data(), static_cast<int>(heap.size())) == InvalidArgument, "the recorder opened with unmapped parameters");
+    Require(errno == 71, "errno was preserved across unmapped open");
     Require(sceVideoRecordingOpen("clip.mp4", nullptr, heap.data(), static_cast<int>(heap.size())) == InvalidArgument, "the recorder opened without parameters");
     Require(sceVideoRecordingOpen("clip.mp4", &video, nullptr, static_cast<int>(heap.size())) == InvalidArgument, "the recorder opened without a heap");
     Require(sceVideoRecordingOpen("clip.mp4", &video, heap.data(), -1) == InvalidArgument, "the recorder opened with a negative heap size");
@@ -136,6 +143,45 @@ int main() {
     Require(sceVideoRecordingGetInfo(0xa001, nullptr, 0) == NotOpen, "info 0xa001 validation");
     Require(sceVideoRecordingGetInfo(0xa005, nullptr, 0) == NotOpen, "info 0xa005 validation");
     Require(sceVideoRecordingGetInfo(0, nullptr, 0) == InvalidArgument, "unknown info validation");
+
+    std::array<std::uint8_t, 16> bgra{};
+    std::array<std::uint8_t, 6> nv12{};
+    Require(sceVideoRecordingCopyBGRAtoNV12(nullptr, bgra.data(), 2, 2) == InvalidArgument, "conversion without a destination");
+    Require(sceVideoRecordingCopyBGRAtoNV12(nv12.data(), nullptr, 2, 2) == InvalidArgument, "conversion without a source");
+    Require(sceVideoRecordingCopyBGRAtoNV12(nv12.data(), bgra.data(), 0, 2) == InvalidArgument, "conversion without width");
+    Require(sceVideoRecordingCopyBGRAtoNV12(nv12.data(), bgra.data(), 2, 0) == InvalidArgument, "conversion without height");
+    Require(sceVideoRecordingCopyBGRAtoNV12(nv12.data(), bgra.data(), 3, 2) == InvalidArgument, "conversion with odd width");
+    Require(sceVideoRecordingCopyBGRAtoNV12(nv12.data(), bgra.data(), 2, 3) == InvalidArgument, "conversion with odd height");
+    Require(sceVideoRecordingCopyBGRAtoNV12(nv12.data(), bgra.data(), 16386, 2) == InvalidArgument, "conversion with a width above the bound");
+    errno = 71;
+    Require(sceVideoRecordingCopyBGRAtoNV12(nv12.data(), reinterpret_cast<const void*>(0x10), 2, 2) == InvalidArgument, "conversion read an unmapped source");
+    Require(errno == 71, "errno was preserved across an unmapped source");
+    Require(sceVideoRecordingCopyBGRAtoNV12(reinterpret_cast<void*>(0x10), bgra.data(), 2, 2) == InvalidArgument, "conversion wrote an unmapped destination");
+    Require(errno == 71, "errno was preserved across an unmapped destination");
+
+    const auto CheckColor = [&](std::uint8_t blue, std::uint8_t green, std::uint8_t red, int luma, int blueDifference, int redDifference) {
+        for (std::size_t pixel = 0; pixel < 4; ++pixel) {
+            bgra[pixel * 4] = blue;
+            bgra[pixel * 4 + 1] = green;
+            bgra[pixel * 4 + 2] = red;
+            bgra[pixel * 4 + 3] = 0xff;
+        }
+        nv12.fill(Sentinel);
+        Require(sceVideoRecordingCopyBGRAtoNV12(nv12.data(), bgra.data(), 2, 2) == 0, "conversion refused a solid colour");
+        for (std::size_t pixel = 0; pixel < 4; ++pixel) Require(std::abs(static_cast<int>(nv12[pixel]) - luma) <= 1, "solid colour luma");
+        Require(std::abs(static_cast<int>(nv12[4]) - blueDifference) <= 1 && std::abs(static_cast<int>(nv12[5]) - redDifference) <= 1, "solid colour chroma");
+    };
+    CheckColor(0xff, 0xff, 0xff, 235, 128, 128);
+    CheckColor(0x00, 0x00, 0x00, 16, 128, 128);
+    CheckColor(0x00, 0x00, 0xff, 63, 102, 240);
+    CheckColor(0xff, 0x00, 0x00, 32, 240, 118);
+
+    bgra = {0x00, 0x00, 0xff, 0xff, 0xff, 0x00, 0x00, 0xff, 0xff, 0x00, 0x00, 0xff, 0x00, 0x00, 0xff, 0xff};
+    nv12.fill(Sentinel);
+    Require(sceVideoRecordingCopyBGRAtoNV12(nv12.data(), bgra.data(), 2, 2) == 0, "conversion refused a checkerboard");
+    Require(std::abs(static_cast<int>(nv12[0]) - 63) <= 1 && std::abs(static_cast<int>(nv12[1]) - 32) <= 1, "checkerboard first row luma");
+    Require(std::abs(static_cast<int>(nv12[2]) - 32) <= 1 && std::abs(static_cast<int>(nv12[3]) - 63) <= 1, "checkerboard second row luma");
+    Require(std::abs(static_cast<int>(nv12[4]) - 171) <= 1 && std::abs(static_cast<int>(nv12[5]) - 179) <= 1, "checkerboard averaged chroma");
     std::puts("VideoRecording tests passed");
     return 0;
 }

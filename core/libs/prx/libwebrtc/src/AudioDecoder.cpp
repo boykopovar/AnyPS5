@@ -42,8 +42,26 @@
 
 #include "prx/libwebrtc/libwebrtc.hpp"
 
+#include <stdexcept>
+
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+
+namespace {
+
+constexpr std::size_t DeletingDestructorSlot = 1;
+
+void DeleteFrame(void* frame) {
+    const void* const* vtable;
+    std::memcpy(&vtable, frame, sizeof(vtable));
+    if (!vtable || !vtable[DeletingDestructorSlot])
+        throw std::invalid_argument("AudioDecoder::ParseResult destructor requires a frame with a virtual destructor");
+    using Destructor = void(APS5_VABI*)(void*);
+    reinterpret_cast<Destructor>(const_cast<void*>(vtable[DeletingDestructorSlot]))(frame);
+}
+
+}
 
 extern "C" {
 
@@ -59,6 +77,25 @@ void APS5_VABI _ZN6webrtc12AudioDecoder11GeneratePlcEmPN3rtc7BufferTIsLb0EEE_nid
 
 int APS5_VABI _ZN6webrtc12AudioDecoder9ErrorCodeEv_nid_postfix(WebRtcAudioDecoder*) {
     return 0;
+}
+
+void APS5_VABI _ZN6webrtc12AudioDecoder11ParseResultC1EOS1__nid_postfix(WebRtcAudioDecoderParseResult* result, WebRtcAudioDecoderParseResult* other) {
+    if (!result)
+        throw std::invalid_argument("AudioDecoder::ParseResult move constructor requires a result");
+    if (!other)
+        throw std::invalid_argument("AudioDecoder::ParseResult move constructor requires a source");
+    void* frame = other->frame;
+    other->frame = nullptr;
+    result->timestamp = other->timestamp;
+    result->priority = other->priority;
+    result->frame = frame;
+}
+
+void APS5_VABI _ZN6webrtc12AudioDecoder11ParseResultD1Ev_nid_postfix(WebRtcAudioDecoderParseResult* result) {
+    if (!result)
+        throw std::invalid_argument("AudioDecoder::ParseResult destructor requires a result");
+    if (result->frame)
+        DeleteFrame(result->frame);
 }
 
 }

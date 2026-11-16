@@ -3,6 +3,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SslCertificateFixture.hpp"
 
+#include <cerrno>
 #include <cstdio>
 #include <cstring>
 #include <exception>
@@ -251,6 +252,9 @@ void CertificateReaders() {
     Check(sceSslGetNotBefore(id, nullptr, &begin) == static_cast<int>(0x8095f007), "null certificate date error mismatch");
     Throws([&] { sceSslGetNotBefore(id, fake, &begin); });
     Check(sceSslGetNotBefore(9999, cert, &begin) == InvalidId, "invalid date context error mismatch");
+    errno = 71;
+    Check(sceSslGetNotBefore(id, cert, reinterpret_cast<SceSsl::RtcTick*>(0x10)) == static_cast<int>(0x8095f007), "unreadable begin accepted");
+    Check(errno == 71, "errno modified by unreadable begin check");
 
     SceSsl::RtcTick limit{};
     Check(sceSslGetNotAfter(id, cert, &limit) == 0, "get not after failed");
@@ -259,6 +263,9 @@ void CertificateReaders() {
     Check(sceSslGetNotAfter(id, nullptr, &limit) == static_cast<int>(0x8095f007), "null certificate date error mismatch");
     Throws([&] { sceSslGetNotAfter(id, fake, &limit); });
     Check(sceSslGetNotAfter(9999, cert, &limit) == InvalidId, "invalid date context error mismatch");
+    errno = 71;
+    Check(sceSslGetNotAfter(id, cert, reinterpret_cast<SceSsl::RtcTick*>(0x10)) == static_cast<int>(0x8095f007), "unreadable limit accepted");
+    Check(errno == 71, "errno modified by unreadable limit check");
 
     unsigned char md5[16]{};
     Check(sceSslGetFingerprint(id, cert, 0, md5) == 0, "get md5 fingerprint failed");

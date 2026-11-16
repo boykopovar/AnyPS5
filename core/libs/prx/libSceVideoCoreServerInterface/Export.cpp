@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "prx/libSceVideoCoreServerInterface/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <mutex>
@@ -34,11 +35,22 @@ DecoderResources& Resources() {
 
 int AcquireDecoderResource(const VideoCoreAcquireDecoderResourceParam* param, VideoCoreDecoderResourceCallback callback, std::uint32_t* resourceId, bool beWrapper) {
     if (param == nullptr || callback == nullptr || resourceId == nullptr) return VideoCoreErrorInvalidArgument;
+    VideoCoreAcquireDecoderResourceParam localParam{};
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam))) {
+        errno = savedErrno;
+        return VideoCoreErrorInvalidArgument;
+    }
     auto& state = Resources();
     std::lock_guard lock(state.mutex);
-    const std::uint32_t id = state.nextId++;
-    state.resources[id] = DecoderResource{beWrapper, *param, callback};
-    *resourceId = id;
+    const std::uint32_t id = state.nextId;
+    if (!GuestCopyOut_nid_no_patch(resourceId, &id, sizeof(id))) {
+        errno = savedErrno;
+        return VideoCoreErrorInvalidArgument;
+    }
+    ++state.nextId;
+    errno = savedErrno;
+    state.resources[id] = DecoderResource{beWrapper, localParam, callback};
     return 0;
 }
 

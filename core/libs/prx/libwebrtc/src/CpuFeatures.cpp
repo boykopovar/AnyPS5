@@ -42,33 +42,21 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/include/GuestCpu.hpp"
 
-#include <cpuid.h>
 #include <cstdint>
 
 namespace {
 
-std::uint64_t ExtendedControlRegister0() {
-    std::uint32_t low = 0;
-    std::uint32_t high = 0;
-    __asm__ volatile("xgetbv" : "=a"(low), "=d"(high) : "c"(0));
-    return (static_cast<std::uint64_t>(high) << 32) | low;
-}
-
 bool HasAvx2(unsigned int leaf1Ecx) {
-    unsigned int eax = 0;
-    unsigned int ebx = 0;
-    unsigned int ecx = 0;
-    unsigned int edx = 0;
-    __cpuid_count(0, 0, eax, ebx, ecx, edx);
-    if (static_cast<int>(eax) < 7)
+    if (static_cast<int>(GuestCpu::Cpuid(0, 0)[0]) < 7)
         return false;
     if ((leaf1Ecx & 0x10000000u) == 0 || (leaf1Ecx & 0x04000000u) == 0 || (leaf1Ecx & 0x08000000u) == 0)
         return false;
-    if ((ExtendedControlRegister0() & 0x6u) != 0x6u)
+    if ((GuestCpu::Xgetbv(0) & 0x6u) != 0x6u)
         return false;
-    __cpuid_count(7, 0, eax, ebx, ecx, edx);
-    return (ebx & 0x00000020u) != 0 && (ebx & 0x00000100u) != 0;
+    const auto leaf7 = GuestCpu::Cpuid(7, 0);
+    return (leaf7[1] & 0x00000020u) != 0 && (leaf7[1] & 0x00000100u) != 0;
 }
 
 }
@@ -76,12 +64,8 @@ bool HasAvx2(unsigned int leaf1Ecx) {
 extern "C" {
 
 WebRtcAvailableCpuFeatures APS5_VABI _ZN6webrtc23GetAvailableCpuFeaturesEv_nid_postfix() {
-    unsigned int eax = 0;
-    unsigned int ebx = 0;
-    unsigned int ecx = 0;
-    unsigned int edx = 0;
-    __cpuid_count(1, 0, eax, ebx, ecx, edx);
-    return {(edx & 0x04000000u) != 0, HasAvx2(ecx), false};
+    const auto leaf1 = GuestCpu::Cpuid(1, 0);
+    return {(leaf1[3] & 0x04000000u) != 0, HasAvx2(leaf1[2]), false};
 }
 
 }

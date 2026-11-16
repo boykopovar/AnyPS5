@@ -1,4 +1,4 @@
-import {actions, canonicalValue, defaults, mouseValues, typesForAction, wheelValues} from './mapping.js';
+import {actions, canonicalChord, canonicalValue, defaults, mouseValues, typesForAction, wheelValues} from './mapping.js';
 import {keyNames} from './keys.js';
 
 export const settings = [
@@ -34,7 +34,8 @@ export function settingValue(setting, value) {
         if (canonicalValue(text, ['LEFT', 'RIGHT']) === undefined) return `${setting.name} must be LEFT or RIGHT.`;
         return '';
     }
-    if (parsed === undefined || !Number.isFinite(parsed) || parsed < setting.minimum || parsed > setting.maximum) {
+    const underflows = parsed === 0 && /[1-9]/u.test(text.split(/e/iu, 1)[0]);
+    if (parsed === undefined || !Number.isFinite(parsed) || underflows || parsed < setting.minimum || parsed > setting.maximum) {
         return `${setting.name} must be a number from ${setting.minimum} to ${setting.maximum}.`;
     }
     return '';
@@ -77,13 +78,13 @@ export function validate(entries) {
     if (!Array.isArray(entries)) return {errors: [{message: 'Configuration must be a list of bindings.'}], warnings, bindings};
     entries.forEach((entry, index) => {
         const action = canonicalValue(entry?.action, actions);
-        const type = canonicalValue(entry?.type, ['KEY', 'MOUSE', 'WHEEL']);
+        const type = canonicalValue(entry?.type, ['KEY', 'MOUSE', 'WHEEL', 'PAD']);
         let message;
         if (!action) message = 'Unknown or empty action.';
-        else if (!type) message = 'Input type must be KEY, MOUSE or WHEEL.';
+        else if (!type) message = 'Input type must be KEY, MOUSE, WHEEL or PAD.';
         else if (!typesForAction(action).includes(type)) message = `${action} cannot use ${type}.`;
         const choices = type === 'KEY' ? keyNames : type === 'MOUSE' ? mouseValues : wheelValues;
-        const value = canonicalValue(entry?.value, choices);
+        const value = type === 'PAD' ? canonicalChord(entry?.value) : canonicalValue(entry?.value, choices);
         if (!message && !value) message = `Unknown or empty ${type} value.`;
         if (!message && /[#;\r\n]/u.test(value)) message = 'This SDL key name cannot be represented in the current INI comment syntax.';
         if (message) {
