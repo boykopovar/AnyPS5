@@ -1532,6 +1532,14 @@ class WindowHelperTests(unittest.TestCase):
         earlier = collections.Counter({"a": 1, "b": 1, "c": 2})
         self.assertEqual(symbolize_samples.subtract(later, earlier), collections.Counter({"a": 2}))
 
+    def test_sample_counts_splits_self_and_inclusive_counts(self):
+        samples = symbolize_samples.Samples()
+        samples.stacks = collections.Counter({"main;work": 3, "main;idle": 1})
+        total, self_counts, inclusive = symbolize_samples.sample_counts(FakeSymbolizer(), samples)
+        self.assertEqual(total, 4)
+        self.assertEqual(self_counts, collections.Counter({"WORK": 3, "IDLE": 1}))
+        self.assertEqual(inclusive, collections.Counter({"MAIN": 4, "WORK": 3, "IDLE": 1}))
+
 
 if __name__ == "__main__":
     unittest.main()
