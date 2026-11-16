@@ -166,5 +166,14 @@ class DependencyProbeFailureTests(unittest.TestCase):
         self.assertEqual(result["reason"], "fatal: fixture read failed")
         self.assertEqual(measure.call_count, 1)
 
+
+class TimestampTests(unittest.TestCase):
+    def test_timestamp_formats_utc_time_with_a_z_suffix(self):
+        fixed = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+        with patch.object(progress_prs, "datetime") as clock:
+            clock.now.return_value = fixed
+            self.assertEqual(progress_prs.timestamp(), "2026-01-02T03:04:05Z")
+
+
 if __name__ == "__main__":
     unittest.main()
