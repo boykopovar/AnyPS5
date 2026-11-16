@@ -647,6 +647,12 @@ class HelperTests(unittest.TestCase):
                          "ANYPS5_A\tIsEnvironmentSet\tcore/b.cpp:7\t\n"
                          "ANYPS5_B\tgetenv\tcore/a.cpp:3\t1\n")
 
+    def test_literal_start_matches_only_string_assignments_with_a_known_prefix(self):
+        pattern = env_reference.literal_start(("ANYPS5_",))
+        self.assertIsNotNone(pattern.search('name = "ANYPS5_FOO"'))
+        self.assertIsNotNone(pattern.search('name = u8"ANYPS5_FOO"'))
+        self.assertIsNone(pattern.search('name = "OTHER"'))
+
 
 if __name__ == "__main__":
     unittest.main()
