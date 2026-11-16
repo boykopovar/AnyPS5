@@ -805,6 +805,12 @@ class MetadataRefusalTests(unittest.TestCase):
             build_web.asset_metadata(dict(good, size=11), 10)
         with self.assertRaises(ValueError):
             build_web.asset_metadata(dict(good, digest='md5:abc'), 10)
+class LoadReleaseTests(unittest.TestCase):
+    def test_load_release_parses_json_and_refuses_deep_nesting(self):
+        import io
+        self.assertEqual(build_web.load_release(io.StringIO('{"tag_name": "v1"}')), {'tag_name': 'v1'})
+        with self.assertRaisesRegex(ValueError, 'Invalid release metadata'):
+            build_web.load_release(io.StringIO('[' * 100000 + ']' * 100000))
 
 
 if __name__ == "__main__":
