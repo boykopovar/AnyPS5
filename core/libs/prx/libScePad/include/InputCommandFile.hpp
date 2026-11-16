@@ -196,7 +196,7 @@ private:
                 if (!parseUnsigned(touch.substr(0, comma), coordinates[i])) return {};
                 if (i < 3) touch.remove_prefix(comma + 1);
             }
-            if (coordinates[0] >= 1920 || coordinates[1] >= 943 || coordinates[2] > 127 || coordinates[3] > 1) return {};
+            if (coordinates[0] >= 1920 || coordinates[1] >= 1080 || coordinates[2] > 127 || coordinates[3] > 1) return {};
             input.hasTouch = true;
             input.touchX = static_cast<std::uint16_t>(coordinates[0]);
             input.touchY = static_cast<std::uint16_t>(coordinates[1]);

@@ -10,9 +10,17 @@
 #include "prx/libc/include/GuestErrno.hpp"
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #ifndef _WIN32
 #include <sys/stat.h>
+#include <unistd.h>
+#else
+#include <io.h>
 #endif
+#include <fcntl.h>
+#include <fstream>
+#include <iterator>
+#include <thread>
 
 #include <cmath>
 #include <cstddef>
@@ -869,6 +877,114 @@ static void TestFileLinks() {
     std::filesystem::remove_all(root);
 }
 
+static void RequireCurrentStackBounds() {
+    static_assert(sizeof(WTF::StackBounds) == 16);
+    static_assert(offsetof(WTF::StackBounds, m_origin) == 0);
+    static_assert(offsetof(WTF::StackBounds, m_bound) == 8);
+    const WTF::StackBounds bounds = _ZN3WTF11StackBounds32currentThreadStackBoundsInternalEv();
+    int local = 0;
+    const auto* here = reinterpret_cast<const char*>(&local);
+    const auto* origin = static_cast<const char*>(bounds.m_origin);
+    const auto* bound = static_cast<const char*>(bounds.m_bound);
+    Require(origin > bound);
+    Require(here < origin && here > bound);
+    PthreadAttr attr = nullptr;
+    Require(pthread_attr_init_nid_postfix(&attr) == 0);
+    Require(pthread_attr_get_np_nid_postfix(pthread_self_nid_postfix(), &attr) == 0);
+    void* stackAddress = nullptr;
+    std::size_t stackSize = 0;
+    Require(pthread_attr_getstack_nid_postfix(&attr, &stackAddress, &stackSize) == 0);
+    Require(pthread_attr_destroy_nid_postfix(&attr) == 0);
+    Require(bounds.m_bound == stackAddress);
+    Require(origin == static_cast<const char*>(stackAddress) + stackSize);
+}
+
+static void TestStackBounds() {
+    RequireCurrentStackBounds();
+    std::thread worker(RequireCurrentStackBounds);
+    worker.join();
+}
+
+static std::string CaptureLog(void (*body)()) {
+    const auto path = (std::filesystem::temp_directory_path() / ("nkwebkit_timing_scope_" + std::to_string(_ZN3WTF13MonotonicTime3nowEv().m_value) + ".log")).string();
+    std::fflush(stdout);
+    std::fflush(stderr);
+#ifdef _WIN32
+    const int file = _open(path.c_str(), _O_CREAT | _O_TRUNC | _O_WRONLY, 0600);
+    const int savedOut = _dup(1);
+    const int savedErr = _dup(2);
+    Require(file >= 0 && savedOut >= 0 && savedErr >= 0 && _dup2(file, 1) == 0 && _dup2(file, 2) == 0);
+#else
+    const int file = open(path.c_str(), O_CREAT | O_TRUNC | O_WRONLY, 0600);
+    const int savedOut = dup(1);
+    const int savedErr = dup(2);
+    Require(file >= 0 && savedOut >= 0 && savedErr >= 0 && dup2(file, 1) == 1 && dup2(file, 2) == 2);
+#endif
+    body();
+    std::fflush(stdout);
+    std::fflush(stderr);
+#ifdef _WIN32
+    Require(_dup2(savedOut, 1) == 0 && _dup2(savedErr, 2) == 0);
+    _close(savedOut);
+    _close(savedErr);
+    _close(file);
+#else
+    Require(dup2(savedOut, 1) == 1 && dup2(savedErr, 2) == 2);
+    close(savedOut);
+    close(savedErr);
+    close(file);
+#endif
+    std::ifstream input(path, std::ios::binary);
+    std::string text((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+    input.close();
+    std::filesystem::remove(path);
+    return text;
+}
+
+static std::size_t CountOccurrences(const std::string& text, const std::string& needle) {
+    std::size_t count = 0;
+    for (std::size_t at = text.find(needle); at != std::string::npos; at = text.find(needle, at + needle.size())) ++count;
+    return count;
+}
+
+static const char g_firstTimingName[] = "nkwebkit-timing-first";
+static const char g_secondTimingName[] = "nkwebkit-timing-second";
+
+static void EndScope(const char* name, unsigned interval) {
+    WTF::TimingScope scope{_ZN3WTF13MonotonicTime3nowEv(), name, interval};
+    _ZN3WTF11TimingScope11scopeDidEndEv(&scope);
+}
+
+static void TestTimingScope() {
+    static_assert(sizeof(WTF::TimingScope) == 24);
+    static_assert(offsetof(WTF::TimingScope, m_startTime) == 0);
+    static_assert(offsetof(WTF::TimingScope, m_name) == 8);
+    static_assert(offsetof(WTF::TimingScope, m_logIterationInterval) == 16);
+    const std::string first = CaptureLog([] {
+        EndScope(g_firstTimingName, 2);
+        EndScope(g_firstTimingName, 2);
+        EndScope(g_secondTimingName, 2);
+    });
+    Require(CountOccurrences(first, std::string(g_firstTimingName) + ": 2 calls, mean duration: ") == 1);
+    Require(CountOccurrences(first, std::string(g_firstTimingName) + ": 1 calls") == 0);
+    Require(CountOccurrences(first, g_secondTimingName) == 0);
+    Require(CountOccurrences(first, "ms, total duration: ") == 1);
+    Require(CountOccurrences(first, "ms, max duration ") == 1);
+    const std::string second = CaptureLog([] {
+        EndScope(g_secondTimingName, 2);
+        EndScope(g_firstTimingName, 1);
+    });
+    Require(CountOccurrences(second, std::string(g_secondTimingName) + ": 2 calls") == 1);
+    Require(CountOccurrences(second, std::string(g_firstTimingName) + ": 3 calls") == 1);
+    bool rejected = false;
+    try {
+        EndScope(g_firstTimingName, 0);
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    Require(rejected);
+}
+
 static void TestUniStdExtras() {
     const auto root = std::filesystem::current_path() / ("nkwebkit-unistd-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
     Require(std::filesystem::create_directory(root));
@@ -912,11 +1028,56 @@ static void TestSleepSeconds() {
     Require(_ZN3WTF13MonotonicTime3nowEv().m_value - start < 1.0);
 }
 
+static void TestMakeAllDirectories() {
+    const auto make = &_ZN3WTF14FileSystemImpl18makeAllDirectoriesERKNS_6StringE;
+    const auto root = std::filesystem::current_path() / ("nkwebkit-dirs-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    Require(std::filesystem::create_directory(root));
+    const auto hostPath = root.u8string();
+    AddPathAlias_nid_no_patch("/nkwebkit-dirs", reinterpret_cast<const char*>(hostPath.c_str()));
+    const auto guest = [](const char* text) {
+        return _ZN3WTF6String8fromUTF8EPKh(reinterpret_cast<const unsigned char*>(text));
+    };
+#ifndef _WIN32
+    const auto oldMask = ::umask(0);
+#endif
+    Require(make(guest("/nkwebkit-dirs/a/b/c")));
+#ifndef _WIN32
+    ::umask(oldMask);
+#endif
+    Require(std::filesystem::is_directory(root / "a" / "b" / "c"));
+#ifndef _WIN32
+    Require((std::filesystem::status(root / "a" / "b").permissions() & std::filesystem::perms::mask) == std::filesystem::perms::owner_all);
+    Require((std::filesystem::status(root / "a" / "b" / "c").permissions() & std::filesystem::perms::mask) == std::filesystem::perms::owner_all);
+#endif
+    Require(make(guest("/nkwebkit-dirs/a/b/c")));
+    Require(make(guest("/nkwebkit-dirs")));
+    Require(make(guest("/nkwebkit-dirs/d/e/")));
+    Require(std::filesystem::is_directory(root / "d" / "e"));
+    Require(make(guest("/nkwebkit-dirs/\xC3\xA9/z")));
+    Require(std::filesystem::is_directory(root / std::filesystem::path(u8"é") / "z"));
+    {
+        std::ofstream file(root / "f.bin", std::ios::binary);
+        Require(static_cast<bool>(file));
+    }
+    Require(make(guest("/nkwebkit-dirs/f.bin")));
+    Require(std::filesystem::is_regular_file(root / "f.bin"));
+    Require(!make(guest("/nkwebkit-dirs/f.bin/x")));
+    Require(!std::filesystem::exists(root / "f.bin" / "x"));
+    Require(!make(guest("/nkwebkit-dirs/f.bin/x/y")));
+    NKWebKit::WtfAbi::String nullPath;
+    Require(!make(nullPath));
+    Require(!make(guest("")));
+    RemovePathAlias_nid_no_patch("/nkwebkit-dirs");
+    std::filesystem::remove_all(root);
+}
+
 int main() {
     if (!TestBmallocHeapOperators()) {
         return 1;
     }
     TestAdditionalWtf();
+    TestStackBounds();
+    TestTimingScope();
     TestMemoryAllocations();
     TestAllocationBoundaries();
     TestTime();
@@ -929,6 +1090,7 @@ int main() {
     TestFileLinks();
     TestUniStdExtras();
     TestSleepSeconds();
+    TestMakeAllDirectories();
     return 0;
 }
 
@@ -953,6 +1115,8 @@ const auto ViewUpper = &_ZNK3WTF10StringView23convertToASCIIUppercaseEv;
 const auto ImplUTF8 = &_ZNK3WTF10StringImpl4utf8ENS_14ConversionModeE;
 const auto UTF8 = &_ZNK3WTF6String4utf8ENS_14ConversionModeE;
 const auto ViewUTF8 = &_ZNK3WTF10StringView4utf8ENS_14ConversionModeE;
+const auto Utf8For16 = &_ZN3WTF10StringImpl17utf8ForCharactersEPKDsjNS_14ConversionModeE;
+const auto Utf8For8 = &_ZN3WTF10StringImpl17utf8ForCharactersEPKhj;
 const auto FromUTF8 = &_ZN3WTF6String8fromUTF8EPKhm;
 const auto FromUTF8Z = &_ZN3WTF6String8fromUTF8EPKh;
 const auto FromCString = &_ZN3WTF6String8fromUTF8ERKNS_7CStringE;
@@ -1171,6 +1335,17 @@ void TestUTFConversions() {
     Check(Bytes(UTF8(&malformed, 0)) == "\xed\xa0\x80X\xed\xb0\x80\xed\xbf\xbf");
     Check(Bytes(UTF8(&malformed, 2)) == "\xef\xbf\xbdX\xef\xbf\xbd\xef\xbf\xbd");
     Throws([&] { UTF8(&malformed, 1); });
+    Check(Bytes(Utf8For16(bad, 4, 0)) == "\xed\xa0\x80X\xed\xb0\x80\xed\xbf\xbf");
+    Check(Bytes(Utf8For16(bad, 4, 2)) == "\xef\xbf\xbdX\xef\xbf\xbd\xef\xbf\xbd");
+    Throws([&] { Utf8For16(bad, 4, 1); });
+    char16_t paired[] = {'c', 'a', 'f', 0xE9, 0xD83D, 0xDE00};
+    Check(Bytes(Utf8For16(paired, 6, 1)) == "caf\xc3\xa9\xf0\x9f\x98\x80");
+    Check(Bytes(Utf8For16(paired, 0, 1)).empty() && Bytes(Utf8For16(nullptr, 0, 1)).empty());
+    Throws([&] { Utf8For16(nullptr, 1, 1); });
+    Check(Bytes(Utf8For8(U8("caf\xe9\x80"), 5)) == "caf\xc3\xa9\xc2\x80");
+    Check(Bytes(Utf8For8(U8("a\0b"), 3)) == std::string("a\0b", 3));
+    Check(Bytes(Utf8For8(U8("x"), 0)).empty() && Bytes(Utf8For8(nullptr, 0)).empty());
+    Throws([&] { Utf8For8(nullptr, 1); });
     Text(FromCodePoint(0x1F600), "\xf0\x9f\x98\x80");
     Check(!FromCodePoint(-1).impl && !FromCodePoint(0x110000).impl);
     auto surrogate = FromCodePoint(0xD800);

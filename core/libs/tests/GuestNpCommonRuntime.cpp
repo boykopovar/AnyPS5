@@ -743,6 +743,10 @@ void TestTitleIdObjects() {
         && _ZN3sce2np9NpTitleId5ParseEPS1_PKc(&parsed, "WXYZ54321-07") == NpTitleIdInvalid,
         "parsing needs four letters, five digits, an underscore and two digits");
     Require(std::memcmp(parsed.titleId.data, "WXYZ54321_00", 13) == 0, "a rejected title id leaves the object as it was");
+    const char* const unmappedText = reinterpret_cast<const char*>(0x10);
+    Require(_ZN3sce2np9NpTitleId5ParseEPS1_PKc(&parsed, unmappedText) == static_cast<int>(0x80558009)
+        && std::memcmp(parsed.titleId.data, "WXYZ54321_00", 13) == 0, "parsing unreadable text fails and leaves the object as it was");
+    Require(_ZN3sce2np9NpTitleId5ParseEPS1_PKc(&parsed, "WXYZ54321_07x") == NpTitleIdInvalid, "parsing rejects a thirteen character title id");
 
     NpTitleIdObject built {};
     _ZN3sce2np9NpTitleIdC1Ev(&built);
@@ -752,6 +756,8 @@ void TestTitleIdObjects() {
         "constructing takes only the nine character code");
     Require(_ZN3sce2np9NpTitleId20ConstructFromTitleIdEPS1_PKc(&built, "WXYZ54321") == 0 && !_ZNK3sce2np9NpTitleId7IsEmptyEv(&built),
         "a constructed title id is not empty");
+    Require(_ZN3sce2np9NpTitleId20ConstructFromTitleIdEPS1_PKc(&built, reinterpret_cast<const char*>(0x10)) == static_cast<int>(0x80558009),
+        "constructing from unreadable text fails");
 
     char text[16];
     std::memset(text, 'x', sizeof(text));
@@ -1204,6 +1210,9 @@ void TestXmlText() {
     Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), nullptr, 1, &length) == NpUtilInvalid, "xml escaping needs a source");
     Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), "a", 0, &length) == NpUtilInvalid, "xml escaping needs a source length");
     Require(sceNpUtilXmlEscape(nullptr, 0, "a", 1, nullptr) == NpUtilInvalid, "xml escaping needs a buffer or a length");
+    errno = 71;
+    Require(sceNpUtilXmlEscape(reinterpret_cast<char*>(0x10), sizeof(escaped), "a&b", 3, &length) == NpUtilInvalid && errno == 71, "xml escaping refuses an unwritable buffer");
+    Require(sceNpUtilXmlEscape(nullptr, 0, "a&b", 3, reinterpret_cast<std::size_t*>(0x10)) == NpUtilInvalid && errno == 71, "xml escaping refuses an unwritable length");
 
     char unescaped[64] = {};
     const char* entities = "x&lt;&gt;&amp;&quot;&apos;y";
@@ -1225,6 +1234,9 @@ void TestXmlText() {
     Require(sceNpUtilXmlUnescape(unescaped, sizeof(unescaped), nullptr, 1, &length) == NpUtilInvalid, "xml unescaping needs a source");
     Require(sceNpUtilXmlUnescape(unescaped, sizeof(unescaped), "a", 0, &length) == NpUtilInvalid, "xml unescaping needs a source length");
     Require(sceNpUtilXmlUnescape(nullptr, 0, "a", 1, nullptr) == NpUtilInvalid, "xml unescaping needs a buffer or a length");
+    errno = 71;
+    Require(sceNpUtilXmlUnescape(reinterpret_cast<char*>(0x10), sizeof(unescaped), "a&amp;b", 7, &length) == NpUtilInvalid && errno == 71, "xml unescaping refuses an unwritable buffer");
+    Require(sceNpUtilXmlUnescape(nullptr, 0, "a&amp;b", 7, reinterpret_cast<std::size_t*>(0x10)) == NpUtilInvalid && errno == 71, "xml unescaping refuses an unwritable length");
     struct {
         char buffer[4];
         char canary[4];
@@ -1552,6 +1564,9 @@ void TestLanguagesAndDebugIds() {
     Require(sceNpUtilGetNpLanguageCode(1, reinterpret_cast<char*>(0x10)) == NpUtilInvalid && errno == 71,
         "an unwritable code buffer is refused and errno is kept");
     Require(sceNpUtilGetNpLanguageCode2(0, nullptr) == NpUtilInvalid, "a language code needs a buffer");
+    errno = 71;
+    Require(sceNpUtilGetNpLanguageCode2(20, reinterpret_cast<char*>(0x10)) == NpUtilInvalid && errno == 71,
+        "an unwritable tag buffer is refused and errno is kept");
     const std::uint32_t first = sceNpDbgAssignDebugId();
     Require(first != 0 && sceNpDbgAssignDebugId() == first + 1, "debug ids count up");
 }
@@ -1640,6 +1655,19 @@ void TestHexAndCopies() {
     Require(sceNpStrBuildHex(text, 5, data, 2, false) == 0 && Equals(text, "0afe"), "bytes are written as lowercase hex");
     Require(sceNpStrBuildHex(text, 5, data, 2, true) == 0 && Equals(text, "0AFE"), "bytes are written as uppercase hex");
     Require(sceNpStrBuildHex(text, 4, data, 2, false) == NpBufferTooSmall, "hex output needs room for the terminator");
+    Require(sceNpStrBuildHex(reinterpret_cast<char*>(0x10), 5, data, 2, false) == NpInvalidArgument, "an unwritable hex output is refused");
+    Require(sceNpStrBuildHex(text, 5, reinterpret_cast<const void*>(0x10), 2, false) == NpInvalidArgument, "unreadable hex input is refused");
+    std::array<std::uint8_t, 300> longData{};
+    for (std::size_t i = 0; i < longData.size(); ++i) longData[i] = static_cast<std::uint8_t>(i * 7);
+    std::array<char, 602> longText{};
+    longText.fill('!');
+    Require(sceNpStrBuildHex(longText.data(), 601, longData.data(), longData.size(), true) == 0 && longText[600] == '\0' && longText[601] == '!',
+        "a long hex output is terminated after the last byte");
+    for (std::size_t i = 0; i < longData.size(); ++i) {
+        char pair[3] = {};
+        std::snprintf(pair, sizeof(pair), "%02X", longData[i]);
+        Require(longText[i * 2] == pair[0] && longText[i * 2 + 1] == pair[1], "every byte of a long input is written as hex");
+    }
     std::uint8_t bytes[4] = {};
     Require(sceNpStrParseHex("0aFE", bytes, 2) == 0 && bytes[0] == 0x0A && bytes[1] == 0xFE, "hex is read in either case");
     Require(sceNpStrParseHex("0AF", bytes, 2) == NpInvalidArgument, "odd hex is refused");
@@ -1667,6 +1695,24 @@ void TestHexAndCopies() {
     const char unterminated[] = {'A', 'B', 'C', 'D', 'E', 'F', '\0'};
     Require(sceNpStrncpyToBuf(copy, 8, unterminated, 4) == 0 && Equals(copy, "ABCD"),
         "a source without a terminator within the limit is cut at the limit");
+    const char* const unmappedSource = reinterpret_cast<const char*>(0x10);
+    copy[0] = 'x';
+    Require(sceNpStrcpyToBuf(copy, 6, unmappedSource) == NpUtilInvalid && sceNpStrncpyToBuf(copy, 6, unmappedSource, 4) == NpUtilInvalid && copy[0] == 'x',
+        "an unreadable source is refused");
+    Require(sceNpStrcpyToBuf(reinterpret_cast<char*>(0x10), 6, "Hello") == NpInvalidArgument
+            && sceNpStrncpyToBuf(reinterpret_cast<char*>(0x10), 6, "Hello World", 5) == NpInvalidArgument,
+        "an unwritable destination is refused");
+    Require(sceNpStrncpyToBuf(copy, 4, unterminated, 8) == NpBufferTooSmall && sceNpStrncpyToBuf(copy, 8, "Hi", 8) == 0 && Equals(copy, "Hi"),
+        "the length limit and the buffer size bound the source read");
+    Require(sceNpStrncpyToBuf(copy, 4, "ABCD", 8) == NpBufferTooSmall && sceNpStrncpyToBuf(copy, 4, "ABC", 8) == 0 && Equals(copy, "ABC"),
+        "with a limit above the buffer size, a source of exactly the buffer size is refused and one byte shorter fits");
+    std::vector<char> large(70000, 'x');
+    Require(sceNpStrcpyToBuf(large.data(), large.size(), "Hi") == 0 && Equals(large.data(), "Hi")
+            && std::all_of(large.begin() + 2, large.end(), [](char byte) { return byte == '\0'; }),
+        "a buffer larger than one write chunk is padded with zeros to its end");
+    const std::size_t hugeSize = std::size_t{1} << 40;
+    Require(sceNpStrncpyToBuf(reinterpret_cast<char*>(0x10), hugeSize, "Hi", 8) == NpInvalidArgument,
+        "an unwritable destination with a huge size is refused without sizing a buffer from it");
 }
 
 }
@@ -1941,6 +1987,9 @@ void TestCommIdObjects() {
     Require(_ZN3sce2np8NpCommId5ParseEPS1_PKc(&commId, "WXY154321_00") == NpTitleIdInvalid
             && _ZN3sce2np8NpCommId5ParseEPS1_PKcm(&commId, "WXYZ54321_0", 11) == NpTitleIdInvalid && commId.commId.num == 42,
         "a rejected communication id leaves the object as it was");
+    Require(_ZN3sce2np8NpCommId5ParseEPS1_PKc(&commId, reinterpret_cast<const char*>(0x10)) == static_cast<int>(0x80558009)
+            && _ZN3sce2np8NpCommId5ParseEPS1_PKc(&commId, "WXYZ54321_421") == NpTitleIdInvalid && commId.commId.num == 42,
+        "unreadable or thirteen character text leaves the communication id as it was");
     Require(_ZN3sce2np8NpCommId5ParseEPS1_PKcm(&commId, "ABCD12345_09xyz", 12) == 0 && commId.commId.num == 9
             && std::memcmp(commId.commId.data, "ABCD12345", 9) == 0,
         "the sized parse reads only the given length");
@@ -1959,6 +2008,8 @@ void TestCommIdObjects() {
     Require(_ZNK3sce2np8NpCommId6EqualsERKS1_(&copy, &commId) && _ZN3sce2npeqERKNS0_8NpCommIdERK20SceNpCommunicationId(&copy, &plain)
             && _ZNK3sce2np8NpCommId6EqualsEPKc(&copy, "ABCD12345_09") && !_ZNK3sce2np8NpCommId6EqualsEPKc(&copy, "ABCD12345_9"),
         "equal communication ids compare equal, ignoring the spare byte");
+    Require(!_ZNK3sce2np8NpCommId6EqualsEPKc(&copy, reinterpret_cast<const char*>(0x10)) && !_ZNK3sce2np8NpCommId6EqualsEPKc(&copy, "ABCD12345_099"),
+        "unreadable or thirteen character text is not equal");
     plain.num = 10;
     Require(_ZN3sce2npneERK20SceNpCommunicationIdRKNS0_8NpCommIdE(&plain, &copy) && !_ZNK3sce2np8NpCommId6EqualsERK20SceNpCommunicationId(&copy, &plain),
         "the number takes part in the comparison");

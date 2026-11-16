@@ -265,11 +265,14 @@ int APS5_VABI sceFontCreateWritingLine(const FontMemory* memory, std::int32_t wr
 }
 
 int APS5_VABI sceFontDestroyWritingLine(void** pWritingLine) {
-    if (!pWritingLine || !*pWritingLine) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    auto* line = static_cast<WritingLine*>(*pWritingLine);
+    if (!pWritingLine) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    void* handle = nullptr;
+    if (!Font::CopyInGuest(handle, pWritingLine) || !handle) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    auto* line = static_cast<WritingLine*>(handle);
     {
         std::lock_guard lock(linesMutex);
         if (!lines.contains(line) || !IsMemoryValid(line->memory)) return SCE_FONT_ERROR_INVALID_WRITING;
+        if (!Font::CopyOutGuest(pWritingLine, static_cast<void*>(nullptr))) return SCE_FONT_ERROR_INVALID_PARAMETER;
         lines.erase(line);
     }
     const FontMemory* memory = line->memory;
@@ -277,7 +280,6 @@ int APS5_VABI sceFontDestroyWritingLine(void** pWritingLine) {
     line->kind = 0;
     std::destroy_at(line);
     memory->iface->dealloc(memory->mspace_handle, line);
-    *pWritingLine = nullptr;
     return SCE_FONT_OK;
 }
 
