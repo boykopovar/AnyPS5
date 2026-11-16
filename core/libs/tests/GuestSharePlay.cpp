@@ -40,7 +40,8 @@ int main() {
     Require(sceSharePlayServerLock() == notInitialized);
     Require(sceSharePlayServerUnLock() == notInitialized);
     Require(sceSharePlaySetMode() == notInitialized);
-    Require(sceSharePlaySetProhibition() == notInitialized);
+    Require(sceSharePlaySetProhibition(2) == notInitialized);
+    Require(sceSharePlaySetProhibition(0) == notInitialized);
     Require(sceSharePlaySetProhibitionModeWithAppId() == notInitialized);
     Require(sceSharePlayStartStandby() == notInitialized);
     Require(sceSharePlayStartStreaming() == notInitialized);
@@ -86,6 +87,12 @@ int main() {
     Require(sceSharePlayProhibitController(0) == 0);
     Require(sceSharePlayProhibitController(2) == invalidArgument);
     Require(sceSharePlayProhibitController(255) == invalidArgument);
+    Require(sceSharePlaySetProhibition(0) == 0);
+    Require(sceSharePlaySetProhibition(1) == 0);
+    Require(sceSharePlaySetProhibition(2) == 0);
+    Require(sceSharePlaySetProhibition(3) == invalidArgument);
+    Require(sceSharePlaySetProhibition(-1) == invalidArgument);
+    Require(sceSharePlaySetProhibition(255) == invalidArgument);
     Require(sceSharePlayTerminate() == 0);
     std::memset(&info, 0x5a, sizeof(info));
     Require(sceSharePlayGetCurrentConnectionInfoA(&info) == notInitialized);
@@ -98,5 +105,6 @@ int main() {
     Require(sceSharePlayProhibitController(0) == notInitialized);
     Require(sceSharePlayProhibitController(1) == notInitialized);
     Require(sceSharePlayProhibitController(2) == notInitialized);
+    Require(sceSharePlaySetProhibition(2) == notInitialized);
     Require(sceSharePlayTerminate() == notInitialized);
 }

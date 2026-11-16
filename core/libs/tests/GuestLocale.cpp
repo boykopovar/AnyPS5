@@ -22,6 +22,7 @@ extern std::uint64_t _ZNSt8numpunctIcE2idE_nid_postfix;
 extern std::uint64_t _ZNSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix;
 extern std::uint64_t _ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix;
 extern std::uint64_t _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix;
+extern std::uint64_t _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE2idE_nid_postfix;
 extern std::uint64_t _ZNSt8messagesIcE2idE_nid_postfix;
 extern std::uint64_t _ZNSt8messagesIwE2idE_nid_postfix;
 extern std::uintptr_t _ZTVSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[17];
@@ -127,12 +128,42 @@ static void CheckNumpunctVtableObject() {
 }
 
 static void CheckMessagesVtableObject() {
-    for (std::uintptr_t& slot : _ZTVSt8messagesIcE_nid_postfix) {
-        Require(slot == 0);
-        slot = 0x1111;
-        Require(slot == 0x1111);
-        slot = 0;
-    }
+    Require(_ZTVSt8messagesIcE_nid_postfix[0] == 0 && _ZTVSt8messagesIcE_nid_postfix[1] == 0);
+    for (std::size_t index = 2; index < std::size(_ZTVSt8messagesIcE_nid_postfix); ++index) Require(_ZTVSt8messagesIcE_nid_postfix[index] != 0);
+    const auto* vtable = reinterpret_cast<const GuestLocale::MessagesVtable*>(&_ZTVSt8messagesIcE_nid_postfix[2]);
+    GuestLocale::Facet facet{&vtable->facet, 0, 0};
+    vtable->facet.destroy(&facet);
+    vtable->facet.retain(&facet);
+    Require(facet.references == 1);
+    Require(vtable->facet.release(&facet) == &facet && facet.references == 0);
+    const GuestLocale::String name{};
+    Require(vtable->open(&facet, &name, nullptr) == -1);
+    vtable->close(&facet, -1);
+    vtable->close(&facet, 5);
+    GuestLocale::String fallback{};
+    std::memcpy(fallback.buffer, "fallback\0tail-xy", sizeof(fallback.buffer));
+    fallback.size = 8;
+    fallback.capacity = 15;
+    GuestLocale::String result{};
+    Require(vtable->get(&result, &facet, -1, 0, 0, &fallback) == &result);
+    Require(result.size == 8 && result.capacity == 15 && std::memcmp(result.buffer, fallback.buffer, sizeof(result.buffer)) == 0);
+    const char text[] = "a default message that does not fit the buffer";
+    const std::size_t length = sizeof(text) - 1;
+    GuestLocale::String longFallback{};
+    longFallback.pointer = static_cast<char*>(_Znwm_nid_postfix(64));
+    std::memcpy(longFallback.pointer, text, sizeof(text));
+    longFallback.size = length;
+    longFallback.capacity = 63;
+    GuestLocale::String longResult{};
+    Require(vtable->get(&longResult, &facet, 1, 2, 3, &longFallback) == &longResult);
+    Require(longResult.size == length && longResult.capacity == (length | 15) && longResult.pointer != longFallback.pointer);
+    Require(std::memcmp(longResult.pointer, text, sizeof(text)) == 0);
+    _ZdlPv_nid_postfix(longResult.pointer);
+    _ZdlPv_nid_postfix(longFallback.pointer);
+    RequireException([&] { vtable->get(&result, &facet, 0, 0, 0, nullptr); });
+    auto* owned = static_cast<GuestLocale::Facet*>(_Znwm_nid_postfix(sizeof(GuestLocale::Facet)));
+    *owned = {&vtable->facet, 0, 0};
+    vtable->facet.deleteObject(owned);
 }
 
 static void CheckCodecvtVtableObject() {
@@ -568,7 +599,13 @@ static void CheckFacetGetcat() {
     _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 11;
     Require(_ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix == 11);
     _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 0;
-    for (GuestLocale::Facet* facet : {codecvt, punct, widePunct, numPut, timePut}) {
+    GuestLocale::Facet* wideTimePut = nullptr;
+    Require(_ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(&wideTimePut, &locale) == 5 && wideTimePut != nullptr);
+    Require(sizeof(_ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE2idE_nid_postfix) == 8 && _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE2idE_nid_postfix == 0);
+    _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE2idE_nid_postfix = 11;
+    Require(_ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE2idE_nid_postfix == 11);
+    _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE2idE_nid_postfix = 0;
+    for (GuestLocale::Facet* facet : {codecvt, punct, widePunct, numPut, timePut, wideTimePut}) {
         facet->vtable->retain(facet);
         facet->vtable->retain(facet);
         Require(facet->references == 2);

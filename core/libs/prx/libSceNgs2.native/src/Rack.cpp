@@ -116,6 +116,7 @@ static int CheckedRackOption(std::uint32_t rackId, const Ngs2RackOption* option,
         (rackId == SCE_NGS2_RACK_ID_SUBMIXER && (options.submixer.num_peak_meter_blocks < 1 || options.submixer.num_peak_meter_blocks > 256))) {
         return SCE_NGS2_ERROR_INVALID_PEAK_METER_BLOCKS;
     }
+    if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER && options.customSubmixer.max_inputs == 0) return SCE_NGS2_ERROR_INVALID_MAX_INPUTS;
     if ((rackId == SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER || rackId == SCE_NGS2_RACK_ID_CUSTOM_MASTERING) && (options.customSubmixer.max_inputs == 0 || options.customSubmixer.max_inputs > SCE_NGS2_CUSTOM_SUBMIXER_MAX_INPUTS)) {
         throw std::runtime_error("NGS2: custom submixer racks with " + std::to_string(options.customSubmixer.max_inputs) + " inputs are not implemented");
     }
@@ -259,23 +260,28 @@ int APS5_VABI sceNgs2RackQueryBufferSize(uint32_t rack_id, const Ngs2RackOption*
     const int result = CheckedRackOption(rack_id, option, options);
     if (result == SCE_NGS2_ERROR_INVALID_NUM_WAVEFORM_BLOCKS) return result;
     if (result != SCE_NGS2_OK) throw std::invalid_argument("NGS2: invalid rack option, rejected at creation with " + Ngs2Hex(static_cast<std::uint32_t>(result)));
-    *buffer_info = {};
-    buffer_info->host_buffer_size = sizeof(Ngs2Rack);
+    Ngs2ContextBufferInfo cleared{};
+    cleared.host_buffer_size = sizeof(Ngs2Rack);
+    if (!WriteGuest(buffer_info, cleared)) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     return SCE_NGS2_OK;
 }
 
 int APS5_VABI sceNgs2RackCreate(uintptr_t system_handle, uint32_t rack_id, const Ngs2RackOption* option, const Ngs2ContextBufferInfo* buffer_info, uintptr_t* handle) {
-    if (buffer_info == nullptr || buffer_info->host_buffer == nullptr) return SCE_NGS2_ERROR_INVALID_BUFFER_INFO;
+    if (buffer_info == nullptr) return SCE_NGS2_ERROR_INVALID_BUFFER_INFO;
+    Ngs2ContextBufferInfo localBufferInfo{};
+    if (!ReadGuest(buffer_info, localBufferInfo) || localBufferInfo.host_buffer == nullptr) return SCE_NGS2_ERROR_INVALID_BUFFER_INFO;
     if (handle == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     RackOptions options{};
     const int result = CheckedRackOption(rack_id, option, options);
     if (result != SCE_NGS2_OK) return result;
     const Ngs2Lock lock;
-    return CreateRack(system_handle, rack_id, options, *buffer_info, {}, handle);
+    return CreateRack(system_handle, rack_id, options, localBufferInfo, {}, handle);
 }
 
 int APS5_VABI sceNgs2RackCreateWithAllocator(uintptr_t system_handle, uint32_t rack_id, const Ngs2RackOption* option, const Ngs2BufferAllocator* allocator, uintptr_t* handle) {
-    if (allocator == nullptr || allocator->alloc_handler == nullptr) return SCE_NGS2_ERROR_INVALID_BUFFER_ALLOCATOR;
+    if (allocator == nullptr) return SCE_NGS2_ERROR_INVALID_BUFFER_ALLOCATOR;
+    Ngs2BufferAllocator localAllocator{};
+    if (!ReadGuest(allocator, localAllocator) || localAllocator.alloc_handler == nullptr) return SCE_NGS2_ERROR_INVALID_BUFFER_ALLOCATOR;
     if (handle == nullptr) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     RackOptions options{};
     const int checked = CheckedRackOption(rack_id, option, options);
@@ -284,24 +290,24 @@ int APS5_VABI sceNgs2RackCreateWithAllocator(uintptr_t system_handle, uint32_t r
     if (Ngs2FindSystem(system_handle) == nullptr) return SCE_NGS2_ERROR_INVALID_SYSTEM_HANDLE;
     Ngs2ContextBufferInfo bufferInfo{};
     bufferInfo.host_buffer_size = sizeof(Ngs2Rack);
-    bufferInfo.user_data = allocator->user_data;
-    if (allocator->free_handler == nullptr) APS5_INVALID_ARG_EX;
-    const int result = allocator->alloc_handler(&bufferInfo);
+    bufferInfo.user_data = localAllocator.user_data;
+    if (localAllocator.free_handler == nullptr) APS5_INVALID_ARG_EX;
+    const int result = localAllocator.alloc_handler(&bufferInfo);
     if (result != SCE_NGS2_OK) throw std::runtime_error("NGS2: the allocator handler failed with " + std::to_string(result));
     int created;
     try {
-        created = CreateRack(system_handle, rack_id, options, bufferInfo, *allocator, handle);
+        created = CreateRack(system_handle, rack_id, options, bufferInfo, localAllocator, handle);
     } catch (...) {
-        Ngs2ReleaseBuffer(*allocator, bufferInfo, nullptr);
+        Ngs2ReleaseBuffer(localAllocator, bufferInfo, nullptr);
         throw;
     }
-    if (created != SCE_NGS2_OK) Ngs2ReleaseBuffer(*allocator, bufferInfo, nullptr);
+    if (created != SCE_NGS2_OK) Ngs2ReleaseBuffer(localAllocator, bufferInfo, nullptr);
     return created;
 }
 
 int APS5_VABI sceNgs2RackDestroy(uintptr_t rack_handle, Ngs2ContextBufferInfo* buffer_info) {
     const Ngs2Lock lock;
-    if (buffer_info != nullptr) *buffer_info = {};
+    if (buffer_info != nullptr && !WriteGuest(buffer_info, Ngs2ContextBufferInfo{})) return SCE_NGS2_ERROR_INVALID_OUT_ADDRESS;
     auto* rack = Ngs2FindRack(rack_handle);
     if (rack == nullptr) return SCE_NGS2_ERROR_INVALID_RACK_HANDLE;
     while (rack != nullptr && Ngs2ExclusiveElsewhere()) {

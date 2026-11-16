@@ -18,6 +18,7 @@ static void ClobberErrno(std::uintptr_t, std::size_t) {
 }
 
 int main() {
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     constexpr int invalidContext = static_cast<int>(0x80553404);
     constexpr int invalidHandle = static_cast<int>(0x8055340D);
@@ -148,10 +149,15 @@ int main() {
     Require(threw);
     Require(sceNpWebApi2SetMultipartContentType(multipart, nullptr, nullptr) == invalidArgument);
     Require(sceNpWebApi2SetMultipartContentType(multipart + 100000, "multipart/form-data", "boundary") == invalidHandle);
+    errno = 71;
     Require(sceNpWebApi2SetMultipartContentType(multipart, "multipart/form-data", "boundary") == 0);
+    Require(errno == 71);
     Require(sceNpWebApi2SetMultipartContentType(multipart, "multipart/form-data", nullptr) == 0);
     errno = 71;
     Require(sceNpWebApi2SetMultipartContentType(multipart, reinterpret_cast<const char*>(0x10), nullptr) == invalidArgument);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceNpWebApi2SetMultipartContentType(multipart, "multipart/form-data", reinterpret_cast<const char*>(0x10)) == invalidArgument);
     Require(errno == 71);
     unsigned char part[4]{1, 2, 3, 4};    Require(sceNpWebApi2SendMultipartRequest(multipart, 0, part, sizeof(part), nullptr) == invalidArgument);
     Require(sceNpWebApi2SendMultipartRequest(multipart, -1, part, sizeof(part), nullptr) == invalidArgument);
@@ -255,6 +261,7 @@ int main() {
     Require(errno == 71);
     Require(sceNpWebApi2IntInitialize2(reinterpret_cast<const NpWebApi2IntInitialize2Args*>(std::uintptr_t{0x10})) == static_cast<int>(0x80553402));
     Require(errno == 71);
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     return 0;
 }

@@ -619,9 +619,17 @@ int APS5_VABI sceSystemServiceParamGetString(int paramId, char* buf, size_t bufS
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
  constexpr char SystemName[] = "PS5";
- std::memset(buf, 0, bufSize);
- std::memcpy(buf, SystemName, sizeof(SystemName));
- buf[SYSTEM_SERVICE_MAX_SYSTEM_NAME_LENGTH - 1] = '\0';
+ static constexpr char Zeros[256] = {};
+ const int savedErrno = errno;
+ bool copied = true;
+ for (std::size_t offset = 0; copied && offset < bufSize; offset += sizeof(Zeros)) {
+  copied = GuestCopyOut_nid_no_patch(buf + offset, Zeros, std::min(sizeof(Zeros), bufSize - offset));
+ }
+ if (copied) copied = GuestCopyOut_nid_no_patch(buf, SystemName, sizeof(SystemName));
+ errno = savedErrno;
+ if (!copied) {
+  return SYSTEM_SERVICE_ERROR_PARAMETER;
+ }
  return SYSTEM_SERVICE_OK;
 }
 
@@ -670,11 +678,13 @@ int APS5_VABI sceSystemServiceLaunchPlayerDialog(const void* param) {
 
 int APS5_VABI sceSystemServiceLaunchWebBrowser(const char* uri) {
     if (!uri) return static_cast<int>(0x80a10003);
-    std::size_t length = 0;
-    while (length < 6016 && uri[length] != 0) ++length;
-    if (length > 6015) return static_cast<int>(0x80a10007);
-    if (std::strncmp(uri, "http:", 5) != 0 && std::strncmp(uri, "https:", 6) != 0 && std::strncmp(uri, "psno:", 5) != 0) return static_cast<int>(0x80a10008);
-    return OpenWebBrowserUrl(uri);
+    std::string copied;
+    const int copyError = CopyGuestString_nid_no_patch(uri, 6016, copied);
+    if (copyError == 63) return static_cast<int>(0x80a10007);
+    if (copyError != 0) return static_cast<int>(0x80a10003);
+    const char* const text = copied.c_str();
+    if (std::strncmp(text, "http:", 5) != 0 && std::strncmp(text, "https:", 6) != 0 && std::strncmp(text, "psno:", 5) != 0) return static_cast<int>(0x80a10008);
+    return OpenWebBrowserUrl(text);
 }
 
 extern "C" void SystemServiceSetUrlHandlers_nid_no_patch(IUrlLauncher* launcher, IUrlConfirmation* confirmation, IUrlClock* clock) {
@@ -729,6 +739,12 @@ int APS5_VABI sceSystemServiceGetAppIdOfRunningBigApp(void) {
 
 int APS5_VABI sceSystemServiceGetAppId(const char* titleId) {
  return RunningAppId("sceSystemServiceGetAppId", titleId);
+}
+
+int APS5_VABI sceSystemServiceGetMainAppTitleId(char* titleId) {
+ if (titleId == nullptr) return SYSTEM_SERVICE_ERROR_PARAMETER;
+ CopyRunningTitleId("sceSystemServiceGetMainAppTitleId", true, titleId);
+ return SYSTEM_SERVICE_OK;
 }
 
 int APS5_VABI sceSystemServiceGetAppTitleId(int appId, char* titleId) {
