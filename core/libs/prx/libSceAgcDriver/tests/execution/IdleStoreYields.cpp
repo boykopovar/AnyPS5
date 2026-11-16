@@ -29,6 +29,8 @@ constexpr std::uint64_t Piece = 4u << 20u;
 alignas(4) std::atomic<std::uint32_t> betweenImagesHold{0};
 alignas(4) std::atomic<std::uint32_t> withinAnImageHold{0};
 alignas(4) std::atomic<std::uint32_t> mutexWaiterHold{0};
+alignas(4) std::atomic<std::uint32_t> hookReadHold{0};
+alignas(4) std::atomic<std::uint32_t> flushReadHold{0};
 
 alignas(256) constexpr std::array<std::uint32_t, 8> StoreRowZeroCode{
     0x7e040300, 0x7e060280, 0x7e0202ff, Stored, 0xf0200108, 0x00020102, 0xbf810000, 0xbf810000,
@@ -241,6 +243,74 @@ void StopsForMutexWaiter() {
     Require(Contains(first.Address(), first.Address() + first.bytes) && Contains(second.Address(), second.Address() + second.bytes), "the idle stores did not bring both results to guest memory");
 }
 
+struct PieceReader {
+    bool throughHook = false;
+    std::uint64_t begin = 0;
+    std::uint64_t split = 0;
+    std::uint64_t end = 0;
+    std::atomic<bool> started{false};
+    std::atomic<bool> done{false};
+    std::atomic<bool> sawStored{false};
+    std::thread thread;
+};
+
+PieceReader* pieceReader = nullptr;
+
+bool RawContains(std::uint64_t begin, std::uint64_t end) {
+    const volatile std::uint32_t* words = reinterpret_cast<const std::uint32_t*>(static_cast<std::uintptr_t>(begin));
+    for (std::size_t index = 0; index < (end - begin) / 4u; ++index) {
+        if (words[index] == Stored) return true;
+    }
+    return false;
+}
+
+void StartReaderInsidePiece(std::uint64_t, std::size_t) {
+    auto& reader = *pieceReader;
+    if (reader.started.exchange(true, std::memory_order_acq_rel)) return;
+    reader.thread = std::thread([&reader] {
+        const auto bytes = static_cast<std::size_t>(reader.end - reader.begin);
+        if (reader.throughHook) AgcDriver::GuestMemory::FlushGpuWrites(reader.begin, bytes);
+        else static_cast<void>(AgcDriver::Graphics::StorageTexture::FlushPending(reader.begin, bytes, nullptr, "idle yield fixture"));
+        reader.sawStored.store(RawContains(reader.split, reader.end), std::memory_order_release);
+        reader.done.store(true, std::memory_order_release);
+    });
+    auto& mutex = AgcDriver::GuestMemory::GpuMutex();
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (mutex.Waiters() == 0 && !reader.done.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::microseconds(200));
+}
+
+void ReadDuringIdlePieceStoresRest(bool throughHook, std::atomic<std::uint32_t>& label) {
+    Surface surface(2048, 1024);
+    Require(surface.bytes > Piece, "idle yield fixture: the large surface is not larger than one stored piece");
+    Registered registered({&surface});
+    std::vector<std::uint32_t> words;
+    AppendStore(words, surface, StoreRowZeroCode);
+    AppendStore(words, surface, StoreFarRowCode);
+    QueueHold hold(label);
+    SubmitAndWaitHeld(words, hold);
+    PieceReader reader;
+    reader.throughHook = throughHook;
+    reader.begin = surface.Address();
+    reader.split = reader.begin + Piece;
+    reader.end = reader.begin + surface.bytes;
+    pieceReader = &reader;
+    bool finished = true;
+    {
+        std::lock_guard gpuLock(AgcDriver::GuestMemory::GpuMutex());
+        hold.Release();
+        Require(Pending(reader.begin, reader.end), "the large image has no pending results");
+        AgcDriver::Graphics::StorageTexture::SetFlushingHookForTest(&StartReaderInsidePiece);
+        finished = AgcDriver::Graphics::StorageTexture::FlushAllPendingUntil("idle", AgcDriver::GuestMemory::YieldToGpuMutexWaiters([] { return false; }));
+        AgcDriver::Graphics::StorageTexture::SetFlushingHookForTest(nullptr);
+    }
+    Require(reader.started.load(std::memory_order_acquire), "the idle store of the large image never flushed a piece");
+    reader.thread.join();
+    pieceReader = nullptr;
+    Require(!finished, "the idle store did not yield to the read blocked behind its first piece");
+    Require(reader.sawStored.load(std::memory_order_acquire), throughHook ? "a guest memory read that waited for the idle store's first piece read the rest of the image without its results" : "a store that waited for the idle store's first piece left the rest of the image without its results");
+    Require(!Pending(reader.begin, reader.end), "a read that waited for the idle store's first piece left the rest of the image pending");
+}
+
 void CountsMutexWaiters() {
     auto& mutex = AgcDriver::GuestMemory::GpuMutex();
     Require(mutex.Waiters() == 0, "the GPU mutex reported a waiter while nobody was blocked on it");
@@ -278,6 +348,8 @@ int main() {
         StopsBetweenImages();
         StopsWithinAnImage();
         StopsForMutexWaiter();
+        ReadDuringIdlePieceStoresRest(true, hookReadHold);
+        ReadDuringIdlePieceStoresRest(false, flushReadHold);
         AgcDriverShutdown_nid_postfix();
         std::puts("idle store yields tests passed");
         return 0;
