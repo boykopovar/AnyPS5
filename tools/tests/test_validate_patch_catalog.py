@@ -178,5 +178,10 @@ class CatalogValidatorTests(unittest.TestCase):
         self.assertTrue(loop.is_symlink())
 
 
+class UniqueKeyTests(unittest.TestCase):
+    def test_unique_json_keys_keeps_distinct_names(self):
+        self.assertEqual(validate_patch_catalog.unique_json_keys([('a', 1), ('b', 2)]), {'a': 1, 'b': 2})
+
+
 if __name__ == "__main__":
     unittest.main()
