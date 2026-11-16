@@ -1,6 +1,11 @@
 #include "prx/libSceAgc/Acb/include/Control.hpp"
 
 #include "prx/libSceAgc/Command/include/Control.hpp"
+#include "prx/libSceAgc/Command/include/RegisterDefaults.hpp"
+#include "prx/libSceAgc/Acb/include/Memory.hpp"
+#include "prx/libSceAgcDriver/include/AgcDriver.hpp"
+#include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
+#include <limits>
 #include "prx/libSceAgc/Command/include/Memory.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 #include "prx/libSceAgc/DcbState/include/Marker.hpp"
@@ -20,6 +25,20 @@ constexpr std::uint32_t CompletePacketWords = 12;
 constexpr std::uint32_t InactivePacketWords = 9;
 constexpr std::uint32_t MaxWorkloadId = 63;
 constexpr std::uint32_t MaxActiveCount = 63;
+
+bool ReserveReset(CommandBuffer* buffer, std::uint32_t words, bool checkCallback) {
+    const auto available = [&] {
+        const auto up = reinterpret_cast<std::uintptr_t>(buffer->cursor_up);
+        const auto down = reinterpret_cast<std::uintptr_t>(buffer->cursor_down);
+        Agc::Command::Require(((up | down) & 3u) == 0 && up <= down, __func__, "invalid command buffer cursors");
+        const auto count = (down - up) / sizeof(std::uint32_t);
+        return count >= buffer->reserved_dw ? count - buffer->reserved_dw : 0;
+    };
+    if (available() >= words) return true;
+    if (buffer->callback == nullptr || words > std::numeric_limits<std::uint32_t>::max() - buffer->reserved_dw) return false;
+    const auto grown = buffer->callback(buffer, words + buffer->reserved_dw, buffer->user_data);
+    return (!checkCallback || grown) && available() >= words;
+}
 
 std::uint32_t* NewWorkloadPacket(CommandBuffer* buf, std::uint32_t words, const char* function) {
     auto* packet = Agc::Command::Allocate(buf, words, function);
@@ -51,16 +70,40 @@ uint32_t APS5_VABI sceAgcAcbJumpGetSize(void) {
     return 16;
 }
 
-// Encoded as the custom DISPATCH_RESET NOP packet the driver consumes on compute queues.
-uint32_t* APS5_VABI sceAgcAcbResetQueue(CommandBuffer* buf, uint32_t op, uint32_t value) {
-    (void)value;
+std::uint32_t* APS5_VABI sceAgcAcbResetQueue(CommandBuffer* buf, std::uint32_t flags, std::uint32_t instance) {
     Agc::Command::Require(buf != nullptr, __func__, "null command buffer");
-    constexpr std::uint32_t OpcodeNop = 0x10;
-    constexpr std::uint32_t CustomDispatchReset = 0x09;
-    auto* packet = Agc::Command::Allocate(buf, 2, __func__);
-    packet[0] = Agc::Command::Header(OpcodeNop, 2, CustomDispatchReset << 2);
-    packet[1] = op;
-    return packet;
+    flags &= 0xffffu;
+    const auto state = Agc::Command::GetQueueResetState(instance, (flags & 0x8000u) != 0);
+    instance = state.instance;
+    const auto marker = 0xce000000u | (!state.external ? 0x200000u : 0u) | flags;
+    const auto prefixWords = sceAgcDriverUserDataGetPacketSize(4);
+    if (!ReserveReset(buf, prefixWords, false)) return nullptr;
+    auto* result = buf->cursor_up;
+    const auto version = Agc::Command::GetQueueResetState(instance, false).version;
+    buf->cursor_up += sceAgcDriverUserDataWritePacket(buf->cursor_up, 1, marker, &version, sizeof(version));
+    if ((flags & 0x80u) != 0) {
+        if (!ReserveReset(buf, 2, true)) return nullptr;
+        auto* event = buf->cursor_up;
+        buf->cursor_up += 2;
+        event[0] = Agc::Command::Header(0x46u, 2);
+        event[1] = 0x407u;
+    }
+    if ((flags & 2u) != 0) {
+        const auto commands = Agc::Command::GetQueueResetState(instance, false).commands;
+        if (commands.empty()) return nullptr;
+        if (!ReserveReset(buf, static_cast<std::uint32_t>(commands.size()), true)) return nullptr;
+        auto* restore = buf->cursor_up;
+        buf->cursor_up += commands.size();
+        std::memcpy(restore, commands.data(), commands.size() * sizeof(std::uint32_t));
+    }
+    if ((flags & 0x140u) != 0) {
+        const auto cache = (flags & 0x100u) != 0 ? 0xc3a1u : 0xc1u;
+        if (sceAgcAcbAcquireMem(buf, cache, nullptr, 0, 0) == nullptr) return nullptr;
+    }
+    const auto suffixWords = sceAgcDriverUserDataGetPacketSize(0);
+    if (!ReserveReset(buf, suffixWords, false)) return nullptr;
+    buf->cursor_up += sceAgcDriverUserDataWritePacket(buf->cursor_up, 1, (marker & 0xcf600000u) | 0x800000u, nullptr, 0);
+    return result;
 }
 
 std::uint32_t* APS5_VABI sceAgcAcbRewind(CommandBuffer* buf, std::uint32_t initialState) {
