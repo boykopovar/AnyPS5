@@ -5252,8 +5252,8 @@ std::size_t ResourceCache::Capacity() const {
 std::uint64_t ResourceCache::TableElementBudget() {
     static const std::uint64_t elements = [] {
         const char* value = std::getenv("APS5_RESOURCE_CACHE_TABLE_ELEMENTS");
-        const auto parsed = value ? std::strtoull(value, nullptr, 10) : 65536ull;
-        return static_cast<std::uint64_t>(parsed != 0 ? parsed : 65536ull);
+        const auto parsed = value ? std::strtoull(value, nullptr, 10) : 262144ull;
+        return static_cast<std::uint64_t>(parsed != 0 ? parsed : 262144ull);
     }();
     return elements;
 }
