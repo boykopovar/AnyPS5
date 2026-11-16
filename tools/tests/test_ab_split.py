@@ -418,5 +418,22 @@ class AbSplitTests(unittest.TestCase):
                         self.assertEqual(run.stdout, "")
                         self.assertIn("settled does not match active phase", run.stderr)
                         self.assertNotIn("Traceback", run.stderr)
+
+
+class TextReportTests(unittest.TestCase):
+    def result(self, config="[ab] cfg", rate=5.0, rows=None):
+        phase = {"kind": "A", "index": 1, "begin_present": 10, "settled_present": None, "end_present": 20,
+                 "clean_reports": {"present": 1, "gputime": 2, "draw": 3, "syncwait": 4},
+                 "metrics": {"presents/10s": rate}}
+        return {"config": config, "phases": [phase], "metrics": rows or []}
+
+    def test_text_report_prints_the_phase_row_with_counts_and_rate(self):
+        lines = ab_split.text_report(self.result()).split("\n")
+        phase_line = next(line for line in lines if line.startswith("A 1"))
+        self.assertIn("10 /       - /      20", phase_line)
+        self.assertIn("1/2/3/4", phase_line)
+        self.assertTrue(phase_line.endswith("5.00"))
+
+
 if __name__ == "__main__":
     unittest.main()
