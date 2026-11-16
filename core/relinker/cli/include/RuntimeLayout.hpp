@@ -3,6 +3,7 @@
 #include <map>
 #include <ostream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace Cli {
@@ -24,8 +25,8 @@ public:
         }
         stream << "Arrange the files like this:\n"
                << "folder/\n"
-               << "  |-- " << executable << "\n";
-        for (const auto& extra : extraExecutables) stream << "  |-- " << extra << '\n';
+               << "  |-- " << displayName(executable) << "\n";
+        for (const auto& extra : extraExecutables) stream << "  |-- " << displayName(extra) << '\n';
         stream << "  |-- libs/\n"
                << "        |-- *.prx (system libraries)\n"
                << "  |-- app0/\n"
@@ -35,13 +36,26 @@ public:
     }
 
 private:
+    static std::string displayName(std::string_view name) {
+        constexpr char hex[] = "0123456789ABCDEF";
+        std::string result;
+        for (const unsigned char character : name) {
+            if (character < 0x20 || character == 0x7f) {
+                result += "\\x";
+                result += hex[character >> 4];
+                result += hex[character & 15];
+            } else result += static_cast<char>(character);
+        }
+        return result;
+    }
+
     struct Node {
         std::map<std::string, Node> children;
     };
 
     static void printChildren(std::ostream& stream, const Node& node, const std::string& prefix) {
         for (const auto& [name, child] : node.children) {
-            stream << prefix << "|-- " << name << (child.children.empty() ? "\n" : "/\n");
+            stream << prefix << "|-- " << displayName(name) << (child.children.empty() ? "\n" : "/\n");
             printChildren(stream, child, prefix + "      ");
         }
     }
