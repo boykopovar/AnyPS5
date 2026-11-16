@@ -442,6 +442,11 @@ class TextReportTests(unittest.TestCase):
         self.assertIn("+100.0%", metric_line)
         self.assertTrue(metric_line.endswith("-"))
 
+    def test_text_report_names_a_missing_configuration_and_unfinished_phases(self):
+        text = ab_split.text_report(self.result(config=None, rate=None))
+        self.assertTrue(text.startswith("[ab] configuration line missing"))
+        self.assertIn("unfinished", text)
+
 
 if __name__ == "__main__":
     unittest.main()
