@@ -98,6 +98,15 @@ GRID_COLUMNS, GRID_ROW = 12, 28
 DONE_COLOR, TODO_COLOR, BORDER, TEXT = "#2ea043", "#6e7681", "#0d1117", "#ffffff"
 
 
+def unique_json_keys(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key {key!r}")
+        result[key] = value
+    return result
+
+
 def blank(match):
     if match.group("code") is not None:
         return match.group()
@@ -148,14 +157,44 @@ def statements(body):
     return parts
 
 
-def inert_statement(statement, wrappers):
+def template_open(tokens, index):
+    before = tokens[index - 1] if index else ""
+    after = tokens[index + 1] if index + 1 < len(tokens) else ""
+    return bool(re.fullmatch(r"[A-Za-z_]\w*", before)) and after not in ("<", "=")
+
+
+def inert_parameters(signature):
+    parameters, nesting, default = set(), [], False
+    text = signature.partition("(")[2].rpartition(")")[0]
+    tokens = [match.group() for match in CPP_TOKEN.finditer(text)]
+    for index, token in enumerate(tokens):
+        if token == "," and not nesting:
+            default = False
+        elif token == "=" and not nesting:
+            default = True
+        elif token == "<" and default and not template_open(tokens, index):
+            continue
+        elif token in ("(", "[", "{", "<"):
+            nesting.append(token)
+        elif token in (")", "]", "}", ">") and nesting:
+            if nesting[-1] == {")": "(", "]": "[", "}": "{", ">": "<"}[token]:
+                nesting.pop()
+        elif not default and not any(part in ("[", "{", "<") for part in nesting):
+            if re.fullmatch(r"[A-Za-z_]\w*", token):
+                parameters.add(token)
+    return parameters
+
+
+def inert_statement(statement, wrappers, parameters):
     if EMPTY_RETURN.fullmatch(statement) or CONST_RETURN.fullmatch(statement) or BARE_THROW.fullmatch(statement):
-        return True
+        returned = re.fullmatch(r"return\s+(\w+)\s*;", statement)
+        return returned is None or returned.group(1) not in parameters
     call = WRAPPER_RETURN.fullmatch(statement)
     return bool(call) and call.group(1) in wrappers
 
 
-def inert_body(body, wrappers):
+def inert_body(body, wrappers, signature):
+    parameters = inert_parameters(signature)
     terminals = 0
     for statement in statements(body):
         statement = statement.strip()
@@ -163,17 +202,17 @@ def inert_body(body, wrappers):
             continue
         if DISCARD.fullmatch(statement):
             continue
-        if terminals or not inert_statement(statement, wrappers):
+        if terminals or not inert_statement(statement, wrappers, parameters):
             return False
         terminals += 1
     return True
 
 
 def inert_wrappers(text):
-    bodies = {m.group(1): text[m.end() - 1:body_end(text, m.end() - 1)] for m in STUB_WRAPPER.finditer(text)}
+    bodies = {m.group(1): (text[m.end() - 1:body_end(text, m.end() - 1)], m.group()) for m in STUB_WRAPPER.finditer(text)}
     names = set()
     while True:
-        found = {name for name, body in bodies.items() if name not in names and inert_body(body, names)}
+        found = {name for name, (body, signature) in bodies.items() if name not in names and inert_body(body, names, signature)}
         if not found:
             return names
         names |= found
@@ -217,7 +256,7 @@ def scan_library(path):
                 todo.add(name)
                 continue
             done.add(name)
-            (inert if inert_body(body, wrappers) else live).add(name)
+            (inert if inert_body(body, wrappers, match.group()) else live).add(name)
     todo -= done
     inert -= live
     group = {"name": path.name, "label": path.name.removeprefix("libSce"), "done": len(done), "todo": len(todo),
@@ -268,7 +307,10 @@ def collect_shaders():
             name, encoding = parts
             isa[name] = encoding
     by_camel = {camel(name): name for name in isa}
-    enum = re.search(r"enum class RdnaOpcode[^{]*\{(.*?)\};", OPCODES.read_text(encoding="utf-8", errors="ignore"), re.S).group(1)
+    enum = re.search(r"enum class RdnaOpcode[^{]*\{(.*?)\};", OPCODES.read_text(encoding="utf-8", errors="ignore"), re.S)
+    if not enum:
+        raise ValueError(f"{OPCODES} has no enum class RdnaOpcode")
+    enum = enum.group(1)
     opcodes = [o for o in re.findall(r"^\s*([A-Z]\w*)\s*[,=]", enum, re.M) if o not in OPCODE_SENTINELS]
     supported, extra = set(), []
     for opcode in opcodes:
@@ -761,7 +803,8 @@ def compare(title, column, unit, base, head):
     icon = "📈" if (exact or delta) > 0 else "📉" if (exact or delta) < 0 else "➖"
     counts = [f"{n:+} {label}" for n, label in ((len(implemented), "implemented"), (len(declared), "declared"),
                                                 (-len(regressed), "reverted"), (-len(removed), "removed")) if n]
-    changes = f', {", ".join(counts)} {unit}' if counts else ""
+    unit = unit[:-1] if len(implemented) + len(declared) + len(regressed) + len(removed) == 1 else unit
+    changes =f', {", ".join(counts)} {unit}' if counts else ""
     lines = [f'{icon} **{title}**: {head["percent"]}% ({shown}%{changes})', ""]
     lines += details("✅", "implemented", column, implemented)
     lines += details("⚪", "behaviourally empty (constant return or throw)", column, inert)
@@ -1030,7 +1073,7 @@ def main(argv=None):
             snapshots = []
             for path in args.compare:
                 try:
-                    snapshots.append(json.loads(path.read_text(encoding="utf-8-sig")))
+                    snapshots.append(json.loads(path.read_text(encoding="utf-8-sig"), object_pairs_hook=unique_json_keys))
                 except (OSError, ValueError, RecursionError) as error:
                     parser.error(f"{path}: {error}")
             for path, snapshot in zip(args.compare, snapshots):
@@ -1057,7 +1100,7 @@ def main(argv=None):
         open_pr_progress = None
         if args.open_pr_estimate:
             try:
-                open_pr_progress = json.loads(args.open_pr_estimate.read_text(encoding="utf-8-sig"))
+                open_pr_progress = json.loads(args.open_pr_estimate.read_text(encoding="utf-8-sig"), object_pairs_hook=unique_json_keys)
                 validate_open_pr_progress(open_pr_progress)
             except (OSError, ValueError, RecursionError) as error:
                 parser.error(f"{args.open_pr_estimate}: {error}")
@@ -1065,6 +1108,10 @@ def main(argv=None):
             libraries, shaders = collect_libraries(), collect_shaders()
         except FileNotFoundError as error:
             parser.error(f"{args.root or ROOT} is not a source tree: {error.filename} not found")
+        except OSError as error:
+            parser.error(f"{args.root or ROOT} is not a source tree: {error.filename}: {error.strerror}")
+        except ValueError as error:
+            parser.error(f"{args.root or ROOT} is not a source tree: {error}")
         try:
             shader_source = collect_shader_source(args.root)
         except shader_scan.ScanError as error:

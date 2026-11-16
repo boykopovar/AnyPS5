@@ -86,19 +86,11 @@ int APS5_VABI u_flushDefaultConverter_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI u_getBinaryPropertySet_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI u_getDefaultConverter_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI u_getFC_NFKC_Closure_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI u_getIntPropertyMap_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -191,15 +183,7 @@ int APS5_VABI uloc_getCharacterOrientation() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI uloc_getDefault() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI uloc_minimizeSubtags() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI uloc_setKeywordValue() {
     NotImplemented_nid_no_patch(__func__);
 }
 

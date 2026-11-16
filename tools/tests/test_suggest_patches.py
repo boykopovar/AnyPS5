@@ -227,6 +227,45 @@ class PatchAdvisorTests(unittest.TestCase):
         run.assert_called_once()
 
     @patch.object(suggest_patches.subprocess, "run")
+    def test_duplicate_catalog_keys_cannot_produce_a_recommendation(self, run):
+        entry = json.dumps(self.entry)
+        duplicate_patch = entry.replace('"patch": "patch.toml"',
+                                        '"patch": "missing.toml", "patch": "patch.toml"')
+        catalogs = (
+            '{"format": 0, "format": 1, "entries": [' + entry + ']}',
+            '{"format": 1, "entries": [' + duplicate_patch + ']}',
+        )
+        run.return_value = subprocess.CompletedProcess([], 0, VERIFIED, "")
+        for catalog in catalogs:
+            with self.subTest(catalog=catalog):
+                run.reset_mock()
+                (self.catalog / "index.json").write_text(catalog, encoding="utf-8")
+                output, errors = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                    self.assertEqual(self.advise(), 2)
+                self.assertEqual(output.getvalue(), "")
+                self.assertIn("duplicate JSON key", errors.getvalue())
+                run.assert_not_called()
+
+    @patch.object(suggest_patches.subprocess, "run")
+    def test_duplicate_param_keys_cannot_produce_a_recommendation(self, run):
+        params = (
+            '{"titleId": "OTHER0001", "titleId": "TEST00001", "contentVersion": "01.000.000"}',
+            '{"titleId": "TEST00001", "contentVersion": "00.000.000", "contentVersion": "01.000.000"}',
+        )
+        run.return_value = subprocess.CompletedProcess([], 0, VERIFIED, "")
+        for metadata in params:
+            with self.subTest(metadata=metadata):
+                run.reset_mock()
+                self.param.write_text(metadata, encoding="utf-8")
+                output, errors = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                    self.assertEqual(self.advise(), 2)
+                self.assertEqual(output.getvalue(), "")
+                self.assertIn("duplicate JSON key", errors.getvalue())
+                run.assert_not_called()
+
+    @patch.object(suggest_patches.subprocess, "run")
     def test_matching_malformed_patch_is_rejected(self, run):
         self.entry["patch"] = "missing.toml"
         self.write_index()

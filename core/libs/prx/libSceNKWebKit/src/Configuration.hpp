@@ -15,6 +15,14 @@ public:
     bool canGoBack = false;
     bool canGoForward = false;
     mutable Retained<Inspector> inspector;
+    bool isPinnedToLeftSide = true;
+    bool isPinnedToRightSide = true;
+    bool isPinnedToTopSide = true;
+    bool isPinnedToBottomSide = true;
+    bool addsVisitedLinks = true;
+    double pageZoomFactor = 1.0;
+    double textZoomFactor = 1.0;
+    bool supportsTextZoom = true;
 };
 class Preferences : public ObjectOf<ObjectType::Preferences> {};
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};
@@ -69,6 +77,11 @@ public:
     bool javaScriptGarbageCollectorTimerEnabled = true;
     bool storageAccessAPIEnabled = false;
     std::uint32_t garbageCollectJavaScriptObjectsCount = 0;
+    std::vector<std::string> bypassingCSPSchemes;
+    std::vector<std::string> cachePartitionedSchemes;
+    std::vector<std::string> canDisplayOnlyIfCanRequestSchemes;
+    std::vector<std::string> emptyDocumentSchemes;
+    std::vector<std::string> secureSchemes;
 };
 
 class PageConfiguration final : public ObjectOf<ObjectType::PageConfiguration> {
