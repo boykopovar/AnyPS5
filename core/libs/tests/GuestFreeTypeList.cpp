@@ -2,10 +2,13 @@
 #include "prx/libSceFreeType/include/GuestList.hpp"
 
 #include <array>
+#include <cerrno>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <map>
 #include <random>
+#include <stdexcept>
 #include <vector>
 #include <type_traits>
 #include <ft2build.h>
@@ -265,8 +268,75 @@ static void FinalizationCases() {
     std::printf("list finalization: 6 allocator/destructor/order cases compared\n");
 }
 
+static void CheckGuestPointers() {
+    auto rejectsRuntime = [](auto&& call) {
+        errno = 71;
+        bool threw = false;
+        try {
+            call();
+        } catch (const std::runtime_error&) {
+            threw = true;
+        }
+        Require(threw && errno == 71);
+    };
+
+    auto* badList = reinterpret_cast<GuestListRec*>(std::uintptr_t{0x10});
+    auto* badNode = reinterpret_cast<GuestListNodeRec*>(std::uintptr_t{0x10});
+    auto* badMemory = reinterpret_cast<GuestMemoryRec*>(std::uintptr_t{0x10});
+    static const GuestListRec readOnlyList{};
+    static const GuestListNodeRec readOnlyNode{};
+    int token = 5;
+    Lists lists;
+    lists.Fill();
+
+    rejectsRuntime([&] { FT_List_Find_nid_postfix(badList, &token); });
+    rejectsRuntime([&] { FT_List_Add_nid_postfix(badList, &lists.actual[0]); });
+    rejectsRuntime([&] { FT_List_Insert_nid_postfix(badList, &lists.actual[0]); });
+    rejectsRuntime([&] { FT_List_Remove_nid_postfix(badList, &lists.actual[3]); });
+    rejectsRuntime([&] { FT_List_Up_nid_postfix(badList, &lists.actual[3]); });
+    rejectsRuntime([&] { FT_List_Iterate_nid_postfix(badList, GuestIterator, &token); });
+    rejectsRuntime([&] { FT_List_Finalize_nid_postfix(badList, nullptr, badMemory, &token); });
+    lists.Match();
+
+    rejectsRuntime([&] { FT_List_Add_nid_postfix(&lists.guest, badNode); });
+    rejectsRuntime([&] { FT_List_Insert_nid_postfix(&lists.guest, badNode); });
+    rejectsRuntime([&] { FT_List_Remove_nid_postfix(&lists.guest, badNode); });
+    rejectsRuntime([&] { FT_List_Up_nid_postfix(&lists.guest, badNode); });
+    rejectsRuntime([&] { FT_List_Add_nid_postfix(const_cast<GuestListRec*>(&readOnlyList), &lists.actual[0]); });
+    rejectsRuntime([&] { FT_List_Add_nid_postfix(&lists.guest, const_cast<GuestListNodeRec*>(&readOnlyNode)); });
+    rejectsRuntime([&] { FT_List_Insert_nid_postfix(&lists.guest, const_cast<GuestListNodeRec*>(&readOnlyNode)); });
+    Require(readOnlyList.head == nullptr && readOnlyList.tail == nullptr && readOnlyNode.prev == nullptr && readOnlyNode.next == nullptr);
+    lists.Match();
+
+    GuestListRec broken{badNode, badNode};
+    rejectsRuntime([&] { FT_List_Find_nid_postfix(&broken, &token); });
+    rejectsRuntime([&] { FT_List_Iterate_nid_postfix(&broken, GuestIterator, &token); });
+    rejectsRuntime([&] { FT_List_Add_nid_postfix(&broken, &lists.actual[0]); });
+    rejectsRuntime([&] { FT_List_Insert_nid_postfix(&broken, &lists.actual[0]); });
+    GuestListNodeRec linked{badNode, badNode, nullptr};
+    rejectsRuntime([&] { FT_List_Remove_nid_postfix(&broken, &linked); });
+    rejectsRuntime([&] { FT_List_Up_nid_postfix(&broken, &linked); });
+    Require(broken.head == badNode && broken.tail == badNode && linked.prev == badNode && linked.next == badNode);
+    lists.Match();
+
+    auto* readOnly = const_cast<GuestListNodeRec*>(&readOnlyNode);
+    GuestListRec readOnlyEnds{readOnly, readOnly};
+    GuestListNodeRec fresh{&lists.actual[1], &lists.actual[2], &token};
+    rejectsRuntime([&] { FT_List_Add_nid_postfix(&readOnlyEnds, &fresh); });
+    rejectsRuntime([&] { FT_List_Insert_nid_postfix(&readOnlyEnds, &fresh); });
+    Require(fresh.prev == &lists.actual[1] && fresh.next == &lists.actual[2] && fresh.data == &token);
+    Require(readOnlyEnds.head == readOnly && readOnlyEnds.tail == readOnly);
+    lists.Match();
+
+    rejectsRuntime([&] { FT_List_Finalize_nid_postfix(&lists.guest, nullptr, badMemory, &token); });
+    rejectsRuntime([&] { FT_List_Finalize_nid_postfix(const_cast<GuestListRec*>(&readOnlyList), nullptr, badMemory, &token); });
+    lists.Match();
+    std::printf("list guest pointers: unreadable and unwritable records rejected\n");
+}
+
 int main() {
     Mutations();
     IterationCases();
     FinalizationCases();
+    CheckGuestPointers();
 }
