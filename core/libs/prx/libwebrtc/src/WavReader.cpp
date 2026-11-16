@@ -73,6 +73,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 
 namespace {
@@ -148,6 +149,12 @@ std::size_t APS5_VABI _ZN6webrtc9WavReader11ReadSamplesEmPs_nid_postfix(WebRtcWa
             throw std::invalid_argument("WavReader::ReadSamples requires a sample buffer");
         if (!WritableReader(reader))
             throw std::invalid_argument("WavReader::ReadSamples requires a writable reader");
+        const std::size_t plannedSamples = std::min(numSamplesLeftToRead, local.numUnreadSamples);
+        if (plannedSamples > std::numeric_limits<std::size_t>::max() / sizeof(std::int16_t))
+            throw std::invalid_argument("WavReader::ReadSamples requires a writable sample buffer");
+        ErrnoGuard errnoGuard;
+        if (!GuestWritable_nid_no_patch(samples, plannedSamples * sizeof(std::int16_t)))
+            throw std::invalid_argument("WavReader::ReadSamples requires a writable sample buffer");
     }
     while (numSamplesLeftToRead > 0 && local.numUnreadSamples > 0) {
         FileStream* const stream = RequireStream(local, "WavReader::ReadSamples requires an open file");

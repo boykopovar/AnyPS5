@@ -217,6 +217,10 @@ void TestGuestPointerGuards() {
     auto* roSamples = static_cast<std::int16_t*>(samplePage.Data());
     RequireThrows<std::invalid_argument>([&] { _ZN6webrtc9WavReader11ReadSamplesEmPs_nid_postfix(guardedReader, 2, roSamples); });
     Require(guardedReader->numUnreadSamples == 4);
+    std::memset(validOut, 0, sizeof(validOut));
+    Require(_ZN6webrtc9WavReader11ReadSamplesEmPs_nid_postfix(guardedReader, 2, validOut) == 2);
+    Require(validOut[0] == 10 && validOut[1] == 20);
+    Require(guardedReader->numUnreadSamples == 2);
 
     _ZN6webrtc9WavReader5CloseEv_nid_postfix(guardedReader);
     Require(guardedReader->file.file == nullptr);
