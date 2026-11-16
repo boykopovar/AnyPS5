@@ -1541,8 +1541,16 @@ static int setSaveDataMemory2(const SaveDataMemorySet2* set_param, SetMemoryTrac
         errno = savedErrno;
         return SAVE_DATA_ERROR_MEMORY_NOT_READY;
     }
+    SaveDataParam localParam{};
+    if (localSet.param != nullptr) {
+        if (!GuestCopyIn_nid_no_patch(&localParam, localSet.param, sizeof(localParam))) {
+            errno = savedErrno;
+            return SAVE_DATA_ERROR_PARAMETER;
+        }
+    }
     const std::uint32_t n = localSet.data != nullptr ? (localSet.data_num != 0 ? localSet.data_num : 1u) : 0u;
     std::vector<MemoryWrite> writes;
+    std::deque<std::vector<char>> buffers;
     constexpr std::size_t kChunkSize = 64;
     std::array<SaveDataMemoryData, kChunkSize> chunk{};
     for (std::uint32_t offset = 0; offset < n; offset += kChunkSize) {
@@ -1560,7 +1568,12 @@ static int setSaveDataMemory2(const SaveDataMemorySet2* set_param, SetMemoryTrac
                 errno = savedErrno;
                 return SAVE_DATA_ERROR_PARAMETER;
             }
-            writes.push_back({d.offset, d.buf_size, static_cast<const char*>(d.buf)});
+            std::vector<char>& writeBuf = buffers.emplace_back(d.buf_size);
+            if (!GuestCopyIn_nid_no_patch(writeBuf.data(), d.buf, d.buf_size)) {
+                errno = savedErrno;
+                return SAVE_DATA_ERROR_PARAMETER;
+            }
+            writes.push_back({d.offset, d.buf_size, writeBuf.data()});
         }
     }
     if (!writes.empty()) {
@@ -1581,11 +1594,6 @@ static int setSaveDataMemory2(const SaveDataMemorySet2* set_param, SetMemoryTrac
         apply_memory_journal(memory, journal, writes);
     }
     if (localSet.param != nullptr) {
-        SaveDataParam localParam{};
-        if (!GuestCopyIn_nid_no_patch(&localParam, localSet.param, sizeof(localParam))) {
-            errno = savedErrno;
-            return SAVE_DATA_ERROR_PARAMETER;
-        }
         std::vector<char> pd(sizeof(SaveDataParam));
         std::memcpy(pd.data(), &localParam, sizeof(SaveDataParam));
         if (!write_file_replace(mem_path(localSet.user_id, localSet.slot_id, "param"), pd)) {
