@@ -443,6 +443,12 @@ class GitListTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             self.make_repo(directory)
             self.assertEqual(check_main_sync.names(Path(directory), 'ls-files', '-z'), ['a.txt'])
+class GitVersionTests(unittest.TestCase):
+    def test_git_version_returns_major_and_minor_numbers(self):
+        version = check_main_sync.git_version(Path('.'))
+        self.assertIsNotNone(version)
+        self.assertEqual(len(version), 2)
+        self.assertTrue(all(isinstance(part, int) for part in version))
 
 
 class ResolveBaseTests(unittest.TestCase):
