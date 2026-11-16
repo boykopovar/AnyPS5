@@ -66,3 +66,4 @@ endif()
 
 include(Parsers.cmake)
 include(LifecycleAliases.cmake)
+include(Submission.cmake)
