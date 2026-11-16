@@ -104,10 +104,19 @@ void CheckInfo(_Unwind_Context& context, std::uintptr_t probe) {
     const auto ip = context.registers[16];
     const auto info = Info(context);
     Require(info.start == probe && info.start < ip && ip < info.end, "getInfo gives the range of the function holding the IP");
-    Require(info.unwindInfo != 0 && info.format == 0x04000000 && info.flags == 0, "getInfo gives the FDE in DWARF mode");
-    std::uint32_t length;
-    std::memcpy(&length, reinterpret_cast<const void*>(info.unwindInfo), sizeof(length));
-    Require(info.unwindInfoSize == length + 4, "the unwind info size covers the whole FDE");
+#ifdef __APPLE__
+    const bool compact = info.unwindInfo == 0;
+#else
+    const bool compact = false;
+#endif
+    if (compact) {
+        Require(info.format == 0 && info.unwindInfoSize == 0 && info.flags == 0, "getInfo gives no FDE for a compact unwind frame");
+    } else {
+        Require(info.unwindInfo != 0 && info.format == 0x04000000 && info.flags == 0, "getInfo gives the FDE in DWARF mode");
+        std::uint32_t length;
+        std::memcpy(&length, reinterpret_cast<const void*>(info.unwindInfo), sizeof(length));
+        Require(info.unwindInfoSize == length + 4, "the unwind info size covers the whole FDE");
+    }
     Require(info.extra != 0 && info.extra <= info.start, "getInfo gives the start of the segment holding the function");
     Require(info.start == _Unwind_GetRegionStart_nid_postfix(&context) && info.lsda == _Unwind_GetLanguageSpecificData_nid_postfix(&context),
         "getInfo agrees with _Unwind_GetRegionStart and _Unwind_GetLanguageSpecificData");

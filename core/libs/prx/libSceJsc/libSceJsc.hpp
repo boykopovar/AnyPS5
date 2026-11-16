@@ -8,6 +8,7 @@
 #include "prx/libSceJsc/include/WtfSha1Exports.hpp"
 #include "prx/libSceJsc/include/InventoryExports.hpp"
 #include "prx/libSceJsc/include/PlacementNewExports.hpp"
+#include "prx/libSceJsc/include/ProtoCallFrameExports.hpp"
 #include "prx/libSceJsc/include/WtfCpuTimeExports.hpp"
 #include "prx/libSceJsc/include/WtfFileSystemExports.hpp"
 #include "prx/libSceJsc/include/WtfHelperExports.hpp"
