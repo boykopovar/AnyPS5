@@ -331,6 +331,12 @@ class CellEscapeTests(unittest.TestCase):
         self.assertEqual(performance_csv.safe_cell('plain'), 'plain')
         self.assertEqual(performance_csv.safe_cell(3), 3)
 
+    def test_configuration_cell_names_missing_values_and_escapes_backslashes(self):
+        self.assertEqual(performance_csv.configuration_cell(None), '<missing>')
+        self.assertEqual(performance_csv.configuration_cell('<missing>'), '\\<missing>')
+        self.assertEqual(performance_csv.configuration_cell('\\lead'), '\\\\lead')
+        self.assertEqual(performance_csv.configuration_cell('value'), 'value')
+
 
 if __name__ == "__main__":
     unittest.main()
