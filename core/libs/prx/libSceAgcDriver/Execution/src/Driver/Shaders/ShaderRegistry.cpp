@@ -2257,8 +2257,8 @@ void PrioritizeLibraryPrebuilds(std::span<const std::uint64_t> programs) {
     if (auto* pool = RegistrationPreparePool::ExistingPrebuild(); pool != nullptr && !programs.empty()) pool->Prioritize(programs);
 }
 
-void SubmitComputePrebuild(std::function<void()> task, bool budgeted) {
-    RegistrationPreparePool::Prebuild().Submit(std::move(task), nullptr, budgeted);
+void SubmitComputePrebuild(std::function<void()> task) {
+    RegistrationPreparePool::Prebuild().Submit(std::move(task), nullptr, true);
 }
 
 void AwaitLibraryPrebuilds() {

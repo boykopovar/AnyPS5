@@ -346,7 +346,7 @@ void AwaitReferencedPreparations(const ShaderRegistry& registry, std::span<const
 void SubmitLibraryPrebuild(std::function<void()> task, std::uint64_t program = 0);
 bool LibraryPrebuildsWaiting();
 void PrioritizeLibraryPrebuilds(std::span<const std::uint64_t> programs);
-void SubmitComputePrebuild(std::function<void()> task, bool budgeted = true);
+void SubmitComputePrebuild(std::function<void()> task);
 void AwaitLibraryPrebuilds();
 void CloseRegistrationPreparation();
 unsigned RegistrationPreparationThreads();

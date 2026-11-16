@@ -71,8 +71,9 @@ int main() {
         Require(async || attempts == 1, "a dispatch without APS5_ASYNC_DRAW_COMPILE needed more than one attempt");
         const auto after = AgcDriver::VulkanDevice::ComputePipelineCounts();
         Require(after.created > before.created, "the dispatch stored without creating a compute pipeline");
-        if (async) Require(after.created - before.created == after.ahead - before.ahead, "a dispatch with APS5_ASYNC_DRAW_COMPILE created its compute pipeline itself (" + std::to_string(after.created - before.created) + " created, " + std::to_string(after.ahead - before.ahead) + " on the library prebuild pool)");
-        else Require(after.ahead == before.ahead, "a dispatch without APS5_ASYNC_DRAW_COMPILE built its compute pipeline on the library prebuild pool");
+        const bool ahead = async && AgcDriver::DriverDetail::AsyncComputePipelineWords() == 0;
+        if (ahead) Require(after.created - before.created == after.ahead - before.ahead, "a dispatch with APS5_ASYNC_DRAW_COMPILE and APS5_ASYNC_COMPUTE_WORDS=0 created its compute pipeline itself (" + std::to_string(after.created - before.created) + " created, " + std::to_string(after.ahead - before.ahead) + " on the library prebuild pool)");
+        else Require(after.ahead == before.ahead, "a dispatch whose compute pipeline is below APS5_ASYNC_COMPUTE_WORDS, or without APS5_ASYNC_DRAW_COMPILE, built its pipeline on the library prebuild pool");
         AgcDriverShutdown_nid_postfix();
         std::printf("async draw compile tests passed (%s, %zu dispatches)\n", async ? "enabled" : "disabled", attempts);
         return 0;
