@@ -51,6 +51,8 @@ python3 tools/select_tests.py ctest build --output-on-failure
 
 `dump` reads the header dependencies recorded by a built tree, so build before dumping. `select` writes `select.ninja` and `select.tests` into the build directory; `ninja -f select.ninja selected` builds only the selected targets (when the change selects the full run, or the graph file is missing, `select` removes `select.ninja` and writes none, so run `cmake --build build` instead, as CI does), and the `ctest` subcommand runs only the selected tests. A change to `CMakeLists.txt`, `core/libs/CMakeLists.txt`, `3rdparty/`, `cmake/`, `.gitmodules`, the build workflow or `tools/select_tests.py` selects the full run. The `select=true` CI build uses the same selection.
 
+[`tools/build_changed_guest_tests.py`](../../tools/build_changed_guest_tests.py) builds and runs the guest and host-only `core/libs` tests that a change touches, from the build directory and an optional changed-paths argument; `--output-log` writes its log to a file. [`tools/build_mingw_host_only_tests.py`](../../tools/build_mingw_host_only_tests.py) builds the `core/libs` test executables that do not link guest libc. It prints the executables it selects, and `--list-only` stops there without building them.
+
 ## Requirements
 
 - x86-64, Git, CMake 3.21 or newer (the test build's CMake scripts use `file(COPY_FILE)`, added in CMake 3.21; `CMakeLists.txt` declares 3.20), Ninja, C++20.
