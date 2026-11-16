@@ -1679,6 +1679,24 @@ void TestHexAndCopies() {
     const char unterminated[] = {'A', 'B', 'C', 'D', 'E', 'F', '\0'};
     Require(sceNpStrncpyToBuf(copy, 8, unterminated, 4) == 0 && Equals(copy, "ABCD"),
         "a source without a terminator within the limit is cut at the limit");
+    const char* const unmappedSource = reinterpret_cast<const char*>(0x10);
+    copy[0] = 'x';
+    Require(sceNpStrcpyToBuf(copy, 6, unmappedSource) == NpUtilInvalid && sceNpStrncpyToBuf(copy, 6, unmappedSource, 4) == NpUtilInvalid && copy[0] == 'x',
+        "an unreadable source is refused");
+    Require(sceNpStrcpyToBuf(reinterpret_cast<char*>(0x10), 6, "Hello") == NpInvalidArgument
+            && sceNpStrncpyToBuf(reinterpret_cast<char*>(0x10), 6, "Hello World", 5) == NpInvalidArgument,
+        "an unwritable destination is refused");
+    Require(sceNpStrncpyToBuf(copy, 4, unterminated, 8) == NpBufferTooSmall && sceNpStrncpyToBuf(copy, 8, "Hi", 8) == 0 && Equals(copy, "Hi"),
+        "the length limit and the buffer size bound the source read");
+    Require(sceNpStrncpyToBuf(copy, 4, "ABCD", 8) == NpBufferTooSmall && sceNpStrncpyToBuf(copy, 4, "ABC", 8) == 0 && Equals(copy, "ABC"),
+        "with a limit above the buffer size, a source of exactly the buffer size is refused and one byte shorter fits");
+    std::vector<char> large(70000, 'x');
+    Require(sceNpStrcpyToBuf(large.data(), large.size(), "Hi") == 0 && Equals(large.data(), "Hi")
+            && std::all_of(large.begin() + 2, large.end(), [](char byte) { return byte == '\0'; }),
+        "a buffer larger than one write chunk is padded with zeros to its end");
+    const std::size_t hugeSize = std::size_t{1} << 40;
+    Require(sceNpStrncpyToBuf(reinterpret_cast<char*>(0x10), hugeSize, "Hi", 8) == NpInvalidArgument,
+        "an unwritable destination with a huge size is refused without sizing a buffer from it");
 }
 
 }
