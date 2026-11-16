@@ -1699,15 +1699,19 @@ std::shared_ptr<const std::vector<std::uint32_t>> meshGroupTableFor(const Pm4::D
     };
     const TableKey key{draw.indexed ? draw.indexAddress : 0u, contentHash, draw.indexCount, draw.indexed ? draw.indexSize : 0u, mesh.reuseVertexLimit, mesh.reusePrimitiveLimit};
     static std::mutex cacheMutex;
-    static std::unordered_map<TableKey, std::shared_ptr<const std::vector<std::uint32_t>>, TableKeyHash> cache;
+    struct CachedTable {
+        std::vector<std::uint32_t> indices;
+        std::shared_ptr<const std::vector<std::uint32_t>> table;
+    };
+    static std::unordered_map<TableKey, CachedTable, TableKeyHash> cache;
     {
         std::lock_guard lock(cacheMutex);
-        if (const auto found = cache.find(key); found != cache.end()) {
+        if (const auto found = cache.find(key); found != cache.end() && found->second.indices == indices) {
             if (snapshot != nullptr) {
                 std::lock_guard snapshotLock(snapshotMutex);
-                snapshotTables[snapshot.get()] = SnapshotTable{snapshot, draw.indexCount, draw.indexSize, mesh.reuseVertexLimit, mesh.reusePrimitiveLimit, found->second};
+                snapshotTables[snapshot.get()] = SnapshotTable{snapshot, draw.indexCount, draw.indexSize, mesh.reuseVertexLimit, mesh.reusePrimitiveLimit, found->second.table};
             }
-            return found->second;
+            return found->second.table;
         }
     }
     const auto grouped = BuildMeshReuseGroups(indices, mesh.reuseVertexLimit, mesh.reusePrimitiveLimit);
@@ -1716,7 +1720,7 @@ std::shared_ptr<const std::vector<std::uint32_t>> meshGroupTableFor(const Pm4::D
     {
         std::lock_guard lock(cacheMutex);
         if (cache.size() >= 8192u) cache.clear();
-        cache.emplace(key, table);
+        cache.insert_or_assign(key, CachedTable{indices, table});
     }
     if (snapshot != nullptr) {
         std::lock_guard lock(snapshotMutex);
