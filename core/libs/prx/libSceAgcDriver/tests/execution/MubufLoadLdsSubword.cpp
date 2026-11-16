@@ -41,6 +41,10 @@ struct Case {
     std::uint32_t laneShift;
     std::uint32_t numRecords;
     std::uint32_t pinned;
+    bool idxen = false;
+    std::uint32_t stride = 0u;
+    std::uint32_t soffset = 0u;
+    std::uint32_t hardwareLane0 = 0u;
 };
 
 std::array<std::uint32_t, 4> Descriptor(const void* bytes, std::uint32_t size, std::uint32_t format) {
@@ -88,7 +92,7 @@ std::array<std::uint32_t, LdsDwords> ExpectedLds(const Case& item, std::uint32_t
     for (std::uint32_t lane = 0u; lane < wave; ++lane) {
         const auto target = (item.m0 & 0xffffu) + item.offset + lane * 4u;
         if (((item.execMask >> (lane & 31u)) & 1u) == 0u || target >= LdsDwords * 4u) continue;
-        lds[target >> 2u] = Loaded(item, (item.perLane ? lane << item.laneShift : 0u) + item.offset);
+        lds[target >> 2u] = Loaded(item, (item.perLane ? lane << item.laneShift : 0u) * (item.idxen ? item.stride : 1u) + item.offset + item.soffset);
     }
     return lds;
 }
@@ -100,18 +104,19 @@ std::uint32_t FormatWord(const Case& item) {
 void Run(AgcDriver::VulkanDevice& device, std::uint32_t wave, const Case& item) {
     Output.fill(0xfeedfaceu);
     const auto opcode = item.opcode;
-    const auto word0 = 0xe0000000u | ((opcode & 0x7fu) << 18u) | (((opcode >> 7u) & 1u) << 25u) | (1u << 16u) | (1u << 12u) | item.offset;
+    const auto word0 = 0xe0000000u | ((opcode & 0x7fu) << 18u) | (((opcode >> 7u) & 1u) << 25u) | (1u << 16u) | ((item.idxen ? 1u : 0u) << 13u) | ((item.idxen ? 0u : 1u) << 12u) | item.offset;
     alignas(256) const auto code = std::to_array<std::uint32_t>({
         0x34020082u, 0x7e1002ffu, 0x13572468u, 0x7e0e02ffu, 0xa5a5a5a5u, 0xd8340000u, 0x00000701u, 0xd8340200u,
         0x00000701u, 0xd8340400u, 0x00000701u, 0xd8340600u, 0x00000701u, 0xbf8cc07fu, 0xbf8a0000u, 0x3606000au,
         0x3406060bu, 0xbefc0308u, 0xbe8c037eu, 0xbe8d037fu, 0x877e097eu, 0x877f097fu, 0xbf800000u, word0,
-        0x80000003u | (item.vdata << 8u), 0xbf8c3f70u, 0xbefe030cu, 0xbeff030du, 0xbf8a0000u, 0x34040085u, 0xd8d80000u, 0x04000001u,
+        0x00000003u | (item.vdata << 8u) | ((0x80u + item.soffset) << 24u), 0xbf8c3f70u, 0xbefe030cu, 0xbeff030du, 0xbf8a0000u, 0x34040085u, 0xd8d80000u, 0x04000001u,
         0xd8d80200u, 0x05000001u, 0xd8d80400u, 0x06000001u, 0xd8d80600u, 0x07000001u, 0xbf8cc07fu, 0xe0701000u,
         0x80010402u, 0xe0701004u, 0x80010502u, 0xe0701008u, 0x80010602u, 0xe070100cu, 0x80010702u, 0xe0701010u,
         0x80010802u, 0xbf810000u
     });
     std::array<std::uint32_t, 14> userData{};
-    const auto input = Descriptor(Input.data(), item.numRecords, FormatWord(item));
+    auto input = Descriptor(Input.data(), item.numRecords, FormatWord(item));
+    input[1] |= item.stride << 16u;
     const auto output = Descriptor(Output.data(), Threads * 32u, RawFormat);
     std::copy(input.begin(), input.end(), userData.begin());
     std::copy(output.begin(), output.end(), userData.begin() + 4u);
@@ -131,6 +136,7 @@ void Run(AgcDriver::VulkanDevice& device, std::uint32_t wave, const Case& item) 
     device.Dispatch(result, 1u, 1u, 1u, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     const auto expected = ExpectedLds(item, wave);
+    if (item.hardwareLane0 != 0u) Require(expected[((item.m0 & 0xffffu) + item.offset) >> 2u] == item.hardwareLane0, "MUBUF LDS model differs from the measured lane 0 dword");
     for (std::uint32_t tid = 0u; tid < Threads; ++tid) {
         for (std::uint32_t window = 0u; window < 4u; ++window) {
             const auto actual = Output[tid * 8u + window];
@@ -187,6 +193,11 @@ std::vector<Case> Cases() {
     }
     constexpr std::array<std::pair<std::uint32_t, std::uint32_t>, 9> converted{{{1u, 0x3f018182u}, {2u, 0xbf800000u}, {3u, 0x43010000u}, {4u, 0xc2fe0000u},
         {7u, 0x3f088189u}, {8u, 0xbf6effdeu}, {9u, 0x47088100u}, {10u, 0xc6eefe00u}, {13u, 0xb9102000u}}};
+    for (const auto opcode : {OpUbyte, OpSbyte, OpUshort, OpSshort, OpDword}) {
+        cases.push_back({opcode, 0u, 0u, 0u, 0x40u, 0u, true, 2u, 2048u, 0u});
+        cases.push_back({opcode, 0u, 0u, 8u, 0x40u, Full, true, 0u, 2048u, 0u, true, 16u, 16u, opcode == OpDword ? 0x3d34332au : 0u});
+        cases.push_back({opcode, 0u, 0u, 8u, 0x40u, Full, true, 2u, 2048u, 0u, false, 0u, 20u});
+    }
     for (const auto& [format, bits] : converted) cases.push_back({OpFormatX, format, 0u, 0u, 0x80u, Full, false, 0u, 2048u, bits});
     return cases;
 }
