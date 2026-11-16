@@ -853,5 +853,15 @@ class CacheTests(unittest.TestCase):
                              {"CMAKE_BUILD_TYPE": "Release", "ANYPS5_GPU": "ON"})
 
 
+
+class SaveTests(unittest.TestCase):
+    def test_save_writes_a_newline_terminated_json_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            gate.save(Path(directory), {"exit_code": 0})
+            text = (Path(directory) / "report.json").read_text(encoding="utf-8")
+            self.assertTrue(text.endswith("\n"))
+            self.assertEqual(json.loads(text), {"exit_code": 0})
+
+
 if __name__ == "__main__":
     unittest.main()
