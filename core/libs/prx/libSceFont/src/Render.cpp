@@ -507,20 +507,22 @@ int APS5_VABI sceFontRenderSurfaceSetStyleFrame(FontRenderSurface* renderSurface
 }
 
 int APS5_VABI sceFontGenerateCharGlyph(FontHandle fontHandle, std::uint32_t code, const FontGenerateGlyphDetail* detail, FontGlyph* pGlyph) {
-    if (!pGlyph) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    *pGlyph = nullptr;
+    if (!pGlyph || !Font::CopyOutGuest(pGlyph, FontGlyph{})) return SCE_FONT_ERROR_INVALID_PARAMETER;
     if (!fontHandle) return SCE_FONT_ERROR_INVALID_FONT_HANDLE;
     if (code == 0) return SCE_FONT_ERROR_NO_SUPPORT_CODE;
     if (!TryGetState(fontHandle)) return SCE_FONT_ERROR_INVALID_FONT_HANDLE;
-    const std::uint8_t glyphForm = detail ? detail->glyph_form : 0;
-    const std::uint8_t metricsForm = detail ? detail->metrics_form : 0;
-    const std::uint16_t formOptions = detail ? detail->form_options : 0;
-    const FontMemory* glyphMemory = detail ? detail->mem : nullptr;
-    if (detail && detail->id != GENERATE_GLYPH_DETAIL_ID) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    FontGenerateGlyphDetail request{};
+    if (detail && !Font::CopyInGuest(request, detail)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    const std::uint8_t glyphForm = request.glyph_form;
+    const std::uint8_t metricsForm = request.metrics_form;
+    const std::uint16_t formOptions = request.form_options;
+    const FontMemory* glyphMemory = request.mem;
+    if (detail && request.id != GENERATE_GLYPH_DETAIL_ID) return SCE_FONT_ERROR_INVALID_PARAMETER;
     if ((formOptions & static_cast<std::uint16_t>(~0x11u)) != 0) return SCE_FONT_ERROR_INVALID_PARAMETER;
     if (glyphForm == 0 && metricsForm != 0) return SCE_FONT_ERROR_INVALID_PARAMETER;
     if ((glyphForm != 0 && metricsForm == 0) || glyphForm > 1 || metricsForm > 4) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    if (glyphMemory && glyphMemory->mem_kind != MEMORY_MAGIC) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    std::uint16_t memoryKind = MEMORY_MAGIC;
+    if (glyphMemory && (!Font::CopyInGuest(memoryKind, &glyphMemory->mem_kind) || memoryKind != MEMORY_MAGIC)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     FontGlyphMetrics metrics{};
     float scaleW = 0.0f;
     float scaleH = 0.0f;
@@ -545,17 +547,22 @@ int APS5_VABI sceFontGenerateCharGlyph(FontHandle fontHandle, std::uint32_t code
     generated->owner = fontHandle;
     generated->outline.outline_flags = generated->glyph.flags;
     TrackGeneratedGlyph(&generated->glyph);
-    *pGlyph = &generated->glyph;
+    if (!Font::CopyOutGuest(pGlyph, static_cast<FontGlyph>(&generated->glyph))) {
+        ForgetGeneratedGlyph(&generated->glyph);
+        delete generated;
+        return SCE_FONT_ERROR_INVALID_PARAMETER;
+    }
     return SCE_FONT_OK;
 }
 
 int APS5_VABI sceFontDeleteGlyph(const FontMemory* memory, FontGlyph* pGlyph) {
     (void)memory;
     if (!pGlyph) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    const FontGlyph glyph = *pGlyph;
+    FontGlyph glyph = nullptr;
+    if (!Font::CopyInGuest(glyph, pGlyph) || !GuestWritable_nid_no_patch(pGlyph, sizeof(*pGlyph))) return SCE_FONT_ERROR_INVALID_PARAMETER;
     if (!glyph || glyph->magic != GLYPH_MAGIC || !ForgetGeneratedGlyph(glyph)) return SCE_FONT_ERROR_INVALID_GLYPH;
     delete reinterpret_cast<GeneratedGlyph*>(glyph);
-    *pGlyph = nullptr;
+    Font::CopyOutGuest(pGlyph, FontGlyph{});
     return SCE_FONT_OK;
 }
 
