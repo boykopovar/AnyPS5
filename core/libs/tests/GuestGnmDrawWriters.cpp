@@ -203,6 +203,19 @@ void CheckUnknown(const Writers& writer, const std::string& mode) {
     }
 }
 
+void CheckUnwritable(const Writers& writer) {
+    auto* const unmapped = reinterpret_cast<std::uint32_t*>(0x10);
+    Require(writer.index(unmapped, 10u, 3u, 0x1234567800000042ull, 0u, 0u) == -1, "an unwritable index draw packet was accepted");
+    Require(writer.automatic(unmapped, 7u, 3u, 0u) == -1, "an unwritable auto draw packet was accepted");
+    Require(writer.offset(unmapped, 9u, 5u, 3u, 0u) == -1, "an unwritable offset draw packet was accepted");
+    for (std::size_t i = 0u; i < 2u; ++i) {
+        Require(writer.indirect[i](unmapped, 9u, 4u, 2u, 1u, 2u, 0u) == -1, "an unwritable indirect draw packet was accepted");
+        Require(writer.multi[i](unmapped, 11u, 4u, 3u, 2u, 1u, 2u, 0u) == -1, "an unwritable multi draw packet was accepted");
+        Require(writer.count[i](unmapped, 16u, 4u, 3u, 0x1234567800000042ull, 2u, 1u, 2u, 0u) == -1, "an unwritable counted draw packet was accepted");
+    }
+    checked += 9u;
+}
+
 void CheckRejected(const Writers& writer, bool unknown, const std::string& mode) {
     for (const auto size : {0u, 1u, 6u, 8u, 12u, 17u, UINT32_MAX}) {
         Refuses([&](auto* p) { return writer.index(p, size, 3u, 2u, 0u, 0u); });
@@ -319,6 +332,7 @@ int main(int argc, char** argv) {
         if (unknown) CheckUnknown(writer, mode);
         else {
             const bool neo = !normal || mode == "neo";
+            CheckUnwritable(writer);
             CheckDirect(writer, neo);
             CheckIndirect(writer, neo);
         }
