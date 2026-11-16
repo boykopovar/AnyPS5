@@ -617,7 +617,52 @@ static void ThreadHelpers() {
     other.join();
 }
 
+static void GuestPointerProbes() {
+    auto* const unreadableHandle = reinterpret_cast<void**>(0x10);
+    const auto* const unreadableTime = reinterpret_cast<const Xtime*>(0x10);
+
+    RequireThrows<std::invalid_argument>([&] { _Mtx_init_nid_postfix(unreadableHandle, tryable); });
+    RequireThrows<std::invalid_argument>([&] { _Cnd_init_nid_postfix(unreadableHandle); });
+    RequireThrows<std::invalid_argument>([&] { _Mtx_destroy_nid_postfix(unreadableHandle); });
+    RequireThrows<std::invalid_argument>([&] { _Cnd_destroy_nid_postfix(unreadableHandle); });
+    RequireThrows<std::invalid_argument>([&] { _Mtx_lock_nid_postfix(unreadableHandle); });
+    RequireThrows<std::invalid_argument>([&] { _Cnd_wait_nid_postfix(unreadableHandle, unreadableHandle); });
+    RequireThrows<std::invalid_argument>([&] { _Mtx_init_with_default_name_override_nid_postfix(unreadableHandle, tryable, "unreadable"); });
+    RequireThrows<std::invalid_argument>([] {
+        _ZNSt8__sce_v219_Mtx_init_with_nameEPP13pthread_mutexiPKc_nid_postfix(reinterpret_cast<void**>(0x10), tryable, "unreadable");
+    });
+
+    void* mutex = CreateMutex(tryable);
+    Xtime future = RelativeTime(1000);
+    RequireThrows<std::invalid_argument>([&] { _Mtx_timedlock_nid_postfix(&mutex, unreadableTime); });
+    RequireThrows<std::invalid_argument>([&] { _Thrd_sleep_nid_postfix(unreadableTime, nullptr); });
+    _Mtx_destroy_nid_postfix(&mutex);
+
+    void* condition = nullptr;
+    Require(_Cnd_init_nid_postfix(&condition) == success);
+    void* conditionMutex = CreateMutex(tryable);
+    RequireThrows<std::invalid_argument>([&] { _Cnd_timedwait_nid_postfix(&condition, &conditionMutex, unreadableTime); });
+    _Mtx_destroy_nid_postfix(&conditionMutex);
+    _Cnd_destroy_nid_postfix(&condition);
+
+    RequireThrows<std::invalid_argument>([] {
+        _ZNSt8__sce_v219_Timespec64_get_sysEP8timespec_nid_postfix(reinterpret_cast<Xtime*>(0x10));
+    });
+    RequireThrows<std::invalid_argument>([] {
+        _ZNSt8__sce_v228_Timespec64_diff_to_usecondsEPK8timespec_nid_postfix(reinterpret_cast<const Xtime*>(0x10));
+    });
+    RequireThrows<std::invalid_argument>([] {
+        _ZNSt8__sce_v222_Timespec64_diff_to_tsEPK8timespec_nid_postfix(reinterpret_cast<const Xtime*>(0x10));
+    });
+
+    Xtime now{};
+    _ZNSt8__sce_v219_Timespec64_get_sysEP8timespec_nid_postfix(&now);
+    Require(now.sec > 0);
+    Require(_ZNSt8__sce_v228_Timespec64_diff_to_usecondsEPK8timespec_nid_postfix(&now) == 0);
+}
+
 int main() {
+    GuestPointerProbes();
     ThreadExitLifecycle();
     KernelKeys();
     VersionedSync();

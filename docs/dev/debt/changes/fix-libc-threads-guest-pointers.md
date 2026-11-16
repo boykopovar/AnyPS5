@@ -1,0 +1,5 @@
+# libc
+
+## add Functional
+
+- [C11 threads guest pointers](../../../core/libs/prx/libc/src/Threads.cpp) (libc) - `_Mtx_init`, `_Mtx_init_with_name` (the versioned `pthread_mutex` form), `_Mtx_destroy`, `_Cnd_init`, `_Cnd_destroy`, `_Mtx_lock`, `_Mtx_trylock`, `_Mtx_timedlock`, `_Mtx_unlock`, `_Cnd_wait`, `_Cnd_timedwait`, `_Cnd_broadcast`, `_Cnd_signal` and `_Thrd_sleep` read the handle they are given and their `xtime` argument through `GuestCopyIn_nid_no_patch`, and publish a handle or a timespec through `GuestCopyOut_nid_no_patch`; `_Timespec64_get_sys`, `_Timespec64_diff_to_useconds` and `_Timespec64_diff_to_ts` read and write their `timespec` the same way. An unreadable handle or xtime throws `std::invalid_argument` where the firmware faults on that pointer, and a handle whose publication fails is deleted before the throw; this is a host-safety fallback for invalid or partially mapped guest pointers, which was not measured on a console. `_Pad` still reaches its own mutex, condition and started flag through direct member accesses.

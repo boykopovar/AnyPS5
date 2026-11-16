@@ -171,7 +171,10 @@ struct DinkumwareCondition {
 DinkumwareMutex* ResolveMutex(void** handle, const char* function) {
     if (!handle)
         throw std::invalid_argument(std::string(function) + ": null mutex handle pointer");
-    auto* mutex = static_cast<DinkumwareMutex*>(*handle);
+    void* value = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&value, handle, sizeof(value)))
+        throw std::invalid_argument(std::string(function) + ": unreadable mutex handle pointer");
+    auto* mutex = static_cast<DinkumwareMutex*>(value);
     if (!mutex)
         throw std::invalid_argument(std::string(function) + ": null mutex handle");
     if (mutex->tag != mutexTag)
@@ -182,7 +185,10 @@ DinkumwareMutex* ResolveMutex(void** handle, const char* function) {
 DinkumwareCondition* ResolveCondition(void** handle, const char* function) {
     if (!handle)
         throw std::invalid_argument(std::string(function) + ": null condition handle pointer");
-    auto* condition = static_cast<DinkumwareCondition*>(*handle);
+    void* value = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&value, handle, sizeof(value)))
+        throw std::invalid_argument(std::string(function) + ": unreadable condition handle pointer");
+    auto* condition = static_cast<DinkumwareCondition*>(value);
     if (!condition)
         throw std::invalid_argument(std::string(function) + ": null condition handle");
     if (condition->tag != conditionTag)
@@ -201,12 +207,18 @@ extern "C" {
 int APS5_VABI _Mtx_init_nid_postfix(void** handle, int type) {
     if (!handle)
         throw std::invalid_argument("_Mtx_init: null handle pointer");
-    *handle = nullptr;
+    void* published = nullptr;
+    if (!GuestCopyOut_nid_no_patch(handle, &published, sizeof(published)))
+        throw std::invalid_argument("_Mtx_init: unreadable handle pointer");
     auto* mutex = new (std::nothrow) DinkumwareMutex();
     if (!mutex)
         return threadNomem;
     mutex->type = type;
-    *handle = mutex;
+    published = mutex;
+    if (!GuestCopyOut_nid_no_patch(handle, &published, sizeof(published))) {
+        delete mutex;
+        throw std::invalid_argument("_Mtx_init: unreadable handle pointer");
+    }
     return threadSuccess;
 }
 
@@ -221,14 +233,19 @@ int APS5_VABI _Mtx_init_with_default_name_override_nid_postfix(void** handle, in
 void APS5_VABI _Mtx_destroy_nid_postfix(void** handle) {
     if (!handle)
         throw std::invalid_argument("_Mtx_destroy: null mutex handle pointer");
-    if (!*handle)
+    void* value = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&value, handle, sizeof(value)))
+        throw std::invalid_argument("_Mtx_destroy: unreadable mutex handle pointer");
+    if (!value)
         return;
     auto* mutex = ResolveMutex(handle, "_Mtx_destroy");
     if (mutex->count != 0)
         throw std::logic_error("_Mtx_destroy: mutex destroyed while locked");
     mutex->tag = 0;
     delete mutex;
-    *handle = nullptr;
+    value = nullptr;
+    if (!GuestCopyOut_nid_no_patch(handle, &value, sizeof(value)))
+        throw std::invalid_argument("_Mtx_destroy: unreadable mutex handle pointer");
 }
 
 int APS5_VABI _Mtx_lock_nid_postfix(void** handle) {
@@ -273,7 +290,10 @@ int APS5_VABI _Mtx_trylock_nid_postfix(void** handle) {
 int APS5_VABI _Mtx_timedlock_nid_postfix(void** handle, const Xtime* target) {
     if (!target)
         APS5_INVALID_ARG_EX;
-    const auto deadline = XtimePoint(*target, "_Mtx_timedlock");
+    Xtime requested{};
+    if (!GuestCopyIn_nid_no_patch(&requested, target, sizeof(requested)))
+        APS5_INVALID_ARG_EX;
+    const auto deadline = XtimePoint(requested, "_Mtx_timedlock");
     auto* mutex = ResolveMutex(handle, "_Mtx_timedlock");
     const auto self = std::this_thread::get_id();
     if (mutex->owner.load(std::memory_order_acquire) == self) {
@@ -311,11 +331,17 @@ int APS5_VABI _Mtx_unlock_nid_postfix(void** handle) {
 int APS5_VABI _Cnd_init_nid_postfix(void** handle) {
     if (!handle)
         throw std::invalid_argument("_Cnd_init: null handle pointer");
-    *handle = nullptr;
+    void* published = nullptr;
+    if (!GuestCopyOut_nid_no_patch(handle, &published, sizeof(published)))
+        throw std::invalid_argument("_Cnd_init: unreadable handle pointer");
     auto* condition = new (std::nothrow) DinkumwareCondition();
     if (!condition)
         return threadNomem;
-    *handle = condition;
+    published = condition;
+    if (!GuestCopyOut_nid_no_patch(handle, &published, sizeof(published))) {
+        delete condition;
+        throw std::invalid_argument("_Cnd_init: unreadable handle pointer");
+    }
     return threadSuccess;
 }
 
@@ -326,12 +352,17 @@ int APS5_VABI _Cnd_init_with_default_name_override_nid_postfix(void** handle, co
 void APS5_VABI _Cnd_destroy_nid_postfix(void** handle) {
     if (!handle)
         throw std::invalid_argument("_Cnd_destroy: null condition handle pointer");
-    if (!*handle)
+    void* value = nullptr;
+    if (!GuestCopyIn_nid_no_patch(&value, handle, sizeof(value)))
+        throw std::invalid_argument("_Cnd_destroy: unreadable condition handle pointer");
+    if (!value)
         return;
     auto* condition = ResolveCondition(handle, "_Cnd_destroy");
     condition->tag = 0;
     delete condition;
-    *handle = nullptr;
+    value = nullptr;
+    if (!GuestCopyOut_nid_no_patch(handle, &value, sizeof(value)))
+        throw std::invalid_argument("_Cnd_destroy: unreadable condition handle pointer");
 }
 
 int APS5_VABI _Cnd_wait_nid_postfix(void** conditionHandle, void** mutexHandle) {
@@ -361,7 +392,10 @@ int APS5_VABI _Cnd_wait_nid_postfix(void** conditionHandle, void** mutexHandle) 
 int APS5_VABI _Cnd_timedwait_nid_postfix(void** conditionHandle, void** mutexHandle, const Xtime* target) {
     if (!target)
         APS5_INVALID_ARG_EX;
-    const auto deadlineTime = XtimePoint(*target, "_Cnd_timedwait");
+    Xtime requested{};
+    if (!GuestCopyIn_nid_no_patch(&requested, target, sizeof(requested)))
+        APS5_INVALID_ARG_EX;
+    const auto deadlineTime = XtimePoint(requested, "_Cnd_timedwait");
     auto* condition = ResolveCondition(conditionHandle, "_Cnd_timedwait");
     auto* mutex = ResolveMutex(mutexHandle, "_Cnd_timedwait");
     if (!IsOwnedByCaller(mutex))
@@ -411,7 +445,10 @@ unsigned APS5_VABI _ZNSt6thread20hardware_concurrencyEv_nid_postfix() {
 int APS5_VABI _Thrd_sleep_nid_postfix(const Xtime* target, Xtime*) {
     if (!target)
         APS5_INVALID_ARG_EX;
-    const auto deadline = XtimeDeadline(*target, "_Thrd_sleep");
+    Xtime requested{};
+    if (!GuestCopyIn_nid_no_patch(&requested, target, sizeof(requested)))
+        APS5_INVALID_ARG_EX;
+    const auto deadline = XtimeDeadline(requested, "_Thrd_sleep");
     for (;;) {
         timespec now{};
         if (clock_gettime(CLOCK_REALTIME, &now) != 0)
@@ -782,7 +819,9 @@ static const char* SyncObjectName(const char* name) {
 
 int APS5_VABI _ZNSt8__sce_v219_Mtx_init_with_nameEPP13pthread_mutexiPKc_nid_postfix(void** mutex, int type, const char* name) {
     const auto& sync = PthreadSync(__func__);
-    *mutex = nullptr;
+    void* published = nullptr;
+    if (!GuestCopyOut_nid_no_patch(mutex, &published, sizeof(published)))
+        throw std::invalid_argument(std::string(__func__) + ": unreadable mutex handle pointer");
     void* attr = nullptr;
     const int created = sync.mutexattrInit(&attr);
     if (created != 0) return CreateResult(created);
@@ -790,12 +829,16 @@ int APS5_VABI _ZNSt8__sce_v219_Mtx_init_with_nameEPP13pthread_mutexiPKc_nid_post
         sync.mutexattrDestroy(&attr);
         return threadError;
     }
-    const int initialized = sync.mutexInit(mutex, &attr, SyncObjectName(name));
+    const int initialized = sync.mutexInit(&published, &attr, SyncObjectName(name));
     const int released = sync.mutexattrDestroy(&attr);
     if (initialized != 0) return CreateResult(initialized);
     if (released != 0) {
-        sync.mutexDestroy(mutex);
+        sync.mutexDestroy(&published);
         return threadError;
+    }
+    if (!GuestCopyOut_nid_no_patch(mutex, &published, sizeof(published))) {
+        sync.mutexDestroy(&published);
+        throw std::invalid_argument(std::string(__func__) + ": unreadable mutex handle pointer");
     }
     return threadSuccess;
 }
@@ -948,8 +991,11 @@ int APS5_VABI _ZNSt8__sce_v228_Timespec64_diff_to_usecondsEPK8timespec_nid_postf
     const auto ticks = static_cast<std::uint64_t>(_Xtime_get_ticks_nid_postfix());
     const std::uint64_t nowSeconds = ticks / 1000000;
     const std::int64_t nowNanos = static_cast<std::int64_t>(ticks % 1000000) * 1000;
-    std::uint64_t seconds = static_cast<std::uint64_t>(target->sec) + static_cast<std::uint64_t>(target->nsec / nanosPerSecond);
-    std::int64_t nanos = target->nsec % nanosPerSecond;
+    Xtime requested{};
+    if (!GuestCopyIn_nid_no_patch(&requested, target, sizeof(requested)))
+        APS5_INVALID_ARG_EX;
+    std::uint64_t seconds = static_cast<std::uint64_t>(requested.sec) + static_cast<std::uint64_t>(requested.nsec / nanosPerSecond);
+    std::int64_t nanos = requested.nsec % nanosPerSecond;
     if (nanos < 0) {
         nanos += nanosPerSecond;
         --seconds;
@@ -971,8 +1017,9 @@ void APS5_VABI _ZNSt8__sce_v219_Timespec64_get_sysEP8timespec_nid_postfix(Xtime*
     if (!now)
         APS5_INVALID_ARG_EX;
     const auto ticks = static_cast<std::uint64_t>(_Xtime_get_ticks_nid_postfix());
-    now->sec = static_cast<std::int64_t>(ticks / 1000000);
-    now->nsec = static_cast<std::int64_t>(ticks % 1000000) * 1000;
+    Xtime value{static_cast<std::int64_t>(ticks / 1000000), static_cast<std::int64_t>(ticks % 1000000) * 1000};
+    if (!GuestCopyOut_nid_no_patch(now, &value, sizeof(value)))
+        APS5_INVALID_ARG_EX;
 }
 
 Xtime APS5_VABI _ZNSt8__sce_v222_Timespec64_diff_to_tsEPK8timespec_nid_postfix(const Xtime* target) {
@@ -982,8 +1029,11 @@ Xtime APS5_VABI _ZNSt8__sce_v222_Timespec64_diff_to_tsEPK8timespec_nid_postfix(c
     const auto ticks = static_cast<std::uint64_t>(_Xtime_get_ticks_nid_postfix());
     const std::uint64_t nowSeconds = ticks / 1000000;
     const auto nowNanos = static_cast<std::int64_t>(ticks % 1000000) * 1000;
-    std::uint64_t seconds = static_cast<std::uint64_t>(target->sec);
-    std::uint64_t nanos = static_cast<std::uint64_t>(target->nsec);
+    Xtime requested{};
+    if (!GuestCopyIn_nid_no_patch(&requested, target, sizeof(requested)))
+        APS5_INVALID_ARG_EX;
+    std::uint64_t seconds = static_cast<std::uint64_t>(requested.sec);
+    std::uint64_t nanos = static_cast<std::uint64_t>(requested.nsec);
     if (static_cast<std::int64_t>(nanos) < 0) {
         const std::uint64_t lowest = 0 - billion;
         const std::uint64_t whole = nanos < lowest ? (lowest - nanos - 1) / billion + 1 : 0;
