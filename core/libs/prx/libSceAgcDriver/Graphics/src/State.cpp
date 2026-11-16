@@ -1970,10 +1970,11 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
                 if (colorReadsAlpha || alphaReadsAlpha) recordBlendConstant(3u, readFloat(cx, 0x105 + 3u));
             }
             const auto constantColor = [](VkBlendFactor factor) { return factor == VK_BLEND_FACTOR_CONSTANT_COLOR || factor == VK_BLEND_FACTOR_ONE_MINUS_CONSTANT_COLOR; };
-            if ((mapping == 0xe4u || mapping == 0xc6u) && state.colorBlendOp != VK_BLEND_OP_MIN && state.colorBlendOp != VK_BLEND_OP_MAX && (constantColor(state.srcColorBlendFactor) || constantColor(state.dstColorBlendFactor))) {
+            if (!reversed && mapping != 0xecu && state.colorBlendOp != VK_BLEND_OP_MIN && state.colorBlendOp != VK_BLEND_OP_MAX && (constantColor(state.srcColorBlendFactor) || constantColor(state.dstColorBlendFactor))) {
                 for (std::uint32_t i = 0; i < 3; ++i) {
                     if ((state.colorWriteMask & (1u << i)) == 0) continue;
-                    recordBlendConstant(i, readFloat(cx, 0x105 + ((mapping >> (2u * i)) & 3u)));
+                    const std::uint32_t sourceChannel = (mapping == 0xe4u || mapping == 0xc6u) ? ((mapping >> (2u * i)) & 3u) : i;
+                    recordBlendConstant(i, readFloat(cx, 0x105 + sourceChannel));
                 }
             }
             if (mapping == 0xecu) {

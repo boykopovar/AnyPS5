@@ -2533,6 +2533,25 @@ void Color565TargetTests() {
     }
 }
 
+void SingleChannelSwapBlendTests() {
+    auto queue = makeState();
+    for (const auto swap : {1u, 2u}) {
+        queue.context[0x31c] = (queue.context[0x31c] & ~((0x1fu << 2u) | (7u << 8u) | (3u << 11u))) | (1u << 2u) | (swap << 11u);
+        queue.context[0x8e] = 0xfu;
+        for (std::uint32_t i = 0; i < 4; ++i) queue.context[0x105 + i] = std::bit_cast<std::uint32_t>(float(i + 1) / 8.0f);
+        queue.context[0x1e0] = (1u << 30u) | 13u;
+        Require(AgcDriver::Graphics::DecodeState(queue).blendConstants == std::array<float, 4>{0.125f, 0.25f, 0.375f, 0.5f}, "a one-channel target with component swap did not keep the constant-colour blend registers");
+        queue.context[0x1e0] = (1u << 30u) | (14u << 8u);
+        Require(AgcDriver::Graphics::DecodeState(queue).blendConstants == std::array<float, 4>{0.125f, 0.25f, 0.375f, 0.5f}, "a one-channel target with component swap did not keep the destination constant-colour blend registers");
+        queue.context[0x1e0] = 0x6001000du;
+        queue.context[0x105] = 0x7fc00000u;
+        expectFailure([&] { AgcDriver::Graphics::DecodeState(queue); }, "non-finite register at DWORD 261");
+        for (std::uint32_t i = 0; i < 4; ++i) queue.context[0x105 + i] = 0x7fc00000u;
+        queue.context[0x1e0] = 0x40000504u;
+        Require(AgcDriver::Graphics::DecodeState(queue).blendConstants == std::array<float, 4>{}, "non-constant blending on a swapped one-channel target read unused CB_BLEND registers");
+    }
+}
+
 void Color1555TargetTests() {
     auto queue = makeState();
     queue.context[0x31c] = (queue.context[0x31c] & ~((0x1fu << 2u) | (7u << 8u) | (3u << 11u))) | (17u << 2u);
@@ -15417,6 +15436,7 @@ int main(int argc, char** argv) {
         DisabledColorTests();
         OpaqueDestinationAlphaTests();
         Color565TargetTests();
+        SingleChannelSwapBlendTests();
         Color1555TargetTests();
         BlendBypassTests();
         UnclampedNormalizedColorTests();
