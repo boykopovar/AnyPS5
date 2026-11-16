@@ -332,6 +332,89 @@ void TestFloatErrors() {
     Require(std::isnan(_Stodx_nid_postfix("nan", &end, 2, &error)) && error == 0 && end[0] == '\0', "_Stodx NaN");
 }
 
+template<typename TFloat>
+void CheckScaledHexadecimal(TFloat (APS5_VABI *parse)(const char*, char**, std::int64_t, int*), const char* text, std::int64_t pten, TFloat expected, long consumed, bool rangeLost) {
+    constexpr std::size_t Bytes = std::numeric_limits<TFloat>::digits == 64 ? 10 : sizeof(TFloat);
+    for (const bool nullError : {false, true}) {
+        *__error_nid_postfix() = 97;
+        int error = 123;
+        char* end = nullptr;
+        const TFloat value = parse(text, &end, pten, nullError ? nullptr : &error);
+        if (std::memcmp(&value, &expected, Bytes) != 0 || end - text != consumed || error != (nullError ? 123 : rangeLost ? 1 : 0) || *__error_nid_postfix() != (rangeLost ? RangeError : 97)) {
+            std::fprintf(stderr, "Dinkumware internals: scaled hexadecimal %s with scale %lld\n", text, static_cast<long long>(pten));
+            std::exit(1);
+        }
+    }
+}
+
+void TestScaledHexadecimal() {
+    static const char* const Texts[9] = {"0x3", "0x1.8p+2rest", "-0x3", "0x0", "-0x0", "0x1p-149", "0x1p-1074", "0x1p+1023", "0x1.fffffffffffffp1023"};
+    static const long Consumed[9] = {3, 8, 4, 3, 4, 8, 9, 9, 22};
+    static const std::int64_t Scales[7] = {-400, -30, -1, 1, 10, 30, 400};
+    static const float Float[9][7] = {
+        {0.0f, 0x1.e6c72p-99f, 0x1.333334p-2f, 0x1.ep4f, 0x1.bf08ecp34f, 0x1.2eec2ep101f, HUGE_VALF},
+        {0.0f, 0x1.e6c72p-98f, 0x1.333334p-1f, 0x1.ep5f, 0x1.bf08ecp35f, 0x1.2eec2ep102f, HUGE_VALF},
+        {-0.0f, -0x1.e6c72p-99f, -0x1.333334p-2f, -0x1.ep4f, -0x1.bf08ecp34f, -0x1.2eec2ep101f, -HUGE_VALF},
+        {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f},
+        {-0.0f, -0.0f, -0.0f, -0.0f, -0.0f, -0.0f, -0.0f},
+        {0.0f, 0.0f, 0.0f, 0x1.4p-146f, 0x1.2a05f2p-116f, 0x1.93e594p-50f, HUGE_VALF},
+        {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, HUGE_VALF},
+        {0.0f, HUGE_VALF, HUGE_VALF, HUGE_VALF, HUGE_VALF, HUGE_VALF, HUGE_VALF},
+        {0.0f, HUGE_VALF, HUGE_VALF, HUGE_VALF, HUGE_VALF, HUGE_VALF, HUGE_VALF},
+    };
+    static const double Double[9][7] = {
+        {0.0, 0x1.e6c71fe61a3efp-99, 0x1.3333333333333p-2, 0x1.ep4, 0x1.bf08ebp34, 0x1.2eec2eb3869afp101, HUGE_VAL},
+        {0.0, 0x1.e6c71fe61a3efp-98, 0x1.3333333333333p-1, 0x1.ep5, 0x1.bf08ebp35, 0x1.2eec2eb3869afp102, HUGE_VAL},
+        {-0.0, -0x1.e6c71fe61a3efp-99, -0x1.3333333333333p-2, -0x1.ep4, -0x1.bf08ebp34, -0x1.2eec2eb3869afp101, -HUGE_VAL},
+        {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0},
+        {-0.0, -0.0, -0.0, -0.0, -0.0, -0.0, -0.0},
+        {0.0, 0x1.4484bfeebc2ap-249, 0x1.999999999999ap-153, 0x1.4p-146, 0x1.2a05f2p-116, 0x1.93e5939a08ceap-50, HUGE_VAL},
+        {0.0, 0.0, 0.0, 0xap-1074, 0x2540be400p-1074, 0x1.93e5939a08ceap-975, HUGE_VAL},
+        {0.0, 0x1.4484bfeebc2ap923, 0x1.999999999999ap1019, HUGE_VAL, HUGE_VAL, HUGE_VAL, HUGE_VAL},
+        {0.0, 0x1.4484bfeebc29fp924, 0x1.9999999999999p1020, HUGE_VAL, HUGE_VAL, HUGE_VAL, HUGE_VAL},
+    };
+    static const long double LongDouble[9][7] = {
+        {0xe0fdbd0badae7877p-1391L, 0xf3638ff30d1f7a4ap-162L, 0x999999999999999ap-65L, 0xf000000000000000p-59L, 0xdf84758000000000p-29L, 0x97761759c34d7b27p38L, 0xa3d8afd698b7fb6cp1267L},
+        {0xe0fdbd0badae7877p-1390L, 0xf3638ff30d1f7a4ap-161L, 0x999999999999999ap-64L, 0xf000000000000000p-58L, 0xdf84758000000000p-28L, 0x97761759c34d7b27p39L, 0xa3d8afd698b7fb6cp1268L},
+        {-0xe0fdbd0badae7877p-1391L, -0xf3638ff30d1f7a4ap-162L, -0x999999999999999ap-65L, -0xf000000000000000p-59L, -0xdf84758000000000p-29L, -0x97761759c34d7b27p38L, -0xa3d8afd698b7fb6cp1267L},
+        {0.0L, 0.0L, 0.0L, 0.0L, 0.0L, 0.0L, 0.0L},
+        {-0.0L, -0.0L, -0.0L, -0.0L, -0.0L, -0.0L, -0.0L},
+        {0x95fe7e07c91efafap-1541L, 0xa2425ff75e14fc32p-312L, 0xcccccccccccccccdp-216L, 0xa000000000000000p-209L, 0x9502f90000000000p-179L, 0xc9f2c9cd04674edfp-113L, 0xda763fc8cb9ff9e6p1116L},
+        {0x95fe7e07c91efafap-2466L, 0xa2425ff75e14fc32p-1237L, 0xcccccccccccccccdp-1141L, 0xa000000000000000p-1134L, 0x9502f90000000000p-1104L, 0xc9f2c9cd04674edfp-1038L, 0xda763fc8cb9ff9e6p191L},
+        {0x95fe7e07c91efafap-369L, 0xa2425ff75e14fc32p860L, 0xcccccccccccccccdp956L, 0xa000000000000000p963L, 0x9502f90000000000p993L, 0xc9f2c9cd04674edfp1059L, 0xda763fc8cb9ff9e6p2288L},
+        {0x95fe7e07c91ef64ap-368L, 0xa2425ff75e14f720p861L, 0xccccccccccccc666p957L, 0x9ffffffffffffb00p964L, 0x9502f8fffffffb58p994L, 0xc9f2c9cd0467488fp1060L, 0xda763fc8cb9ff312p2289L},
+    };
+    for (int index = 0; index < 9; ++index) for (int column = 0; column < 7; ++column) {
+        const bool rangeLost = (column == 0 || column == 6) && index != 3 && index != 4;
+        CheckScaledHexadecimal(_Stofx_nid_postfix, Texts[index], Scales[column], Float[index][column], Consumed[index], rangeLost);
+        CheckScaledHexadecimal(_Stodx_nid_postfix, Texts[index], Scales[column], Double[index][column], Consumed[index], rangeLost);
+        CheckScaledHexadecimal(_Stoldx_nid_postfix, Texts[index], Scales[column], LongDouble[index][column], Consumed[index], false);
+    }
+    CheckScaledHexadecimal(_Stodx_nid_postfix, "0x1p-1075", 1, 0x5p-1074, 9, false);
+    CheckScaledHexadecimal(_Stodx_nid_postfix, "-0x1p-1075", 1, -0x5p-1074, 10, false);
+    CheckScaledHexadecimal(_Stodx_nid_postfix, "0x1p0", 30, 1e30, 5, false);
+    CheckScaledHexadecimal(_Stodx_nid_postfix, "0x1p0", -30, 1e-30, 5, false);
+    CheckScaledHexadecimal(_Stodx_nid_postfix, "0x1p-1022", 400, HUGE_VAL, 9, true);
+    CheckScaledHexadecimal(_Stodx_nid_postfix, "0x1p1024", -1, 0x1.999999999999ap1020, 8, false);
+    CheckScaledHexadecimal(_Stodx_nid_postfix, " \t-0X0001.800000p+2tail", 1, -60.0, 19, false);
+    CheckScaledHexadecimal(_Stodx_nid_postfix, "0x0.3p0", 1, 1.875, 7, false);
+    CheckScaledHexadecimal(_Stofx_nid_postfix, "-0x0.3p0", 1, -1.875f, 8, false);
+    CheckScaledHexadecimal(_Stoldx_nid_postfix, "0x0.3p0", -1, 0x999999999999999ap-69L, 7, false);
+    CheckScaledHexadecimal(_Stodx_nid_postfix, "0x.p1", 5, 0.0, 1, false);
+    CheckScaledHexadecimal(_Stodx_nid_postfix, "-0xg", -5, -0.0, 2, false);
+    CheckScaledHexadecimal(_Stodx_nid_postfix, "0x1p0", std::numeric_limits<std::int64_t>::max(), HUGE_VAL, 5, true);
+    CheckScaledHexadecimal(_Stodx_nid_postfix, "-0x1p0", std::numeric_limits<std::int64_t>::min(), -0.0, 6, true);
+    CheckScaledHexadecimal(_Stofx_nid_postfix, "0x1p999999999999999999999", std::numeric_limits<std::int64_t>::min(), 0.0f, 25, true);
+    CheckScaledHexadecimal(_Stofx_nid_postfix, "0x1p-999999999999999999999", std::numeric_limits<std::int64_t>::max(), HUGE_VALF, 26, true);
+    CheckScaledHexadecimal(_Stofx_nid_postfix, "0xC000.p-455g", 36, 0.0f, 12, false);
+    CheckScaledHexadecimal(_Stofx_nid_postfix, "0x1p455", -45, HUGE_VALF, 7, false);
+    CheckScaledHexadecimal(_Stofx_nid_postfix, "0x1p4", -40, 0x116c2p-145f, 5, false);
+    CheckScaledHexadecimal(_Stodx_nid_postfix, "0x1p10", -320, 0x7e8p-1064, 6, false);
+    CheckScaledHexadecimal(_Stoldx_nid_postfix, "0x1p70", -4940, 0x663278e62p-16375L, 6, false);
+    CheckStod("0x3", -1, 0x1.3333333333333p-2, 3, 0, "scaled hexadecimal through _Stod");
+    CheckStod("0x1p-1074", 400, HUGE_VAL, 9, RangeError, "scaled hexadecimal range loss through _Stod");
+}
+
 void TestScaledNan() {
     struct Case { const char* text; std::size_t consumed; };
     const Case cases[] = {{"nan", 3}, {"  -NaNtail", 6}, {"-nan(0x123)", 11}, {"nan(a_b9)", 9}, {"nan()", 5}, {"nan(abc", 3}, {"nan(1.0)", 3}, {"nan(a b)", 3}, {"nan((a))", 3}, {"\t+NAN(Az_0)", 11}};
@@ -776,6 +859,7 @@ int main() {
     TestDoubleHelpers();
     TestFloatingRounds();
     TestFloatErrors();
+    TestScaledHexadecimal();
     TestScaledNan();
     TestIntegerErrors();
     TestArithmetic();

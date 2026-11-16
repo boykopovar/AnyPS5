@@ -12,6 +12,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 #include "prx/libc/include/General.hpp"
 
@@ -91,8 +92,16 @@ TFloat ScaleHexadecimal(TFloat value, std::int64_t power) {
     }
 }
 
+struct HexadecimalParts {
+    std::string digits;
+    std::int64_t exponent = 0;
+    const char* end = nullptr;
+    int carry = 0;
+    bool negative = false;
+};
+
 template<typename TFloat>
-std::optional<TFloat> UnscaledHexadecimal(const char* text, char** end) {
+std::optional<HexadecimalParts> ParsedHexadecimal(const char* text) {
     const char* cursor = text;
     while (std::isspace(static_cast<unsigned char>(*cursor))) ++cursor;
     const bool negative = *cursor == '-';
@@ -132,7 +141,7 @@ std::optional<TFloat> UnscaledHexadecimal(const char* text, char** end) {
     }
     if (!any) return std::nullopt;
     const auto adjustment = 4 * (discarded - fractional);
-    const auto bound = std::abs(adjustment) + 2 * std::numeric_limits<TFloat>::max_exponent + static_cast<std::int64_t>(Capacity * 4 + 1);
+    const auto bound = std::abs(adjustment) + 2 * (std::numeric_limits<TFloat>::max_exponent + std::numeric_limits<TFloat>::digits) + static_cast<std::int64_t>(Capacity * 4 + 1);
     std::int64_t exponent = 0;
     if (*cursor == 'p' || *cursor == 'P') {
         const char* first = cursor + 1;
@@ -147,10 +156,19 @@ std::optional<TFloat> UnscaledHexadecimal(const char* text, char** end) {
             cursor = first;
         }
     }
-    if (end != nullptr) *end = const_cast<char*>(cursor);
-    if (digits.empty()) return std::copysign(static_cast<TFloat>(0), negative ? static_cast<TFloat>(-1) : static_cast<TFloat>(1));
-    exponent += adjustment;
-    if (carry == 0) while (digits.back() == '0') { digits.pop_back(); exponent += 4; }
+    if (!digits.empty()) {
+        exponent += adjustment;
+        if (carry == 0) while (digits.back() == '0') { digits.pop_back(); exponent += 4; }
+    }
+    return HexadecimalParts{std::move(digits), exponent, cursor, carry, negative};
+}
+
+template<typename TFloat>
+TFloat UnscaledHexadecimal(const HexadecimalParts& subject) {
+    const std::string& digits = subject.digits;
+    const int carry = subject.carry;
+    const TFloat sign = subject.negative ? static_cast<TFloat>(-1) : static_cast<TFloat>(1);
+    if (digits.empty()) return std::copysign(static_cast<TFloat>(0), sign);
     std::uint64_t high = 0;
     std::uint64_t low = 0;
     for (const char digit : digits) {
@@ -193,12 +211,46 @@ std::optional<TFloat> UnscaledHexadecimal(const char* text, char** end) {
         value = 0;
         for (int index = 2; index >= 0; --index) if (limbs[index] != 0) { if (value == 0) value = limbs[index]; else value += limbs[index]; }
     }
-    if (exponent != 0) value = ScaleHexadecimal(value, exponent);
-    return std::copysign(value, negative ? static_cast<TFloat>(-1) : static_cast<TFloat>(1));
+    if (subject.exponent != 0) value = ScaleHexadecimal(value, subject.exponent);
+    return std::copysign(value, sign);
+}
+
+std::string DecimalCoefficient(const HexadecimalParts& subject) {
+    std::string decimal;
+    const auto accumulate = [&](unsigned factor, unsigned addend) {
+        for (auto digit = decimal.rbegin(); digit != decimal.rend(); ++digit) {
+            addend += static_cast<unsigned>(*digit - '0') * factor;
+            *digit = static_cast<char>('0' + addend % 10);
+            addend /= 10;
+        }
+        for (; addend != 0; addend /= 10) decimal.insert(decimal.begin(), static_cast<char>('0' + addend % 10));
+    };
+    for (const char digit : subject.digits) accumulate(16, static_cast<unsigned>(HexadecimalDigit(digit)));
+    accumulate(1, static_cast<unsigned>(subject.carry));
+    return decimal;
 }
 
 template<typename TFloat>
-TFloat ScaledFloat(const char* text, char** end, std::int64_t pten, int* error, TFloat (APS5_VABI *parse)(const char*, char**), const char* function) {
+TFloat ScaledHexadecimal(const HexadecimalParts& subject, std::int64_t pten, bool& rangeLost, TFloat (APS5_VABI *parse)(const char*, char**)) {
+    std::string number = subject.negative ? "-" : "";
+    number += DecimalCoefficient(subject);
+    number += 'e';
+    number += std::to_string(std::clamp<std::int64_t>(pten, -ExponentLimit, ExponentLimit));
+    const TFloat scaled = parse(number.c_str(), nullptr);
+    rangeLost = scaled == 0 || std::isinf(scaled);
+    if (rangeLost) return scaled;
+    TFloat magnitude = std::fabs(scaled);
+    std::int64_t power = subject.exponent;
+    if (std::fpclassify(magnitude) == FP_SUBNORMAL) {
+        constexpr int Precision = std::numeric_limits<TFloat>::digits;
+        magnitude = std::scalbn(magnitude, Precision);
+        power -= Precision;
+    }
+    return std::copysign(ScaleHexadecimal(magnitude, power), scaled);
+}
+
+template<typename TFloat>
+TFloat ScaledFloat(const char* text, char** end, std::int64_t pten, int* error, TFloat (APS5_VABI *parse)(const char*, char**)) {
     int& guestErrno = *__error_nid_postfix();
     const int saved = guestErrno;
     if (error != nullptr) *error = 0;
@@ -207,10 +259,18 @@ TFloat ScaledFloat(const char* text, char** end, std::int64_t pten, int* error, 
         return std::numeric_limits<TFloat>::quiet_NaN();
     }
     guestErrno = 0;
-    if (pten == 0 && text != nullptr && Hexadecimal(text)) {
-        if (const auto value = UnscaledHexadecimal<TFloat>(text, end)) {
-            guestErrno = saved;
-            return *value;
+    if (text != nullptr && Hexadecimal(text)) {
+        if (const auto subject = ParsedHexadecimal<TFloat>(text)) {
+            if (end != nullptr) *end = const_cast<char*>(subject->end);
+            if (pten == 0 || subject->digits.empty()) {
+                guestErrno = saved;
+                return UnscaledHexadecimal<TFloat>(*subject);
+            }
+            bool rangeLost = false;
+            const TFloat value = ScaledHexadecimal<TFloat>(*subject, pten, rangeLost, parse);
+            guestErrno = rangeLost ? RangeError : saved;
+            if (rangeLost && error != nullptr) *error = 1;
+            return value;
         }
     }
     char* stop = nullptr;
@@ -227,7 +287,6 @@ TFloat ScaledFloat(const char* text, char** end, std::int64_t pten, int* error, 
     }
     const bool overflowed = std::isinf(value) && guestErrno == RangeError;
     if (pten != 0 && stop != text && (std::isfinite(value) || overflowed)) {
-        if (Hexadecimal(text)) NotImplemented_nid_no_patch(function);
         std::string number(text, static_cast<const char*>(stop));
         long long exponent = 0;
         const auto marker = number.find_first_of("eE");
@@ -423,15 +482,15 @@ short ScaleProduct(TFloat& value, TFloat factor, TFloat multiplier, long exponen
 extern "C" {
 
 double APS5_VABI _Stodx_nid_postfix(const char* text, char** end, std::int64_t pten, int* error) {
-    return ScaledFloat<double>(text, end, pten, error, strtod_nid_postfix, "_Stodx (hexadecimal text with a power-of-ten scale)");
+    return ScaledFloat<double>(text, end, pten, error, strtod_nid_postfix);
 }
 
 float APS5_VABI _Stofx_nid_postfix(const char* text, char** end, std::int64_t pten, int* error) {
-    return ScaledFloat<float>(text, end, pten, error, strtof_nid_postfix, "_Stofx (hexadecimal text with a power-of-ten scale)");
+    return ScaledFloat<float>(text, end, pten, error, strtof_nid_postfix);
 }
 
 long double APS5_VABI _Stoldx_nid_postfix(const char* text, char** end, std::int64_t pten, int* error) {
-    return ScaledFloat<long double>(text, end, pten, error, strtold_nid_postfix, "_Stoldx (hexadecimal text with a power-of-ten scale)");
+    return ScaledFloat<long double>(text, end, pten, error, strtold_nid_postfix);
 }
 
 double APS5_VABI _Stod_nid_postfix(const char* text, char** end, std::int64_t pten) {
