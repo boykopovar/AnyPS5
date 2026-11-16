@@ -4,6 +4,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -21,6 +22,16 @@
 #include <string>
 #include <system_error>
 #include <vector>
+
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace {
 
@@ -54,6 +65,9 @@ void RequireCodes(std::initializer_list<std::uint64_t> codes, const char* messag
 void RequireNoCodes(const char* message) {
     Require(ERR_get_error_nid_postfix() == 0, message);
 }
+
+std::uint64_t CurrentGeneration();
+std::size_t OutstandingSince(std::uint64_t baseline);
 
 Bytes Cat(std::initializer_list<Bytes> parts) {
     Bytes joined;
@@ -151,6 +165,13 @@ Bytes RsaKey(std::size_t modulusBytes, unsigned char modulusFill) {
 
 Bytes RsaKeyWithBrokenBits(const Bytes& bits) {
     return KeyInformation(RsaEncryption, Tlv(0x05, {}), bits);
+}
+
+Bytes ConstructedRsaKeyBits() {
+    const Bytes first = Tlv(0x02, {0x00, 0xaa, 0xbb});
+    const Bytes second = Tlv(0x02, {0xcc, 0xdd, 0xee, 0xff, 0x11, 0x22});
+    const Bytes third = Tlv(0x02, {0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99});
+    return Tlv(0x30, Cat({Tlv(0x22, Cat({first, second, third})), Tlv(0x02, {0x01, 0x00, 0x01})}));
 }
 
 Bytes EcKey() {
@@ -262,20 +283,27 @@ void RequireAux(const LibreSslX509* certificate, const char* message) {
     Require(certificate && certificate->auxiliary, message);
 }
 
-LibreSslX509* ReadCertificate(const std::string& pem, LibreSslX509** stored = nullptr) {
+LibreSslX509* ReadPemBio(const std::string& pem, LibreSslX509** stored, bool auxiliary) {
     auto* bio = BIO_new_mem_buf_nid_postfix(pem.data(), static_cast<int>(pem.size()));
     Require(bio, "a memory BIO holds the record");
-    LibreSslX509* certificate = PEM_read_bio_X509_nid_postfix(bio, stored, nullptr, nullptr);
+    LibreSslX509* certificate = nullptr;
+    try {
+        certificate = auxiliary ? PEM_read_bio_X509_AUX_nid_postfix(bio, stored, nullptr, nullptr)
+                                : PEM_read_bio_X509_nid_postfix(bio, stored, nullptr, nullptr);
+    } catch (...) {
+        BIO_free_nid_postfix(bio);
+        throw;
+    }
     BIO_free_nid_postfix(bio);
     return certificate;
 }
 
+LibreSslX509* ReadCertificate(const std::string& pem, LibreSslX509** stored = nullptr) {
+    return ReadPemBio(pem, stored, false);
+}
+
 LibreSslX509* ReadTrusted(const std::string& pem, LibreSslX509** stored = nullptr) {
-    auto* bio = BIO_new_mem_buf_nid_postfix(pem.data(), static_cast<int>(pem.size()));
-    Require(bio, "a memory BIO holds the record");
-    LibreSslX509* certificate = PEM_read_bio_X509_AUX_nid_postfix(bio, stored, nullptr, nullptr);
-    BIO_free_nid_postfix(bio);
-    return certificate;
+    return ReadPemBio(pem, stored, true);
 }
 
 const char* RsaCertificatePem = R"PEM(-----BEGIN CERTIFICATE-----
@@ -397,6 +425,7 @@ constexpr int NoSuchFile = 128;
 constexpr int MissingFile = 2;
 constexpr int NestedAsn1Error = 58;
 constexpr int BadObjectHeader = 102;
+constexpr int MissingEoc = 137;
 constexpr int UnexpectedEoc = 159;
 constexpr int TooLong = 155;
 constexpr int WrongTag = 168;
@@ -421,19 +450,11 @@ std::string RecordWithHeader(const char* label, const std::string& header, const
 }
 
 LibreSslX509* ReadWith(LibreSslX509** stored, const std::string& pem) {
-    auto* bio = BIO_new_mem_buf_nid_postfix(pem.data(), static_cast<int>(pem.size()));
-    Require(bio, "a memory BIO holds the record");
-    LibreSslX509* certificate = PEM_read_bio_X509_nid_postfix(bio, stored, nullptr, nullptr);
-    BIO_free_nid_postfix(bio);
-    return certificate;
+    return ReadPemBio(pem, stored, false);
 }
 
 LibreSslX509* ReadTrustedWith(LibreSslX509** stored, const std::string& pem) {
-    auto* bio = BIO_new_mem_buf_nid_postfix(pem.data(), static_cast<int>(pem.size()));
-    Require(bio, "a memory BIO holds the record");
-    LibreSslX509* certificate = PEM_read_bio_X509_AUX_nid_postfix(bio, stored, nullptr, nullptr);
-    BIO_free_nid_postfix(bio);
-    return certificate;
+    return ReadPemBio(pem, stored, true);
 }
 
 constexpr const char* GuestPrefix = "/anyps5-x509-pem-ctx";
@@ -470,6 +491,13 @@ void WriteFile(const std::filesystem::path& path, const std::string& text) {
     Require(!stream.fail(), "the host writes the file the guest reads");
 }
 
+#ifdef _WIN32
+int OpenDescriptors() {
+    DWORD count = 0;
+    Require(GetProcessHandleCount(GetCurrentProcess(), &count) != 0, "the descriptors of this process can be listed");
+    return static_cast<int>(count);
+}
+#else
 int OpenDescriptors() {
     std::error_code error;
     const auto begin = std::filesystem::directory_iterator("/proc/self/fd",
@@ -477,6 +505,7 @@ int OpenDescriptors() {
     Require(!error, "the descriptors of this process can be listed");
     return static_cast<int>(std::distance(begin, std::filesystem::directory_iterator{}));
 }
+#endif
 
 struct StoreObject {
     std::int32_t type;
@@ -515,8 +544,8 @@ struct StoreFixture {
     const void* Objects() const { return static_cast<const void*>(store->objects); }
     const void* Lookups() const { return static_cast<const void*>(store->lookupMethods); }
     LibreSslX509Store* store;
-    LibreSslCtxInternal internal;
-    LibreSslCtx context;
+    LibreSslCtxInternal internal{};
+    LibreSslCtx context{};
 };
 
 void PublicKeys() {
@@ -571,6 +600,7 @@ void PublicKeys() {
 }
 
 void EcCertificate() {
+    const std::uint64_t baseline = CurrentGeneration();
     auto* certificate = ReadCertificate(EcCertificatePem);
     Require(certificate && certificate->certificateInfo && certificate->certificateInfo->key, "the EC P-256 certificate decodes");
     auto* const key = certificate->certificateInfo->key;
@@ -610,10 +640,12 @@ void EcCertificate() {
     Require(EVP_PKEY_id_nid_postfix(publicKey) == EcKeyType, "the public key survives the certificate that cached it");
     auto* const againKey = EVP_PKEY_get1_EC_KEY_nid_postfix(publicKey);
     Require(againKey && againKey == curveKey, "the same curve key is still reachable");
+    Require(mirror->references == 2, "the public key and the caller each hold the curve key");
     Require(EC_KEY_check_key_nid_postfix(againKey) == 1, "the curve key is still coherent after the certificate is gone");
-    EC_KEY_free_nid_postfix(againKey);
     EVP_PKEY_free_nid_postfix(publicKey);
-    Require(mirror->references == 0, "the curve key is released with its last reference");
+    Require(mirror->references == 1, "freeing the public key drops its reference while the caller retains the curve key");
+    EC_KEY_free_nid_postfix(againKey);
+    Require(OutstandingSince(baseline) == 0, "the elliptic curve certificate and public key release every tracked allocation");
     RequireNoCodes("the elliptic curve sequence queues nothing");
 }
 
@@ -772,6 +804,64 @@ void PubkeyErrors() {
         RequireCodes({Code(EvpLibrary, EvpUnsupportedAlgorithm), Code(X509Library, UnsupportedAlgorithm)},
             "an unsupported algorithm queues the algorithm and X509 reasons");
         X509_free_nid_postfix(certificate);
+    }
+
+    {
+        const std::string record = Record("CERTIFICATE", SignedCertificate(
+            RsaKeyWithBrokenBits(Tlv(0x30, Cat({Lengthed(0x22, {0x02, 0x01, 0x05, 0x02, 0x05, 0x01}, 6), Tlv(0x02, {0x01, 0x03})}))), "Leaf"));
+        const std::uint64_t baseline = CurrentGeneration();
+        auto* certificate = ReadCertificate(record);
+        Require(certificate, "a certificate with a broken constructed RSA integer decodes");
+        Require(!X509_get_pubkey_nid_postfix(certificate), "a constructed RSA integer with a truncated second chunk is refused");
+        RequireCodes({Code(Asn1Library, TooLong), Code(Asn1Library, BadObjectHeader), Code(Asn1Library, NestedAsn1Error),
+            Code(Asn1Library, NestedAsn1Error), Code(RsaLibrary, RsaLibraryError), Code(X509Library, PublicKeyDecodeError)},
+            "a failed second chunk in a constructed RSA integer queues the reference reasons");
+        Require(!certificate->certificateInfo->key->key, "a refused constructed RSA integer key is not cached");
+        X509_free_nid_postfix(certificate);
+        Require(OutstandingSince(baseline) == 0, "a broken constructed RSA integer releases its collected buffer and certificate");
+    }
+
+    {
+        const std::string record =
+            Record("CERTIFICATE", SignedCertificate(RsaKeyWithBrokenBits(Bytes{0x30, 0x05, 0x22, 0x80, 0x02, 0x01, 0x05}), "Leaf"));
+        const std::uint64_t baseline = CurrentGeneration();
+        auto* certificate = ReadCertificate(record);
+        Require(certificate, "a certificate with an indefinite constructed RSA integer decodes");
+        Require(!X509_get_pubkey_nid_postfix(certificate), "an indefinite constructed RSA integer without EOC is refused");
+        RequireCodes({Code(Asn1Library, MissingEoc), Code(Asn1Library, NestedAsn1Error), Code(RsaLibrary, RsaLibraryError),
+            Code(X509Library, PublicKeyDecodeError)},
+            "a constructed RSA integer missing EOC queues the reference reasons");
+        Require(!certificate->certificateInfo->key->key, "an incomplete indefinite constructed RSA integer key is not cached");
+        X509_free_nid_postfix(certificate);
+        Require(OutstandingSince(baseline) == 0, "a constructed RSA integer missing EOC releases its collected buffer and certificate");
+    }
+
+    {
+        const std::string record = Record("CERTIFICATE", SignedCertificate(RsaKeyWithBrokenBits(ConstructedRsaKeyBits()), "Leaf"));
+        constexpr std::array<unsigned char, 15> expectedModulus{
+            0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99};
+        const std::uint64_t baseline = CurrentGeneration();
+        auto* certificate = ReadCertificate(record);
+        Require(certificate, "a certificate with a valid constructed RSA integer decodes");
+        void* const publicKey = X509_get_pubkey_nid_postfix(certificate);
+        Require(publicKey, "a valid constructed RSA integer decodes into a public key");
+        RequireNoCodes("decoding a valid constructed RSA integer queues nothing");
+        auto* const rsa = EVP_PKEY_get1_RSA_nid_postfix(publicKey);
+        Require(rsa && rsa->n && rsa->e, "the constructed RSA key holds its modulus and exponent");
+        std::array<unsigned char, 15> modulus{};
+        Require(BN_bn2bin_nid_postfix(static_cast<Bignum*>(rsa->n), modulus.data()) == static_cast<int>(expectedModulus.size()),
+            "the collected RSA modulus has the expected byte length");
+        Require(std::memcmp(modulus.data(), expectedModulus.data(), expectedModulus.size()) == 0,
+            "the collected RSA modulus preserves all chunks in order");
+        std::array<unsigned char, 3> exponent{};
+        Require(BN_bn2bin_nid_postfix(static_cast<Bignum*>(rsa->e), exponent.data()) == 3,
+            "the exponent after the constructed modulus has three bytes");
+        Require(exponent[0] == 0x01 && exponent[1] == 0x00 && exponent[2] == 0x01,
+            "the exponent after the constructed modulus is 65537");
+        RSA_free_nid_postfix(rsa);
+        EVP_PKEY_free_nid_postfix(publicKey);
+        X509_free_nid_postfix(certificate);
+        Require(OutstandingSince(baseline) == 0, "a valid constructed RSA integer releases every allocation");
     }
 }
 
@@ -1068,55 +1158,68 @@ void TrustedCertificates() {
 }
 
 void TrustedFields() {
-    struct Case {
-        Bytes auxiliary;
-        int trust;
-        int reject;
-        bool alias;
-        bool keyid;
-    };
-    const Bytes leaf = SignedCertificate(RsaKey(64, 0x06), "Leaf");
-    const std::array<Case, 4> cases{{
-        {AuxiliaryEmpty(), -1, -1, false, false},
-        {AuxiliaryTwoTrust(), 2, -1, false, false},
-        {AuxiliaryEmptyTrustSequence(), 0, -1, false, false},
-        {AuxiliaryIndefiniteOuter(), 1, -1, false, false},
-    }};
-    for (const Case& testCase : cases) {
-        auto* certificate = ReadTrusted(Trusted(leaf, testCase.auxiliary));
-        Require(certificate, "an auxiliary sequence decodes");
-        RequireNoCodes("a valid auxiliary sequence queues nothing");
-        RequireAux(certificate, "the auxiliary data is attached");
-        const CertAux* aux = Auxiliary(certificate);
-        Require(StackCount(aux->trust) == testCase.trust, "the trust stack matches");
-        Require(StackCount(aux->reject) == testCase.reject, "the reject stack matches");
-        Require((aux->alias != nullptr) == testCase.alias, "the alias matches");
-        Require((aux->keyid != nullptr) == testCase.keyid, "the key id matches");
-    }
+    const std::uint64_t baseline = CurrentGeneration();
+    {
+        struct Case {
+            Bytes auxiliary;
+            int trust;
+            int reject;
+            bool alias;
+            bool keyid;
+        };
+        const Bytes leaf = SignedCertificate(RsaKey(64, 0x06), "Leaf");
+        const std::array<Case, 4> cases{{
+            {AuxiliaryEmpty(), -1, -1, false, false},
+            {AuxiliaryTwoTrust(), 2, -1, false, false},
+            {AuxiliaryEmptyTrustSequence(), 0, -1, false, false},
+            {AuxiliaryIndefiniteOuter(), 1, -1, false, false},
+        }};
+        for (const Case& testCase : cases) {
+            auto* certificate = ReadTrusted(Trusted(leaf, testCase.auxiliary));
+            Require(certificate, "an auxiliary sequence decodes");
+            RequireNoCodes("a valid auxiliary sequence queues nothing");
+            RequireAux(certificate, "the auxiliary data is attached");
+            const CertAux* aux = Auxiliary(certificate);
+            Require(StackCount(aux->trust) == testCase.trust, "the trust stack matches");
+            Require(StackCount(aux->reject) == testCase.reject, "the reject stack matches");
+            Require((aux->alias != nullptr) == testCase.alias, "the alias matches");
+            Require((aux->keyid != nullptr) == testCase.keyid, "the key id matches");
+            X509_free_nid_postfix(certificate);
+        }
 
-    auto* trust = ReadTrusted(Trusted(leaf, Tlv(0x30, Tlv(0x30, Tlv(0x06, SmallTrust)))));
-    Require(StackCount(Auxiliary(trust)->trust) == 1 && Holds(StackObject(Auxiliary(trust)->trust, 0), SmallTrust),
-        "one trust object is kept as it is encoded");
-    auto* second = ReadTrusted(Trusted(leaf, AuxiliaryTwoTrust()));
-    Require(StackCount(Auxiliary(second)->trust) == 2 && Holds(StackObject(Auxiliary(second)->trust, 1), OtherTrust),
-        "the second trust object is kept");
-    auto* reject = ReadTrusted(Trusted(leaf, AuxiliaryReject()));
-    Require(StackCount(Auxiliary(reject)->reject) == 1 && Holds(StackObject(Auxiliary(reject)->reject, 0), SmallTrust),
-        "an implicit reject sequence is read");
-    auto* alias = ReadTrusted(Trusted(leaf, AuxiliaryAlias()));
-    Require(Holds(Auxiliary(alias)->alias, 12, Text("ABC")), "an alias is read as a UTF8String");
-    auto* keyId = ReadTrusted(Trusted(leaf, AuxiliaryKeyId()));
-    Require(Holds(Auxiliary(keyId)->keyid, 4, Bytes{0x01, 0x02}), "a key id is read as an octet string");
-    auto* constructed = ReadTrusted(Trusted(leaf, AuxiliaryConstructedKeyId()));
-    Require(Holds(Auxiliary(constructed)->keyid, 4, Bytes{0x42}), "a constructed key id keeps its content");
-    auto* all = ReadTrusted(Trusted(leaf, AuxiliaryAllFields()));
-    Require(StackCount(Auxiliary(all)->trust) == 1 && StackCount(Auxiliary(all)->reject) == 1 && Auxiliary(all)->alias &&
-        Auxiliary(all)->keyid, "every optional field is read in order");
-    auto* extra = ReadTrusted(Trusted(leaf, Cat({AuxiliaryOneTrust(), Bytes{0x00}})));
-    Require(extra && StackCount(Auxiliary(extra)->trust) == 1, "a byte after the auxiliary sequence is left alone");
-    RequireNoCodes("a trailing byte queues nothing");
-    RequireThrows([&] { ReadTrusted(Trusted(leaf, AuxiliaryOther())); }, "other auxiliary information is not implemented");
-    ERR_clear_error_nid_postfix();
+        auto* trust = ReadTrusted(Trusted(leaf, Tlv(0x30, Tlv(0x30, Tlv(0x06, SmallTrust)))));
+        Require(StackCount(Auxiliary(trust)->trust) == 1 && Holds(StackObject(Auxiliary(trust)->trust, 0), SmallTrust),
+            "one trust object is kept as it is encoded");
+        X509_free_nid_postfix(trust);
+        auto* second = ReadTrusted(Trusted(leaf, AuxiliaryTwoTrust()));
+        Require(StackCount(Auxiliary(second)->trust) == 2 && Holds(StackObject(Auxiliary(second)->trust, 1), OtherTrust),
+            "the second trust object is kept");
+        X509_free_nid_postfix(second);
+        auto* reject = ReadTrusted(Trusted(leaf, AuxiliaryReject()));
+        Require(StackCount(Auxiliary(reject)->reject) == 1 && Holds(StackObject(Auxiliary(reject)->reject, 0), SmallTrust),
+            "an implicit reject sequence is read");
+        X509_free_nid_postfix(reject);
+        auto* alias = ReadTrusted(Trusted(leaf, AuxiliaryAlias()));
+        Require(Holds(Auxiliary(alias)->alias, 12, Text("ABC")), "an alias is read as a UTF8String");
+        X509_free_nid_postfix(alias);
+        auto* keyId = ReadTrusted(Trusted(leaf, AuxiliaryKeyId()));
+        Require(Holds(Auxiliary(keyId)->keyid, 4, Bytes{0x01, 0x02}), "a key id is read as an octet string");
+        X509_free_nid_postfix(keyId);
+        auto* constructed = ReadTrusted(Trusted(leaf, AuxiliaryConstructedKeyId()));
+        Require(Holds(Auxiliary(constructed)->keyid, 4, Bytes{0x42}), "a constructed key id keeps its content");
+        X509_free_nid_postfix(constructed);
+        auto* all = ReadTrusted(Trusted(leaf, AuxiliaryAllFields()));
+        Require(StackCount(Auxiliary(all)->trust) == 1 && StackCount(Auxiliary(all)->reject) == 1 && Auxiliary(all)->alias &&
+            Auxiliary(all)->keyid, "every optional field is read in order");
+        X509_free_nid_postfix(all);
+        auto* extra = ReadTrusted(Trusted(leaf, Cat({AuxiliaryOneTrust(), Bytes{0x00}})));
+        Require(extra && StackCount(Auxiliary(extra)->trust) == 1, "a byte after the auxiliary sequence is left alone");
+        X509_free_nid_postfix(extra);
+        RequireNoCodes("a trailing byte queues nothing");
+        RequireThrows([&] { ReadTrusted(Trusted(leaf, AuxiliaryOther())); }, "other auxiliary information is not implemented");
+        ERR_clear_error_nid_postfix();
+    }
+    Require(OutstandingSince(baseline) == 0, "trusted field checks release every certificate and auxiliary allocation");
 }
 
 void TrustedErrors() {
@@ -1402,7 +1505,12 @@ std::uint64_t generation = 0;
 std::size_t keyShapeAllocations = 0;
 std::mutex trackerMutex;
 int failAt = 0;
-int calls = 0;
+std::atomic<int> calls{0};
+
+std::uint64_t CurrentGeneration() {
+    const std::lock_guard guard(trackerMutex);
+    return generation;
+}
 
 void* Track(void* pointer, std::size_t size, const char* origin) {
     if (!pointer) return nullptr;
@@ -1462,12 +1570,12 @@ void ReportOutstanding(std::uint64_t baseline, int injection, const char* messag
 }
 
 void* APS5_VABI Allocate_nid_no_patch(std::size_t size) {
-    if (++calls == failAt) return nullptr;
+    if (calls.fetch_add(1, std::memory_order_relaxed) + 1 == failAt) return nullptr;
     return Track(std::malloc(size), size, "malloc");
 }
 
 void* APS5_VABI Calloc_nid_no_patch(std::size_t count, std::size_t size) {
-    if (++calls == failAt) return nullptr;
+    if (calls.fetch_add(1, std::memory_order_relaxed) + 1 == failAt) return nullptr;
     return Track(std::calloc(count, size), count * size, "calloc");
 }
 
@@ -1477,7 +1585,7 @@ void APS5_VABI Free_nid_no_patch(void* pointer) {
 }
 
 void* APS5_VABI Reallocate_nid_no_patch(void* pointer, std::size_t size) {
-    if (++calls == failAt) return nullptr;
+    if (calls.fetch_add(1, std::memory_order_relaxed) + 1 == failAt) return nullptr;
     Untrack(pointer);
     return Track(std::realloc(pointer, size), size, "realloc");
 }
@@ -1532,9 +1640,9 @@ void SweepAllocations(TInject inject, TFinal finalExpectation, int minimumChecke
 void Sweep(const std::string& record, bool trusted, bool succeeds) {
     const auto inject = [&](int failing) -> InjectionResult {
         ERR_clear_error_nid_postfix();
-        calls = 0;
+        calls.store(0, std::memory_order_relaxed);
         failAt = failing;
-        const std::uint64_t baseline = generation;
+        const std::uint64_t baseline = CurrentGeneration();
         LibreSslX509* certificate = nullptr;
         bool thrown = false;
         auto* bio = BIO_new_mem_buf_nid_postfix(record.data(), static_cast<int>(record.size()));
@@ -1550,7 +1658,7 @@ void Sweep(const std::string& record, bool trusted, bool succeeds) {
         if (certificate) X509_free_nid_postfix(certificate);
         Require(succeeds || !returned, "a record that cannot be kept is never returned");
         Require(thrown || returned || ERR_peek_error_nid_postfix() != 0, "a read that returns nothing queues an error");
-        return InjectionResult{SweepOutcome{thrown, returned}, baseline, calls < failing};
+        return InjectionResult{SweepOutcome{thrown, returned}, baseline, calls.load(std::memory_order_relaxed) < failing};
     };
     SweepAllocations(inject, [&](const SweepOutcome& outcome) {
         Require(outcome.returned == succeeds, "the run without a failing allocation behaves as the fixed run");
@@ -1560,9 +1668,9 @@ void Sweep(const std::string& record, bool trusted, bool succeeds) {
 void SweepKey(const std::string& record, bool expectsKey, bool expectsThrow, const char* message) {
     const auto inject = [&](int failing) -> InjectionResult {
         ERR_clear_error_nid_postfix();
-        calls = 0;
+        calls.store(0, std::memory_order_relaxed);
         failAt = failing;
-        const std::uint64_t baseline = generation;
+        const std::uint64_t baseline = CurrentGeneration();
         LibreSslX509* certificate = nullptr;
         void* publicKey = nullptr;
         bool thrown = false;
@@ -1579,7 +1687,7 @@ void SweepKey(const std::string& record, bool expectsKey, bool expectsThrow, con
         if (certificate) X509_free_nid_postfix(certificate);
         Require(expectsThrow || !thrown, message);
         Require(thrown || returned || ERR_peek_error_nid_postfix() != 0, message);
-        return InjectionResult{SweepOutcome{thrown, returned}, baseline, calls < failing};
+        return InjectionResult{SweepOutcome{thrown, returned}, baseline, calls.load(std::memory_order_relaxed) < failing};
     };
     SweepAllocations(inject, [&](const SweepOutcome& outcome) {
         Require(outcome.thrown == expectsThrow, message);
@@ -1590,9 +1698,9 @@ void SweepKey(const std::string& record, bool expectsKey, bool expectsThrow, con
 void SweepTrusted(const std::string& record, bool expectsThrow, const char* message) {
     const auto inject = [&](int failing) -> InjectionResult {
         ERR_clear_error_nid_postfix();
-        calls = 0;
+        calls.store(0, std::memory_order_relaxed);
         failAt = failing;
-        const std::uint64_t baseline = generation;
+        const std::uint64_t baseline = CurrentGeneration();
         LibreSslX509* certificate = nullptr;
         bool thrown = false;
         auto* bio = BIO_new_mem_buf_nid_postfix(record.data(), static_cast<int>(record.size()));
@@ -1606,7 +1714,7 @@ void SweepTrusted(const std::string& record, bool expectsThrow, const char* mess
         if (certificate) X509_free_nid_postfix(certificate);
         Require(expectsThrow || !thrown, message);
         Require(thrown || returned || ERR_peek_error_nid_postfix() != 0, message);
-        return InjectionResult{SweepOutcome{thrown, returned}, baseline, calls < failing};
+        return InjectionResult{SweepOutcome{thrown, returned}, baseline, calls.load(std::memory_order_relaxed) < failing};
     };
     SweepAllocations(inject, [&](const SweepOutcome& outcome) {
         Require(outcome.thrown == expectsThrow, message);
@@ -1618,9 +1726,9 @@ void SweepStoreLoad(const std::string& path, bool expectsThrow, const char* mess
     const auto inject = [&](int failing) -> InjectionResult {
         ERR_clear_error_nid_postfix();
         StoreFixture store(message);
-        calls = 0;
+        calls.store(0, std::memory_order_relaxed);
         failAt = failing;
-        const std::uint64_t baseline = generation;
+        const std::uint64_t baseline = CurrentGeneration();
         bool thrown = false;
         int loaded = 0;
         try {
@@ -1630,7 +1738,7 @@ void SweepStoreLoad(const std::string& path, bool expectsThrow, const char* mess
         }
         Require(loaded >= 0, message);
         Require(expectsThrow || !thrown, message);
-        return InjectionResult{SweepOutcome{thrown, loaded > 0}, baseline, calls < failing};
+        return InjectionResult{SweepOutcome{thrown, loaded > 0}, baseline, calls.load(std::memory_order_relaxed) < failing};
     };
     SweepAllocations(inject, [&](const SweepOutcome& outcome) {
         Require(outcome.thrown == expectsThrow, message);
@@ -1654,6 +1762,13 @@ void Allocator() {
     Sweep(Record("RSA PRIVATE KEY", SignedCertificate(EcKey(), "Skipped")) + Trusted(leaf, AuxiliaryAllFields()), true, true);
     SweepKey(Record("CERTIFICATE", SignedCertificate(RsaKey(64, 0x09), "Leaf")), true, false,
         "a decoded RSA public key and its certificate leave nothing behind");
+    SweepKey(Record("CERTIFICATE", SignedCertificate(RsaKeyWithBrokenBits(ConstructedRsaKeyBits()), "Leaf")), true, false,
+        "a constructed RSA integer collecting data and growing releases every allocation");
+    SweepKey(Record("CERTIFICATE", SignedCertificate(RsaKeyWithBrokenBits(
+        Tlv(0x30, Cat({Lengthed(0x22, {0x02, 0x01, 0x05, 0x02, 0x05, 0x01}, 6), Tlv(0x02, {0x01, 0x03})}))), "Leaf")), false, false,
+        "a broken constructed RSA integer releases every allocation");
+    SweepKey(Record("CERTIFICATE", SignedCertificate(RsaKeyWithBrokenBits(Bytes{0x30, 0x05, 0x22, 0x80, 0x02, 0x01, 0x05}), "Leaf")),
+        false, false, "an indefinite constructed RSA integer missing EOC releases every allocation");
     SweepKey(Record("CERTIFICATE", SignedCertificate(EcKey(), "Leaf")), true, false,
         "a decoded elliptic curve public key and its certificate leave nothing behind");
     SweepKey(Record("CERTIFICATE", SignedCertificate(KeyInformation(EcPublicKey, Tlv(0x05, {}), EcPoint), "Leaf")), false, false,
@@ -1703,6 +1818,8 @@ void Allocator() {
 }
 
 void ConcurrentCache() {
+    failAt = 0;
+    calls.store(0, std::memory_order_relaxed);
     constexpr int Workers = 4;
     auto run = [&](const char* pem, int rounds, bool requireRaceAndPkeyShape) {
         int roundsWithSeveralCandidates = 0;
@@ -1712,7 +1829,7 @@ void ConcurrentCache() {
             std::array<void*, Workers> returned{};
             std::array<std::thread, Workers> workers{};
             std::barrier start(Workers);
-            const std::uint64_t baseline = generation;
+            const std::uint64_t baseline = CurrentGeneration();
             const std::size_t candidatesBefore = KeyShapeAllocations();
             for (int index = 0; index < Workers; ++index)
                 workers[index] = std::thread([&, index] {
@@ -1745,7 +1862,7 @@ void ConcurrentCache() {
 
 void StoreInfoReconciliation() {
     {
-        const std::uint64_t baseline = generation;
+        const std::uint64_t baseline = CurrentGeneration();
         auto* certificate = ReadTrusted(TrustedCertificatePem);
         Require(certificate && certificate->auxiliary, "a trusted certificate is created for X509_INFO_free");
         auto* info = static_cast<LibreSslX509Info*>(calloc_nid_postfix(1, sizeof(LibreSslX509Info)));
@@ -1785,7 +1902,7 @@ void StoreInfoReconciliation() {
     WriteFile(files.Host("three-with-dup.pem"), certOne + certTwo + certOneDup);
 
     {
-        const std::uint64_t baseline = generation;
+        const std::uint64_t baseline = CurrentGeneration();
         StoreFixture store("a store for a four-certificate bundle");
         Require(store.Load(files.Path("bundle4.pem")) == 1, "a four-certificate bundle loads past initial stack capacity");
         RequireNoCodes("loading a four-certificate bundle queues nothing");
@@ -1799,7 +1916,7 @@ void StoreInfoReconciliation() {
     }
 
     {
-        const std::uint64_t baseline = generation;
+        const std::uint64_t baseline = CurrentGeneration();
         StoreFixture store("a store for three certs before a CRL");
         RequireThrows([&] { store.Load(files.Path("three-then-crl.pem")); }, "a CRL after three certificates throws");
         ERR_clear_error_nid_postfix();
@@ -1809,7 +1926,7 @@ void StoreInfoReconciliation() {
     }
 
     {
-        const std::uint64_t baseline = generation;
+        const std::uint64_t baseline = CurrentGeneration();
         StoreFixture store("a store for three certs before an encrypted record");
         RequireThrows([&] { store.Load(files.Path("three-then-encrypted.pem")); }, "an encrypted record after three certificates throws");
         ERR_clear_error_nid_postfix();
@@ -1819,7 +1936,7 @@ void StoreInfoReconciliation() {
     }
 
     {
-        const std::uint64_t baseline = generation;
+        const std::uint64_t baseline = CurrentGeneration();
         StoreFixture store("a store for three certs before a malformed record");
         Require(store.Load(files.Path("three-then-broken.pem")) == 0, "a malformed fourth record refuses the file");
         RequireCodes({Code(Asn1Library, SequenceNotConstructed), Code(PemLibrary, Asn1LibraryError), Code(X509Library, PemLibraryFailure)},
@@ -1830,7 +1947,7 @@ void StoreInfoReconciliation() {
     }
 
     {
-        const std::uint64_t baseline = generation;
+        const std::uint64_t baseline = CurrentGeneration();
         StoreFixture store("a store for a duplicate third certificate");
         RequireThrows([&] { store.Load(files.Path("three-with-dup.pem")); }, "a duplicate third subject reaches the store guard");
         ERR_clear_error_nid_postfix();

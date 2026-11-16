@@ -477,24 +477,24 @@ bool DecodeBignum(const unsigned char** in, std::int64_t limit, void** number, H
     const unsigned char* content;
     std::int64_t length;
     Buffer collected{};
-    bool ownsContent = false;
-    auto release = [&] {
-        if (ownsContent && collected.data) free_nid_postfix(collected.data);
-    };
-    if (constructed) {
-        if (!Collect(&collected, &p, contentLength, indefinite, -1, Universal, 0)) {
-            release();
-            return false;
+    struct BufferGuard {
+        Buffer& buffer;
+        ~BufferGuard() {
+            if (buffer.data) {
+                free_nid_postfix(buffer.data);
+                buffer.data = nullptr;
+            }
         }
+    } guard{collected};
+    if (constructed) {
+        if (!Collect(&collected, &p, contentLength, indefinite, -1, Universal, 0)) return false;
         length = static_cast<std::int64_t>(collected.length);
         if (!Grow(&collected, static_cast<std::size_t>(length) + 1, true)) {
             Asn1Queue(MallocFailure);
-            release();
             return false;
         }
         collected.data[length] = 0;
         content = reinterpret_cast<const unsigned char*>(collected.data);
-        ownsContent = true;
     } else {
         content = p;
         length = contentLength;
@@ -502,7 +502,6 @@ bool DecodeBignum(const unsigned char** in, std::int64_t limit, void** number, H
     }
     if (length > std::numeric_limits<int>::max()) NotImplemented_nid_no_patch("X509_get_pubkey: an INTEGER longer than INT_MAX bytes");
     *number = BN_bin2bn_nid_postfix(content, static_cast<int>(length), nullptr);
-    release();
     if (!*number) return false;
     *in = p;
     return true;
