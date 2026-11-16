@@ -32,6 +32,8 @@ int main() {
     Require(sceSocialScreenDialogClose() == kErrNotInitialized);
     Require(sceSocialScreenDialogGetResult(nullptr) == kErrNotInitialized);
     Require(sceSocialScreenDialogGetResult(result) == kErrNotInitialized);
+    Require(result[0] == kSentinel);
+    Require(result[1] == kSentinel);
     Require(sceSocialScreenDialogGetStatus() == kStatusNone);
     Require(sceSocialScreenDialogUpdateStatus() == kStatusNone);
 

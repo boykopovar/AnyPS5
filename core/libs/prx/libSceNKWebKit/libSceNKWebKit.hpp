@@ -5,6 +5,7 @@
 #include "prx/libSceNKWebKit/include/LegacyProtectionSpaceBaseExports.hpp"
 #include "prx/libSceNKWebKit/include/HTTPHeaderFieldExports.hpp"
 #include "prx/libSceNKWebKit/include/CustomHeaderFieldsExports.hpp"
+#include "prx/libSceNKWebKit/include/GLContextExtensionsExports.hpp"
 #include "prx/libSceNKWebKit/include/HistoryItemExports.hpp"
 #include "prx/libSceNKWebKit/include/TrackPrivateBaseExports.hpp"
 #include "prx/libSceNKWebKit/include/LegacyExports.hpp"

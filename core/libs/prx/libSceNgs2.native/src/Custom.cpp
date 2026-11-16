@@ -16,6 +16,7 @@ static constexpr std::uint32_t USER_FX2_FLAG_PARAM_CHANGED = 2;
 
 static const char* BuiltInModuleName(std::uint32_t moduleId) {
     switch (moduleId) {
+        case SCE_NGS2_CUSTOM_MODULE_ID_CHANNEL_MIXER: return "ChannelMixer";
         case SCE_NGS2_CUSTOM_MODULE_ID_GAIN: return "Gain";
         case SCE_NGS2_CUSTOM_MODULE_ID_REVERB: return "Reverb";
         case SCE_NGS2_CUSTOM_MODULE_ID_PITCH_SHIFT: return "PitchShift";
@@ -34,6 +35,11 @@ static int CheckBuiltInModule(const Ngs2CustomRackModuleInfo& info) {
     const auto stateSizeIs = [&info](std::uint32_t size) { return info.state_size == 0 || info.state_size == size; };
     if (info.module_id == SCE_NGS2_CUSTOM_MODULE_ID_GAIN || info.module_id == SCE_NGS2_CUSTOM_MODULE_ID_USER_FX) {
         if (!stateSizeIs(0)) return SCE_NGS2_ERROR_INVALID_STATE_SIZE;
+    } else if (info.module_id == SCE_NGS2_CUSTOM_MODULE_ID_CHANNEL_MIXER) {
+        if (!stateSizeIs(0)) return SCE_NGS2_ERROR_INVALID_STATE_SIZE;
+        if (info.option != nullptr && info.option->size != 4 && info.option->size != 8 && info.option->size != 16) {
+            return SCE_NGS2_ERROR_INVALID_OPTION_SIZE;
+        }
     } else if (info.module_id == SCE_NGS2_CUSTOM_MODULE_ID_REVERB) {
         if (!stateSizeIs(0)) return SCE_NGS2_ERROR_INVALID_STATE_SIZE;
         if (info.option != nullptr && info.option->size != SCE_NGS2_CUSTOM_REVERB_OPTION_SIZE) return SCE_NGS2_ERROR_INVALID_OPTION_SIZE;
@@ -118,7 +124,7 @@ int Ngs2CheckCustomRack(std::uint32_t rackId, const Ngs2CustomRackOption& option
         if (rackId != SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER) throw std::runtime_error("NGS2: multiple custom buffers outside a custom submixer are not implemented");
         for (std::uint32_t m = 0; m < option.num_modules; m++) {
             const auto moduleId = option.module[m].module_id;
-            if (moduleId != SCE_NGS2_CUSTOM_MODULE_ID_GAIN && moduleId != SCE_NGS2_CUSTOM_MODULE_ID_USER_FX) {
+            if (moduleId != SCE_NGS2_CUSTOM_MODULE_ID_GAIN && moduleId != SCE_NGS2_CUSTOM_MODULE_ID_USER_FX && moduleId != SCE_NGS2_CUSTOM_MODULE_ID_REVERB && moduleId != SCE_NGS2_CUSTOM_MODULE_ID_CHANNEL_MIXER) {
                 throw std::runtime_error("NGS2: custom module id " + Ngs2Hex(moduleId) + " in a submixer with multiple custom buffers is not implemented");
             }
         }
@@ -126,6 +132,7 @@ int Ngs2CheckCustomRack(std::uint32_t rackId, const Ngs2CustomRackOption& option
     for (std::uint32_t m = 0; m < option.num_modules; m++) {
         const auto moduleId = option.module[m].module_id;
         if (moduleId == SCE_NGS2_CUSTOM_MODULE_ID_GAIN && option.module[m].option != nullptr) throw std::runtime_error("NGS2: an option for the custom Gain module is not implemented");
+        if (moduleId == SCE_NGS2_CUSTOM_MODULE_ID_CHANNEL_MIXER) continue;
         if (moduleId == SCE_NGS2_CUSTOM_MODULE_ID_REVERB) continue;
         if (moduleId == SCE_NGS2_CUSTOM_MODULE_ID_PITCH_SHIFT) continue;
         if (moduleId == SCE_NGS2_CUSTOM_MODULE_ID_GAIN) continue;
@@ -160,6 +167,7 @@ int Ngs2SetupUserFx(Ngs2Rack& rack, const Ngs2CustomRackOption& option) {
         voice.userFx.resize(option.num_modules);
         voice.customUserFx.resize(option.num_modules);
         voice.customGain.assign(option.num_modules, {});
+        voice.customChannelMixer.assign(option.num_modules, {});
         voice.customReverb.resize(option.num_modules);
         if (hasPitchShift) voice.customPitchShift.resize(option.num_modules);
     }
@@ -335,6 +343,29 @@ static void ProcessGain(Ngs2Voice& voice, std::size_t module, std::uint32_t grai
     gain.current = gain.target;
 }
 
+static void ProcessChannelMixer(Ngs2Voice& voice, std::size_t module, std::uint32_t grain) {
+    const auto& info = voice.rack->customModules[module];
+    const auto& mixer = voice.customChannelMixer[module];
+    if (!mixer.configured) {
+        CopyCustomBuffer(voice, info.source_buffer_id, info.dest_buffer_id);
+        return;
+    }
+    const auto& source = voice.Samples(info.source_buffer_id);
+    auto& dest = voice.Samples(info.dest_buffer_id);
+    if (source.size() != dest.size()) throw std::runtime_error("NGS2: custom buffers of different sizes are not implemented");
+    const std::vector<float> input(source.begin(), source.end());
+    for (std::uint32_t o = 0; o < voice.channels; o++) {
+        auto* out = dest.data() + static_cast<std::size_t>(o) * grain;
+        const auto* levels = mixer.level.data() + o * SCE_NGS2_CUSTOM_SUBMIXER_MAX_CHANNELS;
+        for (std::uint32_t i = 0; i < grain; i++) {
+            float sum = 0.0f;
+            for (std::uint32_t c = 0; c < voice.channels; c++) sum += levels[c] * input[static_cast<std::size_t>(c) * grain + i];
+            out[i] = sum;
+        }
+    }
+    RefreshHasSamples(voice);
+}
+
 #ifdef APS5_NGS2_PS4_LIBRARY
 static constexpr bool PS4_LIBRARY = true;
 #else
@@ -355,6 +386,24 @@ void Ngs2ApplyCustomParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
     }
     if ((param.id & ~0xffu) == SCE_NGS2_CUSTOM_VOICE_PARAM_DELAY) {
         throw std::runtime_error("NGS2: the custom Delay module parameters are not implemented");
+    }
+    if ((param.id & ~0xffu) == SCE_NGS2_CUSTOM_VOICE_PARAM_CHANNEL_MIXER) {
+        auto index = param.id & 0xff;
+        if (rackId == SCE_NGS2_RACK_ID_CUSTOM_SAMPLER) {
+            if (index == 0) throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_PARAM_ID};
+            index--;
+        }
+        if (index >= voice.customChannelMixer.size() || voice.rack->customModuleIds[index] != SCE_NGS2_CUSTOM_MODULE_ID_CHANNEL_MIXER) {
+            throw Ngs2ReturnCode{SCE_NGS2_ERROR_INVALID_PARAM_ID};
+        }
+        auto& mixer = voice.customChannelMixer[index];
+        std::array<float, SCE_NGS2_CUSTOM_SUBMIXER_MAX_CHANNELS * SCE_NGS2_CUSTOM_SUBMIXER_MAX_CHANNELS> level{};
+        const auto payload = param.size > sizeof(Ngs2VoiceParamHeader) ? static_cast<std::size_t>(param.size) - sizeof(Ngs2VoiceParamHeader) : std::size_t{0};
+        std::memcpy(level.data(), reinterpret_cast<const std::uint8_t*>(&param) + sizeof(Ngs2VoiceParamHeader), std::min(payload, level.size() * sizeof(float)));
+        for (auto& value : level) value = std::clamp(value, -32.0f, 32.0f);
+        mixer.level = level;
+        mixer.configured = true;
+        return;
     }
     if (param.id == SCE_NGS2_CUSTOM_SUBMIXER_VOICE_PARAM_SETUP) {
         if (rackId != SCE_NGS2_RACK_ID_CUSTOM_SUBMIXER) throw std::invalid_argument("NGS2: voice param " + Ngs2Hex(param.id) + " belongs to another rack");
@@ -473,10 +522,15 @@ void Ngs2ProcessUserFx(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t samp
     for (std::uint32_t c = 0; c < voice.channels; c++) channels[c] = voice.samples.data() + static_cast<std::size_t>(c) * grain;
     for (std::size_t m = 0; m < voice.rack->customModuleIds.size(); m++) {
         if (voice.rack->customModuleIds[m] == SCE_NGS2_CUSTOM_MODULE_ID_REVERB) {
-            voice.hasSamples = Ngs2ProcessCustomReverb(voice, m, grain, sampleRate);
+            Ngs2ProcessCustomReverb(voice, m, grain, sampleRate);
+            RefreshHasSamples(voice);
             continue;
         }
         if (voice.rack->customModuleIds[m] == SCE_NGS2_CUSTOM_MODULE_ID_DELAY) continue;
+        if (voice.rack->customModuleIds[m] == SCE_NGS2_CUSTOM_MODULE_ID_CHANNEL_MIXER) {
+            ProcessChannelMixer(voice, m, grain);
+            continue;
+        }
         if (voice.rack->customModuleIds[m] == SCE_NGS2_CUSTOM_MODULE_ID_PITCH_SHIFT) {
             Ngs2ProcessPitchShift(voice, m, grain);
             continue;

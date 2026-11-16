@@ -207,7 +207,7 @@ template <typename T, typename TExtract>
 FcResult GetPatternTyped(const FcPattern* pattern, const char* object, int id, T* destination, FcType expectedType,
                          TExtract extract, const char* caller) {
     FcValue found{};
-    const auto result = FcPatternGet(pattern, object, id, &found);
+    const auto result = FcPatternGet_nid_postfix(pattern, object, id, &found);
     if (result != FcResultMatch) return result;
     if (found.type != expectedType) return FcResultTypeMismatch;
     if (!destination) NotImplemented_nid_no_patch(caller);
@@ -382,7 +382,7 @@ FcBool APS5_VABI FcPatternEqual(const FcPattern* first, const FcPattern* second)
     return 1;
 }
 
-FcBool APS5_VABI FcPatternDel(FcPattern* pattern, const char* object) {
+FcBool APS5_VABI FcPatternDel_nid_postfix(FcPattern* pattern, const char* object) {
     if (!pattern || !object) NotImplemented_nid_no_patch(__func__);
     const auto entry = pattern->objects.find(object);
     if (entry == pattern->objects.end()) return 0;
@@ -399,7 +399,7 @@ FcBool APS5_VABI FcPatternRemove(FcPattern* pattern, const char* object, int id)
     return 1;
 }
 
-FcResult APS5_VABI FcPatternGet(const FcPattern* pattern, const char* object, int id, FcValue* value) {
+FcResult APS5_VABI FcPatternGet_nid_postfix(const FcPattern* pattern, const char* object, int id, FcValue* value) {
     if (!object) NotImplemented_nid_no_patch(__func__);
     if (!pattern) return FcResultNoMatch;
     const auto entry = pattern->objects.find(object);
@@ -442,7 +442,7 @@ FcResult APS5_VABI FcPatternGetLangSet(const FcPattern* pattern, const char* obj
                            [](const FcValue& found) { return const_cast<FcLangSet*>(found.u.l); }, __func__);
 }
 
-FcBool APS5_VABI FcPatternAddInteger(FcPattern* pattern, const char* object, int value) {
+FcBool APS5_VABI FcPatternAddInteger_nid_postfix(FcPattern* pattern, const char* object, int value) {
     try {
         PatternValue entry;
         entry.type = FcTypeInteger;
@@ -451,7 +451,7 @@ FcBool APS5_VABI FcPatternAddInteger(FcPattern* pattern, const char* object, int
     } catch (const std::bad_alloc&) { return 0; }
 }
 
-FcBool APS5_VABI FcPatternAddBool(FcPattern* pattern, const char* object, FcBool value) {
+FcBool APS5_VABI FcPatternAddBool_nid_postfix(FcPattern* pattern, const char* object, FcBool value) {
     try {
         PatternValue entry;
         entry.type = FcTypeBool;
