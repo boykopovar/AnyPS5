@@ -245,6 +245,18 @@ static_assert(offsetof(TimeGetVtable, getYear) == 0x48);
 static_assert(offsetof(TimeGetVtable, get) == 0x50);
 static_assert(sizeof(TimeGetVtable) == 0x58);
 
+struct MessagesVtable {
+    FacetVtable facet;
+    std::int32_t (APS5_VABI *open)(const Facet* self, const String* name, const void* locale);
+    String* (APS5_VABI *get)(String* result, const Facet* self, std::int32_t catalog, std::int32_t set, std::int32_t message, const String* fallback);
+    void (APS5_VABI *close)(const Facet* self, std::int32_t catalog);
+};
+
+static_assert(offsetof(MessagesVtable, open) == 0x20);
+static_assert(offsetof(MessagesVtable, get) == 0x28);
+static_assert(offsetof(MessagesVtable, close) == 0x30);
+static_assert(sizeof(MessagesVtable) == 0x38);
+
 struct NumPutVtable {
     FacetVtable facet;
     OutputIterator (APS5_VABI *putBool)(const Facet* self, OutputIterator out, IosBase* stream, char fill, bool value);
@@ -419,5 +431,7 @@ extern "C" std::size_t APS5_VABI _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11ch
 inline constexpr std::size_t kMoneyPutCharVtableSlots = 8;
 static_assert(kMoneyPutCharVtableSlots * sizeof(std::uintptr_t) == 64);
 extern "C" std::uintptr_t _ZTVSt9money_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kMoneyPutCharVtableSlots];
+extern "C" GuestLocale::String* LibcCopyString_nid_no_patch(GuestLocale::String* result, const GuestLocale::String* source);
+extern "C" GuestLocale::String* LibcCopyWideString_nid_no_patch(GuestLocale::String* result, const GuestLocale::String* source);
 
 #endif

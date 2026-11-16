@@ -4,8 +4,8 @@
 
 extern "C" {
 
-int APS5_VABI _ZNKSt8messagesIcE3getEiiiRKSs_nid_postfix();
-int APS5_VABI _ZNKSt8messagesIcE4openERKSsRKSt6locale_nid_postfix();
+void* APS5_VABI _ZNKSt8messagesIcE3getEiiiRKSs_nid_postfix(void* result, const void* self, int catalog, int set, int message, const void* fallback);
+int APS5_VABI _ZNKSt8messagesIcE4openERKSsRKSt6locale_nid_postfix(const void* self, const void* name, const void* locale);
 int APS5_VABI _ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE11do_get_timeES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix();
 int APS5_VABI _ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE11do_get_yearES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix();
 int APS5_VABI _ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE16do_get_monthnameES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix();
