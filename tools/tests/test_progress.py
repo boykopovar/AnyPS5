@@ -1177,6 +1177,10 @@ class HelperValueTests(unittest.TestCase):
         self.assertFalse(progress.template_open(["foo", "<", "="], 1))
         self.assertFalse(progress.template_open(["<"], 0))
 
+    def test_form_label_adds_the_form_only_for_non_base_forms(self):
+        self.assertEqual(progress.form_label({"encoding": "VOP2", "form": "base"}), "VOP2")
+        self.assertEqual(progress.form_label({"encoding": "VOP2", "form": "vop3"}), "VOP2 vop3")
+
 
 if __name__ == "__main__":
     unittest.main()
