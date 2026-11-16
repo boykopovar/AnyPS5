@@ -1,5 +1,6 @@
 #include "prx/libSceFreeTypeOt/libSceFreeTypeOt.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
+#include <cerrno>
 #include <bit>
 #include <cstddef>
 #include <cstdint>
@@ -58,7 +59,6 @@ std::int32_t IntegerSqrt(std::uint64_t value) {
 }
 
 extern "C" {
-
 
 int APS5_VABI sceFreeTypeOtUnknown_UD7IFu7ML2U_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -183,26 +183,11 @@ int APS5_VABI sceFreeTypeOtOpenFace_nid_no_patch() {
 }
 APS5_EXPORT("OeNH41MA2Vs", sceFreeTypeOtOpenFace_nid_no_patch);
 
-int APS5_VABI sceFreeTypeOtOutlineEmbolden_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("l6Cf9rb9fZQ", sceFreeTypeOtOutlineEmbolden_nid_no_patch);
-
-int APS5_VABI sceFreeTypeOtOutlineEmboldenXY_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("BgUMBGvhATU", sceFreeTypeOtOutlineEmboldenXY_nid_no_patch);
-
 int APS5_VABI sceFreeTypeOtOutlineGetBitmap_nid_no_patch(FreeType::GuestLibrary* library, FreeType::GuestOutline* outline,
                                                        const FreeType::GuestBitmap* bitmap) {
-    return FT_Outline_Get_Bitmap_nid_postfix(library, outline, bitmap);
+    return FreeTypeOutlineGetBitmap_nid_no_patch(library, outline, bitmap);
 }
 APS5_EXPORT("4RRjK-Wd1lU", sceFreeTypeOtOutlineGetBitmap_nid_no_patch);
-
-int APS5_VABI sceFreeTypeOtOutlineTransform_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("0Lv6K1d47jg", sceFreeTypeOtOutlineTransform_nid_no_patch);
 
 int APS5_VABI sceFreeTypeOtUnknown_qAPXM5DN62Q_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
@@ -247,7 +232,7 @@ int APS5_VABI sceFreeTypeOtSetVarDesignCoordinates_nid_no_patch() {
 APS5_EXPORT("yCEJIsjIOO8", sceFreeTypeOtSetVarDesignCoordinates_nid_no_patch);
 
 void APS5_VABI FT_Stroker_ExportForward_nid_no_patch(void* stroker, FreeType::GuestOutline* outline) {
-    FT_Stroker_Export_nid_postfix(stroker, outline);
+    StrokerExport_nid_no_patch(stroker, outline);
 }
 APS5_EXPORT("2rcvKZfm5rI", FT_Stroker_ExportForward_nid_no_patch);
 
@@ -271,26 +256,6 @@ int APS5_VABI sceFreeTypeOtUnknown_4_SScYDT5Pg_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("4+SScYDT5Pg", sceFreeTypeOtUnknown_4_SScYDT5Pg_nid_no_patch);
-
-int APS5_VABI sceFreeTypeOtVectorFromPolar_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("2rmvbvOCyjY", sceFreeTypeOtVectorFromPolar_nid_no_patch);
-
-int APS5_VABI sceFreeTypeOtVectorLength_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("1jmC2QcpRl0", sceFreeTypeOtVectorLength_nid_no_patch);
-
-int APS5_VABI sceFreeTypeOtVectorPolarize_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("HMcNe70D9TI", sceFreeTypeOtVectorPolarize_nid_no_patch);
-
-int APS5_VABI sceFreeTypeOtVectorRotate_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("6wJwUIVwAxg", sceFreeTypeOtVectorRotate_nid_no_patch);
 
 int APS5_VABI ft_corner_is_flat_nid_postfix(std::int64_t in_x, std::int64_t in_y, std::int64_t out_x, std::int64_t out_y) {
     const __int128 ax = static_cast<__int128>(in_x) + static_cast<__int128>(out_x);
@@ -327,13 +292,23 @@ void APS5_VABI FT_Matrix_Multiply_Scaled_nid_postfix(const FreeType::GuestMatrix
     if (!a || !b) {
         return;
     }
+    FreeType::GuestMatrix left{};
+    FreeType::GuestMatrix right{};
+    const int savedErrno = errno;
+    const bool readable = GuestCopyIn_nid_no_patch(&left, a, sizeof(left)) &&
+                          GuestCopyIn_nid_no_patch(&right, b, sizeof(right));
+    errno = savedErrno;
+    if (!readable) APS5_INVALID_ARG_EX;
     const FreeType::GuestMatrix product{
-        ScaledSum(a->xx, b->xx, a->xy, b->yx, divisor, __func__),
-        ScaledSum(a->xx, b->xy, a->xy, b->yy, divisor, __func__),
-        ScaledSum(a->yx, b->xx, a->yy, b->yx, divisor, __func__),
-        ScaledSum(a->yx, b->xy, a->yy, b->yy, divisor, __func__),
+        ScaledSum(left.xx, right.xx, left.xy, right.yx, divisor, __func__),
+        ScaledSum(left.xx, right.xy, left.xy, right.yy, divisor, __func__),
+        ScaledSum(left.yx, right.xx, left.yy, right.yx, divisor, __func__),
+        ScaledSum(left.yx, right.xy, left.yy, right.yy, divisor, __func__),
     };
-    *b = product;
+    const int savedWriteErrno = errno;
+    const bool written = GuestCopyOut_nid_no_patch(b, &product, sizeof(product));
+    errno = savedWriteErrno;
+    if (!written) APS5_INVALID_ARG_EX;
 }
 
 void APS5_VABI FT_Vector_Transform_Scaled_nid_postfix(FreeType::GuestVector* vector, const FreeType::GuestMatrix* matrix, std::int64_t scaling) {

@@ -1,24 +1,18 @@
-agcbuild_AcbAcquireMem_a	throw	the ACQUIRE_MEM encoding; #18479
-agcbuild_AcbAcquireMem_b	diff	the ACQUIRE_MEM encoding; #18479
-agcbuild_AcbAcquireMem_c	throw	the ACQUIRE_MEM encoding; #18479
 agcbuild_AcbAtomicGds_a	diff	more than six arguments; the console's stack arguments are not known
 agcbuild_AcbAtomicGds_b	diff	more than six arguments; the console's stack arguments are not known
 agcbuild_AcbAtomicGds_c	diff	more than six arguments; the console's stack arguments are not known
-agcbuild_AcbAtomicMem_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_AcbAtomicMem_b	diff	more than six arguments; the console's stack arguments are not known
-agcbuild_AcbAtomicMem_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_AcbCondExec_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_AcbCondExec_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_AcbCondExec_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_AcbCopyData_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_AcbCopyData_b	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_AcbCopyData_c	throw	AnyPS5 throws for arguments the console encodes
+agcbuild_AcbCopyData_a	throw	more than six arguments; the console's stack arguments are not known
+agcbuild_AcbCopyData_b	throw	more than six arguments; the console's stack arguments are not known
+agcbuild_AcbCopyData_c	throw	more than six arguments; the console's stack arguments are not known
 agcbuild_AcbDispatchIndirect_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_AcbDispatchIndirect_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_AcbDispatchIndirect_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_AcbDmaData_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_AcbDmaData_b	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_AcbDmaData_c	throw	AnyPS5 throws for arguments the console encodes
+agcbuild_AcbDmaData_a	throw	more than six arguments; the console's stack arguments are not known
+agcbuild_AcbDmaData_b	throw	more than six arguments; the console's stack arguments are not known
+agcbuild_AcbDmaData_c	throw	more than six arguments; the console's stack arguments are not known
 agcbuild_AcbEventWrite_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_AcbEventWrite_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_AcbEventWrite_c	throw	AnyPS5 throws for arguments the console encodes
@@ -50,9 +44,9 @@ agcbuild_AcbWaitUntilSafeForRendering_c	diff	the console returns null and writes
 agcbuild_CbBranch_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_CbBranch_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_CbBranch_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_CbCondWrite_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_CbCondWrite_b	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_CbCondWrite_c	throw	AnyPS5 throws for arguments the console encodes
+agcbuild_CbCondWrite_a	diff	more than six arguments; the console's stack arguments are not known
+agcbuild_CbCondWrite_b	diff	more than six arguments; the console's stack arguments are not known
+agcbuild_CbCondWrite_c	diff	more than six arguments; the console's stack arguments are not known
 agcbuild_CbDispatch_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_CbDispatch_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_CbMemSemaphore_c	diff	the operation argument changes the control word; not modelled
@@ -61,41 +55,31 @@ agcbuild_CbReleaseMem_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_CbReleaseMem_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_CbSetShRegisterRangeDirect_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_CbSetUcRegisterRangeDirect_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbAcquireMem_a	throw	the ACQUIRE_MEM encoding; #18479
-agcbuild_DcbAcquireMem_b	diff	the ACQUIRE_MEM encoding; #18479
-agcbuild_DcbAcquireMem_c	throw	the ACQUIRE_MEM encoding; #18479
 agcbuild_DcbAtomicGds_a	diff	more than six arguments; the console's stack arguments are not known
 agcbuild_DcbAtomicGds_b	diff	more than six arguments; the console's stack arguments are not known
 agcbuild_DcbAtomicGds_c	diff	more than six arguments; the console's stack arguments are not known
-agcbuild_DcbAtomicMem_a	throw	AnyPS5 throws for arguments the console encodes
+agcbuild_DcbAtomicMem_a	diff	more than six arguments; the console's stack arguments are not known
 agcbuild_DcbAtomicMem_b	diff	more than six arguments; the console's stack arguments are not known
-agcbuild_DcbAtomicMem_c	throw	AnyPS5 throws for arguments the console encodes
+agcbuild_DcbAtomicMem_c	diff	more than six arguments; the console's stack arguments are not known
 agcbuild_DcbCondExec_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbCondExec_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbCondExec_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbContextStateOp_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbContextStateOp_b	diff	the packet differs from the console's; not yet analysed
 agcbuild_DcbContextStateOp_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbCopyData_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbCopyData_b	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbCopyData_c	throw	AnyPS5 throws for arguments the console encodes
+agcbuild_DcbCopyData_a	throw	more than six arguments; the console's stack arguments are not known
+agcbuild_DcbCopyData_b	throw	more than six arguments; the console's stack arguments are not known
+agcbuild_DcbCopyData_c	throw	more than six arguments; the console's stack arguments are not known
 agcbuild_DcbDispatchIndirect_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbDispatchIndirect_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbDispatchIndirect_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbDmaData_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbDmaData_b	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbDmaData_c	throw	AnyPS5 throws for arguments the console encodes
+agcbuild_DcbDmaData_a	throw	more than six arguments; the console's stack arguments are not known
+agcbuild_DcbDmaData_b	throw	more than six arguments; the console's stack arguments are not known
+agcbuild_DcbDmaData_c	throw	more than six arguments; the console's stack arguments are not known
 agcbuild_DcbDrawIndexAuto_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbDrawIndexIndirectMulti_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbDrawIndexIndirectMulti_b	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbDrawIndexIndirectMulti_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbDrawIndexIndirect_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbDrawIndexIndirect_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbDrawIndexIndirect_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbDrawIndexMultiInstanced_a	diff	the packet differs from the console's; not yet analysed
-agcbuild_DcbDrawIndirectMulti_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbDrawIndirectMulti_b	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbDrawIndirectMulti_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbDrawIndirect_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbDrawIndirect_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbDrawIndirect_c	throw	AnyPS5 throws for arguments the console encodes
@@ -115,9 +99,6 @@ agcbuild_DcbPrimeUtcl2_a	diff	the console writes PRIME_UTCL2 (opcode 0x5d) where
 agcbuild_DcbPrimeUtcl2_b	diff	the console writes PRIME_UTCL2 (opcode 0x5d) where AnyPS5 writes a NOP
 agcbuild_DcbPrimeUtcl2_c	diff	the console writes PRIME_UTCL2 (opcode 0x5d) where AnyPS5 writes a NOP
 agcbuild_DcbResetQueue_b	diff	the packet differs from the console's; not yet analysed
-agcbuild_DcbSetBaseIndirectArgs_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbSetBaseIndirectArgs_b	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbSetBaseIndirectArgs_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbSetCfRegisterDirect_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbSetCfRegisterDirect_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbSetCxRegisterDirect_a	throw	AnyPS5 throws for arguments the console encodes
@@ -155,7 +136,6 @@ agcbuild_DcbWaitUntilSafeForRendering_a	diff	the console returns null and writes
 agcbuild_DcbWaitUntilSafeForRendering_b	diff	the console returns null and writes nothing for these arguments
 agcbuild_DcbWaitUntilSafeForRendering_c	diff	the console returns null and writes nothing for these arguments
 kx_attr_getstack_default	diff	a 1 MiB default stack on purpose, see docs/dev/debt/libkernel.md
-kx_eq_wait_zero_events	diff	the count is left unwritten on EINVAL; #15123 zeroes it on every failure
 nh_escape_buffer_too_small	diff	a short buffer is left unfilled and the required size written; #12056 fills it as the console does
 nh_ntop_v6	diff	the console leaves stale bytes after the string, which are not modelled
 nh_player_dialog_param_init	diff	returns void, so the console's return register is not a result

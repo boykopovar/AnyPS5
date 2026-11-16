@@ -395,6 +395,10 @@ void Driver::ReportFailure(std::exception_ptr error) {
         first = !failure;
         if (first) failure = error;
         failed.store(true, std::memory_order_release);
+        {
+            std::lock_guard tails(tailsMutex);
+            unreadTails.clear();
+        }
         for (const auto& [handle, output] : outputs) output->Fail(failure);
         for (auto& [queue, worker] : workers) {
             for (const auto& item : worker.pending) {
