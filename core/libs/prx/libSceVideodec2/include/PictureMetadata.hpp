@@ -22,6 +22,7 @@ struct PictureHeader {
     std::uint32_t level;
     Crop crop;
     std::uint8_t bitDepthMinus8;
+    bool avcIdr;
 };
 
 }
