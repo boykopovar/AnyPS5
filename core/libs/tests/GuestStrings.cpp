@@ -396,7 +396,7 @@ static void CheckStrtonum() {
         reinterpret_cast<const char**>(std::uintptr_t{0x10}),
         reinterpret_cast<const char**>(memory + page)
     };
-    for (const auto* badError : badErrors) {
+    for (const char** badError : badErrors) {
         *__error_nid_postfix() = 71;
         errno = 71;
         Require(strtonum_nid_postfix("42", 0, 100, badError) == 0);
