@@ -1798,10 +1798,6 @@ int APS5_VABI _ZNK6icu_6810ICUService15getDisplayNamesERNS_7UVectorER10UErrorCod
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI uprv_ebcdictolower_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI sceIcuLegacyUnknown_9sXRmxOZtsY_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }

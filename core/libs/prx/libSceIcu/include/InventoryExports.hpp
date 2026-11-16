@@ -56,6 +56,7 @@ std::int32_t APS5_VABI uloc_getLanguage(const char* locale, char* result, std::i
 std::int32_t APS5_VABI uloc_getParent(const char* locale, char* result, std::int32_t capacity,
                                                   std::int32_t* status);
 std::int32_t APS5_VABI uloc_getScript(const char* locale, char* result, std::int32_t capacity, std::int32_t* status);
+char APS5_VABI uprv_ebcdictolower_nid_postfix(char value);
 std::int8_t APS5_VABI uloc_isRightToLeft_nid_postfix(const char* locale);
 int APS5_VABI uloc_minimizeSubtags();
 void APS5_VABI uloc_setDefault_nid_postfix(const char* newDefaultLocale, std::int32_t* status);
