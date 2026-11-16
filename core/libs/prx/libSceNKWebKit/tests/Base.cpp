@@ -57,7 +57,7 @@ static void TestTypeIDs() {
     Require(WKCertificateInfoGetTypeID() == 0);
     Require(WKApplicationCacheManagerGetTypeID() == 0);
     Require(WKBundleBackForwardListGetTypeID() == 0);
-    Require(WKContextMenuItemGetTypeID() == 0);
+    Require(WKContextMenuItemGetTypeID() == static_cast<std::uint32_t>(NKWebKit::ObjectType::ContextMenuItem));
     Require(WKUserContentExtensionStoreGetTypeID() == 0);
     Require(WKAXObjectGetTypeID() == 132);
     Require(WKRenderLayerGetTypeID() == static_cast<std::uint32_t>(NKWebKit::ObjectType::RenderLayer));
@@ -1473,6 +1473,112 @@ static void TestPopupMenuItem() {
     Require(threw);
 }
 
+static void TestContextMenuItem() {
+    Require(WKContextMenuItemGetTypeID() == static_cast<std::uint32_t>(NKWebKit::ObjectType::ContextMenuItem));
+
+    auto* titleString = WKStringCreateWithUTF8CString("Item 1");
+    auto* actionItem = WKContextMenuItemCreateAsAction(42, titleString, true);
+    Require(actionItem != nullptr);
+    Require(WKGetTypeID(actionItem) == WKContextMenuItemGetTypeID());
+    Require(WKContextMenuItemGetType(actionItem) == 0);
+    Require(WKContextMenuItemGetTag(actionItem) == 42);
+    Require(WKContextMenuItemGetEnabled(actionItem));
+    Require(!WKContextMenuItemGetChecked(actionItem));
+    auto* copyTitle = WKContextMenuItemCopyTitle(actionItem);
+    Require(copyTitle != nullptr);
+    Require(WKStringIsEqualToUTF8CString(copyTitle, "Item 1"));
+    WKRelease(copyTitle);
+    Require(WKContextMenuItemGetUserData(actionItem) == nullptr);
+
+    auto* userDataString = WKStringCreateWithUTF8CString("customData");
+    WKContextMenuItemSetUserData(actionItem, userDataString);
+    auto* getUserData = WKContextMenuItemGetUserData(actionItem);
+    Require(getUserData == userDataString);
+    WKRelease(userDataString);
+    WKRelease(getUserData);
+    WKContextMenuItemSetUserData(actionItem, nullptr);
+    Require(WKContextMenuItemGetUserData(actionItem) == nullptr);
+
+    auto* checkableItem = WKContextMenuItemCreateAsCheckableAction(100, titleString, false, true);
+    Require(checkableItem != nullptr);
+    Require(WKContextMenuItemGetType(checkableItem) == 1);
+    Require(WKContextMenuItemGetTag(checkableItem) == 100);
+    Require(!WKContextMenuItemGetEnabled(checkableItem));
+    Require(WKContextMenuItemGetChecked(checkableItem));
+
+    auto* separator = WKContextMenuItemSeparatorItem();
+    Require(separator != nullptr);
+    Require(WKContextMenuItemGetType(separator) == 2);
+    Require(WKContextMenuItemGetTag(separator) == 0);
+    Require(WKContextMenuItemGetEnabled(separator));
+    Require(!WKContextMenuItemGetChecked(separator));
+
+    const void* subItemsList[] = {actionItem, checkableItem, separator};
+    auto* subItemsArray = WKArrayCreate(subItemsList, 3);
+    auto* submenu = WKContextMenuItemCreateAsSubmenu(titleString, true, subItemsArray);
+    Require(submenu != nullptr);
+    Require(WKContextMenuItemGetType(submenu) == 3);
+    Require(WKContextMenuItemGetEnabled(submenu));
+
+    auto* copiedSubItems = WKContextMenuCopySubmenuItems(submenu);
+    Require(copiedSubItems != nullptr);
+    Require(WKGetTypeID(copiedSubItems) == WKArrayGetTypeID());
+    Require(WKArrayGetSize(copiedSubItems) == 3);
+    Require(WKArrayGetItemAtIndex(copiedSubItems, 0) == actionItem);
+    Require(WKArrayGetItemAtIndex(copiedSubItems, 1) == checkableItem);
+    Require(WKArrayGetItemAtIndex(copiedSubItems, 2) == separator);
+    WKRelease(copiedSubItems);
+    WKRelease(subItemsArray);
+
+    auto* emptySubmenu = WKContextMenuItemCreateAsSubmenu(nullptr, false, nullptr);
+    Require(emptySubmenu != nullptr);
+    auto* emptySubmenuTitle = WKContextMenuItemCopyTitle(emptySubmenu);
+    Require(WKStringIsEmpty(emptySubmenuTitle));
+    WKRelease(emptySubmenuTitle);
+    auto* emptyCopied = WKContextMenuCopySubmenuItems(emptySubmenu);
+    Require(WKArrayGetSize(emptyCopied) == 0);
+    WKRelease(emptyCopied);
+    WKRelease(emptySubmenu);
+
+    bool threw = false;
+    try {
+        WKContextMenuItemGetType(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKContextMenuItemGetTag(titleString);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKContextMenuItemSetUserData(nullptr, titleString);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKContextMenuCopySubmenuItems(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    WKRelease(submenu);
+    WKRelease(separator);
+    WKRelease(checkableItem);
+    WKRelease(actionItem);
+    WKRelease(titleString);
+}
+
 static void TestOpenPanelResultListener() {
     Require(WKOpenPanelResultListenerGetTypeID() == 80);
 
@@ -2760,6 +2866,7 @@ int main() {
     TestDownload();
     TestAXObject();
     TestPopupMenuItem();
+    TestContextMenuItem();
     TestOpenPanelResultListener();
     TestProtectionSpace();
     TestPermissionRequests();

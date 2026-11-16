@@ -31,7 +31,6 @@ int main() {
     WKContextClearSupportedPlugins();
     WKContextGetStatistics();
     WKContextGetStatisticsWithOptions();
-    WKContextMenuItemSetUserData();
     WKContextRefreshPlugIns();
     WKContextSetAdditionalPluginsDirectory();
     WKContextSetIconDatabasePath();
