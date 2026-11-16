@@ -1212,6 +1212,16 @@ class SvgHelperTests(unittest.TestCase):
     def test_heading_shows_the_title_percentage_and_counts(self):
         markup = progress.heading("Shaders", {"percent": 50, "done": 1, "total": 2}, 0, 0)
         self.assertIn("Shaders: 50% (1/2)", markup)
+class LayoutTests(unittest.TestCase):
+    def test_squarify_tiles_the_whole_rectangle(self):
+        rects = progress.squarify([1, 1, 1, 1], 0, 0, 10, 10)
+        self.assertEqual(len(rects), 4)
+        self.assertAlmostEqual(sum(w * h for _, _, w, h in rects), 100)
+
+    def test_squarify_areas_follow_the_values(self):
+        rects = progress.squarify([3, 1], 0, 0, 4, 4)
+        self.assertAlmostEqual(rects[0][2] * rects[0][3], 12)
+        self.assertAlmostEqual(rects[1][2] * rects[1][3], 4)
 
 
 if __name__ == "__main__":
