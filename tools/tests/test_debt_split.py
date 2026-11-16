@@ -580,6 +580,13 @@ class DebtSplitTests(unittest.TestCase):
 
     def test_separated_puts_a_blank_between_entries_and_text(self):
         self.assertEqual(debt_split.separated(["- a", "- b", "text"]), ["- a", "- b", "", "text"])
+class RelinkUnfencedTests(unittest.TestCase):
+    def test_relink_unfenced_rewrites_relative_links_and_keeps_urls(self):
+        text = "see [x](../img/x.png) and [y](https://example.com/a) and [z](#anchor)"
+        moved = debt_split.relink_unfenced(text, "docs/dev/a.md", "docs/dev/debt/b.md")
+        self.assertIn("[x](../../img/x.png)", moved)
+        self.assertIn("[y](https://example.com/a)", moved)
+        self.assertIn("[z](../a.md#anchor)", moved)
 
 
     def test_render_index_separates_headings_and_text_and_ends_with_one_newline(self):
