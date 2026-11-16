@@ -189,6 +189,42 @@ class ModuleTests(unittest.TestCase):
             self.assertEqual(run.commands, [["replay", "--required-modules"]])
             self.assertIn(f"libkernel_sys.prx is not in {directory}", note)
 
+    def test_the_search_path_gets_no_empty_entry_when_the_variable_is_unset_or_empty(self):
+        names = ("PATH", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH")
+        modules = Path("modules")
+        separator = library_oracle.os.pathsep
+        with mock.patch.dict(library_oracle.os.environ, {"OTHER": "kept"}, clear=True):
+            copy = library_oracle.environment(modules)
+            self.assertEqual({name: copy[name] for name in names}, dict.fromkeys(names, str(modules)))
+            self.assertEqual(copy["OTHER"], "kept")
+        with mock.patch.dict(library_oracle.os.environ, dict.fromkeys(names, ""), clear=True):
+            copy = library_oracle.environment(modules)
+            self.assertEqual({name: copy[name] for name in names}, dict.fromkeys(names, str(modules)))
+        with mock.patch.dict(library_oracle.os.environ, dict.fromkeys(names, "first" + separator + "second"), clear=True):
+            copy = library_oracle.environment(modules)
+            self.assertEqual({name: copy[name] for name in names},
+                             dict.fromkeys(names, str(modules) + separator + "first" + separator + "second"))
+
+
+class OutputTests(unittest.TestCase):
+    def test_write_known_reports_a_non_ascii_path_as_utf8(self):
+        from contextlib import redirect_stdout
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as directory:
+            known = Path(directory) / "界" / "known.tsv"
+            known.parent.mkdir()
+            replay = Path(directory) / "library_oracle_replay"
+            replay.write_bytes(b"")
+            stdout = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+            with patch.object(library_oracle, "fetch", return_value=Path(directory) / "rtc.golden.tsv"), \
+                    patch.object(library_oracle, "replay", return_value=({"rtc_case": ("diff", "ret 0x1")}, "compared 1")), \
+                    patch.object(library_oracle, "case_ids", return_value={"rtc_case"}), redirect_stdout(stdout):
+                result = library_oracle.main(["rtc", "--replay", str(replay), "--known", str(known), "--write-known"])
+                stdout.flush()
+            self.assertEqual(result, 0)
+            self.assertEqual(known.read_text(encoding="utf-8"), "rtc_case\tdiff\n")
+            self.assertIn(f"wrote 1 findings to {known}", stdout.buffer.getvalue().decode("utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()
