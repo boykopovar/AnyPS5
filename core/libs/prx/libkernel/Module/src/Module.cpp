@@ -1,4 +1,5 @@
 #include "prx/libkernel/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -283,6 +284,13 @@ namespace {
 thread_local PendingModuleArgs pendingModuleArgs;
 thread_local int pendingModuleInitResult = 0;
 
+bool StoreModuleResult(int* result, int value) {
+    const int savedErrno = errno;
+    const bool stored = GuestCopyOut_nid_no_patch(result, &value, sizeof(value));
+    errno = savedErrno;
+    return stored;
+}
+
 }
 
 extern "C" {
@@ -299,7 +307,7 @@ void __aps5_set_module_init_result_nid_no_patch(int result) {
 
 KernelModule APS5_VABI sceKernelLoadStartModule(const char* module_file_name, size_t args, const void* argp, uint32_t flags, const KernelLoadModuleOpt* opt, int* res) {
  if (flags != 0 || opt != nullptr) return static_cast<KernelModule>(SCE_KERNEL_ERROR_EINVAL);
- if (res) *res = 0;
+ if (res && !StoreModuleResult(res, 0)) return static_cast<KernelModule>(SCE_KERNEL_ERROR_EFAULT);
  if (!module_file_name) return static_cast<KernelModule>(SCE_KERNEL_ERROR_EFAULT);
  pendingModuleArgs = {args, argp};
  pendingModuleInitResult = 0;
@@ -308,7 +316,7 @@ KernelModule APS5_VABI sceKernelLoadStartModule(const char* module_file_name, si
  const int started = pendingModuleInitResult;
  pendingModuleArgs = {};
  pendingModuleInitResult = 0;
- if (res) *res = started;
+ if (res) StoreModuleResult(res, started);
  if (!handle) return static_cast<KernelModule>(SCE_KERNEL_ERROR_ENOENT);
  return static_cast<KernelModule>(reinterpret_cast<intptr_t>(handle));
 }
@@ -317,8 +325,9 @@ int APS5_VABI sceKernelStopUnloadModule(KernelModule handle, size_t args, const 
  (void)args;
  (void)argp;
  if (flags != 0 || opt != nullptr || handle == 0) return SCE_KERNEL_ERROR_EINVAL;
+ if (res && !GuestWritable_nid_no_patch(res, sizeof(*res))) return SCE_KERNEL_ERROR_EFAULT;
  if (dlclose_nid_postfix(reinterpret_cast<void*>(static_cast<intptr_t>(handle))) != 0) return SCE_KERNEL_ERROR_ESRCH;
- if (res) *res = 0;
+ if (res) StoreModuleResult(res, 0);
  return 0;
 }
 
