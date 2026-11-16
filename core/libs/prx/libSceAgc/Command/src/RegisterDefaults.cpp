@@ -67,8 +67,9 @@ struct DefaultContext {
 };
 
 std::mutex defaultStateMutex;
-std::array<DefaultContext, 2> defaultContexts;
+auto& defaultContexts = *new std::array<DefaultContext, 2>;
 std::uint32_t activeDefaultInstance = 0;
+bool activeDefaultAvailable = false;
 
 }
 
@@ -125,6 +126,7 @@ int InitializeDefaultCxState(std::uint32_t version) {
         if (defaultContexts[index].version == version) {
             defaultContexts[index].external = true;
             activeDefaultInstance = index;
+            activeDefaultAvailable = true;
             return 0;
         }
     }
@@ -171,13 +173,17 @@ int InitializeDefaultCxState(std::uint32_t version) {
     next.version = version;
     next.external = true;
     activeDefaultInstance = static_cast<std::uint32_t>(slot - defaultContexts.begin());
+    activeDefaultAvailable = true;
     *slot = std::move(next);
     return 0;
 }
 
 QueueResetState GetQueueResetState(std::uint32_t instance, bool active) {
     std::lock_guard lock(defaultStateMutex);
-    if (active) instance = activeDefaultInstance;
+    if (active) {
+        Require(activeDefaultAvailable, __func__, "active context defaults are unavailable");
+        instance = activeDefaultInstance;
+    }
     Require(instance < defaultContexts.size(), __func__, "invalid context defaults instance");
     const auto& context = defaultContexts[instance];
     return {instance, context.version, context.external, context.resetCommands};
