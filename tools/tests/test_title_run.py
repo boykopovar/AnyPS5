@@ -1100,6 +1100,12 @@ class RunHelperTests(unittest.TestCase):
         self.assertEqual(title_run.unsupported_instructions(run), ["op"])
         self.assertIsNone(title_run.report_field({}, "missing"))
 
+    def test_distinct_counts_unique_key_combinations(self):
+        entries = [{"a": 1, "b": 2}, {"a": 1, "b": 3}, {"a": 2}]
+        self.assertEqual(title_run.distinct(entries, ["a"]), 2)
+        self.assertEqual(title_run.distinct(entries, ["a", "b"]), 3)
+        self.assertIsNone(title_run.distinct(None, ["a"]))
+
 
 if __name__ == "__main__":
     unittest.main()
