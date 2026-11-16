@@ -309,5 +309,13 @@ class PadInputTests(unittest.TestCase):
         self.assertIn("is a directory", errors.getvalue())
 
 
+class NextSequenceTests(unittest.TestCase):
+    def test_next_sequence_is_positive_and_fits_64_bits_without_a_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            value = pad_input.next_sequence(Path(directory) / 'missing.cmd')
+        self.assertGreater(value, 0)
+        self.assertLess(value, 2 ** 64)
+
+
 if __name__ == "__main__":
     unittest.main()
