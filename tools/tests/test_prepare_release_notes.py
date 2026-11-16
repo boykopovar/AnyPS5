@@ -1,0 +1,22 @@
+import json
+import os
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import prepare_release_notes
+
+
+class PrepareReleaseNotesTests(unittest.TestCase):
+    def test_release_body_keeps_short_notes_and_strips_long_ones(self):
+        short = "## What's Changed\n* a\n\n**Full Changelog**: x"
+        self.assertEqual(prepare_release_notes.release_body(short), short)
+        long = "## What's Changed\n" + "* " + "x" * prepare_release_notes.BODY_LIMIT + "\n\n**Full Changelog**: x"
+        self.assertNotIn("What's Changed", prepare_release_notes.release_body(long))
+        self.assertIn("**Full Changelog**: x", prepare_release_notes.release_body(long))
+
+
+if __name__ == "__main__":
+    unittest.main()
