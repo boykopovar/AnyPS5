@@ -38,12 +38,6 @@ std::optional<CandidateHeader> TryReadCandidateHeader(const std::filesystem::pat
     return result;
 }
 
-CandidateHeader ReadCandidateHeader(const std::filesystem::path& path) {
-    const auto header = TryReadCandidateHeader(path);
-    if (!header) throw Domain::RelinkerException("Cannot read guest candidate: " + Io::Utf8Path(path));
-    return *header;
-}
-
 std::string FoldedName(std::string name, const bool foldCase) {
     if (foldCase) for (auto& character : name) if (character >= 'A' && character <= 'Z') character = static_cast<char>(character + ('a' - 'A'));
     return name;
