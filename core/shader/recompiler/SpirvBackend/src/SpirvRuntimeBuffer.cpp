@@ -885,7 +885,7 @@ std::uint32_t formattedCall(SpirvValueEmitContext& context, const IrValue& instr
         } else {
             const auto word1 = state.module.SpecializationConstant(u32, first, 0u);
             const auto stride = field(state, word1, 16u, 14u);
-            const auto swizzle = both(state, nonzero(state, stride), nonzero(state, field(state, word1, 31u, 1u)));
+            const auto swizzle = both(state, both(state, nonzero(state, stride), nonzero(state, field(state, word1, 31u, 1u))), nonzero(state, parameters[7]));
             shared = {ConstantU32(state, 0u), parameters[3], stride, state.module.SpecializationConstant(u32, first + 1u, 0u), swizzle, parameters[0], nonzero(state, parameters[8]), parameters[1], parameters[2]};
         }
         const auto value = formatSwitch(context, instruction, shared, components, store, store ? parameters[9] : 0u);

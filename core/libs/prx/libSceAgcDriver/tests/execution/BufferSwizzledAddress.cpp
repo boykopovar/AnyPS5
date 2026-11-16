@@ -33,6 +33,7 @@ struct Op {
     std::uint32_t components;
 };
 
+constexpr Op FormatX{0u, 4u, 4u, 1u};
 constexpr Op Ubyte{8u, 24u, 1u, 1u};
 constexpr Op Ushort{10u, 26u, 2u, 1u};
 constexpr Op Dword{12u, 28u, 4u, 1u};
@@ -226,6 +227,10 @@ void AddWithoutIndex(std::vector<Case>& cases) {
     cases.push_back(Load(Dword, false, false, 0u, 16u, 0u, true, 4u));
     cases.push_back(Load(Dword, false, false, 0u, 16u, 1u, true, 8u));
     cases.push_back(Load(Dwordx4, false, false, 0u, 16u, 0u, true));
+    cases.push_back(Load(FormatX, true, true, 4u, 16u, 0u));
+    cases.push_back(Load(FormatX, true, true, 8u, 16u, 1u));
+    cases.push_back(Load(FormatX, false, true, 4u, 16u, 0u));
+    cases.push_back(Load(FormatX, false, true, 8u, 16u, 2u, true));
     cases.push_back(Load(Dword, false, false, 0u, 16u, 0u, true, 0u, false));
     cases.push_back(Load(Dword, true, true, 4u, 16u, 0u, true, 0u, false));
 }
