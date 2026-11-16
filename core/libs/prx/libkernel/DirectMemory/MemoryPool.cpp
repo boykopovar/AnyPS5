@@ -73,6 +73,11 @@ struct PhysicalMemoryPool {
         const size_t pageCount = static_cast<size_t>(alignedLen / kPage);
 
         while (cur <= end && alignedLen <= end - cur) {
+            uint64_t claimEnd;
+            if (DirectMemoryReleaseClaimed(cur, cur + alignedLen, &claimEnd)) {
+                if (!RoundUp(claimEnd, align, cur)) break;
+                continue;
+            }
             size_t lastUsed;
             if (!_lastUsedPage(static_cast<size_t>(cur / kPage), pageCount, lastUsed)) {
                 _commit(cur, alignedLen, memoryType);
@@ -92,13 +97,16 @@ struct PhysicalMemoryPool {
         uint64_t lo, hi;
         if (!PageSpan(start, len, lo, hi)) return false;
         std::unique_lock<std::mutex> lock(_mutex);
-        if (requireAllocated) {
-            if (!_allUsed(static_cast<size_t>(lo / kPage), static_cast<size_t>((hi - lo) / kPage)) || _claimed(lo, hi)) return false;
-        } else {
-            _claimFinished.wait(lock, [&] { return !_claimed(lo, hi); });
+        for (;;) {
+            if (requireAllocated && (!_allUsed(static_cast<size_t>(lo / kPage), static_cast<size_t>((hi - lo) / kPage)) || _claimed(lo, hi))) return false;
+            if (!_claimed(lo, hi) && DirectMemoryTryAddReleaseClaim(lo, hi)) return true;
+            _claimFinished.wait(lock);
         }
-        _claims.emplace(lo, hi);
-        return true;
+    }
+
+    void WakeReleaseClaims() {
+        std::lock_guard<std::mutex> lock(_mutex);
+        _claimFinished.notify_all();
     }
 
     void FinishRelease(uint64_t start, size_t len) {
@@ -106,8 +114,14 @@ struct PhysicalMemoryPool {
         if (!PageSpan(start, len, lo, hi)) return;
         {
             std::lock_guard<std::mutex> lock(_mutex);
-            _claims.erase(lo);
-            (void)_releaseLocked(lo, hi, false);
+            try {
+                (void)_releaseLocked(lo, hi, false);
+            } catch (...) {
+                DirectMemoryRemoveReleaseClaim(lo);
+                _claimFinished.notify_all();
+                throw;
+            }
+            DirectMemoryRemoveReleaseClaim(lo);
         }
         _claimFinished.notify_all();
     }
@@ -117,9 +131,15 @@ struct PhysicalMemoryPool {
         if (!PageSpan(start, len, lo, hi)) return;
         {
             std::lock_guard<std::mutex> lock(_mutex);
-            _claims.erase(lo);
+            DirectMemoryRemoveReleaseClaim(lo);
         }
         _claimFinished.notify_all();
+    }
+
+    std::unique_lock<std::mutex> Lock() { return std::unique_lock<std::mutex>(_mutex); }
+
+    void RequireLocked(const std::unique_lock<std::mutex>& lock) const {
+        if (lock.mutex() != &_mutex || !lock.owns_lock()) throw std::logic_error("DirectMemory pool: the caller does not hold the pool lock");
     }
 
     bool Find(uint64_t offset, bool findNext, int64_t* start, int64_t* end, int* memoryType) {
@@ -136,10 +156,15 @@ struct PhysicalMemoryPool {
     }
 
     bool Retype(uint64_t start, size_t len, int memoryType) {
+        const auto lock = Lock();
+        return RetypeLocked(lock, start, len, memoryType);
+    }
+
+    bool RetypeLocked(const std::unique_lock<std::mutex>& lock, uint64_t start, size_t len, int memoryType) {
+        RequireLocked(lock);
         uint64_t lo, hi;
         if (!PageSpan(start, len, lo, hi)) return false;
 
-        std::lock_guard<std::mutex> lock(_mutex);
         const bool splitLo = _splitAt(lo);
         try {
             _splitAt(hi);
@@ -235,7 +260,7 @@ private:
         if (!ins.second) throw std::logic_error("DirectMemory pool: block map and page flags disagree");
 
         try {
-            CreateDirectMemoryBacking(static_cast<int64_t>(start), static_cast<size_t>(len), type);
+            CreateDirectMemoryBacking(static_cast<int64_t>(start), static_cast<size_t>(len));
         } catch (...) {
             _blocks.erase(ins.first);
             throw;
@@ -244,10 +269,7 @@ private:
         _mark(static_cast<size_t>(start / kPage), static_cast<size_t>(len / kPage), true);
     }
 
-    bool _claimed(uint64_t lo, uint64_t hi) const {
-        std::map<uint64_t, uint64_t>::const_iterator it = _claims.lower_bound(hi);
-        return it != _claims.begin() && std::prev(it)->second > lo;
-    }
+    static bool _claimed(uint64_t lo, uint64_t hi) { return DirectMemoryReleaseClaimed(lo, hi, nullptr); }
 
     bool _release(uint64_t start, size_t len, bool requireAllocated) {
         uint64_t lo, hi;
@@ -308,7 +330,6 @@ private:
     std::condition_variable _claimFinished;
     bool _used[kNumPages] = {};
     BlockMap _blocks;
-    std::map<uint64_t, uint64_t> _claims;
 };
 
 }
@@ -341,12 +362,24 @@ void DirectMemoryAbandonRelease(int64_t start, size_t len) noexcept {
     PhysicalMemoryPool::Instance().AbandonRelease(static_cast<uint64_t>(start), len);
 }
 
+void DirectMemoryWakeReleaseClaims() {
+    PhysicalMemoryPool::Instance().WakeReleaseClaims();
+}
+
 bool DirectMemoryFind(int64_t offset, bool findNext, int64_t* start, int64_t* end, int* memoryType) {
     return PhysicalMemoryPool::Instance().Find(static_cast<uint64_t>(offset), findNext, start, end, memoryType);
 }
 
 void DirectMemoryRetype(int64_t start, size_t len, int memoryType) {
     (void)PhysicalMemoryPool::Instance().Retype(static_cast<uint64_t>(start), len, memoryType);
+}
+
+std::unique_lock<std::mutex> DirectMemoryPoolLock() {
+    return PhysicalMemoryPool::Instance().Lock();
+}
+
+void DirectMemoryRetypeLocked(const std::unique_lock<std::mutex>& pool, int64_t start, size_t len, int memoryType) {
+    (void)PhysicalMemoryPool::Instance().RetypeLocked(pool, static_cast<uint64_t>(start), len, memoryType);
 }
 
 int DirectMemoryLargestFree(int64_t searchStart, int64_t searchEnd, size_t alignment, int64_t* startOut, size_t* sizeOut) {

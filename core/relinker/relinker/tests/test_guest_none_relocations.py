@@ -326,7 +326,7 @@ def invalid_cases(sce):
     yield "unsupported-dynamic-tag-unused", insert_dynamic_tag(module([NOOP], sce=sce), 19, 0), "DT_REL relocations are not supported"
     yield "unsupported-dynamic-tag-textrel", insert_dynamic_tag(module([NOOP], sce=sce), 22, 0), "Unsupported dynamic tag 22"
     strtab = 0x61000035 if sce else 5
-    yield "duplicate-dynamic-tag-strtab", insert_dynamic_tag(module([NOOP], sce=sce), strtab, 0), f"Duplicate dynamic tag {strtab}"
+    yield "conflicting-dynamic-tag-strtab", insert_dynamic_tag(module([NOOP], sce=sce), strtab, 1), f"Conflicting duplicate dynamic tag {strtab}"
     yield "unterminated-dynamic-segment", truncate_dynamic_terminator(module([NOOP], sce=sce)), "Unterminated dynamic segment"
     yield "duplicate-dynamic-segment", duplicate_dynamic_segment(module([NOOP], sce=sce)), "Duplicate dynamic segment"
     yield "duplicate-sce-dynamic-data", duplicate_sce_dynamic_data(module([NOOP], sce=sce)), "Duplicate SCE dynamic data"
@@ -418,6 +418,12 @@ def main():
                     result, artifact, output = convert(f"{sce}-{name}", "windows", image)
                     assert result.returncode == 2 and error in result.stderr, (sce, name, result.stderr)
                     assert not artifact.exists() and not output.exists(), name
+            if "linux" in systems:
+                strtab, value = (0x61000035, 0) if sce else (5, 0x2200)
+                image = insert_dynamic_tag(module([RELATIVE], sce=sce), strtab, value)
+                result, artifact, output = convert(f"{sce}-identical-dynamic-tag-strtab", "linux", image)
+                assert result.returncode == 0, (sce, result.stdout, result.stderr)
+                check_output(artifact.read_bytes(), "linux", [RELATIVE], [], UNCHANGED)
     print(f"Guest no-op relocation {group} tests passed")
 
 

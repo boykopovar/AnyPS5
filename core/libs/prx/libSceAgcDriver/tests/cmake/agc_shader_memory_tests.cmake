@@ -5,6 +5,7 @@ add_test_executable(agc_shader_memory_tests EXCLUDE_FROM_ALL
         Execution/src/PerformanceTraceThread.cpp
         Graphics/src/GuestTextureResource.cpp
         Graphics/src/TextureTiling.cpp
+        Graphics/src/RuntimeSwitches.cpp
         Graphics/src/TextureFormat.cpp
 )
 target_include_directories(agc_shader_memory_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR})
@@ -48,6 +49,11 @@ if(BUILD_TESTING)
     set_tests_properties(agc_shader_nested_sampler_snapshot_retry PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(agc_shader_nested_snapshot_retry agc_shader_nested_sampler_snapshot_retry PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test(NAME agc_shader_table_keep COMMAND agc_shader_memory_tests --table-keep)
+    set_tests_properties(agc_shader_table_keep PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(agc_shader_table_keep PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test(NAME agc_shader_table_snapshot_reuse COMMAND agc_shader_memory_tests --table-snapshot-reuse)
     add_test(NAME agc_shader_region_merge COMMAND agc_shader_memory_tests --region-merge)
