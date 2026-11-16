@@ -19,6 +19,32 @@ one settles, and how to cite it.
 
 When sources disagree, say so in the pull request and in the debt entry.
 
+[prosper](https://github.com/mattias800/prosper)'s console oracle has published such measurements for libSceRtc, libc, libSceHttp, libSceNet, libSceUserService, libkernel and libSceAgc's packet builders. `python3 tools/library-oracle/library_oracle.py` replays them against the built modules, after `cmake --build build --target library_oracle_replay`: it downloads the measurements from a pinned commit, checks their digest and fails on a result that is not in [known.tsv](../../tools/library-oracle/known.tsv). A pull request that fixes a listed case removes its line, and one that adds a difference explains it there.
+
+## Public source baselines
+
+Some libraries are builds of public projects. The library's debt file records which release its entries follow,
+and an entry cites the file at that release. This can differ from the submodule the repository bundles, which some
+adapters call into.
+
+| Library | Project | Entries follow | Bundled submodule |
+| --- | --- | --- | --- |
+| [libwebrtc](debt/libwebrtc.md) | WebRTC | code that is the same at M127 and M134 (its Source revision entry) | none |
+| [libSceLibreSsl](debt/libSceLibreSsl.md) | LibreSSL | 2.5.4 | `3rdparty/libressl-openbsd` (OpenBSD 7.0) |
+| [libSceLibreSsl3](debt/libSceLibreSsl3.md) | LibreSSL | 4.0.0 | `3rdparty/libressl-openbsd` (OpenBSD 7.0) |
+| [libSceFreeType](debt/libSceFreeType.md), [libSceFreeTypeOt](debt/libSceFreeTypeOt.md) | FreeType | 2.13.3 | `3rdparty/freetype` (2.15.0) |
+| [libfreetype](debt/libfreetype.md) | FreeType | 2.15.0 | `3rdparty/freetype` (2.15.0) |
+| [libSceIcu](debt/libSceIcu.md) | ICU | 68 for names (`icu_68`), 78.1 for behaviour | `3rdparty/icu` (78.1) |
+| [libharfbuzz](debt/libharfbuzz.md) | HarfBuzz | 10.0.1 | `3rdparty/harfbuzz` (10.0.1) |
+| [libfontconfig](debt/libfontconfig.md) | Fontconfig | 2.15.0 | `3rdparty/fontconfig` (2.15.0) |
+| [libSceJxr](debt/libSceJxr.md) | jxrlib | v2019.10.9 | `3rdparty/jxrlib` (v2019.10.9) |
+| [libSceNKWebKit](debt/libSceNKWebKit.md) | WebKit | the PS5 firmware 11.x WebKit source | none |
+| [libc](debt/libc.md), [libkernel](debt/libkernel.md), [libkernel_sys](debt/libkernel_sys.md), [libSceNet](debt/libSceNet.md), [libScePosixForWebKit](debt/libScePosixForWebKit.md), [libSceUsbd](debt/libSceUsbd.md) | FreeBSD | 11.4 | none |
+| [libSceLibcInternal](debt/libSceLibcInternal.md) | FreeBSD, Microsoft STL (Dinkumware) | FreeBSD 11.4 for C functions, the Microsoft STL for C++ helpers | none |
+
+The guest `std::string` is the 0x28-byte object in [GuestLocale.hpp](../../core/libs/prx/libc/include/GuestLocale.hpp),
+not libc++'s 24-byte one. The layouts of the other standard containers are not settled yet (#18830).
+
 ## What a call site settles
 
 The PS5 uses the System V AMD64 calling convention: integer and pointer arguments in `rdi`, `rsi`, `rdx`, `rcx`, `r8`,
@@ -74,7 +100,23 @@ buffer did not, so the export still throws. A silent stub is allowed only when i
    through the database of `tools/nid_names.py`, which is downloaded on first use unless `--db` names a CSV or
    `--no-names` prints the NIDs instead. It needs binutils `objdump`.
 
-   A disassembler that loads the program headers (Ghidra, IDA) does the same.
+   To name symbols in Ghidra without disassembling or downloading a database:
+
+   ```sh
+   python3 tools/annotate_module.py module.guest.prx --symbols-ghidra --db aerolib.csv > module.symbols
+   ```
+
+   Save the ASCII output without a BOM. Load the same relinked ELF at its ELF virtual addresses and run
+   [ImportSymbolsScript.py](https://github.com/NationalSecurityAgency/ghidra/blob/ac245cfdbd035c14180bb7a470e39348511b4ba2/Ghidra/Extensions/Jython/ghidra_scripts/ImportSymbolsScript.py)
+   from Ghidra's Jython extension with this map. Function exports inside executable file-backed segments get `f`;
+   aliases at the same address get `l`, keeping one function name. Import slots are `imp_` labels and other exports are labels too. TLS exports and
+   unallocated common symbols are omitted because their values are not addresses. Names use ASCII letters, digits and
+   underscores: other characters become underscores, a leading digit gets an underscore prefix, and names are limited
+   to Ghidra's 2000 characters. Collisions get `_2`, `_3`, and so on within that limit.
+   This mode reads only a local NID database or cache, prints to stdout and cannot be combined with `--symbols-json`
+   or `--out`. Without a local database it uses NIDs; `--no-names` skips the database entirely.
+
+   A disassembler that loads the program headers (Ghidra, IDA) does the same segment loading.
 4. Log strings near the call confirm which import it is: `strings -t x eboot.elf`, then the `lea` that loads that address.
 
 The same steps work on a module: the code of a firmware module or of one in `sce_module/` gives the library's side of

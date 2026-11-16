@@ -45,6 +45,14 @@ void RegisterAtomicWaitForwards_nid_no_patch(const AtomicWaitForwards_nid_no_pat
     registeredForwards.store(forwards, std::memory_order_release);
 }
 
+int APS5_VABI __std_atomic_wait_direct_8_nid_postfix(const void* storage, std::uint8_t expected, std::uint64_t milliseconds) {
+    return Wait(Kernel(__func__).wait8, storage, expected, milliseconds);
+}
+
+int APS5_VABI __std_atomic_wait_direct_16_nid_postfix(const void* storage, std::uint16_t expected, std::uint64_t milliseconds) {
+    return Wait(Kernel(__func__).wait16, storage, expected, milliseconds);
+}
+
 int APS5_VABI __std_atomic_wait_direct_32_nid_postfix(const void* storage, std::uint32_t expected, std::uint64_t milliseconds) {
     return Wait(Kernel(__func__).wait32, storage, expected, milliseconds);
 }
