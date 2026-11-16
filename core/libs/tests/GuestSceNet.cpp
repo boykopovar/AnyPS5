@@ -864,6 +864,10 @@ static void CheckEmptyEpoll() {
     Require(epoll >= 0);
     NetEpollEvent event{};
     Require(sceNetEpollWait(epoll, &event, 1, 0) == 0);
+    Require(Failed(sceNetEpollControl(epoll, 4, 0, nullptr), 22));
+    Require(Failed(sceNetEpollControl(0x7fff, 4, 0, nullptr), 22));
+    NetEpollEvent zeroMask{};
+    Require(Failed(sceNetEpollControl(epoll, 1, 0, &zeroMask), 22));
     std::array<std::chrono::steady_clock::duration, 9> elapsed{};
     for (auto& sample : elapsed) {
         const auto start = std::chrono::steady_clock::now();
