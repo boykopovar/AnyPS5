@@ -1,32 +1,8 @@
+/* explicit_bzero, getprogname, getuid, vasprintf and strndup are written for AnyPS5; they are not copied or derived from OpenBSD or LibreSSL. */
 #include <string.h>
 #include <stdlib.h>
 #include <stdarg.h>
 #include <stdio.h>
-
-void *reallocarray(void *ptr, size_t nmemb, size_t size) {
-    if (size && nmemb > (size_t)-1 / size) return NULL;
-    return realloc(ptr, nmemb * size);
-}
-
-size_t strlcpy(char *dst, const char *src, size_t siz) {
-    size_t len = strlen(src);
-    if (siz) {
-        size_t copy = len >= siz ? siz - 1 : len;
-        memcpy(dst, src, copy);
-        dst[copy] = '\0';
-    }
-    return len;
-}
-
-size_t strlcat(char *dst, const char *src, size_t siz) {
-    size_t dlen = strnlen(dst, siz);
-    size_t slen = strlen(src);
-    if (dlen == siz) return siz + slen;
-    if (slen > siz - dlen - 1) slen = siz - dlen - 1;
-    memcpy(dst + dlen, src, slen);
-    dst[dlen + slen] = '\0';
-    return dlen + slen;
-}
 
 void explicit_bzero(void *s, size_t n) {
     volatile unsigned char *p = (volatile unsigned char *)s;
@@ -35,23 +11,6 @@ void explicit_bzero(void *s, size_t n) {
 
 const char *getprogname(void) { return "libSceLibreSsl"; }
 unsigned int getuid(void) { return 0; }
-
-void *recallocarray(void *ptr, size_t oldnmemb, size_t nmemb, size_t size) {
-    if ((size && (nmemb > (size_t)-1 / size || oldnmemb > (size_t)-1 / size)) ||
-        (!size && (nmemb || oldnmemb)))
-        return NULL;
-    size_t oldtotal = oldnmemb * size, total = nmemb * size;
-    void *p = realloc(ptr, total);
-    if (p && total > oldtotal)
-        memset((char *)p + oldtotal, 0, total - oldtotal);
-    return p;
-}
-
-void freezero(void *s, size_t n) {
-    volatile unsigned char *p = (volatile unsigned char *)s;
-    while (n--) *p++ = 0;
-    free(s);
-}
 
 int vasprintf(char **strp, const char *fmt, va_list ap) {
     va_list aq;

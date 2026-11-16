@@ -78,6 +78,11 @@ endforeach()
 
 add_library(libressl_crypto STATIC EXCLUDE_FROM_ALL
     ${CMAKE_CURRENT_SOURCE_DIR}/libressl/libressl_port.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/libressl/strlcpy.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/libressl/strlcat.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/libressl/reallocarray.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/libressl/recallocarray.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/libressl/freezero.c
     ${CMAKE_CURRENT_SOURCE_DIR}/libressl/glue.c
     ${CMAKE_CURRENT_SOURCE_DIR}/libressl/x509_name_print.c
     ${LIBRESSL_SRC_FILES}
