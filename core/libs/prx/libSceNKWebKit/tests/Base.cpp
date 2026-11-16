@@ -2737,7 +2737,29 @@ static void TestRenderTree() {
     requireThrows([&] { WKRenderObjectGetChildren(layer.Get()); });
 }
 
+void TestKeyValueStorageManager() {
+    auto* creationKey = WKKeyValueStorageManagerGetCreationTimeKey();
+    Require(creationKey != nullptr);
+    Require(WKGetTypeID(creationKey) == WKStringGetTypeID());
+    Require(WKStringIsEqualToUTF8CString(creationKey, "WKKeyValueStorageManagerCreationTimeKey"));
+
+    auto* modificationKey = WKKeyValueStorageManagerGetModificationTimeKey();
+    Require(modificationKey != nullptr);
+    Require(WKGetTypeID(modificationKey) == WKStringGetTypeID());
+    Require(WKStringIsEqualToUTF8CString(modificationKey, "WKKeyValueStorageManagerModificationTimeKey"));
+
+    auto* originKey = WKKeyValueStorageManagerGetOriginKey();
+    Require(originKey != nullptr);
+    Require(WKGetTypeID(originKey) == WKStringGetTypeID());
+    Require(WKStringIsEqualToUTF8CString(originKey, "WKKeyValueStorageManagerOriginKey"));
+
+    WKRelease(creationKey);
+    WKRelease(modificationKey);
+    WKRelease(originKey);
+}
+
 int main() {
+    TestKeyValueStorageManager();
     TestTypeIDs();
     TestRetainRelease();
     TestStrings();

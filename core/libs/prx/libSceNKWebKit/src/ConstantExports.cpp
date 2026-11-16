@@ -242,19 +242,7 @@ int APS5_VABI WKKeyValueStorageManagerDeleteEntriesForOrigin() {
     return 0;
 }
 
-int APS5_VABI WKKeyValueStorageManagerGetCreationTimeKey() {
-    return 0;
-}
-
 int APS5_VABI WKKeyValueStorageManagerGetKeyValueStorageOrigins() {
-    return 0;
-}
-
-int APS5_VABI WKKeyValueStorageManagerGetModificationTimeKey() {
-    return 0;
-}
-
-int APS5_VABI WKKeyValueStorageManagerGetOriginKey() {
     return 0;
 }
 
