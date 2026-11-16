@@ -3823,6 +3823,14 @@ class AttachNameTests(unittest.TestCase):
         self.assertEqual((records[0]['name'], records[0]['name_verified']), ('sceFoo', True))
         self.assertEqual((records[1]['name'], records[1]['name_verified']), ('sceBar', False))
         self.assertIsNone(records[2]['name'])
+class LocateAndNamesTests(unittest.TestCase):
+    def test_locate_missing_finds_only_the_names_present_in_a_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'libA.prx').write_bytes(b'x')
+            found = import_audit.locate_missing(['libA.prx', 'libB.prx'], [root])
+            self.assertIn('libA.prx', found)
+            self.assertNotIn('libB.prx', found)
 
 
 if __name__ == "__main__":
