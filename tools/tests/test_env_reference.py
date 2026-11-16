@@ -698,6 +698,10 @@ class DefaultOfTests(unittest.TestCase):
         plain = re.compile(r"x").match("x")
         self.assertEqual(env_reference.default_of(plain, "v ? 1 : 7"), "7")
         self.assertEqual(env_reference.default_of(plain, "no ternary"), "")
+class SourceFilesTests(unittest.TestCase):
+    def test_source_files_is_empty_for_a_missing_root(self):
+        import env_reference
+        self.assertEqual(list(env_reference.source_files(Path("/no/such/env/root"))), [])
 
 
 if __name__ == "__main__":
