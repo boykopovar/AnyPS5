@@ -35,6 +35,7 @@
 #include "prx/libSceNKWebKit/include/WtfBitVector.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfFastBitVector.hpp"
+#include "prx/libSceNKWebKit/include/WtfDataFileExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfPlatformDefaultsExports.hpp"
 #include "prx/libSceNKWebKit/include/SettingsBaseDefaultsExports.hpp"
 #include "prx/libSceNKWebKit/include/WebCoreProcessSwitchesExports.hpp"

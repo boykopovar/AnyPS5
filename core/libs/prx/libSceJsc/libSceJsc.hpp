@@ -10,6 +10,7 @@
 #include "prx/libSceJsc/include/PlacementNewExports.hpp"
 #include "prx/libSceJsc/include/ProtoCallFrameExports.hpp"
 #include "prx/libSceJsc/include/WtfCpuTimeExports.hpp"
+#include "prx/libSceJsc/include/WtfDataLogExports.hpp"
 #include "prx/libSceJsc/include/WtfFileSystemExports.hpp"
 #include "prx/libSceJsc/include/WtfHelperExports.hpp"
 #include "prx/libSceJsc/include/WtfLoggerExports.hpp"

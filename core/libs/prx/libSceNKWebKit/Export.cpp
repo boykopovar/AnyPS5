@@ -14629,18 +14629,6 @@ int APS5_VABI _ZN3WTF15BinarySemaphore9waitUntilERKNS_24TimeWithDynamicClockType
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF15FilePrintStreamD0Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF15FilePrintStreamD1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF15FilePrintStreamD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF15ThreadCondition4waitERNS_5MutexE() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -15214,10 +15202,6 @@ int APS5_VABI _ZN3WTF8WordLock10unlockSlowEv() {
 }
 
 int APS5_VABI _ZN3WTF8WordLock8lockSlowEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF8dataFileEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
