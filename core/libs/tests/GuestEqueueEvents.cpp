@@ -527,9 +527,40 @@ static void VerifyNameLengthBoundary() {
     Require(sceKernelCreateEqueue(&eq, name32) == SCE_KERNEL_ERROR_ENAMETOOLONG && eq == static_cast<KernelEqueue>(-1));
 }
 
+static void VerifyStaleHandleRefusedAfterDescriptorReuse() {
+    KernelEqueue stale = 0;
+    Require(sceKernelCreateEqueue(&stale, "stale") == SCE_OK);
+    Require(sceKernelDeleteEqueue(stale) == SCE_OK);
+
+    KernelEqueue fresh = 0;
+    Require(sceKernelCreateEqueue(&fresh, "recycled") == SCE_OK);
+    Require(fresh != stale);
+    Require(static_cast<std::uint32_t>(fresh) == static_cast<std::uint32_t>(stale));
+
+    KernelEvent events[2]{};
+    int count = 0;
+    int payload = 0;
+    const KernelUseconds poll = 0;
+    Require(sceKernelAddUserEvent(stale, 7) == SCE_KERNEL_ERROR_EBADF);
+    Require(sceKernelTriggerUserEvent(stale, 7, &payload) == SCE_KERNEL_ERROR_EBADF);
+    Require(sceKernelDeleteUserEvent(stale, 7) == SCE_KERNEL_ERROR_EBADF);
+    Require(sceKernelWaitEqueue(stale, events, 2, &count, &poll) == SCE_KERNEL_ERROR_EBADF && count == 0);
+    Require(sceKernelDeleteEqueue(stale) == SCE_KERNEL_ERROR_EBADF);
+    Require(sceKernelAddFileEvent(stale, 0, 0, &payload) == SCE_KERNEL_ERROR_EBADF);
+    Require(sceKernelDeleteFileEvent(stale, 0) == SCE_KERNEL_ERROR_EBADF);
+
+    Require(sceKernelAddUserEvent(fresh, 7) == SCE_OK);
+    Require(sceKernelTriggerUserEvent(fresh, 7, &payload) == SCE_OK);
+    Require(sceKernelWaitEqueue(fresh, events, 2, &count, &poll) == SCE_OK);
+    Require(count == 1 && sceKernelGetEventId(&events[0]) == 7);
+    Require(sceKernelDeleteUserEvent(fresh, 7) == SCE_OK);
+    Require(sceKernelDeleteEqueue(fresh) == SCE_OK);
+}
+
 int main() {
     VerifyInvalidQueueAttributes();
     VerifyFailedWaitClearsCount();
+    VerifyStaleHandleRefusedAfterDescriptorReuse();
     VerifyPeriodicTimer();
     VerifyHRTimerDelete();
     VerifyUserEventReportedOncePerWait();

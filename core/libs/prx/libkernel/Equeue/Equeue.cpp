@@ -688,7 +688,11 @@ KernelEqueueRef EqueuePin_nid_postfix(KernelEqueue eq) {
     if (descriptor == 0 || descriptor > static_cast<std::uint32_t>(std::numeric_limits<int>::max())) {
         return {};
     }
-    return FindKqueueDescriptor(static_cast<int>(descriptor));
+    auto owner = FindKqueueDescriptor(static_cast<int>(descriptor));
+    if (owner && owner->Handle() != eq) {
+        owner = nullptr;
+    }
+    return owner;
 }
 
 int APS5_VABI EqueueAddEvent_nid_postfix(KernelEqueue eq, const KernelEqueueEvent& event) {
