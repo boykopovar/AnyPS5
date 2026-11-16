@@ -267,6 +267,7 @@ float GuestTgammaf(float x) {
     errno = std::isfinite(x) && x < 0.0f && std::trunc(x) == x ? EDOM : savedErrno;
     if (std::isnan(result) && !std::isnan(x)) return std::bit_cast<float>(0xffc00000u);
     if (result != 0.0f || !std::isfinite(x) || x >= 0.0f || std::trunc(x) == x) return result;
+    std::feraiseexcept(FE_UNDERFLOW | FE_INEXACT);
     const double interval = std::floor(-static_cast<double>(x));
     const bool negative = std::fmod(interval, 2.0) == 0.0;
     return std::copysign(0.0f, negative ? -1.0f : 1.0f);
@@ -4019,7 +4020,11 @@ double APS5_VABI __powidf2_nid_postfix(double base, int exponent) {
     }
     return reciprocal ? 1.0 / result : result;
 }
-float APS5_VABI expf_nid_postfix(float x) { return std::exp(x); }
+float APS5_VABI expf_nid_postfix(float x) {
+    const float result = std::exp(x);
+    if (std::isfinite(x) && (std::isinf(result) || result == 0.0f)) errno = ERANGE;
+    return result;
+}
 float APS5_VABI logf_nid_postfix(float x) {
     const float ln2_hi = static_cast<float>(6.9313812256e-01);
     const float ln2_lo = static_cast<float>(9.0580006145e-06);
