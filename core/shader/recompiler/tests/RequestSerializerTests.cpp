@@ -204,8 +204,8 @@ constexpr std::size_t DepthBoundsDiscardBytes = 1u + 8u * sizeof(std::uint32_t);
 
 std::string SerializeVersion56(const ShaderRecompiler::RecompileRequest& request) {
     auto bytes = DecodeBase64(ShaderRecompiler::RequestSerializer{}.Serialize(request));
-    Require(bytes.size() > 13u + DepthBoundsDiscardBytes && bytes[4] == 58u);
-    bytes.resize(bytes.size() - DepthBoundsDiscardBytes - 5u);
+    Require(bytes.size() > 14u + DepthBoundsDiscardBytes && bytes[4] == 63u);
+    bytes.resize(bytes.size() - DepthBoundsDiscardBytes - 6u);
     bytes[4] = 56u;
     return EncodeBase64(bytes);
 }
@@ -216,20 +216,20 @@ void VerifyDepthBoundsDiscard() {
     request.shader.stage = ShaderRecompiler::ShaderStage::Fragment;
     request.context.pixel = ShaderRecompiler::ShaderPixelStageInfo{};
     const auto plain = DecodeBase64(serializer.Serialize(request));
-    Require(plain.size() > DepthBoundsDiscardBytes && plain[4] == 58u && std::all_of(plain.end() - static_cast<std::ptrdiff_t>(DepthBoundsDiscardBytes), plain.end(), [](std::uint8_t byte) { return byte == 0u; }));
+    Require(plain.size() > DepthBoundsDiscardBytes && plain[4] == 63u && std::all_of(plain.end() - static_cast<std::ptrdiff_t>(DepthBoundsDiscardBytes), plain.end(), [](std::uint8_t byte) { return byte == 0u; }));
     auto bounded = request;
     bounded.context.pixel->depthBoundsDiscard = {true, {0x11u, 0x22u, 0x33u, 0x44u, 0x55u, 0x66u, 0x77u, 0x88u}};
     const auto encoded = serializer.Serialize(bounded);
     const auto replay = serializer.Deserialize(encoded);
     Require(replay.request.context.pixel.has_value() && replay.request.context.pixel->depthBoundsDiscard == bounded.context.pixel->depthBoundsDiscard);
     Require(serializer.Serialize(replay.request) == encoded);
-    auto version57 = DecodeBase64(encoded);
-    Require(version57.size() == plain.size() && version57[version57.size() - DepthBoundsDiscardBytes] == 1u);
-    version57.resize(version57.size() - DepthBoundsDiscardBytes);
-    version57[4] = 57u;
-    const auto replay57 = serializer.Deserialize(EncodeBase64(version57));
-    Require(replay57.request.context.pixel.has_value() && replay57.request.context.pixel->depthBoundsDiscard == ShaderRecompiler::DepthBoundsDiscard{});
-    Require(serializer.Serialize(replay57.request) == EncodeBase64(plain));
+    auto version62 = DecodeBase64(encoded);
+    Require(version62.size() == plain.size() && version62[version62.size() - DepthBoundsDiscardBytes] == 1u);
+    version62.resize(version62.size() - DepthBoundsDiscardBytes);
+    version62[4] = 62u;
+    const auto replay62 = serializer.Deserialize(EncodeBase64(version62));
+    Require(replay62.request.context.pixel.has_value() && replay62.request.context.pixel->depthBoundsDiscard == ShaderRecompiler::DepthBoundsDiscard{});
+    Require(serializer.Serialize(replay62.request) == EncodeBase64(plain));
     ShaderRecompiler::RecompileRequest vertex{};
     auto unowned = DecodeBase64(serializer.Serialize(vertex));
     unowned[unowned.size() - DepthBoundsDiscardBytes] = 1u;
@@ -260,8 +260,8 @@ void VerifyTargetOptions() {
                     Require(replay.request.target.float16WidenNans == widen && replay.request.target.float16NarrowNans == narrow);
                     Require(serializer.Serialize(replay.request) == encoded);
                     auto bytes = DecodeBase64(encoded);
-                    Require(bytes[4] == 58u);
-                    for (std::size_t missing = 1u; missing <= DepthBoundsDiscardBytes + 5u; ++missing) {
+                    Require(bytes[4] == 63u);
+                    for (std::size_t missing = 1u; missing <= DepthBoundsDiscardBytes + 6u; ++missing) {
                         auto truncated = bytes;
                         truncated.resize(truncated.size() - missing);
                         bool rejected = false;
@@ -273,10 +273,15 @@ void VerifyTargetOptions() {
                         Require(rejected);
                     }
                     bytes.resize(bytes.size() - DepthBoundsDiscardBytes);
+                    Require(bytes.back() == 0u);
+                    bytes[4] = 62u;
+                    const auto legacy62 = serializer.Deserialize(EncodeBase64(bytes));
+                    Require(serializer.Serialize(legacy62.request) == encoded);
+                    bytes.pop_back();
                     bytes[4] = 57u;
                     const auto legacy57 = serializer.Deserialize(EncodeBase64(bytes));
-                    Require(legacy57.request.target.fixedPushSlots == fixed && legacy57.request.target.maxImageArrayLayers == layers);
-                    Require(serializer.Serialize(legacy57.request) == encoded);
+                    Require(legacy57.request.target.fixedPushSlots == fixed && legacy57.request.target.maxImageArrayLayers == layers && !legacy57.request.target.spannedAnySubgroup);
+                    Require(legacy57.request.target.float16WidenNans == widen && legacy57.request.target.float16NarrowNans == narrow);
                     bytes.resize(bytes.size() - 5u);
                     bytes[4] = 56u;
                     const auto legacy56 = serializer.Deserialize(EncodeBase64(bytes));
@@ -810,15 +815,17 @@ int VerifyVersion56Compatibility() {
         version40[4] = 40u;
         const auto replay40 = serializer.Deserialize(EncodeBase64(version40));
         Require(!replay40.request.target.float32DenormPreserve && replay40.request.target.float32FlushToZero == !preserve);
-        auto future = bytes;
-        future[4] = 59u;
-        bool futureRejected = false;
-        try {
-            static_cast<void>(serializer.Deserialize(EncodeBase64(future)));
-        } catch (const std::runtime_error& error) {
-            futureRejected = std::string_view(error.what()) == "unsupported recompile request serialization version";
+        for (const std::uint8_t unwritten : {58u, 59u, 60u, 61u, 64u}) {
+            auto future = bytes;
+            future[4] = unwritten;
+            bool futureRejected = false;
+            try {
+                static_cast<void>(serializer.Deserialize(EncodeBase64(future)));
+            } catch (const std::runtime_error& error) {
+                futureRejected = std::string_view(error.what()) == "unsupported recompile request serialization version";
+            }
+            Require(futureRejected);
         }
-        Require(futureRejected);
         bytes.pop_back();
         bool rejected = false;
         try {
@@ -922,6 +929,23 @@ int VerifyVersion56Compatibility() {
         version35.pop_back();
         const auto replay35 = serializer.Deserialize(EncodeBase64(version35));
         Require(replay35.request.target.spannedWaves == spanned && !replay35.request.target.float32FlushToZero);
+        request.target.spannedAnySubgroup = spanned;
+        const auto current = DecodeBase64(serializer.Serialize(request));
+        Require(current.size() > DepthBoundsDiscardBytes && current[4] == 63u);
+        Require(serializer.Deserialize(EncodeBase64(current)).request.target.spannedAnySubgroup == spanned);
+        auto version62 = current;
+        version62.resize(version62.size() - DepthBoundsDiscardBytes);
+        version62[4] = 62u;
+        Require(version62.back() == (spanned ? 1u : 0u));
+        Require(serializer.Deserialize(EncodeBase64(version62)).request.target.spannedAnySubgroup == spanned);
+        auto version57 = version62;
+        version57[4] = 57u;
+        version57.pop_back();
+        const auto replay57 = serializer.Deserialize(EncodeBase64(version57));
+        Require(replay57.request.target.float32FlushToZero && !replay57.request.target.spannedAnySubgroup);
+        const auto replay56 = serializer.Deserialize(SerializeVersion56(request));
+        Require(replay56.request.target.float32FlushToZero && !replay56.request.target.spannedAnySubgroup);
+        request.target.spannedAnySubgroup = false;
     }
     ShaderRecompiler::RecompileRequest pointRequest{};
     pointRequest.context.vertex = ShaderRecompiler::ShaderVertexStageInfo{};

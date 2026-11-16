@@ -1,6 +1,7 @@
 import contextlib
 import io
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -11,35 +12,48 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import rebase_verify
 
 
+def run_git(root, *arguments):
+    environment = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1"}
+    return subprocess.run(["git", "-C", str(root), "-c", "user.name=Rebase Test", "-c", "user.email=test@example.com",
+                           "-c", "commit.gpgsign=false", *arguments], capture_output=True, text=True, check=True,
+                          env=environment).stdout.strip()
+
+
 class RebaseVerifyTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        directory = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(directory.cleanup)
+        cls.template = Path(directory.name)
+        git = lambda *arguments: run_git(cls.template, *arguments)
+        write = lambda name, text: (cls.template / name).write_text(text, encoding="utf-8")
+        git("init", "-q", "-b", "main")
+        git("config", "core.filemode", "false")
+        write("f.txt", "a\nb\nc\n")
+        git("add", "f.txt")
+        git("commit", "-q", "-m", "fix(tools): base")
+        cls.base = git("rev-parse", "HEAD")
+        git("checkout", "-q", "-b", "old")
+        write("f.txt", "a\nNEW\nb\nc\n")
+        git("commit", "-q", "-am", "feat(tools): add the new line")
+        write("f.txt", "a\nNEW\nb\nc\ntail\n")
+        git("commit", "-q", "-am", "feat(tools): add a tail line")
+        cls.old = git("rev-parse", "HEAD")
+        git("checkout", "-q", "main")
+        write("g.txt", "main work\n")
+        git("add", "g.txt")
+        git("commit", "-q", "-m", "docs(tools): main work")
+        git("checkout", "-q", "-b", "new", "main")
+        git("cherry-pick", f"{cls.base}..{cls.old}")
+
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
-        self.root = Path(directory.name)
-        self.git("init", "-q", "-b", "main")
-        self.git("config", "core.filemode", "false")
-        self.write("f.txt", "a\nb\nc\n")
-        self.git("add", "f.txt")
-        self.git("commit", "-q", "-m", "fix(tools): base")
-        self.base = self.git("rev-parse", "HEAD")
-        self.git("checkout", "-q", "-b", "old")
-        self.write("f.txt", "a\nNEW\nb\nc\n")
-        self.git("commit", "-q", "-am", "feat(tools): add the new line")
-        self.write("f.txt", "a\nNEW\nb\nc\ntail\n")
-        self.git("commit", "-q", "-am", "feat(tools): add a tail line")
-        self.old = self.git("rev-parse", "HEAD")
-        self.git("checkout", "-q", "main")
-        self.write("g.txt", "main work\n")
-        self.git("add", "g.txt")
-        self.git("commit", "-q", "-m", "docs(tools): main work")
-        self.git("checkout", "-q", "-b", "new", "main")
-        self.git("cherry-pick", f"{self.base}..{self.old}")
+        self.root = Path(directory.name) / "repository"
+        shutil.copytree(self.template, self.root, symlinks=True)
 
     def git(self, *arguments):
-        environment = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1"}
-        return subprocess.run(["git", "-C", str(self.root), "-c", "user.name=Rebase Test", "-c", "user.email=test@example.com",
-                               "-c", "commit.gpgsign=false", *arguments], capture_output=True, text=True, check=True,
-                              env=environment).stdout.strip()
+        return run_git(self.root, *arguments)
 
     def write(self, name, text):
         (self.root / name).write_text(text, encoding="utf-8")
@@ -53,6 +67,40 @@ class RebaseVerifyTests(unittest.TestCase):
 
     def test_a_clean_rebase_keeps_every_line_author_and_commit(self):
         self.assertEqual(self.verify(), [])
+
+    def test_relative_diff_cannot_hide_lost_lines_from_a_subdirectory(self):
+        nested = self.root / "nested"
+        nested.mkdir()
+        self.git("config", "diff.relative", "true")
+        for text, message in (("a\nb\nc\ntail\n", "an added line is missing (1x): NEW"),
+                              ("a\nNEW\nc\ntail\n", "a line is deleted that the branch did not delete (1x): b")):
+            with self.subTest(text=text):
+                self.write("f.txt", text)
+                self.git("commit", "-q", "-a", "--amend", "--no-edit")
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    status = rebase_verify.main(["old", "new", "--onto", "main", "--repo", str(nested)])
+                self.assertEqual(status, 1)
+                self.assertIn("error: f.txt: " + message, output.getvalue())
+
+    def test_changed_lines_keep_repository_paths_from_a_subdirectory(self):
+        nested = self.root / "nested"
+        nested.mkdir()
+        self.write("nested/inside.txt", "inside\n")
+        self.git("add", "nested/inside.txt")
+        self.git("commit", "-q", "--amend", "--no-edit")
+        expected = rebase_verify.changed_lines(self.root, "main", "new")
+        self.assertEqual(set(expected[0]), {"f.txt", "nested/inside.txt"})
+        for relative in ("false", "true"):
+            with self.subTest(relative=relative):
+                self.git("config", "diff.relative", relative)
+                self.assertEqual(rebase_verify.changed_lines(nested, "main", "new"), expected)
+
+    def test_relative_diff_keeps_a_clean_rebase_clean_from_a_subdirectory(self):
+        nested = self.root / "nested"
+        nested.mkdir()
+        self.git("config", "diff.relative", "true")
+        self.assertEqual(rebase_verify.verify(nested, "old", "new", "main")[3], [])
 
     def test_an_executable_mode_change_must_survive_rebase(self):
         self.git("checkout", "-q", "old")
@@ -208,6 +256,42 @@ class RebaseVerifyTests(unittest.TestCase):
         self.git("checkout", "-q", "old")
         self.git("merge", "-q", "--no-ff", "--no-edit", "main")
         self.assertEqual(self.verify(), [])
+
+
+class RebaseDiffTextTests(unittest.TestCase):
+    def changes(self, text, sign="+"):
+        from unittest.mock import patch
+        diff = "diff --git a/f.cpp b/f.cpp\n--- a/f.cpp\n+++ b/f.cpp\n@@ -1 +1 @@\n" + sign + text + "\n"
+        with patch.object(rebase_verify, "git", return_value=diff):
+            return rebase_verify.changed_lines(Path("."), "base", "head")
+
+    def test_unicode_separators_cannot_hide_changed_added_text(self):
+        for separator in ("\u0085", "\u2028", "\u2029"):
+            with self.subTest(separator=repr(separator)):
+                before = 'const char* s = "prefix' + separator + 'before";'
+                after = 'const char* s = "prefix' + separator + 'after";'
+                old, _ = self.changes(before)
+                new, _ = self.changes(after)
+                self.assertEqual(len(rebase_verify.differences(old, new)), 2)
+                self.assertEqual(old["f.cpp"], {before: 1})
+
+    def test_unicode_separators_cannot_hide_changed_deleted_text(self):
+        for separator in ("\u0085", "\u2028", "\u2029"):
+            with self.subTest(separator=repr(separator)):
+                before, after = "prefix" + separator + "before", "prefix" + separator + "after"
+                _, old = self.changes(before, "-")
+                _, new = self.changes(after, "-")
+                self.assertEqual(len(rebase_verify.differences(old, new, deleted=True)), 2)
+                self.assertEqual(old["f.cpp"], {before: 1})
+
+    def test_unchanged_unicode_and_ordinary_line_controls(self):
+        for text in ("ordinary", "prefix\u2028tail"):
+            old, _ = self.changes(text)
+            new, _ = self.changes(text)
+            self.assertEqual(rebase_verify.differences(old, new), [])
+        old, _ = self.changes("before")
+        new, _ = self.changes("after")
+        self.assertEqual(len(rebase_verify.differences(old, new)), 2)
 
 
 if __name__ == "__main__":
