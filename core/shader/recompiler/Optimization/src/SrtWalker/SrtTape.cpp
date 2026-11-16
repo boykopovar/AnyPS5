@@ -105,7 +105,7 @@ private:
         }
         if (value->Opcode() == IrOpcode::Void) return fail();
         const auto mask = contexts[context].mask;
-        if (mask != nullptr && IsRuntimeSelect(value->Opcode()) && value->ArgumentCount() == 3 && ActiveMaskImplies(mask, value->Argument(0))) return compile(value->Argument(1), context, depth + 1);
+        if (mask != nullptr && IsRuntimeSelect(value->Opcode()) && value->ArgumentCount() == 3 && ActiveMaskImplies(plan, mask, value->Argument(0))) return compile(value->Argument(1), context, depth + 1);
         const auto key = std::make_pair(static_cast<const IrValue*>(value), context);
         if (const auto found = built.find(key); found != built.end()) return found->second == Building ? fail() : found->second;
         built.emplace(key, Building);
