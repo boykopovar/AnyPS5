@@ -1026,6 +1026,11 @@ class ListingHelperTests(unittest.TestCase):
             annotate_module.write_lines(path, ["a", "b"])
             self.assertEqual(path.read_bytes(), b"a\nb\n")
 
+    def test_annotate_listing_adds_a_header_before_each_export(self):
+        listing = ["  10:\tnop", "  14:\tnop"]
+        self.assertEqual(annotate_module.annotate_listing(listing, {}, {0x10: ["a"]}, {}, FakeNamer()),
+                         ["", "; ===== export A", "  10:\tnop", "  14:\tnop"])
+
 
 if __name__ == "__main__":
     unittest.main(defaultTest=os.environ.get("ANNOTATE_MODULE_TEST"))
