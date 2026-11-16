@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -238,12 +239,22 @@ inline std::basic_string<CharT> MakeVerbatimWindowsPathForTest_nid_no_patch(
 }
 
 #ifdef _WIN32
-inline std::filesystem::path WindowsAbsolutePath_nid_no_patch(const std::filesystem::path& path, std::error_code& error) {
+inline std::optional<std::filesystem::path> WindowsUncPath_nid_no_patch(const std::filesystem::path& path) {
     const auto& input = path.native();
     const auto separator = [](wchar_t c) { return c == L'\\' || c == L'/'; };
-    if (input.size() > 2 && separator(input[0]) && separator(input[1]))
-        return std::filesystem::path(L"\\" + std::filesystem::path(input.substr(1)).lexically_normal().make_preferred().native());
-    auto absolute = path.is_absolute() ? path : (std::filesystem::current_path(error) / path);
+    if (input.size() <= 2 || !separator(input[0]) || !separator(input[1])) return std::nullopt;
+    const auto serverEnd = input.find_first_of(L"\\/", 2);
+    std::wstring root = L"\\\\" + input.substr(2, serverEnd == std::wstring::npos ? std::wstring::npos : serverEnd - 2);
+    if (serverEnd == std::wstring::npos) return std::filesystem::path(root);
+    const auto shareEnd = input.find_first_of(L"\\/", serverEnd + 1);
+    root += L"\\" + input.substr(serverEnd + 1, shareEnd == std::wstring::npos ? std::wstring::npos : shareEnd - serverEnd - 1);
+    if (shareEnd == std::wstring::npos) return std::filesystem::path(root);
+    return std::filesystem::path(root + std::filesystem::path(L"\\" + input.substr(shareEnd + 1)).lexically_normal().make_preferred().native());
+}
+
+inline std::filesystem::path WindowsAbsolutePath_nid_no_patch(const std::filesystem::path& path, std::error_code& error) {
+    if (auto unc = WindowsUncPath_nid_no_patch(path)) return *unc;
+    const auto absolute = std::filesystem::absolute(path, error);
     if (error) return {};
     return absolute.lexically_normal().make_preferred();
 }
@@ -255,8 +266,12 @@ inline std::filesystem::path NativeVerbatimPath_nid_no_patch(
     const auto& input = path.native();
     if (input.empty()) return path;
     if (input.starts_with(L"\\\\?\\") || input.starts_with(L"\\\\.\\")) return path;
-    const auto absolute = WindowsAbsolutePath_nid_no_patch(path, error);
-    if (error) return {};
+    auto absolute = WindowsUncPath_nid_no_patch(path).value_or(std::filesystem::path());
+    if (absolute.empty()) {
+        absolute = path.is_absolute() ? path : (std::filesystem::current_path(error) / path);
+        if (error) return {};
+        absolute = absolute.lexically_normal().make_preferred();
+    }
     const auto& native = absolute.native();
     if (native.size() < maxPathLength && !NeedsVerbatimPrefix_nid_no_patch(absolute)) return absolute;
     if (native.starts_with(L"\\\\?\\") || native.starts_with(L"\\\\.\\")) return absolute;
