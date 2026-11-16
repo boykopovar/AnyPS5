@@ -138,6 +138,23 @@ class GpuOccupancyTests(unittest.TestCase):
                 self.assertAlmostEqual(gpu["untraced_ms_per_frame"], 15 - expected)
                 self.assertEqual(gpu["wait_ms_per_frame"], 0)
 
+    def test_markdown_batch_ids_and_present_values_cannot_create_report_sections(self):
+        events = [{"name": "thread_name", "ph": "M", "tid": 1, "args": {"name": "gpu"}},
+                  {"name": "thread_name", "ph": "M", "tid": 2, "args": {"name": "worker"}},
+                  {"name": "present", "ph": "i", "ts": 0, "args": {"present": "1\n\n## Fake present"}},
+                  {"name": "present", "ph": "i", "ts": 15000, "args": {"present": 2}},
+                  dict(complete(1, "batch", 0, 10000), args={"batch": "7\n\n# Fake batch\n\n| a |\n|---|"}),
+                  complete(2, "Driver.wait", 1000, 4000)]
+        result = trace_digest.digest(trace_digest.Trace(events))
+        self.assertEqual(result["largest_gpu_batches"][0]["batch"], "7\n\n# Fake batch\n\n| a |\n|---|")
+        self.assertEqual(result["longest_waits"][0]["present"], "1\n\n## Fake present")
+        lines = trace_digest.markdown(result).splitlines()
+        self.assertFalse([line for line in lines if line.startswith(("#", "| a", "|---|:"))])
+        present = "present 1<br><br>## Fake present"
+        self.assertTrue(any(line.startswith(f"- {present}: ") for line in lines))
+        self.assertTrue(any(line.startswith("- Driver.wait (worker) ") and line.endswith(f", {present}") for line in lines))
+        self.assertTrue(any(line.startswith("- batch 7<br><br># Fake batch<br><br>&#124; a &#124;<br>&#124;---&#124;: ") and f", {present}: GPU " in line for line in lines))
+
     def test_overlap_keeps_individual_batch_and_inclusive_slice_durations(self):
         result = trace_digest.digest(self.trace([(0, 10000), (5000, 10000)]))
         self.assertEqual([batch["ms"] for batch in result["largest_gpu_batches"]], [10, 10])

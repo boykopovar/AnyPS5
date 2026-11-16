@@ -26,6 +26,14 @@
 namespace ShaderRecompiler {
 namespace {
 
+void EmitImageAtomicOrdering(SpirvEmitterState& state) {
+#ifdef __APPLE__
+    state.module.AddFunction(spv::OpMemoryBarrier, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsAcquireReleaseMask | spv::MemorySemanticsImageMemoryMask));
+#else
+    static_cast<void>(state);
+#endif
+}
+
 struct ImageEmitAccess {
     const IrValue& inst;
     const MemoryInfo& mem;
@@ -563,6 +571,7 @@ std::uint32_t FoldedOffsetCoord(SpirvValueEmitContext& ctx, const ImageEmitAcces
         }
         const auto fused = state.module.AllocateId();
         state.module.AddFunction(spv::OpExtInst, type, fused, GlslStd450(state), GLSLstd450Fma, one, setup.coord, offset);
+        state.module.AddAnnotation(spv::OpDecorate, fused, spv::DecorationNoContraction);
         return fused;
     }
     const auto sum = Binary(state, spv::OpFAdd, type, setup.coord, offset);
@@ -591,7 +600,9 @@ std::uint32_t MirroredUnnormalizedCoord(SpirvValueEmitContext& ctx, const Sample
         const auto mirrors = Binary(state, spv::OpINotEqual, boolean, Binary(state, spv::OpBitwiseAnd, u32, axes, ConstantU32(state, 1u << index)), ConstantU32(state, 0u));
         const auto negative = Binary(state, spv::OpFOrdLessThan, boolean, x, ConstantF32(state, 0u));
         const auto below = Unary(state, spv::OpBitcast, f32, Binary(state, spv::OpISub, u32, Unary(state, spv::OpBitcast, u32, Unary(state, spv::OpFNegate, f32, x)), ConstantU32(state, 1u)));
-        values[index] = Select(state, f32, Binary(state, spv::OpLogicalAnd, boolean, mirrors, negative), below, x);
+        const auto folded = state.module.AllocateId();
+        state.module.AddFunction(spv::OpExtInst, f32, folded, GlslStd450(state), GLSLstd450FMax, Select(state, f32, negative, below, x), ConstantF32(state, 0x3f000000u));
+        values[index] = Select(state, f32, mirrors, folded, x);
     }
     if (components == 1u) return values[0];
     const auto result = state.module.AllocateId();
@@ -1427,6 +1438,7 @@ void EmitAtomicOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
             state.module.AddFunction(spv::OpImageTexelPointer, TypePointer(state, spv::StorageClassImage, scalar), pointer, StorageImageDescriptorPointer(state, access.mem.resource), CoordU32(ctx, access), ConstantU32(state, 0));
             const auto value = Unary(state, spv::OpBitcast, scalar, ctx.Arg(access.inst, 2));
             const auto old = state.module.AllocateId();
+            EmitImageAtomicOrdering(state);
             if (opcode == IrOpcode::ImageAtomicCmpSwap64) {
                 const auto comparator = Unary(state, spv::OpBitcast, scalar, ctx.Arg(access.inst, 3));
                 state.module.AddFunction(spv::OpAtomicCompareExchange, scalar, old, pointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsMaskNone), ConstantU32(state, spv::MemorySemanticsMaskNone), value, comparator);
@@ -1459,6 +1471,7 @@ void EmitAtomicOp(SpirvValueEmitContext& ctx, const ImageEmitAccess& access) {
                 return AtomicFloatCompareSwap(state, current, value, comparator, access.mem.flushDenormals);
             });
         }
+        EmitImageAtomicOrdering(state);
         const auto old = state.module.AllocateId();
         if (opcode == IrOpcode::ImageAtomicCmpSwap32) {
             state.module.AddFunction(spv::OpAtomicCompareExchange, TypeU32(state), old, pointer, ConstantU32(state, spv::ScopeDevice), ConstantU32(state, spv::MemorySemanticsMaskNone), ConstantU32(state, spv::MemorySemanticsMaskNone), value, ctx.Arg(access.inst, 3));
@@ -1533,6 +1546,7 @@ void EmitPackedHorizontalGatherOp(SpirvValueEmitContext& ctx, const ImageEmitAcc
             if (state.fusedExactArithmetic) {
                 scaled = state.module.AllocateId();
                 state.module.AddFunction(spv::OpExtInst, TypeF32(state), scaled, GlslStd450(state), GLSLstd450Fma, addressF32, lengthF32, ConstantF32(state, 0x80000000u));
+                state.module.AddAnnotation(spv::OpDecorate, scaled, spv::DecorationNoContraction);
             } else {
                 scaled = Binary(state, spv::OpFMul, TypeF32(state), addressF32, lengthF32);
                 state.module.AddAnnotation(spv::OpDecorate, scaled, spv::DecorationNoContraction);

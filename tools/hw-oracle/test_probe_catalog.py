@@ -285,6 +285,17 @@ class ProbeRunTests(unittest.TestCase):
                     probe_catalog.run_probes([probe], self.digest, temporary, "rx-6750-xt")
                 run.assert_not_called()
 
+    def test_run_later_incomplete_gpu_output_does_not_write_earlier_reports(self):
+        probes = self.catalog["probes"][:2]
+        first_outputs = [(index,) * 16 for index in range(len(probes[0]["rows"]))]
+        with tempfile.TemporaryDirectory() as temporary:
+            with patch.object(probe_catalog.hw_oracle, "runtime", return_value="hsa"), \
+                    patch.object(probe_catalog.hw_oracle, "target", return_value="gfx1036"), \
+                    patch.object(probe_catalog.hw_oracle, "run", side_effect=[first_outputs, []]):
+                with self.assertRaisesRegex(ValueError, "incomplete result"):
+                    probe_catalog.run_probes(probes, self.digest, temporary, "rx-6750-xt")
+            self.assertEqual(list((Path(temporary) / "rx-6750-xt").glob("*.json")), [])
+
     def test_run_rejects_incomplete_gpu_output_without_writing_a_report(self):
         probe = self.catalog["probes"][0]
         with tempfile.TemporaryDirectory() as temporary:
