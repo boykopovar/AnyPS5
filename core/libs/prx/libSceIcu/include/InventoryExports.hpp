@@ -57,6 +57,11 @@ std::int32_t APS5_VABI uloc_getParent(const char* locale, char* result, std::int
                                                   std::int32_t* status);
 std::int32_t APS5_VABI uloc_getScript(const char* locale, char* result, std::int32_t capacity, std::int32_t* status);
 std::int8_t APS5_VABI uloc_isRightToLeft_nid_postfix(const char* locale);
+std::uint8_t* APS5_VABI uprv_aestrncpy_nid_postfix(std::uint8_t* destination, const std::uint8_t* source, std::int32_t count);
+std::int32_t APS5_VABI uprv_compareInvEbcdicAsAscii_nid_postfix(const char* first, const char* second);
+std::uint8_t* APS5_VABI uprv_eastrncpy_nid_postfix(std::uint8_t* destination, const std::uint8_t* source, std::int32_t count);
+char APS5_VABI uprv_ebcdicToAscii_nid_postfix(char value);
+char APS5_VABI uprv_ebcdicToLowercaseAscii_nid_postfix(char value);
 int APS5_VABI uloc_minimizeSubtags();
 void APS5_VABI uloc_setDefault_nid_postfix(const char* newDefaultLocale, std::int32_t* status);
 int APS5_VABI uloc_toLanguageTag();
