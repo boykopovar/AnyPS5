@@ -868,6 +868,7 @@ extern "C" bool GuestCopyOut_nid_no_patch(void* destination, const void* source,
     const GuestArena::HostWrite guard(destination, bytes);
     if (!guard.Open()) return false;
 #ifdef _WIN32
+    if (GuestArena::GuestArenaStoreOwned_nid_no_patch(start, source, bytes)) return true;
     for (auto address = start; address < start + bytes;) {
         MEMORY_BASIC_INFORMATION memory{};
         if (VirtualQuery(reinterpret_cast<LPCVOID>(address), &memory, sizeof(memory)) != sizeof(memory) || memory.State != MEM_COMMIT ||
