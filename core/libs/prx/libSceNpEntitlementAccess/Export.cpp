@@ -146,8 +146,15 @@ int APS5_VABI sceNpEntitlementAccessInitialize(const NpEntitlementAccessInitPara
     std::lock_guard lock(mutex);
     if (initialized) return errorAlreadyInitialized;
     if (init_param == nullptr || boot_param == nullptr) return errorParameter;
-    if (!std::all_of(std::begin(init_param->reserved), std::end(init_param->reserved), [](char value) { return value == 0; })) return errorParameter;
-    if (!std::all_of(std::begin(boot_param->reserved), std::end(boot_param->reserved), [](char value) { return value == 0; })) return errorParameter;
+    NpEntitlementAccessInitParam localInit;
+    NpEntitlementAccessBootParam localBoot;
+    const int savedErrno = errno;
+    const bool copiedInit = GuestCopyIn_nid_no_patch(&localInit, init_param, sizeof(localInit));
+    const bool copiedBoot = GuestCopyIn_nid_no_patch(&localBoot, boot_param, sizeof(localBoot));
+    errno = savedErrno;
+    if (!copiedInit || !copiedBoot) return errorParameter;
+    if (!std::all_of(std::begin(localInit.reserved), std::end(localInit.reserved), [](char value) { return value == 0; })) return errorParameter;
+    if (!std::all_of(std::begin(localBoot.reserved), std::end(localBoot.reserved), [](char value) { return value == 0; })) return errorParameter;
     initialized = true;
     return 0;
 }

@@ -2,6 +2,7 @@
 
 ### Functional
 
+- [FieldAt, PointerFieldIsNull, CheckRegion, sceVencCreateEncoder and sceVencQueryPreset2](../../../core/libs/prx/libSceVenc/Export.cpp) (libSceVenc) - returning VencError(0x00) for unmapped encoder pointers and VencError(0x01) or VencError(0x04) for unmapped parameter or preset structures via GuestCopyIn/Out_nid_no_patch is a host-safety fallback preserving host errno; console behavior on unmapped memory is unmeasured.
 - [Encoder engine](../../../core/libs/prx/libSceVenc/Export.cpp): every export except `39+oWg0ZObY` throws through `NotImplemented_nid_no_patch` once its argument checks pass. The 13.42 module (`libSceVenc.sprx`, sha256 3730676e600d79b5a96891e58f60ab7842e21bbf6bb11d552cda42119b78bfb4) passes the checked arguments to its own encoder engine: parameter and preset conversion, memory sizing, header generation and the encoder object behind the handle. None of it is modelled, so no encoder can be created, and every call on a non-null handle throws after its checks. The checks and their `0x80C700xx` codes were read from disassembly up to the first engine call, not measured on a console.
 
 ### Unknown function info
