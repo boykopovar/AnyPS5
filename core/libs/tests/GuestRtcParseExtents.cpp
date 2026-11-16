@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -99,6 +100,7 @@ static std::uint64_t Tick(const Date& d) {
 int main() {
     const Date dates[]{
         {"1970-01-01T00:00:00Z",1970,1,1,0,0,0,0,0,false},
+        {"2026-11-13T10:00:00Z",2026,11,13,10,0,0,0,0,false},
         {"2000-02-29T23:59:59.123456Z",2000,2,29,23,59,59,123456,0,false},
         {"2024-02-29T14:04:56.789+01:30",2024,2,29,14,4,56,789000,90,false},
         {"2024-01-01T00:15:00-00:45",2024,1,1,0,15,0,0,-45,false},
@@ -109,17 +111,37 @@ int main() {
         {"Thu, 29 Feb 2024 11:04:56 -0130",2024,2,29,11,4,56,0,-90,true},
         {"Thu Feb 29 12:34:56 2024",2024,2,29,12,34,56,0,0,true}};
     std::size_t cases = 0;
-    for (const auto& d : dates) for (bool generic : {false,true}) {
+    for (const auto& d : dates) for (bool generic : {false,true}) for (std::size_t padded : {0,4095,4096,4097,16385}) {
         if (d.generic && !generic) continue;
-        const auto length = std::strlen(d.text);
+        std::string content(d.text);
+        if (padded) content.resize(padded,' ');
+        const auto length = content.size();
         Guarded input(length+1), output(sizeof(RtcTick));
         auto* text = reinterpret_cast<char*>(input.End(length+1));
-        std::memcpy(text,d.text,length+1);
+        std::memcpy(text,content.c_str(),length+1);
         input.Protect(true);
         auto* tick = std::construct_at(reinterpret_cast<RtcTick*>(output.End(sizeof(RtcTick))));
+        errno = 73;
         const int result = generic ? sceRtcParseDateTime(tick,text) : sceRtcParseRFC3339(tick,text);
+        if (result != 0)
+            std::fprintf(stderr,"date length %zu, generic %d: error 0x%08x\n",length,generic,static_cast<unsigned>(result));
         Require(result == 0 && tick->tick == Tick(d));
-        Require(std::memcmp(text,d.text,length+1) == 0);
+        Require(errno == 73);
+        Require(std::memcmp(text,content.c_str(),length+1) == 0);
+        input.Prefix(text);output.Prefix(tick);
+        ++cases;
+    }
+    for (bool generic : {false,true}) {
+        constexpr std::size_t length = 8192;
+        Guarded input(length), output(sizeof(RtcTick));
+        auto* text = reinterpret_cast<char*>(input.End(length));
+        std::memset(text,' ',length);
+        std::memcpy(text,"1970-01-01T00:00:00Z",20);
+        input.Protect(true);
+        auto* tick = std::construct_at(reinterpret_cast<RtcTick*>(output.End(sizeof(RtcTick))),RtcTick{123});
+        errno = 73;
+        const int result = generic ? sceRtcParseDateTime(tick,text) : sceRtcParseRFC3339(tick,text);
+        Require(result == static_cast<int>(0x80B50002) && tick->tick == 123 && errno == 73);
         input.Prefix(text);output.Prefix(tick);
         ++cases;
     }

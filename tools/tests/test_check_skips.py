@@ -126,6 +126,37 @@ class SkipJsonTests(unittest.TestCase):
 
 
 class CheckSkipsTests(unittest.TestCase):
+    def test_environment_loader_retention_is_only_expected_for_linux_unload(self):
+        reason = check_skips.ENVIRONMENT_LOADER_RETENTION
+        with tempfile.TemporaryDirectory() as directory:
+            junit = Path(directory) / "junit.xml"
+            for name, output, job, expected in (
+                ("guest_environment_binding_unload", reason, "linux", 0),
+                ("guest_environment_binding_unload", "host CPU has SSE2\n" + reason + "\nnormal library shutdown", "linux", 0),
+                ("guest_environment_binding", reason, "linux", 1),
+                ("guest_other", reason, "linux", 1),
+                ("guest_environment_binding_unload", reason, "windows", 1),
+                ("guest_environment_binding_unload", "", "linux", 1),
+                ("guest_environment_binding_unload", reason + "\nskipped, flaky", "linux", 1),
+                ("guest_environment_binding_unload", reason + "\nskipping: flaky", "linux", 1),
+            ):
+                with self.subTest(name=name, output=output, job=job):
+                    junit.write_text(f'<testsuite><testcase name="{name}"><skipped message="SKIP_RETURN_CODE=77"/><system-out>{output}</system-out></testcase></testsuite>', encoding="utf-8")
+                    result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit), "--job", job],
+                                            capture_output=True, text=True)
+                    self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+
+            for report, expected in (
+                (f'<skipped message="SKIP_RETURN_CODE=77"/><system-err>{reason}</system-err>', 0),
+                (f'<skipped message="unexpected reason"/><system-out>{reason}</system-out>', 1),
+                (f'<skipped message="SKIP_RETURN_CODE=77">unexpected reason</skipped><system-out>{reason}</system-out>', 1),
+                (f'<skipped message="SKIP_RETURN_CODE=77"/><system-out>{reason}</system-out><system-err>skipped, flaky</system-err>', 1),
+            ):
+                with self.subTest(report=report):
+                    junit.write_text(f'<testsuite><testcase name="guest_environment_binding_unload">{report}</testcase></testsuite>', encoding="utf-8")
+                    result = subprocess.run([sys.executable, "-I", str(TOOL), str(junit)], capture_output=True, text=True)
+                    self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+
     def test_windows_symlink_creation_privilege_skip_is_narrow(self):
         reason = "SKIP: Windows symbolic-link privileges unavailable"
         names = ("guest_kernel_sys_paths_symlinkat", "guest_kernel_sys_paths_symlinkat_patched")
