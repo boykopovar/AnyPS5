@@ -6,6 +6,7 @@
 #include <cstring>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
 static constexpr int SCE_NP_WEBAPI_ERROR_NOT_SIGNED_IN = static_cast<int>(0x80552907);
 static constexpr std::size_t ReferenceCountOffset = 0;
@@ -17,6 +18,11 @@ static constexpr int TransactionNotStarted = static_cast<int>(0x80553508);
 // bookkeeping succeeds; the audited accessors read the measured offsets and the rest stay
 // unimplemented because a failed request never produces a response.
 extern "C" {
+
+static bool GuestFlagIsSet(const void* self, std::size_t offset) {
+    std::uint8_t flag = 0;
+    return self != nullptr && GuestPtr<const std::uint8_t>(static_cast<const std::uint8_t*>(self) + offset).CopyIn(flag) && flag != 0;
+}
 
 static void ConstructParameter(void* self);
 static int InitializeParameter(void* self, const std::uint64_t* context, bool argumentsPresent);
@@ -358,7 +364,9 @@ int APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V19BoardsApi18getBoardDefinitio
 
 int APS5_VABI _ZN3sce2Np9CppWebApi12Leaderboards2V19BoardsApi29ParameterToGetBoardDefinition10initializeEPNS1_6Common10LibContextEi(void* self, const std::uint64_t* context, int boardId) {
     if (context == nullptr) return ParameterInvalidArgument;
-    if (*context == 0) return ParameterNotInitialized;
+    std::uint64_t contextValue = 0;
+    if (!GuestPtr<const std::uint64_t>(context).CopyIn(contextValue)) return ParameterInvalidArgument;
+    if (contextValue == 0) return ParameterNotInitialized;
     auto* parameter = static_cast<ParameterObject*>(self);
     if (parameter->implementation != nullptr) return ParameterAlreadyInitialized;
     void* implementation = AllocateParameterImplementation(BoardDefinitionImplementationSize);
@@ -767,11 +775,11 @@ std::uint64_t APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V120GetOfferResponseB
 }
 
 int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V120GetOfferResponseBody20createdDateTimeIsSetEv(void* self) {
-    return static_cast<const std::uint8_t*>(self)[0xf0] != 0;
+    return GuestFlagIsSet(self, 0xf0);
 }
 
 int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V120GetOfferResponseBody20updatedDateTimeIsSetEv(void* self) {
-    return static_cast<const std::uint8_t*>(self)[0x100] != 0;
+    return GuestFlagIsSet(self, 0x100);
 }
 
 int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V120GetOfferResponseBody9getStatusEv(void* self) {
@@ -835,11 +843,11 @@ std::uint64_t APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V121GetTicketResponse
 }
 
 int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V121GetTicketResponseBody20createdDateTimeIsSetEv(void* self) {
-    return static_cast<const std::uint8_t*>(self)[0x138] != 0;
+    return GuestFlagIsSet(self, 0x138);
 }
 
 int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V121GetTicketResponseBody20updatedDateTimeIsSetEv(void* self) {
-    return static_cast<const std::uint8_t*>(self)[0x148] != 0;
+    return GuestFlagIsSet(self, 0x148);
 }
 
 int APS5_VABI _ZNK3sce2Np9CppWebApi11Matchmaking2V121GetTicketResponseBody21ticketAttributesIsSetEv(void* self) {
@@ -1057,7 +1065,9 @@ int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi42ParameterWithB
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi17TitleCloudStorage2V17DataApi42ParameterWithBinaryRequestBodyToUploadData14setRequestBodyEPKhm(void* self, const void* data, std::size_t size) {
-    if (static_cast<const ParameterObject*>(self)->implementation == nullptr) return ParameterNotInitialized;
+    ParameterObject parameter{};
+    if (!GuestPtr<const ParameterObject>(self).CopyIn(parameter)) return ParameterInvalidArgument;
+    if (parameter.implementation == nullptr) return ParameterNotInitialized;
     if (data == nullptr && size != 0) return ParameterInvalidArgument;
     return 0;
 }
@@ -1105,8 +1115,7 @@ int APS5_VABI _ZN3sce2Np9CppWebApi6Common10InitParamsD1Ev(void* self) {
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common10LibContextC1Ev(uint64_t* self) {
-    *self = 0;
-    return 0;
+    return GuestPtr<std::uint64_t>(self).CopyOut(std::uint64_t{0}) ? 0 : ParameterInvalidArgument;
 }
 
 // Initialization succeeds as on an offline console (see libSceJson2); individual requests fail.
@@ -1177,7 +1186,7 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_12Leaderboards2V121
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_12Leaderboards2V121GetRankingRequestBodyEEC1Ev(IntrusivePtr* self) {
-    *self = {};
+    GuestPtr<IntrusivePtr>(self).CopyOut(IntrusivePtr{});
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_12Leaderboards2V121GetRankingRequestBodyEED1Ev(IntrusivePtr* self) {
@@ -1185,7 +1194,7 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_12Leaderboards2V121
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_12Leaderboards2V122GetRankingResponseBodyEEC1Ev(IntrusivePtr* self) {
-    *self = {};
+    GuestPtr<IntrusivePtr>(self).CopyOut(IntrusivePtr{});
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_12Leaderboards2V122GetRankingResponseBodyEED1Ev(IntrusivePtr* self) {
@@ -1197,7 +1206,7 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_12Leaderboards2V122
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_12Leaderboards2V122RecordScoreRequestBodyEEC1Ev(IntrusivePtr* self) {
-    *self = {};
+    GuestPtr<IntrusivePtr>(self).CopyOut(IntrusivePtr{});
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_12Leaderboards2V122RecordScoreRequestBodyEED1Ev(IntrusivePtr* self) {
@@ -1205,7 +1214,7 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_12Leaderboards2V122
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_12Leaderboards2V123RecordScoreResponseBodyEEC1Ev(IntrusivePtr* self) {
-    *self = {};
+    GuestPtr<IntrusivePtr>(self).CopyOut(IntrusivePtr{});
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_12Leaderboards2V123RecordScoreResponseBodyEED1Ev(IntrusivePtr* self) {
@@ -1213,7 +1222,7 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_12Leaderboards2V123
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_12Leaderboards2V130GetBoardDefinitionResponseBodyEEC1Ev(IntrusivePtr* self) {
-    *self = {};
+    GuestPtr<IntrusivePtr>(self).CopyOut(IntrusivePtr{});
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_12Leaderboards2V130GetBoardDefinitionResponseBodyEED1Ev(IntrusivePtr* self) {
@@ -1221,7 +1230,7 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_12Leaderboards2V130
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_12Leaderboards2V14UserEEC1Ev(IntrusivePtr* self) {
-    *self = {};
+    GuestPtr<IntrusivePtr>(self).CopyOut(IntrusivePtr{});
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_12Leaderboards2V14UserEED1Ev(IntrusivePtr* self) {
@@ -1229,7 +1238,7 @@ void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_12Leaderboards2V14U
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_12Leaderboards2V19RecordApi26RecordScoreResponseHeadersEEC1Ev(IntrusivePtr* self) {
-    *self = {};
+    GuestPtr<IntrusivePtr>(self).CopyOut(IntrusivePtr{});
 }
 
 void APS5_VABI _ZN3sce2Np9CppWebApi6Common12IntrusivePtrINS1_12Leaderboards2V19RecordApi26RecordScoreResponseHeadersEED1Ev(IntrusivePtr* self) {
@@ -1367,8 +1376,7 @@ void* APS5_VABI _ZN3sce2Np9CppWebApi6Common8IteratorINS2_12IntrusivePtrINS1_12Le
 }
 
 int APS5_VABI _ZN3sce2Np9CppWebApi6Common9terminateERNS2_10LibContextE(uint64_t* context) {
-    *context = 0;
-    return 0;
+    return GuestPtr<std::uint64_t>(context).CopyOut(std::uint64_t{0}) ? 0 : ParameterInvalidArgument;
 }
 
 std::uint64_t APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V122GetRankingResponseBody22getLastUpdatedDateTimeEv(const void* self) {
@@ -1396,15 +1404,15 @@ int APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponse
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody13sortModeIsSetEv(const void* self) {
-    return static_cast<const std::uint8_t*>(self)[0x70] != 0;
+    return GuestFlagIsSet(self, 0x70);
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody15entryLimitIsSetEv(const void* self) {
-    return static_cast<const std::uint8_t*>(self)[0x34] != 0;
+    return GuestFlagIsSet(self, 0x34);
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody15updateModeIsSetEv(const void* self) {
-    return static_cast<const std::uint8_t*>(self)[0x78] != 0;
+    return GuestFlagIsSet(self, 0x78);
 }
 
 std::int64_t APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody16getMaxScoreLimitEv(const void* self) {
@@ -1416,11 +1424,11 @@ std::int64_t APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitio
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody18maxScoreLimitIsSetEv(const void* self) {
-    return static_cast<const std::uint8_t*>(self)[0x58] != 0;
+    return GuestFlagIsSet(self, 0x58);
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody18minScoreLimitIsSetEv(const void* self) {
-    return static_cast<const std::uint8_t*>(self)[0x68] != 0;
+    return GuestFlagIsSet(self, 0x68);
 }
 
 std::uint32_t APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody20getLargeDataNumLimitEv(const void* self) {
@@ -1432,11 +1440,11 @@ std::size_t APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinition
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody22largeDataNumLimitIsSetEv(const void* self) {
-    return static_cast<const std::uint8_t*>(self)[0x3c] != 0;
+    return GuestFlagIsSet(self, 0x3c);
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V130GetBoardDefinitionResponseBody23largeDataSizeLimitIsSetEv(const void* self) {
-    return static_cast<const std::uint8_t*>(self)[0x48] != 0;
+    return GuestFlagIsSet(self, 0x48);
 }
 
 const CommonString* APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry10getCommentEv(const void* self) {
@@ -1452,7 +1460,7 @@ void* APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry11getOnlineIdEv(void
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry12commentIsSetEv(const void* self) {
-    return static_cast<const std::uint8_t*>(self)[0x38] != 0;
+    return GuestFlagIsSet(self, 0x38);
 }
 
 std::uint64_t APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry12getAccountIdEv(const void* self) {
@@ -1470,7 +1478,7 @@ std::uint32_t APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry13getSerialR
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry13objectIdIsSetEv(const void* self) {
-    return static_cast<const std::uint8_t*>(self)[0x68] != 0;
+    return GuestFlagIsSet(self, 0x68);
 }
 
 std::uint32_t APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry14getHighestRankEv(const void* self) {
@@ -1480,7 +1488,7 @@ std::uint32_t APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry14getHighest
 }
 
 bool APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry14smallDataIsSetEv(const void* self) {
-    return static_cast<const std::uint8_t*>(self)[0xb8] != 0;
+    return GuestFlagIsSet(self, 0xb8);
 }
 
 std::uint32_t APS5_VABI _ZNK3sce2Np9CppWebApi12Leaderboards2V15Entry20getHighestSerialRankEv(const void* self) {
