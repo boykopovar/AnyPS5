@@ -10,6 +10,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <initializer_list>
+#include <limits>
+#include <utility>
 
 using namespace FreeType;
 
@@ -91,10 +93,41 @@ static void TestFromPolar() {
     FT_Vector_From_Polar_nid_postfix(nullptr, 64, 0);
 }
 
+static void TestAccumulatedAngles() {
+    constexpr std::int64_t turn = 360ll << 16;
+    const std::pair<std::int64_t, FT_Angle> angles[] = {
+        {turn * 1000 + (45ll << 16), 45 << 16},
+        {-turn * 1000 - (45ll << 16), -(45 << 16)},
+        {turn * 1000, 360 << 16}, {-turn * 1000, -(360 << 16)},
+        {turn * 100000000000ll + (90ll << 16), 90 << 16},
+        {-turn * 100000000000ll - (90ll << 16), -(90 << 16)},
+        {std::numeric_limits<std::int64_t>::max(), 16252927},
+        {std::numeric_limits<std::int64_t>::min(), -16252928}};
+    for (const auto& [angle, reference] : angles) {
+        for (const GuestVector input : {GuestVector{12345, -54321}, GuestVector{123456789, 987654321}}) {
+            auto actual = input;
+            FT_Vector expected{static_cast<FT_Pos>(input.x), static_cast<FT_Pos>(input.y)};
+            FT_Vector_Rotate(&expected, reference);
+            FT_Vector_Rotate_nid_postfix(&actual, angle);
+            Require(actual.x == expected.x && actual.y == expected.y);
+        }
+        for (const std::int64_t length : {0, 1, -1, 12345, -54321}) {
+            GuestVector actual{11, 13};
+            FT_Vector expected{};
+            FT_Vector_From_Polar(&expected, static_cast<FT_Fixed>(length), reference);
+            FT_Vector_From_Polar_nid_postfix(&actual, length, angle);
+            Require(actual.x == expected.x && actual.y == expected.y);
+        }
+    }
+    FT_Vector_Rotate_nid_postfix(nullptr, std::numeric_limits<std::int64_t>::max());
+    FT_Vector_From_Polar_nid_postfix(nullptr, 64, std::numeric_limits<std::int64_t>::min());
+}
+
 int main() {
     TestAtan2();
     TestLength();
     TestRotate();
     TestPolarize();
     TestFromPolar();
+    TestAccumulatedAngles();
 }
