@@ -12261,6 +12261,7 @@ public:
             if (op == spv::OpIEqual) comparisons.push_back({words[cursor + 3], words[cursor + 4]});
             if (op == spv::OpCompositeExtract) extracted[words[cursor + 2]] = words[cursor + 3];
             if (op == spv::OpConstant && length == 4u) constants[words[cursor + 2]] = words[cursor + 3];
+            if (op == spv::OpCopyObject) copies[words[cursor + 2]] = words[cursor + 3];
             if (op == spv::OpBitcast || op == spv::OpFSub || op == spv::OpISub || op == spv::OpConvertUToF || op == spv::OpConvertFToU) sources[words[cursor + 2]] = words[cursor + 3];
             for (std::size_t operand = 3; (op == spv::OpCompositeConstruct || op == spv::OpConstantComposite) && operand < length; ++operand) composites[words[cursor + 2]].push_back(words[cursor + operand]);
             if (length > 2u && op != spv::OpTypeVector && op != spv::OpTypeImage && op != spv::OpTypeSampledImage && op != spv::OpStore && op != spv::OpDecorate && op != spv::OpMemberDecorate && op != spv::OpName && op != spv::OpImageWrite) resultTypes[words[cursor + 2]] = words[cursor + 1];
@@ -12280,6 +12281,7 @@ public:
 
     std::uint32_t Root(std::uint32_t id) const {
         while (true) {
+            id = Original(id);
             if (const auto constant = constants.find(id); constant != constants.end()) return constant->second;
             const auto source = sources.find(id);
             if (source == sources.end()) return 0xffffffffu;
@@ -12288,6 +12290,7 @@ public:
     }
 
     std::vector<std::uint32_t> Components(std::uint32_t id) const {
+        id = Original(id);
         const auto composite = composites.find(id);
         if (composite == composites.end()) return {Root(id)};
         std::vector<std::uint32_t> roots;
@@ -12314,10 +12317,20 @@ public:
     std::vector<Write> writes;
 
 private:
+    std::uint32_t Original(std::uint32_t id) const {
+        for (std::size_t depth = 0; depth <= copies.size(); ++depth) {
+            const auto copy = copies.find(id);
+            if (copy == copies.end()) return id;
+            id = copy->second;
+        }
+        return 0xffffffffu;
+    }
+
     std::map<std::uint32_t, std::pair<std::uint32_t, std::uint32_t>> images;
     std::map<std::uint32_t, std::uint32_t> sampledImages;
     std::map<std::uint32_t, std::uint32_t> resultTypes;
     std::map<std::uint32_t, std::uint32_t> constants;
+    std::map<std::uint32_t, std::uint32_t> copies;
     std::map<std::uint32_t, std::uint32_t> sources;
     std::map<std::uint32_t, std::uint32_t> extracted;
     std::map<std::uint32_t, std::vector<std::uint32_t>> composites;
