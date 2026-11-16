@@ -468,7 +468,32 @@ void CheckTransferFillers() {
     sceUsbdFreeTransfer(transfer);
 }
 
+void EventTimeoutsWithoutContext() {
+    for (const std::int64_t micros : {0, 50, 1000}) {
+        UsbdTimeval timeout{0, micros};
+        const auto handlerStart = std::chrono::steady_clock::now();
+        for (int round = 0; round < 20; ++round) Require(sceUsbdHandleEventsTimeout(&timeout) == 0, "event handling without a context failed");
+        const auto handlerWait = std::chrono::steady_clock::now() - handlerStart;
+        Require(handlerWait >= std::chrono::microseconds(20 * micros), "event handling without a context returned early");
+        Require(handlerWait < std::chrono::milliseconds(200), "event handling without a context exceeded the timeout tolerance");
+
+        const auto waiterStart = std::chrono::steady_clock::now();
+        for (int round = 0; round < 20; ++round) {
+            sceUsbdLockEventWaiters();
+            Require(sceUsbdWaitForEvent(&timeout) == 1, "event waiter without a context did not time out");
+            Require(sceUsbdEventHandlingOk() == 1, "timed-out waiter did not take over event handling");
+            sceUsbdUnlockEvents();
+        }
+        const auto waiterWait = std::chrono::steady_clock::now() - waiterStart;
+        Require(waiterWait >= std::chrono::microseconds(20 * micros), "event waiter without a context returned early");
+        Require(waiterWait < std::chrono::milliseconds(200), "event waiter without a context exceeded the timeout tolerance");
+        std::printf("USBD: 20 x %lld us: handler %.3f ms, waiter %.3f ms\n", static_cast<long long>(micros),
+            std::chrono::duration<double, std::milli>(handlerWait).count(), std::chrono::duration<double, std::milli>(waiterWait).count());
+    }
+}
+
 int main(int argc, char** argv) {
+    EventTimeoutsWithoutContext();
     Require(sceUsbdInit() == 0, "initialization failed");
     CheckTransferFillers();
     void** list = nullptr;

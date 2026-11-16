@@ -1,6 +1,7 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -8,6 +9,15 @@
 #include <source_location>
 #include <stdexcept>
 #include <string_view>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -76,7 +86,14 @@ void CheckVariant() {
     Require(std::all_of(buffer.begin(), buffer.end(), [](char value) { return value == 'Q'; }));
     RequireThrow<std::invalid_argument>([&] { uloc_getVariant_nid_postfix("en_US", buffer.data(), 32, nullptr); });
     status = 0;
-    RequireThrow<std::runtime_error>([&] { uloc_getVariant_nid_postfix(nullptr, buffer.data(), 32, &status); });
+    std::array<char, 32> expected{};
+    const std::int32_t expectedLength = uloc_getVariant_nid_postfix(uloc_getDefault(), expected.data(), 32, &status);
+    Require(status <= 0);
+    status = 0;
+    buffer.fill('Q');
+    Require(uloc_getVariant_nid_postfix(nullptr, buffer.data(), 32, &status) == expectedLength && status <= 0);
+    Require(std::equal(buffer.begin(), buffer.begin() + expectedLength + 1, expected.begin()));
+    status = 0;
     RequireThrow<std::invalid_argument>([&] { uloc_getVariant_nid_postfix("en_US", nullptr, 1, &status); });
 }
 
@@ -181,10 +198,60 @@ void CheckKeywordErrors() {
     RequireThrow<std::invalid_argument>([&] { uloc_setKeywordValue_nid_postfix("calendar", "japanese", nullptr, 32, &status); });
 }
 
+void CheckGuestStatus() {
+#ifdef _WIN32
+    const std::size_t pageSize = 4096;
+    void* page = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    Require(page != nullptr);
+#else
+    const std::size_t pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE) > 0 ? sysconf(_SC_PAGESIZE) : 4096);
+    void* page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED);
+#endif
+    std::memset(page, 0, pageSize);
+#ifdef _WIN32
+    DWORD oldProtect = 0;
+    Require(VirtualProtect(page, pageSize, PAGE_READONLY, &oldProtect) != 0);
+#else
+    Require(mprotect(page, pageSize, PROT_READ) == 0);
+#endif
+    auto* readOnlyStatus = static_cast<std::int32_t*>(page);
+    auto* unmappedStatus = reinterpret_cast<std::int32_t*>(std::uintptr_t{0x10});
+    auto rejectsKeepingErrno = [](auto call) {
+        errno = 71;
+        bool caught = false;
+        try { call(); }
+        catch (const std::invalid_argument&) { caught = true; }
+        return caught && errno == 71;
+    };
+    std::array<char, 32> buffer;
+    buffer.fill('Q');
+    Require(rejectsKeepingErrno([&] { uloc_getVariant_nid_postfix("en_US_POSIX", buffer.data(), 32, unmappedStatus); }));
+    Require(std::all_of(buffer.begin(), buffer.end(), [](char value) { return value == 'Q'; }));
+    Require(uloc_getVariant_nid_postfix("en_US_POSIX", buffer.data(), 32, readOnlyStatus) == 5);
+    Require(std::strcmp(buffer.data(), "POSIX") == 0);
+    Require(rejectsKeepingErrno([&] { uloc_getVariant_nid_postfix("en_US_POSIX", nullptr, 0, readOnlyStatus); }));
+    std::strcpy(buffer.data(), "de");
+    const auto before = buffer;
+    Require(rejectsKeepingErrno([&] { uloc_setKeywordValue_nid_postfix("currency", "CHF", buffer.data(), 32, unmappedStatus); }));
+    Require(buffer == before);
+    Require(rejectsKeepingErrno([&] { uloc_setKeywordValue_nid_postfix("", "CHF", buffer.data(), 32, readOnlyStatus); }));
+    Require(buffer == before);
+    Require(uloc_setKeywordValue_nid_postfix("currency", "CHF", buffer.data(), 32, readOnlyStatus) == 15);
+    Require(std::strcmp(buffer.data(), "de@currency=CHF") == 0);
+    Require(*readOnlyStatus == 0);
+#ifdef _WIN32
+    VirtualFree(page, 0, MEM_RELEASE);
+#else
+    munmap(page, pageSize);
+#endif
+}
+
 }
 
 int main() {
     CheckVariant();
     CheckKeywordUpdates();
     CheckKeywordErrors();
+    CheckGuestStatus();
 }

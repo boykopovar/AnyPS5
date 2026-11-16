@@ -66,22 +66,12 @@ int APS5_VABI PEM_read_RSAPrivateKey_nid_disambig1_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI PKCS7_free_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI SSL_CTX_add0_chain_cert_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI SSL_CTX_clear_chain_certs_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI d2i_ECParameters_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

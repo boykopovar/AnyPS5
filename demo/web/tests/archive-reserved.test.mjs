@@ -52,3 +52,14 @@ for (const device of ["CONIN$", "conout$", "CoNiN$", "CoNoUt$"]) {
 for (const name of ["COM10", "COM\u2074.txt", "COM\u00b9-extra", "CONIN$-extra", "CONOUT$-extra.txt", "CONINPUT.txt", "content/ordinary.txt"]) {
   assert.equal(validPath(name), name);
 }
+
+for (const name of ["con", "con.txt", "con .txt", "NUL  .bin", "app/aux .dat", "COM1 .log", "a/lpt1 .x/b", "CONIN$ .x", "prn . .txt", "LPT² .txt"]) {
+  assert.throws(() => validPath(name), /Unsafe ZIP path/, name);
+}
+const padded = new Archive([{ path: "main.elf", file: new Blob([header]) }, { path: "content/nul .json", file: new Blob(["resource"]) }]);
+try { await assert.rejects(padded.inspect(() => {}), /Unsafe ZIP path/); }
+finally { await padded.close(); }
+
+for (const name of ["console.txt", "con1 .txt", "icon .txt", "con x.txt", "COM10 .txt", "content/nul-data .bin"]) {
+  assert.equal(validPath(name), name);
+}
