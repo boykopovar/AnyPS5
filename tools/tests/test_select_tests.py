@@ -912,5 +912,10 @@ class GraphClosureTests(unittest.TestCase):
             self.assertEqual(select_tests.load_graph(path), {"tests": {}, "closures": {}})
 
 
+class PathHelperTests(unittest.TestCase):
+    def test_escape_doubles_dollars_and_escapes_colons_and_spaces(self):
+        self.assertEqual(select_tests.escape("a b:c$d"), "a$ b$:c$$d")
+
+
 if __name__ == "__main__":
     unittest.main(defaultTest=os.environ.get("ANYPS5_SELECT_TEST_CLASS"))
