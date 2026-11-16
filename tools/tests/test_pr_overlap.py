@@ -602,5 +602,15 @@ class CommentStateTests(unittest.TestCase):
         self.run_step(first, None)
         self.assertEqual(self.run_step(self.report("b" * 40, (5, 6)), first), [["api", "repos/owner/project/issues/42/comments", "--paginate"], ["api", "-X", "PATCH"]])
 
+
+class ExportScanTests(unittest.TestCase):
+    def test_exports_reads_added_export_names_only(self):
+        diff = "+APS5_VABI sceFoo(int a) {\n-APS5_VABI sceBar(int b) {\n+ other\n"
+        self.assertEqual(pr_overlap.exports(diff, "+"), {"sceFoo"})
+
+    def test_exports_skips_unpatched_names(self):
+        self.assertEqual(pr_overlap.exports("+APS5_VABI sceFoo_nid_no_patch(int a) {\n", "+"), set())
+
+
 if __name__ == "__main__":
     unittest.main()
