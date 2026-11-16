@@ -74,6 +74,17 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSaveData.native>")
     endif()
 
+    add_test_executable(guest_savedata_mount5_tests ${LIBS_INCLUDE_DIR}/tests/GuestSaveDataMount5.cpp)
+    target_include_directories(guest_savedata_mount5_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_savedata_mount5_tests PRIVATE libSceSaveData.native libc)
+    configure_windows_unwind(guest_savedata_mount5_tests)
+    add_test(NAME guest_savedata_mount5 COMMAND guest_savedata_mount5_tests)
+    set_tests_properties(guest_savedata_mount5 PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_savedata_mount5 PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSaveData.native>")
+    endif()
+
     add_test_executable(guest_savedata_mount_status_tests ${LIBS_INCLUDE_DIR}/tests/GuestSaveDataMountStatus.cpp)
     target_include_directories(guest_savedata_mount_status_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_savedata_mount_status_tests PRIVATE libSceSaveData.native libc)

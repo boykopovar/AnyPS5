@@ -61,7 +61,7 @@ int APS5_VABI sceSaveDataIsMounted();
 int APS5_VABI sceSaveDataManualDelete(void);
 int APS5_VABI sceSaveDataManualDownload(void);
 int APS5_VABI sceSaveDataManualUpload(void);
-int APS5_VABI sceSaveDataMount5();
+int APS5_VABI sceSaveDataMount5(const SaveDataMount3* mount, SaveDataMountResult* mountResult);
 int APS5_VABI sceSaveDataMountInternal(void);
 int APS5_VABI sceSaveDataMountSys(void);
 int APS5_VABI sceSaveDataRebuildDatabase(void);

@@ -2311,9 +2311,8 @@ int APS5_VABI sceSaveDataManualUpload(void) {
     return 0;
 }
 
-int APS5_VABI sceSaveDataMount5() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceSaveDataMount5(const SaveDataMount3* mount, SaveDataMountResult* mount_result) {
+    return sceSaveDataMount3(mount, mount_result);
 }
 
 int APS5_VABI sceSaveDataMountInternal(void) {
