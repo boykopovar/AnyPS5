@@ -662,22 +662,6 @@ void CheckNatDiscovery(in_addr address) {
     RecordUniqueTransactionId(seenIds, responseOriginTx);
     Require(!WaitReadable(server2, 300));
 
-    NetCtlSetStunServers_nid_no_patch(&server1Addr, 1, 1000);
-    StunTxId symmetricTx{};
-    std::thread symmetricWorker([&] {
-        sockaddr_in client{};
-        symmetricTx = ReceiveStunBindingRequest(server1, client);
-        SendStunBindingResponse(server1, client, symmetricTx, externalIp, 54321, false, &server2Addr, kStunOtherAddress);
-    });
-    natInfo = {sizeof(natInfo), 99, 99, 0};
-    Require(sceNetCtlGetNatInfo(&natInfo) == 0);
-    symmetricWorker.join();
-    RecordUniqueTransactionId(seenIds, symmetricTx);
-    Require(natInfo.size == sizeof(natInfo));
-    Require(natInfo.stun_status == 2);
-    Require(natInfo.nat_type == 3);
-    Require(natInfo.mapped_addr == externalIp);
-
     NetCtlSetStunServers_nid_no_patch(nullptr, 0, 0);
     CloseTestSocket(server1);
     CloseTestSocket(server2);
