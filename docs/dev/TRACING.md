@@ -96,3 +96,4 @@ A title's `files` in `tools/titles.json` adds files to its prepared folders befo
 ## CSV exports
 
 - `tools/performance_csv.py <baseline> <candidate>` exports a performance comparison as CSV. Empty metric cells mean the value was not reported; `--require-matching-context` fails when the two captures differ in machine or scene, and `--spreadsheet-safe` escapes cells that spreadsheets would evaluate.
+- `tools/trace_intervals_csv.py <summary>` exports the trace interval summaries as CSV. `--require-complete` fails on an incomplete summary.
