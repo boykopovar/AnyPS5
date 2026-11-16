@@ -821,7 +821,10 @@ UniformSelectRegion FindUniformSelectRegion(SpirvValueEmitContext& ctx, const Ir
     std::vector<const IrBlock*> prefix;
     for (auto* at = block;;) {
         prefix.push_back(at);
-        if (at == state.program.BlockOrder().front()) break;
+        if (at == state.program.BlockOrder().front()) {
+            if (!at->Predecessors().empty()) return best;
+            break;
+        }
         if (at->Predecessors().size() != 1u || at->Predecessors().front()->Successors().size() != 1u || std::ranges::find(prefix, at->Predecessors().front()) != prefix.end()) return best;
         at = at->Predecessors().front();
     }
