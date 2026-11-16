@@ -782,6 +782,15 @@ class MetadataRefusalTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'must be a JSON object'):
             build_web.release_metadata([])
 
+    def test_asset_metadata_refuses_a_bad_size_or_digest(self):
+        good = {'name': 'a.zip', 'size': 5, 'browser_download_url': 'https://example.invalid/a.zip', 'digest': 'sha256:' + '0' * 64}
+        with self.assertRaisesRegex(ValueError, 'archive size'):
+            build_web.asset_metadata(dict(good, size=0), 10)
+        with self.assertRaisesRegex(ValueError, 'archive size'):
+            build_web.asset_metadata(dict(good, size=11), 10)
+        with self.assertRaises(ValueError):
+            build_web.asset_metadata(dict(good, digest='md5:abc'), 10)
+
 
 if __name__ == "__main__":
     unittest.main()
