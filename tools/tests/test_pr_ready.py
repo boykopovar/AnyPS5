@@ -364,6 +364,12 @@ class PaginationTests(unittest.TestCase):
         self.assertEqual(pr_ready.listed({'nodes': [1, 2]}), [1, 2])
         with self.assertRaisesRegex(ValueError, 'expected a connection'):
             pr_ready.listed([])
+class CheckMappingTests(unittest.TestCase):
+    def test_check_of_maps_commit_status_states(self):
+        pending = pr_ready.check_of({'__typename': 'StatusContext', 'context': 'ci', 'state': 'PENDING'})
+        self.assertEqual(pending, {'id': 0, 'name': 'ci', 'done': False, 'conclusion': None})
+        self.assertEqual(pr_ready.check_of({'__typename': 'StatusContext', 'context': 'ci', 'state': 'SUCCESS'})['conclusion'], 'success')
+        self.assertEqual(pr_ready.check_of({'__typename': 'StatusContext', 'context': 'ci', 'state': 'ERROR'})['conclusion'], 'failure')
 
 
 if __name__ == "__main__":
