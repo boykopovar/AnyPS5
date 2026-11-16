@@ -2893,6 +2893,7 @@ int64_t APS5_VABI fstat_nid_no_patch(int d, FileStat* sb) {
 
 
 #if defined(__ELF__)
+__asm__(".protected __Ux86_64_setcontext");
 __asm__(".protected __elf_phdr_match_addr_nid_postfix");
 __asm__(".protected __inet_ntop_nid_postfix");
 __asm__(".protected __inet_pton_nid_postfix");
@@ -3262,6 +3263,7 @@ __asm__(".protected sysKernelGetLowerLimitSysexVersion_nid_postfix");
 __asm__(".protected sysKernelGetLowerLimitUpdVersion_nid_postfix");
 __asm__(".protected sysKernelGetManufacturingMode_nid_postfix");
 __asm__(".protected sysKernelGetUpdVersion_nid_postfix");
+__asm__(".protected sysarch");
 __asm__(".protected sysconf_nid_postfix");
 __asm__(".protected sysctl_nid_postfix");
 __asm__(".protected sysctlbyname_nid_postfix");
