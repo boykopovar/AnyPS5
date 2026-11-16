@@ -187,6 +187,10 @@ void RunSaturatedMaximum(AgcDriver::VulkanDevice& device) {
     request.useCache = false;
     request.target.float32FlushToZero = false;
     for (const auto mode : {0xc0u, 0xf0u}) {
+        if (mode == 0xf0u && !request.target.float32DenormPreserve) {
+            std::puts("saturated maximum FLOAT_MODE 0xf0 not run: device lacks DenormPreserve 32");
+            continue;
+        }
         request.context.floatMode = ShaderRecompiler::ShaderFloatMode{mode, true, false, false};
         const auto result = ShaderRecompiler::Recompile(request);
         device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
