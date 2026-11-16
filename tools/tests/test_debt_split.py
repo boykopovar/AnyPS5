@@ -566,5 +566,11 @@ class RelinkUnfencedTests(unittest.TestCase):
         self.assertIn("[z](../a.md#anchor)", moved)
 
 
+class RenderTests(unittest.TestCase):
+    def test_render_orders_sections_and_separates_entries(self):
+        out = debt_split.render("# T", {"B": ["- b"], "A": ["- a"]}, ["A", "B"])
+        self.assertEqual(out, "# T\n\n### A\n\n- a\n\n### B\n\n- b\n")
+
+
 if __name__ == "__main__":
     unittest.main()
