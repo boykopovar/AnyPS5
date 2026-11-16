@@ -402,4 +402,9 @@ ctest --test-dir build/register-context --output-on-failure
 ```
 
 On Linux x86-64, omit `CMAKE_OSX_ARCHITECTURES`; the full `BUILD_TESTING` build also registers these tests. Apple silicon runs the x86-64 tests through Rosetta. They cover the unwinder's register transfer, not the complete macOS runtime or guest exception handling.
- 
+
+## Checker scripts
+
+- `tools/check_test_registration.py [build]` fails when a test executable is built but no ctest test runs it, or when a library source that defines exports is never compiled. `--list` and `--json` print the findings.
+- `tools/check_skips.py <junit> [--job linux|windows] [--require-tests]` fails when a test is skipped for a reason the job's device is not expected to hit.
+- `tools/compare_configure_checks.py <baseline> <candidate>` compares the recognized configure checks in two CMake caches without writing anything.
