@@ -625,5 +625,11 @@ class EnvReferenceTests(unittest.TestCase):
         self.assertIn("APS5_PYTHON", env_reference.reads([root / "core"]))
 
 
+class SourceFilesTests(unittest.TestCase):
+    def test_source_files_is_empty_for_a_missing_root(self):
+        import env_reference
+        self.assertEqual(list(env_reference.source_files(Path("/no/such/env/root"))), [])
+
+
 if __name__ == "__main__":
     unittest.main()
