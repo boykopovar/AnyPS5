@@ -15,12 +15,20 @@ namespace AgcDriver {
 
 using FaultToken = std::uint32_t;
 
+enum class FaultStage : std::uint32_t { unknown = 0, graphics = 1, compute = 2, mesh = 3, task = 4, copy = 5 };
+
 struct FaultTokenEntry {
     alignas(std::atomic_ref<FaultToken>::required_alignment) mutable FaultToken token = 0;
     std::uint64_t submitSerial = 0;
     std::uint64_t programAddress = 0;
     std::uint64_t variantId = 0;
     char desc[48]{};
+    std::uint32_t stage = 0;
+    std::uint64_t argBuffer = 0;
+    std::uint32_t argOffset = 0;
+    std::uint32_t argStride = 0;
+    std::uint32_t argWords[4] = {};
+    std::uint32_t argCount = 0;
 };
 
 struct SubmitBracket {
@@ -62,6 +70,12 @@ public:
             copy.programAddress = slot.programAddress;
             copy.variantId = slot.variantId;
             for (std::size_t i = 0; i < 48; ++i) copy.desc[i] = slot.desc[i];
+            copy.stage = slot.stage;
+            copy.argBuffer = slot.argBuffer;
+            copy.argOffset = slot.argOffset;
+            copy.argStride = slot.argStride;
+            for (std::size_t i = 0; i < 4; ++i) copy.argWords[i] = slot.argWords[i];
+            copy.argCount = slot.argCount;
             if (std::atomic_ref<FaultToken>(slot.token).load(std::memory_order_acquire) != token) return std::nullopt;
             copy.token = token;
             return copy;

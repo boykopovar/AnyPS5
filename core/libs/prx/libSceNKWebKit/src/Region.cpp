@@ -23,9 +23,11 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 #include "prx/libSceNKWebKit/include/RegionExports.hpp"
+#include "prx/libSceNKWebKit/include/WebCoreExports.hpp"
 #include "prx/libc/include/General.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>

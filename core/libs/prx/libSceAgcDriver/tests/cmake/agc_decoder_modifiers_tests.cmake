@@ -1,0 +1,10 @@
+file(GLOB agcDecoderModifiersDecoderSources CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/core/shader/recompiler/RdnaDecoder/src/*.cpp)
+add_test_executable(agc_decoder_modifiers_tests EXCLUDE_FROM_ALL tests/DecoderModifiers.cpp ${agcDecoderModifiersDecoderSources})
+target_include_directories(agc_decoder_modifiers_tests PRIVATE ${PROJECT_SOURCE_DIR}/core/shader/recompiler ${PROJECT_SOURCE_DIR}/core/shader/recompiler/RdnaDecoder/include ${PROJECT_SOURCE_DIR}/core/shader/recompiler/IntermediateRepresentation/include ${PROJECT_SOURCE_DIR}/core/shader/recompiler/ControlFlow/include)
+set_target_properties(agc_decoder_modifiers_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_host_test_executable(agc_decoder_modifiers_tests)
+
+if(BUILD_TESTING)
+    set_target_properties(agc_decoder_modifiers_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_decoder_modifiers COMMAND agc_decoder_modifiers_tests)
+endif()

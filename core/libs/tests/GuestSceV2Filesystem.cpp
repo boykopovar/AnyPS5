@@ -51,6 +51,8 @@ void TestStat() {
     Require(_ZNSt8__sce_v210filesystem5_StatEPKcPNS0_5permsEPi_nid_postfix(root.c_str(), nullptr, &error) == TypeDirectory && error == 0, "directory");
     perms = 1234;
     Require(_ZNSt8__sce_v210filesystem5_StatEPKcPNS0_5permsEPi_nid_postfix(At("missing").c_str(), &perms, &error) == TypeNotFound && error == NoSuchFile && perms == 1234, "missing path");
+    Require(_ZNSt8__sce_v210filesystem5_StatEPKcPNS0_5permsEPi_nid_postfix(At("file").c_str(), reinterpret_cast<int*>(0x10), reinterpret_cast<int*>(0x10)) == TypeRegular, "regular file with unwritable outputs");
+    Require(_ZNSt8__sce_v210filesystem5_StatEPKcPNS0_5permsEPi_nid_postfix(At("missing").c_str(), &perms, reinterpret_cast<int*>(0x10)) == TypeNotFound, "missing path with an unwritable error output");
 }
 
 void TestStatInvalidPath() {

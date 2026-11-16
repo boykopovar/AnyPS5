@@ -28,6 +28,15 @@ void APS5_VABI WKContextConfigurationSetApplicationCacheDirectory(const void* co
     NKWebKit::CastOrNull<NKWebKit::String>(applicationCacheDirectory, __func__);
 }
 
+const void* APS5_VABI WKContextConfigurationCopyCookieStoragePath(const void* configuration) {
+    return NKWebKit::ToCopiedStringRef(NKWebKit::Cast<NKWebKit::ProcessPoolConfiguration>(configuration, __func__)->cookieStoragePath);
+}
+
+void APS5_VABI WKContextConfigurationSetCookieStoragePath(const void* configuration, const void* cookieStoragePath) {
+    NKWebKit::Cast<NKWebKit::ProcessPoolConfiguration>(configuration, __func__)->cookieStoragePath =
+        NKWebKit::OptionalString(cookieStoragePath, __func__);
+}
+
 const void* APS5_VABI WKContextConfigurationCopyCustomClassesForParameterCoder(const void* configuration) {
     NKWebKit::Cast<NKWebKit::ProcessPoolConfiguration>(configuration, __func__);
     return NKWebKit::ToRef(NKWebKit::Make<NKWebKit::Array>());
@@ -160,6 +169,14 @@ bool APS5_VABI WKContextConfigurationProcessSwapsOnNavigation(const void* config
 
 void APS5_VABI WKContextConfigurationSetProcessSwapsOnNavigation(const void* configuration, bool swaps) {
     NKWebKit::Cast<NKWebKit::ProcessPoolConfiguration>(configuration, __func__)->processSwapsOnNavigationFromClient = swaps;
+}
+
+bool APS5_VABI WKContextConfigurationProcessSwapsOnWindowOpenWithOpener(const void* configuration) {
+    return NKWebKit::Cast<NKWebKit::ProcessPoolConfiguration>(configuration, __func__)->processSwapsOnWindowOpenWithOpener;
+}
+
+void APS5_VABI WKContextConfigurationSetProcessSwapsOnWindowOpenWithOpener(const void* configuration, bool processSwapsOnWindowOpenWithOpener) {
+    NKWebKit::Cast<NKWebKit::ProcessPoolConfiguration>(configuration, __func__)->processSwapsOnWindowOpenWithOpener = processSwapsOnWindowOpenWithOpener;
 }
 
 const void* APS5_VABI WKContextConfigurationCopyResourceLoadStatisticsDirectory(const void* configuration) {

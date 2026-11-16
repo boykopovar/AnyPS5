@@ -4,12 +4,12 @@
 
 extern "C" {
 
-int APS5_VABI sceNpSnsYouTubeDialogClose();
-int APS5_VABI sceNpSnsYouTubeDialogGetResult();
-int APS5_VABI sceNpSnsYouTubeDialogGetStatus();
-int APS5_VABI sceNpSnsYouTubeDialogInitialize();
-int APS5_VABI sceNpSnsYouTubeDialogOpen();
-int APS5_VABI sceNpSnsYouTubeDialogTerminate();
-int APS5_VABI sceNpSnsYouTubeDialogUpdateStatus();
+int APS5_VABI sceNpSnsYouTubeDialogInitialize(void);
+int APS5_VABI sceNpSnsYouTubeDialogOpen(const void* param);
+int APS5_VABI sceNpSnsYouTubeDialogUpdateStatus(void);
+int APS5_VABI sceNpSnsYouTubeDialogGetStatus(void);
+int APS5_VABI sceNpSnsYouTubeDialogGetResult(void* result);
+int APS5_VABI sceNpSnsYouTubeDialogClose(void);
+int APS5_VABI sceNpSnsYouTubeDialogTerminate(void);
 
 }

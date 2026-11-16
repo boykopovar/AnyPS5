@@ -4,6 +4,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <stdexcept>
 #include <thread>
 #include <type_traits>
 
@@ -18,6 +19,20 @@ inline constexpr std::uint64_t PreciseHundredNanosToQpcTicks(unsigned long long 
 
 inline constexpr std::uint64_t PrecisePauseThresholdTicks(std::uint64_t freq) {
     return PreciseHundredNanosToQpcTicks(2ULL, freq);
+}
+
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+#include <immintrin.h>
+#endif
+
+inline void PreciseSpinPause() {
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+    _mm_pause();
+#elif defined(__aarch64__)
+    asm volatile("yield" ::: "memory");
+#else
+    std::atomic_signal_fence(std::memory_order_seq_cst);
+#endif
 }
 
 #ifdef _WIN32
@@ -119,18 +134,6 @@ inline void PreciseSleepHundredNanos(unsigned long long hundredNanos) {
 #ifdef __linux__
 #include <sys/prctl.h>
 #endif
-#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
-#include <immintrin.h>
-#endif
-
-inline void PreciseSpinPause() {
-#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
-    _mm_pause();
-#else
-    std::atomic_signal_fence(std::memory_order_seq_cst);
-#endif
-}
-
 inline std::uint64_t PreciseMonotonicNanos() {
     struct timespec ts;
 #if defined(__APPLE__) && defined(_LIBCPP_VERSION) && defined(CLOCK_MONOTONIC_RAW)
@@ -251,22 +254,41 @@ inline void PreciseSleepUs(unsigned long long micros) {
 #endif
 }
 
+using PreciseHundredNanos = std::chrono::duration<std::int64_t, std::ratio<1, 10000000>>;
+
+template <class TTick, class TDuration>
+inline constexpr std::uint64_t PreciseDeadlineTicks(TDuration deadline) {
+    if (!(deadline.count() > 0)) [[unlikely]] {
+        return 0;
+    }
+    if constexpr (std::chrono::treat_as_floating_point_v<typename TDuration::rep>) {
+        const auto nanos = std::chrono::duration<long double, std::nano>(deadline);
+        constexpr auto nanosLimit = static_cast<long double>((std::chrono::nanoseconds::max)().count()) + 1.0L;
+        if (nanosLimit - nanos.count() < 1.0L) [[unlikely]] {
+            throw std::overflow_error("precise deadline is out of range");
+        }
+        if (nanos.count() == 0.0L) {
+            return 1;
+        }
+        const auto roundedNanos = std::chrono::ceil<std::chrono::nanoseconds>(nanos);
+        return static_cast<std::uint64_t>(std::chrono::ceil<TTick>(roundedNanos).count());
+    } else if constexpr (std::is_same_v<typename TDuration::period, std::nano>) {
+        constexpr auto nanosPerTick = std::ratio_divide<typename TTick::period, std::nano>::num;
+        const auto nanos = static_cast<std::uint64_t>(deadline.count());
+        return (nanos - 1) / nanosPerTick + 1;
+    } else {
+        return static_cast<std::uint64_t>(std::chrono::ceil<TTick>(deadline).count());
+    }
+}
+
 template <class TClock, class TDuration>
 inline void PreciseSleepUntil(const std::chrono::time_point<TClock, TDuration>& deadline) {
 #ifdef _WIN32
     if constexpr (std::is_same_v<TClock, std::chrono::steady_clock>) {
         if (PreciseQpcFrequency() == 10000000ULL) [[likely]] {
-            const auto rawDeadline = deadline.time_since_epoch().count();
-            if (rawDeadline <= 0) [[unlikely]] {
+            const auto targetHns = PreciseDeadlineTicks<PreciseHundredNanos>(deadline.time_since_epoch());
+            if (targetHns == 0) [[unlikely]] {
                 return;
-            }
-            using HundredNanos = std::chrono::duration<std::int64_t, std::ratio<1, 10000000>>;
-            std::uint64_t targetHns = 0;
-            if constexpr (std::is_same_v<typename TDuration::period, std::nano>) {
-                targetHns = (static_cast<std::uint64_t>(rawDeadline) + 99ULL) / 100ULL;
-            } else {
-                targetHns = static_cast<std::uint64_t>(
-                    std::chrono::ceil<HundredNanos>(deadline.time_since_epoch()).count());
             }
             LARGE_INTEGER counter;
             QueryPerformanceCounter(&counter);
@@ -295,16 +317,9 @@ inline void PreciseSleepUntil(const std::chrono::time_point<TClock, TDuration>& 
 #if (defined(__linux__) && (defined(__GLIBCXX__) || (defined(_LIBCPP_VERSION) && !defined(_LIBCPP_HAS_TIMESPEC_GET)))) || \
     (defined(__APPLE__) && defined(_LIBCPP_VERSION) && defined(CLOCK_MONOTONIC_RAW))
     if constexpr (std::is_same_v<TClock, std::chrono::steady_clock>) {
-        const auto rawDeadline = deadline.time_since_epoch().count();
-        if (rawDeadline <= 0) [[unlikely]] {
+        const auto targetNanos = PreciseDeadlineTicks<std::chrono::nanoseconds>(deadline.time_since_epoch());
+        if (targetNanos == 0) [[unlikely]] {
             return;
-        }
-        std::uint64_t targetNanos = 0;
-        if constexpr (std::is_same_v<typename TDuration::period, std::nano>) {
-            targetNanos = static_cast<std::uint64_t>(rawDeadline);
-        } else {
-            targetNanos = static_cast<std::uint64_t>(
-                std::chrono::ceil<std::chrono::nanoseconds>(deadline.time_since_epoch()).count());
         }
         const std::uint64_t startNanos = PreciseMonotonicNanos();
         if (startNanos < targetNanos) {
