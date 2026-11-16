@@ -275,7 +275,7 @@ The named entries below use provider-specific NID aliases to avoid interposing h
 
 ### Unknown function info
 
-- [std::__sce_v2::_Thrd_sleep_for](../../../core/libs/prx/libSceLibcInternal/RelativeSleep.cpp) (libSceLibcInternal) - Sony module behavior, guest cancellation and signal interruption are unverified. The void return, millisecond unit and zero-duration yield follow Microsoft STL [sharedmutex.cpp](https://github.com/microsoft/STL/blob/ca6b46463662934a2379d2e1c1a57c9103e820a6/stl/src/sharedmutex.cpp). The mangled `Em` parameter is the guest's 64-bit unsigned long. Positive waits use the host standard library in chunks of at most one day to avoid overflowing host duration arithmetic.
+- [std::__sce_v2::_Thrd_sleep_for](../../../core/libs/prx/libSceLibcInternal/RelativeSleep.cpp) (libSceLibcInternal) - Sony module behavior, guest cancellation and signal interruption are unverified. The void return, millisecond unit and zero-duration yield follow Microsoft STL [sharedmutex.cpp](https://github.com/microsoft/STL/blob/ca6b46463662934a2379d2e1c1a57c9103e820a6/stl/src/sharedmutex.cpp). The mangled `Em` parameter is the guest's 64-bit unsigned long. Positive waits sleep in chunks of at most one day to avoid overflowing host duration arithmetic: through `PreciseSleepHundredNanos` on Windows, so a 1 ms wait is not stretched to the 15.6 ms timer tick, otherwise through the host standard library.
 
 - [Call-once with an argument](../../../core/libs/prx/libSceLibcInternal/CallOnce.cpp) has no console-run or newer-firmware verification. The contract comes from `libc.prx`, SDK 10.00: `0x7eaa2` tests a 32-bit flag, `0x7eaaa` invokes the callback only for zero, `0x7eaad` stores 1 after normal return, and `0x7ead4` unlocks during exception unwinding without resetting the flag. The initializer at `0x7e9f8` requests a recursive mutex shared across flags. `target/include/Dinkum/threads/xthreads.h:127-133`, SDK 10.00, confirms the flag and callback types. Closes when compared with console execution and current firmware.
 
@@ -510,11 +510,6 @@ The five `std::ctype<wchar_t>` operations `do_is` (NIDs `rh7L-TliPoc`, `D0lUMKU+
 ### Additional PS5 3.20 imports (xdCloudy #9498)
 
 - [3.20 pending imports](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - The following PS5 3.20 inventory names are declared for import resolution only; their prototypes and behavior are unverified, and each call throws through `NotImplemented_nid_no_patch`. The source list is [PS5-3.20_Libs](https://github.com/DNNDHH/PS5-3.20_Libs).
-- [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Atan`, `_Atqexit`, `_Atthreadexit`, `_CStrftime`, `_CStrxfrm`, `_CWcsxfrm`, `_Closreg`
-- [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Deletegloballocale`, `_Erfc`, `_FAtan`
-- [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_FErfc`, `_FHypot`, `_FLogpoly`, `_FPlsw`, `_FPmsw`, `_FPow`, `_FQuad`
-- [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_FQuadph`, `_FRint`, `_FSincos`, `_FTan`, `_FTgamma`
-- [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Fac_tidy`, `_Fail_s`
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Atan`, `_Atqexit`, `_Atthreadexit`, `_CStrftime`, `_CStrxfrm`, `_CWcsxfrm`, `_Closreg`
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_Deletegloballocale`, `_Erfc`, `_FAtan`
 - [Additional imported names](../../../core/libs/prx/libSceLibcInternal/Export.cpp) (libSceLibcInternal) - `_FErfc`, `_FHypot`, `_FLogpoly`, `_FPlsw`, `_FPmsw`, `_FPow`, `_FQuad`
