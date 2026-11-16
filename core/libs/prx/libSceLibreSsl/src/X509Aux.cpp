@@ -746,6 +746,7 @@ LibreSslX509* X509AuxRead_nid_no_patch(LibreSslX509** certificate, const unsigne
     LibreSslX509* certificateRead = d2i_X509_nid_postfix(nullptr, &p, length);
     if (!certificateRead) return nullptr;
     length -= static_cast<std::int64_t>(p - *input);
+    *input = p;
     if (length > 0) {
         CertAux* aux = nullptr;
         try {
