@@ -950,7 +950,6 @@ int APS5_VABI _ZN6icu_6813UnicodeStringD1Ev_nid_postfix();
 int APS5_VABI _ZNK6icu_6813UnicodeString9doExtractEiiPDsi_nid_postfix();
 int APS5_VABI _ZN6icu_6811ICU_Utility12appendToRuleERNS_13UnicodeStringERKS1_aaS2__nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_ObwzLI6lyr0_nid_no_patch();
-int APS5_VABI uprv_pathIsAbsolute_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_Og5tvEt3WEA_nid_no_patch();
 int APS5_VABI _ZN6icu_6814ResourceBundleC2EP15UResourceBundleR10UErrorCode_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_Opz1C8EZDlU_nid_no_patch();
