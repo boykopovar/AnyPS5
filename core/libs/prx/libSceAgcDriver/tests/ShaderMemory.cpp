@@ -1494,6 +1494,115 @@ void verifySignedSrtComparison() {
     }
 }
 
+void verifySrtFloatToSignedConversion() {
+    using namespace ShaderRecompiler;
+    IrResourcePlan plan;
+    plan.srtPlanComplete = true;
+    plan.userDataBase = 8;
+    std::vector<std::unique_ptr<IrValue>> values;
+    std::uint32_t id = 0;
+    const auto make = [&](IrOpcode opcode, IrType type, std::initializer_list<IrValue*> arguments = {}) -> IrValue& {
+        auto value = std::make_unique<IrValue>(opcode, type, id++);
+        for (auto* argument : arguments) value->AddArgument(argument);
+        values.push_back(std::move(value));
+        return *values.back();
+    };
+    const auto constant = [&](std::uint32_t bits) -> IrValue& {
+        auto& value = make(IrOpcode::Void, IrType::U32);
+        value.SetImmediateU32(bits);
+        return value;
+    };
+    auto& registerValue = make(IrOpcode::Void, IrType::ScalarReg);
+    registerValue.SetRegister({RegisterBank::Scalar, 8u});
+    auto& userData = make(IrOpcode::GetUserData, IrType::U32, {&registerValue});
+    auto& asFloat = make(IrOpcode::BitCastF32U32, IrType::F32, {&userData});
+    auto& zero = constant(0x00000000u);
+    auto& upper = constant(0x41800000u);
+    auto& nan = make(IrOpcode::FPIsNan32, IrType::Bool, {&asFloat});
+    auto& low = make(IrOpcode::FPOrdLessThanEqual32, IrType::Bool, {&asFloat, &zero});
+    auto& high = make(IrOpcode::FPOrdGreaterThanEqual32, IrType::Bool, {&asFloat, &upper});
+    auto& nonFinite = make(IrOpcode::LogicalOr, IrType::Bool, {&nan, &low});
+    auto& safeLow = make(IrOpcode::SelectF32, IrType::F32, {&nonFinite, &zero, &asFloat});
+    auto& safe = make(IrOpcode::SelectF32, IrType::F32, {&high, &upper, &safeLow});
+    auto& converted = make(IrOpcode::ConvertS32F32, IrType::U32, {&safe});
+    auto& clamped = make(IrOpcode::SelectU32, IrType::U32, {&high, &constant(1u), &constant(0u)});
+    auto& clipped = make(IrOpcode::BitwiseAnd32, IrType::U32, {&converted, &constant(0xfffu)});
+    auto& shifted = make(IrOpcode::ShiftLeftLogical32, IrType::U32, {&clamped, &constant(12u)});
+    auto& assembled = make(IrOpcode::BitwiseOr32, IrType::U32, {&clipped, &shifted});
+    DescriptorSource source;
+    source.dwordCount = 2u;
+    source.dwords[0] = &converted;
+    source.dwords[1] = &assembled;
+    plan.descriptorSources.push_back(source);
+    plan.materializationSources = {0u};
+    for (std::uint32_t dword = 0; dword < source.dwordCount; ++dword) {
+        require(SrtWalker().ValidateRuntimeValue(plan, source.dwords[dword]), "SRT float-to-signed conversion: the runtime validator rejects a descriptor dword the evaluator computes");
+    }
+    const std::array<std::uint32_t, 1> sourceIndex{0u};
+    const std::array<std::pair<std::uint32_t, std::array<std::uint32_t, 2>>, 6> cases{{
+        {0x40700000u, {3u, 3u}},
+        {0xc0300000u, {0u, 0u}},
+        {0x3f000000u, {0u, 0u}},
+        {0x7fc00000u, {0u, 0u}},
+        {0x459c4000u, {16u, 0x1010u}},
+        {0x41800000u, {16u, 0x1010u}},
+    }};
+    for (const bool tape : {false, true}) {
+        for (const auto& [input, expected] : cases) {
+            const std::array<std::uint32_t, 1> userDataWords{input};
+            const SrtRuntime runtime{userDataWords};
+            std::vector<DescriptorValue> descriptors;
+            std::vector<std::uint32_t> flat;
+            std::vector<std::uint8_t> active;
+            const auto* compiled = tape ? Detail::SrtTape::For(plan) : nullptr;
+            if (tape) require(compiled != nullptr, "SRT float-to-signed conversion: the plan has no SRT tape");
+            const bool ok = tape ? compiled->Run(plan, runtime, descriptors, flat, active) : Detail::EvaluateRuntimeSourcesImpl(plan, sourceIndex, runtime, descriptors, flat, false, {}, active);
+            require(ok, "SRT float-to-signed conversion: descriptor expression could not be evaluated");
+            require(descriptors.size() == 1u && descriptors[0].dwordCount == expected.size(), "SRT float-to-signed conversion: descriptor shape changed");
+            for (std::size_t index = 0; index < expected.size(); ++index) {
+                require(descriptors[0].dwords[index] == expected[index], "SRT float-to-signed conversion: the rounded value or its masked field is wrong");
+            }
+        }
+    }
+
+    IrResourcePlan directPlan;
+    directPlan.srtPlanComplete = true;
+    directPlan.userDataBase = 8;
+    auto& rounded = make(IrOpcode::ConvertS32F32, IrType::U32, {&asFloat});
+    DescriptorSource directSource;
+    directSource.dwordCount = 1u;
+    directSource.dwords[0] = &rounded;
+    directPlan.descriptorSources.push_back(directSource);
+    directPlan.materializationSources = {0u};
+    require(SrtWalker().ValidateRuntimeValue(directPlan, directSource.dwords[0]), "SRT float-to-signed conversion: the runtime validator rejects a direct conversion");
+    const auto evaluateDirect = [&](std::uint32_t input, bool tape, std::vector<DescriptorValue>& descriptors) {
+        const std::array<std::uint32_t, 1> userDataWords{input};
+        const SrtRuntime runtime{userDataWords};
+        std::vector<std::uint32_t> flat;
+        std::vector<std::uint8_t> active;
+        if (!tape) return Detail::EvaluateRuntimeSourcesImpl(directPlan, sourceIndex, runtime, descriptors, flat, false, {}, active);
+        const auto* compiled = Detail::SrtTape::For(directPlan);
+        require(compiled != nullptr, "SRT float-to-signed conversion: the direct plan has no SRT tape");
+        return compiled->Run(directPlan, runtime, descriptors, flat, active);
+    };
+    const std::array<std::pair<std::uint32_t, std::uint32_t>, 3> directCases{{
+        {0x40700000u, 3u},
+        {0xc0300000u, 0xfffffffeu},
+        {0x40000000u, 2u},
+    }};
+    for (const bool tape : {false, true}) {
+        for (const auto& [input, expected] : directCases) {
+            std::vector<DescriptorValue> descriptors;
+            require(evaluateDirect(input, tape, descriptors), "SRT float-to-signed conversion: a direct conversion could not be evaluated");
+            require(descriptors.size() == 1u && descriptors[0].dwordCount == 1u && descriptors[0].dwords[0] == expected, "SRT float-to-signed conversion: the direct conversion does not round toward zero into two's complement");
+        }
+        for (const std::uint32_t unrepresentable : {0x7fc00000u, 0x4f000000u}) {
+            std::vector<DescriptorValue> descriptors;
+            require(!evaluateDirect(unrepresentable, tape, descriptors), "SRT float-to-signed conversion: a NaN or an out-of-range float was converted anyway");
+        }
+    }
+}
+
 void verifyTypeZeroImageMaterialization() {
     using namespace ShaderRecompiler;
     for (const std::uint32_t type : {0u, 1u, 2u}) {
@@ -13215,6 +13324,7 @@ int main(int argc, char** argv) {
         verifyFrontendPair();
         verifyLayoutPair();
         verifySignedSrtComparison();
+        verifySrtFloatToSignedConversion();
         verifyTypeZeroImageMaterialization();
         verifyUnsetFormatImageMaterialization();
         verifyOutOfRangeConstantReads();
