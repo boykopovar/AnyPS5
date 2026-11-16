@@ -711,6 +711,94 @@ void TestLongLogAt53Bits() {
     }
 }
 
+
+struct InverseHyperbolicCase {
+    std::uint64_t inputMantissa;
+    std::uint16_t inputSignExponent;
+    std::uint64_t outputMantissa;
+    std::uint16_t outputSignExponent;
+    int error;
+    int flags;
+};
+
+void CheckInverseHyperbolic(const char* name, long double (APS5_VABI *function)(long double), std::initializer_list<InverseHyperbolicCase> cases, std::uint16_t precision) {
+    const std::uint16_t saved = X87ControlWord();
+    const auto control = static_cast<std::uint16_t>((saved & ~0x0300u) | precision);
+    for (const auto& test : cases) {
+        const long double input = Extended(test.inputMantissa, test.inputSignExponent);
+        std::feclearexcept(FE_ALL_EXCEPT);
+        *__error_nid_postfix() = 0;
+        asm volatile("fldcw %0" : : "m"(control) : "memory");
+        const long double result = function(input);
+        const std::uint16_t after = X87ControlWord();
+        asm volatile("fldcw %0" : : "m"(saved) : "memory");
+        const int flags = std::fetestexcept(FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW);
+        if (!SameBits(result, test.outputMantissa, test.outputSignExponent) || *__error_nid_postfix() != test.error || flags != test.flags || after != control) {
+            std::fprintf(stderr, "Dinkumware internals: %s failed for %016llx:%04x at control %04x\n", name, static_cast<unsigned long long>(test.inputMantissa), test.inputSignExponent, control);
+            std::exit(1);
+        }
+    }
+    *__error_nid_postfix() = 0;
+}
+
+void TestLongInverseHyperbolic() {
+    constexpr std::uint16_t Extended64 = 0x0300;
+    constexpr std::uint16_t Double53 = 0x0200;
+    constexpr std::uint64_t QuietNan = 0xc000000000000000ull;
+    constexpr std::uint64_t Infinity = 0x8000000000000000ull;
+    CheckInverseHyperbolic("log1pl", log1pl_nid_postfix, {
+        {0x8000000000000000ull, 0x3fbd, 0x8000000000000000ull, 0x3fbd, 0, 0}, {0xffffffffffffffffull, 0x3fbc, 0xffffffffffffffffull, 0x3fbc, 0, 0},
+        {0x8000000000000000ull, 0xbfbd, 0x8000000000000000ull, 0xbfbd, 0, 0}, {0xffffffffffffffffull, 0xbfbc, 0xffffffffffffffffull, 0xbfbc, 0, 0},
+        {0x8000000000000000ull, 0x3ffd, 0xe47fbe3cd4d10d61ull, 0x3ffc, 0, 0}, {0xc000000000000000ull, 0xbffe, 0xb17217f7d1cf79acull, 0xbfff, 0, 0},
+        {0xc000000000000000ull, 0x3fff, 0xea9207870703bd04ull, 0x3ffe, 0, 0}, {0xc800000000000000ull, 0x4005, 0x93af1138ddd185f2ull, 0x4001, 0, 0},
+        {0xa3b1c2d3e4f50617ull, 0x3fd4, 0xa3b1c2d3e4e7f09cull, 0x3fd4, 0, 0}, {0xfffffffffffffff0ull, 0xbffe, 0xa65af67854b28211ull, 0xc004, 0, 0},
+        {0x8000000000000000ull, 0x4040, 0xb437e057b116b792ull, 0x4004, 0, 0}, {0x8000000000000000ull, 0x3fff, 0xb17217f7d1cf79acull, 0x3ffe, 0, 0},
+        {0x8000000000000000ull, 0xbfff, Infinity, 0xffff, RangeError, FE_DIVBYZERO}, {0x8000000000000001ull, 0xbfff, QuietNan, 0x7fff, DomainError, FE_INVALID},
+        {Infinity, 0x7fff, Infinity, 0x7fff, 0, 0}, {Infinity, 0xffff, QuietNan, 0x7fff, DomainError, FE_INVALID},
+    }, Extended64);
+    CheckInverseHyperbolic("acoshl", acoshl_nid_postfix, {
+        {0x8000000000000000ull, 0x3fff, 0, 0x0000, 0, 0}, {0x8000000000000001ull, 0x3fff, 0xffffffffffffffffull, 0x3fdf, 0, 0},
+        {0xc000000000000000ull, 0x3fff, 0xf661657628b04ca6ull, 0x3ffe, 0, 0}, {0x8000000000000000ull, 0x4000, 0xa892138cc021a4dfull, 0x3fff, 0, 0},
+        {0xa000000000000000ull, 0x4003, 0xec0c59f2ea62f9ceull, 0x4000, 0, 0}, {0x8000000000000000ull, 0x4042, 0xbc8939774eec7147ull, 0x4004, 0, 0},
+        {0xffffffffffffffffull, 0x4041, 0xbc8939774eec7147ull, 0x4004, 0, 0}, {0x9a3b5c7d0e1f2031ull, 0x401e, 0xb2efe55d83d44a79ull, 0x4003, 0, 0},
+        {0xffffffffffffffffull, 0x3ffe, QuietNan, 0x7fff, DomainError, FE_INVALID}, {0, 0x0000, QuietNan, 0x7fff, DomainError, FE_INVALID},
+        {Infinity, 0x7fff, Infinity, 0x7fff, 0, 0}, {Infinity, 0xffff, QuietNan, 0x7fff, DomainError, FE_INVALID},
+        {0, 0xffff, QuietNan, 0x7fff, DomainError, FE_INVALID},
+    }, Extended64);
+    CheckInverseHyperbolic("asinhl", asinhl_nid_postfix, {
+        {0x8000000000000000ull, 0x3fbd, 0x8000000000000000ull, 0x3fbd, 0, 0}, {0xffffffffffffffffull, 0x3fbc, 0xffffffffffffffffull, 0x3fbc, 0, 0},
+        {0x8000000000000000ull, 0xbfbd, 0x8000000000000000ull, 0xbfbd, 0, 0}, {0x8000000000000000ull, 0x3ffe, 0xf661657628b04ca6ull, 0x3ffd, 0, 0},
+        {0x8000000000000000ull, 0xbfff, 0xe1a1b30bcea13660ull, 0xbffe, 0, 0}, {0xc000000000000000ull, 0x4002, 0xcb819ac7cdf41f3cull, 0x4000, 0, 0},
+        {0x8000000000000000ull, 0x4042, 0xbc8939774eec7147ull, 0x4004, 0, 0}, {0xffffffffffffffffull, 0xc041, 0xbc8939774eec7147ull, 0xc004, 0, 0},
+        {0xb5a1c3e5f7091b2dull, 0x3fe8, 0xb5a1c3e5f708275bull, 0x3fe8, 0, 0}, {0, 0x8000, 0, 0x8000, 0, 0},
+        {Infinity, 0xffff, Infinity, 0xffff, 0, 0},
+    }, Extended64);
+    CheckInverseHyperbolic("atanhl", atanhl_nid_postfix, {
+        {0x8000000000000000ull, 0x3fde, 0x8000000000000000ull, 0x3fde, 0, 0}, {0xffffffffffffffffull, 0x3fdd, 0xffffffffffffffffull, 0x3fdd, 0, 0},
+        {0x8000000000000000ull, 0xbfde, 0x8000000000000000ull, 0xbfde, 0, 0}, {0x8000000000000000ull, 0x3ffe, 0x8c9f53d5681854bbull, 0x3ffe, 0, 0},
+        {0xc000000000000000ull, 0xbffe, 0xf913957192d2baa4ull, 0xbffe, 0, 0}, {0xffffffffffffffffull, 0x3ffe, 0xb437e057b116b792ull, 0x4003, 0, 0},
+        {0xabcdef0123456789ull, 0x3ff2, 0xabcdef1aee478b4dull, 0x3ff2, 0, 0},
+        {0x8000000000000000ull, 0x3fff, Infinity, 0x7fff, RangeError, FE_DIVBYZERO}, {0x8000000000000000ull, 0xbfff, Infinity, 0xffff, RangeError, FE_DIVBYZERO},
+        {0x8000000000000001ull, 0x3fff, QuietNan, 0x7fff, DomainError, FE_INVALID}, {Infinity, 0x7fff, QuietNan, 0x7fff, DomainError, FE_INVALID},
+    }, Extended64);
+    CheckInverseHyperbolic("log1pl at 53 bits", log1pl_nid_postfix, {
+        {0x8000000000000000ull, 0x3ffd, 0xe47fbe3cd4d11000ull, 0x3ffc, 0, 0}, {0xc000000000000000ull, 0x3fff, 0xea9207870703c000ull, 0x3ffe, 0, 0},
+        {0xc800000000000000ull, 0x4005, 0x93af1138ddd18800ull, 0x4001, 0, 0},
+    }, Double53);
+    CheckInverseHyperbolic("acoshl at 53 bits", acoshl_nid_postfix, {
+        {0xc000000000000000ull, 0x3fff, 0xf661657628b05000ull, 0x3ffe, 0, 0}, {0xa000000000000000ull, 0x4003, 0xec0c59f2ea62f800ull, 0x4000, 0, 0},
+        {0x9a3b5c7d0e1f2031ull, 0x401e, 0xb2efe55d83d44800ull, 0x4003, 0, 0},
+    }, Double53);
+    CheckInverseHyperbolic("asinhl at 53 bits", asinhl_nid_postfix, {
+        {0x8000000000000000ull, 0x3ffe, 0xf661657628b05000ull, 0x3ffd, 0, 0}, {0xc000000000000000ull, 0x4002, 0xcb819ac7cdf42000ull, 0x4000, 0, 0},
+        {0x8000000000000000ull, 0xbfff, 0xe1a1b30bcea13800ull, 0xbffe, 0, 0},
+    }, Double53);
+    CheckInverseHyperbolic("atanhl at 53 bits", atanhl_nid_postfix, {
+        {0x8000000000000000ull, 0x3ffe, 0x8c9f53d568185000ull, 0x3ffe, 0, 0}, {0xc000000000000000ull, 0xbffe, 0xf913957192d2b800ull, 0xbffe, 0, 0},
+        {0xabcdef0123456789ull, 0x3ff2, 0xabcdef1aee479800ull, 0x3ff2, 0, 0},
+    }, Double53);
+}
+
 void TestLongLogExports() {
     Require(SameBits(log10l_nid_postfix(1000.0L), 0xc000000000000000ull, 0x4000), "log10l of 1000 is exactly 3");
     Require(SameBits(log2l_nid_postfix(8.0L), 0xc000000000000000ull, 0x4000), "log2l of 8 is exactly 3");
@@ -746,5 +834,6 @@ int main() {
     TestLongDoubleHelpers();
     TestLongLog();
     TestLongLogAt53Bits();
+    TestLongInverseHyperbolic();
     TestLongLogExports();
 }
