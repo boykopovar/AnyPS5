@@ -941,6 +941,48 @@ int main() {
         return true;
     });
 
+    const auto scalarRead = [](Builder& b, ResourceKind kind) -> IrValue& {
+        MemoryInfo memory{};
+        memory.kind = kind;
+        MemoryFlags flags{static_cast<std::uint32_t>(b.program.Resources().memoryInfo.size()), 0u};
+        b.program.Resources().memoryInfo.push_back(memory);
+        std::uint64_t bits = 0;
+        std::memcpy(&bits, &flags, sizeof(flags));
+        auto& base = b.emit(IrOpcode::GetUserData, IrType::U32, {&b.constant(0u)});
+        auto& resource = b.emit(IrOpcode::GetBufferResource, IrType::BufferResource, {&base, &b.constant(0u), &b.constant(0u), &b.constant(0u)});
+        return b.emit(IrOpcode::ReadConstBuffer, IrType::U32, {&resource, &b.constant(0u)}, bits);
+    };
+
+    const auto firstLaneOf = [](Builder& b, IrValue& source) {
+        auto& divisor = b.emit(IrOpcode::FPRecip32, IrType::F32, {&b.emit(IrOpcode::ConvertF32U32, IrType::F32, {&source})});
+        auto& quotient = b.emit(IrOpcode::ConvertU32F32, IrType::U32, {&divisor});
+        b.keep(b.emit(IrOpcode::ReadFirstLane, IrType::U32, {&quotient, &b.truth()}));
+        return StencilReplaySafe(b.program);
+    };
+
+    passed &= run("stencil replay admits a first-lane read of a wave-uniform scalar value", [&] {
+        Builder b;
+        b.program.Resources().stage = IrShaderStage::Pixel;
+        return firstLaneOf(b, b.add(scalarRead(b, ResourceKind::ScalarBuffer), 1u));
+    });
+
+    passed &= run("stencil replay refuses first-lane reads of lane-varying values", [&] {
+        Builder lane;
+        lane.program.Resources().stage = IrShaderStage::Pixel;
+        if (firstLaneOf(lane, lane.add(lane.lane(), 1u))) return false;
+        Builder vector;
+        vector.program.Resources().stage = IrShaderStage::Pixel;
+        if (firstLaneOf(vector, scalarRead(vector, ResourceKind::Buffer))) return false;
+        Builder pixel;
+        pixel.program.Resources().stage = IrShaderStage::Pixel;
+        auto& coordinate = pixel.emit(IrOpcode::GetBuiltin, IrType::U32, {&pixel.constant(static_cast<std::uint32_t>(StageInputKind::FragCoord)), &pixel.constant(0u)});
+        if (firstLaneOf(pixel, pixel.emit(IrOpcode::IAdd32, IrType::U32, {&scalarRead(pixel, ResourceKind::ScalarBuffer), &coordinate}))) return false;
+        Builder other;
+        other.program.Resources().stage = IrShaderStage::Pixel;
+        other.keep(other.emit(IrOpcode::ReadLane, IrType::U32, {&scalarRead(other, ResourceKind::ScalarBuffer), &other.constant(0u)}));
+        return !StencilReplaySafe(other.program);
+    });
+
     const auto exportUnder = [](Builder& b, IrValue& guard, bool stencil, bool live) {
         ExportInfo info{};
         info.kind = stencil ? ExportTargetKind::MrtZ : ExportTargetKind::Mrt;
@@ -1612,6 +1654,32 @@ int main() {
         }
         return true;
     });
+
+    const auto scalarExecSkip = [&](ResourceKind kind) {
+        Builder b;
+        b.program.Resources().stage = IrShaderStage::Pixel;
+        auto& entry = *b.block;
+        auto& predicate = b.emit(IrOpcode::INotEqual32, IrType::Bool, {&scalarRead(b, kind), &b.constant(0u)});
+        auto& condition = b.emit(IrOpcode::LogicalNot, IrType::Bool, {&predicate});
+        auto& left = b.newBlock();
+        auto& right = b.newBlock();
+        entry.AddBranch(&left);
+        entry.AddBranch(&right);
+        auto& info = b.program.Metadata().blockInfo[0u];
+        info.terminator.kind = TerminatorKind::ConditionalBranch;
+        info.terminator.condition = BranchCondition::ExecZero;
+        info.terminator.trueBlock = left.Id();
+        info.terminator.falseBlock = right.Id();
+        info.condition = &condition;
+        b.block = &left;
+        exportUnder(b, b.truth(), true, true);
+        b.block = &right;
+        exportUnder(b, b.truth(), true, true);
+        return StencilReplaySafe(b.program);
+    };
+
+    passed &= run("a scalar buffer value is a uniform exec-skip predicate", [&] { return scalarExecSkip(ResourceKind::ScalarBuffer); });
+    passed &= run("a vector buffer value is not taken as a uniform exec-skip predicate", [&] { return !scalarExecSkip(ResourceKind::Buffer); });
 
     const auto anyActiveGate = [&](bool unrelatedLiveMask) {
         Builder b;
