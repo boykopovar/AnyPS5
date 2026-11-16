@@ -85,7 +85,13 @@ std::size_t HostPageSize() {
     return size;
 }
 
+struct RestoreErrno {
+    int value = errno;
+    ~RestoreErrno() { errno = value; }
+};
+
 bool CopyGuestBytes(void* destination, const void* source, std::size_t bytes, bool prepare = true) {
+    const RestoreErrno restore;
     if (prepare) GuestArena::GuestArenaPrepareHostRead_nid_no_patch(source, bytes);
 #ifdef _WIN32
     SIZE_T copied = 0;
@@ -825,10 +831,7 @@ extern "C" std::filesystem::path ResolveArchivedPath_nid_no_patch(const char* pa
 }
 
 extern "C" bool GuestWritable_nid_no_patch(void* destination, std::size_t bytes) {
-    struct RestoreErrno {
-        int value = errno;
-        ~RestoreErrno() { errno = value; }
-    } restore;
+    const RestoreErrno restore;
     if (bytes == 0) return true;
     const auto start = reinterpret_cast<std::uintptr_t>(destination);
     if (start == 0 || bytes > UINTPTR_MAX - start) return false;
@@ -865,6 +868,7 @@ extern "C" bool GuestCopyOut_nid_no_patch(void* destination, const void* source,
     if (bytes == 0) return true;
     const auto start = reinterpret_cast<std::uintptr_t>(destination);
     if (start == 0 || bytes > UINTPTR_MAX - start) return false;
+    const RestoreErrno restore;
     const GuestArena::HostWrite guard(destination, bytes);
     if (!guard.Open()) return false;
 #ifdef _WIN32

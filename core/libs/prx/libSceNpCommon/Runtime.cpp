@@ -916,7 +916,10 @@ int APS5_VABI sceNpFreeKernelMemory(NpKernelMemory* memory) {
 
 void APS5_VABI sceNpGetSdkVersionUInt(std::uint32_t* version) {
     const std::uint32_t value = SystemVersion();
-    if (version != nullptr) *version = value;
+    if (version == nullptr) return;
+    const int savedErrno = errno;
+    GuestCopyOut_nid_no_patch(version, &value, sizeof(value));
+    errno = savedErrno;
 }
 
 int APS5_VABI sceNpRtcConvertToPosixTime(const RtcTick* tick, std::int64_t* seconds) {

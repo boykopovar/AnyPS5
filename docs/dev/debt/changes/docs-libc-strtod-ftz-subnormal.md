@@ -1,0 +1,5 @@
+# libc
+
+## add Functional
+
+- [strtod](../../../core/libs/prx/libc/src/Strings.cpp) (libc) - the console's FTZ decimal-subnormal flush is not reproduced: under the payload MXCSR 0x9fc0 (FTZ+DAZ) the console's `libSceLibcInternal` `strtod`, called in a payload process on a PS5, flushes a decimal subnormal result to zero with `ERANGE` (`1e-310`, `4.9406564584124654e-324` and `2.4703282292062328e-324` all give 0, errno 34), while this library's host `std::strtod` (`ParseFloat`) keeps it nonzero (`1e-310` gives `0x000012688b70e62b`, `4.9406564584124654e-324` gives 2^-1074, errno 34). A hexadecimal subnormal is kept on both, built from integer bits without a floating-point flush (`0x1p-1074` gives 2^-1074, `0x0.fffffffffffffp-1022` gives `0x000fffffffffffff`, errno 0). Host side re-measured on macOS.

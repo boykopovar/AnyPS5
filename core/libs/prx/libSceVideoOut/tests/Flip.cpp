@@ -726,8 +726,8 @@ void testControls() {
         std::lock_guard lock(cfg->mutex);
         check(cfg->flipEvents.empty(), "flip event unsubscription did not clear registration");
     }
-    check(sceVideoOutDeleteFlipEvent(queue, handle) == 0, "duplicate flip event unsubscription failed");
-    expectFailure([&] { sceVideoOutDeleteFlipEvent(0, handle); });
+    check(sceVideoOutDeleteFlipEvent(queue, handle) == VIDEO_OUT_ERROR_INVALID_EVENT, "duplicate flip event unsubscription did not return INVALID_EVENT");
+    check(sceVideoOutDeleteFlipEvent(0, handle) == VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE, "flip event unsubscription from queue 0 did not return INVALID_EVENT_QUEUE");
     check(sceVideoOutDeleteFlipEvent(queue, -1) == VIDEO_OUT_ERROR_INVALID_HANDLE, "flip event unsubscription on an invalid handle was accepted");
     constexpr int slotOccupied = static_cast<int>(0x80290010u);
     VideoOutBuffers again{storage.data(), nullptr, {nullptr, nullptr}};
@@ -1023,6 +1023,37 @@ void testFrameLimit() {
     LibcRunShutdown_nid_postfix();
 }
 
+void testFlipBacklog() {
+    const char* limit = std::getenv("ANYPS5_FPS_LIMIT");
+    check(limit != nullptr && std::string(limit) == "20", "the flip backlog test runs with ANYPS5_FPS_LIMIT=20");
+    const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
+    auto cfg = VideoOutDriver::Get().GetConfig(handle);
+    std::array<std::vector<std::byte>, 2> allocations{std::vector<std::byte>(6 * 65536 + 65535), std::vector<std::byte>(6 * 65536 + 65535)};
+    std::array<VideoOutBuffers, 2> buffers{};
+    for (std::size_t i = 0; i < buffers.size(); ++i) {
+        const auto storage = alignedBuffer(allocations[i]);
+        fillBuffer(storage, 259, 137);
+        buffers[i] = {storage.data(), nullptr, {nullptr, nullptr}};
+    }
+    VideoOutBufferAttribute2 attribute{};
+    sceVideoOutSetBufferAttribute2(&attribute, 0x8000000000000000ull, 0, 259, 137, 0, 0, 0);
+    sceVideoOutRegisterBuffers2(handle, 0, 0, buffers.data(), 2, &attribute, 0, nullptr);
+    constexpr int frames = 180;
+    for (int frame = 0; frame < frames; ++frame) {
+        const int result = sceVideoOutSubmitFlip(handle, frame % 2, 1, frame);
+        check(result == 0, ("flip " + std::to_string(frame) + " returned " + std::to_string(result)).c_str());
+        check(sceVideoOutWaitVblank(handle) == 0, "vblank failed");
+    }
+    {
+        std::unique_lock lock(cfg->mutex);
+        check(cfg->vblankCond.wait_for(lock, std::chrono::seconds(15), [&] { return cfg->failure || cfg->flipStatus.count == frames; }), "the backlog presentations did not complete");
+        if (cfg->failure) std::rethrow_exception(cfg->failure);
+    }
+    sceVideoOutUnregisterBuffers(handle, 0);
+    sceVideoOutClose(handle);
+    LibcRunShutdown_nid_postfix();
+}
+
 std::uint32_t busyLoopResult(std::uint32_t iterations) {
     std::uint32_t value = 1;
     for (std::uint32_t i = 0; i < iterations; ++i) value = value * value + 1u;
@@ -1248,8 +1279,8 @@ void testUnopenedEventRegistration() {
         check(sceVideoOutDeleteFlipEvent(0, unopened) == VIDEO_OUT_ERROR_INVALID_HANDLE, "unopened handle check did not take precedence on delete");
     }
     const int handle = sceVideoOutOpen(255, 0, 0, nullptr);
-    expectFailure([&] { sceVideoOutAddFlipEvent(0, handle, nullptr); });
-    expectFailure([&] { sceVideoOutDeleteFlipEvent(0, handle); });
+    check(sceVideoOutAddFlipEvent(0, handle, nullptr) == VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE, "flip event on queue 0 did not return INVALID_EVENT_QUEUE");
+    check(sceVideoOutDeleteFlipEvent(0, handle) == VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE, "flip event deletion from queue 0 did not return INVALID_EVENT_QUEUE");
     expectFailure([&] { sceVideoOutAddVblankEvent(0, handle, nullptr); });
     expectFailure([&] { sceVideoOutDeleteVblankEvent(0, handle); });
     expectFailure([&] { sceVideoOutAddPreVblankStartEvent(0, handle, nullptr); });
@@ -1271,7 +1302,7 @@ void testUnopenedEventRegistration() {
     check(sceVideoOutDeleteOutputModeEvent(eq, handle) == 0, "registered output mode event was not deleted");
     check(sceVideoOutDeleteVrrActiveStatusEvent(eq, handle) == 0, "registered vrr active status event was not deleted");
 
-    check(sceVideoOutDeleteFlipEvent(eq, handle) == 0, "duplicate flip event deletion on an open port failed");
+    check(sceVideoOutDeleteFlipEvent(eq, handle) == VIDEO_OUT_ERROR_INVALID_EVENT, "duplicate flip event deletion on an open port did not return INVALID_EVENT");
     check(sceVideoOutDeleteVblankEvent(eq, handle) == 0, "duplicate vblank event deletion on an open port failed");
     check(sceVideoOutDeletePreVblankStartEvent(eq, handle) == 0, "duplicate pre-vblank event deletion on an open port failed");
     check(sceVideoOutDeleteOutputModeEvent(eq, handle) == 0, "duplicate output mode event deletion on an open port failed");
@@ -1599,6 +1630,7 @@ int runTests(int argc, char** argv) {
         else if (argc == 2 && std::string(argv[1]) == "present") testPresentation();
         else if (argc == 2 && std::string(argv[1]) == "backtoback") testBackToBack();
         else if (argc == 2 && std::string(argv[1]) == "fps_limit") testFrameLimit();
+        else if (argc == 2 && std::string(argv[1]) == "backlog") testFlipBacklog();
         else if (argc == 2 && std::string(argv[1]) == "dcc") testCompressedPresentation();
         else if (argc == 2 && std::string(argv[1]) == "pacing") testReleaseVblank();
         else if (argc == 2 && std::string(argv[1]) == "aftergpu") testFlipAfterGpuWork();

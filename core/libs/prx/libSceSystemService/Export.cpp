@@ -619,9 +619,17 @@ int APS5_VABI sceSystemServiceParamGetString(int paramId, char* buf, size_t bufS
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
  constexpr char SystemName[] = "PS5";
- std::memset(buf, 0, bufSize);
- std::memcpy(buf, SystemName, sizeof(SystemName));
- buf[SYSTEM_SERVICE_MAX_SYSTEM_NAME_LENGTH - 1] = '\0';
+ static constexpr char Zeros[256] = {};
+ const int savedErrno = errno;
+ bool copied = true;
+ for (std::size_t offset = 0; copied && offset < bufSize; offset += sizeof(Zeros)) {
+  copied = GuestCopyOut_nid_no_patch(buf + offset, Zeros, std::min(sizeof(Zeros), bufSize - offset));
+ }
+ if (copied) copied = GuestCopyOut_nid_no_patch(buf, SystemName, sizeof(SystemName));
+ errno = savedErrno;
+ if (!copied) {
+  return SYSTEM_SERVICE_ERROR_PARAMETER;
+ }
  return SYSTEM_SERVICE_OK;
 }
 
@@ -731,6 +739,12 @@ int APS5_VABI sceSystemServiceGetAppIdOfRunningBigApp(void) {
 
 int APS5_VABI sceSystemServiceGetAppId(const char* titleId) {
  return RunningAppId("sceSystemServiceGetAppId", titleId);
+}
+
+int APS5_VABI sceSystemServiceGetMainAppTitleId(char* titleId) {
+ if (titleId == nullptr) return SYSTEM_SERVICE_ERROR_PARAMETER;
+ CopyRunningTitleId("sceSystemServiceGetMainAppTitleId", true, titleId);
+ return SYSTEM_SERVICE_OK;
 }
 
 int APS5_VABI sceSystemServiceGetAppTitleId(int appId, char* titleId) {

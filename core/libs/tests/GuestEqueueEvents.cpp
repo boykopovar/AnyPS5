@@ -508,6 +508,25 @@ static void VerifyFailedWaitClearsCount() {
     Require(result == SCE_KERNEL_ERROR_EBADF && count == 0);
 }
 
+static void VerifyNameLengthBoundary() {
+    char name31[32]{};
+    for (int i = 0; i < 31; ++i) name31[i] = 'a';
+    char name32[33]{};
+    for (int i = 0; i < 32; ++i) name32[i] = 'b';
+
+    KernelEqueue eq = static_cast<KernelEqueue>(-1);
+    Require(sceKernelCreateEqueue(&eq, "") == SCE_OK && eq != static_cast<KernelEqueue>(-1));
+    Require(sceKernelDeleteEqueue(eq) == SCE_OK);
+    eq = static_cast<KernelEqueue>(-1);
+    Require(sceKernelCreateEqueue(&eq, "ninechars") == SCE_OK && eq != static_cast<KernelEqueue>(-1));
+    Require(sceKernelDeleteEqueue(eq) == SCE_OK);
+    eq = static_cast<KernelEqueue>(-1);
+    Require(sceKernelCreateEqueue(&eq, name31) == SCE_OK && eq != static_cast<KernelEqueue>(-1));
+    Require(sceKernelDeleteEqueue(eq) == SCE_OK);
+    eq = static_cast<KernelEqueue>(-1);
+    Require(sceKernelCreateEqueue(&eq, name32) == SCE_KERNEL_ERROR_ENAMETOOLONG && eq == static_cast<KernelEqueue>(-1));
+}
+
 int main() {
     VerifyInvalidQueueAttributes();
     VerifyFailedWaitClearsCount();
@@ -522,6 +541,7 @@ int main() {
     VerifyAddEventTruncatesPending();
     VerifyReportedEventsMoveBehindWaitingOnes();
     VerifyUserEventsReportInTriggerOrder();
+    VerifyNameLengthBoundary();
 
     KernelEqueue eq = 0;
     Require(sceKernelCreateEqueue(&eq, "events") == SCE_OK);
