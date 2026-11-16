@@ -497,6 +497,9 @@ static void VerifyFailedWaitClearsCount() {
     Require(sceKernelAddUserEvent(eq, 1) == SCE_OK);
     Require(sceKernelTriggerUserEvent(eq, 1, nullptr) == SCE_OK);
     count = -1;
+    Require(sceKernelWaitEqueue(eq, events, 0x7fffffff, &count, &poll) == SCE_OK && count == 1 && events[0].ident == 1);
+    Require(sceKernelTriggerUserEvent(eq, 1, nullptr) == SCE_OK);
+    count = -1;
     Require(sceKernelWaitEqueue(eq, reinterpret_cast<KernelEvent*>(1), 2, &count, &poll) == SCE_KERNEL_ERROR_EFAULT && count == 0);
     Require(sceKernelDeleteUserEvent(eq, 1) == SCE_OK);
     Require(sceKernelDeleteEqueue(eq) == SCE_OK);
