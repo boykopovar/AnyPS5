@@ -661,6 +661,10 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(configure_seed.selected(results, [], []), results)
         self.assertEqual(configure_seed.selected(results, ['APS5_*'], []), {'APS5_A': 1, 'APS5_B': 2})
 
+    def test_selected_exclude_removes_matches_even_when_included(self):
+        results = {'APS5_A': 1, 'APS5_B': 2}
+        self.assertEqual(configure_seed.selected(results, ['APS5_*'], ['APS5_B']), {'APS5_A': 1})
+
 
 if __name__ == "__main__":
     unittest.main()
