@@ -4,7 +4,6 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/SonyCrt.hpp"
 #include <cerrno>
-#include <climits>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -21,17 +20,7 @@ extern "C" void* APS5_VABI set_constraint_handler_s_nid_postfix(void* handler) {
 }
 
 extern "C" std::size_t APS5_VABI wcstombs_nid_postfix(char* destination, const std::uint16_t* source, std::size_t capacity) {
-    std::size_t count = 0;
-    for (;; ++source) {
-        char bytes[MB_LEN_MAX];
-        const std::size_t length = wcrtomb_nid_postfix(bytes, *source, nullptr);
-        for (std::size_t index = 0; index < length; ++index) {
-            if (destination && count == capacity) return count;
-            if (destination) destination[count] = bytes[index];
-            if (bytes[index] == '\0') return count;
-            ++count;
-        }
-    }
+    return wcsrtombs_nid_postfix(destination, &source, capacity, nullptr);
 }
 
 extern "C" int APS5_VABI wcscpy_s_nid_postfix(std::uint16_t* dest, std::size_t size, const std::uint16_t* src) {

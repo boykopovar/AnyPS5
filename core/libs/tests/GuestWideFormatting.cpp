@@ -588,6 +588,10 @@ static void CheckWcsftime() {
         && buffer == std::u16string(u"2024") && buffer[5] == u'x', "wcsftime largest accepted capacity");
     Require(WcsftimeThrows(buffer, nullptr, &time), "wcsftime null format");
     Require(WcsftimeThrows(buffer, u"%Y", nullptr), "wcsftime null time");
+    error = 71;
+    Require(wcsftime_nid_postfix(reinterpret_cast<std::uint16_t*>(0x10), 32, reinterpret_cast<const std::uint16_t*>(u"%Y"), &time) == 0 && error == 71,
+        "wcsftime unwritable buffer");
+    Require(WcsftimeThrows(buffer, u"%Y", reinterpret_cast<const GuestTm*>(0x10)), "wcsftime unreadable time");
     Require((hadZone ? setenv_nid_postfix("TZ", savedZone.c_str(), 1) : unsetenv_nid_postfix("TZ")) == 0, "wcsftime restore guest time zone");
 }
 

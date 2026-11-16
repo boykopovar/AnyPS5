@@ -36,6 +36,7 @@ constexpr int RUDP_ERROR_CANCELLED = static_cast<int>(0x80770014u);
 constexpr int RUDP_ERROR_INVALID_VPORT = static_cast<int>(0x80770015u);
 constexpr int RUDP_ERROR_WOULDBLOCK = static_cast<int>(0x80770016u);
 constexpr int RUDP_ERROR_VPORT_IN_USE = static_cast<int>(0x80770017u);
+constexpr int RUDP_ERROR_VPORT_EXHAUSTED = static_cast<int>(0x80770018u);
 constexpr int RUDP_ERROR_ALREADY_BOUND = static_cast<int>(0x8077001Du);
 constexpr int RUDP_ERROR_INVALID_POLL_ID = static_cast<int>(0x8077001Fu);
 constexpr int RUDP_ERROR_TOO_MANY_CONTEXTS = static_cast<int>(0x80770020u);
@@ -44,6 +45,7 @@ constexpr int RUDP_ERROR_NO_EVENT_HANDLER = static_cast<int>(0x80770022u);
 constexpr uint8_t RUDP_MUXMODE_P2P = 1;
 constexpr uint8_t RUDP_MUXMODE_SERVER = 2;
 constexpr uint16_t RUDP_AUTO_VPORT_BASE = 0x2710;
+constexpr std::size_t RUDP_AUTO_VPORT_COUNT = 0x10000 - RUDP_AUTO_VPORT_BASE;
 constexpr int RUDP_MAX_BACKLOG = 0x80;
 
 constexpr int RUDP_POLL_OP_ADD = 1;
@@ -57,6 +59,7 @@ constexpr std::size_t RUDP_STATUS_SIZE = 0xF8;
 constexpr std::size_t RUDP_CONTEXT_STATUS_SIZE = 0x30;
 constexpr std::size_t RUDP_CONTEXT_STATUS_PARENT = 4;
 constexpr std::size_t RUDP_CONTEXT_STATUS_STATE = 0;
+constexpr std::int32_t RUDP_CONTEXT_STATE_ACTIVATED = 1;
 constexpr std::int32_t RUDP_CONTEXT_STATE_LISTENING = 6;
 constexpr std::size_t RUDP_STATUS_CURRENT_CONTEXTS = 0x64;
 constexpr std::size_t RUDP_CONTEXT_BUFFER_STATUS_SIZE = 16;
@@ -82,6 +85,7 @@ enum RudpOption {
     RUDP_OPTION_FLUSH_TIMEOUT = 17,
     RUDP_OPTION_KEEP_ALIVE_INTERVAL = 18,
     RUDP_OPTION_KEEP_ALIVE_TIMEOUT = 19,
+    RUDP_OPTION_20 = 20,
 };
 
 std::mutex g_mutex;
@@ -94,6 +98,7 @@ struct RudpContext {
     uint16_t vport = 0;
     uint8_t muxMode = 0;
     bool listening = false;
+    bool activated = false;
     int backlog = 0;
     std::map<int, uint32_t> options = {
         {RUDP_OPTION_MAX_PAYLOAD, 1346},
@@ -213,7 +218,13 @@ int APS5_VABI sceRudpActivate(std::int32_t contextId, const void* address, std::
     if (!g_inited) return RUDP_ERROR_NOT_INITIALIZED;
     if (contextId < 0 || !address) return RUDP_ERROR_INVALID_ARGUMENT;
     static_cast<void>(addressLength);
-    NotImplemented_nid_no_patch(__func__);
+    if (g_handler == nullptr) return RUDP_ERROR_NO_EVENT_HANDLER;
+    if (!valid_ctx(contextId)) return RUDP_ERROR_INVALID_CONTEXT_ID;
+    auto& context = g_ctx.at(contextId);
+    if (!context.bound) return RUDP_ERROR_NOT_BOUND;
+    if (context.listening) return RUDP_ERROR_NOT_ACCEPTABLE;
+    if (context.activated) return RUDP_ERROR_IN_PROGRESS;
+    context.activated = true;
     return 0;
 }
 
@@ -358,11 +369,10 @@ int APS5_VABI sceRudpBind(int ctxId, int socketId, uint16_t vport, uint8_t muxMo
     if (muxMode == RUDP_MUXMODE_SERVER) {
         if (vport == 0) {
             vport = socket.lastVport;
+            std::size_t tried = 0;
             do {
-                if (vport == std::numeric_limits<uint16_t>::max()) {
-                    throw std::runtime_error("sceRudpBind: an automatic vport past 0xFFFF");
-                }
-                ++vport;
+                if (tried++ == RUDP_AUTO_VPORT_COUNT) return RUDP_ERROR_VPORT_EXHAUSTED;
+                vport = vport == std::numeric_limits<uint16_t>::max() ? RUDP_AUTO_VPORT_BASE : static_cast<uint16_t>(vport + 1);
             } while (socket.vports.count(vport) != 0);
             socket.lastVport = vport;
         }
@@ -394,20 +404,20 @@ int APS5_VABI sceRudpSetOption(int ctxId, int option, const void* value, uint32_
     return 0;
 }
 
-int APS5_VABI sceRudpGetOption(int ctxId, int option, void* value, uint32_t len) {
+int APS5_VABI sceRudpGetOption(int ctxId, int option, void* value, std::uint64_t len) {
     std::lock_guard<std::mutex> lk(g_mutex);
     if (!g_inited) {
         return RUDP_ERROR_NOT_INITIALIZED;
     }
+    if (ctxId < 0 || value == nullptr) return RUDP_ERROR_INVALID_ARGUMENT;
     const auto context = g_ctx.find(ctxId);
     if (context == g_ctx.end()) return RUDP_ERROR_INVALID_CONTEXT_ID;
-    if (option < RUDP_OPTION_MAX_PAYLOAD || option > RUDP_OPTION_KEEP_ALIVE_TIMEOUT) return RUDP_ERROR_INVALID_OPTION;
-    const auto entry = context->second.options.find(option);
-    if (entry == context->second.options.end()) {
-        NotImplemented_nid_no_patch(__func__);
-    }
-    if (value == nullptr || len != sizeof(entry->second)) return RUDP_ERROR_INVALID_ARGUMENT;
-    if (!GuestCopyOut_nid_no_patch(value, &entry->second, sizeof(entry->second))) return RUDP_ERROR_INVALID_ARGUMENT;
+    if (option < RUDP_OPTION_MAX_PAYLOAD || option > RUDP_OPTION_20) return RUDP_ERROR_INVALID_OPTION;
+    std::uint32_t result = 0;
+    if (len != sizeof(result)) return RUDP_ERROR_INVALID_ARGUMENT;
+    if (option == RUDP_OPTION_20) result = static_cast<std::uint32_t>(RUDP_ERROR_NOT_ACCEPTABLE);
+    else if (option != RUDP_OPTION_LAST_ERROR) result = context->second.options.at(option);
+    if (!GuestCopyOut_nid_no_patch(value, &result, sizeof(result))) return RUDP_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -440,6 +450,8 @@ int APS5_VABI sceRudpGetContextStatus(int ctx_id, void* status, std::size_t size
     std::memset(report + RUDP_CONTEXT_STATUS_PARENT, 0xFF, sizeof(std::int32_t));
     if (g_ctx.at(ctx_id).listening) {
         std::memcpy(report + RUDP_CONTEXT_STATUS_STATE, &RUDP_CONTEXT_STATE_LISTENING, sizeof(RUDP_CONTEXT_STATE_LISTENING));
+    } else if (g_ctx.at(ctx_id).activated) {
+        std::memcpy(report + RUDP_CONTEXT_STATUS_STATE, &RUDP_CONTEXT_STATE_ACTIVATED, sizeof(RUDP_CONTEXT_STATE_ACTIVATED));
     }
     const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(status, report, size);
@@ -770,6 +782,7 @@ int APS5_VABI sceRudpListen(int ctxId, int backlog) {
     if (!context.bound || context.muxMode != RUDP_MUXMODE_SERVER) {
         return RUDP_ERROR_NOT_ACCEPTABLE;
     }
+    if (context.activated) NotImplemented_nid_no_patch(__func__);
     if (context.listening) {
         return RUDP_ERROR_IN_PROGRESS;
     }

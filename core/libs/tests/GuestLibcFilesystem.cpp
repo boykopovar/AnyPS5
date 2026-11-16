@@ -48,6 +48,8 @@ void TestStat() {
     Require(_ZNSt10filesystem5_StatEPKcPNS_5permsEPi_nid_postfix(root.c_str(), nullptr, &error) == TypeDirectory && error == 0, "directory");
     perms = 1234;
     Require(_ZNSt10filesystem5_StatEPKcPNS_5permsEPi_nid_postfix(At("missing").c_str(), &perms, &error) == TypeNotFound && error == NoSuchFile && perms == 1234, "missing path");
+    Require(_ZNSt10filesystem5_StatEPKcPNS_5permsEPi_nid_postfix(At("file").c_str(), reinterpret_cast<int*>(0x10), reinterpret_cast<int*>(0x10)) == TypeRegular, "regular file with unwritable outputs");
+    Require(_ZNSt10filesystem5_StatEPKcPNS_5permsEPi_nid_postfix(At("missing").c_str(), &perms, reinterpret_cast<int*>(0x10)) == TypeNotFound, "missing path with an unwritable error output");
     Require(_ZNSt10filesystem5_StatEPKcPNS_5permsEPi_nid_postfix(At("file/below").c_str(), nullptr, &error) == TypeNotFound, "path below a file");
     Require(_ZNSt10filesystem6_LstatEPKcPNS_5permsEPi_nid_postfix(At("file").c_str(), nullptr, &error) == TypeRegular && error == 0, "lstat of a regular file");
     std::error_code link;

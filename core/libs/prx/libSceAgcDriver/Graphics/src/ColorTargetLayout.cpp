@@ -118,7 +118,7 @@ const SwizzleTables& standardTables(std::uint32_t bytesPerElement, std::uint32_t
 ColorTargetLayout::ColorTargetLayout(std::uint32_t width, std::uint32_t height, ColorTileMode mode, std::uint32_t bytesPerElement, std::uint32_t pipeBankXor) : width(width), height(height), pitch(width), mode(mode), bytes(0), elementBytes(bytesPerElement), pipeBankXor(pipeBankXor) {
     require(width != 0 && height != 0 && width <= 16384 && height <= 16384, "AGC graphics: invalid color surface extent");
     require(std::has_single_bit(bytesPerElement) && bytesPerElement <= 16u, "AGC graphics: unsupported color element size");
-    require(pipeBankXor == 0 || (ColorTileModeIsXor(mode) && pipeBankXor < ColorTileModeBlockBytes(mode) && pipeBankXor % 256u == 0), "AGC graphics: a color pipe/bank XOR applies only to whole 256-byte units of XOR swizzle blocks");
+    require(pipeBankXor == 0 || (ColorTileModeIsGcn(mode) && !ColorTileModeIsLinear(mode)) || (ColorTileModeIsXor(mode) && pipeBankXor < ColorTileModeBlockBytes(mode) && pipeBankXor % 256u == 0), "AGC graphics: a color pipe/bank XOR applies only to whole 256-byte units of XOR swizzle blocks");
     require(mode != ColorTileMode::D64KBX || (pipeBankXor & ~0xcf00u) == 0, "AGC graphics: unsupported display color pipe/bank XOR column bits");
     std::uint32_t paddedHeight = height;
     switch (mode) {
@@ -167,6 +167,7 @@ ColorTargetLayout::ColorTargetLayout(std::uint32_t width, std::uint32_t height, 
         case ColorTileMode::GcnDisplay2D:
         case ColorTileMode::GcnThin2D: {
             const auto geometry = GcnTiling(ColorTextureTileMode(mode), bytesPerElement);
+            require((pipeBankXor & ~(geometry.bankMask << geometry.bankShift)) == 0, "AGC graphics: a PS4 color bank XOR applies only to the bank bits of a 2D-tiled mode");
             blockWidth = geometry.blockWidth;
             blockHeight = geometry.blockHeight;
             pitch = (width + blockWidth - 1u) / blockWidth * blockWidth;
@@ -189,7 +190,7 @@ std::size_t ColorTargetLayout::offset(std::uint32_t x, std::uint32_t y) const {
     if (gcn) {
         std::uint32_t inBlock = 0;
         for (std::uint32_t bit = 0; bit < 16u; ++bit) inBlock |= parity((x & gcnEquation[bit] & 0xfffu) ^ ((y << 12u) & gcnEquation[bit] & 0xfff000u)) << bit;
-        return block * blockBytes + inBlock;
+        return block * blockBytes + (inBlock ^ pipeBankXor);
     }
     auto inBlock = xOffsets[x % blockWidth] ^ yOffsets[y % blockHeight];
     if (equation != nullptr) {
