@@ -1077,6 +1077,13 @@ class HelperValueTests(unittest.TestCase):
         self.assertEqual(progress.form_label({"encoding": "VOP2", "form": "base"}), "VOP2")
         self.assertEqual(progress.form_label({"encoding": "VOP2", "form": "vop3"}), "VOP2 vop3")
 
+    def test_exact_delta_is_the_exact_percentage_difference(self):
+        self.assertEqual(progress.exact_delta({"done": 1, "total": 4}, {"done": 2, "total": 4}), 25)
+
+    def test_exact_delta_is_none_for_missing_or_empty_totals(self):
+        self.assertIsNone(progress.exact_delta({}, {"done": 2, "total": 4}))
+        self.assertIsNone(progress.exact_delta({"done": 0, "total": 0}, {"done": 2, "total": 4}))
+
 
 if __name__ == "__main__":
     unittest.main()
