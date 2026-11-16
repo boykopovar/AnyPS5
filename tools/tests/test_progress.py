@@ -1069,6 +1069,11 @@ class SvgHelperTests(unittest.TestCase):
         self.assertTrue(markup.startswith('<rect x="1.00" y="2.00" width="3.00" height="4.00" fill="#fff"'))
         self.assertTrue(markup.endswith('stroke-width="0.5"/>'))
 
+    def test_text_escapes_its_content(self):
+        markup = progress.text(1, 2, "<b>&", 16)
+        self.assertIn("&lt;b&gt;&amp;", markup)
+        self.assertNotIn("<b>", markup)
+
 
 if __name__ == "__main__":
     unittest.main()
