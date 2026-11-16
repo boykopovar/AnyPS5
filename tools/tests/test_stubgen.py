@@ -564,5 +564,16 @@ class SymlinkLoopTests(unittest.TestCase):
             self.assertFalse((root / "code.cpp").exists())
 
 
+class WriteOutputsTests(unittest.TestCase):
+    def test_write_outputs_writes_each_file_and_replaces_existing_ones(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first, second = root / 'a.cpp', root / 'b.cpp'
+            first.write_text('old', encoding='utf-8')
+            stubgen.write_outputs([(first, 'new\n'), (second, 'two\n')])
+            self.assertEqual(first.read_text(encoding='utf-8'), 'new\n')
+            self.assertEqual(second.read_text(encoding='utf-8'), 'two\n')
+
+
 if __name__ == "__main__":
     unittest.main()
