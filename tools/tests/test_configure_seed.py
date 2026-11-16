@@ -664,6 +664,12 @@ class SelectionTests(unittest.TestCase):
     def test_selected_exclude_removes_matches_even_when_included(self):
         results = {'APS5_A': 1, 'APS5_B': 2}
         self.assertEqual(configure_seed.selected(results, ['APS5_*'], ['APS5_B']), {'APS5_A': 1})
+class RenderLineTests(unittest.TestCase):
+    def test_render_writes_one_cache_line_per_entry_in_name_order(self):
+        self.assertEqual(configure_seed.render({'APS5_A': ('1', 'doc')}), 'set("APS5_A" "1" CACHE INTERNAL "doc")\n')
+        lines = configure_seed.render({'B': ('2', 'two'), 'A': ('1', 'one')}).splitlines()
+        self.assertTrue(lines[0].startswith('set("A"'))
+        self.assertTrue(lines[1].startswith('set("B"'))
 
 
 if __name__ == "__main__":
