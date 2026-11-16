@@ -521,5 +521,12 @@ class SkipLiteralTests(unittest.TestCase):
         self.assertEqual(shader_scan.skip_literal(source, 1), len(source) - 2)
 
 
+class FunctionBodyTests(unittest.TestCase):
+    def test_function_body_returns_text_between_braces(self):
+        source = "int f(int x) { return 1; }\nint g() { }\n"
+        self.assertEqual(shader_scan.function_body(source, "f"), " return 1; ")
+        self.assertIsNone(shader_scan.function_body(source, "missing"))
+
+
 if __name__ == "__main__":
     unittest.main()
