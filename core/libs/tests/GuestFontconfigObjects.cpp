@@ -1,11 +1,21 @@
 #include "prx/libfontconfig/libfontconfig.hpp"
 
+#include <cerrno>
 #include <climits>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
 #include <limits>
+#include <stdexcept>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static void Require(bool condition, int line) {
     if (condition) return;
@@ -245,6 +255,23 @@ static void FontSets() {
     FcFontSetDestroy(set);
 }
 
+static void FreeTypeFaceGetter() {
+    int sentinel = 0;
+    void* face = &sentinel;
+    CHECK(FcPatternGetFTFace(nullptr, "ftface", 0, &face) == FcResultNoMatch && face == &sentinel);
+    auto* pattern = FcPatternCreate();
+    CHECK(pattern);
+    CHECK(FcPatternGetFTFace(pattern, "ftface", 0, &face) == FcResultNoMatch && face == &sentinel);
+    CHECK(FcPatternAddString(pattern, "family", Text("Sans")) == 1);
+    CHECK(FcPatternAddInteger(pattern, "weight", 80) == 1);
+    CHECK(FcPatternGetFTFace(pattern, "family", 0, &face) == FcResultTypeMismatch && face == &sentinel);
+    CHECK(FcPatternGetFTFace(pattern, "weight", 0, &face) == FcResultTypeMismatch && face == &sentinel);
+    CHECK(FcPatternGetFTFace(pattern, "family", 0, nullptr) == FcResultTypeMismatch);
+    CHECK(FcPatternGetFTFace(pattern, "family", 1, &face) == FcResultNoId && face == &sentinel);
+    CHECK(FcPatternGetFTFace(pattern, "family", -1, &face) == FcResultNoId && face == &sentinel);
+    FcPatternDestroy(pattern);
+}
+
 static void CharSetValues() {
     auto* pattern = FcPatternCreate();
     auto* other = FcPatternCreate();
@@ -376,6 +403,74 @@ static void PatternFiltering() {
     FcPatternDestroy(filtered);
 }
 
+template <typename Fn>
+static void ExpectThrowsPreservingErrno(Fn&& fn, int line) {
+    errno = 71;
+    bool threw = false;
+    try {
+        fn();
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    Require(threw && errno == 71, line);
+}
+
+#define EXPECT_REJECTED(...) ExpectThrowsPreservingErrno([&] { __VA_ARGS__; }, __LINE__)
+
+static void GuestPointerChecks() {
+    auto* pattern = FcPatternCreate();
+    CHECK(pattern != nullptr);
+    CHECK(FcPatternAddInteger(pattern, "weight", 80));
+    CHECK(FcPatternAddBool(pattern, "scalable", 1));
+    CHECK(FcPatternAddString(pattern, "family", Text("Mono")));
+    const FcMatrix matrix{1.0, 0.0, 0.0, 1.0};
+    CHECK(FcPatternAddMatrix(pattern, "matrix", &matrix));
+    auto* charset = FcCharSetCreate();
+    CHECK(charset != nullptr && FcCharSetAddChar(charset, 'A'));
+    CHECK(FcPatternAddCharSet(pattern, "charset", charset));
+    FcCharSetDestroy(charset);
+    auto* langset = FcLangSetCreate();
+    CHECK(langset != nullptr && FcLangSetAdd(langset, Text("en")));
+    CHECK(FcPatternAddLangSet(pattern, "lang", langset));
+    FcLangSetDestroy(langset);
+
+    EXPECT_REJECTED(FcPatternAddMatrix(pattern, "matrix", reinterpret_cast<const FcMatrix*>(std::uintptr_t{0x10})));
+
+    void* roPage = nullptr;
+    std::size_t pageSize = 0;
+#ifdef _WIN32
+    SYSTEM_INFO info{};
+    GetSystemInfo(&info);
+    pageSize = info.dwPageSize;
+    roPage = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    CHECK(roPage != nullptr);
+    DWORD previous = 0;
+    CHECK(VirtualProtect(roPage, pageSize, PAGE_READONLY, &previous) != 0);
+#else
+    const long size = sysconf(_SC_PAGESIZE);
+    CHECK(size > 0);
+    pageSize = static_cast<std::size_t>(size);
+    roPage = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    CHECK(roPage != MAP_FAILED);
+    CHECK(mprotect(roPage, pageSize, PROT_READ) == 0);
+#endif
+    EXPECT_REJECTED(FcPatternGet(pattern, "weight", 0, reinterpret_cast<FcValue*>(std::uintptr_t{0x10})));
+    EXPECT_REJECTED(FcPatternGet(pattern, "weight", 0, static_cast<FcValue*>(roPage)));
+    EXPECT_REJECTED(FcPatternGetInteger(pattern, "weight", 0, reinterpret_cast<int*>(std::uintptr_t{0x10})));
+    EXPECT_REJECTED(FcPatternGetInteger(pattern, "weight", 0, static_cast<int*>(roPage)));
+    EXPECT_REJECTED(FcPatternGetBool(pattern, "scalable", 0, static_cast<FcBool*>(roPage)));
+    EXPECT_REJECTED(FcPatternGetString(pattern, "family", 0, static_cast<FcChar8**>(roPage)));
+    EXPECT_REJECTED(FcPatternGetMatrix(pattern, "matrix", 0, static_cast<FcMatrix**>(roPage)));
+    EXPECT_REJECTED(FcPatternGetCharSet(pattern, "charset", 0, static_cast<FcCharSet**>(roPage)));
+    EXPECT_REJECTED(FcPatternGetLangSet(pattern, "lang", 0, static_cast<FcLangSet**>(roPage)));
+#ifdef _WIN32
+    VirtualFree(roPage, 0, MEM_RELEASE);
+#else
+    munmap(roPage, pageSize);
+#endif
+    FcPatternDestroy(pattern);
+}
+
 int main() {
     CharSetValues();
     LangSetValues();
@@ -385,4 +480,6 @@ int main() {
     IntegerGetters();
     Equality();
     FontSets();
+    FreeTypeFaceGetter();
+    GuestPointerChecks();
 }

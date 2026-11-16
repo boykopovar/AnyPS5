@@ -1,6 +1,8 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "prx/libc/include/Api.hpp"
 
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -8,6 +10,11 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 
 static void Check(bool value, int line) {
     if (!value) {
@@ -42,60 +49,32 @@ static bool Throws(TFunction function) {
     return false;
 }
 
-struct ScopedTimeZone {
-    explicit ScopedTimeZone(const char* zone) {
-        const char* original = std::getenv("TZ");
-        if (original != nullptr) {
+struct ScopedGuestTimeZone {
+    ScopedGuestTimeZone(const char* appliedZone, const char* pendingZone) {
+        if (const char* original = getenv_nid_postfix("TZ")) {
             saved = original;
             hadZone = true;
         }
-#ifdef _WIN32
-        savedBias = *__dstbias();
-#endif
-        apply(zone);
+        Require(setenv_nid_postfix("TZ", appliedZone, 1) == 0);
+        tzset_nid_postfix();
+        Require(setenv_nid_postfix("TZ", pendingZone, 1) == 0);
     }
 
-    ~ScopedTimeZone() {
+    ~ScopedGuestTimeZone() {
         if (hadZone) {
-            apply(saved.c_str());
+            setenv_nid_postfix("TZ", saved.c_str(), 1);
         } else {
-            clear();
+            unsetenv_nid_postfix("TZ");
         }
-#ifdef _WIN32
-        *__dstbias() = savedBias;
-#endif
+        tzset_nid_postfix();
     }
 
-    ScopedTimeZone(const ScopedTimeZone&) = delete;
-    ScopedTimeZone& operator=(const ScopedTimeZone&) = delete;
+    ScopedGuestTimeZone(const ScopedGuestTimeZone&) = delete;
+    ScopedGuestTimeZone& operator=(const ScopedGuestTimeZone&) = delete;
 
 private:
-    static void apply(const char* zone) {
-#ifdef _WIN32
-        _putenv((std::string("TZ=") + zone).c_str());
-        _tzset();
-        *__dstbias() = -3600;
-#else
-        setenv("TZ", zone, 1);
-        tzset();
-#endif
-    }
-
-    static void clear() {
-#ifdef _WIN32
-        _putenv("TZ=");
-        _tzset();
-#else
-        unsetenv("TZ");
-        tzset();
-#endif
-    }
-
     std::string saved{};
     bool hadZone{false};
-#ifdef _WIN32
-    long savedBias{0};
-#endif
 };
 
 static void LegacyDates() {
@@ -129,7 +108,7 @@ static void SingleArgumentDates() {
     Require(Same(_ZN3WTF37parseDateFromNullTerminatedCharactersEPKc("Mon Jan 1 2000 10:00:00 GMT+05:30"), 946701000000.0));
 
     {
-        ScopedTimeZone tz("EST5EDT,M3.2.0/2,M11.1.0/2");
+        ScopedGuestTimeZone tz("JST-9", "EST5EDT,M3.2.0/2,M11.1.0/2");
 
         Require(Same(_ZN3WTF37parseDateFromNullTerminatedCharactersEPKc("01/01/2026 12:00"), 1767286800000.0));
         Require(Same(_ZN3WTF37parseDateFromNullTerminatedCharactersEPKc("07/01/2026 12:00"), 1782921600000.0));
@@ -177,6 +156,47 @@ static void SingleArgumentDates() {
     Require(std::isnan(_ZN3WTF37parseDateFromNullTerminatedCharactersEPKc("13/01/2000")));
 }
 
+static void LocalTimeOffsetFollowsGuestZone() {
+    {
+        ScopedGuestTimeZone tz("JST-9", "EST5EDT,M3.2.0/2,M11.1.0/2");
+        WTF::LocalTimeOffset summer = _ZN3WTF24calculateLocalTimeOffsetEdNS_8TimeTypeE(1782907200000.0, WTF::TimeType::UTCTime);
+        Require(summer.offset == -14400000 && summer.isDST);
+    }
+    {
+        ScopedGuestTimeZone tz("JST-9", "EST5EDT,M3.2.0/2,M11.1.0/2");
+        WTF::LocalTimeOffset afterSpringForward = _ZN3WTF24calculateLocalTimeOffsetEdNS_8TimeTypeE(1772971200000.0, WTF::TimeType::LocalTime);
+        Require(afterSpringForward.offset == -14400000 && afterSpringForward.isDST);
+    }
+}
+
+static void CurrentLocalTime() {
+    ScopedGuestTimeZone tz("JST-9", "EST5EDT,M3.2.0/2,M11.1.0/2");
+    for (int attempt = 0;; ++attempt) {
+        Require(attempt < 100);
+        WTF::GregorianDateTime current{};
+        const std::int64_t before = time_nid_postfix(nullptr);
+        _ZN3WTF17GregorianDateTime21setToCurrentLocalTimeEv(&current);
+        const std::int64_t after = time_nid_postfix(nullptr);
+        if (before != after) {
+            continue;
+        }
+        GuestTm expected{};
+        Require(localtime_r_nid_postfix(&before, &expected) != nullptr);
+        Require(current.m_year == expected.tm_year + 1900);
+        Require(current.m_month == expected.tm_mon);
+        Require(current.m_yearDay == expected.tm_yday);
+        Require(current.m_monthDay == expected.tm_mday);
+        Require(current.m_weekDay == expected.tm_wday);
+        Require(current.m_hour == expected.tm_hour);
+        Require(current.m_minute == expected.tm_min);
+        Require(current.m_second == expected.tm_sec);
+        Require(current.m_isDST == expected.tm_isdst);
+        Require(current.m_utcOffsetInMinute == expected.tm_gmtoff / 60);
+        Require(current.m_utcOffsetInMinute == (expected.tm_isdst > 0 ? -240 : -300));
+        return;
+    }
+}
+
 static void UndefinedInWebKit() {
     bool isLocalTime = false;
     Require(Throws<std::overflow_error>([&] { _ZN3WTF37parseDateFromNullTerminatedCharactersEPKcRb("2000/12/9223372036854775800", &isLocalTime); }));
@@ -190,6 +210,32 @@ static void UndefinedInWebKit() {
     Require(Throws<std::invalid_argument>([&] { _ZN3WTF24calculateLocalTimeOffsetEdNS_8TimeTypeE(-std::numeric_limits<double>::infinity(), WTF::TimeType::UTCTime); }));
     Require(Throws<std::overflow_error>([&] { _ZN3WTF24calculateLocalTimeOffsetEdNS_8TimeTypeE(-9223372036854777905152.0, WTF::TimeType::UTCTime); }));
     Require(Throws<std::overflow_error>([&] { _ZN3WTF24calculateLocalTimeOffsetEdNS_8TimeTypeE(-1e25, WTF::TimeType::UTCTime); }));
+}
+
+static void LocalTimePointerValidation() {
+    bool local = false;
+    Require(Same(_ZN3WTF37parseDateFromNullTerminatedCharactersEPKcRb("12/25/2000", &local), 977702400000.0));
+    Require(local);
+
+    local = true;
+    Require(Same(_ZN3WTF37parseDateFromNullTerminatedCharactersEPKcRb("Sat, 01 Jan 2000 08:00:00 GMT", &local), 946713600000.0));
+    Require(!local);
+
+    auto* dangling = reinterpret_cast<bool*>(0x10);
+    Require(Throws<std::invalid_argument>([&] { _ZN3WTF37parseDateFromNullTerminatedCharactersEPKcRb("2000", dangling); }));
+#ifdef _WIN32
+    auto* readOnly = static_cast<bool*>(VirtualAlloc(nullptr, sizeof(bool), MEM_RESERVE | MEM_COMMIT, PAGE_READONLY));
+    Require(readOnly != nullptr);
+#else
+    auto* readOnly = static_cast<bool*>(mmap(nullptr, sizeof(bool), PROT_READ, MAP_ANON | MAP_PRIVATE, -1, 0));
+    Require(readOnly != MAP_FAILED);
+#endif
+    Require(Throws<std::invalid_argument>([&] { _ZN3WTF37parseDateFromNullTerminatedCharactersEPKcRb("2000", readOnly); }));
+#ifdef _WIN32
+    Require(VirtualFree(readOnly, 0, MEM_RELEASE) != 0);
+#else
+    Require(munmap(readOnly, sizeof(bool)) == 0);
+#endif
 }
 
 static void CheckRFC2822(
@@ -251,6 +297,9 @@ static void RFC2822Dates() {
 int main() {
     LegacyDates();
     SingleArgumentDates();
+    LocalTimeOffsetFollowsGuestZone();
+    CurrentLocalTime();
     UndefinedInWebKit();
+    LocalTimePointerValidation();
     RFC2822Dates();
 }
