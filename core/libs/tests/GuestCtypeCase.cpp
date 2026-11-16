@@ -16,6 +16,8 @@
 #include <unistd.h>
 #endif
 
+extern "C" std::uintptr_t _ZTVSt5ctypeIcE_nid_postfix[14];
+
 namespace {
 
 using Facet = GuestLocale::CtypeFacet;
@@ -51,7 +53,7 @@ std::array<void*, 4> released{};
 std::size_t releasedCount = 0;
 
 void* APS5_VABI HeapAllocate(std::size_t bytes) { return std::malloc(bytes); }
-void APS5_VABI HeapFree(void* pointer) {
+void APS5_VABI HeapRelease(void* pointer) {
     if (releasedCount < released.size()) released[releasedCount] = pointer;
     ++releasedCount;
     std::free(pointer);
@@ -306,7 +308,12 @@ std::int16_t* ArrayTable() {
 
 void CheckDestructors() {
     const Tables tables;
-    for (const auto& methods : DestructorMethods) {
+    const std::array<Destructors, 3> destructors{{
+        DestructorMethods[0],
+        DestructorMethods[1],
+        {reinterpret_cast<Destructor>(_ZTVSt5ctypeIcE_nid_postfix[2]), reinterpret_cast<Destructor>(_ZTVSt5ctypeIcE_nid_postfix[3])}
+    }};
+    for (const auto& methods : destructors) {
         Facet facet = tables.MakeFacet();
         facet.classification = _Getpctype_nid_postfix();
         releasedCount = 0;
@@ -368,7 +375,7 @@ void CheckDestructors() {
 int main() {
     std::array<void*, 10> heapApi{};
     heapApi[0] = reinterpret_cast<void*>(&HeapAllocate);
-    heapApi[1] = reinterpret_cast<void*>(&HeapFree);
+    heapApi[1] = reinterpret_cast<void*>(&HeapRelease);
     heapApi[2] = reinterpret_cast<void*>(&HeapCalloc);
     heapApi[3] = reinterpret_cast<void*>(&HeapReallocate);
     heapApi[4] = reinterpret_cast<void*>(&HeapAlign);

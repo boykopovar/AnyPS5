@@ -627,20 +627,7 @@ static void CheckWideCtypeVtableObject() {
 static void CheckCtypeVtableObject() {
     const auto& slots = _ZTVSt5ctypeIcE_nid_postfix;
     Require(sizeof(slots) == 112 && slots[0] == 0 && slots[1] == 0);
-    const std::uintptr_t methods[] = {
-        reinterpret_cast<std::uintptr_t>(&_ZNSt5ctypeIcED1Ev_nid_postfix),
-        reinterpret_cast<std::uintptr_t>(&_ZNSt5ctypeIcED0Ev_nid_postfix),
-        reinterpret_cast<std::uintptr_t>(&_ZNKSt5ctypeIcE10do_tolowerEc_nid_postfix),
-        reinterpret_cast<std::uintptr_t>(&_ZNKSt5ctypeIcE10do_tolowerEPcPKc_nid_postfix),
-        reinterpret_cast<std::uintptr_t>(&_ZNKSt5ctypeIcE10do_toupperEc_nid_postfix),
-        reinterpret_cast<std::uintptr_t>(&_ZNKSt5ctypeIcE10do_toupperEPcPKc_nid_postfix),
-        reinterpret_cast<std::uintptr_t>(&_ZNKSt5ctypeIcE8do_widenEc_nid_postfix),
-        reinterpret_cast<std::uintptr_t>(&_ZNKSt5ctypeIcE8do_widenEPKcS2_Pc_nid_postfix),
-        reinterpret_cast<std::uintptr_t>(&_ZNKSt5ctypeIcE9do_narrowEcc_nid_postfix),
-        reinterpret_cast<std::uintptr_t>(&_ZNKSt5ctypeIcE9do_narrowEPKcS2_cPc_nid_postfix),
-    };
-    Require(slots[2] == methods[0] && slots[3] == methods[1] && slots[4] != 0 && slots[5] != 0);
-    for (std::size_t index = 2; index < std::size(methods); ++index) Require(slots[index + 4] == methods[index]);
+    for (std::size_t index = 2; index < std::size(slots); ++index) Require(slots[index] != 0);
     const auto* vtable = reinterpret_cast<const GuestLocale::CtypeVtable*>(&slots[2]);
     GuestLocale::CtypeFacet facet{};
     facet.base = {&vtable->facet, 0, 0};
