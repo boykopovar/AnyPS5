@@ -354,5 +354,17 @@ class FoldTests(unittest.TestCase):
         self.assertEqual((self.root / "docs/dev/debt/changes/mixed.md").read_text(encoding="utf-8"), mixed_frag)
 
 
+
+class UnitsTests(unittest.TestCase):
+    def test_units_keeps_data_rows_and_skips_header_and_separator(self):
+        text = "| Name | Value |\n| --- | --- |\n| x | y |\n"
+        self.assertEqual(debt_fold.units(text), {3: "| x | y |"})
+
+    def test_units_lists_bullet_entries_by_their_line(self):
+        found = debt_fold.units(BASE_TEXT)
+        self.assertEqual(sorted(found), [5, 6])
+        self.assertTrue(found[5].startswith(f"- [sceExampleA]({LINK})"))
+
+
 if __name__ == "__main__":
     unittest.main()
