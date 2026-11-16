@@ -52,4 +52,25 @@ int APS5_VABI sceFreeTypeOlFtaRemoveModuleTruetype_nid_postfix(void* library);
 int APS5_VABI sceFreeTypeOlFtaRemoveModuleType1_nid_postfix(void* library);
 int APS5_VABI sceFreeTypeOlFtaRemoveModuleType42_nid_postfix(void* library);
 int APS5_VABI sceFreeTypeOlFtaRemoveModuleWinfonts_nid_postfix(void* library);
+
+const void* APS5_VABI sceFreeTypeOlFtaExportModuleAutofitter_nid_postfix();
+const void* APS5_VABI sceFreeTypeOlFtaExportModuleBdf_nid_postfix();
+const void* APS5_VABI sceFreeTypeOlFtaExportModuleCff_nid_postfix();
+const void* APS5_VABI sceFreeTypeOlFtaExportModuleGxvalid_nid_postfix();
+const void* APS5_VABI sceFreeTypeOlFtaExportModuleOtvalid_nid_postfix();
+const void* APS5_VABI sceFreeTypeOlFtaExportModulePcf_nid_postfix();
+const void* APS5_VABI sceFreeTypeOlFtaExportModulePfr_nid_postfix();
+const void* APS5_VABI sceFreeTypeOlFtaExportModulePsaux_nid_postfix();
+const void* APS5_VABI sceFreeTypeOlFtaExportModulePshinter_nid_postfix();
+const void* APS5_VABI sceFreeTypeOlFtaExportModulePsnames_nid_postfix();
+const void* APS5_VABI sceFreeTypeOlFtaExportModuleRaster1_nid_postfix();
+const void* APS5_VABI sceFreeTypeOlFtaExportModuleSfnt_nid_postfix();
+const void* APS5_VABI sceFreeTypeOlFtaExportModuleSmooth_nid_postfix();
+const void* APS5_VABI sceFreeTypeOlFtaExportModuleT1cid_nid_postfix();
+const void* APS5_VABI sceFreeTypeOlFtaExportModuleTruetype_nid_postfix();
+const void* APS5_VABI sceFreeTypeOlFtaExportModuleType1_nid_postfix();
+const void* APS5_VABI sceFreeTypeOlFtaExportModuleType42_nid_postfix();
+const void* APS5_VABI sceFreeTypeOlFtaExportModuleWinfonts_nid_postfix();
+int APS5_VABI sceFreeTypeOlFtaAddModule_nid_postfix(void* library, const void* module);
+int APS5_VABI sceFreeTypeOlAddModule_nid_postfix(void* library, const void* module);
 }

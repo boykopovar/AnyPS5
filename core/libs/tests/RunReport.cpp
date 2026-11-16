@@ -1,3 +1,4 @@
+#include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/RunReport.hpp"
 #include "prx/libc/include/Shutdown.hpp"
@@ -20,6 +21,7 @@
 #include <vector>
 
 #ifndef _WIN32
+#include <pthread.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -189,10 +191,10 @@ void FinishTests() {
     Require(collector.Start(), "the collector did not start");
     Require(SamePath(collector.ReportPath(), executable.path / "anyps5-report.json"), "the report is not next to the executable");
     Require(!fs::exists(collector.ReportPath()), "Start wrote a file");
-    collector.NoteQuitRequested();
+    collector.NoteQuitRequested(true);
     collector.Finish(RunReport::Exit::Clean, {RunReport::Kind::None, RunReport::Reason::GuestExit, std::nullopt}, 3);
     const auto report = Read(collector.ReportPath());
-    Require(Contains(report, "\"exit\": \"clean\"") && Contains(report, "\"exitCode\": 3") && Contains(report, "\"reason\": \"quit-requested\"") && Contains(report, "\"recovered\": false"), "the finished report is wrong: " + report);
+    Require(Contains(report, "\"exit\": \"clean\"") && Contains(report, "\"exitCode\": 3") && Contains(report, "\"reason\": \"quit-requested\"") && Contains(report, "\"message\": \"The window was closed.\"") && Contains(report, "\"recovered\": false"), "the finished report is wrong: " + report);
     collector.Finish(RunReport::Exit::Abort, {RunReport::Kind::Other, RunReport::Reason::Crash, std::nullopt}, std::nullopt);
     Require(Read(collector.ReportPath()) == report, "a second finish changed the report");
     std::size_t files = 0;
@@ -201,6 +203,16 @@ void FinishTests() {
         ++files;
     }
     Require(files == 2 && fs::exists(executable.path / "anyps5-recipe.json"), "the finish must leave only the report and the recipe");
+}
+
+void SignalQuitTests() {
+    Directory executable, user;
+    RunReport::Collector collector(SettingsFor(executable.path, user.path, IdA));
+    Require(collector.Start(), "the collector did not start");
+    collector.NoteQuitRequested(false);
+    collector.Finish(RunReport::Exit::Clean, {RunReport::Kind::None, RunReport::Reason::GuestExit, std::nullopt}, 0);
+    const auto report = Read(collector.ReportPath());
+    Require(Contains(report, "\"reason\": \"quit-requested\"") && Contains(report, "without its window being closed") && !Contains(report, "The window was closed."), "a quit without a window close was reported as a closed window: " + report);
 }
 
 void ConcurrentFinishTests() {
@@ -1432,6 +1444,26 @@ void ChildMissingFunctionTest() {
     }
 }
 
+void ChildUncaughtMissingFunctionTest() {
+    Directory directory;
+    const int status = RunChild(CopySelf(directory), directory.path, "uncaught-missing-function");
+    Require((WIFSIGNALED(status) && WTERMSIG(status) == SIGABRT) || (WIFEXITED(status) && WEXITSTATUS(status) == 128 + SIGABRT), "the run that left an unimplemented function uncaught did not end through abort");
+    const auto text = Report(directory);
+    for (const char* part : {"\"exit\": \"abort\"", "\"reason\": \"runtime-stop\"", "\"kind\": \"missing-function\"", "\"message\": \"Called sceNpUncaught, which is not implemented.\"", "\"name\": \"sceNpUncaught\"", "\"calls\": 1"}) {
+        Require(Contains(text, part), std::string("the report of the run that ended in std::terminate lacks ") + part + ": " + text);
+    }
+}
+
+void ChildTerminateHandlerExitTest() {
+    Directory directory;
+    const int status = RunChild(CopySelf(directory), directory.path, "terminate-handler-exits");
+    Require(WIFEXITED(status) && WEXITSTATUS(status) == 3, "the run whose own terminate handler exits with 3 did not exit with 3");
+    const auto text = Report(directory);
+    for (const char* part : {"\"exit\": \"clean\"", "\"exitCode\": 3", "\"reason\": \"guest-exit\""}) {
+        Require(Contains(text, part), std::string("the report of the run whose terminate handler exits lacks ") + part + ": " + text);
+    }
+}
+
 void ChildEnabledTest() {
     Directory directory;
     const auto copy = CopySelf(directory);
@@ -1529,6 +1561,19 @@ int main(int argc, char** argv) {
                 LibcRunReportFinishExit_nid_no_patch(0);
                 return 0;
             }
+            if (mode == "uncaught-missing-function") {
+                pthread_t thread;
+                pthread_create(&thread, nullptr, [](void*) -> void* { NotImplemented_nid_no_patch("sceNpUncaught"); return nullptr; }, nullptr);
+                pthread_join(thread, nullptr);
+                return 0;
+            }
+            if (mode == "terminate-handler-exits") {
+                _ZSt13set_terminatePFvvE_nid_postfix([] { LibcExit_nid_no_patch(3); });
+                pthread_t thread;
+                pthread_create(&thread, nullptr, [](void*) -> void* { NotImplemented_nid_no_patch("sceNpHandled"); return nullptr; }, nullptr);
+                pthread_join(thread, nullptr);
+                return 0;
+            }
             if (mode == "caught-missing-function") {
                 try { NotImplemented_nid_no_patch("sceNpCaught_nid_postfix"); } catch (const std::exception&) {}
                 LibcRunReportFinishExit_nid_no_patch(0);
@@ -1543,6 +1588,7 @@ int main(int argc, char** argv) {
         Run("privacy", PrivacyTests);
         Run("serialize", SerializeTests);
         Run("finish", FinishTests);
+        Run("signal-quit", SignalQuitTests);
         Run("concurrent-finish", ConcurrentFinishTests);
         Run("fallback", FallbackTests);
         Run("atomic", AtomicTests);
@@ -1606,6 +1652,8 @@ int main(int argc, char** argv) {
         Run("child-gpu", ChildGpuTest);
         Run("child-guest-root-not-fixed-at-load", GuestRootIsNotFixedAtLoadTest);
         Run("child-missing-function", ChildMissingFunctionTest);
+        Run("child-uncaught-missing-function", ChildUncaughtMissingFunctionTest);
+        Run("child-terminate-handler-exits", ChildTerminateHandlerExitTest);
 #endif
         std::printf("run report tests: %d passed, %d failed, %d not run\n", passed, failed, notRun);
         if (passed + failed + notRun == 0) {

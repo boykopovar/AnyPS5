@@ -319,6 +319,38 @@ test("a visible error follows a language switch", async t => {
   assert.equal(document.documentElement.lang, "de");
   assert.equal(get("error").children[0].textContent, "Release-Informationen können nicht geladen werden (404). release.json wird während des Site-Builds erzeugt und fehlt deshalb, wenn demo/web direkt bereitgestellt wird.");
   get("locale").onclick();
+  assert.equal(document.documentElement.lang, "ar");
+  assert.equal(document.documentElement.dir, "rtl");
+  assert.match(get("error").children[0].textContent, /\p{Script=Arabic}.*404/u);
+  get("locale").onclick();
   assert.equal(document.documentElement.lang, "en");
+  assert.equal(document.documentElement.dir, "ltr");
   assert.equal(get("error").children[0].textContent, "Cannot load release information (404). release.json is generated during the site build, so it is missing when serving demo/web directly.");
+});
+
+test("a browser that denies direct ZIP writes explains how to continue", async t => {
+  const denied = Object.assign(new Error("createWritable blocked"), { name: "NotAllowedError" });
+  const { get, workers } = await setup(t, "write-denied", {
+    showSaveFilePicker: async () => ({ createWritable: async () => { throw denied; } })
+  });
+  assert.equal(get("save").value, "zip");
+  await selected(get, workers, "first.zip");
+  assert.equal(get("convert").disabled, false);
+  await get("convert").onclick();
+  const message = get("error").children[0]?.textContent ?? get("error").textContent;
+  assert.match(message, /desktop Chrome or Edge/);
+  assert.doesNotMatch(message, /createWritable/);
+  assert.equal(get("selection").hidden, true);
+  assert.equal(get("convert").disabled, true);
+});
+
+test("cancelling the ZIP picker does not report a failure", async t => {
+  const { get, workers } = await setup(t, "write-cancelled", {
+    showSaveFilePicker: async () => { throw Object.assign(new Error("cancelled"), { name: "AbortError" }); }
+  });
+  await selected(get, workers, "first.zip");
+  await get("convert").onclick();
+  assert.equal(get("error").hidden, true);
+  assert.equal(get("selection").hidden, false);
+  assert.equal(get("convert").disabled, false);
 });
