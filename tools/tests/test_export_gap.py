@@ -815,5 +815,12 @@ class ExportGapTests(unittest.TestCase):
             self.assertIn("FAIL:", error)
 
 
+    def test_strip_token_keeps_first_word_without_comments(self):
+        self.assertEqual(export_gap.strip_token("\ufeffABC  # note"), "ABC")
+        self.assertEqual(export_gap.strip_token("  XYZ extra words"), "XYZ")
+        self.assertEqual(export_gap.strip_token("# whole line comment"), "")
+        self.assertEqual(export_gap.strip_token("   "), "")
+
+
 if __name__ == "__main__":
     unittest.main()
