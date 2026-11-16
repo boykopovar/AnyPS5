@@ -856,5 +856,15 @@ class ProgressHistoryTests(unittest.TestCase):
 
 
 
+class UtcDayTests(unittest.TestCase):
+    def test_utc_day_accepts_valid_dates_only(self):
+        import argparse
+        import progress_history
+        self.assertEqual(progress_history.utc_day("2026-11-16"), "2026-11-16")
+        for value in ("2026-02-30", "16-11-2026", "2026-11-16T00:00"):
+            with self.assertRaises(argparse.ArgumentTypeError, msg=value):
+                progress_history.utc_day(value)
+
+
 if __name__ == "__main__":
     unittest.main()
