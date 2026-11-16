@@ -400,12 +400,29 @@ void verifyRecompilePropagation() {
 
 }
 
+void verifyDebugIdentityRegisters() {
+    constexpr std::uint32_t endProgram = 0xbf810000u;
+    const auto read = [](std::uint32_t hardwareRegister, std::uint32_t offset, std::uint32_t size) {
+        return 0xb9140000u | ((size - 1u) << 11u) | (offset << 6u) | hardwareRegister;
+    };
+    for (const std::uint32_t hardwareRegister : {23u, 24u}) {
+        const std::array<std::uint32_t, 2> code{read(hardwareRegister, 18u, 2u), endProgram};
+        expectRegister(translate(code, std::nullopt), 20u, 0u);
+        const std::array<std::uint32_t, 2> whole{read(hardwareRegister, 0u, 32u), endProgram};
+        expectRegister(translate(whole, std::nullopt), 20u, 0u);
+        const std::array<std::uint32_t, 2> pastRegister{read(hardwareRegister, 31u, 2u), endProgram};
+        expectRejected(pastRegister, std::nullopt, "past the 32-bit register", 0);
+    }
+    const std::array<std::uint32_t, 2> other{read(4u, 0u, 8u), endProgram};
+    expectRejected(other, std::nullopt, "only the MODE round and denormal fields are modeled", 0);
+}
+
 int main() {
     struct Check {
         const char* name;
         void (*run)();
     };
-    constexpr std::array<Check, 21> checks{{
+    constexpr std::array<Check, 22> checks{{
         {"encodings", verifyEncodings}, {"reads", verifyReads}, {"dynamicWrites", verifyDynamicWrites},
         {"partialOverwrite", verifyDynamicWriteSurvivesPartialOverwrite}, {"immediateWrites", verifyImmediateWrites},
         {"denormalImmediateWrites", verifyDenormalImmediateWrites}, {"roundInstruction", verifyRoundInstruction},
@@ -414,6 +431,7 @@ int main() {
         {"untouchedFields", verifyUntouchedFieldsStayAccepted}, {"unmodelled", verifyUnmodelledDirectedRounding},
         {"directedF16", verifyDirectedF16Conversion}, {"denormBeforeUse", verifyDenormBeforeUse}, {"denormDiamond", verifyDenormDiamond},
         {"loop", verifyRoundingInLoop}, {"propagation", verifyRecompilePropagation}, {"denormalAfterRounding", verifyDenormalReadsAfterRoundingWrites},
+        {"debugIdentityRegisters", verifyDebugIdentityRegisters},
     }};
     int failures = 0;
     for (const auto& check : checks) {
