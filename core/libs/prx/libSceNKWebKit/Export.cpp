@@ -9776,10 +9776,6 @@ int APS5_VABI WKBundleAddOriginAccessAllowListEntry() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundleBackForwardListClear() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundleClearHistoryForTesting() {
     NotImplemented_nid_no_patch(__func__);
 }

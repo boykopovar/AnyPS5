@@ -3,6 +3,7 @@
 #include "prx/libSceJsc/include/Api.hpp"
 #include "prx/libSceNKWebKit/src/NavigationData.hpp"
 #include "prx/libSceNKWebKit/src/BackForwardList.hpp"
+#include "prx/libSceNKWebKit/src/BundleBackForwardList.hpp"
 #include "prx/libSceNKWebKit/src/ProtectionSpace.hpp"
 #include "prx/libSceNKWebKit/src/FrameHandle.hpp"
 #include "prx/libSceNKWebKit/src/OpenPanelParameters.hpp"
@@ -56,7 +57,8 @@ static void TestTypeIDs() {
     Require(WKRectGetTypeID() == 36);
     Require(WKCertificateInfoGetTypeID() == 0);
     Require(WKApplicationCacheManagerGetTypeID() == 0);
-    Require(WKBundleBackForwardListGetTypeID() == 0);
+    Require(WKBundleBackForwardListGetTypeID() == static_cast<std::uint32_t>(NKWebKit::ObjectType::BundleBackForwardList));
+    Require(WKBundleBackForwardListItemGetTypeID() == static_cast<std::uint32_t>(NKWebKit::ObjectType::BundleBackForwardListItem));
     Require(WKContextMenuItemGetTypeID() == 0);
     Require(WKUserContentExtensionStoreGetTypeID() == 0);
     Require(WKAXObjectGetTypeID() == 132);
@@ -1091,6 +1093,177 @@ static void TestBackForwardList() {
     Require(Throws(WKBackForwardListItemCopyURL, notList));
     Require(Throws(WKBackForwardListGetCurrentItem, nullptr));
     Require(Throws(WKBackForwardListItemCopyTitle, nullptr));
+    WKRelease(notList);
+}
+
+static NKWebKit::Retained<NKWebKit::BundleBackForwardListItem> MakeBundleBackForwardItem(
+    const char* url, const char* title, const char* originalURL, const char* target = nullptr,
+    bool isTargetItem = false, std::vector<NKWebKit::Retained<NKWebKit::BundleBackForwardListItem>> children = {},
+    bool inBackForwardCache = false, bool hasCachedPageExpired = false, std::uint64_t identifier = 0) {
+    return NKWebKit::Make<NKWebKit::BundleBackForwardListItem>(
+        url ? std::optional<std::string>(url) : std::nullopt,
+        title ? NKWebKit::String::FromUtf8(title) : nullptr,
+        originalURL ? std::optional<std::string>(originalURL) : std::nullopt,
+        target ? NKWebKit::String::FromUtf8(target) : nullptr,
+        isTargetItem,
+        std::move(children),
+        inBackForwardCache,
+        hasCachedPageExpired,
+        identifier);
+}
+
+static void TestBundleBackForwardList() {
+    using ItemList = std::vector<NKWebKit::Retained<NKWebKit::BundleBackForwardListItem>>;
+    ItemList entries;
+    for (int index = 0; index < 5; ++index) {
+        std::string url = "https://example.com/" + std::to_string(index);
+        std::string target = "target_" + std::to_string(index);
+        entries.push_back(MakeBundleBackForwardItem(url.c_str(), url.c_str(), url.c_str(), target.c_str(), index == 2, {}, index % 2 == 1, index % 2 == 0, 100 + index));
+    }
+    const void* items[5];
+    for (int index = 0; index < 5; ++index) items[index] = entries[index].Get();
+
+    auto* list = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::BundleBackForwardList>(entries, 2));
+    Require(WKGetTypeID(list) == WKBundleBackForwardListGetTypeID());
+    Require(WKBundleBackForwardListGetBackListCount(list) == 2);
+    Require(WKBundleBackForwardListGetForwardListCount(list) == 2);
+
+    auto* item0 = WKBundleBackForwardListCopyItemAtIndex(list, -2);
+    Require(item0 == items[0]);
+    WKRelease(item0);
+    auto* item2 = WKBundleBackForwardListCopyItemAtIndex(list, 0);
+    Require(item2 == items[2]);
+    WKRelease(item2);
+    auto* item4 = WKBundleBackForwardListCopyItemAtIndex(list, 2);
+    Require(item4 == items[4]);
+    WKRelease(item4);
+
+    Require(WKBundleBackForwardListCopyItemAtIndex(list, -3) == nullptr);
+    Require(WKBundleBackForwardListCopyItemAtIndex(list, 3) == nullptr);
+    Require(WKBundleBackForwardListCopyItemAtIndex(list, INT32_MIN) == nullptr);
+    Require(WKBundleBackForwardListCopyItemAtIndex(list, INT32_MAX) == nullptr);
+
+    Require(WKGetTypeID(items[1]) == WKBundleBackForwardListItemGetTypeID());
+    auto* url = WKBundleBackForwardListItemCopyURL(items[1]);
+    auto* urlString = WKURLCopyString(url);
+    Require(WKStringIsEqualToUTF8CString(urlString, "https://example.com/1"));
+    WKRelease(urlString);
+    WKRelease(url);
+
+    auto* orig = WKBundleBackForwardListItemCopyOriginalURL(items[1]);
+    auto* origString = WKURLCopyString(orig);
+    Require(WKStringIsEqualToUTF8CString(origString, "https://example.com/1"));
+    WKRelease(origString);
+    WKRelease(orig);
+
+    auto* title = WKBundleBackForwardListItemCopyTitle(items[1]);
+    Require(WKStringIsEqualToUTF8CString(title, "https://example.com/1"));
+    WKRelease(title);
+
+    auto* target = WKBundleBackForwardListItemCopyTarget(items[1]);
+    Require(WKStringIsEqualToUTF8CString(target, "target_1"));
+    WKRelease(target);
+
+    Require(WKBundleBackForwardListItemIsTargetItem(items[2]) == true);
+    Require(WKBundleBackForwardListItemIsTargetItem(items[1]) == false);
+    Require(WKBundleBackForwardListItemIsInBackForwardCache(items[1]) == true);
+    Require(WKBundleBackForwardListItemIsInBackForwardCache(items[0]) == false);
+    Require(WKBundleBackForwardListItemHasCachedPageExpired(items[0]) == true);
+    Require(WKBundleBackForwardListItemHasCachedPageExpired(items[1]) == false);
+
+    Require(WKBundleBackForwardListItemIsSame(items[1], items[1]) == true);
+    Require(WKBundleBackForwardListItemIsSame(items[1], items[2]) == false);
+    auto sameIdItem = MakeBundleBackForwardItem("https://example.com/1", "title", "orig", nullptr, false, {}, false, false, 101);
+    Require(WKBundleBackForwardListItemIsSame(items[1], sameIdItem.Get()) == true);
+
+    auto* children = WKBundleBackForwardListItemCopyChildren(items[0]);
+    Require(WKArrayGetSize(children) == 0);
+    WKRelease(children);
+
+    ItemList childList{entries[0], entries[1]};
+    auto itemWithChildren = MakeBundleBackForwardItem("https://example.com/parent", "parent", "orig", nullptr, false, childList);
+    auto* childrenArr = WKBundleBackForwardListItemCopyChildren(itemWithChildren.Get());
+    Require(WKArrayGetSize(childrenArr) == 2);
+    Require(WKArrayGetItemAtIndex(childrenArr, 0) == items[0]);
+    Require(WKArrayGetItemAtIndex(childrenArr, 1) == items[1]);
+    WKRelease(childrenArr);
+
+    WKBundleBackForwardListClear(list);
+    Require(WKBundleBackForwardListGetBackListCount(list) == 0);
+    Require(WKBundleBackForwardListGetForwardListCount(list) == 0);
+    auto* currentAfterClear = WKBundleBackForwardListCopyItemAtIndex(list, 0);
+    Require(currentAfterClear == items[2]);
+    WKRelease(currentAfterClear);
+    Require(WKBundleBackForwardListCopyItemAtIndex(list, -1) == nullptr);
+    Require(WKBundleBackForwardListCopyItemAtIndex(list, 1) == nullptr);
+    WKRelease(list);
+
+    ItemList pair{entries[0], entries[1]};
+    auto* noCurrent = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::BundleBackForwardList>(pair, std::nullopt));
+    Require(WKBundleBackForwardListGetBackListCount(noCurrent) == 0);
+    Require(WKBundleBackForwardListGetForwardListCount(noCurrent) == 0);
+    Require(WKBundleBackForwardListCopyItemAtIndex(noCurrent, 0) == nullptr);
+    WKBundleBackForwardListClear(noCurrent);
+    Require(NKWebKit::Cast<NKWebKit::BundleBackForwardList>(noCurrent, "test")->entries.empty());
+    WKRelease(noCurrent);
+
+    auto* single = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::BundleBackForwardList>(ItemList{entries[0]}, 0));
+    WKBundleBackForwardListClear(single);
+    auto* singleItem = WKBundleBackForwardListCopyItemAtIndex(single, 0);
+    Require(singleItem == items[0]);
+    WKRelease(singleItem);
+    WKRelease(single);
+
+    auto detached = NKWebKit::Make<NKWebKit::BundleBackForwardList>(entries, 2);
+    detached->attached = false;
+    auto* detachedRef = NKWebKit::ToRef(std::move(detached));
+    Require(WKBundleBackForwardListGetBackListCount(detachedRef) == 0);
+    Require(WKBundleBackForwardListGetForwardListCount(detachedRef) == 0);
+    Require(WKBundleBackForwardListCopyItemAtIndex(detachedRef, 0) == nullptr);
+    WKBundleBackForwardListClear(detachedRef);
+    Require(NKWebKit::Cast<NKWebKit::BundleBackForwardList>(detachedRef, "test")->entries.size() == 5);
+    WKRelease(detachedRef);
+
+    auto* empty = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::BundleBackForwardList>());
+    Require(WKBundleBackForwardListGetBackListCount(empty) == 0);
+    Require(WKBundleBackForwardListGetForwardListCount(empty) == 0);
+    Require(WKBundleBackForwardListCopyItemAtIndex(empty, 0) == nullptr);
+    WKRelease(empty);
+
+    auto* bare = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::BundleBackForwardListItem>());
+    Require(WKBundleBackForwardListItemCopyURL(bare) == nullptr);
+    Require(WKBundleBackForwardListItemCopyOriginalURL(bare) == nullptr);
+    auto* bareTitle = WKBundleBackForwardListItemCopyTitle(bare);
+    Require(WKStringIsEmpty(bareTitle));
+    WKRelease(bareTitle);
+    auto* bareTarget = WKBundleBackForwardListItemCopyTarget(bare);
+    Require(WKStringIsEmpty(bareTarget));
+    WKRelease(bareTarget);
+    Require(WKBundleBackForwardListItemIsTargetItem(bare) == false);
+    Require(WKBundleBackForwardListItemIsInBackForwardCache(bare) == false);
+    Require(WKBundleBackForwardListItemHasCachedPageExpired(bare) == false);
+    WKRelease(bare);
+
+    auto* notList = NKWebKit::ToRef(NKWebKit::String::FromUtf8("not a list"));
+    Require(Throws(WKBundleBackForwardListGetBackListCount, notList));
+    Require(Throws(WKBundleBackForwardListGetForwardListCount, notList));
+    Require(Throws(WKBundleBackForwardListClear, notList));
+    Require(Throws(WKBundleBackForwardListItemCopyChildren, notList));
+    Require(Throws(WKBundleBackForwardListItemCopyURL, notList));
+    Require(Throws(WKBundleBackForwardListItemCopyOriginalURL, notList));
+    Require(Throws(WKBundleBackForwardListItemCopyTitle, notList));
+    Require(Throws(WKBundleBackForwardListItemCopyTarget, notList));
+    Require(Throws(WKBundleBackForwardListItemHasCachedPageExpired, notList));
+    Require(Throws(WKBundleBackForwardListItemIsInBackForwardCache, notList));
+    Require(Throws(WKBundleBackForwardListItemIsTargetItem, notList));
+    Require(Throws(WKBundleBackForwardListGetBackListCount, nullptr));
+    Require(Throws(WKBundleBackForwardListItemCopyTitle, nullptr));
+    Require(Throws([](const void* p) { WKBundleBackForwardListCopyItemAtIndex(p, 0); }, nullptr));
+    Require(Throws([](const void* p) { WKBundleBackForwardListCopyItemAtIndex(p, 0); }, notList));
+    Require(Throws([](const void* p) { WKBundleBackForwardListItemIsSame(p, p); }, nullptr));
+    Require(Throws([](const void* p) { WKBundleBackForwardListItemIsSame(p, p); }, notList));
+    Require(Throws([&](const void* p) { WKBundleBackForwardListItemIsSame(items[0], p); }, nullptr));
+    Require(Throws([&](const void* p) { WKBundleBackForwardListItemIsSame(p, items[0]); }, nullptr));
     WKRelease(notList);
 }
 
@@ -2753,6 +2926,7 @@ int main() {
     TestNavigationData();
     TestHitTestResult();
     TestBackForwardList();
+    TestBundleBackForwardList();
     TestBundleScriptWorld();
     TestBundleDOMWindowExtension();
     TestBundleHitTestResult();

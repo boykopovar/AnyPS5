@@ -228,7 +228,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKAccessibilityFocusedObject` | `WqnB6ITORdg` |
 | `WKAccessibilityRootObject` | `LGfu3uVGjDY` |
 | `WKBundleAddOriginAccessAllowListEntry` | `Ec6dqG56Kog` |
-| `WKBundleBackForwardListClear` | `uDz2mwaGQxc` |
 | `WKBundleClearHistoryForTesting` | `4XbhuyqB6pA` |
 | `WKBundleClearResourceLoadStatistics` | `zm7AblpGSLk` |
 | `WKBundleCreateWKDataFromUInt8Array` | `IOaozfGUAFI` |

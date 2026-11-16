@@ -35,11 +35,11 @@ std::uint32_t APS5_VABI WKBooleanGetTypeID() {
 }
 
 std::uint32_t APS5_VABI WKBundleBackForwardListGetTypeID() {
-    return 0;
+    return NKWebKit::TypeID(NKWebKit::ObjectType::BundleBackForwardList);
 }
 
 std::uint32_t APS5_VABI WKBundleBackForwardListItemGetTypeID() {
-    return 0;
+    return NKWebKit::TypeID(NKWebKit::ObjectType::BundleBackForwardListItem);
 }
 
 std::uint32_t APS5_VABI WKBundleDOMWindowExtensionGetTypeID() {
