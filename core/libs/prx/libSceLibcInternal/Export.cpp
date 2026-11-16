@@ -650,11 +650,6 @@ unsigned int APS5_VABI alarm_nid_postfix(unsigned int seconds) {
 }
 
 
-int APS5_VABI _Atan_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _Atqexit_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -707,11 +702,6 @@ int APS5_VABI _Erfc_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _FAtan_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _FErfc_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -748,11 +738,6 @@ int APS5_VABI _FRint_nid_postfix() {
 }
 
 int APS5_VABI _FSincos_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _FTan_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -902,11 +887,6 @@ int APS5_VABI _Isdst_nid_postfix() {
     return -1;
 }
 
-int APS5_VABI _LAtan_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _LErfc_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -943,11 +923,6 @@ int APS5_VABI _LRint_nid_postfix() {
 }
 
 int APS5_VABI _LSincos_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _LTan_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

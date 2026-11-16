@@ -44,7 +44,7 @@ int APS5_VABI _WPrintf_nid_postfix();
 int APS5_VABI _WGetstr_nid_postfix();
 int APS5_VABI _ZN6Dinkum7threads17_Throw_lock_errorEv_nid_postfix();
 int APS5_VABI _Scanf_nid_postfix();
-int APS5_VABI _Tan_nid_postfix();
+double APS5_VABI _Tan_nid_postfix(double x, int quadrants);
 int APS5_VABI _ZNKSt7_MpunctIcE16do_decimal_pointEv_nid_postfix();
 int APS5_VABI _ZNKSt19istreambuf_iteratorIcSt11char_traitsIcEE5equalERKS2__nid_postfix();
 int APS5_VABI _ZNKSt7_MpunctIcE13do_neg_formatEv_nid_postfix();
