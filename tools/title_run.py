@@ -380,7 +380,9 @@ def render_markdown(summary, previous=None):
     parts = [machine["os"], machine["gpu"], machine["driver"] and f"driver {machine['driver']}", machine["cpu"] and f"CPU {machine['cpu']}"]
     known = ", ".join(part for part in parts if part)
     header += f". {known}." if known else "."
-    header += f" {summary['runs']} run{'' if summary['runs'] == 1 else 's'} per title, {summary['seconds']} s each."
+    lengths = sorted({title["seconds"] for title in summary["titles"].values() if "seconds" in title}) or [summary["seconds"]]
+    length = f"{lengths[0]} to {lengths[-1]}" if len(lengths) > 1 else lengths[0]
+    header += f" {summary['runs']} run{'' if summary['runs'] == 1 else 's'} per title, {length} s each."
     lines = [header, ""]
     lacking = [f"{title['name']} ({title_id}) {', '.join(title['missing_content'])}" for title_id, title in sorted(summary["titles"].items()) if title.get("missing_content")]
     if lacking:
@@ -1032,9 +1034,15 @@ def main(argv=None):
     args.out = args.out or args.build / "title-runs"
     if args.json and not args.compare:
         parser.error("--json needs --compare")
-    previous = json.loads(args.compare.read_text(encoding="utf-8")) if args.compare else None
+    try:
+        previous = json.loads(args.compare.read_text(encoding="utf-8")) if args.compare else None
+    except (OSError, ValueError) as error:
+        parser.error(f"--compare: {error}")
     platform = "windows" if os.name == "nt" else "macos" if sys.platform == "darwin" else "linux"
-    titles = load_titles(args.titles)
+    try:
+        titles = load_titles(args.titles)
+    except (OSError, ValueError) as error:
+        parser.error(f"--titles: {error}")
     if args.smoke:
         args.ids = [title_id for title_id, entry in sorted(titles.items()) if entry.get("smoke")]
         if not args.ids:
@@ -1061,6 +1069,7 @@ def main(argv=None):
     summary = {"build": {"commit": commit, "dirty": bool(git(source, "status", "--porcelain", "--untracked-files=no")), "note": args.note},
                "machine": {"os": "", "gpu": "", "driver": "", "cpu": ""}, "runs": args.runs, "seconds": args.seconds or 60,
                "driver_cache": "isolated" if platform == "linux" else "shared (not isolated)", "titles": {}}
+    progress = sys.stderr if args.json else sys.stdout
     for title_id in ids:
         entry = titles.get(title_id, {})
         seconds = args.seconds or entry.get("seconds", 60)
@@ -1078,7 +1087,7 @@ def main(argv=None):
             (work / "relink.log").write_text(f"{type(error).__name__}: {error}\n", encoding="utf-8")
             executable = None
         if missing:
-            print(f"{title_id}: --content lacks {', '.join(missing)}; running without", flush=True)
+            print(f"{title_id}: --content lacks {', '.join(missing)}; running without", file=progress, flush=True)
         (output / title_id).mkdir(parents=True, exist_ok=True)
         shutil.copyfile(work / "relink.log", output / title_id / "relink.log")
         runs = []
@@ -1094,7 +1103,7 @@ def main(argv=None):
                     value = result.pop(key)
                     summary["machine"][key] = summary["machine"][key] or value
             runs.append({"run": number, "cache": "cold" if number == 1 else "warm", **result})
-            print(f"{title_id} run{number}: {result['outcome']}", flush=True)
+            print(f"{title_id} run{number}: {result['outcome']}", file=progress, flush=True)
         summary["titles"][title_id] = {"name": found[title_id]["name"], "version": found[title_id]["version"], "seconds": seconds, "missing_content": missing, "runs": runs}
         write_summary(output, summary)
     write_summary(output, summary)
@@ -1104,7 +1113,7 @@ def main(argv=None):
         print(compare_json(summary, previous))
     else:
         print(report)
-    print(f"written to {output}")
+    print(f"written to {output}", file=progress)
     return 0
 
 

@@ -1,0 +1,5 @@
+# libc
+
+## change [sceLibcBacktraceGetBufferSize, sceLibcBacktraceSelf](../../../core/libs/prx/libc/src/Backtrace.cpp)
+
+- [sceLibcBacktraceGetBufferSize, sceLibcBacktraceSelf](../../../core/libs/prx/libc/src/Backtrace.cpp) (libc) - not measured on a console. Unlike the `libc.prx` bundled with PPSA04264 v01.011.001 (J03093718), frames outside any loaded module are skipped instead of merged into one record with offset 0 and an empty name, the first record is the caller by assumption, and an unwinder failure does not return 1. The record layout (zero u32 at +0xC, names zero-padded to 8 bytes) and the result 1 for a null buffer or output pointer follow that module. Module names are host file names without the `.guest.prx` suffix, so their case may differ. Linux and macOS use `backtrace` and `dladdr`; Windows uses `_Unwind_Backtrace` and stops at a frame without `.ehmeta` or `.ehfram` tables whose PE unwind data has a handler, leaving the trace empty or cut short while still returning 0; other platforms throw. An unwritable non-null guest output throws `invalid_argument`; the console response is unmeasured

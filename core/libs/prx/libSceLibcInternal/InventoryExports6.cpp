@@ -528,11 +528,6 @@ int APS5_VABI _ZNSt13basic_filebufIwSt11char_traitsIwEE4syncEv_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _ZNSt13basic_filebufIwSt11char_traitsIwEE7_UnlockEv_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZNSt7_MpunctIwED0Ev_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -577,11 +572,6 @@ int APS5_VABI _ZNSt10moneypunctIwLb0EEC1Em_nid_postfix() {
     return 0;
 }
 
-int APS5_VABI _ZNSt13basic_filebufIcSt11char_traitsIcEE7_UnlockEv_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZNSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEEC2ERKSt8_Locinfom_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -593,11 +583,6 @@ int APS5_VABI _ZNSt8messagesIwEC2Em_nid_postfix() {
 }
 
 int APS5_VABI _ZNSt6_WinitD2Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZNSt6_WinitD1Ev_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
