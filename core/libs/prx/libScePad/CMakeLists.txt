@@ -204,6 +204,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_pad_controller_info_capabilities_bounds PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePad>")
     endif()
+    add_test_executable(guest_pad_light_bar_rgb_user_color_bounds_tests ${LIBS_INCLUDE_DIR}/tests/GuestPadLightBarRgbUserColorBounds.cpp)
+    target_include_directories(guest_pad_light_bar_rgb_user_color_bounds_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_pad_light_bar_rgb_user_color_bounds_tests PRIVATE libScePad libc)
+    configure_windows_unwind(guest_pad_light_bar_rgb_user_color_bounds_tests)
+    add_test(NAME guest_pad_light_bar_rgb_user_color_bounds COMMAND guest_pad_light_bar_rgb_user_color_bounds_tests)
+    set_tests_properties(guest_pad_light_bar_rgb_user_color_bounds PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_pad_light_bar_rgb_user_color_bounds PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libScePad>")
+    endif()
 endif()
 
 if(BUILD_TESTING)
