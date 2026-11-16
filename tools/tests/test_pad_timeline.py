@@ -367,5 +367,13 @@ class TimelineTests(unittest.TestCase):
             self.assertIn("\\udcff", result.stdout)
 
 
+class IntegerRangeTests(unittest.TestCase):
+    def test_integer_accepts_in_range_integers_and_refuses_others(self):
+        self.assertEqual(pad_timeline.integer(5, 'x', 1, 10), 5)
+        for value in (True, 2.0, 0, 11):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'x must be an integer between 1 and 10'):
+                pad_timeline.integer(value, 'x', 1, 10)
+
+
 if __name__ == "__main__":
     unittest.main()
