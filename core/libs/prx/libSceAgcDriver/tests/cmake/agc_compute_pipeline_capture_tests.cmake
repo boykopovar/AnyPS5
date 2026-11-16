@@ -27,3 +27,11 @@ if(BUILD_TESTING AND ANYPS5_ENABLE_SPIRV_TOOLS)
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ComputePipelineCaptureRun.cmake)
     set_tests_properties(agc_compute_pipeline_capture_run PROPERTIES TIMEOUT 30 SKIP_REGULAR_EXPRESSION "compute pipeline capture run: skipped, no usable Vulkan device")
 endif()
+
+if(BUILD_TESTING)
+    add_test(NAME agc_compute_pipeline_capture_heap_run COMMAND ${CMAKE_COMMAND}
+            -DFIXTURE=$<TARGET_FILE:agc_driver_heap_compute_sample_tests>
+            -DOUTPUT_ROOT=${CMAKE_CURRENT_BINARY_DIR}/capture-tests
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/ComputePipelineCaptureHeapRun.cmake)
+    set_tests_properties(agc_compute_pipeline_capture_heap_run PROPERTIES TIMEOUT 30 SKIP_REGULAR_EXPRESSION "compute pipeline heap capture run: skipped")
+endif()
