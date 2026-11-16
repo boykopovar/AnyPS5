@@ -1026,6 +1026,11 @@ class CommentLineHelperTests(unittest.TestCase):
         text = "set(A 1) # note\n#[[ block\nmore ]]\nset(B 2)\n"
         self.assertEqual(check_conventions.cmake_comments(text), {1, 2, 3})
 
+    def test_flow_mapping_reads_a_flow_map_and_refuses_other_values(self):
+        self.assertEqual(check_conventions.flow_mapping('{a: 1, "b": 2}'), {"a": "1", "b": "2"})
+        self.assertEqual(check_conventions.flow_mapping("{}"), {})
+        self.assertEqual(check_conventions.flow_mapping("x"), {})
+
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--shard":
