@@ -1063,5 +1063,12 @@ class ProgressConstantReturnTests(unittest.TestCase):
         self.assertEqual(group["inert_names"], ["Discarded"])
 
 
+class UniqueJsonKeysTests(unittest.TestCase):
+    def test_unique_json_keys_rejects_duplicates(self):
+        self.assertEqual(progress.unique_json_keys([("a", 1), ("b", 2)]), {"a": 1, "b": 2})
+        with self.assertRaises(ValueError):
+            progress.unique_json_keys([("a", 1), ("a", 2)])
+
+
 if __name__ == "__main__":
     unittest.main()
