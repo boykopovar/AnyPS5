@@ -69,12 +69,20 @@ std::byte* LowMemory(std::size_t bytes) {
 #else
 #ifdef ANYPS5_ENABLE_ASAN
     constexpr std::uintptr_t FirstHint = 0x60000000;
+    constexpr std::uintptr_t MinimumStride = std::uintptr_t{1} << 12u;
 #else
     constexpr std::uintptr_t FirstHint = std::uintptr_t{1} << 32u;
+    constexpr std::uintptr_t MinimumStride = std::uintptr_t{1} << 32u;
 #endif
-    for (std::uintptr_t hint = FirstHint; hint < (std::uintptr_t{1} << 40u); hint += std::uintptr_t{1} << 32u) {
+    const std::uintptr_t rounded = (bytes + 0xfffu) & ~std::uintptr_t{0xfffu};
+    const std::uintptr_t stride = rounded < MinimumStride ? MinimumStride : rounded;
+    static std::uintptr_t next = FirstHint;
+    for (std::uintptr_t hint = next; hint < (std::uintptr_t{1} << 40u); hint += stride) {
         void* mapped = mmap(reinterpret_cast<void*>(hint), bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
-        if (mapped != MAP_FAILED) return static_cast<std::byte*>(mapped);
+        if (mapped != MAP_FAILED) {
+            next = hint + stride;
+            return static_cast<std::byte*>(mapped);
+        }
     }
     return nullptr;
 #endif
