@@ -4782,6 +4782,8 @@ void Recorder::Submit() {
         submission.pSignalSemaphores = &timeline;
     }
     if (hold != VK_NULL_HANDLE || timeline != VK_NULL_HANDLE) submission.pNext = &timelineInfo;
+    auto* const heapAtSubmit = DescriptorHeapEnabled() ? BindlessHeap::Existing(context) : nullptr;
+    if (heapAtSubmit != nullptr && !HasTimeline()) throw std::runtime_error("AGC bindless heap: a batch using the heap was submitted by a recorder without a timeline semaphore");
     DestroyDeferredAtIdle(context);
     const auto submitStart = std::chrono::steady_clock::now();
     batch->submitStarted.store(true, std::memory_order_release);
@@ -4794,7 +4796,14 @@ void Recorder::Submit() {
     if (batch->guestWork) LibcRunReportMilestone_nid_no_patch(2);
     batch->submitted = true;
     batch->serial = ++submissions;
-    if (auto* heap = DescriptorHeapEnabled() ? BindlessHeap::Existing(context) : nullptr; heap != nullptr) heap->Submitted(*this, batch->serial);
+    std::exception_ptr heapFailure;
+    if (heapAtSubmit != nullptr) {
+        try {
+            heapAtSubmit->Submitted(*this, batch->serial);
+        } catch (...) {
+            heapFailure = std::current_exception();
+        }
+    }
     batch->submittedAt = std::chrono::steady_clock::now();
     CaptureTrace::Log("submit-confirmed batch=%llu tokens=%s", static_cast<unsigned long long>(batch->serial), tokensStr.c_str());
     if (DrawProfiled()) {
@@ -4819,6 +4828,7 @@ void Recorder::Submit() {
     inFlight.push_back(std::move(batch));
     inFlightKeptBytes += inFlight.back()->keptBytes;
     if (activeRecorder == this) pendingLabelSince.store(NoPendingLabel, std::memory_order_release);
+    if (heapFailure != nullptr) std::rethrow_exception(heapFailure);
 }
 
 std::uint64_t Recorder::SubmitAndEpoch() {

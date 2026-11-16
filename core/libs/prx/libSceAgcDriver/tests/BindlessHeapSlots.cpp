@@ -517,6 +517,7 @@ void noTimelineFails(const Context& context) {
         }
     }
     require(failed, "a heap batch from a recorder without a timeline, which could not wait for its slots, was accepted");
+    require(recorder.Submissions() == 0u, "a heap batch from a recorder without a timeline was submitted before the failure");
     BindlessHeap::Release(context.device);
 }
 
