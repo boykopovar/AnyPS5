@@ -4,7 +4,6 @@
 #include <algorithm>
 #include <array>
 #include <bit>
-#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
@@ -383,15 +382,6 @@ std::int32_t APS5_VABI uprv_itou_nid_postfix(char16_t* buffer, std::int32_t capa
 
 std::int8_t APS5_VABI uprv_pathIsAbsolute_nid_postfix(const char* path) {
     return path && *path == '/';
-}
-
-double APS5_VABI uprv_getRawUTCtime_nid_postfix() {
-    const auto now = std::chrono::system_clock::now().time_since_epoch();
-    return static_cast<double>(std::chrono::floor<std::chrono::milliseconds>(now).count());
-}
-
-double APS5_VABI uprv_getUTCtime_nid_postfix() {
-    return uprv_getRawUTCtime_nid_postfix();
 }
 
 }
