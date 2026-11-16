@@ -15,6 +15,14 @@ enum class RuntimeSwitch : std::size_t {
     NoGuardSpans,
     ArmResident,
     NoOwnedDrawInputs,
+    NoPassAttachmentMemo,
+    NoImportSegmentMemo,
+    NoSizeOnlySurfaceBytes,
+    NoSpaceReuseRecords,
+    PipelineDispatchMisses,
+    NoMemoPendingCollect,
+    NoExtendedFastProofs,
+    TableSnapshot,
     Count,
 };
 

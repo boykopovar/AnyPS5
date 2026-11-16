@@ -22,6 +22,7 @@ extern std::uint64_t _ZNSt8numpunctIcE2idE_nid_postfix;
 extern std::uint64_t _ZNSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix;
 extern std::uint64_t _ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix;
 extern std::uint64_t _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix;
+extern std::uint64_t _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE2idE_nid_postfix;
 extern std::uint64_t _ZNSt8messagesIcE2idE_nid_postfix;
 extern std::uint64_t _ZNSt8messagesIwE2idE_nid_postfix;
 extern std::uintptr_t _ZTVSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[17];
@@ -127,12 +128,42 @@ static void CheckNumpunctVtableObject() {
 }
 
 static void CheckMessagesVtableObject() {
-    for (std::uintptr_t& slot : _ZTVSt8messagesIcE_nid_postfix) {
-        Require(slot == 0);
-        slot = 0x1111;
-        Require(slot == 0x1111);
-        slot = 0;
-    }
+    Require(_ZTVSt8messagesIcE_nid_postfix[0] == 0 && _ZTVSt8messagesIcE_nid_postfix[1] == 0);
+    for (std::size_t index = 2; index < std::size(_ZTVSt8messagesIcE_nid_postfix); ++index) Require(_ZTVSt8messagesIcE_nid_postfix[index] != 0);
+    const auto* vtable = reinterpret_cast<const GuestLocale::MessagesVtable*>(&_ZTVSt8messagesIcE_nid_postfix[2]);
+    GuestLocale::Facet facet{&vtable->facet, 0, 0};
+    vtable->facet.destroy(&facet);
+    vtable->facet.retain(&facet);
+    Require(facet.references == 1);
+    Require(vtable->facet.release(&facet) == &facet && facet.references == 0);
+    const GuestLocale::String name{};
+    Require(vtable->open(&facet, &name, nullptr) == -1);
+    vtable->close(&facet, -1);
+    vtable->close(&facet, 5);
+    GuestLocale::String fallback{};
+    std::memcpy(fallback.buffer, "fallback\0tail-xy", sizeof(fallback.buffer));
+    fallback.size = 8;
+    fallback.capacity = 15;
+    GuestLocale::String result{};
+    Require(vtable->get(&result, &facet, -1, 0, 0, &fallback) == &result);
+    Require(result.size == 8 && result.capacity == 15 && std::memcmp(result.buffer, fallback.buffer, sizeof(result.buffer)) == 0);
+    const char text[] = "a default message that does not fit the buffer";
+    const std::size_t length = sizeof(text) - 1;
+    GuestLocale::String longFallback{};
+    longFallback.pointer = static_cast<char*>(_Znwm_nid_postfix(64));
+    std::memcpy(longFallback.pointer, text, sizeof(text));
+    longFallback.size = length;
+    longFallback.capacity = 63;
+    GuestLocale::String longResult{};
+    Require(vtable->get(&longResult, &facet, 1, 2, 3, &longFallback) == &longResult);
+    Require(longResult.size == length && longResult.capacity == (length | 15) && longResult.pointer != longFallback.pointer);
+    Require(std::memcmp(longResult.pointer, text, sizeof(text)) == 0);
+    _ZdlPv_nid_postfix(longResult.pointer);
+    _ZdlPv_nid_postfix(longFallback.pointer);
+    RequireException([&] { vtable->get(&result, &facet, 0, 0, 0, nullptr); });
+    auto* owned = static_cast<GuestLocale::Facet*>(_Znwm_nid_postfix(sizeof(GuestLocale::Facet)));
+    *owned = {&vtable->facet, 0, 0};
+    vtable->facet.deleteObject(owned);
 }
 
 static void CheckCodecvtVtableObject() {
@@ -194,6 +225,9 @@ static void CheckLocinfoAlignment() {
 
     RequireException([&] { _ZNSt8_LocinfoC1EPKc_nid_postfix(storage, "unknown-locale"); });
     RequireException([] { _ZNSt8_LocinfoC1EPKc_nid_postfix(nullptr, "C"); });
+    RequireException([&] { _ZNSt8_LocinfoC1EPKc_nid_postfix(storage, reinterpret_cast<const char*>(0x10)); });
+    RequireException([&] { _ZNSt8_LocinfoC1EPKc_nid_postfix(storage, ""); });
+    RequireException([&] { _ZNSt8_LocinfoC1EPKc_nid_postfix(storage, "CX"); });
 }
 
 static void CheckCharacterTables() {
@@ -367,6 +401,17 @@ static void CheckWideCaseTranslation() {
         Require(_Towctrans_nid_postfix(u'A', descriptor) == u'A' && _Towctrans_nid_postfix(u'7', descriptor) == u'7');
         Require(*__error_nid_postfix() == 22);
     }
+    Require(wctrans_nid_postfix("tolower") == 1 && wctrans_nid_postfix("toupper") == 2);
+    Require(towctrans_nid_postfix(u'A', wctrans_nid_postfix("tolower")) == u'a' && towctrans_nid_postfix(u'a', wctrans_nid_postfix("toupper")) == u'A');
+    Require(wctrans_nid_postfix("") == 0 && wctrans_nid_postfix("totitle") == 0 && wctrans_nid_postfix("tolowercase") == 0);
+    Require(wctrans_nid_postfix(reinterpret_cast<const char*>(0x10)) == 0);
+    const std::uint64_t alpha = wctype_nid_postfix("alpha");
+    Require(alpha != 0 && iswctype_nid_postfix(u'q', alpha) != 0 && iswctype_nid_postfix(u'7', alpha) == 0);
+    const std::uint64_t digit = wctype_nid_postfix("digit");
+    Require(digit != 0 && iswctype_nid_postfix(u'7', digit) != 0 && iswctype_nid_postfix(u'q', digit) == 0);
+    Require(wctype_nid_postfix("phonogram") == 0x200000 && wctype_nid_postfix("ideogram") == 0x80000);
+    Require(wctype_nid_postfix("") == 0 && wctype_nid_postfix("phonograms") == 0 && wctype_nid_postfix("Alpha") == 0);
+    Require(wctype_nid_postfix(reinterpret_cast<const char*>(0x10)) == 0);
 }
 
 static void CheckWideNumPutVtableObject() {
@@ -557,7 +602,13 @@ static void CheckFacetGetcat() {
     _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 11;
     Require(_ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix == 11);
     _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 0;
-    for (GuestLocale::Facet* facet : {codecvt, punct, widePunct, numPut, timePut}) {
+    GuestLocale::Facet* wideTimePut = nullptr;
+    Require(_ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(&wideTimePut, &locale) == 5 && wideTimePut != nullptr);
+    Require(sizeof(_ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE2idE_nid_postfix) == 8 && _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE2idE_nid_postfix == 0);
+    _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE2idE_nid_postfix = 11;
+    Require(_ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE2idE_nid_postfix == 11);
+    _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE2idE_nid_postfix = 0;
+    for (GuestLocale::Facet* facet : {codecvt, punct, widePunct, numPut, timePut, wideTimePut}) {
         facet->vtable->retain(facet);
         facet->vtable->retain(facet);
         Require(facet->references == 2);
@@ -577,12 +628,39 @@ static void CheckWideCtypeVtableObject() {
 }
 
 static void CheckCtypeVtableObject() {
-    for (std::uintptr_t& slot : _ZTVSt5ctypeIcE_nid_postfix) {
-        Require(slot == 0);
-        slot = 0x1111;
-        Require(slot == 0x1111);
-        slot = 0;
-    }
+    const auto& slots = _ZTVSt5ctypeIcE_nid_postfix;
+    Require(sizeof(slots) == 112 && slots[0] == 0 && slots[1] == 0);
+    for (std::size_t index = 2; index < std::size(slots); ++index) Require(slots[index] != 0);
+    const auto* vtable = reinterpret_cast<const GuestLocale::CtypeVtable*>(&slots[2]);
+    GuestLocale::CtypeFacet facet{};
+    facet.base = {&vtable->facet, 0, 0};
+    facet.classification = _Getpctype_nid_postfix();
+    facet.lower = _Getptolower_nid_postfix();
+    facet.upper = _Getptoupper_nid_postfix();
+    vtable->facet.retain(&facet.base);
+    Require(facet.base.references == 1);
+    Require(vtable->facet.release(&facet.base) == &facet.base && facet.base.references == 0);
+    using Scalar = char (APS5_VABI *)(const GuestLocale::CtypeFacet*, char);
+    using Range = const char* (APS5_VABI *)(const GuestLocale::CtypeFacet*, char*, const char*);
+    const auto tolower = reinterpret_cast<Scalar>(slots[6]);
+    const auto tolowerRange = reinterpret_cast<Range>(slots[7]);
+    const auto toupper = reinterpret_cast<Scalar>(slots[8]);
+    const auto toupperRange = reinterpret_cast<Range>(slots[9]);
+    Require(tolower(&facet, 'Q') == 'q' && tolower(&facet, '[') == '[' && toupper(&facet, 'q') == 'Q' && toupper(&facet, '7') == '7');
+    char text[] = "Mixed Case 42!";
+    const char* end = text + std::strlen(text);
+    Require(tolowerRange(&facet, text, end) == end && std::strcmp(text, "mixed case 42!") == 0);
+    Require(toupperRange(&facet, text, end) == end && std::strcmp(text, "MIXED CASE 42!") == 0);
+    Require(vtable->widen(&facet.base, 'x') == 'x' && vtable->narrow(&facet.base, '\xe4', '?') == '\xe4');
+    char copy[4] = {'#', '#', '#', '#'};
+    Require(vtable->widenRange(&facet.base, text, text + 3, copy) == text + 3 && std::memcmp(copy, "MIX#", 4) == 0);
+    Require(vtable->narrowRange(&facet.base, text + 1, text + 3, '?', copy) == text + 3 && std::memcmp(copy, "IXX#", 4) == 0);
+    vtable->facet.destroy(&facet.base);
+    Require(facet.classification == _Getpctype_nid_postfix());
+    auto* owned = static_cast<GuestLocale::CtypeFacet*>(_Znwm_nid_postfix(sizeof(GuestLocale::CtypeFacet)));
+    *owned = facet;
+    vtable->facet.deleteObject(&owned->base);
+    RequireException([&] { vtable->facet.destroy(nullptr); });
 }
 
 static void CheckTimePutVtableObject() {

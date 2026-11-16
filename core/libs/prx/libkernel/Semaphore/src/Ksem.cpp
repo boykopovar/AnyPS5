@@ -131,11 +131,11 @@ int APS5_VABI ksem_init_nid_postfix(std::intptr_t* idp, unsigned int value) {
     if (value > SemValueMax) return Fail(GuestEinval);
     const int descriptor = ReserveDescriptor();
     if (descriptor < 0) return Fail(GuestEnospc);
-    if (idp == nullptr) {
+    const std::intptr_t id = descriptor;
+    if (idp == nullptr || !GuestCopyOut_nid_no_patch(idp, &id, sizeof(id))) {
         close_nid_postfix(descriptor);
         return Fail(GuestEfault);
     }
-    *idp = descriptor;
     auto ksem = std::make_shared<Ksem>();
     ksem->count = value;
     {
@@ -168,8 +168,12 @@ int APS5_VABI ksem_trywait_nid_postfix(std::intptr_t id) {
 }
 
 int APS5_VABI ksem_timedwait_nid_postfix(std::intptr_t id, const KernelTimespec* abstime) {
-    if (abstime != nullptr && (abstime->tv_nsec < 0 || abstime->tv_nsec >= 1000000000)) return Fail(GuestEinval);
-    return Wait(id, false, abstime);
+    KernelTimespec deadline{};
+    if (abstime != nullptr) {
+        if (!GuestCopyIn_nid_no_patch(&deadline, abstime, sizeof(deadline))) return Fail(GuestEfault);
+        if (deadline.tv_nsec < 0 || deadline.tv_nsec >= 1000000000) return Fail(GuestEinval);
+    }
+    return Wait(id, false, abstime != nullptr ? &deadline : nullptr);
 }
 
 int APS5_VABI ksem_getvalue_nid_postfix(std::intptr_t id, int* value) {

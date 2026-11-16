@@ -629,7 +629,7 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
             output.Value(PaddedStringSpec(spec), conversion == '%' ? "%" : text);
             continue;
         }
-        if (!secure) length = ApplicableLength(length, conversion);
+        length = ApplicableLength(length, conversion);
         const bool integerLength = length.empty() || length == "h" || length == "hh" ||
             length == "l" || length == "ll" || length == "j" || length == "z" || length == "t";
         if (conversion == 'd' || conversion == 'i') {
@@ -691,12 +691,15 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
             if (utf8[0] != 0) output.Value(spec.substr(0, spec.find('.')) + 's', utf8.c_str());
         } else if (conversion == 's' && (length.empty() || length == "h")) {
             const char* value = args.Next<const char*>();
-            if (!value && secure) throw FormatConstraintViolation("Null string argument");
-            if (!value) value = "(null)";
+            if (!value && secure) throw FormatConstraintViolation("printf_s: bad %s argument");
+            if (!value) {
+                value = "(null)";
+                spec = spec.substr(0, spec.find('.'));
+            }
             output.Value(spec + 's', value);
         } else if ((conversion == 's' && length == "l") || (conversion == 'S' && length.empty())) {
             const char16_t* value = args.Next<const char16_t*>();
-            if (!value && secure) throw FormatConstraintViolation("Null string argument");
+            if (!value && secure) throw FormatConstraintViolation("printf_s: bad %ls argument");
             if (!value) value = u"(null)";
             std::string utf8;
             while (utf8.size() < precisionLimit && *value) {
@@ -713,7 +716,7 @@ inline int FormatWindows(char* buffer, size_t size, const char* format, const vo
             const std::string text = FormatPointer(spec, args.Next<void*>());
             output.Append(text.data(), text.size());
         } else if (conversion == 'n' && secure) {
-            throw FormatConstraintViolation("Format count conversion");
+            throw FormatConstraintViolation("printf_s: %n disallowed");
         } else if (conversion == 'n' && integerLength && spec == "%") {
             void* pointer = args.Next<void*>();
             if (!pointer) throw std::invalid_argument("Null format count pointer");

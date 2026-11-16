@@ -6,6 +6,7 @@ add_test_executable(agc_shader_memory_tests EXCLUDE_FROM_ALL
         Execution/src/PerformanceTraceThread.cpp
         Graphics/src/GuestTextureResource.cpp
         Graphics/src/TextureTiling.cpp
+        Graphics/src/RuntimeSwitches.cpp
         Graphics/src/TextureFormat.cpp
 )
 target_include_directories(agc_shader_memory_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR})
@@ -17,6 +18,10 @@ target_include_directories(agc_driver_image_table_cache_bounds_tests PRIVATE $<T
 
 if(BUILD_TESTING)
     add_test(NAME agc_shader_bindless COMMAND agc_shader_memory_tests --bindless)
+    add_test(NAME agc_shader_table_binding_growth COMMAND agc_shader_memory_tests --table-binding-growth)
+    add_test(NAME agc_shader_table_resolution_growth COMMAND agc_shader_memory_tests --table-resolution-growth)
+    add_test(NAME agc_shader_empty_table_resolution COMMAND agc_shader_memory_tests --empty-table-resolution)
+    add_test(NAME agc_shader_shared_table_resolution COMMAND agc_shader_memory_tests --shared-table-resolution)
     set_tests_properties(agc_shader_bindless PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     add_test(NAME agc_shader_selected_records_image_limit COMMAND agc_shader_memory_tests --selected-records-image-limit)
     add_test(NAME agc_shader_selected_records_pair_limit COMMAND agc_shader_memory_tests --selected-records-pair-limit)
@@ -43,6 +48,11 @@ if(BUILD_TESTING)
     set_tests_properties(agc_shader_nested_snapshot_retry PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(agc_shader_nested_snapshot_retry PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test(NAME agc_shader_table_keep COMMAND agc_shader_memory_tests --table-keep)
+    set_tests_properties(agc_shader_table_keep PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(agc_shader_table_keep PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test(NAME agc_shader_table_snapshot_reuse COMMAND agc_shader_memory_tests --table-snapshot-reuse)
     add_test(NAME agc_shader_region_merge COMMAND agc_shader_memory_tests --region-merge)
@@ -87,6 +97,12 @@ if(BUILD_TESTING)
         set_tests_properties(agc_shader_bindless agc_shader_selected_records_image_limit agc_shader_selected_records_pair_limit agc_shader_selected_records_direct_image_limit agc_shader_selected_records_direct_pair_limit agc_shader_srt_read_patching agc_shader_type_zero_image_materialization agc_shader_frontend_pair agc_shader_frontend_pair_off agc_shader_layout_pair agc_shader_layout_pair_off agc_shader_result_memo_budget agc_shader_result_memo_budget_threads agc_shader_result_memo_budget_masked agc_shader_entry_lane_proof_budget agc_shader_sampler_limits agc_shader_image_limits_table agc_shader_image_limits_mixed agc_shader_image_limits_refusals PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     agc_add_default_test(agc_shader_memory_tests)
+    add_test(NAME agc_shader_memory_coherent_atomic_loads COMMAND agc_shader_memory_tests)
+    set_tests_properties(agc_shader_memory_coherent_atomic_loads PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_COHERENT_ATOMIC_LOADS=1" WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    if(WIN32)
+        set_tests_properties(agc_shader_memory_coherent_atomic_loads PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+
 endif()
 
 if(BUILD_TESTING)
