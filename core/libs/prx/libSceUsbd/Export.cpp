@@ -132,6 +132,12 @@ bool ValidTimeout(const UsbdTimeval* timeout) {
     return timeout == nullptr || (timeout->seconds >= 0 && timeout->seconds <= INT_MAX && timeout->microseconds >= 0 && timeout->microseconds < 1000000);
 }
 
+const UsbdTimeval* CopyGuestTimeout(const UsbdTimeval* timeout, UsbdTimeval& copy, const char* function) {
+    if (timeout == nullptr) return nullptr;
+    if (!GuestCopyIn_nid_no_patch(&copy, timeout, sizeof(copy))) throw std::runtime_error(std::string(function) + ": an unreadable timeout has no known result");
+    return &copy;
+}
+
 void AcquireEvents(UsbdEvents& events, const char* function) {
     const auto self = std::this_thread::get_id();
     if (events.owner.load() == self) throw std::runtime_error(std::string(function) + ": this thread already holds the event lock");
@@ -841,10 +847,12 @@ std::int32_t APS5_VABI sceUsbdHandleEvents() {
 }
 
 std::int32_t APS5_VABI sceUsbdHandleEventsLocked(UsbdTimeval* timeout) {
-    if (!ValidTimeout(timeout)) throw std::runtime_error(std::string(__func__) + ": a negative or oversized timeout has no known result");
+    UsbdTimeval copy{};
+    const UsbdTimeval* local = CopyGuestTimeout(timeout, copy, __func__);
+    if (!ValidTimeout(local)) throw std::runtime_error(std::string(__func__) + ": a negative or oversized timeout has no known result");
     auto& events = Events();
     RequireEventLock(events, __func__);
-    return HandleEventsLocked(events, timeout);
+    return HandleEventsLocked(events, local);
 }
 
 void APS5_VABI sceUsbdLockEventWaiters() {
@@ -913,10 +921,12 @@ void APS5_VABI sceUsbdUnlockEvents() {
 }
 
 std::int32_t APS5_VABI sceUsbdWaitForEvent(UsbdTimeval* timeout) {
-    if (!ValidTimeout(timeout)) throw std::runtime_error(std::string(__func__) + ": a negative or oversized timeout has no known result");
+    UsbdTimeval copy{};
+    const UsbdTimeval* local = CopyGuestTimeout(timeout, copy, __func__);
+    if (!ValidTimeout(local)) throw std::runtime_error(std::string(__func__) + ": a negative or oversized timeout has no known result");
     auto& events = Events();
     RequireEventLock(events, __func__);
-    return WaitForChange(events, timeout);
+    return WaitForChange(events, local);
 }
 
 }
