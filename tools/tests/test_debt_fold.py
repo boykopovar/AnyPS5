@@ -18,6 +18,11 @@ BASE = (f"# libSceExample technical debt\n\n### Silent stubs\n\n"
         f"- On Windows the [example worker]({LINK}) is not joined at exit\n")
 
 
+BASE_TEXT = (f"# libSceExample technical debt\n\n### Silent stubs\n\n"
+             f"- [sceExampleA]({LINK}) (libSceExample) - returns 0\n"
+             f"- [sceExampleB]({LINK}) (libSceExample) - returns 0 without reading its argument\n")
+
+
 class FoldTests(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
