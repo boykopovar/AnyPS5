@@ -1210,6 +1210,48 @@ class CandidateModuleTests(unittest.TestCase):
         symbolizer = symbolize_samples.Symbolizer([self.current, self.current / "."], self.headers)
         self.assertEqual(symbolizer.frame(self.frame), "example.prx!short")
 
+    def test_hardlinked_candidates_do_not_create_ambiguity(self):
+        (self.old / "example.prx").unlink()
+        os.link(self.current / "example.prx", self.old / "example.prx")
+        for directories in ((self.old, self.current), (self.current, self.old)):
+            for headers, unverified, expected in ((self.headers, False, "example.prx!short"),
+                                                   ({}, True, "example.prx!short"), ({}, False, self.frame)):
+                with self.subTest(directories=directories, headers=headers, unverified=unverified):
+                    warnings = []
+                    symbolizer = symbolize_samples.Symbolizer(directories, headers, unverified=unverified, warn=warnings.append)
+                    self.assertEqual(symbolizer.frame(self.frame), expected)
+                    self.assertEqual(bool(warnings), expected == self.frame)
+
+    def test_identical_copies_remain_distinct_candidates(self):
+        (self.old / "example.prx").write_bytes((self.current / "example.prx").read_bytes())
+        for directories in ((self.old, self.current), (self.current, self.old)):
+            with self.subTest(directories=directories):
+                warnings = []
+                symbolizer = symbolize_samples.Symbolizer(directories, self.headers, warn=warnings.append)
+                self.assertEqual(symbolizer.frame(self.frame), self.frame)
+                self.assertIn("ambiguous", "\n".join(warnings))
+
+    def test_hardlinked_candidates_work_with_json_and_collapsed_output(self):
+        (self.old / "example.prx").unlink()
+        os.link(self.current / "example.prx", self.old / "example.prx")
+        samples = self.root / "samples.txt"
+        samples.write_text(f"# module example.prx {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n{self.frame} 4\n", encoding="utf-8")
+        output = self.root / "symbolized.txt"
+        originals = {path: path.read_bytes() for path in (samples, self.old / "example.prx", self.current / "example.prx")}
+        result = subprocess.run([sys.executable, symbolize_samples.__file__, str(samples), "--libs", str(self.old),
+                                 "--libs", str(self.current), "--json", "--out", str(output)],
+                                capture_output=True, encoding="utf-8", timeout=5)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stderr, "")
+        report = json.loads(result.stdout)
+        self.assertEqual(report["samples"], 4)
+        for category in ("self", "inclusive"):
+            self.assertEqual(report[category], [{"symbol": "example.prx!short", "count": 4}])
+        self.assertEqual(report["modules"], [{"name": "example.prx", "candidate_accepted": True,
+                                              "identity_recorded": True, "identity_matches": True}])
+        self.assertEqual(output.read_text(encoding="utf-8"), "example.prx!short 4\n")
+        self.assertEqual({path: path.read_bytes() for path in originals}, originals)
+
     def test_module_filename_lookup_remains_case_insensitive(self):
         name = "EXAMPLE.PRX"
         symbolizer = symbolize_samples.Symbolizer([self.old, self.current], {name: (SIZE_OF_IMAGE, TIMESTAMP)})

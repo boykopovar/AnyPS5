@@ -96,6 +96,8 @@ static_assert(COMMON_DIALOG_ERROR_ARG_NULL == static_cast<int>(0x80B8000Du));
 int main() {
     Require(!sceCommonDialogIsUsed());
     Require(!CommonDialogSystemInitialized_nid_no_patch());
+    Require(!CommonDialogAcquire_nid_no_patch());
+    Require(!sceCommonDialogIsUsed());
     Require(sceCommonDialogInitialize() == COMMON_DIALOG_OK);
     Require(CommonDialogSystemInitialized_nid_no_patch());
     Require(!sceCommonDialogIsUsed());

@@ -84,6 +84,7 @@ int main() {
     int waiters = -1;
     Require(sceKernelCancelSema(sem, 4, &waiters) == SCE_KERNEL_ERROR_EINVAL);
     Require(waiters == -1);
+    Require(sceKernelCancelSema(sem, 2, reinterpret_cast<int*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
     Require(sceKernelPollSema(sem, 1) == SCE_OK);
     Require(sceKernelPollSema(sem, 1) == SCE_KERNEL_ERROR_EBUSY);
 
