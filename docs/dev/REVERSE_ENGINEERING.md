@@ -151,3 +151,4 @@ debt entry, never in code or test names.
 - `tools/stubgen.py --module <name> --nids <file> --db <nid-db> --out <dir>` writes an `Export.cpp` skeleton and the matching technical-debt lines for the exports it is given.
 - `tools/audit_nid_names.py <database>` audits the hash consistency of a local NID/name database with the stub generator's first-record policy.
 - `tools/pe_symbol_inventory.py <module>` inventories the code symbols and identity metadata of a PE module without reading samples.
+- `tools/inspect_self.py <input>` prints the SELF record and inner ELF header metadata as JSON. It does not validate a conversion or decrypt segments.
