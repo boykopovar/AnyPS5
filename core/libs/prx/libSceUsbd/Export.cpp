@@ -37,6 +37,7 @@ constexpr std::uint8_t TRANSFER_TYPE_INTERRUPT = 3;
 constexpr std::int32_t CONTROL_SETUP_SIZE = 8;
 constexpr std::uint8_t SUPPORTED_TRANSFER_FLAGS = LIBUSB_TRANSFER_SHORT_NOT_OK | LIBUSB_TRANSFER_ADD_ZERO_PACKET;
 constexpr std::uint16_t STRING_DESCRIPTOR_SIZE = 255;
+constexpr std::size_t HID_REPORT_ID_SLACK = 1;
 constexpr std::uint32_t STRING_DESCRIPTOR_TIMEOUT = 1000;
 
 static_assert(offsetof(UsbdTransfer, timeout) == 12 && offsetof(UsbdTransfer, callback) == 32 && offsetof(UsbdTransfer, numIsoPackets) == 56 && offsetof(UsbdTransfer, isoPacketDescriptors) == 60);
@@ -292,13 +293,15 @@ bool GuestTransferDataUsable(std::uint8_t endpoint, std::uint8_t* data, std::int
 using SyncTransferFunction = int (LIBUSB_CALL*)(libusb_device_handle*, unsigned char, unsigned char*, int, int*, unsigned int);
 
 std::int32_t TransferThroughHostCopy(SyncTransferFunction transfer, libusb_device_handle* handle, std::uint8_t endpoint, std::uint8_t* data, std::int32_t length, std::int32_t& moved, std::uint32_t timeout) {
-    std::vector<std::uint8_t> host(length > 0 ? static_cast<std::size_t>(length) : 0);
+    const std::int32_t requested = std::max(length, 0);
+    std::vector<std::uint8_t> host(static_cast<std::size_t>(requested) + HID_REPORT_ID_SLACK);
     const bool deviceToHost = (endpoint & LIBUSB_ENDPOINT_IN) != 0;
-    if (!deviceToHost && !host.empty() && !GuestCopyIn_nid_no_patch(host.data(), data, host.size())) return SCE_USBD_ERROR_INVALID_ARG;
+    if (!deviceToHost && requested > 0 && !GuestCopyIn_nid_no_patch(host.data(), data, static_cast<std::size_t>(requested))) return SCE_USBD_ERROR_INVALID_ARG;
     int hostMoved = 0;
     const int result = transfer(handle, endpoint, host.data(), length, &hostMoved, timeout);
-    moved = hostMoved;
-    if (deviceToHost && hostMoved > 0 && !GuestCopyOut_nid_no_patch(data, host.data(), static_cast<std::size_t>(hostMoved))) return SCE_USBD_ERROR_INVALID_ARG;
+    const std::int32_t received = std::clamp(hostMoved, 0, requested);
+    moved = received;
+    if (deviceToHost && received > 0 && !GuestCopyOut_nid_no_patch(data, host.data(), static_cast<std::size_t>(received))) return SCE_USBD_ERROR_INVALID_ARG;
     return ToGuestError(result);
 }
 
