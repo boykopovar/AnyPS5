@@ -351,5 +351,13 @@ class MainTests(unittest.TestCase):
             pr_ready.closed_with_label("o/r")
 
 
+class CheckMappingTests(unittest.TestCase):
+    def test_check_of_maps_commit_status_states(self):
+        pending = pr_ready.check_of({'__typename': 'StatusContext', 'context': 'ci', 'state': 'PENDING'})
+        self.assertEqual(pending, {'id': 0, 'name': 'ci', 'done': False, 'conclusion': None})
+        self.assertEqual(pr_ready.check_of({'__typename': 'StatusContext', 'context': 'ci', 'state': 'SUCCESS'})['conclusion'], 'success')
+        self.assertEqual(pr_ready.check_of({'__typename': 'StatusContext', 'context': 'ci', 'state': 'ERROR'})['conclusion'], 'failure')
+
+
 if __name__ == "__main__":
     unittest.main()
