@@ -926,6 +926,12 @@ class PathHelperTests(unittest.TestCase):
         self.assertEqual(select_tests.relative(path, root), "a/b.cpp")
         self.assertEqual(select_tests.relative(path, root + os.sep), "a/b.cpp")
 
+    def test_inside_requires_a_path_below_the_root_with_a_separator(self):
+        root = os.path.abspath(os.path.join(os.sep, "r"))
+        self.assertTrue(select_tests.inside(os.path.join(root, "a"), root))
+        self.assertFalse(select_tests.inside(root, root))
+        self.assertFalse(select_tests.inside(root + "x", root))
+
 
 if __name__ == "__main__":
     unittest.main(defaultTest=os.environ.get("ANYPS5_SELECT_TEST_CLASS"))
