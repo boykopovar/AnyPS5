@@ -162,6 +162,11 @@ class CppPieceTests(unittest.TestCase):
         self.assertEqual(masked, "a     \nb")
         self.assertEqual(len(masked), len(text))
 
+    def test_cpp_pieces_empties_string_literals_but_keeps_code(self):
+        masked = "".join(check_conventions.cpp_pieces('x = "ab"; y'))
+        self.assertEqual(masked, 'x = ""  ; y')
+        self.assertNotIn("ab", masked)
+
 
 if __name__ == "__main__":
     unittest.main()
