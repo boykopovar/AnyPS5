@@ -139,5 +139,10 @@ class MainErrorTests(unittest.TestCase):
         self.assertIn("error:", stderr.getvalue())
 
 
+class UniqueKeyTests(unittest.TestCase):
+    def test_unique_json_keys_keeps_distinct_names(self):
+        self.assertEqual(progress_diff.unique_json_keys([('a', 1), ('b', 2)]), {'a': 1, 'b': 2})
+
+
 if __name__ == "__main__":
     unittest.main()
