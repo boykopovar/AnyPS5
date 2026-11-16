@@ -201,7 +201,7 @@ void Driver::Present(const PresentationWindow& window, const DisplayBuffer* buff
 }
 
 void Driver::reportPresents(double waitedMs, std::size_t inFlight) {
-    static std::vector<double> waits;
+    static auto& waits = *new std::vector<double>;
     static VulkanDevice::PresentStatistics previous{};
     static std::uint64_t previousFlips = 0, windowSerial = 0, previousUnsignaled = 0;
     static auto lastReport = std::chrono::steady_clock::now();

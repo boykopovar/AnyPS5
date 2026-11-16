@@ -23,7 +23,7 @@ std::atomic<std::uint64_t> triesFailed[TrySites] = {};
 
 std::atomic<std::uint64_t> storesOnGpu{0}, storesBehindCompletions{0}, storesOnCpu{0}, storesDrained{0}, dmaFills{0}, copiesToHostMemory{0}, copiesBehindPendingSources{0}, sampleDumpsQueued{0};
 
-std::map<std::uint32_t, std::uint64_t> drainCounts;
+std::map<std::uint32_t, std::uint64_t>& drainCounts = *new std::map<std::uint32_t, std::uint64_t>;
 
 std::uint64_t drainTotal = 0;
 

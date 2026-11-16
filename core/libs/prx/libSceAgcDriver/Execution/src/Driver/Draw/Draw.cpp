@@ -1099,7 +1099,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
     if (graphics.rectList) buildRectList();
     if (graphics.stages.tessellationGeometry) {
         static std::mutex captureMutex;
-        static std::map<std::pair<std::uint32_t, std::uint32_t>, ShaderRecompiler::RecompileResult> captureShaders;
+        static auto& captureShaders = *new std::map<std::pair<std::uint32_t, std::uint32_t>, ShaderRecompiler::RecompileResult>;
         const auto& geometry = *graphics.stages.tessellationGeometry;
         results.reserve(programs.size() + 2u);
         {
@@ -1382,7 +1382,7 @@ DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {
     }
     if (static const bool nameVariants = std::getenv("APS5_PROFILE_GPU_DRAWS") != nullptr; nameVariants && stages.size() == programs.size()) {
         static std::mutex namedMutex;
-        static std::set<std::uint64_t> named;
+        static auto& named = *new std::set<std::uint64_t>;
         std::lock_guard namedLock(namedMutex);
         for (std::size_t i = 0; i < stages.size(); ++i) {
             if (stages[i].program == nullptr || !named.insert(stages[i].program->variantId).second) continue;

@@ -5179,11 +5179,11 @@ void WatchMemory(std::uint64_t programAddress) {
     }();
     if (ranges.empty()) return;
     static AgcDriver::Mutex mutex;
-    static std::deque<std::pair<std::uint64_t, std::vector<std::uint8_t>>> history;
+    static auto& history = *new std::deque<std::pair<std::uint64_t, std::vector<std::uint8_t>>>;
     static bool written = false;
     std::lock_guard lock(mutex);
     if (written) return;
-    static std::vector<std::uint64_t> addresses;
+    static auto& addresses = *new std::vector<std::uint64_t>;
     if (addresses.empty()) {
         std::vector<std::uint64_t> found;
         for (const auto& range : ranges) {
@@ -6577,7 +6577,7 @@ VulkanDevice::IndirectOutcome VulkanDevice::recordCompletedDispatch(const Shader
             // APS5_PROFILE_DRAW: the [recorder] line's "address-based" syncs by program, every 10 s,
             // so the programs still waiting here are known (under the GpuMutex, like the rest).
             struct Waits { std::uint64_t count = 0; double ms = 0; };
-            static std::map<std::uint64_t, Waits> byProgram;
+            static auto& byProgram = *new std::map<std::uint64_t, Waits>;
             static std::uint64_t syncs = 0;
             static double waitedMs = 0;
             static auto lastReport = std::chrono::steady_clock::now();

@@ -112,7 +112,7 @@ struct RefusedShaders {
 };
 
 RefusedShaders& refusedShaders() {
-    static RefusedShaders shaders;
+    static auto& shaders = *new RefusedShaders;
     return shaders;
 }
 

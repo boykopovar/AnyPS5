@@ -292,7 +292,7 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     if (traceCache) {
         std::lock_guard traceLock(dispatchCacheMutex);
         struct Last { std::vector<std::uint32_t> userData; std::map<std::uint32_t, std::uint32_t> shader; std::uint64_t key; };
-        static std::map<std::uint64_t, Last> last;
+        static auto& last = *new std::map<std::uint64_t, Last>;
         static int reports = 0;
         auto& previous = last[address];
         if (previous.key != 0 && previous.key != key && reports < 200) {
