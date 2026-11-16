@@ -7,7 +7,7 @@ extern "C" {
 int APS5_VABI sceAjmiBatchCancel();
 int APS5_VABI sceAjmiBatchWait();
 int APS5_VABI sceAjmiModuleUnregister();
-int APS5_VABI sceAjmiBatchStartBuffer();
+int APS5_VABI sceAjmiBatchStartBuffer(std::uint32_t context, const std::uint8_t* batch, std::uint32_t batchSize, int priority, AjmBatchError* error, std::uint32_t* batchId);
 int APS5_VABI sceAjmiFinalize();
 int APS5_VABI sceAjmiStrError();
 int APS5_VABI sceAjmiBatchJobControlBufferRa();

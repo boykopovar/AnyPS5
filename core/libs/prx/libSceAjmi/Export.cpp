@@ -1,6 +1,7 @@
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceAjmi/include/InventoryExports.hpp"
 #include "prx/libSceAjmi/include/Api.hpp"
+#include "prx/libSceAjm.native/include/Api.hpp"
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -198,8 +199,8 @@ int APS5_VABI sceAjmiModuleUnregister() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceAjmiBatchStartBuffer() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceAjmiBatchStartBuffer(std::uint32_t context, const std::uint8_t* batch, std::uint32_t batchSize, int priority, AjmBatchError* error, std::uint32_t* batchId) {
+    return sceAjmBatchStartBuffer(context, batch, batchSize, priority, error, batchId);
 }
 
 int APS5_VABI sceAjmiFinalize() {
