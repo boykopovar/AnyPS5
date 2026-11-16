@@ -14132,6 +14132,31 @@ void pipelineJournalTests(bool longPath = false, bool extended = false) {
         Require(!(subgroup.Identity() == constFirst.Identity()), "the host subgroup size did not enter the identity");
         Require(ShaderRecompiler::RecompileResult{}.Identity().Empty(), "a result without a module has an identity");
         Require(DescribedPipelineIdentity(ShaderRecompiler::RecompileResult{}).Empty(), "a result without a module has a described identity");
+        {
+            const auto fingerprint = [](const ShaderRecompiler::RecompileResult& result) {
+                std::uint64_t hash = 0xcbf29ce484222325ull;
+                for (const auto word : result.spirv.Words()) {
+                    for (std::uint32_t shift = 0; shift < 32; shift += 8) {
+                        hash ^= (word >> shift) & 0xffu;
+                        hash *= 0x100000001b3ull;
+                    }
+                }
+                return hash;
+            };
+            const auto stageText = [&](std::uint32_t stage, const ShaderRecompiler::RecompileResult& result) {
+                const auto identity = DescribedPipelineIdentity(result);
+                char text[160];
+                std::snprintf(text, sizeof(text), " stage %u module %016llx%016llx spirv %zu words fnv %016llx", static_cast<unsigned>(stage), static_cast<unsigned long long>(identity.high), static_cast<unsigned long long>(identity.low), result.spirv.Words().size(), static_cast<unsigned long long>(fingerprint(result)));
+                return std::string(text);
+            };
+            const auto vertex = module(1);
+            const auto pixel = module(2);
+            const std::array<CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &pixel, 0}}};
+            const auto graphics = PipelineBuildStartLine(7, "graphics", shaders);
+            Require(graphics == "[pipecache] build start graphics on thread 7:" + stageText(static_cast<std::uint32_t>(ShaderRecompiler::ShaderStage::Vertex), vertex) + stageText(static_cast<std::uint32_t>(ShaderRecompiler::ShaderStage::Fragment), pixel) + "\n", "the graphics build start line does not name the thread and each stage's module, size and fingerprint");
+            Require(ComputePipelineBuildStartLine(9, vertex) == "[pipecache] build start compute on thread 9:" + stageText(static_cast<std::uint32_t>(ShaderRecompiler::ShaderStage::Compute), vertex) + "\n", "the compute build start line does not name the thread and the stage");
+            Require(fingerprint(vertex) != fingerprint(pixel) && graphics.find(stageText(static_cast<std::uint32_t>(ShaderRecompiler::ShaderStage::Vertex), pixel)) == std::string::npos, "two modules with different words share a build start fingerprint");
+        }
         const auto withTable = [&](Role role, std::uint32_t elements, std::uint32_t buffers) {
             auto result = module(1);
             result.bindings.push_back(makeBinding(Role::GuestBuffers, 0, buffers, std::vector<std::uint32_t>(4 * buffers)));

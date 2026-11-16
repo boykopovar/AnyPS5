@@ -27,6 +27,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <type_traits>
 #include <unordered_map>
 #include <vector>
@@ -59,6 +60,60 @@ bool LogicOpFormat(VkFormat format) {
     }
 }
 
+}
+
+bool PipelineBuildStartLogging() {
+    static const bool enabled = std::getenv("APS5_LOG_PIPELINE_BUILD_START") != nullptr;
+    return enabled;
+}
+
+namespace {
+
+std::string buildStartStage(std::uint32_t stage, const ShaderRecompiler::RecompileResult& shader) {
+    std::uint64_t fingerprint = 0xcbf29ce484222325ull;
+    for (const auto byte : std::as_bytes(std::span<const std::uint32_t>(shader.spirv.data(), shader.spirv.size()))) {
+        fingerprint ^= static_cast<std::uint8_t>(byte);
+        fingerprint *= 0x100000001b3ull;
+    }
+    const auto identity = DescribedPipelineIdentity(shader);
+    char text[160];
+    std::snprintf(text, sizeof(text), " stage %u module %016llx%016llx spirv %zu words fnv %016llx", static_cast<unsigned>(stage), static_cast<unsigned long long>(identity.high), static_cast<unsigned long long>(identity.low), static_cast<std::size_t>(shader.spirv.size()), static_cast<unsigned long long>(fingerprint));
+    return text;
+}
+
+std::uint64_t currentThreadHash() {
+    return std::hash<std::thread::id>{}(std::this_thread::get_id());
+}
+
+std::string buildStartLine(std::uint64_t thread, std::string_view kind, const std::string& stages) {
+    char head[128];
+    std::snprintf(head, sizeof(head), "[pipecache] build start %.*s on thread %llu:", static_cast<int>(kind.size()), kind.data(), static_cast<unsigned long long>(thread));
+    return std::string(head) + stages + "\n";
+}
+
+void writeBuildStart(const std::string& line) {
+    std::fputs(line.c_str(), stderr);
+    std::fflush(stderr);
+}
+
+}
+
+std::string PipelineBuildStartLine(std::uint64_t thread, std::string_view kind, std::span<const CompiledShader> shaders) {
+    std::string stages;
+    for (const auto& shader : shaders) stages += buildStartStage(static_cast<std::uint32_t>(shader.stage), *shader.program);
+    return buildStartLine(thread, kind, stages);
+}
+
+std::string ComputePipelineBuildStartLine(std::uint64_t thread, const ShaderRecompiler::RecompileResult& shader) {
+    return buildStartLine(thread, "compute", buildStartStage(static_cast<std::uint32_t>(ShaderRecompiler::ShaderStage::Compute), shader));
+}
+
+void LogPipelineBuildStart(std::string_view kind, std::span<const CompiledShader> shaders) {
+    writeBuildStart(PipelineBuildStartLine(currentThreadHash(), kind, shaders));
+}
+
+void LogComputePipelineBuildStart(const ShaderRecompiler::RecompileResult& shader) {
+    writeBuildStart(ComputePipelineBuildStartLine(currentThreadHash(), shader));
 }
 
 void LogPipelineStatistics_nid_no_patch(const Context& context, VkPipeline pipeline, std::span<const CompiledShader> shaders) {
@@ -804,6 +859,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
             return;
         }
         if (prebuilding) {
+            if (PipelineBuildStartLogging()) LogPipelineBuildStart("graphics prebuild libraries", shaders);
             static_cast<void>(LinkPipelineFromLibraries(context, pipelineInfo, rendering, layoutInfo, keys, &optimized, true, _modules));
             for (const auto module : _modules) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, module, nullptr);
             _modules.clear();
@@ -811,6 +867,7 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
             return;
         }
         const VkPipelineCache pipelineCache = (state.stages.tessellation || barycentricPatches || state.rectList) && !context.tessellationPipelineCache ? VK_NULL_HANDLE : context.pipelineCache;
+        if (PipelineBuildStartLogging()) LogPipelineBuildStart(libraries ? "graphics libraries" : "graphics", shaders);
         if (libraries) pipeline = LinkPipelineFromLibraries(context, pipelineInfo, rendering, layoutInfo, keys, &optimized, false, _modules);
         else {
             auto pipelineCacheLock = context.LockPipelineCacheForUse();
