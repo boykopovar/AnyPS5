@@ -63,7 +63,13 @@ int main() {
     Require(sceSocialScreenDialogTerminate() == 0);
     Require(sceSocialScreenDialogTerminate() == kErrNotInitialized);
     Require(sceSocialScreenDialogOpen(nullptr) == kErrNotInitialized);
+    Require(sceSocialScreenDialogOpen(&param) == kErrNotInitialized);
+    Require(sceSocialScreenDialogClose() == kErrNotInitialized);
     Require(sceSocialScreenDialogGetResult(nullptr) == kErrNotInitialized);
+    std::memset(result, 0x5a, sizeof(result));
+    Require(sceSocialScreenDialogGetResult(result) == kErrNotInitialized);
+    Require(result[0] == kSentinel);
+    Require(result[1] == kSentinel);
     Require(sceSocialScreenDialogGetStatus() == kStatusNone);
     Require(sceSocialScreenDialogUpdateStatus() == kStatusNone);
 
@@ -84,7 +90,10 @@ int main() {
     Require(sceSocialScreenDialogOpen(&param) == kErrNotInitialized);
     Require(sceSocialScreenDialogClose() == kErrNotInitialized);
     Require(sceSocialScreenDialogGetResult(nullptr) == kErrNotInitialized);
+    std::memset(result, 0x5a, sizeof(result));
     Require(sceSocialScreenDialogGetResult(result) == kErrNotInitialized);
+    Require(result[0] == kSentinel);
+    Require(result[1] == kSentinel);
     Require(sceSocialScreenDialogGetStatus() == kStatusNone);
     Require(sceSocialScreenDialogUpdateStatus() == kStatusNone);
 }
