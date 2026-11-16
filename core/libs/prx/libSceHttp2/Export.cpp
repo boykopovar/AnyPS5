@@ -34,7 +34,6 @@ static constexpr int ERROR_TIMEOUT = static_cast<int>(0x817B1079);
 static constexpr int ERROR_ABORTED = static_cast<int>(0x817B1080);
 static constexpr int ERROR_HTTP_INVALID_VALUE = static_cast<int>(0x804311FE);
 static constexpr int SSL_ERROR_INVALID_ID = static_cast<int>(0x8095F006);
-static constexpr int ERROR_NETWORK = static_cast<int>(0x80431063);
 static constexpr int ERROR_NOT_CONNECTED = static_cast<int>(0x817B1065);
 static constexpr int ERROR_UNSUPPORTED_SCHEME = static_cast<int>(0x817B1061);
 static constexpr std::uint32_t WEBSOCKET_MIN_PERIOD = 1000000;
@@ -372,10 +371,6 @@ int APS5_VABI sceHttp2ReadDataAsync(int req_id, void* data, size_t size, void* k
 }
 
 int APS5_VABI sceHttp2SendRequest(int req_id, const void* post_data, size_t size) {
-    if (std::getenv("APS5_NET_DISCONNECTED") != nullptr) {
-        std::lock_guard lock(g_handlesMutex);
-        return FindHandle(req_id, Http2Kind::Request) != nullptr ? ERROR_NETWORK : ERROR_INVALID_ID;
-    }
     const auto request = Transport(req_id, true);
     return request ? request->Send(post_data, size) : ERROR_INVALID_ID;
 }
@@ -386,22 +381,23 @@ int APS5_VABI sceHttp2SendRequestAsync(int req_id, const void* post_data, size_t
     const std::optional<Http2AsyncOption> async = kqueue_option
         ? std::optional<Http2AsyncOption>(*kqueue_option) : std::nullopt;
     std::shared_ptr<Http2AsyncState> state;
+    const auto request = Transport(req_id, true, &state, true);
+    if (!request) return ERROR_INVALID_ID;
     if (std::getenv("APS5_NET_DISCONNECTED") != nullptr) {
-        {
-            std::lock_guard lock(g_handlesMutex);
-            auto* handle = FindHandle(req_id, Http2Kind::Request);
-            if (!handle) return ERROR_INVALID_ID;
-            state = handle->async;
-        }
         {
             std::lock_guard lock(state->mutex);
             if (!state->deleted && !state->retired) ++state->inFlight[0];
         }
-        CompleteAsync(state, __func__, req_id, async ? &*async : nullptr, 0, ERROR_NETWORK, {});
+        int result = 0;
+        std::exception_ptr failure;
+        try {
+            result = request->Send(post_data, size);
+        } catch (...) {
+            failure = std::current_exception();
+        }
+        CompleteAsync(state, __func__, req_id, async ? &*async : nullptr, 0, result, std::move(failure));
         return 0;
     }
-    const auto request = Transport(req_id, true, &state, true);
-    if (!request) return ERROR_INVALID_ID;
     std::vector<std::uint8_t> body;
     if (size) body.assign(static_cast<const std::uint8_t*>(post_data), static_cast<const std::uint8_t*>(post_data) + size);
     {
@@ -785,6 +781,10 @@ extern "C" void Http2SetConnectHook_nid_no_patch(Http2::ConnectHook hook) {
 
 extern "C" void Http2SetPollHook_nid_no_patch(Http2::PollHook hook) {
     Http2::PollHookSlot().store(hook, std::memory_order_release);
+}
+
+extern "C" void Http2SetCheckHook_nid_no_patch(Http2::CheckHook hook) {
+    Http2::CheckHookSlot().store(hook, std::memory_order_release);
 }
 
 extern "C" void Http2SetWriteHook_nid_no_patch(Http2::WriteHook hook) {
