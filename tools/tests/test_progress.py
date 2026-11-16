@@ -1242,6 +1242,10 @@ class BadgeTests(unittest.TestCase):
         self.assertIn('fill="#000"', markup)
         self.assertNotIn("#4c1", markup)
         self.assertIn('aria-label="x: 3/4"', markup)
+class BarAndRatioTests(unittest.TestCase):
+    def test_worst_ratio_is_one_for_a_square_and_larger_for_a_skewed_row(self):
+        self.assertEqual(progress.worst_ratio([4], 2), 1.0)
+        self.assertGreater(progress.worst_ratio([1, 9], 2), 1.0)
 
 
 if __name__ == "__main__":
