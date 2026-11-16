@@ -535,9 +535,6 @@ int APS5_VABI WKRegistrableDomainCreate();
 
 int APS5_VABI WKSendDisplayConfigurationChangedMessageForTesting();
 int APS5_VABI WKTextCheckerSetTestingMode();
-int APS5_VABI WKUserContentExtensionStoreCompile();
-int APS5_VABI WKUserContentExtensionStoreCreate();
-int APS5_VABI WKUserContentExtensionStoreLookup();
 int APS5_VABI WKUserMediaPermissionCheckSetUserMediaAccessInfo();
 int APS5_VABI WKUserMediaPermissionRequestAudioDeviceUIDs();
 int APS5_VABI WKUserMediaPermissionRequestVideoDeviceUIDs();
@@ -2205,7 +2202,6 @@ int APS5_VABI _ZN7WebCore14ScrollableArea27notifyScrollPositionChangedERKNS_8Int
 int APS5_VABI _ZN7WebCore14ScrollableArea28setScrollOffsetFromInternalsERKNS_8IntPointE();
 int APS5_VABI _ZN7WebCore14ScrollableArea30scrollToOffsetWithoutAnimationERKNS_10FloatPointENS_14ScrollClampingE();
 int APS5_VABI _ZN7WebCore14ScrollableArea32computeScrollbarValueAndOverhangEfffRfS1_();
-int APS5_VABI _ZN7WebCore14ScrollableArea34constrainScrollPositionForOverhangERKNS_10LayoutRectERKNS_10LayoutSizeERKNS_11LayoutPointES9_ii();
 int APS5_VABI _ZN7WebCore14ScrollableAreaC2Ev();
 int APS5_VABI _ZN7WebCore14ScrollableAreaD0Ev();
 int APS5_VABI _ZN7WebCore14ScrollableAreaD1Ev();
