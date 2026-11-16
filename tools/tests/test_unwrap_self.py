@@ -1882,6 +1882,13 @@ class DecryptedCheckTests(unittest.TestCase):
         with self.assertRaisesRegex(unwrap_self.Refused, 'every load segment looks encrypted'):
             unwrap_self.check_decrypted(uniform, headers)
 
+    def test_check_decrypted_passes_when_one_load_segment_is_plain(self):
+        uniform = bytes(range(256)) * 256
+        plain = bytes(len(uniform))
+        data = uniform + plain
+        headers = [{'type': 1, 'size': len(uniform), 'source': 0, 'index': 0}, {'type': 1, 'size': len(plain), 'source': len(uniform), 'index': 1}]
+        unwrap_self.check_decrypted(data, headers)
+
 
 if __name__ == "__main__":
     selected_test = os.environ.get("UNWRAP_SELF_TEST")
