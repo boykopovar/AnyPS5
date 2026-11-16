@@ -6741,6 +6741,182 @@ void drawInputReuseTests(const Device& device, Recorder& recorder) {
     recorder.Sync();
 }
 
+static std::atomic<bool>* s_flushConcurrencyHookInside = nullptr;
+
+static void flushConcurrencyTestHook(std::uint64_t, std::size_t) {
+    if (s_flushConcurrencyHookInside != nullptr && AgcDriver::GuestMemory::GpuMutex().DepthOnThisThread() == 0) {
+        s_flushConcurrencyHookInside->store(true, std::memory_order_release);
+        for (int i = 0; i < 50000 && s_flushConcurrencyHookInside->load(std::memory_order_acquire); ++i) {
+            std::this_thread::yield();
+        }
+    }
+}
+
+void drawInputFlushConcurrencyTests(const Device& device, Recorder& recorder) {
+    using namespace AgcDriver::GuestMemory;
+    using Use = Recorder::SnapshotUse;
+    constexpr std::size_t bytes = 65536;
+    const bool watched = WriteWatched();
+    void* block = AllocateWatched(bytes, 65536);
+#ifdef _WIN32
+    void* fallback = block == nullptr ? GuestArena::GuestArenaAllocate_nid_postfix(bytes, 65536) : nullptr;
+    if (fallback != nullptr) GuestArena::GuestArenaCommit_nid_postfix(fallback, bytes, PAGE_READWRITE, bytes);
+#else
+    void* fallback = block == nullptr ? mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) : nullptr;
+#endif
+    if (block == nullptr) block = fallback;
+    Require(block != nullptr, "cannot allocate test memory for flush concurrency");
+    struct Release {
+        void* watchedBlock;
+        void* fallbackBlock;
+        std::size_t bytes;
+        ~Release() {
+            if (watchedBlock != nullptr) ReleaseWatched(watchedBlock, bytes);
+#ifdef _WIN32
+            else if (fallbackBlock != nullptr) {
+                GuestArena::GuestArenaReset_nid_postfix(fallbackBlock, bytes);
+                GuestArena::GuestArenaRelease_nid_postfix(fallbackBlock, bytes);
+            }
+#else
+            else if (fallbackBlock != nullptr) munmap(fallbackBlock, bytes);
+#endif
+        }
+    } release{watched ? block : nullptr, !watched ? fallback : nullptr, bytes};
+    auto context = device.GetContext();
+    auto* words = static_cast<std::uint32_t*>(block);
+    for (std::uint32_t i = 0; i < bytes / sizeof(std::uint32_t); ++i) words[i] = i * 7u + 1u;
+    const auto address = reinterpret_cast<std::uint64_t>(block);
+    constexpr std::size_t size = 256;
+    bool hostImportRegistered = false;
+    if (context.hostImportAlignment != 0) {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(block, bytes, true, true, true);
+        hostImportRegistered = true;
+    }
+    struct UnregisterAllocation {
+        const Context& context;
+        void* block;
+        std::size_t bytes;
+        bool registered;
+        ~UnregisterAllocation() {
+            if (registered) {
+                {
+                    GuestAllocations::Mutation mutation;
+                    mutation.Remove(block);
+                }
+                HostImportFor(context, reinterpret_cast<std::uint64_t>(block), bytes);
+            }
+        }
+    } unregisterAlloc{context, block, bytes, hostImportRegistered};
+    const auto* imported = hostImportRegistered ? HostImportFor(context, address, bytes) : nullptr;
+    const auto importedBuffer = imported != nullptr ? imported->buffer : VK_NULL_HANDLE;
+    context.recorder = &recorder;
+    context.drawInputsInPlace = hostImportRegistered;
+
+    std::atomic<bool> insideHook{false};
+    std::atomic<bool> stopWorker{false};
+    std::atomic<int> workerInterleavings{0};
+    std::atomic<int> currentIter{0};
+    std::atomic<bool> workerWroteThisIter{false};
+
+    s_flushConcurrencyHookInside = &insideHook;
+    const auto originalFlushHook = CurrentFlushHook();
+    SetFlushHook(&flushConcurrencyTestHook);
+    struct RestoreHook {
+        void (*original)(std::uint64_t, std::size_t);
+        ~RestoreHook() {
+            SetFlushHook(original);
+            s_flushConcurrencyHookInside = nullptr;
+        }
+    } restoreHook{originalFlushHook};
+
+    std::thread worker([&] {
+        while (!stopWorker.load(std::memory_order_acquire)) {
+            if (insideHook.load(std::memory_order_acquire)) {
+                TagGpuLockSite(GpuLockSite::Wait);
+                GpuMutex().lock();
+                Require(GpuMutex().DepthOnThisThread() == 1, "worker depth is not 1");
+                const auto iterVal = currentIter.load(std::memory_order_relaxed);
+                words[0] = static_cast<std::uint32_t>(iterVal * 13 + 7);
+                recorder.NotePendingWrite(address, size);
+                workerWroteThisIter.store(true, std::memory_order_release);
+                workerInterleavings.fetch_add(1, std::memory_order_relaxed);
+                GpuMutex().unlock();
+                insideHook.store(false, std::memory_order_release);
+            }
+            std::this_thread::yield();
+        }
+    });
+
+    for (int iter = 0; iter < 100; ++iter) {
+        currentIter.store(iter, std::memory_order_relaxed);
+        insideHook.store(false, std::memory_order_relaxed);
+        workerWroteThisIter.store(false, std::memory_order_relaxed);
+        TagGpuLockSite(GpuLockSite::Draw);
+        Require(GpuMutex().DepthOnThisThread() == 1, "draw depth before flush is not 1");
+        recorder.NotePendingWrite(address, size);
+        const auto copy = CopyDrawInput(context, &recorder, address, size, 4, Use::Index32);
+        Require(GpuMutex().DepthOnThisThread() == 1, "draw depth after flush is not 1");
+        Require(copy.buffer != nullptr, "draw input buffer is null");
+        Require(std::memcmp(copy.buffer->Bytes().data(), block, size) == 0, "draw input bytes corrupted during concurrent flush");
+        if (workerWroteThisIter.load(std::memory_order_acquire)) {
+            const auto readVal = *reinterpret_cast<const std::uint32_t*>(copy.buffer->Bytes().data());
+            Require(readVal == words[0] && readVal == static_cast<std::uint32_t>(iter * 13 + 7), "draw did not read new bytes written during flush");
+        }
+    }
+
+    stopWorker.store(true, std::memory_order_release);
+    worker.join();
+    Require(workerInterleavings.load() > 0, "concurrent worker did not interleave during draw flush");
+
+    if (importedBuffer != VK_NULL_HANDLE) {
+        std::atomic<bool> workerReaped{false};
+        std::atomic<bool> stopReapWorker{false};
+        std::thread reapWorker([&] {
+            while (!stopReapWorker.load(std::memory_order_acquire)) {
+                if (insideHook.load(std::memory_order_acquire)) {
+                    TagGpuLockSite(GpuLockSite::Wait);
+                    GpuMutex().lock();
+                    Require(GpuMutex().DepthOnThisThread() == 1, "reap worker depth is not 1");
+                    recorder.Submit();
+                    recorder.Reap();
+                    workerReaped.store(true, std::memory_order_release);
+                    insideHook.store(false, std::memory_order_release);
+                    GpuMutex().unlock();
+                    return;
+                }
+                std::this_thread::yield();
+            }
+        });
+        recorder.NotePendingWrite(address, size);
+        const auto flushCopy = CopyDrawInput(context, &recorder, address, size, 4, Use::Index32);
+        Require(flushCopy.buffer != nullptr, "draw input buffer null after concurrent submit and reap");
+        stopReapWorker.store(true, std::memory_order_release);
+        reapWorker.join();
+        Require(workerReaped.load(std::memory_order_acquire), "reap worker did not run during draw flush");
+        const auto* inPlace = InPlaceDrawInput(context, address + 4096, 256, 4);
+        Require(inPlace != nullptr, "in-place draw input failed after concurrent submit and reap");
+        Require(inPlace->buffer == importedBuffer, "held import buffer handle changed after submit and reap");
+        Require(recorder.PendingReadOverlaps(address + 4096, 256), "in-place read not noted on new batch after reap");
+        recorder.Sync();
+        Require(!recorder.PendingReadOverlaps(address + 4096, 256), "in-place read outlived batch after sync");
+    }
+
+    {
+        const auto noOverlapAddress = address + 8192;
+        Require(!recorder.PendingWriteOverlaps(noOverlapAddress, size), "unexpected pending write on no-overlap address");
+        insideHook.store(false, std::memory_order_relaxed);
+        TagGpuLockSite(GpuLockSite::Draw);
+        Require(GpuMutex().DepthOnThisThread() == 1, "depth before no-overlap flush is not 1");
+        const auto copyNoOverlap = CopyDrawInput(context, &recorder, noOverlapAddress, size, 4, Use::Index32);
+        Require(GpuMutex().DepthOnThisThread() == 1, "depth after no-overlap flush is not 1");
+        Require(!insideHook.load(std::memory_order_relaxed), "unlock was triggered on no-overlap flush");
+        Require(copyNoOverlap.buffer != nullptr, "no-overlap draw input buffer is null");
+    }
+    recorder.Sync();
+    std::cout << "draw input flush concurrency tests passed\n" << std::flush;
+}
+
 void drawInputInPlaceTests(const Device& device, Recorder& recorder, bool copied = false) {
     auto context = device.GetContext();
     constexpr std::size_t bytes = 65536;
@@ -17690,6 +17866,10 @@ int main(int argc, char** argv) {
             std::cout << "Copied draw input tests passed\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--draw-input-flush-concurrency-only") {
+            drawInputFlushConcurrencyTests(device, recorder);
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--repeat-storage-guard-only") {
             repeatStorageGuardTests(device, recorder);
             return 0;
@@ -17797,6 +17977,7 @@ int main(int argc, char** argv) {
         if (AgcDriver::GuestMemory::WriteWatched()) vertexWindowSeriesTests(device, recorder);
         vertexWindowMirrorTests(device);
         drawInputInPlaceTests(device, recorder);
+        drawInputFlushConcurrencyTests(device, recorder);
         RunResidentPresentTests(device.GetContext());
         sliceDirtyTests(device, recorder);
         storeRunTests(device, recorder);

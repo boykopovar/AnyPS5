@@ -1470,6 +1470,37 @@ void reportDrawEnd(const State& state, const DrawTimer& timer, const ShaderResou
     reportDraw(timer.us, built, outcome);
 }
 
+struct ScopedGpuUnlockForFlush {
+    bool unlocked = false;
+    ScopedGpuUnlockForFlush() {
+        if (GuestMemory::GpuMutex().DepthOnThisThread() == 1) {
+            GuestMemory::GpuMutex().unlock();
+            unlocked = true;
+        }
+    }
+    ~ScopedGpuUnlockForFlush() {
+        if (unlocked) {
+            GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Draw);
+            GuestMemory::GpuMutex().lock();
+        }
+    }
+};
+
+[[nodiscard]] bool flushDrawInput(Recorder* recorder, std::uint64_t address, std::size_t bytes) {
+    if (recorder == nullptr || bytes == 0 || !recorder->PendingWriteOverlaps(address, bytes)) {
+        GuestMemory::FlushGpuWrites(address, bytes);
+        return true;
+    }
+    const auto id = recorder->Id();
+    ScopedGpuUnlockForFlush unlock;
+    GuestMemory::FlushGpuWrites(address, bytes);
+    if (!Recorder::Alive(id)) return false;
+    if (recorder->PendingWriteOverlaps(address, bytes)) {
+        GuestMemory::FlushGpuWrites(address, bytes);
+    }
+    return true;
+}
+
 }
 
 bool BindsIndexCopy(const State& state) {
@@ -1482,7 +1513,7 @@ DrawInputCopy CopyDrawInput(const Context& context, Recorder* recorder, std::uin
     DrawInputCopy copy;
     copy.from = from;
     if (recorder != nullptr && bytes != 0) {
-        GuestMemory::FlushGpuWrites(address, bytes);
+        if (!flushDrawInput(recorder, address, bytes)) return copy;
 #ifdef _WIN32
         const bool owned = !RuntimeSwitches::Set(RuntimeSwitch::NoOwnedDrawInputs);
 #else
@@ -1518,7 +1549,7 @@ DrawInputCopy CopyZeroPaddedDrawInput(const Context& context, std::uint64_t addr
         const std::size_t prefix = !ranges.empty() && ranges.front().first == address ? static_cast<std::size_t>(ranges.front().second - address) : 0;
         if (validBytes - prefix < stride) readable = prefix;
     }
-    if (readable != 0) GuestMemory::FlushGpuWrites(address, readable);
+    if (readable != 0 && !flushDrawInput(context.recorder, address, readable)) return {};
     DrawInputCopy copy;
     auto* recorder = context.recorder;
     const bool keep = recorder != nullptr && readable != 0 && readable <= std::numeric_limits<std::uint32_t>::max();
@@ -1556,7 +1587,7 @@ const HostImport* InPlaceDrawInput(const Context& context, std::uint64_t address
     if (recorder == nullptr || bytes == 0 || (!context.drawInputsInPlace && (behindGpuWrite == nullptr || copyBehindGpuWrite))) return nullptr;
     bool behind = false;
     if (behindGpuWrite == nullptr) {
-        GuestMemory::FlushGpuWrites(address, bytes);
+        if (!flushDrawInput(recorder, address, bytes)) return nullptr;
         if (recorder->PendingWriteOverlaps(address, bytes)) return nullptr;
     } else {
         StorageTexture::FlushPending(address, bytes, nullptr, "in-place vertex input");
@@ -1865,7 +1896,10 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
             }
         };
         if (draw.indexed) {
-            GuestMemory::FlushGpuWrites(draw.indexAddress, static_cast<std::size_t>(indexBytes));
+            if (!flushDrawInput(context.recorder, draw.indexAddress, static_cast<std::size_t>(indexBytes))) {
+                inputs.nothing = true;
+                return inputs;
+            }
             GuestMemory::CheckRange(reinterpret_cast<const void*>(draw.indexAddress), static_cast<std::size_t>(indexBytes), draw.indexSize);
             const auto readIndex = [&](std::uint32_t idx) -> std::uint32_t {
                 if (draw.indexSize == 2) {
@@ -1896,7 +1930,10 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
             inputs.nothing = true;
             return inputs;
         }
-        GuestMemory::FlushGpuWrites(draw.indexAddress, static_cast<std::size_t>(indexBytes));
+        if (!flushDrawInput(context.recorder, draw.indexAddress, static_cast<std::size_t>(indexBytes))) {
+            inputs.nothing = true;
+            return inputs;
+        }
         auto compacted = std::make_shared<Buffer>(context, static_cast<std::size_t>(indexBytes), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
         const auto bytes = compacted->Bytes().first(static_cast<std::size_t>(indexBytes));
         GuestMemory::Read(draw.indexAddress, bytes, draw.indexSize);
@@ -1931,6 +1968,10 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         DrawInputCopy copy;
         if (import == nullptr) copy = CopyDrawInput(context, context.recorder, draw.indexAddress, static_cast<std::size_t>(indexBytes), draw.indexSize, use, 0, !BindsIndexCopy(state));
         else GuestMemory::CheckRange(reinterpret_cast<const void*>(draw.indexAddress), static_cast<std::size_t>(indexBytes), draw.indexSize);
+        if (import == nullptr && copy.buffer == nullptr) {
+            inputs.nothing = true;
+            return inputs;
+        }
         std::optional<std::uint32_t> highest;
         std::uint32_t lowest = 0;
         if (import != nullptr) {
@@ -1956,7 +1997,10 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         if (const auto zeroFrom = state.stages.mesh || shaders.front().program->vertexAttributes.empty() ? std::nullopt : ZeroFetchVertex(shaders.front().program->vertexAttributes)) {
             const auto limit = *zeroFrom > draw.firstVertex ? *zeroFrom - draw.firstVertex : 0u;
             if (*highest >= limit && *highest - limit >= ZeroFetchSlack) {
-                GuestMemory::FlushGpuWrites(draw.indexAddress, static_cast<std::size_t>(indexBytes));
+                if (!flushDrawInput(context.recorder, draw.indexAddress, static_cast<std::size_t>(indexBytes))) {
+                    inputs.nothing = true;
+                    return inputs;
+                }
                 auto clamped = std::make_shared<Buffer>(context, static_cast<std::size_t>(indexBytes), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
                 const auto bytes = clamped->Bytes().first(static_cast<std::size_t>(indexBytes));
                 GuestMemory::Read(draw.indexAddress, bytes, draw.indexSize);
@@ -2062,6 +2106,10 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
             continue;
         }
         auto copy = CopyDrawInput(context, context.recorder, begin, bytes, 1, Recorder::SnapshotUse::Vertex, rangeFrom[range]);
+        if (copy.buffer == nullptr) {
+            inputs.nothing = true;
+            return inputs;
+        }
         KeepDrawInput(context.recorder, begin, copy, Recorder::SnapshotUse::Vertex, 0);
         rangeHandles.push_back(copy.buffer->Handle());
         rangeOffsets.push_back(0);
@@ -2072,6 +2120,10 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         const auto begin = fetches[f].begin;
         const auto bytes = static_cast<std::size_t>(fetches[f].end - begin);
         auto copy = CopyZeroPaddedDrawInput(context, begin, bytes, fetchValid[f], fetches[f].stride);
+        if (copy.buffer == nullptr) {
+            inputs.nothing = true;
+            return inputs;
+        }
         soloHandles[f] = copy.buffer->Handle();
         inputs.vertexBuffers.push_back(std::move(copy.buffer));
     }
