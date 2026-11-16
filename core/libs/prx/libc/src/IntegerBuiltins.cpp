@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include <bit>
+#include <cerrno>
 #include <cstdint>
 #include <limits>
 #include <stdexcept>
@@ -120,7 +121,15 @@ TSigned MultiplyWithOverflow(TSigned a, TSigned b, int* overflow) {
             overflowed = ((a < 0) == (b < 0)) ? absoluteA > max / absoluteB : absoluteA > -(min / absoluteB);
         }
     }
-    *overflow = overflowed ? 1 : 0;
+    if (overflow != nullptr) {
+        const int value = overflowed ? 1 : 0;
+        const int savedErrno = errno;
+        if (!GuestCopyOut_nid_no_patch(overflow, &value, sizeof(value))) {
+            errno = savedErrno;
+            throw std::runtime_error("MultiplyWithOverflow: invalid overflow pointer");
+        }
+        errno = savedErrno;
+    }
     return product;
 }
 
@@ -154,7 +163,15 @@ Int128 Multiply128WithOverflow(Int128 a, Int128 b, int* overflow) {
             overflowed = static_cast<Uint128>(absoluteA) > SonyUdivti3(limit, static_cast<Uint128>(absoluteB));
         }
     }
-    *overflow = overflowed ? 1 : 0;
+    if (overflow != nullptr) {
+        const int value = overflowed ? 1 : 0;
+        const int savedErrno = errno;
+        if (!GuestCopyOut_nid_no_patch(overflow, &value, sizeof(value))) {
+            errno = savedErrno;
+            throw std::runtime_error("Multiply128WithOverflow: invalid overflow pointer");
+        }
+        errno = savedErrno;
+    }
     return product;
 }
 
@@ -357,25 +374,57 @@ std::uint64_t APS5_VABI __umoddi3_nid_postfix(std::uint64_t a, std::uint64_t b) 
 
 std::int32_t APS5_VABI __divmodsi4_nid_postfix(std::int32_t a, std::int32_t b, std::int32_t* remainder) {
     const std::int32_t quotient = Divide(a, b, "__divmodsi4");
-    *remainder = static_cast<std::int32_t>(static_cast<std::uint32_t>(a) - static_cast<std::uint32_t>(quotient) * static_cast<std::uint32_t>(b));
+    const std::int32_t rest = static_cast<std::int32_t>(static_cast<std::uint32_t>(a) - static_cast<std::uint32_t>(quotient) * static_cast<std::uint32_t>(b));
+    if (remainder != nullptr) {
+        const int savedErrno = errno;
+        if (!GuestCopyOut_nid_no_patch(remainder, &rest, sizeof(rest))) {
+            errno = savedErrno;
+            throw std::runtime_error("__divmodsi4: invalid remainder pointer");
+        }
+        errno = savedErrno;
+    }
     return quotient;
 }
 
 std::int64_t APS5_VABI __divmoddi4_nid_postfix(std::int64_t a, std::int64_t b, std::int64_t* remainder) {
     const std::int64_t quotient = Divide(a, b, "__divmoddi4");
-    *remainder = static_cast<std::int64_t>(static_cast<std::uint64_t>(a) - static_cast<std::uint64_t>(quotient) * static_cast<std::uint64_t>(b));
+    const std::int64_t rest = static_cast<std::int64_t>(static_cast<std::uint64_t>(a) - static_cast<std::uint64_t>(quotient) * static_cast<std::uint64_t>(b));
+    if (remainder != nullptr) {
+        const int savedErrno = errno;
+        if (!GuestCopyOut_nid_no_patch(remainder, &rest, sizeof(rest))) {
+            errno = savedErrno;
+            throw std::runtime_error("__divmoddi4: invalid remainder pointer");
+        }
+        errno = savedErrno;
+    }
     return quotient;
 }
 
 std::uint32_t APS5_VABI __udivmodsi4_nid_postfix(std::uint32_t a, std::uint32_t b, std::uint32_t* remainder) {
     const std::uint32_t quotient = UnsignedDivide32(a, b);
-    *remainder = a - quotient * b;
+    const std::uint32_t rest = a - quotient * b;
+    if (remainder != nullptr) {
+        const int savedErrno = errno;
+        if (!GuestCopyOut_nid_no_patch(remainder, &rest, sizeof(rest))) {
+            errno = savedErrno;
+            throw std::runtime_error("__udivmodsi4: invalid remainder pointer");
+        }
+        errno = savedErrno;
+    }
     return quotient;
 }
 
 std::uint64_t APS5_VABI __udivmoddi4_nid_postfix(std::uint64_t a, std::uint64_t b, std::uint64_t* remainder) {
     const std::uint64_t quotient = UnsignedDivide(a, b, "__udivmoddi4");
-    if (remainder != nullptr) *remainder = a - quotient * b;
+    if (remainder != nullptr) {
+        const std::uint64_t rest = a - quotient * b;
+        const int savedErrno = errno;
+        if (!GuestCopyOut_nid_no_patch(remainder, &rest, sizeof(rest))) {
+            errno = savedErrno;
+            throw std::runtime_error("__udivmoddi4: invalid remainder pointer");
+        }
+        errno = savedErrno;
+    }
     return quotient;
 }
 
@@ -383,7 +432,14 @@ Uint128 APS5_VABI __udivmodti4_nid_postfix(Uint128 a, Uint128 b, Uint128* remain
     if (b == 0) DivideByZero("__udivmodti4");
     Uint128 rest = 0;
     const Uint128 quotient = SonyUdivmod128(a, b, &rest);
-    if (remainder != nullptr) *remainder = rest;
+    if (remainder != nullptr) {
+        const int savedErrno = errno;
+        if (!GuestCopyOut_nid_no_patch(remainder, &rest, sizeof(rest))) {
+            errno = savedErrno;
+            throw std::runtime_error("__udivmodti4: invalid remainder pointer");
+        }
+        errno = savedErrno;
+    }
     return quotient;
 }
 

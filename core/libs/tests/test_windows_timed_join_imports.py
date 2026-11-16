@@ -60,7 +60,7 @@ def main():
     assert os.name == 'nt'
     relinker, libraries = (Path(value).resolve() for value in sys.argv[1:3])
     variant = sys.argv[3]
-    runtime = Path(sys.argv[4]).resolve()
+    runtime = Path(sys.argv[4]).resolve().parent
     assert variant in ('libkernel_sys.prx', 'libkernel_web.prx')
     with fixture_directory('anyps5-timed-join-') as directory:
         work = Path(directory)

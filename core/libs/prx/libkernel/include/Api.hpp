@@ -304,6 +304,7 @@ int APS5_VABI sceKernelWaitEventFlag(KernelEventFlag ef, uint64_t bitPattern, ui
 int APS5_VABI shm_open_nid_postfix(const char* path, int flags, int mode);
 int APS5_VABI shm_unlink_nid_postfix(const char* path);
 int APS5_VABI pipe_nid_postfix(int* descriptors);
+int APS5_VABI pipe2_nid_postfix(int* descriptors, int flags);
 int APS5_VABI chmod_nid_postfix(const char* path, int mode);
 int APS5_VABI chflags_nid_postfix(const char* path, std::uint64_t flags);
 int APS5_VABI fchflags_nid_postfix(int d, std::uint64_t flags);
@@ -387,7 +388,7 @@ int APS5_VABI sceKernelDlsym(KernelModule handle, const char* symbol, void** add
 int APS5_VABI sceKernelGetModuleInfoForUnwind(uint64_t addr, int flags, ModuleInfoForUnwind* info);
 KernelModule APS5_VABI sceKernelLoadStartModule(const char* moduleFileName, size_t args, const void* argp, uint32_t flags, const KernelLoadModuleOpt* opt, int* res);
 int APS5_VABI sceKernelStopUnloadModule(KernelModule handle, size_t args, const void* argp, uint32_t flags, const KernelUnloadModuleOpt* opt, int* res);
-int APS5_VABI __elf_phdr_match_addr_nid_postfix(dl_phdr_info* phdrInfo, void* addr);
+int APS5_VABI __elf_phdr_match_addr_nid_postfix(const ModuleInfoEx* module, void* addr);
 int APS5_VABI sceKernelGetModuleInfoFromAddr(std::uint64_t address, int flags, ModuleInfoEx* info);
 int APS5_VABI sceKernelGetModuleList(KernelModule* handles, std::size_t count, std::size_t* actual);
 int APS5_VABI sceKernelGetModuleList2(KernelModule* handles, std::size_t count, std::size_t* actual);
@@ -680,6 +681,7 @@ char* APS5_VABI getlogin_nid_postfix(void);
 int SetLogin_nid_no_patch(const char* name);
 int APS5_VABI sceKernelDebugOutText(int channel, const char* text);
 int APS5_VABI sceKernelSendNotificationRequest(int device, const void* request, std::size_t size, int flags);
+extern char** environ_nid_postfix;
 int APS5_VABI getargc_nid_postfix(void);
 const char** APS5_VABI getargv_nid_postfix(void);
 int APS5_VABI getpagesize_nid_postfix(void);
