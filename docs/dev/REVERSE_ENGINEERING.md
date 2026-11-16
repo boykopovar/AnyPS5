@@ -144,3 +144,7 @@ debt entry, never in code or test names.
   exists ([libSceIme](debt/libSceIme.md) rebuilds its codepage checks from Unicode's tables).
 - The goal is interoperability: what a title needs from a system library to run. Nothing here is for bypassing
   licence, entitlement or online checks.
+
+## Export and NID tools
+
+- `tools/export_gap.py --module <name> --export-table <file> --nids <file> --db <nid-db>` lists the console exports an AnyPS5 library does not provide.
