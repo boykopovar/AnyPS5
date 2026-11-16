@@ -1200,5 +1200,14 @@ class CheckCompileLauncherTests(unittest.TestCase):
                 check_compile.validate_arguments(bad)
 
 
+    def test_entry_key_is_relative_to_root_or_absolute(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            inside = {"directory": str(root / "build"), "file": "../src/a.cpp"}
+            self.assertEqual(check_compile.entry_key(inside, root), "src/a.cpp")
+            outside = {"directory": str(root), "file": "/elsewhere/b.cpp"}
+            self.assertEqual(check_compile.entry_key(outside, root), "/elsewhere/b.cpp")
+
+
 if __name__ == "__main__":
     unittest.main()
