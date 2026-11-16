@@ -314,6 +314,12 @@ class ButtonMaskTests(unittest.TestCase):
         self.assertEqual(pad_input.button_mask('l3'), pad_input.BUTTONS['l3'])
         self.assertEqual(pad_input.button_mask('cross+circle'), pad_input.BUTTONS['cross'] | pad_input.BUTTONS['circle'])
 
+    def test_button_mask_refuses_unknown_release_and_repeated_names(self):
+        import argparse
+        for value in ('bogus', 'release+cross', 'cross+cross'):
+            with self.subTest(value=value), self.assertRaises(argparse.ArgumentTypeError):
+                pad_input.button_mask(value)
+
 
 if __name__ == "__main__":
     unittest.main()
