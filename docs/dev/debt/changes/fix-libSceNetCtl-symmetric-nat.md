@@ -1,0 +1,5 @@
+# libSceNetCtl
+
+## change RFC 5389 STUN binding probes
+
+- [sceNetCtlGetNatInfo](../../../core/libs/prx/libSceNetCtl/Export.cpp) (libSceNetCtl) - performs RFC 5389 STUN binding probes from the active host IPv4 interface against `stun.playstation.net` and fallback third-party STUN servers instead of reading cached state from the console's background `netctl` service; uncached calls disclose the host's IPv4 address to them. Each call budgets 1000 ms; successes cache 60 s per local IPv4 address, failures re-probe. Classification follows [RFC 3489 section 10.2](https://www.rfc-editor.org/rfc/rfc3489#section-10.2) figure 2, the pinned source: mapped endpoint equal to the local socket is type 1, secondary responses matching or differing the first are type 2 or type 3, and every attempted secondary probe failing is type 3 with the first mapped address; with none attempted STUN stays failed. Console captures confirm types 2, 3 and STUN failure; the console's answer on that branch is unmeasured, as is type 1 with a direct public IP.

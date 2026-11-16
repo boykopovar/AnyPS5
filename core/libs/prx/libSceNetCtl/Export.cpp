@@ -842,6 +842,10 @@ static NetCtlNatInfo DiscoverNatInfo(in_addr localAddress) {
     }
 
     CloseStunSocket(descriptor);
+    if (secondaryServers.empty()) return result;
+    result.stun_status = NET_CTL_STUN_STATUS_OK;
+    result.nat_type = NET_CTL_NAT_TYPE_3;
+    result.mapped_addr = firstResponse.mapped.address;
     return result;
 }
 
