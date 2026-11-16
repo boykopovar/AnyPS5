@@ -20,6 +20,9 @@ public:
     bool isPinnedToTopSide = true;
     bool isPinnedToBottomSide = true;
     bool addsVisitedLinks = true;
+    double pageZoomFactor = 1.0;
+    double textZoomFactor = 1.0;
+    bool supportsTextZoom = true;
 };
 class Preferences : public ObjectOf<ObjectType::Preferences> {};
 class WebsiteDataStore : public ObjectOf<ObjectType::WebsiteDataStore> {};

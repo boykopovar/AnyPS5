@@ -124,6 +124,10 @@ bool IsIpAddress(const std::string& host) {
     return host.front() == '[' || host.find_first_not_of("0123456789.") == std::string::npos;
 }
 
+bool ValidDomain(std::string_view domain) {
+    return !domain.empty() && domain.front() != '.' && domain.back() != '.' && domain.find("..") == std::string_view::npos;
+}
+
 bool DomainMatches(const std::string& host, const std::string& domain) {
     if (host == domain) return true;
     return host.size() > domain.size() && host.compare(host.size() - domain.size(), domain.size(), domain) == 0 && host[host.size() - domain.size() - 1] == '.' && !IsIpAddress(host);
@@ -268,6 +272,7 @@ void RecordUsage(CookieBox& box) {
 }
 
 int StoreCookie(CookieBox& box, const Url& url, std::string_view text, std::int64_t now) {
+    text = text.substr(0, text.find('\0'));
     const std::size_t pairEnd = std::min(text.find(';'), text.size());
     const std::string_view pair = text.substr(0, pairEnd);
     const std::size_t equals = pair.find('=');
@@ -275,10 +280,12 @@ int StoreCookie(CookieBox& box, const Url& url, std::string_view text, std::int6
     cookie.name = std::string(Trim(pair.substr(0, equals)));
     cookie.hasValue = equals != std::string_view::npos;
     if (cookie.hasValue) cookie.value = std::string(Trim(pair.substr(equals + 1)));
+    if (cookie.name.empty() && cookie.value.empty()) return ERROR_INVALID_VALUE;
     cookie.expiry = NEVER;
     if (PairSize(cookie) > box.maxSize || box.maxSize == 0) return ERROR_OUT_OF_SIZE;
     std::optional<std::int64_t> maxAge;
     std::optional<std::int64_t> expires;
+    bool hasDomain = false;
     std::string domain;
     std::optional<std::string> path;
     std::string_view attributes = text.substr(pairEnd);
@@ -295,7 +302,10 @@ int StoreCookie(CookieBox& box, const Url& url, std::string_view text, std::int6
         } else if (EqualsIgnoreCase(key, "max-age")) {
             if (const auto parsed = ParseMaxAge(value, now)) maxAge = parsed;
         } else if (EqualsIgnoreCase(key, "domain")) {
-            if (!value.empty()) domain = LowerCopy(value.front() == '.' ? value.substr(1) : value);
+            if (!value.empty()) {
+                hasDomain = true;
+                domain = LowerCopy(value.front() == '.' ? value.substr(1) : value);
+            }
         } else if (EqualsIgnoreCase(key, "path")) {
             path = !value.empty() && value.front() == '/' ? std::string(value) : DefaultPath(url.path);
         } else if (EqualsIgnoreCase(key, "secure")) {
@@ -304,8 +314,8 @@ int StoreCookie(CookieBox& box, const Url& url, std::string_view text, std::int6
     }
     if (maxAge) cookie.expiry = *maxAge;
     else if (expires) cookie.expiry = *expires;
-    if (!domain.empty() && !DomainMatches(url.host, domain)) return ERROR_REJECTED;
-    cookie.domain = domain.empty() ? url.host : domain;
+    if (hasDomain && (!ValidDomain(domain) || !DomainMatches(url.host, domain))) return ERROR_REJECTED;
+    cookie.domain = hasDomain ? domain : url.host;
     cookie.path = path ? *path : DefaultPath(url.path);
     const auto existing = std::find_if(box.cookies.begin(), box.cookies.end(), [&](const Cookie& stored) {
         return stored.name == cookie.name && stored.domain == cookie.domain && stored.path == cookie.path;
@@ -424,6 +434,13 @@ int APS5_VABI sceHttp2GetCookie(int cookieBoxId, const char* url, char* cookie, 
     if (prepared < size) {
         if (prepared != 0 && !Http2Guest::Store(cookie, '\0')) return ERROR_INVALID_VALUE;
         return ERROR_OUT_OF_SIZE;
+    }
+    std::size_t previousRequired = 0;
+    if (required) {
+        if (!Http2Guest::CopyIn(&previousRequired, required, sizeof(previousRequired)) ||
+            !Http2Guest::Store(required, previousRequired)) {
+            return ERROR_INVALID_VALUE;
+        }
     }
     header.append({'\0', ' ', '\0'});
     if (!Http2Guest::CopyOut(cookie, header.data(), size)) return ERROR_INVALID_VALUE;

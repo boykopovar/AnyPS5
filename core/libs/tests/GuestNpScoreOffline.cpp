@@ -470,6 +470,10 @@ void CheckCommentsAndGameData() {
         Require(call(req + 100, tooLong, nullptr) == InvalidId, "sceNpScoreCensorComment", "the request was not looked up before the length");
         Require(call(req, tooLong, nullptr) == InvalidArgument, "sceNpScoreCensorComment", "a 256-character comment was taken");
         Require(sceNpScorePollAsync(req, nullptr) == PollRunning, "sceNpScoreCensorComment", "a refused call finished the request");
+        errno = 71;
+        Require(call(req, reinterpret_cast<const char*>(0x10), nullptr) == InvalidArgument, "sceNpScoreCensorComment", "an unmapped comment was taken");
+        Require(errno == 71, "sceNpScoreCensorComment", "errno was not preserved");
+        Require(sceNpScorePollAsync(req, nullptr) == PollRunning, "sceNpScoreCensorComment", "an unmapped comment finished the request");
         CheckOffline("sceNpScoreCensorComment", call(req, longest, nullptr), req);
         sceNpScoreDeleteRequest(req);
     }
@@ -478,6 +482,10 @@ void CheckCommentsAndGameData() {
         Require(call(req, longest, sanitized, &option) == InvalidArgument, "sceNpScoreSanitizeComment", "an option was taken");
         Require(call(req + 100, nullptr, sanitized, nullptr) == InsufficientArgument, "sceNpScoreSanitizeComment", "a null comment was not refused before the request lookup");
         Require(call(req, tooLong, sanitized, nullptr) == InvalidArgument, "sceNpScoreSanitizeComment", "a 256-character comment was taken");
+        errno = 71;
+        Require(call(req, reinterpret_cast<const char*>(0x10), sanitized, nullptr) == InvalidArgument, "sceNpScoreSanitizeComment", "an unmapped comment was taken");
+        Require(errno == 71, "sceNpScoreSanitizeComment", "errno was not preserved");
+        Require(sceNpScorePollAsync(req, nullptr) == PollRunning, "sceNpScoreSanitizeComment", "an unmapped comment finished the request");
         CheckOffline("sceNpScoreSanitizeComment", call(req, longest, nullptr, nullptr), req);
         sceNpScoreDeleteRequest(req);
     }

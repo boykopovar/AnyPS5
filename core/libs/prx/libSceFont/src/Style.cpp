@@ -120,8 +120,8 @@ bool IsScriptLanguageValid(int script, int language) {
 }
 
 void ResetScaleOutputs(float* w, float* h) {
-    if (w) *w = 0.0f;
-    if (h) *h = 0.0f;
+    if (w) CopyOutGuest(w, 0.0f);
+    if (h) CopyOutGuest(h, 0.0f);
 }
 
 void ResetDpiOutputs(std::uint32_t* hDpi, std::uint32_t* vDpi) {
@@ -130,9 +130,9 @@ void ResetDpiOutputs(std::uint32_t* hDpi, std::uint32_t* vDpi) {
 }
 
 void ResetWeightOutputs(float* weightXScale, float* weightYScale, std::uint32_t* mode) {
-    if (weightXScale) *weightXScale = 1.0f;
-    if (weightYScale) *weightYScale = 1.0f;
-    if (mode) *mode = 0;
+    if (weightXScale) CopyOutGuest(weightXScale, 1.0f);
+    if (weightYScale) CopyOutGuest(weightYScale, 1.0f);
+    if (mode) CopyOutGuest(mode, std::uint32_t{0});
 }
 
 float ClampWeightDelta(float scale) {
@@ -239,9 +239,19 @@ int APS5_VABI sceFontGetScalePixel(FontHandle fontHandle, float* w, float* h) {
 }
 
 int APS5_VABI sceFontGetScalePoint(FontHandle fontHandle, float* w, float* h) {
-    const int rc = ReadFontStyle(fontHandle, false, [&](FontHandleNative* font) { return StyleStateGetScalePoint(&font->style, w, h); });
-    if (rc != SCE_FONT_OK) ResetScaleOutputs(w, h);
-    return rc;
+    float localW = 0.0f;
+    float localH = 0.0f;
+    const int rc = ReadFontStyle(fontHandle, false, [&](FontHandleNative* font) {
+        if (!w && !h) return SCE_FONT_ERROR_INVALID_PARAMETER;
+        return StyleStateGetScalePoint(&font->style, w ? &localW : nullptr, h ? &localH : nullptr);
+    });
+    if (rc != SCE_FONT_OK) {
+        ResetScaleOutputs(w, h);
+        return rc;
+    }
+    if (w && !CopyOutGuest(w, localW)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (h && !CopyOutGuest(h, localH)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    return SCE_FONT_OK;
 }
 
 int APS5_VABI sceFontGetResolutionDpi(FontHandle fontHandle, std::uint32_t* hDpi, std::uint32_t* vDpi) {
@@ -269,9 +279,21 @@ int APS5_VABI sceFontGetEffectSlant(FontHandle fontHandle, float* slantRatio) {
 }
 
 int APS5_VABI sceFontGetEffectWeight(FontHandle fontHandle, float* weightXScale, float* weightYScale, std::uint32_t* mode) {
-    const int rc = ReadFontStyle(fontHandle, true, [&](FontHandleNative* font) { return StyleStateGetWeightScale(&font->style, weightXScale, weightYScale, mode); });
-    if (rc != SCE_FONT_OK) ResetWeightOutputs(weightXScale, weightYScale, mode);
-    return rc;
+    float localX = 1.0f;
+    float localY = 1.0f;
+    std::uint32_t localMode = 0;
+    const int rc = ReadFontStyle(fontHandle, true, [&](FontHandleNative* font) {
+        if (!weightXScale && !weightYScale && !mode) return SCE_FONT_ERROR_INVALID_PARAMETER;
+        return StyleStateGetWeightScale(&font->style, weightXScale ? &localX : nullptr, weightYScale ? &localY : nullptr, mode ? &localMode : nullptr);
+    });
+    if (rc != SCE_FONT_OK) {
+        ResetWeightOutputs(weightXScale, weightYScale, mode);
+        return rc;
+    }
+    if (weightXScale && !CopyOutGuest(weightXScale, localX)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (weightYScale && !CopyOutGuest(weightYScale, localY)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (mode && !CopyOutGuest(mode, localMode)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    return SCE_FONT_OK;
 }
 
 int APS5_VABI sceFontSetupRenderScalePixel(FontHandle fontHandle, float w, float h) {

@@ -370,6 +370,7 @@ public:
     // as it was, and one that finds it unchanged since an earlier read knows the registry is what
     // it was then.
     static std::uint64_t PendingSerial();
+    static bool PendingClearOnThread(std::uint64_t address, std::size_t bytes);
     // One registry scan for several ranges (the fast Revalidate): each query's `overlaps` receives
     // whether an image other than `except` has results pending, or is being stored right now, over
     // [begin, end), and `found` the image FindPending would return for the range (null: none);
@@ -568,6 +569,7 @@ public:
     // Keeps the image current with guest memory (see GuestMemory::CollectWrites).
     bool Refresh();
     bool RefreshLayers(std::uint32_t first, std::uint32_t count);
+    static void SetRefreshUnchangedHookForTest(void (*hook)(std::uint64_t address, std::size_t bytes));
     inline static std::atomic<std::uint64_t> epochRefreshes{0};
     static std::uint64_t SinglePassMoves();
     static std::uint64_t SlabRetiles();
@@ -579,6 +581,7 @@ public:
     static std::uint64_t HandedOverSuperseded();
     static void SetClearHandOver(bool enabled);
     static std::uint64_t UntrackedCompares();
+    static std::uint64_t RewatchedConfirms();
     static std::uint64_t GuestSnapshots();
     static std::uint64_t OccasionalLabelStores();
     std::uint64_t GuestBytes() const;
@@ -617,9 +620,16 @@ private:
     std::array<std::uint64_t, 2> unitContentHash(std::uint32_t unit) const;
     void hashBeforeUnwatch(std::uint64_t address, std::size_t bytes, bool proven);
     void forgetUnwatchHash(std::uint32_t first, std::uint32_t count);
+    void rebaseBeforeUnwatch(std::uint64_t address, std::size_t bytes, bool proven);
+    void applyRebase(std::uint64_t ticket, std::uint32_t unit);
+    void readBaseline(std::uint32_t unit);
+    void awaitRebase(std::uint32_t unit);
     bool originalHolds(std::uint64_t address, std::size_t bytes) const;
     bool guestBytesStillHeld() const;
     bool compareUntracked(std::uint64_t address, std::size_t bytes, std::span<std::uint8_t> changed, bool memoize = false) const;
+    enum class RewatchProof { None, Unchanged, Changed };
+    RewatchProof rewatchProof(std::uint64_t begin, std::uint64_t end, bool queried) const;
+    void confirmRewatched(std::uint64_t spanBegin, std::span<std::uint8_t> stamped, std::span<std::uint8_t> cpu, std::vector<bool>* comparedUnits) const;
     // Stores the pending tracked layers overlapping [address, address + bytes) to guest memory; in
     // each, 64 KiB blocks the CPU wrote since the layer's generation keep the CPU's bytes. Block
     // units asked for in pieces too often are all stored at once for a while (the hysteresis:
@@ -702,6 +712,16 @@ private:
         std::uint64_t end;
     };
     std::vector<ImportSegment> importSegments() const;
+    struct SegmentMemo {
+        bool valid = false;
+        std::uint64_t generation = 0;
+        VkDevice device = VK_NULL_HANDLE;
+        std::uint64_t importEpoch = 0;
+        std::uint64_t importRefreshed = 0;
+        std::vector<ImportSegment> segments;
+    };
+    mutable std::mutex segmentMemoMutex;
+    mutable SegmentMemo segmentMemo;
     PaddingSeeds paddingSeeds(std::span<const ImportSegment> segments, const std::vector<CopiedBytes>& copied) const;
     // The direct upload and GPU-direct write-back of the runs through their windows (block units);
     // both return the bytes moved. The upload reads each unit from its unit shadow while fresh,
@@ -741,6 +761,7 @@ private:
     bool refresh(std::uint32_t firstLayer, std::uint32_t lastLayer);
     void noteLayersBehind(std::uint32_t firstLayer, std::uint32_t lastLayer, const std::vector<bool>& outside);
     void refreshGeneration();
+    std::uint64_t advanceUnchanged(std::uint32_t unit, std::uint64_t to);
     std::uint64_t collectedLayerGeneration(std::uint32_t layer, std::uint64_t whole, bool uncached = false) const;
     bool refreshProved();
     bool keysReplacedByClear() const;
@@ -935,6 +956,10 @@ private:
     std::shared_ptr<Buffer> savedBytes;
     std::vector<std::uint64_t> savedTicket;
     std::uint64_t lastSaveTicket = 0;
+    std::vector<bool> baselineDue;
+    std::atomic<bool> anyBaselineDue{false};
+    std::vector<std::uint64_t> rebaseTicket;
+    std::uint64_t lastRebaseTicket = 0;
     // The storage cache let the image go (Flush): a lookup makes a new image of the surface, so
     // no fill may put results into this one (guarded by the live-image registry lock).
     bool released = false;

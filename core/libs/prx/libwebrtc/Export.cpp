@@ -630,16 +630,6 @@ int APS5_VABI libwebrtcUnknown34(void) {
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc4rtcp14CompoundPacketC1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc4rtcp14CompoundPacketD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI _ZN6webrtc4rtcp3PliC1Ev_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -691,21 +681,6 @@ int APS5_VABI libwebrtcUnknown37(void) {
 
 void APS5_VABI _ZN6webrtc12AudioEncoder45OnReceivedUplinkRecoverablePacketLossFractionEf_nid_postfix(void*, float) {}
 
-int APS5_VABI _ZN6webrtc14SdpAudioFormataSERKS0__nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc14SdpAudioFormatC1ERKS0__nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc14SdpAudioFormatC1EOS0__nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 APS5_EXPORT("qGXgWFIHHgk", libwebrtcUnknown38);
 int APS5_VABI libwebrtcUnknown38(void) {
     NotImplemented_nid_no_patch("qGXgWFIHHgk");
@@ -721,11 +696,6 @@ int APS5_VABI libwebrtcUnknown39(void) {
 APS5_EXPORT("OnkJ4kSZYkk", libwebrtcUnknown40);
 int APS5_VABI libwebrtcUnknown40(void) {
     NotImplemented_nid_no_patch("OnkJ4kSZYkk");
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc14SdpAudioFormatD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -855,21 +825,6 @@ int APS5_VABI _ZN6webrtc19SmoothingFilterImplC1Ei_nid_postfix(void) {
 APS5_EXPORT("QbtLnp-i47c", libwebrtcUnknown42);
 int APS5_VABI libwebrtcUnknown42(void) {
     NotImplemented_nid_no_patch("QbtLnp-i47c");
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc11AudioBufferC1Emmmmmm_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc11AudioBuffer8CopyFromEPKsRKNS_12StreamConfigE_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc11AudioBuffer6CopyToERKNS_12StreamConfigEPs_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 

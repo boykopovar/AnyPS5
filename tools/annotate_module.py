@@ -34,6 +34,7 @@ DT_REL = 17
 DT_RELA_KIND = 7
 STT_FUNC = 2
 STT_TLS = 6
+STT_GNU_IFUNC = 10
 SHN_COMMON = 0xFFF2
 GHIDRA_MAX_NAME_LENGTH = 2000
 DT_GNU_HASH = 0x6ffffef5
@@ -73,9 +74,9 @@ class Module:
         self.address(self.tags[DT_STRTAB], self.strsz)
         if self.require_tag(DT_SYMENT, "DT_SYMENT") != SYMBOL_SIZE:
             raise ModuleError("DT_SYMENT is not %d" % SYMBOL_SIZE)
+        self.check_relocation_tags()
         self.symbol_count = self.count_symbols()
         self.address(self.tags[DT_SYMTAB], self.symbol_count * SYMBOL_SIZE)
-        self.check_relocation_tags()
 
     def unpack(self, form, offset):
         size = struct.calcsize(form)
@@ -139,6 +140,10 @@ class Module:
                     if next_offset - next_start == position - vaddr and next_start <= covered:
                         covered = max(covered, next_start + next_size)
                 if covered >= vaddr + length:
+                    if length and any(next_size and next_start < vaddr + length and vaddr < next_start + next_size
+                                      and next_offset - next_start != position - vaddr
+                                      for next_start, next_offset, next_size, _ in self.loads):
+                        raise ModuleError("range %#x+%#x has ambiguous PT_LOAD file mappings" % (vaddr, length))
                     return position
         raise ModuleError("range %#x+%#x is outside file-backed PT_LOAD data" % (vaddr, length))
 
@@ -160,6 +165,9 @@ class Module:
         chains_at = buckets_at + buckets * 4
         self.address(table, chains_at - table)
         last = max((self.unpack("<I", self.address(buckets_at + 4 * index, 4))[0] for index in range(buckets)), default=0)
+        if last == 0:
+            referenced = max((info >> 32 for _, info, _ in self.relocations()), default=0)
+            return max(symoffset, referenced + 1)
         if last < symoffset:
             return symoffset
         while not self.unpack("<I", self.address(chains_at + 4 * (last - symoffset), 4))[0] & 1:
@@ -196,8 +204,7 @@ class Module:
         if DT_JMPREL in self.tags:
             yield self.tags[DT_JMPREL], self.tags[DT_PLTRELSZ]
 
-    def imports(self):
-        slots = {}
+    def relocations(self):
         for table, size in self.relocation_tables():
             if size % RELA_SIZE:
                 raise ModuleError("relocation table at %#x has %d bytes, not a multiple of %d" % (table, size, RELA_SIZE))
@@ -205,11 +212,15 @@ class Module:
                 continue
             start = self.address(table, size)
             for position in range(start, start + size, RELA_SIZE):
-                offset, info, _ = self.unpack("<QQq", position)
-                if (info & 0xFFFFFFFF) == R_X86_64_NONE:
-                    continue
-                if info >> 32:
-                    slots[offset] = self.symbol(info >> 32)[0]
+                entry = self.unpack("<QQq", position)
+                if (entry[1] & 0xFFFFFFFF) != R_X86_64_NONE:
+                    yield entry
+
+    def imports(self):
+        slots = {}
+        for offset, info, _ in self.relocations():
+            if info >> 32:
+                slots[offset] = self.symbol(info >> 32)[0]
         return slots
 
     def exported_symbols(self):
@@ -253,9 +264,9 @@ def ghidra_symbols(module, namer):
     for symbol, section, address, kind in module.exported_symbols():
         if kind == STT_TLS or section == SHN_COMMON:
             continue
-        function = kind == STT_FUNC and any(flags & PF_X and start <= address < start + size and
-                                           offset + address - start < len(module.data)
-                                           for start, offset, size, flags in module.loads)
+        function = kind in (STT_FUNC, STT_GNU_IFUNC) and any(flags & PF_X and start <= address < start + size and
+                                                          offset + address - start < len(module.data)
+                                                          for start, offset, size, flags in module.loads)
         rows.add((address, function, namer.resolve(symbol), symbol))
     names, functions, lines = set(), set(), []
     for address, function, resolved, symbol in sorted(rows, key=lambda row: (row[0], not row[1], row[2] == row[3].split("#", 1)[0], row[2], row[3])):

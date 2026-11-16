@@ -160,7 +160,7 @@ PictureInfo pictureInfo(std::uint64_t handle, const SceVideodec2::OutputInfo& ou
     info.ptsData = header.pts;
     info.dtsData = header.dts;
     info.attachedData = header.attached;
-    info.idrPictureFlag = header.keyFrame;
+    info.idrPictureFlag = header.avcIdr;
     info.profileIdc = static_cast<std::uint8_t>(header.profile);
     info.levelIdc = static_cast<std::uint8_t>(header.level);
     info.picWidthInMbsMinus1 = widthInMbs - 1u;

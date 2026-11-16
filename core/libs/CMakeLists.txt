@@ -510,6 +510,14 @@ if(BUILD_TESTING)
     add_test(NAME pe_import_first COMMAND pe_import_first_tests)
     set_tests_properties(pe_import_first PROPERTIES TIMEOUT 10)
 
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_test_executable(patched_self_imports_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/PatchedSelfImports.cpp)
+        target_compile_features(patched_self_imports_tests PRIVATE cxx_std_20)
+        add_dependencies(patched_self_imports_tests libs)
+        add_test(NAME patched_self_imports COMMAND patched_self_imports_tests ${PATCHED_DIR})
+        set_tests_properties(patched_self_imports PROPERTIES TIMEOUT 30)
+    endif()
+
     find_package(Python3 QUIET COMPONENTS Interpreter)
     if(Python3_Interpreter_FOUND)
         set(public_header_compiler_args)
@@ -871,6 +879,17 @@ if(BUILD_TESTING)
     set_tests_properties(guest_kernel_sys_uuid PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_kernel_sys_uuid PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
+    endif()
+
+    add_test_executable(guest_kernel_sys_thread_name_tests tests/GuestKernelSysThreadName.cpp)
+    target_include_directories(guest_kernel_sys_thread_name_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_kernel_sys_thread_name_tests PRIVATE libkernel_sys libkernel libc)
+    configure_windows_unwind(guest_kernel_sys_thread_name_tests)
+    add_test(NAME guest_kernel_sys_thread_name COMMAND guest_kernel_sys_thread_name_tests)
+    set_tests_properties(guest_kernel_sys_thread_name PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_kernel_sys_thread_name PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
     endif()
 
