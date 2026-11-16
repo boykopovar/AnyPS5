@@ -94,6 +94,7 @@ static void CheckLongHexadecimalDigitRuns() {
     CheckBoth(fraction + "+99999999999999999999", 0x7ff0000000000000ull, ERANGE, "long fraction digit run with a saturated exponent");
 }
 
+#if defined(__x86_64__) || defined(__i386__)
 static std::uint32_t ReadMxcsr() {
     std::uint32_t mxcsr = 0;
     asm volatile("stmxcsr %0" : "=m"(mxcsr));
@@ -113,6 +114,7 @@ static void CheckFlushToZero() {
     Check("0x1p-1074", 1, 7, "FTZ keeps a hexadecimal subnormal");
     WriteMxcsr(saved);
 }
+#endif
 
 int main() {
     const std::string exact = ExactSmallestSubnormalDecimal();
@@ -126,5 +128,7 @@ int main() {
     CheckHexadecimal();
     CheckHexadecimalExponentSaturation();
     CheckLongHexadecimalDigitRuns();
+#if defined(__x86_64__) || defined(__i386__)
     CheckFlushToZero();
+#endif
 }

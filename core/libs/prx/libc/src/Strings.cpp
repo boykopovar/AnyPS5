@@ -481,9 +481,13 @@ auto ParseAsciiPrefix(const char16_t* text, char16_t** end, TParse parse) {
 }
 
 bool FlushToZeroEnabled() {
+#if defined(__x86_64__) || defined(__i386__)
     std::uint32_t mxcsr = 0;
     asm volatile("stmxcsr %0" : "=m"(mxcsr));
     return (mxcsr & 0x8000) != 0;
+#else
+    return false;
+#endif
 }
 
 template<typename TFloat>
