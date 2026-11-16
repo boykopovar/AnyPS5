@@ -1483,5 +1483,12 @@ class CheckCompileResolveSourceTests(unittest.TestCase):
             self.assertEqual(key, check_compile.real(file).as_posix())
 
 
+
+class CheckCompileCommandArgumentsTests(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "the POSIX command splitter is used off Windows")
+    def test_command_arguments_splits_quoted_words(self):
+        self.assertEqual(check_compile.command_arguments("cc -c 'a b.cpp' -o x.o"), ["cc", "-c", "a b.cpp", "-o", "x.o"])
+
+
 if __name__ == "__main__":
     unittest.main()
