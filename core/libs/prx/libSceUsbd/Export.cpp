@@ -489,6 +489,7 @@ std::int32_t APS5_VABI sceUsbdInterruptTransfer(void* deviceHandle, std::uint8_t
     if (transferred == nullptr) throw std::runtime_error(std::string(__func__) + ": null transferred output");
     std::int32_t moved = 0;
     if (!GuestCopyOut_nid_no_patch(transferred, &moved, sizeof(moved))) return SCE_USBD_ERROR_INVALID_ARG;
+    if (!GuestTransferDataUsable(endpoint, data, length)) return SCE_USBD_ERROR_INVALID_ARG;
     const std::int32_t result = ToGuestError(libusb_interrupt_transfer(KnownHandle(deviceHandle, __func__), endpoint, data, length, &moved, timeout));
     if (!GuestCopyOut_nid_no_patch(transferred, &moved, sizeof(moved))) return SCE_USBD_ERROR_INVALID_ARG;
     return result;
