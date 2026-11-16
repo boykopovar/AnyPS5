@@ -76,5 +76,6 @@ void SyncSlot(GuestFace& face);
 }
 
 extern "C" void FreeTypeSyncFace_nid_no_patch(FreeType::GuestFaceRec* face);
+extern "C" void FreeTypeSyncBitmap_nid_no_patch(FreeType::GuestBitmap& guest, const FT_Bitmap& bitmap);
 
 #endif
