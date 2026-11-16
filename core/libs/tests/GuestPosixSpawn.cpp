@@ -107,6 +107,23 @@ static void CheckAttributes() {
     Check(ThrowsInvalidArgument([&] { posix_spawnattr_setsigdefault_nid_postfix(&attributes, nullptr); }));
     Check(ThrowsInvalidArgument([] { posix_spawnattr_init_nid_postfix(nullptr); }));
 
+    auto* const unmapped = reinterpret_cast<PosixSpawnAttributes**>(0x10);
+    Check(ThrowsInvalidArgument([&] { posix_spawnattr_init_nid_postfix(unmapped); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawnattr_destroy_nid_postfix(unmapped); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawnattr_setflags_nid_postfix(unmapped, 1); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawnattr_getflags_nid_postfix(unmapped, &flags); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawnattr_getflags_nid_postfix(&attributes, reinterpret_cast<std::int16_t*>(0x10)); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawnattr_getpgroup_nid_postfix(&attributes, reinterpret_cast<std::int32_t*>(0x10)); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawnattr_getschedparam_nid_postfix(&attributes, reinterpret_cast<std::int32_t*>(0x10)); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawnattr_getschedpolicy_nid_postfix(&attributes, reinterpret_cast<std::int32_t*>(0x10)); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawnattr_getsigdefault_nid_postfix(&attributes, reinterpret_cast<GuestSignalSet*>(0x10)); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawnattr_getsigmask_nid_postfix(&attributes, reinterpret_cast<GuestSignalSet*>(0x10)); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawnattr_setsigdefault_nid_postfix(&attributes, reinterpret_cast<const GuestSignalSet*>(0x10)); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawnattr_setschedparam_nid_postfix(&attributes, reinterpret_cast<const std::int32_t*>(0x10)); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawnattr_setsigmask_nid_postfix(&attributes, reinterpret_cast<const GuestSignalSet*>(0x10)); }));
+    Check(attributes->schedulingPriority == 450 && std::memcmp(&attributes->signalMask, &mask, sizeof(mask)) == 0
+          && std::memcmp(&attributes->signalDefault, &defaults, sizeof(defaults)) == 0);
+
     Check(posix_spawnattr_destroy_nid_postfix(&attributes) == 0);
     Check(posix_spawnattr_destroy_nid_postfix(&uninitialized) == 0);
 }
@@ -143,6 +160,12 @@ static void CheckFileActions() {
     Check(ThrowsInvalidArgument([&] { posix_spawn_file_actions_addopen_nid_postfix(&actions, 1, nullptr, 0, 0); }));
     Check(ThrowsInvalidArgument([&] { posix_spawn_file_actions_destroy_nid_postfix(&uninitialized); }));
     Check(ThrowsInvalidArgument([] { posix_spawn_file_actions_init_nid_postfix(nullptr); }));
+    auto* const unmapped = reinterpret_cast<PosixSpawnFileActions**>(0x10);
+    Check(ThrowsInvalidArgument([&] { posix_spawn_file_actions_init_nid_postfix(unmapped); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawn_file_actions_destroy_nid_postfix(unmapped); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawn_file_actions_addclose_nid_postfix(unmapped, 1); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawn_file_actions_adddup2_nid_postfix(unmapped, 1, 2); }));
+    Check(ThrowsInvalidArgument([&] { posix_spawn_file_actions_addopen_nid_postfix(unmapped, 1, "/app0/a", 0, 0); }));
     Check(actions->actions.size() == 4);
 
     Check(posix_spawn_file_actions_destroy_nid_postfix(&actions) == 0);

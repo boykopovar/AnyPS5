@@ -60,8 +60,8 @@ def load_known(path):
     return known
 
 
-def write_known(path, known, findings):
-    rows = {key: value for key, value in known.items() if value[0] == "skip"}
+def write_known(path, known, findings, ran_cases):
+    rows = {key: value for key, value in known.items() if value[0] == "skip" or key not in ran_cases}
     for case, (kind, _) in findings.items():
         rows[case] = (kind, known.get(case, (kind, ""))[1])
     lines = [f"{case}\t{kind}\t{reason}".rstrip("\t") for case, (kind, reason) in sorted(rows.items())]
@@ -77,7 +77,7 @@ def text(value):
 def environment(modules):
     copy = dict(os.environ)
     for name in ("PATH", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH"):
-        copy[name] = str(modules) + os.pathsep + copy.get(name, "")
+        copy[name] = os.pathsep.join(part for part in (str(modules), copy.get(name, "")) if part)
     return copy
 
 
@@ -202,7 +202,7 @@ def main(argv=None):
     if note:
         print(note)
     if args.write_known:
-        write_known(args.known, known, findings)
+        write_known(args.known, known, findings, ran_cases)
         print(f"wrote {len(findings)} findings to {args.known}")
         return 0
     new, expected, stale = classify(known, findings, ran_cases)

@@ -1,6 +1,8 @@
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libSceFreeType/include/PostScriptPrivate.hpp"
+#include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 
 #include FT_TYPE1_TABLES_H
 
@@ -13,6 +15,8 @@ extern "C" int APS5_VABI FT_Get_PS_Font_Private_nid_postfix(GuestFaceRec* face, 
     PS_PrivateRec native{};
     const int error = FT_Get_PS_Font_Private(owner ? owner->host : nullptr, output ? &native : nullptr);
     if (error != 0) return error;
+    GuestArena::HostWrite write(output, sizeof(*output));
+    if (!write.Open() || !GuestWritable_nid_no_patch(output, sizeof(*output))) return FT_Err_Invalid_Argument;
     output->uniqueId = native.unique_id;
     output->lenIV = native.lenIV;
     output->numBlueValues = native.num_blue_values;
