@@ -405,9 +405,15 @@ bool readWalkWords(void* context, std::uint64_t address, std::uint32_t* values, 
     return true;
 }
 
+bool queuedWriteOverlaps(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
+    if (!DrawPipeline::Active() && !DrawFinisher::OnFinisherThread()) return false;
+    auto& queue = DrawPipeline::Queue0();
+    return queue.Busy() && queue.OverlapsAny(ranges);
+}
+
 bool walkPending(const WalkReads& reads, std::uint64_t address, std::uint64_t bytes) {
     const std::array range{std::pair{address, address + bytes}};
-    const bool queuedWrite = DrawPipeline::Active() && DrawPipeline::Queue0().Busy() && DrawPipeline::Queue0().OverlapsAny(range);
+    const bool queuedWrite = queuedWriteOverlaps(range);
     return queuedWrite || !Graphics::Recorder::ReadsSettled(range, reads.before);
 }
 
@@ -504,7 +510,7 @@ void copyRangeValues(const AddressRanges& ranges, std::span<const std::shared_pt
 enum class Settle { Settled, Pending, Stamped };
 
 Settle rangesSettled(const AddressRanges& ranges, const Graphics::Recorder::WriteRanges* before, std::uint64_t generation) {
-    const bool queuedWrite = DrawPipeline::Active() && DrawPipeline::Queue0().Busy() && DrawPipeline::Queue0().OverlapsAny(ranges);
+    const bool queuedWrite = queuedWriteOverlaps(ranges);
     if (queuedWrite || !Graphics::Recorder::ReadsSettled(ranges, before)) return Settle::Pending;
     return GuestMemory::NoStampAfter(ranges, generation) ? Settle::Settled : Settle::Stamped;
 }

@@ -248,10 +248,24 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     };
     if (request.target.gpuResolvedImages && HeapStageExcluded(ShaderRecompiler::ShaderStage::Compute)) request.target.gpuResolvedImages = false;
     if (request.target.gpuResolvedImages && HeapClassesExcluded()) {
-        const auto invocation = InvocationFor(snapshot, codeOffset, request);
-        if (HeapExcludedFor(invocation)) {
-            Graphics::NoteHeapExcluded(Graphics::HeapExcluded::Dispatch);
-            request.target.gpuResolvedImages = false;
+        try {
+            const auto invocation = InvocationFor(snapshot, codeOffset, request);
+            if (HeapExcludedFor(invocation)) {
+                Graphics::NoteHeapExcluded(Graphics::HeapExcluded::Dispatch);
+                request.target.gpuResolvedImages = false;
+            }
+        } catch (const DrawCompilePending&) {
+            return;
+        } catch (const std::exception& error) {
+            std::string reason = error.what();
+            if (const auto newline = reason.find('\n'); newline != std::string::npos) reason.resize(newline);
+            if (SkipRefusedDispatches()) {
+                ReportRefusedDispatch(address, reason);
+                return;
+            }
+            char where[96];
+            std::snprintf(where, sizeof(where), "compute shader 0x%llx: ", static_cast<unsigned long long>(address));
+            throw std::runtime_error(where + reason);
         }
     }
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;

@@ -212,6 +212,13 @@ std::function<MaterializeWork()> reboundWork(const ShaderRecompiler::PreparedSha
     };
 }
 
+void dropHeapReadRegions(std::vector<ShaderRecompiler::MemoryRegion>& memory, const StageCapture& stage) {
+    if (stage.heapReadWords == nullptr || stage.heapReadWords->empty()) return;
+    const auto* first = reinterpret_cast<const std::byte*>(stage.heapReadWords->data());
+    const auto* last = first + stage.heapReadWords->size() * sizeof(std::uint32_t);
+    std::erase_if(memory, [&](const ShaderRecompiler::MemoryRegion& region) { return region.bytes.data() >= first && region.bytes.data() < last; });
+}
+
 constexpr std::uint64_t HeapTemplateJob = std::uint64_t{1} << 63u;
 
 }
@@ -340,6 +347,7 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
     PerformanceTimer timing("Shader.DrawStage");
     using Stage = ShaderRecompiler::ShaderStage;
     context.phaseTiming.Phase(DrawRowVectors);
+    dropHeapReadRegions(context.memory, context.stageCaptures[i]);
     const auto& program = context.programs[i];
     auto request = drawStageRequest(context, i, pushOffset, drawParameters);
 
@@ -374,7 +382,7 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
     stageCapture.forgetSerial = GuestMemory::ForgetSerial();
     stageCapture.pushOffset = pushOffset;
     static const bool dumpGraphics = std::getenv("APS5_DUMP_GRAPHICS_SHADERS") != nullptr;
-    const bool captured = dumpGraphics || traceCapSync() || (context.profile && (context.dumpTarget != 0 || context.dumpSlot1 != 0));
+    const bool captured = dumpGraphics || traceCapSync() || context.dumpTarget != 0 || context.dumpSlot1 != 0;
     if (request.target.gpuResolvedImages && !captured) {
         if (materializeHeapDirect(context, i, invocation, request, timing)) return stageCapture.compiled;
     }
