@@ -1012,16 +1012,6 @@ int APS5_VABI libwebrtcUnknown56(void) {
     return 0;
 }
 
-int APS5_VABI _ZN6webrtc20AudioDecoderOpusImplC1ERKNS_15FieldTrialsViewEmi_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc20AudioDecoderOpusImplD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 APS5_EXPORT("Jq-CaqgT024", libwebrtcUnknown57);
 int APS5_VABI libwebrtcUnknown57(void) {
     NotImplemented_nid_no_patch("Jq-CaqgT024");
