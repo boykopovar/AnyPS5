@@ -11030,7 +11030,7 @@ void verifyBdaReadFallbackFunctions() {
             const auto span = std::string("read_bda_span") + (barrier ? "" : "_stop") + (coherent ? "_coherent" : "");
             const auto loader = std::string("load_bda_span") + (coherent ? "_coherent" : "");
             std::string function;
-            std::size_t compareExchanges = 0;
+            std::size_t faultClaims = 0;
             std::size_t mainLookups = 0;
             std::size_t mainProbes = 0;
             std::size_t spanCalls = 0;
@@ -11054,7 +11054,7 @@ void verifyBdaReadFallbackFunctions() {
                         ++definitions[function];
                     }
                 }
-                if (op == spv::OpAtomicCompareExchange) ++compareExchanges;
+                if (op == spv::OpAtomicCompareExchange || op == spv::OpAtomicOr) ++faultClaims;
                 if (op == spv::OpFunctionCall && function == "main" && names[five[cursor + 3]] == "get_bda_pointer") ++mainLookups;
                 if (op == spv::OpFunctionCall && function == "main") {
                     const auto& callee = names[five[cursor + 3]];
@@ -11075,7 +11075,7 @@ void verifyBdaReadFallbackFunctions() {
             require(definitions[loader] == 1u && loaderLoads == 4u && loaderCalls == 0u, "BDA read functions: the span load function does not hold the four in-place loads and nothing else");
             require(spanLoads == 0u && spanLoaderCalls == 1u, "BDA read functions: a span read function loads in place itself");
             for (const auto& [name, count] : definitions) require(count == 1u, "BDA read functions: a function is defined twice");
-            require(compareExchanges == 1u, "BDA read functions: a fault is recorded outside record_bda_fault");
+            require(faultClaims == 1u, "BDA read functions: a fault is recorded outside record_bda_fault");
             require(mainLookups == 0u, "BDA read functions: a read site looks up its bytes inline");
             require(readerLoads[coherent] == 1u && readerLoads[!coherent] == 0u, "BDA read functions: the byte loads do not keep the access's coherence");
             require(lookupFaults <= 4u, "BDA read functions: the page-table lookup records its faults from more than 4 call sites");
