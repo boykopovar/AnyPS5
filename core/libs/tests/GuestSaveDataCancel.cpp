@@ -3,23 +3,19 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdio>
 #include <cstdint>
-#include <stdexcept>
-#include <string>
+#include <initializer_list>
 
 namespace {
 
 constexpr int SaveDataErrorNotInitialized = -2137063423;
 
-bool ReportsNotImplemented(std::uint32_t argument) {
-    try {
-        sceSaveDataCancel(argument);
-    } catch (const std::runtime_error& error) {
-        if (std::string(error.what()) == "sceSaveDataCancel not implemented") return true;
-        std::fprintf(stderr, "sceSaveDataCancel threw: %s\n", error.what());
+bool ReportsSuccess(std::uint32_t argument) {
+    const int result = sceSaveDataCancel(argument);
+    if (result != 0) {
+        std::fprintf(stderr, "sceSaveDataCancel(%#x) after initialization did not report success: %#x\n", argument, static_cast<unsigned>(result));
         return false;
     }
-    std::fprintf(stderr, "sceSaveDataCancel returned instead of reporting that it is not implemented\n");
-    return false;
+    return true;
 }
 
 }
@@ -35,20 +31,19 @@ int main() {
         std::fprintf(stderr, "SaveData did not initialize\n");
         return 1;
     }
-    const bool reported = ReportsNotImplemented(0);
-    if (!reported) return 1;
+    if (!ReportsSuccess(0)) return 1;
 
     if (sceSaveDataInitialize3(nullptr) != 0) {
         std::fprintf(stderr, "SaveData did not initialize nested session\n");
         return 1;
     }
-    if (!ReportsNotImplemented(1)) return 1;
+    if (!ReportsSuccess(1)) return 1;
 
     if (sceSaveDataTerminate() != 0) {
         std::fprintf(stderr, "SaveData nested session did not terminate\n");
         return 1;
     }
-    if (!ReportsNotImplemented(2)) return 1;
+    if (!ReportsSuccess(2)) return 1;
 
     if (sceSaveDataTerminate() != 0) {
         std::fprintf(stderr, "SaveData did not terminate\n");

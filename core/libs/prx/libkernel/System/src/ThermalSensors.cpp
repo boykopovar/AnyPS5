@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <initializer_list>
@@ -88,6 +89,15 @@ void Plausible(int& value) {
 
 }  // namespace
 
+extern "C" bool StorageDescriptorAllowsTemperatureQuery_nid_no_patch(const void* descriptor, std::size_t bytes) {
+    constexpr std::size_t kBusTypeOffset = 28;
+    constexpr std::uint32_t kBusTypeRaid = 8;
+    std::uint32_t busType = 0;
+    if (descriptor == nullptr || bytes < kBusTypeOffset + sizeof(busType)) return false;
+    std::memcpy(&busType, static_cast<const char*>(descriptor) + kBusTypeOffset, sizeof(busType));
+    return busType != kBusTypeRaid;
+}
+
 extern "C" void ReadThermalSensors_nid_no_patch(const char* root, int celsius[3]) {
     celsius[0] = celsius[1] = celsius[2] = -1;
     if (root == nullptr) return;
@@ -96,10 +106,10 @@ extern "C" void ReadThermalSensors_nid_no_patch(const char* root, int celsius[3]
     int gpu = -1;
     int board = -1;
     for (const auto& path : SortedEntries(base / "hwmon")) {
-        const auto value = ReadCelsius(path / "temp1_input");
-        if (!value) continue;
         const std::string name = Lowercase(ReadName(path / "name"));
         if (IsPowerOrNetwork(name)) continue;
+        const auto value = ReadCelsius(path / "temp1_input");
+        if (!value) continue;
         if (ContainsAny(name, {"coretemp", "k10temp", "zenpower", "cpu"})) {
             if (celsius[0] < 0) celsius[0] = *value;
         } else if (ContainsAny(name, {"amdgpu", "i915", "radeon", "nvidia", "gpu"}) || name == "xe") {
@@ -181,6 +191,7 @@ void ReadAcpiThermalZones(int celsius[2]) {
 int ReadStorageTemperature() {
     constexpr ULONG kStorageDeviceTemperatureProperty = 52;
     constexpr ULONG kLegacyStorageDeviceTemperatureProperty = 22;
+    constexpr ULONG kStorageDeviceProperty = 0;
     constexpr ULONG kPropertyStandardQuery = 0;
     constexpr DWORD kIoctlStorageQueryProperty = 0x2D1400;
     struct Information {
@@ -219,6 +230,16 @@ int ReadStorageTemperature() {
         std::snprintf(name, sizeof(name), "\\\\.\\PhysicalDrive%d", index);
         HANDLE handle = CreateFileA(name, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
         if (handle == INVALID_HANDLE_VALUE) continue;
+        Query deviceQuery{};
+        deviceQuery.property = kStorageDeviceProperty;
+        deviceQuery.query = kPropertyStandardQuery;
+        unsigned char deviceDescriptor[1024]{};
+        DWORD deviceBytes = 0;
+        if (!DeviceIoControl(handle, kIoctlStorageQueryProperty, &deviceQuery, sizeof(deviceQuery), deviceDescriptor, sizeof(deviceDescriptor), &deviceBytes, nullptr)
+            || !StorageDescriptorAllowsTemperatureQuery_nid_no_patch(deviceDescriptor, deviceBytes)) {
+            CloseHandle(handle);
+            continue;
+        }
         for (ULONG property : kProperties) {
             Query query{};
             query.property = property;
@@ -278,7 +299,6 @@ int APS5_VABI sceKernelGetSocSensorTemperature(int sensorId, int* outCelsius) {
         if (!GuestCopyOut_nid_no_patch(outCelsius, &value, sizeof(value))) return Fail(14);
         return 0;
     }
-    if (sensorId > 3 && sensorId < 62) throw std::runtime_error("sceKernelGetSocSensorTemperature: channels 4 to 61 have no host sensor and were not measured");
     int celsius[3];
     ReadHostSensors(celsius);
     const int host = sensorId >= 3 ? 0 : sensorId;

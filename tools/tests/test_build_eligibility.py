@@ -115,6 +115,8 @@ class RelinkerEligibilityTests(unittest.TestCase):
             except subprocess.TimeoutExpired:
                 cls.process.kill()
                 cls.process.wait()
+        for stream in (cls.process.stdin, cls.process.stdout, cls.process.stderr):
+            stream.close()
         cls.temp.cleanup()
 
     def run_gate(self, commits, search, files=("core/relinker/main.cpp",), manual=False, workflow=None):

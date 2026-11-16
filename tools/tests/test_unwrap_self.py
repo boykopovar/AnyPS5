@@ -25,6 +25,7 @@ PT_NOTE = 4
 PT_PHDR = 6
 SCE_COMMENT = 0x6FFFFF00
 SCE_VERSION = 0x6FFFFF01
+SCE_DYNLIBDATA = 0x61000000
 FIRST_REGION = 0x400
 
 HEADER = b"\x7fELF\x02\x01\x01\x09" + b"\x00" * 56
@@ -93,6 +94,40 @@ def read_program_headers(path):
 
 
 class UnwrapTest(unittest.TestCase):
+    def test_tls_zero_fill_cannot_hide_a_truncated_load(self):
+        directory = Path(self.directory)
+        source, output = directory / "input.self", directory / "output.elf"
+        for mapping in ("indexed", "legacy", "unrecorded"):
+            for stored in (0x60, 0x7F):
+                for tls_first in (False, True):
+                    load = (PT_LOAD, 5, 0x800 if mapping == "unrecorded" else 0x1234,
+                            0x1000, 0x80, 1)
+                    tls = (PT_TLS, 4, 0x880, 0x1080, 0x40, 1)
+                    segments = [tls, load] if tls_first else [load, tls]
+                    load_index = segments.index(load)
+                    flags = (load_index << unwrap_self.RECORD_SEGMENT_SHIFT) | 0x800
+                    records = [] if mapping == "unrecorded" else [
+                        (flags if mapping == "indexed" else 0, 0x800, 0x80)]
+                    container = bytearray(build_container(segments, records, {0x800: b"A" * stored}))
+                    struct.pack_into("<Q", container,
+                                     ELF_HEADER_OFFSET + PROGRAM_TABLE_OFFSET + load_index * 56 + 40, 0x100)
+                    source.write_bytes(container)
+                    for previous in (None, b"previous output"):
+                        with self.subTest(mapping=mapping, stored=stored, tls_first=tls_first, previous=previous):
+                            output.unlink(missing_ok=True)
+                            if previous is not None:
+                                output.write_bytes(previous)
+                            before = set(directory.iterdir())
+                            stdout, stderr = io.StringIO(), io.StringIO()
+                            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                                status = unwrap_self.main([str(source), str(output)])
+                            self.assertEqual(status, 2)
+                            self.assertEqual(stdout.getvalue(), "")
+                            self.assertIn(f"segment {load_index} does not fit the file", stderr.getvalue())
+                            self.assertEqual(source.read_bytes(), container)
+                            self.assertEqual(output.read_bytes() if output.exists() else None, previous)
+                            self.assertEqual(set(directory.iterdir()), before)
+
     def test_interpreter_without_an_address_uses_its_load_file_range(self):
         payload = b"/libexec/ld-elf.so.1\0" + pattern(3, 0x20) * 8
         for delta, address in ((0, 0), (0x20, 0), (len(payload) - 0x10, 0),
@@ -166,6 +201,23 @@ class UnwrapTest(unittest.TestCase):
                 self.assertEqual(headers[2][2], headers[0][2])
                 self.assertEqual(headers[2][5:7], (0x10, 0x10))
                 self.assertEqual(data[headers[2][2]:headers[2][2] + 0x10], pattern(1, 0x10))
+
+    def test_dynamic_without_an_address_inside_a_recorded_segment_is_read_from_it(self):
+        segments = default_segments() + [(SCE_DYNLIBDATA, 4, 0x1600, 0x0, 0x40, 0x10)]
+        segments[2] = (PT_DYNAMIC, 6, 0x1620, 0x0, 0x20, 8)
+        records = default_records() + [(0x302804, 0xAA0, 0x40)]
+        payloads = dict(default_payloads())
+        payloads[0xAA0] = pattern(11, 0x40)
+        result, output = self.convert(build_container(segments, records, payloads))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        data, headers = read_program_headers(output)
+        dynamic = [header for header in headers if header[0] == PT_DYNAMIC][0]
+        library_data = [header for header in headers if header[0] == SCE_DYNLIBDATA][0]
+        self.assertEqual(data[library_data[2]:library_data[2] + library_data[5]], pattern(11, 0x40))
+        self.assertEqual((dynamic[2], dynamic[5]), (library_data[2] + 0x20, 0x20))
+        self.assertEqual(data[dynamic[2]:dynamic[2] + dynamic[5]], pattern(11, 0x40)[0x20:])
+        self.assertEqual(len(data), library_data[2] + library_data[5])
+        self.assertEqual(data[headers[0][2]:headers[0][2] + 0x100], pattern(1, 0x100))
 
     def test_unsupported_inner_elf_machines_are_refused(self):
         for machine in (0, 3, 40, 183, 0x3E00, 0xFFFF):

@@ -1,5 +1,6 @@
 #include "prx/libSceXml/include/Api.hpp"
 
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -253,6 +254,10 @@ void TestInitializerNullValidation() {
         threwNullAllocator = true;
     }
     Require(threwNullAllocator, "Initializer::initialize rejects null allocator");
+
+    errno = 71;
+    Require(_ZN3sce3Xml11Initializer10initializeEPKNS0_13InitParameterE(&handle, reinterpret_cast<const XmlInitParameter*>(0x10)) == static_cast<int>(0x80850003), "Initializer::initialize rejects unreadable parameter");
+    Require(errno == 71, "Initializer::initialize preserves errno on unreadable parameter");
 
     bool threwTerminateNull = false;
     try {

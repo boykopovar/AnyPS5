@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -183,5 +184,46 @@ int main() {
         for (int index = 0; index < 8; index++) Require(out[index] == pad[index], "quad frames are the pad mix");
     }
 
+    {
+        const float nan = std::numeric_limits<float>::quiet_NaN();
+        const float inf = std::numeric_limits<float>::infinity();
+        const float negInf = -inf;
+
+        auto out = Silence<1>();
+        const float nonFiniteInput[2] = {nan, inf};
+        const float zeroGain[2] = {0.0f, 0.0f};
+        AudioOut2AccumulatePadFrame(AudioOut2Route::PadSpeaker, nonFiniteInput, 2, unity, out.data());
+        Require(out[0] == 0.0f && out[1] == 0.0f, "non-finite inputs sanitized to zero in accumulation");
+
+        const float infInput[1] = {inf};
+        AudioOut2AccumulatePadFrame(AudioOut2Route::PadSpeaker, infInput, 1, zeroGain, out.data());
+        Require(out[0] == 0.0f && out[1] == 0.0f, "zero gain with infinity input produces zero");
+
+        const float negInfInput[2] = {negInf, nan};
+        AudioOut2AccumulatePadFrame(AudioOut2Route::PadVibration, negInfInput, 2, unity, out.data());
+        Require(out[2] == 0.0f && out[3] == 0.0f, "negative infinity and nan vibration sanitized");
+
+        float dirtyPad[AUDIO_OUT2_PAD_CHANNELS] = {nan, inf, negInf, nan};
+        const float validSpeaker[1] = {0.5f};
+        AudioOut2AccumulatePadFrame(AudioOut2Route::PadSpeaker, validSpeaker, 1, unity, dirtyPad);
+        Require(dirtyPad[0] == 0.5f && dirtyPad[1] == 0.5f, "non-finite accumulator sanitized and valid signal preserved");
+
+        float mixedPortPad[AUDIO_OUT2_PAD_CHANNELS] = {0.25f, 0.25f, 0.0f, 0.0f};
+        const float nanSpeaker[1] = {nan};
+        AudioOut2AccumulatePadFrame(AudioOut2Route::PadSpeaker, nanSpeaker, 1, unity, mixedPortPad);
+        Require(mixedPortPad[0] == 0.25f && mixedPortPad[1] == 0.25f, "valid signal preserved alongside non-finite port");
+
+        float dirtyOut[AUDIO_OUT2_PAD_CHANNELS] = {nan, inf, negInf, 2.5f};
+        AudioOut2FinishPadMix(dirtyOut, 1);
+        Require(dirtyOut[0] == 0.0f && dirtyOut[1] == 0.0f && dirtyOut[2] == 0.0f, "non-finite values sanitized in finish mix");
+        Require(dirtyOut[3] == 1.0f, "finite value clamped in finish mix");
+
+        const auto quad = AudioOut2PadLayoutForDriver("pipewire");
+        const float nonFinitePad[AUDIO_OUT2_PAD_CHANNELS] = {nan, inf, negInf, 0.75f};
+        float writeOut[AUDIO_OUT2_PAD_CHANNELS] = {nan, nan, nan, nan};
+        AudioOut2WritePadFrames(nonFinitePad, quad, writeOut, 1, 50);
+        Require(writeOut[0] == 0.0f && writeOut[1] == 0.0f && writeOut[2] == 0.0f, "write pad frames sanitizes non-finite pad");
+        Require(std::fabs(writeOut[3] - 0.375f) <= 1e-6f, "write pad frames preserves and scales valid vibration");
+    }
     return 0;
 }
