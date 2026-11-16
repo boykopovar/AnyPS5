@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SlimMutex.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "prx/libc/include/General.hpp"
@@ -13,6 +14,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Execution/include/DeviceFault.hpp"
 #include "prx/libc/include/HostThreadSlot.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ThreadScratch.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
@@ -1890,6 +1892,17 @@ public:
     bool SurelyClear(std::uint64_t address, std::size_t bytes) const {
         const auto current = published.load(std::memory_order_acquire);
         return current != nullptr && current->version == changes.load(std::memory_order_acquire) && !Overlaps(current->ranges, address, bytes);
+    }
+    bool ClearOnThread(std::uint64_t address, std::size_t bytes) const {
+        struct CopyTag {};
+        auto& copy = ThreadScratch<std::shared_ptr<const Snapshot>, CopyTag>();
+        const auto version = changes.load(std::memory_order_acquire);
+        if (copy == nullptr || copy->version != version) {
+            auto current = published.load(std::memory_order_acquire);
+            if (current == nullptr || current->version != version) return false;
+            copy = std::move(current);
+        }
+        return !Overlaps(copy->ranges, address, bytes);
     }
 
 private:
@@ -3829,10 +3842,31 @@ std::vector<StorageTexture::ImportSegment> StorageTexture::importSegments() cons
     const auto end = begin + guestBytes;
     const bool unitAligned = blockUnits && UnitShadowEnabled();
     const auto samePiece = [](const RegisteredPiece& a, const RegisteredPiece& b) { return a.address == b.address && a.bytes == b.bytes && a.writable == b.writable && a.gpu == b.gpu; };
+    const bool memoized = !RuntimeSwitches::Set(RuntimeSwitch::NoImportSegmentMemo);
+    const auto generation = GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+    if (memoized) {
+        std::lock_guard lock(segmentMemoMutex);
+        if (segmentMemo.valid && segmentMemo.generation == generation) {
+            std::vector<const HostImport*> imports;
+            imports.reserve(segmentMemo.segments.size());
+            for (const auto& segment : segmentMemo.segments) imports.push_back(segment.import);
+            if (TouchHostImportsIfUnchanged(context, HostImportsProof{segmentMemo.device, segmentMemo.importEpoch, segmentMemo.importRefreshed, 0}, imports)) {
+                return segmentMemo.segments;
+            }
+        }
+    }
+    const auto remember = [&](const HostImportsProof& proof, std::vector<ImportSegment> segments) {
+        if (memoized && proof.device != VK_NULL_HANDLE && GuestAllocations::GuestAllocationsGeneration_nid_postfix() == generation) {
+            std::lock_guard lock(segmentMemoMutex);
+            segmentMemo = {true, generation, proof.device, proof.epoch, proof.refreshedGeneration, segments};
+        }
+        return segments;
+    };
     for (std::uint32_t attempt = 0; attempt < 2; ++attempt) {
         std::vector<RegisteredPiece> pieces;
-        if (!RegisteredReadableCovers(begin, static_cast<std::size_t>(guestBytes), &pieces) || pieces.size() < 2) return {};
-        if (std::any_of(pieces.begin(), pieces.end(), [&](const RegisteredPiece& piece) { return piece.writable != pieces.front().writable || piece.gpu != pieces.front().gpu; })) return {};
+        const auto before = HostImportsIdentity(context);
+        if (!RegisteredReadableCovers(begin, static_cast<std::size_t>(guestBytes), &pieces) || pieces.size() < 2) return remember(before, {});
+        if (std::any_of(pieces.begin(), pieces.end(), [&](const RegisteredPiece& piece) { return piece.writable != pieces.front().writable || piece.gpu != pieces.front().gpu; })) return remember(before, {});
         std::vector<ImportSegment> segments;
         const auto proof = HostImportsIdentity(context);
         for (const auto& piece : pieces) {
@@ -3845,7 +3879,7 @@ std::vector<StorageTexture::ImportSegment> StorageTexture::importSegments() cons
             else segments.push_back({import, from, to});
         }
         std::vector<RegisteredPiece> still;
-        if (HostImportsUnchanged(context, proof) && RegisteredReadableCovers(begin, static_cast<std::size_t>(guestBytes), &still) && std::equal(pieces.begin(), pieces.end(), still.begin(), still.end(), samePiece)) return segments;
+        if (HostImportsUnchanged(context, proof) && RegisteredReadableCovers(begin, static_cast<std::size_t>(guestBytes), &still) && std::equal(pieces.begin(), pieces.end(), still.begin(), still.end(), samePiece)) return remember(proof, std::move(segments));
     }
     return {};
 }
@@ -5990,6 +6024,11 @@ bool StorageTexture::AnyLiveOverlaps(std::span<const std::pair<std::uint64_t, st
 
 std::uint64_t StorageTexture::PendingSerial() {
     return pendingSerial.load(std::memory_order_acquire);
+}
+
+bool StorageTexture::PendingClearOnThread(std::uint64_t address, std::size_t bytes) {
+    auto& pending = Pending();
+    return pending.textures.ClearOnThread(address, bytes) && pending.flushingCount.load(std::memory_order_acquire) == 0;
 }
 
 void StorageTexture::NoteProved() const {

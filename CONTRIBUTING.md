@@ -81,3 +81,9 @@ The [pull request template](.github/pull_request_template.md) is the checklist f
 ## Documentation
 
 Text in the repository is dry, strict and concise. Record known gaps, unknown NIDs and signatures in [technical debt](docs/dev/TechnicalDebt.md) instead of new files. An entry states the gap first (what differs from the console, what is unverified, what throws) and describes the implemented behaviour only as far as the gap needs it. A pull request that closes a gap removes its entry, or cuts it to what is still open, instead of rewriting it to describe the corrected behaviour. An entry goes in `docs/dev/debt/<name>.md`, named after the first `core/` path it links (`<name>` for `core/libs/prx/<name>/...`, otherwise for `core/<name>/...`), under the same `###` sections as the index; entries that link neither stay in the index. A pull request whose `TechnicalDebt.md` change conflicts after the split rebases and runs `python3 tools/debt_split.py resolve` during the stopped rebase, which moves its added, edited and removed entries to their files; `python3 tools/debt_split.py split` moves entries left in the index.
+
+## Maintainer scripts
+
+- `tools/rebase_verify.py <old> <new> [--onto BRANCH] [--repo REPO]` checks that a rebased branch kept its added and deleted lines, file modes, authors and commits. `--onto` names the branch the new commits sit on; by default it is `upstream/main`, then `origin/main`.
+- `tools/pr_labels.py (--pr N | --all) [--dry-run] [--json]` labels pull requests from their title and template fields. `--dry-run` prints the planned changes and writes nothing.
+- `tools/pr_unchanged.py [--dry-run]` labels open pull requests whose merge would not change `main`. `--dry-run` prints the planned changes and writes nothing.
