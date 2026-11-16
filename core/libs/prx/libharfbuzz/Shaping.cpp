@@ -3,6 +3,8 @@
 
 #include <hb.h>
 
+#include <algorithm>
+#include <array>
 #include <cstddef>
 #include <type_traits>
 #include <vector>
@@ -21,14 +23,16 @@ void APS5_VABI hb_shape_nid_postfix(hb_font_t* font, hb_buffer_t* buffer, const 
     if (!buffer) NotImplemented_nid_no_patch(__func__);
     if (!hb_buffer_get_length(buffer)) return;
     if (!font || (!features && numFeatures)) NotImplemented_nid_no_patch(__func__);
-    std::vector<HarfBuzz::Feature> guestFeatures(numFeatures);
-    if (numFeatures && !GuestCopyIn_nid_no_patch(guestFeatures.data(), features, guestFeatures.size() * sizeof(HarfBuzz::Feature))) {
-        NotImplemented_nid_no_patch(__func__);
-    }
     std::vector<hb_feature_t> nativeFeatures;
-    nativeFeatures.reserve(numFeatures);
-    for (const auto& feature : guestFeatures) {
-        nativeFeatures.push_back({feature.tag, feature.value, feature.start, feature.end});
+    std::array<HarfBuzz::Feature, 4096> chunk;
+    for (unsigned done = 0; done < numFeatures;) {
+        const unsigned count = std::min<unsigned>(static_cast<unsigned>(chunk.size()), numFeatures - done);
+        if (!GuestCopyIn_nid_no_patch(chunk.data(), features + done, count * sizeof(HarfBuzz::Feature))) NotImplemented_nid_no_patch(__func__);
+        for (unsigned index = 0; index < count; ++index) {
+            const auto& feature = chunk[index];
+            nativeFeatures.push_back({feature.tag, feature.value, feature.start, feature.end});
+        }
+        done += count;
     }
     hb_shape(font, buffer, nativeFeatures.data(), numFeatures);
 }
