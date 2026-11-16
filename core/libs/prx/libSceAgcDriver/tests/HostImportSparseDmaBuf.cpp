@@ -701,6 +701,7 @@ int main(int argc, char** argv) {
         return 77;
     }
     setenv("APS5_WRITE_WATCH_IMPORTS", retireSnapshot ? "watch" : "unwatch", 1);
+    setenv("APS5_SPARSE_DMA_BUF_IMPORTS", "on", 1);
     SetHostImportBudget(~std::uint64_t{0});
     GuestArena::GuestArenaSetSharedBacking_nid_postfix(Resolve);
     GuestArena::GuestArenaSetSharedBackingRuns_nid_postfix(ResolveRuns);

@@ -472,6 +472,8 @@ struct HostImports {
     std::uint8_t reportNoted = 0;
     std::map<std::uint64_t, std::uint64_t> spaceUses;
     bool dmaBufSelected = false;
+    VkDevice sparseDmaBufDevice = VK_NULL_HANDLE;
+    bool sparseDmaBufImports = false;
     std::uint64_t budgetRefusals = 0;
     std::array<const HostImport*, 4> recentImports{};
     std::uint64_t recentEpoch = std::numeric_limits<std::uint64_t>::max();
@@ -1173,12 +1175,12 @@ bool createSparseDmaBufImport(const Context& context, HostImport& entry, int fil
 // The shared-backing resolver hands out a duplicated descriptor, so this function owns it on every
 // exit. Neither import path below consumes it: a udmabuf holds its own reference to the memfd, so
 // without closing the duplicate here every imported buffer leaks one descriptor.
-const char* createBackingImport(const Context& context, HostImport& entry, int file, const GuestArena::SharedBackingRun* runs, std::size_t count, VkResult& failure) {
+const char* createBackingImport(const Context& context, HostImport& entry, int file, const GuestArena::SharedBackingRun* runs, std::size_t count, VkResult& failure, bool sparse) {
     bool fits = false;
     VkResult chunkFailure = VK_SUCCESS;
     OwnedDescriptor owned(file);
     if (count == 1 && createChunkedDmaBufImport(context, entry, owned.file, runs[0].offset, fits, chunkFailure) == nullptr && fits) return nullptr;
-    if ((count > 1 || !fits) && createSparseDmaBufImport(context, entry, owned.file, std::span<const GuestArena::SharedBackingRun>(runs, count))) return nullptr;
+    if ((count > 1 || !fits) && sparse && createSparseDmaBufImport(context, entry, owned.file, std::span<const GuestArena::SharedBackingRun>(runs, count))) return nullptr;
     return createDmaBufImport(context, entry, owned.Release(), std::span<const GuestArena::SharedBackingRun>(runs, count), failure);
 }
 
@@ -1207,22 +1209,23 @@ bool sharedBacked(const Context& context, std::uint64_t base, std::uint64_t byte
     return true;
 }
 
-const char* createSharedBackingImport(const Context& context, HostImport& entry, VkResult& failure) {
+const char* createSharedBackingImport(const Context& context, HostImport& entry, VkResult& failure, bool sparse) {
     int file = -1;
     std::array<GuestArena::SharedBackingRun, DmaBufRunLimit> runs{};
     std::size_t count = 0;
-    if (resolveBackingRuns(entry, file, runs, count)) return createBackingImport(context, entry, file, runs.data(), count, failure);
+    if (resolveBackingRuns(entry, file, runs, count)) return createBackingImport(context, entry, file, runs.data(), count, failure, sparse);
     failure = VK_ERROR_INVALID_EXTERNAL_HANDLE;
     return "shared backing runs";
 }
 #endif
 
-const char* createImport(const Context& context, HostImport& entry, VkResult& failure, bool dmaBufFallback) {
+const char* createImport(const Context& context, HostImport& entry, VkResult& failure, bool dmaBufFallback, bool sparseDmaBuf) {
     const char* step = createHostPointerImport(context, entry, failure);
 #ifndef _WIN32
-    if (step != nullptr && dmaBufFallback && context.dmaBufImport) step = createSharedBackingImport(context, entry, failure);
+    if (step != nullptr && dmaBufFallback && context.dmaBufImport) step = createSharedBackingImport(context, entry, failure, sparseDmaBuf);
 #else
     static_cast<void>(dmaBufFallback);
+    static_cast<void>(sparseDmaBuf);
 #endif
     return step;
 }
@@ -1237,6 +1240,19 @@ ImportWatchRequest importWatchRequest() {
         if (std::strcmp(value, "watch") == 0) return ImportWatchRequest::Watch;
         if (std::strcmp(value, "unwatch") == 0) return ImportWatchRequest::Unwatch;
         throw std::runtime_error(std::string("APS5_WRITE_WATCH_IMPORTS=") + value + ": expected probe, watch or unwatch");
+    }();
+    return request;
+}
+
+enum class SparseDmaBufRequest : std::uint8_t { Probe, On, Off };
+
+SparseDmaBufRequest sparseDmaBufRequest() {
+    static const auto request = [] {
+        const char* value = std::getenv("APS5_SPARSE_DMA_BUF_IMPORTS");
+        if (value == nullptr || std::strcmp(value, "probe") == 0) return SparseDmaBufRequest::Probe;
+        if (std::strcmp(value, "on") == 0) return SparseDmaBufRequest::On;
+        if (std::strcmp(value, "off") == 0) return SparseDmaBufRequest::Off;
+        throw std::runtime_error(std::string("APS5_SPARSE_DMA_BUF_IMPORTS=") + value + ": expected probe, on or off");
     }();
     return request;
 }
@@ -1664,6 +1680,28 @@ void decideImportWatch(const Context& context, HostImports& state) {
     state.dmaBufSelected = state.unwatchImports && !state.unwatchDmaBufImports && state.dmaBufImportsCoherent;
 #endif
 }
+
+#ifndef _WIN32
+bool sparseDmaBufImports(const Context& context, HostImports& state) {
+    if (state.sparseDmaBufDevice == context.device) return state.sparseDmaBufImports;
+    state.sparseDmaBufDevice = context.device;
+    state.sparseDmaBufImports = false;
+    if (!context.dmaBufImport || !context.sparseBinding || udmabufDevice() < 0) return false;
+    if (const auto request = sparseDmaBufRequest(); request != SparseDmaBufRequest::Probe) {
+        state.sparseDmaBufImports = request == SparseDmaBufRequest::On;
+        std::fprintf(stderr, "[gpu] dma-buf imports of several runs or across 64 MiB chunks %s (APS5_SPARSE_DMA_BUF_IMPORTS=%s)\n", state.sparseDmaBufImports ? "are bound sparsely" : "are not bound sparsely", state.sparseDmaBufImports ? "on" : "off");
+        return state.sparseDmaBufImports;
+    }
+    const auto probe = ProbeSparseDmaBufImport(context);
+    if (probe.failure != nullptr) {
+        std::fprintf(stderr, "[gpu] GPU copies through a sparse buffer bound to dma-buf memory reach that memory: unknown (probe failed at %s, %d); dma-buf imports of several runs or across 64 MiB chunks are not bound sparsely\n", probe.failure, static_cast<int>(probe.result));
+        return false;
+    }
+    state.sparseDmaBufImports = probe.landed == probe.copied;
+    std::fprintf(stderr, "[gpu] GPU copies through a sparse buffer bound to dma-buf memory reach that memory: %s (0x%08x copied, 0x%08x in the memory after it); dma-buf imports of several runs or across 64 MiB chunks %s\n", state.sparseDmaBufImports ? "yes" : "no", probe.copied, probe.landed, state.sparseDmaBufImports ? "are bound sparsely" : "are not bound sparsely");
+    return state.sparseDmaBufImports;
+}
+#endif
 
 struct ImportWatching {
     bool settled = false;
@@ -2624,8 +2662,10 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
 #ifdef _WIN32
     const auto watching = importWatching(context, state, entry.alias != nullptr, writable, bytes);
     const bool settled = watching.settled;
+    constexpr bool sparseDmaBuf = false;
 #else
     const auto watching = importWatching(context, state, false, true, bytes);
+    const bool sparseDmaBuf = sparseDmaBufImports(context, state);
 #endif
     const bool watchedHostPointer = watching.hostPointer;
     const bool watchedDmaBuf = watching.dmaBuf;
@@ -2635,7 +2675,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
     constexpr bool dmaBufOnly = false;
 #endif
     if (!dmaBufOnly) GuestMemory::ImportWatched(base, bytes, [&] {
-        step = watchedDmaBuf == watchedHostPointer ? createImport(context, entry, result, state.dmaBufImportsCoherent) : createHostPointerImport(context, entry, result);
+        step = watchedDmaBuf == watchedHostPointer ? createImport(context, entry, result, state.dmaBufImportsCoherent, sparseDmaBuf) : createHostPointerImport(context, entry, result);
 #ifdef _WIN32
         if (step == nullptr && settled && (step = settleImport(context, state, entry, result)) != nullptr) {
             destroyImport(context, entry);
@@ -2650,7 +2690,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
         const bool hostFallback = GuestArena::GuestArenaSharedBackingHostFallback_nid_no_patch(static_cast<std::uintptr_t>(base), static_cast<std::size_t>(bytes));
         GuestMemory::ImportWatched(base, bytes, [&] {
             try {
-                step = createSharedBackingImport(context, entry, result);
+                step = createSharedBackingImport(context, entry, result, sparseDmaBuf);
             } catch (const std::exception& error) {
                 if (!hostFallback) throw DmaBufImportFailure(error.what());
                 std::fprintf(stderr, "[gpu] dma-buf import of 0x%llx+0x%llx failed (%s)\n", static_cast<unsigned long long>(base), static_cast<unsigned long long>(bytes), error.what());
@@ -2679,7 +2719,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
         if (resolveBackingRuns(entry, runsFile, runs, count)) {
             OwnedDescriptor owned(runsFile);
             GuestMemory::ImportWatched(base, bytes, [&] {
-                step = createBackingImport(context, entry, owned.Release(), runs.data(), count, result);
+                step = createBackingImport(context, entry, owned.Release(), runs.data(), count, result, sparseDmaBuf);
                 return step == nullptr;
             }, watchedDmaBuf, false);
         }
@@ -4858,7 +4898,7 @@ ImportProbe ProbeImportWriteProtection(const Context& context) {
     std::uint32_t touched = 0;
     if (!collect(touched)) probe.failure = "GetWriteWatch";
     else if (context.settleQueue == VK_NULL_HANDLE || context.settleQueueMutex == nullptr) probe.failure = "the settle queue";
-    else runImportProbe(context, base, bytes, [&](HostImport& import, VkResult& result) { return createImport(context, import, result, false); }, collect, probe, [&](HostImport& import, VkResult& result) { return settleImport(context, Imports(), import, result); });
+    else runImportProbe(context, base, bytes, [&](HostImport& import, VkResult& result) { return createImport(context, import, result, false, false); }, collect, probe, [&](HostImport& import, VkResult& result) { return settleImport(context, Imports(), import, result); });
     VirtualFree(raw, 0, MEM_RELEASE);
     return probe;
 #else
@@ -4881,7 +4921,7 @@ ImportProbe ProbeImportWriteProtection(const Context& context) {
     auto* scratch = reinterpret_cast<volatile std::uint8_t*>(base);
     for (std::uint64_t offset = 0; offset < bytes; offset += page) scratch[offset] = 1;
     if (GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(reinterpret_cast<const void*>(base), bytes);
-    runImportProbe(context, base, bytes, [&](HostImport& import, VkResult& result) { return createImport(context, import, result, false); }, [&](std::uint32_t& pages) { return collectWriteWatch(base, bytes, pages); }, probe);
+    runImportProbe(context, base, bytes, [&](HostImport& import, VkResult& result) { return createImport(context, import, result, false, false); }, [&](std::uint32_t& pages) { return collectWriteWatch(base, bytes, pages); }, probe);
     if (GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix()) GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(reinterpret_cast<const void*>(base), bytes);
     munmap(raw, bytes + alignment);
     return probe;
@@ -4939,10 +4979,140 @@ ImportProbe ProbeDmaBufImportWriteProtection(const Context& context) {
 #endif
 }
 
+SparseDmaBufProbe ProbeSparseDmaBufImport(const Context& context) {
+    SparseDmaBufProbe probe;
+#if defined(_WIN32) || defined(__APPLE__)
+    static_cast<void>(context);
+    probe.failure = "dma-buf import support";
+    return probe;
+#else
+    if (!context.dmaBufImport || !context.sparseBinding) {
+        probe.failure = "sparse dma-buf import support";
+        return probe;
+    }
+    const int device = udmabufDevice();
+    if (device < 0) {
+        probe.failure = "open /dev/udmabuf";
+        return probe;
+    }
+    constexpr std::uint32_t Copied = 0x0C0FFEE5u;
+    constexpr std::uint32_t Before = 0x0B5E55EDu;
+    const bool ownQueue = context.sparseQueue != VK_NULL_HANDLE && context.sparseQueueMutex != nullptr;
+    const VkQueue bindQueue = ownQueue ? context.sparseQueue : context.queue;
+    VkBuffer buffer = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    VkCommandBuffer commands = VK_NULL_HANDLE;
+    VkFence fence = VK_NULL_HANDLE;
+    int file = -1;
+    int dmaBuf = -1;
+    VkQueue busy = VK_NULL_HANDLE;
+    const auto wait = [&](VkQueue queue) -> const char* {
+        busy = queue;
+        if ((probe.result = context.Function<PFN_vkWaitForFences>("vkWaitForFences")(context.device, 1, &fence, VK_TRUE, 10'000'000'000ull)) != VK_SUCCESS) return "vkWaitForFences";
+        busy = VK_NULL_HANDLE;
+        return nullptr;
+    };
+    const auto run = [&]() -> const char* {
+        const VkExternalMemoryBufferCreateInfo external{VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO, nullptr, VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT};
+        VkBufferCreateInfo info{VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, &external};
+        info.flags = VK_BUFFER_CREATE_SPARSE_BINDING_BIT;
+        info.size = SparseBlockBytes;
+        info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        ImportFamilies families;
+        shareDmaBufImport(context, info, families, true);
+        if ((probe.result = context.Function<PFN_vkCreateBuffer>("vkCreateBuffer")(context.device, &info, nullptr, &buffer)) != VK_SUCCESS) return "vkCreateBuffer";
+        VkMemoryRequirements requirements{};
+        context.Function<PFN_vkGetBufferMemoryRequirements>("vkGetBufferMemoryRequirements")(context.device, buffer, &requirements);
+        const VkDeviceSize bytes = (requirements.size + 4095) / 4096 * 4096;
+        const VkDeviceSize target = requirements.size / 2;
+        file = memfd_create("aps5-sparse-dma-buf-probe", MFD_CLOEXEC | MFD_ALLOW_SEALING);
+        if (file < 0) return "memfd_create";
+        if (ftruncate(file, static_cast<off_t>(bytes)) != 0 || fcntl(file, F_ADD_SEALS, F_SEAL_SHRINK) != 0) return "the shared scratch file";
+        if (pwrite(file, &Copied, sizeof(Copied), 0) != static_cast<ssize_t>(sizeof(Copied)) || pwrite(file, &Before, sizeof(Before), static_cast<off_t>(target)) != static_cast<ssize_t>(sizeof(Before))) return "the shared scratch file";
+        udmabuf_create request{};
+        request.memfd = static_cast<std::uint32_t>(file);
+        request.flags = UDMABUF_FLAGS_CLOEXEC;
+        request.offset = 0;
+        request.size = bytes;
+        dmaBuf = ioctl(device, UDMABUF_CREATE, &request);
+        if (dmaBuf < 0) {
+            probe.result = VK_ERROR_INVALID_EXTERNAL_HANDLE;
+            return "UDMABUF_CREATE";
+        }
+        VkMemoryFdPropertiesKHR properties{VK_STRUCTURE_TYPE_MEMORY_FD_PROPERTIES_KHR};
+        if ((probe.result = context.Function<PFN_vkGetMemoryFdPropertiesKHR>("vkGetMemoryFdPropertiesKHR")(context.device, VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT, dmaBuf, &properties)) != VK_SUCCESS) return "vkGetMemoryFdPropertiesKHR";
+        const auto types = properties.memoryTypeBits & requirements.memoryTypeBits;
+        if (types == 0) {
+            probe.result = VK_ERROR_FORMAT_NOT_SUPPORTED;
+            return "memory type selection";
+        }
+        const VkImportMemoryFdInfoKHR import{VK_STRUCTURE_TYPE_IMPORT_MEMORY_FD_INFO_KHR, nullptr, VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT, dmaBuf};
+        VkMemoryAllocateInfo allocation{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, &import};
+        allocation.allocationSize = bytes;
+        allocation.memoryTypeIndex = static_cast<std::uint32_t>(std::countr_zero(types));
+        if ((probe.result = MemoryAccounting::Allocate(context, allocation, "sparse dma-buf import probe", &memory)) != VK_SUCCESS) return "vkAllocateMemory";
+        dmaBuf = -1;
+        const VkFenceCreateInfo fenceInfo{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+        if ((probe.result = context.Function<PFN_vkCreateFence>("vkCreateFence")(context.device, &fenceInfo, nullptr, &fence)) != VK_SUCCESS) return "vkCreateFence";
+        const VkSparseMemoryBind bind{0, requirements.size, memory, 0, 0};
+        const VkSparseBufferMemoryBindInfo bufferBinds{buffer, 1, &bind};
+        VkBindSparseInfo bindInfo{VK_STRUCTURE_TYPE_BIND_SPARSE_INFO};
+        bindInfo.bufferBindCount = 1;
+        bindInfo.pBufferBinds = &bufferBinds;
+        {
+            std::unique_lock<std::mutex> queueLock;
+            if (ownQueue) queueLock = std::unique_lock(*context.sparseQueueMutex);
+            if ((probe.result = context.Function<PFN_vkQueueBindSparse>("vkQueueBindSparse")(bindQueue, 1, &bindInfo, fence)) != VK_SUCCESS) return "vkQueueBindSparse";
+            if (const char* step = wait(bindQueue)) return step;
+        }
+        if ((probe.result = context.Function<PFN_vkResetFences>("vkResetFences")(context.device, 1, &fence)) != VK_SUCCESS) return "vkResetFences";
+        VkCommandBufferAllocateInfo allocate{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+        allocate.commandPool = context.pool;
+        allocate.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocate.commandBufferCount = 1;
+        if ((probe.result = context.Function<PFN_vkAllocateCommandBuffers>("vkAllocateCommandBuffers")(context.device, &allocate, &commands)) != VK_SUCCESS) return "vkAllocateCommandBuffers";
+        VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+        begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        if ((probe.result = context.Function<PFN_vkBeginCommandBuffer>("vkBeginCommandBuffer")(commands, &begin)) != VK_SUCCESS) return "vkBeginCommandBuffer";
+        const VkBufferCopy region{0, target, sizeof(Copied)};
+        context.Function<PFN_vkCmdCopyBuffer>("vkCmdCopyBuffer")(commands, buffer, buffer, 1, &region);
+        VkMemoryBarrier toHost{VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+        toHost.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        toHost.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+        context.Function<PFN_vkCmdPipelineBarrier>("vkCmdPipelineBarrier")(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &toHost, 0, nullptr, 0, nullptr);
+        if ((probe.result = context.Function<PFN_vkEndCommandBuffer>("vkEndCommandBuffer")(commands)) != VK_SUCCESS) return "vkEndCommandBuffer";
+        VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+        submit.commandBufferCount = 1;
+        submit.pCommandBuffers = &commands;
+        if ((probe.result = context.Function<PFN_vkQueueSubmit>("vkQueueSubmit")(context.queue, 1, &submit, fence)) != VK_SUCCESS) return "vkQueueSubmit";
+        if (const char* step = wait(context.queue)) return step;
+        if (pread(file, &probe.landed, sizeof(probe.landed), static_cast<off_t>(target)) != static_cast<ssize_t>(sizeof(probe.landed))) return "the shared scratch file";
+        probe.copied = Copied;
+        return nullptr;
+    };
+    probe.failure = run();
+    if (busy != VK_NULL_HANDLE) {
+        std::unique_lock<std::mutex> queueLock;
+        if (ownQueue && busy == context.sparseQueue) queueLock = std::unique_lock(*context.sparseQueueMutex);
+        context.Function<PFN_vkQueueWaitIdle>("vkQueueWaitIdle")(busy);
+    }
+    if (fence != VK_NULL_HANDLE) context.Function<PFN_vkDestroyFence>("vkDestroyFence")(context.device, fence, nullptr);
+    if (commands != VK_NULL_HANDLE) context.Function<PFN_vkFreeCommandBuffers>("vkFreeCommandBuffers")(context.device, context.pool, 1, &commands);
+    if (buffer != VK_NULL_HANDLE) context.Function<PFN_vkDestroyBuffer>("vkDestroyBuffer")(context.device, buffer, nullptr);
+    if (memory != VK_NULL_HANDLE) MemoryAccounting::Free(context, memory);
+    if (dmaBuf >= 0) close(dmaBuf);
+    if (file >= 0) close(file);
+    return probe;
+#endif
+}
+
 ImportWatch PrepareImportWatch(const Context& context) {
     auto& state = Imports();
     std::lock_guard lock(state.mutex);
     decideImportWatch(context, state);
+#ifndef _WIN32
+    sparseDmaBufImports(context, state);
+#endif
     return state.unwatchImports ? ImportWatch::Unwatch : ImportWatch::Watch;
 }
 
@@ -4951,6 +5121,17 @@ bool DmaBufImportSelected(const Context& context) {
     std::lock_guard lock(state.mutex);
     decideImportWatch(context, state);
     return state.dmaBufSelected;
+}
+
+bool SparseDmaBufImportSelected(const Context& context) {
+#ifdef _WIN32
+    static_cast<void>(context);
+    return false;
+#else
+    auto& state = Imports();
+    std::lock_guard lock(state.mutex);
+    return sparseDmaBufImports(context, state);
+#endif
 }
 
 void SetImportWatch(const Context& context, ImportWatch watch) {
