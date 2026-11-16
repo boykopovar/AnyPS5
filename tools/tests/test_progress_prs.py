@@ -174,7 +174,6 @@ class TimestampTests(unittest.TestCase):
             clock.now.return_value = fixed
             self.assertEqual(progress_prs.timestamp(), "2026-01-02T03:04:05Z")
     def test_timestamp_on_the_live_clock_has_no_offset_suffix(self):
-        import re
         self.assertRegex(progress_prs.timestamp(), r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
 
