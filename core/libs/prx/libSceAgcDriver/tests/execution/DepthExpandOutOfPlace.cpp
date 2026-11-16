@@ -269,13 +269,13 @@ struct Launch {
     std::uint32_t instances = 1;
 };
 
-std::vector<std::uint32_t> DepthDraw(const Surfaces& surfaces, bool expand, bool twoSamples, const Launch& launch = {}, float clearDepth = 1.0f, const Triangle& vertices = Vertices) {
+std::vector<std::uint32_t> DepthDraw(const Surfaces& surfaces, bool expand, bool twoSamples, const Launch& launch = {}, float clearDepth = 1.0f, const Triangle& vertices = Vertices, std::uint32_t vsOutCntl = 0) {
     const auto extent = (Height << 16u) | Width;
     const std::vector<std::pair<std::uint32_t, std::uint32_t>> context{
         {0x2d5, 0x2000}, {0x1b6, 0}, {0x203, 0}, {0x2dc, 0xaa00}, {0x293, 0},
         {0x80, 0}, {0x8d, 0}, {0x83, 0xffff}, {0x8c, 0xa}, {0x2f9, 0x2d}, {0x313, 0x6000}, {0x30e, 0xffffffff}, {0x30f, 0xffffffff},
         {0x206, 0x43f}, {0x204, 0x80000}, {0x205, 0x240}, {0x8f, 0}, {0x202, ColorDisabled},
-        {0x1c4, 0}, {0x1c5, 0}, {0x1c3, 4}, {0x207, 0}, {0xc, 0}, {0x81, 0x80000000}, {0x90, 0x80000000}, {0x94, 0x80000000},
+        {0x1c4, 0}, {0x1c5, 0}, {0x1c3, 4}, {0x207, vsOutCntl}, {0xc, 0}, {0x81, 0x80000000}, {0x90, 0x80000000}, {0x94, 0x80000000},
         {0xb4, 0}, {0xb5, std::bit_cast<std::uint32_t>(1.0f)}, {0x114, 0}, {0x113, std::bit_cast<std::uint32_t>(1.0f)},
         {0x10f, std::bit_cast<std::uint32_t>(Width / 2.0f)}, {0x110, std::bit_cast<std::uint32_t>(Width / 2.0f)},
         {0x111, std::bit_cast<std::uint32_t>(Height / 2.0f)}, {0x112, std::bit_cast<std::uint32_t>(Height / 2.0f)},
@@ -503,6 +503,16 @@ bool Run(TexelReader& reader, bool twoSamples) {
     std::printf("%s: read base 0x%llx, write base 0x%llx\n", name.c_str(), static_cast<unsigned long long>(surfaces.depth), static_cast<unsigned long long>(surfaces.written));
     Submit(DepthDraw(surfaces, false, false), name + ": depth draw at the read base");
     Submit(DepthDraw(surfaces, true, twoSamples), name + ": DB expand from the read base to the write base");
+    return Expanded(reader, surfaces.written, DrawnDepth(reader, surfaces, name), name);
+}
+
+bool RunLayerExports(TexelReader& reader) {
+    const auto name = std::string("the game's expand with vertex layer-export bits set");
+    const auto surfaces = NewSurfaces();
+    constexpr std::uint32_t layerExports = (1u << 18u) | (1u << 19u) | (1u << 21u) | (1u << 24u);
+    std::printf("%s: read base 0x%llx, write base 0x%llx\n", name.c_str(), static_cast<unsigned long long>(surfaces.depth), static_cast<unsigned long long>(surfaces.written));
+    Submit(DepthDraw(surfaces, false, false), name + ": depth draw at the read base");
+    Submit(DepthDraw(surfaces, true, true, {}, 1.0f, Vertices, layerExports), name + ": DB expand from the read base to the write base");
     return Expanded(reader, surfaces.written, DrawnDepth(reader, surfaces, name), name);
 }
 
@@ -879,6 +889,7 @@ int main(int argc, char** argv) {
         const std::vector<Case> cases{
             {"direct", [](TexelReader& reader) { return Run(reader, false); }, "depth expand: the write base does not hold the read surface's depth after the DB expand with one raster sample"},
             {"direct-two-samples", [](TexelReader& reader) { return Run(reader, true); }, "depth expand: the write base does not hold the read surface's depth after the game's DB expand with two raster samples"},
+            {"layer-exports", RunLayerExports, "depth expand: the write base does not hold the read surface's depth after the DB expand with vertex layer-export bits set"},
             {"draw-indirect", [](TexelReader& reader) { return RunIndirect(reader, DrawIndirect); }, "depth expand: the write base does not hold the read surface's depth after the DB expand as DRAW_INDIRECT"},
             {"draw-index-indirect", [](TexelReader& reader) { return RunIndirect(reader, DrawIndexIndirect); }, "depth expand: the write base does not hold the read surface's depth after the DB expand as DRAW_INDEX_INDIRECT"},
             {"empty-indirect", RunEmptyIndirect, "depth expand: an indirect DB expand whose record draws nothing changed the write base"},

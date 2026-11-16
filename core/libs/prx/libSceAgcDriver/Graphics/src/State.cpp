@@ -2733,7 +2733,6 @@ std::optional<DepthExpandPass> DecodeDepthExpandPass(const QueueState& queue) {
     if (((zInfo >> 4u) & 0x1fu) != 24u) reject("of a depth surface in a swizzle mode other than SW_64KB_Z_X");
     if ((zInfo & 0x000f1000u) != 0) reject("of a partially resident or mipmapped depth surface");
     if ((view & 0x3c000000u) != 0) reject("of a depth view with a mip level");
-    if ((value(0x207) & LayerExports) != 0) reject("with layer exports");
     if (((source | destination | (planes.stencil ? base(0x013, 0x01b) | base(0x015, 0x01d) : 0u)) & 0xffffu) != 0) reject("between bases that are not 64 KiB aligned");
     zero(cx, 0x80, ~0u, "window offset");
     if (const auto viewportControl = read(cx, 0x206); viewportControl != 0x43fu) throw std::runtime_error(vteMessage(viewportControl));
