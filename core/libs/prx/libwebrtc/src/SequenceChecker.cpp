@@ -42,16 +42,30 @@
  */
 
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 #include "prx/libkernel/include/Api.hpp"
 
+#include <cerrno>
+#include <cstddef>
+#include <cstdint>
 #include <stdexcept>
 #include <string>
 
 namespace {
 
+struct ErrnoGuard {
+    int savedErrno = errno;
+    ~ErrnoGuard() { errno = savedErrno; }
+};
+
 void Check(int result, const char* call) {
     if (result != 0)
         throw std::runtime_error(std::string("SequenceCheckerImpl: ") + call + " failed with " + std::to_string(result));
+}
+
+template<typename T>
+T* FieldAt(WebRtcSequenceCheckerImpl* checker, std::size_t offset) {
+    return reinterpret_cast<T*>(reinterpret_cast<std::uintptr_t>(checker) + offset);
 }
 
 }
@@ -61,15 +75,25 @@ extern "C" {
 void APS5_VABI _ZN6webrtc32webrtc_sequence_checker_internal19SequenceCheckerImplC2Eb_nid_postfix(WebRtcSequenceCheckerImpl* checker, bool attachToCurrentThread) {
     if (!checker)
         throw std::invalid_argument("SequenceCheckerImpl::SequenceCheckerImpl requires a checker");
+    {
+        ErrnoGuard guard;
+        if (!GuestWritable_nid_no_patch(checker, sizeof(*checker)))
+            throw std::invalid_argument("SequenceCheckerImpl::SequenceCheckerImpl requires a checker");
+    }
     PthreadMutexattr attribute = nullptr;
     Check(pthread_mutexattr_init_nid_postfix(&attribute), "pthread_mutexattr_init");
-    const int result = pthread_mutex_init_nid_postfix(&checker->lock, &attribute);
+    const int result = pthread_mutex_init_nid_postfix(FieldAt<PthreadMutex>(checker, offsetof(WebRtcSequenceCheckerImpl, lock)), &attribute);
     const int destroyed = pthread_mutexattr_destroy_nid_postfix(&attribute);
     Check(result, "pthread_mutex_init");
     Check(destroyed, "pthread_mutexattr_destroy");
-    checker->attached = attachToCurrentThread;
-    checker->validThread = pthread_self_nid_postfix();
-    checker->validQueue = _ZN6webrtc13TaskQueueBase7CurrentEv_nid_postfix();
+
+    const Pthread self = pthread_self_nid_postfix();
+    const WebRtcTaskQueueBase* queue = _ZN6webrtc13TaskQueueBase7CurrentEv_nid_postfix();
+    ErrnoGuard guard;
+    if (!GuestPtr<bool>(FieldAt<bool>(checker, offsetof(WebRtcSequenceCheckerImpl, attached))).CopyOut(attachToCurrentThread) ||
+        !GuestPtr<Pthread>(FieldAt<Pthread>(checker, offsetof(WebRtcSequenceCheckerImpl, validThread))).CopyOut(self) ||
+        !GuestPtr<const WebRtcTaskQueueBase*>(FieldAt<const WebRtcTaskQueueBase*>(checker, offsetof(WebRtcSequenceCheckerImpl, validQueue))).CopyOut(queue))
+        throw std::invalid_argument("SequenceCheckerImpl::SequenceCheckerImpl requires a checker");
 }
 
 }
