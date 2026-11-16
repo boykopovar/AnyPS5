@@ -600,6 +600,11 @@ class LinkTextHelperTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "invalid target"):
             build_mingw_host_only_tests.object_document([1], "p.json", "target")
 
+    def test_source_relative_path_is_posix_inside_the_root_and_none_outside(self):
+        root = Path(os.path.abspath(os.sep + "r"))
+        self.assertEqual(build_mingw_host_only_tests.source_relative_path(root, root / "a" / "b.cpp"), "a/b.cpp")
+        self.assertIsNone(build_mingw_host_only_tests.source_relative_path(root, Path(os.path.abspath(os.sep + "other")) / "x.cpp"))
+
 
 if __name__ == "__main__":
     unittest.main()
