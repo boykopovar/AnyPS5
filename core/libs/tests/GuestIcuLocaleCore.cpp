@@ -104,6 +104,38 @@ int main() {
         {"deu_DEU@currency=EUR", "de_DE@currency=EUR"},
         {"en-12", "en_12"}, {"en__US", "en__US"},
     });
+    const std::string defaultName(uloc_getDefault());
+    const std::string defaultWithEncoding = defaultName + ".utf8";
+    const std::string defaultWithKeyword = defaultName + "@currency=EUR";
+    const std::string defaultWithKeywords = defaultName + "@collation=phonebook;currency=EUR";
+    Check(uloc_getBaseName, false, {
+        {"i-default", defaultName.c_str()},
+        {"i-default_US", defaultName.c_str()},
+        {"i-default-extra", defaultName.c_str()},
+        {"i-default.utf8", defaultWithEncoding.c_str()},
+        {"i-default@currency=EUR", defaultName.c_str()},
+    });
+    Check(uloc_canonicalize, false, {
+        {"i-default", defaultName.c_str()},
+        {"i-default_US", defaultName.c_str()},
+        {"i-default-extra", defaultName.c_str()},
+        {"i-default.utf8", defaultName.c_str()},
+        {"i-default@currency=EUR", defaultWithKeyword.c_str()},
+        {"i-default@currency=EUR;collation=phonebook", defaultWithKeywords.c_str()},
+    });
+    std::array<char, 64> boundary{};
+    std::int32_t boundaryStatus = 0;
+    const auto boundaryLength = uloc_getBaseName(
+        "i-defaults", boundary.data(), static_cast<std::int32_t>(boundary.size()), &boundaryStatus);
+    assert(boundaryStatus == 0);
+    assert(std::string_view(boundary.data(), static_cast<std::size_t>(boundaryLength)) !=
+           std::string_view(defaultName));
+    boundaryStatus = 0;
+    const auto upperLength = uloc_canonicalize(
+        "I-DEFAULT", boundary.data(), static_cast<std::int32_t>(boundary.size()), &boundaryStatus);
+    assert(boundaryStatus == 0);
+    assert(std::string_view(boundary.data(), static_cast<std::size_t>(upperLength)) !=
+           std::string_view(defaultName));
     CheckKeyword("en_US@currency=USD", "currency", "USD");
     CheckKeyword("de_DE@currency=EUR;collation=phonebook", "collation", "phonebook");
     CheckKeyword("en@Currency=USD", "CURRENCY", "USD");
