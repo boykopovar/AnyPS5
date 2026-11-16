@@ -240,7 +240,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         source_root, targets = read_reply(Path(os.path.realpath(args.build_dir)))
-        changed_paths = args.changed_paths.read_text(encoding="utf-8").splitlines() if args.changed_paths else None
+        changed_paths = args.changed_paths.read_text(encoding="utf-8-sig").splitlines() if args.changed_paths else None
         selected = host_only_test_targets(source_root, targets, changed_paths)
         if not selected:
             print("No changed host-only core/libs test executables require a link check")
