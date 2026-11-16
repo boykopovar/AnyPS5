@@ -75,7 +75,7 @@ public:
     std::shared_ptr<const ResourceCapture> Capture(const SrtRuntime& runtime) const;
     std::shared_ptr<const RecompileResult> Materialize(const ResourceCapture& capture) const;
     std::shared_ptr<const RecompileResult> MaterializeHeap(const ResourceCapture& capture, HeapStageWords& words, HeapTemplateMiss* miss = nullptr) const;
-    const std::shared_ptr<const IrResourcePlan>& Plan() const;
+    std::shared_ptr<const IrResourcePlan> Plan() const;
     std::shared_ptr<const IrResourcePlan> LoadPlan() const;
     std::shared_ptr<const IrResourcePlan> PlanOrLoad() const;
     std::uint64_t VariantId() const;

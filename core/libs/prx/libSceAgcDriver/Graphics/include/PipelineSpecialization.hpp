@@ -93,8 +93,9 @@ public:
             if (constant.id >= Ids::BufferRootPosition && constant.id < Ids::BufferRootPosition + Ids::BufferRootCount) constant.value = placement.bufferRoots[constant.id - Ids::BufferRootPosition];
             if (constant.id == Ids::BufferOverflowPosition) constant.value = placement.bufferOverflow;
             if (constant.id >= Ids::RootItemPositionBase && constant.id < Ids::RootItemPositionBase + ShaderRecompiler::RuntimeAbi::RootItemCount) {
-                constant.value = placement.items[constant.id - Ids::RootItemPositionBase];
-                Require(constant.value != ShaderRecompiler::RuntimeAbi::NoPushPosition, "a stage reads a root item its pipeline's push layout does not hold");
+                const auto item = constant.id - Ids::RootItemPositionBase;
+                constant.value = placement.items[item];
+                Require(item == static_cast<std::uint32_t>(ShaderRecompiler::RuntimeAbi::RootItem::UserData) || constant.value != ShaderRecompiler::RuntimeAbi::NoPushPosition, "a stage reads a root item its pipeline's push layout does not hold");
             }
         }
     }

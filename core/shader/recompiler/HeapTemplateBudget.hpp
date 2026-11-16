@@ -28,14 +28,14 @@ template<typename TValue>
     return OwnedBytes(binding.guestDescriptor) + OwnedBytes(binding.samplerDepthCompare) + OwnedBytes(binding.imageWritten) + OwnedBytes(binding.imageDepthCompare) + OwnedBytes(binding.imageAtomic) + OwnedBytes(binding.imageAtomic64) +
            OwnedBytes(binding.imageShapes) + OwnedBytes(binding.bufferAtomic) + OwnedBytes(binding.bufferWritten) + OwnedBytes(binding.samplerUnnormalized) + OwnedBytes(binding.samplerIntegerBorder) +
            OwnedBytes(binding.samplerCoordinatesIgnored) + OwnedBytes(binding.imageUnnormalized) + OwnedBytes(binding.imageUnnormalizedBaseLevel) + OwnedBytes(binding.imageSamplers) + OwnedBytes(binding.bufferRead) +
-           OwnedBytes(binding.bufferExtent);
+           OwnedBytes(binding.bufferExtent) + OwnedBytes(binding.samplerEmbedded) + OwnedBytes(binding.samplerEmbeddedWords);
 }
 
 [[nodiscard]] inline std::uint64_t OwnedBytes(const RecompileResult& result) {
     std::uint64_t bytes = sizeof(RecompileResult) + OwnedBytes(result.vertexInputPatches) + OwnedBytes(result.runtimeImageResources) + OwnedBytes(result.vertexInputs) + OwnedBytes(result.parameterExports) +
                           OwnedBytes(result.fragmentParameters) + OwnedBytes(result.stencilReferences) + OwnedBytes(result.specialization) + OwnedBytes(result.heapSlotWords) + OwnedBytes(result.bindings) +
                           OwnedBytes(result.pushConstants) + OwnedBytes(result.vertexAttributes) + OwnedBytes(result.imageTablePoison) + OwnedBytes(result.imageTableRanges) + OwnedBytes(result.imageTableReadRanges) +
-                          OwnedBytes(result.heapUserWords) + OwnedBytes(result.shaderDataUserWords);
+                          OwnedBytes(result.heapUserWords) + OwnedBytes(result.shaderDataUserWords) + OwnedBytes(result.pushedData);
     if (result.meshBarycentrics.has_value()) bytes += OwnedBytes(result.meshBarycentrics->parameters);
     for (const auto& binding : result.bindings) bytes += OwnedBytes(binding);
     for (const auto& ranges : result.imageTableReadRanges) bytes += OwnedBytes(ranges);

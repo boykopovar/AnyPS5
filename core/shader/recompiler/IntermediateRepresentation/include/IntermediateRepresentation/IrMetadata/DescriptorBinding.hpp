@@ -79,6 +79,9 @@ struct IrBindingLayout {
     [[nodiscard]] std::uint32_t ShaderDataDwords() const {
         return BufferAddressDword() + bufferAddressDwords;
     }
+    [[nodiscard]] bool HeapSlotWordKind(DescriptorBindingKind kind) const {
+        return HeapImageKind(kind) && (runtimeImageCount == 0u || RuntimeAbi::GpuHeapStorageKind(static_cast<std::uint32_t>(kind)));
+    }
     [[nodiscard]] bool HeapImageKind(DescriptorBindingKind kind) const {
         const auto value = static_cast<std::uint32_t>(kind);
         return (value >= RuntimeAbi::FirstImageBinding && value < RuntimeAbi::FirstStorageImageBinding) || (heapStorageImages && RuntimeAbi::GpuHeapStorageKind(value));

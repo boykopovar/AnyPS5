@@ -201,7 +201,7 @@ std::uint32_t HeapImageSlotWord(SpirvEmitterState& state, DescriptorBindingKind 
     auto dword = layout.ImageSlotDword();
     for (const auto& descriptor : layout.descriptors) {
         if (descriptor.kind == kind) break;
-        if (state.program.Metadata().bindings.HeapImageKind(descriptor.kind)) dword += static_cast<std::uint32_t>(descriptor.resources.size());
+        if (state.program.Metadata().bindings.HeapSlotWordKind(descriptor.kind)) dword += static_cast<std::uint32_t>(descriptor.resources.size());
     }
     dword += arrayIndex;
     if (dword >= layout.ShaderDataDwords()) ExitDescriptorBindingFailure(state, kind, resource, "image heap slot word lies outside the shader data");
@@ -213,7 +213,7 @@ std::uint32_t StorageElementPointer(SpirvEmitterState& state, std::uint32_t poin
     if (variable == 0) ExitDescriptorBindingFailure(state, kind, resource, "storage image heap array was not emitted");
     RequireDynamicIndexing(state, spv::CapabilityStorageImageArrayDynamicIndexing, kind, resource, "the storage image heap needs storage image array dynamic indexing, which the device lacks");
     const auto pointer = state.module.AllocateId();
-    state.module.AddFunction(spv::OpAccessChain, pointerType, pointer, variable, state.registrationModules ? HeapImageSlot(state, kind, resource) : HeapImageSlotWord(state, kind, resource, arrayIndex));
+    state.module.AddFunction(spv::OpAccessChain, pointerType, pointer, variable, state.registrationModules && arrayIndex == ResourceForDescriptor(state, kind, resource) ? HeapImageSlot(state, kind, resource) : HeapImageSlotWord(state, kind, resource, arrayIndex));
     return pointer;
 }
 

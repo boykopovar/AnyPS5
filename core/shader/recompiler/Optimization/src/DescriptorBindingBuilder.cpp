@@ -566,7 +566,7 @@ DescriptorBindingPlan DescriptorBindingBuilder::Prepare(const IrBindingLayout& l
     for (const auto& logical : layout.descriptors) {
         const bool imageHeap = ImageBindingResourceClass(logical.kind) != ImageResourceClass::None;
         const bool samplerHeap = logical.kind == DescriptorBindingKind::Samplers;
-        const bool sampledSlots = slotWords && layout.HeapImageKind(logical.kind);
+        const bool sampledSlots = layout.gpuResolvedImages && layout.HeapSlotWordKind(logical.kind);
         IrDescriptorBinding compact{logical.kind, {}};
         std::vector<std::uint32_t> originals;
         std::vector<bool> inactive;

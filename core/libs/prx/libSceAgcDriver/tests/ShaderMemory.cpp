@@ -12908,6 +12908,122 @@ void verifyRuntimeImageSwitchDeduplication() {
     require(mipTargets.at(0u) != mipTargets.at(1u), "runtime image switch deduplication: storage image modes with different mip modes shared an OpSwitch target");
 }
 
+void verifyRegistrationStorageMipSlots() {
+    using namespace ShaderRecompiler;
+    constexpr std::uint32_t MetadataDword = 200u;
+    IrProgram program;
+    program.SetWaveSize(32u);
+    program.Resources().stage = IrShaderStage::Compute;
+    program.Resources().srtPlanComplete = true;
+    program.Resources().resourceTrackingComplete = true;
+    program.Metadata().shaderInfoComplete = true;
+    program.Metadata().bindingLayoutComplete = true;
+    auto& block = program.CreateBlock();
+    program.SetEntryBlock(block);
+    program.BlockOrder().push_back(&block);
+    program.Metadata().blockInfo.emplace_back();
+    auto& zero = program.CreateValue(IrOpcode::Void, IrType::U32);
+    zero.SetImmediateU32(0u);
+    auto& enabled = program.CreateValue(IrOpcode::Void, IrType::Bool);
+    enabled.SetImmediateBool(true);
+    auto& handle = program.CreateValue(IrOpcode::GetImageResource, IrType::ImageResource, 0u);
+    for (std::uint32_t i = 0u; i < 8u; ++i) handle.AddArgument(&zero);
+    block.AppendInstruction(&handle);
+    auto& address = program.CreateValue(IrOpcode::MakeImageAddress, IrType::ImageAddress);
+    for (std::uint32_t i = 0u; i < 13u; ++i) address.AddArgument(&zero);
+    block.AppendInstruction(&address);
+    MemoryInfo memory{};
+    memory.kind = ResourceKind::Image;
+    memory.resource = 0u;
+    memory.imageDimension = RdnaImageDimension::Dim2D;
+    memory.imageAddressComponents = 2u;
+    memory.dmask = 0xfu;
+    memory.dataBits = 32u;
+    memory.dataDwords = 4u;
+    memory.componentCount = 4u;
+    program.Resources().memoryInfo.push_back(memory);
+    ImageResource image{};
+    image.resourceClass = ImageResourceClass::Storage;
+    image.numericClass = IrTextureNumericClass::Float;
+    image.dimension = RdnaImageDimension::Dim2D;
+    image.mipMode = ImageMipMode::DynamicStorage;
+    image.mipCount = 3u;
+    image.written = true;
+    image.fmaskCompatible = false;
+    const auto modes = ResourceMaterializer::RuntimeImageModes(image);
+    const auto Mips = std::ranges::max(modes, {}, &ImageResource::mipCount).mipCount;
+    require(Mips > 1u, "registration slot words: a dynamic-mip storage image has no mip chain");
+    program.Info().images.push_back(image);
+    program.Info().runtimeImageModes.push_back(modes);
+    auto& layout = program.Metadata().bindings;
+    layout.gpuResolvedImages = true;
+    layout.heapStorageImages = true;
+    layout.dataAddress = true;
+    layout.runtimeImageCount = 1u;
+    layout.memoryOffsetDword = MetadataDword;
+    for (const auto& mode : modes) {
+        const auto kind = DescriptorBindingForImage(mode);
+        if (std::ranges::none_of(layout.descriptors, [&](const IrDescriptorBinding& entry) { return entry.kind == kind; })) layout.descriptors.push_back({kind, std::vector<std::uint32_t>(Mips, 0u)});
+    }
+    for (const auto& descriptor : layout.descriptors) {
+        require(layout.HeapSlotWordKind(descriptor.kind), "registration slot words: a storage image kind has no slot words in a registration layout");
+        layout.imageSlotDwords += static_cast<std::uint32_t>(descriptor.resources.size());
+    }
+    require(!layout.HeapSlotWordKind(static_cast<DescriptorBindingKind>(RuntimeAbi::FirstImageBinding)), "registration slot words: a sampled image kind has slot words in a registration layout");
+    auto plain = layout;
+    plain.runtimeImageCount = 0u;
+    require(plain.HeapSlotWordKind(static_cast<DescriptorBindingKind>(RuntimeAbi::FirstImageBinding)), "registration slot words: a sampled image kind has no slot words outside a registration layout");
+    ShaderComputeInputInfo compute{};
+    compute.threadsNum[0] = 32u;
+    compute.threadsNum[1] = 1u;
+    compute.threadsNum[2] = 1u;
+    compute.hostSubgroupSize = 32u;
+    compute.waveSize = 32u;
+    ShaderStageInputInfo inputs{};
+    inputs.compute = &compute;
+    auto& texel = program.CreateValue(IrOpcode::CompositeConstructU32x4, IrType::U32x4);
+    for (std::uint32_t i = 0u; i < 4u; ++i) texel.AddArgument(&zero);
+    block.AppendInstruction(&texel);
+    auto& store = program.CreateValue(IrOpcode::ImageWrite, IrType::Void);
+    store.AddArgument(&handle);
+    store.AddArgument(&address);
+    store.AddArgument(&texel);
+    store.AddArgument(&enabled);
+    block.AppendInstruction(&store);
+    CompiledBindingLayout bindings{};
+    bindings.layout = layout;
+    SpirvTargetOptions target{};
+    target.vulkanVersion = 0x00401000u;
+    target.spirvVersion = 0x00010300u;
+    target.subgroupSize = 32u;
+    target.registrationModules = true;
+    target.gpuResolvedImages = true;
+    const std::array<std::uint32_t, 3> capabilities{spv::CapabilityStorageImageArrayDynamicIndexing, spv::CapabilitySampledImageArrayDynamicIndexing, spv::CapabilityStorageImageWriteWithoutFormat};
+    target.supportedCapabilities = capabilities;
+    const auto words = SpirvEmitter().Emit(program, inputs, bindings, target);
+    std::map<std::uint32_t, std::size_t> definitions;
+    std::vector<std::size_t> writes;
+    for (std::size_t cursor = 5u; cursor < words.size(); cursor += words[cursor] >> 16u) {
+        const auto count = words[cursor] >> 16u;
+        require(count != 0u && count <= words.size() - cursor, "registration slot words: truncated SPIR-V instruction");
+        const auto opcode = words[cursor] & 0xffffu;
+        if (opcode == spv::OpImageWrite) writes.push_back(cursor);
+        if ((opcode == spv::OpLoad || opcode == spv::OpAccessChain) && count >= 4u) definitions[words[cursor + 2u]] = cursor;
+    }
+    const auto operandOf = [&](std::uint32_t id, std::uint32_t opcode, std::size_t operand) {
+        const auto found = definitions.find(id);
+        require(found != definitions.end() && (words[found->second] & 0xffffu) == opcode, "registration slot words: a storage image write does not take its descriptor through the image array");
+        return words[found->second + operand];
+    };
+    std::set<std::uint32_t> slotVariables;
+    for (const auto write : writes) {
+        const auto pointer = operandOf(words[write + 1u], spv::OpLoad, 3u);
+        const auto index = operandOf(pointer, spv::OpAccessChain, 4u);
+        slotVariables.insert(operandOf(index, spv::OpLoad, 3u));
+    }
+    require(writes.size() >= Mips && slotVariables.size() >= Mips, "registration slot words: the storage image writes of a dynamic mip chain do not each read their own heap slot word");
+}
+
 int main(int argc, char** argv) {
     try {
 #ifdef _WIN32
@@ -13185,6 +13301,7 @@ int main(int argc, char** argv) {
         verifyGcnDimensionQueries();
         verifySrgbDepthCompareModes();
         verifyRuntimeImageSwitchDeduplication();
+        verifyRegistrationStorageMipSlots();
         verifyQuadMaskNeighbourReads();
         verifyPixelQuadPermReads();
         verifyCoherentGds();

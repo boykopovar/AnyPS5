@@ -2759,7 +2759,7 @@ void HeapBindingWords(const RecompileRequest& request, const CompiledVariant& va
 }
 
 std::shared_ptr<const RecompileResult> PreparedShaderInvocation::MaterializeHeap(const ResourceCapture& capture, HeapStageWords& words, HeapTemplateMiss* miss) const {
-    if (capture.source != handle->source || capture.plan != handle->source->plan) throw std::runtime_error("ShaderRecompiler: resource capture belongs to another prepared shader");
+    if (capture.source != handle->source || capture.plan != Plan()) throw std::runtime_error("ShaderRecompiler: resource capture belongs to another prepared shader");
     const auto& variant = handle->artifact;
     if (!variant->artifact.gpuResolvedImages || !variant->artifact.registrationModule || variant->bindings.layout.UsesPushData()) return nullptr;
     const auto& snapshot = capture.snapshot;
@@ -2850,9 +2850,10 @@ std::shared_ptr<const RecompileResult> PreparedShaderInvocation::Materialize(con
     return Sealed(std::move(result));
 }
 
-const std::shared_ptr<const IrResourcePlan>& PreparedShaderInvocation::Plan() const {
-    static const std::shared_ptr<const IrResourcePlan> none;
-    return handle != nullptr && handle->source != nullptr ? handle->source->plan : none;
+std::shared_ptr<const IrResourcePlan> PreparedShaderInvocation::Plan() const {
+    if (handle == nullptr || handle->source == nullptr) return nullptr;
+    std::lock_guard lock(handle->source->mutex);
+    return handle->source->plan;
 }
 
 std::shared_ptr<const IrResourcePlan> PreparedShaderInvocation::LoadPlan() const {
@@ -2861,8 +2862,8 @@ std::shared_ptr<const IrResourcePlan> PreparedShaderInvocation::LoadPlan() const
 }
 
 std::shared_ptr<const IrResourcePlan> PreparedShaderInvocation::PlanOrLoad() const {
-    const auto& plan = Plan();
-    return plan != nullptr ? plan : LoadPlan();
+    auto plan = Plan();
+    return plan != nullptr ? std::move(plan) : LoadPlan();
 }
 
 std::uint64_t PreparedShaderInvocation::VariantId() const {

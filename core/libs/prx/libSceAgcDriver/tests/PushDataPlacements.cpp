@@ -1,4 +1,5 @@
 #include <algorithm>
+#include "prx/libSceAgcDriver/Graphics/include/PipelineSpecialization.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Shaders.hpp"
 #include "PushDataLayout.hpp"
 #include "RuntimeAbi.hpp"
@@ -55,16 +56,18 @@ std::vector<StagePushPlacement> place(const std::vector<Stage>& stages) {
 
 void disjoint(const std::vector<Stage>& stages, const std::vector<StagePushPlacement>& placements, std::uint64_t occupied, const char* what) {
     std::uint64_t used = occupied;
-    std::uint64_t globals = 0;
+    constexpr std::uint32_t NotGlobal = ~0u;
+    std::array<std::uint32_t, 64> globalOwner;
+    globalOwner.fill(NotGlobal);
     for (std::size_t index = 0; index < placements.size(); ++index) {
-        const auto claim = [&](std::uint32_t first, std::uint32_t width, bool shared) {
+        const auto claim = [&](std::uint32_t first, std::uint32_t width, std::uint32_t global) {
             for (auto dword = first; dword < first + width; ++dword) {
                 require(dword < Abi::PushDataDwords, std::string("a push entry leaves the push data: ") + what);
                 const auto bit = 1ull << dword;
-                if (shared && (globals & bit) != 0u) continue;
+                if (global != NotGlobal && globalOwner[dword] == global) continue;
                 require((used & bit) == 0u, std::string("two push entries share a dword: ") + what);
                 used |= bit;
-                if (shared) globals |= bit;
+                if (global != NotGlobal) globalOwner[dword] = global;
             }
         };
         for (std::uint32_t item = 0; item < Abi::RootItemCount; ++item) {
@@ -75,7 +78,7 @@ void disjoint(const std::vector<Stage>& stages, const std::vector<StagePushPlace
             if (position == Abi::NoPushPosition) continue;
             const auto kind = static_cast<Item>(item);
             if (Abi::RootAddressItem(kind)) require(position % 2u == 0u, std::string("a root address is not 8-byte aligned: ") + what);
-            claim(position, Abi::RootAddressItem(kind) ? 2u : 1u, static_cast<std::uint32_t>(kind) < static_cast<std::uint32_t>(Abi::RootItem::ShaderData));
+            claim(position, Abi::RootAddressItem(kind) ? 2u : 1u, static_cast<std::uint32_t>(kind) < static_cast<std::uint32_t>(Abi::RootItem::ShaderData) ? item : NotGlobal);
         }
         const auto& placement = placements[index];
         require(placement.pushedBuffers == stages[index].buffers, std::string("a stage's placement does not count its buffers: ") + what);
@@ -86,14 +89,14 @@ void disjoint(const std::vector<Stage>& stages, const std::vector<StagePushPlace
             overflowed = overflowed || (buffer < stages[index].buffers && root == Abi::NoPushPosition);
             if (root == Abi::NoPushPosition) continue;
             require(root % 2u == 0u, std::string("a pushed buffer address is not 8-byte aligned: ") + what);
-            claim(root, Abi::PushedBufferWords, false);
+            claim(root, Abi::PushedBufferWords, NotGlobal);
         }
         require(overflowed == (placement.bufferOverflow != Abi::NoPushPosition), std::string("a stage's overflow address and its unplaced buffers disagree: ") + what);
         if (placement.bufferOverflow != Abi::NoPushPosition) {
             require(placement.bufferOverflow % 2u == 0u, std::string("a buffer overflow address is not 8-byte aligned: ") + what);
-            claim(placement.bufferOverflow, 2u, false);
+            claim(placement.bufferOverflow, 2u, NotGlobal);
         }
-        claim(placements[index].pushed.base, placements[index].pushed.count, false);
+        claim(placements[index].pushed.base, placements[index].pushed.count, NotGlobal);
         require(placements[index].pushed.count <= stages[index].pushed, std::string("a stage pushes more than it asked for: ") + what);
     }
 }
@@ -249,6 +252,27 @@ int main() {
                 disjoint(compute, computed, ShaderRecompiler::StagePushFeatures(ShaderStage::Compute, 0u), ("a compute stage with " + std::to_string(buffers) + " buffers").c_str());
                 require(!defaultCap || computed[0] == ShaderRecompiler::StandalonePushPlacement(ShaderStage::Compute, compute[0].items, compute[0].pushed, buffers), "the compiler's standalone compute placement with overflowing buffers is the driver's");
             }
+        }
+        {
+            namespace Ids = ShaderRecompiler::PipelineSpecialization;
+            ShaderRecompiler::RecompileResult module;
+            module.spirv = {0x07230203u, 0x00010300u, 0u, 1u, 0u};
+            const auto rootItem = [](Item item) { return Ids::RootItemPositionBase + static_cast<std::uint32_t>(item); };
+            module.specialization = {{rootItem(Item::UserData), Abi::NoPushPosition}, {rootItem(Item::ShaderData), 0u}};
+            StagePushPlacement placement;
+            placement.items.fill(Abi::NoPushPosition);
+            placement.items[static_cast<std::uint32_t>(Item::ShaderData)] = 4u;
+            AgcDriver::Graphics::PipelineSpecialization optionalUser(module);
+            optionalUser.PlacePushData(placement);
+            placement.items[static_cast<std::uint32_t>(Item::ShaderData)] = Abi::NoPushPosition;
+            bool refused = false;
+            try {
+                AgcDriver::Graphics::PipelineSpecialization required(module);
+                required.PlacePushData(placement);
+            } catch (const std::runtime_error&) {
+                refused = true;
+            }
+            require(refused, "a stage reading a root item its pipeline's push layout does not hold was accepted");
         }
         std::puts("push data placements passed");
         return 0;
