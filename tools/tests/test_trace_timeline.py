@@ -215,6 +215,12 @@ class ArgumentValueTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(argparse.ArgumentTypeError):
                 trace_timeline.nonnegative_number(value)
 
+    def test_positive_integer_accepts_one_and_up(self):
+        self.assertEqual(trace_timeline.positive_integer('3'), 3)
+        for value in ('0', '-2', 'x', '1.5'):
+            with self.subTest(value=value), self.assertRaises(argparse.ArgumentTypeError):
+                trace_timeline.positive_integer(value)
+
 
 if __name__ == "__main__":
     unittest.main()
