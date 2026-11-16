@@ -5798,6 +5798,24 @@ std::size_t StorageTexture::StoreSmallPending(const char* reason) {
     return stored;
 }
 
+#if defined(__APPLE__)
+bool StorageTexture::trapReadsAtLabel(const StorageTexture* texture) {
+    auto& pending = Pending();
+    const auto page = TrapPage();
+    const auto first = texture->descriptor.baseAddress & ~(page - 1);
+    const auto span = static_cast<std::size_t>(((texture->descriptor.baseAddress + texture->guestBytes + page - 1) & ~(page - 1)) - first);
+    const auto shares = [&](const StorageTexture* other) { return other != texture && other->overlaps(first, span); };
+    const auto sharesStored = [&](const StorageTexture* other) { return shares(other) && (other->descriptor.tileMode == TextureTileMode::kLinear || other->guestBytes <= SmallStoreBytes); };
+    if (std::any_of(pending.textures.begin(), pending.textures.end(), sharesStored) || std::any_of(pending.flushing.begin(), pending.flushing.end(), shares)) return false;
+    const auto address = static_cast<std::uintptr_t>(texture->descriptor.baseAddress);
+    const auto bytes = static_cast<std::size_t>(texture->guestBytes);
+    if (!texture->readTrapped.load(std::memory_order_acquire) && DirectMemoryAliased_nid_postfix(address, bytes)) return false;
+    if (!GuestWriteWatch::GuestWriteWatchTrapReads_nid_postfix(address, bytes)) return false;
+    texture->readTrapped.store(true, std::memory_order_release);
+    return true;
+}
+#endif
+
 void StorageTexture::StoreReadbackBeforeLabel(const char* reason, VkDevice device) {
     static const bool disabled = std::getenv("APS5_NO_LABEL_READBACK_STORE") != nullptr;
     if (disabled) return;
@@ -5815,22 +5833,11 @@ void StorageTexture::StoreReadbackBeforeLabel(const char* reason, VkDevice devic
 #if defined(__APPLE__)
         const bool trap = LabelTrapsEnabled();
         if (trap) labelTrapsSet.store(true, std::memory_order_relaxed);
-        const auto page = TrapPage();
-        const auto sharesPage = [&](const StorageTexture* texture) {
-            const auto first = texture->descriptor.baseAddress & ~(page - 1);
-            const auto bytes = static_cast<std::size_t>(((texture->descriptor.baseAddress + texture->guestBytes + page - 1) & ~(page - 1)) - first);
-            const auto shares = [&](const StorageTexture* other) { return other != texture && other->overlaps(first, bytes); };
-            const auto sharesStored = [&](const StorageTexture* other) { return shares(other) && (other->descriptor.tileMode == TextureTileMode::kLinear || other->guestBytes <= SmallStoreBytes); };
-            return std::any_of(pending.textures.begin(), pending.textures.end(), sharesStored) || std::any_of(pending.flushing.begin(), pending.flushing.end(), shares);
-        };
 #endif
         for (const auto* texture : pending.textures) {
             if (texture->descriptor.tileMode != TextureTileMode::kLinear && texture->guestBytes > SmallStoreBytes) continue;
 #if defined(__APPLE__)
-            if (trap && !sharesPage(texture) && (texture->readTrapped.load(std::memory_order_acquire) || !DirectMemoryAliased_nid_postfix(static_cast<std::uintptr_t>(texture->descriptor.baseAddress), static_cast<std::size_t>(texture->guestBytes))) && GuestWriteWatch::GuestWriteWatchTrapReads_nid_postfix(static_cast<std::uintptr_t>(texture->descriptor.baseAddress), static_cast<std::size_t>(texture->guestBytes))) {
-                texture->readTrapped.store(true, std::memory_order_release);
-                continue;
-            }
+            if (trap && trapReadsAtLabel(texture)) continue;
 #endif
             ranges.emplace_back(texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes));
         }
@@ -5854,8 +5861,17 @@ std::size_t StorageTexture::StoreDrawnLinear(const char* reason) {
     std::vector<std::pair<std::uint64_t, std::size_t>> ranges;
     {
         std::lock_guard lock(pending.mutex);
+#if defined(__APPLE__)
+        const bool trap = (std::strcmp(reason, "label") == 0 || std::strcmp(reason, "interrupt") == 0) && LabelTrapsEnabled();
+        if (trap) labelTrapsSet.store(true, std::memory_order_relaxed);
+#endif
         for (const auto& entry : pending.drawn) {
-            if (entry.texture->dirty) ranges.emplace_back(entry.texture->descriptor.baseAddress, static_cast<std::size_t>(entry.texture->guestBytes));
+            const auto* texture = entry.texture;
+            if (!texture->dirty) continue;
+#if defined(__APPLE__)
+            if (trap && texture->descriptor.tileMode == TextureTileMode::kLinear && HostImportCovers(texture->context, texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes)) && trapReadsAtLabel(texture)) continue;
+#endif
+            ranges.emplace_back(texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes));
         }
     }
     std::size_t stored = 0;
