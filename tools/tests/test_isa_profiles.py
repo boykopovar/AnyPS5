@@ -20,6 +20,14 @@ class IsaProfilesTests(unittest.TestCase):
         form = isa_profiles.FORMS[0]
         isa_profiles.validate_forms([("V_ADD_F32", encoding, form, 3)])
 
+    def test_validate_forms_rejects_malformed_rows(self):
+        encoding = next(iter(sorted(isa_profiles.ENCODINGS)))
+        form = isa_profiles.FORMS[0]
+        for row in (("v_add", encoding, form, 3), ("V_ADD", encoding, "not_a_form", 3),
+                    ("V_ADD", encoding, form, -1), ("V_ADD", encoding, form, "3")):
+            with self.assertRaises(ValueError, msg=repr(row)):
+                isa_profiles.validate_forms([row])
+
 
 if __name__ == "__main__":
     unittest.main()
