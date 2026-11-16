@@ -271,5 +271,15 @@ class EnvReferenceDiffTests(unittest.TestCase):
                                                               "APS5_DOCUMENTED is still read by the code but this pull request removes its row")])
 
 
+class ScopeTests(unittest.TestCase):
+    def test_brace_scopes_names_nested_namespaces(self):
+        scopes = check_conventions.brace_scopes("namespace A { namespace B { int x = 1; } }\n")
+        keys = {key for _, _, key in scopes}
+        self.assertIn(("namespace", "::A"), keys)
+        self.assertIn(("namespace", "::A::B"), keys)
+        for start, end, _ in scopes:
+            self.assertLess(start, end)
+
+
 if __name__ == "__main__":
     unittest.main()
