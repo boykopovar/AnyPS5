@@ -5297,11 +5297,15 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
     if (flush.empty()) {
         if (drawnHold.owns_lock()) drawnHold.unlock();
         const bool stored = WaitForFlushing(address, bytes, except);
+        if (stored) {
+            static_cast<void>(FlushPending(address, bytes, except, reason, scope, published, true, device));
+            return true;
+        }
         // Units shadowed over the range (another image's results retiled into the import's unit
         // shadow, or an earlier flush's) still reach the import as the scope asks.
-        const bool units = PublishShadowsOnly(address, bytes, scope, reason, waited || stored);
+        const bool units = PublishShadowsOnly(address, bytes, scope, reason, waited);
         if (published != nullptr) *published = units;
-        return stored;
+        return false;
     }
     struct Unregister {
         const std::vector<std::shared_ptr<StorageTexture>>& flush;

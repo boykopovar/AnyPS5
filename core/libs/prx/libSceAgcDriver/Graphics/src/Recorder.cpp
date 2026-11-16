@@ -1120,14 +1120,20 @@ void FlushForAccess(std::uint64_t address, std::size_t bytes) {
     // only the unit shadows over the range are published; with no image over the range that
     // publish is all FlushPending would do (one registry scan, not two).
     bool stored = false;
-    std::size_t images = 0, evicted = 0;
-    const bool kept = !HookFlushCpuBlocks() && StorageTexture::AccessKeptByCpu(address, bytes, &images, &evicted);
-    if (kept || (images == 0 && !HookFlushCpuBlocks())) {
-        stored = StorageTexture::WaitForFlushing(address, bytes);
-        published = StorageTexture::PublishShadowsOnly(address, bytes, scope, "memory access", waited);
-        if (kept && HookSyncProfiled()) CountRecordedStoreSkip(RecordedStoreKey(), evicted);
-    } else {
-        stored = StorageTexture::FlushPending(address, bytes, nullptr, "memory access", scope, &published, waited);
+    for (;;) {
+        std::size_t images = 0, evicted = 0;
+        const bool kept = !HookFlushCpuBlocks() && StorageTexture::AccessKeptByCpu(address, bytes, &images, &evicted);
+        if (kept || (images == 0 && !HookFlushCpuBlocks())) {
+            if (StorageTexture::WaitForFlushing(address, bytes)) {
+                stored = true;
+                continue;
+            }
+            published = StorageTexture::PublishShadowsOnly(address, bytes, scope, "memory access", waited || stored);
+            if (kept && HookSyncProfiled()) CountRecordedStoreSkip(RecordedStoreKey(), evicted);
+        } else {
+            stored = StorageTexture::FlushPending(address, bytes, nullptr, "memory access", scope, &published, waited || stored) || stored;
+        }
+        break;
     }
     const bool publishInProgress = site == GuestMemory::ReadSite::HostWrite && AnyPublishInProgress();
     if (stored || published || publishInProgress || (completionDepth() == 0 && SnapshotOverlaps(address, bytes))) {
