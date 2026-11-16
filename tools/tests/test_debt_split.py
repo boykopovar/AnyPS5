@@ -574,5 +574,9 @@ class DebtSplitTests(unittest.TestCase):
         self.assertEqual(debt_split.key("entry", entry), debt_split.debt_name(entry))
 
 
+    def test_debt_file_is_under_debt_dir(self):
+        self.assertEqual(debt_split.debt_file("libc"), "docs/dev/debt/libc.md")
+
+
 if __name__ == "__main__":
     unittest.main()
