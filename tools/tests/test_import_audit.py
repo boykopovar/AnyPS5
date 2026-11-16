@@ -3672,5 +3672,15 @@ class StrictProviderTests(unittest.TestCase):
         self.assertEqual(err.errors, "backslashreplace")
 
 
+class LocateAndNamesTests(unittest.TestCase):
+    def test_locate_missing_finds_only_the_names_present_in_a_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'libA.prx').write_bytes(b'x')
+            found = import_audit.locate_missing(['libA.prx', 'libB.prx'], [root])
+            self.assertIn('libA.prx', found)
+            self.assertNotIn('libB.prx', found)
+
+
 if __name__ == "__main__":
     unittest.main()
