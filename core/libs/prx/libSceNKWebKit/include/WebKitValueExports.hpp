@@ -323,6 +323,7 @@ const void* APS5_VABI WKPopupMenuItemCopyText(const void* itemRef);
 bool APS5_VABI WKPopupMenuItemIsEnabled(const void* itemRef);
 bool APS5_VABI WKPopupMenuItemIsItem(const void* itemRef);
 bool APS5_VABI WKPopupMenuItemIsSeparator(const void* itemRef);
+std::uint32_t APS5_VABI WKPreferencesGetTypeID();
 const void* APS5_VABI WKProtectionSpaceCopyHost(const void* protectionSpaceRef);
 const void* APS5_VABI WKProtectionSpaceCopyRealm(const void* protectionSpaceRef);
 std::uint32_t APS5_VABI WKProtectionSpaceGetAuthenticationScheme(const void* protectionSpaceRef);
