@@ -165,5 +165,15 @@ class DependencyProbeFailureTests(unittest.TestCase):
         self.assertEqual(result["reason"], "fatal: fixture read failed")
         self.assertEqual(measure.call_count, 1)
 
+
+class DependencyBlockTests(unittest.TestCase):
+    def test_dependencies_blocked_when_a_dependency_is_excluded(self):
+        self.assertTrue(progress_prs.dependencies_blocked({"depends": {1, 2}}, {2: "dependency_excluded"}))
+
+    def test_dependencies_not_blocked_by_unrelated_or_no_exclusions(self):
+        self.assertFalse(progress_prs.dependencies_blocked({"depends": {1}}, {3: "dependency_excluded"}))
+        self.assertFalse(progress_prs.dependencies_blocked({"depends": set()}, {3: "dependency_excluded"}))
+
+
 if __name__ == "__main__":
     unittest.main()
