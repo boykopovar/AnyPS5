@@ -2633,17 +2633,18 @@ int APS5_VABI sceNetEpollControl(int eid, int op, int id, const NetEpollEvent* e
     const bool resolver = g_resolvers.count(id) != 0;
     if (!kernel && !resolver && g_socks.count(id) == 0) return fail(NET_EBADF);
     auto& registrations = g_epoll_socks[eid];
-    if (op == NET_EPOLL_CTL_ADD) {
-        if (registrations.count(id) != 0) return fail(NET_EADDRINUSE);
-        registrations.emplace(id, std::make_shared<const NetEpollEvent>(*event));
-        if (resolver) g_epoll_resolvers_reported[eid][id] = 0;
-    } else if (op == NET_EPOLL_CTL_DEL) {
+    if (op == NET_EPOLL_CTL_DEL) {
         if (registrations.erase(id) == 0) return fail(NET_ENOENT);
         g_epoll_resolvers_reported[eid].erase(id);
     } else {
-        auto registration = registrations.find(id);
-        if (registration == registrations.end()) return fail(NET_ENOENT);
-        registration->second = std::make_shared<const NetEpollEvent>(*event);
+        const bool adding = op == NET_EPOLL_CTL_ADD;
+        const bool exists = registrations.count(id) != 0;
+        if (adding && exists) return fail(NET_EADDRINUSE);
+        if (!adding && !exists) return fail(NET_ENOENT);
+        NetEpollEvent snapshot{};
+        if (!GuestCopyIn_nid_no_patch(&snapshot, event, sizeof(snapshot))) return fail(NET_EFAULT);
+        registrations.insert_or_assign(id, std::make_shared<const NetEpollEvent>(snapshot));
+        if (adding && resolver) g_epoll_resolvers_reported[eid][id] = 0;
     }
     g_cv.NotifyAll();
     return 0;
@@ -3633,10 +3634,11 @@ int APS5_VABI sceNetSysctl(const int* name, std::uint32_t nameLength, void* oldV
 
 int APS5_VABI sceNetThreadCreate(Pthread* thread, const NetThreadParameter* parameter, const char* name) {
     if (!parameter) return fail(NET_EINVAL);
+    if (thread && !GuestWritable_nid_no_patch(thread, sizeof(*thread))) return fail(NET_EFAULT);
     Pthread created = nullptr;
     const int result = scePthreadCreate(&created, nullptr, RunNetThread, const_cast<NetThreadParameter*>(parameter), name != nullptr ? name : "");
     if (result != 0) return result;
-    if (thread) *thread = created;
+    if (thread && !GuestCopyOut_nid_no_patch(thread, &created, sizeof(created))) return fail(NET_EFAULT);
     return 0;
 }
 
