@@ -113,14 +113,13 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 53 still-unimplemented callable exports: 50 named and 3 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 51 still-unimplemented callable exports: 48 named and 3 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
 
 | Name | NID |
 | --- | --- |
 | `EC_POINT_get_affine_coordinates_GFp` | `+Tu0gXSas9s` |
 | `X509_NAME_add_entry_by_txt` | `0IxWzLyU8PI` |
 | `tls_handshake` | `27Fuliv3Om8` |
-| `X509V3_EXT_d2i` | `2l+JidqxyZQ` |
 | `X509_set_pubkey` | `409ieWBMPUk` |
 | `tls_accept_socket` | `4Q3bvOy4LY8` |
 | `unknown` | `4pEl-5DmrrM` |
@@ -187,3 +186,5 @@
 - [`d2i_PUBKEY`, `d2i_PrivateKey_bio`, `d2i_PKCS8_PRIV_KEY_INFO`, `d2i_PKCS8_PRIV_KEY_INFO_bio`, `i2d_PKCS8_PRIV_KEY_INFO`, `PKCS8_PRIV_KEY_INFO_free`, `EVP_PKCS82PKEY` and `EVP_PKEY2PKCS8`](../../../core/libs/prx/libSceLibreSsl3/src/KeyDer.cpp) - console ABI and error-queue parity are unverified. Follows LibreSSL 4.0.0 `x_pubkey.c`, `p8_pkey.c`, `evp_pkey.c` and `a_pkey.c` for RSA and EC P-256/P-384 only (other curves/types fail). `PKCS8_PRIV_KEY_INFO` uses the 32-byte LP64 layout, storing optional `[0]` attributes as raw `Asn1String*` bytes rather than `STACK_OF(X509_ATTRIBUTE)`. `*_bio` reads one definite-length TLV object without over-reading; indefinite-length BER is rejected. RSA keys in `EVP_PKEY` use `RSA_new` and `RsaAsn1Method`. Closes when: compared with the console.
 - [`d2i_RSA_PUBKEY` and `d2i_RSAPublicKey_bio`](../../../core/libs/prx/libSceLibreSsl3/Export.cpp) - remain throwing stubs because `RSA_free` in `ParentExports.cpp` still forwards to `libSceLibreSsl`. Closes when: RSA_free distinguishes native LibreSSL3 RSA objects.
 - [`PEM_read_RSAPrivateKey`](../../../core/libs/prx/libSceLibreSsl3/Export.cpp), [`PEM_write_bio_PrivateKey` and `PEM_read_bio_PUBKEY`](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) - remain throwing stubs waiting for the parent library PEM layer. Closes when: the parent PEM layer and key wrappers are implemented.
+
+- [`X509V3_EXT_d2i`](../../../core/libs/prx/libSceLibreSsl3/src/X509V3ExtD2i.cpp) (libSceLibreSsl3) - console ABI and allocator equivalence are unverified. The `void* (X509_EXTENSION*)` prototype and NID dispatch follow LibreSSL 4.0.0 `x509_lib.c`, `v3_lib.c` and `ext_dat.h`. BIT STRING, OCTET STRING, INTEGER, ENUMERATED, IA5STRING, GENERALIZEDTIME and OBJECT methods decode into the existing 24-byte `ASN1_STRING`/40-byte `ASN1_OBJECT` layouts; the OCSP nonce decoder copies its input unchanged. Standard methods 84-87, 89, 90, 103, 126, 143, 177, 290, 291, 367-369, 371, 398, 401, 663, 666, 747, 770, 771 and 857 throw `NotImplemented_nid_no_patch`; their decoded structures are not modelled and dynamic `X509V3_EXT_add` methods do not exist. Malformed values return null with ASN1 reason codes; queue parity is unverified. Null extensions or values and positive-length null data throw where upstream dereferences them; negative lengths return null. Closes when: compared with the console.
