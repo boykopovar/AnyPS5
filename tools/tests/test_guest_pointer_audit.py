@@ -268,6 +268,15 @@ class NamesParameterTests(unittest.TestCase):
         self.assertTrue(guest_pointer_audit.names_parameter("  buf ", "buf"))
         self.assertFalse(guest_pointer_audit.names_parameter("bufx", "buf"))
 
+class PointerParameterTests(unittest.TestCase):
+    def test_pointer_parameters_lists_pointer_names_only(self):
+        self.assertEqual(guest_pointer_audit.pointer_parameters("int count, const char* text, uint32_t* out, int& ref"),
+                         ["text", "out"])
+
+    def test_pointer_parameters_ignores_defaults_and_function_pointers(self):
+        self.assertEqual(guest_pointer_audit.pointer_parameters("int* fallback = nullptr, void (*callback)(int), int value"),
+                         ["fallback"])
+
 
 if __name__ == "__main__":
     unittest.main()
