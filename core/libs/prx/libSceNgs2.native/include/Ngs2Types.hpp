@@ -60,6 +60,9 @@ static constexpr int SCE_NGS2_ERROR_INVALID_STATE_SIZE = static_cast<int>(0x804A
 static constexpr int SCE_NGS2_ERROR_INVALID_BUFFER_INDEX = static_cast<int>(0x804A8306);
 static constexpr int SCE_NGS2_ERROR_INVALID_MODULE_LOCATION = static_cast<int>(0x804A8308);
 static constexpr int SCE_NGS2_ERROR_INVALID_NUM_BUFFERS = static_cast<int>(0x804A830B);
+static constexpr int SCE_NGS2_ERROR_INVALID_MAX_INPUTS = static_cast<int>(0x804A830D);
+static constexpr int SCE_NGS2_ERROR_INVALID_MAX_PORTS = static_cast<int>(0x804A830E);
+static constexpr int SCE_NGS2_ERROR_INVALID_MAX_MATRICES = static_cast<int>(0x804A830F);
 
 static constexpr std::uint32_t SCE_NGS2_RACK_ID_SAMPLER = 0x1000;
 static constexpr std::uint32_t SCE_NGS2_RACK_ID_SUBMIXER = 0x2000;
@@ -140,6 +143,7 @@ static constexpr std::uint32_t SCE_NGS2_CUSTOM_MAX_PORTS = 16;
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_MAX_BUFFERS = 4;
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_SUBMIXER_MAX_CHANNELS = 37;
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_SUBMIXER_MAX_INPUTS = 2;
+static constexpr std::uint32_t SCE_NGS2_CUSTOM_SUBMIXER_MIN_STATE_SIZE = 16;
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_REVERB_OPTION_SIZE = 12;
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_PITCH_SHIFT_OPTION_SIZE = 8;
 static constexpr std::uint32_t SCE_NGS2_CUSTOM_PITCH_SHIFT_STATE_SIZE = 8;
