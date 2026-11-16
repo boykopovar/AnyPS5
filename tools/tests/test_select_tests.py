@@ -920,6 +920,12 @@ class PathHelperTests(unittest.TestCase):
         absolute = os.path.abspath(os.path.join(os.sep, "tmp", "x"))
         self.assertEqual(list(select_tests.paths(["-DX=" + absolute, "rel/x", absolute])), [absolute, absolute])
 
+    def test_relative_returns_a_slash_separated_path_under_the_root(self):
+        root = os.path.abspath(os.path.join(os.sep, "r"))
+        path = os.path.join(root, "a", "b.cpp")
+        self.assertEqual(select_tests.relative(path, root), "a/b.cpp")
+        self.assertEqual(select_tests.relative(path, root + os.sep), "a/b.cpp")
+
 
 if __name__ == "__main__":
     unittest.main(defaultTest=os.environ.get("ANYPS5_SELECT_TEST_CLASS"))
