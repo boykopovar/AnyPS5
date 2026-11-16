@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <stdexcept>
 #include <string>
 
 namespace {
@@ -111,7 +112,14 @@ int main() {
     _seekdir_nid_postfix(unlockedDir, bookmark);
     auto* entryAfterSeek = _readdir_unlocked_nid_postfix(unlockedDir, 1);
     Require(entryAfterSeek != nullptr && bookmarkedName == entryAfterSeek->name);
+    _reclaim_telldir_nid_postfix(unlockedDir);
+    _seekdir_nid_postfix(unlockedDir, bookmark);
+    auto* entryAfterReclaim = _readdir_unlocked_nid_postfix(unlockedDir, 1);
+    Require(entryAfterReclaim != nullptr && bookmarkedName == entryAfterReclaim->name);
     Require(closedir_nid_postfix(unlockedDir) == 0);
+    bool reclaimNullThrew = false;
+    try { _reclaim_telldir_nid_postfix(nullptr); } catch (const std::invalid_argument&) { reclaimNullThrew = true; }
+    Require(reclaimNullThrew);
 
     s_fakeOffset = 0;
     void* fakeDir = OpenDescriptorDirectory_nid_no_patch("/virtual", 100, FakeClose, 0, FakeRead, FakeSeek);
