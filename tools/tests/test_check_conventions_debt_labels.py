@@ -65,6 +65,11 @@ class ListedTests(unittest.TestCase):
         self.assertTrue(check_conventions.listed(debt, "sceFoo", "core/libs/prx/libA/x.cpp"))
         self.assertTrue(check_conventions.listed(debt, "sceFoo", "core/libs/prx/libA/y.cpp"))
 
+    def test_listed_refuses_another_name_or_another_library(self):
+        debt = [("sceFoo entry", [(0, "core/libs/prx/libA/x.cpp")])]
+        self.assertFalse(check_conventions.listed(debt, "sceBar", "core/libs/prx/libA/y.cpp"))
+        self.assertFalse(check_conventions.listed(debt, "sceFoo", "core/libs/prx/libB/y.cpp"))
+
 
 if __name__ == "__main__":
     unittest.main()
