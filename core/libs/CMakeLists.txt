@@ -1050,6 +1050,17 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
     endif()
 
+    add_test_executable(guest_pthread_suspend_all_tests tests/GuestPthreadSuspendAll.cpp)
+    target_include_directories(guest_pthread_suspend_all_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_pthread_suspend_all_tests PRIVATE libkernel_sys libkernel libc)
+    configure_windows_unwind(guest_pthread_suspend_all_tests)
+    add_test(NAME guest_pthread_suspend_all COMMAND guest_pthread_suspend_all_tests)
+    set_tests_properties(guest_pthread_suspend_all PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_pthread_suspend_all PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel_sys>")
+    endif()
+
     add_test_executable(guest_np_party_tests tests/GuestNpParty.cpp)
     target_include_directories(guest_np_party_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_np_party_tests PRIVATE libSceNpParty libc)

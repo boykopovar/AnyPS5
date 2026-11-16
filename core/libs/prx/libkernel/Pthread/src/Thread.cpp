@@ -711,6 +711,27 @@ static void WakeParkWord(std::atomic<std::uint32_t>& word) {
 #endif
 }
 
+static std::atomic<PthreadPrivate*> suspendAllHolder{nullptr};
+
+bool HoldsSuspendAllSlot(const PthreadPrivate* thread) {
+    return thread != nullptr && suspendAllHolder.load(std::memory_order_seq_cst) == thread;
+}
+
+static void AcquireSuspendAllSlot(PthreadPrivate* self) {
+    constexpr std::uint64_t PollNanos = 1000000;
+    for (PthreadPrivate* expected = nullptr; !suspendAllHolder.compare_exchange_strong(expected, self, std::memory_order_seq_cst); expected = nullptr) {
+        TimedWait::SleepNanos(PollNanos);
+        ParkCurrentGuestThread_nid_no_patch();
+    }
+}
+
+struct SuspendAllSlot {
+    explicit SuspendAllSlot(PthreadPrivate* self) { AcquireSuspendAllSlot(self); }
+    ~SuspendAllSlot() { suspendAllHolder.store(nullptr, std::memory_order_seq_cst); }
+    SuspendAllSlot(const SuspendAllSlot&) = delete;
+    SuspendAllSlot& operator=(const SuspendAllSlot&) = delete;
+};
+
 static void ReleaseParkedThread(PthreadPrivate* thread) {
     thread->suspended.store(false, std::memory_order_seq_cst);
     thread->parkEpoch.fetch_add(1, std::memory_order_acq_rel);
@@ -720,7 +741,7 @@ static void ReleaseParkedThread(PthreadPrivate* thread) {
 
 extern "C" void ParkCurrentGuestThread_nid_no_patch() {
     PthreadPrivate* self = CurrentGuestState().current;
-    if (self == nullptr) return;
+    if (self == nullptr || HoldsSuspendAllSlot(self)) return;
     for (;;) {
         const std::uint32_t epoch = self->parkEpoch.load(std::memory_order_acquire);
         if (!self->suspended.load(std::memory_order_acquire)) break;
@@ -740,7 +761,8 @@ extern "C" int ResumeGuestThread_nid_no_patch(PthreadPrivate* thread) {
 }
 
 extern "C" void ResumeAllGuestThreads_nid_no_patch() {
-    const auto* self = CurrentGuestState().current;
+    PthreadPrivate* self = scePthreadSelf();
+    const SuspendAllSlot slot(self);
     auto& registry = CpuClocks();
     std::lock_guard lock(registry.lock);
     for (const auto& [id, thread] : registry.threads) {
@@ -1062,26 +1084,26 @@ static void ReleaseThread(PthreadPrivate* thread) {
     delete thread;
 }
 
-extern "C" int SuspendGuestThread_nid_no_patch(PthreadPrivate* thread) {
-    constexpr int GuestEsrch = 3;
-    constexpr int GuestEdeadlk = 11;
-    constexpr std::uint64_t PollNanos = 1000000;
-    if (thread == CurrentGuestState().current) return GuestEdeadlk;
+struct SuspendMark {
     bool referenced = false;
     bool started = false;
-    {
-        const auto live = LockLiveGuestThread(thread);
-        if (!live.owns_lock()) return GuestEsrch;
-        thread->suspended.store(true, std::memory_order_seq_cst);
-        if (thread->parked.load(std::memory_order_acquire) != 0) return 0;
-        referenced = !thread->_adopted;
-        if (referenced) thread->references.fetch_add(1, std::memory_order_acq_rel);
-        started = thread->started.load(std::memory_order_seq_cst);
-    }
-    const std::unique_ptr<PthreadPrivate, decltype(&ReleaseThread)> reference(referenced ? thread : nullptr, &ReleaseThread);
-    if (started) {
+};
+
+static bool MarkGuestThreadSuspended(PthreadPrivate* thread, SuspendMark& mark) {
+    thread->suspended.store(true, std::memory_order_seq_cst);
+    if (thread->parked.load(std::memory_order_acquire) != 0) return false;
+    mark.referenced = !thread->_adopted;
+    if (mark.referenced) thread->references.fetch_add(1, std::memory_order_acq_rel);
+    mark.started = thread->started.load(std::memory_order_seq_cst);
+    return true;
+}
+
+static bool WaitGuestThreadParked(PthreadPrivate* thread, SuspendMark mark) {
+    constexpr std::uint64_t PollNanos = 1000000;
+    const std::unique_ptr<PthreadPrivate, decltype(&ReleaseThread)> reference(mark.referenced ? thread : nullptr, &ReleaseThread);
+    if (mark.started) {
         try {
-            if (!RequestGuestThreadPark(thread)) return 0;
+            if (!RequestGuestThreadPark(thread)) return false;
         } catch (...) {
             const auto live = LockLiveGuestThread(thread);
             if (live.owns_lock()) thread->suspended.store(false, std::memory_order_release);
@@ -1091,9 +1113,55 @@ extern "C" int SuspendGuestThread_nid_no_patch(PthreadPrivate* thread) {
     for (;;) {
         {
             const auto live = LockLiveGuestThread(thread);
-            if (!live.owns_lock() || thread->parked.load(std::memory_order_acquire) != 0 || !thread->suspended.load(std::memory_order_acquire)) return 0;
+            if (!live.owns_lock()) return false;
+            if (thread->parked.load(std::memory_order_acquire) != 0 || !thread->suspended.load(std::memory_order_acquire)) return true;
         }
         TimedWait::SleepNanos(PollNanos);
+        ParkCurrentGuestThread_nid_no_patch();
+    }
+}
+
+extern "C" int SuspendGuestThread_nid_no_patch(PthreadPrivate* thread) {
+    constexpr int GuestEsrch = 3;
+    constexpr int GuestEdeadlk = 11;
+    if (thread == CurrentGuestState().current) return GuestEdeadlk;
+    SuspendMark mark;
+    {
+        const auto live = LockLiveGuestThread(thread);
+        if (!live.owns_lock()) return GuestEsrch;
+        if (!MarkGuestThreadSuspended(thread, mark)) return 0;
+    }
+    static_cast<void>(WaitGuestThreadParked(thread, mark));
+    return 0;
+}
+
+extern "C" void SuspendAllGuestThreads_nid_no_patch() {
+    PthreadPrivate* self = scePthreadSelf();
+    const SuspendAllSlot slot(self);
+    auto& registry = CpuClocks();
+    {
+        std::lock_guard lock(registry.lock);
+        for (const auto& [id, thread] : registry.threads) {
+            if (thread != self && !thread->_finished.load(std::memory_order_acquire)) thread->suspended.store(true, std::memory_order_seq_cst);
+        }
+    }
+    std::vector<PthreadPrivate*> exited;
+    for (;;) {
+        PthreadPrivate* pending = nullptr;
+        SuspendMark mark;
+        {
+            std::lock_guard lock(registry.lock);
+            for (const auto& [id, thread] : registry.threads) {
+                if (thread == self || thread->_finished.load(std::memory_order_acquire)) continue;
+                if (std::find(exited.begin(), exited.end(), thread) != exited.end()) continue;
+                if (MarkGuestThreadSuspended(thread, mark)) {
+                    pending = thread;
+                    break;
+                }
+            }
+        }
+        if (pending == nullptr) return;
+        if (!WaitGuestThreadParked(pending, mark)) exited.push_back(pending);
     }
 }
 

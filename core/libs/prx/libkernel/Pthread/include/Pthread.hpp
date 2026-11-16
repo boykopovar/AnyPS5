@@ -214,7 +214,9 @@ extern "C" void DeliverPendingException_nid_no_patch(PthreadPrivate* thread);
 #endif
 extern "C" void ResumeAllGuestThreads_nid_no_patch();
 extern "C" int SuspendGuestThread_nid_no_patch(PthreadPrivate* thread);
+extern "C" void SuspendAllGuestThreads_nid_no_patch();
 extern "C" void ParkCurrentGuestThread_nid_no_patch();
+bool HoldsSuspendAllSlot(const PthreadPrivate* thread);
 bool RequestGuestThreadPark(PthreadPrivate* thread);
 void ReleaseGuestThreadPark(PthreadPrivate* thread);
 bool LiveGuestThreadExists(std::int64_t tid);

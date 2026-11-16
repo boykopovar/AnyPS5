@@ -1566,7 +1566,7 @@ bool RequestGuestThreadPark(PthreadPrivate* thread) {
         }
         DWORD64 image = 0;
         const auto running = FrozenCode(native, image);
-        if (running == CodeKind::Guest) {
+        if (running == CodeKind::Guest && !HoldsSuspendAllSlot(thread)) {
             thread->parked.store(1, std::memory_order_release);
             thread->osParked.store(true, std::memory_order_seq_cst);
             if (!thread->suspended.load(std::memory_order_seq_cst) && thread->osParked.exchange(false, std::memory_order_seq_cst)) {
@@ -1583,6 +1583,7 @@ bool RequestGuestThreadPark(PthreadPrivate* thread) {
         }
         if (++attempts % YieldsPerSleep == 0) TimedWait::SleepNanos(RetryNanos);
         else SwitchToThread();
+        ParkCurrentGuestThread_nid_no_patch();
     }
 #elif defined(__linux__)
     constexpr std::uint64_t RetryNanos = 1000000;
@@ -1600,6 +1601,7 @@ bool RequestGuestThreadPark(PthreadPrivate* thread) {
             if (result != 0) throw std::system_error(result, std::generic_category(), "pthread_suspend_np: cannot signal the target thread");
         }
         TimedWait::SleepNanos(attempts % YieldsPerSleep == 0 ? RetryNanos : ResendNanos);
+        ParkCurrentGuestThread_nid_no_patch();
     }
 #else
     static_cast<void>(thread);
