@@ -1209,6 +1209,10 @@ class SvgHelperTests(unittest.TestCase):
         self.assertIn('text-anchor="end"', markup)
         self.assertIn("a&lt;", markup)
 
+    def test_heading_shows_the_title_percentage_and_counts(self):
+        markup = progress.heading("Shaders", {"percent": 50, "done": 1, "total": 2}, 0, 0)
+        self.assertIn("Shaders: 50% (1/2)", markup)
+
 
 if __name__ == "__main__":
     unittest.main()
