@@ -1,0 +1,15 @@
+add_library(libSceShareInternal.native SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceShareInternal.native PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceShareInternal.native)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_share_internal_native_tests ${LIBS_INCLUDE_DIR}/tests/GuestShareInternalNative.cpp)
+    target_include_directories(guest_share_internal_native_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_share_internal_native_tests PRIVATE libSceShareInternal.native libc)
+    configure_windows_unwind(guest_share_internal_native_tests)
+    add_test(NAME guest_share_internal_native COMMAND guest_share_internal_native_tests)
+    if(WIN32)
+        set_tests_properties(guest_share_internal_native PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceShareInternal.native>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

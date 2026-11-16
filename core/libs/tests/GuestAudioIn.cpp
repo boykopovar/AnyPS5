@@ -1,5 +1,6 @@
 #include "prx/libSceAudioIn/include/AudioIn.hpp"
 #include "prx/libSceAudioIn/AudioInCapture.hpp"
+#include "prx/libSceAudioIn/AudioInDeviceSelection.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include <array>
@@ -28,6 +29,28 @@ static void SetEnvironment(const char* name, const std::string& value) {
 namespace {
 
 constexpr int user = 0x10000000;
+
+void TestCaptureDeviceSelection() {
+    using audioin::detail::CaptureDeviceMatchKind;
+    const std::array<const char*, 3> names{"Microphone A", nullptr, "Microphone B"};
+    auto getName = [&names](int index) { return names[static_cast<std::size_t>(index)]; };
+    Require(audioin::detail::selectCaptureDevice("", 3, getName).kind == CaptureDeviceMatchKind::Default);
+    Require(audioin::detail::selectCaptureDevice("default", 3, getName).kind == CaptureDeviceMatchKind::Default);
+    const auto found = audioin::detail::selectCaptureDevice("Microphone B", 3, getName);
+    Require(found.kind == CaptureDeviceMatchKind::Found && found.index == 2);
+    Require(audioin::detail::selectCaptureDevice("Missing", 3, getName).kind == CaptureDeviceMatchKind::Missing);
+    const auto ambiguousNames = [](int index) { return index < 2 ? "USB microphone" : "Other"; };
+    Require(audioin::detail::selectCaptureDevice("USB microphone", 3, ambiguousNames).kind == CaptureDeviceMatchKind::Ambiguous);
+    Require(audioin::detail::selectCaptureDevice("Microphone A", -1, getName).kind == CaptureDeviceMatchKind::Missing);
+}
+
+void TestConfiguredDeviceUnavailable() {
+    constexpr int invalidDevice = static_cast<int>(0x8026010f);
+    SetEnvironment("SDL_AUDIODRIVER", "none");
+    SetEnvironment("ANYPS5_AUDIO_IN_DEVICE", "AnyPS5 missing capture device 7fd5622b");
+    Require(sceAudioInOpen(user, 0, 0, 256, 48000, 2) == invalidDevice);
+    SetEnvironment("ANYPS5_AUDIO_IN_DEVICE", "");
+}
 
 void TestOpenEx() {
     constexpr int invalidSize = static_cast<int>(0x80260102);
@@ -228,7 +251,8 @@ void TestNoDevice() {
     constexpr int invalidState = static_cast<int>(0x80260109);
     constexpr int portFull = static_cast<int>(0x80260107);
     SetEnvironment("SDL_AUDIODRIVER", "none");
-
+    TestConfiguredDeviceUnavailable();
+    TestCaptureDeviceSelection();
     TestValidation();
     TestOpenEx();
     TestFirmwareSignatures();
@@ -283,5 +307,9 @@ int main(int argc, char** argv) {
     Require(argc == 2);
     Require(sceAudioInInit() == 0);
     if (std::strcmp(argv[1], "capture") == 0) TestCapture();
+    else if (std::strcmp(argv[1], "selection") == 0) {
+        TestConfiguredDeviceUnavailable();
+        TestCaptureDeviceSelection();
+    }
     else TestNoDevice();
 }

@@ -26,6 +26,10 @@ static void Check(TCounter count) {
     const auto maximum = std::numeric_limits<TValue>::max();
     Require(count(0) == 0);
     Require(count(maximum) == width);
+    const auto evenBits = static_cast<TValue>(0x5555555555555555ULL);
+    const auto oddBits = static_cast<TValue>(0xAAAAAAAAAAAAAAAAULL);
+    Require(count(evenBits) == width / 2);
+    Require(count(oddBits) == width / 2);
     if constexpr (width <= 16) {
         for (std::uint32_t value = 0; value <= maximum; ++value) {
             Require(count(static_cast<TValue>(value)) == Reference(value));

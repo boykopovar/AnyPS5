@@ -87,6 +87,10 @@ void TestBanner() {
     Require(sceNotificationShowPsButtonPersistentBanner(Pointer(config)) == 0, "show the persistent banner");
     Require(sceNotificationShowPsButtonPersistentBanner(nullptr) == 0,
             "show the persistent banner with a null configuration");
+    errno = 71;
+    Require(sceNotificationShowPsButtonPersistentBanner(reinterpret_cast<std::uint8_t*>(0x10)) == Notification::InvalidMessage,
+            "show the persistent banner with an unreadable configuration");
+    Require(errno == 71, "unreadable banner configuration changed host errno");
 
 #ifndef _WIN32
     BannerLog.clear();

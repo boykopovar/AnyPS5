@@ -41,7 +41,13 @@ int main() {
     errno = 0x5a;
     Require(sceCesUcsProfileInitGb18030_2022(nullptr) == nullptr && errno == 0x5a);
     Require(sceCesUcsProfileInitGb18030_2022(gbSheet.bytes) == gbSheet.bytes && errno == 0x5a);
+    Require(sceCesGbUcsProfileSet4ByteCharRange(nullptr, 1) == invalidProfile && errno == 0x5a);
     Require(sceCesGbUcsProfileSet4ByteCharRange(gbSheet.bytes, 1) == 0 && errno == 0x5a);
+    Require(sceCesGbUcsProfileSetSbcs(nullptr, sceCesRefersUcsProfileGbT1988()) == invalidProfile && errno == 0x5a);
+    Require(sceCesGbUcsProfileSetSbcs(gbSheet.bytes, nullptr) == invalidProfile && errno == 0x5a);
+    Require(sceCesGbUcsProfileSetSbcs(gbSheet.bytes, sceCesRefersUcsProfileCp1252()) == invalidProfile && errno == 0x5a);
+    Require(sceCesGbUcsProfileSetSbcs(isoSheet.bytes, sceCesRefersUcsProfileGbT1988()) == invalidProfile && errno == 0x5a);
+    Require(sceCesGbUcsProfileSetSbcs(gbSheet.bytes, sceCesRefersUcsProfileAscii()) == 0 && errno == 0x5a);
     Require(sceCesGbUcsProfileSetSbcs(gbSheet.bytes, sceCesRefersUcsProfileGbT1988()) == 0 && errno == 0x5a);
     return 0;
 }

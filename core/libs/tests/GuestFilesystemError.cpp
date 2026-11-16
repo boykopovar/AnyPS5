@@ -4,6 +4,8 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
+#include <new>
 #include <cstring>
 #include <stdexcept>
 #include <string>
@@ -31,6 +33,65 @@ static void Require(bool value, const char* what) {
     std::fprintf(stderr, "FAIL: %s\n", what);
     ++failures;
 }
+
+static std::array<void*, 128> heapBlocks{};
+static std::size_t allocationAttempt = 0;
+static std::size_t failAllocationAt = 0;
+
+static void** HeapSlot(void* pointer) {
+    for (auto& block : heapBlocks)
+        if (block == pointer) return &block;
+    return nullptr;
+}
+
+static void* TrackAllocation(void* pointer) {
+    if (!pointer) return nullptr;
+    auto* slot = HeapSlot(nullptr);
+    if (!slot || HeapSlot(pointer)) std::abort();
+    *slot = pointer;
+    return pointer;
+}
+
+static bool FailAllocation() {
+    return failAllocationAt != 0 && ++allocationAttempt == failAllocationAt;
+}
+
+static void* APS5_VABI TestAllocate(std::size_t bytes) {
+    if (FailAllocation()) return nullptr;
+    return TrackAllocation(std::malloc(bytes ? bytes : 1));
+}
+
+static void APS5_VABI TestFree(void* pointer) {
+    if (pointer) {
+        auto* slot = HeapSlot(pointer);
+        if (!slot) std::abort();
+        *slot = nullptr;
+    }
+    std::free(pointer);
+}
+
+static void* APS5_VABI TestCalloc(std::size_t count, std::size_t bytes) {
+    if (FailAllocation()) return nullptr;
+    return TrackAllocation(std::calloc(count ? count : 1, bytes ? bytes : 1));
+}
+
+static void* APS5_VABI TestReallocate(void* pointer, std::size_t bytes) {
+    if (!pointer) return TestAllocate(bytes);
+    if (bytes == 0) {
+        TestFree(pointer);
+        return nullptr;
+    }
+    auto* slot = HeapSlot(pointer);
+    if (!slot) std::abort();
+    if (FailAllocation()) return nullptr;
+    void* result = std::realloc(pointer, bytes);
+    if (result) *slot = result;
+    return result;
+}
+
+static void* APS5_VABI TestAlign(std::size_t, std::size_t) { throw std::runtime_error("unexpected aligned allocation"); }
+static void* APS5_VABI TestRealign(void*, std::size_t, std::size_t) { throw std::runtime_error("unexpected aligned reallocation"); }
+static int APS5_VABI TestPosixAlign(void**, std::size_t, std::size_t) { throw std::runtime_error("unexpected posix_memalign"); }
 
 static std::string Text(const GuestLocale::String& string) {
     return std::string(string.capacity > 15 ? string.pointer : string.buffer, string.size);
@@ -321,9 +382,47 @@ static void CheckSceV2SystemErrorBase() {
     Require(inspected.code.value == 13 && inspected.code.category == &GuestCategory, "filesystem_error code at 0x30 preserved for guest category");
 }
 
+static void CheckConstructionFailures() {
+    Require(heapBlocks == std::array<void*, 128>{}, "earlier filesystem checks leave no guest allocations");
+    const std::string firstText(48, 'a');
+    const std::string secondText(79, 'b');
+    auto first = GuestString(firstText);
+    auto second = GuestString(secondText);
+    const auto before = heapBlocks;
+    const auto* generic = _ZSt16generic_categoryv_nid_postfix();
+    const std::array<Thrower, 2> throwers{ThrowFilesystemError, ThrowSceV2FilesystemError};
+    for (const auto thrower : throwers) {
+        for (int paths = 1; paths <= 2; ++paths) {
+            const Throw request{"copy", &first, {0, 0, generic}, paths == 2 ? &second : nullptr};
+            for (std::size_t failing = 1; failing <= static_cast<std::size_t>(paths); ++failing) {
+                allocationAttempt = 0;
+                failAllocationAt = failing;
+                bool caught = false;
+                try {
+                    thrower(&request);
+                } catch (const std::bad_alloc&) {
+                    caught = true;
+                } catch (...) {
+                    Require(false, "path allocation failure throws bad_alloc");
+                }
+                failAllocationAt = 0;
+                Require(caught && allocationAttempt == failing, "the selected path copy allocation fails");
+                Require(heapBlocks == before, "failed filesystem path copy releases all prior allocations");
+                Require(Text(first) == firstText && Text(second) == secondText, "failed path copies preserve both source strings");
+            }
+        }
+    }
+    ReleaseGuestString(first);
+    ReleaseGuestString(second);
+    Require(heapBlocks == std::array<void*, 128>{}, "filesystem construction failures leave no guest allocations");
+}
+
 int main() {
-    std::array<void*, 10> defaultHeap {};
-    ApplicationHeapRegister_nid_no_patch(defaultHeap.data());
+    std::array<void*, 10> heap{
+        reinterpret_cast<void*>(TestAllocate), reinterpret_cast<void*>(TestFree), reinterpret_cast<void*>(TestCalloc),
+        reinterpret_cast<void*>(TestReallocate), reinterpret_cast<void*>(TestAlign), reinterpret_cast<void*>(TestRealign),
+        reinterpret_cast<void*>(TestPosixAlign)};
+    ApplicationHeapRegister_nid_no_patch(heap.data());
     CheckMessages();
     CheckPaths();
     CheckTwoPaths();
@@ -333,6 +432,7 @@ int main() {
     CheckSceV2TwoPaths();
     CheckSceV2NullArguments();
     CheckSceV2SystemErrorBase();
+    CheckConstructionFailures();
     if (failures) return 1;
     std::puts("guest std::filesystem::_Xfilesystem_error and std::__sce_v2::filesystem::_Xfilesystem_error: PASS");
     return 0;

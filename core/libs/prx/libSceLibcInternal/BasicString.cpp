@@ -123,7 +123,7 @@ void ReserveWide(String* string, std::size_t size) {
 
 std::size_t ClampWide(const String* source, std::size_t position, std::size_t count) {
     if (position > source->size) _ZNKSs5_XranEv_nid_postfix(source);
-    return std::min(count, source->size - position);
+    return std::min<std::size_t>(count, source->size - position);
 }
 
 void EraseWideRange(String* string, std::size_t position, std::size_t count) {
@@ -146,7 +146,7 @@ void AssignWide(String* string, const char* source, std::size_t count) {
     const std::uintptr_t dataAddress = reinterpret_cast<std::uintptr_t>(WideData(string));
     const std::size_t sourceBytes = string->size * sizeof(std::uint16_t);
     const bool aliases = sourceAddress >= dataAddress && sourceAddress - dataAddress < sourceBytes;
-    if (aliases) count = std::min(count, string->size - (sourceAddress - dataAddress) / sizeof(std::uint16_t));
+    if (aliases) count = std::min<std::size_t>(count, string->size - (sourceAddress - dataAddress) / sizeof(std::uint16_t));
     if (count > MaxWideSize) _ZNKSs5_XlenEv_nid_postfix(string);
     const std::size_t bytes = count * sizeof(std::uint16_t);
     if (count <= string->capacity) {

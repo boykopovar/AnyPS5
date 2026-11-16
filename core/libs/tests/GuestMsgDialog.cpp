@@ -2,17 +2,21 @@
 #include "prx/libSceMsgDialog/include/MsgDialogParam.hpp"
 #include "prx/libSceIme/include/ModalDialog.hpp"
 #include "SceTypes.hpp"
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <chrono>
 #include <cstring>
+#include <iterator>
 #include <thread>
 
 namespace {
 
 constexpr int StatusRunning = 2;
 constexpr int StatusFinished = 3;
+constexpr int ErrNotInitialized = static_cast<int>(0x80B80003u);
+constexpr int ErrNotFinished = static_cast<int>(0x80B80005u);
 constexpr int ErrBusy = static_cast<int>(0x80B80007u);
 constexpr int ErrParam = static_cast<int>(0x80B80001u);
 constexpr int ErrNotRunning = static_cast<int>(0x80B8000Bu);
@@ -44,6 +48,42 @@ ModalDialogState Session(std::size_t* chosen = nullptr) {
     const auto state = ModalDialogPoll_nid_postfix(value);
     if (chosen != nullptr) *chosen = value;
     return state;
+}
+
+void Results() {
+    MsgDialogResult result{};
+    Require(sceMsgDialogGetResult(&result) == ErrNotInitialized, "a result before initialize");
+    Require(sceMsgDialogInitialize() == 0, "initialize");
+    Require(sceMsgDialogGetResult(&result) == ErrNotFinished, "a result before any dialog");
+    Require(sceMsgDialogGetResult(nullptr) == ErrArgNull, "a null result pointer");
+    UserMessage focusNo{MsgDialog::ButtonTypeYesNoFocusNo, 0, "Delete?"};
+    Param focusParam(MsgDialog::ModeUserMsg, &focusNo);
+    Require(sceMsgDialogOpen(&focusParam) == 0, "open without a presenter");
+    for (int read = 0; read < 3; ++read) Require(sceMsgDialogGetResult(&result) == ErrNotFinished, "a result of a running dialog");
+    Require(sceMsgDialogGetStatus() == StatusRunning, "reading the result counted as a status poll");
+    Require(sceMsgDialogGetStatus() == StatusFinished, "second poll without a presenter");
+    std::memset(&result, 0x5a, sizeof(result));
+    Require(sceMsgDialogGetResult(&result) == 0, "the result of a finished dialog");
+    Require(result.mode == 0 && result.result == 0 && result.button_id == 2, "a YES_NO_FOCUS_NO dialog without UI did not answer NO with result 0");
+    Require(std::all_of(std::begin(result.reserved), std::end(result.reserved), [](char byte) { return byte == 0; }), "the reserved bytes of the result were not cleared");
+    Require(sceMsgDialogGetResult(reinterpret_cast<MsgDialogResult*>(0x10)) == ErrArgNull, "an unwritable result pointer");
+
+    ModalDialogSetPresenter_nid_postfix(true);
+    UserMessage yesNo{MsgDialog::ButtonTypeYesNo, 0, "Continue?"};
+    Param param(MsgDialog::ModeUserMsg, &yesNo);
+    Require(sceMsgDialogOpen(&param) == 0 && Session() == ModalDialogState::Showing, "the dialog was not shown");
+    Require(sceMsgDialogGetResult(&result) == ErrNotFinished, "a result of a shown dialog before its answer");
+    ModalDialogPublishInput_nid_postfix(ModalDialogInputKind::Next);
+    ModalDialogPublishInput_nid_postfix(ModalDialogInputKind::Confirm);
+    Require(sceMsgDialogUpdateStatus() == StatusFinished, "an answered dialog did not finish");
+    Require(sceMsgDialogGetResult(&result) == 0 && result.button_id == 2, "the picked NO button was not returned");
+    Require(sceMsgDialogOpen(&param) == 0 && Session() == ModalDialogState::Showing, "a second dialog was not shown");
+    ModalDialogPublishInput_nid_postfix(ModalDialogInputKind::Confirm);
+    Require(sceMsgDialogGetStatus() == StatusFinished, "the second dialog did not finish");
+    Require(sceMsgDialogGetResult(&result) == 0 && result.button_id == 1, "the picked YES button was not returned");
+    Require(sceMsgDialogTerminate() == 0, "terminate");
+    Require(sceMsgDialogGetResult(&result) == ErrNotInitialized, "a result after terminate");
+    ModalDialogSetPresenter_nid_postfix(false);
 }
 
 void Headless() {
@@ -164,6 +204,7 @@ void WithoutFlips() {
 }
 
 int main() {
+    Results();
     Headless();
     Shown();
     NotPresented();

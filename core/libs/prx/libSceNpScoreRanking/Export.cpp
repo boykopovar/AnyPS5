@@ -1,12 +1,13 @@
 #include "prx/libSceNpScoreRanking/include/Api.hpp"
 #include <cerrno>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
-#include <cstring>
 #include <mutex>
 #include <optional>
 #include <stdexcept>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include "SceTypes.hpp"
@@ -54,6 +55,7 @@ struct Request {
 };
 
 std::mutex scoreMutex;
+std::condition_variable& requestFinished = *new std::condition_variable();
 std::unordered_set<int> titleContexts;
 std::unordered_map<int, Request> requests;
 int nextTitleContext = 1;
@@ -78,7 +80,10 @@ int Finish(int reqId, int error) {
     const auto request = requests.find(reqId);
     if (request == requests.end()) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
     if (request->second.result == SCE_NP_COMMUNITY_ERROR_ABORTED) return SCE_NP_COMMUNITY_ERROR_ABORTED;
-    if (!request->second.result) request->second.result = error;
+    if (!request->second.result) {
+        request->second.result = error;
+        requestFinished.notify_all();
+    }
     return error;
 }
 
@@ -95,7 +100,11 @@ int CheckComment(int reqId, const char* comment, void* option) {
     if (option) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     if (!comment) return SCE_NP_COMMUNITY_ERROR_INSUFFICIENT_ARGUMENT;
     if (!KnownRequest(reqId)) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
-    if (strnlen(comment, COMMENT_MAX_LENGTH + 1) > COMMENT_MAX_LENGTH) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    std::string copy;
+    const int savedErrno = errno;
+    const int status = CopyGuestString_nid_no_patch(comment, COMMENT_MAX_LENGTH + 1, copy);
+    errno = savedErrno;
+    if (status != 0) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
     return Offline(reqId);
 }
 
@@ -108,7 +117,13 @@ int RecordGameData(int reqId, const void* data, void* option) {
 
 int RecordScore(int reqId, const NpScoreGameInfo* gameInfo, void* option) {
     if (option) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
-    if (gameInfo && gameInfo->infoSize > GAME_INFO_MAX_SIZE) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    if (gameInfo) {
+        NpScoreGameInfo localInfo{};
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&localInfo, gameInfo, sizeof(localInfo));
+        errno = savedErrno;
+        if (!copied || localInfo.infoSize > GAME_INFO_MAX_SIZE) return SCE_NP_COMMUNITY_ERROR_INVALID_ARGUMENT;
+    }
     return Offline(reqId);
 }
 
@@ -198,7 +213,10 @@ int APS5_VABI sceNpScoreAbortRequest(int reqId) {
     std::lock_guard lock(scoreMutex);
     const auto request = requests.find(reqId);
     if (request == requests.end()) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
-    if (!request->second.result) request->second.result = SCE_NP_COMMUNITY_ERROR_ABORTED;
+    if (!request->second.result) {
+        request->second.result = SCE_NP_COMMUNITY_ERROR_ABORTED;
+        requestFinished.notify_all();
+    }
     return 0;
 }
 
@@ -545,11 +563,13 @@ int APS5_VABI sceNpScoreSetTimeout(int id, int resolveRetry, int resolveTimeout,
 }
 
 int APS5_VABI sceNpScoreWaitAsync(int reqId, int* result) {
-    std::lock_guard lock(scoreMutex);
-    const auto request = requests.find(reqId);
-    if (request == requests.end()) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
-    if (!request->second.result) NotImplemented_nid_no_patch("sceNpScoreWaitAsync (a request with no operation started)");
-    if (result) *result = *request->second.result;
+    std::unique_lock lock(scoreMutex);
+    if (!requests.contains(reqId)) return SCE_NP_COMMUNITY_ERROR_INVALID_ID;
+    requestFinished.wait(lock, [reqId] {
+        const auto request = requests.find(reqId);
+        return request != requests.end() && request->second.result;
+    });
+    if (result) *result = *requests.at(reqId).result;
     return 0;
 }
 
