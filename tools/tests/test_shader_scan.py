@@ -514,5 +514,12 @@ class StripCommentsTests(unittest.TestCase):
         self.assertEqual(cleaned.count("\n"), source.count("\n"))
 
 
+class SkipLiteralTests(unittest.TestCase):
+    def test_skip_literal_honours_escapes(self):
+        source = 'x"ab\\"c"y'
+        self.assertEqual(source[shader_scan.skip_literal(source, 1)], '"')
+        self.assertEqual(shader_scan.skip_literal(source, 1), len(source) - 2)
+
+
 if __name__ == "__main__":
     unittest.main()
