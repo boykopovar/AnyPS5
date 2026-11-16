@@ -792,5 +792,11 @@ class WebReleaseValidationTests(unittest.TestCase):
             self.assertIsNone(urlopen.call_args[0][0].get_header("Authorization"))
 
 
+class MetadataRefusalTests(unittest.TestCase):
+    def test_release_metadata_refuses_a_non_object(self):
+        with self.assertRaisesRegex(ValueError, 'must be a JSON object'):
+            build_web.release_metadata([])
+
+
 if __name__ == "__main__":
     unittest.main()
