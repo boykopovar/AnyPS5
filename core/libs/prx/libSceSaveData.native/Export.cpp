@@ -1551,47 +1551,54 @@ static int setSaveDataMemory2(const SaveDataMemorySet2* set_param, SetMemoryTrac
     const std::uint32_t n = localSet.data != nullptr ? (localSet.data_num != 0 ? localSet.data_num : 1u) : 0u;
     std::vector<MemoryWrite> writes;
     std::deque<std::vector<char>> buffers;
+    std::size_t stagedBytes = 0;
     constexpr std::size_t kChunkSize = 64;
     std::array<SaveDataMemoryData, kChunkSize> chunk{};
-    for (std::uint32_t offset = 0; offset < n; offset += kChunkSize) {
-        const std::uint32_t count = std::min<std::uint32_t>(kChunkSize, n - offset);
-        if (!GuestCopyIn_nid_no_patch(chunk.data(), localSet.data + offset, count * sizeof(SaveDataMemoryData))) {
-            errno = savedErrno;
-            return SAVE_DATA_ERROR_PARAMETER;
-        }
-        for (std::uint32_t i = 0; i < count; i++) {
-            const SaveDataMemoryData& d = chunk[i];
-            if (d.buf_size == 0) {
-                continue;
-            }
-            if (d.buf == nullptr || d.offset > size || d.buf_size > size - d.offset) {
+    try {
+        for (std::uint32_t offset = 0; offset < n; offset += kChunkSize) {
+            const std::uint32_t count = std::min<std::uint32_t>(kChunkSize, n - offset);
+            if (!GuestCopyIn_nid_no_patch(chunk.data(), localSet.data + offset, count * sizeof(SaveDataMemoryData))) {
                 errno = savedErrno;
                 return SAVE_DATA_ERROR_PARAMETER;
             }
-            std::vector<char>& writeBuf = buffers.emplace_back(d.buf_size);
-            if (!GuestCopyIn_nid_no_patch(writeBuf.data(), d.buf, d.buf_size)) {
-                errno = savedErrno;
-                return SAVE_DATA_ERROR_PARAMETER;
+            for (std::uint32_t i = 0; i < count; i++) {
+                const SaveDataMemoryData& d = chunk[i];
+                if (d.buf_size == 0) {
+                    continue;
+                }
+                if (d.buf == nullptr || d.offset > size || d.buf_size > size - d.offset || stagedBytes > size - d.buf_size) {
+                    errno = savedErrno;
+                    return SAVE_DATA_ERROR_PARAMETER;
+                }
+                stagedBytes += d.buf_size;
+                std::vector<char>& writeBuf = buffers.emplace_back(d.buf_size);
+                if (!GuestCopyIn_nid_no_patch(writeBuf.data(), d.buf, d.buf_size)) {
+                    errno = savedErrno;
+                    return SAVE_DATA_ERROR_PARAMETER;
+                }
+                writes.push_back({d.offset, d.buf_size, writeBuf.data()});
             }
-            writes.push_back({d.offset, d.buf_size, writeBuf.data()});
         }
-    }
-    if (!writes.empty()) {
-        std::fstream memory(path, std::ios::binary | std::ios::in | std::ios::out);
-        if (!memory) {
-            errno = savedErrno;
-            return SAVE_DATA_ERROR_INTERNAL;
+        if (!writes.empty()) {
+            std::fstream memory(path, std::ios::binary | std::ios::in | std::ios::out);
+            if (!memory) {
+                errno = savedErrno;
+                return SAVE_DATA_ERROR_INTERNAL;
+            }
+            const std::string journal = mem_path(localSet.user_id, localSet.slot_id, "journal");
+            const std::vector<char> bytes = encode_memory_journal(writes);
+            const bool staged = savedata::replace_file_with(path, bytes.data(), bytes.size(), [&journal](const auto& temporary, const auto&) {
+                return savedata::move_replacing(temporary, journal);
+            });
+            if (!staged) {
+                errno = savedErrno;
+                return SAVE_DATA_ERROR_INTERNAL;
+            }
+            apply_memory_journal(memory, journal, writes);
         }
-        const std::string journal = mem_path(localSet.user_id, localSet.slot_id, "journal");
-        const std::vector<char> bytes = encode_memory_journal(writes);
-        const bool staged = savedata::replace_file_with(path, bytes.data(), bytes.size(), [&journal](const auto& temporary, const auto&) {
-            return savedata::move_replacing(temporary, journal);
-        });
-        if (!staged) {
-            errno = savedErrno;
-            return SAVE_DATA_ERROR_INTERNAL;
-        }
-        apply_memory_journal(memory, journal, writes);
+    } catch (const std::bad_alloc&) {
+        errno = savedErrno;
+        return SAVE_DATA_ERROR_PARAMETER;
     }
     if (localSet.param != nullptr) {
         std::vector<char> pd(sizeof(SaveDataParam));
