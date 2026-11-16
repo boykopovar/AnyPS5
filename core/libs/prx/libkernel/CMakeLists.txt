@@ -2590,6 +2590,7 @@ if(BUILD_TESTING)
     if(WIN32)
         add_test(NAME guest_memory_armed COMMAND guest_memory_tests)
         set_tests_properties(guest_memory_armed PROPERTIES ENVIRONMENT "APS5_ARM_RESIDENT=1;APS5_ARM_COMPARED=1")
+        set_tests_properties(guest_memory guest_memory_armed PROPERTIES RESOURCE_LOCK guest_memory_module_copy)
         set_tests_properties(guest_memory guest_memory_armed guest_mmap_fixed_anonymous guest_mmap_executable PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libkernel>")
     endif()
