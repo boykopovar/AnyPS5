@@ -823,6 +823,26 @@ class WaitTests(unittest.TestCase):
         with self.assertRaises(subprocess.TimeoutExpired):
             gate.wait_in_slices(self.StuckProcess(), 0.05)
 
+class ParseReportTests(unittest.TestCase):
+    def report(self, text):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        path = Path(directory.name) / "report.xml"
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_parse_report_flags_expected_tests_that_did_not_run(self):
+        path = self.report('<testsuite><testcase name="a"><system-out>'
+                           'Insert instance layer "VK_LAYER_KHRONOS_validation"</system-out></testcase></testsuite>')
+        results, problems = gate.parse_report(path, ["a", "b"])
+        self.assertEqual(sorted(results), ["a"])
+        self.assertTrue(any("missing=['b']" in problem for problem in problems))
+
+    def test_parse_report_refuses_a_duplicate_test_name(self):
+        path = self.report('<testsuite><testcase name="a"/><testcase name="a"/></testsuite>')
+        with self.assertRaisesRegex(gate.GateError, "duplicate testcase name"):
+            gate.parse_report(path, ["a"])
+
 
 if __name__ == "__main__":
     unittest.main()
