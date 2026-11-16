@@ -651,5 +651,12 @@ class GraphicsTrackComparisonTests(unittest.TestCase):
             performance_compare.validate(dict(SUMMARY, graphics_track={"bad": -1}))
 
 
+class GraphicsEmptyTests(unittest.TestCase):
+    def test_graphics_metrics_without_a_track_has_every_label_empty(self):
+        metrics = performance_compare.graphics_metrics({'graphics_track': None})
+        self.assertEqual(set(metrics), set(performance_compare.GRAPHICS_LABELS))
+        self.assertTrue(all(value is None for value in metrics.values()))
+
+
 if __name__ == "__main__":
     unittest.main()
