@@ -2,6 +2,7 @@
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/General.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstdint>
@@ -28,6 +29,19 @@ bool CopyOut(void* destination, const void* source, std::size_t bytes) {
     const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
     errno = savedErrno;
     return copied;
+}
+
+template <typename T>
+bool CopyInChunks(std::vector<T>& host, const void* source, std::size_t bytes) {
+    constexpr std::size_t Chunk = 64 * 1024;
+    host.clear();
+    for (std::size_t done = 0; done < bytes;) {
+        const std::size_t size = std::min(Chunk, bytes - done);
+        host.resize(done + size);
+        if (!CopyIn(host.data() + done, static_cast<const unsigned char*>(source) + done, size)) return false;
+        done += size;
+    }
+    return true;
 }
 
 bool PasswordLength(const char* password, int& length) {
@@ -88,15 +102,16 @@ extern "C" int APS5_VABI PKCS5_PBKDF2_HMAC_nid_postfix(const char* password, int
         throw std::invalid_argument("PKCS5_PBKDF2_HMAC: unreadable password");
     }
     const std::size_t passwordBytes = passwordLength > 0 ? static_cast<std::size_t>(passwordLength) : 0;
-    std::vector<char> passwordCopy(passwordBytes + 1);
-    if (!CopyIn(passwordCopy.data(), password, passwordBytes)) throw std::invalid_argument("PKCS5_PBKDF2_HMAC: unreadable password");
+    std::vector<char> passwordCopy;
+    if (!CopyInChunks(passwordCopy, password, passwordBytes)) throw std::invalid_argument("PKCS5_PBKDF2_HMAC: unreadable password");
+    passwordCopy.push_back('\0');
     HmacKey key;
     if (!key.Init(password ? passwordCopy.data() : nullptr, passwordLength, digest)) return 0;
     if (keyLength == 0) return 1;
     if (keyLength < 0 || !output) throw std::invalid_argument("PKCS5_PBKDF2_HMAC: invalid output");
     if (saltLength < 0 || (saltLength > 0 && !salt)) throw std::invalid_argument("PKCS5_PBKDF2_HMAC: invalid salt");
-    std::vector<unsigned char> saltCopy(static_cast<std::size_t>(saltLength));
-    if (!saltCopy.empty() && !CopyIn(saltCopy.data(), salt, saltCopy.size())) throw std::invalid_argument("PKCS5_PBKDF2_HMAC: unreadable salt");
+    std::vector<unsigned char> saltCopy;
+    if (!CopyInChunks(saltCopy, salt, static_cast<std::size_t>(saltLength))) throw std::invalid_argument("PKCS5_PBKDF2_HMAC: unreadable salt");
     const auto size = static_cast<std::size_t>(digestLength);
     std::array<unsigned char, MaxDigestSize> block{};
     std::array<unsigned char, MaxDigestSize> derived{};
