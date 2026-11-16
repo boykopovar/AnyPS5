@@ -644,6 +644,13 @@ class HelperPathTests(unittest.TestCase):
         self.assertEqual(pr_overlap.depends_on(
             "- [ ] Depends on: [#7](https://github.com/boykopovar/AnyPS5/pull/7)"), {7})
         self.assertEqual(pr_overlap.depends_on(""), set())
+class PageAndCacheHelperTests(unittest.TestCase):
+    def test_decode_pages_reads_consecutive_json_arrays(self):
+        self.assertEqual(pr_overlap.decode_pages("[1]\n[2, 3] [] "), [[1], [2, 3], []])
+
+    def test_decode_pages_refuses_a_non_array_page(self):
+        with self.assertRaisesRegex(ValueError, "non-array page"):
+            pr_overlap.decode_pages("{}")
 
 
 if __name__ == "__main__":
