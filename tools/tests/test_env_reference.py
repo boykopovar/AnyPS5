@@ -631,6 +631,11 @@ class ConstantTableTests(unittest.TestCase):
         self.assertEqual(env_reference.declared_constants(text),
                          {"kName": {"ANYPS5_FOO"}, "kBar": {"APS5_BAR"}})
 
+    def test_shadowed_names_lists_locals_but_not_constant_declarations(self):
+        self.assertIn("count", env_reference.shadowed_names("int count = 3;\n"))
+        self.assertEqual(env_reference.shadowed_names('const char* kName = "ANYPS5_A";\n'), set())
+        self.assertEqual(env_reference.shadowed_names("constexpr int kX = 1;\n"), set())
+
 
 if __name__ == "__main__":
     unittest.main()
