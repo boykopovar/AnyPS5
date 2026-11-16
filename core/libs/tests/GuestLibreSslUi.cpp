@@ -220,6 +220,23 @@ static void TestSetResult() {
     Require(UI_set_result_nid_postfix(&ui, &boolean, pages + 4094) == 0 && buffer[0] == 'n');
 }
 
+static void TestGuestMethods() {
+    errno = 71;
+    auto* const unmapped = reinterpret_cast<LibreSslUiMethod*>(0x10);
+    Require(UI_method_set_opener_nid_postfix(unmapped, Open) == -1 && UI_method_get_opener_nid_postfix(unmapped) == nullptr);
+    Require(UI_method_set_writer_nid_postfix(unmapped, Write) == -1 && UI_method_get_writer_nid_postfix(unmapped) == nullptr);
+    Require(UI_method_set_reader_nid_postfix(unmapped, Read) == -1 && UI_method_get_reader_nid_postfix(unmapped) == nullptr);
+    Require(UI_method_set_closer_nid_postfix(unmapped, Close) == -1 && UI_method_get_closer_nid_postfix(unmapped) == nullptr);
+    RequireThrows([&] { UI_destroy_method_nid_postfix(unmapped); });
+    RequireThrows([] { UI_create_method_nid_postfix(reinterpret_cast<char*>(0x10)); });
+    Require(errno == 71);
+    alignas(4096) static char pages[8192];
+    std::memcpy(pages + 4093, "prompt", 7);
+    LibreSslUiMethod* method = UI_create_method_nid_postfix(pages + 4093);
+    Require(method != nullptr && method->name != pages + 4093 && !std::strcmp(method->name, "prompt"));
+    UI_destroy_method_nid_postfix(method);
+}
+
 int main() {
     InitializeHeap();
     TestCreate();
@@ -233,5 +250,6 @@ int main() {
     TestSetCloser();
     TestGetCloser();
     TestSetResult();
+    TestGuestMethods();
     std::puts("libSceLibreSsl UI method tests passed");
 }
