@@ -1,4 +1,5 @@
 #include "Recompiler.hpp"
+#include "SpirvBackend/SpirvSpannedUniformity.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <array>
@@ -43,6 +44,22 @@ constexpr std::uint32_t MoveExecHi = 0xbeff03ffu;
 constexpr std::uint32_t EvenLanes = 0x55555555u;
 constexpr std::uint32_t HighPattern = 0x0f0f0f0fu;
 constexpr std::uint32_t DeviceMemoryLdsDwords = 16384u;
+constexpr std::uint32_t LowLanes = 0x7d880090u;
+constexpr std::uint32_t SaveExec64 = 0xbe8a246au;
+constexpr std::uint32_t SaveExec32 = 0xbe8a3c6au;
+constexpr std::uint32_t RestoreExec64 = 0xbefe040au;
+constexpr std::uint32_t RestoreExec32 = 0xbefe030au;
+constexpr std::uint32_t SkipIfExecZero = 0xbf880005u;
+constexpr std::uint32_t SkipIfSccZero = 0xbf840005u;
+constexpr std::uint32_t SkipIfVccZero = 0xbf860005u;
+constexpr std::uint32_t TripCount = 0x36080083u;
+constexpr std::uint32_t CopyExec64 = 0xbe8a047eu;
+constexpr std::uint32_t CopyExec32 = 0xbe8a037eu;
+constexpr std::uint32_t CountDown = 0x4a0808c1u;
+constexpr std::uint32_t TripsLeft = 0x7d020880u;
+constexpr std::uint32_t DropDone64 = 0x87fe6a7eu;
+constexpr std::uint32_t DropDone32 = 0x877e6a7eu;
+constexpr std::uint32_t RepeatIfExecNonZero = 0xbf89fff7u;
 
 struct Options {
     std::uint32_t waveSize = 64u;
@@ -66,13 +83,13 @@ void Require(bool condition, const std::string& message) {
     if (!condition) throw std::runtime_error(message);
 }
 
-Usage Compile(std::initializer_list<std::uint32_t> body, const Options& options) {
+Usage Compile(std::span<const std::uint32_t> body, const Options& options) {
     std::vector<std::uint32_t> capabilities{spv::CapabilityShader, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle, spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess};
     if (options.arithmetic) capabilities.push_back(spv::CapabilityGroupNonUniformArithmetic);
     const std::array<std::uint32_t, 4> userData{};
     const std::array<std::string_view, 2> extensions{"SPV_KHR_physical_storage_buffer", "SPV_KHR_8bit_storage"};
     std::vector<std::uint32_t> code{AddressZero, DataOne};
-    code.insert(code.end(), body);
+    code.insert(code.end(), body.begin(), body.end());
     code.insert(code.end(), {WaitLds, EndProgram});
     RecompileRequest request{};
     request.shader = {ShaderStage::Compute, 0x20000u, code, 0, {}};
@@ -110,6 +127,10 @@ Usage Compile(std::initializer_list<std::uint32_t> body, const Options& options)
         cursor += count;
     }
     return usage;
+}
+
+Usage Compile(std::initializer_list<std::uint32_t> body, const Options& options) {
+    return Compile(std::span<const std::uint32_t>(body.begin(), body.size()), options);
 }
 
 std::size_t Count(const Usage& usage, spv::Op op) {
@@ -392,8 +413,9 @@ void CheckLockedProgramsAreUnchanged() {
 void CheckSplitSubgroups() {
     const auto add = Compile({DsAddRtnU32, ReturnOperands, WaitLds, DsWriteB32, WriteReturn}, {32u, true, true, 64u});
     Require(Count(add, spv::OpAtomicIAdd) == 1u && Count(add, spv::OpGroupNonUniformIAdd, spv::GroupOperationExclusiveScan) == 1u, "a lane-ordered wave32 ds_add_rtn_u32 on a 64-lane host does not scan once and add once");
+    const auto unordered = Compile({DsMinRtnU32, ReturnOperands, WaitLds, DsWriteB32, WriteReturn}, {32u, false, true, 64u, 32u});
     const auto min = Compile({DsMinRtnU32, ReturnOperands, WaitLds, DsWriteB32, WriteReturn}, {32u, true, true, 64u, 32u});
-    Require(Count(min, spv::OpAtomicUMin) == 1u && GroupArithmetic(min) == 0u && LoopControlBarriers(min, spv::OpAtomicUMin) == 1u, "a lane-ordered wave32 ds_min_rtn_u32 on a 64-lane host, where a shuffle scan would read the other wave's invocations, is not serialized by one lane loop with a round barrier");
+    Require(Count(min, spv::OpAtomicUMin) == Count(unordered, spv::OpAtomicUMin) && Count(min, spv::OpLoopMerge) == Count(unordered, spv::OpLoopMerge) && Count(min, spv::OpControlBarrier) == Count(unordered, spv::OpControlBarrier), "a lane-ordered wave32 ds_min_rtn_u32 in a one-wave workgroup on a 64-lane host, where the wave's ballot word depends on the invocation index, does not take the plain path");
 }
 
 void CheckSwapRoundsAreOrdered() {
@@ -451,6 +473,61 @@ void CheckUnscopedWavesTakeThePlainPath() {
     }
 }
 
+Usage WithPerInvocationBallots(Usage usage) {
+    for (std::size_t cursor = 5; cursor < usage.words.size();) {
+        const auto count = usage.words[cursor] >> spv::WordCountShift;
+        if (static_cast<spv::Op>(usage.words[cursor] & spv::OpCodeMask) == spv::OpGroupNonUniformBallot) usage.words[cursor] = (count << spv::WordCountShift) | spv::OpGroupNonUniformInverseBallot;
+        cursor += count;
+    }
+    return usage;
+}
+
+std::vector<std::uint32_t> DivergentBody(const std::string& kind, std::uint32_t waveSize) {
+    const bool wave64 = waveSize == 64u;
+    const auto restore = wave64 ? RestoreExec64 : RestoreExec32;
+    if (kind == "loop") return {TripCount, wave64 ? CopyExec64 : CopyExec32, DsWrxchgRtnB32, ReturnOperands, WaitLds, DsWriteB32, WriteReturn, CountDown, TripsLeft, wave64 ? DropDone64 : DropDone32, RepeatIfExecNonZero, restore};
+    const auto skip = kind == "s_cbranch_execz" ? SkipIfExecZero : kind == "s_cbranch_scc0" ? SkipIfSccZero : SkipIfVccZero;
+    return {LowLanes, wave64 ? SaveExec64 : SaveExec32, skip, DsWrxchgRtnB32, ReturnOperands, WaitLds, DsWriteB32, WriteReturn, restore};
+}
+
+void CheckDivergentGuestFlow() {
+    struct Shape {
+        std::uint32_t waveSize;
+        std::uint32_t threads;
+        bool spanned;
+        std::uint32_t atomics;
+        std::uint32_t scope;
+    };
+    constexpr std::array<Shape, 5> shapes{{
+        {32u, 256u, false, 1u, spv::ScopeSubgroup},
+        {32u, 32u, false, 1u, spv::ScopeWorkgroup},
+        {64u, 256u, false, 2u, spv::ScopeSubgroup},
+        {64u, 64u, false, 2u, spv::ScopeWorkgroup},
+        {64u, 64u, true, 1u, spv::ScopeWorkgroup},
+    }};
+    std::size_t rejected = 0;
+    std::size_t controls = 0;
+    for (const std::string kind : {"s_cbranch_execz", "s_cbranch_scc0", "s_cbranch_vccz", "loop"}) {
+        for (const auto& shape : shapes) {
+            Options options;
+            options.moltenVk = true;
+            options.waveSize = shape.waveSize;
+            options.threads = shape.threads;
+            options.spanned = shape.spanned;
+            const auto body = DivergentBody(kind, shape.waveSize);
+            const auto label = "ds_wrxchg_rtn_b32 under " + kind + ", wave" + std::to_string(shape.waveSize) + ", " + std::to_string(shape.threads) + " threads" + (shape.spanned ? ", spanned" : "");
+            const auto usage = Compile(body, options);
+            CheckRoundBarrier(usage, spv::OpAtomicExchange, shape.atomics, {shape.scope}, label);
+            const auto reason = shape.spanned ? SpannedBarrierInDivergentFlow(usage.words) : SubgroupBarrierInDivergentFlow(usage.words);
+            Require(!reason, label + ": " + reason.value_or(""));
+            if (shape.spanned) continue;
+            ++controls;
+            rejected += SubgroupBarrierInDivergentFlow(WithPerInvocationBallots(usage).words) ? 1u : 0u;
+        }
+    }
+    Require(rejected == controls, "the uniformity check accepts " + std::to_string(controls - rejected) + " of " + std::to_string(controls) + " lane loops whose ballots were made per-invocation");
+}
+
 void CheckWithoutArithmetic() {
     const auto ordered = Compile({DsAddRtnU32, ReturnOperands, WaitLds, DsWriteB32, WriteReturn}, {64u, true, false});
     Require(Count(ordered, spv::OpAtomicIAdd) == 2u && GroupArithmetic(ordered) == 0u && !ordered.arithmeticCapability, "without subgroup arithmetic, a lane-ordered ds_add_rtn_u32 does not take the serialized path");
@@ -470,6 +547,7 @@ int main() {
         CheckSwapRoundsAreOrdered();
         CheckOtherRoundsAreOrdered();
         CheckUnscopedWavesTakeThePlainPath();
+        CheckDivergentGuestFlow();
         std::puts("SPIR-V LDS atomic lane order tests passed");
         return 0;
     } catch (const std::exception& error) {

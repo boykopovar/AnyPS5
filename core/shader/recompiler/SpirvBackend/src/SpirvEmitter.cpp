@@ -357,6 +357,8 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     auto words = state.module.Finalize();
     if (state.spannedWave) {
         if (auto reason = SpannedBarrierInDivergentFlow(words)) throw SpannedWaveUnsupported(*reason);
+    } else if (state.laneOrderRounds) {
+        if (auto reason = SubgroupBarrierInDivergentFlow(words)) throw std::runtime_error("lane-ordered LDS atomic rounds: " + *reason);
     }
     if (info != nullptr) {
         info->fullSubgroups = state.spannedWave;

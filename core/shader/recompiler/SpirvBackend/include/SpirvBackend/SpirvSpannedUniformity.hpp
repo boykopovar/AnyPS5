@@ -9,6 +9,7 @@
 namespace ShaderRecompiler {
 
 [[nodiscard]] std::optional<std::string> SpannedBarrierInDivergentFlow(std::span<const std::uint32_t> words);
+[[nodiscard]] std::optional<std::string> SubgroupBarrierInDivergentFlow(std::span<const std::uint32_t> words);
 
 }
 

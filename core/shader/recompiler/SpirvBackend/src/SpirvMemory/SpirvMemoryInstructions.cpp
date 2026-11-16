@@ -1839,6 +1839,7 @@ std::uint32_t SerializedLdsAtomic(SpirvValueEmitContext& ctx, const IrValue& ins
             next.pending[half] = AndCondition(state, current.pending[half], Unary(state, spv::OpLogicalNot, boolean, leads));
         }
         const auto scope = ConstantU32(state, state.waveLdsScope);
+        state.laneOrderRounds = true;
         state.module.AddFunction(spv::OpControlBarrier, scope, scope, ConstantU32(state, spv::MemorySemanticsAcquireReleaseMask | LdsMemorySemantics(state)));
         return next;
     }, [&](const LaneOrderedValues& next) {
@@ -2433,7 +2434,7 @@ std::uint32_t EmitLaneOrderedSharedAtomic(SpirvValueEmitContext& ctx, const IrVa
     const bool arithmetic = std::find(capabilities.begin(), capabilities.end(), static_cast<std::uint32_t>(spv::CapabilityGroupNonUniformArithmetic)) != capabilities.end();
     const auto reduction = AggregatedLdsReduction(inst.Opcode());
     const bool aggregated = reduction && arithmetic && !state.spannedWave && (reduction->scan == spv::OpGroupNonUniformIAdd || !state.splitSubgroup);
-    if (!aggregated && state.waveLdsScope == 0u) return emit(ctx, inst);
+    if (!aggregated && (state.waveLdsScope == 0u || state.splitSubgroup)) return emit(ctx, inst);
     if (ctx.half != 0u) return ctx.Result(inst);
     if (aggregated) return AggregatedLdsAtomic(ctx, inst, *reduction);
     return SerializedLdsAtomic(ctx, inst, emit);

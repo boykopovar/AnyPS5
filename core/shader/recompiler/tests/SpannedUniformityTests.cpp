@@ -29,6 +29,7 @@ enum Id : std::uint32_t {
     StoragePointer,
     Storage,
     PhysicalPointer,
+    Uint4,
     First = 100u,
 };
 
@@ -59,6 +60,7 @@ public:
         emit(spv::OpTypePointer, {StoragePointer, spv::StorageClassStorageBuffer, Uint});
         emit(spv::OpVariable, {StoragePointer, Storage, spv::StorageClassStorageBuffer});
         emit(spv::OpTypePointer, {PhysicalPointer, spv::StorageClassPhysicalStorageBuffer, Uint});
+        emit(spv::OpTypeVector, {Uint4, Uint, 4u});
     }
 
     void emit(spv::Op op, std::initializer_list<std::uint32_t> operands) {
@@ -92,6 +94,13 @@ void expect(const char* name, const Module& module, bool rejected) {
     const auto reason = ShaderRecompiler::SpannedBarrierInDivergentFlow(module.words);
     if (reason.has_value() == rejected) return;
     std::fprintf(stderr, "%s: expected %s, got %s\n", name, rejected ? "a rejection" : "no rejection", reason ? reason->c_str() : "none");
+    failed = true;
+}
+
+void expectSubgroup(const char* name, const Module& module, bool rejected) {
+    const auto reason = ShaderRecompiler::SubgroupBarrierInDivergentFlow(module.words);
+    if (reason.has_value() == rejected) return;
+    std::fprintf(stderr, "%s (subgroup collectives): expected %s, got %s\n", name, rejected ? "a rejection" : "no rejection", reason ? reason->c_str() : "none");
     failed = true;
 }
 
@@ -310,5 +319,34 @@ int main() {
         module.emit(spv::OpLoad, {Uint, First + 6u, First + 5u});
         module.emit(spv::OpIEqual, {Bool, First + 8u, First + 6u, Two});
     }), true);
+    const auto ballotAny = [](std::uint32_t scope) {
+        return joined([scope](Module& module) {
+            module.emit(spv::OpULessThan, {Bool, First + 2u, First + 1u, Three});
+            module.emit(spv::OpGroupNonUniformBallot, {Uint4, First + 5u, scope, First + 2u});
+            module.emit(spv::OpCompositeExtract, {Uint, First + 6u, First + 5u, 0u});
+            module.emit(spv::OpINotEqual, {Bool, First + 8u, First + 6u, Two});
+        });
+    };
+    expect("a barrier under a subgroup ballot of a lane comparison", ballotAny(Three), true);
+    expectSubgroup("a barrier under a subgroup ballot of a lane comparison", ballotAny(Three), false);
+    expectSubgroup("a barrier under a workgroup-scope ballot of a lane comparison", ballotAny(Two), true);
+    expectSubgroup("a barrier under a lane comparison", selection(true), true);
+    expectSubgroup("a barrier in a loop a lane value leaves", loop(true, false), true);
+    const auto shuffled = [](std::uint32_t index) {
+        return joined([index](Module& module) {
+            module.emit(spv::OpGroupNonUniformShuffle, {Uint, First + 6u, Three, First + 1u, index});
+            module.emit(spv::OpIEqual, {Bool, First + 8u, First + 6u, Two});
+        });
+    };
+    expectSubgroup("a barrier under a shuffle from a uniform invocation", shuffled(Two), false);
+    expectSubgroup("a barrier under a shuffle from a per-lane invocation", shuffled(First + 1u), true);
+    const auto summed = [](spv::GroupOperation operation) {
+        return joined([operation](Module& module) {
+            module.emit(spv::OpGroupNonUniformIAdd, {Uint, First + 6u, Three, static_cast<std::uint32_t>(operation), First + 1u});
+            module.emit(spv::OpIEqual, {Bool, First + 8u, First + 6u, Two});
+        });
+    };
+    expectSubgroup("a barrier under a subgroup sum", summed(spv::GroupOperationReduce), false);
+    expectSubgroup("a barrier under a subgroup prefix sum", summed(spv::GroupOperationExclusiveScan), true);
     return failed ? EXIT_FAILURE : EXIT_SUCCESS;
 }
