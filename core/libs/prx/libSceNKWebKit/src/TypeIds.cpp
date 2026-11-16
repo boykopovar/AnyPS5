@@ -266,6 +266,10 @@ std::uint32_t APS5_VABI WKPopupMenuItemGetTypeID() {
     return NKWebKit::TypeID(NKWebKit::ObjectType::PopupMenuItem);
 }
 
+std::uint32_t APS5_VABI WKPreferencesGetTypeID() {
+    return NKWebKit::TypeID(NKWebKit::ObjectType::Preferences);
+}
+
 std::uint32_t APS5_VABI WKProtectionSpaceGetTypeID() {
     return NKWebKit::TypeID(NKWebKit::ObjectType::ProtectionSpace);
 }
