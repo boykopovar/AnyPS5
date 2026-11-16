@@ -1014,6 +1014,15 @@ class RepositoryChecksTests(unittest.TestCase):
         self.assertIn("file=docs/name%2Cwith%3Acolon%25%0A.md,line=2", annotation)
 
 
+class CommentLineHelperTests(unittest.TestCase):
+    def test_python_comments_lists_lines_holding_a_comment(self):
+        self.assertEqual(check_conventions.python_comments("x = 1  # hi\ny = 2\n"), {1})
+
+    def test_python_comments_ignores_a_byte_order_mark_and_refuses_bad_syntax(self):
+        self.assertEqual(check_conventions.python_comments("\ufeff# c\nx = 1\n"), {1})
+        self.assertIsNone(check_conventions.python_comments("def (:\n"))
+
+
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--shard":
         if len(sys.argv) != 3 or "/" not in sys.argv[2]:
