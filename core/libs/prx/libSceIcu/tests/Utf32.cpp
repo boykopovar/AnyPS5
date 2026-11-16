@@ -1,6 +1,7 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -330,6 +331,39 @@ void ToStatus() {
 
 }
 
+void GuestBuffers() {
+    const std::int32_t wide[] = {0x41, 0x1f600, 0};
+    const char16_t narrow[] = {0x41, 0xd83d, 0xde00, 0};
+    auto* const unmappedUnits = reinterpret_cast<char16_t*>(0x10);
+    auto* const unmappedScalars = reinterpret_cast<std::int32_t*>(0x10);
+    std::array<char16_t, 8> units{};
+    std::array<std::int32_t, 8> scalars{};
+    std::int32_t length = -1;
+    std::int32_t substitutions = -1;
+    std::int32_t status = 0;
+    errno = 71;
+    Require(u_strFromUTF32WithSub_nid_postfix(units.data(), 8, &length, reinterpret_cast<const std::int32_t*>(0x10), -1, 0xfffd, nullptr, &status) == nullptr && status == 1);
+    status = 0;
+    Require(u_strFromUTF32WithSub_nid_postfix(unmappedUnits, 8, &length, wide, -1, 0xfffd, nullptr, &status) == nullptr && status == 1);
+    status = 0;
+    Require(u_strFromUTF32WithSub_nid_postfix(units.data(), 8, unmappedScalars, wide, -1, 0xfffd, nullptr, &status) == nullptr && status == 1);
+    status = 0;
+    Require(u_strFromUTF32WithSub_nid_postfix(units.data(), 8, &length, wide, -1, 0xfffd, unmappedScalars, &status) == nullptr && status == 1);
+    status = 0;
+    Require(u_strToUTF32WithSub_nid_postfix(scalars.data(), 8, &length, reinterpret_cast<const char16_t*>(0x10), -1, 0xfffd, nullptr, &status) == nullptr && status == 1);
+    status = 0;
+    Require(u_strToUTF32WithSub_nid_postfix(unmappedScalars, 8, &length, narrow, -1, 0xfffd, nullptr, &status) == nullptr && status == 1);
+    status = 0;
+    Require(u_strToUTF32WithSub_nid_postfix(scalars.data(), 8, &length, narrow, -1, 0xfffd, unmappedScalars, &status) == nullptr && status == 1);
+    Require(errno == 71);
+    status = 0;
+    Require(u_strFromUTF32WithSub_nid_postfix(units.data(), 8, &length, wide, -1, 0xfffd, &substitutions, &status) == units.data());
+    Require(status == 0 && length == 3 && substitutions == 0 && units[0] == 0x41 && units[1] == 0xd83d && units[2] == 0xde00 && units[3] == 0);
+    status = 0;
+    Require(u_strToUTF32WithSub_nid_postfix(scalars.data(), 8, &length, narrow, -1, 0xfffd, &substitutions, &status) == scalars.data());
+    Require(status == 0 && length == 2 && substitutions == 0 && scalars[0] == 0x41 && scalars[1] == 0x1f600 && scalars[2] == 0);
+}
+
 int main() {
     Valid();
     Capacity();
@@ -341,5 +375,6 @@ int main() {
     ToSubstitution();
     ToArguments();
     ToStatus();
+    GuestBuffers();
     std::puts("ICU UTF-32 conversion tests passed");
 }
