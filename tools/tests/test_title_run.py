@@ -982,6 +982,19 @@ class ReportFileTests(unittest.TestCase):
             self.assertIsNone(title_run.read_report(self.write(directory, "b.json", "{not json")))
             self.assertIsNone(title_run.read_report(self.write(directory, "c.json", "[1]")))
 
+    def test_take_report_moves_the_report_and_reads_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work, run_dir = Path(directory) / "work", Path(directory) / "run"
+            work.mkdir()
+            run_dir.mkdir()
+            self.assertIsNone(title_run.take_report(work, run_dir))
+            (work / title_run.REPORT_FILE).write_text(
+                json.dumps({"format": "anyps5-report", "run": {"averageFps": 30}}), encoding="utf-8")
+            report = title_run.take_report(work, run_dir)
+            self.assertEqual(report["averageFps"], 30)
+            self.assertFalse((work / title_run.REPORT_FILE).exists())
+            self.assertTrue((run_dir / title_run.REPORT_FILE).is_file())
+
 
 if __name__ == "__main__":
     unittest.main()
