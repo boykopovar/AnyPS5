@@ -123,10 +123,10 @@ bool OverlapsLabel(std::span<const ShaderRecompiler::MemoryRegion> regions, cons
 void Driver::resolveGroupAhead(const Submission& submission, const QueueState& live, std::size_t from) {
     static const bool allQueues = std::getenv("APS5_GROUP_CAPTURE_ALL_QUEUES") != nullptr;
     if (!allQueues && submission.queue == 0) return;
+    if (submission.queue == 0 && DrawPipeline::Depth() != 0 && DrawPipeline::Queue0().Busy()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, (submission.commands[from] >> 8u) & 0xffu);
     auto& resolved = resolvedAhead();
     const auto localDevice = device.Load();
     if (resolved.contains(from) || localDevice == nullptr) return;
-    if (submission.queue == 0 && DrawPipeline::Depth() != 0 && DrawPipeline::Queue0().Busy()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, (submission.commands[from] >> 8u) & 0xffu);
     auto& stats = groupCaptureStats();
     const auto begin = std::chrono::steady_clock::now();
     ++stats.runs;
