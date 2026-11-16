@@ -194,6 +194,24 @@ void APS5_VABI _ZN3WTF18FunctionDispatcherD1Ev() {
 void APS5_VABI _ZN3WTF18FunctionDispatcherD2Ev() {
 }
 
+void APS5_VABI _ZN3WTF21RefCountedLeakCounter16suppressMessagesEPKc(const char*) {
+}
+
+void APS5_VABI _ZN3WTF21RefCountedLeakCounter24cancelMessageSuppressionEPKc(const char*) {
+}
+
+void APS5_VABI _ZN3WTF21RefCountedLeakCounterC1EPKc(void*, const char*) {
+}
+
+void APS5_VABI _ZN3WTF21RefCountedLeakCounterC2EPKc(void*, const char*) {
+}
+
+void APS5_VABI _ZN3WTF21RefCountedLeakCounter9incrementEv(void*) {
+}
+
+void APS5_VABI _ZN3WTF21RefCountedLeakCounter9decrementEv(void*) {
+}
+
 void APS5_VABI _ZN3WTF21RefCountedLeakCounterD1Ev() {
 }
 
@@ -318,6 +336,9 @@ void APS5_VABI _ZN7WebCore31BasicColorMatrixFilterOperationD1Ev() {
 }
 
 void APS5_VABI _ZN7WebCore31BasicColorMatrixFilterOperationD2Ev() {
+}
+
+void APS5_VABI _ZN7WebCore36registerMemoryReleaseNotifyCallbacksEv() {
 }
 
 void APS5_VABI _ZN7WebCore37BasicComponentTransferFilterOperationD1Ev() {

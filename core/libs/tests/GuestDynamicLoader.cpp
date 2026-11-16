@@ -281,6 +281,21 @@ int main(int argc, char** argv) {
     Require(dlclose_nid_postfix(folded) == 0);
     std::filesystem::remove_all(foldedRoot);
 
+    const bool createdApp = !std::filesystem::exists("app0");
+    std::filesystem::create_directories("app0/prx");
+    std::filesystem::copy_file(argv[1], "app0/prx/anyps5-app-module-for-test.prx.guest.prx", std::filesystem::copy_options::overwrite_existing);
+    for (const char* bare : {"anyps5-app-module-for-test.prx", "ANYPS5-APP-MODULE-FOR-TEST.PRX"}) {
+        void* app = dlopen_nid_postfix(bare, 2);
+        Require(app != nullptr);
+        add = reinterpret_cast<Add>(dlsym_nid_postfix(app, "GuestModuleAdd"));
+        Require(add && add(21, 21) == 42);
+        Require(dlclose_nid_postfix(app) == 0);
+    }
+    Require(dlopen_nid_postfix("prx/anyps5-app-module-for-test.prx", 2) == nullptr);
+    Require(dlerror_nid_postfix() != nullptr);
+    std::filesystem::remove("app0/prx/anyps5-app-module-for-test.prx.guest.prx");
+    if (createdApp) std::filesystem::remove_all("app0");
+
     void* pinned = dlopen_nid_postfix(argv[1], 2);
     add = reinterpret_cast<Add>(dlsym_nid_postfix(pinned, "GuestModuleAdd"));
     Require(add && _sceKernelRtldThreadAtexitIncrement_nid_postfix(reinterpret_cast<const void*>(add)) == 0);
