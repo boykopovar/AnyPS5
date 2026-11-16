@@ -1193,6 +1193,11 @@ class HelperValueTests(unittest.TestCase):
         self.assertEqual(progress.small_delta(Fraction(1, 2)), "+0.5")
         self.assertEqual(progress.small_delta(Fraction(-1, 3)), "-0.3333")
         self.assertEqual(progress.small_delta(Fraction(1, 100000)), "+<0.0001")
+class SvgHelperTests(unittest.TestCase):
+    def test_rect_formats_coordinates_and_colour(self):
+        markup = progress.rect(1, 2, 3, 4, "#fff")
+        self.assertTrue(markup.startswith('<rect x="1.00" y="2.00" width="3.00" height="4.00" fill="#fff"'))
+        self.assertTrue(markup.endswith('stroke-width="0.5"/>'))
 
 
 if __name__ == "__main__":
