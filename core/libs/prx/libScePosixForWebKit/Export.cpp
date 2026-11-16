@@ -7,8 +7,10 @@
 #include "prx/libc/include/HostEntropy.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
-#include <cerrno>
+#include <algorithm>
+#include <array>
 #include <cctype>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -185,7 +187,20 @@ char* APS5_VABI strcasestr_nid_postfix(const char* text, const char* needle) {
 }
 
 void APS5_VABI arc4random_buf_nid_postfix(void* buffer, std::size_t size) {
-    HostEntropy_nid_no_patch(buffer, size);
+    if (!buffer || size == 0) return;
+    std::array<std::uint8_t, 256> chunk;
+    std::size_t offset = 0;
+    const int savedErrno = errno;
+    while (offset < size) {
+        const std::size_t current = std::min(size - offset, chunk.size());
+        HostEntropy_nid_no_patch(chunk.data(), current);
+        if (!GuestCopyOut_nid_no_patch(static_cast<char*>(buffer) + offset, chunk.data(), current)) {
+            errno = savedErrno;
+            return;
+        }
+        offset += current;
+    }
+    errno = savedErrno;
 }
 
 std::uint32_t APS5_VABI arc4random_nid_postfix() {

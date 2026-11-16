@@ -909,7 +909,8 @@ int APS5_VABI sceNpCheckCallback(void) {
 
 int APS5_VABI sceNpCheckNpAvailability(std::int32_t requestId, const NpOnlineId* onlineId, std::uint8_t* available) {
  if (requestId == 0 || onlineId == nullptr) return SCE_NP_ERROR_INVALID_ARGUMENT;
- if (available != nullptr) *available = 0;
+ const std::uint8_t unavailable = 0;
+ if (available != nullptr && !CopyGuestOut(available, &unavailable, sizeof(unavailable))) return SCE_NP_ERROR_INVALID_ARGUMENT;
  return SCE_NP_ERROR_USER_NOT_FOUND;
 }
 
