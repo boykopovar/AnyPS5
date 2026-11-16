@@ -1022,6 +1022,10 @@ class CommentLineHelperTests(unittest.TestCase):
         self.assertEqual(check_conventions.python_comments("\ufeff# c\nx = 1\n"), {1})
         self.assertIsNone(check_conventions.python_comments("def (:\n"))
 
+    def test_cmake_comments_covers_line_and_bracket_comments(self):
+        text = "set(A 1) # note\n#[[ block\nmore ]]\nset(B 2)\n"
+        self.assertEqual(check_conventions.cmake_comments(text), {1, 2, 3})
+
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--shard":
