@@ -37,10 +37,26 @@ alignas(256) constexpr std::array<std::uint32_t, 62> Code{
     0x80010e03, 0xe0781020, 0x80011203, 0xe0781030, 0x80011603, 0xbf810000,
 };
 
-alignas(256) constexpr std::array<std::uint32_t, 3> Min3Div2{0xd7510001, 0x1c020100, 0xbf810000};
-alignas(256) constexpr std::array<std::uint32_t, 3> Max3Mul2{0xd7540001, 0x0c020100, 0xbf810000};
-alignas(256) constexpr std::array<std::uint32_t, 3> Med3Mul4{0xd7570001, 0x14020100, 0xbf810000};
-alignas(256) constexpr std::array<std::uint32_t, 3> DivFixupMul2{0xd75f0001, 0x0c020100, 0xbf810000};
+alignas(256) constexpr std::array<std::uint32_t, 10> Min3Div2{
+    0x34020084u, 0x34060086u, 0xe0381000u, 0x80000401u, 0xbf8c3f70u,
+    0xd751000au, 0x1c1a0b04u,
+    0xe0701000u, 0x80010a03u, 0xbf810000u,
+};
+alignas(256) constexpr std::array<std::uint32_t, 10> Max3Mul2{
+    0x34020084u, 0x34060086u, 0xe0381000u, 0x80000401u, 0xbf8c3f70u,
+    0xd754000au, 0x0c1a0b04u,
+    0xe0701000u, 0x80010a03u, 0xbf810000u,
+};
+alignas(256) constexpr std::array<std::uint32_t, 10> Med3Mul4{
+    0x34020084u, 0x34060086u, 0xe0381000u, 0x80000401u, 0xbf8c3f70u,
+    0xd757000au, 0x141e0d05u,
+    0xe0701000u, 0x80010a03u, 0xbf810000u,
+};
+alignas(256) constexpr std::array<std::uint32_t, 10> DivFixupMul2{
+    0x34020084u, 0x34060086u, 0xe0381000u, 0x80000401u, 0xbf8c3f70u,
+    0xd75f000au, 0x0c1a0b05u,
+    0xe0701000u, 0x80010a03u, 0xbf810000u,
+};
 
 constexpr std::uint32_t Rows[32][4] = {
     {0x00000000u, 0x0000ec99u, 0x000073abu, 0x0000965eu},
@@ -189,15 +205,6 @@ void Check() {
     }
 }
 
-bool RefusesOutputModifier(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> code) {
-    try {
-        Run(device, code, ShaderRecompiler::ShaderFloatMode{0x00u, true, false, false});
-    } catch (const std::runtime_error& error) {
-        return std::string(error.what()).find("output modifier on an f16") != std::string::npos;
-    }
-    return false;
-}
-
 }
 
 int main() {
@@ -208,17 +215,26 @@ int main() {
         Check();
         Run(*device, Code, ShaderRecompiler::ShaderFloatMode{0xf0u, true, true, false});
         Check();
-        Require(RefusesOutputModifier(*device, Code), "float16 modifiers: an output modifier with f16 output denormals flushed was not refused");
-        const std::pair<std::span<const std::uint32_t>, const char*> ternaries[] = {
-            {Min3Div2, "v_min3_f16 div:2"},
-            {Max3Mul2, "v_max3_f16 mul:2"},
-            {Med3Mul4, "v_med3_f16 mul:4"},
-            {DivFixupMul2, "v_div_fixup_f16 mul:2"},
+        Run(*device, Code, ShaderRecompiler::ShaderFloatMode{0x00u, true, false, false});
+        Require((Output[1] & 0xffffu) == 0xf099u, "float16 modifiers: lane 0 v_add_f16 mul:2 was not scaled");
+        Require((Output[12] & 0xffffu) == 0x77abu, "float16 modifiers: lane 0 v_max3_f16 mul:2 was not scaled");
+        Require((Output[14] & 0xffffu) == 0xe899u, "float16 modifiers: lane 0 v_min3_f16 div:2 was not scaled");
+        Require((Output[15] & 0xffffu) == 0x77abu, "float16 modifiers: lane 0 v_fma_f16 mul:2 was not scaled");
+        const struct {
+            std::span<const std::uint32_t> code;
+            const char* name;
+            std::uint32_t expected;
+        } ternaries[] = {
+            {Min3Div2, "v_min3_f16 div:2", 0xe899u},
+            {Max3Mul2, "v_max3_f16 mul:2", 0x77abu},
+            {Med3Mul4, "v_med3_f16 mul:4", 0x9e5eu},
+            {DivFixupMul2, "v_div_fixup_f16 mul:2", 0xf099u},
         };
-        for (const auto& [code, name] : ternaries) {
+        for (const auto& [code, name, expected] : ternaries) {
             Run(*device, code, std::nullopt);
             Run(*device, code, ShaderRecompiler::ShaderFloatMode{0xf0u, true, true, false});
-            Require(RefusesOutputModifier(*device, code), std::string("float16 modifiers: ") + name + " with f16 output denormals flushed was not refused");
+            Run(*device, code, ShaderRecompiler::ShaderFloatMode{0x00u, true, false, false});
+            Require((Output[0] & 0xffffu) == expected, std::string("float16 modifiers: lane 0 ") + name + " was not scaled");
         }
         std::puts("float16 modifiers tests passed");
         return 0;

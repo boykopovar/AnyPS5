@@ -239,7 +239,7 @@ void ResetEdge(KernelEqueueEvent* e) {
 
 void WatchEdges(KernelEqueueEvent& event, bool socket) {
     const int descriptor = static_cast<int>(event.event.ident);
-    auto watch = EdgeWatch::Watch::Open(socket ? GuestSockets::NativeDescriptor(descriptor) : descriptor, event.event.filter == EVFILT_WRITE);
+    auto watch = EdgeWatch::Watch::Open(socket ? GuestSockets::NativeDescriptor(descriptor) : descriptor, descriptor, event.event.filter == EVFILT_WRITE);
     event.filter.data = watch.get();
     event.filter.waitDescriptor = watch->Descriptor();
     event.filter.owner = std::move(watch);
@@ -640,6 +640,19 @@ bool IsKqueueDescriptor_nid_no_patch(int descriptor) {
     return static_cast<bool>(FindKqueue(descriptor));
 }
 
+int ReserveKqueueDescriptor() {
+    return ReserveDescriptor();
+}
+
+void RegisterKqueueDescriptor(int descriptor, KernelEqueueRef queue) {
+    std::lock_guard lock(g_kqueueMutex);
+    g_kqueues[descriptor] = std::move(queue);
+}
+
+KernelEqueueRef FindKqueueDescriptor(int descriptor) {
+    return FindKqueue(descriptor);
+}
+
 std::optional<bool> KqueueReadable(int descriptor) {
     const auto queue = FindKqueue(descriptor);
     if (!queue) return std::nullopt;
@@ -714,6 +727,13 @@ int APS5_VABI kqueue_nid_postfix() {
 }
 
 int APS5_VABI kevent_nid_postfix(int descriptor, const KernelEvent* changelist, int nchanges, KernelEvent* eventlist, int nevents, const KernelTimespec* timeout) {
+    KernelTimespec limit{};
+    if (timeout != nullptr) {
+        if (!GuestCopyIn_nid_no_patch(&limit, timeout, sizeof(limit))) {
+            return PosixFailure(GUEST_EFAULT);
+        }
+        timeout = &limit;
+    }
     const auto queue = FindKqueue(descriptor);
     if (!queue) {
         return PosixFailure(GUEST_EBADF);
@@ -723,13 +743,6 @@ int APS5_VABI kevent_nid_postfix(int descriptor, const KernelEvent* changelist, 
     }
     if (nchanges > 0 && changelist == nullptr) {
         return PosixFailure(GUEST_EFAULT);
-    }
-    KernelTimespec limit{};
-    if (timeout != nullptr) {
-        if (!GuestCopyIn_nid_no_patch(&limit, timeout, sizeof(limit))) {
-            return PosixFailure(GUEST_EFAULT);
-        }
-        timeout = &limit;
     }
     int errors = 0;
     for (int i = 0; i < nchanges; ++i) {

@@ -9,6 +9,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <utility>
 #include <array>
 #include <initializer_list>
 
@@ -207,6 +208,25 @@ std::uint32_t CallSites(const std::vector<std::uint32_t>& spirv, const char* nam
     return calls;
 }
 
+std::pair<std::uint32_t, std::uint32_t> LoopsKeptRolled(const std::vector<std::uint32_t>& spirv, const char* name) {
+    std::uint32_t target = 0;
+    for (std::size_t at = 5; at < spirv.size() && (spirv[at] >> 16u) != 0u; at += spirv[at] >> 16u) {
+        if ((spirv[at] & 0xffffu) == spv::OpName && std::strcmp(reinterpret_cast<const char*>(&spirv[at + 2u]), name) == 0) target = spirv[at + 1u];
+    }
+    std::uint32_t function = 0;
+    std::uint32_t loops = 0;
+    std::uint32_t kept = 0;
+    for (std::size_t at = 5; at < spirv.size() && (spirv[at] >> 16u) != 0u; at += spirv[at] >> 16u) {
+        const auto opcode = spirv[at] & 0xffffu;
+        if (opcode == spv::OpFunction) function = spirv[at + 2u];
+        if (opcode == spv::OpLoopMerge && target != 0u && function == target) {
+            ++loops;
+            if ((spirv[at + 3u] & spv::LoopControlDontUnrollMask) != 0u) ++kept;
+        }
+    }
+    return {loops, kept};
+}
+
 }
 
 void RunBdaContractTests() {
@@ -317,5 +337,7 @@ void RunBdaContractTests() {
         const auto lookups = CallSites(shader, "get_bda_write_pointer");
         const auto loops = CallSites(shader, "write_bda_bytes");
         AgcDriver::Graphics::Require(loops == 1u && lookups == (bits == 32u ? 2u : 1u), "a runtime V# write of " + std::to_string(bits) + " bits has " + std::to_string(lookups) + " write lookups and " + std::to_string(loops) + " byte-loop calls, not its byte path through write_bda_bytes");
+        const auto [byteLoops, rolled] = LoopsKeptRolled(shader, "write_bda_bytes");
+        AgcDriver::Graphics::Require(byteLoops == 1u && rolled == 1u, "the byte loop of write_bda_bytes may be unrolled, which copies its write lookup once per byte");
     }
 }

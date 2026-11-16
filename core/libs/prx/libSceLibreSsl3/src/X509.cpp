@@ -1,6 +1,7 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libSceLibreSsl3/include/Reference.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
+#include "prx/libc/include/Api.hpp"
 
 #include <cstdint>
 #include <limits>
@@ -55,6 +56,22 @@ std::int64_t APS5_VABI X509_get_version_nid_postfix(const LibreSsl3X509* certifi
     if (!certificate || !certificate->certInfo)
         throw std::invalid_argument("X509_get_version requires certificate info");
     return IntegerValue(certificate->certInfo->version);
+}
+
+int APS5_VABI X509_set_version_nid_postfix(LibreSsl3X509* certificate, std::int64_t version) {
+    if (!certificate) return 0;
+    if (version < 0 || version > 2) return 0;
+    if (!certificate->certInfo)
+        throw std::invalid_argument("X509_set_version requires certificate info");
+    auto& info = *certificate->certInfo;
+    if (!info.version) {
+        auto* integer = static_cast<Asn1String*>(calloc_nid_postfix(1, sizeof(Asn1String)));
+        if (!integer) return 0;
+        integer->type = IntegerType;
+        info.version = integer;
+    }
+    info.encModified = 1;
+    return ASN1_INTEGER_set_nid_postfix(info.version, version);
 }
 
 }

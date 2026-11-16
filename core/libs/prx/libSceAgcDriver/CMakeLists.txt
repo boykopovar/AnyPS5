@@ -263,6 +263,8 @@ function(agc_embedded_shader SOURCE STEM SYMBOL OUT_LIST)
 endfunction()
 set(agcDepthTransferShaderHeaders)
 agc_embedded_shader(DepthToStorage.comp DepthToStorage DEPTH_TO_STORAGE_SPV agcDepthTransferShaderHeaders)
+set(agcStagingCopyBackBoundShaderHeaders)
+agc_embedded_shader(StagingCopyBackBound.comp StagingCopyBackBound STAGING_COPY_BACK_BOUND_SPV agcStagingCopyBackBoundShaderHeaders)
 foreach(agcPresentationStage IN ITEMS Vert Frag)
     string(TOLOWER "${agcPresentationStage}" agcPresentationExtension)
     string(TOUPPER "${agcPresentationStage}" agcPresentationSymbol)
@@ -332,6 +334,23 @@ foreach(agcOverlayStage IN ITEMS Vert Frag)
     )
     list(APPEND agcPresentationShaderHeaders ${agcOverlayShaderHeader})
 endforeach()
+set(agcFsrIncludeDir ${CMAKE_SOURCE_DIR}/3rdparty/FidelityFX-FSR/ffx-fsr)
+foreach(agcFsrFilter IN ITEMS Easu Rcas)
+    string(TOUPPER "${agcFsrFilter}" agcFsrSymbol)
+    set(agcFsrShaderSource ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/shaders/Fsr${agcFsrFilter}.frag)
+    set(agcFsrShaderSpv ${agcTextureDetileGeneratedDir}/Fsr${agcFsrFilter}Frag.spv)
+    set(agcFsrShaderHeader ${agcTextureDetileGeneratedDir}/Fsr${agcFsrFilter}Frag_spv.h)
+    add_custom_command(
+            OUTPUT "${agcFsrShaderHeader}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${agcTextureDetileGeneratedDir}"
+            COMMAND "$<TARGET_FILE:glslang-standalone>" -V --target-env vulkan1.1 "-I${agcFsrIncludeDir}" -o "${agcFsrShaderSpv}" "${agcFsrShaderSource}"
+            COMMAND ${CMAKE_COMMAND} -DINPUT=${agcFsrShaderSpv} -DOUTPUT=${agcFsrShaderHeader}
+            -DSYMBOL=FSR_${agcFsrSymbol}_FRAG_SPV -P "${CMAKE_CURRENT_SOURCE_DIR}/embed_spirv.cmake"
+            DEPENDS "${agcFsrShaderSource}" "${agcFsrIncludeDir}/ffx_a.h" "${agcFsrIncludeDir}/ffx_fsr1.h" glslang-standalone
+            VERBATIM
+    )
+    list(APPEND agcPresentationShaderHeaders ${agcFsrShaderHeader})
+endforeach()
 
 set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp
@@ -383,6 +402,7 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Presentation.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Queues/QueueWorker.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Queues/Submission.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Queues/StallPrompt.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Queues/SubmissionRing.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Queues/WorkerAffinity.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Driver/Shaders/ShaderDiagnostics.cpp
@@ -411,12 +431,14 @@ set(agcDriverSources
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/FrameCapture.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/FrameRecorder.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/VulkanDevice.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Float16NanProbe.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/FloatFlushProbe.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/FloatProbeTolerance.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/Float16ConversionProbe.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/AspectFit.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PresentationScaler.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PresentationPass.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PresentationUpscaler.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PerformanceOverlay.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/KeyboardOverlay.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Execution/src/PadStatusOverlay.cpp
@@ -482,6 +504,7 @@ set(agcDriverSources
         ${agcSampleDumpsShaderHeader}
         ${agcPresentationShaderHeaders}
         ${agcDepthTransferShaderHeaders}
+        ${agcStagingCopyBackBoundShaderHeaders}
         ${CMAKE_CURRENT_SOURCE_DIR}/Eq/src/Event.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Eq/src/Query.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Resource/src/Lifecycle.cpp
@@ -562,6 +585,12 @@ set_target_properties(libSceAgcDriver PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(libSceAgcDriver)
 if(WIN32)
     target_link_options(libSceAgcDriver PRIVATE LINKER:--exclude-symbols=_Znwy:_Znay:_ZnwyRKSt9nothrow_t:_ZnayRKSt9nothrow_t:_ZdlPv:_ZdaPv:_ZdlPvy:_ZdaPvy:_ZdlPvRKSt9nothrow_t:_ZdaPvRKSt9nothrow_t)
+endif()
+if(MINGW AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    set(agcStdExportScript "${CMAKE_CURRENT_BINARY_DIR}/libSceAgcDriverStdExports.ver")
+    file(CONFIGURE OUTPUT "${agcStdExportScript}" CONTENT "{\n  local:\n    _ZSt*;\n    _ZNSt*;\n    _ZNKSt*;\n    _ZNRSt*;\n    _ZNKRSt*;\n    _ZNOSt*;\n    _ZNKOSt*;\n    _ZNSa*;\n    _ZNKSa*;\n};\n")
+    target_link_options(libSceAgcDriver PRIVATE "LINKER:--version-script=${agcStdExportScript}")
+    set_property(TARGET libSceAgcDriver APPEND PROPERTY LINK_DEPENDS "${agcStdExportScript}")
 endif()
 
 if(WIN32)
@@ -686,6 +715,7 @@ foreach(agcExecutionTestSource IN LISTS agcExecutionTestSources)
     target_link_libraries(${agcExecutionTest} PRIVATE libSceAgcDriver SDL2-static libc)
     set_target_properties(${agcExecutionTest} PROPERTIES CXX_EXTENSIONS OFF)
     configure_windows_unwind(${agcExecutionTest})
+    target_compile_definitions(${agcExecutionTest} PRIVATE VK_ENABLE_BETA_EXTENSIONS)
     if(agcExecutionTests)
         list(GET agcExecutionTests 0 agcExecutionPchTarget)
         target_precompile_headers(${agcExecutionTest} REUSE_FROM ${agcExecutionPchTarget})
@@ -700,6 +730,20 @@ foreach(agcExecutionTestSource IN LISTS agcExecutionTestSources)
     endif()
     list(APPEND agcExecutionTests ${agcExecutionTest})
 endforeach()
+
+add_test_executable(agc_read_lane_elimination_tests EXCLUDE_FROM_ALL tests/ReadLaneElimination.cpp)
+target_include_directories(agc_read_lane_elimination_tests PRIVATE ${CMAKE_SOURCE_DIR}/core/shader/recompiler)
+target_link_libraries(agc_read_lane_elimination_tests PRIVATE shader_recompiler_agc_driver libc)
+set_target_properties(agc_read_lane_elimination_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_windows_unwind(agc_read_lane_elimination_tests)
+if(BUILD_TESTING)
+    set_target_properties(agc_read_lane_elimination_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_read_lane_elimination COMMAND agc_read_lane_elimination_tests)
+    if(WIN32)
+        set_tests_properties(agc_read_lane_elimination PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
 
 function(agc_add_default_test agcTest)
     string(REGEX REPLACE "_tests$" "" agcTestName "${agcTest}")
@@ -717,6 +761,11 @@ function(agc_add_draw_pipeline_test agcTestName)
     set_tests_properties(${agcTestName}_draw_pipeline PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_DRAW_PIPELINE=1;APS5_PIPELINED_DRAWS=32;APS5_PIPELINE_DISPATCH=1" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
     if(WIN32)
         set_tests_properties(${agcTestName}_draw_pipeline PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test(NAME ${agcTestName}_plan_verify COMMAND ${agcTestName}_tests)
+    set_tests_properties(${agcTestName}_plan_verify PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_DRAW_PIPELINE=1;APS5_PIPELINED_DRAWS=32;APS5_PIPELINE_DISPATCH=1;APS5_VERIFY_DRAW_PLAN=1" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    if(WIN32)
+        set_tests_properties(${agcTestName}_plan_verify PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endfunction()
 
@@ -843,8 +892,14 @@ if(BUILD_TESTING)
                 OUTPUT_NAME GuestMemoryFixture SUFFIX ".prx" CXX_EXTENSIONS OFF
                 BUILD_WITH_INSTALL_RPATH TRUE INSTALL_RPATH "$ORIGIN")
     endif()
+    add_test(NAME agc_driver_depth_expand_out_of_place_inline COMMAND agc_driver_depth_expand_out_of_place_tests)
+    set_tests_properties(agc_driver_depth_expand_out_of_place_inline PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_PIPELINED_DRAWS=0" SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
+    if(WIN32)
+        set_tests_properties(agc_driver_depth_expand_out_of_place_inline PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 
-    foreach(partialStoreTest agc_driver_depth_plane_partial_store_unimported agc_driver_depth_plane_partial_store_image_copy agc_driver_depth_plane_partial_store_buffer_copy)
+    foreach(partialStoreTest agc_driver_depth_plane_partial_store_unimported agc_driver_depth_plane_partial_store_image_copy agc_driver_depth_plane_partial_store_buffer_copy agc_driver_depth_plane_partial_store_upload_image)
         set_tests_properties(${partialStoreTest} PROPERTIES
                 ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_NO_HOST_IMPORT=1" TIMEOUT 30 SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}")
         if(WIN32)
@@ -856,6 +911,7 @@ if(BUILD_TESTING)
         agc_driver_prepared_shaders_indirect agc_driver_prepared_shaders_uncached
         agc_driver_prepared_shaders_debug agc_driver_prepared_shaders_debug_failure
         PROPERTIES RESOURCE_LOCK shader_failure_capture)
+    set_property(TEST agc_driver_prepared_shaders APPEND PROPERTY ENVIRONMENT "APS5_NO_MASKED_RESULT_MEMO=1")
 endif()
 
 option(AGC_BUILD_VISUAL_TEST "Enable the standalone AGC SPIR-V visual test" OFF)
@@ -1060,7 +1116,7 @@ endif()
 
 if(BUILD_TESTING)
     get_directory_property(agcRegisteredTests TESTS)
-    list(FILTER agcRegisteredTests EXCLUDE REGEX "^(agc_pipeline_journal(_long_paths|_extended_paths)?|agc_driver_pipeline_journal|agc_pipeline_store_replay_growth)$")
+    list(FILTER agcRegisteredTests EXCLUDE REGEX "^(agc_pipeline_journal(_long_paths|_extended_paths)?|agc_driver_pipeline_journal(_undecodable_module)?|agc_pipeline_store_replay_growth|agc_pipeline_journal_replay_priority)$")
     set_property(TEST ${agcRegisteredTests} APPEND PROPERTY ENVIRONMENT "APS5_NO_PIPELINE_JOURNAL=1")
 endif()
 

@@ -1,5 +1,26 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "prx/libSceIcu/Version.hpp"
+
+#include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
+#include "prx/libkernel/File/include/File.hpp"
+#include "prx/libkernel/File/include/FileFlags.hpp"
+#include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestErrno.hpp"
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+#ifndef _WIN32
+#include <sys/stat.h>
+#include <unistd.h>
+#else
+#include <io.h>
+#endif
+#include <fcntl.h>
+#include <fstream>
+#include <iterator>
+#include <thread>
 
 #include <cmath>
 #include <cstddef>
@@ -11,7 +32,9 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <source_location>
+#include <type_traits>
 
 namespace {
 
@@ -190,6 +213,83 @@ static void TestMemoryAllocations() {
     _ZN8Gigacage4freeENS_4KindEPv(0, cross2);
 }
 
+template <typename Function>
+bool ExpectBmallocOperatorStub(Function function, const char* name) {
+    const std::uint64_t before = NotImplementedCalls_nid_no_patch();
+    try {
+        static_cast<void>(function());
+    } catch (const std::runtime_error& error) {
+        if (std::string(error.what()) == std::string(name) + " not implemented" &&
+            NotImplementedCalls_nid_no_patch() == before + 1) {
+            std::fprintf(stderr, "EXPECTED_BMALLOC_THROW %s\n", name);
+            return true;
+        }
+    }
+    return false;
+}
+
+template <typename ScalarNew, typename ScalarDelete, typename ArrayNew>
+bool TestBmallocOperatorClass(ScalarNew scalarNew, ScalarDelete scalarDelete, ArrayNew arrayNew,
+                              const char* scalarNewName, const char* scalarDeleteName,
+                              const char* arrayNewName) {
+    if constexpr (std::is_invocable_r_v<int, ScalarNew> &&
+                  std::is_invocable_r_v<int, ScalarDelete> &&
+                  std::is_invocable_r_v<int, ArrayNew>) {
+        ExpectBmallocOperatorStub(scalarNew, scalarNewName);
+        ExpectBmallocOperatorStub(scalarDelete, scalarDeleteName);
+        ExpectBmallocOperatorStub(arrayNew, arrayNewName);
+        return false;
+    } else {
+        static_assert(std::is_invocable_r_v<void*, ScalarNew, std::size_t>);
+        static_assert(std::is_invocable_r_v<void, ScalarDelete, void*>);
+        static_assert(std::is_invocable_r_v<void*, ArrayNew, std::size_t>);
+
+        void* scalarZero = scalarNew(0);
+        Require(scalarZero != nullptr);
+        Require((reinterpret_cast<std::uintptr_t>(scalarZero) % alignof(std::max_align_t)) == 0);
+        scalarDelete(scalarZero);
+        scalarDelete(nullptr);
+
+        auto* scalar = static_cast<unsigned char*>(scalarNew(128));
+        Require(scalar != nullptr);
+        for (std::size_t i = 0; i < 128; ++i) {
+            scalar[i] = static_cast<unsigned char>(i ^ 0xA5);
+        }
+        for (std::size_t i = 0; i < 128; ++i) {
+            Require(scalar[i] == static_cast<unsigned char>(i ^ 0xA5));
+        }
+        scalarDelete(scalar);
+
+        void* arrayZero = arrayNew(0);
+        Require(arrayZero != nullptr);
+        Require((reinterpret_cast<std::uintptr_t>(arrayZero) % alignof(std::max_align_t)) == 0);
+        _ZN7bmalloc3api13freeOutOfLineEPvNS_8HeapKindE(arrayZero, 0);
+
+        auto* array = static_cast<unsigned char*>(arrayNew(128));
+        Require(array != nullptr);
+        for (std::size_t i = 0; i < 128; ++i) {
+            array[i] = static_cast<unsigned char>(i ^ 0x5A);
+        }
+        for (std::size_t i = 0; i < 128; ++i) {
+            Require(array[i] == static_cast<unsigned char>(i ^ 0x5A));
+        }
+        _ZN7bmalloc3api13freeOutOfLineEPvNS_8HeapKindE(array, 0);
+        return true;
+    }
+}
+
+static bool TestBmallocHeapOperators() {
+    const bool isoTls = TestBmallocOperatorClass(
+        _ZN7bmalloc11IsoTLSEntrynwEm, _ZN7bmalloc11IsoTLSEntrydlEPv,
+        _ZN7bmalloc11IsoTLSEntrynaEm, "_ZN7bmalloc11IsoTLSEntrynwEm",
+        "_ZN7bmalloc11IsoTLSEntrydlEPv", "_ZN7bmalloc11IsoTLSEntrynaEm");
+    const bool isoHeap = TestBmallocOperatorClass(
+        _ZN7bmalloc15IsoHeapImplBasenwEm, _ZN7bmalloc15IsoHeapImplBasedlEPv,
+        _ZN7bmalloc15IsoHeapImplBasenaEm, "_ZN7bmalloc15IsoHeapImplBasenwEm",
+        "_ZN7bmalloc15IsoHeapImplBasedlEPv", "_ZN7bmalloc15IsoHeapImplBasenaEm");
+    return isoTls && isoHeap;
+}
+
 static void TestTime() {
     MonotonicTime mNow = _ZN3WTF13MonotonicTime3nowEv();
     Require(mNow.m_value > 0.0);
@@ -257,17 +357,169 @@ static void TestTime() {
     Require(threadCpu.m_value >= 0.0);
 }
 
-static void TestSystem() {
-    int cores = _ZN3WTF22numberOfProcessorCoresEv();
-    Require(cores >= 1);
+extern "C" void CurrentTimeClockForTest_nid_no_patch(int (*query)(int, KernelTimespec*));
 
-    std::uint64_t ram = _ZN3WTF7ramSizeEv();
+static int g_clockQueries = 0;
+static int g_lastClockId = -1;
+
+static int ClockWithTimes(int clockId, KernelTimespec* time) {
+    ++g_clockQueries;
+    g_lastClockId = clockId;
+    if (clockId == 0) {
+        *time = KernelTimespec{1700000000, 250000000};
+        return 0;
+    }
+    if (clockId == 4) {
+        *time = KernelTimespec{12345, 500000000};
+        return 0;
+    }
+    *time = KernelTimespec{99, 0};
+    return 0;
+}
+
+static int ClockFailing(int, KernelTimespec*) {
+    ++g_clockQueries;
+    return -1;
+}
+
+static double GuestClockSeconds(int clockId) {
+    KernelTimespec time{};
+    Require(clock_gettime_nid_postfix(clockId, &time) == 0);
+    return static_cast<double>(time.tv_sec) + time.tv_nsec / 1'000'000'000.0;
+}
+
+static void TestGuestClocks() {
+    CurrentTimeClockForTest_nid_no_patch(ClockWithTimes);
+    g_clockQueries = 0;
+    Require(_ZN3WTF8WallTime3nowEv().m_value == 1700000000.25);
+    Require(g_lastClockId == 0);
+    Require(_ZN3WTF13MonotonicTime3nowEv().m_value == 12345.5);
+    Require(g_lastClockId == 4);
+    Require(g_clockQueries == 2);
+
+    TimeWithDynamicClockType dynamicWall = _ZN3WTF24TimeWithDynamicClockType3nowENS_9ClockTypeE(ClockType::Wall);
+    Require(dynamicWall.m_type == ClockType::Wall && dynamicWall.m_value == 1700000000.25);
+    TimeWithDynamicClockType dynamicMonotonic = _ZN3WTF24TimeWithDynamicClockType3nowENS_9ClockTypeE(ClockType::Monotonic);
+    Require(dynamicMonotonic.m_type == ClockType::Monotonic && dynamicMonotonic.m_value == 12345.5);
+
+    MonotonicTime monotonic{12346.5};
+    Require(_ZNK3WTF13MonotonicTime19approximateWallTimeEv(&monotonic).m_value == 1700000001.25);
+    WallTime wall{1700000002.25};
+    Require(_ZNK3WTF8WallTime24approximateMonotonicTimeEv(&wall).m_value == 12347.5);
+
+    CurrentTimeClockForTest_nid_no_patch(ClockFailing);
+    g_clockQueries = 0;
+    Require(_ZN3WTF8WallTime3nowEv().m_value == 0.0);
+    Require(_ZN3WTF13MonotonicTime3nowEv().m_value == 0.0);
+    Require(g_clockQueries == 2);
+
+    CurrentTimeClockForTest_nid_no_patch(nullptr);
+    const double monotonicBefore = GuestClockSeconds(4);
+    const double monotonicNow = _ZN3WTF13MonotonicTime3nowEv().m_value;
+    Require(monotonicBefore <= monotonicNow && monotonicNow <= GuestClockSeconds(4));
+    const double wallBefore = GuestClockSeconds(0);
+    const double wallNow = _ZN3WTF8WallTime3nowEv().m_value;
+    Require(wallBefore <= wallNow && wallNow <= GuestClockSeconds(0));
+}
+
+extern "C" void NumberOfProcessorCoresSysconfForTest_nid_no_patch(std::int64_t (*query)(int));
+
+static int g_sysconfQueries = 0;
+
+static std::int64_t SysconfWithProcessors(int name) {
+    ++g_sysconfQueries;
+    if (name == 58) return 37;
+    if (name == 57) return 41;
+    return -1;
+}
+
+static std::int64_t SysconfFailing(int) {
+    ++g_sysconfQueries;
+    return -1;
+}
+
+static void TestNumberOfProcessorCores() {
+    NumberOfProcessorCoresSysconfForTest_nid_no_patch(SysconfWithProcessors);
+    g_sysconfQueries = 0;
+    Require(_ZN3WTF22numberOfProcessorCoresEv() == 37);
+    Require(_ZN3WTF22numberOfProcessorCoresEv() == 37);
+    Require(g_sysconfQueries == 1);
+
+    NumberOfProcessorCoresSysconfForTest_nid_no_patch(SysconfFailing);
+    g_sysconfQueries = 0;
+    Require(_ZN3WTF22numberOfProcessorCoresEv() == 1);
+    Require(_ZN3WTF22numberOfProcessorCoresEv() == 1);
+    Require(g_sysconfQueries == 1);
+
+    NumberOfProcessorCoresSysconfForTest_nid_no_patch(nullptr);
+    const int cores = _ZN3WTF22numberOfProcessorCoresEv();
+    Require(cores >= 1);
+    Require(cores == sysconf_nid_postfix(58));
+    Require(_ZN3WTF22numberOfProcessorCoresEv() == cores);
+}
+
+extern "C" void RamSizeSysconfForTest_nid_no_patch(std::int64_t (*query)(int));
+
+static std::int64_t SysconfWithMemory(int name) {
+    ++g_sysconfQueries;
+    if (name == 121) return 139888;
+    if (name == 47) return 16384;
+    return -1;
+}
+
+static std::int64_t SysconfWithoutPhysPages(int name) {
+    ++g_sysconfQueries;
+    return name == 47 ? 16384 : -1;
+}
+
+static std::int64_t SysconfWithoutPageSize(int name) {
+    ++g_sysconfQueries;
+    return name == 121 ? 139888 : -1;
+}
+
+static void TestRamSize() {
+    RamSizeSysconfForTest_nid_no_patch(SysconfWithMemory);
+    g_sysconfQueries = 0;
+    Require(_ZN3WTF7ramSizeEv() == 139888ULL * 16384ULL);
+    Require(_ZN3WTF7ramSizeEv() == 139888ULL * 16384ULL);
+    Require(g_sysconfQueries == 2);
+
+    RamSizeSysconfForTest_nid_no_patch(SysconfWithoutPhysPages);
+    g_sysconfQueries = 0;
+    Require(_ZN3WTF7ramSizeEv() == 512ULL * 1024ULL * 1024ULL);
+    Require(_ZN3WTF7ramSizeEv() == 512ULL * 1024ULL * 1024ULL);
+    Require(g_sysconfQueries == 2);
+
+    RamSizeSysconfForTest_nid_no_patch(SysconfWithoutPageSize);
+    Require(_ZN3WTF7ramSizeEv() == 512ULL * 1024ULL * 1024ULL);
+
+    RamSizeSysconfForTest_nid_no_patch(SysconfFailing);
+    Require(_ZN3WTF7ramSizeEv() == 512ULL * 1024ULL * 1024ULL);
+
+    RamSizeSysconfForTest_nid_no_patch(nullptr);
+    const std::uint64_t ram = _ZN3WTF7ramSizeEv();
+    Require(ram == static_cast<std::uint64_t>(sysconf_nid_postfix(121)) * static_cast<std::uint64_t>(sysconf_nid_postfix(47)));
     Require(ram >= 1024ULL * 1024ULL * 1024ULL);
+    Require(_ZN3WTF7ramSizeEv() == ram);
+}
+
+static void TestSystem() {
+    TestNumberOfProcessorCores();
+    TestRamSize();
+    TestGuestClocks();
 
     std::size_t page = _ZN3WTF8pageSizeEv();
-    Require(page == 4096);
+    Require(page == 16384);
+    Require(_ZN3WTF8pageSizeEv() == page);
 
     _ZN3WTF6Config17permanentlyFreezeEv();
+
+    std::uint8_t icuVersion[4] = {0};
+    u_getVersion_nid_postfix(icuVersion);
+    Require(_ZN3WTF3ICU12majorVersionEv() == icuVersion[0]);
+    Require(_ZN3WTF3ICU12minorVersionEv() == icuVersion[1]);
+    Require(_ZN3WTF3ICU12majorVersionEv() == 78);
+    Require(_ZN3WTF3ICU12minorVersionEv() == 1);
 
     char b1[16] = {0};
     char b2[16] = {0};
@@ -375,8 +627,375 @@ static void TestJscAndPal() {
 
 void TestAdditionalWtf();
 
+static void TestMappedFiles() {
+    const auto open = &_ZN3WTF14FileSystemImpl8openFileERKNS_6StringENS0_12FileOpenModeENS0_20FileAccessPermissionEb;
+    const auto close = &_ZN3WTF14FileSystemImpl9closeFileERi;
+    const auto construct = &_ZN3WTF14FileSystemImpl14MappedFileDataC1EiNS0_12FileOpenModeENS0_14MappedFileModeERb;
+    const auto readOnly = &_ZN3WTF14FileSystemImpl14MappedFileDataC1EiNS0_14MappedFileModeERb;
+    const auto fromPath = &_ZN3WTF14FileSystemImpl14MappedFileDataC1ERKNS_6StringENS0_14MappedFileModeERb;
+    const auto fromPathBase = &_ZN3WTF14FileSystemImpl14MappedFileDataC2ERKNS_6StringENS0_14MappedFileModeERb;
+    const auto destroy = &_ZN3WTF14FileSystemImpl14MappedFileDataD1Ev;
+    const auto destroyBase = &_ZN3WTF14FileSystemImpl14MappedFileDataD2Ev;
+    const auto map = &_ZN3WTF14FileSystemImpl14MappedFileData13mapFileHandleEiNS0_12FileOpenModeENS0_14MappedFileModeE;
+    WTF::MappedFileData mapped{};
+    bool success = true;
+    readOnly(&mapped, -1, 0, success);
+    Require(!success && !mapped.data && !mapped.size);
+    destroy(&mapped);
+    const auto root = std::filesystem::current_path() / ("nkwebkit-mapped-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    Require(std::filesystem::create_directory(root));
+    const auto hostPath = root.u8string();
+    AddPathAlias_nid_no_patch("/nkwebkit-mapped", reinterpret_cast<const char*>(hostPath.c_str()));
+    auto path = _ZN3WTF6String8fromUTF8EPKh(reinterpret_cast<const unsigned char*>("/nkwebkit-mapped/file.bin"));
+    fromPath(&mapped, path, 0, success);
+    Require(!success && !mapped.data && !mapped.size);
+    int handle = open(path, 2, true, true);
+    Require(handle >= 0);
+    readOnly(&mapped, handle, 0, success);
+    Require(success && !mapped.data && !mapped.size);
+    destroyBase(&mapped);
+    Require(sceKernelWrite(handle, "abcdef", 6) == 6);
+    readOnly(&mapped, handle, 0, success);
+    Require(success && mapped.size == 6 && std::memcmp(mapped.data, "abcdef", 6) == 0);
+    VirtualQueryInfo info{};
+    void* address = mapped.data;
+    Require(sceKernelVirtualQuery(address, 0, &info, sizeof(info)) == 0);
+    close(handle);
+    Require(std::memcmp(mapped.data, "abcdef", 6) == 0);
+    destroy(&mapped);
+    Require(sceKernelVirtualQuery(address, 0, &info, sizeof(info)) != 0);
+    handle = open(path, 2, true, false);
+    construct(&mapped, handle, 2, 0, success);
+    Require(success && mapped.size == 6);
+    static_cast<char*>(mapped.data)[0] = 'S';
+    char contents[6]{};
+    Require(sceKernelRead(handle, contents, sizeof(contents)) == 6 && contents[0] == 'S');
+    destroy(&mapped);
+    construct(&mapped, handle, 2, 1, success);
+    Require(success && mapped.size == 6);
+    static_cast<char*>(mapped.data)[0] = 'P';
+    Require(sceKernelLseek(handle, 0, 0) == 0);
+    Require(sceKernelRead(handle, contents, sizeof(contents)) == 6 && contents[0] == 'S');
+    destroyBase(&mapped);
+    construct(&mapped, handle, 1, 0, success);
+    Require(success);
+    static_cast<char*>(mapped.data)[1] = 'W';
+    destroy(&mapped);
+    close(handle);
+    fromPathBase(&mapped, path, 1, success);
+    Require(success && mapped.size == 6 && std::memcmp(mapped.data, "SWcdef", 6) == 0);
+    destroyBase(&mapped);
+    handle = open(path, 0, true, false);
+    construct(&mapped, handle, 2, 0, success);
+    Require(!success && !mapped.data && !mapped.size);
+    Require(map(&mapped, handle, 0, 1));
+    Require(mapped.size == 6 && std::memcmp(mapped.data, "SWcdef", 6) == 0);
+    destroy(&mapped);
+    close(handle);
+#ifndef _WIN32
+    std::filesystem::resize_file(root / "file.bin", std::uint64_t{1} << 32);
+    handle = open(path, 0, true, false);
+    readOnly(&mapped, handle, 0, success);
+    Require(!success && !mapped.data && !mapped.size);
+    close(handle);
+#endif
+    RemovePathAlias_nid_no_patch("/nkwebkit-mapped");
+    std::filesystem::remove_all(root);
+}
+
+static void TestFileHandles() {
+    const auto open = &_ZN3WTF14FileSystemImpl8openFileERKNS_6StringENS0_12FileOpenModeENS0_20FileAccessPermissionEb;
+    const auto close = &_ZN3WTF14FileSystemImpl9closeFileERi;
+    const auto seek = &_ZN3WTF14FileSystemImpl8seekFileEixNS0_14FileSeekOriginE;
+    const auto truncate = &_ZN3WTF14FileSystemImpl12truncateFileEix;
+    const auto openAndLock = &_ZN3WTF14FileSystemImpl15openAndLockFileERKNS_6StringENS0_12FileOpenModeENS_9OptionSetINS0_12FileLockModeEEE;
+    const auto unlockAndClose = &_ZN3WTF14FileSystemImpl18unlockAndCloseFileEi;
+    const auto root = std::filesystem::current_path() / ("nkwebkit-handles-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    Require(std::filesystem::create_directory(root));
+    const auto hostPath = root.u8string();
+    AddPathAlias_nid_no_patch("/nkwebkit-handles", reinterpret_cast<const char*>(hostPath.c_str()));
+    const char* guestPath = "/nkwebkit-handles/\xC3\xA9.bin";
+    auto path = _ZN3WTF6String8fromUTF8EPKh(reinterpret_cast<const unsigned char*>(guestPath));
+    Require(open(path, 0, true, false) == -1);
+    Require(openAndLock(path, 0, 1) == -1);
+    NKWebKit::WtfAbi::String nullPath;
+    Require(open(nullPath, 0, true, false) == -1);
+#ifndef _WIN32
+    const auto oldMask = ::umask(0);
+#endif
+    int handle = open(path, 1, false, false);
+#ifndef _WIN32
+    ::umask(oldMask);
+#endif
+    Require(handle >= 0);
+    Require(sceKernelWrite(handle, "abcdef", 6) == 6);
+    Require(seek(handle, 2, 0) == 2);
+    Require(seek(handle, 1, 1) == 3);
+    Require(seek(handle, -1, 2) == 5);
+    Require(truncate(handle, 4));
+    Require(seek(handle, 0, 2) == 4);
+    Require(!truncate(handle, -1));
+    close(handle);
+    Require(handle == -1);
+    close(handle);
+    Require(handle == -1);
+#ifndef _WIN32
+    Require((std::filesystem::status(root / std::filesystem::path(u8"é.bin")).permissions() & std::filesystem::perms::mask) == (std::filesystem::perms::owner_read | std::filesystem::perms::owner_write));
+#endif
+    handle = open(path, 0, true, false);
+    Require(handle >= 0);
+    char bytes[8]{};
+    Require(sceKernelRead(handle, bytes, sizeof(bytes)) == 4);
+    Require(std::memcmp(bytes, "abcd", 4) == 0);
+    Require(!truncate(handle, 1));
+    close(handle);
+    for (int mode = 0; mode != 3; ++mode) Require(open(path, mode, true, true) == -1);
+    Require(std::filesystem::file_size(root / std::filesystem::path(u8"é.bin")) == 4);
+    handle = open(path, 2, true, false);
+    Require(handle >= 0 && seek(handle, 0, 2) == 4);
+    Require(sceKernelWrite(handle, "ef", 2) == 2);
+    Require(seek(handle, 0, 0) == 0);
+    Require(sceKernelRead(handle, bytes, sizeof(bytes)) == 6);
+    Require(std::memcmp(bytes, "abcdef", 6) == 0);
+    close(handle);
+    handle = open(path, 1, true, false);
+    Require(handle >= 0 && seek(handle, 0, 2) == 0);
+    Require(sceKernelClose(handle) == 0);
+    handle = sceKernelOpen(guestPath, SCE_KERNEL_O_RDONLY, 0);
+    Require(handle >= 0);
+    close(handle);
+    Require(handle == -1);
+    handle = openAndLock(path, 2, 2);
+    Require(handle >= 0 && sceKernelWrite(handle, "x", 1) == 1);
+    unlockAndClose(handle);
+    Require(seek(handle, 0, 0) == -1);
+    Require(!truncate(-1, 0));
+    Require(seek(-1, 0, 0) == -1);
+    handle = -2;
+    close(handle);
+    Require(handle == -1);
+    auto allPath = _ZN3WTF6String8fromUTF8EPKh(reinterpret_cast<const unsigned char*>("/nkwebkit-handles/all.bin"));
+#ifndef _WIN32
+    const auto allMask = ::umask(0);
+#endif
+    handle = open(allPath, 2, true, true);
+#ifndef _WIN32
+    ::umask(allMask);
+#endif
+    Require(handle >= 0);
+    close(handle);
+#ifndef _WIN32
+    Require((std::filesystem::status(root / "all.bin").permissions() & std::filesystem::perms::mask) == static_cast<std::filesystem::perms>(0666));
+#endif
+    auto readPath = _ZN3WTF6String8fromUTF8EPKh(reinterpret_cast<const unsigned char*>("/nkwebkit-handles/read.bin"));
+    handle = open(readPath, 0, false, true);
+    Require(handle >= 0 && sceKernelRead(handle, bytes, sizeof(bytes)) == 0);
+    close(handle);
+    RemovePathAlias_nid_no_patch("/nkwebkit-handles");
+    std::filesystem::remove_all(root);
+}
+
+static void RequireCurrentStackBounds() {
+    static_assert(sizeof(WTF::StackBounds) == 16);
+    static_assert(offsetof(WTF::StackBounds, m_origin) == 0);
+    static_assert(offsetof(WTF::StackBounds, m_bound) == 8);
+    const WTF::StackBounds bounds = _ZN3WTF11StackBounds32currentThreadStackBoundsInternalEv();
+    int local = 0;
+    const auto* here = reinterpret_cast<const char*>(&local);
+    const auto* origin = static_cast<const char*>(bounds.m_origin);
+    const auto* bound = static_cast<const char*>(bounds.m_bound);
+    Require(origin > bound);
+    Require(here < origin && here > bound);
+    PthreadAttr attr = nullptr;
+    Require(pthread_attr_init_nid_postfix(&attr) == 0);
+    Require(pthread_attr_get_np_nid_postfix(pthread_self_nid_postfix(), &attr) == 0);
+    void* stackAddress = nullptr;
+    std::size_t stackSize = 0;
+    Require(pthread_attr_getstack_nid_postfix(&attr, &stackAddress, &stackSize) == 0);
+    Require(pthread_attr_destroy_nid_postfix(&attr) == 0);
+    Require(bounds.m_bound == stackAddress);
+    Require(origin == static_cast<const char*>(stackAddress) + stackSize);
+}
+
+static void TestStackBounds() {
+    RequireCurrentStackBounds();
+    std::thread worker(RequireCurrentStackBounds);
+    worker.join();
+}
+
+static std::string CaptureLog(void (*body)()) {
+    const auto path = (std::filesystem::temp_directory_path() / ("nkwebkit_timing_scope_" + std::to_string(_ZN3WTF13MonotonicTime3nowEv().m_value) + ".log")).string();
+    std::fflush(stdout);
+    std::fflush(stderr);
+#ifdef _WIN32
+    const int file = _open(path.c_str(), _O_CREAT | _O_TRUNC | _O_WRONLY, 0600);
+    const int savedOut = _dup(1);
+    const int savedErr = _dup(2);
+    Require(file >= 0 && savedOut >= 0 && savedErr >= 0 && _dup2(file, 1) == 0 && _dup2(file, 2) == 0);
+#else
+    const int file = open(path.c_str(), O_CREAT | O_TRUNC | O_WRONLY, 0600);
+    const int savedOut = dup(1);
+    const int savedErr = dup(2);
+    Require(file >= 0 && savedOut >= 0 && savedErr >= 0 && dup2(file, 1) == 1 && dup2(file, 2) == 2);
+#endif
+    body();
+    std::fflush(stdout);
+    std::fflush(stderr);
+#ifdef _WIN32
+    Require(_dup2(savedOut, 1) == 0 && _dup2(savedErr, 2) == 0);
+    _close(savedOut);
+    _close(savedErr);
+    _close(file);
+#else
+    Require(dup2(savedOut, 1) == 1 && dup2(savedErr, 2) == 2);
+    close(savedOut);
+    close(savedErr);
+    close(file);
+#endif
+    std::ifstream input(path, std::ios::binary);
+    std::string text((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+    input.close();
+    std::filesystem::remove(path);
+    return text;
+}
+
+static std::size_t CountOccurrences(const std::string& text, const std::string& needle) {
+    std::size_t count = 0;
+    for (std::size_t at = text.find(needle); at != std::string::npos; at = text.find(needle, at + needle.size())) ++count;
+    return count;
+}
+
+static const char g_firstTimingName[] = "nkwebkit-timing-first";
+static const char g_secondTimingName[] = "nkwebkit-timing-second";
+
+static void EndScope(const char* name, unsigned interval) {
+    WTF::TimingScope scope{_ZN3WTF13MonotonicTime3nowEv(), name, interval};
+    _ZN3WTF11TimingScope11scopeDidEndEv(&scope);
+}
+
+static void TestTimingScope() {
+    static_assert(sizeof(WTF::TimingScope) == 24);
+    static_assert(offsetof(WTF::TimingScope, m_startTime) == 0);
+    static_assert(offsetof(WTF::TimingScope, m_name) == 8);
+    static_assert(offsetof(WTF::TimingScope, m_logIterationInterval) == 16);
+    const std::string first = CaptureLog([] {
+        EndScope(g_firstTimingName, 2);
+        EndScope(g_firstTimingName, 2);
+        EndScope(g_secondTimingName, 2);
+    });
+    Require(CountOccurrences(first, std::string(g_firstTimingName) + ": 2 calls, mean duration: ") == 1);
+    Require(CountOccurrences(first, std::string(g_firstTimingName) + ": 1 calls") == 0);
+    Require(CountOccurrences(first, g_secondTimingName) == 0);
+    Require(CountOccurrences(first, "ms, total duration: ") == 1);
+    Require(CountOccurrences(first, "ms, max duration ") == 1);
+    const std::string second = CaptureLog([] {
+        EndScope(g_secondTimingName, 2);
+        EndScope(g_firstTimingName, 1);
+    });
+    Require(CountOccurrences(second, std::string(g_secondTimingName) + ": 2 calls") == 1);
+    Require(CountOccurrences(second, std::string(g_firstTimingName) + ": 3 calls") == 1);
+    bool rejected = false;
+    try {
+        EndScope(g_firstTimingName, 0);
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    Require(rejected);
+}
+
+static void TestUniStdExtras() {
+    const auto root = std::filesystem::current_path() / ("nkwebkit-unistd-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    Require(std::filesystem::create_directory(root));
+    const auto hostPath = root.u8string();
+    AddPathAlias_nid_no_patch("/nkwebkit-unistd", reinterpret_cast<const char*>(hostPath.c_str()));
+    const int handle = sceKernelOpen("/nkwebkit-unistd/file.bin", SCE_KERNEL_O_RDWR | SCE_KERNEL_O_CREAT, 0666);
+    Require(handle >= 0);
+    Require((fcntl_nid_postfix(handle, 3) & SCE_KERNEL_O_NONBLOCK) == 0);
+    Require(_ZN3WTF11setNonBlockEi(handle));
+    Require((fcntl_nid_postfix(handle, 3) & SCE_KERNEL_O_NONBLOCK) != 0);
+    Require((fcntl_nid_postfix(handle, 3) & SCE_KERNEL_O_ACCMODE) == SCE_KERNEL_O_RDWR);
+    Require(_ZN3WTF11setNonBlockEi(handle));
+    Require(fcntl_nid_postfix(handle, 1) == 0);
+    const int duplicate = _ZN3WTF14dupCloseOnExecEi(handle);
+    Require(duplicate >= 0 && duplicate != handle);
+    Require(fcntl_nid_postfix(duplicate, 1) == 1);
+    Require(fcntl_nid_postfix(handle, 1) == 0);
+    Require(sceKernelWrite(duplicate, "abc", 3) == 3);
+    Require(sceKernelLseek(handle, 0, 1) == 3);
+    Require(close_nid_postfix(duplicate) == 0);
+    Require(sceKernelClose(handle) == 0);
+    *__error_nid_postfix() = 0;
+    Require(!_ZN3WTF11setNonBlockEi(handle));
+    Require(*__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    Require(_ZN3WTF14dupCloseOnExecEi(-1) == -1);
+    Require(*__error_nid_postfix() == 9);
+    RemovePathAlias_nid_no_patch("/nkwebkit-unistd");
+    std::filesystem::remove_all(root);
+}
+
+static void TestSleepSeconds() {
+    double start = _ZN3WTF13MonotonicTime3nowEv().m_value;
+    _ZN3WTF5sleepENS_7SecondsE(Seconds{0.05});
+    Require(_ZN3WTF13MonotonicTime3nowEv().m_value - start >= 0.05);
+    start = _ZN3WTF13MonotonicTime3nowEv().m_value;
+    _ZN3WTF5sleepENS_7SecondsE(Seconds{0.0});
+    _ZN3WTF5sleepENS_7SecondsE(Seconds{-5.0});
+    _ZN3WTF5sleepENS_7SecondsE(Seconds{-std::numeric_limits<double>::infinity()});
+    _ZN3WTF5sleepENS_7SecondsE(Seconds{std::numeric_limits<double>::quiet_NaN()});
+    Require(_ZN3WTF13MonotonicTime3nowEv().m_value - start < 1.0);
+}
+
+static void TestMakeAllDirectories() {
+    const auto make = &_ZN3WTF14FileSystemImpl18makeAllDirectoriesERKNS_6StringE;
+    const auto root = std::filesystem::current_path() / ("nkwebkit-dirs-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    Require(std::filesystem::create_directory(root));
+    const auto hostPath = root.u8string();
+    AddPathAlias_nid_no_patch("/nkwebkit-dirs", reinterpret_cast<const char*>(hostPath.c_str()));
+    const auto guest = [](const char* text) {
+        return _ZN3WTF6String8fromUTF8EPKh(reinterpret_cast<const unsigned char*>(text));
+    };
+#ifndef _WIN32
+    const auto oldMask = ::umask(0);
+#endif
+    Require(make(guest("/nkwebkit-dirs/a/b/c")));
+#ifndef _WIN32
+    ::umask(oldMask);
+#endif
+    Require(std::filesystem::is_directory(root / "a" / "b" / "c"));
+#ifndef _WIN32
+    Require((std::filesystem::status(root / "a" / "b").permissions() & std::filesystem::perms::mask) == std::filesystem::perms::owner_all);
+    Require((std::filesystem::status(root / "a" / "b" / "c").permissions() & std::filesystem::perms::mask) == std::filesystem::perms::owner_all);
+#endif
+    Require(make(guest("/nkwebkit-dirs/a/b/c")));
+    Require(make(guest("/nkwebkit-dirs")));
+    Require(make(guest("/nkwebkit-dirs/d/e/")));
+    Require(std::filesystem::is_directory(root / "d" / "e"));
+    Require(make(guest("/nkwebkit-dirs/\xC3\xA9/z")));
+    Require(std::filesystem::is_directory(root / std::filesystem::path(u8"é") / "z"));
+    {
+        std::ofstream file(root / "f.bin", std::ios::binary);
+        Require(static_cast<bool>(file));
+    }
+    Require(make(guest("/nkwebkit-dirs/f.bin")));
+    Require(std::filesystem::is_regular_file(root / "f.bin"));
+    Require(!make(guest("/nkwebkit-dirs/f.bin/x")));
+    Require(!std::filesystem::exists(root / "f.bin" / "x"));
+    Require(!make(guest("/nkwebkit-dirs/f.bin/x/y")));
+    NKWebKit::WtfAbi::String nullPath;
+    Require(!make(nullPath));
+    Require(!make(guest("")));
+    RemovePathAlias_nid_no_patch("/nkwebkit-dirs");
+    std::filesystem::remove_all(root);
+}
+
 int main() {
+    if (!TestBmallocHeapOperators()) {
+        return 1;
+    }
     TestAdditionalWtf();
+    TestStackBounds();
+    TestTimingScope();
     TestMemoryAllocations();
     TestAllocationBoundaries();
     TestTime();
@@ -384,6 +1003,11 @@ int main() {
     TestString();
     TestWebCorePure();
     TestJscAndPal();
+    TestMappedFiles();
+    TestFileHandles();
+    TestUniStdExtras();
+    TestSleepSeconds();
+    TestMakeAllDirectories();
     return 0;
 }
 
@@ -408,6 +1032,8 @@ const auto ViewUpper = &_ZNK3WTF10StringView23convertToASCIIUppercaseEv;
 const auto ImplUTF8 = &_ZNK3WTF10StringImpl4utf8ENS_14ConversionModeE;
 const auto UTF8 = &_ZNK3WTF6String4utf8ENS_14ConversionModeE;
 const auto ViewUTF8 = &_ZNK3WTF10StringView4utf8ENS_14ConversionModeE;
+const auto Utf8For16 = &_ZN3WTF10StringImpl17utf8ForCharactersEPKDsjNS_14ConversionModeE;
+const auto Utf8For8 = &_ZN3WTF10StringImpl17utf8ForCharactersEPKhj;
 const auto FromUTF8 = &_ZN3WTF6String8fromUTF8EPKhm;
 const auto FromUTF8Z = &_ZN3WTF6String8fromUTF8EPKh;
 const auto FromCString = &_ZN3WTF6String8fromUTF8ERKNS_7CStringE;
@@ -626,6 +1252,17 @@ void TestUTFConversions() {
     Check(Bytes(UTF8(&malformed, 0)) == "\xed\xa0\x80X\xed\xb0\x80\xed\xbf\xbf");
     Check(Bytes(UTF8(&malformed, 2)) == "\xef\xbf\xbdX\xef\xbf\xbd\xef\xbf\xbd");
     Throws([&] { UTF8(&malformed, 1); });
+    Check(Bytes(Utf8For16(bad, 4, 0)) == "\xed\xa0\x80X\xed\xb0\x80\xed\xbf\xbf");
+    Check(Bytes(Utf8For16(bad, 4, 2)) == "\xef\xbf\xbdX\xef\xbf\xbd\xef\xbf\xbd");
+    Throws([&] { Utf8For16(bad, 4, 1); });
+    char16_t paired[] = {'c', 'a', 'f', 0xE9, 0xD83D, 0xDE00};
+    Check(Bytes(Utf8For16(paired, 6, 1)) == "caf\xc3\xa9\xf0\x9f\x98\x80");
+    Check(Bytes(Utf8For16(paired, 0, 1)).empty() && Bytes(Utf8For16(nullptr, 0, 1)).empty());
+    Throws([&] { Utf8For16(nullptr, 1, 1); });
+    Check(Bytes(Utf8For8(U8("caf\xe9\x80"), 5)) == "caf\xc3\xa9\xc2\x80");
+    Check(Bytes(Utf8For8(U8("a\0b"), 3)) == std::string("a\0b", 3));
+    Check(Bytes(Utf8For8(U8("x"), 0)).empty() && Bytes(Utf8For8(nullptr, 0)).empty());
+    Throws([&] { Utf8For8(nullptr, 1); });
     Text(FromCodePoint(0x1F600), "\xf0\x9f\x98\x80");
     Check(!FromCodePoint(-1).impl && !FromCodePoint(0x110000).impl);
     auto surrogate = FromCodePoint(0xD800);
@@ -1235,6 +1872,122 @@ void TestFileNameHelpers() {
     Throws([&] { LastComponent(nullptr); });
 }
 
+const auto ParserEqual = &_ZN3WTF9URLParser14allValuesEqualERKNS_3URLES3_;
+const auto ParserConsistent = &_ZN3WTF9URLParser24internalValuesConsistentERKNS_3URLE;
+
+void TestURLParserChecks() {
+    constexpr unsigned valid = 1U;
+    constexpr unsigned http = 2U;
+    constexpr unsigned opaque = 4U;
+    auto text = FromUTF8Z(U8("https://u%20:p%40@example.test:8443/a/b?q=1#frag"));
+    const std::string raw = Bytes(UTF8(&text, 1));
+    const unsigned hostEnd = static_cast<unsigned>(raw.find(":8443"));
+    URL url{text.impl, valid | (5U << 3) | (5U << 6), 8, 12, 17, hostEnd,
+        static_cast<unsigned>(raw.rfind('/') + 1), static_cast<unsigned>(raw.find('?')), static_cast<unsigned>(raw.find('#'))};
+    Check(ParserEqual(&url, &url) && ParserConsistent(&url));
+
+    auto copy = FromUTF8Z(U8("https://u%20:p%40@example.test:8443/a/b?q=1#frag"));
+    Check(copy.impl != text.impl);
+    URL same = url;
+    same.impl = copy.impl;
+    Check(ParserEqual(&url, &same) && ParserEqual(&same, &url));
+    auto wide = Create16(u"https://u%20:p%40@example.test:8443/a/b?q=1#frag", 48);
+    Check(!(wide.impl->hashAndFlags & 4));
+    same.impl = wide.impl;
+    Check(ParserEqual(&url, &same) && ParserEqual(&same, &url));
+    auto other = FromUTF8Z(U8("https://u%20:p%40@example.test:8443/a/b?q=1#frog"));
+    same.impl = other.impl;
+    Check(!ParserEqual(&url, &same) && ParserConsistent(&same));
+    auto shorter = FromUTF8Z(U8("https://u%20:p%40@example.test:8443/a/b?q=1#fra"));
+    same.impl = shorter.impl;
+    Check(!ParserEqual(&url, &same));
+
+    for (unsigned flip : {valid, http, opaque, 1U << 3, 4U << 3, 1U << 6, 1U << 31}) {
+        URL changed = url;
+        changed.bits ^= flip;
+        Check(!ParserEqual(&url, &changed) && !ParserEqual(&changed, &url));
+    }
+    unsigned URL::* const offsets[] = {&URL::userStart, &URL::userEnd, &URL::passwordEnd, &URL::hostEnd,
+        &URL::pathAfterLastSlash, &URL::pathEnd, &URL::queryEnd};
+    for (auto offset : offsets) {
+        URL changed = url;
+        changed.*offset += 1;
+        Check(!ParserEqual(&url, &changed) && !ParserEqual(&changed, &url));
+    }
+
+    URL absent{};
+    URL absentCopy{};
+    Check(ParserEqual(&absent, &absentCopy) && ParserConsistent(&absent));
+    auto empty = FromUTF8Z(U8(""));
+    Check(empty.impl && empty.impl->length == 0);
+    URL emptyURL{empty.impl, 0, 0, 0, 0, 0, 0, 0, 0};
+    Check(!ParserEqual(&absent, &emptyURL) && !ParserEqual(&emptyURL, &absent));
+    Check(ParserConsistent(&emptyURL));
+    absent.queryEnd = 1;
+    Check(!ParserConsistent(&absent));
+
+    {
+        URL changed = url;
+        changed.bits = (changed.bits & 63U) | ((changed.userStart + 1) << 6);
+        Check(!ParserConsistent(&changed));
+        changed.bits = (changed.bits & 63U) | (changed.userStart << 6);
+        Check(ParserConsistent(&changed));
+    }
+    const std::pair<unsigned URL::*, unsigned URL::*> orders[] = {{&URL::userStart, &URL::userEnd},
+        {&URL::userEnd, &URL::passwordEnd}, {&URL::passwordEnd, &URL::hostEnd}, {&URL::pathAfterLastSlash, &URL::pathEnd},
+        {&URL::pathEnd, &URL::queryEnd}};
+    for (const auto& [lower, upper] : orders) {
+        URL changed = url;
+        changed.*lower = changed.*upper + 1;
+        Check(!ParserConsistent(&changed));
+        changed.*lower = changed.*upper;
+        Check(ParserConsistent(&changed));
+    }
+    {
+        URL changed = url;
+        changed.pathAfterLastSlash = changed.hostEnd + 4;
+        Check(!ParserConsistent(&changed));
+        changed.pathAfterLastSlash = changed.hostEnd + 5;
+        Check(ParserConsistent(&changed));
+        changed.bits &= ~(7U << 3);
+        changed.pathAfterLastSlash = changed.hostEnd;
+        Check(ParserConsistent(&changed));
+    }
+    {
+        URL changed = url;
+        changed.queryEnd = text.impl->length;
+        Check(ParserConsistent(&changed));
+        changed.queryEnd = text.impl->length + 1;
+        Check(!ParserConsistent(&changed));
+        changed.queryEnd = url.queryEnd;
+        changed.bits &= ~(valid | http | opaque);
+        Check(ParserConsistent(&changed));
+        changed.bits |= http | opaque;
+        Check(ParserConsistent(&changed));
+    }
+    {
+        auto abc = FromUTF8Z(U8("abc"));
+        URL wrapped{abc.impl, valid | (1U << 3), 0, 0, 0, 0xFFFFFFFFU, 0, 0, 0};
+        Check(ParserConsistent(&wrapped));
+        wrapped.bits = valid | (2U << 3);
+        Check(!ParserConsistent(&wrapped));
+        wrapped.pathAfterLastSlash = 1;
+        wrapped.pathEnd = 1;
+        wrapped.queryEnd = 1;
+        Check(ParserConsistent(&wrapped));
+    }
+
+    StringImpl corrupt{2, 3, nullptr, 4};
+    StringImpl corruptCopy{2, 3, nullptr, 4};
+    URL broken{&corrupt, 0, 0, 0, 0, 0, 0, 0, 0};
+    URL brokenCopy{&corruptCopy, 0, 0, 0, 0, 0, 0, 0, 0};
+    Throws([&] { ParserEqual(&broken, &brokenCopy); });
+    Check(ParserEqual(&broken, &broken));
+    Throws([&] { ParserEqual(nullptr, &url); });
+    Throws([&] { ParserEqual(&url, nullptr); });
+    Throws([&] { ParserConsistent(nullptr); });
+}
+
 void TestURLsAndReallocation() {
     struct PinnedBits {
         unsigned valid : 1;
@@ -1685,6 +2438,7 @@ void TestURLsAndReallocation() {
     Check(memory[0] == 'h' && memory[1] == 'e');
     Check(!JSRealloc(memory, 0));
     TestURLStringHelpers();
+    TestURLParserChecks();
 }
 
 void TestURLLastPathComponentAndReferrer() {

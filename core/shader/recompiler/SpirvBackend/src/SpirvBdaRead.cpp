@@ -110,7 +110,7 @@ std::uint32_t EmitBdaByteLoop(SpirvEmitterState& state, std::uint32_t address, s
     state.module.AddFunction(spv::OpPhi, u32, byte, ConstantU32(state, 0u), entry, nextByte, continuation);
     state.module.AddFunction(spv::OpPhi, u32, result, ConstantU32(state, 0u), entry, nextResult, continuation);
     const auto more = Binary(state, spv::OpULessThan, TypeBool(state), byte, count);
-    state.module.AddFunction(spv::OpLoopMerge, merge, continuation, spv::LoopControlMaskNone);
+    state.module.AddFunction(spv::OpLoopMerge, merge, continuation, spv::LoopControlDontUnrollMask);
     state.module.AddFunction(spv::OpBranchConditional, more, body, merge);
     EmitLabel(state, body);
     const auto guest = Binary(state, spv::OpIAdd, TypeScalarU64(state), address, Unary(state, spv::OpUConvert, TypeScalarU64(state), byte));
@@ -750,7 +750,7 @@ void DefineBdaByteWriteFunctions(SpirvEmitterState& state) {
         const auto byte = state.module.AllocateId();
         state.module.AddFunction(spv::OpLoad, u32, byte, counter);
         const auto pending = Binary(state, spv::OpULessThan, TypeBool(state), byte, bytes);
-        state.module.AddFunction(spv::OpLoopMerge, merge, continuation, spv::LoopControlMaskNone);
+        state.module.AddFunction(spv::OpLoopMerge, merge, continuation, spv::LoopControlDontUnrollMask);
         state.module.AddFunction(spv::OpBranchConditional, pending, body, merge);
         EmitLabel(state, body);
         const auto guest = Binary(state, spv::OpIAdd, u64, address, Unary(state, spv::OpUConvert, u64, byte));
