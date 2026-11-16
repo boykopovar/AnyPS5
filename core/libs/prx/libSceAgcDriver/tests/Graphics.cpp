@@ -11663,6 +11663,74 @@ void ProvokingVertexTests() {
     expectFailure([&] { ValidateProvokingVertex(supported, last); }, "invalid provoking vertex mode");
 }
 
+void LastVertexPatchTests() {
+    using namespace AgcDriver::Graphics;
+    auto base = DecodeState(makeState());
+    base.provokingVertexMode = VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT;
+    base.stages = {};
+    base.stages.path = ShaderPath::Vertex;
+    base.rectList = false;
+    base.primitiveRestart = false;
+    base.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    const auto module = [](std::initializer_list<std::uint32_t> instructions) {
+        std::vector<std::uint32_t> words{spv::MagicNumber, 0x10300u, 0u, 4u, 0u};
+        words.insert(words.end(), instructions);
+        return words;
+    };
+    ShaderRecompiler::RecompileResult vertex{};
+    vertex.spirv = module({});
+    ShaderRecompiler::RecompileResult fragment{};
+    fragment.spirv = module({});
+    fragment.fragmentParameters = {{0, 0, true, false}};
+    const std::array<CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, 0}}};
+    const auto patches = [&](const State& state, bool provokingVertexLast = false, bool tessellation = true, bool primitiveListRestart = false, bool indexed = false) {
+        return LastVertexPatches(state, shaders, provokingVertexLast, tessellation, primitiveListRestart, indexed);
+    };
+    Require(patches(base), "an observed last provoking vertex on a device without provokingVertexLast did not take the tessellation patches");
+    Require(!patches(base, true), "a device with provokingVertexLast took the tessellation patches");
+    Require(!patches(base, false, false), "a device without tessellation took the tessellation patches");
+    auto state = base;
+    state.provokingVertexMode = VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT;
+    Require(!patches(state), "a first provoking vertex took the tessellation patches");
+    fragment.fragmentParameters = {{0, 0, false, false}};
+    Require(!patches(base), "a pixel shader that does not observe the provoking vertex took the tessellation patches");
+    for (std::uint32_t read = 0; read < 4; ++read) {
+        fragment.fragmentParameters = {{0, 0, false, false}, {1, 1, read == 0, read == 1, read == 2, read == 3, false}};
+        Require(patches(base), "a pixel shader input that observes the provoking vertex did not take the tessellation patches");
+    }
+    fragment.fragmentParameters = {{0, 0, true, false}};
+    for (const std::uint32_t builtIn : {static_cast<std::uint32_t>(spv::BuiltInLayer), static_cast<std::uint32_t>(spv::BuiltInViewportIndex)}) {
+        vertex.spirv = module({(4u << 16u) | spv::OpDecorate, 1u, spv::DecorationBuiltIn, builtIn});
+        Require(!patches(base), "a vertex shader that writes the layer or viewport took the tessellation patches");
+    }
+    vertex.spirv = module({});
+    for (const auto topology : {VK_PRIMITIVE_TOPOLOGY_POINT_LIST, VK_PRIMITIVE_TOPOLOGY_LINE_LIST, VK_PRIMITIVE_TOPOLOGY_LINE_STRIP, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN, VK_PRIMITIVE_TOPOLOGY_PATCH_LIST}) {
+        state = base;
+        state.topology = topology;
+        Require(!patches(state), "a topology the tessellation patches do not draw took them");
+    }
+    state = base;
+    state.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+    Require(patches(state) && patches(state, false, true, false, true), "a triangle strip did not take the tessellation patches");
+    state.primitiveRestart = true;
+    Require(patches(state) && !patches(state, false, true, false, true), "primitive restart in a triangle strip took the wrong path");
+    state = base;
+    state.primitiveRestart = true;
+    Require(patches(state) && !patches(state, false, true, true), "primitive restart in a triangle list took the wrong path");
+    state = base;
+    state.rectList = true;
+    Require(!patches(state), "a rect list took the triangle tessellation patches");
+    state = base;
+    state.stages.path = ShaderPath::Geometry;
+    Require(!patches(state), "a mesh path draw took the vertex tessellation patches");
+    state = base;
+    state.stages.tessellation = ShaderRecompiler::TessellationConfiguration{};
+    Require(!patches(state), "a tessellated draw took the barycentric tessellation patches");
+    Require(!LastVertexPatches(base, std::span(shaders).first(1), false, true, false, false), "a draw without a pixel shader took the tessellation patches");
+    const std::array<CompiledShader, 2> missing{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, nullptr, 0}}};
+    Require(!LastVertexPatches(base, missing, false, true, false, false), "a draw without a compiled pixel shader took the tessellation patches");
+}
+
 void UnobservedProvokingVertexTests() {
     using namespace AgcDriver::Graphics;
     auto last = DecodeState(makeState());
@@ -15318,6 +15386,7 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--unobserved-provoking-vertex") {
             UnobservedProvokingVertexTests();
+            LastVertexPatchTests();
             ProvokingVertexTests();
             std::cout << "Unobserved provoking vertex checks passed\n";
             return 0;
