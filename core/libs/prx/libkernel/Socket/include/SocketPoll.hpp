@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -25,14 +26,20 @@ using StatusControl = bool (*)(int descriptor, int command, int flags, int* resu
 using IoctlControl = bool (*)(int descriptor, std::uint32_t request, void* argument, int* error);
 struct Forwards {
     int (*family)(int descriptor);
+    int (*listen)(int descriptor, int backlog);
     int (*bind)(int descriptor, const void* address, std::uint32_t length);
+    int (*connect)(int descriptor, const void* address, std::uint32_t length);
     int (*getsockname)(int descriptor, void* address, std::uint32_t* length);
     std::int64_t (*sendto)(int descriptor, const void* buffer, std::uint64_t length, int flags, const void* address, std::uint32_t addressLength, int* error);
     std::int64_t (*recvfrom)(int descriptor, void* buffer, std::uint64_t length, int flags, void* address, std::uint32_t* addressLength, int* error);
+    int (*shutdown)(int descriptor, int how);
 };
 struct NativeOwner {
     int (*transfer)(NativeOwner* owner, bool send, void* buffer, int length) = nullptr;
+    std::atomic<unsigned> shutdownFlags{0};
 };
+constexpr unsigned ReceiveShut = 1;
+constexpr unsigned SendShut = 2;
 
 using NativeLookup = bool (*)(int descriptor, std::shared_ptr<void>* owner, std::uintptr_t* native);
 

@@ -3,6 +3,7 @@
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -111,11 +112,14 @@ bool Push(Stack* stack, void* element, const char* function) {
     return true;
 }
 
+using LookupCallback = int (APS5_VABI*)(LibreSslX509Lookup*);
+using LookupFree = void (APS5_VABI*)(LibreSslX509Lookup*);
+
 void FreeLookup(LibreSslX509Lookup* lookup, bool shutdown, const char* function) {
     if (!lookup) NotImplemented_nid_no_patch(function);
     const auto* method = lookup->method;
-    if (shutdown && method && method->shutdown) NotImplemented_nid_no_patch("X509_LOOKUP shutdown callback");
-    if (method && method->free) NotImplemented_nid_no_patch("X509_LOOKUP free callback");
+    if (shutdown && method && method->shutdown) reinterpret_cast<LookupCallback>(method->shutdown)(lookup);
+    if (method && method->free) reinterpret_cast<LookupFree>(method->free)(lookup);
     free_nid_postfix(lookup);
 }
 
@@ -160,6 +164,26 @@ void FreeVerifyParam(LibreSslX509VerifyParam* param, const char* function) {
     free_nid_postfix(id->ip);
     free_nid_postfix(id);
     free_nid_postfix(param);
+}
+
+bool ReadHostName(const char* name, std::size_t length, std::string& host) {
+    constexpr std::uintptr_t Page = 4096;
+    const bool counted = length != 0;
+    auto address = reinterpret_cast<std::uintptr_t>(name);
+    char chunk[Page];
+    while (!counted || host.size() < length) {
+        std::size_t size = Page - address % Page;
+        if (counted) size = std::min<std::size_t>(size, length - host.size());
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(chunk, reinterpret_cast<const void*>(address), size);
+        errno = savedErrno;
+        if (!copied) throw std::invalid_argument("X509_VERIFY_PARAM_set1_host: unreadable host name");
+        const auto* end = static_cast<const char*>(std::memchr(chunk, '\0', size));
+        host.append(chunk, end ? static_cast<std::size_t>(end - chunk) : size);
+        if (end) return !counted;
+        address += size;
+    }
+    return true;
 }
 
 } // namespace
@@ -228,15 +252,24 @@ LibreSslX509Lookup* APS5_VABI X509_STORE_add_lookup_nid_postfix(LibreSslX509Stor
         }
     }
     if (!method) throw std::invalid_argument(std::string(__func__) + ": null method");
-    if (method->newItem) NotImplemented_nid_no_patch("X509_LOOKUP new_item callback");
     auto* lookup = static_cast<LibreSslX509Lookup*>(malloc_nid_postfix(sizeof(LibreSslX509Lookup)));
     if (!lookup) return nullptr;
     lookup->init = 0;
     lookup->skip = 0;
     lookup->method = method;
     lookup->methodData = nullptr;
+    lookup->storeContext = nullptr;
+    if (method->newItem && !reinterpret_cast<LookupCallback>(method->newItem)(lookup)) {
+        free_nid_postfix(lookup);
+        return nullptr;
+    }
     lookup->storeContext = store;
-    if (Push(lookupMethods, lookup, __func__)) return lookup;
+    try {
+        if (Push(lookupMethods, lookup, __func__)) return lookup;
+    } catch (...) {
+        FreeLookup(lookup, false, __func__);
+        throw;
+    }
     FreeLookup(lookup, false, __func__);
     return nullptr;
 }
@@ -244,14 +277,14 @@ LibreSslX509Lookup* APS5_VABI X509_STORE_add_lookup_nid_postfix(LibreSslX509Stor
 int APS5_VABI X509_VERIFY_PARAM_set1_host_nid_postfix(LibreSslX509VerifyParam* param, const char* name, std::size_t length) {
     if (!param || !param->id) throw std::invalid_argument("X509_VERIFY_PARAM_set1_host requires verify parameters");
     auto* id = param->id;
-    if (name && length == 0) length = std::strlen(name);
-    if (name && std::memchr(name, '\0', length)) return 0;
+    std::string host;
+    if (name && !ReadHostName(name, length, host)) return 0;
     if (id->hosts) {
         FreeStrings(static_cast<Stack*>(id->hosts), __func__);
         id->hosts = nullptr;
     }
-    if (!name || length == 0) return 1;
-    char* copy = strndup_nid_postfix(name, length);
+    if (host.empty()) return 1;
+    char* copy = strndup_nid_postfix(host.data(), host.size());
     if (!copy) return 0;
     if (!id->hosts && !(id->hosts = NewStack(nullptr))) {
         free_nid_postfix(copy);

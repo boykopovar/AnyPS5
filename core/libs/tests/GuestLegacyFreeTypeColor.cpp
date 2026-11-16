@@ -4,6 +4,7 @@
 #include FT_FREETYPE_H
 #include FT_COLOR_H
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -103,6 +104,10 @@ int main() {
     Require(FT_Palette_Select_nid_postfix(guest, 0, &palette) == 0);
     Require(palette[0].red == 0xff && palette[0].green == 0 && palette[0].blue == 0 && palette[0].alpha == 0xff);
     Require(FT_Palette_Select_nid_postfix(nullptr, 0, &palette) == FT_Err_Invalid_Face_Handle);
+    errno = 71;
+    Require(FT_Palette_Data_Get_nid_postfix(guest, reinterpret_cast<LegacyFreeType::GuestPaletteData*>(0x10)) == FT_Err_Invalid_Argument);
+    Require(FT_Palette_Select_nid_postfix(guest, 0, reinterpret_cast<LegacyFreeType::GuestColor**>(0x10)) == FT_Err_Invalid_Argument);
+    Require(errno == 71);
 
     for (const std::uint32_t baseGlyph : {0u, 1u, 2u, 4u}) CheckLayers(guest, native, baseGlyph);
     LegacyFreeType::GuestLayerIterator iterator{};

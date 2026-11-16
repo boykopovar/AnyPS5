@@ -92,4 +92,16 @@ int main() {
     char* third = devname_nid_postfix(0x6001u, Block);
     Check(third == first && std::strcmp(third, "#B:0x6001") == 0);
     Check(std::strlen(devname_nid_postfix(0xFFFFFFFEu, Character)) == 13);
+
+    char* unmapped = reinterpret_cast<char*>(std::uintptr_t{0x10});
+    Check(devname_r_nid_postfix(0xABCDu, Character, unmapped, 16) == unmapped);
+    Check(devname_r_nid_postfix(NoDevice, Character, unmapped, 16) == unmapped);
+    *__error_nid_postfix() = 0;
+    Check(devname_r_nid_postfix(0x12, Character, unmapped, -1) == unmapped);
+    Check(*__error_nid_postfix() == 84);
+
+    std::array<char, 24> full;
+    full.fill('#');
+    Check(devname_r_nid_postfix(0xFFFFFFFEu, Character, full.data(), static_cast<int>(full.size())) == full.data());
+    Check(std::strcmp(full.data(), "#C:0xfffffffe") == 0 && full[14] == '#');
 }

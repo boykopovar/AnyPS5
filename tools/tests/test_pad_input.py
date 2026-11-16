@@ -85,6 +85,9 @@ class PadInputTests(unittest.TestCase):
             (1, b"0 100 16384\n0 100 64\n"),
             (1, b"0 100 16384\ntrailing\n"),
             (1, b"0 100 16384\n" + b" " * 4096 + b"extra"),
+            (1, b"0 100 16384 255\n"), (1, b"0 100 16384 255 128\n"), (1, b"0 100 16384 255 128 128\n"),
+            (1, b"0 100 16384 255 128 128 128 128\n"), (1, b"0 100 16384 256 128 128 128\n"),
+            (1, b"0 100 16384 255 128 128 x\n"),
         ]
         for count, body in cases:
             with self.subTest(count=count, body=body):
@@ -98,6 +101,8 @@ class PadInputTests(unittest.TestCase):
             b"0+100+16384\n100 100 64\n200 1 0\n",
             b"0 100 16384\x00-1\n100 100 64\n200 1 0\n",
             b"0 100 16384\n100 100 64\n" + b" " * 120 + b"200 1 0",
+            b"0 100 16384 255 0 128 128\n100 100 64\n200 1 0 0 255 +255 +0\n",
+            b"0+100+16384+255+0+128+128\n100 100 64\n200 1 0\n",
         ]
         for body in bodies:
             with self.subTest(body=body):
@@ -186,9 +191,16 @@ class PadInputTests(unittest.TestCase):
         self.assertEqual(self.queue(1000, "cross", "--left-stick", "0", "255", "--touch", "0", "0", "0", "1"),
                          [1003, 16384, 300, 0, 255, 128, 128, "touch(0,0,0,1)"])
 
+    def test_full_dualsense_touch_height_preserves_sequence(self):
+        for y in (942, 943, 1079):
+            with self.subTest(y=y):
+                self.path.write_text(f"2000 0 300 touch(1919,{y},127,1)\n", encoding="utf-8")
+                self.assertEqual(self.queue(1000, "release", "--touch", "1919", str(y), "127", "1"),
+                                 [2001, 0, 300, f"touch(1919,{y},127,1)"])
+
     def test_invalid_touch_arguments_preserve_command(self):
         original = "2000 0 300 touch(100,200,3,1)\n"
-        for coordinates in [(1920, 0, 0, 1), (0, 943, 0, 1), (0, 0, 128, 1), (0, 0, 0, 2), (-1, 0, 0, 1)]:
+        for coordinates in [(1920, 0, 0, 1), (0, 1080, 0, 1), (0, 0, 128, 1), (0, 0, 0, 2), (-1, 0, 0, 1), (0, -1, 0, 1)]:
             with self.subTest(coordinates=coordinates):
                 self.path.write_text(original, encoding="utf-8")
                 with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
@@ -197,7 +209,7 @@ class PadInputTests(unittest.TestCase):
                 self.assertEqual(self.path.read_text(encoding="utf-8"), original)
 
     def test_invalid_touch_file_does_not_preserve_sequence(self):
-        for token in ["touch(1920,0,0,1)", "touch(0,943,0,1)", "touch(0,0,128,1)", "touch(0,0,0,2)",
+        for token in ["touch(1920,0,0,1)", "touch(0,1080,0,1)", "touch(0,0,128,1)", "touch(0,0,0,2)",
                       "touch(-1,0,0,1)", "touch(0,0,0)", "touch(0,0,0,1,1)", "touch(0,,0,1)", "touch(0,0,0,1)x"]:
             with self.subTest(token=token):
                 self.path.write_text(f"2000 0 300 {token}\n", encoding="utf-8")
@@ -212,6 +224,33 @@ class PadInputTests(unittest.TestCase):
         self.path.write_bytes(b" " * 113 + b"2000 16384 300\r\n")
         expected = 2001 if os.name == "nt" else 1000
         self.assertEqual(self.queue(1000, "down"), [expected, 64, 300])
+
+    def test_pulse_nul_termination_preserves_sequence(self):
+        for pulse in [b"2000 16384 300", b"2000 0 300 0 255 128 128",
+                      b"2000 0 300 touch(100,200,3,1)"]:
+            with self.subTest(pulse=pulse):
+                self.path.write_bytes(pulse + b"\0-ignored\n")
+                self.assertEqual(self.queue(1000, "down"), [2001, 64, 300])
+
+    def test_nul_does_not_hide_invalid_or_overlong_pulse(self):
+        for pulse in [b"2000 16384\0 300\n", b"2000 1 300\0ignored\n",
+                      b"2000 16384 300\0" + b" " * 114 + b"\n"]:
+            with self.subTest(pulse=pulse):
+                self.path.write_bytes(pulse)
+                self.assertEqual(self.queue(1000, "down"), [1000, 64, 300])
+
+    def test_pulse_text_end_marker_matches_host_text_mode(self):
+        self.path.write_bytes(b"2000 16384 300\x1aignored\n")
+        expected = 2001 if os.name == "nt" else 1000
+        self.assertEqual(self.queue(1000, "down"), [expected, 64, 300])
+
+    def test_nul_terminated_exhausted_pulse_preserves_command(self):
+        original = f"{2**64 - 1} 16384 300".encode() + b"\0ignored\n"
+        self.path.write_bytes(original)
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+            self.queue(1, "down")
+        self.assertEqual(error.exception.code, 2)
+        self.assertEqual(self.path.read_bytes(), original)
 
     def test_empty_and_malformed_commands_can_be_replaced(self):
         for text in ["", "not a command\n", "18446744073709551615 nonsense\n",
