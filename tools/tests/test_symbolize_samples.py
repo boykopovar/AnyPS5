@@ -1545,6 +1545,10 @@ class SampleFileLoadTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "hexadecimal offset"):
             symbolize_samples.load(self.write("libA 10 2 5\n"))
 
+    def test_load_refuses_a_thread_filter_without_thread_headings(self):
+        with self.assertRaisesRegex(ValueError, "thread filtering requires thread headings"):
+            symbolize_samples.load(self.write("libA 0x10 2 5\n"), thread="1")
+
 
 if __name__ == "__main__":
     unittest.main()
