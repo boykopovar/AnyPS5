@@ -1888,6 +1888,9 @@ class DecryptedCheckTests(unittest.TestCase):
         data = uniform + plain
         headers = [{'type': 1, 'size': len(uniform), 'source': 0, 'index': 0}, {'type': 1, 'size': len(plain), 'source': len(uniform), 'index': 1}]
         unwrap_self.check_decrypted(data, headers)
+class RecordReadTests(unittest.TestCase):
+    def test_read_records_returns_nothing_for_an_empty_table(self):
+        self.assertEqual(unwrap_self.read_records(bytes(unwrap_self.FIRST_REGION)), [])
 
 
 if __name__ == "__main__":
