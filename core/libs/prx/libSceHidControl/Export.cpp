@@ -750,9 +750,11 @@ int APS5_VABI sceHidControlPswUpdateGetDeviceFirmwareUpdateTelemetryData(std::ui
     request.mode = 1;
     const int result = Control<0x8018486d>(request);
     if (result < 0) return result;
-    auto* bytes = static_cast<std::uint8_t*>(output);
-    std::memset(bytes + sizeof(std::uint32_t), 0, outputSize - sizeof(std::uint32_t));
-    std::memcpy(bytes, reply.data(), sizeof(std::uint32_t));
+    std::memset(reply.data() + sizeof(std::uint32_t), 0, outputSize - sizeof(std::uint32_t));
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(output, reply.data(), reply.size());
+    errno = savedErrno;
+    if (!copied) return ErrorInvalidArgument;
     return result;
 }
 
