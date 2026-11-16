@@ -523,6 +523,11 @@ class CommentAndScopeTests(unittest.TestCase):
         self.assertEqual(pr_labels.strip_comments('a<!-- x -->b'), 'ab')
         self.assertEqual(pr_labels.strip_comments(None), '')
 
+    def test_needs_capture_follows_the_performance_scope(self):
+        self.assertTrue(pr_labels.needs_capture('perf(libc): speed up'))
+        self.assertFalse(pr_labels.needs_capture('perf(tools): x'))
+        self.assertFalse(pr_labels.needs_capture('fix: x'))
+
 
 if __name__ == "__main__":
     unittest.main()
