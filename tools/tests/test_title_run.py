@@ -985,5 +985,14 @@ class SectionTests(unittest.TestCase):
         self.assertEqual(title_run.section({}, "x"), {})
 
 
+class CheckPadTests(unittest.TestCase):
+    def test_check_pad_rejects_missing_events_and_unknown_fields(self):
+        import title_run
+        with self.assertRaises(ValueError):
+            title_run.check_pad({"repeat": 1})
+        with self.assertRaises(ValueError):
+            title_run.check_pad({"events": [], "not_a_field": 1})
+
+
 if __name__ == "__main__":
     unittest.main()
