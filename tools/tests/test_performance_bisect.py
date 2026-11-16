@@ -90,6 +90,17 @@ class RecipeTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         performance_bisect.load_recipe(path)
 
+    def test_rejects_duplicate_fields(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            text = json.dumps(self.make_recipe(root))
+            for name, value in (("regression_pct", "50"), ("title_id", '"PPSA00001"')):
+                with self.subTest(name=name):
+                    path = root / f"duplicate-{name}.json"
+                    path.write_text(text[:-1] + f', "{name}": {value}}}', encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, f"recipe has a duplicate field: {name}"):
+                        performance_bisect.load_recipe(path)
+
 
 class SummaryValidationTests(unittest.TestCase):
     def test_sample_requires_clean_expected_commit_and_rendering_result(self):

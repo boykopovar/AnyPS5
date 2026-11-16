@@ -293,9 +293,12 @@ static void CheckDiagnostics() {
     Require(ifconfig.starts_with("lo0 (index=2)\n") || ifconfig.starts_with("eth0 (index=1)\n   Type:Ethernet HWaddr:02:50:53:35:00:01\n   inet:"));
     const std::string padding(28, ' ');
     const std::string longName(40, 'x');
+    Require(Failed(sceNetSocket(reinterpret_cast<const char*>(0x10), 2, 2, 0), 14));
     const int udp = sceNetSocket(longName.c_str(), 2, 2, 0);
     const int tcp = sceNetSocket("netstat-tcp", 2, 1, 0);
-    const int epoll = sceNetEpollCreate("netstat-epoll", 0);
+    const std::string epollName = "netstat-epoll-" + std::string(40, 'y');
+    Require(Failed(sceNetEpollCreate(reinterpret_cast<const char*>(0x10), 0), 14));
+    const int epoll = sceNetEpollCreate(epollName.c_str(), 0);
     Require(udp >= 0 && tcp >= 0 && epoll >= 0);
     const int nonblocking = 1;
     Require(sceNetSetsockopt(tcp, 0xffff, 0x1200, &nonblocking, sizeof(nonblocking)) == 0);
@@ -309,7 +312,7 @@ static void CheckDiagnostics() {
     const auto udpAt = netstat.find(NetstatEntry(udp, "udp", '.', "OPENED", longName.substr(0, 31)) + "  Local : *:*" + padding + "\n  Remote: *:*" + padding + "\n  Send-Q: 0/");
     const auto tcpAt = netstat.find(NetstatEntry(tcp, "tcp", '*', "LISTEN", "netstat-tcp") + "  Local : 127.0.0.1:" + port + padding + "\n  Remote: *:*" + padding + "\n  Send-Q: 0/");
     std::array<char, 96> epollLine{};
-    std::snprintf(epollLine.data(), epollLine.size(), "ID: %4d (epoll)        *....-. OPENED pid=0x%08x netstat-epoll\n", epoll, static_cast<unsigned>(getpid_nid_postfix()));
+    std::snprintf(epollLine.data(), epollLine.size(), "ID: %4d (epoll)        *....-. OPENED pid=0x%08x %.31s\n", epoll, static_cast<unsigned>(getpid_nid_postfix()), epollName.c_str());
     const auto epollAt = netstat.find(epollLine.data());
     Require(udpAt != std::string::npos && tcpAt != std::string::npos && epollAt != std::string::npos && udpAt < tcpAt && tcpAt < epollAt);
     Require(netstat.find(longName.substr(0, 32)) == std::string::npos);
@@ -861,6 +864,10 @@ static void CheckEmptyEpoll() {
     Require(epoll >= 0);
     NetEpollEvent event{};
     Require(sceNetEpollWait(epoll, &event, 1, 0) == 0);
+    Require(Failed(sceNetEpollControl(epoll, 4, 0, nullptr), 22));
+    Require(Failed(sceNetEpollControl(0x7fff, 4, 0, nullptr), 22));
+    NetEpollEvent zeroMask{};
+    Require(Failed(sceNetEpollControl(epoll, 1, 0, &zeroMask), 22));
     std::array<std::chrono::steady_clock::duration, 9> elapsed{};
     for (auto& sample : elapsed) {
         const auto start = std::chrono::steady_clock::now();
@@ -909,8 +916,11 @@ static void CheckResolverEpoll() {
     NetEpollEvent registration{};
     registration.events = in;
     registration.data.u64 = 0x1234;
+    const auto* const unreadable = reinterpret_cast<const NetEpollEvent*>(0x10);
+    Require(Failed(sceNetEpollControl(epoll, 1, resolver, unreadable), 14));
     Require(sceNetEpollControl(epoll, 1, resolver, &registration) == 0);
     Require(Failed(sceNetEpollControl(epoll, 1, resolver, &registration), 48));
+    Require(Failed(sceNetEpollControl(epoll, 2, resolver, unreadable), 14));
     NetEpollEvent ready{};
     Require(sceNetEpollWait(epoll, &ready, 1, 0) == 0);
 
@@ -920,6 +930,7 @@ static void CheckResolverEpoll() {
     address = 0;
     Require(sceNetResolverStartNtoa(resolver, "guest-sce-net.resolver-epoll", &address, 0, 0, async) == 0);
     Require(address == 0x0100007fu);
+    Require(Failed(sceNetEpollWait(epoll, reinterpret_cast<NetEpollEvent*>(0x10), 1, 0), 14));
     Require(sceNetEpollWait(epoll, &ready, 1, 0) == 1);
     Require(ready.events == (in | descid) && ready.ident == static_cast<std::uint64_t>(resolver) && ready.data.u64 == 0x1234 && ready.reserved == 0);
     Require(sceNetEpollWait(epoll, &ready, 1, 0) == 0);
@@ -1372,6 +1383,7 @@ static void CheckEpollWritable() {
     registration.data.u32 = 41;
     Require(sceNetEpollControl(epoll, 1, sender, &registration) == 0);
     NetEpollEvent ready{};
+    Require(Failed(sceNetEpollWait(epoll, reinterpret_cast<NetEpollEvent*>(0x10), 1, 1000000), 14));
     Require(sceNetEpollWait(epoll, &ready, 1, 1000000) == 1);
     Require(ready.events == 2 && ready.ident == static_cast<std::uint64_t>(sender) && ready.data.u32 == 41);
     Require(sceNetEpollControl(epoll, 3, sender, nullptr) == 0);

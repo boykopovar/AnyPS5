@@ -21,6 +21,8 @@ file(GLOB nkWebKitSources CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cp
 add_library(libSceNKWebKit SHARED EXCLUDE_FROM_ALL Export.cpp DateParsing.cpp CharactersToNumber.cpp ${nkWebKitSources})
 target_include_directories(libSceNKWebKit PRIVATE ${LIBS_INCLUDE_DIR})
 target_link_libraries(libSceNKWebKit PUBLIC libSceJsc libSceIcu PRIVATE qjs libc libkernel libSceLibreSsl)
+include(${CMAKE_SOURCE_DIR}/cmake/LibPsl.cmake)
+target_link_libraries(libSceNKWebKit PRIVATE psl)
 configure_windows_unwind(libSceNKWebKit)
 target_sources(libSceNKWebKit PRIVATE UrlHelpers.cpp)
 

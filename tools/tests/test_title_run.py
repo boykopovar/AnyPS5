@@ -286,6 +286,13 @@ class ReportTests(unittest.TestCase):
         now["machine"] = {"os": "", "gpu": "", "driver": "", "cpu": "Ryzen AI 7 350"}
         self.assertTrue(title_run.render_markdown(now).startswith("AnyPS5 `abc1234`, main + #6814. CPU Ryzen AI 7 350. 2 runs"))
 
+    def test_render_markdown_states_the_run_length_of_the_titles(self):
+        for lengths, stated in (((90, 90), "90 s each."), ((30, 120, 45), "30 to 120 s each.")):
+            with self.subTest(lengths=lengths):
+                now = summary({f"PPSA0000{index}": {"name": "Game", "version": "1", "seconds": seconds, "runs": [run("rendering")]}
+                               for index, seconds in enumerate(lengths)})
+                self.assertIn(f" 2 runs per title, {stated}\n", title_run.render_markdown(now))
+
     def test_render_markdown_skips_runs_without_an_error(self):
         now = summary({"PPSA01325": {"name": "Playroom", "version": "01.905.000",
                                      "runs": [run("stalled"), run("crashed", "warm", error="vkQueueSubmit recorder: Vulkan result -4")]}})
@@ -666,7 +673,8 @@ class SessionTests(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "nt", "junctions are Windows-specific")
     def test_exit_code_follows_a_junctioned_interpreter(self):
-        target = Path(sys.executable).parent
+        interpreter = Path(getattr(sys, "_base_executable", sys.executable))
+        target = interpreter.parent
         directory = Path(tempfile.mkdtemp(prefix="title-run-junction-"))
         link = directory / "python"
         session = None
@@ -675,7 +683,7 @@ class SessionTests(unittest.TestCase):
             if made.returncode != 0:
                 self.skipTest("cannot create a junction: " + made.stderr.strip())
             child = "import subprocess, sys; subprocess.Popen([sys.executable, '-c', 'import time, sys; time.sleep(1); sys.exit(7)'])"
-            session = title_run.Session([str(link / Path(sys.executable).name), "-c", child], Path.cwd(), dict(os.environ), subprocess.DEVNULL, subprocess.DEVNULL, owned=link)
+            session = title_run.Session([str(link / interpreter.name), "-c", child], Path.cwd(), dict(os.environ), subprocess.DEVNULL, subprocess.DEVNULL, owned=link)
             self.assertTrue(wait_until(lambda: not session.alive()))
             self.assertEqual(session.exit_code(), 7)
         finally:

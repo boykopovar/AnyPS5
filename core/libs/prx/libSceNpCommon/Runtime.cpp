@@ -916,7 +916,10 @@ int APS5_VABI sceNpFreeKernelMemory(NpKernelMemory* memory) {
 
 void APS5_VABI sceNpGetSdkVersionUInt(std::uint32_t* version) {
     const std::uint32_t value = SystemVersion();
-    if (version != nullptr) *version = value;
+    if (version == nullptr) return;
+    const int savedErrno = errno;
+    GuestCopyOut_nid_no_patch(version, &value, sizeof(value));
+    errno = savedErrno;
 }
 
 int APS5_VABI sceNpRtcConvertToPosixTime(const RtcTick* tick, std::int64_t* seconds) {
@@ -1305,7 +1308,12 @@ int APS5_VABI sceNpUtilGetNpLanguageCode(int language, char* code) {
 int APS5_VABI sceNpUtilGetNpLanguageCode2(int language, char* tag) {
     const NpLanguageCodes* codes = FindLanguageCodes(language);
     if (codes == nullptr || tag == nullptr) return NP_ERROR_INVALID_ARGUMENT_UTIL;
-    CopyText(tag, codes->tag, NP_LANGUAGE_CODE2_SIZE);
+    char localTag[NP_LANGUAGE_CODE2_SIZE]{};
+    CopyText(localTag, codes->tag, NP_LANGUAGE_CODE2_SIZE);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(tag, localTag, NP_LANGUAGE_CODE2_SIZE);
+    errno = savedErrno;
+    if (!copied) return NP_ERROR_INVALID_ARGUMENT_UTIL;
     return 0;
 }
 
@@ -1678,7 +1686,11 @@ bool APS5_VABI _ZNK3sce2np9NpTitleId6EqualsERK12SceNpTitleId(const NpTitleIdObje
 }
 
 int APS5_VABI _ZN3sce2np9NpTitleId20ConstructFromTitleIdEPS1_PKc(NpTitleIdObject* out, const char* text) {
-    return StoreTitleId(out, text, std::strlen(text), NP_TITLE_ID_CODE_LENGTH);
+    std::string copy;
+    const int error = CopyGuestString_nid_no_patch(text, NP_TITLE_ID_LENGTH + 1, copy);
+    if (error == 63) return NP_ERROR_TITLE_ID_INVALID;
+    if (error != 0) return NP_ERROR_INVALID_ARGUMENT;
+    return StoreTitleId(out, copy.c_str(), copy.size(), NP_TITLE_ID_CODE_LENGTH);
 }
 
 int APS5_VABI _ZN3sce2np9NpTitleId20ConstructFromTitleIdEPS1_PKcm(NpTitleIdObject* out, const char* text, std::size_t length) {
@@ -1686,7 +1698,11 @@ int APS5_VABI _ZN3sce2np9NpTitleId20ConstructFromTitleIdEPS1_PKcm(NpTitleIdObjec
 }
 
 int APS5_VABI _ZN3sce2np9NpTitleId5ParseEPS1_PKc(NpTitleIdObject* out, const char* text) {
-    return StoreTitleId(out, text, std::strlen(text), NP_TITLE_ID_LENGTH);
+    std::string copy;
+    const int error = CopyGuestString_nid_no_patch(text, NP_TITLE_ID_LENGTH + 1, copy);
+    if (error == 63) return NP_ERROR_TITLE_ID_INVALID;
+    if (error != 0) return NP_ERROR_INVALID_ARGUMENT;
+    return StoreTitleId(out, copy.c_str(), copy.size(), NP_TITLE_ID_LENGTH);
 }
 
 int APS5_VABI _ZN3sce2np9NpTitleId5ParseEPS1_PKcm(NpTitleIdObject* out, const char* text, std::size_t length) {
@@ -1968,8 +1984,11 @@ bool APS5_VABI _ZNK3sce2np8NpCommId7IsEmptyEv(const NpCommIdObject* self) {
     return self->commId.data[0] == '\0' && self->commId.num == 0;
 }
 
-bool APS5_VABI _ZNK3sce2np8NpCommId6EqualsEPKc(const NpCommIdObject* self, const char* commId) {
-    if (std::strlen(commId) != NP_TITLE_ID_LENGTH || !IsCommIdText(commId)) return false;
+bool APS5_VABI _ZNK3sce2np8NpCommId6EqualsEPKc(const NpCommIdObject* self, const char* guestCommId) {
+    std::string copy;
+    if (CopyGuestString_nid_no_patch(guestCommId, NP_TITLE_ID_LENGTH + 1, copy) != 0) return false;
+    const char* const commId = copy.c_str();
+    if (copy.size() != NP_TITLE_ID_LENGTH || !IsCommIdText(commId)) return false;
     const auto num = static_cast<std::uint32_t>(std::strtol(commId + 10, nullptr, 10));
     return self->commId.num == num && std::strncmp(self->commId.data, commId, sizeof(self->commId.data)) == 0;
 }
@@ -1983,8 +2002,12 @@ bool APS5_VABI _ZNK3sce2np8NpCommId6EqualsERK20SceNpCommunicationId(const NpComm
 }
 
 int APS5_VABI _ZN3sce2np8NpCommId5ParseEPS1_PKc(NpCommIdObject* out, const char* text) {
-    if (std::strlen(text) != NP_TITLE_ID_LENGTH || !IsCommIdText(text)) return NP_ERROR_TITLE_ID_INVALID;
-    return NpResult(sceNpUtilParseTitleId(&out->commId, text));
+    std::string copy;
+    const int error = CopyGuestString_nid_no_patch(text, NP_TITLE_ID_LENGTH + 1, copy);
+    if (error == 63) return NP_ERROR_TITLE_ID_INVALID;
+    if (error != 0) return NP_ERROR_INVALID_ARGUMENT;
+    if (copy.size() != NP_TITLE_ID_LENGTH || !IsCommIdText(copy.c_str())) return NP_ERROR_TITLE_ID_INVALID;
+    return NpResult(sceNpUtilParseTitleId(&out->commId, copy.c_str()));
 }
 
 int APS5_VABI _ZN3sce2np8NpCommId5ParseEPS1_PKcm(NpCommIdObject* out, const char* text, std::size_t length) {
