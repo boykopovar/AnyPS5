@@ -386,6 +386,38 @@ void testStoreBetweenWalks(const std::filesystem::path& directory) {
     if (held != std::byte{0x6b}) throw std::runtime_error("the last memory delta holding the page has byte " + std::to_string(static_cast<int>(held)) + ", not the 107 the CPU stored between the walks of a driver store");
 }
 
+void testStoreAfterUnwatch(const std::filesystem::path& directory) {
+    constexpr std::size_t Size = 1u << 20;
+    constexpr std::size_t Page = 4096;
+    auto* bytes = allocate(Size);
+    std::fill_n(bytes, Size, std::byte{0});
+    auto* imported = bytes + 2 * FrameCaptureWriter::BlockBytes;
+    auto* neighbor = imported + Page;
+    auto* recorder = AgcDriver::FrameRecorder::Active();
+    check(recorder != nullptr, "frame recorder is disabled");
+    recorder->FrameBoundary();
+    check(AgcDriver::GuestMemory::ImportWatched(address(imported), Page, [] { return true; }, false), "the import of the page failed");
+    check(!AgcDriver::GuestMemory::Watched(address(imported), Page), "the import left the page in the write watch");
+    std::fill_n(imported, 16, std::byte{0x51});
+    std::fill_n(neighbor, 16, std::byte{0x52});
+    recorder->Suspend([] {});
+    std::fill_n(imported + 16, 16, std::byte{0x53});
+    recorder->Suspend([] {});
+    recorder->Suspend([] {});
+    recorder->FrameBoundary();
+    const FrameCaptureReader reader(directory);
+    std::string failures;
+    const auto expect = [&](const std::byte* at, std::byte value, const char* name) {
+        const auto held = lastDeltaByte(reader, at);
+        if (held == value) return;
+        failures += std::string(failures.empty() ? "" : "; ") + name + " holds " + std::to_string(static_cast<int>(held)) + ", not " + std::to_string(static_cast<int>(value));
+    };
+    expect(imported, std::byte{0x51}, "the CPU store to the page after its import left the write watch");
+    expect(imported + 16, std::byte{0x53}, "the CPU store to that page after the next memory delta");
+    expect(neighbor, std::byte{0x52}, "the CPU store to the watched page beside it in the same block");
+    if (!failures.empty()) throw std::runtime_error(failures);
+}
+
 #ifdef _WIN32
 bool consumeWrites(std::uintptr_t begin, std::size_t bytes, void (*written)(void*, std::uintptr_t, std::uintptr_t), void* context) {
     std::vector<void*> pages(256);
@@ -1115,6 +1147,7 @@ int main(int argc, char** argv) {
         else if (mode == "partly_covered") testPartlyCoveredBlock(directory);
         else if (mode == "late_clear") testLateClear(directory);
         else if (mode == "store_between_walks") testStoreBetweenWalks(directory);
+        else if (mode == "store_after_unwatch") testStoreAfterUnwatch(directory);
         else if (mode == "store_window") testStoreWindow(directory);
         else if (mode == "store_window_unwritten") testStoreWindowUnwritten(directory);
         else if (mode == "store_window_stopped") testStoreWindowStopped(directory);
