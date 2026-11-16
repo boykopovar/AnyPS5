@@ -45,7 +45,7 @@ PLATFORMS = (("windows", re.compile(r"\bWindows\b")), ("macos", re.compile(r"\bm
 class Entry:
     file: str
     line: int
-    section: str | None
+    section: Optional[str]
     text: str
 
 
