@@ -3,6 +3,7 @@
 
 extern "C" {
 const void* APS5_VABI WKDictionaryCreate(const void** keys, const void** values, std::size_t numberOfValues) {
+    if ((!keys || !values) && numberOfValues) throw std::invalid_argument(std::string(__func__) + ": null keys or values array");
     std::map<std::u16string, NKWebKit::Retained<NKWebKit::Object>> entries;
     for (std::size_t i = 0; i < numberOfValues; ++i) {
         const auto* key = NKWebKit::Cast<NKWebKit::String>(keys[i], __func__);

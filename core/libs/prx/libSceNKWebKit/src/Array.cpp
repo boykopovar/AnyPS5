@@ -3,6 +3,7 @@
 
 extern "C" {
 const void* APS5_VABI WKArrayCreate(const void** values, std::size_t numberOfValues) {
+    if (!values && numberOfValues) throw std::invalid_argument(std::string(__func__) + ": null values array");
     std::vector<NKWebKit::Retained<NKWebKit::Object>> elements;
     elements.reserve(numberOfValues);
     for (std::size_t i = 0; i < numberOfValues; ++i) {
@@ -12,6 +13,7 @@ const void* APS5_VABI WKArrayCreate(const void** values, std::size_t numberOfVal
 }
 
 const void* APS5_VABI WKArrayCreateAdoptingValues(const void** values, std::size_t numberOfValues) {
+    if (!values && numberOfValues) throw std::invalid_argument(std::string(__func__) + ": null values array");
     std::vector<NKWebKit::Retained<NKWebKit::Object>> elements;
     elements.reserve(numberOfValues);
     for (std::size_t i = 0; i < numberOfValues; ++i) {
