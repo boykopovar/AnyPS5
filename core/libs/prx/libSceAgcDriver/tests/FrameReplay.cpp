@@ -587,12 +587,15 @@ void testStoreAfterGatedCopy(const std::filesystem::path& tool) {
 
     flip();
     auto* const gate = layout.label + 1;
+    auto* const landed = layout.label + 2;
     auto* const control = submitRewound(layout.firstCommands, [&](CommandBuffer& buffer) {
         sceAgcDcbWaitRegMem(&buffer, 0, 3, 0, 0, gate, Done, 0xffffffffu, 0);
         sceAgcDcbDmaData(&buffer, 0, DmaMemory, 0, at(layout.firstTarget), DmaMemory, 0, at(layout.source), DataBytes, 0, 1, 0);
+        writeDone(buffer, landed);
     }, [&](CommandBuffer& buffer) { writeDone(buffer, layout.label); });
     std::atomic_ref<std::uint32_t>(*gate).store(Done, std::memory_order_release);
-    waitUntil([&] { return equal(layout.firstTarget, copied); }, "the copy before the REWIND did not land");
+    waitUntil([&] { return std::atomic_ref<std::uint32_t>(*landed).load(std::memory_order_acquire) == Done; }, "the copy before the REWIND did not land");
+    check(equal(layout.firstTarget, copied), "the label after the copy before the REWIND landed ahead of the copy");
     std::memcpy(layout.firstTarget, stored.data(), stored.size());
     flip();
     release(control);
