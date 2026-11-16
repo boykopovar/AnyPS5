@@ -146,6 +146,9 @@ void EventLocks() {
     Require(sceUsbdTryLockEvents() == 0 && sceUsbdEventHandlingOk() == 1, "a free event lock was not taken");
     UsbdTimeval negative{-1, 0};
     Require(Throws([&] { sceUsbdHandleEventsLocked(&negative); }) && Throws([&] { sceUsbdWaitForEvent(&negative); }), "a negative timeout was accepted");
+    auto* unreadable = reinterpret_cast<UsbdTimeval*>(0x10);
+    Require(Throws([&] { sceUsbdHandleEventsLocked(unreadable); }) && Throws([&] { sceUsbdWaitForEvent(unreadable); }), "an unreadable timeout was accepted");
+    Require(sceUsbdEventHandlingOk() == 1, "an unreadable timeout released the event lock");
     const auto start = std::chrono::steady_clock::now();
     Require(sceUsbdHandleEventsLocked(&brief) == 0, "the handler failed to handle events");
     Require(std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(15), "the handler returned before the timeout");
