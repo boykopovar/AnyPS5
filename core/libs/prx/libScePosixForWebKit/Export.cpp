@@ -7,6 +7,7 @@
 #include "prx/libc/include/HostEntropy.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
+#include <cerrno>
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
@@ -246,7 +247,10 @@ int APS5_VABI getenv_np(const char* name, char* buffer, std::size_t size) {
     const std::size_t length = std::strlen(value);
     if (length >= size)
         throw std::runtime_error("getenv_np: the console's handling of a value longer than the buffer is unknown");
-    std::memcpy(buffer, value, length + 1);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(buffer, value, length + 1);
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument("getenv_np requires a writable buffer");
     return 0;
 }
 
@@ -288,18 +292,18 @@ int APS5_VABI pthread_setname_np_nid_postfix(Pthread thread, const char* name) {
 }
 
 void* APS5_VABI opendir_nid_disambig1_nid_postfix(const char* path) {
-    return opendir_nid_postfix(path);
+    return OpenDirectory_nid_no_patch(path);
 }
 
 int APS5_VABI closedir_nid_disambig1_nid_postfix(void* handle) {
-    return closedir_nid_postfix(handle);
+    return CloseDirectory_nid_no_patch(handle);
 }
 
 GuestDirectoryEntry* APS5_VABI readdir_nid_disambig1_nid_postfix(void* handle) {
-    return readdir_nid_postfix(handle);
+    return ReadDirectory_nid_no_patch(handle);
 }
 
 int APS5_VABI readdir_r_nid_disambig1_nid_postfix(void* handle, GuestDirectoryEntry* entry, GuestDirectoryEntry** result) {
-    return readdir_r_nid_postfix(handle, entry, result);
+    return ReadDirectoryEntry_nid_no_patch(handle, entry, result);
 }
 }
