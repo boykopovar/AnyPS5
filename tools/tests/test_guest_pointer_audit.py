@@ -308,6 +308,13 @@ class AccessKindTests(unittest.TestCase):
     def test_accesses_ignores_other_names(self):
         self.assertEqual(guest_pointer_audit.accesses("q->x; q[0] = 1;", "p"), [])
 
+class QuietTests(unittest.TestCase):
+    def test_quiet_blanks_the_operand_of_sizeof_keeping_the_width(self):
+        text = "sizeof(p->x)"
+        blanked = guest_pointer_audit.quiet(text)
+        self.assertEqual(blanked, "sizeof(" + " " * 4 + ")")
+        self.assertEqual(len(blanked), len(text))
+
 
 if __name__ == "__main__":
     unittest.main()
