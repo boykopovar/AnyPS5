@@ -157,6 +157,13 @@ void NoAllocationOnReturnOrTake() {
 
 }
 
+void StableSortThroughTemporaryBuffer() {
+    std::vector<int> order(1024);
+    for (std::size_t i = 0; i < order.size(); ++i) order[i] = static_cast<int>(order.size() - i) / 2;
+    std::stable_sort(order.begin(), order.end());
+    Expect(std::is_sorted(order.begin(), order.end()), "a stable sort through the temporary buffer left its input unsorted");
+}
+
 void IdleBuffersReleased() {
     using namespace std::chrono_literals;
     const auto start = ReferenceStorage::Clock::time_point{} + 1h;
@@ -184,6 +191,7 @@ int main() {
     SlotsEvictOldest();
     NoAllocationOnReturnOrTake();
     IdleBuffersReleased();
+    StableSortThroughTemporaryBuffer();
     if (failures != 0) return 1;
     std::printf("reference storage tests passed\n");
     return 0;

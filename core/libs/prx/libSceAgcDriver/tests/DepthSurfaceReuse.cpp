@@ -884,6 +884,10 @@ void TestRetireStaleSurfaceWithoutWrittenUnits(const Context& context) {
 }
 
 void RunDepthSurfaceReuseTests() {
+    std::vector<int> order(1024);
+    for (std::size_t i = 0; i < order.size(); ++i) order[i] = static_cast<int>(order.size() - i) / 2;
+    std::stable_sort(order.begin(), order.end());
+    Require(std::is_sorted(order.begin(), order.end()), "a stable sort through the temporary buffer left its input unsorted");
     static int deviceTag = 0;
     Context context{};
     context.device = reinterpret_cast<VkDevice>(&deviceTag);
@@ -1013,6 +1017,15 @@ void* operator new(std::size_t bytes) {
     throw std::bad_alloc();
 }
 
+void* operator new(std::size_t bytes, const std::nothrow_t&) noexcept {
+    try {
+        return ::operator new(bytes);
+    } catch (...) {
+        return nullptr;
+    }
+}
+
 void operator delete(void* allocation) noexcept { std::free(allocation); }
 void operator delete(void* allocation, std::size_t) noexcept { std::free(allocation); }
+void operator delete(void* allocation, const std::nothrow_t&) noexcept { std::free(allocation); }
 #endif
