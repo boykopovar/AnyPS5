@@ -511,6 +511,8 @@ int main(int argc, char** argv) {
     Require(Throws([&] { sceUsbdFreeDeviceList(list, 1); }), "a device list was freed twice");
     EventLocks();
     Require(sceUsbdGetDeviceList(nullptr) == invalidArgument, "null list accepted");
+    errno = 71;
+    Require(sceUsbdGetDeviceList(reinterpret_cast<void***>(0x10)) == invalidArgument && errno == 71, "unwritable device list output accepted");
     Require(sceUsbdHandleEventsTimeout(nullptr) == invalidArgument, "null timeout accepted");
     const UsbdTimeval invalid{0, 1000000};
     Require(sceUsbdHandleEventsTimeout(&invalid) == invalidArgument, "out-of-range microseconds accepted");
