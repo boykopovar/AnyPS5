@@ -313,15 +313,20 @@ std::int64_t APS5_VABI sceUsbdGetDeviceList(void*** list) {
     auto& state = State();
     std::lock_guard lock(state.mutex);
     if (state.context == nullptr) {
-        *list = g_emptyDeviceList;
+        void** const empty = g_emptyDeviceList;
+        if (!GuestCopyOut_nid_no_patch(list, &empty, sizeof(empty))) return SCE_USBD_ERROR_INVALID_ARG;
         return 0;
     }
     libusb_device** devices = nullptr;
     const ssize_t count = libusb_get_device_list(state.context, &devices);
     if (count < 0) return ToGuestError(static_cast<int>(count));
+    void** const stored = reinterpret_cast<void**>(devices);
+    if (!GuestCopyOut_nid_no_patch(list, &stored, sizeof(stored))) {
+        libusb_free_device_list(devices, 1);
+        return SCE_USBD_ERROR_INVALID_ARG;
+    }
     for (ssize_t index = 0; index < count; ++index) AddDeviceReference(state, devices[index]);
     state.lists.insert(devices);
-    *list = reinterpret_cast<void**>(devices);
     return count;
 }
 
