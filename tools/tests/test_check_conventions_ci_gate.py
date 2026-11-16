@@ -221,6 +221,9 @@ class YamlHelperTests(unittest.TestCase):
         lines = [(1, 0, "jobs", ""), (2, 2, "a", ""), (3, 4, "x", ""), (4, 2, "b", ""), (5, 0, "top", "")]
         self.assertEqual(check_conventions.block(lines, 0), [(2, 2, "a", ""), (3, 4, "x", ""), (4, 2, "b", "")])
 
+    def test_field_joins_indented_continuation_lines_into_one_value(self):
+        self.assertEqual(check_conventions.field(["key: a", "  b", "  c", "next: 1"], (1, 0, "key", "a")), "a b c")
+
 
 if __name__ == "__main__":
     unittest.main()
