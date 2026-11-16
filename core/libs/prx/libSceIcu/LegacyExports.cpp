@@ -5228,10 +5228,6 @@ int APS5_VABI _ZN6icu_6810ICUService15registerFactoryEPNS_17ICUServiceFactoryER1
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI uprv_compareASCIIPropertyNames_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK6icu_6822BytesDictionaryMatcher9transformEi_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -6691,10 +6687,6 @@ int APS5_VABI sceIcuLegacyUnknown_gKn2ySmvwDo_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("gKn2ySmvwDo", sceIcuLegacyUnknown_gKn2ySmvwDo_nid_no_patch);
-
-int APS5_VABI uprv_compareEBCDICPropertyNames_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI sceIcuLegacyUnknown_gKwcTFGDWFI_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);

@@ -63,6 +63,8 @@ int APS5_VABI uloc_toLanguageTag();
 int APS5_VABI uloc_toUnicodeLocaleType();
 int APS5_VABI unorm2_getNFKCInstance();
 int APS5_VABI unorm2_getNFKDInstance();
+std::int32_t APS5_VABI uprv_compareASCIIPropertyNames_nid_postfix(const char* name1, const char* name2);
+std::int32_t APS5_VABI uprv_compareEBCDICPropertyNames_nid_postfix(const char* name1, const char* name2);
 const char* APS5_VABI uprv_getDefaultLocaleID_nid_postfix();
 double APS5_VABI uprv_getRawUTCtime_nid_postfix();
 double APS5_VABI uprv_getUTCtime_nid_postfix();

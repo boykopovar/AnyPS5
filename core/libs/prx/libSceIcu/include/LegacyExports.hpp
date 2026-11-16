@@ -1223,7 +1223,6 @@ int APS5_VABI _ZNK6icu_685Edits8Iterator8toStringERNS_13UnicodeStringE_nid_postf
 int APS5_VABI _ZN6icu_6811StringPiece4findES0_i_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_WXYlroAVMGY_nid_no_patch();
 int APS5_VABI _ZN6icu_6810ICUService15registerFactoryEPNS_17ICUServiceFactoryER10UErrorCode_nid_postfix();
-int APS5_VABI uprv_compareASCIIPropertyNames_nid_postfix();
 int APS5_VABI _ZNK6icu_6822BytesDictionaryMatcher9transformEi_nid_postfix();
 int APS5_VABI ucnv_getPlatform_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_Wf5woiuN9RU_nid_no_patch();
@@ -1564,7 +1563,6 @@ int APS5_VABI ures_findResource_nid_postfix();
 int APS5_VABI _ZN6icu_6815MaybeStackArrayIcLi40EE12aliasInsteadEPci_nid_postfix();
 int APS5_VABI _ZNK6icu_6810ICUService14countFactoriesEv_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_gKn2ySmvwDo_nid_no_patch();
-int APS5_VABI uprv_compareEBCDICPropertyNames_nid_postfix();
 int APS5_VABI sceIcuLegacyUnknown_gKwcTFGDWFI_nid_no_patch();
 int APS5_VABI _ZNK6icu_6817UCharsTrieBuilder17getMinLinearMatchEv_nid_postfix();
 int APS5_VABI _ZN6icu_6813ParsePositionD0Ev_nid_postfix();
