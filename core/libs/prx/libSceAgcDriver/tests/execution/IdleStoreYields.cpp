@@ -31,6 +31,7 @@ alignas(4) std::atomic<std::uint32_t> withinAnImageHold{0};
 alignas(4) std::atomic<std::uint32_t> mutexWaiterHold{0};
 alignas(4) std::atomic<std::uint32_t> hookReadHold{0};
 alignas(4) std::atomic<std::uint32_t> flushReadHold{0};
+alignas(4) std::atomic<std::uint32_t> finderHold{0};
 
 alignas(256) constexpr std::array<std::uint32_t, 8> StoreRowZeroCode{
     0x7e040300, 0x7e060280, 0x7e0202ff, Stored, 0xf0200108, 0x00020102, 0xbf810000, 0xbf810000,
@@ -314,6 +315,34 @@ void ReadDuringIdlePieceStoresRest(bool throughHook, std::atomic<std::uint32_t>&
     Require(Contains(reader.split, reader.end), "the rest of the large image never reached guest memory");
 }
 
+void FinderSeesImageBehindBlockedFlush() {
+    Surface surface(256, 256);
+    Registered registered({&surface});
+    std::vector<std::uint32_t> words;
+    AppendStore(words, surface, StoreRowZeroCode);
+    QueueHold hold(finderHold);
+    SubmitAndWaitHeld(words, hold);
+    const auto begin = surface.Address();
+    const auto end = begin + surface.bytes;
+    auto& mutex = AgcDriver::GuestMemory::GpuMutex();
+    std::atomic<bool> stored{false};
+    std::thread flusher;
+    bool found = false;
+    {
+        std::lock_guard gpuLock(mutex);
+        hold.Release();
+        Require(Pending(begin, end), "the image has no pending results");
+        flusher = std::thread([&] { stored.store(AgcDriver::Graphics::StorageTexture::FlushPending(begin, static_cast<std::size_t>(end - begin), nullptr, "idle yield fixture"), std::memory_order_release); });
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (mutex.Waiters() == 0 && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::microseconds(200));
+        Require(mutex.Waiters() != 0, "the flushing thread never blocked on the GPU mutex");
+        found = AgcDriver::Graphics::StorageTexture::FindPending(begin, surface.bytes) != nullptr;
+    }
+    flusher.join();
+    Require(found, "an image a flush had selected but not yet stored was invisible to a lookup made under the GPU mutex");
+    Require(stored.load(std::memory_order_acquire) && !Pending(begin, end), "the flush behind the GPU mutex did not store the image");
+}
+
 void CountsMutexWaiters() {
     auto& mutex = AgcDriver::GuestMemory::GpuMutex();
     Require(mutex.Waiters() == 0, "the GPU mutex reported a waiter while nobody was blocked on it");
@@ -353,6 +382,7 @@ int main() {
         StopsForMutexWaiter();
         ReadDuringIdlePieceStoresRest(true, hookReadHold);
         ReadDuringIdlePieceStoresRest(false, flushReadHold);
+        FinderSeesImageBehindBlockedFlush();
         AgcDriverShutdown_nid_postfix();
         std::puts("idle store yields tests passed");
         return 0;
