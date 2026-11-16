@@ -57,10 +57,6 @@ int APS5_VABI EC_POINT_get_affine_coordinates_GFp_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI X509_NAME_add_entry_by_txt_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI tls_handshake_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }

@@ -348,7 +348,8 @@ void APS5_VABI EC_KEY_set_asn1_flag_nid_postfix(EcKey* key, int flag);
 void APS5_VABI BIO_set_init_nid_postfix(LibreSsl::Bio* bio, int init);
 int APS5_VABI EC_POINT_get_affine_coordinates_GFp_nid_postfix();
 int APS5_VABI SSL_SESSION_get_protocol_version_nid_postfix(const void* session);
-int APS5_VABI X509_NAME_add_entry_by_txt_nid_postfix();
+int APS5_VABI X509_NAME_add_entry_by_txt_nid_postfix(LibreSslX509Name* name, const char* field, int type,
+    const unsigned char* bytes, int len, int loc, int set);
 void APS5_VABI BIO_meth_free_nid_postfix(LibreSsl::BioMethod* method);
 int APS5_VABI tls_handshake_nid_postfix();
 void APS5_VABI AUTHORITY_KEYID_free_nid_postfix(void* authorityKeyId);
