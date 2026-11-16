@@ -375,4 +375,53 @@ private:
     bool canShowMIMEType_ = true;
 };
 
+class AuthenticationDecisionListener final : public ObjectOf<ObjectType::AuthenticationDecisionListener> {
+public:
+    enum class Decision { None, Cancel, UseCredential, RejectProtectionSpace };
+    Decision decision = Decision::None;
+    Retained<Object> credential;
+};
+
+class AuthenticationChallenge final : public ObjectOf<ObjectType::AuthenticationChallenge> {
+public:
+    std::string requestURL;
+    Retained<AuthenticationDecisionListener> decisionListener;
+    int previousFailureCount = 0;
+    Retained<Object> proposedCredential;
+    Retained<Object> protectionSpace;
+    bool isForMainResource = false;
+    bool isInMainFrame = false;
+};
+
+class SecurityOrigin final : public ObjectOf<ObjectType::SecurityOrigin> {
+public:
+    SecurityOrigin() = default;
+    SecurityOrigin(const String& protocol, const String& host, std::optional<std::uint16_t> port)
+        : protocol(protocol.characters), host(host.characters), port(port), protocolNull(protocol.null), hostNull(host.null) {}
+
+    std::u16string protocol;
+    std::u16string host;
+    std::optional<std::uint16_t> port;
+    bool protocolNull = false;
+    bool hostNull = false;
+};
+
+class ResourceCacheManager final : public ObjectOf<ObjectType::CacheManager> {
+public:
+    std::uint32_t lastCachesCleared = 0;
+    bool clearedAll = false;
+    std::vector<std::string> origins;
+
+    void ClearAll(std::uint32_t cachesToClear) {
+        lastCachesCleared = cachesToClear;
+        clearedAll = true;
+        origins.clear();
+    }
+
+    void ClearForOrigin(const std::string& origin, std::uint32_t cachesToClear) {
+        lastCachesCleared = cachesToClear;
+        std::erase(origins, origin);
+    }
+};
+
 }  // namespace NKWebKit
