@@ -534,7 +534,7 @@ void APS5_VABI scePthreadResumeAll(void);
 int APS5_VABI scePthreadSetBesteffort(void);
 int APS5_VABI scePthreadSetconcurrency(int level);
 int APS5_VABI scePthreadSingle(void);
-int APS5_VABI scePthreadSuspend(void);
+int APS5_VABI scePthreadSuspend(Pthread thread);
 int APS5_VABI scePthreadSuspendAll(void);
 int APS5_VABI scePthreadTimedjoin(Pthread thread, void** value, KernelUseconds usec);
 int APS5_VABI sched_setscheduler_nid_postfix(int pid, int policy, const KernelSchedParam* param);

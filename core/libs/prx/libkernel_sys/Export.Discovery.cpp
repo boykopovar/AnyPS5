@@ -2080,17 +2080,16 @@ int APS5_VABI scePthreadSetconcurrency(int level) {
 }
 
 int APS5_VABI scePthreadSingle(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+    return SceResult(pthread_single_np_nid_postfix());
 }
 
-int APS5_VABI scePthreadSuspend(void) {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI scePthreadSuspend(Pthread thread) {
+    if (pthread_suspend_np_nid_postfix(thread) != 0) NotImplemented_nid_no_patch("scePthreadSuspend: the error of a null, finished or calling thread");
     return 0;
 }
 
 int APS5_VABI scePthreadSuspendAll(void) {
-    NotImplemented_nid_no_patch(__func__);
+    pthread_suspend_all_np_nid_postfix();
     return 0;
 }
 
