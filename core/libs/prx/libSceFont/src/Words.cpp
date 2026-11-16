@@ -7,6 +7,7 @@
 
 #include "prx/libSceFont/include/Api.hpp"
 #include "prx/libSceFont/include/FontDriver.hpp"
+#include "prx/libSceFont/include/FontInternal.hpp"
 #include "prx/libSceFont/include/FontWords.hpp"
 
 namespace {
@@ -153,7 +154,11 @@ int BuildWords(const FontMemory* memory, FontTextSource* source, FontWords** wor
     data->rootCount = levels.empty() ? 0 : static_cast<std::uint16_t>(levels[0].size());
     data->memory = memory;
     data->nodes = nodes;
-    *words = reinterpret_cast<FontWords*>(data);
+    if (!Font::CopyOutGuest(words, reinterpret_cast<FontWords*>(data))) {
+        memory->iface->dealloc(memory->mspace_handle, nodes);
+        memory->iface->dealloc(memory->mspace_handle, raw);
+        return SCE_FONT_ERROR_INVALID_PARAMETER;
+    }
     return SCE_FONT_OK;
 }
 
@@ -252,6 +257,7 @@ FontTextCharacter* SelectWord(const WordsData& data, FontTextCharacter* first, c
 }
 
 int Font::CreateWords(const FontMemory* memory, FontTextSource* source, FontWords** words) {
+    if (words && !Font::CopyOutGuest(words, static_cast<FontWords*>(nullptr))) return SCE_FONT_ERROR_INVALID_PARAMETER;
     int rc = SCE_FONT_ERROR_INVALID_PARAMETER;
     if (memory && (memory->mem_kind != MEMORY_MAGIC || !memory->iface || !memory->iface->alloc || !memory->iface->dealloc)) {
         rc = SCE_FONT_ERROR_INVALID_MEMORY;
@@ -262,7 +268,7 @@ int Font::CreateWords(const FontMemory* memory, FontTextSource* source, FontWord
             return rc;
         }
     }
-    if (words) *words = nullptr;
+    if (words) Font::CopyOutGuest(words, static_cast<FontWords*>(nullptr));
     if (source) sceFontTextSourceRewind(source);
     return rc;
 }

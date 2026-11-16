@@ -355,11 +355,7 @@ static const char* APS5_VABI FutureCategoryName_nid_no_patch(const CategoryObjec
 static ErrorCode APS5_VABI CategoryCondition_nid_no_patch(const CategoryObject* self, int value) { return {0, value, self}; }
 static bool APS5_VABI CategoryEquivalentCondition_nid_no_patch(const CategoryObject* self, int value, const ErrorCode* condition) {
     using Condition = ErrorCode (APS5_VABI *)(const CategoryObject*, int);
-#ifdef __APPLE__
     const auto mapped = reinterpret_cast<Condition>(const_cast<void*>(static_cast<const void* const*>(self->vtable)[4]))(self, value);
-#else
-    const auto mapped = reinterpret_cast<Condition>(static_cast<const void* const*>(self->vtable)[4])(self, value);
-#endif
     return condition->category == mapped.category && condition->value == mapped.value;
 }
 static bool APS5_VABI CategoryEquivalentCode_nid_no_patch(const CategoryObject* self, const ErrorCode* code, int value) {
@@ -940,11 +936,17 @@ const ExceptionVtable SceV2FilesystemError {0, &SceV2FilesystemErrorType, GuestD
     what += ErrorCodeMessage(code);
     auto* object = static_cast<FilesystemErrorObject*>(__cxa_allocate_exception_nid_postfix(sizeof(FilesystemErrorObject)));
     *object = {};
-    Construct(&object->base.base, table, what.c_str());
-    object->base.code = code;
-    object->code = code;
-    object->path1 = CopyGuestString(path1);
-    object->path2 = CopyGuestString(path2);
+    try {
+        Construct(&object->base.base, table, what.c_str());
+        object->base.code = code;
+        object->code = code;
+        object->path1 = CopyGuestString(path1);
+        object->path2 = CopyGuestString(path2);
+    } catch (...) {
+        DestroyFilesystemError(&object->base.base);
+        __cxa_free_exception_nid_postfix(object);
+        throw;
+    }
     __cxa_throw_nid_postfix(object, reinterpret_cast<std::type_info*>(const_cast<TypeRecord*>(table.type)),
         reinterpret_cast<decltype(Header::destructor)>(DestroyThrownFilesystemError_nid_no_patch));
 }
