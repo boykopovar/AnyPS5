@@ -124,11 +124,17 @@ void requireDescriptor(const AudioPropagationStructDescriptor* desc, std::uint32
     require(desc != nullptr && desc->id == id && desc->size == size, function);
 }
 
-void requireAttributes(const Attribute* attributes, std::uint32_t count, const char* function) {
+std::vector<Attribute> requireAttributes(const Attribute* attributes, std::uint32_t count, const char* function) {
     require(count == 0 || attributes != nullptr, function);
-    for (std::uint32_t index = 0; index < count; ++index) {
-        require(attributes[index].value != nullptr && attributes[index].valueSize != 0, function);
+    std::vector<Attribute> copied(count);
+    if (count != 0) {
+        const int savedErrno = errno;
+        const bool read = GuestCopyIn_nid_no_patch(copied.data(), attributes, copied.size() * sizeof(Attribute));
+        errno = savedErrno;
+        require(read, function);
     }
+    for (const auto& attribute : copied) require(attribute.value != nullptr && attribute.valueSize != 0, function);
+    return copied;
 }
 
 bool liveSystem(Registry& state, AudioPropagationHandle system) {
@@ -479,11 +485,9 @@ std::int32_t APS5_VABI sceAudioPropagationSourceSetAttributes(AudioPropagationHa
     auto& state = registry();
     std::lock_guard lock(state.mutex);
     requireObject(state, source, Kind::Source, __func__);
-    requireAttributes(attributes, count, __func__);
+    const auto copied = requireAttributes(attributes, count, __func__);
     SourceInfo updated = state.sourceInfos.at(source);
-    for (std::uint32_t index = 0; index < count; ++index) {
-        require(StoreSourceAttribute(updated, attributes[index]), __func__);
-    }
+    for (const auto& attribute : copied) require(StoreSourceAttribute(updated, attribute), __func__);
     state.sourceInfos.at(source) = updated;
     return 0;
 }

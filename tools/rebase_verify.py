@@ -20,7 +20,7 @@ def default_onto(root, name=None):
     if name:
         return name
     for candidate in CANDIDATES:
-        if subprocess.run(["git", "-C", str(root), "rev-parse", "--verify", "--quiet", f"{candidate}^{{commit}}"],
+        if subprocess.run(["git", "-C", str(root), "rev-parse", "--verify", "--quiet", f"{candidate}^0"],
                           capture_output=True).returncode == 0:
             return candidate
     raise ValueError(f"no base branch found ({', '.join(CANDIDATES)}); fetch the upstream remote or pass --onto")
