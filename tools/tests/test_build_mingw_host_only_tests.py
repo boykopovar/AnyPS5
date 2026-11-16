@@ -29,6 +29,11 @@ class BuildMingwHostOnlyTestsTests(unittest.TestCase):
             self.assertFalse(build_mingw_host_only_tests.is_core_libs_test_source(in_source, core_libs))
             self.assertFalse(build_mingw_host_only_tests.is_core_libs_test_source(Path("/elsewhere/tests/x.cpp"), core_libs))
 
+    def test_source_relative_path_inside_and_outside_root(self):
+        root = Path("/repo")
+        self.assertEqual(build_mingw_host_only_tests.source_relative_path(root, root / "core" / "a.cpp"), "core/a.cpp")
+        self.assertIsNone(build_mingw_host_only_tests.source_relative_path(root, Path("/other/a.cpp")))
+
 
 if __name__ == "__main__":
     unittest.main()
