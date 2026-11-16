@@ -140,15 +140,13 @@ int APS5_VABI kmq_open_nid_postfix(const char* path, int flags, unsigned int mod
     if ((flags & GuestOAccmode) == GuestOAccmode || (flags & GuestOExec) != 0) return Fail(GuestEinval);
     const bool create = (flags & GuestOCreat) != 0;
     GuestMqAttr localAttr{};
-    if (attr != nullptr) {
+    if (create && attr != nullptr) {
         const int savedErrno = errno;
         const bool copied = GuestCopyIn_nid_no_patch(&localAttr, attr, sizeof(localAttr));
         errno = savedErrno;
         if (!copied) return Fail(GuestEfault);
-        if (create) {
-            if (localAttr.maxmsg <= 0 || localAttr.maxmsg > MaxMessages) return Fail(GuestEinval);
-            if (localAttr.msgsize <= 0 || localAttr.msgsize > MaxMessageSize) return Fail(GuestEinval);
-        }
+        if (localAttr.maxmsg <= 0 || localAttr.maxmsg > MaxMessages) return Fail(GuestEinval);
+        if (localAttr.msgsize <= 0 || localAttr.msgsize > MaxMessageSize) return Fail(GuestEinval);
     }
     std::string name;
     if (const int error = CheckName(path, name)) return Fail(error);
