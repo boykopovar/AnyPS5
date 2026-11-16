@@ -373,6 +373,12 @@ class IntegerRangeTests(unittest.TestCase):
         for value in (True, 2.0, 0, 11):
             with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'x must be an integer between 1 and 10'):
                 pad_timeline.integer(value, 'x', 1, 10)
+class TimelineLoadTests(unittest.TestCase):
+    def test_load_timeline_reads_a_json_document(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'timeline.json'
+            path.write_text('{"version": 1, "events": []}', encoding='utf-8')
+            self.assertEqual(pad_timeline.load_timeline(path), {'version': 1, 'events': []})
 
 
 if __name__ == "__main__":
