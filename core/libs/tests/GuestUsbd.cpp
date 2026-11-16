@@ -468,7 +468,32 @@ void CheckTransferFillers() {
     sceUsbdFreeTransfer(transfer);
 }
 
+void EventTimeoutsWithoutContext() {
+    for (const std::int64_t micros : {0, 50, 1000}) {
+        UsbdTimeval timeout{0, micros};
+        const auto handlerStart = std::chrono::steady_clock::now();
+        for (int round = 0; round < 20; ++round) Require(sceUsbdHandleEventsTimeout(&timeout) == 0, "event handling without a context failed");
+        const auto handlerWait = std::chrono::steady_clock::now() - handlerStart;
+        Require(handlerWait >= std::chrono::microseconds(20 * micros), "event handling without a context returned early");
+        Require(handlerWait < std::chrono::milliseconds(200), "event handling without a context exceeded the timeout tolerance");
+
+        const auto waiterStart = std::chrono::steady_clock::now();
+        for (int round = 0; round < 20; ++round) {
+            sceUsbdLockEventWaiters();
+            Require(sceUsbdWaitForEvent(&timeout) == 1, "event waiter without a context did not time out");
+            Require(sceUsbdEventHandlingOk() == 1, "timed-out waiter did not take over event handling");
+            sceUsbdUnlockEvents();
+        }
+        const auto waiterWait = std::chrono::steady_clock::now() - waiterStart;
+        Require(waiterWait >= std::chrono::microseconds(20 * micros), "event waiter without a context returned early");
+        Require(waiterWait < std::chrono::milliseconds(200), "event waiter without a context exceeded the timeout tolerance");
+        std::printf("USBD: 20 x %lld us: handler %.3f ms, waiter %.3f ms\n", static_cast<long long>(micros),
+            std::chrono::duration<double, std::milli>(handlerWait).count(), std::chrono::duration<double, std::milli>(waiterWait).count());
+    }
+}
+
 int main(int argc, char** argv) {
+    EventTimeoutsWithoutContext();
     Require(sceUsbdInit() == 0, "initialization failed");
     CheckTransferFillers();
     void** list = nullptr;
@@ -542,6 +567,9 @@ int main(int argc, char** argv) {
     descriptor[0] = 0x55;
     Require(sceUsbdGetStringDescriptorAscii(nullptr, 1, descriptor, 18) == invalidArgument, "null handle ASCII string descriptor accepted");
     Require(sceUsbdGetStringDescriptorAscii(&foreign, 1, nullptr, 18) == invalidArgument && sceUsbdGetStringDescriptorAscii(&foreign, 1, descriptor, 0) == invalidArgument, "missing ASCII string buffer accepted");
+    errno = 71;
+    Require(sceUsbdGetStringDescriptor(&foreign, 1, 0x409, reinterpret_cast<std::uint8_t*>(0x10), 18) == invalidArgument && errno == 71, "unwritable string descriptor buffer accepted");
+    Require(sceUsbdGetStringDescriptorAscii(&foreign, 1, reinterpret_cast<std::uint8_t*>(0x10), 18) == invalidArgument && errno == 71, "unwritable ASCII string buffer accepted");
     Require(descriptor[0] == 0x55, "a rejected ASCII string request wrote the buffer");
     Require(Throws([&] { sceUsbdGetStringDescriptorAscii(&foreign, 1, descriptor, 18); }), "ASCII string request on a handle that was never opened did not throw");
     Require(sceUsbdGetDescriptor(nullptr, 1, 0, descriptor, 18) == invalidArgument, "null handle descriptor request accepted");
