@@ -262,5 +262,12 @@ class ClosingTests(unittest.TestCase):
         self.assertEqual(guest_pointer_audit.closing("f(a", 1), len("f(a") - 1)
 
 
+class NamesParameterTests(unittest.TestCase):
+    def test_names_parameter_matches_whole_names_only(self):
+        self.assertTrue(guest_pointer_audit.names_parameter("buf", "buf"))
+        self.assertTrue(guest_pointer_audit.names_parameter("  buf ", "buf"))
+        self.assertFalse(guest_pointer_audit.names_parameter("bufx", "buf"))
+
+
 if __name__ == "__main__":
     unittest.main()
