@@ -662,6 +662,14 @@ class WriteSeedTests(unittest.TestCase):
             configure_seed.write_seed(target, 'set(A 1)\n')
             self.assertEqual(target.read_text(encoding='utf-8'), 'set(A 1)\n')
 
+    def test_write_seed_replaces_content_and_leaves_no_temporary_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / 'seed.cmake'
+            target.write_text('old', encoding='utf-8')
+            configure_seed.write_seed(target, 'new\n')
+            self.assertEqual(target.read_text(encoding='utf-8'), 'new\n')
+            self.assertEqual(list(Path(directory).glob('.configure-seed-*')), [])
+
 
 if __name__ == "__main__":
     unittest.main()
