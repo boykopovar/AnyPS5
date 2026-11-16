@@ -366,6 +366,12 @@ void testEndOfPipeAddressPatch() {
     event[0] = Agc::Command::Header(0x47u, 5);
     expectFailure([&] { sceAgcQueueEndOfPipeActionPatchAddress(event.data(), label(0x1000u)); });
     expectFailure([&] { sceAgcQueueEndOfPipeActionPatchAddress(nullptr, label(0x1000u)); });
+    expectFailure([&] { sceAgcQueueEndOfPipeActionPatchAddress(reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10}), label(0x1000u)); });
+    static const std::uint32_t readOnlyRelease[8] = {0xc0064900u, 0, 1u << 29u, 0, 0, 0, 0, 0};
+    static const std::uint32_t readOnlyEvent[6] = {0xc0044700u, 0, 0, 1u << 29u, 0, 0};
+    expectFailure([&] { sceAgcQueueEndOfPipeActionPatchAddress(const_cast<std::uint32_t*>(readOnlyRelease), label(0x1000u)); });
+    expectFailure([&] { sceAgcQueueEndOfPipeActionPatchAddress(const_cast<std::uint32_t*>(readOnlyEvent), label(0x1000u)); });
+    check(readOnlyRelease[3] == 0 && readOnlyRelease[4] == 0 && readOnlyEvent[2] == 0 && readOnlyEvent[3] == (1u << 29u), "an address patch of a read-only packet changed it");
 }
 
 void testWorkloads() {
@@ -940,6 +946,16 @@ void testEndOfPipePatches() {
     expectFailure([&] { sceAgcQueueEndOfPipeActionPatchGcrCntl(packet.data(), 1); });
     packet[0] = before[0];
     check(packet == before, "a data or GCR control patch of another packet changed it");
+    const auto unmapped = reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10});
+    expectFailure([&] { sceAgcQueueEndOfPipeActionPatchData(unmapped, 0); });
+    expectFailure([&] { sceAgcQueueEndOfPipeActionPatchGcrCntl(unmapped, 0); });
+    expectFailure([&] { sceAgcQueueEndOfPipeActionPatchType(unmapped, 0); });
+    static const std::uint32_t readOnly[8] = {0xc0064900u, 0, 2u << 29u, 0, 0, 0, 0, 0};
+    auto* readOnlyPacket = const_cast<std::uint32_t*>(readOnly);
+    expectFailure([&] { sceAgcQueueEndOfPipeActionPatchData(readOnlyPacket, 1); });
+    expectFailure([&] { sceAgcQueueEndOfPipeActionPatchGcrCntl(readOnlyPacket, 0x0a5u); });
+    expectFailure([&] { sceAgcQueueEndOfPipeActionPatchType(readOnlyPacket, 0x28); });
+    check(readOnly[1] == 0 && readOnly[5] == 0 && readOnly[6] == 0, "a patch of a read-only packet changed it");
 }
 
 struct AtomicGdsAllocation {
