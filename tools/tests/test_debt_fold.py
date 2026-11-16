@@ -357,5 +357,14 @@ class SpaceTests(unittest.TestCase):
         self.assertEqual(debt_fold.space(["- a", "", "- b"]), ["- a", "", "- b"])
 
 
+class SpacedTests(unittest.TestCase):
+    def test_spaced_is_false_when_two_entries_touch(self):
+        import debt_fold
+        apart = [(0, 1, "- a"), (2, 3, "- b")]
+        touching = [(0, 1, "- a"), (1, 2, "- b")]
+        self.assertTrue(debt_fold.spaced(apart))
+        self.assertFalse(debt_fold.spaced(touching))
+
+
 if __name__ == "__main__":
     unittest.main()
