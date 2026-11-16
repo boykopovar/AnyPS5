@@ -294,12 +294,12 @@ void BadPointers() {
     for (const void* pointer : bad) {
         const auto badAttr = static_cast<const GuestMqAttr*>(pointer);
         auto badOut = const_cast<GuestMqAttr*>(badAttr);
+        const auto createBad = Name("badcreate");
         errno = 42;
         *__error_nid_postfix() = 42;
-        Require(kmq_open_nid_postfix(name.c_str(), ORdwr | OCreat, 0600, badAttr) == -1 && Error() == Efault && errno == 42);
-        errno = 42;
-        *__error_nid_postfix() = 42;
-        Require(kmq_open_nid_postfix(name.c_str(), ORdwr, 0600, badAttr) == -1 && Error() == Efault && errno == 42);
+        Require(kmq_open_nid_postfix(createBad.c_str(), ORdwr | OCreat, 0600, badAttr) == -1 && Error() == Efault && errno == 42);
+        const int opened = kmq_open_nid_postfix(name.c_str(), ORdwr, 0600, badAttr);
+        Require(opened >= 0 && close_nid_postfix(opened) == 0);
         errno = 42;
         *__error_nid_postfix() = 42;
         Require(kmq_setattr_nid_postfix(queue, badAttr, nullptr) == -1 && Error() == Efault && errno == 42);
