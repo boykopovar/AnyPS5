@@ -71,6 +71,7 @@ bool IsRuntimeUniformOp(IrOpcode opcode) {
         case IrOpcode::BitCastU32F32:
         case IrOpcode::BitCastF32U32:
         case IrOpcode::ConvertU32F32:
+        case IrOpcode::ConvertS32F32:
         case IrOpcode::ConvertF32U32:
         case IrOpcode::CompositeConstructU64:
         case IrOpcode::CompositeExtractU64:
