@@ -1082,6 +1082,13 @@ class CheckPadTests(unittest.TestCase):
             title_run.check_pad({"repeat": 1})
         with self.assertRaises(ValueError):
             title_run.check_pad({"events": [], "not_a_field": 1})
+class RunHelperTests(unittest.TestCase):
+    def test_fps_of_hides_frame_rate_from_a_failed_relink(self):
+        self.assertIsNone(title_run.fps_of({"outcome": "relink-failed", "fps": 60}))
+        self.assertEqual(title_run.fps_of({"outcome": "ok", "fps": 60}), 60)
+
+    def test_last_run_returns_the_most_recent_run(self):
+        self.assertEqual(title_run.last_run({"runs": [{"n": 1}, {"n": 2}]}), {"n": 2})
 
 
 if __name__ == "__main__":
