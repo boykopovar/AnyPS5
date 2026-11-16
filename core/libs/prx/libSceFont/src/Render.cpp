@@ -216,14 +216,20 @@ int APS5_VABI sceFontGetFontMetrics(FontHandle fontHandle, std::uint32_t form, F
             ReleaseFontLock(font, fontLock);
             return SCE_FONT_ERROR_INVALID_FONT_HANDLE;
         }
-        const int rc = ComputeFontMetrics(fontHandle, form, metrics);
+        FontMetrics local;
+        if (!Font::CopyInGuest(local, metrics)) {
+            ReleaseFontLock(font, fontLock);
+            return SCE_FONT_ERROR_INVALID_PARAMETER;
+        }
+        const int rc = ComputeFontMetrics(fontHandle, form, &local);
         ReleaseFontLock(font, fontLock);
-        if (rc == SCE_FONT_OK) return rc;
+        if (rc == SCE_FONT_OK) return Font::CopyOutGuest(metrics, local) ? rc : SCE_FONT_ERROR_INVALID_PARAMETER;
     }
     if (metrics) {
-        *metrics = {};
-        metrics->effectWeightX = 1.0f;
-        metrics->effectWeightY = 1.0f;
+        FontMetrics cleared{};
+        cleared.effectWeightX = 1.0f;
+        cleared.effectWeightY = 1.0f;
+        Font::CopyOutGuest(metrics, cleared);
     }
     return SCE_FONT_ERROR_INVALID_FONT_HANDLE;
 }
@@ -233,17 +239,20 @@ int APS5_VABI sceFontGetFontStyleInformation(FontHandle fontHandle, FontStyleInf
     std::uint32_t fontLock = 0;
     int rc = SCE_FONT_ERROR_INVALID_FONT_HANDLE;
     if (font && font->magic == HANDLE_MAGIC && AcquireFontLock(font, fontLock)) {
-        rc = ComputeFontStyleInformation(fontHandle, information);
+        FontStyleInformation local;
+        if (information && !Font::CopyInGuest(local, information)) {
+            ReleaseFontLock(font, fontLock);
+            return SCE_FONT_ERROR_INVALID_PARAMETER;
+        }
+        rc = ComputeFontStyleInformation(fontHandle, information ? &local : nullptr);
         ReleaseFontLock(font, fontLock);
-        if (rc == SCE_FONT_OK) return rc;
+        if (rc == SCE_FONT_OK) return Font::CopyOutGuest(information, local) ? rc : SCE_FONT_ERROR_INVALID_PARAMETER;
     }
     if (information) {
-        information->familyName = "";
-        information->styleName = "";
-        information->styleFlags = 0;
-        information->weight = 0;
-        information->width = 0;
-        information->layoutFlags = 0;
+        FontStyleInformation cleared{};
+        cleared.familyName = "";
+        cleared.styleName = "";
+        Font::CopyOutGuest(information, cleared);
     }
     return rc;
 }
