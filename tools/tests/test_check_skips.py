@@ -690,6 +690,14 @@ class DeviceLimitTests(unittest.TestCase):
     def test_high_refresh_limitation_matches_only_the_refresh_message(self):
         self.assertTrue(check_skips.high_refresh_limitation('test: skipped, current display does not provide 120 Hz\n'))
         self.assertFalse(check_skips.high_refresh_limitation('test: skipped, other reason\n'))
+class RequiredTestsTests(unittest.TestCase):
+    def test_skips_refuses_an_empty_report_when_tests_are_required(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'report.xml'
+            path.write_text('<testsuite></testsuite>', encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, 'no testcases'):
+                list(check_skips.skips(path, require_tests=True))
+            self.assertEqual(list(check_skips.skips(path)), [])
 
 
 class DeviceLimitationsTests(unittest.TestCase):
