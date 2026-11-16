@@ -52,6 +52,12 @@ class PrepareReleaseNotesTests(unittest.TestCase):
             os.symlink(loop, loop)
             with self.assertRaises(ValueError):
                 prepare_release_notes.resolve_output_path(loop)
+class OutputPathTests(unittest.TestCase):
+    def test_resolve_output_path_returns_a_regular_file_resolved(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'notes.md'
+            path.write_text('x', encoding='utf-8')
+            self.assertEqual(prepare_release_notes.resolve_output_path(path), path.resolve())
 
 
 if __name__ == "__main__":
