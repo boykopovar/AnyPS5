@@ -187,6 +187,8 @@ struct PthreadPrivate {
 
     explicit PthreadPrivate(const PthreadAttrPrivate* attr = nullptr);
     ~PthreadPrivate();
+    static void* operator new(std::size_t bytes);
+    static void operator delete(void* pointer) noexcept;
     PthreadPrivate(const PthreadPrivate&) = delete;
     PthreadPrivate& operator=(const PthreadPrivate&) = delete;
 };
