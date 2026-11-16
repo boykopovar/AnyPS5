@@ -353,7 +353,11 @@ int APS5_VABI sceLncUtilIsHostBoot(std::int32_t appId, bool* hostBoot) {
 int APS5_VABI sceLncUtilIsSpeculativeLaunch(std::int32_t appId, bool* speculative) {
     if (speculative == nullptr) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
     if (appId != sceSystemServiceGetAppIdOfRunningBigApp()) throw std::runtime_error("sceLncUtilIsSpeculativeLaunch: application other than the running title");
-    *speculative = false;
+    const bool localSpeculative = false;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(speculative, &localSpeculative, sizeof(localSpeculative));
+    errno = savedErrno;
+    if (!copied) return LNC_UTIL_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 
@@ -1731,11 +1735,6 @@ int APS5_VABI sceSystemServiceGetEventForDaemon(SystemServiceDaemonEvent* event)
 }
 
 int APS5_VABI sceSystemServiceGetLocalProcessStatusList(SystemServiceLocalProcessStatus* statuses, std::uint32_t capacity, std::uint32_t* count) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceSystemServiceGetMainAppTitleId() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
