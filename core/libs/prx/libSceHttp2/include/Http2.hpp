@@ -94,5 +94,6 @@ int APS5_VABI sceHttp2SetCookieMaxSize(int cookieBoxId, std::uint32_t size);
 int APS5_VABI sceHttp2SetCookieRecvCallback(void);
 int APS5_VABI sceHttp2SetCookieSendCallback(void);
 int APS5_VABI sceHttp2SetPreSendCallback(int id, void* cbFunc, void* userArg);
+int APS5_VABI _Z5dummyv_nid_postfix();
 
 }

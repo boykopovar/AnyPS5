@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+import struct
 import subprocess
 import sys
 
@@ -17,10 +18,12 @@ HOOK = (b'\x80\x3a\x73\x75\x0e'
 
 
 def named_provider(symbol, soname, code):
-    image = provider(0, code=code)
+    image = provider(0, code=code, main_stack_entry=True)
     strings = b'\0' + symbol.encode() + b'#A#B\0' + soname.encode() + b'\0'
-    image[0x800:0x800 + len(strings)] = strings
-    tags = [(5, 0x2200), (10, len(strings)), (6, 0x2280), (11, 24),
+    struct.pack_into('<I', image, 0x8b0, len(strings))
+    strings += b'EnterGuestMainStack_nid_no_patch\0'
+    image[0x940:0x940 + len(strings)] = strings
+    tags = [(5, 0x2340), (10, len(strings)), (6, 0x2280), (11, 24),
             (4, 0x2240), (7, 0x2300), (8, 0), (9, 24), (14, len(symbol) + 6)]
     dynamic(image, 0x600, 176, tags)
     return image

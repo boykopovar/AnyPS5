@@ -1,4 +1,3 @@
-#include "Translation/MemoryInstructions.hpp"
 #include "Translation/TranslationContext.hpp"
 #include <stdexcept>
 #include <string>
@@ -19,10 +18,6 @@ const char* globalWaveSyncName(RdnaOpcode opcode) {
     }
 }
 
-}
-
-void TranslateMemoryInstruction(IrBuilder& builder, const RdnaInstruction& instruction) {
-    throw std::runtime_error("TranslateMemoryInstruction not implemented");
 }
 
 bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
@@ -701,10 +696,6 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
     default:
         return false;
     }
-}
-
-void TranslateMemoryInstruction(TranslationContext& context, const RdnaInstruction& instruction) {
-    throw std::runtime_error("TranslateMemoryInstruction not implemented");
 }
 
 }

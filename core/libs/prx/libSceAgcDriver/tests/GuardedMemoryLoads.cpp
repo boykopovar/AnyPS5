@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <map>
@@ -173,22 +174,20 @@ public:
                 }
                 require(found, "SPIR-V phi has no incoming edge for the executed path");
             }
-            if (opcode == spv::OpLoad && isGuestPointer(instruction[3])) {
+            if ((opcode == spv::OpLoad || opcode == spv::OpAtomicLoad) && isGuestPointer(instruction[3])) {
                 const auto pointer = definition(instruction[3]);
                 require((pointer[0] & 0xffff) == spv::OpAccessChain, "guest read is not an indexed access");
                 reads.push_back(value(pointer.back()));
                 if (rootName(instruction[3]) == "scratch_dwords") require(pointerStorage(instruction[3]) == spv::StorageClassFunction, "scratch selection accessed non-private storage");
                 if (rootName(instruction[3]) == "scratch_pool") require(pointerStorage(instruction[3]) == spv::StorageClassStorageBuffer, "scratch pool accessed outside a storage buffer");
-                if (rootName(instruction[3]).starts_with("buffers")) require(instruction.size() == 5 && (instruction[4] & spv::MemoryAccessVolatileMask), "coherent buffer read lost its volatile access");
-                if (rootName(instruction[3]).starts_with("buffers")) ++volatileReads;
-            }
-            if (opcode == spv::OpAtomicLoad && isGuestPointer(instruction[3])) {
-                const auto pointer = definition(instruction[3]);
-                require((pointer[0] & 0xffff) == spv::OpAccessChain, "atomic guest read is not an indexed access");
-                require(rootName(instruction[3]).starts_with("buffers"), "atomic guest read is not a buffer read");
-                require(value(instruction[4]) == spv::ScopeDevice && value(instruction[5]) == spv::MemorySemanticsMaskNone, "atomic buffer read is not a relaxed device-scope load");
-                reads.push_back(value(pointer.back()));
-                ++atomicReads;
+                if (opcode == spv::OpAtomicLoad) {
+                    require(rootName(instruction[3]).starts_with("buffers"), "atomic guest read is not a buffer read");
+                    require(instruction.size() == 6 && value(instruction[4]) == spv::ScopeDevice && value(instruction[5]) == spv::MemorySemanticsMaskNone, "atomic buffer read is not a relaxed device-scope load");
+                    ++atomicReads;
+                } else if (rootName(instruction[3]).starts_with("buffers")) {
+                    require(instruction.size() == 5 && (instruction[4] & spv::MemoryAccessVolatileMask), "coherent buffer read lost its volatile access");
+                    ++volatileReads;
+                }
             }
             if (opcode == spv::OpBranch || opcode == spv::OpBranchConditional) {
                 const auto destination = opcode == spv::OpBranch ? instruction[1] : instruction[value(instruction[1]) ? 2 : 3];
@@ -395,6 +394,7 @@ int main() {
     });
     run("coherent buffer atomic loads", [] {
         const LoadCase coherent{ResourceKind::Buffer, IrOpcode::LoadBufferU32, IrType::U32};
+        const bool atomicWithoutFlag = std::getenv("APS5_COHERENT_ATOMIC_LOADS") != nullptr;
         auto atomic = coherent;
         atomic.atomicLoads = true;
         const auto count = [](const std::vector<std::uint32_t>& module, spv::Op op) {
@@ -431,7 +431,7 @@ int main() {
                                 }
                                 require(trace.atomicReads == actual.size() && trace.volatileReads == 0, "a coherent buffer read is not an atomic load with the flag");
                                 require(count(module, spv::OpAtomicLoad) != 0 && volatileLoads(module) == 0, "the flag left a volatile buffer load in the module");
-                                require(referenceTrace.atomicReads == 0 && count(reference, spv::OpAtomicLoad) == 0 && volatileLoads(reference) != 0, "a coherent buffer read is atomic without the flag");
+                                require(atomicWithoutFlag ? referenceTrace.volatileReads == 0 && count(reference, spv::OpAtomicLoad) != 0 && volatileLoads(reference) == 0 : referenceTrace.atomicReads == 0 && count(reference, spv::OpAtomicLoad) == 0 && volatileLoads(reference) != 0, "without the flag, a coherent buffer read does not follow APS5_COHERENT_ATOMIC_LOADS");
                                 ++compared;
                             }
                         }
@@ -447,7 +447,7 @@ int main() {
         for (const bool robust : {false, true}) {
             for (const bool exact : {false, true}) {
                 require(emitLoad(plainAtomic, true, 8, 64, robust, exact) == emitLoad(plain, true, 8, 64, robust, exact), "the flag changed a buffer load without GLC or DLC");
-                require(count(emitLoad(coherent, true, 8, 64, robust, exact), spv::OpAtomicLoad) == 0, "a coherent buffer load is atomic without the flag");
+                require((count(emitLoad(coherent, true, 8, 64, robust, exact), spv::OpAtomicLoad) != 0) == atomicWithoutFlag, "without the flag, a coherent buffer load does not follow APS5_COHERENT_ATOMIC_LOADS");
             }
         }
     });
@@ -546,7 +546,8 @@ int main() {
         require(fenced.deviceFences == unfenced.deviceFences + 2u && fenced.otherFences == unfenced.otherFences, "with the flag, the guest's release and acquire did not each become one device-scope acquire-release fence on uniform memory");
         require(emitPublication(false, true) == emitPublication(false, false), "without the flag, the guest's release or acquire changed the module");
         const auto plain = counts(emitPublication(false, true));
-        require(plain.atomicStores == 0u && plain.volatileStores == 3u && plain.volatileLoads != 0u && plain.atomicLoads + plain.volatileLoads == fenced.atomicLoads, "without the flag, the coherent stores and loads of a publication are not volatile");
+        const bool atomicWithoutFlag = std::getenv("APS5_COHERENT_ATOMIC_LOADS") != nullptr;
+        require(plain.atomicStores == 0u && plain.volatileStores == 3u && (atomicWithoutFlag ? plain.volatileLoads == 0u && plain.atomicLoads != 0u : plain.volatileLoads != 0u) && plain.atomicLoads + plain.volatileLoads == fenced.atomicLoads, "without the flag, the coherent stores of a publication are not volatile or its loads do not follow APS5_COHERENT_ATOMIC_LOADS");
     });
     run("coherent loads either side of a guest fence are not read as one vector", [] {
         const auto readSites = [](std::initializer_list<IrOpcode> between) {

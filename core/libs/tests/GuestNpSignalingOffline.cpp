@@ -1,5 +1,6 @@
 #include "prx/libSceNpSignaling/include/Api.hpp"
 #include "SceTypes.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -107,6 +108,13 @@ int main() {
     Require(sceNpSignalingCreateContext(&latin, nullptr, nullptr, &context) == InvalidArgument, "sceNpSignalingCreateContext", "an online ID with a byte outside ASCII was taken");
     Require(context == -7, "sceNpSignalingCreateContext", "a refused call wrote the context id");
 
+    errno = 71;
+    Require(sceNpSignalingCreateContext(reinterpret_cast<const void*>(static_cast<std::uintptr_t>(0x10)), nullptr, nullptr, &context) == InvalidArgument, "sceNpSignalingCreateContext", "an unreadable SignalingNpId was taken");
+    Require(errno == 71 && context == -7, "sceNpSignalingCreateContext", "errno was modified or a refused call wrote the id on an unreadable SignalingNpId");
+    errno = 71;
+    Require(sceNpSignalingCreateContext(&owner, nullptr, nullptr, reinterpret_cast<int*>(static_cast<std::uintptr_t>(0x10))) == InvalidArgument, "sceNpSignalingCreateContext", "an unwritable output was taken");
+    Require(errno == 71 && context == -7, "sceNpSignalingCreateContext", "errno was modified by a refused call with an unwritable output");
+
     Require(sceNpSignalingCreateContext(&owner, nullptr, nullptr, &context) == 0 && context == 1, "sceNpSignalingCreateContext", "the first context is not id 1");
     Require(sceNpSignalingActivateConnection(context, &upper, &connection) == SignedOut, "sceNpSignalingActivateConnection", "an online ID with upper-case letters and digits was refused");
     int created = 0;
@@ -127,6 +135,9 @@ int main() {
 
     Require(sceNpSignalingActivateConnection(context, nullptr, &connection) == InvalidArgument, "sceNpSignalingActivateConnection", "a null peer was taken");
     Require(sceNpSignalingActivateConnection(context, &peer, nullptr) == InvalidArgument, "sceNpSignalingActivateConnection", "a null output was taken");
+    errno = 71;
+    Require(sceNpSignalingActivateConnection(context, reinterpret_cast<const void*>(static_cast<std::uintptr_t>(0x10)), &connection) == InvalidArgument, "sceNpSignalingActivateConnection", "an unreadable peerNpId was taken");
+    Require(errno == 71 && connection == -7, "sceNpSignalingActivateConnection", "errno was modified or output changed on unreadable peerNpId");
     Require(sceNpSignalingActivateConnection(99, &tooShort, &connection) == InvalidArgument, "sceNpSignalingActivateConnection", "an invalid peer was not refused before the context");
     Require(sceNpSignalingActivateConnection(99, &peer, &connection) == CtxNotFound, "sceNpSignalingActivateConnection", "an unknown context was taken");
     Require(sceNpSignalingActivateConnection(context, &owner, &connection) == OwnNpId, "sceNpSignalingActivateConnection", "the context's own SignalingNpId did not return OWN_NP_ID");
@@ -145,6 +156,9 @@ int main() {
     Require(sceNpSignalingGetLocalNetInfo(context, nullptr) == InvalidArgument, "sceNpSignalingGetLocalNetInfo", "a null output was taken");
     Require(sceNpSignalingGetLocalNetInfo(99, nullptr) == InvalidArgument, "sceNpSignalingGetLocalNetInfo", "a null output was not refused before the context");
     Require(sceNpSignalingGetLocalNetInfo(-1, nullptr) == InvalidArgument, "sceNpSignalingGetLocalNetInfo", "a null output was not refused for negative context");
+    errno = 71;
+    Require(sceNpSignalingGetLocalNetInfo(context, inaccessible) == InvalidArgument, "sceNpSignalingGetLocalNetInfo", "an inaccessible pointer was taken");
+    Require(errno == 71, "sceNpSignalingGetLocalNetInfo", "errno was not preserved");
 
     std::memset(&localInfo, 0xA5, sizeof(localInfo));
     localInfo.size = 0;
@@ -168,9 +182,17 @@ int main() {
     Require(localInfo.localAddr == 0xA5A5A5A5u && localInfo.mappedAddr == 0xA5A5A5A5u &&
             localInfo.natStatus == static_cast<std::int32_t>(0xA5A5A5A5u) && localInfo.reserved == 0xA5A5A5A5u,
             "sceNpSignalingGetLocalNetInfo", "output was modified on large size");
+    localInfo.size = (1ULL << 32) | sizeof(localInfo);
+    Require(sceNpSignalingGetLocalNetInfo(context, &localInfo) == InvalidArgument, "sceNpSignalingGetLocalNetInfo", "upper 32-bit size was taken");
+    Require(localInfo.localAddr == 0xA5A5A5A5u && localInfo.mappedAddr == 0xA5A5A5A5u &&
+            localInfo.natStatus == static_cast<std::int32_t>(0xA5A5A5A5u) && localInfo.reserved == 0xA5A5A5A5u,
+            "sceNpSignalingGetLocalNetInfo", "output was modified on upper 32-bit size");
     Require(sceNpSignalingGetPeerNetInfo(context, nullptr, &reqId) == InvalidArgument, "sceNpSignalingGetPeerNetInfo", "a null peer was taken");
     Require(sceNpSignalingGetPeerNetInfo(context, &peer, nullptr) == InvalidArgument, "sceNpSignalingGetPeerNetInfo", "a null output was taken");
     reqId = 0xA5A5A5A5u;
+    errno = 71;
+    Require(sceNpSignalingGetPeerNetInfo(context, reinterpret_cast<const void*>(static_cast<std::uintptr_t>(0x10)), &reqId) == InvalidArgument, "sceNpSignalingGetPeerNetInfo", "an unreadable peerNpId was taken");
+    Require(errno == 71 && reqId == 0xA5A5A5A5u, "sceNpSignalingGetPeerNetInfo", "errno was modified or reqId changed on unreadable peerNpId");
     Require(sceNpSignalingGetPeerNetInfo(99, &tooShort, &reqId) == InvalidArgument, "sceNpSignalingGetPeerNetInfo", "an invalid peer was not refused before the context");
     Require(reqId == 0xA5A5A5A5u, "sceNpSignalingGetPeerNetInfo", "the request id was written on invalid peer");
     reqId = 0xA5A5A5A5u;
@@ -186,6 +208,9 @@ int main() {
     NpSignalingAccountPlatformPair noPlatform{0x1234, 0, 0};
     Require(sceNpSignalingActivateConnectionA(context, nullptr, &connection) == InvalidArgument, "sceNpSignalingActivateConnectionA", "a null peer was taken");
     Require(sceNpSignalingActivateConnectionA(context, &account, nullptr) == InvalidArgument, "sceNpSignalingActivateConnectionA", "a null output was taken");
+    errno = 71;
+    Require(sceNpSignalingActivateConnectionA(context, reinterpret_cast<const NpSignalingAccountPlatformPair*>(0x10), &connection) == InvalidArgument, "sceNpSignalingActivateConnectionA", "unreadable peerAddr was taken");
+    Require(errno == 71, "sceNpSignalingActivateConnectionA", "errno was not preserved");
     Require(sceNpSignalingActivateConnectionA(99, &noAccount, &connection) == InvalidArgument, "sceNpSignalingActivateConnectionA", "account id 0 was not refused before the context");
     Require(sceNpSignalingActivateConnectionA(99, &noPlatform, &connection) == InvalidArgument, "sceNpSignalingActivateConnectionA", "platform 0 was not refused before the context");
     Require(sceNpSignalingActivateConnectionA(99, &account, &connection) == CtxNotFound, "sceNpSignalingActivateConnectionA", "an unknown context was taken");
@@ -198,6 +223,9 @@ int main() {
 
     Require(sceNpSignalingGetConnectionFromNpId(context, nullptr, &connection) == InvalidArgument, "sceNpSignalingGetConnectionFromNpId", "a null peer was taken");
     Require(sceNpSignalingGetConnectionFromNpId(context, &peer, nullptr) == InvalidArgument, "sceNpSignalingGetConnectionFromNpId", "a null output was taken");
+    errno = 71;
+    Require(sceNpSignalingGetConnectionFromNpId(context, reinterpret_cast<const void*>(static_cast<std::uintptr_t>(0x10)), &connection) == InvalidArgument, "sceNpSignalingGetConnectionFromNpId", "an unreadable peerNpId was taken");
+    Require(errno == 71 && connection == -7, "sceNpSignalingGetConnectionFromNpId", "errno was modified or output changed on unreadable peerNpId");
     Require(sceNpSignalingGetConnectionFromNpId(99, &tooShort, &connection) == InvalidArgument, "sceNpSignalingGetConnectionFromNpId", "an invalid peer was not refused before the context");
     Require(sceNpSignalingGetConnectionFromNpId(99, &peer, &connection) == CtxNotFound, "sceNpSignalingGetConnectionFromNpId", "an unknown context was taken");
     Require(sceNpSignalingGetConnectionFromNpId(context, &peer, &connection) == ConnNotFound && connection == -7, "sceNpSignalingGetConnectionFromNpId", "a connection that was never created was found");
@@ -214,6 +242,11 @@ int main() {
     Require(sceNpSignalingGetContextOption(context, 1, &option) == 0 && option == 0, "sceNpSignalingGetContextOption", "the cleared flag does not read 0");
     Require(sceNpSignalingSetContextOption(context, 1, 1) == 0, "sceNpSignalingSetContextOption", "setting the flag failed");
 
+    option = -7;
+    errno = 71;
+    Require(sceNpSignalingGetContextOption(context, 1, reinterpret_cast<int*>(static_cast<std::uintptr_t>(0x10))) == InvalidArgument, "sceNpSignalingGetContextOption", "an unwritable output was taken");
+    Require(errno == 71 && option == -7, "sceNpSignalingGetContextOption", "errno was modified by a refused call with an unwritable output");
+
     Require(sceNpSignalingCancelPeerNetInfo(99, 1) == CtxNotFound, "sceNpSignalingCancelPeerNetInfo", "an unknown context was taken");
     Require(sceNpSignalingCancelPeerNetInfo(context, 1) == ReqNotFound, "sceNpSignalingCancelPeerNetInfo", "a request that was never made was found");
 
@@ -221,6 +254,11 @@ int main() {
     netInfo.size = 0;
     Require(sceNpSignalingGetPeerNetInfoResult(99, 1, &netInfo) == CtxNotFound, "sceNpSignalingGetPeerNetInfoResult", "an unknown context was not refused before the size");
     Require(sceNpSignalingGetPeerNetInfoResult(context, 1, &netInfo) == InvalidArgument, "sceNpSignalingGetPeerNetInfoResult", "size 0 was taken");
+    netInfo.size = (1ULL << 32) | sizeof(netInfo);
+    Require(sceNpSignalingGetPeerNetInfoResult(context, 1, &netInfo) == InvalidArgument, "sceNpSignalingGetPeerNetInfoResult", "upper 32-bit size was taken");
+    errno = 71;
+    Require(sceNpSignalingGetPeerNetInfoResult(context, 1, inaccessible) == InvalidArgument, "sceNpSignalingGetPeerNetInfoResult", "unreadable peerNetInfo was taken");
+    Require(errno == 71, "sceNpSignalingGetPeerNetInfoResult", "errno was not preserved");
     netInfo.size = sizeof(netInfo);
     Require(sceNpSignalingGetPeerNetInfoResult(context, 1, &netInfo) == ResultNotFound && netInfo.localAddr == 0, "sceNpSignalingGetPeerNetInfoResult", "a result that was never staged was found");
     Require(sceNpSignalingGetMemoryInfo(nullptr) == InvalidArgument, "sceNpSignalingGetMemoryInfo", "a null output was taken");

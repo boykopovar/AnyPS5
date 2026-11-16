@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 
 #include <algorithm>
 #include <array>
@@ -106,6 +107,71 @@ void CheckVersionName() {
         threw = true;
     }
     Require(threw, "null connection");
+}
+
+void APS5_VABI InfoLine(const LibreSsl3Ssl*, int, int) {}
+
+void CheckInfoCallback() {
+    Guarded<LibreSsl3Ssl> guarded;
+    std::memset(&guarded, 0x5A, sizeof(guarded));
+    auto expected = Bytes(guarded);
+    const auto offset = offsetof(Guarded<LibreSsl3Ssl>, object) + 312;
+    const LibreSsl3InfoCallback callback = InfoLine;
+    SSL_set_info_callback_nid_postfix(&guarded.object, callback);
+    std::memcpy(expected.data() + offset, &callback, sizeof(callback));
+    Require(Same(guarded, expected), "callback stored outside offset 312");
+    SSL_set_info_callback_nid_postfix(&guarded.object, nullptr);
+    std::memset(expected.data() + offset, 0, sizeof(callback));
+    Require(Same(guarded, expected), "null callback did not clear offset 312");
+    bool threw = false;
+    try {
+        SSL_set_info_callback_nid_postfix(nullptr, callback);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw, "null SSL");
+}
+
+void CheckAlpnProtos() {
+    Guarded<LibreSsl3Ssl> guarded;
+    std::memset(&guarded, 0x5A, sizeof(guarded));
+    guarded.object.alpnClientProtoList = nullptr;
+    guarded.object.alpnClientProtoListLength = 0;
+    const auto start = Bytes(guarded);
+    const auto offset = offsetof(Guarded<LibreSsl3Ssl>, object) + 264;
+    const auto Stored = [&](const std::uint8_t* list, std::uint64_t length) {
+        auto expected = start;
+        const auto* pointer = guarded.object.alpnClientProtoList;
+        std::memcpy(expected.data() + offset, &pointer, sizeof(pointer));
+        std::memcpy(expected.data() + offset + 8, &length, sizeof(length));
+        return Same(guarded, expected) && guarded.object.alpnClientProtoListLength == length &&
+               (length == 0 ? pointer == nullptr : pointer != list && std::memcmp(pointer, list, length) == 0);
+    };
+    const std::uint8_t both[] = {2, 'h', '2', 8, 'h', 't', 't', 'p', '/', '1', '.', '1'};
+    Require(SSL_set_alpn_protos_nid_postfix(&guarded.object, both, sizeof(both)) == 0, "valid list");
+    Require(Stored(both, sizeof(both)), "valid list not copied to offsets 264 and 272");
+    const std::uint8_t one[] = {2, 'h', '2'};
+    Require(SSL_set_alpn_protos_nid_postfix(&guarded.object, one, sizeof(one)) == 0, "replacement list");
+    Require(Stored(one, sizeof(one)), "replacement list not copied");
+    const std::uint8_t truncated[] = {3, 'h', '2'};
+    const std::uint8_t empty[] = {2, 'h', '2', 0};
+    const std::uint8_t trailing[] = {2, 'h', '2', 4, 'h'};
+    Require(SSL_set_alpn_protos_nid_postfix(&guarded.object, truncated, sizeof(truncated)) == 1, "truncated name");
+    Require(SSL_set_alpn_protos_nid_postfix(&guarded.object, empty, sizeof(empty)) == 1, "empty name");
+    Require(SSL_set_alpn_protos_nid_postfix(&guarded.object, trailing, sizeof(trailing)) == 1, "truncated last name");
+    Require(Stored(one, sizeof(one)), "malformed list changed the SSL");
+    Require(SSL_set_alpn_protos_nid_postfix(&guarded.object, one, 0) == 0, "zero length");
+    Require(Stored(nullptr, 0), "zero length did not clear the list");
+    Require(SSL_set_alpn_protos_nid_postfix(&guarded.object, both, sizeof(both)) == 0, "valid list again");
+    Require(SSL_set_alpn_protos_nid_postfix(&guarded.object, nullptr, sizeof(both)) == 0, "null list");
+    Require(Stored(nullptr, 0), "null list did not clear the list");
+    bool threw = false;
+    try {
+        SSL_set_alpn_protos_nid_postfix(nullptr, one, sizeof(one));
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw, "null SSL");
 }
 
 struct Versions {
@@ -248,7 +314,8 @@ struct VersionResult {
 };
 
 VersionResult ReadVersion(Asn1String* version) {
-    LibreSsl3X509CertInfo info{version};
+    LibreSsl3X509CertInfo info{};
+    info.version = version;
     LibreSsl3X509 certificate;
     std::memset(&certificate, 0xA5, sizeof(certificate));
     certificate.certInfo = &info;
@@ -265,6 +332,21 @@ void CheckVersion(std::int32_t type, std::vector<unsigned char> bytes, std::int6
     Asn1String integer{static_cast<std::int32_t>(bytes.size()), type, bytes.data(), 0};
     const auto result = ReadVersion(&integer);
     Require(result.value == value && result.error == error && result.following == 0, message, location);
+}
+
+void CheckTlsMethod() {
+    const auto* method = TLS_method_nid_postfix();
+    Require(method != nullptr, "TLS method");
+    Require(method->dtls == 0 && method->server == 1, "TLS method role");
+    Require(method->version == 0x0304, "TLS method version");
+    Require(method->minTlsVersion == 0x0301 && method->maxTlsVersion == 0x0304, "TLS method range");
+    Require(TLS_method_nid_postfix() == method, "TLS method is shared");
+    Require(TLS_server_method_nid_postfix() == method, "TLS server method is the TLS method");
+    const Versions full{0x0301, 0x0304, 0, 0};
+    CheckBound(SSL_CTX_set_min_proto_version_nid_postfix, *method, full, 0x0303, 1, {0x0303, 0x0304, 0x0303, 0},
+               "TLS method minimum");
+    CheckBound(SSL_CTX_set_max_proto_version_nid_postfix, *method, full, 0x0303, 1, {0x0301, 0x0303, 0, 0x0303},
+               "TLS method maximum");
 }
 
 void CheckX509Version() {
@@ -305,16 +387,45 @@ void CheckX509Version() {
     CheckVersion(0x102, {0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01}, -1, TooSmall, "negative value below the minimum");
 }
 
+void APS5_VABI KeylogLine(const LibreSsl3Ssl*, const char*) {}
+
+void CheckKeylogCallback() {
+    Guarded<LibreSsl3SslCtx> guarded;
+    std::memset(&guarded, 0x5A, sizeof(guarded));
+    auto expected = Bytes(guarded);
+    const auto offset = offsetof(Guarded<LibreSsl3SslCtx>, object) + 552;
+    const LibreSsl3KeylogCallback callback = KeylogLine;
+    SSL_CTX_set_keylog_callback_nid_postfix(&guarded.object, callback);
+    std::memcpy(expected.data() + offset, &callback, sizeof(callback));
+    Require(Same(guarded, expected), "callback stored outside offset 552");
+    SSL_CTX_set_keylog_callback_nid_postfix(&guarded.object, nullptr);
+    std::memset(expected.data() + offset, 0, sizeof(callback));
+    Require(Same(guarded, expected), "null callback did not clear offset 552");
+    bool threw = false;
+    try {
+        SSL_CTX_set_keylog_callback_nid_postfix(nullptr, callback);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw, "null context");
+}
+
 } // namespace
 
 int main() {
+    void* api[10]{};
+    ApplicationHeapRegister_nid_no_patch(api);
     CheckRetain<LibreSsl3Ssl>(SSL_up_ref_nid_postfix, 176);
     CheckRetain<LibreSsl3SslSession>(SSL_SESSION_up_ref_nid_postfix, 184);
     CheckVersionName();
+    CheckInfoCallback();
+    CheckAlpnProtos();
     CheckVersionBounds();
     CheckClientRandom();
     CheckContextTimeout();
     CheckRetain<LibreSsl3X509>(X509_up_ref_nid_postfix, 28);
+    CheckTlsMethod();
     CheckX509Version();
+    CheckKeylogCallback();
     return 0;
 }
