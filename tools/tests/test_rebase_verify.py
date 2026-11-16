@@ -294,5 +294,22 @@ class RebaseDiffTextTests(unittest.TestCase):
         self.assertEqual(len(rebase_verify.differences(old, new)), 2)
 
 
+class ChangedModeTests(unittest.TestCase):
+    def commit(self, root, message):
+        run_git(root, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "-m", message)
+        return run_git(root, "rev-parse", "HEAD")
+
+    def test_changed_modes_reports_a_file_whose_executable_bit_changed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_git(root, "init", "-q")
+            (root / "f.txt").write_text("x\n", encoding="utf-8")
+            run_git(root, "add", "f.txt")
+            base = self.commit(root, "base")
+            run_git(root, "update-index", "--chmod=+x", "--", "f.txt")
+            tip = self.commit(root, "make executable")
+            self.assertEqual(rebase_verify.changed_modes(root, base, tip), {b"f.txt": ("100644", "100755")})
+
+
 if __name__ == "__main__":
     unittest.main()
