@@ -9,7 +9,7 @@ import xml.etree.ElementTree as ET
 import textwrap
 from fractions import Fraction
 from html import escape
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 tokenizer_spec = importlib.util.spec_from_file_location("anyps5_cpp_tokenizer", Path(__file__).with_name("nid_names.py"))
 tokenizer = importlib.util.module_from_spec(tokenizer_spec)
@@ -228,8 +228,10 @@ def shared_source_owners(path):
 
 def scan_library(path):
     done, todo, inert, live = set(), set(), set(), set()
+    flavor = PureWindowsPath if os.name == "nt" else Path
+    path_flavored = flavor(str(path))
     sources = [source.read_text(encoding="utf-8", errors="ignore") for source in path.rglob("*.cpp")
-               if "tests" not in source.relative_to(path).parts]
+               if "tests" not in flavor(str(source)).relative_to(path_flavored).parts]
     texts = [code(source) for source in sources]
     exported = {match.group(1) for text in texts for match in EXPORT.finditer(text)}
     for source in sources:
@@ -307,7 +309,10 @@ def collect_shaders():
             name, encoding = parts
             isa[name] = encoding
     by_camel = {camel(name): name for name in isa}
-    enum = re.search(r"enum class RdnaOpcode[^{]*\{(.*?)\};", OPCODES.read_text(encoding="utf-8", errors="ignore"), re.S).group(1)
+    enum = re.search(r"enum class RdnaOpcode[^{]*\{(.*?)\};", OPCODES.read_text(encoding="utf-8", errors="ignore"), re.S)
+    if not enum:
+        raise ValueError(f"{OPCODES} has no enum class RdnaOpcode")
+    enum = enum.group(1)
     opcodes = [o for o in re.findall(r"^\s*([A-Z]\w*)\s*[,=]", enum, re.M) if o not in OPCODE_SENTINELS]
     supported, extra = set(), []
     for opcode in opcodes:
@@ -1105,6 +1110,10 @@ def main(argv=None):
             libraries, shaders = collect_libraries(), collect_shaders()
         except FileNotFoundError as error:
             parser.error(f"{args.root or ROOT} is not a source tree: {error.filename} not found")
+        except OSError as error:
+            parser.error(f"{args.root or ROOT} is not a source tree: {error.filename}: {error.strerror}")
+        except ValueError as error:
+            parser.error(f"{args.root or ROOT} is not a source tree: {error}")
         try:
             shader_source = collect_shader_source(args.root)
         except shader_scan.ScanError as error:

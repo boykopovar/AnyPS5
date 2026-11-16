@@ -71,6 +71,7 @@ void TestStatus() {
     Require(_ZNSt8__sce_v210filesystem6_LstatEPKcPNS0_5permsEPi_nid_postfix("f", &perms, &error) == TypeRegular && error == 0, "a regular file");
     Require(perms == (Status("f").st_mode & 0xfff), "the permission bits of a regular file");
     Require(_ZNSt8__sce_v210filesystem6_LstatEPKcPNS0_5permsEPi_nid_postfix("d", nullptr, nullptr) == TypeDirectory, "a directory without outputs");
+    Require(_ZNSt8__sce_v210filesystem6_LstatEPKcPNS0_5permsEPi_nid_postfix("f", reinterpret_cast<int*>(0x10), reinterpret_cast<int*>(0x10)) == TypeRegular, "a regular file with unwritable outputs");
     Require(_ZNSt8__sce_v210filesystem6_LstatEPKcPNS0_5permsE_nid_postfix("d/", &perms) == TypeDirectory && perms == (Status("d").st_mode & 0xfff), "a directory with a trailing slash");
     const struct {
         const char* path;
