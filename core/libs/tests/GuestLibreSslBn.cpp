@@ -2,6 +2,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -11,6 +12,12 @@
 #include <stdexcept>
 #include <source_location>
 #include <string>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 #ifndef _WIN32
 static std::size_t failHostAllocationOfSize = 0;
@@ -97,6 +104,124 @@ static void Print() {
     BIO_free_nid_postfix(readOnly);
     ERR_clear_error_nid_postfix();
     Require(BN_print_nid_postfix(nullptr, &negative) == 0);
+}
+
+class GuardedPage {
+public:
+    GuardedPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        bytes = info.dwPageSize;
+        data = static_cast<unsigned char*>(VirtualAlloc(nullptr, bytes * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(data != nullptr);
+        DWORD previous{};
+        Require(VirtualProtect(data + bytes, bytes, PAGE_NOACCESS, &previous) != 0);
+#else
+        bytes = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        void* mapped = mmap(nullptr, bytes * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapped != MAP_FAILED);
+        data = static_cast<unsigned char*>(mapped);
+        Require(mprotect(data + bytes, bytes, PROT_NONE) == 0);
+#endif
+    }
+
+    ~GuardedPage() {
+#ifdef _WIN32
+        VirtualFree(data, 0, MEM_RELEASE);
+#else
+        munmap(data, bytes * 2);
+#endif
+    }
+
+    template <typename T>
+    T* Tail(const void* value, std::size_t size) {
+        std::memcpy(data + bytes - size, value, size);
+        return reinterpret_cast<T*>(data + bytes - size);
+    }
+
+    void ReadOnly() {
+#ifdef _WIN32
+        DWORD previous{};
+        Require(VirtualProtect(data, bytes, PAGE_READONLY, &previous) != 0);
+#else
+        Require(mprotect(data, bytes, PROT_READ) == 0);
+#endif
+    }
+
+private:
+    unsigned char* data = nullptr;
+    std::size_t bytes = 0;
+};
+
+template <typename TCall>
+static void Rejects(TCall call, int line = __builtin_LINE()) {
+    errno = 71;
+    bool rejected = false;
+    try {
+        call();
+    } catch (const std::runtime_error&) {
+        rejected = errno == 71;
+    }
+    Require(rejected, line);
+}
+
+static void CheckGuestPointers() {
+    auto* unmappedBytes = reinterpret_cast<unsigned char*>(0x10);
+    auto* unmappedText = reinterpret_cast<const char*>(0x10);
+    auto* unmappedBn = reinterpret_cast<Bn*>(0x10);
+    auto* unmappedSlot = reinterpret_cast<Bn**>(0x10);
+    Bn* value = FromHex("1F2E");
+
+    Rejects([&] { BN_bin2bn_nid_postfix(unmappedBytes, 4, nullptr); });
+    Rejects([&] { BN_bin2bn_nid_postfix(unmappedBytes, 4, value); });
+    Require(Hex(value) == "1F2E");
+    Rejects([&] { BN_bn2bin_nid_postfix(value, unmappedBytes); });
+    Rejects([&] { BN_hex2bn_nid_postfix(nullptr, unmappedText); });
+    Rejects([&] { BN_hex2bn_nid_postfix(unmappedSlot, "1F"); });
+    Rejects([&] { BN_print_nid_postfix(nullptr, unmappedBn); });
+    std::uint64_t limbs[] = {0x2a};
+    Bn badLimbs{reinterpret_cast<std::uint64_t*>(0x10), 1, 1, 0, 2};
+    Rejects([&] { BN_print_nid_postfix(nullptr, &badLimbs); });
+
+    {
+        GuardedPage page;
+        const char text[] = {'-', '1', 'f', 'z'};
+        Require(BN_hex2bn_nid_postfix(nullptr, page.Tail<const char>(text, sizeof(text))) == 3);
+        Bn* parsed = nullptr;
+        Require(BN_hex2bn_nid_postfix(&parsed, page.Tail<const char>(text, sizeof(text))) == 3 && Hex(parsed) == "-1F");
+        BN_free_nid_postfix(parsed);
+        Rejects([&] { BN_hex2bn_nid_postfix(nullptr, page.Tail<const char>(text, 3)); });
+        const unsigned char bytes[] = {1, 2, 3};
+        Bn* loaded = BN_bin2bn_nid_postfix(page.Tail<unsigned char>(bytes, sizeof(bytes)), sizeof(bytes), nullptr);
+        Require(loaded && Hex(loaded) == "10203");
+        Rejects([&] { BN_bin2bn_nid_postfix(page.Tail<unsigned char>(bytes, sizeof(bytes)), sizeof(bytes) + 1, loaded); });
+        Require(Hex(loaded) == "10203");
+        unsigned char* out = page.Tail<unsigned char>(bytes, 2);
+        Rejects([&] { BN_bn2bin_nid_postfix(loaded, out); });
+        BN_free_nid_postfix(loaded);
+        Bn tail{limbs, 1, 1, 0, 2};
+        Bn* stored = page.Tail<Bn>(&tail, sizeof(tail));
+        Require(Printed(stored) == "2A");
+    }
+
+    {
+        GuardedPage page;
+        struct Slots {
+            unsigned char out[8];
+            Bn* empty;
+            Bn* existing;
+        } slots{};
+        std::memset(slots.out, 0xEE, sizeof(slots.out));
+        slots.existing = value;
+        Slots* stored = page.Tail<Slots>(&slots, sizeof(slots));
+        page.ReadOnly();
+        Rejects([&] { BN_hex2bn_nid_postfix(&stored->existing, "-7"); });
+        Rejects([&] { BN_hex2bn_nid_postfix(&stored->empty, "7"); });
+        Rejects([&] { BN_bn2bin_nid_postfix(value, stored->out); });
+        Require(std::memcmp(stored, &slots, sizeof(slots)) == 0 && Hex(value) == "1F2E");
+    }
+    BN_free_nid_postfix(value);
 }
 
 static void InitializeHeap() {
@@ -322,6 +447,7 @@ int main(int argc, char** argv) {
         return 0;
     }
     InitializeHeap();
+    CheckGuestPointers();
     Bn* fresh = BN_new_nid_postfix();
     Require(fresh && fresh->top == 0 && fresh->neg == 0 && BN_num_bits_nid_postfix(fresh) == 0);
     BN_free_nid_postfix(fresh);

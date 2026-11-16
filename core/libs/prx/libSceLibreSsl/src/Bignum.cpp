@@ -2,6 +2,7 @@
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/Api.hpp"
 #include <bit>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <new>
@@ -21,6 +22,7 @@ static_assert(offsetof(Bignum, neg) == 16);
 static_assert(offsetof(Bignum, flags) == 20);
 
 constexpr int FlagMalloced = 1;
+constexpr std::uintptr_t GuestChunkBytes = 4096;
 constexpr int FlagStaticData = 2;
 
 using Mag = std::vector<std::uint64_t>;
@@ -257,6 +259,42 @@ int HexValue(char c) {
     return -1;
 }
 
+void CopyGuestInPreservingErrno(void* hostValue, const void* guestAddress, std::size_t bytes, const char* caller) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(hostValue, guestAddress, bytes);
+    errno = savedErrno;
+    if (!ok) NotImplementedAt_nid_no_patch(caller, __FILE__, __LINE__);
+}
+
+void CopyGuestOutPreservingErrno(void* guestAddress, const void* hostValue, std::size_t bytes, const char* caller) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(guestAddress, hostValue, bytes);
+    errno = savedErrno;
+    if (!ok) NotImplementedAt_nid_no_patch(caller, __FILE__, __LINE__);
+}
+
+void RequireGuestWritablePreservingErrno(void* guestAddress, std::size_t bytes, const char* caller) {
+    const int savedErrno = errno;
+    const bool ok = GuestWritable_nid_no_patch(guestAddress, bytes);
+    errno = savedErrno;
+    if (!ok) NotImplementedAt_nid_no_patch(caller, __FILE__, __LINE__);
+}
+
+std::string CopyGuestHexDigits(const char* guestAddress, std::size_t limit, const char* caller) {
+    std::string digits;
+    char chunk[GuestChunkBytes];
+    auto address = reinterpret_cast<std::uintptr_t>(guestAddress);
+    for (;;) {
+        const std::size_t count = GuestChunkBytes - address % GuestChunkBytes;
+        CopyGuestInPreservingErrno(chunk, reinterpret_cast<const void*>(address), count, caller);
+        for (std::size_t i = 0; i < count; i++) {
+            if (HexValue(chunk[i]) < 0 || digits.size() > limit) return digits;
+            digits.push_back(chunk[i]);
+        }
+        address += count;
+    }
+}
+
 bool ApplyWord(Bignum* a, std::uint64_t w, bool subtract) {
     Int word;
     if (w) word.mag = {w};
@@ -299,10 +337,12 @@ Bignum* APS5_VABI BN_bin2bn_nid_postfix(const unsigned char* s, int len, Bignum*
     Bignum* target = ret ? ret : NewBignum();
     if (!target) return nullptr;
     const bool stored = FillBignum(target, ret == nullptr, [&] {
+        std::vector<unsigned char> bytes(static_cast<std::size_t>(len));
+        CopyGuestInPreservingErrno(bytes.data(), s, bytes.size(), __func__);
         Mag m((static_cast<std::size_t>(len) + 7) / 8, 0);
         for (int i = 0; i < len; i++) {
             const std::size_t bit = static_cast<std::size_t>(len - 1 - i);
-            m[bit / 8] |= static_cast<std::uint64_t>(s[i]) << (bit % 8 * 8);
+            m[bit / 8] |= static_cast<std::uint64_t>(bytes[i]) << (bit % 8 * 8);
         }
         Trim(m);
         return Store(target, m, false);
@@ -322,37 +362,44 @@ int APS5_VABI BN_bn2bin_nid_postfix(const Bignum* a, unsigned char* to) {
     const Mag m = Load(Checked(a, __func__)).mag;
     const std::size_t length = (BitLength(m) + 7) / 8;
     if (length && !to) throw std::invalid_argument(std::string(__func__) + ": null output");
+    std::vector<unsigned char> bytes(length);
     for (std::size_t i = 0; i < length; i++) {
         const std::size_t bit = length - 1 - i;
-        to[i] = static_cast<unsigned char>(m[bit / 8] >> (bit % 8 * 8));
+        bytes[i] = static_cast<unsigned char>(m[bit / 8] >> (bit % 8 * 8));
     }
+    CopyGuestOutPreservingErrno(to, bytes.data(), length, __func__);
     return static_cast<int>(length);
 }
 
 int APS5_VABI BN_hex2bn_nid_postfix(Bignum** a, const char* str) {
-    if (!str || !*str) return 0;
-    const bool negative = *str == '-';
-    const char* digits = str + negative;
-    std::size_t count = 0;
-    while (HexValue(digits[count]) >= 0) count++;
+    if (!str) return 0;
+    char first = 0;
+    CopyGuestInPreservingErrno(&first, str, sizeof(first), __func__);
+    if (!first) return 0;
+    const bool negative = first == '-';
+    const std::string digits = CopyGuestHexDigits(str + negative, 0x7FFFFFFF / 4, __func__);
+    const std::size_t count = digits.size();
     if (count > 0x7FFFFFFF / 4) return 0;
     const int consumed = static_cast<int>(count + negative);
     if (!a) return consumed;
+    Bignum* existing = nullptr;
+    CopyGuestInPreservingErrno(&existing, a, sizeof(existing), __func__);
+    RequireGuestWritablePreservingErrno(a, sizeof(existing), __func__);
     Mag m((count + 15) / 16, 0);
     for (std::size_t i = 0; i < count; i++) {
         const std::size_t nibble = count - 1 - i;
         m[nibble / 16] |= static_cast<std::uint64_t>(HexValue(digits[i])) << (nibble % 16 * 4);
     }
     Trim(m);
-    const bool owned = *a == nullptr;
-    Bignum* target = owned ? NewBignum() : *a;
+    const bool owned = existing == nullptr;
+    Bignum* target = owned ? NewBignum() : existing;
     if (!target) return 0;
     if (!FillBignum(target, owned, [&] { return Store(target, m, negative); })) {
         if (owned) FreeBignum(target);
         return 0;
     }
     target->neg = negative ? 1 : 0;
-    *a = target;
+    CopyGuestOutPreservingErrno(a, &target, sizeof(target), __func__);
     return consumed;
 }
 
@@ -382,12 +429,16 @@ int APS5_VABI BN_mul_nid_postfix(Bignum* r, const Bignum* a, const Bignum* b, Bi
 int APS5_VABI BN_print_nid_postfix(LibreSsl::Bio* bio, const Bignum* a) {
     static constexpr char digits[] = "0123456789ABCDEF";
     Checked(a, __func__);
-    if (a->neg && LibreSslBioWrite_nid_no_patch(bio, "-", 1) != 1) return 0;
-    if (a->top == 0 && LibreSslBioWrite_nid_no_patch(bio, "0", 1) != 1) return 0;
+    Bignum value{};
+    CopyGuestInPreservingErrno(&value, a, sizeof(value), __func__);
+    std::vector<std::uint64_t> limbs(value.top > 0 ? static_cast<std::size_t>(value.top) : 0);
+    CopyGuestInPreservingErrno(limbs.data(), value.d, limbs.size() * sizeof(std::uint64_t), __func__);
+    if (value.neg && LibreSslBioWrite_nid_no_patch(bio, "-", 1) != 1) return 0;
+    if (value.top == 0 && LibreSslBioWrite_nid_no_patch(bio, "0", 1) != 1) return 0;
     bool started = false;
-    for (int i = a->top - 1; i >= 0; i--) {
+    for (int i = value.top - 1; i >= 0; i--) {
         for (int shift = 60; shift >= 0; shift -= 4) {
-            const int digit = static_cast<int>(a->d[i] >> shift) & 15;
+            const int digit = static_cast<int>(limbs[static_cast<std::size_t>(i)] >> shift) & 15;
             if (!started && digit == 0) continue;
             if (LibreSslBioWrite_nid_no_patch(bio, &digits[digit], 1) != 1) return 0;
             started = true;
