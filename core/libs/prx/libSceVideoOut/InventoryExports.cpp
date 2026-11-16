@@ -486,7 +486,8 @@ int APS5_VABI sceVideoOutSysIsUserStatusVr() {
 }
 
 int APS5_VABI sceVideoOutSysModeIsHdr(const void* mode) {
-    const auto value = static_cast<const std::uint8_t*>(mode)[6];
+    std::uint8_t value = 0;
+    if (mode == nullptr || !GuestBytes(static_cast<const std::uint8_t*>(mode) + 6).CopyIn(&value, sizeof(value))) return 0;
     return static_cast<std::uint8_t>(value - 12u) < 6u ? 1 : 0;
 }
 

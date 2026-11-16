@@ -61,6 +61,7 @@ int main() {
     valid.filter = EVFILT_VIDEO_OUT;
     Require(sceVideoOutGetEventData(&valid, data) == InvalidAddress, "GetEventData accepted an unmapped output");
     Require(Throws([&] { sceVideoOutSysInitMode(unmapped); }), "SysInitMode wrote an unmapped mode");
+    Require(sceVideoOutSysModeIsHdr(unmapped) == 0, "SysModeIsHdr read an unmapped mode");
     Require(sceVideoOutInitializeOutputOptions(options) == InvalidAddress, "InitializeOutputOptions wrote an unmapped options block");
     Require(Throws([&] { sceVideoOutColorSettingsSetGamma(color, 1.0f); }), "ColorSettingsSetGamma wrote an unmapped setting");
     Require(Throws([&] { sceVideoOutColorSpaceConversionSettingsSetDefaultSdrToHdrConversion(conversion); }), "the conversion defaults wrote an unmapped setting");
