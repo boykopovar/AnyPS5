@@ -638,6 +638,13 @@ class HelperPathTests(unittest.TestCase):
         self.assertEqual(pr_overlap.canonical("sceFoo_nid_disambig2_nid_postfix"), "sceFoo")
         self.assertEqual(pr_overlap.canonical("sceFoo"), "sceFoo")
 
+    def test_depends_on_reads_plain_and_linked_pull_request_numbers(self):
+        self.assertEqual(pr_overlap.depends_on("- [ ] Depends on: #12, #34"), {12, 34})
+        self.assertEqual(pr_overlap.depends_on("- [ ] Depends on: none"), set())
+        self.assertEqual(pr_overlap.depends_on(
+            "- [ ] Depends on: [#7](https://github.com/boykopovar/AnyPS5/pull/7)"), {7})
+        self.assertEqual(pr_overlap.depends_on(""), set())
+
 
 if __name__ == "__main__":
     unittest.main()
