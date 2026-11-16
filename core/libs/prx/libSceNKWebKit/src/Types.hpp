@@ -347,6 +347,13 @@ public:
     bool isDisplayingMarkupDocument = false;
     bool isDisplayingStandaloneImageDocument = false;
     bool isMainFrame = false;
+    std::uint64_t frameID = 0;
+    std::uint32_t loadState = 2;
+    Retained<URL> url;
+    Retained<String> title;
+    Retained<String> mimeType;
+    Retained<URL> provisionalURL;
+    Retained<URL> unreachableURL;
 };
 
 class Image final : public ObjectOf<ObjectType::Image> {
@@ -422,6 +429,12 @@ public:
         lastCachesCleared = cachesToClear;
         std::erase(origins, origin);
     }
+};
+
+class ContentRuleListStore final : public ObjectOf<ObjectType::ContentRuleListStore> {
+public:
+    std::u16string path;
+    std::map<std::u16string, Retained<Object>> filters;
 };
 
 }  // namespace NKWebKit

@@ -370,6 +370,7 @@ public:
     // as it was, and one that finds it unchanged since an earlier read knows the registry is what
     // it was then.
     static std::uint64_t PendingSerial();
+    static bool PendingClearOnThread(std::uint64_t address, std::size_t bytes);
     // One registry scan for several ranges (the fast Revalidate): each query's `overlaps` receives
     // whether an image other than `except` has results pending, or is being stored right now, over
     // [begin, end), and `found` the image FindPending would return for the range (null: none);
@@ -576,6 +577,10 @@ private:
     std::array<std::uint64_t, 2> unitContentHash(std::uint32_t unit) const;
     void hashBeforeUnwatch(std::uint64_t address, std::size_t bytes, bool proven);
     void forgetUnwatchHash(std::uint32_t first, std::uint32_t count);
+    void rebaseBeforeUnwatch(std::uint64_t address, std::size_t bytes, bool proven);
+    void applyRebase(std::uint64_t ticket, std::uint32_t unit);
+    void readBaseline(std::uint32_t unit);
+    void awaitRebase(std::uint32_t unit);
     bool originalHolds(std::uint64_t address, std::size_t bytes) const;
     bool guestBytesStillHeld() const;
     bool compareUntracked(std::uint64_t address, std::size_t bytes, std::span<std::uint8_t> changed, bool memoize = false) const;
@@ -661,6 +666,16 @@ private:
         std::uint64_t end;
     };
     std::vector<ImportSegment> importSegments() const;
+    struct SegmentMemo {
+        bool valid = false;
+        std::uint64_t generation = 0;
+        VkDevice device = VK_NULL_HANDLE;
+        std::uint64_t importEpoch = 0;
+        std::uint64_t importRefreshed = 0;
+        std::vector<ImportSegment> segments;
+    };
+    mutable std::mutex segmentMemoMutex;
+    mutable SegmentMemo segmentMemo;
     PaddingSeeds paddingSeeds(std::span<const ImportSegment> segments, const std::vector<CopiedBytes>& copied) const;
     // The direct upload and GPU-direct write-back of the runs through their windows (block units);
     // both return the bytes moved. The upload reads each unit from its unit shadow while fresh,
@@ -884,6 +899,10 @@ private:
     std::shared_ptr<Buffer> savedBytes;
     std::vector<std::uint64_t> savedTicket;
     std::uint64_t lastSaveTicket = 0;
+    std::vector<bool> baselineDue;
+    std::atomic<bool> anyBaselineDue{false};
+    std::vector<std::uint64_t> rebaseTicket;
+    std::uint64_t lastRebaseTicket = 0;
     // The storage cache let the image go (Flush): a lookup makes a new image of the surface, so
     // no fill may put results into this one (guarded by the live-image registry lock).
     bool released = false;
