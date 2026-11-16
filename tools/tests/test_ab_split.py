@@ -436,6 +436,12 @@ class FiniteHelperTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "non-finite"):
             ab_split.finite_sum([1e308, 1e308])
 
+    def test_number_returns_the_first_captured_float(self):
+        self.assertEqual(ab_split.number(r"busy ([\d.]+) ms", "busy 12.5 ms, busy 3 ms"), 12.5)
+
+    def test_number_returns_none_when_the_pattern_is_absent(self):
+        self.assertIsNone(ab_split.number(r"busy ([\d.]+) ms", "idle only"))
+
 
 if __name__ == "__main__":
     unittest.main()
