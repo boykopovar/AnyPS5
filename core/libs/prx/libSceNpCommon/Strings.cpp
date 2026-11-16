@@ -393,6 +393,21 @@ bool ReadXmlSource(const char* src, std::size_t length, std::string& host) {
     return true;
 }
 
+bool ReadNpIdText(const char* text, std::size_t limit, std::string& host) {
+    constexpr std::uintptr_t Page = 4096;
+    auto address = reinterpret_cast<std::uintptr_t>(text);
+    char chunk[Page];
+    while (host.size() < limit) {
+        const std::size_t size = std::min<std::size_t>(Page - address % Page, limit - host.size());
+        if (!GuestCopyIn_nid_no_patch(chunk, reinterpret_cast<const void*>(address), size)) return false;
+        const auto* end = static_cast<const char*>(std::memchr(chunk, '\0', size));
+        host.append(chunk, end ? static_cast<std::size_t>(end - chunk) : size);
+        if (end) return true;
+        address += size;
+    }
+    return true;
+}
+
 bool IsUrlSafe(unsigned char c) {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.'
         || c == '*';
@@ -862,32 +877,45 @@ int APS5_VABI sceNpUtilParseJid(NpJid* jid, const char* text, char* buffer, std:
 
 int APS5_VABI sceNpUtilJidToNpId(NpIdFull* npId, const NpJid* jid) {
     if (npId == nullptr || jid == nullptr) return NP_UTIL_ERROR_INVALID_ARGUMENT;
-    if (jid->user == nullptr || jid->domain == nullptr) return NP_UTIL_ERROR_INVALID_JID;
-    const std::size_t userLength = std::strlen(jid->user);
-    if (userLength == 0 || userLength > NP_ONLINE_ID_MAX_LENGTH) return NP_UTIL_ERROR_INVALID_JID;
-    const char* domain = jid->domain;
+    const int savedErrno = errno;
+    const auto finish = [savedErrno](int result) {
+        errno = savedErrno;
+        return result;
+    };
+    NpJid copy{};
+    if (!GuestCopyIn_nid_no_patch(&copy, jid, sizeof(copy))) return finish(NP_UTIL_ERROR_INVALID_ARGUMENT);
+    if (copy.user == nullptr || copy.domain == nullptr) return finish(NP_UTIL_ERROR_INVALID_JID);
+    std::string user;
+    std::string domainText;
+    std::string resource;
+    if (!ReadNpIdText(copy.user, NP_ONLINE_ID_MAX_LENGTH + 1, user) || !ReadNpIdText(copy.domain, SIZE_MAX, domainText)
+        || (copy.resource != nullptr && !ReadNpIdText(copy.resource, NP_ID_RESOURCE_MAX_LENGTH + 1, resource)))
+        return finish(NP_UTIL_ERROR_INVALID_JID);
+    const std::size_t userLength = user.size();
+    if (userLength == 0 || userLength > NP_ONLINE_ID_MAX_LENGTH) return finish(NP_UTIL_ERROR_INVALID_JID);
+    const char* domain = domainText.c_str();
     if (!IsAsciiAlnum(domain[0]) || !IsAsciiAlnum(domain[1]) || domain[2] != '.' || !IsAsciiAlnum(domain[3]) || !IsAsciiAlnum(domain[4])
         || domain[5] != '.') {
-        return NP_UTIL_ERROR_INVALID_JID;
+        return finish(NP_UTIL_ERROR_INVALID_JID);
     }
     const char* label = domain + 6;
     while (*label != '.') {
-        if (*label == '\0') return NP_UTIL_ERROR_INVALID_JID;
+        if (*label == '\0') return finish(NP_UTIL_ERROR_INVALID_JID);
         ++label;
     }
-    if (std::strcmp(label + 1, "playstation.net") != 0) return NP_UTIL_ERROR_INVALID_JID;
-    const std::size_t resourceLength = jid->resource != nullptr ? std::strlen(jid->resource) : 0;
-    if (resourceLength > NP_ID_RESOURCE_MAX_LENGTH) return NP_UTIL_ERROR_INVALID_JID;
+    if (std::strcmp(label + 1, "playstation.net") != 0) return finish(NP_UTIL_ERROR_INVALID_JID);
+    const std::size_t resourceLength = resource.size();
+    if (resourceLength > NP_ID_RESOURCE_MAX_LENGTH) return finish(NP_UTIL_ERROR_INVALID_JID);
     NpIdFull local{};
-    std::memcpy(local.handle.data, jid->user, userLength);
+    std::memcpy(local.handle.data, user.data(), userLength);
     local.opt[0] = static_cast<std::uint8_t>(domain[0]);
     local.opt[1] = static_cast<std::uint8_t>(domain[1]);
     local.opt[2] = static_cast<std::uint8_t>(domain[3]);
     local.opt[3] = static_cast<std::uint8_t>(domain[4]);
-    if (resourceLength != 0) std::memcpy(local.opt + 4, jid->resource, resourceLength);
+    if (resourceLength != 0) std::memcpy(local.opt + 4, resource.data(), resourceLength);
     local.reserved[0] = 1;
-    if (!GuestCopyOut_nid_no_patch(npId, &local, sizeof(local))) return NP_UTIL_ERROR_INVALID_ARGUMENT;
-    return 0;
+    if (!GuestCopyOut_nid_no_patch(npId, &local, sizeof(local))) return finish(NP_UTIL_ERROR_INVALID_ARGUMENT);
+    return finish(0);
 }
 
 int APS5_VABI sceNpUtilHttpUrlEncode(char* dst, std::size_t dstSize, const char* src, std::size_t srcLength,
