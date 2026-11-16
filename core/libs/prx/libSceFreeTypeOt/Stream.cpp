@@ -386,7 +386,7 @@ std::uint64_t APS5_VABI FT_Stream_ReadULongLE_nid_postfix(GuestStreamRec* stream
 
 int APS5_VABI FT_Stream_ReadFields_nid_postfix(GuestStreamRec* stream, const GuestFrameField* fields, void* structure) {
     const char* function = __func__;
-    if (!fields) return InvalidArgument;
+    if (!fields || !stream) return InvalidArgument;
     auto& record = Stream(stream, function);
     int error = 0;
     bool frameAccessed = false;

@@ -156,6 +156,64 @@ void FormatOverflow() {
     std::remove(configured);
 }
 
+void PrefixMatching() {
+    for (const char* empty : {static_cast<const char*>(nullptr), "", ",,,"}) {
+        const AgcDriver::CaptureTraceFilter all(empty);
+        Check(!all.Active() && all.Matches("anything") && all.MayMatchFormat("anything %d"),
+              "an absent or empty prefix list must retain all records");
+    }
+    char configured[] = ",upload image=,image-write ,flip ,";
+    const AgcDriver::CaptureTraceFilter selected(configured);
+    configured[1] = 'x';
+    Check(selected.Active(), "a non-empty prefix list must activate filtering");
+    for (const auto* record : {"upload image=2a", "image-write image=2a", "flip frame=3"}) {
+        Check(selected.Matches(record), "a selected literal prefix was lost or not copied");
+    }
+    for (const auto* record : {"draw frame=3", "xupload image=2a", "upload image", "flipbook frame=3", ""}) {
+        Check(!selected.Matches(record), "filtering must match prefixes including their spaces and separators");
+    }
+    Check(!selected.MayMatchFormat("draw shader=%llx"), "an unrelated literal format must be rejected before formatting");
+    Check(selected.MayMatchFormat("upload image=%llx"), "a selected format must remain eligible");
+    Check(selected.MayMatchFormat("%s"), "a dynamically formatted prefix cannot be rejected before formatting");
+    Check(selected.MayMatchFormat("up%s"), "a partially literal prefix cannot be rejected before formatting");
+    const AgcDriver::CaptureTraceFilter escaped("load %");
+    Check(escaped.MayMatchFormat("load %% %d") && escaped.Matches("load % 7"),
+          "escaped percent signs must be checked after formatting");
+    const AgcDriver::CaptureTraceFilter spaces(" upload");
+    Check(spaces.Matches(" upload image=1") && !spaces.Matches("upload image=1"),
+          "spaces in configured prefixes must remain significant");
+}
+
+void PrefixWrites() {
+    const char* configured = RequiredPathVariable();
+    const std::string oversized(4096, 'x');
+    AgcDriver::CaptureTrace::Log("draw payload=%s", oversized.c_str());
+    AgcDriver::CaptureTrace::Log("upload image=%x", 42);
+    AgcDriver::CaptureTrace::Log("image-write image=%x", 42);
+    AgcDriver::CaptureTrace::Log("%s", "draw dynamically-formatted=1");
+    AgcDriver::CaptureTrace::Log("%s", "upload image=dynamic");
+    AgcDriver::CaptureTrace::Log("upload image=%s", oversized.c_str());
+    Check(WaitForRecord(configured, "capture-trace-dropped records=1\n"),
+          "selected oversized records must still report loss, while rejected literal formats must not");
+    AgcDriver::CaptureTrace::Log("upload image=recovered");
+    Check(WaitForRecord(configured, "upload image=recovered\n"), "filtered tracing did not recover after overflow");
+    const auto contents = ReadFile(configured);
+    for (const auto* record : {"capture-trace-filter active=1\n", "upload image=2a\n", "image-write image=2a\n", "upload image=dynamic\n"}) {
+        Check(contents.find(record) != std::string::npos, "a selected record or filtered-trace marker is missing");
+    }
+    Check(contents.find("draw ") == std::string::npos, "an excluded formatted record reached the trace");
+    std::istringstream records(contents);
+    std::string record;
+    unsigned long long expected = 0;
+    while (std::getline(records, record)) {
+        std::istringstream fields(record);
+        unsigned long long sequence = 0;
+        fields >> sequence;
+        Check(sequence == ++expected, "excluded records must not create sequence holes");
+    }
+    std::remove(configured);
+}
+
 class PausedTraceBuffer final : public std::streambuf {
 public:
     bool WaitForWrite() {
@@ -398,6 +456,8 @@ int main(int argc, char** argv) {
         else if (mode == "open-failure") OpenFailure();
         else if (mode == "best-effort-overflow") BestEffortOverflow();
         else if (mode == "format-overflow") FormatOverflow();
+        else if (mode == "prefix-matching") PrefixMatching();
+        else if (mode == "prefix-writes") PrefixWrites();
         else if (mode == "queue-drop") AgcDriver::CaptureTraceTestAccess::QueueDrop(false);
         else if (mode == "queue-drop-shutdown") AgcDriver::CaptureTraceTestAccess::QueueDrop(true);
         else if (mode == "queue-drop-cumulative") AgcDriver::CaptureTraceTestAccess::QueueDrop(false, true);

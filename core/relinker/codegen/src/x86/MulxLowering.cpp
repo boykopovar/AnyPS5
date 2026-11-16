@@ -109,9 +109,10 @@ void EmitMulx(StubBodyBuilder& body, const MulxOperands& operands) {
         _stack(body, 0x8B, operands.Wide, operands.HighDestination, 32);
     const std::array popFlags{std::uint8_t{0x9D}};
     body.Raw(popFlags);
-    _stack(body, 0x8D, true, kStack, kFrameSize - 8);
     if (operands.HighDestination == kStack || operands.LowDestination == kStack)
-        _stack(body, 0x8B, operands.Wide, kStack, (operands.HighDestination == kStack ? 32 : 24) - kFrameSize);
+        _stack(body, 0x8B, operands.Wide, kStack, operands.HighDestination == kStack ? 24 : 16);
+    else
+        _stack(body, 0x8D, true, kStack, kFrameSize - 8);
 }
 
 }
