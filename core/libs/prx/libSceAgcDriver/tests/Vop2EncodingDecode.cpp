@@ -34,6 +34,8 @@ int main() {
         {{0xd52b0002u, 0x80020300u}, RdnaOpcode::VMacF32, "VOP3 v_fmac_f32 with a negated accumulator"},
         {{0xd52b0402u, 0x00020300u}, RdnaOpcode::VMacF32, "VOP3 v_fmac_f32 with an absolute accumulator"},
         {{0xd51f0002u, 0x60020300u}, RdnaOpcode::VMacF32, "VOP3 v_mac_f32 with negated sources"},
+        {{0xd5368302u, 0x68020300u}, RdnaOpcode::VFmacF16, "VOP3 v_fmac_f16 with source modifiers, clamp and mul:2"},
+        {{0xd5360402u, 0x80020300u}, RdnaOpcode::VFmacF16, "VOP3 v_fmac_f16 with accumulator modifiers"},
     };
     const std::vector<Refused> refused{
         {{0x2a040300u}, "VOP2 opcode is not implemented", "VOP2 opcode 0x15"},
@@ -53,6 +55,7 @@ int main() {
         {{0xd53c0002u, 0x00020300u}, "VOP3 opcode is not implemented", "VOP3 opcode 0x13c"},
         {{0xd51f0002u, 0x80020300u}, "VOP3 source modifiers are not implemented", "VOP3 v_mac_f32 with a negated accumulator"},
         {{0xd5060402u, 0x00020300u}, "VOP3 source modifiers are not implemented", "VOP3 opcode 0x106 with an absolute accumulator"},
+        {{0xd5360802u, 0x00020300u}, "VOP3 source modifiers are not implemented", "VOP3 v_fmac_f16 with op_sel"},
     };
     int failures = 0;
     for (const auto& test : accepted) {
