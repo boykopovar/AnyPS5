@@ -1,6 +1,7 @@
 #include "prx/libSceLibreSsl3/include/Api.hpp"
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
 #include "prx/libc/include/General.hpp"
+#include <algorithm>
 #include <cerrno>
 #include <cstdint>
 #include <cstring>
@@ -26,6 +27,28 @@ bool CopyOut(void* destination, const void* source, std::size_t bytes) {
     return copied;
 }
 
+bool CopyInChunks(std::vector<unsigned char>& host, const unsigned char* source, std::size_t bytes) {
+    constexpr std::size_t Chunk = 64 * 1024;
+    host.clear();
+    for (std::size_t done = 0; done < bytes;) {
+        const std::size_t size = std::min(Chunk, bytes - done);
+        host.resize(done + size);
+        if (!CopyIn(host.data() + done, source + done, size)) return false;
+        done += size;
+    }
+    return true;
+}
+
+bool CopyOutChunks(unsigned char* destination, const unsigned char* host, std::size_t bytes) {
+    constexpr std::size_t Chunk = 64 * 1024;
+    for (std::size_t done = 0; done < bytes;) {
+        const std::size_t size = std::min(Chunk, bytes - done);
+        if (!CopyOut(destination + done, host + done, size)) return false;
+        done += size;
+    }
+    return true;
+}
+
 }
 
 extern "C" {
@@ -36,8 +59,8 @@ int APS5_VABI AES_wrap_key_nid_postfix(AesKey* key, const unsigned char* iv, uns
     const std::uint32_t blocks = inlen / 8;
     AesKey schedule;
     unsigned char a[8];
-    std::vector<unsigned char> r(inlen);
-    if (!CopyIn(&schedule, key, sizeof(schedule)) || !CopyIn(a, iv ? iv : DefaultIv, sizeof(a)) || !CopyIn(r.data(), in, inlen)) {
+    std::vector<unsigned char> r;
+    if (!CopyIn(&schedule, key, sizeof(schedule)) || !CopyIn(a, iv ? iv : DefaultIv, sizeof(a)) || !CopyInChunks(r, in, inlen)) {
         throw std::invalid_argument(std::string(__func__) + ": unreadable key, iv or input");
     }
     for (std::uint32_t round = 0; round < 6; ++round) {
@@ -55,10 +78,7 @@ int APS5_VABI AES_wrap_key_nid_postfix(AesKey* key, const unsigned char* iv, uns
             }
         }
     }
-    std::vector<unsigned char> wrapped(inlen + 8);
-    std::memcpy(wrapped.data(), a, 8);
-    std::memcpy(wrapped.data() + 8, r.data(), inlen);
-    if (!CopyOut(out, wrapped.data(), wrapped.size())) throw std::invalid_argument(std::string(__func__) + ": unwritable output");
+    if (!CopyOut(out, a, sizeof(a)) || !CopyOutChunks(out + 8, r.data(), inlen)) throw std::invalid_argument(std::string(__func__) + ": unwritable output");
     return static_cast<int>(inlen + 8);
 }
 

@@ -52,7 +52,9 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libc/include/General.hpp"
 
+#include <algorithm>
 #include <cerrno>
+#include <cstddef>
 #include <cstring>
 #include <stdexcept>
 #include <vector>
@@ -75,6 +77,28 @@ bool CopyOut(void* destination, const void* source, std::size_t bytes) {
     return copied;
 }
 
+bool CopyInChunks(std::vector<unsigned char>& host, const unsigned char* source, std::size_t bytes) {
+    constexpr std::size_t Chunk = 64 * 1024;
+    host.clear();
+    for (std::size_t done = 0; done < bytes;) {
+        const std::size_t size = std::min(Chunk, bytes - done);
+        host.resize(done + size);
+        if (!CopyIn(host.data() + done, source + done, size)) return false;
+        done += size;
+    }
+    return true;
+}
+
+bool CopyOutChunks(unsigned char* destination, const unsigned char* host, std::size_t bytes) {
+    constexpr std::size_t Chunk = 64 * 1024;
+    for (std::size_t done = 0; done < bytes;) {
+        const std::size_t size = std::min(Chunk, bytes - done);
+        if (!CopyOut(destination + done, host + done, size)) return false;
+        done += size;
+    }
+    return true;
+}
+
 }
 
 extern "C" {
@@ -87,8 +111,8 @@ int APS5_VABI AES_unwrap_key_nid_postfix(AesKey* key, const unsigned char* iv, u
     length -= 8;
     AesKey schedule;
     unsigned char block[16];
-    std::vector<unsigned char> data(length);
-    if (!CopyIn(&schedule, key, sizeof(schedule)) || !CopyIn(block, in, 8) || !CopyIn(data.data(), in + 8, length)) {
+    std::vector<unsigned char> data;
+    if (!CopyIn(&schedule, key, sizeof(schedule)) || !CopyIn(block, in, 8) || !CopyInChunks(data, in + 8, length)) {
         throw std::invalid_argument("AES_unwrap_key: unreadable key or input");
     }
     unsigned int step = 6 * (length >> 3);
@@ -112,10 +136,10 @@ int APS5_VABI AES_unwrap_key_nid_postfix(AesKey* key, const unsigned char* iv, u
     if (CRYPTO_memcmp_nid_postfix(block, expected, 8)) {
         volatile unsigned char* cleared = data.data();
         for (unsigned int index = 0; index < length; ++index) cleared[index] = 0;
-        if (!CopyOut(out, data.data(), length)) throw std::invalid_argument("AES_unwrap_key: unwritable output");
+        if (!CopyOutChunks(out, data.data(), length)) throw std::invalid_argument("AES_unwrap_key: unwritable output");
         return 0;
     }
-    if (!CopyOut(out, data.data(), length)) throw std::invalid_argument("AES_unwrap_key: unwritable output");
+    if (!CopyOutChunks(out, data.data(), length)) throw std::invalid_argument("AES_unwrap_key: unwritable output");
     return static_cast<int>(length);
 }
 

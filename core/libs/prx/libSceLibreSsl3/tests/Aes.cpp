@@ -1,4 +1,7 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#ifdef __linux__
+#include <sys/resource.h>
+#endif
 
 #include <cerrno>
 #include <cstddef>
@@ -13,6 +16,16 @@
 #include <vector>
 
 namespace {
+
+long PeakKilobytes() {
+#ifdef __linux__
+    rusage usage{};
+    getrusage(RUSAGE_SELF, &usage);
+    return usage.ru_maxrss;
+#else
+    return 0;
+#endif
+}
 
 using Bytes = std::vector<unsigned char>;
 
@@ -154,6 +167,10 @@ void TestNullArguments() {
     RequireInvalidArgument([&] { AES_unwrap_key_nid_postfix(&key, unreadable, out.data(), Rfc41.data(), 24); });
     RequireInvalidArgument([&] { AES_unwrap_key_nid_postfix(&key, nullptr, reinterpret_cast<unsigned char*>(0x10), Rfc41.data(), 24); });
     Require(errno == 71 && Filled(out.data(), out.size(), 0xCC));
+    const long peakBefore = PeakKilobytes();
+    RequireInvalidArgument([&] { AES_unwrap_key_nid_postfix(&key, nullptr, out.data(), unreadable, 0xfffffff8u); });
+    Require(errno == 71 && Filled(out.data(), out.size(), 0xCC));
+    Require(PeakKilobytes() - peakBefore < 64 * 1024);
 }
 
 }
