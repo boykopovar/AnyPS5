@@ -532,9 +532,15 @@ int VideoOutDriver::GetBusType(int handle) {
 
 int VideoOutDriver::SubmitFlip(int handle, int index, int flipMode, int64_t flipArg) {
     if (LibcShutdownToken_nid_postfix().stop_requested()) throw ProcessShutdown{};
-    // A title that does not pace on flipPendingNum can run ahead of the presenter now that the queue
-    // worker no longer waits per flip; a full queue is the documented error, not a failure.
-    if (flipQueue->reservations.load() >= VIDEO_OUT_FLIP_QUEUE_CAPACITY) return VIDEO_OUT_ERROR_FLIP_QUEUE_FULL;
+    if (flipQueue->reservations.load() >= VIDEO_OUT_FLIP_QUEUE_CAPACITY) {
+        std::unique_lock lock(flipQueue->mutex);
+        const bool room = flipQueue->changed.WaitUntil(lock, TimedWait::DeadlineNanos(FLIP_ROOM_WAIT_MICROS), [&] {
+            return flipQueue->failure || flipQueue->stopping || LibcShutdownToken_nid_postfix().stop_requested() || flipQueue->reservations.load() < VIDEO_OUT_FLIP_QUEUE_CAPACITY;
+        });
+        if (flipQueue->failure) std::rethrow_exception(flipQueue->failure);
+        if (flipQueue->stopping || LibcShutdownToken_nid_postfix().stop_requested()) throw ProcessShutdown{};
+        if (!room) return VIDEO_OUT_ERROR_FLIP_QUEUE_FULL;
+    }
     AgcDriverSubmitFlip_nid_postfix(AgcDriver::FlipInfo{static_cast<std::uint32_t>(handle), index, static_cast<std::uint32_t>(flipMode), flipArg});
     return 0;
 }
@@ -794,6 +800,7 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
             dialogInput.emplace();
             imeTextInput->SetClipboardProvider(&readHostClipboard);
         });
+        bool windowCloseSeen = false;
         while (!token.stop_requested()) {
             {
                 std::unique_lock lock(flipQueue->mutex);
@@ -809,6 +816,7 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
             const bool quit = OnMainThread([&] {
                 SDL_Event event;
                 while (SDL_PollEvent(&event)) {
+                    if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_CLOSE) windowCloseSeen = true;
                     if (event.type == SDL_QUIT) return true;
                     padInput->HandleEvent(event, window);
                     if (window.Handle() != nullptr) {
@@ -823,7 +831,7 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
                 return false;
             });
             if (quit) {
-                LibcRunReportQuitRequested_nid_no_patch();
+                LibcRunReportQuitRequested_nid_no_patch(windowCloseSeen);
                 LibcRequestExit_nid_postfix(0);
                 throw ProcessShutdown{};
             }

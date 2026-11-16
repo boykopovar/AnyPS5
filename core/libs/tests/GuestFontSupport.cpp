@@ -2,6 +2,7 @@
 #include "prx/libSceFont/include/Api.hpp"
 #include "prx/libSceFont/include/FontTypes.hpp"
 #include "prx/libSceFontFt/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -64,6 +65,12 @@ int main() {
     std::memset(record, 0xA5, sizeof(record));
     Require(sceFontOutlineVertexesInterfaceInit(nullptr, record, record, 1) == SCE_FONT_ERROR_INVALID_PARAMETER);
     int p1 = 0, p2 = 0;
+    errno = 71;
+    Require(sceFontOutlineVertexesInterfaceInit(reinterpret_cast<void*>(0x10), &p1, &p2, 2) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceFontOutlineVertexesInterfaceInit(reinterpret_cast<void*>(0x10), nullptr, &p2, 2) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     Require(sceFontOutlineVertexesInterfaceInit(record, nullptr, &p2, 2) == SCE_FONT_ERROR_INVALID_PARAMETER);
     for (int i = 0; i < 0x30; ++i) Require(record[i] == 0);
     std::memset(record, 0xA5, sizeof(record));
