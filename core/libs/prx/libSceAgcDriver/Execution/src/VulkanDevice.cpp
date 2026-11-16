@@ -579,6 +579,7 @@ struct VulkanDevice::State {
     bool fragmentBarycentricBuiltins = false;
     bool hostInterpolationFirst = false;
     bool geometryShader = false;
+    bool multiViewport = false;
     bool largePoints = false;
     bool sampleRateShading = false;
     bool storageImageMultisample = false;
@@ -2233,6 +2234,9 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     enabled.sampleRateShading = available.sampleRateShading;
     enabled.geometryShader = available.geometryShader;
     state->geometryShader = enabled.geometryShader == VK_TRUE;
+    enabled.multiViewport = available.multiViewport && state->properties.limits.maxViewports >= Graphics::MaxViewports ? VK_TRUE : VK_FALSE;
+    state->multiViewport = enabled.multiViewport == VK_TRUE;
+    if (enabled.multiViewport) state->capabilities.push_back(spv::CapabilityMultiViewport);
     enabled.largePoints = available.largePoints;
     state->largePoints = enabled.largePoints == VK_TRUE;
     state->sampleRateShading = enabled.sampleRateShading == VK_TRUE;
@@ -4910,6 +4914,7 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.imageTableUpdateAfterBind = ImageTableUpdateAfterBind(context);
     context.samplerTableUpdateAfterBind = SamplerTableUpdateAfterBind(context);
     context.geometryShader = state->geometryShader;
+    context.multiViewport = state->multiViewport;
     context.largePoints = state->largePoints;
     context.sampleRateShading = state->sampleRateShading;
     context.fillModeNonSolid = state->fillModeNonSolid;

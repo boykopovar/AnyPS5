@@ -170,6 +170,9 @@ void APS5_VABI _ZN3WTF11Persistence7DecoderD1Ev() {
 void APS5_VABI _ZN3WTF11Persistence7DecoderD2Ev() {
 }
 
+void APS5_VABI _ZN3WTF11PrintStream3endEv() {
+}
+
 void APS5_VABI _ZN3WTF18FunctionDispatcherD1Ev() {
 }
 
