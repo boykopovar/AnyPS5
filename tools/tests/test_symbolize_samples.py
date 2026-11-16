@@ -1534,6 +1534,18 @@ class HeaderWindowTests(unittest.TestCase):
         self.assertEqual(result.stacks, collections.Counter({"s": 3}))
         self.assertEqual(result.headers, {"liba": (1, 2)})
 
+    def test_validate_window_needs_module_records_in_both_captures(self):
+        later = symbolize_samples.Samples()
+        earlier = symbolize_samples.Samples()
+        later.self_counts = collections.Counter({("libA", 4): 1})
+        earlier.self_counts = collections.Counter({("libA", 4): 1})
+        with self.assertRaisesRegex(ValueError, "needs module records in both captures"):
+            symbolize_samples.validate_window(later, earlier)
+        earlier.headers = {"liba": (1, 2)}
+        later.headers = {"liba": (1, 3)}
+        with self.assertRaisesRegex(ValueError, "module identity differs"):
+            symbolize_samples.validate_window(later, earlier)
+
 
 if __name__ == "__main__":
     unittest.main()
