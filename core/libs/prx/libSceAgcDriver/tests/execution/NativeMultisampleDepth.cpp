@@ -31,6 +31,7 @@
 #include <bit>
 #include <chrono>
 #include <cmath>
+#include <compare>
 #include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
@@ -94,6 +95,43 @@ struct DriverTestAccess {
 namespace {
 
 using namespace AgcDriver::Graphics;
+
+struct DepthRasterKey {
+    VkDevice device;
+    VkFormat format;
+    std::uint32_t samples;
+    std::uint32_t width;
+    std::uint32_t height;
+    bool stencilPlane;
+    bool stencil;
+    VkCompareOp compare;
+    VkStencilOp pass;
+    bool perPixel;
+    auto operator<=>(const DepthRasterKey&) const = default;
+};
+
+struct DepthRasterPipelines {
+    DepthRasterPipelines() = default;
+    DepthRasterPipelines(const DepthRasterPipelines&) = delete;
+    DepthRasterPipelines& operator=(const DepthRasterPipelines&) = delete;
+    ~DepthRasterPipelines() {
+        for (const auto pipeline : pipelines) if (pipeline) owner.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(owner.device, pipeline, nullptr);
+        for (const auto module : modules) if (module) owner.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(owner.device, module, nullptr);
+        if (layout) owner.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(owner.device, layout, nullptr);
+        if (pass) owner.Function<PFN_vkDestroyRenderPass>("vkDestroyRenderPass")(owner.device, pass, nullptr);
+    }
+    Context owner{};
+    VkRenderPass pass = VK_NULL_HANDLE;
+    VkPipelineLayout layout = VK_NULL_HANDLE;
+    std::array<VkShaderModule, 2> modules{};
+    std::vector<VkPipeline> pipelines;
+};
+
+std::map<DepthRasterKey, DepthRasterPipelines> depthRasterPipelines;
+
+void ClearDepthRasterPipelines(VkDevice device) {
+    std::erase_if(depthRasterPipelines, [&](const auto& entry) { return entry.first.device == device; });
+}
 
 class Device {
 public:
@@ -244,6 +282,7 @@ private:
             ClearCachedTextures(context.device);
             ClearDepthSurfaces(context.device);
             ClearSampleOrders(context.device);
+            ClearDepthRasterPipelines(context.device);
             context.bufferPool.reset();
             if (context.pool) context.Function<PFN_vkDestroyCommandPool>("vkDestroyCommandPool")(context.device, context.pool, nullptr);
             function<PFN_vkDestroyDevice>("vkDestroyDevice")(context.device, nullptr);
@@ -754,98 +793,23 @@ struct StencilUse {
 
 class DepthRaster {
 public:
-    DepthRaster(const Context& context, const DepthTarget& target, VkImageView view, std::optional<StencilUse> stencil = std::nullopt, bool perPixel = false, bool perSampleStencil = false) : context(context), extent(target.extent), samples(target.samples) {
-        try {
-            const auto stencilLoad = target.stencilAddress != 0u ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-            const auto stencilStore = target.stencilAddress != 0u ? VK_ATTACHMENT_STORE_OP_STORE : VK_ATTACHMENT_STORE_OP_DONT_CARE;
-            const VkAttachmentDescription attachment{0u, target.format, static_cast<VkSampleCountFlagBits>(samples), VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE, stencilLoad, stencilStore, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL};
-            const VkAttachmentReference reference{0u, VK_IMAGE_LAYOUT_GENERAL};
-            VkSubpassDescription subpass{};
-            subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-            subpass.pDepthStencilAttachment = &reference;
-            VkRenderPassCreateInfo passInfo{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
-            passInfo.attachmentCount = 1u;
-            passInfo.pAttachments = &attachment;
-            passInfo.subpassCount = 1u;
-            passInfo.pSubpasses = &subpass;
-            Check(context.Function<PFN_vkCreateRenderPass>("vkCreateRenderPass")(context.device, &passInfo, nullptr, &pass), "depth sample render pass");
-            VkFramebufferCreateInfo framebufferInfo{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
-            framebufferInfo.renderPass = pass;
-            framebufferInfo.attachmentCount = 1u;
-            framebufferInfo.pAttachments = &view;
-            framebufferInfo.width = extent.width;
-            framebufferInfo.height = extent.height;
-            framebufferInfo.layers = 1u;
-            Check(context.Function<PFN_vkCreateFramebuffer>("vkCreateFramebuffer")(context.device, &framebufferInfo, nullptr, &framebuffer), "depth sample framebuffer");
-            const VkPushConstantRange push{VK_SHADER_STAGE_FRAGMENT_BIT, 0u, 4u};
-            VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-            layoutInfo.pushConstantRangeCount = 1u;
-            layoutInfo.pPushConstantRanges = &push;
-            Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &layoutInfo, nullptr, &layout), "depth sample pipeline layout");
-            std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
-            const std::array codes{DepthVertexShader(), DepthFragmentShader()};
-            for (std::uint32_t i = 0u; i < 2u; ++i) {
-                VkShaderModuleCreateInfo info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-                info.codeSize = codes[i].size() * 4u;
-                info.pCode = codes[i].data();
-                Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &info, nullptr, &modules[i]), "depth sample shader");
-                stages[i] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0u, i == 0u ? VK_SHADER_STAGE_VERTEX_BIT : VK_SHADER_STAGE_FRAGMENT_BIT, modules[i], "main", nullptr};
-            }
-            VkPipelineVertexInputStateCreateInfo input{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
-            VkPipelineInputAssemblyStateCreateInfo assembly{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
-            assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-            const VkViewport viewport{0.0f, 0.0f, static_cast<float>(extent.width), static_cast<float>(extent.height), 0.0f, 1.0f};
-            const VkRect2D scissor{{0, 0}, extent};
-            VkPipelineViewportStateCreateInfo viewportInfo{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
-            viewportInfo.viewportCount = viewportInfo.scissorCount = 1u;
-            viewportInfo.pViewports = &viewport;
-            viewportInfo.pScissors = &scissor;
-            VkPipelineRasterizationStateCreateInfo raster{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
-            raster.polygonMode = VK_POLYGON_MODE_FILL;
-            raster.cullMode = VK_CULL_MODE_NONE;
-            raster.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
-            raster.lineWidth = 1.0f;
-            VkPipelineMultisampleStateCreateInfo multisample{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
-            multisample.rasterizationSamples = static_cast<VkSampleCountFlagBits>(samples);
-            VkPipelineDepthStencilStateCreateInfo depth{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
-            depth.depthTestEnable = depth.depthWriteEnable = VK_TRUE;
-            depth.depthCompareOp = VK_COMPARE_OP_ALWAYS;
-            if (stencil) {
-                depth.stencilTestEnable = VK_TRUE;
-                depth.front = depth.back = {VK_STENCIL_OP_KEEP, stencil->pass, VK_STENCIL_OP_KEEP, stencil->compare, 0xffu, 0xffu, stencil->reference};
-            }
-            VkPipelineColorBlendStateCreateInfo blend{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
-            constexpr std::array<VkDynamicState, 2> dynamicStates{VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_STENCIL_REFERENCE};
-            VkPipelineDynamicStateCreateInfo dynamic{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
-            dynamic.dynamicStateCount = static_cast<std::uint32_t>(dynamicStates.size());
-            dynamic.pDynamicStates = dynamicStates.data();
-            VkGraphicsPipelineCreateInfo info{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
-            if (perPixel) info.pDynamicState = &dynamic;
-            info.stageCount = 2u;
-            info.pStages = stages.data();
-            info.pVertexInputState = &input;
-            info.pInputAssemblyState = &assembly;
-            info.pViewportState = &viewportInfo;
-            info.pRasterizationState = &raster;
-            info.pMultisampleState = &multisample;
-            info.pDepthStencilState = &depth;
-            info.pColorBlendState = &blend;
-            info.layout = layout;
-            info.renderPass = pass;
-            pipelines.resize(samples, VK_NULL_HANDLE);
-            for (std::uint32_t sample = 0u; sample < samples; ++sample) {
-                const auto mask = 1u << sample;
-                multisample.pSampleMask = &mask;
-                if (stencil && perSampleStencil) depth.front.reference = depth.back.reference = stencil->reference + sample;
-                Check(context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")(context.device, VK_NULL_HANDLE, 1u, &info, nullptr, &pipelines[sample]), "depth sample pipeline");
-            }
-        } catch (...) { release(); throw; }
+    DepthRaster(const Context& context, const DepthTarget& target, VkImageView view, std::optional<StencilUse> stencil = std::nullopt, bool perPixel = false, bool perSampleStencil = false) : context(context), extent(target.extent), samples(target.samples), stencil(stencil), perSampleStencil(perSampleStencil), shared(&Pipelines(context, target, stencil, perPixel)) {
+        VkFramebufferCreateInfo framebufferInfo{VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO};
+        framebufferInfo.renderPass = shared->pass;
+        framebufferInfo.attachmentCount = 1u;
+        framebufferInfo.pAttachments = &view;
+        framebufferInfo.width = extent.width;
+        framebufferInfo.height = extent.height;
+        framebufferInfo.layers = 1u;
+        Check(context.Function<PFN_vkCreateFramebuffer>("vkCreateFramebuffer")(context.device, &framebufferInfo, nullptr, &framebuffer), "depth sample framebuffer");
     }
-    ~DepthRaster() { release(); }
+    DepthRaster(const DepthRaster&) = delete;
+    DepthRaster& operator=(const DepthRaster&) = delete;
+    ~DepthRaster() { context.Function<PFN_vkDestroyFramebuffer>("vkDestroyFramebuffer")(context.device, framebuffer, nullptr); }
     void Run(VkCommandBuffer commands, float offset) const {
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
         VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-        begin.renderPass = pass;
+        begin.renderPass = shared->pass;
         begin.framebuffer = framebuffer;
         begin.renderArea = {{0, 0}, extent};
         context.Function<PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
@@ -853,8 +817,9 @@ public:
         state.Begin(commands, false);
         for (std::uint32_t sample = 0u; sample < samples; ++sample) {
             const auto value = offset + static_cast<float>(sample + 1u) / 16.0f;
-            state.BindPipeline(context, pipelines[sample], 0);
-            context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0u, 4u, &value);
+            state.BindPipeline(context, shared->pipelines[sample], 0);
+            state.SetStencilReference(context, VK_STENCIL_FACE_FRONT_AND_BACK, stencil ? stencil->reference + (perSampleStencil ? sample : 0u) : 0u);
+            context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, shared->layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0u, 4u, &value);
             context.Function<PFN_vkCmdDraw>("vkCmdDraw")(commands, 3u, 1u, 0u, 0u);
         }
         context.Function<PFN_vkCmdEndRenderPass>("vkCmdEndRenderPass")(commands);
@@ -864,7 +829,7 @@ public:
     void RunPerPixel(VkCommandBuffer commands, float offset, Reference reference) const {
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
         VkRenderPassBeginInfo begin{VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO};
-        begin.renderPass = pass;
+        begin.renderPass = shared->pass;
         begin.framebuffer = framebuffer;
         begin.renderArea = {{0, 0}, extent};
         context.Function<PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass")(commands, &begin, VK_SUBPASS_CONTENTS_INLINE);
@@ -872,8 +837,8 @@ public:
         state.Begin(commands, false);
         for (std::uint32_t sample = 0u; sample < samples; ++sample) {
             const auto value = offset + static_cast<float>(sample + 1u) / 16.0f;
-            state.BindPipeline(context, pipelines[sample], 0);
-            context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0u, 4u, &value);
+            state.BindPipeline(context, shared->pipelines[sample], 0);
+            context.Function<PFN_vkCmdPushConstants>("vkCmdPushConstants")(commands, shared->layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0u, 4u, &value);
             for (std::uint32_t row = extent.height; row-- > 0u;) {
                 for (std::uint32_t column = extent.width; column-- > 0u;) {
                     const auto x = column, y = row;
@@ -888,21 +853,97 @@ public:
         RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
     }
 private:
-    void release() noexcept {
-        for (const auto pipeline : pipelines) if (pipeline) context.Function<PFN_vkDestroyPipeline>("vkDestroyPipeline")(context.device, pipeline, nullptr);
-        for (const auto module : modules) if (module) context.Function<PFN_vkDestroyShaderModule>("vkDestroyShaderModule")(context.device, module, nullptr);
-        if (layout) context.Function<PFN_vkDestroyPipelineLayout>("vkDestroyPipelineLayout")(context.device, layout, nullptr);
-        if (framebuffer) context.Function<PFN_vkDestroyFramebuffer>("vkDestroyFramebuffer")(context.device, framebuffer, nullptr);
-        if (pass) context.Function<PFN_vkDestroyRenderPass>("vkDestroyRenderPass")(context.device, pass, nullptr);
+    static const DepthRasterPipelines& Pipelines(const Context& context, const DepthTarget& target, const std::optional<StencilUse>& stencil, bool perPixel) {
+        const DepthRasterKey key{context.device, target.format, target.samples, target.extent.width, target.extent.height, target.stencilAddress != 0u, stencil.has_value(), stencil ? stencil->compare : VK_COMPARE_OP_NEVER, stencil ? stencil->pass : VK_STENCIL_OP_KEEP, perPixel};
+        if (const auto found = depthRasterPipelines.find(key); found != depthRasterPipelines.end()) return found->second;
+        auto& entry = depthRasterPipelines.try_emplace(key).first->second;
+        entry.owner.device = context.device;
+        entry.owner.deviceProc = context.deviceProc;
+        try {
+            const auto stencilLoad = target.stencilAddress != 0u ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+            const auto stencilStore = target.stencilAddress != 0u ? VK_ATTACHMENT_STORE_OP_STORE : VK_ATTACHMENT_STORE_OP_DONT_CARE;
+            const VkAttachmentDescription attachment{0u, target.format, static_cast<VkSampleCountFlagBits>(target.samples), VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE, stencilLoad, stencilStore, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL};
+            const VkAttachmentReference reference{0u, VK_IMAGE_LAYOUT_GENERAL};
+            VkSubpassDescription subpass{};
+            subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+            subpass.pDepthStencilAttachment = &reference;
+            VkRenderPassCreateInfo passInfo{VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO};
+            passInfo.attachmentCount = 1u;
+            passInfo.pAttachments = &attachment;
+            passInfo.subpassCount = 1u;
+            passInfo.pSubpasses = &subpass;
+            Check(context.Function<PFN_vkCreateRenderPass>("vkCreateRenderPass")(context.device, &passInfo, nullptr, &entry.pass), "depth sample render pass");
+            const VkPushConstantRange push{VK_SHADER_STAGE_FRAGMENT_BIT, 0u, 4u};
+            VkPipelineLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+            layoutInfo.pushConstantRangeCount = 1u;
+            layoutInfo.pPushConstantRanges = &push;
+            Check(context.Function<PFN_vkCreatePipelineLayout>("vkCreatePipelineLayout")(context.device, &layoutInfo, nullptr, &entry.layout), "depth sample pipeline layout");
+            std::array<VkPipelineShaderStageCreateInfo, 2> stages{};
+            const std::array codes{DepthVertexShader(), DepthFragmentShader()};
+            for (std::uint32_t i = 0u; i < 2u; ++i) {
+                VkShaderModuleCreateInfo info{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+                info.codeSize = codes[i].size() * 4u;
+                info.pCode = codes[i].data();
+                Check(context.Function<PFN_vkCreateShaderModule>("vkCreateShaderModule")(context.device, &info, nullptr, &entry.modules[i]), "depth sample shader");
+                stages[i] = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0u, i == 0u ? VK_SHADER_STAGE_VERTEX_BIT : VK_SHADER_STAGE_FRAGMENT_BIT, entry.modules[i], "main", nullptr};
+            }
+            VkPipelineVertexInputStateCreateInfo input{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
+            VkPipelineInputAssemblyStateCreateInfo assembly{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
+            assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+            const VkViewport viewport{0.0f, 0.0f, static_cast<float>(target.extent.width), static_cast<float>(target.extent.height), 0.0f, 1.0f};
+            const VkRect2D scissor{{0, 0}, target.extent};
+            VkPipelineViewportStateCreateInfo viewportInfo{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
+            viewportInfo.viewportCount = viewportInfo.scissorCount = 1u;
+            viewportInfo.pViewports = &viewport;
+            viewportInfo.pScissors = &scissor;
+            VkPipelineRasterizationStateCreateInfo raster{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
+            raster.polygonMode = VK_POLYGON_MODE_FILL;
+            raster.cullMode = VK_CULL_MODE_NONE;
+            raster.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+            raster.lineWidth = 1.0f;
+            VkPipelineMultisampleStateCreateInfo multisample{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
+            multisample.rasterizationSamples = static_cast<VkSampleCountFlagBits>(target.samples);
+            VkPipelineDepthStencilStateCreateInfo depth{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
+            depth.depthTestEnable = depth.depthWriteEnable = VK_TRUE;
+            depth.depthCompareOp = VK_COMPARE_OP_ALWAYS;
+            if (stencil) {
+                depth.stencilTestEnable = VK_TRUE;
+                depth.front = depth.back = {VK_STENCIL_OP_KEEP, stencil->pass, VK_STENCIL_OP_KEEP, stencil->compare, 0xffu, 0xffu, 0u};
+            }
+            VkPipelineColorBlendStateCreateInfo blend{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
+            constexpr std::array<VkDynamicState, 2> dynamicStates{VK_DYNAMIC_STATE_STENCIL_REFERENCE, VK_DYNAMIC_STATE_SCISSOR};
+            VkPipelineDynamicStateCreateInfo dynamic{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
+            dynamic.dynamicStateCount = perPixel ? 2u : 1u;
+            dynamic.pDynamicStates = dynamicStates.data();
+            VkGraphicsPipelineCreateInfo info{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
+            info.pDynamicState = &dynamic;
+            info.stageCount = 2u;
+            info.pStages = stages.data();
+            info.pVertexInputState = &input;
+            info.pInputAssemblyState = &assembly;
+            info.pViewportState = &viewportInfo;
+            info.pRasterizationState = &raster;
+            info.pMultisampleState = &multisample;
+            info.pDepthStencilState = &depth;
+            info.pColorBlendState = &blend;
+            info.layout = entry.layout;
+            info.renderPass = entry.pass;
+            entry.pipelines.resize(target.samples, VK_NULL_HANDLE);
+            for (std::uint32_t sample = 0u; sample < target.samples; ++sample) {
+                const auto mask = 1u << sample;
+                multisample.pSampleMask = &mask;
+                Check(context.Function<PFN_vkCreateGraphicsPipelines>("vkCreateGraphicsPipelines")(context.device, VK_NULL_HANDLE, 1u, &info, nullptr, &entry.pipelines[sample]), "depth sample pipeline");
+            }
+        } catch (...) { depthRasterPipelines.erase(key); throw; }
+        return entry;
     }
     Context context;
     VkExtent2D extent;
     std::uint32_t samples;
-    VkRenderPass pass = VK_NULL_HANDLE;
+    std::optional<StencilUse> stencil;
+    bool perSampleStencil;
+    const DepthRasterPipelines* shared;
     VkFramebuffer framebuffer = VK_NULL_HANDLE;
-    VkPipelineLayout layout = VK_NULL_HANDLE;
-    std::array<VkShaderModule, 2> modules{};
-    std::vector<VkPipeline> pipelines;
 };
 
 std::vector<std::uint32_t> SingleSampleFetchShader(std::uint32_t width, std::uint32_t height) {
@@ -3403,6 +3444,10 @@ int CheckDriverPath(bool queued) {
     AgcDriver::DriverDetail::DriverTestAccess::UseDevice(device);
     const int result = [&] {
         const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(*device);
+        struct ReleaseRasters {
+            VkDevice device;
+            ~ReleaseRasters() { ClearDepthRasterPipelines(device); }
+        } releaseRasters{context.device};
         auto* recorder = Recorder::Active();
         Require(recorder != nullptr && recorder->Device() == context.device, "the driver's device did not activate its recorder");
 #ifdef _WIN32
