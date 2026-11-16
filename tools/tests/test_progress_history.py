@@ -854,6 +854,10 @@ class ProgressHistoryTests(unittest.TestCase):
             self.assertEqual(cache.read_bytes(), original)
 
 
+class LocationAndSeriesTests(unittest.TestCase):
+    def test_used_shader_metrics_lists_only_series_with_counts(self):
+        points = [{"shaders": 3}, {"shader_metric": "legacy", "shaders": 4}]
+        self.assertEqual(progress_history.used_shader_metrics(points), ["decoded", "legacy"])
 
 
 class UtcDayTests(unittest.TestCase):
