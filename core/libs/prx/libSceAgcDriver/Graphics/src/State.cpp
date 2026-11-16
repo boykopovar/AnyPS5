@@ -1391,8 +1391,10 @@ std::string DepthMaintenanceRejection(const QueueState& queue) {
     constexpr std::uint32_t maintenance = 0x0000101cu;
     if ((control->second & maintenance) == 0) return {};
     const auto depthControl = find(queue.context, 0x200);
+    const auto colorControl = find(queue.context, 0x202);
+    const bool colorDisabled = colorControl != queue.context.end() && ((colorControl->second >> 4u) & 7u) == 0u;
     const bool colorMasks = find(queue.context, 0x8e) != queue.context.end() && find(queue.context, 0x8f) != queue.context.end();
-    if ((control->second & (maintenance & ~0x10u)) == 0 && depthControl != queue.context.end() && (depthControl->second & 3u) == 0 && colorMasks && ColorWriteMask(queue.context) == 0) return {};
+    if ((control->second & (maintenance & ~0x10u)) == 0 && depthControl != queue.context.end() && (depthControl->second & 3u) == 0 && (colorDisabled || (colorMasks && ColorWriteMask(queue.context) == 0))) return {};
     return zeroMessage(0x000, control->second, "DB_RENDER_CONTROL depth copy, resummarize or decompress");
 }
 
@@ -2332,9 +2334,11 @@ ColorTarget DecodeGcnColorBuffer(const Registers& cx, std::uint32_t slot) {
         case 14u: color.tileMode = ColorTileMode::GcnThin2D; break;
         default: throw std::runtime_error("AGC graphics: PS4 color target tile mode index " + std::to_string(attrib & 0x1fu) + " is not implemented");
     }
-    Require(slice == 0 || (color.tileMode != ColorTileMode::GcnDisplay2D && color.tileMode != ColorTileMode::GcnThin2D), "GCN color views of a later slice of a 2D-tiled array, whose banks rotate per slice, are not implemented");
+    const bool macroTiled = color.tileMode == ColorTileMode::GcnDisplay2D || color.tileMode == ColorTileMode::GcnThin2D;
+    Require(slice == 0 || !macroTiled || color.samples == 1u, "GCN multisampled color views of a later slice of a 2D-tiled array are not implemented");
+    if (macroTiled) color.pipeBankXor = GcnLayerBankXor(GcnTiling(ColorTextureTileMode(color.tileMode), color.elementBytes), slice);
     color.mipCount = 1;
-    const ColorTargetLayout layout(color.extent.width, color.extent.height, color.tileMode, color.elementBytes);
+    const ColorTargetLayout layout(color.extent.width, color.extent.height, color.tileMode, color.elementBytes, color.pipeBankXor);
     Require(layout.Bytes() == static_cast<std::size_t>(pitch) * color.extent.height * color.elementBytes, "PS4 color target pitch or slice is not padded the way its tile mode pads them");
     color.surfaceAddress = (static_cast<std::uint64_t>(read(cx, 0x318 + stride)) << 8u) + static_cast<std::uint64_t>(slice) * layout.Bytes() * fragments;
     color.address = color.surfaceAddress;

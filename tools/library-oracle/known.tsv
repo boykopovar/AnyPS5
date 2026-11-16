@@ -86,7 +86,6 @@ agcbuild_DcbDrawIndexAuto_c	throw	AnyPS5 throws for arguments the console encode
 agcbuild_DcbDrawIndexIndirect_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbDrawIndexIndirect_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbDrawIndexIndirect_c	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_DcbDrawIndexMultiInstanced_a	diff	the packet differs from the console's; not yet analysed
 agcbuild_DcbDrawIndirect_a	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbDrawIndirect_b	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_DcbDrawIndirect_c	throw	AnyPS5 throws for arguments the console encodes

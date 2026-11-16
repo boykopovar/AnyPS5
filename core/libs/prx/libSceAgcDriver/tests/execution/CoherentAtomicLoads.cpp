@@ -90,6 +90,7 @@ int main() {
         {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
+            if (SkipWithoutSharedMemoryStores()) return VulkanTestSkipped;
             CheckLoads(*device, atomic);
         }
         if (!atomic) {
