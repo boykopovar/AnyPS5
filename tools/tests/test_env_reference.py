@@ -631,5 +631,20 @@ class SourceFilesTests(unittest.TestCase):
         self.assertEqual(list(env_reference.source_files(Path("/no/such/env/root"))), [])
 
 
+class SourceFileFilterTests(unittest.TestCase):
+    def test_source_files_keeps_sources_outside_skipped_folders(self):
+        import env_reference
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "src").mkdir()
+            (root / "build").mkdir()
+            (root / "a.cpp").write_text("x", encoding="utf-8")
+            (root / "c.txt").write_text("x", encoding="utf-8")
+            (root / "build" / "b.cpp").write_text("x", encoding="utf-8")
+            (root / "src" / "d.hpp").write_text("x", encoding="utf-8")
+            names = [path.name for path in env_reference.source_files(root)]
+            self.assertEqual(names, ["a.cpp", "d.hpp"])
+
+
 if __name__ == "__main__":
     unittest.main()
