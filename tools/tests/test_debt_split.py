@@ -567,5 +567,12 @@ class DebtSplitTests(unittest.TestCase):
         self.assertEqual(items[3][2], "plain text")
 
 
+    def test_key_is_set_for_entries_only(self):
+        entry = "- [a](../../../core/libs/prx/libX/a.cpp) (libX) gap"
+        self.assertIsNone(debt_split.key("heading", "## change"))
+        self.assertIsNone(debt_split.key("text", "plain text"))
+        self.assertEqual(debt_split.key("entry", entry), debt_split.debt_name(entry))
+
+
 if __name__ == "__main__":
     unittest.main()
