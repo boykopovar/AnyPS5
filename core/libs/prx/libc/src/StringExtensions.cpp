@@ -134,7 +134,8 @@ std::size_t APS5_VABI strcspn_nid_postfix(const char* text, const char* reject) 
     return std::strcspn(text, reject);
 }
 
-void APS5_VABI strmode_nid_postfix(int mode, char* buffer) {
+void APS5_VABI strmode_nid_postfix(int mode, char* guestBuffer) {
+    char buffer[12];
     switch (mode & 0170000) {
         case 0040000: buffer[0] = 'd'; break;
         case 0020000: buffer[0] = 'c'; break;
@@ -172,6 +173,7 @@ void APS5_VABI strmode_nid_postfix(int mode, char* buffer) {
     }
     buffer[10] = ' ';
     buffer[11] = '\0';
+    GuestCopyOut_nid_no_patch(guestBuffer, buffer, sizeof(buffer));
 }
 
 std::size_t APS5_VABI strlcat_nid_postfix(char* destination, const char* source, std::size_t capacity) {

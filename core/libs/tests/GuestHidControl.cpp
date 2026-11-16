@@ -187,6 +187,9 @@ void CheckArguments() {
     Require(sceHidControlIsForceUpdateNeeded(0, 1, nullptr) == ErrorInvalidArgument, "IsForceUpdateNeeded null result");
     Require(sceHidControlPswUpdateIsUpdateNeeded(0, buffer.data(), nullptr) == ErrorInvalidArgument, "PswUpdateIsUpdateNeeded null result");
     Require(sceHidControlPswUpdateIsUpdateNeeded(0, nullptr, &first) == ErrorInvalidArgument && first == 0, "PswUpdateIsUpdateNeeded clears result before the image check");
+    errno = 71;
+    Require(sceHidControlPswUpdateIsUpdateNeeded(0, buffer.data(), reinterpret_cast<std::uint16_t*>(0x10)) == ErrorInvalidArgument && errno == 71,
+            "PswUpdateIsUpdateNeeded unwritable result");
     first = 0x5a5a;
     Require(sceHidControlPswUpdateIsUpdateNeededForMultiDevice(0, &first, nullptr, &second) == ErrorInvalidArgument && second == 0x5a5a,
             "PswUpdateIsUpdateNeededForMultiDevice null first result");

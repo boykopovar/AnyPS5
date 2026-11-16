@@ -119,6 +119,8 @@ def unbuilt_exports(root, sources, skipped=()):
             text = source.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
+        if '.cpp"' not in text.replace("\\\n", "").replace("\\\r\n", ""):
+            continue
         for name in INCLUDED_SOURCE.findall(cpp_source(text, keep_strings=True)):
             included = (source.parent / name).resolve()
             if included not in built_sources and included.is_file():

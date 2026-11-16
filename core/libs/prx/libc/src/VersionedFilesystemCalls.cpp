@@ -67,10 +67,12 @@ int StatusType(const char* function, const char* path, int* perms, int* error) {
     if (NotFound(result)) {
         type = TypeNotFound;
     } else if (result == 0) {
-        if (perms) *perms = status.st_mode & 0xfff;
+        const int permissions = status.st_mode & 0xfff;
+        if (perms) GuestCopyOut_nid_no_patch(perms, &permissions, sizeof(permissions));
         type = TypeOf(status.st_mode);
     }
-    if (error) *error = StatusOf(result);
+    const int failure = StatusOf(result);
+    if (error) GuestCopyOut_nid_no_patch(error, &failure, sizeof(failure));
     return type;
 }
 
