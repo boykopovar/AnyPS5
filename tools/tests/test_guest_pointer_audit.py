@@ -299,5 +299,15 @@ class SourceCodeTests(unittest.TestCase):
         self.assertEqual(guest_pointer_audit.source_code('x = "ab";\n'), "x = LITERAL;\n")
 
 
+
+class AccessTests(unittest.TestCase):
+    def test_accesses_reports_each_kind_for_the_named_pointer(self):
+        kinds = [kind for _, kind in guest_pointer_audit.accesses("p->x; *p = 1; p[2] = 0; q->y;", "p")]
+        self.assertEqual(kinds, ["member", "dereference", "index"])
+
+    def test_accesses_ignores_other_names(self):
+        self.assertEqual(guest_pointer_audit.accesses("q->x; q[0] = 1;", "p"), [])
+
+
 if __name__ == "__main__":
     unittest.main()
