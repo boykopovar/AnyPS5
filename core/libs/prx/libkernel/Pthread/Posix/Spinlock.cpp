@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 #include "Common.hpp"
 #include <atomic>
+#include <cerrno>
 #include <new>
 #include <stdexcept>
 #include <thread>
@@ -13,6 +14,20 @@ constexpr int GUEST_ENOMEM = 12;
 constexpr int GUEST_EBUSY = 16;
 constexpr int PROCESS_PRIVATE = 0;
 constexpr int SPIN_COUNT = 100000;
+
+bool CopyGuestInPreservingErrno(PthreadSpinlockPrivate*& destination, PthreadSpinlockPrivate* const* source) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(&destination, source, sizeof(destination));
+    errno = savedErrno;
+    return ok;
+}
+
+bool CopyGuestOutPreservingErrno(PthreadSpinlockPrivate** destination, PthreadSpinlockPrivate* value) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(destination, &value, sizeof(value));
+    errno = savedErrno;
+    return ok;
+}
 
 bool tryAcquire(PthreadSpinlockPrivate* spinlock) {
     std::thread::id unowned{};
@@ -28,14 +43,20 @@ int APS5_VABI pthread_spin_init_nid_postfix(PthreadSpinlockPrivate** lock, int p
     if (pshared != PROCESS_PRIVATE) return PosixThread::GUEST_EINVAL;
     auto* spinlock = new (std::nothrow) PthreadSpinlockPrivate;
     if (!spinlock) return GUEST_ENOMEM;
-    *lock = spinlock;
+    if (!CopyGuestOutPreservingErrno(lock, spinlock)) {
+        delete spinlock;
+        return PosixThread::GUEST_EFAULT;
+    }
     return 0;
 }
 
 int APS5_VABI pthread_spin_destroy_nid_postfix(PthreadSpinlockPrivate** lock) {
-    if (!lock || !*lock) return PosixThread::GUEST_EINVAL;
-    delete *lock;
-    *lock = nullptr;
+    if (!lock) return PosixThread::GUEST_EINVAL;
+    PthreadSpinlockPrivate* spinlock = nullptr;
+    if (!CopyGuestInPreservingErrno(spinlock, lock)) return PosixThread::GUEST_EFAULT;
+    if (!spinlock) return PosixThread::GUEST_EINVAL;
+    if (!CopyGuestOutPreservingErrno(lock, nullptr)) return PosixThread::GUEST_EFAULT;
+    delete spinlock;
     return 0;
 }
 

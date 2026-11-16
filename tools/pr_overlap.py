@@ -33,14 +33,32 @@ EXPORT_PATHS = ("core/libs/prx/*.cpp", ":(exclude,icase)**/test/**", ":(exclude,
 _REPO_ROOTS = {}
 
 
-def git(*args):
+def _repository_root():
     cwd = Path.cwd()
     root = _REPO_ROOTS.get(cwd)
     if root is None:
-        root = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"], cwd=cwd, capture_output=True, check=True
+        output = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=cwd,
+            capture_output=True,
+            check=True,
         ).stdout.decode("utf-8", errors="replace").strip()
+        root = Path(output)
+        if os.name == "nt" and not root.is_dir():
+            relative = subprocess.run(
+                ["git", "rev-parse", "--show-cdup"],
+                cwd=cwd,
+                capture_output=True,
+                check=True,
+            ).stdout.decode("utf-8", errors="replace").strip()
+            root = (cwd / relative).resolve()
         _REPO_ROOTS[cwd] = root
+    return root
+
+
+def git(*args):
+    cwd = Path.cwd()
+    root = _repository_root()
     args = list(args)
     if "--" in args:
         separator = args.index("--")
@@ -230,13 +248,7 @@ def fetch(base, prs):
 
 
 def merge(*args):
-    cwd = Path.cwd()
-    root = _REPO_ROOTS.get(cwd)
-    if root is None:
-        root = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"], cwd=cwd, capture_output=True, check=True
-        ).stdout.decode("utf-8", errors="replace").strip()
-        _REPO_ROOTS[cwd] = root
+    root = _repository_root()
     result = subprocess.run(["git", "-c", "core.quotePath=false", "merge-tree", "--write-tree", "--name-only", "--no-messages", "-z", *args],
                             cwd=root, capture_output=True)
     lines = result.stdout.decode("utf-8", errors="replace").rstrip("\0").split("\0")
@@ -396,8 +408,9 @@ def blob_texts(root, blobs):
 
 
 def base_exports(ref):
-    root = git("rev-parse", "--show-toplevel").strip()
-    cache_path = Path(root, git("rev-parse", "--git-common-dir").strip()) / "pr_overlap-exports.json"
+    root = _repository_root()
+    common_dir = git("rev-parse", "--path-format=relative", "--git-common-dir").strip()
+    cache_path = root / common_dir / "pr_overlap-exports.json"
     version = export_cache_version()
     cached = load_export_cache(cache_path, version)
     sources = base_sources(root, ref)

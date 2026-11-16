@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -11,6 +12,12 @@
 #include <limits>
 #include <stdexcept>
 #include <type_traits>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -106,6 +113,88 @@ void MasterKey() {
     Write(bytes, Start + 8, 100, 8);
     Check(readMasterKey(session, out.data(), out.size()) == 48, "overlong stored length clamps to 48");
 }
+
+class ReadOnlyPage {
+public:
+    ReadOnlyPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        bytes = info.dwPageSize;
+        data = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        Check(data != nullptr, "allocate test page");
+#else
+        const long page = sysconf(_SC_PAGESIZE);
+        Check(page > 0, "query page size");
+        bytes = static_cast<std::size_t>(page);
+        data = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Check(data != nullptr && data != MAP_FAILED, "map test page");
+#endif
+    }
+
+    ~ReadOnlyPage() {
+#ifdef _WIN32
+        VirtualFree(data, 0, MEM_RELEASE);
+#else
+        munmap(data, bytes);
+#endif
+    }
+
+    unsigned char* Bytes() {
+        return static_cast<unsigned char*>(data);
+    }
+
+    void Protect() {
+#ifdef _WIN32
+        DWORD previous{};
+        Check(VirtualProtect(data, bytes, PAGE_READONLY, &previous) != 0, "protect read-only page");
+#else
+        Check(mprotect(data, bytes, PROT_READ) == 0, "protect read-only page");
+#endif
+    }
+
+private:
+    void* data = nullptr;
+    std::size_t bytes = 0;
+};
+
+template <typename TCall>
+void RejectsRuntime(TCall call, const char* message) {
+    errno = 71;
+    bool rejected = false;
+    try {
+        call();
+    } catch (const std::runtime_error&) {
+        rejected = errno == 71;
+    }
+    Check(rejected, message);
+}
+
+void GuestPointers() {
+    ++cases;
+    const void* badSession = reinterpret_cast<const void*>(std::uintptr_t{0x10});
+    auto* badWritableSession = reinterpret_cast<void*>(std::uintptr_t{0x10});
+    auto* badOut = reinterpret_cast<unsigned char*>(std::uintptr_t{0x10});
+    std::array<unsigned char, 48> key{};
+    RejectsRuntime([&] { SSL_SESSION_get_timeout_nid_postfix(badSession); }, "bad session timeout");
+    RejectsRuntime([&] { SSL_SESSION_set_time_nid_postfix(badWritableSession, 123); }, "bad session set time");
+    RejectsRuntime([&] { SSL_SESSION_get_protocol_version_nid_postfix(badSession); }, "bad session protocol version");
+    RejectsRuntime([&] { SSL_SESSION_get_master_key_nid_postfix(badSession, key.data(), key.size()); }, "bad session master key");
+
+    alignas(8) std::array<unsigned char, 256> validSession{};
+    Write(validSession, 8, 16, 8);
+    RejectsRuntime([&] { SSL_SESSION_get_master_key_nid_postfix(validSession.data(), badOut, 16); }, "bad out master key");
+
+    ReadOnlyPage readOnlySession;
+    std::memset(readOnlySession.Bytes(), 0x5A, 256);
+    readOnlySession.Protect();
+    RejectsRuntime([&] { SSL_SESSION_set_time_nid_postfix(readOnlySession.Bytes(), 999); }, "read-only session set time");
+
+    ReadOnlyPage readOnlyOut;
+    std::memset(readOnlyOut.Bytes(), 0xCC, 16);
+    readOnlyOut.Protect();
+    RejectsRuntime([&] { SSL_SESSION_get_master_key_nid_postfix(validSession.data(), readOnlyOut.Bytes(), 16); }, "read-only out master key");
+}
 }
 
 int main() {
@@ -129,6 +218,7 @@ int main() {
     }
     Check(threw, "null version rejects undefined upstream input");
     MasterKey();
+    GuestPointers();
     for (auto version : Versions)
         for (auto timeout : Times)
             for (auto time : Times) Exercise(version, timeout, ~time, time, cases + 1);

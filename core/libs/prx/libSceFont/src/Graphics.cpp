@@ -327,7 +327,7 @@ int OutlineVertexesInterfaceInit(void* interface, const void* first, const void*
     static_assert(sizeof(OutlineInterface) == 0x30);
     const bool valid = first != nullptr && count >= 1 && count <= 3;
     const OutlineInterface value = valid ? OutlineInterface{0xf08, first, second, count, {}} : OutlineInterface{};
-    std::memcpy(interface, &value, sizeof(value));
+    if (!CopyOutGuest(static_cast<OutlineInterface*>(interface), value)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return valid ? SCE_FONT_OK : SCE_FONT_ERROR_INVALID_PARAMETER;
 }
 
@@ -1225,7 +1225,7 @@ bool IsUsableMemory(const FontMemory* memory) {
 namespace Font {
 
 int CreateGraphicsService(const FontMemory* memory, const FontGraphicsServiceParam* param, FontGraphicsService** service) {
-    if (service != nullptr) *service = nullptr;
+    if (service != nullptr && !CopyOutGuest(service, static_cast<FontGraphicsService*>(nullptr))) return Fail(FONT_GRAPHICS_ERROR_INVALID_PARAMETER);
     if (!IsUsableMemory(memory) || param == nullptr || param->tag != BackendTag || service == nullptr)
         return Fail(FONT_GRAPHICS_ERROR_INVALID_PARAMETER);
     if (param->level < BackendLevel) return Fail(FONT_GRAPHICS_ERROR_UNINITIALIZED);
@@ -1242,7 +1242,11 @@ int CreateGraphicsService(const FontMemory* memory, const FontGraphicsServicePar
     data->iface = *memory->iface;
     data->memory.iface = &data->iface;
     data->instanceSlot = param->instanceSlot;
-    *service = reinterpret_cast<FontGraphicsService*>(data);
+    if (!CopyOutGuest(service, reinterpret_cast<FontGraphicsService*>(data))) {
+        if (data->instanceSlot != nullptr) DetachInstance(data->instanceSlot);
+        memory->iface->dealloc(memory->mspace_handle, data);
+        return Fail(FONT_GRAPHICS_ERROR_INVALID_PARAMETER);
+    }
     return SCE_FONT_OK;
 }
 

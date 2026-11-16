@@ -4,16 +4,29 @@
 #include FT_FREETYPE_H
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <limits>
+#include <set>
+#include <stdexcept>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
+constexpr std::int32_t InvalidFileFormat = 0x03;
 constexpr std::int32_t InvalidArgument = 0x06;
 constexpr std::int32_t InvalidTable = 0x08;
 constexpr std::int32_t ArrayTooLarge = 0x0a;
+constexpr std::int32_t OutOfMemory = 0x40;
+constexpr std::int32_t InvalidStreamOperation = 0x55;
 
 constexpr char Text[] = "AnyPS5 relinks PS5 executables.";
 constexpr std::uint64_t TextLength = sizeof(Text) - 1;
@@ -36,26 +49,104 @@ constexpr std::array<std::uint8_t, 81> LargeGzip{
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xc0, 0xbf, 0x01, 0x66, 0xc0, 0x21, 0x15, 0x00, 0xa0, 0x00,
     0x00};
 
+constexpr std::array<std::uint8_t, 8> Plain{'n', 'o', 't', ' ', 'g', 'z', 'i', 'p'};
+
 struct Counter {
     int allocations = 0;
     int frees = 0;
     int limit = -1;
+    int failures = 0;
+    std::set<void*> live;
 };
 
 void Require(bool value) {
     if (!value) std::abort();
 }
 
+template <class F>
+bool Rejects(F call) {
+    errno = 71;
+    try {
+        call();
+    } catch (const std::runtime_error&) {
+        return errno == 71;
+    }
+    return false;
+}
+
+class ReadOnlyPage {
+    void* page = nullptr;
+    std::size_t size = 4096;
+
+public:
+    explicit ReadOnlyPage(std::uint64_t initialValue) {
+#ifdef _WIN32
+        page = VirtualAlloc(nullptr, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        Require(page != nullptr);
+        std::memcpy(page, &initialValue, sizeof(initialValue));
+        DWORD oldProtect = 0;
+        Require(VirtualProtect(page, size, PAGE_READONLY, &oldProtect) != 0);
+#else
+        const long pageSize = sysconf(_SC_PAGESIZE);
+        size = pageSize > 0 ? static_cast<std::size_t>(pageSize) : 4096;
+        page = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(page != MAP_FAILED);
+        std::memcpy(page, &initialValue, sizeof(initialValue));
+        Require(mprotect(page, size, PROT_READ) == 0);
+#endif
+    }
+
+    ~ReadOnlyPage() {
+        if (!page) return;
+#ifdef _WIN32
+        VirtualFree(page, 0, MEM_RELEASE);
+#else
+        munmap(page, size);
+#endif
+    }
+
+    ReadOnlyPage(const ReadOnlyPage&) = delete;
+    ReadOnlyPage& operator=(const ReadOnlyPage&) = delete;
+
+    template <typename T>
+    T* As() const {
+        return static_cast<T*>(page);
+    }
+};
+
 void* APS5_VABI GuestAlloc(FreeType::GuestMemoryRec* memory, std::int64_t size) {
     auto* counter = static_cast<Counter*>(memory->user);
     if (counter->allocations == counter->limit) return nullptr;
+    if (counter->failures > 0) {
+        --counter->failures;
+        return nullptr;
+    }
     ++counter->allocations;
-    return std::malloc(static_cast<std::size_t>(size));
+    void* block = std::malloc(static_cast<std::size_t>(size));
+    counter->live.insert(block);
+    return block;
 }
 
 void APS5_VABI GuestFree(FreeType::GuestMemoryRec* memory, void* block) {
-    ++static_cast<Counter*>(memory->user)->frees;
+    auto* counter = static_cast<Counter*>(memory->user);
+    ++counter->frees;
+    counter->live.erase(block);
     std::free(block);
+}
+
+void ReleaseLeaks(Counter& counter) {
+    for (void* block : counter.live) std::free(block);
+    counter.live.clear();
+}
+
+template <class TCall>
+bool Throws(TCall call) {
+    try {
+        call();
+    } catch (const std::exception&) {
+        return true;
+    }
+    return false;
 }
 
 void* APS5_VABI GuestRealloc(FreeType::GuestMemoryRec*, std::int64_t, std::int64_t, void*) {
@@ -83,6 +174,196 @@ std::uint64_t APS5_VABI ReadSource(LegacyFreeType::GuestStreamRec* stream, std::
     const auto length = std::min(count, stream->size - offset);
     std::memcpy(buffer, static_cast<const unsigned char*>(stream->descriptor.pointer) + offset, static_cast<std::size_t>(length));
     return length;
+}
+
+std::uint64_t APS5_VABI RefuseSeeks(LegacyFreeType::GuestStreamRec* stream, std::uint64_t offset, unsigned char* buffer, std::uint64_t count) {
+    return count == 0 ? 1 : ReadSource(stream, offset, buffer, count);
+}
+
+std::uint64_t APS5_VABI ReadTooMuch(LegacyFreeType::GuestStreamRec* stream, std::uint64_t offset, unsigned char* buffer, std::uint64_t count) {
+    return count == 0 ? 0 : ReadSource(stream, offset, buffer, count) + 1;
+}
+
+LegacyFreeType::GuestStreamRec MemorySource(unsigned char* bytes, std::size_t size, FreeType::GuestMemoryRec* memory) {
+    LegacyFreeType::GuestStreamRec source{};
+    source.base = bytes;
+    source.size = size;
+    source.memory = memory;
+    return source;
+}
+
+LegacyFreeType::GuestStreamRec CallbackSource(unsigned char* bytes, std::size_t size, FreeType::GuestMemoryRec* memory) {
+    LegacyFreeType::GuestStreamRec source{};
+    source.descriptor.pointer = bytes;
+    source.size = size;
+    source.read = ReadSource;
+    source.memory = memory;
+    return source;
+}
+
+LegacyFreeType::GuestStreamRec Filled() {
+    LegacyFreeType::GuestStreamRec stream;
+    std::memset(&stream, 0x5a, sizeof(stream));
+    return stream;
+}
+
+bool Same(const LegacyFreeType::GuestStreamRec& first, const LegacyFreeType::GuestStreamRec& second) {
+    return std::memcmp(&first, &second, sizeof(first)) == 0;
+}
+
+void CheckUnusedMemory() {
+    auto plain = Plain;
+    auto small = Gzip;
+    FreeType::GuestMemoryRec empty{};
+    for (FreeType::GuestMemoryRec* memory : {static_cast<FreeType::GuestMemoryRec*>(nullptr), &empty}) {
+        auto source = MemorySource(plain.data(), plain.size(), memory);
+        auto output = Filled();
+        const auto untouched = output;
+        Require(FT_Stream_OpenGzip_nid_postfix(&output, &source) == InvalidFileFormat);
+        Require(Same(output, untouched) && source.pos == 4);
+        source = MemorySource(small.data(), small.size(), memory);
+        Require(Throws([&] { FT_Stream_OpenGzip_nid_postfix(&output, &source); }));
+        Require(Same(output, untouched));
+    }
+
+    Counter counter;
+    FreeType::GuestMemoryRec noRealloc{&counter, GuestAlloc, GuestFree, nullptr};
+    auto source = MemorySource(small.data(), small.size(), &noRealloc);
+    LegacyFreeType::GuestStreamRec output{};
+    Require(FT_Stream_OpenGzip_nid_postfix(&output, &source) == 0);
+    Require(output.base != nullptr && std::memcmp(output.base, Text, TextLength) == 0);
+    output.close(&output);
+    auto large = LargeGzip;
+    source = CallbackSource(large.data(), large.size(), &noRealloc);
+    output = {};
+    Require(FT_Stream_OpenGzip_nid_postfix(&output, &source) == 0);
+    std::array<unsigned char, 64> decoded{};
+    Require(output.read(&output, 40000, decoded.data(), decoded.size()) == decoded.size());
+    Require(std::all_of(decoded.begin(), decoded.end(), [](unsigned char byte) { return byte == 'A'; }));
+    output.close(&output);
+    Require(counter.allocations > 0 && counter.allocations == counter.frees);
+}
+
+void CheckAliasedStream() {
+    Counter counter;
+    FreeType::GuestMemoryRec memory{&counter, GuestAlloc, GuestFree, GuestRealloc};
+    auto small = Gzip;
+    auto stream = MemorySource(small.data(), small.size(), &memory);
+    Require(FT_Stream_OpenGzip_nid_postfix(&stream, &stream) == InvalidStreamOperation);
+    LegacyFreeType::GuestStreamRec zeroed{};
+    zeroed.memory = &memory;
+    Require(Same(stream, zeroed) && counter.allocations == 1 && counter.frees == 1);
+
+    auto plain = Plain;
+    stream = MemorySource(plain.data(), plain.size(), &memory);
+    auto expected = stream;
+    expected.pos = 4;
+    Require(FT_Stream_OpenGzip_nid_postfix(&stream, &stream) == InvalidFileFormat);
+    Require(Same(stream, expected) && counter.allocations == 1);
+}
+
+void CheckReopenedStream() {
+    Counter counter;
+    FreeType::GuestMemoryRec memory{&counter, GuestAlloc, GuestFree, GuestRealloc};
+    auto large = LargeGzip;
+    auto source = CallbackSource(large.data(), large.size(), &memory);
+    LegacyFreeType::GuestStreamRec output{};
+    Require(FT_Stream_OpenGzip_nid_postfix(&output, &source) == 0);
+    const auto opened = output;
+    auto plain = Plain;
+    auto other = MemorySource(plain.data(), plain.size(), &memory);
+    Require(FT_Stream_OpenGzip_nid_postfix(&output, &other) == InvalidFileFormat);
+    Require(Same(output, opened));
+    std::array<unsigned char, 16> decoded{};
+    Require(output.read(&output, 0, decoded.data(), decoded.size()) == decoded.size());
+    const int frees = counter.frees;
+    Require(FT_Stream_OpenGzip_nid_postfix(&output, &source) == 0);
+    Require(counter.frees == frees && output.read != nullptr);
+    decoded.fill(0);
+    Require(output.read(&output, 0, decoded.data(), decoded.size()) == decoded.size());
+    Require(std::all_of(decoded.begin(), decoded.end(), [](unsigned char byte) { return byte == 'A'; }));
+    output.close(&output);
+    Require(counter.allocations > counter.frees);
+    ReleaseLeaks(counter);
+}
+
+void CheckFailedAllocation() {
+    Counter counter;
+    counter.limit = 0;
+    FreeType::GuestMemoryRec memory{&counter, GuestAlloc, GuestFree, GuestRealloc};
+    auto small = Gzip;
+    auto source = MemorySource(small.data(), small.size(), &memory);
+    LegacyFreeType::GuestStreamRec output{};
+    Require(FT_Stream_OpenGzip_nid_postfix(&output, &source) == 0);
+    Require(output.read != nullptr && output.close != nullptr && output.base == nullptr && output.descriptor.pointer == nullptr);
+    Require(output.size == TextLength && output.memory == &memory);
+    std::array<unsigned char, 4> decoded{};
+    Require(Throws([&] { output.read(&output, 0, decoded.data(), decoded.size()); }));
+    output.close(&output);
+    auto large = LargeGzip;
+    source = CallbackSource(large.data(), large.size(), &memory);
+    output = {};
+    Require(FT_Stream_OpenGzip_nid_postfix(&output, &source) == OutOfMemory);
+    Require(output.read != nullptr && output.close != nullptr && output.descriptor.pointer == nullptr && output.size == 40960);
+    output.close(&output);
+    Require(counter.allocations == 0 && counter.frees == 0);
+
+    Counter recordOnly;
+    recordOnly.limit = 1;
+    FreeType::GuestMemoryRec failsSecond{&recordOnly, GuestAlloc, GuestFree, GuestRealloc};
+    source = MemorySource(small.data(), small.size(), &failsSecond);
+    output = Filled();
+    Require(FT_Stream_OpenGzip_nid_postfix(&output, &source) == InvalidFileFormat);
+    Require(output.read == nullptr && output.close == nullptr && output.descriptor.pointer == nullptr && output.memory == &failsSecond);
+    Require(recordOnly.allocations == 1 && recordOnly.frees == 1 && recordOnly.live.empty());
+
+    Counter once;
+    once.failures = 1;
+    FreeType::GuestMemoryRec failsOnce{&once, GuestAlloc, GuestFree, GuestRealloc};
+    source = MemorySource(small.data(), small.size(), &failsOnce);
+    output = Filled();
+    const auto untouched = output;
+    Require(Throws([&] { FT_Stream_OpenGzip_nid_postfix(&output, &source); }));
+    Require(Same(output, untouched) && once.allocations == 1 && once.frees == 1 && once.live.empty());
+
+    Counter kept;
+    kept.failures = 1;
+    FreeType::GuestMemoryRec cannotFree{&kept, GuestAlloc, nullptr, GuestRealloc};
+    source = MemorySource(small.data(), small.size(), &cannotFree);
+    output = Filled();
+    Require(Throws([&] { FT_Stream_OpenGzip_nid_postfix(&output, &source); }));
+    Require(Same(output, untouched) && kept.allocations == 1 && kept.frees == 0 && kept.live.size() == 1);
+    ReleaseLeaks(kept);
+}
+
+void CheckSourceReads() {
+    Counter counter;
+    FreeType::GuestMemoryRec memory{&counter, GuestAlloc, GuestFree, GuestRealloc};
+    auto large = LargeGzip;
+    auto source = CallbackSource(large.data(), large.size(), &memory);
+    source.read = RefuseSeeks;
+    auto output = Filled();
+    const auto untouched = output;
+    Require(FT_Stream_OpenGzip_nid_postfix(&output, &source) == InvalidStreamOperation);
+    Require(Same(output, untouched));
+    source.read = ReadTooMuch;
+    Require(Throws([&] { FT_Stream_OpenGzip_nid_postfix(&output, &source); }));
+    Require(Same(output, untouched) && counter.allocations == 0);
+}
+
+void CheckOverlappingRecords() {
+    Counter counter;
+    FreeType::GuestMemoryRec memory{&counter, GuestAlloc, GuestFree, GuestRealloc};
+    std::array<LegacyFreeType::GuestStreamRec, 2> records{};
+    auto* source = records.data();
+    auto* output = reinterpret_cast<LegacyFreeType::GuestStreamRec*>(reinterpret_cast<unsigned char*>(records.data()) + 8);
+    auto plain = Plain;
+    *source = MemorySource(plain.data(), plain.size(), &memory);
+    Require(FT_Stream_OpenGzip_nid_postfix(output, source) == InvalidFileFormat);
+    auto small = Gzip;
+    *source = MemorySource(small.data(), small.size(), &memory);
+    Require(Throws([&] { FT_Stream_OpenGzip_nid_postfix(output, source); }));
+    ReleaseLeaks(counter);
 }
 
 void CheckStreams() {
@@ -126,6 +407,12 @@ int main() {
     CheckDecodes(Gzip);
     CheckDecodes(Zlib);
     CheckStreams();
+    CheckUnusedMemory();
+    CheckAliasedStream();
+    CheckReopenedStream();
+    CheckFailedAllocation();
+    CheckSourceReads();
+    CheckOverlappingRecords();
 
     Counter counter;
     FreeType::GuestMemoryRec memory{&counter, GuestAlloc, GuestFree, GuestRealloc};
@@ -160,5 +447,27 @@ int main() {
     length = output.size();
     Require(Uncompress(initFails, Gzip, output.data(), length) == InvalidArgument);
     Require(length == output.size());
+
+    auto* badMemory = reinterpret_cast<FreeType::GuestMemoryRec*>(std::uintptr_t{0x10});
+    auto* badLength = reinterpret_cast<std::uint64_t*>(std::uintptr_t{0x10});
+    auto* badBuffer = reinterpret_cast<std::uint8_t*>(std::uintptr_t{0x10});
+    length = output.size();
+    Require(Rejects([&] { FT_Gzip_Uncompress_nid_postfix(badMemory, output.data(), &length, Gzip.data(), Gzip.size()); }));
+    Require(length == output.size());
+    Require(Rejects([&] { FT_Gzip_Uncompress_nid_postfix(&memory, output.data(), badLength, Gzip.data(), Gzip.size()); }));
+    Require(Rejects([&] { FT_Gzip_Uncompress_nid_postfix(&memory, output.data(), &length, badBuffer, Gzip.size()); }));
+    Require(length == output.size() && counter.allocations == counter.frees);
+    Require(Rejects([&] { FT_Gzip_Uncompress_nid_postfix(&memory, badBuffer, &length, Gzip.data(), Gzip.size()); }));
+    Require(length == output.size() && counter.allocations == counter.frees);
+
+    const ReadOnlyPage readOnlyOutput(output.size());
+    std::array<std::uint8_t, 64> untouched{};
+    untouched.fill(0x5a);
+    output = untouched;
+    Require(Rejects([&] { FT_Gzip_Uncompress_nid_postfix(&memory, output.data(), readOnlyOutput.As<std::uint64_t>(), Gzip.data(), Gzip.size()); }));
+    Require(output == untouched && counter.allocations == counter.frees);
+    length = output.size();
+    Require(Rejects([&] { FT_Gzip_Uncompress_nid_postfix(&memory, readOnlyOutput.As<std::uint8_t>(), &length, Gzip.data(), Gzip.size()); }));
+    Require(length == output.size() && counter.allocations == counter.frees);
     return 0;
 }
