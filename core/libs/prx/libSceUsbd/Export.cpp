@@ -9,6 +9,7 @@
 #include <libusb.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <climits>
@@ -279,9 +280,13 @@ bool RequestStringDescriptor(libusb_device_handle* handle, std::uint8_t descript
 
 bool GuestTransferDataUsable(std::uint8_t endpoint, std::uint8_t* data, std::int32_t length) {
     if (length <= 0) return true;
-    std::vector<std::uint8_t> copy(static_cast<std::size_t>(length));
-    if (!GuestCopyIn_nid_no_patch(copy.data(), data, copy.size())) return false;
-    return (endpoint & LIBUSB_ENDPOINT_IN) == 0 || GuestCopyOut_nid_no_patch(data, copy.data(), copy.size());
+    const auto bytes = static_cast<std::size_t>(length);
+    if ((endpoint & LIBUSB_ENDPOINT_IN) != 0) return GuestWritable_nid_no_patch(data, bytes);
+    std::array<std::uint8_t, 4096> chunk{};
+    for (std::size_t offset = 0; offset < bytes; offset += chunk.size()) {
+        if (!GuestCopyIn_nid_no_patch(chunk.data(), data + offset, std::min(chunk.size(), bytes - offset))) return false;
+    }
+    return true;
 }
 
 }
