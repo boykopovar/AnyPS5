@@ -99,7 +99,7 @@ std::int64_t APS5_VABI utext_nativeLength_nid_postfix(Icu::Text* text) {
 
 std::int64_t APS5_VABI utext_getNativeIndex_nid_postfix(const Icu::Text* text) {
     const auto& value = Checked(text);
-    return value.chunkOffset < value.nativeIndexingLimit ? Add(value.chunkNativeStart, value.chunkOffset) :
+    return value.chunkOffset <= value.nativeIndexingLimit ? Add(value.chunkNativeStart, value.chunkOffset) :
         Callback(value, &Icu::TextFunctions::mapOffsetToNative)(text);
 }
 

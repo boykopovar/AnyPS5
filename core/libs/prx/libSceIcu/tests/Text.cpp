@@ -211,7 +211,7 @@ void Iteration() {
     text.chunkNativeLimit = 8;
     text.chunkLength = 2;
     text.chunkOffset = 2;
-    text.nativeIndexingLimit = 2;
+    text.nativeIndexingLimit = 0;
     Require(utext_getNativeIndex_nid_postfix(&text) == 8);
     Require(provider.mappedOffsets == std::vector<std::int32_t>{2});
 }
