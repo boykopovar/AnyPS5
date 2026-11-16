@@ -220,5 +220,14 @@ class QuietTests(unittest.TestCase):
         self.assertEqual(guest_pointer_audit.quiet("GuestCopyIn_nid_no_patch(a, b)", safe=False), "GuestCopyIn_nid_no_patch(a, b)")
 
 
+class CheckedDereferenceTests(unittest.TestCase):
+    def test_checked_argument_dereferences_reports_a_dereference_in_a_safe_copy(self):
+        found = guest_pointer_audit.checked_argument_dereferences("GuestCopyIn_nid_no_patch(*p, q, 1)", "p")
+        self.assertEqual([kind for _, kind in found], ["dereference"])
+
+    def test_checked_argument_dereferences_ignores_a_plain_pointer_argument(self):
+        self.assertEqual(guest_pointer_audit.checked_argument_dereferences("GuestCopyIn_nid_no_patch(p, q, 1)", "p"), [])
+
+
 if __name__ == "__main__":
     unittest.main()
