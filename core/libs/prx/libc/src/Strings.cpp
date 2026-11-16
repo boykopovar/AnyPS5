@@ -480,6 +480,12 @@ auto ParseAsciiPrefix(const char16_t* text, char16_t** end, TParse parse) {
     return value;
 }
 
+bool FlushToZeroEnabled() {
+    std::uint32_t mxcsr = 0;
+    asm volatile("stmxcsr %0" : "=m"(mxcsr));
+    return (mxcsr & 0x8000) != 0;
+}
+
 template<typename TFloat>
 TFloat ParseFloat(const char* text, char** end, TFloat (*parse)(const char*, char**)) {
     if (const NanSubject subject = FindNanSubject(text); subject.tail != nullptr) {
@@ -512,7 +518,16 @@ TFloat ParseFloat(const char* text, char** end, TFloat (*parse)(const char*, cha
         }
         return value;
     }
-    if (!hexadecimal) return value;
+    if (!hexadecimal) {
+        if constexpr (std::is_same_v<TFloat, double>) {
+            const std::uint64_t bits = std::bit_cast<std::uint64_t>(value);
+            if (FlushToZeroEnabled() && bits != 0 && (bits & 0x7ff0000000000000ull) == 0) {
+                errno = ERANGE;
+                return std::signbit(value) ? -TFloat{0} : TFloat{0};
+            }
+        }
+        return value;
+    }
     if constexpr (std::is_same_v<TFloat, double>) {
         const HexadecimalSubject exact = ReadHexadecimalSubject(subject + 2, parsedEnd);
         const long long leadingExponent = exact.exponent + 63;
