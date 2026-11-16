@@ -138,12 +138,32 @@ static void CheckMessagesVtableObject() {
 
 static void CheckCodecvtVtableObject() {
     Require(sizeof(_ZTVSt7codecvtIcc9_MbstatetE_nid_postfix) == kCodecvtCharVtableSlots * sizeof(std::uintptr_t));
-    for (std::uintptr_t& slot : _ZTVSt7codecvtIcc9_MbstatetE_nid_postfix) {
-        Require(slot == 0);
-        slot = 0x1111;
-        Require(slot == 0x1111);
-        slot = 0;
-    }
+    Require(_ZTVSt7codecvtIcc9_MbstatetE_nid_postfix[0] == 0 && _ZTVSt7codecvtIcc9_MbstatetE_nid_postfix[1] == 0);
+    const GuestLocale::Implementation* locale = _ZSt21_sceLibcClassicLocale_nid_postfix;
+    GuestLocale::Facet* built = nullptr;
+    Require(_ZNSt7codecvtIcc9_MbstatetE7_GetcatEPPKNSt6locale5facetEPKS2__nid_postfix(&built, &locale) == 2 && built != nullptr);
+    Require(std::memcmp(&_ZTVSt7codecvtIcc9_MbstatetE_nid_postfix[2], built->vtable, sizeof(GuestLocale::CodecvtVtable)) == 0);
+    built->vtable->deleteObject(built);
+    const auto* vtable = reinterpret_cast<const GuestLocale::CodecvtVtable*>(&_ZTVSt7codecvtIcc9_MbstatetE_nid_postfix[2]);
+    auto* facet = static_cast<GuestLocale::Facet*>(_Znwm_nid_postfix(sizeof(GuestLocale::Facet)));
+    *facet = {&vtable->facet, 0, 0};
+    vtable->facet.destroy(facet);
+    vtable->facet.retain(facet);
+    Require(facet->references == 1);
+    Require(vtable->facet.release(facet) == facet && facet->references == 0);
+    Require(vtable->alwaysNoconv(facet) && vtable->maxLength(facet) == 1 && vtable->encoding(facet) == 1);
+    const char source[] = "abc";
+    const char* nextFrom = nullptr;
+    char target[4]{};
+    char* nextTo = nullptr;
+    Require(vtable->in(facet, nullptr, source, source + 3, &nextFrom, target, target + 4, &nextTo) == 3 && nextFrom == source && nextTo == target);
+    nextFrom = nullptr;
+    nextTo = nullptr;
+    Require(vtable->out(facet, nullptr, source, source + 3, &nextFrom, target, target + 4, &nextTo) == 3 && nextFrom == source && nextTo == target);
+    nextTo = nullptr;
+    Require(vtable->unshift(facet, nullptr, target, target + 4, &nextTo) == 0 && nextTo == target);
+    Require(vtable->length(facet, nullptr, source, source + 3, 2) == 2 && vtable->length(facet, nullptr, source, source + 3, 5) == 3);
+    vtable->facet.deleteObject(facet);
 }
 
 static void CheckGuestCalls() {
@@ -650,13 +670,31 @@ static void CheckTimePutWideVtableObject() {
 }
 
 static void CheckNumPutVtableObject() {
-    Require(sizeof(_ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix) == kNumPutCharVtableSlots * sizeof(std::uintptr_t));
-    for (std::uintptr_t& slot : _ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix) {
-        Require(slot == 0);
-        slot = 0x1111;
-        Require(slot == 0x1111);
-        slot = 0;
-    }
+    auto& slots = _ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix;
+    Require(sizeof(slots) == kNumPutCharVtableSlots * sizeof(std::uintptr_t));
+    Require(slots[0] == 0 && slots[1] == 0);
+    const GuestLocale::Implementation* locale = _ZSt21_sceLibcClassicLocale_nid_postfix;
+    GuestLocale::Facet* built = nullptr;
+    Require(_ZNSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(&built, &locale) == 4 && built != nullptr);
+    Require(std::memcmp(&slots[2], built->vtable, sizeof(GuestLocale::NumPutVtable)) == 0);
+    built->vtable->deleteObject(built);
+    const auto* put = reinterpret_cast<const GuestLocale::NumPutVtable*>(&slots[2]);
+    auto* facet = static_cast<GuestLocale::Facet*>(_Znwm_nid_postfix(sizeof(GuestLocale::Facet)));
+    *facet = {&put->facet, 0, 0};
+    put->facet.destroy(facet);
+    put->facet.retain(facet);
+    Require(facet->references == 1);
+    Require(put->facet.release(facet) == facet && facet->references == 0);
+    GuestLocale::Implementation** classic = &_ZSt21_sceLibcClassicLocale_nid_postfix;
+    Require(NumPut([&](auto out, auto* ios) { return put->putBool(facet, out, ios, '*', true); }, classic, 0, 6, 0) == "1");
+    Require(NumPut([&](auto out, auto* ios) { return put->putLong(facet, out, ios, '*', -42); }, classic, 0x408, 6, 8) == "-*****42");
+    Require(NumPut([&](auto out, auto* ios) { return put->putUnsignedLong(facet, out, ios, '*', 255); }, classic, 0x2c8, 6, 10) == "0X******FF");
+    Require(NumPut([&](auto out, auto* ios) { return put->putLongLong(facet, out, ios, '*', std::numeric_limits<std::int64_t>::min()); }, classic, 0x2, 6, 25) == "-9223372036854775808*****");
+    Require(NumPut([&](auto out, auto* ios) { return put->putUnsignedLongLong(facet, out, ios, '*', std::numeric_limits<std::uint64_t>::max()); }, classic, 0x20, 6, 0) == "1777777777777777777777");
+    Require(NumPut([&](auto out, auto* ios) { return put->putDouble(facet, out, ios, '*', -0.000123); }, classic, 0xa00, 3, 12) == "**-1.230E-04");
+    Require(NumPut([&](auto out, auto* ios) { return put->putLongDouble(facet, out, ios, '*', -2.25L); }, classic, 0, 3, 0) == "-2.25");
+    Require(NumPut([&](auto out, auto* ios) { return put->putPointer(facet, out, ios, '*', reinterpret_cast<const void*>(0x1234)); }, classic, 0, 6, 6) == "**1234");
+    put->facet.deleteObject(facet);
 }
 
 static void CheckNumGetWideVtableObject() {

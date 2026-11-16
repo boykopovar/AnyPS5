@@ -756,9 +756,38 @@ std::uintptr_t _ZTVSt8numpunctIcE_nid_postfix[11] {};
 std::uintptr_t _ZTVSt8messagesIcE_nid_postfix[9] {};
 std::uint64_t _ZNSt7codecvtIcc9_MbstatetE2idE_nid_postfix = 0;
 std::uintptr_t _ZTVSt7codecvtIwc9_MbstatetE_nid_postfix[13] {};
-std::uintptr_t _ZTVSt7codecvtIcc9_MbstatetE_nid_postfix[kCodecvtCharVtableSlots] {};
+std::uintptr_t _ZTVSt7codecvtIcc9_MbstatetE_nid_postfix[kCodecvtCharVtableSlots] {
+    0,
+    0,
+    reinterpret_cast<std::uintptr_t>(&DestroyCollate),
+    reinterpret_cast<std::uintptr_t>(&DeleteCollate),
+    reinterpret_cast<std::uintptr_t>(&RetainFacet),
+    reinterpret_cast<std::uintptr_t>(&ReleaseFacet),
+    reinterpret_cast<std::uintptr_t>(&CodecvtAlwaysNoconv),
+    reinterpret_cast<std::uintptr_t>(&CodecvtConstantOne),
+    reinterpret_cast<std::uintptr_t>(&CodecvtConstantOne),
+    reinterpret_cast<std::uintptr_t>(&CodecvtNoConversion),
+    reinterpret_cast<std::uintptr_t>(&CodecvtNoConversion),
+    reinterpret_cast<std::uintptr_t>(&CodecvtUnshift),
+    reinterpret_cast<std::uintptr_t>(&CodecvtLength),
+};
 std::uint64_t _ZNSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 0;
-std::uintptr_t _ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kNumPutCharVtableSlots] {};
+std::uintptr_t _ZTVSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[kNumPutCharVtableSlots] {
+    0,
+    0,
+    reinterpret_cast<std::uintptr_t>(&DestroyCollate),
+    reinterpret_cast<std::uintptr_t>(&DeleteCollate),
+    reinterpret_cast<std::uintptr_t>(&RetainFacet),
+    reinterpret_cast<std::uintptr_t>(&ReleaseFacet),
+    reinterpret_cast<std::uintptr_t>(&NumPutBool),
+    reinterpret_cast<std::uintptr_t>(&NumPutLong),
+    reinterpret_cast<std::uintptr_t>(&NumPutUnsignedLong),
+    reinterpret_cast<std::uintptr_t>(&NumPutLongLong),
+    reinterpret_cast<std::uintptr_t>(&NumPutUnsignedLongLong),
+    reinterpret_cast<std::uintptr_t>(&NumPutDouble),
+    reinterpret_cast<std::uintptr_t>(&NumPutLongDouble),
+    reinterpret_cast<std::uintptr_t>(&NumPutPointer),
+};
 std::uint64_t _ZNSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 0;
 std::uintptr_t _ZTVSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE_nid_postfix[17] {};
 std::uint64_t _ZNSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE2idE_nid_postfix = 0;
