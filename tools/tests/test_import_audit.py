@@ -3811,6 +3811,10 @@ class VariantCallTests(unittest.TestCase):
     def test_variant_calls_give_one_call_list_per_arm(self):
         body = '{\n#if X\n b();\n#else\n c();\n#endif\n}'
         self.assertEqual([sorted(calls) for calls in import_audit.variant_calls(body)], [['b'], ['c']])
+class FunctionExitTests(unittest.TestCase):
+    def test_function_exit_detects_an_explicit_return(self):
+        self.assertTrue(import_audit.function_exit('{ foo(); return 1; }'))
+        self.assertFalse(import_audit.function_exit('{ foo(); }'))
 
 
 if __name__ == "__main__":
