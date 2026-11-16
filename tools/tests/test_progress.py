@@ -1063,5 +1063,12 @@ class ProgressConstantReturnTests(unittest.TestCase):
         self.assertEqual(group["inert_names"], ["Discarded"])
 
 
+class LibraryProgressTests(unittest.TestCase):
+    def test_library_progress_names_absent_shared_and_uncounted_libraries(self):
+        self.assertEqual(progress.library_progress(None), ('Not present', None))
+        self.assertEqual(progress.library_progress({'shared_sources': 'libY'}), ('Shared sources: `libY`', None))
+        self.assertEqual(progress.library_progress({'done': 1}), ('Counts unavailable', None))
+
+
 if __name__ == "__main__":
     unittest.main()
