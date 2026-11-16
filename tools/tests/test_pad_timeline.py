@@ -380,6 +380,13 @@ class TimelineLoadTests(unittest.TestCase):
             path.write_text('{"version": 1, "events": []}', encoding='utf-8')
             self.assertEqual(pad_timeline.load_timeline(path), {'version': 1, 'events': []})
 
+    def test_load_timeline_refuses_a_duplicate_field(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'timeline.json'
+            path.write_text('{"version": 1, "version": 2}', encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, 'duplicate timeline field'):
+                pad_timeline.load_timeline(path)
+
 
 if __name__ == "__main__":
     unittest.main()
