@@ -366,5 +366,22 @@ class UnitsTests(unittest.TestCase):
         self.assertTrue(found[5].startswith(f"- [sceExampleA]({LINK})"))
 
 
+
+class FindTests(unittest.TestCase):
+    def operation(self, target):
+        return debt_fold.Operation("fragment.md", 9, "libSceExample", "change", target, "")
+
+    def test_find_returns_the_span_of_the_one_matching_entry(self):
+        self.assertEqual(debt_fold.find(BASE_TEXT, self.operation("sceExampleA")), (4, 5))
+
+    def test_find_refuses_a_target_matching_several_entries(self):
+        with self.assertRaisesRegex(debt_fold.FoldError, "matches 2 entries"):
+            debt_fold.find(BASE_TEXT, self.operation("sceExample"))
+
+    def test_find_refuses_a_target_matching_no_entry(self):
+        with self.assertRaisesRegex(debt_fold.FoldError, "matches 0 entries"):
+            debt_fold.find(BASE_TEXT, self.operation("sceMissing"))
+
+
 if __name__ == "__main__":
     unittest.main()
