@@ -929,6 +929,7 @@ void testGpuStoreBehindRewind(const std::filesystem::path& tool) {
     flip();
     auto* const released = layout.label + 1;
     auto* const title = layout.label + 2;
+    auto* const copied = layout.label + 3;
     auto* const filled = reinterpret_cast<const std::uint32_t*>(bulk.base + Fills * FillBytes) - 1;
     auto graphics = commands(layout.firstCommands);
     auto* const first = sceAgcDcbRewind(&graphics, 0) + 1;
@@ -943,11 +944,13 @@ void testGpuStoreBehindRewind(const std::filesystem::path& tool) {
     auto compute = commands(layout.secondCommands);
     sceAgcAcbWaitRegMem(&compute, 0, 3, 0, released, Done, 0xffffffffu, 0);
     sceAgcAcbDmaData(&compute, DmaMemory, 0, at(layout.secondTarget), DmaMemory, 0, at(layout.firstTarget), DataBytes, 0, 1);
+    sceAgcAcbWriteData(&compute, ComputeMemory, 0, at(copied), &Done, 1, 0, 1);
     Packet consumer{layout.secondCommands, static_cast<std::uint32_t>(compute.cursor_up - layout.secondCommands), 0, {}};
     check(sceAgcDriverSubmitAcb(ComputeQueue, &consumer) == 0, "compute submission failed");
     std::atomic_ref<std::uint32_t>(*title).store(Done, std::memory_order_release);
     release(first);
-    waitUntil([&] { return equal(layout.secondTarget, read); }, "the compute queue did not copy after the label the graphics queue released");
+    waitUntil([&] { return std::atomic_ref<std::uint32_t>(*copied).load(std::memory_order_acquire) == Done; }, "the compute queue did not copy after the label the graphics queue released");
+    check(equal(layout.secondTarget, read), "the compute queue's copy after the label the graphics queue released did not land");
     flip();
     release(second);
     flip();
