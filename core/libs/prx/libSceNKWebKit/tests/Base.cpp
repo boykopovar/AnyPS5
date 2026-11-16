@@ -1761,10 +1761,17 @@ static void TestOpenPanelParameters() {
         true, true,
         Strings{NKWebKit::String::FromUtf8("Image/PNG"), NKWebKit::String::FromUtf8("image/png"), NKWebKit::String::FromUtf8("TEXT/*")},
         Strings{NKWebKit::String::FromUtf8(".txt"), NKWebKit::String::FromUtf8("PNG"), NKWebKit::String::FromUtf8(".unknown")},
-        Strings{NKWebKit::String::FromUtf8("/tmp/a.txt"), NKWebKit::String::FromUtf8("/tmp/b.txt"), NKWebKit::String::FromUtf8("/tmp/c.txt")}));
+        Strings{NKWebKit::String::FromUtf8("/tmp/a.txt"), NKWebKit::String::FromUtf8("/tmp/b.txt"), NKWebKit::String::FromUtf8("/tmp/c.txt")},
+        NKWebKit::String::FromUtf8("user"), NKWebKit::MediaCaptureType::User));
     Require(WKGetTypeID(parameters) == WKOpenPanelParametersGetTypeID());
     Require(WKOpenPanelParametersGetAllowsDirectories(parameters));
     Require(WKOpenPanelParametersGetAllowsMultipleFiles(parameters));
+    Require(WKOpenPanelParametersGetMediaCaptureType(parameters) == 1);
+    auto* capture = WKOpenPanelParametersCopyCapture(parameters);
+    Require(capture != nullptr);
+    Require(WKGetTypeID(capture) == WKStringGetTypeID());
+    Require(WKStringIsEqualToUTF8CString(capture, "user"));
+    WKRelease(capture);
 
     auto* mimeTypes = WKOpenPanelParametersCopyAcceptedMIMETypes(parameters);
     Require(WKGetTypeID(mimeTypes) == WKArrayGetTypeID());
@@ -1798,6 +1805,8 @@ static void TestOpenPanelParameters() {
     auto* empty = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::OpenPanelParameters>());
     Require(!WKOpenPanelParametersGetAllowsDirectories(empty));
     Require(!WKOpenPanelParametersGetAllowsMultipleFiles(empty));
+    Require(WKOpenPanelParametersGetMediaCaptureType(empty) == 0);
+    Require(WKOpenPanelParametersCopyCapture(empty) == nullptr);
     auto* none = WKOpenPanelParametersCopyAcceptedMIMETypes(empty);
     Require(WKArrayGetSize(none) == 0);
     WKRelease(none);
@@ -1819,9 +1828,17 @@ static void TestOpenPanelParameters() {
     WKRelease(nullTypes);
     WKRelease(withNull);
 
+    auto* withNullCapture = NKWebKit::ToRef(NKWebKit::Make<NKWebKit::OpenPanelParameters>(false, false, Strings{}, Strings{}, Strings{}, NKWebKit::Make<NKWebKit::String>()));
+    Require(WKOpenPanelParametersCopyCapture(withNullCapture) == nullptr);
+    WKRelease(withNullCapture);
+
     auto* notParameters = NKWebKit::ToRef(NKWebKit::String::FromUtf8("not parameters"));
     Require(ThrowsOpenPanel(WKOpenPanelParametersGetAllowsDirectories, notParameters));
     Require(ThrowsOpenPanel(WKOpenPanelParametersGetAllowsMultipleFiles, nullptr));
+    Require(ThrowsOpenPanel(WKOpenPanelParametersGetMediaCaptureType, notParameters));
+    Require(ThrowsOpenPanel(WKOpenPanelParametersGetMediaCaptureType, nullptr));
+    Require(ThrowsOpenPanelCopy(WKOpenPanelParametersCopyCapture, notParameters));
+    Require(ThrowsOpenPanelCopy(WKOpenPanelParametersCopyCapture, nullptr));
     Require(ThrowsOpenPanelCopy(WKOpenPanelParametersCopyAcceptedMIMETypes, notParameters));
     Require(ThrowsOpenPanelCopy(WKOpenPanelParametersCopyAllowedMIMETypes, notParameters));
     Require(ThrowsOpenPanelCopy(WKOpenPanelParametersCopyAllowedMIMETypes, nullptr));
