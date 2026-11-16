@@ -472,9 +472,13 @@ PacketTag CurrentPacket() {
 }
 
 const char* ReadSiteName(ReadSite site) {
-    static const char* const names[static_cast<std::size_t>(ReadSite::Count)] = {"unknown", "capture", "dispatch-cache", "texture-compare", "texture-read", "buffer-upload", "index-buffer", "vertex-buffer", "registers", "indirect-args", "wait", "label", "scanout", "store", "mirror-refresh", "draw-cache"};
+    static const char* const names[static_cast<std::size_t>(ReadSite::Count)] = {"unknown", "capture", "dispatch-cache", "texture-compare", "texture-read", "buffer-upload", "index-buffer", "vertex-buffer", "registers", "indirect-args", "wait", "label", "scanout", "store", "mirror-refresh", "draw-cache", "host-write"};
     const auto index = static_cast<std::size_t>(site);
     return index < static_cast<std::size_t>(ReadSite::Count) ? names[index] : "?";
+}
+
+bool WritesGuestMemory(ReadSite site) {
+    return site == ReadSite::Store || site == ReadSite::HostWrite;
 }
 
 ReadSite SetReadSite(ReadSite site) {
@@ -1562,6 +1566,8 @@ struct WriteTracker {
         }
     };
     std::unordered_map<std::uint64_t, DriverPieces> driverPieces;
+    std::unordered_map<std::uint64_t, std::uint64_t> rewatchStamps;
+    std::atomic<bool> anyRewatchStamp{false};
 
     struct CpuPages {
         std::array<std::uint64_t, WritePagesPerBlock> pages{};
@@ -2327,6 +2333,9 @@ void unwatchLocked(WriteTracker& tracker, std::uint64_t address, std::size_t byt
         unwatchSerial.fetch_add(1, std::memory_order_release);
         bumpSubscriptions(address, bytes, WriteBumpSource::Unwatch);
     }
+    if (bytes != 0 && !tracker.rewatchStamps.empty()) {
+        for (auto block = tracker.blockOf(address); block <= tracker.blockOf(address + bytes - 1); ++block) tracker.rewatchStamps.erase(block);
+    }
 #else
     if (GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(reinterpret_cast<const void*>(address), bytes)) {
         unwatchSerial.fetch_add(1, std::memory_order_release);
@@ -2406,6 +2415,8 @@ void Rewatch(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
         for (auto block = tracker.blockOf(begin); block <= tracker.blockOf(end - 1); ++block) {
             tracker.driverPieces.erase(block);
             tracker.stamp(block, tracker.generation, StampKind::Cpu);
+            tracker.rewatchStamps[block] = tracker.stampOf(block);
+            tracker.anyRewatchStamp.store(true, std::memory_order_release);
         }
         restored = true;
     }
@@ -2514,6 +2525,60 @@ bool WriteWatched() {
     const auto lock = lockTracker(tracker);
     tracker.initialize();
     return tracker.watched;
+}
+
+bool OnlyRewatchedSince(std::uint64_t address, std::size_t bytes, std::uint64_t generation) {
+    if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address || generation == 0) return false;
+    auto& tracker = Tracker();
+    if (!tracker.anyRewatchStamp.load(std::memory_order_acquire)) return false;
+    const auto lock = lockTracker(tracker);
+    tracker.initialize();
+    if (!tracker.watched || !tracker.covers(address, bytes)) return false;
+    bool rewatched = false;
+    for (auto block = tracker.blockOf(address); block <= tracker.blockOf(address + bytes - 1); ++block) {
+        const auto stamp = tracker.stampOf(block);
+        if (stamp <= generation) continue;
+        const auto found = tracker.rewatchStamps.find(block);
+        if (found == tracker.rewatchStamps.end() || found->second != stamp) return false;
+        rewatched = true;
+    }
+    return rewatched;
+}
+
+bool Rewatched(std::uint64_t address, std::size_t bytes) {
+    if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return false;
+    auto& tracker = Tracker();
+    if (!tracker.anyRewatchStamp.load(std::memory_order_acquire)) return false;
+    const auto lock = lockTracker(tracker);
+    tracker.initialize();
+    if (!tracker.watched || !tracker.covers(address, bytes)) return false;
+    for (auto block = tracker.blockOf(address); block <= tracker.blockOf(address + bytes - 1); ++block) {
+        if (tracker.rewatchStamps.contains(block)) return true;
+    }
+    return false;
+}
+
+void RewatchedBlocks(std::uint64_t address, std::size_t bytes, std::span<const std::uint64_t> since, std::span<std::uint8_t> rewatched) {
+    std::fill(rewatched.begin(), rewatched.end(), std::uint8_t{0});
+    if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return;
+    auto& tracker = Tracker();
+    if (!tracker.anyRewatchStamp.load(std::memory_order_acquire)) return;
+    const auto lock = lockTracker(tracker);
+    tracker.initialize();
+    if (!tracker.watched) return;
+    const auto end = address + bytes;
+    const auto first = tracker.blockOf(address);
+    for (auto block = first; block <= tracker.blockOf(end - 1); ++block) {
+        const auto k = static_cast<std::size_t>(block - first);
+        if (k >= since.size() || k >= rewatched.size()) break;
+        const auto found = tracker.rewatchStamps.find(block);
+        if (found == tracker.rewatchStamps.end()) continue;
+        const auto begin = std::max(address, tracker.blockBegin(block));
+        const auto stop = std::min<std::uint64_t>(end, tracker.blockBegin(block) + WriteBlockBytes);
+        if (!tracker.covers(begin, static_cast<std::size_t>(stop - begin))) continue;
+        const auto stamp = tracker.stampOf(block);
+        if (since[k] == 0 || (stamp > since[k] && stamp == found->second)) rewatched[k] = 1;
+    }
 }
 
 bool Watched(std::uint64_t address, std::size_t bytes) {
@@ -3090,7 +3155,14 @@ std::atomic<std::uint64_t> gpuHoldSerial{0};
 }
 
 void GpuMutexType::enter() {
-    if (!HeldByThisThread()) LockSpinning(mutex, HandoffSpinWindow());
+    if (HeldByThisThread() || mutex.try_lock()) return;
+    block();
+}
+
+void GpuMutexType::block() {
+    waiters.fetch_add(1, std::memory_order_relaxed);
+    LockSpinning(mutex, HandoffSpinWindow());
+    waiters.fetch_sub(1, std::memory_order_relaxed);
 }
 
 bool GpuMutexType::tryEnter() {
@@ -3177,7 +3249,7 @@ void GpuMutexType::lock() {
             const auto site = static_cast<std::size_t>(std::exchange(LockStats().nextSite, GpuLockSite::Other));
             if (!tryEnter()) {
                 const auto start = std::chrono::steady_clock::now();
-                LockSpinning(mutex, HandoffSpinWindow());
+                block();
                 trace->Add("GpuMutex.wait", GpuLockSiteNames[site], start, std::chrono::steady_clock::now());
             }
         }
@@ -3195,7 +3267,7 @@ void GpuMutexType::lock() {
         HolderMatrixValues before{};
         if (holders) Holders().Snapshot(before);
         const auto start = std::chrono::steady_clock::now();
-        LockSpinning(mutex, HandoffSpinWindow());
+        block();
         acquired();
         const auto now = std::chrono::steady_clock::now();
         if (auto* trace = PerformanceTrace::Recording() ? PerformanceTrace::Thread() : nullptr) trace->Add("GpuMutex.wait", GpuLockSiteNames[site], start, now);
@@ -3304,6 +3376,17 @@ GpuMutexType& GpuMutex() {
     static GpuMutexType mutex;
     return mutex;
 #endif
+}
+
+std::function<bool()> YieldToGpuMutexWaiters(std::function<bool()> stop) {
+    return [stop = std::move(stop), first = true]() mutable {
+        if (stop()) return true;
+        if (first) {
+            first = false;
+            return false;
+        }
+        return GpuMutex().Waiters() != 0;
+    };
 }
 
 void TagGpuLockThread(std::uint32_t queue) {
@@ -3445,7 +3528,7 @@ void PrepareHostWrite(std::uintptr_t address, std::size_t bytes) {
     if (GpuMutex().HeldByThisThread()) noteLockedHostWrite(address, bytes);
     const HostWriteInFlight inFlight;
     if (hostWritesStopped.load(std::memory_order_seq_cst)) return;
-    const ReadSiteScope site(ReadSite::Store);
+    const ReadSiteScope site(ReadSite::HostWrite);
     if (!MemoryProfiled()) {
         FlushGpuWrites(address, bytes);
         return;
@@ -3610,6 +3693,16 @@ bool EqualsCommittedUnsynced(std::uint64_t address, std::span<const std::byte> b
     return true;
 }
 
+namespace {
+
+thread_local void (*compareMappedHook)(std::uint64_t, std::size_t) = nullptr;
+
+}
+
+void SetCompareMappedHook(void (*hook)(std::uint64_t address, std::size_t bytes)) {
+    compareMappedHook = hook;
+}
+
 Compare CompareMapped(std::uint64_t address, std::span<const std::byte> bytes) {
     if (bytes.empty()) return Compare::Equal;
     if (address == 0 || bytes.size() > std::numeric_limits<std::uintptr_t>::max() - address) return Compare::Unmapped;
@@ -3617,7 +3710,10 @@ Compare CompareMapped(std::uint64_t address, std::span<const std::byte> bytes) {
     // Each run's page state is consulted right before its bytes are compared.
     const bool queried = describePages(static_cast<std::uintptr_t>(address), bytes.size(), [&](const PageRun& run) {
         if (!run.readable) outcome = Compare::Unmapped;
-        else if (std::memcmp(reinterpret_cast<const void*>(run.begin), bytes.data() + (run.begin - address), static_cast<std::size_t>(run.end - run.begin)) != 0) outcome = Compare::Differs;
+        else {
+            if (compareMappedHook != nullptr) compareMappedHook(run.begin, static_cast<std::size_t>(run.end - run.begin));
+            if (std::memcmp(reinterpret_cast<const void*>(run.begin), bytes.data() + (run.begin - address), static_cast<std::size_t>(run.end - run.begin)) != 0) outcome = Compare::Differs;
+        }
         return outcome == Compare::Equal;
     });
     return queried ? outcome : Compare::Unmapped;

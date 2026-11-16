@@ -358,10 +358,6 @@ int APS5_VABI WKProtectionSpaceCopyCertificateInfo() {
     return 0;
 }
 
-int APS5_VABI WKUserContentExtensionStoreCreate() {
-    return 0;
-}
-
 int APS5_VABI _ZN3JSC12isFromJSCodeEPv() {
     return 0;
 }

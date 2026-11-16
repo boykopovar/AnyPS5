@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include <array>
+#include <cerrno>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -409,6 +410,9 @@ void TestSystemState() {
     AudioOutSystemState sysState{};
     Require(sceAudioOutGetSystemState(&sysState) == 0);
     Require(sceAudioOutGetSystemState(nullptr) == invalidPointer);
+    errno = 71;
+    Require(sceAudioOutGetSystemState(reinterpret_cast<AudioOutSystemState*>(0x10)) == invalidPointer);
+    Require(errno == 71);
 }
 
 void TestPortStateAudit() {
