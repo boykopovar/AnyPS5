@@ -550,13 +550,13 @@ void CheckCharFloats() {
         long double ldval = 0.0L;
         RunCharGet(_ZNKSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE6do_getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateERe_nid_postfix,
             "1.234567890123456789L", 0, classic, state, ldval);
-        Require(std::fabsl(ldval - 1.234567890123456789L) <= 1e-18L && state == 0, "long double 80-bit precision");
+        Require(std::fabs(ldval - 1.234567890123456789L) <= 1e-18L && state == 0, "long double 80-bit precision");
 
         state = 0;
         ldval = 0.0L;
         RunCharGet(_ZNKSt7num_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE6do_getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateERe_nid_postfix,
             "1e2000", 0, classic, state, ldval);
-        Require(std::isfinite(ldval) && std::fabsl(ldval - 1e2000L) / 1e2000L < 1e-17L && state == EofBit, "long double 1e2000 exceeds double range without overflow");
+        Require(std::isfinite(ldval) && std::fabs(ldval - 1e2000L) / 1e2000L < 1e-17L && state == EofBit, "long double 1e2000 exceeds double range without overflow");
 
         state = 0;
         ldval = 0.0L;
@@ -727,7 +727,7 @@ void CheckWideNumbers() {
         long double ldval = 0.0L;
         RunWideGet(_ZNKSt7num_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE6do_getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateERe_nid_postfix,
             u"1e2000", 0, classic, state, ldval);
-        Require(std::isfinite(ldval) && std::fabsl(ldval - 1e2000L) / 1e2000L < 1e-17L && state == EofBit, "wide long double 1e2000");
+        Require(std::isfinite(ldval) && std::fabs(ldval - 1e2000L) / 1e2000L < 1e-17L && state == EofBit, "wide long double 1e2000");
 
         state = 0;
         ldval = 0.0L;
@@ -892,7 +892,7 @@ void CheckGetcat() {
         std::int32_t state = 0;
         long double ldval = 0.0L;
         Export<NumGetExport<long double>>("wUCRGap1j0U")(facet, BeginIterator(&sb.base), EndIterator(), &ios, &state, &ldval);
-        Require(std::isfinite(ldval) && std::fabsl(ldval - 1e2000L) / 1e2000L < 1e-17L && state == EofBit, "num_get::get(long double) dispatches through _Getcat facet");
+        Require(std::isfinite(ldval) && std::fabs(ldval - 1e2000L) / 1e2000L < 1e-17L && state == EofBit, "num_get::get(long double) dispatches through _Getcat facet");
     }
 
     facet->vtable->deleteObject(facet);
