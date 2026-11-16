@@ -259,6 +259,12 @@ class TextHelperTests(unittest.TestCase):
         self.assertEqual(run_report_summary.number_text(float("nan")), "unknown")
         self.assertEqual(run_report_summary.number_text(True), "unknown")
 
+    def test_count_text_pluralises_by_value(self):
+        self.assertEqual(run_report_summary.count_text(1, "file"), "1 file")
+        self.assertEqual(run_report_summary.count_text(2, "file"), "2 files")
+        self.assertEqual(run_report_summary.count_text(0, "file"), "0 files")
+        self.assertEqual(run_report_summary.count_text("x", "file"), "unknown files")
+
 
 if __name__ == "__main__":
     unittest.main()
