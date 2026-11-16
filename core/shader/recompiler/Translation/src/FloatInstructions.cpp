@@ -739,7 +739,7 @@ bool TranslationContext::floatTernary(const RdnaInstruction& inst, IrOpcode opco
     }
     const bool f32Sources = !mix || !(sourceAt(inst, 0u).opSelHi || sourceAt(inst, 1u).opSelHi || (!accumulator && sourceAt(inst, 2u).opSelHi));
     const std::uint32_t rounding = floatMode.has_value() ? floatMode->floatMode & 3u : 0u;
-    const bool directed = rounding != 0u && f32Sources && (opcode == IrOpcode::FPFma32 || opcode == IrOpcode::FPMad32);
+    const bool directed = rounding != 0u && (opcode == IrOpcode::FPFma32 || opcode == IrOpcode::FPMad32);
     IrValue* result = nullptr;
     if (directed) {
         const IrF32 zero(ir.ConstantF32(0.0f));
