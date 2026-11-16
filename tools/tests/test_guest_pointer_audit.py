@@ -206,5 +206,19 @@ class CommandLineTests(unittest.TestCase):
                 self.assertIn("not a library under core/libs/prx:", errors.getvalue())
 
 
+    def test_split_top_level_ignores_commas_inside_brackets(self):
+        parts = guest_pointer_audit.split_top_level("a, f(b, c), [d, e]")
+        self.assertEqual([text for _, text in parts], ["a", " f(b, c)", " [d, e]"])
+        self.assertEqual(parts[0][0], 0)
+
+
+    def test_split_top_level_angles_flag_controls_angle_nesting(self):
+        text = "a<b, c>, d"
+        with_angles = [part for _, part in guest_pointer_audit.split_top_level(text)]
+        self.assertEqual(with_angles, ["a<b, c>", " d"])
+        without = [part for _, part in guest_pointer_audit.split_top_level(text, angles=False)]
+        self.assertEqual(without, ["a<b", " c>", " d"])
+
+
 if __name__ == "__main__":
     unittest.main()
