@@ -1142,3 +1142,31 @@ if(BUILD_TESTING)
 endif()
 
 target_sources(agc_driver_scattered_runs_tests PRIVATE tests/AllocationFailure.cpp)
+
+if(BUILD_TESTING)
+    set(agcExactFloatTests
+            agc_denormal_flush_elimination
+            agc_driver_division
+            agc_driver_f32_arithmetic_nan
+            agc_driver_f32_denormal_flush
+            agc_driver_f32_fma_flushed_invalid_product
+            agc_driver_f32_fract_floor_denormal_modes
+            agc_driver_fma_legacy
+            agc_driver_log_near_one
+            agc_driver_mac_legacy
+            agc_driver_mullit_f32_denormal_modes
+            agc_driver_nan_quieting
+            agc_driver_sin_cos_near_zero
+            agc_driver_sin_cos_reduction
+            agc_driver_vfmac_f32_accumulator_modifiers
+            agc_driver_vop1_float_unary
+            agc_f32_nan_result_selects
+            agc_nan_payload_elimination
+            vector_constant_factor_tininess
+    )
+    foreach(agcExactFloatTest IN LISTS agcExactFloatTests)
+        if(TEST ${agcExactFloatTest})
+            set_property(TEST ${agcExactFloatTest} APPEND PROPERTY ENVIRONMENT "APS5_SHADER_OPT_PLAIN_FLOAT=0")
+        endif()
+    endforeach()
+endif()
