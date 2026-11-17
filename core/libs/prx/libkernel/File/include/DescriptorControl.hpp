@@ -18,6 +18,8 @@ bool HasFixedSizeWrites(int fd);
 void RememberPipe(int fd, int openFlags = 0);
 void ShareDescriptor(int from, int to);
 void ForgetDescriptor(int fd);
+int PipeProcessGroup(int fd);
+int SetPipeProcessGroup(int fd, int group);
 bool Appends(int fd);
 void SyncWrites(int fd);
 
