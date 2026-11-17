@@ -364,10 +364,7 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
         ValidateRegisterWrite(packet, opcode, queue);
         return;
     }
-    if (opcode == 0x10 && (header & 0xffu) == 0) {
-        require((packet[1] & 0xffff0000u) != 0x68750000u, "typed user-data and legacy flip markers are not implemented");
-        return;
-    }
+    if (opcode == 0x10 && (header & 0xffu) == 0 && (packet[1] & 0xffff0000u) != 0x68750000u) return;
     ValidateGeneral(packet, queue, header, opcode);
 }
 
