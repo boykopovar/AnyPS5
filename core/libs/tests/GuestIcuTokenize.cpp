@@ -144,6 +144,7 @@ public:
     char16_t* Text() const { return reinterpret_cast<char16_t*>(static_cast<unsigned char*>(mapping) + 16); }
     char16_t** State() const { return reinterpret_cast<char16_t**>(static_cast<unsigned char*>(mapping) + Page + 16); }
     char16_t* Delimiters() const { return reinterpret_cast<char16_t*>(static_cast<unsigned char*>(mapping) + Page * 2 + 16); }
+    char16_t* At(std::size_t offset) const { return reinterpret_cast<char16_t*>(static_cast<unsigned char*>(mapping) + offset); }
 
     void Protect(std::size_t page, int protection) {
         Require(sceKernelMprotect(static_cast<unsigned char*>(mapping) + Page * page, Page, protection) == 0);
@@ -235,6 +236,40 @@ void ReadOnlyGuestTokens() {
 #endif
 }
 
+void InaccessibleGuestText() {
+    GuestStorage storage;
+    constexpr auto page = GuestStorage::Page;
+    const std::array<char16_t, 4> initial{'a', ',', 'b', 0};
+    auto* text = storage.At(page - sizeof(initial));
+    std::copy(initial.begin(), initial.end(), text);
+    auto* unreadable = storage.At(page + 16);
+    storage.Protect(1, 0);
+    Require(u_strpbrk_nid_postfix(text, u",") == text + 1);
+    Require(u_strspn_nid_postfix(text, u"a") == 1 && u_strcspn_nid_postfix(text, u"b") == 2);
+    Require(u_memrchr32_nid_postfix(text, 'b', 4) == text + 2);
+    Throws([&] { u_strpbrk_nid_postfix(unreadable, u","); });
+    Throws([&] { u_strpbrk_nid_postfix(text, unreadable); });
+    Throws([&] { u_strspn_nid_postfix(unreadable, u","); });
+    Throws([&] { u_strcspn_nid_postfix(text, unreadable); });
+    Throws([&] { u_memrchr32_nid_postfix(unreadable, 'a', 1); });
+    Throws([&] { u_memrchr32_nid_postfix(text, 'a', 5); });
+    char16_t* state = unreadable;
+    Throws([&] { u_strtok_r_nid_postfix(nullptr, u",", &state); });
+    Require(state == unreadable);
+    Throws([&] { u_strtok_r_nid_postfix(nullptr, u",", reinterpret_cast<char16_t**>(unreadable)); });
+    Throws([&] { u_strtok_r_nid_postfix(text, u",", reinterpret_cast<char16_t**>(unreadable)); });
+    Throws([&] { u_strtok_r_nid_postfix(text, unreadable, &state); });
+    Require(std::equal(initial.begin(), initial.end(), text));
+    state = nullptr;
+    Require(u_strtok_r_nid_postfix(text, u",", &state) == text && text[1] == 0 && state == text + 2);
+    Require(u_strtok_r_nid_postfix(nullptr, u",", &state) == text + 2 && state == nullptr);
+    text[1] = ',';
+    text[3] = 'c';
+    Throws([&] { u_strpbrk_nid_postfix(text, u":"); });
+    Throws([&] { u_strtok_r_nid_postfix(text + 2, u",", &state); });
+    Require(text[3] == 'c');
+}
+
 void IndependentState() {
     const auto tokenize = [](char16_t separator) {
         for (unsigned iteration = 0; iteration < 1000; ++iteration) {
@@ -262,5 +297,6 @@ int main() {
     AliasedDelimiters();
     GuestMappedTokens();
     ReadOnlyGuestTokens();
+    InaccessibleGuestText();
     IndependentState();
 }

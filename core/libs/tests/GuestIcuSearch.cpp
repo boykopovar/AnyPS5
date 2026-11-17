@@ -114,6 +114,42 @@ void MappedMemory() {
     Require(sceKernelReleaseDirectMemory(physical, bytes) == 0);
 }
 
+void InaccessibleMemory() {
+    constexpr std::size_t page = 0x4000;
+    constexpr std::size_t bytes = 2 * page;
+    constexpr std::size_t unitsPerPage = page / sizeof(char16_t);
+    std::int64_t physical = 0;
+    Require(sceKernelAllocateDirectMemory(0, 0x7fffffffffll, bytes, 0, 0, &physical) == 0);
+    void* mapping = nullptr;
+    Require(sceKernelMapDirectMemory(&mapping, bytes, 3, 0, physical, 0) == 0 && mapping);
+    auto* data = static_cast<char16_t*>(mapping);
+    std::array<char16_t, bytes / sizeof(char16_t)> expected;
+    for (std::size_t index = 0; index < expected.size(); ++index) expected[index] = static_cast<char16_t>(index * 263 + 5);
+    {
+        GuestArena::HostWrite access(data, bytes);
+        Require(access.Open());
+        std::copy(expected.begin(), expected.end(), data);
+    }
+    Require(sceKernelMprotect(data + unitsPerPage, page, 0) == 0);
+    Throws([&] { u_memmove_nid_postfix(data + 4, data + unitsPerPage, 4); });
+    Throws([&] { u_memmove_nid_postfix(data + 4, data + unitsPerPage - 2, 4); });
+    Throws([&] { u_memmove_nid_postfix(data + unitsPerPage, data + 4, 4); });
+    Throws([&] { u_memset_nid_postfix(data + unitsPerPage, 0xffff, 4); });
+    Require(std::equal(expected.begin(), expected.begin() + unitsPerPage, data));
+    Require(u_memmove_nid_postfix(data + 1, data + unitsPerPage - 4, 4) == data + 1);
+    std::copy_n(expected.data() + unitsPerPage - 4, 4, expected.data() + 1);
+    Require(u_memset_nid_postfix(data + unitsPerPage - 3, 0xd812, 3) == data + unitsPerPage - 3);
+    std::fill_n(expected.data() + unitsPerPage - 3, 3, 0xd812);
+    Require(std::equal(expected.begin(), expected.begin() + unitsPerPage, data));
+    Require(sceKernelMprotect(data + unitsPerPage, page, 1) == 0);
+    Throws([&] { u_memmove_nid_postfix(data + unitsPerPage + 4, data, 4); });
+    Throws([&] { u_memset_nid_postfix(data + unitsPerPage + 4, 0, 4); });
+    Require(std::equal(expected.begin(), expected.end(), data));
+    Require(sceKernelMprotect(data + unitsPerPage, page, 3) == 0);
+    Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapping), bytes) == 0);
+    Require(sceKernelReleaseDirectMemory(physical, bytes) == 0);
+}
+
 void Characters() {
     const std::array<char16_t, 8> text{0xd800, 0xdc00, 'a', 0xd800, 'b', 0xdc00, 'a', 0};
     const auto original = text;
@@ -282,6 +318,7 @@ void Comparisons() {
 int main() {
     Memory();
     MappedMemory();
+    InaccessibleMemory();
     Characters();
     Substrings();
     MappedSubstrings();
