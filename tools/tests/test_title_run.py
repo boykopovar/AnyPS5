@@ -363,6 +363,8 @@ class NativeProvenanceFlowTests(unittest.TestCase):
         relinker = build / "core/relinker/relinker"
         relinker.parent.mkdir(parents=True)
         (build / "core/libs/libs").mkdir(parents=True)
+        for name in ("libmimalloc.so", "libmimalloc.dylib"):
+            (build / "core/libs/libs" / name).write_bytes(name.encode("utf-8"))
         (build / "CMakeCache.txt").write_text(f"CMAKE_HOME_DIRECTORY:INTERNAL={self.source}\n", encoding="utf-8")
         native = relinker.with_name("native.py")
         native.write_text("#!" + sys.executable + "\n" + '''import json, os, struct, time

@@ -825,6 +825,7 @@ class FocusedInputEdgeTests(unittest.TestCase):
             self.assertEqual(output.read_text(encoding="utf-8"), "owned")
 
 
+
 class GitFailureAndExitTests(unittest.TestCase):
     def test_git_failure_raises_with_stderr_or_command_fallback(self):
         with tempfile.TemporaryDirectory() as directory:

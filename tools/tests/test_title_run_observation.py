@@ -55,6 +55,8 @@ def run_fixture(root, seconds, mode, interval=None, catalog=False):
     converter = build / "core/relinker/relinker"
     converter.parent.mkdir(parents=True)
     (build / "core/libs/libs").mkdir(parents=True)
+    for name in ("libmimalloc.so", "libmimalloc.dylib"):
+        (build / "core/libs/libs" / name).write_bytes(name.encode("utf-8"))
     (build / "CMakeCache.txt").write_text(f"CMAKE_HOME_DIRECTORY:INTERNAL={source}\n", encoding="utf-8")
     converter.with_name("runtime.py").write_text("#!" + sys.executable + "\n" + RUNTIME, encoding="utf-8")
     converter.write_text("#!" + sys.executable + "\nimport pathlib, shutil, sys\n"
