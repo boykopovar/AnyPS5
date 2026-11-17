@@ -178,6 +178,12 @@ int InitializeDefaultCxState(std::uint32_t version) {
     return 0;
 }
 
+std::span<const std::uint32_t> GetDefaultComputeCommands() {
+    std::lock_guard lock(defaultStateMutex);
+    if (!activeDefaultAvailable) return {};
+    return defaultContexts[activeDefaultInstance].resetCommands;
+}
+
 QueueResetState GetQueueResetState(std::uint32_t instance, bool active) {
     std::lock_guard lock(defaultStateMutex);
     if (active) {

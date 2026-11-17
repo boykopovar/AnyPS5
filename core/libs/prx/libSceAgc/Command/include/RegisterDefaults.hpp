@@ -22,6 +22,7 @@ struct QueueResetState {
     std::span<const std::uint32_t> commands;
 };
 
+std::span<const std::uint32_t> GetDefaultComputeCommands();
 QueueResetState GetQueueResetState(std::uint32_t instance, bool active);
 int InitializeDefaultCxState(std::uint32_t version);
 int CopyDefaultCxStateRange(void* destination, std::uint32_t first, std::uint32_t last, std::span<const ShaderRegister> registers);

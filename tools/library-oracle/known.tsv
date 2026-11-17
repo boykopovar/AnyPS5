@@ -13,9 +13,6 @@ agcbuild_AcbDispatchIndirect_c	throw	AnyPS5 throws for arguments the console enc
 agcbuild_AcbDmaData_a	diff	the recording passes six of the export's ten arguments; the console's source address and byte count are not recorded
 agcbuild_AcbDmaData_b	diff	the recording passes six of the export's ten arguments; the console's source address and byte count are not recorded
 agcbuild_AcbDmaData_c	diff	the recording passes six of the export's ten arguments; the console's source address and byte count are not recorded
-agcbuild_AcbInitializeDefaultHardwareState_a	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_AcbInitializeDefaultHardwareState_b	throw	AnyPS5 throws for arguments the console encodes
-agcbuild_AcbInitializeDefaultHardwareState_c	throw	AnyPS5 throws for arguments the console encodes
 agcbuild_AcbMemSemaphore_a	throw	the operation argument changes the control word; not modelled
 agcbuild_AcbMemSemaphore_b	throw	the operation argument changes the control word; not modelled
 agcbuild_AcbMemSemaphore_c	throw	the operation argument changes the control word; not modelled
