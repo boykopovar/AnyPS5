@@ -100,9 +100,12 @@ if(BUILD_TESTING)
     agc_add_default_test(agc_driver_pm4_tests)
     add_test(NAME agc_driver_pm4_context_reg_rmw COMMAND agc_driver_pm4_tests context-reg-rmw)
     add_test(NAME agc_driver_pm4_written_label_thread COMMAND agc_driver_pm4_tests written-label-thread)
-    set_tests_properties(agc_driver_pm4_context_reg_rmw agc_driver_pm4_written_label_thread PROPERTIES TIMEOUT 30)
+    add_test(NAME agc_driver_pm4_unreadable_label_trace COMMAND agc_driver_pm4_tests unreadable-label-trace)
+    set_tests_properties(agc_driver_pm4_context_reg_rmw agc_driver_pm4_written_label_thread agc_driver_pm4_unreadable_label_trace PROPERTIES TIMEOUT 30)
+    set_tests_properties(agc_driver_pm4_unreadable_label_trace PROPERTIES ENVIRONMENT "APS5_TRACE_UNREADABLE=1"
+            PASS_REGULAR_EXPRESSION "\\[unreadable\\]   read from \\+0x[0-9a-f]+\n(.*\n)*PM4 unreadable-label-trace test passed")
     if(WIN32)
-        set_tests_properties(agc_driver_pm4_context_reg_rmw agc_driver_pm4_written_label_thread PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(agc_driver_pm4_context_reg_rmw agc_driver_pm4_written_label_thread agc_driver_pm4_unreadable_label_trace PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     agc_add_default_test(agc_driver_graphics_tests)

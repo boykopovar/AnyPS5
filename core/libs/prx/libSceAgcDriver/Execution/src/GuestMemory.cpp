@@ -3659,6 +3659,16 @@ bool StopHostWrites(std::uint32_t boundMs) {
     return true;
 }
 
+static void checkReadable(const void* source, std::size_t bytes, std::size_t alignment, const void* caller) {
+    try {
+        CheckRange(source, bytes, alignment);
+    } catch (const std::runtime_error&) {
+        static const bool trace = std::getenv("APS5_TRACE_UNREADABLE") != nullptr;
+        if (trace) std::fprintf(stderr, "[unreadable]   read from +0x%llx\n", ModuleOffset(caller));
+        throw;
+    }
+}
+
 void Read(std::uint64_t address, std::span<std::byte> destination, std::size_t alignment) {
     if (destination.empty()) return;
     GuardRead(address, destination.size());
@@ -3666,13 +3676,7 @@ void Read(std::uint64_t address, std::span<std::byte> destination, std::size_t a
     const TimedAccess timed(CounterRead, destination.size());
     CountReadCaller(__builtin_return_address(0));
     const auto* source = reinterpret_cast<const void*>(address);
-    try {
-        CheckRange(source, destination.size(), alignment);
-    } catch (const std::runtime_error&) {
-        static const bool trace = std::getenv("APS5_TRACE_UNREADABLE") != nullptr;
-        if (trace) std::fprintf(stderr, "[unreadable]   read from +0x%llx\n", ModuleOffset(__builtin_return_address(0)));
-        throw;
-    }
+    checkReadable(source, destination.size(), alignment, __builtin_return_address(0));
     CopyGuestBytes(destination.data(), source, destination.size());
 }
 
@@ -3682,7 +3686,7 @@ std::uint64_t ReadLabel(std::uint64_t address, std::size_t bytes) {
     FlushGpuWrites(address, bytes);
     const TimedAccess timed(CounterRead, bytes);
     CountReadCaller(__builtin_return_address(0));
-    CheckRange(reinterpret_cast<const void*>(address), bytes, bytes);
+    checkReadable(reinterpret_cast<const void*>(address), bytes, bytes, __builtin_return_address(0));
     if (bytes == sizeof(std::uint64_t)) return std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(address)).load(std::memory_order_acquire);
     return std::atomic_ref<std::uint32_t>(*reinterpret_cast<std::uint32_t*>(address)).load(std::memory_order_acquire);
 }
