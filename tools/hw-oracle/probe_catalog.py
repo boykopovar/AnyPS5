@@ -213,8 +213,22 @@ def generate(probes, catalog_digest, output_dir):
             rows = "".join(" ".join(f"0x{word:08x}" for word in row["input"]) + "\n"
                            for row in probe["rows"])
             (case / "rows.txt").write_text(rows, encoding="utf-8")
-        for probe, destination in zip(probes, destinations):
-            os.replace(stage / probe["id"], destination)
+        promoted = []
+        try:
+            for probe, destination in zip(probes, destinations):
+                os.replace(stage / probe["id"], destination)
+                promoted.append(destination)
+        except OSError as promotion_error:
+            rollback_errors = []
+            for destination in reversed(promoted):
+                try:
+                    shutil.rmtree(destination)
+                except OSError as error:
+                    rollback_errors.append(error)
+            if rollback_errors:
+                details = "; ".join(str(error) for error in rollback_errors)
+                raise RuntimeError(f"Probe catalog promotion failed: {promotion_error}; rollback failed: {details}") from promotion_error
+            raise
     finally:
         shutil.rmtree(stage, ignore_errors=True)
     return destinations
@@ -269,6 +283,7 @@ def run_probes(probes, digest, output_dir, device_label):
     directory.mkdir(parents=True, exist_ok=True)
     runtime = hw_oracle.runtime()
     target = hw_oracle.target()
+    reports = []
     for probe, destination in zip(probes, destinations):
         rows = [tuple(row["input"]) for row in probe["rows"]]
         outputs = hw_oracle.run(
@@ -282,7 +297,9 @@ def run_probes(probes, digest, output_dir, device_label):
                for output in outputs for word in output[:probe["output_registers"]]):
             raise ValueError(f"hardware oracle returned a non-dword result for {probe['id']}")
         report = make_result(probe, digest, device_label, target, runtime, outputs)
-        write_atomic(destination, json.dumps(report, indent=2) + "\n")
+        reports.append((probe, destination, json.dumps(report, indent=2) + "\n"))
+    for probe, destination, report in reports:
+        write_atomic(destination, report)
         print(f"Measured {probe['id']}: {destination}")
     return destinations
 

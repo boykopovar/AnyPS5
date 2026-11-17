@@ -94,6 +94,9 @@ void VerifyLoggedInUser(int userId) {
     UserServiceGamePresets presets{};
     presets.difficulty = 0x5a;
     Require(sceUserServiceGetGamePresets(userId, nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    errno = 71;
+    Require(sceUserServiceGetGamePresets(userId, reinterpret_cast<UserServiceGamePresets*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
     Require(sceUserServiceGetGamePresets(userId, &presets) == USER_SERVICE_OK);
     Require(presets.difficulty == 0);
 
@@ -146,6 +149,15 @@ int main() {
         const int userId = USER_SERVICE_INITIAL_USER_ID + i;
 
         Require(sceUserServiceGetUserName(userId, nullptr, sizeof(nameBuffer)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+        errno = 71;
+        Require(sceUserServiceGetUserName(userId, reinterpret_cast<char*>(0x10), sizeof(nameBuffer)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+        Require(errno == 71);
+        errno = 71;
+        Require(sceUserServiceGetUserName(userId, reinterpret_cast<char*>(0x10), 5) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+        Require(errno == 71);
+        errno = 71;
+        Require(sceUserServiceGetUserName(userId, nameBuffer, static_cast<std::size_t>(-1)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+        Require(errno == 71);
 
         for (std::size_t size = 0; size <= USER_SERVICE_MAX_USER_NAME_LENGTH; ++size) {
             std::memset(nameBuffer, 'Z', sizeof(nameBuffer));
@@ -239,17 +251,36 @@ int main() {
     char homePath[64]{};
     Require(sceUserServiceGetHomeDirectory(USER_SERVICE_INITIAL_USER_ID, nullptr, sizeof(homePath)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetHomeDirectory(USER_SERVICE_INITIAL_USER_ID, homePath, 1) == USER_SERVICE_ERROR_BUFFER_TOO_SHORT);
-    Require(sceUserServiceGetHomeDirectory(USER_SERVICE_INITIAL_USER_ID, homePath, sizeof(homePath)) == USER_SERVICE_OK);
+    Require(sceUserServiceGetHomeDirectory(USER_SERVICE_INITIAL_USER_ID, homePath, 19) == USER_SERVICE_ERROR_BUFFER_TOO_SHORT);
+    Require(sceUserServiceGetHomeDirectory(USER_SERVICE_INITIAL_USER_ID, homePath, 20) == USER_SERVICE_OK);
     Require(std::strcmp(homePath, "/user/home/10000000") == 0);
+    Require(sceUserServiceGetHomeDirectory(USER_SERVICE_INITIAL_USER_ID, homePath, sizeof(homePath)) == USER_SERVICE_OK);
+    Require(sceUserServiceGetHomeDirectory(USER_SERVICE_INITIAL_USER_ID, homePath, 1024) == USER_SERVICE_OK);
+    Require(std::strcmp(homePath, "/user/home/10000000") == 0);
+    errno = 71;
+    Require(sceUserServiceGetHomeDirectory(USER_SERVICE_INITIAL_USER_ID, reinterpret_cast<char*>(0x10), sizeof(homePath)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
     Require(sceUserServiceGetSecureHomeDirectory(USER_SERVICE_INITIAL_USER_ID, nullptr, sizeof(homePath)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetSecureHomeDirectory(USER_SERVICE_INITIAL_USER_ID, homePath, 1) == USER_SERVICE_ERROR_BUFFER_TOO_SHORT);
     Require(sceUserServiceGetSecureHomeDirectory(USER_SERVICE_INITIAL_USER_ID, homePath, sizeof(homePath)) == USER_SERVICE_OK);
+    Require(sceUserServiceGetSecureHomeDirectory(USER_SERVICE_INITIAL_USER_ID, homePath, 1024) == USER_SERVICE_OK);
+    errno = 71;
+    Require(sceUserServiceGetSecureHomeDirectory(USER_SERVICE_INITIAL_USER_ID, reinterpret_cast<char*>(0x10), sizeof(homePath)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
     Require(std::strstr(homePath, "/priv/home/10000000") != nullptr);
     Require(libSceUserServiceUnknown_ErTMkmSho4E_nid_no_patch(USER_SERVICE_INITIAL_USER_ID, nullptr, 37) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(libSceUserServiceUnknown_ErTMkmSho4E_nid_no_patch(USER_SERVICE_INITIAL_USER_ID, homePath, 36) == USER_SERVICE_ERROR_BUFFER_TOO_SHORT);
     Require(libSceUserServiceUnknown_ErTMkmSho4E_nid_no_patch(USER_SERVICE_INITIAL_USER_ID, homePath, 37) == USER_SERVICE_ERROR_BUFFER_TOO_SHORT);
     Require(libSceUserServiceUnknown_ErTMkmSho4E_nid_no_patch(USER_SERVICE_INITIAL_USER_ID, homePath, 38) == USER_SERVICE_OK);
     Require(std::strlen(homePath) == 36);
+    errno = 71;
+    Require(libSceUserServiceUnknown_ErTMkmSho4E_nid_no_patch(USER_SERVICE_INITIAL_USER_ID, reinterpret_cast<char*>(0x10), 38) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
+    char groupName[160];
+    std::memset(groupName, 0x5a, sizeof(groupName));
+    Require(sceUserServiceGetDefaultNewUserGroupName(groupName, sizeof(groupName)) == USER_SERVICE_OK);
+    Require(std::strncmp(groupName, "User Group ", 11) == 0 && groupName[std::strlen(groupName) + 1] == 0x5a);
+    Require(sceUserServiceGetDefaultNewUserGroupName(reinterpret_cast<char*>(0x10), sizeof(groupName)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(sceUserServiceGetCurrentUserGroupIndex(nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     errno = 71;
     Require(sceUserServiceGetCurrentUserGroupIndex(reinterpret_cast<std::int32_t*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
@@ -260,6 +291,30 @@ int main() {
     Require(sceUserServiceGetUserGroupName(0, homePath, 128) == USER_SERVICE_ERROR_BUFFER_TOO_SHORT);
     char oversizedGroupName[256]{};
     Require(sceUserServiceGetUserGroupName(0, oversizedGroupName, sizeof(oversizedGroupName)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    char nameListBuf[0x110]{};
+    std::int32_t nameCount = 0;
+    Require(sceUserServiceGetUserGroupNameList(0, nullptr, sizeof(nameListBuf), &nameCount) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserGroupNameList(0, nameListBuf, sizeof(nameListBuf), nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserGroupNameList(0, nameListBuf, 0x100, &nameCount) == USER_SERVICE_ERROR_BUFFER_TOO_SHORT);
+    errno = 71;
+    Require(sceUserServiceGetUserGroupNameList(0, reinterpret_cast<char*>(0x10), sizeof(nameListBuf), &nameCount) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserGroupNameList(0, nameListBuf, sizeof(nameListBuf), reinterpret_cast<std::int32_t*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
+
+    char defaultGroupName[0x110]{};
+    std::memset(defaultGroupName, 'Q', sizeof(defaultGroupName));
+    Require(sceUserServiceGetDefaultNewUserGroupName(nullptr, sizeof(defaultGroupName)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetDefaultNewUserGroupName(defaultGroupName, sizeof(defaultGroupName)) == USER_SERVICE_OK);
+    Require(std::strcmp(defaultGroupName, "User Group 1") == 0);
+
+    char groupNameList[0x110]{};
+    std::int32_t groupNameCount = -7;
+    Require(sceUserServiceGetUserGroupNameList(-1, nullptr, sizeof(groupNameList), &groupNameCount) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(sceUserServiceGetUserGroupNameList(-1, groupNameList, sizeof(groupNameList), nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    std::int32_t currentGroup = -7;
+    const int globalListError = sceUserServiceGetUserGroupNameList(-1, groupNameList, sizeof(groupNameList), &groupNameCount);
+    Require(globalListError == sceUserServiceGetCurrentUserGroupIndex(&currentGroup));
+    Require(static_cast<unsigned>(globalListError) >> 16 == 0x8002u);
 
     SetLanguage(nullptr);
     using KeyboardSetting = decltype(&sceUserServiceGetKeyboardType);
@@ -353,11 +408,21 @@ int main() {
         Require(sceUserServiceGetRegisteredUserIdList(&registered) == USER_SERVICE_OK);
         Require(registered.user_id[0] == USER_SERVICE_INITIAL_USER_ID);
         Require(registered.user_id[i] == userId);
+        Require(sceUserServiceGetRegisteredHomeUserIdList(homeIds, &homeCount) == USER_SERVICE_OK);
+        for (int k = 0; k < 16; ++k) {
+            Require(homeIds[k] == registered.user_id[k]);
+        }
+        Require(homeCount == 2);
         VerifyLoggedInUser(userId);
 
         UserServiceSetUserConnected_nid_postfix(i, false);
         Require(sceUserServiceGetRegisteredUserIdList(&registered) == USER_SERVICE_OK);
         Require(registered.user_id[i] == USER_SERVICE_USER_ID_INVALID);
+        Require(sceUserServiceGetRegisteredHomeUserIdList(homeIds, &homeCount) == USER_SERVICE_OK);
+        for (int k = 0; k < 16; ++k) {
+            Require(homeIds[k] == registered.user_id[k]);
+        }
+        Require(homeCount == 1);
         VerifyLoggedOutUser(userId);
     }
 
