@@ -149,6 +149,8 @@ class MachineCliTests(unittest.TestCase):
         converter = self.build / "core/relinker/relinker"
         converter.parent.mkdir(parents=True)
         (self.build / "core/libs/libs").mkdir(parents=True)
+        for name in ("libmimalloc.so", "libmimalloc.dylib"):
+            (self.build / "core/libs/libs" / name).write_bytes(name.encode("utf-8"))
         (self.build / "CMakeCache.txt").write_text(f"CMAKE_HOME_DIRECTORY:INTERNAL={source}\n", encoding="utf-8")
         converter.with_name("runtime.py").write_text("#!" + sys.executable + "\n" + RUNTIME, encoding="utf-8")
         converter.write_text("#!" + sys.executable + "\nimport pathlib, shutil, sys\n"
