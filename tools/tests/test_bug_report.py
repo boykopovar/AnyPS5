@@ -1,5 +1,6 @@
 import contextlib
 import io
+import json
 import os
 import sys
 import tempfile
@@ -69,6 +70,23 @@ class BundleTests(unittest.TestCase):
             for secret in ("/home/ana", "serverfestivo", "192.168.1.20", "10.0.0.7"):
                 self.assertNotIn(secret, text, f"{secret} leaked into {name}")
 
+    def test_escaped_home_paths_are_redacted_in_nested_json(self):
+        cases = (
+            ("windows", r"C:\Profiles\example", r"\games\title.elf"),
+            ("unicode-linux", "/home/профиль", "/games/title.elf"),
+        )
+        for label, home, suffix in cases:
+            with self.subTest(label=label):
+                details = {"path": f"opened {home}{suffix}", "recovered": False, "frames": 3, "extra": None}
+                report = {"run": {"details": [details]}}
+                self.report.write_text(json.dumps(report, ensure_ascii=True), encoding="utf-8")
+                out = self.root / f"{label}.zip"
+                bug_report.make_bundle(self.report, out, **{**self.identity, "home": home})
+                with zipfile.ZipFile(out) as bundle:
+                    archived = json.loads(bundle.read("anyps5-report.json"))
+                details["path"] = f"opened ~{suffix}"
+                self.assertEqual(archived, report)
+
     def test_missing_log_and_input_are_left_out(self):
         _, names = self.bundle(log=self.root / "absent.log", input_config=None)
         self.assertEqual(names, ["README.txt", "anyps5-report.json", "host.txt"])
@@ -84,6 +102,14 @@ class BundleTests(unittest.TestCase):
         with self.assertRaises(FileExistsError):
             self.bundle()
         self.assertEqual((self.root / "bundle.zip").read_bytes(), b"keep")
+
+    def test_bundle_created_after_absence_check_is_not_overwritten(self):
+        target = self.root / "bundle.zip"
+        target.write_bytes(b"keep")
+        with patch.object(Path, "exists", return_value=False):
+            with self.assertRaises(FileExistsError):
+                self.bundle()
+        self.assertEqual(target.read_bytes(), b"keep")
 
 
 class MainTests(unittest.TestCase):

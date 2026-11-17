@@ -217,6 +217,43 @@ int copyOut(const std::string& value, char* out, size_t* require, size_t prepare
 
 }
 
+static void SweepPathInto(char* dst, const char* src, size_t srcSize) {
+    const size_t length = srcSize - 1;
+    if (src[0] != '/') {
+        std::memcpy(dst, src, length);
+        dst[length] = '\0';
+        return;
+    }
+
+    dst[0] = '/';
+    dst[1] = '\0';
+    size_t end = 0;
+    size_t pos = 1;
+    while (pos < length) {
+        if (src[pos] == '.' && pos + 1 < length && src[pos + 1] == '/') {
+            pos += 2;
+            continue;
+        }
+        if (src[pos] == '.' && pos + 2 <= length && src[pos + 1] == '.' && src[pos + 2] == '/') {
+            if (end != 0) {
+                dst[end] = '\0';
+                end = static_cast<size_t>(std::strrchr(dst, '/') - dst);
+                dst[end + 1] = '\0';
+            }
+            pos += 3;
+            continue;
+        }
+        size_t count = length - pos;
+        if (const void* slash = std::memchr(src + pos, '/', length - pos)) {
+            count = static_cast<size_t>(static_cast<const char*>(slash) + 1 - (src + pos));
+        }
+        std::memcpy(dst + end + 1, src + pos, count);
+        dst[end + 1 + count] = '\0';
+        end += count;
+        pos += count;
+    }
+}
+
 extern "C" {
 
 int APS5_VABI sceHttpUriBuild(char* out, size_t* requiredSize, size_t capacity, const SceHttpUriElement* element, uint32_t option) {
@@ -408,7 +445,8 @@ int APS5_VABI sceHttpUriParse(SceHttpUriElement* out, const char* src_url, void*
         if (!written) return ERROR_INVALID_VALUE;
         next += spaces[i] + 1;
     }
-    SceHttpUriElement element{};
+    SceHttpUriElement element;
+    std::memset(static_cast<void*>(&element), 0, sizeof(element));
     element.opaque = parts.opaque;
     element.scheme = strings[0];
     element.username = strings[1];
@@ -432,8 +470,7 @@ int APS5_VABI sceHttpUriCopy(SceHttpUriElement* out, const SceHttpUriElement* sr
 
     if (write) {
         if (!ZeroGuest(pool, prepare)) return ERROR_INVALID_VALUE;
-        const SceHttpUriElement cleared{};
-        if (!WriteGuestBytes(out, &cleared, sizeof(cleared))) return ERROR_INVALID_VALUE;
+        if (!ZeroGuest(out, sizeof(SceHttpUriElement))) return ERROR_INVALID_VALUE;
     }
     SceHttpUriElement source{};
     const int savedErrno = errno;
@@ -467,7 +504,8 @@ int APS5_VABI sceHttpUriCopy(SceHttpUriElement* out, const SceHttpUriElement* sr
         if (!WriteGuestBytes(next, segment.data(), segment.size())) return ERROR_INVALID_VALUE;
         next += lengths[i] + 1;
     }
-    SceHttpUriElement element{};
+    SceHttpUriElement element;
+    std::memset(static_cast<void*>(&element), 0, sizeof(element));
     element.scheme = strings[0];
     element.hostname = strings[1];
     element.path = strings[2];
@@ -482,41 +520,13 @@ int APS5_VABI sceHttpUriCopy(SceHttpUriElement* out, const SceHttpUriElement* sr
 int APS5_VABI sceHttpUriSweepPath(char* dst, const char* src, size_t srcSize) {
     if (srcSize == 0) return 0;
     if (!dst || !src) return ERROR_INVALID_VALUE;
-
-    const size_t length = srcSize - 1;
-    if (src[0] != '/') {
-        std::memcpy(dst, src, length);
-        dst[length] = '\0';
-        return 0;
-    }
-
-    dst[0] = '/';
-    dst[1] = '\0';
-    size_t end = 0;
-    size_t pos = 1;
-    while (pos < length) {
-        if (src[pos] == '.' && pos + 1 < length && src[pos + 1] == '/') {
-            pos += 2;
-            continue;
-        }
-        if (src[pos] == '.' && pos + 2 <= length && src[pos + 1] == '.' && src[pos + 2] == '/') {
-            if (end != 0) {
-                dst[end] = '\0';
-                end = static_cast<size_t>(std::strrchr(dst, '/') - dst);
-                dst[end + 1] = '\0';
-            }
-            pos += 3;
-            continue;
-        }
-        size_t count = length - pos;
-        if (const void* slash = std::memchr(src + pos, '/', length - pos)) {
-            count = static_cast<size_t>(static_cast<const char*>(slash) + 1 - (src + pos));
-        }
-        std::memcpy(dst + end + 1, src + pos, count);
-        dst[end + 1 + count] = '\0';
-        end += count;
-        pos += count;
-    }
+    std::string source(srcSize, '\0');
+    if (!GuestCopyIn_nid_no_patch(source.data(), src, srcSize)) return ERROR_INVALID_VALUE;
+    const size_t touched = source[0] == '/' ? std::max<size_t>(srcSize, 2) : srcSize;
+    std::string swept(touched, '\0');
+    if (!GuestCopyIn_nid_no_patch(swept.data(), dst, touched)) return ERROR_INVALID_VALUE;
+    SweepPathInto(swept.data(), source.data(), srcSize);
+    if (!GuestCopyOut_nid_no_patch(dst, swept.data(), touched)) return ERROR_INVALID_VALUE;
     return 0;
 }
 

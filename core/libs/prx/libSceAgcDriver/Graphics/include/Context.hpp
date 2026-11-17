@@ -227,6 +227,7 @@ struct Context {
     VkDeviceSize hostImportAlignment = 0;
     mutable std::vector<std::pair<std::pair<VkFormat, std::uint32_t>, bool>> stencilShadowCopyProbes;
     bool drawInputsInPlace = true;
+    std::size_t drawInputsInPlaceBelow = 0;
     bool discreteGpu = false;
     bool integratedGpu = false;
     bool hostPointerImport = true;
@@ -299,6 +300,7 @@ struct Context {
     bool imageTableUpdateAfterBind = false;
     bool samplerTableUpdateAfterBind = false;
     bool geometryShader = false;
+    bool multiViewport = false;
     bool largePoints = false;
     bool sampleRateShading = false;
     bool fillModeNonSolid = false;
@@ -311,6 +313,7 @@ struct Context {
     bool shaderCullDistance = false;
     bool nullDescriptors = false;
     bool bufferInt64Atomics = false;
+    VkDeviceAddress atomicLockTable = 0;
     const PlaceholderImages* placeholderImages = nullptr;
     bool viewportIndexLayer = false;
     bool demoteToHelperInvocation = false;

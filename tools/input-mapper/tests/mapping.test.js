@@ -1,12 +1,32 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {actions, chordButtons, defaults, emulatorActions, mouseValues, padButtons, typesForAction} from '../mapping.js';
+import {actions, actionsForInput, chordButtons, defaults, emulatorActions, mouseValues, padButtons, typesForAction} from '../mapping.js';
 import {exportableKeys, keyNames} from '../keys.js';
 import {captureKey} from '../capture.js';
 import {parseIni, serialize, settings, validate, validateSettings} from '../validation.js';
 
 const binding = (action, type = 'KEY', value = 'F') => ({action, type, value});
+
+test('search finds exact built-in keyboard and full input bindings', () => {
+    assert.deepEqual(actionsForInput(' f7 ', []), new Set(['ToggleMouse']));
+    assert.deepEqual(actionsForInput('F', []), new Set(['RightStickLeft']));
+    assert.deepEqual(actionsForInput('KEY:Left Alt', []), new Set(['R1']));
+    assert.deepEqual(actionsForInput('mouse:left', []), new Set(['Square']));
+    assert.deepEqual(actionsForInput('wheel:up', []), new Set(['Up']));
+    assert.deepEqual(actionsForInput('   ', []), new Set());
+});
+
+test('search uses configured alternatives in place of built-ins', () => {
+    const {entries} = parseIni('Square = KEY:J\nCross = KEY:Return\nCross = MOUSE:Left\nScreenshot = PAD:L1+R1\n');
+    assert.deepEqual(actionsForInput('j', entries), new Set(['Square']));
+    assert.deepEqual(actionsForInput('MOUSE:Left', entries), new Set(['Cross']));
+    assert.deepEqual(actionsForInput('Return', entries), new Set(['Cross']));
+    assert.deepEqual(actionsForInput('Space', entries), new Set());
+    assert.deepEqual(actionsForInput('PAD:L1+R1', entries), new Set(['Screenshot']));
+    assert.deepEqual(actionsForInput('J', [...entries, binding('Options', 'KEY', 'J')]), new Set(['Square', 'Options']));
+    assert.deepEqual(actionsForInput('F7', [...entries, binding('ToggleMouse', 'KEY', '')]), new Set());
+});
 
 test('action names and pad button categories agree with the current native parser', () => {
     const source = readFileSync(new URL('../../../core/libs/prx/libSceVideoOut/src/InputMapping.cpp', import.meta.url), 'utf8');
@@ -113,6 +133,19 @@ test('out-of-range and malformed setting values report their line', () => {
     }
     for (const line of ['MouseSensitivity = 10', 'MouseCurve = 1e0', 'MouseDeadzoneOffset = 0', 'KeyboardRampMs = 2000', 'LeftStickDeadzone = 0', 'RightStickDeadzone = 90']) {
         assert.deepEqual(parseIni(line).errors, [], line);
+    }
+});
+
+test('setting values that underflow to zero are refused like the native parser', () => {
+    for (const value of ['1e-400', '-1e-400', '0.5E-400', '.1e-999', '10e-401']) {
+        const message = 'MouseSmoothingMs must be a number from 0 to 500.';
+        assert.deepEqual(parseIni(`MouseSmoothingMs = ${value}`), {entries: [], settings: [], errors: [{line: 1, message}], warnings: []}, value);
+        assert.deepEqual(validateSettings([{name: 'MouseSmoothingMs', value}]), {errors: [{index: 0, message}], settings: []}, value);
+        assert.throws(() => serialize([], [{name: 'MouseSmoothingMs', value}]), {message}, value);
+    }
+    for (const value of ['0', '0.0', '-0', '0e5', '0.e-400', '00.00E+400', '1e-320']) {
+        assert.deepEqual(parseIni(`MouseSmoothingMs = ${value}`).settings, [{name: 'MouseSmoothingMs', value}], value);
+        assert.equal(serialize([], [{name: 'MouseDeadzoneOffset', value}]), `MouseDeadzoneOffset = ${value}\n`, value);
     }
 });
 
