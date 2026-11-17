@@ -91,6 +91,9 @@ class BundleFixture:
         self.write_manifest(directory, manifest)
         return directory
 
+    def paired_bundles(self, cases=None, raw=None, changes=None):
+        return tuple(self.bundle(cases, raw=raw, changes=changes) for _ in range(2))
+
     def manifest(self, directory):
         return json.loads((directory / "manifest.json").read_bytes())
 
@@ -280,7 +283,7 @@ class OutcomeTests(BundleFixture, unittest.TestCase):
         self.assertEqual(parsed["case_count"], 1)
         self.assertEqual(set(parsed["cases"]), {"only"})
         self.assertTrue(parsed["gaps"])
-        report = self.compare(self.bundle(raw=raw), self.bundle(raw=raw))
+        report = self.compare(*self.paired_bundles(raw=raw))
         self.assertFalse(report["summary"]["paired_observations_complete"])
         self.assertFalse(report["summary"]["execution_coverage_complete"])
 
@@ -300,7 +303,7 @@ class OutcomeTests(BundleFixture, unittest.TestCase):
                 parsed = subject.parse_bundle_junit(raw)
                 self.assertEqual(parsed["case_count"], 1)
                 self.assertTrue(parsed["gaps"])
-                report = self.compare(self.bundle(raw=raw), self.bundle(raw=raw))
+                report = self.compare(*self.paired_bundles(raw=raw))
                 self.assertFalse(report["summary"]["paired_observations_complete"])
                 self.assertFalse(report["summary"]["observed_execution_complete"])
 
@@ -355,7 +358,7 @@ class ObservationTests(BundleFixture, unittest.TestCase):
         self.assertFalse(report["summary"]["observed_execution_complete"])
 
     def test_matching_observed_cohort_does_not_prove_expected_plan_coverage(self):
-        report = self.compare(self.bundle(), self.bundle())
+        report = self.compare(*self.paired_bundles())
         self.assertTrue(report["summary"]["paired_observations_complete"])
         self.assertTrue(report["summary"]["observed_execution_complete"])
         self.assertFalse(report["summary"]["execution_coverage_complete"])
@@ -363,8 +366,8 @@ class ObservationTests(BundleFixture, unittest.TestCase):
         self.assertTrue(report["gaps"])
 
     def test_repeated_final_pass_cannot_prove_retry_history(self):
-        baseline = self.bundle(changes=lambda value: value["test"].update(repeat="after-timeout:2"))
-        candidate = self.bundle(changes=lambda value: value["test"].update(repeat="after-timeout:2"))
+        baseline, candidate = self.paired_bundles(
+            changes=lambda value: value["test"].update(repeat="after-timeout:2"))
         report = self.compare(baseline, candidate)
         self.assertEqual(report["cases"]["passed"]["transition"], "passed -> passed")
         rendered = json.dumps(report).lower()
@@ -377,7 +380,7 @@ class ObservationTests(BundleFixture, unittest.TestCase):
         for outcome in ("cancelled", "skipped"):
             with self.subTest(outcome=outcome):
                 operation = lambda value: value["test"].update(step_outcome=outcome)
-                baseline, candidate = self.bundle(changes=operation), self.bundle(changes=operation)
+                baseline, candidate = self.paired_bundles(changes=operation)
                 report = self.compare(baseline, candidate)
                 self.assertEqual(report["cases"]["passed"]["transition"], "passed -> passed")
                 self.assertFalse(report["summary"]["paired_observations_complete"])
@@ -464,8 +467,7 @@ class FingerprintTests(BundleFixture, unittest.TestCase):
 
 class CliTests(BundleFixture, unittest.TestCase):
     def test_json_report_generation_zero_is_not_a_test_pass(self):
-        baseline = self.bundle([failure()])
-        candidate = self.bundle([failure()])
+        baseline, candidate = self.paired_bundles([failure()])
         code, out, err = self.cli(baseline, candidate, "--json")
         self.assertEqual(code, 0, err)
         report = json.loads(out)
@@ -474,7 +476,7 @@ class CliTests(BundleFixture, unittest.TestCase):
         self.assertTrue(report["notes"])
 
     def test_invalid_artifact_and_expected_pin_failure_return_two(self):
-        baseline, candidate = self.bundle(), self.bundle()
+        baseline, candidate = self.paired_bundles()
         for arguments in (("--expect-baseline-head", "a" * 40, "--expect-candidate-head", "f" * 40),):
             code, out, err = self.cli(baseline, candidate, *arguments)
             self.assertEqual(code, 2)
@@ -485,7 +487,7 @@ class CliTests(BundleFixture, unittest.TestCase):
         self.assertTrue(err)
 
     def test_expected_heads_are_an_optional_pair(self):
-        baseline, candidate = self.bundle(), self.bundle()
+        baseline, candidate = self.paired_bundles()
         out, err = io.StringIO(), io.StringIO()
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             try:
@@ -501,7 +503,7 @@ class CliTests(BundleFixture, unittest.TestCase):
             value["runner"] = {key: None for key in value["runner"]}
             value["test"].update(selection=None, repeat=None, step_outcome="success")
         case = {"name": "not_executed", "status": "notrun", "details": [{"kind": "skipped"}]}
-        baseline, candidate = self.bundle([case], changes=local), self.bundle([case], changes=local)
+        baseline, candidate = self.paired_bundles([case], changes=local)
         code, out, err = self.cli(baseline, candidate, "--json")
         self.assertEqual(code, 0, err)
         report = json.loads(out)
@@ -525,7 +527,7 @@ class CliTests(BundleFixture, unittest.TestCase):
         self.assertFalse(report.get("no_regressions", False))
 
     def test_cli_executes_no_recorded_commands(self):
-        baseline, candidate = self.bundle(), self.bundle()
+        baseline, candidate = self.paired_bundles()
         with mock.patch.object(subprocess, "Popen", side_effect=AssertionError("artifact reader executed a command")):
             code, out, err = self.cli(baseline, candidate, "--json")
         self.assertEqual(code, 0, err)
