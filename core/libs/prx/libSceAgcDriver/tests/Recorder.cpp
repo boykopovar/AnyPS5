@@ -1949,6 +1949,7 @@ PFN_vkQueueSubmit passedQueueSubmit = nullptr;
 std::atomic<unsigned> failingEnds{0};
 std::atomic<std::uint64_t> countedSubmits{0};
 std::atomic<bool> refusedSubmits{false};
+std::atomic<unsigned> lostSubmits{0};
 
 VKAPI_ATTR VkResult VKAPI_CALL failingEndCommandBuffer(VkCommandBuffer commands) {
     if (failingEnds.load() != 0) {
@@ -1961,6 +1962,10 @@ VKAPI_ATTR VkResult VKAPI_CALL failingEndCommandBuffer(VkCommandBuffer commands)
 VKAPI_ATTR VkResult VKAPI_CALL countingQueueSubmit(VkQueue queue, std::uint32_t count, const VkSubmitInfo* submits, VkFence fence) {
     countedSubmits.fetch_add(1);
     if (refusedSubmits.load()) return VK_ERROR_OUT_OF_HOST_MEMORY;
+    if (lostSubmits.load() != 0) {
+        lostSubmits.fetch_sub(1);
+        return VK_ERROR_DEVICE_LOST;
+    }
     return passedQueueSubmit(queue, count, submits, fence);
 }
 
@@ -2096,6 +2101,58 @@ void deferredBatchTests(const Device& device) {
         }
         refusedSubmits.store(false);
         Require(cancelled && countedSubmits.load() == submitted, "a batch after a failed replay was submitted");
+    }
+    {
+        Context failing = context;
+        failing.deviceProc = replayFailingDeviceProc;
+        std::uint64_t submitted = 0;
+        {
+            Recorder recorder(failing, false, true, context.queueFamily);
+            recordBarrierThrough(failing, recorder.Commands());
+            recorder.Submit();
+            submitted = countedSubmits.load();
+            recordBarrierThrough(failing, recorder.Commands());
+            failingEnds.store(1);
+        }
+        Require(failingEnds.load() == 0, "the batch left open at teardown was not replayed");
+        Require(countedSubmits.load() == submitted, "a batch whose replay failed at teardown reached vkQueueSubmit");
+    }
+    {
+        Context failing = context;
+        failing.deviceProc = replayFailingDeviceProc;
+        Recorder recorder(failing, false, true, context.queueFamily);
+        recordBarrierThrough(failing, recorder.Commands());
+        lostSubmits.store(1);
+        bool lost = false;
+        try {
+            recorder.Submit();
+        } catch (const std::exception&) {
+            lost = true;
+        }
+        Require(lost && lostSubmits.load() == 0, "the injected device loss did not surface at submit");
+        VkCommandBufferAllocateInfo allocation{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+        allocation.commandPool = context.pool;
+        allocation.level = VK_COMMAND_BUFFER_LEVEL_SECONDARY;
+        allocation.commandBufferCount = 1;
+        VkCommandBuffer secondary = VK_NULL_HANDLE;
+        Require(context.Function<PFN_vkAllocateCommandBuffers>("vkAllocateCommandBuffers")(context.device, &allocation, &secondary) == VK_SUCCESS, "no secondary command buffer");
+        VkCommandBufferInheritanceInfo inheritance{VK_STRUCTURE_TYPE_COMMAND_BUFFER_INHERITANCE_INFO};
+        VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+        begin.pInheritanceInfo = &inheritance;
+        Require(context.Function<PFN_vkBeginCommandBuffer>("vkBeginCommandBuffer")(secondary, &begin) == VK_SUCCESS, "the secondary command buffer did not begin");
+        Require(context.Function<PFN_vkEndCommandBuffer>("vkEndCommandBuffer")(secondary) == VK_SUCCESS, "the secondary command buffer did not end");
+        const auto commands = recorder.Commands();
+        reinterpret_cast<PFN_vkCmdExecuteCommands>(CommandThunk("vkCmdExecuteCommands", context.deviceProc(context.device, "vkCmdExecuteCommands")))(commands, 1, &secondary);
+        Require(!recorder.Deferred(), "a command with an uncopied pointer did not demote the batch");
+        const auto submitted = countedSubmits.load();
+        bool refused = false;
+        try {
+            recorder.Submit();
+        } catch (const std::exception&) {
+            refused = true;
+        }
+        Require(refused && countedSubmits.load() == submitted, "a direct batch reached vkQueueSubmit after the device was lost");
+        context.Function<PFN_vkFreeCommandBuffers>("vkFreeCommandBuffers")(context.device, context.pool, 1, &secondary);
     }
     std::cout << "deferred batch tests passed\n";
 }
