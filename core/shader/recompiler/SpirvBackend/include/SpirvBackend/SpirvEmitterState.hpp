@@ -250,6 +250,8 @@ struct SpirvEmitterState {
     std::uint32_t vectorWindowIndexed = 0;
     std::array<std::vector<std::uint32_t>, 2> vectorWindowSlots {};
     bool meshWindowBuffer = false;
+    bool splitState = false;
+    std::uint32_t splitStateVariable = 0;
     std::uint32_t meshWindowBufferVariable = 0;
     std::uint32_t meshWindowSlotVariable = 0;
     std::uint32_t meshWindowBaseVariable = 0;

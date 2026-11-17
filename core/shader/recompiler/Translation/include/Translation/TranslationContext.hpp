@@ -38,6 +38,7 @@ public:
     void SyncVectorWindow(bool toWindow) { ir.SyncVectorWindow(toWindow); }
     void TranslateCodeTableLoad(const RdnaInstruction& instruction, const ControlFlowGraph::CodeTableLoad& table);
     void TranslateUnlinkedCall(const RdnaInstruction& instruction);
+    void TranslateSplitState(const SplitStateAbi::Plan& plan, const SplitStateAbi::Point& point);
     IrValue* ReadOperand(const RdnaOperand& operand, IrType type) { return readOperand(operand, type); }
     void WriteOperand(const RdnaOperand& operand, IrValue* value) { writeOperand(operand, value); }
 

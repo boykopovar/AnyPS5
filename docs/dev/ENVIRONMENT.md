@@ -17,6 +17,9 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_EBOOT` | string | `core/libs/prx/libSceSystemService/Export.cpp` |  | host path of the executable launched for /app0/eboot.bin; unset or empty means the running executable |
 | `APS5_LOAD_EXEC_STANDARD_ERROR` | string | `core/libs/tests/GuestSystemServiceLoadExecStandardError.cpp` |  | marker that the standard-error load-exec test sets in its child process to choose a mode, `list` or `none`; not a product setting |
 | `APS5_SKIP_TIMING_TESTS` | string | `core/libs/tests/PreciseWait.cpp` |  | treats the timing tests' runner as preempted, so they skip without probing the clock; an empty value or one starting with 0 leaves the probe on |
+| `APS5_SPLIT_SLICES` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Dispatch/Dispatch.cpp` | 8 | slices of `APS5_SPLIT_STATE_LANES` lanes that an indirect split table call dispatch covers, since its workgroup count is only known on the GPU |
+| `APS5_SPLIT_STATE_LANES` | integer | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Dispatch/Dispatch.cpp` | 262144 | lanes of a split table call dispatch that keep their saved state at once; the dispatch runs in slices of that many lanes, waiting for the GPU after each part that reads the lanes' targets back, so fewer lanes mean more waits (4096 made a PPSA01317 dispatch take 7.4 s instead of 450 ms) |
+| `APS5_SPLIT_TABLE_CALLS` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Shaders/ShaderRegistry.cpp` |  | splits a compute shader whose table call cannot be linked into one part before the call, one part per callee and one after it |
 | `APS5_USBD_DEVICE` | string | `core/libs/tests/GuestUsbd.cpp` |  | selects the USB device a test drives, as vendor:product in hex |
 
 ### core/relinker

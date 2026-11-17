@@ -247,7 +247,7 @@ bool WritesMemory(IrOpcode opcode) {
     const auto address = AddressOpcodeInfoOf(opcode).access;
     const auto image = ImageOpcodeInfoOf(opcode).access;
     return buffer == BufferAccess::Write || buffer == BufferAccess::Atomic || (shared != SharedAccess::None && shared != SharedAccess::Read) || address == AddressAccess::Write || address == AddressAccess::Atomic ||
-        image == ImageAccess::Write || image == ImageAccess::Atomic || opcode == IrOpcode::Barrier || opcode == IrOpcode::StoreVectorWindow;
+        image == ImageAccess::Write || image == ImageAccess::Atomic || opcode == IrOpcode::Barrier || opcode == IrOpcode::StoreVectorWindow || opcode == IrOpcode::StoreSplitState;
 }
 
 std::vector<std::pair<const IrValue*, std::uint32_t>> AdjacentBdaLoads(const SpirvEmitterState& state, const IrValue& inst, const MemoryInfo& mem) {

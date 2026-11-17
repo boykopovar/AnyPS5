@@ -446,6 +446,158 @@ static std::vector<std::uint32_t> HoistedTableCaller(HoistedShape shape) {
     return code;
 }
 
+static std::vector<std::uint32_t> WaterfallTableCaller(std::initializer_list<std::uint32_t> inLoop = {}) {
+    std::vector<std::uint32_t> code{0xbeaa047eu, 0x7e600281u, 0x7e280500u, 0xbea8047eu, 0x7da40014u, 0x7e600280u};
+    code.insert(code.end(), inLoop.begin(), inLoop.end());
+    const auto table = TableCaller();
+    code.insert(code.end(), table.begin(), table.end() - 1);
+    code.insert(code.end(), {0xbefe0428u, 0x7daa6080u});
+    const auto offset = 2 - static_cast<std::int32_t>(code.size() + 1u);
+    code.push_back(0xbf890000u | (static_cast<std::uint32_t>(offset) & 0xffffu));
+    code.insert(code.end(), {0xbefe042au, 0xbf810000u});
+    return code;
+}
+
+static void CheckTableCallSplit() {
+    const SwappcInfo swappc{false, 0u, 16u};
+    const std::vector<std::uint32_t> first{0xbf068000u, 0x4a020285u, 0xbe80200eu};
+    const std::vector<std::uint32_t> second{0x4a0202c0u, 0xbf068001u, 0xbe80200eu};
+    const auto split = [&](std::span<const std::uint32_t> caller, std::vector<TableCallee> callees, std::string& refusal) {
+        const auto program = RdnaInstructionDecoder{}.Decode(caller);
+        const auto calls = FindTableCalls(program, swappc);
+        Require(calls.size() == 1u);
+        return SplitTableCall(program, calls[0], callees, 32u, refusal);
+    };
+    const auto refused = [&](std::span<const std::uint32_t> caller, std::vector<TableCallee> callees, const char* needle) {
+        std::string refusal;
+        Require(!split(caller, std::move(callees), refusal));
+        if (refusal.find(needle) == std::string::npos) throw std::runtime_error(std::string("expected refusal ") + needle + ", got " + refusal);
+    };
+    const auto caller = WaterfallTableCaller();
+    std::string refusal;
+    const auto plan = split(caller, {{0x1000u, first}, {0x2000u, second}}, refusal);
+    Require(plan && plan->loopProgramCounter == 0x08u && plan->callProgramCounter == 0x3cu && plan->exitProgramCounter == 0x4cu && refusal.empty());
+    refused(TableCaller(), {{0x1000u, first}}, "s_cbranch_execnz of a waterfall loop");
+    refused(caller, {}, "holds no callee");
+    refused(caller, {{0x1000u, first}, {0x2000u, {0xd8340000u, 0x00000100u, 0xbe80200eu}}}, "accesses LDS");
+    refused(caller, {{0x1000u, {0xbf8a0000u, 0xbe80200eu}}}, "s_barrier");
+    refused(caller, {{0x1000u, {0x4a020285u, 0xbf810000u}}}, "ends the program");
+    refused(caller, {{0x1000u, {0xbe80200eu, 0x4a020285u, 0xbe80200eu}}}, "returns before its last instruction");
+    refused(caller, {{0x1000u, {0x4a020285u, 0xbe802010u}}}, "s_setpc_b64 to its link register");
+    refused(caller, {{0x1000u, {0x4a020285u, 0xbe8e210eu, 0xbe80200eu}}}, "calls another function");
+    refused(WaterfallTableCaller({0xd8340000u, 0x00000100u}), {{0x1000u, first}}, "vector or LDS memory");
+    auto unpicked = caller;
+    unpicked[2] = 0x7e280280u;
+    refused(unpicked, {{0x1000u, first}}, "v_readfirstlane_b32");
+    auto uncompared = caller;
+    uncompared[4] = 0x7da40015u;
+    refused(uncompared, {{0x1000u, first}}, "compare the picked value");
+    const std::vector<std::uint32_t> writesS30{0xbe9e0380u, 0xbe80200eu};
+    const auto after = [&](std::initializer_list<std::uint32_t> words) {
+        auto code = caller;
+        code.insert(code.end() - 1, words.begin(), words.end());
+        return code;
+    };
+    refused(after({0xbe9f031eu}), {{0x1000u, first}, {0x2000u, writesS30}}, "a callee writes s30");
+    refused(caller, {{0x1000u, first}, {0x2000u, {0xbea80380u, 0xbe80200eu}}}, "a callee writes s40");
+    refused(after({0x851f8080u}), {{0x1000u, first}}, "a callee writes scc");
+    std::string rewritten;
+    Require(split(after({0xbe9e0380u, 0xbe9f031eu}), {{0x1000u, first}, {0x2000u, writesS30}}, rewritten).has_value() && rewritten.empty());
+}
+
+static std::uint32_t SplitOpcodes(const IrProgram& program, IrOpcode opcode) {
+    std::uint32_t count = 0;
+    for (const auto& block : program.Blocks()) {
+        for (const IrValue* instruction : block->Instructions()) count += instruction->Opcode() == opcode ? 1u : 0u;
+    }
+    return count;
+}
+
+static IrProgram TranslateSplit(std::span<const std::uint32_t> code, std::span<const std::uint32_t> plan, const SwappcInfo& swappc) {
+    const auto program = RdnaInstructionDecoder{}.Decode(code);
+    const auto cfg = GraphBuilder{}.Build(program, &swappc);
+    auto decoded = SplitStateAbi::Decode(plan);
+    decoded.plan.points = decoded.points;
+    decoded.plan.registers = decoded.registers;
+    ShaderComputeInputInfo computeInfo{};
+    TranslateOptions options{};
+    options.stage = ShaderStageKind::Compute;
+    options.inputInfo.compute = &computeInfo;
+    options.userDataCount = swappc.userDataCount;
+    options.splitState = &decoded.plan;
+    auto translated = InstructionTranslator{}.Translate(program, cfg, options);
+    Require(translated.Metadata().splitState);
+    return translated;
+}
+
+static void CheckTableCallSplitPrograms() {
+    using SplitStateAbi::Action;
+    const SwappcInfo swappc{false, 0u, 16u};
+    const std::vector<std::uint32_t> first{0xbf068000u, 0x4a020285u, 0xbe80200eu};
+    const std::vector<std::uint32_t> second{0x4a0202c0u, 0xbf068001u, 0xbe80200eu};
+    const std::vector<TableCallee> callees{{0x1000u, first}, {0x2000u, second}};
+    const auto caller = WaterfallTableCaller();
+    const auto program = RdnaInstructionDecoder{}.Decode(caller);
+    const auto calls = FindTableCalls(program, swappc);
+    Require(calls.size() == 1u);
+    std::string refusal;
+    const auto split = SplitTableCall(program, calls[0], callees, 32u, refusal);
+    Require(split.has_value());
+    Require(std::find(split->vectors.begin(), split->vectors.end(), 1u) != split->vectors.end() && std::find(split->vectors.begin(), split->vectors.end(), 0u) == split->vectors.end());
+    constexpr std::uint32_t allocated = 4u;
+    const auto programs = BuildSplitTableCallPrograms(program, calls[0], callees, *split, allocated);
+    const auto vectors = programs.stateVectors;
+    Require(vectors == static_cast<std::uint32_t>(std::count_if(split->vectors.begin(), split->vectors.end(), [](std::uint32_t reg) { return reg < allocated; })));
+
+    const auto& entry = programs.entry;
+    Require(entry.code.size() == caller.size() && entry.code[0x3cu / 4u] == 0xbf800000u && entry.code[0x4cu / 4u] == 0xbf810000u);
+    const auto entryPlan = SplitStateAbi::Decode(entry.plan);
+    Require(entryPlan.points.size() == 3u && entryPlan.points[0].action == Action::ClearTarget && entryPlan.points[1].action == Action::SaveTarget && entryPlan.points[1].programCounter == 0x3cu);
+    Require(entryPlan.points[2].action == Action::Save && entryPlan.points[2].programCounter == 0x4cu);
+    Require(entryPlan.plan.vectorCount == vectors && entryPlan.registers.size() == vectors && entryPlan.plan.targetRegister == calls[0].targetRegister);
+    const auto entryIr = TranslateSplit(entry.code, entry.plan, swappc);
+    Require(SplitOpcodes(entryIr, IrOpcode::StoreSplitState) == 4u + vectors && SplitOpcodes(entryIr, IrOpcode::LoadSplitState) == 0u);
+
+    Require(programs.callees.size() == callees.size());
+    for (std::size_t callee = 0; callee < callees.size(); ++callee) {
+        const auto& replay = programs.callees[callee];
+        Require(std::equal(caller.begin(), caller.begin() + 0x3cu / 4u, replay.code.begin()) && replay.code[0x4cu / 4u] == 0xbf810000u);
+        Require(std::search(replay.code.begin(), replay.code.end(), callees[callee].code.begin(), callees[callee].code.end() - 1) != replay.code.end());
+        Require(std::search(replay.code.begin(), replay.code.end(), callees[1u - callee].code.begin(), callees[1u - callee].code.end() - 1) == replay.code.end());
+        const auto plan = SplitStateAbi::Decode(replay.plan);
+        Require(plan.plan.selectedTarget == callees[callee].target && plan.points.size() == 1u && plan.points[0].action == Action::SaveSelected && plan.points[0].programCounter == 0x4cu);
+        const auto replayIr = TranslateSplit(replay.code, replay.plan, swappc);
+        Require(SplitOpcodes(replayIr, IrOpcode::StoreSplitState) == vectors && SplitOpcodes(replayIr, IrOpcode::LoadSplitState) == 2u);
+    }
+
+    const auto& resume = programs.resume;
+    Require(resume.code.size() == caller.size() && resume.code[0] == caller[0] && resume.code[0x3cu / 4u] == 0xbf800000u && resume.code.back() == caller.back());
+    const auto resumeIr = TranslateSplit(resume.code, resume.plan, swappc);
+    Require(SplitOpcodes(resumeIr, IrOpcode::StoreSplitState) == 0u && SplitOpcodes(resumeIr, IrOpcode::LoadSplitState) == vectors);
+
+    const auto refusedSplit = [&](std::vector<std::uint32_t> code, const char* needle) {
+        const auto changed = RdnaInstructionDecoder{}.Decode(code);
+        const auto changedCalls = FindTableCalls(changed, swappc);
+        Require(changedCalls.size() == 1u);
+        std::string reason;
+        Require(!SplitTableCall(changed, changedCalls[0], callees, 32u, reason));
+        if (reason.find(needle) == std::string::npos) throw std::runtime_error(std::string("expected refusal ") + needle + ", got " + reason);
+    };
+    auto branchesIn = caller;
+    branchesIn[1] = 0xbf820000u;
+    refusedSplit(branchesIn, "entered by falling through");
+    auto loopsAgain = caller;
+    loopsAgain.back() = 0xbf840000u | (static_cast<std::uint32_t>(-static_cast<std::int32_t>(loopsAgain.size())) & 0xffffu);
+    loopsAgain.push_back(0xbf810000u);
+    refusedSplit(loopsAgain, "runs the waterfall loop again");
+    auto skipsExit = caller;
+    skipsExit[0] = 0xbf840000u | static_cast<std::uint32_t>(caller.size() - 2u);
+    refusedSplit(skipsExit, "skips the end of the waterfall loop");
+    auto storesFirst = caller;
+    storesFirst.insert(storesFirst.begin(), {0xe0701000u, 0x80010102u});
+    refusedSplit(storesFirst, "writes memory");
+}
+
 static void CheckTableCalleeProgramCounter() {
     const SwappcInfo swappc{false, 0u, 16u};
     const auto caller = TableCaller();
@@ -613,6 +765,8 @@ int main(int argc, char** argv) {
             CheckUserDataCalls();
             CheckTableCalls();
             CheckTableCalleeProgramCounter();
+            CheckTableCallSplit();
+            CheckTableCallSplitPrograms();
             CheckHoistedTableCalls();
             CheckGuards("");
         } else {

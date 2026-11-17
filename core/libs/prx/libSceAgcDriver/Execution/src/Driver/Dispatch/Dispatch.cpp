@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
+#include "SplitStateAbi.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTimer.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
@@ -95,6 +96,153 @@ bool Driver::capturedCurrent(std::span<const ShaderRecompiler::MemoryRegion> cap
 
 bool Driver::pipelineDispatch() {
     return DispatchItemsEnabled();
+}
+
+void Driver::dispatchSplitTableCall(QueueState& queue, std::span<const std::uint32_t> packet, const Submission& submission, std::uint64_t indirectArguments, SplitTableCallParts& split, const ShaderRecompiler::RecompileRequest& request, std::span<const ShaderRecompiler::MemoryRegion> memory, std::uint64_t address, const ShaderRecompiler::ShaderComputeStageInfo& compute, const std::array<std::uint32_t, 3>& threadGroup, const std::shared_ptr<VulkanDevice>& localDevice) {
+    const auto partCount = SplitTableCallPartCount(split);
+    const bool continues = SplitTableCallContinues(split);
+    std::vector<SplitTableCallPart> parts(partCount);
+    std::vector<std::vector<Graphics::GuestMemorySnapshot>> partSnapshots(partCount);
+    std::vector<std::shared_ptr<ShaderMemory>> partMemories(partCount);
+    const auto fail = [&](const std::string& reason) {
+        char where[96];
+        std::snprintf(where, sizeof(where), "compute shader 0x%llx split into %zu table call parts: ", static_cast<unsigned long long>(address), partCount);
+        return std::runtime_error(where + reason + describeIndirectSource());
+    };
+    const auto compile = [&](std::span<const std::size_t> which) {
+        try {
+            std::vector<ShaderMemory*> memoryViews;
+            for (const auto part : which) {
+                partMemories[part] = std::make_shared<ShaderMemory>(memory, &queryPendingWrite, &observePendingWrite, hookWaitCounter(), &QueryPendingSpan);
+                memoryViews.push_back(partMemories[part].get());
+            }
+            auto compiled = CompileSplitTableCallParts(memoryViews, split, which, request);
+            static std::mutex reportedMutex;
+            static std::set<std::uint64_t> reported;
+            std::lock_guard reportedLock(reportedMutex);
+            for (std::size_t index = 0; index < which.size(); ++index) {
+                const auto part = which[index];
+                const auto& result = *compiled[index].result;
+                if (reported.insert(result.variantId).second) std::fprintf(stderr, "[gpu] compute shader 0x%llx: split part %zu of %zu (%s) is variant 0x%llx, %zu SPIR-V words\n", static_cast<unsigned long long>(address), part, partCount, part == 0 ? "entry" : part + 1 == partCount ? "resume" : "callee", static_cast<unsigned long long>(result.variantId), result.spirv.size());
+                parts[part] = std::move(compiled[index]);
+                for (const auto& region : partMemories[part]->Regions()) partSnapshots[part].push_back({region.guestAddress, region.bytes});
+            }
+        } catch (const std::exception& error) {
+            throw fail(error.what());
+        }
+        ForEachSplitTableCallPart(which.size(), [&](std::size_t index) {
+            try {
+                localDevice->PrebuildComputePipeline(*parts[which[index]].result, address);
+            } catch (const std::exception&) {
+            }
+        });
+    };
+    std::vector<std::size_t> first;
+    for (std::size_t part = 0; part < partCount; ++part) {
+        if (part == 0 || part + 1u == partCount) first.push_back(part);
+    }
+    compile(first);
+    std::array<std::uint32_t, 3> groups{packet[1], packet[2], packet[3]};
+    if (indirectArguments == 0 && (packet[4] & 0x20u) != 0) {
+        for (std::uint32_t axis = 0; axis < 3; ++axis) groups[axis] = ThreadDimensionGroups(groups[axis], std::max(readRegister(queue.shader, 0x207 + axis) & 0xffffu, 1u));
+    }
+    const auto lanesPerGroup = parts.front().result->splitStateLanes;
+    for (const auto& part : parts) {
+        if (part.result != nullptr && part.result->splitStateLanes != lanesPerGroup) throw fail("its parts disagree on the lanes of a workgroup");
+    }
+    static const std::uint32_t stateLanes = [] {
+        const char* text = std::getenv("APS5_SPLIT_STATE_LANES");
+        return text != nullptr ? static_cast<std::uint32_t>(std::strtoul(text, nullptr, 0)) : 1u << 18u;
+    }();
+    static const std::uint64_t indirectSlices = [] {
+        const char* text = std::getenv("APS5_SPLIT_SLICES");
+        return text != nullptr ? std::max<std::uint64_t>(std::strtoull(text, nullptr, 0), 1u) : 8u;
+    }();
+    const auto stateSlots = SplitTableCallStateSlots(split);
+    const auto groupsInRange = (localDevice->StorageBufferRangeLimit() / sizeof(std::uint32_t) - ShaderRecompiler::SplitStateAbi::HeaderDwords) / (static_cast<std::uint64_t>(stateSlots) * lanesPerGroup);
+    const auto groupsPerSlice = std::max<std::uint64_t>(std::min<std::uint64_t>(groupsInRange, localDevice->WorkGroupCountLimit()[0]), 1u);
+    const std::uint64_t indirectGroups = indirectSlices * std::max(stateLanes / lanesPerGroup, 1u);
+    const auto sliceGroups = static_cast<std::uint32_t>(std::min<std::uint64_t>(indirectArguments != 0 ? indirectGroups : std::max(stateLanes / lanesPerGroup, 1u), groupsPerSlice));
+    const auto totalGroups = static_cast<std::uint64_t>(groups[0]) * groups[1] * groups[2];
+    const auto slices = ((indirectArguments != 0 ? indirectGroups : totalGroups) + sliceGroups - 1u) / sliceGroups;
+    if (slices * sliceGroups > std::numeric_limits<std::uint32_t>::max()) throw fail("its slices start past 2^32 workgroups");
+    const VulkanDevice::SplitSlice base{sliceGroups * lanesPerGroup, 0u, sliceGroups, stateSlots};
+    const std::uint64_t dispatchThreads = indirectArguments != 0 ? 0 : totalGroups * compute.numThreads[0] * compute.numThreads[1] * compute.numThreads[2];
+    const auto run = [&](std::size_t part, std::uint64_t slice, bool readTargets) {
+        const auto& compiled = *parts[part].result;
+        const auto* views = &parts[part].capture->snapshot.registeredImages;
+        try {
+            auto prepared = localDevice->PrepareDispatch(compiled, partSnapshots[part], dispatchThreads, address, std::nullopt, views);
+            GuestMemory::TagGpuLockSite(indirectArguments != 0 ? GuestMemory::GpuLockSite::Indirect : GuestMemory::GpuLockSite::Dispatch);
+            std::lock_guard gpuLock(GuestMemory::GpuMutex());
+            recordLabelsForPacket(localDevice.get(), submission.queue);
+            auto current = base;
+            current.groupBase = static_cast<std::uint32_t>(slice * sliceGroups);
+            current.readTargets = readTargets;
+            current.targetSlot = SplitTableCallTargetSlot(split);
+            localDevice->SetSplitSlice(current);
+            try {
+                if (indirectArguments != 0) {
+                    const auto outcome = localDevice->DispatchIndirect(compiled, indirectArguments, partSnapshots[part], address, std::move(prepared), nullptr, threadGroup, views);
+                    countIndirect(outcome.cpuReason, outcome.argumentReadMs);
+                } else {
+                    localDevice->Dispatch(compiled, groups[0], groups[1], groups[2], partSnapshots[part], address, std::move(prepared), nullptr, std::nullopt, views);
+                }
+            } catch (...) {
+                localDevice->SetSplitSlice(std::nullopt);
+                throw;
+            }
+            localDevice->SetSplitSlice(std::nullopt);
+            if (!readTargets) return std::vector<std::uint64_t>{};
+            localDevice->WaitIdle();
+            const auto words = localDevice->SplitTargets();
+            constexpr auto header = ShaderRecompiler::SplitStateAbi::HeaderDwords;
+            constexpr auto counts = ShaderRecompiler::SplitStateAbi::GroupCountDword;
+            const auto capacity = base.capacity;
+            const std::uint64_t dispatched = static_cast<std::uint64_t>(words[counts]) * words[counts + 1u] * words[counts + 2u];
+            const auto groupBase = slice * sliceGroups;
+            const auto lanes = dispatched <= groupBase ? 0u : static_cast<std::uint32_t>(std::min<std::uint64_t>((dispatched - groupBase) * lanesPerGroup, capacity));
+            std::set<std::uint64_t> targets;
+            for (std::uint32_t lane = 0; lane < lanes; ++lane) {
+                const auto target = static_cast<std::uint64_t>(words[header + lane]) | static_cast<std::uint64_t>(words[header + capacity + lane]) << 32u;
+                if (target != 0) targets.insert(target);
+            }
+            return std::vector<std::uint64_t>(targets.begin(), targets.end());
+        } catch (const std::exception& error) {
+            throw fail(error.what());
+        }
+    };
+    constexpr std::uint32_t continuationRounds = 1u << 12u;
+    for (std::uint64_t slice = 0; slice < slices; ++slice) {
+        auto targets = run(0, slice, true);
+        for (std::uint32_t round = 0; !targets.empty(); ++round) {
+            if (round == continuationRounds) throw fail("its lanes still call after " + std::to_string(continuationRounds) + " rounds");
+            std::vector<std::size_t> served;
+            for (const auto target : targets) {
+                const auto part = SplitTableCallPartOf(split, target);
+                if (!part) {
+                    char text[96];
+                    std::snprintf(text, sizeof(text), "a lane calls 0x%llx, which its call table does not hold", static_cast<unsigned long long>(target));
+                    throw fail(text);
+                }
+                served.push_back(*part);
+            }
+            std::vector<std::size_t> missing;
+            for (const auto part : served) {
+                if (parts[part].result == nullptr) missing.push_back(part);
+            }
+            if (!missing.empty()) compile(missing);
+            for (const auto part : served) static_cast<void>(run(part, slice, false));
+            if (!continues) break;
+            targets = run(partCount - 1u, slice, true);
+        }
+        if (!continues) static_cast<void>(run(partCount - 1u, slice, false));
+    }
+    if (writeEvidenceEnabled() || traceCapSync()) {
+        for (const auto& part : parts) {
+            if (part.result != nullptr) noteWrittenBuffers(address, submission.queue, *part.result);
+        }
+    }
 }
 
 void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, const Submission& submission, std::uint64_t indirectArguments) {
@@ -211,6 +359,14 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
         localDevice->ComputeTarget((packet[4] & 0x8000u) != 0 ? 32u : 64u),
         {0, 0, 0, threadGroup != std::array<std::uint32_t, 3>{} ? 0u : 128u}
     };
+    if (const auto rsrc1 = queue.shader.find(0x212); !fromAhead && rsrc1 != queue.shader.end()) {
+        const auto vectorGranule = request.context.waveSize == 32u ? 8u : 4u;
+        if (const auto split = SplitTableCallPartsFor(request, ((rsrc1->second & 0x3fu) + 1u) * vectorGranule)) {
+            if (resolving) return;
+            dispatchSplitTableCall(queue, packet, submission, indirectArguments, *split, request, memory, address, compute, threadGroup, localDevice);
+            return;
+        }
+    }
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     static std::atomic<double> captureMs{0}, keyMs{0}, recompileMs{0}, deviceMs{0};
     static std::atomic<std::uint64_t> cacheHits{0};

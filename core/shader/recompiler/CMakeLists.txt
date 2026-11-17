@@ -335,6 +335,13 @@ function(add_shader_recompiler target runtimeTarget)
             LinkUserDataCalls
             FindTableCalls
             LinkCalls
+            SplitTableCall
+            BuildSplitTableCallPrograms
+            ContinueTableCall
+            BuildTableCallContinuation
+            SplitStateAbi::TotalSlots
+            SplitStateAbi::TargetSlot
+            SplitStateAbi::SlotCount
             LoadStamp
             StoreStamp
             WriteFileAtomically

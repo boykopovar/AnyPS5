@@ -20,6 +20,8 @@ namespace ShaderRecompiler {
 
 namespace {
 
+constexpr std::uint32_t SplitLoopGuardLimit = 1u << 12u;
+
 std::string FailureText(const IrProgram& program) {
     char hash[24];
     std::snprintf(hash, sizeof(hash), "%llx", static_cast<unsigned long long>(program.Resources().shaderHash));
@@ -339,6 +341,8 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.bdaStopsInvocations = state.waveLdsScope == 0 && !state.spannedWave && BdaInvocationsMayStop(program) && program.Resources().stage != IrShaderStage::Mesh;
     state.meshWindowBuffer = target.meshWindowBuffer && program.Resources().stage == IrShaderStage::Mesh && program.Metadata().vectorWindowSize != 0u && state.laneCount * MeshWindowInvocations(state) * program.Metadata().vectorWindowSize <= MeshWindowSlotDwords;
     if (target.meshInlineFunctions && program.Resources().stage == IrShaderStage::Mesh) state.module.InlineFunctions();
+    state.splitState = program.Metadata().splitState && program.Resources().stage == IrShaderStage::Compute;
+    if (state.splitState && state.loopGuardLimit == 0) state.loopGuardLimit = SplitLoopGuardLimit;
     EmitModuleHeader(state, bindings);
     EmitProgram(state);
     state.module.EmitEntryPoint(ExecutionModelForStage(state.program.Resources().stage), state.mainFunc, "main", state.interfaceVariables);
@@ -353,6 +357,7 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
         info->fullSubgroups = state.spannedWave;
         info->functionLdsBuffer = state.pixelFunctionLdsBuffer;
         info->meshWindowBuffer = state.meshWindowBuffer;
+        info->splitStateLanes = state.splitState ? state.laneCount * MeshWindowInvocations(state) : 0u;
         info->scratchPoolSlotDwords = ScratchPoolActive(state) ? ScratchPoolSlotDwords(state) : 0u;
         info->anySubgroupSize = state.spannedAnySubgroup;
     }
