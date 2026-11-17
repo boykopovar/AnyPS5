@@ -2,6 +2,7 @@
 #include "prx/libSceHttp/src/Cookies.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libSceHttp/src/GuestAccess.hpp"
 #include "prx/libSceHttp/src/HttpErrors.hpp"
 #include "prx/libSceHttp/src/Options.hpp"
 #include <algorithm>
@@ -564,11 +565,14 @@ int APS5_VABI sceHttpGetCookieStats(int id, HttpCookieStats* stats) {
     if (!jar) return ERROR_INVALID_ID;
     if (!stats) return ERROR_INVALID_VALUE;
     std::erase_if(jar->cookies, [now = Clock::now()](const Cookie& stored) { return expired(stored, now); });
-    stats->usedBytes = jarSize(*jar);
-    stats->cookieCount = static_cast<std::uint32_t>(jar->cookies.size());
-    stats->peakUsedBytes = jar->peakSize;
-    stats->peakCookieCount = jar->peakNum;
-    stats->evictedCookieCount = jar->removedNum;
+    HttpCookieStats out{};
+    if (!HttpGuest::CopyIn(&out, stats, sizeof(out))) return ERROR_INVALID_VALUE;
+    out.usedBytes = jarSize(*jar);
+    out.cookieCount = static_cast<std::uint32_t>(jar->cookies.size());
+    out.peakUsedBytes = jar->peakSize;
+    out.peakCookieCount = jar->peakNum;
+    out.evictedCookieCount = jar->removedNum;
+    if (!HttpGuest::CopyOut(stats, &out, sizeof(out))) return ERROR_INVALID_VALUE;
     return 0;
 }
 

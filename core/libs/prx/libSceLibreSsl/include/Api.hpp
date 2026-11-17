@@ -917,7 +917,7 @@ int APS5_VABI UI_method_set_opener_nid_postfix(LibreSslUiMethod* method, UiSessi
 int APS5_VABI UI_method_set_reader_nid_postfix(LibreSslUiMethod* method, UiStringFunction reader);
 int APS5_VABI UI_method_set_writer_nid_postfix(LibreSslUiMethod* method, UiStringFunction writer);
 int APS5_VABI UI_set_result_nid_postfix(LibreSslUi* ui, LibreSslUiString* string, const char* result);
-int APS5_VABI X509V3_EXT_print_nid_postfix(void);
+int APS5_VABI X509V3_EXT_print_nid_postfix(LibreSsl::Bio* out, void* extension, std::uint64_t flag, int indent);
 int APS5_VABI X509_EXTENSION_get_critical_nid_postfix(const void* extension);
 void* APS5_VABI X509_EXTENSION_get_data_nid_postfix(const void* extension);
 void* APS5_VABI X509_EXTENSION_get_object_nid_postfix(const void* extension);
@@ -928,7 +928,7 @@ LibreSslX509NameEntry* APS5_VABI X509_NAME_get_entry_nid_postfix(const LibreSslX
 int APS5_VABI X509_NAME_get_index_by_NID_nid_postfix(const LibreSslX509Name* name, int nid, int lastpos);
 int APS5_VABI X509_NAME_get_text_by_NID_nid_postfix(const LibreSslX509Name* name, int nid, char* buf, int len);
 char* APS5_VABI X509_NAME_oneline_nid_postfix(const void* name, char* buffer, int length);
-int APS5_VABI X509_NAME_print_ex_nid_postfix(void);
+int APS5_VABI X509_NAME_print_ex_nid_postfix(LibreSsl::Bio* bio, const LibreSslX509Name* name, int indent, std::uint64_t flags);
 LibreSslStack* APS5_VABI X509_STORE_CTX_get1_chain_nid_postfix(LibreSslX509StoreContext* context);
 void* APS5_VABI X509_STORE_CTX_get_chain_nid_postfix(LibreSslX509StoreContext* context);
 void* APS5_VABI X509_STORE_CTX_get_current_cert_nid_postfix(LibreSslX509StoreContext* context);

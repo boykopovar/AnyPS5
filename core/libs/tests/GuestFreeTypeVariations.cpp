@@ -5,6 +5,7 @@
 
 #include FT_MULTIPLE_MASTERS_H
 
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -250,6 +251,32 @@ static void TestGetMultiMaster() {
     Require(FT_Get_Multi_Master_nid_postfix(nullptr, &actual) == FT_Get_Multi_Master(nullptr, &expected));
 }
 
+static void TestProbeErrors() {
+    for (auto font : {FontFixture::BuildFont(3, {}), FontFixture::BitmapFont()}) {
+        FacePair pair(std::move(font));
+        Require(!FT_HAS_MULTIPLE_MASTERS(pair.oracle));
+        void* actual = reinterpret_cast<void*>(std::uintptr_t{1});
+        FT_MM_Var* expected = reinterpret_cast<FT_MM_Var*>(std::uintptr_t{1});
+        const int error = FT_Get_MM_Var(pair.oracle, &expected);
+        Require(error == FT_Err_Invalid_Argument);
+        Require(FT_Get_MM_Var_nid_postfix(&pair.guest.rec, &actual) == error);
+        Require(actual == reinterpret_cast<void*>(std::uintptr_t{1}) && expected == reinterpret_cast<FT_MM_Var*>(std::uintptr_t{1}));
+        std::array<std::uint64_t, 16> master;
+        master.fill(0x1122334455667788);
+        FT_Multi_Master native{};
+        Require(FT_Get_Multi_Master(pair.oracle, &native) == FT_Err_Invalid_Argument);
+        Require(FT_Get_Multi_Master_nid_postfix(&pair.guest.rec, master.data()) == FT_Err_Invalid_Argument);
+        for (const auto value : master) Require(value == 0x1122334455667788);
+        Require(FT_Get_MM_Var_nid_postfix(&pair.guest.rec, nullptr) == FT_Get_MM_Var(pair.oracle, nullptr));
+        Require(FT_Get_Multi_Master_nid_postfix(&pair.guest.rec, nullptr) == FT_Get_Multi_Master(pair.oracle, nullptr));
+    }
+    FacePair variable(VariableFont());
+    Require(FT_Get_MM_Var_nid_postfix(&variable.guest.rec, nullptr) == FT_Get_MM_Var(variable.oracle, nullptr));
+    Require(FT_Get_Multi_Master_nid_postfix(&variable.guest.rec, nullptr) == FT_Get_Multi_Master(variable.oracle, nullptr));
+    Require(FT_Get_MM_Var_nid_postfix(nullptr, nullptr) == FT_Get_MM_Var(nullptr, nullptr));
+    Require(FT_Get_Multi_Master_nid_postfix(nullptr, nullptr) == FT_Get_Multi_Master(nullptr, nullptr));
+}
+
 int main() {
     TestGetMMVar();
     TestDoneMMVar();
@@ -260,4 +287,5 @@ int main() {
     TestSetMMBlend();
     TestSetMMDesign();
     TestGetMultiMaster();
+    TestProbeErrors();
 }

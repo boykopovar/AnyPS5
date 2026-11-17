@@ -64,6 +64,7 @@ bool DccAlphaOnMsb(VkFormat format, std::uint32_t componentSwap);
 // The keys of a texture's DCC surface when they fast-clear it to a value encodable here, else
 // Uncompressed (the texels are read as stored; other keys are reported once).
 DccKeys TextureClearKeys(const GuestTextureResource& resource, std::uint64_t guestBytes);
+DccKeys ScannedDccKeys(std::uint64_t metaAddress, std::size_t keyCount);
 // The last stable key scan of one surface's metadata (ProvedClearKeys): the keys read and the write
 // generation the key range was collected at before the scan. Held by the image or texture of the
 // surface, read and written under GuestMemory::GpuMutex only.
