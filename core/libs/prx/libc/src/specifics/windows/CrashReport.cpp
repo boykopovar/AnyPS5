@@ -368,6 +368,7 @@ LONG WINAPI ReportCrash(EXCEPTION_POINTERS* info) {
     if (fault->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && fault->NumberParameters >= 2 && fault->ExceptionInformation[0] == 1 && GuestArena::GuestArenaHandleWrite_nid_postfix(fault->ExceptionInformation[1])) return EXCEPTION_CONTINUE_EXECUTION;
     if (fault->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && fault->NumberParameters >= 2 && fault->ExceptionInformation[0] == 0 && GuestArena::GuestArenaHandleRead_nid_postfix(fault->ExceptionInformation[1])) return EXCEPTION_CONTINUE_EXECUTION;
     if (HandleWatch(info)) return EXCEPTION_CONTINUE_EXECUTION;
+    if (GuestArena::GuestArenaRecoverWrite_nid_no_patch(info)) return EXCEPTION_CONTINUE_EXECUTION;
     if (HandleSse4a(info)) return EXCEPTION_CONTINUE_EXECUTION;
     if (HandleHostFault(info)) return EXCEPTION_CONTINUE_EXECUTION;
     const auto* record = info->ExceptionRecord;

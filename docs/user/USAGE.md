@@ -148,7 +148,7 @@ All switches are disabled by default. `unused-filter` defaults to `0`; `--rpath`
 | `unused-filter=2`             | Apply strict unused-import analysis and compact the PLT. Unsupported analysis cases cause an error.                                                                                                                                                                                                                                                                                                                                                                         |
 | `--registry`                  | Write `<output-stem>.registry.json` beside the output executable, and `<output-stem>.<module>.registry.json` for each converted bundled module.                                                                                                                                                                                                                                                                                                                             |
 | `--rpath <path>`              | Set the system library search path. Quote `$ORIGIN` to prevent shell expansion, for example `--rpath '$ORIGIN/libs'` in Bash or PowerShell. On Linux every colon-separated entry must be nonempty, and with guest modules each must be absolute or begin with `$ORIGIN`. Windows requires a nonempty ASCII path and supports `$ORIGIN` as the executable directory.                                                                                                         |
-| `--omit-unavailable-dependencies` | Linux output: leave out a bundled module's dependency that no converted module provides, from which the module imports nothing, and that no `--rpath` directory holds when converting. Every run path directory must exist at that time. Without the switch such a dependency is kept and the conversion prints a note naming it. Use it only when the run path holds every system library: a library found later through `LD_LIBRARY_PATH` is no longer loaded. |
+| `--omit-unavailable-dependencies` | Linux output: leave out a bundled module's dependency that no converted module provides, from which the module imports nothing, and that no `--rpath` directory holds when converting. Every run path directory must exist at that time. Without the switch such a dependency is kept and the conversion prints a note naming it. Use it only when the run path holds every system library: a library found later through `LD_LIBRARY_PATH` is no longer loaded. Cannot be used with `--windows` or `--macos`. |
 | `--autorun`                   | Run the output after conversion, print its exit code, and wait for Enter. Requires the target OS and prepared runtime layout.                                                                                                                                                                                                                                                                                                                                               |
 | `--sce-module-path <path>`    | Parent of the module directories, not the module directory itself. Default: input ELF parent; relative input paths resolve from the process working directory. Explicit absolute path: used directly. Explicit relative path (including `.` and `..`): relative to the process working directory. Output path has no effect. Requires one nonempty value; repeats, nonexistent or nondirectory paths, access failures, and combination with `--skip-sce-module` are errors. |
 | `--module-dir <dir>`          | Relink the ELF modules of a directory under the module parent directory, besides `sce_module`/`sce_modules`/`prx`; outputs keep the relative path. Needed modules are mapped at startup. On Linux, modules in these extra directories initialize only when explicitly loaded, with the arguments from `sceKernelLoadStartModule` (for example Unity plugins in `Media/Plugins`). On Windows, such a module initializes when explicitly loaded, after the modules it needs that initialize the same way (they receive the same start arguments), unless a module outside these directories needs it, directly or through other modules, then it initializes at startup; the first explicit load of any such module also initializes, best effort, the others that a module depends on. On macOS, a module another module or the executable needs initializes at startup. Other modules initialize when loaded. Repeatable; `.` is the parent itself, without the input ELF. Conflicts with `--skip-sce-module`.  |
@@ -156,7 +156,7 @@ All switches are disabled by default. `unused-filter` defaults to `0`; `--rpath`
 | `--patches <file>`            | Apply the byte patches of this file during conversion, see [game patches](#game-patches). Overrides `relinker-patches.toml` discovery. Conflicts with `--no-patches`. |
 | `--no-patches`                | Do not apply patches, and do not load `relinker-patches.toml` from the input directory. |
 | `--verify-patches <file>`     | Check a patch file against `<path>` without writing anything, see [game patches](#game-patches). Takes one path and no output path. |
-| `--verify-output`             | With `--verify-patches`, treat `<path>` as a converted Linux output instead of an input executable. |
+| `--verify-output`             | With `--verify-patches`, treat `<path>` as a converted Linux or Windows output instead of an input executable. |
 | `--function-symbol-roots`     | Treat defined function symbols as code entry points instead of trusting their `st_size` ranges during export validation and Windows/macOS code analysis. For modules whose symbol sizes describe different code, such as generated loader companions. Function entries must remain executable and file-backed; data, TLS and unwind ranges keep their checks. The original symbol sizes are preserved. |
 | `--skip-sce-module`           | Deprecated. Disable bundled module processing and module directory checks. Conflicts with explicit `--sce-module-path`.                                                                                                                                                                                                                                                                                                                                                     |
 | `--exclude-sce-module <file>` | Deprecated. Exclude a bundled module by exact filename, not path. Repeat for multiple files; a missing filename is an error. Conflicts with `--skip-sce-module`.                                                                                                                                                                                                                                                                                                            |
@@ -178,7 +178,7 @@ A patch file changes bytes of the input executable or of a bundled module before
 The advisor and catalog validator require Python 3.11 or newer. To check a local patch catalog, run:
 
 ```sh
-python3 tools/suggest_patches.py --catalog <directory> --param-json <sce_sys/param.json> --input <input.elf> --relinker <relinker> [--sce-module-path <directory>] [--module-dir <directory>]... [--executable <path>]... [--skip-sce-module] [--timeout-seconds <seconds>] [--list-verified]
+python3 tools/suggest_patches.py --catalog <directory> --param-json <sce_sys/param.json> --input <input.elf> --relinker <relinker> [--sce-module-path <directory>] [--module-dir <directory>]... [--executable <path>]... [--skip-sce-module] [--timeout-seconds <seconds>] [--list-verified] [--json]
 ```
 
 To check every entry in a catalog before sharing it, without game files or a relinker, run:
@@ -241,6 +241,8 @@ The advisor validates patch files only for entries matching the requested title 
 
 With `--list-verified`, the advisor prints every entry that passes metadata, hash and relinker checks, in catalog order. Each result includes its catalog number, patch file, target hashes and conversion options. It exits `0` when at least one entry verifies, even if another entry was rejected; with no verified entries, the existing `1` or `2` exit status still applies. Without this option, a single verified entry is recommended and multiple verified entries remain ambiguous. The listing tells users to choose one patch file. It does not combine patch files or apply them during conversion; review the chosen patch before applying it.
 
+Use `--json` for one machine-readable result on stdout. `schemaVersion` is `1` for every result, including errors; consumers should check it before reading other fields. The existing `status`, `entries`, `recommended_entry` and exit codes keep their meanings. Each entry with `status: "verified"` also has `conversion_options`: an array of individual arguments such as `["--patches", "/absolute/catalog/patch.toml", "--skip-sce-module"]`. These are the same options printed by the text mode, in the same order; they do not include the relinker program or input ELF. Relative module paths retain the meaning they had in the advisor invocation. Rejected entries have no conversion options. The array describes one verified patch file, not a combination of entries, and does not apply a patch automatically. Argument parsing errors still use argparse's stderr output and exit status.
+
 The target hashes identify the exact unwrapped files changed by a patch, which might not include the main executable. Different dump tools could produce different bytes for the same title version; the advisor then rejects a patch even if it would work. It has not been confirmed that all dump tools produce identical files. The hashes do not authenticate a catalog or establish that a patch is safe or that the title is fully playable. Use catalogs from sources you trust and review the patch before applying it.
 
 If the patch targets another title executable, pass `--executable <path>` to the advisor for each additional executable, using paths relative to the module parent directory, such as `picker/picker.bin`. The advisor hashes those target files and forwards the same options to `relinker --verify-patches`. Use the same `--executable` options when converting with `--patches`.
@@ -275,6 +277,7 @@ description = "pool size"
 | `name` | Optional. A setting name of `[a-z0-9_]`, unique within the file and not one of the reserved top-level key names (`format` and the eight keys above). Shown in the progress line, the manifest and the verify report. |
 | `target` | Required. The main executable's file name, or for `--executable` files and bundled modules the path relative to the module parent directory, for example `sce_module/libc.prx`. |
 | `va` | Required. The virtual address of the ELF as a disassembler shows it. |
+| `output_rva` | Optional, from `0` to `0xffffffff`. Written to the manifest by a `--windows` conversion: the address of the entry's first byte in the PE output, relative to its image base. Used only by `--verify-output`; a conversion ignores it and writes its own. |
 | `type` | Optional: `u8 u16 u32 u64 i8 i16 i32 i64`. Then `expected`, `value`, `min`, `max` and `align` are integers, range-checked and written little-endian. Without it, `expected` and `value` are hexadecimal byte strings of the same length. |
 | `expected` | Required. The bytes the input must hold. |
 | `value` | Required. The bytes to write. |
@@ -285,11 +288,19 @@ x86 `mov r/m64, imm32` and `add`/`sub`/`cmp r/m64, imm32` sign-extend their imme
 
 Entries apply in file order. A patch range must lie in the file bytes of one `PT_LOAD` and outside the ELF header and program header table. The conversion fails before writing any output if bytes differ from `expected`, a range is not valid, two entries overlap, a target matches no file or more than one file, or a range overlaps bytes the relinker itself rewrites (`--to-intel` replacements and trampolines, relinker patches, syscall traps) or the 8-byte target of a relocation of the file.
 
+A PLT stub of the executable or of a bundled module that no longer starts with the linked `jmp` through its GOT entry is reported during the conversion, because the import of that entry is not called through it:
+
+```
+Replaced PLT stub: [<target>] va=0x<address> <linked> -> <found> [(jump to 0x<address>)]; import <NID> is not called through it; a --patches entry with expected = "<found>" and value = "<linked>" restores the linked stub
+```
+
+`<target>` is the module's patch target and is left out for the executable. The bytes are the 6-byte jump, or the whole 16-byte stub when its `push` and `jmp` to the PLT header differ as well. The conversion is otherwise unchanged and converts the replacement as it is. A table in which no stub is linked that way is not reported. When a syscall instruction is refused in the code such a stub jumps to, before that code's first return or jump, the error names the stub. Restoring the stub leaves that code unreferenced but still scanned, so a second entry has to overwrite it before the file converts.
+
 When at least one patch is applied, `<output-stem>.patches.toml` is written beside the output. It lists every applied entry for every converted file, with `main_target`, `linux_base` (the address a Linux `ET_EXEC` output is placed at) and `config` (the patch file path in forward-slash form, reduced to its file name when the path holds a `"`, backslash or control character; the conversion fails before writing any output when even that cannot be held); typed entries keep their `type`, integers and `min`, `max` and `align`, and `--patches` accepts it to reproduce the conversion. The manifest must not replace the patch file it was read from.
 
 `--verify-patches <file> <path>` writes nothing and exits `0` when no entry is a mismatch. Without `--verify-output`, `<path>` is the input executable of any type, modules are found as in a conversion (module options and `--executable` apply), and each entry is `applicable` (the input holds `expected`) or `mismatch`. A target that matches nothing is an error that suggests `--verify-output`.
 
-With `--verify-output`, `<path>` is a converted Linux ELF; PE and Mach-O outputs are refused. The file must have `main_target`, so verify the generated manifest, not a hand-written file. Entries are checked at their `va` plus the manifest's `linux_base` in an `ET_EXEC` output, which requires `linux_base`; an `ET_DYN` output, from `--lazy-binding`, requires a manifest without it. The entry whose target is `main_target` is checked against `<path>`, and entries for the `--executable` strings given are checked against the output file derived as in a conversion; an entry holding `value` is `applied`. Every other entry is `not-checked (module, or executable not named with --executable)`, including a mistyped module target. Two targets with the same name, such as an `--executable` equal to `main_target`, are an `ambiguous patch target` error. Module discovery options are rejected with `--verify-output`.
+With `--verify-output`, `<path>` is a converted Linux ELF or Windows PE; Mach-O outputs are refused. The file must have `main_target`, so verify the generated manifest, not a hand-written file. Entries are checked at their `va` plus the manifest's `linux_base` in an `ET_EXEC` output, which requires `linux_base`; an `ET_DYN` output, from `--lazy-binding`, requires a manifest without it. In a PE output, which also requires a manifest without `linux_base`, each entry is checked at its `output_rva`, which every checked entry must have; bytes of a section past its file data are the zeros the loader maps there, and the report says when a range holds only such bytes. The entry whose target is `main_target` is checked against `<path>`, and entries for the `--executable` strings given are checked against the output file derived as in a conversion; an entry holding `value` is `applied`. Every other entry is `not-checked (module, or executable not named with --executable)`, including a mistyped module target. Two targets with the same name, such as an `--executable` equal to `main_target`, are an `ambiguous patch target` error. Module discovery options are rejected with `--verify-output`.
 
 Verify mode rejects the conversion options (`--windows`, `--macos`, `--to-intel`, `--rpath`, `--patches`, `--no-patches` and the like) and a second path.
 
@@ -495,7 +506,7 @@ When a dump has neither `sce_sys/playgo-chunk.dat` nor `sce_sys/playgo-scenario.
 | Value | Answer for an unlisted chunk ID | Observed title that needs it |
 |-------|---------------------------------|------------------------------|
 | `installed` | Report it as installed (`LOCAL_FAST`). | None known: High on Life (PPSA15388), which needed it to load its saves, asks only IDs 0 to 999, which the default answers. |
-| `absent` | Return `SCE_PLAYGO_ERROR_BAD_CHUNK_ID`. | Sifu (PPSA03001) and Demon Slayer: Kimetsu no Yaiba - The Hinokami Chronicles (PPSA03490) use this result to end their chunk-ID search. With `installed`, PPSA03490 keeps asking about higher chunk IDs forever, so its chunk list grows until startup fails with a `Ran out of memory allocating 5565054976 bytes` error. |
+| `absent` | Return `SCE_PLAYGO_ERROR_BAD_CHUNK_ID`. | Sifu (PPSA03001), Demon Slayer: Kimetsu no Yaiba - The Hinokami Chronicles (PPSA03490) and Guilty Gear -Strive- (PPSA02257) use this result to end their chunk-ID search. With `installed`, PPSA03490 keeps asking about higher chunk IDs forever, so its chunk list grows until startup fails with a `Ran out of memory allocating 5565054976 bytes` error. PPSA02257 fails the same way after about 245 million `scePlayGoGetLocus` calls in 30 seconds. |
 | A comma-separated list of IDs, e.g. `0,1` | Report those IDs as installed (`LOCAL_FAST`) and every other unlisted ID as absent (`SCE_PLAYGO_ERROR_BAD_CHUNK_ID`). | The Medium (PPSA03718) needs chunks 0 and 1; with `installed` it asks about every ID and UE4 runs out of memory. |
 
 Leave the variable unset to keep the default above. A dump with `playgo-scenario.json` but no `playgo-chunk.dat` treats IDs 0 to 999 as listed, and an ID from 1000 up still stops with an error unless the variable is set. A list holds decimal chunk IDs from 0 to 65535 and is added to chunk 0; it only applies when the dump has neither `playgo-chunk.dat` nor `playgo-scenario.json`. Any other value also stops with an error. Dumps that include `playgo-chunk.dat` or `playgo-scenario.json` are unaffected. These title-specific results come from emulator runs and have not been verified against a console.
@@ -593,7 +604,51 @@ An empty value of either variable is the same as an unset one. The start fails o
 
 ### Benchmark reports
 
-To measure how a title runs on a machine, start it with `APS5_TRACE_SUMMARY_EVERY=30 APS5_TRACE_BENCH=1`, play the scene for a few minutes and quit. Every 30 seconds the runtime rewrites `aps5-bench-<commit>-<pid>.json.gz` in `APS5_TRACE_DIR` or the working directory and appends a line to `aps5-summary.jsonl`. The file holds the time between every two presents, the commit, GPU, driver, OS, CPU name, thread count and physical memory, and, when `app0/sce_sys/param.json` is present, the title ID, name and content version. It holds no game data. The first interval includes shader compilation; compare later intervals. The interval still open when the title exits is not written. The fields are described under [summaries for a long session](../dev/BUILD.md#summaries-for-a-long-session).
+To measure how a title runs on a machine, start it with `APS5_TRACE_SUMMARY_EVERY=30 APS5_TRACE_BENCH=1`, play the scene for a few minutes and quit. Every 30 seconds the runtime rewrites `aps5-bench-<commit>-<pid>.json.gz` in `APS5_TRACE_DIR` or the working directory and appends a line to `aps5-summary.jsonl`. The file holds the time between every two presents, the commit, GPU, driver, OS, CPU name, thread count and physical memory, and, when `app0/sce_sys/param.json` is present, the title ID, name and content version. It holds no game data. Only completed intervals are saved, keeping the most recent 240; `intervals_dropped` counts older intervals removed from the file. The interval still open when the title exits is not written. The fields are described under [summaries for a long session](../dev/BUILD.md#summaries-for-a-long-session).
+
+Read a capture with Python 3 from the source checkout:
+
+```sh
+python3 tools/benchmark_compare.py summarize captures/run.json.gz
+python3 tools/benchmark_compare.py summarize captures/run.json.gz --intervals 1:2 --json
+```
+
+`--intervals START:COUNT` selects whole completed intervals by their zero-based position in the retained file: `1:2` selects positions 1 and 2. Without it, all retained intervals are included. An interval recorded during loading or shader compilation stays included unless you select a later range. The report shows the selected intervals' recorded times and global present numbers, including when earlier history was dropped. A selected range that crosses a gap is refused.
+
+FPS uses the frame count divided by the sum of the selected intervals' elapsed times. Mean frame time and p50, p90, p99 and maximum frame time pool their recorded frame durations, which are truncated to microseconds. Those values can differ from the reciprocal of FPS. Saturated durations produce a warning and make affected raw-duration metrics unavailable.
+
+For repeated A/B runs, write a series JSON beside the captures. List attempts in the order they ran, using `baseline` and `candidate` as the arms. Give each intended matched pair the same `pair` value. This example records A, B, B, A, then two unsuccessful attempts:
+
+```json
+{
+  "format": "aps5-bench-series/1",
+  "recipe": {
+    "scene": "Load the same save and stand still after loading",
+    "save": "Local save slot 1",
+    "input": "No input during the selected intervals",
+    "cache": "Warm caches"
+  },
+  "runs": [
+    {"id": "A1", "arm": "baseline", "pair": "1", "capture": "captures/base-1.json.gz", "intervals": [1, 2]},
+    {"id": "B1", "arm": "candidate", "pair": "1", "capture": "captures/change-1.json.gz", "intervals": [1, 2]},
+    {"id": "B2", "arm": "candidate", "pair": "2", "capture": "captures/change-2.json.gz", "intervals": [1, 2]},
+    {"id": "A2", "arm": "baseline", "pair": "2", "capture": "captures/base-2.json.gz", "intervals": [1, 2]},
+    {"id": "B3", "arm": "candidate", "pair": "3", "status": "failed", "reason": "No benchmark was produced"},
+    {"id": "A3", "arm": "baseline", "pair": "3", "status": "excluded", "reason": "The display slept during the run"}
+  ]
+}
+```
+
+Capture paths are relative to the series file. `intervals` is `[START, COUNT]` and may be omitted to include all retained intervals. An included run may supply `sha256` to require that the original capture bytes match that digest. Failed and excluded attempts require a reason and have no capture. Keep them in the series so the report shows every supplied attempt. Reusing the same capture, including a renamed or recompressed copy, is refused as duplicate evidence.
+
+```sh
+python3 tools/benchmark_compare.py compare series.json
+python3 tools/benchmark_compare.py compare series.json --require-matching-context --json
+```
+
+The comparison preserves run order, reports each pair and counts complete pairs separately. Changes are candidate minus baseline; the aggregate reports the mean and range of paired percentage changes. A pair with a failed, excluded or missing arm contributes no paired change.
+
+Recorded context differences, dirty builds and missing identity fields appear in the report. `--require-matching-context` rejects recorded context differences. The recipe records the operator's account of the scene, save, input and caches. Check that the runs reached the same scene: matching metadata and hashes do not prove independent runs or that a code change caused a speed difference. The tool reads existing files and prints Markdown, or JSON with `--json`.
 
 ### Run report
 
@@ -700,6 +755,14 @@ ANYPS5_LOG_FILE=run.log ./app.elf
 - With no console, for example a Windows executable started without one, only the file receives the log.
 - On Windows the file was checked with a console, with the output redirected to a file or read through a pipe, and with no console, and the crash report path and the handover to a replacement executable are run by the tests.
 
+### Bug report bundle
+
+`python3 tools/bug_report.py` gathers what a bug report needs into one zip file: the run report `anyps5-report.json`, the log, and the input mapping, with your personal details redacted. It also writes `host.txt` with the operating system, machine and Python version, and a `README.txt` that says what was redacted.
+
+- By default it reads `./anyps5-report.json`, the log named by `ANYPS5_LOG_FILE` and the input mapping named by `ANYPS5_INPUT_CONFIG` (or `./anyps5-input.ini`), and writes `bug-report.zip`. Use `--report`, `--log`, `--input-config` and `--out` to choose other files.
+- Redaction replaces your home directory with `~`, your user and host names with `<user>` and `<host>`, and IPv4 addresses with `<ip>`. It matches whole words only, so a user name inside another word is not changed. It does not know other personal details, such as a name typed into a title, a file name that contains your name, or an IPv6 address; open the bundle and check it before you attach it.
+- A missing log or input mapping is left out of the bundle. The run report must be valid JSON. An existing bundle is never overwritten: the command exits with status 1 and names the file.
+
 ### Controller status panel
 
 A small panel over the presented image lists the controllers of the four player slots, one line for each slot that has had a controller since the game started (with `ANYPS5_PAD_STATUS` unset or 0, since the first F9 press, because controllers are not tracked before that): `P1 DUALSENSE  WIRED`, `P2 XBOX  BATTERY MEDIUM`, `P3 DISCONNECTED`. It is never shown permanently: it disappears 4 seconds after the last thing that showed it. With no controller seen yet it reads `NO CONTROLLER`.
@@ -774,7 +837,7 @@ An import that names a library requires the literal export name. If its implemen
 
 Module registries mark ELF weak imports with `"weak": true`, allowing the audit's current-stop selection to skip them. Strong imports omit the field. Older module registries do not preserve weak bindings; regenerate them to distinguish optional imports.
 
-ELF modules in `--modules` are audited regardless of filename: their undefined symbols are classified against the built libraries and the other modules' exports, with the module file named in the report, and the libraries they need must have a file in `--libs` or `--modules`. Ordinary non-module sidecars are ignored; malformed ELF, SELF containers and non-ELF files with module extensions remain errors; the converted `*.guest.prx` PE modules of a Windows build are accepted, and any other PE file is an error. The audit reads dynamic tables from ELF section headers or, for sectionless files, from `PT_DYNAMIC` and a SysV or GNU hash table.
+ELF modules in `--modules` are audited regardless of filename: their undefined symbols are classified against the built libraries and the other modules' exports, with the module file named in the report, and the libraries they need must have a file in `--libs` or `--modules`. Ordinary non-module sidecars are ignored; malformed ELF, SELF containers and non-ELF files with module extensions remain errors; the converted `*.guest.prx` PE modules of a Windows build are accepted, and any other PE file is an error. The audit reads dynamic tables from ELF section headers or, for sectionless files, from `PT_DYNAMIC` and a SysV or GNU hash table. When both views are present, their import, export and dependency inventories must agree; contradictory metadata is an error. A PS4 module has no `DT_STRTAB` or `DT_SYMTAB`: the SCE tags `0x61000035` and `0x61000039` give the offsets of its string and symbol tables in its SCE dynamic library data segment (`0x61000000`), `0x61000037` and `0x6100003b` give the string table size and the symbol entry size, and `0x6100003f` gives the symbol table size. A module that names both standard and SCE tables is an error; the `0x6100003f` that PS5 modules carry beside their standard tables does not change how they are read.
 
 Each registry has a companion with the same prefix and the suffix `.needed.json`, listing its host library dependencies, including declared `DT_NEEDED` entries with no imports. Dependencies supplied by converted bundled modules, including their aliases, are omitted. The executable's companion includes host dependencies of its bundled modules. The audit reads these companions automatically; keep them beside the registries. Older registries without companions still work, but cannot report dependencies that have no imports; regenerate them with `--registry` to include those dependencies.
 

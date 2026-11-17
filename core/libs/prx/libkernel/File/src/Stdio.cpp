@@ -573,7 +573,8 @@ static int PositionedArgumentError(int descriptor, bool write, bool nullBuffer, 
     if (!GuestSockets::IsOpen(descriptor) && !DescriptorIsOpen_nid_no_patch(descriptor)) return GUEST_EBADF;
     if (!IsSeekableDescriptor(descriptor)) return GUEST_ESPIPE;
     if (!File::GrantsAccess(descriptor, write)) return GUEST_EBADF;
-    return offset < 0 ? GUEST_EINVAL : GUEST_EFAULT;
+    if (offset < 0 && !File::IsRandomDevice(descriptor)) return GUEST_EINVAL;
+    return nullBuffer ? GUEST_EFAULT : 0;
 }
 
 static int TransferArgumentError(int descriptor, bool nullBuffer) {
@@ -756,6 +757,21 @@ extern "C" int APS5_VABI pipe2_nid_postfix(int* descriptors, int flags) {
     int mode = _O_BINARY;
     if ((flags & SCE_KERNEL_O_CLOEXEC) != 0) mode |= _O_NOINHERIT;
     const int result = ::_pipe(native, 65536, mode);
+#elif defined(__APPLE__)
+    int result = ::pipe(native);
+    if (result == 0) {
+        for (const int descriptor : native) {
+            if (((flags & SCE_KERNEL_O_CLOEXEC) != 0 && ::fcntl(descriptor, F_SETFD, FD_CLOEXEC) != 0) ||
+                ((flags & SCE_KERNEL_O_NONBLOCK) != 0 && ::fcntl(descriptor, F_SETFL, ::fcntl(descriptor, F_GETFL) | O_NONBLOCK) != 0)) {
+                const int saved = errno;
+                ::close(native[0]);
+                ::close(native[1]);
+                errno = saved;
+                result = -1;
+                break;
+            }
+        }
+    }
 #else
     int hostFlags = 0;
 #ifdef O_CLOEXEC
@@ -1201,7 +1217,7 @@ int APS5_VABI ftruncate_nid_postfix(int d, int64_t length) {
     if (length < 0 || GuestSockets::IsOpen(d)) {
         return PosixFailure(GUEST_EINVAL);
     }
-    File::RefuseArchivedFile(d, "ftruncate");
+    if (File::IsArchivedFile(d)) return PosixFailure(GUEST_EINVAL);
 #ifdef _WIN32
     int error = NativeFtruncate(d, length);
     if (error != 0) {
@@ -1445,8 +1461,7 @@ int APS5_VABI sceKernelWriteThrottlingStatus(std::uint64_t* status) {
 #ifdef _WIN32
 
 int APS5_VABI sceKernelGetdirentries(int fd, char* buf, int nbytes, int64_t* basep) {
-    if (GuestSockets::IsOpen(fd)) return SceErrorFromErrno(GUEST_EINVAL);
-    File::RefuseArchivedFile(fd, "getdirentries");
+    if (GuestSockets::IsOpen(fd) || File::IsArchivedFile(fd)) return SceErrorFromErrno(GUEST_EINVAL);
     if (buf == nullptr) return SceErrorFromErrno(GUEST_EFAULT);
     if (nbytes <= 0) return SceErrorFromErrno(GUEST_EINVAL);
     if (!File::DirectoryDescriptorPath(fd)) {
@@ -1493,8 +1508,7 @@ static unsigned char GuestEntryType(int fd, const struct dirent& entry, bool fol
 }
 
 int APS5_VABI sceKernelGetdirentries(int fd, char* buf, int nbytes, int64_t* basep) {
-    if (GuestSockets::IsOpen(fd)) return SceErrorFromErrno(GUEST_EINVAL);
-    File::RefuseArchivedFile(fd, "getdirentries");
+    if (GuestSockets::IsOpen(fd) || File::IsArchivedFile(fd)) return SceErrorFromErrno(GUEST_EINVAL);
     constexpr std::size_t GuestHeaderBytes = 8;
     constexpr std::size_t GuestMaxName = 255;
     if (buf == nullptr) return SceErrorFromErrno(GUEST_EFAULT);
@@ -1576,8 +1590,7 @@ static unsigned char GuestEntryType(int fd, const struct dirent64& entry, bool f
 }
 
 int APS5_VABI sceKernelGetdirentries(int fd, char* buf, int nbytes, int64_t* basep) {
-    if (GuestSockets::IsOpen(fd)) return SceErrorFromErrno(GUEST_EINVAL);
-    File::RefuseArchivedFile(fd, "getdirentries");
+    if (GuestSockets::IsOpen(fd) || File::IsArchivedFile(fd)) return SceErrorFromErrno(GUEST_EINVAL);
     constexpr std::size_t GuestHeaderBytes = 8;
     constexpr std::size_t GuestMaxName = 255;
     if (buf == nullptr) return SceErrorFromErrno(GUEST_EFAULT);
@@ -1590,7 +1603,8 @@ int APS5_VABI sceKernelGetdirentries(int fd, char* buf, int nbytes, int64_t* bas
     if (!S_ISDIR(status.st_mode)) return SceErrorFromErrno(GUEST_EINVAL);
     const off_t base = ::lseek(fd, 0, SEEK_CUR);
     if (base < 0) return SceErrorFromErrno(errno);
-    std::vector<char> host(static_cast<std::size_t>(nbytes) < 4096 ? 4096 : static_cast<std::size_t>(nbytes));
+    constexpr std::size_t MaxHostChunk = 64 * 1024;
+    std::vector<char> host(std::min(std::max(static_cast<std::size_t>(nbytes), std::size_t{4096}), MaxHostChunk));
 #ifdef __EMSCRIPTEN__
     const auto read = ::getdents(fd, reinterpret_cast<struct dirent*>(host.data()), host.size());
 #else
@@ -1784,7 +1798,7 @@ static std::int64_t TransferIovecs(int d, const KernelIovec* guestIov, int iovcn
         if (iov[i].base == nullptr && iov[i].length != 0) return SceErrorFromErrno(GUEST_EFAULT);
         total += iov[i].length;
     }
-    if (offset != nullptr && total > static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max() - *offset)) return SceErrorFromErrno(GUEST_EINVAL);
+    if (offset != nullptr && *offset >= 0 && total > static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max() - *offset)) return SceErrorFromErrno(GUEST_EINVAL);
     if (offset != nullptr) {
         if (const auto error = PositionedGuestSocketError(d); error != 0) return error;
     }
