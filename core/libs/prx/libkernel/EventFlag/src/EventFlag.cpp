@@ -158,17 +158,30 @@ static int CopyEventFlagName(const char* name, std::string& copy) {
     return SCE_KERNEL_ERROR_EFAULT;
 }
 
-static bool StoreWaitCount(int* destination, int value) {
+template <typename T>
+static bool StoreGuest(T* destination, T value) {
     const int savedErrno = errno;
     const bool stored = GuestCopyOut_nid_no_patch(destination, &value, sizeof(value));
     errno = savedErrno;
     return stored;
 }
 
-static void Consume(KernelEventFlagPrivate* flag, uint64_t bitPattern, uint32_t waitMode, uint64_t* resultPattern) {
-    if (resultPattern) *resultPattern = flag->_pattern;
+static bool LoadGuest(KernelUseconds* source, KernelUseconds& value) {
+    const int savedErrno = errno;
+    const bool loaded = GuestCopyIn_nid_no_patch(&value, source, sizeof(value));
+    errno = savedErrno;
+    return loaded;
+}
+
+static int ReportPattern(uint64_t* destination, uint64_t value, int result) {
+    return destination && !StoreGuest(destination, value) ? SCE_KERNEL_ERROR_EFAULT : result;
+}
+
+static uint64_t Consume(KernelEventFlagPrivate* flag, uint64_t bitPattern, uint32_t waitMode) {
+    const uint64_t previous = flag->_pattern;
     if (waitMode & EVF_WAITMODE_CLEAR_ALL) flag->_pattern = 0;
     else if (waitMode & EVF_WAITMODE_CLEAR_PAT) flag->_pattern &= ~bitPattern;
+    return previous;
 }
 
 extern "C" {
@@ -298,10 +311,10 @@ int APS5_VABI sceKernelCancelEventFlag(KernelEventFlag ef, uint64_t set_pattern,
     std::lock_guard lock(flag->_mutex);
     if (flag->_deleted) {
         if (!entry->opened) return SCE_KERNEL_ERROR_ESRCH;
-        if (num_wait_threads && !StoreWaitCount(num_wait_threads, 0)) return SCE_KERNEL_ERROR_EFAULT;
+        if (num_wait_threads && !StoreGuest(num_wait_threads, 0)) return SCE_KERNEL_ERROR_EFAULT;
         return SCE_OK;
     }
-    if (num_wait_threads && !StoreWaitCount(num_wait_threads, flag->_waiters)) return SCE_KERNEL_ERROR_EFAULT;
+    if (num_wait_threads && !StoreGuest(num_wait_threads, flag->_waiters)) return SCE_KERNEL_ERROR_EFAULT;
     flag->_pattern = set_pattern;
     for (auto* waiter = flag->_waiterHead; waiter != nullptr; waiter = waiter->next) {
         if (waiter->outcome == WaiterNode::Outcome::Pending) {
@@ -320,19 +333,11 @@ int APS5_VABI sceKernelPollEventFlag(KernelEventFlag ef, uint64_t bit_pattern, u
     std::lock_guard lock(flag->_mutex);
     if (flag->_deleted) {
         if (!entry->opened) return SCE_KERNEL_ERROR_ESRCH;
-        if (result_pat) *result_pat = 0;
-        return SCE_KERNEL_ERROR_EACCES;
+        return ReportPattern(result_pat, 0, SCE_KERNEL_ERROR_EACCES);
     }
-    if (!flag->_multipleWaiters && flag->_waiters != 0) {
-        if (result_pat) *result_pat = 0;
-        return SCE_KERNEL_ERROR_EPERM;
-    }
-    if (!IsSatisfied(flag->_pattern, bit_pattern, wait_mode)) {
-        if (result_pat) *result_pat = flag->_pattern;
-        return SCE_KERNEL_ERROR_EBUSY;
-    }
-    Consume(flag, bit_pattern, wait_mode, result_pat);
-    return SCE_OK;
+    if (!flag->_multipleWaiters && flag->_waiters != 0) return ReportPattern(result_pat, 0, SCE_KERNEL_ERROR_EPERM);
+    if (!IsSatisfied(flag->_pattern, bit_pattern, wait_mode)) return ReportPattern(result_pat, flag->_pattern, SCE_KERNEL_ERROR_EBUSY);
+    return ReportPattern(result_pat, Consume(flag, bit_pattern, wait_mode), SCE_OK);
 }
 
 int APS5_VABI sceKernelWaitEventFlag(KernelEventFlag ef, uint64_t bit_pattern, uint32_t wait_mode, uint64_t* result_pat, KernelUseconds* timeout) {
@@ -343,22 +348,16 @@ int APS5_VABI sceKernelWaitEventFlag(KernelEventFlag ef, uint64_t bit_pattern, u
     std::unique_lock lock(flag->_mutex);
     if (flag->_deleted) {
         if (!entry->opened) return SCE_KERNEL_ERROR_ESRCH;
-        if (result_pat) *result_pat = 0;
-        return SCE_KERNEL_ERROR_EACCES;
+        return ReportPattern(result_pat, 0, SCE_KERNEL_ERROR_EACCES);
     }
-    if (!flag->_multipleWaiters && flag->_waiters != 0) {
-        if (result_pat) *result_pat = 0;
-        return SCE_KERNEL_ERROR_EPERM;
-    }
-    if (IsSatisfied(flag->_pattern, bit_pattern, wait_mode)) {
-        Consume(flag, bit_pattern, wait_mode, result_pat);
-        return SCE_OK;
-    }
-    if (TraceSync()) std::fprintf(stderr, "[evf] wait %p '%s' want=0x%llx mode=0x%x have=0x%llx timeout=%d caller=%p outer=%p\n", static_cast<void*>(ef), flag->_name.c_str(), static_cast<unsigned long long>(bit_pattern), wait_mode, static_cast<unsigned long long>(flag->_pattern), timeout ? static_cast<int>(*timeout) : -1, __builtin_return_address(0), static_cast<void**>(static_cast<void**>(__builtin_frame_address(0))[0])[1]);
-    if (timeout && *timeout == 0) {
+    if (!flag->_multipleWaiters && flag->_waiters != 0) return ReportPattern(result_pat, 0, SCE_KERNEL_ERROR_EPERM);
+    if (IsSatisfied(flag->_pattern, bit_pattern, wait_mode)) return ReportPattern(result_pat, Consume(flag, bit_pattern, wait_mode), SCE_OK);
+    KernelUseconds limit = 0;
+    if (timeout && !LoadGuest(timeout, limit)) return SCE_KERNEL_ERROR_EFAULT;
+    if (TraceSync()) std::fprintf(stderr, "[evf] wait %p '%s' want=0x%llx mode=0x%x have=0x%llx timeout=%d caller=%p outer=%p\n", static_cast<void*>(ef), flag->_name.c_str(), static_cast<unsigned long long>(bit_pattern), wait_mode, static_cast<unsigned long long>(flag->_pattern), timeout ? static_cast<int>(limit) : -1, __builtin_return_address(0), static_cast<void**>(static_cast<void**>(__builtin_frame_address(0))[0])[1]);
+    if (timeout && limit == 0) {
         if (KernelTraceWaitEnabled()) KernelTraceWait_nid_postfix("evf", __builtin_return_address(0), 0, true);
-        if (result_pat) *result_pat = flag->_pattern;
-        return SCE_KERNEL_ERROR_ETIMEDOUT;
+        return ReportPattern(result_pat, flag->_pattern, SCE_KERNEL_ERROR_ETIMEDOUT);
     }
     ++flag->_waiters;
     WaiterNode waiter;
@@ -376,34 +375,31 @@ int APS5_VABI sceKernelWaitEventFlag(KernelEventFlag ef, uint64_t bit_pattern, u
     } waiterGuard{flag, &waiter};
     const auto released = [&] { return waiter.outcome != WaiterNode::Outcome::Pending; };
     bool timedOut = false;
+    bool remainingStored = true;
     const bool traceWaits = KernelTraceWaitEnabled();
     const auto waitStart = traceWaits ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     if (timeout) {
-        const std::uint64_t deadline = TimedWait::DeadlineNanos(*timeout);
+        const std::uint64_t deadline = TimedWait::DeadlineNanos(limit);
         timedOut = !waiter.wake.WaitUntil(lock, deadline, released);
-        *timeout = static_cast<KernelUseconds>(TimedWait::RemainingMicros(deadline));
+        remainingStored = StoreGuest(timeout, static_cast<KernelUseconds>(TimedWait::RemainingMicros(deadline)));
     } else {
         waiter.wake.Wait(lock, released);
     }
     if (traceWaits) KernelTraceWait_nid_postfix("evf", __builtin_return_address(0), static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - waitStart).count()), timedOut);
-    if (waiter.outcome == WaiterNode::Outcome::Satisfied) {
-        if (result_pat) *result_pat = waiter.resultPattern;
-        return SCE_OK;
-    }
+    int result = SCE_OK;
+    uint64_t pattern = waiter.resultPattern;
     if (waiter.outcome == WaiterNode::Outcome::Deleted) {
-        if (result_pat) *result_pat = 0;
-        return SCE_KERNEL_ERROR_EACCES;
+        result = SCE_KERNEL_ERROR_EACCES;
+        pattern = 0;
+    } else if (waiter.outcome == WaiterNode::Outcome::Canceled) {
+        result = SCE_KERNEL_ERROR_ECANCELED;
+        pattern = 0;
+    } else if (waiter.outcome != WaiterNode::Outcome::Satisfied && timedOut) {
+        result = SCE_KERNEL_ERROR_ETIMEDOUT;
+        pattern = flag->_pattern;
     }
-    if (waiter.outcome == WaiterNode::Outcome::Canceled) {
-        if (result_pat) *result_pat = 0;
-        return SCE_KERNEL_ERROR_ECANCELED;
-    }
-    if (timedOut) {
-        if (result_pat) *result_pat = flag->_pattern;
-        return SCE_KERNEL_ERROR_ETIMEDOUT;
-    }
-    if (result_pat) *result_pat = waiter.resultPattern;
-    return SCE_OK;
+    result = ReportPattern(result_pat, pattern, result);
+    return remainingStored ? result : SCE_KERNEL_ERROR_EFAULT;
 }
 
 }

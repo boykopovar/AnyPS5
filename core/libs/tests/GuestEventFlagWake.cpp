@@ -3,6 +3,7 @@
 #include "SceTypes.hpp"
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -135,6 +136,25 @@ static void RequireCancelOrDeleteReleasesEveryWaiter(bool cancel) {
     if (cancel) Require(sceKernelDeleteEventFlag(flag) == SCE_OK);
 }
 
+static void RequireUnusableOutputsFault() {
+    KernelEventFlag flag = nullptr;
+    Require(sceKernelCreateEventFlag(&flag, "guest_copies", EVF_ATTR_MULTI, 0x5, nullptr) == SCE_OK);
+    auto* const unwritable = reinterpret_cast<std::uint64_t*>(0x10);
+    auto* const unreadable = reinterpret_cast<KernelUseconds*>(0x10);
+    errno = 71;
+    Require(sceKernelPollEventFlag(flag, 0x1, EVF_WAITMODE_OR, unwritable) == SCE_KERNEL_ERROR_EFAULT && errno == 71);
+    Require(sceKernelPollEventFlag(flag, 0x2, EVF_WAITMODE_OR, unwritable) == SCE_KERNEL_ERROR_EFAULT && errno == 71);
+    Require(sceKernelWaitEventFlag(flag, 0x4, EVF_WAITMODE_OR, unwritable, nullptr) == SCE_KERNEL_ERROR_EFAULT && errno == 71);
+    std::uint64_t pattern = 0;
+    Require(sceKernelWaitEventFlag(flag, 0x2, EVF_WAITMODE_OR, &pattern, unreadable) == SCE_KERNEL_ERROR_EFAULT && errno == 71 && pattern == 0);
+    Require(APS5_Test_GetEventFlagWaiterCount(flag) == 0);
+    KernelUseconds timeout = 1000;
+    Require(sceKernelWaitEventFlag(flag, 0x2, EVF_WAITMODE_OR, &pattern, &timeout) == SCE_KERNEL_ERROR_ETIMEDOUT && pattern == 0x5 && timeout == 0);
+    Require(sceKernelPollEventFlag(flag, 0x4, EVF_WAITMODE_OR | EVF_WAITMODE_CLEAR_PAT, &pattern) == SCE_OK && pattern == 0x5);
+    Require(sceKernelPollEventFlag(flag, 0x4, EVF_WAITMODE_OR, &pattern) == SCE_KERNEL_ERROR_EBUSY && pattern == 0x1);
+    Require(sceKernelDeleteEventFlag(flag) == SCE_OK);
+}
+
 int main() {
     for (int round = 0; round < 20; ++round) {
         RequireEachSetReleasesOnlyItsWaiter();
@@ -142,6 +162,7 @@ int main() {
         RequireTimeoutLeavesOtherWaiters();
         RequireCancelOrDeleteReleasesEveryWaiter(true);
         RequireCancelOrDeleteReleasesEveryWaiter(false);
+        RequireUnusableOutputsFault();
     }
     return 0;
 }
