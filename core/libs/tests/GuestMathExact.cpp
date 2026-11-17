@@ -11,6 +11,19 @@
 #include <cstring>
 #include <limits>
 #include <source_location>
+#include <stdexcept>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static void Require(bool value, std::source_location location = std::source_location::current()) {
     if (value) return;
@@ -688,6 +701,121 @@ static void CheckExpSpecialValues() {
     Require(expf_nid_postfix(-110.0f) == 0.0f);
 }
 
+class GuardedPage {
+public:
+    GuardedPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        size = info.dwPageSize;
+        allocation = static_cast<unsigned char*>(VirtualAlloc(nullptr, size * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(allocation != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(allocation + size, size, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long page = sysconf(_SC_PAGESIZE);
+        Require(page > 0);
+        size = static_cast<std::size_t>(page);
+        void* mapping = mmap(nullptr, size * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapping != MAP_FAILED);
+        allocation = static_cast<unsigned char*>(mapping);
+        Require(mprotect(allocation + size, size, PROT_NONE) == 0);
+#endif
+    }
+    GuardedPage(const GuardedPage&) = delete;
+    GuardedPage& operator=(const GuardedPage&) = delete;
+    ~GuardedPage() {
+#ifdef _WIN32
+        VirtualFree(allocation, 0, MEM_RELEASE);
+#else
+        munmap(allocation, size * 2);
+#endif
+    }
+    unsigned char* End() const { return allocation + size; }
+    void ReadOnly() {
+#ifdef _WIN32
+        DWORD previous = 0;
+        Require(VirtualProtect(allocation, size, PAGE_READONLY, &previous) != 0);
+#else
+        Require(mprotect(allocation, size, PROT_READ) == 0);
+#endif
+    }
+
+private:
+    unsigned char* allocation = nullptr;
+    std::size_t size = 0;
+};
+
+template<typename Call>
+static bool RejectsKeepingErrno(Call call) {
+    errno = 71;
+    bool caught = false;
+    try { call(); }
+    catch (const std::invalid_argument&) { caught = true; }
+    return caught && errno == 71;
+}
+
+static void CheckGuestPointers() {
+    auto* unmappedValue = reinterpret_cast<long double*>(std::uintptr_t{0x10});
+    auto* unmappedExponent = reinterpret_cast<short*>(std::uintptr_t{0x10});
+    auto* unmappedWords = reinterpret_cast<std::uint16_t*>(std::uintptr_t{0x10});
+    Require(RejectsKeepingErrno([&] { _LDtest_nid_postfix(unmappedValue); }));
+    Require(RejectsKeepingErrno([&] { _LExp_nid_postfix(unmappedValue, 1.0L, 0); }));
+    Require(RejectsKeepingErrno([&] { _LDint_nid_postfix(unmappedValue, 0); }));
+    Require(RejectsKeepingErrno([&] { _LDscale_nid_postfix(unmappedValue, 1); }));
+    short exponent = 7;
+    Require(RejectsKeepingErrno([&] { _LDunscale_nid_postfix(&exponent, unmappedValue); }) && exponent == 7);
+    long double value = 8.0L;
+    Require(RejectsKeepingErrno([&] { _LDunscale_nid_postfix(unmappedExponent, &value); }));
+    Require(RejectsKeepingErrno([&] { _LDnorm_nid_postfix(unmappedWords); }));
+    Require(RejectsKeepingErrno([&] { _LPoly_nid_postfix(2.0L, reinterpret_cast<const long double*>(std::uintptr_t{0x10}), 3); }));
+    Require(RejectsKeepingErrno([&] { _ZNSt8__sce_v25_PolyEdPKdi_nid_postfix(2.0, reinterpret_cast<const double*>(std::uintptr_t{0x10}), 3); }));
+
+    long double longTable[41];
+    double table[41];
+    long double longExpected = 1.0L;
+    double expected = 1.0;
+    for (int index = 0; index < 41; ++index) {
+        longTable[index] = static_cast<long double>(index + 1);
+        table[index] = static_cast<double>(index + 1);
+        if (index > 0) {
+            longExpected = longExpected * 0.5L + longTable[index];
+            expected = expected * 0.5 + table[index];
+        }
+    }
+    Require(_LPoly_nid_postfix(0.5L, longTable, 40) == longExpected);
+    Require(_ZNSt8__sce_v25_PolyEdPKdi_nid_postfix(0.5, table, 40) == expected);
+    Require(_LPoly_nid_postfix(0.5L, longTable, -3) == 1.0L && _ZNSt8__sce_v25_PolyEdPKdi_nid_postfix(0.5, table, -3) == 1.0);
+
+    GuardedPage page;
+    auto* tail = reinterpret_cast<long double*>(page.End() - 3 * sizeof(long double));
+    auto* doubleTail = reinterpret_cast<double*>(page.End() - 3 * sizeof(double));
+    for (int index = 0; index < 3; ++index) tail[index] = 1.0L;
+    Require(_LPoly_nid_postfix(1.0L, tail, 2) == 3.0L);
+    Require(RejectsKeepingErrno([&] { _LPoly_nid_postfix(1.0L, tail, 3); }));
+    for (int index = 0; index < 3; ++index) doubleTail[index] = 1.0;
+    Require(_ZNSt8__sce_v25_PolyEdPKdi_nid_postfix(1.0, doubleTail, 2) == 3.0);
+    Require(RejectsKeepingErrno([&] { _ZNSt8__sce_v25_PolyEdPKdi_nid_postfix(1.0, doubleTail, 3); }));
+
+    auto* finite = reinterpret_cast<long double*>(page.End() - 4 * sizeof(long double));
+    auto* nan = reinterpret_cast<long double*>(page.End() - 5 * sizeof(long double));
+    auto* words = reinterpret_cast<std::uint16_t*>(page.End() - 6 * sizeof(long double));
+    *finite = 2.5L;
+    *nan = std::numeric_limits<long double>::quiet_NaN();
+    const std::uint64_t mantissa = 1;
+    std::memcpy(words, &mantissa, sizeof(mantissa));
+    page.ReadOnly();
+    Require(_LDtest_nid_postfix(finite) == -1);
+    Require(_LDint_nid_postfix(nan, 0) == 2 && _LDscale_nid_postfix(nan, 3) == 2);
+    Require(_LExp_nid_postfix(nan, 1.0L, 0) == 2);
+    Require(RejectsKeepingErrno([&] { _LDint_nid_postfix(finite, 0); }));
+    Require(RejectsKeepingErrno([&] { _LDscale_nid_postfix(finite, 1); }));
+    Require(RejectsKeepingErrno([&] { _LExp_nid_postfix(finite, 1.0L, 0); }));
+    Require(RejectsKeepingErrno([&] { _LDunscale_nid_postfix(&exponent, finite); }));
+    Require(RejectsKeepingErrno([&] { _LDnorm_nid_postfix(words); }));
+    Require(*finite == 2.5L && std::memcmp(words, &mantissa, sizeof(mantissa)) == 0);
+}
+
 int main() {
     CheckRoundingAndScaling();
     CheckLogblLroundl();
@@ -710,5 +838,6 @@ int main() {
     CheckFmalFarApartDirected();
     CheckExpSpecialValues();
     CheckLogSpecialValues();
+    CheckGuestPointers();
     return 0;
 }
