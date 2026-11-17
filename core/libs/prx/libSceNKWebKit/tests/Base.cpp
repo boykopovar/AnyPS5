@@ -65,6 +65,7 @@ static void TestTypeIDs() {
     Require(WKSessionStateGetTypeID() == 19);
     Require(WKSerializedScriptValueGetTypeID() == 20);
     Require(WKContextGetTypeID() == 85);
+    Require(WKPreferencesGetTypeID() == static_cast<std::uint32_t>(NKWebKit::ObjectType::Preferences));
 }
 
 static void TestRetainRelease() {
@@ -1200,6 +1201,49 @@ static void TestBundleNodeHandle() {
     Require(threw);
 }
 
+static void TestBundleFrameScroll() {
+    Require(WKBundleFrameGetTypeID() == 119);
+    auto frame = NKWebKit::Make<NKWebKit::BundleFrame>();
+    const void* ref = frame.Get();
+
+    auto cb = WKBundleFrameGetContentBounds(ref);
+    Require(cb.origin.x == 0.0 && cb.size.width == 0.0);
+    auto vcb = WKBundleFrameGetVisibleContentBounds(ref);
+    Require(vcb.origin.x == 0.0 && vcb.size.width == 0.0);
+    auto vcbes = WKBundleFrameGetVisibleContentBoundsExcludingScrollbars(ref);
+    Require(vcbes.origin.x == 0.0 && vcbes.size.width == 0.0);
+    auto so = WKBundleFrameGetScrollOffset(ref);
+    Require(so.width == 0.0 && so.height == 0.0);
+    Require(!WKBundleFrameHasHorizontalScrollbar(ref));
+    Require(!WKBundleFrameHasVerticalScrollbar(ref));
+
+    frame->contentBounds = NKWebKit::RectValue{{1.0, 2.0}, {800.0, 600.0}};
+    frame->visibleContentBounds = NKWebKit::RectValue{{3.0, 4.0}, {400.0, 300.0}};
+    frame->visibleContentBoundsExcludingScrollbars = NKWebKit::RectValue{{5.0, 6.0}, {390.0, 290.0}};
+    frame->scrollOffset = NKWebKit::SizeValue{10.0, 20.0};
+    frame->hasHorizontalScrollbar = true;
+    frame->hasVerticalScrollbar = true;
+
+    auto cb2 = WKBundleFrameGetContentBounds(ref);
+    Require(cb2.origin.x == 1.0 && cb2.size.width == 800.0);
+    auto vcb2 = WKBundleFrameGetVisibleContentBounds(ref);
+    Require(vcb2.origin.x == 3.0 && vcb2.size.width == 400.0);
+    auto vcbes2 = WKBundleFrameGetVisibleContentBoundsExcludingScrollbars(ref);
+    Require(vcbes2.origin.x == 5.0 && vcbes2.size.width == 390.0);
+    auto so2 = WKBundleFrameGetScrollOffset(ref);
+    Require(so2.width == 10.0 && so2.height == 20.0);
+    Require(WKBundleFrameHasHorizontalScrollbar(ref));
+    Require(WKBundleFrameHasVerticalScrollbar(ref));
+
+    bool threw = false;
+    try {
+        WKBundleFrameGetContentBounds(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 static void TestBundleHitTestResult() {
     Require(WKBundleHitTestResultGetTypeID() == 120);
     auto hit = NKWebKit::Make<NKWebKit::BundleHitTestResult>();
@@ -1467,6 +1511,99 @@ static void TestPopupMenuItem() {
     bool threw = false;
     try {
         WKPopupMenuItemIsEnabled(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
+static void TestMediaSessionMetadata() {
+    Require(WKMediaSessionMetadataGetTypeID() == static_cast<std::uint32_t>(NKWebKit::ObjectType::MediaSessionMetadata));
+    auto meta = NKWebKit::Make<NKWebKit::MediaSessionMetadata>();
+    const void* ref = meta.Get();
+    Require(WKGetTypeID(ref) == WKMediaSessionMetadataGetTypeID());
+
+    auto* unsetTitle = WKMediaSessionMetadataCopyTitle(ref);
+    Require(unsetTitle != nullptr);
+    Require(WKStringGetLength(unsetTitle) == 0);
+    WKRelease(unsetTitle);
+
+    auto* unsetAlbum = WKMediaSessionMetadataCopyAlbum(ref);
+    Require(unsetAlbum != nullptr);
+    Require(WKStringGetLength(unsetAlbum) == 0);
+    WKRelease(unsetAlbum);
+
+    auto* unsetArtist = WKMediaSessionMetadataCopyArtist(ref);
+    Require(unsetArtist != nullptr);
+    Require(WKStringGetLength(unsetArtist) == 0);
+    WKRelease(unsetArtist);
+
+    Require(WKMediaSessionMetadataCopyArtworkURL(ref) == nullptr);
+
+    meta->title = NKWebKit::String::FromUtf8("Test Song");
+    meta->album = NKWebKit::String::FromUtf8("Test Album");
+    meta->artist = NKWebKit::String::FromUtf8("Test Artist");
+    meta->artworkURL = NKWebKit::Make<NKWebKit::URL>("https://example.com/artwork.jpg");
+
+    auto* title = WKMediaSessionMetadataCopyTitle(ref);
+    Require(title != nullptr);
+    Require(WKStringIsEqualToUTF8CString(title, "Test Song"));
+    WKRelease(title);
+
+    auto* album = WKMediaSessionMetadataCopyAlbum(ref);
+    Require(album != nullptr);
+    Require(WKStringIsEqualToUTF8CString(album, "Test Album"));
+    WKRelease(album);
+
+    auto* artist = WKMediaSessionMetadataCopyArtist(ref);
+    Require(artist != nullptr);
+    Require(WKStringIsEqualToUTF8CString(artist, "Test Artist"));
+    WKRelease(artist);
+
+    auto* artworkURL = WKMediaSessionMetadataCopyArtworkURL(ref);
+    Require(artworkURL != nullptr);
+    Require(WKGetTypeID(artworkURL) == WKURLGetTypeID());
+    auto* urlStr = WKURLCopyString(artworkURL);
+    Require(WKStringIsEqualToUTF8CString(urlStr, "https://example.com/artwork.jpg"));
+    WKRelease(urlStr);
+    WKRelease(artworkURL);
+
+    bool threw = false;
+    try {
+        WKMediaSessionMetadataCopyTitle(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKMediaSessionMetadataCopyAlbum(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKMediaSessionMetadataCopyArtist(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKMediaSessionMetadataCopyArtworkURL(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    auto wrongObj = NKWebKit::Make<NKWebKit::String>();
+    threw = false;
+    try {
+        WKMediaSessionMetadataCopyTitle(wrongObj.Get());
     } catch (const std::invalid_argument&) {
         threw = true;
     }
@@ -2787,9 +2924,11 @@ int main() {
     TestBundleDOMWindowExtension();
     TestBundleHitTestResult();
     TestBundleNodeHandle();
+    TestBundleFrameScroll();
     TestDownload();
     TestAXObject();
     TestPopupMenuItem();
+    TestMediaSessionMetadata();
     TestOpenPanelResultListener();
     TestProtectionSpace();
     TestPermissionRequests();
