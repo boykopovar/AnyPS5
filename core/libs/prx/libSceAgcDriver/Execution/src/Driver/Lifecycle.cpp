@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/AsyncLog.hpp"
+#include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 #include "prx/libc/include/HostThread.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PipelineJournal.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
@@ -211,6 +212,7 @@ void Driver::stop() {
     PerformanceTrace::StopOutput();
     FlushAsyncLogAtEnd_nid_no_patch();
     StopProfileOutput_nid_no_patch();
+    CaptureTrace::Stop();
     stopped = true;
 }
 
@@ -328,6 +330,11 @@ bool Driver::WaitSettledFor(std::chrono::milliseconds timeout) {
     return done;
 }
 
+bool Driver::SettledHeld() {
+    std::lock_guard lock(mutex);
+    return captureHold.load(std::memory_order_relaxed);
+}
+
 bool Driver::Settled() {
     std::lock_guard lock(mutex);
     return failure != nullptr || stopping || completed >= accepted || parkedOnTitle();
@@ -390,6 +397,10 @@ void Driver::ReportFailure(std::exception_ptr error) {
         first = !failure;
         if (first) failure = error;
         failed.store(true, std::memory_order_release);
+        {
+            std::lock_guard tails(tailsMutex);
+            unreadTails.clear();
+        }
         for (const auto& [handle, output] : outputs) output->Fail(failure);
         for (auto& [queue, worker] : workers) {
             for (const auto& item : worker.pending) {

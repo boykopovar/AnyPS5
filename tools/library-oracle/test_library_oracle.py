@@ -4,6 +4,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -75,8 +76,17 @@ class KnownTests(unittest.TestCase):
             path = Path(directory) / "known.tsv"
             path.write_text("# header\na\tdiff\t#1\ns\tskip\tenvironment\nold\tdiff\tgone\n", encoding="utf-8")
             known = library_oracle.load_known(path)
-            library_oracle.write_known(path, known, {"a": ("diff", "x"), "n": ("crash", "y")})
+            library_oracle.write_known(path, known, {"a": ("diff", "x"), "n": ("crash", "y")}, {"a", "n", "old"})
             self.assertEqual(path.read_text(encoding="utf-8"), "a\tdiff\t#1\nn\tcrash\ns\tskip\tenvironment\n")
+
+    def test_a_byte_order_mark_is_not_part_of_the_first_case(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "known.tsv"
+            path.write_text("a\tdiff\t#1\nb\tcrash\t#2\n", encoding="utf-8-sig")
+            known = library_oracle.load_known(path)
+            self.assertEqual(known, {"a": ("diff", "#1"), "b": ("crash", "#2")})
+            new, expected, stale = library_oracle.classify(known, {"a": ("diff", "x")}, {"a"})
+            self.assertEqual((new, [case for case, *_ in expected]), ([], ["a"]))
 
     def test_an_unknown_kind_is_refused(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -84,6 +94,35 @@ class KnownTests(unittest.TestCase):
             path.write_text("a\tbroken\treason\n", encoding="utf-8")
             with self.assertRaises(SystemExit):
                 library_oracle.load_known(path)
+
+    def test_write_known_after_one_family_preserves_unrun_findings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "known.tsv"
+            path.write_text("libc-pass\tdiff\tnow matches\nlibc-change\tdiff\tkeep reason\nkernel-case\tcrash\tunrun reason\nskipped-case\tskip\tenvironment\n",
+                            encoding="utf-8")
+            golden = Path(directory) / "libc.golden.tsv"
+            golden.write_text("libc-pass\tcase\nlibc-change\tcase\nlibc-new\tcase\nskipped-case\tcase\n", encoding="utf-8")
+            findings = {"libc-change": ("throw", "new detail"), "libc-new": ("diff", "new finding")}
+            with mock.patch.object(library_oracle, "fetch", return_value=golden) as fetch, \
+                 mock.patch.object(library_oracle, "replay", return_value=(findings, "compared 3")) as replay, \
+                 mock.patch("sys.stdout", new_callable=io.StringIO):
+                result = library_oracle.main(["libc", "--known", str(path), "--replay", "unused", "--write-known"])
+            self.assertEqual(result, 0)
+            self.assertEqual(fetch.call_args.args[0], "libc")
+            self.assertEqual(replay.call_args.args[3], {"skipped-case"})
+            self.assertEqual(library_oracle.load_known(path), {
+                "kernel-case": ("crash", "unrun reason"),
+                "libc-change": ("throw", "keep reason"),
+                "libc-new": ("diff", ""),
+                "skipped-case": ("skip", "environment"),
+            })
+
+    def test_write_known_without_replayed_cases_preserves_existing_findings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "known.tsv"
+            known = {"unrun": ("crash", "reason"), "skip": ("skip", "environment")}
+            library_oracle.write_known(path, known, {}, set())
+            self.assertEqual(library_oracle.load_known(path), known)
 
     def test_the_committed_known_file_parses(self):
         known = library_oracle.load_known(library_oracle.HERE / "known.tsv")
@@ -116,6 +155,84 @@ class FetchTests(unittest.TestCase):
         finally:
             library_oracle.FAMILIES.clear()
             library_oracle.FAMILIES.update(original)
+
+
+class ModuleTests(unittest.TestCase):
+    def test_required_modules_asks_the_replay_for_the_chain_it_resolves_through(self):
+        run = Script(Done(0, "MODULE\tlibc.prx\nMODULE\tlibkernel.prx\n", ""))
+        self.assertEqual(library_oracle.required_modules("replay", run), ["libc.prx", "libkernel.prx"])
+        self.assertEqual(run.commands, [["replay", "--required-modules"]])
+
+    def test_required_modules_stays_quiet_about_a_replay_that_does_not_answer(self):
+        run = Script(Done(2, "", "usage: replay MODULE_DIRECTORY ...\n"))
+        self.assertIsNone(library_oracle.required_modules("replay", run))
+
+    def test_required_modules_stays_quiet_when_the_replay_cannot_be_started(self):
+        run = Script(FileNotFoundError(2, "No such file or directory"))
+        self.assertIsNone(library_oracle.required_modules("replay", run))
+
+    def test_absent_modules_names_the_chain_files_the_directory_lacks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "libc.prx").write_bytes(b"")
+            (Path(directory) / "libScePosix.prx").mkdir()
+            absent = library_oracle.absent_modules(directory, ["libc.prx", "libkernel_sys.prx", "libScePosix.prx"])
+            self.assertEqual(absent, ["libkernel_sys.prx", "libScePosix.prx"])
+
+    def test_the_warning_names_the_absent_files_and_the_directory(self):
+        note = library_oracle.module_warning(["libkernel_sys.prx"], "/m/unpatched") or ""
+        self.assertIn("libkernel_sys.prx is not in /m/unpatched", note)
+
+    def test_there_is_no_warning_without_an_absent_file(self):
+        self.assertIsNone(library_oracle.module_warning([], "/m/unpatched"))
+
+    def test_a_run_without_a_missing_case_never_starts_the_replay_for_the_chain(self):
+        run = Script(Done(0, "MODULE\tlibkernel_sys.prx\n", ""))
+        self.assertIsNone(library_oracle.missing_warning("replay", "/m/unpatched", {"a": ("diff", "ret 0x1")}, run))
+        self.assertEqual(run.commands, [])
+
+    def test_a_missing_case_asks_the_replay_and_names_the_files_the_directory_lacks(self):
+        run = Script(Done(0, "MODULE\tlibc.prx\nMODULE\tlibkernel_sys.prx\n", ""))
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "libc.prx").write_bytes(b"")
+            note = library_oracle.missing_warning("replay", directory, {"a": ("missing", "scePthreadBarrierInit")}, run) or ""
+            self.assertEqual(run.commands, [["replay", "--required-modules"]])
+            self.assertIn(f"libkernel_sys.prx is not in {directory}", note)
+
+    def test_the_search_path_gets_no_empty_entry_when_the_variable_is_unset_or_empty(self):
+        names = ("PATH", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH")
+        modules = Path("modules")
+        separator = library_oracle.os.pathsep
+        with mock.patch.dict(library_oracle.os.environ, {"OTHER": "kept"}, clear=True):
+            copy = library_oracle.environment(modules)
+            self.assertEqual({name: copy[name] for name in names}, dict.fromkeys(names, str(modules)))
+            self.assertEqual(copy["OTHER"], "kept")
+        with mock.patch.dict(library_oracle.os.environ, dict.fromkeys(names, ""), clear=True):
+            copy = library_oracle.environment(modules)
+            self.assertEqual({name: copy[name] for name in names}, dict.fromkeys(names, str(modules)))
+        with mock.patch.dict(library_oracle.os.environ, dict.fromkeys(names, "first" + separator + "second"), clear=True):
+            copy = library_oracle.environment(modules)
+            self.assertEqual({name: copy[name] for name in names},
+                             dict.fromkeys(names, str(modules) + separator + "first" + separator + "second"))
+
+
+class OutputTests(unittest.TestCase):
+    def test_write_known_reports_a_non_ascii_path_as_utf8(self):
+        from contextlib import redirect_stdout
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as directory:
+            known = Path(directory) / "界" / "known.tsv"
+            known.parent.mkdir()
+            replay = Path(directory) / "library_oracle_replay"
+            replay.write_bytes(b"")
+            stdout = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+            with patch.object(library_oracle, "fetch", return_value=Path(directory) / "rtc.golden.tsv"), \
+                    patch.object(library_oracle, "replay", return_value=({"rtc_case": ("diff", "ret 0x1")}, "compared 1")), \
+                    patch.object(library_oracle, "case_ids", return_value={"rtc_case"}), redirect_stdout(stdout):
+                result = library_oracle.main(["rtc", "--replay", str(replay), "--known", str(known), "--write-known"])
+                stdout.flush()
+            self.assertEqual(result, 0)
+            self.assertEqual(known.read_text(encoding="utf-8"), "rtc_case\tdiff\n")
+            self.assertIn(f"wrote 1 findings to {known}", stdout.buffer.getvalue().decode("utf-8"))
 
 
 if __name__ == "__main__":

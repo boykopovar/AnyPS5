@@ -3,8 +3,10 @@
 #include "prx/libkernel_sys/include/Api.hpp"
 #include <array>
 #include <bit>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -173,28 +175,28 @@ enum GnmMacroTileFieldValue : std::uint32_t {
     GnmBanks16 = 3,
 };
 
-constexpr std::uint32_t GnmMacroTile(std::uint32_t bankWidth, std::uint32_t bankHeight, std::uint32_t aspect, std::uint32_t banks,
+constexpr std::uint32_t GnmMacroTileWord(std::uint32_t bankWidth, std::uint32_t bankHeight, std::uint32_t aspect, std::uint32_t banks,
                                      std::uint32_t altBankHeight, std::uint32_t altAspect, std::uint32_t altBanks) {
     return bankWidth | bankHeight << 2 | aspect << 4 | banks << 6 | altBankHeight << 8 | altAspect << 10 | altBanks << 12;
 }
 
 constexpr std::uint32_t GnmMacroTileModes[16] = {
-    GnmMacroTile(GnmBankWidth1, GnmBankHeight4, GnmMacroAspect4, GnmBanks16, GnmBankHeight4, GnmMacroAspect2, GnmBanks8),
-    GnmMacroTile(GnmBankWidth1, GnmBankHeight2, GnmMacroAspect2, GnmBanks16, GnmBankHeight4, GnmMacroAspect2, GnmBanks8),
-    GnmMacroTile(GnmBankWidth1, GnmBankHeight1, GnmMacroAspect2, GnmBanks16, GnmBankHeight2, GnmMacroAspect1, GnmBanks8),
-    GnmMacroTile(GnmBankWidth1, GnmBankHeight1, GnmMacroAspect2, GnmBanks16, GnmBankHeight2, GnmMacroAspect1, GnmBanks8),
-    GnmMacroTile(GnmBankWidth1, GnmBankHeight1, GnmMacroAspect1, GnmBanks8, GnmBankHeight1, GnmMacroAspect1, GnmBanks8),
-    GnmMacroTile(GnmBankWidth1, GnmBankHeight1, GnmMacroAspect1, GnmBanks4, GnmBankHeight1, GnmMacroAspect1, GnmBanks8),
-    GnmMacroTile(GnmBankWidth1, GnmBankHeight1, GnmMacroAspect1, GnmBanks2, GnmBankHeight1, GnmMacroAspect1, GnmBanks4),
-    GnmMacroTile(GnmBankWidth1, GnmBankHeight1, GnmMacroAspect1, GnmBanks2, GnmBankHeight1, GnmMacroAspect1, GnmBanks2),
-    GnmMacroTile(GnmBankWidth1, GnmBankHeight8, GnmMacroAspect4, GnmBanks16, GnmBankHeight4, GnmMacroAspect2, GnmBanks16),
-    GnmMacroTile(GnmBankWidth1, GnmBankHeight4, GnmMacroAspect4, GnmBanks16, GnmBankHeight4, GnmMacroAspect2, GnmBanks8),
-    GnmMacroTile(GnmBankWidth1, GnmBankHeight2, GnmMacroAspect2, GnmBanks16, GnmBankHeight2, GnmMacroAspect1, GnmBanks8),
-    GnmMacroTile(GnmBankWidth1, GnmBankHeight1, GnmMacroAspect2, GnmBanks16, GnmBankHeight1, GnmMacroAspect1, GnmBanks8),
-    GnmMacroTile(GnmBankWidth1, GnmBankHeight1, GnmMacroAspect1, GnmBanks8, GnmBankHeight1, GnmMacroAspect1, GnmBanks4),
-    GnmMacroTile(GnmBankWidth1, GnmBankHeight1, GnmMacroAspect1, GnmBanks4, GnmBankHeight1, GnmMacroAspect1, GnmBanks4),
-    GnmMacroTile(GnmBankWidth1, GnmBankHeight1, GnmMacroAspect1, GnmBanks2, GnmBankHeight1, GnmMacroAspect1, GnmBanks2),
-    GnmMacroTile(GnmBankWidth1, GnmBankHeight1, GnmMacroAspect1, GnmBanks2, GnmBankHeight1, GnmMacroAspect1, GnmBanks2)};
+    GnmMacroTileWord(GnmBankWidth1, GnmBankHeight4, GnmMacroAspect4, GnmBanks16, GnmBankHeight4, GnmMacroAspect2, GnmBanks8),
+    GnmMacroTileWord(GnmBankWidth1, GnmBankHeight2, GnmMacroAspect2, GnmBanks16, GnmBankHeight4, GnmMacroAspect2, GnmBanks8),
+    GnmMacroTileWord(GnmBankWidth1, GnmBankHeight1, GnmMacroAspect2, GnmBanks16, GnmBankHeight2, GnmMacroAspect1, GnmBanks8),
+    GnmMacroTileWord(GnmBankWidth1, GnmBankHeight1, GnmMacroAspect2, GnmBanks16, GnmBankHeight2, GnmMacroAspect1, GnmBanks8),
+    GnmMacroTileWord(GnmBankWidth1, GnmBankHeight1, GnmMacroAspect1, GnmBanks8, GnmBankHeight1, GnmMacroAspect1, GnmBanks8),
+    GnmMacroTileWord(GnmBankWidth1, GnmBankHeight1, GnmMacroAspect1, GnmBanks4, GnmBankHeight1, GnmMacroAspect1, GnmBanks8),
+    GnmMacroTileWord(GnmBankWidth1, GnmBankHeight1, GnmMacroAspect1, GnmBanks2, GnmBankHeight1, GnmMacroAspect1, GnmBanks4),
+    GnmMacroTileWord(GnmBankWidth1, GnmBankHeight1, GnmMacroAspect1, GnmBanks2, GnmBankHeight1, GnmMacroAspect1, GnmBanks2),
+    GnmMacroTileWord(GnmBankWidth1, GnmBankHeight8, GnmMacroAspect4, GnmBanks16, GnmBankHeight4, GnmMacroAspect2, GnmBanks16),
+    GnmMacroTileWord(GnmBankWidth1, GnmBankHeight4, GnmMacroAspect4, GnmBanks16, GnmBankHeight4, GnmMacroAspect2, GnmBanks8),
+    GnmMacroTileWord(GnmBankWidth1, GnmBankHeight2, GnmMacroAspect2, GnmBanks16, GnmBankHeight2, GnmMacroAspect1, GnmBanks8),
+    GnmMacroTileWord(GnmBankWidth1, GnmBankHeight1, GnmMacroAspect2, GnmBanks16, GnmBankHeight1, GnmMacroAspect1, GnmBanks8),
+    GnmMacroTileWord(GnmBankWidth1, GnmBankHeight1, GnmMacroAspect1, GnmBanks8, GnmBankHeight1, GnmMacroAspect1, GnmBanks4),
+    GnmMacroTileWord(GnmBankWidth1, GnmBankHeight1, GnmMacroAspect1, GnmBanks4, GnmBankHeight1, GnmMacroAspect1, GnmBanks4),
+    GnmMacroTileWord(GnmBankWidth1, GnmBankHeight1, GnmMacroAspect1, GnmBanks2, GnmBankHeight1, GnmMacroAspect1, GnmBanks2),
+    GnmMacroTileWord(GnmBankWidth1, GnmBankHeight1, GnmMacroAspect1, GnmBanks2, GnmBankHeight1, GnmMacroAspect1, GnmBanks2)};
 
 enum GnmChannelTypeValue : std::uint32_t {
     GnmChannelTypeUNorm = 0,
@@ -207,6 +209,24 @@ enum GnmChannelTypeValue : std::uint32_t {
 
 constexpr std::uint32_t GnmRenderTargetTypeSrgb = 6;
 constexpr std::uint32_t GnmMicroTileTexels = 64;
+constexpr std::uint32_t GnmRowBits = 1024 * 8;
+constexpr std::uint32_t GnmColorInfoFormatShift = 2;
+constexpr std::uint32_t GnmColorInfoNumberTypeShift = 8;
+constexpr std::uint32_t GnmColorInfoCompSwapShift = 11;
+constexpr std::uint32_t GnmColorInfoBlendClamp = 1u << 15;
+constexpr std::uint32_t GnmColorInfoBlendBypass = 1u << 16;
+constexpr std::uint32_t GnmColorInfoRoundMode = 1u << 18;
+constexpr std::uint32_t GnmSelectZero = 0;
+constexpr std::uint32_t GnmSelectOne = 1;
+constexpr std::uint32_t GnmSelectX = 4;
+
+enum GnmChannelIndex : std::uint8_t { GnmX = 0, GnmY = 1, GnmZ = 2, GnmW = 3 };
+
+constexpr std::uint8_t GnmComponentSwapChannel[4][4][4] = {
+    {{GnmX}, {GnmY}, {GnmZ}, {GnmW}},
+    {{GnmX, GnmY}, {GnmX, GnmW}, {GnmY, GnmX}, {GnmW, GnmX}},
+    {{GnmX, GnmY, GnmZ}, {GnmX, GnmY, GnmW}, {GnmZ, GnmY, GnmX}, {GnmW, GnmY, GnmX}},
+    {{GnmX, GnmY, GnmZ, GnmW}, {GnmZ, GnmY, GnmX, GnmW}, {GnmW, GnmZ, GnmY, GnmX}, {GnmW, GnmX, GnmY, GnmZ}}};
 
 enum GnmSurfaceFormatValue : std::uint32_t {
     GnmFormatInvalid = 0x00,
@@ -395,6 +415,36 @@ constexpr std::uint32_t GnmThicknessOf(std::uint32_t arrayMode) {
     }
 }
 
+constexpr bool GnmIsMacroTiled(std::uint32_t arrayMode) { return arrayMode >= GnmArrayMode2dTiledThin1; }
+
+constexpr bool GnmIsPrt(std::uint32_t arrayMode) {
+    switch (arrayMode) {
+    case GnmArrayModePrtTiledThin1:
+    case GnmArrayModePrt2dTiledThin1:
+    case GnmArrayModePrtTiledThick:
+    case GnmArrayModePrt2dTiledThick:
+    case GnmArrayModePrt3dTiledThin1:
+    case GnmArrayModePrt3dTiledThick: return true;
+    default: return false;
+    }
+}
+
+constexpr bool GnmHasThinOrThickFallback(std::uint32_t arrayMode) {
+    if (arrayMode < GnmArrayMode1dTiledThin1 || arrayMode > GnmArrayMode3dTiledThick) return false;
+    switch (arrayMode) {
+    case GnmArrayMode2dTiledXThick:
+    case GnmArrayModePrtTiledThick:
+    case GnmArrayModePrt2dTiledThick: return false;
+    default: return true;
+    }
+}
+
+constexpr bool GnmTileModeHasBanks(std::uint32_t tileMode) {
+    if (tileMode >= 32) return false;
+    const std::uint32_t entry = GnmTileModes[tileMode];
+    return GnmIsMacroTiled((entry >> 2) & 0xf) && ((entry >> 22) & 7) != GnmMicroTileModeRotated;
+}
+
 constexpr std::uint32_t GnmThinOrThickTileMode(std::uint32_t arrayMode) {
     std::uint32_t tileMode = 0;
     while (tileMode < 0x1f) {
@@ -406,8 +456,8 @@ constexpr std::uint32_t GnmThinOrThickTileMode(std::uint32_t arrayMode) {
 }
 
 static_assert([] {
-    for (std::uint32_t arrayMode = 2; arrayMode < 0xe; ++arrayMode) {
-        if (((0xe3fu >> (arrayMode - 2)) & 1) != 0 && GnmThinOrThickTileMode(arrayMode) == 0x1f) return false;
+    for (std::uint32_t arrayMode = GnmArrayModeLinearGeneral; arrayMode <= GnmArrayModePrt3dTiledThick; ++arrayMode) {
+        if (GnmHasThinOrThickFallback(arrayMode) && GnmThinOrThickTileMode(arrayMode) == 0x1f) return false;
     }
     return true;
 }());
@@ -474,25 +524,29 @@ bool GnmTextureFormatSupported(std::uint32_t format) {
     } else if (surface == 0xd || surface == 0xf) {
         return false;
     }
-    const std::uint32_t type = (format >> 8) & 0xf;
-    if (type > 9 || ((0x2b3u >> type) & 1) == 0) return false;
+    switch ((format >> 8) & 0xf) {
+    case GnmChannelTypeUNorm:
+    case GnmChannelTypeSNorm:
+    case GnmChannelTypeUInt:
+    case GnmChannelTypeSInt:
+    case GnmChannelTypeFloat:
+    case GnmChannelTypeSrgb: break;
+    default: return false;
+    }
     return GnmSwizzle(format, nullptr);
 }
 
 std::uint32_t GnmDegradeArrayMode(std::uint32_t arrayMode, std::uint32_t bits) {
-    const std::uint32_t index = arrayMode - 3;
-    if (GnmThicknessOf(arrayMode) == 1) return arrayMode;
-    const std::uint32_t size = bits * GnmMicroTileTexels * GnmThicknessOf(arrayMode);
-    if (size < 0x2001) return arrayMode;
-    switch (index) {
-    case 0: return 3;
-    case 4: return 4;
-    case 5: return size < 0x4010 ? 7 : 4;
-    case 6: return 5;
-    case 7: return 6;
-    case 10: return 0xc;
-    case 11: return size < 0x4010 ? 0xd : 0xc;
-    case 12: return 0xb;
+    const std::uint32_t tileBits = bits * GnmMicroTileTexels * GnmThicknessOf(arrayMode);
+    if (GnmThicknessOf(arrayMode) == 1 || tileBits <= GnmRowBits) return arrayMode;
+    switch (arrayMode) {
+    case GnmArrayMode2dTiledThick: return GnmArrayMode2dTiledThin1;
+    case GnmArrayMode2dTiledXThick: return tileBits <= 2 * GnmRowBits ? GnmArrayMode2dTiledThick : GnmArrayMode2dTiledThin1;
+    case GnmArrayModePrtTiledThick: return GnmArrayModePrtTiledThin1;
+    case GnmArrayModePrt2dTiledThick: return GnmArrayModePrt2dTiledThin1;
+    case GnmArrayMode3dTiledThick: return GnmArrayMode3dTiledThin1;
+    case GnmArrayMode3dTiledXThick: return tileBits <= 2 * GnmRowBits ? GnmArrayMode3dTiledThick : GnmArrayMode3dTiledThin1;
+    case GnmArrayModePrt3dTiledThick: return GnmArrayModePrt3dTiledThin1;
     default: return arrayMode;
     }
 }
@@ -511,7 +565,7 @@ bool GnmTileModeForArrayMode(std::uint32_t tileMode, std::uint32_t arrayMode, st
         return true;
     case 1:
     case 4:
-        if (arrayMode - 2 >= 0xc || ((0xe3fu >> (arrayMode - 2)) & 1) == 0) return false;
+        if (!GnmHasThinOrThickFallback(arrayMode)) return false;
         result = GnmThinOrThickTileMode(arrayMode);
         return true;
     case 2:
@@ -522,19 +576,36 @@ bool GnmTileModeForArrayMode(std::uint32_t tileMode, std::uint32_t arrayMode, st
     }
 }
 
-bool GnmMacroTileIndex(std::uint32_t tileMode, std::uint32_t bits, std::uint32_t& index) {
-    if (tileMode > 0x1f) return false;
+struct GnmMacroTile {
+    bool found;
+    std::uint32_t index;
+    std::uint32_t residual;
+};
+
+GnmMacroTile GnmFindMacroTile(std::uint32_t tileMode, std::uint32_t bits, std::uint32_t fragments) {
+    const auto fragmentBits = static_cast<std::uint32_t>(std::popcount(fragments));
+    if (fragmentBits != 1) return {false, 0, fragmentBits};
+    if (fragments > 8 || tileMode > 0x1f) return {false, 0, 1};
     const std::uint32_t entry = GnmTileModes[tileMode];
     const std::uint32_t arrayMode = GnmArrayMode(entry);
-    if (((0xfff0u >> arrayMode) & 1) == 0 || bits - 1 > 0x7f) return false;
+    if (!GnmIsMacroTiled(arrayMode) || bits - 1 > 0x7f) return {false, 0, arrayMode};
     const std::uint32_t tileBytes = ((bits * GnmThicknessOf(arrayMode)) << 6) >> 3;
     const std::uint32_t scaled = tileBytes << ((entry >> 25) & 3);
     const std::uint32_t split = tileMode >= 8 ? (scaled >= 0x101 ? scaled : 0x100) : 0x40u << ((entry >> 11) & 7);
     const std::uint32_t limit = split < 0x400 ? split : 0x400;
-    const std::uint32_t bytes = tileBytes >= limit ? limit : tileBytes;
-    if (!std::has_single_bit(bytes) || bytes < 0x40) return false;
-    index = static_cast<std::uint32_t>(std::bit_width((bytes >> 6) | 1)) - 1 + (((0x8e60u >> arrayMode) & 1) != 0 ? 8 : 0);
-    return true;
+    const std::uint32_t fragmentBytes = tileBytes * fragments;
+    const std::uint32_t bytes = fragmentBytes >= limit ? limit : fragmentBytes;
+    const auto byteBits = static_cast<std::uint32_t>(std::popcount(bytes));
+    if (byteBits != 1) return {false, 0, byteBits};
+    if (bytes < 0x40) return {false, 0, 1};
+    const std::uint32_t index = static_cast<std::uint32_t>(std::bit_width((bytes >> 6) | 1)) - 1 + (GnmIsPrt(arrayMode) ? 8 : 0);
+    return {true, index, 0};
+}
+
+bool GnmMacroTileIndex(std::uint32_t tileMode, std::uint32_t bits, std::uint32_t& index) {
+    const GnmMacroTile tile = GnmFindMacroTile(tileMode, bits, 1);
+    if (tile.found) index = tile.index;
+    return tile.found;
 }
 
 bool GnmComputeMacroLayout(std::uint32_t tileMode, std::uint32_t arrayMode, std::uint32_t pipes, bool neo, std::uint32_t width,
@@ -569,7 +640,7 @@ bool GnmComputeMacroLayout(std::uint32_t tileMode, std::uint32_t arrayMode, std:
     if (splitBytes * bankWidth * macroBankHeight >= 0x401) NotImplemented_nid_no_patch("sceFontGraphicsGnmSurfaceInit");
     std::uint32_t pitchAlign = macroAspect * pipes * bankWidth * 8;
     const std::uint32_t heightAlign = banks * macroBankHeight * 8 / macroAspect;
-    if (((0x8e60u >> arrayMode) & 1) != 0) {
+    if (GnmIsPrt(arrayMode)) {
         const std::uint32_t sliceBits = heightAlign * bits * pitchAlign;
         if (sliceBits <= 0x7ffff) {
             if (0x10000 % (sliceBits >> 3) != 0) return false;
@@ -617,13 +688,14 @@ bool GnmComputeSurface(std::uint32_t tileMode, bool neo, std::uint32_t width, st
 
 std::uint32_t GnmTextureFormatWord(std::uint32_t format) {
     const std::uint32_t numeric = GnmRenderTargetType((format >> 8) & 0xf);
-    const std::uint32_t paired = numeric & ~1u;
+    const bool normalized = numeric == GnmChannelTypeUNorm || numeric == GnmChannelTypeSNorm || numeric == GnmRenderTargetTypeSrgb;
+    const bool integer = numeric == GnmChannelTypeUInt || numeric == GnmChannelTypeSInt;
     std::uint32_t swizzle = 0;
     GnmSwizzle(format, &swizzle);
-    std::uint32_t word = numeric == 0 || numeric == 6 ? 0 : static_cast<std::uint32_t>(numeric != 1) << 18;
-    word |= static_cast<std::uint32_t>(paired == 4) << 16;
-    word |= static_cast<std::uint32_t>(numeric < 7 && ((0x43u >> numeric) & 1) != 0 && paired != 4) << 15;
-    return word | (swizzle & 3) << 11 | (numeric & 7) << 8 | (format << 2 & 0x7c);
+    std::uint32_t word = normalized ? GnmColorInfoBlendClamp : GnmColorInfoRoundMode;
+    if (integer) word |= GnmColorInfoBlendBypass;
+    return word | (swizzle & 3) << GnmColorInfoCompSwapShift | (numeric & 7) << GnmColorInfoNumberTypeShift |
+           (format & 0x1f) << GnmColorInfoFormatShift;
 }
 
 bool GnmInitTexture(std::uint8_t* output, std::uint32_t width, std::uint32_t height, std::uint32_t format, std::uint32_t tileMode,
@@ -646,19 +718,169 @@ bool GnmInitTexture(std::uint8_t* output, std::uint32_t width, std::uint32_t hei
     return computed;
 }
 
-void GnmSetTextureBase(std::uint8_t* output, std::uint64_t base) {
-    std::uint32_t address = static_cast<std::uint32_t>(base >> 8);
-    const std::uint32_t formatWord = Read32(output, 0x10);
-    const std::uint32_t surface = (formatWord >> 2) & 0x1f;
-    const std::uint32_t tileMode = Read32(output, 0x14) & 0x1f;
-    std::uint32_t index = 0;
-    if (surface != 0 && ((0x7f7dcdfu >> tileMode) & 1) != 0 && GnmMacroTileIndex(tileMode, GnmElementBits[surface], index)) {
-        const bool neo = (formatWord & 0x80000000) != 0;
-        const std::uint32_t banks = neo ? (GnmMacroTileModes[index] >> 12) & 3 : (GnmMacroTileModes[index] >> 6) & 3;
-        const std::uint32_t mask = ((2u << banks) - 1) << (neo ? 4 : 3);
-        address = (address & ~mask) | (Read32(output, 0) & mask);
+std::uint32_t GnmFormatBits(std::uint32_t surface) {
+    if (surface > 0x3c) return 0;
+    const std::uint32_t scale = ((surface - 0x23) & 0xff) < 7 ? 16 : ((surface - 0x3b) & 0xff) <= 1 ? 8 : 1;
+    return GnmElementBits[surface] * scale;
+}
+
+std::uint32_t GnmTextureDataFormat(const std::uint8_t* texture) {
+    const std::uint32_t word = Read32(texture, 0x10);
+    const std::uint32_t surface = (word >> 2) & 0x1f;
+    const std::uint32_t numeric = (word >> 8) & 7;
+    const std::uint32_t count = GnmComponentCounts[surface];
+    std::uint32_t channels = 1u << 21;
+    if (count - 1 < 4) {
+        std::uint32_t selects[4] = {GnmSelectZero, GnmSelectZero, GnmSelectZero, GnmSelectOne};
+        for (std::uint32_t component = 0; component < count; ++component)
+            selects[GnmComponentSwapChannel[count - 1][(word >> 11) & 3][component]] = GnmSelectX + component;
+        channels = GnmDataFormat(0, 0, selects[0], selects[1], selects[2], selects[3]);
     }
-    Write(output, 0, address);
+    return surface | (numeric == 6 ? 0x900 : numeric << 8) | channels;
+}
+
+std::uint32_t GnmBankMask(std::uint32_t tileMode, std::uint32_t surface, std::uint32_t fragments, bool neo, bool incrementResidual) {
+    const GnmMacroTile tile = GnmFindMacroTile(tileMode, GnmFormatBits(surface), fragments);
+    const std::uint32_t field = neo ? (GnmMacroTileModes[tile.index] >> 12) & 3 : (GnmMacroTileModes[tile.index] >> 6) & 3;
+    const std::uint32_t bits = tile.found ? field + 1 : tile.residual + (incrementResidual ? 1 : 0);
+    return ~(0xffffffffu << (bits & 0x1f)) << (neo ? 4 : 3);
+}
+
+std::uint32_t GnmTextureBankMask(const std::uint8_t* texture) {
+    const std::uint32_t tiling = Read32(texture, 0x14);
+    return GnmBankMask(tiling & 0x1f, GnmTextureDataFormat(texture) & 0xff, 1u << ((tiling >> 15) & 3),
+                       (Read32(texture, 0x10) & 0x80000000) != 0, true);
+}
+
+bool GnmTextureHasBanks(const std::uint8_t* texture) {
+    return (GnmTextureDataFormat(texture) & 0xff) != 0 && GnmTileModeHasBanks(Read32(texture, 0x14) & 0x1f);
+}
+
+void GnmSetTextureBase(std::uint8_t* texture, std::uint32_t address) {
+    if (GnmTextureHasBanks(texture)) {
+        const std::uint32_t mask = GnmTextureBankMask(texture);
+        address = (address & ~mask) | (Read32(texture, 0) & mask);
+    }
+    Write(texture, 0, address);
+}
+
+void GnmSetTextureMetadata(std::uint8_t* texture, std::uint32_t address) {
+    const std::uint32_t tiling = Read32(texture, 0x14);
+    if ((tiling & 0x7000) != 0 && GnmTileModeHasBanks((tiling >> 5) & 0x1f)) {
+        const std::uint32_t mask = GnmTextureBankMask(texture);
+        address = (address & ~mask) | (Read32(texture, 0x24) & mask);
+    }
+    Write(texture, 0x24, address);
+}
+
+std::uint32_t GnmTextureBase(const std::uint8_t* texture) {
+    const std::uint32_t address = Read32(texture, 0);
+    return GnmTextureHasBanks(texture) ? address & ~GnmTextureBankMask(texture) : address;
+}
+
+std::uint32_t GnmResourceFragments(std::uint32_t word3) { return word3 >= 0xe0000000 ? 1u << ((word3 >> 16) & 0xf) : 1; }
+
+bool GnmResourceHasBanks(const std::uint32_t* resource) {
+    return (resource[1] & 0x3f00000) != 0 && GnmTileModeHasBanks((resource[3] >> 20) & 0x1f);
+}
+
+std::uint32_t GnmResourceBankMask(const std::uint32_t* resource, bool neo, bool incrementResidual) {
+    return GnmBankMask((resource[3] >> 20) & 0x1f, (resource[1] >> 20) & 0x3f, GnmResourceFragments(resource[3]), neo, incrementResidual);
+}
+
+void GnmSetResourceBase(std::uint32_t* resource, std::uint32_t address) {
+    if (GnmResourceHasBanks(resource)) {
+        const std::uint32_t mask = GnmResourceBankMask(resource, (resource[6] & 0x1000000) != 0, true);
+        address = (address & ~mask) | (resource[0] & mask);
+    }
+    resource[0] = address;
+    resource[1] &= 0xffffffc0;
+}
+
+std::uint32_t GnmResourceType(std::uint32_t depth, std::uint32_t tiling, std::uint32_t depthWord, std::uint32_t heightBits) {
+    const bool layered = depthWord >= 0x2000;
+    const bool single = (depth & 0x7ff) == 0;
+    if ((tiling & 0x18000) != 0) return single && !layered ? 0xe0000000 : 0xf0000000;
+    const bool flat = !layered && single;
+    if (heightBits == 0) return flat ? 0x80000000 : 0xc0000000;
+    return flat ? 0x90000000 : 0xd0000000;
+}
+
+void GnmTextureToResource(std::uint8_t* output, const std::uint8_t* texture, bool cube) {
+    std::uint32_t resource[8] = {};
+    const std::uint32_t extent = Read32(texture, 0x3c);
+    const std::uint32_t widthBits = (extent - 1) & 0x3fff;
+    const std::uint32_t heightBits = (((extent >> 2) & 0xfffc000) + 0xfffc000) & 0xfffc000;
+    const std::uint32_t pitch = ((Read32(texture, 0x04) << 16) & 0x7ff0000) + 0xe000;
+    const std::uint32_t format = GnmTextureDataFormat(texture);
+    resource[1] = (format & 0x3f) << 20 | ((format << 18) & 0x3c000000);
+    const std::uint32_t selects = GnmChannel(format, 0) | GnmChannel(format, 1) << 3 | GnmChannel(format, 2) << 6 | GnmChannel(format, 3) << 9;
+    const std::uint32_t tiling = Read32(texture, 0x14);
+    const std::uint32_t word3 = (((0x94000000 | selects) & 0xfe0fffff) | (tiling & 0x1f) << 20) & 0xfffffff;
+    const std::uint32_t depth = Read32(texture, 0x0c);
+    const std::uint32_t slices = (depth >> 13) & 0x7ff;
+    const std::uint32_t depthWord = depth & 0xffe7ff;
+    resource[2] = heightBits + widthBits + 0x70000000;
+    resource[4] = pitch + slices;
+    resource[5] = depthWord;
+    if (cube && depthWord >= 0x2000) {
+        resource[4] = pitch | ((((slices * 0xaaab + 0xaaab) >> 18) - 1) & 0x1fff);
+        resource[3] = word3 | 0xb0000000;
+    } else {
+        resource[3] = word3 | GnmResourceType(depth, tiling, depthWord, heightBits);
+    }
+    if (const std::uint32_t fragments = (tiling >> 15) & 3; fragments != 0) resource[3] = (resource[3] & 0xfff0ffff) | fragments << 16;
+    const std::uint32_t formatWord = Read32(texture, 0x10);
+    const std::uint32_t flags = Read32(texture, 0x18);
+    std::uint32_t extra = 0;
+    if ((formatWord & 0x10000000) != 0 && (flags & 0x260) == 0x200 && Read32(texture, 0x34) != 0) {
+        extra = (~(formatWord << 10) & 0x400000) + ((flags << 16) & 0x800000) + 0x200000;
+        resource[7] = Read32(texture, 0x34);
+    }
+    resource[6] = ((formatWord >> 7) & 0x1000000) | extra;
+    GnmSetResourceBase(resource, GnmTextureBase(texture));
+    std::uint32_t banks = 0;
+    if ((formatWord & 0x80000000) != 0 && GnmTextureHasBanks(texture)) {
+        const std::uint32_t mask = GnmBankMask(tiling & 0x1f, GnmTextureDataFormat(texture) & 0xff, 1u << ((tiling >> 15) & 3), true, false);
+        banks = mask & Read32(texture, 0) & 0xff0;
+    }
+    if ((resource[6] & 0x1000000) != 0 && GnmResourceHasBanks(resource)) {
+        const std::uint32_t mask = GnmResourceBankMask(resource, true, false);
+        resource[0] = (resource[0] & ~mask) | (mask & banks);
+    }
+    std::memcpy(output, resource, sizeof(resource));
+}
+
+std::uint32_t GnmResourceDataFormat(const std::uint8_t* resource) {
+    const std::uint32_t word1 = Read32(resource, 4);
+    return ((word1 >> 20) & 0x3f) | ((word1 >> 18) & 0xf00) | ((Read32(resource, 0x0c) << 12) & 0xfff000);
+}
+
+int APS5_VABI GnmBackendStructureTexture(void* object, void* texture, std::uint64_t base) {
+    if (object == nullptr) return 0;
+    auto* const output = static_cast<std::uint8_t*>(object);
+    auto* const source = static_cast<std::uint8_t*>(texture);
+    GnmSetTextureBase(source, static_cast<std::uint32_t>(base >> 8));
+    Write<std::uint32_t>(source, 0x1c, 0);
+    GnmSetTextureMetadata(source, 0);
+    std::uint8_t* const resource = output + 0x40;
+    GnmTextureToResource(resource, source, false);
+    std::uint32_t format = GnmResourceDataFormat(resource);
+    const std::uint32_t surface = format & 0xff;
+    if (surface == 1 || surface == 2 || surface == 4) {
+        const std::uint32_t index = GnmChannel(format, 3) == 4   ? 3
+                                    : GnmChannel(format, 0) == 4 ? 0
+                                    : GnmChannel(format, 1) == 4 ? 1
+                                    : GnmChannel(format, 2) == 4 ? 2
+                                                                 : 3;
+        format = GnmDataFormat(surface, (format >> 8) & 0xf, 1, 1, 1, GnmChannel(format, index));
+    } else if (surface == 3) {
+        format = GnmDataFormat(3, 0, 4, 4, 4, 5);
+    }
+    Write(resource, 4, (Read32(resource, 4) & 0xc00fffff) | (format & 0x3f) << 20 | ((format << 18) & 0x3c000000));
+    Write(resource, 0x0c, (Read32(resource, 0x0c) & 0xfffff000) | GnmChannel(format, 0) | GnmChannel(format, 1) << 3 |
+                             GnmChannel(format, 2) << 6 | GnmChannel(format, 3) << 9);
+    return 0x20;
 }
 
 int GnmSurfaceInit(void* surface, const void* config) {
@@ -713,7 +935,7 @@ int GnmSurfaceInit(void* surface, const void* config) {
     }
     const bool neo = sceKernelIsNeoMode() != 0;
     if (!GnmInitTexture(out + 0x40, width, height, format, tileMode, neo)) return FontGsSurfaceConfigInvalid;
-    GnmSetTextureBase(out + 0x40, base);
+    GnmSetTextureBase(out + 0x40, static_cast<std::uint32_t>(base >> 8));
     Write(out, 0x5c, static_cast<std::uint32_t>(Read64(in, 0x58) >> 8));
     Write(out, 0x64, static_cast<std::uint32_t>(Read64(in, 0x78) >> 8));
     Write(out, 0x6c, Read64(in, 0x68));
@@ -741,6 +963,15 @@ int GnmSurfaceInit(void* surface, const void* config) {
     return 0;
 }
 
+template <typename T>
+bool WriteGuestOut(T* pointer, const T& value) {
+    if (pointer == nullptr) return true;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(pointer, &value, sizeof(value));
+    errno = savedErrno;
+    return copied;
+}
+
 const FontGnmSurface* ReadGnmSurface(const void* surface) {
     const auto* const gnm = static_cast<const FontGnmSurface*>(surface);
     if (gnm->tag != FontGnmSurfaceTag || gnm->head == nullptr || gnm->initialized != 1 || gnm->busy != 0) return nullptr;
@@ -762,13 +993,70 @@ const FontGnmCommands* CheckSequence(const FontGraphicsCanvasSequence* sequence,
     return nullptr;
 }
 
+template <std::uint32_t Opcode>
+void APS5_VABI GnmBackendUnported() {
+    char name[48];
+    std::snprintf(name, sizeof(name), "sceFontSelectGraphicsGnm_backend_%08x", Opcode);
+    NotImplemented_nid_no_patch(name);
+}
+
+void APS5_VABI GnmBackendTerminate(void*) {}
+
+template <std::uint32_t Opcode>
+FontGraphicsBackendEntry GnmUnportedEntry() {
+    return {Opcode, 0, reinterpret_cast<std::uint64_t>(&GnmBackendUnported<Opcode>)};
+}
+
+struct GnmBackend {
+    FontGraphicsServiceParam header;
+    FontGraphicsBackendEntry entries[21];
+    FontGraphicsBackendList list;
+};
+
+static_assert(offsetof(GnmBackend, entries) == 0x20);
+static_assert(offsetof(GnmBackend, list) == 0x170);
+
+void* g_gnmInstance = nullptr;
+
+int APS5_VABI GnmBackendEnumerate(void* dispatch, FontGraphicsBackendSink sink);
+
+const GnmBackend g_gnmBackend = {
+    {0x0e08, 4, 0x200, &g_gnmInstance, 0x20000, 0, GnmBackendEnumerate},
+    {GnmUnportedEntry<0x47000001>(),
+     {0x47000002, 0, reinterpret_cast<std::uint64_t>(&GnmBackendTerminate)},
+     GnmUnportedEntry<0x4700002d>(),
+     GnmUnportedEntry<0x4700002e>(),
+     GnmUnportedEntry<0x470000c0>(),
+     GnmUnportedEntry<0x470000cb>(),
+     GnmUnportedEntry<0x470000ce>(),
+     GnmUnportedEntry<0x470000d1>(),
+     GnmUnportedEntry<0x470000d2>(),
+     GnmUnportedEntry<0x470000d4>(),
+     GnmUnportedEntry<0x470000e0>(),
+     GnmUnportedEntry<0x470000e1>(),
+     GnmUnportedEntry<0x470000ec>(),
+     GnmUnportedEntry<0x470000d0>(),
+     GnmUnportedEntry<0x470000e2>(),
+     GnmUnportedEntry<0x470000e3>(),
+     GnmUnportedEntry<0x470000f0>(),
+     {0x47000003, 0, 0x1000000040},
+     {0x47000004, 0, 0x4000000020},
+     GnmUnportedEntry<0x4700000b>(),
+     {0x47000005, 0, reinterpret_cast<std::uint64_t>(&GnmBackendStructureTexture)}},
+    {0, 21, g_gnmBackend.entries}};
+
+int APS5_VABI GnmBackendEnumerate(void* dispatch, FontGraphicsBackendSink sink) {
+    if (dispatch == nullptr) return 0;
+    sink(dispatch, &g_gnmBackend.list);
+    return 0x400;
+}
+
 }
 
 extern "C" {
 
 void* APS5_VABI sceFontSelectGraphicsGnm(std::uint32_t index) {
-    if (index == 0) NotImplemented_nid_no_patch(__func__);
-    return nullptr;
+    return index == 0 ? const_cast<GnmBackend*>(&g_gnmBackend) : nullptr;
 }
 
 int APS5_VABI sceFontGraphicsGnmSurfaceInit(void* surface, const void* config) {
@@ -778,7 +1066,11 @@ int APS5_VABI sceFontGraphicsGnmSurfaceInit(void* surface, const void* config) {
 int APS5_VABI sceFontGraphicsGnmDrawupFillTextureImage(FontGraphicsFrame* graphicsObject, const void* surface, void** output,
                                                      float x, float y, float width, float height) {
     if (output == nullptr) return FontGsInvalidParameter;
-    *output = nullptr;
+    void* zero = nullptr;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(output, &zero, sizeof(zero));
+    errno = savedErrno;
+    if (!copied) return FontGsInvalidParameter;
     if (graphicsObject == nullptr || surface == nullptr) return FontGsInvalidParameter;
     const auto* const gnm = ReadGnmSurface(surface);
     if (gnm == nullptr || !(x >= 0.0f)) return FontGsInvalidParameter;
@@ -786,9 +1078,14 @@ int APS5_VABI sceFontGraphicsGnmDrawupFillTextureImage(FontGraphicsFrame* graphi
     if (!(right >= x) || !(right <= FontGnmDrawupLimit) || !(y >= 0.0f)) return FontGsInvalidParameter;
     const float bottom = y + height;
     if (!(bottom >= y) || !(bottom <= FontGnmDrawupLimit)) return FontGsInvalidParameter;
-    const int error = sceFontGraphicsDrawupFillTextureImageObject(graphicsObject, gnm->fillObject, gnm->mode, output, x, y, width, height);
+    void* record = nullptr;
+    const int error = sceFontGraphicsDrawupFillTextureImageObject(graphicsObject, gnm->fillObject, gnm->mode, &record, x, y, width, height);
     if (error != 0) return error;
-    MarkGnmRecord(*output);
+    MarkGnmRecord(record);
+    const int savedErrno2 = errno;
+    const bool copied2 = GuestCopyOut_nid_no_patch(output, &record, sizeof(record));
+    errno = savedErrno2;
+    if (!copied2) return FontGsInvalidParameter;
     return 0;
 }
 
@@ -796,43 +1093,56 @@ int APS5_VABI sceFontGraphicsGnmDrawupFillTexturePattern(FontGraphicsFrame* grap
                                                        std::uint32_t select, std::uint32_t dimension1, std::uint32_t option1,
                                                        std::uint32_t option2, std::uint32_t dimension2, void** output) {
     if (output == nullptr) return FontGsInvalidParameter;
-    *output = nullptr;
+    void* zero = nullptr;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(output, &zero, sizeof(zero));
+    errno = savedErrno;
+    if (!copied) return FontGsInvalidParameter;
     if (graphicsObject == nullptr || surface == nullptr) return FontGsInvalidParameter;
     const auto* const gnm = ReadGnmSurface(surface);
     if (gnm == nullptr) return FontGsInvalidParameter;
+    void* record = nullptr;
     const int error = sceFontGraphicsDrawupFillTexturePatternObject(graphicsObject, gnm->fillObject, gnm->mode, format, select,
-                                                                  dimension1, option1, option2, dimension2, output);
+                                                                  dimension1, option1, option2, dimension2, &record);
     if (error != 0) return error;
-    MarkGnmRecord(*output);
+    MarkGnmRecord(record);
+    const int savedErrno2 = errno;
+    const bool copied2 = GuestCopyOut_nid_no_patch(output, &record, sizeof(record));
+    errno = savedErrno2;
+    if (!copied2) return FontGsInvalidParameter;
     return 0;
 }
 
 int APS5_VABI sceFontGraphicsSequenceGetGnmCommandsForChain(FontGraphicsCanvasSequence* sequence, void** commands,
                                                           std::uint32_t* numCommands, void** commands2, std::uint32_t* numCommands2) {
-    if (commands != nullptr) *commands = nullptr;
-    if (numCommands != nullptr) *numCommands = 0;
-    if (commands2 != nullptr) *commands2 = nullptr;
-    if (numCommands2 != nullptr) *numCommands2 = 0;
+    const bool zeroedCommands = WriteGuestOut(commands, static_cast<void*>(nullptr));
+    const bool zeroedNumCommands = WriteGuestOut(numCommands, std::uint32_t{0});
+    const bool zeroedCommands2 = WriteGuestOut(commands2, static_cast<void*>(nullptr));
+    const bool zeroedNumCommands2 = WriteGuestOut(numCommands2, std::uint32_t{0});
+    if (!zeroedCommands || !zeroedNumCommands || !zeroedCommands2 || !zeroedNumCommands2) return FontGsInvalidParameter;
     int error = 0;
     const bool outputs = commands != nullptr && numCommands != nullptr && commands2 != nullptr && numCommands2 != nullptr;
     const auto* const gnm = CheckSequence(sequence, outputs, error);
     if (gnm == nullptr) return error;
-    *commands = const_cast<void*>(gnm->first);
-    *numCommands = gnm->firstSize >> 2;
-    *commands2 = const_cast<void*>(gnm->second);
-    *numCommands2 = gnm->secondCount;
+    const bool wroteCommands = WriteGuestOut(commands, const_cast<void*>(gnm->first));
+    const bool wroteNumCommands = WriteGuestOut(numCommands, static_cast<std::uint32_t>(gnm->firstSize >> 2));
+    const bool wroteCommands2 = WriteGuestOut(commands2, const_cast<void*>(gnm->second));
+    const bool wroteNumCommands2 = WriteGuestOut(numCommands2, gnm->secondCount);
+    if (!wroteCommands || !wroteNumCommands || !wroteCommands2 || !wroteNumCommands2) return FontGsInvalidParameter;
     return 0;
 }
 
 int APS5_VABI sceFontGraphicsSequenceGetGnmCommandsForSubmit(FontGraphicsCanvasSequence* sequence, void** commands,
                                                            std::uint32_t* numCommands) {
-    if (commands != nullptr) *commands = nullptr;
-    if (numCommands != nullptr) *numCommands = 0;
+    const bool zeroedCommands = WriteGuestOut(commands, static_cast<void*>(nullptr));
+    const bool zeroedNumCommands = WriteGuestOut(numCommands, std::uint32_t{0});
+    if (!zeroedCommands || !zeroedNumCommands) return FontGsInvalidParameter;
     int error = 0;
     const auto* const gnm = CheckSequence(sequence, commands != nullptr && numCommands != nullptr, error);
     if (gnm == nullptr) return error;
-    *commands = const_cast<void*>(gnm->first);
-    *numCommands = gnm->firstSize;
+    const bool wroteCommands = WriteGuestOut(commands, const_cast<void*>(gnm->first));
+    const bool wroteNumCommands = WriteGuestOut(numCommands, gnm->firstSize);
+    if (!wroteCommands || !wroteNumCommands) return FontGsInvalidParameter;
     return 0;
 }
 

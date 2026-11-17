@@ -71,6 +71,12 @@ int Poll() {
     }
     return g_status;
 }
+
+int MsgDialogResultStatus(int& buttonId) {
+    std::lock_guard g(g_lock);
+    buttonId = g_buttonId;
+    return g_status;
+}
 }
 
 extern "C" {
@@ -136,3 +142,5 @@ int APS5_VABI sceMsgDialogProgressBarSetValue(int target, std::uint32_t rate) {
  return kErrOk;
 }
 }
+
+#include "../libSceMsgDialog.native/Result.cpp"

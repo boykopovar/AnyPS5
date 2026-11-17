@@ -1,5 +1,5 @@
 if(BUILD_TESTING)
-    set_tests_properties(agc_driver_gds_integer_atomics64 PROPERTIES TIMEOUT 30)
+    set_tests_properties(agc_driver_gds_integer_atomics64 PROPERTIES TIMEOUT 30 SKIP_RETURN_CODE 77)
     foreach(mode IN ITEMS exchanges contention bounds requirements alignment coherence exchange-contention)
         set(name agc_driver_gds_integer_atomics64_${mode})
         add_test(NAME ${name} COMMAND agc_driver_gds_integer_atomics64_tests ${mode})

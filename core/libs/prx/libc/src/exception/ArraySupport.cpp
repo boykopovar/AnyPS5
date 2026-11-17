@@ -52,11 +52,6 @@ std::size_t ArraySize(std::size_t count, std::size_t size, std::size_t padding) 
         __cxa_throw_bad_array_new_length_nid_postfix();
     return count * size + padding;
 }
-void* ArrayAllocate(std::size_t size) {
-    void* result = std::malloc(size ? size : 1);
-    if (!result) _ZSt11_Xbad_allocv_nid_postfix();
-    return result;
-}
 template<class TAllocate, class TDeallocate>
 void* NewArray(std::size_t count, std::size_t size, std::size_t padding, void (APS5_VABI *construct)(void*), void (APS5_VABI *destroy)(void*), TAllocate allocate, TDeallocate deallocate) {
     std::size_t total = ArraySize(count, size, padding);
@@ -86,7 +81,7 @@ void DeleteArray(void* array, std::size_t size, std::size_t padding, void (APS5_
 
 extern "C" {
 void* APS5_VABI __cxa_vec_new_nid_postfix(std::size_t n, std::size_t s, std::size_t p, void (APS5_VABI *ctor)(void*), void (APS5_VABI *dtor)(void*)) {
-    return LibcException::NewArray(n, s, p, ctor, dtor, LibcException::ArrayAllocate, [](void* ptr, std::size_t) { std::free(ptr); });
+    return LibcException::NewArray(n, s, p, ctor, dtor, _Znam_nid_postfix, [](void* ptr, std::size_t) { _ZdaPv_nid_postfix(ptr); });
 }
 void* APS5_VABI __cxa_vec_new2_nid_postfix(std::size_t n, std::size_t s, std::size_t p, void (APS5_VABI *ctor)(void*), void (APS5_VABI *dtor)(void*), void* (APS5_VABI *alloc)(std::size_t), void (APS5_VABI *dealloc)(void*)) {
     return LibcException::NewArray(n, s, p, ctor, dtor, alloc, [dealloc](void* ptr, std::size_t) { dealloc(ptr); });
@@ -95,7 +90,7 @@ void* APS5_VABI __cxa_vec_new3_nid_postfix(std::size_t n, std::size_t s, std::si
     return LibcException::NewArray(n, s, p, ctor, dtor, alloc, dealloc);
 }
 void APS5_VABI __cxa_vec_delete_nid_postfix(void* array, std::size_t s, std::size_t p, void (APS5_VABI *dtor)(void*)) {
-    LibcException::DeleteArray(array, s, p, dtor, [](void* ptr, std::size_t) { std::free(ptr); });
+    LibcException::DeleteArray(array, s, p, dtor, [](void* ptr, std::size_t) { _ZdaPv_nid_postfix(ptr); });
 }
 void APS5_VABI __cxa_vec_delete2_nid_postfix(void* array, std::size_t s, std::size_t p, void (APS5_VABI *dtor)(void*), void (APS5_VABI *dealloc)(void*)) {
     LibcException::DeleteArray(array, s, p, dtor, [dealloc](void* ptr, std::size_t) { dealloc(ptr); });

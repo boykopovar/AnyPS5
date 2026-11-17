@@ -3,11 +3,11 @@
 
 #include <sqlite3.h>
 
+#include <cerrno>
 #include <cstring>
 #include <filesystem>
 #include <new>
 #include <string>
-#include <string_view>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -436,33 +436,30 @@ sqlite3_stmt* APS5_VABI sqlite3_next_stmt_nid_postfix(sqlite3* db, sqlite3_stmt*
     return sqlite3_next_stmt(db, statement);
 }
 
-static bool MemoryUri(const char* filename) {
-    const char* path = filename + 5;
-    if (std::strchr(path, '%') != nullptr) return false;
-    const char* end = path + std::strcspn(path, "?#");
-    if (std::string_view(path, static_cast<std::size_t>(end - path)) == ":memory:") return true;
-    if (*end != '?') return false;
-    bool memory = false;
-    for (const char* parameter = end + 1; *parameter != '\0' && *parameter != '#';) {
-        const char* stop = parameter + std::strcspn(parameter, "&#");
-        const std::string_view text(parameter, static_cast<std::size_t>(stop - parameter));
-        if (text.substr(0, 5) == "mode=") memory = text.substr(5) == "memory";
-        parameter = *stop == '&' ? stop + 1 : stop;
-    }
-    return memory;
-}
-
 int APS5_VABI sqlite3_open_v2_nid_postfix(const char* filename, sqlite3** db, int flags, const char* vfs) {
     static_cast<void>(vfs);
-    if (filename && (flags & SQLITE_OPEN_URI) && std::strncmp(filename, "file:", 5) == 0 && !MemoryUri(filename)) {
-        NotImplemented_nid_no_patch("sqlite3_open_v2 file URI");
-    }
+    if (!db) return SQLITE_MISUSE;
+    sqlite3* localDb = nullptr;
+    const int savedErrno = errno;
+    const bool writable = GuestWritable_nid_no_patch(db, sizeof(localDb));
+    errno = savedErrno;
+    if (!writable) return SQLITE_MISUSE;
     const int ready = InitializeGuestVfs();
     if (ready != SQLITE_OK) {
-        *db = nullptr;
+        const int copyErrno = errno;
+        GuestCopyOut_nid_no_patch(db, &localDb, sizeof(localDb));
+        errno = copyErrno;
         return ready;
     }
-    return sqlite3_open_v2(filename, db, flags, nullptr);
+    const int result = sqlite3_open_v2(filename, &localDb, flags, nullptr);
+    const int copyErrno = errno;
+    const bool copiedOut = GuestCopyOut_nid_no_patch(db, &localDb, sizeof(localDb));
+    errno = copyErrno;
+    if (!copiedOut) {
+        if (localDb) sqlite3_close(localDb);
+        return SQLITE_MISUSE;
+    }
+    return result;
 }
 
 int APS5_VABI sqlite3_prepare_v2_nid_postfix(sqlite3* db, const char* sql, int size, sqlite3_stmt** statement,
