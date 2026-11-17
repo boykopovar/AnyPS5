@@ -1095,5 +1095,73 @@ class PathResolutionTests(unittest.TestCase):
             self.assertTrue(loop.is_symlink())
 
 
+class ReferencedAddressTests(unittest.TestCase):
+    def test_referenced_address_is_none_without_a_reference(self):
+        import annotate_module
+        self.assertIsNone(annotate_module.referenced_address("    nop"))
+        self.assertIsNone(annotate_module.referenced_address("    mov %fs:0x28, %rax"))
+
+
+class LineNoteTests(unittest.TestCase):
+    def test_line_note_is_empty_for_plain_instructions(self):
+        import annotate_module
+        class Namer:
+            def resolve(self, value):
+                raise AssertionError("not expected for a plain instruction")
+        self.assertEqual(annotate_module.line_note("    nop", {}, {}, Namer()), "")
+class FakeNamer:
+    def resolve(self, name):
+        return name.upper()
+
+
+class ListingHelperTests(unittest.TestCase):
+    def test_export_lines_lists_exports_then_thread_local_offsets(self):
+        self.assertEqual(annotate_module.export_lines({0x10: ["a"]}, {0x4: ["tl"]}, FakeNamer()),
+                         ["0x10 a A", "tls+0x4 tl TL"])
+
+    def test_write_lines_terminates_each_line_with_lf(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "out.txt"
+            annotate_module.write_lines(path, ["a", "b"])
+            self.assertEqual(path.read_bytes(), b"a\nb\n")
+
+    def test_annotate_listing_adds_a_header_before_each_export(self):
+        listing = ["  10:\tnop", "  14:\tnop"]
+        self.assertEqual(annotate_module.annotate_listing(listing, {}, {0x10: ["a"]}, {}, FakeNamer()),
+                         ["", "; ===== export A", "  10:\tnop", "  14:\tnop"])
+
+    def test_find_stubs_maps_a_jump_through_a_known_slot_to_its_name(self):
+        listing = ["  30:\tjmpq   *0x2(%rip)        # 0x20", "  34:\tnop"]
+        self.assertEqual(annotate_module.find_stubs(listing, {0x20: "tbl"}, FakeNamer()), {0x30: "TBL"})
+        self.assertEqual(annotate_module.find_stubs(listing, {}, FakeNamer()), {})
+class ArgumentAndPathTests(unittest.TestCase):
+    def test_parse_arguments_defaults_to_the_disassembly_outputs(self):
+        args = annotate_module.parse_arguments(["lib.prx"])
+        self.assertEqual(args.module, "lib.prx")
+        self.assertIsNone(args.out)
+        self.assertIsNone(args.db)
+        self.assertFalse(args.no_names)
+        self.assertFalse(args.symbols_json)
+
+    def test_parse_arguments_refuses_an_offline_mode_with_out(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            annotate_module.parse_arguments(["lib.prx", "--symbols-json", "--out", "x"])
+
+    def test_resolved_path_follows_a_link_and_accepts_a_missing_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "real.prx"
+            target.write_bytes(b"x")
+            self.assertEqual(annotate_module.resolved_path(target), target.resolve())
+            link = root / "link.prx"
+            try:
+                os.symlink(target, link)
+            except OSError:
+                self.skipTest("symbolic links are not available")
+            self.assertEqual(annotate_module.resolved_path(link), target.resolve())
+            missing = root / "missing.prx"
+            self.assertEqual(annotate_module.resolved_path(missing), missing.resolve())
+
+
 if __name__ == "__main__":
     unittest.main(defaultTest=os.environ.get("ANNOTATE_MODULE_TEST"))

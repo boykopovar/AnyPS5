@@ -50,6 +50,7 @@
 #include "prx/libSceNKWebKit/include/DiagnosticLoggingKeysExports.hpp"
 #include "prx/libSceNKWebKit/include/MediaExports.hpp"
 #include "prx/libSceNKWebKit/include/JsonExports.hpp"
+#include "prx/libSceNKWebKit/include/HEVCCodecParameters.hpp"
 #include "prx/libSceNKWebKit/include/MimeExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfValueExports.hpp"
 #include "prx/libSceNKWebKit/include/RegionExports.hpp"
@@ -64,3 +65,5 @@
 #include "prx/libSceNKWebKit/include/DoubleConversionExports.hpp"
 #include "prx/libSceNKWebKit/include/PublicSuffixExports.hpp"
 #include "prx/libSceNKWebKit/include/DisplayListItemExports.hpp"
+#include "prx/libSceNKWebKit/include/CrossOriginRequestExports.hpp"
+#include "prx/libSceNKWebKit/include/BlobDataFileReferenceExports.hpp"
