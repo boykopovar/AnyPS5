@@ -9,10 +9,6 @@ int APS5_VABI sceAudioOut2GetSystemDebugState() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceAudioOut2PortSetAttributesEx() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI sceAudioOut2SetHrtfIdForCronos() {
     NotImplemented_nid_no_patch(__func__);
 }

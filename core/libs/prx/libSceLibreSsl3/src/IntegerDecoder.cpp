@@ -2,6 +2,7 @@
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/libc.hpp"
 #include "prx/libc/include/General.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -9,6 +10,8 @@
 #include <optional>
 #include <span>
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 
 namespace {
@@ -19,6 +22,7 @@ constexpr int NestedAsn1Error = 58;
 constexpr int LengthMismatch = 62;
 constexpr int MallocFailure = 65;
 constexpr int BadObjectHeader = 102;
+constexpr int HeaderTooLong = 123;
 constexpr int TooLong = 155;
 constexpr int WrongTag = 168;
 constexpr int TypeNotPrimitive = 231;
@@ -26,6 +30,24 @@ constexpr int TypeNotPrimitive = 231;
 static_assert(sizeof(Asn1String) == 24);
 static_assert(offsetof(Asn1String, data) == 8);
 static_assert(offsetof(Asn1String, flags) == 16);
+
+template <typename T>
+T GuestLoad(const T* source, const char* function) {
+    T value;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&value, source, sizeof(T));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument(std::string(function) + ": unreadable guest pointer");
+    return value;
+}
+
+template <typename T>
+void GuestStore(T* destination, const T& value, const char* function) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, &value, sizeof(T));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument(std::string(function) + ": unwritable guest pointer");
+}
 
 void PutError(int reason) {
     LibreSslPutError_nid_no_patch(Asn1Library, AnyFunction, reason);
@@ -134,15 +156,58 @@ void FreeInteger(void* value) {
 
 extern "C" {
 
+int APS5_VABI ASN1_get_object_nid_postfix(const unsigned char** input, std::int64_t* length,
+                                        int* tag, int* tagClass, std::int64_t maximum) {
+    if (!input || !length || !tag || !tagClass || maximum < 0)
+        throw std::invalid_argument("ASN1_get_object: invalid buffer or output");
+    const unsigned char* const start = GuestLoad(input, "ASN1_get_object");
+    if (!start && maximum != 0) throw std::invalid_argument("ASN1_get_object: invalid buffer or output");
+    GuestStore(tagClass, 0, "ASN1_get_object");
+    GuestStore(tag, 0, "ASN1_get_object");
+    GuestStore(length, std::int64_t{0}, "ASN1_get_object");
+    std::span<const unsigned char> remaining(start, static_cast<std::size_t>(maximum));
+    std::uint8_t parsedClass;
+    std::uint32_t parsedTag;
+    bool constructed;
+    bool indefinite;
+    std::size_t parsedLength;
+    if (!ReadIdentifier(remaining, parsedClass, constructed, parsedTag)
+        || !ReadLength(remaining, indefinite, parsedLength) || (indefinite && !constructed)
+        || parsedTag > static_cast<std::uint32_t>(std::numeric_limits<int>::max())) {
+        PutError(HeaderTooLong);
+        return 0x80;
+    }
+    int result = (constructed ? 0x20 : 0) | (indefinite ? 1 : 0);
+    if (parsedLength > remaining.size()
+        || parsedLength > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+        PutError(TooLong);
+        result |= 0x80;
+    }
+    GuestStore(tagClass, static_cast<int>(parsedClass << 6), "ASN1_get_object");
+    GuestStore(tag, static_cast<int>(parsedTag), "ASN1_get_object");
+    GuestStore(length, static_cast<std::int64_t>(parsedLength), "ASN1_get_object");
+    GuestStore(input, remaining.data(), "ASN1_get_object");
+    return result;
+}
+
 void* APS5_VABI d2i_ASN1_INTEGER_nid_postfix(void** output, const unsigned char** input, std::int64_t length) {
     if (length < 0) return nullptr;
-    if (!input || !*input) throw std::invalid_argument("d2i_ASN1_INTEGER: null input");
-    std::span<const unsigned char> remaining(*input, static_cast<std::size_t>(length));
+    if (!input) throw std::invalid_argument("d2i_ASN1_INTEGER: null input");
+    const unsigned char* const start = GuestLoad(input, "d2i_ASN1_INTEGER");
+    if (!start) throw std::invalid_argument("d2i_ASN1_INTEGER: null input");
+    std::vector<unsigned char> buffer(static_cast<std::size_t>(length));
+    {
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(buffer.data(), start, buffer.size());
+        errno = savedErrno;
+        if (!copied) throw std::invalid_argument("d2i_ASN1_INTEGER: unreadable guest input");
+    }
+    std::span<const unsigned char> remaining(buffer.data(), buffer.size());
     auto content = ReadInteger(remaining);
     if (!content || content->size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) return nullptr;
     if (output) {
-        FreeInteger(*output);
-        *output = nullptr;
+        FreeInteger(GuestLoad(output, "d2i_ASN1_INTEGER"));
+        GuestStore(output, static_cast<void*>(nullptr), "d2i_ASN1_INTEGER");
     }
     if (content->empty()) {
         PutError(LengthMismatch);
@@ -181,8 +246,8 @@ void* APS5_VABI d2i_ASN1_INTEGER_nid_postfix(void** output, const unsigned char*
         return nullptr;
     }
     *integer = {static_cast<std::int32_t>(content->size()), negative ? 0x102 : 2, data, 0};
-    if (output) *output = integer;
-    *input += static_cast<std::size_t>(length) - remaining.size();
+    if (output) GuestStore(output, static_cast<void*>(integer), "d2i_ASN1_INTEGER");
+    GuestStore(input, start + (static_cast<std::size_t>(length) - remaining.size()), "d2i_ASN1_INTEGER");
     return integer;
 }
 

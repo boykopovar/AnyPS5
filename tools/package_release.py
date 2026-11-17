@@ -49,20 +49,31 @@ def windows_runtime(build):
     raise RuntimeError(f"CMAKE_CXX_COMPILER is not configured in {cache}")
 
 
-def tracy_runtime(platform, build):
+def cmake_option(build, name):
     cache = build / "CMakeCache.txt"
     if not cache.is_file():
-        return []
+        return False
     lines = cache.read_text(encoding="utf-8-sig").split("\n")
-    enabled = next((line.partition("=")[2].upper() for line in lines if line.startswith("APS5_ENABLE_TRACY:")), "OFF")
-    if enabled in ("", "0", "OFF", "NO", "FALSE", "N", "IGNORE", "NOTFOUND") or enabled.endswith("-NOTFOUND"):
+    value = next((line.partition("=")[2].upper() for line in lines if line.startswith(name + ":")), "OFF")
+    return value not in ("", "0", "OFF", "NO", "FALSE", "N", "IGNORE", "NOTFOUND") and not value.endswith("-NOTFOUND")
+
+
+def tracy_runtime(platform, build):
+    if not cmake_option(build, "APS5_ENABLE_TRACY"):
         return []
-    pattern = "libTracyClient.dll" if platform == "windows" else "libTracyClient.so.*"
+    pattern = {"windows": "libTracyClient.dll", "linux": "libTracyClient.so.*", "macos": "libTracyClient.*.dylib"}[platform]
     directory = build / "core/libs/libs"
     clients = sorted(directory.glob(pattern))
-    if len(clients) != 1:
+    if len(clients) != 1 or not clients[0].is_file() or clients[0].stat().st_size == 0:
         raise RuntimeError(f"Missing or ambiguous Tracy runtime for APS5_ENABLE_TRACY: {directory / pattern}")
     return clients
+
+
+def native_auxiliary_runtimes(platform, build):
+    names = {"linux": ("libmimalloc.so",), "windows": ("mimalloc.dll", "mimalloc-redirect.dll"), "macos": ("libmimalloc.dylib",)}[platform]
+    if platform == "linux" and any(cmake_option(build, name) for name in ("ANYPS5_ENABLE_ASAN", "ANYPS5_ENABLE_TSAN")):
+        names = ()
+    return [build / "core/libs/libs" / name for name in names] + tracy_runtime(platform, build)
 
 
 def promote_native_assets(staging, output):
@@ -109,6 +120,12 @@ def package(platform, build, output, version):
     if "libharfbuzz.prx" in expected:
         licenses.append((ROOT / "3rdparty/harfbuzz/COPYING", "libs/licenses/harfbuzz.txt"))
         licenses.append((ROOT / "3rdparty/harfbuzz/src/ms-use/COPYING", "libs/licenses/harfbuzz-ms-use.txt"))
+    if "libcairo.prx" in expected:
+        licenses.append((ROOT / "3rdparty/cairo/COPYING", "libs/licenses/cairo.txt"))
+        licenses.append((ROOT / "3rdparty/cairo/COPYING-LGPL-2.1", "libs/licenses/cairo-lgpl-2.1.txt"))
+        licenses.append((ROOT / "3rdparty/cairo/COPYING-MPL-1.1", "libs/licenses/cairo-mpl-1.1.txt"))
+        licenses.append((ROOT / "3rdparty/pixman/COPYING", "libs/licenses/pixman.txt"))
+        licenses.append((ROOT / "3rdparty/libpng/LICENSE", "libs/licenses/libpng.txt"))
     if "libwebrtc.prx" in expected:
         licenses.append((ROOT / "3rdparty/libfvad/LICENSE", "libs/licenses/libfvad.txt"))
         licenses.append((ROOT / "3rdparty/libfvad/PATENTS", "libs/licenses/libfvad-patents.txt"))
@@ -121,17 +138,15 @@ def package(platform, build, output, version):
         licenses.append((ROOT / "3rdparty/opus/COPYING", "libs/licenses/opus.txt"))
     if "libSceNKWebKitRequirements.prx" in expected:
         licenses.append((ROOT / "3rdparty/sqlite/LICENSE.md", "libs/licenses/sqlite.txt"))
+        licenses.append((ROOT / "3rdparty/libwpe/COPYING", "libs/licenses/libwpe.txt"))
     if "libfontconfig.prx" in expected:
         licenses.append((ROOT / "3rdparty/fontconfig/COPYING", "libs/licenses/fontconfig.txt"))
         licenses.append((ROOT / "core/libs/prx/libfontconfig/Unicode-LICENSE.txt", "libs/licenses/fontconfig-unicode.txt"))
     if platform == "windows":
         runtime = windows_runtime(build)
         files.extend(runtime / name for name in ("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"))
-        files.extend(build / "core/libs/libs" / name for name in ("mimalloc.dll", "mimalloc-redirect.dll"))
-    else:
-        files.append(build / "core/libs/libs/libmimalloc.so")
     licenses.append((ROOT / "3rdparty/mimalloc/LICENSE", "libs/licenses/mimalloc.txt"))
-    files.extend(tracy_runtime(platform, build))
+    files.extend(native_auxiliary_runtimes(platform, build))
     unpatched = [(build / "core/libs/libs/unpatched" / name, "libs/" + name) for name in sorted(expected)]
     unpatched.extend((file, "libs/" + file.name) for file in files if file.suffix != ".prx")
     if platform == "windows":
@@ -150,6 +165,10 @@ def package(platform, build, output, version):
             raise RuntimeError("Import library manifest does not match release libraries")
         unpatched.extend((imports[name], "libs/implib/" + imports[name].name) for name in sorted(imports))
     binary = build / "core/relinker" / executable
+    needs_freetype_notices = bool(expected & {"libharfbuzz.prx", "libSceFreeType.prx", "libSceFreeTypeOt.prx", "libSceFontFt.prx"})
+    if needs_freetype_notices:
+        for source, name in (("LICENSE.TXT", "freetype-licenses.txt"), ("docs/FTL.TXT", "freetype-ftl.txt"), ("src/bdf/README", "freetype-bdf.txt"), ("src/pcf/README", "freetype-pcf.txt")):
+            licenses.append((ROOT / "3rdparty/freetype" / source, "libs/licenses/" + name))
     for file in [*files, binary, *(source for source, _ in licenses), *(source for source, _ in unpatched)]:
         if not file.is_file() or file.stat().st_size == 0:
             raise RuntimeError(f"Missing or empty release file: {file}")
@@ -172,6 +191,10 @@ def package(platform, build, output, version):
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".release-", dir=output) as temporary:
         staging = Path(temporary)
+        if needs_freetype_notices:
+            attribution = staging / "freetype-attribution.txt"
+            attribution.write_text("This software is based in part on the work of the FreeType Team.\nhttps://freetype.org/\n", encoding="utf-8", newline="\n")
+            licenses.append((attribution, "libs/licenses/freetype-attribution.txt"))
         for stem, entries in archives.items():
             with zipfile.ZipFile(staging / (stem + ".zip"), "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9, strict_timestamps=False) as archive:
                 for source, destination in entries + licenses:
@@ -180,6 +203,8 @@ def package(platform, build, output, version):
                 for source, destination in entries + licenses:
                     archive.add(source, arcname=destination)
         shutil.copy2(binary, staging / asset)
+        if needs_freetype_notices:
+            attribution.unlink()
         promote_native_assets(staging, output)
 
 
@@ -199,8 +224,23 @@ def collect_docs(source, output):
         staging = Path(temporary)
         for document in documents:
             shutil.copy2(document, staging / document.name)
-        for document in documents:
-            (staging / document.name).replace(output / document.name)
+        try:
+            for document in documents:
+                (staging / document.name).replace(output / document.name)
+        except BaseException as error:
+            failures = []
+            for document in reversed(documents):
+                staged = staging / document.name
+                if staged.exists():
+                    continue
+                published = output / document.name
+                try:
+                    published.replace(staged)
+                except OSError as recovery_error:
+                    failures.append(f"{published}: {recovery_error}")
+            if failures:
+                raise RuntimeError(f"Documentation promotion failed: {error}; rollback failed: {'; '.join(failures)}; remaining published documents require recovery") from error
+            raise
 
 
 def package_web(build, output, version, revision):

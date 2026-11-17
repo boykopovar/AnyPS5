@@ -1,0 +1,5 @@
+# libc
+
+## change [Wide-character conversions]
+
+- [Wide-character conversions](../../../core/libs/prx/libc/src/Multibyte.cpp) (libc) - The wide `wcsto*` functions parse the ASCII prefix of the guest string, as the C locale accepts only ASCII white space and digits. The multibyte conversions follow the C locale of the console's `libSceLibcInternal.sprx`: UTF-8 of at most three bytes, so `_Getmbcurmax` returns 3, overlong forms and encoded surrogates decode, and four-byte forms are invalid. `__mb_cur_max` stays 1 like the console's variable; `___mb_cur_max` is not in that module and also stays 1, unverified. Other locales are not supported. With a null destination, `wcstombs` returns the byte count; the console's count is wrong when the capacity argument equals the running count, because it reads past the terminator With a destination, `wcstombs` converts one character at a time and, when the capacity ends inside a character, stores the bytes that fit and returns the capacity, where `wcsrtombs` stops before it
