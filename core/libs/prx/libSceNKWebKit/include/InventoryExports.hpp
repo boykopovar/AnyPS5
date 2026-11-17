@@ -2880,7 +2880,6 @@ int APS5_VABI _ZN7WebCore19ResourceRequestBase12clearPurposeEv();
 int APS5_VABI _ZN7WebCore19ResourceRequestBase13partitionNameERKN3WTF6StringE();
 int APS5_VABI _ZN7WebCore19ResourceRequestBase15clearHTTPOriginEv();
 int APS5_VABI _ZN7WebCore19ResourceRequestBase17clearHTTPReferrerEv();
-int APS5_VABI _ZN7WebCore19ResourceRequestBase17makeUnconditionalEv();
 int APS5_VABI _ZN7WebCore19ResourceRequestBase17setAsIsolatedCopyERKNS_15ResourceRequestE();
 int APS5_VABI _ZN7WebCore19ResourceRequestBase17setCachePartitionERKN3WTF6StringE();
 int APS5_VABI _ZN7WebCore19ResourceRequestBase19setHTTPHeaderFieldsENS_13HTTPHeaderMapE();
