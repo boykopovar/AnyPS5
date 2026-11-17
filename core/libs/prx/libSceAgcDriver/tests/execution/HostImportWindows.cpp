@@ -176,6 +176,71 @@ Outcome ResidentMappingsImportAfterCollection() {
     return Outcome::Passed;
 }
 
+void SmallColorTargetsStayWatched(AgcDriver::VulkanDevice& device) {
+#ifdef _WIN32
+    const auto context = AgcDriver::VulkanDeviceTestAccess::ContextOf(device);
+    const auto probe = Graphics::ProbeImportWriteProtection(context);
+    Require(probe.failure == nullptr, "small color import write-watch probe failed");
+    const bool supported = probe.writtenAfterSettle == 0 && probe.writtenAfterSubmit == 0 && probe.writtenAfterSecondSubmit == 0 && probe.writtenAfterFill == 0 && probe.writtenByCpu != 0;
+    struct Cleanup {
+        VkDevice device;
+        std::uint8_t* data = nullptr;
+        bool registered = false;
+        ~Cleanup() {
+            Graphics::ClearHostImports(device);
+            if (registered) GuestAllocations::Mutation().Remove(data);
+            if (data != nullptr) {
+                GuestArena::GuestArenaReset_nid_postfix(data, GuestAlignment);
+                GuestArena::GuestArenaRelease_nid_postfix(data, GuestAlignment);
+            }
+        }
+    } cleanup{device.Device()};
+    cleanup.data = static_cast<std::uint8_t*>(GuestArena::GuestArenaAllocate_nid_postfix(GuestAlignment, GuestAlignment));
+    Require(cleanup.data != nullptr, "cannot allocate the small color target");
+    GuestArena::GuestArenaCommit_nid_postfix(cleanup.data, GuestAlignment, PAGE_READWRITE, GuestAlignment);
+    std::memset(cleanup.data, 0x37, GuestAlignment);
+    GuestAllocations::Mutation().Add(cleanup.data, GuestAlignment, true, true, true);
+    cleanup.registered = true;
+    const auto address = reinterpret_cast<std::uintptr_t>(cleanup.data);
+    MEMORY_BASIC_INFORMATION info{};
+    Require(VirtualQuery(cleanup.data, &info, sizeof(info)) == sizeof(info) && info.Type == MEM_PRIVATE, "small color target did not use private resident memory");
+    Require(AgcDriver::GuestMemory::Watched(address, GuestAlignment), "small color target is not watched before import");
+    for (unsigned int pass = 0; pass < 2; ++pass) {
+        {
+            std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
+            const auto* imported = Graphics::HostImportFor(context, address, ProbeBytes, Graphics::ImportRequester::ColorTarget);
+            if (!supported) {
+                Require(imported == nullptr, "small private color target imported without watch-preserving support");
+                Require(AgcDriver::GuestMemory::Watched(address, GuestAlignment), "refusing the small color import lost its watch");
+                std::puts("small color import safely refused: private import write watching unsupported");
+                return;
+            }
+            Require(imported != nullptr, "watch-preserving small color import was refused");
+            Require(!imported->unwatched && Graphics::HostImportCovers(context, address, ProbeBytes), "small color import did not preserve its watched coverage");
+            const auto serial = Graphics::HostImportSerial(context, address, ProbeBytes, false);
+            Require(serial != 0 && Graphics::HostImportFor(context, address, ProbeBytes, Graphics::ImportRequester::ColorTarget) == imported && Graphics::HostImportSerial(context, address, ProbeBytes, false) == serial, "small color import was not reused");
+        }
+        Require(Fill(device, address), "cannot fill the watched small color target");
+        constexpr std::array<std::uint32_t, 4> pattern{0x11111111u, 0x22222222u, 0x33333333u, 0x44444444u};
+        for (std::size_t offset = 0; offset < ProbeBytes; offset += sizeof(std::uint32_t)) {
+            std::uint32_t actual = 0;
+            std::memcpy(&actual, cleanup.data + offset, sizeof(actual));
+            Require(actual == pattern[(offset / sizeof(actual)) % pattern.size()], "small color import lost a GPU fill");
+        }
+        Require(cleanup.data[ProbeBytes] == 0x37 && cleanup.data[GuestAlignment - 1] == 0x37, "small color import changed neighboring bytes");
+        Require(AgcDriver::GuestMemory::Watched(address, GuestAlignment), "small color import lost its watch after GPU use");
+        const auto generation = AgcDriver::GuestMemory::CollectWritesUncached(address, GuestAlignment);
+        cleanup.data[ProbeBytes + 1] ^= 1;
+        Require(AgcDriver::GuestMemory::CollectWritesUncached(address, GuestAlignment) != generation, "small color import hid a subsequent CPU store");
+        Graphics::ClearHostImports(device.Device());
+        Require(!Graphics::HostImportCovers(context, address, ProbeBytes), "cleared small color import retained coverage");
+    }
+    std::puts("small color import retained write watching through GPU and CPU writes");
+#else
+    static_cast<void>(device);
+#endif
+}
+
 Outcome MixedBlocksImportInSmallerRuns() {
 #ifdef _WIN32
     constexpr std::size_t piece = 64 * 1024;
@@ -407,6 +472,16 @@ void PartialResidentAliasDispatch(AgcDriver::VulkanDevice& device, bool left) {
 
 int main(int argc, char** argv) {
     try {
+        if (argc == 2 && std::string_view(argv[1]) == "--small-color-watch") {
+            auto device = OpenVulkanTestDevice();
+            if (!device) return VulkanTestSkipped;
+            if (AgcDriver::VulkanDeviceTestAccess::ContextOf(*device).hostImportAlignment == 0) {
+                std::puts("skipped, the device does not import guest memory");
+                return VulkanTestSkipped;
+            }
+            SmallColorTargetsStayWatched(*device);
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--alias-failure") {
             auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
