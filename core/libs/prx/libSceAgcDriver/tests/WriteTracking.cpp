@@ -1909,6 +1909,14 @@ void CheckImportWindow() {
     Require(changed[1] == BlockWritten && WrittenSince(base + Block, Block, synced) && cpu[1] == 1, "a store of new bytes within an import window was missed");
     Require(changed[2] == BlockUnchanged && cpu[2] == 0, "a block the import window did not touch reads as written");
     Require(cpu[0] == 1, "a page an import window resolved no longer counts as possibly touched by the CPU");
+    bytes[0x2010] = 0x44;
+    static_cast<void>(CollectWritesUncached(base, 3 * Block));
+    Require(!StoredOver(base, 4096, synced), "a neighbouring store made an unchanged import-window page read as stored");
+    Require(StoredOver(base + 0x2000, 4096, synced), "a store beside an unchanged import-window page was missed");
+    Require(!UnchangedSinceLastCollect(base, 4096, synced), "an unchanged import-window page lost its possible CPU touch");
+    bytes[0x200] = 0x11;
+    static_cast<void>(CollectWritesUncached(base, 3 * Block));
+    Require(StoredOver(base, 4096, synced), "a same-value CPU store after an import-window touch was missed");
     const auto after = CollectWritesUncached(base, 3 * Block);
     bytes[0x100] = 0x33;
     static_cast<void>(CollectWritesUncached(base, 3 * Block));
