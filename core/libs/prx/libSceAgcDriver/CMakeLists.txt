@@ -1169,4 +1169,13 @@ if(BUILD_TESTING)
             set_property(TEST ${agcExactFloatTest} APPEND PROPERTY ENVIRONMENT "APS5_SHADER_OPT_PLAIN_FLOAT=0")
         endif()
     endforeach()
+    set(agcPlainFloatTests
+            agc_driver_f16_pack_toward_zero
+            agc_driver_f32_plain_float
+    )
+    foreach(agcPlainFloatTest IN LISTS agcPlainFloatTests)
+        if(TEST ${agcPlainFloatTest})
+            set_property(TEST ${agcPlainFloatTest} APPEND PROPERTY ENVIRONMENT "APS5_SHADER_OPT_PLAIN_FLOAT=1")
+        endif()
+    endforeach()
 endif()
