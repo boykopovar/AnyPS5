@@ -104,7 +104,7 @@ void TestReport() {
     if (failure) std::rethrow_exception(failure);
     const auto report = capture.ReadReport();
     std::cout << report << '\n';
-    Check(DrawPipeline::CommitClockReads() - clockReads == 4, "a timed commit did not read the clock exactly twice");
+    Check(DrawPipeline::CommitClockReads() - clockReads == 4, "the two timed commits did not read the clock exactly twice each");
     Check(report.find(" 2 read ranges, 1 stores held, 3 decode drains") != std::string::npos, "pipeline read counters changed");
     Check(Count(report, " read ranges") == 1, "pipeline read-range counters were printed more than once");
     Check(Count(report, " stores held") == 1, "pipeline held-store counters were printed more than once");

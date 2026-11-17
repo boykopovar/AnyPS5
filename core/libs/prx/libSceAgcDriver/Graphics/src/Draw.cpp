@@ -4960,7 +4960,7 @@ DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, con
     }
     timer.phase(PhasePipeline);
     const auto recordStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
-    RecordedDraw record{resources, std::move(pipeline), std::move(framebuffer)};
+    RecordedDraw record{resources, pipeline, framebuffer};
     record.recorder = recorder;
     record.masked = recipe.masked.has_value() ? &*recipe.masked : nullptr;
     record.completion = outcome.completion;
