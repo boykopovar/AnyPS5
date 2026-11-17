@@ -56,7 +56,12 @@ int APS5_VABI FT_Outline_New_Internal_nid_postfix(FreeType::GuestMemoryRec* memo
     }
     localOutline.n_points = static_cast<std::uint16_t>(numPoints);
     localOutline.n_contours = static_cast<std::uint16_t>(numContours);
-    if (!GuestCopyOut_nid_no_patch(anoutline, &localOutline, sizeof(localOutline))) return InvalidArgument;
+    if (!GuestCopyOut_nid_no_patch(anoutline, &localOutline, sizeof(localOutline))) {
+        ft_mem_free_nid_postfix(memory, localOutline.points);
+        ft_mem_free_nid_postfix(memory, localOutline.tags);
+        ft_mem_free_nid_postfix(memory, localOutline.contours);
+        return InvalidArgument;
+    }
     return 0;
 }
 
