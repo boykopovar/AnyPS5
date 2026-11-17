@@ -4871,8 +4871,7 @@ int APS5_VABI __isfinite_nid_postfix(double x) {
     return exponent != 0x7ff0000000000000ull ? 1 : 0;
 }
 int APS5_VABI __isnan_nid_postfix(double x) {
-    const auto bits = std::bit_cast<std::uint64_t>(x);
-    return (bits & 0x7ff0000000000000ull) == 0x7ff0000000000000ull && (bits & 0x000fffffffffffffull) != 0 ? 1 : 0;
+    return (std::bit_cast<std::uint64_t>(x) & 0x7fffffffffffffffull) > 0x7ff0000000000000ull ? 1 : 0;
 }
 int APS5_VABI __isinf_nid_postfix(double x) {
     return (std::bit_cast<std::uint64_t>(x) & 0x7fffffffffffffffull) == 0x7ff0000000000000ull ? 1 : 0;
@@ -5340,8 +5339,7 @@ short APS5_VABI _Dsign_nid_postfix(double value) {
 }
 
 int APS5_VABI __isnanf_nid_postfix(float x) {
-    const auto bits = std::bit_cast<std::uint32_t>(x);
-    return (bits & 0x7f800000u) == 0x7f800000u && (bits & 0x007fffffu) != 0 ? 1 : 0;
+    return (std::bit_cast<std::uint32_t>(x) & 0x7fffffffu) > 0x7f800000u ? 1 : 0;
 }
 int APS5_VABI isnanf_nid_postfix(float x) { return __isnanf_nid_postfix(x); }
 int APS5_VABI isnan_nid_postfix(double x) { return __isnan_nid_postfix(x); }

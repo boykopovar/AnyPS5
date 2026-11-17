@@ -359,7 +359,7 @@ int APS5_VABI X509_NAME_add_entry_by_txt_nid_postfix();
 void APS5_VABI BIO_meth_free_nid_postfix(LibreSsl::BioMethod* method);
 int APS5_VABI tls_handshake_nid_postfix();
 void APS5_VABI AUTHORITY_KEYID_free_nid_postfix(void* authorityKeyId);
-int APS5_VABI X509V3_EXT_d2i_nid_postfix();
+void* APS5_VABI X509V3_EXT_d2i_nid_postfix(LibreSsl3X509Extension* extension);
 int APS5_VABI ASN1_INTEGER_set_nid_postfix(Asn1String* integer, std::int64_t value);
 int APS5_VABI RSA_set0_factors_nid_postfix(LibreSsl3Rsa* rsa, LibreSsl3Bignum* p, LibreSsl3Bignum* q);
 int APS5_VABI X509_set_pubkey_nid_postfix(LibreSsl3X509* certificate, LibreSsl3EvpPkey* key);
