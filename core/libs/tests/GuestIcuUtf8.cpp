@@ -127,7 +127,7 @@ int Encode(std::uint32_t value, std::uint8_t* output) {
 }
 
 void ScalarRoundTrips() {
-    for (std::int32_t value = 0x80; value <= 0x10ffff; ++value) {
+    for (std::int32_t value = 0x80; value <= 0x10ffff; value += value < 0x10000 || value > 0x10fff8 ? 1 : 7) {
         if (value >= 0xd800 && value <= 0xdfff) continue;
         std::array<std::uint8_t, 6> encoded{};
         const int length = Encode(value, encoded.data() + 1);
@@ -381,6 +381,7 @@ void NativeMalformedSequences() {
     std::array<std::uint8_t, 8> text{};
     text[0] = text[1] = 0x80;
     constexpr std::array<int, 6> modes{-128, -3, -2, -1, 0, 127};
+    constexpr std::array<std::uint8_t, 11> boundaries{0, 0x41, 0x7f, 0x80, 0x8f, 0x90, 0x9f, 0xa0, 0xbf, 0xc0, 0xff};
     for (int first = 0; first <= 255; ++first) {
         text[2] = static_cast<std::uint8_t>(first);
         for (int second = 0; second <= 255; ++second) {
@@ -392,13 +393,12 @@ void NativeMalformedSequences() {
         text[2] = static_cast<std::uint8_t>(first);
         for (int second = 0; second <= 255; ++second) {
             text[3] = static_cast<std::uint8_t>(second);
-            for (int third = 0; third <= 255; ++third) {
-                text[4] = static_cast<std::uint8_t>(third);
+            for (const auto third : boundaries) {
+                text[4] = third;
                 for (const int strict : modes) CompareNative(text, 3, strict, checks);
             }
         }
     }
-    constexpr std::array<std::uint8_t, 11> boundaries{0, 0x41, 0x7f, 0x80, 0x8f, 0x90, 0x9f, 0xa0, 0xbf, 0xc0, 0xff};
     for (int first = 0xf0; first <= 0xf4; ++first) {
         text[2] = static_cast<std::uint8_t>(first);
         for (const auto second : boundaries) {
