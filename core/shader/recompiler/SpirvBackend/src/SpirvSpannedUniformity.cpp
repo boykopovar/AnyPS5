@@ -31,6 +31,7 @@ struct Module {
     std::unordered_map<std::uint32_t, std::uint32_t> storageClasses;
     std::unordered_map<std::uint32_t, std::uint32_t> pointerClasses;
     std::unordered_map<std::uint32_t, std::uint32_t> constants;
+    std::unordered_set<std::uint32_t> nonWritable;
     std::vector<Function> functions;
 };
 
@@ -47,6 +48,7 @@ Module Parse(std::span<const std::uint32_t> words) {
         switch (Opcode(instruction)) {
         case spv::OpDecorate:
             if (instruction.size() >= 4u && instruction[2] == spv::DecorationBuiltIn) module.builtins[instruction[1]] = instruction[3];
+            if (instruction.size() >= 3u && instruction[2] == spv::DecorationNonWritable) module.nonWritable.insert(instruction[1]);
             break;
         case spv::OpTypePointer:
             if (instruction.size() >= 4u) module.pointerClasses[instruction[1]] = instruction[2];
@@ -185,7 +187,10 @@ bool ImageRead(spv::Op op) {
 
 class Analysis {
 public:
-    Analysis(const Module& module, bool subgroupCollectives) : module(module), subgroupCollectives(subgroupCollectives) {
+    Analysis(const Module& module, bool subgroupCollectives, std::span<const std::uint32_t> snapshotVariables) : module(module), subgroupCollectives(subgroupCollectives) {
+        for (const auto variable : snapshotVariables) {
+            if (module.nonWritable.contains(variable)) snapshots.insert(variable);
+        }
         for (const auto& function : module.functions) {
             for (const auto& block : function.blocks) {
                 for (const auto& instruction : block.body) {
@@ -539,7 +544,7 @@ private:
                     const auto builtin = module.builtins.find(variable);
                     const auto storage = module.storageClasses.find(variable);
                     varying = NonUniform(instruction[3]) || (builtin != module.builtins.end() && VaryingBuiltin(builtin->second)) || storedNonUniform.contains(variable) ||
-                        (storage != module.storageClasses.end() && storage->second == spv::StorageClassInput && builtin == module.builtins.end()) || Racy(instruction[3], fencedBefore);
+                        (storage != module.storageClasses.end() && storage->second == spv::StorageClassInput && builtin == module.builtins.end()) || (!snapshots.contains(variable) && Racy(instruction[3], fencedBefore));
                     break;
                 }
                 case spv::OpAtomicLoad:
@@ -575,23 +580,28 @@ private:
     std::unordered_set<std::uint32_t> barriers;
     std::unordered_set<std::uint32_t> nonUniform;
     std::unordered_set<std::uint32_t> storedNonUniform;
+    std::unordered_set<std::uint32_t> snapshots;
     std::unordered_set<std::uint32_t> varyingFunctions;
     std::optional<std::string> report;
 };
 
 }
 
-std::optional<std::string> SpannedBarrierInDivergentFlow(std::span<const std::uint32_t> words) {
+bool SpannedSnapshotLoadsEnabled(const char* optOut) {
+    return optOut == nullptr;
+}
+
+std::optional<std::string> SpannedBarrierInDivergentFlow(std::span<const std::uint32_t> words, std::span<const std::uint32_t> snapshotVariables) {
     bool barrier = false;
     for (std::size_t cursor = 5u; !barrier && cursor < words.size(); cursor += std::max(words[cursor] >> 16u, 1u)) barrier = (words[cursor] & 0xffffu) == spv::OpControlBarrier;
     if (!barrier) return std::nullopt;
     const auto module = Parse(words);
-    return Analysis(module, false).Run();
+    return Analysis(module, false, snapshotVariables).Run();
 }
 
 std::optional<std::string> SubgroupBarrierInDivergentFlow(std::span<const std::uint32_t> words) {
     const auto module = Parse(words);
-    return Analysis(module, true).Run();
+    return Analysis(module, true, {}).Run();
 }
 
 }

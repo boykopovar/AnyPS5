@@ -379,6 +379,7 @@ struct SpirvTarget {
     bool deviceScopeLdsMemoryBarriers = false;
     bool ldsLockFences = false;
     bool laneOrderedLdsAtomics = false;
+    bool deviceAtomicWorkgroupMemoryBarriers = false;
     bool fragmentBarycentricBuiltins = false;
     bool meshWindowBuffer = false;
     bool hostInterpolationFirst = false;

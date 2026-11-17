@@ -80,7 +80,7 @@ STUB_BODY = re.compile(r"^(?:\(void\)\s*\w+\s*;|static_cast<void>\(\s*\w+\s*\)\s
                        r"(?:return\s*\(?\s*(?:-?(?:0x[0-9a-fA-F]+|\d+)[uUlL]*|nullptr|true|false|\w*_OK)?\s*\)?\s*;)?$")
 SYSTEM_DEPENDENCY = re.compile(r"\b(find_package\s*\((?!\s*(Python3|Threads|Git|LLVM)\b)|pkg_check_modules\b|pkg_search_module\b|find_(library|path|program|file)\b)", re.I)
 TITLE = re.compile(r"\b(PPSA|CUSA)\d{5}\b")
-EXTENSION = re.compile(r"__attribute__|__declspec|#\s*pragma\s+(?!once\b)")
+EXTENSION = re.compile(r"__attribute__|__declspec|#\s*pragma\b(?!\s+once\b)")
 INTEGER = r"(0[xX][0-9a-fA-F']+|0[bB][01']+|[0-9][0-9']*)[uUlLzZ]*"
 ALIGNAS = re.compile(rf"\balignas\s*\(\s*(?:{INTEGER}|([A-Za-z_][A-Za-z0-9_]*))\s*\)")
 CONSTANT = re.compile(rf"\bconstexpr\b[^;=]*?\b([A-Za-z_][A-Za-z0-9_]*)\s*(?:=\s*|\{{\s*){INTEGER}\s*[;}}]")
@@ -517,7 +517,7 @@ class Check:
             self.report("pr-template", "", 0, f"unchecked: {item.strip()}")
         if checklist and not re.search(r"AI-assisted:[ \t]*(yes|no)\b", checklist, re.I):
             self.report("pr-template", "", 0, "answer AI-assisted with yes or no")
-        if checklist and not re.search(r"Depends on:\s*(?:[-*+]\s+)?(#\d+|none)\b", checklist, re.I):
+        if checklist and not re.search(r"Depends on:(?:[ \t]*|\s*[-*+][ \t]+)(#\d+|none)\b", checklist, re.I):
             self.report("pr-template", "", 0, "fill Depends on with #N or none")
 
 

@@ -297,6 +297,7 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.deviceScopeLdsMemoryBarriers = target.deviceScopeLdsMemoryBarriers;
     state.ldsLockFences = target.ldsLockFences;
     state.laneOrderedLdsAtomics = target.laneOrderedLdsAtomics;
+    state.deviceAtomicWorkgroupMemoryBarriers = target.deviceAtomicWorkgroupMemoryBarriers;
     state.float16WidenNans = target.float16WidenNans;
     state.float16NarrowNans = target.float16NarrowNans;
     state.hostSubgroupSize = target.subgroupSize;
@@ -360,7 +361,10 @@ std::vector<std::uint32_t> SpirvEmitter::Emit(const IrProgram& program, const Sh
     state.module.EmitEntryPoint(ExecutionModelForStage(state.program.Resources().stage), state.mainFunc, "main", state.interfaceVariables);
     auto words = state.module.Finalize();
     if (state.spannedWave) {
-        if (auto reason = SpannedBarrierInDivergentFlow(words)) throw SpannedWaveUnsupported(*reason);
+        static const bool snapshotLoads = SpannedSnapshotLoadsEnabled(std::getenv("APS5_NO_SPANNED_SNAPSHOT_LOADS"));
+        const std::uint32_t snapshotVariables[] = {state.flattenedSrtVariable};
+        const auto snapshots = snapshotLoads && state.flattenedSrtVariable != 0u ? std::span<const std::uint32_t>(snapshotVariables) : std::span<const std::uint32_t>();
+        if (auto reason = SpannedBarrierInDivergentFlow(words, snapshots)) throw SpannedWaveUnsupported(*reason);
     } else if (state.laneOrderRounds) {
         if (auto reason = SubgroupBarrierInDivergentFlow(words)) throw std::runtime_error("lane-ordered LDS atomic rounds: " + *reason);
     }
