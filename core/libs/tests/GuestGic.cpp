@@ -1,3 +1,4 @@
+#include <cerrno>
 #include "prx/libSceGic/libSceGic.hpp"
 #include <array>
 #include <chrono>
@@ -27,6 +28,9 @@ int main() {
     std::filesystem::current_path(directory);
 
     Require(sceGicGetValue(nullptr) == ErrorInvalidArgument, "null output");
+    errno = 71;
+    Require(sceGicGetValue(reinterpret_cast<void*>(0x10)) == ErrorDeviceUnavailable, "unmapped output");
+    Require(errno == 71, "preserves errno");
     Require(sceGicGetValue(nullptr) == ErrorInvalidArgument, "repeated null output");
     for (const std::uint8_t fill : {std::uint8_t{0x00}, std::uint8_t{0xAB}, std::uint8_t{0xFF}}) {
         std::array<std::uint8_t, 33> buffer{};
