@@ -1,9 +1,11 @@
 #include "prx/libSceFaceTracker/include/Api.hpp"
 #include "prx/libSceFace/include/Api.hpp"
+#include <array>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
@@ -99,13 +101,41 @@ int32_t recordI32(uint8_t *record, std::size_t off) {
     return v;
 }
 
+bool CopyIn(void *destination, const void *source, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    return ok;
+}
+
+bool CopyOut(void *destination, const void *source, std::size_t bytes) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    return ok;
+}
+
+bool CheckContext(const void *context, int &error) {
+    if (context == nullptr) {
+        error = kErrNullContext;
+        return false;
+    }
+    std::uint8_t initFlag = 0;
+    if (!CopyIn(&initFlag, static_cast<const std::uint8_t *>(context) + kInitFlag, sizeof(initFlag))) {
+        error = kErrInvalid;
+        return false;
+    }
+    if (initFlag == 0) {
+        error = kErrNotInitialized;
+        return false;
+    }
+    return true;
+}
+
 int registerCallback(void *callback, void *userArg, void *context,
                      std::size_t cbOff, std::size_t argOff) {
-    if (context == nullptr) {
-        return kErrNullContext;
-    }
-    if (ctxByte(context, kInitFlag)[0] == 0) {
-        return kErrNotInitialized;
+    if (int error = 0; !CheckContext(context, error)) {
+        return error;
     }
     ctxStore(context, cbOff, callback);
     ctxStore(context, argOff, userArg);
@@ -115,6 +145,10 @@ int registerCallback(void *callback, void *userArg, void *context,
 int userDbRegister(void *context, int userId, const void *feature, int featureSize) {
     if (userId <= 0 || feature == nullptr || featureSize > kMaxFeatureSize ||
         featureSize <= 0) {
+        return kErrInvalid;
+    }
+    std::vector<std::uint8_t> localFeature(static_cast<std::size_t>(featureSize));
+    if (!CopyIn(localFeature.data(), feature, localFeature.size())) {
         return kErrInvalid;
     }
     const int32_t count = userDbCount(context);
@@ -138,7 +172,7 @@ int userDbRegister(void *context, int userId, const void *feature, int featureSi
         return kErrFull;
     }
     std::memcpy(userDbFeatures(context) + static_cast<std::size_t>(freeIndex) * kFeatureStride,
-                feature, static_cast<std::size_t>(featureSize));
+                localFeature.data(), localFeature.size());
     uint8_t *entry = entries + static_cast<std::size_t>(freeIndex) * kUserEntryStride;
     entry[0] = 1;
     std::memcpy(entry + 8, &userId, sizeof(userId));
@@ -219,21 +253,15 @@ int APS5_VABI sceFaceTrackerReset() {
 }
 
 int APS5_VABI sceFaceTrackerRegisterUser(int userId, const void *feature, int featureSize, void *context) {
-    if (context == nullptr) {
-        return kErrNullContext;
-    }
-    if (ctxByte(context, kInitFlag)[0] == 0) {
-        return kErrNotInitialized;
+    if (int error = 0; !CheckContext(context, error)) {
+        return error;
     }
     return userDbRegister(context, userId, feature, featureSize);
 }
 
 int APS5_VABI sceFaceTrackerUnregisterUser(int userId, void *context) {
-    if (context == nullptr) {
-        return kErrNullContext;
-    }
-    if (ctxByte(context, kInitFlag)[0] == 0) {
-        return kErrNotInitialized;
+    if (int error = 0; !CheckContext(context, error)) {
+        return error;
     }
     const int ret = userDbUnregister(context, userId);
     if (ret != 0) {
@@ -256,11 +284,8 @@ int APS5_VABI sceFaceTrackerAddUserFeature() {
 }
 
 int APS5_VABI sceFaceTrackerGetUserFeature(int userId, void **feature, int *featureSize, void *context) {
-    if (context == nullptr) {
-        return kErrNullContext;
-    }
-    if (ctxByte(context, kInitFlag)[0] == 0) {
-        return kErrNotInitialized;
+    if (int error = 0; !CheckContext(context, error)) {
+        return error;
     }
     if (userId <= 0 || !feature || !featureSize) {
         return kErrInvalid;
@@ -299,11 +324,8 @@ int APS5_VABI sceFaceTrackerGetUserFeature(int userId, void **feature, int *feat
 }
 
 int APS5_VABI sceFaceTrackerGetUserIdByTrackId(int trackId, void *context) {
-    if (context == nullptr) {
-        return kErrNullContext;
-    }
-    if (ctxByte(context, kInitFlag)[0] == 0) {
-        return kErrNotInitialized;
+    if (int error = 0; !CheckContext(context, error)) {
+        return error;
     }
     if (trackId < 0) {
         return kErrInvalid;
@@ -322,11 +344,8 @@ int APS5_VABI sceFaceTrackerGetUserIdByTrackId(int trackId, void *context) {
 }
 
 int APS5_VABI sceFaceTrackerGetTrackIdByUserId(int userId, void *context) {
-    if (context == nullptr) {
-        return kErrNullContext;
-    }
-    if (ctxByte(context, kInitFlag)[0] == 0) {
-        return kErrNotInitialized;
+    if (int error = 0; !CheckContext(context, error)) {
+        return error;
     }
     if (userId <= 0) {
         return kErrInvalid;
@@ -349,7 +368,8 @@ int APS5_VABI sceFaceTrackerGetDefaultConfig(void *config) {
         return kErrInvalid;
     }
     std::uint32_t param[0x38 / 4] = {};
-    auto *out = static_cast<std::uint32_t *>(config);
+    std::array<std::uint8_t, 0x7e> localConfig{};
+    auto *out = reinterpret_cast<std::uint32_t *>(localConfig.data());
     if (sceFaceDetectionGetDefaultParam(param) == 0) {
         out[0x00 / 4] = param[0x08 / 4];
         out[0x04 / 4] = param[0x10 / 4];
@@ -377,14 +397,15 @@ int APS5_VABI sceFaceTrackerGetDefaultConfig(void *config) {
     out[0x58 / 4] = 5;
     out[0x5c / 4] = 0x42480000;
     out[0x60 / 4] = 0xa;
-    static_cast<std::uint8_t *>(config)[0x64] = 1;
+    localConfig[0x64] = 1;
     out[0x68 / 4] = 0xf;
     out[0x6c / 4] = 0x42500000;
     out[0x70 / 4] = 0x1e;
     out[0x74 / 4] = 0xf;
     out[0x78 / 4] = 5;
-    static_cast<std::uint16_t *>(config)[0x7c / 2] = 0x101;
-    return 0;
+    const std::uint16_t tail = 0x101;
+    std::memcpy(localConfig.data() + 0x7c, &tail, sizeof(tail));
+    return CopyOut(config, localConfig.data(), localConfig.size()) ? 0 : kErrInvalid;
 }
 
 int APS5_VABI sceFaceTrackerGetWorkingMemorySize() {

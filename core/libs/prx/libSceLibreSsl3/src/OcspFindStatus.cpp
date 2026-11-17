@@ -183,18 +183,40 @@
  */
 
 #include "prx/libSceLibreSsl3/include/Api.hpp"
+#include "prx/libc/include/General.hpp"
 
+#include <cerrno>
 #include <limits>
 #include <stdexcept>
 
 namespace {
 
-int IntegerCompare(const Asn1String* first, const Asn1String* second) {
+template <typename T>
+bool CopyGuestInPreservingErrno(T& destination, const T* source) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(&destination, source, sizeof(T));
+    errno = savedErrno;
+    return ok;
+}
+
+template <typename T>
+bool CopyGuestOutPreservingErrno(T* destination, const T& value) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(destination, &value, sizeof(T));
+    errno = savedErrno;
+    return ok;
+}
+
+int IntegerCompare(const Asn1String* first, const Asn1String* second, const char* function) {
     if (!first || !second) throw std::invalid_argument("OCSP_resp_find_status: null serial number");
+    Asn1String guestFirst{};
+    Asn1String guestSecond{};
+    if (!CopyGuestInPreservingErrno(guestFirst, first) || !CopyGuestInPreservingErrno(guestSecond, second))
+        NotImplemented_nid_no_patch(function);
     int result = 1;
-    if ((first->type & 0x100) == (second->type & 0x100))
+    if ((guestFirst.type & 0x100) == (guestSecond.type & 0x100))
         result = ASN1_OCTET_STRING_cmp_nid_postfix(first, second);
-    if (first->type & 0x100) {
+    if (guestFirst.type & 0x100) {
         if (result == std::numeric_limits<int>::min())
             throw std::overflow_error("OCSP_resp_find_status: serial comparison overflow");
         return -result;
@@ -202,16 +224,27 @@ int IntegerCompare(const Asn1String* first, const Asn1String* second) {
     return result;
 }
 
-int CertIdCompare(const OCSP_CERTID* first, const OCSP_CERTID* second) {
-    if (!first || !second || !first->hashAlgorithm || !second->hashAlgorithm)
+int CertIdCompare(const OCSP_CERTID* first, const OCSP_CERTID* second, const char* function) {
+    if (!first || !second)
         throw std::invalid_argument("OCSP_resp_find_status: null certificate ID or algorithm");
-    int result = OBJ_cmp_nid_postfix(first->hashAlgorithm->algorithm, second->hashAlgorithm->algorithm);
+    OCSP_CERTID guestFirst{};
+    OCSP_CERTID guestSecond{};
+    if (!CopyGuestInPreservingErrno(guestFirst, first) || !CopyGuestInPreservingErrno(guestSecond, second))
+        NotImplemented_nid_no_patch(function);
+    if (!guestFirst.hashAlgorithm || !guestSecond.hashAlgorithm)
+        throw std::invalid_argument("OCSP_resp_find_status: null certificate ID or algorithm");
+    LibreSsl3X509Algor firstAlgorithm{};
+    LibreSsl3X509Algor secondAlgorithm{};
+    if (!CopyGuestInPreservingErrno(firstAlgorithm, guestFirst.hashAlgorithm) ||
+        !CopyGuestInPreservingErrno(secondAlgorithm, guestSecond.hashAlgorithm))
+        NotImplemented_nid_no_patch(function);
+    int result = OBJ_cmp_nid_postfix(firstAlgorithm.algorithm, secondAlgorithm.algorithm);
     if (result) return result;
-    result = ASN1_OCTET_STRING_cmp_nid_postfix(first->issuerNameHash, second->issuerNameHash);
+    result = ASN1_OCTET_STRING_cmp_nid_postfix(guestFirst.issuerNameHash, guestSecond.issuerNameHash);
     if (result) return result;
-    result = ASN1_OCTET_STRING_cmp_nid_postfix(first->issuerKeyHash, second->issuerKeyHash);
+    result = ASN1_OCTET_STRING_cmp_nid_postfix(guestFirst.issuerKeyHash, guestSecond.issuerKeyHash);
     if (result) return result;
-    return IntegerCompare(first->serialNumber, second->serialNumber);
+    return IntegerCompare(guestFirst.serialNumber, guestSecond.serialNumber, function);
 }
 
 }
@@ -219,14 +252,60 @@ int CertIdCompare(const OCSP_CERTID* first, const OCSP_CERTID* second) {
 extern "C" int APS5_VABI OCSP_resp_find_status_nid_postfix(LibreSslOcspBasicResponse* bs, OCSP_CERTID* id, int* status,
     int* reason, Asn1String** revtime, Asn1String** thisupd, Asn1String** nextupd) {
     if (!bs) return 0;
-    if (!bs->tbsResponseData) throw std::invalid_argument("OCSP_resp_find_status: null response data");
-    const auto* responses = bs->tbsResponseData->responses;
+    LibreSslOcspBasicResponse guestBs{};
+    if (!CopyGuestInPreservingErrno(guestBs, bs))
+        NotImplemented_nid_no_patch(__func__);
+    if (!guestBs.tbsResponseData) throw std::invalid_argument("OCSP_resp_find_status: null response data");
+    LibreSslOcspResponseData guestTbs{};
+    if (!CopyGuestInPreservingErrno(guestTbs, guestBs.tbsResponseData))
+        NotImplemented_nid_no_patch(__func__);
+    const auto* responses = guestTbs.responses;
     for (int index = 0; index < sk_num_nid_postfix(responses); ++index) {
         const auto* single = static_cast<const LibreSslOcspSingleResponse*>(sk_value_nid_postfix(responses, index));
         if (!single) throw std::invalid_argument("OCSP_resp_find_status: null single response");
-        if (CertIdCompare(id, static_cast<const OCSP_CERTID*>(single->certId))) continue;
-        const int result = OCSP_single_get0_status_nid_postfix(single, reason, revtime, thisupd, nextupd);
-        if (status) *status = result;
+        LibreSslOcspSingleResponse guestSingle{};
+        if (!CopyGuestInPreservingErrno(guestSingle, single))
+            NotImplemented_nid_no_patch(__func__);
+        if (CertIdCompare(id, static_cast<const OCSP_CERTID*>(guestSingle.certId), __func__)) continue;
+        int localReason = 0;
+        Asn1String* localRevtime = nullptr;
+        Asn1String* localThisupd = nullptr;
+        Asn1String* localNextupd = nullptr;
+        const int result = OCSP_single_get0_status_nid_postfix(single, reason ? &localReason : nullptr,
+            revtime ? &localRevtime : nullptr, thisupd ? &localThisupd : nullptr, nextupd ? &localNextupd : nullptr);
+        const bool writeRevoked = (result == 1);
+        Asn1String* previousRevtime = nullptr;
+        const bool hadRevtime = writeRevoked && revtime && CopyGuestInPreservingErrno(previousRevtime, revtime);
+        if (writeRevoked && revtime && !CopyGuestOutPreservingErrno(revtime, localRevtime))
+            NotImplemented_nid_no_patch(__func__);
+        int previousReason = 0;
+        const bool hadReason = writeRevoked && reason && CopyGuestInPreservingErrno(previousReason, reason);
+        if (writeRevoked && reason && !CopyGuestOutPreservingErrno(reason, localReason)) {
+            if (hadRevtime) CopyGuestOutPreservingErrno(revtime, previousRevtime);
+            NotImplemented_nid_no_patch(__func__);
+        }
+        Asn1String* previousThisupd = nullptr;
+        const bool hadThisupd = thisupd && CopyGuestInPreservingErrno(previousThisupd, thisupd);
+        if (thisupd && !CopyGuestOutPreservingErrno(thisupd, localThisupd)) {
+            if (hadReason) CopyGuestOutPreservingErrno(reason, previousReason);
+            if (hadRevtime) CopyGuestOutPreservingErrno(revtime, previousRevtime);
+            NotImplemented_nid_no_patch(__func__);
+        }
+        Asn1String* previousNextupd = nullptr;
+        const bool hadNextupd = nextupd && CopyGuestInPreservingErrno(previousNextupd, nextupd);
+        if (nextupd && !CopyGuestOutPreservingErrno(nextupd, localNextupd)) {
+            if (hadThisupd) CopyGuestOutPreservingErrno(thisupd, previousThisupd);
+            if (hadReason) CopyGuestOutPreservingErrno(reason, previousReason);
+            if (hadRevtime) CopyGuestOutPreservingErrno(revtime, previousRevtime);
+            NotImplemented_nid_no_patch(__func__);
+        }
+        if (status && !CopyGuestOutPreservingErrno(status, result)) {
+            if (hadNextupd) CopyGuestOutPreservingErrno(nextupd, previousNextupd);
+            if (hadThisupd) CopyGuestOutPreservingErrno(thisupd, previousThisupd);
+            if (hadReason) CopyGuestOutPreservingErrno(reason, previousReason);
+            if (hadRevtime) CopyGuestOutPreservingErrno(revtime, previousRevtime);
+            NotImplemented_nid_no_patch(__func__);
+        }
         return 1;
     }
     return 0;

@@ -210,6 +210,32 @@ class MainTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("boom", err)
 
+    def test_open_pages_reject_invalid_next_cursors_without_restarting(self):
+        for cursor in (None, "", 17, []):
+            with self.subTest(cursor=cursor):
+                calls = []
+                def fake(*args, **kwargs):
+                    calls.append(kwargs)
+                    if len(calls) > 2:
+                        raise ValueError("fixture read budget exceeded")
+                    return page([node(same=False)], True, cursor)["data"]
+                with patch.object(pr_unchanged, "graphql", fake), self.assertRaisesRegex(ValueError, "no cursor"):
+                    pr_unchanged.fetch("o/r")
+                self.assertEqual(len(calls), 1)
+
+    def test_open_page_cursors_must_advance(self):
+        for cursors in (("repeat", "repeat"), ("first", "second", "first")):
+            with self.subTest(cursors=cursors):
+                calls = []
+                def fake(*args, **kwargs):
+                    calls.append(kwargs)
+                    if len(calls) > len(cursors):
+                        raise ValueError("fixture read budget exceeded")
+                    return page([node(same=False)], True, cursors[len(calls) - 1])["data"]
+                with patch.object(pr_unchanged, "graphql", fake), self.assertRaisesRegex(ValueError, "did not advance"):
+                    pr_unchanged.fetch("o/r")
+                self.assertEqual(len(calls), len(cursors))
+
     def test_pages_are_followed(self):
         api = Api([])
         api.pages = [page([node(number=1, same=False)], True, "c1"), page([node(number=2, same=False)])]

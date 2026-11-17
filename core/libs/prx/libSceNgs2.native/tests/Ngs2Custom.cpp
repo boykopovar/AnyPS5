@@ -1,6 +1,7 @@
 #include "prx/libSceNgs2.native/tests/Ngs2Test.hpp"
 #include "Ngs2Test.hpp"
 
+#include <cerrno>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -75,6 +76,7 @@ static Ngs2CustomSubmixerRackOption RackOption(const Ngs2CustomUserFx2ModuleOpti
     common.max_matrices = 1;
     common.max_ports = 1;
     option.custom_rack_option.num_buffers = 1;
+    option.custom_rack_option.state_size = 16;
     option.custom_rack_option.num_modules = count;
     for (std::uint32_t m = 0; m < count; m++) {
         option.custom_rack_option.module[m].option = &modules[m].custom_module_option;
@@ -575,10 +577,52 @@ static void TestCustomRackChecks() {
     option.custom_rack_option.module[0].dest_buffer_id = SCE_NGS2_CUSTOM_MAX_BUFFERS;
     Require(create(option) == SCE_NGS2_ERROR_INVALID_BUFFER_INDEX);
     option = good;
-    option.max_inputs = 0;
-    Require(CreateThrows<std::runtime_error>(option));
     option.max_inputs = SCE_NGS2_CUSTOM_SUBMIXER_MAX_INPUTS + 1;
     Require(CreateThrows<std::runtime_error>(option));
+
+    option = good;
+    option.max_inputs = 0;
+    Require(create(option) == SCE_NGS2_ERROR_INVALID_MAX_INPUTS);
+    Require(CreateThrows<std::invalid_argument>(option));
+    option.custom_rack_option.num_buffers = 0;
+    option.custom_rack_option.rack_option.max_ports = 0;
+    option.custom_rack_option.rack_option.max_matrices = 0;
+    option.custom_rack_option.state_size = 0;
+    Require(create(option) == SCE_NGS2_ERROR_INVALID_MAX_INPUTS);
+    option = good;
+    option.custom_rack_option.num_buffers = 0;
+    option.custom_rack_option.rack_option.max_ports = 0;
+    Require(create(option) == SCE_NGS2_ERROR_INVALID_NUM_BUFFERS);
+    option = good;
+    option.custom_rack_option.rack_option.max_ports = 0;
+    option.custom_rack_option.rack_option.max_matrices = 0;
+    option.custom_rack_option.state_size = 0;
+    Require(create(option) == SCE_NGS2_ERROR_INVALID_MAX_PORTS);
+    Require(CreateThrows<std::invalid_argument>(option));
+    option = good;
+    option.custom_rack_option.rack_option.max_matrices = 0;
+    option.custom_rack_option.state_size = 0;
+    Require(create(option) == SCE_NGS2_ERROR_INVALID_MAX_MATRICES);
+    option = good;
+    for (const std::uint32_t stateSize : {0u, 4u, 12u, 15u}) {
+        option.custom_rack_option.state_size = stateSize;
+        Require(create(option) == SCE_NGS2_ERROR_INVALID_STATE_SIZE);
+        Require(CreateThrows<std::invalid_argument>(option));
+    }
+    option.custom_rack_option.num_modules = 0;
+    option.custom_rack_option.state_size = 16;
+    Require(sceNgs2RackDestroy(CustomRack(system, option), nullptr) == SCE_NGS2_OK);
+    option.custom_rack_option.state_size = 17;
+    Require(sceNgs2RackDestroy(CustomRack(system, option), nullptr) == SCE_NGS2_OK);
+    option.custom_rack_option.state_size = 0;
+    option.custom_rack_option.rack_option.max_matrices = 2;
+    Require(CreateThrows<std::runtime_error>(option));
+    option.custom_rack_option.state_size = 15;
+    Require(CreateThrows<std::runtime_error>(option));
+    for (const std::uint32_t stateSize : {16u, 17u}) {
+        option.custom_rack_option.state_size = stateSize;
+        Require(sceNgs2RackDestroy(CustomRack(system, option), nullptr) == SCE_NGS2_OK);
+    }
 
     option = good;
     option.custom_rack_option.module[0].source_buffer_id = 1;
@@ -722,6 +766,7 @@ static Ngs2CustomSubmixerRackOption LegacyRackOption(const Ngs2CustomModuleOptio
     common.max_matrices = 1;
     common.max_ports = 1;
     rack.custom_rack_option.num_buffers = 1;
+    rack.custom_rack_option.state_size = 16;
     rack.custom_rack_option.num_modules = moduleIndex + 1;
     for (std::uint32_t index = 0; index <= moduleIndex; ++index) {
         rack.custom_rack_option.module[index].option = option;
@@ -1171,6 +1216,8 @@ static void TestCustomModuleInfo() {
     Require(info.module_id == SCE_NGS2_CUSTOM_MODULE_ID_FILTER && info.state_offset == 0 && info.state_size == 0 && info.reserved == 0 && info.reserved2 == 0);
 
     Require(sceNgs2CustomRackGetModuleInfo(rack, 0, nullptr, sizeof(info)) == SCE_NGS2_ERROR_INVALID_OUT_ADDRESS);
+    errno = 71;
+    Require(sceNgs2CustomRackGetModuleInfo(rack, 0, reinterpret_cast<Ngs2CustomModuleInfo*>(0x10), sizeof(info)) == SCE_NGS2_ERROR_INVALID_OUT_ADDRESS && errno == 71);
     Require(sceNgs2CustomRackGetModuleInfo(0x1234, 0, nullptr, sizeof(info)) == SCE_NGS2_ERROR_INVALID_OUT_ADDRESS);
     std::memset(&info, 0xa5, sizeof(info));
     Require(sceNgs2CustomRackGetModuleInfo(0x1234, 0, &info, sizeof(info)) == SCE_NGS2_ERROR_INVALID_RACK_HANDLE);
@@ -1264,6 +1311,7 @@ static void TestCustomMastering() {
     uintptr_t rack = 0;
     Require(sceNgs2RackCreate(system, SCE_NGS2_RACK_ID_CUSTOM_MASTERING, &good.custom_rack_option.rack_option, &info, &rack) == SCE_NGS2_OK);
     const auto voice = Voice(rack);
+    Require(sceNgs2VoiceGetState(voice, reinterpret_cast<Ngs2VoiceState*>(0x10), sizeof(Ngs2VoiceState)) == SCE_NGS2_ERROR_INVALID_OUT_ADDRESS);
 
     Control(voice, SCE_NGS2_CUSTOM_MASTERING_VOICE_PARAM_SETUP, Ngs2MasteringVoiceSetupParam{{}, 2, 0});
     Control(voice, SCE_NGS2_CUSTOM_MASTERING_VOICE_PARAM_GAIN, Ngs2MasteringVoiceGainParam{{}, 1.0f, 1.0f});
