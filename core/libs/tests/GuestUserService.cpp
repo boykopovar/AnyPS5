@@ -111,13 +111,24 @@ void VerifyLoggedInUser(int userId) {
 }
 
 int main() {
+    int initialUser = -1;
+    Require(sceUserServiceGetInitialUser(&initialUser) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(initialUser == -1);
+
+    char name[32]{};
+    Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, name, sizeof(name)) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(sceUserServiceGetUserName(123, name, sizeof(name)) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, name, 0) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, name, USER_SERVICE_MAX_USER_NAME_LENGTH) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+
+    Require(sceUserServiceInitialize(nullptr) == USER_SERVICE_OK);
     Require(sceUserServiceGetForegroundUser(nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     int foreground = -1;
     Require(sceUserServiceGetForegroundUser(&foreground) == USER_SERVICE_OK);
     Require(foreground == USER_SERVICE_INITIAL_USER_ID);
 
     Require(sceUserServiceGetInitialUser(nullptr) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
-    int initialUser = -1;
+    initialUser = -1;
     Require(sceUserServiceGetInitialUser(&initialUser) == USER_SERVICE_OK);
     Require(initialUser == USER_SERVICE_INITIAL_USER_ID);
 
@@ -500,6 +511,12 @@ int main() {
     errno = 71;
     Require(sceUserServiceGetIsSpartacusEnabled(USER_SERVICE_INITIAL_USER_ID, reinterpret_cast<bool*>(0x10)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
     Require(errno == 71);
+
+    Require(sceUserServiceTerminate() == USER_SERVICE_OK);
+    initialUser = -1;
+    Require(sceUserServiceGetInitialUser(&initialUser) == USER_SERVICE_ERROR_NOT_INITIALIZED);
+    Require(initialUser == -1);
+    Require(sceUserServiceGetUserName(USER_SERVICE_INITIAL_USER_ID, name, sizeof(name)) == USER_SERVICE_ERROR_NOT_INITIALIZED);
 
     return 0;
 }

@@ -323,10 +323,12 @@ void TestLoginStateTransitions() {
 }
 
 int main() {
+    Require(sceUserServiceInitialize(nullptr) == USER_SERVICE_OK);
     TestUserIdRangeBounds();
     TestInvalidUserIdRejection();
     TestUserNameBufferOverflowGuards();
     TestEapHomePathGuestWrite();
+    Require(sceUserServiceTerminate() == USER_SERVICE_OK);
     TestLoginStateTransitions();
     return 0;
 }
