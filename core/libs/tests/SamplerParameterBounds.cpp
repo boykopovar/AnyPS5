@@ -202,14 +202,16 @@ void TestInvalidFilterModes() {
 
 void TestLodBiasBounds() {
     auto context = BaseContext();
+    // A bias past SamplerLodBiasShaderThreshold (15) is applied in the shader, so test one between the device limit and that threshold.
+    context.limits.maxSamplerLodBias = 14.0f;
     auto high = BaseDescriptor();
-    high.lodBias = 16.0f;
+    high.lodBias = 14.5f;
     ExpectFailure("LodBiasHigh", [&] {
         AgcDriver::Graphics::Sampler::Validate(context, high);
     }, "requests a LOD bias beyond the device limit");
 
     auto low = BaseDescriptor();
-    low.lodBias = -16.0f;
+    low.lodBias = -14.5f;
     ExpectFailure("LodBiasLow", [&] {
         AgcDriver::Graphics::Sampler::Validate(context, low);
     }, "requests a LOD bias beyond the device limit");
@@ -221,7 +223,7 @@ void TestLodBiasBounds() {
     }, "requests a LOD bias beyond the device limit");
 
     auto atLimit = BaseDescriptor();
-    atLimit.lodBias = 15.0f;
+    atLimit.lodBias = 14.0f;
     ExpectSuccess("LodBiasAtLimit", [&] {
         AgcDriver::Graphics::Sampler sampler(context, atLimit);
     });
