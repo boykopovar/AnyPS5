@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 
 #include <array>
+#include <cerrno>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -128,6 +129,10 @@ void CheckArguments() {
     const EncodeParam param{KindAcn, 1};
     Require(sceAudioOut2GetAmbisonicsEncodeCoefficients(nullptr, out.data(), {0, 0, 1}) == ErrorInvalidParam, "null parameters were accepted");
     Require(sceAudioOut2GetAmbisonicsEncodeCoefficients(&param, nullptr, {0, 0, 1}) == ErrorInvalidParam, "a null output was accepted");
+    errno = 71;
+    Require(sceAudioOut2GetAmbisonicsEncodeCoefficients(reinterpret_cast<const void*>(0x10), out.data(), {0, 0, 1}) == ErrorInvalidParam && Untouched(out, 0), "unreadable parameters were accepted");
+    Require(sceAudioOut2GetAmbisonicsEncodeCoefficients(&param, reinterpret_cast<float*>(0x10), {0, 0, 1}) == ErrorInvalidParam, "an unwritable output was accepted");
+    Require(errno == 71, "errno was changed by an unmapped pointer");
     Require(Encode(2, 1, {0, 0, 1}, out) == ErrorInvalidParam && Untouched(out, 0), "kind 2 was accepted");
 }
 

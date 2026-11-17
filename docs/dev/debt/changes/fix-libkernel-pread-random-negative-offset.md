@@ -1,0 +1,5 @@
+# libkernel
+
+## change [readv, writev, preadv, pwritev and their sceKernel forms]
+
+- [readv, writev, preadv, pwritev and their sceKernel forms](../../../core/libs/prx/libkernel/File/src/Stdio.cpp) (libkernel) - unreadable iovec-table errors follow FreeBSD 11.4's [`copyinuio`](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/sys/kern/subr_uio.c#L401-L434), not console measurements. The table is copied before inspecting its entries; payload-buffer validation is unchanged. A total length above `SSIZE_MAX` fails with `EINVAL` before the descriptor is looked up, and the positioned forms, `pread` and `pwrite` included, report `EBADF` for a descriptor not open in that direction, then `ESPIPE` for a pipe, socket or kqueue, before `EINVAL` or `EFAULT`, as [`kern_preadv`](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/sys/kern/sys_generic.c) does. FreeBSD passes a negative offset on a character device to the driver; here only the random devices take it. A Linux `process_vm_readv` failure other than `EFAULT` throws, including when the host denies that API.

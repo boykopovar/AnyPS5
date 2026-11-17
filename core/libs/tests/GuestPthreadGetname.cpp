@@ -9,8 +9,9 @@
 static constexpr int GUEST_ESRCH = 3;
 static constexpr int GUEST_EFAULT = 14;
 static constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016);
-static constexpr int SCE_KERNEL_ERROR_ESRCH = static_cast<int>(0x80020003);
 static constexpr int SCE_KERNEL_ERROR_EFAULT = static_cast<int>(0x8002000e);
+static constexpr int SCE_KERNEL_ERROR_ENAMETOOLONG = static_cast<int>(0x8002003f);
+static constexpr int SCE_KERNEL_ERROR_ESRCH = static_cast<int>(0x80020003);
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -33,6 +34,11 @@ static void* APS5_VABI Unnamed(void*) {
 }
 
 static void* APS5_VABI ExitNow(void*) {
+    return nullptr;
+}
+
+static void* APS5_VABI MaximumName(void*) {
+    RequireName(pthread_self_nid_postfix(), std::string(31, 'N'));
     return nullptr;
 }
 
@@ -81,6 +87,18 @@ int main() {
     Pthread worker = nullptr;
     Require(scePthreadCreate(&worker, nullptr, Unnamed, nullptr, nullptr) == 0);
     Require(scePthreadJoin(worker, nullptr) == 0);
+
+    Pthread invalidName = reinterpret_cast<Pthread>(static_cast<std::uintptr_t>(1));
+    Require(scePthreadCreate(&invalidName, nullptr, ExitNow, nullptr, reinterpret_cast<const char*>(static_cast<std::uintptr_t>(0x10))) == SCE_KERNEL_ERROR_EFAULT);
+    Require(invalidName == nullptr);
+    invalidName = reinterpret_cast<Pthread>(static_cast<std::uintptr_t>(1));
+    const std::string tooLongName(32, 'N');
+    Require(scePthreadCreate(&invalidName, nullptr, ExitNow, nullptr, tooLongName.c_str()) == SCE_KERNEL_ERROR_ENAMETOOLONG);
+    Require(invalidName == nullptr);
+    const std::string maximumName(31, 'N');
+    Pthread named = nullptr;
+    Require(scePthreadCreate(&named, nullptr, MaximumName, nullptr, maximumName.c_str()) == 0);
+    Require(scePthreadJoin(named, nullptr) == 0);
 
     // A joined thread answers pthread_getname_np with ESRCH (PS5 firmware 13.60) and leaves the
     // output buffer untouched, so the posix wrapper must not read the retained object's name.

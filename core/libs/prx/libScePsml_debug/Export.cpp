@@ -1,6 +1,7 @@
 #include "prx/libScePsml_debug/include/Api.hpp"
 #include "prx/libScePsml_debug/include/LaterExports.hpp"
 #include "prx/libkernel/libkernel.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <atomic>
@@ -142,6 +143,13 @@ std::int32_t CreateContextFromParam(void** context, const MfsrContextParam* para
  return 0;
 }
 
+bool CopyInPreservingErrno(void* destination, const void* source, std::size_t bytes) {
+ const int savedErrno = errno;
+ const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
+ errno = savedErrno;
+ return copied;
+}
+
 void ReleaseMfsrObject(void* handle, MfsrObjectKind kind, const char* function) {
  std::lock_guard lock(g_mfsrMutex);
  const auto found = g_mfsrObjects.find(handle);
@@ -261,8 +269,8 @@ std::int32_t APS5_VABI scePsmlMfsrReleaseContext(void* context) {
 }
 
 std::int32_t APS5_VABI scePsmlMfsrCreateContext1300(void** context, const void* param) {
- if (param != nullptr) {
-  const auto* bytes = static_cast<const std::uint8_t*>(param);
+ std::uint8_t bytes[0x1c];
+ if (param != nullptr && CopyInPreservingErrno(bytes, param, sizeof(bytes))) {
   std::uint32_t type;
   std::uint16_t width, height;
   std::memcpy(&type, bytes, sizeof(type));
