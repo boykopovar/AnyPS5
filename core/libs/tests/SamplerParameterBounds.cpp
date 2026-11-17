@@ -12,6 +12,15 @@
 #include <string_view>
 #include <type_traits>
 
+namespace AgcDriver::Graphics {
+
+std::uint64_t& DeviceProcLookups() {
+    thread_local std::uint64_t count = 0;
+    return count;
+}
+
+}
+
 namespace {
 
 int failures = 0;
