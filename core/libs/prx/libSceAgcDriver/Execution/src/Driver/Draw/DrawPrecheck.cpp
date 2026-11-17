@@ -1,5 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawRegisterKey.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DepthSurface.hpp"
@@ -46,6 +48,43 @@ QueueState DepthCopyDraw(const QueueState& queue, const Graphics::DepthCopyPass&
     return draw;
 }
 
+struct RestartInputs {
+    std::uint32_t indexSize = 0;
+    std::uint32_t resetIndex = 0;
+    bool resetPresent = false;
+    bool operator==(const RestartInputs&) const = default;
+};
+
+struct PrecheckMemo {
+    RegisterFingerprints state;
+    RestartInputs restart;
+    bool restartKnown = false;
+    bool valid = false;
+    PrecheckMemoCounts counts;
+};
+
+struct PrecheckMemoStorage {};
+
+PrecheckMemo& precheckMemo() {
+    return HostThreadLocal<PrecheckMemo, PrecheckMemoStorage>();
+}
+
+bool precheckMemoEnabled() {
+    static const bool enabled = std::getenv("APS5_NO_PRECHECK_MEMO") == nullptr;
+    return enabled;
+}
+
+bool primitiveRestartEnabled(const QueueState& queue) {
+    const auto restart = queue.userConfig.find(0x24b);
+    return restart != queue.userConfig.end() && restart->second != 0;
+}
+
+RestartInputs restartInputs(const QueueState& queue, const Pm4::DrawParameters& drawParameters) {
+    const auto reset = queue.context.find(0x103);
+    const bool present = reset != queue.context.end();
+    return {drawParameters.indexSize, present ? reset->second : 0u, present};
+}
+
 }
 
 bool Driver::drawPrecheck() {
@@ -53,8 +92,34 @@ bool Driver::drawPrecheck() {
     return precheck;
 }
 
+PrecheckMemoCounts Driver::precheckMemoCounts() {
+    return precheckMemo().counts;
+}
+
+void Driver::resetPrecheckMemo() {
+    precheckMemo() = {};
+}
+
 std::optional<DrawVerdict> Driver::precheckDraw(const QueueState& queue, const Submission& submission, std::size_t packetOffset, std::span<const std::uint32_t> packet, const Pm4::DrawParameters& drawParameters, std::string& rejected, bool& traceIndirect) {
     if (!drawParameters.indirect && !drawParameters.indexed && (drawParameters.indexCount == 0 || drawParameters.instanceCount == 0)) return DrawVerdict::Nothing;
+    static const bool traceIndirectEnabled = std::getenv("APS5_TRACE_INDIRECT_DRAWS") != nullptr;
+    const auto reached = [&] {
+        traceIndirect = traceIndirectEnabled;
+        if (traceIndirect && drawParameters.indirect) std::fprintf(stderr, "[draw] indirect packet %s args 0x%llx count %u reached\n", Pm4::Name(packet[0]).c_str(), static_cast<unsigned long long>(drawParameters.indirect->arguments), drawParameters.indirect->count);
+    };
+    PrecheckMemo* const memo = precheckMemoEnabled() ? &precheckMemo() : nullptr;
+    RegisterFingerprints fingerprints;
+    bool restartDecides = false;
+    if (memo != nullptr) {
+        fingerprints = DrawKeyFingerprints(queue);
+        restartDecides = drawParameters.indexed && primitiveRestartEnabled(queue);
+        if (memo->valid && memo->state == fingerprints && (!restartDecides || (memo->restartKnown && memo->restart == restartInputs(queue, drawParameters)))) {
+            ++memo->counts.hits;
+            rejected.clear();
+            reached();
+            return std::nullopt;
+        }
+    }
     const auto metadata = Graphics::DecodeColorMetadataPass(queue);
     std::optional<Graphics::DepthExpandPass> expand;
     if (!metadata) expand = Graphics::DecodeDepthExpandPass(queue);
@@ -99,16 +164,15 @@ std::optional<DrawVerdict> Driver::precheckDraw(const QueueState& queue, const S
         auto copyDraw = DepthCopyDraw(queue, *copy);
         return draw(copyDraw, packet, submission, packetOffset, rejected);
     }
-    if (const auto control = Graphics::DecodeDepthRenderControl(queue); control && Graphics::DepthRenderControlDrains(*control)) {
+    const auto control = Graphics::DecodeDepthRenderControl(queue);
+    if (control && Graphics::DepthRenderControlDrains(*control)) {
         if (DrawPipeline::Active()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, (packet[0] >> 8u) & 0xffu);
         Graphics::NoteDepthRenderControl(*control);
     }
     if (Graphics::DepthResummarizeDrawsNothing(queue)) return DrawVerdict::Nothing;
     rejected = Graphics::DepthMaintenanceRejection(queue);
     if (!rejected.empty()) return DrawVerdict::Rejected;
-    static const bool traceIndirectEnabled = std::getenv("APS5_TRACE_INDIRECT_DRAWS") != nullptr;
-    traceIndirect = traceIndirectEnabled;
-    if (traceIndirect && drawParameters.indirect) std::fprintf(stderr, "[draw] indirect packet %s args 0x%llx count %u reached\n", Pm4::Name(packet[0]).c_str(), static_cast<unsigned long long>(drawParameters.indirect->arguments), drawParameters.indirect->count);
+    reached();
     {
         const auto colorControl = queue.context.find(0x202);
         const bool colorDisabled = colorControl != queue.context.end() && ((colorControl->second >> 4u) & 7u) == 0u;
@@ -142,6 +206,13 @@ std::optional<DrawVerdict> Driver::precheckDraw(const QueueState& queue, const S
     if (drawPrecheck()) {
         rejected = Graphics::DrawRejection(queue, drawParameters.indexed);
         if (!rejected.empty()) return DrawVerdict::Rejected;
+    }
+    if (memo != nullptr && !control) {
+        memo->state = fingerprints;
+        memo->restartKnown = restartDecides;
+        memo->restart = restartDecides ? restartInputs(queue, drawParameters) : RestartInputs{};
+        memo->valid = true;
+        ++memo->counts.records;
     }
     return std::nullopt;
 }

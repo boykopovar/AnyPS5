@@ -388,6 +388,7 @@ The code reads environment names through `getenv`, `IsEnvironmentSet`, `kibSetti
 | `APS5_NO_PIPELINE_JOURNAL` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/PipelineJournal.cpp` |  | keeps the pipeline journal off; 0 leaves it on, and it is also off while the shader disk cache is disabled |
 | `APS5_NO_PIPELINE_LTO` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/PipelineLibrary.cpp` |  | disables background link-time optimization of graphics pipeline libraries |
 | `APS5_NO_POOL_CACHE` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` |  | allocates descriptor pools fresh instead of through the descriptor cache |
+| `APS5_NO_PRECHECK_MEMO` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/Driver/Draw/DrawPrecheck.cpp` |  | runs the draw precheck on every draw instead of skipping it while the draw-key register fingerprints equal those of the thread's last draw the precheck let through |
 | `APS5_NO_PRECOLLECT` | presence | `core/libs/prx/libSceAgcDriver/Graphics/src/ShaderResources.cpp` |  | disables the stage-A precollect pass |
 | `APS5_NO_PREPARED_FIND` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | looks the resource-cache key up again instead of using the object stage A found |
 | `APS5_NO_PRESENT_EPOCH` | presence | `core/libs/prx/libSceAgcDriver/Execution/src/VulkanDevice.cpp` |  | keeps the presenter at collect epoch 0 instead of adopting the newest epoch a worker started |
