@@ -1,5 +1,6 @@
 import contextlib
 import datetime
+import faulthandler
 import importlib.util
 import io
 import json
@@ -65,6 +66,16 @@ def snapshot(root):
 
 
 class TitleRunPathsTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        temporary = tempfile.TemporaryDirectory(prefix="anyps5-title-source-")
+        cls.addClassCleanup(temporary.cleanup)
+        cls.source = Path(temporary.name)
+        subprocess.run(["git", "init", "-q", str(cls.source)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(cls.source), "-c", "user.name=title-run-paths", "-c", "user.email=title-run-paths@invalid",
+                        "-c", "commit.gpgsign=false", "-c", f"core.hooksPath={os.devnull}", "commit", "-q", "--allow-empty", "-m", "source"],
+                       capture_output=True, check=True)
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix="anyps5-title-paths-")
         self.addCleanup(temporary.cleanup)
@@ -154,8 +165,12 @@ runpy.run_path(sys.argv[0], run_name="__main__")
         target = self.build / "core/relinker" / ("relinker.exe" if os.name == "nt" else "relinker")
         target.parent.mkdir(parents=True)
         shutil.copy2(sys.executable, target)
-        (self.build / "CMakeCache.txt").write_text(f"CMAKE_HOME_DIRECTORY:INTERNAL={ROOT}\n", encoding="utf-8")
+        self.build_from_source()
         return target
+
+    def build_from_source(self):
+        self.build.mkdir(parents=True, exist_ok=True)
+        (self.build / "CMakeCache.txt").write_text(f"CMAKE_HOME_DIRECTORY:INTERNAL={self.source}\n", encoding="utf-8")
 
     def reports(self, output=None):
         output = output or self.out
@@ -540,6 +555,7 @@ runpy.run_path(sys.argv[0], run_name="__main__")
 
     def test_cleanup_failure_does_not_write_through_stale_log_alias(self):
         self.package(self.root / "games" / TITLE)
+        self.build_from_source()
         work = self.stale_work()
         victim = self.root / "original-victim.bin"
         victim.write_bytes(b"a cleanup error must not overwrite this file")
@@ -576,7 +592,7 @@ runpy.run_path(sys.argv[0], run_name="__main__")
         prepare.assert_not_called()
 
     def report_name(self, instant):
-        result = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=True)
+        result = subprocess.run(["git", "-C", str(self.source), "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=True)
         return f"{result.stdout.strip()}-{instant:%Y%m%d-%H%M%S}"
 
     def test_old_report_directory_symlinks_are_not_followed(self):
@@ -616,4 +632,5 @@ runpy.run_path(sys.argv[0], run_name="__main__")
 
 
 if __name__ == "__main__":
+    faulthandler.dump_traceback_later(20, exit=True)
     unittest.main()

@@ -41,7 +41,7 @@ int validateCommonOptParam(const void* optParam) {
     if (optParam == nullptr) return ULT_OK;
     if ((reinterpret_cast<std::uintptr_t>(optParam) & 7u) != 0) return ULT_ERROR_ALIGNMENT;
     UltCommonOptParam value;
-    std::memcpy(&value, optParam, sizeof(value));
+    if (!GuestCopyIn_nid_no_patch(&value, optParam, sizeof(value))) return ULT_ERROR_NULL;
     if (value.header[0] != 0x6C696275 || value.header[1] != 0x6C746D61 || value.header[2] != 0x67696300) return ULT_ERROR_INVALID;
     if (std::any_of(std::begin(value.reserved), std::end(value.reserved), [](std::uint8_t byte) { return byte != 0; })) return ULT_ERROR_INVALID;
     return ULT_OK;
@@ -55,6 +55,13 @@ int semaphoreGetState(void* semaphore, std::shared_ptr<UltSemaphoreState>* out) 
     }
     *out = it->second;
     return ULT_OK;
+}
+
+int semaphoreRequest(void* semaphore, std::int32_t numResource, std::shared_ptr<UltSemaphoreState>* out) {
+    if (semaphore == nullptr) return ULT_ERROR_NULL;
+    if ((reinterpret_cast<std::uintptr_t>(semaphore) & 7u) != 0) return ULT_ERROR_ALIGNMENT;
+    if (numResource <= 0) return ULT_ERROR_RANGE;
+    return semaphoreGetState(semaphore, out);
 }
 
 int queueGetState(void* queue, std::shared_ptr<UltQueueState>* out) {
@@ -370,8 +377,10 @@ int APS5_VABI sceUltMutexCreate(void* mutex, const char* name, void* waitingQueu
     if (mutex == nullptr) {
         return ULT_ERROR_NULL;
     }
+    std::uint32_t attribute = 0;
+    if (optParam != nullptr && !GuestCopyIn_nid_no_patch(&attribute, &optParam->attribute, sizeof(attribute))) return ULT_ERROR_NULL;
     auto state = std::make_shared<UltMutexState>();
-    state->_attribute = optParam != nullptr ? optParam->attribute : 0;
+    state->_attribute = attribute;
     state->_waitingPool = waitingQueueResourcePool;
     if (!CopyUltName(state->_name, name)) return ULT_ERROR_NULL;
     std::lock_guard<std::mutex> lock(gMutex);
@@ -843,13 +852,8 @@ int APS5_VABI sceUltSemaphoreCreate(void* semaphore, const char* name, std::uint
 }
 
 int APS5_VABI sceUltSemaphoreAcquire(void* semaphore, std::int32_t numResource) {
-    if (semaphore == nullptr) return ULT_ERROR_NULL;
-    if ((reinterpret_cast<std::uintptr_t>(semaphore) & 7u) != 0) return ULT_ERROR_ALIGNMENT;
-    if (numResource <= 0) {
-        return ULT_ERROR_RANGE;
-    }
     std::shared_ptr<UltSemaphoreState> state;
-    if (int ret = semaphoreGetState(semaphore, &state); ret != ULT_OK) {
+    if (int ret = semaphoreRequest(semaphore, numResource, &state); ret != ULT_OK) {
         return ret;
     }
     std::unique_lock<std::mutex> lock(state->_mutex);
@@ -877,13 +881,8 @@ int APS5_VABI sceUltSemaphoreAcquire(void* semaphore, std::int32_t numResource) 
 }
 
 int APS5_VABI sceUltSemaphoreTryAcquire(void* semaphore, std::int32_t numResource) {
-    if (semaphore == nullptr) return ULT_ERROR_NULL;
-    if ((reinterpret_cast<std::uintptr_t>(semaphore) & 7u) != 0) return ULT_ERROR_ALIGNMENT;
-    if (numResource <= 0) {
-        return ULT_ERROR_RANGE;
-    }
     std::shared_ptr<UltSemaphoreState> state;
-    if (int ret = semaphoreGetState(semaphore, &state); ret != ULT_OK) {
+    if (int ret = semaphoreRequest(semaphore, numResource, &state); ret != ULT_OK) {
         return ret;
     }
     std::lock_guard<std::mutex> lock(state->_mutex);
@@ -898,13 +897,8 @@ int APS5_VABI sceUltSemaphoreTryAcquire(void* semaphore, std::int32_t numResourc
 }
 
 int APS5_VABI sceUltSemaphoreRelease(void* semaphore, std::int32_t numResource) {
-    if (semaphore == nullptr) return ULT_ERROR_NULL;
-    if ((reinterpret_cast<std::uintptr_t>(semaphore) & 7u) != 0) return ULT_ERROR_ALIGNMENT;
-    if (numResource <= 0) {
-        return ULT_ERROR_RANGE;
-    }
     std::shared_ptr<UltSemaphoreState> state;
-    if (int ret = semaphoreGetState(semaphore, &state); ret != ULT_OK) {
+    if (int ret = semaphoreRequest(semaphore, numResource, &state); ret != ULT_OK) {
         return ret;
     }
     {
@@ -944,8 +938,9 @@ int APS5_VABI sceUltUlthreadRuntimeOptParamInitialize(UltUlthreadRuntimeOptParam
         return ULT_ERROR_NULL;
     }
     const std::uint32_t defaults[] = {0x6C696275, 0x6C746D61, 0x67696300, buildVersion, 0x4000, 0, 0x1FFF, 0, 0x2BC, 4};
-    std::memset(optParam, 0, sizeof(*optParam));
-    std::memcpy(optParam->bytes, defaults, sizeof(defaults));
+    UltUlthreadRuntimeOptParam local{};
+    std::memcpy(local.bytes, defaults, sizeof(defaults));
+    if (!GuestCopyOut_nid_no_patch(optParam, &local, sizeof(local))) return ULT_ERROR_NULL;
     return ULT_OK;
 }
 
@@ -964,7 +959,7 @@ int APS5_VABI sceUltUlthreadRuntimeCreate(void* runtime, const char* name, std::
     }
     if (optParam != nullptr) {
         std::uint32_t header[3];
-        std::memcpy(header, optParam, sizeof(header));
+        if (!GuestCopyIn_nid_no_patch(header, optParam, sizeof(header))) return ULT_ERROR_NULL;
         if (header[0] != 0x6C696275 || header[1] != 0x6C746D61 || header[2] != 0x67696300) return ULT_ERROR_INVALID;
     }
     UltRuntimeState state{maxNumUlthread, numWorkerThread, workArea};
@@ -1100,8 +1095,12 @@ int APS5_VABI _sceUltMutexCreate(void* mutex, const char* name, void* waitingQue
     if (((reinterpret_cast<std::uintptr_t>(mutex) | reinterpret_cast<std::uintptr_t>(optParam) | reinterpret_cast<std::uintptr_t>(waitingQueueResourcePool)) & 7u) != 0) {
         return ULT_ERROR_ALIGNMENT;
     }
-    if (optParam != nullptr && (optParam->header[0] != 0x6C696275 || optParam->header[1] != 0x6C746D61 || optParam->header[2] != 0x67696300 || optParam->attribute > 1 || std::any_of(std::begin(optParam->reserved), std::end(optParam->reserved), [](std::uint32_t value) { return value != 0; }))) {
-        return ULT_ERROR_INVALID;
+    if (optParam != nullptr) {
+        UltMutexOptParam options;
+        if (!GuestCopyIn_nid_no_patch(&options, optParam, sizeof(options))) return ULT_ERROR_NULL;
+        if (options.header[0] != 0x6C696275 || options.header[1] != 0x6C746D61 || options.header[2] != 0x67696300 || options.attribute > 1 || std::any_of(std::begin(options.reserved), std::end(options.reserved), [](std::uint32_t value) { return value != 0; })) {
+            return ULT_ERROR_INVALID;
+        }
     }
     return sceUltMutexCreate(mutex, name, waitingQueueResourcePool, optParam, 0);
 }
