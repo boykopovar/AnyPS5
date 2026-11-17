@@ -1,6 +1,7 @@
 from pathlib import Path
 import json
 import math
+import os
 import subprocess
 import sys
 import tempfile
@@ -461,7 +462,12 @@ class BuildSymlinkSafetyTests(unittest.TestCase):
             external.mkdir()
             marker = external / "keep.txt"
             marker.write_text("outside data", encoding="utf-8")
-            (repo / "build").symlink_to(external, target_is_directory=True)
+            try:
+                (repo / "build").symlink_to(external, target_is_directory=True)
+            except OSError as error:
+                if os.name == "nt" and getattr(error, "winerror", None) == 1314:
+                    self.skipTest("Windows symbolic-link privileges unavailable")
+                raise
             with self.assertRaisesRegex(ValueError, "resolves outside the worktree"):
                 performance_bisect.reset_build_dir(repo, repo / "build")
             self.assertEqual(marker.read_text(encoding="utf-8"), "outside data")
