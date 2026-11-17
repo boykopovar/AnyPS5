@@ -436,7 +436,7 @@ static void CheckProcessListSysctl() {
     const int callerPid = getpid_nid_postfix();
     const int mib[] = {1, 14, 8};
     std::size_t length = 0;
-    Require(sysctl_nid_postfix(mib, 3, nullptr, &length, nullptr, 0) == 0);
+    Require(sysctl_nid_postfix(mib, 3, nullptr, &length, nullptr, 0) == 0 && length == 6 * 1088);
     const std::size_t size = length;
     *__error_nid_postfix() = 13;
     length = 0;
@@ -462,6 +462,8 @@ static void CheckProcessListSysctl() {
     const int mibWithPid[] = {1, 14, 8, 0};
     length = sizeof(buffer);
     Require(sysctl_nid_postfix(mibWithPid, 4, buffer, &length, nullptr, 0) == 0 && length == 1088);
+    length = 0;
+    Require(sysctl_nid_postfix(mibWithPid, 4, nullptr, &length, nullptr, 0) == 0 && length == 6 * 1088);
 
     const int mibTooLong[] = {1, 14, 8, 0, 0};
     Require(sysctl_nid_postfix(mibTooLong, 5, buffer, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 22);
