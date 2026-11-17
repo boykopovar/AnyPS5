@@ -11,6 +11,7 @@
 #include "SceTypes.hpp"
 #include "prx/libSceVoice/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 
 namespace {
@@ -108,6 +109,13 @@ int CopyStatus(void* destination, TValue value) {
 
 int CreateEndpoint(std::int32_t* id, std::map<std::int32_t, Endpoint>& endpoints, std::int32_t limit) {
     if (!id) return SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
+    const int savedErrno = errno;
+    const GuestArena::HostWrite write(id, sizeof(*id));
+    if (!write.Open() || !GuestWritable_nid_no_patch(id, sizeof(*id))) {
+        errno = savedErrno;
+        return SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
+    }
+    errno = savedErrno;
     for (std::int32_t candidate = 0; candidate < limit; ++candidate) {
         if (!endpoints.contains(candidate)) {
             if (!CopyOut(id, &candidate, sizeof(candidate))) return SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
@@ -184,6 +192,13 @@ int APS5_VABI sceVoiceQoSEnd() {
 int APS5_VABI sceVoiceQoSCreateLocalEndpoint(int32_t* localId, int32_t userId, int32_t deviceInId, int32_t deviceOutId) {
     return Locked([&](QoS& qos) -> int {
         if (!localId) return SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
+        const int savedErrno = errno;
+        const GuestArena::HostWrite write(localId, sizeof(*localId));
+        if (!write.Open() || !GuestWritable_nid_no_patch(localId, sizeof(*localId))) {
+            errno = savedErrno;
+            return SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
+        }
+        errno = savedErrno;
         if (userId == -1 || !qos.locals.empty()) {
             const std::int32_t invalidId = -1;
             return CopyOut(localId, &invalidId, sizeof(invalidId)) ? SCE_VOICE_ERROR_LIBVOICEQOS_LIMIT : SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
@@ -241,8 +256,12 @@ int APS5_VABI sceVoiceQoSCreateRemoteEndpoint(int32_t* remoteId) {
             }
         }
         if (slot < 0) {
+            const int savedErrno = errno;
+            const GuestArena::HostWrite write(remoteId, sizeof(*remoteId));
             const std::int32_t invalidId = -1;
-            return CopyOut(remoteId, &invalidId, sizeof(invalidId)) ? SCE_VOICE_ERROR_LIBVOICEQOS_LIMIT : SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
+            const bool copied = write.Open() && CopyOut(remoteId, &invalidId, sizeof(invalidId));
+            errno = savedErrno;
+            return copied ? SCE_VOICE_ERROR_LIBVOICEQOS_LIMIT : SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
         }
         VoicePortParam param{};
         param.port_type = VOICE_PORT_IN_VOICE;
@@ -281,6 +300,13 @@ int APS5_VABI sceVoiceQoSDeleteRemoteEndpoint(int32_t remoteId) {
 int APS5_VABI sceVoiceQoSConnect(int32_t* connectionId, int32_t localId, int32_t remoteId) {
     return Locked([&](QoS& qos) {
         if (!connectionId || localId != 0 || remoteId < 0 || remoteId >= qos.endpointLimit) return SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
+        const int savedErrno = errno;
+        const GuestArena::HostWrite write(connectionId, sizeof(*connectionId));
+        if (!write.Open() || !GuestWritable_nid_no_patch(connectionId, sizeof(*connectionId))) {
+            errno = savedErrno;
+            return SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
+        }
+        errno = savedErrno;
         if (!qos.locals.contains(localId) || !qos.remotes.contains(remoteId)) throw std::runtime_error("sceVoiceQoSConnect: missing voice port error behavior is not implemented");
         for (std::int32_t candidate = 0; candidate < qos.endpointLimit; ++candidate) {
             if (!qos.connections.contains(candidate)) {
@@ -360,6 +386,13 @@ int APS5_VABI sceVoiceQoSReadPacket(int32_t connectionId, void* buffer, uint32_t
     return Locked([&](QoS& qos) {
         qos.packetTraffic = true;
         if (!buffer || !size || !qos.connections.contains(connectionId)) return SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
+        const int savedErrno = errno;
+        const GuestArena::HostWrite write(size, sizeof(*size));
+        if (!write.Open() || !GuestWritable_nid_no_patch(size, sizeof(*size))) {
+            errno = savedErrno;
+            return SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
+        }
+        errno = savedErrno;
         const std::uint32_t zero = 0;
         return CopyOut(size, &zero, sizeof(zero)) ? 0 : SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
     });
@@ -369,6 +402,8 @@ int APS5_VABI sceVoiceQoSWritePacket(int32_t connectionId, const void* buffer, u
     return Locked([&](QoS& qos) {
         qos.packetTraffic = true;
         if (!buffer || !size || !qos.connections.contains(connectionId)) return SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
+        std::uint32_t localSize = 0;
+        if (!CopyIn(&localSize, size, sizeof(localSize))) return SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
         return 0;
     });
 }
@@ -430,9 +465,14 @@ int APS5_VABI sceVoiceQoSGetConnectionAttribute(int32_t connectionId, int32_t at
 int APS5_VABI sceVoiceQoSGetLocalEndpoint(int32_t connectionId, int32_t* localId) {
     return Locked([&](QoS& qos) {
         if (!localId || connectionId < 0 || connectionId >= qos.endpointLimit) return SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
+        const int savedErrno = errno;
+        const GuestArena::HostWrite write(localId, sizeof(*localId));
+        if (!write.Open() || !GuestWritable_nid_no_patch(localId, sizeof(*localId))) {
+            errno = savedErrno;
+            return SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
+        }
         const auto it = qos.connections.find(connectionId);
         const std::int32_t value = it == qos.connections.end() ? -1 : it->second.local;
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(localId, &value, sizeof(value));
         errno = savedErrno;
         return copied ? 0 : SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
@@ -442,9 +482,14 @@ int APS5_VABI sceVoiceQoSGetLocalEndpoint(int32_t connectionId, int32_t* localId
 int APS5_VABI sceVoiceQoSGetRemoteEndpoint(int32_t connectionId, int32_t* remoteId) {
     return Locked([&](QoS& qos) {
         if (!remoteId || connectionId < 0 || connectionId >= qos.endpointLimit) return SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
+        const int savedErrno = errno;
+        const GuestArena::HostWrite write(remoteId, sizeof(*remoteId));
+        if (!write.Open() || !GuestWritable_nid_no_patch(remoteId, sizeof(*remoteId))) {
+            errno = savedErrno;
+            return SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;
+        }
         const auto it = qos.connections.find(connectionId);
         const std::int32_t value = it == qos.connections.end() ? -1 : it->second.remote;
-        const int savedErrno = errno;
         const bool copied = GuestCopyOut_nid_no_patch(remoteId, &value, sizeof(value));
         errno = savedErrno;
         return copied ? 0 : SCE_VOICE_ERROR_LIBVOICEQOS_ARGUMENT_INVALID;

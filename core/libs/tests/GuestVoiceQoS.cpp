@@ -1,12 +1,21 @@
 #include "prx/libSceVoice/include/Api.hpp"
 #include "prx/libSceVoiceQoS/include/Api.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <array>
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
 #include <string_view>
 #include <vector>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 
 static void Require(bool value) { if (!value) std::abort(); }
 
@@ -132,6 +141,11 @@ int main(int argc, char** argv) {
     std::int32_t remote = -1;
     std::int32_t connection = -1;
     Require(sceVoiceQoSCreateLocalEndpoint(nullptr, 1, 0, 0) == argumentInvalid);
+    errno = 71;
+    Require(sceVoiceQoSCreateLocalEndpoint(reinterpret_cast<std::int32_t*>(std::uintptr_t{0x10}), 1, 0, 0) == argumentInvalid);
+    Require(errno == 71);
+    Require(sceVoiceQoSCreateRemoteEndpoint(reinterpret_cast<std::int32_t*>(std::uintptr_t{0x10})) == argumentInvalid);
+    Require(errno == 71);
     Require(sceVoiceQoSCreateLocalEndpoint(&local, 1, 0, 0) == 0 && local == 0);
     Require(sceVoiceQoSCreateRemoteEndpoint(&remote) == 0 && remote == 0);
     float volume = 0.0f;
@@ -307,6 +321,9 @@ int main(int argc, char** argv) {
 
     packetSize = 100;
     Require(sceVoiceQoSWritePacket(connection, packet.data(), &packetSize) == 0);
+    errno = 71;
+    Require(sceVoiceQoSWritePacket(connection, packet.data(), reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10})) == argumentInvalid);
+    Require(errno == 71);
     Require(sceVoiceQoSWritePacket(connection, nullptr, &packetSize) == argumentInvalid);
     Require(sceVoiceQoSWritePacket(connection, packet.data(), nullptr) == argumentInvalid);
     Require(sceVoiceQoSWritePacket(connection + 100, packet.data(), &packetSize) == argumentInvalid);
@@ -356,6 +373,124 @@ int main(int argc, char** argv) {
     Require(sceVoiceQoSCreateLocalEndpoint(reinterpret_cast<std::int32_t*>(std::uintptr_t{0x10}), 1, 0, 0) == argumentInvalid);
     Require(errno == 71);
     Require(sceVoiceQoSDeleteRemoteEndpoint(remote) == argumentInvalid);
+    if (GuestArena::GuestArenaAvailable_nid_postfix()) {
+        constexpr std::size_t kArenaBytes = 0x10000;
+        auto* const mapped = static_cast<unsigned char*>(GuestArena::GuestArenaAllocate_nid_postfix(kArenaBytes, kArenaBytes));
+        Require(mapped != nullptr);
+#ifdef _WIN32
+        const HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, kArenaBytes, nullptr);
+        Require(section != nullptr);
+        GuestArena::GuestArenaMap_nid_postfix(mapped, kArenaBytes, section, 0, PAGE_READWRITE);
+        CloseHandle(section);
+        const bool watchedWrites = GuestArena::GuestArenaWriteWatched_nid_postfix();
+#else
+        GuestArena::GuestArenaCommit_nid_postfix(mapped, kArenaBytes, 0x04, kArenaBytes);
+        const bool watchedWrites = GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix();
+        if (watchedWrites) {
+            GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(mapped, kArenaBytes);
+        }
+#endif
+        const auto collectDirty = [&]() -> bool {
+            if (!watchedWrites) {
+                return true;
+            }
+#ifdef _WIN32
+            std::array<void*, 16> pages{};
+            std::size_t count = pages.size();
+            Require(GuestArena::GuestArenaCollectWrites_nid_postfix(reinterpret_cast<std::uintptr_t>(mapped), kArenaBytes, pages.data(), &count, true));
+            return count != 0;
+#else
+            bool dirty = false;
+            Require(GuestWriteWatch::GuestWriteWatchCollect_nid_postfix(reinterpret_cast<std::uintptr_t>(mapped), kArenaBytes,
+                [](void* context, std::uintptr_t, std::uintptr_t) { *static_cast<bool*>(context) = true; }, &dirty));
+            return dirty;
+#endif
+        };
+        const auto armWatch = [&](void* target) {
+            if (!watchedWrites) {
+                return;
+            }
+            static_cast<void>(collectDirty());
+            Require(!collectDirty());
+#ifdef _WIN32
+            MEMORY_BASIC_INFORMATION mbi{};
+            Require(VirtualQuery(target, &mbi, sizeof(mbi)) == sizeof(mbi) && mbi.Protect == PAGE_READONLY);
+#else
+            static_cast<void>(target);
+#endif
+        };
+        auto* const watchedId = reinterpret_cast<std::int32_t*>(mapped);
+        auto* const watchedSize = reinterpret_cast<std::uint32_t*>(mapped);
+        *watchedId = -1;
+        armWatch(watchedId);
+        errno = 71;
+        Require(sceVoiceQoSCreateLocalEndpoint(watchedId, 1, 0, 0) == 0 && *watchedId == 0);
+        Require(errno == 71);
+        Require(collectDirty());
+        *watchedId = -1;
+        armWatch(watchedId);
+        errno = 71;
+        Require(sceVoiceQoSCreateRemoteEndpoint(watchedId) == 0 && *watchedId == 0);
+        Require(errno == 71);
+        Require(collectDirty());
+        *watchedId = -1;
+        armWatch(watchedId);
+        errno = 71;
+        Require(sceVoiceQoSConnect(watchedId, 0, 0) == 0 && *watchedId == 0);
+        Require(errno == 71);
+        Require(collectDirty());
+        *watchedId = 99;
+        armWatch(watchedId);
+        errno = 71;
+        Require(sceVoiceQoSGetLocalEndpoint(0, watchedId) == 0 && *watchedId == 0);
+        Require(errno == 71);
+        Require(collectDirty());
+        *watchedId = 99;
+        armWatch(watchedId);
+        errno = 71;
+        Require(sceVoiceQoSGetRemoteEndpoint(0, watchedId) == 0 && *watchedId == 0);
+        Require(errno == 71);
+        Require(collectDirty());
+        *watchedSize = 64;
+        armWatch(watchedSize);
+        errno = 71;
+        Require(sceVoiceQoSReadPacket(0, packet.data(), watchedSize) == 0 && *watchedSize == 0);
+        Require(errno == 71);
+        Require(collectDirty());
+        Require(sceVoiceQoSDisconnect(0) == 0);
+        Require(sceVoiceQoSDeleteLocalEndpoint(0) == 0);
+        for (int index = 1; index < endpointLimit; ++index) Require(sceVoiceQoSCreateRemoteEndpoint(&remote) == 0);
+        *watchedId = 99;
+        armWatch(watchedId);
+        errno = 71;
+        Require(sceVoiceQoSCreateRemoteEndpoint(watchedId) == limitReached && *watchedId == -1);
+        Require(errno == 71);
+        Require(collectDirty());
+        GuestArena::GuestArenaSetProtection_nid_postfix(reinterpret_cast<std::uintptr_t>(mapped), kArenaBytes, 0x02);
+        errno = 71;
+        Require(sceVoiceQoSCreateLocalEndpoint(watchedId, 1, 0, 0) == argumentInvalid && *watchedId == -1);
+        Require(errno == 71);
+        errno = 71;
+        Require(sceVoiceQoSCreateRemoteEndpoint(watchedId) == argumentInvalid && *watchedId == -1);
+        Require(errno == 71);
+        errno = 71;
+        Require(sceVoiceQoSConnect(watchedId, 0, 0) == argumentInvalid && *watchedId == -1);
+        Require(errno == 71);
+        errno = 71;
+        Require(sceVoiceQoSGetLocalEndpoint(0, watchedId) == argumentInvalid && *watchedId == -1);
+        Require(errno == 71);
+        errno = 71;
+        Require(sceVoiceQoSGetRemoteEndpoint(0, watchedId) == argumentInvalid && *watchedId == -1);
+        Require(errno == 71);
+        GuestArena::GuestArenaSetProtection_nid_postfix(reinterpret_cast<std::uintptr_t>(mapped), kArenaBytes, 0x04);
+#ifndef _WIN32
+        if (watchedWrites) {
+            GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(mapped, kArenaBytes);
+        }
+#endif
+        GuestArena::GuestArenaReset_nid_postfix(mapped, kArenaBytes);
+        GuestArena::GuestArenaRelease_nid_postfix(mapped, kArenaBytes);
+    }
     Require(sceVoiceQoSEnd() == 0);
     Require(sceVoiceQoSEnd() == notInitialized);
     Require(sceVoiceQoSTerminate() == notInitialized);
