@@ -93,6 +93,7 @@ void ReleaseBuffer(NpRingBufMemory& ringBuf) {
 extern "C" {
 
 void APS5_VABI _ZN3sce2np7RingBufC1Ev(NpRingBuf* self) {
+    if (self == nullptr) return;
     self->vtable = &RingBufVtable[2];
     ClearFields(*self);
 }
@@ -102,6 +103,7 @@ void APS5_VABI _ZN3sce2np7RingBufC2Ev(NpRingBuf* self) {
 }
 
 void APS5_VABI _ZN3sce2np7RingBufD1Ev(NpRingBuf* self) {
+    if (self == nullptr) return;
     self->vtable = &RingBufVtable[2];
 }
 
@@ -115,6 +117,7 @@ void APS5_VABI _ZN3sce2np7RingBufD0Ev(NpRingBuf* self) {
 }
 
 void APS5_VABI _ZN3sce2np7RingBuf4ctorEv(NpRingBuf* self) {
+    if (self == nullptr) return;
     ClearFields(*self);
 }
 
@@ -129,6 +132,7 @@ int APS5_VABI _ZN3sce2np7RingBuf4InitEPvm(NpRingBuf* self, void* buf, std::size_
 }
 
 void APS5_VABI _ZN3sce2np7RingBuf7DestroyEv(NpRingBuf* self) {
+    if (self == nullptr) return;
     ClearFields(*self);
 }
 
@@ -176,6 +180,7 @@ int APS5_VABI _ZN3sce2np7RingBuf5WriteEPKvm(NpRingBuf* self, const void* data, s
 }
 
 void* APS5_VABI _ZN3sce2np7RingBuf15CheckoutForReadEPm(NpRingBuf* self, std::size_t* blockSize) {
+    Require(blockSize != nullptr, "sce::np::RingBuf::CheckoutForRead: null block size");
     if (self->size == 0) return nullptr;
     return ReadBlock(*self, *blockSize);
 }

@@ -59,6 +59,8 @@ int APS5_VABI psl_suffix_exception_count_nid_postfix(const NKWebKit::GuestPslCtx
 int APS5_VABI psl_suffix_wildcard_count_nid_postfix(const NKWebKit::GuestPslCtx* psl);
 const char* APS5_VABI psl_unregistrable_domain_nid_postfix(const NKWebKit::GuestPslCtx* psl, const char* domain);
 int APS5_VABI uncompress_nid_postfix(std::uint8_t* destination, std::uint64_t* destinationLength, const std::uint8_t* source, std::uint64_t sourceLength);
+std::uint32_t APS5_VABI wpe_key_code_to_unicode_nid_postfix(std::uint32_t keyCode);
+std::uint32_t APS5_VABI wpe_unicode_to_key_code_nid_postfix(std::uint32_t character);
 int64_t APS5_VABI xmlByteConsumed_nid_postfix(NKWebKit::GuestParserCtxt* ctxt);
 NKWebKit::GuestParserCtxt* APS5_VABI xmlCreateMemoryParserCtxt_nid_postfix(const char* buffer, int size);
 NKWebKit::GuestParserCtxt* APS5_VABI xmlCreatePushParserCtxt_nid_postfix(NKWebKit::GuestSAXHandler* sax, void* user_data, const char* chunk, int size, const char* filename);

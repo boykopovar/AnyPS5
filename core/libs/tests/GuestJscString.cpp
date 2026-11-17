@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <codecvt>
 #include <cstddef>
 #include <cstdint>
@@ -85,10 +86,22 @@ static void Boundaries() {
     Require(JSStringGetUTF8CString_nid_postfix(string, &unchanged, 0) == 0 && unchanged == '!');
     Require(JSStringGetUTF8CString_nid_postfix(string, nullptr, 10) == 0);
     Require(JSStringGetUTF8CString_nid_postfix(nullptr, &unchanged, 1) == 0 && unchanged == '!');
+    errno = 71;
+    Require(JSStringGetUTF8CString_nid_postfix(string, reinterpret_cast<char*>(std::uintptr_t{0x10}), 16) == 0 && errno == 71);
     Require(JSStringGetLength_nid_postfix(nullptr) == 0 && JSStringGetCharactersPtr_nid_postfix(nullptr) == nullptr);
     Require(JSStringIsEqual(nullptr, nullptr) && !JSStringIsEqual(nullptr, string));
     Require(JSStringIsEqualToUTF8CString(string, text));
     Require(!JSStringIsEqualToUTF8CString(string, "a"));
+    JSStringRelease_nid_postfix(string);
+}
+
+static void ChunkBoundaries() {
+    const std::vector<std::uint16_t> units(8193, 'x');
+    auto* string = JSStringCreateWithCharacters_nid_postfix(units.data(), units.size());
+    std::vector<char> buffer(units.size() + 2, '?');
+    Require(JSStringGetUTF8CString_nid_postfix(string, buffer.data(), buffer.size()) == units.size() + 1);
+    Require(std::all_of(buffer.begin(), buffer.begin() + units.size(), [](char unit) { return unit == 'x'; }));
+    Require(buffer[units.size()] == '\0' && buffer.back() == '?');
     JSStringRelease_nid_postfix(string);
 }
 
@@ -259,6 +272,7 @@ static void Ownership() {
 int main() {
     Unicode();
     Boundaries();
+    ChunkBoundaries();
     Invalid();
     NullText();
     NullHandles();

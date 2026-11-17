@@ -1614,10 +1614,11 @@ void Collector::NoteDescriptor(int type, Status status, int usage) {
     else ++tables->dropped.descriptors;
 }
 
-void Collector::NoteQuitRequested() noexcept {
+void Collector::NoteQuitRequested(bool windowClosed) noexcept {
     try {
         std::lock_guard guard(mutex);
         quitRequested = true;
+        quitWithoutWindowClose = !windowClosed;
     } catch (...) {
     }
 }
@@ -1717,7 +1718,10 @@ void Collector::Finish(Exit exit, Stop stop, std::optional<std::int64_t> exitCod
                 return;
             }
             state = 1;
-            if (stop.reason == Reason::GuestExit && quitRequested) stop.reason = Reason::QuitRequested;
+            if (stop.reason == Reason::GuestExit && quitRequested) {
+                stop.reason = Reason::QuitRequested;
+                if (quitWithoutWindowClose && !stop.message) stop.message = "The run was asked to quit without its window being closed, for example by SIGTERM from a time cap, Ctrl+C or a Quit command.";
+            }
         }
         if (exit == Exit::Clean) RefreshGame(true);
         try {
@@ -1908,8 +1912,8 @@ extern "C" void LibcRunReportTerminate_nid_no_patch(const char* what) noexcept {
     }
 }
 
-extern "C" void LibcRunReportQuitRequested_nid_no_patch() noexcept {
-    if (collector != nullptr) collector->NoteQuitRequested();
+extern "C" void LibcRunReportQuitRequested_nid_no_patch(bool windowClosed) noexcept {
+    if (collector != nullptr) collector->NoteQuitRequested(windowClosed);
 }
 
 extern "C" bool LibcRunReportEnabled_nid_no_patch() noexcept {

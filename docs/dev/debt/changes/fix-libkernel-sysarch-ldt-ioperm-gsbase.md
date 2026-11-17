@@ -1,0 +1,5 @@
+# libkernel
+
+## change XFPUSTATE operations 11 and 132 throw for a non-null argument
+
+- [sysarch](../../../core/libs/prx/libkernel/System/src/Process.cpp) (libkernel) XFPUSTATE operations 11 and 132 throw for a non-null argument; a null argument returns EFAULT. On PS5 firmware 12.70, operation 132 accepted lengths 0, 64, 128, 256 and 512 (the largest found), rejected 1024, 2048, 4096 and 8192 with EINVAL, and rejected null arguments/addresses with EFAULT; operation 11 rejected a null argument with EFAULT. Operations 0, 1 without descriptors, 3, 4 and 10 follow FreeBSD 11.4 with no LDT or I/O permission map installed; 4 fails with `EPERM`, as `priv_check(PRIV_IO)` does in a jail (not measured), and 1 with descriptors throws. Numbers absent from its switch return EINVAL here; the console confirmed that result for 2, 5, 6, 12, 127, 133, 134, 1000 and -1 with null arguments (6 is I386_VM86). Other absent numbers follow FreeBSD's [default case](https://github.com/freebsd/freebsd-src/blob/release/11.0.0/sys/amd64/amd64/sys_machdep.c#L324-L325) and are unmeasured.
