@@ -158,6 +158,43 @@ class MainTests(unittest.TestCase):
         with zipfile.ZipFile(target) as bundle:
             self.assertIn("anyps5.log", bundle.namelist())
 
+    def test_input_config_defaults_to_the_environment_variable(self):
+        ini = self.root / "map.ini"
+        ini.write_text("Cross = KEY:/home/ana/F\n", encoding="utf-8")
+        target = self.root / "bundle.zip"
+        with patch.dict(os.environ, {"ANYPS5_INPUT_CONFIG": str(ini)}):
+            code, _, _ = self.run_main(["--report", str(self.report), "--log", "", "--out", str(target)])
+        self.assertEqual(code, 0)
+        with zipfile.ZipFile(target) as bundle:
+            self.assertEqual(bundle.read("anyps5-input.ini").decode("utf-8"), "Cross = KEY:~/F\n")
+
+    def test_invalid_report_json_is_an_error(self):
+        self.report.write_text("not json", encoding="utf-8")
+        code, _, err = self.run_main(["--report", str(self.report), "--log", "", "--input-config", "", "--out", str(self.root / "b.zip")])
+        self.assertEqual(code, 1)
+        self.assertIn("bug_report:", err)
+        self.assertFalse((self.root / "b.zip").exists())
+
+
+class IdentityTests(unittest.TestCase):
+    def test_host_is_cut_at_the_first_dot(self):
+        with patch.object(bug_report.getpass, "getuser", return_value="ana"), patch.object(bug_report.socket, "gethostname", return_value="box.example.org"):
+            identity = bug_report.identities()
+        self.assertEqual(identity["user"], "ana")
+        self.assertEqual(identity["host"], "box")
+        self.assertEqual(identity["home"], str(Path.home()))
+
+    def test_user_is_empty_when_it_cannot_be_determined(self):
+        with patch.object(bug_report.getpass, "getuser", side_effect=OSError("no user")), patch.object(bug_report.socket, "gethostname", return_value="box"):
+            self.assertEqual(bug_report.identities()["user"], "")
+
+
+class RedactReportTests(unittest.TestCase):
+    def test_non_string_scalars_pass_through_and_containers_are_walked(self):
+        identity = {"home": "/home/ana", "user": "ana", "host": "box1"}
+        value = {"n": 3, "ok": True, "none": None, "list": ["/home/ana/x", 1.5, {"h": "box1"}]}
+        self.assertEqual(bug_report.redact_report(value, identity), {"n": 3, "ok": True, "none": None, "list": ["~/x", 1.5, {"h": "<host>"}]})
+
 
 if __name__ == "__main__":
     unittest.main()
