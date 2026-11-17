@@ -114,6 +114,21 @@ int main(int argc, char** argv) {
     FT_Matrix_Multiply_nid_postfix(nullptr, &unchanged);
     if (!Equal(unchanged, original) || untouched.x != 123 || untouched.y != -456 ||
         FT_Matrix_Invert_nid_postfix(nullptr) != FT_Err_Invalid_Argument) std::abort();
+    bool caught = false;
+    try {
+        FT_Vector_Transform_nid_postfix(reinterpret_cast<GuestVector*>(0x10), &unchanged);
+    } catch (...) {
+        caught = true;
+    }
+    if (!caught) std::abort();
+    caught = false;
+    try {
+        FT_Matrix_Multiply_nid_postfix(reinterpret_cast<const GuestMatrix*>(0x10), &unchanged);
+    } catch (...) {
+        caught = true;
+    }
+    if (!caught) std::abort();
+    if (FT_Matrix_Invert_nid_postfix(reinterpret_cast<GuestMatrix*>(0x10)) != FT_Err_Invalid_Argument) std::abort();
     constexpr bool nativeReference = sizeof(FT_Long) == 8 && FREETYPE_MAJOR == 2 && FREETYPE_MINOR == 13 && FREETYPE_PATCH == 3;
     std::cout << "FT_GEOMETRY " << sizeof(FT_Long) << ' ' << nativeReference << '\n';
     GuestVector input{};
