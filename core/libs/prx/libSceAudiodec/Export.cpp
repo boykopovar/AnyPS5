@@ -1,6 +1,7 @@
 #include "prx/libSceAudiodec/include/Api.hpp"
 #include <cstdint>
 #include <cstddef>
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstring>
@@ -316,8 +317,14 @@ int32_t APS5_VABI sceAudiodecDecode(int32_t handle, AudiodecCtrl* ctrl) {
     InfoBuffer info{};
     if (const std::int32_t result = loadDecodeInfo(localCtrl, instance->codecType, info); result != 0) return result;
 
-    std::vector<std::uint8_t> auData(auInfo.ui_au_size);
-    if (!copyIn(auData.data(), auInfo.p_au_addr, auData.size())) return ERROR_INVALID_AU_POINTER;
+    constexpr std::size_t MaxCopyStep = 64 * 1024;
+    const auto* au = static_cast<const std::uint8_t*>(auInfo.p_au_addr);
+    std::vector<std::uint8_t> auData;
+    for (std::size_t wanted; (wanted = instance->decoder->InputBytes(auData.data(), auData.size(), auInfo.ui_au_size)) > auData.size();) {
+        const std::size_t old = auData.size();
+        auData.resize(old + std::min(wanted - old, MaxCopyStep));
+        if (!copyIn(auData.data() + old, au + old, auData.size() - old)) return ERROR_INVALID_AU_POINTER;
+    }
     std::vector<std::uint8_t> pcmData;
 
     const Audiodec::DecodeResult decoded = instance->decoder->Decode(auData.data(), static_cast<std::uint32_t>(auData.size()),
