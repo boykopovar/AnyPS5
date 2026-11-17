@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include "SceTypes.hpp"
 #include "EvpDigest.hpp"
 #include "OcspCertId.hpp"
@@ -365,7 +366,7 @@ int APS5_VABI RSA_set0_factors_nid_postfix(LibreSsl3Rsa* rsa, LibreSsl3Bignum* p
 int APS5_VABI X509_set_pubkey_nid_postfix();
 int APS5_VABI BIO_get_shutdown_nid_postfix(LibreSsl::Bio* bio);
 int APS5_VABI tls_accept_socket_nid_postfix();
-int APS5_VABI ERR_print_errors_fp_nid_postfix();
+void APS5_VABI ERR_print_errors_fp_nid_postfix(std::FILE* file);
 int APS5_VABI BIO_meth_set_write_nid_postfix(LibreSsl::BioMethod* method, decltype(LibreSsl::BioMethod::write) write);
 int APS5_VABI BIO_meth_set_create_nid_postfix(LibreSsl::BioMethod* method, decltype(LibreSsl::BioMethod::create) create);
 void APS5_VABI X509_CRL_free_nid_postfix(void* crl);
