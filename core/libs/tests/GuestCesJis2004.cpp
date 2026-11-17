@@ -67,6 +67,31 @@ void RequireUtf32Encode(void* context, std::uint32_t first, std::uint32_t second
     Require(used == consumed && produced == size && std::memcmp(out, mbcs, size) == 0);
 }
 
+void RequireRejected(const void* profile, const char* mbcs, std::uint32_t size, int error, std::uint32_t length) {
+    for (int form = 0; form < 8; ++form) {
+        std::uint32_t consumed = 0xEEEEEEEE;
+        std::uint32_t produced = 0xEEEEEEEE;
+        std::uint16_t units[2] = {0xEEEE, 0xEEEE};
+        std::uint8_t utf8[4] = {};
+        std::uint32_t utf32 = 0xEEEEEEEE;
+        int result = 0;
+        switch (form) {
+        case 0: result = sceCesMbcToUcs2(profile, Bytes(mbcs), size, &consumed, units); break;
+        case 1: result = sceCesMbcToUtf8(profile, Bytes(mbcs), size, &consumed, utf8, sizeof(utf8), &produced); break;
+        case 2: result = sceCesMbcToUtf16(profile, Bytes(mbcs), size, &consumed, units, 2, &produced); break;
+        case 3: result = sceCesMbcToUtf16be(profile, Bytes(mbcs), size, &consumed, units, 2, &produced); break;
+        case 4: result = sceCesMbcToUtf16le(profile, Bytes(mbcs), size, &consumed, units, 2, &produced); break;
+        case 5: result = sceCesMbcToUtf32(profile, Bytes(mbcs), size, &consumed, &utf32); break;
+        case 6: result = sceCesMbcToUtf32be(profile, Bytes(mbcs), size, &consumed, &utf32); break;
+        default: result = sceCesMbcToUtf32le(profile, Bytes(mbcs), size, &consumed, &utf32); break;
+        }
+        Require(result == error && consumed == length);
+        if (form == 0) Require(units[0] == 0);
+        else if (form <= 4) Require(produced == 0);
+        else Require(utf32 == 0);
+    }
+}
+
 void CheckEuc() {
     alignas(8) std::uint8_t sheet[64] = {};
     alignas(8) std::uint8_t context[64] = {};
@@ -100,6 +125,19 @@ void CheckEuc() {
     RequireDecodeFails(context, "\xA4\x41", 2, invalidEncode);
     RequireDecodeFails(context, "\x80", 1, invalidEncode);
     RequireDecodeFails(context, "\x8E\x41", 2, invalidEncode);
+    RequireRejected(sheet, "\xA4", 1, srcBufferEnd, 2);
+    RequireRejected(sheet, "\x8E", 1, srcBufferEnd, 2);
+    RequireRejected(sheet, "\x8F", 1, srcBufferEnd, 3);
+    RequireRejected(sheet, "\x8F\xA1", 2, srcBufferEnd, 3);
+    RequireRejected(sheet, "\x80", 1, invalidEncode, 1);
+    RequireRejected(sheet, "\xFF", 1, invalidEncode, 1);
+    RequireRejected(sheet, "\xA4\x00", 2, invalidEncode, 1);
+    RequireRejected(sheet, "\xA4\x41", 2, invalidEncode, 2);
+    RequireRejected(sheet, "\x8E\x00", 2, invalidEncode, 1);
+    RequireRejected(sheet, "\x8E\x41", 2, invalidEncode, 2);
+    RequireRejected(sheet, "\x8F\x00", 2, invalidEncode, 1);
+    RequireRejected(sheet, "\x8F\xA1\x00", 3, invalidEncode, 2);
+    RequireRejected(sheet, "\x8F\xA1\x41", 3, invalidEncode, 3);
     RequireEncodeFails(context, "\xE0\xB8\x81", unassignedCode);
     RequireEncodeFails(context, "\xE3\x81\x8B\xE3\x82\x9A", unassignedCode);
     std::uint32_t wide[4] = {};
@@ -146,6 +184,12 @@ void CheckShiftJis() {
     RequireDecodeFails(context, "\x82", 1, srcBufferEnd);
     RequireDecodeFails(context, "\xFD", 1, invalidEncode);
     RequireDecodeFails(context, "\x82\x7F", 2, invalidEncode);
+    RequireRejected(sheet, "\x82", 1, srcBufferEnd, 2);
+    RequireRejected(sheet, "\x80", 1, invalidEncode, 1);
+    RequireRejected(sheet, "\xA0", 1, invalidEncode, 1);
+    RequireRejected(sheet, "\xFD", 1, invalidEncode, 1);
+    RequireRejected(sheet, "\x82\x00", 2, invalidEncode, 1);
+    RequireRejected(sheet, "\x82\x7F", 2, invalidEncode, 2);
     RequireEncodeFails(context, "\xE0\xB8\x81", unassignedCode);
     alignas(8) std::uint8_t sjis[64] = {};
     Require(sceCesUcsProfileInitSJis1997Cp932(sjis) == sjis);

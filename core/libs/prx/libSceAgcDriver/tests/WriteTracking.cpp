@@ -20,15 +20,19 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <iostream>
 #include <limits>
+#include <mutex>
+#include <random>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -39,6 +43,7 @@ constexpr std::size_t Block = 65536;
 #ifdef _WIN32
 constexpr wchar_t MetadataCommitMode[] = L"--metadata-commit";
 constexpr wchar_t HostHoleMode[] = L"--host-hole";
+constexpr wchar_t HostRegionIndexMode[] = L"--host-region-index";
 constexpr wchar_t ResidentRemapMode[] = L"--resident-direct-remap";
 constexpr wchar_t RewatchImportPagesMode[] = L"--rewatch-import-pages";
 constexpr wchar_t RewatchedSharedMode[] = L"--rewatched-direct-shared";
@@ -1445,7 +1450,63 @@ void CheckHostHoleInChild(const wchar_t* mode, std::uint64_t hole) {
     Require(reported && exitCode == 0, "the host-hole child failed");
 }
 
+bool ScanHostRegions(const std::vector<std::pair<std::uintptr_t, std::uintptr_t>>& regions, std::uintptr_t start, std::size_t bytes) {
+    for (const auto& [regionStart, regionEnd] : regions) {
+        if (regionStart < start + bytes && start < regionEnd) return true;
+    }
+    return false;
+}
+
+void CheckHostRegionIndex(bool needRegions) {
+    const bool expectIndex = std::getenv("APS5_NO_HOST_REGION_INDEX") == nullptr;
+    Require(GuestArena::GuestArenaHostRegionIndexActive_nid_no_patch() == expectIndex, "the host region index does not follow its switch");
+    const auto count = GuestArena::GuestArenaHostRegions_nid_no_patch(nullptr, 0);
+    std::vector<std::uintptr_t> flat(2 * count);
+    Require(GuestArena::GuestArenaHostRegions_nid_no_patch(flat.data(), count) == count, "the host region list changed while it was read");
+    std::vector<std::pair<std::uintptr_t, std::uintptr_t>> regions;
+    for (std::size_t index = 0; index < count; ++index) regions.emplace_back(flat[2 * index], flat[2 * index + 1]);
+    Require(!needRegions || !regions.empty(), "the arena has no host region to check");
+    std::size_t touching = 0;
+    for (std::size_t first = 0; first < regions.size(); ++first) {
+        for (std::size_t second = 0; second < regions.size(); ++second) touching += regions[first].second == regions[second].first;
+    }
+    const auto compare = [&](std::uintptr_t start, std::size_t bytes) {
+        Require(GuestArena::GuestArenaHostRegionOverlaps_nid_postfix(start, bytes) == ScanHostRegions(regions, start, bytes), "the host region test differs from a scan of the region list");
+    };
+    std::vector<std::uintptr_t> edges;
+    for (const auto& [regionStart, regionEnd] : regions) {
+        for (const std::uintptr_t offset : {std::uintptr_t{0}, std::uintptr_t{1}, std::uintptr_t{2}}) {
+            for (const auto edge : {regionStart, regionEnd}) {
+                edges.push_back(edge + offset);
+                edges.push_back(edge - offset);
+            }
+        }
+        edges.push_back(regionStart + (regionEnd - regionStart) / 2);
+    }
+    std::sort(edges.begin(), edges.end());
+    edges.erase(std::unique(edges.begin(), edges.end()), edges.end());
+    const auto stride = edges.size() / 500 + 1;
+    const std::array<std::size_t, 9> sizes{0, 1, 2, 4096, Block, std::size_t{1} << 20, std::size_t{1} << 32, std::size_t{1} << 40, std::numeric_limits<std::size_t>::max()};
+    for (std::size_t index = 0; index < edges.size(); index += stride) {
+        for (const auto bytes : sizes) {
+            compare(edges[index], bytes);
+            compare(edges[index] - bytes, bytes);
+            compare(edges[index] - bytes, bytes + 1);
+        }
+        for (std::size_t other = 0; other < edges.size(); other += stride) compare(edges[index], static_cast<std::size_t>(edges[other] - edges[index]));
+    }
+    std::mt19937_64 random(0x4e6f);
+    for (unsigned query = 0; query < 200000; ++query) {
+        std::uintptr_t start = random() % (std::uintptr_t{1} << 47);
+        if (!edges.empty() && random() % 2 == 0) start = edges[random() % edges.size()] + random() % 5 - 2;
+        const std::size_t bytes = random() % 8 == 0 ? random() : (std::size_t{1} << (random() % 41)) + random() % 3;
+        compare(start, bytes);
+    }
+    std::cout << "host region index: " << regions.size() << " regions, " << touching << " touching pairs, index " << (expectIndex ? "on" : "off") << "\n";
+}
+
 void CheckHostHole() {
+    CheckHostRegionIndex(true);
     constexpr std::size_t bytes = 64;
     const auto hole = ChildHostHole();
     Require(GuestArena::GuestArenaHostRegionOverlaps_nid_postfix(hole, bytes), "the range reserved before the arena is not an arena host region");
@@ -1853,6 +1914,45 @@ void CheckImportWindow() {
     static_cast<void>(CollectWritesUncached(base, 3 * Block));
     Require(!UnchangedSince(base, Block, after), "a store after the import window was missed");
 }
+
+#ifdef __APPLE__
+void ResolveUnderGpuMutex(std::uintptr_t begin, std::uintptr_t end) {
+    const std::lock_guard held(GpuMutex());
+    std::memset(reinterpret_cast<void*>(begin), 0x33, end - begin);
+    GuestWriteWatch::GuestWriteWatchReleaseReads_nid_postfix(begin, end - begin);
+}
+
+std::size_t TrappedBytes(std::uint64_t address, std::size_t bytes) {
+    std::size_t trapped = 0;
+    GuestWriteWatch::GuestWriteWatchReadTraps_nid_postfix(static_cast<std::uintptr_t>(address), bytes, +[](void* context, std::uintptr_t begin, std::uintptr_t end) { *static_cast<std::size_t*>(context) += end - begin; }, &trapped);
+    return trapped;
+}
+
+void CheckImportOverReadTraps() {
+    ::alarm(20);
+    constexpr std::size_t bytes = 256 * Block;
+    void* memory = AllocateWatched(bytes);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    std::memset(memory, 0x11, bytes);
+    const auto synced = CollectWritesUncached(base, bytes);
+    Require(synced != 0, "the read-trapped import range is not collected");
+    Require(GuestWriteWatch::GuestWriteWatchSetReadTrapResolver_nid_postfix(&ResolveUnderGpuMutex), "cannot set the read trap resolver");
+    {
+        const std::lock_guard held(GpuMutex());
+        Require(ImportWatched(base, bytes, [&] {
+            std::memset(memory, 0x22, bytes);
+            return GuestWriteWatch::GuestWriteWatchTrapReads_nid_postfix(base, bytes);
+        }, true, false), "the import under the GPU mutex failed");
+        Require(TrappedBytes(base, bytes) == bytes, "the import took read traps off its range");
+    }
+    Require(Watched(base, bytes), "the import under the GPU mutex left its range unwatched");
+    Require(WrittenSince(base, bytes, synced), "the stores within the import were missed");
+    std::uint8_t seen = 0;
+    std::thread reader([&] { seen = *static_cast<const volatile std::uint8_t*>(memory); });
+    reader.join();
+    Require(seen == 0x33, "a read after the import did not see the bytes its trap stores");
+}
+#endif
 
 void CheckImportWindowOtherThread() {
     void* memory = AllocateWatched(2 * Block);
@@ -2566,6 +2666,13 @@ int main(int argc, char** argv) {
             std::cout << "generation wrap test passed\n";
             return 0;
         }
+#ifdef __APPLE__
+        if (argc == 2 && std::string_view(argv[1]) == "--import-over-read-traps") {
+            CheckImportOverReadTraps();
+            std::cout << "import over read traps test passed\n";
+            return 0;
+        }
+#endif
         if (argc == 2 && std::string_view(argv[1]) == "--mark-order") {
             CheckMarkPossiblyWrittenOrder();
             std::cout << "mark order test passed\n";
@@ -2574,6 +2681,10 @@ int main(int argc, char** argv) {
 #ifdef _WIN32
         if (std::wstring_view(GetCommandLineW()).ends_with(HostHoleMode)) {
             CheckHostHole();
+            return 0;
+        }
+        if (std::wstring_view(GetCommandLineW()).ends_with(HostRegionIndexMode)) {
+            CheckHostRegionIndex(false);
             return 0;
         }
         if (std::wstring_view(GetCommandLineW()).ends_with(ResidentRemapMode)) {

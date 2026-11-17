@@ -17,6 +17,9 @@
 #if defined(__SSE2__)
 #include <emmintrin.h>
 #endif
+#if defined(__SSE__) || defined(__x86_64__) || defined(_M_X64)
+#include <xmmintrin.h>
+#endif
 
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/SonyCrt.hpp"
@@ -480,6 +483,14 @@ auto ParseAsciiPrefix(const char16_t* text, char16_t** end, TParse parse) {
     return value;
 }
 
+bool FlushToZeroEnabled() {
+#if defined(__SSE__) || defined(__x86_64__) || defined(_M_X64)
+    return (_mm_getcsr() & 0x8000) != 0;
+#else
+    return false;
+#endif
+}
+
 template<typename TFloat>
 TFloat ParseFloat(const char* text, char** end, TFloat (*parse)(const char*, char**)) {
     if (const NanSubject subject = FindNanSubject(text); subject.tail != nullptr) {
@@ -512,7 +523,16 @@ TFloat ParseFloat(const char* text, char** end, TFloat (*parse)(const char*, cha
         }
         return value;
     }
-    if (!hexadecimal) return value;
+    if (!hexadecimal) {
+        if constexpr (std::is_same_v<TFloat, double>) {
+            const std::uint64_t bits = std::bit_cast<std::uint64_t>(value);
+            if (FlushToZeroEnabled() && (bits & 0x7fffffffffffffffull) != 0 && (bits & 0x7ff0000000000000ull) == 0) {
+                errno = ERANGE;
+                return std::signbit(value) ? -TFloat{0} : TFloat{0};
+            }
+        }
+        return value;
+    }
     if constexpr (std::is_same_v<TFloat, double>) {
         const HexadecimalSubject exact = ReadHexadecimalSubject(subject + 2, parsedEnd);
         const long long leadingExponent = exact.exponent + 63;
@@ -892,13 +912,15 @@ int APS5_VABI memmove_s_nid_postfix(void* dest, size_t destsz, const void* src, 
 }
 
 int APS5_VABI memset_s_nid_postfix(void* dest, size_t destsz, int value, size_t count) {
-    constexpr int GuestEinval = 22;
-    constexpr size_t RsizeMax = SIZE_MAX >> 1;
-    if (!dest || destsz > RsizeMax || count > RsizeMax) return GuestEinval;
-    const auto length = count > destsz ? destsz : count;
+    constexpr int GuestErange = 34;
+    constexpr size_t RsizeMax = SIZE_MAX >> 3;
+    if (!dest || destsz > RsizeMax || count > destsz) {
+        SonyInvokeConstraintHandler("memset_s: bad destination argument", nullptr, GuestErange);
+        return GuestErange;
+    }
     auto* bytes = static_cast<volatile unsigned char*>(dest);
-    for (size_t index = 0; index < length; ++index) bytes[index] = static_cast<unsigned char>(value);
-    return count > destsz ? GuestEinval : 0;
+    for (size_t index = 0; index < count; ++index) bytes[index] = static_cast<unsigned char>(value);
+    return 0;
 }
 
 char* APS5_VABI strnstr_nid_postfix(const char* haystack, const char* needle, size_t length) {

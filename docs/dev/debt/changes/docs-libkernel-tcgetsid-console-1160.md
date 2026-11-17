@@ -1,0 +1,5 @@
+# libkernel
+
+## change [tcgetsid]
+
+- [tcgetsid](../../../core/libs/prx/libkernel/File/src/Terminal.cpp) (libkernel, also exported by libkernel_sys on the PS5) follows FreeBSD 11's [`termios.c`](https://github.com/freebsd/freebsd-src/blob/stable/11/lib/libc/gen/termios.c), where it is `ioctl(fd, TIOCGSID, &sid)`, and fails the way the other terminal calls here do on a descriptor that is not a terminal: `EBADF` for a descriptor that is not open, `EOPNOTSUPP` for a local socket, `EADDRNOTAVAIL` for an internet socket and `ENOTTY` for anything else, so it never returns a session id, since terminals are not modelled. A pipe or FIFO gets `ENOTTY` and does not throw as `tcgetpgrp` does, because FreeBSD's `pipe_ioctl` answers `TIOCGPGRP` and `TIOCSPGRP` but not `TIOCGSID`. The PS5 `libkernel` is assumed to use this FreeBSD code. On firmware 11.60 a payload process got in 10 calls `EADDRNOTAVAIL` for descriptors 0 to 2, `EBADF` for -1 and 999, `ENOTTY` for `/dev/null` and pipe ends and `EOPNOTSUPP` for a local socket pair.

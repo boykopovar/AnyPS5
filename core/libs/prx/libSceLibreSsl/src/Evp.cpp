@@ -171,9 +171,11 @@
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libSceLibreSsl/include/Evp.hpp"
 #include "prx/libSceLibreSsl/include/PkeyContext.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <exception>
 #include <stdexcept>
 #include <string>
 #include "prx/libc/include/General.hpp"
@@ -211,44 +213,74 @@ constexpr int BadKeyLength = 137;
 constexpr int NoDigestSet = 139;
 constexpr int TooLarge = 164;
 
+template <typename T>
+void CopyGuestInPreservingErrno(const void* guestAddress, T& hostValue, const char* caller) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(&hostValue, guestAddress, sizeof(T));
+    errno = savedErrno;
+    if (!ok) NotImplementedAt_nid_no_patch(caller, __FILE__, __LINE__);
+}
+
+void RequireGuestWritablePreservingErrno(void* guestAddress, std::size_t bytes, const char* caller) {
+    const int savedErrno = errno;
+    const bool ok = GuestWritable_nid_no_patch(guestAddress, bytes);
+    errno = savedErrno;
+    if (!ok) NotImplementedAt_nid_no_patch(caller, __FILE__, __LINE__);
+}
+
+template <typename T>
+void CopyGuestOutPreservingErrno(void* guestAddress, const T& hostValue, const char* caller) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(guestAddress, &hostValue, sizeof(T));
+    errno = savedErrno;
+    if (!ok) NotImplementedAt_nid_no_patch(caller, __FILE__, __LINE__);
+}
+
+template <typename TData>
+TData* DigestData(const EvpMdContext* context, const char* caller) {
+    void* data = nullptr;
+    CopyGuestInPreservingErrno(reinterpret_cast<const std::byte*>(context) + offsetof(EvpMdContext, mdData), data, caller);
+    return static_cast<TData*>(data);
+}
+
 int APS5_VABI Md5Init(EvpMdContext* context) {
-    return MD5_Init_nid_postfix(static_cast<Md5Context*>(context->mdData));
+    return MD5_Init_nid_postfix(DigestData<Md5Context>(context, __func__));
 }
 
 int APS5_VABI Md5Update(EvpMdContext* context, const void* data, std::size_t length) {
-    return MD5_Update_nid_postfix(static_cast<Md5Context*>(context->mdData), data, length);
+    return MD5_Update_nid_postfix(DigestData<Md5Context>(context, __func__), data, length);
 }
 
 int APS5_VABI Md5Final(EvpMdContext* context, unsigned char* digest) {
-    return MD5_Final_nid_postfix(digest, static_cast<Md5Context*>(context->mdData));
+    return MD5_Final_nid_postfix(digest, DigestData<Md5Context>(context, __func__));
 }
 
 int APS5_VABI Sha256Init(EvpMdContext* context) {
-    return SHA256_Init_nid_postfix(static_cast<Sha256Context*>(context->mdData));
+    return SHA256_Init_nid_postfix(DigestData<Sha256Context>(context, __func__));
 }
 
 int APS5_VABI Sha256Update(EvpMdContext* context, const void* data, std::size_t length) {
-    return SHA256_Update_nid_postfix(static_cast<Sha256Context*>(context->mdData), data, length);
+    return SHA256_Update_nid_postfix(DigestData<Sha256Context>(context, __func__), data, length);
 }
 
 int APS5_VABI Sha256Final(EvpMdContext* context, unsigned char* digest) {
-    return SHA256_Final_nid_postfix(digest, static_cast<Sha256Context*>(context->mdData));
+    return SHA256_Final_nid_postfix(digest, DigestData<Sha256Context>(context, __func__));
 }
 
 int APS5_VABI Sha384Init(EvpMdContext* context) {
-    return SHA384_Init_nid_postfix(static_cast<Sha512Context*>(context->mdData));
+    return SHA384_Init_nid_postfix(DigestData<Sha512Context>(context, __func__));
 }
 
 int APS5_VABI Sha512Init(EvpMdContext* context) {
-    return SHA512_Init_nid_postfix(static_cast<Sha512Context*>(context->mdData));
+    return SHA512_Init_nid_postfix(DigestData<Sha512Context>(context, __func__));
 }
 
 int APS5_VABI Sha512Update(EvpMdContext* context, const void* data, std::size_t length) {
-    return SHA512_Update_nid_postfix(static_cast<Sha512Context*>(context->mdData), data, length);
+    return SHA512_Update_nid_postfix(DigestData<Sha512Context>(context, __func__), data, length);
 }
 
 int APS5_VABI Sha512Final(EvpMdContext* context, unsigned char* digest) {
-    return SHA512_Final_nid_postfix(digest, static_cast<Sha512Context*>(context->mdData));
+    return SHA512_Final_nid_postfix(digest, DigestData<Sha512Context>(context, __func__));
 }
 
 constexpr EvpMd Md5 {
@@ -335,7 +367,7 @@ int DigestUpdate(EvpMdContext& context, const void* data, std::size_t length, co
     return context.update(&context, data, length);
 }
 
-int DigestFinal(EvpMdContext& context, unsigned char* digest, std::uint32_t* size, const char* function) {
+int DigestFinal(EvpMdContext& context, unsigned char* digest, std::uint32_t* size, const char* function, bool* cleanupAttempted = nullptr) {
     if (!context.digest) throw std::invalid_argument(std::string(function) + ": context without a digest");
     const auto* type = context.digest;
     if (static_cast<std::size_t>(type->mdSize) > MaxDigestSize) return Fail(TooLarge);
@@ -343,6 +375,7 @@ int DigestFinal(EvpMdContext& context, unsigned char* digest, std::uint32_t* siz
     const int result = type->finalize(&context, digest);
     if (size) *size = static_cast<std::uint32_t>(type->mdSize);
     if (type->cleanup) {
+        if (cleanupAttempted) *cleanupAttempted = true;
         type->cleanup(&context);
         context.flags |= FlagCleaned;
     }
@@ -356,15 +389,22 @@ int DigestFinal(EvpMdContext& context, unsigned char* digest, std::uint32_t* siz
 int CopyContext(EvpMdContext& to, const EvpMdContext& from, const char* function) {
     if (!from.digest) return Fail(InputNotInitialized);
     RequireNoEngineOrKey(from, function);
+    if (&to == &from) return 1;
     void* reused = nullptr;
-    if (to.digest == from.digest) {
+    if (from.mdData && to.digest == from.digest && !(to.flags & FlagReuse)) {
         reused = to.mdData;
         to.flags |= FlagReuse;
     }
     CleanupContext(to, function);
     std::memcpy(&to, &from, sizeof(to));
+    to.mdData = nullptr;
+    to.pkeyContext = nullptr;
+    to.flags &= ~FlagReuse;
     if (from.mdData && to.digest->contextSize) {
-        if (to.digest->contextSize < 0) throw std::invalid_argument(std::string(function) + ": negative digest context size");
+        if (to.digest->contextSize < 0) {
+            free_nid_postfix(reused);
+            throw std::invalid_argument(std::string(function) + ": negative digest context size");
+        }
         const auto size = static_cast<std::size_t>(to.digest->contextSize);
         to.mdData = reused ? reused : malloc_nid_postfix(size);
         if (!to.mdData) {
@@ -373,6 +413,8 @@ int CopyContext(EvpMdContext& to, const EvpMdContext& from, const char* function
             return Fail(MallocFailure);
         }
         std::memmove(to.mdData, from.mdData, size);
+    } else {
+        free_nid_postfix(reused);
     }
     to.update = from.update;
     if (from.pkeyContext) {
@@ -400,7 +442,42 @@ void HmacContextCleanup(HmacContext& context, const char* function) {
     std::memset(&context, 0, sizeof(context));
 }
 
-int HmacInit(HmacContext& context, const void* key, int length, const EvpMd* md, void* engine, const char* function) {
+std::exception_ptr CleanupLocalDigest(EvpMdContext& context, const char* function) {
+    std::exception_ptr failure;
+    try {
+        RequireNoEngineOrKey(context, function);
+        if (context.digest && context.digest->cleanup && !(context.flags & FlagCleaned)) context.digest->cleanup(&context);
+    } catch (...) {
+        failure = std::current_exception();
+    }
+    try {
+        ReleaseData(context);
+    } catch (...) {
+        if (!failure) failure = std::current_exception();
+    }
+    context.mdData = nullptr;
+    auto* pkey = static_cast<PkeyContext*>(context.pkeyContext);
+    context.pkeyContext = nullptr;
+    try {
+        PkeyContextFree_nid_no_patch(pkey);
+    } catch (...) {
+        if (!failure) failure = std::current_exception();
+    }
+    std::memset(&context, 0, sizeof(context));
+    return failure;
+}
+
+void CleanupLocalHmac(HmacContext& context, const char* function) {
+    auto failure = CleanupLocalDigest(context.innerContext, function);
+    const auto outerFailure = CleanupLocalDigest(context.outerContext, function);
+    const auto digestFailure = CleanupLocalDigest(context.mdContext, function);
+    std::memset(&context, 0, sizeof(context));
+    if (!failure) failure = outerFailure;
+    if (!failure) failure = digestFailure;
+    if (failure) std::rethrow_exception(failure);
+}
+
+int HmacInit(HmacContext& context, const void* key, int length, const EvpMd* md, void* engine, const char* function, bool* cleanupAttempted = nullptr) {
     if (md && md != context.md && (!key || length < 0)) return 0;
     bool reset = false;
     if (md) {
@@ -418,7 +495,7 @@ int HmacInit(HmacContext& context, const void* key, int length, const EvpMd* md,
         if (block < length) {
             if (!DigestInit(context.mdContext, md, engine, function)) return 0;
             if (!DigestUpdate(context.mdContext, key, static_cast<std::size_t>(length), function)) return 0;
-            if (!DigestFinal(context.mdContext, context.key, &context.keyLength, function)) return 0;
+            if (!DigestFinal(context.mdContext, context.key, &context.keyLength, function, cleanupAttempted)) return 0;
         } else {
             if (length < 0 || static_cast<std::size_t>(length) > sizeof(context.key)) return Fail(BadKeyLength);
             std::memcpy(context.key, key, static_cast<std::size_t>(length));
@@ -436,6 +513,7 @@ int HmacInit(HmacContext& context, const void* key, int length, const EvpMd* md,
         if (!DigestInit(context.outerContext, md, engine, function)) return 0;
         if (!DigestUpdate(context.outerContext, pad, block, function)) return 0;
     }
+    if (cleanupAttempted) *cleanupAttempted = false;
     return CopyContext(context.mdContext, context.innerContext, function) ? 1 : 0;
 }
 
@@ -444,14 +522,15 @@ int HmacUpdate(HmacContext& context, const unsigned char* data, std::size_t leng
     return DigestUpdate(context.mdContext, data, length, function);
 }
 
-int HmacFinal(HmacContext& context, unsigned char* digest, std::uint32_t* length, const char* function) {
+int HmacFinal(HmacContext& context, unsigned char* digest, std::uint32_t* length, const char* function, bool* cleanupAttempted = nullptr) {
     if (!context.md) return 0;
     unsigned char inner[MaxDigestSize];
     std::uint32_t innerLength = 0;
-    if (!DigestFinal(context.mdContext, inner, &innerLength, function)) return 0;
+    if (!DigestFinal(context.mdContext, inner, &innerLength, function, cleanupAttempted)) return 0;
+    if (cleanupAttempted) *cleanupAttempted = false;
     if (!CopyContext(context.mdContext, context.outerContext, function)) return 0;
     if (!DigestUpdate(context.mdContext, inner, innerLength, function)) return 0;
-    if (!DigestFinal(context.mdContext, digest, length, function)) return 0;
+    if (!DigestFinal(context.mdContext, digest, length, function, cleanupAttempted)) return 0;
     return 1;
 }
 }
@@ -483,7 +562,9 @@ int APS5_VABI EVP_MD_size_nid_postfix(const EvpMd* md) {
         LibreSslPutError_nid_no_patch(EvpLibrary, AnyFunction, MessageDigestIsNull);
         return -1;
     }
-    return md->mdSize;
+    std::int32_t size = 0;
+    CopyGuestInPreservingErrno(reinterpret_cast<const std::byte*>(md) + offsetof(EvpMd, mdSize), size, __func__);
+    return size;
 }
 
 void APS5_VABI EVP_MD_CTX_init_nid_postfix(EvpMdContext* context) {
@@ -500,7 +581,11 @@ int APS5_VABI EVP_MD_CTX_cleanup_nid_postfix(EvpMdContext* context) {
 
 void APS5_VABI EVP_MD_CTX_destroy_nid_postfix(EvpMdContext* context) {
     if (!context) return;
-    CleanupContext(*context, __func__);
+    EvpMdContext local {};
+    CopyGuestInPreservingErrno(context, local, __func__);
+    RequireGuestWritablePreservingErrno(context, sizeof(local), __func__);
+    CleanupContext(local, __func__);
+    CopyGuestOutPreservingErrno(context, local, __func__);
     free_nid_postfix(context);
 }
 
@@ -519,8 +604,16 @@ int APS5_VABI EVP_DigestFinal_ex_nid_postfix(EvpMdContext* context, unsigned cha
 int APS5_VABI EVP_Digest_nid_postfix(const void* data, std::size_t length, unsigned char* digest, std::uint32_t* size, const EvpMd* type, void* engine) {
     EvpMdContext context {};
     context.flags = FlagOneShot;
-    const int result = DigestInit(context, type, engine, __func__) && DigestUpdate(context, data, length, __func__) && DigestFinal(context, digest, size, __func__);
-    CleanupContext(context, __func__);
+    bool cleanupAttempted = false;
+    int result;
+    try {
+        result = DigestInit(context, type, engine, __func__) && DigestUpdate(context, data, length, __func__) && DigestFinal(context, digest, size, __func__, &cleanupAttempted);
+    } catch (...) {
+        if (cleanupAttempted) context.flags |= FlagCleaned;
+        CleanupLocalDigest(context, __func__);
+        throw;
+    }
+    if (const auto failure = CleanupLocalDigest(context, __func__)) std::rethrow_exception(failure);
     return result;
 }
 
@@ -555,8 +648,19 @@ unsigned char* APS5_VABI HMAC_nid_postfix(const EvpMd* md, const void* key, int 
     if (!digest) digest = buffer;
     HmacContext context;
     HmacContextInit(context);
-    const bool ok = HMAC_Init_nid_postfix(&context, key, keyLength, md) && HmacUpdate(context, data, length, __func__) && HmacFinal(context, digest, digestLength, __func__);
-    HmacContextCleanup(context, __func__);
+    bool cleanupAttempted = false;
+    bool ok;
+    try {
+        ok = HmacInit(context, key, keyLength, md, nullptr, "HMAC_Init_nid_postfix", &cleanupAttempted) && HmacUpdate(context, data, length, __func__) && HmacFinal(context, digest, digestLength, __func__, &cleanupAttempted);
+    } catch (...) {
+        if (cleanupAttempted) context.mdContext.flags |= FlagCleaned;
+        try {
+            CleanupLocalHmac(context, __func__);
+        } catch (...) {
+        }
+        throw;
+    }
+    CleanupLocalHmac(context, __func__);
     return ok ? digest : nullptr;
 }
 

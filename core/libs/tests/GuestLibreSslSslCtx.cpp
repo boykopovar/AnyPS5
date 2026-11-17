@@ -4,7 +4,9 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
+#include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <array>
 #include <climits>
 #include <cstddef>
 #include <cstdint>
@@ -145,6 +147,21 @@ static void TestSetCertStore() {
 
 }
 
+static void TestLoadVerifyLocations() {
+    TestCtx ctx {};
+    ctx.certStore = reinterpret_cast<void*>(1);
+    std::array<unsigned char, sizeof(ctx)> before {};
+    std::memcpy(before.data(), &ctx, sizeof(ctx));
+    LibreSslPutError_nid_no_patch(32, 0xfff, 67);
+    LibreSslPutError_nid_no_patch(32, 0xfff, 68);
+    Require(SSL_CTX_load_verify_locations_nid_postfix(Context(&ctx), nullptr, nullptr) == 0);
+    Require(std::memcmp(before.data(), &ctx, sizeof(ctx)) == 0);
+    Require(ERR_get_error_nid_postfix() == 0x20fff043);
+    Require(ERR_get_error_nid_postfix() == 0x20fff044);
+    Require(ERR_get_error_nid_postfix() == 0);
+    RequireThrows([] { SSL_CTX_load_verify_locations_nid_postfix(nullptr, nullptr, nullptr); });
+}
+
 static void TestSetQuietShutdown() {
     TestCtxInternal internal {};
     TestCtx ctx {};
@@ -240,6 +257,26 @@ static void TestSetExData() {
     Require(internal.quietShutdown == 0);
 }
 
+static void TestGetExData() {
+    int first = 1;
+    int second = 2;
+    char* slots[] = {reinterpret_cast<char*>(&first), reinterpret_cast<char*>(&second)};
+    LibreSslStack stack {2, slots, 0, 2, nullptr};
+    TestCtxInternal internal {};
+    TestCtx ctx {};
+    RequireThrows([] { SSL_CTX_get_ex_data_nid_postfix(nullptr, 0); });
+    RequireThrows([&] { SSL_CTX_get_ex_data_nid_postfix(Context(&ctx), 0); });
+    ctx.internal = &internal;
+    Require(SSL_CTX_get_ex_data_nid_postfix(Context(&ctx), 0) == nullptr);
+    internal.exData = &stack;
+    Require(SSL_CTX_get_ex_data_nid_postfix(Context(&ctx), 0) == &first);
+    Require(SSL_CTX_get_ex_data_nid_postfix(Context(&ctx), 1) == &second);
+    Require(SSL_CTX_get_ex_data_nid_postfix(Context(&ctx), 2) == nullptr);
+    Require(SSL_CTX_get_ex_data_nid_postfix(Context(&ctx), INT_MIN) == nullptr);
+    internal.quietShutdown = 7;
+    Require(SSL_CTX_get_ex_data_nid_postfix(Context(&ctx), 0) == &first);
+}
+
 int main() {
     void* heap[10] {};
     ApplicationHeapRegister_nid_no_patch(heap);
@@ -248,10 +285,12 @@ int main() {
     TestGetVerifyMode();
     TestGetCertStore();
     TestSetCertStore();
+    TestLoadVerifyLocations();
     TestSetQuietShutdown();
     TestSetPasswordCallback();
     TestSetPasswordUserdata();
     TestUsePrivateKey();
     TestSetExData();
+    TestGetExData();
     return 0;
 }
