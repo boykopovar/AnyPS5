@@ -466,7 +466,7 @@ if mode.startswith('repeat_'):
         project += 'add_test(NAME missing COMMAND "${CMAKE_CURRENT_SOURCE_DIR}/missing-program")\n'
         for mode in ("repeat_stable", "repeat_fail_second", "repeat_timeout_once"):
             project += f'add_test(NAME {mode} COMMAND "{Path(sys.executable).as_posix()}" "${{CMAKE_CURRENT_SOURCE_DIR}}/case.py" {mode} "${{CMAKE_CURRENT_BINARY_DIR}}/{mode}.count")\n'
-        project += 'set_tests_properties(repeat_timeout_once PROPERTIES TIMEOUT 0.25)\n'
+        project += 'set_tests_properties(repeat_timeout_once PROPERTIES TIMEOUT 1)\n'
         (self.source / "CMakeLists.txt").write_bytes(project.encode("utf-8"))
         self.build = self.root / "build"
         completed = subprocess.run([CMAKE, "-S", str(self.source), "-B", str(self.build)],
