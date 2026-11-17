@@ -158,6 +158,42 @@ class AccessTests(unittest.TestCase):
         self.assertEqual(entry["line"], 4)
 
 
+class LinkageTests(unittest.TestCase):
+    def test_anonymous_namespace_callback_is_not_reported(self):
+        source = (
+            "namespace {\n"
+            "int APS5_VABI LibraryGetFaceScale(Metrics* out) { out->scale = 1; return 0; }\n"
+            "}\n"
+        )
+        self.assertEqual(findings(source), [])
+
+    def test_static_callback_is_not_reported(self):
+        source = "static int APS5_VABI defaultAllocate(void* out, std::size_t size) { std::memset(out, 0, size); return 0; }\n"
+        self.assertEqual(findings(source), [])
+
+    def test_named_namespace_definition_is_reported(self):
+        source = (
+            "namespace detail {\n"
+            "int APS5_VABI sceExampleGet(Info* info) { info->size = 1; return 0; }\n"
+            "}\n"
+        )
+        self.assertEqual(findings(source), [("sceExampleGet", "info", ["member"])])
+
+    def test_static_variable_in_a_previous_definition_does_not_hide_the_next_one(self):
+        source = (
+            "int APS5_VABI sceExampleFirst(int* out) { static int counter = 0; *out = counter; return 0; }\n"
+            "int APS5_VABI sceExampleSecond(Info* info) { info->size = 2; return 0; }\n"
+        )
+        self.assertEqual(findings(source), [
+            ("sceExampleFirst", "out", ["dereference"]),
+            ("sceExampleSecond", "info", ["member"]),
+        ])
+
+    def test_exported_definition_outside_a_namespace_is_reported(self):
+        source = "int APS5_VABI sceExamplePlain(std::uint32_t* out) { *out = 3; return 0; }\n"
+        self.assertEqual(findings(source), [("sceExamplePlain", "out", ["dereference"])])
+
+
 class CommandLineTests(unittest.TestCase):
     def run_main(self, argv, files):
         with tempfile.TemporaryDirectory() as directory:
@@ -204,6 +240,20 @@ class CommandLineTests(unittest.TestCase):
                     self.run_main(["--json", name], files)
                 self.assertEqual(raised.exception.code, 2)
                 self.assertIn("not a library under core/libs/prx:", errors.getvalue())
+
+
+    def test_split_top_level_ignores_commas_inside_brackets(self):
+        parts = guest_pointer_audit.split_top_level("a, f(b, c), [d, e]")
+        self.assertEqual([text for _, text in parts], ["a", " f(b, c)", " [d, e]"])
+        self.assertEqual(parts[0][0], 0)
+
+
+    def test_split_top_level_angles_flag_controls_angle_nesting(self):
+        text = "a<b, c>, d"
+        with_angles = [part for _, part in guest_pointer_audit.split_top_level(text)]
+        self.assertEqual(with_angles, ["a<b, c>", " d"])
+        without = [part for _, part in guest_pointer_audit.split_top_level(text, angles=False)]
+        self.assertEqual(without, ["a<b", " c>", " d"])
 
 
 if __name__ == "__main__":

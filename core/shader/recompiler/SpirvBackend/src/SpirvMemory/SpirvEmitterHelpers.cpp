@@ -166,9 +166,9 @@ void CheckBindings(const IrProgram& program, const CompiledBindingLayout& bindin
     }
 }
 
-void EmitBaseHeader(SpirvModule& module, const IrProgram& program) {
+void EmitBaseHeader(SpirvModule& module, const IrProgram& program, bool atomicLockTable) {
     module.EmitCapability(spv::CapabilityShader);
-    const bool physical = program.Info().usesDma || program.Resources().stage == IrShaderStage::Mesh;
+    const bool physical = program.Info().usesDma || program.Resources().stage == IrShaderStage::Mesh || atomicLockTable;
     if (physical) {
         module.EmitCapability(spv::CapabilityInt64);
         module.EmitCapability(spv::CapabilityPhysicalStorageBufferAddresses);
@@ -574,6 +574,7 @@ void DefineDescriptors(SpirvEmitterState& state) {
                     if (std::any_of(state.tableImageVariables.begin(), state.tableImageVariables.end(), [&](const SpirvTableImageVariable& variable) { return variable.kind == kind; })) continue;
                     const auto name = "table_images_" + std::to_string(static_cast<std::uint32_t>(kind));
                     state.tableImageVariables.push_back({kind, Define(state.module.Type(spv::OpTypeRuntimeArray, ImageType(state, mode)), name.c_str(), spv::StorageClassUniformConstant)});
+                    if (mode.atomic64 && state.requirements.imageAtomicLocks) state.module.AddAnnotation(spv::OpDecorate, state.tableImageVariables.back().variable, spv::DecorationCoherent);
                     if (mode.dimension == RdnaImageDimension::Dim1D || mode.dimension == RdnaImageDimension::Dim1DArray) state.module.EmitCapability(binding.kind == DescriptorBindingKind::ImageStorageTable ? spv::CapabilityImage1D : spv::CapabilitySampled1D);
                 }
             }
@@ -616,7 +617,7 @@ void DefineDescriptors(SpirvEmitterState& state) {
                 const auto variable = Define(ArrayType(ImageType(state, mode)), name.c_str(), spv::StorageClassUniformConstant);
                 state.imageVariables.push_back({binding.kind, format, variable});
                 heapVariables.push_back(variable);
-                if (merged) state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationCoherent);
+                if (merged || (mode.atomic64 && state.requirements.imageAtomicLocks)) state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationCoherent);
             }
             if (distinct.empty()) FailEmit("static image heap has no resources");
             if (heapVariables.size() > 1u) {

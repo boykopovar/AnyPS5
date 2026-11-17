@@ -116,7 +116,7 @@ static bool DeviceSupportsCapability(const SpirvEmitterState& state, spv::Capabi
 
 std::uint32_t ImageSpirvFormat(const SpirvEmitterState& state, const ImageResource& image) {
     if (image.resourceClass != ImageResourceClass::Storage) return spv::ImageFormatUnknown;
-    if (image.atomic) return image.atomic64 ? spv::ImageFormatR64ui : spv::ImageFormatR32ui;
+    if (image.atomic) return image.atomic64 ? (state.requirements.imageAtomicLocks ? spv::ImageFormatUnknown : spv::ImageFormatR64ui) : spv::ImageFormatR32ui;
     if (image.storageFormat != StorageImageFormat::Unknown && std::ranges::find(state.formatlessImageHeaps, DescriptorBindingForImage(image)) != state.formatlessImageHeaps.end()) return spv::ImageFormatUnknown;
     std::uint32_t format = spv::ImageFormatUnknown;
     switch (image.storageFormat) {
@@ -146,6 +146,7 @@ static bool ImageFormatNeedsExtendedFormats(std::uint32_t format) {
 std::uint32_t ImageType(SpirvEmitterState& state, const ImageResource& image) {
     std::uint32_t sampled = 0;
     std::uint32_t format = spv::ImageFormatUnknown;
+    const bool lockedAtomic64 = image.atomic64 && state.requirements.imageAtomicLocks;
     if (image.resourceClass == ImageResourceClass::Sampled) {
         if (image.atomic) {
             FailEmit("sampled image cannot be atomic");
@@ -172,7 +173,7 @@ std::uint32_t ImageType(SpirvEmitterState& state, const ImageResource& image) {
             if (info.arrayed != 0u) state.module.EmitCapability(spv::CapabilityImageMSArray);
         }
     }
-    const auto scalar = image.atomic64 ? TypeScalarU64(state) : ImageScalarType(state, image.numericClass);
+    const auto scalar = image.atomic64 && !lockedAtomic64 ? TypeScalarU64(state) : ImageScalarType(state, image.numericClass);
     return state.module.Type(spv::OpTypeImage, scalar, info.spirvDimension, image.depthCompare ? 1u : 0u, info.arrayed, info.multisampled, sampled, format);
 }
 

@@ -137,7 +137,9 @@ enum class ColorExportPacking : std::uint8_t {
     Unorm4_4_4_4,
     Uint,
     UintClamp8,
-    UintClamp16
+    UintClamp16,
+    UintMask8,
+    UintMask16
 };
 
 enum class RasterPrimitive : std::uint8_t {
@@ -366,6 +368,7 @@ struct SpirvTarget {
     bool tessellationEvaluationSubgroups = true;
     bool float16DenormPreserve = false;
     bool spannedWaves = false;
+    bool spannedAnySubgroup = false;
     bool robustBufferAccess2 = false;
     bool exactRobustLoads = false;
     bool depthRangeRemap = false;
@@ -377,6 +380,7 @@ struct SpirvTarget {
     std::uint32_t pixelFunctionStorageDwords = 4096u;
     bool deviceScopeLdsMemoryBarriers = false;
     bool ldsLockFences = false;
+    bool deviceAtomicWorkgroupMemoryBarriers = false;
     bool fragmentBarycentricBuiltins = false;
     bool meshWindowBuffer = false;
     bool hostInterpolationFirst = false;
@@ -700,6 +704,7 @@ struct DescriptorBinding {
     ElementFlags imageDepthCompare;
     ElementFlags imageAtomic;
     ElementFlags imageAtomic64;
+    ElementFlags imageUintStorage;
     std::vector<DescriptorImageShape> imageShapes;
     // Guest buffer elements the shader updates atomically (one entry per element of a GuestBuffers
     // binding, empty otherwise). An atomic on a host-imported range is a serialized PCIe round trip

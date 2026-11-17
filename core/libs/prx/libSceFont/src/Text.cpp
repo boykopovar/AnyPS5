@@ -243,58 +243,69 @@ extern "C" {
 
 int APS5_VABI sceFontTextSourceInit(FontTextSource* textSource, const void* textAddress, std::uint32_t textSizeByte, FontTextParseFunction textParser, void* textObject) {
     if (!textSource) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    std::memset(textSource, 0, sizeof(*textSource));
+    FontTextSource local{};
+    if (!Font::CopyOutGuest(textSource, local)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     if (!textParser) return SCE_FONT_ERROR_INVALID_PARAMETER;
     const void* end = textSizeByte != 0 ? static_cast<const std::uint8_t*>(textAddress) + textSizeByte : nullptr;
-    textSource->systemUse0 = (static_cast<std::uint64_t>(WRITING_FORM_HORIZONTAL) << 32) | TEXT_SOURCE_MAGIC;
-    textSource->start = textAddress;
-    textSource->end = end;
-    textSource->current = textAddress;
-    textSource->textParser = textParser;
-    textSource->textObject = textObject;
-    textSource->defaultFont = nullptr;
-    textSource->systemUse[0] = const_cast<void*>(textAddress);
-    textSource->systemUse[1] = const_cast<void*>(end);
-    textSource->systemUse[2] = reinterpret_cast<void*>(textParser);
-    textSource->systemUse[3] = textObject;
-    textSource->systemUse[4] = nullptr;
+    local.systemUse0 = (static_cast<std::uint64_t>(WRITING_FORM_HORIZONTAL) << 32) | TEXT_SOURCE_MAGIC;
+    local.start = textAddress;
+    local.end = end;
+    local.current = textAddress;
+    local.textParser = textParser;
+    local.textObject = textObject;
+    local.defaultFont = nullptr;
+    local.systemUse[0] = const_cast<void*>(textAddress);
+    local.systemUse[1] = const_cast<void*>(end);
+    local.systemUse[2] = reinterpret_cast<void*>(textParser);
+    local.systemUse[3] = textObject;
+    local.systemUse[4] = nullptr;
+    if (!Font::CopyOutGuest(textSource, local)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SCE_FONT_OK;
 }
 
 int APS5_VABI sceFontTextSourceRewind(FontTextSource* textSource) {
     if (!textSource) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    if (TextSourceMagic(textSource) != TEXT_SOURCE_MAGIC) return SCE_FONT_ERROR_INVALID_TEXT_SOURCE;
-    textSource->start = textSource->systemUse[0];
-    textSource->end = textSource->systemUse[1];
-    textSource->current = textSource->systemUse[0];
-    textSource->textParser = reinterpret_cast<FontTextParseFunction>(textSource->systemUse[2]);
-    textSource->textObject = textSource->systemUse[3];
-    textSource->defaultFont = static_cast<FontHandle>(textSource->systemUse[4]);
+    FontTextSource local{};
+    if (!Font::CopyInGuest(local, textSource)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (TextSourceMagic(&local) != TEXT_SOURCE_MAGIC) return SCE_FONT_ERROR_INVALID_TEXT_SOURCE;
+    local.start = local.systemUse[0];
+    local.end = local.systemUse[1];
+    local.current = local.systemUse[0];
+    local.textParser = reinterpret_cast<FontTextParseFunction>(local.systemUse[2]);
+    local.textObject = local.systemUse[3];
+    local.defaultFont = static_cast<FontHandle>(local.systemUse[4]);
+    if (!Font::CopyOutGuest(textSource, local)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SCE_FONT_OK;
 }
 
 int APS5_VABI sceFontTextSourceSetDefaultFont(FontTextSource* textSource, FontHandle defaultFont) {
     if (!textSource) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    if (TextSourceMagic(textSource) != TEXT_SOURCE_MAGIC) return SCE_FONT_ERROR_INVALID_TEXT_SOURCE;
-    textSource->defaultFont = defaultFont;
-    textSource->systemUse[4] = defaultFont;
+    FontTextSource local{};
+    if (!Font::CopyInGuest(local, textSource)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (TextSourceMagic(&local) != TEXT_SOURCE_MAGIC) return SCE_FONT_ERROR_INVALID_TEXT_SOURCE;
+    local.defaultFont = defaultFont;
+    local.systemUse[4] = defaultFont;
+    if (!Font::CopyOutGuest(textSource, local)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SCE_FONT_OK;
 }
 
 int APS5_VABI sceFontTextSourceSetWritingForm(FontTextSource* textSource, std::int32_t writingForm) {
     if (!textSource) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    if (TextSourceMagic(textSource) != TEXT_SOURCE_MAGIC) return SCE_FONT_ERROR_INVALID_TEXT_SOURCE;
+    FontTextSource local{};
+    if (!Font::CopyInGuest(local, textSource)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (TextSourceMagic(&local) != TEXT_SOURCE_MAGIC) return SCE_FONT_ERROR_INVALID_TEXT_SOURCE;
     if (writingForm < static_cast<std::int32_t>(WRITING_FORM_HORIZONTAL) || writingForm > static_cast<std::int32_t>(WRITING_FORM_HORIZONTAL_LTR)) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    textSource->systemUse0 = (textSource->systemUse0 & 0xFFFFFFFFull) | (static_cast<std::uint64_t>(writingForm) << 32);
+    local.systemUse0 = (local.systemUse0 & 0xFFFFFFFFull) | (static_cast<std::uint64_t>(writingForm) << 32);
+    if (!Font::CopyOutGuest(textSource, local)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SCE_FONT_OK;
 }
 
 int APS5_VABI sceFontCreateString(const FontMemory* fontMemory, FontTextSource* textSource, const FontCreateStringDetail* detail, FontString* pFontString) {
     if (!fontMemory || !textSource || !pFontString || !textSource->textParser) {
-        if (pFontString) *pFontString = nullptr;
+        if (pFontString) CopyOutGuest(pFontString, static_cast<FontString>(nullptr));
         return SCE_FONT_ERROR_INVALID_PARAMETER;
     }
-    *pFontString = nullptr;
+    if (!CopyOutGuest(pFontString, static_cast<FontString>(nullptr))) return SCE_FONT_ERROR_INVALID_PARAMETER;
     if (TextSourceMagic(textSource) != TEXT_SOURCE_MAGIC) return SCE_FONT_ERROR_INVALID_TEXT_SOURCE;
     if (fontMemory->mem_kind != MEMORY_MAGIC || !fontMemory->iface || !fontMemory->iface->alloc || !fontMemory->iface->dealloc) return SCE_FONT_ERROR_INVALID_MEMORY;
     if (detail) {
@@ -350,22 +361,29 @@ int APS5_VABI sceFontCreateString(const FontMemory* fontMemory, FontTextSource* 
     LinkCharacters(data->characters, characters.size());
     data->textCount = static_cast<std::uint32_t>(characters.size());
     data->renderCount = data->textCount;
-    *pFontString = reinterpret_cast<FontString>(data);
+    if (!CopyOutGuest(pFontString, reinterpret_cast<FontString>(data))) {
+        data->magic = 0;
+        if (data->characters) fontMemory->iface->dealloc(fontMemory->mspace_handle, data->characters);
+        fontMemory->iface->dealloc(fontMemory->mspace_handle, raw);
+        return SCE_FONT_ERROR_INVALID_PARAMETER;
+    }
     return SCE_FONT_OK;
 }
 
 int APS5_VABI sceFontDestroyString(FontString* pFontString) {
     if (!pFontString) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    auto* data = GetStringData(*pFontString);
+    FontString string = nullptr;
+    if (!Font::CopyInGuest(string, pFontString)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    auto* data = GetStringData(string);
     if (!data) {
-        *pFontString = nullptr;
+        Font::CopyOutGuest(pFontString, FontString{});
         return SCE_FONT_ERROR_INVALID_STRING;
     }
+    if (!Font::CopyOutGuest(pFontString, FontString{})) return SCE_FONT_ERROR_INVALID_PARAMETER;
     const FontMemory* memory = data->memory;
     data->magic = 0;
     if (data->characters) memory->iface->dealloc(memory->mspace_handle, data->characters);
     memory->iface->dealloc(memory->mspace_handle, data);
-    *pFontString = nullptr;
     return SCE_FONT_OK;
 }
 
@@ -387,10 +405,10 @@ int APS5_VABI sceFontStringGetWritingForm(FontString fontString) {
 FontTextCharacter* APS5_VABI sceFontStringRefersTextCharacters(FontString fontString, std::uint32_t* characterCount) {
     auto* data = GetStringData(fontString);
     if (!data || data->textCount == 0) {
-        if (characterCount) *characterCount = 0;
+        if (characterCount) CopyOutGuest(characterCount, std::uint32_t{0});
         return nullptr;
     }
-    if (characterCount) *characterCount = data->textCount;
+    if (characterCount && !CopyOutGuest(characterCount, data->textCount)) return nullptr;
     return TextCharacters(data);
 }
 
@@ -525,7 +543,7 @@ const FontTextCharacter* APS5_VABI sceFontStringRefersRenderCharacters(FontStrin
 
 int APS5_VABI sceFontCharacterGetBidiLevel(const FontTextCharacter* textCharacter, int* bidiLevel) {
     if (!textCharacter || !bidiLevel) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    *bidiLevel = static_cast<int>(LevelOf(textCharacter));
+    if (!CopyOutGuest(bidiLevel, static_cast<int>(LevelOf(textCharacter)))) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SCE_FONT_OK;
 }
 
@@ -650,15 +668,15 @@ int APS5_VABI sceFontWritingInit(FontWriting* fontWriting, FontString fontString
 
 int APS5_VABI sceFontWritingGetRenderMetrics(FontWriting* fontWriting, FontWritingMetrics* writingMetrics) {
     if (!fontWriting || !writingMetrics) {
-        if (writingMetrics) *writingMetrics = {};
+        if (writingMetrics) CopyOutGuest(writingMetrics, FontWritingMetrics{});
         return SCE_FONT_ERROR_INVALID_PARAMETER;
     }
     const auto* writing = GetWritingData(fontWriting);
     if (!writing) {
-        *writingMetrics = {};
+        CopyOutGuest(writingMetrics, FontWritingMetrics{});
         return SCE_FONT_ERROR_INVALID_WRITING;
     }
-    *writingMetrics = writing->metrics;
+    if (!CopyOutGuest(writingMetrics, writing->metrics)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SCE_FONT_OK;
 }
 
