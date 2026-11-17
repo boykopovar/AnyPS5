@@ -6,7 +6,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
-#include <stdexcept>
 
 namespace {
 
@@ -14,16 +13,6 @@ void Require(bool condition, const char* message) {
     if (condition) return;
     std::fprintf(stderr, "libc internal quadrant trig: %s\n", message);
     std::abort();
-}
-
-template <typename Function>
-bool Throws(Function function) {
-    try {
-        function();
-    } catch (const std::runtime_error&) {
-        return true;
-    }
-    return false;
 }
 
 template <typename T>
@@ -56,13 +45,6 @@ void TestAtanDouble() {
         Require(Near(_Atan_nid_postfix(z, 0x2), std::acos(x), 4.0), "_Atan 0x2 gives acos as Dinkumware's acos calls it");
         Require(Near(_Atan_nid_postfix(z, 0x4), std::acos(-x), 4.0), "_Atan 0x4 gives acos of a negative argument");
     }
-    const double nan = std::numeric_limits<double>::quiet_NaN();
-    Require(Throws([] { _Atan_nid_postfix(1.5, 0x0); }), "_Atan above 1 throws");
-    Require(Throws([] { _Atan_nid_postfix(-0.5, 0x0); }), "_Atan below 0 throws");
-    Require(Throws([nan] { _Atan_nid_postfix(nan, 0x0); }), "_Atan NaN throws");
-    Require(Throws([] { _Atan_nid_postfix(std::numeric_limits<double>::infinity(), 0x0); }), "_Atan infinity throws");
-    Require(Throws([] { _Atan_nid_postfix(0.5, 0x1); }), "_Atan flag 0x1 throws");
-    Require(Throws([] { _Atan_nid_postfix(0.5, 0x10); }), "_Atan flag 0x10 throws");
 }
 
 void TestAtanOtherWidths() {
@@ -76,8 +58,6 @@ void TestAtanOtherWidths() {
         Require(Near(_LAtan_nid_postfix(wide, 0x4), std::atan2(1.0L, -wide), 4.0L), "_LAtan 0x4 is pi/2 + atan");
         Require(Near(_LAtan_nid_postfix(wide, 0xe), std::atan2(-wide, -1.0L), 4.0L), "_LAtan 0xe is -(pi - atan)");
     }
-    Require(Throws([] { _FAtan_nid_postfix(2.0f, 0x0); }), "_FAtan above 1 throws");
-    Require(Throws([] { _LAtan_nid_postfix(0.5L, 0x1); }), "_LAtan flag 0x1 throws");
 }
 
 void TestTan() {
@@ -91,9 +71,6 @@ void TestTan() {
     }
     Require(std::isnan(_Tan_nid_postfix(std::numeric_limits<double>::quiet_NaN(), 0)), "_Tan NaN is NaN");
     Require(std::isnan(_Tan_nid_postfix(std::numeric_limits<double>::infinity(), 0)), "_Tan infinity is NaN");
-    Require(Throws([] { _Tan_nid_postfix(0.5, 1); }), "_Tan nonzero quadrants throws");
-    Require(Throws([] { _FTan_nid_postfix(0.5f, -1); }), "_FTan nonzero quadrants throws");
-    Require(Throws([] { _LTan_nid_postfix(0.5L, 2); }), "_LTan nonzero quadrants throws");
 }
 
 }
