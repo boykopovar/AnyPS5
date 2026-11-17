@@ -1670,7 +1670,7 @@ void materializeSingleTexelSamplers(const IrResourcePlan& plan, ResourceSnapshot
     for (std::uint32_t index = 0; index < plan.info.samplers.size() && index < snapshot.samplers.size(); ++index) {
         auto& sampler = snapshot.samplers[index];
         if (plan.info.samplers[index].table != NoTable || sampler.dwordCount != 4u) continue;
-        if ((sampler.dwords[0] & 7u) > 3u || ((sampler.dwords[0] >> 3u) & 7u) > 3u || ((sampler.dwords[0] >> 29u) & 3u) != 0u) continue;
+        if ((sampler.dwords[0] & 7u) > 3u || ((sampler.dwords[0] >> 3u) & 7u) > 3u) continue;
         bool paired = false;
         bool singleTexel = true;
         for (const auto& pair : plan.info.sampledPairs) {

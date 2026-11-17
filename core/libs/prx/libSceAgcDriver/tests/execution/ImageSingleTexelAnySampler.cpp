@@ -139,11 +139,13 @@ int main() {
             const char* name;
             std::array<std::uint32_t, 4> sampler;
         };
-        const std::array<Case, 4> cases{{
+        const std::array<Case, 6> cases{{
             {"a buffer descriptor read as an unnormalized point sampler", {0x938cfd00u, 0x00100010u, 0x0000002du, 0x0004dfacu}},
             {"an image descriptor read as an unnormalized point sampler", {0x10049900u, 0x03800000u, 0x00000000u, 0xa0500f2eu}},
             {"an unnormalized anisotropic wrap sampler", {0x00008600u, 0x00fff000u, 0x09f00000u, 0u}},
             {"a normalized anisotropic sampler with linear mips", {0x00000692u, 0x00fff000u, 0x0af00000u, 0u}},
+            {"a buffer descriptor read as an unnormalized max-reduction sampler", {0xc3218858u, 0x00100010u, 0x00000003u, 0x0004dfacu}},
+            {"an unnormalized sampler with the undefined reduction mode 3", {0x60008000u, 0x00100010u, 0x0000002du, 0x0004dfacu}},
         }};
         for (const auto type : {Type2D, Type3D}) {
             for (const auto& item : cases) {
