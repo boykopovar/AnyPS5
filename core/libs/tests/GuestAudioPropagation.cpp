@@ -6,6 +6,8 @@
 #include <cerrno>
 #include <chrono>
 #include <cstdarg>
+#include <algorithm>
+#include <iterator>
 #include <cstdint>
 #include <thread>
 #include <vector>
@@ -458,6 +460,18 @@ int main() {
     Require(sceAudioPropagationSourceGetAudioPath(source, AudioPropagation::MaxPaths, &repeated) == AudioPropagation::ErrorInvalidArgument, "out of range path slot");
     Require(repeated == path, "rejected path lookup changed the output");
     Require(sceAudioPropagationSourceGetAudioPath(source, 0, nullptr) == AudioPropagation::ErrorNullPointer, "null path output");
+    {
+        std::uint64_t queried[AudioPropagation::MaxPaths + 2];
+        std::fill(std::begin(queried), std::end(queried), 0x5a5a5a5a5a5a5a5aull);
+        Require(sceAudioPropagationSourceQueryAudioPaths(0, queried, sizeof(queried)) == AudioPropagation::ErrorInvalidHandle, "query on handle 0");
+        Require(sceAudioPropagationSourceQueryAudioPaths(0, nullptr, 0) == AudioPropagation::ErrorInvalidHandle, "query handle checked before the null output");
+        Require(sceAudioPropagationSourceQueryAudioPaths(source, nullptr, 0) == AudioPropagation::ErrorNullPointer, "query with a null output");
+        Require(sceAudioPropagationSourceQueryAudioPaths(source, queried, 0) == static_cast<std::int32_t>(AudioPropagation::MaxPaths) && queried[0] == 0x5a5a5a5a5a5a5a5aull, "a zero-size query wrote or did not report the count");
+        Require(sceAudioPropagationSourceQueryAudioPaths(source, queried, 3 * sizeof(std::uint64_t) + 7) == static_cast<std::int32_t>(AudioPropagation::MaxPaths), "a short query did not report the full count");
+        Require(queried[0] == path && queried[2] != 0x5a5a5a5a5a5a5a5aull && queried[3] == 0x5a5a5a5a5a5a5a5aull, "a short query did not write exactly size / 8 handles");
+        Require(sceAudioPropagationSourceQueryAudioPaths(source, queried, sizeof(queried)) == static_cast<std::int32_t>(AudioPropagation::MaxPaths), "a full query failed");
+        Require(queried[AudioPropagation::MaxPaths - 1] == lastPath && queried[AudioPropagation::MaxPaths] == 0x5a5a5a5a5a5a5a5aull, "a full query wrote the wrong handles or past the count");
+    }
     errno = 71;
     Require(sceAudioPropagationSourceGetAudioPath(source, 0, reinterpret_cast<AudioPropagationHandle*>(0x10)) == AudioPropagation::ErrorNullPointer, "unwritable path output");
     Require(errno == 71, "errno preserved on unwritable path output");
