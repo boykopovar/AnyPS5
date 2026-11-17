@@ -136,7 +136,7 @@ constexpr int NET_ENOTINIT = 200;
 constexpr int NET_ENODATA = 0xA4;
 constexpr int NET_ERROR_BASE = static_cast<int>(0x80410100u);
 constexpr int NET_ERROR_RESOLVER_ENODNS = static_cast<int>(0x804101E1u);
-constexpr int NET_CONFIG_ERROR_NULL_FLAGS = static_cast<int>(0x8041130Eu);
+constexpr int NET_CONFIG_ERROR_INVALID_ADDRESS = static_cast<int>(0x8041130Eu);
 constexpr int NET_CONFIG_ERROR_NO_ROUTE = static_cast<int>(0x8041130Cu);
 constexpr int NET_ENAMETOOLONG = 63;
 constexpr int NET_ERROR_DAEMON_INVALID = static_cast<int>(0x80411506u);
@@ -2650,6 +2650,13 @@ int APS5_VABI sceNetEpollAbort(int eid, int flags) {
 }
 
 int APS5_VABI sceNetEpollControl(int eid, int op, int id, const NetEpollEvent* event) {
+    if (op != NET_EPOLL_CTL_ADD && op != NET_EPOLL_CTL_MOD && op != NET_EPOLL_CTL_DEL) return fail(NET_EINVAL);
+    if (op != NET_EPOLL_CTL_DEL) {
+        if (!event) return fail(NET_EINVAL);
+        std::uint32_t mask = 0;
+        if (!GuestCopyIn_nid_no_patch(&mask, event, sizeof(mask))) return fail(NET_EFAULT);
+        if (mask == 0) return fail(NET_EINVAL);
+    }
     bool kernel = false;
     {
         std::lock_guard lk(g_mutex);
@@ -2660,8 +2667,6 @@ int APS5_VABI sceNetEpollControl(int eid, int op, int id, const NetEpollEvent* e
     if (g_epolls.count(eid) == 0) {
         return fail(NET_EBADF);
     }
-    if (op != NET_EPOLL_CTL_ADD && op != NET_EPOLL_CTL_MOD && op != NET_EPOLL_CTL_DEL) return fail(NET_EINVAL);
-    if (op != NET_EPOLL_CTL_DEL && !event) return fail(NET_EINVAL);
     const bool resolver = g_resolvers.count(id) != 0;
     if (!kernel && !resolver && g_socks.count(id) == 0) return fail(NET_EBADF);
     auto& registrations = g_epoll_socks[eid];
@@ -2684,6 +2689,14 @@ int APS5_VABI sceNetEpollControl(int eid, int op, int id, const NetEpollEvent* e
 
 int APS5_VABI sceNetEpollWait(int eid, NetEpollEvent* events, int maxevents, int timeout) {
     if (!events || maxevents <= 0) return fail(NET_EINVAL);
+    const auto output = reinterpret_cast<std::uintptr_t>(events);
+    const auto copyReady = [&](std::size_t index, NetEpollEvent event, int descriptor, std::uint32_t flags) {
+        if (index > (UINTPTR_MAX - output) / sizeof(event)) return false;
+        event.ident = static_cast<std::uint64_t>(descriptor);
+        event.reserved = 0;
+        event.events = flags;
+        return GuestCopyOut_nid_no_patch(reinterpret_cast<void*>(output + index * sizeof(event)), &event, sizeof(event));
+    };
     struct Watch {
         int descriptor;
         std::shared_ptr<const NetEpollEvent> registration;
@@ -2709,11 +2722,9 @@ int APS5_VABI sceNetEpollWait(int eid, NetEpollEvent* events, int maxevents, int
                     const auto resolver = g_resolvers.find(entry.first);
                     if (resolver == g_resolvers.end() || count >= maxevents) continue;
                     if ((entry.second->events & NET_EPOLLIN) == 0 || reported[entry.first] == resolver->second.completions) continue;
+                    const auto flags = NET_EPOLLIN | NET_EPOLLDESCID | (resolver->second.hangup ? NET_EPOLLHUP : 0u);
+                    if (!copyReady(count, *entry.second, entry.first, flags)) return count != 0 ? count : fail(NET_EFAULT);
                     reported[entry.first] = resolver->second.completions;
-                    events[count] = *entry.second;
-                    events[count].ident = static_cast<std::uint64_t>(entry.first);
-                    events[count].reserved = 0;
-                    events[count].events = NET_EPOLLIN | NET_EPOLLDESCID | (resolver->second.hangup ? NET_EPOLLHUP : 0u);
                     ++count;
                 }
                 if (count > 0) return count;
@@ -2816,10 +2827,8 @@ int APS5_VABI sceNetEpollWait(int eid, NetEpollEvent* events, int maxevents, int
 #endif
                     if (native_events & POLLERR) guest_events |= 8;
                     if (native_events & POLLHUP) guest_events |= 16;
-                    events[count] = *watches[index].registration;
-                    events[count].ident = static_cast<std::uint64_t>(watches[index].descriptor);
-                    events[count].reserved = 0;
-                    events[count].events = guest_events;
+                    if (!copyReady(count, *watches[index].registration, watches[index].descriptor, guest_events))
+                        return count != 0 ? count : fail(NET_EFAULT);
                     ++count;
                 }
                 if (count > 0) return count;
@@ -3834,11 +3843,11 @@ int APS5_VABI sceNetShowRoute6ForBuffer(char* buffer, std::int32_t bufferSize, s
 }
 
 int APS5_VABI sceNetConfigGetIfFlags(std::uint32_t interfaceId, std::uint32_t* flags) {
-    if (flags == nullptr) return NET_CONFIG_ERROR_NULL_FLAGS;
+    if (flags == nullptr) return NET_CONFIG_ERROR_INVALID_ADDRESS;
     if (interfaceId >= 10) return -1;
     if (interfaceId != NET_IF_LO0) throw std::runtime_error("sceNetConfigGetIfFlags: interface " + std::to_string(interfaceId) + " is not implemented");
-    *flags = NET_IFF_UP | NET_IFF_LOOPBACK | NET_IFF_RUNNING | NET_IFF_MULTICAST;
-    return 0;
+    constexpr std::uint32_t result = NET_IFF_UP | NET_IFF_LOOPBACK | NET_IFF_RUNNING | NET_IFF_MULTICAST;
+    return GuestCopyOut_nid_no_patch(flags, &result, sizeof(result)) ? 0 : NET_CONFIG_ERROR_INVALID_ADDRESS;
 }
 
 int APS5_VABI sceNetConfigSetIfFlags(std::uint32_t interfaceId, std::uint32_t flags) {
