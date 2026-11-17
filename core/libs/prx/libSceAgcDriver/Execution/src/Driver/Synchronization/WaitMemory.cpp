@@ -13,7 +13,6 @@
 #include <cstring>
 #include <map>
 #include <mutex>
-#include <set>
 #ifdef _WIN32
 #include <windows.h>
 #endif
