@@ -17,7 +17,7 @@ DOC_TEXT = "| `APS5_DOCUMENTED` | presence |\n| `APS5_GONE` | presence |\n"
 def repository(root, base, head, target=None):
     def git(*args):
         subprocess.run(["git", "-c", f"safe.directory={root}", "-c", "user.name=Conventions Test",
-                        "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", *args],
+                        "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", *args],
                        cwd=root, capture_output=True, check=True)
 
     def apply(files):
@@ -133,6 +133,13 @@ class EnvReferenceDiffTests(unittest.TestCase):
         base = {DOC: DOC_TEXT, SAMPLE: "int unrelated;\n"}
         head = {SAMPLE: base[SAMPLE] + 'auto value = !std::getenv \t("APS5_NEW_READ");\n'}
         self.assertEqual(self.run_case(base, head), [("env-reference", SAMPLE, 2,
+                                                    f"APS5_NEW_READ is read here but has no row in {DOC}")])
+
+    def test_a_new_read_in_a_path_with_spaces_is_reported_at_its_exact_path(self):
+        spaced = "core/my dir/a b.cpp"
+        base = {DOC: DOC_TEXT, SAMPLE: "int unrelated;\n"}
+        head = {spaced: 'auto value = std::getenv("APS5_NEW_READ");\n'}
+        self.assertEqual(self.run_case(base, head), [("env-reference", spaced, 1,
                                                     f"APS5_NEW_READ is read here but has no row in {DOC}")])
 
     def test_removing_a_compact_read_keeps_a_row_still_used_by_a_spaced_read(self):

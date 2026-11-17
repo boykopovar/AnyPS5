@@ -79,6 +79,15 @@ class KnownTests(unittest.TestCase):
             library_oracle.write_known(path, known, {"a": ("diff", "x"), "n": ("crash", "y")}, {"a", "n", "old"})
             self.assertEqual(path.read_text(encoding="utf-8"), "a\tdiff\t#1\nn\tcrash\ns\tskip\tenvironment\n")
 
+    def test_a_byte_order_mark_is_not_part_of_the_first_case(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "known.tsv"
+            path.write_text("a\tdiff\t#1\nb\tcrash\t#2\n", encoding="utf-8-sig")
+            known = library_oracle.load_known(path)
+            self.assertEqual(known, {"a": ("diff", "#1"), "b": ("crash", "#2")})
+            new, expected, stale = library_oracle.classify(known, {"a": ("diff", "x")}, {"a"})
+            self.assertEqual((new, [case for case, *_ in expected]), ([], ["a"]))
+
     def test_an_unknown_kind_is_refused(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "known.tsv"
