@@ -84,6 +84,9 @@ extern "C" void LibcSetGuestWriteHook_nid_no_patch(GuestWriteHook_nid_no_patch h
 extern "C" GuestWriteHook_nid_no_patch LibcGetGuestWriteHook_nid_no_patch();
 extern "C" void RegisterPthreadDetach_nid_no_patch(PthreadDetachFn_nid_no_patch fn);
 extern "C" void RegisterProcessorCount_nid_no_patch(unsigned count);
+struct GuestPad;
+extern "C" void ConstructNamedPad_nid_no_patch(GuestPad* pad, const char* name);
+extern "C" void LaunchPad_nid_no_patch(GuestPad* pad, const char* name, void** attrSlot, void** thread);
 struct ThreadForwards_nid_no_patch {
     int (APS5_VABI* once)(std::int32_t*, void (APS5_VABI*)(void));
     int (APS5_VABI* keyCreate)(int*, void (APS5_VABI*)(void*));
