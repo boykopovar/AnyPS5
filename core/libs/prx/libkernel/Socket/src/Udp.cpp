@@ -2532,6 +2532,15 @@ static std::vector<unsigned char> ArrivalTimestamps(const Socket& socket, int ke
     if (micro) append(2, seconds, nanoseconds / 1000);
     return records;
 }
+static bool FirstOutputWritable(const std::vector<KernelIovec>& vectors) {
+    for (const auto& vector : vectors) {
+        if (vector.length == 0) continue;
+        char byte = 0;
+        return ReadGuest(&byte, vector.base, 1) && WriteGuest(vector.base, &byte, 1);
+    }
+    return true;
+}
+
 std::int64_t APS5_VABI recvmsg_nid_postfix(int descriptor, GuestMsghdr* message, int flags) {
     GuestMsghdr header{};
     if (!message || !ReadGuest(&header, message, sizeof(header))) return Fail(14);
@@ -2570,6 +2579,12 @@ std::int64_t APS5_VABI recvmsg_nid_postfix(int descriptor, GuestMsghdr* message,
         size = sizeof(native);
         if (const int waited = WaitForTransfer(*socket, false, flags, descriptor)) return Fail(waited);
         shut = ReceiveShut(*socket);
+        if (socket->type == 1 && !passing && !shut && (flags & GuestPeek) == 0 && !FirstOutputWritable(vectors)) {
+            char next = 0;
+            const auto pending = ::recv(socket->value, &next, 1, NativeReceiveFlags((flags & ~GuestWaitAll) | GuestPeek, socket->type));
+            if (pending < 0) return Fail(NativeError());
+            if (pending > 0) return Fail(14);
+        }
 #ifndef _WIN32
         if (passing) {
             std::vector<char> control(CMSG_SPACE(MostPassedDescriptors * sizeof(int)));
