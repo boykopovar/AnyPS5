@@ -1,6 +1,7 @@
 #include "prx/libSceFreeTypeOt/include/Stream.hpp"
 #include "prx/libc/include/General.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -475,9 +476,14 @@ int APS5_VABI FT_Stream_ReadFields_nid_postfix(GuestStreamRec* stream, const Gue
             if (field.value == FrameBytes && length != 0) {
                 if (!structure) refuse("null structure");
                 if (!cursor) refuse("null frame cursor");
-                std::array<std::uint8_t, 255> copy{};
-                copyIn(copy.data(), cursor, length);
-                copyOut(static_cast<std::uint8_t*>(structure) + field.offset, copy.data(), length);
+                auto* destination = static_cast<std::uint8_t*>(structure) + field.offset;
+                std::array<std::uint8_t, 64> copy{};
+                for (std::uint64_t done = 0; done < length;) {
+                    const std::size_t chunk = std::min<std::uint64_t>(length - done, copy.size());
+                    copyIn(copy.data(), Offset(cursor, done), chunk);
+                    copyOut(destination + done, copy.data(), chunk);
+                    done += chunk;
+                }
             }
             cursor = Offset(cursor, length);
             continue;

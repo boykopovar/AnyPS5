@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -469,6 +470,19 @@ void TestReadFields() {
     Require(!stream.cursor && !stream.limit && stream.base == data.data() && stream.pos == 4, "refused fields leave no memory frame");
 }
 
+void TestReadFieldsLongBytes() {
+    std::array<std::uint8_t, 600> data{};
+    for (std::size_t i = 0; i < data.size(); ++i) data[i] = static_cast<std::uint8_t>(i * 7 + 3);
+    auto stream = MemoryStream(data.data(), data.size());
+    const std::array<GuestFrameField, 5> fields{{{4, 0, 511}, {24, 255, 0}, {24, 255, 255}, {24, 1, 510}, {0, 0, 0}}};
+    std::array<std::uint8_t, 520> target{};
+    target.fill(0xEE);
+    Require(api.ReadFields(&stream, fields.data(), target.data()) == 0, "longest byte sequence fields");
+    Require(std::memcmp(target.data(), data.data(), 511) == 0, "longest byte sequences copied in full");
+    Require(target[511] == 0xEE && target[519] == 0xEE, "longest byte sequences write nothing past their fields");
+    Require(!stream.cursor && !stream.limit && stream.pos == 511, "longest byte sequences close their frame");
+}
+
 void TestNullStream() {
     int error = 0;
     std::uint8_t* frame = nullptr;
@@ -549,6 +563,7 @@ void Run() {
     TestDeviceStream();
     TestCloseAndFree();
     TestReadFields();
+    TestReadFieldsLongBytes();
     TestNullStream();
     TestGuestPointers();
 }
