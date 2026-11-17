@@ -2948,20 +2948,28 @@ thread_local bool buildingAhead = false;
 }
 
 void VulkanDevice::PrebuildComputePipeline(const ShaderRecompiler::RecompileResult& shader, std::uint64_t programAddress) {
-    if (shader.spirv.size() < 5 || shader.spirv[0] != 0x07230203u) return;
-    const std::array<Graphics::CompiledShader, 1> shaders{{{ShaderRecompiler::ShaderStage::Compute, &shader, 0}}};
-    const auto pushStages = Graphics::PushConstantStages(shaders);
-    const auto key = ComputePipelineKey::Of(shader, pushStages != 0);
+    std::optional<ComputePipelineKey> key;
     const auto settle = [&](bool failed) {
-        if (key.identity.Empty()) return;
+        if (!key || key->identity.Empty()) return;
         std::lock_guard pipelines(state->computePipelinesMutex);
-        state->computePipelinesQueued.erase(key);
-        if (failed) state->computePipelinesFailed.insert(key);
+        state->computePipelinesQueued.erase(*key);
+        if (failed) state->computePipelinesFailed.insert(*key);
     };
     try {
+        const std::array<Graphics::CompiledShader, 1> shaders{{{ShaderRecompiler::ShaderStage::Compute, &shader, 0}}};
+        const auto pushStages = Graphics::PushConstantStages(shaders);
+        key = ComputePipelineKey::Of(shader, pushStages != 0);
+        if (shader.spirv.size() < 5 || shader.spirv[0] != 0x07230203u) {
+            settle(true);
+            return;
+        }
         ShaderRecompiler::RuntimeAbi::RequireVersion(shader.runtimeAbiVersion);
         const auto context = graphicsContext();
-        if (context.descriptorCache == nullptr || (pushStages != 0 && state->properties.limits.maxPushConstantsSize < Graphics::ComputePushConstantBytes) || HasComputePipeline(shader)) {
+        if (context.descriptorCache == nullptr || (pushStages != 0 && state->properties.limits.maxPushConstantsSize < Graphics::ComputePushConstantBytes)) {
+            settle(true);
+            return;
+        }
+        if (HasComputePipeline(shader)) {
             settle(false);
             return;
         }
@@ -2985,6 +2993,15 @@ void VulkanDevice::PrebuildComputePipeline(const ShaderRecompiler::RecompileResu
         settle(true);
         throw;
     }
+}
+
+void VulkanDevice::AbandonComputePipelineAhead(const ShaderRecompiler::RecompileResult& shader) {
+    const std::array<Graphics::CompiledShader, 1> shaders{{{ShaderRecompiler::ShaderStage::Compute, &shader, 0}}};
+    const auto key = ComputePipelineKey::Of(shader, Graphics::PushConstantStages(shaders) != 0);
+    if (key.identity.Empty()) return;
+    std::lock_guard pipelines(state->computePipelinesMutex);
+    state->computePipelinesQueued.erase(key);
+    state->computePipelinesFailed.insert(key);
 }
 
 VulkanDevice::PipelineAhead VulkanDevice::ComputePipelineAhead(const ShaderRecompiler::RecompileResult& shader) {

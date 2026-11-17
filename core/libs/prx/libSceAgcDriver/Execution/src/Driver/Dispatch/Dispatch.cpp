@@ -534,9 +534,14 @@ void Driver::dispatch(QueueState& queue, std::span<const std::uint32_t> packet, 
     if (AsyncDrawCompile() && compiledResult != nullptr && localDevice != nullptr && compiledResult->spirv.size() >= AsyncComputePipelineWords()) {
         const auto ahead = localDevice->ComputePipelineAhead(*compiledResult);
         if (ahead == VulkanDevice::PipelineAhead::Start) {
-            SubmitComputePrebuild([localDevice, compiledResult, address] {
-                try { localDevice->PrebuildComputePipeline(*compiledResult, address); } catch (const std::exception&) {}
-            });
+            try {
+                SubmitComputePrebuild([localDevice, compiledResult, address] {
+                    try { localDevice->PrebuildComputePipeline(*compiledResult, address); } catch (...) {}
+                });
+            } catch (...) {
+                localDevice->AbandonComputePipelineAhead(*compiledResult);
+                throw;
+            }
         }
         if (ahead == VulkanDevice::PipelineAhead::Start || ahead == VulkanDevice::PipelineAhead::Building) {
             if (profile) NotePipelineSkip(address, compiledResult->spirv.size());

@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
+#include "RuntimeAbi.hpp"
 #include "VulkanTestDevice.hpp"
 #include <array>
 #include <chrono>
@@ -48,8 +49,35 @@ bool Done() {
 
 }
 
+void CheckFailedBuildAhead() {
+    using Ahead = AgcDriver::VulkanDevice::PipelineAhead;
+    auto device = OpenVulkanTestDevice();
+    if (!device) return;
+    ShaderRecompiler::RecompileResult failing;
+    failing.spirv = std::vector<std::uint32_t>{0x07230203u, 0x00010300u, 0u, 16u, 0u};
+    failing.runtimeAbiVersion = ShaderRecompiler::RuntimeAbi::Version + 1u;
+    const auto first = device->ComputePipelineAhead(failing);
+    if (first == Ahead::Unavailable) return;
+    Require(first == Ahead::Start, "a compute pipeline that is not built yet was not handed out for a build ahead");
+    Require(device->ComputePipelineAhead(failing) == Ahead::Building, "a compute pipeline queued for a build ahead was not reported as building");
+    bool threw = false;
+    try {
+        device->PrebuildComputePipeline(failing);
+    } catch (const std::exception&) {
+        threw = true;
+    }
+    Require(threw, "a build ahead with an incompatible runtime ABI did not fail");
+    Require(device->ComputePipelineAhead(failing) == Ahead::Unavailable, "a build ahead that failed left its compute pipeline queued, so every dispatch of it would be skipped");
+    ShaderRecompiler::RecompileResult abandoned;
+    abandoned.spirv = std::vector<std::uint32_t>{0x07230203u, 0x00010300u, 0u, 17u, 0u};
+    Require(device->ComputePipelineAhead(abandoned) == Ahead::Start, "a second compute pipeline was not handed out for a build ahead");
+    device->AbandonComputePipelineAhead(abandoned);
+    Require(device->ComputePipelineAhead(abandoned) == Ahead::Unavailable, "an abandoned build ahead left its compute pipeline queued");
+}
+
 int main() {
     try {
+        CheckFailedBuildAhead();
         {
             const auto device = OpenVulkanTestDevice();
             if (!device) return VulkanTestSkipped;
