@@ -128,11 +128,12 @@ void testSharedPage(const std::filesystem::path& directory) {
 void testHostNeighbors(const std::filesystem::path& directory) {
 #ifdef __linux__
     const auto page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
-    void* mapped = mmap(nullptr, 2 * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    constexpr std::size_t ReservedPages = 256;
+    void* mapped = mmap(nullptr, ReservedPages * page, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
     check(mapped != MAP_FAILED, "host allocation failed");
     auto* occupied = static_cast<std::byte*>(mapped);
     auto* available = occupied + page;
-    check(munmap(available, page) == 0, "host page release failed");
+    check(munmap(available, (ReservedPages - 1) * page) == 0, "host page release failed");
     std::uintptr_t base = 0;
     std::size_t arenaSize = 0;
     GuestArena::GuestArenaRange_nid_postfix(&base, &arenaSize);
