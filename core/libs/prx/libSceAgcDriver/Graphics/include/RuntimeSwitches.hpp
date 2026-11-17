@@ -44,6 +44,9 @@ enum class RuntimeSwitch : std::size_t {
     BufferBlobAppend,
     PreparedCapacity,
     InvocationSlotsWide,
+    StageMemo,
+    StageMemoAdmitThird,
+    StageMemoFront,
     Count,
 };
 

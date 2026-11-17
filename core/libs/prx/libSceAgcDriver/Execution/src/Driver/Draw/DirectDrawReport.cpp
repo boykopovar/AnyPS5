@@ -44,6 +44,7 @@ constexpr std::array<const char*, CounterCount> CounterNames{
     "verified with exact capacities", "differing with exact capacities", "memory changed with exact capacities", "unwatched with exact capacities",
     "inputs verified with exact capacities", "inputs differing with exact capacities",
     "blobs appended",
+    "memo hits", "memo stored", "no pattern", "gather failed", "no entry", "other inputs", "other values", "views", "order", "unsettled", "side", "untraced", "patterns full", "memo cleared", "memo verify checked", "memo verify differing",
 };
 
 constexpr std::array<const char*, StepCount> StepNames{"request", "invocation", "walk", "key", "side", "class", "checks", "buffers", "inputs", "hand-off"};
@@ -316,6 +317,11 @@ void Report(bool force) {
             static_cast<unsigned long long>(at(Counter::InputsVerifyChecked)), static_cast<unsigned long long>(at(Counter::InputsVerifyDiffering)), capacities.c_str());
     }
     if (at(Counter::BlobAppends) != 0) AgcDriver::ProfilePrint_nid_no_patch("[direct-draws] finisher reuse: buffers%s\n", reasons(counts, Counter::BlobAppends, Counter::BlobAppends).c_str());
+    if (sum(Counter::StageMemoHits, Counter::StageMemoVerifyDiffering) != 0) {
+        AgcDriver::ProfilePrint_nid_no_patch("[direct-draws] stage memo: %llu hits, %llu stored, %llu not adopted%s; not stored%s; %llu cleared; verify %llu checked, %llu differing\n",
+            static_cast<unsigned long long>(at(Counter::StageMemoHits)), static_cast<unsigned long long>(at(Counter::StageMemoStored)), static_cast<unsigned long long>(sum(Counter::StageMemoNoPattern, Counter::StageMemoSide)), reasons(counts, Counter::StageMemoNoPattern, Counter::StageMemoSide).c_str(),
+            reasons(counts, Counter::StageMemoUntraced, Counter::StageMemoPatternsFull).c_str(), static_cast<unsigned long long>(at(Counter::StageMemoCleared)), static_cast<unsigned long long>(at(Counter::StageMemoVerifyChecked)), static_cast<unsigned long long>(at(Counter::StageMemoVerifyDiffering)));
+    }
 }
 
 const char* CounterName(Counter counter) {

@@ -71,6 +71,9 @@ void registry() {
     Require(RuntimeSwitches::Find("APS5_BUFFER_BLOB_APPEND") == RuntimeSwitch::BufferBlobAppend && !RuntimeSwitches::Set(RuntimeSwitch::BufferBlobAppend), "APS5_BUFFER_BLOB_APPEND is not a runtime switch that starts unset");
     Require(RuntimeSwitches::Find("APS5_PREPARED_CAPACITY") == RuntimeSwitch::PreparedCapacity && !RuntimeSwitches::Set(RuntimeSwitch::PreparedCapacity), "APS5_PREPARED_CAPACITY is not a runtime switch that starts unset");
     Require(RuntimeSwitches::Find("APS5_INVOCATION_SLOTS_WIDE") == RuntimeSwitch::InvocationSlotsWide && !RuntimeSwitches::Set(RuntimeSwitch::InvocationSlotsWide), "APS5_INVOCATION_SLOTS_WIDE is not a runtime switch that starts unset");
+    Require(RuntimeSwitches::Find("APS5_STAGE_MEMO") == RuntimeSwitch::StageMemo && !RuntimeSwitches::Set(RuntimeSwitch::StageMemo), "APS5_STAGE_MEMO is not a runtime switch that starts unset");
+    Require(RuntimeSwitches::Find("APS5_STAGE_MEMO_ADMIT_THIRD") == RuntimeSwitch::StageMemoAdmitThird && !RuntimeSwitches::Set(RuntimeSwitch::StageMemoAdmitThird), "APS5_STAGE_MEMO_ADMIT_THIRD is not a runtime switch that starts unset");
+    Require(RuntimeSwitches::Find("APS5_STAGE_MEMO_FRONT") == RuntimeSwitch::StageMemoFront && !RuntimeSwitches::Set(RuntimeSwitch::StageMemoFront), "APS5_STAGE_MEMO_FRONT is not a runtime switch that starts unset");
     Require(RuntimeSwitches::Set(RuntimeSwitch::LeanFront),"APS5_LEAN_FRONT set in the environment did not start set");
 }
 

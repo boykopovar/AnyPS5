@@ -49,6 +49,7 @@
 #include "Optimization/include/Optimization/VectorWindowStoreEliminator.hpp"
 #include "Optimization/include/Optimization/ShaderInfoCollector.hpp"
 #include "Optimization/include/Optimization/SrtWalker.hpp"
+#include "Optimization/include/Optimization/SrtWalker/SrtTape.hpp"
 #include "Optimization/include/Optimization/SsaBuilder.hpp"
 #include "Optimization/include/Optimization/TessellationLowering.hpp"
 #include "SpirvBackend/include/SpirvBackend/SpirvEmitter.hpp"
@@ -2604,6 +2605,49 @@ bool PreparedShaderInvocation::FillSharedSide(const ResourceCapture& capture, co
         if (vertex.fetchEmbedded) attribute.fetchIndex = vertex.resourcesDst[attribute.location].fetchIndex;
     }
     return true;
+}
+
+SideForwards PreparedShaderInvocation::TraceSideForwards(const ResourceCapture& capture, const RecompileResult& donor, const MemoPatch& patch) const {
+    SideForwards out;
+    if (capture.source != handle->source || capture.plan == nullptr || !patch.valid) return out;
+    const auto count = donor.bindings.size();
+    for (std::size_t word = 0; word < patch.userWords.size(); ++word) {
+        if (patch.pushData) out.forwards.push_back({0u, static_cast<std::uint32_t>(word), patch.userWords[word], true});
+        else if (patch.shaderData < count) out.forwards.push_back({patch.shaderData, static_cast<std::uint32_t>(word), patch.userWords[word], false});
+        else return {};
+    }
+    out.traced = true;
+    const auto& plan = *capture.plan;
+    const auto* tape = Detail::SrtTape::For(plan);
+    if (tape == nullptr) return out;
+    const auto bit = [](std::uint32_t word) { return std::uint64_t {1} << word; };
+    std::vector<SideForward> moved;
+    std::uint64_t seen = 0;
+    std::uint64_t uncovered = 0;
+    for (const auto& forward : tape->AddressForwards(plan)) {
+        seen |= bit(forward.word);
+        bool covered = false;
+        if (forward.flat) {
+            if (patch.flattenedSrt != MemoPatch::NoBinding && patch.flattenedSrt < count) {
+                moved.push_back({patch.flattenedSrt, forward.index, forward.word, false});
+                covered = true;
+            }
+        } else {
+            for (const auto& [binding, resources] : patch.buffers) {
+                for (std::size_t element = 0; element < resources.size(); ++element) {
+                    if (resources[element] != forward.index || binding >= count) continue;
+                    moved.push_back({binding, static_cast<std::uint32_t>(element * 4u), forward.word, false});
+                    covered = true;
+                }
+            }
+        }
+        if (!covered) uncovered |= bit(forward.word);
+    }
+    out.addressWords = seen & ~uncovered;
+    for (const auto& forward : moved) {
+        if ((out.addressWords & bit(forward.word)) != 0u) out.forwards.push_back(forward);
+    }
+    return out;
 }
 
 std::shared_ptr<const RecompileResult> PreparedShaderInvocation::MaterializeIfMemoized(const ResourceCapture& capture, bool* contended) const {
