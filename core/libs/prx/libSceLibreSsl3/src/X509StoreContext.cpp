@@ -222,8 +222,10 @@ bool SetBytes(char** destination, std::uint64_t* length, const char* source, std
         if (!(copy = strdup_nid_postfix(source))) return false;
     } else {
         if (noNul && std::memchr(source, '\0', sourceLength)) return false;
-        if (!(copy = static_cast<char*>(malloc_nid_postfix(sourceLength)))) return false;
+        if (sourceLength == std::numeric_limits<std::uint64_t>::max()) return false;
+        if (!(copy = static_cast<char*>(malloc_nid_postfix(sourceLength + 1)))) return false;
         std::memcpy(copy, source, sourceLength);
+        copy[sourceLength] = '\0';
     }
     free_nid_postfix(*destination);
     *destination = copy;

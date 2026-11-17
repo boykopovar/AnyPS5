@@ -33,14 +33,18 @@ PROJECT = {
 }
 
 
+def child_decoder_rejects(text):
+    probe = "import json, sys\ntry:\n    json.loads(sys.stdin.read())\nexcept RecursionError:\n    sys.exit(3)\n"
+    return subprocess.run([sys.executable, "-c", probe], input=text, text=True, encoding="utf-8",
+                          capture_output=True).returncode == 3
+
+
 def excessively_nested_json(test):
     depth = sys.getrecursionlimit() + 64
     while True:
         text = "[" * depth + "]" * depth
-        try:
-            json.loads(text)
-        except RecursionError:
-            return text
+        if child_decoder_rejects(text):
+            return "[" * (depth + 128) + "]" * (depth + 128)
         depth *= 2
         if depth > 10_000_000:
             test.fail("the JSON decoder accepts every probed nesting depth")
@@ -467,15 +471,12 @@ class NonAsciiDirectoryTests(unittest.TestCase):
         except (UnicodeEncodeError, UnicodeDecodeError):
             self.skipTest("the ANSI code page does not make the fixture directory valid UTF-8")
         with tempfile.TemporaryDirectory() as directory:
+            recorded = os.path.join(name, "alpha.h").encode("mbcs")
+            self.assertEqual(select_tests.dependency_path(recorded, directory), os.path.join(utf8, "alpha.h"))
             header = Path(directory, name, "alpha.h")
-            try:
-                recorded = str(header).encode("mbcs", "strict")
-            except UnicodeEncodeError:
-                self.skipTest("the ANSI code page cannot represent the temporary directory")
-            self.assertEqual(select_tests.dependency_path(recorded, directory), str(Path(directory, utf8, "alpha.h")))
             header.parent.mkdir()
             header.write_text("", encoding="utf-8")
-            self.assertEqual(select_tests.dependency_path(recorded, directory), str(header))
+            self.assertEqual(select_tests.dependency_path(recorded, directory), os.path.join(name, "alpha.h"))
             relative = os.path.join("..", name, "alpha.h")
             self.assertEqual(select_tests.dependency_path(relative.encode("mbcs"), os.path.join(directory, "build")),
                              relative)

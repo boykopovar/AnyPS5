@@ -278,11 +278,11 @@ Pad::InputRequests Pad::KeyboardMouse::HandleEvent(const SDL_Event& event, Clock
             gyroCountsX += event.motion.xrel;
             gyroCountsY += event.motion.yrel;
         }
-        if (mouseMode && !titleReadsMouse) mouse.Move(event.motion.xrel, event.motion.yrel);
+        if (mouseMode) mouse.Move(event.motion.xrel, event.motion.yrel);
         return requests;
     }
     if (event.type == SDL_MOUSEWHEEL) {
-        if (titleReadsMouse) return requests;
+        if (titleReadsMouse && !mouseMode) return requests;
         int direction = (event.wheel.y > 0) - (event.wheel.y < 0);
         int tilt = (event.wheel.x > 0) - (event.wheel.x < 0);
         if (event.wheel.direction == SDL_MOUSEWHEEL_FLIPPED) {
@@ -305,7 +305,7 @@ Pad::InputRequests Pad::KeyboardMouse::HandleEvent(const SDL_Event& event, Clock
     const bool mouseButton = event.type == SDL_MOUSEBUTTONDOWN || event.type == SDL_MOUSEBUTTONUP;
     if (!keyboard && !mouseButton) return requests;
     if (keyboard && event.key.repeat != 0) return requests;
-    if (event.type == SDL_MOUSEBUTTONDOWN && titleReadsMouse) return requests;
+    if (event.type == SDL_MOUSEBUTTONDOWN && titleReadsMouse && !mouseMode) return requests;
     if (event.type == SDL_MOUSEBUTTONUP && event.button.button == SDL_BUTTON_LEFT) mouseTouch.reset();
     if (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_LEFT && mouseTouchpad && !mouseMode) mouseTouch = touchAt(event.button.x, event.button.y);
     advanceAxes(now);

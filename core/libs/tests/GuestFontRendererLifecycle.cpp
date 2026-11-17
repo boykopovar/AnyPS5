@@ -2,6 +2,7 @@
 #include "prx/libSceFont/include/Api.hpp"
 #include "prx/libSceFont/include/FontDriver.hpp"
 #include "prx/libSceFont/include/FontTypes.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -44,6 +45,16 @@ int main() {
     Require(sceFontMemoryInit(&memory, nullptr, 0, &iface, &memory, nullptr, nullptr) == SCE_FONT_OK);
 
     const Font::RendererSelection selection{0, sizeof(Font::RendererFt), CreateRenderer, DestroyRenderer, QueryRenderer};
+    auto* const invalidRenderer = reinterpret_cast<FontRenderer*>(0x10);
+    errno = 71;
+    Require(sceFontCreateRendererWithEdition(nullptr, &selection, 0, invalidRenderer) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71 && allocations == 0);
+    errno = 71;
+    Require(sceFontCreateRendererWithEdition(&memory, &selection, 0, invalidRenderer) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71 && allocations == 0);
+    errno = 71;
+    Require(sceFontCreateRenderer(&memory, sceFontSelectRendererFt(0), invalidRenderer) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71 && allocations == 0);
     FontRenderer renderer = reinterpret_cast<FontRenderer>(&memory);
     Require(sceFontCreateRendererWithEdition(nullptr, &selection, 0, &renderer) == SCE_FONT_ERROR_INVALID_PARAMETER && renderer == nullptr);
     renderer = reinterpret_cast<FontRenderer>(&memory);
