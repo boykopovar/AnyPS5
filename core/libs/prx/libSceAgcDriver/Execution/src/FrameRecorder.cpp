@@ -477,6 +477,19 @@ std::uint64_t FrameRecorder::blockSince(std::uint64_t block) const {
     return covered == FrameCaptureWriter::BlockBytes ? std::max(mark, since) : mark;
 }
 
+void FrameRecorder::UnwatchedHashes::Keep(std::uint64_t begin, std::uint64_t bytes, std::pair<std::uint64_t, std::uint64_t> sample) {
+    samples[{begin, bytes}] = sample;
+    longest = std::max(longest, bytes);
+}
+
+void FrameRecorder::UnwatchedHashes::Forget(std::uint64_t begin, std::uint64_t end) {
+    auto found = samples.lower_bound({begin - std::min(begin, longest), 0});
+    while (found != samples.end() && found->first.first < end) {
+        if (found->first.first + found->first.second > begin) found = samples.erase(found);
+        else ++found;
+    }
+}
+
 void FrameRecorder::MergeOverlappingBlocks(std::vector<std::pair<std::uint64_t, std::uint64_t>>& blocks) {
     std::ranges::sort(blocks);
     std::size_t merged = 0;
@@ -536,11 +549,7 @@ void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::uint6
     };
     const auto forget = [&](std::uint64_t begin, std::uint64_t end) {
         hostPageHashes.erase(hostPageHashes.lower_bound(begin & ~std::uint64_t{HostPageBytes - 1}), hostPageHashes.lower_bound(end));
-        auto found = unwatchedHashes.lower_bound({begin - std::min<std::uint64_t>(begin, FrameCaptureWriter::BlockBytes), 0});
-        while (found != unwatchedHashes.end() && found->first.first < end) {
-            if (found->first.first + found->first.second > begin) found = unwatchedHashes.erase(found);
-            else ++found;
-        }
+        unwatchedHashes.Forget(begin, end);
     };
     for (const auto& range : added) {
         writer->WriteRange(range.address, range.bytes, range.kind, range.protection, range.access);
@@ -576,10 +585,10 @@ void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::uint6
         if (accepted == completed && !GuestMemory::Watched(begin, bytes.size())) {
             const auto key = std::pair{begin, static_cast<std::uint64_t>(bytes.size())};
             const auto sample = std::pair{contentHash(bytes), accepted};
-            const auto found = unwatchedHashes.find(key);
-            if (found != unwatchedHashes.end() && found->second == sample) continue;
+            const auto found = unwatchedHashes.samples.find(key);
+            if (found != unwatchedHashes.samples.end() && found->second == sample) continue;
             forget(begin, end);
-            unwatchedHashes[key] = sample;
+            unwatchedHashes.Keep(key.first, key.second, sample);
         } else {
             forget(begin, end);
         }

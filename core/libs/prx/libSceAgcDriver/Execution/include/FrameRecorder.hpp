@@ -53,6 +53,12 @@ public:
     }
     void RewindTailFlips(std::uint64_t flips);
     static void MergeOverlappingBlocks(std::vector<std::pair<std::uint64_t, std::uint64_t>>& blocks);
+    struct UnwatchedHashes {
+        std::map<std::pair<std::uint64_t, std::uint64_t>, std::pair<std::uint64_t, std::uint64_t>> samples;
+        std::uint64_t longest = 0;
+        void Keep(std::uint64_t begin, std::uint64_t bytes, std::pair<std::uint64_t, std::uint64_t> sample);
+        void Forget(std::uint64_t begin, std::uint64_t end);
+    };
     static void SetStartIdleWaitForTest(std::function<bool()> wait);
 
 private:
@@ -124,7 +130,7 @@ private:
     std::vector<Range> ranges;
     std::map<std::uint64_t, std::uint64_t> shaderMarks;
     std::map<std::uint64_t, std::uint64_t> hostPageHashes;
-    std::map<std::pair<std::uint64_t, std::uint64_t>, std::pair<std::uint64_t, std::uint64_t>> unwatchedHashes;
+    UnwatchedHashes unwatchedHashes;
     inline static std::atomic<bool> notingGpuStores{false};
     std::mutex gpuStoresMutex;
     std::map<std::uint64_t, GpuWord> gpuWords;

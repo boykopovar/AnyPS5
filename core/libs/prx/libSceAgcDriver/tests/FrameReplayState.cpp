@@ -614,6 +614,22 @@ void testMergedBlocks() {
     check(unaligned == Blocks{{0x10000, 0x20000}, {0x1fffe, 0x20006}, {0x20002, 0x20010}, {0x20004, 0x20008}}, "a block with an unaligned edge was merged, so its GPU-stored words would be kept whole");
 }
 
+void testForgottenUnwatchedHashes() {
+    constexpr std::uint64_t Block = FrameCaptureWriter::BlockBytes;
+    const std::pair<std::uint64_t, std::uint64_t> sample{0x1234, 7};
+    AgcDriver::FrameRecorder::UnwatchedHashes hashes;
+    hashes.Keep(0x100000, Block, sample);
+    hashes.Keep(0x100000 + Block, Block / 2 + 2 * Block, sample);
+    hashes.Keep(0x100000 + 4 * Block, Block, sample);
+    hashes.Forget(0x100000 + 3 * Block + 0x4000, 0x100000 + 3 * Block + 0x5000);
+    check(!hashes.samples.contains({0x100000 + Block, Block / 2 + 2 * Block}), "a store into the tail of a merged unwatched block longer than a capture block left its hash, so an unchanged later sample would skip the store");
+    check(hashes.samples.contains({0x100000, Block}) && hashes.samples.contains({0x100000 + 4 * Block, Block}), "a store forgot hashes of unwatched blocks it does not touch");
+    hashes.Forget(0x100000 + 4 * Block - 1, 0x100000 + 4 * Block);
+    check(hashes.samples.contains({0x100000 + 4 * Block, Block}), "a store just before an unwatched block forgot its hash");
+    hashes.Forget(0x100000 + Block - 1, 0x100000 + Block);
+    check(!hashes.samples.contains({0x100000, Block}), "a store into the last byte of an unwatched block left its hash");
+}
+
 void testEopTokens() {
     Frames frames;
     auto output = std::make_shared<ReplayOutput>(frames);
@@ -1368,6 +1384,7 @@ int main(int argc, char** argv) {
         else if (mode == "trace_window") testTraceWindow(directory);
         else if (mode == "tokens") testEopTokens();
         else if (mode == "merge_blocks") testMergedBlocks();
+        else if (mode == "forget_unwatched_hashes") testForgottenUnwatchedHashes();
         else if (mode == "reservations" || mode == "reservation_failure") testRepeatedReservations(directory, mode == "reservation_failure");
         else if (mode == "blocking") testBlockingSubmission(directory);
         else if (mode == "environment") testColdPipelines();
