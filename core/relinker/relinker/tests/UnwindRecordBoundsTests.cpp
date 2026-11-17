@@ -74,7 +74,33 @@ int main() {
         auto empty = Fixture();
         Io::WriteU64(empty, 112, 0);
         Require(Relinker::UnusedNidFilter::ReadExceptionFunctions(empty, {load, eh}, {}, {}).empty());
-        for (int kind = 0; kind < 14; ++kind) {
+        Domain::ProgramHeader highSeg{}; highSeg.Type = 1; highSeg.MappedAddress = 0xFFFFFFFFFFFF0000ULL; highSeg.FileSize = 128;
+        auto highEh = highSeg; highEh.Type = 0x6474E550; highEh.FileSize = 32;
+        auto ulebAtLimit = Fixture();
+        Io::WriteU64(ulebAtLimit, 4, 0xFFFFFFFFFFFF0040ULL);
+        ulebAtLimit[3] = 0x11;
+        ulebAtLimit[16] = 0xEF; ulebAtLimit[17] = 0xFF; ulebAtLimit[18] = 0x03;
+        ulebAtLimit[19] = 0x4D;
+        Io::WriteU64(ulebAtLimit, 104, 0xFFFFFFFFFFFFFFFFULL);
+        Io::WriteU64(ulebAtLimit, 112, 0);
+        Require(Relinker::UnusedNidFilter::ReadExceptionFunctions(ulebAtLimit, {highSeg, highEh}, {}, {}).empty());
+        auto udata8OverLimit = Fixture();
+        Io::WriteU64(udata8OverLimit, 4, 0xFFFFFFFFFFFF0040ULL);
+        udata8OverLimit[3] = 0x14;
+        Io::WriteU64(udata8OverLimit, 16, 0xFFF0);
+        Io::WriteU64(udata8OverLimit, 24, 0x48);
+        Io::WriteU64(udata8OverLimit, 104, 0);
+        Io::WriteU64(udata8OverLimit, 112, 0);
+        Require(Relinker::UnusedNidFilter::ReadExceptionFunctions(udata8OverLimit, {highSeg, highEh}, {}, {}).empty());
+        auto ulebOverLimit = Fixture();
+        Io::WriteU64(ulebOverLimit, 4, 0xFFFFFFFFFFFF0040ULL);
+        ulebOverLimit[3] = 0x11;
+        ulebOverLimit[16] = 0xF0; ulebOverLimit[17] = 0xFF; ulebOverLimit[18] = 0x03;
+        ulebOverLimit[19] = 0x4D;
+        Io::WriteU64(ulebOverLimit, 104, 0);
+        ulebOverLimit[112] = 0;
+        Require(Relinker::UnusedNidFilter::ReadExceptionFunctions(ulebOverLimit, {highSeg, highEh}, {}, {}).empty());
+        for (int kind = 0; kind < 20; ++kind) {
             auto bytes = Fixture(); auto segment = load; auto ehSeg = eh;
             switch (kind) {
                 case 0: Io::WriteU32(bytes, 64, 0x1000); break;
@@ -118,6 +144,16 @@ int main() {
                     break;
                 }
                 case 13: bytes[3] = 0x05; break;
+                case 14: Io::WriteU32(bytes, 68, 1); break;
+                case 15: bytes[76] = 17; break;
+                case 16: bytes[73] = 'z'; bytes[74] = 'R'; bytes[75] = 'L'; bytes[76] = 1; break;
+                case 17: bytes[76] = 0; break;
+                case 18: break;
+                case 19: {
+                    Io::WriteU64(bytes, 104, 0x2000);
+                    Io::WriteU64(bytes, 112, 0x1010);
+                    break;
+                }
             }
             bool rejected = false;
             std::vector<Domain::ProgramHeader> headers = {segment, ehSeg};
@@ -128,6 +164,15 @@ int main() {
             if (kind == 10) {
                 Domain::ProgramHeader funcSeg{}; funcSeg.Type = 1; funcSeg.MappedAddress = 0x800; funcSeg.FileSize = 0x20;
                 headers = {segment, ehSeg, funcSeg};
+            }
+            if (kind == 18) {
+                Domain::ProgramHeader textSeg{}; textSeg.Type = 1; textSeg.Flags = 5; textSeg.MappedAddress = 0x3000; textSeg.FileSize = 0x100;
+                headers = {segment, ehSeg, textSeg};
+            }
+            if (kind == 19) {
+                Domain::ProgramHeader seg1{}; seg1.Type = 1; seg1.Flags = 5; seg1.MappedAddress = 0x2000; seg1.FileSize = 0x10;
+                Domain::ProgramHeader seg2{}; seg2.Type = 1; seg2.Flags = 5; seg2.MappedAddress = 0x3000; seg2.FileSize = 0x10;
+                headers = {segment, ehSeg, seg1, seg2};
             }
             try { Relinker::UnusedNidFilter::ReadExceptionFunctions(bytes, headers, {}, {}); }
             catch (const std::exception&) { rejected = true; }
@@ -472,6 +517,82 @@ int main() {
             landingPadOverflowRejected = std::string(error.what()).find("LSDA landing pad address overflowed") != std::string::npos;
         }
         Require(landingPadOverflowRejected);
+        Domain::ProgramHeader validText{}; validText.Type = 1; validText.Flags = 5; validText.MappedAddress = 0x2000; validText.FileSize = 0x1000;
+        const auto inText = Relinker::UnusedNidFilter::ReadExceptionFunctions(Fixture(), {load, eh, validText}, {}, {});
+        Require(inText.size() == 1 && inText[0].Begin == 0x2000 && inText[0].End == 0x2010);
+        auto validLsdaBytes = Fixture();
+        validLsdaBytes.resize(160, 0);
+        Io::WriteU32(validLsdaBytes, 64, 25);
+        validLsdaBytes[72] = 1;
+        const std::vector<std::uint8_t> aug = {'z', 'P', 'L', 'R', 0, 1, 0x78, 16, 11, 0};
+        std::copy(aug.begin(), aug.end(), validLsdaBytes.begin() + 73);
+        Io::WriteU64(validLsdaBytes, 83, 0x2000);
+        validLsdaBytes[91] = 0; validLsdaBytes[92] = 0;
+        Io::WriteU32(validLsdaBytes, 96, 29);
+        Io::WriteU32(validLsdaBytes, 100, 36);
+        Io::WriteU64(validLsdaBytes, 104, 0x2000);
+        Io::WriteU64(validLsdaBytes, 112, 0x10);
+        validLsdaBytes[120] = 8;
+        Io::WriteU64(validLsdaBytes, 121, 0x1088);
+        const std::vector<std::uint8_t> lsdaTable = {0xFF, 0xFF, 1, 4, 0, 1, 0x40, 0};
+        std::copy(lsdaTable.begin(), lsdaTable.end(), validLsdaBytes.begin() + 136);
+        auto validLsdaLoad = load; validLsdaLoad.FileSize = 160;
+        const auto withLsda = Relinker::UnusedNidFilter::ReadExceptionFunctions(validLsdaBytes, {validLsdaLoad, eh, validText}, {}, {});
+        Require(withLsda.size() == 1 && withLsda[0].ExtraTargets.size() == 2 && withLsda[0].ExtraTargets[1] == 0x2040);
+        Domain::ProgramHeader smallText{}; smallText.Type = 1; smallText.Flags = 5; smallText.MappedAddress = 0x2000; smallText.FileSize = 0x20;
+        bool validLsdaRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(validLsdaBytes, {validLsdaLoad, eh, smallText}, {}, {}); }
+        catch (const Relinker::RelinkerException&) { validLsdaRejected = true; }
+        Require(validLsdaRejected);
+        auto zsBytes = Fixture();
+        Io::WriteU32(zsBytes, 64, 12);
+        zsBytes[72] = 1;
+        zsBytes[73] = 'z'; zsBytes[74] = 'S'; zsBytes[75] = 0;
+        zsBytes[76] = 1; zsBytes[77] = 0x78; zsBytes[78] = 16;
+        zsBytes[79] = 0;
+        Io::WriteU32(zsBytes, 96, 21);
+        Io::WriteU32(zsBytes, 100, 36);
+        Io::WriteU64(zsBytes, 104, 0x2000);
+        Io::WriteU64(zsBytes, 112, 0x10);
+        zsBytes[120] = 0;
+        const auto zs = Relinker::UnusedNidFilter::ReadExceptionFunctions(zsBytes, {load, eh, validText}, {}, {});
+        Require(zs.size() == 1 && zs[0].Begin == 0x2000 && zs[0].End == 0x2010);
+        auto zrsBytes = Fixture();
+        Io::WriteU32(zrsBytes, 64, 14);
+        zrsBytes[72] = 1;
+        zrsBytes[73] = 'z'; zrsBytes[74] = 'R'; zrsBytes[75] = 'S'; zrsBytes[76] = 0;
+        zrsBytes[77] = 1; zrsBytes[78] = 0x78; zrsBytes[79] = 16;
+        zrsBytes[80] = 1;
+        zrsBytes[81] = 0;
+        Io::WriteU32(zrsBytes, 96, 21);
+        Io::WriteU32(zrsBytes, 100, 36);
+        Io::WriteU64(zrsBytes, 104, 0x2000);
+        Io::WriteU64(zrsBytes, 112, 0x10);
+        zrsBytes[120] = 0;
+        const auto zrs = Relinker::UnusedNidFilter::ReadExceptionFunctions(zrsBytes, {load, eh, validText}, {}, {});
+        Require(zrs.size() == 1 && zrs[0].Begin == 0x2000 && zrs[0].End == 0x2010);
+        auto extraBytes = Fixture();
+        extraBytes[72] = 1;
+        extraBytes[73] = 'z'; extraBytes[74] = 'R'; extraBytes[75] = 0;
+        extraBytes[76] = 1; extraBytes[77] = 0x78; extraBytes[78] = 16;
+        extraBytes[79] = 3;
+        extraBytes[80] = 0;
+        extraBytes[81] = 0xAA; extraBytes[82] = 0xBB;
+        Io::WriteU32(extraBytes, 64, 15);
+        Io::WriteU32(extraBytes, 96, 23);
+        Io::WriteU32(extraBytes, 100, 36);
+        Io::WriteU64(extraBytes, 104, 0x2000);
+        Io::WriteU64(extraBytes, 112, 0x10);
+        extraBytes[120] = 2;
+        extraBytes[121] = 0xCC; extraBytes[122] = 0xDD;
+        const auto extra = Relinker::UnusedNidFilter::ReadExceptionFunctions(extraBytes, {load, eh, validText}, {}, {});
+        Require(extra.size() == 1 && extra[0].Begin == 0x2000 && extra[0].End == 0x2010);
+        auto removedBytes = Fixture();
+        Io::WriteU64(removedBytes, 16, 0);
+        Io::WriteU64(removedBytes, 104, 0);
+        Io::WriteU64(removedBytes, 112, 0);
+        const auto removed = Relinker::UnusedNidFilter::ReadExceptionFunctions(removedBytes, {load, eh, validText}, {}, {});
+        Require(removed.empty());
         auto unsupportedAugBytes = Fixture();
         Io::WriteU32(unsupportedAugBytes, 64, 11);
         unsupportedAugBytes[73] = 'e';
