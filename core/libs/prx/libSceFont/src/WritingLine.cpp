@@ -235,7 +235,13 @@ extern "C" {
 
 int APS5_VABI sceFontCreateWritingLine(const FontMemory* memory, std::int32_t writingForm, const void* writingLineDetail, void** pWritingLine) {
     if (!memory) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    if (!IsMemoryValid(memory)) return SCE_FONT_ERROR_INVALID_MEMORY;
+    FontMemory probed{};
+    if (!Font::CopyInGuest(probed, memory) || !probed.iface) return SCE_FONT_ERROR_INVALID_MEMORY;
+    FontMemoryInterface iface{};
+    if (!Font::CopyInGuest(iface, probed.iface)) return SCE_FONT_ERROR_INVALID_MEMORY;
+    FontMemory validated = probed;
+    validated.iface = &iface;
+    if (!IsMemoryValid(&validated)) return SCE_FONT_ERROR_INVALID_MEMORY;
     if (!pWritingLine || writingLineDetail || (writingForm != WRITING_FORM_HORIZONTAL_RTL && writingForm != WRITING_FORM_HORIZONTAL_LTR)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     void* allocation = memory->iface->alloc(memory->mspace_handle, sizeof(WritingLine));
     if (!allocation) return SCE_FONT_ERROR_ALLOCATION_FAILED;

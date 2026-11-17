@@ -1,7 +1,14 @@
 #include "prx/libSceFont/include/Api.hpp"
 #include "prx/libSceFont/include/FontTypes.hpp"
 #include <cerrno>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
@@ -97,6 +104,64 @@ int main() {
     void* line = nullptr;
     Require(sceFontCreateWritingLine(nullptr, 0x12, nullptr, &line) == SCE_FONT_ERROR_INVALID_PARAMETER);
     Require(sceFontCreateWritingLine(&memory, 0x12, nullptr, &line) == SCE_FONT_ERROR_INVALID_MEMORY);
+    {
+        void* sentinel = &allocations;
+        errno = 71;
+        Require(sceFontCreateWritingLine(reinterpret_cast<const FontMemory*>(0x1), 0x12, nullptr, &sentinel) == SCE_FONT_ERROR_INVALID_MEMORY);
+        Require(errno == 71 && sentinel == &allocations);
+        Require(sceFontCreateWritingLine(reinterpret_cast<const FontMemory*>(static_cast<std::uintptr_t>(-4096)), 0x12, nullptr, &sentinel) == SCE_FONT_ERROR_INVALID_MEMORY && sentinel == &allocations);
+    }
+    {
+        constexpr std::size_t regionSize = 4096;
+#ifdef _WIN32
+        auto* region = static_cast<std::byte*>(VirtualAlloc(nullptr, regionSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+#else
+        auto* region = static_cast<std::byte*>(mmap(nullptr, regionSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+#endif
+        Require(region != nullptr);
+        std::memcpy(region, &memory, sizeof(memory));
+#ifdef _WIN32
+        DWORD oldProtect = 0;
+        Require(VirtualProtect(region, regionSize, PAGE_NOACCESS, &oldProtect) != 0);
+#else
+        Require(mprotect(region, regionSize, PROT_NONE) == 0);
+#endif
+        void* sentinel = &allocations;
+        errno = 71;
+        Require(sceFontCreateWritingLine(reinterpret_cast<const FontMemory*>(region), 0x12, nullptr, &sentinel) == SCE_FONT_ERROR_INVALID_MEMORY);
+        Require(errno == 71 && sentinel == &allocations);
+#ifdef _WIN32
+        VirtualFree(region, 0, MEM_RELEASE);
+#else
+        munmap(region, regionSize);
+#endif
+    }
+    {
+        constexpr std::size_t regionSize = 4096;
+#ifdef _WIN32
+        auto* readable = static_cast<std::byte*>(VirtualAlloc(nullptr, regionSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+        auto* guarded = static_cast<std::byte*>(VirtualAlloc(nullptr, regionSize, MEM_COMMIT | MEM_RESERVE, PAGE_NOACCESS));
+#else
+        auto* readable = static_cast<std::byte*>(mmap(nullptr, regionSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+        auto* guarded = static_cast<std::byte*>(mmap(nullptr, regionSize, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
+#endif
+        Require(readable != nullptr && guarded != nullptr);
+        FontMemory readableMemory{};
+        readableMemory.mem_kind = 0xF00;
+        readableMemory.iface = reinterpret_cast<const FontMemoryInterface*>(guarded);
+        std::memcpy(readable, &readableMemory, sizeof(readableMemory));
+        void* sentinel = &allocations;
+        errno = 71;
+        Require(sceFontCreateWritingLine(reinterpret_cast<const FontMemory*>(readable), 0x12, nullptr, &sentinel) == SCE_FONT_ERROR_INVALID_MEMORY);
+        Require(errno == 71 && sentinel == &allocations);
+#ifdef _WIN32
+        VirtualFree(readable, 0, MEM_RELEASE);
+        VirtualFree(guarded, 0, MEM_RELEASE);
+#else
+        munmap(readable, regionSize);
+        munmap(guarded, regionSize);
+#endif
+    }
     memory.mem_kind = 0xF00;
     memory.mspace_handle = &allocations;
     Require(sceFontCreateWritingLine(&memory, 0x12, nullptr, &line) == SCE_FONT_ERROR_INVALID_MEMORY);
