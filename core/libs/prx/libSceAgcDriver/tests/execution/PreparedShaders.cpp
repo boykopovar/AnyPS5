@@ -1719,9 +1719,9 @@ void AbiDeferredRectanglePairs() {
     }
     SettleResolvedAbis();
     auto log = Logged(resolve);
-    Require(Deferrals(log) == 1 && log.find("custom per-vertex interpolation is unsupported") != std::string::npos, "a rectangle pair its pipeline ABI cannot build was not deferred once with the builder's reason");
+    Require(Deferrals(log) == 0, "a rectangle pair whose pass-through input the front stage never writes was deferred instead of built");
     log = Logged(resolve);
-    Require(Deferrals(log) == 0, "a rectangle pair deferred at its pipeline ABI was logged again");
+    Require(Deferrals(log) == 0, "a rectangle pair was logged again");
     const auto draw = [&](bool withPixel) {
         std::vector<std::uint32_t> commands;
         for (const auto* header : {&front, &pixel}) {
@@ -1736,8 +1736,7 @@ void AbiDeferredRectanglePairs() {
         AgcDriverWaitIdle_nid_postfix();
     };
     draw(false);
-    ExpectFailure([&] { draw(true); }, "custom per-vertex interpolation is unsupported");
-    ExpectFailure([] { AgcDriverShutdown_nid_postfix(); }, "custom per-vertex interpolation is unsupported");
+    AgcDriverShutdown_nid_postfix();
 }
 
 void CommittedAbis() {

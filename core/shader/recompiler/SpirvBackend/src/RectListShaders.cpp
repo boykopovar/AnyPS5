@@ -497,8 +497,12 @@ RectListShaders BuildRectListShaders(const RecompileResult& vertex, const Recomp
     std::set<std::uint32_t> locations;
     for (const auto& input : fragment.fragmentParameters) {
         require(input.location < 32 && input.sourceLocation < 32 && locations.insert(input.location).second, "invalid fragment parameter location");
-        require(!input.custom, "custom per-vertex interpolation is unsupported");
         const bool exported = std::find(vertex.parameterExports.begin(), vertex.parameterExports.end(), input.sourceLocation) != vertex.parameterExports.end();
+        if (input.custom) {
+            require(!exported, "custom per-vertex interpolation of an exported parameter is unsupported");
+            parameters.push_back({input.sourceLocation, input.location, true, true});
+            continue;
+        }
         if (fragment.barycentricEmulation.active && input.perVertex) {
             require(exported, "an emulated per-vertex parameter is not exported by the vertex shader");
             const auto relocated = std::find_if(layout.perVertexLocations.begin(), layout.perVertexLocations.end(), [&](const auto& entry) { return entry.first == input.location; });
