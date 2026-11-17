@@ -121,6 +121,7 @@ void testLabelRejections() {
         check(label == storage.get(), "a rejected semaphore label changed the output");
     }
     expectFailure([] { sceAgcGetSemaphoreLabel(0, nullptr); });
+    expectFailure([] { sceAgcGetSemaphoreLabel(0, reinterpret_cast<void**>(std::uintptr_t{1})); });
 }
 
 void testRepeatedRegistration() {
