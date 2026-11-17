@@ -1177,10 +1177,12 @@ int GuestSockets::Stat(int descriptor, FileStat* status) {
     }
     bool receiveShut = false;
     bool sendShut = false;
+    int sendBuffer = 0;
     {
         std::lock_guard lock(socket->modeMutex);
         receiveShut = socket->receiveShut;
         sendShut = socket->sendShut;
+        sendBuffer = GuestSockets::SendBufferSize(socket->options, socket->family, socket->type);
     }
     std::int64_t available = 0;
 #ifdef _WIN32
@@ -1190,9 +1192,6 @@ int GuestSockets::Stat(int descriptor, FileStat* status) {
     int count = 0;
     if (!receiveShut && QueuedBytes(*socket, count) == 0) available = count;
 #endif
-    int sendBuffer = 0;
-    socklen_t length = sizeof(sendBuffer);
-    if (getsockopt(socket->value, SOL_SOCKET, SO_SNDBUF, reinterpret_cast<char*>(&sendBuffer), &length) != 0) sendBuffer = 0;
     *status = FileStat{};
     if (socket->family == GuestUnix) {
         status->st_dev = NoDevice;
@@ -1202,7 +1201,7 @@ int GuestSockets::Stat(int descriptor, FileStat* status) {
     if (!receiveShut || available > 0) status->st_mode |= 0444;
     if (!sendShut) status->st_mode |= 0222;
     status->st_size = available;
-    status->st_blksize = sendBuffer > 0 ? static_cast<std::uint32_t>(sendBuffer) : 0;
+    status->st_blksize = static_cast<std::uint32_t>(sendBuffer);
     return 0;
 }
 
