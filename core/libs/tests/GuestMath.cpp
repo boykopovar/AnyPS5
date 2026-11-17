@@ -5006,6 +5006,70 @@ int main() {
             }
         }
     }
+    struct DoubleCategory { std::uint64_t bits; int code; };
+    for (const auto& item : {
+             DoubleCategory{0x7ff0000000000001ull, 2},
+             DoubleCategory{0x7ff8000000000001ull, 2},
+             DoubleCategory{0x7fffffffffffffffull, 2},
+             DoubleCategory{0x7ff0000000000000ull, 1},
+             DoubleCategory{0x0ull, 0},
+             DoubleCategory{0x1ull, -2},
+             DoubleCategory{0x000fffffffffffffull, -2},
+             DoubleCategory{0x0010000000000000ull, -1},
+             DoubleCategory{0x3ff0000000000000ull, -1},
+             DoubleCategory{0x7fefffffffffffffull, -1}
+         }) {
+        for (const std::uint64_t sign : {std::uint64_t{0}, std::uint64_t{0x8000000000000000ull}}) {
+            volatile double input = std::bit_cast<double>(item.bits | sign);
+            for (int classifier = 0; classifier < 3; ++classifier) {
+                for (const int flags : {0, FE_DIVBYZERO}) {
+                    const double value = input;
+                    std::feclearexcept(FE_ALL_EXCEPT);
+                    if (flags != 0) std::feraiseexcept(flags);
+                    errno = 12345;
+                    const int result = classifier == 0 ? _Dclass_nid_postfix(value)
+                        : classifier == 1 ? __fpclassifyd_nid_postfix(value)
+                        : _Dtest_nid_postfix(&value);
+                    const int actualFlags = std::fetestexcept(FE_ALL_EXCEPT);
+                    Require(result == item.code);
+                    Require(actualFlags == flags);
+                    Require(errno == 12345);
+                }
+            }
+        }
+    }
+    struct FloatCategory { std::uint32_t bits; int code; };
+    for (const auto& item : {
+             FloatCategory{0x7f800001u, 2},
+             FloatCategory{0x7fc00001u, 2},
+             FloatCategory{0x7fffffffu, 2},
+             FloatCategory{0x7f800000u, 1},
+             FloatCategory{0x0u, 0},
+             FloatCategory{0x1u, -2},
+             FloatCategory{0x007fffffu, -2},
+             FloatCategory{0x00800000u, -1},
+             FloatCategory{0x3f800000u, -1},
+             FloatCategory{0x7f7fffffu, -1}
+         }) {
+        for (const std::uint32_t sign : {std::uint32_t{0}, std::uint32_t{0x80000000u}}) {
+            volatile float input = std::bit_cast<float>(item.bits | sign);
+            for (int classifier = 0; classifier < 3; ++classifier) {
+                for (const int flags : {0, FE_DIVBYZERO}) {
+                    const float value = input;
+                    std::feclearexcept(FE_ALL_EXCEPT);
+                    if (flags != 0) std::feraiseexcept(flags);
+                    errno = 12345;
+                    const int result = classifier == 0 ? _FDclass_nid_postfix(value)
+                        : classifier == 1 ? __fpclassifyf_nid_postfix(value)
+                        : _FDtest_nid_postfix(&value);
+                    const int actualFlags = std::fetestexcept(FE_ALL_EXCEPT);
+                    Require(result == item.code);
+                    Require(actualFlags == flags);
+                    Require(errno == 12345);
+                }
+            }
+        }
+    }
     std::feclearexcept(FE_ALL_EXCEPT);
     CheckAsin();
     const auto quotient = div_nid_postfix(7, 2);
