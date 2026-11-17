@@ -13,7 +13,7 @@ REGISTRATION_SPEC = importlib.util.spec_from_file_location("check_test_registrat
 REGISTRATION = importlib.util.module_from_spec(REGISTRATION_SPEC)
 REGISTRATION_SPEC.loader.exec_module(REGISTRATION)
 
-FULL = re.compile(r"^CMakeLists\.txt$|^core/CMakeLists\.txt$|^core/libs/CMakeLists\.txt$|^\.github/workflows/build\.yml$"
+FULL = re.compile(r"^CMakeLists\.txt$|^core/libs/CMakeLists\.txt$|^\.github/workflows/build\.yml$"
                   r"|^3rdparty/|^cmake/|^\.gitmodules$|^tools/select_tests\.py$")
 LOCAL = re.compile(r"(^|/)CMakeLists\.txt$|\.cmake$")
 BATCH = 20000
@@ -82,17 +82,13 @@ class Build:
         return nodes
 
     def leaves(self):
-        nodes = self.walk(["all"])
         leaves, todo, seen = set(), ["all"], set()
         while todo:
-            name = todo.pop()
-            if name in seen or name not in nodes:
-                continue
-            seen.add(name)
-            if nodes[name]["phony"]:
-                todo.extend(nodes[name]["inputs"])
-            else:
-                leaves.add(name)
+            batch = sorted(set(todo) - seen)
+            seen.update(batch)
+            nodes = self.query(batch) if batch else {}
+            todo = [i for t in batch if nodes.get(t, {}).get("phony") for i in nodes[t]["inputs"]]
+            leaves.update(t for t in batch if t in nodes and not nodes[t]["phony"])
         return sorted(leaves)
 
     def outputs(self, paths):
@@ -233,14 +229,15 @@ def load_graph(path):
 
 
 def dump(build, out):
+    repo, key = functools.lru_cache(maxsize=None)(build.repo), functools.lru_cache(maxsize=None)(build.key)
     deps = collections.defaultdict(set)
     current = None
     recorded = subprocess.run([build.program, "-C", build.path, "-t", "deps"], capture_output=True, check=True).stdout
     for line in recorded.splitlines():
         if not line.startswith(b" ") and b": #deps" in line:
-            current = build.key(line.split(b": #deps")[0].decode(build.encoding))
+            current = key(line.split(b": #deps")[0].decode(build.encoding))
         elif line.strip() and current:
-            path = build.repo(dependency_path(line.strip(), build.path))
+            path = repo(dependency_path(line.strip(), build.path))
             if path:
                 deps[current].add(path)
     listing, listed = build.tests()
@@ -258,20 +255,20 @@ def dump(build, out):
             if name in seen:
                 continue
             seen.add(name)
-            path = build.repo(name)
+            path = repo(name)
             if path:
                 files.add(path)
-            files |= deps.get(build.key(name), set())
+            files |= deps.get(key(name), set())
             todo.extend(nodes.get(name, {"inputs": []})["inputs"])
         closures[target] = sorted(files)
     tests = {}
     for test in listed:
         registered, node = set(), test.get("backtrace")
         while node is not None:
-            registered.add(build.repo(graph["files"][graph["nodes"][node]["file"]]))
+            registered.add(repo(graph["files"][graph["nodes"][node]["file"]]))
             node = graph["nodes"][node].get("parent")
         props = {p["name"]: p["value"] for p in test.get("properties", [])}
-        inputs = {build.repo(a) for a in paths((test.get("command") or [])[1:])} - {None}
+        inputs = {repo(a) for a in paths((test.get("command") or [])[1:])} - {None}
         inputs.update(path for target in arguments[test["name"]] & outputs for path in closures[target])
         tests[test["name"]] = {"registered": sorted(registered - {None}), "arguments": sorted(inputs),
                                "requires": props.get("FIXTURES_REQUIRED", []), "sets": props.get("FIXTURES_SETUP", []),

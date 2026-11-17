@@ -29,7 +29,10 @@ jobs:
             sleep 15
           done
           if [ "$mergeable" = true ] && [ "$labeled" = true ]; then
-            gh api -X DELETE "repos/$GH_REPO/issues/$PR/labels/needs%20rebase" --silent
+            if ! gh api -X DELETE "repos/$GH_REPO/issues/$PR/labels/needs%20rebase" --silent; then
+              labeled=$(gh api "repos/$GH_REPO/pulls/$PR" --jq 'any(.labels[]; .name == "needs rebase")')
+              [ "$labeled" = false ]
+            fi
           elif [ "$mergeable" = false ] && [ "$labeled" = false ]; then
             gh api "repos/$GH_REPO/issues/$PR/labels" -f 'labels[]=needs rebase' --silent
           fi
