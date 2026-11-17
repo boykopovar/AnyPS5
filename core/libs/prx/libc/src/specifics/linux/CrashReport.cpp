@@ -1,6 +1,7 @@
 #if defined(__linux__) && defined(__x86_64__)
 #include "prx/libc/include/CallTrace.hpp"
 #include "prx/libc/include/LogFile.hpp"
+#include "prx/libc/include/specifics/linux/GuestFaultCopy.hpp"
 
 #include <atomic>
 #include <cerrno>
@@ -274,6 +275,7 @@ void ReportCallTrace() {
 }
 
 void OnFatalSignal(int signal, siginfo_t* info, void* context) {
+    if (GuestFaultCopy::Resume(info, context)) return;
     const int savedErrno = errno;
     if (!g_reporting.exchange(true, std::memory_order_acq_rel)) {
         Report(signal, info, static_cast<const ucontext_t*>(context));

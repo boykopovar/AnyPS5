@@ -473,6 +473,27 @@ static void PollsASocketClosedDuringTheWait() {
     }
 }
 
+static void ReusedDescriptorNumberIsPolledFresh() {
+    const int held = socket_nid_postfix(2, 2, 0);
+    Require(held >= 0);
+    const int closed = socket_nid_postfix(2, 2, 0);
+    Require(closed > held);
+    Require(close_nid_postfix(closed) == 0);
+    const int reused = socket_nid_postfix(2, 2, 0);
+    Require(reused == closed);
+    std::array<unsigned char, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(bind_nid_postfix(reused, address.data(), address.size()) == 0);
+    std::uint32_t size = address.size();
+    Require(getsockname_nid_postfix(reused, address.data(), &size) == 0);
+    Require(connect_nid_postfix(reused, address.data(), address.size()) == 0);
+    Require(send_nid_postfix(reused, "r", 1, 0) == 1);
+    GuestPollDescriptor entry{reused, In, 0};
+    Require(poll_nid_postfix(&entry, 1, 0) == 1 && (entry.revents & In) != 0);
+    char byte{};
+    Require(recv_nid_postfix(reused, &byte, sizeof(byte), 0) == 1 && byte == 'r');
+    Require(close_nid_postfix(reused) == 0 && close_nid_postfix(held) == 0);
+}
+
 static void RejectsReadinessAfterSocketClose() {
     for (int attempt = 0; attempt < 20; ++attempt) {
         const int receiver = socket_nid_postfix(2, 2, 0);
@@ -617,5 +638,6 @@ int main() {
     Require(close_nid_postfix(listener) == 0);
     PollsASocketClosedDuringTheWait();
     RejectsReadinessAfterSocketClose();
+    ReusedDescriptorNumberIsPolledFresh();
     PollsSocketsShutForReading();
 }
