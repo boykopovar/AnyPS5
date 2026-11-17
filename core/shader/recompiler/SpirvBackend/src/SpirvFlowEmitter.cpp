@@ -497,6 +497,8 @@ void EmitDirectInstruction(SpirvValueEmitContext& ctx, const IrValue& inst) {
         case IrOpcode::FPFract32: return Invoke(EmitFPFract32, ctx, inst);
         case IrOpcode::FPAdd64: return Invoke(EmitFPAdd64, ctx, inst);
         case IrOpcode::FPMul64: return Invoke(EmitFPMul64, ctx, inst);
+        case IrOpcode::FPAddRound64: return Invoke(EmitFPAddRound64, ctx, inst);
+        case IrOpcode::FPMulRound64: return Invoke(EmitFPMulRound64, ctx, inst);
         case IrOpcode::FPFma64: return Invoke(EmitFPFma64, ctx, inst);
         case IrOpcode::FPFmaScale64: return Invoke(EmitFPFmaScale64, ctx, inst);
         case IrOpcode::FPFmaScale32: return Invoke(EmitFPFmaScale32, ctx, inst);
