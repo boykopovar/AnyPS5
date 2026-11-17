@@ -2,4 +2,9 @@
 
 ### Unknown function info
 
-- [sceSdecCreateSw, sceSdecDestroySw, sceSdecGetVersionSw and sceSdecQueryMemorySw](../../../core/libs/prx/libSceVdecSavc/Export.cpp) (libSceVdecSavc) - names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceVdecSavc.c), but no credible prototypes were found. The declarations have no parameters solely to resolve known imports; this is not an ABI claim and callers must not call them until signatures are verified
+- [sceSdecCreateSw and sceSdecQueryMemorySw](../../../core/libs/prx/libSceVdecSavc/Export.cpp) (libSceVdecSavc) - names and NIDs are present in the [PS5 3.20 export inventory](https://github.com/DNNDHH/PS5-3.20_Libs/blob/b2a77c09cd71c01f34c790cfbe98c751a13262ad/libSceVdecSavc.c), but no credible prototypes were found. The declarations have no parameters solely to resolve known imports; this is not an ABI claim and callers must not call them until signatures are verified
+- [sceSdecGetVersionSw](../../../core/libs/prx/libSceVdecSavc/Export.cpp) (libSceVdecSavc) - the prototype and behaviour follow firmware 13.42's libSceVdecSavc.sprx, read from disassembly and run under an emulator, not measured on a console: it takes a `uint32_t*`, writes 0 there unless the pointer is null, and returns nothing. Firmware 13.42 checks only for null and stores directly, so the console faults on an unwritable non-null pointer; AnyPS5 skips the store and returns normally instead.
+
+### Functional
+
+- [sceSdecDestroySw](../../../core/libs/prx/libSceVdecSavc/Export.cpp) (libSceVdecSavc) - follows firmware 13.42's libSceVdecSavc.sprx only where it makes no call, read from disassembly, not measured on a console: it takes the decoder pointer and returns 0 for a null pointer, or, when the 64-bit word at offset 0x10 is 0, after storing 0 at offset 8 if that word is non-zero. A non-zero word at offset 0x10 is an object the module releases through its virtual table, so that path throws, as does a decoder that cannot be read or written.

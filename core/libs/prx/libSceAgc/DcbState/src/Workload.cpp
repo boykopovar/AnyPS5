@@ -6,13 +6,13 @@
 #include <cstddef>
 #include <cstring>
 #include "SceTypes.hpp"
-#include "prx/libc/include/General.hpp"
 
 namespace {
 
 constexpr std::uint32_t OpcodeNop = 0x10;
 constexpr std::uint32_t ActivePacketWords = 18;
 constexpr std::uint32_t CompletePacketWords = 12;
+constexpr std::uint32_t InactivePacketWords = 9;
 constexpr std::uint32_t MaxWorkloadId = 63;
 constexpr std::uint32_t MaxActiveCount = 63;
 
@@ -57,8 +57,9 @@ uint32_t* APS5_VABI sceAgcDcbSetWorkloadsActive(CommandBuffer* buf, uint32_t str
 
 uint32_t* APS5_VABI sceAgcDcbSetWorkloadStreamInactive(CommandBuffer* buf, uint32_t streamId) {
  if (buf == nullptr || !AgcDriverWorkloadStreamRegistered_nid_postfix(streamId)) return nullptr;
- NotImplemented_nid_no_patch(__func__);
- return nullptr;
+ auto* packet = NewPacket(buf, InactivePacketWords, __func__);
+ packet[1] = streamId;
+ return packet;
 }
 
 }

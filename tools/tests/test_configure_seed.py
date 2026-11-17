@@ -36,6 +36,71 @@ set(MINI_OPTION "value" CACHE STRING "An option, not a check result")
 """
 
 
+class ConfigureSeedStdoutTests(unittest.TestCase):
+    def stdout_seed(self, root):
+        import contextlib
+        import io
+        cache = root / "CMakeCache.txt"
+        cache.write_text('//Test KEEP\nKEEP:INTERNAL=semi;quote"dollar$\\path\n'
+                         '//Test KDROP\nKDROP:INTERNAL=1\n//Test DROP\nDROP:INTERNAL=1\n', encoding="utf-8")
+        original = cache.read_bytes()
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(configure_seed.main([str(cache), "--stdout", "--include", "K*", "--exclude", "KDROP"]), 0)
+        self.assertEqual(cache.read_bytes(), original)
+        self.assertEqual(list(root.iterdir()), [cache])
+        return cache, output.getvalue()
+
+    def test_stdout_no_mutation(self):
+        import contextlib
+        import io
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cache, text = self.stdout_seed(root)
+            self.assertEqual(text, 'set("KEEP" "semi;quote\\"dollar\\$\\\\path" CACHE INTERNAL "Test KEEP")\n')
+            for args in ([str(cache)], [str(cache), str(root / "seed.cmake"), "--stdout"]):
+                with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+                    configure_seed.main(args)
+                self.assertEqual(error.exception.code, 2)
+
+    @unittest.skipUnless(shutil.which("cmake") and shutil.which("ninja"), "CMake and Ninja are required for the seed round trip")
+    def test_stdout_round_trip(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            seed = root / "seed.cmake"
+            seed.write_text(self.stdout_seed(root)[1], encoding="utf-8")
+            (root / "CMakeLists.txt").write_text('cmake_minimum_required(VERSION 3.20)\nproject(seed NONE)\nfile(WRITE "${CMAKE_BINARY_DIR}/value" "${KEEP}")\n')
+            subprocess.run(["cmake", "-S", str(root), "-B", str(root / "build"), "-G", "Ninja", "-C", str(seed)], check=True, capture_output=True)
+            self.assertEqual((root / "build/value").read_text(), 'semi;quote"dollar$\\path')
+
+    def test_stdout_include_and_exclude_are_applied_independently(self):
+        import contextlib
+        import io
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cache = root / "CMakeCache.txt"
+            cache.write_text('//Test KEEP\nKEEP:INTERNAL=1\n//Test KDROP\nKDROP:INTERNAL=0\n'
+                             '//Test OTHER\nOTHER:INTERNAL=2\n', encoding="utf-8")
+            original = cache.read_bytes()
+            keep = 'set("KEEP" "1" CACHE INTERNAL "Test KEEP")\n'
+            drop = 'set("KDROP" "0" CACHE INTERNAL "Test KDROP")\n'
+            other = 'set("OTHER" "2" CACHE INTERNAL "Test OTHER")\n'
+            cases = (
+                (("--include", "K*"), drop + keep),
+                (("--exclude", "KDROP"), keep + other),
+                (("--include", "K*", "--exclude", "KDROP"), keep),
+                (("--include", "K*", "--exclude", "K*"), ""),
+            )
+            for options, expected in cases:
+                with self.subTest(options=options):
+                    output = io.StringIO()
+                    with contextlib.redirect_stdout(output):
+                        self.assertEqual(configure_seed.main([str(cache), "--stdout", *options]), 0)
+                    self.assertEqual(output.getvalue(), expected)
+                    self.assertEqual(cache.read_bytes(), original)
+                    self.assertEqual(list(root.iterdir()), [cache])
+
+
 class ConfigureSeedPathTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "posix", "requires POSIX file size limits")
     def test_failed_write_preserves_existing_seed_and_allows_retry(self):
@@ -177,6 +242,25 @@ class ConfigureSeedPathTests(unittest.TestCase):
                                  'set("HAVE_FEATURE" "1" CACHE INTERNAL "Test HAVE_FEATURE")\n')
                 self.assertEqual(self.cache.read_bytes(), self.original)
 
+    def test_symbolic_link_loops_are_reported_without_a_traceback(self):
+        loop = self.root / "loop.cmake"
+        try:
+            loop.symlink_to(loop.name)
+        except OSError as error:
+            self.skipTest(f"symbolic links unavailable: {error}")
+        for arguments in ((str(self.cache), str(loop)), (str(loop), str(self.root / "seed.cmake"))):
+            with self.subTest(arguments=arguments):
+                result = subprocess.run([sys.executable, str(TOOL), *arguments],
+                                        capture_output=True, text=True, encoding="utf-8")
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertIn(str(loop), result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertTrue(loop.is_symlink())
+                self.assertEqual(os.readlink(loop), loop.name)
+                self.assertFalse((self.root / "seed.cmake").exists())
+                self.assertEqual(self.cache.read_bytes(), self.original)
+
     def test_filters_do_not_allow_overwriting_cache(self):
         for options in (("--include", "HAVE_*"), ("--include", "NO_MATCH_*"), ("--exclude", "HAVE_*")):
             with self.subTest(options=options):
@@ -246,7 +330,7 @@ class ConfigureSeedTests(ConfigureSeedProject):
         seed = self.root / "filtered.cmake"
         result = subprocess.run([sys.executable, str(TOOL), str(self.root / "fresh" / "CMakeCache.txt"), str(seed),
                                  "--include", "MINI_HAVE_*", "--include", "MINI_COMPILES", "--exclude", "*MISSING*"],
-                                check=True, capture_output=True, text=True)
+                                check=True, capture_output=True, text=True, encoding="utf-8")
         self.assertIn("3 check results", result.stdout)
         seeded = seed.read_text(encoding="utf-8")
         self.assertIn("MINI_HAVE_STDIO_H", seeded)
@@ -314,6 +398,27 @@ class ConfigureSeedRoundTripTests(ConfigureSeedProject):
         self.assertEqual(fresh["HAVE_MINI_SIZEOF_NONE"][0], "FALSE")
         self.assertEqual(fresh["MINI_SIZEOF_NONE"][0], "")
 
+    def test_try_run_results_round_trip_through_cmake(self):
+        source = self.root / "try-run-source"
+        source.mkdir(exist_ok=True)
+        (source / "probe.c").write_text("int main(void) { return 3; }\n", encoding="utf-8")
+        (source / "CMakeLists.txt").write_text(
+            "cmake_minimum_required(VERSION 3.20)\nproject(try_run_check C)\nif(NOT DEFINED MINI_RUN)\n"
+            '  message(STATUS "Running MINI_RUN")\n'
+            "  try_run(MINI_RUN MINI_RUN_COMPILES ${CMAKE_BINARY_DIR}/probe ${CMAKE_SOURCE_DIR}/probe.c)\nendif()\n",
+            encoding="utf-8")
+
+        def configure(name, *extra):
+            return subprocess.run(["cmake", *extra, "-S", str(source), "-B", str(self.root / name), "-G", "Ninja",
+                                   f"-DCMAKE_C_COMPILER={self.compiler}"], check=True, capture_output=True, text=True).stdout
+
+        self.assertIn("Running MINI_RUN", configure("try-run-fresh"))
+        cache = self.root / "try-run-fresh" / "CMakeCache.txt"
+        self.assertEqual(configure_seed.checks(cache)["MINI_RUN"][0], "3")
+        self.assertNotIn("Running MINI_RUN", configure("try-run-seeded", "-C", str(self.seed(cache, "try-run.cmake"))))
+        self.assertEqual(configure_seed.checks(self.root / "try-run-seeded" / "CMakeCache.txt"),
+                         configure_seed.checks(cache))
+
     def test_values_with_cmake_syntax_round_trip(self):
         cache = self.root / "odd" / "CMakeCache.txt"
         cache.parent.mkdir()
@@ -323,6 +428,28 @@ class ConfigureSeedRoundTripTests(ConfigureSeedProject):
         seeded = (self.root / "odd-seeded" / "CMakeCache.txt").read_text(encoding="utf-8")
         self.assertIn(f"MINI_ODD:INTERNAL={value}\n", seeded)
         self.assertEqual(configure_seed.checks(self.root / "odd-seeded" / "CMakeCache.txt")["MINI_ODD"][0], value)
+
+    def test_values_cmake_quotes_for_trailing_whitespace_round_trip(self):
+        source = self.root / "quoted-source"
+        source.mkdir(exist_ok=True)
+        (source / "CMakeLists.txt").write_text(
+            "cmake_minimum_required(VERSION 3.20)\nproject(quoted_check NONE)\nif(NOT DEFINED MINI_SPACE)\n"
+            '  set(MINI_SPACE "abc " CACHE INTERNAL "Test MINI_SPACE")\n'
+            '  set(MINI_TAB "a\\t" CACHE INTERNAL "Test MINI_TAB")\nendif()\n'
+            'message(STATUS "MINI_SPACE=[${MINI_SPACE}] MINI_TAB=[${MINI_TAB}]")\n', encoding="utf-8")
+
+        def configure(name, *extra):
+            return subprocess.run(["cmake", *extra, "-S", str(source), "-B", str(self.root / name), "-G", "Ninja"],
+                                  check=True, capture_output=True, text=True).stdout
+
+        self.assertIn("MINI_SPACE=[abc ] MINI_TAB=[a\t]", configure("quoted-fresh"))
+        cache = self.root / "quoted-fresh" / "CMakeCache.txt"
+        self.assertIn("MINI_SPACE:INTERNAL='abc '\n", cache.read_text(encoding="utf-8"))
+        self.assertEqual({name: entry[0] for name, entry in configure_seed.checks(cache).items()},
+                         {"MINI_SPACE": "abc ", "MINI_TAB": "a\t"})
+        output = configure("quoted-seeded", "-C", str(self.seed(cache, "quoted.cmake")))
+        self.assertIn("MINI_SPACE=[abc ] MINI_TAB=[a\t]", output)
+        self.assertEqual(configure_seed.checks(self.root / "quoted-seeded" / "CMakeCache.txt"), configure_seed.checks(cache))
 
 
 

@@ -54,6 +54,7 @@ struct PeImport {
     std::string Library;
     bool Weak = false;
     bool Function = false;
+    bool Lazy = false;
 };
 
 struct PeRelocations {

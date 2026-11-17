@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "Optimization/ResourceProgram.hpp"
 #include <algorithm>
 #include <bit>
 
@@ -8,6 +9,8 @@ namespace AgcDriver::DriverDetail {
 
 void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<VulkanDevice>& localDevice, const Graphics::State& graphics, const ShaderRecompiler::ShaderPixelStageInfo& pixel, const std::vector<DrawProgram>& programs, const std::vector<ShaderRecompiler::ProgramRole>& roles, const std::vector<std::optional<ShaderRecompiler::ShaderVertexStageInfo>>& vertexInfos, bool useDrawEntries, bool registerKey, bool profile, std::uint64_t& drawKey, std::shared_ptr<DrawEntry>& entry, std::vector<std::shared_ptr<DispatchVariant>>& matched, std::vector<std::vector<ShaderRecompiler::MemoryRegion>>& matchedRegions, bool& drawHit, bool& verifyHit, DrawPhaseTiming& phaseTiming, std::array<double, DrawDriverPhaseCount>& phaseMs, const std::shared_ptr<DrawEntry>& dataEntry, DrawDataCandidates& dataCandidates, std::vector<StageDataHit>& stageData) {
     using Role = ShaderRecompiler::ProgramRole;
+    const bool fixedSlots = localDevice->GraphicsPipelineLibraries();
+    const bool hasFragment = std::ranges::any_of(programs, [](const DrawProgram& program) { return program.binary.stage == ShaderRecompiler::ShaderStage::Fragment; });
     if (useDrawEntries) {
         if (!registerKey) {
             drawKey = 0xcbf29ce484222325ull;
@@ -32,6 +35,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                 mix(tess.mergedHull);
             }
             mix(graphics.rectList);
+            mix(graphics.rasterizerDiscard);
             mix(programs.size());
             for (std::size_t i = 0; i < programs.size(); ++i) {
                 const auto& program = programs[i];
@@ -86,6 +90,11 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                 mix(merge.target);
                 mix(merge.mask);
                 mix(merge.samples);
+                mix(static_cast<std::uint64_t>(merge.packing));
+                mix(merge.blendControl);
+                mix(merge.layered);
+                mix(merge.firstSlice);
+                mix(merge.lastSlice);
                 for (const auto word : merge.descriptor) mix(word);
                 mix(merge.depthStencilWrites);
                 mix(merge.depthStencilTests);
@@ -135,13 +144,16 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                 for (std::size_t i = 0; !miss && i < programs.size(); ++i) {
                     if (roles[i] == Role::GeometryBack) continue;
                     ++stageValidations;
-                    cursor = Graphics::StagePushOffset(cursor, programs[i].binary.stage, localDevice->GraphicsPipelineLibraries());
+                    cursor = Graphics::StagePushOffset(cursor, programs[i].binary.stage, fixedSlots);
+                    if (cursor > Graphics::PushBlockBytes(fixedSlots)) { miss = DrawMiss::Layout; break; }
+                    const auto pushBudget = Graphics::StagePushBudget(Graphics::StagePushLimit(graphics.stages, cursor, graphics.depthRemap.mode != 0u), cursor, programs[i].binary.stage, fixedSlots, hasFragment);
                     const auto& variants = entry->stages[i];
                     auto outcome = EntryOutcome::Differing;
                     bool anyLayout = false;
                     for (std::size_t rank = 0; rank < variants.size(); ++rank) {
                         const auto& variant = variants[rank];
-                        if (variant->pushOffset != cursor) continue;
+                        if (variant->registeredViews != nullptr && !CaptureRegisteredViewsCurrent(*variant->registeredViews)) continue;
+                        if (variant->pushOffset != cursor || variant->compiled->pushConstants.size() > pushBudget) continue;
                         if (programs[i].binary.stage == ShaderRecompiler::ShaderStage::Mesh && !std::equal(variant->meshIndexDescriptor.begin(), variant->meshIndexDescriptor.end(), programs[i].userData.begin() + ShaderRecompiler::MeshIndexBufferUserWord)) {
                             if (!anyLayout) outcome = EntryOutcome::Differing;
                             anyLayout = true;
@@ -174,6 +186,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                     }
                     if (matched[i] != nullptr) continue;
                     if (!anyLayout) miss = DrawMiss::Layout;
+                    else if (outcome == EntryOutcome::QueuedStores) miss = DrawMiss::QueuedStores;
                     else if (outcome != EntryOutcome::Differing) miss = DrawMiss::Gate;
                     else miss = roles[i] == Role::Fragment ? DrawMiss::FragmentDiffering : i == 0 ? DrawMiss::FrontDiffering : DrawMiss::OtherDiffering;
                 }
@@ -190,6 +203,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                 counters.stageDataWords += dataWords;
                 if (registerKey) ++counters.registerKeyHits;
                 ++drawCacheHits;
+                drawCacheUseful().fetch_add(1, std::memory_order_relaxed);
                 bool rotate = false;
                 for (std::size_t i = 0; i < programs.size(); ++i) {
                     if (matched[i] == nullptr) continue;
@@ -249,6 +263,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                 const auto& was = dataEntry->decode->programs[i].userData;
                 auto& candidates = dataCandidates[i];
                 for (const auto& variant : dataEntry->stages[i]) {
+                    if (variant->registeredViews != nullptr && !CaptureRegisteredViewsCurrent(*variant->registeredViews)) continue;
                     bool usedEqual = true;
                     for (std::size_t w = 0; w < now.size() && usedEqual; ++w) {
                         if (now[w] != was[w] && (w >= 64u || ((variant->userDataMask >> w) & 1u) != 0)) usedEqual = false;

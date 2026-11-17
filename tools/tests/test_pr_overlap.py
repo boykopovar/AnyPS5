@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 from urllib.parse import unquote, urlsplit
@@ -37,7 +38,7 @@ class OpenPullRequestsTests(unittest.TestCase):
             found = pr_overlap.open_prs("main")
         self.assertEqual(set(found), set(range(1, 202)))
         self.assertEqual(found[201], {
-            "ref": "refs/pr/201", "sha": "sha201", "author": "author201", "depends": {12, 34},
+            "ref": "refs/pr/201", "sha": "sha201", "author": "author201", "title": "", "depends": {12, 34},
         })
         self.assertEqual(found[1]["depends"], set())
 
@@ -57,7 +58,7 @@ class OpenPullRequestsTests(unittest.TestCase):
                 patch.object(pr_overlap, "gh", return_value=json.dumps(pull_requests)):
             found = pr_overlap.open_prs("main")
         self.assertEqual(found, {
-            7: {"ref": "refs/pr/7", "sha": "head-sha", "author": "contributor", "depends": set()},
+            7: {"ref": "refs/pr/7", "sha": "head-sha", "author": "contributor", "title": "", "depends": set()},
         })
 
     def test_collects_concatenated_json_pages_from_paginated_gh_output(self):
@@ -83,6 +84,23 @@ class OpenPullRequestsTests(unittest.TestCase):
                 pr_overlap.open_prs("main")
 
 
+class ClashDiffReadTests(unittest.TestCase):
+    def test_each_side_diff_is_read_once(self):
+        a = {"tree": "ta", "files": {"f.cpp"}, "added": set()}
+        b = {"tree": "tb", "files": {"f.cpp"}, "added": set()}
+        diffs = {"ta": "@@ -1 +1 @@\n-a\n+b\n@@ -5 +5 @@\n-c\n+d\n@@ -9 +9 @@\n-e\n+f\n",
+                 "tb": "@@ -2 +2 @@\n-g\n+h\n"}
+        calls = []
+
+        def fake_git(*args):
+            calls.append(args)
+            return diffs[args[4]]
+
+        with patch.object(pr_overlap, "git", side_effect=fake_git):
+            self.assertEqual(pr_overlap.clashes(a, b, "f.cpp"), [(1, 2)])
+        self.assertEqual(len(calls), 2)
+
+
 class TopInsertTests(unittest.TestCase):
     def test_top_of_file_insertions_clash_on_line_one(self):
         pr = {"tree": "t", "files": {"f.cpp"}, "added": set()}
@@ -101,18 +119,76 @@ class TopInsertTests(unittest.TestCase):
 
 
 class FetchTests(unittest.TestCase):
+    def test_concurrent_fetches_do_not_replace_shared_refs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            remote = root / "remote.git"
+            source = root / "source"
+            consumer = root / "consumer"
+            source.mkdir()
+            consumer.mkdir()
+
+            def run(where, *args):
+                return subprocess.run(
+                    ["git", "-c", "user.name=Overlap Test", "-c", "user.email=test@example.com", *args],
+                    cwd=where, capture_output=True, text=True, check=True, encoding="utf-8",
+                ).stdout.strip()
+
+            run(root, "init", "--bare", "-q", str(remote))
+            run(source, "init", "-q", "-b", "main")
+            run(source, "commit", "-qm", "base", "--allow-empty")
+            base = run(source, "rev-parse", "HEAD")
+            run(source, "commit", "-qm", "head", "--allow-empty")
+            head = run(source, "rev-parse", "HEAD")
+            run(source, "commit", "-qm", "newer head", "--allow-empty")
+            newer_head = run(source, "rev-parse", "HEAD")
+            run(source, "remote", "add", "origin", str(remote))
+            run(source, "push", "-q", "origin", "HEAD:refs/heads/main")
+
+            run(consumer, "init", "-q")
+            run(consumer, "fetch", "-q", str(remote), "refs/heads/main")
+            run(consumer, "fetch", "-q", str(remote), base)
+            run(consumer, "update-ref", "refs/pr/base", base)
+            run(consumer, "update-ref", "refs/pr/7", base)
+            prs = {7: {"ref": "refs/pr/7", "sha": head, "author": "one", "depends": set()}}
+            newer_prs = {7: {"ref": "refs/pr/7", "sha": newer_head, "author": "one", "depends": set()}}
+            original = Path.cwd()
+            try:
+                os.chdir(consumer)
+                pr_overlap._REPO_ROOTS.clear()
+                redirect = {
+                    "GIT_CONFIG_COUNT": "1",
+                    "GIT_CONFIG_KEY_0": f"url.{remote.as_posix()}.insteadOf",
+                    "GIT_CONFIG_VALUE_0": "https://github.com/owner/project.git",
+                }
+                with patch.object(pr_overlap, "REPO", "owner/project", create=True), patch.dict(os.environ, redirect):
+                    with ThreadPoolExecutor(max_workers=2) as executor:
+                        bases = list(executor.map(lambda requests: pr_overlap.fetch("main", requests), (prs, newer_prs)))
+            finally:
+                os.chdir(original)
+                pr_overlap._REPO_ROOTS.clear()
+
+            self.assertEqual(run(consumer, "rev-parse", "refs/pr/base"), base)
+            self.assertEqual(run(consumer, "rev-parse", "refs/pr/7"), base)
+            self.assertEqual(run(consumer, "rev-parse", "FETCH_HEAD"), base)
+            self.assertEqual(bases, [newer_head, newer_head])
+            self.assertEqual(prs[7]["ref"], head)
+            self.assertEqual(newer_prs[7]["ref"], newer_head)
+
     def test_fetches_each_head_commit_the_api_reported(self):
         prs = {
             7: {"ref": "refs/pr/7", "sha": "a" * 40, "author": "one", "depends": set()},
             9: {"ref": "refs/pr/9", "sha": "b" * 40, "author": "two", "depends": set()},
         }
         with patch.object(pr_overlap, "REPO", "owner/project", create=True), \
-                patch.object(pr_overlap, "git", return_value="") as git:
-            pr_overlap.fetch("main", prs)
-        git.assert_called_once_with(
-            "fetch", "--no-tags", "-q", "https://github.com/owner/project.git",
-            "+refs/heads/main:refs/pr/base", f"+{'a' * 40}:refs/pr/7", f"+{'b' * 40}:refs/pr/9",
-        )
+                patch.object(pr_overlap, "git", side_effect=[f"{'c' * 40}\trefs/heads/main\n", ""]) as git:
+            self.assertEqual(pr_overlap.fetch("main", prs), "c" * 40)
+        self.assertEqual([call.args for call in git.call_args_list], [
+            ("ls-remote", "--exit-code", "https://github.com/owner/project.git", "refs/heads/main"),
+            ("fetch", "--no-write-fetch-head", "--no-tags", "-q", "https://github.com/owner/project.git",
+             "c" * 40, "a" * 40, "b" * 40),
+        ])
+        self.assertEqual([prs[7]["ref"], prs[9]["ref"]], ["a" * 40, "b" * 40])
 
     def test_batches_large_sets_of_pull_request_heads(self):
         prs = {
@@ -123,12 +199,12 @@ class FetchTests(unittest.TestCase):
             for number in range(250)
         }
         with patch.object(pr_overlap, "REPO", "owner/project", create=True), \
-                patch.object(pr_overlap, "git", return_value="") as git:
+                patch.object(pr_overlap, "git", side_effect=[f"{'f' * 40}\trefs/heads/main\n", "", "", ""]) as git:
             pr_overlap.fetch("main", prs)
-        self.assertEqual(git.call_count, 3)
-        self.assertEqual([len(call.args) - 4 for call in git.call_args_list], [100, 100, 51])
-        self.assertEqual(git.call_args_list[0].args[4], "+refs/heads/main:refs/pr/base")
-        self.assertEqual(git.call_args_list[-1].args[-1], "+00000000000000000000000000000000000000f9:refs/pr/249")
+        self.assertEqual(git.call_count, 4)
+        self.assertEqual([len(call.args) - 5 for call in git.call_args_list[1:]], [100, 100, 51])
+        self.assertEqual(git.call_args_list[1].args[5], "f" * 40)
+        self.assertEqual(git.call_args_list[-1].args[-1], "00000000000000000000000000000000000000f9")
 
 
 class ConflictTests(unittest.TestCase):
@@ -408,6 +484,84 @@ class MarkdownCellTests(unittest.TestCase):
             "example%60file.cpp#L5",
             result,
         )
+
+
+class ReportSizeCapTests(unittest.TestCase):
+    CAP_UNDER_GITHUB_LIMIT = 60000
+
+    def test_empty_report_stays_empty(self):
+        self.assertEqual(pr_overlap.report({}, "https://example.invalid/blob/base"), "")
+
+    def test_small_report_is_byte_identical_to_the_uncapped_output(self):
+        rows = {2: {"added": set(), "conflicts": {"other.cpp": [(1, 1)]}},
+                3: {"added": set(), "uncompared": {"shared.cpp"}}}
+        report = pr_overlap.report(rows, "https://example.invalid/blob/base")
+        self.assertEqual(report, (
+            f"{pr_overlap.MARKER}\n"
+            "Other open pull requests touch the same code. Merging one will break the other, "
+            "or both implement the same thing. If this one builds on them, list them in **Depends on**.\n"
+            "\n"
+            "| Pull request | Conflicting files (lines on `main`) | Same exports | Same new files |\n"
+            "|---|---|---|---|\n"
+            "| [PR 2](https://example.invalid/pull/2) | `other.cpp` [L1](https://example.invalid/blob/base/other.cpp#L1) |  |  |\n"
+            "\n"
+            "Some comparisons could not be completed because a pull request conflicts with the base branch. "
+            "Review these shared files manually before concluding that there is no overlap.\n"
+            "\n"
+            "| Pull request | Shared files not compared |\n"
+            "|---|---|\n"
+            "| [PR 3](https://example.invalid/pull/3) | `shared.cpp` |\n"
+        ))
+        self.assertLessEqual(len(report), self.CAP_UNDER_GITHUB_LIMIT)
+
+    def test_uncompared_section_after_main_exports_starts_a_new_paragraph(self):
+        rows = {3: {"added": set(), "uncompared": {"shared.cpp"}}}
+        main_exports = {"sceFoo": {"same_key": {("core/libs/prx/libSceX", "AAAAAAAAAAA")}, "other_libraries": set()}}
+        report = pr_overlap.report(rows, "https://example.invalid/blob/base", main_exports)
+        self.assertEqual(report, (
+            f"{pr_overlap.MARKER}\n"
+            "Exports with a name or library/NID already present in `main`:\n"
+            "\n"
+            "- `sceFoo` (same library/NID already present: core/libs/prx/libSceX (AAAAAAAAAAA))\n"
+            "\n"
+            "Some comparisons could not be completed because a pull request conflicts with the base branch. "
+            "Review these shared files manually before concluding that there is no overlap.\n"
+            "\n"
+            "| Pull request | Shared files not compared |\n"
+            "|---|---|\n"
+            "| [PR 3](https://example.invalid/pull/3) | `shared.cpp` |\n"
+        ))
+
+    def test_pathological_report_with_many_overlaps_and_paths_is_capped(self):
+        rows = {
+            number: {
+                "added": {f"new/file{number}_{i}.cpp" for i in range(3)},
+                "conflicts": {f"core/libs/prx/libExample/path_{number}_{i}.cpp": [(1, 1), (10, 20)] for i in range(5)},
+                "exports": {f"sceExample{number}_{i}" for i in range(3)},
+            }
+            for number in range(2, 400)
+        }
+        report = pr_overlap.report(rows, "https://github.com/boykopovar/AnyPS5/blob/deadbeef")
+        self.assertLessEqual(len(report), self.CAP_UNDER_GITHUB_LIMIT)
+        self.assertTrue(report.startswith(pr_overlap.MARKER))
+        match = re.search(r"_Report truncated: (\d+) more lines omitted\._\n\Z", report)
+        self.assertIsNotNone(match)
+        self.assertGreater(int(match.group(1)), 0)
+        lines = report.split("\n")
+        table_rows = [line for line in lines if line.startswith("|")]
+        self.assertTrue(table_rows)
+        self.assertEqual(table_rows[1], "|---|---|---|---|")
+        pipe_counts = {line.count("|") for line in table_rows}
+        self.assertEqual(pipe_counts, {5})
+
+    def test_single_oversized_row_still_yields_a_capped_report(self):
+        rows = {2: {"added": set(),
+                    "conflicts": {f"core/libs/prx/libExample/path_{i}.cpp": [(1, 2)] for i in range(2000)}}}
+        report = pr_overlap.report(rows, "https://github.com/boykopovar/AnyPS5/blob/deadbeef")
+        self.assertLessEqual(len(report), self.CAP_UNDER_GITHUB_LIMIT)
+        self.assertTrue(report.startswith(pr_overlap.MARKER))
+        self.assertRegex(report, r"_Report truncated: \d+ more lines omitted\._\n\Z")
+
 
 class CommentStateTests(unittest.TestCase):
     def setUp(self):

@@ -2,52 +2,47 @@
 
 ### Silent stubs
 
-- [sceAudioInInit](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - returns 0 without library-wide setup, as `sceAudioOutInit` does; each `sceAudioInOpen` opens its own SDL capture device
+- [sceAudioInInit](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - returns 0 without library-wide setup; the 4.03 module defers an audio-service IPC handle fetch, which has no host equivalent
+- [sceAudioInSetCompressorPreGain, sceAudioInSetNoiseGateThreshold](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signatures; the PS5 13.60 module returns 0 without reading any argument, and so do these stubs
 
 ### Unknown function info
 
-- [sceAudioInDeviceIdOpen](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
-- [sceAudioInDeviceIdAsyncOpen](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
 - [sceAudioInSetUsbGain](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
-- [sceAudioInIsSharedDevice](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
-- [sceAudioInDeviceIdHqOpen](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
-- [sceAudioInDeviceHqOpen](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
 - [sceAudioInSetConnections](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
 - [sceAudioInSetPortConnections](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
 - [sceAudioInSetPortStatuses](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
-- [sceAudioInGetHandleStatusInfo](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
-- [sceAudioInDeviceOpenEx](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
 - [sceAudioInChangeAppModuleState](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature; the export throws through `NotImplemented_nid_no_patch`, and this parameterless declaration is for import resolution only. The closest signed sibling, `sceMbusChangeAppModuleState` (`std::uint32_t deviceClass`, `std::int32_t moduleId`, `std::uint32_t state`), takes three arguments, so this shape is probably not the real one. What the console notifies and whether a title calls it is unmeasured
 - [sceAudioInSetSparkParam](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
 - [sceAudioInSetSparkSideTone](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
-- [sceAudioInSetCompressorPreGain](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature; the PS5 13.60 module returns 0 without reading any argument, and so does this one
-- [sceAudioInSetNoiseGateThreshold](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature; the PS5 13.60 module returns 0 without reading any argument, and so does this one
-- [sceAudioInSetMicLevel](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
-- [sceAudioInSetDeviceMuteStatus](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
 - [sceAudioInSetDevConnection](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
-- [sceAudioInCountPorts](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
-- [sceAudioInSetUserMute](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
-- [sceAudioInVmicCreate](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
 - [sceAudioInVmicDestroy](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
 - [sceAudioInVmicWrite](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
 - [sceAudioInVmicGetStatus](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
 - [sceAudioInVmicSetMute](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
-- [sceAudioInSetMode](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
-- [sceAudioInSetMode2](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
 - [sceAudioInExtCtrl](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
 - [sceAudioInInputs](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - unknown signature
 
 - 6 additional pending imports in [InventoryExports.cpp](../../../core/libs/prx/libSceAudioIn/InventoryExports.cpp) are listed in the local PS5 3.20 export inventory `libSceAudioIn.c`. Their signatures and behavior are unverified; each uses the no-parameter unknown-signature convention and throws through `NotImplemented_nid_no_patch`, for import resolution only.
 
-- `sceAudioInExtClose` — NID `kFKJ3MVcDuo` — [`sceAudioInPending_001_nid_no_patch`](../../../core/libs/prx/libSceAudioIn/InventoryExports.cpp)
-- `sceAudioInExtInput` — NID `KpBKoHKVKEc` — [`sceAudioInPending_002_nid_no_patch`](../../../core/libs/prx/libSceAudioIn/InventoryExports.cpp)
-- `sceAudioInExtOpen` — NID `YZ+3seW7CyY` — [`sceAudioInPending_003_nid_no_patch`](../../../core/libs/prx/libSceAudioIn/InventoryExports.cpp)
-- `sceAudioInExtSetAecMode` — NID `FVGWf8JaHOE` — [`sceAudioInPending_004_nid_no_patch`](../../../core/libs/prx/libSceAudioIn/InventoryExports.cpp)
-- `sceAudioInSetConnectionsForUser` — NID `thLNHvkWSeg` — [`sceAudioInPending_005_nid_no_patch`](../../../core/libs/prx/libSceAudioIn/InventoryExports.cpp)
-- `sceAudioInSetFocusForUser` — NID `iN3KqF-8R-w` — [`sceAudioInPending_006_nid_no_patch`](../../../core/libs/prx/libSceAudioIn/InventoryExports.cpp)
+- [`sceAudioInExtClose`](../../../core/libs/prx/libSceAudioIn/InventoryExports.cpp) — NID `kFKJ3MVcDuo`
+- [`sceAudioInExtInput`](../../../core/libs/prx/libSceAudioIn/InventoryExports.cpp) — NID `KpBKoHKVKEc`
+- [`sceAudioInExtOpen`](../../../core/libs/prx/libSceAudioIn/InventoryExports.cpp) — NID `YZ+3seW7CyY`
+- [`sceAudioInExtSetAecMode`](../../../core/libs/prx/libSceAudioIn/InventoryExports.cpp) — NID `FVGWf8JaHOE`
+- [`sceAudioInSetConnectionsForUser`](../../../core/libs/prx/libSceAudioIn/InventoryExports.cpp) — NID `thLNHvkWSeg`
+- [`sceAudioInSetFocusForUser`](../../../core/libs/prx/libSceAudioIn/InventoryExports.cpp) — NID `iN3KqF-8R-w`
 
 ### Functional
 
-- [sceAudioInIsPadEmbeddedMic](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - returns 0 for every open port: on the console it returns 1 when the port captures from the controller's built-in microphone and 0 for another input device, but ports here capture from the host's default input device
+- [sceAudioInIsPadEmbeddedMic](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - returns 0 for every open port: on the console it returns 1 when the port captures from the controller's built-in microphone and 0 for another input device, but ports here capture from the host's default input device. The export is absent from the 4.03 module and its validation order is unverified
 - [sceAudioInHqOpen, sceAudioInAsyncOpen](../../../core/libs/prx/libSceAudioIn/Export.cpp) - PS5 wrapper validation requires 48000 Hz followed by exactly 128 samples for both calls; HqOpen then requires format 2. The host uses the same SDL capture path for both, so native asynchronous scheduling and high-quality processing are not reproduced. Common port validation, device selection and host capture pacing remain incomplete. One title (PPSA03355, in its libfmod plugin) disassembled for this entry calls `sceAudioInAsyncOpen` from one call site (0xe5972) with index 0, 128 samples, 48000 Hz and a last argument of 2, plus a type argument of 0 or 1, which agrees with the 48000 Hz and 128 samples above; it stores the result in a slot of its own and branches on a negative result. What the last argument 2 means is not shown.
-- [sceAudioInGetGain, sceAudioInGetRerouteCount](../../../core/libs/prx/libSceAudioIn/Export.cpp) - GetGain writes 1.0f before handle validation and returns 0x80260105 for a null output, as confirmed by the PS5 module. Native handle bit checks and uninitialized/inactive port errors differ from the host port table. Native reroute counters follow device reassignment; the host opens each SDL device once and reports zero.
+- [sceAudioInGetGain, sceAudioInGetRerouteCount](../../../core/libs/prx/libSceAudioIn/Export.cpp) - GetGain writes 1.0f before handle validation and returns 0x80260105 for a null or unwritable output, as confirmed by the PS5 module for null; Firmware 13.42 checks only for null and stores directly (read from disassembly, not measured on a console), so the console faults on an unwritable non-null pointer; AnyPS5 returns INVALID_POINTER (0x80260105) instead. Native handle bit checks now match the 4.03 module (0x30000000 base, 0x80260109 for free slots); the remaining differences are the shm-backed gain value and reroute counter — native counters follow device reassignment while the host opens each SDL device once and reports zero.
+- [sceAudioInDeviceIdOpen, sceAudioInDeviceIdAsyncOpen, sceAudioInDeviceIdHqOpen, sceAudioInDeviceHqOpen, sceAudioInDeviceOpenEx](../../../core/libs/prx/libSceAudioIn/Export.cpp) - signatures and check order verified against the 4.03 module: the device core validates type <= 5, then freq, then len, then the param mask, and registers the port through `sceMbusAddHandleByDeviceId`. The host ignores the device id and opens the default capture device; per-device selection and the async/hq flag byte (+0x9c) the firmware records are not modelled.
+- [sceAudioInGetHandleStatusInfo](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - handle gates implemented per 4.03 (handle&0x7f000000==0x30000000, index<=7, slot open). The status record layout recovered: out[0x00..0x0f] copies the entry blob at +0x80, out[0x10] is the mode snapshot stored at open, out[0x14]/out[0x18] are shm slot fields +0x402c/+0x4028, and out[0] gets bits 0x21 when +0x402c is zero. The shm service state has no host equivalent, so the export still throws past validation.
+- [sceAudioInIsSharedDevice](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - 4.03 checks only the low-byte index (<=7) and the slot's open flag; unlike the other handle gates it skips the 0x30000000 high-bits test. The shared-state answer is a shm service field (returns shm+0x402c == 3), so the export throws past the checks.
+- [sceAudioInCountPorts](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - 4.03 signature is (int16 type, int16 index, int16 arg3, int32 arg4); it lazy-fetches the IPC handle and forwards all four arguments to the audio service with no local checks, so it stays unsupported.
+- [sceAudioInSetMode, sceAudioInSetMode2](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - SetMode is a literal alias of SetMode2 with a null third argument. SetMode2 stores its second argument in a library global when the first is 0 (the global each open snapshots into entry +0x70), then forwards all three arguments to the service; the store is implemented and the service tail throws.
+- [sceAudioInSetUserMute, sceAudioInSetDeviceMuteStatus](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - SetUserMute is a literal alias of SetDeviceMuteStatus. The type argument masked to 31 bits must land in {1,2,3,4,6,7} (0x8026010f otherwise); a negative type selects a raw device id. Past the mask the call converts the id through sceMbusConvertToLocalDeviceId2 and reaches the service, which is unimplemented.
+- [sceAudioInSetMicLevel, sceAudioInSetMicrophoneLevel](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - SetMicrophoneLevel aliases SetMicLevel with a zero fifth argument. Level above 100 returns 0x80260106 before the type check; a non-negative type outside 1..4 returns 0x8026010f, while a negative type selects a raw device id. The mbus conversion and service call are unimplemented.
+- [sceAudioInVmicCreate](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - 4.03 runs sceAudioInInit, opens the /vmicDdShmAin shared object and /vmicDdEvfAin event flag (0x80260100 when unavailable), validates len and freq like the open path, then creates the vmic channel through the service and notifies sceMbusNotifyDriverEvent. Vmic handles live in a separate 0x0004xxxx space. Only the argument checks are implemented; the service tail throws.
+- [sceAudioInOpen](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - the 4.03 module applies an extra gate when `sceKernelIsPs4Process` reports a PS4 title: frequency must be 16000, granularity 256, and param <= 1. The host does not distinguish PS4 from PS5 callers and always applies the PS5 path. The 0x30000000-based handle encoding, 0x80260109 free-slot error, open-order checks, channel/encoding param mask ({1,1,2} channels for nibbles 0..2, bit 0x10 selects float32) and the entry mode snapshot stored at open all match the module.
+- [sceAudioInInput](../../../core/libs/prx/libSceAudioIn/Export.cpp) (libSceAudioIn) - the native path drains shm service state and applies per-port flags; the host captures through SDL and does not model the service channel.

@@ -14,19 +14,28 @@ enum class ImeHostInputKind : std::uint32_t {
     End,
     Enter,
     Escape,
+    Preedit,
+    Paste,
 };
 
 struct ImeHostInput {
     ImeHostInputKind kind = ImeHostInputKind::Text;
     char text[32] = {};
+    std::int32_t start = 0;
+    std::int32_t length = 0;
 };
 
 extern "C" void ImePublishInput_nid_postfix(const ImeHostInput& input);
+extern "C" void ImePublishPaste_nid_postfix(const char* utf8, std::size_t size);
 extern "C" bool ImeCapturesKeyboard_nid_postfix();
 
 using ImeHostTextSink = void (*)(ImeHostInputKind kind, const char16_t* text, std::size_t length);
 
 extern "C" void ImeSetHostTextSink_nid_no_patch(ImeHostTextSink sink);
+
+using ImeHostPreeditSink = void (*)(const char16_t* text, std::size_t size, std::int32_t start, std::int32_t selected);
+
+extern "C" void ImeSetHostPreeditSink_nid_no_patch(ImeHostPreeditSink sink);
 
 struct ImeHostPad {
     std::uint32_t buttons = 0;

@@ -4,15 +4,33 @@
 
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
 
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <mutex>
 #include <sstream>
+#include <stdexcept>
+#include <streambuf>
 #include <string>
 #include <thread>
+#include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
+namespace AgcDriver {
+
+struct CaptureTraceTestAccess {
+    static void QueueDrop(bool shutdownOnly, bool cumulative = false);
+};
+
+}
 
 namespace {
 
@@ -85,6 +103,50 @@ void ExplicitWrites() {
     std::remove(configured);
 }
 
+void StopUnused() {
+    const char* configured = RequiredPathVariable();
+    AgcDriver::CaptureTrace::Stop();
+    Check(!FileExists(configured), "stopping an unused trace must not create its file or worker");
+}
+
+void StopDrains() {
+    const char* configured = RequiredPathVariable();
+    AgcDriver::CaptureTrace::Log("stop-record before");
+    std::vector<std::thread> callers;
+    for (unsigned i = 0; i < 4; ++i) callers.emplace_back([] { AgcDriver::CaptureTrace::Stop(); });
+    for (auto& caller : callers) caller.join();
+    const auto contents = ReadFile(configured);
+    Check(contents.find("stop-record before\n") != std::string::npos, "stopping lost a queued record");
+    Check(contents.find("capture-trace-summary dropped=0\n") != std::string::npos, "stopping did not write its summary");
+    AgcDriver::CaptureTrace::Log("stop-record after");
+    AgcDriver::CaptureTrace::Stop();
+    Check(ReadFile(configured) == contents, "a repeated stop or a late record changed the completed trace");
+}
+
+#ifdef _WIN32
+void DllShutdown(const char* modulePath) {
+    const char* configured = RequiredPathVariable();
+    HMODULE module = LoadLibraryA(modulePath);
+    Check(module != nullptr, "the capture trace DLL could not be loaded");
+    const auto record = reinterpret_cast<void (*)()>(GetProcAddress(module, "CaptureTraceRecord"));
+    const auto stop = reinterpret_cast<void (*)()>(GetProcAddress(module, "CaptureTraceStop"));
+    Check(record != nullptr && stop != nullptr, "the capture trace DLL is missing its test entry points");
+    record();
+    stop();
+    stop();
+    Check(FreeLibrary(module) != 0, "the stopped capture trace DLL could not be unloaded");
+    std::istringstream lines(ReadFile(configured));
+    std::string line;
+    for (unsigned i = 0; i < 32; ++i) {
+        Check(static_cast<bool>(std::getline(lines, line)) && line.ends_with(" unload-record item=" + std::to_string(i)),
+              "DLL shutdown lost or reordered a queued record");
+    }
+    Check(static_cast<bool>(std::getline(lines, line)) && line.ends_with(" capture-trace-summary dropped=0"),
+          "DLL shutdown lost its summary");
+    Check(!std::getline(lines, line), "DLL shutdown wrote extra records or a second summary");
+}
+#endif
+
 void DefaultWrites() {
     RemoveEnvironmentVariable("APS5_CAPTURE_TRACE_PATH");
     Check(AgcDriver::CaptureTrace::Enabled(), "APS5_CAPTURE_TRACE must enable capture tracing");
@@ -127,6 +189,140 @@ void BestEffortOverflow() {
     std::remove(configured);
 }
 
+void FormatOverflow() {
+    const char* configured = RequiredPathVariable();
+    const std::string oversized(4096, 'x');
+    AgcDriver::CaptureTrace::Log("capture-trace-format payload=%s", oversized.c_str());
+    Check(WaitForRecord(configured, "capture-trace-dropped records=1\n"),
+          "an oversized record must be counted instead of throwing or writing a partial record");
+    AgcDriver::CaptureTrace::Log("%s", "capture-trace-format-recovered");
+    Check(WaitForRecord(configured, "capture-trace-format-recovered\n"),
+          "capture tracing did not recover after an oversized record");
+    Check(ReadFile(configured).find("capture-trace-format payload=") == std::string::npos,
+          "the trace contains a truncated oversized record");
+    std::remove(configured);
+}
+
+void PrefixMatching() {
+    for (const char* empty : {static_cast<const char*>(nullptr), "", ",,,"}) {
+        const AgcDriver::CaptureTraceFilter all(empty);
+        Check(!all.Active() && all.Matches("anything") && all.MayMatchFormat("anything %d"),
+              "an absent or empty prefix list must retain all records");
+    }
+    char configured[] = ",upload image=,image-write ,flip ,";
+    const AgcDriver::CaptureTraceFilter selected(configured);
+    configured[1] = 'x';
+    Check(selected.Active(), "a non-empty prefix list must activate filtering");
+    for (const auto* record : {"upload image=2a", "image-write image=2a", "flip frame=3"}) {
+        Check(selected.Matches(record), "a selected literal prefix was lost or not copied");
+    }
+    for (const auto* record : {"draw frame=3", "xupload image=2a", "upload image", "flipbook frame=3", ""}) {
+        Check(!selected.Matches(record), "filtering must match prefixes including their spaces and separators");
+    }
+    Check(!selected.MayMatchFormat("draw shader=%llx"), "an unrelated literal format must be rejected before formatting");
+    Check(selected.MayMatchFormat("upload image=%llx"), "a selected format must remain eligible");
+    Check(selected.MayMatchFormat("%s"), "a dynamically formatted prefix cannot be rejected before formatting");
+    Check(selected.MayMatchFormat("up%s"), "a partially literal prefix cannot be rejected before formatting");
+    const AgcDriver::CaptureTraceFilter escaped("load %");
+    Check(escaped.MayMatchFormat("load %% %d") && escaped.Matches("load % 7"),
+          "escaped percent signs must be checked after formatting");
+    const AgcDriver::CaptureTraceFilter spaces(" upload");
+    Check(spaces.Matches(" upload image=1") && !spaces.Matches("upload image=1"),
+          "spaces in configured prefixes must remain significant");
+}
+
+void PrefixWrites() {
+    const char* configured = RequiredPathVariable();
+    const std::string oversized(4096, 'x');
+    AgcDriver::CaptureTrace::Log("draw payload=%s", oversized.c_str());
+    AgcDriver::CaptureTrace::Log("upload image=%x", 42);
+    AgcDriver::CaptureTrace::Log("image-write image=%x", 42);
+    AgcDriver::CaptureTrace::Log("%s", "draw dynamically-formatted=1");
+    AgcDriver::CaptureTrace::Log("%s", "upload image=dynamic");
+    AgcDriver::CaptureTrace::Log("upload image=%s", oversized.c_str());
+    Check(WaitForRecord(configured, "capture-trace-dropped records=1\n"),
+          "selected oversized records must still report loss, while rejected literal formats must not");
+    AgcDriver::CaptureTrace::Log("upload image=recovered");
+    Check(WaitForRecord(configured, "upload image=recovered\n"), "filtered tracing did not recover after overflow");
+    const auto contents = ReadFile(configured);
+    for (const auto* record : {"capture-trace-filter active=1\n", "upload image=2a\n", "image-write image=2a\n", "upload image=dynamic\n"}) {
+        Check(contents.find(record) != std::string::npos, "a selected record or filtered-trace marker is missing");
+    }
+    Check(contents.find("draw ") == std::string::npos, "an excluded formatted record reached the trace");
+    std::istringstream records(contents);
+    std::string record;
+    unsigned long long expected = 0;
+    while (std::getline(records, record)) {
+        std::istringstream fields(record);
+        unsigned long long sequence = 0;
+        fields >> sequence;
+        Check(sequence == ++expected, "excluded records must not create sequence holes");
+    }
+    std::remove(configured);
+}
+
+class PausedTraceBuffer final : public std::streambuf {
+public:
+    bool WaitForWrite() {
+        std::unique_lock lock(mutex);
+        return changed.wait_for(lock, std::chrono::seconds(2), [this] { return entered; });
+    }
+
+    void Release() {
+        {
+            std::lock_guard lock(mutex);
+            released = true;
+        }
+        changed.notify_all();
+    }
+
+    void Pause() {
+        std::lock_guard lock(mutex);
+        entered = false;
+        released = false;
+    }
+
+    std::string Contents() {
+        std::lock_guard lock(mutex);
+        return contents;
+    }
+
+    bool WaitForRecord(const std::string& record) {
+        std::unique_lock lock(mutex);
+        return changed.wait_for(lock, std::chrono::seconds(2), [this, &record] {
+            return contents.find(record) != std::string::npos;
+        });
+    }
+
+protected:
+    std::streamsize xsputn(const char* text, std::streamsize size) override {
+        std::unique_lock lock(mutex);
+        entered = true;
+        changed.notify_all();
+        changed.wait(lock, [this] { return released; });
+        contents.append(text, static_cast<std::size_t>(size));
+        changed.notify_all();
+        return size;
+    }
+
+    int sync() override {
+        return 0;
+    }
+
+private:
+    std::mutex mutex;
+    std::condition_variable changed;
+    std::string contents;
+    bool entered = false;
+    bool released = false;
+};
+
+std::string QueueRecord(std::size_t producer, std::size_t item) {
+    char prefix[64];
+    std::snprintf(prefix, sizeof(prefix), "queue producer=%02zu item=%08zu payload=", producer, item);
+    return std::string(prefix) + std::string(1900, 'x');
+}
+
 void Disabled() {
     RemoveEnvironmentVariable("APS5_CAPTURE_TRACE");
     Check(!AgcDriver::CaptureTrace::Enabled(),
@@ -138,17 +334,185 @@ void Disabled() {
 
 }
 
+void AgcDriver::CaptureTraceTestAccess::QueueDrop(bool shutdownOnly, bool cumulative) {
+    constexpr std::size_t Capacity = 16u * 1024u * 1024u;
+    constexpr std::size_t Producers = 4;
+    const char* configured = RequiredPathVariable();
+    PausedTraceBuffer sink;
+    std::exception_ptr failure;
+    std::size_t initialItems = 0;
+    std::atomic<bool> bounded = true;
+    const std::size_t rounds = cumulative ? 2 : 1;
+    std::size_t lostTotal = 0;
+    std::vector<std::string> expectedMarkers;
+    std::vector<std::size_t> queuedByRound;
+    for (std::size_t round = 0; round < rounds; ++round) {
+        const auto lost = Producers * (round == 0 ? 64u : 17u) + (shutdownOnly ? 0u : 1u);
+        lostTotal += lost;
+        expectedMarkers.push_back("capture-trace-dropped records=" + std::to_string(lost));
+    }
+    const auto summary = "capture-trace-summary dropped=" + std::to_string(lostTotal);
+    {
+        CaptureTrace trace;
+        Check(trace.output.is_open(), "the queue test trace path must be writable");
+        auto& output = static_cast<std::ostream&>(trace.output);
+        output.rdbuf(&sink);
+        auto append = [&](std::size_t producer, std::size_t item) {
+            trace.append(QueueRecord(producer, item));
+            std::lock_guard lock(trace.mutex);
+            if (trace.pending.size() > Capacity) bounded.store(false);
+        };
+        for (std::size_t round = 0; round < rounds && !failure; ++round) {
+            if (round != 0) sink.Pause();
+            const std::size_t itemsPerProducer = round == 0 ? 64 : 17;
+            std::vector<std::thread> producers;
+            std::vector<std::exception_ptr> producerErrors(Producers);
+            std::mutex stateMutex;
+            std::condition_variable stateChanged;
+            std::size_t attempted = 0;
+            std::size_t finished = 0;
+            try {
+                for (std::size_t item = 0; item < 64; ++item) append(0, initialItems++);
+                Check(sink.WaitForWrite(), "the trace worker did not reach the paused sink");
+                for (;;) {
+                    const auto line = QueueRecord(0, initialItems);
+                    {
+                        std::lock_guard lock(trace.mutex);
+                        if (trace.pending.size() + line.size() + 64 > Capacity) break;
+                    }
+                    append(0, initialItems++);
+                }
+                queuedByRound.push_back(initialItems);
+                for (std::size_t producer = 0; producer < Producers; ++producer) {
+                    producers.emplace_back([&, producer] {
+                        {
+                            std::lock_guard lock(stateMutex);
+                            ++attempted;
+                        }
+                        stateChanged.notify_all();
+                        try {
+                            for (std::size_t item = 0; item < itemsPerProducer; ++item) append(producer + 1, item);
+                        } catch (...) {
+                            producerErrors[producer] = std::current_exception();
+                        }
+                        {
+                            std::lock_guard lock(stateMutex);
+                            ++finished;
+                        }
+                        stateChanged.notify_all();
+                    });
+                }
+                {
+                    std::unique_lock lock(stateMutex);
+                    Check(stateChanged.wait_for(lock, std::chrono::seconds(2), [&] { return attempted == Producers; }),
+                          "the queue producers did not start");
+                    Check(stateChanged.wait_for(lock, std::chrono::seconds(2), [&] { return finished == Producers; }),
+                          "a full capture queue must return from every caller while its writer is paused");
+                }
+                if (!shutdownOnly) trace.append("queue-short-during-loss");
+            } catch (...) {
+                failure = std::current_exception();
+            }
+            sink.Release();
+            for (auto& producer : producers) producer.join();
+            if (!failure) {
+                for (const auto& error : producerErrors) {
+                    if (error) {
+                        failure = error;
+                        break;
+                    }
+                }
+            }
+            if (!failure && !shutdownOnly) {
+                try {
+                    Check(sink.WaitForRecord(expectedMarkers[round] + "\n"),
+                          "the recovered writer did not report the exact dropped-record count");
+                    append(Producers + 1, round);
+                    Check(sink.WaitForRecord(QueueRecord(Producers + 1, round) + "\n"),
+                          "the recovered writer did not accept a new record");
+                } catch (...) {
+                    failure = std::current_exception();
+                }
+            }
+        }
+    }
+    if (failure) std::rethrow_exception(failure);
+    Check(bounded.load(), "the pending capture queue exceeded 16 MiB");
+    std::istringstream records(sink.Contents());
+    std::string record;
+    std::size_t sequence = 0;
+    std::size_t queued = 0;
+    std::size_t recovered = 0;
+    std::size_t markers = 0;
+    std::size_t summaries = 0;
+    while (std::getline(records, record)) {
+        std::istringstream fields(record);
+        unsigned long long foundSequence = 0;
+        std::string elapsed;
+        std::string label;
+        std::string producerField;
+        std::string itemField;
+        fields >> foundSequence >> elapsed >> label >> producerField >> itemField;
+        Check(foundSequence == ++sequence, "the recovered trace lost or reordered sequence numbers");
+        Check(elapsed.ends_with("us"), "the recovered trace lost its elapsed-time field");
+        Check(summaries == 0, "the trace contains a record after its shutdown summary");
+        const auto prefix = std::to_string(foundSequence) + " " + elapsed + " ";
+        const auto body = record.substr(prefix.size());
+        if (body.starts_with("capture-trace-dropped records=")) {
+            Check(markers < rounds && body == expectedMarkers[markers],
+                  "the trace did not report each dropped-record batch exactly once");
+            Check(queued == queuedByRound[markers] && recovered == markers,
+                  "the dropped marker did not follow the queued records and precede recovery");
+            ++markers;
+            continue;
+        }
+        if (body == summary) {
+            Check(markers == rounds, "the shutdown total appeared before the loss markers");
+            ++summaries;
+            continue;
+        }
+        Check(label == "queue" && producerField.starts_with("producer=") && itemField.starts_with("item="),
+              "the recovered trace contains an incomplete record");
+        const auto producer = std::stoull(producerField.substr(9));
+        const auto item = std::stoull(itemField.substr(5));
+        if (producer == 0) {
+            Check(markers == recovered && item == queued++, "the trace lost or reordered an accepted queued record");
+        } else {
+            Check(!shutdownOnly && producer == Producers + 1 && item == recovered && markers == recovered + 1,
+                  "the trace retained a dropped record or lost recovery ordering");
+            ++recovered;
+        }
+        Check(record == prefix + QueueRecord(producer, item), "the recovered trace changed a record's payload");
+    }
+    Check(queued == initialItems, "the recovered trace lost the initial accepted records");
+    Check(recovered == (shutdownOnly ? 0u : rounds), "the trace lost or duplicated its recovery records");
+    Check(markers == rounds && summaries == 1, "the trace did not report each loss marker and one shutdown total");
+    Check(sequence == initialItems + recovered + rounds + 1, "the trace contains an unexpected number of records");
+    std::remove(configured);
+}
+
 int main(int argc, char** argv) {
     try {
-        if (argc != 2) throw std::runtime_error("expected exactly one test mode argument");
+        if (argc < 2) throw std::runtime_error("expected a test mode argument");
         const std::string mode = argv[1];
         if (mode == "path-default") PathDefault();
         else if (mode == "path-empty") PathEmpty();
         else if (mode == "path-explicit") PathExplicit();
         else if (mode == "explicit-writes") ExplicitWrites();
+        else if (mode == "stop-unused") StopUnused();
+        else if (mode == "stop-drains") StopDrains();
+#ifdef _WIN32
+        else if (mode == "dll-shutdown" && argc == 3) DllShutdown(argv[2]);
+#endif
         else if (mode == "default-writes") DefaultWrites();
         else if (mode == "open-failure") OpenFailure();
         else if (mode == "best-effort-overflow") BestEffortOverflow();
+        else if (mode == "format-overflow") FormatOverflow();
+        else if (mode == "prefix-matching") PrefixMatching();
+        else if (mode == "prefix-writes") PrefixWrites();
+        else if (mode == "queue-drop") AgcDriver::CaptureTraceTestAccess::QueueDrop(false);
+        else if (mode == "queue-drop-shutdown") AgcDriver::CaptureTraceTestAccess::QueueDrop(true);
+        else if (mode == "queue-drop-cumulative") AgcDriver::CaptureTraceTestAccess::QueueDrop(false, true);
         else if (mode == "disabled") Disabled();
         else throw std::runtime_error("unknown capture trace test mode: " + mode);
         std::cout << "capture trace tests passed\n";

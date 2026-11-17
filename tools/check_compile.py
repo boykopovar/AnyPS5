@@ -10,14 +10,17 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from pathlib import Path, PureWindowsPath
 
-CPP = (".cpp", ".cc", ".cxx", ".c")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import base_ref
+
+CPP =(".cpp", ".cc", ".cxx", ".c")
 DROP = ("-c", "-MD", "-MMD", "-MP", "-fsyntax-only", "-fno-syntax-only", "-save-temps", "--save-temps",
         "-save-temps=cwd", "-save-temps=obj", "--save-temps=cwd", "--save-temps=obj")
 DROP_WITH_VALUE = ("-o", "-MT", "-MF", "-MQ", "-MJ")
 PREPROCESSING = ("-E", "--preprocess", "-M", "--dependencies", "-MM", "--user-dependencies",
                  "-MG", "--print-missing-file-dependencies", "-P", "--no-line-commands",
                  "-C", "-CC", "-dM", "-dD", "-dI")
-DRIVER_QUERIES = ("--version", "--help", "-help", "--help-hidden", "--target-help", "-###", "-fdriver-only",
+DRIVER_QUERIES = ("--version", "--help", "-help", "--help-hidden", "--target-help", "--autocomplete", "-###", "-fdriver-only",
                   "-dumpversion", "-dumpfullversion", "-dumpmachine", "-dumpspecs", "-ccc-print-phases", "-ccc-print-bindings",
                   "-print-file-name", "-print-prog-name", "-print-search-dirs", "-print-libgcc-file-name", "-print-multiarch",
                   "-print-multi-directory", "-print-multi-lib", "-print-multi-os-directory", "-print-sysroot",
@@ -61,7 +64,11 @@ def repository():
     result = capture(["git", "rev-parse", "--show-toplevel"])
     if result.returncode != 0:
         raise ValueError(result.stderr.strip() or "not a git checkout")
-    return Path(result.stdout.strip())
+    root = Path(result.stdout.strip())
+    if os.name == "nt" and not root.is_dir():
+        relative = capture(["git", "rev-parse", "--show-cdup"]).stdout.strip()
+        root = (Path.cwd() / relative).resolve()
+    return root
 
 
 def validate_arguments(arguments):
@@ -367,19 +374,24 @@ def check_source(task):
     return 1, int(failed), "".join(diagnostics)
 
 
+def resolve_source(file, root):
+    try:
+        file.stat()
+    except FileNotFoundError:
+        pass
+    source = real(file)
+    try:
+        name = source.relative_to(real(root)).as_posix()
+    except ValueError:
+        name = source.as_posix()
+    return source, name
+
+
 def check(root, build, files, jobs=1):
     commands = index(build, root)
     tasks = []
     for file in files:
-        try:
-            file.stat()
-        except FileNotFoundError:
-            pass
-        source = real(file)
-        try:
-            name = source.relative_to(real(root)).as_posix()
-        except ValueError:
-            name = source.as_posix()
+        source, name = resolve_source(file, root)
         tasks.append((source, name, build, commands.get(name)))
     checked = failed = 0
     with (ThreadPoolExecutor(max_workers=jobs) if jobs > 1 else nullcontext()) as executor:
@@ -408,16 +420,31 @@ def main(argv=None):
                         help="a configured Ninja build directory of this checkout (default: build)")
     parser.add_argument("--jobs", type=positive_integer, default=1, metavar="N",
                         help="check up to N translation units concurrently; diagnostics retain input order (default 1)")
-    parser.add_argument("--base", default="origin/main",
-                        help="branch the change is against (default: origin/main)")
+    parser.add_argument("--base", help="branch the change is against (default: upstream/main, then origin/main, then main)")
     parser.add_argument("paths", nargs="*", help="translation units to check instead of the changed ones")
+    parser.add_argument("--dry-run", action="store_true", help="print planned syntax commands as JSON without executing a compiler")
     args = parser.parse_args(argv)
     try:
         root = repository()
-        files = [Path(path) for path in args.paths] or [root / path for path in changed(root, args.base)]
-        if not files:
-            print(f"no changed translation unit against {args.base}")
-            return 0
+        if args.paths:
+            files = [Path(path) for path in args.paths]
+        else:
+            base = base_ref.resolve(root, args.base)
+            files = [root / path for path in changed(root, base)]
+            if not files:
+                print(json.dumps({"translation_units": []}) if args.dry_run else f"no changed translation unit against {base}")
+                return 0
+        if args.dry_run:
+            commands = index(args.build, root)
+            plan = []
+            for file in files:
+                source, name = resolve_source(file, root)
+                configurations = commands.get(name, [])
+                plan.append({"source": str(source), "commands": [
+                    {"directory": entry["directory"], "arguments": syntax_arguments(entry["arguments"], Path(entry["directory"]), source)
+                     if "arguments" in entry else syntax_only(entry, source)} for entry in configurations]})
+            print(json.dumps({"translation_units": plan}, indent=2))
+            return 0 if any(entry["commands"] for entry in plan) else 1
         checked, failed = check(root, args.build, files, args.jobs)
     except (json.JSONDecodeError, OSError, ValueError) as error:
         parser.error(str(error))

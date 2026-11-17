@@ -99,6 +99,9 @@ void PeNidPatcher::PatchNids(std::vector<std::uint8_t>& pe, const std::string& l
 
         const std::size_t namesArrayOffset = RvaToOffset(pe, exportTable.AddressOfNames, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
         const std::size_t ordinalsArrayOffset = RvaToOffset(pe, exportTable.AddressOfNameOrdinals, peHeaderOffset, numberOfSections, sizeOfOptionalHeader);
+        if (std::uint64_t{namesArrayOffset} + std::uint64_t{exportTable.NumberOfNames} * 4u > pe.size() ||
+            std::uint64_t{ordinalsArrayOffset} + std::uint64_t{exportTable.NumberOfNames} * 2u > pe.size())
+            throw std::runtime_error("export name tables out of file bounds");
 
         std::vector<std::uint32_t> nameRvas(exportTable.NumberOfNames);
         std::vector<std::string> names(exportTable.NumberOfNames);

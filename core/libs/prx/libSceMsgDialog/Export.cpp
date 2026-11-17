@@ -24,6 +24,7 @@ constexpr int kErrOk = 0;
 constexpr int kErrNotInitialized = static_cast<int>(0x80B80003u);
 constexpr int kErrBusy = static_cast<int>(0x80B80007u);
 constexpr int kErrNotRunning = static_cast<int>(0x80B8000Bu);
+constexpr int kErrParam = static_cast<int>(0x80B80001u);
 constexpr int kErrArgNull = static_cast<int>(0x80B8000Du);
 
 constexpr int kButtonIdOk = MsgDialog::ButtonIdOk;
@@ -68,6 +69,12 @@ int Poll() {
         }
         if (done) g_status = kStatusFinished;
     }
+    return g_status;
+}
+
+int MsgDialogResultStatus(int& buttonId) {
+    std::lock_guard g(g_lock);
+    buttonId = g_buttonId;
     return g_status;
 }
 }
@@ -115,21 +122,25 @@ int APS5_VABI sceMsgDialogClose(void) {
  return kErrOk;
 }
 int APS5_VABI sceMsgDialogProgressBarInc(int target, std::uint32_t delta) {
- (void)target;
  (void)delta;
  std::lock_guard g(g_lock);
- return g_status == kStatusRunning ? kErrOk : kErrNotRunning;
+ if (g_status != kStatusRunning || g_mode != kModeProgressBar) return kErrNotRunning;
+ if (target != 0) return kErrParam;
+ return kErrOk;
 }
 int APS5_VABI sceMsgDialogProgressBarSetMsg(int target, const char* msg) {
- (void)target;
- (void)msg;
  std::lock_guard g(g_lock);
- return g_status == kStatusRunning ? kErrOk : kErrNotRunning;
+ if (g_status != kStatusRunning || g_mode != kModeProgressBar) return kErrNotRunning;
+ if (target != 0) return kErrParam;
+ if (msg == nullptr) return kErrArgNull;
+ return kErrOk;
 }
 int APS5_VABI sceMsgDialogProgressBarSetValue(int target, std::uint32_t rate) {
- (void)target;
- (void)rate;
  std::lock_guard g(g_lock);
- return g_status == kStatusRunning ? kErrOk : kErrNotRunning;
+ if (g_status != kStatusRunning || g_mode != kModeProgressBar) return kErrNotRunning;
+ if (target != 0 || rate > 100) return kErrParam;
+ return kErrOk;
 }
 }
+
+#include "../libSceMsgDialog.native/Result.cpp"

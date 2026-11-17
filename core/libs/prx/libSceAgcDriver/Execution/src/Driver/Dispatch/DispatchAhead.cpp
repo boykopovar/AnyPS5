@@ -2,6 +2,7 @@
 #include "ThreadOwned.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Memory/DrawWriteRanges.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
@@ -81,9 +82,9 @@ bool InCode(const ShaderRecompiler::MemoryRegion& region, const std::shared_ptr<
     return !code->header.empty() && region.guestAddress >= code->headerAddress && region.guestAddress < code->headerAddress + code->header.size();
 }
 
-bool OverlapsRange(std::span<const ShaderRecompiler::MemoryRegion> regions, const std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges, const std::shared_ptr<const ShaderSnapshot>& code) {
+bool OverlapsRange(std::span<const ShaderRecompiler::MemoryRegion> regions, const std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges, const std::shared_ptr<const ShaderSnapshot>& code, const PreparedShaderState::UserDataLink* linking) {
     for (const auto& region : regions) {
-        if (InCode(region, code)) continue;
+        if (InCode(region, code) && (linking == nullptr || !linking->Overlaps(region.guestAddress, region.bytes.size()))) continue;
         for (const auto& [begin, end] : ranges) {
             if (begin < region.guestAddress + region.bytes.size() && region.guestAddress < end) return true;
         }
@@ -108,10 +109,6 @@ void NoteLabel(std::vector<RunLabel>& labels, std::uint64_t address, std::span<c
     labels.push_back({address, bytes.size(), value});
 }
 
-bool WritesThroughPointers(const ShaderRecompiler::RecompileResult& compiled) {
-    return std::any_of(compiled.bindings.begin(), compiled.bindings.end(), [](const ShaderRecompiler::DescriptorBinding& binding) { return binding.role == ShaderRecompiler::DescriptorRole::BdaPagetable; });
-}
-
 bool OverlapsLabel(std::span<const ShaderRecompiler::MemoryRegion> regions, const std::vector<RunLabel>& labels) {
     for (const auto& label : labels) {
         for (const auto& region : regions) {
@@ -126,17 +123,16 @@ bool OverlapsLabel(std::span<const ShaderRecompiler::MemoryRegion> regions, cons
 void Driver::resolveGroupAhead(const Submission& submission, const QueueState& live, std::size_t from) {
     static const bool allQueues = std::getenv("APS5_GROUP_CAPTURE_ALL_QUEUES") != nullptr;
     if (!allQueues && submission.queue == 0) return;
+    if (submission.queue == 0 && DrawPipeline::Depth() != 0 && DrawPipeline::Queue0().Busy()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, (submission.commands[from] >> 8u) & 0xffu);
     auto& resolved = resolvedAhead();
     const auto localDevice = device.Load();
     if (resolved.contains(from) || localDevice == nullptr) return;
-    if (submission.queue == 0 && DrawPipeline::Depth() != 0 && DrawPipeline::Queue0().Busy()) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, (submission.commands[from] >> 8u) & 0xffu);
     auto& stats = groupCaptureStats();
     const auto begin = std::chrono::steady_clock::now();
     ++stats.runs;
     QueueState scratch = live;
     std::vector<RunLabel> labels;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> writes;
-    bool unknownWrites = false;
     for (const auto& label : deferredLabels().labels) NoteLabel(labels, label.address, std::span<const std::byte>(label.bytes).first(label.size));
     struct Resolving {
         std::size_t offset;
@@ -183,6 +179,7 @@ void Driver::resolveGroupAhead(const Submission& submission, const QueueState& l
                 const auto packet = std::span(commands).subspan(scan, count);
                 const auto opcode = (header >> 8u) & 0xffu;
                 const auto next = scan + count;
+                if (opcode == 0x45 && ((packet[1] >> 8u) & 3u) == 0) break;
                 if (opcode == 0x15 || opcode == 0x16) {
                     if (count < (opcode == 0x15 ? 5u : 3u)) break;
                     if (scan > from) {
@@ -277,7 +274,7 @@ void Driver::resolveGroupAhead(const Submission& submission, const QueueState& l
                 const auto argumentsEnd = arguments + 3u * sizeof(std::uint32_t);
                 const bool written = std::any_of(writes.begin(), writes.end(), [&](const auto& range) { return range.first < argumentsEnd && arguments < range.second; })
                     || std::any_of(labels.begin(), labels.end(), [&](const RunLabel& label) { return label.address < argumentsEnd && arguments < label.address + label.size; });
-                if ((unknownWrites || written) && indirectArgumentsPath(packet, arguments) != IndirectGpu) {
+                if (written && indirectArgumentsPath(packet, arguments) != IndirectGpu) {
                     ++stats.writtenBefore;
                     break;
                 }
@@ -297,15 +294,37 @@ void Driver::resolveGroupAhead(const Submission& submission, const QueueState& l
                     ++stats.labelOverlaps;
                     break;
                 }
-                if (OverlapsRange(found->second.captured, writes, found->second.registeredShader)) {
+                const auto* linking = found->second.linking != nullptr ? found->second.linking.get() : found->second.keepVariant != nullptr ? found->second.keepVariant->linking.get() : nullptr;
+                if (OverlapsRange(found->second.captured, writes, found->second.registeredShader, linking)) {
                     resolved.erase(found);
                     ++stats.writtenBefore;
                     break;
                 }
-                if (found->second.compiledResult != nullptr) appendWrittenRanges(*found->second.compiledResult, writes);
-                if (found->second.compiledResult == nullptr || WritesThroughPointers(*found->second.compiledResult)) unknownWrites = true;
+                if (found->second.compiledResult == nullptr) {
+                    ++stats.unknownWrites;
+                    break;
+                }
+                if (!found->second.cached && found->second.registeredShader != nullptr) {
+                    static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
+                    const auto& snapshot = *found->second.registeredShader;
+                    std::vector<ShaderRecompiler::MemoryRegion> memory{{snapshot.codeAddress, std::as_bytes(std::span(snapshot.code))}};
+                    if (!snapshot.header.empty()) memory.push_back({snapshot.headerAddress, snapshot.header});
+                    auto lap = std::chrono::steady_clock::now();
+                    std::array<double, DriverPhaseCount> phaseMs{};
+                    auto phaseLap = lap;
+                    DispatchPhaseTiming phaseTiming{profile, lap, phaseMs, phaseLap};
+                    insertDispatch(found->second.address, found->second.key, found->second.noDispatchCache, profile, found->second.registeredShader, found->second.forgetAtCapture, memory, found->second.shaderMemory, found->second.captured, found->second.capture, found->second.compiledResult, found->second.missedEntry, found->second.missedDiffering, found->second.attachVariant, phaseTiming, found->second.linking);
+                }
+                bool bounded = false;
+                const auto itemWrites = DispatchWriteRanges(*found->second.compiledResult, bounded);
+                if (!bounded) {
+                    ++stats.unknownWrites;
+                    break;
+                }
+                writes.insert(writes.end(), itemWrites.begin(), itemWrites.end());
             } else {
-                unknownWrites = true;
+                ++stats.unknownWrites;
+                break;
             }
         } else if (opcode == 0x37 || opcode == 0x49) {
             const auto label = Pm4::DecodeLabelWrite(packet);
@@ -334,10 +353,10 @@ void Driver::reportGroupCapture(std::uint32_t queue) {
     auto& stats = groupCaptureStats();
     const auto now = std::chrono::steady_clock::now();
     if (now - stats.reported < std::chrono::seconds(10)) return;
-    AgcDriver::ProfilePrint_nid_no_patch("[groupcap] queue 0x%x (10 s): %llu runs resolved %llu dispatches (%llu cache hits) in %.1f ms (max %.2f ms); %llu adopted %.2f ms after the resolve on average, max %.2f ms; mismatches: address %llu key %llu memory %llu; %llu resolve failures, %llu stale, %llu label overlaps, %llu read an earlier dispatch's output, %llu rejected by the device, %llu dropped because the argument re-read differed\n",
+    AgcDriver::ProfilePrint_nid_no_patch("[groupcap] queue 0x%x (10 s): %llu runs resolved %llu dispatches (%llu cache hits) in %.1f ms (max %.2f ms); %llu adopted %.2f ms after the resolve on average, max %.2f ms; mismatches: address %llu key %llu memory %llu; %llu resolve failures, %llu stale, %llu label overlaps, %llu read an earlier dispatch's output, %llu stopped at unknown writes, %llu rejected by the device, %llu dropped because the argument re-read differed\n",
                                          queue, static_cast<unsigned long long>(stats.runs), static_cast<unsigned long long>(stats.resolved), static_cast<unsigned long long>(stats.resolvedHits), stats.resolveMs, stats.resolveMaxMs,
                                          static_cast<unsigned long long>(stats.adopted), stats.adopted != 0 ? stats.ageMs / static_cast<double>(stats.adopted) : 0.0, stats.ageMaxMs, static_cast<unsigned long long>(stats.addressMismatches), static_cast<unsigned long long>(stats.keyMismatches), static_cast<unsigned long long>(stats.memoryMismatches),
-                                         static_cast<unsigned long long>(stats.failures), static_cast<unsigned long long>(stats.stale), static_cast<unsigned long long>(stats.labelOverlaps), static_cast<unsigned long long>(stats.writtenBefore), static_cast<unsigned long long>(stats.deviceRejects), static_cast<unsigned long long>(stats.argumentMismatches));
+                                         static_cast<unsigned long long>(stats.failures), static_cast<unsigned long long>(stats.stale), static_cast<unsigned long long>(stats.labelOverlaps), static_cast<unsigned long long>(stats.writtenBefore), static_cast<unsigned long long>(stats.unknownWrites), static_cast<unsigned long long>(stats.deviceRejects), static_cast<unsigned long long>(stats.argumentMismatches));
     stats = GroupCaptureStats{};
     stats.reported = now;
 }

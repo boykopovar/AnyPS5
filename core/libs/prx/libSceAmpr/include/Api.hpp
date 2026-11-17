@@ -145,7 +145,7 @@ void APS5_VABI _Lock_shared_ptr_spin_lock_nid_postfix(void);
 SonyLconv* APS5_VABI sceAmprLocaleconv(void);
 unsigned __int128 APS5_VABI sceAmprUdivti3(unsigned __int128 dividend, unsigned __int128 divisor);
 double APS5_VABI sceAmprSinh(double x, double y);
-char* APS5_VABI sceAmprStrtokS(char* str, const char* delim, char** context);
+char* APS5_VABI sceAmprStrtokS(char* str, std::size_t* remaining, const char* delimiters, char** context);
 int APS5_VABI sceAmprCtimeS(char* buffer, std::size_t size, const std::int64_t* time);
 int APS5_VABI sceAmprWcscpyS(std::uint16_t* dest, std::size_t size, const std::uint16_t* src);
 void* APS5_VABI sceAmprSetConstraintHandlerS(void* handler);
