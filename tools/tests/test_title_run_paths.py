@@ -464,6 +464,39 @@ runpy.run_path(sys.argv[0], run_name="__main__")
             load_tool().validate_layout(args, {TITLE: {"package": package}}, [TITLE], {}, self.source, "windows")
         self.assertEqual(snapshot(self.root), before)
 
+    def test_unusable_enabled_tracy_preserves_work_before_cleanup(self):
+        package = self.package(self.root / "games" / TITLE)
+        self.fake_relinker()
+        with (self.build / "CMakeCache.txt").open("a", encoding="utf-8") as cache:
+            cache.write("APS5_ENABLE_TRACY:BOOL=ON\n")
+        libraries = self.build / "core/libs/libs"
+        libraries.mkdir(parents=True)
+        (libraries / "libmimalloc.so").write_bytes(b"allocator")
+        client = libraries / "libTracyClient.so.0.14.1"
+        from types import SimpleNamespace
+        args = SimpleNamespace(build=self.build, out=self.out, titles=self.titles, compare=None)
+        for kind in ("dangling-symlink", "directory", "empty-file"):
+            work = self.stale_work()
+            if kind == "dangling-symlink":
+                self.symlink(self.root / "missing-client", client)
+            elif kind == "directory":
+                client.mkdir()
+            else:
+                client.touch()
+            before = snapshot(self.root)
+            with self.subTest(kind=kind, consumer="layout"), self.assertRaisesRegex(RuntimeError, "Tracy"):
+                load_tool().validate_layout(args, {TITLE: {"package": package}}, [TITLE], {}, self.source, "linux")
+            with self.subTest(kind=kind, consumer="CLI"):
+                result = self.run_cli()
+                self.assertTrue((work / "previous-run.bin").is_file(), result.stdout + result.stderr)
+                self.assertEqual(snapshot(self.root), before, result.stdout + result.stderr)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("Tracy", result.stderr)
+            if kind == "directory":
+                client.rmdir()
+            else:
+                client.unlink()
+
     def test_disjoint_run_preserves_dump_and_cleans_previous_work(self):
         package = self.package(self.root / "games" / TITLE)
         self.fake_relinker()

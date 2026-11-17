@@ -681,6 +681,18 @@ class NativeRuntimePreparationTests(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             self.prepare("linux")
 
+    def test_prepare_accepts_a_tracy_symlink_to_a_regular_file(self):
+        client = self.libraries / "libTracyClient.so.0.14.1"
+        client.unlink()
+        target = self.root / "client-runtime"
+        target.write_bytes(b"linked Tracy client")
+        try:
+            client.symlink_to(target)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest(f"symlinks unavailable: {error}")
+        staged = self.prepare("linux", "APS5_ENABLE_TRACY:BOOL=ON\n")
+        self.assertEqual(staged[client.name], b"linked Tracy client")
+
 
 class PadTests(unittest.TestCase):
     def setUp(self):

@@ -64,7 +64,7 @@ def tracy_runtime(platform, build):
     pattern = {"windows": "libTracyClient.dll", "linux": "libTracyClient.so.*", "macos": "libTracyClient.*.dylib"}[platform]
     directory = build / "core/libs/libs"
     clients = sorted(directory.glob(pattern))
-    if len(clients) != 1:
+    if len(clients) != 1 or not clients[0].is_file() or clients[0].stat().st_size == 0:
         raise RuntimeError(f"Missing or ambiguous Tracy runtime for APS5_ENABLE_TRACY: {directory / pattern}")
     return clients
 
