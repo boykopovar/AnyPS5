@@ -2,6 +2,8 @@
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
+#include <exception>
 
 namespace {
 
@@ -9,6 +11,104 @@ void Require(bool value) {
     if (!value) {
         std::abort();
     }
+}
+
+template <typename Call>
+bool Throws(Call call) {
+    try {
+        call();
+    } catch (const std::exception&) {
+        return true;
+    }
+    return false;
+}
+
+constexpr int InvalidArgument = static_cast<int>(0x80020016u);
+
+template <typename T>
+T Field(const std::uint8_t* opt, std::size_t offset) {
+    T value{};
+    std::memcpy(&value, opt + offset, sizeof(value));
+    return value;
+}
+
+template <typename T>
+void SetField(std::uint8_t* opt, std::size_t offset, T value) {
+    std::memcpy(opt + offset, &value, sizeof(value));
+}
+
+void SetText(std::uint8_t* opt, std::size_t offset, const char* text) {
+    SetField(opt, offset, reinterpret_cast<std::uint64_t>(text));
+}
+
+void CheckInitMountPprPkgOpt() {
+    alignas(8) std::uint8_t opt[0x90];
+    std::memset(opt, 0xa5, sizeof(opt));
+    Require(sceFsInitMountPprPkgOpt(opt) == 0);
+    for (std::size_t i = 0; i < 0x58; ++i) Require(opt[i] == 0);
+    Require(Field<std::uint64_t>(opt, 0x58) == 0x30);
+    Require(Field<std::uint64_t>(opt, 0x60) == 0);
+    Require(Field<std::uint64_t>(opt, 0x68) == ~std::uint64_t{0});
+    Require(Field<std::uint64_t>(opt, 0x70) == 0);
+    Require(Field<std::uint32_t>(opt, 0x78) == 0x10000);
+    for (std::size_t i = 0x7c; i < 0x80; ++i) Require(opt[i] == 0xa5);
+    for (std::size_t i = 0x80; i < 0x90; ++i) Require(opt[i] == 0);
+    Require(sceFsInitMountPprPkgOpt(nullptr) == InvalidArgument);
+    Require(Throws([] { sceFsInitMountPprPkgOpt(reinterpret_cast<void*>(std::uintptr_t{0x10})); }));
+}
+
+void CheckMountPprPkg() {
+    alignas(8) std::uint8_t opt[0x90];
+    Require(sceFsInitMountPprPkgOpt(opt) == 0);
+    int first = 7;
+    int second = 7;
+    Require(sceFsMountPprPkg(nullptr, &first, &second) == InvalidArgument && first == -1 && second == -1);
+    first = 7;
+    Require(sceFsMountPprPkg(opt, &first, nullptr) == InvalidArgument && first == -1);
+    second = 7;
+    Require(sceFsMountPprPkg(opt, nullptr, &second) == InvalidArgument && second == -1);
+    Require(Throws([&] { sceFsMountPprPkg(opt, reinterpret_cast<int*>(std::uintptr_t{0x10}), &second); }));
+    Require(Throws([&] { sceFsMountPprPkg(reinterpret_cast<const void*>(std::uintptr_t{0x10}), &first, &second); }));
+
+    const std::uint32_t skipped[] = {0, 0x100, 0x107, 0x108, 0x10b, 0x10e, 0x201, 0xffffffffu};
+    for (std::uint32_t type : skipped) {
+        SetField(opt, 0x38, type);
+        first = 7;
+        second = 7;
+        Require(sceFsMountPprPkg(opt, &first, &second) == 0x16 && first == -1 && second == -1);
+    }
+
+    const char image[] = "/data/app.pkg";
+    const char mountPath[] = "/mnt/ppr";
+    SetField(opt, 0x38, std::uint32_t{0x102});
+    SetText(opt, 0x0, image);
+    Require(sceFsMountPprPkg(opt, &first, &second) == InvalidArgument && first == -1 && second == -1);
+    SetText(opt, 0x0, nullptr);
+    SetText(opt, 0x80, mountPath);
+    Require(sceFsMountPprPkg(opt, &first, &second) == InvalidArgument);
+    SetText(opt, 0x0, image);
+    Require(Throws([&] { sceFsMountPprPkg(opt, &first, &second); }));
+
+    SetField(opt, 0x38, std::uint32_t{0x101});
+    SetText(opt, 0x80, nullptr);
+    Require(Throws([&] { sceFsMountPprPkg(opt, &first, &second); }));
+    const char budgets[][8] = {"game", "bigapp", "system"};
+    for (const char* budget : budgets) {
+        SetText(opt, 0x10, budget);
+        Require(sceFsMountPprPkg(opt, &first, &second) == InvalidArgument);
+    }
+}
+
+void CheckUmountPprPkg() {
+    alignas(8) std::uint8_t opt[0x20] = {};
+    Require(sceFsUmountPprPkg(nullptr) == InvalidArgument);
+    Require(sceFsUmountPprPkg(opt) == InvalidArgument);
+    const char path[] = "/mnt/ppr";
+    SetText(opt, 0x18, path);
+    Require(sceFsUmountPprPkg(opt) == InvalidArgument);
+    SetText(opt, 0x0, path);
+    Require(Throws([&] { sceFsUmountPprPkg(opt); }));
+    Require(Throws([] { sceFsUmountPprPkg(reinterpret_cast<const void*>(std::uintptr_t{0x10})); }));
 }
 
 void CheckWorkspaceOptInit(decltype(&sceFsInitCreateWorkspaceOpt) init) {
@@ -66,5 +166,8 @@ int main() {
         Require(libSceFsInternalForVshUnknown_lxyJjALNmp4_nid_no_patch() == 0);
     }
     CheckTrophyImageError();
+    CheckInitMountPprPkgOpt();
+    CheckMountPprPkg();
+    CheckUmountPprPkg();
     return 0;
 }

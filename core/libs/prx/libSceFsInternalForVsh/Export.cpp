@@ -5,17 +5,53 @@
 #include <cstdint>
 #include <cstring>
 #include <cstddef>
+#include <stdexcept>
+#include <string>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 
 namespace {
+
+constexpr int InvalidArgument = static_cast<int>(0x80020016u);
 
 int InitWorkspaceOpt(void* opt) {
     const std::uint32_t zero = 0;
     const int savedErrno = errno;
     const bool copied = opt != nullptr && GuestCopyOut_nid_no_patch(opt, &zero, sizeof(zero));
     errno = savedErrno;
-    return copied ? 0 : static_cast<int>(0x80020016u);
+    return copied ? 0 : InvalidArgument;
+}
+
+[[noreturn]] void Fault(const char* function, const char* what) {
+    throw std::logic_error(std::string(function) + ": " + what + " faults in firmware 13.60");
+}
+
+void WriteGuest(void* destination, const void* source, std::size_t size, const char* function) {
+    if (!GuestCopyOut_nid_no_patch(destination, source, size)) Fault(function, "writing where it is not writable");
+}
+
+template <typename T>
+T ReadGuest(const void* base, std::size_t offset, const char* function) {
+    T value{};
+    if (!GuestCopyIn_nid_no_patch(&value, static_cast<const std::uint8_t*>(base) + offset, sizeof(value))) Fault(function, "reading where it is not readable");
+    return value;
+}
+
+bool GuestTextEquals(std::uint64_t text, const char* expected, std::size_t limit, const char* function) {
+    for (std::size_t i = 0; i < limit; ++i) {
+        const auto c = ReadGuest<char>(reinterpret_cast<const void*>(text), i, function);
+        if (c != expected[i]) return false;
+        if (c == '\0') return true;
+    }
+    return true;
+}
+
+bool MountsPprStages(std::uint32_t type) {
+    return type >= 0x101 && type <= 0x10d && type != 0x107 && type != 0x108 && type != 0x10b;
+}
+
+bool ReadsBudget(std::uint32_t type) {
+    return type == 0x101 || type == 0x104 || type == 0x109 || type == 0x10a;
 }
 
 }
@@ -395,8 +431,16 @@ int APS5_VABI sceFsInitMountLwfsOpt() {
     return 0;
 }
 
-int APS5_VABI sceFsInitMountPprPkgOpt() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI sceFsInitMountPprPkgOpt(void* opt) {
+    if (opt == nullptr) return InvalidArgument;
+    std::uint8_t head[0x7c] = {};
+    const std::uint64_t tail[] = {0x30, 0, ~std::uint64_t{0}, 0};
+    std::memcpy(head + 0x58, tail, sizeof(tail));
+    const std::uint32_t blockSize = 0x10000;
+    std::memcpy(head + 0x78, &blockSize, sizeof(blockSize));
+    const std::uint8_t paths[0x10] = {};
+    WriteGuest(opt, head, sizeof(head), __func__);
+    WriteGuest(static_cast<std::uint8_t*>(opt) + 0x80, paths, sizeof(paths), __func__);
     return 0;
 }
 
@@ -540,9 +584,28 @@ int APS5_VABI sceFsMountPartiallyCryptedDownloadData() {
     return 0;
 }
 
-int APS5_VABI sceFsMountPprPkg() {
+int APS5_VABI sceFsMountPprPkg(const void* opt, int* firstUnit, int* secondUnit) {
+    const int none = -1;
+    if (firstUnit != nullptr) WriteGuest(firstUnit, &none, sizeof(none), __func__);
+    if (secondUnit != nullptr) WriteGuest(secondUnit, &none, sizeof(none), __func__);
+    if (opt == nullptr || firstUnit == nullptr || secondUnit == nullptr) return InvalidArgument;
+    const auto image = ReadGuest<std::uint64_t>(opt, 0x0, __func__);
+    ReadGuest<std::uint64_t>(opt, 0x18, __func__);
+    const auto type = ReadGuest<std::uint32_t>(opt, 0x38, __func__);
+    if (!MountsPprStages(type)) {
+        ReadGuest<std::uint64_t>(opt, 0x88, __func__);
+        return 0x16;
+    }
+    if (ReadsBudget(type)) {
+        const auto budget = ReadGuest<std::uint64_t>(opt, 0x10, __func__);
+        if (!GuestTextEquals(budget, "game", 5, __func__)) GuestTextEquals(budget, "bigapp", 7, __func__);
+    }
+    ReadGuest<std::uint64_t>(opt, 0x10, __func__);
+    ReadGuest<std::uint32_t>(opt, 0x78, __func__);
+    ReadGuest<std::uint64_t>(opt, 0x20, __func__);
+    const auto mountPath = ReadGuest<std::uint64_t>(opt, 0x80, __func__);
+    if (mountPath == 0 || image == 0) return InvalidArgument;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceFsMountSaveData() {
@@ -1243,7 +1306,12 @@ int APS5_VABI sceFsUfsMkfsProsperoDownloadData() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceFsUmountPprPkg() {
+int APS5_VABI sceFsUmountPprPkg(const void* opt) {
+    if (opt == nullptr) return InvalidArgument;
+    ReadGuest<std::uint32_t>(opt, 0x8, __func__);
+    const auto firstPath = ReadGuest<std::uint64_t>(opt, 0x0, __func__);
+    ReadGuest<std::uint32_t>(opt, 0x10, __func__);
+    if (firstPath == 0) return InvalidArgument;
     NotImplemented_nid_no_patch(__func__);
 }
 
