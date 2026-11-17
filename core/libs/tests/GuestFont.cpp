@@ -549,6 +549,14 @@ static void CheckRenderEffects(FontHandle font, FontRenderer renderer) {
     Require(sceFontGetRenderScalePixel(font, &scaleW, &scaleH) == SCE_FONT_OK && scaleW == 24.0f && scaleH == 32.0f);
     Require(sceFontSetupRenderScalePoint(font, 12.0f, 18.0f) == SCE_FONT_OK);
     Require(sceFontGetRenderScalePoint(font, &scaleW, &scaleH) == SCE_FONT_OK && scaleW == 12.0f && scaleH == 18.0f);
+    Require(sceFontGetRenderScalePoint(nullptr, reinterpret_cast<float*>(0x10), nullptr) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
+    Require(sceFontGetRenderScalePoint(font, nullptr, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontGetRenderScalePoint(font, reinterpret_cast<float*>(0x10), &scaleH) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceFontGetRenderScalePoint(font, &scaleW, reinterpret_cast<float*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     Require(sceFontSetupRenderScalePixel(font, pixelW, pixelH) == SCE_FONT_OK);
     Require(sceFontSetupRenderEffectSlant(font, 0.25f) == SCE_FONT_OK);
     Require(sceFontGetRenderEffectSlant(font, &slant) == SCE_FONT_OK && slant == 0.25f);
@@ -824,7 +832,13 @@ int main() {
 
     std::vector<unsigned char> callerCache(0x2000);
     Require(sceFontAttachDeviceCacheBuffer(library, callerCache.data(), 0x1000) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontAttachDeviceCacheBuffer(library, reinterpret_cast<void*>(0x10), 0x2000) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
+    Require(sceFontClearDeviceCache(library) == SCE_FONT_ERROR_NOT_ATTACHED_CACHE_BUFFER);
     Require(sceFontAttachDeviceCacheBuffer(library, callerCache.data(), static_cast<std::uint32_t>(callerCache.size())) == SCE_FONT_OK);
+    const std::uint32_t attachedCacheHeader[6] = {0x2000, 1, 0, 1, 0x1000, 0xFF8};
+    Require(std::memcmp(callerCache.data(), attachedCacheHeader, sizeof(attachedCacheHeader)) == 0);
     Require(sceFontAttachDeviceCacheBuffer(library, callerCache.data(), static_cast<std::uint32_t>(callerCache.size())) == SCE_FONT_ERROR_ALREADY_ATTACHED);
     Require(sceFontClearDeviceCache(library) == SCE_FONT_OK);
     errno = 71;
@@ -1141,6 +1155,9 @@ int main() {
     int glyphAttribute = -1;
     Require(sceFontGlyphGetAttribute(glyph, 0x11, &glyphAttribute) == SCE_FONT_OK && glyphAttribute == 0x11);
     Require(sceFontGlyphGetAttribute(glyph, 0x11, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontGlyphGetAttribute(glyph, 0x11, reinterpret_cast<int*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     Require(sceFontGlyphGetAttribute(nullptr, 0x11, &glyphAttribute) == SCE_FONT_ERROR_INVALID_GLYPH);
     Require(sceFontDeleteGlyph(&memory, &glyph) == SCE_FONT_OK && glyph == nullptr);
     FontKerning kerning{1.0f, 1.0f, 1.0f, 1.0f};

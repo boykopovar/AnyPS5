@@ -139,6 +139,9 @@ int APS5_VABI _ZNSt10filesystem13_Current_set2EPKc_nid_postfix(const char* path)
 int APS5_VABI _ZNSt10filesystem9_Make_dirEPKcS1__nid_postfix(const char* path, const char* existing);
 bool APS5_VABI _ZNSt10filesystem11_Remove_dirEPKc_nid_postfix(const char* path);
 void APS5_VABI sceLibcInternalPadCompleteDestructor_nid_no_patch(void* self);
+void APS5_VABI sceLibcInternalPadConstructorWithName_nid_no_patch(void* self, const char* name);
+void APS5_VABI sceLibcInternalPadLaunchWithName_nid_no_patch(void* self, const char* name, void** thread);
+void APS5_VABI sceLibcInternalPadLaunchWithNameAttr_nid_no_patch(void* self, const char* name, void** attrSlot, void** thread);
 int APS5_VABI sceLibcInternalCollateDoCompare_nid_no_patch(const GuestLocale::CollateFacet* self, const char* first1, const char* last1, const char* first2, const char* last2);
 GuestLocale::String* APS5_VABI sceLibcInternalCollateDoTransform_nid_no_patch(GuestLocale::String* result, const GuestLocale::CollateFacet* self, const char* first, const char* last);
 std::int64_t APS5_VABI sceLibcInternalCollateDoHash_nid_no_patch(const GuestLocale::CollateFacet* self, const char* first, const char* last);
@@ -312,8 +315,12 @@ void APS5_VABI sceLibcInternalUnknown6_140_iZCHNahjpp4_nid_no_patch(void* self, 
 void APS5_VABI sceLibcInternalUnknown6_141_zkCx9c2QKBc_nid_no_patch(void* self);
 void APS5_VABI sceLibcInternalUnknown6_150_cXLpLN0lSwc_nid_no_patch(void* self, const void* locinfo);
 bool APS5_VABI sceLibcInternalPending3_016_nid_no_patch(const void* self);
+int APS5_VABI sceLibcInternalPending3_017_nid_no_patch(const void* self, void* state, const char* first1, const char* last1, const char** mid1, char32_t* first2, char32_t* last2, char32_t** mid2);
+int APS5_VABI sceLibcInternalPending3_018_nid_no_patch(const void* self, void* state, const char32_t* first1, const char32_t* last1, const char32_t** mid1, char* first2, char* last2, char** mid2);
 int APS5_VABI sceLibcInternalPending3_021_nid_no_patch(const void* self);
 bool APS5_VABI sceLibcInternalPending3_023_nid_no_patch(const void* self);
+int APS5_VABI sceLibcInternalPending3_024_nid_no_patch(const void* self, void* state, const char* first1, const char* last1, const char** mid1, char16_t* first2, char16_t* last2, char16_t** mid2);
+int APS5_VABI sceLibcInternalPending3_025_nid_no_patch(const void* self, void* state, const char16_t* first1, const char16_t* last1, const char16_t** mid1, char* first2, char* last2, char** mid2);
 int APS5_VABI sceLibcInternalPending3_037_nid_no_patch(const void* self);
 int APS5_VABI sceLibcInternalPending3_038_nid_no_patch(const void* self);
 bool APS5_VABI sceLibcInternalPending3_039_nid_no_patch(const void* self);

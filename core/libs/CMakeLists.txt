@@ -1367,6 +1367,16 @@ if(BUILD_TESTING)
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSaveData.native>")
     endif()
 
+    add_test_executable(guest_savedata_required_blocks_tests tests/GuestSaveDataRequiredBlocks.cpp)
+    target_include_directories(guest_savedata_required_blocks_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(guest_savedata_required_blocks_tests PRIVATE libSceSaveData libc)
+    configure_windows_unwind(guest_savedata_required_blocks_tests)
+    add_test(NAME guest_savedata_required_blocks COMMAND guest_savedata_required_blocks_tests)
+    if(WIN32)
+        set_tests_properties(guest_savedata_required_blocks PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceSaveData>")
+    endif()
+
     add_test_executable(guest_kernel_sys_mqueue_tests tests/GuestKernelSysMqueue.cpp)
     target_include_directories(guest_kernel_sys_mqueue_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_kernel_sys_mqueue_tests PRIVATE libkernel_sys libkernel libc)
