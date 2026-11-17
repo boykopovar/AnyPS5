@@ -27,6 +27,12 @@ class RedactTests(unittest.TestCase):
         out = bug_report.redact("banana ana ana.txt ana-dir", home="", user="ana", host="")
         self.assertEqual(out, "banana <user> <user>.txt ana-dir")
 
+    def test_windows_home_matches_mixed_case_and_separators(self):
+        out = bug_report.redact(
+            r"opened c:/PROFILES\Example/games/title.elf and C:\Profiles\Example-backup\title.elf",
+            home=r"C:\Profiles\Example", user="", host="")
+        self.assertEqual(out, r"opened ~/games/title.elf and C:\Profiles\Example-backup\title.elf")
+
     def test_short_or_empty_identities_are_not_replaced(self):
         text = "a b /x"
         self.assertEqual(bug_report.redact(text, home="/x", user="a", host="b"), "a b /x")
