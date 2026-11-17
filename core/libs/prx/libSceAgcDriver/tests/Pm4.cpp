@@ -239,12 +239,16 @@ void testContextAndBases() {
     AgcDriver::QueueState state;
     check(state.context.at(0x1b6) == 0, "the starting context changed SPI_PS_IN_CONTROL");
     check(state.context.contains(0x280) && state.context.at(0x280) == 0x00080008u && state.context.contains(0x281) && state.context.at(0x281) == 0xffff0000u, "initial point context differs from the SDK defaults");
+    check(state.context.contains(0x282) && state.context.at(0x282) == 8u, "initial PA_SU_LINE_CNTL differs from the SDK default of a one-pixel width");
     execute(state, makePacket(0x69, {0x280, 0x00180018u, 0x00400008u}));
     check(state.context.at(0x280) == 0x00180018u && state.context.at(0x281) == 0x00400008u, "explicit point size and limits were not stored");
+    execute(state, makePacket(0x69, {0x282, 0x10u}));
+    check(state.context.at(0x282) == 0x10u, "an explicit line width was not stored");
     for (const auto offset : {0x010u, 0x011u, 0x10bu, 0x10cu, 0x10du}) execute(state, makePacket(0x69, {offset, 0xffffffffu}));
     execute(state, makePacket(0x12, {0}));
     for (const auto offset : {0x010u, 0x011u, 0x10bu, 0x10cu, 0x10du}) check(state.context.at(offset) == 0, "CLEAR_STATE did not restore depth and stencil defaults");
     check(state.context.at(0x280) == 0x00080008u && state.context.at(0x281) == 0xffff0000u, "CLEAR_STATE did not restore point size and limits");
+    check(state.context.contains(0x282) && state.context.at(0x282) == 8u, "CLEAR_STATE did not restore the line width");
     check(state.context.at(0x1b6) == 2u, "CLEAR_STATE did not leave SPI_PS_IN_CONTROL at its clear-state NUM_INTERP of 2");
     execute(state, makePacket(0x69, {0x10, 17}));
     execute(state, makePacket(0x76, {0x20c, 2}));
@@ -253,7 +257,9 @@ void testContextAndBases() {
     expectFailure([&] { execute(state, makePacket(0x10, {1, 0}, 0x68)); }, "already pushed");
     execute(state, makePacket(0x69, {0x10, 19}));
     execute(state, makePacket(0x69, {0x280, 0x00100010u, 0x00800010u}));
+    execute(state, makePacket(0x69, {0x282, 0x20u}));
     execute(state, makePacket(0x10, {2, 0}, 0x68));
+    check(state.context.at(0x282) == 8u, "context pop did not restore the saved line width");
     check(state.context.at(0x280) == 0x00080008u && state.context.at(0x281) == 0xffff0000u, "context pop did not restore saved point size and limits");
     check(state.context.at(0x10) == 17, "pop did not restore context");
     expectFailure([&] { execute(state, makePacket(0x10, {2, 0}, 0x68)); }, "not been pushed");
@@ -1373,6 +1379,50 @@ void testGcnReleaseMemSystemCounter() {
     check(second - first + 1 >= ticks(secondStart - firstEnd) && second - first <= ticks(secondEnd - firstStart) + 1, "the GCN DATA_SEL 4 counter does not advance at 800 MHz");
     check(label.has_value() && label->Bytes().size() == 8, "a GCN DATA_SEL 4 RELEASE_MEM did not resolve as an 8-byte label");
     check(stores.size() == 1 && stores[0].value == AgcDriver::Pm4::PacketStore::Value::RunTime && stores[0].bytes == 8, "a GCN DATA_SEL 4 RELEASE_MEM did not decode as an 8-byte run-time store");
+}
+
+void testGcnCalledBufferPacketForms() {
+    alignas(8) static std::uint32_t target = 0;
+    const auto marker = [](std::uint32_t value) { return makePacket(0x10, {value, 0, 0, 0, 0}); };
+    const auto release = [](std::uint32_t flags, std::uint32_t event = 0x0000062fu, std::uint32_t interrupt = 3u) { return makePacket(0x49, {event, (1u << 29u) | (interrupt << 24u), low(&target), high(&target), 0x150, 0}, flags); };
+    const auto acquire = [](std::uint32_t control) { return makePacket(0x58, {control, 0, 0, 0, 0, 10}); };
+    expectFailure([&] { AgcDriver::Pm4::Validate(marker(0x68754000u), 0x20); }, "typed user-data and legacy flip markers are not implemented");
+    expectFailure([&] { AgcDriver::Pm4::Validate(release(0), 0x20); }, "invalid packet size");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x49, {0x0000062f, 1u << 29u, low(&target), high(&target), 1, 0, 0}, 2u), 0x20); }, "PM4 header flags 0x2 are not implemented");
+    expectFailure([&] { AgcDriver::Pm4::Validate(acquire(0x00c58000u), 0x20); }, "unsupported ACQUIRE_MEM control flags");
+    struct GcnGuest {
+        GcnGuest() { ShaderRecompiler::SetGcnGuestShaders(true); }
+        ~GcnGuest() { ShaderRecompiler::SetGcnGuestShaders(false); }
+    } gcn;
+    for (const auto queue : {0u, 0x20u}) AgcDriver::Pm4::Validate(marker(0x68754000u), queue);
+    for (const auto flip : {0x68750777u, 0x68750778u}) expectFailure([&] { AgcDriver::Pm4::Validate(marker(flip), 0x20); }, "legacy flip markers are not implemented");
+    std::vector<std::uint32_t> reservation(64, 0);
+    reservation[0] = 0xc03e1000u;
+    reservation[1] = 0x68754000u;
+    expectFailure([&] { AgcDriver::Pm4::Validate(reservation, 0x20); }, "a GCN flip reservation in a command buffer is not implemented");
+    AgcDriver::Pm4::Validate(release(0), 0);
+    AgcDriver::Pm4::Validate(release(2u), 0x20);
+    AgcDriver::Pm4::Validate(makePacket(0x49, {0x0000062f, 1u << 29u, low(&target), high(&target), 1, 0, 0}, 2u), 0x20);
+    expectFailure([&] { AgcDriver::Pm4::Validate(release(2u), 0); }, "PM4 header flags 0x2 are not implemented");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x49, {0x0000062f, 1u << 29u, low(&target), high(&target), 1}), 0x20); }, "invalid packet size");
+    expectFailure([&] { AgcDriver::Pm4::Validate(release(2u, 0x0002062fu), 0x20); }, "GCN RELEASE_MEM event control bits beyond the event type and index are not implemented");
+    for (const auto interrupt : {1u, 2u}) expectFailure([&] { AgcDriver::Pm4::Validate(release(2u, 0x0000062fu, interrupt), 0x20); }, "an interrupting GCN RELEASE_MEM has no interrupt context dword");
+    AgcDriver::Pm4::Validate(release(2u, 0x0000062fu, 0), 0x20);
+    for (const auto queue : {0u, 0x20u}) AgcDriver::Pm4::Validate(acquire(0x00c58000u), queue);
+    expectFailure([&] { AgcDriver::Pm4::Validate(acquire(0x00020000u), 0x20); }, "unsupported ACQUIRE_MEM control flags");
+    expectFailure([&] { AgcDriver::Pm4::Validate(makePacket(0x58, {0x00010000u, 0, 0, 0, 0, 10, 0}), 0x20); }, "unsupported ACQUIRE_MEM control flags");
+    AgcDriver::QueueState state;
+    target = 0;
+    execute(state, release(0));
+    check(target == 0x150, "a 7-dword GCN RELEASE_MEM did not write its data");
+    const auto label = AgcDriver::Pm4::DecodeLabelWrite(release(0));
+    check(label.has_value() && label->address == reinterpret_cast<std::uintptr_t>(&target) && label->Bytes().size() == 4, "a 7-dword GCN RELEASE_MEM did not resolve as a 4-byte label");
+    target = 0;
+    const auto called = joinPackets({marker(0x68754000u), acquire(0x00c58000u), release(2u)});
+    auto words = indirectBuffer(called);
+    submitWords(words, 0x20);
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::atomic_ref<std::uint32_t>(target).load() == 0x150, "a called buffer with the GCN packet forms did not run on a compute queue");
 }
 
 void testMemSemaphore() {
@@ -2816,6 +2866,7 @@ int main(int argc, char** argv) {
         testEventWrite();
         testReleaseMemDataSelects();
         testGcnReleaseMemSystemCounter();
+        testGcnCalledBufferPacketForms();
         testAcquireMem();
         testConditionalWrite();
         testConditionalWriteSubmission();

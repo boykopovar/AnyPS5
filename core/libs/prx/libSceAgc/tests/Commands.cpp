@@ -258,6 +258,34 @@ void testTagHeaders() {
     }
 }
 
+void testWaitConsoleArguments() {
+    const auto pointer = [](std::uintptr_t address) { return reinterpret_cast<const volatile void*>(address); };
+    {
+        Storage storage;
+        const auto* wait = sceAgcAcbWaitRegMem(&storage.buffer, 1, 2, 3, pointer(4), 5, 0, 0);
+        const std::array<std::uint32_t, 16> expected{0xc0027900u, 0x342u, 0xc8020000u, 4u, 0xc0079300u, 0x06000012u, 0u, 0u, 5u, 0u, 0u, 0u, 0u, 0xc0017900u, 0x342u, 0xc8000000u};
+        check(wait == storage.words.data() && std::equal(expected.begin(), expected.end(), wait), "ACB wait does not match the console's packet");
+        check(storage.buffer.cursor_up == storage.words.data() + expected.size(), "ACB wait cursor advance mismatch");
+    }
+    {
+        Storage storage;
+        const auto* wait = sceAgcDcbWaitRegMem(&storage.buffer, 1, 2, 3, 4, pointer(5), 0, 1, 0xffff0);
+        const std::array<std::uint32_t, 16> expected{0xc0027904u, 0x342u, 0xc8020000u, 5u, 0xc0079300u, 0x152u, 0u, 0u, 0u, 0u, 1u, 0u, 0xffffu, 0xc0017904u, 0x342u, 0xc8000000u};
+        check(wait == storage.words.data() && std::equal(expected.begin(), expected.end(), wait), "DCB wait does not match the console's packet");
+        check(storage.buffer.cursor_up == storage.words.data() + expected.size(), "DCB wait cursor advance mismatch");
+    }
+    const auto rejects = [](const auto& build, const char* message) {
+        Storage storage;
+        storage.words.fill(0xdeadbeefu);
+        const auto before = storage.words;
+        check(build(storage.buffer) == nullptr && storage.words == before && storage.buffer.cursor_up == storage.words.data(), message);
+    };
+    rejects([&](CommandBuffer& buffer) { return sceAgcAcbWaitRegMem(&buffer, 0x11, 0x22, 0x33, pointer(0x44444444u), 0x55555555u, 0, 0); }, "ACB wait with size 0x11 wrote a packet");
+    rejects([&](CommandBuffer& buffer) { return sceAgcAcbWaitRegMem(&buffer, 0x22, 0x44, 0, nullptr, 0, 0, 0); }, "ACB wait with size 0x22 wrote a packet");
+    rejects([&](CommandBuffer& buffer) { return sceAgcDcbWaitRegMem(&buffer, 0x11, 0x22, 0x33, 0x44, pointer(0x55555555u), 0, 0, 0); }, "DCB wait with size 0x11 wrote a packet");
+    rejects([&](CommandBuffer& buffer) { return sceAgcDcbWaitRegMem(&buffer, 0x22, 0x44, 0, 0, nullptr, 0, 0, 0); }, "DCB wait with size 0x22 wrote a packet");
+}
+
 void testJumpTargetPatch() {
     const auto target = [](std::uintptr_t address) { return reinterpret_cast<const volatile std::uint32_t*>(address); };
     Storage storage;
@@ -622,19 +650,30 @@ void testFlowPackets() {
     check(called.words[3] == 0x0f2fffffu, "unchained INDIRECT_BUFFER control word mismatch");
     Storage compute;
     sceAgcAcbJump(&compute.buffer, 1, target, 0x10);
-    check(compute.words[0] == 0xc0023f00u && compute.words[3] == 0x1f300010u, "compute jumps did not chain");
-    Storage rejected;
-    rejected.words.fill(0xa5a5a5a5u);
-    const auto rejectedWords = rejected.words;
-    const auto* rejectedCursor = rejected.buffer.cursor_up;
-    expectFailure([&] { sceAgcDcbJump(&rejected.buffer, 2, 0, target, 1); });
-    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
-    expectFailure([&] { sceAgcDcbJump(&rejected.buffer, 0, 4, target, 1); });
-    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
-    expectFailure([&] { sceAgcDcbJump(&rejected.buffer, 0, 0, target, 0x100000u); });
-    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
-    expectFailure([&] { sceAgcAcbJump(&rejected.buffer, 0, reinterpret_cast<const std::uint32_t*>(0x1002ull), 1); });
-    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
+    check(compute.words[0] == 0xc0023f00u && compute.words[3] == 0x1f900010u, "compute jumps did not chain");
+    struct ConsoleJump {
+        bool compute;
+        std::uint8_t mode;
+        std::uint8_t cachePolicy;
+        std::uintptr_t target;
+        std::uint32_t size;
+        std::array<std::uint32_t, 3> words;
+    };
+    const std::array<ConsoleJump, 6> consoleJumps{{
+        {true, 1, 0x11, 0x22222222u, 0x33333333u, {0x22222220u, 0u, 0x1f933333u}},
+        {true, 1, 1, 2u, 3u, {0u, 0u, 0x1f900003u}},
+        {true, 1, 0x22, 0x3333333344444444ull, 0u, {0x44444444u, 0x33333333u, 0x2f900000u}},
+        {false, 0x11, 0x22, 0x33333333u, 0x44444444u, {0x33333330u, 0u, 0x2f344444u}},
+        {false, 1, 2, 3u, 4u, {0u, 0u, 0x2f300004u}},
+        {false, 0x22, 0x44, 0u, 0u, {0u, 0u, 0x0f200000u}},
+    }};
+    for (const auto& item : consoleJumps) {
+        Storage storage;
+        const auto* jumpTarget = reinterpret_cast<const std::uint32_t*>(item.target);
+        const auto* packet = item.compute ? sceAgcAcbJump(&storage.buffer, item.cachePolicy, jumpTarget, item.size) : sceAgcDcbJump(&storage.buffer, item.mode, item.cachePolicy, jumpTarget, item.size);
+        check(packet == storage.words.data() && packet[0] == 0xc0023f00u && std::equal(item.words.begin(), item.words.end(), packet + 1), "jump packet does not match the console's");
+        check(storage.buffer.cursor_up == storage.words.data() + 4, "jump cursor mismatch");
+    }
     check(sceAgcDcbJumpGetSize() == 16 && sceAgcAcbJumpGetSize() == 16, "jump packet sizes");
     Storage stall;
     sceAgcDcbStallCommandBufferParser(&stall.buffer);
@@ -1167,12 +1206,24 @@ void testDispatchPackets() {
     sceAgcCbDispatch(&direct.buffer, 7, 3, 1, 0x8000u);
     const std::array<std::uint32_t, 5> directExpected{0xc0031500u, 7, 3, 1, 0x8041u};
     check(std::equal(directExpected.begin(), directExpected.end(), direct.words.begin()), "DISPATCH_DIRECT packet mismatch");
+    const std::array<std::array<std::uint32_t, 2>, 10> modifiers{{
+        {4u, 0x41u}, {0x100u, 0x41u}, {0x44444444u, 0x41u},
+        {0xffffffffu, 0xa079u}, {8u, 0x49u}, {16u, 0x51u},
+        {32u, 0x61u}, {0x2000u, 0x2041u}, {0x8001u, 0x8041u},
+        {0x40u, 0x41u}
+    }};
+    for (const auto& item : modifiers) {
+        Storage masked;
+        masked.words.fill(0xdeadbeefu);
+        auto* packet = sceAgcCbDispatch(&masked.buffer, 1u, 2u, 3u, item[0]);
+        const std::array<std::uint32_t, 5> expected{0xc0031500u, 1u, 2u, 3u, item[1]};
+        check(packet == masked.words.data() && std::equal(expected.begin(), expected.end(), packet), "direct dispatch did not mask the modifier");
+        check(masked.buffer.cursor_up == packet + 5 && masked.words[5] == 0xdeadbeefu, "masked dispatch cursor or sentinel differs");
+    }
     Storage rejected;
     rejected.words.fill(0xa5a5a5a5u);
     const auto rejectedWords = rejected.words;
     const auto* rejectedCursor = rejected.buffer.cursor_up;
-    expectFailure([&] { sceAgcCbDispatch(&rejected.buffer, 1, 1, 1, 0x100u); });
-    check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
     expectFailure([&] { sceAgcAcbDispatchIndirect(&rejected.buffer, reinterpret_cast<const volatile void*>(0x1002ull), 0); });
     check(rejected.words == rejectedWords && rejected.buffer.cursor_up == rejectedCursor, "a refused packet changed the command buffer");
     expectFailure([&] { sceAgcAcbDispatchIndirect(&rejected.buffer, nullptr, 0); });
@@ -1319,6 +1370,7 @@ int main(int argc, char** argv) {
         testIndexedIndirectDraws();
     testMeasuredMultiDraws();
         testTagHeaders();
+        testWaitConsoleArguments();
         testMarkers();
         testJumpTargetPatch();
         testMarkerSpans();

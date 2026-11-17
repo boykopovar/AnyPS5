@@ -54,6 +54,7 @@ inline std::optional<std::vector<RecordedSample>> ParseRecording(std::string_vie
         const char* cursor = line.data();
         const char* end = line.data() + line.size();
         for (std::size_t i = 0; i < fields.size(); ++i) {
+            if (i != 0 && (cursor == end || *cursor != ' ')) return std::nullopt;
             while (cursor < end && *cursor == ' ') ++cursor;
             const auto [next, error] = std::from_chars(cursor, end, fields[i], i == 1 ? 16 : 10);
             if (error != std::errc{}) return std::nullopt;
