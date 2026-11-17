@@ -1848,6 +1848,58 @@ class ImportAuditTests(unittest.TestCase):
                         with self.assertRaisesRegex(import_audit.AuditError, "GNU hash chain.*outside file-backed"):
                             reader(Path("unmapped-chain.prx"), image)
 
+    def test_sectionless_elf_rejects_ambiguous_load_mappings(self):
+        for gnu_hash in (False, True):
+            original = build_sectionless_elf([("alpha", 0, GLOBAL_FUNCTION), ("beta", 1, GLOBAL_FUNCTION)], gnu_hash=gnu_hash)
+            load = struct.unpack_from("<IIQQQQQQ", original, 64)
+            dynamic = struct.unpack_from("<IIQQQQQQ", original, 120)
+            tags = dict(struct.unpack_from("<qQ", original, position)
+                        for position in range(dynamic[2], dynamic[2] + dynamic[5], 16))
+            for tag in (5, 6, 0x6ffffef5 if gnu_hash else 4):
+                for interior in (False, True):
+                    for reverse in (False, True):
+                        image = bytearray(original)
+                        address = tags[tag] + int(interior)
+                        length = 1 if interior else load[3] + load[5] - address
+                        offset = len(image)
+                        image.extend(original[address - load[3]:address - load[3] + length])
+                        if tag == 5 and not interior:
+                            image[offset:] = image[offset:].replace(b"alpha", b"omega")
+                        other = (1, 4, offset, address, address, length, length, 1)
+                        headers = [load, other]
+                        if reverse:
+                            headers.reverse()
+                        table = len(image)
+                        for header in [*headers, dynamic]:
+                            image.extend(struct.pack("<IIQQQQQQ", *header))
+                        struct.pack_into("<Q", image, 32, table)
+                        struct.pack_into("<H", image, 56, 3)
+                        for reader in (import_audit.elf_imports, import_audit.elf_exports):
+                            with self.subTest(gnu_hash=gnu_hash, tag=tag, interior=interior, reverse=reverse, reader=reader.__name__):
+                                with self.assertRaisesRegex(import_audit.AuditError, "ambiguous.*load"):
+                                    reader(Path("ambiguous.prx"), image)
+
+    def test_sectionless_elf_accepts_unambiguous_load_overlaps(self):
+        original = build_sectionless_elf([("alpha", 0, GLOBAL_FUNCTION), ("beta", 1, GLOBAL_FUNCTION)])
+        load = struct.unpack_from("<IIQQQQQQ", original, 64)
+        dynamic = struct.unpack_from("<IIQQQQQQ", original, 120)
+        for offset, address, size, memory in ((176, 0x4000b0, len(original) - 176, len(original) - 176),
+                                             (0, 0x4000b0, 0, len(original)), (0, 0x500000, len(original), len(original))):
+            for reverse in (False, True):
+                with self.subTest(offset=offset, address=address, size=size, reverse=reverse):
+                    image = bytearray(original)
+                    other = (1, 4, offset, address, address, size, memory, 1)
+                    headers = [load, other]
+                    if reverse:
+                        headers.reverse()
+                    table = len(image)
+                    for header in [*headers, dynamic]:
+                        image.extend(struct.pack("<IIQQQQQQ", *header))
+                    struct.pack_into("<Q", image, 32, table)
+                    struct.pack_into("<H", image, 56, 3)
+                    self.assertEqual(import_audit.elf_imports(Path("valid.prx"), image), ({"alpha": False}, set()))
+                    self.assertEqual(import_audit.elf_exports(Path("valid.prx"), image), {"beta"})
+
     def test_sectionless_hash_metadata_must_be_file_backed(self):
         for gnu_hash in (False, True):
             image = bytearray(build_sectionless_elf([("AAAAAAAAAAA", 1, GLOBAL_FUNCTION)], gnu_hash=gnu_hash))

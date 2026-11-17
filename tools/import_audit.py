@@ -106,6 +106,9 @@ def elf_program_dynamic_symbols(path, data, section_symbol_count=None):
                         covered = max(covered, next_virtual + next_size)
                 if address + size <= covered:
                     take(data, result, size, path, what)
+                    if size and any(other[5] and other[3] < address + size and address < other[3] + other[5]
+                                    and other[2] - other[3] != offset - virtual for other in loads):
+                        raise AuditError(f"{path}: {what} address 0x{address:x} has ambiguous file-backed load mappings")
                     return result
         raise AuditError(f"{path}: {what} address 0x{address:x} is outside file-backed load segments")
 
