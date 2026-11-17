@@ -325,11 +325,16 @@ void verifyDirectedF16Conversion() {
 }
 
 void verifyDirectedF64Arithmetic() {
-    for (const std::uint32_t first : {0xd564000au, 0xd565000au}) {
-        requireOpcode(first, first == 0xd564000au ? RdnaOpcode::VAddF64 : RdnaOpcode::VMulF64);
+    struct Form {
+        std::uint32_t first;
+        std::uint32_t second;
+        RdnaOpcode opcode;
+    };
+    for (const Form& form : {Form{0xd564000au, 0x00020d04u, RdnaOpcode::VAddF64}, Form{0xd565000au, 0x00020d04u, RdnaOpcode::VMulF64}, Form{0xd54c000au, 0x04220d04u, RdnaOpcode::VFmaF64}}) {
+        requireOpcode(form.first, form.opcode);
         for (std::uint32_t rounding = 1; rounding < 4; ++rounding) {
-            const std::array<std::uint32_t, 4> runtime{roundMode(rounding << 2u), first, 0x00020d04u, endProgram};
-            const std::array<std::uint32_t, 3> declared{first, 0x00020d04u, endProgram};
+            const std::array<std::uint32_t, 4> runtime{roundMode(rounding << 2u), form.first, form.second, endProgram};
+            const std::array<std::uint32_t, 3> declared{form.first, form.second, endProgram};
             const auto rounded = opcodeSequence(translate(runtime, ShaderFloatMode{0xc0}));
             require(rounded == opcodeSequence(translate(declared, ShaderFloatMode{0xc0u | (rounding << 2u)})), "runtime f64 rounding does not match the declared rounding");
             require(rounded != opcodeSequence(translate(declared, ShaderFloatMode{0xc0})), "runtime f64 rounding did not change the arithmetic");

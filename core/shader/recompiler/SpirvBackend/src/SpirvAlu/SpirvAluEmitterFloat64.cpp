@@ -694,6 +694,75 @@ public:
         return pair(pick(special, pick(zero, constant(DefaultNan), infinity), pick(zero, sign, roundPack(sign, exponent, wide, rounding))));
     }
 
+    std::uint32_t Fma(std::uint32_t lhsBits, std::uint32_t rhsBits, std::uint32_t addendBits, std::uint32_t rounding, bool flushResult) const {
+        const auto lhs = scalar(lhsBits);
+        const auto rhs = scalar(rhsBits);
+        const auto addend = scalar(addendBits);
+        const auto productSign = withConstant(spv::OpBitwiseAnd, op(spv::OpBitwiseXor, lhs, rhs), SignBit);
+        const auto addendSign = withConstant(spv::OpBitwiseAnd, addend, SignBit);
+        const auto lhsMagnitude = withConstant(spv::OpBitwiseAnd, lhs, MagnitudeMask);
+        const auto rhsMagnitude = withConstant(spv::OpBitwiseAnd, rhs, MagnitudeMask);
+        const auto addendMagnitude = withConstant(spv::OpBitwiseAnd, addend, MagnitudeMask);
+        const auto lhsField = withConstant(spv::OpShiftRightLogical, lhsMagnitude, 52u);
+        const auto rhsField = withConstant(spv::OpShiftRightLogical, rhsMagnitude, 52u);
+        const auto addendField = withConstant(spv::OpShiftRightLogical, addendMagnitude, 52u);
+        const auto lhsNormal = normalized(lhsMagnitude, lhsField);
+        const auto rhsNormal = normalized(rhsMagnitude, rhsField);
+        const auto addendNormal = normalized(addendMagnitude, addendField);
+        const auto raw = multiply(lhsNormal.significand, rhsNormal.significand);
+        const Product shifted{op(spv::OpBitwiseOr, withConstant(spv::OpShiftLeftLogical, raw.high, 21u), withConstant(spv::OpShiftRightLogical, raw.low, 43u)), withConstant(spv::OpShiftLeftLogical, raw.low, 21u)};
+        const auto carry = testConstant(spv::OpUGreaterThanEqual, shifted.high, 1ull << 62u);
+        const Product product{pick(carry, shifted.high, op(spv::OpBitwiseOr, withConstant(spv::OpShiftLeftLogical, shifted.high, 1u), withConstant(spv::OpShiftRightLogical, shifted.low, 63u))),
+                              pick(carry, shifted.low, withConstant(spv::OpShiftLeftLogical, shifted.low, 1u))};
+        const auto productExponent = op(spv::OpIAdd, op(spv::OpIAdd, lhsNormal.exponent, rhsNormal.exponent), pick(carry, constant(~std::uint64_t{1021u}), constant(~std::uint64_t{1022u})));
+        const auto addendZero = testConstant(spv::OpIEqual, addendMagnitude, 0u);
+        const auto addendExponent = pick(addendZero, productExponent, addendNormal.exponent);
+        const Product wideAddend{pick(addendZero, constant(0u), withConstant(spv::OpShiftLeftLogical, addendNormal.significand, 10u)), constant(0u)};
+        const auto productAbove = test(spv::OpSLessThan, addendExponent, productExponent);
+        const auto alignedProduct = shiftRightJam128(product, pick(productAbove, constant(0u), op(spv::OpISub, addendExponent, productExponent)));
+        const auto alignedAddend = shiftRightJam128(wideAddend, pick(productAbove, op(spv::OpISub, productExponent, addendExponent), constant(0u)));
+        const auto alignedExponent = pick(productAbove, productExponent, addendExponent);
+        const auto subtract = test(spv::OpINotEqual, productSign, addendSign);
+        const auto productLarger = logical(spv::OpLogicalOr, test(spv::OpUGreaterThan, alignedProduct.high, alignedAddend.high),
+            logical(spv::OpLogicalAnd, test(spv::OpIEqual, alignedProduct.high, alignedAddend.high), test(spv::OpUGreaterThanEqual, alignedProduct.low, alignedAddend.low)));
+        const Product large{pick(productLarger, alignedProduct.high, alignedAddend.high), pick(productLarger, alignedProduct.low, alignedAddend.low)};
+        const Product small{pick(productLarger, alignedAddend.high, alignedProduct.high), pick(productLarger, alignedAddend.low, alignedProduct.low)};
+        const auto sumLow = op(spv::OpIAdd, large.low, small.low);
+        const auto sumHigh = op(spv::OpIAdd, op(spv::OpIAdd, large.high, small.high), pick(test(spv::OpULessThan, sumLow, large.low), constant(1u), constant(0u)));
+        const auto differenceLow = op(spv::OpISub, large.low, small.low);
+        const auto differenceHigh = op(spv::OpISub, op(spv::OpISub, large.high, small.high), pick(test(spv::OpULessThan, large.low, small.low), constant(1u), constant(0u)));
+        const Product total{pick(subtract, differenceHigh, sumHigh), pick(subtract, differenceLow, sumLow)};
+        const auto sign = pick(logical(spv::OpLogicalOr, productLarger, Unary(state, spv::OpLogicalNot, boolean, subtract)), productSign, addendSign);
+        const auto cancelled = testConstant(spv::OpIEqual, op(spv::OpBitwiseOr, total.high, total.low), 0u);
+        const auto zeros = pick(testConstant(spv::OpIEqual, total.high, 0u), withConstant(spv::OpIAdd, leadingZeros(total.low), 64u), leadingZeros(total.high));
+        const auto top = testConstant(spv::OpIEqual, zeros, 0u);
+        const auto leftShift = pick(top, constant(0u), withConstant(spv::OpISub, zeros, 1u));
+        const auto raised = shiftLeft128(total, leftShift);
+        const auto lowered = shiftRightJam128(total, constant(1u));
+        const auto wideHigh = pick(top, lowered.high, raised.high);
+        const auto wideLow = pick(top, lowered.low, raised.low);
+        const auto unbounded = pick(top, withConstant(spv::OpIAdd, alignedExponent, 1u), op(spv::OpISub, alignedExponent, leftShift));
+        const auto wide = op(spv::OpBitwiseOr, wideHigh, pick(testConstant(spv::OpINotEqual, wideLow, 0u), constant(1u), constant(0u)));
+        const auto tiny = test(spv::OpSLessThan, unbounded, constant(1u));
+        const auto significandBits = pick(tiny, shiftRightJam(wide, op(spv::OpISub, constant(1u), unbounded)), wide);
+        auto finite = roundPack(sign, pick(tiny, constant(1u), unbounded), significandBits, rounding);
+        if (flushResult) {
+            const auto reachesNormal = logical(spv::OpLogicalAnd, testConstant(spv::OpIEqual, unbounded, 0u),
+                logical(spv::OpLogicalAnd, testConstant(spv::OpIEqual, withConstant(spv::OpShiftRightLogical, wide, 10u), (1ull << 53u) - 1u), roundsUp(sign, wide, rounding)));
+            finite = pick(logical(spv::OpLogicalAnd, tiny, Unary(state, spv::OpLogicalNot, boolean, reachesNormal)), sign, finite);
+        }
+        finite = pick(cancelled, constant(rounding == 2u ? SignBit : 0u), finite);
+        const auto keptAddend = flushResult ? pick(testConstant(spv::OpIEqual, addendField, 0u), addendSign, addend) : addend;
+        const auto zeroSum = pick(subtract, constant(rounding == 2u ? SignBit : 0u), productSign);
+        const auto productZero = logical(spv::OpLogicalOr, testConstant(spv::OpIEqual, lhsMagnitude, 0u), testConstant(spv::OpIEqual, rhsMagnitude, 0u));
+        const auto productSpecial = logical(spv::OpLogicalOr, testConstant(spv::OpIEqual, lhsField, 0x7ffu), testConstant(spv::OpIEqual, rhsField, 0x7ffu));
+        const auto addendSpecial = testConstant(spv::OpIEqual, addendField, 0x7ffu);
+        auto result = pick(productZero, pick(addendZero, zeroSum, keptAddend), finite);
+        result = pick(addendSpecial, addend, result);
+        const auto invalid = logical(spv::OpLogicalOr, productZero, logical(spv::OpLogicalAnd, addendSpecial, subtract));
+        return pair(pick(productSpecial, pick(invalid, constant(DefaultNan), withConstant(spv::OpBitwiseOr, productSign, Infinity)), result));
+    }
+
     std::uint32_t FromF32(std::uint32_t value) const {
         const auto bits = widen(Unary(state, spv::OpBitcast, u32, value));
         const auto sign = withConstant(spv::OpShiftLeftLogical, withConstant(spv::OpBitwiseAnd, bits, 0x80000000u), 32u);
@@ -836,13 +905,39 @@ private:
         return {op(spv::OpIAdd, op(spv::OpIAdd, highHigh, high(lowHigh)), op(spv::OpIAdd, high(highLow), high(middle))), op(spv::OpBitwiseOr, withConstant(spv::OpShiftLeftLogical, middle, 32u), low(lowLow))};
     }
 
-    std::uint32_t roundPack(std::uint32_t sign, std::uint32_t exponent, std::uint32_t significandBits, std::uint32_t rounding) const {
+    Product shiftRightJam128(Product value, std::uint32_t count) const {
+        const auto below = testConstant(spv::OpULessThan, count, 64u);
+        const auto within = testConstant(spv::OpULessThan, count, 128u);
+        const auto near = pick(below, count, constant(0u));
+        const auto far = pick(logical(spv::OpLogicalAnd, within, Unary(state, spv::OpLogicalNot, boolean, below)), withConstant(spv::OpISub, count, 64u), constant(0u));
+        const auto lost = [&](std::uint32_t bits, std::uint32_t amount) { return op(spv::OpBitwiseAnd, bits, withConstant(spv::OpISub, op(spv::OpShiftLeftLogical, constant(1u), amount), 1u)); };
+        const auto jam = [&](std::uint32_t bits) { return pick(testConstant(spv::OpINotEqual, bits, 0u), constant(1u), constant(0u)); };
+        const auto carried = op(spv::OpShiftLeftLogical, withConstant(spv::OpShiftLeftLogical, value.high, 1u), op(spv::OpISub, constant(63u), near));
+        const auto nearLow = op(spv::OpBitwiseOr, op(spv::OpBitwiseOr, op(spv::OpShiftRightLogical, value.low, near), carried), jam(lost(value.low, near)));
+        const auto farLow = op(spv::OpBitwiseOr, op(spv::OpShiftRightLogical, value.high, far), jam(op(spv::OpBitwiseOr, lost(value.high, far), value.low)));
+        return {pick(below, op(spv::OpShiftRightLogical, value.high, near), constant(0u)), pick(below, nearLow, pick(within, farLow, jam(op(spv::OpBitwiseOr, value.high, value.low))))};
+    }
+
+    Product shiftLeft128(Product value, std::uint32_t count) const {
+        const auto below = testConstant(spv::OpULessThan, count, 64u);
+        const auto near = pick(below, count, constant(0u));
+        const auto far = pick(below, constant(0u), withConstant(spv::OpISub, count, 64u));
+        const auto carried = op(spv::OpShiftRightLogical, withConstant(spv::OpShiftRightLogical, value.low, 1u), op(spv::OpISub, constant(63u), near));
+        return {pick(below, op(spv::OpBitwiseOr, op(spv::OpShiftLeftLogical, value.high, near), carried), op(spv::OpShiftLeftLogical, value.low, far)), pick(below, op(spv::OpShiftLeftLogical, value.low, near), constant(0u))};
+    }
+
+    std::uint32_t roundsUp(std::uint32_t sign, std::uint32_t significandBits, std::uint32_t rounding) const {
         const auto roundBits = withConstant(spv::OpBitwiseAnd, significandBits, 0x3ffu);
-        const auto kept = withConstant(spv::OpShiftRightLogical, significandBits, 10u);
-        const auto odd = testConstant(spv::OpINotEqual, withConstant(spv::OpBitwiseAnd, kept, 1u), 0u);
-        const auto nearest = logical(spv::OpLogicalOr, testConstant(spv::OpUGreaterThan, roundBits, 0x200u), logical(spv::OpLogicalAnd, testConstant(spv::OpIEqual, roundBits, 0x200u), odd));
+        const auto odd = testConstant(spv::OpINotEqual, withConstant(spv::OpBitwiseAnd, significandBits, 0x400u), 0u);
+        if (rounding == 0u) return logical(spv::OpLogicalOr, testConstant(spv::OpUGreaterThan, roundBits, 0x200u), logical(spv::OpLogicalAnd, testConstant(spv::OpIEqual, roundBits, 0x200u), odd));
         const auto away = rounding == 3u ? test(spv::OpINotEqual, sign, sign) : testConstant(rounding == 2u ? spv::OpINotEqual : spv::OpIEqual, sign, 0u);
-        const auto up = rounding == 0u ? nearest : logical(spv::OpLogicalAnd, away, testConstant(spv::OpINotEqual, roundBits, 0u));
+        return logical(spv::OpLogicalAnd, away, testConstant(spv::OpINotEqual, roundBits, 0u));
+    }
+
+    std::uint32_t roundPack(std::uint32_t sign, std::uint32_t exponent, std::uint32_t significandBits, std::uint32_t rounding) const {
+        const auto kept = withConstant(spv::OpShiftRightLogical, significandBits, 10u);
+        const auto away = rounding == 3u ? test(spv::OpINotEqual, sign, sign) : testConstant(rounding == 2u ? spv::OpINotEqual : spv::OpIEqual, sign, 0u);
+        const auto up = roundsUp(sign, significandBits, rounding);
         const auto magnitude = op(spv::OpIAdd, withConstant(spv::OpShiftLeftLogical, withConstant(spv::OpISub, exponent, 1u), 52u), op(spv::OpIAdd, kept, pick(up, constant(1u), constant(0u))));
         const auto overflow = rounding == 0u ? constant(Infinity) : pick(away, constant(Infinity), constant(Infinity - 1u));
         return op(spv::OpBitwiseOr, sign, pick(testConstant(spv::OpUGreaterThanEqual, magnitude, Infinity), overflow, magnitude));
@@ -898,6 +993,19 @@ std::uint32_t EmitFPMulRound64(SpirvEmitterState& state, std::uint32_t arg0, std
 
 std::uint32_t EmitFPFma64(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1, std::uint32_t arg2) {
     return FusedMultiplyAdd(state, arg0, arg1, arg2, ConstantI32(state, 0));
+}
+
+std::uint32_t EmitFPFmaRound64(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1, std::uint32_t arg2, const IrValue* mode) {
+    const auto a = Classify(state, arg0);
+    const auto b = Classify(state, arg1);
+    const auto c = Classify(state, arg2);
+    const auto both = [&](std::uint32_t lhs, std::uint32_t rhs) { return Binary(state, spv::OpLogicalAnd, TypeBool(state), lhs, rhs); };
+    const auto validProduct = Unary(state, spv::OpLogicalNot, TypeBool(state), Binary(state, spv::OpLogicalOr, TypeBool(state), both(a.infinite, b.zero), both(a.zero, b.infinite)));
+    auto result = Split(state, CallIntegerFunction(state, state.roundedFmaF64Functions.at(mode->ImmediateU32()), TypeU64(state), arg0, arg1, arg2));
+    result = SelectBits(state, both(c.nan, validProduct), Quiet(state, c.bits), result);
+    result = SelectBits(state, b.nan, Quiet(state, b.bits), result);
+    result = SelectBits(state, a.nan, Quiet(state, a.bits), result);
+    return Join(state, result);
 }
 
 std::uint32_t EmitFPFmaScale64(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1, std::uint32_t arg2, std::uint32_t arg3) {
@@ -1257,6 +1365,14 @@ void DefineIntegerFloat64Functions(SpirvEmitterState& state) {
         const auto roundedType = TypeU64(state);
         for (const IrBlock* block : state.program.BlockOrder()) {
             for (const IrValue* inst : block->Instructions()) {
+                if (inst->Opcode() == IrOpcode::FPFmaRound64) {
+                    const std::uint32_t mode = inst->Argument(3u)->ImmediateU32();
+                    std::uint32_t& fused = state.roundedFmaF64Functions.at(mode);
+                    if (fused != 0u) continue;
+                    const std::string fusedName = "f64_fma_round_" + std::to_string(mode & 3u) + ((mode & 4u) != 0u ? "_flush" : "");
+                    fused = DefineIntegerFunction(state, fusedName.c_str(), roundedType, [&](std::uint32_t lhs, std::uint32_t rhs, std::uint32_t addend) { return rounded.Fma(lhs, rhs, addend, mode & 3u, (mode & 4u) != 0u); }, roundedType, roundedType, roundedType);
+                    continue;
+                }
                 const bool add = inst->Opcode() == IrOpcode::FPAddRound64;
                 if (!add && inst->Opcode() != IrOpcode::FPMulRound64) continue;
                 const std::uint32_t rounding = inst->Argument(2u)->ImmediateU32();

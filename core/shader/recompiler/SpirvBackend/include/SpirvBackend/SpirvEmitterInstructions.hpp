@@ -199,6 +199,7 @@ std::uint32_t EmitFPMul64(SpirvEmitterState& state, std::uint32_t arg0, std::uin
 std::uint32_t EmitFPAddRound64(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1, const IrValue* rounding);
 std::uint32_t EmitFPMulRound64(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1, const IrValue* rounding);
 std::uint32_t EmitFPFma64(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1, std::uint32_t arg2);
+std::uint32_t EmitFPFmaRound64(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1, std::uint32_t arg2, const IrValue* mode);
 std::uint32_t EmitFPFmaScale64(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1, std::uint32_t arg2, std::uint32_t arg3);
 std::uint32_t EmitFPFmaScale32(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1, std::uint32_t arg2, std::uint32_t arg3);
 std::uint32_t EmitFPMin64(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1);

@@ -28,10 +28,12 @@ bool TranslationContext::float64Operation(const RdnaInstruction& inst, IrOpcode 
         }
     }
     const IrType type = IrOpcodeType(opcode);
-    const std::uint32_t rounding = floatMode.has_value() && (opcode == IrOpcode::FPAdd64 || opcode == IrOpcode::FPMul64) ? (floatMode->floatMode >> 2u) & 3u : 0u;
-    IrValue* result = rounding != 0u ? &ir.Emit(opcode == IrOpcode::FPAdd64 ? IrOpcode::FPAddRound64 : IrOpcode::FPMulRound64, type, {args[0], args[1], &ir.Constant(rounding)})
+    const std::uint32_t rounding = floatMode.has_value() && arithmetic ? (floatMode->floatMode >> 2u) & 3u : 0u;
+    const bool roundedFma = rounding != 0u && opcode == IrOpcode::FPFma64;
+    IrValue* result = roundedFma ? &ir.Emit(IrOpcode::FPFmaRound64, type, {args[0], args[1], args[2], &ir.Constant(rounding | ((floatMode->floatMode & 0x80u) == 0u ? 4u : 0u))})
+        : rounding != 0u ? &ir.Emit(opcode == IrOpcode::FPAdd64 ? IrOpcode::FPAddRound64 : IrOpcode::FPMulRound64, type, {args[0], args[1], &ir.Constant(rounding)})
         : count == 1u ? &ir.Emit(opcode, type, {args[0]}) : count == 2u ? &ir.Emit(opcode, type, {args[0], args[1]}) : &ir.Emit(opcode, type, {args[0], args[1], args[2]});
-    if (arithmetic) result = &nanResultF64(*args[0], *args[1], args[2], flushTinyF64Result(opcode, *args[0], *args[1], args[2], *result, rounding));
+    if (arithmetic) result = &nanResultF64(*args[0], *args[1], args[2], roundedFma ? *result : flushTinyF64Result(opcode, *args[0], *args[1], args[2], *result, rounding));
     if (type == IrType::U64) {
         writeF64Result(inst.destination, *result);
         return true;

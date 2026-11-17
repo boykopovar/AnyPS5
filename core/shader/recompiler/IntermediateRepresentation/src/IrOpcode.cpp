@@ -308,6 +308,7 @@ constexpr std::array<OpcodeMeta, static_cast<std::size_t>(IrOpcode::Count)> Meta
     makeMeta("FPAddRound64", U64, U64, U64, U32),
     makeMeta("FPMulRound64", U64, U64, U64, U32),
     makeMeta("FPFma64", U64, U64, U64, U64),
+    makeMeta("FPFmaRound64", U64, U64, U64, U64, U32),
     makeMeta("FPFmaScale64", U64, U64, U64, U64, U32),
     makeMeta("FPFmaScale32", F32, F32, F32, F32, U32),
     makeMeta("FPMin64", U64, U64, U64),
