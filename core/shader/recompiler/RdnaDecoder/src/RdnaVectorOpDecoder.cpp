@@ -2281,7 +2281,13 @@ RdnaInstruction DecodeRdnaVop2(std::uint32_t programCounter, std::span<const std
     instruction.programCounter = programCounter;
     instruction.family = RdnaInstructionFamily::VOP2;
     instruction.opcodeId = opcode;
-    instruction.op = lookupVectorOpcode(vop2Opcodes, opcode, "VOP2 opcode is not implemented");
+    const auto* entry = findVectorOpcodeEntry(vop2Opcodes, opcode);
+    if (entry == nullptr) {
+        char reason[160];
+        std::snprintf(reason, sizeof(reason), "VOP2 opcode is not implemented: opcode 0x%x at program counter 0x%08x raw word 0x%08x", opcode, programCounter, word);
+        throw std::invalid_argument(reason);
+    }
+    instruction.op = entry->opcode;
     SetRdnaRawWords(instruction, code, wordIndex, 1);
 
     if (src0 == 249u) {
