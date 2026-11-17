@@ -418,5 +418,110 @@ class AbSplitTests(unittest.TestCase):
                         self.assertEqual(run.stdout, "")
                         self.assertIn("settled does not match active phase", run.stderr)
                         self.assertNotIn("Traceback", run.stderr)
+
+DRIFT = 2.0
+
+
+def plan_log(names, rotate, cycles, effects):
+    count = len(names)
+    header = "[ab] in-run A/B: phases of 30.0 s from present 100, settle 2.0 s"
+    if rotate:
+        header += f", the arm order rotates by one at every cycle of {count} phases"
+    header += "".join(f"; {name}: APS5_NO_BARRIER_BATCH {'set' if name == 'A' else 'unset'}" for name in names)
+    lines = ["[gpu] startup", header]
+    for index in range(count * cycles):
+        arm = names[(index + (index // count if rotate else 0)) % count]
+        busy = 100.0 + DRIFT * index + effects.get(arm, 0.0)
+        lines += phase_lines(arm, index, 100 + 40 * index, 10.0 + 30 * index, busy, 400.0, 40.0, 8.0, 200.0, 30.0)
+    return [line + "\n" for line in lines]
+
+
+def busy_rows(names, rotate, cycles, effects):
+    result = ab_split.split(plan_log(names, rotate, cycles, effects))
+    return result, {row["metric"]: row for row in result["metrics"] if row["metric"].startswith("GPU busy ms/frame")}
+
+
+class AbRotationTests(unittest.TestCase):
+    def test_header_gives_the_cycle_length(self):
+        self.assertIsNone(ab_split.cycle_length(None))
+        self.assertIsNone(ab_split.cycle_length(plan_log(["A", "B"], False, 1, {})[1]))
+        self.assertEqual(ab_split.cycle_length(plan_log(["A", "B"], True, 1, {})[1]), 2)
+        self.assertEqual(ab_split.cycle_length(plan_log(["A", "X", "Y"], False, 1, {})[1]), 3)
+        self.assertEqual(ab_split.cycle_length(plan_log(["A", "X", "Y"], True, 1, {})[1]), 3)
+        self.assertEqual(ab_split.cycle_length(plan_log(["A", "X", "A", "Y", "X"], False, 1, {})[1]), 5)
+
+    def test_two_arms_without_rotation_pair_each_b_with_both_neighbours(self):
+        result, rows = busy_rows(["A", "B"], False, 3, {"B": 10.0})
+        self.assertEqual([phase["kind"] for phase in result["phases"]], ["A", "B", "A", "B", "A", "B"])
+        busy = rows["GPU busy ms/frame"]
+        self.assertAlmostEqual(busy["change"], 10.0 + DRIFT)
+        self.assertAlmostEqual(busy["noise"]["mean"], 10.0 + DRIFT / 3)
+        self.assertEqual(busy["noise"]["n"], 3)
+        self.assertNotIn("arm", busy)
+
+    def test_two_arms_with_rotation_pair_each_cycle_and_cancel_the_drift(self):
+        result, rows = busy_rows(["A", "B"], True, 4, {"B": 10.0})
+        self.assertEqual([phase["kind"] for phase in result["phases"]], ["A", "B", "B", "A", "A", "B", "B", "A"])
+        busy = rows["GPU busy ms/frame"]
+        self.assertAlmostEqual(busy["change"], 10.0)
+        self.assertAlmostEqual(busy["noise"]["mean"], 10.0)
+        self.assertEqual(busy["noise"]["n"], 4)
+        self.assertNotIn("arm", busy)
+
+    def test_two_arms_with_rotation_pair_b_only_with_the_a_of_its_cycle(self):
+        phases = [{"kind": kind, "index": index} for index, kind in enumerate("ABBAABBA")]
+        values = [0.0, 11.0, 20.0, 3.0, 4.0, 15.0, 24.0, 7.0]
+        result = ab_split.noise(values, phases, "B", 2)
+        self.assertEqual(result["n"], 4)
+        self.assertAlmostEqual(result["mean"], ((11.0 - 0.0) + (20.0 - 3.0) + (15.0 - 4.0) + (24.0 - 7.0)) / 4)
+
+    def test_three_arms_without_rotation_keep_the_drift_in_the_pairing(self):
+        result, rows = busy_rows(["A", "X", "Y"], False, 3, {"X": 10.0, "Y": -5.0})
+        self.assertEqual([phase["kind"] for phase in result["phases"]], list("AXYAXYAXY"))
+        self.assertEqual(sorted(rows), ["GPU busy ms/frame [X]", "GPU busy ms/frame [Y]"])
+        self.assertEqual({row["arm"] for row in rows.values()}, {"X", "Y"})
+        self.assertAlmostEqual(rows["GPU busy ms/frame [X]"]["noise"]["mean"], 10.0 + DRIFT)
+        self.assertAlmostEqual(rows["GPU busy ms/frame [Y]"]["noise"]["mean"], -5.0 + 2 * DRIFT)
+        self.assertEqual(rows["GPU busy ms/frame [X]"]["noise"]["n"], 3)
+
+    def test_three_arms_with_rotation_cancel_the_drift(self):
+        result, rows = busy_rows(["A", "X", "Y"], True, 3, {"X": 10.0, "Y": -5.0})
+        self.assertEqual([phase["kind"] for phase in result["phases"]], list("AXYXYAYAX"))
+        x, y = rows["GPU busy ms/frame [X]"], rows["GPU busy ms/frame [Y]"]
+        self.assertAlmostEqual(x["noise"]["mean"], 10.0)
+        self.assertAlmostEqual(y["noise"]["mean"], -5.0)
+        self.assertAlmostEqual(x["change"], 10.0)
+        self.assertAlmostEqual(y["change"], -5.0)
+        self.assertEqual((x["noise"]["n"], y["noise"]["n"]), (3, 3))
+
+    def test_each_cycle_begins_with_the_arm_of_its_number(self):
+        result, _ = busy_rows(["A", "X", "Y"], True, 6, {})
+        first = [phase["kind"] for phase in result["phases"][::3]]
+        self.assertEqual(first, ["A", "X", "Y", "A", "X", "Y"])
+
+    def test_a_repeated_arm_in_a_cycle_is_averaged(self):
+        result, rows = busy_rows(["A", "X", "A", "Y", "X"], False, 2, {"X": 10.0, "Y": 7.0})
+        self.assertEqual(len(result["phases"]), 10)
+        x = rows["GPU busy ms/frame [X]"]
+        self.assertEqual(x["noise"]["n"], 4)
+        self.assertAlmostEqual(x["noise"]["mean"], 10.0 + 1.5 * DRIFT)
+        y = rows["GPU busy ms/frame [Y]"]
+        self.assertEqual(y["noise"]["n"], 2)
+        self.assertAlmostEqual(y["noise"]["mean"], 7.0 + 2.0 * DRIFT)
+
+    def test_text_names_the_arm_and_the_pairing(self):
+        result, _ = busy_rows(["A", "X", "Y"], True, 3, {"X": 10.0})
+        text = ab_split.text_report(result)
+        self.assertIn("the arm order rotates by one at every cycle of 3 phases", text)
+        self.assertIn("arm vs A of its cycle", text)
+        self.assertIn("GPU busy ms/frame [X]", text)
+        two, _ = busy_rows(["A", "B"], False, 2, {})
+        self.assertIn("B vs neighbouring A", ab_split.text_report(two))
+
+    def test_log_without_a_header_pairs_the_neighbours(self):
+        lines = [line for line in plan_log(["A", "B"], True, 2, {"B": 10.0}) if not line.startswith("[ab] in-run A/B:")]
+        rows = {row["metric"]: row for row in ab_split.split(lines)["metrics"]}
+        self.assertEqual(rows["GPU busy ms/frame"]["noise"]["n"], 2)
+
 if __name__ == "__main__":
     unittest.main()
