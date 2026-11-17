@@ -77,6 +77,12 @@ int main() {
     Require(errno == 71);
     Require(sceOpusCeltDecDestroy(nullptr) == static_cast<int>(errorBase));
     std::uint32_t context = 0;
+    std::array<std::uint8_t, 640> moduleState{};
+    Require(sceOpusCeltDecCreate(nullptr, 48000, 2) == static_cast<int>(errorBase));
+    Require(sceOpusCeltDecCreate(moduleState.data(), 0, 3) == static_cast<int>(errorBase + 3));
+    Require(sceOpusCeltDecCreate(moduleState.data(), 44100, 2) == static_cast<int>(errorBase + 2));
+    Require(sceOpusCeltDecCreate(moduleState.data(), 24000, 1) == 0);
+    Require(sceOpusCeltDecDestroy(moduleState.data()) == 0);
     Require(sceOpusCeltDecInitialize(&context) == 0);
     std::array<std::uint8_t, 640> invalidState{};
     std::int16_t output = 12345;
