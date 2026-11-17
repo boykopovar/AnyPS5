@@ -41,6 +41,9 @@ alignas(256) constexpr std::array<std::uint32_t, 9> BiasPixelCode{
 constexpr std::array<std::uint32_t, 2> BiasSample{0xf0940f08u, 0x00610401u};
 constexpr std::array<std::uint32_t, 2> LevelZeroSample{0xf09c0f08u, 0x00610402u};
 constexpr std::array<std::uint32_t, 2> ImplicitSample{0xf0800f08u, 0x00610402u};
+constexpr std::array<std::uint32_t, 2> LodSample{0xf0900f08u, 0x00610402u};
+constexpr std::uint32_t MoveBiasToV1 = 0x7e020212u;
+constexpr std::uint32_t MoveLodToV4 = 0x7e080212u;
 
 constexpr std::array<std::array<float, 4>, 3> Triangle{{{-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}}};
 
@@ -97,11 +100,11 @@ void FillTexture() {
     }
 }
 
-std::uint64_t Draw(AgcDriver::VulkanDevice& device, std::array<std::uint32_t, 8> texture, std::array<std::uint32_t, 4> sampler, float bias, bool mixedSamplers = false, std::array<std::uint32_t, 2> sample = BiasSample) {
+std::uint64_t Draw(AgcDriver::VulkanDevice& device, std::array<std::uint32_t, 8> texture, std::array<std::uint32_t, 4> sampler, float bias, bool mixedSamplers = false, std::array<std::uint32_t, 2> sample = BiasSample, std::uint32_t move = MoveBiasToV1) {
     const auto& target = device.Target();
     alignas(256) std::array<std::uint32_t, 13> code{};
     std::copy_n(BiasPixelCode.begin(), 3u, code.begin());
-    code[3] = 0x7e020212u;
+    code[3] = move;
     std::copy(BiasPixelCode.begin() + 3, BiasPixelCode.end(), code.begin() + 4);
     std::copy(sample.begin(), sample.end(), code.begin() + 4);
     if (mixedSamplers) {
@@ -227,6 +230,14 @@ int main() {
             const auto plane = Pixels;
             Draw(*device, VolumeDescriptor(), BilinearSampler(2u), 0.0f, false, sample);
             Require(Pixels == plane, "single-level volume: a bilinear clamp-to-last-texel sample differs from the same sample of the plane");
+        }
+        for (const float lod : {0.0f, 2.0f}) {
+            Draw(*device, PlaneDescriptor(), BilinearSampler(2u), lod, false, LodSample, MoveLodToV4);
+            const auto plane = Pixels;
+            Draw(*device, VolumeDescriptor(), BilinearSampler(2u), lod, false, LodSample, MoveLodToV4);
+            Require(Pixels == plane, "single-level volume: an explicit-LOD bilinear sample at LOD " + std::to_string(lod) + " differs from the same sample of the plane");
+            Draw(*device, VolumeDescriptor(), SamplerDescriptor(), lod, false, LodSample, MoveLodToV4);
+            Check();
         }
         for (const auto sample : {LevelZeroSample, ImplicitSample}) {
             Draw(*device, VolumeDescriptor(), SamplerDescriptor(), 0.0f, false, sample);
