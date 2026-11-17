@@ -75,6 +75,7 @@ constexpr std::size_t LargeCubeOffset = 0x200000;
 constexpr std::size_t GuestDepthBitsOffset = 0x480000;
 constexpr std::size_t FrameCopiesOffset = 0x520000;
 constexpr std::size_t ReloadOffset = 0x700000;
+constexpr std::size_t TailOffset = BlockBytes - 2u * SliceBytes;
 constexpr float DrawnDepth = 0.25f;
 constexpr float DrawnD16Depth = 0.2f;
 constexpr std::uint32_t DrawnD16Bits = 13107;
@@ -496,6 +497,21 @@ void FrameCopiesCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::sp
     Require(left == 1, std::to_string(left) + " depth plane copies were kept two presents after the other copy was last sampled, expected only the newest");
 }
 
+void UnbackedTailCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::span<std::uint32_t> output) {
+    auto* base = block.At(TailOffset);
+    DrawDepth(device, reinterpret_cast<std::uintptr_t>(base), {128, 128}, VK_FORMAT_D32_SFLOAT, DrawnDepth);
+    FillSlice(base + SliceBytes, SliceBytes, Bits(0.5f), 4u);
+    constexpr std::uint32_t lastArray = 255;
+    const Shape shape{Format32Float, 128, 128, Type2DArray, lastArray, Swizzle64KbZX};
+    const std::array<std::pair<std::uint32_t, float>, 4> expected{{{0u, DrawnDepth}, {1u, 0.5f}, {2u, 0.0f}, {lastArray, 0.0f}}};
+    for (const auto& [slice, value] : expected) {
+        Load(device, base, shape, slice, output);
+        Expect(output, Bits(value), "D32 2D array of 256 slices whose last 254 lie past the committed guest memory, slice " + std::to_string(slice));
+    }
+    const auto held = AgcDriver::Graphics::DepthPlaneCopyBytes();
+    Require(AgcDriver::Graphics::DepthPlaneCopyCount() == 1u && held < 16u * SliceBytes, "a D32 2D array of 256 slices with 2 in committed guest memory holds " + std::to_string(held) + " bytes in " + std::to_string(AgcDriver::Graphics::DepthPlaneCopyCount()) + " depth plane copies, expected one copy of its committed slices and one zero slice");
+}
+
 void ExpectRefusal(AgcDriver::VulkanDevice& device, GuestBlock& block, std::size_t offset, const Shape& shape, std::uint32_t baseArray, const std::string& expected, const std::string& what) {
     const auto words = TextureDescriptor(block.At(offset), shape);
     auto resource = AgcDriver::Graphics::DecodeTextureResource(words);
@@ -528,6 +544,8 @@ int main(int argc, char** argv) {
             AgcDriver::Graphics::Recorder::CountPresent();
             AgcDriver::Graphics::Recorder::CountPresent();
         };
+        UnbackedTailCase(*device, block, output);
+        present();
         ArrayCase(*device, block, output);
         present();
         CubeCase(*device, block, output);

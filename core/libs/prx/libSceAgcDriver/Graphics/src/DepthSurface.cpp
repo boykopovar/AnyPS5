@@ -2664,7 +2664,7 @@ public:
         const auto geometry = DescribeSurface(resource);
         Require(!geometry.levelMajor, "depth planes of a PS4 layered surface with several mip levels (stored level by level) are not implemented");
         const bool guestFill = std::any_of(slices.begin(), slices.end(), [](const auto& slice) { return slice.image == VK_NULL_HANDLE; });
-        if (guestFill && (geometry.layers != requested || geometry.sliceLinearBytes < sliceBytes() || geometry.mips.empty())) {
+        if (guestFill && (geometry.layers < requested || geometry.sliceLinearBytes < sliceBytes() || geometry.mips.empty())) {
             char text[320];
             std::snprintf(text, sizeof(text), "AGC graphics: depth plane copy geometry does not match its layers (copy %ux%u, %u layers, %llu bytes a slice; texture %ux%u guest format %u, dimension %d, tile mode %d, %u layers, %llu bytes a slice, %zu mips)", extent.width, extent.height, layers, static_cast<unsigned long long>(sliceBytes()), resource.width, resource.height, resource.format, static_cast<int>(resource.dimension), static_cast<int>(resource.tileMode), geometry.layers, static_cast<unsigned long long>(geometry.sliceLinearBytes), geometry.mips.size());
             throw std::runtime_error(text);
@@ -2823,6 +2823,25 @@ private:
         memory = VK_NULL_HANDLE;
     }
 };
+
+std::uint32_t backedPlaneLayers(std::uint64_t address, const SurfaceGeometry& geometry, std::span<const DepthPlaneSlice> slices, std::uint32_t baseLayer) {
+    const auto declared = static_cast<std::uint32_t>(slices.size());
+    if (geometry.thick || geometry.layerBytes == 0u || baseLayer >= declared) return declared;
+    auto backed = baseLayer + 1u;
+    for (auto layer = declared; layer > backed; --layer) {
+        if (slices[layer - 1u].image != VK_NULL_HANDLE) {
+            backed = layer;
+            break;
+        }
+    }
+    const auto bytes = geometry.GuestLayerOffset(declared);
+    const auto ranges = GuestMemory::CommittedRanges(address, static_cast<std::size_t>(bytes));
+    if (!ranges.empty()) {
+        const auto end = std::min(ranges.back().second, address + bytes);
+        if (end > address) backed = std::max(backed, static_cast<std::uint32_t>((end - address - 1u) / geometry.layerBytes) + 1u);
+    }
+    return std::min(declared, backed + 1u);
+}
 
 std::map<std::tuple<VkDevice, std::uint64_t, std::uint32_t, std::uint32_t, VkFormat>, std::unique_ptr<DepthPlaneCopy>>& planeCopies() {
     static auto* copies = new std::map<std::tuple<VkDevice, std::uint64_t, std::uint32_t, std::uint32_t, VkFormat>, std::unique_ptr<DepthPlaneCopy>>();
@@ -4660,22 +4679,24 @@ std::shared_ptr<Texture> DepthSurfaceTexture(const Context& context, std::span<c
     found->ApplyFastClear();
     if (sampled) return found->Sampled(words, resource, components, found == drawnDepth);
     Require(found->hostFormat == base.format, "sampling several slices or an integer view of a depth plane that the device stores in another depth format is not implemented");
-    const auto layers = cube ? std::max(resource.depthOrLastArray + 1u, 6u) : layered ? resource.depthOrLastArray + 1u : 1u;
+    const auto declared = cube ? std::max(resource.depthOrLastArray + 1u, 6u) : layered ? resource.depthOrLastArray + 1u : 1u;
     if (!planes) {
         char text[400];
-        std::snprintf(text, sizeof(text), "AGC graphics: sampling the depth planes of depth surface 0x%llx (%ux%u, vk format %d) as a %ux%u texture of guest format %u (vk %d), dimension %d, %u slices, levels %u-%u, base slice %u is not implemented (last array %u, depth bits %d, copy format %d)", static_cast<unsigned long long>(base.address), base.extent.width, base.extent.height, static_cast<int>(base.format), resource.width, resource.height, resource.format, static_cast<int>(format), static_cast<int>(resource.dimension), layers, resource.baseLevel, resource.lastLevel, resource.baseArray, resource.depthOrLastArray, depthBits ? 1 : 0, static_cast<int>(copyFormat));
+        std::snprintf(text, sizeof(text), "AGC graphics: sampling the depth planes of depth surface 0x%llx (%ux%u, vk format %d) as a %ux%u texture of guest format %u (vk %d), dimension %d, %u slices, levels %u-%u, base slice %u is not implemented (last array %u, depth bits %d, copy format %d)", static_cast<unsigned long long>(base.address), base.extent.width, base.extent.height, static_cast<int>(base.format), resource.width, resource.height, resource.format, static_cast<int>(format), static_cast<int>(resource.dimension), declared, resource.baseLevel, resource.lastLevel, resource.baseArray, resource.depthOrLastArray, depthBits ? 1 : 0, static_cast<int>(copyFormat));
         throw std::runtime_error(text);
     }
     std::vector<DepthPlaneSlice> slices;
     const auto geometry = DescribeSurface(resource);
     Require(!geometry.levelMajor, "depth planes of a PS4 layered surface with several mip levels (stored level by level) are not implemented");
-    for (std::uint32_t layer = 0; layer < layers; ++layer) {
+    for (std::uint32_t layer = 0; layer < declared; ++layer) {
         const auto address = base.address + geometry.GuestLayerOffset(layer);
         auto* slice = depthSlice(context.device, address, base);
         if (slice != nullptr) slice->ApplyFastClear();
         if (slice == nullptr) slices.push_back({});
         else slices.push_back({slice->image, slice == drawnDepth ? 0u : slice->written});
     }
+    const auto layers = layered && !cube ? backedPlaneLayers(base.address, geometry, slices, resource.baseArray) : declared;
+    slices.resize(layers);
     const auto imageFormat = integer ? VK_FORMAT_R16_UINT : d16 ? VK_FORMAT_D16_UNORM : VK_FORMAT_D32_SFLOAT;
     const VkExtent2D extent{resource.width, resource.height};
     auto& copies = planeCopies();
