@@ -5,7 +5,6 @@ import json
 import os
 import re
 import sys
-import tempfile
 import xml.etree.ElementTree as ET
 import textwrap
 from concurrent.futures import ProcessPoolExecutor
@@ -548,91 +547,13 @@ def summarize(groups):
     return {"done": done, "total": total, "percent": round(100 * done / total, 2) if total else 0, "groups": groups}
 
 
-def _library_mtime(path):
-    flavor = PureWindowsPath if os.name == "nt" else Path
-    path_flavored = flavor(str(path))
-    mtimes = []
-    for pattern in ("*.cpp", "*.h", "*.hpp", "CMakeLists.txt"):
-        for file in path.rglob(pattern):
-            if "tests" not in flavor(str(file)).relative_to(path_flavored).parts:
-                try:
-                    mtimes.append(file.stat().st_mtime_ns)
-                except OSError:
-                    pass
-    return max(mtimes) if mtimes else 0
-
-
-def _libraries_cache_path():
-    return ROOT / ".cache" / "progress_libraries.json"
-
-
-def _libraries_cache_signature():
-    try:
-        content = Path(__file__).read_bytes()
-        return hashlib.sha256(content).hexdigest()
-    except OSError:
-        return ""
-
-
-def _load_libraries_cache():
-    cache_file = _libraries_cache_path()
-    if not cache_file.is_file():
-        return {}
-    try:
-        data = json.loads(cache_file.read_text(encoding="utf-8"))
-        if data.get("version") == 1 and data.get("signature") == _libraries_cache_signature():
-            return data.get("libraries", {})
-    except (OSError, ValueError, RecursionError):
-        pass
-    return {}
-
-
-def _save_libraries_cache(libraries):
-    cache_file = _libraries_cache_path()
-    try:
-        cache_file.parent.mkdir(parents=True, exist_ok=True)
-        data = {
-            "version": 1,
-            "signature": _libraries_cache_signature(),
-            "libraries": libraries,
-        }
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=cache_file.parent, delete=False, prefix=".progress-") as tmp:
-            json.dump(data, tmp)
-            tmp_path = Path(tmp.name)
-        os.replace(tmp_path, cache_file)
-    except OSError:
-        pass
-
-
 def collect_libraries():
     dirs = [p for p in sorted(PRX.iterdir()) if p.is_dir()]
-    if not dirs:
-        return summarize([])
-    use_cache = (PRX == ROOT / "core" / "libs" / "prx")
-    cached = _load_libraries_cache() if use_cache else {}
-    results = {}
-    to_scan = []
-    for d in dirs:
-        mtime = _library_mtime(d)
-        entry = cached.get(d.name)
-        if entry and entry.get("mtime_ns") == mtime and "group" in entry:
-            results[d.name] = entry["group"]
-        else:
-            to_scan.append((d, mtime))
-    if to_scan:
-        workers = min(os.cpu_count() or 4, len(to_scan))
-        if workers > 1 and len(to_scan) > 2:
-            with ProcessPoolExecutor(max_workers=workers) as executor:
-                scanned_groups = list(executor.map(scan_library, [d for d, _ in to_scan]))
-        else:
-            scanned_groups = [scan_library(d) for d, _ in to_scan]
-        for (d, mtime), group in zip(to_scan, scanned_groups):
-            results[d.name] = group
-            if use_cache:
-                cached[d.name] = {"mtime_ns": mtime, "group": group}
-        if use_cache:
-            _save_libraries_cache(cached)
-    return summarize([results[d.name] for d in dirs])
+    workers = min(os.cpu_count() or 1, len(dirs))
+    if workers > 1 and len(dirs) > 2:
+        with ProcessPoolExecutor(max_workers=workers) as executor:
+            return summarize(list(executor.map(scan_library, dirs)))
+    return summarize([scan_library(p) for p in dirs])
 
 
 def select_libraries(libraries, modules):

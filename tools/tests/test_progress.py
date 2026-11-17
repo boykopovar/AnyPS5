@@ -1156,5 +1156,36 @@ class ProgressOverloadTests(unittest.TestCase):
         self.assertEqual(group["todo_names"], [])
 
 
+class ParallelLibraryScanTests(unittest.TestCase):
+    def test_parallel_scan_matches_serial_scan_and_follows_deleted_and_older_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "core" / "libs" / "prx"
+            for name in ("libSceA", "libSceB", "libSceC", "libSceD"):
+                (root / name / "src").mkdir(parents=True)
+                (root / name / "src" / "Export.cpp").write_text(f"int APS5_VABI {name}Ready() {{ return 0; }}\n")
+            source = root / "libSceA" / "src"
+            newest = source / "Newest.cpp"
+            older = source / "Older.cpp"
+            newest.write_text("int APS5_VABI NewestReady() { return 0; }\n")
+            older.write_text("int APS5_VABI OlderReady() { return 0; }\n")
+            os.utime(older, ns=(1_000_000_000, 1_000_000_000))
+            with patch.object(progress, "ROOT", Path(directory)), patch.object(progress, "PRX", root):
+                first = progress.collect_libraries()
+                serial = progress.summarize([progress.scan_library(path) for path in sorted(root.iterdir())])
+                self.assertEqual(first, serial)
+                self.assertIn("OlderReady", first["groups"][0]["done_names"])
+                older.unlink()
+                deleted = progress.collect_libraries()
+                self.assertNotIn("OlderReady", deleted["groups"][0]["done_names"])
+                self.assertEqual(deleted["done"], first["done"] - 1)
+                added = source / "Added.cpp"
+                added.write_text("int APS5_VABI AddedReady() { return 0; }\n")
+                os.utime(added, ns=(1_000_000_000, 1_000_000_000))
+                grown = progress.collect_libraries()
+                self.assertIn("AddedReady", grown["groups"][0]["done_names"])
+                self.assertEqual(grown["done"], first["done"])
+            self.assertFalse((Path(directory) / ".cache").exists())
+
+
 if __name__ == "__main__":
     unittest.main()
