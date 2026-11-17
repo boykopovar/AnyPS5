@@ -41,7 +41,6 @@ static bool AcceptsSchedParam(int policy, int priority) {
     return (priority >= 256 && priority <= 767) || (priority >= 896 && priority <= 959);
 }
 static constexpr std::size_t GUEST_CPUSET_BYTES = 32;
-static constexpr std::size_t GUEST_AFFINITY_ERANGE_BYTES = 24;
 static constexpr int GUEST_ERANGE = 34;
 
 extern "C" {
@@ -113,8 +112,7 @@ int APS5_VABI cpuset_setaffinity_nid_postfix(int level, int which, std::int64_t 
         *__error_nid_postfix() = error;
         return -1;
     };
-    if (size < sizeof(KernelCpumask) || size >= 24) return fail(GuestErange);
-    if (size > 16) NotImplemented_nid_no_patch("cpuset_setaffinity with a size of 17 to 23 bytes");
+    if (size < sizeof(KernelCpumask) || size > 16) return fail(GuestErange);
     if (!mask) return fail(GuestEfault);
     std::array<std::uint8_t, MaximumSize> buffer{};
     if (!GuestCopyIn_nid_no_patch(buffer.data(), mask, size)) return fail(GuestEfault);
@@ -185,14 +183,14 @@ int APS5_VABI cpuset_setaffinity_nid_postfix(int level, int which, std::int64_t 
 
 int APS5_VABI rtprio_thread_nid_postfix(int function, int lwpid, GuestRtPrio* priority) {
     constexpr int Lookup = 0, Set = 1;
-    constexpr int GuestEperm = 1, GuestEsrch = 3, GuestEfault = 14;
+    constexpr int GuestEperm = 1, GuestEsrch = 3, GuestEfault = 14, GuestEinval = 22;
     constexpr int GuestSchedFifo = 1, GuestSchedRr = 3;
     constexpr std::uint16_t Realtime = 2, Normal = 3, Idle = 4, Fifo = 10, FifoBit = 8;
     const auto fail = [](int error) {
         *__error_nid_postfix() = error;
         return -1;
     };
-    if (function != Lookup && function != Set) return fail(GuestEsrch);
+    if (function != Lookup && function != Set) return fail(function == 2 ? GuestEsrch : GuestEinval);
     if (priority == nullptr) return fail(GuestEfault);
     auto* self = scePthreadSelf();
     int policy = self->schedPolicy.load(std::memory_order_relaxed);
@@ -211,9 +209,9 @@ int APS5_VABI rtprio_thread_nid_postfix(int function, int lwpid, GuestRtPrio* pr
     }
     const auto requestedClass = static_cast<std::uint16_t>(requested.type & ~FifoBit);
     if (requestedClass == Realtime || requestedClass == Idle) return fail(GuestEperm);
+    if (requested.type == Normal && !other) return fail(GuestEinval);
     if (other) NotImplemented_nid_no_patch("rtprio_thread: a thread other than the calling one");
     if (realTime) NotImplemented_nid_no_patch("rtprio_thread: a guest thread's real-time class");
-    if (requested.type == Normal && requested.prio == 0) return 0;
     NotImplemented_nid_no_patch("rtprio_thread: a real-time priority change");
 }
 
@@ -247,21 +245,35 @@ void APS5_VABI pthread_exit_nid_postfix(void* value) {
 
 int APS5_VABI scePthreadGetschedparam(Pthread thread, int* policy, KernelSchedParam* param) {
     if (!policy || !param) return SCE_KERNEL_ERROR_EINVAL;
-    const int result = scePthreadGetprio(thread, &param->sched_priority);
-    if (result == 0) *policy = thread->schedPolicy.load(std::memory_order_relaxed);
-    return result;
+    KernelSchedParam current{};
+    const int result = scePthreadGetprio(thread, &current.sched_priority);
+    if (result != 0) return result;
+    const int currentPolicy = thread->schedPolicy.load(std::memory_order_relaxed);
+    if (!GuestCopyOut_nid_no_patch(param, &current, sizeof(current)) ||
+        !GuestCopyOut_nid_no_patch(policy, &currentPolicy, sizeof(currentPolicy)))
+        return SCE_KERNEL_ERROR_EFAULT;
+    return 0;
 }
 
 int APS5_VABI scePthreadSetschedparam(Pthread thread, int policy, const KernelSchedParam* param) {
-    if (!param || !AcceptsSchedParam(policy, param->sched_priority)) return SCE_KERNEL_ERROR_EINVAL;
-    const int result = scePthreadSetprio(thread, param->sched_priority);
+    if (!param) return SCE_KERNEL_ERROR_EINVAL;
+    KernelSchedParam requested{};
+    if (!GuestCopyIn_nid_no_patch(&requested, param, sizeof(requested))) return SCE_KERNEL_ERROR_EFAULT;
+    if (!AcceptsSchedParam(policy, requested.sched_priority)) return SCE_KERNEL_ERROR_EINVAL;
+    const int result = scePthreadSetprio(thread, requested.sched_priority);
     if (result == 0) thread->schedPolicy.store(policy, std::memory_order_relaxed);
     return result;
 }
 
 int APS5_VABI pthread_getschedparam_nid_postfix(Pthread thread, int* policy, KernelSchedParam* param) {
     if (!policy || !param) return PosixThread::GUEST_EINVAL;
-    return PosixThread::ToErrno(scePthreadGetschedparam(thread, policy, param));
+    int currentPolicy = 0;
+    KernelSchedParam currentParam{};
+    if (const int error = PosixThread::ToErrno(scePthreadGetschedparam(thread, &currentPolicy, &currentParam))) return error;
+    if (!GuestCopyOut_nid_no_patch(policy, &currentPolicy, sizeof(currentPolicy)) ||
+        !GuestCopyOut_nid_no_patch(param, &currentParam, sizeof(currentParam)))
+        return PosixThread::GUEST_EFAULT;
+    return 0;
 }
 
 static std::unique_lock<std::mutex> SchedTarget(int pid, Pthread& thread, const char* function) {
@@ -341,8 +353,7 @@ int APS5_VABI pthread_getprio_nid_postfix(Pthread thread) {
 
 int APS5_VABI pthread_getaffinity_np_nid_postfix(Pthread thread, std::size_t cpusetSize, void* cpuset) {
     if (!thread) return PosixThread::GUEST_EINVAL;
-    if (cpusetSize < sizeof(KernelCpumask) || cpusetSize >= GUEST_AFFINITY_ERANGE_BYTES) return GUEST_ERANGE;
-    if (cpusetSize > 16) NotImplemented_nid_no_patch("pthread_getaffinity_np with a set of 17 to 23 bytes");
+    if (cpusetSize < sizeof(KernelCpumask) || cpusetSize > 16) return GUEST_ERANGE;
     if (!cpuset) return PosixThread::GUEST_EFAULT;
     KernelCpumask mask = 0;
     const int result = scePthreadGetaffinity(thread, &mask);
@@ -359,8 +370,7 @@ int APS5_VABI pthread_setaffinity_np_nid_postfix(Pthread thread, std::size_t cpu
         if (!thread) return PosixThread::GUEST_EINVAL;
         if (!GuestThreadIsLive(thread)) return PosixThread::GUEST_ESRCH;
     }
-    if (cpusetSize < sizeof(KernelCpumask) || cpusetSize >= GUEST_AFFINITY_ERANGE_BYTES) return GUEST_ERANGE;
-    if (cpusetSize > 16) NotImplemented_nid_no_patch("pthread_setaffinity_np with a set of 17 to 23 bytes");
+    if (cpusetSize < sizeof(KernelCpumask) || cpusetSize > 16) return GUEST_ERANGE;
     if (!cpuset) return PosixThread::GUEST_EFAULT;
     std::array<std::uint8_t, 16> buffer{};
     if (!GuestCopyIn_nid_no_patch(buffer.data(), cpuset, cpusetSize)) return PosixThread::GUEST_EFAULT;
@@ -379,15 +389,18 @@ int APS5_VABI pthread_join_nid_postfix(Pthread thread, void** value) {
 }
 
 int APS5_VABI pthread_timedjoin_np_nid_postfix(Pthread thread, void** value, const KernelTimespec* abstime) {
-    if (abstime == nullptr || abstime->tv_sec < 0 || abstime->tv_nsec < 0 || abstime->tv_nsec >= 1000000000)
+    if (abstime == nullptr) return PosixThread::GUEST_EINVAL;
+    KernelTimespec deadline{};
+    if (!GuestCopyIn_nid_no_patch(&deadline, abstime, sizeof(deadline))) return PosixThread::GUEST_EFAULT;
+    if (deadline.tv_sec < 0 || deadline.tv_nsec < 0 || deadline.tv_nsec >= 1000000000)
         return PosixThread::GUEST_EINVAL;
-    return PosixThread::ToErrno(JoinThread_nid_no_patch(thread, value, abstime));
+    return PosixThread::ToErrno(JoinThread_nid_no_patch(thread, value, &deadline));
 }
 
 namespace {
 struct RegisterPthreadOnLoad {
     RegisterPthreadOnLoad() {
-        RegisterPthreadCreate_nid_no_patch(reinterpret_cast<PthreadCreateFn_nid_no_patch>(pthread_create_nid_postfix));
+        RegisterPthreadCreate_nid_no_patch(reinterpret_cast<PthreadCreateFn_nid_no_patch>(scePthreadCreate));
         RegisterPthreadJoin_nid_no_patch(reinterpret_cast<PthreadJoinFn_nid_no_patch>(pthread_join_nid_postfix));
         RegisterPthreadDetach_nid_no_patch(reinterpret_cast<PthreadDetachFn_nid_no_patch>(pthread_detach_nid_postfix));
         RegisterProcessorCount_nid_no_patch(static_cast<unsigned>(std::popcount(DEFAULT_THREAD_AFFINITY)));
@@ -400,6 +413,7 @@ struct RegisterPthreadOnLoad {
             reinterpret_cast<decltype(forwards.equal)>(scePthreadEqual),
             reinterpret_cast<decltype(forwards.self)>(scePthreadSelf),
             scePthreadExit,
+            reinterpret_cast<decltype(forwards.attrDetachState)>(scePthreadAttrGetdetachstate),
         };
         RegisterThreadForwards_nid_no_patch(&forwards);
         static const PthreadSyncForwards_nid_no_patch sync{
@@ -436,8 +450,10 @@ const RegisterPthreadOnLoad gRegisterPthread;
 }
 
 int APS5_VABI pthread_rename_np_nid_postfix(Pthread thread, const char* name) {
-    if (thread && name && std::strlen(name) >= 32) return PosixThread::ToErrno(SCE_KERNEL_ERROR_ENAMETOOLONG);
-    return PosixThread::ToErrno(scePthreadRename(thread, name));
+    if (!thread || !name) return PosixThread::ToErrno(scePthreadRename(thread, name));
+    std::string copy;
+    if (const int error = CopyGuestString_nid_no_patch(name, 32, copy)) return error;
+    return PosixThread::ToErrno(scePthreadRename(thread, copy.c_str()));
 }
 
 int APS5_VABI pthread_getname_np_nid_postfix(Pthread thread, char* name) {
@@ -450,8 +466,8 @@ int APS5_VABI pthread_getname_np_nid_postfix(Pthread thread, char* name) {
 }
 
 void APS5_VABI pthread_set_name_np_nid_postfix(Pthread thread, const char* name) {
-    scePthreadRename(thread, name != nullptr ? name : "");
-
+    const int result = scePthreadRename(thread, name != nullptr ? name : "");
+    if (result != 0) *__error_nid_postfix() = PosixThread::ToErrno(result);
 }
 
 Pthread APS5_VABI pthread_self_nid_postfix(void) {
@@ -499,7 +515,9 @@ int APS5_VABI pthread_setprio_nid_postfix(Pthread thread, int prio) {
 
 int APS5_VABI pthread_setschedparam_nid_postfix(Pthread thread, int policy, const KernelSchedParam* param) {
     if (!param) return PosixThread::GUEST_EINVAL;
-    return PosixThread::ToErrno(scePthreadSetschedparam(thread, policy, param));
+    KernelSchedParam requested{};
+    if (!GuestCopyIn_nid_no_patch(&requested, param, sizeof(requested))) return PosixThread::GUEST_EFAULT;
+    return PosixThread::ToErrno(scePthreadSetschedparam(thread, policy, &requested));
 }
 
 void APS5_VABI pthread_testcancel_nid_postfix(void) {

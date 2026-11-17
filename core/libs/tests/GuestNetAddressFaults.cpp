@@ -47,6 +47,11 @@ int main(int argc, char** argv) {
         Require(sceNetBind_nid_postfix(peer, address.data(), size) == 0);
         std::uint32_t actual = size;
         Require(sceNetGetsockname(peer, address.data(), &actual) == 0);
+        auto* const badLength = reinterpret_cast<std::uint32_t*>(0x10);
+        void* const badAddress = reinterpret_cast<void*>(0x10);
+        Failed(sceNetGetsockname(peer, badAddress, &actual), 14);
+        Require(actual == size);
+        Failed(sceNetGetsockname(peer, address.data(), badLength), 14);
         const auto call = [&](int descriptor, const void* pointer, std::uint32_t length) {
             return connect ? sceNetConnect(descriptor, pointer, length) : sceNetBind_nid_postfix(descriptor, pointer, length);
         };
@@ -70,6 +75,9 @@ int main(int argc, char** argv) {
             actual = size;
             Require(sceNetGetpeername(socket, connected.data(), &actual) == 0);
             Require(std::memcmp(connected.data(), address.data(), size) == 0);
+            Failed(sceNetGetpeername(socket, badAddress, &actual), 14);
+            Require(actual == size);
+            Failed(sceNetGetpeername(socket, connected.data(), badLength), 14);
         }
         Require(sceKernelMprotect(boundary, page, 3) == 0);
         if (!connect) {

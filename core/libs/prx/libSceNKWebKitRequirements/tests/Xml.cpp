@@ -1,0 +1,689 @@
+#include "prx/libSceNKWebKitRequirements/libSceNKWebKitRequirements.hpp"
+
+#include <libxml/parser.h>
+
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+namespace {
+
+void AssertTrue(bool condition, const char* message) {
+    if (!condition) {
+        std::fprintf(stderr, "Assertion failed: %s\n", message);
+        std::abort();
+    }
+}
+
+struct ParserEvents {
+    bool startedDoc = false;
+    bool endedDoc = false;
+    int elementCount = 0;
+    int endElementCount = 0;
+    std::string textContent;
+    std::string cdataContent;
+    std::string commentContent;
+    std::vector<std::string> localNames;
+    std::vector<std::string> prefixes;
+    std::vector<std::string> uris;
+    bool errorOccurred = false;
+};
+
+static void APS5_VABI SaxStartDoc(void* ctx) {
+    auto* ev = static_cast<ParserEvents*>(ctx);
+    if (ev) ev->startedDoc = true;
+}
+
+static void APS5_VABI SaxEndDoc(void* ctx) {
+    auto* ev = static_cast<ParserEvents*>(ctx);
+    if (ev) ev->endedDoc = true;
+}
+
+static void APS5_VABI SaxStartElementNs(void* ctx, const uint8_t* localname, const uint8_t* prefix, const uint8_t* URI, int32_t nb_namespaces, const uint8_t** namespaces, int32_t nb_attributes, int32_t nb_defaulted, const uint8_t** attributes) {
+    (void)nb_namespaces;
+    (void)namespaces;
+    (void)nb_attributes;
+    (void)nb_defaulted;
+    (void)attributes;
+    auto* ev = static_cast<ParserEvents*>(ctx);
+    if (!ev) return;
+    ev->elementCount++;
+    ev->localNames.push_back(localname ? reinterpret_cast<const char*>(localname) : "");
+    ev->prefixes.push_back(prefix ? reinterpret_cast<const char*>(prefix) : "");
+    ev->uris.push_back(URI ? reinterpret_cast<const char*>(URI) : "");
+}
+
+static void APS5_VABI SaxEndElementNs(void* ctx, const uint8_t* localname, const uint8_t* prefix, const uint8_t* URI) {
+    (void)localname;
+    (void)prefix;
+    (void)URI;
+    auto* ev = static_cast<ParserEvents*>(ctx);
+    if (ev) ev->endElementCount++;
+}
+
+static void APS5_VABI SaxCharacters(void* ctx, const uint8_t* ch, int32_t len) {
+    auto* ev = static_cast<ParserEvents*>(ctx);
+    if (ev && ch && len > 0) {
+        ev->textContent.append(reinterpret_cast<const char*>(ch), len);
+    }
+}
+
+static void APS5_VABI SaxCdataBlock(void* ctx, const uint8_t* value, int32_t len) {
+    auto* ev = static_cast<ParserEvents*>(ctx);
+    if (ev && value && len > 0) {
+        ev->cdataContent.append(reinterpret_cast<const char*>(value), len);
+    }
+}
+
+static void APS5_VABI SaxComment(void* ctx, const uint8_t* value) {
+    auto* ev = static_cast<ParserEvents*>(ctx);
+    if (ev && value) {
+        ev->commentContent.append(reinterpret_cast<const char*>(value));
+    }
+}
+
+static void APS5_VABI SaxError(void* ctx, const char* msg, ...) {
+    (void)msg;
+    auto* ev = static_cast<ParserEvents*>(ctx);
+    if (ev) ev->errorOccurred = true;
+}
+
+static void APS5_VABI SaxSerror(void* userData, NKWebKit::GuestXmlError* error) {
+    (void)error;
+    auto* ev = static_cast<ParserEvents*>(userData);
+    if (ev) ev->errorOccurred = true;
+}
+
+void TestBasicStringsAndDict() {
+    xmlInitParser_nid_postfix();
+
+    const char hello[] = "Hello libxml2";
+    uint8_t* dup = xmlStrdup_nid_postfix(reinterpret_cast<const uint8_t*>(hello));
+    AssertTrue(dup != nullptr, "xmlStrdup returned null");
+    AssertTrue(std::strcmp(reinterpret_cast<char*>(dup), hello) == 0, "xmlStrdup mismatch");
+    std::free(dup);
+
+    uint8_t* ndup = xmlStrndup_nid_postfix(reinterpret_cast<const uint8_t*>(hello), 5);
+    AssertTrue(ndup != nullptr, "xmlStrndup returned null");
+    AssertTrue(std::strcmp(reinterpret_cast<char*>(ndup), "Hello") == 0, "xmlStrndup mismatch");
+    std::free(ndup);
+}
+
+void TestPushParserChunks() {
+    const char xmlDoc[] =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        "<!-- test-comment-data -->\n"
+        "<root xmlns:test=\"http://example.org/test\">\n"
+        "    <test:item id=\"1\">Sample text</test:item>\n"
+        "    <test:item id=\"2\"><![CDATA[cdata-payload]]></test:item>\n"
+        "</root>\n";
+
+    ParserEvents events;
+    NKWebKit::GuestSAXHandler sax{};
+    sax.startDocument = SaxStartDoc;
+    sax.endDocument = SaxEndDoc;
+    sax.startElementNs = SaxStartElementNs;
+    sax.endElementNs = SaxEndElementNs;
+    sax.characters = SaxCharacters;
+    sax.cdataBlock = SaxCdataBlock;
+    sax.comment = SaxComment;
+    sax.error = SaxError;
+    sax.serror = SaxSerror;
+
+    NKWebKit::GuestParserCtxt* ctxt = xmlCreatePushParserCtxt_nid_postfix(&sax, &events, nullptr, 0, "test.xml");
+    AssertTrue(ctxt != nullptr, "xmlCreatePushParserCtxt returned null");
+
+    int optRet = xmlCtxtUseOptions_nid_postfix(ctxt, 1);
+    AssertTrue(optRet == 0, "xmlCtxtUseOptions failed");
+
+    size_t docLen = std::strlen(xmlDoc);
+    size_t chunkSize = 7;
+    for (size_t offset = 0; offset < docLen; offset += chunkSize) {
+        size_t size = (docLen - offset > chunkSize) ? chunkSize : (docLen - offset);
+        int terminate = (offset + size == docLen) ? 1 : 0;
+        int parseRet = xmlParseChunk_nid_postfix(ctxt, xmlDoc + offset, static_cast<int>(size), terminate);
+        AssertTrue(parseRet == 0, "xmlParseChunk failed");
+    }
+
+    int64_t consumed = xmlByteConsumed_nid_postfix(ctxt);
+    AssertTrue(consumed > 0, "xmlByteConsumed should be positive");
+
+    AssertTrue(events.startedDoc, "startDocument not called");
+    AssertTrue(events.endedDoc, "endDocument not called");
+    AssertTrue(events.elementCount == 3, "expected 3 elements (<root>, <test:item>, <test:item>)");
+    AssertTrue(events.endElementCount == 3, "expected 3 end elements");
+    AssertTrue(events.commentContent.find("test-comment-data") != std::string::npos, "comment not captured");
+    AssertTrue(events.cdataContent.find("cdata-payload") != std::string::npos, "cdata not captured");
+    AssertTrue(events.textContent.find("Sample text") != std::string::npos, "text not captured");
+
+    if (ctxt->dict) {
+        const uint8_t* lookedUp = xmlDictLookup_nid_postfix(ctxt->dict, reinterpret_cast<const uint8_t*>("root"), 4);
+        AssertTrue(lookedUp != nullptr, "xmlDictLookup returned null");
+        AssertTrue(std::strcmp(reinterpret_cast<const char*>(lookedUp), "root") == 0, "xmlDictLookup mismatch");
+    }
+
+    xmlStopParser_nid_postfix(ctxt);
+    xmlFreeParserCtxt_nid_postfix(ctxt);
+}
+
+void TestErrorHandling() {
+    const char badXml[] = "<root><unclosed></root>";
+
+    ParserEvents events;
+    NKWebKit::GuestSAXHandler sax{};
+    sax.serror = SaxSerror;
+    sax.error = SaxError;
+
+    NKWebKit::GuestParserCtxt* ctxt = xmlCreatePushParserCtxt_nid_postfix(&sax, &events, nullptr, 0, "bad.xml");
+    AssertTrue(ctxt != nullptr, "xmlCreatePushParserCtxt returned null");
+
+    int ret = xmlParseChunk_nid_postfix(ctxt, badXml, static_cast<int>(std::strlen(badXml)), 1);
+    AssertTrue(ret != 0, "malformed xml should produce non-zero return code");
+
+    NKWebKit::GuestXmlError* err = xmlCtxtGetLastError_nid_postfix(ctxt);
+    AssertTrue(err != nullptr, "xmlCtxtGetLastError returned null");
+    AssertTrue(err->code != 0, "error code should be non-zero");
+
+    xmlFreeParserCtxt_nid_postfix(ctxt);
+}
+
+void TestMemoryParserAndEntities() {
+    const char memXml[] = "<greeting>Hello Memory Parser</greeting>";
+    NKWebKit::GuestParserCtxt* ctxt = xmlCreateMemoryParserCtxt_nid_postfix(memXml, static_cast<int>(std::strlen(memXml)));
+    AssertTrue(ctxt != nullptr, "xmlCreateMemoryParserCtxt returned null");
+
+    int contentRet = xmlParseContent_nid_postfix(ctxt);
+    AssertTrue(contentRet == 0, "xmlParseContent failed");
+
+    int encRet = xmlSwitchEncoding_nid_postfix(ctxt, 1);
+    (void)encRet;
+
+    xmlSAX2StartDocument_nid_postfix(ctxt);
+    xmlSAX2InternalSubset_nid_postfix(ctxt, reinterpret_cast<const uint8_t*>("greeting"), nullptr, nullptr);
+    xmlSAX2EntityDecl_nid_postfix(ctxt, reinterpret_cast<const uint8_t*>("customEnt"), 1, nullptr, nullptr, reinterpret_cast<const uint8_t*>("customVal"));
+    xmlSAX2EndDocument_nid_postfix(ctxt);
+
+    NKWebKit::GuestEntity* ent = xmlGetPredefinedEntity_nid_postfix(reinterpret_cast<const uint8_t*>("amp"));
+    AssertTrue(ent != nullptr, "xmlGetPredefinedEntity('amp') returned null");
+    AssertTrue(ent->name != nullptr && std::strcmp(reinterpret_cast<const char*>(ent->name), "amp") == 0, "entity name mismatch");
+    AssertTrue(ent->content != nullptr && std::strcmp(reinterpret_cast<const char*>(ent->content), "&") == 0, "entity content mismatch");
+
+    NKWebKit::GuestEntity* docEnt = xmlGetDocEntity_nid_postfix(ctxt->myDoc, reinterpret_cast<const uint8_t*>("amp"));
+    (void)docEnt;
+
+    if (ctxt->myDoc) {
+        xmlFreeDoc_nid_postfix(ctxt->myDoc);
+        ctxt->myDoc = nullptr;
+    }
+    xmlFreeParserCtxt_nid_postfix(ctxt);
+}
+
+struct IoHandler {
+    const char* scheme = "";
+    const char* payload = "";
+    int matches = 0;
+    int opens = 0;
+    int reads = 0;
+    int closes = 0;
+    int foreign = 0;
+    void (*onFirstRead)() = nullptr;
+};
+
+struct IoStream {
+    int handler = -1;
+    std::size_t offset = 0;
+};
+
+IoHandler g_io[6];
+IoStream g_streams[32];
+int g_streamCount = 0;
+int g_lateRegistration = -2;
+
+template <int H>
+int32_t APS5_VABI IoMatch(const char* name) {
+    ++g_io[H].matches;
+    const std::size_t length = std::strlen(g_io[H].scheme);
+    return length != 0 && std::strncmp(name, g_io[H].scheme, length) == 0 ? 1 : 0;
+}
+
+template <int H>
+void* APS5_VABI IoOpen(const char* name) {
+    (void)name;
+    ++g_io[H].opens;
+    AssertTrue(g_streamCount < 32, "too many I/O streams");
+    IoStream* stream = &g_streams[g_streamCount++];
+    stream->handler = H;
+    stream->offset = 0;
+    return stream;
+}
+
+template <int H>
+int32_t APS5_VABI IoRead(void* context, char* buffer, int32_t len) {
+    auto* stream = static_cast<IoStream*>(context);
+    ++g_io[H].reads;
+    if (stream->handler != H) {
+        ++g_io[H].foreign;
+        return -1;
+    }
+    if (g_io[H].reads == 1 && g_io[H].onFirstRead) {
+        g_io[H].onFirstRead();
+    }
+    const std::size_t length = std::strlen(g_io[H].payload);
+    if (stream->offset >= length || len <= 0) {
+        return 0;
+    }
+    buffer[0] = g_io[H].payload[stream->offset++];
+    return 1;
+}
+
+template <int H>
+int32_t APS5_VABI IoClose(void* context) {
+    ++g_io[H].closes;
+    if (static_cast<IoStream*>(context)->handler != H) {
+        ++g_io[H].foreign;
+    }
+    return 0;
+}
+
+template <int H>
+int RegisterInput() {
+    return xmlRegisterInputCallbacks_nid_postfix(IoMatch<H>, IoOpen<H>, IoRead<H>, IoClose<H>);
+}
+
+template <int H>
+int32_t APS5_VABI OutMatch(const char* name) {
+    (void)name;
+    ++g_io[H].matches;
+    return 0;
+}
+
+template <int H>
+void* APS5_VABI OutOpen(const char* name) {
+    (void)name;
+    ++g_io[H].opens;
+    return nullptr;
+}
+
+template <int H>
+int32_t APS5_VABI OutWrite(void* context, const char* buffer, int32_t len) {
+    (void)context;
+    (void)buffer;
+    ++g_io[H].reads;
+    return len;
+}
+
+template <int H>
+int32_t APS5_VABI OutClose(void* context) {
+    (void)context;
+    ++g_io[H].closes;
+    return 0;
+}
+
+template <int H>
+int RegisterOutput() {
+    return xmlRegisterOutputCallbacks_nid_postfix(OutMatch<H>, OutOpen<H>, OutWrite<H>, OutClose<H>);
+}
+
+void RegisterLateHandler() {
+    g_lateRegistration = RegisterInput<2>();
+}
+
+void ResetIoCounters() {
+    for (IoHandler& handler : g_io) {
+        handler.matches = 0;
+        handler.opens = 0;
+        handler.reads = 0;
+        handler.closes = 0;
+        handler.foreign = 0;
+        handler.onFirstRead = nullptr;
+    }
+}
+
+int ParseWithExternalEntities() {
+    const char doc[] =
+        "<!DOCTYPE r [<!ENTITY a SYSTEM \"alpha:one\"><!ENTITY b SYSTEM \"beta:two\">]>"
+        "<r>&a;|&b;</r>";
+    NKWebKit::GuestParserCtxt* ctxt = xmlCreatePushParserCtxt_nid_postfix(nullptr, nullptr, nullptr, 0, "io.xml");
+    AssertTrue(ctxt != nullptr, "xmlCreatePushParserCtxt returned null");
+    AssertTrue(xmlCtxtUseOptions_nid_postfix(ctxt, 2) == 0, "xmlCtxtUseOptions(XML_PARSE_NOENT) failed");
+    const int result = xmlParseChunk_nid_postfix(ctxt, doc, static_cast<int>(std::strlen(doc)), 1);
+    if (ctxt->myDoc) {
+        xmlFreeDoc_nid_postfix(ctxt->myDoc);
+        ctxt->myDoc = nullptr;
+    }
+    xmlFreeParserCtxt_nid_postfix(ctxt);
+    return result;
+}
+
+void ExpectServed(int handler, const char* message) {
+    AssertTrue(g_io[handler].opens == 1, message);
+    AssertTrue(g_io[handler].reads > static_cast<int>(std::strlen(g_io[handler].payload)), message);
+    AssertTrue(g_io[handler].closes == 1, message);
+    AssertTrue(g_io[handler].foreign == 0, message);
+}
+
+void ExpectUntouched(int handler, const char* message) {
+    AssertTrue(g_io[handler].opens == 0 && g_io[handler].reads == 0 && g_io[handler].closes == 0, message);
+}
+
+void TestInputHandlersAndOpenContexts() {
+    g_io[0].scheme = "alpha:";
+    g_io[0].payload = "alpha-payload";
+    g_io[1].scheme = "beta:";
+    g_io[1].payload = "beta-payload";
+    const int first = RegisterInput<0>();
+    const int second = RegisterInput<1>();
+    AssertTrue(first >= 0 && second == first + 1, "input registrations should take consecutive entries");
+
+    ResetIoCounters();
+    g_io[0].onFirstRead = RegisterLateHandler;
+    AssertTrue(ParseWithExternalEntities() == 0, "parse through two guest input handlers failed");
+    AssertTrue(g_lateRegistration == second + 1, "registration made while alpha was open should succeed");
+    ExpectServed(0, "alpha entity should be read and closed through alpha's callbacks after a later registration");
+    ExpectServed(1, "beta entity should be read and closed through beta's callbacks");
+    ExpectUntouched(2, "the late handler matches nothing and must not receive alpha's or beta's stream");
+    AssertTrue(g_io[2].matches >= 1, "the late handler should be consulted for beta");
+}
+
+void TestFailedRegistrations() {
+    int inputResult = 0;
+    for (int i = 0; i < 20 && inputResult >= 0; ++i) {
+        inputResult = RegisterInput<3>();
+    }
+    AssertTrue(inputResult == -1, "input registrations should fail once libxml2's table is full");
+    AssertTrue(RegisterInput<4>() == -1, "a registration into a full table should fail");
+
+    ResetIoCounters();
+    AssertTrue(ParseWithExternalEntities() == 0, "parse after failed registrations failed");
+    ExpectServed(0, "alpha should still be served after failed registrations");
+    ExpectServed(1, "beta should still be served after failed registrations");
+    ExpectUntouched(3, "filler handlers match nothing");
+    AssertTrue(g_io[4].matches == 0, "a rejected handler must never be called");
+    ExpectUntouched(4, "a rejected handler must never be called");
+
+    const int firstOutput = RegisterOutput<0>();
+    const int secondOutput = RegisterOutput<1>();
+    AssertTrue(firstOutput >= 0 && secondOutput == firstOutput + 1, "output registrations should take consecutive entries");
+    int outputResult = 0;
+    for (int i = 0; i < 20 && outputResult >= 0; ++i) {
+        outputResult = RegisterOutput<3>();
+    }
+    AssertTrue(outputResult == -1, "output registrations should fail once libxml2's table is full");
+    AssertTrue(RegisterOutput<5>() == -1, "an output registration into a full table should fail");
+}
+
+void TestDocumentOutlivesContext() {
+    const char docXml[] = "<!DOCTYPE r [<!ENTITY kept \"kept value\">]><r>&kept;</r>";
+    NKWebKit::GuestParserCtxt* ctxt = xmlCreatePushParserCtxt_nid_postfix(nullptr, nullptr, nullptr, 0, "kept.xml");
+    AssertTrue(ctxt != nullptr, "xmlCreatePushParserCtxt returned null");
+    AssertTrue(xmlParseChunk_nid_postfix(ctxt, docXml, static_cast<int>(std::strlen(docXml)), 1) == 0, "the document should parse");
+    NKWebKit::GuestDoc* doc = ctxt->myDoc;
+    AssertTrue(doc != nullptr, "the parser should build a document");
+    ctxt->myDoc = nullptr;
+    xmlFreeParserCtxt_nid_postfix(ctxt);
+
+    const char otherXml[] = "<!DOCTYPE o [<!ENTITY other \"other value\">]><o>&other;</o>";
+    NKWebKit::GuestParserCtxt* other = xmlCreatePushParserCtxt_nid_postfix(nullptr, nullptr, nullptr, 0, "other.xml");
+    AssertTrue(other != nullptr, "xmlCreatePushParserCtxt returned null");
+    AssertTrue(xmlParseChunk_nid_postfix(other, otherXml, static_cast<int>(std::strlen(otherXml)), 1) == 0, "the second document should parse");
+    NKWebKit::GuestDoc* otherDoc = other->myDoc;
+    AssertTrue(otherDoc != nullptr && otherDoc != doc, "a later context must not reuse a document that is still alive");
+    other->myDoc = nullptr;
+    xmlFreeParserCtxt_nid_postfix(other);
+    AssertTrue(xmlGetDocEntity_nid_postfix(doc, reinterpret_cast<const uint8_t*>("other")) == nullptr, "the first document must not see the second document's entities");
+    xmlFreeDoc_nid_postfix(otherDoc);
+
+    AssertTrue(doc->type == 9, "the document should keep its type after the context is freed");
+    AssertTrue(doc->doc == doc, "the document should still point to itself");
+    AssertTrue(doc->version != nullptr && std::strcmp(reinterpret_cast<const char*>(doc->version), "1.0") == 0, "the document version should survive the context");
+    NKWebKit::GuestEntity* kept = xmlGetDocEntity_nid_postfix(doc, reinterpret_cast<const uint8_t*>("kept"));
+    AssertTrue(kept != nullptr && kept->content != nullptr, "the document entity should be found after the context is freed");
+    AssertTrue(std::strcmp(reinterpret_cast<const char*>(kept->content), "kept value") == 0, "the document entity content mismatch");
+    xmlFreeDoc_nid_postfix(doc);
+}
+
+void TestEntityResultsStayDistinct() {
+    NKWebKit::GuestEntity* amp = xmlGetPredefinedEntity_nid_postfix(reinterpret_cast<const uint8_t*>("amp"));
+    NKWebKit::GuestEntity* lt = xmlGetPredefinedEntity_nid_postfix(reinterpret_cast<const uint8_t*>("lt"));
+    AssertTrue(amp != nullptr && lt != nullptr && amp != lt, "two predefined entities should have their own guest entities");
+    AssertTrue(std::strcmp(reinterpret_cast<const char*>(amp->name), "amp") == 0 && std::strcmp(reinterpret_cast<const char*>(amp->content), "&") == 0, "the first predefined entity should keep its fields after a second lookup");
+    AssertTrue(std::strcmp(reinterpret_cast<const char*>(lt->name), "lt") == 0 && std::strcmp(reinterpret_cast<const char*>(lt->content), "<") == 0, "the second predefined entity fields mismatch");
+    AssertTrue(xmlGetPredefinedEntity_nid_postfix(reinterpret_cast<const uint8_t*>("amp")) == amp, "a repeated lookup should return the same guest entity");
+    AssertTrue(amp->doc == nullptr, "a predefined entity has no document");
+
+    const char docXml[] = "<!DOCTYPE r [<!ENTITY first \"one\"><!ENTITY second \"two\">]><r/>";
+    NKWebKit::GuestParserCtxt* ctxt = xmlCreatePushParserCtxt_nid_postfix(nullptr, nullptr, nullptr, 0, "entities.xml");
+    AssertTrue(ctxt != nullptr, "xmlCreatePushParserCtxt returned null");
+    AssertTrue(xmlParseChunk_nid_postfix(ctxt, docXml, static_cast<int>(std::strlen(docXml)), 1) == 0, "the document should parse");
+    NKWebKit::GuestDoc* doc = ctxt->myDoc;
+    AssertTrue(doc != nullptr, "the parser should build a document");
+    ctxt->myDoc = nullptr;
+    xmlFreeParserCtxt_nid_postfix(ctxt);
+    NKWebKit::GuestEntity* first = xmlGetDocEntity_nid_postfix(doc, reinterpret_cast<const uint8_t*>("first"));
+    NKWebKit::GuestEntity* second = xmlGetDocEntity_nid_postfix(doc, reinterpret_cast<const uint8_t*>("second"));
+    AssertTrue(first != nullptr && second != nullptr && first != second, "two document entities should have their own guest entities");
+    AssertTrue(std::strcmp(reinterpret_cast<const char*>(first->content), "one") == 0 && std::strcmp(reinterpret_cast<const char*>(second->content), "two") == 0, "a document entity should keep its fields after a second lookup");
+    AssertTrue(first->doc == doc && second->doc == doc, "a document entity should point to its owning document");
+    AssertTrue(xmlGetDocEntity_nid_postfix(doc, reinterpret_cast<const uint8_t*>("first")) == first, "a repeated document lookup should return the same guest entity");
+    xmlFreeDoc_nid_postfix(doc);
+}
+
+void TestFreedDocumentLeavesContext() {
+    const char head[] = "<?xml version=\"1.0\"?><r><a>text</a>";
+    NKWebKit::GuestParserCtxt* ctxt = xmlCreatePushParserCtxt_nid_postfix(nullptr, nullptr, nullptr, 0, "freed.xml");
+    AssertTrue(ctxt != nullptr, "xmlCreatePushParserCtxt returned null");
+    AssertTrue(xmlParseChunk_nid_postfix(ctxt, head, static_cast<int>(std::strlen(head)), 0) == 0, "the first chunk should parse");
+    NKWebKit::GuestDoc* doc = ctxt->myDoc;
+    AssertTrue(doc != nullptr, "the parser should have started a document");
+    xmlFreeDoc_nid_postfix(doc);
+    AssertTrue(ctxt->myDoc == nullptr, "freeing the document should clear the context's document");
+    AssertTrue(xmlCtxtUseOptions_nid_postfix(ctxt, 0) == 0, "the context should stay usable after its document is freed");
+    AssertTrue(ctxt->myDoc == nullptr, "a later call should not bring back the freed document");
+    xmlFreeParserCtxt_nid_postfix(ctxt);
+}
+
+void TestGuestCharsetReachesHost() {
+    NKWebKit::GuestParserCtxt* ctxt = xmlCreatePushParserCtxt_nid_postfix(nullptr, nullptr, nullptr, 0, "charset.xml");
+    AssertTrue(ctxt != nullptr, "xmlCreatePushParserCtxt returned null");
+    const auto changed = ctxt->charset == 1 ? 2 : 1;
+    ctxt->charset = changed;
+    AssertTrue(xmlCtxtUseOptions_nid_postfix(ctxt, 0) == 0, "xmlCtxtUseOptions failed");
+    AssertTrue(ctxt->charset == changed, "a guest charset should reach the host context and survive the next sync");
+    xmlFreeParserCtxt_nid_postfix(ctxt);
+}
+
+void TestUnknownContexts() {
+    AssertTrue(xmlCtxtGetLastError_nid_postfix(nullptr) == nullptr, "xmlCtxtGetLastError(NULL) should return NULL");
+    xmlSAX2StartDocument_nid_postfix(nullptr);
+    xmlSAX2EndDocument_nid_postfix(nullptr);
+    xmlSAX2InternalSubset_nid_postfix(nullptr, reinterpret_cast<const uint8_t*>("r"), nullptr, nullptr);
+    xmlSAX2EntityDecl_nid_postfix(nullptr, reinterpret_cast<const uint8_t*>("e"), 1, nullptr, nullptr, reinterpret_cast<const uint8_t*>("v"));
+    NKWebKit::GuestParserCtxt stray{};
+    const auto rejects = [](auto call, const char* message) {
+        bool thrown = false;
+        try {
+            call();
+        } catch (const std::invalid_argument&) {
+            thrown = true;
+        }
+        AssertTrue(thrown, message);
+    };
+    rejects([&] { xmlCtxtGetLastError_nid_postfix(&stray); }, "xmlCtxtGetLastError should reject a context it did not create");
+    rejects([&] { xmlSAX2StartDocument_nid_postfix(&stray); }, "xmlSAX2StartDocument should reject a context it did not create");
+    rejects([&] { xmlSAX2EndDocument_nid_postfix(&stray); }, "xmlSAX2EndDocument should reject a context it did not create");
+    rejects([&] { xmlSAX2InternalSubset_nid_postfix(&stray, reinterpret_cast<const uint8_t*>("r"), nullptr, nullptr); }, "xmlSAX2InternalSubset should reject a context it did not create");
+    rejects([&] { xmlSAX2EntityDecl_nid_postfix(&stray, reinterpret_cast<const uint8_t*>("e"), 1, nullptr, nullptr, reinterpret_cast<const uint8_t*>("v")); }, "xmlSAX2EntityDecl should reject a context it did not create");
+}
+
+enum class RouteChoice { Keep, Clear, Second };
+
+struct RouteCase {
+    const char* name;
+    bool initialNull = false;
+    RouteChoice before = RouteChoice::Keep;
+    RouteChoice during = RouteChoice::Keep;
+    bool split = false;
+    bool callbacks = true;
+};
+
+struct RouteResult {
+    std::vector<int> events;
+    int created = -1;
+    int final = -1;
+    int status = -1;
+    bool valid = true;
+    bool operator==(const RouteResult&) const = default;
+};
+
+struct RouteRun {
+    int first = 1;
+    int second = 2;
+    void* parser = nullptr;
+    void** slot = nullptr;
+    RouteChoice during = RouteChoice::Keep;
+    RouteResult result;
+
+    int Label(void* value) const {
+        if (!value) return 0;
+        if (value == &first) return 1;
+        if (value == &second) return 2;
+        if (value == parser) return 3;
+        return -1;
+    }
+
+    void Select(RouteChoice choice) {
+        if (choice == RouteChoice::Clear) *slot = nullptr;
+        else if (choice == RouteChoice::Second) *slot = &second;
+    }
+};
+
+RouteRun* activeRoute = nullptr;
+
+void RouteEvent(void* context, int event) {
+    const int label = activeRoute->Label(context);
+    if (label < 0) activeRoute->result.valid = false;
+    activeRoute->result.events.push_back(event * 10 + label);
+    if (event == 2) activeRoute->Select(activeRoute->during);
+}
+
+void NativeRouteStartDoc(void* context) { RouteEvent(context, 1); }
+void NativeRouteEndDoc(void* context) { RouteEvent(context, 5); }
+void NativeRouteCharacters(void* context, const xmlChar*, int) { RouteEvent(context, 3); }
+void NativeRouteStart(void* context, const xmlChar*, const xmlChar*, const xmlChar*, int, const xmlChar**, int, int, const xmlChar**) { RouteEvent(context, 2); }
+void NativeRouteEnd(void* context, const xmlChar*, const xmlChar*, const xmlChar*) { RouteEvent(context, 4); }
+void APS5_VABI GuestRouteStartDoc(void* context) { RouteEvent(context, 1); }
+void APS5_VABI GuestRouteEndDoc(void* context) { RouteEvent(context, 5); }
+void APS5_VABI GuestRouteCharacters(void* context, const uint8_t*, int32_t) { RouteEvent(context, 3); }
+void APS5_VABI GuestRouteStart(void* context, const uint8_t*, const uint8_t*, const uint8_t*, int32_t, const uint8_t**, int32_t, int32_t, const uint8_t**) { RouteEvent(context, 2); }
+void APS5_VABI GuestRouteEnd(void* context, const uint8_t*, const uint8_t*, const uint8_t*) { RouteEvent(context, 4); }
+
+RouteResult ParseRoutes(const RouteCase& scenario, bool guest) {
+    RouteRun run;
+    run.during = scenario.during;
+    activeRoute = &run;
+    xmlSAXHandler nativeSax{};
+    nativeSax.initialized = XML_SAX2_MAGIC;
+    nativeSax.startDocument = NativeRouteStartDoc;
+    nativeSax.endDocument = NativeRouteEndDoc;
+    nativeSax.characters = NativeRouteCharacters;
+    nativeSax.startElementNs = NativeRouteStart;
+    nativeSax.endElementNs = NativeRouteEnd;
+    NKWebKit::GuestSAXHandler guestSax{};
+    guestSax.initialized = XML_SAX2_MAGIC;
+    guestSax.startDocument = GuestRouteStartDoc;
+    guestSax.endDocument = GuestRouteEndDoc;
+    guestSax.characters = GuestRouteCharacters;
+    guestSax.startElementNs = GuestRouteStart;
+    guestSax.endElementNs = GuestRouteEnd;
+    void* initial = scenario.initialNull ? nullptr : &run.first;
+    xmlParserCtxtPtr native = nullptr;
+    NKWebKit::GuestParserCtxt* adapted = nullptr;
+    if (guest) {
+        adapted = xmlCreatePushParserCtxt_nid_postfix(scenario.callbacks ? &guestSax : nullptr, initial, nullptr, 0, "context.xml");
+        if (adapted) {
+            run.parser = adapted;
+            run.slot = &adapted->userData;
+        }
+    } else {
+        native = xmlCreatePushParserCtxt(scenario.callbacks ? &nativeSax : nullptr, initial, nullptr, 0, "context.xml");
+        if (native) {
+            run.parser = native;
+            run.slot = &native->userData;
+        }
+    }
+    if (!run.slot) {
+        run.result.valid = false;
+        activeRoute = nullptr;
+        return run.result;
+    }
+    run.result.created = run.Label(*run.slot);
+    run.Select(scenario.before);
+    const auto parse = [&](const char* text, int terminate) {
+        const int size = static_cast<int>(std::strlen(text));
+        return guest ? xmlParseChunk_nid_postfix(adapted, text, size, terminate) : xmlParseChunk(native, text, size, terminate);
+    };
+    run.result.status = 0;
+    if (scenario.callbacks) {
+        if (scenario.split) {
+            run.result.status = parse("<root>", 0);
+            run.Select(RouteChoice::Second);
+            if (run.result.status == 0) run.result.status = parse("text</root>", 1);
+        } else run.result.status = parse("<root>text</root>", 1);
+    }
+    run.result.final = run.Label(*run.slot);
+    if (guest) xmlFreeParserCtxt_nid_postfix(adapted);
+    else xmlFreeParserCtxt(native);
+    activeRoute = nullptr;
+    return run.result;
+}
+
+bool TestCallbackContext() {
+    const RouteCase scenarios[]{
+        {"default context", true},
+        {"provided context"},
+        {"replace before parse", false, RouteChoice::Second},
+        {"clear before parse", false, RouteChoice::Clear},
+        {"replace default", true, RouteChoice::Second},
+        {"replace during callback", false, RouteChoice::Keep, RouteChoice::Second},
+        {"clear during callback", false, RouteChoice::Keep, RouteChoice::Clear},
+        {"replace between chunks", false, RouteChoice::Keep, RouteChoice::Keep, true},
+        {"default SAX ignores data", false, RouteChoice::Keep, RouteChoice::Keep, false, false},
+        {"default SAX context", true, RouteChoice::Keep, RouteChoice::Keep, false, false},
+    };
+    int matched = 0;
+    for (const auto& scenario : scenarios) {
+        const auto expected = ParseRoutes(scenario, false);
+        const auto observed = ParseRoutes(scenario, true);
+        const bool passed = expected.valid && observed.valid && expected.status == 0
+            && (!scenario.callbacks || !expected.events.empty()) && expected == observed;
+        if (passed) ++matched;
+        else std::fprintf(stderr, "XML context %s: expected created=%d final=%d, observed created=%d final=%d; callback routes equal=%d\n",
+            scenario.name, expected.created, expected.final, observed.created, observed.final, expected.events == observed.events);
+    }
+    std::printf("XML callback context: %d/10 cases match bundled libxml2\n", matched);
+    return matched == 10;
+}
+
+} // namespace
+
+int main() {
+    if (!TestCallbackContext()) return 1;
+    TestBasicStringsAndDict();
+    TestPushParserChunks();
+    TestErrorHandling();
+    TestMemoryParserAndEntities();
+    TestDocumentOutlivesContext();
+    TestFreedDocumentLeavesContext();
+    TestEntityResultsStayDistinct();
+    TestGuestCharsetReachesHost();
+    TestUnknownContexts();
+    TestInputHandlersAndOpenContexts();
+    TestFailedRegistrations();
+    std::printf("Xml tests passed.\n");
+    return 0;
+}

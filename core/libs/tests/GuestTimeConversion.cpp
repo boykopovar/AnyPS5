@@ -4,9 +4,11 @@
 #include "prx/libc/include/GuestTime.hpp"
 #include "prx/libc/include/GuestTimeZoneName.hpp"
 #include "prx/libc/include/General.hpp"
+#include "SceTypes.hpp"
 #include <array>
 #include <atomic>
 #include <barrier>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -38,6 +40,42 @@ static void Require(bool value, const char* message) {
         std::fprintf(stderr, "%s\n", message);
         std::abort();
     }
+}
+
+static int g_constraintCalls = 0;
+static std::string g_constraintMessage;
+
+static void APS5_VABI RecordConstraint(const char* message, void* pointer, int error) {
+    Require(pointer == nullptr && error == 22, "constraint handler arguments");
+    ++g_constraintCalls;
+    g_constraintMessage = message;
+}
+
+static void CheckNullArguments() {
+    void* const previous = set_constraint_handler_s_nid_postfix(reinterpret_cast<void*>(&RecordConstraint));
+    const std::int64_t timer = 0;
+    GuestTm result{};
+    for (const auto convert : {gmtime_s_nid_postfix, localtime_s_nid_postfix}) {
+        const char* expected = convert == gmtime_s_nid_postfix ? "gmtime_s: bad argument" : "localtime_s: bad argument";
+        for (int which = 0; which < 3; ++which) {
+            g_constraintCalls = 0;
+            Require(convert(which == 0 ? &timer : nullptr, which == 1 ? &result : nullptr) == nullptr,
+                "null argument was accepted");
+            Require(g_constraintCalls == 1 && g_constraintMessage == expected, "null argument did not report a bad argument");
+        }
+        g_constraintCalls = 0;
+        Require(convert(&timer, &result) == &result && g_constraintCalls == 0, "valid conversion reported a violation");
+    }
+    g_constraintCalls = 0;
+    for (const auto convert : {libc_gmtime_nid_postfix, gmtime_nid_postfix, libc_localtime_nid_postfix, localtime_nid_postfix}) {
+        Require(convert(nullptr) == nullptr, "null timer was accepted");
+    }
+    for (const auto convert : {gmtime_r_nid_postfix, localtime_r_nid_postfix}) {
+        Require(convert(nullptr, &result) == nullptr && convert(&timer, nullptr) == nullptr && convert(nullptr, nullptr) == nullptr,
+            "null argument was accepted");
+    }
+    Require(g_constraintCalls == 0, "non-_s conversion reported a violation");
+    set_constraint_handler_s_nid_postfix(previous);
 }
 
 static bool Equal(const GuestTm& left, const GuestTm& right) {
@@ -74,7 +112,7 @@ static void CheckConcurrent(Converter convert, BufferedConverter buffered, const
 
 static GuestTm UtcTime(std::int64_t timer) {
     GuestTm utc{};
-    Require(gmtime_s_nid_postfix(&timer, &utc) == &utc, "UTC conversion failed");
+    Require(gmtime_r_nid_postfix(&timer, &utc) == &utc, "UTC conversion failed");
     return utc;
 }
 
@@ -104,7 +142,7 @@ static void CheckUtc(const UtcCase& expected) {
     Require(gmtime_s_nid_postfix(&expected.timer, &utc) == &utc, "UTC conversion failed");
     Require(utc.tm_year == expected.year && utc.tm_mon == expected.mon && utc.tm_mday == expected.mday
         && utc.tm_hour == expected.hour && utc.tm_min == expected.min && utc.tm_sec == expected.sec
-        && utc.tm_wday == expected.wday && utc.tm_yday == expected.yday && utc.tm_isdst == 0,
+        && utc.tm_wday == expected.wday && utc.tm_yday == expected.yday && utc.tm_isdst == -1,
         "UTC calendar fields are wrong");
     Require(utc.tm_gmtoff == 0, "UTC conversion did not reset tm_gmtoff");
     Require(utc.tm_zone != nullptr && std::strcmp(utc.tm_zone, "UTC") == 0, "UTC conversion did not set tm_zone");
@@ -119,6 +157,20 @@ struct DifferenceCase {
 static void CheckDifference(const DifferenceCase& expected) {
     Require(libc_difftime_nid_postfix(expected.time1, expected.time0) == expected.seconds
         && difftime_nid_postfix(expected.time1, expected.time0) == expected.seconds, "difftime did not return time1 - time0");
+}
+
+static void CheckTimeOutputs() {
+    std::int64_t stored = 0;
+    const std::int64_t now = time_nid_postfix(&stored);
+    Require(now > 0 && stored == now, "time did not store the time it returned");
+    errno = 0;
+    Require(time_nid_postfix(reinterpret_cast<std::int64_t*>(0x10)) == -1 && errno == EFAULT, "time accepted an unwritable timer");
+    KernelTimespec current{-1, -1};
+    Require(timespec_get_nid_postfix(&current, TIME_UTC) == TIME_UTC && current.tv_sec >= now && current.tv_nsec >= 0 && current.tv_nsec < 1000000000,
+        "timespec_get did not store the current time");
+    errno = 71;
+    Require(timespec_get_nid_postfix(reinterpret_cast<KernelTimespec*>(0x10), TIME_UTC) == 0 && errno == 71,
+        "timespec_get accepted an unwritable timespec or changed errno");
 }
 
 static void CheckFormat(const GuestTm& guest, const char* format, const char* expected) {
@@ -489,6 +541,8 @@ static void CheckRejectedZone() {
 int main() {
     Require(setenv_nid_postfix("TZ", "UTC-2", 1) == 0, "Could not set the guest time zone");
     tzset_nid_postfix();
+    CheckNullArguments();
+    CheckTimeOutputs();
 
     constexpr std::array<UtcCase, 7> utcCases{{
         {0, 70, 0, 1, 0, 0, 0, 4, 0},
@@ -603,8 +657,8 @@ int main() {
 #endif
     CheckLiteralConversions();
 
-    CheckConcurrent(libc_gmtime_nid_postfix, gmtime_s_nid_postfix, "Concurrent libc_gmtime returned another thread's date");
-    CheckConcurrent(gmtime_nid_postfix, gmtime_s_nid_postfix, "Concurrent gmtime returned another thread's date");
+    CheckConcurrent(libc_gmtime_nid_postfix, gmtime_r_nid_postfix, "Concurrent libc_gmtime returned another thread's date");
+    CheckConcurrent(gmtime_nid_postfix, gmtime_r_nid_postfix, "Concurrent gmtime returned another thread's date");
     CheckConcurrent(libc_localtime_nid_postfix, localtime_s_nid_postfix, "Concurrent libc_localtime returned another thread's date");
     CheckConcurrent(localtime_nid_postfix, localtime_s_nid_postfix, "Concurrent localtime returned another thread's date");
     CheckGuestZone();

@@ -3,7 +3,9 @@
 #include "prx/libSceIme/include/ModalDialog.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include <atomic>
+#include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <chrono>
@@ -18,6 +20,10 @@ extern int SceMsgDialogNativeModuleLoaded_nid_no_patch;
 namespace {
 
 void Require(bool value) { if (!value) std::abort(); }
+
+void ClobberErrno(std::uintptr_t, std::size_t) {
+    errno = 99;
+}
 
 constexpr int kStatusInitialized = 1;
 constexpr int kStatusFinished = 3;
@@ -77,8 +83,10 @@ void CancelAndFallbacks() {
     UserParam system(MsgDialog::ModeSystemMsg, &yesNo);
     Require(sceMsgDialogOpen(&system) == 0 && sceMsgDialogGetStatus() == kStatusFinished && Session() != ModalDialogState::Showing);
     result = MsgDialogResult{};
-    Require(sceMsgDialogGetResult(&result) == 0 && result.button_id == kButtonIdOk);
-    Require(sceMsgDialogGetResult(reinterpret_cast<MsgDialogResult*>(0x10)) == kErrArgNull);
+    errno = 71;
+    Require(sceMsgDialogGetResult(&result) == 0 && result.button_id == kButtonIdOk && errno == 71);
+    errno = 71;
+    Require(sceMsgDialogGetResult(reinterpret_cast<MsgDialogResult*>(0x10)) == kErrArgNull && errno == 71);
 
     ModalDialogSetPresenter_nid_postfix(false);
     UserMessage focusNo{MsgDialog::ButtonTypeYesNoFocusNo, 0, "Delete?"};
@@ -232,6 +240,7 @@ void TerminateWinsOverOpen() {
 
 int main() {
     Require(SceMsgDialogNativeModuleLoaded_nid_no_patch == 1);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     std::uint8_t param[0x60]{};
     MsgDialogResult result{};
 
@@ -284,6 +293,13 @@ int main() {
     Require(sceMsgDialogGetResult(&result) == kErrNotInitialized);
     Require(sceMsgDialogClose() == kErrNotRunning);
     Require(sceMsgDialogGetStatus() == 0);
+    Require(sceMsgDialogUpdateStatus() == 0);
+    Require(sceMsgDialogProgressBarInc(0, 10) == kErrNotRunning);
+    Require(sceMsgDialogProgressBarInc(-1, 0) == kErrNotRunning);
+    Require(sceMsgDialogProgressBarSetMsg(0, "progress") == kErrNotRunning);
+    Require(sceMsgDialogProgressBarSetMsg(0, nullptr) == kErrNotRunning);
+    Require(sceMsgDialogProgressBarSetValue(0, 50) == kErrNotRunning);
+    Require(sceMsgDialogProgressBarSetValue(-1, 0xffffffffu) == kErrNotRunning);
 
     ShownDialog();
     CancelAndFallbacks();
@@ -291,4 +307,5 @@ int main() {
     WithoutFlips();
     OtherLibraryDialog();
     TerminateWinsOverOpen();
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
 }

@@ -1,15 +1,18 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
-#include <algorithm>
+#include "prx/libc/include/Api.hpp"
+#include <cerrno>
+#include <climits>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
 #include <string>
-#include <utility>
+#include <type_traits>
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/General.hpp"
 
 static_assert(sizeof(LibreSslCtxInternal) == 464);
+static_assert(offsetof(LibreSslCtxInternal, exData) == 248);
 static_assert(offsetof(LibreSslCtxInternal, quietShutdown) == 292);
 static_assert(sizeof(LibreSslCtx) == 120);
 static_assert(offsetof(LibreSslCtx, certStore) == 16);
@@ -31,6 +34,7 @@ static_assert(offsetof(LibreSslCtxInternal, tlsextTicketKeyCb) == 144);
 static_assert(offsetof(LibreSslCtxInternal, tlsextStatusCb) == 152);
 static_assert(offsetof(LibreSslCtxInternal, tlsextStatusArg) == 160);
 static_assert(offsetof(LibreSslCtxInternal, sessionCacheSize) == 176);
+static_assert(offsetof(LibreSslCtxInternal, cert) == 264);
 static_assert(offsetof(LibreSslCtxInternal, sessionCacheMode) == 200);
 static_assert(offsetof(LibreSslCtxInternal, sessConnect) == 204);
 static_assert(offsetof(LibreSslCtxInternal, sessConnectRenegotiate) == 208);
@@ -43,6 +47,9 @@ static_assert(offsetof(LibreSslCtxInternal, sessTimeout) == 232);
 static_assert(offsetof(LibreSslCtxInternal, sessCacheFull) == 236);
 static_assert(offsetof(LibreSslCtxInternal, sessHit) == 240);
 static_assert(offsetof(LibreSslCtxInternal, sessCbHit) == 244);
+static_assert(offsetof(LibreSslCtxInternal, exData) == 248);
+static_assert(sizeof(LibreSslExData) == sizeof(void*));
+static_assert(offsetof(LibreSslExData, stack) == 0);
 static_assert(offsetof(LibreSslCtxInternal, maxCertList) == 280);
 static_assert(offsetof(LibreSslCtxInternal, readAhead) == 288);
 static_assert(offsetof(LibreSslCtxInternal, maxSendFragment) == 296);
@@ -104,10 +111,17 @@ enum Command : int {
 };
 
 constexpr int ErrLibSsl = 20;
+constexpr int ErrLibEvp = 6;
+constexpr int ErrLibAsn1 = 13;
 constexpr int ErrFunctionNone = 0xfff;
+constexpr int ErrMallocFailure = 65;
+constexpr int ErrEvpLibrary = 6;
+constexpr int ErrUnsupportedAlgorithm = 156;
+constexpr int ErrUnknownPublicKeyType = 163;
 constexpr int ShouldNotHaveBeenCalled = 66;
 constexpr int SessionIdContextTooLong = 273;
 constexpr int InvalidTicketKeysLength = 325;
+constexpr int NoCertificateAssigned = 177;
 constexpr std::int64_t TicketKeysLength = 48;
 constexpr std::int64_t MinSendFragment = 512;
 constexpr std::int64_t MaxPlainLength = 16384;
@@ -123,8 +137,119 @@ LibreSslCtxInternal& Internal(LibreSslCtx* ctx, const char* function) {
     return *context.internal;
 }
 
+void CopyGuestBytesInPreservingErrno(void* hostAddress, const void* guestAddress, std::size_t size, const char* caller) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(hostAddress, guestAddress, size);
+    errno = savedErrno;
+    if (!ok) NotImplementedAt_nid_no_patch(caller, __FILE__, __LINE__);
+}
+
+void CopyGuestBytesOutPreservingErrno(void* guestAddress, const void* hostAddress, std::size_t size, const char* caller) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(guestAddress, hostAddress, size);
+    errno = savedErrno;
+    if (!ok) NotImplementedAt_nid_no_patch(caller, __FILE__, __LINE__);
+}
+
+void RequireGuestWritablePreservingErrno(void* guestAddress, std::size_t size, const char* caller) {
+    const int savedErrno = errno;
+    const bool ok = GuestWritable_nid_no_patch(guestAddress, size);
+    errno = savedErrno;
+    if (!ok) NotImplementedAt_nid_no_patch(caller, __FILE__, __LINE__);
+}
+
+template <typename TObject, typename TField>
+std::size_t FieldOffset(TField TObject::* field) {
+    static const TObject probe {};
+    return static_cast<std::size_t>(reinterpret_cast<const unsigned char*>(&(probe.*field)) - reinterpret_cast<const unsigned char*>(&probe));
+}
+
+template <typename TObject, typename TField>
+const unsigned char* FieldBytes(const TObject* object, TField TObject::* field) {
+    return reinterpret_cast<const unsigned char*>(object) + FieldOffset(field);
+}
+
+template <typename TObject, typename TField>
+unsigned char* FieldBytes(TObject* object, TField TObject::* field) {
+    return reinterpret_cast<unsigned char*>(object) + FieldOffset(field);
+}
+
+template <typename TObject, typename TField>
+TField ReadField(const TObject* object, TField TObject::* field, const char* caller) {
+    TField value {};
+    CopyGuestBytesInPreservingErrno(&value, FieldBytes(object, field), sizeof(TField), caller);
+    return value;
+}
+
+template <typename TObject, typename TField>
+void WriteField(TObject* object, TField TObject::* field, const std::type_identity_t<TField>& value, const char* caller) {
+    CopyGuestBytesOutPreservingErrno(FieldBytes(object, field), &value, sizeof(TField), caller);
+}
+
+template <typename TObject, typename TField>
+TField ExchangeField(TObject* object, TField TObject::* field, const std::type_identity_t<TField>& value, const char* caller) {
+    const TField previous = ReadField(object, field, caller);
+    WriteField(object, field, value, caller);
+    return previous;
+}
+
+LibreSslCtxInternal* GuestInternal(const LibreSslCtx* ctx, const char* function) {
+    if (!ctx) throw std::invalid_argument(std::string(function) + ": null context");
+    auto* internal = ReadField(ctx, &LibreSslCtx::internal, function);
+    if (!internal) throw std::invalid_argument(std::string(function) + ": null internal state");
+    return internal;
+}
+
 [[noreturn]] void UnsupportedCommand(const char* function, int cmd) {
     NotImplemented_nid_no_patch((std::string(function) + " command " + std::to_string(cmd)).c_str());
+}
+
+int SetCtxExData_nid_no_patch(LibreSslCtxInternal& internal, int index, void* value) {
+    constexpr int InitialCapacity = 4;
+    constexpr int CryptoLibrary = 15;
+    constexpr int AnyFunction = 0xfff;
+    constexpr int MallocFailure = 65;
+    auto* stack = static_cast<LibreSslStack*>(internal.exData);
+    if (!stack) {
+        stack = static_cast<LibreSslStack*>(malloc_nid_postfix(sizeof(LibreSslStack)));
+        if (!stack) {
+            LibreSslPutError_nid_no_patch(CryptoLibrary, AnyFunction, MallocFailure);
+            return 0;
+        }
+        stack->num = 0;
+        stack->sorted = 0;
+        stack->numAlloc = InitialCapacity;
+        stack->comp = nullptr;
+        stack->data = static_cast<char**>(malloc_nid_postfix(InitialCapacity * sizeof(char*)));
+        if (!stack->data) {
+            free_nid_postfix(stack);
+            LibreSslPutError_nid_no_patch(CryptoLibrary, AnyFunction, MallocFailure);
+            return 0;
+        }
+        std::memset(stack->data, 0, InitialCapacity * sizeof(char*));
+        internal.exData = stack;
+    } else if (stack->num < 0 || stack->numAlloc <= 0 || stack->num >= stack->numAlloc || !stack->data) {
+        NotImplemented_nid_no_patch("SSL_CTX_set_ex_data: malformed ex-data stack");
+    }
+
+    int count = stack->num;
+    while (count <= index) {
+        if (stack->numAlloc <= stack->num + 1) {
+            if (stack->numAlloc > INT_MAX / 2) NotImplemented_nid_no_patch("SSL_CTX_set_ex_data: unrepresentable stack capacity");
+            auto** data = static_cast<char**>(reallocarray_nid_postfix(stack->data, static_cast<std::size_t>(stack->numAlloc), 2 * sizeof(char*)));
+            if (!data) {
+                LibreSslPutError_nid_no_patch(CryptoLibrary, AnyFunction, MallocFailure);
+                return 0;
+            }
+            stack->data = data;
+            stack->numAlloc *= 2;
+        }
+        stack->data[stack->num++] = nullptr;
+        stack->sorted = 0;
+        ++count;
+    }
+    if (index >= 0) stack->data[index] = static_cast<char*>(value);
+    return 1;
 }
 
 void PutSslError(int reason) {
@@ -135,12 +260,32 @@ void PutSslError(int reason) {
 
 extern "C" {
 
+int APS5_VABI SSL_CTX_use_certificate_nid_postfix(LibreSslCtx* ctx, void* certificate) {
+    if (certificate == nullptr) {
+        PutSslError(67);
+        return 0;
+    }
+    NotImplemented_nid_no_patch(__func__);
+}
+
 int APS5_VABI SSL_CTX_get_verify_mode_nid_postfix(LibreSslCtx* ctx) {
     return Context(ctx, __func__).verifyMode;
 }
 
 void* APS5_VABI SSL_CTX_get_cert_store_nid_postfix(LibreSslCtx* ctx) {
     return Context(ctx, __func__).certStore;
+}
+
+void APS5_VABI SSL_CTX_set_cert_store_nid_postfix(LibreSslCtx* ctx, LibreSslX509Store* store) {
+    LibreSslCtx& context = Context(ctx, __func__);
+    X509_STORE_free_nid_postfix(static_cast<LibreSslX509Store*>(context.certStore));
+    context.certStore = store;
+}
+
+int APS5_VABI SSL_CTX_load_verify_locations_nid_postfix(LibreSslCtx* ctx, const char* file, const char* path) {
+    Context(ctx, __func__);
+    if (file || path) NotImplemented_nid_no_patch(__func__);
+    return 0;
 }
 
 void APS5_VABI SSL_CTX_set_quiet_shutdown_nid_postfix(LibreSslCtx* ctx, int mode) {
@@ -157,36 +302,75 @@ void APS5_VABI SSL_CTX_set_default_passwd_cb_userdata_nid_postfix(LibreSslCtx* c
     Context(ctx, __func__).defaultPasswdCallbackUserdata = userdata;
 }
 
+int APS5_VABI SSL_CTX_set_ex_data_nid_postfix(LibreSslCtx* ctx, int index, void* value) {
+    return SetCtxExData_nid_no_patch(Internal(ctx, __func__), index, value);
+}
+
+int APS5_VABI SSL_CTX_use_PrivateKey_ASN1_nid_postfix(int type, LibreSslCtx*, const unsigned char*, std::int64_t) {
+    if (type != 0) NotImplemented_nid_no_patch(__func__);
+
+    void* const pkey = EVP_PKEY_new_nid_postfix();
+    if (!pkey) {
+        LibreSslPutError_nid_no_patch(ErrLibEvp, ErrFunctionNone, ErrMallocFailure);
+        LibreSslPutError_nid_no_patch(ErrLibAsn1, ErrFunctionNone, ErrEvpLibrary);
+        PutSslError(13);
+        return 0;
+    }
+
+    LibreSslPutError_nid_no_patch(ErrLibEvp, ErrFunctionNone, ErrUnsupportedAlgorithm);
+    LibreSslPutError_nid_no_patch(ErrLibAsn1, ErrFunctionNone, ErrUnknownPublicKeyType);
+    EVP_PKEY_free_nid_postfix(pkey);
+    PutSslError(13);
+    return 0;
+}
+
 std::int64_t APS5_VABI SSL_CTX_ctrl_nid_postfix(LibreSslCtx* ctx, int cmd, std::int64_t larg, void* parg) {
-    LibreSslCtxInternal& internal = Internal(ctx, __func__);
+    auto* internal = GuestInternal(ctx, __func__);
+    using CtxInternal = LibreSslCtxInternal;
     switch (cmd) {
-    case GetReadAhead: return internal.readAhead;
-    case SetReadAhead: return std::exchange(internal.readAhead, static_cast<int>(larg));
-    case SetMsgCallbackArg: internal.msgCallbackArg = parg; return 1;
-    case GetMaxCertList: return internal.maxCertList;
-    case SetMaxCertList: return std::exchange(internal.maxCertList, larg);
-    case SetSessCacheSize: return static_cast<std::int64_t>(std::exchange(internal.sessionCacheSize, static_cast<std::uint64_t>(larg)));
-    case GetSessCacheSize: return static_cast<std::int64_t>(internal.sessionCacheSize);
-    case SetSessCacheMode: return std::exchange(internal.sessionCacheMode, static_cast<int>(larg));
-    case GetSessCacheMode: return internal.sessionCacheMode;
-    case SessConnect: return internal.sessConnect;
-    case SessConnectGood: return internal.sessConnectGood;
-    case SessConnectRenegotiate: return internal.sessConnectRenegotiate;
-    case SessAccept: return internal.sessAccept;
-    case SessAcceptGood: return internal.sessAcceptGood;
-    case SessAcceptRenegotiate: return internal.sessAcceptRenegotiate;
-    case SessHit: return internal.sessHit;
-    case SessCbHit: return internal.sessCbHit;
-    case SessMisses: return internal.sessMiss;
-    case SessTimeouts: return internal.sessTimeout;
-    case SessCacheFull: return internal.sessCacheFull;
-    case Options: return static_cast<std::int64_t>(internal.options |= static_cast<std::uint64_t>(larg));
-    case ClearOptions: return static_cast<std::int64_t>(internal.options &= ~static_cast<std::uint64_t>(larg));
-    case Mode: return static_cast<std::int64_t>(internal.mode |= static_cast<std::uint64_t>(larg));
-    case ClearMode: return static_cast<std::int64_t>(internal.mode &= ~static_cast<std::uint64_t>(larg));
+    case GetReadAhead: return ReadField(internal, &CtxInternal::readAhead, __func__);
+    case SetReadAhead: return ExchangeField(internal, &CtxInternal::readAhead, static_cast<int>(larg), __func__);
+    case SetMsgCallbackArg: WriteField(internal, &CtxInternal::msgCallbackArg, parg, __func__); return 1;
+    case GetMaxCertList: return ReadField(internal, &CtxInternal::maxCertList, __func__);
+    case SetMaxCertList: return ExchangeField(internal, &CtxInternal::maxCertList, larg, __func__);
+    case SetSessCacheSize: return static_cast<std::int64_t>(ExchangeField(internal, &CtxInternal::sessionCacheSize, static_cast<std::uint64_t>(larg), __func__));
+    case GetSessCacheSize: return static_cast<std::int64_t>(ReadField(internal, &CtxInternal::sessionCacheSize, __func__));
+    case SetSessCacheMode: return ExchangeField(internal, &CtxInternal::sessionCacheMode, static_cast<int>(larg), __func__);
+    case GetSessCacheMode: return ReadField(internal, &CtxInternal::sessionCacheMode, __func__);
+    case SessConnect: return ReadField(internal, &CtxInternal::sessConnect, __func__);
+    case SessConnectGood: return ReadField(internal, &CtxInternal::sessConnectGood, __func__);
+    case SessConnectRenegotiate: return ReadField(internal, &CtxInternal::sessConnectRenegotiate, __func__);
+    case SessAccept: return ReadField(internal, &CtxInternal::sessAccept, __func__);
+    case SessAcceptGood: return ReadField(internal, &CtxInternal::sessAcceptGood, __func__);
+    case SessAcceptRenegotiate: return ReadField(internal, &CtxInternal::sessAcceptRenegotiate, __func__);
+    case SessHit: return ReadField(internal, &CtxInternal::sessHit, __func__);
+    case SessCbHit: return ReadField(internal, &CtxInternal::sessCbHit, __func__);
+    case SessMisses: return ReadField(internal, &CtxInternal::sessMiss, __func__);
+    case SessTimeouts: return ReadField(internal, &CtxInternal::sessTimeout, __func__);
+    case SessCacheFull: return ReadField(internal, &CtxInternal::sessCacheFull, __func__);
+    case Options: {
+        const auto value = ReadField(internal, &CtxInternal::options, __func__) | static_cast<std::uint64_t>(larg);
+        WriteField(internal, &CtxInternal::options, value, __func__);
+        return static_cast<std::int64_t>(value);
+    }
+    case ClearOptions: {
+        const auto value = ReadField(internal, &CtxInternal::options, __func__) & ~static_cast<std::uint64_t>(larg);
+        WriteField(internal, &CtxInternal::options, value, __func__);
+        return static_cast<std::int64_t>(value);
+    }
+    case Mode: {
+        const auto value = ReadField(internal, &CtxInternal::mode, __func__) | static_cast<std::uint64_t>(larg);
+        WriteField(internal, &CtxInternal::mode, value, __func__);
+        return static_cast<std::int64_t>(value);
+    }
+    case ClearMode: {
+        const auto value = ReadField(internal, &CtxInternal::mode, __func__) & ~static_cast<std::uint64_t>(larg);
+        WriteField(internal, &CtxInternal::mode, value, __func__);
+        return static_cast<std::int64_t>(value);
+    }
     case SetMaxSendFragment:
         if (larg < MinSendFragment || larg > MaxPlainLength) return 0;
-        internal.maxSendFragment = static_cast<unsigned int>(larg);
+        WriteField(internal, &CtxInternal::maxSendFragment, static_cast<unsigned int>(larg), __func__);
         return 1;
     case NeedTmpRsa: return 0;
     case SetTmpRsa:
@@ -195,7 +379,7 @@ std::int64_t APS5_VABI SSL_CTX_ctrl_nid_postfix(LibreSslCtx* ctx, int cmd, std::
     case SetTmpEcdhCb:
         PutSslError(ShouldNotHaveBeenCalled);
         return 0;
-    case SetTlsextServernameArg: internal.tlsextServernameArg = parg; return 1;
+    case SetTlsextServernameArg: WriteField(internal, &CtxInternal::tlsextServernameArg, parg, __func__); return 1;
     case GetTlsextTicketKeys:
     case SetTlsextTicketKeys: {
         auto* keys = static_cast<unsigned char*>(parg);
@@ -204,22 +388,28 @@ std::int64_t APS5_VABI SSL_CTX_ctrl_nid_postfix(LibreSslCtx* ctx, int cmd, std::
             PutSslError(InvalidTicketKeysLength);
             return 0;
         }
+        unsigned char local[TicketKeysLength];
         if (cmd == SetTlsextTicketKeys) {
-            std::memcpy(internal.tlsextTickKeyName, keys, 16);
-            std::memcpy(internal.tlsextTickHmacKey, keys + 16, 16);
-            std::memcpy(internal.tlsextTickAesKey, keys + 32, 16);
+            CopyGuestBytesInPreservingErrno(local, keys, sizeof(local), __func__);
+            RequireGuestWritablePreservingErrno(FieldBytes(internal, &CtxInternal::tlsextTickKeyName), sizeof(local), __func__);
+            CopyGuestBytesOutPreservingErrno(FieldBytes(internal, &CtxInternal::tlsextTickKeyName), local, 16, __func__);
+            CopyGuestBytesOutPreservingErrno(FieldBytes(internal, &CtxInternal::tlsextTickHmacKey), local + 16, 16, __func__);
+            CopyGuestBytesOutPreservingErrno(FieldBytes(internal, &CtxInternal::tlsextTickAesKey), local + 32, 16, __func__);
         } else {
-            std::memcpy(keys, internal.tlsextTickKeyName, 16);
-            std::memcpy(keys + 16, internal.tlsextTickHmacKey, 16);
-            std::memcpy(keys + 32, internal.tlsextTickAesKey, 16);
+            CopyGuestBytesInPreservingErrno(local, FieldBytes(internal, &CtxInternal::tlsextTickKeyName), 16, __func__);
+            CopyGuestBytesInPreservingErrno(local + 16, FieldBytes(internal, &CtxInternal::tlsextTickHmacKey), 16, __func__);
+            CopyGuestBytesInPreservingErrno(local + 32, FieldBytes(internal, &CtxInternal::tlsextTickAesKey), 16, __func__);
+            CopyGuestBytesOutPreservingErrno(keys, local, sizeof(local), __func__);
         }
         return 1;
     }
-    case SetTlsextStatusReqCbArg: internal.tlsextStatusArg = parg; return 1;
-    case GetExtraChainCerts:
+    case SetTlsextStatusReqCbArg: WriteField(internal, &CtxInternal::tlsextStatusArg, parg, __func__); return 1;
+    case GetExtraChainCerts: {
         if (!parg) throw std::invalid_argument(std::string(__func__) + ": null extra chain certificates output");
-        *static_cast<void**>(parg) = ctx->extraCerts;
+        const auto extraCerts = ReadField(ctx, &LibreSslCtx::extraCerts, __func__);
+        CopyGuestBytesOutPreservingErrno(parg, &extraCerts, sizeof(extraCerts), __func__);
         return 1;
+    }
     case SetTmpDh:
     case SetTmpEcdh:
     case ExtraChainCert:
@@ -249,26 +439,54 @@ std::int64_t APS5_VABI SSL_CTX_callback_ctrl_nid_postfix(LibreSslCtx* ctx, int c
     }
 }
 
+int APS5_VABI SSL_CTX_check_private_key_nid_postfix(const LibreSslCtx* ctx) {
+    if (!ctx) {
+        PutSslError(NoCertificateAssigned);
+        return 0;
+    }
+    if (!ReadField(GuestInternal(ctx, __func__), &LibreSslCtxInternal::cert, __func__)) {
+        PutSslError(NoCertificateAssigned);
+        return 0;
+    }
+    NotImplemented_nid_no_patch(__func__);
+}
+
 void APS5_VABI SSL_CTX_set_msg_callback_nid_postfix(LibreSslCtx* ctx, void* callback) {
     Internal(ctx, __func__).msgCallback = callback;
 }
 
 void APS5_VABI SSL_CTX_set_verify_nid_postfix(LibreSslCtx* ctx, int mode, void* callback) {
-    LibreSslCtxInternal& internal = Internal(ctx, __func__);
-    ctx->verifyMode = mode;
-    internal.defaultVerifyCallback = callback;
+    auto* internal = GuestInternal(ctx, __func__);
+    RequireGuestWritablePreservingErrno(FieldBytes(internal, &LibreSslCtxInternal::defaultVerifyCallback), sizeof(void*), __func__);
+    WriteField(ctx, &LibreSslCtx::verifyMode, mode, __func__);
+    WriteField(internal, &LibreSslCtxInternal::defaultVerifyCallback, callback, __func__);
+}
+
+int APS5_VABI SSL_CTX_add_client_CA_nid_postfix(LibreSslCtx* ctx, void* certificate) {
+    Internal(ctx, __func__);
+    if (!certificate) return 0;
+    NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI SSL_CTX_set_session_id_context_nid_postfix(LibreSslCtx* ctx, const unsigned char* sidCtx, unsigned int length) {
-    LibreSslCtx& context = Context(ctx, __func__);
-    if (length > sizeof context.sidCtx) {
+    if (!ctx) throw std::invalid_argument(std::string(__func__) + ": null context");
+    unsigned char local[sizeof(LibreSslCtx::sidCtx)];
+    if (length > sizeof local) {
         PutSslError(SessionIdContextTooLong);
         return 0;
     }
     if (!sidCtx && length) throw std::invalid_argument(std::string(__func__) + ": null session id context");
-    context.sidCtxLength = length;
-    std::copy_n(sidCtx, length, context.sidCtx);
+    CopyGuestBytesInPreservingErrno(local, sidCtx, length, __func__);
+    RequireGuestWritablePreservingErrno(FieldBytes(ctx, &LibreSslCtx::sidCtx), length, __func__);
+    WriteField(ctx, &LibreSslCtx::sidCtxLength, length, __func__);
+    CopyGuestBytesOutPreservingErrno(FieldBytes(ctx, &LibreSslCtx::sidCtx), local, length, __func__);
     return 1;
+}
+
+void* APS5_VABI SSL_CTX_get_ex_data_nid_postfix(const LibreSslCtx* ctx, int index) {
+    const auto* const data = static_cast<const LibreSslStack*>(ReadField(GuestInternal(ctx, __func__), &LibreSslCtxInternal::exData, __func__));
+    if (!data || index >= sk_num_nid_postfix(data)) return nullptr;
+    return sk_value_nid_postfix(data, index);
 }
 
 }

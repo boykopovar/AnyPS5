@@ -924,6 +924,93 @@ int main() {
         validZlrAug[120] = 0;
         const auto zlrRegions = Relinker::UnusedNidFilter::ReadExceptionFunctions(validZlrAug, {sigLoad, augEh}, {}, {});
         Require(zlrRegions.size() == 1 && zlrRegions[0].Begin == 0x2000 && zlrRegions[0].End == 0x2010);
-        std::cout << "75 unwind record cases passed\n";
+        auto slebMinUnderflow = Fixture();
+        slebMinUnderflow[3] = 0x39;
+        for (int i = 0; i < 9; ++i) slebMinUnderflow[16 + i] = 0x80;
+        slebMinUnderflow[25] = 0x7F;
+        bool slebMinUnderflowRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(slebMinUnderflow, {load, eh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            slebMinUnderflowRejected = std::string(error.what()).find("unwind pointer address overflowed") != std::string::npos;
+        }
+        Require(slebMinUnderflowRejected);
+        auto slebMinValid = Fixture();
+        slebMinValid[3] = 0x39;
+        Io::WriteU64(slebMinValid, 4, 0x8000000000002040ULL);
+        for (int i = 0; i < 9; ++i) slebMinValid[16 + i] = 0x80;
+        slebMinValid[25] = 0x7F;
+        slebMinValid[26] = 0xE0;
+        slebMinValid[27] = 0x00;
+        Domain::ProgramHeader slebMinLoad{}; slebMinLoad.Type = 1; slebMinLoad.MappedAddress = 0x8000000000002000ULL; slebMinLoad.FileSize = 128;
+        Domain::ProgramHeader slebMinEh = slebMinLoad; slebMinEh.Type = 0x6474E550; slebMinEh.FileSize = 32;
+        const auto slebMinRegions = Relinker::UnusedNidFilter::ReadExceptionFunctions(slebMinValid, {slebMinLoad, slebMinEh}, {}, {});
+        Require(slebMinRegions.size() == 1 && slebMinRegions[0].Begin == 0x2000 && slebMinRegions[0].End == 0x2010);
+        auto unterminatedLeb = Fixture();
+        unterminatedLeb[3] = 0x31;
+        for (int i = 0; i < 11; ++i) unterminatedLeb[16 + i] = 0x80;
+        bool unterminatedLebRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(unterminatedLeb, {load, eh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            unterminatedLebRejected = std::string(error.what()).find("unterminated LEB128 value") != std::string::npos;
+        }
+        Require(unterminatedLebRejected);
+        auto unterminatedSleb = Fixture();
+        unterminatedSleb[3] = 0x39;
+        for (int i = 0; i < 9; ++i) unterminatedSleb[16 + i] = 0x80;
+        unterminatedSleb[25] = 0xFF;
+        bool unterminatedSlebRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(unterminatedSleb, {load, eh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            unterminatedSlebRejected = std::string(error.what()).find("unterminated LEB128 value") != std::string::npos;
+        }
+        Require(unterminatedSlebRejected);
+        for (std::uint32_t terminal = 1; terminal < 0x7F; ++terminal) {
+            auto slebOverflowFuzz = Fixture();
+            slebOverflowFuzz[3] = 0x39;
+            for (int i = 0; i < 9; ++i) slebOverflowFuzz[16 + i] = 0x80;
+            slebOverflowFuzz[25] = static_cast<std::uint8_t>(terminal);
+            bool slebFuzzRejected = false;
+            try { Relinker::UnusedNidFilter::ReadExceptionFunctions(slebOverflowFuzz, {load, eh}, {}, {}); }
+            catch (const Domain::RelinkerException& error) {
+                slebFuzzRejected = std::string(error.what()).find("overflowing LEB128 value") != std::string::npos;
+            }
+            Require(slebFuzzRejected);
+        }
+        for (std::uint32_t terminal = 2; terminal <= 0x7F; ++terminal) {
+            auto ulebOverflowFuzz = Fixture();
+            ulebOverflowFuzz[3] = 0x31;
+            for (int i = 0; i < 9; ++i) ulebOverflowFuzz[16 + i] = 0x80;
+            ulebOverflowFuzz[25] = static_cast<std::uint8_t>(terminal);
+            bool ulebFuzzRejected = false;
+            try { Relinker::UnusedNidFilter::ReadExceptionFunctions(ulebOverflowFuzz, {load, eh}, {}, {}); }
+            catch (const Domain::RelinkerException& error) {
+                ulebFuzzRejected = std::string(error.what()).find("overflowing LEB128 value") != std::string::npos;
+            }
+            Require(ulebFuzzRejected);
+        }
+        auto cieMinBytes = Fixture();
+        Io::WriteU32(cieMinBytes, 64, 18);
+        cieMinBytes[72] = 1;
+        cieMinBytes[73] = 0;
+        cieMinBytes[74] = 1;
+        for (int i = 0; i < 9; ++i) cieMinBytes[75 + i] = 0x80;
+        cieMinBytes[84] = 0x7F;
+        cieMinBytes[85] = 16;
+        const auto cieMinRegions = Relinker::UnusedNidFilter::ReadExceptionFunctions(cieMinBytes, {load, eh}, {}, {});
+        Require(cieMinRegions.size() == 1 && cieMinRegions[0].Begin == 0x2000 && cieMinRegions[0].End == 0x2010);
+        auto cieUnterminatedBytes = Fixture();
+        Io::WriteU32(cieUnterminatedBytes, 64, 18);
+        cieUnterminatedBytes[72] = 1;
+        cieUnterminatedBytes[73] = 0;
+        cieUnterminatedBytes[74] = 1;
+        for (int i = 0; i < 10; ++i) cieUnterminatedBytes[75 + i] = 0x80;
+        cieUnterminatedBytes[85] = 16;
+        bool cieUnterminatedRejected = false;
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(cieUnterminatedBytes, {load, eh}, {}, {}); }
+        catch (const Domain::RelinkerException& error) {
+            cieUnterminatedRejected = std::string(error.what()).find("unterminated LEB128 value") != std::string::npos;
+        }
+        Require(cieUnterminatedRejected);
+        std::cout << "83 unwind record cases passed\n";
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }
