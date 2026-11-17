@@ -9413,14 +9413,6 @@ int APS5_VABI WKBundlePageGetAppCacheUsageForOrigin() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundlePageGetPageZoomFactor() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundlePageGetTextZoomFactor() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundlePageHasLocalDataForURL() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -9549,10 +9541,6 @@ int APS5_VABI WKBundlePageSetPageLoaderClient() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKBundlePageSetPageZoomFactor() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundlePageSetPolicyClient() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -9562,10 +9550,6 @@ int APS5_VABI WKBundlePageSetResourceLoadClient() {
 }
 
 int APS5_VABI WKBundlePageSetScaleAtOrigin() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundlePageSetTextZoomFactor() {
     NotImplemented_nid_no_patch(__func__);
 }
 
