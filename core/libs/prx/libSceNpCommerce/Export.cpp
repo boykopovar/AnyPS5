@@ -120,10 +120,14 @@ int APS5_VABI sceNpCommerceDialogGetResult(NpCommerceDialogResult* result) {
  if (result == nullptr) return COMMON_DIALOG_ERROR_ARG_NULL;
  if (g_status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
  if (g_status != COMMON_DIALOG_STATUS_FINISHED) return COMMON_DIALOG_ERROR_NOT_FINISHED;
+ const int savedErrno = errno;
+ if (!GuestWritable_nid_no_patch(result, sizeof(*result))) {
+  errno = savedErrno;
+  return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
+ }
  const std::int32_t cancelResult = COMMON_DIALOG_RESULT_USER_CANCELED;
  const std::uint8_t authorized = 0;
  const std::uint64_t userData = g_userData;
- const int savedErrno = errno;
  if (!GuestCopyOut_nid_no_patch(&result->result, &cancelResult, sizeof(cancelResult)) ||
      !GuestCopyOut_nid_no_patch(&result->authorized, &authorized, sizeof(authorized)) ||
      !GuestCopyOut_nid_no_patch(&result->userData, &userData, sizeof(userData))) {
