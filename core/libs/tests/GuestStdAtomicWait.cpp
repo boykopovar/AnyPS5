@@ -20,6 +20,16 @@ struct Call {
 
 Call last;
 
+int APS5_VABI Wait8(std::uint8_t* address, std::uint8_t expected, KernelUseconds* timeout, const char* name) {
+    last = {address, expected, timeout != nullptr, timeout ? *timeout : 0, name, 0, last.calls + 1};
+    return static_cast<int>(0x8002003c);
+}
+
+int APS5_VABI Wait16(std::uint16_t* address, std::uint16_t expected, KernelUseconds* timeout, const char* name) {
+    last = {address, expected, timeout != nullptr, timeout ? *timeout : 0, name, 0, last.calls + 1};
+    return static_cast<int>(0x80020016);
+}
+
 int APS5_VABI Wait32(std::uint32_t* address, std::uint32_t expected, KernelUseconds* timeout, const char* name) {
     last = {address, expected, timeout != nullptr, timeout ? *timeout : 0, name, 0, last.calls + 1};
     return static_cast<int>(0x8002003c);
@@ -41,11 +51,12 @@ void Require(bool condition, const char* label) {
     std::abort();
 }
 
-void CheckWait32(std::uint64_t milliseconds, bool timed, KernelUseconds timeout, const char* label) {
-    std::uint32_t word = 7;
+template <typename T, typename Fn>
+void CheckWait(Fn wait, T value, std::uint64_t milliseconds, bool timed, KernelUseconds timeout, const char* label) {
+    T storage = value;
     const int calls = last.calls;
-    Require(__std_atomic_wait_direct_32_nid_postfix(&word, 7, milliseconds) == 1, label);
-    Require(last.calls == calls + 1 && last.address == &word && last.expected == 7, label);
+    Require(wait(&storage, value, milliseconds) == 1, label);
+    Require(last.calls == calls + 1 && last.address == &storage && last.expected == value, label);
     Require(last.timed == timed && last.timeout == timeout, label);
     Require(last.name != nullptr && std::strcmp(last.name, "SceLibcV2AtomicWait") == 0, label);
 }
@@ -53,15 +64,29 @@ void CheckWait32(std::uint64_t milliseconds, bool timed, KernelUseconds timeout,
 }
 
 int main() {
-    static const AtomicWaitForwards_nid_no_patch forwards{Wait32, Wait64, Wake};
+    static const AtomicWaitForwards_nid_no_patch forwards{Wait8, Wait16, Wait32, Wait64, Wake};
     RegisterAtomicWaitForwards_nid_no_patch(&forwards);
 
-    CheckWait32(0xffffffff, false, 0, "infinite wait passes no timeout");
-    CheckWait32(0, true, 0, "zero milliseconds");
-    CheckWait32(5, true, 5000, "milliseconds become microseconds");
-    CheckWait32(0x418937, true, 4294967000u, "largest exact conversion");
-    CheckWait32(0x418938, true, 0xffffffffu, "first clamped timeout");
-    CheckWait32(0x100000000ull, true, 0xffffffffu, "timeouts wider than 32 bits are clamped");
+    CheckWait<std::uint8_t>(__std_atomic_wait_direct_8_nid_postfix, 0xab, 0xffffffff, false, 0, "8-bit infinite wait passes no timeout");
+    CheckWait<std::uint8_t>(__std_atomic_wait_direct_8_nid_postfix, 0xab, 0, true, 0, "8-bit zero milliseconds");
+    CheckWait<std::uint8_t>(__std_atomic_wait_direct_8_nid_postfix, 0xab, 5, true, 5000, "8-bit milliseconds become microseconds");
+    CheckWait<std::uint8_t>(__std_atomic_wait_direct_8_nid_postfix, 0xab, 0x418937, true, 4294967000u, "8-bit largest exact conversion");
+    CheckWait<std::uint8_t>(__std_atomic_wait_direct_8_nid_postfix, 0xab, 0x418938, true, 0xffffffffu, "8-bit first clamped timeout");
+    CheckWait<std::uint8_t>(__std_atomic_wait_direct_8_nid_postfix, 0xab, 0x100000000ull, true, 0xffffffffu, "8-bit timeouts wider than 32 bits are clamped");
+
+    CheckWait<std::uint16_t>(__std_atomic_wait_direct_16_nid_postfix, 0xcafe, 0xffffffff, false, 0, "16-bit infinite wait passes no timeout");
+    CheckWait<std::uint16_t>(__std_atomic_wait_direct_16_nid_postfix, 0xcafe, 0, true, 0, "16-bit zero milliseconds");
+    CheckWait<std::uint16_t>(__std_atomic_wait_direct_16_nid_postfix, 0xcafe, 5, true, 5000, "16-bit milliseconds become microseconds");
+    CheckWait<std::uint16_t>(__std_atomic_wait_direct_16_nid_postfix, 0xcafe, 0x418937, true, 4294967000u, "16-bit largest exact conversion");
+    CheckWait<std::uint16_t>(__std_atomic_wait_direct_16_nid_postfix, 0xcafe, 0x418938, true, 0xffffffffu, "16-bit first clamped timeout");
+    CheckWait<std::uint16_t>(__std_atomic_wait_direct_16_nid_postfix, 0xcafe, 0x100000000ull, true, 0xffffffffu, "16-bit timeouts wider than 32 bits are clamped");
+
+    CheckWait<std::uint32_t>(__std_atomic_wait_direct_32_nid_postfix, 7, 0xffffffff, false, 0, "infinite wait passes no timeout");
+    CheckWait<std::uint32_t>(__std_atomic_wait_direct_32_nid_postfix, 7, 0, true, 0, "zero milliseconds");
+    CheckWait<std::uint32_t>(__std_atomic_wait_direct_32_nid_postfix, 7, 5, true, 5000, "milliseconds become microseconds");
+    CheckWait<std::uint32_t>(__std_atomic_wait_direct_32_nid_postfix, 7, 0x418937, true, 4294967000u, "largest exact conversion");
+    CheckWait<std::uint32_t>(__std_atomic_wait_direct_32_nid_postfix, 7, 0x418938, true, 0xffffffffu, "first clamped timeout");
+    CheckWait<std::uint32_t>(__std_atomic_wait_direct_32_nid_postfix, 7, 0x100000000ull, true, 0xffffffffu, "timeouts wider than 32 bits are clamped");
 
     std::uint64_t wide = 0x1122334455667788ull;
     Require(__std_atomic_wait_direct_64_nid_postfix(&wide, 0x1122334455667788ull, 12) == 1, "64-bit wait returns 1");
