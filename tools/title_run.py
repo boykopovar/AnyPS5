@@ -258,10 +258,37 @@ def worst(runs):
     return min((entry["outcome"] for entry in runs), key=OUTCOMES.index)
 
 
+def worst_recorded(runs):
+    return worst(runs) if runs and all(run.get("outcome") in OUTCOMES for run in runs) else None
+
+
+def recorded_context(summary, title):
+    machine = summary.get("machine") or {}
+    seconds, missing = title.get("seconds"), title.get("missing_content")
+    context = {"contentVersion": title.get("version"), **{field: machine.get(field) for field in ("os", "cpu", "gpu", "driver")},
+               "driverCache": summary.get("driver_cache")}
+    context = {field: value if isinstance(value, str) and value.strip() else None for field, value in context.items()}
+    context["requestedSeconds"] = seconds if type(seconds) is int and seconds > 0 else None
+    context["runCaches"] = [run.get("cache") if run.get("cache") in ("cold", "warm") else None for run in title["runs"]]
+    context["missingContent"] = sorted(set(missing)) if isinstance(missing, list) and all(isinstance(item, str) for item in missing) else None
+    return context
+
+
+def comparison_context(summary, previous, title_id):
+    contexts = {"before": recorded_context(previous, previous["titles"][title_id]),
+                "now": recorded_context(summary, summary["titles"][title_id])}
+    unknowns = {side: [field for field, value in context.items() if value is None or field == "runCaches" and (not value or None in value)]
+                for side, context in contexts.items()}
+    differences = [field for field in contexts["before"] if all(field not in unknowns[side] for side in contexts)
+                   and contexts["before"][field] != contexts["now"][field]]
+    status = "differing" if differences else "unknown" if any(unknowns.values()) else "matched"
+    return {**contexts, "status": status, "differences": differences, "unknowns": unknowns}
+
+
 def compare(summary, previous):
     regressions, improvements = [], []
     for title_id, title in summary["titles"].items():
-        if title_id not in previous["titles"]:
+        if title_id not in previous["titles"] or comparison_context(summary, previous, title_id)["status"] != "matched":
             continue
         before, now = worst(previous["titles"][title_id]["runs"]), worst(title["runs"])
         if OUTCOMES.index(now) < OUTCOMES.index(before):
@@ -340,6 +367,8 @@ def compare_runs(summary, previous):
         before_frames = section(before.get("report") or {}, "frameMs")
         now_frames = section(now.get("report") or {}, "frameMs")
         compared[title_id] = {"name": summary["titles"][title_id]["name"], "fps": pair(fps_of(before), fps_of(now)),
+                              "context": comparison_context(summary, previous, title_id),
+                              "outcomes": pair(worst_recorded(previous["titles"][title_id]["runs"]), worst_recorded(summary["titles"][title_id]["runs"])),
                               "provenance": {"before": title_run_provenance.qualification(before, previous.get("build")),
                                              "now": title_run_provenance.qualification(now, summary.get("build"))},
                               "averageFps": pair(report_field(before, "averageFps"), report_field(now, "averageFps")),
@@ -371,12 +400,29 @@ def names(entries):
     return ", ".join(label(entry) for entry in entries)
 
 
+def context_display(value):
+    if isinstance(value, list):
+        return ", ".join(display(item) for item in value) if value else "none"
+    return display(value)
+
+
 def render_compare(compared):
     columns = ["Title", "ID", "Measure", "Before", "Now"]
     lines = ["| " + " | ".join(columns) + " |", "|" + "---|" * len(columns)]
-    details = []
+    details = ["Recorded context compares content version, machine, requested time, cache classifications and missing content only; "
+               "it does not establish scene, environment, resolution or native runtime identity equivalence. "
+               "Numeric pairs use the last run; outcomes use the worst of all runs."]
     for title_id, title in compared.items():
+        context = title["context"]
+        details.append(f"{title['name']} ({title_id}), recorded comparison context: {context['status']}; "
+                       f"differences: {', '.join(context['differences']) or 'none'}; "
+                       f"unknown before: {', '.join(context['unknowns']['before']) or 'none'}; "
+                       f"unknown now: {', '.join(context['unknowns']['now']) or 'none'}."
+                       + (" Numeric pairs and outcome changes are exploratory; no improvement or regression is qualified." if context["status"] != "matched" else ""))
         measures = [
+            ("Recorded comparison context", {side: context["status"] for side in ("before", "now")}),
+            *((f"Context {field}", {side: context_display(context[side][field]) for side in ("before", "now")}) for field in context["before"]),
+            ("Worst outcome", title["outcomes"]),
             ("Native runtime provenance", {side: title_run_provenance.label(title["provenance"][side]) for side in ("before", "now")}),
             ("FPS", title["fps"]),
             ("Average FPS (report)", title["averageFps"]),
@@ -413,9 +459,10 @@ def compare_json(summary, previous):
 
 
 def render_markdown(summary, previous=None):
-    build, machine = summary["build"], summary["machine"]
+    build, machine = summary["build"], summary.get("machine") or {}
     header = f"AnyPS5 `{build['commit']}`" + (" (dirty)" if build["dirty"] else "") + (f", {build['note']}" if build["note"] else "")
-    parts = [machine["os"], machine["gpu"], machine["driver"] and f"driver {machine['driver']}", machine["cpu"] and f"CPU {machine['cpu']}"]
+    parts = [machine.get("os"), machine.get("gpu"), machine.get("driver") and f"driver {machine['driver']}",
+             machine.get("cpu") and f"CPU {machine['cpu']}"]
     known = ", ".join(part for part in parts if part)
     header += f". {known}." if known else "."
     lengths = sorted({title["seconds"] for title in summary["titles"].values() if "seconds" in title}) or [summary["seconds"]]
@@ -431,7 +478,7 @@ def render_markdown(summary, previous=None):
         for label, changes in (("Regressions", regressions), ("Improvements", improvements)):
             if changes:
                 names = ", ".join(f"{summary['titles'][title_id]['name']} ({title_id}) {before} -> {now}" for title_id, before, now in changes)
-                lines += [f"{label}: {names}", ""]
+                lines += [f"{label} (recorded context matched): {names}", ""]
         missing = sorted(title_id for title_id in previous["titles"] if title_id not in summary["titles"])
         if missing:
             names = ", ".join(f"{previous['titles'][title_id]['name']} ({title_id})" for title_id in missing)
