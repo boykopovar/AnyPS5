@@ -49,6 +49,7 @@ DYNAMIC_VALUE_TAGS = {
 }
 
 LINE_ADDRESS = re.compile(r"^\s*([0-9a-f]+):")
+ENDBR64 = re.compile(r"^\s*([0-9a-f]+):\s+endbr64\s*$")
 STUB = re.compile(r"^\s*([0-9a-f]+):\s+(?:\w+\s+)*jmpq?\s+\*(?:-?0x[0-9a-f]+)?\(%(?:rip|eip)\)\s+# 0x([0-9a-f]+)")
 BRANCH = re.compile(r"\b(?:call|jmp)q?\s+0x([0-9a-f]+)")
 REFERENCE = re.compile(r"# 0x([0-9a-f]+)")
@@ -337,11 +338,17 @@ def referenced_address(line):
 
 def find_stubs(listing, slots, namer):
     stubs = {}
+    landing = None
     for line in listing:
         match = STUB.match(line)
         target = referenced_address(line)
         if match and target in slots:
-            stubs[int(match.group(1), 16)] = namer.resolve(slots[target])
+            address = int(match.group(1), 16)
+            stubs[address] = namer.resolve(slots[target])
+            if landing is not None and address == landing + 4:
+                stubs[landing] = stubs[address]
+        endbr = ENDBR64.match(line)
+        landing = int(endbr.group(1), 16) if endbr else None
     return stubs
 
 

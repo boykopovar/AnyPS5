@@ -1,5 +1,6 @@
 import contextlib
 import datetime
+import faulthandler
 import importlib.util
 import io
 import json
@@ -65,6 +66,16 @@ def snapshot(root):
 
 
 class TitleRunPathsTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        temporary = tempfile.TemporaryDirectory(prefix="anyps5-title-source-")
+        cls.addClassCleanup(temporary.cleanup)
+        cls.source = Path(temporary.name)
+        subprocess.run(["git", "init", "-q", str(cls.source)], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(cls.source), "-c", "user.name=title-run-paths", "-c", "user.email=title-run-paths@invalid",
+                        "-c", "commit.gpgsign=false", "-c", f"core.hooksPath={os.devnull}", "commit", "-q", "--allow-empty", "-m", "source"],
+                       capture_output=True, check=True)
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix="anyps5-title-paths-")
         self.addCleanup(temporary.cleanup)
@@ -154,8 +165,12 @@ runpy.run_path(sys.argv[0], run_name="__main__")
         target = self.build / "core/relinker" / ("relinker.exe" if os.name == "nt" else "relinker")
         target.parent.mkdir(parents=True)
         shutil.copy2(sys.executable, target)
-        (self.build / "CMakeCache.txt").write_text(f"CMAKE_HOME_DIRECTORY:INTERNAL={ROOT}\n", encoding="utf-8")
+        self.build_from_source()
         return target
+
+    def build_from_source(self):
+        self.build.mkdir(parents=True, exist_ok=True)
+        (self.build / "CMakeCache.txt").write_text(f"CMAKE_HOME_DIRECTORY:INTERNAL={self.source}\n", encoding="utf-8")
 
     def reports(self, output=None):
         output = output or self.out
@@ -408,6 +423,80 @@ runpy.run_path(sys.argv[0], run_name="__main__")
                 self.titles.write_text(json.dumps({TITLE: {"executables": [executable]}}), encoding="utf-8")
                 self.refuse()
 
+    def test_auxiliary_library_alias_targets_are_protected(self):
+        self.package(self.root / "games" / TITLE)
+        target = self.stale_work() / "original-runtime"
+        target.write_bytes(b"original auxiliary runtime")
+        for name in ("libmimalloc.so", "mimalloc.dll", "mimalloc-redirect.dll", "libTracyClient.so.0.14.1"):
+            with self.subTest(name=name):
+                alias = self.build / "core/libs/libs" / name
+                self.symlink(target, alias)
+                self.refuse()
+                alias.unlink()
+
+    def test_invalid_enabled_tracy_preserves_work_before_cleanup(self):
+        self.package(self.root / "games" / TITLE)
+        self.fake_relinker()
+        with (self.build / "CMakeCache.txt").open("a", encoding="utf-8") as cache:
+            cache.write("APS5_ENABLE_TRACY:BOOL=ON\n")
+        libraries = self.build / "core/libs/libs"
+        libraries.mkdir(parents=True)
+        for names in ((), ("libTracyClient.so.0.13.1", "libTracyClient.so.0.14.1")):
+            with self.subTest(clients=names):
+                self.stale_work()
+                for name in names:
+                    (libraries / name).write_bytes(b"client")
+                self.refuse()
+
+    def test_configured_windows_compiler_runtime_alias_is_protected(self):
+        package = self.package(self.root / "games" / TITLE)
+        target = self.stale_work() / "original-compiler-runtime.dll"
+        target.write_bytes(b"original compiler runtime")
+        compiler = self.root / "toolchain/bin"
+        self.symlink(target, compiler / "libstdc++-6.dll")
+        self.build.mkdir()
+        (self.build / "CMakeCache.txt").write_text(
+            "CMAKE_CXX_COMPILER:FILEPATH=" + (compiler / "g++.exe").as_posix() + "\n", encoding="utf-8")
+        from types import SimpleNamespace
+        args = SimpleNamespace(build=self.build, out=self.out, titles=self.titles, compare=None)
+        before = snapshot(self.root)
+        with self.assertRaisesRegex(ValueError, "overlaps"):
+            load_tool().validate_layout(args, {TITLE: {"package": package}}, [TITLE], {}, self.source, "windows")
+        self.assertEqual(snapshot(self.root), before)
+
+    def test_unusable_enabled_tracy_preserves_work_before_cleanup(self):
+        package = self.package(self.root / "games" / TITLE)
+        self.fake_relinker()
+        with (self.build / "CMakeCache.txt").open("a", encoding="utf-8") as cache:
+            cache.write("APS5_ENABLE_TRACY:BOOL=ON\n")
+        libraries = self.build / "core/libs/libs"
+        libraries.mkdir(parents=True)
+        (libraries / "libmimalloc.so").write_bytes(b"allocator")
+        client = libraries / "libTracyClient.so.0.14.1"
+        from types import SimpleNamespace
+        args = SimpleNamespace(build=self.build, out=self.out, titles=self.titles, compare=None)
+        for kind in ("dangling-symlink", "directory", "empty-file"):
+            work = self.stale_work()
+            if kind == "dangling-symlink":
+                self.symlink(self.root / "missing-client", client)
+            elif kind == "directory":
+                client.mkdir()
+            else:
+                client.touch()
+            before = snapshot(self.root)
+            with self.subTest(kind=kind, consumer="layout"), self.assertRaisesRegex(RuntimeError, "Tracy"):
+                load_tool().validate_layout(args, {TITLE: {"package": package}}, [TITLE], {}, self.source, "linux")
+            with self.subTest(kind=kind, consumer="CLI"):
+                result = self.run_cli()
+                self.assertTrue((work / "previous-run.bin").is_file(), result.stdout + result.stderr)
+                self.assertEqual(snapshot(self.root), before, result.stdout + result.stderr)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("Tracy", result.stderr)
+            if kind == "directory":
+                client.rmdir()
+            else:
+                client.unlink()
+
     def test_disjoint_run_preserves_dump_and_cleans_previous_work(self):
         package = self.package(self.root / "games" / TITLE)
         self.fake_relinker()
@@ -540,6 +629,7 @@ runpy.run_path(sys.argv[0], run_name="__main__")
 
     def test_cleanup_failure_does_not_write_through_stale_log_alias(self):
         self.package(self.root / "games" / TITLE)
+        self.build_from_source()
         work = self.stale_work()
         victim = self.root / "original-victim.bin"
         victim.write_bytes(b"a cleanup error must not overwrite this file")
@@ -576,7 +666,7 @@ runpy.run_path(sys.argv[0], run_name="__main__")
         prepare.assert_not_called()
 
     def report_name(self, instant):
-        result = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=True)
+        result = subprocess.run(["git", "-C", str(self.source), "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=True)
         return f"{result.stdout.strip()}-{instant:%Y%m%d-%H%M%S}"
 
     def test_old_report_directory_symlinks_are_not_followed(self):
@@ -616,4 +706,5 @@ runpy.run_path(sys.argv[0], run_name="__main__")
 
 
 if __name__ == "__main__":
+    faulthandler.dump_traceback_later(280, exit=True)
     unittest.main()
