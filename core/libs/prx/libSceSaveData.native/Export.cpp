@@ -233,6 +233,10 @@ bool write_file_replace(const std::string& path, const std::vector<char>& data) 
 }
 
 bool read_file_all(const std::string& path, std::vector<char>& out) {
+    std::error_code ec;
+    if (!std::filesystem::is_regular_file(path, ec)) {
+        return false;
+    }
     std::ifstream f(path, std::ios::binary);
     if (!f) {
         return false;
@@ -1297,12 +1301,12 @@ int APS5_VABI sceSaveDataLoadIcon(const SaveDataMountPoint* mount_point, SaveDat
         return SAVE_DATA_ERROR_NOT_MOUNTED;
     }
     const auto path = ResolveDiskPath_nid_no_patch((g_slots[slot].mount_point + "/sce_sys/icon0.png").c_str());
+    std::error_code error;
+    const auto type = std::filesystem::status(path, error).type();
+    if (type == std::filesystem::file_type::not_found) return SAVE_DATA_ERROR_NOT_FOUND;
+    if (type != std::filesystem::file_type::regular) return SAVE_DATA_ERROR_INTERNAL;
     std::ifstream file(path, std::ios::binary | std::ios::ate);
-    if (!file) {
-        std::error_code error;
-        const bool exists = std::filesystem::exists(path, error);
-        return !error && !exists ? SAVE_DATA_ERROR_NOT_FOUND : SAVE_DATA_ERROR_INTERNAL;
-    }
+    if (!file) return SAVE_DATA_ERROR_INTERNAL;
     const std::streamoff size = file.tellg();
     if (size < 0 || static_cast<std::uintmax_t>(size) > std::numeric_limits<std::size_t>::max()) return SAVE_DATA_ERROR_INTERNAL;
     const auto count = std::min(localIcon.buf_size, static_cast<std::size_t>(size));
@@ -1757,9 +1761,14 @@ int APS5_VABI sceSaveDataTerminate(void) {
 static int transferringMount(const SaveDataTransferringMount* mount, SaveDataMountResult* mount_result) {
     (void)mount;
     if (mount_result != nullptr) {
-        std::memset(mount_result, 0, sizeof(*mount_result));
+        SaveDataMountResult localResult{};
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(mount_result, &localResult, sizeof(localResult));
+        errno = savedErrno;
+        if (!copied) {
+            return SAVE_DATA_ERROR_PARAMETER;
+        }
     }
-    // No PS4-to-PS5 transfer data exists on this console.
     return SAVE_DATA_ERROR_NOT_FOUND;
 }
 
