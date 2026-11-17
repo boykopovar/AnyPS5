@@ -31,7 +31,7 @@ int Fail(int error) {
 
 extern "C" {
 
-int APS5_VABI __sys_namedobj_create_nid_postfix(const char* name, void* object, std::uint32_t type) {
+int GuestNamedObjectCreate_nid_no_patch(const char* name, void* object, std::uint32_t type) {
     static_cast<void>(object);
     if (name == nullptr) return Fail(GuestEinval);
     std::string copy;
@@ -44,6 +44,10 @@ int APS5_VABI __sys_namedobj_create_nid_postfix(const char* name, void* object, 
     if (reuse) releasedIds.erase(releasedIds.begin());
     else ++nextUnusedId;
     return static_cast<int>(id);
+}
+
+int APS5_VABI __sys_namedobj_create_nid_postfix(const char* name, void* object, std::uint32_t type) {
+    return GuestNamedObjectCreate_nid_no_patch(name, object, type);
 }
 
 int APS5_VABI __sys_namedobj_delete_nid_postfix(std::uint32_t id, std::uint32_t type) {
