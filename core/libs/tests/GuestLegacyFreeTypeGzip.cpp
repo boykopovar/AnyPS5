@@ -399,6 +399,16 @@ void CheckStreams() {
     Require(counter.allocations == counter.frees);
     Require(FT_Stream_OpenGzip_nid_postfix(nullptr, &source) == FT_Err_Invalid_Stream_Handle);
     Require(FT_Stream_OpenGzip_nid_postfix(&output, nullptr) == FT_Err_Invalid_Stream_Handle);
+    Require(FT_Stream_OpenGzip_nid_postfix(nullptr, nullptr) == FT_Err_Invalid_Stream_Handle);
+    errno = 71;
+    Require(FT_Stream_OpenGzip_nid_postfix(reinterpret_cast<LegacyFreeType::GuestStreamRec*>(0x10), &source) == FT_Err_Invalid_Stream_Handle);
+    Require(errno == 71);
+    errno = 71;
+    Require(FT_Stream_OpenGzip_nid_postfix(&output, reinterpret_cast<LegacyFreeType::GuestStreamRec*>(0x10)) == FT_Err_Invalid_Stream_Handle);
+    Require(errno == 71);
+    errno = 71;
+    Require(FT_Stream_OpenGzip_nid_postfix(reinterpret_cast<LegacyFreeType::GuestStreamRec*>(0x10), reinterpret_cast<LegacyFreeType::GuestStreamRec*>(0x10)) == FT_Err_Invalid_Stream_Handle);
+    Require(errno == 71);
 }
 
 }
