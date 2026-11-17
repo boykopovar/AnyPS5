@@ -2,7 +2,7 @@
 
 ## add Functional
 
-- [PS4 (GCN) on-chip tessellation](../../../core/shader/recompiler/Optimization/src/TessellationLowering.cpp) (shader recompiler, PS4) - not measured on a console. LS, HS and VS-stage domain routing (`VGT_SHADER_STAGES_EN` 0x45 or 0x145) is drawn through the off-chip ring lowering. With `SPI_SHADER_PGM_RSRC2_HS.OC_LDS_EN` clear the hull shader keeps its control points and patch constants in LDS and the domain shader reads them there, at offsets a tessellation constant buffer bound by the title computes at run time; a hull LDS write or a domain LDS read then throws. An on-chip hull that writes only tessellation factors and a domain shader that reads no hull output are drawn.
+- [PS4 (GCN) on-chip tessellation](../../../core/shader/recompiler/Optimization/src/TessellationLowering.cpp) (shader recompiler, PS4) - not measured on a console. The tessellation constant buffer (shadPS4 `TessellationDataConstantBuffer`) is read from guest memory for every on-chip draw and compiled into its hull and domain stages, so those draws are kept in no draw cache or recipe. With `OC_LDS_EN` clear, hull LDS writes and domain LDS reads at or above `hs_output_base` go through the off-chip ring lowering at that offset less `hs_output_base`. A hull with `hs_output_base` 0 is taken as pass-through and copies `ls_stride` bytes of its input control point to its output; one with another output stride or control point count throws, as does an on-chip LDS address that reads another constant buffer or none. LS, HS and VS-stage domain routing (0x45, 0x145) uses the off-chip ring lowering.
 
 # libSceAgcDriver
 

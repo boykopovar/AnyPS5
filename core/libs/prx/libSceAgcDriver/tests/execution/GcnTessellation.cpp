@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "Recompiler.hpp"
+#include "Optimization/TessellationLowering.hpp"
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "VulkanTestDevice.hpp"
 #include <algorithm>
@@ -71,6 +72,44 @@ alignas(256) constexpr std::array<std::uint32_t, 9> GcnDomainOnChipLds{
     0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 28> GcnHullOnChipPassthrough{
+    0xbefc03c1, 0xc2c60500, 0xd2900002, 0x02151101, 0xd2900003, 0x02210101, 0xbf8c007f, 0x7d840480,
+    0xbe86246a, 0x36100081, 0x7e100d08, 0x081010f2, 0x34120684, 0xe0701000, 0x08000809, 0xe0701004,
+    0x08000809, 0xe0701008, 0x08000809, 0xe070100c, 0x08000809, 0x7e140211, 0xd286000a, 0x04282103,
+    0x7e1602f2, 0xd8340000, 0x00000b0a, 0xbf810000,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 45> GcnHullOnChipOutputs{
+    0xbefc03c1, 0xc2c60500, 0xd2900002, 0x02151101, 0xd2900003, 0x02210101, 0xbf8c007f, 0x34080484,
+    0xd2860005, 0x04116103, 0xd8d80000, 0x06000005, 0xd8d80004, 0x07000005, 0x7e28020f, 0xd2860014,
+    0x04502503, 0xd2860014, 0x04501b02, 0xbf8c007f, 0xd8340000, 0x00000614, 0xd8340004, 0x00000714,
+    0x7d840480, 0xbe86246a, 0x36100081, 0x7e100d08, 0x081010f2, 0x34120684, 0xe0701000, 0x08000809,
+    0xe0701004, 0x08000809, 0xe0701008, 0x08000809, 0xe070100c, 0x08000809, 0x7e140211, 0xd286000a,
+    0x04282103, 0x7e1602f2, 0xd8340000, 0x00000b0a, 0xbf810000,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 41> GcnDomainOnChipInputs{
+    0xbefc03c1, 0xc2c20100, 0xbf8c007f, 0x7e080207, 0xd2860004, 0x04101502, 0xd8d80000, 0x05000004,
+    0xd8d80004, 0x06000004, 0xd8d80010, 0x07000004, 0xd8d80014, 0x08000004, 0xd8d80020, 0x09000004,
+    0xd8d80024, 0x0a000004, 0x7e180209, 0xd286000c, 0x04301102, 0xd8d80000, 0x0d00000c, 0xbf8c007f,
+    0x081600f2, 0x0816030b, 0x101c0b00, 0x3e1c0f01, 0x3e1c130b, 0x101c1b0e, 0x101e0d00, 0x3e1e1101,
+    0x3e1e150b, 0x101e1b0f, 0x7e200280, 0x7e2202f2, 0xf80008cf, 0x11100f0e, 0xf800020f, 0x11111111,
+    0xbf810000,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 40> GcnDomainOnChipOffsetInputs{
+    0xbefc03c1, 0xc2c20100, 0xbf8c007f, 0xd2860004, 0x02001502, 0xd8d800c0, 0x05000004, 0xd8d800c4,
+    0x06000004, 0xd8d800d0, 0x07000004, 0xd8d800d4, 0x08000004, 0xd8d800e0, 0x09000004, 0xd8d800e4,
+    0x0a000004, 0x7e180209, 0xd286000c, 0x04301102, 0xd8d80000, 0x0d00000c, 0xbf8c007f, 0x081600f2,
+    0x0816030b, 0x101c0b00, 0x3e1c0f01, 0x3e1c130b, 0x101c1b0e, 0x101e0d00, 0x3e1e1101, 0x3e1e150b,
+    0x101e1b0f, 0x7e200280, 0x7e2202f2, 0xf80008cf, 0x11100f0e, 0xf800020f, 0x11111111, 0xbf810000,
+};
+
+using Constants = std::array<std::uint32_t, ShaderRecompiler::TessellationConstantWords>;
+
+alignas(16) constexpr Constants PassthroughConstants{16u, 16u, 4u, 0u, 16u, 192u, 48u, 0u, 0u};
+alignas(16) constexpr Constants OutputConstants{16u, 16u, 4u, 192u, 16u, 384u, 48u, 0u, 0u};
+
 alignas(256) constexpr std::array<std::uint32_t, 7> PixelCode{
     0xc8020002, 0xc8060102, 0xc80a0202, 0xc80e0302, 0xf800180f, 0x03020100, 0xbf810000,
 };
@@ -87,6 +126,16 @@ alignas(256) constexpr std::array<std::uint16_t, 9> Indices{
 
 constexpr std::array<std::uint32_t, 4> RingUserData{0x1000u, 0u, 0u, 0u};
 
+std::array<std::uint32_t, 4> ConstantBuffer(const Constants& constants) {
+    const auto address = reinterpret_cast<std::uintptr_t>(constants.data());
+    return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u) & 0xffffu, static_cast<std::uint32_t>(sizeof(Constants)), 0x00027facu};
+}
+
+std::array<std::uint32_t, 8> HullUserData(const Constants& constants) {
+    const auto buffer = ConstantBuffer(constants);
+    return {RingUserData[0], RingUserData[1], RingUserData[2], RingUserData[3], buffer[0], buffer[1], buffer[2], buffer[3]};
+}
+
 TessellationConfiguration Patches(bool onChip) {
     TessellationConfiguration configuration{3u, 3u, 1u, 0u, 2u, 4u};
     configuration.onChip = onChip;
@@ -100,9 +149,9 @@ struct Stages {
     ShaderRecompiler::RecompileResult fragment;
 };
 
-ShaderRecompiler::RecompileResult Compile(const ShaderRecompiler::SpirvTarget& target, ShaderStage stage, std::span<const std::uint32_t> code, std::uint32_t& pushCursor, const TessellationConfiguration& configuration) {
+ShaderRecompiler::RecompileResult Compile(const ShaderRecompiler::SpirvTarget& target, ShaderStage stage, std::span<const std::uint32_t> code, std::uint32_t& pushCursor, const TessellationConfiguration& configuration, std::span<const std::uint32_t> stageUserData = {}, const std::optional<Constants>& constants = std::nullopt) {
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(code.data()), std::as_bytes(code)}}};
-    const auto userData = stage == ShaderStage::TessellationControl || stage == ShaderStage::TessellationEvaluation ? std::span<const std::uint32_t>(RingUserData) : std::span<const std::uint32_t>();
+    const auto userData = !stageUserData.empty() ? stageUserData : stage == ShaderStage::TessellationControl || stage == ShaderStage::TessellationEvaluation ? std::span<const std::uint32_t>(RingUserData) : std::span<const std::uint32_t>();
     std::optional<ShaderRecompiler::ShaderPixelStageInfo> pixel;
     std::optional<ShaderRecompiler::ShaderVertexStageInfo> vertex;
     std::optional<ShaderRecompiler::GraphicsCompileContext> graphics;
@@ -127,9 +176,21 @@ ShaderRecompiler::RecompileResult Compile(const ShaderRecompiler::SpirvTarget& t
         graphics
     };
     request.useCache = false;
+    if (request.graphics) request.graphics->tessellationConstants = constants;
     auto result = ShaderRecompiler::Recompile(request);
     pushCursor += static_cast<std::uint32_t>(result.pushConstants.size());
     return result;
+}
+
+void ExpectConstantsRequired(const ShaderRecompiler::SpirvTarget& target, ShaderStage stage, std::span<const std::uint32_t> code, std::span<const std::uint32_t> userData, std::uint32_t word) {
+    std::uint32_t cursor = 0;
+    try {
+        static_cast<void>(Compile(target, stage, code, cursor, Patches(true), userData));
+    } catch (const ShaderRecompiler::TessellationConstantsRequired& required) {
+        Require(required.UserDataWord() == word, "the tessellation constant buffer was asked for at user data word " + std::to_string(required.UserDataWord()) + ", expected " + std::to_string(word));
+        return;
+    }
+    Require(false, "an on-chip GCN tessellation program that addresses LDS through the tessellation constant buffer compiled without its constants");
 }
 
 void ExpectRefusal(const ShaderRecompiler::SpirvTarget& target, ShaderStage stage, std::span<const std::uint32_t> code, const std::string& reason) {
@@ -198,14 +259,18 @@ void Draw(AgcDriver::VulkanDevice& device, const Stages& stages, const Tessellat
     device.WaitIdle();
 }
 
-void RequirePatches(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> hull, std::span<const std::uint32_t> domain, bool onChip, const std::string& program) {
+void RequirePatches(AgcDriver::VulkanDevice& device, std::span<const std::uint32_t> hull, std::span<const std::uint32_t> domain, bool onChip, const std::string& program, const std::optional<Constants>& constants = std::nullopt) {
     const auto target = device.Target();
     const auto configuration = Patches(onChip);
+    const auto hullUsers = constants ? HullUserData(*constants) : std::array<std::uint32_t, 8>{};
+    const auto domainUsers = constants ? ConstantBuffer(*constants) : std::array<std::uint32_t, 4>{};
+    const auto hullData = constants ? std::span<const std::uint32_t>(hullUsers) : std::span<const std::uint32_t>();
+    const auto domainData = constants ? std::span<const std::uint32_t>(domainUsers) : std::span<const std::uint32_t>();
     std::uint32_t cursor = 0;
     Stages stages{
         Compile(target, ShaderStage::Local, GcnLocal, cursor, configuration),
-        Compile(target, ShaderStage::TessellationControl, hull, cursor, configuration),
-        Compile(target, ShaderStage::TessellationEvaluation, domain, cursor, configuration),
+        Compile(target, ShaderStage::TessellationControl, hull, cursor, configuration, hullData, constants),
+        Compile(target, ShaderStage::TessellationEvaluation, domain, cursor, configuration, domainData, constants),
         Compile(target, ShaderStage::Fragment, PixelCode, cursor, configuration),
     };
     Draw(device, stages, configuration);
@@ -284,7 +349,14 @@ int main() {
         RequirePatches(*device, GcnHullOffChip, GcnDomainOffChip, false, "GCN off-chip LS-HS-VS draw");
         RequirePatches(*device, GcnHullOnChip, GcnDomainOnChip, true, "GCN on-chip LS-HS-VS draw");
         ExpectRefusal(target, ShaderStage::TessellationControl, GcnHullOnChipLds, "keeps its outputs on chip");
-        ExpectRefusal(target, ShaderStage::TessellationEvaluation, GcnDomainOnChipLds, "reads them from LDS");
+        ExpectRefusal(target, ShaderStage::TessellationEvaluation, GcnDomainOnChipLds, "reads LDS at an address that does not come from the tessellation constant buffer");
+        RequirePatches(*device, GcnHullOnChipPassthrough, GcnDomainOnChipInputs, true, "GCN on-chip pass-through LS-HS-VS draw through LDS", PassthroughConstants);
+        RequirePatches(*device, GcnHullOnChipOutputs, GcnDomainOnChipInputs, true, "GCN on-chip LS-HS-VS draw with hull output control points in LDS", OutputConstants);
+        RequirePatches(*device, GcnHullOnChipOutputs, GcnDomainOnChipOffsetInputs, true, "GCN on-chip LS-HS-VS draw whose domain shader reaches the hull output control points through its LDS instruction offset", OutputConstants);
+        const auto hullUsers = HullUserData(PassthroughConstants);
+        const auto domainUsers = ConstantBuffer(PassthroughConstants);
+        ExpectConstantsRequired(target, ShaderStage::TessellationControl, GcnHullOnChipPassthrough, hullUsers, 4u);
+        ExpectConstantsRequired(target, ShaderStage::TessellationEvaluation, GcnDomainOnChipInputs, domainUsers, 0u);
         ShaderRecompiler::SetGcnGuestShaders(false);
         device.reset();
         std::puts("GCN tessellation tests passed");

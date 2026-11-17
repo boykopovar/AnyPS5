@@ -6,12 +6,15 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "Optimization/ResourceProgram.hpp"
+#include "Optimization/TessellationLowering.hpp"
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <span>
 #include <sstream>
 #include <stdexcept>
@@ -21,6 +24,35 @@
 namespace AgcDriver::DriverDetail {
 
 namespace {
+
+std::array<std::uint32_t, ShaderRecompiler::TessellationConstantWords> ReadTessellationConstants(std::span<const std::uint32_t> userData, std::uint32_t word) {
+    require(word + 4u <= userData.size(), "the tessellation constant buffer's V# lies past the stage's user data");
+    const auto base = static_cast<std::uint64_t>(userData[word]) | (static_cast<std::uint64_t>(userData[word + 1u] & 0xffffu) << 32u);
+    const auto stride = (userData[word + 1u] >> 16u) & 0x3fffu;
+    const auto size = stride == 0u ? static_cast<std::uint64_t>(userData[word + 2u]) : static_cast<std::uint64_t>(stride) * userData[word + 2u];
+    std::array<std::uint32_t, ShaderRecompiler::TessellationConstantWords> constants{};
+    for (std::uint32_t index = 0; index < constants.size(); ++index) {
+        if (4u * index + 4u > size) break;
+        GuestMemory::Read(base + 4u * index, std::as_writable_bytes(std::span(&constants[index], 1u)), 4u);
+    }
+    return constants;
+}
+
+std::optional<std::uint32_t> TessellationConstantWord(const ShaderSnapshot& snapshot, std::size_t codeOffset) {
+    std::lock_guard lock(snapshot.prepared->mutex);
+    for (const auto& [offset, word] : snapshot.prepared->tessellationConstants) {
+        if (offset == codeOffset) return word;
+    }
+    return std::nullopt;
+}
+
+void RecordTessellationConstantWord(const ShaderSnapshot& snapshot, std::size_t codeOffset, std::uint32_t word) {
+    std::lock_guard lock(snapshot.prepared->mutex);
+    for (const auto& [offset, known] : snapshot.prepared->tessellationConstants) {
+        if (offset == codeOffset) return;
+    }
+    snapshot.prepared->tessellationConstants.emplace_back(codeOffset, word);
+}
 
 void TraceMaterializationFailure(std::uint64_t token, const Submission& submission, std::size_t packetOffset, std::size_t stage, const char* phase, const std::exception_ptr& failure) {
     if (token == 0) return;
@@ -179,10 +211,23 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
         {0, 0, pushOffset, pushBytes},
         ShaderRecompiler::GraphicsCompileContext{program.firstUserSgpr, linked, Graphics::StageMeshConfiguration(graphics.stages, program.binary.stage), graphics.stages.tessellation, {drawParameters.indexAddress, drawParameters.indexCount, drawParameters.indexSize, drawParameters.instanceCount}, program.binary.stage == Stage::Mesh ? meshBarycentrics : std::nullopt}
     };
+    if (request.graphics->tessellation && request.graphics->tessellation->onChip && (program.binary.stage == Stage::TessellationControl || program.binary.stage == Stage::TessellationEvaluation)) {
+        if (const auto word = TessellationConstantWord(*program.snapshot, program.codeOffset)) request.graphics->tessellationConstants = ReadTessellationConstants(program.userData, *word);
+    }
+    const auto pinTessellationConstants = [&](const ShaderRecompiler::TessellationConstantsRequired& required) {
+        if (request.graphics->tessellationConstants) throw required;
+        RecordTessellationConstantWord(*program.snapshot, program.codeOffset, required.UserDataWord());
+        request.graphics->tessellationConstants = ReadTessellationConstants(program.userData, required.UserDataWord());
+    };
     const auto waitedBefore = traceCapSync() || profile ? Graphics::Recorder::ThreadWaitedMs() : 0.0;
     auto invocation = [&] {
         try {
-            return InvocationFor(*program.snapshot, program.codeOffset, request, AsyncDrawCompile());
+            try {
+                return InvocationFor(*program.snapshot, program.codeOffset, request, AsyncDrawCompile());
+            } catch (const ShaderRecompiler::TessellationConstantsRequired& required) {
+                pinTessellationConstants(required);
+                return InvocationFor(*program.snapshot, program.codeOffset, request, AsyncDrawCompile());
+            }
         } catch (const DrawCompilePending&) {
             throw;
         } catch (...) {
@@ -213,7 +258,15 @@ std::shared_ptr<const ShaderRecompiler::RecompileResult> Driver::materializeDraw
     const auto capture = [&] {
         const SampledReadScope sampling(evidenceReads);
         try {
-            return CaptureInvocation(shaderMemory, *program.snapshot, program.codeOffset, request, invocation);
+            try {
+                return CaptureInvocation(shaderMemory, *program.snapshot, program.codeOffset, request, invocation);
+            } catch (const ShaderRecompiler::TessellationConstantsRequired& required) {
+                pinTessellationConstants(required);
+                invocation = InvocationFor(*program.snapshot, program.codeOffset, request, AsyncDrawCompile());
+                return CaptureInvocation(shaderMemory, *program.snapshot, program.codeOffset, request, invocation);
+            }
+        } catch (const DrawCompilePending&) {
+            throw;
         } catch (const std::exception& error) {
             throw named(error, shaderMemory.Regions());
         }

@@ -498,6 +498,8 @@ struct MeshBarycentricLayout {
     bool operator==(const MeshBarycentricLayout&) const = default;
 };
 
+inline constexpr std::uint32_t TessellationConstantWords = 9;
+
 struct GraphicsCompileContext {
     std::uint32_t firstUserSgpr;
     std::span<const LinkedProgram> linkedPrograms;
@@ -505,6 +507,7 @@ struct GraphicsCompileContext {
     std::optional<TessellationConfiguration> tessellation;
     GraphicsDrawParameters draw;
     std::optional<MeshBarycentricLayout> meshBarycentrics;
+    std::optional<std::array<std::uint32_t, TessellationConstantWords>> tessellationConstants;
 };
 
 struct RecompileRequest {

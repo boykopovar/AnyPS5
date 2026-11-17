@@ -150,6 +150,7 @@ private:
         if (request.shader.stage != ShaderStage::TessellationEvaluation) append(key, tessellation->mergedHull);
         append(key, tessellation->onChip);
         if (request.shader.stage == ShaderStage::Local) return;
+        append(key, request.graphics->tessellationConstants);
         append(key, tessellation->patchesPerGroup);
         append(key, tessellation->primitiveGroupSize);
         append(key, TessellationInstancePatches(request));

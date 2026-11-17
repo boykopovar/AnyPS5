@@ -380,7 +380,10 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
 
     if (inputInfo.vertex != nullptr) {
         constexpr TessellationLowering tessellationLowering;
-        tessellationLowering.Lower(program, inputInfo.vertex->tess, request.target.tessellation ? &*request.target.tessellation : nullptr);
+        auto tessellation = inputInfo.vertex->tess;
+        tessellation.constants = request.graphics ? request.graphics->tessellationConstants : std::nullopt;
+        tessellation.userDataBase = request.context.userDataBaseRegister;
+        tessellationLowering.Lower(program, tessellation, request.target.tessellation ? &*request.target.tessellation : nullptr);
     }
 
     deadCodeEliminator.EliminateUnobservedPhis(program);
@@ -1707,6 +1710,8 @@ auto CountedCompile(Compile&& compile) {
         return result;
     } catch (const ConvertedSampleRequired&) {
         throw;
+    } catch (const TessellationConstantsRequired&) {
+        throw;
     } catch (const std::exception&) {
         NoteFailureOnce();
         throw;
@@ -2329,6 +2334,8 @@ auto recompileReporting(const RecompileRequest& request, Impl&& impl) -> decltyp
     try {
         return impl();
     } catch (const ConvertedSampleRequired&) {
+        throw;
+    } catch (const TessellationConstantsRequired&) {
         throw;
     } catch (const std::exception& e) {
         NoteFailureOnce();

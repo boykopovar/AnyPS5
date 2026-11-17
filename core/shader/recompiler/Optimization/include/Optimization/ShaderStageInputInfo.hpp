@@ -117,6 +117,8 @@ struct ShaderTessellationInputInfo {
     bool drawParameters = false;
     bool mergedHull = false;
     bool onChip = false;
+    std::optional<std::array<std::uint32_t, TessellationConstantWords>> constants;
+    std::uint32_t userDataBase = 0;
     std::uint32_t geometryItemDwords = 0;
 };
 
