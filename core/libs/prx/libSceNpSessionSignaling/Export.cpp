@@ -377,19 +377,39 @@ int APS5_VABI sceNpSessionSignalingSetCustomProperty(std::uint32_t contextId, co
     return 0;
 }
 
-int APS5_VABI sceNpSessionSignalingManualUdpAbortConnection() {
+int APS5_VABI sceNpSessionSignalingManualUdpAbortConnection(std::uint32_t contextId) {
+    std::lock_guard lock(g_mutex);
+    if (!g_initialized) return SCE_NP_SESSION_SIGNALING_ERROR_NOT_INITIALIZED;
+    if (!FindContext(contextId)) return SCE_NP_SESSION_SIGNALING_ERROR_CONTEXT_NOT_FOUND;
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceNpSessionSignalingManualUdpCreateJoin() {
+int APS5_VABI sceNpSessionSignalingManualUdpCreateJoin(const void* param, std::uint32_t* id, std::uint32_t* extra) {
+    (void)extra;
+    std::lock_guard lock(g_mutex);
+    if (!g_initialized) return SCE_NP_SESSION_SIGNALING_ERROR_NOT_INITIALIZED;
+    if (!param || !id) return SCE_NP_SESSION_SIGNALING_ERROR_INVALID_ARGUMENT;
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceNpSessionSignalingManualUdpEstablishConnection() {
+int APS5_VABI sceNpSessionSignalingManualUdpEstablishConnection(std::uint32_t contextId, std::uint32_t value) {
+    (void)value;
+    std::lock_guard lock(g_mutex);
+    if (!g_initialized) return SCE_NP_SESSION_SIGNALING_ERROR_NOT_INITIALIZED;
+    if (!FindContext(contextId)) return SCE_NP_SESSION_SIGNALING_ERROR_CONTEXT_NOT_FOUND;
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceNpSessionSignalingManualUdpJoin() {
+int APS5_VABI sceNpSessionSignalingManualUdpJoin(const void* param, const char* name, std::uint32_t* id, std::uint32_t* extra) {
+    (void)extra;
+    std::lock_guard lock(g_mutex);
+    if (!g_initialized) return SCE_NP_SESSION_SIGNALING_ERROR_NOT_INITIALIZED;
+    if (!param || !name || !id) return SCE_NP_SESSION_SIGNALING_ERROR_INVALID_ARGUMENT;
+    char first = 0;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&first, name, sizeof(first));
+    errno = savedErrno;
+    if (!copied || first == 0) return SCE_NP_SESSION_SIGNALING_ERROR_INVALID_ARGUMENT;
     NotImplemented_nid_no_patch(__func__);
 }
 
