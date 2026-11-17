@@ -685,6 +685,47 @@ int timeout_option(int optname) {
 #ifndef _WIN32
 constexpr int CONNECT_EXPIRED = -1;
 
+#ifdef __APPLE__
+bool GuestHoldsUnlistenedLoopback(const sockaddr_storage& target) {
+    const bool v4 = target.ss_family == AF_INET;
+    if (!v4 && target.ss_family != AF_INET6) return false;
+    if (v4) {
+        if ((ntohl(reinterpret_cast<const sockaddr_in*>(&target)->sin_addr.s_addr) >> 24) != 127) return false;
+    } else if (!IN6_IS_ADDR_LOOPBACK(&reinterpret_cast<const sockaddr_in6*>(&target)->sin6_addr)) {
+        return false;
+    }
+    const std::uint16_t port = v4 ? reinterpret_cast<const sockaddr_in*>(&target)->sin_port
+                                  : reinterpret_cast<const sockaddr_in6*>(&target)->sin6_port;
+    if (port == 0) return false;
+    std::lock_guard lk(g_mutex);
+    for (const auto& entry : g_socks) {
+        const Sock& candidate = entry.second;
+        if (!candidate.bound || candidate.listening || candidate.type != NET_SOCK_STREAM) continue;
+        if (candidate.family != (v4 ? NET_AF_INET : NET_AF_INET6)) continue;
+        sockaddr_storage local{};
+        NativeLength length = sizeof(local);
+        if (::getsockname(candidate.native->value, reinterpret_cast<sockaddr*>(&local), &length) != 0) continue;
+        std::uint16_t boundPort = 0;
+        bool wildcard = false;
+        if (v4) {
+            boundPort = reinterpret_cast<const sockaddr_in*>(&local)->sin_port;
+            wildcard = reinterpret_cast<const sockaddr_in*>(&local)->sin_addr.s_addr == htonl(INADDR_ANY);
+        } else {
+            boundPort = reinterpret_cast<const sockaddr_in6*>(&local)->sin6_port;
+            wildcard = IN6_IS_ADDR_UNSPECIFIED(&reinterpret_cast<const sockaddr_in6*>(&local)->sin6_addr);
+        }
+        if (boundPort != port) continue;
+        if (wildcard) return true;
+        if (v4) {
+            if ((ntohl(reinterpret_cast<const sockaddr_in*>(&local)->sin_addr.s_addr) >> 24) == 127) return true;
+        } else if (IN6_IS_ADDR_LOOPBACK(&reinterpret_cast<const sockaddr_in6*>(&local)->sin6_addr)) {
+            return true;
+        }
+    }
+    return false;
+}
+#endif
+
 int connect_within(NativeSocket native, const sockaddr* address, NativeLength length, int microseconds) {
     const int flags = fcntl(native, F_GETFL, 0);
     if (flags < 0 || fcntl(native, F_SETFL, flags | O_NONBLOCK) != 0) return native_error();
@@ -1605,6 +1646,9 @@ int APS5_VABI sceNetConnect(int s, const void* addr, uint32_t addrlen) {
     }
     const int connectTimeout = socket.native->connectTimeout;
 #ifndef _WIN32
+#ifdef __APPLE__
+    if (socket.type == NET_SOCK_STREAM && !socket.native->nonblock && GuestHoldsUnlistenedLoopback(native)) return fail(NET_ECONNREFUSED);
+#endif
     if (socket.type == NET_SOCK_STREAM && connectTimeout > 0 && !socket.native->nonblock) {
         const int error = connect_within(socket.native->value, reinterpret_cast<const sockaddr*>(&native), native_length, connectTimeout);
         if (error == CONNECT_EXPIRED) {
@@ -3633,7 +3677,8 @@ void* APS5_VABI sceNetMemoryAllocate(std::int32_t size, int flags) {
 }
 
 void APS5_VABI sceNetMemoryFree(void* memory) {
-    GuestHeap::GuestHeapFree_nid_postfix(memory);
+    constexpr int freedFill = 0xdd;
+    GuestHeap::GuestHeapFillAndFree_nid_no_patch(memory, freedFill);
 }
 
 int APS5_VABI sceNetSetDnsInfoToKernel(const NetDnsInfo* info, std::uint32_t flags) {
