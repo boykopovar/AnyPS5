@@ -76,6 +76,7 @@ constexpr int ErrorNotSupported = 45;
 constexpr int ErrorAddressInUse = 48;
 constexpr int ErrorAddressNotAvailable = 49;
 
+constexpr int ErrorNoEntry = 2;
 constexpr int ErrorFault = 14;
 constexpr int ErrorInvalid = 22;
 constexpr int ErrorDomain = 33;
@@ -182,12 +183,15 @@ int SendBufferSize(SocketOptionState& state, int family, int type) {
 int SetSocketLevelOption(std::uintptr_t native, SocketOptionState& state, int family, int type, int option, const void* value, std::uint32_t length) {
     const auto handle = static_cast<NativeHandle>(native);
     if (option == GuestAcceptFilter) {
+        if (value) {
+            if (length < GuestAcceptFilterArgumentSize) return ErrorInvalid;
+            std::uint8_t argument[GuestAcceptFilterArgumentSize];
+            if (const int fault = ReadValue(argument, value, sizeof(argument))) return fault;
+            return ErrorNoEntry;
+        }
         bool listening = false;
         if (type != 2 && !NativeListening(native, listening)) return HostError();
-        if (!listening) return ErrorInvalid;
-        if (!value) return 0;
-        if (length < GuestAcceptFilterArgumentSize) return ErrorInvalid;
-        NotImplemented_nid_no_patch("setsockopt: SO_ACCEPTFILTER on a listening socket");
+        return listening ? 0 : ErrorInvalid;
     }
     if (option == GuestLinger) {
         if (length < sizeof(GuestLingerValue)) return ErrorInvalid;
