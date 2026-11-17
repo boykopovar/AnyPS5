@@ -808,7 +808,7 @@ struct RollbackSnapshot {
 
 extern "C" {
 
-int APS5_VABI sceHttpCacheEnableCacheInfo() {
+int APS5_VABI sceHttpCacheEnableCacheInfo(bool enable) {
     NotImplemented_nid_no_patch(__func__);
 }
 

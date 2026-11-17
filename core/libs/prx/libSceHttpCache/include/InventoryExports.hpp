@@ -4,7 +4,7 @@
 
 extern "C" {
 
-int APS5_VABI sceHttpCacheEnableCacheInfo();
+int APS5_VABI sceHttpCacheEnableCacheInfo(bool enable);
 int APS5_VABI sceHttpCacheUnregisterCacheInfoUrl(const char* url);
 
 int APS5_VABI libSceHttpCacheUnknown_Y3bCbdeHzNg_nid_no_patch();

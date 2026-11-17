@@ -1,5 +1,9 @@
 # libSceHttpCache
 
+## change [libSceHttpCache additional exports]
+
+- [libSceHttpCache additional exports](../../../core/libs/prx/libSceHttpCache/Export.cpp) - this name/NID pair is present in the inspected export inventory. Firmware 13.42 gives `sceHttpCacheEnableCacheInfo` one `bool` ([reading](https://github.com/boykopovar/AnyPS5/issues/21850#issuecomment-6939803983), disassembly only); it still throws through `NotImplemented_nid_no_patch`, because its result comes from `0x2e260`, which was not read, and the call talks to a system service over IPMI ([follow-up](https://github.com/boykopovar/AnyPS5/issues/21850#issuecomment-6958852739)). No runtime functionality is implemented.
+
 ## remove | `sceHttpCacheUnregisterCacheInfoUrl` | `3JQc1T-fvmc` |
 
 ## change [`sceHttpCacheClearCacheInfo` and `sceHttpCacheRemoveTag`]
