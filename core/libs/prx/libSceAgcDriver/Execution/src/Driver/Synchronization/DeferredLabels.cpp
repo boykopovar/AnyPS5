@@ -208,10 +208,17 @@ void Driver::runCaptureCheckHook() {
     if (const auto hook = captureCheckHook.load(std::memory_order_acquire)) hook();
 }
 
-bool Driver::capturedMemoryChanged(std::span<const ShaderRecompiler::MemoryRegion> regions, std::span<Graphics::GuestMemorySnapshot> compared) {
+bool Driver::capturedMemoryChanged(std::span<const ShaderRecompiler::MemoryRegion> regions, std::span<Graphics::GuestMemorySnapshot> compared, const PreparedShaderState::UserDataLink* linking) {
     if (recapturing()) return false;
     const bool mark = compared.size() == regions.size();
-    for (std::size_t i = 0; i < regions.size(); ++i) {
+    std::vector<VouchedRegions> vouched;
+    if (linking != nullptr && vouchedValidation() && !validateLegacy()) linking->VouchRegions(regions, vouched);
+    for (std::size_t i = 0, range = 0; i < regions.size(); ++i) {
+        while (range < vouched.size() && i >= vouched[range].end) ++range;
+        if (range < vouched.size() && i >= vouched[range].begin) {
+            if (mark) compared[i].compared = true;
+            continue;
+        }
         const auto outcome = GuestMemory::CompareMapped(regions[i].guestAddress, regions[i].bytes);
         if (outcome == GuestMemory::Compare::Differs) return true;
         if (mark && outcome == GuestMemory::Compare::Equal) compared[i].compared = true;

@@ -4,6 +4,7 @@
 
 #include FT_OUTLINE_H
 
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -115,6 +116,32 @@ static void TestTransform() {
     FT_Outline_Transform_nid_postfix(&noPoints, &matrices[0]);
 }
 
+static void TestNoopEmbolden() {
+    constexpr std::int64_t big = std::int64_t{1} << 40;
+    std::array<GuestVector, 4> points{{{big, -big}, {big + 640, -big}, {big + 640, -big + 640}, {big, -big + 640}}};
+    const auto original = points;
+    unsigned char tags[] = {1, 1, 1, 1};
+    unsigned short end = 3;
+    GuestOutline outline{1, 4, points.data(), tags, &end, FT_OUTLINE_EVEN_ODD_FILL};
+    FT_Outline native{};
+    const auto unchanged = [&] {
+        for (std::size_t index = 0; index < points.size(); ++index) Require(points[index].x == original[index].x && points[index].y == original[index].y);
+        Require(outline.n_contours == 1 && outline.n_points == 4 && outline.flags == FT_OUTLINE_EVEN_ODD_FILL);
+        Require(outline.points == points.data() && outline.tags == tags && outline.contours == &end);
+        Require(tags[0] == 1 && tags[1] == 1 && tags[2] == 1 && tags[3] == 1 && end == 3);
+    };
+    for (const std::int64_t x : {-1, 0, 1}) {
+        Require(FT_Outline_Embolden_nid_postfix(&outline, x) == FT_Outline_Embolden(&native, static_cast<FT_Pos>(x)));
+        unchanged();
+        Require(FT_Outline_Embolden_nid_postfix(nullptr, x) == FT_Outline_Embolden(nullptr, static_cast<FT_Pos>(x)));
+        for (const std::int64_t y : {-1, 0, 1}) {
+            Require(FT_Outline_EmboldenXY_nid_postfix(&outline, x, y) == FT_Outline_EmboldenXY(&native, static_cast<FT_Pos>(x), static_cast<FT_Pos>(y)));
+            unchanged();
+            Require(FT_Outline_EmboldenXY_nid_postfix(nullptr, x, y) == FT_Outline_EmboldenXY(nullptr, static_cast<FT_Pos>(x), static_cast<FT_Pos>(y)));
+        }
+    }
+}
+
 static void TestWideTransformSums() {
     GuestVector points[] = {{0x40000000, 0x40000000}, {-0x40000001, -0x40000001}, {7, -3}};
     unsigned char tags[] = {1, 1, 1};
@@ -134,5 +161,6 @@ int main() {
     TestEmbolden();
     TestEmboldenXY();
     TestTransform();
+    TestNoopEmbolden();
     TestWideTransformSums();
 }

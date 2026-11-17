@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 from pathlib import Path
@@ -158,6 +159,30 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual(title_run.read_summary(path)["presents"], 500)
         self.assertEqual(title_run.read_summary(self.root / "missing.jsonl")["presents"], 0)
 
+    def test_periodic_presents_are_not_recounted_by_capture_windows(self):
+        identity = {"gpu": "GPU", "driver": "Driver", "os": "OS"}
+        first = dict(identity, interval_start_s=0, interval_end_s=10, presents=100, window={"ms": 10000})
+        second = dict(identity, interval_start_s=10, interval_end_s=20, presents=300, window={"ms": 10000})
+        capture = dict(identity, presents=300, window={"ms": 10000}, trace="aps5-trace-window.json.gz")
+        path = self.root / "aps5-summary.jsonl"
+        for rows in ([capture, first, second], [first, capture, second], [first, second, capture]):
+            with self.subTest(capture_position=rows.index(capture)):
+                path.write_text("\n".join(map(json.dumps, rows)), encoding="utf-8")
+                self.assertEqual(title_run.read_summary(path), dict(identity, presents=400, fps=20.0))
+
+    def test_empty_periodic_window_does_not_fall_back_to_capture_frames(self):
+        path = self.root / "aps5-summary.jsonl"
+        interval = {"interval_start_s": 0, "interval_end_s": 10, "presents": 0, "window": {"ms": 10000}}
+        capture = {"presents": 300, "window": {"ms": 10000}, "trace": "capture.json.gz"}
+        path.write_text("\n".join(map(json.dumps, [interval, capture])), encoding="utf-8")
+        self.assertEqual(title_run.read_summary(path), {"presents": 0, "fps": 0.0, "gpu": "", "driver": "", "os": ""})
+
+    def test_capture_only_summary_remains_available(self):
+        path = self.root / "aps5-summary.jsonl"
+        capture = {"presents": 300, "window": {"ms": 10000}, "trace": "capture.json.gz", "gpu": "A", "driver": "1", "os": "W"}
+        path.write_text(json.dumps(capture), encoding="utf-8")
+        self.assertEqual(title_run.read_summary(path), {"presents": 300, "fps": 30.0, "gpu": "A", "driver": "1", "os": "W"})
+
     def test_frame_is_uniform(self):
         black = bmp(self.root / "black.bmp", 8, 4, lambda x, y: (0, 0, 0))
         noisy = bmp(self.root / "noisy.bmp", 8, 4, lambda x, y: (3, 2, 1) if x < 7 else (200, 200, 200))
@@ -286,6 +311,13 @@ class ReportTests(unittest.TestCase):
         now["machine"] = {"os": "", "gpu": "", "driver": "", "cpu": "Ryzen AI 7 350"}
         self.assertTrue(title_run.render_markdown(now).startswith("AnyPS5 `abc1234`, main + #6814. CPU Ryzen AI 7 350. 2 runs"))
 
+    def test_render_markdown_states_the_run_length_of_the_titles(self):
+        for lengths, stated in (((90, 90), "90 s each."), ((30, 120, 45), "30 to 120 s each.")):
+            with self.subTest(lengths=lengths):
+                now = summary({f"PPSA0000{index}": {"name": "Game", "version": "1", "seconds": seconds, "runs": [run("rendering")]}
+                               for index, seconds in enumerate(lengths)})
+                self.assertIn(f" 2 runs per title, {stated}\n", title_run.render_markdown(now))
+
     def test_render_markdown_skips_runs_without_an_error(self):
         now = summary({"PPSA01325": {"name": "Playroom", "version": "01.905.000",
                                      "runs": [run("stalled"), run("crashed", "warm", error="vkQueueSubmit recorder: Vulkan result -4")]}})
@@ -336,6 +368,26 @@ class PreparationTests(unittest.TestCase):
         again = title_run.lock_work(out / "work/PPSA00001.lock")
         self.assertIsNotNone(again)
         again.close()
+
+    def test_unreadable_catalog_and_comparison_files_are_reported_without_a_traceback(self):
+        import contextlib
+        import io
+        package(self.root / "games/PPSA00001", "PPSA00001")
+        unknown = self.root / "unknown.json"
+        unknown.write_text(json.dumps({"PPSA00001": {"rlink": []}}), encoding="utf-8")
+        invalid = self.root / "invalid.json"
+        invalid.write_text("not json", encoding="utf-8")
+        for option, path, message in (("--titles", self.root / "missing.json", "No such file"), ("--titles", self.root / "games", ""),
+                                      ("--titles", unknown, "unknown field rlink"), ("--titles", invalid, "Expecting value"),
+                                      ("--compare", self.root / "missing.json", "No such file"), ("--compare", invalid, "Expecting value")):
+            with self.subTest(option=option, path=path.name):
+                errors = io.StringIO()
+                with contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as raised:
+                    title_run.main(["--games", str(self.root / "games"), "--out", str(self.root / "out"), option, str(path)])
+                self.assertEqual(raised.exception.code, 2)
+                self.assertIn(f"error: {option}: ", errors.getvalue())
+                self.assertIn(message, errors.getvalue())
+                self.assertFalse((self.root / "out").exists())
 
     def test_smoke_runs_the_marked_titles(self):
         for title_id in ("PPSA00001", "PPSA00002", "PPSA00003"):
@@ -508,6 +560,38 @@ class PreparationTests(unittest.TestCase):
         self.assertIn("| テスト | PPSA00001 |", stdout)
         self.assertIn(f"written to {out.resolve()}", stdout)
 
+    def test_json_comparison_is_the_only_output_on_stdout(self):
+        package(self.root / "games/PPSA00001", "PPSA00001")
+        titles = self.root / "titles.json"
+        titles.write_text(json.dumps({"PPSA00001": {"files": {"app0/pak0.pak": {"content": "pak0.pak"}}}}), encoding="utf-8")
+        previous = self.root / "previous.json"
+        previous.write_text(json.dumps(summary({"PPSA00001": {"name": "Game", "version": "01.000.000", "runs": [run("rendering", fps=30.0)]}})),
+                            encoding="utf-8")
+
+        def prepare(title_id, found, entry, platform, build, work):
+            work.mkdir(parents=True, exist_ok=True)
+            (work / "relink.log").write_text("", encoding="utf-8")
+            return work / title_id
+
+        def run_title(executable, work, run_dir, seconds, extra_env, pad=None):
+            return {"outcome": "exited", "exit_code": 0, "seconds": 0.1, "presents": 0, "fps": 0.0, "first_error": "", "warnings": {},
+                    "frames": [], "report": None, "os": "", "gpu": "", "driver": "", "cpu": ""}
+
+        out = self.root / "out"
+        with tempfile.TemporaryFile("w+", encoding="utf-8") as stdout, tempfile.TemporaryFile("w+", encoding="utf-8") as stderr:
+            with unittest.mock.patch.object(title_run, "prepare", side_effect=prepare), \
+                    unittest.mock.patch.object(title_run, "run_title", side_effect=run_title), \
+                    unittest.mock.patch("sys.stdout", stdout), unittest.mock.patch("sys.stderr", stderr):
+                title_run.main(["--games", str(self.root / "games"), "--out", str(out), "--build", str(self.root / "build"), "--titles", str(titles),
+                                "--runs", "2", "--compare", str(previous), "--json", "PPSA00001"])
+            stdout.seek(0)
+            stderr.seek(0)
+            printed, progress = stdout.read(), stderr.read()
+        self.assertEqual(json.loads(printed)["titles"]["PPSA00001"]["fps"], {"before": 30.0, "now": 0.0})
+        self.assertIn("PPSA00001: --content lacks pak0.pak; running without\n", progress)
+        self.assertIn("PPSA00001 run1: exited\nPPSA00001 run2: exited\n", progress)
+        self.assertIn(f"written to {out.resolve()}", progress)
+
 
 def wait_until(condition, seconds=10):
     deadline = time.monotonic() + seconds
@@ -614,7 +698,8 @@ class SessionTests(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "nt", "junctions are Windows-specific")
     def test_exit_code_follows_a_junctioned_interpreter(self):
-        target = Path(sys.executable).parent
+        interpreter = Path(getattr(sys, "_base_executable", sys.executable))
+        target = interpreter.parent
         directory = Path(tempfile.mkdtemp(prefix="title-run-junction-"))
         link = directory / "python"
         session = None
@@ -623,7 +708,7 @@ class SessionTests(unittest.TestCase):
             if made.returncode != 0:
                 self.skipTest("cannot create a junction: " + made.stderr.strip())
             child = "import subprocess, sys; subprocess.Popen([sys.executable, '-c', 'import time, sys; time.sleep(1); sys.exit(7)'])"
-            session = title_run.Session([str(link / Path(sys.executable).name), "-c", child], Path.cwd(), dict(os.environ), subprocess.DEVNULL, subprocess.DEVNULL, owned=link)
+            session = title_run.Session([str(link / interpreter.name), "-c", child], Path.cwd(), dict(os.environ), subprocess.DEVNULL, subprocess.DEVNULL, owned=link)
             self.assertTrue(wait_until(lambda: not session.alive()))
             self.assertEqual(session.exit_code(), 7)
         finally:
@@ -810,6 +895,88 @@ class CompareTests(unittest.TestCase):
         self.assertEqual(list(feature("compare_runs")(summary, previous)), ["PPSA00001"])
 
 
+class DiagnosticComparisonTests(unittest.TestCase):
+    def run_summary(self, functions=(), instructions=(), functions_omitted=0, instructions_omitted=0):
+        report = {"missing": list(functions), "unsupported": list(instructions),
+                  "truncated": {"functions": functions_omitted, "unsupported": instructions_omitted}}
+        return {"titles": {"PPSA00001": {"name": "Example", "runs": [
+            {"outcome": "rendering", "fps": 60.0, "report": report}]}}}
+
+    def missing(self, name, calls, library="libSceExample"):
+        return {"library": library, "name": name, "calls": calls}
+
+    def instruction(self, count):
+        return {"encoding": "VOP3", "opcode": "V_EXAMPLE", "opcodeValue": 4, "modifiers": None, "count": count}
+
+    def render(self, before, now):
+        return "\n".join(title_run.render_compare(title_run.compare_runs(now, before)))
+
+    def test_changed_calls_are_visible_with_the_same_function_identity(self):
+        before = self.run_summary([self.missing("shared", 3)])
+        small = self.run_summary([self.missing("shared", 5)])
+        large = self.run_summary([self.missing("shared", 3000)])
+        first, second = self.render(before, small), self.render(before, large)
+        self.assertNotEqual(first, second)
+        self.assertIn("libSceExample/shared: 3 -> 5", first)
+        self.assertIn("libSceExample/shared: 3 -> 3000", second)
+
+    def test_aggregated_calls_and_each_presence_category_are_preserved(self):
+        before = self.run_summary([self.missing("shared", 2), self.missing("shared", 5), self.missing("old", 11)])
+        now = self.run_summary([self.missing("shared", 3), self.missing("shared", 6), self.missing("new", 13)])
+        text = self.render(before, now)
+        self.assertIn("missing functions calls:", text)
+        self.assertIn("only before: libSceExample/old: 11", text)
+        self.assertIn("only now: libSceExample/new: 13", text)
+        self.assertIn("in both: libSceExample/shared: 7 -> 9", text)
+
+    def test_instruction_occurrence_counts_are_preserved(self):
+        before = self.run_summary(instructions=[self.instruction(2), self.instruction(5)])
+        now = self.run_summary(instructions=[self.instruction(1000)])
+        text = self.render(before, now)
+        self.assertIn("unsupported instructions occurrences:", text)
+        self.assertIn("V_EXAMPLE (VOP3, opcode value 4): 7 -> 1000", text)
+
+    def test_partial_function_lists_show_retained_and_omitted_counts(self):
+        before = self.run_summary([self.missing("old", 1)], functions_omitted=3)
+        now = self.run_summary([self.missing("new", 1)], functions_omitted=7)
+        text = self.render(before, now)
+        self.assertIn("| Example | PPSA00001 | Missing functions (retained) | 1 | 1 |", text)
+        self.assertIn("| Example | PPSA00001 | Missing functions omitted | 3 | 7 |", text)
+        self.assertIn("missing functions: lists are partial", text)
+        self.assertIn("not proof of absence from the other run", text)
+
+    def test_one_sided_instruction_truncation_preserves_unknown(self):
+        before = self.run_summary(instructions=[self.instruction(1)])
+        before["titles"]["PPSA00001"]["runs"][0]["report"].pop("truncated")
+        now = self.run_summary(instructions=[self.instruction(1)], instructions_omitted=2)
+        text = self.render(before, now)
+        self.assertIn("| Example | PPSA00001 | Unsupported instructions omitted | not recorded | 2 |", text)
+        self.assertIn("unsupported instructions: lists are partial", text)
+
+    def test_complete_and_legacy_empty_lists_keep_the_existing_output(self):
+        complete = self.run_summary()
+        legacy = copy.deepcopy(complete)
+        legacy["titles"]["PPSA00001"]["runs"][0]["report"].pop("truncated")
+        for summary in (complete, legacy):
+            text = self.render(summary, summary)
+            self.assertIn("| Example | PPSA00001 | Missing functions | 0 | 0 |", text)
+            self.assertNotIn("omitted", text)
+            self.assertNotIn("partial", text)
+            self.assertNotIn("missing functions calls:", text)
+
+    def test_rendering_does_not_change_the_json_comparison(self):
+        before = self.run_summary([self.missing("shared", 3)], functions_omitted=2)
+        now = self.run_summary([self.missing("shared", 5)])
+        compared = title_run.compare_runs(now, before)
+        saved = copy.deepcopy(compared)
+        title_run.render_compare(compared)
+        self.assertEqual(compared, saved)
+        document = json.loads(title_run.compare_json(now, before))
+        self.assertEqual(document["titles"], saved)
+        self.assertEqual(saved["PPSA00001"]["missingFunctions"]["both"][0]["before"], 3)
+        self.assertEqual(saved["PPSA00001"]["missingFunctionsTruncated"], {"before": 2, "now": 0})
+
+
 class RunReportTests(unittest.TestCase):
     def setUp(self):
         directory = tempfile.TemporaryDirectory()
@@ -859,6 +1026,28 @@ class RunReportTests(unittest.TestCase):
         document = self.report()
         document["run"]["averageFps"] = None
         self.assertIsNone(self.read(document)["averageFps"])
+
+    def test_frame_percentiles_reach_both_comparison_outputs(self):
+        def summary(run):
+            report = self.read(self.report(run=run))
+            return {"titles": {"PPSA00001": {"name": "Game", "runs": [{"outcome": "rendering", "report": report}]}}}
+
+        before = summary({"frameMs": {"p50": 12.0, "p90": 16.5, "p99": 41.7}})
+        now = summary({"frameMs": {"p50": 11.0, "p90": 16.0, "p99": 29.5}})
+        lines = title_run.render_compare(title_run.compare_runs(now, before))
+        expected = {"p50": {"before": 12.0, "now": 11.0}, "p90": {"before": 16.5, "now": 16.0},
+                    "p99": {"before": 41.7, "now": 29.5}}
+        self.assertEqual(json.loads(title_run.compare_json(now, before))["titles"]["PPSA00001"]["frameMs"], expected)
+        for percentile, values in expected.items():
+            self.assertIn(f"| Game | PPSA00001 | Frame time {percentile} (ms) | {values['before']} | {values['now']} |",
+                          lines)
+        for run in ({}, {"frameMs": None}):
+            with self.subTest(run=run):
+                unrecorded = summary(run)
+                missing = json.loads(title_run.compare_json(now, unrecorded))["titles"]["PPSA00001"]["frameMs"]
+                self.assertEqual(missing["p99"], {"before": None, "now": 29.5})
+                self.assertIn("| Game | PPSA00001 | Frame time p99 (ms) | not recorded | 29.5 |",
+                              title_run.render_compare(title_run.compare_runs(now, unrecorded)))
 
     def test_unreadable_reports_are_not_recorded(self):
         self.assertIsNone(feature("read_report")(self.root / "missing.json"))
