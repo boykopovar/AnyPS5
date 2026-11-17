@@ -2445,6 +2445,47 @@ static void CheckCbrtlConsoleBits() {
     check(0x027f, doublePrecision);
 }
 
+static void CheckHypotlConsoleBits() {
+    struct Expected { std::uint64_t mantissa; std::uint16_t signExponent; std::uint16_t x87Flags; };
+    struct Case { std::uint64_t xMantissa; std::uint16_t xSignExponent; std::uint64_t yMantissa; std::uint16_t ySignExponent; Expected extended; Expected doublePrecision; };
+    const Case cases[] = {
+        {0xc000000000000000ull, 0x4000, 0x8000000000000000ull, 0x4001, {0xa000000000000000ull, 0x4001, 0x00}, {0xa000000000000000ull, 0x4001, 0x00}},
+        {0xffffffffffffffffull, 0x7ffe, 0xffffffffffffffffull, 0x7ffe, {0x8000000000000000ull, 0x7fff, 0x28}, {0x8000000000000000ull, 0x7fff, 0x28}},
+        {0xffffffffffffffffull, 0x7ffd, 0xffffffffffffffffull, 0x7ffd, {0xb504f333f9de6484ull, 0x7ffe, 0x20}, {0xb504f333f9de6800ull, 0x7ffe, 0x20}},
+        {0x8000000000000000ull, 0x7000, 0xc000000000000000ull, 0x7001, {0xca62c1d6d2da9490ull, 0x7001, 0x20}, {0xca62c1d6d2da9800ull, 0x7001, 0x20}},
+        {0x8000000000000000ull, 0x0100, 0xc000000000000000ull, 0x0101, {0xca62c1d6d2da9490ull, 0x0101, 0x20}, {0xca62c1d6d2da9800ull, 0x0101, 0x20}},
+        {0x8000000000000000ull, 0x0001, 0x8000000000000000ull, 0x0001, {0xb504f333f9de6484ull, 0x0001, 0x20}, {0xb504f333f9de6800ull, 0x0001, 0x20}},
+        {0x8000000000000000ull, 0x3fff, 0x8000000000000000ull, 0x3f9b, {0x8000000000000000ull, 0x3fff, 0x20}, {0x8000000000000000ull, 0x3fff, 0x20}},
+        {0xb504f333f9de6484ull, 0x3fff, 0x8000000000000000ull, 0x3fe0, {0xb504f333f9de6485ull, 0x3fff, 0x20}, {0xb504f333f9de6800ull, 0x3fff, 0x20}},
+        {0xcce56ce05f6cdac4ull, 0xbfdd, 0xdc86e8ada6c48b60ull, 0xbff3, {0xdc86e8ada6ca7e5cull, 0x3ff3, 0x20}, {0xdc86e8ada6ca8000ull, 0x3ff3, 0x20}},
+        {0xcf60e4336a5ee9f5ull, 0x3ff1, 0xc2bb0393d4243f62ull, 0x3ff2, {0xdc9db48c47121f38ull, 0x3ff2, 0x20}, {0xdc9db48c47122000ull, 0x3ff2, 0x20}},
+        {0x8e0412b10b328599ull, 0x4021, 0xa5e56711d52bca5eull, 0xc00f, {0x8e0412b11140db2full, 0x4021, 0x20}, {0x8e0412b11140e000ull, 0x4021, 0x20}},
+        {0x9f6238ecb845578aull, 0xbfd9, 0x97bf0c39555930eaull, 0x3fe8, {0x97bf0c3aa428cb0bull, 0x3fe8, 0x20}, {0x97bf0c3aa428c800ull, 0x3fe8, 0x20}},
+        {0xef49df1b6b66f9c5ull, 0x401e, 0xfe63a94b5f780114ull, 0xc006, {0xef49df1b6b6780fdull, 0x401e, 0x20}, {0xef49df1b6b678000ull, 0x401e, 0x20}},
+        {0xcceddc08359cab33ull, 0x4018, 0xe4234da9b58ee241ull, 0xc00d, {0xccedde0428dd7f3aull, 0x4018, 0x20}, {0xccedde0428dd8000ull, 0x4018, 0x20}},
+        {0x8000000000000000ull, 0x7fff, 0xc000000000000001ull, 0x7fff, {0x8000000000000000ull, 0x7fff, 0x00}, {0x8000000000000000ull, 0x7fff, 0x00}},
+        {0xc000000000000001ull, 0x7fff, 0x8000000000000000ull, 0xffff, {0x8000000000000000ull, 0x7fff, 0x00}, {0x8000000000000000ull, 0x7fff, 0x00}},
+        {0xc000000000000001ull, 0xffff, 0x8000000000000000ull, 0x3fff, {0xc000000000000001ull, 0x7fff, 0x00}, {0xc000000000000001ull, 0x7fff, 0x00}},
+        {0x0000000000000000ull, 0x8000, 0x0000000000000000ull, 0x8000, {0x0000000000000000ull, 0x0000, 0x00}, {0x0000000000000000ull, 0x0000, 0x00}},
+        {0x0000000000000003ull, 0x0000, 0x0000000000000004ull, 0x0000, {0xc000000000000000ull, 0xffff, 0x01}, {0xc000000000000000ull, 0xffff, 0x01}},
+        {0x0000300000000000ull, 0x0000, 0x0000400000000000ull, 0x8000, {0xc000000000000000ull, 0xffff, 0x01}, {0xc000000000000000ull, 0xffff, 0x01}},
+        {0x095f2ce63cfd8f12ull, 0x8024, 0x000000000005f660ull, 0x8000, {0xc000000000000000ull, 0xffff, 0x01}, {0xc000000000000000ull, 0xffff, 0x01}},
+        {0x0000000000000000ull, 0x0000, 0x0000000000000003ull, 0x0000, {0xc000000000000000ull, 0xffff, 0x01}, {0xc000000000000000ull, 0xffff, 0x01}},
+        {0x0000000000000003ull, 0x0000, 0x0000000000000000ull, 0x8000, {0x0000000000000003ull, 0x0000, 0x00}, {0x0000000000000003ull, 0x0000, 0x00}},
+        {0x0000000000000001ull, 0x0000, 0xffffffffffffffffull, 0x0047, {0xc000000000000000ull, 0xffff, 0x01}, {0xc000000000000000ull, 0xffff, 0x01}},
+    };
+    for (const Case& test : cases) {
+        for (const auto& [control, expected] : {std::pair{std::uint16_t{0x037f}, test.extended}, std::pair{std::uint16_t{0x027f}, test.doublePrecision}}) {
+            *__error_nid_postfix() = 12345;
+            const X87Call call = CallAtControlWord(control, [&] { return hypotl_nid_postfix(MakeExtended(test.xMantissa, test.xSignExponent), MakeExtended(test.yMantissa, test.ySignExponent)); });
+            if (!ExtendedBits(call.result, expected.mantissa, expected.signExponent) || call.control != control || call.x87Flags != expected.x87Flags || call.sseFlags != 0 || *__error_nid_postfix() != 12345) {
+                std::fprintf(stderr, "Guest hypotl failed for %016llx:%04x, %016llx:%04x with control word %04x\n", static_cast<unsigned long long>(test.xMantissa), test.xSignExponent, static_cast<unsigned long long>(test.yMantissa), test.ySignExponent, control);
+                std::abort();
+            }
+        }
+    }
+}
+
 static void CheckIntegerConversions() {
     for (const long long numerator : {4294967301LL, -4294967301LL}) {
         for (const long long denominator : {3LL, -3LL}) {
@@ -2745,6 +2786,54 @@ static void CheckExp2fConsoleBits() {
         errno = 1234;
         Require(std::bit_cast<std::uint32_t>(exp2f_nid_postfix(std::bit_cast<float>(item.input))) == item.expected);
         Require(errno == (item.error != 0 ? item.error : 1234));
+    }
+}
+
+static void CheckCoshProductConsole() {
+    const RestoreFloatingPointState saved;
+    Require(std::fesetenv(FE_DFL_ENV) == 0);
+    const struct {
+        double x;
+        std::uint64_t results[4];
+        int flags[4];
+        int errors[4];
+    } cases[] = {
+        {0.0, {0x3ff0000000000000, 0x4000000000000000, 0x3fe0000000000000, 0}, {}, {}},
+        {1.0, {0x3ff8b07551d9f550, 0x4008b07551d9f550, 0x3fe8b07551d9f550, 0},
+            {FE_INEXACT, FE_INEXACT, FE_INEXACT, 0}, {}},
+        {-1.0, {0x3ff8b07551d9f550, 0x4008b07551d9f550, 0x3fe8b07551d9f550, 0},
+            {FE_INEXACT, FE_INEXACT, FE_INEXACT, 0}, {}},
+        {10.0, {0x40c5829dd053712d, 0x40d5829dd053712d, 0x40b5829dd053712d, 0},
+            {FE_INEXACT, FE_INEXACT, FE_INEXACT, 0}, {}},
+        {88.0, {0x47cf1056dc7bf22d, 0x47df1056dc7bf22d, 0x47bf1056dc7bf22d, 0},
+            {FE_INEXACT, FE_INEXACT, FE_INEXACT, 0}, {}},
+        {89.0, {0x47e51c2cc3433802, 0x47f51c2cc3433802, 0x47d51c2cc3433802, 0},
+            {FE_INEXACT, FE_INEXACT, FE_INEXACT, 0}, {}},
+        {700.0, {0x7efd945df4f8ec8f, 0x7f0d945df4f8ec8f, 0x7eed945df4f8ec8f, 0},
+            {FE_INEXACT, FE_INEXACT, FE_INEXACT, 0}, {}},
+        {710.0, {0x7fe3e21a464507f9, 0x7ff0000000000000, 0x7fd3e21a464507f9, 0},
+            {FE_INEXACT, FE_OVERFLOW | FE_INEXACT, FE_INEXACT, 0}, {0, ERANGE, 0, 0}},
+        {std::numeric_limits<double>::infinity(), {0x7ff0000000000000, 0x7ff0000000000000, 0x7ff0000000000000, 0x7ff8000000000000},
+            {0, 0, 0, FE_INVALID}, {0, 0, 0, EDOM}},
+        {std::numeric_limits<double>::quiet_NaN(), {0x7ff8000000000000, 0x7ff8000000000000, 0x7ff8000000000000, 0x7ff8000000000000}, {}, {}},
+    };
+    constexpr double factors[]{1.0, 2.0, 0.5, 0.0};
+    constexpr int reportedFlags = FE_INVALID | FE_OVERFLOW | FE_DIVBYZERO | FE_INEXACT;
+    for (const auto& item : cases) {
+        for (std::size_t index = 0; index < std::size(factors); ++index) {
+            Require(std::feclearexcept(FE_ALL_EXCEPT) == 0);
+            errno = 0;
+            const auto result = std::bit_cast<std::uint64_t>(_Cosh_nid_postfix(item.x, factors[index]));
+            const int error = errno;
+            const int flags = std::fetestexcept(reportedFlags);
+            const bool matches = result == item.results[index] && error == item.errors[index] && flags == item.flags[index];
+            if (!matches) {
+                std::fprintf(stderr, "_Cosh(%a, %a): result %016llx expected %016llx, errno %d expected %d, flags %x expected %x\n",
+                    item.x, factors[index], static_cast<unsigned long long>(result), static_cast<unsigned long long>(item.results[index]),
+                    error, item.errors[index], flags, item.flags[index]);
+            }
+            Require(matches);
+        }
     }
 }
 
@@ -4482,6 +4571,7 @@ int main() {
     CheckIntegerConversions();
     CheckCbrtfConsoleBits();
     CheckCbrtlConsoleBits();
+    CheckHypotlConsoleBits();
     CheckExtendedMath();
     CheckAcosl();
     CheckAtanl();
@@ -4894,6 +4984,135 @@ int main() {
     Require(__isnormalf_nid_postfix(std::numeric_limits<float>::denorm_min()) == 0);
     Require(__isnormal_nid_postfix(1.) == 1 && __isnormal_nid_postfix(0.) == 0);
     Require(__isnormal_nid_postfix(std::numeric_limits<double>::denorm_min()) == 0);
+    struct DoubleClassification { std::uint64_t bits; int finite; int nan; int normal; int inf; };
+    for (const auto& item : {
+             DoubleClassification{0x7ff0000000000001ull, 0, 1, 0, 0},
+             DoubleClassification{0x7ff8000000000001ull, 0, 1, 0, 0},
+             DoubleClassification{0x0ull, 1, 0, 0, 0},
+             DoubleClassification{0x1ull, 1, 0, 0, 0},
+             DoubleClassification{0x000fffffffffffffull, 1, 0, 0, 0},
+             DoubleClassification{0x0010000000000000ull, 1, 0, 1, 0},
+             DoubleClassification{0x7fefffffffffffffull, 1, 0, 1, 0},
+             DoubleClassification{0x7ff0000000000000ull, 0, 0, 0, 1}
+         }) {
+        for (const std::uint64_t sign : {std::uint64_t{0}, std::uint64_t{0x8000000000000000ull}}) {
+            volatile double input = std::bit_cast<double>(item.bits | sign);
+            Require(std::bit_cast<std::uint64_t>(static_cast<double>(input)) == (item.bits | sign));
+            const decltype(&__isfinite_nid_postfix) classifiers[] = {
+                __isfinite_nid_postfix, __isnan_nid_postfix, __isnormal_nid_postfix, isnan_nid_postfix, __isinf_nid_postfix, isinf_nid_postfix
+            };
+            const int expected[] = {item.finite, item.nan, item.normal, item.nan, item.inf, item.inf};
+            for (std::size_t i = 0; i < std::size(classifiers); ++i) {
+                for (const int flags : {0, FE_DIVBYZERO}) {
+                    std::feclearexcept(FE_ALL_EXCEPT);
+                    if (flags != 0) std::feraiseexcept(flags);
+                    errno = 12345;
+                    const int result = classifiers[i](input);
+                    const int actualFlags = std::fetestexcept(FE_ALL_EXCEPT);
+                    Require(result == expected[i]);
+                    Require(actualFlags == flags);
+                    Require(errno == 12345);
+                }
+            }
+        }
+    }
+    struct FloatClassification { std::uint32_t bits; int finite; int nan; int normal; int inf; };
+    for (const auto& item : {
+             FloatClassification{0x7f800001u, 0, 1, 0, 0},
+             FloatClassification{0x7fc00001u, 0, 1, 0, 0},
+             FloatClassification{0x0u, 1, 0, 0, 0},
+             FloatClassification{0x1u, 1, 0, 0, 0},
+             FloatClassification{0x007fffffu, 1, 0, 0, 0},
+             FloatClassification{0x00800000u, 1, 0, 1, 0},
+             FloatClassification{0x7f7fffffu, 1, 0, 1, 0},
+             FloatClassification{0x7f800000u, 0, 0, 0, 1}
+         }) {
+        for (const std::uint32_t sign : {std::uint32_t{0}, std::uint32_t{0x80000000u}}) {
+            volatile float input = std::bit_cast<float>(item.bits | sign);
+            Require(std::bit_cast<std::uint32_t>(static_cast<float>(input)) == (item.bits | sign));
+            const decltype(&__isfinitef_nid_postfix) classifiers[] = {
+                __isfinitef_nid_postfix, __isnanf_nid_postfix, __isnormalf_nid_postfix, isnanf_nid_postfix, __isinff_nid_postfix
+            };
+            const int expected[] = {item.finite, item.nan, item.normal, item.nan, item.inf};
+            for (std::size_t i = 0; i < std::size(classifiers); ++i) {
+                for (const int flags : {0, FE_DIVBYZERO}) {
+                    std::feclearexcept(FE_ALL_EXCEPT);
+                    if (flags != 0) std::feraiseexcept(flags);
+                    errno = 12345;
+                    const int result = classifiers[i](input);
+                    const int actualFlags = std::fetestexcept(FE_ALL_EXCEPT);
+                    Require(result == expected[i]);
+                    Require(actualFlags == flags);
+                    Require(errno == 12345);
+                }
+            }
+        }
+    }
+    struct DoubleCategory { std::uint64_t bits; int code; };
+    for (const auto& item : {
+             DoubleCategory{0x7ff0000000000001ull, 2},
+             DoubleCategory{0x7ff8000000000001ull, 2},
+             DoubleCategory{0x7fffffffffffffffull, 2},
+             DoubleCategory{0x7ff0000000000000ull, 1},
+             DoubleCategory{0x0ull, 0},
+             DoubleCategory{0x1ull, -2},
+             DoubleCategory{0x000fffffffffffffull, -2},
+             DoubleCategory{0x0010000000000000ull, -1},
+             DoubleCategory{0x3ff0000000000000ull, -1},
+             DoubleCategory{0x7fefffffffffffffull, -1}
+         }) {
+        for (const std::uint64_t sign : {std::uint64_t{0}, std::uint64_t{0x8000000000000000ull}}) {
+            volatile double input = std::bit_cast<double>(item.bits | sign);
+            for (int classifier = 0; classifier < 3; ++classifier) {
+                for (const int flags : {0, FE_DIVBYZERO}) {
+                    const double value = input;
+                    std::feclearexcept(FE_ALL_EXCEPT);
+                    if (flags != 0) std::feraiseexcept(flags);
+                    errno = 12345;
+                    const int result = classifier == 0 ? _Dclass_nid_postfix(value)
+                        : classifier == 1 ? __fpclassifyd_nid_postfix(value)
+                        : _Dtest_nid_postfix(&value);
+                    const int actualFlags = std::fetestexcept(FE_ALL_EXCEPT);
+                    Require(result == item.code);
+                    Require(actualFlags == flags);
+                    Require(errno == 12345);
+                }
+            }
+        }
+    }
+    struct FloatCategory { std::uint32_t bits; int code; };
+    for (const auto& item : {
+             FloatCategory{0x7f800001u, 2},
+             FloatCategory{0x7fc00001u, 2},
+             FloatCategory{0x7fffffffu, 2},
+             FloatCategory{0x7f800000u, 1},
+             FloatCategory{0x0u, 0},
+             FloatCategory{0x1u, -2},
+             FloatCategory{0x007fffffu, -2},
+             FloatCategory{0x00800000u, -1},
+             FloatCategory{0x3f800000u, -1},
+             FloatCategory{0x7f7fffffu, -1}
+         }) {
+        for (const std::uint32_t sign : {std::uint32_t{0}, std::uint32_t{0x80000000u}}) {
+            volatile float input = std::bit_cast<float>(item.bits | sign);
+            for (int classifier = 0; classifier < 3; ++classifier) {
+                for (const int flags : {0, FE_DIVBYZERO}) {
+                    const float value = input;
+                    std::feclearexcept(FE_ALL_EXCEPT);
+                    if (flags != 0) std::feraiseexcept(flags);
+                    errno = 12345;
+                    const int result = classifier == 0 ? _FDclass_nid_postfix(value)
+                        : classifier == 1 ? __fpclassifyf_nid_postfix(value)
+                        : _FDtest_nid_postfix(&value);
+                    const int actualFlags = std::fetestexcept(FE_ALL_EXCEPT);
+                    Require(result == item.code);
+                    Require(actualFlags == flags);
+                    Require(errno == 12345);
+                }
+            }
+        }
+    }
+    std::feclearexcept(FE_ALL_EXCEPT);
     CheckAsin();
     const auto quotient = div_nid_postfix(7, 2);
     CheckAsinfErrno();
@@ -4945,6 +5164,7 @@ int main() {
     Require(std::isinf(__powidf2_nid_postfix(-0.0, -3)) && std::signbit(__powidf2_nid_postfix(-0.0, -3)));
     Require(__powidf2_nid_postfix(2.0, -127) == 0x1p-127);
     CheckHyperbolic();
+    CheckCoshProductConsole();
     CheckAcoshfDomainEnvironment();
     CheckAcoshfMsunBoundaries();
     CheckCoshfMsunBoundaries();

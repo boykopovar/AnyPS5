@@ -1575,7 +1575,8 @@ int APS5_VABI scePthreadGetaffinity(Pthread thread, KernelCpumask* mask) {
     if (!thread || !mask) return SCE_KERNEL_ERROR_EINVAL;
     auto registered = LockRegisteredGuestThread(thread);
     if (!registered) return SCE_KERNEL_ERROR_ESRCH;
-    *mask = thread->affinity.load(std::memory_order_relaxed);
+    const KernelCpumask affinity = thread->affinity.load(std::memory_order_relaxed);
+    if (!GuestCopyOut_nid_no_patch(mask, &affinity, sizeof(affinity))) return SCE_KERNEL_ERROR_EFAULT;
     return SCE_OK;
 }
 

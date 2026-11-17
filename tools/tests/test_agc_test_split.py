@@ -1,3 +1,4 @@
+import os
 import shutil
 import subprocess
 import sys
@@ -173,7 +174,8 @@ class ResolveTests(unittest.TestCase):
 
     def git(self, *args, check=True):
         return subprocess.run(["git", "-c", "user.name=Split Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false",
-                               "-c", "core.editor=true", *args], cwd=self.root, capture_output=True, text=True, check=check)
+                               "-c", "core.editor=true", *args], cwd=self.root, capture_output=True, text=True, check=check,
+                              env={**os.environ, "GIT_EDITOR": "true"})
 
     def write(self, path, text):
         (self.root / path).parent.mkdir(parents=True, exist_ok=True)

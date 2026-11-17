@@ -60,20 +60,11 @@ int APS5_VABI tls_handshake_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI X509V3_EXT_d2i_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-
 int APS5_VABI X509_set_pubkey_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI tls_accept_socket_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI ERR_print_errors_fp_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -106,10 +97,6 @@ void APS5_VABI SSL_set_quic_use_legacy_codepoint_nid_postfix(void* ssl, int useL
 }
 
 int APS5_VABI SSL_CTX_set_default_verify_paths_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI EVP_PKEY_CTX_new_id_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 

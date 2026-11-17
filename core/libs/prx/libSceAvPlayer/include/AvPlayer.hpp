@@ -33,6 +33,9 @@ constexpr std::int32_t EventWarningId = 0x20;
 
 constexpr std::uint32_t StreamTypeVideo = 1;
 constexpr std::uint32_t StreamTypeAudio = 0;
+constexpr std::uint32_t Ps4StreamTypeVideo = 0;
+constexpr std::uint32_t Ps4StreamTypeAudio = 1;
+constexpr std::uint32_t Ps5StreamTypeVideo = 1;
 constexpr std::uint32_t Ps5StreamTypeAudio = 2;
 constexpr std::uint32_t StreamTypeTimedText = 2;
 
@@ -169,11 +172,13 @@ private:
     bool readyLocked() const;
     int startLocked(std::uint64_t startTime = 0);
     int stopLocked();
+    std::uint32_t guestStreamType(std::uint32_t type) const;
 
     AvPlayerFileReplacement file{};
     AvPlayerMemAllocator memory{};
     AvPlayerEventReplacement callback{};
     bool autoStartEnabled = false;
+    bool ps4Process = false;
     char language[4]{};
     std::uint32_t videoBuffers = 2;
 

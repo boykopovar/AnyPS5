@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <thread>
@@ -120,6 +121,7 @@ void contractPadAndPresentLines() {
         state.buttons = 0x4000;
         writer->EmitPad(7, state);
         writer->EmitPresent(30, 59.94);
+        writer->EmitCompletedFlip(4, 31, 1800);
     }
     const auto lines = readLines(directory / "videoout.jsonl");
     check(lines.size() == 3, "expected contract, pad and present, got " + std::to_string(lines.size()));
@@ -131,6 +133,97 @@ void contractPadAndPresentLines() {
     check(lines[1].find("\"ev\":\"pad\"") != std::string::npos && field(lines[1], "n") == 7 && field(lines[1], "buttons") == 0x4000, "pad line");
     check(lines[1].find("\"sticks\":[128,128,128,128]") != std::string::npos, "pad sticks");
     check(lines[2].find("\"ev\":\"present\"") != std::string::npos && field(lines[2], "n") == 30, "present line");
+    std::filesystem::remove_all(directory);
+}
+
+void flipTimingWindowRequiresValidRange() {
+    using VideoOutTelemetry::ParseFlipTimingWindow;
+    check(!ParseFlipTimingWindow(nullptr), "unset flip timing must be disabled");
+    check(!ParseFlipTimingWindow(""), "empty flip timing must be disabled");
+    const auto ordinary = ParseFlipTimingWindow("9:100000");
+    check(ordinary && ordinary->first == 9 && ordinary->count == 100000, "flip timing must parse the requested window");
+    const auto last = ParseFlipTimingWindow("18446744073709551614:2");
+    check(last && last->first == std::numeric_limits<std::uint64_t>::max() - 1 && last->count == 2,
+        "flip timing must accept a window ending at the largest sequence");
+    for (const char* value : {"1", "1:", ":2", "0:2", "1:1", "1:100001", "-1:2", " 1:2", "1:2 ", "1:2:3",
+             "18446744073709551615:2", "18446744073709551616:2", "1:18446744073709551616"}) {
+        bool rejected = false;
+        try {
+            ParseFlipTimingWindow(value);
+        } catch (const std::exception&) {
+            rejected = true;
+        }
+        check(rejected, std::string("invalid flip timing must fail: ") + value);
+    }
+}
+
+template <typename Emit>
+std::vector<std::string> captureFlipLines(VideoOutTelemetry::FlipTimingWindow window, Emit emit) {
+    for (int attempt = 0; attempt < 8; ++attempt) {
+        const auto directory = freshDirectory("flip-capture");
+        bool dropped = false;
+        {
+            VideoOutTelemetry::Writer writer(directory.string(), 16, "test", window);
+            emit(writer);
+            dropped = writer.Dropped() != 0;
+        }
+        auto lines = readLines(directory / "videoout.jsonl");
+        std::filesystem::remove_all(directory);
+        if (!dropped) return lines;
+    }
+    throw std::runtime_error("each completed flip capture encountered queue contention");
+}
+
+void completedFlipCaptureRecordsWindow() {
+    const auto lines = captureFlipLines({3, 2}, [](VideoOutTelemetry::Writer& writer) {
+        writer.EmitCompletedFlip(7, 2, 1700);
+        writer.EmitCompletedFlip(7, 3, 1800);
+        writer.EmitCompletedFlip(7, 4, 2000);
+        writer.EmitCompletedFlip(7, 5, 2200);
+    });
+    check(lines.size() == 3, "exactly two flips must be recorded after the contract");
+    check(field(lines[0], "flip_start") == 3 && field(lines[0], "flip_count") == 2,
+        "the contract must declare the expected capture range");
+    for (std::size_t index = 1; index < lines.size(); ++index) {
+        const auto& line = lines[index];
+        check(line.find("\"ev\":\"flip_complete\"") != std::string::npos, "a captured flip must have its own event");
+        check(field(line, "generation") == 7 && field(line, "n") == static_cast<long long>(index + 2),
+            "captured flips must retain the completion sequence and generation");
+        check(field(line, "process_us") == (index == 1 ? 1800 : 2000), "a captured flip must retain its process timestamp");
+    }
+}
+
+void completedFlipCapturePinsGeneration() {
+    for (const bool captureStarted : {false, true}) {
+        const auto lines = captureFlipLines({2, 3}, [captureStarted](VideoOutTelemetry::Writer& writer) {
+            writer.EmitCompletedFlip(4, 1, 100);
+            if (captureStarted) writer.EmitCompletedFlip(4, 2, 110);
+            writer.EmitCompletedFlip(5, 1, 200);
+            writer.EmitCompletedFlip(5, 2, 210);
+            writer.EmitCompletedFlip(5, 3, 220);
+            writer.EmitCompletedFlip(5, 4, 230);
+        });
+        check(lines.size() == (captureStarted ? 2u : 1u), "a reopened output must not extend an incomplete capture");
+        check(field(lines[0], "flip_start") == 2 && field(lines[0], "flip_count") == 3,
+            "an incomplete capture must retain its original bounds");
+        if (captureStarted) {
+            check(field(lines[1], "generation") == 4 && field(lines[1], "n") == 2,
+                "the valid flip from the original generation must survive");
+        }
+    }
+}
+
+void completedFlipCaptureCountsLoss() {
+    const auto directory = freshDirectory("flip-loss");
+    {
+        VideoOutTelemetry::Writer writer(directory.string(), 0, "test", VideoOutTelemetry::FlipTimingWindow{2, 2});
+        const auto initialDrops = writer.Dropped();
+        for (std::uint64_t sequence = 1; sequence <= 4; ++sequence) writer.EmitCompletedFlip(2, sequence, sequence * 100);
+        check(writer.Dropped() == initialDrops + 2, "each refused in-window flip must be counted once");
+    }
+    const auto lines = readLines(directory / "videoout.jsonl");
+    check(lines.size() == 1 && lines[0].find("\"ev\":\"drops\"") != std::string::npos && field(lines[0], "dropped") >= 2,
+        "the writer must report capture loss");
     std::filesystem::remove_all(directory);
 }
 
@@ -180,6 +273,10 @@ int main(int argc, char** argv) {
         noEnvironmentOpensNothing();
         queueOverflowIsCounted();
         contractPadAndPresentLines();
+        flipTimingWindowRequiresValidRange();
+        completedFlipCaptureRecordsWindow();
+        completedFlipCapturePinsGeneration();
+        completedFlipCaptureCountsLoss();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());
         return 1;
