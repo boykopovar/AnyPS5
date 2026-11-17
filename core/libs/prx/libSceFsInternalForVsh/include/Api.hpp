@@ -32,7 +32,7 @@ int APS5_VABI sceFsDeviceAlignedPread();
 int APS5_VABI sceFsDeviceAlignedPwrite();
 int APS5_VABI sceFsDevpfsA53IocGetBuildMetadataStatus();
 int APS5_VABI sceFsDevpfsCancelWaitEvent();
-int APS5_VABI sceFsDevpfsCreateForVSH();
+int APS5_VABI sceFsDevpfsCreateForVSH(const char* imagePath, const std::uint8_t* seed);
 int APS5_VABI sceFsDevpfsDeleteForVSH();
 int APS5_VABI sceFsDevpfsDeregisterEvent();
 int APS5_VABI sceFsDevpfsEventComplete();

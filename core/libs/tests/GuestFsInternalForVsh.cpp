@@ -153,6 +153,19 @@ void CheckUmountGamePkg() {
     Require(Throws([&] { sceFsUmountGamePkg(&opt, path, 0, 1); }));
 }
 
+void CheckDevpfsVsh() {
+    const char image[] = "/user/devpfs/devpfs.img";
+    const char mountPoint[] = "/mnt/devpfs";
+    const std::uint8_t seed[16] = {};
+    const char* budget = "system";
+    const std::uint32_t force = 0;
+    std::uint64_t result = 0;
+    Require(Throws([&] { sceFsDevpfsCreateForVSH(image, seed); }));
+    Require(Throws([&] { sceFsDevpfsMountForVSH(image, mountPoint, &budget); }));
+    Require(Throws([&] { sceFsDevpfsUmountForVSH(mountPoint, &force); }));
+    Require(Throws([&] { sceFsDevpfsWriteChunk(3, 0, 0, 0, 0, &result); }));
+}
+
 void CheckUmountPprPkg() {
     alignas(8) std::uint8_t opt[0x20] = {};
     Require(sceFsUmountPprPkg(nullptr) == InvalidArgument);
@@ -225,5 +238,6 @@ int main() {
     CheckUmountPprPkg();
     CheckMountGamePkg();
     CheckUmountGamePkg();
+    CheckDevpfsVsh();
     return 0;
 }

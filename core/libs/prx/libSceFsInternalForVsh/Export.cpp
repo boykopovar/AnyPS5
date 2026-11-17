@@ -198,9 +198,8 @@ int APS5_VABI sceFsDevpfsCancelWaitEvent() {
     return 0;
 }
 
-int APS5_VABI sceFsDevpfsCreateForVSH() {
+int APS5_VABI sceFsDevpfsCreateForVSH(const char* imagePath, const std::uint8_t* seed) {
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceFsDevpfsDeleteForVSH() {
@@ -1125,7 +1124,7 @@ int APS5_VABI sceFsDevpfsAllocateSparseFile() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceFsDevpfsMountForVSH() {
+int APS5_VABI sceFsDevpfsMountForVSH(const char* imagePath, const char* mountPoint, const void* opt) {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -1141,11 +1140,11 @@ int APS5_VABI sceFsDevpfsUmountForFSMP() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceFsDevpfsUmountForVSH() {
+int APS5_VABI sceFsDevpfsUmountForVSH(const char* path, const std::uint32_t* opt) {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI sceFsDevpfsWriteChunk() {
+int APS5_VABI sceFsDevpfsWriteChunk(int fd, std::uint64_t first, std::uint64_t second, std::uint64_t third, std::uint32_t fourth, std::uint64_t* result) {
     NotImplemented_nid_no_patch(__func__);
 }
 
