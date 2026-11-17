@@ -54,6 +54,37 @@ inline bool Format(const std::uint8_t* bytes, std::size_t size, char* out, std::
     return true;
 }
 
+inline const char* AmdOnlyInstruction(const std::uint8_t* bytes, std::size_t size) {
+    bool operandSize = false;
+    bool repne = false;
+    bool rep = false;
+    std::size_t index = 0;
+    for (; index < size; ++index) {
+        const std::uint8_t byte = bytes[index];
+        if (byte == 0x66) operandSize = true;
+        else if (byte == 0xf2) repne = true;
+        else if (byte == 0xf3) rep = true;
+        else if (byte != 0x67 && byte != 0xf0 && byte != 0x2e && byte != 0x36 && byte != 0x3e && byte != 0x26 && byte != 0x64 && byte != 0x65) break;
+    }
+    if (index < size && (bytes[index] & 0xf0) == 0x40) ++index;
+    if (index + 2 > size || bytes[index] != 0x0f) return nullptr;
+    const bool none = !operandSize && !repne && !rep;
+    const bool onlyOperandSize = operandSize && !repne && !rep;
+    const bool onlyRepne = !operandSize && repne && !rep;
+    const bool onlyRep = !operandSize && !repne && rep;
+    const std::uint8_t opcode = bytes[index + 1];
+    if (opcode == 0x2b) return onlyRep ? "MOVNTSS" : onlyRepne ? "MOVNTSD" : nullptr;
+    if (opcode == 0x78 || opcode == 0x79) return onlyOperandSize ? "EXTRQ" : onlyRepne ? "INSERTQ" : nullptr;
+    if (opcode != 0x01 || index + 3 > size) return nullptr;
+    switch (bytes[index + 2]) {
+    case 0xfa: return none ? "MONITORX" : onlyRep ? "MCOMMIT" : nullptr;
+    case 0xfb: return none ? "MWAITX" : nullptr;
+    case 0xfc: return none ? "CLZERO" : nullptr;
+    case 0xfd: return none ? "RDPRU" : nullptr;
+    default: return nullptr;
+    }
+}
+
 }
 
 #endif

@@ -421,6 +421,16 @@ class PreparationTests(unittest.TestCase):
         self.assertEqual(found["PPSA00001"]["version"], "01.000.110")
         self.assertEqual(found["PPSA00001"]["name"], "Light")
 
+    def test_overlapping_game_directories_find_each_package_once(self):
+        games = self.root / "games"
+        homebrew = games / "homebrew"
+        package(homebrew / "PPSA00001", "PPSA00001")
+        package(games / "PPSA00002", "PPSA00002")
+        expected = title_run.discover([games])
+        for directories in ([games, homebrew], [homebrew, games], [games, games]):
+            with self.subTest(directories=directories):
+                self.assertEqual(title_run.discover(directories), expected)
+
     def test_discover_ignores_duplicates_of_titles_not_asked_for(self):
         package(self.root / "a/PPSA00001", "PPSA00001")
         package(self.root / "b/PPSA00001", "PPSA00001")
@@ -1167,6 +1177,110 @@ class RunReportTests(unittest.TestCase):
         report = self.read(self.report(missing={"functions": [1, {"name": "f", "calls": None}]}))
         self.assertEqual(report["missing"], [{"name": "f", "calls": None}])
         self.assertEqual(title_run.tally(report["missing"], ["name"], "calls"), {'["f"]': 0})
+
+
+class InsideTests(unittest.TestCase):
+    def test_inside_rejects_absolute_and_traversing_paths(self):
+        import title_run
+        self.assertTrue(title_run.inside("a/b"))
+        for path in ("/abs/x", "a/../b", "a\\b", "C:x", ""):
+            self.assertFalse(title_run.inside(path), path)
+
+    def test_inside_requires_a_listed_root_when_given(self):
+        import title_run
+        self.assertTrue(title_run.inside("a/b", roots=("a",)))
+        self.assertFalse(title_run.inside("a", roots=("a",)))
+        self.assertFalse(title_run.inside("b/c", roots=("a",)))
+
+
+class SectionTests(unittest.TestCase):
+    def test_section_returns_dict_or_empty(self):
+        import title_run
+        self.assertEqual(title_run.section({"x": {"k": 1}}, "x"), {"k": 1})
+        self.assertEqual(title_run.section({"x": 5}, "x"), {})
+        self.assertEqual(title_run.section({}, "x"), {})
+
+
+class CheckPadTests(unittest.TestCase):
+    def test_check_pad_rejects_missing_events_and_unknown_fields(self):
+        import title_run
+        with self.assertRaises(ValueError):
+            title_run.check_pad({"repeat": 1})
+        with self.assertRaises(ValueError):
+            title_run.check_pad({"events": [], "not_a_field": 1})
+class RunHelperTests(unittest.TestCase):
+    def test_fps_of_hides_frame_rate_from_a_failed_relink(self):
+        self.assertIsNone(title_run.fps_of({"outcome": "relink-failed", "fps": 60}))
+        self.assertEqual(title_run.fps_of({"outcome": "ok", "fps": 60}), 60)
+
+    def test_last_run_returns_the_most_recent_run(self):
+        self.assertEqual(title_run.last_run({"runs": [{"n": 1}, {"n": 2}]}), {"n": 2})
+
+    def test_report_fields_read_missing_and_truncated_values_as_none(self):
+        run = {"report": {"shaders": {"x": 2}, "missing": ["f"], "truncated": {"functions": 3, "unsupported": 4},
+                          "unsupported": ["op"]}}
+        self.assertEqual(title_run.shader_count(run, "x"), 2)
+        self.assertEqual(title_run.missing_functions(run), ["f"])
+        self.assertEqual(title_run.truncated_functions(run), 3)
+        self.assertEqual(title_run.truncated_unsupported(run), 4)
+        self.assertEqual(title_run.unsupported_instructions(run), ["op"])
+        self.assertIsNone(title_run.report_field({}, "missing"))
+
+    def test_distinct_counts_unique_key_combinations(self):
+        entries = [{"a": 1, "b": 2}, {"a": 1, "b": 3}, {"a": 2}]
+        self.assertEqual(title_run.distinct(entries, ["a"]), 2)
+        self.assertEqual(title_run.distinct(entries, ["a", "b"]), 3)
+        self.assertIsNone(title_run.distinct(None, ["a"]))
+
+    def test_display_formats_values_for_the_report(self):
+        self.assertEqual(title_run.display(None), "not recorded")
+        self.assertEqual(title_run.display(12.34), "12.3")
+        self.assertEqual(title_run.display(7), "7")
+
+    def test_last_line_skips_trailing_blank_lines(self):
+        self.assertEqual(title_run.last_line("a\n\n  b  \n\n"), "b")
+        self.assertEqual(title_run.last_line(""), "")
+class ReportFileTests(unittest.TestCase):
+    def write(self, directory, name, text):
+        path = Path(directory) / name
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_read_report_returns_the_run_average_from_a_well_formed_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.write(directory, "report.json",
+                              json.dumps({"format": "anyps5-report", "run": {"averageFps": 60}}))
+            self.assertEqual(title_run.read_report(path)["averageFps"], 60)
+
+    def test_read_report_returns_none_for_other_or_unreadable_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertIsNone(title_run.read_report(Path(directory) / "missing.json"))
+            self.assertIsNone(title_run.read_report(self.write(directory, "a.json", '{"format": "other"}')))
+            self.assertIsNone(title_run.read_report(self.write(directory, "b.json", "{not json")))
+            self.assertIsNone(title_run.read_report(self.write(directory, "c.json", "[1]")))
+
+    def test_take_report_moves_the_report_and_reads_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            work, run_dir = Path(directory) / "work", Path(directory) / "run"
+            work.mkdir()
+            run_dir.mkdir()
+            self.assertIsNone(title_run.take_report(work, run_dir))
+            (work / title_run.REPORT_FILE).write_text(
+                json.dumps({"format": "anyps5-report", "run": {"averageFps": 30}}), encoding="utf-8")
+            report = title_run.take_report(work, run_dir)
+            self.assertEqual(report["averageFps"], 30)
+            self.assertFalse((work / title_run.REPORT_FILE).exists())
+            self.assertTrue((run_dir / title_run.REPORT_FILE).is_file())
+class ModuleFileTests(unittest.TestCase):
+    def test_is_module_recognises_the_elf_magic_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            module = root / 'm.prx'
+            module.write_bytes(b'\x7fELF' + b'0' * 20)
+            text = root / 't.txt'
+            text.write_text('hello', encoding='utf-8')
+            self.assertTrue(title_run.is_module(module))
+            self.assertFalse(title_run.is_module(text))
 
 
 if __name__ == "__main__":
