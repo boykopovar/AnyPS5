@@ -5,12 +5,21 @@
 #include "prx/libSceAgc/Acb/include/Sync.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
+#include "prx/libc/include/GuestArena.hpp"
+#include "prx/libc/include/GuestWriteWatch.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 #include <cstdio>
 #include <limits>
 #include <memory>
@@ -123,6 +132,80 @@ void testLabelRejections() {
         check(label == storage.get(), "a rejected semaphore label changed the output");
     }
     expectFailure([] { sceAgcGetSemaphoreLabel(0, nullptr); });
+    errno = 71;
+    expectFailure([] { sceAgcGetSemaphoreLabel(0, reinterpret_cast<void**>(std::uintptr_t{1})); });
+    check(errno == 71, "unmapped label pointer mutated errno");
+    if (GuestArena::GuestArenaAvailable_nid_postfix()) {
+        constexpr std::size_t kArenaBytes = 0x10000;
+        void* const watchedPage = GuestArena::GuestArenaAllocate_nid_postfix(kArenaBytes, kArenaBytes);
+        check(watchedPage != nullptr, "allocating write-watched page failed");
+#ifdef _WIN32
+        const HANDLE section = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0, kArenaBytes, nullptr);
+        check(section != nullptr, "creating write-watched section failed");
+        GuestArena::GuestArenaMap_nid_postfix(watchedPage, kArenaBytes, section, 0, PAGE_READWRITE);
+        CloseHandle(section);
+        const bool watchedWrites = GuestArena::GuestArenaWriteWatched_nid_postfix();
+#else
+        GuestArena::GuestArenaCommit_nid_postfix(watchedPage, kArenaBytes, 0x04, kArenaBytes);
+        const bool watchedWrites = GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix();
+        if (watchedWrites) {
+            GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(watchedPage, kArenaBytes);
+        }
+#endif
+        const auto collectDirty = [&]() -> bool {
+            if (!watchedWrites) {
+                return true;
+            }
+#ifdef _WIN32
+            std::array<void*, 16> pages{};
+            std::size_t count = pages.size();
+            check(GuestArena::GuestArenaCollectWrites_nid_postfix(reinterpret_cast<std::uintptr_t>(watchedPage), kArenaBytes, pages.data(), &count, true),
+                  "collecting write-watched writes failed");
+            return count != 0;
+#else
+            bool dirty = false;
+            check(GuestWriteWatch::GuestWriteWatchCollect_nid_postfix(reinterpret_cast<std::uintptr_t>(watchedPage), kArenaBytes,
+                [](void* context, std::uintptr_t, std::uintptr_t) { *static_cast<bool*>(context) = true; }, &dirty),
+                "collecting write-watched writes failed");
+            return dirty;
+#endif
+        };
+        const auto armWatch = [&](void* target) {
+            if (!watchedWrites) {
+                return;
+            }
+            static_cast<void>(collectDirty());
+            check(!collectDirty(), "write-watched page was still dirty");
+#ifdef _WIN32
+            MEMORY_BASIC_INFORMATION mbi{};
+            check(VirtualQuery(target, &mbi, sizeof(mbi)) == sizeof(mbi) && mbi.Protect == PAGE_READONLY, "arming write-watched page failed");
+#else
+            static_cast<void>(target);
+#endif
+        };
+        auto* const watchedLabel = static_cast<void**>(watchedPage);
+        *watchedLabel = nullptr;
+        armWatch(watchedLabel);
+        errno = 71;
+        check(sceAgcGetSemaphoreLabel(1, watchedLabel) == 0, "write-watched label pointer lookup failed");
+        check(*watchedLabel == memory() + labelBytes, "write-watched label pointer received wrong address");
+        check(errno == 71, "write-watched label lookup mutated errno");
+        check(collectDirty(), "write-watched label lookup did not mark page dirty");
+
+        GuestArena::GuestArenaSetProtection_nid_postfix(reinterpret_cast<std::uintptr_t>(watchedPage), kArenaBytes, 0x02);
+        errno = 71;
+        expectFailure([&] { sceAgcGetSemaphoreLabel(1, watchedLabel); });
+        check(*watchedLabel == memory() + labelBytes, "read-only label lookup modified the output");
+        check(errno == 71, "read-only label lookup mutated errno");
+        GuestArena::GuestArenaSetProtection_nid_postfix(reinterpret_cast<std::uintptr_t>(watchedPage), kArenaBytes, 0x04);
+#ifndef _WIN32
+        if (watchedWrites) {
+            GuestWriteWatch::GuestWriteWatchUnregister_nid_postfix(watchedPage, kArenaBytes);
+        }
+#endif
+        GuestArena::GuestArenaReset_nid_postfix(watchedPage, kArenaBytes);
+        GuestArena::GuestArenaRelease_nid_postfix(watchedPage, kArenaBytes);
+    }
 }
 
 void testRepeatedRegistration() {
