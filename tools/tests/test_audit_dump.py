@@ -14,7 +14,8 @@ import audit_dump
 import unwrap_self
 
 SELF = b"\x4f\x15\x3d\x1d" + b"\0" * 60
-ELF = b"\x7fELF" + b"\0" * 60
+ELF = b"\x7fELF" + b"\0" * 12 + b"\x18\xfe" + b"\0" * 46
+EXECUTABLE = b"\x7fELF" + b"\0" * 12 + b"\x10\xfe" + b"\0" * 46
 
 
 def fake_unwrap(source, destination, verbose=False):
@@ -27,6 +28,38 @@ def fake_unwrap(source, destination, verbose=False):
 
 
 class AuditDumpTests(unittest.TestCase):
+    def test_root_module_cannot_replace_the_staged_executable(self):
+        names = ("eboot.elf", "EBOOT.ELF") if os.name == "nt" else ("eboot.elf",)
+        for name in names:
+            for contents in (ELF + b"different executable", SELF + b"different container"):
+                with self.subTest(name=name, contents=contents[:4]):
+                    self.module(name, contents)
+                    source = self.root / "collision-source"
+                    with self.assertRaisesRegex(unwrap_self.Refused, "staged executable"):
+                        audit_dump.prepare(self.dump, source, log=lambda text: None)
+                    self.assertFalse(source.exists())
+                    self.assertEqual((self.dump / name).read_bytes(), contents)
+                    (self.dump / name).unlink()
+
+    def test_colliding_module_stops_before_conversion_or_audit(self):
+        self.module("eboot.elf", ELF + b"different executable")
+        with mock.patch.object(audit_dump, "convert") as convert, mock.patch.object(audit_dump.import_audit, "main") as audit:
+            code, errors = self.run_main(self.dump, "--relinker", self.relinker, "--libs", "libs")
+        self.assertEqual(code, 2)
+        self.assertIn("eboot.elf", errors)
+        self.assertIn("staged executable", errors)
+        convert.assert_not_called()
+        audit.assert_not_called()
+
+    def test_same_name_in_a_module_directory_does_not_replace_the_executable(self):
+        self.module("sce_module/eboot.elf", ELF + b"module")
+        source = self.root / "source"
+        directories, extra = audit_dump.prepare(self.dump, source, log=lambda text: None)
+        self.assertEqual((source / "eboot.elf").read_bytes(), ELF + b"eboot.bin")
+        self.assertEqual((source / "sce_module/eboot.elf").read_bytes(), ELF + b"module")
+        self.assertEqual(directories, [source / "sce_module"])
+        self.assertEqual(extra, [])
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.root = Path(self.directory.name)
@@ -63,6 +96,61 @@ class AuditDumpTests(unittest.TestCase):
         self.assertFalse((source / "Media/Plugins/readme.txt").exists())
         self.assertEqual(extra, ["Media/Modules", "Media/Plugins", "."])
         self.assertEqual(directories, [source / "sce_module", source / "Media/Modules", source / "Media/Plugins", source])
+
+    def test_modules_with_other_names_are_staged_by_magic(self):
+        locations = (*audit_dump.STANDARD_DIRECTORIES, *audit_dump.EXTRA_DIRECTORIES, ".")
+        source = self.root / "source"
+        messages = []
+        for location in locations:
+            self.module(Path(location) / "guest.bin", ELF)
+            self.module(Path(location) / "guest.dat", SELF)
+            self.module(Path(location) / "asset.bin", b"ordinary data")
+        directories, extra = audit_dump.prepare(self.dump, source, log=messages.append)
+        for location in locations:
+            with self.subTest(location=location):
+                self.assertEqual((source / location / "guest.bin").read_bytes(), ELF)
+                self.assertEqual((source / location / "guest.dat").read_bytes(), ELF + b"guest.dat")
+                self.assertFalse((source / location / "asset.bin").exists())
+        self.assertFalse((source / "eboot.bin").exists())
+        self.assertEqual(directories, [source / location for location in locations])
+        self.assertEqual(extra, [*audit_dump.EXTRA_DIRECTORIES, "."])
+        self.assertEqual(messages, ["staged eboot.bin and 12 modules"])
+
+    def test_eboot_alias_is_not_staged_as_an_extra_module(self):
+        alias = self.dump / "eboot-alias.bin"
+        try:
+            os.link(self.dump / "eboot.bin", alias)
+        except OSError:
+            self.skipTest("hard links unavailable")
+        source = self.root / "source"
+        messages = []
+        directories, extra = audit_dump.prepare(self.dump, source, log=messages.append)
+        self.assertFalse((source / alias.name).exists())
+        self.assertEqual(directories, [])
+        self.assertEqual(extra, [])
+        self.assertEqual(messages, ["staged eboot.bin and 0 modules"])
+
+    def test_executables_found_by_magic_are_skipped_with_a_message(self):
+        self.module("eboot.bin.esbak", EXECUTABLE)
+        self.module("sce_module/libc.prx")
+        self.module("sce_module/launcher.bin", EXECUTABLE)
+        source = self.root / "source"
+        messages = []
+        directories, extra = audit_dump.prepare(self.dump, source, log=messages.append)
+        self.assertFalse((source / "eboot.bin.esbak").exists())
+        self.assertFalse((source / "sce_module" / "launcher.bin").exists())
+        self.assertTrue((source / "sce_module" / "libc.prx").is_file())
+        self.assertEqual(directories, [source / "sce_module"])
+        self.assertEqual(extra, [])
+        self.assertEqual(messages, ["skipped launcher.bin: not a shared module (ELF type 0xfe10)",
+                                    "skipped eboot.bin.esbak: not a shared module (ELF type 0xfe10)",
+                                    "staged eboot.bin and 1 modules"])
+
+    def test_an_executable_with_a_module_suffix_still_reaches_the_relinker(self):
+        self.module("sce_module/odd.prx", EXECUTABLE)
+        source = self.root / "source"
+        audit_dump.prepare(self.dump, source, log=lambda text: None)
+        self.assertEqual((source / "sce_module" / "odd.prx").read_bytes(), EXECUTABLE)
 
     def test_a_module_that_is_neither_a_self_nor_an_elf_is_refused(self):
         self.module("sce_module/broken.prx", b"MZ" + b"\0" * 62)
@@ -771,6 +859,15 @@ class AuditDumpTests(unittest.TestCase):
         (self.dump / "eboot.bin").write_bytes(SELF)
         with self.assertRaises(SystemExit):
             self.run_main(self.dump, "--relinker", self.root / "missing.exe", "--libs", "libs")
+
+    def test_errors_name_a_non_ascii_dump_on_a_cp1252_console(self):
+        dump = self.root / "日本"
+        dump.mkdir()
+        env = {**os.environ, "PYTHONIOENCODING": "cp1252", "PYTHONUTF8": "0"}
+        result = subprocess.run([sys.executable, "-X", "utf8=0", audit_dump.__file__, str(dump),
+                                 "--relinker", str(self.relinker), "--libs", "libs"], env=env, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(f"{dump}: no eboot.bin", result.stderr.decode("utf-8"))
 
 
 if __name__ == "__main__":

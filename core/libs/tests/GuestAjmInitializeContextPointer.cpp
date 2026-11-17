@@ -1,6 +1,7 @@
 #include "prx/libSceAjm.native/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -19,16 +20,19 @@ void Require(bool condition, const char* message) {
 }
 
 int main() {
+    errno = 42;
     std::uint32_t first = Untouched;
-    Require(sceAjmInitialize(0, &first) == 0 && first == 1, "a valid context pointer was not written with the first id");
+    Require(sceAjmInitialize(0, &first) == 0 && first == 1 && errno == 42, "a valid context pointer was not written with the first id");
     std::uint32_t second = Untouched;
     Require(sceAjmInitialize(0, &second) == 0 && second != Untouched && second != first, "two calls did not yield unique ids");
 
     Require(sceAjmInitialize(0, nullptr) == InvalidParameter, "a null context pointer was not rejected");
-    Require(sceAjmInitialize(0, reinterpret_cast<std::uint32_t*>(0x10)) == InvalidParameter, "a dangling context pointer was not rejected");
+    Require(sceAjmInitialize(0, reinterpret_cast<std::uint32_t*>(0x10)) == InvalidParameter && errno == 42, "a dangling context pointer was not rejected");
 
     std::uint32_t third = Untouched;
     Require(sceAjmInitialize(0, &third) == 0 && third == 3, "an invalid call consumed a context id");
+    Require(sceAjmModuleRegister(first, 0, 1) == InvalidParameter, "non-zero reserved parameter was not rejected");
+    Require(sceAjmFinalize(first) == 0 && sceAjmFinalize(third) == 0, "sceAjmFinalize failed");
 
     std::puts("Ajm initialize context pointer tests passed");
     return 0;

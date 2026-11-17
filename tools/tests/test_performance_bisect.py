@@ -90,6 +90,17 @@ class RecipeTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         performance_bisect.load_recipe(path)
 
+    def test_rejects_duplicate_fields(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            text = json.dumps(self.make_recipe(root))
+            for name, value in (("regression_pct", "50"), ("title_id", '"PPSA00001"')):
+                with self.subTest(name=name):
+                    path = root / f"duplicate-{name}.json"
+                    path.write_text(text[:-1] + f', "{name}": {value}}}', encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, f"recipe has a duplicate field: {name}"):
+                        performance_bisect.load_recipe(path)
+
 
 class SummaryValidationTests(unittest.TestCase):
     def test_sample_requires_clean_expected_commit_and_rendering_result(self):
@@ -178,7 +189,7 @@ class CommandTests(unittest.TestCase):
                   "result_dir": Path("/tmp/results"), "commit": "abc123"}
         command = ["cmake", "--build", "{build_dir}", "literal;argument", "{commit}"]
         self.assertEqual(performance_bisect.format_command(command, values),
-                         ["cmake", "--build", "/tmp/source/build", "literal;argument", "abc123"])
+                         ["cmake", "--build", str(Path("/tmp/source/build")), "literal;argument", "abc123"])
 
     def test_build_commands_expand_paths_without_a_shell(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -369,6 +380,19 @@ class CliExecutionTests(unittest.TestCase):
         self.assertEqual(result, 0)
         self.assertIn("first measured regression: bad (54.00 FPS)", stdout.getvalue())
         bisect.assert_called_once()
+
+    def test_main_reports_a_non_ascii_output_path_as_utf8(self):
+        from io import BytesIO, TextIOWrapper
+        report = {"first_bad": {"commit": "bad", "median_fps": 54.0},
+                  "previous_good": {"commit": "good", "median_fps": 60.0}}
+        output = Path(tempfile.gettempdir()) / "界" / "report.json"
+        stdout = TextIOWrapper(BytesIO(), encoding="cp1252")
+        with patch.object(performance_bisect, "load_recipe", return_value={}), \
+                patch.object(performance_bisect, "bisect", return_value=report), patch("sys.stdout", stdout):
+            result = performance_bisect.main(["--good", "good", "--bad", "bad", "--recipe", "recipe.json", "--output", str(output)])
+            stdout.flush()
+        self.assertEqual(result, 0)
+        self.assertIn(f"report written to {output}", stdout.buffer.getvalue().decode("utf-8"))
 
     def test_main_rejects_a_missing_temporary_directory(self):
         from contextlib import redirect_stderr
@@ -577,6 +601,14 @@ class FocusedInputEdgeTests(unittest.TestCase):
                 performance_bisect.load_recipe(path)
 
 
+    @unittest.skipUnless(sys.platform == "win32", "drive-relative paths exist only on Windows")
+    def test_recipe_rejects_drive_relative_build_directories(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.recipe_path(Path(directory), build_dir="D:unsafe-build")
+            with self.assertRaisesRegex(ValueError, "relative path"):
+                performance_bisect.load_recipe(path)
+
+
     def test_recipe_rejects_worktree_root_build_directory(self):
         with tempfile.TemporaryDirectory() as directory:
             path = self.recipe_path(Path(directory), build_dir=".")
@@ -709,7 +741,7 @@ class FocusedInputEdgeTests(unittest.TestCase):
             repo.mkdir()
             subprocess.run(["git", "init", "-q", str(repo)], check=True)
             command = [sys.executable, "-c", "print('compiler detail'); raise SystemExit(7)"]
-            with self.assertRaisesRegex(RuntimeError, "failed \(7\).*compiler detail"):
+            with self.assertRaisesRegex(RuntimeError, r"failed \(7\).*compiler detail"):
                 performance_bisect.run_build_commands(
                     repo, {"build_dir": "build", "build_commands": [command]},
                     GOOD, Path(directory) / "results")
@@ -770,3 +802,29 @@ class FocusedInputEdgeTests(unittest.TestCase):
                     performance_bisect.bisect(directory, "good", "bad", {}, output)
             history.assert_not_called()
             self.assertEqual(output.read_text(encoding="utf-8"), "owned")
+
+
+class GitFailureAndExitTests(unittest.TestCase):
+    def test_git_failure_raises_with_stderr_or_command_fallback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(RuntimeError, "not a git repository"):
+                performance_bisect.git(directory, "status")
+            failed = subprocess.CompletedProcess([], 1, stdout="", stderr="")
+            with patch.object(performance_bisect.subprocess, "run", return_value=failed):
+                with self.assertRaisesRegex(RuntimeError, "git log -1 failed"):
+                    performance_bisect.git(directory, "log", "-1")
+
+    def test_regression_is_inclusive_at_the_exact_threshold(self):
+        self.assertTrue(performance_bisect.is_regression(54, 60, 10))
+        self.assertFalse(performance_bisect.is_regression(54.01, 60, 10))
+
+    def test_main_exits_with_status_2_for_a_missing_recipe_file(self):
+        from contextlib import redirect_stderr
+        from io import StringIO
+        with tempfile.TemporaryDirectory() as directory:
+            stderr = StringIO()
+            with redirect_stderr(stderr), self.assertRaises(SystemExit) as error:
+                performance_bisect.main(["--good", "good", "--bad", "bad",
+                                         "--recipe", str(Path(directory) / "missing.json")])
+        self.assertEqual(error.exception.code, 2)
+        self.assertTrue(stderr.getvalue().strip())

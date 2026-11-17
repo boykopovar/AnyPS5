@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 import nid_names
+import progress
 
 ROOT = Path(__file__).resolve().parent.parent
 PRX = ROOT / "core" / "libs" / "prx"
@@ -19,8 +20,10 @@ POSTFIXES = ("_nid_postfix", "_nid_no_patch_cut", "_nid_no_patch")
 DISAMBIG = "_nid_disambig"
 NID_PATTERN = "[A-Za-z0-9+\\-]{11}"
 VABI = re.compile(r"\bAPS5_VABI\s+(\w+)\s*\(")
-TABLE_ENTRY = re.compile(r"sprx_dlsym\s*\(\s*__handle\s*,\s*\"(" + NID_PATTERN + r")\"")
-DEFINE = re.compile(r"#define\s+(\w+)\s*\(\s*(\w+)\s*\)([^\n]*)")
+DEFINE = re.compile(r"^[ \t]*#[ \t]*define[ \t]+(\w+)[ \t]*\([ \t]*(\w+)[ \t]*\)([^\n]*)", re.M)
+DIRECTIVE_TAIL = r'(?://[^\n]*|/\*[\s\S]*?\*/|"(?:\\.|[^"\\\n])*"|[^\n])*'
+DIRECTIVE_TOKEN = re.compile(r'(?P<directive>^[ \t]*#' + DIRECTIVE_TAIL + r')|' + nid_names.CPP_TOKEN.pattern, re.M)
+NON_DEFINE_DIRECTIVE_TOKEN = re.compile(r'(?P<directive>^[ \t]*#(?![ \t]*define\b)' + DIRECTIVE_TAIL + r')|' + nid_names.CPP_TOKEN.pattern, re.M)
 IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 MODULE_PATTERN = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*\Z")
 
@@ -90,7 +93,28 @@ def parse_export_table(path):
         raise GapError(f"{path}: cannot read export table: {error.strerror or error}") from error
     nids = []
     seen = set()
-    for match in TABLE_ENTRY.finditer(text):
+    text = joined_lines(text)
+    tokens = []
+    directive_end = 0
+    for token in nid_names.CPP_TOKEN.finditer(text):
+        if token.start() < directive_end or token.group("comment") is not None:
+            continue
+        if (token.group("code") is not None and token.group() == "#"
+                and not text[text.rfind("\n", 0, token.start()) + 1:token.start()].strip()):
+            end = text.find("\n", token.end())
+            directive_end = len(text) if end < 0 else end
+            continue
+        tokens.append(token)
+    for index, token in enumerate(tokens[:-4]):
+        if token.group("code") is None or token.group() != "sprx_dlsym":
+            continue
+        opening, handle, comma, literal = tokens[index + 1:index + 5]
+        if (opening.group() != "(" or handle.group() != "__handle" or comma.group() != ","
+                or literal.group("string") is None):
+            continue
+        match = re.fullmatch(r'"(' + NID_PATTERN + r')"', literal.group())
+        if match is None:
+            continue
         nid = match.group(1)
         if nid not in seen:
             seen.add(nid)
@@ -98,13 +122,13 @@ def parse_export_table(path):
     return nids
 
 
-def mask_code(text):
+def mask_code(text, token=nid_names.CPP_TOKEN):
     def blank(match):
         if match.group("code") is not None:
             return match.group()
         return re.sub(r"[^\n]", " ", match.group())
 
-    return nid_names.CPP_TOKEN.sub(blank, text)
+    return token.sub(blank, text)
 
 
 def mask_directives(text):
@@ -141,6 +165,8 @@ def strip_disambig(name):
 def source_texts(module_dir):
     texts = []
     for path in sorted(module_dir.rglob("*")):
+        if any(part.lower() in {"test", "tests"} for part in path.relative_to(module_dir).parts[:-1]):
+            continue
         if not path.is_file():
             continue
         if path.suffix.lower() not in (".cpp", ".c", ".cc", ".h", ".hpp", ".hh"):
@@ -160,9 +186,9 @@ def same_file(left, right):
 def macro_definitions(texts):
     macros = {}
     for _, text in texts:
-        for match in DEFINE.finditer(joined_lines(text)):
+        for match in DEFINE.finditer(mask_code(joined_lines(text), NON_DEFINE_DIRECTIVE_TOKEN)):
             macro, param, body = match.group(1), match.group(2), match.group(3)
-            if re.search(r"\bAPS5_VABI\s+" + re.escape(param) + r"\b", body) is not None:
+            if any(definition.group(1) == param for definition in nid_names.DEFINITION.finditer(body)):
                 macros.setdefault(macro, param)
     return macros
 
@@ -186,16 +212,13 @@ def record_provided(provided, name, origin=None):
         provided.setdefault(nid, f"{prefix}under {name} for {base}")
 
 
-def collect_provided(module_dir):
-    texts = source_texts(module_dir)
+def collect_source_exports(texts):
     macros = macro_definitions(texts)
     provided = {}
-    for _, text in texts:
-        for line in mask_code(joined_lines(text)).split("\n"):
-            if line.lstrip().startswith("#"):
-                continue
-            for match in VABI.finditer(line):
-                record_provided(provided, match.group(1))
+    masked_texts = [mask_directives(mask_code(joined_lines(text), DIRECTIVE_TOKEN)) for _, text in texts]
+    for (_, text), masked in zip(texts, masked_texts):
+        for match in nid_names.DEFINITION.finditer(masked):
+            record_provided(provided, match.group(1))
         for name in nid_names.source_assembly_definitions(text):
             record_provided(provided, name, "defined in assembly")
         for nid, helper in nid_names.source_aliases(text):
@@ -203,8 +226,7 @@ def collect_provided(module_dir):
                 provided[nid] = f"bound with APS5_EXPORT as {helper}"
     for macro in sorted(macros):
         call = re.compile(r"\b" + re.escape(macro) + r"\s*\(\s*(?:::)?(?:\w+::)*(\w+)\s*\)")
-        for _, text in texts:
-            masked = mask_code(mask_directives(text))
+        for masked in masked_texts:
             for match in call.finditer(masked):
                 symbol = match.group(1)
                 base, postfix = base_of(symbol)
@@ -225,6 +247,22 @@ def collect_provided(module_dir):
     return provided
 
 
+def collect_provided(module_dir):
+    texts = source_texts(module_dir)
+    provided = collect_source_exports(texts)
+    owners = progress.shared_source_owners(module_dir)
+    if owners:
+        declared = {}
+        for _, text in texts:
+            for match in VABI.finditer(mask_code(joined_lines(text))):
+                record_provided(declared, match.group(1))
+        for owner in owners:
+            shared = collect_source_exports(source_texts(module_dir.parent / owner))
+            for nid in declared.keys() & shared.keys():
+                provided.setdefault(nid, f"from {owner}: {shared[nid]}")
+    return provided
+
+
 def find_self_calls(module_dir, missing):
     if not missing:
         return []
@@ -234,6 +272,11 @@ def find_self_calls(module_dir, missing):
     calls = []
     for path, text in source_texts(module_dir):
         joined = joined_lines(text)
+        splices = []
+        removed = 0
+        for splice in re.finditer(r"\\\r?\n", text):
+            splices.append(splice.start() - removed)
+            removed += len(splice.group())
         masked = mask_code(joined)
         rows = joined.split("\n")
         try:
@@ -253,7 +296,7 @@ def find_self_calls(module_dir, missing):
             if rows[number - 1].lstrip().startswith("#"):
                 continue
             nid = next(key for key, value in missing.items() if value == name)
-            calls.append((name, nid, rel, number, qual))
+            calls.append((name, nid, rel, number + sum(1 for position in splices if position <= match.start()), qual))
     calls.sort(key=lambda item: (item[0], item[2], item[3], item[4]))
     return calls
 

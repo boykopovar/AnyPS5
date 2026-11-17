@@ -76,7 +76,7 @@ int APS5_VABI sceAudioOut2PortCreateEx(AudioOut2ContextHandle ctx, const AudioOu
 int APS5_VABI sceAudioOut2Terminate(void);
 int APS5_VABI sceAudioOut2PortRegister(void);
 int APS5_VABI sceAudioOut2PortUnregister(void);
-int APS5_VABI sceAudioOut2GetAmbisonicsEncodeCoefficients(void);
+int APS5_VABI sceAudioOut2GetAmbisonicsEncodeCoefficients(const void* params, float* coefficients, AudioOut2Position direction);
 int APS5_VABI sceAudioOut2GetHrtfIdForCronos(void);
 
 }

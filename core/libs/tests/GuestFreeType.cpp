@@ -454,6 +454,7 @@ static void Trigonometry() {
         ++vectorCases;
     }
     FT_Vector_Unit_nid_postfix(nullptr, INT64_MIN);
+    FT_Vector_Unit_nid_postfix(reinterpret_cast<GuestVector*>(std::uintptr_t{1}), INT64_MIN);
     Require(FT_Angle_Diff_nid_postfix(INT64_MIN, INT64_MIN + 1) == 1);
     Require(FT_Angle_Diff_nid_postfix(INT64_MAX, INT64_MAX - 1) == -1);
     Require(FT_Angle_Diff_nid_postfix(INT64_MIN, INT64_MIN) == 0);
@@ -1836,6 +1837,9 @@ int main() {
     Require(kerning.x == 123 && kerning.y == 456);
     Require(FT_Get_Kerning_nid_postfix(nullptr, 1, 1, FT_KERNING_DEFAULT, nullptr) == FT_Err_Invalid_Face_Handle);
     Require(FT_Get_Kerning_nid_postfix(face, 1, 1, FT_KERNING_DEFAULT, nullptr) == FT_Err_Invalid_Argument);
+    errno = 71;
+    Require(FT_Get_Kerning_nid_postfix(face, 1, 1, FT_KERNING_DEFAULT, reinterpret_cast<GuestVector*>(0x10)) == FT_Err_Invalid_Argument);
+    Require(errno == 71);
     Require(FT_Get_Kerning_nid_postfix(face, 1, 1, FT_KERNING_DEFAULT, &kerning) == 0);
     Require(kerning.x == 0 && kerning.y == 0);
 

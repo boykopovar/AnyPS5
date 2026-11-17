@@ -13,6 +13,7 @@
 
 #include "SDL.h"
 #include "SDL_vulkan.h"
+#include "prx/libc/include/HostThread.hpp"
 #include "prx/libSceVideoOut/include/MainThread.hpp"
 #include "prx/libSceVideoOut/include/PadInput.hpp"
 #include "prx/libSceVideoOut/include/MouseInput.hpp"
@@ -355,7 +356,7 @@ VideoOutDriver::VideoOutDriver() {
         AgcDriverWaitIdle_nid_postfix();
         std::promise<void> started;
         auto attached = started.get_future();
-        presentThread = std::jthread([this, &started](std::stop_token token) {
+        presentThread = Libc::StartHostJThread([this, &started](std::stop_token token) {
             try {
                 AgcDriverRaiseWorkerThreadPriority_nid_postfix("presenter");
             } catch (...) {
@@ -365,7 +366,7 @@ VideoOutDriver::VideoOutDriver() {
             presentLoop(token, started);
         });
         attached.get();
-        vblankThread = std::jthread([this](std::stop_token token) { vblankLoop(token); });
+        vblankThread = Libc::StartHostJThread([this](std::stop_token token) { vblankLoop(token); });
         LibcRegisterShutdown_nid_postfix([] { VideoOutDriver::Get().Shutdown(); });
     } catch (...) {
         if (vblankThread.joinable()) {
@@ -518,11 +519,28 @@ bool VideoOutDriver::HasConfig(int handle) {
     return cfg->opened && !cfg->closing;
 }
 
+int VideoOutDriver::GetBusType(int handle) {
+    std::shared_ptr<VideoOutConfig> cfg;
+    {
+        std::lock_guard lock(mutex);
+        if (handle <= 0 || handle >= VIDEO_OUT_NUM_MAX || contexts[handle] == nullptr) return -1;
+        cfg = contexts[handle];
+    }
+    std::lock_guard cfgLock(cfg->mutex);
+    return cfg->opened && !cfg->closing ? cfg->busType : -1;
+}
+
 int VideoOutDriver::SubmitFlip(int handle, int index, int flipMode, int64_t flipArg) {
     if (LibcShutdownToken_nid_postfix().stop_requested()) throw ProcessShutdown{};
-    // A title that does not pace on flipPendingNum can run ahead of the presenter now that the queue
-    // worker no longer waits per flip; a full queue is the documented error, not a failure.
-    if (flipQueue->reservations.load() >= VIDEO_OUT_FLIP_QUEUE_CAPACITY) return VIDEO_OUT_ERROR_FLIP_QUEUE_FULL;
+    if (flipQueue->reservations.load() >= VIDEO_OUT_FLIP_QUEUE_CAPACITY) {
+        std::unique_lock lock(flipQueue->mutex);
+        const bool room = flipQueue->changed.WaitUntil(lock, TimedWait::DeadlineNanos(FLIP_ROOM_WAIT_MICROS), [&] {
+            return flipQueue->failure || flipQueue->stopping || LibcShutdownToken_nid_postfix().stop_requested() || flipQueue->reservations.load() < VIDEO_OUT_FLIP_QUEUE_CAPACITY;
+        });
+        if (flipQueue->failure) std::rethrow_exception(flipQueue->failure);
+        if (flipQueue->stopping || LibcShutdownToken_nid_postfix().stop_requested()) throw ProcessShutdown{};
+        if (!room) return VIDEO_OUT_ERROR_FLIP_QUEUE_FULL;
+    }
     AgcDriverSubmitFlip_nid_postfix(AgcDriver::FlipInfo{static_cast<std::uint32_t>(handle), index, static_cast<std::uint32_t>(flipMode), flipArg});
     return 0;
 }
@@ -782,6 +800,7 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
             dialogInput.emplace();
             imeTextInput->SetClipboardProvider(&readHostClipboard);
         });
+        bool windowCloseSeen = false;
         while (!token.stop_requested()) {
             {
                 std::unique_lock lock(flipQueue->mutex);
@@ -797,10 +816,14 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
             const bool quit = OnMainThread([&] {
                 SDL_Event event;
                 while (SDL_PollEvent(&event)) {
+                    if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_CLOSE) windowCloseSeen = true;
                     if (event.type == SDL_QUIT) return true;
+                    const bool padOwnedMouse = padInput->MouseModeEnabled();
                     padInput->HandleEvent(event, window);
                     if (window.Handle() != nullptr) {
+                        mouseInput->SetPadOwnsMouse(padOwnedMouse || padInput->MouseModeEnabled());
                         mouseInput->HandleEvent(event, SDL_GetWindowID(window.Handle()));
+                        mouseInput->SetPadOwnsMouse(padInput->MouseModeEnabled());
                         keyboardInput->HandleEvent(event, SDL_GetWindowID(window.Handle()));
                         imeTextInput->HandleEvent(event, SDL_GetWindowID(window.Handle()));
                         dialogInput->HandleEvent(event, SDL_GetWindowID(window.Handle()));
@@ -811,7 +834,7 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
                 return false;
             });
             if (quit) {
-                LibcRunReportQuitRequested_nid_no_patch();
+                LibcRunReportQuitRequested_nid_no_patch(windowCloseSeen);
                 LibcRequestExit_nid_postfix(0);
                 throw ProcessShutdown{};
             }

@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "prx/libc/include/HostThread.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/JumpBuffer.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
@@ -214,7 +215,10 @@ int NativeSignal(int guest) {
 void ResetToDefault(int guest) {
     handlerReset[guest].store(true);
     handlers[guest].store(nullptr);
-    if (const int native = NativeSignal(guest)) std::signal(native, SIG_DFL);
+    if (const int native = NativeSignal(guest)) {
+        std::signal(native, SIG_DFL);
+        if (native == SIGSEGV) GuestFaultCopyReinstall_nid_no_patch();
+    }
 }
 void RunHandler(int guest, GuestHandler handler) {
     auto& self = CurrentSignals();
@@ -278,6 +282,7 @@ bool Install(int guest, const GuestSigaction& action) {
         handlers[guest].store(previous);
         return false;
     }
+    if (native == SIGSEGV) GuestFaultCopyReinstall_nid_no_patch();
     return true;
 }
 }
@@ -479,7 +484,7 @@ std::chrono::microseconds RemainingAlarm(const AlarmState& alarms, std::chrono::
 
 void NotifyAlarms(AlarmState& alarms) {
     if (!alarms.threadStarted) {
-        std::thread(RunAlarms).detach();
+        Libc::StartHostThread(RunAlarms).detach();
         alarms.threadStarted = true;
     }
     alarms.changed.NotifyAll();

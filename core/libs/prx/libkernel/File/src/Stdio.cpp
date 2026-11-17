@@ -573,7 +573,8 @@ static int PositionedArgumentError(int descriptor, bool write, bool nullBuffer, 
     if (!GuestSockets::IsOpen(descriptor) && !DescriptorIsOpen_nid_no_patch(descriptor)) return GUEST_EBADF;
     if (!IsSeekableDescriptor(descriptor)) return GUEST_ESPIPE;
     if (!File::GrantsAccess(descriptor, write)) return GUEST_EBADF;
-    return offset < 0 ? GUEST_EINVAL : GUEST_EFAULT;
+    if (offset < 0 && !File::IsRandomDevice(descriptor)) return GUEST_EINVAL;
+    return nullBuffer ? GUEST_EFAULT : 0;
 }
 
 static int TransferArgumentError(int descriptor, bool nullBuffer) {
@@ -756,6 +757,21 @@ extern "C" int APS5_VABI pipe2_nid_postfix(int* descriptors, int flags) {
     int mode = _O_BINARY;
     if ((flags & SCE_KERNEL_O_CLOEXEC) != 0) mode |= _O_NOINHERIT;
     const int result = ::_pipe(native, 65536, mode);
+#elif defined(__APPLE__)
+    int result = ::pipe(native);
+    if (result == 0) {
+        for (const int descriptor : native) {
+            if (((flags & SCE_KERNEL_O_CLOEXEC) != 0 && ::fcntl(descriptor, F_SETFD, FD_CLOEXEC) != 0) ||
+                ((flags & SCE_KERNEL_O_NONBLOCK) != 0 && ::fcntl(descriptor, F_SETFL, ::fcntl(descriptor, F_GETFL) | O_NONBLOCK) != 0)) {
+                const int saved = errno;
+                ::close(native[0]);
+                ::close(native[1]);
+                errno = saved;
+                result = -1;
+                break;
+            }
+        }
+    }
 #else
     int hostFlags = 0;
 #ifdef O_CLOEXEC
@@ -1178,6 +1194,11 @@ int64_t APS5_VABI fstat_nid_disambig1_nid_postfix(int d, FileStat* sb) {
         return PosixFailure(GUEST_EFAULT);
     }
     FileStat result{};
+    if (IsKqueueDescriptor_nid_no_patch(d)) {
+        result.st_mode = 0010000;
+        if (!GuestCopyOut_nid_no_patch(sb, &result, sizeof(result))) return PosixFailure(GUEST_EFAULT);
+        return 0;
+    }
     if (GuestSockets::IsOpen(d)) {
         if (const int error = GuestSockets::Stat(d, &result)) return PosixFailure(error);
     } else if (!File::FillFileStatFromDescriptor(d, &result)) {
@@ -1389,6 +1410,11 @@ int APS5_VABI sceKernelFstat(int d, FileStat* sb) {
         return SceErrorFromErrno(GUEST_EFAULT);
     }
     FileStat result{};
+    if (IsKqueueDescriptor_nid_no_patch(d)) {
+        result.st_mode = 0010000;
+        if (!GuestCopyOut_nid_no_patch(sb, &result, sizeof(result))) return SceErrorFromErrno(GUEST_EFAULT);
+        return 0;
+    }
     if (GuestSockets::IsOpen(d)) {
         const int error = GuestSockets::Stat(d, &result);
         if (error != 0) return SceErrorFromErrno(error);
@@ -1580,7 +1606,8 @@ int APS5_VABI sceKernelGetdirentries(int fd, char* buf, int nbytes, int64_t* bas
     if (!S_ISDIR(status.st_mode)) return SceErrorFromErrno(GUEST_EINVAL);
     const off_t base = ::lseek(fd, 0, SEEK_CUR);
     if (base < 0) return SceErrorFromErrno(errno);
-    std::vector<char> host(static_cast<std::size_t>(nbytes) < 4096 ? 4096 : static_cast<std::size_t>(nbytes));
+    constexpr std::size_t MaxHostChunk = 64 * 1024;
+    std::vector<char> host(std::min(std::max(static_cast<std::size_t>(nbytes), std::size_t{4096}), MaxHostChunk));
 #ifdef __EMSCRIPTEN__
     const auto read = ::getdents(fd, reinterpret_cast<struct dirent*>(host.data()), host.size());
 #else
@@ -1774,7 +1801,7 @@ static std::int64_t TransferIovecs(int d, const KernelIovec* guestIov, int iovcn
         if (iov[i].base == nullptr && iov[i].length != 0) return SceErrorFromErrno(GUEST_EFAULT);
         total += iov[i].length;
     }
-    if (offset != nullptr && total > static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max() - *offset)) return SceErrorFromErrno(GUEST_EINVAL);
+    if (offset != nullptr && *offset >= 0 && total > static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max() - *offset)) return SceErrorFromErrno(GUEST_EINVAL);
     if (offset != nullptr) {
         if (const auto error = PositionedGuestSocketError(d); error != 0) return error;
     }
@@ -2048,7 +2075,7 @@ int APS5_VABI sceKernelChmod_nid_postfix(const char* path, std::uint16_t mode) {
 
 int APS5_VABI sceKernelFchmod(int d, std::uint16_t mode) {
     if (File::IsVirtualDirectoryDescriptor(d)) return SceErrorFromErrno(GUEST_EISDIR);
-    if (GuestSockets::IsOpen(d)) return SceErrorFromErrno(GUEST_EINVAL);
+    if (GuestSockets::IsOpen(d) || IsKqueueDescriptor_nid_no_patch(d)) return SceErrorFromErrno(GUEST_EINVAL);
     if (IsPipeDescriptor(d)) return SceErrorFromErrno(GUEST_EINVAL);
     File::RefuseArchivedFile(d, "fchmod");
 #ifdef _WIN32
@@ -2137,6 +2164,8 @@ int APS5_VABI utimes_nid_postfix(const char* path, const KernelTimeval* times) {
 }
 
 int PosixUtimesAt_nid_no_patch(int directory, const char* path, const KernelTimeval* times) {
+    KernelTimeval local[2];
+    if (!CopyInTimes(times, local)) return PosixFailure(GUEST_EFAULT);
     if (InvalidTimes(times)) return PosixFailure(GUEST_EINVAL);
     std::string copy;
     if (const int error = PathError(path, copy)) return PosixFailure(error);
