@@ -3681,14 +3681,13 @@ void Read(std::uint64_t address, std::span<std::byte> destination, std::size_t a
 }
 
 std::uint64_t ReadLabel(std::uint64_t address, std::size_t bytes) {
-    if (bytes != sizeof(std::uint32_t) && bytes != sizeof(std::uint64_t)) throw std::invalid_argument("a guest label is 4 or 8 bytes");
+    RequireLabel(address, bytes);
     GuardRead(address, bytes);
     FlushGpuWrites(address, bytes);
     const TimedAccess timed(CounterRead, bytes);
     CountReadCaller(__builtin_return_address(0));
     checkReadable(reinterpret_cast<const void*>(address), bytes, bytes, __builtin_return_address(0));
-    if (bytes == sizeof(std::uint64_t)) return std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(address)).load(std::memory_order_acquire);
-    return std::atomic_ref<std::uint32_t>(*reinterpret_cast<std::uint32_t*>(address)).load(std::memory_order_acquire);
+    return LoadAlignedLabel(address, bytes);
 }
 
 #ifdef ANYPS5_ENABLE_ASAN
