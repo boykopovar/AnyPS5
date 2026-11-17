@@ -55,12 +55,6 @@ bool InvalidQuery(const char16_t* text, std::int32_t length) {
     return (text == nullptr && length != 0) || length < -1;
 }
 
-void RequireData(bool ready, const UErrorCode& status) {
-    if (ready && (status == U_MISSING_RESOURCE_ERROR || status == U_FILE_ACCESS_ERROR)) {
-        NotImplemented_nid_no_patch("unorm_compare: normalization data");
-    }
-}
-
 bool InvalidAppend(const char16_t* first, std::int32_t firstLength, std::int32_t capacity, const char16_t* second,
                    std::int32_t secondLength) {
     return InvalidSource(second, secondLength) ||
@@ -240,11 +234,7 @@ std::int8_t APS5_VABI unorm2_isInert_nid_postfix(const Icu::Normalizer2* normali
 
 std::int32_t APS5_VABI unorm_compare_nid_postfix(const char16_t* first, std::int32_t firstLength, const char16_t* second,
                                                  std::int32_t secondLength, std::uint32_t options, std::int32_t* error) {
-    auto& status = Status(error);
-    const auto ready = U_SUCCESS(status);
-    const auto result = unorm_compare(first, firstLength, second, secondLength, options, &status);
-    RequireData(ready, status);
-    return result;
+    return unorm_compare(first, firstLength, second, secondLength, options, &Status(error));
 }
 
 }

@@ -20,7 +20,7 @@ struct CommonData {
     char padding[8];
     std::uint32_t count;
     std::uint32_t reserved;
-    Entry entries[2];
+    Entry entries[@ICU_NORMALIZATION_COUNT@];
 };
 
 static_assert(offsetof(CommonData, count) == 32);
@@ -33,7 +33,7 @@ extern "C" U_EXPORT alignas(16) const CommonData U_ICUDATA_ENTRY_POINT = {
     32, 0xda, 0x27,
     {sizeof(UDataInfo), 0, U_IS_BIG_ENDIAN, U_CHARSET_FAMILY, sizeof(char16_t), 0,
      {0x54, 0x6f, 0x43, 0x50}, {1, 0, 0, 0}, {}},
-    {}, 2, 0,
+    {}, @ICU_NORMALIZATION_COUNT@, 0,
     {
 @ICU_NORMALIZATION_ENTRIES@
     }

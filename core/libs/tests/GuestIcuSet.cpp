@@ -99,6 +99,23 @@ void BinaryPropertySet() {
             "incoming error is preserved");
 }
 
+void DataFilePropertySets() {
+    constexpr std::int32_t emoji = 57;
+    constexpr std::int32_t extendedPictographic = 64;
+    constexpr std::int32_t changesWhenNfkcCasefolded = 56;
+    std::int32_t error = Success;
+    const auto* set = u_getBinaryPropertySet_nid_postfix(emoji, &error);
+    Require(set != nullptr && error == Success, "emoji property set");
+    Require(uset_contains_nid_postfix(set, 0x1f600) && uset_contains_nid_postfix(set, 0x23), "emoji membership");
+    Require(!uset_contains_nid_postfix(set, 'A'), "letter is not emoji");
+    set = u_getBinaryPropertySet_nid_postfix(extendedPictographic, &error);
+    Require(set != nullptr && error == Success && uset_contains_nid_postfix(set, 0xa9) && !uset_contains_nid_postfix(set, 0x23),
+            "extended pictographic property set");
+    set = u_getBinaryPropertySet_nid_postfix(changesWhenNfkcCasefolded, &error);
+    Require(set != nullptr && error == Success && uset_contains_nid_postfix(set, 'A') && !uset_contains_nid_postfix(set, 'a'),
+            "NFKC casefold property set");
+}
+
 template<class F>
 void RequiresRuntimeErrorKeepingErrno(F call, const char* message) {
     errno = 71;
@@ -298,6 +315,7 @@ void Random() {
 int main() {
     Empty();
     BinaryPropertySet();
+    DataFilePropertySets();
     BinaryPropertySetGuestPointers();
     SingleCodePoints();
     CodePointRanges();
