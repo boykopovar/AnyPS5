@@ -118,6 +118,7 @@ expect_usage_error("--gpu-heap then --no-gpu-heap" "--gpu-heap and --no-gpu-heap
 expect_usage_error("--no-gpu-heap then --gpu-heap" "--gpu-heap and --no-gpu-heap conflict" --no-gpu-heap --gpu-heap "${CAPTURE}/lds.req")
 expect_usage_error("--no-gpu-heap with a limit" "--no-gpu-heap conflicts with --heap-data-uniform-dwords 4096" --no-gpu-heap --heap-data-uniform-dwords 4096 "${CAPTURE}/lds.req")
 expect_usage_error("a limit then --no-gpu-heap" "--no-gpu-heap conflicts with --heap-data-uniform-dwords 4096" --heap-data-uniform-dwords 4096 --no-gpu-heap "${CAPTURE}/lds.req")
+expect_usage_error("a limit hidden by a later zero" "--no-gpu-heap conflicts with --heap-data-uniform-dwords 4096" --heap-data-uniform-dwords 4096 --no-gpu-heap --heap-data-uniform-dwords 0 "${CAPTURE}/lds.req")
 expect_usage_error("a missing limit" "needs an unsigned 32-bit number" --heap-data-uniform-dwords)
 expect_usage_error("an overflowing limit" "needs an unsigned 32-bit number" --heap-data-uniform-dwords 99999999999 "${CAPTURE}/lds.req")
 expect_usage_error("a negative limit" "needs an unsigned 32-bit number" --heap-data-uniform-dwords -1 "${CAPTURE}/lds.req")

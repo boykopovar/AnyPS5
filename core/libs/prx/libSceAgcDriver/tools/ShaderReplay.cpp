@@ -111,7 +111,10 @@ bool HeapFlagsConflict(int argc, char** argv) {
         const std::string argument = argv[i];
         if (argument == "--gpu-heap") gpuHeap = true;
         else if (argument == "--no-gpu-heap") noGpuHeap = true;
-        else if (argument == "--heap-data-uniform-dwords") ParseHeapDataUniformDwords(i, argc, argv, dwords);
+        else if (argument == "--heap-data-uniform-dwords") {
+            std::uint32_t value = 0;
+            if (ParseHeapDataUniformDwords(i, argc, argv, value) && value != 0u && dwords == 0u) dwords = value;
+        }
     }
     if (gpuHeap && noGpuHeap) {
         std::fprintf(stderr, "--gpu-heap and --no-gpu-heap conflict\n");
