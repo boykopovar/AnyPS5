@@ -617,6 +617,22 @@ static void ThreadHelpers() {
     other.join();
 }
 
+static void CurrentOwnsAnswersForEverySlotState() {
+    void* mutex = CreateMutex(tryable);
+    Require(_Mtx_current_owns_nid_postfix(&mutex) == 1);
+    Require(_Mtx_lock_nid_postfix(&mutex) == success);
+    Require(_Mtx_current_owns_nid_postfix(&mutex) == 1);
+    Require(_Mtx_unlock_nid_postfix(&mutex) == success);
+    Require(_Mtx_current_owns_nid_postfix(&mutex) == 1);
+    Require(_Mtx_lock_nid_postfix(&mutex) == success);
+    std::thread([&] { Require(_Mtx_current_owns_nid_postfix(&mutex) == 1); }).join();
+    Require(_Mtx_unlock_nid_postfix(&mutex) == success);
+    void* unused = nullptr;
+    Require(_Mtx_current_owns_nid_postfix(&unused) == 1);
+    _Mtx_destroy_nid_postfix(&mutex);
+    Require(_Mtx_current_owns_nid_postfix(&mutex) == 1);
+}
+
 int main() {
     ThreadExitLifecycle();
     KernelKeys();
@@ -624,6 +640,7 @@ int main() {
     ForwardedCalls();
     MutexBasics();
     DefaultNameOverrideMutex();
+    CurrentOwnsAnswersForEverySlotState();
     RecursiveMutex();
     TimedMutex();
     MutualExclusion();

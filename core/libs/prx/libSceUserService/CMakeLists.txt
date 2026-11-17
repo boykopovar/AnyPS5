@@ -122,4 +122,15 @@ if(BUILD_TESTING)
         set_tests_properties(guest_user_service_login_list PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceUserService>")
     endif()
+
+    add_test_executable(guest_user_service_account_name_limits_tests ${LIBS_INCLUDE_DIR}/tests/GuestUserServiceAccountNameLimits.cpp)
+    target_include_directories(guest_user_service_account_name_limits_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_user_service_account_name_limits_tests PRIVATE libSceUserService libSceSystemService libc)
+    configure_windows_unwind(guest_user_service_account_name_limits_tests)
+    add_test(NAME guest_user_service_account_name_limits COMMAND guest_user_service_account_name_limits_tests)
+    set_tests_properties(guest_user_service_account_name_limits PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_user_service_account_name_limits PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceUserService>")
+    endif()
 endif()

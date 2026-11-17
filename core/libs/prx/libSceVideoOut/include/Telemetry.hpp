@@ -8,12 +8,20 @@
 #include <fstream>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 
 #include "prx/libScePad/include/PadState.hpp"
 
 namespace VideoOutTelemetry {
+
+struct FlipTimingWindow {
+    std::uint64_t first;
+    std::uint64_t count;
+};
+
+std::optional<FlipTimingWindow> ParseFlipTimingWindow(const char* setting);
 
 class BoundedLineQueue {
 public:
@@ -34,13 +42,15 @@ private:
 
 class Writer {
 public:
-    Writer(const std::string& directory, std::size_t capacity, const std::string& commit);
+    Writer(const std::string& directory, std::size_t capacity, const std::string& commit,
+           std::optional<FlipTimingWindow> flipTiming = std::nullopt);
     ~Writer();
     Writer(const Writer&) = delete;
     Writer& operator=(const Writer&) = delete;
 
     bool EmitPad(std::uint64_t frame, const PadInputState& state);
     void EmitPresent(std::uint64_t frame, double fps);
+    void EmitCompletedFlip(std::uint64_t generation, std::uint64_t sequence, std::uint64_t processTimeUs);
     std::uint64_t Dropped() const;
 
 private:
@@ -51,6 +61,8 @@ private:
 
     std::ofstream output;
     BoundedLineQueue queue;
+    const std::optional<FlipTimingWindow> flipTiming;
+    std::atomic<std::uint64_t> flipGeneration{0};
     std::uint64_t reportedDrops = 0;
     std::jthread thread;
 };
@@ -66,7 +78,7 @@ private:
 
 bool EmitPadIfChanged(Writer& writer, PadChangeFilter& filter, std::uint64_t frame, const PadInputState& state);
 
-std::unique_ptr<Writer> OpenFromEnvironment(const char* directory, const std::string& commit);
+std::unique_ptr<Writer> OpenFromEnvironment(const char* directory, const std::string& commit, const char* flipTiming = nullptr);
 Writer* Instance();
 
 }

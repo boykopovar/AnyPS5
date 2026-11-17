@@ -877,6 +877,89 @@ class SymbolizeSamplesTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, r"bad\.collapsed\.txt:2:"):
             symbolize_samples.load(bad)
 
+    def test_numeric_records_and_module_headers_require_ascii_numbers_with_location(self):
+        capture = self.root / "malformed-numbers.txt"
+        output = self.root / "preserved-out.txt"
+        output.write_text("existing output\n", encoding="utf-8")
+        cases = [
+            ("collapsed-arabic", "# samples=5 depth=64 truncated=0\nlibSceAgcDriver.prx+0x1011 \u0665\n", 2),
+            ("collapsed-superscript", "# samples=5 depth=64 truncated=0\nlibSceAgcDriver.prx+0x1011 \u00b2\n", 2),
+            ("collapsed-negative", "# samples=5 depth=64 truncated=0\nlibSceAgcDriver.prx+0x1011 -5\n", 2),
+            ("address-self-arabic", "# 9 samples\nlibSceAgcDriver.prx 0x1011 \u0663 9\n", 2),
+            ("address-self-superscript", "# 9 samples\nlibSceAgcDriver.prx 0x1011 \u00b2 9\n", 2),
+            ("address-self-word", "# 9 samples\nlibSceAgcDriver.prx 0x1011 many 9\n", 2),
+            ("address-inclusive-arabic", "# 9 samples\nlibSceAgcDriver.prx 0x1011 3 \u0669\n", 2),
+            ("address-inclusive-superscript", "# 9 samples\nlibSceAgcDriver.prx 0x1011 3 \u00b2\n", 2),
+            ("thread-id-arabic", "# 50 rounds\nthread \u0667 samples 10\n  libSceAgcDriver.prx 0x1011 6 8\n", 2),
+            ("thread-id-superscript", "# 50 rounds\nthread \u00b2 samples 10\n  libSceAgcDriver.prx 0x1011 6 8\n", 2),
+            ("thread-id-word", "# 50 rounds\nthread worker samples 10\n  libSceAgcDriver.prx 0x1011 6 8\n", 2),
+            ("thread-samples-arabic", "# 50 rounds\nthread 7 samples \u0661\u0660\n  libSceAgcDriver.prx 0x1011 6 8\n", 2),
+            ("thread-samples-superscript", "# 50 rounds\nthread 7 samples \u00b2\n  libSceAgcDriver.prx 0x1011 6 8\n", 2),
+            ("total-samples-arabic", "# header\n# \u0665 samples\nlibSceAgcDriver.prx 0x1011 5 5\n", 2),
+            ("total-samples-superscript", "# header\n# \u00b2 samples\nlibSceAgcDriver.prx 0x1011 5 5\n", 2),
+            ("total-samples-negative", "# header\n# -5 samples\nlibSceAgcDriver.prx 0x1011 5 5\n", 2),
+            ("total-samples-word", "# header\n# many samples\nlibSceAgcDriver.prx 0x1011 5 5\n", 2),
+            ("module-size-bad-hex", "# 5 samples\nlibSceAgcDriver.prx 0x1011 5 5\n# module libSceAgcDriver.prx 0x101g 0x6ad92ac4\n", 3),
+            ("module-timestamp-bad-hex", "# 5 samples\nlibSceAgcDriver.prx 0x1011 5 5\n# module libSceAgcDriver.prx 0x3000 0xnothex\n", 3),
+            ("module-size-arabic-hex", "# 5 samples\nlibSceAgcDriver.prx 0x1011 5 5\n# module libSceAgcDriver.prx \u0663\u0660\u0660\u0660 0x6ad92ac4\n", 3),
+            ("module-size-prefixed-arabic", "# 5 samples\nlibSceAgcDriver.prx 0x1011 5 5\n# module libSceAgcDriver.prx 0x\u0663000 0x6ad92ac4\n", 3),
+            ("module-missing-timestamp", "# 5 samples\nlibSceAgcDriver.prx 0x1011 5 5\n# module libSceAgcDriver.prx 0x3000\n", 3),
+        ]
+        for label, text, line_number in cases:
+            with self.subTest(case=label):
+                capture.write_text(text, encoding="utf-8")
+                with self.assertRaises(ValueError) as raised:
+                    symbolize_samples.load(capture)
+                self.assertIn(f"{capture}:{line_number}:", str(raised.exception))
+        for label, text, line_number in (cases[0], cases[3], cases[8], cases[13], cases[17]):
+            with self.subTest(cli=label):
+                capture.write_text(text, encoding="utf-8")
+                extra = ("--out", str(output)) if label.startswith("collapsed") else ()
+                result = subprocess.run([sys.executable, symbolize_samples.__file__, str(capture),
+                                         "--libs", str(self.libs), *extra],
+                                        capture_output=True, text=True, encoding="utf-8", timeout=5)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertEqual(result.stdout, "")
+                self.assertIn(f"{capture}:{line_number}:", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertEqual(output.read_text(encoding="utf-8"), "existing output\n")
+
+    def test_valid_ascii_records_keep_unrelated_comments_and_unicode_module_names(self):
+        unicode_name = "caf\u00e9 \u65e5\u672c.prx"
+        build_pe(self.libs / unicode_name)
+        header = (
+            "# samples=5 depth=64 truncated=0\n"
+            "# no samples yet\n"
+            "# 50 rounds\n"
+            f"# module {unicode_name} {SIZE_OF_IMAGE:#x} {TIMESTAMP:#x}\n"
+        )
+        collapsed = self.root / "unicode.collapsed.txt"
+        output = self.root / "unicode.out.txt"
+        collapsed.write_text(header + f"{unicode_name}+0x1011 5\n# trailing comment\n", encoding="utf-8")
+        result = subprocess.run([sys.executable, symbolize_samples.__file__, str(collapsed),
+                                 "--libs", str(self.libs), "--out", str(output), "--json"],
+                                capture_output=True, text=True, encoding="utf-8", timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "")
+        report = json.loads(result.stdout)
+        self.assertEqual(report["samples"], 5)
+        self.assertEqual(report["self"], [{"symbol": f"{unicode_name}!short", "count": 5}])
+        self.assertEqual(output.read_text(encoding="utf-8"), f"{unicode_name}!short 5\n")
+
+        address = self.root / "unicode-address.txt"
+        address.write_text(
+            "# 9 samples\n"
+            + header
+            + "thread 7 samples 9\n"
+            + f"  {unicode_name} 0x1011 4 9\n"
+            + f"  {unicode_name} 0x1045 0 5\n",
+            encoding="utf-8",
+        )
+        lines, errors = self.run_main(address, "--libs", self.libs, "--thread", "7")
+        self.assertEqual(errors, "")
+        self.assertEqual(lines[0], "9 samples")
+        self.assertIn(f"4  44.4%  {unicode_name}!short", lines[2])
+
     def test_unusable_inputs_are_usage_errors(self):
         good = self.root / "good.collapsed.txt"
         good.write_text("libSceAgcDriver.prx+0x1011 1\n", encoding="utf-8")
@@ -1355,6 +1438,26 @@ class MappedExportTests(unittest.TestCase):
         module = self.module()
         self.assertEqual(module.name(0x1021), "~first_func")
         self.assertEqual(module.name(0x1061), "~second_func")
+
+    def test_export_directory_must_hold_its_header(self):
+        for size in (0, 1, 39):
+            with self.subTest(size=size):
+                struct.pack_into("<II", self.data, 0x58 + 112, 0x2000, size)
+                with self.assertRaisesRegex(ValueError, "PE export directory is smaller than its header"):
+                    self.module()
+
+    def test_export_directory_cannot_wrap_the_rva_address_space(self):
+        struct.pack_into("<II", self.data, 0x58 + 112, 0x2000, 0xFFFFFFFF)
+        with self.assertRaisesRegex(ValueError, "PE export directory exceeds address space"):
+            self.module()
+
+    def test_export_directory_size_boundaries_remain_valid(self):
+        for size in (40, 0xFFFFE000):
+            with self.subTest(size=size):
+                struct.pack_into("<II", self.data, 0x58 + 112, 0x2000, size)
+                module = self.module()
+                self.assertEqual(module.name(0x1021), "~first_func")
+                self.assertEqual(module.name(0x1061), "~second_func")
 
     def overlapping_section(self, rva, size=0x10, raw_size=0x10, first=False):
         struct.pack_into("<H", self.data, 0x46, 3)
