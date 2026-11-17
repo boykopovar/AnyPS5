@@ -134,11 +134,15 @@ std::int32_t APS5_VABI FT_Match_Size_nid_postfix(GuestFaceRec* face, const Guest
     if (!(face->face_flags & FT_FACE_FLAG_FIXED_SIZES)) return FT_Err_Invalid_Face_Handle;
     if (!req) NotImplemented_nid_no_patch(__func__);
     if (req->type != FT_SIZE_REQUEST_TYPE_NOMINAL) return FT_Err_Unimplemented_Feature;
+    if (size_index && !GuestWritable_nid_no_patch(size_index, sizeof(*size_index))) return FT_Err_Invalid_Argument;
     HostFace host(*face, __func__);
     FT_Size_RequestRec request = HostRequest(*req, __func__);
     FT_ULong index = 0;
     const FT_Error error = FT_Match_Size(&host.face, &request, ignore_width, &index);
-    if (!error && size_index) *size_index = index;
+    if (!error && size_index) {
+        const std::uint64_t outIndex = index;
+        if (!GuestCopyOut_nid_no_patch(size_index, &outIndex, sizeof(outIndex))) return FT_Err_Invalid_Argument;
+    }
     return error;
 }
 

@@ -199,6 +199,7 @@ static void TestNew(GuestLibrary& library, FT_Library native) {
     guest = nullptr;
     expected = nullptr;
     Require(FT_Stroker_New_nid_postfix(&library, nullptr) == FT_Stroker_New(native, nullptr));
+    Require(FT_Stroker_New_nid_postfix(&library, reinterpret_cast<void**>(0x10)) == FT_Err_Invalid_Argument);
     Require(FT_Stroker_New_nid_postfix(&library, &guest) == FT_Stroker_New(native, &expected));
     Require(guest != nullptr && expected != nullptr);
     FT_Stroker_Done(static_cast<FT_Stroker>(guest));
@@ -227,6 +228,8 @@ static void TestGetCounts(GuestLibrary& library, FT_Library native) {
     Require(FT_Stroker_GetCounts_nid_postfix(nullptr, &points, &contours) == FT_Stroker_GetCounts(nullptr, &nativePoints, &nativeContours));
     Require(points == nativePoints && contours == nativeContours);
     Require(FT_Stroker_GetCounts_nid_postfix(pair.guest, nullptr, nullptr) == FT_Stroker_GetCounts(pair.native, nullptr, nullptr));
+    Require(FT_Stroker_GetCounts_nid_postfix(pair.guest, reinterpret_cast<std::uint32_t*>(0x10), &contours) == FT_Err_Invalid_Argument);
+    Require(FT_Stroker_GetCounts_nid_postfix(pair.guest, &points, reinterpret_cast<std::uint32_t*>(0x10)) == FT_Err_Invalid_Argument);
 }
 
 static void TestBeginSubPath(GuestLibrary& library, FT_Library native) {
@@ -315,6 +318,8 @@ static void TestGetBorderCounts(GuestLibrary& library, FT_Library native) {
                 FT_Stroker_GetBorderCounts(pair.native, static_cast<FT_StrokerBorder>(border), &nativePoints, &nativeContours));
         Require(points == nativePoints && contours == nativeContours);
     }
+    Require(FT_Stroker_GetBorderCounts_nid_postfix(pair.guest, 0, reinterpret_cast<std::uint32_t*>(0x10), nullptr) == FT_Err_Invalid_Argument);
+    Require(FT_Stroker_GetBorderCounts_nid_postfix(pair.guest, 0, nullptr, reinterpret_cast<std::uint32_t*>(0x10)) == FT_Err_Invalid_Argument);
     Require(FT_Stroker_GetBorderCounts_nid_postfix(nullptr, 0, nullptr, nullptr) == FT_Stroker_GetBorderCounts(nullptr, FT_STROKER_BORDER_LEFT, nullptr, nullptr));
 }
 
