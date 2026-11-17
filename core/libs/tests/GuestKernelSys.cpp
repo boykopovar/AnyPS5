@@ -885,6 +885,10 @@ void CheckAmmMapperCalls() {
     KernelMapperSubmitResult result{7, 7};
     std::uint32_t id = 0;
     Require(sceKernelCallIndirectBuffer2(1, commands.data(), bytes, &result, &id) == 0 && result.result == 0 && result.errorOffset == 0 && id != 0);
+    errno = 71;
+    Require(sceKernelCallIndirectBuffer2(1, commands.data(), bytes, reinterpret_cast<KernelMapperSubmitResult*>(std::uintptr_t{0x10}), &id) == SCE_KERNEL_ERROR_EFAULT && errno == 71);
+    errno = 71;
+    Require(sceKernelCallIndirectBuffer3(2, commands.data(), bytes, reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10})) == SCE_KERNEL_ERROR_EFAULT && errno == 71);
     Require(sceKernelWaitCommandBufferCompletion(id) == 0);
     const std::uint64_t third = second + page;
     Require(sceKernelWriteMapDirectCommand(commands.data(), third, static_cast<std::uint64_t>(offset) + 2 * page, page, 0, cpuReadWrite, &bytes) == 0);
