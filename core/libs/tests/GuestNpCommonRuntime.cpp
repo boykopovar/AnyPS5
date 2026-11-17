@@ -764,6 +764,14 @@ void TestTitleIdObjects() {
     Require(_ZN3sce2np9NpTitleId5BuildERKS1_Pcm(&built, text, 12) == NpTitleIdBufferTooSmall && text[0] == 'x', "building needs 13 bytes");
     Require(_ZN3sce2np9NpTitleId5BuildERKS1_Pcm(&built, text, 14) == 0 && std::strcmp(text, "WXYZ54321_00") == 0 && text[13] == '\0' && text[14] == 'x',
         "building writes the title id and clears the rest of the buffer");
+    errno = 71;
+    Require(_ZN3sce2np9NpTitleId5BuildERKS1_Pcm(&built, reinterpret_cast<char*>(0x10), 14) == NpUtilInvalid && errno == 71,
+        "building into an unwritable buffer is refused and keeps errno");
+    std::array<char, 600> longText{};
+    longText.fill('x');
+    Require(_ZN3sce2np9NpTitleId5BuildERKS1_Pcm(&built, longText.data(), 599) == 0 && std::strcmp(longText.data(), "WXYZ54321_00") == 0
+            && std::all_of(longText.begin() + 13, longText.begin() + 599, [](char c) { return c == '\0'; }) && longText[599] == 'x',
+        "building clears a long buffer up to its size");
 
     NpTitleIdObject copy {};
     _ZN3sce2np9NpTitleIdC1ERKS1_(&copy, &parsed);
@@ -1237,6 +1245,19 @@ void TestXmlText() {
     errno = 71;
     Require(sceNpUtilXmlUnescape(reinterpret_cast<char*>(0x10), sizeof(unescaped), "a&amp;b", 7, &length) == NpUtilInvalid && errno == 71, "xml unescaping refuses an unwritable buffer");
     Require(sceNpUtilXmlUnescape(nullptr, 0, "a&amp;b", 7, reinterpret_cast<std::size_t*>(0x10)) == NpUtilInvalid && errno == 71, "xml unescaping refuses an unwritable length");
+    const auto* const unreadableXml = reinterpret_cast<const char*>(0x10);
+    Require(sceNpUtilXmlEscape(escaped, sizeof(escaped), unreadableXml, 3, &length) == NpUtilInvalid
+            && sceNpUtilXmlUnescape(unescaped, sizeof(unescaped), unreadableXml, 3, &length) == NpUtilInvalid && errno == 71,
+        "xml escaping and unescaping refuse an unreadable source");
+    std::memset(escaped, 'x', sizeof(escaped));
+    Require(sceNpUtilXmlEscape(escaped, 3, "a&b", 3, &length) == NpUtilBufferTooSmall && escaped[0] == 'a' && escaped[1] == 'x',
+        "xml escaping still leaves the pieces that fit before a buffer that is too small");
+    std::string longText(70000, 'a');
+    longText[69999] = '<';
+    std::string longEscaped(longText.size() + 8, 'x');
+    Require(sceNpUtilXmlEscape(longEscaped.data(), longEscaped.size(), longText.data(), longText.size(), &length) == 0
+            && length == longText.size() + 4 && longEscaped.compare(0, 69999, longText, 0, 69999) == 0 && std::strcmp(longEscaped.c_str() + 69999, "&lt;") == 0,
+        "a source longer than one copy chunk is escaped whole");
     struct {
         char buffer[4];
         char canary[4];
@@ -2000,6 +2021,9 @@ void TestCommIdObjects() {
             && text[14] == 'x',
         "building writes the id and clears the rest of the buffer");
     Require(_ZN3sce2np8NpCommId5BuildERKS1_Pcm(&commId, text, 12) == NpUtilBufferTooSmall && text[0] == '\0', "building needs 13 bytes");
+    errno = 71;
+    Require(_ZN3sce2np8NpCommId5BuildERKS1_Pcm(&commId, reinterpret_cast<char*>(0x10), 14) == NpUtilInvalid && errno == 71,
+        "building a communication id into an unwritable buffer is refused and keeps errno");
 
     NpCommIdObject copy {};
     _ZN3sce2np8NpCommIdC1ERKS1_(&copy, &commId);
