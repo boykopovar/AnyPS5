@@ -74,7 +74,16 @@ int APS5_VABI sceKernelMemoryPoolBatch(const KernelMemoryPoolBatchEntry* entries
  int done = 0;
  int ret = 0;
  for (; done < num_entries; ++done) {
-  const KernelMemoryPoolBatchEntry& e = entries[done];
+  KernelMemoryPoolBatchEntry e;
+  {
+   const int savedErrno = errno;
+   const bool read = GuestCopyIn_nid_no_patch(&e, entries + done, sizeof(e));
+   errno = savedErrno;
+   if (!read) {
+    ret = SCE_KERNEL_ERROR_EFAULT;
+    break;
+   }
+  }
   ret = Guarded([&] {
    switch (e.op) {
     case 1: return PoolCommit(e.commit.addr, e.commit.len, e.commit.type, e.commit.prot);
@@ -110,13 +119,17 @@ int APS5_VABI sceKernelMemoryPoolExpand(int64_t search_start, int64_t search_end
   || (alignment != 0 && !PageAligned(alignment))) {
   return SCE_KERNEL_ERROR_EINVAL;
  }
- const int ret = DirectMemoryAlloc(search_start, std::min<int64_t>(search_end, static_cast<int64_t>(DirectMemorySize())), len, alignment, -1, phys_addr_out);
- if (ret == 0) {
-  PoolState& pool = Pool();
-  std::lock_guard<std::mutex> lock(pool.mutex);
-  pool.expandedBytes += len;
+ int64_t physical = 0;
+ const int ret = DirectMemoryAlloc(search_start, std::min<int64_t>(search_end, static_cast<int64_t>(DirectMemorySize())), len, alignment, -1, &physical);
+ if (ret != 0) return ret;
+ if (!GuestCopyOut_nid_no_patch(phys_addr_out, &physical, sizeof(physical))) {
+  DirectMemoryFree(physical, len);
+  return SCE_KERNEL_ERROR_EFAULT;
  }
- return ret;
+ PoolState& pool = Pool();
+ std::lock_guard<std::mutex> lock(pool.mutex);
+ pool.expandedBytes += len;
+ return 0;
 }
 
 int APS5_VABI sceKernelMemoryPoolGetBlockStats(KernelMemoryPoolBlockStats* output, size_t output_size) {
