@@ -26,7 +26,7 @@ FT_Pos HostCoordinate(std::int64_t value) {
 
 extern "C" {
 
-int APS5_VABI FT_Outline_Get_Bitmap_nid_postfix(GuestLibrary* library, GuestOutline* outline, const GuestBitmap* bitmap) {
+int APS5_VABI FreeTypeOutlineGetBitmap_nid_no_patch(GuestLibrary* library, GuestOutline* outline, const GuestBitmap* bitmap) {
     FT_Library host = library ? library->host : nullptr;
     if (!bitmap) return FT_Outline_Get_Bitmap(host, nullptr, nullptr);
     const FT_Bitmap target{bitmap->rows, bitmap->width, bitmap->pitch, bitmap->buffer, bitmap->num_grays, bitmap->pixel_mode, bitmap->palette_mode, bitmap->palette};
@@ -40,6 +40,10 @@ int APS5_VABI FT_Outline_Get_Bitmap_nid_postfix(GuestLibrary* library, GuestOutl
     const std::size_t pitch = static_cast<std::size_t>(bitmap->pitch < 0 ? -static_cast<std::int64_t>(bitmap->pitch) : bitmap->pitch);
     GuestArena::HostWrite write(bitmap->buffer, bitmap->buffer ? pitch * bitmap->rows : 0);
     return FT_Outline_Get_Bitmap(host, &native, &target);
+}
+
+int APS5_VABI FT_Outline_Get_Bitmap_nid_postfix(GuestLibrary* library, GuestOutline* outline, const GuestBitmap* bitmap) {
+    return FreeTypeOutlineGetBitmap_nid_no_patch(library, outline, bitmap);
 }
 
 }

@@ -80,7 +80,7 @@ STUB_BODY = re.compile(r"^(?:\(void\)\s*\w+\s*;|static_cast<void>\(\s*\w+\s*\)\s
                        r"(?:return\s*\(?\s*(?:-?(?:0x[0-9a-fA-F]+|\d+)[uUlL]*|nullptr|true|false|\w*_OK)?\s*\)?\s*;)?$")
 SYSTEM_DEPENDENCY = re.compile(r"\b(find_package\s*\((?!\s*(Python3|Threads|Git|LLVM)\b)|pkg_check_modules\b|pkg_search_module\b|find_(library|path|program|file)\b)", re.I)
 TITLE = re.compile(r"\b(PPSA|CUSA)\d{5}\b")
-EXTENSION = re.compile(r"__attribute__|__declspec|#\s*pragma\s+(?!once\b)")
+EXTENSION = re.compile(r"__attribute__|__declspec|#\s*pragma\b(?!\s+once\b)")
 INTEGER = r"(0[xX][0-9a-fA-F']+|0[bB][01']+|[0-9][0-9']*)[uUlLzZ]*"
 ALIGNAS = re.compile(rf"\balignas\s*\(\s*(?:{INTEGER}|([A-Za-z_][A-Za-z0-9_]*))\s*\)")
 CONSTANT = re.compile(rf"\bconstexpr\b[^;=]*?\b([A-Za-z_][A-Za-z0-9_]*)\s*(?:=\s*|\{{\s*){INTEGER}\s*[;}}]")
@@ -272,7 +272,7 @@ class Check:
     def unknown_nids(self, unknowns, symbols):
         if not unknowns and not symbols:
             return
-        result = subprocess.run(["git", "grep", "--no-color", "-nE", "--full-name", NID_SOURCES, self.head, "--", ":(top)core/libs/prx"], capture_output=True, encoding="utf-8", errors="replace")
+        result = subprocess.run(["git", "grep", "--no-color", "-InE", "--full-name", NID_SOURCES, self.head, "--", ":(top)core/libs/prx"], capture_output=True, encoding="utf-8", errors="replace")
         tree_unknowns, tree_symbols = defaultdict(list), defaultdict(list)
         for path, number, text in (line.split(":", 3)[1:] for line in filter(None, result.stdout.split("\n"))):
             if "tests" in PurePosixPath(path).parts or PurePosixPath(path).suffix not in CPP:
@@ -454,7 +454,7 @@ class Check:
                     self.report("ci-gate", path, number, name)
 
     def commits(self):
-        for line in git("log", "--no-merges", "--format=%h %s", f"{self.base}..{self.head}").splitlines():
+        for line in filter(None, git("log", "--no-merges", "--format=%h %s", f"{self.base}..{self.head}").split("\n")):
             sha, subject = line.split(" ", 1)
             if not CONVENTIONAL.match(subject):
                 self.report("commit-subject", "", 0, f"{sha} {subject}")
@@ -464,7 +464,7 @@ class Check:
         added, removed, dropped = {}, set(), set()
         path, number, in_hunk = "", 0, False
         for line in git("diff", "-U0", "--inter-hunk-context=0", "--no-color", "--no-ext-diff", "--no-textconv", "--no-relative",
-                        "--find-renames", "--dst-prefix=b/", self.base, self.head, "--", ":(top)core", f":(top){doc}").splitlines():
+                        "--find-renames", "--dst-prefix=b/", self.base, self.head, "--", ":(top)core", f":(top){doc}").split("\n"):
             if line.startswith("diff --git"):
                 path, in_hunk = "", False
             elif line.startswith("@@"):
@@ -481,11 +481,11 @@ class Check:
                 elif line.startswith("-"):
                     removed.update(match.group("name") for _, match in env_reference.line_reads(line[1:]))
             elif line.startswith("+++ b/"):
-                path = line[6:]
+                path = line[6:].removesuffix("\t")
         result = subprocess.run(["git", "grep", "--no-color", "-nE", "--full-name", env_reference.GREP, self.head, "--", ":(top)core"],
                                 capture_output=True, encoding="utf-8", errors="replace")
         reads = set()
-        for line in result.stdout.splitlines():
+        for line in result.stdout.split("\n"):
             reads.update(match.group("name") for _, match in env_reference.line_reads(line))
         pattern = env_reference.documented_pattern(env_reference.PREFIXES)
         documented = set(pattern.findall(self.show(doc))) if doc in self.tree else set()
@@ -517,7 +517,7 @@ class Check:
             self.report("pr-template", "", 0, f"unchecked: {item.strip()}")
         if checklist and not re.search(r"AI-assisted:[ \t]*(yes|no)\b", checklist, re.I):
             self.report("pr-template", "", 0, "answer AI-assisted with yes or no")
-        if checklist and not re.search(r"Depends on:\s*(?:[-*+]\s+)?(#\d+|none)\b", checklist, re.I):
+        if checklist and not re.search(r"Depends on:(?:[ \t]*|\s*[-*+][ \t]+)(#\d+|none)\b", checklist, re.I):
             self.report("pr-template", "", 0, "fill Depends on with #N or none")
 
 

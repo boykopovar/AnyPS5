@@ -162,7 +162,7 @@ int APS5_VABI sceContentSearchGetContentLastUpdateId(std::int64_t* lastUpdateId)
     if (!g_initialized.load()) return ErrorNotInitialized;
     if (lastUpdateId == nullptr) return ErrorInvalidArgument;
     const std::int64_t val = LibraryUpdateId;
-    if (!GuestCopyOut_nid_no_patch(lastUpdateId, &val, sizeof(val))) return ErrorInvalidArgument;
+    if (!CopyGuestOutPreservingErrno_nid_no_patch(lastUpdateId, &val, sizeof(val))) return ErrorInvalidArgument;
     return 0;
 }
 
@@ -179,8 +179,8 @@ int APS5_VABI sceContentSearchGetTotalContentSize(const ContentSearchContentColu
     if (!ValidateColumnSets(__func__, columnSet, columnSetLength)) return ErrorInvalidArgument;
     const std::int64_t zero = 0;
     const std::int64_t updateId = LibraryUpdateId;
-    if (!GuestCopyOut_nid_no_patch(size, &zero, sizeof(zero))) return ErrorInvalidArgument;
-    if (!GuestCopyOut_nid_no_patch(lastUpdateId, &updateId, sizeof(updateId))) return ErrorInvalidArgument;
+    if (!CopyGuestOutPreservingErrno_nid_no_patch(size, &zero, sizeof(zero))) return ErrorInvalidArgument;
+    if (!CopyGuestOutPreservingErrno_nid_no_patch(lastUpdateId, &updateId, sizeof(updateId))) return ErrorInvalidArgument;
     return 0;
 }
 
@@ -190,8 +190,8 @@ int APS5_VABI sceContentSearchGetNumOfContent(const ContentSearchContentColumnSe
     if (!ValidateColumnSets(__func__, columnSet, columnSetLength)) return ErrorInvalidArgument;
     const std::int64_t zero = 0;
     const std::int64_t updateId = LibraryUpdateId;
-    if (!GuestCopyOut_nid_no_patch(numOfContent, &zero, sizeof(zero))) return ErrorInvalidArgument;
-    if (!GuestCopyOut_nid_no_patch(lastUpdateId, &updateId, sizeof(updateId))) return ErrorInvalidArgument;
+    if (!CopyGuestOutPreservingErrno_nid_no_patch(numOfContent, &zero, sizeof(zero))) return ErrorInvalidArgument;
+    if (!CopyGuestOutPreservingErrno_nid_no_patch(lastUpdateId, &updateId, sizeof(updateId))) return ErrorInvalidArgument;
     return 0;
 }
 
