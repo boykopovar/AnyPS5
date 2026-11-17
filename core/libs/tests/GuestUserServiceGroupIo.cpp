@@ -45,6 +45,12 @@ int main() {
     Require(opens == 0);
     Require(sceUserServiceGetUserGroupName(0, name, sizeof(name)) == USER_SERVICE_OK);
     Require(std::strcmp(name, "Team") == 0 && closes == 1);
+    errno = EDOM;
+    Require(sceUserServiceGetUserGroupName(0, reinterpret_cast<char*>(0x10), sizeof(name)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == EDOM && opens == closes);
+    static const char readOnlyName[129]{};
+    Require(sceUserServiceGetUserGroupName(0, const_cast<char*>(readOnlyName), sizeof(readOnlyName)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == EDOM && opens == closes);
     readResult = 0;
     Require(sceUserServiceGetUserGroupName(128, name, sizeof(name)) == USER_SERVICE_OK);
     Require(std::strcmp(name, "User Group 129") == 0);
@@ -54,6 +60,9 @@ int main() {
     openResult = SCE_KERNEL_ERROR_EIO;
     Require(sceUserServiceGetUserGroupName(0, name, sizeof(name)) == USER_SERVICE_OK);
     Require(std::strcmp(name, "User Group 1") == 0);
+    errno = EDOM;
+    Require(sceUserServiceGetUserGroupName(0, reinterpret_cast<char*>(0x10), sizeof(name)) == USER_SERVICE_ERROR_INVALID_ARGUMENT);
+    Require(errno == EDOM);
     openResult = 7;
     const int opensBeforeInvalidName = opens;
     const int closesBeforeInvalidName = closes;
