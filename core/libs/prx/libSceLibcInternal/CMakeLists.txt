@@ -1134,3 +1134,5 @@ if(BUILD_TESTING)
         endif()
     endforeach()
 endif()
+
+target_sources(libSceLibcInternal PRIVATE Forwards.cpp)
