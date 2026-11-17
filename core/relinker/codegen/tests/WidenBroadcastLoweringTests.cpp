@@ -8,9 +8,6 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
-#if LOWERING_EXECUTION_AVAILABLE
-#include <unistd.h>
-#endif
 
 namespace {
 
@@ -154,10 +151,10 @@ void execution() {
 }
 
 void pageEndMemory() {
-    const auto pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
-    auto* area = static_cast<std::uint8_t*>(mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
-    require(area != MAP_FAILED, "cannot allocate the guarded operand pages");
-    require(mprotect(area + pageSize, pageSize, PROT_NONE) == 0, "cannot protect the page after the operand");
+    const auto pageSize = LoweringExecution::PageSize();
+    auto* area = LoweringExecution::AllocatePages(pageSize * 2);
+    require(area != nullptr, "cannot allocate the guarded operand pages");
+    require(LoweringExecution::ProtectPages(area + pageSize, pageSize, false, false), "cannot protect the page after the operand");
     const auto memory = VectorExecution::Initial().Memory;
     const auto runAtPageEnd = [&](const Bytes& instruction, unsigned width, std::uint8_t dst, const Vector& wanted, const std::string& describe) {
         auto* operand = area + pageSize - width;
@@ -179,12 +176,12 @@ void pageEndMemory() {
     }
     for (const auto& [opcode, wide] : std::array<std::pair<std::uint8_t, bool>, 4>{{{0x78, false}, {0x78, true}, {0x79, false}, {0x79, true}}})
         runAtPageEnd(memorySite(opcode, wide, 6), broadcastSize(opcode), 6, broadcast(memory, broadcastSize(opcode), wide), "broadcast " + std::to_string(opcode) + " from memory");
-    munmap(area, pageSize * 2);
+    LoweringExecution::FreePages(area, pageSize * 2);
 }
 
 #else
 
-void execution() { std::cout << "widen/broadcast execution checks require a Linux/macOS x86-64 build\n"; }
+void execution() { std::cout << "widen/broadcast execution checks require an x86-64 Linux, macOS or Windows build\n"; }
 void pageEndMemory() {}
 
 #endif
