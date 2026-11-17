@@ -158,13 +158,11 @@ constexpr std::uint32_t INVALID_FILE_ID = 0xFFFFFFFFu;
 constexpr int SCE_KERNEL_ERROR_ENOENT = static_cast<int>(0x80020002);
 
 struct PathPrefix {
-    bool present = false;
     bool fits = true;
     std::string text;
 };
 
 int _copyPrefix(const char* prefix, PathPrefix& copy) {
-    copy.present = prefix != nullptr;
     if (!prefix) return 0;
     const int error = CopyGuestPath_nid_no_patch(prefix, copy.text);
     if (error == GUEST_EFAULT) return GUEST_EFAULT;
@@ -192,7 +190,7 @@ bool _store(T* destination, T value) {
 int _resolveForEach(const char* prefix, const char** paths, uint32_t count, uint32_t* ids, uint64_t* sizes, int* results) {
     if (!paths || !ids) return _fail(GUEST_EINVAL);
     PathPrefix copiedPrefix;
-    if (const int error = _copyPrefix(prefix, copiedPrefix)) return _fail(error);
+    if (const int error = count != 0 ? _copyPrefix(prefix, copiedPrefix) : 0) return _fail(error);
     std::uint32_t resolvedCount = 0;
     for (uint32_t index = 0; index < count; ++index) {
         std::string path;
@@ -213,7 +211,7 @@ int _resolveForEach(const char* prefix, const char** paths, uint32_t count, uint
 
 int _resolveAll(const char* prefix, const char** paths, uint32_t count, uint32_t* ids, uint64_t* sizes, uint32_t* error_index) {
     PathPrefix copiedPrefix;
-    if (const int error = _copyPrefix(prefix, copiedPrefix)) return _fail(error);
+    if (const int error = count != 0 ? _copyPrefix(prefix, copiedPrefix) : 0) return _fail(error);
     for (uint32_t index = 0; index < count; ++index) {
         std::string path;
         if (const int error = _entryPath(copiedPrefix, paths, index, path)) return _fail(error);

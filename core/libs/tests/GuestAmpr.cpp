@@ -819,6 +819,9 @@ void TestResolveFailures() {
     Require(faulted(sceKernelAprResolveFilepathsToIdsAndFileSizes(unreadableEntry, 1, ids, sizes, &failed)));
     Require(faulted(sceKernelAprResolveFilepathsWithPrefixToIds(unreadablePrefix, paths, 1, ids, &failed)));
     Require(faulted(sceKernelAprResolveFilepathsWithPrefixToIdsForEach(unreadablePrefix, paths, 1, ids, results)));
+    *__error_nid_postfix() = 0;
+    Require(sceKernelAprResolveFilepathsWithPrefixToIds(unreadablePrefix, paths, 0, ids, &failed) == 0 && *__error_nid_postfix() == 0);
+    Require(sceKernelAprResolveFilepathsWithPrefixToIdsForEach(unreadablePrefix, paths, 0, ids, results) == 0 && *__error_nid_postfix() == 0);
     Require(faulted(sceKernelAprResolveFilepathsToIds(paths, 1, reinterpret_cast<std::uint32_t*>(0x10), &failed)));
     Require(faulted(sceKernelAprResolveFilepathsToIdsAndFileSizesForEach(paths, 1, ids, reinterpret_cast<std::uint64_t*>(0x10), results)));
     Require(faulted(sceKernelAprResolveFilepathsToIdsForEach(paths, 1, ids, reinterpret_cast<int*>(0x10))));
