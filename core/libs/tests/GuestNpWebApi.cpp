@@ -1,5 +1,6 @@
 #include "ProcessParametersFixture.hpp"
 #include "prx/libSceNpWebApi/include/Api.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cerrno>
@@ -11,6 +12,8 @@
 #include <climits>
 #include <cstring>
 #include <initializer_list>
+#include <limits>
+#include <stdexcept>
 #include <thread>
 
 namespace {
@@ -43,6 +46,10 @@ constexpr int MethodPost = 1;
 constexpr int MethodPatch = 4;
 
 alignas(16) std::array<std::byte, 0x40> process{};
+
+void ClobberErrno(std::uintptr_t, std::size_t) {
+    errno = 99;
+}
 const char onlineId[20] = "player";
 const char filterParam[16] = {};
 const char body[] = "{}";
@@ -191,6 +198,9 @@ void TestRequests() {
     Require(sceNpWebApiCreateRequest(user, "group", "/path", MethodPost, &untyped, &request) == InvalidContentParameter, "content without a type");
     Require(sceNpWebApiCreateRequest(0, "group", "/path", MethodPost, &untyped, &request) == InvalidContentParameter, "content is checked before the user context");
     Require(sceNpWebApiCreateRequest(user, "group", "/path", MethodPatch, nullptr, &request) == InvalidArgument, "PATCH with SDK 2.50 or later");
+    Require(sceNpWebApiCreateRequest(user, "group", "/path", -1, nullptr, &request) == InvalidArgument && request == 0, "negative method rejected");
+    SetSdkVersion(0x02000000);
+    Require(sceNpWebApiCreateRequest(user, "group", "/path", -1, nullptr, &request) == InvalidArgument && request == 0, "negative method rejected before SDK 2.50");
     SetSdkVersion(0x05050001);
     request = 0;
     Require(sceNpWebApiCreateRequest(user, "userProfile", "/v1/users/me/profile", 99, nullptr, &request) == InvalidArgument && request == 0, "method 99 at SDK 0x05050001");
@@ -493,6 +503,7 @@ void TestMultipartRequests() {
     Require(sceNpWebApiCreateMultipartRequest(user, nullptr, "/path", MethodPost, &request) == InvalidArgument, "multipart request without an API group");
     Require(sceNpWebApiCreateMultipartRequest(user, "group", nullptr, MethodPost, &request) == InvalidArgument, "multipart request without a path");
     Require(sceNpWebApiCreateMultipartRequest(0, "group", "/path", MethodPatch, &request) == InvalidArgument, "the method is checked before the user context from SDK 2.50");
+    Require(sceNpWebApiCreateMultipartRequest(user, "group", "/path", -1, &request) == InvalidArgument && request == 0, "negative multipart method rejected");
     Require(sceNpWebApiCreateMultipartRequest(user + 1, "group", "/path", MethodPost, &request) == UserContextNotFound, "multipart request of an unknown user context");
     Require(sceNpWebApiCreateMultipartRequest(0, "group", "/path", MethodPost, &request) == LibContextNotFound, "multipart request of user context 0");
     Require(request == 0, "a failed multipart request leaves the id alone");
@@ -510,6 +521,8 @@ void TestMultipartRequests() {
     Require(sceNpWebApiSendRequest(request, nullptr, 0) == RequestNotFound, "send a deleted multipart request");
 
     SetSdkVersion(0x02000000);
+    std::int64_t negRequest = 55;
+    Require(sceNpWebApiCreateMultipartRequest(user, "group", "/path", -1, &negRequest) == InvalidArgument && negRequest == 55, "negative multipart method rejected before SDK 2.50");
     Require(sceNpWebApiCreateMultipartRequest(user, "group", "/path", MethodPatch, &request) == 0, "multipart PATCH before SDK 2.50");
     SetSdkVersion(0x04508001);
     Require(sceNpWebApiTerminate(context) == 0, "terminate the multipart library context");
@@ -562,6 +575,11 @@ void TestMultipartParts() {
     Require(sceNpWebApiAddMultipartPart(-1, nullptr, &index) == InvalidArgument, "null multipart parameter before lookup");
     Require(index == 0, "failed add part leaves index unmodified");
 
+    errno = 71;
+    Require(sceNpWebApiAddMultipartPart(multipartRequest, reinterpret_cast<const NpWebApiMultipartPartParameter*>(0x10), &index) == InvalidArgument, "unreadable multipart parameter");
+    Require(errno == 71, "unreadable multipart parameter changed host errno");
+    Require(index == 0, "unreadable multipart parameter leaves index unmodified");
+
     const NpWebApiHttpHeader headers[2] = {{"Header1", "Val1"}, {"Content-Length", "100"}};
     const NpWebApiMultipartPartParameter validParam{headers, 2, 10};
 
@@ -575,6 +593,11 @@ void TestMultipartParts() {
 
     Require(sceNpWebApiAddMultipartPart(multipartRequest, &validParam, &index) == 0, "add first multipart part");
     Require(index == 1, "first part index is 1");
+
+    errno = 71;
+    const NpWebApiMultipartPartParameter unindexedParam{nullptr, 0, 7};
+    Require(sceNpWebApiAddMultipartPart(multipartRequest, &unindexedParam, reinterpret_cast<int*>(0x10)) == InvalidArgument, "unwritable part index");
+    Require(errno == 71, "unwritable part index changed host errno");
 
     int index2 = 0;
     const NpWebApiMultipartPartParameter paramNoHeaders{nullptr, 0, 20};
@@ -648,11 +671,28 @@ void TestMultipartParts() {
     sceNpWebApiCheckTimeout();
     Require(sceNpWebApiSendMultipartRequest(timedReq, 1, "67890", 5) == NotSignedIn, "timed out multipart request returns NotSignedIn");
 
+    std::int64_t overflowReq = 0;
+    Require(sceNpWebApiCreateMultipartRequest(user, "group", "/path", MethodPost, &overflowReq) == 0, "create overflow multipart request");
+    int oIndex = 0;
+    const NpWebApiMultipartPartParameter overflowParam{nullptr, 0, 10};
+    Require(sceNpWebApiAddMultipartPart(overflowReq, &overflowParam, &oIndex) == 0, "add overflow part");
+    Require(sceNpWebApiSendMultipartRequest(overflowReq, 1, "12345", 5) == 0, "partial send before overflow");
+    Require(sceNpWebApiSendMultipartRequest(overflowReq, 1, "x", std::numeric_limits<std::size_t>::max() - 2) == NotSignedIn, "large send saturates instead of wrapping");
+
+    std::int64_t overflowReq2 = 0;
+    Require(sceNpWebApiCreateMultipartRequest(user, "group", "/path", MethodPost, &overflowReq2) == 0, "create overflow2 multipart request");
+    int oIndex2 = 0;
+    Require(sceNpWebApiAddMultipartPart(overflowReq2, &overflowParam, &oIndex2) == 0, "add overflow2 part");
+    Require(sceNpWebApiSendMultipartRequest2(overflowReq2, 1, "12345", 5, nullptr) == 0, "partial send2 before overflow");
+    Require(sceNpWebApiSendMultipartRequest2(overflowReq2, 1, "x", std::numeric_limits<std::size_t>::max(), nullptr) == NotSignedIn, "large send2 saturates instead of wrapping");
+
     Require(sceNpWebApiDeleteRequest(multipartRequest) == 0, "delete multipart request");
     Require(sceNpWebApiDeleteRequest(emptyMultipart) == 0, "delete empty multipart request");
     Require(sceNpWebApiDeleteRequest(chunkReq) == 0, "delete chunked multipart request");
     Require(sceNpWebApiDeleteRequest(abortReq) == 0, "delete abort multipart request");
     Require(sceNpWebApiDeleteRequest(timedReq) == 0, "delete timed multipart request");
+    Require(sceNpWebApiDeleteRequest(overflowReq) == 0, "delete overflow multipart request");
+    Require(sceNpWebApiDeleteRequest(overflowReq2) == 0, "delete overflow2 multipart request");
     Require(sceNpWebApiTerminate(context) == 0, "terminate multipart parts library context");
 }
 
@@ -661,9 +701,20 @@ void TestUtilityParseNpId() {
     Require(sceNpWebApiUtilityParseNpId(nullptr, &npId) == NpInvalidArgument, "null jsonNpId");
     Require(sceNpWebApiUtilityParseNpId(nullptr, nullptr) == NpInvalidArgument, "null jsonNpId and null npId");
     Require(sceNpWebApiUtilityParseNpId("cGxheWVy", nullptr) == 0, "null npId with valid jsonNpId");
+    errno = 71;
+    Require(sceNpWebApiUtilityParseNpId("cGxheWVy", reinterpret_cast<NpId*>(0x10)) == NpInvalidArgument, "unwritable npId");
+    Require(errno == 71, "unwritable npId changed host errno");
 
     std::memset(&npId, 0xCC, sizeof(npId));
-    Require(sceNpWebApiUtilityParseNpId("cGxheWVyQHNlZzEvc2VnMi5zZWcz", &npId) == 0, "parse serialized npId");
+    const NpId untouchedNpId = npId;
+    errno = 71;
+    Require(sceNpWebApiUtilityParseNpId(reinterpret_cast<const char*>(static_cast<std::uintptr_t>(0x10)), &npId) == NpInvalidArgument && errno == 71,
+            "unreadable jsonNpId must return InvalidArgument without changing errno");
+    Require(std::memcmp(&npId, &untouchedNpId, sizeof(npId)) == 0, "failed parseNpId modified output");
+
+    std::memset(&npId, 0xCC, sizeof(npId));
+    errno = 71;
+    Require(sceNpWebApiUtilityParseNpId("cGxheWVyQHNlZzEvc2VnMi5zZWcz", &npId) == 0 && errno == 71, "parse serialized npId");
     Require(std::strcmp(npId.handle.data, "player") == 0, "handle matches string before at");
     Require(std::memcmp(npId.opt, "seg1seg2", 8) == 0, "opt concatenates segments");
     Require(npId.reserved[0] == 0x01, "reserved 0 is 1");
@@ -818,6 +869,8 @@ void TestConnectionChecks() {
 }
 
 int main() {
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     InstallProcessParameters();
     SetSdkVersion(0x04508001);
     TestUnknownFieldChecks();
@@ -864,6 +917,38 @@ int main() {
                 "unreadable internalArgs must fail");
         Require(sceNpWebApiDeleteContext(userCtx) == 0, "delete userCtx");
         Require(sceNpWebApiTerminate(libCtx) == 0, "terminate libCtx");
+
+        alignas(8) std::array<std::byte, 0x30> inventoryObj{};
+        std::memset(inventoryObj.data(), 0xff, inventoryObj.size());
+        errno = 71;
+        Require(!libSceNpWebApiUnknown_ojGP5vur_plus_qM_nid_no_patch(inventoryObj.data()) && errno == 71, "ojGP5vur+qM -1 check");
+        errno = 71;
+        Require(!libSceNpWebApiUnknown_zQE2rxZdLy8_nid_no_patch(inventoryObj.data()) && errno == 71, "zQE2rxZdLy8 -1 check");
+        std::memset(inventoryObj.data(), 0, inventoryObj.size());
+        errno = 71;
+        Require(libSceNpWebApiUnknown_ojGP5vur_plus_qM_nid_no_patch(inventoryObj.data()) && errno == 71, "ojGP5vur+qM valid check");
+        errno = 71;
+        Require(libSceNpWebApiUnknown_zQE2rxZdLy8_nid_no_patch(inventoryObj.data()) && errno == 71, "zQE2rxZdLy8 valid check");
+        for (const void* badObj : {static_cast<const void*>(nullptr), reinterpret_cast<const void*>(static_cast<std::uintptr_t>(0x10))}) {
+            bool threwOj = false;
+            errno = 71;
+            try {
+                libSceNpWebApiUnknown_ojGP5vur_plus_qM_nid_no_patch(badObj);
+            } catch (const std::runtime_error&) {
+                threwOj = true;
+            }
+            Require(threwOj && errno == 71, "ojGP5vur+qM invalid object threw and preserved errno");
+            bool threwZq = false;
+            errno = 71;
+            try {
+                libSceNpWebApiUnknown_zQE2rxZdLy8_nid_no_patch(badObj);
+            } catch (const std::runtime_error&) {
+                threwZq = true;
+            }
+            Require(threwZq && errno == 71, "zQE2rxZdLy8 invalid object threw and preserved errno");
+        }
     }
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     return 0;
 }

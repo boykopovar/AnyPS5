@@ -116,7 +116,7 @@ public:
         const auto x = static_cast<std::uint32_t>(area.offset.x);
         const auto y = static_cast<std::uint32_t>(area.offset.y);
         const MergePush push{{x, y}, {x + area.extent.width, y + area.extent.height}, mask, samples};
-        context.Resolved(&DeviceFunctions::cmdBindPipeline, "vkCmdBindPipeline")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+        context.BindComputePipeline(commands, pipeline);
         context.Resolved(&DeviceFunctions::cmdBindDescriptorSets, "vkCmdBindDescriptorSets")(commands, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayout, 0, 1, &set, 0, nullptr);
         context.Resolved(&DeviceFunctions::cmdPushConstants, "vkCmdPushConstants")(commands, pipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
         context.Resolved(&DeviceFunctions::cmdDispatch, "vkCmdDispatch")(commands, (area.extent.width + 7u) / 8u, (area.extent.height + 7u) / 8u, 1);
