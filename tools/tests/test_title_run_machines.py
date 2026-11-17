@@ -24,6 +24,9 @@ def recorded(machines):
             "titles": {"PPSA00001": {"name": "Fixture", "version": "1", "seconds": 1, "missing_content": [],
                 "runs": [{"run": index + 1, "cache": "cold" if index == 0 else "warm", "outcome": "rendering",
                           "fps": 60.0, "machine": copy.deepcopy(machine), "first_error": "",
+                          "cache_policy": {"version": 1, "platform": "linux", "status": "runner-defaults",
+                              "environment": {"MESA_SHADER_CACHE_DIR": "/fixture/driver-cache", "__GL_SHADER_DISK_CACHE_PATH": "/fixture/driver-cache"},
+                              "overrides": [], "driver_directory": "/fixture/driver-cache"},
                           "native": {"summary": [{"commit": GOOD[:12], "dirty": False}]}}
                          for index, machine in enumerate(machines)]}}}
 

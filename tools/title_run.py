@@ -21,6 +21,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 import pad_input
 import pad_timeline
 import title_run_provenance
+import title_run_cache
 import unwrap_self
 from audit_dump import comparison_path
 from package_release import native_auxiliary_runtimes, windows_runtime
@@ -280,11 +281,14 @@ def recorded_context(summary, title):
     machine = recorded_machine(title["runs"][-1]) if title["runs"] else {}
     seconds, missing = title.get("seconds"), title.get("missing_content")
     context = {"contentVersion": title.get("version"), **{field: machine.get(field) for field in ("os", "cpu", "gpu", "driver")},
-               "driverCache": summary.get("driver_cache")}
+               "driverCache": title_run_cache.common_cache_policy(run.get("cache_policy") for run in title["runs"])}
     context = {field: value if isinstance(value, str) and value.strip() else None for field, value in context.items()}
     context["requestedSeconds"] = seconds if type(seconds) is int and seconds > 0 else None
     context["runCaches"] = [run.get("cache") if run.get("cache") in ("cold", "warm") else None for run in title["runs"]]
     context["runMachines"] = [recorded_machine(run) for run in title["runs"]]
+    context["runCachePolicies"] = [title_run_cache.recorded_cache_policy(run.get("cache_policy")) for run in title["runs"]]
+    if context["driverCache"] == title_run_cache.LABELS["unknown"]:
+        context["driverCache"] = None
     context["missingContent"] = sorted(set(missing)) if isinstance(missing, list) and all(isinstance(item, str) for item in missing) else None
     return context
 
@@ -294,7 +298,8 @@ def comparison_context(summary, previous, title_id):
                 "now": recorded_context(summary, summary["titles"][title_id])}
     unknowns = {side: [field for field, value in context.items() if value is None
                       or field == "runCaches" and (not value or None in value)
-                      or field == "runMachines" and (not value or any(None in machine.values() for machine in value))]
+                      or field == "runMachines" and (not value or any(None in machine.values() for machine in value))
+                      or field == "runCachePolicies" and (not value or any(policy is None or policy["status"] == "unknown" for policy in value))]
                 for side, context in contexts.items()}
     differences = [field for field in contexts["before"] if all(field not in unknowns[side] for side in contexts)
                    and contexts["before"][field] != contexts["now"][field]]
@@ -419,10 +424,10 @@ def names(entries):
 
 def context_display(value):
     if isinstance(value, list):
-        if value and all(isinstance(machine, dict) for machine in value):
+        if value and all(isinstance(machine, dict) and all(field in machine for field in MACHINE_FIELDS) for machine in value):
             return "; ".join(f"run {index}: " + ", ".join(f"{field} {display(machine[field])}" for field in MACHINE_FIELDS)
                              for index, machine in enumerate(value, 1))
-        return ", ".join(display(item) for item in value) if value else "none"
+        return "; ".join(json.dumps(item, sort_keys=True).replace("|", "\\|") if isinstance(item, dict) else display(item) for item in value) if value else "none"
     return display(value)
 
 
@@ -431,7 +436,8 @@ def render_compare(compared):
     lines = ["| " + " | ".join(columns) + " |", "|" + "---|" * len(columns)]
     details = ["Recorded context compares content version, machine, requested time, cache classifications and missing content only; "
                "it does not establish scene, environment, resolution or native runtime identity equivalence. "
-               "Scalar machine fields describe the last run; runMachines records every run in order. "
+               "Scalar machine fields describe the last run; runMachines and runCachePolicies record every run in order. "
+               "Cache policies describe configured controls, not observed cache hits or actual warmth. "
                "Numeric pairs use the last run; outcomes use the worst of all runs."]
     for title_id, title in compared.items():
         context = title["context"]
@@ -507,7 +513,7 @@ def render_markdown(summary, previous=None):
     lacking = [f"{title['name']} ({title_id}) {', '.join(title['missing_content'])}" for title_id, title in sorted(summary["titles"].items()) if title.get("missing_content")]
     if lacking:
         lines += [f"Ran without content: {'; '.join(lacking)}", ""]
-    columns = ["Title", "ID", "Version", "Cold", "Warm", "FPS", "First error", "Native runtime provenance"] + (["Before"] if previous else [])
+    columns = ["Title", "ID", "Version", "Cold (requested)", "Warm (requested)", "FPS", "First error", "Native runtime provenance"] + (["Before"] if previous else [])
     if previous:
         regressions, improvements = compare(summary, previous)
         for label, changes in (("Regressions", regressions), ("Improvements", improvements)):
@@ -529,6 +535,15 @@ def render_markdown(summary, previous=None):
             old = previous["titles"].get(title_id)
             row.append(worst(old["runs"]) if old else "new")
         lines.append("| " + " | ".join(row) + " |")
+    lines += ["", "Cold/Warm are requested sequence labels, not observed cache warmth. "
+              "Configured cache policy is recorded per run; overrides are not proof of empty or isolated caches.",
+              "Configured cache policy across all runs: " + title_run_cache.common_cache_policy(run.get("cache_policy")
+                  for title in summary["titles"].values() for run in title["runs"]) + ".",
+              "", "| ID | Run | Requested cache phase | Configured cache policy |", "|---|---|---|---|"]
+    for title_id, title in sorted(summary["titles"].items()):
+        for index, run in enumerate(title["runs"], 1):
+            policy = title_run_cache.cache_policy_label(run.get("cache_policy")).replace("|", "\\|").replace("\n", " ")
+            lines.append(f"| {title_id} | {index} | {run.get('cache', 'not recorded')} | {policy} |")
     if previous and (compared := compare_runs(summary, previous)):
         lines += ["", *render_compare(compared)]
     return "\n".join(lines + [""])
@@ -1061,6 +1076,7 @@ def run_title(executable, work, run_dir, seconds, extra_env, pad=None):
     env = {**inherited, "SDL_WINDOW_NO_ACTIVATION_WHEN_SHOWN": "1",
            "APS5_TRACE_SUMMARY_EVERY": "10", "APS5_TRACE_DIR": str(run_dir), **FRAME_ENV,
            "MESA_SHADER_CACHE_DIR": str(work / "driver-cache"), "__GL_SHADER_DISK_CACHE_PATH": str(work / "driver-cache"), **extra_env}
+    policy = title_run_cache.configured_cache_policy(env, extra_env, work)
     env.setdefault("SDL_AUDIODRIVER", "dummy")
     pad_file, queued = work / "pad-input.txt", None
     if pad:
@@ -1099,7 +1115,7 @@ def run_title(executable, work, run_dir, seconds, extra_env, pad=None):
               **({"summary_errors": summary["native_errors"]} if "native_errors" in summary else {})}
     return {"outcome": classify(True, exit_code, age, bool(frames), uniform), "exit_code": exit_code, "seconds": elapsed,
             "presents": summary["presents"], "fps": summary["fps"], "first_error": first_error(text),
-            "warnings": warning_counts(text), "frames": frames, "report": report, "native": native, "gpu": summary["gpu"], "driver": summary["driver"],
+            "warnings": warning_counts(text), "frames": frames, "report": report, "native": native, "cache_policy": policy, "gpu": summary["gpu"], "driver": summary["driver"],
             "os": summary["os"], "cpu": cpu.group(1) if cpu else "", **({"pad_queued_s": queued} if pad else {})}
 
 
@@ -1346,7 +1362,8 @@ def run_cli(argv, capture_resources):
     output = Path(tempfile.mkdtemp(prefix=f"{commit}-{datetime.datetime.now():%Y%m%d-%H%M%S}-", dir=args.out.resolve()))
     summary = {"build": {"commit": commit, "dirty": bool(git(source, "status", "--porcelain", "--untracked-files=no")), "note": args.note},
                "machine": {"os": "", "gpu": "", "driver": "", "cpu": ""}, "runs": args.runs, "seconds": args.seconds or 60,
-               "driver_cache": "isolated" if platform == "linux" else "shared (not isolated)", "titles": {}}
+               "driver_cache": "unknown cache configuration" if args.profile == "smoke" else
+                               "isolated" if platform == "linux" else "shared (not isolated)", "titles": {}}
     if args.profile == "performance":
         summary.update(profile="performance", format="anyps5-performance-capture/1", scene=args.scene,
                        window={"kind": args.capture_kind, "spec": list(args.capture_window)})
@@ -1414,6 +1431,8 @@ def run_cli(argv, capture_resources):
         summary["titles"][title_id] = {"name": found[title_id]["name"], "version": found[title_id]["version"], "seconds": seconds, "missing_content": missing, "runs": runs}
         if args.profile == "smoke":
             summary["machine"] = common_machine(summary["titles"])
+            summary["driver_cache"] = title_run_cache.common_cache_policy(run.get("cache_policy")
+                for title in summary["titles"].values() for run in title["runs"])
         write_summary(output, summary)
     write_summary(output, summary)
     if args.profile == "performance":

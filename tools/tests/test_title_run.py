@@ -326,6 +326,9 @@ def summary(titles):
     for title in titles.values():
         for observed in title["runs"]:
             observed["machine"] = copy.deepcopy(result["machine"])
+            observed["cache_policy"] = {"version": 1, "platform": "linux", "status": "runner-defaults",
+                "environment": {"MESA_SHADER_CACHE_DIR": "/fixture/driver-cache", "__GL_SHADER_DISK_CACHE_PATH": "/fixture/driver-cache"},
+                "overrides": [], "driver_directory": "/fixture/driver-cache"}
     return result
 
 
@@ -551,7 +554,7 @@ class ReportTests(unittest.TestCase):
             "",
             "Regressions (recorded context matched): Light (PPSA85300) rendering -> crashed",
             "",
-            "| Title | ID | Version | Cold | Warm | FPS | First error | Native runtime provenance | Before |",
+            "| Title | ID | Version | Cold (requested) | Warm (requested) | FPS | First error | Native runtime provenance | Before |",
             "|---|---|---|---|---|---|---|---|---|",
             "| Light | PPSA85300 | 0.4 | crashed | rendering | 31.0 | what(): unsupported MIB 1.1 \\| x | unknown; unknown | rendering |",
             "",
@@ -1124,7 +1127,6 @@ class ComparisonContextTests(unittest.TestCase):
         cases = [("contentVersion", "title", "version", "2"), ("os", "machine", "os", "Linux"),
                  ("cpu", "machine", "cpu", "Another CPU"), ("gpu", "machine", "gpu", "Another GPU"),
                  ("driver", "machine", "driver", "Another driver"), ("requestedSeconds", "title", "seconds", 120),
-                 ("driverCache", "summary", "driver_cache", "shared (not isolated)"),
                  ("missingContent", "title", "missing_content", ["pak0.pak"])]
         for field, section, key, value in cases:
             with self.subTest(field=field):
@@ -1230,6 +1232,7 @@ class ComparisonContextTests(unittest.TestCase):
         del before["machine"]
         for observed in before["titles"]["PPSA00001"]["runs"]:
             del observed["machine"]
+            del observed["cache_policy"]
         del before["driver_cache"]
         del before["titles"]["PPSA00001"]["seconds"]
         del before["titles"]["PPSA00001"]["missing_content"]
@@ -1241,7 +1244,7 @@ class ComparisonContextTests(unittest.TestCase):
         self.assertEqual(context["status"], "differing")
         self.assertEqual(context["differences"], ["contentVersion"])
         self.assertEqual(set(context["unknowns"]["before"]),
-                         {"os", "cpu", "gpu", "driver", "requestedSeconds", "missingContent", "runCaches", "runMachines", "driverCache"})
+                         {"os", "cpu", "gpu", "driver", "requestedSeconds", "missingContent", "runCaches", "runMachines", "driverCache", "runCachePolicies"})
         self.assertEqual(context["before"]["runCaches"], [None, "warm"])
         self.assertEqual(compared["fps"], {"before": 10, "now": 60})
         self.assertIn("not recorded", title_run.render_markdown(now, before))
