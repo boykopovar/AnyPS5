@@ -8,7 +8,9 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <initializer_list>
 #include <iostream>
+#include <limits>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -78,6 +80,17 @@ constexpr std::array<Operands, 40> Picked{{
     {48.0f, 0.02f, -0.96f}, {-0.6f, -0.7f, 0.58f}, {0.9f, 1.2f, -0.08f}, {0.3f, 0.3f, 0.91f},
 }};
 
+constexpr std::array<std::array<std::uint32_t, 3>, 16> Special{{
+    {0x7fc12345u, 0x3f800000u, 0x3f800000u}, {0x3f800000u, 0x7fa00001u, 0x40000000u}, {0xffc00042u, 0xc0000000u, 0x7fa00001u},
+    {0x7f800000u, 0x3f800000u, 0xff800000u}, {0xff800000u, 0x00000000u, 0x3f800000u}, {0x00000000u, 0x80000000u, 0x80000000u},
+    {0x80000000u, 0x7f800000u, 0x00000000u}, {0x00000001u, 0x3f800000u, 0x80000003u}, {0x007fffffu, 0x807fffffu, 0x00400000u},
+    {0x0d800000u, 0x30800000u, 0x00020000u}, {0x71800000u, 0x71800000u, 0xff800000u}, {0xc0400000u, 0x00800000u, 0x80600000u},
+    {0x3f800001u, 0x3f800001u, 0xbf800002u}, {0x80000001u, 0x80000001u, 0x00000000u}, {0x7f7fffffu, 0x40000000u, 0xff7fffffu},
+    {0x00800000u, 0x3f000000u, 0x00000000u},
+}};
+
+constexpr std::uint32_t SpecialFirst = static_cast<std::uint32_t>(Picked.size());
+
 std::uint32_t Bits(float value) {
     return std::bit_cast<std::uint32_t>(value);
 }
@@ -97,6 +110,7 @@ std::uint32_t TowardZero(std::uint32_t bits) {
     const std::uint32_t sign = (bits >> 16u) & 0x8000u;
     const std::uint32_t exponent = (bits >> 23u) & 0xffu;
     const std::uint32_t mantissa = bits & 0x7fffffu;
+    if (exponent == 0xffu) return mantissa == 0u ? sign | 0x7c00u : sign | 0x7e00u | (mantissa >> 13u);
     if (exponent >= 143u) return sign | 0x7bffu;
     if (exponent >= 113u) return sign | ((exponent - 112u) << 10u) | (mantissa >> 13u);
     if (exponent >= 103u) return sign | ((mantissa | 0x800000u) >> (126u - exponent));
@@ -146,6 +160,166 @@ std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t by
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
 }
 
+struct Value {
+    bool nan;
+    std::uint32_t bits;
+};
+
+struct Allowed {
+    std::vector<std::uint32_t> bits;
+    bool nan = false;
+};
+
+struct Tally {
+    std::uint32_t nan = 0;
+    std::uint32_t denormalKept = 0;
+    std::uint32_t denormalFlushed = 0;
+    std::uint32_t inputKept = 0;
+    std::uint32_t inputFlushed = 0;
+    std::uint32_t fmaFused = 0;
+    std::uint32_t fmaRounded = 0;
+};
+
+Tally Seen;
+
+bool IsNan(std::uint32_t bits) {
+    return (bits & 0x7fffffffu) > 0x7f800000u;
+}
+
+bool IsDenormal(std::uint32_t bits) {
+    return (bits & 0x7f800000u) == 0u && (bits & 0x007fffffu) != 0u;
+}
+
+std::uint32_t FlushInput(std::uint32_t bits) {
+    return IsDenormal(bits) ? bits & 0x80000000u : bits;
+}
+
+double Wide(std::uint32_t bits) {
+    const double sign = (bits & 0x80000000u) != 0u ? -1.0 : 1.0;
+    const std::uint32_t exponent = (bits >> 23u) & 0xffu;
+    const std::uint32_t mantissa = bits & 0x007fffffu;
+    if (exponent == 0xffu) return mantissa != 0u ? std::numeric_limits<double>::quiet_NaN() : sign * std::numeric_limits<double>::infinity();
+    if (exponent == 0u) return sign * std::ldexp(static_cast<double>(mantissa), -149);
+    return sign * std::ldexp(static_cast<double>(mantissa | 0x00800000u), static_cast<int>(exponent) - 150);
+}
+
+Value Round(double value) {
+    if (std::isnan(value)) return {true, 0u};
+    const std::uint32_t sign = std::signbit(value) ? 0x80000000u : 0u;
+    if (std::isinf(value)) return {false, sign | 0x7f800000u};
+    const double magnitude = std::fabs(value);
+    if (magnitude == 0.0) return {false, sign};
+    int exponent = 0;
+    std::frexp(magnitude, &exponent);
+    int scale = std::max(exponent, -125);
+    auto mantissa = static_cast<std::uint64_t>(std::nearbyint(std::ldexp(magnitude, 24 - scale)));
+    if (mantissa == (1ull << 24u)) {
+        mantissa >>= 1u;
+        ++scale;
+    }
+    if (scale > 128) return {false, sign | 0x7f800000u};
+    if (mantissa < (1ull << 23u)) return {false, sign | static_cast<std::uint32_t>(mantissa)};
+    return {false, sign | (static_cast<std::uint32_t>(scale + 126) << 23u) | static_cast<std::uint32_t>(mantissa & 0x007fffffu)};
+}
+
+void Admit(Allowed& allowed, Value value) {
+    if (value.nan) {
+        allowed.nan = true;
+        return;
+    }
+    allowed.bits.push_back(value.bits);
+    if (IsDenormal(value.bits)) allowed.bits.push_back(value.bits & 0x80000000u);
+}
+
+std::array<std::uint32_t, 2> InputForms(std::uint32_t bits) {
+    return {bits, FlushInput(bits)};
+}
+
+template<class TOperation>
+Allowed Binary(std::uint32_t a, std::uint32_t b, TOperation operation) {
+    Allowed allowed;
+    for (const std::uint32_t x : InputForms(a))
+        for (const std::uint32_t y : InputForms(b)) Admit(allowed, Round(operation(Wide(x), Wide(y))));
+    return allowed;
+}
+
+Allowed FusedOnly(std::uint32_t a, std::uint32_t b, std::uint32_t c) {
+    Allowed allowed;
+    for (const std::uint32_t x : InputForms(a))
+        for (const std::uint32_t y : InputForms(b))
+            for (const std::uint32_t z : InputForms(c)) Admit(allowed, Round(std::fma(Wide(x), Wide(y), Wide(z))));
+    return allowed;
+}
+
+Allowed RoundedOnly(std::uint32_t a, std::uint32_t b, std::uint32_t c) {
+    Allowed allowed;
+    for (const std::uint32_t x : InputForms(a))
+        for (const std::uint32_t y : InputForms(b))
+            for (const std::uint32_t z : InputForms(c)) {
+                const Value product = Round(Wide(x) * Wide(y));
+                if (product.nan) {
+                    allowed.nan = true;
+                    continue;
+                }
+                for (const std::uint32_t p : InputForms(product.bits)) Admit(allowed, Round(Wide(p) + Wide(z)));
+            }
+    return allowed;
+}
+
+bool Contains(const Allowed& allowed, std::uint32_t got) {
+    if (IsNan(got)) return allowed.nan;
+    return std::find(allowed.bits.begin(), allowed.bits.end(), got) != allowed.bits.end();
+}
+
+Allowed Merge(Allowed first, const Allowed& second) {
+    first.nan = first.nan || second.nan;
+    first.bits.insert(first.bits.end(), second.bits.begin(), second.bits.end());
+    return first;
+}
+
+Allowed Saturated(const Allowed& source) {
+    Allowed allowed;
+    if (source.nan) allowed.bits.push_back(0u);
+    for (const std::uint32_t bits : source.bits) {
+        const double value = Wide(bits);
+        if (value >= 1.0) {
+            allowed.bits.push_back(0x3f800000u);
+        } else if ((bits & 0x80000000u) != 0u) {
+            allowed.bits.push_back(0u);
+            if ((bits & 0x7f800000u) == 0u) allowed.bits.push_back(0x80000000u);
+        } else {
+            allowed.bits.push_back(bits);
+            if (IsDenormal(bits)) allowed.bits.push_back(0u);
+        }
+    }
+    return allowed;
+}
+
+Allowed Exactly(std::initializer_list<std::uint32_t> bits) {
+    Allowed allowed;
+    allowed.bits.assign(bits);
+    return allowed;
+}
+
+Allowed AnyNan() {
+    Allowed allowed;
+    allowed.nan = true;
+    return allowed;
+}
+
+std::string Describe(const Allowed& allowed) {
+    std::string text;
+    for (const std::uint32_t bits : allowed.bits) text += (text.empty() ? "" : ", ") + Hex(bits);
+    if (allowed.nan) text += std::string(text.empty() ? "" : ", ") + "any NaN";
+    return text;
+}
+
+void Note(std::uint32_t got, Value ieee) {
+    if (ieee.nan || !IsDenormal(ieee.bits)) return;
+    if (got == ieee.bits) ++Seen.denormalKept;
+    if ((got & 0x7fffffffu) == 0u) ++Seen.denormalFlushed;
+}
+
 std::string Where(std::uint32_t lane, std::uint32_t column, const Operands& operands, std::uint32_t got) {
     return std::string("f32 plain float: ") + Names[column] + " in lane " + std::to_string(lane) + " with a=" + Hex(Bits(operands.a)) +
            " b=" + Hex(Bits(operands.b)) + " c=" + Hex(Bits(operands.c)) + " is " + Hex(got);
@@ -160,6 +334,7 @@ void RequireFma(std::uint32_t lane, std::uint32_t column, const Operands& operan
     const float unfused = clamp ? Clamp01(Unfused(operands.a, operands.b, operands.c)) : Unfused(operands.a, operands.b, operands.c);
     Require(got == Bits(fused) || got == Bits(unfused),
             Where(lane, column, operands, got) + ", expected " + Hex(Bits(fused)) + " (fused) or " + Hex(Bits(unfused)) + " (product rounded first)");
+    if (!clamp && Bits(fused) != Bits(unfused)) ++(got == Bits(fused) ? Seen.fmaFused : Seen.fmaRounded);
 }
 
 void RequireWithin(std::uint32_t lane, std::uint32_t column, const Operands& operands, std::uint32_t got, double reference, double ulps) {
@@ -202,11 +377,106 @@ void Check(std::uint32_t lane, const Operands& operands, const std::uint32_t* re
     Require(result[19] == negated, Where(lane, 19u, operands, result[19]) + ", expected " + Hex(negated));
 }
 
+
+void RequireAllowed(std::uint32_t lane, std::uint32_t column, const Operands& operands, std::uint32_t got, const Allowed& allowed) {
+    Require(Contains(allowed, got), Where(lane, column, operands, got) + ", expected one of " + Describe(allowed));
+    if (IsNan(got)) ++Seen.nan;
+}
+
+Allowed UnarySpecial(std::uint32_t column, std::uint32_t bits) {
+    const bool negative = (bits & 0x80000000u) != 0u;
+    const bool zero = (bits & 0x7fffffffu) == 0u;
+    const std::uint32_t sign = bits & 0x80000000u;
+    if (IsNan(bits)) return AnyNan();
+    switch (column) {
+    case 5u: return Exactly({zero ? (sign | 0x7f800000u) : sign});
+    case 6u: return Exactly({zero ? 0x7f800000u : 0u});
+    case 7u: return Exactly({zero ? 0u : 0x7f800000u});
+    case 8u: return Exactly({zero ? 0xff800000u : 0x7f800000u});
+    case 9u: return Exactly({zero ? 0x3f800000u : (negative ? 0u : 0x7f800000u)});
+    case 11u: return zero ? Exactly({0u, 0x80000000u}) : AnyNan();
+    default: return Exactly({bits});
+    }
+}
+
+bool UnaryMatches(std::uint32_t column, std::uint32_t input, std::uint32_t got, double ulps) {
+    if (IsNan(input) || (input & 0x7fffffffu) == 0u || (input & 0x7fffffffu) == 0x7f800000u) return Contains(UnarySpecial(column, input), got);
+    const double x = Wide(input);
+    double reference = 0.0;
+    switch (column) {
+    case 5u: reference = 1.0 / x; break;
+    case 6u: reference = 1.0 / std::sqrt(x); break;
+    case 7u: reference = std::sqrt(x); break;
+    case 8u: reference = std::log2(x); break;
+    case 9u: reference = std::exp2(x); break;
+    case 10u: reference = std::floor(x); break;
+    case 11u: reference = x - std::floor(x); break;
+    case 12u: reference = std::trunc(x); break;
+    case 13u: reference = std::ceil(x); break;
+    default: reference = std::nearbyint(x); break;
+    }
+    if (column >= 10u) {
+        Allowed allowed;
+        Admit(allowed, Round(reference));
+        return Contains(allowed, got);
+    }
+    if (IsNan(got)) return false;
+    if (column == 8u && x >= 0.5 && x <= 2.0) return std::fabs(Wide(got) - reference) < std::ldexp(1.0, -21);
+    if (std::fabs(reference) > static_cast<double>(std::numeric_limits<float>::max())) return got == (reference < 0.0 ? 0xff800000u : 0x7f800000u);
+    if (std::fabs(reference) < std::ldexp(1.0, -126)) return (got & 0x7fffffffu) == 0u || std::fabs(Wide(got) - reference) <= std::ldexp(3.0, -149);
+    return Ulps(Float(got), reference) <= ulps;
+}
+
+void RequireUnary(std::uint32_t lane, std::uint32_t column, const Operands& operands, std::uint32_t got, std::uint32_t input, double ulps) {
+    const bool kept = UnaryMatches(column, input, got, ulps);
+    const bool flushed = UnaryMatches(column, FlushInput(input), got, ulps);
+    Require(kept || flushed, Where(lane, column, operands, got) + ", outside what this instruction allows for " + Hex(input) +
+                                 (IsDenormal(input) ? " or for its flushed form " + Hex(FlushInput(input)) : std::string()));
+    if (IsNan(got)) ++Seen.nan;
+    if (IsDenormal(input) && kept != flushed) ++(kept ? Seen.inputKept : Seen.inputFlushed);
+}
+
+void CheckSpecial(std::uint32_t lane, const std::array<std::uint32_t, 3>& bits, const std::uint32_t* result) {
+    const Operands operands{Float(bits[0]), Float(bits[1]), Float(bits[2])};
+    const std::uint32_t a = bits[0];
+    const std::uint32_t b = bits[1];
+    const std::uint32_t c = bits[2];
+    const auto add = Binary(a, b, [](double x, double y) { return x + y; });
+    const auto mul = Binary(a, b, [](double x, double y) { return x * y; });
+    const auto fused = FusedOnly(a, b, c);
+    const auto rounded = RoundedOnly(a, b, c);
+    const auto fma = Merge(fused, rounded);
+    RequireAllowed(lane, 0u, operands, result[0], add);
+    Note(result[0], Round(Wide(a) + Wide(b)));
+    RequireAllowed(lane, 1u, operands, result[1], Binary(a, b, [](double x, double y) { return x - y; }));
+    Note(result[1], Round(Wide(a) - Wide(b)));
+    RequireAllowed(lane, 2u, operands, result[2], mul);
+    Note(result[2], Round(Wide(a) * Wide(b)));
+    for (const std::uint32_t column : {3u, 4u}) {
+        RequireAllowed(lane, column, operands, result[column], fma);
+        Note(result[column], Round(std::fma(Wide(a), Wide(b), Wide(c))));
+        if (Contains(fused, result[column]) != Contains(rounded, result[column])) ++(Contains(fused, result[column]) ? Seen.fmaFused : Seen.fmaRounded);
+    }
+    const std::uint32_t magnitude = a & 0x7fffffffu;
+    RequireUnary(lane, 5u, operands, result[5], a, 2.5);
+    RequireUnary(lane, 6u, operands, result[6], magnitude, 2.0);
+    RequireUnary(lane, 7u, operands, result[7], magnitude, 4.5);
+    RequireUnary(lane, 8u, operands, result[8], magnitude, 3.0);
+    RequireUnary(lane, 9u, operands, result[9], a, 3.0 + 2.0 * std::fabs(Wide(a)));
+    for (std::uint32_t column = 10u; column <= 14u; ++column) RequireUnary(lane, column, operands, result[column], a, 0.0);
+    RequireAllowed(lane, 15u, operands, result[15], Saturated(add));
+    RequireAllowed(lane, 16u, operands, result[16], Saturated(mul));
+    RequireAllowed(lane, 17u, operands, result[17], Saturated(fma));
+    const std::uint32_t packed = TowardZero(a) | (TowardZero(b) << 16u);
+    Require(result[18] == packed, Where(lane, 18u, operands, result[18]) + ", expected " + Hex(packed));
+    const std::uint32_t negated = TowardZero(c) | (TowardZero(c ^ 0x80000000u) << 16u);
+    Require(result[19] == negated, Where(lane, 19u, operands, result[19]) + ", expected " + Hex(negated));
+}
+
 }
 
 int main() {
     try {
-        Require(ShaderRecompiler::ShaderOptOn(ShaderRecompiler::ShaderOpt::PlainFloat), "f32 plain float: run with APS5_SHADER_OPT_PLAIN_FLOAT on, the default");
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         const auto inputs = Inputs();
@@ -214,6 +484,9 @@ int main() {
             Input[lane * InputStride] = Bits(inputs[lane].a);
             Input[lane * InputStride + 1u] = Bits(inputs[lane].b);
             Input[lane * InputStride + 2u] = Bits(inputs[lane].c);
+        }
+        for (std::uint32_t index = 0; index < Special.size(); ++index) {
+            std::copy(Special[index].begin(), Special[index].end(), Input.begin() + (SpecialFirst + index) * InputStride);
         }
         Output.fill(0xdeadbeefu);
         std::vector<std::uint32_t> userData(8, 0u);
@@ -235,8 +508,20 @@ int main() {
         const auto result = ShaderRecompiler::Recompile(request);
         device->Dispatch(result, Lanes / Threads, 1, 1, {}, reinterpret_cast<std::uintptr_t>(Code.data()));
         device->WaitIdle();
-        for (std::uint32_t lane = 0; lane < Lanes; ++lane) Check(lane, inputs[lane], &Output[lane * OutputStride]);
-        std::printf("f32 plain float tests passed (%u lanes, %u results each)\n", Lanes, Results);
+        for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
+            if (lane >= SpecialFirst && lane < SpecialFirst + Special.size()) {
+                CheckSpecial(lane, Special[lane - SpecialFirst], &Output[lane * OutputStride]);
+            } else {
+                Check(lane, inputs[lane], &Output[lane * OutputStride]);
+            }
+        }
+        const bool plain = ShaderRecompiler::ShaderOptOn(ShaderRecompiler::ShaderOpt::PlainFloat);
+        std::printf("f32 plain float tests passed with APS5_SHADER_OPT_PLAIN_FLOAT=%d (%u lanes, %zu of them NaN, infinity, zero and denormal inputs, %u results each): "
+                    "%u NaN results (payloads not compared), %u denormal results kept and %u flushed to zero, "
+                    "%u unary results that used a denormal input as is and %u that flushed it, "
+                    "fma where fused and product-rounded results differ: %u fused, %u product-rounded\n",
+                    plain ? 1 : 0, Lanes, Special.size(), Results, Seen.nan, Seen.denormalKept, Seen.denormalFlushed, Seen.inputKept, Seen.inputFlushed,
+                    Seen.fmaFused, Seen.fmaRounded);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
