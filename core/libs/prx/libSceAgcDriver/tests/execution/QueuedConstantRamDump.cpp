@@ -449,7 +449,6 @@ int DispatchReadsQueuedDump() {
     return 0;
 }
 
-
 int DrawReadsQueuedDumpedDescriptor() {
     constexpr std::uint64_t DescriptorOffset = 0x6000;
     constexpr std::uint64_t StaleOffset = 0x6100;

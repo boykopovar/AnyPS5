@@ -412,8 +412,8 @@ bool ShaderMemory::read(void* context, std::uint64_t address, std::uint32_t* val
                 (self.forceSync != 0u ? self.pendingSpan(address, self.descriptorSpanBytes, {}) != PendingWrite::None
                                       : spanNeedsSync(self.pendingSpan(address, self.descriptorSpanBytes, {})))) {
                 std::vector<std::byte> span(self.descriptorSpanBytes);
-                const auto spanPolicy = self.pendingWrite != nullptr ? self.pendingWrite(address, span.size(), span) : PendingWrite::Sync;
-                if (spanPolicy == PendingWrite::KnownValue || spanPolicy == PendingWrite::VerifyKnownValue) {
+                const auto spanPolicy = self.forceSync == 0u && self.pendingWrite != nullptr ? self.pendingWrite(address, span.size(), span) : PendingWrite::Sync;
+                if ((spanPolicy == PendingWrite::KnownValue || spanPolicy == PendingWrite::VerifyKnownValue) && GuestMemory::Accessible(reinterpret_cast<const void*>(address), sizeof(word))) {
                     policy = spanPolicy;
                     std::memcpy(&word, span.data(), sizeof(word));
                 } else {
