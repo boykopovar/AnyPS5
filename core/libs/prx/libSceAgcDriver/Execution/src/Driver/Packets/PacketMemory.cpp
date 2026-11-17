@@ -433,7 +433,7 @@ bool Driver::enqueueDmaPacket(std::span<const std::uint32_t> packet, std::uint32
                 }
             }
         }
-        if (copy.bytes <= gpuStoreLimit && copyOnGpuBehindPendingSource(copy, queue)) {
+        if (copyOnGpuBehindPendingSource(copy, queue)) {
             ++pipelinedCopiesBehindPendingSources;
             return;
         }
