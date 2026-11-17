@@ -7,11 +7,20 @@
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestErrno.hpp"
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #ifndef _WIN32
 #include <sys/stat.h>
+#include <unistd.h>
+#else
+#include <io.h>
 #endif
+#include <fcntl.h>
+#include <fstream>
+#include <iterator>
+#include <thread>
 
 #include <cmath>
 #include <cstddef>
@@ -25,6 +34,7 @@
 #include <string>
 #include <utility>
 #include <source_location>
+#include <type_traits>
 
 namespace {
 
@@ -201,6 +211,83 @@ static void TestMemoryAllocations() {
 
     void* cross2 = _ZN7bmalloc3api15mallocOutOfLineEmNS_8HeapKindE(60, 0);
     _ZN8Gigacage4freeENS_4KindEPv(0, cross2);
+}
+
+template <typename Function>
+bool ExpectBmallocOperatorStub(Function function, const char* name) {
+    const std::uint64_t before = NotImplementedCalls_nid_no_patch();
+    try {
+        static_cast<void>(function());
+    } catch (const std::runtime_error& error) {
+        if (std::string(error.what()) == std::string(name) + " not implemented" &&
+            NotImplementedCalls_nid_no_patch() == before + 1) {
+            std::fprintf(stderr, "EXPECTED_BMALLOC_THROW %s\n", name);
+            return true;
+        }
+    }
+    return false;
+}
+
+template <typename ScalarNew, typename ScalarDelete, typename ArrayNew>
+bool TestBmallocOperatorClass(ScalarNew scalarNew, ScalarDelete scalarDelete, ArrayNew arrayNew,
+                              const char* scalarNewName, const char* scalarDeleteName,
+                              const char* arrayNewName) {
+    if constexpr (std::is_invocable_r_v<int, ScalarNew> &&
+                  std::is_invocable_r_v<int, ScalarDelete> &&
+                  std::is_invocable_r_v<int, ArrayNew>) {
+        ExpectBmallocOperatorStub(scalarNew, scalarNewName);
+        ExpectBmallocOperatorStub(scalarDelete, scalarDeleteName);
+        ExpectBmallocOperatorStub(arrayNew, arrayNewName);
+        return false;
+    } else {
+        static_assert(std::is_invocable_r_v<void*, ScalarNew, std::size_t>);
+        static_assert(std::is_invocable_r_v<void, ScalarDelete, void*>);
+        static_assert(std::is_invocable_r_v<void*, ArrayNew, std::size_t>);
+
+        void* scalarZero = scalarNew(0);
+        Require(scalarZero != nullptr);
+        Require((reinterpret_cast<std::uintptr_t>(scalarZero) % alignof(std::max_align_t)) == 0);
+        scalarDelete(scalarZero);
+        scalarDelete(nullptr);
+
+        auto* scalar = static_cast<unsigned char*>(scalarNew(128));
+        Require(scalar != nullptr);
+        for (std::size_t i = 0; i < 128; ++i) {
+            scalar[i] = static_cast<unsigned char>(i ^ 0xA5);
+        }
+        for (std::size_t i = 0; i < 128; ++i) {
+            Require(scalar[i] == static_cast<unsigned char>(i ^ 0xA5));
+        }
+        scalarDelete(scalar);
+
+        void* arrayZero = arrayNew(0);
+        Require(arrayZero != nullptr);
+        Require((reinterpret_cast<std::uintptr_t>(arrayZero) % alignof(std::max_align_t)) == 0);
+        _ZN7bmalloc3api13freeOutOfLineEPvNS_8HeapKindE(arrayZero, 0);
+
+        auto* array = static_cast<unsigned char*>(arrayNew(128));
+        Require(array != nullptr);
+        for (std::size_t i = 0; i < 128; ++i) {
+            array[i] = static_cast<unsigned char>(i ^ 0x5A);
+        }
+        for (std::size_t i = 0; i < 128; ++i) {
+            Require(array[i] == static_cast<unsigned char>(i ^ 0x5A));
+        }
+        _ZN7bmalloc3api13freeOutOfLineEPvNS_8HeapKindE(array, 0);
+        return true;
+    }
+}
+
+static bool TestBmallocHeapOperators() {
+    const bool isoTls = TestBmallocOperatorClass(
+        _ZN7bmalloc11IsoTLSEntrynwEm, _ZN7bmalloc11IsoTLSEntrydlEPv,
+        _ZN7bmalloc11IsoTLSEntrynaEm, "_ZN7bmalloc11IsoTLSEntrynwEm",
+        "_ZN7bmalloc11IsoTLSEntrydlEPv", "_ZN7bmalloc11IsoTLSEntrynaEm");
+    const bool isoHeap = TestBmallocOperatorClass(
+        _ZN7bmalloc15IsoHeapImplBasenwEm, _ZN7bmalloc15IsoHeapImplBasedlEPv,
+        _ZN7bmalloc15IsoHeapImplBasenaEm, "_ZN7bmalloc15IsoHeapImplBasenwEm",
+        "_ZN7bmalloc15IsoHeapImplBasedlEPv", "_ZN7bmalloc15IsoHeapImplBasenaEm");
+    return isoTls && isoHeap;
 }
 
 static void TestTime() {
@@ -708,8 +795,221 @@ static void TestFileHandles() {
     std::filesystem::remove_all(root);
 }
 
+static void RequireCurrentStackBounds() {
+    static_assert(sizeof(WTF::StackBounds) == 16);
+    static_assert(offsetof(WTF::StackBounds, m_origin) == 0);
+    static_assert(offsetof(WTF::StackBounds, m_bound) == 8);
+    const WTF::StackBounds bounds = _ZN3WTF11StackBounds32currentThreadStackBoundsInternalEv();
+    int local = 0;
+    const auto* here = reinterpret_cast<const char*>(&local);
+    const auto* origin = static_cast<const char*>(bounds.m_origin);
+    const auto* bound = static_cast<const char*>(bounds.m_bound);
+    Require(origin > bound);
+    Require(here < origin && here > bound);
+    PthreadAttr attr = nullptr;
+    Require(pthread_attr_init_nid_postfix(&attr) == 0);
+    Require(pthread_attr_get_np_nid_postfix(pthread_self_nid_postfix(), &attr) == 0);
+    void* stackAddress = nullptr;
+    std::size_t stackSize = 0;
+    Require(pthread_attr_getstack_nid_postfix(&attr, &stackAddress, &stackSize) == 0);
+    Require(pthread_attr_destroy_nid_postfix(&attr) == 0);
+    Require(bounds.m_bound == stackAddress);
+    Require(origin == static_cast<const char*>(stackAddress) + stackSize);
+}
+
+static void TestStackBounds() {
+    RequireCurrentStackBounds();
+    std::thread worker(RequireCurrentStackBounds);
+    worker.join();
+}
+
+static std::string CaptureLog(void (*body)()) {
+    const auto path = (std::filesystem::temp_directory_path() / ("nkwebkit_timing_scope_" + std::to_string(_ZN3WTF13MonotonicTime3nowEv().m_value) + ".log")).string();
+    std::fflush(stdout);
+    std::fflush(stderr);
+#ifdef _WIN32
+    const int file = _open(path.c_str(), _O_CREAT | _O_TRUNC | _O_WRONLY, 0600);
+    const int savedOut = _dup(1);
+    const int savedErr = _dup(2);
+    Require(file >= 0 && savedOut >= 0 && savedErr >= 0 && _dup2(file, 1) == 0 && _dup2(file, 2) == 0);
+#else
+    const int file = open(path.c_str(), O_CREAT | O_TRUNC | O_WRONLY, 0600);
+    const int savedOut = dup(1);
+    const int savedErr = dup(2);
+    Require(file >= 0 && savedOut >= 0 && savedErr >= 0 && dup2(file, 1) == 1 && dup2(file, 2) == 2);
+#endif
+    body();
+    std::fflush(stdout);
+    std::fflush(stderr);
+#ifdef _WIN32
+    Require(_dup2(savedOut, 1) == 0 && _dup2(savedErr, 2) == 0);
+    _close(savedOut);
+    _close(savedErr);
+    _close(file);
+#else
+    Require(dup2(savedOut, 1) == 1 && dup2(savedErr, 2) == 2);
+    close(savedOut);
+    close(savedErr);
+    close(file);
+#endif
+    std::ifstream input(path, std::ios::binary);
+    std::string text((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+    input.close();
+    std::filesystem::remove(path);
+    return text;
+}
+
+static std::size_t CountOccurrences(const std::string& text, const std::string& needle) {
+    std::size_t count = 0;
+    for (std::size_t at = text.find(needle); at != std::string::npos; at = text.find(needle, at + needle.size())) ++count;
+    return count;
+}
+
+static const char g_firstTimingName[] = "nkwebkit-timing-first";
+static const char g_secondTimingName[] = "nkwebkit-timing-second";
+
+static void EndScope(const char* name, unsigned interval) {
+    WTF::TimingScope scope{_ZN3WTF13MonotonicTime3nowEv(), name, interval};
+    _ZN3WTF11TimingScope11scopeDidEndEv(&scope);
+}
+
+static void TestTimingScope() {
+    static_assert(sizeof(WTF::TimingScope) == 24);
+    static_assert(offsetof(WTF::TimingScope, m_startTime) == 0);
+    static_assert(offsetof(WTF::TimingScope, m_name) == 8);
+    static_assert(offsetof(WTF::TimingScope, m_logIterationInterval) == 16);
+    const std::string first = CaptureLog([] {
+        EndScope(g_firstTimingName, 2);
+        EndScope(g_firstTimingName, 2);
+        EndScope(g_secondTimingName, 2);
+    });
+    Require(CountOccurrences(first, std::string(g_firstTimingName) + ": 2 calls, mean duration: ") == 1);
+    Require(CountOccurrences(first, std::string(g_firstTimingName) + ": 1 calls") == 0);
+    Require(CountOccurrences(first, g_secondTimingName) == 0);
+    Require(CountOccurrences(first, "ms, total duration: ") == 1);
+    Require(CountOccurrences(first, "ms, max duration ") == 1);
+    const std::string second = CaptureLog([] {
+        EndScope(g_secondTimingName, 2);
+        EndScope(g_firstTimingName, 1);
+    });
+    Require(CountOccurrences(second, std::string(g_secondTimingName) + ": 2 calls") == 1);
+    Require(CountOccurrences(second, std::string(g_firstTimingName) + ": 3 calls") == 1);
+    bool rejected = false;
+    try {
+        EndScope(g_firstTimingName, 0);
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    Require(rejected);
+}
+
+static void TestUniStdExtras() {
+    const auto root = std::filesystem::current_path() / ("nkwebkit-unistd-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    Require(std::filesystem::create_directory(root));
+    const auto hostPath = root.u8string();
+    AddPathAlias_nid_no_patch("/nkwebkit-unistd", reinterpret_cast<const char*>(hostPath.c_str()));
+    const int handle = sceKernelOpen("/nkwebkit-unistd/file.bin", SCE_KERNEL_O_RDWR | SCE_KERNEL_O_CREAT, 0666);
+    Require(handle >= 0);
+    Require((fcntl_nid_postfix(handle, 3) & SCE_KERNEL_O_NONBLOCK) == 0);
+    Require(_ZN3WTF11setNonBlockEi(handle));
+    Require((fcntl_nid_postfix(handle, 3) & SCE_KERNEL_O_NONBLOCK) != 0);
+    Require((fcntl_nid_postfix(handle, 3) & SCE_KERNEL_O_ACCMODE) == SCE_KERNEL_O_RDWR);
+    Require(_ZN3WTF11setNonBlockEi(handle));
+    Require(fcntl_nid_postfix(handle, 1) == 0);
+    const int duplicate = _ZN3WTF14dupCloseOnExecEi(handle);
+    Require(duplicate >= 0 && duplicate != handle);
+    Require(fcntl_nid_postfix(duplicate, 1) == 1);
+    Require(fcntl_nid_postfix(handle, 1) == 0);
+    Require(sceKernelWrite(duplicate, "abc", 3) == 3);
+    Require(sceKernelLseek(handle, 0, 1) == 3);
+    Require(close_nid_postfix(duplicate) == 0);
+    Require(sceKernelClose(handle) == 0);
+    *__error_nid_postfix() = 0;
+    Require(!_ZN3WTF11setNonBlockEi(handle));
+    Require(*__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 0;
+    Require(_ZN3WTF14dupCloseOnExecEi(-1) == -1);
+    Require(*__error_nid_postfix() == 9);
+    RemovePathAlias_nid_no_patch("/nkwebkit-unistd");
+    std::filesystem::remove_all(root);
+}
+
+static void TestSleepSeconds() {
+    double start = _ZN3WTF13MonotonicTime3nowEv().m_value;
+    _ZN3WTF5sleepENS_7SecondsE(Seconds{0.05});
+    Require(_ZN3WTF13MonotonicTime3nowEv().m_value - start >= 0.05);
+    start = _ZN3WTF13MonotonicTime3nowEv().m_value;
+    _ZN3WTF5sleepENS_7SecondsE(Seconds{0.0});
+    _ZN3WTF5sleepENS_7SecondsE(Seconds{-5.0});
+    _ZN3WTF5sleepENS_7SecondsE(Seconds{-std::numeric_limits<double>::infinity()});
+    _ZN3WTF5sleepENS_7SecondsE(Seconds{std::numeric_limits<double>::quiet_NaN()});
+    Require(_ZN3WTF13MonotonicTime3nowEv().m_value - start < 1.0);
+
+    auto shortStart = std::chrono::steady_clock::now();
+    for (int round = 0; round < 20; ++round) _ZN3WTF5sleepENS_7SecondsE(Seconds{0.002});
+    auto shortSleeps = std::chrono::steady_clock::now() - shortStart;
+    Require(shortSleeps >= std::chrono::milliseconds(38) && shortSleeps < std::chrono::milliseconds(200));
+
+    shortStart = std::chrono::steady_clock::now();
+    for (int round = 0; round < 20; ++round) {
+        TimeWithDynamicClockType wake = _ZN3WTF24TimeWithDynamicClockType3nowENS_9ClockTypeE(ClockType::Monotonic);
+        wake.m_value += 0.002;
+        _ZN3WTF5sleepERKNS_24TimeWithDynamicClockTypeE(wake);
+    }
+    shortSleeps = std::chrono::steady_clock::now() - shortStart;
+    Require(shortSleeps >= std::chrono::milliseconds(38) && shortSleeps < std::chrono::milliseconds(200));
+}
+
+static void TestMakeAllDirectories() {
+    const auto make = &_ZN3WTF14FileSystemImpl18makeAllDirectoriesERKNS_6StringE;
+    const auto root = std::filesystem::current_path() / ("nkwebkit-dirs-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    Require(std::filesystem::create_directory(root));
+    const auto hostPath = root.u8string();
+    AddPathAlias_nid_no_patch("/nkwebkit-dirs", reinterpret_cast<const char*>(hostPath.c_str()));
+    const auto guest = [](const char* text) {
+        return _ZN3WTF6String8fromUTF8EPKh(reinterpret_cast<const unsigned char*>(text));
+    };
+#ifndef _WIN32
+    const auto oldMask = ::umask(0);
+#endif
+    Require(make(guest("/nkwebkit-dirs/a/b/c")));
+#ifndef _WIN32
+    ::umask(oldMask);
+#endif
+    Require(std::filesystem::is_directory(root / "a" / "b" / "c"));
+#ifndef _WIN32
+    Require((std::filesystem::status(root / "a" / "b").permissions() & std::filesystem::perms::mask) == std::filesystem::perms::owner_all);
+    Require((std::filesystem::status(root / "a" / "b" / "c").permissions() & std::filesystem::perms::mask) == std::filesystem::perms::owner_all);
+#endif
+    Require(make(guest("/nkwebkit-dirs/a/b/c")));
+    Require(make(guest("/nkwebkit-dirs")));
+    Require(make(guest("/nkwebkit-dirs/d/e/")));
+    Require(std::filesystem::is_directory(root / "d" / "e"));
+    Require(make(guest("/nkwebkit-dirs/\xC3\xA9/z")));
+    Require(std::filesystem::is_directory(root / std::filesystem::path(u8"é") / "z"));
+    {
+        std::ofstream file(root / "f.bin", std::ios::binary);
+        Require(static_cast<bool>(file));
+    }
+    Require(make(guest("/nkwebkit-dirs/f.bin")));
+    Require(std::filesystem::is_regular_file(root / "f.bin"));
+    Require(!make(guest("/nkwebkit-dirs/f.bin/x")));
+    Require(!std::filesystem::exists(root / "f.bin" / "x"));
+    Require(!make(guest("/nkwebkit-dirs/f.bin/x/y")));
+    NKWebKit::WtfAbi::String nullPath;
+    Require(!make(nullPath));
+    Require(!make(guest("")));
+    RemovePathAlias_nid_no_patch("/nkwebkit-dirs");
+    std::filesystem::remove_all(root);
+}
+
 int main() {
+    if (!TestBmallocHeapOperators()) {
+        return 1;
+    }
     TestAdditionalWtf();
+    TestStackBounds();
+    TestTimingScope();
     TestMemoryAllocations();
     TestAllocationBoundaries();
     TestTime();
@@ -719,6 +1019,9 @@ int main() {
     TestJscAndPal();
     TestMappedFiles();
     TestFileHandles();
+    TestUniStdExtras();
+    TestSleepSeconds();
+    TestMakeAllDirectories();
     return 0;
 }
 
@@ -743,6 +1046,8 @@ const auto ViewUpper = &_ZNK3WTF10StringView23convertToASCIIUppercaseEv;
 const auto ImplUTF8 = &_ZNK3WTF10StringImpl4utf8ENS_14ConversionModeE;
 const auto UTF8 = &_ZNK3WTF6String4utf8ENS_14ConversionModeE;
 const auto ViewUTF8 = &_ZNK3WTF10StringView4utf8ENS_14ConversionModeE;
+const auto Utf8For16 = &_ZN3WTF10StringImpl17utf8ForCharactersEPKDsjNS_14ConversionModeE;
+const auto Utf8For8 = &_ZN3WTF10StringImpl17utf8ForCharactersEPKhj;
 const auto FromUTF8 = &_ZN3WTF6String8fromUTF8EPKhm;
 const auto FromUTF8Z = &_ZN3WTF6String8fromUTF8EPKh;
 const auto FromCString = &_ZN3WTF6String8fromUTF8ERKNS_7CStringE;
@@ -961,6 +1266,17 @@ void TestUTFConversions() {
     Check(Bytes(UTF8(&malformed, 0)) == "\xed\xa0\x80X\xed\xb0\x80\xed\xbf\xbf");
     Check(Bytes(UTF8(&malformed, 2)) == "\xef\xbf\xbdX\xef\xbf\xbd\xef\xbf\xbd");
     Throws([&] { UTF8(&malformed, 1); });
+    Check(Bytes(Utf8For16(bad, 4, 0)) == "\xed\xa0\x80X\xed\xb0\x80\xed\xbf\xbf");
+    Check(Bytes(Utf8For16(bad, 4, 2)) == "\xef\xbf\xbdX\xef\xbf\xbd\xef\xbf\xbd");
+    Throws([&] { Utf8For16(bad, 4, 1); });
+    char16_t paired[] = {'c', 'a', 'f', 0xE9, 0xD83D, 0xDE00};
+    Check(Bytes(Utf8For16(paired, 6, 1)) == "caf\xc3\xa9\xf0\x9f\x98\x80");
+    Check(Bytes(Utf8For16(paired, 0, 1)).empty() && Bytes(Utf8For16(nullptr, 0, 1)).empty());
+    Throws([&] { Utf8For16(nullptr, 1, 1); });
+    Check(Bytes(Utf8For8(U8("caf\xe9\x80"), 5)) == "caf\xc3\xa9\xc2\x80");
+    Check(Bytes(Utf8For8(U8("a\0b"), 3)) == std::string("a\0b", 3));
+    Check(Bytes(Utf8For8(U8("x"), 0)).empty() && Bytes(Utf8For8(nullptr, 0)).empty());
+    Throws([&] { Utf8For8(nullptr, 1); });
     Text(FromCodePoint(0x1F600), "\xf0\x9f\x98\x80");
     Check(!FromCodePoint(-1).impl && !FromCodePoint(0x110000).impl);
     auto surrogate = FromCodePoint(0xD800);
@@ -1278,9 +1594,9 @@ void Run() {
 
 }  // namespace Wtf2Tests
 
-namespace Wtf2Tests { void TestURLsAndReallocation(); void TestURLLastPathComponentAndReferrer(); void TestFileNameHelpers(); }
+namespace Wtf2Tests { void TestURLsAndReallocation(); void TestURLLastPathComponentAndReferrer(); void TestFileNameHelpers(); void TestFileSystemRepresentations(); }
 
-void TestAdditionalWtf() { Wtf2Tests::Run(); Wtf2Tests::TestURLsAndReallocation(); Wtf2Tests::TestURLLastPathComponentAndReferrer(); Wtf2Tests::TestFileNameHelpers(); }
+void TestAdditionalWtf() { Wtf2Tests::Run(); Wtf2Tests::TestURLsAndReallocation(); Wtf2Tests::TestURLLastPathComponentAndReferrer(); Wtf2Tests::TestFileNameHelpers(); Wtf2Tests::TestFileSystemRepresentations(); }
 
 namespace Wtf2Tests {
 
@@ -1568,6 +1884,72 @@ void TestFileNameHelpers() {
     auto wideTail = Wide(u"a/文");
     Check(NameUnits(LastComponent(&wideTail)) == u"文");
     Throws([&] { LastComponent(nullptr); });
+}
+
+void TestFileSystemRepresentations() {
+    const auto Representation = &_ZN3WTF14FileSystemImpl24fileSystemRepresentationERKNS_6StringE;
+    const auto FromRepresentation = &_ZN3WTF14FileSystemImpl34stringFromFileSystemRepresentationEPKc;
+    const auto Append = &_ZN3WTF14FileSystemImpl25pathByAppendingComponentsENS_10StringViewERKNS_6VectorIS1_Lm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEE;
+
+    Check(Bytes(Representation(&(const String&)NameString("/data/a b"))) == "/data/a b");
+    const unsigned char latin1Path[] = {'/', 'c', 'a', 'f', 0xE9};
+    auto latin1 = Create8(latin1Path, 5);
+    Check(Bytes(Representation(&latin1)) == "/caf\xC3\xA9");
+    Check(Bytes(Representation(&(const String&)Wide(u"/a/caf\u00E9/\u4E2D"))) == "/a/caf\xC3\xA9/\xE4\xB8\xAD");
+    Check(Bytes(Representation(&(const String&)Wide(u"x\xD800y"))) == "x\xED\xA0\x80y");
+    String nullString;
+    CString nullRepresentation = Representation(&nullString);
+    Check(nullRepresentation.buffer && Bytes(nullRepresentation).empty());
+    Throws([&] { Representation(nullptr); });
+
+    Check(!FromRepresentation(nullptr).impl);
+    auto fromUTF8 = FromRepresentation("/a/caf\xC3\xA9/\xE4\xB8\xAD");
+    Check(NameUnits(fromUTF8) == u"/a/caf\u00E9/\u4E2D");
+    Check(!FromRepresentation("bad\xFF").impl);
+    auto empty = FromRepresentation("");
+    Check(empty.impl && !empty.impl->length);
+
+    NKWebKit::WtfAbi::Vector<StringView> components(3);
+    components.buffer[0] = Literal("b");
+    components.buffer[1] = Literal("");
+    components.buffer[2] = Literal("c.txt");
+    components.size = 3;
+    auto joined = Append(Literal("/a"), &components);
+    Check(NameUnits(joined) == u"/a/b//c.txt" && NameIs8Bit(joined));
+    auto trailing = Append(Literal("/a/"), &components);
+    Check(NameUnits(trailing) == u"/a//b//c.txt");
+    auto relative = Append(Literal(""), &components);
+    Check(NameUnits(relative) == u"/b//c.txt");
+
+    NKWebKit::WtfAbi::Vector<StringView> none;
+    auto alone = Append(Literal("/only"), &none);
+    Check(NameUnits(alone) == u"/only" && NameIs8Bit(alone));
+    auto nothing = Append(Literal(""), &none);
+    Check(nothing.impl && !nothing.impl->length && NameIs8Bit(nothing));
+    auto nullPath = Append(StringView{nullptr, 0, true}, &none);
+    Check(nullPath.impl && !nullPath.impl->length);
+
+    const std::u16string widePath = u"/\u4E2D";
+    auto wideJoined = Append(StringView{widePath.data(), 2, false}, &components);
+    Check(NameUnits(wideJoined) == u"/\u4E2D/b//c.txt" && !NameIs8Bit(wideJoined));
+    const std::u16string latinUnit = u"\u00E9";
+    auto latinAlone = Append(StringView{latinUnit.data(), 1, false}, &none);
+    Check(NameUnits(latinAlone) == u"\u00E9" && NameIs8Bit(latinAlone));
+    const std::u16string emptyWide;
+    auto emptyWideAlone = Append(StringView{emptyWide.data(), 0, false}, &none);
+    Check(NameIs8Bit(emptyWideAlone));
+    NKWebKit::WtfAbi::Vector<StringView> wideComponent(1);
+    wideComponent.buffer[0] = StringView{latinUnit.data(), 1, false};
+    wideComponent.size = 1;
+    auto upconverted = Append(Literal("/a"), &wideComponent);
+    Check(NameUnits(upconverted) == u"/a/\u00E9" && !NameIs8Bit(upconverted));
+    wideComponent.buffer[0] = StringView{emptyWide.data(), 0, false};
+    auto emptyUpconverted = Append(Literal("/a"), &wideComponent);
+    Check(NameUnits(emptyUpconverted) == u"/a/" && !NameIs8Bit(emptyUpconverted));
+
+    wideComponent.buffer[0] = StringView{nullptr, 1, true};
+    Throws([&] { Append(Literal("/a"), &wideComponent); });
+    Throws([&] { Append(Literal("/a"), nullptr); });
 }
 
 const auto ParserEqual = &_ZN3WTF9URLParser14allValuesEqualERKNS_3URLES3_;

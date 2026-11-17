@@ -345,9 +345,8 @@ static void MixDown(const float* input, std::uint32_t channels, std::uint32_t gr
     }
 }
 
-static bool ProcessReverb(Ngs2Voice& voice, Ngs2ReverbState& reverb, std::uint32_t grain, std::uint32_t sampleRate) {
+static bool ProcessReverb(const std::vector<float>& source, std::vector<float>& dest, std::uint32_t inputChannels, std::uint32_t channels, Ngs2ReverbState& reverb, std::uint32_t grain, std::uint32_t sampleRate) {
     const float rate = static_cast<float>(sampleRate);
-    const std::uint32_t channels = voice.channels;
     if (reverb.sampleRate != sampleRate) {
         reverb.sampleRate = sampleRate;
         reverb.reset = true;
@@ -357,8 +356,7 @@ static bool ProcessReverb(Ngs2Voice& voice, Ngs2ReverbState& reverb, std::uint32
         Reset(reverb);
         reverb.changed = true;
     }
-    const std::uint32_t inputChannels = voice.InputChannels();
-    reverb.input = voice.samples;
+    reverb.input = source;
     const auto& input = reverb.input;
     auto& mono = reverb.mono;
     auto& early = reverb.early;
@@ -377,7 +375,7 @@ static bool ProcessReverb(Ngs2Voice& voice, Ngs2ReverbState& reverb, std::uint32
                 for (std::uint32_t i = 0; i < grain; i++) mapped[static_cast<std::size_t>(dst) * grain + i] += input[static_cast<std::size_t>(src) * grain + i] * level;
             }
         }
-        voice.samples.assign(static_cast<std::size_t>(grain) * channels, 0.0f);
+        dest.assign(static_cast<std::size_t>(grain) * channels, 0.0f);
     }
     const std::vector<float>& direct = inputChannels != channels ? mapped : input;
     if (reverb.changed) {
@@ -407,7 +405,7 @@ static bool ProcessReverb(Ngs2Voice& voice, Ngs2ReverbState& reverb, std::uint32
     bool audible = false;
     for (std::uint32_t channel = 0; channel < channels; channel++) {
         auto& state = reverb.channels[channel];
-        float* out = voice.samples.data() + static_cast<std::size_t>(channel) * grain;
+        float* out = dest.data() + static_cast<std::size_t>(channel) * grain;
         const float* in = direct.data() + static_cast<std::size_t>(channel) * grain;
         const bool excluded = reverb.custom ? (params.reserved[0] & (1u << channel)) != 0 : channel == LFE_CHANNEL;
         if (excluded) {
@@ -470,7 +468,7 @@ static void SetReverbParams(Ngs2Reverb& reverb, const Ngs2ReverbI3DL2Param& para
 }
 
 bool Ngs2ProcessReverb(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t sampleRate) {
-    return ProcessReverb(voice, *voice.reverb, grain, sampleRate);
+    return ProcessReverb(voice.samples, voice.samples, voice.InputChannels(), voice.channels, *voice.reverb, grain, sampleRate);
 }
 
 void Ngs2SetReverbParams(Ngs2Voice& voice, const Ngs2ReverbI3DL2Param& params) {
@@ -491,7 +489,16 @@ void Ngs2SetCustomReverbParams(Ngs2Reverb& reverb, const Ngs2ReverbI3DL2Param& p
 
 bool Ngs2ProcessCustomReverb(Ngs2Voice& voice, std::size_t module, std::uint32_t grain, std::uint32_t sampleRate) {
     auto& reverb = *voice.customReverb[module];
-    return reverb.active ? ProcessReverb(voice, reverb, grain, sampleRate) : voice.hasSamples;
+    const auto& info = voice.rack->customModules[module];
+    if (!voice.customBuffers.empty() && (voice.outputTransition != Ngs2VoiceTransition::None || voice.state == Ngs2PlayState::Paused ||
+        (voice.stateFlags & SCE_NGS2_VOICE_STATE_FLAG_PAUSED) != 0)) {
+        throw std::runtime_error("NGS2: custom Reverb voice transitions with multiple buffers are not verified");
+    }
+    if (!reverb.active) {
+        if (info.source_buffer_id != info.dest_buffer_id) throw std::runtime_error("NGS2: custom Reverb bypass between different buffers is not verified");
+        return voice.hasSamples;
+    }
+    return ProcessReverb(voice.Samples(info.source_buffer_id), voice.Samples(info.dest_buffer_id), voice.InputChannels(), voice.channels, reverb, grain, sampleRate);
 }
 
 void Ngs2SetupReverb(Ngs2Voice& voice) {

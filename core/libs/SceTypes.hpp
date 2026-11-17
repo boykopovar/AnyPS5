@@ -1461,6 +1461,7 @@ struct HttpNBEvent { std::uint8_t opaque[64]; };
 
 struct SceHttpUriElement {
     int opaque = 0;
+    std::uint32_t pad0 = 0;
     char* scheme = nullptr;
     char* username = nullptr;
     char* password = nullptr;
@@ -1470,6 +1471,7 @@ struct SceHttpUriElement {
     char* fragment = nullptr;
     std::uint16_t port = 0;
     std::uint8_t reserved[10]{};
+    std::uint32_t pad1 = 0;
 };
 
 struct Http2AsyncResult {

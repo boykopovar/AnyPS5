@@ -2,6 +2,8 @@
 #include "prx/libc/include/General.hpp"
 #include "SceTypes.hpp"
 #include <algorithm>
+#include <stdexcept>
+#include <string>
 
 namespace {
 
@@ -10,6 +12,22 @@ constexpr int kCodecvtNoconv = 3;
 
 const GuestLocale::CodecvtVtable* VtableOf(const GuestLocale::Facet* self) {
     return reinterpret_cast<const GuestLocale::CodecvtVtable*>(self->vtable);
+}
+
+[[noreturn]] void Unwritable(const char* function) {
+    throw std::invalid_argument(std::string(function) + ": unwritable next pointer");
+}
+
+template<typename T>
+void StoreNext(const char* function, T** next, T* value) {
+    if (!GuestCopyOut_nid_no_patch(next, &value, sizeof(value))) Unwritable(function);
+}
+
+int Noconv(const char* function, const char** next1, const char* first1, char** next2, char* first2) {
+    if (!GuestWritable_nid_no_patch(next1, sizeof(*next1)) || !GuestWritable_nid_no_patch(next2, sizeof(*next2))) Unwritable(function);
+    StoreNext(function, next1, first1);
+    StoreNext(function, next2, first2);
+    return kCodecvtNoconv;
 }
 
 }
@@ -21,19 +39,15 @@ bool APS5_VABI _ZNKSt7codecvtIcc9_MbstatetE16do_always_noconvEv_nid_postfix(cons
 }
 
 int APS5_VABI _ZNKSt7codecvtIcc9_MbstatetE5do_inERS0_PKcS4_RS4_PcS6_RS6__nid_postfix(GuestLocale::Facet*, std::uint64_t*, const char* first1, const char*, const char** next1, char* first2, char*, char** next2) {
-    *next1 = first1;
-    *next2 = first2;
-    return kCodecvtNoconv;
+    return Noconv(__func__, next1, first1, next2, first2);
 }
 
 int APS5_VABI _ZNKSt7codecvtIcc9_MbstatetE6do_outERS0_PKcS4_RS4_PcS6_RS6__nid_postfix(GuestLocale::Facet*, std::uint64_t*, const char* first1, const char*, const char** next1, char* first2, char*, char** next2) {
-    *next1 = first1;
-    *next2 = first2;
-    return kCodecvtNoconv;
+    return Noconv(__func__, next1, first1, next2, first2);
 }
 
 int APS5_VABI _ZNKSt7codecvtIcc9_MbstatetE10do_unshiftERS0_PcS3_RS3__nid_postfix(GuestLocale::Facet*, std::uint64_t*, char* first2, char*, char** next2) {
-    *next2 = first2;
+    StoreNext(__func__, next2, first2);
     return kCodecvtOk;
 }
 
