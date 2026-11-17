@@ -528,7 +528,9 @@ int ScanSource(TSource source, const char* format, bool secure, NextPointer next
             capped = wanted == 0 || wanted > limit;
             terminatorAt = limit;
             const std::uint64_t scanWidth = wanted == 0 ? limit : std::min(wanted, limit);
-            width = static_cast<unsigned long>(std::min<std::uint64_t>(scanWidth, consoleSizes ? static_cast<std::uint64_t>(INT_MAX) : std::uint64_t{ULONG_MAX}));
+            std::uint64_t hostWidth = std::min<std::uint64_t>(scanWidth, consoleSizes ? static_cast<std::uint64_t>(INT_MAX) : std::uint64_t{ULONG_MAX});
+            if constexpr (TSource::Contiguous) if (conversion != 'c') hostWidth = std::min<std::uint64_t>(hostWidth, std::strlen(source.Remaining()));
+            width = static_cast<unsigned long>(hostWidth);
         }
         const bool narrowInteger = !suppress && std::strchr("diouxX", conversion) != nullptr && (length.empty() || length == "h" || length == "hh");
         std::uint64_t wideInteger = 0;
@@ -1024,11 +1026,9 @@ int APS5_VABI snprintf_s_nid_postfix(char* buffer, size_t size, const char* form
 }
 
 int APS5_VABI printf_s_nid_postfix(const char* format, ...) {
-    if (!_Stdout_nid_postfix.IsOpen()) { errno = 9; return -1; }
     __builtin_sysv_va_list args;
     __builtin_sysv_va_start(args, format);
-    _Stdout_nid_postfix.Orientation(-1);
-    const int result = LibcDetail::PrintWindows(format, args);
+    const int result = WriteSecure(&_Stdout_nid_postfix, format, reinterpret_cast<VaList*>(args));
     __builtin_sysv_va_end(args);
     return result;
 }
@@ -1061,11 +1061,9 @@ int APS5_VABI snprintf_s_nid_postfix(char* buffer, size_t size, const char* form
 }
 
 int APS5_VABI printf_s_nid_postfix(const char* format, ...) {
-    if (!_Stdout_nid_postfix.IsOpen()) { errno = 9; return -1; }
     std::va_list args;
     va_start(args, format);
-    _Stdout_nid_postfix.Orientation(-1);
-    const int result = RequiresGuestFormatting(format) ? LibcDetail::PrintWindows(format, args) : std::vfprintf(GuestStandardOutputFile_nid_no_patch(), format, args);
+    const int result = WriteSecure(&_Stdout_nid_postfix, format, reinterpret_cast<VaList*>(args));
     va_end(args);
     return result;
 }
