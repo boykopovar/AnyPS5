@@ -98,6 +98,7 @@ void WorkBudget::Retired(std::size_t charge) noexcept {
 
 SealedBatch::SealedBatch(std::uint64_t serial, CommandStream& stream, const CommandFunctions& real, FailureLatch& latch, WorkBudget* budget) : serial(serial), stream(stream), real(real), latch(latch), budget(budget) {
     stream.Seal();
+    charged = stream.Charged();
     if (budget != nullptr) budget->Sealed();
 }
 
@@ -202,7 +203,7 @@ void SealedBatch::DeviceIdleAfterLoss() noexcept {
 
 void SealedBatch::maybeRetire() noexcept {
     if (!Retirable() || retiredCharge.exchange(true, std::memory_order_acq_rel)) return;
-    if (budget != nullptr) budget->Retired(stream.Charged());
+    if (budget != nullptr) budget->Retired(charged);
 }
 
 std::exception_ptr SealedBatch::Error() const {

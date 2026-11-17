@@ -130,6 +130,7 @@ private:
     const CommandFunctions& real;
     FailureLatch& latch;
     WorkBudget* budget;
+    std::size_t charged = 0;
     std::atomic<std::uint32_t> replay{Unclaimed};
     std::atomic<bool> cancelRequested{false};
     std::atomic<Outcome> outcome{Outcome::Pending};

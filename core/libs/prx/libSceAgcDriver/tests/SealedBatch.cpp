@@ -389,6 +389,22 @@ void BudgetBoundsWorkThroughRetirement() {
     budget.Retired(0);
 }
 
+void RetirementOutlivesTheStream() {
+    WorkBudget budget(WorkBudget::Limits{2, 2, 1u << 30});
+    FailureLatch latch;
+    budget.Open(latch, 1);
+    auto stream = std::make_unique<CommandStream>(Real(), &budget);
+    append(*stream, 51);
+    const auto charged = stream->Charged();
+    SealedBatch batch(1, *stream, Real(), latch, &budget);
+    Require(batch.Claim(), "an unclaimed batch could not be claimed");
+    batch.Encoded(fakeBuffer(51), 0);
+    stream.reset();
+    Require(budget.OutstandingBytes() == charged, "the budget lost the batch's charge before it retired");
+    retireUnsubmitted(batch);
+    Require(budget.OutstandingBytes() == 0 && budget.Outstanding() == 0, "retirement after the stream was freed did not return the batch's charge");
+}
+
 void SingleExecutorOwnsItsPoolAndThread() {
     FailureLatch latch;
     auto shared = std::make_shared<FakePool::Shared>();
@@ -550,6 +566,7 @@ int main(int argc, char** argv) {
         DeviceLossHoldsResourcesUntilTheDeviceIsIdle();
         FenceBeforeReturnStaysHeld();
         BudgetBoundsWorkThroughRetirement();
+        RetirementOutlivesTheStream();
         AdmissionOpensDirectInsteadOfWaiting();
         SingleExecutorOwnsItsPoolAndThread();
         ShutdownCancelsQueuedBatches();
