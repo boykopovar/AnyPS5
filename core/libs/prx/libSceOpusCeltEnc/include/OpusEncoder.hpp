@@ -101,11 +101,10 @@ public:
     int Encode(void* state, const std::int16_t* samples, int frameSize, std::uint8_t* data, int maxDataBytes) {
         if (!state) return error(codes.nullErrorOffset);
         if (!samples) return error(codes.nullSamplesErrorOffset);
-        if (frameSize == 0) return error(codes.frameErrorOffset);
-        std::lock_guard lock(mutex);
-        if (!hasMarker(state)) return error(codes.destroyStateErrorOffset);
         if (!data) return error(codes.nullDataErrorOffset);
         if (maxDataBytes == 0) return error(codes.sizeErrorOffset);
+        std::lock_guard lock(mutex);
+        if (!hasMarker(state)) return error(codes.destroyStateErrorOffset);
         if (!acceptedFrame(stateRate(state), frameSize)) return error(codes.frameErrorOffset);
         const auto found = encoders.find(stateWord(state, codes.stateInstanceOffset));
         if (found == encoders.end()) fail("state does not reference a live encoder");
@@ -134,9 +133,7 @@ public:
 
     int Destroy(void* state) {
         if (!state) return error(codes.nullErrorOffset);
-        std::uint16_t magic = 0;
-        std::memcpy(&magic, static_cast<std::uint8_t*>(state) + codes.stateMagicOffset, sizeof magic);
-        if (magic != codes.stateMagic) return error(codes.destroyStateErrorOffset);
+        if (!hasMarker(state)) return error(codes.destroyStateErrorOffset);
         std::lock_guard lock(mutex);
         encoders.erase(stateWord(state, codes.stateInstanceOffset));
         setWord(state, codes.stateMagicOffset, 0);
@@ -199,9 +196,7 @@ private:
     }
 
     bool hasMarker(void* state) const {
-        std::uint16_t magic = 0;
-        std::memcpy(&magic, static_cast<std::uint8_t*>(state) + codes.stateMagicOffset, sizeof magic);
-        return magic == codes.stateMagic;
+        return stateWord(state, codes.stateMagicOffset) == codes.stateMagic;
     }
 
     const char* name;

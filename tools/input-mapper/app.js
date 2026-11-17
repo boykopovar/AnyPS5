@@ -1,4 +1,4 @@
-import {actions, defaults, groups, mouseValues, typesForAction, wheelValues} from './mapping.js';
+import {actions, actionsForInput, defaults, groups, mouseValues, typesForAction, wheelValues} from './mapping.js';
 import {exportableKeys} from './keys.js';
 import {captureKey} from './capture.js';
 import {parseIni, serialize, validate} from './validation.js';
@@ -126,8 +126,13 @@ async function confirmReplacement() {
     });
 }
 
-function valueChoices(type) {
+function valueChoices(type, value = '') {
+    if (type === 'PAD') return value ? [value] : [];
     return type === 'KEY' ? exportableKeys : type === 'MOUSE' ? mouseValues : type === 'WHEEL' ? wheelValues : [];
+}
+
+function typeChoices(entry) {
+    return typesForAction(entry.action).filter(type => type !== 'PAD' || entry.type === 'PAD');
 }
 
 function dropdownText() {
@@ -183,8 +188,8 @@ function renderCategories() {
 function renderBinding(entry, position) {
     const row = element('div', undefined, 'binding');
     const label = t('bindingLabel', {action: entry.action, number: position + 1});
-    const type = selectControl(t('typeLabel', {binding: label}), typesForAction(entry.action), entry.type);
-    const value = selectControl(t('valueLabel', {binding: label}), valueChoices(entry.type), entry.value);
+    const type = selectControl(t('typeLabel', {binding: label}), typeChoices(entry), entry.type);
+    const value = selectControl(t('valueLabel', {binding: label}), valueChoices(entry.type, entry.value), entry.value);
     type.element.dir = 'ltr';
     value.element.dir = 'ltr';
     const capture = button(t('capture'), t('captureLabel', {binding: label}), () => {
@@ -198,8 +203,9 @@ function renderBinding(entry, position) {
     const remove = button(t('remove'), t('removeLabel', {binding: label}), () => {
         entries = entries.filter(binding => binding !== entry);
         render();
-        const remaining = document.querySelector(`[data-action="${entry.action}"] .dropdown-trigger`);
-        (remaining || document.querySelector(`[data-action="${entry.action}"] .add-binding`)).focus();
+        const action = document.querySelector(`[data-action="${entry.action}"]`);
+        const remaining = action.querySelector('.dropdown-trigger') || action.querySelector('.add-binding');
+        (action.hidden ? byId('search') : remaining).focus();
     });
     type.select.addEventListener('change', () => {
         entry.type = type.select.value;
@@ -255,12 +261,14 @@ function render() {
         }
         container.append(section);
     }
-    filterActions();
     updateOutput();
 }
 
 function filterActions() {
-    const search = byId('search').value.trim().toLowerCase();
+    const searchField = byId('search');
+    const search = searchField.value.trim().toLowerCase();
+    const focusedAction = document.activeElement?.closest('.action');
+    const inputActions = actionsForInput(search, entries);
     if (activeView === 'controls') byId('group-title').textContent = search ? t('search') : groupLabel(selectedGroup);
     for (const category of byId('categories').children) {
         category.setAttribute('aria-pressed', String(!search && category.dataset.group === selectedGroup));
@@ -269,7 +277,8 @@ function filterActions() {
     for (const section of document.querySelectorAll('.group')) {
         let matches = 0;
         for (const action of section.querySelectorAll('.action')) {
-            action.hidden = search ? !`${section.dataset.group} ${groupLabel(section.dataset.group)} ${action.dataset.action}`.toLowerCase().includes(search) : section.dataset.group !== selectedGroup;
+            const label = `${section.dataset.group} ${groupLabel(section.dataset.group)} ${action.dataset.action}`.toLowerCase();
+            action.hidden = search ? !label.includes(search) && !inputActions.has(action.dataset.action) : section.dataset.group !== selectedGroup;
             if (!action.hidden) matches++;
         }
         section.hidden = matches === 0;
@@ -282,6 +291,7 @@ function filterActions() {
         byId('mappings').append(empty);
     }
     empty.hidden = visible !== 0;
+    if (focusedAction?.hidden) searchField.focus({preventScroll: true});
 }
 
 function updateOutput() {
@@ -305,6 +315,7 @@ function updateOutput() {
         const invalid = result.errors.some(error => entries[error.index] === renderedEntries[index]);
         for (const control of row.querySelectorAll('.dropdown-trigger')) control.setAttribute('aria-invalid', String(invalid));
     });
+    filterActions();
 }
 
 function cancelCapture(message) {
