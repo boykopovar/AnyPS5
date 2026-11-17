@@ -65,3 +65,4 @@
 #include "prx/libSceNKWebKit/include/PublicSuffixExports.hpp"
 #include "prx/libSceNKWebKit/include/IsoBoxParsingExports.hpp"
 #include "prx/libSceNKWebKit/include/IsoProtectionBoxExports.hpp"
+#include "prx/libSceNKWebKit/include/IsoSchemeBoxExports.hpp"

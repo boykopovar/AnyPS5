@@ -328,7 +328,6 @@ int APS5_VABI _ZNK7WebCore29PerspectiveTransformOperation5applyERNS_20Transforma
 int APS5_VABI _ZN7WebCore22SocketStreamHandleImpl12platformSendEPKhmON3WTF8FunctionIFvbEEE();
 int APS5_VABI _ZN7WebCore8Document20updateIsPlayingMediaEm();
 int APS5_VABI _ZNK7WebCore4Path6isNullEv();
-int APS5_VABI _ZN7WebCore36ISOProtectionSystemSpecificHeaderBox12peekSystemIDERN3JSC8DataViewEj();
 int APS5_VABI _ZN7WebCore11DisplayList7ClipOutD2Ev();
 int APS5_VABI _ZN7WebCore15GraphicsContext18setStrokeThicknessEf();
 int APS5_VABI _ZN7WebCore9CookieJar12sameSiteInfoERKNS_8DocumentE();
