@@ -2855,9 +2855,9 @@ static int PollDescriptors(GuestPollDescriptor* descriptors, std::uint32_t count
                 continue;
             }
             if (File::IsRandomDevice(entry.descriptor)) {
-                if (unknownEvents) UnsupportedPollEvents(entry.events, "the random device");
                 const short readable = static_cast<short>(entry.events & GuestPollReadable);
                 entry.revents = readable != 0 ? readable : entry.events;
+                if ((entry.revents & GuestPollHangUp) != 0) entry.revents = static_cast<short>(entry.revents & ~GuestPollWritable);
                 if (entry.revents) ++ready;
                 continue;
             }
