@@ -564,9 +564,24 @@ int APS5_VABI sceFsMountDownloadData() {
     return 0;
 }
 
-int APS5_VABI sceFsMountGamePkg() {
+int APS5_VABI sceFsMountGamePkg(const void* opt, const char* mountPath, const std::uint64_t* eekpfs, const std::uint64_t* eekc, std::uint32_t pubkeyVersion, std::uint32_t keyVersion) {
+    if (opt == nullptr || mountPath == nullptr) return InvalidArgument;
+    if (ReadGuest<std::uint64_t>(opt, 0x0, __func__) == 0) return InvalidArgument;
+    const auto flags = ReadGuest<std::uint8_t>(opt, 0x40, __func__);
+    bool game = false;
+    if ((flags & 0x1e) == 0) {
+        const auto budget = ReadGuest<std::uint64_t>(opt, 0x48, __func__);
+        game = budget != 0 && GuestTextEquals(budget, "game", 5, __func__);
+    }
+    const bool ddr3 = ReadGuest<std::uint64_t>(opt, 0x18, __func__) != 0;
+    if (game && (flags & 0x80) != 0) {
+        if (ddr3 || ReadGuest<std::uint32_t>(opt, 0x20, __func__) == 0) return InvalidArgument;
+    } else if (game) {
+        if (!ddr3 || ReadGuest<std::uint32_t>(opt, 0x20, __func__) != 0) return InvalidArgument;
+    } else if (ddr3 || ReadGuest<std::uint32_t>(opt, 0x20, __func__) != 0) {
+        return InvalidArgument;
+    }
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceFsMountLwfs() {
@@ -895,9 +910,9 @@ int APS5_VABI sceFsUmountDownloadData() {
     return 0;
 }
 
-int APS5_VABI sceFsUmountGamePkg() {
+int APS5_VABI sceFsUmountGamePkg(const void* opt, const char* path, int unit, std::uint8_t force) {
+    if (opt == nullptr || path == nullptr) return InvalidArgument;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceFsUmountLwfs() {

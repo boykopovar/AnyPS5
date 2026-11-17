@@ -99,6 +99,60 @@ void CheckMountPprPkg() {
     }
 }
 
+int MountGamePkg(const std::uint8_t* opt, const char* mountPath) {
+    return sceFsMountGamePkg(opt, mountPath, nullptr, nullptr, 0, 0);
+}
+
+void CheckGamePkgCache(std::uint8_t* opt, std::uint8_t flags, const char* budget, std::uint64_t ddr3, std::uint32_t gddr5, bool accepted) {
+    const char mountPath[] = "/mnt/app";
+    SetField(opt, 0x40, flags);
+    SetText(opt, 0x48, budget);
+    SetField(opt, 0x18, ddr3);
+    SetField(opt, 0x20, gddr5);
+    if (accepted) {
+        Require(Throws([&] { MountGamePkg(opt, mountPath); }));
+    } else {
+        Require(MountGamePkg(opt, mountPath) == InvalidArgument);
+    }
+}
+
+void CheckMountGamePkg() {
+    alignas(8) std::uint8_t opt[0x50] = {};
+    const char image[] = "/data/app.pkg";
+    const char mountPath[] = "/mnt/app";
+    Require(MountGamePkg(nullptr, mountPath) == InvalidArgument);
+    Require(MountGamePkg(opt, nullptr) == InvalidArgument);
+    Require(MountGamePkg(opt, mountPath) == InvalidArgument);
+    Require(Throws([&] { MountGamePkg(reinterpret_cast<const std::uint8_t*>(std::uintptr_t{0x10}), mountPath); }));
+    SetText(opt, 0x0, image);
+
+    CheckGamePkgCache(opt, 0x00, nullptr, 0, 0, true);
+    CheckGamePkgCache(opt, 0x00, nullptr, 1, 0, false);
+    CheckGamePkgCache(opt, 0x00, nullptr, 0, 1, false);
+    CheckGamePkgCache(opt, 0x00, "bigapp", 0, 0, true);
+    CheckGamePkgCache(opt, 0x02, "game", 0, 0, true);
+    CheckGamePkgCache(opt, 0x02, "game", 1, 0, false);
+    CheckGamePkgCache(opt, 0x82, "game", 0, 1, false);
+
+    CheckGamePkgCache(opt, 0x00, "game", 1, 0, true);
+    CheckGamePkgCache(opt, 0x01, "game", 1, 0, true);
+    CheckGamePkgCache(opt, 0x00, "game", 0, 0, false);
+    CheckGamePkgCache(opt, 0x00, "game", 1, 1, false);
+
+    CheckGamePkgCache(opt, 0x80, "game", 0, 1, true);
+    CheckGamePkgCache(opt, 0xe1, "game", 0, 1, true);
+    CheckGamePkgCache(opt, 0x80, "game", 1, 1, false);
+    CheckGamePkgCache(opt, 0x80, "game", 0, 0, false);
+}
+
+void CheckUmountGamePkg() {
+    const std::uint32_t opt = 0;
+    const char path[] = "/mnt/app";
+    Require(sceFsUmountGamePkg(nullptr, path, 0, 0) == InvalidArgument);
+    Require(sceFsUmountGamePkg(&opt, nullptr, 0, 0) == InvalidArgument);
+    Require(Throws([&] { sceFsUmountGamePkg(&opt, path, 0, 1); }));
+}
+
 void CheckUmountPprPkg() {
     alignas(8) std::uint8_t opt[0x20] = {};
     Require(sceFsUmountPprPkg(nullptr) == InvalidArgument);
@@ -169,5 +223,7 @@ int main() {
     CheckInitMountPprPkgOpt();
     CheckMountPprPkg();
     CheckUmountPprPkg();
+    CheckMountGamePkg();
+    CheckUmountGamePkg();
     return 0;
 }
