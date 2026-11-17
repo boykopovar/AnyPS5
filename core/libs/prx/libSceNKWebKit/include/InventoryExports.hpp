@@ -2862,7 +2862,6 @@ int APS5_VABI _ZN7WebCore19MediaResourceLoader25recordResponsesForTestingEv();
 int APS5_VABI _ZN7WebCore19MediaResourceLoaderD0Ev();
 int APS5_VABI _ZN7WebCore19MediaResourceLoaderD1Ev();
 int APS5_VABI _ZN7WebCore19MediaResourceLoaderD2Ev();
-int APS5_VABI _ZN7WebCore19ProtectionSpaceBase7compareERKNS_15ProtectionSpaceES3_();
 int APS5_VABI _ZN7WebCore19ResourceRequestBase12clearPurposeEv();
 int APS5_VABI _ZN7WebCore19ResourceRequestBase13partitionNameERKN3WTF6StringE();
 int APS5_VABI _ZN7WebCore19ResourceRequestBase15clearHTTPOriginEv();

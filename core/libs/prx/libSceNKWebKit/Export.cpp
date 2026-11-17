@@ -20354,10 +20354,6 @@ int APS5_VABI _ZN7WebCore19MediaResourceLoaderD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7WebCore19ProtectionSpaceBase7compareERKNS_15ProtectionSpaceES3_() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7WebCore19ResourceRequestBase12clearPurposeEv() {
     NotImplemented_nid_no_patch(__func__);
 }
