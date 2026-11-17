@@ -85,6 +85,9 @@ static void CheckBadPointers(PthreadMutex* valid) {
         Require(scePthreadMutexSetyieldloops(static_cast<PthreadMutex*>(pointer), 5) == SCE_KERNEL_ERROR_EFAULT);
         Require(pthread_mutex_setspinloops_np_nid_postfix(static_cast<PthreadMutex*>(pointer), 5) == 14);
         Require(pthread_mutex_setyieldloops_np_nid_postfix(static_cast<PthreadMutex*>(pointer), 5) == 14);
+        PthreadMutex fresh = nullptr;
+        Require(scePthreadMutexInit(&fresh, static_cast<const PthreadMutexattr*>(pointer), "unreadable attr") == SCE_KERNEL_ERROR_EFAULT && fresh == nullptr);
+        Require(scePthreadMutexInit(static_cast<PthreadMutex*>(pointer), nullptr, "unwritable slot") == SCE_KERNEL_ERROR_EFAULT);
     }
 }
 
