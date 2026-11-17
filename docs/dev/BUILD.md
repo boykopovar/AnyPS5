@@ -31,7 +31,29 @@ build-fuzz/tests/relinker_conversion_fuzzer build-fuzz/fuzz-corpus -fork=2 -max_
 
 `relinker_fuzz_seeds.py` writes the executables built by the relinker's Python tests as seeds, one per target system. With `BUILD_TESTING=ON`, CTest runs 20000 inputs from an empty corpus as `relinker_conversion_fuzzer`. Findings are written to the working directory as `crash-*`, `timeout-*` or `oom-*`; reproduce one with `build-fuzz/tests/relinker_conversion_fuzzer <file>`.
 
+## Integer leaf compiler
+
+This compiler translates one named x86-64 ELF function to a native x86-64 object. It does not convert a console executable or provide a guest runtime. The caller must declare the input function's System V ABI: zero to six `uint64_t` arguments and a `uint64_t` result. Argument registers are RDI, RSI, RDX, RCX, R8 and R9; LLVM lowers them to the output target's C calling convention.
+
+```sh
+git submodule update --init --checkout 3rdparty/llvm-project
+cmake -S . -B build-leaf -G Ninja -DCMAKE_BUILD_TYPE=Release -DANYPS5_RELINKER_ONLY=ON -DANYPS5_BUILD_AOT=ON -DBUILD_TESTING=ON
+cmake --build build-leaf --target aot_compiler_cli aot_ir_check --parallel 2
+ctest --test-dir build-leaf -R "^aot_leaf_" --output-on-failure
+build-leaf/core/aot/compiler/aot_compiler_cli --input functions.elf --function sum --args 2 --output sum.o --emit-llvm sum.ll --emit-asm sum.s
+```
+
+Windows executables have the `.exe` suffix. A standalone configure with `-S core/aot` builds the same compiler and tests.
+
+Input must contain a defined `STT_FUNC` symbol with a nonzero extent entirely in an executable section. Relocations anywhere in the input reject it. The accepted body is straight-line register-only code ending at a plain `RET`: 32/64-bit `MOV`, `ADD`, `SUB`, `AND`, `OR`, `XOR`, two-operand `IMUL`, `NEG`, `NOT`, `SHL`, `SHR`, `SAR`, register `MOVSXD`, and unprefixed one-byte `NOP`. Only the implemented register/immediate encodings are accepted. Reads require a declared argument or earlier definition; stack and callee-saved registers reject. No accepted instruction observes flags, and flags are not part of the declared function result.
+
+`--triple` accepts `x86_64-unknown-linux-gnu`, `x86_64-w64-windows-gnu`, `x86_64-pc-windows-msvc`, or `x86_64-apple-darwin`; the default matches the host OS. `--opt 0..3` selects LLVM's code-generation optimization level. Objects must be linked by the target's toolchain. The CLI does not invoke a shell or linker.
+
+The tests link and execute emitted objects and emitted assembly, compare both against the original x86-64 function and independent integer results, and parse emitted IR using LLVM. They require an x86-64 host or Apple Silicon with Rosetta, and a GCC-compatible C++ compiler. Each execution runs in a separate x86-64 program; Python only orchestrates compilation and checks the returned results. The native reference uses a host-ABI wrapper around the System V byte function; the ABI test returns each of the six arguments separately to check register and stack argument transfers. On macOS the test compiler receives `-arch x86_64`, and Python may run as either arm64 or x86-64. A compile-time architecture check rejects non-x86-64 test programs before any fixture bytes can execute. Missing execution support fails the test rather than skipping it. Unsupported input and malformed CLI requests must fail without replacing existing output. Limits are tracked in [AOT debt](debt/aot.md).
+
 ## Full build
+
+The experimental integer leaf compiler is disabled by default in every root build configuration. Set `ANYPS5_BUILD_AOT=ON` to build it and LLVM 20.1.5 from the pinned `3rdparty/llvm-project` submodule. Existing build directories retain their cached setting; set `ANYPS5_BUILD_AOT=OFF` explicitly to disable a previously enabled build. The LLVM submodule uses `update = none`, so the recursive submodule command below skips it unless local Git configuration overrides that setting. To opt in, run `git submodule update --init --checkout 3rdparty/llvm-project`; naming the path without `--checkout` still skips it. The measured LLVM working tree is 1.66 GiB across 154,024 files, plus 396.50 MiB of Git pack data in the local shallow checkout; filesystem allocation and download sizes can differ. Build-time measurements, memory limits and machine details are recorded in [PR #9776](https://github.com/boykopovar/AnyPS5/pull/9776). Use bounded build parallelism for LLVM; the leaf-compiler example uses two workers.
 
 ```sh
 git submodule update --init --recursive
