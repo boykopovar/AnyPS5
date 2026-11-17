@@ -5,6 +5,7 @@
 #include "prx/libc/include/PreciseWait.hpp"
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <thread>
 #include <chrono>
@@ -87,6 +88,12 @@ std::string ToHex(std::uint32_t value) {
 void require(bool condition, const char* reason) {
     if (!condition) throw std::runtime_error(reason);
 }
+
+constexpr std::uint32_t GcnPrepareFlipMarker = 0x68750777u;
+constexpr std::uint32_t GcnPrepareFlipLabelMarker = 0x68750778u;
+constexpr std::size_t GcnFlipReservationWords = 64;
+constexpr std::uint32_t GcnReleaseEventControl = 0xf3fu;
+constexpr std::uint32_t GcnVolatileTextureCacheAction = 0x10000u;
 
 std::uint64_t address(std::uint32_t low, std::uint32_t high) {
     return low | (static_cast<std::uint64_t>(high) << 32u);
@@ -327,7 +334,11 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
         require((header & 3u) == 0, "unsupported NOP header flags");
         switch ((header >> 2u) & 0x3fu) {
             case 0:
-                require((packet[1] & 0xffff0000u) != 0x68750000u, "typed user-data and legacy flip markers are not implemented");
+                if ((packet[1] & 0xffff0000u) == 0x68750000u) {
+                    require(ShaderRecompiler::GcnGuestShaders(), "typed user-data and legacy flip markers are not implemented");
+                    require(packet.size() != GcnFlipReservationWords, "a GCN flip reservation in a command buffer is not implemented");
+                    require(packet[1] != GcnPrepareFlipMarker && packet[1] != GcnPrepareFlipLabelMarker, "legacy flip markers are not implemented");
+                }
                 break;
             case 0x09: size(2); break;
             case 0x06: size(4); require(packet[3] == 0, "unsupported rendering wait mode"); break;
@@ -353,6 +364,7 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
     const bool registerWrite = opcode == 0x69 || opcode == 0x76 || opcode == 0x79 || opcode == 0x7a || (opcode == 0x37 && ((packet[1] >> 8u) & 0xfu) == 0);
     auto allowedFlags = opcode == 0x11 || opcode == 0x15 || opcode == 0x16 ? 2u : registerWrite ? 6u : opcode == 0x3c || opcode == 0x93 ? 2u : 0u;
     if (opcode != 0x20 && opcode != 0x22) allowedFlags |= 1u;
+    if (queue != 0 && ShaderRecompiler::GcnGuestShaders()) allowedFlags |= 2u;
     if ((flags & ~allowedFlags) != 0) throw std::runtime_error("PM4 header flags 0x" + ToHex(flags) + " are not implemented");
     switch (opcode) {
         case 0x11:
@@ -370,8 +382,8 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
             graphics();
             size(4);
             const auto operation = (packet[1] >> 16u) & 7u;
-            require(operation != 1 && operation != 2, "GPU query predication is not implemented");
-            require(operation == 0 || operation == 3 || operation == 4, "invalid predication operation");
+            require(operation != 2, "GPU primitive-count predication is not implemented");
+            require(operation == 0 || operation == 1 || operation == 3 || operation == 4, "invalid predication operation");
             require((packet[1] & ~0x71100u) == 0, "unsupported SET_PREDICATION bits");
             if (operation != 0) require(address(packet[2], packet[3]) != 0 && (packet[2] & 0xfu) == 0, "unaligned predication address");
             break;
@@ -490,7 +502,7 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
         }
         case 0x58: {
             require(packet.size() == 7 || packet.size() == 8, "invalid ACQUIRE_MEM packet size");
-            const auto controlMask = packet.size() == 8 ? 0x86287fc3u : 0xfeecfffbu;
+            const auto controlMask = packet.size() == 8 ? 0x86287fc3u : 0xfeecfffbu | (ShaderRecompiler::GcnGuestShaders() ? GcnVolatileTextureCacheAction : 0u);
             require((packet[1] & ~controlMask) == 0, "unsupported ACQUIRE_MEM control flags");
             require(queue == 0 || (packet[1] & 0x06287fc3u) == 0, "graphics cache operation in compute queue");
             require(packet[3] <= 0xffu && packet[5] <= 0xffu, "invalid ACQUIRE_MEM range high bits");
@@ -537,14 +549,23 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
         case 0x45: {
             size(9);
             require((packet[1] & ~0x317u) == 0, "COND_WRITE reserved fields are not implemented");
-            require((packet[1] & 0x10u) != 0, "register-space COND_WRITE poll is not implemented");
+            const bool memoryPoll = (packet[1] & 0x10u) != 0;
+            require(memoryPoll || (packet[3] == 0 && registerBankBase(packet[2]) != 0), "register-space COND_WRITE poll outside modeled banks is not implemented");
             require((packet[1] & 7u) <= 6u, "invalid COND_WRITE compare function");
-            require(((packet[1] >> 8u) & 3u) == 1u, "register or scratch COND_WRITE destination is not implemented");
-            require((packet[2] & 3u) == 0 && (packet[6] & 3u) == 0, "misaligned COND_WRITE address");
+            const auto destination = (packet[1] >> 8u) & 3u;
+            require(destination <= 1u, "scratch or reserved COND_WRITE destination is not implemented");
+            require(destination != 0 || (packet[7] == 0 && registerBankBase(packet[6]) != 0), "COND_WRITE destination outside modeled banks is not implemented");
+            if (destination == 0 && registerBankBase(packet[6]) != ShaderRegisterBase) graphics();
+            require((!memoryPoll || (packet[2] & 3u) == 0) && (destination != 1 || (packet[6] & 3u) == 0), "misaligned COND_WRITE address");
             break;
         }
         case 0x49: {
-            size(8);
+            require(packet.size() == 8 || (packet.size() == 7 && ShaderRecompiler::GcnGuestShaders()), "invalid packet size");
+            if (packet.size() == 7) {
+                require((packet[1] & ~GcnReleaseEventControl) == 0, "GCN RELEASE_MEM event control bits beyond the event type and index are not implemented");
+                const auto interruptSelect = (packet[2] >> 24u) & 7u;
+                require(interruptSelect == 0 || interruptSelect == 3, "an interrupting GCN RELEASE_MEM has no interrupt context dword");
+            }
             const auto dataSelect = packet[2] >> 29u;
             require(dataSelect != 4 || ShaderRecompiler::GcnGuestShaders(), "RELEASE_MEM of the 64-bit system counter (DATA_SEL 4) is not implemented");
             require(dataSelect <= 5, "reserved RELEASE_MEM DATA_SEL");
@@ -667,12 +688,33 @@ std::size_t ConditionalWords(std::span<const std::uint32_t> packet) {
     return packet[4] & ConditionalWordsMask;
 }
 
+std::size_t PredicationBytes(const Predication& predication) {
+    if (predication.operation == 1) return SampleDumpBytes + SampleDumpBlockBytes;
+    return predication.operation == 3 ? 8 : 4;
+}
+
 bool PredicationPasses(const QueueState& queue) {
     const auto& predication = queue.predication;
     if (predication.operation == 0) return true;
-    const std::size_t bytes = predication.operation == 3 ? 8 : 4;
-    std::uint64_t value = 0;
     const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::Wait);
+    if (predication.operation == 1) {
+        constexpr std::uint64_t ready = 1ull << 63u;
+        std::array<std::uint64_t, SampleDumpBlocks * SampleDumpStride / sizeof(std::uint64_t)> words{};
+        GuestMemory::Read(predication.address, std::as_writable_bytes(std::span(words)).first(PredicationBytes(predication)), 8);
+        std::uint64_t samples = 0;
+        for (std::uint64_t db = 0; db < SampleDumpBlocks; ++db) {
+            const auto begin = words[db * SampleDumpStride / sizeof(std::uint64_t)];
+            const auto end = words[db * SampleDumpStride / sizeof(std::uint64_t) + 1];
+            if ((begin & ready) == 0 || (end & ready) == 0) {
+                require(predication.runWhenUnwritten, "Z-pass predication waits for a counter pair that was never written");
+                return true;
+            }
+            samples += (end & ~ready) - (begin & ~ready);
+        }
+        return (samples != 0) == predication.executeWhenSet;
+    }
+    const std::size_t bytes = PredicationBytes(predication);
+    std::uint64_t value = 0;
     GuestMemory::Read(predication.address, std::as_writable_bytes(std::span(&value, 1)).first(bytes), bytes);
     return (value != 0) == predication.executeWhenSet;
 }
@@ -817,6 +859,7 @@ std::vector<PacketStore> DecodeStores(std::span<const std::uint32_t> packet) {
         }
         case 0x45: {
             const auto write = DecodeConditionalWrite(packet);
+            if (((packet[1] >> 8u) & 3u) != 1u) return {};
             auto store = known(write.destination, std::as_bytes(std::span(&write.value, 1)));
             store.conditional = true;
             return {store};
@@ -1143,7 +1186,7 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
         case 0x13: queue.indexBufferSize = packet[1]; return;
         case 0x20: {
             const auto operation = (packet[1] >> 16u) & 7u;
-            queue.predication = {operation == 0 ? 0 : address(packet[2], packet[3]), operation, (packet[1] & 0x100u) != 0};
+            queue.predication = {operation == 0 ? 0 : address(packet[2], packet[3]), operation, (packet[1] & 0x100u) != 0, (packet[1] & 0x1000u) != 0};
             return;
         }
         case 0x3f: throw std::runtime_error(std::string(UnsupportedReason(packet[0])));
@@ -1244,9 +1287,21 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
         case 0x45: {
             const auto write = DecodeConditionalWrite(packet);
             std::uint32_t value = 0;
-            {
+            if ((packet[1] & 0x10u) != 0) {
                 const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::Wait);
                 GuestMemory::Read(write.compared, std::as_writable_bytes(std::span(&value, 1)), 4);
+            } else {
+                const auto base = registerBankBase(packet[2]);
+                const auto& bank = base == ShaderRegisterBase ? queue.shader : base == ContextRegisterBase ? queue.context : queue.userConfig;
+                require(base != 0 && bank.contains(packet[2] - base), "COND_WRITE poll register has no known value");
+                value = bank.at(packet[2] - base);
+            }
+            if (((packet[1] >> 8u) & 3u) == 0) {
+                if (waitCompares(packet, false, value)) {
+                    const auto base = registerBankBase(packet[6]);
+                    writeRegister(queue, base == ShaderRegisterBase ? 0x76u : base == ContextRegisterBase ? 0x69u : 0x79u, packet[6] - base, write.value);
+                }
+                return;
             }
             if (waitCompares(packet, false, value)) GuestMemory::Write(write.destination, std::as_bytes(std::span(&write.value, 1)), 4);
             return;

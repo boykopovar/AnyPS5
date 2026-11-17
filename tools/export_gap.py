@@ -20,7 +20,10 @@ POSTFIXES = ("_nid_postfix", "_nid_no_patch_cut", "_nid_no_patch")
 DISAMBIG = "_nid_disambig"
 NID_PATTERN = "[A-Za-z0-9+\\-]{11}"
 VABI = re.compile(r"\bAPS5_VABI\s+(\w+)\s*\(")
-DEFINE = re.compile(r"#define\s+(\w+)\s*\(\s*(\w+)\s*\)([^\n]*)")
+DEFINE = re.compile(r"^[ \t]*#[ \t]*define[ \t]+(\w+)[ \t]*\([ \t]*(\w+)[ \t]*\)([^\n]*)", re.M)
+DIRECTIVE_TAIL = r'(?://[^\n]*|/\*[\s\S]*?\*/|"(?:\\.|[^"\\\n])*"|[^\n])*'
+DIRECTIVE_TOKEN = re.compile(r'(?P<directive>^[ \t]*#' + DIRECTIVE_TAIL + r')|' + nid_names.CPP_TOKEN.pattern, re.M)
+NON_DEFINE_DIRECTIVE_TOKEN = re.compile(r'(?P<directive>^[ \t]*#(?![ \t]*define\b)' + DIRECTIVE_TAIL + r')|' + nid_names.CPP_TOKEN.pattern, re.M)
 IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 MODULE_PATTERN = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*\Z")
 
@@ -119,13 +122,13 @@ def parse_export_table(path):
     return nids
 
 
-def mask_code(text):
+def mask_code(text, token=nid_names.CPP_TOKEN):
     def blank(match):
         if match.group("code") is not None:
             return match.group()
         return re.sub(r"[^\n]", " ", match.group())
 
-    return nid_names.CPP_TOKEN.sub(blank, text)
+    return token.sub(blank, text)
 
 
 def mask_directives(text):
@@ -162,6 +165,8 @@ def strip_disambig(name):
 def source_texts(module_dir):
     texts = []
     for path in sorted(module_dir.rglob("*")):
+        if any(part.lower() in {"test", "tests"} for part in path.relative_to(module_dir).parts[:-1]):
+            continue
         if not path.is_file():
             continue
         if path.suffix.lower() not in (".cpp", ".c", ".cc", ".h", ".hpp", ".hh"):
@@ -181,9 +186,9 @@ def same_file(left, right):
 def macro_definitions(texts):
     macros = {}
     for _, text in texts:
-        for match in DEFINE.finditer(joined_lines(text)):
+        for match in DEFINE.finditer(mask_code(joined_lines(text), NON_DEFINE_DIRECTIVE_TOKEN)):
             macro, param, body = match.group(1), match.group(2), match.group(3)
-            if any(definition.group(1) == param for definition in nid_names.DEFINITION.finditer(mask_code(body))):
+            if any(definition.group(1) == param for definition in nid_names.DEFINITION.finditer(body)):
                 macros.setdefault(macro, param)
     return macros
 
@@ -210,9 +215,9 @@ def record_provided(provided, name, origin=None):
 def collect_source_exports(texts):
     macros = macro_definitions(texts)
     provided = {}
-    for _, text in texts:
-        code = "\n".join(line for line in mask_code(joined_lines(text)).split("\n") if not line.lstrip().startswith("#"))
-        for match in nid_names.DEFINITION.finditer(code):
+    masked_texts = [mask_directives(mask_code(joined_lines(text), DIRECTIVE_TOKEN)) for _, text in texts]
+    for (_, text), masked in zip(texts, masked_texts):
+        for match in nid_names.DEFINITION.finditer(masked):
             record_provided(provided, match.group(1))
         for name in nid_names.source_assembly_definitions(text):
             record_provided(provided, name, "defined in assembly")
@@ -221,8 +226,7 @@ def collect_source_exports(texts):
                 provided[nid] = f"bound with APS5_EXPORT as {helper}"
     for macro in sorted(macros):
         call = re.compile(r"\b" + re.escape(macro) + r"\s*\(\s*(?:::)?(?:\w+::)*(\w+)\s*\)")
-        for _, text in texts:
-            masked = mask_code(mask_directives(text))
+        for masked in masked_texts:
             for match in call.finditer(masked):
                 symbol = match.group(1)
                 base, postfix = base_of(symbol)

@@ -33,14 +33,18 @@ PROJECT = {
 }
 
 
+def child_decoder_rejects(text):
+    probe = "import json, sys\ntry:\n    json.loads(sys.stdin.read())\nexcept RecursionError:\n    sys.exit(3)\n"
+    return subprocess.run([sys.executable, "-c", probe], input=text, text=True, encoding="utf-8",
+                          capture_output=True).returncode == 3
+
+
 def excessively_nested_json(test):
     depth = sys.getrecursionlimit() + 64
     while True:
         text = "[" * depth + "]" * depth
-        try:
-            json.loads(text)
-        except RecursionError:
-            return text
+        if child_decoder_rejects(text):
+            return "[" * (depth + 128) + "]" * (depth + 128)
         depth *= 2
         if depth > 10_000_000:
             test.fail("the JSON decoder accepts every probed nesting depth")

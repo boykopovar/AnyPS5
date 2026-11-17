@@ -7,6 +7,7 @@ import posixpath
 import re
 import subprocess
 import sys
+import tempfile
 import tokenize
 from collections import defaultdict
 from pathlib import Path, PurePosixPath
@@ -37,6 +38,7 @@ RULES = {
     "env-reference": ("error", "docs/dev/ENVIRONMENT.md", "Every APS5_* or ANYPS5_* name a pull request adds to the code has a row in docs/dev/ENVIRONMENT.md, a row whose name the pull request stops reading is removed, and a row the pull request removes is no longer read"),
     "debt-length": ("warning", "CONTRIBUTING.md#documentation", "Technical debt entry over 1000 characters: state the gap first (what differs from the console, what is unverified, what throws) and keep only the behaviour it needs"),
     "debt-labels": ("warning", "docs/dev/TechnicalDebt.md", "Unknown label in a technical debt entry's Labels: trailer, which ends the entry; the labels are console, firmware, gpu, title, code, no-test, tested, windows, macos and linux"),
+    "debt-fragment": ("error", "docs/dev/TechnicalDebt.md#fragments", "A debt fragment in docs/dev/debt/changes/ must apply: each '## change' or '## remove' names text that occurs in exactly one entry of its '# <library>' file, and no other fragment changes the same entry; check with python3 tools/debt_fold.py --check"),
 }
 
 CPP = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".inl", ".ipp"}
@@ -49,6 +51,7 @@ AGENT_FILES = {
 }
 DEBT = "docs/dev/TechnicalDebt.md"
 DEBT_DIR = "docs/dev/debt/"
+DEBT_CHANGES = DEBT_DIR + "changes/"
 DEBT_TARGET = re.compile(r"\]\((?:\.\./)+(core/[^)#\s]+)")
 DEBT_ENTRY_LIMIT = 1000
 DEBT_LABELS = {
@@ -159,7 +162,7 @@ class Check:
             elif path and number is not None and line.startswith("+"):
                 self.added[path].append((number, line[1:]))
                 number += 1
-        self.read([path for path in sorted(self.tree) if is_debt(path)] +
+        self.read([path for path in sorted(self.tree) if is_debt(path) or is_debt_fragment(path)] +
                   [path for path, (added, _) in self.numstat.items() if self.status.get(path) != "D" and added != "-" and
                    not path.startswith("3rdparty/") and PurePosixPath(path).suffix.lower() not in IMAGES])
 
@@ -269,7 +272,7 @@ class Check:
     def unknown_nids(self, unknowns, symbols):
         if not unknowns and not symbols:
             return
-        result = subprocess.run(["git", "grep", "--no-color", "-nE", "--full-name", NID_SOURCES, self.head, "--", ":(top)core/libs/prx"], capture_output=True, encoding="utf-8", errors="replace")
+        result = subprocess.run(["git", "grep", "--no-color", "-InE", "--full-name", NID_SOURCES, self.head, "--", ":(top)core/libs/prx"], capture_output=True, encoding="utf-8", errors="replace")
         tree_unknowns, tree_symbols = defaultdict(list), defaultdict(list)
         for path, number, text in (line.split(":", 3)[1:] for line in filter(None, result.stdout.split("\n"))):
             if "tests" in PurePosixPath(path).parts or PurePosixPath(path).suffix not in CPP:
@@ -368,7 +371,7 @@ class Check:
                         self.report("debt-file", path, number, expected)
                 if number in fenced:
                     continue
-                for target, resolved in links(path, text):
+                for target, resolved in links(link_base(path), text):
                     if resolved not in self.tree and resolved not in self.dirs:
                         self.report("doc-link", path, number, target)
         deleted = {path for path, status in self.status.items() if status == "D"} | self.renamed_from
@@ -383,7 +386,7 @@ class Check:
                 for number, text in enumerate(source.split("\n"), 1):
                     if number in checked or number in fenced:
                         continue
-                    for target, resolved in links(path, text):
+                    for target, resolved in links(link_base(path), text):
                         if resolved in deleted and resolved not in self.tree and resolved not in self.dirs:
                             self.report("doc-link", path, number, target)
 
@@ -397,6 +400,44 @@ class Check:
                 for label in debt_labels(text) if number in entry_lines else []:
                     if label not in known:
                         self.report("debt-labels", path, number, label)
+
+    def debt_fragments(self):
+        import debt_fold
+        changed = {path for path, status in self.status.items() if status != "D" and is_debt_fragment(path)}
+        if not changed:
+            return
+        known = {label for labels in DEBT_LABELS.values() for label in labels}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for path in sorted(path for path in self.tree if is_debt(path) or is_debt_fragment(path)):
+                (root / path).parent.mkdir(parents=True, exist_ok=True)
+                (root / path).write_bytes(self.blob(path))
+            try:
+                debt_fold.fold(root, write=False)
+            except debt_fold.FoldError as error:
+                for problem in str(error).split("\n"):
+                    found = [(path, int(line)) for path, line in re.findall(r"(\S+\.md):(\d+)", problem) if path in changed]
+                    if found:
+                        self.report("debt-fragment", found[0][0], found[0][1], problem)
+            for path in sorted(changed):
+                try:
+                    operations = debt_fold.parse(root / path, root)
+                except debt_fold.FoldError:
+                    continue
+                for operation in operations:
+                    for entry in debt_fold.units(operation.body).values():
+                        if not entry.startswith("- "):
+                            continue
+                        name = debt_name(entry)
+                        expected = f"{DEBT_DIR}{name}.md" if name else DEBT
+                        if expected != debt_fold.debt_file(operation.library):
+                            self.report("debt-file", path, operation.line, expected)
+                        first = entry.split("\n")[0]
+                        if long_debt_entry(first):
+                            self.report("debt-length", path, operation.line, f"{len(first)} characters")
+                        for label in debt_labels(entry):
+                            if label not in known:
+                                self.report("debt-labels", path, operation.line, label)
 
     def workflows(self):
         for path in sorted(self.status):
@@ -413,7 +454,7 @@ class Check:
                     self.report("ci-gate", path, number, name)
 
     def commits(self):
-        for line in git("log", "--no-merges", "--format=%h %s", f"{self.base}..{self.head}").splitlines():
+        for line in filter(None, git("log", "--no-merges", "--format=%h %s", f"{self.base}..{self.head}").split("\n")):
             sha, subject = line.split(" ", 1)
             if not CONVENTIONAL.match(subject):
                 self.report("commit-subject", "", 0, f"{sha} {subject}")
@@ -423,7 +464,7 @@ class Check:
         added, removed, dropped = {}, set(), set()
         path, number, in_hunk = "", 0, False
         for line in git("diff", "-U0", "--inter-hunk-context=0", "--no-color", "--no-ext-diff", "--no-textconv", "--no-relative",
-                        "--find-renames", "--dst-prefix=b/", self.base, self.head, "--", ":(top)core", f":(top){doc}").splitlines():
+                        "--find-renames", "--dst-prefix=b/", self.base, self.head, "--", ":(top)core", f":(top){doc}").split("\n"):
             if line.startswith("diff --git"):
                 path, in_hunk = "", False
             elif line.startswith("@@"):
@@ -440,11 +481,11 @@ class Check:
                 elif line.startswith("-"):
                     removed.update(match.group("name") for _, match in env_reference.line_reads(line[1:]))
             elif line.startswith("+++ b/"):
-                path = line[6:]
+                path = line[6:].removesuffix("\t")
         result = subprocess.run(["git", "grep", "--no-color", "-nE", "--full-name", env_reference.GREP, self.head, "--", ":(top)core"],
                                 capture_output=True, encoding="utf-8", errors="replace")
         reads = set()
-        for line in result.stdout.splitlines():
+        for line in result.stdout.split("\n"):
             reads.update(match.group("name") for _, match in env_reference.line_reads(line))
         pattern = env_reference.documented_pattern(env_reference.PREFIXES)
         documented = set(pattern.findall(self.show(doc))) if doc in self.tree else set()
@@ -474,7 +515,7 @@ class Check:
         checklist = sections.get("Checklist", "")
         for item in re.findall(r"^\s*[-*+]\s*\[ \]\s*(.+)$", checklist, re.M):
             self.report("pr-template", "", 0, f"unchecked: {item.strip()}")
-        if checklist and not re.search(r"AI-assisted:\s*(yes|no)\b", checklist, re.I):
+        if checklist and not re.search(r"AI-assisted:[ \t]*(yes|no)\b", checklist, re.I):
             self.report("pr-template", "", 0, "answer AI-assisted with yes or no")
         if checklist and not re.search(r"Depends on:\s*(?:[-*+]\s+)?(#\d+|none)\b", checklist, re.I):
             self.report("pr-template", "", 0, "fill Depends on with #N or none")
@@ -538,6 +579,14 @@ def links(path, text):
 
 def is_debt(path):
     return path == DEBT or (path.startswith(DEBT_DIR) and path.endswith(".md") and "/" not in path[len(DEBT_DIR):])
+
+
+def is_debt_fragment(path):
+    return path.startswith(DEBT_CHANGES) and path.endswith(".md") and "/" not in path[len(DEBT_CHANGES):]
+
+
+def link_base(path):
+    return f"{DEBT_DIR}fragment.md" if is_debt_fragment(path) else path
 
 
 def long_debt_entry(text):
@@ -940,6 +989,7 @@ if __name__ == "__main__":
     check.repository()
     check.docs()
     check.debt_entries()
+    check.debt_fragments()
     check.workflows()
     check.commits()
     check.env_reference()

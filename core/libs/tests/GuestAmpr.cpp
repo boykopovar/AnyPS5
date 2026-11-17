@@ -8,6 +8,7 @@
 #include "prx/libkernel/Apr/include/AprCommandBuffer.hpp"
 #include <array>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -786,11 +787,26 @@ void TestResolveFailures() {
     Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(paths, 2, ids, sizes, &failed) == -1);
     Require(*__error_nid_postfix() == 2 && failed == 1 && ids[1] == 0xffffffffu && sizes[1] == 0);
     Require(sizes[0] == 4);
+    *__error_nid_postfix() = 0;
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(paths, 1, ids, nullptr, &failed) == -1 && *__error_nid_postfix() == 22);
+    const char* nullElements[]{paths[0], nullptr};
+    ids[0] = ids[1] = 123;
+    sizes[0] = sizes[1] = 123;
+    failed = 99;
+    *__error_nid_postfix() = 0;
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(nullElements, 2, ids, sizes, &failed) == -1);
+    Require(*__error_nid_postfix() == 2 && failed == 1 && ids[1] == 0xffffffffu && sizes[1] == 0);
+    const char* emptyElements[]{paths[0], ""};
+    ids[0] = ids[1] = 123;
+    failed = 99;
+    *__error_nid_postfix() = 0;
+    Require(sceKernelAprResolveFilepathsToIds(emptyElements, 2, ids, &failed) == -1);
+    Require(*__error_nid_postfix() == 2 && failed == 1 && ids[1] == 0xffffffffu);
     int results[]{123, 123};
     Require(sceKernelAprResolveFilepathsToIdsAndFileSizesForEach(paths, 2, ids, sizes, results) == 1);
     Require(results[0] == 0 && results[1] == static_cast<int>(0x80020002));
     Require(ids[1] == 0xffffffffu && sizes[0] == 4 && sizes[1] == 0);
-    for (const char* invalid : {"ampr_resolve_missing.bin/../ampr_resolve_existing.bin", "ampr_resolve_existing.bin/../ampr_resolve_existing.bin"}) {
+    for (const char* invalid : {"ampr_resolve_missing.bin/../ampr_resolve_existing.bin", "ampr_resolve_existing.bin/../ampr_resolve_existing.bin", "", static_cast<const char*>(nullptr)}) {
         Require(sceKernelAprResolveFilepathsToIds(&invalid, 1, ids, &failed) == -1);
         Require(*__error_nid_postfix() == 2 && failed == 0 && ids[0] == 0xffffffffu);
     }
@@ -809,14 +825,28 @@ void TestResolveForEachVariants() {
     Require(sceKernelAprResolveFilepathsToIdsForEach(paths, 2, ids, results) == 1);
     Require(ids[0] == expected && ids[1] == 0xffffffffu && results[0] == 0 && results[1] == static_cast<int>(0x80020002));
     ids[0] = ids[1] = 123;
+    Require(sceKernelAprResolveFilepathsToIdsForEach(paths, 2, ids, nullptr) == 1);
+    Require(ids[0] == expected && ids[1] == 0xffffffffu);
+    ids[0] = ids[1] = 123;
+    std::uint64_t sizes[]{123, 123};
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizesForEach(paths, 2, ids, sizes, nullptr) == 1);
+    Require(ids[0] == expected && ids[1] == 0xffffffffu && sizes[0] == 4 && sizes[1] == 0);
+    ids[0] = ids[1] = 123;
     results[0] = results[1] = 123;
     Require(sceKernelAprResolveFilepathsWithPrefixToIdsForEach("ampr_", names, 2, ids, results) == 1);
     Require(ids[0] == expected && ids[1] == 0xffffffffu && results[0] == 0 && results[1] == static_cast<int>(0x80020002));
-    std::uint64_t sizes[]{123, 123};
+    ids[0] = ids[1] = 123;
+    Require(sceKernelAprResolveFilepathsWithPrefixToIdsForEach("ampr_", names, 2, ids, nullptr) == 1);
+    Require(ids[0] == expected && ids[1] == 0xffffffffu);
+    sizes[0] = sizes[1] = 123;
     ids[0] = ids[1] = 123;
     results[0] = results[1] = 123;
     Require(sceKernelAprResolveFilepathsWithPrefixToIdsAndFileSizesForEach("ampr_", names, 2, ids, sizes, results) == 1);
     Require(ids[0] == expected && ids[1] == 0xffffffffu && sizes[0] == 4 && sizes[1] == 0 && results[0] == 0 && results[1] == static_cast<int>(0x80020002));
+    ids[0] = ids[1] = 123;
+    sizes[0] = sizes[1] = 123;
+    Require(sceKernelAprResolveFilepathsWithPrefixToIdsAndFileSizesForEach("ampr_", names, 2, ids, sizes, nullptr) == 1);
+    Require(ids[0] == expected && ids[1] == 0xffffffffu && sizes[0] == 4 && sizes[1] == 0);
     std::remove(paths[0]);
 }
 
@@ -855,6 +885,13 @@ void TestPrefixedResolveWithoutSizes() {
     std::uint32_t untouched[]{0x123456};
     Require(sceKernelAprResolveFilepathsWithPrefixToIds(prefix.c_str(), names, 0, untouched, &failed) == 0);
     Require(untouched[0] == 0x123456 && failed == 1);
+    *__error_nid_postfix() = 0;
+    Require(sceKernelAprResolveFilepathsWithPrefixToIds(nullptr, names, 0, ids, &failed) == -1 && *__error_nid_postfix() == 22);
+    Require(sceKernelAprResolveFilepathsWithPrefixToIds(prefix.c_str(), nullptr, 0, ids, &failed) == -1 && *__error_nid_postfix() == 22);
+    Require(sceKernelAprResolveFilepathsWithPrefixToIds(prefix.c_str(), names, 0, nullptr, &failed) == -1 && *__error_nid_postfix() == 22);
+    Require(sceKernelAprResolveFilepathsToIds(nullptr, 0, ids, &failed) == -1 && *__error_nid_postfix() == 22);
+    Require(sceKernelAprResolveFilepathsToIds(names, 0, nullptr, &failed) == -1 && *__error_nid_postfix() == 22);
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(names, 0, ids, nullptr, &failed) == -1 && *__error_nid_postfix() == 22);
     std::remove((prefix + "first.bin").c_str());
     std::remove((prefix + "second.bin").c_str());
 }
@@ -1711,6 +1748,10 @@ void TestKernelWriteCommands() {
     Require(sceAmprAmmCommandBufferModifyMtypeProtect(&sibling.buffer, target, 2 * page, 5, 0x13, 0x10) == 0);
     Require(std::memcmp(written.data(), sibling.memory.data(), sizeof(Apr::AmmProtectCommand)) == 0);
     Require(sceKernelWriteModifyMtypeProtectCommand(written.data(), target, 2 * page, 5, 0x13, 0x10, nullptr) == 0);
+    constexpr int kernelEfault = static_cast<int>(0x8002000E);
+    errno = 71;
+    Require(sceKernelWriteModifyMtypeProtectCommand(reinterpret_cast<void*>(0x10), target, 2 * page, 5, 0x13, 0x10, &reported) == kernelEfault && errno == 71);
+    Require(sceKernelWriteModifyMtypeProtectCommand(written.data(), target, 2 * page, 5, 0x13, 0x10, reinterpret_cast<std::uint64_t*>(0x10)) == kernelEfault && errno == 71);
     std::uint32_t id = 0;
     Require(sceAmprAmmSubmitCommandBuffer3(written.data(), static_cast<std::uint32_t>(reported), 0, &id) == 0);
     Require(sceAmprAmmWaitCommandBufferCompletion(id) == 0);
@@ -1728,6 +1769,8 @@ void TestKernelWriteCommands() {
     Require(remap.header.opcode == Apr::Opcode::AmmRemapIntoPrt && remap.header.bytes == sizeof(remap));
     Require(remap.address == prt + page && remap.source == source && remap.size == page && remap.protection == cpuReadWrite && remap.reserved == 1011);
     Require(sceKernelWriteRemapIntoPrtCommand(reinterpret_cast<std::uint32_t*>(prtWritten.data()), prt + page, source, page, cpuReadWrite, 42, &prtMeasured) == 0);
+    Require(sceKernelWriteRemapIntoPrtCommand(reinterpret_cast<std::uint32_t*>(0x10), prt + page, source, page, cpuReadWrite, 0, &prtMeasured) == kernelEfault && errno == 71);
+    Require(sceKernelWriteRemapIntoPrtCommand(reinterpret_cast<std::uint32_t*>(prtWritten.data()), prt + page, source, page, cpuReadWrite, 42, reinterpret_cast<std::uint64_t*>(0x10)) == kernelEfault && errno == 71);
     std::memcpy(&remap, prtWritten.data(), sizeof(remap));
     Require(remap.reserved == 42);
     Recorder prtSibling;
@@ -1930,6 +1973,43 @@ void TestConstructNopPayloadIntoBuffer() {
     Require(sceAmprCommandBufferDestructor(&buffer) == 0);
 }
 
+static void TestGuestPointerAndErrnoPreservation() {
+    Require(sceAmprCommandBufferClearBuffer(nullptr) == nullptr);
+    Require(sceAmprCommandBufferGetBufferBaseAddress(nullptr) == nullptr);
+    Require(sceAmprCommandBufferGetCurrentOffset(nullptr) == 0);
+    Require(sceAmprCommandBufferGetNumCommands(nullptr) == 0);
+    Require(sceAmprCommandBufferGetSize(nullptr) == 0);
+    Require(sceAmprCommandBufferGetType(nullptr) == 0);
+
+    Apr::CommandBufferObject buffer{};
+    std::array<std::uint8_t, 512> storage{};
+    const std::uint32_t color = 0x11223344u;
+    AmmUsageStatsData stats{sizeof(AmmUsageStatsData), 0, 0};
+
+    errno = EILSEQ;
+    Require(sceAmprCommandBufferConstructor(&buffer) == 0);
+    Require(errno == EILSEQ);
+    Require(sceAmprCommandBufferSetBuffer(&buffer, storage.data(), static_cast<std::uint32_t>(storage.size())) == 0);
+    Require(errno == EILSEQ);
+    Require(sceAmprCommandBufferGetBufferBaseAddress(&buffer) == storage.data());
+    Require(sceAmprCommandBufferGetSize(&buffer) == storage.size());
+    Require(sceAmprCommandBufferGetCurrentOffset(&buffer) == 0);
+    Require(sceAmprCommandBufferGetNumCommands(&buffer) == 0);
+    Require(sceAmprCommandBufferGetType(&buffer) == static_cast<std::uint32_t>(Apr::BufferType::Generic));
+    Require(errno == EILSEQ);
+    Require(sceAmprCommandBufferSetMarkerWithColor(&buffer, "marker", &color) == 0);
+    Require(errno == EILSEQ);
+    Require(sceAmprCommandBufferConstructMarker(&buffer, 5, "marker2", &color) == 0);
+    Require(errno == EILSEQ);
+    Require(sceAmprCommandBufferGetNumCommands(&buffer) == 2);
+    Require(sceAmprCommandBufferClearBuffer(&buffer) == storage.data());
+    Require(errno == EILSEQ);
+    Require(sceAmprCommandBufferGetBufferBaseAddress(&buffer) == nullptr);
+    Require(sceAmprAmmGetUsageStatsData(&stats) == 0);
+    Require(errno == EILSEQ);
+    Require(sceAmprCommandBufferDestructor(&buffer) == 0);
+}
+
 int main() {
     TestRecording("frame");
     TestRecording("");
@@ -1977,5 +2057,6 @@ int main() {
     TestAmmSubmitAfterGrowth();
     TestExpandedBufferLifecycle();
     TestConstructNopPayloadIntoBuffer();
+    TestGuestPointerAndErrnoPreservation();
     return 0;
 }
