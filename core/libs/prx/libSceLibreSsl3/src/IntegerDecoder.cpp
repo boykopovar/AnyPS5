@@ -2,6 +2,7 @@
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/libc.hpp"
 #include "prx/libc/include/General.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -9,6 +10,8 @@
 #include <optional>
 #include <span>
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 
 namespace {
@@ -28,6 +31,24 @@ static_assert(sizeof(Asn1String) == 24);
 static_assert(offsetof(Asn1String, data) == 8);
 static_assert(offsetof(Asn1String, flags) == 16);
 
+template <typename T>
+T GuestLoad(const T* source, const char* function) {
+    T value;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&value, source, sizeof(T));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument(std::string(function) + ": unreadable guest pointer");
+    return value;
+}
+
+template <typename T>
+void GuestStore(T* destination, const T& value, const char* function) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, &value, sizeof(T));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument(std::string(function) + ": unwritable guest pointer");
+}
+
 void PutError(int reason) {
     LibreSslPutError_nid_no_patch(Asn1Library, AnyFunction, reason);
 }
@@ -37,14 +58,53 @@ void PutHeaderError(int reason) {
     PutError(NestedAsn1Error);
 }
 
-bool ReadByte(std::span<const unsigned char>& input, unsigned char& byte) {
-    if (input.empty()) return false;
-    byte = input.front();
-    input = input.subspan(1);
-    return true;
+class GuestInput {
+public:
+    GuestInput(const unsigned char* start, std::size_t size, const char* function)
+        : start(start), size(size), function(function) {}
+
+    std::size_t Remaining() const {
+        return size - offset;
+    }
+
+    const unsigned char* Position() const {
+        return start + offset;
+    }
+
+    bool ReadByte(unsigned char& byte) {
+        if (offset == size) return false;
+        CopyIn(&byte, 1);
+        ++offset;
+        return true;
+    }
+
+    std::span<const unsigned char> Take(std::size_t count) {
+        taken.resize(count);
+        if (count != 0) CopyIn(taken.data(), count);
+        offset += count;
+        return taken;
+    }
+
+private:
+    void CopyIn(unsigned char* destination, std::size_t count) {
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(destination, start + offset, count);
+        errno = savedErrno;
+        if (!copied) throw std::invalid_argument(std::string(function) + ": unreadable guest input");
+    }
+
+    const unsigned char* start;
+    std::size_t size;
+    const char* function;
+    std::size_t offset = 0;
+    std::vector<unsigned char> taken;
+};
+
+bool ReadByte(GuestInput& input, unsigned char& byte) {
+    return input.ReadByte(byte);
 }
 
-bool ReadIdentifier(std::span<const unsigned char>& input, std::uint8_t& tagClass, bool& constructed, std::uint32_t& tag) {
+bool ReadIdentifier(GuestInput& input, std::uint8_t& tagClass, bool& constructed, std::uint32_t& tag) {
     unsigned char identifier;
     if (!ReadByte(input, identifier)) return false;
     tagClass = identifier >> 6;
@@ -61,7 +121,7 @@ bool ReadIdentifier(std::span<const unsigned char>& input, std::uint8_t& tagClas
     return true;
 }
 
-bool ReadLength(std::span<const unsigned char>& input, bool& indefinite, std::size_t& length) {
+bool ReadLength(GuestInput& input, bool& indefinite, std::size_t& length) {
     unsigned char lengthByte;
     if (!ReadByte(input, lengthByte)) return false;
     indefinite = lengthByte == 0x80;
@@ -78,7 +138,7 @@ bool ReadLength(std::span<const unsigned char>& input, bool& indefinite, std::si
     return true;
 }
 
-std::optional<std::span<const unsigned char>> ReadInteger(std::span<const unsigned char>& input) {
+std::optional<std::span<const unsigned char>> ReadInteger(GuestInput& input) {
     std::uint8_t tagClass;
     bool constructed;
     std::uint32_t tag;
@@ -96,7 +156,7 @@ std::optional<std::span<const unsigned char>> ReadInteger(std::span<const unsign
         PutHeaderError(BadObjectHeader);
         return std::nullopt;
     }
-    if (!indefinite && length > input.size()) {
+    if (!indefinite && length > input.Remaining()) {
         PutHeaderError(TooLong);
         return std::nullopt;
     }
@@ -104,9 +164,8 @@ std::optional<std::span<const unsigned char>> ReadInteger(std::span<const unsign
         PutError(TypeNotPrimitive);
         return std::nullopt;
     }
-    const auto content = input.first(length);
-    input = input.subspan(length);
-    return content;
+    if (length > static_cast<std::size_t>(std::numeric_limits<int>::max())) return std::nullopt;
+    return input.Take(length);
 }
 
 void ClearAndFree(void* data, std::size_t size) {
@@ -137,12 +196,14 @@ extern "C" {
 
 int APS5_VABI ASN1_get_object_nid_postfix(const unsigned char** input, std::int64_t* length,
                                         int* tag, int* tagClass, std::int64_t maximum) {
-    if (!input || !length || !tag || !tagClass || maximum < 0 || (!*input && maximum != 0))
+    if (!input || !length || !tag || !tagClass || maximum < 0)
         throw std::invalid_argument("ASN1_get_object: invalid buffer or output");
-    *tagClass = 0;
-    *tag = 0;
-    *length = 0;
-    std::span<const unsigned char> remaining(*input, static_cast<std::size_t>(maximum));
+    const unsigned char* const start = GuestLoad(input, "ASN1_get_object");
+    if (!start && maximum != 0) throw std::invalid_argument("ASN1_get_object: invalid buffer or output");
+    GuestStore(tagClass, 0, "ASN1_get_object");
+    GuestStore(tag, 0, "ASN1_get_object");
+    GuestStore(length, std::int64_t{0}, "ASN1_get_object");
+    GuestInput remaining(start, static_cast<std::size_t>(maximum), "ASN1_get_object");
     std::uint8_t parsedClass;
     std::uint32_t parsedTag;
     bool constructed;
@@ -155,27 +216,29 @@ int APS5_VABI ASN1_get_object_nid_postfix(const unsigned char** input, std::int6
         return 0x80;
     }
     int result = (constructed ? 0x20 : 0) | (indefinite ? 1 : 0);
-    if (parsedLength > remaining.size()
+    if (parsedLength > remaining.Remaining()
         || parsedLength > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
         PutError(TooLong);
         result |= 0x80;
     }
-    *tagClass = parsedClass << 6;
-    *tag = static_cast<int>(parsedTag);
-    *length = static_cast<std::int64_t>(parsedLength);
-    *input = remaining.data();
+    GuestStore(tagClass, static_cast<int>(parsedClass << 6), "ASN1_get_object");
+    GuestStore(tag, static_cast<int>(parsedTag), "ASN1_get_object");
+    GuestStore(length, static_cast<std::int64_t>(parsedLength), "ASN1_get_object");
+    GuestStore(input, remaining.Position(), "ASN1_get_object");
     return result;
 }
 
 void* APS5_VABI d2i_ASN1_INTEGER_nid_postfix(void** output, const unsigned char** input, std::int64_t length) {
     if (length < 0) return nullptr;
-    if (!input || !*input) throw std::invalid_argument("d2i_ASN1_INTEGER: null input");
-    std::span<const unsigned char> remaining(*input, static_cast<std::size_t>(length));
+    if (!input) throw std::invalid_argument("d2i_ASN1_INTEGER: null input");
+    const unsigned char* const start = GuestLoad(input, "d2i_ASN1_INTEGER");
+    if (!start) throw std::invalid_argument("d2i_ASN1_INTEGER: null input");
+    GuestInput remaining(start, static_cast<std::size_t>(length), "d2i_ASN1_INTEGER");
     auto content = ReadInteger(remaining);
-    if (!content || content->size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) return nullptr;
+    if (!content) return nullptr;
     if (output) {
-        FreeInteger(*output);
-        *output = nullptr;
+        FreeInteger(GuestLoad(output, "d2i_ASN1_INTEGER"));
+        GuestStore(output, static_cast<void*>(nullptr), "d2i_ASN1_INTEGER");
     }
     if (content->empty()) {
         PutError(LengthMismatch);
@@ -214,8 +277,8 @@ void* APS5_VABI d2i_ASN1_INTEGER_nid_postfix(void** output, const unsigned char*
         return nullptr;
     }
     *integer = {static_cast<std::int32_t>(content->size()), negative ? 0x102 : 2, data, 0};
-    if (output) *output = integer;
-    *input += static_cast<std::size_t>(length) - remaining.size();
+    if (output) GuestStore(output, static_cast<void*>(integer), "d2i_ASN1_INTEGER");
+    GuestStore(input, remaining.Position(), "d2i_ASN1_INTEGER");
     return integer;
 }
 
