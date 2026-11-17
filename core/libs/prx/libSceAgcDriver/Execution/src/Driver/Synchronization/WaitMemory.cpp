@@ -8,6 +8,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include <cstdlib>
+#include <cstring>
 #include <mutex>
 #include <set>
 #ifdef _WIN32
@@ -112,7 +113,7 @@ void Driver::landPendingWaits(std::uint32_t queue) {
     }
 }
 
-void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t queue, const PacketHistory& context, std::uint64_t received, bool heldAtSubmit, bool requireMemory) {
+void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t queue, const PacketHistory& context, std::uint64_t received, bool heldAtSubmit, bool requireMemory, std::span<const std::uint32_t> following) {
     const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::Wait);
 
     auto start = std::chrono::steady_clock::now();
@@ -449,6 +450,23 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
                 for (const auto& [record, count] : writers)
                     std::fprintf(stderr, "[gpu]   earlier write by queue 0x%x opcode 0x%x at 0x%llx+0x%llx (%zu in the write history)\n", record.queue, record.opcode, static_cast<unsigned long long>(record.target), static_cast<unsigned long long>(record.length), count);
             }
+            constexpr std::size_t ShownLaterWrites = 8;
+            std::size_t laterWrites = 0;
+            for (std::size_t at = 0; at < following.size();) {
+                const auto words = Pm4::PacketWords(following[at]);
+                if (at + words > following.size()) break;
+                if (const auto label = Pm4::DecodeLabelWrite(following.subspan(at, words))) {
+                    if (laterWrites < ShownLaterWrites) {
+                        const auto bytes = label->Bytes();
+                        std::uint64_t value = 0;
+                        std::memcpy(&value, bytes.data(), std::min(bytes.size(), sizeof(value)));
+                        std::fprintf(stderr, "[gpu]   later in this submission: %s at 0x%llx+0x%zx value 0x%llx\n", Pm4::Name(following[at]).c_str(), static_cast<unsigned long long>(label->address), bytes.size(), static_cast<unsigned long long>(value));
+                    }
+                    ++laterWrites;
+                }
+                at += words;
+            }
+            if (laterWrites > ShownLaterWrites) std::fprintf(stderr, "[gpu]   later in this submission: %zu more label writes\n", laterWrites - ShownLaterWrites);
 
             if (const auto reportDevice = device.Load(); reportDevice != nullptr) {
                 Graphics::Recorder::LabelRefusal refusal{};

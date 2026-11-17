@@ -111,6 +111,9 @@ void CheckGroupedWriters() {
     const std::string writer = std::string("earlier write by queue 0x0 opcode 0x37 at ") + target + "+0x4";
     Require(Count(text, writer) == 1, "wait timeout report: the label's writer was not listed once");
     Require(Count(text, writer + " (" + std::to_string(Writes) + " in the write history)") == 1, "wait timeout report: the writer line does not count the label's " + std::to_string(Writes) + " writes");
+    char finishedTarget[32];
+    std::snprintf(finishedTarget, sizeof(finishedTarget), "0x%llx", static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(&done)));
+    Require(Count(text, std::string("later in this submission: WRITE_DATA at ") + finishedTarget + "+0x4 value 0x1") == 1, "wait timeout report: the write after the wait was not listed");
 }
 
 }
