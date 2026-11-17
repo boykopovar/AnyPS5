@@ -66,7 +66,7 @@ int main() {
         Require(sceVideoOutIsOutputSupported(handle, mode, &options, nullptr, 0) == UNSUPPORTED_OUTPUT_MODE);
         Require(sceVideoOutConfigureOutput(handle, mode, &options, nullptr, 0) == UNSUPPORTED_OUTPUT_MODE);
     }
-    for (std::uint64_t mode : {0x0ull, 0x2ull, 0x3ull, 0x5ull, 0x6ull, 0x9ull, 0xAull, 0xBull, 0x14ull, 0x20ull, 0x3Full, 0x100ull, 0xD000000Aull, 0x8000000000000001ull, ~0ull}) {
+    for (std::uint64_t mode : {0x0ull, 0x2ull, 0x3ull, 0x5ull, 0x6ull, 0x9ull, 0xAull, 0xBull, 0x12ull, 0x14ull, 0x20ull, 0x3Full, 0x100ull, 0xD000000Aull, 0x8000000000000001ull, ~0ull}) {
         Require(sceVideoOutIsOutputSupported(handle, mode, &options, nullptr, 0) == UNKNOWN_OUTPUT_MODE);
         Require(sceVideoOutConfigureOutput(handle, mode, &options, nullptr, 0) == UNKNOWN_OUTPUT_MODE);
     }
@@ -74,13 +74,6 @@ int main() {
         Require(sceVideoOutIsOutputSupported(handle, mode, nullptr, nullptr, 0) == UNKNOWN_OUTPUT_MODE);
         Require(sceVideoOutConfigureOutput(handle, mode, nullptr, nullptr, 0) == UNKNOWN_OUTPUT_MODE);
     }
-    bool thrown = false;
-    try {
-        sceVideoOutIsOutputSupported(handle, 0x12, &options, nullptr, 0);
-    } catch (const std::runtime_error&) {
-        thrown = true;
-    }
-    Require(thrown);
 
     Require(sceVideoOutIsOutputSupported(handle, 1, &options, &options, 0) == INVALID_VALUE);
     Require(sceVideoOutIsOutputSupported(handle, 1, &options, nullptr, 1) == INVALID_VALUE);

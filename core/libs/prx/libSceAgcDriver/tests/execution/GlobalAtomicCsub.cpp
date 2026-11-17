@@ -283,6 +283,7 @@ int main() {
     try {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
+        if (SkipWithoutSharedMemoryStores()) return VulkanTestSkipped;
         GuestBlock guest;
         Run(*device, guest, 32);
         Run(*device, guest, 64);
