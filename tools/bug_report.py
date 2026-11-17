@@ -23,6 +23,16 @@ def redact(text, *, home, user, host):
     return IPV4.sub("<ip>", text)
 
 
+def redact_report(value, identity):
+    if isinstance(value, str):
+        return redact(value, **identity)
+    if isinstance(value, list):
+        return [redact_report(item, identity) for item in value]
+    if isinstance(value, dict):
+        return {key: redact_report(item, identity) for key, item in value.items()}
+    return value
+
+
 README = """AnyPS5 bug report
 
 anyps5-report.json  the run report of the last run, redacted
@@ -42,10 +52,9 @@ def make_bundle(report, out, *, home, user, host, log=None, input_config=None):
     out = Path(out)
     if out.exists():
         raise FileExistsError(f"{out} already exists")
-    text = report.read_text(encoding="utf-8")
-    json.loads(text)
+    data = json.loads(report.read_text(encoding="utf-8"))
     identity = {"home": home, "user": user, "host": host}
-    members = {"anyps5-report.json": redact(text, **identity)}
+    members = {"anyps5-report.json": json.dumps(redact_report(data, identity), indent=2) + "\n"}
     if log is not None and Path(log).is_file():
         members["anyps5.log"] = redact(Path(log).read_text(encoding="utf-8", errors="replace"), **identity)
     if input_config is not None and Path(input_config).is_file():
@@ -79,7 +88,7 @@ def main(argv=None):
         return 1
     try:
         names = make_bundle(args.report, args.out, log=args.log, input_config=args.input_config, **identities())
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, RecursionError) as error:
         print(f"bug_report: {error}", file=sys.stderr)
         return 1
     print(f"wrote {args.out}: {', '.join(names)}")

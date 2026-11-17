@@ -3187,6 +3187,15 @@ void depthMaintenanceTests() {
         queue.context[0x8f] = 0xf;
         Require(AgcDriver::Graphics::DepthMaintenanceRejection(queue).find("DB_RENDER_CONTROL") != std::string::npos, "a resummarize draw with color writes passed");
     }
+    for (const auto expand : {0u, 0x20u, 0x40u, 0x60u}) {
+        auto queue = makeState();
+        queue.context[0x000] = 0x10u | expand;
+        queue.context[0x200] = 0;
+        queue.context[0x8e] = 0xf;
+        queue.context[0x8f] = 0xf;
+        queue.context[0x202] = 0x00cc0000;
+        Require(AgcDriver::Graphics::DepthMaintenanceRejection(queue).empty(), "a resummarize draw with disabled color was rejected");
+    }
     auto absent = makeState();
     absent.context.erase(0x000);
     Require(AgcDriver::Graphics::DepthMaintenanceRejection(absent).empty(), "an absent depth control produced a maintenance verdict");
@@ -14678,6 +14687,14 @@ void commandStateTests() {
         tracker.SetViewport(context, negative);
         tracker.SetViewport(context, positive);
         expectStateLog({stateLine("viewport", 0.0f, 0.0f, 640.0f, 480.0f, 0.0f, 1.0f), stateLine("viewport", -0.0f, 0.0f, 640.0f, 480.0f, -0.0f, 1.0f), stateLine("viewport", 0.0f, 0.0f, 640.0f, 480.0f, 0.0f, 1.0f)}, "viewports that differ in the sign of zero");
+        const VkViewport first{0.0f, 0.0f, 320.0f, 240.0f, 0.0f, 1.0f};
+        const std::array<VkViewport, 2> pair{first, VkViewport{320.0f, 0.0f, 320.0f, 240.0f, 0.0f, 1.0f}};
+        const std::array<VkRect2D, 2> pairScissors{VkRect2D{{0, 0}, {320, 240}}, VkRect2D{{320, 0}, {320, 240}}};
+        tracker.SetViewports(context, pair, pairScissors);
+        tracker.SetViewport(context, first);
+        tracker.SetScissor(context, pairScissors[0]);
+        tracker.SetViewport(context, positive);
+        expectStateLog({stateLine("viewport", 0.0f, 0.0f, 320.0f, 240.0f, 0.0f, 1.0f), stateLine("scissor", 0, 0, 320u, 240u), stateLine("viewport", 0.0f, 0.0f, 640.0f, 480.0f, 0.0f, 1.0f)}, "a single viewport after a viewport array that set the same viewport 0");
         tracker.SetDepthBias(context, 0.0f, 0.0f, 0.0f);
         tracker.SetDepthBias(context, -0.0f, 0.0f, 0.0f);
         tracker.SetDepthBias(context, -0.0f, 0.0f, 0.0f);

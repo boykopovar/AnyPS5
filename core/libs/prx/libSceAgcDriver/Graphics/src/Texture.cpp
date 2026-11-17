@@ -1,3 +1,4 @@
+#include "prx/libc/include/HostThreadSlot.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include "prx/libSceAgcDriver/Execution/include/AsyncLog.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
@@ -152,6 +153,7 @@ std::atomic<std::uint64_t> reuseLookupsHeld{0}, reuseLookupsChanged{0};
 std::atomic<std::uint64_t> refreshesProved{0};
 std::atomic<std::uint64_t> refreshesProvedPendingKeys{0};
 std::atomic<std::uint64_t> untrackedCompares{0};
+std::atomic<std::uint64_t> rewatchedConfirms{0};
 std::atomic<std::uint64_t> guestSnapshots{0};
 
 struct StorageTraffic {
@@ -2459,11 +2461,12 @@ VkImageView StorageTexture::AtomicView(std::uint32_t mip, bool firstLayer) {
 }
 
 VkImageView StorageTexture::Atomic64View(std::uint32_t mip, bool firstLayer) {
-    if (storageFormat == VK_FORMAT_R64_UINT) return firstLayer ? FirstLayerView(mip) : View(mip);
+    const auto format = context.imageInt64Atomics ? VK_FORMAT_R64_UINT : VK_FORMAT_R32G32_UINT;
+    if (storageFormat == format) return firstLayer ? FirstLayerView(mip) : View(mip);
     Require(storageFormat == VK_FORMAT_R32G32_UINT || storageFormat == VK_FORMAT_R32G32_SINT || storageFormat == VK_FORMAT_R32G32_SFLOAT, "64-bit storage image atomics need a surface of two 32-bit components");
     const auto found = atomicViews.find({mip, firstLayer});
     if (found != atomicViews.end()) return found->second;
-    const auto created = createView(mip, firstLayer, VK_FORMAT_R64_UINT);
+    const auto created = createView(mip, firstLayer, format);
     atomicViews.emplace(std::pair{mip, firstLayer}, created);
     return created;
 }
@@ -2491,25 +2494,39 @@ LookupOutcomes& ThreadLookupOutcomes() {
     return outcomes;
 }
 
+namespace {
+std::atomic<void (*)(std::uint64_t, std::size_t)> refreshUnchangedHookForTest{nullptr};
+}
+
+void StorageTexture::SetRefreshUnchangedHookForTest(void (*hook)(std::uint64_t address, std::size_t bytes)) {
+    refreshUnchangedHookForTest.store(hook, std::memory_order_release);
+}
+
 bool StorageTexture::Refresh() {
     return refresh(0, trackedLayers);
 }
 
-bool StorageTexture::RefreshLayers(std::uint32_t first, std::uint32_t count) {
-    const auto whole = [this] {
-        static_cast<void>(FlushDepthPlanes(descriptor.baseAddress, static_cast<std::size_t>(guestBytes)));
-        return Refresh();
-    };
-    if (count == 0 || geometry.thick || geometry.imageLayers <= 1 || first >= geometry.imageLayers || count > geometry.imageLayers - first || geometry.layerBytes == 0 || trackedLayerBytes == 0 || descriptor.dccAddress != 0) return whole();
+std::pair<std::uint32_t, std::uint32_t> StorageTexture::refreshUnits(std::uint32_t first, std::uint32_t count) const {
+    const std::pair whole{std::uint32_t{0}, trackedLayers};
+    if (count == 0 || geometry.thick || geometry.imageLayers <= 1 || first >= geometry.imageLayers || count > geometry.imageLayers - first || geometry.layerBytes == 0 || trackedLayerBytes == 0 || descriptor.dccAddress != 0) return whole;
     const auto begin = geometry.GuestLayerOffset(first);
     const auto end = geometry.GuestLayerOffset(first + count - 1) + geometry.layerBytes;
     const auto firstLayer = static_cast<std::uint32_t>(begin / trackedLayerBytes);
     const auto lastLayer = static_cast<std::uint32_t>(std::min<std::uint64_t>((end + trackedLayerBytes - 1) / trackedLayerBytes, trackedLayers));
-    if (firstLayer >= lastLayer || (firstLayer == 0 && lastLayer == trackedLayers)) return whole();
+    if (firstLayer >= lastLayer) return whole;
     for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
-        if (layerPending[layer] && (layer < firstLayer || layer >= lastLayer)) return whole();
+        if (layerPending[layer] && (layer < firstLayer || layer >= lastLayer)) return whole;
     }
-    if (pendingAlias() != nullptr) return whole();
+    if (pendingAlias() != nullptr) return whole;
+    return {firstLayer, lastLayer};
+}
+
+bool StorageTexture::RefreshLayers(std::uint32_t first, std::uint32_t count) {
+    const auto [firstLayer, lastLayer] = refreshUnits(first, count);
+    if (firstLayer == 0 && lastLayer == trackedLayers) {
+        static_cast<void>(FlushDepthPlanes(descriptor.baseAddress, static_cast<std::size_t>(guestBytes)));
+        return Refresh();
+    }
     const auto scopeBegin = layerBegin(firstLayer);
     static_cast<void>(FlushDepthPlanes(scopeBegin, static_cast<std::size_t>(layerBegin(lastLayer - 1) + layerBytes(lastLayer - 1) - scopeBegin)));
     return refresh(firstLayer, lastLayer);
@@ -2634,6 +2651,7 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
     // by a CPU store; scanned once when anything changed.
     std::vector<std::uint64_t> generations;
     std::vector<std::uint8_t> stampedBlocks, cpuBlocks;
+    std::vector<bool> rewatchCompared(trackedLayers, false);
     std::vector<bool> outside;
     // Units taken from the alias's image instead of guest memory.
     std::vector<bool> borrowed;
@@ -2660,6 +2678,7 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
             stampedBlocks.assign(generations.size(), 0);
             cpuBlocks.assign(generations.size(), 0);
             tracked = GuestMemory::ChangedBlocks(descriptor.baseAddress, static_cast<std::size_t>(guestBytes), generations, stampedBlocks, cpuBlocks);
+            if (tracked && !keysChanged) confirmRewatched(descriptor.baseAddress & ~std::uint64_t{0xffff}, stampedBlocks, cpuBlocks, &rewatchCompared);
             if (!tracked) awaitStoredSave(nullptr);
             const auto firstBlock = static_cast<std::size_t>(scopeBegin / 65536 - descriptor.baseAddress / 65536);
             const auto blocks = static_cast<std::size_t>((scopeBegin + scopeBytes - 1) / 65536 - scopeBegin / 65536 + 1);
@@ -2679,6 +2698,7 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
                     auto cpu = std::span(cpuBlocks).subspan(offset, count);
                     GuestMemory::CollectWritesUncached(begin, unitBytes);
                     unitTracked[unit] = GuestMemory::ChangedBlocks(begin, unitBytes, std::span(generations).subspan(offset, count), changed, cpu);
+                    if (unitTracked[unit] && !keysChanged) confirmRewatched(begin & ~std::uint64_t{0xffff}, changed, cpu, &rewatchCompared);
                     if (!unitTracked[unit]) {
                         unitCompared[unit] = compareUntracked(begin, unitBytes, changed, true);
                         if (unitCompared[unit]) std::copy(changed.begin(), changed.end(), cpu.begin());
@@ -2715,7 +2735,7 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
                 scanBlocks();
                 for (std::uint32_t unit = 0; unit < trackedLayers; ++unit) {
                     if (stampedBlocks[unit] == 0) {
-                        layerGeneration[unit] = currentFor(unit);
+                        layerGeneration[unit] = advanceUnchanged(unit, currentFor(unit));
                         continue;
                     }
                     changed[unit] = true;
@@ -2726,6 +2746,11 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
         } else {
             for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
                 if (GuestMemory::UnchangedSince(layerBegin(layer), static_cast<std::size_t>(layerBytes(layer)), layerGeneration[layer])) continue;
+                if (!keysChanged && rewatchProof(layerBegin(layer), layerBegin(layer) + layerBytes(layer), false) == RewatchProof::Unchanged) {
+                    rewatchedConfirms.fetch_add(1, std::memory_order_relaxed);
+                    layerGeneration[layer] = currentFor(layer);
+                    continue;
+                }
                 changed[layer] = true;
                 unchanged = false;
             }
@@ -2800,8 +2825,9 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
     else layerBehind.clear();
     if (unchanged) {
         ++Profile().storageReused;
+        if (const auto hook = refreshUnchangedHookForTest.load(std::memory_order_acquire)) hook(descriptor.baseAddress, static_cast<std::size_t>(guestBytes));
         for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) {
-            if (!outsideChanged || !outside[layer]) layerGeneration[layer] = currentFor(layer);
+            if (!outsideChanged || !outside[layer]) layerGeneration[layer] = advanceUnchanged(layer, currentFor(layer));
         }
         refreshGeneration();
         if (layerBehind.empty()) takeRefreshProof(alias != nullptr);
@@ -2832,7 +2858,7 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
     // unit's stamps say nothing, so it is stored.
     const auto droppable = [&](std::uint32_t unit) {
         if (keysChanged && IsDccClear(keys)) return true;
-        if (unitCompared.empty() ? compared : unitCompared[unit]) return stampedBlocks.at(unit) == GuestMemory::BlockWritten;
+        if ((unitCompared.empty() ? compared : unitCompared[unit]) || (unit < rewatchCompared.size() && rewatchCompared[unit])) return stampedBlocks.at(unit) == GuestMemory::BlockWritten;
         if (!(unitTracked.empty() ? tracked : unitTracked[unit]) || layerGeneration[unit] == 0 || unit >= stampedBlocks.size() || stampedBlocks[unit] != GuestMemory::BlockWritten) return false;
         const auto begin = layerBegin(unit);
         const auto bytes = layerBytes(unit);
@@ -2892,6 +2918,7 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
         reconcilePending();
     }
     if (anyBorrowed) {
+        NoteRefreshWork();
         uploadReason = "alias";
         borrowUnits(*alias, borrowed);
         for (std::uint32_t unit = 0; unit < trackedLayers; ++unit) {
@@ -2903,6 +2930,7 @@ bool StorageTexture::refresh(std::uint32_t firstLayer, std::uint32_t lastLayer) 
         refreshGeneration();
     }
     if (std::any_of(changed.begin(), changed.end(), [](bool selected) { return selected; })) {
+        NoteRefreshWork();
         uploadReason = keysChanged ? "keys" : cpuWrote ? "cpu" : generation == 0 ? "untracked" : flushed ? "flushed" : "store";
         upload(&changed);
     } else {
@@ -2943,6 +2971,31 @@ bool StorageTexture::otherPendingOverlaps() const {
     return std::any_of(pending.textures.begin(), pending.textures.end(), other) || std::any_of(pending.flushing.begin(), pending.flushing.end(), other);
 }
 
+const char* StorageTexture::RefreshObligation(std::uint32_t first, std::uint32_t count) const {
+    const auto [firstLayer, lastLayer] = refreshUnits(first, count);
+    const auto scoped = firstLayer != 0 || lastLayer != trackedLayers;
+    {
+        const auto base = scoped ? layerBegin(firstLayer) : descriptor.baseAddress;
+        const auto bytes = scoped ? static_cast<std::size_t>(layerBegin(lastLayer - 1) + layerBytes(lastLayer - 1) - base) : static_cast<std::size_t>(guestBytes);
+        auto& pending = Pending();
+        std::lock_guard lock(pending.mutex);
+        const auto other = [&](const StorageTexture* texture) { return texture != this && texture->overlaps(base, bytes); };
+        const auto owed = [&](const StorageTexture* texture) { return other(texture) && texture->pendingUnitInside(base, bytes); };
+        if (std::any_of(pending.textures.begin(), pending.textures.end(), owed) || std::any_of(pending.flushing.begin(), pending.flushing.end(), other)) return "another image's pending results";
+    }
+    auto* recorder = Recorder::Active();
+    const auto keyCount = static_cast<std::size_t>(guestBytes / 256);
+    if (descriptor.dccAddress != 0 && keyCount != 0 && (recorder == nullptr || !recorder->PendingWriteOverlaps(descriptor.dccAddress, keyCount)) && ScannedDccKeys(descriptor.dccAddress, keyCount) != uploadedKeys) return "a DCC key change";
+    if (original.size() != guestBytes) return nullptr;
+    for (auto unit = firstLayer; unit < lastLayer; ++unit) {
+        if (layerPending[unit] || !layerOriginal[unit]) continue;
+        const auto begin = layerBegin(unit);
+        const auto bytes = static_cast<std::size_t>(layerBytes(unit));
+        if (std::memcmp(reinterpret_cast<const void*>(begin), original.data() + (begin - descriptor.baseAddress), bytes) != 0) return "guest bytes the image does not hold";
+    }
+    return nullptr;
+}
+
 bool StorageTexture::refreshProved() {
     if (refreshProof.generation == 0) return false;
     if (generation != refreshProof.generation || uploadedKeys != refreshProof.keys || !GuestMemory::GpuMutex().HeldByThisThread()) return false;
@@ -2981,6 +3034,10 @@ std::uint64_t StorageTexture::RefreshesProved() {
 
 std::uint64_t StorageTexture::UntrackedCompares() {
     return untrackedCompares.load(std::memory_order_relaxed);
+}
+
+std::uint64_t StorageTexture::RewatchedConfirms() {
+    return rewatchedConfirms.load(std::memory_order_relaxed);
 }
 
 std::uint64_t StorageTexture::GuestSnapshots() {
@@ -3231,6 +3288,68 @@ bool StorageTexture::originalHolds(std::uint64_t address, std::size_t bytes) con
         if (!layerOriginal[static_cast<std::size_t>(layer)]) return false;
     }
     return true;
+}
+
+StorageTexture::RewatchProof StorageTexture::rewatchProof(std::uint64_t begin, std::uint64_t end, bool queried) const {
+    if (end <= begin) return RewatchProof::None;
+    const auto bytes = static_cast<std::size_t>(end - begin);
+    const auto firstUnit = static_cast<std::uint32_t>((begin - descriptor.baseAddress) / trackedLayerBytes);
+    bool ungenerated = false;
+    auto since = std::numeric_limits<std::uint64_t>::max();
+    for (auto unit = firstUnit; unit < trackedLayers && layerBegin(unit) < end; ++unit) {
+        if (unit < savedTicket.size() && savedTicket[unit] != 0) return RewatchProof::None;
+        if (layerGeneration[unit] == 0) ungenerated = true;
+        else since = std::min(since, layerGeneration[unit]);
+    }
+    const bool copy = original.size() == guestBytes && originalHolds(begin, bytes);
+    if (ungenerated ? !copy : since == std::numeric_limits<std::uint64_t>::max()) return RewatchProof::None;
+    if (!queried && !(ungenerated ? GuestMemory::Rewatched(begin, bytes) : GuestMemory::OnlyRewatchedSince(begin, bytes, since))) return RewatchProof::None;
+    struct Exempt {
+        const StorageTexture* previous;
+        ~Exempt() { Refreshing::Set(previous); }
+    } exempt{Refreshing::Get()};
+    Refreshing::Set(this);
+    GuestMemory::FlushGpuWrites(begin, bytes);
+    if (copy && originalHolds(begin, bytes)) {
+        if (GuestMemory::EqualsCommittedUnsynced(begin, std::span<const std::byte>(original).subspan(static_cast<std::size_t>(begin - descriptor.baseAddress), bytes))) return RewatchProof::Unchanged;
+        return ungenerated ? RewatchProof::Changed : RewatchProof::None;
+    }
+    if (ungenerated) return RewatchProof::None;
+    for (auto unit = firstUnit; unit < trackedLayers && layerBegin(unit) < end; ++unit) {
+        if (baselineMiss(unit) != BaselineMiss::None) return RewatchProof::None;
+    }
+    return RewatchProof::Unchanged;
+}
+
+void StorageTexture::confirmRewatched(std::uint64_t spanBegin, std::span<std::uint8_t> stamped, std::span<std::uint8_t> cpu, std::vector<bool>* comparedUnits) const {
+    constexpr std::uint64_t block = 65536;
+    if (stamped.empty() || std::all_of(stamped.begin(), stamped.end(), [](std::uint8_t entry) { return entry == GuestMemory::BlockUnchanged; })) return;
+    std::vector<std::uint64_t> since(stamped.size(), std::numeric_limits<std::uint64_t>::max());
+    for (std::uint32_t unit = 0; unit < trackedLayers; ++unit) {
+        const auto unitEnd = layerBegin(unit) + layerBytes(unit);
+        if (unitEnd <= spanBegin) continue;
+        for (auto at = std::max(spanBegin, layerBegin(unit) & ~(block - 1)); at < unitEnd; at += block) {
+            const auto k = static_cast<std::size_t>((at - spanBegin) / block);
+            if (k >= since.size()) break;
+            since[k] = std::min(since[k], layerGeneration[unit]);
+        }
+    }
+    std::vector<std::uint8_t> rewatched(stamped.size(), 0);
+    GuestMemory::RewatchedBlocks(spanBegin, stamped.size() * block, since, rewatched);
+    for (std::size_t k = 0; k < stamped.size(); ++k) {
+        if (stamped[k] == GuestMemory::BlockUnchanged || rewatched[k] == 0) continue;
+        const auto begin = std::max(descriptor.baseAddress, spanBegin + k * block);
+        const auto end = std::min(descriptor.baseAddress + guestBytes, spanBegin + (k + 1) * block);
+        if (end <= begin) continue;
+        const auto proof = rewatchProof(begin, end, true);
+        if (proof == RewatchProof::Changed && comparedUnits != nullptr) {
+            for (auto unit = static_cast<std::uint32_t>((begin - descriptor.baseAddress) / trackedLayerBytes); unit < trackedLayers && unit < comparedUnits->size() && layerBegin(unit) < end; ++unit) (*comparedUnits)[unit] = true;
+        }
+        if (proof != RewatchProof::Unchanged) continue;
+        stamped[k] = GuestMemory::BlockUnchanged;
+        if (k < cpu.size()) cpu[k] = 0;
+        rewatchedConfirms.fetch_add(1, std::memory_order_relaxed);
+    }
 }
 
 bool StorageTexture::compareUntracked(std::uint64_t address, std::size_t bytes, std::span<std::uint8_t> changed, bool memoize) const {
@@ -4563,6 +4682,11 @@ bool StorageTexture::anyLayerPending() const {
     return layerPending.Any();
 }
 
+std::uint64_t StorageTexture::advanceUnchanged(std::uint32_t unit, std::uint64_t to) {
+    if (unit < unwatchHash.size() && unwatchHash[unit].generation != 0 && unwatchHash[unit].generation == layerGeneration[unit]) unwatchHash[unit].generation = to;
+    return to;
+}
+
 void StorageTexture::refreshGeneration() {
     generation = *std::min_element(layerGeneration.begin(), layerGeneration.end());
 }
@@ -4666,7 +4790,8 @@ void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count)
     }
     std::optional<MapImportGate::PublishHold> publication;
     if (!layerPending.Any()) publication.emplace(descriptor.baseAddress, guestBytes);
-    if (!layerPending.AllIn(first, count)) {
+    const bool newUnits = !layerPending.AllIn(first, count);
+    if (newUnits) {
         std::vector<bool> unsaved;
         bool anyUnsaved = false;
         const bool trims = CommitTrims();
@@ -4759,7 +4884,7 @@ void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count)
     if (const auto format = ResolveTextureFormat(descriptor.format); format == VK_FORMAT_R8_UINT || format == VK_FORMAT_R8_UNORM) eightBitWrites().fetch_add(1, std::memory_order_release);
     const bool wasLent = std::exchange(lent, false);
     if (dirty) {
-        if (wasLent) BumpPendingSerial();
+        if (wasLent || newUnits) BumpPendingSerial();
         return;
     }
     dirty = true;
@@ -6193,6 +6318,23 @@ StorageTexture::HookSkipCounts StorageTexture::TakeHookSkipCounts() {
     return {flushedAfterSkip.exchange(0, std::memory_order_relaxed), flushedAfterSkipSameSite.exchange(0, std::memory_order_relaxed)};
 }
 
+namespace {
+struct OwnPendingMovesSlot {};
+struct OwnRefreshWorkSlot {};
+}
+
+std::uint64_t StorageTexture::OwnPendingMoves() {
+    return HostThreadSlot<std::uint64_t, OwnPendingMovesSlot>::Get();
+}
+
+std::uint64_t StorageTexture::OwnRefreshWork() {
+    return HostThreadSlot<std::uint64_t, OwnRefreshWorkSlot>::Get();
+}
+
+void StorageTexture::NoteRefreshWork() {
+    HostThreadSlot<std::uint64_t, OwnRefreshWorkSlot>::Set(OwnRefreshWork() + 1);
+}
+
 StorageTexture::OrderedSkipCounts StorageTexture::TakeOrderedSkipCounts() {
     return {orderedFlushSkips.exchange(0, std::memory_order_relaxed), orderedRefreshSkips.exchange(0, std::memory_order_relaxed)};
 }
@@ -6211,6 +6353,7 @@ bool StorageTexture::OrderedFlushArmedForTest() {
 
 void StorageTexture::BumpPendingSerial() {
     pendingSerial.fetch_add(1, std::memory_order_release);
+    HostThreadSlot<std::uint64_t, OwnPendingMovesSlot>::Set(OwnPendingMoves() + 1);
 }
 
 bool StorageTexture::ScanPending(std::span<PendingQuery> queries) {
@@ -6859,7 +7002,7 @@ void StorageTexture::advanceAdjacent(const std::vector<Adjacent>& adjacent, std:
         if (begin < beforeEnd && !GuestMemory::UnchangedSince(begin, static_cast<std::size_t>(beforeEnd - begin), seen)) continue;
         if (afterBegin < end && !GuestMemory::UnchangedSince(afterBegin, static_cast<std::size_t>(end - afterBegin), seen)) continue;
         if (trace) std::fprintf(stderr, "[flush] adjacent pending image 0x%llx+0x%llx layer %u advanced past a write-back's stamps (generation %llu -> %llu)\n", static_cast<unsigned long long>(texture->descriptor.baseAddress), static_cast<unsigned long long>(texture->guestBytes), layer, static_cast<unsigned long long>(seen), static_cast<unsigned long long>(now));
-        texture->layerGeneration[layer] = now;
+        texture->layerGeneration[layer] = texture->advanceUnchanged(layer, now);
         texture->refreshGeneration();
     }
 }
@@ -6974,7 +7117,7 @@ void StorageTexture::supersedeHandedOver(std::uint32_t first, std::uint32_t coun
             if (!handedUnits[unit]) continue;
             handedUnits[unit] = false;
             if (!tracked || unit >= cpu.size() || cpu[unit] != 0) continue;
-            layerGeneration[unit] = current;
+            layerGeneration[unit] = advanceUnchanged(unit, current);
             moved = true;
         }
         if (moved) refreshGeneration();
@@ -7337,6 +7480,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
     std::vector<std::uint8_t> changedBlocks(spanBlocks);
     std::vector<std::uint8_t> cpuBlocks(drawn.drawn ? spanBlocks : 0);
     const bool tracked = GuestMemory::ChangedBlocks(firstStored, static_cast<std::size_t>(lastStored - firstStored), generations, changedBlocks, cpuBlocks);
+    if (tracked) confirmRewatched(spanBegin, changedBlocks, cpuBlocks, nullptr);
     std::vector<bool> compared(trackedLayers, false);
     std::vector<bool> unitTracked;
     if (!tracked) {
@@ -7351,6 +7495,7 @@ void StorageTexture::writeBackLayers(const std::vector<bool>& layers) {
             GuestMemory::CollectWritesUncached(begin, bytes);
             if (unitTracked.empty()) unitTracked.assign(trackedLayers, false);
             unitTracked[layer] = GuestMemory::ChangedBlocks(begin, bytes, std::span(generations).subspan(offset, count), std::span(changedBlocks).subspan(offset, count), cpu);
+            if (unitTracked[layer]) confirmRewatched(begin & ~std::uint64_t{0xffff}, std::span(changedBlocks).subspan(offset, count), cpu, nullptr);
         }
         std::vector<bool> saved(trackedLayers, false);
         for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) saved[layer] = layers[layer] && layerOriginal[layer];
