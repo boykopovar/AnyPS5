@@ -15,6 +15,20 @@ target_sources(libSceIcu PRIVATE Properties.cpp CaseMapping.cpp CaseProperties.c
 target_sources(libSceIcu PRIVATE Bidi.cpp CharsetDetection.cpp Normalization.cpp CodePoints.cpp)
 target_link_libraries(libSceIcu PRIVATE icu_common icu_i18n)
 target_sources(libSceIcu PRIVATE Locale.cpp LocaleMap.cpp DefaultLocale.cpp)
+target_sources(libSceIcu PRIVATE UtcTime.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_icu_utc_time_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/UtcTime.cpp)
+    target_include_directories(guest_icu_utc_time_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_icu_utc_time_tests PRIVATE libSceIcu libkernel libc)
+    configure_windows_unwind(guest_icu_utc_time_tests)
+    add_test(NAME guest_icu_utc_time COMMAND guest_icu_utc_time_tests)
+    set_tests_properties(guest_icu_utc_time PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_icu_utc_time PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceIcu>")
+    endif()
+endif()
 
 if(BUILD_TESTING)
     add_test_executable(guest_icu_default_locale_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/DefaultLocale.cpp)
