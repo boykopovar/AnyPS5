@@ -3,6 +3,7 @@ if(BUILD_TESTING)
             tests/MappedCopy.cpp
             Execution/src/GuestMemory.cpp
             Execution/src/PerformanceTraceThread.cpp
+            Graphics/src/RuntimeSwitches.cpp
     )
     target_include_directories(agc_mapped_copy_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(agc_mapped_copy_tests PRIVATE shader_recompiler_agc_driver libc)

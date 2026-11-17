@@ -33,6 +33,13 @@ enum class RuntimeSwitch : std::size_t {
     DirectPassTargets,
     DirectBuffers,
     DirectInputs,
+    FastSettle,
+    PreciseSettle,
+    ImportSnapshots,
+    MergedSettle,
+    UnlockedStamps,
+    WriteSnapshotFronts,
+    PendingFronts,
     Count,
 };
 

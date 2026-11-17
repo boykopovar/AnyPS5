@@ -5543,8 +5543,10 @@ DrawRecipeOutcome DrawWithRecord(const Context& context, const State& state, con
     const ShaderResources::PreparedBuffers* checked = nullptr;
     if (recording && prepared != nullptr && RuntimeSwitches::Set(RuntimeSwitch::DirectBuffers)) {
         if (prepared->plan == nullptr || prepared->plan != resources->DirectBufferPlan(shaders)) record.effects.buffers = DrawRecordBuffers::PlanDiffers;
-        else if (record.verifyBuffers) checked = prepared;
-        else bound = prepared;
+        else if (record.verifyBuffers) {
+            checked = prepared;
+            record.effects.bufferShortcuts = prepared->shortcuts;
+        } else bound = prepared;
     }
     std::vector<ShaderResources::MovedBuffer> moved;
     {

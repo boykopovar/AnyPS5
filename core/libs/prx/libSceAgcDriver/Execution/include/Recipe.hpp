@@ -116,6 +116,7 @@ struct DrawRecordEffects {
     DrawRecordBuffers buffers = DrawRecordBuffers::None;
     Graphics::ShaderResources::PreparedDifference bufferDifference;
     DrawRecordInputs inputs = DrawRecordInputs::None;
+    std::uint8_t bufferShortcuts = 0;
 };
 
 struct DrawCommitView {

@@ -55,7 +55,7 @@ void noteUnsettled(const AddressRanges& ranges, const Graphics::Recorder::WriteR
     if (DrawPipeline::Active() && DrawPipeline::Queue0().Busy() && DrawPipeline::Queue0().OverlapsAny(ranges)) queued.fetch_add(1, std::memory_order_relaxed);
     else if (!Graphics::Recorder::ReadsSettled(ranges, before)) recorded.fetch_add(1, std::memory_order_relaxed);
     else stamped.fetch_add(1, std::memory_order_relaxed);
-    if ((total.fetch_add(1, std::memory_order_relaxed) + 1u) % 4096u == 0u) std::fprintf(stderr, "[direct-unsettled] cumulative: %llu over a write queued in the draw pipeline, %llu over a recorder write not settled, %llu with a newer memory stamp\n", static_cast<unsigned long long>(queued.load(std::memory_order_relaxed)), static_cast<unsigned long long>(recorded.load(std::memory_order_relaxed)), static_cast<unsigned long long>(stamped.load(std::memory_order_relaxed)));
+    if ((total.fetch_add(1, std::memory_order_relaxed) + 1u) % 4096u == 0u) std::fprintf(stderr, "[direct-unsettled] cumulative: %llu over a write queued in the draw pipeline, %llu over a recorder write not settled, %llu with a newer memory stamp; %llu ranges under a newer block stamp settled by their pages\n", static_cast<unsigned long long>(queued.load(std::memory_order_relaxed)), static_cast<unsigned long long>(recorded.load(std::memory_order_relaxed)), static_cast<unsigned long long>(stamped.load(std::memory_order_relaxed)), static_cast<unsigned long long>(PreciseSettles.load(std::memory_order_relaxed)));
 }
 
 bool DirectShape(const LeanDrawJob& job) {
@@ -200,7 +200,29 @@ bool ExactClassKeys() {
 }
 
 bool readsSettled(const AddressRanges& ranges, const DirectStages& resolved, const Graphics::Recorder::WriteRanges* pending, const std::optional<DrawPipeline::Watch>& queued) {
-    return RangesSettled(ranges, resolved.before.get(), resolved.generation) && Graphics::Recorder::ReadsSettled(ranges, pending) && !(queued.has_value() && DrawPipeline::Queue0().WrittenSince(*queued, ranges));
+    const bool fast = Graphics::RuntimeSwitches::Set(Graphics::RuntimeSwitch::FastSettle);
+    return RangesSettled(ranges, resolved.before.get(), resolved.generation, fast ? pending : nullptr) && (fast || Graphics::Recorder::ReadsSettled(ranges, pending)) && !(queued.has_value() && DrawPipeline::Queue0().WrittenSince(*queued, ranges));
+}
+
+constexpr std::uint64_t SettleMergeGap = 4096;
+
+const AddressRanges& mergedRanges(const AddressRanges& ranges) {
+    struct MergedStorage {};
+    auto& merged = HostThreadLocal<AddressRanges, MergedStorage>();
+    merged.assign(ranges.begin(), ranges.end());
+    for (std::size_t at = 1; at < merged.size(); ++at) {
+        const auto value = merged[at];
+        std::size_t to = at;
+        for (; to > 0 && merged[to - 1].first > value.first; --to) merged[to] = merged[to - 1];
+        merged[to] = value;
+    }
+    std::size_t kept = 0;
+    for (std::size_t at = 1; at < merged.size(); ++at) {
+        if (merged[at].first <= merged[kept].second + SettleMergeGap) merged[kept].second = std::max(merged[kept].second, merged[at].second);
+        else merged[++kept] = merged[at];
+    }
+    if (!merged.empty()) merged.resize(kept + 1);
+    return merged;
 }
 
 Counter BufferRefusal(Graphics::ShaderResources::PreparedBuffers::Refusal refusal) {
@@ -241,11 +263,37 @@ void prepareBuffers(const LeanDrawJob& job, const DirectStages& resolved, DrawRe
     for (const auto& item : prepared.selected) {
         if (item.begin != 0) read.emplace_back(item.begin, item.begin + item.bytes);
     }
-    if (!read.empty() && !readsSettled(read, resolved, pending.get(), queued)) {
+    bool check = !read.empty();
+    bool mergedRefused = false;
+    if (check && read.size() > 2 && Graphics::RuntimeSwitches::Set(Graphics::RuntimeSwitch::MergedSettle)) {
+        struct RecheckStorage {};
+        auto& recheckOrdinal = HostThreadLocal<std::uint64_t, RecheckStorage>();
+        const auto recheckEvery = DirectDraws::BufferVerifyEvery();
+        const bool recheck = recheckEvery != 0 && ++recheckOrdinal % recheckEvery == 0;
+        const bool separateRefused = recheck && !readsSettled(read, resolved, pending.get(), queued);
+        const auto& merged = mergedRanges(read);
+        DirectDraws::Add(Counter::SettleRangesBefore, read.size());
+        DirectDraws::Add(Counter::SettleRangesAfter, merged.size());
+        if (readsSettled(merged, resolved, pending.get(), queued)) {
+            DirectDraws::Add(Counter::MergedSettlesPassed);
+            if (recheck) DirectDraws::Add(Counter::MergedSettlesRechecked);
+            if (separateRefused) {
+                DirectDraws::Add(Counter::MergedSettlesRecheckRefused);
+            } else {
+                check = false;
+                prepared.shortcuts |= Graphics::ShaderResources::PreparedBuffers::MergedSettle;
+            }
+        } else {
+            mergedRefused = true;
+            DirectDraws::Add(Counter::MergedSettlesRefused);
+        }
+    }
+    if (check && !readsSettled(read, resolved, pending.get(), queued)) {
         DirectDraws::Add(Counter::BuffersUnsettled);
         hit.preparedBuffers.reset();
         return;
     }
+    if (check && mergedRefused) DirectDraws::Add(Counter::MergedSettlesRecovered);
     prepared.plan = std::move(plan);
     DirectDraws::Add(Counter::BuffersPrepared);
     DirectDraws::Add(Counter::BuffersBlobBytes, prepared.blob.size());
@@ -483,7 +531,7 @@ std::uint64_t DirectStores::Follow(std::uint64_t serial) {
     if (seen.epoch == current && seen.generation == generation && seen.deviceSerial == serial) return current;
     std::lock_guard lock(mutex);
     auto live = Graphics::RuntimeSwitches::Snapshot();
-    for (const auto id : {Graphics::RuntimeSwitch::DirectDraws, Graphics::RuntimeSwitch::DirectRetry, Graphics::RuntimeSwitch::PipelineDispatchMisses, Graphics::RuntimeSwitch::DirectPassTargets, Graphics::RuntimeSwitch::DirectBuffers, Graphics::RuntimeSwitch::DirectInputs}) live.Assign(id, false);
+    for (const auto id : {Graphics::RuntimeSwitch::DirectDraws, Graphics::RuntimeSwitch::DirectRetry, Graphics::RuntimeSwitch::PipelineDispatchMisses, Graphics::RuntimeSwitch::DirectPassTargets, Graphics::RuntimeSwitch::DirectBuffers, Graphics::RuntimeSwitch::DirectInputs, Graphics::RuntimeSwitch::FastSettle, Graphics::RuntimeSwitch::PreciseSettle, Graphics::RuntimeSwitch::ImportSnapshots, Graphics::RuntimeSwitch::MergedSettle, Graphics::RuntimeSwitch::UnlockedStamps, Graphics::RuntimeSwitch::WriteSnapshotFronts, Graphics::RuntimeSwitch::PendingFronts}) live.Assign(id, false);
     if (!tagged || deviceSerial != serial || !(live == switches)) {
         tagged = true;
         deviceSerial = serial;

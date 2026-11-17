@@ -13,6 +13,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ResidentMirror.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ReferenceStorage.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
@@ -4968,12 +4969,105 @@ const HostImport* ExistingHostImportFor(const Context& context, std::uint64_t ad
     return findImport(state, address, address + bytes);
 }
 
+namespace {
+
+struct ImportSnapshot {
+    struct Row {
+        std::uint64_t base;
+        std::uint64_t end;
+        const HostImport* import;
+        VkBuffer buffer;
+        std::uint64_t lead;
+    };
+    std::vector<Row> rows;
+    std::uint64_t generation = 0;
+    std::uint64_t refreshed = 0;
+    VkDevice device = VK_NULL_HANDLE;
+    std::uint32_t uses = 0;
+    std::uint64_t verifyOrdinal = 0;
+    bool built = false;
+};
+
+std::atomic<std::uint64_t> snapshotAnswers{0};
+std::atomic<std::uint64_t> snapshotLocked{0};
+std::atomic<std::uint64_t> snapshotRenewals{0};
+std::atomic<std::uint64_t> snapshotChecked{0};
+std::atomic<std::uint64_t> snapshotDiffering{0};
+std::atomic<std::int64_t> snapshotWindow{-1};
+
+std::uint64_t importSnapshotVerifyEvery() {
+    static const std::uint64_t every = [] {
+        const char* text = std::getenv("APS5_VERIFY_IMPORT_SNAPSHOTS");
+        return text != nullptr ? std::strtoull(text, nullptr, 10) : 0ull;
+    }();
+    return every;
+}
+
+void noteImportSnapshots() {
+    const std::int64_t window = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count() / 10;
+    if (snapshotWindow.exchange(window, std::memory_order_relaxed) == window) return;
+    std::fprintf(stderr, "[import-snapshots] %llu lookups answered from a thread's snapshot, %llu under the mutex, %llu snapshots renewed; verify %llu checked, %llu differing\n", static_cast<unsigned long long>(snapshotAnswers.load(std::memory_order_relaxed)), static_cast<unsigned long long>(snapshotLocked.load(std::memory_order_relaxed)), static_cast<unsigned long long>(snapshotRenewals.load(std::memory_order_relaxed)), static_cast<unsigned long long>(snapshotChecked.load(std::memory_order_relaxed)), static_cast<unsigned long long>(snapshotDiffering.load(std::memory_order_relaxed)));
+}
+
+bool answerFromSnapshot(const ImportSnapshot& snapshot, std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, std::span<ExistingHostImport> found) {
+    for (std::size_t index = 0; index < ranges.size(); ++index) {
+        const auto begin = ranges[index].first;
+        const auto next = std::upper_bound(snapshot.rows.begin(), snapshot.rows.end(), begin, [](std::uint64_t value, const ImportSnapshot::Row& row) { return value < row.base; });
+        if (next == snapshot.rows.begin()) return false;
+        const auto& row = *std::prev(next);
+        if (ranges[index].second > row.end) return false;
+        found[index] = {row.import, row.buffer, begin - row.base + row.lead};
+    }
+    return true;
+}
+
+}
+
 bool ExistingHostImportsFor(const Context& context, std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, std::span<ExistingHostImport> found) {
     if (context.hostImportAlignment == 0 || found.size() != ranges.size()) return false;
     if (std::any_of(ranges.begin(), ranges.end(), [](const auto& range) { return range.second <= range.first; })) return false;
+    struct SnapshotStorage {};
+    auto* const snapshot = RuntimeSwitches::Set(RuntimeSwitch::ImportSnapshots) ? &HostThreadLocal<ImportSnapshot, SnapshotStorage>() : nullptr;
+    const auto current = [&] {
+        return snapshot->built && snapshot->device == context.device && snapshot->generation == importSetGeneration.load(std::memory_order_acquire) && snapshot->refreshed == GuestAllocations::GuestAllocationsGeneration_nid_postfix();
+    };
+    if (snapshot != nullptr && current() && (++snapshot->uses & 63u) != 0u) {
+        const bool answered = answerFromSnapshot(*snapshot, ranges, found);
+        snapshotAnswers.fetch_add(1, std::memory_order_relaxed);
+        if (const auto every = importSnapshotVerifyEvery(); every != 0 && ++snapshot->verifyOrdinal % every == 0) {
+            auto& state = Imports();
+            std::lock_guard lock(state.mutex);
+            if (current() && !importsStale(context, state)) {
+                snapshotChecked.fetch_add(1, std::memory_order_relaxed);
+                bool same = true;
+                bool held = true;
+                for (std::size_t index = 0; index < ranges.size() && held; ++index) {
+                    const auto* entry = peekImport(state, ranges[index].first, ranges[index].second);
+                    held = entry != nullptr;
+                    if (held && answered) same = same && found[index].import == entry && found[index].buffer == entry->buffer && found[index].offset == HostImportOffset(*entry, ranges[index].first);
+                }
+                if (held != answered || !same) {
+                    if (snapshotDiffering.fetch_add(1, std::memory_order_relaxed) < 16) std::fprintf(stderr, "[import-snapshots-verify] %zu ranges from 0x%llx: the snapshot %s, the import set %s%s\n", ranges.size(), static_cast<unsigned long long>(ranges[0].first), answered ? "answers" : "refuses", held ? "answers" : "refuses", held && answered ? " with another import or offset" : "");
+                }
+            }
+        }
+        return answered;
+    }
     auto& state = Imports();
     std::lock_guard lock(state.mutex);
+    if (snapshot != nullptr) snapshotLocked.fetch_add(1, std::memory_order_relaxed);
     if (importsStale(context, state)) return false;
+    if (snapshot != nullptr && !current()) {
+        snapshot->rows.clear();
+        snapshot->rows.reserve(state.imports.size());
+        for (const auto& [base, entry] : state.imports) snapshot->rows.push_back({entry.base, entry.base + entry.bytes, &entry, entry.buffer, entry.lead});
+        snapshot->generation = importSetGeneration.load(std::memory_order_acquire);
+        snapshot->refreshed = state.refreshedGeneration;
+        snapshot->device = state.device;
+        snapshot->built = true;
+        snapshotRenewals.fetch_add(1, std::memory_order_relaxed);
+        noteImportSnapshots();
+    }
     for (std::size_t index = 0; index < ranges.size(); ++index) {
         const auto* entry = findImport(state, ranges[index].first, ranges[index].second);
         if (entry == nullptr) return false;

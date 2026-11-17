@@ -8,6 +8,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include "prx/libSceAgcDriver/Execution/include/DrawCommitViewSlot.hpp"
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <bit>
 #include <chrono>
@@ -474,6 +475,16 @@ void NoteDirectBuffers(const DrawRecordCommit& commit, bool prepared) {
         DirectDraws::NoteBufferDifference(effects.bufferDifference.what != nullptr ? effects.bufferDifference.what : "buffers", effects.bufferDifference.detail);
         break;
     default: break;
+    }
+    if (effects.bufferShortcuts == 0) return;
+    const auto kind = effects.buffers == DrawRecordBuffers::Checked ? 0u : effects.buffers == DrawRecordBuffers::Differs ? 1u : effects.buffers == DrawRecordBuffers::MemoryChanged ? 2u : effects.buffers == DrawRecordBuffers::Unwatched ? 3u : 4u;
+    if (kind == 4u) return;
+    using Prepared = Graphics::ShaderResources::PreparedBuffers;
+    constexpr std::array<std::pair<std::uint8_t, Counter>, 1> shortcuts{{{Prepared::MergedSettle, Counter::VerifyMergedChecked}}};
+    for (const auto& [bit, first] : shortcuts) {
+        if ((effects.bufferShortcuts & bit) == 0) continue;
+        DirectDraws::Add(first);
+        if (kind != 0u) DirectDraws::Add(static_cast<Counter>(static_cast<std::size_t>(first) + kind));
     }
 }
 

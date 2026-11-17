@@ -92,6 +92,17 @@ enum class Counter : std::uint8_t {
     InputsDropped,
     InputsVerifyChecked,
     InputsVerifyDiffering,
+    SettleRangesBefore,
+    SettleRangesAfter,
+    MergedSettlesPassed,
+    MergedSettlesRefused,
+    MergedSettlesRecovered,
+    VerifyMergedChecked,
+    VerifyMergedDiffering,
+    VerifyMergedMemoryChanged,
+    VerifyMergedUnwatched,
+    MergedSettlesRechecked,
+    MergedSettlesRecheckRefused,
     Count,
 };
 

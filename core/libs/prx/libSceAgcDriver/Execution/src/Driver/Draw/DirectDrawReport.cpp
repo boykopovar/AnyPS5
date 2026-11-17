@@ -38,6 +38,9 @@ constexpr std::array<const char*, CounterCount> CounterNames{
     "buffers used", "plan differs", "moved-range hazard", "unmoved-range hazard", "depth guards", "dropped", "buffers verified", "buffers differing", "buffer memory changed", "buffers differing unwatched",
     "inputs prepared", "no published recipe", "outside the shape", "not imported in place", "inputs not accessible", "inputs threw", "indices not settled",
     "inputs used", "inputs rechecked", "import changed", "commit shape", "refused in place", "inputs dropped", "inputs verified", "inputs differing",
+    "settle ranges before merging", "settle ranges after merging", "merged settles passed", "merged settles refused", "merged refusals settled per range",
+    "verified with a merged settle", "differing with a merged settle", "memory changed with a merged settle", "unwatched with a merged settle",
+    "merged settles rechecked per range", "merged settles refused per range",
 };
 
 constexpr std::array<const char*, StepCount> StepNames{"request", "invocation", "walk", "key", "side", "class", "checks", "buffers", "inputs", "hand-off"};
@@ -280,12 +283,25 @@ void Report(bool force) {
     };
     if (sum(Counter::BuffersPrepared, Counter::BuffersUnwatched) != 0) {
         const auto prepared = at(Counter::BuffersPrepared);
-        AgcDriver::ProfilePrint_nid_no_patch("[direct-commits] buffers: %llu hits prepared, %llu used, %llu not prepared%s, %llu not used%s; %.1f blob bytes per prepared hit; verify %llu checked, %llu differing, %llu memory changed, %llu differing in unwatched memory\n",
+        std::string shortcuts;
+        const auto verified = [&](const char* name, Counter first) {
+            const auto index = static_cast<std::size_t>(first);
+            if (counts[index] == 0) return;
+            shortcuts += "; verify of " + std::string(name) + " " + std::to_string(counts[index]) + " checked, " + std::to_string(counts[index + 1]) + " differing, " + std::to_string(counts[index + 2]) + " memory changed, " + std::to_string(counts[index + 3]) + " differing in unwatched memory";
+        };
+        verified("merged settles", Counter::VerifyMergedChecked);
+        if (at(Counter::MergedSettlesRechecked) != 0) shortcuts += "; merged settles rechecked per range " + std::to_string(at(Counter::MergedSettlesRechecked)) + ", " + std::to_string(at(Counter::MergedSettlesRecheckRefused)) + " refused per range";
+        AgcDriver::ProfilePrint_nid_no_patch("[direct-commits] buffers: %llu hits prepared, %llu used, %llu not prepared%s, %llu not used%s; %.1f blob bytes per prepared hit; verify %llu checked, %llu differing, %llu memory changed, %llu differing in unwatched memory%s\n",
             static_cast<unsigned long long>(prepared), static_cast<unsigned long long>(at(Counter::BuffersUsed)),
             static_cast<unsigned long long>(sum(Counter::BuffersNoPlan, Counter::BuffersUnsettled)), reasons(counts, Counter::BuffersNoPlan, Counter::BuffersUnsettled).c_str(),
             static_cast<unsigned long long>(sum(Counter::BuffersPlanDiffers, Counter::BuffersDropped)), reasons(counts, Counter::BuffersPlanDiffers, Counter::BuffersDropped).c_str(),
             prepared != 0 ? static_cast<double>(at(Counter::BuffersBlobBytes)) / static_cast<double>(prepared) : 0.0,
-            static_cast<unsigned long long>(at(Counter::BuffersVerifyChecked)), static_cast<unsigned long long>(at(Counter::BuffersVerifyDiffering)), static_cast<unsigned long long>(at(Counter::BuffersMemoryChanged)), static_cast<unsigned long long>(at(Counter::BuffersUnwatched)));
+            static_cast<unsigned long long>(at(Counter::BuffersVerifyChecked)), static_cast<unsigned long long>(at(Counter::BuffersVerifyDiffering)), static_cast<unsigned long long>(at(Counter::BuffersMemoryChanged)), static_cast<unsigned long long>(at(Counter::BuffersUnwatched)), shortcuts.c_str());
+    }
+    if (sum(Counter::SettleRangesBefore, Counter::MergedSettlesRecovered) != 0) {
+        AgcDriver::ProfilePrint_nid_no_patch("[direct-commits] buffer shortcuts: settle ranges %llu before, %llu after merging; merged settles %llu passed, %llu refused (%llu of them settled per range)\n",
+            static_cast<unsigned long long>(at(Counter::SettleRangesBefore)), static_cast<unsigned long long>(at(Counter::SettleRangesAfter)),
+            static_cast<unsigned long long>(at(Counter::MergedSettlesPassed)), static_cast<unsigned long long>(at(Counter::MergedSettlesRefused)), static_cast<unsigned long long>(at(Counter::MergedSettlesRecovered)));
     }
     if (sum(Counter::InputsPrepared, Counter::InputsVerifyDiffering) != 0) {
         AgcDriver::ProfilePrint_nid_no_patch("[direct-commits] inputs: %llu hits prepared, %llu used (%llu after an import recheck), %llu not prepared%s, %llu not used%s; verify %llu checked, %llu differing\n",

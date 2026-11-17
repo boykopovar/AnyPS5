@@ -678,6 +678,103 @@ using WriteRanges = Recorder::WriteRanges;
 // reader that sees no overlap either precedes the note (the queues are unordered then, as on the
 // GPU) or follows the write-back.
 AtomicSharedPtr<const WriteRanges> pendingWrites;
+std::atomic<const WriteRanges*> pendingWritesWord{nullptr};
+
+enum class WriteFrontCount : std::size_t { Answers, Refreshes, Uncached, Null, Count };
+
+constexpr std::size_t WriteFrontCounts = static_cast<std::size_t>(WriteFrontCount::Count);
+
+struct WriteSnapshotFront {
+    const WriteRanges* word = nullptr;
+    std::shared_ptr<const WriteRanges> local;
+    std::array<std::uint64_t, WriteFrontCounts> counts{};
+    std::uint64_t noted = 0;
+    std::uint64_t verifyOrdinal = 0;
+};
+
+struct WriteFrontCensus {
+    std::array<std::atomic<std::uint64_t>, WriteFrontCounts> totals{};
+    std::array<std::atomic<std::uint64_t>, WriteFrontCounts> reported{};
+    std::atomic<std::uint64_t> checked{0};
+    std::atomic<std::uint64_t> differing{0};
+    std::atomic<std::int64_t> window{-1};
+};
+
+WriteFrontCensus& writeFrontCensus() {
+    static WriteFrontCensus census;
+    return census;
+}
+
+std::uint64_t writeFrontVerifyEvery() {
+    static const std::uint64_t every = [] {
+        const char* text = std::getenv("APS5_VERIFY_WRITE_SNAPSHOT_FRONTS");
+        return text != nullptr ? std::strtoull(text, nullptr, 10) : 0ull;
+    }();
+    return every;
+}
+
+WriteSnapshotFront& writeSnapshotFront() {
+    struct Storage {};
+    return HostThreadLocal<WriteSnapshotFront, Storage>();
+}
+
+void reportWriteFronts() {
+    auto& census = writeFrontCensus();
+    const std::int64_t window = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count() / 10;
+    if (census.window.exchange(window, std::memory_order_relaxed) == window) return;
+    std::array<unsigned long long, WriteFrontCounts> since{};
+    for (std::size_t index = 0; index < WriteFrontCounts; ++index) {
+        const auto total = census.totals[index].load(std::memory_order_relaxed);
+        since[index] = static_cast<unsigned long long>(total - census.reported[index].exchange(total, std::memory_order_relaxed));
+    }
+    const auto at = [&](WriteFrontCount count) { return since[static_cast<std::size_t>(count)]; };
+    AgcDriver::ProfilePrint_nid_no_patch("[write-snapshot-fronts] 10 s: %llu pending-write snapshots answered from a thread's front, %llu fronts refreshed, %llu loads not kept (the word ran ahead of the snapshot), %llu null snapshots; verify (cumulative) %llu checked, %llu differing\n", at(WriteFrontCount::Answers), at(WriteFrontCount::Refreshes), at(WriteFrontCount::Uncached), at(WriteFrontCount::Null), static_cast<unsigned long long>(census.checked.load(std::memory_order_relaxed)), static_cast<unsigned long long>(census.differing.load(std::memory_order_relaxed)));
+}
+
+void noteWriteFront(WriteSnapshotFront& front, WriteFrontCount count) {
+    ++front.counts[static_cast<std::size_t>(count)];
+    if (++front.noted % 4096 != 0) return;
+    auto& census = writeFrontCensus();
+    for (std::size_t index = 0; index < WriteFrontCounts; ++index) {
+        census.totals[index].fetch_add(front.counts[index], std::memory_order_relaxed);
+        front.counts[index] = 0;
+    }
+    reportWriteFronts();
+}
+
+void verifyWriteFront(const WriteSnapshotFront& front) {
+    const auto* first = pendingWritesWord.load(std::memory_order_acquire);
+    const auto loaded = pendingWrites.load(std::memory_order_acquire);
+    const auto* second = pendingWritesWord.load(std::memory_order_acquire);
+    if (first != second || first != front.word) return;
+    auto& census = writeFrontCensus();
+    census.checked.fetch_add(1, std::memory_order_relaxed);
+    if (loaded.get() == front.word) return;
+    if (census.differing.fetch_add(1, std::memory_order_relaxed) < 16) std::fprintf(stderr, "[write-snapshot-fronts-verify] the word names 0x%llx and the snapshot is 0x%llx\n", static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(front.word)), static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(loaded.get())));
+}
+
+const WriteRanges* frontWrites(WriteSnapshotFront& front, std::shared_ptr<const WriteRanges>& held) {
+    const auto* word = pendingWritesWord.load(std::memory_order_acquire);
+    if (word != nullptr && word == front.word) {
+        noteWriteFront(front, WriteFrontCount::Answers);
+        if (const auto every = writeFrontVerifyEvery(); every != 0 && ++front.verifyOrdinal % every == 0) verifyWriteFront(front);
+        return front.word;
+    }
+    held = pendingWrites.load(std::memory_order_acquire);
+    if (word != nullptr && held.get() == word) {
+        const auto holder = std::make_shared<const std::shared_ptr<const WriteRanges>>(held);
+        front.local = std::shared_ptr<const WriteRanges>(holder, holder->get());
+        front.word = word;
+        noteWriteFront(front, WriteFrontCount::Refreshes);
+        return word;
+    }
+    noteWriteFront(front, held == nullptr ? WriteFrontCount::Null : WriteFrontCount::Uncached);
+    return held.get();
+}
+
+bool SnapshotFrontsOn() {
+    return RuntimeSwitches::Set(RuntimeSwitch::WriteSnapshotFronts);
+}
 
 bool HookSnapshotEnabled() {
     // Debug aid: APS5_NO_HOOK_SNAPSHOT=1 takes the GpuMutex on every access as before.
@@ -694,6 +791,10 @@ bool SnapshotOverlaps(const WriteRanges* snapshot, std::uint64_t address, std::s
 
 bool SnapshotOverlaps(std::uint64_t address, std::size_t bytes) {
     if (bytes == 0) return false;
+    if (SnapshotFrontsOn()) {
+        std::shared_ptr<const WriteRanges> held;
+        return SnapshotOverlaps(frontWrites(writeSnapshotFront(), held), address, bytes);
+    }
     const auto snapshot = pendingWrites.load(std::memory_order_acquire);
     return SnapshotOverlaps(snapshot.get(), address, bytes);
 }
@@ -1434,6 +1535,7 @@ Recorder::~Recorder() {
     holdKept.clear();
     if (activeRecorder == this) {
         activeRecorder = nullptr;
+        pendingWritesWord.store(nullptr, std::memory_order_release);
         pendingWrites.store(nullptr, std::memory_order_release);
         publishGeneration.fetch_add(1, std::memory_order_release);
         pendingLabelSince.store(NoPendingLabel, std::memory_order_release);
@@ -2033,17 +2135,31 @@ bool Recorder::SnapshotWriteOverlaps(std::uint64_t address, std::size_t bytes) {
 }
 
 std::shared_ptr<const Recorder::WriteRanges> Recorder::PendingWriteSnapshot() {
-    return pendingWrites.load(std::memory_order_acquire);
+    if (!SnapshotFrontsOn()) return pendingWrites.load(std::memory_order_acquire);
+    auto& front = writeSnapshotFront();
+    std::shared_ptr<const WriteRanges> held;
+    const auto* snapshot = frontWrites(front, held);
+    if (snapshot != nullptr && snapshot == front.word) return front.local;
+    return held;
 }
 
-bool Recorder::ReadsSettled(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, const WriteRanges* before) {
+bool Recorder::ReadsSettled(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, const WriteRanges* before, const WriteRanges* also) {
     if (!HookSnapshotEnabled()) return false;
     const bool labels = !QueuedLabelRanges().empty();
-    const auto now = pendingWrites.load(std::memory_order_acquire);
+    std::shared_ptr<const WriteRanges> loaded;
+    const WriteRanges* now = nullptr;
+    if (SnapshotFrontsOn()) {
+        now = frontWrites(writeSnapshotFront(), loaded);
+        if (also == before) also = nullptr;
+        if (now == before || now == also) now = nullptr;
+    } else {
+        loaded = pendingWrites.load(std::memory_order_acquire);
+        now = loaded.get();
+    }
     for (const auto& [begin, end] : ranges) {
         const auto bytes = static_cast<std::size_t>(end - begin);
         if (labels && QueuedLabelOverlaps(begin, bytes)) return false;
-        if (AgcDriver::Graphics::SnapshotOverlaps(before, begin, bytes) || AgcDriver::Graphics::SnapshotOverlaps(now.get(), begin, bytes)) return false;
+        if (AgcDriver::Graphics::SnapshotOverlaps(before, begin, bytes) || AgcDriver::Graphics::SnapshotOverlaps(also, begin, bytes) || AgcDriver::Graphics::SnapshotOverlaps(now, begin, bytes)) return false;
     }
     return !StorageTexture::AnyPendingOverlaps(ranges) && !AnyShadowedOverlaps(ranges);
 }
@@ -4133,6 +4249,7 @@ void Recorder::publishPendingWrites(std::span<const std::pair<std::uint64_t, std
     publishedWriteRangesValid = std::all_of(merged->begin(), merged->end(), [](const auto& range) { return range.second > range.first; });
     publishedWriteRanges = merged;
     published = merged;
+    pendingWritesWord.store(merged.get(), std::memory_order_release);
     pendingWrites.store(std::move(merged), std::memory_order_release);
     publishGeneration.fetch_add(1, std::memory_order_release);
     ++snapshotRebuilds;

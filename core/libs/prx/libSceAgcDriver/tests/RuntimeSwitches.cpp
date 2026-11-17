@@ -60,6 +60,13 @@ void registry() {
     Require(RuntimeSwitches::Find("APS5_DIRECT_PASS_TARGETS") == RuntimeSwitch::DirectPassTargets && !RuntimeSwitches::Set(RuntimeSwitch::DirectPassTargets), "APS5_DIRECT_PASS_TARGETS is not a runtime switch that starts unset");
     Require(RuntimeSwitches::Find("APS5_DIRECT_BUFFERS") == RuntimeSwitch::DirectBuffers && !RuntimeSwitches::Set(RuntimeSwitch::DirectBuffers), "APS5_DIRECT_BUFFERS is not a runtime switch that starts unset");
     Require(RuntimeSwitches::Find("APS5_DIRECT_INPUTS") == RuntimeSwitch::DirectInputs && !RuntimeSwitches::Set(RuntimeSwitch::DirectInputs), "APS5_DIRECT_INPUTS is not a runtime switch that starts unset");
+    Require(RuntimeSwitches::Find("APS5_FAST_SETTLE") == RuntimeSwitch::FastSettle && !RuntimeSwitches::Set(RuntimeSwitch::FastSettle), "APS5_FAST_SETTLE is not a runtime switch that starts unset");
+    Require(RuntimeSwitches::Find("APS5_PRECISE_SETTLE") == RuntimeSwitch::PreciseSettle && !RuntimeSwitches::Set(RuntimeSwitch::PreciseSettle), "APS5_PRECISE_SETTLE is not a runtime switch that starts unset");
+    Require(RuntimeSwitches::Find("APS5_IMPORT_SNAPSHOTS") == RuntimeSwitch::ImportSnapshots && !RuntimeSwitches::Set(RuntimeSwitch::ImportSnapshots), "APS5_IMPORT_SNAPSHOTS is not a runtime switch that starts unset");
+    Require(RuntimeSwitches::Find("APS5_MERGED_SETTLE") == RuntimeSwitch::MergedSettle && !RuntimeSwitches::Set(RuntimeSwitch::MergedSettle), "APS5_MERGED_SETTLE is not a runtime switch that starts unset");
+    Require(RuntimeSwitches::Find("APS5_UNLOCKED_STAMPS") == RuntimeSwitch::UnlockedStamps && !RuntimeSwitches::Set(RuntimeSwitch::UnlockedStamps), "APS5_UNLOCKED_STAMPS is not a runtime switch that starts unset");
+    Require(RuntimeSwitches::Find("APS5_WRITE_SNAPSHOT_FRONTS") == RuntimeSwitch::WriteSnapshotFronts && !RuntimeSwitches::Set(RuntimeSwitch::WriteSnapshotFronts), "APS5_WRITE_SNAPSHOT_FRONTS is not a runtime switch that starts unset");
+    Require(RuntimeSwitches::Find("APS5_PENDING_FRONTS") == RuntimeSwitch::PendingFronts && !RuntimeSwitches::Set(RuntimeSwitch::PendingFronts), "APS5_PENDING_FRONTS is not a runtime switch that starts unset");
     Require(RuntimeSwitches::Set(RuntimeSwitch::LeanFront),"APS5_LEAN_FRONT set in the environment did not start set");
 }
 

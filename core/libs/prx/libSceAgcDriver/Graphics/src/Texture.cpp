@@ -15,6 +15,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/BufferPool.hpp"
 #include "prx/libSceAgcDriver/Execution/include/DeviceFault.hpp"
 #include "prx/libc/include/HostThreadSlot.hpp"
+#include "prx/libc/include/HostThreadLocal.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ThreadScratch.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Resources.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
@@ -1869,6 +1870,13 @@ StorageTexture::StorageTexture(const Context& context, TextureDetiler& detiler, 
 
 namespace {
 
+struct FlushingSpans {
+    std::uint64_t state = 0;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> ranges;
+};
+
+enum class PendingFrontVerdict : std::uint8_t { Clear, NoSnapshot, OverPending };
+
 class PendingList {
 public:
     using iterator = std::vector<StorageTexture*>::iterator;
@@ -1887,6 +1895,7 @@ public:
     void remove(const StorageTexture* texture) {
         if (std::erase(textures, texture) != 0) changed();
     }
+    std::uint64_t Version() const { return version; }
     bool MayOverlap(std::uint64_t address, std::size_t bytes) {
         if (indexed != version) rebuild();
         return !textures.empty() && Overlaps(ranges, address, bytes);
@@ -1894,6 +1903,11 @@ public:
     bool SurelyClear(std::uint64_t address, std::size_t bytes) const {
         const auto current = published.load(std::memory_order_acquire);
         return current != nullptr && current->version == changes.load(std::memory_order_acquire) && !Overlaps(current->ranges, address, bytes);
+    }
+    bool SurelyClear(std::span<const std::pair<std::uint64_t, std::uint64_t>> spans) const {
+        const auto current = published.load(std::memory_order_acquire);
+        if (current == nullptr || current->version != changes.load(std::memory_order_acquire)) return false;
+        return std::none_of(spans.begin(), spans.end(), [&](const auto& span) { return span.second > span.first && Overlaps(current->ranges, span.first, static_cast<std::size_t>(span.second - span.first)); });
     }
     bool ClearOnThread(std::uint64_t address, std::size_t bytes) const {
         struct CopyTag {};
@@ -1913,6 +1927,29 @@ private:
         Ranges ranges;
     };
 
+public:
+    struct Front {
+        std::shared_ptr<const Snapshot> pending;
+    };
+
+    std::uint64_t Changes() const { return changes.load(std::memory_order_acquire); }
+
+    PendingFrontVerdict FrontClear(Front& front, std::span<const std::pair<std::uint64_t, std::uint64_t>> spans, std::uint64_t& seen, bool& refreshed) const {
+        seen = changes.load(std::memory_order_acquire);
+        if (front.pending == nullptr || front.pending->version != seen) {
+            auto loaded = published.load(std::memory_order_acquire);
+            if (loaded == nullptr || loaded->version != seen) return PendingFrontVerdict::NoSnapshot;
+            front.pending = std::move(loaded);
+            refreshed = true;
+        }
+        return SpansOverlap(front.pending->ranges, spans) ? PendingFrontVerdict::OverPending : PendingFrontVerdict::Clear;
+    }
+
+    static bool SpansOverlap(const Ranges& ranges, std::span<const std::pair<std::uint64_t, std::uint64_t>> spans) {
+        return std::any_of(spans.begin(), spans.end(), [&](const auto& span) { return span.second > span.first && Overlaps(ranges, span.first, static_cast<std::size_t>(span.second - span.first)); });
+    }
+
+private:
     static bool Overlaps(const Ranges& ranges, std::uint64_t address, std::size_t bytes) {
         if (bytes == 0) return false;
         const auto end = bytes > std::numeric_limits<std::uint64_t>::max() - address ? std::numeric_limits<std::uint64_t>::max() : address + bytes;
@@ -1953,6 +1990,8 @@ struct PendingWrites {
     // Images taken out of `textures` by a FlushPending still storing them (see adjacentPendingUnchanged).
     std::vector<StorageTexture*> flushing;
     std::atomic<std::size_t> flushingCount{0};
+    std::atomic<std::uint64_t> flushingState{0};
+    AtomicSharedPtr<const FlushingSpans> flushingSpans;
     struct Drawn {
         StorageTexture* texture;
         std::uint64_t bytes;
@@ -1965,6 +2004,176 @@ struct PendingWrites {
 PendingWrites& Pending() {
     static PendingWrites pending;
     return pending;
+}
+
+enum class PendingFrontCount : std::size_t { Clear, ClearBesideFlushing, Refreshes, NoSnapshot, OverPending, NoSpans, OverFlushing, Flushing, Moved, Count };
+
+constexpr std::size_t PendingFrontCounts = static_cast<std::size_t>(PendingFrontCount::Count);
+
+enum class FlushingUse : std::uint8_t { Ignore, Spans, None };
+
+struct PendingFrontThread {
+    PendingList::Front list;
+    std::shared_ptr<const FlushingSpans> flushing;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> scanSpans;
+    std::array<std::uint64_t, PendingFrontCounts> counts{};
+    std::uint64_t noted = 0;
+    std::uint64_t verifyOrdinal = 0;
+};
+
+struct PendingFrontCensus {
+    std::array<std::atomic<std::uint64_t>, PendingFrontCounts> totals{};
+    std::array<std::atomic<std::uint64_t>, PendingFrontCounts> reported{};
+    std::atomic<std::uint64_t> checked{0};
+    std::atomic<std::uint64_t> differing{0};
+    std::atomic<std::int64_t> window{-1};
+};
+
+PendingFrontCensus& pendingFrontCensus() {
+    static PendingFrontCensus census;
+    return census;
+}
+
+PendingFrontThread& pendingFrontThread() {
+    struct Storage {};
+    return HostThreadLocal<PendingFrontThread, Storage>();
+}
+
+bool PendingFrontsOn() {
+    return RuntimeSwitches::Set(RuntimeSwitch::PendingFronts);
+}
+
+void reportPendingFronts() {
+    auto& census = pendingFrontCensus();
+    const std::int64_t window = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count() / 10;
+    if (census.window.exchange(window, std::memory_order_relaxed) == window) return;
+    std::array<unsigned long long, PendingFrontCounts> since{};
+    for (std::size_t index = 0; index < PendingFrontCounts; ++index) {
+        const auto total = census.totals[index].load(std::memory_order_relaxed);
+        since[index] = static_cast<unsigned long long>(total - census.reported[index].exchange(total, std::memory_order_relaxed));
+    }
+    const auto at = [&](PendingFrontCount count) { return since[static_cast<std::size_t>(count)]; };
+    AgcDriver::ProfilePrint_nid_no_patch("[pending-fronts] 10 s: %llu clear answers from a thread's front (%llu of them beside flushing images), %llu fronts refreshed; fallbacks: %llu without a snapshot of the current version, %llu over a pending range, %llu flushing without a current span list, %llu over a flushing span, %llu with flushing images where none may be, %llu moved while read; verify (cumulative) %llu checked, %llu differing\n", at(PendingFrontCount::Clear) + at(PendingFrontCount::ClearBesideFlushing), at(PendingFrontCount::ClearBesideFlushing), at(PendingFrontCount::Refreshes), at(PendingFrontCount::NoSnapshot), at(PendingFrontCount::OverPending), at(PendingFrontCount::NoSpans), at(PendingFrontCount::OverFlushing), at(PendingFrontCount::Flushing), at(PendingFrontCount::Moved), static_cast<unsigned long long>(census.checked.load(std::memory_order_relaxed)), static_cast<unsigned long long>(census.differing.load(std::memory_order_relaxed)));
+}
+
+void notePendingFront(PendingFrontThread& thread, PendingFrontCount count) {
+    ++thread.counts[static_cast<std::size_t>(count)];
+    if (++thread.noted % 4096 != 0) return;
+    auto& census = pendingFrontCensus();
+    for (std::size_t index = 0; index < PendingFrontCounts; ++index) {
+        census.totals[index].fetch_add(thread.counts[index], std::memory_order_relaxed);
+        thread.counts[index] = 0;
+    }
+    reportPendingFronts();
+}
+
+std::uint64_t pendingFrontVerifyEvery() {
+    static const std::uint64_t every = [] {
+        const char* text = std::getenv("APS5_VERIFY_PENDING_FRONTS");
+        return text != nullptr ? std::strtoull(text, nullptr, 10) : 0ull;
+    }();
+    return every;
+}
+
+void verifyPendingFront(PendingWrites& pending, std::span<const std::pair<std::uint64_t, std::uint64_t>> spans, FlushingUse use, std::uint64_t version, std::uint64_t state) {
+    std::lock_guard lock(pending.mutex);
+    if (pending.textures.Version() != version) return;
+    const auto now = pending.flushingState.load(std::memory_order_relaxed);
+    if (use != FlushingUse::Ignore && now != state && ((now & 1u) != 0 || (state & 1u) != 0)) return;
+    auto& census = pendingFrontCensus();
+    census.checked.fetch_add(1, std::memory_order_relaxed);
+    const auto meets = [&](const StorageTexture* texture, std::pair<std::uint64_t, std::uint64_t>& met) {
+        const auto base = texture->Descriptor().baseAddress;
+        const auto end = base + texture->GuestBytes();
+        for (const auto& span : spans) {
+            if (span.second <= span.first || span.first >= end || base >= span.second) continue;
+            met = span;
+            return true;
+        }
+        return false;
+    };
+    std::pair<std::uint64_t, std::uint64_t> met{};
+    const StorageTexture* found = nullptr;
+    bool flushing = false;
+    for (const auto* texture : pending.textures) {
+        if (!meets(texture, met)) continue;
+        found = texture;
+        break;
+    }
+    if (found == nullptr && use != FlushingUse::Ignore) {
+        for (const auto* texture : pending.flushing) {
+            if (!meets(texture, met)) continue;
+            found = texture;
+            flushing = true;
+            break;
+        }
+    }
+    if (found == nullptr) return;
+    if (census.differing.fetch_add(1, std::memory_order_relaxed) < 16) std::fprintf(stderr, "[pending-fronts-verify] 0x%llx+0x%llx: the front says clear, the list has image 0x%llx+0x%llx (%s)\n", static_cast<unsigned long long>(met.first), static_cast<unsigned long long>(met.second - met.first), static_cast<unsigned long long>(found->Descriptor().baseAddress), static_cast<unsigned long long>(found->GuestBytes()), flushing ? "flushing" : "pending");
+}
+
+bool pendingFrontClear(PendingWrites& pending, std::span<const std::pair<std::uint64_t, std::uint64_t>> spans, FlushingUse use) {
+    auto& thread = pendingFrontThread();
+    std::uint64_t version = 0;
+    bool refreshed = false;
+    const auto verdict = pending.textures.FrontClear(thread.list, spans, version, refreshed);
+    if (refreshed) notePendingFront(thread, PendingFrontCount::Refreshes);
+    if (verdict != PendingFrontVerdict::Clear) {
+        notePendingFront(thread, verdict == PendingFrontVerdict::NoSnapshot ? PendingFrontCount::NoSnapshot : PendingFrontCount::OverPending);
+        return false;
+    }
+    std::uint64_t state = 0;
+    if (use != FlushingUse::Ignore) {
+        state = pending.flushingState.load(std::memory_order_acquire);
+        if ((state & 1u) != 0) {
+            if (use == FlushingUse::None) {
+                notePendingFront(thread, PendingFrontCount::Flushing);
+                return false;
+            }
+            if (thread.flushing == nullptr || thread.flushing->state != state) {
+                auto loaded = pending.flushingSpans.load(std::memory_order_acquire);
+                if (loaded == nullptr || loaded->state != state) {
+                    notePendingFront(thread, PendingFrontCount::NoSpans);
+                    return false;
+                }
+                thread.flushing = std::move(loaded);
+                notePendingFront(thread, PendingFrontCount::Refreshes);
+            }
+            if (PendingList::SpansOverlap(thread.flushing->ranges, spans)) {
+                notePendingFront(thread, PendingFrontCount::OverFlushing);
+                return false;
+            }
+        }
+        if (pending.textures.Changes() != version || pending.flushingState.load(std::memory_order_acquire) != state) {
+            notePendingFront(thread, PendingFrontCount::Moved);
+            return false;
+        }
+    }
+    notePendingFront(thread, (state & 1u) != 0 ? PendingFrontCount::ClearBesideFlushing : PendingFrontCount::Clear);
+    if (const auto every = pendingFrontVerifyEvery(); every != 0 && ++thread.verifyOrdinal % every == 0) verifyPendingFront(pending, spans, use, version, state);
+    return true;
+}
+
+void noteFlushingChange(PendingWrites& pending) noexcept {
+    const auto state = (((pending.flushingState.load(std::memory_order_relaxed) >> 1u) + 1u) << 1u) | (pending.flushing.empty() ? 0u : 1u);
+    if (PendingFrontsOn()) {
+        try {
+            auto spans = std::make_shared<FlushingSpans>();
+            spans->state = state;
+            spans->ranges.reserve(pending.flushing.size());
+            for (const auto* texture : pending.flushing) spans->ranges.emplace_back(texture->Descriptor().baseAddress, texture->Descriptor().baseAddress + texture->GuestBytes());
+            std::sort(spans->ranges.begin(), spans->ranges.end());
+            std::size_t merged = 0;
+            for (const auto& range : spans->ranges) {
+                if (merged != 0 && range.first <= spans->ranges[merged - 1].second) spans->ranges[merged - 1].second = std::max(spans->ranges[merged - 1].second, range.second);
+                else spans->ranges[merged++] = range;
+            }
+            spans->ranges.resize(merged);
+            pending.flushingSpans.store(std::move(spans), std::memory_order_release);
+        } catch (...) {
+        }
+    }
+    pending.flushingState.store(state, std::memory_order_release);
 }
 
 DrawnPending drawnPending() {
@@ -5257,7 +5466,9 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
     const auto nothingToStore = [&] {
         auto& pending = Pending();
         if (pending.flushingCount.load(std::memory_order_acquire) != 0) return false;
-        if (!pending.textures.SurelyClear(address, bytes)) {
+        const bool fronts = PendingFrontsOn();
+        const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> span{{{address, address + bytes}}};
+        if (fronts ? !(bytes <= std::numeric_limits<std::uint64_t>::max() - address && pendingFrontClear(pending, span, FlushingUse::None)) : !pending.textures.SurelyClear(address, bytes)) {
             std::lock_guard lock(pending.mutex);
             const auto* exempt = Refreshing::Get();
             if (pending.textures.MayOverlap(address, bytes) && std::any_of(pending.textures.begin(), pending.textures.end(), [&](const StorageTexture* texture) { return texture != except && texture != exempt && texture->overlaps(address, bytes) && texture->pendingUnitInside(address, bytes); })) return false;
@@ -5328,6 +5539,7 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
         // Still pending for the adjacency rule of writeBack until each one is stored.
         for (const auto& texture : flush) pending.flushing.push_back(texture.get());
         pending.flushingCount.store(pending.flushing.size(), std::memory_order_release);
+        if (!flush.empty()) noteFlushingChange(pending);
         if (!flush.empty()) BumpPendingSerial();
         for (const auto& texture : flush) {
             if (texture->drawnListed) ownNotes.insert(ownNotes.end(), texture->storeNotes.begin(), texture->storeNotes.end());
@@ -5350,6 +5562,7 @@ bool StorageTexture::FlushPending(std::uint64_t address, std::size_t bytes, cons
             std::lock_guard lock(pending.mutex);
             for (const auto& texture : flush) std::erase(pending.flushing, texture.get());
             pending.flushingCount.store(pending.flushing.size(), std::memory_order_release);
+            noteFlushingChange(pending);
             BumpPendingSerial();
         }
     } unregister{flush};
@@ -5991,6 +6204,10 @@ std::shared_ptr<StorageTexture> StorageTexture::FindPendingSlice(std::uint64_t a
 
 bool PendingStorageOverlaps(std::uint64_t address, std::size_t bytes, const StorageTexture* except) {
     auto& pending = Pending();
+    if (PendingFrontsOn()) {
+        const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> span{{{address, address + bytes}}};
+        if (bytes <= std::numeric_limits<std::uint64_t>::max() - address && pendingFrontClear(pending, span, FlushingUse::Ignore)) return false;
+    }
     std::lock_guard lock(pending.mutex);
     if (!pending.textures.MayOverlap(address, bytes)) return false;
     for (const auto* texture : pending.textures) {
@@ -6100,6 +6317,11 @@ std::uint64_t StorageTexture::StampKeepingNewerResults(std::uint64_t address, st
 bool StorageTexture::AnyPendingOverlaps(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges) {
     if (ranges.empty()) return false;
     auto& pending = Pending();
+    if (PendingFrontsOn()) {
+        if (pendingFrontClear(pending, ranges, FlushingUse::Spans)) return false;
+    } else if (RuntimeSwitches::Set(RuntimeSwitch::FastSettle) && pending.textures.SurelyClear(ranges) && pending.flushingCount.load(std::memory_order_acquire) == 0) {
+        return false;
+    }
     std::lock_guard lock(pending.mutex);
     const auto overlapsAny = [&](const StorageTexture* texture) {
         for (const auto& [begin, end] : ranges) {
@@ -6169,7 +6391,12 @@ std::vector<std::shared_ptr<StorageTexture>> StorageTexture::overlappingPending(
     // FlushPending's listing; the images stay alive across the caller's scan as there.
     std::vector<std::shared_ptr<StorageTexture>> overlapping;
     auto& pending = Pending();
-    if (pending.textures.SurelyClear(address, bytes)) return overlapping;
+    if (PendingFrontsOn()) {
+        const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> span{{{address, address + bytes}}};
+        if (bytes <= std::numeric_limits<std::uint64_t>::max() - address && pendingFrontClear(pending, span, FlushingUse::Ignore)) return overlapping;
+    } else if (pending.textures.SurelyClear(address, bytes)) {
+        return overlapping;
+    }
     std::lock_guard lock(pending.mutex);
     if (!pending.textures.MayOverlap(address, bytes)) return overlapping;
     const auto* exempt = Refreshing::Get();
@@ -6363,6 +6590,28 @@ void StorageTexture::BumpPendingSerial() {
 
 bool StorageTexture::ScanPending(std::span<PendingQuery> queries) {
     auto& pending = Pending();
+    if (PendingFrontsOn()) {
+        std::array<std::pair<std::uint64_t, std::uint64_t>, 1> one{};
+        auto& many = pendingFrontThread().scanSpans;
+        std::span<const std::pair<std::uint64_t, std::uint64_t>> spans;
+        if (queries.size() == 1) {
+            one[0] = {queries[0].begin, queries[0].end};
+            spans = one;
+        } else {
+            many.clear();
+            for (const auto& query : queries) many.emplace_back(query.begin, query.end);
+            spans = many;
+        }
+        if (pendingFrontClear(pending, spans, FlushingUse::Spans)) {
+            bool identities = true;
+            for (auto& query : queries) {
+                query.overlaps = false;
+                query.found = nullptr;
+                if (query.end > query.begin && query.pending != nullptr) identities = false;
+            }
+            return identities;
+        }
+    }
     std::lock_guard lock(pending.mutex);
     bool identities = true;
     for (auto& query : queries) {

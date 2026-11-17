@@ -318,6 +318,8 @@ public:
         std::uint64_t generation = 0;
         std::uint64_t depthGuards = 0;
         std::uint64_t forget = 0;
+        static constexpr std::uint8_t MergedSettle = 2;
+        std::uint8_t shortcuts = 0;
     };
     struct PreparedDifference {
         const char* what = nullptr;

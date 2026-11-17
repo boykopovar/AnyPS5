@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Execution/include/HandoffSpin.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
@@ -1357,6 +1358,8 @@ struct WriteTracker {
 #endif
     };
     std::vector<std::unique_ptr<Leaf>> leaves;
+    std::unique_ptr<std::atomic<const Leaf*>[]> leafTable;
+    std::atomic<bool> readable{false};
 #ifdef _WIN32
     std::uintptr_t base = 0;
     std::size_t size = 0;
@@ -1364,6 +1367,15 @@ struct WriteTracker {
 #else
     static constexpr std::size_t LeafCount = std::size_t{1} << 15;
 #endif
+
+    static std::uint64_t loadStamp(const std::uint64_t& word) {
+        return std::atomic_ref<std::uint64_t>(const_cast<std::uint64_t&>(word)).load(std::memory_order_relaxed);
+    }
+
+    static void storeStamp(std::uint64_t& word, std::uint64_t value) {
+        std::atomic_ref<std::uint64_t>(word).store(value, std::memory_order_relaxed);
+    }
+
     // Atomic only so a per-thread memo hit can read it without the mutex (every mutation and every
     // stamp still happen under it): a hit must return the current value, including MarkWritten
     // bumps, or an image refreshed after a stamp would keep failing UnchangedSince until the next
@@ -1419,19 +1431,30 @@ struct WriteTracker {
 #ifdef _WIN32
         GuestArena::GuestArenaRange_nid_postfix(&base, &size);
         watched = size != 0 && GuestArena::GuestArenaWriteWatched_nid_postfix();
-        if (!watched) return;
+        if (!watched) {
+            readable.store(true, std::memory_order_release);
+            return;
+        }
         leaves.resize((size / WriteBlockBytes + LeafBlocks) / LeafBlocks);
+        leafTable = std::make_unique<std::atomic<const Leaf*>[]>(leaves.size());
         coverage.Initialize(base, size, std::getenv("APS5_NO_COVERAGE_SUMMARY") == nullptr);
         pages.resize(1u << 16);
         GuestArena::GuestArenaSetPrivateMappingObserver_nid_postfix(&watchPrivateMapping);
 #else
         watched = GuestWriteWatch::GuestWriteWatchAvailable_nid_postfix();
-        if (watched) leaves.resize(LeafCount);
+        if (watched) {
+            leaves.resize(LeafCount);
+            leafTable = std::make_unique<std::atomic<const Leaf*>[]>(leaves.size());
+        }
 #endif
-        if (!watched) return;
+        if (!watched) {
+            readable.store(true, std::memory_order_release);
+            return;
+        }
         observationLeafCount = leaves.size();
         observationLeaves = std::make_unique<std::atomic<ObservationLeaf*>[]>(observationLeafCount);
         observationTable.store(observationLeaves.get(), std::memory_order_release);
+        readable.store(true, std::memory_order_release);
     }
 
     bool inObservationRange(std::uint64_t first, std::uint64_t stop) const {
@@ -1706,7 +1729,10 @@ struct WriteTracker {
 
     Leaf& leafFor(std::uint64_t block) {
         auto& leaf = leaves[block / LeafBlocks];
-        if (leaf == nullptr) leaf = std::make_unique<Leaf>();
+        if (leaf == nullptr) {
+            leaf = std::make_unique<Leaf>();
+            leafTable[block / LeafBlocks].store(leaf.get(), std::memory_order_release);
+        }
         return *leaf;
     }
 
@@ -1723,21 +1749,26 @@ struct WriteTracker {
 
     std::uint64_t stampOf(std::uint64_t block) const {
         const auto& leaf = leaves[block / LeafBlocks];
-        return leaf != nullptr ? leaf->blocks[block % LeafBlocks] : 0;
+        return leaf != nullptr ? loadStamp(leaf->blocks[block % LeafBlocks]) : 0;
     }
 
     static constexpr std::size_t UnstampedSlots = 1u << 16;
     std::vector<std::uint64_t> unstampedStores;
+    std::atomic<const std::uint64_t*> unstampedTable{nullptr};
 
     void noteUnstampedStore(std::uint64_t address, std::uint64_t end) {
-        if (unstampedStores.empty()) unstampedStores.assign(UnstampedSlots, 0);
+        if (unstampedStores.empty()) {
+            unstampedStores.assign(UnstampedSlots, 0);
+            unstampedTable.store(unstampedStores.data(), std::memory_order_release);
+        }
         const auto first = address / WriteBlockBytes;
         const auto last = (end - 1) / WriteBlockBytes;
+        const auto stampGeneration = generation.load(std::memory_order_relaxed);
         if (last - first >= UnstampedSlots) {
-            std::fill(unstampedStores.begin(), unstampedStores.end(), generation);
+            for (auto& slot : unstampedStores) storeStamp(slot, stampGeneration);
             return;
         }
-        for (auto block = first; block <= last; ++block) unstampedStores[block % UnstampedSlots] = generation;
+        for (auto block = first; block <= last; ++block) storeStamp(unstampedStores[block % UnstampedSlots], stampGeneration);
     }
 
     std::uint64_t newestStamp(std::uint64_t address, std::uint64_t end) const {
@@ -1745,8 +1776,11 @@ struct WriteTracker {
         if (!unstampedStores.empty()) {
             const auto first = address / WriteBlockBytes;
             const auto last = (end - 1) / WriteBlockBytes;
-            if (last - first >= UnstampedSlots) newest = *std::max_element(unstampedStores.begin(), unstampedStores.end());
-            else for (auto block = first; block <= last; ++block) newest = std::max(newest, unstampedStores[block % UnstampedSlots]);
+            if (last - first >= UnstampedSlots) {
+                for (const auto& slot : unstampedStores) newest = std::max(newest, loadStamp(slot));
+            } else {
+                for (auto block = first; block <= last; ++block) newest = std::max(newest, loadStamp(unstampedStores[block % UnstampedSlots]));
+            }
         }
         if (!watched) return newest;
 #ifdef _WIN32
@@ -1758,6 +1792,40 @@ struct WriteTracker {
         if (address >= end) return newest;
         for (auto block = blockOf(address); block <= blockOf(end - 1); ++block) newest = std::max(newest, stampOf(block));
         return newest;
+    }
+
+    bool stampsAtMost(std::uint64_t address, std::uint64_t end, std::uint64_t since) const {
+        if (const auto* slots = unstampedTable.load(std::memory_order_acquire); slots != nullptr) {
+            const auto first = address / WriteBlockBytes;
+            const auto last = (end - 1) / WriteBlockBytes;
+            if (last - first >= UnstampedSlots) {
+                for (std::size_t slot = 0; slot < UnstampedSlots; ++slot) {
+                    if (loadStamp(slots[slot]) > since) return false;
+                }
+            } else {
+                for (auto block = first; block <= last; ++block) {
+                    if (loadStamp(slots[block % UnstampedSlots]) > since) return false;
+                }
+            }
+        }
+        if (!watched) return true;
+#ifdef _WIN32
+        address = std::max<std::uint64_t>(address, base);
+        end = std::min<std::uint64_t>(end, base + size);
+#else
+        end = std::min<std::uint64_t>(end, LeafCount * LeafBlocks * WriteBlockBytes);
+#endif
+        if (address >= end) return true;
+        const Leaf* leaf = nullptr;
+        auto leafIndex = ~std::uint64_t{0};
+        for (auto block = blockOf(address); block <= blockOf(end - 1); ++block) {
+            if (block / LeafBlocks != leafIndex) {
+                leafIndex = block / LeafBlocks;
+                leaf = leafTable[leafIndex].load(std::memory_order_acquire);
+            }
+            if (leaf != nullptr && loadStamp(leaf->blocks[block % LeafBlocks]) > since) return false;
+        }
+        return true;
     }
 
     std::uint64_t coarseStampOf(std::uint64_t block) const {
@@ -1776,8 +1844,9 @@ struct WriteTracker {
             }
             const auto end = std::min<std::uint64_t>(last + 1, (first / CoarseBlocks + 1) * CoarseBlocks);
             if (end - first < CoarseBlocks || coarseStampOf(first) > since) {
-                const auto begin = leaf->blocks.begin() + first % LeafBlocks;
-                if (std::any_of(begin, begin + (end - first), newer)) return false;
+                for (auto block = first; block < end; ++block) {
+                    if (newer(loadStamp(leaf->blocks[block % LeafBlocks]))) return false;
+                }
             }
             first = end;
         }
@@ -1829,7 +1898,7 @@ struct WriteTracker {
             const auto last = (end - 1) / WriteBlockBytes;
             if (last - first >= UnstampedSlots) return true;
             for (auto block = first; block <= last; ++block) {
-                if (unstampedStores[block % UnstampedSlots] > generation) return true;
+                if (loadStamp(unstampedStores[block % UnstampedSlots]) > generation) return true;
             }
         }
         for (auto block = blockOf(address); block <= blockOf(end - 1); ++block) {
@@ -1895,7 +1964,7 @@ struct WriteTracker {
         const bool stored = kind != StampKind::ImportWindow;
         auto& leaf = leafFor(block);
         if (stored) {
-            leaf.blocks[block % LeafBlocks] = stampGeneration;
+            storeStamp(leaf.blocks[block % LeafBlocks], stampGeneration);
             auto& coarse = leaf.coarseBlocks[(block % LeafBlocks) / CoarseBlocks];
             coarse = std::max(coarse, stampGeneration);
         }
@@ -2489,6 +2558,16 @@ private:
     bool outer;
 };
 
+std::atomic<std::uint64_t> ownStoresInFlight{0};
+
+class OwnStoreInFlight {
+public:
+    OwnStoreInFlight() { ownStoresInFlight.fetch_add(1, std::memory_order_seq_cst); }
+    ~OwnStoreInFlight() { ownStoresInFlight.fetch_sub(1, std::memory_order_seq_cst); }
+    OwnStoreInFlight(const OwnStoreInFlight&) = delete;
+    OwnStoreInFlight& operator=(const OwnStoreInFlight&) = delete;
+};
+
 }
 
 void SetUnwatchHook(void (*hook)(std::uint64_t, std::size_t)) {
@@ -2557,6 +2636,7 @@ bool ImportWatched(std::uint64_t address, std::size_t bytes, const std::function
     }
     auto& tracker = Tracker();
     auto lock = lockTracker(tracker);
+    const OwnStoreInFlight inFlight;
     tracker.initialize();
     if (!tracker.watched) {
         lock.Unlock();
@@ -2849,6 +2929,7 @@ std::uint64_t storeOwn(std::uint64_t address, std::size_t bytes, bool imaged, co
     };
     auto& tracker = Tracker();
     const auto lock = lockTracker(tracker);
+    const OwnStoreInFlight inFlight;
     tracker.initialize();
     if (!tracker.watched || bytes > std::numeric_limits<std::uint64_t>::max() - address || !tracker.covers(address, bytes)) return stampStored(tracker, store({}));
     constexpr std::uint64_t page = 4096;
@@ -3000,9 +3081,9 @@ bool StoredAllSince_nid_no_patch(std::uint64_t address, std::size_t bytes, std::
         const auto first = address / WriteBlockBytes;
         const auto last = (end - 1u) / WriteBlockBytes;
         if (last - first >= WriteTracker::UnstampedSlots) {
-            if (std::ranges::any_of(tracker.unstampedStores, [&](auto stamp) { return stamp > generation; })) return false;
+            if (std::ranges::any_of(tracker.unstampedStores, [&](const std::uint64_t& stamp) { return WriteTracker::loadStamp(stamp) > generation; })) return false;
         } else {
-            for (auto block = first; block <= last; ++block) if (tracker.unstampedStores[block % WriteTracker::UnstampedSlots] > generation) return false;
+            for (auto block = first; block <= last; ++block) if (WriteTracker::loadStamp(tracker.unstampedStores[block % WriteTracker::UnstampedSlots]) > generation) return false;
         }
     }
     for (auto block = tracker.blockOf(address); block <= tracker.blockOf(end - 1u); ++block) {
@@ -3024,6 +3105,10 @@ std::uint64_t TrackerGeneration() {
     return tracker.generation;
 }
 
+std::uint64_t TrackerGenerationNow() {
+    return Tracker().generation.load(std::memory_order_acquire);
+}
+
 void AdvanceTrackerGenerationForTest(std::uint64_t generation) {
     auto& tracker = Tracker();
     const auto lock = lockTracker(tracker);
@@ -3035,6 +3120,100 @@ std::uint64_t NewestStamp(std::uint64_t address, std::size_t bytes) {
     const auto lock = lockTracker(tracker);
     tracker.initialize();
     return bytes == 0 ? 0 : tracker.newestStamp(address, address + bytes);
+}
+
+namespace {
+
+enum class UnlockedStampCount : std::size_t { Answers, Newer, Locked, OwnStores, Count };
+
+constexpr std::size_t UnlockedStampCounts = static_cast<std::size_t>(UnlockedStampCount::Count);
+
+struct UnlockedStampThread {
+    std::array<std::uint64_t, UnlockedStampCounts> counts{};
+    std::uint64_t noted = 0;
+    std::uint64_t verifyOrdinal = 0;
+};
+
+struct UnlockedStampCensus {
+    std::array<std::atomic<std::uint64_t>, UnlockedStampCounts> totals{};
+    std::array<std::atomic<std::uint64_t>, UnlockedStampCounts> reported{};
+    std::atomic<std::uint64_t> stampsChecked{0};
+    std::atomic<std::uint64_t> stampsDiffering{0};
+    std::atomic<std::int64_t> window{-1};
+};
+
+UnlockedStampCensus& unlockedStampCensus() {
+    static UnlockedStampCensus census;
+    return census;
+}
+
+UnlockedStampThread& unlockedStampThread() {
+    struct Storage {};
+    return HostThreadLocal<UnlockedStampThread, Storage>();
+}
+
+std::uint64_t unlockedStampsVerifyEvery() {
+    static const std::uint64_t every = [] {
+        const char* text = std::getenv("APS5_VERIFY_UNLOCKED_STAMPS");
+        return text != nullptr ? std::strtoull(text, nullptr, 10) : 0ull;
+    }();
+    return every;
+}
+
+void reportUnlockedStamps() {
+    auto& census = unlockedStampCensus();
+    const std::int64_t window = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count() / 10;
+    if (census.window.exchange(window, std::memory_order_relaxed) == window) return;
+    std::array<unsigned long long, UnlockedStampCounts> since{};
+    for (std::size_t index = 0; index < UnlockedStampCounts; ++index) {
+        const auto total = census.totals[index].load(std::memory_order_relaxed);
+        since[index] = static_cast<unsigned long long>(total - census.reported[index].exchange(total, std::memory_order_relaxed));
+    }
+    const auto at = [&](UnlockedStampCount count) { return since[static_cast<std::size_t>(count)]; };
+    AgcDriver::ProfilePrint_nid_no_patch("[unlocked-stamps] 10 s: stamp checks without the tracker mutex %llu settled and %llu over a newer stamp, under it %llu before the tracker was set up and %llu while a driver store or host import was in flight; verify (cumulative) %llu stamp checks, %llu differing\n", at(UnlockedStampCount::Answers), at(UnlockedStampCount::Newer), at(UnlockedStampCount::Locked), at(UnlockedStampCount::OwnStores), static_cast<unsigned long long>(census.stampsChecked.load(std::memory_order_relaxed)), static_cast<unsigned long long>(census.stampsDiffering.load(std::memory_order_relaxed)));
+}
+
+void noteUnlockedStamp(UnlockedStampThread& thread, UnlockedStampCount count) {
+    ++thread.counts[static_cast<std::size_t>(count)];
+    if (++thread.noted % 4096 != 0) return;
+    auto& census = unlockedStampCensus();
+    for (std::size_t index = 0; index < UnlockedStampCounts; ++index) {
+        census.totals[index].fetch_add(thread.counts[index], std::memory_order_relaxed);
+        thread.counts[index] = 0;
+    }
+    reportUnlockedStamps();
+}
+
+}
+
+bool StampsAtMost(std::uint64_t address, std::size_t bytes, std::uint64_t generation) {
+    if (!Graphics::RuntimeSwitches::Set(Graphics::RuntimeSwitch::UnlockedStamps)) return NewestStamp(address, bytes) <= generation;
+    auto& tracker = Tracker();
+    auto& thread = unlockedStampThread();
+    if (!tracker.readable.load(std::memory_order_acquire)) {
+        noteUnlockedStamp(thread, UnlockedStampCount::Locked);
+        return NewestStamp(address, bytes) <= generation;
+    }
+    std::atomic_thread_fence(std::memory_order_acquire);
+    if (ownStoresInFlight.load(std::memory_order_seq_cst) != 0) {
+        noteUnlockedStamp(thread, UnlockedStampCount::OwnStores);
+        return NewestStamp(address, bytes) <= generation;
+    }
+    const auto every = unlockedStampsVerifyEvery();
+    const bool verify = every != 0 && ++thread.verifyOrdinal % every == 0;
+    const auto before = verify ? tracker.generation.load(std::memory_order_acquire) : 0;
+    const auto stableBefore = verify ? tracker.stable.load(std::memory_order_acquire) : 0;
+    const bool answer = bytes == 0 || tracker.stampsAtMost(address, address + bytes, generation);
+    noteUnlockedStamp(thread, answer ? UnlockedStampCount::Answers : UnlockedStampCount::Newer);
+    if (verify) {
+        const bool locked = NewestStamp(address, bytes) <= generation;
+        if (before == stableBefore && tracker.generation.load(std::memory_order_acquire) == before) {
+            auto& census = unlockedStampCensus();
+            census.stampsChecked.fetch_add(1, std::memory_order_relaxed);
+            if (locked != answer && census.stampsDiffering.fetch_add(1, std::memory_order_relaxed) < 16) std::fprintf(stderr, "[unlocked-stamps-verify] 0x%llx+%zu at generation %llu: without the mutex %s, under it %s\n", static_cast<unsigned long long>(address), bytes, static_cast<unsigned long long>(generation), answer ? "settled" : "newer", locked ? "settled" : "newer");
+        }
+    }
+    return answer;
 }
 
 #ifdef _WIN32
