@@ -96,6 +96,7 @@ constexpr std::int16_t FromEnd = 2;
 constexpr std::uint32_t CloseOnExecRequest = 0x20006601;
 constexpr std::uint32_t KeepOnExecRequest = 0x20006602;
 constexpr std::uint32_t NonblockingRequest = 0x8004667e;
+constexpr std::uint32_t AsynchronousRequest = 0x8004667d;
 constexpr std::uint32_t ReadableRequest = 0x4004667f;
 constexpr std::uint32_t RequestIn = 0x80000000u;
 constexpr std::uint32_t RequestOut = 0x40000000u;
@@ -581,10 +582,11 @@ int Ioctl(int fd, std::uint64_t request, void* argument) {
         return 0;
     }
     if (IsKqueueDescriptor_nid_no_patch(fd)) return Fail(GuestEnotty);
-    if (command == NonblockingRequest) {
+    if (command == NonblockingRequest || command == AsynchronousRequest) {
         int enable = 0;
         if (!GuestCopyIn_nid_no_patch(&enable, argument, sizeof(enable))) return Fail(GuestEfault);
-        return ChangeStatus(fd, *kind, Nonblocking, enable != 0 ? Nonblocking : 0, "ioctl");
+        const int flag = command == NonblockingRequest ? Nonblocking : Asynchronous;
+        return ChangeStatus(fd, *kind, flag, enable != 0 ? flag : 0, "ioctl");
     }
     if (command == ReadableRequest) {
         if (*kind == Kind::RandomDevice) return Fail(GuestEnotty);
