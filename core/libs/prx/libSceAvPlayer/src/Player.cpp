@@ -4,10 +4,13 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <cerrno>
 #include <cstring>
 #include "prx/libSceAvPlayer/include/AvPlayer.hpp"
+#include "prx/libc/include/HostThread.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
 
 namespace AvPlayer {
 
@@ -15,6 +18,13 @@ namespace {
 
 bool EqualsIgnoreCase(std::string_view left, std::string_view right) {
     return std::ranges::equal(left, right, [](unsigned char a, unsigned char b) { return std::tolower(a) == std::tolower(b); });
+}
+
+bool IsPs4Process() {
+    const int savedErrno = errno;
+    const bool ps4 = sceKernelIsPs4Process() != 0;
+    errno = savedErrno;
+    return ps4;
 }
 
 bool SameLanguage(const char* preferred, const char* code) {
@@ -62,7 +72,7 @@ std::uint32_t DetectSourceType(std::string_view path) {
 }
 
 Player::Player(const AvPlayerInitData& init, std::uint32_t bufferCount)
-    : memory(WithGuestHeapFallback(init.memory_replacement)), callback(init.event_replacement), videoBuffers(bufferCount) {
+    : memory(WithGuestHeapFallback(init.memory_replacement)), callback(init.event_replacement), ps4Process(IsPs4Process()), videoBuffers(bufferCount) {
     if (init.file_replacement.open && init.file_replacement.close && init.file_replacement.read_offset && init.file_replacement.size) {
         file = init.file_replacement;
     }
@@ -70,7 +80,7 @@ Player::Player(const AvPlayerInitData& init, std::uint32_t bufferCount)
     if (init.default_language) {
         for (std::size_t index = 0; index < 3 && init.default_language[index] != '\0'; ++index) language[index] = init.default_language[index];
     }
-    controller = std::thread([this, closed = controllerClosed] { controllerLoop(*closed); });
+    controller = Libc::StartHostThread([this, closed = controllerClosed] { controllerLoop(*closed); });
 }
 
 Player::~Player() {
@@ -97,8 +107,19 @@ void Player::queue(const Event& event) {
     eventCondition.NotifyAll();
 }
 
-void Player::OnWarning(std::int32_t code) {
-    queue({EventWarningId, code, false, false});
+std::uint64_t Player::OnWarning(std::int32_t code) {
+    std::uint64_t ticket = 0;
+    {
+        std::lock_guard lock(eventMutex);
+        ticket = ++queuedWarnings;
+        events.push_back({EventWarningId, code, false, false, ticket});
+    }
+    eventCondition.NotifyAll();
+    return ticket;
+}
+
+bool Player::WarningDelivered(std::uint64_t ticket) {
+    return deliveredWarnings.load(std::memory_order_acquire) >= ticket;
 }
 
 void Player::OnError() {
@@ -141,9 +162,12 @@ void Player::deliver(const Event& event) {
         autoStart();
         return;
     }
-    if (!callback.event_callback) return;
-    std::int32_t warning = event.warning;
-    callback.event_callback(callback.object_ptr, event.id, 0, event.id == EventWarningId ? &warning : nullptr);
+    const auto closed = controllerClosed;
+    if (callback.event_callback) {
+        std::int32_t warning = event.warning;
+        callback.event_callback(callback.object_ptr, event.id, 0, event.id == EventWarningId ? &warning : nullptr);
+    }
+    if (event.ticket != 0 && !*closed) deliveredWarnings.store(event.ticket, std::memory_order_release);
 }
 
 bool Player::readyLocked() const {
@@ -168,8 +192,8 @@ void Player::autoStart() {
             Stop();
             return;
         }
-        if (info.type == StreamTypeVideo && (video == -1 || SameLanguage(language, info.details.video.language_code))) video = index;
-        if (info.type == Ps5StreamTypeAudio && (audio == -1 || SameLanguage(language, info.details.audio.language_code))) audio = index;
+        if (info.type == guestStreamType(StreamTypeVideo) && (video == -1 || SameLanguage(language, info.details.video.language_code))) video = index;
+        if (info.type == guestStreamType(StreamTypeAudio) && (audio == -1 || SameLanguage(language, info.details.audio.language_code))) audio = index;
     }
     if (video != -1) EnableStream(static_cast<std::uint32_t>(video));
     if (audio != -1) EnableStream(static_cast<std::uint32_t>(audio));
@@ -233,7 +257,7 @@ int Player::StreamCount() {
 int Player::GetStreamInfo(std::uint32_t index, AvPlayerStreamInfo& info) {
     std::lock_guard lock(mutex);
     if (!source || !source->GetStreamInfo(index, info)) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
-    if (info.type == StreamTypeAudio) info.type = Ps5StreamTypeAudio;
+    info.type = guestStreamType(info.type);
     return SCE_OK;
 }
 
@@ -241,10 +265,15 @@ int Player::GetStreamInfoEx(std::uint32_t index, AvPlayerStreamInfoEx& info) {
     std::lock_guard lock(mutex);
     AvPlayerStreamInfoEx described{};
     if (!source || !source->GetStreamInfoEx(index, described)) return SCE_AVPLAYER_ERROR_OPERATION_FAILED;
-    if (described.type == StreamTypeAudio) described.type = Ps5StreamTypeAudio;
+    described.type = guestStreamType(described.type);
     described.this_size = info.this_size;
     info = described;
     return SCE_OK;
+}
+
+std::uint32_t Player::guestStreamType(std::uint32_t type) const {
+    if (type == StreamTypeVideo) return ps4Process ? Ps4StreamTypeVideo : Ps5StreamTypeVideo;
+    return ps4Process ? Ps4StreamTypeAudio : Ps5StreamTypeAudio;
 }
 
 int Player::EnableStream(std::uint32_t index) {

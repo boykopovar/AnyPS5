@@ -1,0 +1,12 @@
+if(BUILD_TESTING)
+    add_test_executable(guest_agc_pm4_nop_tests ${LIBS_INCLUDE_DIR}/tests/GuestAgcPm4Nop.cpp)
+    target_include_directories(guest_agc_pm4_nop_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_agc_pm4_nop_tests PRIVATE libSceAgc libSceAgcDriver libc)
+    configure_windows_unwind(guest_agc_pm4_nop_tests)
+    add_test(NAME guest_agc_pm4_nop COMMAND guest_agc_pm4_nop_tests)
+    set_tests_properties(guest_agc_pm4_nop PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_agc_pm4_nop PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAgc>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAgcDriver>;PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()

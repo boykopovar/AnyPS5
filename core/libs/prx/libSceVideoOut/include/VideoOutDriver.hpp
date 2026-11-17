@@ -32,6 +32,9 @@
 #include "SceTypes.hpp"
 
 static constexpr int VIDEO_OUT_ERROR_INVALID_VALUE = -2144796671;
+static constexpr int VIDEO_OUT_ERROR_INVALID_PITCH = static_cast<int>(0x80290004u);
+static constexpr int VIDEO_OUT_ERROR_INVALID_TILING_MODE = static_cast<int>(0x80290007u);
+static constexpr int VIDEO_OUT_ERROR_INVALID_ASPECT_RATIO = static_cast<int>(0x80290008u);
 static constexpr int VIDEO_OUT_ERROR_INVALID_ADDRESS = -2144796670;
 static constexpr int VIDEO_OUT_ERROR_INVALID_HANDLE = -2144796661;
 static constexpr int VIDEO_OUT_ERROR_INVALID_EVENT_QUEUE = -2144796660;
@@ -233,6 +236,7 @@ public:
     std::shared_ptr<VideoOutConfig> GetConfig(int handle);
     bool IsOpen(int handle);
     bool HasConfig(int handle);
+    int GetBusType(int handle);
     bool SupportsHighFrameRate();
     int GetDisplayRefreshRate();
     std::uint32_t GetDisplayResolution();

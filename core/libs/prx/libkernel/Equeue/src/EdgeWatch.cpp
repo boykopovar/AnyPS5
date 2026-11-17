@@ -2,6 +2,7 @@
 #include "prx/libc/include/General.hpp"
 
 #include <cerrno>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -14,11 +15,15 @@
 #include <unistd.h>
 #endif
 
+#if defined(_WIN32)
+#include "prx/libkernel/Socket/include/SocketRuntime.hpp"
+#endif
+
 namespace EdgeWatch {
 
 #ifdef __linux__
 
-std::shared_ptr<Watch> Watch::Open(std::intptr_t hostDescriptor, bool write) {
+std::shared_ptr<Watch> Watch::Open(std::intptr_t hostDescriptor, std::intptr_t, bool write) {
     const int descriptor = ::epoll_create1(EPOLL_CLOEXEC);
     if (descriptor < 0) {
         throw std::runtime_error("kevent: EV_CLEAR: epoll_create1 failed, host errno " + std::to_string(errno));
@@ -43,7 +48,7 @@ bool Watch::TakeEdge() {
 
 #elif defined(__APPLE__)
 
-std::shared_ptr<Watch> Watch::Open(std::intptr_t hostDescriptor, bool write) {
+std::shared_ptr<Watch> Watch::Open(std::intptr_t hostDescriptor, std::intptr_t, bool write) {
     auto watch = std::make_shared<Watch>(-1);
     const int descriptor = ::kqueue();
     if (descriptor < 0) {
@@ -78,10 +83,43 @@ bool Watch::TakeEdge() {
     return result > 0;
 }
 
+#elif defined(_WIN32)
+
+std::shared_ptr<Watch> Watch::Open(std::intptr_t, std::intptr_t guestDescriptor, bool write) {
+    auto watch = std::make_shared<Watch>(std::numeric_limits<int>::max());
+    watch->guestDescriptor = guestDescriptor;
+    watch->writeInterest = write;
+    return watch;
+}
+
+Watch::~Watch() = default;
+
+bool Watch::TakeEdge() {
+    std::int64_t data = 0;
+    bool eof = false;
+    if (!GuestSockets::Ready(static_cast<int>(guestDescriptor), writeInterest, &data, &eof)) {
+        lastUnread = -1;
+        sawEof = false;
+        return false;
+    }
+    if (eof) {
+        if (sawEof) return false;
+        sawEof = true;
+        lastUnread = data;
+        return true;
+    }
+    if (data > lastUnread) {
+        lastUnread = data;
+        return true;
+    }
+    lastUnread = data;
+    return false;
+}
+
 #else
 
-std::shared_ptr<Watch> Watch::Open(std::intptr_t, bool) {
-    NotImplemented_nid_no_patch("kevent: EV_CLEAR on a socket or a pipe off Linux");
+std::shared_ptr<Watch> Watch::Open(std::intptr_t, std::intptr_t, bool) {
+    NotImplemented_nid_no_patch("kevent: EV_CLEAR on a socket or a pipe on this host");
     return nullptr;
 }
 

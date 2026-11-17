@@ -1,9 +1,11 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/File/include/DescriptorControl.hpp"
+#include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/File/include/RandomDevice.hpp"
+#include "prx/libkernel/Equeue/Equeue.hpp"
 #include "prx/libkernel/File/include/ArchivedFile.hpp"
 #include "prx/libkernel/Socket/include/SocketRuntime.hpp"
 #include "prx/libc/include/GuestArena.hpp"
@@ -414,14 +416,13 @@ void SetCloseOnExec(int fd, bool value) {
 }
 
 int RecordLock(int fd, int command, std::intptr_t argument) {
-    if (File::IsVirtualDirectoryDescriptor(fd)) return Fail(GuestEinval);
     const bool old = command <= OldSetLockWait;
     const int current = old ? command + (GetLock - OldGetLock) : command;
     const std::size_t size = old ? OldGuestLockSize : sizeof(GuestLock);
     auto* pointer = reinterpret_cast<void*>(argument);
-    if (pointer == nullptr) return Fail(GuestEfault);
     GuestLock lock{};
-    std::memcpy(&lock, pointer, size);
+    if (!GuestCopyIn_nid_no_patch(&lock, pointer, size)) return Fail(GuestEfault);
+    if (File::IsVirtualDirectoryDescriptor(fd)) return Fail(GuestEinval);
     const auto kind = Classify(fd, "fcntl");
     if (!kind || *kind == Kind::Pipe || *kind == Kind::Socket) return Fail(GuestEbadf);
     if (*kind != Kind::File && *kind != Kind::Directory) Unsupported("fcntl", "a record lock", *kind, fd);
@@ -563,7 +564,7 @@ bool IoctlRequestMalformed(std::uint64_t request) {
     const auto command = static_cast<std::uint32_t>(request);
     const std::uint32_t length = (command >> 16) & 0x1fff;
     if ((command & (RequestIn | RequestOut | RequestVoid)) == 0) return true;
-    if ((command & RequestOut) && length == 0) return true;
+    if ((command & (RequestIn | RequestOut)) && length == 0) return true;
     return (command & RequestVoid) && length != 0 && length != sizeof(int);
 }
 
@@ -579,6 +580,7 @@ int Ioctl(int fd, std::uint64_t request, void* argument) {
         SetCloseOnExec(fd, command == CloseOnExecRequest);
         return 0;
     }
+    if (IsKqueueDescriptor_nid_no_patch(fd)) return Fail(GuestEnotty);
     if (command == NonblockingRequest) {
         int enable = 0;
         if (!GuestCopyIn_nid_no_patch(&enable, argument, sizeof(enable))) return Fail(GuestEfault);
@@ -606,8 +608,8 @@ void RememberDescriptor(int fd, int openFlags, bool fixedSizeWrites) {
 #endif
 }
 
-void RememberPipe(int fd) {
-    RememberDescriptor(fd, 0);
+void RememberPipe(int fd, int openFlags) {
+    RememberDescriptor(fd, openFlags);
     std::lock_guard lock(g_mutex);
     g_entries[fd].pipe = true;
 }
@@ -687,7 +689,7 @@ bool IsVnode(int fd) {
 }
 
 extern "C" bool DescriptorHasNoVnode_nid_no_patch(int fd) {
-    return !File::IsVnode(fd) && !File::IsCharacterDevice(fd) && !File::IsRandomDevice(fd);
+    return IsKqueueDescriptor_nid_no_patch(fd) || (!File::IsVnode(fd) && !File::IsCharacterDevice(fd) && !File::IsRandomDevice(fd));
 }
 
 extern "C" std::uint64_t FileSynchronousWritesForTest_nid_no_patch() {

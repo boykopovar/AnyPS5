@@ -1,4 +1,3 @@
-#include "Translation/MemoryInstructions.hpp"
 #include "Translation/TranslationContext.hpp"
 #include <stdexcept>
 #include <string>
@@ -19,10 +18,6 @@ const char* globalWaveSyncName(RdnaOpcode opcode) {
     }
 }
 
-}
-
-void TranslateMemoryInstruction(IrBuilder& builder, const RdnaInstruction& instruction) {
-    throw std::runtime_error("TranslateMemoryInstruction not implemented");
 }
 
 bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
@@ -238,9 +233,6 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
     case RdnaOpcode::FlatAtomicSub:
         return flatAtomic(inst, IrOpcode::AddressAtomicISub32);
     case RdnaOpcode::GlobalAtomicCsub:
-        if (!inst.glc) {
-            throw std::runtime_error("global_atomic_csub without glc is not supported, at pc " + std::to_string(inst.programCounter));
-        }
         return flatAtomic(inst, IrOpcode::AddressAtomicUSubSat32);
     case RdnaOpcode::FlatAtomicSmin:
         return flatAtomic(inst, IrOpcode::AddressAtomicSMin32);
@@ -366,9 +358,11 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
     case RdnaOpcode::DsWriteSrc2B32:
         return dsSrc2(inst, IrOpcode::WriteSharedU32);
     case RdnaOpcode::DsMinSrc2F32:
+        return dsSrc2(inst, IrOpcode::SharedAtomicFMin32);
     case RdnaOpcode::DsMaxSrc2F32:
+        return dsSrc2(inst, IrOpcode::SharedAtomicFMax32);
     case RdnaOpcode::DsAddSrc2F32:
-        throw std::runtime_error("f32 DS src2 operations depend on the f32 denormal mode, which is not modelled for LDS float atomics");
+        return dsSrc2(inst, IrOpcode::SharedAtomicFAdd32);
     case RdnaOpcode::DsWrxchgRtnB32:
         return dsAtomic(inst, IrOpcode::SharedAtomicSwap32, true);
 
@@ -605,6 +599,7 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
     case RdnaOpcode::ImageGather4CLzO:
     case RdnaOpcode::ImageGather4h:
     case RdnaOpcode::ImageGather4hPck:
+    case RdnaOpcode::ImageGather8hPck:
     case RdnaOpcode::ImageGather4:
     case RdnaOpcode::ImageGather4B:
     case RdnaOpcode::ImageGather4BCl:
@@ -698,10 +693,6 @@ bool TranslationContext::emitMemory(const RdnaInstruction& inst) {
     default:
         return false;
     }
-}
-
-void TranslateMemoryInstruction(TranslationContext& context, const RdnaInstruction& instruction) {
-    throw std::runtime_error("TranslateMemoryInstruction not implemented");
 }
 
 }

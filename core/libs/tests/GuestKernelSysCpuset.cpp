@@ -4,7 +4,7 @@
 #include <source_location>
 
 #include "prx/libc/include/Api.hpp"
-#include "prx/libkernel_sys/include/Api.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 
 namespace {
@@ -80,6 +80,21 @@ int main() {
     Require(cpuset_getid_nid_postfix(LevelCpuset, WhichProcess, pid, &setid) == 0);
     Require(setid == set2);
     Require(cpuset_getid_nid_postfix(LevelCpuset, WhichProcess, 999999, &setid) == -1 && Error() == Esrch);
+
+    const int tid = scePthreadGetthreadid();
+    Require(cpuset_getid_nid_postfix(LevelCpuset, WhichThread, -1, &setid) == 0);
+    Require(setid == set2);
+    Require(cpuset_getid_nid_postfix(LevelRoot, WhichThread, -1, &setid) == 0);
+    Require(setid == 0);
+    Require(cpuset_getid_nid_postfix(LevelCpuset, WhichThread, tid, &setid) == 0);
+    Require(setid == set2);
+    Require(cpuset_getid_nid_postfix(LevelRoot, WhichThread, tid, &setid) == 0);
+    Require(setid == 0);
+    Require(cpuset_getid_nid_postfix(LevelCpuset, WhichThread, 999999, &setid) == -1 && Error() == Esrch);
+    Require(cpuset_getid_nid_postfix(LevelRoot, WhichThread, 999999, &setid) == -1 && Error() == Esrch);
+    Require(cpuset_getid_nid_postfix(LevelCpuset, WhichThread, -1, nullptr) == -1 && Error() == Efault);
+    Require(cpuset_getid_nid_postfix(LevelCpuset, WhichThread, -1, reinterpret_cast<int*>(0x10)) == -1 && Error() == Efault);
+    Require(cpuset_getid_nid_postfix(LevelWhich, WhichThread, tid, &setid) == -1 && Error() == Einval);
 
     int outOfRangeSet = 0x1234;
     Require(cpuset_getid_nid_postfix(LevelCpuset, WhichProcess, 4294967296LL, &outOfRangeSet) == -1 && Error() == Esrch && outOfRangeSet == 0x1234);
