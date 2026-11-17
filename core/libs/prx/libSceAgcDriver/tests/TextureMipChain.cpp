@@ -612,8 +612,10 @@ void TestExtraMipAllocationRecovery() {
     mock.imageRequirementBytes = 65536u;
 }
 
-void TestStorageLevelsPastTheFullChain(const Context& context, TextureDetiler& detiler) {
+void TestStorageLevelsPastTheFullChain(const Context& context, TextureDetiler& detiler, std::uint32_t layers) {
     auto descriptor = storageSurface(28, 1, 10);
+    descriptor.dimension = layers == 1u ? TextureDimension::k2D : TextureDimension::k2DArray;
+    descriptor.depthOrLastArray = layers - 1u;
     GuestSurface memory(static_cast<std::size_t>(DescribeSurface(descriptor).guestBytes));
     descriptor.baseAddress = memory.Address();
     clearRecords();
@@ -621,17 +623,17 @@ void TestStorageLevelsPastTheFullChain(const Context& context, TextureDetiler& d
         const auto texture = StorageTexture::Create(context, detiler, descriptor, 0);
         const auto image = texture->Image();
         const auto info = mock.images.at(image);
-        Require(info.mipLevels == 5 && mock.images.size() == 6, "a 28x1 storage surface needs its five-level chain and five extra 1x1 images");
+        Require(info.mipLevels == 5 && info.arrayLayers == layers && mock.images.size() == 6, "a 28x1 storage surface needs its five-level chain and five extra 1x1 images");
         for (std::uint32_t level = 0; level < 5; ++level) {
-            Require(std::count_if(mock.copies.begin(), mock.copies.end(), [&](const auto& copy) { return copy.first == image && copy.second.mipLevel == level; }) == 1, "every level of the core storage chain must be uploaded once");
+            Require(std::count_if(mock.copies.begin(), mock.copies.end(), [&](const auto& copy) { return copy.first == image && copy.second.mipLevel == level; }) == layers, "every layer of the core storage chain must be uploaded once");
         }
         checkInsideImage(image, info, "28x1 core storage image");
         for (std::uint32_t level = 5; level < 10; ++level) {
             const auto extra = texture->Image(level);
             Require(extra != image, "an extra guest mip aliases the physical chain");
             const auto& created = mock.images.at(extra);
-            Require(created.extent.width == 1 && created.extent.height == 1 && created.mipLevels == 1, "an extra guest mip is not backed by a legal 1x1 image");
-            Require(std::count_if(mock.copies.begin(), mock.copies.end(), [&](const auto& copy) { return copy.first == extra && copy.second.mipLevel == 0; }) == 1, "an extra guest mip was not uploaded exactly once");
+            Require(created.extent.width == 1 && created.extent.height == 1 && created.mipLevels == 1 && created.arrayLayers == layers, "an extra guest mip is not backed by a legal 1x1 image");
+            Require(std::count_if(mock.copies.begin(), mock.copies.end(), [&](const auto& copy) { return copy.first == extra && copy.second.mipLevel == 0; }) == layers, "every layer of an extra guest mip must be uploaded once");
             static_cast<void>(texture->StorageView(level, false));
             static_cast<void>(texture->AttachmentView(VK_FORMAT_R8G8B8A8_UNORM, level));
             checkInsideImage(extra, created, "28x1 extra storage mip");
@@ -641,6 +643,14 @@ void TestStorageLevelsPastTheFullChain(const Context& context, TextureDetiler& d
         const char* refusal = nullptr;
         Require(!texture->FillClear(pattern, StorageTexture::WholeImage, refusal), "the existing full-surface fill fast path must keep its extra-level admission rule");
         Require(refusal != nullptr && std::string_view(refusal) == "levels past the image", "the fill refusal changed");
+        const auto clearsBefore = mock.clears.size();
+        const auto barriersBefore = mock.barriers.size();
+        for (std::uint32_t layer = 0u; layer < layers; ++layer) {
+            refusal = nullptr;
+            Require(!texture->FillClear(pattern, layer, refusal), "a layer fill bypassed the extra-level admission rule");
+            Require(refusal != nullptr && std::string_view(refusal) == "levels past the image", "a layer fill reached another admission check");
+        }
+        Require(mock.clears.size() == clearsBefore && mock.barriers.size() == barriersBefore, "a refused layer fill recorded image commands");
         auto otherDescriptor = descriptor;
         GuestSurface otherMemory(static_cast<std::size_t>(DescribeSurface(otherDescriptor).guestBytes));
         otherDescriptor.baseAddress = otherMemory.Address();
@@ -835,7 +845,8 @@ void RunTextureMipChainTests() {
         TestSrgbExpansionLevels(context, detiler);
         TestRepackCopyLevels(context, detiler);
         TestExtraMipAllocationRecovery();
-        TestStorageLevelsPastTheFullChain(context, detiler);
+        TestStorageLevelsPastTheFullChain(context, detiler, 1u);
+        TestStorageLevelsPastTheFullChain(context, detiler, 3u);
         TestStorageFullChainIsUnchanged(context, detiler);
         TestShaderLevelsPastTheView(context, detiler);
         TestSrgbLevelsPastTheFullChain(context);
