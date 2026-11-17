@@ -895,7 +895,11 @@ int main() {
     FontHandle fileHandle = nullptr;
     Require(sceFontOpenFontFile(library, reinterpret_cast<const char*>(fileFontText.c_str()), 1, nullptr, &fileHandle) == SCE_FONT_OK && fileHandle != nullptr);
     Require(sceFontCloseFont(fileHandle) == SCE_FONT_OK);
+    errno = EBUSY;
+    Require(sceFontOpenFontFile(library, reinterpret_cast<const char*>(fileFontText.c_str()), 1, nullptr, reinterpret_cast<FontHandle*>(std::uintptr_t{0x10})) == SCE_FONT_ERROR_INVALID_PARAMETER && errno == EBUSY);
     RemovePathAlias_nid_no_patch("/font-test");
+    errno = EBUSY;
+    Require(sceFontOpenFontMemory(library, fontData.data(), static_cast<std::uint32_t>(fontData.size()), nullptr, reinterpret_cast<FontHandle*>(std::uintptr_t{0x10})) == SCE_FONT_ERROR_INVALID_PARAMETER && errno == EBUSY);
     Require(sceFontOpenFontMemory(library, fontData.data(), static_cast<std::uint32_t>(fontData.size()), nullptr, &font) == SCE_FONT_OK && font != nullptr);
     Require(sceFontGetLibrary(font, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
     FontLibrary fontLibrary = nullptr;

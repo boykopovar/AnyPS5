@@ -133,16 +133,21 @@ std::uint32_t ClaimEntry(FontCtxHeader* header, const OpenRequest& request) {
 
 int OpenFontInContext(const OpenRequest& request, std::uint32_t libraryLock, FontHandle* pFontHandle) {
     FontLibNative* library = request.library;
-    FontHandle handle = PrepareHandle(library, *pFontHandle);
+    FontHandle existing = nullptr;
+    if (!pFontHandle || !CopyInGuest(existing, pFontHandle)) {
+        ReleaseLibraryLock(library, libraryLock);
+        return SCE_FONT_ERROR_INVALID_PARAMETER;
+    }
+    FontHandle handle = PrepareHandle(library, existing);
     if (!handle) {
         ReleaseLibraryLock(library, libraryLock);
-        *pFontHandle = nullptr;
+        (void)CopyOutGuest(pFontHandle, static_cast<FontHandle>(nullptr));
         return SCE_FONT_ERROR_ALLOCATION_FAILED;
     }
     const auto fail = [&](int rc) {
         DiscardHandle(library, handle);
         ReleaseLibraryLock(library, libraryLock);
-        *pFontHandle = nullptr;
+        (void)CopyOutGuest(pFontHandle, static_cast<FontHandle>(nullptr));
         return rc;
     };
     auto* header = static_cast<FontCtxHeader*>(request.context);
@@ -185,7 +190,7 @@ int OpenFontInContext(const OpenRequest& request, std::uint32_t libraryLock, Fon
     if (rc == SCE_FONT_OK) {
         InitializeOpenedHandle(GetNativeFont(handle), library, fontObj, request.modeLow, packedId, entryIndex, request.subFontIndex);
         ++lockWord;
-        *pFontHandle = handle;
+        if (!CopyOutGuest(pFontHandle, handle)) rc = SCE_FONT_ERROR_INVALID_PARAMETER;
     }
     ReleaseFontCtxEntryLock(entry, request.modeLow, lockWord);
     if (rc != SCE_FONT_OK) return fail(rc);
@@ -197,7 +202,7 @@ int OpenFontInContext(const OpenRequest& request, std::uint32_t libraryLock, Fon
 int BeginOpen(FontLibrary library, FontHandle* pFontHandle, std::uint32_t& libraryLock) {
     auto* lib = static_cast<FontLibNative*>(library);
     if (!lib || lib->magic != LIBRARY_MAGIC || !AcquireLibraryLock(lib, libraryLock)) {
-        if (pFontHandle) *pFontHandle = nullptr;
+        if (pFontHandle) (void)CopyOutGuest(pFontHandle, static_cast<FontHandle>(nullptr));
         return SCE_FONT_ERROR_INVALID_LIBRARY;
     }
     int rc = SCE_FONT_OK;
@@ -208,7 +213,7 @@ int BeginOpen(FontLibrary library, FontHandle* pFontHandle, std::uint32_t& libra
     }
     if (rc != SCE_FONT_OK) {
         ReleaseLibraryLock(lib, libraryLock);
-        if (pFontHandle) *pFontHandle = nullptr;
+        if (pFontHandle) (void)CopyOutGuest(pFontHandle, static_cast<FontHandle>(nullptr));
     }
     return rc;
 }
@@ -276,7 +281,7 @@ int APS5_VABI sceFontOpenFontMemory(FontLibrary library, const void* fontAddress
     const std::int32_t uniqueId = openDetail ? openDetail->unique_id : -1;
     if (!fontAddress || fontSize == 0 || uniqueId < -1 || !pFontHandle) {
         ReleaseLibraryLock(lib, libraryLock);
-        if (pFontHandle) *pFontHandle = nullptr;
+        if (pFontHandle) (void)CopyOutGuest(pFontHandle, static_cast<FontHandle>(nullptr));
         return SCE_FONT_ERROR_INVALID_PARAMETER;
     }
     const OpenRequest request{lib, lib->external_fonts_ctx, 1, 1, fontAddress, fontSize, true, subFontIndex, uniqueId};
@@ -289,13 +294,13 @@ int APS5_VABI sceFontOpenFontMemory(FontLibrary library, const void* fontAddress
 
 int APS5_VABI sceFontOpenFontFile(FontLibrary library, const char* path, std::uint32_t openMode, const FontOpenDetail* openDetail, FontHandle* pFontHandle) {
     if (!library) {
-        if (pFontHandle) *pFontHandle = nullptr;
+        if (pFontHandle) (void)CopyOutGuest(pFontHandle, static_cast<FontHandle>(nullptr));
         return SCE_FONT_ERROR_INVALID_LIBRARY;
     }
     if (!pFontHandle) return SCE_FONT_ERROR_INVALID_PARAMETER;
     std::filesystem::path hostPath;
     if (path && ResolvePathError_nid_no_patch(path, hostPath) != 0) {
-        *pFontHandle = nullptr;
+        (void)CopyOutGuest(pFontHandle, static_cast<FontHandle>(nullptr));
         return SCE_FONT_ERROR_FS_OPEN_FAILED;
     }
     const std::string hostPathString = hostPath.string();
@@ -308,7 +313,7 @@ int APS5_VABI sceFontOpenFontFile(FontLibrary library, const char* path, std::ui
     const std::uint32_t modeLow = openMode & 0x0Fu;
     if (!path || uniqueId < -1 || modeLow < 1 || modeLow > 3 || hostPathString.empty()) {
         ReleaseLibraryLock(lib, libraryLock);
-        *pFontHandle = nullptr;
+        (void)CopyOutGuest(pFontHandle, static_cast<FontHandle>(nullptr));
         return SCE_FONT_ERROR_INVALID_PARAMETER;
     }
     const OpenRequest request{lib, lib->external_fonts_ctx, modeLow, modeLow + 4, hostPathString.c_str(), 0, false, subFontIndex, uniqueId};
