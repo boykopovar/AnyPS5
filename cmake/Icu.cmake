@@ -1,22 +1,47 @@
 set(ICU_SOURCE_DIR ${CMAKE_SOURCE_DIR}/3rdparty/icu/icu4c/source)
 
+set(ICU_NORMALIZATION_DIR ${CMAKE_CURRENT_BINARY_DIR}/icu-normalization)
+set(ICU_NORMALIZATION_SOURCE ${ICU_NORMALIZATION_DIR}/CommonData.cpp)
+file(MAKE_DIRECTORY ${ICU_NORMALIZATION_DIR})
+set(ICU_NORMALIZATION_DECLARATIONS "")
+set(ICU_NORMALIZATION_ENTRIES "")
+set(ICU_NORMALIZATION_FILES nfkc.nrm nfkc_cf.nrm uemoji.icu ulayout.icu)
+list(LENGTH ICU_NORMALIZATION_FILES ICU_NORMALIZATION_COUNT)
+foreach(ICU_NORMALIZATION_FILE IN LISTS ICU_NORMALIZATION_FILES)
+    string(MAKE_C_IDENTIFIER ${ICU_NORMALIZATION_FILE} ICU_NORMALIZATION_NAME)
+    set(ICU_NORMALIZATION_INPUT ${ICU_SOURCE_DIR}/data/in/${ICU_NORMALIZATION_FILE})
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${ICU_NORMALIZATION_INPUT})
+    file(READ ${ICU_NORMALIZATION_INPUT} ICU_NORMALIZATION_HEX HEX)
+    string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," ICU_NORMALIZATION_BYTES "${ICU_NORMALIZATION_HEX}")
+    string(APPEND ICU_NORMALIZATION_DECLARATIONS
+        "alignas(16) constexpr unsigned char ${ICU_NORMALIZATION_NAME}[]{${ICU_NORMALIZATION_BYTES}};\n")
+    string(APPEND ICU_NORMALIZATION_ENTRIES
+        "    {U_ICUDATA_NAME \"/${ICU_NORMALIZATION_FILE}\", ${ICU_NORMALIZATION_NAME}},\n")
+endforeach()
+configure_file(${CMAKE_CURRENT_LIST_DIR}/IcuNormalizationData.cpp.in ${ICU_NORMALIZATION_SOURCE} @ONLY)
+
 add_library(icu_common STATIC EXCLUDE_FROM_ALL
     ${ICU_SOURCE_DIR}/common/appendable.cpp
     ${ICU_SOURCE_DIR}/common/bmpset.cpp
     ${ICU_SOURCE_DIR}/common/bytesinkutil.cpp
     ${ICU_SOURCE_DIR}/common/bytestream.cpp
     ${ICU_SOURCE_DIR}/common/bytestrie.cpp
+    ${ICU_SOURCE_DIR}/common/characterproperties.cpp
     ${ICU_SOURCE_DIR}/common/charstr.cpp
     ${ICU_SOURCE_DIR}/common/cmemory.cpp
     ${ICU_SOURCE_DIR}/common/cstring.cpp
     ${ICU_SOURCE_DIR}/common/edits.cpp
     ${ICU_SOURCE_DIR}/common/emojiprops.cpp
+    ${ICU_SOURCE_DIR}/common/filterednormalizer2.cpp
     ${ICU_SOURCE_DIR}/common/loadednormalizer2impl.cpp
+    ${ICU_SOURCE_DIR}/common/locmap.cpp
     ${ICU_SOURCE_DIR}/common/normalizer2.cpp
     ${ICU_SOURCE_DIR}/common/normalizer2impl.cpp
+    ${ICU_SOURCE_DIR}/common/parsepos.cpp
     ${ICU_SOURCE_DIR}/common/patternprops.cpp
     ${ICU_SOURCE_DIR}/common/propname.cpp
     ${ICU_SOURCE_DIR}/common/putil.cpp
+    ${ICU_SOURCE_DIR}/common/ruleiter.cpp
     ${ICU_SOURCE_DIR}/common/stringpiece.cpp
     ${ICU_SOURCE_DIR}/common/uarrsort.cpp
     ${ICU_SOURCE_DIR}/common/ubidi.cpp
@@ -63,14 +88,18 @@ add_library(icu_common STATIC EXCLUDE_FROM_ALL
     ${ICU_SOURCE_DIR}/common/umath.cpp
     ${ICU_SOURCE_DIR}/common/umutablecptrie.cpp
     ${ICU_SOURCE_DIR}/common/umutex.cpp
+    ${ICU_SOURCE_DIR}/common/unames.cpp
     ${ICU_SOURCE_DIR}/common/unifilt.cpp
     ${ICU_SOURCE_DIR}/common/unifunct.cpp
     ${ICU_SOURCE_DIR}/common/uniset.cpp
+    ${ICU_SOURCE_DIR}/common/uniset_props.cpp
     ${ICU_SOURCE_DIR}/common/unisetspan.cpp
     ${ICU_SOURCE_DIR}/common/unistr.cpp
     ${ICU_SOURCE_DIR}/common/unistr_case.cpp
+    ${ICU_SOURCE_DIR}/common/unormcmp.cpp
     ${ICU_SOURCE_DIR}/common/uobject.cpp
     ${ICU_SOURCE_DIR}/common/uprops.cpp
+    ${ICU_SOURCE_DIR}/common/uscript_props.cpp
     ${ICU_SOURCE_DIR}/common/ustrcase.cpp
     ${ICU_SOURCE_DIR}/common/ustring.cpp
     ${ICU_SOURCE_DIR}/common/ustrtrns.cpp
@@ -81,30 +110,28 @@ add_library(icu_common STATIC EXCLUDE_FROM_ALL
     ${ICU_SOURCE_DIR}/common/utrie_swap.cpp
     ${ICU_SOURCE_DIR}/common/uvector.cpp
     ${ICU_SOURCE_DIR}/common/uvectr32.cpp
-    ${ICU_SOURCE_DIR}/stubdata/stubdata.cpp)
+    ${ICU_NORMALIZATION_SOURCE})
+target_sources(icu_common PRIVATE
+    ${ICU_SOURCE_DIR}/common/fixedstring.cpp
+    ${ICU_SOURCE_DIR}/common/localebuilder.cpp
+    ${ICU_SOURCE_DIR}/common/locid.cpp
+    ${ICU_SOURCE_DIR}/common/loclikely.cpp
+    ${ICU_SOURCE_DIR}/common/loclikelysubtags.cpp
+    ${ICU_SOURCE_DIR}/common/lsr.cpp
+    ${ICU_SOURCE_DIR}/common/resource.cpp
+    ${ICU_SOURCE_DIR}/common/ucol_swp.cpp
+    ${ICU_SOURCE_DIR}/common/uloc.cpp
+    ${ICU_SOURCE_DIR}/common/uloc_keytype.cpp
+    ${ICU_SOURCE_DIR}/common/uloc_tag.cpp
+    ${ICU_SOURCE_DIR}/common/uresbund.cpp
+    ${ICU_SOURCE_DIR}/common/uresdata.cpp
+    ${ICU_SOURCE_DIR}/common/ustrenum.cpp
+    ${ICU_SOURCE_DIR}/common/utypes.cpp)
 if(WIN32)
-    target_sources(icu_common PRIVATE
-        ${ICU_SOURCE_DIR}/common/fixedstring.cpp
-        ${ICU_SOURCE_DIR}/common/localebuilder.cpp
-        ${ICU_SOURCE_DIR}/common/locid.cpp
-        ${ICU_SOURCE_DIR}/common/loclikely.cpp
-        ${ICU_SOURCE_DIR}/common/loclikelysubtags.cpp
-        ${ICU_SOURCE_DIR}/common/locmap.cpp
-        ${ICU_SOURCE_DIR}/common/lsr.cpp
-        ${ICU_SOURCE_DIR}/common/resource.cpp
-        ${ICU_SOURCE_DIR}/common/ucol_swp.cpp
-        ${ICU_SOURCE_DIR}/common/uloc.cpp
-        ${ICU_SOURCE_DIR}/common/uloc_keytype.cpp
-        ${ICU_SOURCE_DIR}/common/uloc_tag.cpp
-        ${ICU_SOURCE_DIR}/common/uresbund.cpp
-        ${ICU_SOURCE_DIR}/common/uresdata.cpp
-        ${ICU_SOURCE_DIR}/common/uscript_props.cpp
-        ${ICU_SOURCE_DIR}/common/ustrenum.cpp
-        ${ICU_SOURCE_DIR}/common/utypes.cpp
-        ${ICU_SOURCE_DIR}/common/wintz.cpp)
+    target_sources(icu_common PRIVATE ${ICU_SOURCE_DIR}/common/wintz.cpp)
 endif()
 target_include_directories(icu_common SYSTEM PUBLIC ${ICU_SOURCE_DIR}/common)
-target_compile_definitions(icu_common PUBLIC U_STATIC_IMPLEMENTATION PRIVATE U_COMMON_IMPLEMENTATION UCONFIG_NO_FILE_IO=1)
+target_compile_definitions(icu_common PUBLIC U_STATIC_IMPLEMENTATION PRIVATE U_COMMON_IMPLEMENTATION UCONFIG_NO_FILE_IO=1 UCONFIG_USE_WINDOWS_LCID_MAPPING_API=0)
 target_compile_features(icu_common PUBLIC cxx_std_17)
 set_target_properties(icu_common PROPERTIES POSITION_INDEPENDENT_CODE ON CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
 if(MINGW OR CMAKE_SYSTEM_NAME STREQUAL "Linux")

@@ -1,5 +1,6 @@
 #include "prx/libSceAudioOut/include/AudioOut2.hpp"
 #include <atomic>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
@@ -28,8 +29,11 @@ int APS5_VABI sceAudioOut2Set3DLatency(int userId, std::uint32_t output) {
 
 int APS5_VABI sceAudioOut2GetSystemState(AudioOut2SystemState* state) {
     if (!state) return static_cast<int>(0x80260502);
-    state->loudness = 0.0f;
-    return 0;
+    const float loudness = 0.0f;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(state, &loudness, sizeof(loudness));
+    errno = savedErrno;
+    return copied ? 0 : static_cast<int>(0x80260502);
 }
 
 int APS5_VABI sceAudioOut2GetSystemStateEx(void* state) {
@@ -46,6 +50,8 @@ int APS5_VABI sceAudioOut2Terminate(void) {
 
 int APS5_VABI sceAudioOut2SetSystemDebugState(const AudioOut2SystemDebugStateParam* param) {
     constexpr int ErrorInvalidPointer = static_cast<int>(0x8026800C);
+    constexpr int ErrorDebugStateTwo = static_cast<int>(0x80268000);
+    constexpr std::uint32_t DebugStateIdTwo = 2;
     constexpr std::uint32_t DebugStateIdLoudness = 1;
     constexpr std::uint32_t DebugStateIdUnmodelled = 0x20;
     constexpr std::size_t LoudnessParamSize = 8;
@@ -53,8 +59,9 @@ int APS5_VABI sceAudioOut2SetSystemDebugState(const AudioOut2SystemDebugStatePar
     if (!AudioOut2IsInitialized_nid_no_patch()) return SCE_AUDIO_OUT2_ERROR_NOT_INITIALIZED;
     if (param == nullptr) return ErrorInvalidPointer;
     if (param->debug_state_id == DebugStateIdUnmodelled && param->param_size == UnmodelledParamSize) NotImplemented_nid_no_patch(__func__);
+    if ((param->debug_state_id == DebugStateIdLoudness || param->debug_state_id == DebugStateIdTwo) && param->param == nullptr) return ErrorInvalidPointer;
+    if (param->debug_state_id == DebugStateIdTwo && param->param_size == LoudnessParamSize) return ErrorDebugStateTwo;
     if (param->debug_state_id != DebugStateIdLoudness || param->param_size != LoudnessParamSize) return SCE_AUDIO_OUT2_ERROR_INVALID_PARAM;
-    if (param->param == nullptr) NotImplemented_nid_no_patch(__func__);
     AUDIOOUT2_TRACE("t=%.3f SetSystemDebugState: debug state %u recorded; the host has no system mix to apply it to\n", AudioOut2TraceSeconds(), param->debug_state_id);
     return 0;
 }

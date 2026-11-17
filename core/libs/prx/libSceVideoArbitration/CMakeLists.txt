@@ -1,0 +1,15 @@
+add_library(libSceVideoArbitration SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceVideoArbitration PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceVideoArbitration)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_video_arbitration_tests ${LIBS_INCLUDE_DIR}/tests/GuestVideoArbitration.cpp)
+    target_include_directories(guest_video_arbitration_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_video_arbitration_tests PRIVATE libSceVideoArbitration libc)
+    configure_windows_unwind(guest_video_arbitration_tests)
+    add_test(NAME guest_video_arbitration COMMAND guest_video_arbitration_tests)
+    if(WIN32)
+        set_tests_properties(guest_video_arbitration PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceVideoArbitration>")
+    endif()
+endif()
