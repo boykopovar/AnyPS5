@@ -47,6 +47,7 @@ constexpr int GUEST_ENOENT = 2;
 constexpr int GUEST_EFAULT = 14;
 constexpr int GUEST_ENOTSUP = 45;
 constexpr int GUEST_EINVAL = 22;
+constexpr int GUEST_ENAMETOOLONG = 63;
 
 struct AprFile {
     std::filesystem::path path;
@@ -165,7 +166,7 @@ struct PathPrefix {
 int _copyPrefix(const char* prefix, PathPrefix& copy) {
     if (!prefix) return 0;
     const int error = CopyGuestPath_nid_no_patch(prefix, copy.text);
-    if (error == GUEST_EFAULT) return GUEST_EFAULT;
+    if (error != 0 && error != GUEST_ENAMETOOLONG) return error;
     copy.fits = error == 0;
     return 0;
 }
@@ -177,7 +178,7 @@ int _entryPath(const PathPrefix& prefix, const char** paths, uint32_t index, std
     if (!entry || !prefix.fits) return 0;
     std::string tail;
     const int error = CopyGuestPath_nid_no_patch(entry, tail);
-    if (error == GUEST_EFAULT) return GUEST_EFAULT;
+    if (error != 0 && error != GUEST_ENAMETOOLONG) return error;
     if (error == 0) path = prefix.text + tail;
     return 0;
 }

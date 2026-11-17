@@ -839,6 +839,16 @@ void TestResolveFailures() {
     *__error_nid_postfix() = 0;
     Require(sceKernelAprResolveFilepathsWithPrefixToIds(longPath.c_str(), paths, 1, ids, &failed) == -1);
     Require(*__error_nid_postfix() == 2 && failed == 0 && ids[0] == 0xffffffffu);
+    ids[0] = 123;
+    sizes[0] = 123;
+    failed = 99;
+    *__error_nid_postfix() = 0;
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(longPaths, 1, ids, sizes, &failed) == -1);
+    Require(*__error_nid_postfix() == 2 && failed == 0 && ids[0] == 0xffffffffu && sizes[0] == 0);
+    ids[0] = 123;
+    results[0] = 123;
+    Require(sceKernelAprResolveFilepathsToIdsForEach(longPaths, 1, ids, results) == 0);
+    Require(ids[0] == 0xffffffffu && results[0] == static_cast<int>(0x80020002));
     std::remove(paths[0]);
 }
 
