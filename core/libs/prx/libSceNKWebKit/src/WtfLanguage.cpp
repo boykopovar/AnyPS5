@@ -57,6 +57,10 @@ std::vector<ObserverEntry>& ObserverMap() {
     return *map;
 }
 
+void StoreExactMatch(bool* exactMatch, bool value) {
+    if (!GuestCopyOut_nid_no_patch(exactMatch, &value, sizeof(value))) throw std::invalid_argument("null WTF language match argument");
+}
+
 void CheckContext(void* context) {
     if (!context || context == reinterpret_cast<void*>(-1)) throw std::invalid_argument("invalid WTF language change observer context");
 }
@@ -189,7 +193,7 @@ extern "C" std::size_t APS5_VABI _ZN3WTF33indexOfBestMatchingLanguageInListERKNS
         String canonicalizedLanguageFromList = CanonicalLanguageIdentifier(languageList->buffer[i]);
 
         if (_ZN3WTF5equalEPKNS_10StringImplES2_(lowercaseLanguage.impl, canonicalizedLanguageFromList.impl)) {
-            *exactMatch = true;
+            StoreExactMatch(exactMatch, true);
             return i;
         }
 
@@ -208,7 +212,7 @@ extern "C" std::size_t APS5_VABI _ZN3WTF33indexOfBestMatchingLanguageInListERKNS
         }
     }
 
-    *exactMatch = false;
+    StoreExactMatch(exactMatch, false);
 
     if (languageWithoutLocaleMatch) return languageWithoutLocaleMatchIndex;
 
