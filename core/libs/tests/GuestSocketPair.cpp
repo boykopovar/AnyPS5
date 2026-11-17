@@ -195,6 +195,24 @@ static void CheckReceiveMessageFaults() {
     }
 
     Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+
+    Require(socketpair_nid_postfix(Unix, Stream, 0, pair) == 0);
+    Require(Queue(pair[0], pair[1], "abc"));
+    vector = {inaccessible, sizeof(data)};
+    message = {nullptr, 0, &vector, 1, nullptr, 0, -1};
+    Require(ReceiveFaults(pair[1], &message));
+    char kept[8]{};
+    Require(recv_nid_postfix(pair[1], kept, sizeof(kept), Peek | 0x80) == 3);
+    vector.base = readOnly + 128;
+    Require(ReceiveFaults(pair[1], &message));
+    *__error_nid_postfix() = 0;
+    Require(recvmsg_nid_postfix(pair[1], &message, 0x40) == -1 && *__error_nid_postfix() == 14);
+    KernelIovec split[2]{{inaccessible, 0}, {kept, sizeof(kept)}};
+    GuestMsghdr skipped{nullptr, 0, split, 2, nullptr, 0, -1};
+    Require(recvmsg_nid_postfix(pair[1], &skipped, 0x80) == 3 && std::memcmp(kept, "abc", 3) == 0);
+    Require(close_nid_postfix(pair[0]) == 0);
+    Require(recvmsg_nid_postfix(pair[1], &message, 0) == 0);
+    Require(close_nid_postfix(pair[1]) == 0);
     Require(sceKernelMprotect(memory, page * 3, 3) == 0 && sceKernelMunmap(reinterpret_cast<std::uint64_t>(memory), page * 3) == 0);
 }
 

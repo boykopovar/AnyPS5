@@ -2688,6 +2688,17 @@ static bool Transferred(ssize_t copied, std::size_t bytes, const char* call, int
     throw std::runtime_error(std::string("recvmsg: ") + call + " failed with errno " + std::to_string(errno));
 }
 #endif
+static bool FirstOutputWritable(const std::vector<KernelIovec>& vectors) {
+    for (const auto& vector : vectors) {
+        if (vector.length == 0) continue;
+        const int saved = errno;
+        const GuestArena::HostWrite guard(vector.base, 1);
+        const bool writable = guard.Open() && GuestWritable_nid_no_patch(vector.base, 1);
+        errno = saved;
+        return writable;
+    }
+    return true;
+}
 static bool GuestRange(const void* pointer, std::size_t bytes) {
     const auto start = reinterpret_cast<std::uintptr_t>(pointer);
     return start != 0 && bytes <= UINTPTR_MAX - start;
@@ -2801,6 +2812,12 @@ std::int64_t APS5_VABI recvmsg_nid_postfix(int descriptor, GuestMsghdr* message,
         size = sizeof(native);
         if (const int waited = WaitForTransfer(*socket, false, flags, descriptor)) return Fail(waited);
         shut = ReceiveEnded(*socket);
+        if (socket->type == 1 && !passing && !shut && (flags & GuestPeek) == 0 && !FirstOutputWritable(vectors)) {
+            char next = 0;
+            const auto pending = ::recv(socket->value, &next, 1, NativeReceiveFlags((flags & ~GuestWaitAll) | GuestPeek, socket->type));
+            if (pending < 0) return Fail(NativeError());
+            if (pending > 0) return Fail(14);
+        }
 #ifndef _WIN32
         if (passing) {
             std::vector<char> control(CMSG_SPACE(MostPassedDescriptors * sizeof(int)));
