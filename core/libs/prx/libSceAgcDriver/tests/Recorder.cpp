@@ -2,6 +2,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PipelineLinkOptimization.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "Triangle_frag_spv.h"
 #include "Triangle_vert_spv.h"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
@@ -3766,6 +3767,13 @@ bool multisampleUseCollectTests(const Device& device) {
         SetObservationHookForTest(+[](int point) {
             if (point == 1) multisampleUseWalks.fetch_add(1, std::memory_order_relaxed);
         });
+        if (ordered && CollectEpoch() == 0) {
+            for (int use = 0; use != 2; ++use) {
+                multisampleUseWalks.store(0, std::memory_order_relaxed);
+                MultisampleTargetView(context, target);
+                Require(multisampleUseWalks.load(std::memory_order_relaxed) != 0, "a GPU use without a collect epoch reused an observation");
+            }
+        }
         BumpCollectEpoch();
         multisampleUseWalks.store(0, std::memory_order_relaxed);
         MultisampleTargetView(context, target);
@@ -3773,7 +3781,8 @@ bool multisampleUseCollectTests(const Device& device) {
         multisampleUseWalks.store(0, std::memory_order_relaxed);
         MultisampleTargetView(context, target);
         const auto repeated = multisampleUseWalks.load(std::memory_order_relaxed);
-        Require(ordered ? repeated == 0 : repeated != 0, ordered ? "a repeated GPU use walked unchanged multisample planes again" : "an ordinary host use reused a multisample observation");
+        const bool memoized = ordered && CollectEpoch() != 0;
+        Require(memoized ? repeated == 0 : repeated != 0, memoized ? "a repeated GPU use walked unchanged multisample planes again" : "a use without GPU epoch reuse skipped a fresh observation");
         auto* changed = reinterpret_cast<volatile std::uint8_t*>(samples == 8 ? target.fmaskAddress : target.dccAddress);
         *changed = samples == 8 ? 0x11 : 0xc0;
         if (ordered) BumpCollectEpoch();
@@ -3791,15 +3800,16 @@ bool multisampleUseCollectTests(const Device& device) {
     if (base.storageImageMultisample && (base.limits.framebufferColorSampleCounts & VK_SAMPLE_COUNT_8_BIT) != 0) sampleCounts.push_back(8);
     for (const auto samples : sampleCounts) run(false, samples);
     std::exception_ptr failure;
-    std::thread committer([&] {
+    auto& committer = AgcDriver::DriverDetail::DrawPipeline::Queue0();
+    committer.Enqueue(AgcDriver::DriverDetail::DrawPipeline::CommitKind::Draw, [&] {
         try {
-            MarkProofThread();
             for (const auto samples : sampleCounts) run(true, samples);
         } catch (...) {
             failure = std::current_exception();
         }
-    });
-    committer.join();
+    }, {}, 0, {}, {}, true);
+    committer.Drain(AgcDriver::DriverDetail::DrawPipeline::DrainReason::Submission);
+    committer.Stop();
     if (failure) std::rethrow_exception(failure);
     return true;
 }

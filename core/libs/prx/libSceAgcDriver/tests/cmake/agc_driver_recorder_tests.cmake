@@ -28,9 +28,11 @@ target_link_libraries(agc_driver_recorder_tests PRIVATE
 
 if(BUILD_TESTING)
     add_test(NAME agc_multisample_use_collect COMMAND agc_driver_recorder_tests --multisample-use-collect-only)
-    set_tests_properties(agc_multisample_use_collect PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
+    add_test(NAME agc_multisample_use_collect_no_memo COMMAND agc_driver_recorder_tests --multisample-use-collect-only)
+    set_tests_properties(agc_multisample_use_collect agc_multisample_use_collect_no_memo PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30 ENVIRONMENT "APS5_DRAW_PIPELINE=8")
+    set_property(TEST agc_multisample_use_collect_no_memo APPEND PROPERTY ENVIRONMENT "APS5_NO_COLLECT_MEMO=1")
     if(WIN32)
-        set_tests_properties(agc_multisample_use_collect PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        set_tests_properties(agc_multisample_use_collect agc_multisample_use_collect_no_memo PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test(NAME agc_completion_label_wait COMMAND agc_driver_recorder_tests --completion-wait-only)
     set_tests_properties(agc_completion_label_wait PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 30)
