@@ -1,10 +1,25 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
 #include <source_location>
+#include <stdexcept>
 #include <string>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -103,11 +118,82 @@ void Arguments() {
     Require(u_strCompare_nid_postfix(text.c_str(), -2, u"b", 1, 1) == 0);
 }
 
+template<typename TCall>
+void RequireThrows(TCall call, std::source_location location = std::source_location::current()) {
+    errno = 71;
+    try {
+        call();
+    } catch (const std::invalid_argument&) {
+        Require(errno == 71, location);
+        return;
+    }
+    Require(false, location);
+}
+
+char16_t* GuardedPage(std::size_t& pageSize) {
+#ifdef _WIN32
+    SYSTEM_INFO info {};
+    GetSystemInfo(&info);
+    pageSize = info.dwPageSize;
+    auto* base = static_cast<char*>(VirtualAlloc(nullptr, pageSize * 2, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+    Require(base != nullptr);
+    DWORD previous {};
+    Require(VirtualProtect(base + pageSize, pageSize, PAGE_NOACCESS, &previous) != 0);
+#else
+    pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* mapped = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(mapped != MAP_FAILED);
+    auto* base = static_cast<char*>(mapped);
+    Require(mprotect(base + pageSize, pageSize, PROT_NONE) == 0);
+#endif
+    return reinterpret_cast<char16_t*>(base + pageSize);
+}
+
+void ReleasePage(char16_t* end, std::size_t pageSize) {
+    auto* base = reinterpret_cast<char*>(end) - pageSize;
+#ifdef _WIN32
+    VirtualFree(base, 0, MEM_RELEASE);
+#else
+    munmap(base, pageSize * 2);
+#endif
+}
+
+void GuestStrings() {
+    const auto* unmapped = reinterpret_cast<const char16_t*>(std::uintptr_t {0x10});
+    const char16_t text[] = u"abc";
+    RequireThrows([&] { u_strCompare_nid_postfix(unmapped, -1, text, -1, 0); });
+    RequireThrows([&] { u_strCompare_nid_postfix(text, -1, unmapped, -1, 1); });
+    RequireThrows([&] { u_strCompare_nid_postfix(unmapped, 3, text, 3, 0); });
+    RequireThrows([&] { u_strCompare_nid_postfix(text, 3, unmapped, -1, 1); });
+    errno = 71;
+    Require(u_strCompare_nid_postfix(unmapped, 0, text, 0, 0) == 0 && errno == 71);
+    Require(u_strCompare_nid_postfix(unmapped, -1, unmapped, -1, 1) == 0 && errno == 71);
+
+    std::size_t pageSize = 0;
+    auto* end = GuardedPage(pageSize);
+    auto* tail = end - 2;
+    tail[0] = u'a';
+    tail[1] = 0xd800;
+    constexpr auto huge = std::numeric_limits<std::int32_t>::max();
+    const char16_t other[] = u"ac";
+    const char16_t longer[] = {u'a', 0xd800, u'c', 0};
+    const char16_t pair[] = {u'a', 0xd800, 0xdc00, 0};
+    Require(u_strCompare_nid_postfix(tail, huge, other, huge, 0) == 0xd800 - u'c');
+    Require(u_strCompare_nid_postfix(tail, 2, pair, 3, 1) == -1);
+    Require(u_strCompare_nid_postfix(tail, 2, pair, 2, 1) == 0);
+    RequireThrows([&] { u_strCompare_nid_postfix(tail, huge, longer, huge, 0); });
+    RequireThrows([&] { u_strCompare_nid_postfix(tail, -1, longer, -1, 0); });
+    RequireThrows([&] { u_strCompare_nid_postfix(tail, -1, longer, 3, 0); });
+    RequireThrows([&] { u_strCompare_nid_postfix(tail, huge, pair, huge, 1); });
+    ReleasePage(end, pageSize);
+}
+
 }
 
 int main() {
     Plain();
     Surrogates();
     Arguments();
+    GuestStrings();
     std::puts("ICU string comparison tests passed");
 }
