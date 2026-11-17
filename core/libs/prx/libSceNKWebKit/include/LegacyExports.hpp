@@ -985,7 +985,6 @@ int APS5_VABI _ZN7WebCore20ResourceResponseBase17setHTTPStatusTextERKN3WTF6Strin
 int APS5_VABI _ZN7WebCore9FrameView13setNodeToDrawEPNS_4NodeE();
 int APS5_VABI WKBundleSetAllowFileAccessFromFileURLs();
 int APS5_VABI _ZN7WebCore8Settings38setShowRepaintCounterInspectorOverrideEN3WTF8OptionalIbEE();
-int APS5_VABI _ZN7WebCore20UserGestureIndicator21processingUserGestureEv();
 int APS5_VABI _ZNK7WebCore24MatrixTransformOperation5cloneEv();
 int APS5_VABI _ZN7WebCore25previousParagraphPositionERKNS_15VisiblePositionEi();
 int APS5_VABI libSceNKWebKitLegacyUnknown_QT9ArotZAcs_nid_no_patch();
@@ -2193,7 +2192,6 @@ int APS5_VABI _ZN7WebCore17FrameLoaderClient52dispatchWillDestroyGlobalObjectFor
 int APS5_VABI _ZNK7WebCore12TextEncoding7domNameEv();
 int APS5_VABI _ZN7WebCore21NetworkStorageSession23getHostnamesWithCookiesERN3WTF7HashSetINS1_6StringENS1_11DefaultHashIS3_EENS1_10HashTraitsIS3_EEEE();
 int APS5_VABI _ZN7WebCore17FrameLoaderClient11allowScriptEb();
-int APS5_VABI _ZN7WebCore21BlobDataFileReference24expectedModificationTimeEv();
 int APS5_VABI _ZN7WebCore8Document13createCommentERKN3WTF6StringE();
 int APS5_VABI _ZNK7WebCore5Frame15contentRendererEv();
 int APS5_VABI _ZNK7WebCore29PerspectiveTransformOperation5cloneEv();

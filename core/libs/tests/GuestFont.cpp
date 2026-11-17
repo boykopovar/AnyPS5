@@ -547,6 +547,14 @@ static void CheckRenderEffects(FontHandle font, FontRenderer renderer) {
     Require(sceFontGetRenderScalePixel(font, &pixelW, &pixelH) == SCE_FONT_OK);
     Require(sceFontSetupRenderScalePixel(font, 24.0f, 32.0f) == SCE_FONT_OK);
     Require(sceFontGetRenderScalePixel(font, &scaleW, &scaleH) == SCE_FONT_OK && scaleW == 24.0f && scaleH == 32.0f);
+    Require(sceFontGetRenderScalePixel(nullptr, reinterpret_cast<float*>(0x10), nullptr) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);
+    Require(sceFontGetRenderScalePixel(font, nullptr, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontGetRenderScalePixel(font, reinterpret_cast<float*>(0x10), &scaleH) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceFontGetRenderScalePixel(font, &scaleW, reinterpret_cast<float*>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     Require(sceFontSetupRenderScalePoint(font, 12.0f, 18.0f) == SCE_FONT_OK);
     Require(sceFontGetRenderScalePoint(font, &scaleW, &scaleH) == SCE_FONT_OK && scaleW == 12.0f && scaleH == 18.0f);
     Require(sceFontGetRenderScalePoint(nullptr, reinterpret_cast<float*>(0x10), nullptr) == SCE_FONT_ERROR_INVALID_FONT_HANDLE);

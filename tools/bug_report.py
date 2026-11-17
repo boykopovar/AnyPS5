@@ -29,7 +29,7 @@ def redact_report(value, identity):
     if isinstance(value, list):
         return [redact_report(item, identity) for item in value]
     if isinstance(value, dict):
-        return {key: redact_report(item, identity) for key, item in value.items()}
+        return {redact_report(key, identity): redact_report(item, identity) for key, item in value.items()}
     return value
 
 
@@ -61,7 +61,7 @@ def make_bundle(report, out, *, home, user, host, log=None, input_config=None):
         members["anyps5-input.ini"] = redact(Path(input_config).read_text(encoding="utf-8", errors="replace"), **identity)
     members["host.txt"] = f"os: {platform.system()}\nmachine: {platform.machine()}\npython: {platform.python_version()}\n"
     members["README.txt"] = README
-    with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+    with zipfile.ZipFile(out, "x", compression=zipfile.ZIP_DEFLATED) as bundle:
         for name, content in members.items():
             bundle.writestr(name, content.encode("utf-8"))
     return sorted(members)

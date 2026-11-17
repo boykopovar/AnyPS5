@@ -1,9 +1,23 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <stdexcept>
 #include <string>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -76,6 +90,54 @@ void TestInstances() {
     ExpectInt(error, Success, "unorm2_getInstance status");
     Expect(unorm2_getInstance_nid_postfix(nullptr, "", Compose, &error) == nullptr, "unorm2_getInstance(empty name)");
     ExpectInt(error, IllegalArgument, "unorm2_getInstance(empty name) status");
+}
+
+char* GuardedPage(std::size_t& pageSize) {
+#ifdef _WIN32
+    SYSTEM_INFO info {};
+    GetSystemInfo(&info);
+    pageSize = info.dwPageSize;
+    auto* base = static_cast<char*>(VirtualAlloc(nullptr, pageSize * 2, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+    Expect(base != nullptr, "guarded page allocation");
+    DWORD previous {};
+    Expect(VirtualProtect(base + pageSize, pageSize, PAGE_NOACCESS, &previous) != 0, "guard page protection");
+#else
+    pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* mapped = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Expect(mapped != MAP_FAILED, "guarded page allocation");
+    auto* base = static_cast<char*>(mapped);
+    Expect(mprotect(base + pageSize, pageSize, PROT_NONE) == 0, "guard page protection");
+#endif
+    return base + pageSize;
+}
+
+void ReleasePage(char* end, std::size_t pageSize) {
+#ifdef _WIN32
+    VirtualFree(end - pageSize, 0, MEM_RELEASE);
+#else
+    munmap(end - pageSize, pageSize * 2);
+#endif
+}
+
+void TestGuestName() {
+    const auto* unmapped = reinterpret_cast<const char*>(std::uintptr_t {0x10});
+    errno = 71;
+    ExpectThrow<std::invalid_argument>([&] {
+        std::int32_t status = Success;
+        unorm2_getInstance_nid_postfix(nullptr, unmapped, Compose, &status);
+    }, "unorm2_getInstance(unmapped name)");
+    ExpectInt(errno, 71, "unorm2_getInstance(unmapped name) errno");
+    std::int32_t failing = IllegalArgument;
+    Expect(unorm2_getInstance_nid_postfix(nullptr, unmapped, Compose, &failing) == nullptr, "unorm2_getInstance(failing status, unmapped name)");
+    ExpectInt(failing, IllegalArgument, "unorm2_getInstance(failing status, unmapped name) status");
+
+    std::size_t pageSize = 0;
+    auto* end = GuardedPage(pageSize);
+    std::memcpy(end - 4, "nfc", 4);
+    std::int32_t error = Success;
+    Expect(unorm2_getInstance_nid_postfix(nullptr, end - 4, Decompose, &error) == Nfd(), "unorm2_getInstance(name before a guard page)");
+    ExpectInt(error, Success, "unorm2_getInstance(name before a guard page) status");
+    ReleasePage(end, pageSize);
 }
 
 void TestNormalize() {
@@ -253,6 +315,7 @@ void TestCompare() {
 
 int main() {
     TestInstances();
+    TestGuestName();
     TestNormalize();
     TestCompatibilityInstances();
     TestQueries();
