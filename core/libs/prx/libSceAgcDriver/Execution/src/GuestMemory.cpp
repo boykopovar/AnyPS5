@@ -322,6 +322,8 @@ void raiseForgetSlot(std::atomic<std::uint64_t>& slot, std::uint64_t serial) {
 }
 std::atomic<std::uint64_t> forgetBytes{0};
 std::atomic<std::uint64_t> collectMemoHits{0};
+std::atomic<std::uint64_t> sharedWalkHits{0};
+std::atomic<bool> sharedCollectWalks{std::getenv("APS5_NO_SHARED_COLLECT_WALKS") == nullptr};
 std::atomic<std::uint64_t> collectEpochBumps{0};
 std::atomic<std::uint64_t> unwatchSerial{0};
 // Walks that reported at least one written page (the ones the probe pass used to double), and the
@@ -570,7 +572,7 @@ public:
         for (std::size_t i = 0; i < MemoryCounterCount; ++i) {
             AgcDriver::ProfilePrint_nid_no_patch(" %s %llu calls %.0f MiB %.1f s", MemoryCounterNames[i], static_cast<unsigned long long>(totals[i][0]), totals[i][1] / 1048576.0, totals[i][2] / 1e9);
         }
-        AgcDriver::ProfilePrint_nid_no_patch(" collect-memo hits %llu, collect epochs %llu", static_cast<unsigned long long>(collectMemoHits.load()), static_cast<unsigned long long>(collectEpochBumps.load()));
+        AgcDriver::ProfilePrint_nid_no_patch(" collect-memo hits %llu (%llu from other threads' walks), collect epochs %llu", static_cast<unsigned long long>(collectMemoHits.load()), static_cast<unsigned long long>(sharedWalkHits.load()), static_cast<unsigned long long>(collectEpochBumps.load()));
         AgcDriver::ProfilePrint_nid_no_patch(" collect-dirty %llu tracker waits %llu / %llu", static_cast<unsigned long long>(collectDirty.load()), static_cast<unsigned long long>(trackerWaits.load()), static_cast<unsigned long long>(trackerAcquisitions.load()));
         AgcDriver::ProfilePrint_nid_no_patch(" | arena 0x%llx+0x%llx image 0x%llx+0x%llx forgets %llu (%.0f MiB)", static_cast<unsigned long long>(PagesBase()), static_cast<unsigned long long>(PagesSize()), static_cast<unsigned long long>(ImagePagesBase()), static_cast<unsigned long long>(ImagePagesSize()), static_cast<unsigned long long>(forgetCalls.load()), forgetBytes.load() / 1048576.0);
         {
@@ -1380,24 +1382,33 @@ struct WriteTracker {
     struct ObservationLeaf {
         std::array<std::atomic<std::uint64_t>, LeafBlocks> ticks{};
         std::array<std::atomic<std::uint64_t>, LeafBlocks / CoarseBlocks> coarse{};
+        std::array<std::atomic<std::uint64_t>, LeafBlocks> times{};
+        std::array<std::atomic<std::uint64_t>, LeafBlocks / CoarseBlocks> coarseTimes{};
     };
     std::unique_ptr<std::atomic<ObservationLeaf*>[]> observationLeaves;
     std::size_t observationLeafCount = 0;
     std::atomic<const std::atomic<ObservationLeaf*>*> observationTable{nullptr};
     std::atomic<std::uint64_t> observationFloor{0};
+    std::atomic<std::uint64_t> observationTimeFloor{0};
     std::atomic<std::uint64_t> observationUnwatched{std::numeric_limits<std::uint64_t>::max()};
     std::atomic<std::uint64_t> observationMapping{std::numeric_limits<std::uint64_t>::max()};
     struct ExactObservation {
         std::uint64_t first = 0;
         std::uint64_t stop = 0;
         std::uint64_t tick = 0;
+        std::uint64_t time = 0;
     };
     std::array<ExactObservation, 16> exactObservations{};
     std::size_t nextExactObservation = 0;
 
-    bool exactlyObserved(std::uint64_t first, std::uint64_t stop, std::uint64_t need) const {
+    bool exactlyObserved(std::uint64_t first, std::uint64_t stop, std::uint64_t need, std::uint64_t timeNeed, bool& hitByTime) const {
         for (const auto& entry : exactObservations) {
-            if (entry.tick >= need && entry.first <= first && stop <= entry.stop) return true;
+            if (entry.first > first || stop > entry.stop) continue;
+            if (entry.tick >= need) return true;
+            if (timeNeed != 0 && entry.time > timeNeed) {
+                hitByTime = true;
+                return true;
+            }
         }
         return false;
     }
@@ -1437,12 +1448,20 @@ struct WriteTracker {
         return leaf != nullptr ? leaf->ticks[block % LeafBlocks].load(std::memory_order_relaxed) : 0;
     }
 
-    bool observedSince(std::uint64_t first, std::uint64_t stop, std::uint64_t epoch, std::uint64_t unwatched, std::uint64_t mapping) const {
+    std::uint64_t observedTime(std::uint64_t block) const {
+        if (block / LeafBlocks >= observationLeafCount) return 0;
+        const auto* leaf = observationLeaves[block / LeafBlocks].load(std::memory_order_relaxed);
+        return leaf != nullptr ? leaf->times[block % LeafBlocks].load(std::memory_order_relaxed) : 0;
+    }
+
+    bool observedSince(std::uint64_t first, std::uint64_t stop, std::uint64_t epoch, std::uint64_t since, std::uint64_t unwatched, std::uint64_t mapping) const {
         const auto* table = observationTable.load(std::memory_order_acquire);
         if (table == nullptr || observationUnwatched.load(std::memory_order_acquire) != unwatched || observationMapping.load(std::memory_order_acquire) != mapping) return false;
         if (!inObservationRange(first, stop)) return false;
         const auto need = std::max(epoch, observationFloor.load(std::memory_order_acquire));
+        const auto timeNeed = since != 0 ? std::max(since, observationTimeFloor.load(std::memory_order_acquire)) : 0;
         const auto last = blockOf(stop - 1);
+        bool fromSharedTime = false;
         auto block = blockOf(first);
         while (block <= last) {
             const auto index = block / LeafBlocks;
@@ -1452,18 +1471,31 @@ struct WriteTracker {
             const auto end = std::min<std::uint64_t>(last + 1, (index + 1) * LeafBlocks);
             while (block < end) {
                 if (block % CoarseBlocks == 0 && block + CoarseBlocks <= end) {
-                    if (leaf->coarse[(block % LeafBlocks) / CoarseBlocks].load(std::memory_order_acquire) < need) return false;
-                    block += CoarseBlocks;
-                    continue;
+                    const auto group = (block % LeafBlocks) / CoarseBlocks;
+                    if (leaf->coarse[group].load(std::memory_order_acquire) >= need) {
+                        block += CoarseBlocks;
+                        continue;
+                    }
+                    if (timeNeed == 0) return false;
+                    if (leaf->coarseTimes[group].load(std::memory_order_acquire) > timeNeed) {
+                        fromSharedTime = true;
+                        block += CoarseBlocks;
+                        continue;
+                    }
                 }
-                if (leaf->ticks[block % LeafBlocks].load(std::memory_order_acquire) < need) return false;
+                const auto slot = block % LeafBlocks;
+                if (leaf->ticks[slot].load(std::memory_order_acquire) < need) {
+                    if (timeNeed == 0 || leaf->times[slot].load(std::memory_order_acquire) <= timeNeed) return false;
+                    fromSharedTime = true;
+                }
                 ++block;
             }
         }
+        if (fromSharedTime) sharedWalkHits.fetch_add(1, std::memory_order_relaxed);
         return true;
     }
 
-    void publishObserved(std::uint64_t first, std::uint64_t last, std::uint64_t tick) {
+    void publishObserved(std::uint64_t first, std::uint64_t last, std::uint64_t tick, std::uint64_t walkStarted) {
         for (auto block = first; block <= last;) {
             const auto index = block / LeafBlocks;
             auto* leaf = observationLeaves[index].load(std::memory_order_relaxed);
@@ -1473,13 +1505,21 @@ struct WriteTracker {
             }
             const auto end = std::min<std::uint64_t>(last + 1, (index + 1) * LeafBlocks);
             for (auto at = block; at < end; ++at) {
-                auto& slot = leaf->ticks[at % LeafBlocks];
-                if (slot.load(std::memory_order_relaxed) < tick) slot.store(tick, std::memory_order_release);
+                const auto slot = at % LeafBlocks;
+                auto& tickSlot = leaf->ticks[slot];
+                if (tickSlot.load(std::memory_order_relaxed) < tick) tickSlot.store(tick, std::memory_order_release);
+                auto& timeSlot = leaf->times[slot];
+                if (timeSlot.load(std::memory_order_relaxed) < walkStarted) timeSlot.store(walkStarted, std::memory_order_release);
             }
             for (auto group = (block % LeafBlocks) / CoarseBlocks; group <= ((end - 1) % LeafBlocks) / CoarseBlocks; ++group) {
-                std::uint64_t least = std::numeric_limits<std::uint64_t>::max();
-                for (std::size_t at = group * CoarseBlocks; at < (group + 1) * CoarseBlocks; ++at) least = std::min(least, leaf->ticks[at].load(std::memory_order_relaxed));
-                leaf->coarse[group].store(least, std::memory_order_release);
+                std::uint64_t leastTick = std::numeric_limits<std::uint64_t>::max();
+                std::uint64_t leastTime = std::numeric_limits<std::uint64_t>::max();
+                for (std::size_t at = group * CoarseBlocks; at < (group + 1) * CoarseBlocks; ++at) {
+                    leastTick = std::min(leastTick, leaf->ticks[at].load(std::memory_order_relaxed));
+                    leastTime = std::min(leastTime, leaf->times[at].load(std::memory_order_relaxed));
+                }
+                leaf->coarse[group].store(leastTick, std::memory_order_release);
+                leaf->coarseTimes[group].store(leastTime, std::memory_order_release);
             }
             block = end;
         }
@@ -1944,6 +1984,7 @@ struct ThreadCollectMemo {
 void syncObservationContext(WriteTracker& tracker, std::uint64_t unwatched, std::uint64_t mapping) {
     if (tracker.observationUnwatched.load(std::memory_order_relaxed) == unwatched && tracker.observationMapping.load(std::memory_order_relaxed) == mapping) return;
     tracker.observationFloor.store(nextCollectEpoch.fetch_add(1, std::memory_order_acq_rel) + 1, std::memory_order_release);
+    tracker.observationTimeFloor.store(SteadyNanoseconds(), std::memory_order_release);
     tracker.observationUnwatched.store(unwatched, std::memory_order_release);
     tracker.observationMapping.store(mapping, std::memory_order_release);
 }
@@ -2068,6 +2109,8 @@ bool walkWrites(WriteTracker& tracker, std::uint64_t first, std::uint64_t stop, 
     return complete;
 }
 
+struct CollectSinceSlot {};
+
 Observation observe(std::uint64_t address, std::size_t bytes, bool memoized) {
     using Status = Observation::Status;
     if (bytes == 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address) return {Status::Uncovered, 0};
@@ -2078,7 +2121,8 @@ Observation observe(std::uint64_t address, std::size_t bytes, bool memoized) {
     if (stop <= first) return {Status::Uncovered, 0};
     const auto epoch = currentCollectEpoch();
     const bool shared = memoized && collectMemoEnabled() && HostThreadSlot<std::uint64_t, CollectEpochSlot>::Get() != 0;
-    if (shared && tracker.observedSince(first, stop, epoch, unwatchSerial.load(std::memory_order_acquire), GuestAllocations::GuestAllocationsGeneration_nid_postfix())) {
+    const auto since = shared && sharedCollectWalks.load(std::memory_order_relaxed) ? HostThreadSlot<std::uint64_t, CollectSinceSlot>::Get() : 0;
+    if (shared && tracker.observedSince(first, stop, epoch, since, unwatchSerial.load(std::memory_order_acquire), GuestAllocations::GuestAllocationsGeneration_nid_postfix())) {
         collectMemoHits.fetch_add(1, std::memory_order_relaxed);
         return {Status::Complete, tracker.stable.load(std::memory_order_acquire)};
     }
@@ -2095,20 +2139,23 @@ Observation observe(std::uint64_t address, std::size_t bytes, bool memoized) {
     struct RunSlot {};
     auto& runs = ThreadScratch<std::vector<Run>, RunSlot>();
     runs.clear();
+    bool hitByTime = false;
     if (!shared) runs.push_back({first, stop, false});
     else {
         const auto need = std::max(epoch, tracker.observationFloor.load(std::memory_order_relaxed));
+        const auto timeNeed = since != 0 ? std::max(since, tracker.observationTimeFloor.load(std::memory_order_relaxed)) : 0;
         const auto lastBlock = tracker.blockOf(stop - 1);
         const auto addRun = [&](std::uint64_t from, std::uint64_t to) {
             const auto begin = tracker.blockBegin(from);
             const auto end = tracker.blockBegin(to + 1);
             if (tracker.covers(begin, static_cast<std::size_t>(end - begin))) runs.push_back({begin, end, false});
-            else if (!tracker.exactlyObserved(std::max(first, begin), std::min(stop, end), need)) runs.push_back({std::max(first, begin), std::min(stop, end), true});
+            else if (!tracker.exactlyObserved(std::max(first, begin), std::min(stop, end), need, timeNeed, hitByTime)) runs.push_back({std::max(first, begin), std::min(stop, end), true});
         };
         bool open = false;
         std::uint64_t from = 0;
         for (auto block = tracker.blockOf(first); block <= lastBlock; ++block) {
-            if (tracker.observedTick(block) < need) {
+            const bool satisfied = tracker.observedTick(block) >= need || (timeNeed != 0 && tracker.observedTime(block) > timeNeed && (hitByTime = true));
+            if (!satisfied) {
                 if (!open) from = block;
                 open = true;
             } else if (open) {
@@ -2118,9 +2165,13 @@ Observation observe(std::uint64_t address, std::size_t bytes, bool memoized) {
         }
         if (open) addRun(from, lastBlock);
     }
-    if (runs.empty()) collectMemoHits.fetch_add(1, std::memory_order_relaxed);
+    if (runs.empty()) {
+        collectMemoHits.fetch_add(1, std::memory_order_relaxed);
+        if (hitByTime) sharedWalkHits.fetch_add(1, std::memory_order_relaxed);
+    }
     std::optional<TimedAccess> timed;
     if (!runs.empty()) timed.emplace(CounterCollect, bytes);
+    const auto walkStarted = !runs.empty() ? SteadyNanoseconds() : 0;
     std::size_t done = 0;
     auto status = Status::Complete;
     for (auto& run : runs) {
@@ -2137,7 +2188,7 @@ Observation observe(std::uint64_t address, std::size_t bytes, bool memoized) {
 #endif
             break;
         }
-        if (shared && run.exact) tracker.exactObservations[tracker.nextExactObservation++ % tracker.exactObservations.size()] = {run.first, run.stop, tick};
+        if (shared && run.exact) tracker.exactObservations[tracker.nextExactObservation++ % tracker.exactObservations.size()] = {run.first, run.stop, tick, walkStarted};
         ++done;
     }
     lock.Stabilize();
@@ -2147,7 +2198,7 @@ Observation observe(std::uint64_t address, std::size_t bytes, bool memoized) {
         auto from = tracker.blockOf(runs[index].first);
         if (tracker.blockBegin(from) < runs[index].first) ++from;
         const auto end = tracker.blockOf(runs[index].stop);
-        if (end > from) tracker.publishObserved(from, end - 1, tick);
+        if (end > from) tracker.publishObserved(from, end - 1, tick, walkStarted);
     }
     if (status != Status::Complete) return {status, 0};
     return {Status::Complete, generation};
@@ -2243,7 +2294,37 @@ std::uint64_t CollectWrittenBlocks(std::uint64_t address, std::size_t bytes, std
     return tracker.generation.load(std::memory_order_relaxed);
 }
 
+std::uint64_t SteadyNanoseconds() {
+    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+void ShareCollectWalks(bool share) {
+    if (sharedCollectWalks.load(std::memory_order_relaxed) != share) sharedCollectWalks.store(share, std::memory_order_relaxed);
+}
+
+bool CollectWalksShared() {
+    return sharedCollectWalks.load(std::memory_order_relaxed);
+}
+
+std::uint64_t CollectSince() {
+    return HostThreadSlot<std::uint64_t, CollectSinceSlot>::Get();
+}
+
+void RaiseCollectSince(std::uint64_t since) {
+    const auto now = SteadyNanoseconds();
+    const auto raised = since == 0 ? now : std::min(since, now);
+    if (raised > HostThreadSlot<std::uint64_t, CollectSinceSlot>::Get()) HostThreadSlot<std::uint64_t, CollectSinceSlot>::Set(raised);
+}
+
+void BumpCollectEpochSince(std::uint64_t since) {
+    const auto now = SteadyNanoseconds();
+    const auto previous = HostThreadSlot<std::uint64_t, CollectSinceSlot>::Get();
+    BumpCollectEpoch();
+    HostThreadSlot<std::uint64_t, CollectSinceSlot>::Set(since == 0 ? now : std::max(previous, std::min(since, now)));
+}
+
 void BumpCollectEpoch() {
+    HostThreadSlot<std::uint64_t, CollectSinceSlot>::Set(SteadyNanoseconds());
     const auto epoch = nextCollectEpoch.fetch_add(1, std::memory_order_acq_rel) + 1;
     HostThreadSlot<std::uint64_t, CollectEpochSlot>::Set(epoch);
     auto last = lastBumpedEpoch.load(std::memory_order_relaxed);
