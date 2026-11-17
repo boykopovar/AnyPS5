@@ -3677,7 +3677,8 @@ void* APS5_VABI sceNetMemoryAllocate(std::int32_t size, int flags) {
 }
 
 void APS5_VABI sceNetMemoryFree(void* memory) {
-    GuestHeap::GuestHeapFree_nid_postfix(memory);
+    constexpr int freedFill = 0xdd;
+    GuestHeap::GuestHeapFillAndFree_nid_no_patch(memory, freedFill);
 }
 
 int APS5_VABI sceNetSetDnsInfoToKernel(const NetDnsInfo* info, std::uint32_t flags) {

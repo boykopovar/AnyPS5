@@ -1693,53 +1693,76 @@ static int setupSaveDataMemory2(const SaveDataMemorySetup2* setup_param, SaveDat
     if (g_initializations == 0) {
         return SAVE_DATA_ERROR_NOT_INITIALIZED;
     }
-    if (setup_param->memory_size == 0 || setup_param->memory_size > MEM_MAX_SIZE) {
+    SaveDataMemorySetup2 localParam{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localParam, setup_param, sizeof(localParam));
+    errno = savedErrno;
+    if (!copied) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
+    if (localParam.memory_size == 0 || localParam.memory_size > MEM_MAX_SIZE) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    if (result != nullptr && !GuestWritable_nid_no_patch(result, sizeof(*result))) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    const bool needParam = (localParam.init_param != nullptr && (localParam.option & 1u) != 0);
+    SaveDataParam initParam{};
+    if (needParam) {
+        const int savedErrnoParam = errno;
+        const bool copiedInit = GuestCopyIn_nid_no_patch(&initParam, localParam.init_param, sizeof(initParam));
+        errno = savedErrnoParam;
+        if (!copiedInit) {
+            return SAVE_DATA_ERROR_PARAMETER;
+        }
+    }
     std::lock_guard<std::mutex> lk(g_mem_mutex);
-    replay_memory_journal(setup_param->user_id, setup_param->slot_id);
-    const std::string path = mem_path(setup_param->user_id, setup_param->slot_id, "bin");
+    replay_memory_journal(localParam.user_id, localParam.slot_id);
+    const std::string path = mem_path(localParam.user_id, localParam.slot_id, "bin");
     std::size_t existed = 0;
     const bool have = file_size_of(path, &existed);
     if (!have) {
         existed = 0;
     }
-    const bool needParam = (setup_param->init_param != nullptr && (setup_param->option & 1u) != 0);
-    const std::string paramPath = mem_path(setup_param->user_id, setup_param->slot_id, "param");
+    const std::string paramPath = mem_path(localParam.user_id, localParam.slot_id, "param");
     std::size_t paramSize = 0;
     const bool haveParam = file_size_of(paramPath, &paramSize);
-    // First run: create a zero-filled blob and report existed size 0 so the title treats it as a new save.
-    if (!have || existed < setup_param->memory_size || (needParam && !haveParam)) {
+    if (!have || existed < localParam.memory_size || (needParam && !haveParam)) {
         std::error_code ec;
         std::filesystem::create_directories(std::filesystem::path(path).parent_path(), ec);
         if (needParam) {
             std::vector<char> pd(sizeof(SaveDataParam));
-            std::memcpy(pd.data(), setup_param->init_param, sizeof(SaveDataParam));
+            std::memcpy(pd.data(), &initParam, sizeof(SaveDataParam));
             if (!write_file_replace(paramPath, pd)) {
                 return SAVE_DATA_ERROR_INTERNAL;
             }
         }
-        if (!have || existed < setup_param->memory_size) {
+        if (!have || existed < localParam.memory_size) {
             std::vector<char> data;
             if (have && !read_file_all(path, data)) {
                 return SAVE_DATA_ERROR_INTERNAL;
             }
-            data.resize(setup_param->memory_size, 0);
+            data.resize(localParam.memory_size, 0);
             if (!write_file_replace(path, data)) {
                 return SAVE_DATA_ERROR_INTERNAL;
             }
         }
     }
     if (result != nullptr) {
-        std::memset(result, 0, sizeof(*result));
-        result->existed_memory_size = have ? existed : 0;
+        SaveDataMemorySetupResult localResult{};
+        localResult.existed_memory_size = have ? existed : 0;
+        const int savedErrnoResult = errno;
+        const bool copiedResult = GuestCopyOut_nid_no_patch(result, &localResult, sizeof(localResult));
+        errno = savedErrnoResult;
+        if (!copiedResult) {
+            return SAVE_DATA_ERROR_PARAMETER;
+        }
     }
     return SAVE_DATA_OK;
 }
 
 int APS5_VABI sceSaveDataSetupSaveDataMemory2(const SaveDataMemorySetup2* setup_param, SaveDataMemorySetupResult* result) {
     const int rc = setupSaveDataMemory2(setup_param, result);
-    SAVEDATA_TRACE("setupMemory2 user=%d slot=%u size=%zu -> 0x%08x existed=%zu", setup_param != nullptr ? setup_param->user_id : -1, setup_param != nullptr ? setup_param->slot_id : 0u, setup_param != nullptr ? setup_param->memory_size : static_cast<size_t>(0), static_cast<unsigned>(rc), result != nullptr ? result->existed_memory_size : static_cast<size_t>(0));
     return rc;
 }
 
@@ -2597,6 +2620,13 @@ int APS5_VABI sceSaveDataUmount(const SaveDataMountPoint* mount_point) {
 }
 
 int APS5_VABI sceSaveDataSetupSaveDataMemory(std::int32_t user_id, std::size_t memory_size, const SaveDataParam* param) {
+    if (param != nullptr) {
+        SaveDataParam localParam{};
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(&localParam, param, sizeof(localParam));
+        errno = savedErrno;
+        if (!copied) return SAVE_DATA_ERROR_PARAMETER;
+    }
     SaveDataMemorySetup2 setup{};
     setup.user_id = user_id;
     setup.memory_size = memory_size;
