@@ -1,0 +1,5 @@
+# libkernel
+
+## change [cpuset, cpuset_getid, cpuset_setid]
+
+- [cpuset, cpuset_getid, cpuset_setid](../../../core/libs/prx/libkernel/System/src/Cpuset.cpp) (libkernel) - follow FreeBSD 11.4 [kern_cpuset.c](https://github.com/freebsd/freebsd-src/blob/release/11.4.0/sys/kern/kern_cpuset.c); the console has not been checked, nor are its root IDs and inheritance known. CPU_WHICH_JAIL throws, as set hierarchy visibility is not tracked. `cpuset` allocates sequential IDs from 2. `cpuset_setid` supports CPU_WHICH_PID for known IDs (or root 0, default 1); a dynamic set is referenced by this process only and unlinked when vacated, after which a lookup returns ESRCH. `cpuset_getid` answers CPU_WHICH_PID, CPU_WHICH_TID and CPU_WHICH_CPUSET with root 0 for CPU_LEVEL_ROOT and the selected set's ID for any other level (CPU_LEVEL_WHICH only with CPU_WHICH_CPUSET), id -1 meaning the calling thread's base set, and truncates the 64-bit ID to int. Level, which and id errors come before the copyout, which gives EFAULT for a bad pointer.
