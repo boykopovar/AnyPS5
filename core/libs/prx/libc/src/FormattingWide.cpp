@@ -342,20 +342,21 @@ extern FileStream* __stdoutp_nid_postfix;
 
 int APS5_VABI vswprintf_nid_postfix(char16_t* buffer, std::size_t size, const char16_t* format, VaList* args) {
     if (buffer == nullptr || size == 0) { errno = 22; return -1; }
+    const auto store = [buffer, size](const std::u16string& text) {
+        const std::size_t copied = text.size() < size - 1 ? text.size() : size - 1;
+        const std::u16string stored = text.substr(0, copied);
+        return GuestCopyOut_nid_no_patch(buffer, stored.c_str(), (copied + 1) * sizeof(char16_t));
+    };
     try {
         const std::u16string text = FormatWide(format, args);
-        const std::size_t copied = text.size() < size - 1 ? text.size() : size - 1;
-        std::memcpy(buffer, text.data(), copied * sizeof(char16_t));
-        buffer[copied] = 0;
-        return copied == text.size() ? static_cast<int>(copied) : -1;
+        if (!store(text)) { errno = 22; return -1; }
+        return text.size() < size ? static_cast<int>(text.size()) : -1;
     } catch (const WideEncodingError& error) {
-        const std::size_t copied = error.partial.size() < size - 1 ? error.partial.size() : size - 1;
-        std::memcpy(buffer, error.partial.data(), copied * sizeof(char16_t));
-        buffer[copied] = 0;
+        if (!store(error.partial)) { errno = 22; return -1; }
         if (error.invalidSequence) errno = 86;
         return -1;
     } catch (const std::exception&) {
-        buffer[0] = 0;
+        GuestCopyOut_nid_no_patch(buffer, u"", sizeof(char16_t));
         errno = 22;
         return -1;
     }
@@ -528,8 +529,8 @@ int APS5_VABI putwchar_nid_postfix(char16_t value) {
 }
 
 char16_t* APS5_VABI fgetws_nid_postfix(char16_t* buffer, int size, FileStream* stream) {
-    if (stream != nullptr) stream->Orientation(1);
     if (size < 2) return nullptr;
+    if (stream != nullptr) stream->Orientation(1);
     if (buffer == nullptr || stream == nullptr) {
         if (stream != nullptr) stream->SetError();
         errno = 22;

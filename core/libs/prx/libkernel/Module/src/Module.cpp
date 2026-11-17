@@ -1,4 +1,5 @@
 #include "prx/libkernel/include/Api.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
@@ -47,7 +48,7 @@ void WriteUnwindInfo(const UnwindImage& image, const std::uint8_t* base, ModuleI
   if (image.hasTables) {
     info->eh_frame_hdr_addr = image.tables.header;
     info->eh_frame_addr = image.tables.frames;
-    info->eh_frame_size = image.tables.framesSize;
+    info->eh_frame_size = image.tables.framesSize + sizeof(std::uint32_t);
     info->seg0_addr = reinterpret_cast<std::uint64_t>(base);
     info->seg0_size = image.size;
   }
@@ -328,9 +329,18 @@ extern "C" {
 
 int APS5_VABI __elf_phdr_match_addr_nid_postfix(const ModuleInfoEx* module, void* addr) {
     if (module == nullptr) throw std::invalid_argument("__elf_phdr_match_addr: module info is null");
+    static_assert(offsetof(ModuleInfoEx, segment_count) == offsetof(ModuleInfoEx, segments) + sizeof(ModuleInfoEx::segments));
+    struct {
+        ModuleSegmentInfo segments[std::size(ModuleInfoEx{}.segments)];
+        std::uint32_t segment_count;
+    } table{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&table, &module->segments, sizeof(table.segments) + sizeof(table.segment_count));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument("__elf_phdr_match_addr: module info is unreadable");
     const auto address = reinterpret_cast<std::uintptr_t>(addr);
-    for (std::uint32_t i = 0; i < module->segment_count && i < std::size(module->segments); ++i) {
-        const auto& segment = module->segments[i];
+    for (std::uint32_t i = 0; i < table.segment_count && i < std::size(table.segments); ++i) {
+        const auto& segment = table.segments[i];
         if ((segment.prot & 4) == 0 || segment.size < sizeof(addr)) continue;
         if (segment.address <= address && address - segment.address <= segment.size - sizeof(addr)) return 1;
     }

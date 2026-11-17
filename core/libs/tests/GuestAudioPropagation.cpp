@@ -13,6 +13,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
+#ifndef _WIN32
+#include <sys/resource.h>
+#endif
 #include <stdexcept>
 
 #ifdef _WIN32
@@ -289,6 +292,16 @@ int main() {
     errno = 71;
     RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSystemSetAttributes(system, unreadable, 1); }, "system attributes from an unreadable array");
     Require(errno == 71, "unreadable system attributes changed errno");
+#ifndef _WIN32
+    rusage before{};
+    getrusage(RUSAGE_SELF, &before);
+#endif
+    RequireThrows<std::invalid_argument>([&] { sceAudioPropagationSystemSetAttributes(system, unreadable, 0x10000000u); }, "a huge count from an unreadable array");
+#ifndef _WIN32
+    rusage after{};
+    getrusage(RUSAGE_SELF, &after);
+    Require(after.ru_maxrss - before.ru_maxrss < 64 * 1024, "a huge attribute count sized a buffer before reading");
+#endif
 
     std::uint8_t materialBytes[AudioPropagation::MaterialSize]{};
     auto* material = reinterpret_cast<AudioPropagationStructDescriptor*>(materialBytes);

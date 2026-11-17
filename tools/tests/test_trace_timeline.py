@@ -121,6 +121,28 @@ class TimelineTests(unittest.TestCase):
                     self.assertIn(option, done.stderr)
                     self.assertFalse(out.exists())
 
+    def test_the_cli_rejects_a_window_ending_before_it_starts(self):
+        path = Path(self.tmp.name) / "capture.json"
+        path.write_text(json.dumps(document(self.items)), encoding="utf-8")
+        tool = Path(trace_timeline.__file__)
+        for label, bounds in (
+            ("explicit", ("--from-ms=6", "--to-ms=2")),
+            ("default", ("--from-ms=10",)),
+        ):
+            with self.subTest(label=label):
+                out = path.with_name(f"{label}.html")
+                done = subprocess.run([sys.executable, str(tool), str(path), "-o", str(out), *bounds],
+                                      capture_output=True, text=True)
+                self.assertEqual(done.returncode, 2, done.stdout + done.stderr)
+                self.assertIn("window end must be at or after its start", done.stderr)
+                self.assertFalse(out.exists())
+
+        out = path.with_name("equal.html")
+        done = subprocess.run([sys.executable, str(tool), str(path), "-o", str(out), "--from-ms=9", "--to-ms=9"],
+                              capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("window 9.000 to 9.000 ms", out.read_text(encoding="utf-8"))
+
     def test_the_cli_rejects_sizes_that_are_not_positive(self):
         path = Path(self.tmp.name) / "a.json.gz"
         with gzip.open(path, "wt", encoding="utf-8") as handle:
