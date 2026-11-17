@@ -1915,6 +1915,29 @@ void CheckImportWindow() {
     Require(!UnchangedSince(base, Block, after), "a store after the import window was missed");
 }
 
+void CheckImportWindowTouchIsNotAStore() {
+    void* memory = AllocateWatched(2 * Block);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    auto* bytes = static_cast<volatile std::uint8_t*>(memory);
+    std::memset(memory, 0x11, 2 * Block);
+    const auto synced = CollectWritesUncached(base, 2 * Block);
+    Require(synced != 0, "the import window touch block is not collected");
+    Require(ImportWatched(base, 2 * Block, [&] {
+        bytes[0x100] = 0x11;
+        bytes[Block + 0x100] = 0x22;
+        return true;
+    }, true, false), "the import window touch import failed");
+    static_cast<void>(CollectWritesUncached(base, 2 * Block));
+    Require(!UnchangedSinceLastCollect(base, 4096, synced), "a page an import window resolved no longer counts as possibly touched by the CPU");
+    Require(StoreUnchangedSinceLastCollect(base, 4096, synced) && StoreUnchangedSinceLastCollect(base + 0x100, 1, synced), "a page an import window resolved without changing its bytes reads as stored");
+    Require(StoreUnchangedSinceLastCollect(base + 4096, Block - 4096, synced), "pages the import window did not touch read as stored");
+    Require(!StoreUnchangedSinceLastCollect(base + Block, 4096, synced), "a store of new bytes within an import window reads as unstored");
+    bytes[0x200] = 0x11;
+    static_cast<void>(CollectWritesUncached(base, 2 * Block));
+    Require(!StoreUnchangedSinceLastCollect(base, 4096, synced) && !StoreUnchangedSinceLastCollect(base + 0x100, 1, synced), "a same-value store after an import window touch reads as unstored");
+    Require(StoreUnchangedSinceLastCollect(base + 4096, Block - 4096, synced), "a store after the import window marked other pages as stored");
+}
+
 #ifdef __APPLE__
 void ResolveUnderGpuMutex(std::uintptr_t begin, std::uintptr_t end) {
     const std::lock_guard held(GpuMutex());
@@ -2753,6 +2776,7 @@ int main(int argc, char** argv) {
         CheckWidenedCollectBesideUncommittedPages();
 #endif
         CheckImportWindow();
+        CheckImportWindowTouchIsNotAStore();
         CheckImportWindowZeroPages();
         CheckImportWindowOtherThread();
         CheckImportWindowOverUnwatchedBlock();

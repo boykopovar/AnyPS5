@@ -926,7 +926,7 @@ std::array<std::uint32_t, 8> DepthSampleWords(const DepthTarget& target) {
     return {static_cast<std::uint32_t>(base), static_cast<std::uint32_t>((base >> 32u) & 255u) | (format << 20u) | ((width & 3u) << 30u), (width >> 2u) | (height << 14u), (14u << 28u) | (24u << 20u) | (count << 16u) | 0x204u, 0u, count << 4u, (target.iterate256 ? 1u << 10u : 0u) | (target.htilePipeAligned ? 1u << 19u : 0u) | (1u << 21u) | (static_cast<std::uint32_t>(metadata & 255u) << 24u), static_cast<std::uint32_t>(metadata >> 8u)};
 }
 
-enum class PublicationWrite { None, Pages, Queued, PaddingSameValue, Completion, Concurrent, CopyRace, LateStore, PlaneStore, TargetsHeld, Retired, ColorAcquisition, DrawAlias, DrawPending, AliasImported, AliasDrawnAfterImport, StencilAliasImported, StencilAliasRefilled, StencilAliasDrawnAfterImport, Reuse, DccAcquisition, DriverSameDepth, DriverSameStencil, DriverSameHtile, SameDepth, SameStencil, SameHtile, ChangedHull, Possible, ImportSameValue };
+enum class PublicationWrite { None, Pages, Queued, PaddingSameValue, Completion, Concurrent, CopyRace, LateStore, PlaneStore, TargetsHeld, Retired, ColorAcquisition, DrawAlias, DrawPending, AliasImported, AliasDrawnAfterImport, StencilAliasImported, StencilAliasRefilled, StencilAliasDrawnAfterImport, Reuse, DccAcquisition, DriverSameDepth, DriverSameStencil, DriverSameHtile, SameDepth, SameStencil, SameHtile, ChangedHull, Possible, ImportSameValue, ImportThenSameDepth };
 void CheckGuardedWrite() {
     TargetMemory memory(65536u, true);
     for (const std::size_t head : {0u, 1u, 3u, 8u}) {
@@ -1171,12 +1171,13 @@ void CheckDepthPublication(Context context, std::uint32_t samples, PublicationWr
         Require(AgcDriver::GuestMemory::WriteChangedIfHeld(page, changed, original, 0u) == 0u, "the changed-hull fixture store was refused");
     }
     if (write == PublicationWrite::Possible) AgcDriver::GuestMemory::MarkPossiblyWritten(target.address, depthBytes);
-    if (write == PublicationWrite::ImportSameValue) {
+    if (write == PublicationWrite::ImportSameValue || write == PublicationWrite::ImportThenSameDepth) {
         Require(AgcDriver::GuestMemory::ImportWatched(target.address, depthBytes, [&] {
             *reinterpret_cast<volatile std::byte*>(target.address + sampleOffset) = std::byte{0xa5};
             return true;
         }), "native depth publication import-window simulation failed");
     }
+    if (write == PublicationWrite::ImportThenSameDepth) *reinterpret_cast<volatile std::byte*>(target.address + sampleOffset) = std::byte{0xa5};
     std::array<std::pair<std::size_t, std::size_t>, 3> holes{};
     std::array<std::vector<std::byte>, 3> excluded;
     struct ProtectedHoles {
@@ -1418,11 +1419,15 @@ void CheckDepthPublication(Context context, std::uint32_t samples, PublicationWr
         Require(held == guestBytes() && MultisampleColorTargetOver(alias.address, aliasBytes).has_value() && DepthSurfaceAt(target.address), "a refused publication over a colour target drawn after the depth import changed guest bytes or retired a target");
     } else if (write >= PublicationWrite::SameDepth) {
         std::vector<std::pair<std::size_t, std::size_t>> stored;
-        if (write == PublicationWrite::SameDepth || write == PublicationWrite::ImportSameValue) stored.emplace_back(0u, sampleOffset);
+        if (write == PublicationWrite::SameDepth || write == PublicationWrite::ImportThenSameDepth) stored.emplace_back(0u, sampleOffset);
         if (write == PublicationWrite::SameStencil) stored.emplace_back(2u, stencilLayout.Offset(0u, 0u, 0u, 0u));
         if (write == PublicationWrite::SameHtile) stored.emplace_back(1u, 0u);
         std::array<std::byte, 1> probe;
         keepsGuest([&] { AgcDriver::GuestMemory::Read(target.address, probe); }, stored);
+        if (write == PublicationWrite::ImportSameValue) {
+            const auto* guest = reinterpret_cast<const std::byte*>(target.address);
+            Require(expected[0][sampleOffset] != std::byte{0xa5} && std::equal(expected[0].begin(), expected[0].end(), guest), "a page an import window resolved without changing its bytes was not published with the host's depth");
+        }
     } else {
         const auto trigger = unmap == PublicationUnmap::EmptyDepth ? 2u : 0u;
         const auto [first, last] = holes[trigger];
@@ -4684,7 +4689,7 @@ int main(int argc, char** argv) {
             CheckDepthPublication(publishing, 4u, PublicationWrite::SameDepth, true, PublicationUnmap::None, PublicationClear::Redraw);
             for (const auto unmap : {PublicationUnmap::Head, PublicationUnmap::Tail, PublicationUnmap::EmptyDepth, PublicationUnmap::EmptyStencil, PublicationUnmap::EmptyHtile, PublicationUnmap::Remap, PublicationUnmap::Inaccessible}) CheckDepthPublication(publishing, 4u, PublicationWrite::None, true, unmap);
             CheckDepthPublication(publishing, 4u, PublicationWrite::Completion, true);
-            for (const auto write : {PublicationWrite::SameDepth, PublicationWrite::SameStencil, PublicationWrite::SameHtile, PublicationWrite::ChangedHull, PublicationWrite::Possible, PublicationWrite::ImportSameValue}) CheckDepthPublication(publishing, 4u, write, true);
+            for (const auto write : {PublicationWrite::SameDepth, PublicationWrite::SameStencil, PublicationWrite::SameHtile, PublicationWrite::ChangedHull, PublicationWrite::Possible, PublicationWrite::ImportSameValue, PublicationWrite::ImportThenSameDepth}) CheckDepthPublication(publishing, 4u, write, true);
             CheckDepthPublication(publishing, 4u, PublicationWrite::DccAcquisition, true);
             for (const auto samples : {2u, 4u, 8u}) {
                 if (!supported(samples) || (context.limits.framebufferColorSampleCounts & samples) == 0u) continue;
