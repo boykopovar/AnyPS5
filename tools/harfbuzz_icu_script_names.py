@@ -1,5 +1,6 @@
 import argparse
 import hashlib
+import os
 import re
 from pathlib import Path
 
@@ -7,11 +8,18 @@ from pathlib import Path
 ICU_68_2_SHA256 = "66fccd1aab39b466083373d36cfd2583b067f5b6c83c1caec6bd7faa49e65391"
 
 
+def same_input_output(header, output):
+    return (os.path.normcase(os.path.realpath(header)) == os.path.normcase(os.path.realpath(output))
+            or (header.exists() and output.exists() and header.samefile(output)))
+
+
 def main():
     parser = argparse.ArgumentParser(description="Generate HarfBuzz script names from ICU 68.2 uscript.h")
     parser.add_argument("header", type=Path)
     parser.add_argument("output", type=Path)
     args = parser.parse_args()
+    if same_input_output(args.header, args.output):
+        parser.error("output must be separate from the ICU header")
     source = args.header.read_bytes()
     if hashlib.sha256(source).hexdigest() != ICU_68_2_SHA256:
         parser.error("expected icu4c/source/common/unicode/uscript.h from ICU release-68-2")

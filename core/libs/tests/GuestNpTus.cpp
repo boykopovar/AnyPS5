@@ -239,6 +239,39 @@ static void CheckMultiSlotVariables() {
     for (const std::uint8_t byte : variables) Require(byte == 0x5a);
 }
 
+static void CheckRequestSettings() {
+    const int context = sceNpTusCreateNpTitleCtxA(0, 1);
+    Require(context > 0);
+    const int request = sceNpTusCreateRequest(context);
+    Require(request > 0);
+    const int unknown = request + 1000;
+
+    Require(sceNpTusSetTimeout(context, 0, 0, 0, 0, 0) == 0);
+    Require(sceNpTusSetTimeout(request, 3, 1000000, 10000000, 10000000, 10000000) == 0);
+    Require(sceNpTusSetTimeout(unknown, 0, 0, 0, 0, 0) == INVALID_ID);
+    Require(sceNpTusSetTimeout(unknown, -1, 0, 0, 0, 0) == INVALID_ARGUMENT);
+    Require(sceNpTusSetTimeout(unknown, 0, 999999, 0, 0, 0) == INVALID_ARGUMENT);
+    Require(sceNpTusSetTimeout(unknown, 0, -1, 0, 0, 0) == INVALID_ARGUMENT);
+    Require(sceNpTusSetTimeout(unknown, 0, 0, 9999999, 0, 0) == INVALID_ARGUMENT);
+    Require(sceNpTusSetTimeout(unknown, 0, 0, 0, 9999999, 0) == INVALID_ARGUMENT);
+    Require(sceNpTusSetTimeout(unknown, 0, 0, 0, 0, 9999999) == INVALID_ARGUMENT);
+    Require(sceNpTusSetTimeout(request, 0, 0, 0, 1, 0) == INVALID_ARGUMENT);
+
+    Require(sceNpTusChangeModeForOtherSaveDataOwners(context, 3) == 0);
+    Require(sceNpTusChangeModeForOtherSaveDataOwners(request, 0) == 0);
+    Require(sceNpTusChangeModeForOtherSaveDataOwners(unknown, 3) == INVALID_ID);
+    Require(sceNpTusChangeModeForOtherSaveDataOwners(unknown, 4) == INVALID_ARGUMENT);
+    Require(sceNpTusChangeModeForOtherSaveDataOwners(request, 0xFFFFFFFFu) == INVALID_ARGUMENT);
+
+    int result = 0;
+    Require(sceNpTusPollAsync(request, &result) == 1);
+    Require(sceNpTusDeleteNpTitleCtx(context) == 0);
+    Require(sceNpTusSetTimeout(context, 0, 0, 0, 0, 0) == INVALID_ID);
+    Require(sceNpTusSetTimeout(request, 0, 0, 0, 0, 0) == INVALID_ID);
+    Require(sceNpTusChangeModeForOtherSaveDataOwners(context, 0) == INVALID_ID);
+    Require(sceNpTusChangeModeForOtherSaveDataOwners(request, 0) == INVALID_ID);
+}
+
 int main() {
     CheckMultiSlotVariables();
 
@@ -338,4 +371,5 @@ int main() {
     CheckTssTitleContexts();
     CheckNpIdTitleContexts();
     CheckTitleContexts();
+    CheckRequestSettings();
 }

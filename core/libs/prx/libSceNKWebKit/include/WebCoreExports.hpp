@@ -2,6 +2,9 @@
 
 #include "SceTypes.hpp"
 #include "prx/libSceNKWebKit/src/WebCoreTypes.hpp"
+#include "prx/libSceNKWebKit/include/WtfValueExports.hpp"
+#include "prx/libSceNKWebKit/src/WtfStringAbi.hpp"
+#include "prx/libSceNKWebKit/src/WtfVector.hpp"
 #include <cstddef>
 #include <cstdint>
 
@@ -19,6 +22,7 @@ void APS5_VABI _ZN7WebCore11RoundedRectC1ERKNS_10LayoutRectERKNS0_5RadiiE(WebCor
 void APS5_VABI _ZN7WebCore11RoundedRectC2ERKNS_10LayoutRectERKNS0_5RadiiE(WebCore::RoundedRect* self, const WebCore::LayoutRect& rect, const WebCore::RoundedRect::Radii& radii);
 void APS5_VABI _ZN7WebCore11RoundedRectC1ERKNS_10LayoutRectERKNS_10LayoutSizeES6_S6_S6_( WebCore::RoundedRect* self, const WebCore::LayoutRect& rect, const WebCore::LayoutSize& topLeft, const WebCore::LayoutSize& topRight, const WebCore::LayoutSize& bottomLeft, const WebCore::LayoutSize& bottomRight);
 void APS5_VABI _ZN7WebCore11RoundedRectC2ERKNS_10LayoutRectERKNS_10LayoutSizeES6_S6_S6_( WebCore::RoundedRect* self, const WebCore::LayoutRect& rect, const WebCore::LayoutSize& topLeft, const WebCore::LayoutSize& topRight, const WebCore::LayoutSize& bottomLeft, const WebCore::LayoutSize& bottomRight);
+WebCore::LayoutPoint APS5_VABI _ZN7WebCore14ScrollableArea34constrainScrollPositionForOverhangERKNS_10LayoutRectERKNS_10LayoutSizeERKNS_11LayoutPointES9_ii(const WebCore::LayoutRect& visibleContentRect, const WebCore::LayoutSize& totalContentsSize, const WebCore::LayoutPoint& scrollPosition, const WebCore::LayoutPoint& scrollOrigin, int headerHeight, int footerHeight);
 WebCore::IntRect APS5_VABI _ZN7WebCore14roundedIntRectERKNS_9FloatRectE(const WebCore::FloatRect& rect);
 void APS5_VABI _ZN7WebCore15AffineTransform12makeIdentityEv(WebCore::AffineTransform* self);
 void APS5_VABI _ZN7WebCore15AffineTransformC1Ev(WebCore::AffineTransform* self);
@@ -57,6 +61,11 @@ WebCore::TransformationMatrix& APS5_VABI _ZN7WebCore20TransformationMatrix9trans
 void APS5_VABI _ZN7WebCore20TransformationMatrixC1ERKNS_15AffineTransformE( WebCore::TransformationMatrix* self, const WebCore::AffineTransform& t);
 void APS5_VABI _ZN7WebCore20TransformationMatrixC2ERKNS_15AffineTransformE( WebCore::TransformationMatrix* self, const WebCore::AffineTransform& t);
 void APS5_VABI _ZN7WebCore27setPresentingApplicationPIDEi(int pid);
+WebCore::AutofillFieldName APS5_VABI _ZN7WebCore19toAutofillFieldNameERKN3WTF10AtomStringE(const NKWebKit::WtfAbi::AtomString& value);
+int APS5_VABI _ZN7WebCore24presentingApplicationPIDEv();
+unsigned APS5_VABI _ZN7WebCore25TextureMapperBackingStore25calculateExposedTileEdgesERKNS_9FloatRectES3_(const WebCore::FloatRect& totalRect, const WebCore::FloatRect& tileRect);
+bool APS5_VABI _ZN7WebCore8SVGTests27hasFeatureForLegacyBindingsERKN3WTF6StringES4_(const NKWebKit::WtfAbi::String& feature, const NKWebKit::WtfAbi::String& version);
+WebCore::FloatRect APS5_VABI _ZN7WebCore9unionRectERKN3WTF6VectorINS_9FloatRectELm0ENS0_15CrashOnOverflowELm16ENS0_10FastMallocEEE(const NKWebKit::WtfAbi::Vector<WebCore::FloatRect>& rects);
 bool APS5_VABI _ZN7WebCore24redirectChainAllowsReuseENS_24RedirectChainCacheStatusENS_28ReuseExpiredRedirectionOrNotE(WebCore::RedirectChainCacheStatus status, int reuseExpiredRedirection);
 bool APS5_VABI _ZN7WebCore30isStatusCodeCacheableByDefaultEi(int statusCode);
 bool APS5_VABI _ZN7WebCore32isStatusCodePotentiallyCacheableEi(int statusCode);
