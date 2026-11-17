@@ -14,6 +14,9 @@
 namespace AgcDriver::Graphics {
 
     class Buffer;
+    class Recorder;
+
+    std::shared_ptr<void> RecordMultisampleColorUpload(const Context& context, VkCommandBuffer commands, VkImage image, VkFormat format, VkExtent2D extent, std::uint32_t samples, std::uint32_t elementBytes, const Buffer& source, VkDeviceSize stride, Recorder* recorder);
 
     // The part of a mip one Dispatch moves: only elements whose tiled offset (relative to the mip's
     // tiled base; the linear offset of a linear surface) lies in [rangeBegin, rangeEnd), with the

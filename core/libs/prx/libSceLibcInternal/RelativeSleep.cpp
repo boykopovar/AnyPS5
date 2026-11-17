@@ -1,4 +1,7 @@
 #include "prx/libSceLibcInternal/include/RecoveredInventory.hpp"
+#ifdef _WIN32
+#include "prx/libc/include/PreciseWait.hpp"
+#endif
 #include <algorithm>
 #include <chrono>
 #include <thread>
@@ -11,7 +14,11 @@ extern "C" void APS5_VABI _ZNSt8__sce_v215_Thrd_sleep_forEm_nid_postfix(std::uin
     constexpr std::uint64_t maximumChunk = 86400000;
     while (milliseconds != 0) {
         const auto chunk = std::min(milliseconds, maximumChunk);
+#ifdef _WIN32
+        PreciseSleepHundredNanos(chunk * 10000ULL);
+#else
         std::this_thread::sleep_for(std::chrono::milliseconds(chunk));
+#endif
         milliseconds -= chunk;
     }
 }
