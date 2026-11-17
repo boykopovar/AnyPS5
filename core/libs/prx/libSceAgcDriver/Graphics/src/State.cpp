@@ -1017,7 +1017,7 @@ struct DecodedColorFormat {
 };
 
 bool UintPacked(ShaderRecompiler::ColorExportPacking packing) {
-    return packing == ShaderRecompiler::ColorExportPacking::Uint || packing == ShaderRecompiler::ColorExportPacking::UintClamp8 || packing == ShaderRecompiler::ColorExportPacking::UintClamp16 || packing == ShaderRecompiler::ColorExportPacking::UintMask8 || packing == ShaderRecompiler::ColorExportPacking::UintMask16;
+    return packing == ShaderRecompiler::ColorExportPacking::Uint || packing == ShaderRecompiler::ColorExportPacking::UintClamp8 || packing == ShaderRecompiler::ColorExportPacking::UintClamp16 || packing == ShaderRecompiler::ColorExportPacking::UintMask8 || packing == ShaderRecompiler::ColorExportPacking::UintMask16 || packing == ShaderRecompiler::ColorExportPacking::UintClamp10_10_10_2 || packing == ShaderRecompiler::ColorExportPacking::UintMask10_10_10_2;
 }
 
 const char* PackedColorTargetName(ShaderRecompiler::ColorExportPacking packing) {
@@ -1026,9 +1026,10 @@ const char* PackedColorTargetName(ShaderRecompiler::ColorExportPacking packing) 
     return packing == ShaderRecompiler::ColorExportPacking::Float11_11_10 ? "11_11_10 float" : "10_11_11 unorm";
 }
 
-ShaderRecompiler::ColorExportPacking NarrowUintPacking(VkFormat format, ShaderRecompiler::ColorExportPacking eight, ShaderRecompiler::ColorExportPacking sixteen) {
+ShaderRecompiler::ColorExportPacking NarrowUintPacking(VkFormat format, ShaderRecompiler::ColorExportPacking eight, ShaderRecompiler::ColorExportPacking sixteen, ShaderRecompiler::ColorExportPacking ten) {
     if (format == VK_FORMAT_R8_UINT || format == VK_FORMAT_R8G8_UINT || format == VK_FORMAT_R8G8B8A8_UINT) return eight;
     if (format == VK_FORMAT_R16_UINT || format == VK_FORMAT_R16G16_UINT || format == VK_FORMAT_R16G16B16A16_UINT) return sixteen;
+    if (format == VK_FORMAT_A2B10G10R10_UINT_PACK32) return ten;
     return ShaderRecompiler::ColorExportPacking::Uint;
 }
 
@@ -1092,6 +1093,7 @@ DecodedColorFormat DecodeColorFormatRaw(std::uint32_t format, std::uint32_t numb
             return {VK_FORMAT_R32_UINT, 4, static_cast<std::uint8_t>(swap == 2 ? 0xc6u : 0xe4u), ShaderRecompiler::ColorExportPacking::Float11_11_10};
         case 9:
             // COLOR_2_10_10_10 keeps red in the low bits, the Vulkan A2B10G10R10 packing.
+            if (number == uint && !alternate) return {VK_FORMAT_A2B10G10R10_UINT_PACK32, 4};
             if (number != unorm) return fail();
             return {alternate ? VK_FORMAT_A2R10G10B10_UNORM_PACK32 : VK_FORMAT_A2B10G10R10_UNORM_PACK32, 4};
         case 10: {
@@ -2120,8 +2122,8 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
         }
         if (color.packing == ShaderRecompiler::ColorExportPacking::Uint) {
             const auto slotExport = (exportFormat >> (4u * color.exportIndex)) & 0xfu;
-            if (slotExport == 2 || slotExport == 4 || slotExport == 9) color.packing = NarrowUintPacking(color.format, ShaderRecompiler::ColorExportPacking::UintClamp8, ShaderRecompiler::ColorExportPacking::UintClamp16);
-            else if (slotExport == 1) color.packing = NarrowUintPacking(color.format, ShaderRecompiler::ColorExportPacking::UintMask8, ShaderRecompiler::ColorExportPacking::UintMask16);
+            if (slotExport == 2 || slotExport == 4 || slotExport == 9) color.packing = NarrowUintPacking(color.format, ShaderRecompiler::ColorExportPacking::UintClamp8, ShaderRecompiler::ColorExportPacking::UintClamp16, ShaderRecompiler::ColorExportPacking::UintClamp10_10_10_2);
+            else if (slotExport == 1) color.packing = NarrowUintPacking(color.format, ShaderRecompiler::ColorExportPacking::UintMask8, ShaderRecompiler::ColorExportPacking::UintMask16, ShaderRecompiler::ColorExportPacking::UintMask10_10_10_2);
             else if (slotExport != 3) throw std::runtime_error("AGC graphics: color export format " + std::to_string(slotExport) + " into an unsigned integer target is unsupported");
         }
         if (state.blendEnable && !reversed && (secondSource(state.srcColorBlendFactor) || secondSource(state.dstColorBlendFactor) || secondSource(state.srcAlphaBlendFactor) || secondSource(state.dstAlphaBlendFactor))) {

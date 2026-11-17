@@ -470,17 +470,23 @@ std::uint32_t SelectExportPacking(SpirvEmitterState& state, std::uint32_t target
     const bool mask = mode == 1u;
     const auto eight = clamp ? ColorExportPacking::UintClamp8 : ColorExportPacking::UintMask8;
     const auto sixteen = clamp ? ColorExportPacking::UintClamp16 : ColorExportPacking::UintMask16;
-    const auto limit = clamp || mask ? Select(state, TypeU32(state), EmitCompareU32Constant(state, spv::OpIEqual, packing, static_cast<std::uint32_t>(eight)), ConstantU32(state, 0xffu), Select(state, TypeU32(state), EmitCompareU32Constant(state, spv::OpIEqual, packing, static_cast<std::uint32_t>(sixteen)), ConstantU32(state, 0xffffu), ConstantU32(state, 0xffffffffu))) : 0u;
+    const auto ten = clamp ? ColorExportPacking::UintClamp10_10_10_2 : ColorExportPacking::UintMask10_10_10_2;
+    const auto narrowLimit = [&](std::uint32_t tenBits) {
+        const auto packedTen = Select(state, TypeU32(state), EmitCompareU32Constant(state, spv::OpIEqual, packing, static_cast<std::uint32_t>(ten)), ConstantU32(state, tenBits), ConstantU32(state, 0xffffffffu));
+        return Select(state, TypeU32(state), EmitCompareU32Constant(state, spv::OpIEqual, packing, static_cast<std::uint32_t>(eight)), ConstantU32(state, 0xffu), Select(state, TypeU32(state), EmitCompareU32Constant(state, spv::OpIEqual, packing, static_cast<std::uint32_t>(sixteen)), ConstantU32(state, 0xffffu), packedTen));
+    };
+    const auto limit = clamp || mask ? narrowLimit(0x3ffu) : 0u;
+    const auto alphaLimit = clamp || mask ? narrowLimit(0x3u) : 0u;
     std::array<std::uint32_t, 4> components{};
     for (std::uint32_t component = 0; component < components.size(); ++component) {
         auto unpacked = state.module.AllocateId();
         state.module.AddFunction(spv::OpCompositeExtract, TypeF32(state), unpacked, color, component);
         if (clamp) {
             const auto clamped = state.module.AllocateId();
-            state.module.AddFunction(spv::OpExtInst, TypeU32(state), clamped, GlslStd450(state), GLSLstd450UMin, Unary(state, spv::OpBitcast, TypeU32(state), unpacked), limit);
+            state.module.AddFunction(spv::OpExtInst, TypeU32(state), clamped, GlslStd450(state), GLSLstd450UMin, Unary(state, spv::OpBitcast, TypeU32(state), unpacked), component == 3u ? alphaLimit : limit);
             unpacked = Unary(state, spv::OpBitcast, TypeF32(state), clamped);
         } else if (mask) {
-            unpacked = Unary(state, spv::OpBitcast, TypeF32(state), Binary(state, spv::OpBitwiseAnd, TypeU32(state), Unary(state, spv::OpBitcast, TypeU32(state), unpacked), limit));
+            unpacked = Unary(state, spv::OpBitcast, TypeF32(state), Binary(state, spv::OpBitwiseAnd, TypeU32(state), Unary(state, spv::OpBitcast, TypeU32(state), unpacked), component == 3u ? alphaLimit : limit));
         }
         components[component] = Select(state, TypeF32(state), packed, component == 0u ? Unary(state, spv::OpBitcast, TypeF32(state), word) : ConstantF32(state, 0u), unpacked);
     }

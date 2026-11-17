@@ -11961,6 +11961,13 @@ void uintTargetTests() {
     auto halfwords = queue;
     halfwords.context[0x31c] = (halfwords.context.at(0x31c) & ~0x1f7cu) | (2u << 2u) | (4u << 8u);
     Require(AgcDriver::Graphics::DecodeState(halfwords).color.packing == ColorExportPacking::UintClamp16, "a 32_ABGR export into a 16-bit UINT target did not get the clamping packing");
+    auto tenBits = queue;
+    tenBits.context[0x31c] = (tenBits.context.at(0x31c) & ~0x1f7cu) | (9u << 2u) | (4u << 8u);
+    for (const auto& [exportFormat, packing] : std::array<std::pair<std::uint32_t, ColorExportPacking>, 4>{{{1u, ColorExportPacking::UintMask10_10_10_2}, {2u, ColorExportPacking::UintClamp10_10_10_2}, {3u, ColorExportPacking::Uint}, {9u, ColorExportPacking::UintClamp10_10_10_2}}}) {
+        tenBits.context[0x1c5] = exportFormat;
+        const auto ten = AgcDriver::Graphics::DecodeState(tenBits);
+        Require(ten.color.format == VK_FORMAT_A2B10G10R10_UINT_PACK32 && ten.color.elementBytes == 4 && ten.color.componentMapping == 0xe4u && ten.color.packing == packing && AgcDriver::Graphics::ExportPackings(ten)[0] == packing && !ten.blends.at(0).blendEnable, "a 32-bit export into a 2_10_10_10 UINT target did not get the packing of its export format");
+    }
     for (const auto& [exportFormat, eightPacking, sixteenPacking] : std::array<std::tuple<std::uint32_t, ColorExportPacking, ColorExportPacking>, 3>{{{1u, ColorExportPacking::UintMask8, ColorExportPacking::UintMask16}, {2u, ColorExportPacking::UintClamp8, ColorExportPacking::UintClamp16}, {3u, ColorExportPacking::Uint, ColorExportPacking::Uint}}}) {
         auto narrow = bytes;
         narrow.context[0x1c5] = exportFormat;
@@ -11976,7 +11983,7 @@ void uintTargetTests() {
     Require(uint16.color.packing == ColorExportPacking::None && uint16.color.uintExport, "a UINT16_ABGR export into a UINT target was retyped twice");
     auto halves = queue;
     halves.context[0x1c5] = 4u;
-    for (const auto& [format, vkFormat, packing] : std::array<std::tuple<std::uint32_t, VkFormat, ColorExportPacking>, 5>{{{4u, VK_FORMAT_R32_UINT, ColorExportPacking::Uint}, {1u, VK_FORMAT_R8_UINT, ColorExportPacking::UintClamp8}, {10u, VK_FORMAT_R8G8B8A8_UINT, ColorExportPacking::UintClamp8}, {2u, VK_FORMAT_R16_UINT, ColorExportPacking::UintClamp16}, {12u, VK_FORMAT_R16G16B16A16_UINT, ColorExportPacking::UintClamp16}}}) {
+    for (const auto& [format, vkFormat, packing] : std::array<std::tuple<std::uint32_t, VkFormat, ColorExportPacking>, 6>{{{4u, VK_FORMAT_R32_UINT, ColorExportPacking::Uint}, {1u, VK_FORMAT_R8_UINT, ColorExportPacking::UintClamp8}, {10u, VK_FORMAT_R8G8B8A8_UINT, ColorExportPacking::UintClamp8}, {2u, VK_FORMAT_R16_UINT, ColorExportPacking::UintClamp16}, {12u, VK_FORMAT_R16G16B16A16_UINT, ColorExportPacking::UintClamp16}, {9u, VK_FORMAT_A2B10G10R10_UINT_PACK32, ColorExportPacking::UintClamp10_10_10_2}}}) {
         halves.context[0x31c] = (queue.context.at(0x31c) & ~0x1f7cu) | (format << 2u) | (4u << 8u);
         const auto half = AgcDriver::Graphics::DecodeState(halves);
         Require(half.color.format == vkFormat && half.color.packing == packing && !half.color.uintExport && AgcDriver::Graphics::ExportPackings(half)[0] == packing && !half.blends.at(0).blendEnable, "an FP16_ABGR export into a UINT target did not get the packing that clamps to its channel width");
@@ -12541,7 +12548,7 @@ void float11_11_10TargetTests() {
     const std::array<AgcDriver::Graphics::CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &packed, 0}}};
     Require(AgcDriver::Graphics::ValidateShaders(shaders, state, subgroup, false) == std::set<std::uint32_t>{0u}, "the packed float export did not reach attachment 0");
     auto invalid = request;
-    invalid.context.pixel->targetExportPacking[0] = static_cast<ColorExportPacking>(9);
+    invalid.context.pixel->targetExportPacking[0] = static_cast<ColorExportPacking>(static_cast<std::uint8_t>(ColorExportPacking::UintMask10_10_10_2) + 1u);
     expectFailure([&] { static_cast<void>(ShaderRecompiler::Recompile(invalid)); }, "invalid prepared fragment export packing");
 }
 
