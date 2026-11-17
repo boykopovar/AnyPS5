@@ -625,7 +625,8 @@ std::uint32_t FusedMultiplyAdd(SpirvEmitterState& state, std::uint32_t arg0, std
     const auto special = any({a.zero, b.zero, isField(exponentA, 0x7ffu), isField(exponentB, 0x7ffu), isField(exponentC, 0x7ffu)});
 
     auto result = SelectBits(state, special, fallback, finite);
-    result = SelectBits(state, c.nan, Quiet(state, c.bits), result);
+    const auto invalidProduct = either(both(a.infinite, b.zero), both(a.zero, b.infinite));
+    result = SelectBits(state, both(c.nan, negate(invalidProduct)), Quiet(state, c.bits), result);
     result = SelectBits(state, b.nan, Quiet(state, b.bits), result);
     result = SelectBits(state, a.nan, Quiet(state, a.bits), result);
     return Join(state, result);

@@ -10,9 +10,14 @@ if(BUILD_TESTING)
         ${LIBS_INCLUDE_DIR}/prx/libSceFreeType/src/Pfr.cpp ${CMAKE_CURRENT_SOURCE_DIR}/Export.cpp)
     target_include_directories(guest_freetype_pfr_null_face_tests PRIVATE
         ${LIBS_INCLUDE_DIR} $<TARGET_PROPERTY:freetype,INTERFACE_INCLUDE_DIRECTORIES>)
+    target_link_libraries(guest_freetype_pfr_null_face_tests PRIVATE libc)
     configure_windows_unwind(guest_freetype_pfr_null_face_tests)
     add_test(NAME guest_freetype_pfr_null_face COMMAND guest_freetype_pfr_null_face_tests)
     set_tests_properties(guest_freetype_pfr_null_face PROPERTIES TIMEOUT 10)
+    if(WIN32)
+        set_tests_properties(guest_freetype_pfr_null_face PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test_executable(guest_freetype_pfr_tests NO_RUNTIME_DLL_STAGING
         ${LIBS_INCLUDE_DIR}/tests/GuestFreeTypePfr.cpp
         ${LIBS_INCLUDE_DIR}/nid/src/NidCompute.cpp ${LIBS_INCLUDE_DIR}/nid/src/Sha1.cpp)

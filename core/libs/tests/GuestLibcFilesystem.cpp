@@ -48,6 +48,8 @@ void TestStat() {
     Require(_ZNSt10filesystem5_StatEPKcPNS_5permsEPi_nid_postfix(root.c_str(), nullptr, &error) == TypeDirectory && error == 0, "directory");
     perms = 1234;
     Require(_ZNSt10filesystem5_StatEPKcPNS_5permsEPi_nid_postfix(At("missing").c_str(), &perms, &error) == TypeNotFound && error == NoSuchFile && perms == 1234, "missing path");
+    Require(_ZNSt10filesystem5_StatEPKcPNS_5permsEPi_nid_postfix(At("file").c_str(), reinterpret_cast<int*>(0x10), reinterpret_cast<int*>(0x10)) == TypeRegular, "regular file with unwritable outputs");
+    Require(_ZNSt10filesystem5_StatEPKcPNS_5permsEPi_nid_postfix(At("missing").c_str(), &perms, reinterpret_cast<int*>(0x10)) == TypeNotFound, "missing path with an unwritable error output");
     Require(_ZNSt10filesystem5_StatEPKcPNS_5permsEPi_nid_postfix(At("file/below").c_str(), nullptr, &error) == TypeNotFound, "path below a file");
     Require(_ZNSt10filesystem6_LstatEPKcPNS_5permsEPi_nid_postfix(At("file").c_str(), nullptr, &error) == TypeRegular && error == 0, "lstat of a regular file");
     std::error_code link;
@@ -68,6 +70,9 @@ void TestSizeAndTime() {
     Require(seconds == status.st_mtim.tv_sec && nanoseconds == status.st_mtim.tv_nsec, "last write time matches stat");
     seconds = 5;
     Require(_ZNSt10filesystem16_Last_write_timeEPKcPlS2__nid_postfix(At("missing").c_str(), &seconds, &nanoseconds) == NoSuchFile && seconds == 5, "time of a missing file");
+    Require(_ZNSt10filesystem16_Last_write_timeEPKcPlS2__nid_postfix(At("file").c_str(), reinterpret_cast<std::int64_t*>(0x10), &nanoseconds) == 14, "last write time into an unwritable output");
+    Require(_ZNSt10filesystem16_Last_write_timeEPKcPlS2__nid_postfix(At("file").c_str(), &seconds, reinterpret_cast<std::int64_t*>(0x10)) == 14, "last write time into an unwritable nanosecond output");
+    Require(_ZNSt10filesystem10_File_sizeEPKcPi_nid_postfix(At("missing").c_str(), reinterpret_cast<int*>(0x10)) == UINT64_MAX, "size of a missing file with an unwritable error output");
 }
 
 void TestDirectories() {

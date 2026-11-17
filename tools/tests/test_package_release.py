@@ -435,6 +435,16 @@ class ReleasePackageTests(unittest.TestCase):
         binary = self.build / "core/relinker/relinker"
         binary.parent.mkdir(parents=True)
         binary.write_bytes(b"relinker bytes")
+        self.freetype_notices = {
+            "LICENSE.TXT": ("freetype-licenses.txt", b"FreeType license options"),
+            "docs/FTL.TXT": ("freetype-ftl.txt", b"FreeType project license"),
+            "src/bdf/README": ("freetype-bdf.txt", b"FreeType BDF notice"),
+            "src/pcf/README": ("freetype-pcf.txt", b"FreeType PCF notice"),
+        }
+        for source, (_, content) in self.freetype_notices.items():
+            file = self.source / "3rdparty/freetype" / source
+            file.parent.mkdir(parents=True, exist_ok=True)
+            file.write_bytes(content)
         self.addCleanup(patch.stopall)
         patch.object(package_release, "ROOT", self.source, create=True).start()
 
@@ -771,6 +781,55 @@ class ReleasePackageTests(unittest.TestCase):
                     package_release.package("linux", self.build, self.output, "v1")
                 self.assertFalse(self.output.exists())
 
+    def test_freetype_notices_follow_every_font_backend(self):
+        for library in ("libSceFreeType", "libSceFreeTypeOt", "libSceFontFt", "libharfbuzz"):
+            with self.subTest(library=library):
+                (self.source / "core/libs/prx" / library).mkdir()
+                (self.library.parent / (library + ".prx")).write_bytes(b"patched font backend")
+                (self.unpatched.parent / (library + ".prx")).write_bytes(b"unpatched font backend")
+                if library == "libharfbuzz":
+                    for path in ("COPYING", "src/ms-use/COPYING"):
+                        file = self.source / "3rdparty/harfbuzz" / path
+                        file.parent.mkdir(parents=True, exist_ok=True)
+                        file.write_bytes(b"HarfBuzz notice")
+                package_release.package("linux", self.build, self.output, "v1")
+                expected = {"libs/licenses/" + name: content for name, content in self.freetype_notices.values()}
+                expected["libs/licenses/freetype-attribution.txt"] = b"This software is based in part on the work of the FreeType Team.\nhttps://freetype.org/\n"
+                for variant in ("", "-unpatched"):
+                    with zipfile.ZipFile(self.output / f"prx-linux{variant}-v1.zip") as archive:
+                        for name, content in expected.items():
+                            self.assertIn(name, archive.namelist())
+                            self.assertEqual(archive.read(name), content)
+                    with tarfile.open(self.output / f"prx-linux{variant}-v1.tar.gz") as archive:
+                        for name, content in expected.items():
+                            self.assertIn(name, archive.getnames())
+                            self.assertEqual(archive.extractfile(name).read(), content)
+                self.assertEqual({file.name for file in self.output.iterdir()}, {"prx-linux-v1.zip", "prx-linux-v1.tar.gz", "prx-linux-unpatched-v1.zip", "prx-linux-unpatched-v1.tar.gz", "relinker-v1"})
+                (self.source / "core/libs/prx" / library).rmdir()
+                (self.library.parent / (library + ".prx")).unlink()
+                (self.unpatched.parent / (library + ".prx")).unlink()
+
+    def test_missing_or_empty_freetype_notices_preserve_existing_assets(self):
+        (self.source / "core/libs/prx/libSceFreeType").mkdir()
+        (self.library.parent / "libSceFreeType.prx").write_bytes(b"patched font backend")
+        (self.unpatched.parent / "libSceFreeType.prx").write_bytes(b"unpatched font backend")
+        self.output.mkdir()
+        previous = self.output / "prx-linux-v1.zip"
+        previous.write_bytes(b"previous release")
+        for path, (_, content) in self.freetype_notices.items():
+            file = self.source / "3rdparty/freetype" / path
+            for missing in (True, False):
+                with self.subTest(path=path, missing=missing):
+                    if missing:
+                        file.unlink()
+                    else:
+                        file.write_bytes(b"")
+                    with self.assertRaisesRegex(RuntimeError, "Missing or empty release file"):
+                        package_release.package("linux", self.build, self.output, "v1")
+                    self.assertEqual(list(self.output.iterdir()), [previous])
+                    self.assertEqual(previous.read_bytes(), b"previous release")
+            file.write_bytes(content)
+
     def test_opus_library_archives_include_the_bundled_license(self):
         (self.source / "core/libs/prx/libSceOpusDec").mkdir()
         (self.unpatched.parent / "libSceOpusDec.prx").write_bytes(b"unpatched library")
@@ -867,6 +926,14 @@ class ReleasePackageTests(unittest.TestCase):
                 with zipfile.ZipFile(output / "prx-linux-v1.zip") as archive:
                     self.assertEqual(archive.namelist(), ["libs/libc.prx", "libs/libmimalloc.so", "libs/licenses/mimalloc.txt"])
 
+    def test_linux_sanitizer_packages_omit_stale_allocator_runtimes(self):
+        for option in ("ANYPS5_ENABLE_ASAN", "ANYPS5_ENABLE_TSAN"):
+            with self.subTest(option=option):
+                (self.build / "CMakeCache.txt").write_text(f"{option}:BOOL=ON\n", encoding="utf-8")
+                package_release.package("linux", self.build, self.output, "v1")
+                with zipfile.ZipFile(self.output / "prx-linux-v1.zip") as archive:
+                    self.assertEqual(archive.namelist(), ["libs/libc.prx", "libs/licenses/mimalloc.txt"])
+
     def test_missing_or_ambiguous_tracy_client_preserves_existing_assets(self):
         (self.build / "CMakeCache.txt").write_text("APS5_ENABLE_TRACY:BOOL=ON\n", encoding="utf-8")
         previous = {"prx-linux-v1.zip": b"old zip", "prx-linux-v1.tar.gz": b"old tar", "relinker-v1": b"old binary"}
@@ -887,6 +954,53 @@ class ReleasePackageTests(unittest.TestCase):
         self.assertEqual((self.output / "relinker-v1.0").read_bytes(), b"relinker bytes")
         with zipfile.ZipFile(self.output / "prx-linux-v1.0.zip") as archive:
             self.assertEqual(archive.read("libs/libc.prx"), b"library bytes")
+
+    def test_tracy_file_validation_preserves_existing_release_assets(self):
+        (self.build / "CMakeCache.txt").write_text("APS5_ENABLE_TRACY:BOOL=ON\n", encoding="utf-8")
+        self.output.mkdir()
+        previous = self.output / "previous.asset"
+        previous.write_bytes(b"previous release")
+        client = self.library.parent / "libTracyClient.so.0.14.1"
+        for kind in ("dangling-symlink", "directory", "empty-file"):
+            with self.subTest(kind=kind):
+                if kind == "dangling-symlink":
+                    try:
+                        client.symlink_to(self.root / "missing-client")
+                    except (OSError, NotImplementedError) as error:
+                        self.skipTest(f"symlinks unavailable: {error}")
+                elif kind == "directory":
+                    client.mkdir()
+                else:
+                    client.touch()
+                with self.assertRaisesRegex(RuntimeError, "Tracy"):
+                    package_release.package("linux", self.build, self.output, "v1")
+                self.assertEqual(list(self.output.iterdir()), [previous])
+                self.assertEqual(previous.read_bytes(), b"previous release")
+                if kind == "directory":
+                    client.rmdir()
+                else:
+                    client.unlink()
+
+    def test_tracy_symlink_contents_are_packaged_and_extra_entries_are_ambiguous(self):
+        (self.build / "CMakeCache.txt").write_text("APS5_ENABLE_TRACY:BOOL=ON\n", encoding="utf-8")
+        client = self.library.parent / "libTracyClient.so.0.14.1"
+        target = self.root / "client-runtime"
+        target.write_bytes(b"linked Tracy client")
+        try:
+            client.symlink_to(target)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest(f"symlinks unavailable: {error}")
+        package_release.package("linux", self.build, self.output, "v1")
+        with zipfile.ZipFile(self.output / "prx-linux-v1.zip") as archive:
+            self.assertEqual(archive.read("libs/" + client.name), b"linked Tracy client")
+        with tarfile.open(self.output / "prx-linux-v1.tar.gz") as archive:
+            self.assertEqual(archive.extractfile("libs/" + client.name).read(), b"linked Tracy client")
+        before = {path.name: path.read_bytes() for path in self.output.iterdir()}
+        extra = client.with_name("libTracyClient.so.0.13.1")
+        extra.symlink_to(self.root / "missing-client")
+        with self.assertRaisesRegex(RuntimeError, "ambiguous Tracy"):
+            package_release.package("linux", self.build, self.output, "v1")
+        self.assertEqual({path.name: path.read_bytes() for path in self.output.iterdir()}, before)
 
     def test_hidden_cache_directory_is_not_a_required_library(self):
         (self.source / "core/libs/prx/.cache").mkdir()
