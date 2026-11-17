@@ -67,6 +67,9 @@ int main() {
     std::size_t size = 0;
     CHECK(sceNpUniversalDataSystemEventEstimateSize(nullptr, &size) == static_cast<int>(0x80553116u));
     CHECK(sceNpUniversalDataSystemEventEstimateSize(event, nullptr) == static_cast<int>(0x80553102u));
+    errno = EBUSY;
+    CHECK(sceNpUniversalDataSystemEventEstimateSize(event, reinterpret_cast<std::size_t*>(std::uintptr_t{0x10})) == static_cast<int>(0x80553102u));
+    CHECK(errno == EBUSY);
     CHECK(sceNpUniversalDataSystemEventEstimateSize(event, &size) == 0 && size == 34);
 
     char text[8];

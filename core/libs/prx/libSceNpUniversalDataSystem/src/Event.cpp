@@ -86,8 +86,11 @@ int APS5_VABI sceNpUniversalDataSystemPostEvent(int context, int handle, const v
 int APS5_VABI sceNpUniversalDataSystemEventEstimateSize(const NpUniversalDataSystemEvent* event, size_t* size) {
     if (event == nullptr) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_EVENT;
     if (size == nullptr) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
-    *size = Uds::MessagePackSize(*event);
-    return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
+    const size_t estimated = Uds::MessagePackSize(*event);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(size, &estimated, sizeof(estimated));
+    errno = savedErrno;
+    return copied ? SCE_NP_UNIVERSAL_DATA_SYSTEM_OK : SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
 }
 
 int APS5_VABI sceNpUniversalDataSystemEventToString(
