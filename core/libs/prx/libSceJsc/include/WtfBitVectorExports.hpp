@@ -23,5 +23,6 @@ static_assert(sizeof(BitVectorOutOfLineBits) == 8);
 extern "C" {
 
 void APS5_VABI _ZN3WTF9BitVector10filterSlowERKS0_(Jsc::WtfAbi::BitVector* self, const Jsc::WtfAbi::BitVector* other);
+void APS5_VABI _ZN3WTF9BitVector15resizeOutOfLineEm(Jsc::WtfAbi::BitVector* self, std::size_t numBits);
 
 }

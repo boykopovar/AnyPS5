@@ -208,7 +208,7 @@ bool Driver::copyBuffer(QueueState& queue, std::uint32_t queueId, std::span<cons
     };
     std::size_t bytes = 0;
     if (table) {
-        Graphics::FinishLeaseWork();
+        Graphics::FinishLeaseWrites();
         const auto tableAddress = base(0);
         const bool tableAccessible = GuestMemory::Accessible(reinterpret_cast<const void*>(tableAddress), 32);
         bool published = false;
@@ -237,7 +237,7 @@ bool Driver::copyBuffer(QueueState& queue, std::uint32_t queueId, std::span<cons
         }
         bytes = range->bytes;
     } else if (indexed) {
-        Graphics::FinishLeaseWork();
+        Graphics::FinishLeaseWrites();
         const bool recordAccessible = GuestMemory::Accessible(reinterpret_cast<const void*>(record), 12);
 
         bool published = false;
