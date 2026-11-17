@@ -15,6 +15,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
+#include "prx/libkernel/Time/include/Time.hpp"
 
 namespace {
 
@@ -208,9 +209,15 @@ bool writeGuest(void* destination, const void* source, std::size_t bytes) {
 }
 
 int readGuestString(const char* source, std::string& destination) {
-    constexpr std::size_t MAX_DATE_TIME_LENGTH = 4096;
     const int savedErrno = errno;
-    const int result = CopyGuestString_nid_no_patch(source, MAX_DATE_TIME_LENGTH, destination);
+    const auto limit = destination.max_size();
+    std::size_t maximum = 64;
+    int result;
+    for (;;) {
+        result = CopyGuestString_nid_no_patch(source, maximum, destination);
+        if (result != 63 || maximum == limit) break;
+        maximum = maximum > limit / 2 ? limit : maximum * 2;
+    }
     errno = savedErrno;
     if (result == 0) return 0;
     return result == 14 ? SCE_RTC_ERROR_INVALID_POINTER : SCE_RTC_ERROR_BAD_PARSE;
@@ -831,9 +838,9 @@ int APS5_VABI sceRtcSetCurrentDebugNetworkTick(const RtcTick* tick) {
 int APS5_VABI sceRtcSetConf(int first, int second, int third, int fourth) {
     (void)first;
     (void)second;
-    (void)third;
-    (void)fourth;
-    NotImplemented_nid_no_patch(__func__);
+    if (fourth < -1) return static_cast<int>(0x80020016u);
+    SetGuestTimezone_nid_no_patch(third, fourth < 0 ? 0 : fourth);
+    return 0;
 }
 
 int APS5_VABI sceRtcFormatRFC3339Precise(char* date_time, const RtcTick* utc, int time_zone_minutes, int precision) {
