@@ -316,7 +316,11 @@ UnnormalizedProof ProveUnnormalized(const ShaderInfo& info, const ResourceSnapsh
             const auto mode = ResourceMaterializer::RuntimeImageMode(image, snapshot.images.at(pair.image), info.runtimeImageModes.at(pair.image));
             if (info.runtimeImageModes.at(pair.image).at(mode).dimension != RdnaImageDimension::Dim3D) continue;
             const auto& words = snapshot.samplers.at(r).dwords;
-            if ((words[0] & ForceUnnormalizedBit) != 0u || ((words[0] >> 29u) & 3u) > 2u || ((words[2] >> 20u) & 0xfu) != 0u || ((words[2] >> 26u) & 3u) > 1u) fail("2D sampling of a one-slice volume requires a normalized point sampler");
+            if ((words[0] & ForceUnnormalizedBit) != 0u || ((words[0] >> 29u) & 3u) > 2u || ((words[2] >> 20u) & 0xfu) != 0u || ((words[2] >> 26u) & 3u) > 1u) {
+                char sampler[64];
+                std::snprintf(sampler, sizeof(sampler), " (S# %08x %08x %08x %08x)", words[0], words[1], words[2], words[3]);
+                fail(std::string("2D sampling of a one-slice volume requires a normalized point sampler") + sampler);
+            }
         }
         if ((snapshot.samplers[r].dwords[0] & ForceUnnormalizedBit) == 0u) {
             if (sampler.foldTexelOffsetsOnly) {
