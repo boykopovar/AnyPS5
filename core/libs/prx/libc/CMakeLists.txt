@@ -125,6 +125,15 @@ if(BUILD_TESTING)
         set_tests_properties(guest_bounded_search_guards PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(guest_bounded_copy_blocks_tests ${LIBS_INCLUDE_DIR}/tests/GuestBoundedCopyBlocks.cpp)
+    target_include_directories(guest_bounded_copy_blocks_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_bounded_copy_blocks_tests PRIVATE libc)
+    configure_windows_unwind(guest_bounded_copy_blocks_tests)
+    add_test(NAME guest_bounded_copy_blocks COMMAND guest_bounded_copy_blocks_tests)
+    if(WIN32)
+        set_tests_properties(guest_bounded_copy_blocks PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
 endif()
 
 target_sources(libc PRIVATE
