@@ -305,6 +305,17 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
     endif()
 
+    add_test_executable(guest_libressl_evp_aes_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslEvpAes.cpp)
+    target_include_directories(guest_libressl_evp_aes_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl_evp_aes_tests PRIVATE libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl_evp_aes_tests)
+    add_test(NAME guest_libressl_evp_aes COMMAND guest_libressl_evp_aes_tests)
+    set_tests_properties(guest_libressl_evp_aes PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libressl_evp_aes PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
+    endif()
+
     add_test_executable(guest_libressl_ec_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslEc.cpp)
     target_include_directories(guest_libressl_ec_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_libressl_ec_tests PRIVATE libSceLibreSsl libc)

@@ -205,6 +205,7 @@ std::shared_ptr<DrawDecode> Driver::decodeDraw(const QueueState& queue, const Su
     }
     product->pixel = Graphics::DecodePixelStageInfo(queue.context, Graphics::ExportMappings(product->state), Graphics::PixelProgramSkipped(queue), fragmentHeader);
     Graphics::NormalizeUnusedViewportDepth(product->state, product->pixel);
+    Graphics::ApplyViewportIndex(context, product->state);
     Graphics::ApplyDepthRemap(context, product->state);
     Graphics::ApplyDepthBoundsEmulation(context, product->state, product->pixel);
     static const bool readOnlyDepthBoundsCompare = [] {
