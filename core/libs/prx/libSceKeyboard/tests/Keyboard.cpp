@@ -382,6 +382,9 @@ int main() {
     Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, KEYBOARD_ARRANGEMENT_101, 0, 0, 0x04, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
     Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, KEYBOARD_ARRANGEMENT_106, 0, 0, 0x04, nullptr) == KEYBOARD_ERROR_INVALID_ARG);
     Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, 2, 0, 0, 0x04, &charData) == KEYBOARD_ERROR_INVALID_ARG);
+    Require(sceKeyboardGetKey2Char(KEYBOARD_HANDLE, KEYBOARD_ARRANGEMENT_101, 0, 0, 0x04, reinterpret_cast<KeyboardCharData*>(1)) == KEYBOARD_ERROR_INVALID_ARG);
+    Require(sceKeyboardGetConnection(KEYBOARD_HANDLE, reinterpret_cast<bool*>(1)) == KEYBOARD_ERROR_INVALID_ARG);
+    Require(sceKeyboardDebugGetDeviceId(KEYBOARD_HANDLE, reinterpret_cast<std::int32_t*>(1)) == KEYBOARD_ERROR_INVALID_ARG);
 
     Require(sceKeyboardClose(KEYBOARD_HANDLE) == KEYBOARD_OK);
     Require(sceKeyboardGetConnection(KEYBOARD_HANDLE, &connected) == KEYBOARD_ERROR_INVALID_HANDLE);

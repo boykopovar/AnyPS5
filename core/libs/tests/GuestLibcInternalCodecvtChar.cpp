@@ -1,9 +1,12 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/GuestErrno.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include <array>
 #include <cstdio>
+#include <cstdint>
 #include <cstdlib>
+#include <stdexcept>
 
 extern "C" {
 extern GuestLocale::Implementation* _ZSt21_sceLibcClassicLocale_nid_postfix;
@@ -144,6 +147,34 @@ void CheckUnshift(Unshift unshift, GuestLocale::Facet* facet) {
     Require(target[0] == 'a' && target[1] == 'b' && target[2] == 'c' && target[3] == 'd', "unshift writes nothing");
 }
 
+template<typename TCall>
+void RequireRejected(TCall call, const char* message) {
+    *__error_nid_postfix() = 71;
+    try {
+        call();
+    } catch (const std::invalid_argument&) {
+        Require(*__error_nid_postfix() == 71, message);
+        return;
+    }
+    Require(false, message);
+}
+
+void CheckGuestPointers(Conversion convert, Unshift unshift) {
+    const char source[] = "codecvt";
+    char target[4] = {};
+    const char* next1 = nullptr;
+    char* next2 = nullptr;
+    std::uint64_t state = kStateSentinel;
+    auto** unmappedNext1 = reinterpret_cast<const char**>(std::uintptr_t{0x10});
+    auto** unmappedNext2 = reinterpret_cast<char**>(std::uintptr_t{0x10});
+    RequireRejected([&] { convert(nullptr, &state, source, source + 7, unmappedNext1, target, target + 4, &next2); }, "a conversion rejects an unwritable next1");
+    Require(next2 == nullptr, "a rejected next1 leaves next2 alone");
+    RequireRejected([&] { convert(nullptr, &state, source, source + 7, &next1, target, target + 4, unmappedNext2); }, "a conversion rejects an unwritable next2");
+    Require(next1 == nullptr, "a rejected next2 leaves next1 alone");
+    RequireRejected([&] { unshift(nullptr, &state, target, target + 4, unmappedNext2); }, "unshift rejects an unwritable next2");
+    Require(state == kStateSentinel, "rejected calls leave the state alone");
+}
+
 void CheckLength(Length length, GuestLocale::Facet* facet) {
     const char source[16] = {};
     std::uint64_t state = kStateSentinel;
@@ -163,6 +194,8 @@ void CheckVirtuals() {
     CheckConversion(_ZNKSt7codecvtIcc9_MbstatetE5do_inERS0_PKcS4_RS4_PcS6_RS6__nid_postfix, nullptr, "do_in returns noconv");
     CheckConversion(_ZNKSt7codecvtIcc9_MbstatetE6do_outERS0_PKcS4_RS4_PcS6_RS6__nid_postfix, nullptr, "do_out returns noconv");
     CheckUnshift(_ZNKSt7codecvtIcc9_MbstatetE10do_unshiftERS0_PcS3_RS3__nid_postfix, nullptr);
+    CheckGuestPointers(_ZNKSt7codecvtIcc9_MbstatetE5do_inERS0_PKcS4_RS4_PcS6_RS6__nid_postfix, _ZNKSt7codecvtIcc9_MbstatetE10do_unshiftERS0_PcS3_RS3__nid_postfix);
+    CheckGuestPointers(_ZNKSt7codecvtIcc9_MbstatetE6do_outERS0_PKcS4_RS4_PcS6_RS6__nid_postfix, _ZNKSt7codecvtIcc9_MbstatetE10do_unshiftERS0_PcS3_RS3__nid_postfix);
     CheckLength(sceLibcInternalCodecvtCharDoLength_nid_no_patch, nullptr);
 }
 
