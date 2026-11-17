@@ -185,7 +185,7 @@ std::string validationMessage(const std::vector<std::uint32_t>& packet, std::uin
 
 void testValidationMessages() {
     for (std::uint32_t opcode = 0; opcode < 256; ++opcode) {
-        for (const std::uint32_t flags : {0u, 1u, 2u, 4u}) {
+        for (std::uint32_t flags = 0; flags < 256; ++flags) {
             auto packet = makePacket(opcode, {0, 0, 0, 0, 0, 0, 0, 0, 0}, flags);
             const auto reason = std::string(AgcDriver::Pm4::UnsupportedReason(packet[0]));
             const bool predicatedNested = opcode == 0x3f && (flags & 1u) != 0;
