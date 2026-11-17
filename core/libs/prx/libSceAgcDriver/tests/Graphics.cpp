@@ -10985,6 +10985,17 @@ void stencilRefExportTests() {
         expectFailure([&] { AgcDriver::Graphics::ValidateStencilAttachment(context, state); }, "requires enabled independentBlend");
         context.independentBlend = true;
         AgcDriver::Graphics::ValidateStencilAttachment(context, state);
+        for (const bool logicOp : {true, false}) {
+            context.logicOp = logicOp;
+            for (const auto rop : {0x5au, 0x66u, 0x00u, 0xffu}) {
+                state.colorRop = static_cast<std::uint8_t>(rop);
+                expectFailure([&] { AgcDriver::Graphics::ValidateStencilAttachment(context, state); }, "refuses a color logic operation");
+            }
+            for (const auto rop : {0xccu, 0xf0u}) {
+                state.colorRop = static_cast<std::uint8_t>(rop);
+                AgcDriver::Graphics::ValidateStencilAttachment(context, state);
+            }
+        }
     }
     for (const auto shaderControl : {0x52u, 0x12u, 0x02u, 0x03u}) {
         for (const auto zFormat : {2u, 9u}) {

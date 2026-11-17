@@ -3183,6 +3183,7 @@ struct StencilAttachment {
 
 void ValidateStencilAttachment(const Context& context, const State& state) {
     Require(context.independentBlend, "stencil attachment export requires enabled independentBlend");
+    Require(LogicOpFromRop(state.colorRop) == VK_LOGIC_OP_COPY, "stencil attachment export refuses a color logic operation");
     Require(state.samples == 1u && state.depth && state.depth->samples == 1u && state.depth->stencilAddress != 0 && HasStencil(state.depth->format), "stencil attachment export requires a single-sample depth/stencil target");
     Require(state.stencilTest && !state.pixelEarlyZ, "stencil attachment export requires a late stencil test");
     Require(state.renderLayers == 1u && state.layerExports == 0u && !state.rectList && !state.stages.mesh && !state.stages.tessellation, "stencil attachment export requires a single-layer vertex draw");
