@@ -1,3 +1,4 @@
+#include "Recompiler.hpp"
 #include "SpirvBackend/SpirvEmitterInstructions.hpp"
 #include "SpirvBackend/SpirvAnalysis.hpp"
 #include "PipelineSpecialization.hpp"
@@ -1243,7 +1244,29 @@ static std::uint32_t EmitF32ToF16BitsTowardZero(SpirvEmitterState& state, std::u
     return Select(state, u32, away, Binary(state, spv::OpISub, u32, nearest, ConstantU32(state, 1u)), nearest);
 }
 
+static std::uint32_t EmitPlainF32ToF16RtzBits(SpirvEmitterState& state, std::uint32_t value) {
+    const auto u32 = TypeU32(state);
+    const auto bits = Unary(state, spv::OpBitcast, u32, value);
+    const auto magnitudeBits = EmitAndConstant(state, bits, 0x7fffffffu);
+    const auto sign = EmitAndConstant(state, Binary(state, spv::OpShiftRightLogical, u32, bits, ConstantU32(state, 16u)), 0x8000u);
+    const auto exponent = Binary(state, spv::OpShiftRightLogical, u32, magnitudeBits, ConstantU32(state, 23u));
+    const auto mantissa = EmitAndConstant(state, magnitudeBits, 0x007fffffu);
+    const auto shift = EmitExt(state, u32, GLSLstd450UMin, {Binary(state, spv::OpISub, u32, ConstantU32(state, 126u), exponent), ConstantU32(state, 31u)});
+    const auto subnormal = Binary(state, spv::OpShiftRightLogical, u32, EmitOrU32(state, mantissa, ConstantU32(state, 0x00800000u)), shift);
+    const auto truncated = Binary(state, spv::OpShiftRightLogical, u32, magnitudeBits, ConstantU32(state, 13u));
+    const auto normal = EmitExt(state, u32, GLSLstd450UMin, {Binary(state, spv::OpISub, u32, truncated, ConstantU32(state, 0x1c000u)), ConstantU32(state, 0x7bffu)});
+    const auto finite = Select(state, u32, EmitCompareU32Constant(state, spv::OpULessThan, magnitudeBits, 0x38800000u), subnormal, normal);
+    const auto nan = EmitOrU32(state, EmitAndConstant(state, truncated, 0x03ffu), ConstantU32(state, 0x7e00u));
+    const auto special = Select(state, u32, EmitCompareU32Constant(state, spv::OpIEqual, mantissa, 0u), ConstantU32(state, 0x7c00u), nan);
+    const auto magnitude = Select(state, u32, EmitCompareU32Constant(state, spv::OpUGreaterThanEqual, magnitudeBits, 0x7f800000u), special, finite);
+    return EmitOrU32(state, sign, magnitude);
+}
+
 std::uint32_t EmitPackFloat2x16Rtz(SpirvEmitterState& state, std::uint32_t arg0, std::uint32_t arg1) {
+    if (ShaderOptOn(ShaderOpt::PlainFloat)) {
+        const auto high = Binary(state, spv::OpShiftLeftLogical, TypeU32(state), EmitPlainF32ToF16RtzBits(state, arg1), ConstantU32(state, 16u));
+        return Binary(state, spv::OpBitwiseOr, TypeU32(state), EmitPlainF32ToF16RtzBits(state, arg0), high);
+    }
     const auto low = EmitF32ToF16BitsTowardZero(state, arg0);
     const auto high = Binary(state, spv::OpShiftLeftLogical, TypeU32(state), EmitF32ToF16BitsTowardZero(state, arg1), ConstantU32(state, 16u));
     return Binary(state, spv::OpBitwiseOr, TypeU32(state), low, high);

@@ -1058,6 +1058,12 @@ void SetDebugProbeActive(bool active);
 [[nodiscard]] bool RayTracingMiss();
 [[nodiscard]] bool ExactF32Arithmetic();
 
+enum class ShaderOpt : std::uint32_t {
+    PlainFloat = 1u << 0u,
+};
+[[nodiscard]] std::uint32_t ShaderOptMask();
+[[nodiscard]] inline bool ShaderOptOn(ShaderOpt opt) { return (ShaderOptMask() & static_cast<std::uint32_t>(opt)) != 0u; }
+
 struct RectListShaders {
     RecompileResult control;
     RecompileResult evaluation;

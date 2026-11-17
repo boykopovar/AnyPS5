@@ -373,7 +373,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     }
 
     static const bool nanPayloadElimination = std::getenv("APS5_NO_NAN_PAYLOAD_ELIMINATION") == nullptr;
-    if (nanPayloadElimination && ExactF32Arithmetic()) {
+    if (nanPayloadElimination && ExactF32Arithmetic() && !ShaderOptOn(ShaderOpt::PlainFloat)) {
         constexpr NanPayloadEliminator nanPayloadEliminator;
         if (nanPayloadEliminator.Eliminate(program).removedSelects != 0u) deadCodeEliminator.Eliminate(program);
     }
