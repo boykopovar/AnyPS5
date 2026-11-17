@@ -14,4 +14,5 @@ if(BUILD_TESTING)
         set_tests_properties(agc_driver_pipeline_profile agc_driver_pipeline_untimed PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceAgcDriver>")
     endif()
+    set_property(TEST agc_driver_pipeline_untimed APPEND PROPERTY ENVIRONMENT_MODIFICATION "APS5_PROFILE_DRAW=unset:" "APS5_PIPELINE_STATS=unset:")
 endif()

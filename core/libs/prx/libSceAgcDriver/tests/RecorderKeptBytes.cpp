@@ -336,7 +336,7 @@ void SeparateStoresOfOneRunAreOrdered() {
     Expect(std::count(commandOrder.begin(), commandOrder.end(), 'U') == 2, "a run of two stores into different buffers did not record exactly two updates");
 }
 
-void FailedSubmission(VkResult endResult, VkResult submitResult, VkResult idleResult = VK_ERROR_DEVICE_LOST) {
+void FailedSubmission(VkResult endResult, VkResult submitResult, VkResult idleResult = VK_ERROR_DEVICE_LOST, bool budgetedKeep = false) {
     mock = MockDevice{};
     std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
     alignas(8) std::array<std::byte, 128> memory{};
@@ -357,8 +357,12 @@ void FailedSubmission(VkResult endResult, VkResult submitResult, VkResult idleRe
             delete object;
         });
         std::weak_ptr<int> released = kept;
-        recorder.Retain(kept);
-        recorder.KeepBytes(kept.get(), Budget);
+        if (budgetedKeep) {
+            recorder.Keep(kept, Budget);
+        } else {
+            recorder.Retain(kept);
+            recorder.KeepBytes(kept.get(), Budget);
+        }
         kept.reset();
         recorder.NoteLabel(address + 8, std::span<const std::byte>(memory).first(4), 2, 0);
         recorder.NoteLabel(address + 16, std::span<const std::byte>(memory).first(Recorder::LabelTableBytes + 4), 3, 0);
@@ -442,6 +446,8 @@ int main() {
         FailedSubmission(VK_SUCCESS, VK_ERROR_OUT_OF_DEVICE_MEMORY);
         FailedSubmission(VK_SUCCESS, VK_ERROR_DEVICE_LOST);
         FailedSubmission(VK_SUCCESS, VK_ERROR_DEVICE_LOST, VK_SUCCESS);
+        FailedSubmission(VK_ERROR_OUT_OF_HOST_MEMORY, VK_SUCCESS, VK_ERROR_DEVICE_LOST, true);
+        FailedSubmission(VK_SUCCESS, VK_ERROR_DEVICE_LOST, VK_ERROR_DEVICE_LOST, true);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;
