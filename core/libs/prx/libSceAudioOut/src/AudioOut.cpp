@@ -44,6 +44,7 @@ static constexpr int DEFAULT_PADSPK_MIX_LEVEL = 11626;
 static constexpr std::uint32_t FORMAT_MASK = 0xFFu;
 static constexpr std::uint64_t TARGET_LATENCY_US = 40000;
 static constexpr std::uint64_t DRAIN_TIMEOUT_US = 200000;
+static constexpr std::uint64_t DEFAULT_OUTPUT_CHECK_US = 1000000;
 static constexpr std::uint64_t DRAIN_SLEEP_US = 1000;
 static constexpr int MONITOR_TYPE_HDMI = 1;
 static constexpr std::uint32_t HDMI_MONITOR_INFO_SIZE = 0x180;
@@ -129,6 +130,8 @@ struct Port {
     AudioOut2PadLayout padLayout;
     SDL_AudioDeviceID device = 0;
     SDL_AudioSpec spec = {};
+    std::string defaultOutput;
+    std::uint64_t nextDefaultOutputCheck = 0;
     HostGainRamp hostGain;
 };
 
@@ -174,12 +177,15 @@ static bool openDevice(Port& port) {
     desired.samples = static_cast<Uint16>(port.samplesNum);
     desired.callback = nullptr;
     SDL_AudioSpec obtained{};
-    const auto name = selectedOutputDevice(std::getenv("ANYPS5_AUDIO_DEVICE"));
+    const char* requested = std::getenv("ANYPS5_AUDIO_DEVICE");
+    const auto name = selectedOutputDevice(requested);
     port.device = SDL_OpenAudioDevice(name.empty() ? nullptr : name.c_str(), 0, &desired, &obtained, 0);
     if (port.device == 0) {
         return false;
     }
     port.spec = obtained;
+    port.defaultOutput = requested != nullptr && name == requested ? std::string() : name;
+    port.nextDefaultOutputCheck = sceKernelGetProcessTime() + DEFAULT_OUTPUT_CHECK_US;
     SDL_PauseAudioDevice(port.device, 0);
     return true;
 }
@@ -215,10 +221,20 @@ static void closeDevice(Port& port) {
     }
     port.device = 0;
     port.spec = {};
+    port.defaultOutput.clear();
+}
+
+static bool defaultOutputChanged(Port& port) {
+    if (port.defaultOutput.empty()) return false;
+    const auto now = sceKernelGetProcessTime();
+    if (now < port.nextDefaultOutputCheck) return false;
+    port.nextDefaultOutputCheck = now + DEFAULT_OUTPUT_CHECK_US;
+    const auto current = SdlDefaultOutputDeviceName();
+    return !current.empty() && current != port.defaultOutput;
 }
 
 static void reopenStoppedDevice(Port& port) {
-    if (port.device == 0 || SDL_GetAudioDeviceStatus(port.device) != SDL_AUDIO_STOPPED) return;
+    if (port.device == 0 || (SDL_GetAudioDeviceStatus(port.device) != SDL_AUDIO_STOPPED && !defaultOutputChanged(port))) return;
     closeDevice(port);
     if (port.type == PORT_TYPE_VIBRATION) {
         try {
