@@ -87,9 +87,6 @@ int APS5_VABI cpuset_getid_nid_postfix(int level, int which, std::int64_t id, in
     if (level == LevelWhich && which != WhichCpuset) {
         return Fail(GuestEinval);
     }
-    if (level < LevelRoot || level > LevelWhich) {
-        return Fail(GuestEinval);
-    }
     if (which < WhichThread || which > WhichDomain || which == WhichIrq || which == WhichDomain) {
         return Fail(GuestEinval);
     }
