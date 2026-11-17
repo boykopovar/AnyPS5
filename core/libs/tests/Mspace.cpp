@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstdint>
@@ -22,9 +23,6 @@
 #include <unistd.h>
 #endif
 
-static void Require(bool value) {
-    if (!value) { std::fputs("Mspace check failed\n", stderr); std::abort(); }
-}
 static void CheckPaf() {
     alignas(64) static std::array<unsigned char, 65536> storage{};
     bool rejected = false;

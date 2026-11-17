@@ -1,4 +1,5 @@
 #include "../tools/OracleCodeObject.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <cstring>
 #include <exception>
@@ -121,10 +122,6 @@ std::vector<std::byte> Build(const Spec& spec) {
     Put<std::uint16_t>(bytes, 60, 6);
     Put<std::uint16_t>(bytes, 62, 5);
     return bytes;
-}
-
-void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
 }
 
 void Rejects(const std::string& label, const std::vector<std::byte>& bytes, const std::string& expected) {

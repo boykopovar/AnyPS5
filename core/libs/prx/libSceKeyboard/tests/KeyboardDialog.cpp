@@ -5,6 +5,7 @@
 #include "prx/libSceVideoOut/include/KeyboardInput.hpp"
 #include "SDL_events.h"
 #include "SDL_keyboard.h"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -13,12 +14,6 @@ namespace {
 
 constexpr unsigned Window = 7;
 constexpr int InitialUserId = 0x10000000;
-
-void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "keyboard dialog: %s\n", what);
-    std::abort();
-}
 
 SDL_Event Key(Uint32 type, SDL_Scancode scancode) {
     SDL_Event event{};

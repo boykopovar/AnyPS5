@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -23,18 +24,6 @@ void* operator new(std::size_t size, const std::nothrow_t&) noexcept {
 void operator delete(void* memory) noexcept { std::free(memory); }
 void operator delete(void* memory, std::size_t) noexcept { std::free(memory); }
 
-static void Require(bool value) { if (!value) std::abort(); }
-
-template<typename TException, typename TCall>
-static void RequireThrows(TCall call) {
-    try {
-        call();
-    } catch (const TException&) {
-        return;
-    }
-    std::abort();
-}
-
 constexpr int success = 0;
 constexpr int plain = 0x01;
 
@@ -44,9 +33,9 @@ static void RegisterRejectsNullHandles() {
     Require(_Cnd_init_nid_postfix(&condition) == success);
     Require(_Mtx_init_nid_postfix(&mutex, plain) == success);
     int ready = 0;
-    RequireThrows<std::invalid_argument>([&] { _Cnd_register_at_thread_exit_nid_postfix(nullptr, mutex, &ready); });
-    RequireThrows<std::invalid_argument>([&] { _Cnd_register_at_thread_exit_nid_postfix(condition, nullptr, &ready); });
-    RequireThrows<std::invalid_argument>([] { _Cnd_unregister_at_thread_exit_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([&] { _Cnd_register_at_thread_exit_nid_postfix(nullptr, mutex, &ready); });
+    ExpectErr<std::invalid_argument>([&] { _Cnd_register_at_thread_exit_nid_postfix(condition, nullptr, &ready); });
+    ExpectErr<std::invalid_argument>([] { _Cnd_unregister_at_thread_exit_nid_postfix(nullptr); });
     _Cnd_register_at_thread_exit_nid_postfix(condition, mutex, nullptr);
     _Cnd_unregister_at_thread_exit_nid_postfix(mutex);
     _Mtx_destroy_nid_postfix(&mutex);

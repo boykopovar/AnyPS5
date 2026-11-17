@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstdint>
@@ -19,12 +20,6 @@ constexpr std::int32_t Success = 0;
 constexpr std::int32_t IllegalArgument = 1;
 constexpr std::int32_t InvalidFormat = 3;
 constexpr std::int32_t BufferOverflow = 15;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "ICU constrained field position: %s\n", message);
-    std::abort();
-}
 
 template<class F>
 bool Rejects(F call) {

@@ -2,6 +2,7 @@
 #include "prx/libSceLibreSsl/include/ObjectTable.hpp"
 #include "prx/libSceLibreSsl/include/Bio.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -17,22 +18,6 @@
 namespace {
 
 constexpr std::uint64_t UnknownNidError = (8ull << 24) | (0xfffull << 12) | 101;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "failed: %s\n", message);
-    std::abort();
-}
-
-template<typename TAction>
-void RequireThrows(TAction action, const char* message) {
-    try {
-        action();
-    } catch (const std::exception&) {
-        return;
-    }
-    Require(false, message);
-}
 
 struct Encoded {
     std::vector<unsigned char> bytes;
@@ -128,8 +113,8 @@ void Errors() {
     RequireText(none, 64, 0, "", "an object without data");
     Require(i2t_ASN1_OBJECT_nid_postfix(nullptr, 0, nullptr) == 0, "a null object");
     char buffer[8];
-    RequireThrows([&] { i2t_ASN1_OBJECT_nid_postfix(buffer, -1, &gap.object); }, "a negative length");
-    RequireThrows([&] { i2t_ASN1_OBJECT_nid_postfix(nullptr, 8, &gap.object); }, "a null buffer with a length");
+    ExpectErr([&] { i2t_ASN1_OBJECT_nid_postfix(buffer, -1, &gap.object); }, "a negative length");
+    ExpectErr([&] { i2t_ASN1_OBJECT_nid_postfix(nullptr, 8, &gap.object); }, "a null buffer with a length");
     Require(i2t_ASN1_OBJECT_nid_postfix(buffer, -1, nullptr) == 0, "a negative length with a null object");
 }
 
@@ -153,7 +138,7 @@ void Created() {
     Rejects("1.40", Asn1Error(147), "a second arc of 40 under 0 or 1");
     Rejects("", Asn1Error(122), "an empty text reads its terminator as the first arc");
     Rejects("1.", 0, "a text without a second arc value adds nothing and queues nothing");
-    RequireThrows([] { OBJ_create_nid_postfix(nullptr, "x", "y"); }, "a null OID text");
+    ExpectErr([] { OBJ_create_nid_postfix(nullptr, "x", "y"); }, "a null OID text");
     Require(OBJ_create_nid_postfix("1.2.3.4", "addedShort", "addedLong") == LibreSslObjectCount, "the first added object takes NID 956");
     RequireText(added.object, 64, 9, "addedLong", "an added object prints its long name");
     Require(LibreSslObjectNid_nid_no_patch(&added.object) == LibreSslObjectCount, "an added encoding resolves to its NID");

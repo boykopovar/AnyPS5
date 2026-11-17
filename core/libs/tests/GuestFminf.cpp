@@ -1,18 +1,13 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cfenv>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
 
-static void Check(bool condition, const char* name, int line) {
-    if (!condition) {
-        std::fprintf(stderr, "%s check failed at line %d\n", name, line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), name, __LINE__)
+#define Require(value) Require((value), name)
 
 template <typename T>
 static void CheckMinAndMax(T (APS5_VABI *minimum)(T, T), T (APS5_VABI *maximum)(T, T), const char* name) {

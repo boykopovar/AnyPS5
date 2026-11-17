@@ -1,5 +1,6 @@
 #include "prx/libSceAjm.native/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <cerrno>
 #include <cstdint>
@@ -10,12 +11,6 @@ namespace {
 
 constexpr int InvalidParameter = static_cast<int>(0x80930005);
 constexpr std::uint32_t Untouched = 0x5a5a5a5au;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "Ajm initialize context pointer: %s\n", message);
-    std::abort();
-}
 
 }
 

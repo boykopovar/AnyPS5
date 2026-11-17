@@ -1,4 +1,5 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "Testing.hpp"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -14,21 +15,6 @@
 #include <stdexcept>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc ExpFilter check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> void RequireInvalidArgument(TAction action, std::source_location location = std::source_location::current()) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, location);
-}
 
 void Reset(WebRtcExpFilter& filter, float alpha) {
     _ZN3rtc9ExpFilter5ResetEf_nid_postfix(&filter, alpha);
@@ -77,8 +63,8 @@ void TestMax() {
 }
 
 void TestNullFilter() {
-    RequireInvalidArgument([] { _ZN3rtc9ExpFilter5ResetEf_nid_postfix(nullptr, 0.5f); });
-    RequireInvalidArgument([] { _ZN3rtc9ExpFilter5ApplyEff_nid_postfix(nullptr, 1.0f, 1.0f); });
+    ExpectErr<std::invalid_argument>([] { _ZN3rtc9ExpFilter5ResetEf_nid_postfix(nullptr, 0.5f); });
+    ExpectErr<std::invalid_argument>([] { _ZN3rtc9ExpFilter5ApplyEff_nid_postfix(nullptr, 1.0f, 1.0f); });
 }
 
 struct GuardedPage {
@@ -126,8 +112,8 @@ void TestGuardedPointers() {
         GuardedPage page;
         *page.As<WebRtcExpFilter>() = WebRtcExpFilter{0.5f, 4.0f, 10.0f};
         page.SetReadOnly();
-        RequireInvalidArgument([&] { _ZN3rtc9ExpFilter5ResetEf_nid_postfix(page.As<WebRtcExpFilter>(), 0.25f); });
-        RequireInvalidArgument([&] { _ZN3rtc9ExpFilter5ApplyEff_nid_postfix(page.As<WebRtcExpFilter>(), 1.0f, 8.0f); });
+        ExpectErr<std::invalid_argument>([&] { _ZN3rtc9ExpFilter5ResetEf_nid_postfix(page.As<WebRtcExpFilter>(), 0.25f); });
+        ExpectErr<std::invalid_argument>([&] { _ZN3rtc9ExpFilter5ApplyEff_nid_postfix(page.As<WebRtcExpFilter>(), 1.0f, 8.0f); });
     }
 }
 

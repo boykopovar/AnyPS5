@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -10,12 +11,6 @@
 namespace {
 
 constexpr const char* Bogus = "[BOGUS UErrorCode]";
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "ICU error name: %s\n", message);
-    std::abort();
-}
 
 bool Named(std::int32_t code, const char* expected) {
     const char* name = u_errorName_nid_postfix(code);

@@ -10,6 +10,7 @@
 #include <unordered_map>
 
 #include "../../src/WtfTextAbi.hpp"
+#include "Testing.hpp"
 
 namespace {
 
@@ -20,19 +21,12 @@ constexpr unsigned char GuardByte = 0xA5;
 std::unordered_map<void*, std::size_t> liveAllocations;
 int allocationsBeforeFailure = -1;
 
-void Check(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "WTF text allocation test failed at line %u\n", location.line());
-        std::abort();
-    }
-}
-
 void* Place(std::size_t size) {
-    Check(size <= LargestExpectedAllocation);
+    Require(size <= LargestExpectedAllocation);
     if (allocationsBeforeFailure == 0) return nullptr;
     if (allocationsBeforeFailure > 0) --allocationsBeforeFailure;
     auto* allocation = static_cast<unsigned char*>(std::malloc(size + GuardSize));
-    Check(allocation != nullptr);
+    Require(allocation != nullptr);
     std::memset(allocation + size, GuardByte, GuardSize);
     liveAllocations.emplace(allocation, size);
     return allocation;
@@ -58,9 +52,9 @@ void* TryAllocate(std::size_t size, std::size_t) {
 void Deallocate(void* ptr) {
     if (!ptr) return;
     auto allocation = liveAllocations.find(ptr);
-    Check(allocation != liveAllocations.end());
+    Require(allocation != liveAllocations.end());
     const auto* guard = static_cast<const unsigned char*>(ptr) + allocation->second;
-    for (std::size_t i = 0; i < GuardSize; ++i) Check(guard[i] == GuardByte);
+    for (std::size_t i = 0; i < GuardSize; ++i) Require(guard[i] == GuardByte);
     liveAllocations.erase(allocation);
     std::free(ptr);
 }
@@ -71,12 +65,6 @@ namespace {
 
 using NKWebKit::WtfAbi::String;
 using NKWebKit::WtfAbi::StringBuilder;
-
-template<typename T> void Throws(T action, std::source_location location = std::source_location::current()) {
-    bool threw = false;
-    try { action(); } catch (const std::length_error&) { threw = true; }
-    Check(threw, location);
-}
 
 StringBuilder NewBuilder(bool crashOnOverflow) {
     StringBuilder builder{String()};
@@ -118,31 +106,31 @@ template<typename TSetup, typename TFailing, typename TRecorded> void Case(TSetu
     FailFrom(0);
     failing(recording);
     Restore();
-    Check(recording.overflowed);
+    Require(recording.overflowed);
     recorded(recording);
     Free(recording);
     if (kept) *kept = String();
-    Check(liveAllocations.size() == baseline);
+    Require(liveAllocations.size() == baseline);
 
     auto crashing = NewBuilder(true);
     setup(crashing);
     FailFrom(0);
-    Throws([&] { failing(crashing); });
+    ExpectErr<std::length_error>([&] { failing(crashing); });
     Restore();
-    Check(crashing.overflowed);
+    Require(crashing.overflowed);
     Free(crashing);
     if (kept) *kept = String();
-    Check(liveAllocations.size() == baseline);
+    Require(liveAllocations.size() == baseline);
 }
 
 void TestInitialAllocation() {
     Case([](StringBuilder&) {}, [](StringBuilder& builder) { Append8(builder, "abc"); },
-        [](StringBuilder& builder) { Check(!builder.buffer && !builder.length && builder.is8Bit && !builder.characters8); });
+        [](StringBuilder& builder) { Require(!builder.buffer && !builder.length && builder.is8Bit && !builder.characters8); });
 }
 
 void TestGrowth() {
     Case([](StringBuilder& builder) { Append8(builder, "abcdefghijklmnop"); }, [](StringBuilder& builder) { Append8(builder, "q"); },
-        [](StringBuilder& builder) { Check(!builder.buffer && builder.length == 16); });
+        [](StringBuilder& builder) { Require(!builder.buffer && builder.length == 16); });
 }
 
 void TestSharedGrowth() {
@@ -150,12 +138,12 @@ void TestSharedGrowth() {
     Case([&](StringBuilder& builder) {
             Append8(builder, "abcdefghijklmnop");
             shared = NKWebKit::WtfAbi::ToString(builder);
-            Check(shared.impl == builder.buffer);
+            Require(shared.impl == builder.buffer);
         },
         [](StringBuilder& builder) { Append8(builder, "q"); },
         [&](StringBuilder& builder) {
-            Check(builder.buffer == shared.impl && builder.length == 16 && !builder.string.impl && !builder.characters8);
-            Check(shared.impl->length == 16 && std::memcmp(shared.impl->data, "abcdefghijklmnop", 16) == 0);
+            Require(builder.buffer == shared.impl && builder.length == 16 && !builder.string.impl && !builder.characters8);
+            Require(shared.impl->length == 16 && std::memcmp(shared.impl->data, "abcdefghijklmnop", 16) == 0);
         }, &shared);
 }
 
@@ -164,12 +152,12 @@ void TestWideSharedGrowth() {
     Case([&](StringBuilder& builder) {
             Append16(builder, u"\x263a\x263b\x263c\x263d\x263e\x263f\x2640\x2641\x2642\x2643\x2644\x2645\x2646\x2647\x2648\x2649");
             shared = NKWebKit::WtfAbi::ToString(builder);
-            Check(!builder.is8Bit && shared.impl == builder.buffer && builder.length == 16);
+            Require(!builder.is8Bit && shared.impl == builder.buffer && builder.length == 16);
         },
         [](StringBuilder& builder) { Append16(builder, u"\x264a"); },
         [&](StringBuilder& builder) {
-            Check(builder.buffer == shared.impl && builder.length == 16 && !builder.string.impl && !builder.characters16);
-            Check(static_cast<const char16_t*>(shared.impl->data)[15] == u'\x2649');
+            Require(builder.buffer == shared.impl && builder.length == 16 && !builder.string.impl && !builder.characters16);
+            Require(static_cast<const char16_t*>(shared.impl->data)[15] == u'\x2649');
         }, &shared);
 }
 
@@ -178,26 +166,26 @@ void TestLengthLimit() {
     auto recording = NewBuilder(false);
     Append16(recording, u"\x263a");
     Reserve(recording, 0x7FFFFFFF);
-    Check(recording.overflowed);
+    Require(recording.overflowed);
     Free(recording);
     auto crashing = NewBuilder(true);
     Append16(crashing, u"\x263a");
-    Throws([&] { Reserve(crashing, 0x7FFFFFFF); });
-    Check(crashing.overflowed);
+    ExpectErr<std::length_error>([&] { Reserve(crashing, 0x7FFFFFFF); });
+    Require(crashing.overflowed);
     Free(crashing);
-    Check(liveAllocations.size() == baseline);
+    Require(liveAllocations.size() == baseline);
 }
 
 void TestReserveCapacity() {
     Case([](StringBuilder&) {}, [](StringBuilder& builder) { Reserve(builder, 100); },
-        [](StringBuilder& builder) { Check(!builder.buffer && !builder.length && !builder.characters8); });
+        [](StringBuilder& builder) { Require(!builder.buffer && !builder.length && !builder.characters8); });
     Case([](StringBuilder& builder) { Append8(builder, "abc"); }, [](StringBuilder& builder) { Reserve(builder, 100); },
-        [](StringBuilder& builder) { Check(!builder.buffer && builder.length == 3); });
+        [](StringBuilder& builder) { Require(!builder.buffer && builder.length == 3); });
 }
 
 void TestUpConversion() {
     Case([](StringBuilder& builder) { Append8(builder, "abc"); }, [](StringBuilder& builder) { Append16(builder, u"\x263a"); },
-        [](StringBuilder& builder) { Check(builder.is8Bit && builder.buffer && builder.buffer->length == 16 && builder.length == 3 && !builder.characters16); });
+        [](StringBuilder& builder) { Require(builder.is8Bit && builder.buffer && builder.buffer->length == 16 && builder.length == 3 && !builder.characters16); });
 }
 
 }  // namespace
@@ -210,6 +198,6 @@ int main() {
     TestReserveCapacity();
     TestLengthLimit();
     TestUpConversion();
-    Check(liveAllocations.empty());
+    Require(liveAllocations.empty());
     return 0;
 }

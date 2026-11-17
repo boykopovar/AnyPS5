@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "Testing.hpp"
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -23,14 +24,6 @@
 using namespace AgcDriver::Graphics;
 
 namespace {
-
-int failures = 0;
-
-void Expect(bool condition, const std::string& what) {
-    if (condition) return;
-    std::fprintf(stderr, "FAIL: %s\n", what.c_str());
-    ++failures;
-}
 
 constexpr std::size_t Alignment = 65536;
 constexpr std::size_t RangeBytes = std::size_t{1} << 20u;
@@ -592,8 +585,8 @@ int main() {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;
     }
-    if (failures != 0) {
-        std::fprintf(stderr, "%d host import retire checks failed\n", failures);
+    if (Failures() != 0) {
+        std::fprintf(stderr, "%u host import retire checks failed\n", Failures());
         return 1;
     }
     std::printf("host import retire tests passed\n");

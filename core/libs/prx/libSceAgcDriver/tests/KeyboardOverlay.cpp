@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceOverlay.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Presentation.hpp"
 #include "prx/libSceImeDialog/include/PadKeyboard.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -23,10 +24,6 @@ using AgcDriver::OverlayRect;
 using ImeDialog::PadKeyboardCase;
 using ImeDialog::PadKeyboardCurrency;
 using ImeDialog::PadKeyboardFamily;
-
-void require(bool condition, const std::string& reason) {
-    if (!condition) throw std::runtime_error(reason);
-}
 
 std::uint32_t colorOf(OverlayColor color) {
     return static_cast<std::uint32_t>(color);
@@ -132,22 +129,22 @@ void pageLayoutTests() {
             const auto where = page.name + " at " + std::to_string(extent.width) + "x" + std::to_string(extent.height);
             const auto layout = AgcDriver::LayOutKeyboard(view, extent);
             const auto expectedScale = static_cast<std::int32_t>(extent.height / 360);
-            require(layout.scale == expectedScale, where + ": scale " + std::to_string(layout.scale) + ", not " + std::to_string(expectedScale) + " screen pixels per glyph pixel");
+            Require(layout.scale == expectedScale, where + ": scale " + std::to_string(layout.scale) + ", not " + std::to_string(expectedScale) + " screen pixels per glyph pixel");
             const auto& bounds = layout.bounds;
             const auto screenWidth = static_cast<std::int32_t>(extent.width);
             const auto screenHeight = static_cast<std::int32_t>(extent.height);
-            require(bounds.width == AgcDriver::KeyboardPanelWidth(view) * layout.scale && bounds.height == AgcDriver::KeyboardPanelHeight(view) * layout.scale, where + ": the panel is not its grid at the layout's scale");
-            require(bounds.y >= screenHeight / 2 && bounds.y + bounds.height <= screenHeight, where + ": the panel leaves the bottom half");
-            require(std::abs((bounds.y - screenHeight / 2) - (screenHeight - bounds.y - bounds.height)) <= 1, where + ": the panel is not centred in the bottom half");
-            require(bounds.x >= 0 && std::abs(bounds.x - (screenWidth - bounds.x - bounds.width)) <= 1, where + ": the panel is not centred across the frame");
-            require(layout.rects.front().color == colorOf(OverlayColor::Panel) && layout.rects.front().x == bounds.x && layout.rects.front().width == bounds.width, where + ": the panel is not drawn first");
-            for (const auto& rect : layout.rects) require(contains(bounds, rect) && rect.width > 0 && rect.height > 0, where + ": a rectangle leaves the panel");
+            Require(bounds.width == AgcDriver::KeyboardPanelWidth(view) * layout.scale && bounds.height == AgcDriver::KeyboardPanelHeight(view) * layout.scale, where + ": the panel is not its grid at the layout's scale");
+            Require(bounds.y >= screenHeight / 2 && bounds.y + bounds.height <= screenHeight, where + ": the panel leaves the bottom half");
+            Require(std::abs((bounds.y - screenHeight / 2) - (screenHeight - bounds.y - bounds.height)) <= 1, where + ": the panel is not centred in the bottom half");
+            Require(bounds.x >= 0 && std::abs(bounds.x - (screenWidth - bounds.x - bounds.width)) <= 1, where + ": the panel is not centred across the frame");
+            Require(layout.rects.front().color == colorOf(OverlayColor::Panel) && layout.rects.front().x == bounds.x && layout.rects.front().width == bounds.width, where + ": the panel is not drawn first");
+            for (const auto& rect : layout.rects) Require(contains(bounds, rect) && rect.width > 0 && rect.height > 0, where + ": a rectangle leaves the panel");
             std::size_t selected = 0;
             for (const auto& key : view.keys) {
                 const auto area = keyRect(layout, key);
                 const bool drawsSomething = key.symbol != ImeKeySymbol::None || !key.label.empty();
-                if (drawsSomething) require(inside(layout, area, OverlayColor::Text) != 0, where + ": a key draws no label");
-                if (!key.badge.empty()) require(inside(layout, area, OverlayColor::Graph) != 0, where + ": a key draws no badge");
+                if (drawsSomething) Require(inside(layout, area, OverlayColor::Text) != 0, where + ": a key draws no label");
+                if (!key.badge.empty()) Require(inside(layout, area, OverlayColor::Graph) != 0, where + ": a key draws no badge");
                 if (!key.selected) continue;
                 ++selected;
                 const auto border = KeyboardMetrics::Border * layout.scale;
@@ -157,9 +154,9 @@ void pageLayoutTests() {
                     outer = outer || (rect.color == colorOf(OverlayColor::Accent) && rect.x == area.x && rect.y == area.y && rect.width == area.width && rect.height == area.height);
                     inner = inner || (rect.color == colorOf(OverlayColor::Key) && rect.x == area.x + border && rect.y == area.y + border && rect.width == area.width - 2 * border && rect.height == area.height - 2 * border);
                 }
-                require(outer && inner, where + ": the selected key has no accent border " + std::to_string(border) + " pixels wide");
+                Require(outer && inner, where + ": the selected key has no accent border " + std::to_string(border) + " pixels wide");
             }
-            require(selected == 1, where + ": " + std::to_string(selected) + " keys are selected, not one");
+            Require(selected == 1, where + ": " + std::to_string(selected) + " keys are selected, not one");
             ++views;
         }
     }
@@ -179,11 +176,11 @@ void labelTests() {
         for (const VkExtent2D extent : {VkExtent2D{1280, 720}, VkExtent2D{1920, 1080}}) {
             const auto layout = AgcDriver::LayOutKeyboard(view, extent);
             for (const auto& key : view.keys) {
-                if (key.badge == u"R2") require(inside(layout, keyRect(layout, key), OverlayColor::Text) != 0, "the enter key draws no label");
+                if (key.badge == u"R2") Require(inside(layout, keyRect(layout, key), OverlayColor::Text) != 0, "the enter key draws no label");
             }
         }
     }
-    require(enterLabels == std::set<std::u16string>{u"Done", u"Send", u"Search", u"Go"}, "the enter key does not read Done, Send, Search and Go");
+    Require(enterLabels == std::set<std::u16string>{u"Done", u"Send", u"Search", u"Go"}, "the enter key does not read Done, Send, Search and Go");
     for (const auto currency : {PadKeyboardCurrency::Euro, PadKeyboardCurrency::Dollar, PadKeyboardCurrency::Pound, PadKeyboardCurrency::Yen, PadKeyboardCurrency::Won}) {
         ImeDialog::PadKeyboardOptions options;
         options.family = PadKeyboardFamily::Symbols;
@@ -192,16 +189,16 @@ void labelTests() {
         for (const auto& key : view.keys) {
             if (key.row == 3 && key.column == 5) currencies.insert(key.label);
         }
-        for (const auto character : charactersOf(view)) require(AgcDriver::KeyboardHasGlyph(character), "a currency page has a character without a glyph");
+        for (const auto character : charactersOf(view)) Require(AgcDriver::KeyboardHasGlyph(character), "a currency page has a character without a glyph");
     }
-    require(currencies == std::set<std::u16string>{u"€", u"$", u"£", u"¥", u"₩"}, "the currency key does not cover euro, dollar, pound, yen and won");
+    Require(currencies == std::set<std::u16string>{u"€", u"$", u"£", u"¥", u"₩"}, "the currency key does not cover euro, dollar, pound, yen and won");
     std::printf("labels: Done, Send, Search and Go drawn on the enter key; euro, dollar, pound, yen and won on the currency key\n");
 }
 
 void coverageTests() {
     const auto table = AgcDriver::KeyboardGlyphTable();
-    for (std::size_t index = 1; index < table.size(); ++index) require(table[index - 1].code < table[index].code, "the glyph table is not sorted by code");
-    for (char32_t code = 0x20; code < 0x7F; ++code) require(AgcDriver::KeyboardHasGlyph(code), "printable ASCII " + std::to_string(code) + " has no glyph");
+    for (std::size_t index = 1; index < table.size(); ++index) Require(table[index - 1].code < table[index].code, "the glyph table is not sorted by code");
+    for (char32_t code = 0x20; code < 0x7F; ++code) Require(AgcDriver::KeyboardHasGlyph(code), "printable ASCII " + std::to_string(code) + " has no glyph");
     std::set<char16_t> pageCharacters;
     for (const auto& page : pages()) {
         const auto characters = charactersOf(viewOf(page.state, u"", 0));
@@ -209,20 +206,20 @@ void coverageTests() {
     }
     std::size_t nonAscii = 0;
     for (const auto character : pageCharacters) {
-        require(AgcDriver::KeyboardHasGlyph(character), "page character U+" + std::to_string(static_cast<unsigned>(character)) + " has no glyph");
+        Require(AgcDriver::KeyboardHasGlyph(character), "page character U+" + std::to_string(static_cast<unsigned>(character)) + " has no glyph");
         if (character > 0x7E) ++nonAscii;
     }
-    require(AgcDriver::KeyboardHasGlyph(AgcDriver::KeyboardFallbackCode), "the fallback box has no glyph");
+    Require(AgcDriver::KeyboardHasGlyph(AgcDriver::KeyboardFallbackCode), "the fallback box has no glyph");
     std::set<std::array<std::uint8_t, KeyboardMetrics::GlyphHeight>> symbols;
     for (const auto symbol : {ImeKeySymbol::ShiftOutline, ImeKeySymbol::ShiftFilled, ImeKeySymbol::CapsLock, ImeKeySymbol::Backspace, ImeKeySymbol::ArrowLeft, ImeKeySymbol::ArrowRight, ImeKeySymbol::ArrowUp, ImeKeySymbol::ArrowDown}) {
         const auto& rows = AgcDriver::KeyboardSymbolGlyph(symbol);
-        require(std::any_of(rows.begin(), rows.end(), [](std::uint8_t bits) { return bits != 0; }), "a key symbol glyph is empty");
+        Require(std::any_of(rows.begin(), rows.end(), [](std::uint8_t bits) { return bits != 0; }), "a key symbol glyph is empty");
         symbols.insert(rows);
     }
-    require(symbols.size() == 8, "two key symbols share a glyph");
+    Require(symbols.size() == 8, "two key symbols share a glyph");
     for (const auto& entry : table) {
-        for (const auto bits : entry.rows) require(bits < 0x20, "a glyph is wider than five pixels");
-        if (entry.code != u' ') require(std::any_of(entry.rows.begin(), entry.rows.end(), [](std::uint8_t bits) { return bits != 0; }), "a glyph other than space is empty");
+        for (const auto bits : entry.rows) Require(bits < 0x20, "a glyph is wider than five pixels");
+        if (entry.code != u' ') Require(std::any_of(entry.rows.begin(), entry.rows.end(), [](std::uint8_t bits) { return bits != 0; }), "a glyph other than space is empty");
     }
     std::printf("glyph coverage: %zu glyphs, all 95 printable ASCII, %zu page characters (%zu outside ASCII), 8 key symbols and the fallback box\n", table.size(), pageCharacters.size(), nonAscii);
 }
@@ -249,18 +246,18 @@ void fallbackTests() {
     view.keys.front().label = u"中";
     const VkExtent2D extent{1920, 1080};
     const auto layout = AgcDriver::LayOutKeyboard(view, extent);
-    require(!AgcDriver::KeyboardHasGlyph(0x65E5) && !AgcDriver::KeyboardHasGlyph(0x1F600), "a CJK or emoji character has a glyph of its own");
+    Require(!AgcDriver::KeyboardHasGlyph(0x65E5) && !AgcDriver::KeyboardHasGlyph(0x1F600), "a CJK or emoji character has a glyph of its own");
     const auto box = glyphPixels(AgcDriver::KeyboardGlyph(AgcDriver::KeyboardFallbackCode));
-    require(&AgcDriver::KeyboardGlyph(0x65E5) == &AgcDriver::KeyboardGlyph(AgcDriver::KeyboardFallbackCode) && &AgcDriver::KeyboardGlyph(0x1F600) == &AgcDriver::KeyboardGlyph(AgcDriver::KeyboardFallbackCode), "CJK and emoji do not fall back to the box");
-    require(fieldGlyphPixels(layout) == 4 * box, "three CJK characters and one surrogate pair do not draw four fallback boxes");
-    require(inside(layout, keyRect(layout, view.keys.front()), OverlayColor::Text) != 0, "a CJK key label draws nothing");
+    Require(&AgcDriver::KeyboardGlyph(0x65E5) == &AgcDriver::KeyboardGlyph(AgcDriver::KeyboardFallbackCode) && &AgcDriver::KeyboardGlyph(0x1F600) == &AgcDriver::KeyboardGlyph(AgcDriver::KeyboardFallbackCode), "CJK and emoji do not fall back to the box");
+    Require(fieldGlyphPixels(layout) == 4 * box, "three CJK characters and one surrogate pair do not draw four fallback boxes");
+    Require(inside(layout, keyRect(layout, view.keys.front()), OverlayColor::Text) != 0, "a CJK key label draws nothing");
     bool threw = false;
     try {
         static_cast<void>(AgcDriver::OverlayGlyph('\x80'));
     } catch (const std::exception&) {
         threw = true;
     }
-    require(threw, "the performance overlay font no longer throws for a character it lacks");
+    Require(threw, "the performance overlay font no longer throws for a character it lacks");
     std::printf("fallback: CJK and an emoji pair drawn as four boxes, a CJK key label drawn, the performance overlay font never consulted\n");
 }
 
@@ -275,15 +272,15 @@ void caretTests() {
         const auto scale = layout.scale;
         const OverlayRect field{layout.bounds.x + KeyboardMetrics::Padding * scale, layout.bounds.y + KeyboardMetrics::Padding * scale, (layout.bounds.width / scale - 2 * KeyboardMetrics::Padding) * scale, KeyboardMetrics::FieldHeight * scale, 0};
         const auto carets = inside(layout, field, OverlayColor::Accent);
-        require(carets == 1, "the field draws " + std::to_string(carets) + " caret bars at caret " + std::to_string(caret));
+        Require(carets == 1, "the field draws " + std::to_string(carets) + " caret bars at caret " + std::to_string(caret));
         for (const auto& rect : layout.rects) {
             if (rect.color != colorOf(OverlayColor::Accent) || !contains(field, rect)) continue;
-            require(rect.width == scale && rect.height == (KeyboardMetrics::FieldHeight - 2) * scale, "the caret is not a bar one glyph pixel wide");
+            Require(rect.width == scale && rect.height == (KeyboardMetrics::FieldHeight - 2) * scale, "the caret is not a bar one glyph pixel wide");
             const auto column = (rect.x + scale - field.x) / scale - KeyboardMetrics::FieldInset;
-            if (caret <= 44) require(column == static_cast<std::int32_t>(caret) * KeyboardMetrics::Advance, "the caret is not after character " + std::to_string(caret));
-            else require(column == 44 * KeyboardMetrics::Advance, "a caret past the field does not scroll the text to keep it at the right edge");
+            if (caret <= 44) Require(column == static_cast<std::int32_t>(caret) * KeyboardMetrics::Advance, "the caret is not after character " + std::to_string(caret));
+            else Require(column == 44 * KeyboardMetrics::Advance, "a caret past the field does not scroll the text to keep it at the right edge");
         }
-        require(fieldGlyphPixels(layout) == 44 * glyphPixels(AgcDriver::KeyboardGlyph(u'a')), "the field does not show 44 characters of a long text");
+        Require(fieldGlyphPixels(layout) == 44 * glyphPixels(AgcDriver::KeyboardGlyph(u'a')), "the field does not show 44 characters of a long text");
     }
     ImeKeyboardView bad = viewOf(state, u"ab", 3);
     bool threw = false;
@@ -292,7 +289,7 @@ void caretTests() {
     } catch (const std::exception&) {
         threw = true;
     }
-    require(threw, "a caret past the text is laid out");
+    Require(threw, "a caret past the text is laid out");
     std::printf("caret: one bar per field, after its character, the text scrolled to keep it in the 44-character field\n");
 }
 
@@ -335,31 +332,31 @@ void compositionTests() {
     const VkExtent2D extent{1280, 720};
     const auto plain = AgcDriver::LayOutKeyboard(composing(u"ab", 1, u"", 0, 0), extent);
     const auto ignored = AgcDriver::LayOutKeyboard(composing(u"ab", 1, u"", 3, 2), extent);
-    require(sameRects(plain.rects, ignored.rects), "a cursor and a selection with no composition changed the layout");
+    Require(sameRects(plain.rects, ignored.rects), "a cursor and a selection with no composition changed the layout");
     const auto baseline = AgcDriver::LayOutKeyboard(viewOf(ImeDialog::PadKeyboardOpen({}), u"ab", 1), extent);
-    require(sameRects(plain.rects, baseline.rects), "a view with an empty composition does not lay out as before");
+    Require(sameRects(plain.rects, baseline.rects), "a view with an empty composition does not lay out as before");
 
     const auto inserted = AgcDriver::LayOutKeyboard(composing(u"ab", 1, u"X", 1, 0), extent);
     const auto flat = AgcDriver::LayOutKeyboard(viewOf(ImeDialog::PadKeyboardOpen({}), u"aXb", 2), extent);
     const auto extra = std::vector<OverlayRect>{underline(inserted, 1, 1, OverlayColor::Accent)};
-    require(inserted.rects.size() == flat.rects.size() + 1, "a one-character composition adds " + std::to_string(inserted.rects.size() - flat.rects.size()) + " rectangles, not one underline");
-    require(sameRects(without(inserted.rects, extra), flat.rects), "the composition is not drawn between the text before and after the caret, or its caret is not after it");
+    Require(inserted.rects.size() == flat.rects.size() + 1, "a one-character composition adds " + std::to_string(inserted.rects.size() - flat.rects.size()) + " rectangles, not one underline");
+    Require(sameRects(without(inserted.rects, extra), flat.rects), "the composition is not drawn between the text before and after the caret, or its caret is not after it");
 
     const auto selected = AgcDriver::LayOutKeyboard(composing(u"", 0, u"abc", 1, 1), extent);
     const auto flatSelected = AgcDriver::LayOutKeyboard(viewOf(ImeDialog::PadKeyboardOpen({}), u"abc", 1), extent);
     const std::vector<OverlayRect> marks{underline(selected, 0, 1, OverlayColor::Accent), underline(selected, 1, 2, OverlayColor::Text), underline(selected, 2, 1, OverlayColor::Accent)};
-    require(sameRects(without(selected.rects, marks), flatSelected.rects), "the selected segment is not the second character underlined twice in the text colour");
-    require(selected.rects.size() == flatSelected.rects.size() + 3, "a three-character composition does not add three underlines");
+    Require(sameRects(without(selected.rects, marks), flatSelected.rects), "the selected segment is not the second character underlined twice in the text colour");
+    Require(selected.rects.size() == flatSelected.rects.size() + 3, "a three-character composition does not add three underlines");
 
     const auto pair = AgcDriver::LayOutKeyboard(composing(u"", 0, u"a\U0001F600b", 3, 0), extent);
     const auto flatPair = AgcDriver::LayOutKeyboard(viewOf(ImeDialog::PadKeyboardOpen({}), u"a\U0001F600b", 3), extent);
     const std::vector<OverlayRect> pairMarks{underline(pair, 0, 1, OverlayColor::Accent), underline(pair, 1, 1, OverlayColor::Accent), underline(pair, 2, 1, OverlayColor::Accent)};
-    require(sameRects(without(pair.rects, pairMarks), flatPair.rects), "a surrogate pair in the composition is not one character");
+    Require(sameRects(without(pair.rects, pairMarks), flatPair.rects), "a surrogate pair in the composition is not one character");
 
-    require(!AgcDriver::KeyboardHasGlyph(0x3053), "the overlay font gained a hiragana glyph; the composition test below assumes none");
+    Require(!AgcDriver::KeyboardHasGlyph(0x3053), "the overlay font gained a hiragana glyph; the composition test below assumes none");
     const auto cjk = AgcDriver::LayOutKeyboard(composing(u"", 0, u"\u3053", 1, 0), extent);
     const auto box = AgcDriver::LayOutKeyboard(viewOf(ImeDialog::PadKeyboardOpen({}), u"\uFFFD", 1), extent);
-    require(cjk.rects.size() == box.rects.size() + 1, "a character the font lacks does not draw as the replacement box");
+    Require(cjk.rects.size() == box.rects.size() + 1, "a character the font lacks does not draw as the replacement box");
 
     std::u16string text(60, u'a');
     const auto scrolled = AgcDriver::LayOutKeyboard(composing(text, 60, u"xyz", 3, 0), extent);
@@ -368,10 +365,10 @@ void compositionTests() {
     for (const auto& rect : scrolled.rects) {
         if (rect.color == colorOf(OverlayColor::Accent) && rect.width == scale && contains(field, rect)) {
             const auto column = (rect.x + scale - field.x) / scale - KeyboardMetrics::FieldInset;
-            require(column == 44 * KeyboardMetrics::Advance, "a composition past the field does not keep the caret at the right edge");
+            Require(column == 44 * KeyboardMetrics::Advance, "a composition past the field does not keep the caret at the right edge");
         }
     }
-    require(inside(scrolled, field, OverlayColor::Accent) == 1 + 3, "a long composition does not draw one caret and three underlines");
+    Require(inside(scrolled, field, OverlayColor::Accent) == 1 + 3, "a long composition does not draw one caret and three underlines");
 
     for (const auto& bad : {composing(u"ab", 1, u"x", 2, 0), composing(u"ab", 1, u"xy", 1, 2), composing(u"ab", 1, u"x", 0, 5)}) {
         bool threw = false;
@@ -380,7 +377,7 @@ void compositionTests() {
         } catch (const std::exception&) {
             threw = true;
         }
-        require(threw, "a composition cursor or selection past its text is laid out");
+        Require(threw, "a composition cursor or selection past its text is laid out");
     }
     std::printf("composition: laid out between the text around the caret, underlined, selection marked, cursor kept in view, bad offsets rejected\n");
 }
@@ -414,12 +411,12 @@ void paletteTests() {
         const auto name = std::string(pq ? "PQ" : "sRGB");
         const double floor = pq ? 0.05 * 203.0 : 0.05;
         const auto of = [&](OverlayColor color) { return luminance(palette[colorOf(color)], pq); };
-        require(palette[colorOf(OverlayColor::Panel)][3] >= 0.9f && palette[colorOf(OverlayColor::Key)][3] == 1.0f && palette[colorOf(OverlayColor::Accent)][3] == 1.0f && palette[colorOf(OverlayColor::Field)][3] == 1.0f, name + ": the keyboard is not opaque enough to read over the game");
-        require(contrast(of(OverlayColor::Text), of(OverlayColor::Key), floor) >= 7.0, name + ": key labels do not reach 7:1 on their keys");
-        require(contrast(of(OverlayColor::Text), of(OverlayColor::Field), floor) >= 7.0, name + ": the text does not reach 7:1 on its field");
-        require(contrast(of(OverlayColor::Accent), of(OverlayColor::Key), floor) >= 4.5, name + ": the selected border does not reach 4.5:1 on a key");
-        require(contrast(of(OverlayColor::Accent), of(OverlayColor::Field), floor) >= 4.5, name + ": the caret does not reach 4.5:1 on the field");
-        require(contrast(of(OverlayColor::Graph), of(OverlayColor::Key), floor) >= 4.5, name + ": badges do not reach 4.5:1 on their keys");
+        Require(palette[colorOf(OverlayColor::Panel)][3] >= 0.9f && palette[colorOf(OverlayColor::Key)][3] == 1.0f && palette[colorOf(OverlayColor::Accent)][3] == 1.0f && palette[colorOf(OverlayColor::Field)][3] == 1.0f, name + ": the keyboard is not opaque enough to read over the game");
+        Require(contrast(of(OverlayColor::Text), of(OverlayColor::Key), floor) >= 7.0, name + ": key labels do not reach 7:1 on their keys");
+        Require(contrast(of(OverlayColor::Text), of(OverlayColor::Field), floor) >= 7.0, name + ": the text does not reach 7:1 on its field");
+        Require(contrast(of(OverlayColor::Accent), of(OverlayColor::Key), floor) >= 4.5, name + ": the selected border does not reach 4.5:1 on a key");
+        Require(contrast(of(OverlayColor::Accent), of(OverlayColor::Field), floor) >= 4.5, name + ": the caret does not reach 4.5:1 on the field");
+        Require(contrast(of(OverlayColor::Graph), of(OverlayColor::Key), floor) >= 4.5, name + ": badges do not reach 4.5:1 on their keys");
         std::printf("%s palette: labels %.1f:1, text %.1f:1, border %.1f:1, caret %.1f:1, badges %.1f:1\n", name.c_str(), contrast(of(OverlayColor::Text), of(OverlayColor::Key), floor), contrast(of(OverlayColor::Text), of(OverlayColor::Field), floor), contrast(of(OverlayColor::Accent), of(OverlayColor::Key), floor), contrast(of(OverlayColor::Accent), of(OverlayColor::Field), floor), contrast(of(OverlayColor::Graph), of(OverlayColor::Key), floor));
     }
 }
@@ -442,25 +439,25 @@ std::vector<OverlayRect> rectsOf(const OverlayLayout& layout, OverlayColor color
 void dialogWrapTests() {
     using AgcDriver::WrapDialogMessage;
     using Lines = std::vector<std::u32string>;
-    require(WrapDialogMessage(u"hello world", 5, 8) == Lines{U"hello", U"world"}, "words are not wrapped at the column limit");
-    require(WrapDialogMessage(u"a b c", 5, 8) == Lines{U"a b c"}, "words that fit were split");
-    require(WrapDialogMessage(u"abcdefghij", 4, 8) == Lines{U"abcd", U"efgh", U"ij"}, "a long word is not broken at the column limit");
-    require(WrapDialogMessage(u"one\ntwo", 20, 8) == Lines{U"one", U"two"}, "a line break is not kept");
-    require(WrapDialogMessage(u"one\n\ntwo", 20, 8) == Lines{U"one", U"", U"two"}, "a blank line is not kept");
-    require(WrapDialogMessage(u"one\r\ntwo", 20, 8) == Lines{U"one", U"two"}, "a carriage return is drawn");
-    require(WrapDialogMessage(u"  spaced   out  ", 20, 8) == Lines{U"spaced out"}, "extra spaces are kept");
-    require(WrapDialogMessage(u"", 20, 8) == Lines{U""}, "an empty message has no line");
-    require(WrapDialogMessage(u"one\n", 20, 8) == Lines{U"one"}, "a trailing line break adds a line");
-    require(WrapDialogMessage(u"a\U0001F600b", 4, 8) == Lines{U"a\U0001F600b"}, "a surrogate pair counts as two characters");
-    require(WrapDialogMessage(u"aa bb cc dd ee", 5, 2) == Lines{U"aa bb", U"cc..."}, "an overlong message does not end in dots");
-    require(WrapDialogMessage(u"abcde fghij klmno", 5, 2) == Lines{U"abcde", U"fg..."}, "a full last line is not cut to make room for the dots");
+    Require(WrapDialogMessage(u"hello world", 5, 8) == Lines{U"hello", U"world"}, "words are not wrapped at the column limit");
+    Require(WrapDialogMessage(u"a b c", 5, 8) == Lines{U"a b c"}, "words that fit were split");
+    Require(WrapDialogMessage(u"abcdefghij", 4, 8) == Lines{U"abcd", U"efgh", U"ij"}, "a long word is not broken at the column limit");
+    Require(WrapDialogMessage(u"one\ntwo", 20, 8) == Lines{U"one", U"two"}, "a line break is not kept");
+    Require(WrapDialogMessage(u"one\n\ntwo", 20, 8) == Lines{U"one", U"", U"two"}, "a blank line is not kept");
+    Require(WrapDialogMessage(u"one\r\ntwo", 20, 8) == Lines{U"one", U"two"}, "a carriage return is drawn");
+    Require(WrapDialogMessage(u"  spaced   out  ", 20, 8) == Lines{U"spaced out"}, "extra spaces are kept");
+    Require(WrapDialogMessage(u"", 20, 8) == Lines{U""}, "an empty message has no line");
+    Require(WrapDialogMessage(u"one\n", 20, 8) == Lines{U"one"}, "a trailing line break adds a line");
+    Require(WrapDialogMessage(u"a\U0001F600b", 4, 8) == Lines{U"a\U0001F600b"}, "a surrogate pair counts as two characters");
+    Require(WrapDialogMessage(u"aa bb cc dd ee", 5, 2) == Lines{U"aa bb", U"cc..."}, "an overlong message does not end in dots");
+    Require(WrapDialogMessage(u"abcde fghij klmno", 5, 2) == Lines{U"abcde", U"fg..."}, "a full last line is not cut to make room for the dots");
     bool threw = false;
     try {
         static_cast<void>(WrapDialogMessage(u"x", 3, 8));
     } catch (const std::exception&) {
         threw = true;
     }
-    require(threw, "a dialog with no room for its text was accepted");
+    Require(threw, "a dialog with no room for its text was accepted");
     std::printf("dialog wrap: words, long words, breaks, dots\n");
 }
 
@@ -472,22 +469,22 @@ void dialogLayoutTests() {
             const auto view = dialogOf(message, {labels.begin(), labels.begin() + static_cast<std::ptrdiff_t>(count)}, count - 1);
             const auto layout = AgcDriver::LayOutDialog(view, extent);
             const auto name = std::to_string(extent.width) + "x" + std::to_string(extent.height) + " with " + std::to_string(count) + " buttons";
-            require(layout.scale == std::max<std::int32_t>(1, static_cast<std::int32_t>(extent.height / KeyboardMetrics::LinesPerScale)), name + ": the dialog scale is not the keyboard's");
-            require(contains({0, 0, static_cast<std::int32_t>(extent.width), static_cast<std::int32_t>(extent.height), 0}, layout.bounds), name + ": the dialog leaves the screen");
-            require(std::abs(layout.bounds.x + layout.bounds.width / 2 - static_cast<std::int32_t>(extent.width) / 2) <= layout.scale && std::abs(layout.bounds.y + layout.bounds.height / 2 - static_cast<std::int32_t>(extent.height) / 2) <= layout.scale, name + ": the dialog is not centred");
-            require(layout.rects.front().color == colorOf(OverlayColor::Panel) && layout.rects.front().x == layout.bounds.x, name + ": the panel is not drawn first");
-            for (const auto& rect : layout.rects) require(contains(layout.bounds, rect), name + ": a rectangle leaves the panel");
+            Require(layout.scale == std::max<std::int32_t>(1, static_cast<std::int32_t>(extent.height / KeyboardMetrics::LinesPerScale)), name + ": the dialog scale is not the keyboard's");
+            Require(contains({0, 0, static_cast<std::int32_t>(extent.width), static_cast<std::int32_t>(extent.height), 0}, layout.bounds), name + ": the dialog leaves the screen");
+            Require(std::abs(layout.bounds.x + layout.bounds.width / 2 - static_cast<std::int32_t>(extent.width) / 2) <= layout.scale && std::abs(layout.bounds.y + layout.bounds.height / 2 - static_cast<std::int32_t>(extent.height) / 2) <= layout.scale, name + ": the dialog is not centred");
+            Require(layout.rects.front().color == colorOf(OverlayColor::Panel) && layout.rects.front().x == layout.bounds.x, name + ": the panel is not drawn first");
+            for (const auto& rect : layout.rects) Require(contains(layout.bounds, rect), name + ": a rectangle leaves the panel");
             const auto accents = rectsOf(layout, OverlayColor::Accent);
-            require(rectsOf(layout, OverlayColor::Key).size() == count && accents.size() == 1, name + ": one key per button and one accent border are expected");
+            Require(rectsOf(layout, OverlayColor::Key).size() == count && accents.size() == 1, name + ": one key per button and one accent border are expected");
             std::vector<OverlayRect> buttons;
             for (const auto& rect : layout.rects) {
                 if ((rect.color == colorOf(OverlayColor::Key) || rect.color == colorOf(OverlayColor::Accent)) && rect.height == AgcDriver::DialogMetrics::ButtonHeight * layout.scale) buttons.push_back(rect);
             }
             std::sort(buttons.begin(), buttons.end(), [](const OverlayRect& a, const OverlayRect& b) { return a.x < b.x; });
-            require(buttons.size() == count, name + ": the buttons are not all drawn");
-            for (std::size_t index = 1; index < buttons.size(); ++index) require(buttons[index].x >= buttons[index - 1].x + buttons[index - 1].width, name + ": the buttons overlap");
-            require(buttons.back().color == colorOf(OverlayColor::Accent), name + ": the accent border is not on the focused button");
-            require(!rectsOf(layout, OverlayColor::Text).empty(), name + ": no text is drawn");
+            Require(buttons.size() == count, name + ": the buttons are not all drawn");
+            for (std::size_t index = 1; index < buttons.size(); ++index) Require(buttons[index].x >= buttons[index - 1].x + buttons[index - 1].width, name + ": the buttons overlap");
+            Require(buttons.back().color == colorOf(OverlayColor::Accent), name + ": the accent border is not on the focused button");
+            Require(!rectsOf(layout, OverlayColor::Text).empty(), name + ": no text is drawn");
         }
     }
     std::printf("dialog layout: bounds, centring, buttons, focus\n");
@@ -495,18 +492,18 @@ void dialogLayoutTests() {
     const VkExtent2D extent{1280, 720};
     const auto first = AgcDriver::LayOutDialog(dialogOf(u"Question", {u"Yes", u"No"}, 0), extent);
     const auto second = AgcDriver::LayOutDialog(dialogOf(u"Question", {u"Yes", u"No"}, 1), extent);
-    require(first.bounds.x == second.bounds.x && first.bounds.width == second.bounds.width, "the focus changed the panel size");
-    require(rectsOf(first, OverlayColor::Accent).front().x < rectsOf(second, OverlayColor::Accent).front().x, "the accent border does not follow the focus");
-    require(rectsOf(AgcDriver::LayOutDialog(dialogOf(u"Question", {u"Yes", u"No"}, 5), extent), OverlayColor::Accent).empty(), "a dialog with no focused button drew an accent border");
+    Require(first.bounds.x == second.bounds.x && first.bounds.width == second.bounds.width, "the focus changed the panel size");
+    Require(rectsOf(first, OverlayColor::Accent).front().x < rectsOf(second, OverlayColor::Accent).front().x, "the accent border does not follow the focus");
+    Require(rectsOf(AgcDriver::LayOutDialog(dialogOf(u"Question", {u"Yes", u"No"}, 5), extent), OverlayColor::Accent).empty(), "a dialog with no focused button drew an accent border");
 
     const auto crowded = dialogOf(std::u16string(400, u'w'), {u"OK"}, 0);
     const auto crowdedLayout = AgcDriver::LayOutDialog(crowded, extent);
-    require(contains({0, 0, 1280, 720, 0}, crowdedLayout.bounds), "a long message makes the dialog leave the screen");
-    require(crowdedLayout.bounds.height <= 720, "a long message makes the dialog taller than the screen");
+    Require(contains({0, 0, 1280, 720, 0}, crowdedLayout.bounds), "a long message makes the dialog leave the screen");
+    Require(crowdedLayout.bounds.height <= 720, "a long message makes the dialog taller than the screen");
 
     const auto small = AgcDriver::LayOutDialog(dialogOf(u"Very long message that needs the whole panel width to be shown at once here", {u"Yes", u"No", u"Cancel"}, 0), VkExtent2D{1280, 720});
     const auto narrow = AgcDriver::LayOutDialog(dialogOf(u"Very long message that needs the whole panel width to be shown at once here", {u"Yes", u"No", u"Cancel"}, 0), VkExtent2D{320, 720});
-    require(narrow.scale == 1 && narrow.scale < small.scale, "the dialog does not shrink for a narrow target");
+    Require(narrow.scale == 1 && narrow.scale < small.scale, "the dialog does not shrink for a narrow target");
 
     for (const auto& bad : {dialogOf(u"x", {}, 0), dialogOf(u"x", {u"a", u"b", u"c", u"d"}, 0)}) {
         bool threw = false;
@@ -515,7 +512,7 @@ void dialogLayoutTests() {
         } catch (const std::exception&) {
             threw = true;
         }
-        require(threw, "a dialog without one to three buttons was laid out");
+        Require(threw, "a dialog without one to three buttons was laid out");
     }
     bool threw = false;
     try {
@@ -523,42 +520,42 @@ void dialogLayoutTests() {
     } catch (const std::exception&) {
         threw = true;
     }
-    require(threw, "a dialog without a destination was laid out");
+    Require(threw, "a dialog without a destination was laid out");
     std::printf("dialog layout: focus, long text, narrow target, invalid input\n");
 }
 
 void systemDialogTests() {
     const VkExtent2D extent{1280, 720};
-    require(!AgcDriver::SystemDialogView().has_value() && !AgcDriver::SystemOverlayLayout(extent).has_value(), "an overlay is laid out before one was set");
+    Require(!AgcDriver::SystemDialogView().has_value() && !AgcDriver::SystemOverlayLayout(extent).has_value(), "an overlay is laid out before one was set");
     const auto dialog = dialogOf(u"Continue?", {u"Yes", u"No"}, 1);
     AgcDriverSetSystemDialog_nid_postfix(&dialog);
     const auto shown = AgcDriver::SystemDialogView();
-    require(shown.has_value() && shown->message == u"Continue?" && shown->buttons.size() == 2 && shown->buttons[1].selected, "the shown dialog is not the one set");
+    Require(shown.has_value() && shown->message == u"Continue?" && shown->buttons.size() == 2 && shown->buttons[1].selected, "the shown dialog is not the one set");
     const auto layout = AgcDriver::SystemOverlayLayout(extent);
     const auto expected = AgcDriver::LayOutDialog(dialog, extent);
-    require(layout.has_value() && layout->bounds.x == expected.bounds.x && layout->bounds.width == expected.bounds.width && layout->rects.size() == expected.rects.size(), "the system overlay is not the dialog");
+    Require(layout.has_value() && layout->bounds.x == expected.bounds.x && layout->bounds.width == expected.bounds.width && layout->rects.size() == expected.rects.size(), "the system overlay is not the dialog");
     ImeDialog::PadKeyboardOptions options;
     const auto keyboard = viewOf(ImeDialog::PadKeyboardOpen(options), u"ab", 1);
     AgcDriverSetSystemOverlay_nid_postfix(&keyboard);
     const auto both = AgcDriver::SystemOverlayLayout(extent);
     const auto keyboardLayout = AgcDriver::LayOutKeyboard(keyboard, extent);
-    require(both.has_value() && both->bounds.width == keyboardLayout.bounds.width && both->rects.size() == keyboardLayout.rects.size(), "the keyboard does not take the overlay from the dialog");
+    Require(both.has_value() && both->bounds.width == keyboardLayout.bounds.width && both->rects.size() == keyboardLayout.rects.size(), "the keyboard does not take the overlay from the dialog");
     AgcDriverSetSystemOverlay_nid_postfix(nullptr);
-    require(AgcDriver::SystemOverlayLayout(extent).has_value(), "the dialog is gone after the keyboard was cleared");
+    Require(AgcDriver::SystemOverlayLayout(extent).has_value(), "the dialog is gone after the keyboard was cleared");
     AgcDriverSetSystemDialog_nid_postfix(nullptr);
-    require(!AgcDriver::SystemDialogView().has_value() && !AgcDriver::SystemOverlayLayout(extent).has_value(), "a cleared dialog is still shown");
+    Require(!AgcDriver::SystemDialogView().has_value() && !AgcDriver::SystemOverlayLayout(extent).has_value(), "a cleared dialog is still shown");
     std::printf("system dialog: set, read back, ranked below the keyboard and cleared\n");
 }
 
 void systemOverlayTests() {
-    require(!AgcDriver::SystemOverlayView().has_value(), "a keyboard is shown before one was set");
+    Require(!AgcDriver::SystemOverlayView().has_value(), "a keyboard is shown before one was set");
     ImeDialog::PadKeyboardOptions options;
     const auto view = viewOf(ImeDialog::PadKeyboardOpen(options), u"ab", 1);
     AgcDriverSetSystemOverlay_nid_postfix(&view);
     const auto shown = AgcDriver::SystemOverlayView();
-    require(shown.has_value() && shown->text == u"ab" && shown->caret == 1 && shown->keys.size() == view.keys.size(), "the shown keyboard is not the one set");
+    Require(shown.has_value() && shown->text == u"ab" && shown->caret == 1 && shown->keys.size() == view.keys.size(), "the shown keyboard is not the one set");
     AgcDriverSetSystemOverlay_nid_postfix(nullptr);
-    require(!AgcDriver::SystemOverlayView().has_value(), "a cleared keyboard is still shown");
+    Require(!AgcDriver::SystemOverlayView().has_value(), "a cleared keyboard is still shown");
     std::printf("system overlay: set, read back and cleared\n");
 }
 

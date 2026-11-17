@@ -3,24 +3,13 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 #include <thread>
-
-static void Require(bool value) { if (!value) std::abort(); }
-
-template<typename TException, typename TCall>
-static void RequireThrows(TCall call) {
-    try {
-        call();
-    } catch (const TException&) {
-        return;
-    }
-    std::abort();
-}
 
 constexpr int success = 0;
 constexpr int permission = 1;
@@ -55,7 +44,7 @@ static void DiffToMicroseconds() {
     Require(Near(Microseconds({now.sec + 2, now.nsec + 1}), 2000001));
     const auto wrapped = static_cast<std::uint32_t>(Microseconds(FromNow(3000 * second)));
     Require(wrapped <= 3000000001u && wrapped > 3000000000u - 500000u);
-    RequireThrows<std::invalid_argument>([] { _ZNSt8__sce_v228_Timespec64_diff_to_usecondsEPK8timespec_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZNSt8__sce_v228_Timespec64_diff_to_usecondsEPK8timespec_nid_postfix(nullptr); });
 }
 
 static void ExclusiveOwnership() {
@@ -190,7 +179,7 @@ static void ForwardedResults() {
     Require(_Smtx_timedlock_shared_nid_postfix(&smtx, &later) == timedOut);
 
     RegisterPthreadSyncForwards_nid_no_patch(nullptr);
-    RequireThrows<std::runtime_error>([&] { _Smtx_lock_exclusive_nid_postfix(&smtx); });
+    ExpectErr<std::runtime_error>([&] { _Smtx_lock_exclusive_nid_postfix(&smtx); });
 }
 
 int main() {

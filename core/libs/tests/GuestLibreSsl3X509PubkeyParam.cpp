@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl3/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -15,17 +16,6 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
-
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL3 X509 public-key parameter check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> static void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
-    try { action(); } catch (const std::invalid_argument&) { return; }
-    Require(false, location);
-}
 
 class ReadOnlyPage {
 public:
@@ -117,13 +107,13 @@ int main() {
     Require(returnedAlgorithm == &algorithmInfo);
     Require(X509_PUBKEY_get0_param_nid_postfix(nullptr, nullptr, nullptr, nullptr, nullptr) == 1);
 
-    RequireThrows([&] { X509_PUBKEY_get0_param_nid_postfix(nullptr, &returnedKey, nullptr, nullptr, &pubkey); });
-    RequireThrows([&] { X509_PUBKEY_get0_param_nid_postfix(&returnedOid, nullptr, nullptr, nullptr, nullptr); });
-    RequireThrows([&] { X509_PUBKEY_get0_param_nid_postfix(nullptr, &returnedKey, &returnedLength, nullptr, nullptr); });
+    ExpectErr<std::invalid_argument>([&] { X509_PUBKEY_get0_param_nid_postfix(nullptr, &returnedKey, nullptr, nullptr, &pubkey); });
+    ExpectErr<std::invalid_argument>([&] { X509_PUBKEY_get0_param_nid_postfix(&returnedOid, nullptr, nullptr, nullptr, nullptr); });
+    ExpectErr<std::invalid_argument>([&] { X509_PUBKEY_get0_param_nid_postfix(nullptr, &returnedKey, &returnedLength, nullptr, nullptr); });
     LibreSsl3X509Pubkey noAlgorithm{nullptr, &bitString, nullptr};
     LibreSsl3X509Pubkey noPublicKey{&algorithmInfo, nullptr, nullptr};
-    RequireThrows([&] { X509_PUBKEY_get0_param_nid_postfix(&returnedOid, nullptr, nullptr, nullptr, &noAlgorithm); });
-    RequireThrows([&] { X509_PUBKEY_get0_param_nid_postfix(nullptr, &returnedKey, &returnedLength, nullptr, &noPublicKey); });
+    ExpectErr<std::invalid_argument>([&] { X509_PUBKEY_get0_param_nid_postfix(&returnedOid, nullptr, nullptr, nullptr, &noAlgorithm); });
+    ExpectErr<std::invalid_argument>([&] { X509_PUBKEY_get0_param_nid_postfix(nullptr, &returnedKey, &returnedLength, nullptr, &noPublicKey); });
 
     {
         ReadOnlyPage algorPage;

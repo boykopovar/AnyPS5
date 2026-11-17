@@ -1,5 +1,6 @@
 #include "prx/libSceNpRemotePlaySessionSignaling/libSceNpRemotePlaySessionSignaling.hpp"
 #include "prx/libSceNpSessionSignaling/include/Api.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -16,12 +17,6 @@ constexpr int NotInitialized = static_cast<int>(0x80553301u);
 constexpr int AlreadyInitialized = static_cast<int>(0x80553302u);
 constexpr int ContextNotFound = static_cast<int>(0x80553308u);
 constexpr std::uint32_t Stale = 0x5A5A5A5Au;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "NpRemotePlaySessionSignaling: %s\n", message);
-    std::abort();
-}
 
 template <typename TCall>
 void RequireNotImplemented(TCall call, const std::string& name) {

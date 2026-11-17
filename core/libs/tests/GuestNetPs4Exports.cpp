@@ -1,6 +1,7 @@
 #include "prx/libSceNet/include/Net.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -10,8 +11,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
 
 constexpr int kErrorBase = static_cast<int>(0x80410100);
 constexpr int kEnoent = 2;

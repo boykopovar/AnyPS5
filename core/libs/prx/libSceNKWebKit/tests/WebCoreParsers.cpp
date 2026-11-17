@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -17,23 +18,6 @@ namespace {
 using NKWebKit::WtfAbi::ByteVector;
 using NKWebKit::WtfAbi::String;
 using NKWebKit::WtfAbi::StringView;
-
-void Check(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "WebCore parsers check failed at line %u\n", static_cast<unsigned>(location.line()));
-        std::abort();
-    }
-}
-
-template<typename T> void Throws(T action, std::source_location location = std::source_location::current()) {
-    bool threw = false;
-    try {
-        action();
-    } catch (const std::exception&) {
-        threw = true;
-    }
-    Check(threw, location);
-}
 
 template<typename Function> void ForBothWidths(const char* text, Function function) {
     function(StringView{text, static_cast<unsigned>(std::strlen(text)), true});
@@ -76,14 +60,14 @@ void TestXFrameOptions() {
     for (const auto& test : cases) {
         ForBothWidths(test.text, [&](StringView view) {
             StringImpl storage{1, view.length, view.data, view.is8Bit ? 4u : 0u};
-            Check(_ZN7WebCore24parseXFrameOptionsHeaderERKN3WTF6StringE(String(&storage)) == test.expected);
+            Require(_ZN7WebCore24parseXFrameOptionsHeaderERKN3WTF6StringE(String(&storage)) == test.expected);
         });
     }
-    Check(_ZN7WebCore24parseXFrameOptionsHeaderERKN3WTF6StringE(String()) == Disposition::None);
+    Require(_ZN7WebCore24parseXFrameOptionsHeaderERKN3WTF6StringE(String()) == Disposition::None);
 
     auto checkWide = [](std::u16string_view text, Disposition expected) {
         StringImpl storage{1, static_cast<unsigned>(text.size()), text.data(), 0};
-        Check(_ZN7WebCore24parseXFrameOptionsHeaderERKN3WTF6StringE(String(&storage)) == expected);
+        Require(_ZN7WebCore24parseXFrameOptionsHeaderERKN3WTF6StringE(String(&storage)) == expected);
     };
     checkWide(u"\u1680DENY\u2028,\u2007deny\u3000", Disposition::Deny);
     checkWide(u"SAMEORIGIN\u2029", Disposition::Invalid);
@@ -91,7 +75,7 @@ void TestXFrameOptions() {
     checkWide(std::u16string_view(u"DENY\0", 5), Disposition::Invalid);
 
     StringImpl invalid{1, 1, nullptr, 4};
-    Throws([&] { _ZN7WebCore24parseXFrameOptionsHeaderERKN3WTF6StringE(String(&invalid)); });
+    ExpectErr([&] { _ZN7WebCore24parseXFrameOptionsHeaderERKN3WTF6StringE(String(&invalid)); });
 }
 
 struct IntegerCase {
@@ -151,48 +135,48 @@ void TestParseHTMLInteger() {
     for (const auto& testCase : kIntegerCases) {
         ForBothWidths(testCase.input, [&](StringView view) {
             auto result = _ZN7WebCore16parseHTMLIntegerEN3WTF10StringViewE(view);
-            Check(result.hasValue);
-            Check(result.value == testCase.expected);
+            Require(result.hasValue);
+            Require(result.value == testCase.expected);
         });
     }
     for (const char* input : kIntegerFailures) {
         ForBothWidths(input, [&](StringView view) {
-            Check(!_ZN7WebCore16parseHTMLIntegerEN3WTF10StringViewE(view).hasValue);
+            Require(!_ZN7WebCore16parseHTMLIntegerEN3WTF10StringViewE(view).hasValue);
         });
     }
 
     ForBothWidths("-2147483649", [](StringView view) {
         auto result = _ZN7WebCore16parseHTMLIntegerEN3WTF10StringViewE(view);
-        Check(!result.hasValue && result.error == WebCore::HTMLIntegerParsingError::NegativeOverflow);
+        Require(!result.hasValue && result.error == WebCore::HTMLIntegerParsingError::NegativeOverflow);
     });
     ForBothWidths("2147483648", [](StringView view) {
         auto result = _ZN7WebCore16parseHTMLIntegerEN3WTF10StringViewE(view);
-        Check(!result.hasValue && result.error == WebCore::HTMLIntegerParsingError::PositiveOverflow);
+        Require(!result.hasValue && result.error == WebCore::HTMLIntegerParsingError::PositiveOverflow);
     });
     ForBothWidths("111111111111111111", [](StringView view) {
         auto result = _ZN7WebCore16parseHTMLIntegerEN3WTF10StringViewE(view);
-        Check(!result.hasValue && result.error == WebCore::HTMLIntegerParsingError::PositiveOverflow);
+        Require(!result.hasValue && result.error == WebCore::HTMLIntegerParsingError::PositiveOverflow);
     });
     for (const char* input : {"", " ", "+", "-", "a", "\v123", ".1"}) {
         ForBothWidths(input, [](StringView view) {
             auto result = _ZN7WebCore16parseHTMLIntegerEN3WTF10StringViewE(view);
-            Check(!result.hasValue && result.error == WebCore::HTMLIntegerParsingError::Other);
+            Require(!result.hasValue && result.error == WebCore::HTMLIntegerParsingError::Other);
         });
     }
 
     std::u16string wide = u"12\u0663";
     auto result = _ZN7WebCore16parseHTMLIntegerEN3WTF10StringViewE(StringView{wide.data(), static_cast<unsigned>(wide.size()), false});
-    Check(result.hasValue && result.value == 12);
+    Require(result.hasValue && result.value == 12);
     wide = u"\u00a0" u"12";
-    Check(!_ZN7WebCore16parseHTMLIntegerEN3WTF10StringViewE(StringView{wide.data(), static_cast<unsigned>(wide.size()), false}).hasValue);
+    Require(!_ZN7WebCore16parseHTMLIntegerEN3WTF10StringViewE(StringView{wide.data(), static_cast<unsigned>(wide.size()), false}).hasValue);
 
-    Check(!_ZN7WebCore16parseHTMLIntegerEN3WTF10StringViewE(StringView{nullptr, 0, true}).hasValue);
-    Throws([] { _ZN7WebCore16parseHTMLIntegerEN3WTF10StringViewE(StringView{nullptr, 3, true}); });
+    Require(!_ZN7WebCore16parseHTMLIntegerEN3WTF10StringViewE(StringView{nullptr, 0, true}).hasValue);
+    ExpectErr([] { _ZN7WebCore16parseHTMLIntegerEN3WTF10StringViewE(StringView{nullptr, 3, true}); });
 }
 
 void ExpectPolicy(const char* text, WebCore::CrossOriginResourcePolicy expected, std::source_location location = std::source_location::current()) {
     ForBothWidths(text, [&](StringView view) {
-        Check(_ZN7WebCore36parseCrossOriginResourcePolicyHeaderEN3WTF10StringViewE(view) == expected, location);
+        Require(_ZN7WebCore36parseCrossOriginResourcePolicyHeaderEN3WTF10StringViewE(view) == expected, location);
     });
 }
 
@@ -211,8 +195,8 @@ void TestCrossOriginResourcePolicy() {
     ExpectPolicy("same-origins", CrossOriginResourcePolicy::Invalid);
     ExpectPolicy("\fsame-origin", CrossOriginResourcePolicy::Invalid);
     ExpectPolicy("\vsame-site", CrossOriginResourcePolicy::Invalid);
-    Check(_ZN7WebCore36parseCrossOriginResourcePolicyHeaderEN3WTF10StringViewE(StringView{nullptr, 0, true}) == CrossOriginResourcePolicy::None);
-    Throws([] { _ZN7WebCore36parseCrossOriginResourcePolicyHeaderEN3WTF10StringViewE(StringView{nullptr, 4, true}); });
+    Require(_ZN7WebCore36parseCrossOriginResourcePolicyHeaderEN3WTF10StringViewE(StringView{nullptr, 0, true}) == CrossOriginResourcePolicy::None);
+    ExpectErr([] { _ZN7WebCore36parseCrossOriginResourcePolicyHeaderEN3WTF10StringViewE(StringView{nullptr, 4, true}); });
 }
 
 ByteVector Make(std::initializer_list<unsigned char> bytes) {
@@ -248,7 +232,7 @@ constexpr unsigned char letterB = 'b';
 std::string ToLF(std::initializer_list<unsigned char> bytes) {
     ByteVector input = Make(bytes);
     ByteVector output = _ZN3WTF24normalizeLineEndingsToLFEONS_6VectorIhLm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEE(std::move(input));
-    Check(input.buffer == nullptr && input.size == 0 && input.capacity == 0);
+    Require(input.buffer == nullptr && input.size == 0 && input.capacity == 0);
     return Stringify(output);
 }
 
@@ -265,62 +249,62 @@ std::string ToNative(std::initializer_list<unsigned char> bytes) {
 }
 
 void TestLineEndings() {
-    Check(ToLF({}) == "");
-    Check(ToLF({null}) == "<0>");
-    Check(ToLF({letterA}) == "a");
-    Check(ToLF({CR}) == "<LF>");
-    Check(ToLF({LF}) == "<LF>");
-    Check(ToLF({CR, LF}) == "<LF>");
-    Check(ToLF({LF, LF}) == "<LF><LF>");
-    Check(ToLF({CR, CR}) == "<LF><LF>");
-    Check(ToLF({LF, CR}) == "<LF><LF>");
-    Check(ToLF({letterA, CR}) == "a<LF>");
-    Check(ToLF({letterA, LF}) == "a<LF>");
-    Check(ToLF({letterA, CR, LF}) == "a<LF>");
-    Check(ToLF({letterA, LF, CR}) == "a<LF><LF>");
-    Check(ToLF({letterA, CR, letterB}) == "a<LF>b");
-    Check(ToLF({letterA, LF, letterB}) == "a<LF>b");
-    Check(ToLF({letterA, CR, LF, letterB}) == "a<LF>b");
-    Check(ToLF({letterA, LF, CR, letterB}) == "a<LF><LF>b");
+    Require(ToLF({}) == "");
+    Require(ToLF({null}) == "<0>");
+    Require(ToLF({letterA}) == "a");
+    Require(ToLF({CR}) == "<LF>");
+    Require(ToLF({LF}) == "<LF>");
+    Require(ToLF({CR, LF}) == "<LF>");
+    Require(ToLF({LF, LF}) == "<LF><LF>");
+    Require(ToLF({CR, CR}) == "<LF><LF>");
+    Require(ToLF({LF, CR}) == "<LF><LF>");
+    Require(ToLF({letterA, CR}) == "a<LF>");
+    Require(ToLF({letterA, LF}) == "a<LF>");
+    Require(ToLF({letterA, CR, LF}) == "a<LF>");
+    Require(ToLF({letterA, LF, CR}) == "a<LF><LF>");
+    Require(ToLF({letterA, CR, letterB}) == "a<LF>b");
+    Require(ToLF({letterA, LF, letterB}) == "a<LF>b");
+    Require(ToLF({letterA, CR, LF, letterB}) == "a<LF>b");
+    Require(ToLF({letterA, LF, CR, letterB}) == "a<LF><LF>b");
 
-    Check(ToCRLF({}) == "");
-    Check(ToCRLF({null}) == "<0>");
-    Check(ToCRLF({letterA}) == "a");
-    Check(ToCRLF({CR}) == "<CR><LF>");
-    Check(ToCRLF({LF}) == "<CR><LF>");
-    Check(ToCRLF({CR, LF}) == "<CR><LF>");
-    Check(ToCRLF({LF, LF}) == "<CR><LF><CR><LF>");
-    Check(ToCRLF({CR, CR}) == "<CR><LF><CR><LF>");
-    Check(ToCRLF({LF, CR}) == "<CR><LF><CR><LF>");
-    Check(ToCRLF({letterA, CR}) == "a<CR><LF>");
-    Check(ToCRLF({letterA, LF}) == "a<CR><LF>");
-    Check(ToCRLF({letterA, CR, LF}) == "a<CR><LF>");
-    Check(ToCRLF({letterA, LF, CR}) == "a<CR><LF><CR><LF>");
-    Check(ToCRLF({letterA, CR, letterB}) == "a<CR><LF>b");
-    Check(ToCRLF({letterA, LF, letterB}) == "a<CR><LF>b");
-    Check(ToCRLF({letterA, CR, LF, letterB}) == "a<CR><LF>b");
-    Check(ToCRLF({letterA, LF, CR, letterB}) == "a<CR><LF><CR><LF>b");
+    Require(ToCRLF({}) == "");
+    Require(ToCRLF({null}) == "<0>");
+    Require(ToCRLF({letterA}) == "a");
+    Require(ToCRLF({CR}) == "<CR><LF>");
+    Require(ToCRLF({LF}) == "<CR><LF>");
+    Require(ToCRLF({CR, LF}) == "<CR><LF>");
+    Require(ToCRLF({LF, LF}) == "<CR><LF><CR><LF>");
+    Require(ToCRLF({CR, CR}) == "<CR><LF><CR><LF>");
+    Require(ToCRLF({LF, CR}) == "<CR><LF><CR><LF>");
+    Require(ToCRLF({letterA, CR}) == "a<CR><LF>");
+    Require(ToCRLF({letterA, LF}) == "a<CR><LF>");
+    Require(ToCRLF({letterA, CR, LF}) == "a<CR><LF>");
+    Require(ToCRLF({letterA, LF, CR}) == "a<CR><LF><CR><LF>");
+    Require(ToCRLF({letterA, CR, letterB}) == "a<CR><LF>b");
+    Require(ToCRLF({letterA, LF, letterB}) == "a<CR><LF>b");
+    Require(ToCRLF({letterA, CR, LF, letterB}) == "a<CR><LF>b");
+    Require(ToCRLF({letterA, LF, CR, letterB}) == "a<CR><LF><CR><LF>b");
 
-    Check(ToNative({letterA, CR, LF, letterB, CR, CR}) == "a<LF>b<LF><LF>");
-    Check(ToNative({}) == "");
+    Require(ToNative({letterA, CR, LF, letterB, CR, CR}) == "a<LF>b<LF><LF>");
+    Require(ToNative({}) == "");
 }
 
 void TestLineEndingStorage() {
     ByteVector input = Make({letterA, CR, LF, letterB});
     unsigned char* buffer = input.buffer;
     ByteVector lf = _ZN3WTF24normalizeLineEndingsToLFEONS_6VectorIhLm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEE(std::move(input));
-    Check(lf.buffer == buffer && lf.size == 3 && lf.capacity == 4);
+    Require(lf.buffer == buffer && lf.size == 3 && lf.capacity == 4);
 
     ByteVector clean = Make({letterA, letterB});
     unsigned char* cleanBuffer = clean.buffer;
     ByteVector same = _ZN3WTF26normalizeLineEndingsToCRLFEONS_6VectorIhLm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEE(std::move(clean));
-    Check(same.buffer == cleanBuffer && same.size == 2 && clean.buffer == nullptr);
+    Require(same.buffer == cleanBuffer && same.size == 2 && clean.buffer == nullptr);
 
     ByteVector grown = Make({LF, letterA});
     unsigned char* original = grown.buffer;
     ByteVector crlf = _ZN3WTF26normalizeLineEndingsToCRLFEONS_6VectorIhLm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEE(std::move(grown));
-    Check(crlf.buffer != original && crlf.size == 3 && crlf.capacity == 3);
-    Check(grown.buffer == original && grown.size == 2);
+    Require(crlf.buffer != original && crlf.size == 3 && crlf.capacity == 3);
+    Require(grown.buffer == original && grown.size == 2);
 }
 
 struct RangeResult {
@@ -342,7 +326,7 @@ String MakeNarrow(const char* text) {
 
 String MakeWide(const std::u16string& text) {
     String string = _ZN3WTF10StringImpl6createEPKDsj(text.data(), static_cast<unsigned>(text.size()));
-    if (!text.empty()) Check(!(string.impl->hashAndFlags & 4));
+    if (!text.empty()) Require(!(string.impl->hashAndFlags & 4));
     return string;
 }
 
@@ -356,14 +340,14 @@ template<typename Function> void ForBothStringWidths(const char* text, Function 
 void ExpectRange(const char* text, long long offset, long long end, long long suffixLength, std::source_location location = std::source_location::current()) {
     ForBothStringWidths(text, [&](const String& string) {
         RangeResult result = ParseRange(string);
-        Check(result.accepted && result.offset == offset && result.end == end && result.suffixLength == suffixLength, location);
+        Require(result.accepted && result.offset == offset && result.end == end && result.suffixLength == suffixLength, location);
     });
 }
 
 void ExpectRejected(const char* text, std::source_location location = std::source_location::current()) {
     ForBothStringWidths(text, [&](const String& string) {
         RangeResult result = ParseRange(string);
-        Check(!result.accepted && result.offset == -1 && result.end == -1 && result.suffixLength == -1, location);
+        Require(!result.accepted && result.offset == -1 && result.end == -1 && result.suffixLength == -1, location);
     });
 }
 
@@ -475,7 +459,7 @@ void TestParseRangeRejections() {
     for (const char* text : rejected) ExpectRejected(text);
 
     RangeResult result = ParseRange(String());
-    Check(!result.accepted && result.offset == -1 && result.end == -1 && result.suffixLength == -1);
+    Require(!result.accepted && result.offset == -1 && result.end == -1 && result.suffixLength == -1);
 }
 
 void TestParseRangeWhitespaceUnits() {
@@ -484,16 +468,16 @@ void TestParseRangeWhitespaceUnits() {
         std::u16string leading = u"bytes=";
         leading.push_back(unit);
         leading += u"0-5";
-        Check(IsZeroToFive(leading) == (IsRangeWhitespace(unit) || unit == u'+' || unit == u'0'));
+        Require(IsZeroToFive(leading) == (IsRangeWhitespace(unit) || unit == u'+' || unit == u'0'));
 
         std::u16string trailing = u"bytes=0-5";
         trailing.push_back(unit);
-        Check(IsZeroToFive(trailing) == IsRangeWhitespace(unit));
+        Require(IsZeroToFive(trailing) == IsRangeWhitespace(unit));
 
         std::u16string separator = u"bytes";
         separator.push_back(unit);
         separator += u"0-5";
-        Check(IsZeroToFive(separator) == (unit == u'=' || unit == 0x1D));
+        Require(IsZeroToFive(separator) == (unit == u'=' || unit == 0x1D));
     }
 }
 
@@ -503,17 +487,17 @@ void TestParseRangeArguments() {
     long long offset = 0;
     long long end = 0;
     long long suffixLength = 0;
-    Check(_ZN7WebCore10parseRangeERKN3WTF6StringERxS4_S4_(&text, &offset, &end, &suffixLength));
-    Check(text.impl->refCount == references && offset == 0 && end == 1 && suffixLength == -1);
+    Require(_ZN7WebCore10parseRangeERKN3WTF6StringERxS4_S4_(&text, &offset, &end, &suffixLength));
+    Require(text.impl->refCount == references && offset == 0 && end == 1 && suffixLength == -1);
 
-    Throws([&] { _ZN7WebCore10parseRangeERKN3WTF6StringERxS4_S4_(nullptr, &offset, &end, &suffixLength); });
-    Throws([&] { _ZN7WebCore10parseRangeERKN3WTF6StringERxS4_S4_(&text, nullptr, &end, &suffixLength); });
-    Throws([&] { _ZN7WebCore10parseRangeERKN3WTF6StringERxS4_S4_(&text, &offset, nullptr, &suffixLength); });
-    Throws([&] { _ZN7WebCore10parseRangeERKN3WTF6StringERxS4_S4_(&text, &offset, &end, nullptr); });
+    ExpectErr([&] { _ZN7WebCore10parseRangeERKN3WTF6StringERxS4_S4_(nullptr, &offset, &end, &suffixLength); });
+    ExpectErr([&] { _ZN7WebCore10parseRangeERKN3WTF6StringERxS4_S4_(&text, nullptr, &end, &suffixLength); });
+    ExpectErr([&] { _ZN7WebCore10parseRangeERKN3WTF6StringERxS4_S4_(&text, &offset, nullptr, &suffixLength); });
+    ExpectErr([&] { _ZN7WebCore10parseRangeERKN3WTF6StringERxS4_S4_(&text, &offset, &end, nullptr); });
 
     NKWebKit::WtfAbi::StringImpl broken{2, 9, nullptr, 4};
     String brokenString(&broken);
-    Throws([&] { ParseRange(brokenString); });
+    ExpectErr([&] { ParseRange(brokenString); });
     brokenString.impl = nullptr;
 }
 

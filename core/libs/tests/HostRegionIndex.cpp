@@ -1,4 +1,5 @@
 #include "prx/libc/include/HostRegionIndex.hpp"
+#include "Testing.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -15,10 +16,6 @@ using GuestArena::HostRegionIndex;
 using Regions = std::vector<HostRegionIndex::Region>;
 
 constexpr std::uintptr_t Domain = 40;
-
-void Require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 Regions RandomRegions(std::mt19937_64& random, std::uintptr_t origin, bool wellFormed) {
     Regions regions;

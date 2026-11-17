@@ -1,6 +1,7 @@
 #include "prx/libSceMouse/include/Api.hpp"
 #include "prx/libSceMouse/include/MouseState.hpp"
 #include "prx/libSceMouse/include/mouse_structs.h"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -42,12 +43,6 @@ Function Resolve(const char* name) {
         std::abort();
     }
     return reinterpret_cast<Function>(symbol);
-}
-
-void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "mouse absolute position: %s\n", what);
-    std::abort();
 }
 
 void Motion(std::int32_t x, std::int32_t y) {

@@ -1,5 +1,6 @@
 #include "prx/libSceAudio3d/include/Audio3d.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
@@ -42,23 +43,6 @@ constexpr int AUDIO_OUT_INVALID_FORMAT = static_cast<int>(0x80260007);
 constexpr int AUDIO_OUT_INVALID_PORT_TYPE = static_cast<int>(0x8026000A);
 constexpr int SYSTEM_USER = 0xFF;
 constexpr std::uint32_t OBJECT_INVALID = 0xFFFFFFFF;
-
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
-
-template <typename F>
-void RequireThrows(F f, const char* message) {
-    bool threw = false;
-    try {
-        f();
-    } catch (const std::exception&) {
-        threw = true;
-    }
-    Require(threw, message);
-}
 
 Audio3dOpenParameters Defaults() {
     Audio3dOpenParameters parameters{};
@@ -106,7 +90,7 @@ void CheckBeforeInitialize() {
     float value = 0.0f;
     Require(sceAudio3dPortSetAttribute(0, 0x10001, &value, sizeof(value)) == INVALID_PORT, "set attribute needs an open port");
     Require(sceAudio3dInitialize(0) == 0, "initialize");
-    RequireThrows([] { sceAudio3dInitialize(0); }, "repeated initialize must throw");
+    ExpectErr([] { sceAudio3dInitialize(0); }, "repeated initialize must throw");
 }
 
 void CheckOpenParameters() {
@@ -325,7 +309,7 @@ void CheckQueue() {
     Require(sceAudio3dPortAdvance(0) == 0, "advance 2");
     RequireLevel(2, 0, "queue full");
     Require(sceAudio3dPortAdvance(0) == NOT_READY, "advance into a full queue must be NOT_READY");
-    RequireThrows([] { sceAudio3dPortPush(0, 2); }, "unknown blocking mode must throw");
+    ExpectErr([] { sceAudio3dPortPush(0, 2); }, "unknown blocking mode must throw");
     Require(sceAudio3dPortPush(0, 1) == 0, "sync push");
     RequireLevel(0, 2, "sync push drains every queued frame");
     Require(sceAudio3dPortAdvance(0) == 0, "advance 3");
@@ -757,11 +741,11 @@ void CheckPs4Process() {
         change(parameters);
         return Open(parameters, &id);
     };
-    RequireThrows([&] { open([](auto& p) { p.size_this = 0x10; }); }, "a PS4 process with 0x10 parameters selects the unsupported buffer mode 0");
-    RequireThrows([&] { open([](auto& p) { p.size_this = 0x18; }); }, "a PS4 process with 0x18 parameters selects the unsupported buffer mode 1");
-    RequireThrows([&] { open([](auto& p) { p.buffer_mode = 0; }); }, "a PS4 process with buffer mode 0 is unsupported");
-    RequireThrows([&] { open([](auto& p) { p.buffer_mode = 1; }); }, "a PS4 process with buffer mode 1 is unsupported");
-    RequireThrows([&] { open([](auto& p) { p.size_this = 0x28; p.num_beds = 3; }); }, "a PS4 process with 3 beds is unsupported");
+    ExpectErr([&] { open([](auto& p) { p.size_this = 0x10; }); }, "a PS4 process with 0x10 parameters selects the unsupported buffer mode 0");
+    ExpectErr([&] { open([](auto& p) { p.size_this = 0x18; }); }, "a PS4 process with 0x18 parameters selects the unsupported buffer mode 1");
+    ExpectErr([&] { open([](auto& p) { p.buffer_mode = 0; }); }, "a PS4 process with buffer mode 0 is unsupported");
+    ExpectErr([&] { open([](auto& p) { p.buffer_mode = 1; }); }, "a PS4 process with buffer mode 1 is unsupported");
+    ExpectErr([&] { open([](auto& p) { p.size_this = 0x28; p.num_beds = 3; }); }, "a PS4 process with 3 beds is unsupported");
     for (const std::uint32_t beds : {0u, 1u, 4u}) {
         Require(open([&](auto& p) { p.size_this = 0x28; p.num_beds = beds; }) == INVALID_PARAMETER && id == 7, "a PS4 process needs 2 or 3 beds");
     }
@@ -771,7 +755,7 @@ void CheckPs4Process() {
     Require(open([](auto& p) { p.buffer_mode = 0; }) == OUT_OF_RESOURCES && id == 7, "a PS4 process reports the open port before an unsupported buffer mode");
     Require(sceAudio3dPortClose(0) == 0, "close after open ex in a PS4 process");
     Require(sceAudio3dPortCreate(0x100, 0, 1, &id) == INVALID_PARAMETER && id == 7, "create in a PS4 process needs a zero reserved argument");
-    RequireThrows([&] { sceAudio3dPortCreate(0x100, 0, 0, &id); }, "create in a PS4 process selects the unsupported buffer mode 0");
+    ExpectErr([&] { sceAudio3dPortCreate(0x100, 0, 0, &id); }, "create in a PS4 process selects the unsupported buffer mode 0");
     Require(open([](auto& p) { p.size_this = 0x28; p.num_beds = 2; }) == 0 && id == 0, "a PS4 process opens with 2 beds");
     const std::int16_t samples[8] = {};
     Require(sceAudio3dBedWrite2(0, 2, 0, samples, 4, 1, false) == INVALID_PARAMETER, "a PS4 process rejects the hmu only route on a 2-bed port");
@@ -781,8 +765,8 @@ void CheckPs4Process() {
     Require(sceAudio3dAudioOutOpen(0, SYSTEM_USER, 3, 0, granularity, 48000, 1 | (1u << 17)) == AUDIO_OUT_INVALID_FORMAT, "a PS4 process rejects param bit 17 on port type 3");
     Require(sceAudio3dAudioOutOpen(0, SYSTEM_USER, 5, 0, granularity, 48000, 1) == AUDIO_OUT_INVALID_PORT_TYPE, "a PS4 process checks the port type");
     Require(sceAudio3dAudioOutOpen(0, SYSTEM_USER, 0, 0, granularity, 48000, 8) == AUDIO_OUT_INVALID_FORMAT, "a PS4 process rejects an unknown format");
-    RequireThrows([&] { sceAudio3dAudioOutOpen(0, SYSTEM_USER, 0, 0, granularity, 48000, 6); }, "a PS4 process with format 6 depends on the SDK version");
-    RequireThrows([&] { sceAudio3dAudioOutOpen(0, SYSTEM_USER, 0, 0, granularity, 48000, 7); }, "a PS4 process with format 7 depends on the SDK version");
+    ExpectErr([&] { sceAudio3dAudioOutOpen(0, SYSTEM_USER, 0, 0, granularity, 48000, 6); }, "a PS4 process with format 6 depends on the SDK version");
+    ExpectErr([&] { sceAudio3dAudioOutOpen(0, SYSTEM_USER, 0, 0, granularity, 48000, 7); }, "a PS4 process with format 7 depends on the SDK version");
     const int handle = sceAudio3dAudioOutOpen(0, SYSTEM_USER, 3, 0, granularity, 48000, 1);
     Require(handle > 0 && sceAudio3dAudioOutClose(handle) == 0, "a PS4 process opens port type 3 without bit 17");
     Require(sceAudio3dPortClose(0) == 0, "close in a PS4 process");

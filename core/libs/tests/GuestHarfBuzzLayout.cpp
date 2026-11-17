@@ -1,5 +1,6 @@
 #include "prx/libharfbuzz/include/Layout.hpp"
 #include "FreeTypeGuestOutputFixture.hpp"
+#include "Testing.hpp"
 
 #include <hb-ot.h>
 
@@ -26,13 +27,6 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
-
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "HarfBuzz layout check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 template <typename TFunction, typename TModule>
 static TFunction Import(TModule module, const char* name, const char* fallback = nullptr) {

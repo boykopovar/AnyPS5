@@ -1,4 +1,5 @@
 #include "prx/libScePad/include/Pad.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -9,8 +10,6 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
-
-static void Require(bool condition) { if (!condition) std::abort(); }
 
 int main() {
     auto* const unreadableDeviceId = reinterpret_cast<std::int32_t*>(0x10);

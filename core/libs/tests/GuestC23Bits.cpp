@@ -1,14 +1,10 @@
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
-
-static void Require(bool condition) {
-    if (condition) return;
-    std::abort();
-}
 
 static std::uint64_t Reference(std::uint64_t value, unsigned width, unsigned operation) {
     if (operation < 4) {

@@ -1,4 +1,5 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "Testing.hpp"
 
 #include <algorithm>
 #include <array>
@@ -18,12 +19,6 @@ constexpr std::size_t FrameSamples = 960;
 constexpr std::size_t PacketCapacity = 1500;
 constexpr std::int32_t Voip = 0;
 constexpr std::int32_t Audio = 1;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc Opus check failed at line %u\n", location.line());
-    std::abort();
-}
 
 WebRtcOpusEncInst* Create(std::size_t channels, std::int32_t application) {
     WebRtcOpusEncInst* inst = nullptr;

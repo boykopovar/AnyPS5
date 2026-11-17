@@ -3,6 +3,7 @@
 #include "prx/libc/include/PreciseWait.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -14,14 +15,6 @@
 #include <string>
 #include <thread>
 #include <vector>
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "Positioned close check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static constexpr std::int64_t ErrorEbadf = static_cast<std::int32_t>(0x80020009u);
 

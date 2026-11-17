@@ -1,4 +1,5 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -14,13 +15,6 @@ namespace {
 
 using NKWebKit::WtfAbi::CString;
 using NKWebKit::WtfAbi::SHA1;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "SHA1 check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 using Constructor = void (APS5_VABI *)(SHA1*);
 using HexDigest = CString (APS5_VABI *)(SHA1*);
@@ -71,17 +65,6 @@ void Fill(SHA1& sha1, const void* data, std::size_t length, std::uint64_t totalB
     sha1.cursor = length;
     sha1.totalBytes = totalBytes;
     std::memcpy(sha1.hash, hash, sizeof(sha1.hash));
-}
-
-template<class Function>
-void RequireThrows(Function function) {
-    bool threw = false;
-    try {
-        function();
-    } catch (const std::invalid_argument&) {
-        threw = true;
-    }
-    Require(threw);
 }
 
 void TestConstructors() {
@@ -141,9 +124,9 @@ void TestGuestFilled() {
 }
 
 void TestInvalid() {
-    RequireThrows([] { _ZN3WTF4SHA1C1Ev(nullptr); });
-    RequireThrows([] { _ZN3WTF4SHA1C2Ev(nullptr); });
-    RequireThrows([] { _ZN3WTF4SHA116computeHexDigestEv(nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZN3WTF4SHA1C1Ev(nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZN3WTF4SHA1C2Ev(nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZN3WTF4SHA116computeHexDigestEv(nullptr); });
     for (std::size_t cursor : {std::size_t{64}, std::size_t{65}, ~std::size_t{0}}) {
         Guarded value;
         _ZN3WTF4SHA1C1Ev(&value.sha1);
@@ -151,7 +134,7 @@ void TestInvalid() {
         value.sha1.totalBytes = 64;
         SHA1 before;
         std::memcpy(&before, &value.sha1, sizeof(before));
-        RequireThrows([&] { _ZN3WTF4SHA116computeHexDigestEv(&value.sha1); });
+        ExpectErr<std::invalid_argument>([&] { _ZN3WTF4SHA116computeHexDigestEv(&value.sha1); });
         Require(!std::memcmp(&before, &value.sha1, sizeof(before)));
         value.CheckGuards();
     }

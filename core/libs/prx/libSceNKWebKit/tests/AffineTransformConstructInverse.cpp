@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cmath>
@@ -8,14 +9,6 @@
 #include <cstring>
 #include <limits>
 #include <new>
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "AffineTransform construct and inverse check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static bool AlmostEqual(double a, double b) {
     return std::abs(a - b) <= 1e-12;

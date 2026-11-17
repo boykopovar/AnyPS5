@@ -43,6 +43,7 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libc/libc.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdio>
@@ -55,12 +56,6 @@
 #include <stdexcept>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc RateTracker check failed at line %u\n", location.line());
-    std::abort();
-}
 
 void* lastAllocated;
 void* lastFreed;

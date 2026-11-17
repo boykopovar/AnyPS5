@@ -1,6 +1,7 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libkernel/libkernel.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -12,19 +13,6 @@
 #include <thread>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "ICU tokenization check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TCall>
-void Throws(TCall call) {
-    try { call(); }
-    catch (const std::exception&) { return; }
-    Require(false);
-}
 
 void SetSearches() {
     const std::array<char16_t, 9> text{'a', 0xd83d, 0xde00, 'b', 0xd800, 'c', 0xdc00, 'd', 0};
@@ -47,9 +35,9 @@ void SetSearches() {
     Require(u_strcspn_nid_postfix(text.data(), u"") == 8);
     Require(u_strpbrk_nid_postfix(text.data(), u"") == nullptr);
     Require(text == before);
-    Throws([&] { u_strspn_nid_postfix(nullptr, set.data()); });
-    Throws([&] { u_strcspn_nid_postfix(text.data(), nullptr); });
-    Throws([&] { u_strpbrk_nid_postfix(nullptr, nullptr); });
+    ExpectErr([&] { u_strspn_nid_postfix(nullptr, set.data()); });
+    ExpectErr([&] { u_strcspn_nid_postfix(text.data(), nullptr); });
+    ExpectErr([&] { u_strpbrk_nid_postfix(nullptr, nullptr); });
 }
 
 void ReverseSearch() {
@@ -71,7 +59,7 @@ void ReverseSearch() {
     Require(u_memrchr32_nid_postfix(nullptr, -1, 7) == nullptr);
     Require(u_memrchr32_nid_postfix(nullptr, 0x110000, 7) == nullptr);
     Require(u_memrchr32_nid_postfix(nullptr, std::numeric_limits<std::int32_t>::max(), 7) == nullptr);
-    Throws([&] { u_memrchr32_nid_postfix(nullptr, 'a', 1); });
+    ExpectErr([&] { u_memrchr32_nid_postfix(nullptr, 'a', 1); });
     Require(text == before);
 }
 
@@ -90,9 +78,9 @@ void Tokens() {
     Require(u_strtok_r_nid_postfix(delimitersOnly.data(), u",", &state) == nullptr && state == nullptr);
     const std::array<char16_t, 4> unchanged{',', ',', ',', 0};
     Require(delimitersOnly == unchanged);
-    Throws([&] { u_strtok_r_nid_postfix(text.data(), u",", nullptr); });
+    ExpectErr([&] { u_strtok_r_nid_postfix(text.data(), u",", nullptr); });
     const auto before = text;
-    Throws([&] { u_strtok_r_nid_postfix(text.data(), nullptr, &state); });
+    ExpectErr([&] { u_strtok_r_nid_postfix(text.data(), nullptr, &state); });
     Require(text == before && state == nullptr);
 }
 
@@ -208,12 +196,12 @@ void ReadOnlyGuestTokens() {
         Require(!rejected.Open());
     }
     Require(u_strtok_r_nid_postfix(nullptr, nullptr, state) == nullptr);
-    Throws([&] { u_strtok_r_nid_postfix(text + 1, u",", state); });
+    ExpectErr([&] { u_strtok_r_nid_postfix(text + 1, u",", state); });
     Require(*state == nullptr && std::equal(initial.begin(), initial.end(), text));
     storage.Protect(1, 3);
     *state = text + 1;
     storage.Protect(1, 1);
-    Throws([&] { u_strtok_r_nid_postfix(nullptr, u",", state); });
+    ExpectErr([&] { u_strtok_r_nid_postfix(nullptr, u",", state); });
     Require(*state == text + 1 && std::equal(initial.begin(), initial.end(), text));
     storage.Protect(1, 3);
     storage.Protect(0, 1);
@@ -221,10 +209,10 @@ void ReadOnlyGuestTokens() {
         GuestArena::HostWrite rejected(text + 2, sizeof(*text));
         Require(!rejected.Open());
     }
-    Throws([&] { u_strtok_r_nid_postfix(nullptr, u",", state); });
+    ExpectErr([&] { u_strtok_r_nid_postfix(nullptr, u",", state); });
     Require(*state == text + 1 && std::equal(initial.begin(), initial.end(), text));
     *state = nullptr;
-    Throws([&] { u_strtok_r_nid_postfix(text + 1, u",", state); });
+    ExpectErr([&] { u_strtok_r_nid_postfix(text + 1, u",", state); });
     Require(*state == text + 1 && std::equal(initial.begin(), initial.end(), text));
     Require(u_strtok_r_nid_postfix(nullptr, u"", state) == text + 1 && *state == nullptr);
     Require(std::equal(initial.begin(), initial.end(), text));

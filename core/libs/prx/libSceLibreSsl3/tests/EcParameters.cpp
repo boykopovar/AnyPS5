@@ -1,6 +1,7 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libSceLibreSsl/include/Ec.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -29,12 +30,6 @@ constexpr std::uint64_t SequenceNotConstructed = 0x0dfff095;
 constexpr std::uint64_t TooLong = 0x0dfff09b;
 constexpr std::uint64_t InvalidObject = 0x0dfff0d8;
 constexpr std::uint64_t NotPrimitive = 0x0dfff0e7;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "requirement failed at line %u\n", static_cast<unsigned>(location.line()));
-    std::abort();
-}
 
 std::vector<unsigned char> Hex(const char* text) {
     std::vector<unsigned char> bytes;

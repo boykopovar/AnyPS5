@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include "VulkanTestDevice.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include "ControlFlow/RequestSerializer.hpp"
@@ -62,10 +63,6 @@
 #endif
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 template<typename TAction>
 void ExpectFailure(TAction action, const char* expected) {

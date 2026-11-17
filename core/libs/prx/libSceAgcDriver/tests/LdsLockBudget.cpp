@@ -1,4 +1,5 @@
 #include "Recompiler.hpp"
+#include "Testing.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <array>
 #include <cstdint>
@@ -16,17 +17,13 @@ namespace {
 
 using namespace ShaderRecompiler;
 
-void require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
-
 std::uint64_t workgroupBytes(std::span<const std::uint32_t> words) {
     std::map<std::uint32_t, std::span<const std::uint32_t>> types;
     std::map<std::uint32_t, std::uint32_t> constants;
     std::vector<std::uint32_t> pointers;
     for (std::size_t offset = 5; offset < words.size();) {
         const auto count = words[offset] >> 16u;
-        require(count != 0u && count <= words.size() - offset, "malformed SPIR-V instruction");
+        Require(count != 0u && count <= words.size() - offset, "malformed SPIR-V instruction");
         const auto instruction = words.subspan(offset, count);
         const auto opcode = static_cast<spv::Op>(instruction[0] & 0xffffu);
         if (opcode == spv::OpTypeInt || opcode == spv::OpTypeFloat || opcode == spv::OpTypeVector || opcode == spv::OpTypeArray || opcode == spv::OpTypeStruct || opcode == spv::OpTypePointer) types.emplace(instruction[1], instruction);
@@ -51,7 +48,7 @@ std::uint64_t workgroupBytes(std::span<const std::uint32_t> words) {
     std::uint64_t bytes = 0;
     for (const auto pointer : pointers) {
         const auto type = types.at(pointer);
-        require((type[0] & 0xffffu) == spv::OpTypePointer, "Workgroup variable is not a pointer");
+        Require((type[0] & 0xffffu) == spv::OpTypePointer, "Workgroup variable is not a pointer");
         bytes += size(type[3]);
     }
     return bytes;
@@ -64,7 +61,7 @@ std::set<std::uint32_t> compareExchangeWidths(std::span<const std::uint32_t> wor
     bool inFaultFunction = false;
     for (std::size_t offset = 5; offset < words.size();) {
         const auto count = words[offset] >> 16u;
-        require(count != 0u && count <= words.size() - offset, "malformed SPIR-V instruction");
+        Require(count != 0u && count <= words.size() - offset, "malformed SPIR-V instruction");
         const auto instruction = words.subspan(offset, count);
         const auto opcode = static_cast<spv::Op>(instruction[0] & 0xffffu);
         if (opcode == spv::OpName && std::string_view(reinterpret_cast<const char*>(instruction.data() + 2)) == "record_bda_fault") faultFunction = instruction[1];
@@ -105,16 +102,16 @@ RecompileResult compile(std::uint32_t waveSize, std::uint32_t limit, bool int64A
 
 void verify(std::uint32_t waveSize, std::uint32_t limit, bool int64Atomics) {
     const auto result = compile(waveSize, limit, int64Atomics);
-    require(!result.spirv.empty(), "LDS atomic program did not compile");
+    Require(!result.spirv.empty(), "LDS atomic program did not compile");
     const auto declared = workgroupBytes(result.spirv.Words());
-    require(declared <= limit, "declared " + std::to_string(declared) + " Workgroup bytes exceeds limit " + std::to_string(limit));
-    require(result.workgroupMemoryDwords == (limit < 68u ? 18u : 0u), "incorrect device-memory LDS stride at limit " + std::to_string(limit));
-    if (limit >= 68u) require(declared != 0u, "in-budget LDS unexpectedly lost its Workgroup allocation");
+    Require(declared <= limit, "declared " + std::to_string(declared) + " Workgroup bytes exceeds limit " + std::to_string(limit));
+    Require(result.workgroupMemoryDwords == (limit < 68u ? 18u : 0u), "incorrect device-memory LDS stride at limit " + std::to_string(limit));
+    if (limit >= 68u) Require(declared != 0u, "in-budget LDS unexpectedly lost its Workgroup allocation");
     const auto widths = compareExchangeWidths(result.spirv.Words());
     const bool native = int64Atomics && limit < 68u;
-    require(widths.contains(64u) == native, native ? "device-memory LDS did not use a 64-bit compare exchange" : "a 64-bit compare exchange appeared without device-memory LDS and shaderBufferInt64Atomics");
-    require(widths.contains(32u) != native, native ? "device-memory LDS with shaderBufferInt64Atomics kept the workgroup lock" : "the 64-bit LDS atomic lost its workgroup lock");
-    require(result.bdaAbiVersion == 1u, "a 64-bit LDS atomic did not get the fault buffer for a misaligned address at limit " + std::to_string(limit));
+    Require(widths.contains(64u) == native, native ? "device-memory LDS did not use a 64-bit compare exchange" : "a 64-bit compare exchange appeared without device-memory LDS and shaderBufferInt64Atomics");
+    Require(widths.contains(32u) != native, native ? "device-memory LDS with shaderBufferInt64Atomics kept the workgroup lock" : "the 64-bit LDS atomic lost its workgroup lock");
+    Require(result.bdaAbiVersion == 1u, "a 64-bit LDS atomic did not get the fault buffer for a misaligned address at limit " + std::to_string(limit));
 }
 
 alignas(256) std::array<std::uint8_t, 32768> Texture{};
@@ -149,9 +146,9 @@ void verifySpecializedImageWithoutBuffers() {
     request.layout = {0, 0, 0, 128};
     request.useCache = false;
     const auto result = Recompile(request);
-    require(!result.spirv.empty(), "image program with device-memory LDS did not compile");
-    require(result.workgroupMemoryDwords == 18u, "image program did not place its LDS in device memory");
-    require(result.specializationId != 0u, "image program was not specialized");
+    Require(!result.spirv.empty(), "image program with device-memory LDS did not compile");
+    Require(result.workgroupMemoryDwords == 18u, "image program did not place its LDS in device memory");
+    Require(result.specializationId != 0u, "image program was not specialized");
 }
 
 }

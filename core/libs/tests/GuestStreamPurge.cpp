@@ -2,6 +2,7 @@
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "tests/TemporaryFile.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstdio>
@@ -16,13 +17,6 @@
 #endif
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "stream purge: %s\n", message);
-        std::abort();
-    }
-}
 
 std::int64_t Position(std::FILE* stream) {
 #ifdef _WIN32

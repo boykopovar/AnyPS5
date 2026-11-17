@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Memory/WrittenBufferIndex.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <iostream>
 #include <optional>
@@ -13,10 +14,6 @@ using AgcDriver::DriverDetail::WrittenBuffer;
 using AgcDriver::DriverDetail::WrittenBufferIndex;
 
 constexpr std::uint64_t Base = std::uint64_t{1} << 32;
-
-void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 WrittenBuffer Make(std::uint64_t begin, std::uint64_t end, std::uint64_t serial) {
     return WrittenBuffer{1, begin, end, serial, 0, false};

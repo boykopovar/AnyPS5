@@ -3,6 +3,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -10,10 +11,6 @@
 #include <source_location>
 #include <thread>
 #include <vector>
-
-namespace {
-
-}
 
 namespace {
 
@@ -28,12 +25,6 @@ constexpr std::int64_t Millisecond = 1000000;
 constexpr std::int64_t Second = 1000000000;
 
 const GuestSigevent None{0, 0, 0, {}};
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "check failed at line %u\n", static_cast<unsigned>(location.line()));
-    std::exit(1);
-}
 
 int Error() {
     return *__error_nid_postfix();

@@ -1,12 +1,9 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
+#include "Testing.hpp"
 #include <cstdlib>
 #include <string>
-
-static void Require(bool value) {
-    if (!value) std::abort();
-}
 
 int main() {
     char name[] = "EXECVP_ABSENT_BINARY";

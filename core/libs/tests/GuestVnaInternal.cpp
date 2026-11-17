@@ -1,14 +1,7 @@
 #include "prx/libSceVnaInternal/libSceVnaInternal.hpp"
+#include "Testing.hpp"
 
 #include <cstdlib>
-
-namespace {
-
-void Require(bool value) {
-    if (!value) std::abort();
-}
-
-} // namespace
 
 int main() {
     constexpr int unknownHandle = static_cast<int>(0x816F8007u);

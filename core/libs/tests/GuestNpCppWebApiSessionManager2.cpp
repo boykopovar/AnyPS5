@@ -1,13 +1,10 @@
 #include "prx/libSceNpCppWebApi/include/Api.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdlib>
 
 namespace {
-
-void Require(const bool value) {
-    if (!value) std::abort();
-}
 
 constexpr auto CreateMember = _ZN3sce2Np9CppWebApi14SessionManager2V130MemberWithMultiPlatformFactory6createEPNS1_6Common10LibContextERKmPKcPNS5_12IntrusivePtrINS3_23MemberWithMultiPlatformEEE;
 constexpr auto SendMessage = _ZN3sce2Np9CppWebApi14SessionManager2V115GameSessionsApi22sendGameSessionMessageEiRKNS4_33ParameterToSendGameSessionMessageERNS1_6Common11TransactionINS8_15DefaultResponseENS8_12IntrusivePtrINS8_18ResponseHeaderBaseEEEEE;

@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <bit>
@@ -30,17 +31,6 @@ namespace {
 
 using Factors = void (APS5_VABI*)(const LibreSsl3Rsa*, const void**, const void**);
 using CrtParams = void (APS5_VABI*)(const LibreSsl3Rsa*, const void**, const void**, const void**);
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL3 RSA getter check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> void RequireNotImplemented(TAction action, std::source_location location = std::source_location::current()) {
-    try { action(); } catch (const std::runtime_error&) { return; }
-    Require(false, location);
-}
 
 class ReadOnlyPage {
 public:
@@ -157,13 +147,13 @@ void Run(Factors factors, CrtParams crtParams) {
     const void* outP = sentinel;
     const void* outQ = sentinel;
     errno = 73;
-    RequireNotImplemented([&] { factors(reinterpret_cast<const LibreSsl3Rsa*>(0x10), &outP, &outQ); });
+    ExpectErr<std::runtime_error>([&] { factors(reinterpret_cast<const LibreSsl3Rsa*>(0x10), &outP, &outQ); });
     Require(errno == 73 && outP == sentinel && outQ == sentinel);
     errno = 73;
-    RequireNotImplemented([&] { factors(&guestRsa, badPtr, &outQ); });
+    ExpectErr<std::runtime_error>([&] { factors(&guestRsa, badPtr, &outQ); });
     Require(errno == 73 && outQ == sentinel);
     errno = 73;
-    RequireNotImplemented([&] { factors(&guestRsa, &outP, badPtr); });
+    ExpectErr<std::runtime_error>([&] { factors(&guestRsa, &outP, badPtr); });
     Require(errno == 73 && outP == sentinel);
 
     const void* outDmp1 = sentinel;
@@ -171,19 +161,19 @@ void Run(Factors factors, CrtParams crtParams) {
     const void* outIqmp = sentinel;
     const void* shared = sentinel;
     errno = 73;
-    RequireNotImplemented([&] { crtParams(reinterpret_cast<const LibreSsl3Rsa*>(0x10), &outDmp1, &outDmq1, &outIqmp); });
+    ExpectErr<std::runtime_error>([&] { crtParams(reinterpret_cast<const LibreSsl3Rsa*>(0x10), &outDmp1, &outDmq1, &outIqmp); });
     Require(errno == 73 && outDmp1 == sentinel && outDmq1 == sentinel && outIqmp == sentinel);
     errno = 73;
-    RequireNotImplemented([&] { crtParams(&guestRsa, badPtr, &outDmq1, &outIqmp); });
+    ExpectErr<std::runtime_error>([&] { crtParams(&guestRsa, badPtr, &outDmq1, &outIqmp); });
     Require(errno == 73 && outDmq1 == sentinel && outIqmp == sentinel);
     errno = 73;
-    RequireNotImplemented([&] { crtParams(&guestRsa, &outDmp1, badPtr, &outIqmp); });
+    ExpectErr<std::runtime_error>([&] { crtParams(&guestRsa, &outDmp1, badPtr, &outIqmp); });
     Require(errno == 73 && outDmp1 == sentinel && outIqmp == sentinel);
     errno = 73;
-    RequireNotImplemented([&] { crtParams(&guestRsa, &outDmp1, &outDmq1, badPtr); });
+    ExpectErr<std::runtime_error>([&] { crtParams(&guestRsa, &outDmp1, &outDmq1, badPtr); });
     Require(errno == 73 && outDmp1 == sentinel && outDmq1 == sentinel);
     errno = 73;
-    RequireNotImplemented([&] { crtParams(&guestRsa, &shared, &shared, badPtr); });
+    ExpectErr<std::runtime_error>([&] { crtParams(&guestRsa, &shared, &shared, badPtr); });
     Require(errno == 73 && shared == sentinel);
 }
 

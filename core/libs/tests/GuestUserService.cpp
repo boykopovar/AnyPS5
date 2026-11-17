@@ -1,5 +1,6 @@
 #include "SceTypes.hpp"
 #include "prx/libSceUserService/UserService.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstdint>
@@ -13,12 +14,6 @@ namespace {
 
 constexpr int SCE_USER_SERVICE_ERROR_INVALID_USER_ID = USER_SERVICE_ERROR_UNKNOWN_USER;
 constexpr int USER_SERVICE_ERROR_NO_SUCH_USER = USER_SERVICE_ERROR_UNKNOWN_USER;
-
-void Require(bool value) {
-    if (!value) {
-        std::abort();
-    }
-}
 
 void SetLanguage(const char* value) {
 #ifdef _WIN32

@@ -1,14 +1,13 @@
 #include "prx/libSceSharePlay/libSceSharePlay.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
 #include <span>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 template <typename TCall>
 static bool Throws(TCall call) {

@@ -1,4 +1,5 @@
 #include "../tools/ComputePipelineFixture.hpp"
+#include "Testing.hpp"
 #include <chrono>
 #include <cstdio>
 #include <fstream>
@@ -12,21 +13,6 @@
 #endif
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
-
-template<typename TAction>
-void Reject(TAction action, const char* message) {
-    bool rejected = false;
-    try {
-        action();
-    } catch (const std::exception&) {
-        rejected = true;
-    }
-    Require(rejected, message);
-}
 
 template<typename TAction>
 void RejectWithMessage(TAction action, const char* expected) {
@@ -107,7 +93,7 @@ void CheckRoundTrip() {
     Require(AgcDriver::ComputePipelineCapture::Read(file).Encode() == encoded, "capture file changed pipeline inputs");
     Require(capture.Write(directory.path) == file, "identical capture was not deduplicated");
     std::ofstream(file, std::ios::binary | std::ios::trunc).put('x');
-    Reject([&] { capture.Write(directory.path); }, "existing damaged capture was overwritten");
+    ExpectErr([&] { capture.Write(directory.path); }, "existing damaged capture was overwritten");
     Require(std::filesystem::file_size(file) == 1, "damaged capture was changed");
 }
 
@@ -122,9 +108,9 @@ void CheckLargeRecord() {
     const auto file = capture.Write(directory.path);
     Require(AgcDriver::ComputePipelineCapture::Read(file).spirv == capture.spirv, "large module changed on disk");
     capture.spirv.resize(AgcDriver::ComputePipelineCapture::MaxSpirvWords + 1u, 0x00010000u);
-    Reject([&] { capture.Encode(); }, "module beyond the word bound accepted");
+    ExpectErr([&] { capture.Encode(); }, "module beyond the word bound accepted");
     std::vector<std::byte> oversized(AgcDriver::ComputePipelineCapture::MaxFileBytes + 1u);
-    Reject([&] { AgcDriver::ComputePipelineCapture::Decode(oversized); }, "record beyond the file bound accepted");
+    ExpectErr([&] { AgcDriver::ComputePipelineCapture::Decode(oversized); }, "record beyond the file bound accepted");
     const auto oversizedFile = directory.path / "oversized.aps5cp";
     {
         std::ofstream output(oversizedFile, std::ios::binary);
@@ -132,7 +118,7 @@ void CheckLargeRecord() {
         output.put('x');
         Require(output.good(), "cannot write oversized capture fixture");
     }
-    Reject([&] { AgcDriver::ComputePipelineCapture::Read(oversizedFile); }, "file beyond the file bound accepted");
+    ExpectErr([&] { AgcDriver::ComputePipelineCapture::Read(oversizedFile); }, "file beyond the file bound accepted");
 }
 
 void CheckBindingFlags() {
@@ -146,10 +132,10 @@ void CheckBindingFlags() {
     Require(changed.Identity() != capture.Identity(), "binding flags did not affect capture identity");
     changed = capture;
     changed.sets[0].bindings[1].flags |= VK_DESCRIPTOR_BINDING_VARIABLE_DESCRIPTOR_COUNT_BIT;
-    Reject([&] { changed.Encode(); }, "non-highest variable descriptor binding accepted");
+    ExpectErr([&] { changed.Encode(); }, "non-highest variable descriptor binding accepted");
     changed = capture;
     changed.sets[0].bindings[0].flags |= VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT;
-    Reject([&] { changed.Encode(); }, "unsupported binding flags accepted");
+    ExpectErr([&] { changed.Encode(); }, "unsupported binding flags accepted");
     capture.sets[0].flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
     capture.sets[0].bindings[0].type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     capture.sets[0].bindings[0].flags |= VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
@@ -160,24 +146,24 @@ void CheckMalformedRecords() {
     const auto capture = AgcDriver::ComputePipelineFixture();
     const auto encoded = capture.Encode();
     for (std::size_t length = 0; length < encoded.size(); ++length) {
-        Reject([&] { AgcDriver::ComputePipelineCapture::Decode(std::span(encoded).first(length)); }, "truncated capture accepted");
+        ExpectErr([&] { AgcDriver::ComputePipelineCapture::Decode(std::span(encoded).first(length)); }, "truncated capture accepted");
     }
     auto bytes = encoded;
     bytes.push_back(std::byte{0});
-    Reject([&] { AgcDriver::ComputePipelineCapture::Decode(bytes); }, "trailing capture bytes accepted");
+    ExpectErr([&] { AgcDriver::ComputePipelineCapture::Decode(bytes); }, "trailing capture bytes accepted");
     bytes = encoded;
     bytes[0] ^= std::byte{1};
-    Reject([&] { AgcDriver::ComputePipelineCapture::Decode(bytes); }, "invalid signature accepted");
+    ExpectErr([&] { AgcDriver::ComputePipelineCapture::Decode(bytes); }, "invalid signature accepted");
     bytes = encoded;
     bytes[8] = std::byte{0xff};
-    Reject([&] { AgcDriver::ComputePipelineCapture::Decode(bytes); }, "unknown capture version accepted");
+    ExpectErr([&] { AgcDriver::ComputePipelineCapture::Decode(bytes); }, "unknown capture version accepted");
     bytes = encoded;
     for (std::size_t index = 104; index < 108; ++index) bytes[index] = std::byte{0xff};
-    Reject([&] { AgcDriver::ComputePipelineCapture::Decode(bytes); }, "unbounded device name accepted");
+    ExpectErr([&] { AgcDriver::ComputePipelineCapture::Decode(bytes); }, "unbounded device name accepted");
     const auto invalid = [&](auto change) {
         auto copy = capture;
         change(copy);
-        Reject([&] { copy.Encode(); }, "unsupported pipeline input accepted");
+        ExpectErr([&] { copy.Encode(); }, "unsupported pipeline input accepted");
     };
     invalid([](auto& copy) { copy.spirv[0] = 0; });
     invalid([](auto& copy) { copy.spirv[5] = 0; });
@@ -259,7 +245,7 @@ void CheckOptionalIo() {
     Require(capture.WriteOptional(directory.path / "after-stop").empty() && !std::filesystem::exists(directory.path / "after-stop"), "disabled optional capture retried output");
     auto malformed = capture;
     malformed.spirv[0] = 0u;
-    Reject([&] { malformed.WriteOptional(directory.path / "after-stop"); }, "disabled optional capture swallowed an invalid pipeline input");
+    ExpectErr([&] { malformed.WriteOptional(directory.path / "after-stop"); }, "disabled optional capture swallowed an invalid pipeline input");
 }
 
 void CheckOptionalInvalid() {
@@ -267,22 +253,22 @@ void CheckOptionalInvalid() {
     auto capture = AgcDriver::ComputePipelineFixture();
     auto malformed = capture;
     malformed.spirv[0] = 0u;
-    Reject([&] { malformed.WriteOptional(directory.path / "malformed"); }, "optional capture swallowed an invalid pipeline input");
+    ExpectErr([&] { malformed.WriteOptional(directory.path / "malformed"); }, "optional capture swallowed an invalid pipeline input");
     Require(AgcDriver::ComputePipelineCapture::OptionalEnabled() && !std::filesystem::exists(directory.path / "malformed"), "invalid input disabled optional capture or touched its output");
     const auto path = capture.WriteOptional(directory.path);
     Require(!path.empty(), "optional capture refused valid input");
     std::ofstream(path, std::ios::binary | std::ios::trunc).put('x');
-    Reject([&] { capture.WriteOptional(directory.path); }, "optional capture swallowed an existing damaged record");
+    ExpectErr([&] { capture.WriteOptional(directory.path); }, "optional capture swallowed an existing damaged record");
     Require(AgcDriver::ComputePipelineCapture::OptionalEnabled() && std::filesystem::file_size(path) == 1u, "damaged record disabled optional capture or was overwritten");
     Require(std::filesystem::remove(path), "cannot remove owned damaged record");
-    Reject([&] { capture.WriteOptional(directory.path); }, "optional capture swallowed an incomplete existing record");
+    ExpectErr([&] { capture.WriteOptional(directory.path); }, "optional capture swallowed an incomplete existing record");
     Require(AgcDriver::ComputePipelineCapture::OptionalEnabled() && !std::filesystem::exists(path), "incomplete record disabled optional capture or was replaced");
     Require(std::filesystem::create_directory(path), "cannot create owned nonregular capture");
-    Reject([&] { capture.WriteOptional(directory.path); }, "optional capture swallowed a nonregular existing capture");
+    ExpectErr([&] { capture.WriteOptional(directory.path); }, "optional capture swallowed a nonregular existing capture");
     Require(AgcDriver::ComputePipelineCapture::OptionalEnabled() && std::filesystem::is_directory(path), "nonregular capture disabled optional capture or was changed");
     std::filesystem::remove_all(path.parent_path());
     std::ofstream(path.parent_path(), std::ios::binary).put('x');
-    Reject([&] { capture.WriteOptional(directory.path); }, "optional capture swallowed a non-directory existing record");
+    ExpectErr([&] { capture.WriteOptional(directory.path); }, "optional capture swallowed a non-directory existing record");
     Require(AgcDriver::ComputePipelineCapture::OptionalEnabled() && std::filesystem::file_size(path.parent_path()) == 1u, "non-directory record disabled optional capture or was changed");
     Directory unexpected;
     const auto finder = unexpected.path / ".DS_Store";
@@ -296,7 +282,7 @@ void CheckOptionalInvalid() {
     const auto foreign = unexpected.path / "foreign";
     std::ofstream(foreign, std::ios::binary).put('x');
     RejectWithMessage([&] { capture.Write(unexpected.path); }, "capture directory contains an unexpected entry");
-    Reject([&] { capture.WriteOptional(unexpected.path); }, "optional capture swallowed an unexpected directory entry");
+    ExpectErr([&] { capture.WriteOptional(unexpected.path); }, "optional capture swallowed an unexpected directory entry");
     Require(AgcDriver::ComputePipelineCapture::OptionalEnabled() && std::filesystem::file_size(foreign) == 1u, "unexpected entry disabled optional capture or was changed");
 }
 

@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -102,21 +103,7 @@ void InitializeHeap() {
 
 
 
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "JXR prediction: %s\n", message);
-    std::abort();
-}
 
-template<typename TAction>
-void RequireInvalidArgument(TAction action, const char* message) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, message);
-}
 
 struct Pair {
     void* guest;
@@ -135,7 +122,7 @@ struct Pair {
 };
 
 void TestPredInfoRelease() {
-    RequireInvalidArgument([] { freePredInfo_nid_postfix(nullptr); }, "freePredInfo accepted a null codec");
+    ExpectErr<std::invalid_argument>([] { freePredInfo_nid_postfix(nullptr); }, "freePredInfo accepted a null codec");
     Pair pair(0x2b3c4d5e, 3, Yuv444, 1);
     void* const block = malloc_nid_postfix(2 * Width * 3 * 48);
     Require(block != nullptr, "allocation");
@@ -185,16 +172,16 @@ void TestQuantizers() {
     }
 
     Pair pair(7, 3, Yuv444, 2);
-    RequireInvalidArgument([] { setUniformQuantizer_nid_postfix(nullptr, 0); }, "null codec");
-    RequireInvalidArgument([&] { useDCQuantizer_nid_postfix(pair.guest, 2); }, "tile past the last column");
-    RequireInvalidArgument([&] { useLPQuantizer_nid_postfix(pair.guest, 17, 0); }, "more than 16 quantizers");
+    ExpectErr<std::invalid_argument>([] { setUniformQuantizer_nid_postfix(nullptr, 0); }, "null codec");
+    ExpectErr<std::invalid_argument>([&] { useDCQuantizer_nid_postfix(pair.guest, 2); }, "tile past the last column");
+    ExpectErr<std::invalid_argument>([&] { useLPQuantizer_nid_postfix(pair.guest, 17, 0); }, "more than 16 quantizers");
     JxrPredictSetTileQuantizer_nid_no_patch(pair.guest, 1, 0, 2, nullptr);
-    RequireInvalidArgument([&] { useDCQuantizer_nid_postfix(pair.guest, 1); }, "null DC quantizer");
+    ExpectErr<std::invalid_argument>([&] { useDCQuantizer_nid_postfix(pair.guest, 1); }, "null DC quantizer");
     JxrPredictSetTileQuantizer_nid_no_patch(pair.guest, 0, 2, 1, nullptr);
-    RequireInvalidArgument([&] { useLPQuantizer_nid_postfix(pair.guest, 1, 0); }, "null HP quantizer");
+    ExpectErr<std::invalid_argument>([&] { useLPQuantizer_nid_postfix(pair.guest, 1, 0); }, "null HP quantizer");
     useLPQuantizer_nid_postfix(pair.guest, 0, 0);
     Pair many(8, 17, Yuv444, 1);
-    RequireInvalidArgument([&] { setUniformQuantizer_nid_postfix(many.guest, 0); }, "more than 16 channels");
+    ExpectErr<std::invalid_argument>([&] { setUniformQuantizer_nid_postfix(many.guest, 0); }, "more than 16 channels");
 }
 
 void TestModes() {
@@ -219,14 +206,14 @@ void TestModes() {
     }
 
     Pair pair(9, 3, Yuv444, 1);
-    RequireInvalidArgument([] { getDCACPredMode_nid_postfix(nullptr, 1); }, "null codec");
-    RequireInvalidArgument([&] { getDCACPredMode_nid_postfix(pair.guest, 0); }, "no left macroblock");
-    RequireInvalidArgument([&] { getDCACPredMode_nid_postfix(pair.guest, Width); }, "column past the row");
+    ExpectErr<std::invalid_argument>([] { getDCACPredMode_nid_postfix(nullptr, 1); }, "null codec");
+    ExpectErr<std::invalid_argument>([&] { getDCACPredMode_nid_postfix(pair.guest, 0); }, "no left macroblock");
+    ExpectErr<std::invalid_argument>([&] { getDCACPredMode_nid_postfix(pair.guest, Width); }, "column past the row");
     JxrPredictContext_nid_no_patch(pair.guest, 1, 1);
     Require(getDCACPredMode_nid_postfix(pair.guest, 0) == 3 + (2 << 2), "corner predicts nothing");
     JxrPredictContext_nid_no_patch(pair.guest, 0, 0);
     JxrPredictSetPredInfo_nid_no_patch(pair.guest, 2, 1, nullptr);
-    RequireInvalidArgument([&] { getDCACPredMode_nid_postfix(pair.guest, 1); }, "null chroma row");
+    ExpectErr<std::invalid_argument>([&] { getDCACPredMode_nid_postfix(pair.guest, 1); }, "null chroma row");
     JxrPredictContext_nid_no_patch(pair.guest, 0, 1);
     JxrPredictContext_nid_no_patch(pair.native, 0, 1);
     Require(getDCACPredMode_nid_postfix(pair.guest, 1) == JxrPredictReferenceMode_nid_no_patch(pair.native, 1),
@@ -258,20 +245,20 @@ void TestUpdates() {
     updatePredInfo_nid_postfix(pair.guest, own, 4, Yuv444);
     JxrPredictReferenceUpdate_nid_no_patch(pair.native, JxrPredictMacroblockOf_nid_no_patch(pair.native), 4, Yuv444);
     Require(pair.Same(), "updatePredInfo from the codec's own macroblock");
-    RequireInvalidArgument([&] { updatePredInfo_nid_postfix(nullptr, macroblock, 0, Yuv444); }, "null codec");
-    RequireInvalidArgument([&] { updatePredInfo_nid_postfix(pair.guest, nullptr, 0, Yuv444); }, "null macroblock");
-    RequireInvalidArgument([&] { updatePredInfo_nid_postfix(pair.guest, macroblock, Width, Yuv444); },
+    ExpectErr<std::invalid_argument>([&] { updatePredInfo_nid_postfix(nullptr, macroblock, 0, Yuv444); }, "null codec");
+    ExpectErr<std::invalid_argument>([&] { updatePredInfo_nid_postfix(pair.guest, nullptr, 0, Yuv444); }, "null macroblock");
+    ExpectErr<std::invalid_argument>([&] { updatePredInfo_nid_postfix(pair.guest, macroblock, Width, Yuv444); },
                            "column past the row");
-    RequireInvalidArgument([&] { updatePredInfo_nid_postfix(pair.guest, macroblock, 0, 9); }, "unknown format");
-    RequireInvalidArgument([&] { updatePredInfo_nid_postfix(pair.guest, macroblock, 0, -1); }, "negative format");
+    ExpectErr<std::invalid_argument>([&] { updatePredInfo_nid_postfix(pair.guest, macroblock, 0, 9); }, "unknown format");
+    ExpectErr<std::invalid_argument>([&] { updatePredInfo_nid_postfix(pair.guest, macroblock, 0, -1); }, "negative format");
     JxrPredictSetPredInfo_nid_no_patch(pair.guest, 1, 0, nullptr);
-    RequireInvalidArgument([&] { updatePredInfo_nid_postfix(pair.guest, macroblock, 0, Yuv420); }, "null UV row");
+    ExpectErr<std::invalid_argument>([&] { updatePredInfo_nid_postfix(pair.guest, macroblock, 0, Yuv420); }, "null UV row");
 }
 
 } // namespace
 
 void TestPredInfoAllocation() {
-    RequireInvalidArgument([] { allocatePredInfo_nid_postfix(nullptr); }, "allocatePredInfo accepted a null codec");
+    ExpectErr<std::invalid_argument>([] { allocatePredInfo_nid_postfix(nullptr); }, "allocatePredInfo accepted a null codec");
     std::uint32_t seed = 0x13579bdf;
     for (std::size_t channels = 1; channels <= 16; channels += 5) {
         for (std::size_t width = 1; width <= 9; width += 4) {
@@ -302,7 +289,7 @@ void TestPredInfoAllocation() {
     }
     void* const wide = JxrPredictMake_nid_no_patch(seed, 17, Yuv444, 1, Width);
     Require(wide != nullptr, "allocation");
-    RequireInvalidArgument([wide] { allocatePredInfo_nid_postfix(wide); }, "allocatePredInfo accepted 17 channels");
+    ExpectErr<std::invalid_argument>([wide] { allocatePredInfo_nid_postfix(wide); }, "allocatePredInfo accepted 17 channels");
     Require(JxrPredictPredInfoMemory_nid_no_patch(wide) == nullptr, "allocatePredInfo kept rows for 17 channels");
     std::free(wide);
 }

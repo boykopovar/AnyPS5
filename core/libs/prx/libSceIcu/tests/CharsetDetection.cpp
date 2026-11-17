@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -19,26 +20,10 @@ constexpr std::int32_t Success = 0;
 constexpr std::int32_t IllegalArgument = 1;
 constexpr std::int32_t MissingResource = 2;
 
-void Expect(bool condition, const char* what) {
-    if (condition) return;
-    std::fprintf(stderr, "failed: %s\n", what);
-    std::abort();
-}
-
 void ExpectInt(std::int64_t actual, std::int64_t expected, const char* what) {
     if (actual == expected) return;
     std::fprintf(stderr, "%s returned %lld, expected %lld\n", what, static_cast<long long>(actual), static_cast<long long>(expected));
     std::abort();
-}
-
-template <typename Exception, typename Function>
-void ExpectThrow(Function function, const char* what) {
-    try {
-        function();
-    } catch (const Exception&) {
-        return;
-    }
-    Expect(false, what);
 }
 
 void ExpectBest(Icu::CharsetDetector* detector, const char* text, std::int32_t length, const char* name, std::int32_t confidence) {
@@ -48,12 +33,12 @@ void ExpectBest(Icu::CharsetDetector* detector, const char* text, std::int32_t l
     std::int32_t found = 0;
     const auto** matches = ucsdet_detectAll_nid_postfix(detector, &found, &error);
     ExpectInt(error, Success, name);
-    Expect(matches != nullptr && found > 0, name);
+    Require(matches != nullptr && found > 0, name);
     const char* actual = ucsdet_getName_nid_postfix(matches[0], &error);
-    Expect(actual != nullptr && std::strcmp(actual, name) == 0, name);
+    Require(actual != nullptr && std::strcmp(actual, name) == 0, name);
     ExpectInt(ucsdet_getConfidence_nid_postfix(matches[0], &error), confidence, name);
     for (std::int32_t i = 1; i < found; ++i) {
-        Expect(ucsdet_getConfidence_nid_postfix(matches[i], &error) <= confidence, "ucsdet_detectAll order");
+        Require(ucsdet_getConfidence_nid_postfix(matches[i], &error) <= confidence, "ucsdet_detectAll order");
     }
 }
 
@@ -61,10 +46,10 @@ void TestDetection() {
     std::int32_t error = Success;
     auto* detector = ucsdet_open_nid_postfix(&error);
     ExpectInt(error, Success, "ucsdet_open");
-    Expect(detector != nullptr, "ucsdet_open");
+    Require(detector != nullptr, "ucsdet_open");
 
     std::int32_t found = -1;
-    Expect(ucsdet_detectAll_nid_postfix(detector, &found, &error) == nullptr, "ucsdet_detectAll without text");
+    Require(ucsdet_detectAll_nid_postfix(detector, &found, &error) == nullptr, "ucsdet_detectAll without text");
     ExpectInt(error, MissingResource, "ucsdet_detectAll without text status");
 
     ExpectBest(detector, "Gr\xC3\xBC\xC3\x9F" "e aus M\xC3\xBCnchen, \xC3\xA7" "a va tr\xC3\xA8s bien", -1, "UTF-8", 100);
@@ -84,19 +69,19 @@ void TestFilterAndStatus() {
     ExpectInt(ucsdet_enableInputFilter_nid_postfix(nullptr, 1), 0, "ucsdet_enableInputFilter(null)");
 
     std::int32_t failing = IllegalArgument;
-    Expect(ucsdet_open_nid_postfix(&failing) == nullptr, "ucsdet_open with failing status");
+    Require(ucsdet_open_nid_postfix(&failing) == nullptr, "ucsdet_open with failing status");
     std::int32_t found = 0;
-    Expect(ucsdet_detectAll_nid_postfix(nullptr, &found, &failing) == nullptr, "ucsdet_detectAll with failing status");
-    Expect(ucsdet_getName_nid_postfix(nullptr, &failing) == nullptr, "ucsdet_getName with failing status");
+    Require(ucsdet_detectAll_nid_postfix(nullptr, &found, &failing) == nullptr, "ucsdet_detectAll with failing status");
+    Require(ucsdet_getName_nid_postfix(nullptr, &failing) == nullptr, "ucsdet_getName with failing status");
     ExpectInt(ucsdet_getConfidence_nid_postfix(nullptr, &failing), 0, "ucsdet_getConfidence with failing status");
     ExpectInt(failing, IllegalArgument, "failing status unchanged");
 
-    ExpectThrow<std::invalid_argument>([] { ucsdet_open_nid_postfix(nullptr); }, "ucsdet_open(null status)");
-    ExpectThrow<std::invalid_argument>([detector] {
+    ExpectErr<std::invalid_argument>([] { ucsdet_open_nid_postfix(nullptr); }, "ucsdet_open(null status)");
+    ExpectErr<std::invalid_argument>([detector] {
         std::int32_t status = Success;
         ucsdet_setText_nid_postfix(detector, nullptr, -1, &status);
     }, "ucsdet_setText(null, -1)");
-    ExpectThrow<std::invalid_argument>([] {
+    ExpectErr<std::invalid_argument>([] {
         std::int32_t status = Success;
         ucsdet_getName_nid_postfix(nullptr, &status);
     }, "ucsdet_getName(null)");
@@ -111,13 +96,13 @@ public:
         GetSystemInfo(&info);
         bytes = info.dwPageSize;
         data = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-        Expect(data != nullptr, "VirtualAlloc");
+        Require(data != nullptr, "VirtualAlloc");
 #else
         const long page = sysconf(_SC_PAGESIZE);
-        Expect(page > 0, "sysconf");
+        Require(page > 0, "sysconf");
         bytes = static_cast<std::size_t>(page);
         data = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-        Expect(data != nullptr && data != MAP_FAILED, "mmap");
+        Require(data != nullptr && data != MAP_FAILED, "mmap");
 #endif
     }
 
@@ -131,7 +116,7 @@ public:
 
     template <typename T>
     T* Set(const T& value) {
-        Expect(sizeof(value) <= bytes, "ReadOnlyPage size");
+        Require(sizeof(value) <= bytes, "ReadOnlyPage size");
         std::memcpy(data, &value, sizeof(value));
         return static_cast<T*>(data);
     }
@@ -139,9 +124,9 @@ public:
     void Protect() {
 #ifdef _WIN32
         DWORD previous{};
-        Expect(VirtualProtect(data, bytes, PAGE_READONLY, &previous) != 0, "VirtualProtect");
+        Require(VirtualProtect(data, bytes, PAGE_READONLY, &previous) != 0, "VirtualProtect");
 #else
-        Expect(mprotect(data, bytes, PROT_READ) == 0, "mprotect");
+        Require(mprotect(data, bytes, PROT_READ) == 0, "mprotect");
 #endif
     }
 
@@ -159,7 +144,7 @@ void RejectsFaulted(TCall call, const char* what) {
     } catch (const std::runtime_error&) {
         threw = true;
     }
-    Expect(threw, what);
+    Require(threw, what);
     ExpectInt(errno, EINVAL, "errno preserved");
 }
 
@@ -178,10 +163,10 @@ void TestGuestPointers() {
         auto* roFail = page.Set<std::int32_t>(IllegalArgument);
         page.Protect();
         errno = EINVAL;
-        Expect(ucsdet_open_nid_postfix(roFail) == nullptr, "ucsdet_open ro failure");
+        Require(ucsdet_open_nid_postfix(roFail) == nullptr, "ucsdet_open ro failure");
         ucsdet_setText_nid_postfix(nullptr, "a", 1, roFail);
-        Expect(ucsdet_detectAll_nid_postfix(nullptr, &found, roFail) == nullptr, "ucsdet_detectAll ro failure");
-        Expect(ucsdet_getName_nid_postfix(nullptr, roFail) == nullptr, "ucsdet_getName ro failure");
+        Require(ucsdet_detectAll_nid_postfix(nullptr, &found, roFail) == nullptr, "ucsdet_detectAll ro failure");
+        Require(ucsdet_getName_nid_postfix(nullptr, roFail) == nullptr, "ucsdet_getName ro failure");
         ExpectInt(ucsdet_getConfidence_nid_postfix(nullptr, roFail), 0, "ucsdet_getConfidence ro failure");
         ExpectInt(*roFail, IllegalArgument, "ro failure status unchanged");
         ExpectInt(errno, EINVAL, "errno preserved");
@@ -189,11 +174,11 @@ void TestGuestPointers() {
 
     std::int32_t error = Success;
     auto* detector = ucsdet_open_nid_postfix(&error);
-    Expect(detector != nullptr && error == Success, "setup detector");
+    Require(detector != nullptr && error == Success, "setup detector");
     ucsdet_setText_nid_postfix(detector, "Hello UTF-8 World", -1, &error);
     ExpectInt(error, Success, "setup setText");
     const auto** matches = ucsdet_detectAll_nid_postfix(detector, &found, &error);
-    Expect(matches != nullptr && found > 0 && error == Success, "setup detectAll");
+    Require(matches != nullptr && found > 0 && error == Success, "setup detectAll");
 
     {
         ReadOnlyPage page;

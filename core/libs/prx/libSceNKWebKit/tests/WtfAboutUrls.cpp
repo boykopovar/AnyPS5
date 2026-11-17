@@ -1,4 +1,5 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <barrier>
@@ -12,13 +13,6 @@
 namespace {
 
 using namespace NKWebKit::WtfAbi;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "About URL check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 void Text(StringView view, std::string_view expected) {
     Require(view.is8Bit);

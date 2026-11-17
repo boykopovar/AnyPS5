@@ -2,6 +2,7 @@
 
 #include "prx/libc/libc.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 
 #include <vector>
 #include <unordered_set>
@@ -14,12 +15,6 @@
 #include <stdexcept>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc rtcp::TransportFeedback check failed at line %u\n", location.line());
-    std::abort();
-}
 
 std::unordered_set<void*> allocations;
 std::size_t allocated = 0;

@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include "VectorExecution.hpp"
 #include <codegen/x86/PermuteLowering.hpp>
 #include <codegen/x86/IAmd64OnlyInstructionMatcher.hpp>
@@ -12,10 +13,6 @@ namespace {
 
 using LoweringExecution::Bytes;
 
-void require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
-
 Bytes immediateSite(bool doubles, std::uint8_t dst, std::uint8_t src, std::uint8_t imm) {
     return {0xC4, static_cast<std::uint8_t>(((dst & 8) ? 0 : 0x80) | 0x40 | ((src & 8) ? 0 : 0x20) | 3), 0xFD, static_cast<std::uint8_t>(doubles ? 0x01 : 0x00),
         static_cast<std::uint8_t>(0xC0 | ((dst & 7) << 3) | (src & 7)), imm};
@@ -29,24 +26,24 @@ Bytes variableSite(bool floats, std::uint8_t dst, std::uint8_t index, std::uint8
 void decoding() {
     const auto q = immediateSite(false, 9, 3, 0x1B);
     const auto qOperands = Codegen::DecodePermute(q.data(), q.size());
-    require(qOperands && std::string(qOperands->Name) == "VPERMQ" && !qOperands->Variable && qOperands->Destination == 9 && qOperands->Source == 3 && qOperands->Immediate == 0x1B, "VPERMQ was not decoded");
+    Require(qOperands && std::string(qOperands->Name) == "VPERMQ" && !qOperands->Variable && qOperands->Destination == 9 && qOperands->Source == 3 && qOperands->Immediate == 0x1B, "VPERMQ was not decoded");
     const auto pd = immediateSite(true, 1, 12, 0x4E);
-    require(Codegen::DecodePermute(pd.data(), pd.size()) && std::string(Codegen::DecodePermute(pd.data(), pd.size())->Name) == "VPERMPD", "VPERMPD was not decoded");
+    Require(Codegen::DecodePermute(pd.data(), pd.size()) && std::string(Codegen::DecodePermute(pd.data(), pd.size())->Name) == "VPERMPD", "VPERMPD was not decoded");
     const auto d = variableSite(false, 2, 11, 7);
     const auto dOperands = Codegen::DecodePermute(d.data(), d.size());
-    require(dOperands && std::string(dOperands->Name) == "VPERMD" && dOperands->Variable && dOperands->Destination == 2 && dOperands->Index == 11 && dOperands->Source == 7, "VPERMD was not decoded");
+    Require(dOperands && std::string(dOperands->Name) == "VPERMD" && dOperands->Variable && dOperands->Destination == 2 && dOperands->Index == 11 && dOperands->Source == 7, "VPERMD was not decoded");
     const auto ps = variableSite(true, 14, 0, 5);
-    require(Codegen::DecodePermute(ps.data(), ps.size()) && std::string(Codegen::DecodePermute(ps.data(), ps.size())->Name) == "VPERMPS", "VPERMPS was not decoded");
+    Require(Codegen::DecodePermute(ps.data(), ps.size()) && std::string(Codegen::DecodePermute(ps.data(), ps.size())->Name) == "VPERMPS", "VPERMPS was not decoded");
     const Bytes memory{0x65, 0xC4, 0x62, 0x75, 0x36, 0x44, 0x24, 0x20};
     const auto loaded = Codegen::DecodePermute(memory.data(), memory.size());
-    require(loaded && loaded->Memory && loaded->Memory->Prefixes == Bytes{0x65} && loaded->Destination == 8 && loaded->Index == 1, "a memory VPERMD lost its prefix or operands");
+    Require(loaded && loaded->Memory && loaded->Memory->Prefixes == Bytes{0x65} && loaded->Destination == 8 && loaded->Index == 1, "a memory VPERMD lost its prefix or operands");
     for (const Bytes bytes : {Bytes{0xC4, 0xE3, 0x7D, 0x00, 0xC1, 0x1B}, Bytes{0xC4, 0xE2, 0xF5, 0x36, 0xC2}, Bytes{0xC4, 0xE2, 0x71, 0x36, 0xC2}, Bytes{0xC4, 0xE3, 0xF9, 0x00, 0xC1, 0x1B}, Bytes{0xC4, 0xE3, 0x7D, 0x06, 0xC1, 0x01}, Bytes{0xC4, 0xE2, 0x75, 0x0C, 0xC2}, Bytes{0x90}})
-        require(!Codegen::DecodePermute(bytes.data(), bytes.size()), "an instruction that is not a cross-lane permute was taken as one");
+        Require(!Codegen::DecodePermute(bytes.data(), bytes.size()), "an instruction that is not a cross-lane permute was taken as one");
     for (const Bytes bytes : {Bytes{0xC4, 0xE3, 0xFD, 0x00, 0xC1}, Bytes{0xC4, 0xE2, 0x75, 0x36, 0xC2, 0x90}}) {
         bool rejected = false;
         try { (void)Codegen::DecodePermute(bytes.data(), bytes.size()); }
         catch (const Codegen::CodegenException&) { rejected = true; }
-        require(rejected, "a malformed permute was accepted");
+        Require(rejected, "a malformed permute was accepted");
     }
 }
 
@@ -54,9 +51,9 @@ void matching() {
     const auto rosetta = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
     const auto avx = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Avx);
     for (const auto& bytes : {immediateSite(false, 0, 1, 0x1B), variableSite(false, 0, 1, 2)}) {
-        require(!rosetta->Match(bytes.data(), bytes.size()), "Rosetta mode lowered a permute");
+        Require(!rosetta->Match(bytes.data(), bytes.size()), "Rosetta mode lowered a permute");
         const auto match = avx->Match(bytes.data(), bytes.size());
-        require(match && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline && match->RelocatableWindow, "AVX mode did not lower a permute through a movable stub");
+        Require(match && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline && match->RelocatableWindow, "AVX mode did not lower a permute through a movable stub");
     }
 }
 
@@ -94,7 +91,7 @@ void verify(const Machine& start, const Machine& end, std::uint8_t dst, const st
         const auto expected = reg == dst ? wanted : start.Ymm[reg];
         if (end.Ymm[reg] != expected) throw std::runtime_error(describe + ": ymm" + std::to_string(reg) + " is wrong");
     }
-    for (const auto slot : end.RedZone) require(slot == LoweringExecution::kSentinel, describe + " overwrote the red zone");
+    for (const auto slot : end.RedZone) Require(slot == LoweringExecution::kSentinel, describe + " overwrote the red zone");
 }
 
 void execution() {

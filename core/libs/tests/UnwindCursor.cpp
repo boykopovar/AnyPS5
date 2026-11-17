@@ -1,6 +1,7 @@
 #include "prx/libc/include/exceptions/Unwind.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/src/specifics/x86_64/RegisterContext.cpp"
+#include "Testing.hpp"
 
 #include <csignal>
 #include <cstdint>
@@ -53,12 +54,6 @@ volatile int jumps = 0;
 
 template<class Function> Function Slot(const _Unwind_Context& context, int index) {
     return reinterpret_cast<Function>(context.cursor[index]);
-}
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "unwind cursor check failed: %s\n", message);
-    std::exit(1);
 }
 
 ProcedureInfo Info(_Unwind_Context& context) {

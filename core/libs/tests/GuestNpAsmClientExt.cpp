@@ -1,4 +1,5 @@
 #include "prx/libSceNpManager/libSceNpManager.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdio>
@@ -7,12 +8,6 @@
 namespace {
 
 constexpr int AsmClientExtNotInitialized = static_cast<int>(0x8055CE07u);
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
 
 } // namespace
 

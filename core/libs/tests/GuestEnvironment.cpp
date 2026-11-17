@@ -1,10 +1,10 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdlib>
 #include <cstring>
 #include <string>
 
-static void Require(bool value) { if (!value) std::abort(); }
 int main() {
     const char* key = "ANYPS5_GUEST_ENV_TEST_4C27";
 #ifdef _WIN32

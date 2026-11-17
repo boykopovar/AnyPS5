@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/KeptUnits.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <iostream>
@@ -15,10 +16,6 @@ using Kept = std::map<std::uint64_t, std::uint64_t>;
 
 constexpr std::uint64_t Untouched = 0xdead;
 constexpr std::uint64_t Stamp = 0x5151;
-
-void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 std::uint64_t ReferenceBegin(const UnitLayout& layout, std::uint32_t unit) {
     return layout.base + static_cast<std::uint64_t>(unit) * layout.unitBytes;

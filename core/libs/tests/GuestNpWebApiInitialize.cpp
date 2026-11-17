@@ -1,4 +1,5 @@
 #include "prx/libSceNpWebApi/include/Api.hpp"
+#include "Testing.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -35,12 +36,6 @@ Function Resolve(const char* name) {
         std::abort();
     }
     return reinterpret_cast<Function>(symbol);
-}
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "NpWebApi initialize: %s\n", message);
-    std::abort();
 }
 
 void APS5_VABI Notification() {}

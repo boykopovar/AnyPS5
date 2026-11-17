@@ -1,6 +1,7 @@
 #include "prx/libSceFiber/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -12,12 +13,6 @@ constexpr std::int32_t SCE_OK = 0;
 constexpr std::int32_t FiberErrorNull = static_cast<std::int32_t>(0x80590001);
 constexpr std::int32_t FiberErrorInvalid = static_cast<std::int32_t>(0x80590004);
 constexpr std::int32_t FiberErrorState = static_cast<std::int32_t>(0x80590006);
-
-void Require(bool condition) {
-    if (!condition) {
-        std::abort();
-    }
-}
 
 struct UserContext {
     std::uint32_t magic;

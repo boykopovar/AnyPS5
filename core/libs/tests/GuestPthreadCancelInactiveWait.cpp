@@ -2,6 +2,7 @@
 #include "prx/libkernel/Pthread/include/Cancel.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libkernel/Pthread/include/ThreadLifecycle.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -11,12 +12,6 @@
 #include <source_location>
 #include <string_view>
 #include <thread>
-
-static void Require(bool value, std::source_location location = std::source_location::current()) {
-    if (value) return;
-    std::fprintf(stderr, "%s:%u: requirement failed\n", location.file_name(), location.line());
-    std::_Exit(EXIT_FAILURE);
-}
 
 template <class TPredicate>
 static void Await(TPredicate predicate, std::source_location location = std::source_location::current()) {

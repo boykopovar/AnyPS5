@@ -3,6 +3,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/GuestErrno.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdlib>
 
@@ -11,12 +12,6 @@ static constexpr int GUEST_EFAULT = 14;
 static constexpr int GUEST_EINVAL = 22;
 static constexpr std::int64_t NANOS_PER_SECOND = 1000000000LL;
 static constexpr std::int64_t SLEEP_NANOS = 20000000LL;
-
-static void Require(bool condition) {
-    if (!condition) {
-        std::abort();
-    }
-}
 
 static void TestNanosleepInvalidNsec() {
     const KernelTimespec boundaryReq{0, NANOS_PER_SECOND};

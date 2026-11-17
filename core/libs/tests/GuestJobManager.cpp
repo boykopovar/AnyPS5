@@ -2,6 +2,7 @@
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libSceJobManager/libSceJobManager.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #ifndef ANYPS5_JOB_MANAGER_REFERENCE
 #include "prx/libc/include/GuestArena.hpp"
 #endif
@@ -43,15 +44,6 @@ static constexpr int NoNodes = static_cast<int>(0x81580002u);
 static constexpr int LimitExceeded = static_cast<int>(0x81580003u);
 static constexpr int NoneFree = static_cast<int>(0x81580006u);
 static constexpr int Invalid = static_cast<int>(0x81580007u);
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "job manager check failed at line %d\n", line);
-        std::abort();
-    }
-}
-
-#define Require(value) Check((value), __LINE__)
 
 struct Block {
     explicit Block(std::uint64_t size) : bytes(size), memory(::operator new((size + 255) & ~std::uint64_t{255}, std::align_val_t{256})) {}

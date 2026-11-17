@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -10,17 +11,6 @@
 #include <cstring>
 #include <source_location>
 #include <stdexcept>
-
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL X509_STORE_CTX check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> static void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
-    try { action(); } catch (const std::exception&) { return; }
-    Require(false, location);
-}
 
 constexpr std::size_t ContextSize = 240;
 constexpr std::size_t ChainOffset = 160;
@@ -62,7 +52,7 @@ static void TestGetError() {
     context.Write<std::int32_t>(ErrorOffset, -7);
     Require(X509_STORE_CTX_get_error_nid_postfix(Context(context)) == -7);
     Require(OnlyChanged(context, ErrorOffset, 4));
-    RequireThrows([] { X509_STORE_CTX_get_error_nid_postfix(nullptr); });
+    ExpectErr([] { X509_STORE_CTX_get_error_nid_postfix(nullptr); });
 }
 
 static void TestSetError() {
@@ -75,7 +65,7 @@ static void TestSetError() {
     X509_STORE_CTX_set_error_nid_postfix(Context(context), 0);
     Require(context.Read<std::int32_t>(ErrorOffset) == 0);
     Require(OnlyChanged(context, ErrorOffset, 4));
-    RequireThrows([] { X509_STORE_CTX_set_error_nid_postfix(nullptr, 1); });
+    ExpectErr([] { X509_STORE_CTX_set_error_nid_postfix(nullptr, 1); });
 }
 
 static void TestGetErrorDepth() {
@@ -88,7 +78,7 @@ static void TestGetErrorDepth() {
     Require(X509_STORE_CTX_get_error_depth_nid_postfix(Context(context)) == 3);
     X509_STORE_CTX_set_error_nid_postfix(Context(context), 11);
     Require(X509_STORE_CTX_get_error_depth_nid_postfix(Context(context)) == 3);
-    RequireThrows([] { X509_STORE_CTX_get_error_depth_nid_postfix(nullptr); });
+    ExpectErr([] { X509_STORE_CTX_get_error_depth_nid_postfix(nullptr); });
 }
 
 static void TestGetCurrentCert() {
@@ -99,7 +89,7 @@ static void TestGetCurrentCert() {
     context.Write<void*>(CurrentCertOffset, &certificate);
     Require(X509_STORE_CTX_get_current_cert_nid_postfix(Context(context)) == &certificate);
     Require(OnlyChanged(context, CurrentCertOffset, 8));
-    RequireThrows([] { X509_STORE_CTX_get_current_cert_nid_postfix(nullptr); });
+    ExpectErr([] { X509_STORE_CTX_get_current_cert_nid_postfix(nullptr); });
 }
 
 static void TestGetChain() {
@@ -110,7 +100,7 @@ static void TestGetChain() {
     context.Write<void*>(ChainOffset, &chain);
     Require(X509_STORE_CTX_get_chain_nid_postfix(Context(context)) == &chain);
     Require(OnlyChanged(context, ChainOffset, 8));
-    RequireThrows([] { X509_STORE_CTX_get_chain_nid_postfix(nullptr); });
+    ExpectErr([] { X509_STORE_CTX_get_chain_nid_postfix(nullptr); });
 }
 
 static void TestGetExData() {

@@ -1,6 +1,7 @@
 #include "prx/libcairo/include/Surface.hpp"
 
 #include "Decoder/Png.hpp"
+#include "Testing.hpp"
 
 #include <algorithm>
 #include <array>
@@ -15,12 +16,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "Cairo PNG check failed at line %u\n", location.line());
-    std::abort();
-}
 
 using Surface = std::unique_ptr<CairoSurface, decltype(&cairo_surface_destroy)>;
 

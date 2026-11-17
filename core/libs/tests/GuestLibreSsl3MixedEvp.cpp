@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdio>
@@ -49,10 +50,6 @@ static const DigestMethod* Sha224Method() {
     return reinterpret_cast<const DigestMethod*>(EVP_sha224_nid_postfix());
 }
 
-static void Require(bool ok, std::source_location where = std::source_location::current()) {
-    if (!ok) { std::fprintf(stderr, "mixed EVP check line%u\n", where.line()); std::abort(); }
-}
-template<typename T> static void Throws(T call) { try { call(); } catch (const std::exception&) { return; } Require(false); }
 static bool failAllocation;
 static std::size_t allocations;
 static void* APS5_VABI Allocate(std::size_t size) { if (failAllocation) return nullptr; auto* p = std::malloc(size); if (p) ++allocations; return p; }

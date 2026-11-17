@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <barrier>
@@ -41,13 +42,6 @@ void WriteEnvironment(const Environment& state) {
 bool SameEnvironment(const Environment& lhs, const Environment& rhs) {
     const bool pointers = (lhs.x87[1] & 0x80u) != 0u && (rhs.x87[1] & 0x80u) != 0u;
     return std::equal(lhs.x87.begin(), lhs.x87.begin() + (pointers ? 7 : 3), rhs.x87.begin()) && lhs.sse == rhs.sse;
-}
-
-void Require(bool value, const char* message) {
-    if (!value) {
-        std::fprintf(stderr, "floating-point environment: %s\n", message);
-        std::abort();
-    }
 }
 
 Environment SeedFlags(unsigned x87, unsigned sse) {

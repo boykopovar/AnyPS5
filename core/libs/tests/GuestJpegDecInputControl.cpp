@@ -2,6 +2,7 @@
 #include "prx/libSceJpegDec/libSceJpegDec.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "Decoder/Jpeg.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -13,12 +14,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool value, std::source_location location = std::source_location::current()) {
-    if (value) return;
-    std::fprintf(stderr, "%s:%u: JPEG input-control assertion failed\n", location.file_name(), location.line());
-    std::abort();
-}
 
 struct Source {
     std::vector<std::uint8_t> bytes;

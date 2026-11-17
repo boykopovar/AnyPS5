@@ -1,18 +1,11 @@
 #include "prx/libSceAgcDriver/Execution/include/HostReport.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <cstdio>
 #include <stdexcept>
 #include <string>
 
 namespace {
-
-int failures = 0;
-
-void Check(bool condition, const char* what) {
-    if (condition) return;
-    std::fprintf(stderr, "failed: %s\n", what);
-    ++failures;
-}
 
 AgcDriver::HostFacts SampleFacts() {
     AgcDriver::HostFacts facts;
@@ -89,7 +82,7 @@ constexpr const char* Golden =
     "APS5_PROFILE_GPU: 1\n";
 
 void GoldenOutput() {
-    Check(AgcDriver::FormatHostReport(SampleFacts()) == Golden, "the report differs from the golden text");
+    Expect(AgcDriver::FormatHostReport(SampleFacts()) == Golden, "the report differs from the golden text");
 }
 
 void OrderIsStable() {
@@ -97,25 +90,25 @@ void OrderIsStable() {
     std::reverse(shuffled.environment.begin(), shuffled.environment.end());
     std::reverse(shuffled.gpu->requirements.begin(), shuffled.gpu->requirements.end());
     std::reverse(shuffled.gpu->presentModes.begin(), shuffled.gpu->presentModes.end());
-    Check(AgcDriver::FormatHostReport(shuffled) == Golden, "the entry order of the input changed the report");
-    Check(AgcDriver::FormatHostReport(SampleFacts()) == AgcDriver::FormatHostReport(SampleFacts()), "two formats of the same facts differ");
+    Expect(AgcDriver::FormatHostReport(shuffled) == Golden, "the entry order of the input changed the report");
+    Expect(AgcDriver::FormatHostReport(SampleFacts()) == AgcDriver::FormatHostReport(SampleFacts()), "two formats of the same facts differ");
 }
 
 void MissingFactsAreNamed() {
     AgcDriver::HostFacts facts;
     const auto text = AgcDriver::FormatHostReport(facts);
-    Check(text.find("os: unavailable\n") != std::string::npos, "an absent OS is not reported as unavailable");
-    Check(text.find("cpu_gate: unavailable\n") != std::string::npos, "an unknown CPU gate is not reported as unavailable");
-    Check(text.find("device: none selected\n") != std::string::npos, "an absent GPU is not reported");
-    Check(text.find("state: unavailable\n") != std::string::npos, "an unknown shader cache is not reported as unavailable");
-    Check(text.find("commit: unknown\n") != std::string::npos, "an empty commit is not reported as unknown");
+    Expect(text.find("os: unavailable\n") != std::string::npos, "an absent OS is not reported as unavailable");
+    Expect(text.find("cpu_gate: unavailable\n") != std::string::npos, "an unknown CPU gate is not reported as unavailable");
+    Expect(text.find("device: none selected\n") != std::string::npos, "an absent GPU is not reported");
+    Expect(text.find("state: unavailable\n") != std::string::npos, "an unknown shader cache is not reported as unavailable");
+    Expect(text.find("commit: unknown\n") != std::string::npos, "an empty commit is not reported as unknown");
     facts.cpuMissing = std::vector<std::string>{"AVX2", "BMI2"};
     facts.shaderCache = AgcDriver::HostShaderCacheFacts{false, false, 0};
     const auto failed = AgcDriver::FormatHostReport(facts);
-    Check(failed.find("cpu_gate: failed, lacks AVX2, BMI2\n") != std::string::npos, "a failed CPU gate does not list the missing extensions");
-    Check(failed.find("state: disabled\n") != std::string::npos, "a disabled shader cache is not reported");
+    Expect(failed.find("cpu_gate: failed, lacks AVX2, BMI2\n") != std::string::npos, "a failed CPU gate does not list the missing extensions");
+    Expect(failed.find("state: disabled\n") != std::string::npos, "a disabled shader cache is not reported");
     facts.shaderCache = AgcDriver::HostShaderCacheFacts{true, false, 0};
-    Check(AgcDriver::FormatHostReport(facts).find("state: absent\n") != std::string::npos, "an absent shader cache directory is not reported");
+    Expect(AgcDriver::FormatHostReport(facts).find("state: absent\n") != std::string::npos, "an absent shader cache directory is not reported");
 }
 
 std::string DecodedDriverVersion(AgcDriver::HostDriverVersionScheme scheme, std::uint32_t version) {
@@ -131,33 +124,33 @@ std::string DecodedDriverVersion(AgcDriver::HostDriverVersionScheme scheme, std:
 
 void DriverVersionsAreDecoded() {
     using Scheme = AgcDriver::HostDriverVersionScheme;
-    Check(DecodedDriverVersion(Scheme::Nvidia, 0x9b438000u) == "621.14.0.0", "NVIDIA 621.14 was not decoded");
-    Check(DecodedDriverVersion(Scheme::Nvidia, (580u << 22) | (95u << 14) | (5u << 6) | 1u) == "580.95.5.1", "the lower NVIDIA fields were not decoded");
-    Check(DecodedDriverVersion(Scheme::IntelWindows, 0x0019485cu) == "101.2140", "Intel 101.2140 on Windows was not decoded");
-    Check(DecodedDriverVersion(Scheme::Vulkan, (25u << 22) | (2u << 12) | 8u) == "25.2.8", "a Vulkan-encoded version was not decoded");
-    Check(DecodedDriverVersion(Scheme::Unknown, 0x9b438000u) == "unknown", "a version without a known encoding was decoded");
+    Expect(DecodedDriverVersion(Scheme::Nvidia, 0x9b438000u) == "621.14.0.0", "NVIDIA 621.14 was not decoded");
+    Expect(DecodedDriverVersion(Scheme::Nvidia, (580u << 22) | (95u << 14) | (5u << 6) | 1u) == "580.95.5.1", "the lower NVIDIA fields were not decoded");
+    Expect(DecodedDriverVersion(Scheme::IntelWindows, 0x0019485cu) == "101.2140", "Intel 101.2140 on Windows was not decoded");
+    Expect(DecodedDriverVersion(Scheme::Vulkan, (25u << 22) | (2u << 12) | 8u) == "25.2.8", "a Vulkan-encoded version was not decoded");
+    Expect(DecodedDriverVersion(Scheme::Unknown, 0x9b438000u) == "unknown", "a version without a known encoding was decoded");
     const auto text = AgcDriver::FormatHostReport(SampleFacts());
-    Check(text.find("driver_version: ") < text.find("driver_version_raw: "), "the decoded version does not precede the raw value");
+    Expect(text.find("driver_version: ") < text.find("driver_version_raw: "), "the decoded version does not precede the raw value");
 }
 
 void PathsAndAddressesAreRedacted() {
-    Check(AgcDriver::RedactHostText("/home/alice/.cache/shader_cache") == "<path>", "an absolute path was kept");
-    Check(AgcDriver::RedactHostText("loaded from ~/games/x") == "loaded from <path>", "a home-relative path was kept");
-    Check(AgcDriver::RedactHostText("C:\\Users\\bob\\AppData") == "<path>", "a Windows path was kept");
-    Check(AgcDriver::RedactHostText("D:/Users/bob") == "<path>", "a Windows drive path with a slash was kept");
-    Check(AgcDriver::RedactHostText("(/usr/lib/libvulkan.so.1)") == "<path>", "a parenthesised path was kept");
-    Check(AgcDriver::RedactHostText("https://user:secret@example.org/a") == "<url>", "a URL was kept");
-    Check(AgcDriver::RedactHostText("nic 00:1a:2B:3c:4d:5e up") == "nic <redacted> up", "a MAC address was kept");
-    Check(AgcDriver::RedactHostText("00-1A-2B-3C-4D-5E") == "<redacted>", "a dashed MAC address was kept");
-    Check(AgcDriver::RedactHostText("LAHF/SAHF") == "LAHF/SAHF", "a feature name with a slash was changed");
-    Check(AgcDriver::RedactHostText("AMD Radeon RX 6750 XT (RADV NAVI22)") == "AMD Radeon RX 6750 XT (RADV NAVI22)", "a device name was changed");
-    Check(AgcDriver::RedactHostText("a\nfake: line\r\tx") == "a fake: line  x", "control characters were kept");
+    Expect(AgcDriver::RedactHostText("/home/alice/.cache/shader_cache") == "<path>", "an absolute path was kept");
+    Expect(AgcDriver::RedactHostText("loaded from ~/games/x") == "loaded from <path>", "a home-relative path was kept");
+    Expect(AgcDriver::RedactHostText("C:\\Users\\bob\\AppData") == "<path>", "a Windows path was kept");
+    Expect(AgcDriver::RedactHostText("D:/Users/bob") == "<path>", "a Windows drive path with a slash was kept");
+    Expect(AgcDriver::RedactHostText("(/usr/lib/libvulkan.so.1)") == "<path>", "a parenthesised path was kept");
+    Expect(AgcDriver::RedactHostText("https://user:secret@example.org/a") == "<url>", "a URL was kept");
+    Expect(AgcDriver::RedactHostText("nic 00:1a:2B:3c:4d:5e up") == "nic <redacted> up", "a MAC address was kept");
+    Expect(AgcDriver::RedactHostText("00-1A-2B-3C-4D-5E") == "<redacted>", "a dashed MAC address was kept");
+    Expect(AgcDriver::RedactHostText("LAHF/SAHF") == "LAHF/SAHF", "a feature name with a slash was changed");
+    Expect(AgcDriver::RedactHostText("AMD Radeon RX 6750 XT (RADV NAVI22)") == "AMD Radeon RX 6750 XT (RADV NAVI22)", "a device name was changed");
+    Expect(AgcDriver::RedactHostText("a\nfake: line\r\tx") == "a fake: line  x", "control characters were kept");
 }
 
 void MissingRequirementsAreDescribed() {
     auto facts = SampleFacts();
-    Check(AgcDriver::DescribeMissingRequirements(*facts.gpu).empty(), "a GPU with every required item got a message");
-    Check(AgcDriver::MissingRequirements(*facts.gpu).empty(), "a GPU with every required item lists missing items");
+    Expect(AgcDriver::DescribeMissingRequirements(*facts.gpu).empty(), "a GPU with every required item got a message");
+    Expect(AgcDriver::MissingRequirements(*facts.gpu).empty(), "a GPU with every required item lists missing items");
     facts.gpu->requirements.push_back({"VK_KHR_8bit_storage", "extension", true, false});
     facts.gpu->requirements.push_back({"bufferDeviceAddress", "feature", true, false});
     facts.gpu->requirements.push_back({"VK_KHR_present_wait", "extension", false, false});
@@ -166,34 +159,34 @@ void MissingRequirementsAreDescribed() {
         "VK_KHR_8bit_storage (extension), bufferDeviceAddress (feature). Update the graphics driver; an older GPU or driver may not offer them. "
         "Other Vulkan devices on this machine: Other GPU; set ANYPS5_GPU to a part of one name to run on it. "
         "Start again with ANYPS5_HOST_REPORT=1 and attach the report to the issue.";
-    Check(message == expected, "the message differs from the expected text");
-    Check(message.find("VK_KHR_present_wait") == std::string::npos, "an optional item was listed as needed");
+    Expect(message == expected, "the message differs from the expected text");
+    Expect(message.find("VK_KHR_present_wait") == std::string::npos, "an optional item was listed as needed");
     facts.gpu->candidates = {"Test GPU"};
     facts.gpu->requirements = {{"shaderInt64", "feature", true, false}};
     facts.gpu->driverName.clear();
     facts.gpu->driverInfo.clear();
     const auto single = AgcDriver::DescribeMissingRequirements(*facts.gpu);
-    Check(single.find("lacks 1 item AnyPS5 needs: shaderInt64 (feature).") != std::string::npos, "the singular form is wrong");
-    Check(single.find("unknown driver") != std::string::npos, "an unknown driver is not named as unknown");
-    Check(single.find("Other Vulkan devices") == std::string::npos, "the only device was offered as an alternative");
+    Expect(single.find("lacks 1 item AnyPS5 needs: shaderInt64 (feature).") != std::string::npos, "the singular form is wrong");
+    Expect(single.find("unknown driver") != std::string::npos, "an unknown driver is not named as unknown");
+    Expect(single.find("Other Vulkan devices") == std::string::npos, "the only device was offered as an alternative");
     facts.gpu->driverName = "HoneyKrisp";
     facts.gpu->requirements = {{"vertexPipelineStoresAndAtomics", "feature", true, false}};
     const auto honeykrisp = AgcDriver::DescribeMissingRequirements(*facts.gpu);
-    Check(honeykrisp.find("hk_enable_vertex_pipeline_stores_atomics=true") != std::string::npos, "the Honeykrisp feature opt-in was not named");
-    Check(honeykrisp.find("Update the graphics driver") == std::string::npos, "the Honeykrisp feature opt-in was misdiagnosed as an old driver");
+    Expect(honeykrisp.find("hk_enable_vertex_pipeline_stores_atomics=true") != std::string::npos, "the Honeykrisp feature opt-in was not named");
+    Expect(honeykrisp.find("Update the graphics driver") == std::string::npos, "the Honeykrisp feature opt-in was misdiagnosed as an old driver");
     facts.gpu->requirements.push_back({"shaderInt64", "feature", true, false});
     const auto multiple = AgcDriver::DescribeMissingRequirements(*facts.gpu);
-    Check(multiple.find("Other missing items may still require a graphics driver update") != std::string::npos, "other missing Honeykrisp features lost their update advice");
+    Expect(multiple.find("Other missing items may still require a graphics driver update") != std::string::npos, "other missing Honeykrisp features lost their update advice");
     facts.gpu->requirements = {{"shaderInt64", "feature", true, false}};
     const auto unrelated = AgcDriver::DescribeMissingRequirements(*facts.gpu);
-    Check(unrelated.find("hk_enable_vertex_pipeline_stores_atomics") == std::string::npos, "the Honeykrisp opt-in was suggested for another missing feature");
+    Expect(unrelated.find("hk_enable_vertex_pipeline_stores_atomics") == std::string::npos, "the Honeykrisp opt-in was suggested for another missing feature");
     facts.gpu->driverName = "test-driver";
     facts.gpu->requirements = {{"vertexPipelineStoresAndAtomics", "feature", true, false}};
     const auto otherDriver = AgcDriver::DescribeMissingRequirements(*facts.gpu);
-    Check(otherDriver.find("hk_enable_vertex_pipeline_stores_atomics") == std::string::npos, "the Honeykrisp opt-in was suggested for another driver");
+    Expect(otherDriver.find("hk_enable_vertex_pipeline_stores_atomics") == std::string::npos, "the Honeykrisp opt-in was suggested for another driver");
     facts.gpu->name = "GPU of alice at /home/alice";
     const auto redacted = AgcDriver::DescribeMissingRequirements(*facts.gpu, {"alice"});
-    Check(redacted.find("alice") == std::string::npos, "the message leaked a listed name");
+    Expect(redacted.find("alice") == std::string::npos, "the message leaked a listed name");
 }
 
 AgcDriver::HostSources FakeSources() {
@@ -214,16 +207,16 @@ AgcDriver::HostSources FakeSources() {
 
 void SourcesAreCollected() {
     const auto facts = AgcDriver::CollectHostFacts(FakeSources());
-    Check(facts.commit == "feedface" && facts.os == "Fake OS 1" && facts.cpuModel == "Fake CPU", "a text source was not collected");
-    Check(facts.cpuThreads == 8 && facts.memoryMiB == 16000, "a number source was not collected");
-    Check(facts.cpuMissing && *facts.cpuMissing == std::vector<std::string>{"BMI2"}, "the CPU gate source was not collected");
-    Check(facts.sdlLinked == "2.30.0" && facts.sdlCompiled == "2.30.1", "an SDL source was not collected");
-    Check(facts.shaderCache && facts.shaderCache->sizeMiB == 7, "the shader cache source was not collected");
-    Check(facts.redactions == std::vector<std::string>{"alice"}, "the redaction source was not collected");
-    Check(facts.unavailable.empty(), "a working source was reported as unavailable");
-    Check(!facts.gpu, "the collector invented a GPU");
+    Expect(facts.commit == "feedface" && facts.os == "Fake OS 1" && facts.cpuModel == "Fake CPU", "a text source was not collected");
+    Expect(facts.cpuThreads == 8 && facts.memoryMiB == 16000, "a number source was not collected");
+    Expect(facts.cpuMissing && *facts.cpuMissing == std::vector<std::string>{"BMI2"}, "the CPU gate source was not collected");
+    Expect(facts.sdlLinked == "2.30.0" && facts.sdlCompiled == "2.30.1", "an SDL source was not collected");
+    Expect(facts.shaderCache && facts.shaderCache->sizeMiB == 7, "the shader cache source was not collected");
+    Expect(facts.redactions == std::vector<std::string>{"alice"}, "the redaction source was not collected");
+    Expect(facts.unavailable.empty(), "a working source was reported as unavailable");
+    Expect(!facts.gpu, "the collector invented a GPU");
     const std::vector<std::pair<std::string, std::string>> environment{{"ANYPS5_A", "1"}, {"APS5_B", "2"}, {"SDL_VIDEODRIVER", "x11"}, {"VK_INSTANCE_LAYERS", "layer"}};
-    Check(facts.environment == environment, "the environment was not filtered and sorted");
+    Expect(facts.environment == environment, "the environment was not filtered and sorted");
 }
 
 void FailingSourcesAreRecorded() {
@@ -232,29 +225,29 @@ void FailingSourcesAreRecorded() {
     sources.memoryMiB = nullptr;
     sources.cpuModel = [] () -> std::string { throw std::logic_error("cpuid"); };
     const auto facts = AgcDriver::CollectHostFacts(sources);
-    Check(!facts.os && !facts.memoryMiB && !facts.cpuModel, "a failing source produced a value");
-    Check(facts.cpuThreads == 8 && facts.sdlLinked == "2.30.0", "a failing source hid the others");
+    Expect(!facts.os && !facts.memoryMiB && !facts.cpuModel, "a failing source produced a value");
+    Expect(facts.cpuThreads == 8 && facts.sdlLinked == "2.30.0", "a failing source hid the others");
     const std::vector<std::string> unavailable{"os: uname failed", "cpu: cpuid", "memory: no source"};
-    Check(facts.unavailable.size() == 3, "the failures were not all recorded");
-    for (const auto& item : unavailable) Check(std::find(facts.unavailable.begin(), facts.unavailable.end(), item) != facts.unavailable.end(), item.c_str());
+    Expect(facts.unavailable.size() == 3, "the failures were not all recorded");
+    for (const auto& item : unavailable) Expect(std::find(facts.unavailable.begin(), facts.unavailable.end(), item) != facts.unavailable.end(), item.c_str());
     const auto text = AgcDriver::FormatHostReport(facts);
-    Check(text.find("os: unavailable\n") != std::string::npos && text.find("memory_mib: unavailable\n") != std::string::npos, "a failed source is not shown as unavailable");
-    Check(text.find("[unavailable]\ncpu: cpuid\nmemory: no source\nos: uname failed\n") != std::string::npos, "the unavailable section is missing or unsorted");
-    Check(AgcDriver::FormatHostReport(AgcDriver::CollectHostFacts(FakeSources())).find("[unavailable]") == std::string::npos, "a report with every fact printed an unavailable section");
+    Expect(text.find("os: unavailable\n") != std::string::npos && text.find("memory_mib: unavailable\n") != std::string::npos, "a failed source is not shown as unavailable");
+    Expect(text.find("[unavailable]\ncpu: cpuid\nmemory: no source\nos: uname failed\n") != std::string::npos, "the unavailable section is missing or unsorted");
+    Expect(AgcDriver::FormatHostReport(AgcDriver::CollectHostFacts(FakeSources())).find("[unavailable]") == std::string::npos, "a report with every fact printed an unavailable section");
     auto leaking = facts;
     leaking.unavailable.push_back("environment: cannot read /home/alice/.config");
-    Check(AgcDriver::FormatHostReport(leaking).find("alice") == std::string::npos, "a failure message leaked a path");
+    Expect(AgcDriver::FormatHostReport(leaking).find("alice") == std::string::npos, "a failure message leaked a path");
     AgcDriver::HostSources none;
     const auto empty = AgcDriver::CollectHostFacts(none);
-    Check(empty.unavailable.size() == 10 && !empty.os && empty.environment.empty() && empty.redactions.empty(), "an empty source set did not report every source");
+    Expect(empty.unavailable.size() == 10 && !empty.os && empty.environment.empty() && empty.redactions.empty(), "an empty source set did not report every source");
 }
 
 void RedactionNamesAreDerived() {
-    Check(AgcDriver::HostRedactionNames("alice", "alice-pc", "/home/alice/") == std::vector<std::string>{"alice", "alice-pc"}, "the user, host and home names were not derived");
-    Check(AgcDriver::HostRedactionNames("alice", "box", "/home/ally") == std::vector<std::string>{"alice", "box", "ally"}, "a home name that differs from the user was dropped");
-    Check(AgcDriver::HostRedactionNames("", "", "/home/ally/") == std::vector<std::string>{"ally"}, "a trailing separator hid the home directory name");
-    Check(AgcDriver::HostRedactionNames("", "", "C:\\Users\\Bob") == std::vector<std::string>{"Bob"}, "a Windows home directory was not split");
-    Check(AgcDriver::HostRedactionNames("", "", "").empty(), "empty inputs produced names");
+    Expect(AgcDriver::HostRedactionNames("alice", "alice-pc", "/home/alice/") == std::vector<std::string>{"alice", "alice-pc"}, "the user, host and home names were not derived");
+    Expect(AgcDriver::HostRedactionNames("alice", "box", "/home/ally") == std::vector<std::string>{"alice", "box", "ally"}, "a home name that differs from the user was dropped");
+    Expect(AgcDriver::HostRedactionNames("", "", "/home/ally/") == std::vector<std::string>{"ally"}, "a trailing separator hid the home directory name");
+    Expect(AgcDriver::HostRedactionNames("", "", "C:\\Users\\Bob") == std::vector<std::string>{"Bob"}, "a Windows home directory was not split");
+    Expect(AgcDriver::HostRedactionNames("", "", "").empty(), "empty inputs produced names");
 }
 
 bool Refused(const char* value, std::string& message) {
@@ -268,39 +261,39 @@ bool Refused(const char* value, std::string& message) {
 }
 
 void SettingIsParsed() {
-    Check(!AgcDriver::ParseHostReportSetting(nullptr), "an unset variable turned the report on");
-    Check(!AgcDriver::ParseHostReportSetting(""), "an empty value turned the report on");
-    Check(!AgcDriver::ParseHostReportSetting("0"), "0 turned the report on");
-    Check(AgcDriver::ParseHostReportSetting("1"), "1 did not turn the report on");
+    Expect(!AgcDriver::ParseHostReportSetting(nullptr), "an unset variable turned the report on");
+    Expect(!AgcDriver::ParseHostReportSetting(""), "an empty value turned the report on");
+    Expect(!AgcDriver::ParseHostReportSetting("0"), "0 turned the report on");
+    Expect(AgcDriver::ParseHostReportSetting("1"), "1 did not turn the report on");
     for (const char* bad : {"2", "true", "yes", " 1", "1 ", "01", "-1", "on", "00"}) {
         std::string message;
-        Check(Refused(bad, message), bad);
-        Check(message.find("ANYPS5_HOST_REPORT") != std::string::npos && message.find(std::string("'") + bad + "'") != std::string::npos, "the refusal does not name the variable and the value");
+        Expect(Refused(bad, message), bad);
+        Expect(message.find("ANYPS5_HOST_REPORT") != std::string::npos && message.find(std::string("'") + bad + "'") != std::string::npos, "the refusal does not name the variable and the value");
     }
 }
 
 void NamedValuesAreRedacted() {
     const std::vector<std::string> names{"alice", "al", "workstation-7", ""};
-    Check(AgcDriver::RedactHostText("user alice on workstation-7", names) == "user <redacted> on <redacted>", "a listed name was kept");
-    Check(AgcDriver::RedactHostText("al's radeon", names) == "<redacted>'s radeon", "a short name hit inside a word or was kept");
-    Check(AgcDriver::RedactHostText("alicia palice", names) == "alicia palice", "a name inside another word was replaced");
-    Check(AgcDriver::RedactHostText("alice-pc", names) == "<redacted>-pc", "a name before a dash was kept");
-    Check(AgcDriver::RedactHostText("no names here", {}) == "no names here", "text without names changed");
+    Expect(AgcDriver::RedactHostText("user alice on workstation-7", names) == "user <redacted> on <redacted>", "a listed name was kept");
+    Expect(AgcDriver::RedactHostText("al's radeon", names) == "<redacted>'s radeon", "a short name hit inside a word or was kept");
+    Expect(AgcDriver::RedactHostText("alicia palice", names) == "alicia palice", "a name inside another word was replaced");
+    Expect(AgcDriver::RedactHostText("alice-pc", names) == "<redacted>-pc", "a name before a dash was kept");
+    Expect(AgcDriver::RedactHostText("no names here", {}) == "no names here", "text without names changed");
 #ifdef _WIN32
-    Check(AgcDriver::RedactHostText("user AlIcE on WORKSTATION-7", names) == "user <redacted> on <redacted>", "a Windows name in another case was kept");
-    Check(AgcDriver::RedactHostText("Users/ALICE/cache", names) == "Users/<redacted>/cache", "a Windows name in a forward-slash path was kept");
-    Check(AgcDriver::RedactHostText("ALICIA PALICE", names) == "ALICIA PALICE", "a name inside another word was replaced in another case");
-    Check(AgcDriver::RedactHostText("user \xc3\xa9lise", {"\xc3\x89LISE"}) == "user <redacted>", "a UTF-8 name in another case was kept");
-    Check(AgcDriver::RedactHostText("user \xd0\xb8\xd1\x80\xd0\xb8\xd0\xbd\xd0\xb0", {"\xd0\x98\xd0\xa0\xd0\x98\xd0\x9d\xd0\x90"}) == "user <redacted>", "a UTF-8 Cyrillic name in another case was kept");
-    Check(AgcDriver::RedactHostText("user \xd0\xb8\xd1\x80\xd0\xb8\xd0\xbd\xd0\xb0\xd0\xb1", {"\xd0\x98\xd0\xa0\xd0\x98\xd0\x9d\xd0\x90"}) == "user \xd0\xb8\xd1\x80\xd0\xb8\xd0\xbd\xd0\xb0\xd0\xb1", "a name inside a longer word in another script was replaced");
-    Check(AgcDriver::RedactHostText("path Users/\xc3\x89lise/cache", {"\xc3\x89LISE"}) == "path Users/<redacted>/cache", "a UTF-8 name in another case in a path was kept");
-    Check(AgcDriver::RedactHostText("user \xd0\xb8 \x80", {"\xd0\xb8"}).find("\xd0\xb8") == std::string::npos, "a case-exact name in native ANSI text was kept");
-    Check(AgcDriver::RedactHostText("user \xd0\xb8 \x80 \xd0\xb8", {"\xd0\xb8"}).find("\xd0\xb8") == std::string::npos, "a case-exact name in native ANSI contextual text was kept");
-    Check(AgcDriver::RedactHostText("a\x80\x84" "b", {}).find("\x80\x84") != std::string::npos, "a byte the code page cannot represent was changed");
-    Check(AgcDriver::RedactHostText("user \x80 alice", {"alice"}).find("alice") == std::string::npos, "a name in a text the code page cannot represent was kept");
-    Check(AgcDriver::RedactHostText("user \x80 ALICE", {"alice"}).find("ALICE") == std::string::npos, "a name in another case in a text the code page cannot represent was kept");
+    Expect(AgcDriver::RedactHostText("user AlIcE on WORKSTATION-7", names) == "user <redacted> on <redacted>", "a Windows name in another case was kept");
+    Expect(AgcDriver::RedactHostText("Users/ALICE/cache", names) == "Users/<redacted>/cache", "a Windows name in a forward-slash path was kept");
+    Expect(AgcDriver::RedactHostText("ALICIA PALICE", names) == "ALICIA PALICE", "a name inside another word was replaced in another case");
+    Expect(AgcDriver::RedactHostText("user \xc3\xa9lise", {"\xc3\x89LISE"}) == "user <redacted>", "a UTF-8 name in another case was kept");
+    Expect(AgcDriver::RedactHostText("user \xd0\xb8\xd1\x80\xd0\xb8\xd0\xbd\xd0\xb0", {"\xd0\x98\xd0\xa0\xd0\x98\xd0\x9d\xd0\x90"}) == "user <redacted>", "a UTF-8 Cyrillic name in another case was kept");
+    Expect(AgcDriver::RedactHostText("user \xd0\xb8\xd1\x80\xd0\xb8\xd0\xbd\xd0\xb0\xd0\xb1", {"\xd0\x98\xd0\xa0\xd0\x98\xd0\x9d\xd0\x90"}) == "user \xd0\xb8\xd1\x80\xd0\xb8\xd0\xbd\xd0\xb0\xd0\xb1", "a name inside a longer word in another script was replaced");
+    Expect(AgcDriver::RedactHostText("path Users/\xc3\x89lise/cache", {"\xc3\x89LISE"}) == "path Users/<redacted>/cache", "a UTF-8 name in another case in a path was kept");
+    Expect(AgcDriver::RedactHostText("user \xd0\xb8 \x80", {"\xd0\xb8"}).find("\xd0\xb8") == std::string::npos, "a case-exact name in native ANSI text was kept");
+    Expect(AgcDriver::RedactHostText("user \xd0\xb8 \x80 \xd0\xb8", {"\xd0\xb8"}).find("\xd0\xb8") == std::string::npos, "a case-exact name in native ANSI contextual text was kept");
+    Expect(AgcDriver::RedactHostText("a\x80\x84" "b", {}).find("\x80\x84") != std::string::npos, "a byte the code page cannot represent was changed");
+    Expect(AgcDriver::RedactHostText("user \x80 alice", {"alice"}).find("alice") == std::string::npos, "a name in a text the code page cannot represent was kept");
+    Expect(AgcDriver::RedactHostText("user \x80 ALICE", {"alice"}).find("ALICE") == std::string::npos, "a name in another case in a text the code page cannot represent was kept");
 #else
-    Check(AgcDriver::RedactHostText("user AlIcE on WORKSTATION-7", names) == "user AlIcE on WORKSTATION-7", "a POSIX name in another case was replaced");
+    Expect(AgcDriver::RedactHostText("user AlIcE on WORKSTATION-7", names) == "user AlIcE on WORKSTATION-7", "a POSIX name in another case was replaced");
 #endif
     auto facts = SampleFacts();
     facts.redactions = {"alice", "workstation-7"};
@@ -308,27 +301,27 @@ void NamedValuesAreRedacted() {
     facts.gpu->name = "GPU of alice";
     facts.environment.push_back({"APS5_NOTE", "alice"});
     const auto text = AgcDriver::FormatHostReport(facts);
-    Check(text.find("alice") == std::string::npos && text.find("workstation-7") == std::string::npos, "a listed name reached the report");
-    Check(text.find("os: Linux <redacted> 6.1\n") != std::string::npos, "the host name was not replaced in the OS line");
-    Check(text.find("device: GPU of <redacted>\n") != std::string::npos, "the user name was not replaced in the GPU name");
+    Expect(text.find("alice") == std::string::npos && text.find("workstation-7") == std::string::npos, "a listed name reached the report");
+    Expect(text.find("os: Linux <redacted> 6.1\n") != std::string::npos, "the host name was not replaced in the OS line");
+    Expect(text.find("device: GPU of <redacted>\n") != std::string::npos, "the user name was not replaced in the GPU name");
 #ifdef _WIN32
     auto mixed = SampleFacts();
     mixed.redactions = {"alice", "workstation-7"};
     mixed.environment.push_back({"APS5_NOTE", "user ALICE on Workstation-7 at Users/ALICE/cache"});
     const auto mixedText = AgcDriver::FormatHostReport(mixed);
-    Check(mixedText.find("ALICE") == std::string::npos && mixedText.find("Workstation-7") == std::string::npos, "a mixed-case name reached the Windows report");
-    Check(mixedText.find("APS5_NOTE: user <redacted> on <redacted> at Users/<redacted>/cache\n") != std::string::npos, "a mixed-case name was not replaced in the Windows report");
+    Expect(mixedText.find("ALICE") == std::string::npos && mixedText.find("Workstation-7") == std::string::npos, "a mixed-case name reached the Windows report");
+    Expect(mixedText.find("APS5_NOTE: user <redacted> on <redacted> at Users/<redacted>/cache\n") != std::string::npos, "a mixed-case name was not replaced in the Windows report");
     auto unicode = SampleFacts();
     unicode.redactions = {"\xc3\x89LISE"};
     unicode.environment.push_back({"APS5_NOTE", "user \xc3\xa9lise"});
     const auto unicodeText = AgcDriver::FormatHostReport(unicode);
-    Check(unicodeText.find("\xc3\xa9lise") == std::string::npos, "a UTF-8 name reached the Windows report");
-    Check(unicodeText.find("APS5_NOTE: user <redacted>\n") != std::string::npos, "a UTF-8 name was not replaced in the Windows report");
+    Expect(unicodeText.find("\xc3\xa9lise") == std::string::npos, "a UTF-8 name reached the Windows report");
+    Expect(unicodeText.find("APS5_NOTE: user <redacted>\n") != std::string::npos, "a UTF-8 name was not replaced in the Windows report");
     auto ansi = SampleFacts();
     ansi.redactions = {"\xd0\xb8"};
     ansi.environment.push_back({"APS5_NOTE", "user \xd0\xb8 \x80 \xd0\xb8"});
     const auto ansiText = AgcDriver::FormatHostReport(ansi);
-    Check(ansiText.find("\xd0\xb8") == std::string::npos, "a case-exact name reached the Windows report in native ANSI text");
+    Expect(ansiText.find("\xd0\xb8") == std::string::npos, "a case-exact name reached the Windows report in native ANSI text");
 #endif
 }
 
@@ -343,10 +336,10 @@ void FormattedReportHasNoSensitiveText() {
     facts.environment.push_back({"APS5_NOTE", "line\nINJECTED: yes"});
     const auto text = AgcDriver::FormatHostReport(facts);
     for (const char* forbidden : {"alice", "/home", "/usr", "C:\\", "00:11:22", "\\\\server", "\nINJECTED"})
-        Check(text.find(forbidden) == std::string::npos, forbidden);
-    Check(text.find("ANYPS5_SHADER_CACHE_DIR: <path>\n") != std::string::npos, "an environment path value was not replaced");
-    Check(text.find("driver_info: Mesa 24 <path>\n") != std::string::npos, "a path in the driver info was not replaced");
-    Check(text.find("APS5_NOTE: line INJECTED: yes\n") != std::string::npos, "a newline in a value was not flattened");
+        Expect(text.find(forbidden) == std::string::npos, forbidden);
+    Expect(text.find("ANYPS5_SHADER_CACHE_DIR: <path>\n") != std::string::npos, "an environment path value was not replaced");
+    Expect(text.find("driver_info: Mesa 24 <path>\n") != std::string::npos, "a path in the driver info was not replaced");
+    Expect(text.find("APS5_NOTE: line INJECTED: yes\n") != std::string::npos, "a newline in a value was not flattened");
 }
 
 }
@@ -364,5 +357,5 @@ int main() {
     FailingSourcesAreRecorded();
     RedactionNamesAreDerived();
     FormattedReportHasNoSensitiveText();
-    return failures == 0 ? 0 : 1;
+    return Failures() == 0 ? 0 : 1;
 }

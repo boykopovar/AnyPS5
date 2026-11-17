@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -8,13 +9,6 @@
 #include <limits>
 #include <source_location>
 #include <stdexcept>
-
-static void Require(bool condition, const std::source_location& location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "module address match check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 static void* Address(std::uintptr_t value) {
     return reinterpret_cast<void*>(value);

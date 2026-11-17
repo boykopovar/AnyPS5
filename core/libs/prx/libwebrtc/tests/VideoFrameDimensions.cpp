@@ -1,4 +1,5 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstddef>
@@ -9,12 +10,6 @@
 #include <stdexcept>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc VideoFrame dimensions check failed at line %u\n", location.line());
-    std::abort();
-}
 
 const void* expectedBuffer;
 int widthCalls;

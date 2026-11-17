@@ -2,6 +2,7 @@
 #include "prx/libSceFont/libSceFont.hpp"
 #include "prx/libSceFont/include/FontTypes.hpp"
 #include "prx/libSceFont/include/FontDriver.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -11,14 +12,6 @@
 #include <initializer_list>
 #include <utility>
 #include <vector>
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "Font surface check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static int allocations = 0;
 static void* APS5_VABI Allocate(void*, std::uint32_t size) {

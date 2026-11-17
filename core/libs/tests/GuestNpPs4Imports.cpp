@@ -3,6 +3,7 @@
 #include "prx/libSceNpMatching2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -23,13 +24,6 @@ constexpr int TrophyInvalidArgument = static_cast<int>(0x80551604u);
 constexpr int TrophyInvalidTrophyId = static_cast<int>(0x8055160au);
 constexpr int TrophyInvalidGroupId = static_cast<int>(0x8055160bu);
 constexpr int TrophyNotRegistered = static_cast<int>(0x8055160fu);
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "NpPs4Imports: %s\n", message);
-        std::abort();
-    }
-}
 
 void WriteBigEndian(std::vector<std::uint8_t>& bytes, std::size_t at, std::uint64_t value, std::size_t width) {
     for (std::size_t index = 0; index < width; ++index) bytes[at + index] = static_cast<std::uint8_t>(value >> (8u * (width - 1u - index)));

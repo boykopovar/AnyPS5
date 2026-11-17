@@ -1,5 +1,6 @@
 #include "BdaAbi.hpp"
 #include "Recompiler.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdio>
 #include <exception>
@@ -13,10 +14,6 @@
 namespace {
 
 using namespace ShaderRecompiler;
-
-void Check(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 SpirvTarget Target(bool byteAccess) {
     static constexpr std::array<std::uint32_t, 3> withBytes{
@@ -39,13 +36,13 @@ struct Counts {
 };
 
 Counts Count(std::span<const std::uint32_t> words) {
-    Check(words.size() >= 5 && words[0] == spv::MagicNumber, "formatted buffer byte stores: missing SPIR-V module");
+    Require(words.size() >= 5 && words[0] == spv::MagicNumber, "formatted buffer byte stores: missing SPIR-V module");
     Counts counts;
     std::uint32_t byteType = 0;
     std::vector<std::uint32_t> bytePointers;
     for (std::size_t offset = 5; offset < words.size();) {
         const auto count = words[offset] >> spv::WordCountShift;
-        Check(count != 0 && count <= words.size() - offset, "formatted buffer byte stores: malformed SPIR-V instruction");
+        Require(count != 0 && count <= words.size() - offset, "formatted buffer byte stores: malformed SPIR-V instruction");
         const auto opcode = words[offset] & spv::OpCodeMask;
         if (opcode == spv::OpAtomicCompareExchange) ++counts.compareExchanges;
         if (opcode == spv::OpCapability && words[offset + 1] == spv::CapabilityStorageBuffer8BitAccess) counts.byteCapability = true;
@@ -105,11 +102,11 @@ Counts Compile(bool byteAccess, bool vertex = false) {
 int main() {
     try {
         const auto bytes = Compile(true);
-        Check(bytes.compareExchanges == 0, "formatted buffer byte stores: a store still patches its dword with " + std::to_string(bytes.compareExchanges) + " compare-exchange loops");
-        Check(bytes.byteBuffers && bytes.byteCapability && bytes.byteTypes == 1, "formatted buffer byte stores: the byte view of the buffers is not declared under StorageBuffer8BitAccess");
-        Check(bytes.byteStores >= 4, "formatted buffer byte stores: the 8-bit components are stored with " + std::to_string(bytes.byteStores) + " byte stores, expected at least 4");
+        Require(bytes.compareExchanges == 0, "formatted buffer byte stores: a store still patches its dword with " + std::to_string(bytes.compareExchanges) + " compare-exchange loops");
+        Require(bytes.byteBuffers && bytes.byteCapability && bytes.byteTypes == 1, "formatted buffer byte stores: the byte view of the buffers is not declared under StorageBuffer8BitAccess");
+        Require(bytes.byteStores >= 4, "formatted buffer byte stores: the 8-bit components are stored with " + std::to_string(bytes.byteStores) + " byte stores, expected at least 4");
         const auto dwords = Compile(false);
-        Check(dwords.compareExchanges > 0 && !dwords.byteBuffers && !dwords.byteCapability, "formatted buffer byte stores: without StorageBuffer8BitAccess the stores do not fall back to the dword patch");
+        Require(dwords.compareExchanges > 0 && !dwords.byteBuffers && !dwords.byteCapability, "formatted buffer byte stores: without StorageBuffer8BitAccess the stores do not fall back to the dword patch");
         std::printf("formatted buffer byte stores tests passed (%zu byte stores, %zu compare-exchange loops without the capability)\n", bytes.byteStores, dwords.compareExchanges);
         return 0;
     } catch (const std::exception& error) {

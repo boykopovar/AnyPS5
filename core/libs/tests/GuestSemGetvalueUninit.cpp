@@ -1,14 +1,9 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdlib>
-
-static void Require(bool condition) {
-    if (!condition) {
-        std::abort();
-    }
-}
 
 int main() {
     std::uintptr_t sem = 0;

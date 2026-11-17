@@ -2,6 +2,7 @@
 #include "FontFixture.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include FT_BITMAP_H
 #include FT_MODULE_H
@@ -18,14 +19,6 @@
 #include <vector>
 
 using namespace FreeType;
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "FreeType bitmap check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static GuestBitmap Guest(const FT_Bitmap& bitmap) {
     return {bitmap.rows, bitmap.width, bitmap.pitch, bitmap.buffer, bitmap.num_grays, bitmap.pixel_mode, bitmap.palette_mode, bitmap.palette};

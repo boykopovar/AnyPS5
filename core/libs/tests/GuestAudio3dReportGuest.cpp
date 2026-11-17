@@ -1,4 +1,5 @@
 #include "prx/libSceAudio3d/include/Audio3d.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -19,25 +20,9 @@
 
 namespace {
 
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "Audio3d report guest: %s\n", message);
-    std::abort();
-}
-
 int callReports = 0;
 
 void APS5_VABI ReportHandler(const Audio3dReport*, void*) { ++callReports; }
-
-template <typename Action>
-void RequireThrows(Action action, const char* message) {
-    try {
-        action();
-    } catch (const std::runtime_error&) {
-        return;
-    }
-    Require(false, message);
-}
 
 struct ProtectedPages {
     std::uint8_t* bytes;
@@ -89,7 +74,7 @@ int main() {
     Require(sceAudio3dReportRegisterHandler(3, nullptr, nullptr, &invalid) == -2 && invalid == 7, "null report handler order changed");
 
     errno = 71;
-    RequireThrows([&] {
+    ExpectErr<std::runtime_error>([&] {
         sceAudio3dReportRegisterHandler(3, ReportHandler, nullptr, reinterpret_cast<std::uint64_t*>(0x10));
     }, "unmapped output accepted");
     Require(errno == 71, "unmapped output changed errno");
@@ -106,11 +91,11 @@ int main() {
     Require(sceAudio3dReportRegisterHandler(3, ReportHandler, nullptr, atEnd) == 0, "valid output at guard-page end rejected");
     Require(sceAudio3dReportUnregisterHandler(*atEnd) == 0, "guard-page handle did not unregister");
     auto* crossBoundary = reinterpret_cast<std::uint64_t*>(pages.bytes + pages.size - sizeof(std::uint64_t) + 1);
-    RequireThrows([&] { sceAudio3dReportRegisterHandler(3, ReportHandler, nullptr, crossBoundary); }, "cross-page output accepted");
+    ExpectErr<std::runtime_error>([&] { sceAudio3dReportRegisterHandler(3, ReportHandler, nullptr, crossBoundary); }, "cross-page output accepted");
     auto* readOnly = reinterpret_cast<std::uint64_t*>(pages.bytes);
     *readOnly = 0x123456789abcdef0ULL;
     pages.MakeReadOnly();
-    RequireThrows([&] { sceAudio3dReportRegisterHandler(3, ReportHandler, nullptr, readOnly); }, "read-only output accepted");
+    ExpectErr<std::runtime_error>([&] { sceAudio3dReportRegisterHandler(3, ReportHandler, nullptr, readOnly); }, "read-only output accepted");
     Require(*readOnly == 0x123456789abcdef0ULL, "read-only output modified");
     Require(errno == 71, "guard-page operations changed errno");
 
@@ -121,7 +106,7 @@ int main() {
     Require(sceAudio3dReportRegisterHandler(3, ReportHandler, nullptr, nullptr) == 0, "null optional handle rejected");
     Require(sceAudio3dReportUnregisterHandler(handle) == 0, "null-output registration cleanup failed");
 
-    RequireThrows([&] {
+    ExpectErr<std::runtime_error>([&] {
         sceAudio3dReportRegisterHandler(0, ReportHandler, nullptr, reinterpret_cast<std::uint64_t*>(0x10));
     }, "unmapped call-handler output accepted");
     const int invalidPort = static_cast<int>(0x80EA0002u);

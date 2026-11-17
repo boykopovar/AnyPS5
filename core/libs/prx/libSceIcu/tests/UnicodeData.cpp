@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -18,11 +19,6 @@ struct Properties {
     std::int32_t combining = 0;
     std::int32_t digit = -1;
 };
-
-[[noreturn]] void Fail(const std::string& what) {
-    std::fprintf(stderr, "failed: %s\n", what.c_str());
-    std::abort();
-}
 
 std::int32_t Index(const char* const* names, std::size_t count, const std::string& name, const std::string& line) {
     for (std::size_t index = 0; index < count; ++index)

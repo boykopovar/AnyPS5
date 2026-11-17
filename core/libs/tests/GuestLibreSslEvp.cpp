@@ -2,6 +2,7 @@
 #include "prx/libSceLibreSsl/include/Evp.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <stdexcept>
 #include <algorithm>
 #include <array>
@@ -40,17 +41,6 @@ struct Algorithm {
     const char* digests[3];
     const char* macs[6];
 };
-
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL EVP check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> static void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
-    try { action(); } catch (const std::exception&) { return; }
-    Require(false, location);
-}
 
 static void RequireQueued(std::uint64_t reason, std::source_location location = std::source_location::current()) {
     Require(ERR_get_error_nid_postfix() == (6u << 24 | 0xfffu << 12 | reason), location);
@@ -588,16 +578,16 @@ int main() {
     Require(AllZero(&context, sizeof(context)));
     Require(EVP_DigestInit_ex_nid_postfix(&context, nullptr, nullptr) == 0);
     RequireQueued(139);
-    RequireThrows([&] { EVP_DigestUpdate_nid_postfix(&context, abc.data(), abc.size()); });
-    RequireThrows([&] { EVP_DigestFinal_ex_nid_postfix(&context, nullptr, nullptr); });
+    ExpectErr([&] { EVP_DigestUpdate_nid_postfix(&context, abc.data(), abc.size()); });
+    ExpectErr([&] { EVP_DigestFinal_ex_nid_postfix(&context, nullptr, nullptr); });
     Require(EVP_DigestInit_ex_nid_postfix(&context, sha256, nullptr) == 1);
     Require(EVP_DigestInit_ex_nid_postfix(&context, sha512, nullptr) == 1 && context.digest == sha512);
     Require(DigestInChunks(context, sha512, abc, 2) == algorithms[3].digests[1]);
-    RequireThrows([&] { EVP_DigestInit_ex_nid_postfix(&context, nullptr, nullptr); });
-    RequireThrows([&] { EVP_DigestUpdate_nid_postfix(&context, nullptr, 1); });
-    RequireThrows([&] { EVP_DigestUpdate_nid_postfix(nullptr, abc.data(), abc.size()); });
-    RequireThrows([&] { EVP_MD_CTX_init_nid_postfix(nullptr); });
-    RequireThrows([&] { EVP_MD_CTX_cleanup_nid_postfix(nullptr); });
+    ExpectErr([&] { EVP_DigestInit_ex_nid_postfix(&context, nullptr, nullptr); });
+    ExpectErr([&] { EVP_DigestUpdate_nid_postfix(&context, nullptr, 1); });
+    ExpectErr([&] { EVP_DigestUpdate_nid_postfix(nullptr, abc.data(), abc.size()); });
+    ExpectErr([&] { EVP_MD_CTX_init_nid_postfix(nullptr); });
+    ExpectErr([&] { EVP_MD_CTX_cleanup_nid_postfix(nullptr); });
     EVP_MD_CTX_destroy_nid_postfix(nullptr);
     Require(EVP_MD_CTX_cleanup_nid_postfix(&context) == 1);
 
@@ -687,8 +677,8 @@ int main() {
     Require(HMAC_nid_postfix(sha256, nullptr, 0, abc.data(), abc.size(), mac, &macSize) == nullptr);
     Require(HMAC_nid_postfix(sha256, "", 0, nullptr, 0, mac, &macSize) == mac && macSize == 32);
     Require(Hex(mac, macSize) == "b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad");
-    RequireThrows([&] { HMAC_CTX_init_nid_postfix(nullptr); });
-    RequireThrows([&] { HMAC_Update_nid_postfix(nullptr, abc.data(), abc.size()); });
+    ExpectErr([&] { HMAC_CTX_init_nid_postfix(nullptr); });
+    ExpectErr([&] { HMAC_Update_nid_postfix(nullptr, abc.data(), abc.size()); });
     Require(liveBlocks == 0);
 
     EVP_MD_CTX_init_nid_postfix(&context);
@@ -696,8 +686,8 @@ int main() {
     Require(EVP_DigestInit_ex_nid_postfix(&context, sha256, nullptr) == 0);
     RequireQueued(65);
     Require(AllZero(&context, sizeof(context)) && liveBlocks == 0);
-    RequireThrows([&] { EVP_DigestUpdate_nid_postfix(&context, abc.data(), abc.size()); });
-    RequireThrows([&] { EVP_DigestFinal_ex_nid_postfix(&context, mac, &macSize); });
+    ExpectErr([&] { EVP_DigestUpdate_nid_postfix(&context, abc.data(), abc.size()); });
+    ExpectErr([&] { EVP_DigestFinal_ex_nid_postfix(&context, mac, &macSize); });
     Require(DigestInChunks(context, sha256, abc, 1) == algorithms[1].digests[1] && liveBlocks == 1);
     allocationsBeforeFailure = 0;
     Require(EVP_DigestInit_ex_nid_postfix(&context, sha512, nullptr) == 0);
@@ -724,7 +714,7 @@ int main() {
             Require(allocationsBeforeFailure == -1 && liveBlocks == failure);
             for (const std::size_t offset : {std::size_t(8), std::size_t(56), std::size_t(104)})
                 Require(Field<void*>(&hmac, offset + 24) || (!Field<const void*>(&hmac, offset) && !Field<void*>(&hmac, offset + 40)));
-            if (key.size() <= 64) RequireThrows([&] { HMAC_Update_nid_postfix(&hmac, message.data(), message.size()); });
+            if (key.size() <= 64) ExpectErr([&] { HMAC_Update_nid_postfix(&hmac, message.data(), message.size()); });
             Require(MacInChunks(&hmac, key, sha256, message, 1000) == algorithms[1].macs[c] && liveBlocks == 3);
             HMAC_CTX_cleanup_nid_postfix(&hmac);
             Require(liveBlocks == 0);

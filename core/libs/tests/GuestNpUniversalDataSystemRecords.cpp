@@ -1,5 +1,6 @@
 #include "prx/libSceNpUniversalDataSystem/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -21,13 +22,6 @@ constexpr int kNotInitialized = static_cast<int>(0x80553117u);
 constexpr int kAlreadyInitialized = static_cast<int>(0x80553118u);
 constexpr int kNullObject = static_cast<int>(0x80553119u);
 constexpr int kNullArray = static_cast<int>(0x8055311Au);
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "NpUniversalDataSystem records: %s\n", message);
-        std::abort();
-    }
-}
 
 const std::shared_ptr<NpUniversalDataSystemEventPropertyObject>* StoredObject(void* record, const char* key) {
     const auto* object = static_cast<NpUniversalDataSystemEventPropertyObject*>(record);

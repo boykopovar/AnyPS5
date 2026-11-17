@@ -1,4 +1,5 @@
 #include "prx/libSceVideoOut/include/PadOutputPacing.hpp"
+#include "Testing.hpp"
 
 #include <chrono>
 #include <cstdio>
@@ -7,12 +8,6 @@
 namespace {
 
 using namespace std::chrono_literals;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "pad_output_pacing: %s\n", message);
-    std::exit(1);
-}
 
 void LightBarSendsChangesOnly() {
     LightBarPacer pacer;

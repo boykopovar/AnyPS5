@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -35,14 +36,6 @@ extern "C" void APS5_VABI SceV2ConstructLocinfo(const void* argument) {
     _ZNSt8__sce_v28_Locinfo13_Locinfo_ctorEPS0_PKc_nid_postfix(call->self, call->name);
 }
 
-static unsigned failures = 0;
-
-static void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "FAIL: %s\n", what);
-    ++failures;
-}
-
 static const TypeRecord* TypeOf(const LibcException::ExceptionObject* object) {
     return static_cast<const TypeRecord*>(static_cast<const void* const*>(object->vtable)[-1]);
 }
@@ -73,10 +66,10 @@ static void Run(const Case& test) {
     SceV2Selector = 0;
     inspected[0] = 0;
     SceV2Catch(test.thrower, test.argument);
-    Require(SceV2Selector == test.selector, test.label);
+    Expect(SceV2Selector == test.selector, test.label);
     if (std::strcmp(inspected, test.expected) != 0) {
         std::fprintf(stderr, "  %s: got '%s', want '%s'\n", test.label, inspected, test.expected);
-        ++failures;
+        Expect(false);
     }
 }
 
@@ -137,7 +130,7 @@ static void CheckCopies() {
     _ZNSt13__sce_cxxvers16_Error_exceptionC2EPKc_nid_postfix(&range, "range copy");
     Run({"_Throw(range_error)", AsThrower(_ZNSt8__sce_v26_ThrowERKNS_11range_errorE_nid_postfix), &range, &runtimeError, &logicError, 2,
         "NSt8__sce_v211range_errorE|range copy"});
-    Require(inspectedSystem.base.message == range.message, "_Throw(range_error) shares the message");
+    Expect(inspectedSystem.base.message == range.message, "_Throw(range_error) shares the message");
     _ZNSt13__sce_cxxvers16_Error_exceptionD2Ev_nid_postfix(&range);
 
     LibcException::ExceptionObject format {};
@@ -152,8 +145,8 @@ static void CheckCopies() {
     inspectBytes = sizeof(LibcException::SystemErrorObject);
     Run({"_Throw(future_error)", AsThrower(_ZNSt8__sce_v26_ThrowERKNS_12future_errorE_nid_postfix), &future, &logicError, &runtimeError, 2,
         "NSt8__sce_v212future_errorE|promise already satisfied"});
-    Require(inspectedSystem.code.reserved == 3 && inspectedSystem.code.value == 7, "_Throw(future_error) copies the code");
-    Require(inspectedSystem.code.category == future.code.category, "_Throw(future_error) copies the category");
+    Expect(inspectedSystem.code.reserved == 3 && inspectedSystem.code.value == 7, "_Throw(future_error) copies the code");
+    Expect(inspectedSystem.code.category == future.code.category, "_Throw(future_error) copies the category");
     inspectBytes = sizeof(LibcException::ExceptionObject);
     _ZNSt13__sce_cxxvers16_Error_exceptionD2Ev_nid_postfix(&future.base);
 
@@ -164,14 +157,14 @@ static void CheckCopies() {
     SceV2CatchType = &runtimeError;
     SceV2OtherType = &logicError;
     SceV2Catch(AsThrower(_ZNSt8__sce_v26_ThrowERKNS_12system_errorE_nid_postfix), &error);
-    Require(std::strcmp(inspected, "NSt8__sce_v212system_errorE|system copy") == 0, "_Throw(system_error) type and message");
-    Require(inspectedSystem.code.value == 5, "_Throw(system_error) copies the code value");
-    Require(inspectedSystem.code.category == error.code.category, "_Throw(system_error) copies the category");
+    Expect(std::strcmp(inspected, "NSt8__sce_v212system_errorE|system copy") == 0, "_Throw(system_error) type and message");
+    Expect(inspectedSystem.code.value == 5, "_Throw(system_error) copies the code value");
+    Expect(inspectedSystem.code.category == error.code.category, "_Throw(system_error) copies the category");
 
     SceV2CatchType = &systemError;
     SceV2Catch(AsThrower(_ZNSt8__sce_v28ios_base6_ThrowERKNS0_7failureE_nid_postfix), &error);
-    Require(std::strcmp(inspected, "NSt8__sce_v28ios_base7failureE|system copy") == 0, "ios_base::_Throw(failure) type and message");
-    Require(inspectedSystem.code.value == 5, "ios_base::_Throw(failure) copies the code");
+    Expect(std::strcmp(inspected, "NSt8__sce_v28ios_base7failureE|system copy") == 0, "ios_base::_Throw(failure) type and message");
+    Expect(inspectedSystem.code.value == 5, "ios_base::_Throw(failure) copies the code");
     inspectBytes = sizeof(LibcException::ExceptionObject);
     _ZNSt13__sce_cxxvers16_Error_exceptionD2Ev_nid_postfix(&error.base);
 }
@@ -182,48 +175,48 @@ static void CheckCppErrorCode() {
     SceV2CatchType = &systemError;
     SceV2OtherType = &_ZTISt12system_error_nid_postfix;
     SceV2Catch(AsThrower(_ZNSt8__sce_v216_Throw_Cpp_errorEi_nid_postfix), reinterpret_cast<const void*>(1));
-    Require(inspectedSystem.code.reserved == 22, "_Throw_Cpp_error stores the value in the first code word");
-    Require(inspectedSystem.code.value == 0, "_Throw_Cpp_error leaves the second code word clear");
-    Require(inspectedSystem.code.category == _ZSt16generic_categoryv_nid_postfix(), "_Throw_Cpp_error uses the generic category");
+    Expect(inspectedSystem.code.reserved == 22, "_Throw_Cpp_error stores the value in the first code word");
+    Expect(inspectedSystem.code.value == 0, "_Throw_Cpp_error leaves the second code word clear");
+    Expect(inspectedSystem.code.category == _ZSt16generic_categoryv_nid_postfix(), "_Throw_Cpp_error uses the generic category");
     inspectBytes = sizeof(LibcException::ExceptionObject);
 }
 
 static void CheckErrorException() {
     LibcException::ExceptionObject empty {};
     _ZNSt13__sce_cxxvers16_Error_exceptionC1EPKc_nid_postfix(&empty, nullptr);
-    Require(std::strcmp(_ZNKSt13__sce_cxxvers16_Error_exception4whatEv_nid_postfix(&empty), "") == 0, "_Error_exception(nullptr) has an empty message");
-    Require(std::strcmp(TypeOf(&empty)->name, "NSt13__sce_cxxvers16_Error_exceptionE") == 0, "_Error_exception type name");
-    Require(TypeOf(&empty)->base == &_ZTISt9exception_nid_postfix, "_Error_exception derives from std::exception");
+    Expect(std::strcmp(_ZNKSt13__sce_cxxvers16_Error_exception4whatEv_nid_postfix(&empty), "") == 0, "_Error_exception(nullptr) has an empty message");
+    Expect(std::strcmp(TypeOf(&empty)->name, "NSt13__sce_cxxvers16_Error_exceptionE") == 0, "_Error_exception type name");
+    Expect(TypeOf(&empty)->base == &_ZTISt9exception_nid_postfix, "_Error_exception derives from std::exception");
 
     LibcException::ExceptionObject text {};
     _ZNSt13__sce_cxxvers16_Error_exceptionC2EPKc_nid_postfix(&text, "text");
     LibcException::ExceptionObject copy {};
     _ZNSt13__sce_cxxvers16_Error_exceptionC1ERKS0__nid_postfix(&copy, &text);
-    Require(std::strcmp(_ZNKSt13__sce_cxxvers16_Error_exception4whatEv_nid_postfix(&copy), "text") == 0, "_Error_exception copy keeps the message");
+    Expect(std::strcmp(_ZNKSt13__sce_cxxvers16_Error_exception4whatEv_nid_postfix(&copy), "text") == 0, "_Error_exception copy keeps the message");
     _ZNSt13__sce_cxxvers16_Error_exceptionD2Ev_nid_postfix(&text);
-    Require(std::strcmp(_ZNKSt13__sce_cxxvers16_Error_exception4whatEv_nid_postfix(&copy), "text") == 0, "_Error_exception copy outlives the source");
+    Expect(std::strcmp(_ZNKSt13__sce_cxxvers16_Error_exception4whatEv_nid_postfix(&copy), "text") == 0, "_Error_exception copy outlives the source");
     _ZNSt13__sce_cxxvers16_Error_exceptionD1Ev_nid_postfix(&copy);
     _ZNSt13__sce_cxxvers16_Error_exceptionD1Ev_nid_postfix(&empty);
 }
 
 static void CheckSyserrorMap() {
-    Require(std::strcmp(_ZNSt8__sce_v213_Syserror_mapEi_nid_postfix(0), "success") == 0, "_Syserror_map(0)");
-    Require(_ZSt13_Syserror_mapi_nid_postfix(0) == nullptr, "unversioned _Syserror_map(0) stays null");
-    Require(std::strcmp(_ZNSt8__sce_v213_Syserror_mapEi_nid_postfix(2), _ZSt13_Syserror_mapi_nid_postfix(2)) == 0, "_Syserror_map(2) matches the unversioned text");
-    Require(std::strcmp(_ZNSt8__sce_v213_Syserror_mapEi_nid_postfix(99999), "unknown error") == 0, "_Syserror_map(unknown)");
-    Require(_ZSt13_Syserror_mapi_nid_postfix(99999) == nullptr, "unversioned _Syserror_map(unknown) stays null");
+    Expect(std::strcmp(_ZNSt8__sce_v213_Syserror_mapEi_nid_postfix(0), "success") == 0, "_Syserror_map(0)");
+    Expect(_ZSt13_Syserror_mapi_nid_postfix(0) == nullptr, "unversioned _Syserror_map(0) stays null");
+    Expect(std::strcmp(_ZNSt8__sce_v213_Syserror_mapEi_nid_postfix(2), _ZSt13_Syserror_mapi_nid_postfix(2)) == 0, "_Syserror_map(2) matches the unversioned text");
+    Expect(std::strcmp(_ZNSt8__sce_v213_Syserror_mapEi_nid_postfix(99999), "unknown error") == 0, "_Syserror_map(unknown)");
+    Expect(_ZSt13_Syserror_mapi_nid_postfix(99999) == nullptr, "unversioned _Syserror_map(unknown) stays null");
 
-    Require(std::strcmp(_ZNSt8__sce_v220_Syserror_map_searchEi_nid_postfix(0), "success") == 0, "_Syserror_map_search(0)");
-    Require(std::strcmp(_ZNSt8__sce_v220_Syserror_map_searchEi_nid_postfix(1040), "no message available") == 0, "_Syserror_map_search(1040)");
-    Require(std::strcmp(_ZNSt8__sce_v220_Syserror_map_searchEi_nid_postfix(1050), "no stream resources") == 0, "_Syserror_map_search(1050)");
-    Require(std::strcmp(_ZNSt8__sce_v220_Syserror_map_searchEi_nid_postfix(1051), "not a stream") == 0, "_Syserror_map_search(1051)");
-    Require(std::strcmp(_ZNSt8__sce_v220_Syserror_map_searchEi_nid_postfix(1074), "stream timeout") == 0, "_Syserror_map_search(1074)");
-    Require(std::strcmp(_ZNSt8__sce_v220_Syserror_map_searchEi_nid_postfix(45), "not supported") == 0, "_Syserror_map_search(45) first match");
-    Require(std::strcmp(_ZNSt8__sce_v220_Syserror_map_searchEi_nid_postfix(35), "operation would block") == 0, "_Syserror_map_search(35) first match");
-    Require(_ZNSt8__sce_v220_Syserror_map_searchEi_nid_postfix(95) == nullptr, "_Syserror_map_search(95) is not in the table");
-    Require(_ZNSt8__sce_v220_Syserror_map_searchEi_nid_postfix(99999) == nullptr, "_Syserror_map_search(unknown)");
-    Require(std::strcmp(_ZNSt8__sce_v213_Syserror_mapEi_nid_postfix(1040), "no message available") == 0, "_Syserror_map(1040)");
-    Require(std::strcmp(_ZNSt8__sce_v213_Syserror_mapEi_nid_postfix(95), "unknown error") == 0, "_Syserror_map(95) is unknown");
+    Expect(std::strcmp(_ZNSt8__sce_v220_Syserror_map_searchEi_nid_postfix(0), "success") == 0, "_Syserror_map_search(0)");
+    Expect(std::strcmp(_ZNSt8__sce_v220_Syserror_map_searchEi_nid_postfix(1040), "no message available") == 0, "_Syserror_map_search(1040)");
+    Expect(std::strcmp(_ZNSt8__sce_v220_Syserror_map_searchEi_nid_postfix(1050), "no stream resources") == 0, "_Syserror_map_search(1050)");
+    Expect(std::strcmp(_ZNSt8__sce_v220_Syserror_map_searchEi_nid_postfix(1051), "not a stream") == 0, "_Syserror_map_search(1051)");
+    Expect(std::strcmp(_ZNSt8__sce_v220_Syserror_map_searchEi_nid_postfix(1074), "stream timeout") == 0, "_Syserror_map_search(1074)");
+    Expect(std::strcmp(_ZNSt8__sce_v220_Syserror_map_searchEi_nid_postfix(45), "not supported") == 0, "_Syserror_map_search(45) first match");
+    Expect(std::strcmp(_ZNSt8__sce_v220_Syserror_map_searchEi_nid_postfix(35), "operation would block") == 0, "_Syserror_map_search(35) first match");
+    Expect(_ZNSt8__sce_v220_Syserror_map_searchEi_nid_postfix(95) == nullptr, "_Syserror_map_search(95) is not in the table");
+    Expect(_ZNSt8__sce_v220_Syserror_map_searchEi_nid_postfix(99999) == nullptr, "_Syserror_map_search(unknown)");
+    Expect(std::strcmp(_ZNSt8__sce_v213_Syserror_mapEi_nid_postfix(1040), "no message available") == 0, "_Syserror_map(1040)");
+    Expect(std::strcmp(_ZNSt8__sce_v213_Syserror_mapEi_nid_postfix(95), "unknown error") == 0, "_Syserror_map(95) is unknown");
 }
 
 static void CheckLocinfo() {
@@ -234,12 +227,12 @@ static void CheckLocinfo() {
     GuestLocale::SceV2Locinfo locinfo {};
     locinfo.reserved = 0x5a5a5a5a5a5a5a5aull;
     _ZNSt8__sce_v28_Locinfo13_Locinfo_ctorEPS0_PKc_nid_postfix(&locinfo, "");
-    Require(locinfo.name != nullptr && std::strcmp(locinfo.name, "C") == 0, "_Locinfo(empty) stores C");
-    Require(locinfo.name == locinfo.classicName, "_Locinfo stores the classic name twice");
+    Expect(locinfo.name != nullptr && std::strcmp(locinfo.name, "C") == 0, "_Locinfo(empty) stores C");
+    Expect(locinfo.name == locinfo.classicName, "_Locinfo stores the classic name twice");
     _ZNSt8__sce_v28_Locinfo13_Locinfo_ctorEPS0_PKc_nid_postfix(&locinfo, "C");
-    Require(locinfo.classicName != nullptr && std::strcmp(locinfo.classicName, "C") == 0, "_Locinfo(C) stores C");
+    Expect(locinfo.classicName != nullptr && std::strcmp(locinfo.classicName, "C") == 0, "_Locinfo(C) stores C");
     _ZNSt8__sce_v28_Locinfo13_Locinfo_dtorEPS0__nid_postfix(&locinfo);
-    Require(locinfo.reserved == 0x5a5a5a5a5a5a5a5aull, "_Locinfo preserves the caller word at offset 0");
+    Expect(locinfo.reserved == 0x5a5a5a5a5a5a5a5aull, "_Locinfo preserves the caller word at offset 0");
 
     const char* const rejected[] {nullptr, "POSIX", "c", "C.UTF-8", "CX", "en_US.UTF-8", reinterpret_cast<const char*>(0x10)};
     for (const char* name : rejected) {
@@ -253,11 +246,11 @@ static void CheckLocinfo() {
         inspected[0] = 0;
         inspectBytes = sizeof(void*);
         SceV2Catch(reinterpret_cast<Thrower>(SceV2ConstructLocinfo), &call);
-        Require(SceV2Selector == 2, "_Locinfo(non-C) throws");
-        Require(std::strcmp(inspected, "NSt8__sce_v213runtime_errorE|bad locale name") == 0, "_Locinfo(non-C) message");
-        Require(invalid.name != nullptr && std::strcmp(invalid.name, "C") == 0, "_Locinfo stores C before rejecting the name");
-        Require(invalid.classicName == untouched, "_Locinfo leaves offset 0x10 untouched when rejecting the name");
-        Require(invalid.reserved == 0x5a5a5a5a5a5a5a5aull, "_Locinfo preserves the caller word when rejecting the name");
+        Expect(SceV2Selector == 2, "_Locinfo(non-C) throws");
+        Expect(std::strcmp(inspected, "NSt8__sce_v213runtime_errorE|bad locale name") == 0, "_Locinfo(non-C) message");
+        Expect(invalid.name != nullptr && std::strcmp(invalid.name, "C") == 0, "_Locinfo stores C before rejecting the name");
+        Expect(invalid.classicName == untouched, "_Locinfo leaves offset 0x10 untouched when rejecting the name");
+        Expect(invalid.reserved == 0x5a5a5a5a5a5a5a5aull, "_Locinfo preserves the caller word when rejecting the name");
     }
     inspectBytes = sizeof(LibcException::ExceptionObject);
 }
@@ -266,7 +259,7 @@ static void CheckTicks() {
     const auto before = _Xtime_get_ticks_nid_postfix();
     const auto ticks = _ZNSt8__sce_v216_Xtime_get_ticksEv_nid_postfix();
     const auto after = _Xtime_get_ticks_nid_postfix();
-    Require(before <= ticks && ticks <= after, "_Xtime_get_ticks is the unversioned clock");
+    Expect(before <= ticks && ticks <= after, "_Xtime_get_ticks is the unversioned clock");
 }
 
 int main() {
@@ -277,7 +270,7 @@ int main() {
     CheckSyserrorMap();
     CheckLocinfo();
     CheckTicks();
-    if (failures) return 1;
+    if (Failures()) return 1;
     std::puts("guest std::__sce_v2 exceptions: PASS");
     return 0;
 }

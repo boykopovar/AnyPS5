@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
@@ -15,8 +16,6 @@
 namespace {
 
 using Destructor = void (APS5_VABI*)(void*);
-
-void Require(bool value) { if (!value) std::abort(); }
 
 void* dsoHandle = &dsoHandle;
 void* staleDsoHandle = nullptr;

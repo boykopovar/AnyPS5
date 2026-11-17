@@ -1,5 +1,6 @@
 #include "prx/libSceMouse/libSceMouse.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cerrno>
@@ -31,12 +32,6 @@ using SetConfigFn = int (APS5_VABI*)(std::int32_t, const void*);
 using SetCursorFn = int (APS5_VABI*)(std::int32_t, std::int32_t);
 using GetCursorFn = int (APS5_VABI*)(std::int32_t, void*);
 using ScaleFn = int (APS5_VABI*)(std::uint16_t*, std::uint16_t);
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "Mouse queries: %s\n", message);
-    std::abort();
-}
 
 class ProtectedPosition {
 public:

@@ -6,6 +6,7 @@
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -32,8 +33,6 @@ static constexpr int StartingRounds = 50;
 static constexpr std::uint64_t SpinMarker = 0x0123456789abcdefULL;
 static constexpr std::uint64_t PatchedR12 = 0x5a5a1234abcd0001ULL;
 static constexpr std::uint64_t PatchedXmm8 = 0x7e7e5678dcba0002ULL;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static std::atomic<int> calls{0};
 static std::atomic<std::thread::id> handlerThread;

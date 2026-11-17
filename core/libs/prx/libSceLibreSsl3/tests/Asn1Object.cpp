@@ -6,6 +6,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceLibreSsl3/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 namespace {
 
@@ -18,12 +19,6 @@ std::size_t wipedLength;
 bool wipeChecked;
 bool tailChecked;
 int freeCalls;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "libSceLibreSsl3 ASN1_OBJECT_free failed: %s\n", message);
-    std::abort();
-}
 
 void* Allocate(std::size_t size) {
     void* pointer = std::malloc(size);

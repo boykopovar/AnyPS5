@@ -3,6 +3,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "tests/TemporaryFile.hpp"
+#include "Testing.hpp"
 
 #include <cerrno>
 #include <cstdio>
@@ -20,12 +21,6 @@ namespace {
 
 void ClobberErrno(std::uintptr_t, std::size_t) {
     errno = 99;
-}
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "SysUtil notification: %s\n", message);
-    std::abort();
 }
 
 class StandardErrorCapture {

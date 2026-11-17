@@ -1,5 +1,6 @@
 #include "SceTypes.hpp"
 #include "prx/libSceUserService/UserService.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
@@ -10,12 +11,6 @@ namespace {
 constexpr int SCE_USER_SERVICE_ERROR_INVALID_ARGUMENT = USER_SERVICE_ERROR_INVALID_ARGUMENT;
 constexpr int SCE_USER_SERVICE_ERROR_NO_SUCH_USER = USER_SERVICE_ERROR_UNKNOWN_USER;
 constexpr std::size_t SCE_USER_SERVICE_MAX_USER_NAME_LENGTH = USER_SERVICE_MAX_USER_NAME_LENGTH;
-
-void Require(bool value) {
-    if (!value) {
-        std::abort();
-    }
-}
 
 bool Filled(const char* buffer, std::size_t from, std::size_t to, char value) {
     for (std::size_t i = from; i < to; ++i) {

@@ -1,4 +1,5 @@
 #include "prx/libScePngEnc/include/Api.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
@@ -12,12 +13,6 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
-
-static void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "PNG encode writes: %s\n", message);
-    std::exit(1);
-}
 
 class WorkMemory {
 public:

@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "Testing.hpp"
 #ifdef __linux__
 #include <sys/resource.h>
 #endif
@@ -28,21 +29,6 @@ long PeakKilobytes() {
 }
 
 using Bytes = std::vector<unsigned char>;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL3 AES_unwrap_key check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> void RequireInvalidArgument(TAction action, std::source_location location = std::source_location::current()) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, location);
-}
 
 Bytes Hex(std::string_view text) {
     Bytes bytes;
@@ -156,19 +142,19 @@ void TestInPlace() {
 void TestNullArguments() {
     AesKey key = DecryptKey(Sequence(16));
     Bytes out(Rfc41.size(), 0xCC);
-    RequireInvalidArgument([&] { AES_unwrap_key_nid_postfix(nullptr, nullptr, out.data(), Rfc41.data(), 24); });
-    RequireInvalidArgument([&] { AES_unwrap_key_nid_postfix(&key, nullptr, nullptr, Rfc41.data(), 24); });
-    RequireInvalidArgument([&] { AES_unwrap_key_nid_postfix(&key, nullptr, out.data(), nullptr, 24); });
+    ExpectErr<std::invalid_argument>([&] { AES_unwrap_key_nid_postfix(nullptr, nullptr, out.data(), Rfc41.data(), 24); });
+    ExpectErr<std::invalid_argument>([&] { AES_unwrap_key_nid_postfix(&key, nullptr, nullptr, Rfc41.data(), 24); });
+    ExpectErr<std::invalid_argument>([&] { AES_unwrap_key_nid_postfix(&key, nullptr, out.data(), nullptr, 24); });
     Require(Filled(out.data(), out.size(), 0xCC));
     const auto* const unreadable = reinterpret_cast<const unsigned char*>(0x10);
     errno = 71;
-    RequireInvalidArgument([&] { AES_unwrap_key_nid_postfix(reinterpret_cast<AesKey*>(0x10), nullptr, out.data(), Rfc41.data(), 24); });
-    RequireInvalidArgument([&] { AES_unwrap_key_nid_postfix(&key, nullptr, out.data(), unreadable, 24); });
-    RequireInvalidArgument([&] { AES_unwrap_key_nid_postfix(&key, unreadable, out.data(), Rfc41.data(), 24); });
-    RequireInvalidArgument([&] { AES_unwrap_key_nid_postfix(&key, nullptr, reinterpret_cast<unsigned char*>(0x10), Rfc41.data(), 24); });
+    ExpectErr<std::invalid_argument>([&] { AES_unwrap_key_nid_postfix(reinterpret_cast<AesKey*>(0x10), nullptr, out.data(), Rfc41.data(), 24); });
+    ExpectErr<std::invalid_argument>([&] { AES_unwrap_key_nid_postfix(&key, nullptr, out.data(), unreadable, 24); });
+    ExpectErr<std::invalid_argument>([&] { AES_unwrap_key_nid_postfix(&key, unreadable, out.data(), Rfc41.data(), 24); });
+    ExpectErr<std::invalid_argument>([&] { AES_unwrap_key_nid_postfix(&key, nullptr, reinterpret_cast<unsigned char*>(0x10), Rfc41.data(), 24); });
     Require(errno == 71 && Filled(out.data(), out.size(), 0xCC));
     const long peakBefore = PeakKilobytes();
-    RequireInvalidArgument([&] { AES_unwrap_key_nid_postfix(&key, nullptr, out.data(), unreadable, 0xfffffff8u); });
+    ExpectErr<std::invalid_argument>([&] { AES_unwrap_key_nid_postfix(&key, nullptr, out.data(), unreadable, 0xfffffff8u); });
     Require(errno == 71 && Filled(out.data(), out.size(), 0xCC));
     Require(PeakKilobytes() - peakBefore < 64 * 1024);
 }

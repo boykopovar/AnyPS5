@@ -1,21 +1,10 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <cstdlib>
 #include <stdexcept>
 #include <thread>
-
-static void Require(bool value) { if (!value) std::abort(); }
-
-template<typename TException, typename TCall>
-static void RequireThrows(TCall call) {
-    try {
-        call();
-    } catch (const TException&) {
-        return;
-    }
-    std::abort();
-}
 
 constexpr int success = 0;
 constexpr int busy = 3;
@@ -29,7 +18,7 @@ int main() {
     Require(_Mtx_lock_nid_postfix(&mutex) == success);
     Require(_Mtx_lock_nid_postfix(&mutex) == busy);
     Require(_Mtx_trylock_nid_postfix(&mutex) == busy);
-    RequireThrows<std::logic_error>([&] { _Mtx_destroy_nid_postfix(&mutex); });
+    ExpectErr<std::logic_error>([&] { _Mtx_destroy_nid_postfix(&mutex); });
     Require(_Mtx_unlock_nid_postfix(&mutex) == success);
     _Mtx_destroy_nid_postfix(&mutex);
     Require(mutex == nullptr);
@@ -74,10 +63,10 @@ int main() {
     _Mtx_destroy_nid_postfix(&recMutex);
     Require(recMutex == nullptr);
 
-    RequireThrows<std::invalid_argument>([] {
+    ExpectErr<std::invalid_argument>([] {
         _Mtx_init_with_name_nid_postfix(nullptr, plain, "NullHandle");
     });
-    RequireThrows<std::invalid_argument>([] {
+    ExpectErr<std::invalid_argument>([] {
         _Mtx_destroy_nid_postfix(nullptr);
     });
     return 0;

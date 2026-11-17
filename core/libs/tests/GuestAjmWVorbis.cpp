@@ -1,5 +1,6 @@
 #include "prx/libSceAjm.native/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstddef>
@@ -17,12 +18,6 @@ constexpr int InvalidParameter = static_cast<int>(0x8A6E0001);
 constexpr int InvalidSize = static_cast<int>(0x8A6E0002);
 constexpr int OutputTooSmall = static_cast<int>(0x8A6E0003);
 constexpr int InvalidSetup = static_cast<int>(0x8A6E0004);
-
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
 
 constexpr std::array<std::uint8_t, 12> Setup {5, 'v', 'o', 'r', 'b', 'i', 's', 9, 0, 0xAA, 0xBB, 0xCC};
 

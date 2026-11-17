@@ -3,6 +3,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <barrier>
 #include <chrono>
@@ -29,14 +30,6 @@ static int ClosePipe(int end) { return ::_close(end); }
 static int MakePipe(int* ends) { return ::pipe(ends); }
 static int ClosePipe(int end) { return ::close(end); }
 #endif
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "File vector check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static constexpr std::int64_t ErrorEbadf = static_cast<int>(0x80020009u);
 static constexpr std::int64_t ErrorEfault = static_cast<int>(0x8002000Eu);

@@ -1,6 +1,7 @@
 #include "prx/libSceSystemService/include/SystemService.hpp"
 #include "SceTypes.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -13,12 +14,6 @@
 #endif
 
 namespace {
-
-void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stdout, "check failed: %s\n", what);
-    std::abort();
-}
 
 void Set(const char* name, const char* value) {
 #ifdef _WIN32

@@ -1,12 +1,11 @@
 #include "prx/libc/include/exceptions/Unwind.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <cstdlib>
 
 namespace LibcUnwind {
 _Unwind_Reason_Code CallPersonality(Word personality, _Unwind_Action actions, _Unwind_Exception* exception, _Unwind_Context* context);
 }
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static const unsigned char cleanupTable[] = {0xff, 0xff, 0x01, 0x04, 0x10, 0x20, 0x40, 0x00};
 static const unsigned char noLandingTable[] = {0xff, 0xff, 0x01, 0x04, 0x10, 0x20, 0x00, 0x00};

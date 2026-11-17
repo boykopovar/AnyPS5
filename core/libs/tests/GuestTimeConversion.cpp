@@ -5,6 +5,7 @@
 #include "prx/libc/include/GuestTimeZoneName.hpp"
 #include "prx/libc/include/General.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <atomic>
 #include <barrier>
@@ -35,12 +36,6 @@ extern int daylight_nid_postfix;
 using Converter = GuestTm* (APS5_VABI *)(const std::int64_t*);
 using BufferedConverter = GuestTm* (APS5_VABI *)(const std::int64_t*, GuestTm*);
 
-static void Require(bool value, const char* message) {
-    if (!value) {
-        std::fprintf(stderr, "%s\n", message);
-        std::abort();
-    }
-}
 
 static int g_constraintCalls = 0;
 static std::string g_constraintMessage;

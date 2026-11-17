@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdint>
@@ -8,12 +9,6 @@
 #include <source_location>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL3 EVP_MD_CTX check failed at line %u\n", location.line());
-    std::abort();
-}
 
 constexpr std::size_t ContextSize = 48;
 

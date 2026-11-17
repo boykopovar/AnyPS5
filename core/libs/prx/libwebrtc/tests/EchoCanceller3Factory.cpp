@@ -1,6 +1,7 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libc/libc.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -13,12 +14,6 @@
 namespace {
 
 std::unordered_map<void*, std::size_t> allocations;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc EchoCanceller3Factory check failed at line %u\n", location.line());
-    std::abort();
-}
 
 void* APS5_VABI Allocate_nid_no_patch(std::size_t size) {
     auto* pointer = std::malloc(size);

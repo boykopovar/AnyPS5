@@ -1,6 +1,7 @@
 #include "prx/libSceSystemService/include/SystemService.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -22,7 +23,6 @@ void VerifyExit() {
 void UnexpectedShutdown() {
     if (!finished) std::_Exit(3);
 }
-void Require(bool value) { if (!value) std::abort(); }
 bool Rejects(int appId, int how, int reason, int coreDump, const char* expected) {
     try { sceSystemServiceKillApp(appId, how, reason, coreDump); }
     catch (const std::runtime_error& error) { return std::strstr(error.what(), expected) != nullptr; }

@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
@@ -13,10 +14,6 @@
 #include <thread>
 
 namespace {
-
-void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error("compute prebuild share: " + message);
-}
 
 unsigned PrebuildThreads() {
     const char* text = std::getenv("APS5_PREBUILD_THREADS");

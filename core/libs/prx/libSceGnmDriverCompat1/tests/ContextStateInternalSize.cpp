@@ -1,5 +1,6 @@
 #include "SceTypes.hpp"
 #include "tests/ProcessParametersFixture.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -13,12 +14,6 @@
 #endif
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "GnmDriverCompat1 ContextStateInternalSize: %s\n", message);
-    std::abort();
-}
 
 using SizeFunction = int (APS5_VABI*)(void);
 

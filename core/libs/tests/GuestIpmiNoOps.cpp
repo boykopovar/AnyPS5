@@ -1,16 +1,11 @@
 #include "prx/libSceIpmi/include/Api.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "libSceIpmi no-op handler: %s\n", message);
-    std::abort();
-}
 
 using Handler = void (APS5_VABI*)(void*);
 

@@ -1,4 +1,5 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdint>
@@ -10,21 +11,6 @@
 #include <string>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc AudioEncoder::Encode check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TException, typename TAction> void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
-    try {
-        action();
-    } catch (const TException&) {
-        return;
-    }
-    Require(false, location);
-}
 
 struct FakeEncoder {
     const void* const* vtable;
@@ -109,9 +95,9 @@ void TestWrongSampleCountThrowsBeforeEncoding() {
     std::array<std::int16_t, 480> audio {};
     WebRtcBuffer encoded {};
     alignas(8) unsigned char info[64] {};
-    RequireThrows<std::runtime_error>([&] { Encode(info, fake, 0, audio.data(), audio.size(), &encoded); });
+    ExpectErr<std::runtime_error>([&] { Encode(info, fake, 0, audio.data(), audio.size(), &encoded); });
     Require(fake.calls == "cr");
-    RequireThrows<std::runtime_error>([&] { Encode(info, fake, 0, audio.data(), audio.size(), nullptr); });
+    ExpectErr<std::runtime_error>([&] { Encode(info, fake, 0, audio.data(), audio.size(), nullptr); });
 }
 
 void TestMismatchedEncodedSizeThrows() {
@@ -120,7 +106,7 @@ void TestMismatchedEncodedSizeThrows() {
     std::array<std::int16_t, 80> audio {};
     WebRtcBuffer encoded {3, 0, nullptr};
     alignas(8) unsigned char info[64] {};
-    RequireThrows<std::runtime_error>([&] { Encode(info, fake, 0, audio.data(), audio.size(), &encoded); });
+    ExpectErr<std::runtime_error>([&] { Encode(info, fake, 0, audio.data(), audio.size(), &encoded); });
     Require(fake.calls == "cre" && encoded.size == 13);
 }
 
@@ -130,16 +116,16 @@ void TestNullArgumentsThrow() {
     std::array<std::int16_t, 80> audio {};
     WebRtcBuffer encoded {};
     alignas(8) unsigned char info[64] {};
-    RequireThrows<std::invalid_argument>([&] { Encode(nullptr, fake, 0, audio.data(), audio.size(), &encoded); });
-    RequireThrows<std::invalid_argument>([&] {
+    ExpectErr<std::invalid_argument>([&] { Encode(nullptr, fake, 0, audio.data(), audio.size(), &encoded); });
+    ExpectErr<std::invalid_argument>([&] {
         _ZN6webrtc12AudioEncoder6EncodeEjN3rtc9ArrayViewIKsLln4711EEEPNS1_7BufferTIhLb0EEE_nid_postfix(info, nullptr, 0, audio.data(), audio.size(), &encoded);
     });
-    RequireThrows<std::invalid_argument>([&] { Encode(info, fake, 0, audio.data(), audio.size(), nullptr); });
+    ExpectErr<std::invalid_argument>([&] { Encode(info, fake, 0, audio.data(), audio.size(), nullptr); });
     Require(fake.calls == "cr");
     vtable[29] = nullptr;
-    RequireThrows<std::invalid_argument>([&] { Encode(info, fake, 0, audio.data(), audio.size(), &encoded); });
+    ExpectErr<std::invalid_argument>([&] { Encode(info, fake, 0, audio.data(), audio.size(), &encoded); });
     FakeEncoder empty {nullptr, 8000, 1, 0, 0};
-    RequireThrows<std::invalid_argument>([&] { Encode(info, empty, 0, audio.data(), audio.size(), &encoded); });
+    ExpectErr<std::invalid_argument>([&] { Encode(info, empty, 0, audio.data(), audio.size(), &encoded); });
 }
 
 }

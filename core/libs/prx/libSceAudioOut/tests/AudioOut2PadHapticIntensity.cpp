@@ -1,4 +1,5 @@
 #include "prx/libSceAudioOut/src/AudioOut2PadMix.hpp"
+#include "Testing.hpp"
 
 #include <cmath>
 #include <cstdint>
@@ -8,12 +9,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "audio_out2_pad_haptic_intensity: %s\n", message);
-    std::exit(1);
-}
 
 constexpr std::uint32_t kFrames = 4;
 const float kPad[kFrames * AUDIO_OUT2_PAD_CHANNELS] = {

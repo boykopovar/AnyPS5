@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -17,13 +18,6 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 constexpr int TimedOut = static_cast<int>(0x8002003cu);
-
-void Require(bool value, const char* message) {
-    if (!value) {
-        std::fprintf(stderr, "%s\n", message);
-        std::abort();
-    }
-}
 
 std::uint64_t ThreadCycles() {
     ULONG64 cycles = 0;

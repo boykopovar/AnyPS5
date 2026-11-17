@@ -2,6 +2,7 @@
 #include "prx/libcurl/libcurl.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
@@ -15,13 +16,6 @@
 #include <new>
 #include <source_location>
 #include <string>
-
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "Require failed at %s:%u\n", location.file_name(), location.line());
-        std::abort();
-    }
-}
 
 struct AllocationTracker {
     std::size_t mallocCalls = 0;

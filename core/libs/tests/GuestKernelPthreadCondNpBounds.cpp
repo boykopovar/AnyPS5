@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -16,12 +17,6 @@ constexpr int GuestEperm = 1;
 constexpr int GuestEinval = 22;
 constexpr int GuestEtimedout = 60;
 constexpr int MutexTypeRecursive = 2;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "check failed at line %u\n", static_cast<unsigned>(location.line()));
-    std::abort();
-}
 
 template <typename TFunc>
 bool ThrowsInvalidArgument(TFunc func) {

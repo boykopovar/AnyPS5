@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -15,14 +16,6 @@ using NKWebKit::WtfAbi::StringImpl;
 
 static constexpr std::int64_t kInvalid = std::numeric_limits<std::int64_t>::min();
 static constexpr std::int64_t kUnknown = std::numeric_limits<std::int64_t>::max();
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "ParsedContentRange check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static ParsedContentRange Parse(const char* text, bool wide = false) {
     std::u16string wideText;

@@ -1,4 +1,5 @@
 #include "FontFixture.hpp"
+#include "Testing.hpp"
 #include "Type1Fixture.hpp"
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
@@ -15,14 +16,6 @@
 #include <vector>
 
 using namespace FreeType;
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "FreeType attach file check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 struct FacePair {
     std::vector<unsigned char> bytes;

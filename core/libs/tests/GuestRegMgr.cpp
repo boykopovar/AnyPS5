@@ -4,6 +4,7 @@
 #include <initializer_list>
 #include <cerrno>
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -16,8 +17,6 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 template <typename TCall>
 static bool ReportsNotImplemented(const char* name, TCall call) {

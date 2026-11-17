@@ -1,5 +1,6 @@
 #include "prx/libSceVcodec/libSceVcodec.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cerrno>
@@ -18,12 +19,6 @@ void ClobberErrno(std::uintptr_t, std::size_t) {
 
 constexpr int ErrorPermission = static_cast<int>(0x80bf0000);
 constexpr int ErrorInvalidArgument = static_cast<int>(0x80bf0001);
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "VCODEC: %s\n", message);
-    std::abort();
-}
 
 }
 

@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include "TestProgress.hpp"
 #include <relinker/analysis/SyscallScanner.hpp>
 #include <cstdint>
@@ -37,10 +38,6 @@ const std::vector<Fixture> Fixtures = {
       0x0F, 0x05, 0x0F, 0x93, 0xC1, 0x49, 0x89, 0xC6, 0x49, 0xF7, 0xDE, 0x84, 0xC9,
       0x4C, 0x0F, 0x45, 0xF0, 0x4D, 0x85, 0xF6}, 28, 13},
 };
-
-void Require(bool value, const std::string& message) {
-    if (!value) throw std::runtime_error(message);
-}
 
 bool Rejected(const Bytes& code, bool trap, std::size_t size) {
     try {

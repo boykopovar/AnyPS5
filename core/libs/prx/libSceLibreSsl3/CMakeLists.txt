@@ -638,6 +638,7 @@ endif()
 
 if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND EXISTS "${LIBS_INCLUDE_DIR}/prx/libSceLibreSsl/src/Evp.cpp")
     add_library(guest_libressl3_mixed_evp_consumer SHARED ${LIBS_INCLUDE_DIR}/tests/GuestLibreSsl3MixedEvp.cpp)
+    target_include_directories(guest_libressl3_mixed_evp_consumer PRIVATE ${CMAKE_SOURCE_DIR}/core/test/include)
     target_include_directories(guest_libressl3_mixed_evp_consumer PRIVATE ${LIBS_INCLUDE_DIR})
     target_compile_options(guest_libressl3_mixed_evp_consumer PRIVATE -fno-plt -Werror=return-type)
     target_link_libraries(guest_libressl3_mixed_evp_consumer PRIVATE $<TARGET_FILE:libSceLibreSsl3>)

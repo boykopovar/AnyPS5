@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -23,12 +24,6 @@ static constexpr std::uint64_t ExpectedHashes[] {
     0xf659605c19b0997eULL, 0xddad96c31c47ffdeULL, 0x2ccb58faf48aae6aULL, 0x9973a358685fe222ULL,
     0xe154c3e01bf7ba9bULL, 0x1e042e731311c0e8ULL, 0xa9af33b6e407c014ULL,
 };
-
-static void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "failed: %s\n", message);
-    std::abort();
-}
 
 static std::uint64_t Hash(const char* text) {
     Require(text != nullptr, "error string is non-null");

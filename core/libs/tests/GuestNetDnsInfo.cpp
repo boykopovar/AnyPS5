@@ -1,4 +1,5 @@
 #include "prx/libSceNet/include/Net.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -11,8 +12,6 @@
 #endif
 
 namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
 
 constexpr int kErrorBase = static_cast<int>(0x80410100);
 constexpr int kEfault = 14;

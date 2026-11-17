@@ -3,13 +3,12 @@
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "prx/libkernel/Pthread/include/Cond.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdlib>
 
 static constexpr int SCE_OK = 0;
 static constexpr int POSIX_EINVAL = 22;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 int main() {
     PthreadMutex mutex = nullptr;

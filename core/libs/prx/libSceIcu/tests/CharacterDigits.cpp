@@ -1,13 +1,8 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
-
-static void Require(bool value, std::source_location location = std::source_location::current()) {
-    if (value) return;
-    std::fprintf(stderr, "ICU character digit check failed at line %u\n", location.line());
-    std::abort();
-}
 
 int main() {
     for (std::int32_t digit = 0; digit < 10; ++digit) {

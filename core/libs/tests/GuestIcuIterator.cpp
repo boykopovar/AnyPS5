@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -23,12 +24,6 @@ constexpr std::int32_t IndexOutOfBounds = 8;
 constexpr std::int32_t Unsupported = 16;
 
 using Units = std::vector<std::int32_t>;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "ICU iterator: %s\n", message);
-    std::abort();
-}
 
 template<class F>
 bool Rejects(F call) {

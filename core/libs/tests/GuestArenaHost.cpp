@@ -1,5 +1,6 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
+#include "Testing.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -42,10 +43,6 @@ struct HostRegion {
     std::uintptr_t end;
     vm_prot_t maxProtection;
 };
-
-void Require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 std::vector<HostRegion> RegionsInArenaRange() {
     std::vector<HostRegion> regions;

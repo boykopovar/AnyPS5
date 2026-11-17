@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -10,21 +11,6 @@
 #include <time.h>
 
 namespace {
-
-void Require(bool value) {
-    if (!value)
-        std::abort();
-}
-
-template<typename TException, typename TCall>
-void RequireThrows(TCall call) {
-    try {
-        call();
-    } catch (const TException&) {
-        return;
-    }
-    std::abort();
-}
 
 constexpr int threadSuccess = 0;
 constexpr int threadBusy = 3;
@@ -140,7 +126,7 @@ void TestThrdSleep() {
     const Xtime past{before.tv_sec - 1, before.tv_nsec};
     Require(_Thrd_sleep_nid_postfix(&past, nullptr) == 0);
 
-    RequireThrows<std::invalid_argument>([] {
+    ExpectErr<std::invalid_argument>([] {
         _Thrd_sleep_nid_postfix(nullptr, nullptr);
 
     });

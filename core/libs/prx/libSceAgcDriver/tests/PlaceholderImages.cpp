@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/PlaceholderImages.hpp"
 #include "IntermediateRepresentation/IrProgram.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <exception>
@@ -11,10 +12,6 @@
 using namespace ShaderRecompiler;
 
 namespace {
-
-void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 VkImageViewType ViewType(RdnaImageDimension dimension) {
     switch (dimension) {

@@ -4,6 +4,7 @@
 #include "prx/libSceNpTrophy2/include/NpTrophy2Types.hpp"
 #include "prx/libSceNpTrophy2/include/TrophyStore.hpp"
 #include "tests/TemporaryFile.hpp"
+#include "Testing.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -85,12 +86,6 @@ static const char ActionExtraction[] = R"({"statsExtractionRuleArray":[
     {"condition":{"eventName":"LATEST"},"action":{"input":"$.steps","output":{"statId":10}}},
     {"condition":{"eventName":"MAX","property":{"path":"$.mode","comparator":"==","value":1}},"action":{"input":"$.steps","output":{"statId":20}}}
 ]})";
-
-static void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
 
 static void PutBigEndian(std::string& data, std::size_t offset, std::uint64_t value, std::size_t size) {
     for (std::size_t i = 0; i < size; ++i) data[offset + i] = static_cast<char>((value >> (8 * (size - 1 - i))) & 0xFF);

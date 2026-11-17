@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -19,26 +20,10 @@ constexpr std::uint32_t FoldDefault = 0;
 constexpr std::uint32_t FoldExcludeSpecialI = 1;
 constexpr std::int32_t Sentinel = -1;
 
-void Expect(bool condition, const char* what) {
-    if (condition) return;
-    std::fprintf(stderr, "failed: %s\n", what);
-    std::abort();
-}
-
 void ExpectInt(std::int64_t actual, std::int64_t expected, const char* what) {
     if (actual == expected) return;
     std::fprintf(stderr, "%s returned %lld, expected %lld\n", what, static_cast<long long>(actual), static_cast<long long>(expected));
     std::abort();
-}
-
-template <typename Exception, typename Function>
-void ExpectThrow(Function function, const char* what) {
-    try {
-        function();
-    } catch (const Exception&) {
-        return;
-    }
-    Expect(false, what);
 }
 
 struct Context {
@@ -70,13 +55,13 @@ void ExpectFull(FullMapping map, std::int32_t character, std::int32_t caseLocale
     const char16_t* string = u"unset";
     const auto result = map(character, nullptr, nullptr, &string, caseLocale);
     ExpectInt(result, static_cast<std::int64_t>(expected.size()), what);
-    Expect(string && std::u16string(string, result) == expected, what);
+    Require(string && std::u16string(string, result) == expected, what);
 }
 
 void ExpectFullCodePoint(FullMapping map, std::int32_t character, std::int32_t caseLocale, std::int32_t expected, const char* what) {
     const char16_t* string = u"unset";
     ExpectInt(map(character, nullptr, nullptr, &string, caseLocale), expected, what);
-    Expect(!string, what);
+    Require(!string, what);
 }
 
 void TestProperties() {
@@ -89,11 +74,11 @@ void TestProperties() {
     ExpectInt(ucase_getTypeOrIgnorable_nid_postfix(u'\''), Ignorable, "ucase_getTypeOrIgnorable(')");
     ExpectInt(ucase_getTypeOrIgnorable_nid_postfix(u'a'), Lower, "ucase_getTypeOrIgnorable(a)");
     ExpectInt(ucase_getTypeOrIgnorable_nid_postfix(u'1'), None, "ucase_getTypeOrIgnorable(1)");
-    Expect(ucase_isSoftDotted_nid_postfix(u'i') && ucase_isSoftDotted_nid_postfix(u'j'), "ucase_isSoftDotted(i, j)");
-    Expect(!ucase_isSoftDotted_nid_postfix(u'a') && !ucase_isSoftDotted_nid_postfix(0x0131), "ucase_isSoftDotted(a, U+0131)");
-    Expect(ucase_isCaseSensitive_nid_postfix(u'a') && ucase_isCaseSensitive_nid_postfix(0x00DF), "ucase_isCaseSensitive(a, U+00DF)");
-    Expect(!ucase_isCaseSensitive_nid_postfix(u'1'), "ucase_isCaseSensitive(1)");
-    Expect(ucase_isCaseSensitive_nid_postfix(0x0307) && ucase_getType_nid_postfix(0x0307) == None, "ucase_isCaseSensitive(U+0307)");
+    Require(ucase_isSoftDotted_nid_postfix(u'i') && ucase_isSoftDotted_nid_postfix(u'j'), "ucase_isSoftDotted(i, j)");
+    Require(!ucase_isSoftDotted_nid_postfix(u'a') && !ucase_isSoftDotted_nid_postfix(0x0131), "ucase_isSoftDotted(a, U+0131)");
+    Require(ucase_isCaseSensitive_nid_postfix(u'a') && ucase_isCaseSensitive_nid_postfix(0x00DF), "ucase_isCaseSensitive(a, U+00DF)");
+    Require(!ucase_isCaseSensitive_nid_postfix(u'1'), "ucase_isCaseSensitive(1)");
+    Require(ucase_isCaseSensitive_nid_postfix(0x0307) && ucase_getType_nid_postfix(0x0307) == None, "ucase_isCaseSensitive(U+0307)");
     ExpectInt(ucase_getType_nid_postfix(-1), None, "ucase_getType(-1)");
     ExpectInt(ucase_getType_nid_postfix(0x110000), None, "ucase_getType(U+110000)");
 }
@@ -130,24 +115,24 @@ void TestFullMapping() {
 
     const char16_t* string = u"unset";
     ExpectInt(ucase_toFullFolding_nid_postfix(0x00DF, &string, FoldDefault), 2, "ucase_toFullFolding(U+00DF)");
-    Expect(string && std::u16string(string, 2) == u"ss", "ucase_toFullFolding(U+00DF) string");
+    Require(string && std::u16string(string, 2) == u"ss", "ucase_toFullFolding(U+00DF) string");
     ExpectInt(ucase_toFullFolding_nid_postfix(0x0130, &string, FoldDefault), 2, "ucase_toFullFolding(U+0130)");
-    Expect(string && std::u16string(string, 2) == u"i̇", "ucase_toFullFolding(U+0130) string");
+    Require(string && std::u16string(string, 2) == u"i̇", "ucase_toFullFolding(U+0130) string");
     ExpectInt(ucase_toFullFolding_nid_postfix(0x0130, &string, FoldExcludeSpecialI), u'i', "ucase_toFullFolding(U+0130, Turkic)");
-    Expect(!string, "ucase_toFullFolding(U+0130, Turkic) string");
+    Require(!string, "ucase_toFullFolding(U+0130, Turkic) string");
     ExpectInt(ucase_toFullFolding_nid_postfix(u'a', &string, FoldDefault), ~std::int32_t{u'a'}, "ucase_toFullFolding(a)");
 
-    ExpectThrow<std::invalid_argument>([] { ucase_toFullLower_nid_postfix(u'A', nullptr, nullptr, nullptr, RootLocale); }, "ucase_toFullLower null string");
-    ExpectThrow<std::invalid_argument>([] { ucase_toFullUpper_nid_postfix(u'a', nullptr, nullptr, nullptr, RootLocale); }, "ucase_toFullUpper null string");
-    ExpectThrow<std::invalid_argument>([] { ucase_toFullTitle_nid_postfix(u'a', nullptr, nullptr, nullptr, RootLocale); }, "ucase_toFullTitle null string");
-    ExpectThrow<std::invalid_argument>([] { ucase_toFullFolding_nid_postfix(u'A', nullptr, FoldDefault); }, "ucase_toFullFolding null string");
+    ExpectErr<std::invalid_argument>([] { ucase_toFullLower_nid_postfix(u'A', nullptr, nullptr, nullptr, RootLocale); }, "ucase_toFullLower null string");
+    ExpectErr<std::invalid_argument>([] { ucase_toFullUpper_nid_postfix(u'a', nullptr, nullptr, nullptr, RootLocale); }, "ucase_toFullUpper null string");
+    ExpectErr<std::invalid_argument>([] { ucase_toFullTitle_nid_postfix(u'a', nullptr, nullptr, nullptr, RootLocale); }, "ucase_toFullTitle null string");
+    ExpectErr<std::invalid_argument>([] { ucase_toFullFolding_nid_postfix(u'A', nullptr, FoldDefault); }, "ucase_toFullFolding null string");
 }
 
 std::int32_t LowerSigma(const std::u16string& text, std::int32_t position, std::int32_t& calls) {
     Context context{text, position, 0, 0, 0};
     const char16_t* string = u"unset";
     const auto result = ucase_toFullLower_nid_postfix(0x03A3, Iterate, &context, &string, RootLocale);
-    Expect(!string, "ucase_toFullLower(sigma) string");
+    Require(!string, "ucase_toFullLower(sigma) string");
     calls = context.calls;
     return result;
 }
@@ -155,7 +140,7 @@ std::int32_t LowerSigma(const std::u16string& text, std::int32_t position, std::
 void TestContext() {
     std::int32_t calls = 0;
     ExpectInt(LowerSigma(u"ΑΣ", 1, calls), 0x03C2, "ucase_toFullLower(final sigma)");
-    Expect(calls > 0, "ucase_toFullLower(final sigma) calls the iterator");
+    Require(calls > 0, "ucase_toFullLower(final sigma) calls the iterator");
     ExpectInt(LowerSigma(u"ΑΣΑ", 1, calls), 0x03C3, "ucase_toFullLower(medial sigma)");
     ExpectInt(LowerSigma(u"Σ", 0, calls), 0x03C3, "ucase_toFullLower(lone sigma)");
     ExpectInt(LowerSigma(u"Α'Σ", 2, calls), 0x03C2, "ucase_toFullLower(sigma after ignorable)");

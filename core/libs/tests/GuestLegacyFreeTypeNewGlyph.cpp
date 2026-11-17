@@ -2,6 +2,7 @@
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libkernel/libkernel.hpp"
+#include "Testing.hpp"
 
 #include FT_GLYPH_H
 #include FT_MODULE_H
@@ -28,12 +29,6 @@
 using namespace FreeType;
 
 namespace {
-
-void Require(bool condition, const char* message, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "FreeType new glyph check failed at line %u: %s\n", location.line(), message);
-    std::abort();
-}
 
 class Module {
 public:

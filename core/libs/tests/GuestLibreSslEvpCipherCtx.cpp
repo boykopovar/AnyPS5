@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -127,24 +128,13 @@ static const LibreSslEvpCipher* EvpCipher(const void* cipher) {
     return static_cast<const LibreSslEvpCipher*>(cipher);
 }
 
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL EVP_CIPHER_CTX check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> static void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
-    try { action(); } catch (const std::exception&) { return; }
-    Require(false, location);
-}
-
 static void TestInit() {
     unsigned char memory[ContextBytes + 16];
     std::memset(memory, 0xAA, sizeof(memory));
     EVP_CIPHER_CTX_init_nid_postfix(Context(memory));
     for (std::size_t index = 0; index < ContextBytes; ++index) Require(memory[index] == 0);
     for (std::size_t index = ContextBytes; index < sizeof(memory); ++index) Require(memory[index] == 0xAA);
-    RequireThrows([] { EVP_CIPHER_CTX_init_nid_postfix(nullptr); });
+    ExpectErr([] { EVP_CIPHER_CTX_init_nid_postfix(nullptr); });
 }
 
 static void TestNew() {
@@ -173,7 +163,7 @@ static void TestSetPadding() {
     for (std::size_t index = 0; index < ContextBytes; ++index) {
         if (index < FlagsOffset || index >= FlagsOffset + 8) Require(context[index] == 0);
     }
-    RequireThrows([] { EVP_CIPHER_CTX_set_padding_nid_postfix(nullptr, 0); });
+    ExpectErr([] { EVP_CIPHER_CTX_set_padding_nid_postfix(nullptr, 0); });
 }
 
 static int APS5_VABI RecordCleanup(unsigned char* context) {
@@ -243,9 +233,9 @@ static void TestCleanup() {
     cipher.contextSize = -1;
     data = FilledData(8);
     PrepareContext(context, &cipher, data);
-    RequireThrows([&] { EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)); });
+    ExpectErr([&] { EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)); });
     free_nid_postfix(data);
-    RequireThrows([] { EVP_CIPHER_CTX_cleanup_nid_postfix(nullptr); });
+    ExpectErr([] { EVP_CIPHER_CTX_cleanup_nid_postfix(nullptr); });
 }
 
 static void TestFree() {
@@ -281,7 +271,7 @@ static void TestCtrl() {
     }
     Require(calls.controls == 5 && calls.controlContext == context && calls.controlType == 0x11);
     Require(calls.controlArg == -3 && calls.controlPointer == &value);
-    RequireThrows([&] { EVP_CIPHER_CTX_ctrl_nid_postfix(nullptr, 0, 0, &value); });
+    ExpectErr([&] { EVP_CIPHER_CTX_ctrl_nid_postfix(nullptr, 0, 0, &value); });
 }
 
 using Update = int (APS5_VABI*)(LibreSslEvpCipherCtx*, unsigned char*, int*, const unsigned char*, int);
@@ -696,7 +686,7 @@ static void TestInitFields() {
     Require(EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(&cipher), nullptr, XorKey, first.data()) == 0);
     cipher.flags = ModeCtr;
     Require(EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(&cipher), nullptr, XorKey, nullptr) == 1);
-    RequireThrows([&] { EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(&cipher), nullptr, XorKey, first.data()); });
+    ExpectErr([&] { EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(&cipher), nullptr, XorKey, first.data()); });
     cipher.ivLength = 16;
     cipher.blockSize = 4;
     Require(EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(&cipher), nullptr, XorKey, first.data()) == 0);
@@ -724,7 +714,7 @@ static void TestInitFields() {
     Require(EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(&cipher), nullptr, nullptr, nullptr) == 0);
     Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
     Require(EVP_EncryptInit_ex_nid_postfix(Context(context), nullptr, nullptr, XorKey, nullptr) == 0);
-    RequireThrows([] { EVP_CipherInit_ex_nid_postfix(nullptr, nullptr, nullptr, nullptr, nullptr, 1); });
+    ExpectErr([] { EVP_CipherInit_ex_nid_postfix(nullptr, nullptr, nullptr, nullptr, nullptr, 1); });
 }
 
 static void TestStreamCipher() {
@@ -795,18 +785,18 @@ static void TestUpdateArguments() {
         Require(update(Context(context), out, &written, in, 0) == 1 && written == 0);
         written = -1;
         Require(update(Context(context), out, &written, in, -1) == 0 && written == 0);
-        RequireThrows([&] { update(Context(context), out, nullptr, in, 16); });
-        RequireThrows([&] { update(Context(context), out, &written, nullptr, 3); });
-        RequireThrows([&] { update(nullptr, out, &written, in, 16); });
+        ExpectErr([&] { update(Context(context), out, nullptr, in, 16); });
+        ExpectErr([&] { update(Context(context), out, &written, nullptr, 3); });
+        ExpectErr([&] { update(nullptr, out, &written, in, 16); });
     }
     Require(calls.ciphers == 3);
     for (Final final : {EVP_EncryptFinal_ex_nid_postfix, EVP_DecryptFinal_ex_nid_postfix, EVP_CipherFinal_ex_nid_postfix}) {
-        RequireThrows([&] { final(Context(context), out, nullptr); });
-        RequireThrows([&] { final(nullptr, out, &written); });
+        ExpectErr([&] { final(Context(context), out, nullptr); });
+        ExpectErr([&] { final(nullptr, out, &written); });
     }
     Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
-    RequireThrows([&] { EVP_EncryptUpdate_nid_postfix(Context(context), out, &written, in, 16); });
-    RequireThrows([&] { EVP_DecryptFinal_ex_nid_postfix(Context(context), out, &written); });
+    ExpectErr([&] { EVP_EncryptUpdate_nid_postfix(Context(context), out, &written, in, 16); });
+    ExpectErr([&] { EVP_DecryptFinal_ex_nid_postfix(Context(context), out, &written); });
 }
 
 using Descriptor = const LibreSslEvpCipher* (APS5_VABI*)(void);
@@ -913,7 +903,7 @@ static void TestAesCfb8() {
         Require(EVP_EncryptUpdate_nid_postfix(Context(context), buffer.data(), &written, buffer.data(), 18) == 1);
         Require(written == 18 && buffer == encrypted && Load<int>(context, NumOffset) == 9);
         Require(std::memcmp(context + IvOffset, encrypted.data() + 2, 16) == 0);
-        RequireThrows([&] { EVP_EncryptUpdate_nid_postfix(Context(context), nullptr, &written, buffer.data(), 3); });
+        ExpectErr([&] { EVP_EncryptUpdate_nid_postfix(Context(context), nullptr, &written, buffer.data(), 3); });
         Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
     }
 }
@@ -966,9 +956,9 @@ static void TestAesCtr() {
     Require(EVP_EncryptInit_ex_nid_postfix(Context(context), nullptr, nullptr, key.data(), nullptr) == 0);
     Require(cipher->init(context, nullptr, nullptr, 1) == 0);
     Store(context, NumOffset, 16);
-    RequireThrows([&] { EVP_EncryptUpdate_nid_postfix(Context(context), out, &written, plain.data(), 1); });
+    ExpectErr([&] { EVP_EncryptUpdate_nid_postfix(Context(context), out, &written, plain.data(), 1); });
     Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
-    RequireThrows([&] { cipher->doCipher(context, out, plain.data(), 1); });
+    ExpectErr([&] { cipher->doCipher(context, out, plain.data(), 1); });
 }
 
 constexpr int ControlCopy = 0x8;
@@ -1186,8 +1176,8 @@ static void TestAesGcmControl() {
     Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(copy)) == 1);
     Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
     Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), GcmSetIvLength, 12, nullptr) == 0);
-    RequireThrows([&] { cipher->control(context, GcmSetIvLength, 12, nullptr); });
-    RequireThrows([&] { cipher->doCipher(context, out, plain.data(), 16); });
+    ExpectErr([&] { cipher->control(context, GcmSetIvLength, 12, nullptr); });
+    ExpectErr([&] { cipher->doCipher(context, out, plain.data(), 16); });
     {
         Require(EVP_EncryptInit_ex_nid_postfix(Context(context), EvpCipher(cipher), nullptr, nullptr, nullptr) == 1);
         Require(EVP_CIPHER_CTX_ctrl_nid_postfix(Context(context), GcmSetIvLength, 60, nullptr) == 1);

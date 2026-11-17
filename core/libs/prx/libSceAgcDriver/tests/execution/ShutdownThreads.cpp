@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/ParallelCompare.hpp"
 #include "CompiledVariant.hpp"
 #include "ShaderDiskCache.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <chrono>
 #include <cstddef>
@@ -24,10 +25,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 void SetEnvironment(const char* name, const std::string& value) {
 #ifdef _WIN32

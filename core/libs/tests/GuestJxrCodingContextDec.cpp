@@ -1,5 +1,6 @@
 #include "prx/libSceJxr/include/Api.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "Testing.hpp"
 
 #include <climits>
 #include <cstddef>
@@ -34,12 +35,6 @@ std::vector<HostWriteRecord> hostWrites;
 
 void RecordHostWrite(std::uintptr_t address, std::size_t bytes) {
     hostWrites.push_back({address, bytes});
-}
-
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "JXR AllocateCodingContextDec: %s\n", message);
-    std::abort();
 }
 
 struct Pair {

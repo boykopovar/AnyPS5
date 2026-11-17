@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -10,14 +11,6 @@
 
 using DesBlock = std::array<unsigned char, 8>;
 using DesSchedule = std::array<unsigned char, 128>;
-
-static void Require(bool value) { if (!value) std::abort(); }
-
-template<typename TAction>
-static void RequireThrows(TAction action) {
-    try { action(); } catch (const std::invalid_argument&) { return; }
-    std::abort();
-}
 
 static DesBlock Block(std::uint64_t value) {
     DesBlock block{};
@@ -68,8 +61,8 @@ int main() {
     Require(DES_set_key_nid_postfix(weak.data(), schedule.data()) == 0);
     const auto badParity = Block(0x0000000000000000);
     Require(DES_set_key_nid_postfix(badParity.data(), schedule.data()) == 0);
-    RequireThrows([&] { DES_set_key_nid_postfix(nullptr, schedule.data()); });
-    RequireThrows([&] { DES_ecb_encrypt_nid_postfix(weak.data(), schedule.data(), nullptr, 1); });
-    RequireThrows([] { DES_set_odd_parity_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([&] { DES_set_key_nid_postfix(nullptr, schedule.data()); });
+    ExpectErr<std::invalid_argument>([&] { DES_ecb_encrypt_nid_postfix(weak.data(), schedule.data(), nullptr, 1); });
+    ExpectErr<std::invalid_argument>([] { DES_set_odd_parity_nid_postfix(nullptr); });
     return 0;
 }

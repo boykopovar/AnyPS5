@@ -1,5 +1,6 @@
 #include "prx/libSceHttp/include/Http.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
@@ -13,13 +14,6 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
-
-static void Require(bool value) {
-    if (!value) {
-        std::fputs("HTTP response header check failed\n", stderr);
-        std::abort();
-    }
-}
 
 static void Check(std::string_view header, const char* field, std::size_t offset, std::string_view expected, int consumed) {
     const char* value = nullptr;

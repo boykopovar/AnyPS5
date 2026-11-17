@@ -1,6 +1,7 @@
 #include "prx/libfreetype/libfreetype.hpp"
 #include "prx/libSceFreeType/libSceFreeType.hpp"
 #include "FreeTypeFontFixture.hpp"
+#include "Testing.hpp"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -24,13 +25,6 @@
 #else
 #include <dlfcn.h>
 #endif
-
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "Legacy FreeType library check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 static auto Load(const char* path) {
 #ifdef _WIN32

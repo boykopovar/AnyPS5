@@ -1,6 +1,7 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <bit>
 #include <csignal>
@@ -15,13 +16,6 @@ namespace {
 
 using SignalSet = std::array<std::uint32_t, 4>;
 volatile std::sig_atomic_t received = 0;
-
-void Require(bool value, const char* message) {
-    if (!value) {
-        std::fprintf(stderr, "legacy signal mask: %s\n", message);
-        std::abort();
-    }
-}
 
 SignalSet CurrentMask() {
     SignalSet mask{};

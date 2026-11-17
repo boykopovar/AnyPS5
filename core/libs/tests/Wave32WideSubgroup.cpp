@@ -2,6 +2,7 @@
 #include "SpirvBackend/SpirvEmitterInstructions.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvSubgroup.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvConstants.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <bit>
 #include <cstdio>
@@ -18,10 +19,6 @@ namespace {
 
 using Value = std::array<std::uint32_t, 4>;
 using Lanes = std::vector<Value>;
-
-void Require(bool condition, const char* reason) {
-    if (!condition) throw std::runtime_error(reason);
-}
 
 class Subgroup {
 public:

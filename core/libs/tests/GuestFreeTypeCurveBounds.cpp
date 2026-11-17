@@ -1,5 +1,6 @@
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestFreeType.hpp"
+#include "Testing.hpp"
 
 #include <ft2build.h>
 #include FT_BBOX_H
@@ -17,13 +18,6 @@
 #include <vector>
 
 using namespace FreeType;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "FreeType curve bounds check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 bool Equal(const GuestBBox& a, const GuestBBox& b) {
     return a.xMin == b.xMin && a.yMin == b.yMin && a.xMax == b.xMax && a.yMax == b.yMax;

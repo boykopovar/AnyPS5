@@ -1,5 +1,6 @@
 #include "prx/libSceCesCs/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -12,8 +13,6 @@ constexpr int invalidParameter = static_cast<int>(0x805C0001);
 constexpr int invalidSrcBuffer = static_cast<int>(0x805C0010);
 constexpr int invalidDstBuffer = static_cast<int>(0x805C0030);
 constexpr int dstBufferEnd = static_cast<int>(0x805C0031);
-
-void Require(bool value) { if (!value) std::abort(); }
 
 const std::uint8_t* Bytes(const char* text) { return reinterpret_cast<const std::uint8_t*>(text); }
 

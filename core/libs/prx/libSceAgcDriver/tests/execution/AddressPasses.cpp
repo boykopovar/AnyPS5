@@ -6,6 +6,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
+#include "Testing.hpp"
 #include "VulkanTestDevice.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -203,10 +204,6 @@ std::array<std::uint32_t, 4> StoredDword(const GuestBlock& data, std::size_t off
     return BufferDescriptor(data.At(offset), 0, 4, 0x31016facu);
 }
 
-void Expect(bool condition, const std::string& what) {
-    if (!condition) throw std::runtime_error("address passes: " + what);
-}
-
 std::string Counts(const AgcDriver::Graphics::DrawPassCounts& before, const AgcDriver::Graphics::DrawPassCounts& after, const char* draws = "address-based draws") {
     return std::to_string(after.draws - before.draws) + " " + draws + ", " + std::to_string(after.passesBegun - before.passesBegun) + " began a pass, " + std::to_string(after.passesContinued - before.passesContinued) + " continued one";
 }
@@ -216,7 +213,7 @@ void ReadersShareAPass(const GuestBlock& vertices, const GuestBlock& data, const
     Submit(vertices, target, {{PixelRead.data(), data.At(0)}, {PixelRead.data(), data.At(0)}});
     const auto after = AddressDraws();
     std::printf("two draws reading through the table: %s\n", Counts(before, after).c_str());
-    Expect(after.draws - before.draws == 2 && after.passesContinued - before.passesContinued == 1, "a draw reading through the table after another did not continue its pass: " + Counts(before, after));
+    Require(after.draws - before.draws == 2 && after.passesContinued - before.passesContinued == 1, "a draw reading through the table after another did not continue its pass: " + Counts(before, after));
 }
 
 void StoreAfterTableReadBreaks(const GuestBlock& vertices, const GuestBlock& data, const GuestBlock& target) {
@@ -224,7 +221,7 @@ void StoreAfterTableReadBreaks(const GuestBlock& vertices, const GuestBlock& dat
     Submit(vertices, target, {{PixelRead.data(), data.At(32)}, {PixelStore.data(), data.At(32)}});
     const auto after = AddressDraws();
     std::printf("a draw storing through the table after a draw reading through it: %s\n", Counts(before, after).c_str());
-    Expect(after.draws - before.draws == 2 && after.passesBegun - before.passesBegun == 2, "a draw storing through the table continued the pass of a draw that read through it: " + Counts(before, after));
+    Require(after.draws - before.draws == 2 && after.passesBegun - before.passesBegun == 2, "a draw storing through the table continued the pass of a draw that read through it: " + Counts(before, after));
 }
 
 void ReadSeesStore(const GuestBlock& vertices, const GuestBlock& data, const GuestBlock& target) {
@@ -239,9 +236,9 @@ void ReadSeesStore(const GuestBlock& vertices, const GuestBlock& data, const Gue
     unsigned brightest = 0;
     for (std::size_t i = 0; i < ColorBytes; ++i) brightest = std::max(brightest, static_cast<unsigned>(target.Bytes(ColorOffset)[i]));
     std::printf("a draw reading through the table what the previous draw stored: stored %g, brightest color byte %u, %s\n", static_cast<double>(stored), brightest, Counts(before, after).c_str());
-    Expect(stored == 1.0f, "the store through the table did not reach guest memory");
-    Expect(brightest == 255u, "the read through the table did not see the previous draw's store");
-    Expect(after.passesBegun - before.passesBegun == 2, "a draw reading through the table continued the pass of a draw that stored through it: " + Counts(before, after));
+    Require(stored == 1.0f, "the store through the table did not reach guest memory");
+    Require(brightest == 255u, "the read through the table did not see the previous draw's store");
+    Require(after.passesBegun - before.passesBegun == 2, "a draw reading through the table continued the pass of a draw that stored through it: " + Counts(before, after));
 }
 
 void ReadSeesDescriptorStore(const GuestBlock& vertices, const GuestBlock& data, const GuestBlock& target) {
@@ -258,10 +255,10 @@ void ReadSeesDescriptorStore(const GuestBlock& vertices, const GuestBlock& data,
     unsigned brightest = 0;
     for (std::size_t i = 0; i < ColorBytes; ++i) brightest = std::max(brightest, static_cast<unsigned>(target.Bytes(ColorOffset)[i]));
     std::printf("a draw reading through the table what the previous draw stored through a buffer descriptor: stored %g, brightest color byte %u, %s; the storing draw: %s\n", static_cast<double>(stored), brightest, Counts(before, after).c_str(), Counts(otherBefore, otherAfter, "other draws").c_str());
-    Expect(otherAfter.draws - otherBefore.draws == 1, "the draw storing through a buffer descriptor was taken for an address-based one: " + Counts(otherBefore, otherAfter, "other draws"));
-    Expect(stored == 1.0f, "the store through the buffer descriptor did not reach guest memory");
-    Expect(after.draws - before.draws == 1 && after.passesBegun - before.passesBegun == 1, "a draw reading through the table continued the pass of a draw that stored through a buffer descriptor: " + Counts(before, after));
-    Expect(brightest == 255u, "the read through the table did not see the previous draw's store through a buffer descriptor");
+    Require(otherAfter.draws - otherBefore.draws == 1, "the draw storing through a buffer descriptor was taken for an address-based one: " + Counts(otherBefore, otherAfter, "other draws"));
+    Require(stored == 1.0f, "the store through the buffer descriptor did not reach guest memory");
+    Require(after.draws - before.draws == 1 && after.passesBegun - before.passesBegun == 1, "a draw reading through the table continued the pass of a draw that stored through a buffer descriptor: " + Counts(before, after));
+    Require(brightest == 255u, "the read through the table did not see the previous draw's store through a buffer descriptor");
 }
 
 void DescriptorStoreAfterTableReadBreaks(const GuestBlock& vertices, const GuestBlock& data, const GuestBlock& target) {
@@ -271,8 +268,8 @@ void DescriptorStoreAfterTableReadBreaks(const GuestBlock& vertices, const Guest
     const auto after = AddressDraws();
     const auto otherAfter = OtherDraws();
     std::printf("a draw storing through a buffer descriptor after a draw reading through the table: %s; the storing draw: %s\n", Counts(before, after).c_str(), Counts(otherBefore, otherAfter, "other draws").c_str());
-    Expect(after.draws - before.draws == 1 && otherAfter.draws - otherBefore.draws == 1, "the reading and the storing draw were not one address-based and one other draw");
-    Expect(otherAfter.passesBegun - otherBefore.passesBegun == 1, "a draw storing through a buffer descriptor continued the pass of a draw that read through the table: " + Counts(otherBefore, otherAfter, "other draws"));
+    Require(after.draws - before.draws == 1 && otherAfter.draws - otherBefore.draws == 1, "the reading and the storing draw were not one address-based and one other draw");
+    Require(otherAfter.passesBegun - otherBefore.passesBegun == 1, "a draw storing through a buffer descriptor continued the pass of a draw that read through the table: " + Counts(otherBefore, otherAfter, "other draws"));
 }
 
 void TargetReadAsWhenSplit(const GuestBlock& vertices, const GuestBlock& target, bool linear) {
@@ -286,8 +283,8 @@ void TargetReadAsWhenSplit(const GuestBlock& vertices, const GuestBlock& target,
     const unsigned red = target.Bytes(ColorOffset)[0];
     const auto what = std::string(linear ? "linear" : "tiled") + " target" + (split ? " with APS5_NO_ADDRESS_READ_PASSES=1" : "");
     std::printf("%s: a draw reading through the table the target the previous draw rendered read %s (red byte %u), %s\n", what.c_str(), red == 255u ? "that draw's color" : "the bytes before it", red, Counts(before, after).c_str());
-    Expect(red == (linear ? 255u : 0u), what + ": a draw reading through the table the target the previous draw rendered read " + (red == 255u ? "that draw's color" : "the bytes before it") + "; whether or not the pass breaks between them, it reads " + (linear ? "that draw's color (stored back after the draw)" : "the bytes before it (no write-back between them)"));
-    if (!linear && !split) Expect(after.passesContinued - before.passesContinued == 1, what + ": the reading draw did not continue the rendering draw's pass, so the case does not test it: " + Counts(before, after));
+    Require(red == (linear ? 255u : 0u), what + ": a draw reading through the table the target the previous draw rendered read " + (red == 255u ? "that draw's color" : "the bytes before it") + "; whether or not the pass breaks between them, it reads " + (linear ? "that draw's color (stored back after the draw)" : "the bytes before it (no write-back between them)"));
+    if (!linear && !split) Require(after.passesContinued - before.passesContinued == 1, what + ": the reading draw did not continue the rendering draw's pass, so the case does not test it: " + Counts(before, after));
 }
 
 void TargetReadSynchronously(const GuestBlock& vertices, const GuestBlock& target, const GuestBlock& unmapped) {
@@ -305,9 +302,9 @@ void TargetReadSynchronously(const GuestBlock& vertices, const GuestBlock& targe
         std::puts("a synchronous draw reading through the table the linear target the previous draw rendered: skipped, that draw was not recorded because the linear target is not resident on this device, so the target was stored right after it");
         return;
     }
-    Expect(otherAfter.draws - otherBefore.draws == 1, "the draw rendering the linear target was not recorded as one draw: " + Counts(otherBefore, otherAfter, "other draws"));
-    Expect(after.draws == before.draws, "the draw reading through the table into an unregistered target was recorded, so the case does not test a synchronous draw: " + Counts(before, after));
-    Expect(red == 255u, "a synchronous draw reading through the table the linear target the previous draw rendered read the bytes before it (red byte " + std::to_string(red) + "), not that draw's color");
+    Require(otherAfter.draws - otherBefore.draws == 1, "the draw rendering the linear target was not recorded as one draw: " + Counts(otherBefore, otherAfter, "other draws"));
+    Require(after.draws == before.draws, "the draw reading through the table into an unregistered target was recorded, so the case does not test a synchronous draw: " + Counts(before, after));
+    Require(red == 255u, "a synchronous draw reading through the table the linear target the previous draw rendered read the bytes before it (red byte " + std::to_string(red) + "), not that draw's color");
 }
 
 }

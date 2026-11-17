@@ -1,5 +1,6 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/WindowsMappings.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -10,10 +11,6 @@
 #include <string>
 #include <thread>
 #include <vector>
-
-static void Require(bool value, std::source_location location = std::source_location::current()) {
-    if (!value) throw std::runtime_error("owned guest memory regression at " + std::to_string(location.line()));
-}
 
 #ifdef _WIN32
 using Mappings = GuestArena::WindowsMappings;

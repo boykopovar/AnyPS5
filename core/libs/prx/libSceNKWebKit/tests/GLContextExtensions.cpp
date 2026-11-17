@@ -1,4 +1,5 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -8,26 +9,9 @@
 
 namespace {
 
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "GLContext extension check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
-
 using Query = bool (APS5_VABI *)(const char*, const char*);
 static_assert(std::is_same_v<decltype(&_ZN7WebCore9GLContext20isExtensionSupportedEPKcS2_), Query>);
 constexpr Query IsSupported = &_ZN7WebCore9GLContext20isExtensionSupportedEPKcS2_;
-
-void RequireThrows(const char* list, const char* extension) {
-    bool threw = false;
-    try {
-        IsSupported(list, extension);
-    } catch (const std::exception&) {
-        threw = true;
-    }
-    Require(threw);
-}
 
 }
 
@@ -53,11 +37,11 @@ int main() {
         Require(IsSupported("", ""));
         Require(IsSupported(" ", ""));
         Require(IsSupported(" EXT_x", ""));
-        RequireThrows("EXT_x", nullptr);
-        RequireThrows("", nullptr);
-        RequireThrows("EXT_x", "");
-        RequireThrows("EXT_x ", "");
-        RequireThrows("\tEXT_x", "");
+        ExpectErr([&] { IsSupported("EXT_x", nullptr); });
+        ExpectErr([&] { IsSupported("", nullptr); });
+        ExpectErr([&] { IsSupported("EXT_x", ""); });
+        ExpectErr([&] { IsSupported("EXT_x ", ""); });
+        ExpectErr([&] { IsSupported("\tEXT_x", ""); });
     } catch (const std::exception& error) {
         std::fprintf(stderr, "GLContext extension query unexpectedly threw: %s\n", error.what());
         return 1;

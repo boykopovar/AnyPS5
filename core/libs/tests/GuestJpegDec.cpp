@@ -3,6 +3,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "Decoder/Jpeg.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -40,8 +41,6 @@ static void TamperContextOnRead(std::uintptr_t address, std::size_t) {
         std::memset(static_cast<std::uint8_t*>(gTamperContext) + sizeof(void*), 0, 24);
     }
 }
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 template<typename TFunction>
 static bool ThrowsRuntimeError(TFunction function) {

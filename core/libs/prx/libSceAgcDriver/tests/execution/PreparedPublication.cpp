@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include "VulkanTestDevice.hpp"
 #include "SceShaders.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderPreparation.hpp"
@@ -22,17 +23,6 @@ namespace {
 using namespace AgcDriver::DriverDetail;
 using namespace ShaderRecompiler;
 
-void Require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
-
-template<typename TAction>
-void Reject(TAction action) {
-    bool failed = false;
-    try { action(); } catch (const std::runtime_error&) { failed = true; }
-    Require(failed, "failed shader transaction was accepted");
-}
-
 void Transactions() {
     ShaderSnapshot front{};
     auto pixel = std::make_shared<ShaderSnapshot>();
@@ -54,10 +44,10 @@ void Transactions() {
             ShaderPreparationTransaction nested;
             nested.Edit(*pixel).rectangleRequested = true;
         }
-        Reject([&] { transaction.Commit(); });
+        ExpectErr<std::runtime_error>([&] { transaction.Commit(); });
     }
     Require(!front.prepared->rectangleRequested && !pixel->prepared->rectangleRequested, "nested abort did not roll back the group");
-    Reject([&] { ResolvePreparedGraphics(front, pixel, 7, {}); });
+    ExpectErr<std::runtime_error>([&] { ResolvePreparedGraphics(front, pixel, 7, {}); });
     Require(!front.prepared->rectangleRequested && front.prepared->fragments.empty(), "failed rectangle preparation published a link");
     const auto rectangle = std::make_shared<const RectListShaders>();
     front.prepared->rectangles.push_back({1, 2, rectangle});
@@ -134,7 +124,7 @@ void HeaderSelection() {
     PublishRegisteredShader(registry, vertex);
     PublishRegisteredShader(registry, compute);
     Require(RegisteredProgram(*registry, 0x10000, {2}) == vertex && RegisteredProgram(*registry, 0x10000, {0}) == compute, "shared code selected another registered type");
-    Reject([&] { static_cast<void>(RegisteredProgram(*registry, 0x10000, {1})); });
+    ExpectErr<std::runtime_error>([&] { static_cast<void>(RegisteredProgram(*registry, 0x10000, {1})); });
     Require(RegisteredProgram(*registry, 0x10100, {2}) == nullptr, "an out-of-range entry selected registered code");
     const auto copy = makeSnapshot(0x40000, 2);
     PublishRegisteredShader(registry, copy);
@@ -150,7 +140,7 @@ void HeaderSelection() {
     Require(RegisteredProgram(*registry, 0x10000, {2}) == replacement, "same-type registration did not keep the latest program metadata");
     const auto geometry = makeSnapshot(0x60000, 4);
     PublishRegisteredShader(registry, geometry);
-    Reject([&] { static_cast<void>(RegisteredProgram(*registry, 0x10000, {2, 4})); });
+    ExpectErr<std::runtime_error>([&] { static_cast<void>(RegisteredProgram(*registry, 0x10000, {2, 4})); });
 }
 
 void FailedRegistrationPublication() {

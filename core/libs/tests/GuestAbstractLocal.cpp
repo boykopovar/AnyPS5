@@ -1,14 +1,7 @@
 #include "prx/libSceAbstractLocal/libSceAbstractLocal.hpp"
+#include "Testing.hpp"
 
 #include <cstdlib>
-
-namespace {
-
-void Require(bool value) {
-    if (!value) std::abort();
-}
-
-} // namespace
 
 int main() {
     for (int call = 0; call < 2; ++call) {

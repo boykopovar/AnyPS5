@@ -1,14 +1,11 @@
 #include "prx/libc/include/WindowsMappings.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <initializer_list>
 #include <utility>
 #include <vector>
 #include <stdexcept>
 #include <source_location>
-
-static void Require(bool value, std::source_location location = std::source_location::current()) {
-    if (!value) throw std::runtime_error("Windows resident release regression at " + std::to_string(location.line()));
-}
 
 static void CheckMetadataMismatch(unsigned mode) {
     constexpr std::size_t page = 65536;

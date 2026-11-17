@@ -1,6 +1,7 @@
 #include "AppArchiveFixture.hpp"
 #include "prx/libc/include/AppArchive.hpp"
 #include "prx/libc/include/General.hpp"
+#include "Testing.hpp"
 
 #include <algorithm>
 #include <cstdlib>
@@ -13,13 +14,6 @@
 #include <string>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::cerr << message << '\n';
-        std::exit(1);
-    }
-}
 
 bool Lookup(const char* guestPath, AppArchiveNode& node) {
     return AppArchiveLookup_nid_no_patch(ResolveArchivedPath_nid_no_patch(guestPath), &node);

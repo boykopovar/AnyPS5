@@ -1,4 +1,5 @@
 #include "Recompiler.hpp"
+#include "Testing.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <array>
 #include <cstdint>
@@ -18,10 +19,6 @@ constexpr std::array<std::uint32_t, 9> FragmentCode{
     0xbefc0300u, 0x7e028700u, 0xd5480001u, 0x02111101u,
     0x7e020d01u, 0x060202f2u, 0xf800180fu, 0x01010101u, 0xbf810000u
 };
-
-void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 std::vector<std::uint32_t> Compile(std::span<const std::uint32_t> capabilities) {
     RecompileRequest request{};

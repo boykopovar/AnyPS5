@@ -1,18 +1,10 @@
 #include "prx/libSceNKWebKit/include/FieldGettersExports.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "libSceNKWebKit getter check failed at line %d\n", line);
-        std::abort();
-    }
-}
-
-#define Require(value) Check((value), __LINE__)
 
 int main() {
     alignas(16) unsigned char object[0x1000] = {};

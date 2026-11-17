@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include <elfpatcher/linux/LinuxDesktopEntryWriter.hpp>
 #include <domain/Types.hpp>
 #include <cstdint>
@@ -31,10 +32,6 @@ std::vector<std::uint8_t> withIhdrCrc(std::vector<std::uint8_t> bytes) {
     return bytes;
 }
 
-void require(const bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
-
 void writeBytes(const std::filesystem::path& path, const std::vector<std::uint8_t>& bytes) {
     std::filesystem::create_directories(path.parent_path());
     std::ofstream stream(path, std::ios::binary);
@@ -58,11 +55,11 @@ std::map<std::string, std::string> readEntry(const std::filesystem::path& path) 
     std::ifstream stream(path);
     std::string line;
     std::getline(stream, line);
-    require(line == "[Desktop Entry]", "Missing [Desktop Entry] group in " + path.string());
+    Require(line == "[Desktop Entry]", "Missing [Desktop Entry] group in " + path.string());
     std::map<std::string, std::string> fields;
     while (std::getline(stream, line)) {
         const auto separator = line.find('=');
-        require(separator != std::string::npos, "Malformed desktop entry line: " + line);
+        Require(separator != std::string::npos, "Malformed desktop entry line: " + line);
         fields[line.substr(0, separator)] = line.substr(separator + 1);
     }
     return fields;
@@ -70,7 +67,7 @@ std::map<std::string, std::string> readEntry(const std::filesystem::path& path) 
 
 void requireField(const std::map<std::string, std::string>& fields, const std::string& key, const std::string& expected) {
     const auto found = fields.find(key);
-    require(found != fields.end() && found->second == expected, key + " is '" + (found == fields.end() ? "<missing>" : found->second) + "', expected '" + expected + "'");
+    Require(found != fields.end() && found->second == expected, key + " is '" + (found == fields.end() ? "<missing>" : found->second) + "', expected '" + expected + "'");
 }
 
 std::filesystem::path write(const std::filesystem::path& sceSys, const std::filesystem::path& executable) {
@@ -83,23 +80,23 @@ void requireFailure(const std::filesystem::path& sceSys, const std::filesystem::
     try {
         Elfpatcher::Linux::LinuxDesktopEntryWriter().Prepare(sceSys, executable);
     } catch (const Domain::RelinkerException& e) {
-        require(std::string(e.what()).find(reason) != std::string::npos, "Failure does not name " + reason + ": " + e.what());
-        require(!std::filesystem::exists(executable.string() + ".desktop") && !std::filesystem::exists(executable.string() + ".png"), "Files written despite the failure");
+        Require(std::string(e.what()).find(reason) != std::string::npos, "Failure does not name " + reason + ": " + e.what());
+        Require(!std::filesystem::exists(executable.string() + ".desktop") && !std::filesystem::exists(executable.string() + ".png"), "Files written despite the failure");
         return;
     }
     throw std::runtime_error("Prepare succeeded despite " + reason);
 }
 
 void run(const std::filesystem::path& root) {
-    require(write(root / "none" / "sce_sys", root / "none" / "out" / "game").empty(), "Desktop entry written without icon0.png");
-    require(!std::filesystem::exists(root / "none" / "out"), "Files written without icon0.png");
+    Require(write(root / "none" / "sce_sys", root / "none" / "out" / "game").empty(), "Desktop entry written without icon0.png");
+    Require(!std::filesystem::exists(root / "none" / "out"), "Files written without icon0.png");
 
     const auto titledSceSys = root / "titled" / "game" / "sce_sys";
     const auto titled = root / "titled" / "out dir" / "game";
     writeBytes(titledSceSys / "icon0.png", Png);
     writeText(titledSceSys / "param.json", param("Some™ Game®:\\n  Edition© "));
     std::filesystem::create_directories(titled.parent_path());
-    require(write(titledSceSys, titled) == titled.string() + ".desktop", "Unexpected desktop entry path");
+    Require(write(titledSceSys, titled) == titled.string() + ".desktop", "Unexpected desktop entry path");
     const auto fields = readEntry(titled.string() + ".desktop");
     requireField(fields, "Type", "Application");
     requireField(fields, "Name", "Some Game: Edition");
@@ -107,9 +104,9 @@ void run(const std::filesystem::path& root) {
     requireField(fields, "Path", titled.parent_path().string());
     requireField(fields, "Icon", titled.string() + ".png");
     requireField(fields, "Terminal", "false");
-    require(readBytes(titled.string() + ".png") == Png, "Icon bytes changed");
+    Require(readBytes(titled.string() + ".png") == Png, "Icon bytes changed");
     const auto permissions = std::filesystem::status(titled.string() + ".desktop").permissions();
-    require((permissions & std::filesystem::perms::owner_exec) != std::filesystem::perms::none, "Desktop entry is not executable");
+    Require((permissions & std::filesystem::perms::owner_exec) != std::filesystem::perms::none, "Desktop entry is not executable");
 
     const auto untitledSceSys = root / "untitled" / "game" / "sce_sys";
     const auto untitled = root / "untitled" / "out" / "100% $HOME";
@@ -151,7 +148,7 @@ void run(const std::filesystem::path& root) {
         requireFailure(structurallyBad, untouched, "icon0.png");
     }
     writeBytes(structurallyBad / "icon0.png", Png);
-    require(Elfpatcher::Linux::LinuxDesktopEntryWriter().Prepare(structurallyBad, untouched).has_value(), "Valid PNG retry failed");
+    Require(Elfpatcher::Linux::LinuxDesktopEntryWriter().Prepare(structurallyBad, untouched).has_value(), "Valid PNG retry failed");
 
     const auto badParamSceSys = root / "badparam" / "game" / "sce_sys";
     writeBytes(badParamSceSys / "icon0.png", Png);

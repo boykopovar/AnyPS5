@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
@@ -9,17 +10,6 @@
 #include <source_location>
 #include <stdexcept>
 #include <vector>
-
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL stack check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> static void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
-    try { action(); } catch (const std::exception&) { return; }
-    Require(false, location);
-}
 
 static std::vector<void*> freed;
 
@@ -75,7 +65,7 @@ static void TestValue() {
     Require(sk_value_nid_postfix(&stack, 0) == nullptr);
     LibreSslStack detached {2, nullptr, 0, 0, nullptr};
     Require(sk_value_nid_postfix(&detached, 2) == nullptr);
-    RequireThrows([&] { sk_value_nid_postfix(&detached, 1); });
+    ExpectErr([&] { sk_value_nid_postfix(&detached, 1); });
 }
 
 static void TestPop() {
@@ -93,7 +83,7 @@ static void TestPop() {
     stack.num = -2;
     Require(sk_pop_nid_postfix(&stack) == nullptr && sk_num_nid_postfix(&stack) == -2);
     LibreSslStack detached {2, nullptr, 0, 0, nullptr};
-    RequireThrows([&] { sk_pop_nid_postfix(&detached); });
+    ExpectErr([&] { sk_pop_nid_postfix(&detached); });
     Require(detached.num == 2);
 }
 
@@ -142,7 +132,7 @@ static void TestPopFree() {
     Require(released.empty());
 
     stack = NewStack({&first, &second}, 2);
-    RequireThrows([&] { sk_pop_free_nid_postfix(stack, nullptr); });
+    ExpectErr([&] { sk_pop_free_nid_postfix(stack, nullptr); });
     stack->data[0] = nullptr;
     stack->data[1] = nullptr;
     sk_pop_free_nid_postfix(stack, nullptr);

@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -31,7 +32,6 @@ using Handler = void (APS5_VABI *)(int);
 extern "C" unsigned int APS5_VABI GuestAlarm_nid_no_patch(unsigned int);
 volatile int received = 0;
 void APS5_VABI Callback(int value) { received = value; }
-static void Require(bool value) { if (!value) std::abort(); }
 static void RequireUntouched(const GuestSiginfo& info) {
     const GuestSiginfo empty{};
     Require(std::memcmp(&info, &empty, sizeof(info)) == 0);

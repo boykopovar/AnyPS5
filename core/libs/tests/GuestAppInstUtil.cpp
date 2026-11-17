@@ -1,5 +1,6 @@
 #include "prx/libSceAppInstUtil/include/Api.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "Testing.hpp"
 
 #include <cerrno>
 #include <cstddef>
@@ -19,13 +20,6 @@
 #endif
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "AppInstUtil: %s\n", message);
-        std::abort();
-    }
-}
 
 char* GuardedPageEnd() {
 #ifdef _WIN32

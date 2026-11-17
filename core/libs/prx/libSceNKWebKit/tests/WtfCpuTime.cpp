@@ -1,4 +1,5 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -11,13 +12,6 @@
 extern "C" void CpuTimeClockForTest_nid_no_patch(int (*query)(int, KernelTimespec*));
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "WTF::CPUTime check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 int g_queries = 0;
 int g_lastClockId = -1;

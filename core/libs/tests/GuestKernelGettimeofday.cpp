@@ -3,14 +3,9 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/GuestErrno.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdlib>
-
-static void Require(bool value) {
-    if (!value) {
-        std::abort();
-    }
-}
 
 static void TestValidTimevalBounds() {
     KernelTimeval tv{};

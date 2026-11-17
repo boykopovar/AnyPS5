@@ -3,6 +3,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "tests/VideoOutTestEnvironment.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdio>
@@ -18,8 +19,6 @@ static constexpr int NEVER_OPENED_HANDLE = 2;
 static constexpr int NO_BUFFERS_REGISTERED = static_cast<int>(0x8029001Cu);
 static constexpr std::uint64_t TILING_MODE_LINEAR = 0;
 static constexpr std::uint64_t PIXEL_FORMAT = 0x8000000022000000ull;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static bool Rejects(int handle, VideoOutResolutionStatus* status) {
     try {

@@ -1,5 +1,6 @@
 #include "prx/libSceAudioOut/libSceAudioOut.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 
 #include <cerrno>
 #include <cstdint>
@@ -37,11 +38,6 @@ void FreePage(void* page) {
 }
 
 
-static void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
 
 static void SetEnvironment(const char* name, const std::string& value) {
 #ifdef _WIN32

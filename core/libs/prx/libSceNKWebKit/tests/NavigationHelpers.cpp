@@ -2,42 +2,22 @@
 #include "prx/libSceNKWebKit/src/Types.hpp"
 #include "prx/libSceNKWebKit/src/NavigationData.hpp"
 #include "prx/libSceNKWebKit/include/WebKitValueExports.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
 #include <stdexcept>
 
-namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "NavigationHelpers check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
-
-template<class Function>
-void RequireInvalidArgument(Function function) {
-    bool threw = false;
-    try {
-        function();
-    } catch (const std::invalid_argument&) {
-        threw = true;
-    }
-    Require(threw);
-}
-
-}
 
 int main() {
-    RequireInvalidArgument([] {
+    ExpectErr<std::invalid_argument>([] {
         WKNavigationActionShouldPerformDownload(nullptr);
     });
-    RequireInvalidArgument([] {
+    ExpectErr<std::invalid_argument>([] {
         WKNavigationResponseCanShowMIMEType(nullptr);
     });
-    RequireInvalidArgument([] {
+    ExpectErr<std::invalid_argument>([] {
         WKNavigationDataCopyOriginalRequest(nullptr);
     });
 

@@ -1,14 +1,9 @@
 #include "prx/libSceSystemService/include/SystemService.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cerrno>
 #include <cstdlib>
-
-namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
-
-}
 
 int main() {
     std::uint64_t freeSize = 0;

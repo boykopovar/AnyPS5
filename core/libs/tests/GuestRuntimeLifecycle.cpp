@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -24,11 +25,6 @@ std::atomic<bool> waiterObserved{false};
 std::atomic<unsigned> waiterReturns{0};
 const char* modulePath = nullptr;
 std::int32_t reentrantHandle = -1;
-void Require(bool ok, const std::source_location& where = std::source_location::current()) {
-    if (ok) return;
-    std::fprintf(stderr, "guest_runtime_lifecycle: failed at %u\n", where.line());
-    std::abort();
-}
 }
 
 extern "C" int pthread_cond_wait(pthread_cond_t* condition, pthread_mutex_t* mutex) {

@@ -1,6 +1,7 @@
 #include "prx/libSceNpGameIntent/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <atomic>
 #include <cerrno>
@@ -12,12 +13,6 @@
 #include <stdexcept>
 #include <thread>
 #include <vector>
-
-static void Require(bool value, const char* what) {
-    if (value) return;
-    std::printf("NpGameIntent: %s\n", what);
-    std::abort();
-}
 
 template <typename TError, typename TCall>
 static bool Throws(TCall call) {

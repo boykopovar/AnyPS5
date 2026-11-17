@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -43,14 +44,6 @@ const Row PastRows[] = {
     {"minus three seconds next second", 1, -3000000000LL, 0, 0},
 };
 
-unsigned failures = 0;
-
-void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "FAIL: sce v2 timespec64: %s\n", what);
-    ++failures;
-}
-
 Wide Nanos(const Xtime& time) {
     return static_cast<Wide>(time.sec) * Billion + time.nsec;
 }
@@ -65,17 +58,17 @@ void CheckGetSys() {
     _ZNSt8__sce_v219_Timespec64_get_sysEP8timespec_nid_postfix(&first);
     const auto ticks = _Xtime_get_ticks_nid_postfix();
     _ZNSt8__sce_v219_Timespec64_get_sysEP8timespec_nid_postfix(&second);
-    Require(Normalized(first) && Normalized(second), "get_sys nanoseconds in range");
-    Require(first.nsec % 1000 == 0 && second.nsec % 1000 == 0, "get_sys has microsecond resolution");
-    Require(Nanos(first) <= Nanos(second), "get_sys does not go back");
-    Require(Nanos(first) <= static_cast<Wide>(ticks) * 1000 && static_cast<Wide>(ticks) * 1000 <= Nanos(second), "get_sys reads the realtime ticks");
+    Expect(Normalized(first) && Normalized(second), "get_sys nanoseconds in range");
+    Expect(first.nsec % 1000 == 0 && second.nsec % 1000 == 0, "get_sys has microsecond resolution");
+    Expect(Nanos(first) <= Nanos(second), "get_sys does not go back");
+    Expect(Nanos(first) <= static_cast<Wide>(ticks) * 1000 && static_cast<Wide>(ticks) * 1000 <= Nanos(second), "get_sys reads the realtime ticks");
     bool thrown = false;
     try {
         _ZNSt8__sce_v219_Timespec64_get_sysEP8timespec_nid_postfix(nullptr);
     } catch (const std::invalid_argument&) {
         thrown = true;
     }
-    Require(thrown, "get_sys null output throws");
+    Expect(thrown, "get_sys null output throws");
 }
 
 void CheckRemaining(const char* label, const Xtime& target, Wide normalized) {
@@ -89,7 +82,7 @@ void CheckRemaining(const char* label, const Xtime& target, Wide normalized) {
     const bool unchanged = copy.sec == target.sec && copy.nsec == target.nsec;
     if (inside && Normalized(left) && unchanged) return;
     std::fprintf(stderr, "FAIL: sce v2 timespec64: %s: %lld.%09lld\n", label, static_cast<long long>(left.sec), static_cast<long long>(left.nsec));
-    ++failures;
+    Expect(false);
 }
 
 void CheckDiffToTs() {
@@ -102,13 +95,13 @@ void CheckDiffToTs() {
     for (const auto& row : PastRows) {
         const Xtime target {now.sec + row.offset, row.nsec};
         const Xtime left = _ZNSt8__sce_v222_Timespec64_diff_to_tsEPK8timespec_nid_postfix(&target);
-        Require(left.sec == 0 && left.nsec == 0, row.label);
+        Expect(left.sec == 0 && left.nsec == 0, row.label);
     }
     const Xtime lowestNanos {0, INT64_MIN};
     const Xtime zero {0, 0};
     for (const Xtime* target : {&lowestNanos, &zero}) {
         const Xtime left = _ZNSt8__sce_v222_Timespec64_diff_to_tsEPK8timespec_nid_postfix(target);
-        Require(left.sec == 0 && left.nsec == 0, "an absolute past target gives zero");
+        Expect(left.sec == 0 && left.nsec == 0, "an absolute past target gives zero");
     }
     CheckRemaining("lowest seconds wrap around", Xtime {INT64_MIN, 0}, (static_cast<Wide>(1) << 63) * Billion);
     bool thrown = false;
@@ -117,7 +110,7 @@ void CheckDiffToTs() {
     } catch (const std::invalid_argument&) {
         thrown = true;
     }
-    Require(thrown, "diff_to_ts null target throws");
+    Expect(thrown, "diff_to_ts null target throws");
 }
 
 }
@@ -125,5 +118,5 @@ void CheckDiffToTs() {
 int main() {
     CheckGetSys();
     CheckDiffToTs();
-    return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+    return Failures() == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

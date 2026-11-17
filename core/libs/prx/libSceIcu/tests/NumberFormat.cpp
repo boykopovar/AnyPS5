@@ -11,8 +11,6 @@
 
 namespace UnumClone {
 
-using IcuRecoveredTest::Require;
-using IcuRecoveredTest::RequireThrows;
 
 static_assert(std::is_same_v<decltype(&unum_clone_nid_postfix), UNumberFormat* (APS5_VABI*)(const UNumberFormat*, std::int32_t*)>);
 
@@ -54,23 +52,22 @@ void Run() {
 
     for (const auto incoming : passing) {
         std::int32_t status = incoming;
-        RequireThrows([&] { unum_clone_nid_postfix(nullptr, &status); });
+        ExpectErr([&] { unum_clone_nid_postfix(nullptr, &status); });
         Require(status == incoming);
 
         status = incoming;
-        RequireThrows([&] { unum_clone_nid_postfix(fmt, &status); });
+        ExpectErr([&] { unum_clone_nid_postfix(fmt, &status); });
         Require(status == incoming);
         Require(Unchanged(formatStorage));
     }
 
-    RequireThrows([&] { unum_clone_nid_postfix(nullptr, nullptr); });
+    ExpectErr([&] { unum_clone_nid_postfix(nullptr, nullptr); });
 }
 
 } // namespace UnumClone
 
 namespace UnumClose {
 
-using IcuRecoveredTest::Require;
 
 static_assert(std::is_same_v<decltype(&unum_close_nid_postfix), void (APS5_VABI*)(UNumberFormat*)>);
 
@@ -109,8 +106,6 @@ void Run() {
 
 namespace UnumFormatDecimal {
 
-using IcuRecoveredTest::Require;
-using IcuRecoveredTest::RequireThrows;
 
 static_assert(std::is_same_v<decltype(&unum_formatDecimal_nid_postfix), std::int32_t (APS5_VABI*)(const UNumberFormat*, const char*, std::int32_t, char16_t*, std::int32_t, UFieldPosition*, std::int32_t*)>);
 
@@ -169,17 +164,17 @@ void Run() {
 
     for (const auto incoming : passing) {
         std::int32_t status = incoming;
-        RequireThrows([&] { unum_formatDecimal_nid_postfix(fmt, "123", -1, result.data(), 4, nullptr, &status); });
+        ExpectErr([&] { unum_formatDecimal_nid_postfix(fmt, "123", -1, result.data(), 4, nullptr, &status); });
         Require(status == incoming);
         Require(result == probeResult);
         Require(Unchanged(formatStorage));
 
         status = incoming;
-        RequireThrows([&] { unum_formatDecimal_nid_postfix(fmt, nullptr, 0, nullptr, 0, nullptr, &status); });
+        ExpectErr([&] { unum_formatDecimal_nid_postfix(fmt, nullptr, 0, nullptr, 0, nullptr, &status); });
         Require(status == incoming);
     }
 
-    RequireThrows([&] { unum_formatDecimal_nid_postfix(fmt, "123", 3, result.data(), 4, nullptr, nullptr); });
+    ExpectErr([&] { unum_formatDecimal_nid_postfix(fmt, "123", 3, result.data(), 4, nullptr, nullptr); });
     Require(result == probeResult);
 }
 
@@ -188,9 +183,7 @@ void Run() {
 namespace UnumFormatDouble {
 
 using IcuRecoveredTest::Filler;
-using IcuRecoveredTest::Require;
 using IcuRecoveredTest::RequireNoThrow;
-using IcuRecoveredTest::RequireThrows;
 using IcuRecoveredTest::Unchanged;
 
 static_assert(std::is_same_v<decltype(&unum_formatDouble_nid_postfix), std::int32_t (APS5_VABI*)(const UNumberFormat*, double, char16_t*, std::int32_t, UFieldPosition*, std::int32_t*)>);
@@ -219,20 +212,20 @@ void Run() {
 
     for (const auto incoming : passing) {
         std::int32_t status = incoming;
-        RequireThrows([&] { unum_formatDouble_nid_postfix(format, 12.5, destination, 8, position, &status); });
+        ExpectErr([&] { unum_formatDouble_nid_postfix(format, 12.5, destination, 8, position, &status); });
         Require(status == incoming);
 
         status = incoming;
-        RequireThrows([&] { unum_formatDouble_nid_postfix(format, 12.5, nullptr, 0, nullptr, &status); });
+        ExpectErr([&] { unum_formatDouble_nid_postfix(format, 12.5, nullptr, 0, nullptr, &status); });
         Require(status == incoming);
 
         status = incoming;
-        RequireThrows([&] { unum_formatDouble_nid_postfix(format, 12.5, destination, -1, position, &status); });
+        ExpectErr([&] { unum_formatDouble_nid_postfix(format, 12.5, destination, -1, position, &status); });
         Require(status == incoming);
     }
 
     Require(Unchanged(storage));
-    RequireThrows([&] { unum_formatDouble_nid_postfix(format, 0.0, destination, 8, position, nullptr); });
+    ExpectErr([&] { unum_formatDouble_nid_postfix(format, 0.0, destination, 8, position, nullptr); });
 }
 
 } // namespace UnumFormatDouble
@@ -240,9 +233,7 @@ void Run() {
 namespace UnumGetSymbol {
 
 using IcuRecoveredTest::Filler;
-using IcuRecoveredTest::Require;
 using IcuRecoveredTest::RequireNoThrow;
-using IcuRecoveredTest::RequireThrows;
 using IcuRecoveredTest::Unchanged;
 
 static_assert(std::is_same_v<decltype(&unum_getSymbol_nid_postfix), std::int32_t (APS5_VABI*)(const UNumberFormat*, std::int32_t, char16_t*, std::int32_t, std::int32_t*)>);
@@ -286,7 +277,7 @@ void Run() {
     for (const auto incoming : passing) {
         for (const auto symbol : usable) {
             std::int32_t status = incoming;
-            RequireThrows([&] { unum_getSymbol_nid_postfix(format, symbol, buffer, 8, &status); });
+            ExpectErr([&] { unum_getSymbol_nid_postfix(format, symbol, buffer, 8, &status); });
             Require(status == incoming);
         }
 
@@ -309,9 +300,7 @@ void Run() {
 namespace UnumOpen {
 
 using IcuRecoveredTest::Filler;
-using IcuRecoveredTest::Require;
 using IcuRecoveredTest::RequireNoThrow;
-using IcuRecoveredTest::RequireThrows;
 using IcuRecoveredTest::Unchanged;
 
 static_assert(std::is_same_v<decltype(&unum_open_nid_postfix), UNumberFormat* (APS5_VABI*)(std::int32_t, const char16_t*, std::int32_t, const char*, UParseError*, std::int32_t*)>);
@@ -349,7 +338,7 @@ void Run() {
     for (const auto incoming : passing) {
         for (const auto style : inRange) {
             std::int32_t status = incoming;
-            RequireThrows([&] { unum_open_nid_postfix(style, pattern, 4, "en", parseError, &status); });
+            ExpectErr([&] { unum_open_nid_postfix(style, pattern, 4, "en", parseError, &status); });
             Require(status == incoming);
         }
 
@@ -361,7 +350,7 @@ void Run() {
     }
 
     Require(Unchanged(storage));
-    RequireThrows([&] { unum_open_nid_postfix(0, pattern, 4, "en", parseError, nullptr); });
+    ExpectErr([&] { unum_open_nid_postfix(0, pattern, 4, "en", parseError, nullptr); });
 }
 
 } // namespace UnumOpen

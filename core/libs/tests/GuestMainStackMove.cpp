@@ -1,4 +1,5 @@
 #include "prx/libc/include/GuestArena.hpp"
+#include "Testing.hpp"
 #include <crt_externs.h>
 #include <mach-o/dyld.h>
 #include <mach/mach.h>
@@ -51,12 +52,6 @@ mach_vm_address_t MapStackNeighbour(std::uintptr_t stack) {
     if (mach_vm_deallocate(mach_task_self(), at, NeighbourBytes) != KERN_SUCCESS) return 0;
     if (mach_vm_allocate(mach_task_self(), &at, NeighbourBytes, VM_MAKE_TAG(VM_MEMORY_STACK)) != KERN_SUCCESS) return 0;
     return at;
-}
-
-void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "check failed: %s\n", what);
-    std::exit(1);
 }
 
 bool InArena(std::uintptr_t address) {

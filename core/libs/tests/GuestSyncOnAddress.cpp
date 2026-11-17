@@ -2,6 +2,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <climits>
@@ -15,8 +16,6 @@ static constexpr int SCE_OK = 0;
 static constexpr KernelUseconds FAILSAFE_TIMEOUT = 10000000;
 static constexpr KernelUseconds SHORT_TIMEOUT = 1000;
 static constexpr auto SETTLE = std::chrono::milliseconds(100);
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static void AwaitCount(const std::atomic<int>& counter, int value) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);

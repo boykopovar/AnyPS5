@@ -1,14 +1,9 @@
 #include "prx/libSceNpUtility/libSceNpUtility.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <initializer_list>
-
-static void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
 
 int main() {
     constexpr int appInfoInvalid = static_cast<int>(0x8055b204u);

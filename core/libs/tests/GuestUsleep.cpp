@@ -1,15 +1,9 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
-
-static void Require(bool value, const char* message) {
-    if (!value) {
-        std::fprintf(stderr, "%s\n", message);
-        std::abort();
-    }
-}
 
 int main() {
     *__error_nid_postfix() = 61;

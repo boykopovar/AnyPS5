@@ -1,4 +1,5 @@
 #include "prx/libSceAgcVsh/include/Api.hpp"
+#include "Testing.hpp"
 
 #include <algorithm>
 #include <array>
@@ -9,10 +10,6 @@
 namespace {
 
 constexpr std::uint32_t Sentinel = 0xabcdef01u;
-
-void check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 constexpr std::array<std::uint32_t, 39> Expected{
     0xc0032200u, 0xf8110000u, 0x0000000fu, 0x00000000u, 0x22000000u,
@@ -25,7 +22,7 @@ constexpr std::array<std::uint32_t, 39> Expected{
 };
 
 void testNullBuffer() {
-    check(sceAgcVshUnknown_Aozdh0bCcO0(nullptr) == nullptr, "null buffer did not return nullptr");
+    Require(sceAgcVshUnknown_Aozdh0bCcO0(nullptr) == nullptr, "null buffer did not return nullptr");
 }
 
 void testStream() {
@@ -33,15 +30,15 @@ void testStream() {
     words.fill(Sentinel);
     CommandBuffer buffer{words.data(), words.data() + words.size(), words.data(), words.data() + words.size(), nullptr, nullptr, 0};
     auto* packet = sceAgcVshUnknown_Aozdh0bCcO0(&buffer);
-    check(packet == words.data(), "the stream did not start at the cursor");
-    check(std::equal(Expected.begin(), Expected.end(), packet), "incorrect Vsh packet stream");
-    check(buffer.cursor_up == words.data() + Expected.size(), "the cursor did not advance by the stream size");
-    check(std::all_of(words.begin() + Expected.size(), words.end(), [](std::uint32_t word) { return word == Sentinel; }), "the stream wrote past its thirty-nine words");
+    Require(packet == words.data(), "the stream did not start at the cursor");
+    Require(std::equal(Expected.begin(), Expected.end(), packet), "incorrect Vsh packet stream");
+    Require(buffer.cursor_up == words.data() + Expected.size(), "the cursor did not advance by the stream size");
+    Require(std::all_of(words.begin() + Expected.size(), words.end(), [](std::uint32_t word) { return word == Sentinel; }), "the stream wrote past its thirty-nine words");
 }
 
 bool APS5_VABI growInto(CommandBuffer* buffer, std::uint32_t count, void* userData) {
     auto& grown = *static_cast<std::array<std::uint32_t, 64>*>(userData);
-    check(count == 39, "incorrect stream allocation request");
+    Require(count == 39, "incorrect stream allocation request");
     buffer->bottom = grown.data();
     buffer->top = grown.data() + grown.size();
     buffer->cursor_up = grown.data();
@@ -60,9 +57,9 @@ void testGrow() {
     large.fill(Sentinel);
     CommandBuffer buffer{small.data(), small.data() + small.size(), small.data(), small.data() + small.size(), growInto, &large, 0};
     auto* packet = sceAgcVshUnknown_Aozdh0bCcO0(&buffer);
-    check(packet == large.data(), "the grown stream did not start at the new cursor");
-    check(std::equal(Expected.begin(), Expected.end(), packet), "incorrect Vsh packet stream after growth");
-    check(buffer.cursor_up == large.data() + Expected.size(), "the cursor did not advance after growth");
+    Require(packet == large.data(), "the grown stream did not start at the new cursor");
+    Require(std::equal(Expected.begin(), Expected.end(), packet), "incorrect Vsh packet stream after growth");
+    Require(buffer.cursor_up == large.data() + Expected.size(), "the cursor did not advance after growth");
 }
 
 void testGrowFailure() {
@@ -70,9 +67,9 @@ void testGrowFailure() {
     small.fill(Sentinel);
     CommandBuffer buffer{small.data(), small.data() + small.size(), small.data(), small.data() + small.size(), growFail, nullptr, 0};
     auto* packet = sceAgcVshUnknown_Aozdh0bCcO0(&buffer);
-    check(packet == nullptr, "a failed grow did not return nullptr");
-    check(buffer.cursor_up == small.data(), "a failed grow still advanced the cursor");
-    check(std::all_of(small.begin(), small.end(), [](std::uint32_t word) { return word == Sentinel; }), "a failed grow still wrote");
+    Require(packet == nullptr, "a failed grow did not return nullptr");
+    Require(buffer.cursor_up == small.data(), "a failed grow still advanced the cursor");
+    Require(std::all_of(small.begin(), small.end(), [](std::uint32_t word) { return word == Sentinel; }), "a failed grow still wrote");
 }
 
 }

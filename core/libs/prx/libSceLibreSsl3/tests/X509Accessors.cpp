@@ -1,6 +1,7 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libSceLibreSsl/include/ObjectTable.hpp"
+#include "Testing.hpp"
 
 #include <climits>
 #include <cstdint>
@@ -15,22 +16,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL3 X509 accessor check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template <typename Function>
-void RequireThrows(Function function, std::source_location location = std::source_location::current()) {
-    try {
-        function();
-    } catch (const std::exception&) {
-        return;
-    }
-    Require(false, location);
-}
 
 struct LaterName {
     int nid;
@@ -210,14 +195,14 @@ void CheckPubkey() {
     info.key = nullptr;
     Require(X509_get_X509_PUBKEY_nid_postfix(&certificate) == nullptr);
     certificate.certInfo = nullptr;
-    RequireThrows([&] { X509_get_X509_PUBKEY_nid_postfix(&certificate); });
-    RequireThrows([] { X509_get_X509_PUBKEY_nid_postfix(nullptr); });
+    ExpectErr([&] { X509_get_X509_PUBKEY_nid_postfix(&certificate); });
+    ExpectErr([] { X509_get_X509_PUBKEY_nid_postfix(nullptr); });
 }
 
 void CheckSignatureNidInputs() {
-    RequireThrows([] { X509_get_signature_nid_nid_postfix(nullptr); });
+    ExpectErr([] { X509_get_signature_nid_nid_postfix(nullptr); });
     LibreSsl3Certificate certificate {};
-    RequireThrows([&] { X509_get_signature_nid_nid_postfix(&certificate); });
+    ExpectErr([&] { X509_get_signature_nid_nid_postfix(&certificate); });
     Require(SignatureNid(static_cast<const LibreSslAsn1Object*>(nullptr)) == 0);
     const LibreSslAsn1Object empty {nullptr, nullptr, 668, 0, nullptr, 0};
     Require(SignatureNid(&empty) == 0);
@@ -229,9 +214,9 @@ void CheckSignatureNidInputs() {
     const LibreSslAsn1Object longNull {nullptr, nullptr, 0, 200, nullptr, 0};
     Require(SignatureNid(&longNull) == 0);
     const LibreSslAsn1Object shortNull {nullptr, nullptr, 0, 9, nullptr, 0};
-    RequireThrows([&] { SignatureNid(&shortNull); });
+    ExpectErr([&] { SignatureNid(&shortNull); });
     const LibreSslAsn1Object hugeNegative {nullptr, nullptr, 0, INT_MIN, nullptr, 0};
-    RequireThrows([&] { SignatureNid(&hugeNegative); });
+    ExpectErr([&] { SignatureNid(&hugeNegative); });
 }
 
 void CheckEveryBuiltInObject() {
@@ -277,13 +262,13 @@ void CheckAddedObjects() {
     Require(SignatureNid(Encode("1.3.6.1.5.5.7.1.31")) == 1053);
     Require(SignatureNid(Encode("1.2.3.4.5.6.7.8.9")) == 0);
     const LibreSslAsn1Object longNull {nullptr, nullptr, 0, 200, nullptr, 0};
-    RequireThrows([&] { SignatureNid(&longNull); });
+    ExpectErr([&] { SignatureNid(&longNull); });
     const LibreSslAsn1Object negative {nullptr, nullptr, 0, -1, nullptr, 0};
-    RequireThrows([&] { SignatureNid(&negative); });
+    ExpectErr([&] { SignatureNid(&negative); });
     const std::vector<unsigned char> largest(2047, 0x2a);
     Require(SignatureNid(largest) == 0);
     const std::vector<unsigned char> tooLarge(2048, 0x2a);
-    RequireThrows([&] { SignatureNid(tooLarge); });
+    ExpectErr([&] { SignatureNid(tooLarge); });
     OBJ_cleanup_nid_postfix();
     Require(SignatureNid(tooLarge) == 0);
     Require(SignatureNid(&negative) == 0);
@@ -339,7 +324,7 @@ void CheckExtensionSearch() {
     Require(certificate.Find(1022, -1) == 4);
     Require(certificate.Find(1022, 4) == -1);
     Require(certificate.Find(1, -1) == -1);
-    RequireThrows([&] { certificate.Find(87, INT_MAX); });
+    ExpectErr([&] { certificate.Find(87, INT_MAX); });
     certificate.stack.num = 2;
     Require(certificate.Find(87, 0) == -1);
     certificate.stack.num = -1;
@@ -363,25 +348,25 @@ void CheckUnknownNids() {
 }
 
 void CheckExtensionInputs() {
-    RequireThrows([] { X509_get_ext_by_NID_nid_postfix(nullptr, 87, -1); });
-    RequireThrows([] { X509_get_ext_by_NID_nid_postfix(nullptr, -1, -1); });
+    ExpectErr([] { X509_get_ext_by_NID_nid_postfix(nullptr, 87, -1); });
+    ExpectErr([] { X509_get_ext_by_NID_nid_postfix(nullptr, -1, -1); });
     LibreSsl3Certificate empty {};
-    RequireThrows([&] { X509_get_ext_by_NID_nid_postfix(&empty, 87, -1); });
+    ExpectErr([&] { X509_get_ext_by_NID_nid_postfix(&empty, 87, -1); });
     LibreSsl3CertificateInfo info {};
     empty.certInfo = &info;
     Require(X509_get_ext_by_NID_nid_postfix(&empty, 87, -1) == -1);
     Extensions certificate(List({"2.5.29.19"}));
     certificate.slots[0] = nullptr;
-    RequireThrows([&] { certificate.Find(87, -1); });
+    ExpectErr([&] { certificate.Find(87, -1); });
     certificate.slots[0] = reinterpret_cast<char*>(&certificate.extensions[0]);
     certificate.extensions[0].object = nullptr;
-    RequireThrows([&] { certificate.Find(87, -1); });
+    ExpectErr([&] { certificate.Find(87, -1); });
     certificate.extensions[0].object = &certificate.objects[0].object;
     certificate.stack.data = nullptr;
-    RequireThrows([&] { certificate.Find(87, -1); });
+    ExpectErr([&] { certificate.Find(87, -1); });
     certificate.stack.data = certificate.slots.data();
     certificate.objects[0].object.data = nullptr;
-    RequireThrows([&] { certificate.Find(87, -1); });
+    ExpectErr([&] { certificate.Find(87, -1); });
     certificate.objects[0].object.length = -3;
     Require(certificate.Find(87, -1) == -1);
 }

@@ -1,5 +1,6 @@
 #include "prx/libSceAjm.native/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -19,12 +20,6 @@ constexpr int InvalidFlags = static_cast<int>(0x8093000C);
 using InstanceGetSizeFn = int (APS5_VABI*)(std::uint32_t, std::uint32_t, std::uint64_t);
 using GetFailedInstanceFn = int (APS5_VABI*)(std::uint32_t, void*);
 using TelemetryGetLogFn = int (APS5_VABI*)(std::uint32_t, std::uint8_t*, void*);
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "Ajm driver queries: %s\n", message);
-    std::abort();
-}
 
 template <typename Function>
 Function Resolve(const char* library, const char* name) {

@@ -1,4 +1,5 @@
 #include "prx/libSceLibcInternal/include/CodecvtUtfMetadata.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -29,12 +30,6 @@ static_assert(std::is_same_v<decltype(&_ZNKSt7codecvtIDsc9_MbstatetE10do_unshift
 static_assert(std::is_same_v<decltype(&_ZNKSt7codecvtIDic9_MbstatetE11do_encodingEv_nid_postfix), Metadata>);
 static_assert(std::is_same_v<decltype(&_ZNKSt7codecvtIDic9_MbstatetE13do_max_lengthEv_nid_postfix), Metadata>);
 static_assert(std::is_same_v<decltype(&_ZNKSt7codecvtIDsc9_MbstatetE13do_max_lengthEv_nid_postfix), Metadata>);
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "UTF codecvt metadata: %s\n", message);
-    std::abort();
-}
 
 template<typename TCall>
 void RequireInvalid(TCall call, const char* text) {

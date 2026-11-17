@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -24,7 +25,6 @@
 
 namespace {
 
-int failures = 0;
 const char* library = nullptr;
 volatile sig_atomic_t failStackInstall = 0;
 volatile sig_atomic_t failStackQuery = 0;
@@ -46,12 +46,6 @@ void Check(bool condition, const char* what) {
     if (condition) return;
     Text(what);
     _exit(81);
-}
-
-void Expect(bool condition, const std::string& what) {
-    if (condition) return;
-    std::fprintf(stderr, "FAIL: %s\n", what.c_str());
-    ++failures;
 }
 
 void Load() {
@@ -430,7 +424,7 @@ int main(int argc, char** argv) {
         }
     } else return 2;
     std::filesystem::remove_all(root);
-    if (failures != 0) return 1;
+    if (Failures() != 0) return 1;
     std::printf("linux crash report %s tests passed\n", group.c_str());
     return 0;
 }

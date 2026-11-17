@@ -1,4 +1,5 @@
 #include "prx/libkernel/Socket/include/SocketRuntime.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstdint>
@@ -21,10 +22,6 @@ extern "C" [[noreturn]] void NotImplementedAt_nid_no_patch(const char* name, con
 }
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) throw std::runtime_error("check failed at line " + std::to_string(location.line()));
-}
 
 struct Descriptor {
     int value = -1;

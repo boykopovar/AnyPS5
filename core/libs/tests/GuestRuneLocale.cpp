@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cctype>
 #include <cerrno>
 #include <cstdint>
@@ -12,13 +13,6 @@ extern "C" {
 extern const unsigned char _DefaultRuneLocale_nid_postfix[4224];
 extern const unsigned char* _CurrentRuneLocale_nid_postfix;
 extern int __mb_sb_limit_nid_postfix;
-}
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "Rune locale check failed at line %u\n", location.line());
-        std::abort();
-    }
 }
 
 template <typename T>

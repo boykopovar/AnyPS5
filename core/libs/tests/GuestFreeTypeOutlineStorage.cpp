@@ -1,6 +1,7 @@
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include FT_OUTLINE_H
 
@@ -11,14 +12,6 @@
 #include <limits>
 
 using namespace FreeType;
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "FreeType outline storage check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static void Compare(GuestLibrary& library, FT_Library native, std::uint32_t points, std::int32_t contours) {
     GuestOutline guest{1, 2, nullptr, nullptr, nullptr, 3};

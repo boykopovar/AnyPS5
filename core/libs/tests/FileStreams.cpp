@@ -2,6 +2,7 @@
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "tests/TemporaryFile.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <iterator>
 #include <memory>
@@ -34,10 +35,6 @@
 #else
 #include <unistd.h>
 #endif
-
-static void Require(bool condition, const char* message = "File stream check failed") {
-    if (!condition) throw std::runtime_error(message);
-}
 
 static void CheckWriteFlushErrno(const std::string& base) {
     const std::string path = base + ".write-flush-errno";
@@ -298,16 +295,6 @@ static void CheckWriteFlushErrno(const std::string& base) {
     Require(::close(fds[1]) == 0);
     Require(::close(fds[0]) == 0);
 #endif
-}
-
-template<typename TAction>
-static void ExpectException(TAction action) {
-    try {
-        action();
-    } catch (const std::runtime_error&) {
-        return;
-    }
-    throw std::runtime_error("Expected a stream exception");
 }
 
 static void CheckReadErrnoAndStatus(const char* path) {
@@ -1325,8 +1312,8 @@ int main(int argc, char** argv) {
     Require(fread_nid_postfix(buffer.data(), 1, buffer.size(), stream) == buffer.size());
     Require(std::strcmp(buffer.data(), payload) == 0);
     Require(fread_nid_postfix(buffer.data(), 1, buffer.size(), stream) == 0);
-    ExpectException([&] { fputs_nid_postfix(nullptr, stream); });
-    ExpectException([&] { fwrite_nid_postfix(nullptr, 1, sizeof(payload), stream); });
+    ExpectErr<std::runtime_error>([&] { fputs_nid_postfix(nullptr, stream); });
+    ExpectErr<std::runtime_error>([&] { fwrite_nid_postfix(nullptr, 1, sizeof(payload), stream); });
     errno = 0;
     Require(fread_nid_postfix(buffer.data(), 2, SIZE_MAX / 2 + 1, stream) == 0 && errno == EINVAL && ferror_nid_postfix(stream) == 0);
     errno = 0;
@@ -1336,8 +1323,8 @@ int main(int argc, char** argv) {
     Require(fseek_nid_postfix(stream, 0, -1) == -1);
     Require(errno == EINVAL);
     Require(fclose_nid_postfix(stream) == 0);
-    ExpectException([] { fputs_nid_postfix("invalid stream", nullptr); });
-    ExpectException([] { fopen_nid_postfix(nullptr, "r"); });
+    ExpectErr<std::runtime_error>([] { fputs_nid_postfix("invalid stream", nullptr); });
+    ExpectErr<std::runtime_error>([] { fopen_nid_postfix(nullptr, "r"); });
     FileStream closed(TemporaryFile::Open());
     closed.Close();
     Require(fflush_nid_postfix(&closed) == -1 && errno == 9);

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdio>
@@ -17,12 +18,6 @@
 
 namespace QueryOutputFixture {
 
-inline void Check(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "FreeType query output guard failed at line %u\n", location.line());
-    std::abort();
-}
-
 class Pages {
 public:
     Pages() {
@@ -31,21 +26,21 @@ public:
         GetSystemInfo(&information);
         page = information.dwPageSize;
         memory = static_cast<unsigned char*>(VirtualAlloc(nullptr, page * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
-        Check(memory != nullptr);
+        Require(memory != nullptr);
 #else
         const long nativePage = sysconf(_SC_PAGESIZE);
-        Check(nativePage > 0);
+        Require(nativePage > 0);
         page = static_cast<std::size_t>(nativePage);
         memory = static_cast<unsigned char*>(mmap(nullptr, page * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
-        Check(memory != MAP_FAILED);
+        Require(memory != MAP_FAILED);
 #endif
     }
 
     ~Pages() {
 #ifdef _WIN32
-        Check(VirtualFree(memory, 0, MEM_RELEASE) != 0);
+        Require(VirtualFree(memory, 0, MEM_RELEASE) != 0);
 #else
-        Check(munmap(memory, page * 2) == 0);
+        Require(munmap(memory, page * 2) == 0);
 #endif
     }
 
@@ -54,7 +49,7 @@ public:
 
     template <typename TCall>
     void Reject(std::size_t width, TCall call) {
-        Check(width > 1 && width < page);
+        Require(width > 1 && width < page);
         const std::array offsets{std::size_t{16}, page - width / 2, page + 16};
         for (std::size_t index = 0; index < offsets.size(); ++index) {
             std::memset(memory, 0xA5, page * 2);
@@ -69,14 +64,14 @@ public:
                 throw;
             }
             Protect(selected, 3);
-            Check(correct);
-            Check(std::memcmp(memory, before.data(), before.size()) == 0);
+            Require(correct);
+            Require(std::memcmp(memory, before.data(), before.size()) == 0);
         }
     }
 
     template <typename TCall>
     void Accept(std::size_t width, TCall call) {
-        Check(width > 1 && width < page);
+        Require(width > 1 && width < page);
         std::memset(memory, 0xA5, page * 2);
         const std::vector<unsigned char> before(memory, memory + page * 2);
         Protect(1, 0);
@@ -88,9 +83,9 @@ public:
             throw;
         }
         Protect(1, 3);
-        Check(correct);
-        Check(std::memcmp(memory, before.data(), page - width) == 0);
-        Check(std::memcmp(memory + page, before.data() + page, page) == 0);
+        Require(correct);
+        Require(std::memcmp(memory, before.data(), page - width) == 0);
+        Require(std::memcmp(memory + page, before.data() + page, page) == 0);
     }
 
 private:
@@ -98,10 +93,10 @@ private:
 #ifdef _WIN32
         DWORD previous;
         const DWORD native = protection == 3 ? PAGE_READWRITE : protection == 1 ? PAGE_READONLY : PAGE_NOACCESS;
-        Check(VirtualProtect(memory + page * index, page, native, &previous) != 0);
+        Require(VirtualProtect(memory + page * index, page, native, &previous) != 0);
 #else
         const int native = protection == 3 ? PROT_READ | PROT_WRITE : protection == 1 ? PROT_READ : PROT_NONE;
-        Check(mprotect(memory + page * index, page, native) == 0);
+        Require(mprotect(memory + page * index, page, native) == 0);
 #endif
     }
 

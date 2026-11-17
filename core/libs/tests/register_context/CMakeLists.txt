@@ -8,6 +8,7 @@ endif()
 
 find_package(Threads REQUIRED)
 add_executable(register_context_tests ../RegisterContext.cpp)
+target_include_directories(register_context_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../../test/include)
 target_include_directories(register_context_tests PRIVATE ../..)
 target_compile_features(register_context_tests PRIVATE cxx_std_20)
 target_link_libraries(register_context_tests PRIVATE Threads::Threads)

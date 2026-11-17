@@ -1,6 +1,7 @@
 #include "prx/libScePosixForWebKit/libScePosixForWebKit.hpp"
 #include "prx/libScePosixForWebKit/GuestResolver.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -10,12 +11,6 @@
 
 
 namespace {
-
-void Require(bool result, const char* message) {
-    if (result) return;
-    std::fprintf(stderr, "raw resolver: %s\n", message);
-    std::abort();
-}
 
 void Address(const char* node, int family, int protocol, int flags) {
     GuestResolver::AddressInfo hints{};

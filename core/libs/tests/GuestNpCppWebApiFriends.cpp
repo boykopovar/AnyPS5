@@ -1,15 +1,11 @@
 #include "prx/libSceNpCppWebApi/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
-static void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", what);
-    std::abort();
-}
 
 static int deleterCalls = 0;
 

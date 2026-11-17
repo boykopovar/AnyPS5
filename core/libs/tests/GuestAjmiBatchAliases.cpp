@@ -1,4 +1,5 @@
 #include "prx/libSceAjmi/libSceAjmi.hpp"
+#include "Testing.hpp"
 
 #include <algorithm>
 #include <array>
@@ -21,13 +22,6 @@
 #endif
 
 namespace {
-
-void Require(bool condition, const char* message, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "Ajmi batch alias check failed at line %u: %s\n", location.line(), message);
-        std::abort();
-    }
-}
 
 class Module {
 public:

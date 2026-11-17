@@ -1,5 +1,6 @@
 #include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -23,9 +24,6 @@ extern "C" const void* ApplicationProcessParameters_nid_no_patch() {
 #else
 static constexpr bool Legacy = false;
 #endif
-static void Require(bool condition, const char* message) {
-    if (!condition) { std::fprintf(stderr, "%s\n", message); std::abort(); }
-}
 struct TerminationMarker { const void* identity; };
 struct TerminationTrace {
     void* allocator = nullptr;

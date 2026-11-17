@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include <codegen/x86/RedZoneFramer.hpp>
 #include <codegen/x86/StubBodyBuilder.hpp>
 #include <cstdint>
@@ -8,10 +9,6 @@
 #include <vector>
 
 namespace {
-
-void require(const bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 constexpr std::uint64_t Base = 0x1000;
 
@@ -77,23 +74,23 @@ void framesRedZoneLeaf() {
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
-    require(report.RedZoneFunctions == 1 && report.Framed == 1 && report.Exits == 1, "a red-zone leaf was not framed");
-    require(sites.size() == 2, "a framed leaf needs one prologue and one exit site");
-    require(displacements.empty() && report.FramedWithoutFramePointer == 0, "a leaf with a frame pointer had rsp operands moved");
+    Require(report.RedZoneFunctions == 1 && report.Framed == 1 && report.Exits == 1, "a red-zone leaf was not framed");
+    Require(sites.size() == 2, "a framed leaf needs one prologue and one exit site");
+    Require(displacements.empty() && report.FramedWithoutFramePointer == 0, "a leaf with a frame pointer had rsp operands moved");
 
     const auto& entry = sites[0];
-    require(entry.Address == Base + 0x40 && entry.Length == Prologue.size(), "the prologue site does not cover the pushes");
-    require(entry.OriginalBytes == Prologue, "the prologue site lost its bytes");
+    Require(entry.Address == Base + 0x40 && entry.Length == Prologue.size(), "the prologue site does not cover the pushes");
+    Require(entry.OriginalBytes == Prologue, "the prologue site lost its bytes");
     std::vector<std::uint8_t> entryBody = Prologue;
     append(entryBody, {0x48, 0x8d, 0x64, 0x24, 0x80, 0xe9, 0, 0, 0, 0});
-    require(entry.Body == entryBody && entry.ReturnBranchOffset == Prologue.size() + 5, "the prologue stub does not lower rsp after the pushes");
+    Require(entry.Body == entryBody && entry.ReturnBranchOffset == Prologue.size() + 5, "the prologue stub does not lower rsp after the pushes");
 
     const auto& exit = sites[1];
-    require(exit.Address == Base + 0x40 + Prologue.size() + body.size() && exit.Length == Exit.size(), "the exit site does not cover the pops and ret");
+    Require(exit.Address == Base + 0x40 + Prologue.size() + body.size() && exit.Length == Exit.size(), "the exit site does not cover the pops and ret");
     std::vector<std::uint8_t> exitBody{0x48, 0x8d, 0xa4, 0x24, 0x80, 0, 0, 0};
     append(exitBody, Exit);
     append(exitBody, {0xe9, 0, 0, 0, 0});
-    require(exit.Body == exitBody && exit.ReturnBranchOffset == 8 + Exit.size(), "the exit stub does not raise rsp before the pops");
+    Require(exit.Body == exitBody && exit.ReturnBranchOffset == 8 + Exit.size(), "the exit stub does not raise rsp before the pops");
 }
 
 const std::vector<std::uint8_t> FramelessPrologue{0x53, 0x41, 0x56, 0x41, 0x57};
@@ -134,24 +131,24 @@ void framesLeafWithoutFramePointer() {
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
-    require(report.RedZoneFunctions == 1 && report.Framed == 1 && report.FramedWithoutFramePointer == 1 && report.MovedOperands == 2, "a leaf that only pushes was not framed");
-    require(sites.size() == 2, "a framed leaf needs one prologue and one exit site");
+    Require(report.RedZoneFunctions == 1 && report.Framed == 1 && report.FramedWithoutFramePointer == 1 && report.MovedOperands == 2, "a leaf that only pushes was not framed");
+    Require(sites.size() == 2, "a framed leaf needs one prologue and one exit site");
     const auto& entry = sites[0];
-    require(entry.Address == Base + 0x40 && entry.Length == FramelessPrologue.size(), "the prologue site does not cover the pushes");
+    Require(entry.Address == Base + 0x40 && entry.Length == FramelessPrologue.size(), "the prologue site does not cover the pushes");
     std::vector<std::uint8_t> entryBody = FramelessPrologue;
     append(entryBody, {0x48, 0x8d, 0x64, 0x24, 0xf0, 0xe9, 0, 0, 0, 0});
-    require(entry.Body == entryBody, "the prologue stub does not lower rsp by the leaf's depth below rsp after the pushes");
+    Require(entry.Body == entryBody, "the prologue stub does not lower rsp by the leaf's depth below rsp after the pushes");
     const auto& exit = sites[1];
-    require(exit.Address == Base + 0x40 + FramelessPrologue.size() + body.size() && exit.OriginalBytes == FramelessExit, "the exit site does not cover the pops and ret");
+    Require(exit.Address == Base + 0x40 + FramelessPrologue.size() + body.size() && exit.OriginalBytes == FramelessExit, "the exit site does not cover the pops and ret");
     std::vector<std::uint8_t> exitBody{0x48, 0x8d, 0xa4, 0x24, 0x10, 0, 0, 0};
     append(exitBody, FramelessExit);
     append(exitBody, {0xe9, 0, 0, 0, 0});
-    require(exit.Body == exitBody, "the exit stub does not raise rsp by the leaf's depth below rsp before the pops");
+    Require(exit.Body == exitBody, "the exit stub does not raise rsp by the leaf's depth below rsp before the pops");
     const auto storeDisplacement = 0x40 + FramelessPrologue.size() + 4;
     const auto loadDisplacement = storeDisplacement + StoreBelowRsp.size();
-    require(displacements.size() == 2, "both rsp operands must move");
-    require(displacements[0].Offset == storeDisplacement && displacements[0].Bytes == std::vector<std::uint8_t>{0x00}, "the store below rsp was not moved to the lowered rsp");
-    require(displacements[1].Offset == loadDisplacement && displacements[1].Bytes == std::vector<std::uint8_t>{0x00}, "the load below rsp was not moved to the lowered rsp");
+    Require(displacements.size() == 2, "both rsp operands must move");
+    Require(displacements[0].Offset == storeDisplacement && displacements[0].Bytes == std::vector<std::uint8_t>{0x00}, "the store below rsp was not moved to the lowered rsp");
+    Require(displacements[1].Offset == loadDisplacement && displacements[1].Bytes == std::vector<std::uint8_t>{0x00}, "the load below rsp was not moved to the lowered rsp");
 }
 
 void shiftsByTheDeepestOperandBelowRsp() {
@@ -162,12 +159,12 @@ void shiftsByTheDeepestOperandBelowRsp() {
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
-    require(report.Framed == 1 && sites.size() == 2 && displacements.size() == 3, "a leaf reaching 0x28 bytes below rsp was not framed");
+    Require(report.Framed == 1 && sites.size() == 2 && displacements.size() == 3, "a leaf reaching 0x28 bytes below rsp was not framed");
     std::vector<std::uint8_t> entryBody = FramelessPrologue;
     append(entryBody, {0x48, 0x8d, 0x64, 0x24, 0xd0, 0xe9, 0, 0, 0, 0});
-    require(sites[0].Body == entryBody, "rsp is not lowered by the deepest displacement rounded up to 16");
-    require(std::vector<std::uint8_t>(sites[1].Body.begin(), sites[1].Body.begin() + 8) == std::vector<std::uint8_t>{0x48, 0x8d, 0xa4, 0x24, 0x30, 0, 0, 0}, "rsp is not raised by the shift it was lowered by");
-    require(displacements[0].Bytes == std::vector<std::uint8_t>{0x20} && displacements[1].Bytes == std::vector<std::uint8_t>{0x08} && displacements[2].Bytes == std::vector<std::uint8_t>{0x08}, "the operands below rsp were not moved by the shift");
+    Require(sites[0].Body == entryBody, "rsp is not lowered by the deepest displacement rounded up to 16");
+    Require(std::vector<std::uint8_t>(sites[1].Body.begin(), sites[1].Body.begin() + 8) == std::vector<std::uint8_t>{0x48, 0x8d, 0xa4, 0x24, 0x30, 0, 0, 0}, "rsp is not raised by the shift it was lowered by");
+    Require(displacements[0].Bytes == std::vector<std::uint8_t>{0x20} && displacements[1].Bytes == std::vector<std::uint8_t>{0x08} && displacements[2].Bytes == std::vector<std::uint8_t>{0x08}, "the operands below rsp were not moved by the shift");
 }
 
 void movesPositiveOperandsThatFitAfterTheShift() {
@@ -177,9 +174,9 @@ void movesPositiveOperandsThatFitAfterTheShift() {
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
-    require(report.Framed == 1 && report.MovedOperands == 2 && sites.size() == 2, "a leaf with an 8-bit displacement above rsp that fits after the shift was not framed");
+    Require(report.Framed == 1 && report.MovedOperands == 2 && sites.size() == 2, "a leaf with an 8-bit displacement above rsp that fits after the shift was not framed");
     const auto loadDisplacement = 0x40 + FramelessPrologue.size() + StoreBelowRsp.size() + 4;
-    require(displacements.size() == 2 && displacements[1].Offset == loadDisplacement && displacements[1].Bytes == std::vector<std::uint8_t>{0x18}, "the load above rsp was not moved in place by the shift");
+    Require(displacements.size() == 2 && displacements[1].Offset == loadDisplacement && displacements[1].Bytes == std::vector<std::uint8_t>{0x18}, "the load above rsp was not moved in place by the shift");
 }
 
 void shiftsByTheWholeRedZoneForAddressesBelowRsp() {
@@ -191,9 +188,9 @@ void shiftsByTheWholeRedZoneForAddressesBelowRsp() {
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
-    require(report.Framed == 2 && sites.size() == 4 && displacements.size() == 4, "leaves that take the address of a stack slot were not framed");
-    require(sites[0].Body[FramelessPrologue.size() + 4] == 0x80 && displacements[0].Bytes == std::vector<std::uint8_t>{0x70} && displacements[1].Bytes == std::vector<std::uint8_t>{0x60}, "a leaf that takes the address of a slot below rsp was not shifted by the whole red zone");
-    require(sites[2].Body[FramelessPrologue.size() + 4] == 0xf0 && displacements[2].Bytes == std::vector<std::uint8_t>{0x00} && displacements[3].Bytes == std::vector<std::uint8_t>{0x18}, "a leaf that only takes the address of a slot above rsp was shifted by more than its depth");
+    Require(report.Framed == 2 && sites.size() == 4 && displacements.size() == 4, "leaves that take the address of a stack slot were not framed");
+    Require(sites[0].Body[FramelessPrologue.size() + 4] == 0x80 && displacements[0].Bytes == std::vector<std::uint8_t>{0x70} && displacements[1].Bytes == std::vector<std::uint8_t>{0x60}, "a leaf that takes the address of a slot below rsp was not shifted by the whole red zone");
+    Require(sites[2].Body[FramelessPrologue.size() + 4] == 0xf0 && displacements[2].Bytes == std::vector<std::uint8_t>{0x00} && displacements[3].Bytes == std::vector<std::uint8_t>{0x18}, "a leaf that only takes the address of a slot above rsp was shifted by more than its depth");
 }
 
 void shiftsByTheWholeRedZoneForIndexedOperands() {
@@ -203,8 +200,8 @@ void shiftsByTheWholeRedZoneForIndexedOperands() {
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
-    require(report.Framed == 1 && sites.size() == 2 && displacements.size() == 2, "a leaf with an indexed operand below rsp was not framed");
-    require(sites[0].Body[FramelessPrologue.size() + 4] == 0x80 && displacements[0].Bytes == std::vector<std::uint8_t>{0x70} && displacements[1].Bytes == std::vector<std::uint8_t>{0x70}, "a leaf whose indexed operand can reach deeper than its displacement was not shifted by the whole red zone");
+    Require(report.Framed == 1 && sites.size() == 2 && displacements.size() == 2, "a leaf with an indexed operand below rsp was not framed");
+    Require(sites[0].Body[FramelessPrologue.size() + 4] == 0x80 && displacements[0].Bytes == std::vector<std::uint8_t>{0x70} && displacements[1].Bytes == std::vector<std::uint8_t>{0x70}, "a leaf whose indexed operand can reach deeper than its displacement was not shifted by the whole red zone");
 }
 
 void stubsOperandsWhoseDisplacementOverflows() {
@@ -215,13 +212,13 @@ void stubsOperandsWhoseDisplacementOverflows() {
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
-    require(report.Framed == 1 && report.MovedOperands == 1 && report.OperandStubs == 2 && report.StubbedOperands == 2 && sites.size() == 4, "a leaf whose 8-bit displacements above rsp overflow after the shift was not framed with operand stubs");
+    Require(report.Framed == 1 && report.MovedOperands == 1 && report.OperandStubs == 2 && report.StubbedOperands == 2 && sites.size() == 4, "a leaf whose 8-bit displacements above rsp overflow after the shift was not framed with operand stubs");
     const auto load = Base + 0x40 + FramelessPrologue.size() + StoreBelowRsp.size();
-    require(sites[2].Address == load && sites[2].Length == LoadFarAboveRsp.size() && sites[2].OriginalBytes == LoadFarAboveRsp, "the stub site does not cover the load that cannot move in place");
-    require(sites[2].Body == stubBody({0x48, 0x8b, 0x84, 0x24, 0x88, 0x00, 0x00, 0x00}) && sites[2].ReturnBranchOffset == 8, "the load was not re-encoded with a 32-bit displacement moved by the shift");
-    require(sites[3].Address == load + LoadFarAboveRsp.size() && sites[3].OriginalBytes == StoreImmediateFarAboveRsp, "the stub site does not cover the store of an immediate that cannot move in place");
-    require(sites[3].Body == stubBody({0xc7, 0x84, 0x24, 0x8c, 0x00, 0x00, 0x00, 0x78, 0x56, 0x34, 0x12}), "the store lost its immediate when its displacement was widened");
-    require(displacements.size() == 1 && displacements[0].Bytes == std::vector<std::uint8_t>{0x00}, "the store below rsp was not moved in place");
+    Require(sites[2].Address == load && sites[2].Length == LoadFarAboveRsp.size() && sites[2].OriginalBytes == LoadFarAboveRsp, "the stub site does not cover the load that cannot move in place");
+    Require(sites[2].Body == stubBody({0x48, 0x8b, 0x84, 0x24, 0x88, 0x00, 0x00, 0x00}) && sites[2].ReturnBranchOffset == 8, "the load was not re-encoded with a 32-bit displacement moved by the shift");
+    Require(sites[3].Address == load + LoadFarAboveRsp.size() && sites[3].OriginalBytes == StoreImmediateFarAboveRsp, "the stub site does not cover the store of an immediate that cannot move in place");
+    Require(sites[3].Body == stubBody({0xc7, 0x84, 0x24, 0x8c, 0x00, 0x00, 0x00, 0x78, 0x56, 0x34, 0x12}), "the store lost its immediate when its displacement was widened");
+    Require(displacements.size() == 1 && displacements[0].Bytes == std::vector<std::uint8_t>{0x00}, "the store below rsp was not moved in place");
 }
 
 void stubsOperandsAtRspWithTheInstructionsAfterThem() {
@@ -235,13 +232,13 @@ void stubsOperandsAtRspWithTheInstructionsAfterThem() {
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
-    require(report.Framed == 2 && report.MovedOperands == 2 && report.OperandStubs == 2 && report.StubbedOperands == 3 && sites.size() == 6, "leaves with operands at rsp were not framed with operand stubs");
+    Require(report.Framed == 2 && report.MovedOperands == 2 && report.OperandStubs == 2 && report.StubbedOperands == 3 && sites.size() == 6, "leaves with operands at rsp were not framed with operand stubs");
     const auto first = 0x40 + FramelessPrologue.size() + StoreBelowRsp.size();
-    require(sites[2].Address == Base + first && sites[2].Length == LoadAtRsp.size() + LoadAboveRsp.size(), "the stub site does not run on to the next instruction to make room for its jump");
-    require(sites[2].Body == stubBody({0x48, 0x8b, 0x44, 0x24, 0x10, 0x48, 0x8b, 0x44, 0x24, 0x18}), "the load at rsp and the load the stub covers after it were not both moved by the shift");
-    for (const auto& displacement : displacements) require(displacement.Offset < first || displacement.Offset >= first + sites[2].Length, "an rsp operand inside a stub site was also moved in place");
-    require(sites[3].Body[FramelessPrologue.size() + 4] == 0x80, "a leaf with an indexed operand at rsp was not shifted by the whole red zone");
-    require(sites[5].OriginalBytes.size() == LoadIndexedAtRsp.size() + AddRdxToRax.size() && sites[5].Body == stubBody({0x48, 0x8b, 0x84, 0xcc, 0x80, 0x00, 0x00, 0x00, 0x48, 0x01, 0xd0}), "the indexed load at rsp was not re-encoded with a 32-bit displacement of 0x80 ahead of the add it covers");
+    Require(sites[2].Address == Base + first && sites[2].Length == LoadAtRsp.size() + LoadAboveRsp.size(), "the stub site does not run on to the next instruction to make room for its jump");
+    Require(sites[2].Body == stubBody({0x48, 0x8b, 0x44, 0x24, 0x10, 0x48, 0x8b, 0x44, 0x24, 0x18}), "the load at rsp and the load the stub covers after it were not both moved by the shift");
+    for (const auto& displacement : displacements) Require(displacement.Offset < first || displacement.Offset >= first + sites[2].Length, "an rsp operand inside a stub site was also moved in place");
+    Require(sites[3].Body[FramelessPrologue.size() + 4] == 0x80, "a leaf with an indexed operand at rsp was not shifted by the whole red zone");
+    Require(sites[5].OriginalBytes.size() == LoadIndexedAtRsp.size() + AddRdxToRax.size() && sites[5].Body == stubBody({0x48, 0x8b, 0x84, 0xcc, 0x80, 0x00, 0x00, 0x00, 0x48, 0x01, 0xd0}), "the indexed load at rsp was not re-encoded with a 32-bit displacement of 0x80 ahead of the add it covers");
 }
 
 void stubsVexOperandsAtRsp() {
@@ -251,8 +248,8 @@ void stubsVexOperandsAtRsp() {
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
-    require(report.Framed == 1 && report.OperandStubs == 1 && report.StubbedOperands == 1 && sites.size() == 3, "a leaf with a VEX store at rsp was not framed with an operand stub");
-    require(sites[2].OriginalBytes == VexStoreAtRsp && sites[2].Body == stubBody({0xc5, 0xf8, 0x11, 0x44, 0x24, 0x10}), "the VEX store at rsp was not re-encoded with an 8-bit displacement moved by the shift");
+    Require(report.Framed == 1 && report.OperandStubs == 1 && report.StubbedOperands == 1 && sites.size() == 3, "a leaf with a VEX store at rsp was not framed with an operand stub");
+    Require(sites[2].OriginalBytes == VexStoreAtRsp && sites[2].Body == stubBody({0xc5, 0xf8, 0x11, 0x44, 0x24, 0x10}), "the VEX store at rsp was not re-encoded with an 8-bit displacement moved by the shift");
 }
 
 void stubsOperandsAtRspWithTheInstructionsBeforeThem() {
@@ -263,10 +260,10 @@ void stubsOperandsAtRspWithTheInstructionsBeforeThem() {
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
-    require(report.Framed == 1 && report.MovedOperands == 0 && report.OperandStubs == 1 && report.StubbedOperands == 2 && sites.size() == 3 && displacements.empty(), "a leaf whose short operand at rsp sits before a rip-relative instruction was not framed with a stub over the instruction before it");
+    Require(report.Framed == 1 && report.MovedOperands == 0 && report.OperandStubs == 1 && report.StubbedOperands == 2 && sites.size() == 3 && displacements.empty(), "a leaf whose short operand at rsp sits before a rip-relative instruction was not framed with a stub over the instruction before it");
     const auto store = Base + 0x40 + FramelessPrologue.size();
-    require(sites[2].Address == store && sites[2].Length == StoreBelowRsp.size() + LoadAtRsp.size(), "the stub site does not start at the store before the operand at rsp");
-    require(sites[2].Body == stubBody({0x48, 0x89, 0x7c, 0x24, 0x00, 0x48, 0x8b, 0x44, 0x24, 0x10}), "the store before the operand and the operand at rsp were not both moved by the shift");
+    Require(sites[2].Address == store && sites[2].Length == StoreBelowRsp.size() + LoadAtRsp.size(), "the stub site does not start at the store before the operand at rsp");
+    Require(sites[2].Body == stubBody({0x48, 0x89, 0x7c, 0x24, 0x00, 0x48, 0x8b, 0x44, 0x24, 0x10}), "the store before the operand and the operand at rsp were not both moved by the shift");
 }
 
 void stubsOperandsAtRspBetweenRipRelativeInstructions() {
@@ -280,22 +277,22 @@ void stubsOperandsAtRspBetweenRipRelativeInstructions() {
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
-    require(report.Framed == 1 && report.OperandStubs == 1 && report.StubbedOperands == 1 && sites.size() == 3 && report.Skipped.empty(), "a leaf whose operand at rsp sits between rip-relative instructions was not framed with an operand stub");
+    Require(report.Framed == 1 && report.OperandStubs == 1 && report.StubbedOperands == 1 && sites.size() == 3 && report.Skipped.empty(), "a leaf whose operand at rsp sits between rip-relative instructions was not framed with an operand stub");
     const auto operand = Base + 0x40 + FramelessPrologue.size() + StoreBelowRsp.size() + otherRipRelative.size();
     const auto& stub = sites[2];
-    require(stub.Address == operand && stub.Length == LoadAtRsp.size() + loadRipRelative.size(), "the stub site does not run from the operand at rsp over the rip-relative load after it");
+    Require(stub.Address == operand && stub.Length == LoadAtRsp.size() + loadRipRelative.size(), "the stub site does not run from the operand at rsp over the rip-relative load after it");
     std::vector<std::uint8_t> expected{0x48, 0x8b, 0x44, 0x24, 0x10};
     append(expected, loadRipRelative);
-    require(stub.Body == stubBody(expected) && stub.ReturnBranchOffset == expected.size(), "the operand at rsp was not moved by the shift ahead of the rip-relative load");
-    require(stub.Relocations.size() == 1, "the rip-relative load in the stub has no relocation");
+    Require(stub.Body == stubBody(expected) && stub.ReturnBranchOffset == expected.size(), "the operand at rsp was not moved by the shift ahead of the rip-relative load");
+    Require(stub.Relocations.size() == 1, "the rip-relative load in the stub has no relocation");
     const auto& relocation = stub.Relocations[0];
-    require(relocation.DisplacementOffset == 8 && relocation.InstructionEnd == 12 && !relocation.AddressSize32, "the relocation does not cover the displacement of the rip-relative load");
-    require(relocation.SiteTarget == static_cast<std::int64_t>(LoadAtRsp.size() + loadRipRelative.size()) + 0x1234, "the relocation does not keep the rip-relative load's original target");
+    Require(relocation.DisplacementOffset == 8 && relocation.InstructionEnd == 12 && !relocation.AddressSize32, "the relocation does not cover the displacement of the rip-relative load");
+    Require(relocation.SiteTarget == static_cast<std::int64_t>(LoadAtRsp.size() + loadRipRelative.size()) + 0x1234, "the relocation does not keep the rip-relative load's original target");
     auto relocated = stub.Body;
     const std::uint64_t stubAddress = 0x200000;
     Codegen::ApplyStubRelocations(std::span<std::uint8_t>(relocated.data(), stub.ReturnBranchOffset), stub.Relocations, stub.Address, stubAddress, 0);
     const auto displacement = static_cast<std::int32_t>(static_cast<std::uint32_t>(relocated[8]) | static_cast<std::uint32_t>(relocated[9]) << 8 | static_cast<std::uint32_t>(relocated[10]) << 16 | static_cast<std::uint32_t>(relocated[11]) << 24);
-    require(stubAddress + 12 + static_cast<std::int64_t>(displacement) == stub.Address + stub.Length + 0x1234, "the relocated load in the stub does not read the address the original load read");
+    Require(stubAddress + 12 + static_cast<std::int64_t>(displacement) == stub.Address + stub.Length + 0x1234, "the relocated load in the stub does not read the address the original load read");
 }
 
 void skipsLeavesWithOperandsThatCannotMove() {
@@ -312,10 +309,10 @@ void skipsLeavesWithOperandsThatCannotMove() {
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
-    require(sites.empty() && displacements.empty() && report.RedZoneFunctions == 4, "a leaf whose rsp operands can neither move nor be stubbed, or whose prologue is too short, was framed");
-    require(report.Skipped.at("rsp operand that cannot move with rsp") == 1, "an EVEX operand, whose 8-bit displacement is scaled, was not refused");
-    require(report.Skipped.at("rsp operand that cannot move and has no room for a stub") == 2, "an operand at rsp followed by an exit or a branch target was not refused for want of room");
-    require(report.Skipped.at("prologue shorter than a jump") == 1, "the leaf whose short prologue is followed by a rip-relative instruction was not reported with its reason");
+    Require(sites.empty() && displacements.empty() && report.RedZoneFunctions == 4, "a leaf whose rsp operands can neither move nor be stubbed, or whose prologue is too short, was framed");
+    Require(report.Skipped.at("rsp operand that cannot move with rsp") == 1, "an EVEX operand, whose 8-bit displacement is scaled, was not refused");
+    Require(report.Skipped.at("rsp operand that cannot move and has no room for a stub") == 2, "an operand at rsp followed by an exit or a branch target was not refused for want of room");
+    Require(report.Skipped.at("prologue shorter than a jump") == 1, "the leaf whose short prologue is followed by a rip-relative instruction was not reported with its reason");
 }
 
 const std::vector<std::uint8_t> PushRbx{0x53};
@@ -330,18 +327,18 @@ void widensShortProloguesAndExits() {
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
-    require(report.Framed == 1 && report.WidenedPrologues == 1 && report.WidenedExits == 1 && report.WidenedOperands == 1 && report.MovedOperands == 1 && sites.size() == 2 && report.Skipped.empty(), "a leaf with a 1-byte push and a 2-byte exit was not framed by widening both sites");
+    Require(report.Framed == 1 && report.WidenedPrologues == 1 && report.WidenedExits == 1 && report.WidenedOperands == 1 && report.MovedOperands == 1 && sites.size() == 2 && report.Skipped.empty(), "a leaf with a 1-byte push and a 2-byte exit was not framed by widening both sites");
     const auto& entry = sites[0];
-    require(entry.Address == Base + 0x40 && entry.Length == PushRbx.size() + StoreBelowRsp.size(), "the prologue site does not run on over the store after the push");
-    require(entry.Body == stubBody({0x53, 0x48, 0x8d, 0x64, 0x24, 0xf0, 0x48, 0x89, 0x7c, 0x24, 0x00}) && entry.ReturnBranchOffset == 11, "the store after the push was not moved by the shift after rsp is lowered");
+    Require(entry.Address == Base + 0x40 && entry.Length == PushRbx.size() + StoreBelowRsp.size(), "the prologue site does not run on over the store after the push");
+    Require(entry.Body == stubBody({0x53, 0x48, 0x8d, 0x64, 0x24, 0xf0, 0x48, 0x89, 0x7c, 0x24, 0x00}) && entry.ReturnBranchOffset == 11, "the store after the push was not moved by the shift after rsp is lowered");
     const auto& exit = sites[1];
     const auto add = Base + 0x40 + PushRbx.size() + StoreBelowRsp.size() + LoadBelowRsp.size();
-    require(exit.Address == add && exit.Length == AddRdxToRax.size() + PopRbxExit.size(), "the exit site does not start at the add before the pop");
+    Require(exit.Address == add && exit.Length == AddRdxToRax.size() + PopRbxExit.size(), "the exit site does not start at the add before the pop");
     std::vector<std::uint8_t> exitBody = AddRdxToRax;
     append(exitBody, {0x48, 0x8d, 0xa4, 0x24, 0x10, 0x00, 0x00, 0x00});
     append(exitBody, PopRbxExit);
-    require(exit.Body == stubBody(exitBody), "the add was not copied ahead of raising rsp and the pop");
-    require(displacements.size() == 1 && displacements[0].Offset == 0x40 + PushRbx.size() + StoreBelowRsp.size() + 4 && displacements[0].Bytes == std::vector<std::uint8_t>{0x00}, "the load between the widened sites was not moved in place");
+    Require(exit.Body == stubBody(exitBody), "the add was not copied ahead of raising rsp and the pop");
+    Require(displacements.size() == 1 && displacements[0].Offset == 0x40 + PushRbx.size() + StoreBelowRsp.size() + 4 && displacements[0].Bytes == std::vector<std::uint8_t>{0x00}, "the load between the widened sites was not moved in place");
 }
 
 void widensAShortFramePointerPrologue() {
@@ -353,15 +350,15 @@ void widensAShortFramePointerPrologue() {
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
-    require(report.Framed == 1 && report.FramedWithoutFramePointer == 0 && report.WidenedPrologues == 1 && report.WidenedExits == 1 && report.WidenedOperands == 0 && sites.size() == 2 && displacements.empty(), "a frame-pointer leaf without other pushes was not framed by widening its 4-byte prologue and 2-byte exit");
+    Require(report.Framed == 1 && report.FramedWithoutFramePointer == 0 && report.WidenedPrologues == 1 && report.WidenedExits == 1 && report.WidenedOperands == 0 && sites.size() == 2 && displacements.empty(), "a frame-pointer leaf without other pushes was not framed by widening its 4-byte prologue and 2-byte exit");
     std::vector<std::uint8_t> entryBody = framePrologue;
     append(entryBody, {0x48, 0x8d, 0x64, 0x24, 0x80});
     append(entryBody, StoreBelowPushes);
-    require(sites[0].OriginalBytes.size() == framePrologue.size() + StoreBelowPushes.size() && sites[0].Body == stubBody(entryBody), "the store through rbp was not copied unchanged after rsp is lowered by the whole red zone");
+    Require(sites[0].OriginalBytes.size() == framePrologue.size() + StoreBelowPushes.size() && sites[0].Body == stubBody(entryBody), "the store through rbp was not copied unchanged after rsp is lowered by the whole red zone");
     std::vector<std::uint8_t> exitBody = LoadBelowPushes;
     append(exitBody, {0x48, 0x8d, 0xa4, 0x24, 0x80, 0x00, 0x00, 0x00});
     append(exitBody, popRbpExit);
-    require(sites[1].OriginalBytes.size() == LoadBelowPushes.size() + popRbpExit.size() && sites[1].Body == stubBody(exitBody), "the load through rbp was not copied unchanged ahead of raising rsp and popping rbp");
+    Require(sites[1].OriginalBytes.size() == LoadBelowPushes.size() + popRbpExit.size() && sites[1].Body == stubBody(exitBody), "the load through rbp was not copied unchanged ahead of raising rsp and popping rbp");
 }
 
 void framesLeavesWithoutPushes() {
@@ -371,12 +368,12 @@ void framesLeavesWithoutPushes() {
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
-    require(report.Framed == 1 && report.WidenedPrologues == 1 && report.WidenedExits == 1 && report.WidenedOperands == 2 && sites.size() == 2 && displacements.empty(), "a leaf that only spills below rsp and returns was not framed");
-    require(sites[0].Address == Base + 0x40 && sites[0].OriginalBytes == StoreBelowRsp, "the entry site of a leaf without pushes does not cover its first instruction");
-    require(sites[0].Body == stubBody({0x48, 0x8d, 0x64, 0x24, 0xf0, 0x48, 0x89, 0x7c, 0x24, 0x00}), "the entry stub does not lower rsp before the store moved by the shift");
+    Require(report.Framed == 1 && report.WidenedPrologues == 1 && report.WidenedExits == 1 && report.WidenedOperands == 2 && sites.size() == 2 && displacements.empty(), "a leaf that only spills below rsp and returns was not framed");
+    Require(sites[0].Address == Base + 0x40 && sites[0].OriginalBytes == StoreBelowRsp, "the entry site of a leaf without pushes does not cover its first instruction");
+    Require(sites[0].Body == stubBody({0x48, 0x8d, 0x64, 0x24, 0xf0, 0x48, 0x89, 0x7c, 0x24, 0x00}), "the entry stub does not lower rsp before the store moved by the shift");
     std::vector<std::uint8_t> exitBody{0x48, 0x8b, 0x44, 0x24, 0x00, 0x48, 0x8d, 0xa4, 0x24, 0x10, 0x00, 0x00, 0x00};
     append(exitBody, Ret);
-    require(sites[1].OriginalBytes.size() == LoadBelowRsp.size() + Ret.size() && sites[1].Body == stubBody(exitBody), "the exit stub does not run the load moved by the shift, raise rsp and return");
+    Require(sites[1].OriginalBytes.size() == LoadBelowRsp.size() + Ret.size() && sites[1].Body == stubBody(exitBody), "the exit stub does not run the load moved by the shift, raise rsp and return");
 }
 
 void skipsFragmentsThatPopWithoutPushing() {
@@ -386,7 +383,7 @@ void skipsFragmentsThatPopWithoutPushing() {
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
-    require(sites.empty() && displacements.empty() && report.Skipped.at("push or pop in a leaf without pushes") == 1, "a fragment without pushes that pops a register its caller pushed was framed");
+    Require(sites.empty() && displacements.empty() && report.Skipped.at("push or pop in a leaf without pushes") == 1, "a fragment without pushes that pops a register its caller pushed was framed");
 }
 
 void skipsWideningOverBranchTargets() {
@@ -398,9 +395,9 @@ void skipsWideningOverBranchTargets() {
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
-    require(sites.empty() && displacements.empty() && report.RedZoneFunctions == 2, "a leaf with a branch into a widened site was framed");
-    require(report.Skipped.at("branch to the start of a widened prologue") == 1, "a leaf without pushes whose loop branches back to its first instruction was not refused");
-    require(report.Skipped.at("branch into the instructions before a short exit") == 1, "a short exit that a branch reaches past the add before it was not refused");
+    Require(sites.empty() && displacements.empty() && report.RedZoneFunctions == 2, "a leaf with a branch into a widened site was framed");
+    Require(report.Skipped.at("branch to the start of a widened prologue") == 1, "a leaf without pushes whose loop branches back to its first instruction was not refused");
+    Require(report.Skipped.at("branch into the instructions before a short exit") == 1, "a short exit that a branch reaches past the add before it was not refused");
 }
 
 void skipsBranchesIntoTheInstructionsAfterAShortPrologue() {
@@ -411,8 +408,8 @@ void skipsBranchesIntoTheInstructionsAfterAShortPrologue() {
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
-    require(sites.empty() && displacements.empty() && report.RedZoneFunctions == 1, "a leaf whose loop branches to the store the widened prologue borrows was framed");
-    require(report.Skipped.at("branch into the instructions after a short prologue") == 1, "a loop to the instruction after a 1-byte push was not refused with its reason");
+    Require(sites.empty() && displacements.empty() && report.RedZoneFunctions == 1, "a leaf whose loop branches to the store the widened prologue borrows was framed");
+    Require(report.Skipped.at("branch into the instructions after a short prologue") == 1, "a loop to the instruction after a 1-byte push was not refused with its reason");
 }
 
 void widensAShortPrologueThatAllocates() {
@@ -424,14 +421,14 @@ void widensAShortPrologueThatAllocates() {
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
-    require(report.Framed == 1 && report.FramedWithoutFramePointer == 1 && report.WidenedPrologues == 1 && report.WidenedExits == 0 && report.WidenedOperands == 1 && report.MovedOperands == 1 && sites.size() == 2 && report.Skipped.empty(), "a leaf whose 4-byte sub is its whole prologue was not framed by widening the prologue over the store after it");
+    Require(report.Framed == 1 && report.FramedWithoutFramePointer == 1 && report.WidenedPrologues == 1 && report.WidenedExits == 0 && report.WidenedOperands == 1 && report.MovedOperands == 1 && sites.size() == 2 && report.Skipped.empty(), "a leaf whose 4-byte sub is its whole prologue was not framed by widening the prologue over the store after it");
     std::vector<std::uint8_t> entryBody = allocate;
     append(entryBody, {0x48, 0x8d, 0x64, 0x24, 0xf0, 0x48, 0x89, 0x7c, 0x24, 0x00});
-    require(sites[0].Address == Base + 0x40 && sites[0].OriginalBytes.size() == allocate.size() + StoreBelowRsp.size() && sites[0].Body == stubBody(entryBody), "the store after the sub was not moved by the shift after the sub and the lowering lea");
+    Require(sites[0].Address == Base + 0x40 && sites[0].OriginalBytes.size() == allocate.size() + StoreBelowRsp.size() && sites[0].Body == stubBody(entryBody), "the store after the sub was not moved by the shift after the sub and the lowering lea");
     std::vector<std::uint8_t> exitBody{0x48, 0x8d, 0xa4, 0x24, 0x10, 0x00, 0x00, 0x00};
     append(exitBody, freeExit);
-    require(sites[1].OriginalBytes == freeExit && sites[1].Body == stubBody(exitBody), "rsp is not raised by the shift before the add that frees the allocation");
-    require(displacements.size() == 1 && displacements[0].Offset == 0x40 + allocate.size() + StoreBelowRsp.size() + 2 + 4 && displacements[0].Bytes == std::vector<std::uint8_t>{0x00}, "the load between the widened prologue and the exit was not moved in place");
+    Require(sites[1].OriginalBytes == freeExit && sites[1].Body == stubBody(exitBody), "rsp is not raised by the shift before the add that frees the allocation");
+    Require(displacements.size() == 1 && displacements[0].Offset == 0x40 + allocate.size() + StoreBelowRsp.size() + 2 + 4 && displacements[0].Bytes == std::vector<std::uint8_t>{0x00}, "the load between the widened prologue and the exit was not moved in place");
 }
 
 void widensBothExitsOfALeafWithoutPushes() {
@@ -448,15 +445,15 @@ void widensBothExitsOfALeafWithoutPushes() {
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
-    require(report.Framed == 2 && report.Exits == 4 && report.WidenedPrologues == 2 && report.WidenedExits == 4 && report.WidenedOperands == 6 && report.MovedOperands == 2 && sites.size() == 6 && report.Skipped.empty(), "leaves without pushes that return from two places were not framed with a widened prologue and two widened exits");
-    require(sites[0].Body == stubBody({0x48, 0x8d, 0x64, 0x24, 0xf0, 0x48, 0x89, 0x7c, 0x24, 0x00}), "the entry stub does not lower rsp before the store moved by the shift");
+    Require(report.Framed == 2 && report.Exits == 4 && report.WidenedPrologues == 2 && report.WidenedExits == 4 && report.WidenedOperands == 6 && report.MovedOperands == 2 && sites.size() == 6 && report.Skipped.empty(), "leaves without pushes that return from two places were not framed with a widened prologue and two widened exits");
+    Require(sites[0].Body == stubBody({0x48, 0x8d, 0x64, 0x24, 0xf0, 0x48, 0x89, 0x7c, 0x24, 0x00}), "the entry stub does not lower rsp before the store moved by the shift");
     std::vector<std::uint8_t> firstExit{0x48, 0x8b, 0x44, 0x24, 0x00, 0x48, 0x8d, 0xa4, 0x24, 0x10, 0x00, 0x00, 0x00};
     append(firstExit, Ret);
     std::vector<std::uint8_t> secondExit{0x48, 0x8b, 0x44, 0x24, 0x08, 0x48, 0x8d, 0xa4, 0x24, 0x10, 0x00, 0x00, 0x00};
     append(secondExit, Ret);
-    require(sites[1].Address == Base + 0x40 + 15 && sites[1].Body == stubBody(firstExit), "the first ret was not widened over the load before it, moved by the shift");
-    require(sites[2].Address == Base + 0x40 + 21 && sites[2].Body == stubBody(secondExit), "the ret a branch reaches at its load was not widened over that load, moved by the shift");
-    require(displacements[0].Offset == 0x40 + 9 && displacements[0].Bytes == std::vector<std::uint8_t>{0x08}, "the second spill was not moved in place");
+    Require(sites[1].Address == Base + 0x40 + 15 && sites[1].Body == stubBody(firstExit), "the first ret was not widened over the load before it, moved by the shift");
+    Require(sites[2].Address == Base + 0x40 + 21 && sites[2].Body == stubBody(secondExit), "the ret a branch reaches at its load was not widened over that load, moved by the shift");
+    Require(displacements[0].Offset == 0x40 + 9 && displacements[0].Bytes == std::vector<std::uint8_t>{0x08}, "the second spill was not moved in place");
 }
 
 void widensExitsOverVexOperandsAtRsp() {
@@ -467,11 +464,11 @@ void widensExitsOverVexOperandsAtRsp() {
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
-    require(report.Framed == 1 && report.WidenedPrologues == 1 && report.WidenedExits == 1 && report.WidenedOperands == 2 && sites.size() == 2 && displacements.empty(), "a leaf whose ret follows a VEX andn below rsp was not framed by widening its exit over the andn");
-    require(sites[0].Body == stubBody({0x48, 0x8d, 0x64, 0x24, 0xf0, 0x48, 0x89, 0x7c, 0x24, 0x08}), "the spill was not moved by the shift after rsp is lowered");
+    Require(report.Framed == 1 && report.WidenedPrologues == 1 && report.WidenedExits == 1 && report.WidenedOperands == 2 && sites.size() == 2 && displacements.empty(), "a leaf whose ret follows a VEX andn below rsp was not framed by widening its exit over the andn");
+    Require(sites[0].Body == stubBody({0x48, 0x8d, 0x64, 0x24, 0xf0, 0x48, 0x89, 0x7c, 0x24, 0x08}), "the spill was not moved by the shift after rsp is lowered");
     std::vector<std::uint8_t> exitBody{0xc4, 0xe2, 0xf0, 0xf2, 0x44, 0x24, 0x08, 0x48, 0x8d, 0xa4, 0x24, 0x10, 0x00, 0x00, 0x00};
     append(exitBody, Ret);
-    require(sites[1].OriginalBytes.size() == andnBelowRsp.size() + Ret.size() && sites[1].Body == stubBody(exitBody), "the VEX andn was not re-encoded with its displacement moved by the shift ahead of raising rsp");
+    Require(sites[1].OriginalBytes.size() == andnBelowRsp.size() + Ret.size() && sites[1].Body == stubBody(exitBody), "the VEX andn was not re-encoded with its displacement moved by the shift ahead of raising rsp");
 }
 
 void framesFramePointerLeavesThatPushInTheirBody() {
@@ -484,12 +481,12 @@ void framesFramePointerLeavesThatPushInTheirBody() {
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
-    require(report.Framed == 1 && report.FramedWithoutFramePointer == 0 && report.WidenedPrologues == 1 && report.WidenedExits == 1 && report.WidenedOperands == 0 && sites.size() == 2 && displacements.empty() && report.Skipped.empty(), "a frame-pointer leaf that pushes and pops rbx in its body was not framed");
+    Require(report.Framed == 1 && report.FramedWithoutFramePointer == 0 && report.WidenedPrologues == 1 && report.WidenedExits == 1 && report.WidenedOperands == 0 && sites.size() == 2 && displacements.empty() && report.Skipped.empty(), "a frame-pointer leaf that pushes and pops rbx in its body was not framed");
     std::vector<std::uint8_t> entryBody = framePrologue;
     append(entryBody, {0x48, 0x8d, 0x64, 0x24, 0x80});
     append(entryBody, StoreBelowPushes);
-    require(sites[0].Body == stubBody(entryBody), "the store through rbp was not copied unchanged after rsp is lowered by the whole red zone");
-    require(sites[1].Body == stubBody({0x48, 0x01, 0xd0, 0x48, 0x8d, 0xa4, 0x24, 0x80, 0x00, 0x00, 0x00, 0x5d, 0xc3}), "the add before pop rbp was not copied ahead of raising rsp");
+    Require(sites[0].Body == stubBody(entryBody), "the store through rbp was not copied unchanged after rsp is lowered by the whole red zone");
+    Require(sites[1].Body == stubBody({0x48, 0x01, 0xd0, 0x48, 0x8d, 0xa4, 0x24, 0x80, 0x00, 0x00, 0x00, 0x5d, 0xc3}), "the add before pop rbp was not copied ahead of raising rsp");
 }
 
 void skipsOpcodeEncodedRspUses() {
@@ -513,7 +510,7 @@ void skipsOpcodeEncodedRspUses() {
         Codegen::RedZoneFrameReport report;
         std::vector<Codegen::RedZoneDisplacement> displacements;
         const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
-        require(sites.empty() && displacements.empty() && report.Skipped.at("other use of rsp") == 1,
+        Require(sites.empty() && displacements.empty() && report.Skipped.at("other use of rsp") == 1,
                 "an opcode-encoded rsp use was framed");
     }
 }
@@ -528,7 +525,7 @@ void framesOpcodeEncodedNonStackRegisters() {
         Codegen::RedZoneFrameReport report;
         std::vector<Codegen::RedZoneDisplacement> displacements;
         const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
-        require(report.Framed == 1 && sites.size() == 2, "an opcode-encoded non-stack register prevented framing");
+        Require(report.Framed == 1 && sites.size() == 2, "an opcode-encoded non-stack register prevented framing");
     }
 }
 
@@ -541,7 +538,7 @@ void skipsLeavesThatCopyRsp() {
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
-    require(sites.empty() && displacements.empty() && report.Skipped.at("other use of rsp") == 2, "a leaf that copies rsp into another register was framed");
+    Require(sites.empty() && displacements.empty() && report.Skipped.at("other use of rsp") == 2, "a leaf that copies rsp into another register was framed");
 }
 
 void tellsPopsWithoutRexFromXop() {
@@ -555,8 +552,8 @@ void tellsPopsWithoutRexFromXop() {
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(pops.bytes, pops.segments, pops.functions, {}, report, displacements);
-    require(sites.empty() && displacements.empty() && report.RedZoneFunctions == 3, "a pop without REX to an rsp operand or into rsp, read as an XOP prefix, was framed");
-    require(report.Skipped.at("other use of rsp") == 3, "a pop without REX to an rsp operand or into rsp was not reported as another use of rsp");
+    Require(sites.empty() && displacements.empty() && report.RedZoneFunctions == 3, "a pop without REX to an rsp operand or into rsp, read as an XOP prefix, was framed");
+    Require(report.Skipped.at("other use of rsp") == 3, "a pop without REX to an rsp operand or into rsp was not reported as another use of rsp");
 
     std::vector<std::uint8_t> xopAtR12 = StoreBelowRsp;
     append(xopAtR12, {0x8f, 0xc8, 0x78, 0xc0, 0x04, 0x24, 0x01});
@@ -566,7 +563,7 @@ void tellsPopsWithoutRexFromXop() {
     Codegen::RedZoneFrameReport xopReport;
     std::vector<Codegen::RedZoneDisplacement> xopDisplacements;
     const auto xopSites = Codegen::FrameRedZoneFunctions(xops.bytes, xops.segments, xops.functions, {}, xopReport, xopDisplacements);
-    require(xopReport.Framed == 2 && xopReport.MovedOperands == 3 && xopReport.OperandStubs == 0 && xopSites.size() == 4, "an XOP operand was not read with the base register extension of its XOP prefix");
+    Require(xopReport.Framed == 2 && xopReport.MovedOperands == 3 && xopReport.OperandStubs == 0 && xopSites.size() == 4, "an XOP operand was not read with the base register extension of its XOP prefix");
 }
 
 const std::vector<std::uint8_t> InflatePrologue{0x55, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x53, 0x48, 0x83, 0xec, 0x40};
@@ -626,20 +623,20 @@ void stubsShortOperandsAtRspBeforeABranchWithTheInstructionsBeforeThem() {
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
-    require(report.Framed == 2 && report.OperandStubs == 2 && report.StubbedOperands == 3 && report.MovedOperands == 5 && sites.size() == 6 && report.Skipped.empty(), "inflate_fast's 4-byte cmp at rsp between an instruction and a branch was not framed with a stub over the instruction before it");
+    Require(report.Framed == 2 && report.OperandStubs == 2 && report.StubbedOperands == 3 && report.MovedOperands == 5 && sites.size() == 6 && report.Skipped.empty(), "inflate_fast's 4-byte cmp at rsp between an instruction and a branch was not framed with a stub over the instruction before it");
     const auto add = input.functions[0].Begin + InflatePrologue.size() + 22;
-    require(sites[2].Address == add && sites[2].Length == AddRdiToR8.size() + 4, "the stub site does not start at the add before the cmp at rsp");
+    Require(sites[2].Address == add && sites[2].Length == AddRdiToR8.size() + 4, "the stub site does not start at the add before the cmp at rsp");
     std::vector<std::uint8_t> addBody = AddRdiToR8;
     append(addBody, CompareRdiAtRspShifted);
-    require(sites[2].Body == stubBody(addBody), "the add was not copied ahead of the cmp re-encoded with a displacement of the shift");
+    Require(sites[2].Body == stubBody(addBody), "the add was not copied ahead of the cmp re-encoded with a displacement of the shift");
     const auto load = input.functions[1].Begin + InflatePrologue.size() + 17;
-    require(sites[5].Address == load && sites[5].Length == 9, "the stub site does not start at the load before the cmp at rsp");
+    Require(sites[5].Address == load && sites[5].Length == 9, "the stub site does not start at the load before the cmp at rsp");
     std::vector<std::uint8_t> loadBody{0x48, 0x03, 0x44, 0x24, 0x00};
     append(loadBody, CompareRdiAtRspShifted);
-    require(sites[5].Body == stubBody(loadBody), "the load before the cmp, itself an rsp operand, was not moved by the shift in the stub");
+    Require(sites[5].Body == stubBody(loadBody), "the load before the cmp, itself an rsp operand, was not moved by the shift in the stub");
     for (const auto& displacement : displacements) {
         const auto at = Base + displacement.Offset;
-        require((at < sites[2].Address || at >= sites[2].Address + sites[2].Length) && (at < sites[5].Address || at >= sites[5].Address + sites[5].Length), "an rsp operand inside a stub site was also moved in place");
+        Require((at < sites[2].Address || at >= sites[2].Address + sites[2].Length) && (at < sites[5].Address || at >= sites[5].Address + sites[5].Length), "an rsp operand inside a stub site was also moved in place");
     }
 }
 
@@ -656,7 +653,7 @@ void skipsShortOperandsAtRspWhoseWidenedStubCoversABranchTarget() {
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
-    require(sites.empty() && displacements.empty() && report.RedZoneFunctions == 1 && report.Skipped.at("rsp operand that cannot move and has no room for a stub") == 1, "a cmp at rsp whose loop branches back to it was framed with a stub that starts at the add before it");
+    Require(sites.empty() && displacements.empty() && report.RedZoneFunctions == 1 && report.Skipped.at("rsp operand that cannot move and has no room for a stub") == 1, "a cmp at rsp whose loop branches back to it was framed with a stub that starts at the add before it");
 }
 
 void framesLeavesThatAllocateBelowTheirPushes() {
@@ -665,23 +662,23 @@ void framesLeavesThatAllocateBelowTheirPushes() {
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
-    require(report.RedZoneFunctions == 1 && report.Framed == 1 && report.FramedWithoutFramePointer == 1 && report.Exits == 1 && sites.size() == 2, "a leaf that allocates with sub after its pushes and spills below its allocation was not framed");
+    Require(report.RedZoneFunctions == 1 && report.Framed == 1 && report.FramedWithoutFramePointer == 1 && report.Exits == 1 && sites.size() == 2, "a leaf that allocates with sub after its pushes and spills below its allocation was not framed");
     const auto& entry = sites[0];
-    require(entry.Address == Base + 0x40 && entry.OriginalBytes == InflatePrologue, "the prologue site does not cover the pushes and the sub");
+    Require(entry.Address == Base + 0x40 && entry.OriginalBytes == InflatePrologue, "the prologue site does not cover the pushes and the sub");
     std::vector<std::uint8_t> entryBody = InflatePrologue;
     append(entryBody, {0x48, 0x8d, 0x64, 0x24, 0xe0, 0xe9, 0, 0, 0, 0});
-    require(entry.Body == entryBody, "the prologue stub does not lower rsp by 0x20 after the sub");
+    Require(entry.Body == entryBody, "the prologue stub does not lower rsp by 0x20 after the sub");
     const auto& exit = sites[1];
-    require(exit.Address == Base + 0x40 + InflatePrologue.size() + body.size() && exit.OriginalBytes == inflateExit(), "the exit site does not cover the add, the pops and the ret");
+    Require(exit.Address == Base + 0x40 + InflatePrologue.size() + body.size() && exit.OriginalBytes == inflateExit(), "the exit site does not cover the add, the pops and the ret");
     std::vector<std::uint8_t> exitBody{0x48, 0x8d, 0xa4, 0x24, 0x20, 0, 0, 0};
     append(exitBody, inflateExit());
     append(exitBody, {0xe9, 0, 0, 0, 0});
-    require(exit.Body == exitBody, "the exit stub does not raise rsp by 0x20 before the add");
+    Require(exit.Body == exitBody, "the exit stub does not raise rsp by 0x20 before the add");
     const std::vector<std::uint8_t> moved{0x00, 0x20, 0x28, 0x58, 0x28, 0x00, 0x20, 0x58};
-    require(displacements.size() == moved.size() && report.MovedOperands == moved.size(), "not every rsp operand of the allocating leaf was moved");
+    Require(displacements.size() == moved.size() && report.MovedOperands == moved.size(), "not every rsp operand of the allocating leaf was moved");
     for (std::size_t index = 0; index < moved.size(); ++index)
-        require(displacements[index].Bytes == std::vector<std::uint8_t>{moved[index]}, "an rsp operand of the allocating leaf was not moved by 0x20 from the post-sub rsp");
-    require(displacements[0].Offset == 0x40 + InflatePrologue.size() + 4, "the spill below the allocation was not the first operand moved");
+        Require(displacements[index].Bytes == std::vector<std::uint8_t>{moved[index]}, "an rsp operand of the allocating leaf was not moved by 0x20 from the post-sub rsp");
+    Require(displacements[0].Offset == 0x40 + InflatePrologue.size() + 4, "the spill below the allocation was not the first operand moved");
 }
 
 void framesLeavesThatAllocateWithLeaOrALargeSub() {
@@ -695,10 +692,10 @@ void framesLeavesThatAllocateWithLeaOrALargeSub() {
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
-    require(report.Framed == 2 && sites.size() == 4 && displacements.size() == 3, "leaves that allocate with lea or a 32-bit sub were not framed");
-    require(sites[0].OriginalBytes == leaPrologue && sites[1].OriginalBytes == leaExit, "the lea allocation and free are not part of the prologue and exit sites");
-    require(sites[2].OriginalBytes == largePrologue && sites[3].OriginalBytes == largeExit, "the 32-bit sub and add are not part of the prologue and exit sites");
-    require(displacements[2].Bytes == std::vector<std::uint8_t>{0x90, 0x00, 0x00, 0x00}, "the 32-bit displacement into the allocation was not moved by the shift");
+    Require(report.Framed == 2 && sites.size() == 4 && displacements.size() == 3, "leaves that allocate with lea or a 32-bit sub were not framed");
+    Require(sites[0].OriginalBytes == leaPrologue && sites[1].OriginalBytes == leaExit, "the lea allocation and free are not part of the prologue and exit sites");
+    Require(sites[2].OriginalBytes == largePrologue && sites[3].OriginalBytes == largeExit, "the 32-bit sub and add are not part of the prologue and exit sites");
+    Require(displacements[2].Bytes == std::vector<std::uint8_t>{0x90, 0x00, 0x00, 0x00}, "the 32-bit displacement into the allocation was not moved by the shift");
 }
 
 void skipsAllocatingLeavesWithoutAMatchingFree() {
@@ -711,9 +708,9 @@ void skipsAllocatingLeavesWithoutAMatchingFree() {
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
-    require(sites.empty() && displacements.empty() && report.RedZoneFunctions == 3, "an allocating leaf without a matching free, or with more rsp arithmetic, was framed");
-    require(report.Skipped.at("exit does not free the prologue's allocation") == 1, "an exit that does not free the allocation was not reported with its own reason");
-    require(report.Skipped.at("other use of rsp") == 2, "an add of another size before the pops, or more rsp arithmetic in the body, was not reported as another use of rsp");
+    Require(sites.empty() && displacements.empty() && report.RedZoneFunctions == 3, "an allocating leaf without a matching free, or with more rsp arithmetic, was framed");
+    Require(report.Skipped.at("exit does not free the prologue's allocation") == 1, "an exit that does not free the allocation was not reported with its own reason");
+    Require(report.Skipped.at("other use of rsp") == 2, "an add of another size before the pops, or more rsp arithmetic in the body, was not reported as another use of rsp");
 }
 
 void skipsLeavesWithoutFramePointerThatPushOrPop() {
@@ -739,9 +736,9 @@ void skipsLeavesWithoutFramePointerThatPushOrPop() {
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
-    require(report.RedZoneFunctions == functions.size() && report.FramedWithoutFramePointer == 0 && displacements.empty(), "a leaf without a frame pointer that pushes or pops between its prologue and its exits was framed, so its rsp operands after a push were moved past the pushed slot");
-    require(report.Skipped.at("push or pop inside the body") == moves.size(), "a leaf without a frame pointer that pushes or pops between its prologue and its exits was not reported with its reason");
-    require(report.Framed == 1 && sites.size() == 2, "a leaf with a frame pointer, whose rsp operands are refused anyway, was not framed because it pushes and pops");
+    Require(report.RedZoneFunctions == functions.size() && report.FramedWithoutFramePointer == 0 && displacements.empty(), "a leaf without a frame pointer that pushes or pops between its prologue and its exits was framed, so its rsp operands after a push were moved past the pushed slot");
+    Require(report.Skipped.at("push or pop inside the body") == moves.size(), "a leaf without a frame pointer that pushes or pops between its prologue and its exits was not reported with its reason");
+    Require(report.Framed == 1 && sites.size() == 2, "a leaf with a frame pointer, whose rsp operands are refused anyway, was not framed because it pushes and pops");
 }
 
 Image calledThenUncalled(const std::vector<std::uint8_t>& called, const std::vector<std::uint8_t>& uncalled) {
@@ -766,9 +763,9 @@ void framesEachFunctionFromItsOwnFde() {
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
-    require(report.Functions == 2 && report.Framed == 2 && report.Exits == 2 && sites.size() == 4 && displacements.size() == 3, "two adjacent functions were not framed each by its own FDE");
-    require(sites[0].Address < Base + 0x60 && sites[1].Address + sites[1].Length <= Base + 0x60 && displacements[0].Offset < 0x60 && displacements[1].Offset < 0x60, "the first function's frame runs past its FDE end");
-    require(sites[2].Address == Base + 0x60 && sites[2].OriginalBytes == FramelessPrologue && displacements[2].Offset > 0x60, "the function reached without a call was not framed from its own FDE start");
+    Require(report.Functions == 2 && report.Framed == 2 && report.Exits == 2 && sites.size() == 4 && displacements.size() == 3, "two adjacent functions were not framed each by its own FDE");
+    Require(sites[0].Address < Base + 0x60 && sites[1].Address + sites[1].Length <= Base + 0x60 && displacements[0].Offset < 0x60 && displacements[1].Offset < 0x60, "the first function's frame runs past its FDE end");
+    Require(sites[2].Address == Base + 0x60 && sites[2].OriginalBytes == FramelessPrologue && displacements[2].Offset > 0x60, "the function reached without a call was not framed from its own FDE start");
 }
 
 void treatsATailCallPastTheFdeEndAsLeaving() {
@@ -781,8 +778,8 @@ void treatsATailCallPastTheFdeEndAsLeaving() {
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
-    require(report.Skipped.at("branch leaves the function") == 1, "the tail call past the FDE end was not reported as leaving the function");
-    require(report.Framed == 1 && sites.size() == 2 && sites[0].Address == Base + 0x60, "the tail-called function was not framed from its own FDE start");
+    Require(report.Skipped.at("branch leaves the function") == 1, "the tail call past the FDE end was not reported as leaving the function");
+    Require(report.Framed == 1 && sites.size() == 2 && sites[0].Address == Base + 0x60, "the tail-called function was not framed from its own FDE start");
 }
 
 void framesALeafAfterAJumpWithoutInt3FromItsOwnFde() {
@@ -791,16 +788,16 @@ void framesALeafAfterAJumpWithoutInt3FromItsOwnFde() {
     append(first, {0x31, 0xc0, 0xeb, 0x06});
     append(first, FramelessExit);
     append(first, {0x48, 0x3b, 0x44, 0x24, 0xf0, 0x73, 0xf3, 0x48, 0xff, 0xc0, 0xeb, 0xf4});
-    require(first.size() == 0x20, "the first leaf must end where the second starts");
+    Require(first.size() == 0x20, "the first leaf must end where the second starts");
     std::vector<std::uint8_t> second = StoreBelowRsp;
     append(second, LoadBelowRsp);
     const auto input = calledThenUncalled(first, framelessLeaf(FramelessPrologue, second, FramelessExit));
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
-    require(report.Framed == 2 && report.Exits == 2 && sites.size() == 4 && displacements.size() == 4, "a leaf right after a jmp without int3 padding was not framed on its own");
-    require(sites[1].Address + sites[1].Length <= Base + 0x60 && displacements[1].Offset < 0x60, "the leaf ending in a jmp took the next leaf into its body");
-    require(sites[2].Address == Base + 0x60 && sites[2].OriginalBytes == FramelessPrologue && displacements[2].Offset > 0x60, "the leaf after the jmp was not framed from its own FDE start");
+    Require(report.Framed == 2 && report.Exits == 2 && sites.size() == 4 && displacements.size() == 4, "a leaf right after a jmp without int3 padding was not framed on its own");
+    Require(sites[1].Address + sites[1].Length <= Base + 0x60 && displacements[1].Offset < 0x60, "the leaf ending in a jmp took the next leaf into its body");
+    Require(sites[2].Address == Base + 0x60 && sites[2].OriginalBytes == FramelessPrologue && displacements[2].Offset > 0x60, "the leaf after the jmp was not framed from its own FDE start");
 }
 
 void keepsColdBlocksAfterARetInsideTheFde() {
@@ -816,8 +813,8 @@ void keepsColdBlocksAfterARetInsideTheFde() {
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
-    require(report.Framed == 1 && report.Exits == 2 && sites.size() == 3, "the exit of a cold block after the ret inside the FDE was not framed");
-    require(displacements.size() == 3 && displacements[2].Offset == 0x40 + 0x20 + 4 && displacements[2].Bytes == std::vector<std::uint8_t>{0x00}, "the rsp operand of a cold block after the ret inside the FDE was not moved");
+    Require(report.Framed == 1 && report.Exits == 2 && sites.size() == 3, "the exit of a cold block after the ret inside the FDE was not framed");
+    Require(displacements.size() == 3 && displacements[2].Offset == 0x40 + 0x20 + 4 && displacements[2].Bytes == std::vector<std::uint8_t>{0x00}, "the rsp operand of a cold block after the ret inside the FDE was not moved");
 }
 
 void keepsLoopsAlignedAfterAJump() {
@@ -829,7 +826,7 @@ void keepsLoopsAlignedAfterAJump() {
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
-    require(report.Framed == 1 && sites.size() == 2 && displacements.size() == 2, "a leaf whose loop header is aligned after a jump was not framed");
+    Require(report.Framed == 1 && sites.size() == 2 && displacements.size() == 2, "a leaf whose loop header is aligned after a jump was not framed");
 }
 
 void leavesOtherFunctions() {
@@ -841,7 +838,7 @@ void leavesOtherFunctions() {
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
-    require(sites.empty() && report.RedZoneFunctions == 0, "a leaf without red-zone use or a function that calls was framed");
+    Require(sites.empty() && report.RedZoneFunctions == 0, "a leaf without red-zone use or a function that calls was framed");
 }
 
 void skipsSitesTakenByOtherStubs() {
@@ -852,7 +849,7 @@ void skipsSitesTakenByOtherStubs() {
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {other}, report, displacements);
-    require(sites.empty() && report.Skipped.at("overlaps another stub") == 1, "a site over another stub was framed");
+    Require(sites.empty() && report.Skipped.at("overlaps another stub") == 1, "a site over another stub was framed");
 }
 
 void framesAPointerOnlyFunctionByItsOwnBounds() {
@@ -872,10 +869,10 @@ void framesAPointerOnlyFunctionByItsOwnBounds() {
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(bytes, segments, functions, {}, report, displacements);
-    require(report.Functions == 2 && report.Framed == 2 && report.Exits == 2, "a function reached only through a pointer was not framed by its own bounds");
-    require(sites.size() == 4, "two framed leaves need two prologue and two exit sites");
-    require(sites[2].Address == Base + secondStart && sites[2].OriginalBytes == Prologue, "the second function's prologue site is not at its own start");
-    require(sites[1].Address + sites[1].Length == Base + 0x40 + first.size(), "the first function's exit runs past its end");
+    Require(report.Functions == 2 && report.Framed == 2 && report.Exits == 2, "a function reached only through a pointer was not framed by its own bounds");
+    Require(sites.size() == 4, "two framed leaves need two prologue and two exit sites");
+    Require(sites[2].Address == Base + secondStart && sites[2].OriginalBytes == Prologue, "the second function's prologue site is not at its own start");
+    Require(sites[1].Address + sites[1].Length == Base + 0x40 + first.size(), "the first function's exit runs past its end");
 }
 
 void leavesCodeWithoutAFunctionRange() {
@@ -883,7 +880,7 @@ void leavesCodeWithoutAFunctionRange() {
     Codegen::RedZoneFrameReport report;
     std::vector<Codegen::RedZoneDisplacement> displacements;
     const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, {}, {}, report, displacements);
-    require(sites.empty() && report.Functions == 0, "code without a function range was framed");
+    Require(sites.empty() && report.Functions == 0, "code without a function range was framed");
 }
 
 void skipsModRmAndVectorRspOperands() {
@@ -958,7 +955,7 @@ void skipsModRmAndVectorRspOperands() {
         Codegen::RedZoneFrameReport report;
         std::vector<Codegen::RedZoneDisplacement> displacements;
         const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
-        require(sites.empty() && displacements.empty() && report.RedZoneFunctions == 2 && report.Framed == 0 && report.Skipped.at("other use of rsp") == 2,
+        Require(sites.empty() && displacements.empty() && report.RedZoneFunctions == 2 && report.Framed == 0 && report.Skipped.at("other use of rsp") == 2,
                 "direct rsp operand case " + std::to_string(index) + " was framed");
     }
 }
@@ -989,7 +986,7 @@ void framesModRmAndVectorNonStackOperands() {
         Codegen::RedZoneFrameReport report;
         std::vector<Codegen::RedZoneDisplacement> displacements;
         const auto sites = Codegen::FrameRedZoneFunctions(input.bytes, input.segments, input.functions, {}, report, displacements);
-        require(report.Framed == 1 && sites.size() == 2 && report.Skipped.empty(),
+        Require(report.Framed == 1 && sites.size() == 2 && report.Skipped.empty(),
                 "non-stack register case " + std::to_string(index) + " prevented framing");
     }
 }

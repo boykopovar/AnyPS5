@@ -1,17 +1,12 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdlib>
 #include <limits>
 
 namespace {
-
-void Require(bool condition) {
-    if (!condition) {
-        std::abort();
-    }
-}
 
 void TestSysconfPositiveParameters() {
     *__error_nid_postfix() = 42;

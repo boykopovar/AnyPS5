@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <bit>
 #include <cerrno>
 #include <cfenv>
@@ -10,8 +11,6 @@
 #include <cstdlib>
 #include <iterator>
 #include <limits>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static double Value(std::uint64_t bits) { return std::bit_cast<double>(bits); }
 

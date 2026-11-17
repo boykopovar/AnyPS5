@@ -2,6 +2,7 @@
 #include "FontFixture.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include FT_FONT_FORMATS_H
 
@@ -13,14 +14,6 @@
 #include <vector>
 
 using namespace FreeType;
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "FreeType face info check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static std::vector<unsigned char> Font(std::uint16_t flags) {
     std::vector<unsigned char> os2(78, 0);

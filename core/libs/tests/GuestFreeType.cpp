@@ -2,6 +2,7 @@
 #include "FreeTypeFontFixture.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libc/include/General.hpp"
+#include "Testing.hpp"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -31,14 +32,6 @@
 #include <vector>
 
 using namespace FreeType;
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "FreeType check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static void CheckGaspTable(const std::vector<unsigned char>* table, const std::vector<std::pair<unsigned, int>>& ranges,
                            bool versionZero, bool render) {

@@ -1,4 +1,5 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -12,13 +13,6 @@ namespace {
 
 using NKWebKit::WtfAbi::DoubleConversionStringBuilder;
 using NKWebKit::WtfAbi::DoubleToStringConverter;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "DoubleToStringConverter check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 std::string FormatExponential(const DoubleToStringConverter* converter, double value, int digits, bool* outOk = nullptr) {
     char buffer[256]{};

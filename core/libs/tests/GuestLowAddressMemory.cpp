@@ -1,18 +1,12 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
-
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "Low guest memory check failed at line %u\n", static_cast<unsigned>(location.line()));
-        std::abort();
-    }
-}
 
 int main() {
     constexpr std::size_t page = 0x4000;

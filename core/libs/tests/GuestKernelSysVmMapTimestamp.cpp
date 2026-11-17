@@ -3,18 +3,12 @@
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
-
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "VM map timestamp check failed at %s:%u\n", location.file_name(), static_cast<unsigned>(location.line()));
-        std::abort();
-    }
-}
 
 int main() {
     constexpr std::size_t page = 0x4000;

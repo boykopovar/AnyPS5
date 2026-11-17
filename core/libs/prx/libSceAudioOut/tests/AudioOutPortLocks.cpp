@@ -1,6 +1,7 @@
 #include "prx/libSceAudioOut/include/AudioOut.hpp"
 #include "SDL.h"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <atomic>
@@ -25,12 +26,6 @@ std::array<std::atomic<unsigned>, 4> queued{};
 std::array<std::atomic<bool>, 4> closed{};
 std::mutex stateMutex;
 std::condition_variable changed;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "AudioOut port locks: %s\n", message);
-    std::abort();
-}
 
 bool WaitFor(const std::atomic<bool>& condition, std::chrono::milliseconds timeout) {
     std::unique_lock lock(stateMutex);

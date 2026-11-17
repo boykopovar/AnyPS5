@@ -1,4 +1,5 @@
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <atomic>
 #include <cstddef>
@@ -55,10 +56,6 @@ bool Equal(const Snapshot& left, const Snapshot& right) {
         if (!Same(left.pages[page], right.pages[page])) return false;
     }
     return true;
-}
-
-void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
 }
 
 std::uint8_t* Reserve() {

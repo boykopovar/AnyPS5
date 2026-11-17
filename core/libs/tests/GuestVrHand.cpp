@@ -1,5 +1,6 @@
 #include "prx/libSceVrHand/include/Api.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstdint>
@@ -18,8 +19,6 @@ namespace {
 void ClobberErrno(std::uintptr_t, std::size_t) {
     errno = 99;
 }
-
-void Require(bool value) { if (!value) std::abort(); }
 
 constexpr int kErrInvalidArg = static_cast<int>(0x8a870006);
 constexpr std::uint8_t kFill = 0xaa;

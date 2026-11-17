@@ -1,4 +1,5 @@
 #include "prx/libSceFreeTypeOt/include/OutlineTransform.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -12,12 +13,6 @@ namespace {
 using FreeType::GuestMatrix;
 using FreeType::GuestOutline;
 using FreeType::GuestVector;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "FreeType Ot outline transform: %s\n", message);
-    std::exit(1);
-}
 
 template <typename TCall> bool Throws(TCall call) {
     try {

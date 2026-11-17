@@ -1,5 +1,6 @@
 #include "prx/libfreetype/libfreetype.hpp"
 #include "prx/libfreetype/include/GuestStream.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdint>
@@ -11,10 +12,6 @@ namespace {
 constexpr int UnimplementedFeature = 0x07;
 
 int allocations = 0;
-
-void Require(bool condition) {
-    if (!condition) std::abort();
-}
 
 void* APS5_VABI Allocate(FreeType::GuestMemoryRec*, std::int64_t size) {
     ++allocations;

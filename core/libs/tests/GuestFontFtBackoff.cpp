@@ -1,6 +1,7 @@
 #include "prx/libSceFont/include/Api.hpp"
 #include "prx/libSceFont/include/FontDriver.hpp"
 #include "prx/libSceFontFt/include/Api.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -15,12 +16,6 @@
 #endif
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "font backoff check failed at line %u\n", static_cast<unsigned>(location.line()));
-    std::exit(1);
-}
 
 void* APS5_VABI Allocate(void*, std::uint32_t size) {
     return std::malloc(size);

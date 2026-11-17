@@ -1,5 +1,6 @@
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -17,8 +18,6 @@ static constexpr KernelUseconds LONG_MICROS = 2000;
 static constexpr unsigned EARLY_WAKES_PER_RUN = 8;
 static constexpr unsigned TRIES = 20;
 static constexpr auto EARLY = std::chrono::microseconds(900);
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static std::chrono::microseconds Usleep(KernelUseconds microseconds) {
     const auto start = std::chrono::steady_clock::now();

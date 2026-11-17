@@ -3,6 +3,7 @@
 #include "prx/libSceVideoOut/include/Event.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "tests/VideoOutTestEnvironment.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -15,12 +16,6 @@ constexpr int MainBus = 0;
 constexpr int InvalidHandle = static_cast<int>(0x8029000Bu);
 constexpr int InvalidEventQueue = static_cast<int>(0x8029000Cu);
 constexpr int InvalidEvent = static_cast<int>(0x8029000Du);
-
-void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "FAIL: %s\n", what);
-    std::abort();
-}
 
 }
 

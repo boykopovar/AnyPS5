@@ -1,5 +1,6 @@
 #include "FreeTypeFontFixture.hpp"
 #include "prx/libSceFreeType/libSceFreeType.hpp"
+#include "Testing.hpp"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -15,14 +16,6 @@
 #include <vector>
 
 using namespace FreeType;
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "FreeType advance check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 constexpr std::int64_t Sentinel = 0x1122334455667788;
 

@@ -1,6 +1,7 @@
 #include "FreeTypeFontFixture.hpp"
 #include "FreeTypeQueryOutputFixture.hpp"
 #include "prx/libSceFreeType/include/Api.hpp"
+#include "Testing.hpp"
 #include <nid/NidCompute.hpp>
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -20,13 +21,6 @@
 #endif
 
 using namespace FreeType;
-
-static void Check(bool value, int line) {
-    if (value) return;
-    std::fprintf(stderr, "PFR check failed at line %d\n", line);
-    std::exit(1);
-}
-#define Require(value) Check((value), __LINE__)
 
 static void CheckNullFace(int error) {
     if (error != FT_Err_Invalid_Argument) std::fprintf(stderr, "PFR null-face returned %d, expected %d\n", error, FT_Err_Invalid_Argument);

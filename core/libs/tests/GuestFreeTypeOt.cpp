@@ -1,6 +1,7 @@
 #include "FreeTypeFontFixture.hpp"
 #include "FontFixture.hpp"
 #include "prx/libSceFreeTypeOt/libSceFreeTypeOt.hpp"
+#include "Testing.hpp"
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include FT_MULTIPLE_MASTERS_H
@@ -62,12 +63,6 @@ struct StrokerExports {
 
 Exports ot;
 StrokerExports strokers;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "libSceFreeTypeOt: %s\n", message);
-    std::exit(1);
-}
 
 struct ForwardedExports {
     decltype(&FT_Init_FreeType_nid_postfix) init;

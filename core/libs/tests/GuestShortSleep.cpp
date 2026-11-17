@@ -1,5 +1,6 @@
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -16,10 +17,6 @@ using Clock = std::chrono::steady_clock;
 
 static constexpr KernelUseconds SHORT_MICROS = 20;
 static constexpr unsigned LOOP_SLEEPS = 2000;
-
-static void Require(bool value) {
-    if (!value) std::abort();
-}
 
 static std::chrono::nanoseconds Usleep(KernelUseconds microseconds) {
     const auto start = Clock::now();

@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "tests/TemporaryFile.hpp"
+#include "Testing.hpp"
 #include <cstdarg>
 #include <chrono>
 #include <cstddef>
@@ -12,14 +13,6 @@
 #include <fstream>
 #include <iterator>
 #include <string>
-
-static void Check(bool condition, int line) {
-    if (!condition) {
-        std::fprintf(stderr, "guest libc internal format check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static int APS5_VABI WriteFormatted(FileStream* stream, const char* format, ...) {
 #ifdef _WIN32

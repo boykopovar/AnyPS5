@@ -1,5 +1,6 @@
 #include "prx/libc/include/CallTrace.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -25,13 +26,6 @@
 struct Block {
     std::uint64_t words[4];
 };
-
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "Call trace check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 static std::uint64_t APS5_VABI Integers(std::uint64_t a, std::uint64_t b, std::uint64_t c, std::uint64_t d, std::uint64_t e, std::uint64_t f, std::uint64_t g, std::uint64_t h) {
     return a + 2 * b + 3 * c + 4 * d + 5 * e + 6 * f + 7 * g + 8 * h;

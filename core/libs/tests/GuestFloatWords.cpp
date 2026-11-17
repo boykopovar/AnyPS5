@@ -1,4 +1,5 @@
 #include "prx/libSceLibcInternal/include/FloatWords.hpp"
+#include "Testing.hpp"
 #include <bit>
 #include <array>
 #include <cstdint>
@@ -9,10 +10,6 @@
 #include <stdexcept>
 
 namespace {
-
-void Require(bool condition) {
-    if (!condition) std::abort();
-}
 
 template<class Float, class Bits>
 void Check(Bits bits, std::uint16_t* (APS5_VABI *least)(Float*), std::uint16_t* (APS5_VABI *most)(Float*)) {

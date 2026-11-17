@@ -1,4 +1,5 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "Testing.hpp"
 
 #include <cstddef>
 #include <cstdio>
@@ -8,21 +9,6 @@
 #include <stdexcept>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc ColorSpace check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> void RequireInvalidArgument(TAction action, std::source_location location = std::source_location::current()) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, location);
-}
 
 WebRtcColorSpace Hdr() {
     WebRtcColorSpace colorSpace;
@@ -107,10 +93,10 @@ void TestTailPaddingUntouched() {
 
 void TestNullArgumentsThrow() {
     WebRtcColorSpace colorSpace = Hdr();
-    RequireInvalidArgument([&] { _ZN6webrtc10ColorSpaceC1ERKS0__nid_postfix(nullptr, &colorSpace); });
-    RequireInvalidArgument([&] { _ZN6webrtc10ColorSpaceC1ERKS0__nid_postfix(&colorSpace, nullptr); });
-    RequireInvalidArgument([&] { _ZN6webrtc10ColorSpaceaSERKS0__nid_postfix(nullptr, &colorSpace); });
-    RequireInvalidArgument([&] { _ZN6webrtc10ColorSpaceaSERKS0__nid_postfix(&colorSpace, nullptr); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc10ColorSpaceC1ERKS0__nid_postfix(nullptr, &colorSpace); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc10ColorSpaceC1ERKS0__nid_postfix(&colorSpace, nullptr); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc10ColorSpaceaSERKS0__nid_postfix(nullptr, &colorSpace); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc10ColorSpaceaSERKS0__nid_postfix(&colorSpace, nullptr); });
     Require(SameFields(colorSpace, Hdr()));
 }
 

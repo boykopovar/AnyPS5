@@ -1,4 +1,5 @@
 #include "prx/libSceLibcInternal/include/FloatDigits.hpp"
+#include "Testing.hpp"
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -9,12 +10,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool condition, const std::string& message) {
-    if (condition) return;
-    std::fprintf(stderr, "libc internal float digits: %s\n", message.c_str());
-    std::abort();
-}
 
 struct Case {
     const char* text;

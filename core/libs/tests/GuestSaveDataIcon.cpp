@@ -1,6 +1,7 @@
 #include "prx/libSceSaveData/include/Api.hpp"
 #include "prx/libSceSaveData.native/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdio>
@@ -20,12 +21,6 @@ static constexpr int Internal = static_cast<int>(0x809F000B);
 static constexpr std::uint32_t ReadOnly = 1;
 static constexpr std::uint32_t ReadWrite = 2;
 static constexpr std::uint32_t Create = 32;
-
-static void Require(bool value, const std::source_location location = std::source_location::current()) {
-    if (value) return;
-    std::fprintf(stderr, "save icon requirement failed at %s:%u\n", location.file_name(), location.line());
-    throw std::runtime_error("savedata icon requirement failed");
-}
 
 static SaveDataMountPoint Mount(const char* name, std::uint32_t mode = ReadWrite | Create) {
     SceSaveDataDirName directory{};

@@ -8,6 +8,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -41,10 +42,6 @@ constexpr std::uint32_t Handle = 7;
 constexpr std::size_t BlockBytes = 1u << 20;
 constexpr std::size_t Frames = 6;
 constexpr std::size_t CapturedFrames = 3;
-
-void check(bool condition, const std::string& reason) {
-    if (!condition) throw std::runtime_error(reason);
-}
 
 class Request final : public AgcDriver::IFlipRequest {
 public:
@@ -101,7 +98,7 @@ private:
 
 std::byte* allocate() {
     auto* const block = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(BlockBytes, 65536));
-    check(block != nullptr, "cannot allocate guest memory");
+    Require(block != nullptr, "cannot allocate guest memory");
     GuestArena::GuestArenaCommit_nid_postfix(block, BlockBytes, 0x04, BlockBytes);
     GuestAllocations::Mutation mutation;
     mutation.Add(block, BlockBytes, true, true, true);
@@ -110,24 +107,24 @@ std::byte* allocate() {
 
 void submitEopFrame(std::byte* block, std::size_t frame) {
     const auto token = AgcDriverReserveEopFlip_nid_postfix(AgcDriver::FlipInfo{Handle, 0, 1, static_cast<std::int64_t>(frame)});
-    check(token != 0, "the EOP flip of frame " + std::to_string(frame) + " was not reserved");
+    Require(token != 0, "the EOP flip of frame " + std::to_string(frame) + " was not reserved");
     auto* const words = reinterpret_cast<std::uint32_t*>(block + frame * 256);
     const auto label = reinterpret_cast<std::uintptr_t>(block + BlockBytes / 2 + frame * 8);
     const std::array<std::uint32_t, 8> release{0xc0064900u, 0x06200504u, 0x42010000u, static_cast<std::uint32_t>(label), static_cast<std::uint32_t>(label >> 32u), 1u, 0u, token};
     std::memcpy(words, release.data(), sizeof(release));
     Packet packet{words, static_cast<std::uint32_t>(release.size()), 0, {}};
-    check(sceAgcDriverSubmitDcb(&packet) == 0, "the EOP submission of frame " + std::to_string(frame) + " failed");
+    Require(sceAgcDriverSubmitDcb(&packet) == 0, "the EOP submission of frame " + std::to_string(frame) + " failed");
 }
 
 std::uint32_t* submitRewound(std::byte* block, std::size_t frame) {
     const auto token = AgcDriverReserveEopFlip_nid_postfix(AgcDriver::FlipInfo{Handle, 0, 1, static_cast<std::int64_t>(frame)});
-    check(token != 0, "the EOP flip of frame " + std::to_string(frame) + " was not reserved");
+    Require(token != 0, "the EOP flip of frame " + std::to_string(frame) + " was not reserved");
     auto* const words = reinterpret_cast<std::uint32_t*>(block + frame * 256);
     const auto label = reinterpret_cast<std::uintptr_t>(block + BlockBytes / 2 + frame * 8);
     const std::array<std::uint32_t, 10> commands{0xc0005900u, 0u, 0xc0064900u, 0x06200504u, 0x42010000u, static_cast<std::uint32_t>(label), static_cast<std::uint32_t>(label >> 32u), 1u, 0u, token};
     std::memcpy(words, commands.data(), sizeof(commands));
     Packet packet{words, static_cast<std::uint32_t>(commands.size()), 0, {}};
-    check(sceAgcDriverSubmitDcb(&packet) == 0, "the rewound submission of frame " + std::to_string(frame) + " failed");
+    Require(sceAgcDriverSubmitDcb(&packet) == 0, "the rewound submission of frame " + std::to_string(frame) + " failed");
     return &words[1];
 }
 
@@ -138,7 +135,7 @@ void release(std::uint32_t* control) {
 void waitPresented(const Output& output, int presented) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(30);
     while (output.ready.load() < presented) {
-        check(std::chrono::steady_clock::now() < deadline, "the rewind tail of frame " + std::to_string(presented - 1) + " did not flip");
+        Require(std::chrono::steady_clock::now() < deadline, "the rewind tail of frame " + std::to_string(presented - 1) + " did not flip");
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 }
@@ -151,17 +148,17 @@ void submitRewindFrame(std::byte* block, std::size_t frame, const Output& output
 
 const char* captureDirectory() {
     const char* directory = std::getenv("APS5_FRAME_CAPTURE");
-    check(directory != nullptr && *directory != '\0', "APS5_FRAME_CAPTURE is not set");
+    Require(directory != nullptr && *directory != '\0', "APS5_FRAME_CAPTURE is not set");
     return directory;
 }
 
 void checkCapturedFrames(const char* directory) {
     const FrameCaptureReader reader{std::filesystem::path(directory)};
-    check(!reader.Truncated(), "the capture is truncated");
-    check(reader.Header().find("\"frames\":" + std::to_string(CapturedFrames)) != std::string::npos, "the capture header does not record " + std::to_string(CapturedFrames) + " frames: " + reader.Header());
+    Require(!reader.Truncated(), "the capture is truncated");
+    Require(reader.Header().find("\"frames\":" + std::to_string(CapturedFrames)) != std::string::npos, "the capture header does not record " + std::to_string(CapturedFrames) + " frames: " + reader.Header());
     const auto& calls = reader.Calls();
     const auto start = std::find_if(calls.begin(), calls.end(), [](const auto& call) { return call.kind == FrameCallKind::FrameStart; });
-    check(start != calls.end(), "the capture has no frame start");
+    Require(start != calls.end(), "the capture has no frame start");
     std::size_t submits = 0, reservations = 0;
     FrameCallKind first = FrameCallKind::End;
     for (auto call = start + 1; call != calls.end(); ++call) {
@@ -171,8 +168,8 @@ void checkCapturedFrames(const char* directory) {
             reservations += call->kind == FrameCallKind::ReserveEopFlip;
         }
     }
-    check(first == FrameCallKind::ReserveEopFlip, "the capture started between a reservation and the submission that flips it");
-    check(submits == CapturedFrames && reservations == CapturedFrames,
+    Require(first == FrameCallKind::ReserveEopFlip, "the capture started between a reservation and the submission that flips it");
+    Require(submits == CapturedFrames && reservations == CapturedFrames,
           "the captured frames hold " + std::to_string(submits) + " submissions and " + std::to_string(reservations) + " reservations, expected " + std::to_string(CapturedFrames) + " of each");
 }
 
@@ -183,7 +180,7 @@ void testEopFramesCountOnce() {
     AgcDriverRegisterVideoOutput_nid_postfix(Handle, output);
     for (std::size_t frame = 0; frame < Frames; ++frame) submitEopFrame(block, frame);
     AgcDriverWaitIdle_nid_postfix();
-    check(output->ready.load() == static_cast<int>(Frames), "the driver presented " + std::to_string(output->ready.load()) + " of the EOP flips");
+    Require(output->ready.load() == static_cast<int>(Frames), "the driver presented " + std::to_string(output->ready.load()) + " of the EOP flips");
     checkCapturedFrames(directory);
 }
 
@@ -195,7 +192,7 @@ void testRewindTailFramesCount() {
     AgcDriverRegisterVideoOutput_nid_postfix(Handle, output);
     for (std::size_t frame = 0; frame < Frames; ++frame) submitRewindFrame(block, frame, *output);
     AgcDriverWaitIdle_nid_postfix();
-    check(std::filesystem::exists(directory), "flips made by rewind tails did not reach the frame recorder, so the capture did not start");
+    Require(std::filesystem::exists(directory), "flips made by rewind tails did not reach the frame recorder, so the capture did not start");
     checkCapturedFrames(directory);
 }
 
@@ -222,12 +219,12 @@ void testRewindReleasedAfterCall() {
     for (std::size_t frame = Frames; frame < 2 * Frames; ++frame) submitRewindFrame(block, frame, *output);
     AgcDriverWaitIdle_nid_postfix();
     const auto waited = std::chrono::duration_cast<std::chrono::milliseconds>(slowest).count();
-    check(slowest < std::chrono::seconds(1), "a driver call waited " + std::to_string(waited) + " ms at a frame boundary for a REWIND its thread releases after the call");
-    check(std::filesystem::exists(directory), "the capture did not start at an idle frame boundary after the busy ones");
+    Require(slowest < std::chrono::seconds(1), "a driver call waited " + std::to_string(waited) + " ms at a frame boundary for a REWIND its thread releases after the call");
+    Require(std::filesystem::exists(directory), "the capture did not start at an idle frame boundary after the busy ones");
     checkCapturedFrames(directory);
     const FrameCaptureReader reader{std::filesystem::path(directory)};
     const auto start = std::find_if(reader.Calls().begin(), reader.Calls().end(), [](const auto& call) { return call.kind == FrameCallKind::FrameStart; });
-    check(start->values.at(0) >= Frames - 1, "the capture started at frame boundary " + std::to_string(start->values.at(0)) + ", while a REWIND was still parked");
+    Require(start->values.at(0) >= Frames - 1, "the capture started at frame boundary " + std::to_string(start->values.at(0)) + ", while a REWIND was still parked");
 }
 
 void testFlipsCountPerThread() {
@@ -248,13 +245,13 @@ void testFlipsCountPerThread() {
     submitter.join();
     if (failure) std::rethrow_exception(failure);
     AgcDriverWaitIdle_nid_postfix();
-    check(otherAfter == otherBefore + 1, "the flipping submission did not count on the thread that made it");
-    check(driver.FlipSubmissions() == before, "a flip submitted on another thread changed this thread's flip count, so a submission of this thread that overlaps it would end a captured frame");
+    Require(otherAfter == otherBefore + 1, "the flipping submission did not count on the thread that made it");
+    Require(driver.FlipSubmissions() == before, "a flip submitted on another thread changed this thread's flip count, so a submission of this thread that overlaps it would end a captured frame");
 }
 
 void testSettledHoldsAdmissions() {
     AgcDriverWaitIdle_nid_postfix();
-    check(AgcDriverHoldSettled_nid_postfix(1000), "the idle driver did not settle");
+    Require(AgcDriverHoldSettled_nid_postfix(1000), "the idle driver did not settle");
     std::uint64_t before = 0, completed = 0;
     AgcDriverSerialProgress_nid_postfix(&before, &completed);
     std::atomic<bool> admitted{false};
@@ -269,13 +266,13 @@ void testSettledHoldsAdmissions() {
     AgcDriverReleaseSettled_nid_postfix();
     submitter.join();
     AgcDriverWaitIdle_nid_postfix();
-    check(held, "the driver admitted a submission while a settled hold was taken on an idle driver");
+    Require(held, "the driver admitted a submission while a settled hold was taken on an idle driver");
 }
 
 void submitWords(std::span<const std::uint32_t> words, std::byte* at) {
     std::memcpy(at, words.data(), words.size_bytes());
     Packet packet{reinterpret_cast<std::uint32_t*>(at), static_cast<std::uint32_t>(words.size()), 0, {}};
-    check(sceAgcDriverSubmitDcb(&packet) == 0, "a submission was refused");
+    Require(sceAgcDriverSubmitDcb(&packet) == 0, "a submission was refused");
 }
 
 void testWaitingRecorderAdmitsBesideBlockedFlip() {
@@ -314,10 +311,10 @@ void testWaitingRecorderAdmitsBesideBlockedFlip() {
     flipper.join();
     if (flipFailure) std::rethrow_exception(flipFailure);
     AgcDriverWaitIdle_nid_postfix();
-    check(held, "the flip submission did not wait for flip room");
-    check(besideFlip, "with the frame recorder waiting for its trigger, a submission waited for another thread's submission that was waiting for flip room");
-    check(std::atomic_ref<std::uint32_t>(*done).load() == 1, "the register list submitted before the flip was not executed");
-    check(!std::filesystem::exists(captureDirectory()) || std::filesystem::is_empty(captureDirectory()), "the frame recorder started without its trigger");
+    Require(held, "the flip submission did not wait for flip room");
+    Require(besideFlip, "with the frame recorder waiting for its trigger, a submission waited for another thread's submission that was waiting for flip room");
+    Require(std::atomic_ref<std::uint32_t>(*done).load() == 1, "the register list submitted before the flip was not executed");
+    Require(!std::filesystem::exists(captureDirectory()) || std::filesystem::is_empty(captureDirectory()), "the frame recorder started without its trigger");
 }
 
 class Latch {
@@ -361,10 +358,10 @@ void finishedWithin(const std::function<void()>& call, const char* what) {
 
 void testRecorderStartsAfterAdmittedCalls() {
     auto* const recorder = AgcDriver::FrameRecorder::Active();
-    check(recorder != nullptr, "the frame recorder is not active");
+    Require(recorder != nullptr, "the frame recorder is not active");
     const std::filesystem::path directory(captureDirectory());
     const char* trigger = std::getenv("APS5_FRAME_CAPTURE_TRIGGER");
-    check(trigger != nullptr && *trigger != '\0', "the startup test needs APS5_FRAME_CAPTURE_TRIGGER");
+    Require(trigger != nullptr && *trigger != '\0', "the startup test needs APS5_FRAME_CAPTURE_TRIGGER");
     std::filesystem::remove(trigger);
     std::filesystem::remove_all(directory);
     const auto started = [&] { return std::filesystem::exists(directory / FrameCaptureWriter::MemoryName); };
@@ -386,7 +383,7 @@ void testRecorderStartsAfterAdmittedCalls() {
 
     bool inner = false;
     finishedWithin([&] { recorder->Submit(idle, 0, [&] { recorder->Submit(idle, 0, [&] { inner = true; }); }); }, "a call accepted from inside another call's acceptance");
-    check(inner, "the call accepted from inside another call's acceptance did not run");
+    Require(inner, "the call accepted from inside another call's acceptance did not run");
 
     bool thrown = false;
     try {
@@ -394,7 +391,7 @@ void testRecorderStartsAfterAdmittedCalls() {
     } catch (const std::runtime_error&) {
         thrown = true;
     }
-    check(thrown, "a call whose acceptance threw did not pass the exception on");
+    Require(thrown, "a call whose acceptance threw did not pass the exception on");
 
     auto* const label = reinterpret_cast<std::uint32_t*>(block + BlockBytes / 2);
     const auto address = reinterpret_cast<std::uintptr_t>(label);
@@ -409,14 +406,14 @@ void testRecorderStartsAfterAdmittedCalls() {
             recorder->Submit(labelled, 0, [&] {
                 holding.store(true);
                 entered.Open();
-                check(release.Wait(), "the test did not release the call held in its acceptance");
-                check(sceAgcDriverSubmitDcb(const_cast<Packet*>(&labelled)) == 0, "the held call's submission was refused");
+                Require(release.Wait(), "the test did not release the call held in its acceptance");
+                Require(sceAgcDriverSubmitDcb(const_cast<Packet*>(&labelled)) == 0, "the held call's submission was refused");
             });
         } catch (...) {
             failure = std::current_exception();
         }
     });
-    check(entered.Wait(), "the held call did not reach its acceptance");
+    Require(entered.Wait(), "the held call did not reach its acceptance");
     { std::ofstream(trigger) << 1; }
     finishedWithin([&] { recorder->FrameBoundary(); }, "a frame boundary while a call was being accepted");
     const bool deferred = !started();
@@ -424,11 +421,11 @@ void testRecorderStartsAfterAdmittedCalls() {
     release.Open();
     admitted.join();
     if (failure) std::rethrow_exception(failure);
-    check(deferred, "the frame recorder started while a call it does not record was still being accepted");
-    check(waitsWhileHeld.load() == 0, "the frame recorder waited for the driver to go idle while a call it does not record was still being accepted");
+    Require(deferred, "the frame recorder started while a call it does not record was still being accepted");
+    Require(waitsWhileHeld.load() == 0, "the frame recorder waited for the driver to go idle while a call it does not record was still being accepted");
     finishedWithin([&] { recorder->FrameBoundary(); }, "a frame boundary after the held call");
-    check(started(), "the frame recorder did not start once no call was being accepted, so a call whose acceptance threw or re-entered is still counted");
-    check(waits.load() == 1, "the frame recorder did not wait for the driver to go idle exactly once, at the start");
+    Require(started(), "the frame recorder did not start once no call was being accepted, so a call whose acceptance threw or re-entered is still counted");
+    Require(waits.load() == 1, "the frame recorder did not wait for the driver to go idle exactly once, at the start");
     finishedWithin([&] { recorder->FrameBoundary(); }, "the frame boundary that ends the capture");
     AgcDriverWaitIdle_nid_postfix();
     const FrameCaptureReader reader(directory);
@@ -439,7 +436,7 @@ void testRecorderStartsAfterAdmittedCalls() {
         std::memcpy(&value, bytes.data() + (address - chunk.address), sizeof(value));
         return value == 1;
     });
-    check(snapshotted, "the snapshot does not hold the label written by the GPU work of a call accepted before the start");
+    Require(snapshotted, "the snapshot does not hold the label written by the GPU work of a call accepted before the start");
 }
 
 }

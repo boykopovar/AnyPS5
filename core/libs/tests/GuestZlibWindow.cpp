@@ -1,4 +1,5 @@
 #include "prx/libSceZlib/include/Api.hpp"
+#include "Testing.hpp"
 
 #include <algorithm>
 #include <array>
@@ -19,13 +20,6 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
-
-static void Require(bool value, std::source_location location = std::source_location::current()) {
-    if (!value) {
-        std::fprintf(stderr, "boundary check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 class Guarded {
     unsigned char* memory;

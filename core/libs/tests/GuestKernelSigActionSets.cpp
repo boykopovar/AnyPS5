@@ -1,18 +1,13 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <climits>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
-
-static void Require(bool condition) {
-    if (!condition) {
-        std::abort();
-    }
-}
 
 static void APS5_VABI DummyHandler(int) {}
 

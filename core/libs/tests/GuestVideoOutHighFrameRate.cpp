@@ -3,6 +3,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "tests/VideoOutTestEnvironment.hpp"
+#include "Testing.hpp"
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -10,10 +11,6 @@
 #include <stdexcept>
 
 static constexpr int Unavailable = static_cast<int>(0x80290019u);
-
-static void Require(bool value, const char* message) {
-    if (!value) throw std::runtime_error(message);
-}
 
 static double Measure(int handle) {
     Require(sceVideoOutWaitVblank(handle) == 0, "initial vblank failed");

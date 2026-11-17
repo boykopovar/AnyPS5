@@ -1,10 +1,9 @@
 #include "prx/libSceHttp2/include/Http2.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static constexpr int InvalidId = static_cast<int>(0x817B1100);
 static constexpr int NotFound = static_cast<int>(0x817B1025);

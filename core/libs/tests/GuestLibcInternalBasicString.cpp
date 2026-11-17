@@ -4,6 +4,7 @@
 #include "prx/libc/include/GuestLocale.hpp"
 #include "prx/libc/GuestStringStorage.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -95,12 +96,6 @@ static_assert(sizeof(String) == 40);
 
 constexpr std::size_t NoPosition = std::numeric_limits<std::size_t>::max();
 constexpr std::uint64_t Allocator = 0x5a5a5a5a5a5a5a5a;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "libc internal basic_string: %s\n", message);
-    std::abort();
-}
 
 String Empty() {
     String string{};

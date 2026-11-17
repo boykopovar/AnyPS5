@@ -13,6 +13,7 @@
 #include <stdexcept>
 #include <string>
 #include "ProcessParametersFixture.hpp"
+#include "Testing.hpp"
 
 static constexpr int ErrorParameter = static_cast<int>(0x80D90002);
 static constexpr int ErrorNotFound = static_cast<int>(0x80D90005);
@@ -20,7 +21,6 @@ static constexpr int ErrorDrmNoEntitlement = static_cast<int>(0x80D90007);
 static constexpr int ErrorBusy = static_cast<int>(0x80D90003);
 static constexpr int ErrorNotMounted = static_cast<int>(0x80D90004);
 static constexpr int ErrorGetStoreCountry = static_cast<int>(0x80D91000);
-static void Require(bool value) { if (!value) std::abort(); }
 
 int main() {
     static std::array<std::byte, 64> process{};
@@ -105,24 +105,16 @@ int main() {
     Require(sceAppContentInitialize(nullptr, &boot) == 0);
     AppContentMountPoint download{};
     std::memcpy(download.data, "/download0", 11);
-    const auto reachesService = [](auto call) {
-        try {
-            call();
-        } catch (const std::runtime_error&) {
-            return true;
-        }
-        return false;
-    };
     Require(sceAppContentAppParamGetString(0, nullptr, sizeof(appParam)) == ErrorParameter);
-    Require(reachesService([&] { sceAppContentAppParamGetString(0, appParam, sizeof(appParam)); }));
+    ExpectErr<std::runtime_error>([&] { sceAppContentAppParamGetString(0, appParam, sizeof(appParam)); });
     size_t blockSize = 12345;
     Require(sceAppContentDownloadDataGetBlockSize(nullptr, &blockSize) == ErrorParameter);
     Require(sceAppContentDownloadDataGetBlockSize(&download, nullptr) == ErrorParameter);
     Require(blockSize == 12345);
-    Require(reachesService([&] { sceAppContentDownloadDataGetBlockSize(&download, &blockSize); }));
+    ExpectErr<std::runtime_error>([&] { sceAppContentDownloadDataGetBlockSize(&download, &blockSize); });
     std::uint32_t region = 0;
     Require(sceAppContentGetRegion(nullptr) == ErrorParameter);
-    Require(reachesService([&] { sceAppContentGetRegion(&region); }));
+    ExpectErr<std::runtime_error>([&] { sceAppContentGetRegion(&region); });
     const std::string longest(255, 'a');
     const std::string tooLong(256, 'a');
     Require(sceAppContentRequestPatchInstall(nullptr) == ErrorParameter);
@@ -130,7 +122,7 @@ int main() {
     errno = EBUSY;
     Require(sceAppContentRequestPatchInstall(reinterpret_cast<const char*>(std::uintptr_t{0x10})) == ErrorParameter);
     Require(errno == EBUSY);
-    Require(reachesService([&] { sceAppContentRequestPatchInstall(longest.c_str()); }));
+    ExpectErr<std::runtime_error>([&] { sceAppContentRequestPatchInstall(longest.c_str()); });
     size_t availableKb = 12345;
     Require(sceAppContentDownloadDataGetAvailableSpaceKb(&download, &availableKb) == 0);
     Require(availableKb == 0);
@@ -200,13 +192,13 @@ int main() {
     { std::ofstream file(download1Data / "used.bin", std::ios::binary); file << std::string(1024, 'x'); }
     Require(sceAppContentDownloadDataGetAvailableSpaceKb(&download1Mount, &download1Space) == 0);
     Require(download1Space == 2047);
-    Require(reachesService([&] { sceAppContentDownload1Shrink(1); }));
+    ExpectErr<std::runtime_error>([&] { sceAppContentDownload1Shrink(1); });
     Require(sceAppContentDownload2Shrink(0) == ErrorParameter);
-    Require(reachesService([&] { sceAppContentDownload2Shrink(1); }));
+    ExpectErr<std::runtime_error>([&] { sceAppContentDownload2Shrink(1); });
     Require(std::filesystem::exists(downloadData / "preserve.bin"));
     Require(sceAppContentDownloadDataGetAvailableSpaceKb(&download, &availableKb) == 0);
     Require(availableKb == 0);
-    Require(reachesService([&] { sceAppContentDownload0Expand(0); }));
+    ExpectErr<std::runtime_error>([&] { sceAppContentDownload0Expand(0); });
     Require(sceAppContentDownloadDataGetAvailableSpaceKb(&download, &availableKb) == 0);
     Require(availableKb == 0);
     Require(sceAppContentDownload0Expand(2) == 0);
@@ -216,7 +208,7 @@ int main() {
     Require(sceAppContentDownloadDataGetAvailableSpaceKb(&download, &availableKb) == 0);
     Require(availableKb == 2047);
     Require(std::filesystem::exists(downloadData / "preserve.bin"));
-    Require(reachesService([&] { sceAppContentDownload0Shrink(1); }));
+    ExpectErr<std::runtime_error>([&] { sceAppContentDownload0Shrink(1); });
     Require(sceAppContentDownloadDataGetAvailableSpaceKb(&download, &availableKb) == 0);
     Require(availableKb == 2047);
 

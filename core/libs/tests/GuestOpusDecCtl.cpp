@@ -1,6 +1,7 @@
 #include "prx/libSceOpusCeltDec/libSceOpusCeltDec.hpp"
 #include "prx/libSceOpusDec/libSceOpusDec.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -13,8 +14,6 @@
 #include <opus.h>
 
 namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
 
 using Ctl = int (APS5_VABI*)(void*, int, ...);
 

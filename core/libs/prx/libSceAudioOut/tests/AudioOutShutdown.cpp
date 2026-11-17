@@ -4,6 +4,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "Testing.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -29,12 +30,6 @@ constexpr auto exitLimit = std::chrono::seconds(3);
 
 std::atomic<std::uint64_t> outputs{0};
 std::vector<float> pcm(static_cast<std::size_t>(grain) * 2, 0.25f);
-
-void Fail(const char* message) {
-    std::fprintf(stderr, "%s\n", message);
-    std::fflush(stderr);
-    std::_Exit(1);
-}
 
 void RequireParked() {
     const auto before = outputs.load();

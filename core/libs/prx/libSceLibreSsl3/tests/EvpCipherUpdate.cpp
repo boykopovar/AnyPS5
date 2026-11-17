@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libSceLibreSsl/include/Evp.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstddef>
@@ -39,12 +40,6 @@ int APS5_VABI CustomCipher(LibreSslEvpCipherCtx*, unsigned char*, const unsigned
     record.in = in;
     record.length = length;
     return record.result < 0 ? record.result : static_cast<int>(length);
-}
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL3 EVP_*Update check failed at line %u\n", location.line());
-    std::abort();
 }
 
 void Reset(int result = 1) {

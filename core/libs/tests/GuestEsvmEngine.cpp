@@ -1,15 +1,8 @@
 #include "prx/libSceEsvmEngine/libSceEsvmEngine.hpp"
 #include "prx/libSceEsvmEngine/include/InventoryExports.hpp"
+#include "Testing.hpp"
 
 #include <cstdlib>
-
-namespace {
-
-void Require(bool value) {
-    if (!value) std::abort();
-}
-
-} // namespace
 
 int main() {
     constexpr int notInitialized = static_cast<int>(0x8178000Au);

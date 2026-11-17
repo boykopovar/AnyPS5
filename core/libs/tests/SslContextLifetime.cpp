@@ -1,4 +1,5 @@
 #include "prx/libSceSsl/Export.cpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <atomic>
@@ -14,19 +15,15 @@ extern "C" bool KernelLookupSocketNative_nid_no_patch(int, std::shared_ptr<void>
 
 namespace {
 
-void Check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
-
 int CreateContext() {
     const int id = sceSslInit_nid_postfix(1024 * 1024);
-    Check(id > 0, "context creation failed");
+    Require(id > 0, "context creation failed");
     return id;
 }
 
 int CreateConnection(int context) {
     const int id = sceSslCreateConnection(context, -1, "localhost");
-    Check(id > 0, "connection creation failed");
+    Require(id > 0, "connection creation failed");
     return id;
 }
 
@@ -34,9 +31,9 @@ void DeleteBeforeTerm() {
     for (int cycle = 0; cycle < 3; ++cycle) {
         const int context = CreateContext();
         const int connection = CreateConnection(context);
-        Check(sceSslDeleteConnection(connection) == 0, "delete before term failed");
-        Check(sceSslTerm_nid_postfix(context) == 0, "term after delete failed");
-        Check(State().connections.empty() && State().contexts.empty(), "delete-first cycle retained records");
+        Require(sceSslDeleteConnection(connection) == 0, "delete before term failed");
+        Require(sceSslTerm_nid_postfix(context) == 0, "term after delete failed");
+        Require(State().connections.empty() && State().contexts.empty(), "delete-first cycle retained records");
     }
     std::puts("SSL delete-first control: 3 cycles, no retained records");
 }
@@ -48,15 +45,15 @@ void TermBeforeDelete() {
         const int context = CreateContext();
         const int connection = CreateConnection(context);
         const auto created = State().connections.size();
-        Check(sceSslTerm_nid_postfix(context) == 0, "term before delete failed");
+        Require(sceSslTerm_nid_postfix(context) == 0, "term before delete failed");
         const auto terminated = State().connections.size();
-        Check(sceSslDeleteConnection(connection) == ErrorInvalidId, "post-term delete result changed");
+        Require(sceSslDeleteConnection(connection) == ErrorInvalidId, "post-term delete result changed");
         const auto deleted = State().connections.size();
-        Check(State().contexts.empty(), "context survived termination");
+        Require(State().contexts.empty(), "context survived termination");
         clean = clean && before == 0 && created == 1 && terminated == 0 && deleted == 0;
         std::printf("SSL term-first cycle %d: connections %zu -> %zu -> %zu -> %zu\n", cycle + 1, before, created, terminated, deleted);
     }
-    Check(clean, "termination retained orphan connection records");
+    Require(clean, "termination retained orphan connection records");
 }
 
 void SeparateContexts() {
@@ -66,18 +63,18 @@ void SeparateContexts() {
     const int secondConnection = CreateConnection(second);
     const int extraConnection = CreateConnection(first);
     std::weak_ptr<Context> lifetime = State().contexts.at(first);
-    Check(sceSslTerm_nid_postfix(first) == 0, "selective term failed");
-    Check(lifetime.expired(), "idle terminated context survived");
-    Check(State().connections.size() == 1 && State().connections.contains(secondConnection), "term did not isolate connection ownership");
-    Check(!State().connections.contains(firstConnection) && !State().connections.contains(extraConnection), "term retained a child connection");
-    Check(sceSslTerm_nid_postfix(first) == ErrorInvalidId, "repeated term result changed");
-    Check(sceSslCreateConnection(first, -1, "localhost") == ErrorInvalidId, "create accepted a terminated context");
-    Check(sceSslDeleteConnection(firstConnection) == ErrorInvalidId, "delete accepted a terminated connection");
-    Check(sceSslSetVerifyCallback(firstConnection, nullptr, nullptr) == ErrorInvalidId, "callback accepted a terminated connection");
-    Check(sceSslConnect(firstConnection) == ErrorInvalidId && sceSslClose(firstConnection) == ErrorInvalidId, "I/O accepted a terminated connection");
-    Check(sceSslSetVerifyCallback(secondConnection, nullptr, nullptr) == 0, "term invalidated another context's connection");
-    Check(sceSslDeleteConnection(secondConnection) == 0 && sceSslTerm_nid_postfix(second) == 0, "unrelated context cleanup failed");
-    Check(State().connections.empty() && State().contexts.empty(), "selective term retained records");
+    Require(sceSslTerm_nid_postfix(first) == 0, "selective term failed");
+    Require(lifetime.expired(), "idle terminated context survived");
+    Require(State().connections.size() == 1 && State().connections.contains(secondConnection), "term did not isolate connection ownership");
+    Require(!State().connections.contains(firstConnection) && !State().connections.contains(extraConnection), "term retained a child connection");
+    Require(sceSslTerm_nid_postfix(first) == ErrorInvalidId, "repeated term result changed");
+    Require(sceSslCreateConnection(first, -1, "localhost") == ErrorInvalidId, "create accepted a terminated context");
+    Require(sceSslDeleteConnection(firstConnection) == ErrorInvalidId, "delete accepted a terminated connection");
+    Require(sceSslSetVerifyCallback(firstConnection, nullptr, nullptr) == ErrorInvalidId, "callback accepted a terminated connection");
+    Require(sceSslConnect(firstConnection) == ErrorInvalidId && sceSslClose(firstConnection) == ErrorInvalidId, "I/O accepted a terminated connection");
+    Require(sceSslSetVerifyCallback(secondConnection, nullptr, nullptr) == 0, "term invalidated another context's connection");
+    Require(sceSslDeleteConnection(secondConnection) == 0 && sceSslTerm_nid_postfix(second) == 0, "unrelated context cleanup failed");
+    Require(State().connections.empty() && State().contexts.empty(), "selective term retained records");
 }
 
 void ConcurrentLifecycle() {
@@ -108,8 +105,8 @@ void ConcurrentLifecycle() {
         const int result = sceSslTerm_nid_postfix(context);
         creator.join();
         deleter.join();
-        Check(result == 0 && valid, "concurrent lifecycle returned an unexpected error");
-        Check(State().connections.empty() && State().contexts.empty(), "concurrent termination retained records");
+        Require(result == 0 && valid, "concurrent lifecycle returned an unexpected error");
+        Require(State().connections.empty() && State().contexts.empty(), "concurrent termination retained records");
     }
     std::puts("SSL concurrent create/delete/term: 32 cycles, no retained records");
 }
@@ -139,14 +136,14 @@ void InFlightSession() {
         PoolScope scope(owner->pool);
         session->Configure("localhost", "", InitialVerifyOptions);
     }
-    Check(owner->pool.current > 0, "session did not allocate backend state");
+    Require(owner->pool.current > 0, "session did not allocate backend state");
     session->verified = true;
     session->verifyResult = ErrorCallbackCheck;
     State().connections.at(connection).session = session;
     std::weak_ptr<Session> sessionLifetime = session;
     CallbackState callback;
     callback.context = context;
-    Check(sceSslSetVerifyCallback(connection, PendingCallback, &callback) == 0, "callback setup failed");
+    Require(sceSslSetVerifyCallback(connection, PendingCallback, &callback) == 0, "callback setup failed");
     owner.reset();
     session.reset();
     int operationResult = ErrorInvalidId;
@@ -157,11 +154,11 @@ void InFlightSession() {
     const bool retained = !sessionLifetime.expired() && !contextLifetime.expired();
     callback.resume.count_down();
     operation.join();
-    Check(result == 0 && removed, "term did not remove the in-flight connection");
-    Check(retained, "term destroyed an in-flight session or its pool");
-    Check(callback.valid && operationResult == 0, "in-flight verification callback did not finish");
-    Check(sessionLifetime.expired() && contextLifetime.expired(), "finished operation retained its session or pool");
-    Check(sceSslConnect(connection) == ErrorInvalidId && sceSslDeleteConnection(connection) == ErrorInvalidId, "post-term connection became usable");
+    Require(result == 0 && removed, "term did not remove the in-flight connection");
+    Require(retained, "term destroyed an in-flight session or its pool");
+    Require(callback.valid && operationResult == 0, "in-flight verification callback did not finish");
+    Require(sessionLifetime.expired() && contextLifetime.expired(), "finished operation retained its session or pool");
+    Require(sceSslConnect(connection) == ErrorInvalidId && sceSslDeleteConnection(connection) == ErrorInvalidId, "post-term connection became usable");
     std::puts("SSL in-flight callback completed; session and pool released after completion");
 }
 

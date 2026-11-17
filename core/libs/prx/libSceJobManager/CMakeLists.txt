@@ -57,6 +57,7 @@ if(BUILD_TESTING)
         add_library(job_manager_reference SHARED EXCLUDE_FROM_ALL
             ${LIBS_INCLUDE_DIR}/tests/GuestJobManager.cpp
             ${LIBS_INCLUDE_DIR}/tests/JobManagerReference.cpp)
+        target_include_directories(job_manager_reference PRIVATE ${CMAKE_SOURCE_DIR}/core/test/include)
         target_include_directories(job_manager_reference PRIVATE ${LIBS_INCLUDE_DIR})
         target_compile_definitions(job_manager_reference PRIVATE ANYPS5_JOB_MANAGER_REFERENCE)
         target_link_libraries(job_manager_reference PRIVATE libkernel libc ${CMAKE_DL_LIBS})

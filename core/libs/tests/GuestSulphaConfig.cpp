@@ -1,4 +1,5 @@
 #include "prx/libSceSulphaDrv/libSceSulphaDrv.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -6,12 +7,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-
-static void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
 
 int main() {
     for (const int expectedErrno : {0, 7, 22, 42}) {

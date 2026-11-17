@@ -4,6 +4,7 @@
 #include "SDL_events.h"
 #include "SDL_keyboard.h"
 #include "SDL_mouse.h"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -12,13 +13,6 @@
 namespace {
 
 constexpr unsigned Window = 7;
-
-void Require(bool condition, const char* reason) {
-    if (!condition) {
-        std::fprintf(stderr, "dialog input: %s\n", reason);
-        std::abort();
-    }
-}
 
 SDL_Event Key(SDL_Scancode scancode, unsigned window = Window, std::uint8_t repeat = 0, std::uint16_t mod = 0) {
     SDL_Event event{};

@@ -1,6 +1,7 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -15,8 +16,6 @@ static constexpr int SCE_OK = 0;
 static constexpr int EVFILT_READ = -1;
 static constexpr int EVFILT_WRITE = -2;
 static constexpr std::uint16_t EV_EOF = 0x8000;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static bool Rejects(int (APS5_VABI *add)(KernelEqueue, int, std::size_t, void*), KernelEqueue eq, int fd, std::size_t size) {
     try {

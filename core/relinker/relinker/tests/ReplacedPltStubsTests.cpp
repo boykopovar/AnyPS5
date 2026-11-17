@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include <relinker/analysis/ReplacedPltStubs.hpp>
 #include <algorithm>
 #include <cstdint>
@@ -15,10 +16,6 @@ constexpr Relinker::VirtualAddress Base = 0x10000;
 constexpr Relinker::VirtualAddress Got = 0x30000;
 constexpr std::size_t Header = 0x100;
 constexpr std::size_t Count = 4;
-
-void Require(bool value, const std::string& message) {
-    if (!value) throw std::runtime_error(message);
-}
 
 void Displace(Bytes& code, std::size_t at, Relinker::VirtualAddress target, std::size_t next) {
     const auto displacement = static_cast<std::int32_t>(static_cast<std::int64_t>(target - (Base + next)));

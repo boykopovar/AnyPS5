@@ -1,12 +1,9 @@
 #include "prx/libSceGameLiveStreaming/include/Api.hpp"
+#include "Testing.hpp"
 
 #include <cstdlib>
 
 namespace {
-
-void Require(bool value) {
-    if (!value) std::abort();
-}
 
 constexpr int notInitialized = static_cast<int>(0x80A00004u);
 

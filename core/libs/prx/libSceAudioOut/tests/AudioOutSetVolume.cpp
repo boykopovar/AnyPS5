@@ -1,20 +1,11 @@
 #include "prx/libSceAudioOut/include/AudioOut.hpp"
 #include "SDL.h"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-
-namespace {
-
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
-
-}
 
 int InitializeSdlAudio_nid_no_patch() { return 0; }
 bool WasapiDefaultOutputAbsent_nid_no_patch() { return false; }

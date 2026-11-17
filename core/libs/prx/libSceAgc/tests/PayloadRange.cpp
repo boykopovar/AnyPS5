@@ -1,6 +1,7 @@
 #include "prx/libSceAgc/Misc/include/PacketInfo.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdint>
@@ -10,16 +11,12 @@
 
 namespace {
 
-void check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
-
 template <typename TAction>
 void expectFailure(TAction action) {
     try {
         action();
     } catch (const std::runtime_error& error) {
-        check(error.what()[0] != '\0', "empty exception message");
+        Require(error.what()[0] != '\0', "empty exception message");
         return;
     }
     throw std::runtime_error("expected an exception");
@@ -33,16 +30,16 @@ void testRanges() {
     for (const auto& [header, type, offset, size] : rows) {
         std::array<std::uint32_t, 2> words{header, 0x12345678u};
         SceAgcMemoryRange range{reinterpret_cast<void*>(std::uintptr_t{0x1000}), 0xdeadu};
-        check(sceAgcGetDataPacketPayloadRange(&range, words.data(), type) == 0, "payload range failed");
+        Require(sceAgcGetDataPacketPayloadRange(&range, words.data(), type) == 0, "payload range failed");
         void* expected = offset < 0 ? nullptr : static_cast<void*>(words.data() + offset);
-        check(range.base == expected, "payload range base mismatch");
-        check(range.size == size, "payload range size mismatch");
-        check(words[0] == header && words[1] == 0x12345678u, "payload range query modified the packet");
+        Require(range.base == expected, "payload range base mismatch");
+        Require(range.size == size, "payload range size mismatch");
+        Require(words[0] == header && words[1] == 0x12345678u, "payload range query modified the packet");
         std::uint32_t* address = nullptr;
-        check(sceAgcGetDataPacketPayloadAddress_0090(&address, words.data(), type) == 0 && address == range.base,
+        Require(sceAgcGetDataPacketPayloadAddress_0090(&address, words.data(), type) == 0 && address == range.base,
               "payload range base differs from the payload address");
         std::uint32_t* unversionedAddress = nullptr;
-        check(sceAgcGetDataPacketPayloadAddress(&unversionedAddress, words.data(), type) == 0 && unversionedAddress == address,
+        Require(sceAgcGetDataPacketPayloadAddress(&unversionedAddress, words.data(), type) == 0 && unversionedAddress == address,
               "unversioned payload address differs from versioned payload address");
     }
 }

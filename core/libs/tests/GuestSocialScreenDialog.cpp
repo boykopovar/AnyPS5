@@ -1,13 +1,12 @@
 #include "prx/libSceSocialScreenDialog/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 
 namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
 
 constexpr int kStatusNone = 0;
 constexpr int kStatusInitialized = 1;

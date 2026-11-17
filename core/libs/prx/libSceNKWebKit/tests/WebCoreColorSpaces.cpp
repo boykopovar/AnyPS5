@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <cmath>
 #include <cstdint>
@@ -8,14 +9,6 @@
 #include <string>
 
 namespace {
-
-void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "WebCore color space check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 bool Near(float actual, float expected, float tolerance = 1e-4f) {
     return std::fabs(actual - expected) <= tolerance;

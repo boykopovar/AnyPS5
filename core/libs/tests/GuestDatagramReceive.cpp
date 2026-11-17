@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceNet/include/Net.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -10,13 +11,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <thread>
-
-static void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "%s\n", message);
-        std::exit(1);
-    }
-}
 
 static void Check(bool net, bool from, int family) {
     int* error = net ? sceNetErrnoLoc() : __error_nid_postfix();

@@ -1,5 +1,6 @@
 #include "prx/libkernel_sys/include/AdditionalExports.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -11,13 +12,6 @@ namespace {
 
 constexpr int GuestEperm = 1;
 constexpr int GuestEfault = 14;
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "kernel sys adjtime: %s\n", message);
-        std::abort();
-    }
-}
 
 void RequirePermissionDenied(const KernelTimeval& delta) {
     KernelTimeval remaining{-3, -2};

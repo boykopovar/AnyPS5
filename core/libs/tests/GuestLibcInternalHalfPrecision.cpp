@@ -1,5 +1,6 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/general/AsmMacros.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <bit>
 #include <cfenv>
@@ -31,12 +32,6 @@ asm(".text\n"
     APS5_ASM_FUNCTION_END("TruncateThroughXmm_nid_no_patch"));
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "half precision check failed at line %u\n", location.line());
-    std::abort();
-}
 
 constexpr std::uint16_t Infinity = 0x7c00;
 constexpr std::uint16_t LargestFinite = 0x7bff;

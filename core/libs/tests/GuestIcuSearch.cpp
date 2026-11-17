@@ -1,6 +1,7 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -14,19 +15,6 @@
 
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "ICU search check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TCall>
-void Throws(TCall call) {
-    try { call(); }
-    catch (const std::exception&) { return; }
-    Require(false);
-}
 
 void Memory() {
     std::array<char16_t, 20> original;
@@ -54,9 +42,9 @@ void Memory() {
         Require(u_memset_nid_postfix(nullptr, 0xffff, count) == nullptr);
         Require(u_memmove_nid_postfix(original.data(), nullptr, count) == original.data());
     }
-    Throws([&] { u_memmove_nid_postfix(nullptr, original.data(), 1); });
-    Throws([&] { u_memmove_nid_postfix(original.data(), nullptr, 1); });
-    Throws([&] { u_memset_nid_postfix(nullptr, 0, 1); });
+    ExpectErr([&] { u_memmove_nid_postfix(nullptr, original.data(), 1); });
+    ExpectErr([&] { u_memmove_nid_postfix(original.data(), nullptr, 1); });
+    ExpectErr([&] { u_memset_nid_postfix(nullptr, 0, 1); });
 }
 
 void MappedMemory() {
@@ -95,9 +83,9 @@ void MappedMemory() {
             GuestArena::HostWrite access(data + offset, 4 * sizeof(char16_t));
             Require(!access.Open());
         }
-        Throws([&] { u_memmove_nid_postfix(data + offset, data + unitsPerPage + 40, 4); });
+        ExpectErr([&] { u_memmove_nid_postfix(data + offset, data + unitsPerPage + 40, 4); });
         Require(std::equal(expected.begin(), expected.end(), data));
-        Throws([&] { u_memset_nid_postfix(data + offset, 0xffff, 4); });
+        ExpectErr([&] { u_memset_nid_postfix(data + offset, 0xffff, 4); });
         Require(std::equal(expected.begin(), expected.end(), data));
     }
 #endif
@@ -135,10 +123,10 @@ void Characters() {
     Require(u_memrchr_nid_postfix(nullptr, 0xdfff, 7) == nullptr);
     Require(u_strchr_nid_postfix(nullptr, 0xd800) == nullptr);
     Require(u_strrchr_nid_postfix(nullptr, 0xdfff) == nullptr);
-    Throws([&] { u_memchr_nid_postfix(nullptr, 'a', 1); });
-    Throws([&] { u_memrchr_nid_postfix(nullptr, 'a', 1); });
-    Throws([&] { u_strchr_nid_postfix(nullptr, 'a'); });
-    Throws([&] { u_strrchr_nid_postfix(nullptr, 'a'); });
+    ExpectErr([&] { u_memchr_nid_postfix(nullptr, 'a', 1); });
+    ExpectErr([&] { u_memrchr_nid_postfix(nullptr, 'a', 1); });
+    ExpectErr([&] { u_strchr_nid_postfix(nullptr, 'a'); });
+    ExpectErr([&] { u_strrchr_nid_postfix(nullptr, 'a'); });
     Require(text == original);
 }
 
@@ -195,8 +183,8 @@ void Comparisons() {
         Require(u_strncmpCodePointOrder_nid_postfix(nullptr, nullptr, count) == 0);
     Require(u_strncmpCodePointOrder_nid_postfix(nullptr, u"a", 0) == 0);
     Require(u_strcmpCodePointOrder_nid_postfix(nullptr, nullptr) == 0);
-    Throws([&] { u_strcmpCodePointOrder_nid_postfix(nullptr, u"a"); });
-    Throws([&] { u_strncmpCodePointOrder_nid_postfix(u"a", nullptr, -1); });
+    ExpectErr([&] { u_strcmpCodePointOrder_nid_postfix(nullptr, u"a"); });
+    ExpectErr([&] { u_strncmpCodePointOrder_nid_postfix(u"a", nullptr, -1); });
 }
 
 } // namespace

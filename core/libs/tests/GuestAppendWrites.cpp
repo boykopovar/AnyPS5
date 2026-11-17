@@ -2,6 +2,7 @@
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -17,14 +18,6 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
-
-static void Check(bool condition, int line) {
-    if (!condition) {
-        std::fprintf(stderr, "append check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static constexpr const char* Path = "guest_append_writes.txt";
 static constexpr int CreateWriteAppend = 0x0209;

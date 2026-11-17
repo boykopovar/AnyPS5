@@ -1,4 +1,5 @@
 #include "prx/libSceLibcInternal/include/RuntimeInternals.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -23,12 +24,6 @@ struct TableEntry {
 
 static_assert(sizeof(TableEntry) == 16);
 static_assert(offsetof(TableEntry, offset) == 8);
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "wide tables: %s\n", message);
-    std::abort();
-}
 
 template<std::size_t N>
 std::array<TableEntry, N> ReadTable(Getter getter, const std::array<const char*, N>& names,

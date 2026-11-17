@@ -4,6 +4,7 @@
 #include "prx/libSceNpTrophy2/include/NpTrophy2Types.hpp"
 #include "prx/libSceNpTrophy2/include/TrophyStore.hpp"
 #include "tests/ExportLookup.hpp"
+#include "Testing.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -39,12 +40,6 @@ static const char TropMeta[] = R"({"metadata":{"titleMetadata":{"name":"Syntheti
     "trophyMetadata":[{"id":"0","name":"All of them"},{"id":"1","name":"Ten","detail":"Reach ten"},{"id":"5","name":"Five steps"},
                       {"id":"6","name":"Secret","detail":"A hidden one","reward":"A hat"}],
     "groupMetadata":[{"id":"1","name":"Expansion"}]}})";
-
-static void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
 
 template <typename TCall>
 static bool ThrowsInvalidArgument(TCall call) {

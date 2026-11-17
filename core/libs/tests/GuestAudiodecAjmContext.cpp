@@ -1,5 +1,6 @@
 #include "prx/libSceAudiodec.native/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -36,11 +37,6 @@ Function Resolve(const char* name) {
     return reinterpret_cast<Function>(symbol);
 }
 
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "Audiodec GetAjmContext: %s\n", message);
-    std::abort();
-}
 
 }
 

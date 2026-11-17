@@ -1,4 +1,5 @@
 #include "prx/libSceNKWebKit/include/UrlHelpers.hpp"
+#include "Testing.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -13,14 +14,6 @@ using NKWebKit::UrlAbi::StringView;
 using NKWebKit::WtfAbi::String;
 
 constexpr auto SerializeForm = _ZN3WTF9URLParser9serializeERKNS_6VectorINS_12KeyValuePairINS_6StringES3_EELm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEE;
-
-void Check(bool result, int line) {
-    if (result) return;
-    std::fprintf(stderr, "WTF URL helper check failed at line %d\n", line);
-    std::abort();
-}
-
-#define Require(condition) Check((condition), __LINE__)
 
 StringView View(const std::string& value) {
     return {value.data(), static_cast<std::uint32_t>(value.size()), true};

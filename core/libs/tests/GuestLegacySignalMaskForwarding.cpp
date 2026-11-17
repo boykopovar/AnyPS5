@@ -1,5 +1,6 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <bit>
 #include <cerrno>
@@ -16,13 +17,6 @@ std::array<std::uint32_t, 4> observedSet{};
 std::uint32_t previousMask = 0;
 int backendResult = 0;
 int backendError = 0;
-
-void Require(bool value, const char* message) {
-    if (!value) {
-        std::fprintf(stderr, "legacy signal mask forwarding: %s\n", message);
-        std::abort();
-    }
-}
 
 using MaskFunction = int (APS5_VABI *)(int);
 

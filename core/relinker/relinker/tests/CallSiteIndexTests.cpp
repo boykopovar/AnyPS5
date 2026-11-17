@@ -1,10 +1,9 @@
+#include "Testing.hpp"
 #include <relinker/analysis/CallSiteResolver.hpp>
 #include <cstring>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
-
-static void Require(bool ok) { if (!ok) throw std::runtime_error("Incorrect call-site index"); }
 
 int main() {
     try {

@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/ReferenceStorage.hpp"
 #include "AllocationFailure.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <chrono>
 #include <span>
@@ -14,14 +15,6 @@ using AgcDriver::Graphics::ReferenceStorage;
 using AgcDriver::Tests::SetAllocationFailureCountdown;
 
 namespace {
-
-int failures = 0;
-
-void Expect(bool condition, const std::string& what) {
-    if (condition) return;
-    std::fprintf(stderr, "FAIL: %s\n", what.c_str());
-    ++failures;
-}
 
 constexpr std::size_t KiB = 1024;
 
@@ -184,7 +177,7 @@ int main() {
     SlotsEvictOldest();
     NoAllocationOnReturnOrTake();
     IdleBuffersReleased();
-    if (failures != 0) return 1;
+    if (Failures() != 0) return 1;
     std::printf("reference storage tests passed\n");
     return 0;
 }

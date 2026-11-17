@@ -1,6 +1,7 @@
 #include "prx/libSceAudiodecCpu/include/Api.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cerrno>
@@ -33,24 +34,8 @@ constexpr int ErrorMemory = static_cast<int>(0x80f7000eu);
 constexpr int ErrorMemorySize = static_cast<int>(0x80f70008u);
 constexpr int ErrorType = static_cast<int>(0x80f70001u);
 
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "AudiodecCpu query guest: %s\n", message);
-    std::abort();
-}
-
 void ClobberErrno(std::uintptr_t, std::size_t) {
     errno = 99;
-}
-
-template <typename Operation>
-void RequireThrows(Operation operation, const char* message) {
-    try {
-        operation();
-    } catch (const std::runtime_error&) {
-        return;
-    }
-    Require(false, message);
 }
 
 struct ProtectedRegion {
@@ -106,10 +91,10 @@ int main() {
 
     Require(sceAudiodecCpuQueryMemSize(nullptr, &memory, LpcmBd) == ErrorCtrl, "null control changed");
     errno = 71;
-    RequireThrows([&] { sceAudiodecCpuQueryMemSize(reinterpret_cast<const AudiodecCtrl*>(0x10), &memory, LpcmBd); }, "unreadable control accepted");
+    ExpectErr<std::runtime_error>([&] { sceAudiodecCpuQueryMemSize(reinterpret_cast<const AudiodecCtrl*>(0x10), &memory, LpcmBd); }, "unreadable control accepted");
     Require(memory.ui_memory_size == 0xA5A5A5A5u, "invalid control modified memory result");
     Require(errno == 71, "invalid control changed errno");
-    RequireThrows([&] { sceAudiodecCpuInternalQueryMemSize(&ctrl, reinterpret_cast<AudiodecCpuMemory*>(0x10), LpcmBd); }, "unreadable output struct accepted");
+    ExpectErr<std::runtime_error>([&] { sceAudiodecCpuInternalQueryMemSize(&ctrl, reinterpret_cast<AudiodecCpuMemory*>(0x10), LpcmBd); }, "unreadable output struct accepted");
     Require(errno == 71, "invalid output struct changed errno");
 
     AudiodecCtrl noParam{};
@@ -137,12 +122,12 @@ int main() {
     auto* crossing = reinterpret_cast<AudiodecCpuMemory*>(guarded.address + guarded.pageSize - offsetof(AudiodecCpuMemory, ui_memory_size) - sizeof(std::uint32_t) + 1);
     const std::uint32_t crossingSize = 0x18u;
     std::memcpy(crossing, &crossingSize, sizeof(crossingSize));
-    RequireThrows([&] { sceAudiodecCpuQueryMemSize(&ctrl, crossing, LpcmBd); }, "cross-page output struct accepted");
+    ExpectErr<std::runtime_error>([&] { sceAudiodecCpuQueryMemSize(&ctrl, crossing, LpcmBd); }, "cross-page output struct accepted");
 
     auto* readOnly = reinterpret_cast<AudiodecCpuMemory*>(guarded.address);
     *readOnly = {0x18u, nullptr, 0xA5A5A5A5u};
     guarded.ProtectReadOnly();
-    RequireThrows([&] { sceAudiodecCpuQueryMemSize(&ctrl, readOnly, LpcmBd); }, "read-only output accepted");
+    ExpectErr<std::runtime_error>([&] { sceAudiodecCpuQueryMemSize(&ctrl, readOnly, LpcmBd); }, "read-only output accepted");
     Require(readOnly->ui_memory_size == 0xA5A5A5A5u, "read-only output modified");
     Require(errno == 71, "protected guest copies changed errno");
 
@@ -181,20 +166,20 @@ int main() {
 
     auto* badPtr = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x10));
     errno = 71;
-    RequireThrows([&] { sceAudiodecCpuInitDecoder(reinterpret_cast<const AudiodecCtrl*>(badPtr), &validMem, LpcmBd); }, "bad InitDecoder ctrl");
+    ExpectErr<std::runtime_error>([&] { sceAudiodecCpuInitDecoder(reinterpret_cast<const AudiodecCtrl*>(badPtr), &validMem, LpcmBd); }, "bad InitDecoder ctrl");
     Require(errno == 71, "bad InitDecoder ctrl changed errno");
     errno = 71;
-    RequireThrows([&] { sceAudiodecCpuInternalInitDecoder(&validCtrl, reinterpret_cast<const AudiodecCpuMemory*>(badPtr), LpcmBd); }, "bad InitDecoder mem");
+    ExpectErr<std::runtime_error>([&] { sceAudiodecCpuInternalInitDecoder(&validCtrl, reinterpret_cast<const AudiodecCpuMemory*>(badPtr), LpcmBd); }, "bad InitDecoder mem");
     Require(errno == 71, "bad InitDecoder mem changed errno");
     AudiodecCpuMemory badMemPtr{0x18u, badPtr, RequiredBytes};
     errno = 71;
-    RequireThrows([&] { sceAudiodecCpuInitDecoder(&validCtrl, &badMemPtr, LpcmBd); }, "bad InitDecoder p_memory");
+    ExpectErr<std::runtime_error>([&] { sceAudiodecCpuInitDecoder(&validCtrl, &badMemPtr, LpcmBd); }, "bad InitDecoder p_memory");
     Require(errno == 71, "bad InitDecoder p_memory changed errno");
     errno = 71;
-    RequireThrows([&] { sceAudiodecCpuClearContext(reinterpret_cast<const AudiodecCpuMemory*>(badPtr), LpcmBd); }, "bad ClearContext mem");
+    ExpectErr<std::runtime_error>([&] { sceAudiodecCpuClearContext(reinterpret_cast<const AudiodecCpuMemory*>(badPtr), LpcmBd); }, "bad ClearContext mem");
     Require(errno == 71, "bad ClearContext mem changed errno");
     errno = 71;
-    RequireThrows([&] { sceAudiodecCpuClearContext(&badMemPtr, LpcmBd); }, "bad ClearContext p_memory");
+    ExpectErr<std::runtime_error>([&] { sceAudiodecCpuClearContext(&badMemPtr, LpcmBd); }, "bad ClearContext p_memory");
     Require(errno == 71, "bad ClearContext p_memory changed errno");
 
     initValid();
@@ -202,7 +187,7 @@ int main() {
     pcmItem = {0x18u, pcmBuf.data(), static_cast<std::uint32_t>(pcmBuf.size() * sizeof(float))};
     auto checkBadDecode = [&](const AudiodecCtrl& c, const AudiodecCpuMemory& m, const char* msg) {
         errno = 71;
-        RequireThrows([&] { sceAudiodecCpuInternalDecode(&c, &m, LpcmBd); }, msg);
+        ExpectErr<std::runtime_error>([&] { sceAudiodecCpuInternalDecode(&c, &m, LpcmBd); }, msg);
         Require(errno == 71, msg);
     };
     checkBadDecode({badPtr, lpcmBsi.data(), &auInfo, &pcmItem}, validMem, "bad pParam");

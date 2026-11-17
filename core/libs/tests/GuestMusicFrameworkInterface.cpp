@@ -1,14 +1,11 @@
 #include "prx/libSceMusicFrameworkInterface/libSceMusicFrameworkInterface.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdint>
 #include <cstdlib>
 
 namespace {
-
-void Require(bool value) {
-    if (!value) std::abort();
-}
 
 constexpr int invalidArgument = static_cast<int>(0x81797001u);
 

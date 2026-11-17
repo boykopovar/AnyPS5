@@ -1,4 +1,5 @@
 #include "prx/libSceNKWebKitRequirements/include/Sqlite.hpp"
+#include "Testing.hpp"
 
 #include <sqlite3.h>
 
@@ -12,12 +13,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "SQLite binding destructor assertion failed: %s\n", message);
-    std::abort();
-}
 
 template<class TNative, class TGuest, class... TArgs>
 auto Call(bool guest, TNative native, TGuest adapter, TArgs... arguments) {

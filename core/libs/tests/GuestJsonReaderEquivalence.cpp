@@ -1,5 +1,6 @@
 #include "prx/libSceJson2/include/Api.hpp"
 #include "JsonTestAllocator.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -9,13 +10,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
-
-static void Require(bool value, std::source_location location = std::source_location::current()) {
-    if (!value) {
-        std::fprintf(stderr, "check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 using namespace SceJson2;
 

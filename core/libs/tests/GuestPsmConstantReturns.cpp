@@ -1,17 +1,8 @@
 #include "prx/libScePsm/libScePsm.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
-
-namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "PSM CONSTANT RETURNS: %s\n", message);
-    std::abort();
-}
-
-}
 
 int main() {
     Require(libScePsmUnknown_0PIOM2UIUpQ_nid_no_patch() == 0, "0PIOM2UIUpQ result");

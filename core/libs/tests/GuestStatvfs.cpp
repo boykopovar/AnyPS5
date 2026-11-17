@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -19,14 +20,6 @@
 #include <sys/un.h>
 #include <unistd.h>
 #endif
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "statvfs check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static void RequireVolume(const char* path, const std::filesystem::path& native) {
     std::array<std::uint64_t, 13> output;

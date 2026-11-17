@@ -1,13 +1,10 @@
 #include "prx/libSceUgcServiceS3/libSceUgcServiceS3.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdlib>
 
 namespace {
-
-void Require(bool value) {
-    if (!value) std::abort();
-}
 
 constexpr int noClient = static_cast<int>(0x81b70002u);
 

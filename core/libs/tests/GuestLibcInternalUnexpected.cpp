@@ -1,5 +1,6 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -11,12 +12,6 @@
 #endif
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "libc internal unexpected: %s\n", message);
-    std::abort();
-}
 
 bool customHandler1Called = false;
 void CustomHandler1() {

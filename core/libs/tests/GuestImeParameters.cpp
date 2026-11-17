@@ -1,5 +1,6 @@
 #include "prx/libSceIme/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdio>
 #include <cstdlib>
@@ -12,12 +13,6 @@ static_assert(offsetof(Param, option) == 32);
 static_assert(offsetof(Param, reserved) == 88);
 
 static constexpr int NotOpened = static_cast<int>(0x80bc0002u);
-
-static void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
 
 template <typename TCall>
 static void RequireNotImplemented(TCall call, const std::string& name) {

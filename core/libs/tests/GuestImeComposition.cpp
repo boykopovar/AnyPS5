@@ -1,6 +1,7 @@
 #include "prx/libSceIme/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libSceIme/include/ImeInput.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -35,12 +36,6 @@ int32_t APS5_VABI CountingFilter(char16_t* outText, uint32_t* outTextLength, con
     for (uint32_t i = 0; i < sourceTextLength; ++i) outText[i] = sourceText[i];
     *outTextLength = sourceTextLength;
     return 0;
-}
-
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
 }
 
 struct Buffers {

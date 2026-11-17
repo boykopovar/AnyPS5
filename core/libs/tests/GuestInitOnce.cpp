@@ -1,5 +1,6 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -9,12 +10,6 @@
 namespace {
 
 constexpr unsigned long InitFailed = 4;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "init once: %s\n", message);
-    std::abort();
-}
 
 int Begin(void** once) {
     int pending = -1;

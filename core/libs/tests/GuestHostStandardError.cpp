@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <csignal>
 #include <cstdint>
 #include <cstdio>
@@ -25,8 +26,6 @@ extern "C" {
 extern FileStream* __stderrp_nid_postfix;
 extern FileStream* __stdoutp_nid_postfix;
 }
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static void SkipCrashHandler() {
 #ifdef __linux__

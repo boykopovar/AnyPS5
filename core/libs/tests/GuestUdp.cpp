@@ -2,6 +2,7 @@
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -18,8 +19,6 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static void CheckUnreachablePortIgnored() {
     const int closing = socket_nid_postfix(2, 2, 0);

@@ -1,6 +1,7 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libc/libc.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdio>
@@ -16,10 +17,6 @@ std::unordered_map<void*, std::size_t> allocations;
 std::size_t allocated = 0;
 std::size_t freed = 0;
 bool failAllocation = false;
-
-void Require(bool condition) {
-    if (!condition) throw std::runtime_error("VideoSinkWants assertion failed");
-}
 
 void* APS5_VABI Allocate_nid_no_patch(std::size_t size) {
     if (failAllocation) throw std::bad_alloc();

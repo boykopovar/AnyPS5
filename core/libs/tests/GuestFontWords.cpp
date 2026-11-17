@@ -1,4 +1,5 @@
 #include "prx/libSceFont/libSceFont.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -6,14 +7,6 @@
 #include <cstring>
 #include <string>
 #include <vector>
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "Font words check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 struct AllocationState {
     std::size_t live = 0;

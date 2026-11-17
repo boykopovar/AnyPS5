@@ -3,6 +3,7 @@
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libkernel/Pthread/include/Rwlock.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -28,8 +29,6 @@ static constexpr int GUEST_ETIMEDOUT = 60;
 static constexpr int GUEST_REALTIME_CLOCK = 0;
 static constexpr int PROCESS_PRIVATE = 0;
 static constexpr std::int64_t NANOS_PER_SECOND = 1000000000;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static const PthreadRwlock DestroyedRwlock = reinterpret_cast<PthreadRwlock>(std::uintptr_t{1});
 
@@ -439,17 +438,9 @@ static void CheckSceAttrLifecycle() {
     Require(pthread_rwlock_unlock_nid_postfix(&lock) == 0);
     Require(pthread_rwlock_destroy_nid_postfix(&lock) == 0);
     Require(scePthreadRwlockattrDestroy(&attr) == SCE_OK && attr == nullptr);
-    const auto throws = [](auto&& call) {
-        try {
-            call();
-        } catch (const std::runtime_error&) {
-            return true;
-        }
-        return false;
-    };
-    Require(throws([&] { scePthreadRwlockattrDestroy(&attr); }));
-    Require(throws([] { scePthreadRwlockattrDestroy(nullptr); }));
-    Require(throws([] { scePthreadRwlockattrInit(nullptr); }));
+    ExpectErr<std::runtime_error>([&] { scePthreadRwlockattrDestroy(&attr); });
+    ExpectErr<std::runtime_error>([] { scePthreadRwlockattrDestroy(nullptr); });
+    ExpectErr<std::runtime_error>([] { scePthreadRwlockattrInit(nullptr); });
 }
 
 class GuardPage {

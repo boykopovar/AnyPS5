@@ -1,6 +1,7 @@
 #include "prx/libcurl/libcurl.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdio>
@@ -18,13 +19,6 @@
 #endif
 
 namespace {
-
-void Require(bool condition, const std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "GuestCurl check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 std::size_t activeAllocations = 0;
 std::size_t allocationCalls = 0;

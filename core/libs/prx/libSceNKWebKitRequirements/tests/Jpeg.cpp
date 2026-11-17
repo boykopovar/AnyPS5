@@ -1,4 +1,5 @@
 #include "prx/libSceNKWebKitRequirements/libSceNKWebKitRequirements.hpp"
+#include "Testing.hpp"
 
 #include <cstddef>
 #include <csetjmp>
@@ -15,13 +16,6 @@ extern "C" {
 }
 
 namespace {
-
-void AssertTrue(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "Assertion failed: %s\n", message);
-        std::abort();
-    }
-}
 
 void GenerateJpeg(std::vector<uint8_t>& outJpeg, int width, int height, int components, J_COLOR_SPACE colorSpace, bool progressive, int restartInterval, const uint8_t* markerData, size_t markerLen) {
     jpeg_compress_struct cinfo{};
@@ -173,7 +167,7 @@ void TestDiagnosticDispatch() {
             hostError.msg_code = guestError.msg_code = messageLevel < 0 ? JWRN_EXTRANEOUS_DATA : JTRC_SOI;
             hostError.emit_message(&host, messageLevel);
             guestError.emit_message(&guest, messageLevel);
-            AssertTrue(guestError.num_warnings == hostError.num_warnings, "diagnostic warning counts differ from libjpeg");
+            Require(guestError.num_warnings == hostError.num_warnings, "diagnostic warning counts differ from libjpeg");
         }
         if (guestMessages != hostMessages) {
             std::fprintf(stderr, "JPEG trace level %d: expected %zu messages, observed %zu\n", traceLevel, hostMessages.size(), guestMessages.size());
@@ -181,11 +175,11 @@ void TestDiagnosticDispatch() {
         }
         hostError.reset_error_mgr(&host);
         guestError.reset_error_mgr(&guest);
-        AssertTrue(guestError.num_warnings == hostError.num_warnings && guestError.msg_code == hostError.msg_code,
+        Require(guestError.num_warnings == hostError.num_warnings && guestError.msg_code == hostError.msg_code,
             "diagnostic reset differs from libjpeg");
-        AssertTrue(guestError.trace_level == hostError.trace_level, "diagnostic reset changed the trace level");
+        Require(guestError.trace_level == hostError.trace_level, "diagnostic reset changed the trace level");
     }
-    AssertTrue(matched, "JPEG warning and trace dispatch differs from libjpeg");
+    Require(matched, "JPEG warning and trace dispatch differs from libjpeg");
 }
 
 void TestHeaderDiagnostics(int traceLevel, bool defaultOutput, bool promote = false) {
@@ -201,7 +195,7 @@ void TestHeaderDiagnostics(int traceLevel, bool defaultOutput, bool promote = fa
     hostError.output_message = promote ? HostPromotingDiagnostic : HostDiagnostic;
     hostError.trace_level = traceLevel;
     jpeg_mem_src(&host, jpeg.data(), jpeg.size());
-    AssertTrue(jpeg_read_header(&host, TRUE) == JPEG_HEADER_OK, "host warning fixture header failed");
+    Require(jpeg_read_header(&host, TRUE) == JPEG_HEADER_OK, "host warning fixture header failed");
 
     std::vector<Diagnostic> guestMessages;
     NKWebKit::GuestJpegErrorMgr guestError{};
@@ -221,15 +215,15 @@ void TestHeaderDiagnostics(int traceLevel, bool defaultOutput, bool promote = fa
     source.resync_to_restart = GuestResyncToRestart;
     source.term_source = GuestTermSource;
     guest.src = &source;
-    AssertTrue(jpeg_read_header_nid_postfix(&guest, 1) == JPEG_HEADER_OK, "guest warning fixture header failed");
-    AssertTrue(guest.image_width == host.image_width && guest.image_height == host.image_height,
+    Require(jpeg_read_header_nid_postfix(&guest, 1) == JPEG_HEADER_OK, "guest warning fixture header failed");
+    Require(guest.image_width == host.image_width && guest.image_height == host.image_height,
         "warning fixture dimensions differ from libjpeg");
-    AssertTrue(hostError.num_warnings == 1 && guestError.num_warnings == hostError.num_warnings,
+    Require(hostError.num_warnings == 1 && guestError.num_warnings == hostError.num_warnings,
         "warning fixture did not count its extraneous header byte");
-    AssertTrue(guestError.trace_level == hostError.trace_level, "header diagnostic callback trace levels differ");
+    Require(guestError.trace_level == hostError.trace_level, "header diagnostic callback trace levels differ");
     if (!defaultOutput && guestMessages != hostMessages) {
         std::fprintf(stderr, "JPEG header trace level %d: expected %zu messages, observed %zu\n", traceLevel, hostMessages.size(), guestMessages.size());
-        AssertTrue(false, "header diagnostics differ from libjpeg");
+        Require(false, "header diagnostics differ from libjpeg");
     }
     jpeg_destroy_decompress_nid_postfix(&guest);
     jpeg_destroy_decompress(&host);
@@ -244,7 +238,7 @@ void TestDecode(const std::vector<uint8_t>& jpegData, const uint8_t* expectedMar
 
     NKWebKit::GuestJpegErrorMgr jerr{};
     auto* errRet = jpeg_std_error_nid_postfix(&jerr);
-    AssertTrue(errRet == &jerr, "jpeg_std_error returned incorrect pointer");
+    Require(errRet == &jerr, "jpeg_std_error returned incorrect pointer");
 
     NKWebKit::GuestJpegDecompress guest_cinfo{};
     guest_cinfo.err = &jerr;
@@ -265,39 +259,39 @@ void TestDecode(const std::vector<uint8_t>& jpegData, const uint8_t* expectedMar
     }
 
     int headerRet = jpeg_read_header_nid_postfix(&guest_cinfo, 1);
-    AssertTrue(headerRet == 1, "jpeg_read_header failed");
+    Require(headerRet == 1, "jpeg_read_header failed");
     if (inputColorSpace >= 0) guest_cinfo.jpeg_color_space = inputColorSpace;
     if (outputColorSpace >= 0) guest_cinfo.out_color_space = outputColorSpace;
 
     jpeg_calc_output_dimensions_nid_postfix(&guest_cinfo);
-    AssertTrue(guest_cinfo.output_width == static_cast<uint32_t>(hostWidth), "width mismatch");
-    AssertTrue(guest_cinfo.output_height == static_cast<uint32_t>(hostHeight), "height mismatch");
-    AssertTrue(guest_cinfo.output_components == hostComps, "components mismatch");
+    Require(guest_cinfo.output_width == static_cast<uint32_t>(hostWidth), "width mismatch");
+    Require(guest_cinfo.output_height == static_cast<uint32_t>(hostHeight), "height mismatch");
+    Require(guest_cinfo.output_components == hostComps, "components mismatch");
 
     if (expectedMarkerData && expectedMarkerLen > 0) {
-        AssertTrue(guest_cinfo.marker_list != nullptr, "marker_list is null");
-        AssertTrue(guest_cinfo.marker_list->marker == 0xE1, "marker code mismatch");
-        AssertTrue(guest_cinfo.marker_list->data_length == expectedMarkerLen, "marker data_length mismatch");
-        AssertTrue(std::memcmp(guest_cinfo.marker_list->data, expectedMarkerData, expectedMarkerLen) == 0, "marker content mismatch");
+        Require(guest_cinfo.marker_list != nullptr, "marker_list is null");
+        Require(guest_cinfo.marker_list->marker == 0xE1, "marker code mismatch");
+        Require(guest_cinfo.marker_list->data_length == expectedMarkerLen, "marker data_length mismatch");
+        Require(std::memcmp(guest_cinfo.marker_list->data, expectedMarkerData, expectedMarkerLen) == 0, "marker content mismatch");
     }
 
     int startRet = jpeg_start_decompress_nid_postfix(&guest_cinfo);
-    AssertTrue(startRet == 1, "jpeg_start_decompress failed");
+    Require(startRet == 1, "jpeg_start_decompress failed");
 
     std::vector<uint8_t> guestPixels(hostWidth * hostHeight * hostComps);
     while (guest_cinfo.output_scanline < guest_cinfo.output_height) {
         uint8_t* rowPtr = guestPixels.data() + guest_cinfo.output_scanline * hostWidth * hostComps;
         uint32_t lines = jpeg_read_scanlines_nid_postfix(&guest_cinfo, &rowPtr, 1);
-        AssertTrue(lines == 1, "jpeg_read_scanlines returned 0");
+        Require(lines == 1, "jpeg_read_scanlines returned 0");
     }
 
     int finishRet = jpeg_finish_decompress_nid_postfix(&guest_cinfo);
-    AssertTrue(finishRet == 1, "jpeg_finish_decompress failed");
+    Require(finishRet == 1, "jpeg_finish_decompress failed");
 
     jpeg_destroy_decompress_nid_postfix(&guest_cinfo);
 
-    AssertTrue(jerr.num_warnings == 0, "the decode should not warn about corrupt data");
-    AssertTrue(guestPixels == hostPixels, "decoded pixels differ from host libjpeg output");
+    Require(jerr.num_warnings == 0, "the decode should not warn about corrupt data");
+    Require(guestPixels == hostPixels, "decoded pixels differ from host libjpeg output");
     if (inputColorSpace >= 0) std::printf("JPEG input/output color spaces %d/%d match native pixels.\n", inputColorSpace, outputColorSpace);
 }
 
@@ -320,13 +314,13 @@ void TestProgressiveBuffered(const std::vector<uint8_t>& jpegData) {
     cinfo.src = &srcMgr;
 
     int ret = jpeg_read_header_nid_postfix(&cinfo, 1);
-    AssertTrue(ret == 1, "read header failed");
+    Require(ret == 1, "read header failed");
 
     cinfo.buffered_image = 1;
     ret = jpeg_start_decompress_nid_postfix(&cinfo);
-    AssertTrue(ret == 1, "start decompress failed");
+    Require(ret == 1, "start decompress failed");
 
-    AssertTrue(jpeg_has_multiple_scans_nid_postfix(&cinfo) == 1, "expected progressive multiple scans");
+    Require(jpeg_has_multiple_scans_nid_postfix(&cinfo) == 1, "expected progressive multiple scans");
 
     while (jpeg_input_complete_nid_postfix(&cinfo) == 0) {
         jpeg_consume_input_nid_postfix(&cinfo);
@@ -336,14 +330,14 @@ void TestProgressiveBuffered(const std::vector<uint8_t>& jpegData) {
     uint8_t* rowPtr = buf.data();
 
     ret = jpeg_start_output_nid_postfix(&cinfo, cinfo.input_scan_number);
-    AssertTrue(ret == 1, "start output failed");
+    Require(ret == 1, "start output failed");
 
     while (cinfo.output_scanline < cinfo.output_height) {
         jpeg_read_scanlines_nid_postfix(&cinfo, &rowPtr, 1);
     }
 
     ret = jpeg_finish_output_nid_postfix(&cinfo);
-    AssertTrue(ret == 1, "finish output failed");
+    Require(ret == 1, "finish output failed");
 
     jpeg_finish_decompress_nid_postfix(&cinfo);
     jpeg_destroy_decompress_nid_postfix(&cinfo);
@@ -362,23 +356,23 @@ bool TestColormap(const std::vector<uint8_t>& jpegData, int colors) {
     host.err = jpeg_std_error(&hostError);
     jpeg_create_decompress(&host);
     jpeg_mem_src(&host, jpegData.data(), jpegData.size());
-    AssertTrue(jpeg_read_header(&host, TRUE) == JPEG_HEADER_OK, "native colormap header");
+    Require(jpeg_read_header(&host, TRUE) == JPEG_HEADER_OK, "native colormap header");
     host.quantize_colors = TRUE;
     host.desired_number_of_colors = 16;
     host.dither_mode = JDITHER_NONE;
     host.colormap = colors ? rows : nullptr;
     host.actual_number_of_colors = colors;
     jpeg_calc_output_dimensions(&host);
-    AssertTrue(jpeg_start_decompress(&host) == TRUE && host.output_components == 1, "native colormap start");
+    Require(jpeg_start_decompress(&host) == TRUE && host.output_components == 1, "native colormap start");
     const auto width = host.output_width;
     const auto height = host.output_height;
     const int actualColors = host.actual_number_of_colors;
     std::vector<uint8_t> expected(static_cast<size_t>(width) * height);
     while (host.output_scanline < height) {
         JSAMPROW row = expected.data() + host.output_scanline * width;
-        AssertTrue(jpeg_read_scanlines(&host, &row, 1) == 1, "native colormap scanline");
+        Require(jpeg_read_scanlines(&host, &row, 1) == 1, "native colormap scanline");
     }
-    AssertTrue(jpeg_finish_decompress(&host) == TRUE, "native colormap finish");
+    Require(jpeg_finish_decompress(&host) == TRUE, "native colormap finish");
     jpeg_destroy_decompress(&host);
 
     NKWebKit::GuestJpegErrorMgr guestError{};
@@ -396,23 +390,23 @@ bool TestColormap(const std::vector<uint8_t>& jpegData, int colors) {
     guest.src = &source;
     bool matches = false;
     try {
-        AssertTrue(jpeg_read_header_nid_postfix(&guest, 1) == JPEG_HEADER_OK, "guest colormap header");
+        Require(jpeg_read_header_nid_postfix(&guest, 1) == JPEG_HEADER_OK, "guest colormap header");
         guest.quantize_colors = 1;
         guest.desired_number_of_colors = 16;
         guest.dither_mode = JDITHER_NONE;
         guest.colormap = colors ? rows : nullptr;
         guest.actual_number_of_colors = colors;
         jpeg_calc_output_dimensions_nid_postfix(&guest);
-        AssertTrue(jpeg_start_decompress_nid_postfix(&guest) == 1, "guest colormap start");
-        AssertTrue(guest.output_width == width && guest.output_height == height && guest.output_components == 1,
+        Require(jpeg_start_decompress_nid_postfix(&guest) == 1, "guest colormap start");
+        Require(guest.output_width == width && guest.output_height == height && guest.output_components == 1,
                    "guest colormap dimensions or components differ");
         std::vector<uint8_t> actual(expected.size());
         while (guest.output_scanline < height) {
             uint8_t* row = actual.data() + guest.output_scanline * width;
-            AssertTrue(jpeg_read_scanlines_nid_postfix(&guest, &row, 1) == 1, "guest colormap scanline");
+            Require(jpeg_read_scanlines_nid_postfix(&guest, &row, 1) == 1, "guest colormap scanline");
         }
         matches = actual == expected && guest.actual_number_of_colors == actualColors;
-        AssertTrue(jpeg_finish_decompress_nid_postfix(&guest) == 1, "guest colormap finish");
+        Require(jpeg_finish_decompress_nid_postfix(&guest) == 1, "guest colormap finish");
     } catch (const std::runtime_error& error) {
         std::fprintf(stderr, "JPEG colormap %d: %s\n", colors, error.what());
     }
@@ -486,7 +480,7 @@ SamplingResult NativeSampling(const std::vector<uint8_t>& image, int aligned, bo
     info.err = jpeg_std_error(&error);
     jpeg_create_decompress(&info);
     jpeg_mem_src(&info, image.data(), image.size());
-    AssertTrue(jpeg_read_header(&info, TRUE) == JPEG_HEADER_OK, "native sampling header failed");
+    Require(jpeg_read_header(&info, TRUE) == JPEG_HEADER_OK, "native sampling header failed");
     info.CCIR601_sampling = aligned;
     info.raw_data_out = raw;
     info.do_fancy_upsampling = fancy;
@@ -512,7 +506,7 @@ SamplingResult GuestSampling(const std::vector<uint8_t>& image, int aligned, boo
     source.resync_to_restart = GuestResyncToRestart;
     source.term_source = GuestTermSource;
     info.src = &source;
-    AssertTrue(jpeg_read_header_nid_postfix(&info, 1) == JPEG_HEADER_OK, "guest sampling header failed");
+    Require(jpeg_read_header_nid_postfix(&info, 1) == JPEG_HEADER_OK, "guest sampling header failed");
     info.CCIR601_sampling = aligned;
     info.raw_data_out = raw;
     info.do_fancy_upsampling = fancy;
@@ -538,8 +532,8 @@ void TestSamplingAlignment() {
                     for (const int aligned : {0, 1, 2, -1}) {
                         const auto native = NativeSampling(image, aligned, raw, fancy);
                         const auto guest = GuestSampling(image, aligned, raw, fancy);
-                        AssertTrue(native.errors == (aligned != 0 && !raw), "native sampling refusal control failed");
-                        AssertTrue(!native.errors || native.code == JERR_CCIR601_NOTIMPL, "native sampling error differs");
+                        Require(native.errors == (aligned != 0 && !raw), "native sampling refusal control failed");
+                        Require(!native.errors || native.code == JERR_CCIR601_NOTIMPL, "native sampling error differs");
                         if (native == guest) ++passed;
                         else std::fprintf(stderr, "Sampling mismatch: progressive=%d color=%d raw=%d fancy=%d aligned=%d native_rows=%d guest_rows=%d native_error=%d guest_error=%d\n", progressive, color, raw, fancy, aligned, native.rows, guest.rows, native.code, guest.code);
                     }
@@ -548,7 +542,7 @@ void TestSamplingAlignment() {
         }
     }
     std::fprintf(stderr, "JPEG sampling alignment: %d/64 native comparisons passed\n", passed);
-    AssertTrue(passed == 64, "sampling alignment differs from native libjpeg");
+    Require(passed == 64, "sampling alignment differs from native libjpeg");
 }
 
 void TestBadStructSize() {
@@ -560,17 +554,17 @@ void TestBadStructSize() {
     g_errorExitCalls = 0;
     const std::size_t wrong = sizeof(NKWebKit::GuestJpegDecompress) - 8;
     jpeg_CreateDecompress_nid_postfix(&guest_cinfo, 62, wrong);
-    AssertTrue(g_errorExitCalls == 1, "a wrong structsize should call the guest error_exit once");
-    AssertTrue(g_errorExitCode == JERR_BAD_STRUCT_SIZE, "a wrong structsize should raise JERR_BAD_STRUCT_SIZE");
-    AssertTrue(g_errorExitParms[0] == static_cast<int>(sizeof(NKWebKit::GuestJpegDecompress)), "JERR_BAD_STRUCT_SIZE should report the expected size first");
-    AssertTrue(g_errorExitParms[1] == static_cast<int>(wrong), "JERR_BAD_STRUCT_SIZE should report the passed size second");
+    Require(g_errorExitCalls == 1, "a wrong structsize should call the guest error_exit once");
+    Require(g_errorExitCode == JERR_BAD_STRUCT_SIZE, "a wrong structsize should raise JERR_BAD_STRUCT_SIZE");
+    Require(g_errorExitParms[0] == static_cast<int>(sizeof(NKWebKit::GuestJpegDecompress)), "JERR_BAD_STRUCT_SIZE should report the expected size first");
+    Require(g_errorExitParms[1] == static_cast<int>(wrong), "JERR_BAD_STRUCT_SIZE should report the passed size second");
     bool rejected = false;
     try {
         jpeg_read_header_nid_postfix(&guest_cinfo, 1);
     } catch (const std::invalid_argument&) {
         rejected = true;
     }
-    AssertTrue(rejected, "an object whose creation failed should not be usable");
+    Require(rejected, "an object whose creation failed should not be usable");
     jpeg_destroy_decompress_nid_postfix(&guest_cinfo);
     g_errorExitCalls = 0;
 }
@@ -595,9 +589,9 @@ void TestGuestErrorExit() {
     srcMgr.term_source = GuestTermSource;
     guest_cinfo.src = &srcMgr;
 
-    AssertTrue(jpeg_read_header_nid_postfix(&guest_cinfo, 1) == 0, "jpeg_read_header should end early after error_exit returns");
-    AssertTrue(g_errorExitCalls == 1, "the guest error_exit should be called once");
-    AssertTrue(g_errorExitCode == JERR_NO_SOI, "the guest error_exit should see JERR_NO_SOI");
+    Require(jpeg_read_header_nid_postfix(&guest_cinfo, 1) == 0, "jpeg_read_header should end early after error_exit returns");
+    Require(g_errorExitCalls == 1, "the guest error_exit should be called once");
+    Require(g_errorExitCode == JERR_NO_SOI, "the guest error_exit should see JERR_NO_SOI");
     jpeg_destroy_decompress_nid_postfix(&guest_cinfo);
 }
 
@@ -626,8 +620,8 @@ void TestDefaultErrorExitThrows() {
     } catch (const std::runtime_error& error) {
         threw = std::strstr(error.what(), "libjpeg: ") == error.what() && std::strlen(error.what()) > std::strlen("libjpeg: ");
     }
-    AssertTrue(threw, "the default error_exit should throw the formatted libjpeg message");
-    AssertTrue(jerr.msg_code == JERR_NO_SOI, "the default error_exit should see JERR_NO_SOI");
+    Require(threw, "the default error_exit should throw the formatted libjpeg message");
+    Require(jerr.msg_code == JERR_NO_SOI, "the default error_exit should see JERR_NO_SOI");
     jpeg_destroy_decompress_nid_postfix(&guest_cinfo);
 }
 

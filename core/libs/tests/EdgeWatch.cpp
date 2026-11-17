@@ -1,4 +1,5 @@
 #include "prx/libkernel/Equeue/include/EdgeWatch.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cerrno>
@@ -21,10 +22,6 @@ extern "C" [[noreturn]] void NotImplementedAt_nid_no_patch(const char* name, con
 }
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 struct Pair {
     explicit Pair(bool socket) {

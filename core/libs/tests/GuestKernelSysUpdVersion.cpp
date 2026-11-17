@@ -1,4 +1,5 @@
 #include "prx/libkernel/include/Api.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -11,12 +12,6 @@
 namespace {
 
 using GetUpdVersionFn = int (APS5_VABI*)(std::uint32_t*);
-
-void Require(bool condition, const char* what) {
-    if (condition) return;
-    std::fprintf(stderr, "%s\n", what);
-    std::abort();
-}
 
 GetUpdVersionFn Resolve() {
 #ifdef _WIN32

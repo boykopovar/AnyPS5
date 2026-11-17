@@ -1,4 +1,5 @@
 #include "prx/libSceCdlgUtilServer/libSceCdlgUtilServer.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cerrno>
@@ -8,10 +9,6 @@
 #include <stdexcept>
 
 namespace {
-
-void Require(bool value) {
-    if (!value) std::abort();
-}
 
 template <typename Callable>
 void RequireInvalidArgument(Callable&& callable) {

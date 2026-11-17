@@ -1,5 +1,6 @@
 #include "prx/libSceUrlConfigResolver/libSceUrlConfigResolver.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "Testing.hpp"
 
 #include <cerrno>
 #include <cstddef>
@@ -12,22 +13,8 @@ namespace {
 
 void ClobberErrno(std::uintptr_t, std::size_t) { errno = 99; }
 
-void Require(bool value) {
-    if (!value) std::abort();
-}
-
 constexpr int invalidArgument() {
     return static_cast<int>(0x80BA8080u);
-}
-
-template<typename TCall>
-void RequireInvalidArgument(TCall call) {
-    try {
-        call();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    std::abort();
 }
 
 void CheckAppConfigWithoutKey(std::size_t capacity, std::uint32_t size, std::uint32_t* lengthOut) {
@@ -71,7 +58,7 @@ int main() {
 
         length = 0xCAFEF00Du;
         errno = 71;
-        RequireInvalidArgument([&] {
+        ExpectErr<std::invalid_argument>([&] {
             sceUrlConfigResolverGetAppConfig(nullptr, 0, reinterpret_cast<void*>(0x10), 4, &length);
         });
         Require(errno == 71);
@@ -79,7 +66,7 @@ int main() {
 
         std::vector<unsigned char> buffer(16, 0x5A);
         errno = 71;
-        RequireInvalidArgument([&] {
+        ExpectErr<std::invalid_argument>([&] {
             sceUrlConfigResolverGetAppConfig(nullptr, 0, buffer.data(), 4, reinterpret_cast<std::uint32_t*>(0x10));
         });
         Require(errno == 71);

@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -13,8 +14,6 @@
 
 static constexpr int SCE_OK = 0;
 static constexpr int PS5_LOGICAL_CPUS = 16;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 struct RestoreProcessMask {
     KernelCpumask mask;
@@ -313,15 +312,7 @@ int main() {
     Require(cpuset_setaffinity_nid_postfix(99, 1, 999999, 8, processSet) == -1 && *__error_nid_postfix() == GUEST_EINVAL);
     Require(cpuset_setaffinity_nid_postfix(99, 2, 999999, 8, processSet) == -1 && *__error_nid_postfix() == GUEST_EINVAL);
     Require(cpuset_setaffinity_nid_postfix(3, 99, -1, 8, processSet) == -1 && *__error_nid_postfix() == GUEST_EINVAL);
-    const auto throws = [](auto&& call) {
-        try {
-            call();
-            return false;
-        } catch (const std::runtime_error&) {
-            return true;
-        }
-    };
-    Require(throws([&] { cpuset_getaffinity_nid_postfix(3, 4, -1, 8, processSet); }));
+    ExpectErr<std::runtime_error>([&] { cpuset_getaffinity_nid_postfix(3, 4, -1, 8, processSet); });
     std::uint64_t pinnedSelf[4] = {available & (~available + 1), 0, 0, 0};
     for (const std::size_t size : {std::size_t{17}, std::size_t{23}}) Require(cpuset_setaffinity_nid_postfix(3, 1, -1, size, pinnedSelf) == -1 && *__error_nid_postfix() == GUEST_ERANGE);
     Require(cpuset_setaffinity_nid_postfix(3, 1, -1, 8, pinnedSelf) == 0);
@@ -373,10 +364,10 @@ int main() {
     Require(cpuset_getaffinity_nid_postfix(3, 8, -1, 8, base) == -1 && *__error_nid_postfix() == GUEST_EINVAL);
     pinnedSelf[0] = available;
     Require(cpuset_setaffinity_nid_postfix(3, 1, -1, 8, pinnedSelf) == 0);
-    Require(throws([&] { cpuset_setaffinity_nid_postfix(1, 1, -1, 8, processSet); }));
-    Require(throws([&] { cpuset_setaffinity_nid_postfix(2, 1, -1, 8, processSet); }));
-    Require(throws([&] { cpuset_setaffinity_nid_postfix(3, 3, -1, 8, processSet); }));
-    Require(throws([&] { cpuset_setaffinity_nid_postfix(3, 4, -1, 8, processSet); }));
+    ExpectErr<std::runtime_error>([&] { cpuset_setaffinity_nid_postfix(1, 1, -1, 8, processSet); });
+    ExpectErr<std::runtime_error>([&] { cpuset_setaffinity_nid_postfix(2, 1, -1, 8, processSet); });
+    ExpectErr<std::runtime_error>([&] { cpuset_setaffinity_nid_postfix(3, 3, -1, 8, processSet); });
+    ExpectErr<std::runtime_error>([&] { cpuset_setaffinity_nid_postfix(3, 4, -1, 8, processSet); });
     for (const int level : {1, 2}) {
         for (const int which : {4, 6, 7, 8, 99}) {
             *__error_nid_postfix() = 0;

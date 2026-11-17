@@ -1,5 +1,6 @@
 #include "prx/libSceScreenShot/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cerrno>
@@ -20,12 +21,6 @@ using GetAppInfoFn = int (APS5_VABI*)(int, void*);
 using IsVshDisabledFn = int (APS5_VABI*)(int*);
 using GetDrcParamFn = int (APS5_VABI*)(int, void*, std::uint64_t, void*, void*, std::uint64_t, void*);
 using BlockFn = int (APS5_VABI*)(const void*);
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "ScreenShot checks: %s\n", message);
-    std::abort();
-}
 
 template <typename Function, typename Export>
 Function As(Export function) {

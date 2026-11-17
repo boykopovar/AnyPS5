@@ -1,12 +1,11 @@
 #include "prx/libc/include/General.hpp"
+#include "Testing.hpp"
 
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <fstream>
 #include <string>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static std::string Under(const std::filesystem::path& directory, const std::string& names) {
     auto text = directory.string();

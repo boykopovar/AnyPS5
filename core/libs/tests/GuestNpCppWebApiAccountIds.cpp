@@ -1,4 +1,5 @@
 #include "prx/libSceNpCppWebApi/include/Api.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -31,10 +32,6 @@ constexpr ReferenceProbe References[]{
     {"activities", _ZNK3sce2Np9CppWebApi10Activities2V114UserActivities14UserActivities12getAccountIdEv},
     {"storage-owner", _ZNK3sce2Np9CppWebApi17TitleCloudStorage2V15Owner12getAccountIdEv},
 };
-
-void Require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 void CheckValue(const ValueProbe& probe) {
     alignas(8) std::array<std::uint8_t, 0x40> model{};

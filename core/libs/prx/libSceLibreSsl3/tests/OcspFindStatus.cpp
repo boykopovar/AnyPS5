@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl3/include/Api.hpp"
+#include "Testing.hpp"
 
 #include <cerrno>
 #include <cstddef>
@@ -22,17 +23,6 @@
 #endif
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "OCSP find status check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> void RequireNotImplemented(TAction action, std::source_location location = std::source_location::current()) {
-    try { action(); } catch (const std::runtime_error&) { return; }
-    Require(false, location);
-}
 
 class ReadOnlyPage {
 public:
@@ -204,42 +194,42 @@ void TestGuestPointers() {
     ReadOnlyPage roPtr(&rev, sizeof(rev));
 
     errno = 73;
-    RequireNotImplemented([&] {
+    ExpectErr<std::runtime_error>([&] {
         OCSP_resp_find_status_nid_postfix(reinterpret_cast<LibreSslOcspBasicResponse*>(0x10), &f.query, &status, &reason, &rev, &now, &after);
     });
     Require(errno == 73 && status == 88 && reason == 99 && rev == &f.sentinel && now == &f.sentinel && after == &f.sentinel);
 
     LibreSslOcspBasicResponse badTbsBs {reinterpret_cast<LibreSslOcspResponseData*>(0x10), nullptr, nullptr, nullptr};
     errno = 73;
-    RequireNotImplemented([&] {
+    ExpectErr<std::runtime_error>([&] {
         OCSP_resp_find_status_nid_postfix(&badTbsBs, &f.query, &status, &reason, &rev, &now, &after);
     });
     Require(errno == 73);
 
     errno = 73;
-    RequireNotImplemented([&] {
+    ExpectErr<std::runtime_error>([&] {
         OCSP_resp_find_status_nid_postfix(&f.response, reinterpret_cast<OCSP_CERTID*>(0x10), &status, &reason, &rev, &now, &after);
     });
     Require(errno == 73);
 
     errno = 73;
-    RequireNotImplemented([&] { f.Find(&status, &reason, roPtr.As<Asn1String*>(), &now, &after); });
+    ExpectErr<std::runtime_error>([&] { f.Find(&status, &reason, roPtr.As<Asn1String*>(), &now, &after); });
     Require(errno == 73 && status == 88 && reason == 99 && now == &f.sentinel && after == &f.sentinel);
 
     errno = 73;
-    RequireNotImplemented([&] { f.Find(&status, roInt.As<int>(), &rev, &now, &after); });
+    ExpectErr<std::runtime_error>([&] { f.Find(&status, roInt.As<int>(), &rev, &now, &after); });
     Require(errno == 73 && status == 88 && rev == &f.sentinel && now == &f.sentinel && after == &f.sentinel);
 
     errno = 73;
-    RequireNotImplemented([&] { f.Find(&status, &reason, &rev, roPtr.As<Asn1String*>(), &after); });
+    ExpectErr<std::runtime_error>([&] { f.Find(&status, &reason, &rev, roPtr.As<Asn1String*>(), &after); });
     Require(errno == 73 && status == 88 && reason == 99 && rev == &f.sentinel && after == &f.sentinel);
 
     errno = 73;
-    RequireNotImplemented([&] { f.Find(&status, &reason, &rev, &now, roPtr.As<Asn1String*>()); });
+    ExpectErr<std::runtime_error>([&] { f.Find(&status, &reason, &rev, &now, roPtr.As<Asn1String*>()); });
     Require(errno == 73 && status == 88 && reason == 99 && rev == &f.sentinel && now == &f.sentinel);
 
     errno = 73;
-    RequireNotImplemented([&] { f.Find(roInt.As<int>(), &reason, &rev, &now, &after); });
+    ExpectErr<std::runtime_error>([&] { f.Find(roInt.As<int>(), &reason, &rev, &now, &after); });
     Require(errno == 73 && reason == 99 && rev == &f.sentinel && now == &f.sentinel && after == &f.sentinel);
 
     f.certStatus.type = 0;

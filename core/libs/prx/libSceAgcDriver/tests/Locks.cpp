@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
 #include "prx/libc/include/HostThreadSlot.hpp"
+#include "Testing.hpp"
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -15,14 +16,6 @@
 #include <vector>
 
 namespace {
-
-int failures = 0;
-
-void Check(bool condition, const char* what) {
-    if (condition) return;
-    std::fprintf(stderr, "FAIL: %s\n", what);
-    ++failures;
-}
 
 void MutexCounts(int threads, int iterations, int holdSpins) {
     AgcDriver::Mutex mutex;
@@ -40,23 +33,23 @@ void MutexCounts(int threads, int iterations, int holdSpins) {
         });
     }
     for (auto& worker : workers) worker.join();
-    Check(counter == static_cast<std::uint64_t>(threads) * static_cast<std::uint64_t>(iterations), "every increment under the mutex counted");
+    Expect(counter == static_cast<std::uint64_t>(threads) * static_cast<std::uint64_t>(iterations), "every increment under the mutex counted");
 }
 
 void MutexTryLock() {
     AgcDriver::Mutex mutex;
-    Check(mutex.try_lock(), "try_lock takes a free mutex");
+    Expect(mutex.try_lock(), "try_lock takes a free mutex");
     bool taken = true;
     std::thread other([&] { taken = mutex.try_lock(); });
     other.join();
-    Check(!taken, "try_lock fails while another thread holds the mutex");
+    Expect(!taken, "try_lock fails while another thread holds the mutex");
     mutex.unlock();
     std::thread again([&] {
         taken = mutex.try_lock();
         if (taken) mutex.unlock();
     });
     again.join();
-    Check(taken, "try_lock takes the mutex once released");
+    Expect(taken, "try_lock takes the mutex once released");
 }
 
 void MutexWakesSleeper() {
@@ -68,10 +61,10 @@ void MutexWakesSleeper() {
         acquired = true;
     });
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    Check(!acquired, "lock() waits while the mutex is held");
+    Expect(!acquired, "lock() waits while the mutex is held");
     mutex.unlock();
     waiter.join();
-    Check(acquired, "the waiting thread took the mutex after the release");
+    Expect(acquired, "the waiting thread took the mutex after the release");
 }
 
 void DeviceGate() {
@@ -109,24 +102,24 @@ void DeviceGate() {
     threads[7].join();
     stop = true;
     for (int t = 0; t < 6; ++t) threads[static_cast<std::size_t>(t)].join();
-    Check(!overlap, "no user inside the gate during a replacement, one replacement at a time");
-    Check(uses.load() != 0, "users got through between replacements");
+    Expect(!overlap, "no user inside the gate during a replacement, one replacement at a time");
+    Expect(uses.load() != 0, "users got through between replacements");
 }
 
 void GpuMutexRecursion() {
     auto& mutex = AgcDriver::GuestMemory::GpuMutex();
-    Check(!mutex.HeldByThisThread(), "the GPU mutex starts free");
+    Expect(!mutex.HeldByThisThread(), "the GPU mutex starts free");
     mutex.lock();
     mutex.lock();
-    Check(mutex.HeldByThisThread() && mutex.DepthOnThisThread() == 2, "a nested lock counts the depth");
+    Expect(mutex.HeldByThisThread() && mutex.DepthOnThisThread() == 2, "a nested lock counts the depth");
     bool taken = true;
     std::thread other([&] {
         taken = mutex.try_lock();
         if (taken) mutex.unlock();
     });
     other.join();
-    Check(!taken, "another thread cannot take the held GPU mutex");
-    Check(mutex.try_lock() && mutex.DepthOnThisThread() == 3, "the holder's try_lock nests");
+    Expect(!taken, "another thread cannot take the held GPU mutex");
+    Expect(mutex.try_lock() && mutex.DepthOnThisThread() == 3, "the holder's try_lock nests");
     mutex.unlock();
     mutex.unlock();
     other = std::thread([&] {
@@ -134,9 +127,9 @@ void GpuMutexRecursion() {
         if (taken) mutex.unlock();
     });
     other.join();
-    Check(!taken, "the GPU mutex stays held until the outermost unlock");
+    Expect(!taken, "the GPU mutex stays held until the outermost unlock");
     mutex.unlock();
-    Check(!mutex.HeldByThisThread() && mutex.DepthOnThisThread() == 0, "the outermost unlock releases the GPU mutex");
+    Expect(!mutex.HeldByThisThread() && mutex.DepthOnThisThread() == 0, "the outermost unlock releases the GPU mutex");
     std::uint64_t counter = 0;
     std::vector<std::thread> workers;
     for (int t = 0; t < 4; ++t) {
@@ -149,7 +142,7 @@ void GpuMutexRecursion() {
         });
     }
     for (auto& worker : workers) worker.join();
-    Check(counter == 80000, "every nested increment under the GPU mutex counted");
+    Expect(counter == 80000, "every nested increment under the GPU mutex counted");
 }
 
 template<typename TTag>
@@ -165,7 +158,7 @@ void SlotIsolation(const char* what) {
     other.join();
     ok = ok && seen == 0 && Slot::Get() == 0x1234567890abcdefull;
     Slot::Set(0);
-    Check(ok, what);
+    Expect(ok, what);
 }
 
 struct DirectSlot {};
@@ -176,7 +169,7 @@ void ThreadSlots() {
     SlotIsolation<DirectSlot>("a thread slot starts at zero on every thread and keeps its own value");
     int object = 0;
     HostThreadSlot<int*, PointerSlot>::Set(&object);
-    Check(HostThreadSlot<int*, PointerSlot>::Get() == &object, "a pointer round-trips through a thread slot");
+    Expect(HostThreadSlot<int*, PointerSlot>::Get() == &object, "a pointer round-trips through a thread slot");
 #ifdef _WIN32
     std::vector<DWORD> held;
     for (DWORD index = TlsAlloc(); index != TLS_OUT_OF_INDEXES; index = TlsAlloc()) {
@@ -193,13 +186,13 @@ void ThreadSlots() {
         freshSite = AgcDriver::GuestMemory::CurrentReadSite();
     });
     other.join();
-    Check(fresh.opcode == AgcDriver::GuestMemory::NoPacket && fresh.queue == 0xffffffffu, "a thread that ran no packet reads NoPacket");
-    Check(freshSite == AgcDriver::GuestMemory::ReadSite::Unknown, "a thread that named no read site reads Unknown");
+    Expect(fresh.opcode == AgcDriver::GuestMemory::NoPacket && fresh.queue == 0xffffffffu, "a thread that ran no packet reads NoPacket");
+    Expect(freshSite == AgcDriver::GuestMemory::ReadSite::Unknown, "a thread that named no read site reads Unknown");
     AgcDriver::GuestMemory::SetCurrentPacket(0xffffu, 0x2au);
     const auto packet = AgcDriver::GuestMemory::CurrentPacket();
-    Check(packet.opcode == 0xffffu && packet.queue == 0x2au, "the packet tag reads back what was set");
+    Expect(packet.opcode == 0xffffu && packet.queue == 0x2au, "the packet tag reads back what was set");
     const auto previous = AgcDriver::GuestMemory::SetReadSite(AgcDriver::GuestMemory::ReadSite::Scanout);
-    Check(previous == AgcDriver::GuestMemory::ReadSite::Unknown && AgcDriver::GuestMemory::CurrentReadSite() == AgcDriver::GuestMemory::ReadSite::Scanout, "SetReadSite returns the previous site and sets the new one");
+    Expect(previous == AgcDriver::GuestMemory::ReadSite::Unknown && AgcDriver::GuestMemory::CurrentReadSite() == AgcDriver::GuestMemory::ReadSite::Scanout, "SetReadSite returns the previous site and sets the new one");
     AgcDriver::GuestMemory::SetReadSite(previous);
 }
 
@@ -213,8 +206,8 @@ int main() {
     DeviceGate();
     GpuMutexRecursion();
     ThreadSlots();
-    if (failures != 0) {
-        std::fprintf(stderr, "%d lock check(s) failed\n", failures);
+    if (Failures() != 0) {
+        std::fprintf(stderr, "%u lock check(s) failed\n", Failures());
         return 1;
     }
     std::printf("lock tests passed\n");

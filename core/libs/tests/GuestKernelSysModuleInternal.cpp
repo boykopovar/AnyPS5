@@ -2,6 +2,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -10,8 +11,6 @@
 #include <set>
 #include <string>
 #include <vector>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static std::vector<KernelModule> List(int (APS5_VABI* list)(KernelModule*, std::size_t, std::size_t*)) {
     std::vector<KernelModule> handles(256, -1);

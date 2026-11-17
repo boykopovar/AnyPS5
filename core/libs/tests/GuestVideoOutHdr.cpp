@@ -10,6 +10,7 @@
 #include "prx/libSceAgcDriver/Execution/include/HostHdr.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
 #include "tests/VideoOutTestEnvironment.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -28,12 +29,6 @@ namespace {
 constexpr int SystemUser = 255;
 constexpr int MainBus = 0;
 constexpr int OutputModeEvent = 8;
-
-void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "FAIL: %s\n", what);
-    std::abort();
-}
 
 VideoOutOutputStatus Status(int handle) {
     VideoOutOutputStatus status{};

@@ -4,6 +4,7 @@
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "SceTypes.hpp"
 #include "prx/libkernel/Pthread/include/Atfork.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -12,8 +13,6 @@
 
 static constexpr int SCOPE_PROCESS = 0;
 static constexpr int SCOPE_SYSTEM = 2;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static void APS5_VABI Prepare() {}
 static void APS5_VABI Parent() {}

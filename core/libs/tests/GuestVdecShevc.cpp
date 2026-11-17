@@ -1,5 +1,6 @@
 #include "prx/libSceVdecShevc/libSceVdecShevc.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cerrno>
@@ -13,10 +14,6 @@ namespace {
 using HandleCall = decltype(&sceSdecExecuteSwHevc);
 
 void ClobberErrno(std::uintptr_t, std::size_t) { errno = 99; }
-
-void Require(bool value) {
-    if (!value) std::abort();
-}
 
 std::array<unsigned char, 0x40> Block() {
     std::array<unsigned char, 0x40> block{};

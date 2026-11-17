@@ -1,6 +1,7 @@
 #include "prx/libSceJxr/include/Api.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libkernel/libkernel.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -38,22 +39,6 @@ constexpr std::size_t Channels = 16;
 constexpr std::int32_t Thresholds[] = {0, 1, 4, 100};
 constexpr std::int32_t Zeros[] = {0, 90, 100};
 constexpr std::size_t PixelOrigin = 256;
-
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "JXR post-processing: %s\n", message);
-    std::abort();
-}
-
-template<typename TAction>
-void RequireInvalidArgument(TAction action, const char* message) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, message);
-}
 
 struct Pair {
     void* guest;
@@ -94,16 +79,16 @@ void TestSlide() {
                     }
                 }
     Pair pair(seed, 0, false, false);
-    RequireInvalidArgument([&] { slideOneMBRow_nid_postfix(nullptr, 1, 1, 1, 1); }, "null table");
-    RequireInvalidArgument([&] { slideOneMBRow_nid_postfix(pair.Table(), Channels + 1, 1, 0, 0); }, "17 channels");
-    RequireInvalidArgument([&] { slideOneMBRow_nid_postfix(pair.Table(), 1, std::numeric_limits<std::size_t>::max(), 1, 0); },
+    ExpectErr<std::invalid_argument>([&] { slideOneMBRow_nid_postfix(nullptr, 1, 1, 1, 1); }, "null table");
+    ExpectErr<std::invalid_argument>([&] { slideOneMBRow_nid_postfix(pair.Table(), Channels + 1, 1, 0, 0); }, "17 channels");
+    ExpectErr<std::invalid_argument>([&] { slideOneMBRow_nid_postfix(pair.Table(), 1, std::numeric_limits<std::size_t>::max(), 1, 0); },
                            "row width overflow");
     pair.SetRow(2, 1, nullptr);
-    RequireInvalidArgument([&] { slideOneMBRow_nid_postfix(pair.Table(), 3, 1, 1, 0); }, "null row under a top slide");
+    ExpectErr<std::invalid_argument>([&] { slideOneMBRow_nid_postfix(pair.Table(), 3, 1, 1, 0); }, "null row under a top slide");
     slideOneMBRow_nid_postfix(pair.Table(), 3, 1, 0, 1);
     JxrPostReferenceSlide_nid_no_patch(pair.native, 3, 1, 0, 1);
     Require(pair.Same(), "a bottom slide leaves the old current row unread");
-    RequireInvalidArgument([&] { slideOneMBRow_nid_postfix(pair.Table(), 3, 1, 0, 1); }, "null row under a bottom slide");
+    ExpectErr<std::invalid_argument>([&] { slideOneMBRow_nid_postfix(pair.Table(), 3, 1, 0, 1); }, "null row under a bottom slide");
     slideOneMBRow_nid_postfix(pair.Table(), 3, 0, 1, 1);
     JxrPostReferenceSlide_nid_no_patch(pair.native, 3, 0, 1, 1);
     Require(pair.Same(), "a zero-width slide only swaps rows");
@@ -120,15 +105,15 @@ void TestUpdate() {
                 Require(pair.Same(), "updatePostProcInfo differs from jxrlib");
             }
     Pair pair(seed, 0, false, false);
-    RequireInvalidArgument([&] { updatePostProcInfo_nid_postfix(nullptr, pair.Current(), 0, 0); }, "null table");
-    RequireInvalidArgument([&] { updatePostProcInfo_nid_postfix(pair.Table(), pair.Current(), 0, Channels); },
+    ExpectErr<std::invalid_argument>([&] { updatePostProcInfo_nid_postfix(nullptr, pair.Current(), 0, 0); }, "null table");
+    ExpectErr<std::invalid_argument>([&] { updatePostProcInfo_nid_postfix(pair.Table(), pair.Current(), 0, Channels); },
                            "channel 16");
-    RequireInvalidArgument([&] { updatePostProcInfo_nid_postfix(pair.Table(), nullptr, 0, 0); }, "null macroblock");
-    RequireInvalidArgument(
+    ExpectErr<std::invalid_argument>([&] { updatePostProcInfo_nid_postfix(pair.Table(), nullptr, 0, 0); }, "null macroblock");
+    ExpectErr<std::invalid_argument>(
         [&] { updatePostProcInfo_nid_postfix(pair.Table(), pair.Current(), std::numeric_limits<std::size_t>::max(), 0); },
         "column overflow");
     pair.SetRow(4, 1, nullptr);
-    RequireInvalidArgument([&] { updatePostProcInfo_nid_postfix(pair.Table(), pair.Current(), 0, 4); }, "null row");
+    ExpectErr<std::invalid_argument>([&] { updatePostProcInfo_nid_postfix(pair.Table(), pair.Current(), 0, 4); }, "null row");
     Require(pair.Same(), "rejected updates leave the state unchanged");
 }
 
@@ -152,17 +137,17 @@ void TestNeighbours(TGuest guest, TReference reference, std::uint32_t seed, cons
             Require(pair.Same(), message);
         }
     Pair pair(seed, 0, false, true);
-    RequireInvalidArgument([&] { guest(nullptr, pair.Previous(), pair.Current(), 1, 0, 4); }, "null table");
-    RequireInvalidArgument([&] { guest(pair.Table(), pair.Previous(), pair.Current(), 1, Channels, 4); }, "channel 16");
-    RequireInvalidArgument([&] { guest(pair.Table(), nullptr, pair.Current(), 1, 0, 4); }, "null previous row");
-    RequireInvalidArgument([&] { guest(pair.Table(), pair.Previous(), nullptr, 1, 0, 4); }, "null current row");
-    RequireInvalidArgument(
+    ExpectErr<std::invalid_argument>([&] { guest(nullptr, pair.Previous(), pair.Current(), 1, 0, 4); }, "null table");
+    ExpectErr<std::invalid_argument>([&] { guest(pair.Table(), pair.Previous(), pair.Current(), 1, Channels, 4); }, "channel 16");
+    ExpectErr<std::invalid_argument>([&] { guest(pair.Table(), nullptr, pair.Current(), 1, 0, 4); }, "null previous row");
+    ExpectErr<std::invalid_argument>([&] { guest(pair.Table(), pair.Previous(), nullptr, 1, 0, 4); }, "null current row");
+    ExpectErr<std::invalid_argument>(
         [&] { guest(pair.Table(), pair.Previous(), pair.Current(), std::numeric_limits<std::size_t>::max(), 0, 4); },
         "column overflow");
     pair.SetRow(1, 0, nullptr);
     pair.SetRow(2, 1, nullptr);
-    RequireInvalidArgument([&] { guest(pair.Table(), pair.Previous(), pair.Current(), 1, 1, 4); }, "null previous info");
-    RequireInvalidArgument([&] { guest(pair.Table(), pair.Previous(), pair.Current(), 1, 2, 4); }, "null current info");
+    ExpectErr<std::invalid_argument>([&] { guest(pair.Table(), pair.Previous(), pair.Current(), 1, 1, 4); }, "null previous info");
+    ExpectErr<std::invalid_argument>([&] { guest(pair.Table(), pair.Previous(), pair.Current(), 1, 2, 4); }, "null current info");
     Require(pair.Same(), "rejected calls leave the state unchanged");
 }
 
@@ -205,7 +190,7 @@ public:
     template<typename TAction>
     void Reject(TAction action, const char* message) const {
         const std::vector<unsigned char> before(At(0), At(Pages));
-        RequireInvalidArgument(action, message);
+        ExpectErr<std::invalid_argument>(action, message);
         Require(std::memcmp(At(0), before.data(), before.size()) == 0, message);
     }
 

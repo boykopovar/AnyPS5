@@ -1,4 +1,5 @@
 #include "../../tools/OracleDispatch.hpp"
+#include "Testing.hpp"
 #include "VulkanTestDevice.hpp"
 #include <array>
 #include <cstdint>
@@ -38,10 +39,6 @@ constexpr std::array<Row, 6> Rows{{
     {0x7bff, 0x3c00, 0x7bff, false},
     {0x7bff, 0x7bff, 0x7c00, false},
 }};
-
-void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 void Rejects(const std::string& label, AgcDriver::VulkanDevice& device, const OracleKernel& kernel, std::uint32_t threads, std::span<const std::byte> input) {
     try {

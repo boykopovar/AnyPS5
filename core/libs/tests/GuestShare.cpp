@@ -1,6 +1,7 @@
 #include "prx/libSceShare/include/Api.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -12,8 +13,6 @@
 namespace {
 
 void ClobberErrno(std::uintptr_t, std::size_t) { errno = 99; }
-
-void Require(bool value) { if (!value) std::abort(); }
 
 }
 

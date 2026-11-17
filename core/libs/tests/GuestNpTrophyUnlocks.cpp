@@ -2,6 +2,7 @@
 #include "prx/libSceNpTrophy2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNpTrophy2/include/NpTrophy2Types.hpp"
+#include "Testing.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -15,12 +16,6 @@ struct NpUniversalDataSystemEvent;
 struct NpUniversalDataSystemEventPropertyObject;
 
 static constexpr int InitialUser = 0x10000000;
-
-static void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
 
 static std::string Read(const char* path) {
     std::string text;

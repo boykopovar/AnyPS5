@@ -1,6 +1,7 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cmath>
@@ -26,21 +27,6 @@ void* APS5_VABI TestRealign(void* pointer, std::size_t size, std::size_t) { retu
 int APS5_VABI TestPosixAlign(void** pointer, std::size_t, std::size_t size) {
     *pointer = std::malloc(size);
     return *pointer ? 0 : 12;
-}
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc AudioBuffer check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> void RequireInvalidArgument(TAction action, std::source_location location = std::source_location::current()) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, location);
 }
 
 using Destructor = void (APS5_VABI*)(WebRtcAudioBuffer*);
@@ -203,17 +189,17 @@ void TestDeletingDestructorFreesTheObject() {
 
 void TestRejectsUpstreamPreconditions() {
     WebRtcAudioBuffer object{};
-    RequireInvalidArgument([&] { _ZN6webrtc11AudioBufferC1Emmmmmm_nid_postfix(nullptr, 16000, 1, 16000, 1, 16000, 1); });
-    RequireInvalidArgument([&] { _ZN6webrtc11AudioBufferC1Emmmmmm_nid_postfix(&object, 0, 1, 16000, 1, 16000, 1); });
-    RequireInvalidArgument([&] { _ZN6webrtc11AudioBufferC1Emmmmmm_nid_postfix(&object, 16000, 0, 16000, 1, 16000, 1); });
-    RequireInvalidArgument([&] { _ZN6webrtc11AudioBufferC1Emmmmmm_nid_postfix(&object, 16000, 1, 16000, 2, 16000, 2); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc11AudioBufferC1Emmmmmm_nid_postfix(nullptr, 16000, 1, 16000, 1, 16000, 1); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc11AudioBufferC1Emmmmmm_nid_postfix(&object, 0, 1, 16000, 1, 16000, 1); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc11AudioBufferC1Emmmmmm_nid_postfix(&object, 16000, 0, 16000, 1, 16000, 1); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc11AudioBufferC1Emmmmmm_nid_postfix(&object, 16000, 1, 16000, 2, 16000, 2); });
     Buffer buffer(16000, 2, 16000, 2, 16000, 2);
     std::vector<std::int16_t> samples(320);
     const auto wrongChannels = Config(16000, 1);
     const auto wrongRate = Config(8000, 2);
-    RequireInvalidArgument([&] { _ZN6webrtc11AudioBuffer8CopyFromEPKsRKNS_12StreamConfigE_nid_postfix(&buffer.object, samples.data(), &wrongChannels); });
-    RequireInvalidArgument([&] { _ZN6webrtc11AudioBuffer8CopyFromEPKsRKNS_12StreamConfigE_nid_postfix(&buffer.object, samples.data(), &wrongRate); });
-    RequireInvalidArgument([&] { _ZN6webrtc11AudioBuffer6CopyToERKNS_12StreamConfigEPs_nid_postfix(&buffer.object, &wrongChannels, samples.data()); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc11AudioBuffer8CopyFromEPKsRKNS_12StreamConfigE_nid_postfix(&buffer.object, samples.data(), &wrongChannels); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc11AudioBuffer8CopyFromEPKsRKNS_12StreamConfigE_nid_postfix(&buffer.object, samples.data(), &wrongRate); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc11AudioBuffer6CopyToERKNS_12StreamConfigEPs_nid_postfix(&buffer.object, &wrongChannels, samples.data()); });
 }
 
 }

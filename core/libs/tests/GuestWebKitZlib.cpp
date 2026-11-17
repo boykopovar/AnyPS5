@@ -1,4 +1,5 @@
 #include "prx/libSceNKWebKitRequirements/libSceNKWebKitRequirements.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
@@ -22,12 +23,6 @@ constexpr int Z_NO_FLUSH = 0;
 constexpr int Z_FINISH = 4;
 constexpr int Z_DEFLATED = 8;
 constexpr int STREAM_SIZE = static_cast<int>(sizeof(GuestZStream));
-
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "WebKit zlib assertion failed: %s\n", message);
-    std::abort();
-}
 
 struct Allocations {
     int allocated;

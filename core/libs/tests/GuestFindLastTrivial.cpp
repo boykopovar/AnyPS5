@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -13,13 +14,6 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
-
-static void Check(bool condition, int line) {
-    if (condition) return;
-    std::fprintf(stderr, "find-last check failed at line %d\n", line);
-    std::abort();
-}
-#define Require(condition) Check((condition), __LINE__)
 
 class GuardedPage {
     unsigned char* allocation;

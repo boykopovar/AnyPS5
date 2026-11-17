@@ -2,6 +2,7 @@
 #include "prx/libSceAudioOut/include/AudioOut.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -11,12 +12,6 @@
 #include <cstdlib>
 #include <thread>
 #include <vector>
-
-static void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
 
 namespace {
 

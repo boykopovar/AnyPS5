@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include "TestProgress.hpp"
 #include <relinker/analysis/SyscallScanner.hpp>
 #include <codegen/CodegenException.hpp>
@@ -16,10 +17,6 @@ using Bytes = std::vector<std::uint8_t>;
 constexpr std::size_t DataOffset = 6;
 constexpr std::size_t RoutineOffset = 14;
 constexpr std::array<std::uint8_t, 8> UndecodableData{0x0f, 0x78, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55};
-
-void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 Bytes Fixture(bool syscall) {
     constexpr std::array<std::uint8_t, DataOffset> entry{0xe8, 0x09, 0x00, 0x00, 0x00, 0xc3};

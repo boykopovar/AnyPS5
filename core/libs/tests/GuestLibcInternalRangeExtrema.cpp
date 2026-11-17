@@ -1,4 +1,5 @@
 #include "prx/libSceLibcInternal/include/VectorAlgorithms.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <bit>
 #include <cstdint>
@@ -23,12 +24,6 @@
 #endif
 
 namespace {
-
-void Require(bool value, std::source_location location = std::source_location::current()) {
-    if (value) return;
-    std::fprintf(stderr, "native range extrema: assertion at line %u\n", location.line());
-    std::abort();
-}
 
 template<typename TValue>
 struct Api;

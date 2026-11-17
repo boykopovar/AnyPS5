@@ -1,5 +1,6 @@
 #include "prx/libSceFreeTypeOt/libSceFreeTypeOt.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
+#include "Testing.hpp"
 
 #include FT_STROKER_H
 
@@ -12,12 +13,6 @@
 using namespace FreeType;
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "FreeTypeOt stroker export: %s\n", message);
-    std::exit(1);
-}
 
 constexpr bool SharedPoints = sizeof(FT_Pos) == sizeof(std::int64_t);
 

@@ -1,5 +1,6 @@
 #include "FontFixture.hpp"
 #include "prx/libSceFreeType/libSceFreeType.hpp"
+#include "Testing.hpp"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -14,14 +15,6 @@
 #include <vector>
 
 using namespace FreeType;
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "FreeType variant check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static void Put32(std::vector<unsigned char>& bytes, std::uint32_t value) {
     FontFixture::Put16(bytes, static_cast<int>(value >> 16));

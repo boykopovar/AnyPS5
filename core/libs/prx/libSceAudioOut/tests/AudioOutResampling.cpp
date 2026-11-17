@@ -1,6 +1,7 @@
 #include "prx/libSceAudioOut/include/AudioOut.hpp"
 #include "SDL.h"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <cmath>
 #include <cstdint>
@@ -14,12 +15,6 @@ constexpr std::uint32_t grain = 256;
 constexpr int hostRate = 48000;
 SDL_AudioStream* conversion = nullptr;
 std::vector<float> played;
-
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
 
 void Collect() {
     const int bytes = SDL_AudioStreamAvailable(conversion);

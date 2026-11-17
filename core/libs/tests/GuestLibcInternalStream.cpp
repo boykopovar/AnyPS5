@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "tests/TemporaryFile.hpp"
+#include "Testing.hpp"
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -12,14 +13,6 @@
 #include <fstream>
 #include <iterator>
 #include <string>
-
-static void Check(bool condition, int line) {
-    if (!condition) {
-        std::fprintf(stderr, "guest libc internal stream check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 int main() {
     Require(__fflush_nid_postfix(nullptr) == 0);

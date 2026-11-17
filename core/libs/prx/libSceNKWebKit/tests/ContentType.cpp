@@ -1,5 +1,6 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 #include "prx/libSceNKWebKit/src/WtfStringAbi.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -12,15 +13,6 @@ namespace {
 
 using NKWebKit::WebCoreAbi::ContentType;
 using NKWebKit::WtfAbi::String;
-
-void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "ContentType check failed at line %d\n", line);
-        std::abort();
-    }
-}
-
-#define Require(value) Check((value), __LINE__)
 
 String Make(const char* text) {
     return _ZN3WTF10StringImpl6createEPKhj(reinterpret_cast<const unsigned char*>(text), static_cast<unsigned>(std::strlen(text)));
@@ -54,17 +46,6 @@ std::string Container(const char* type) {
     ContentType contentType = Construct(type);
     String result = _ZNK7WebCore11ContentType13containerTypeEv(&contentType);
     return Text(result);
-}
-
-template<typename Function>
-void RequireThrows(Function function) {
-    bool threw = false;
-    try {
-        function();
-    } catch (const std::invalid_argument&) {
-        threw = true;
-    }
-    Require(threw);
 }
 
 void TestCodecsParameter() {
@@ -103,10 +84,10 @@ void TestConstructors() {
     }
     Require(impl->refCount == before);
 
-    RequireThrows([] { String s = Make("a"); _ZN7WebCore11ContentTypeC1ERKN3WTF6StringE(nullptr, &s); });
-    RequireThrows([] { ContentType c; _ZN7WebCore11ContentTypeC1ERKN3WTF6StringE(&c, nullptr); });
-    RequireThrows([] { String s = Make("a"); _ZN7WebCore11ContentTypeC1EON3WTF6StringE(nullptr, &s); });
-    RequireThrows([] { ContentType c; _ZN7WebCore11ContentTypeC1EON3WTF6StringE(&c, nullptr); });
+    ExpectErr<std::invalid_argument>([] { String s = Make("a"); _ZN7WebCore11ContentTypeC1ERKN3WTF6StringE(nullptr, &s); });
+    ExpectErr<std::invalid_argument>([] { ContentType c; _ZN7WebCore11ContentTypeC1ERKN3WTF6StringE(&c, nullptr); });
+    ExpectErr<std::invalid_argument>([] { String s = Make("a"); _ZN7WebCore11ContentTypeC1EON3WTF6StringE(nullptr, &s); });
+    ExpectErr<std::invalid_argument>([] { ContentType c; _ZN7WebCore11ContentTypeC1EON3WTF6StringE(&c, nullptr); });
 }
 
 void TestContainerType() {
@@ -122,7 +103,7 @@ void TestContainerType() {
     ContentType none;
     String result = _ZNK7WebCore11ContentType13containerTypeEv(&none);
     Require(result.impl == nullptr);
-    RequireThrows([] { String r = _ZNK7WebCore11ContentType13containerTypeEv(nullptr); });
+    ExpectErr<std::invalid_argument>([] { String r = _ZNK7WebCore11ContentType13containerTypeEv(nullptr); });
 
     const char16_t wide[] = u"audio/éx ; q=1";
     ContentType type;
@@ -180,8 +161,8 @@ void TestParameterAbsent() {
     String nullResult = _ZNK7WebCore11ContentType9parameterERKN3WTF6StringE(&contentType, &nullName);
     Require(nullResult.impl == nullptr);
 
-    RequireThrows([&] { String r = _ZNK7WebCore11ContentType9parameterERKN3WTF6StringE(nullptr, &name); });
-    RequireThrows([&] { String r = _ZNK7WebCore11ContentType9parameterERKN3WTF6StringE(&contentType, nullptr); });
+    ExpectErr<std::invalid_argument>([&] { String r = _ZNK7WebCore11ContentType9parameterERKN3WTF6StringE(nullptr, &name); });
+    ExpectErr<std::invalid_argument>([&] { String r = _ZNK7WebCore11ContentType9parameterERKN3WTF6StringE(&contentType, nullptr); });
 }
 
 void TestParameterEmptyName() {

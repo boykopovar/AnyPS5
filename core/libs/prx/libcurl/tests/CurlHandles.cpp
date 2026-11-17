@@ -1,12 +1,9 @@
 #include "prx/libcurl/src/CurlHost.hpp"
 #include "prx/libcurl/libcurl.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstdlib>
-
-static void Require(bool condition) {
-    if (!condition) std::abort();
-}
 
 static int callbackCount;
 

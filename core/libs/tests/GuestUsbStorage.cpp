@@ -2,6 +2,7 @@
 #include <cerrno>
 #include "prx/libSceUsbStorage/include/HostVolumes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "Testing.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -34,13 +35,6 @@ void APS5_VABI CallbackStub(const UsbStorageEvent*, void*) {}
 
 UsbStorageCallback Callback() {
     return &CallbackStub;
-}
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "USBSTORAGE: %s\n", message);
-        std::abort();
-    }
 }
 
 template <typename TCall>

@@ -1,6 +1,7 @@
 #include "FreeTypeFontFixture.hpp"
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -36,13 +37,6 @@ struct Api {
     int (APS5_VABI *newMemoryFace)(GuestLibrary*, const unsigned char*, std::int64_t, std::int64_t, FreeType::GuestFaceRec**);
     int (APS5_VABI *doneFace)(FreeType::GuestFaceRec*);
 };
-
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "Module property check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 template <typename TValue>
 static auto NativePointer(TValue& value) {

@@ -1,4 +1,5 @@
 #include "prx/libSceS3da/include/Api.hpp"
+#include "Testing.hpp"
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -14,12 +15,6 @@ extern "C" [[noreturn]] void NotImplemented_nid_no_patch(const char* name) {
 #endif
 
 namespace {
-
-void Require(bool value) {
-    if (!value) {
-        std::abort();
-    }
-}
 
 constexpr int ERROR_INVALID_ARGUMENT = static_cast<int>(0x81600002u);
 constexpr int ERROR_ALREADY_OPEN = static_cast<int>(0x81600006u);

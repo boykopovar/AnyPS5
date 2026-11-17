@@ -22,85 +22,78 @@
 #include <thread>
 #include <vector>
 #include "tests/AioTest.hpp"
-
-static void Require(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "Aio check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Check(value) Require((value), __LINE__)
+#include "Testing.hpp"
 
 static void DeleteAio(std::int32_t id) {
     std::int32_t removed = -1;
-    Check(sceKernelAioDeleteRequest(id, &removed) == 0 && removed == 0);
+    Require(sceKernelAioDeleteRequest(id, &removed) == 0 && removed == 0);
 }
 
 static std::int32_t SubmitEmptyAio() {
     KernelAioResult result{-1, 0};
     KernelAioRwRequest request{0, 0, nullptr, &result, -1};
     std::int32_t id = 0;
-    Check(sceKernelAioSubmitReadCommands(&request, 1, 1, &id) == 0);
-    Check(result.state == 3 && result.return_value == SCE_KERNEL_ERROR_EBADF);
+    Require(sceKernelAioSubmitReadCommands(&request, 1, 1, &id) == 0);
+    Require(result.state == 3 && result.return_value == SCE_KERNEL_ERROR_EBADF);
     return id;
 }
 
 static void CheckAioIdentity() {
     const auto retained = SubmitEmptyAio();
     std::int32_t state = 0;
-    Check(sceKernelAioPollRequest(retained, &state) == 0 && state == 3);
+    Require(sceKernelAioPollRequest(retained, &state) == 0 && state == 3);
     auto previous = retained;
     for (int iteration = 0; iteration < 1100; ++iteration) {
         const auto id = SubmitEmptyAio();
-        Check(id > previous);
+        Require(id > previous);
         previous = id;
         DeleteAio(id);
-        Check(sceKernelAioPollRequest(retained, &state) == 0 && state == 0x10003);
+        Require(sceKernelAioPollRequest(retained, &state) == 0 && state == 0x10003);
     }
     DeleteAio(retained);
     for (int iteration = 0; iteration < 1100; ++iteration) {
         const auto id = SubmitEmptyAio();
-        Check(id > previous);
+        Require(id > previous);
         previous = id;
         DeleteAio(id);
     }
-    Check(sceKernelAioPollRequest(retained, &state) == 0 && state == SCE_KERNEL_ERROR_ESRCH);
+    Require(sceKernelAioPollRequest(retained, &state) == 0 && state == SCE_KERNEL_ERROR_ESRCH);
 }
 
 static void CheckAioAdmission() {
     const auto file = std::filesystem::path("anyps5-aio-admission-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    { std::ofstream stream(file, std::ios::binary); stream << 'Z'; Check(static_cast<bool>(stream)); }
+    { std::ofstream stream(file, std::ios::binary); stream << 'Z'; Require(static_cast<bool>(stream)); }
     const int fd = sceKernelOpen(file.string().c_str(), SCE_KERNEL_O_RDWR, 0);
-    Check(fd >= 0);
+    Require(fd >= 0);
     std::vector<std::int32_t> retained;
     for (int index = 0; index < 510; ++index) retained.push_back(SubmitEmptyAio());
     std::array<KernelAioResult, 2> results{{{-7, 7}, {-7, 7}}};
     char byte = 'X';
     KernelAioRwRequest requests[2]{{0, 1, &byte, &results[0], fd}, {0, 1, &byte, &results[1], fd}};
     std::int32_t state = 0;
-    Check(sceKernelAioPollRequest(retained[0], &state) == 0 && state == 3);
+    Require(sceKernelAioPollRequest(retained[0], &state) == 0 && state == 3);
     for (const auto submit : {sceKernelAioSubmitReadCommandsMultiple, sceKernelAioSubmitWriteCommandsMultiple}) {
         std::int32_t ids[2]{-7, -7};
         bool refused = false;
         try { submit(requests, 2, 1, ids); } catch (const std::runtime_error&) { refused = true; }
-        Check(refused && ids[0] == -7 && ids[1] == -7);
-        Check(results[0].state == 7 && results[0].return_value == -7 && results[1].state == 7 && results[1].return_value == -7);
+        Require(refused && ids[0] == -7 && ids[1] == -7);
+        Require(results[0].state == 7 && results[0].return_value == -7 && results[1].state == 7 && results[1].return_value == -7);
     }
     retained.push_back(SubmitEmptyAio());
     for (const auto submit : {sceKernelAioSubmitReadCommands, sceKernelAioSubmitWriteCommands}) {
         std::int32_t id = -7;
         bool refused = false;
         try { submit(requests, 1, 1, &id); } catch (const std::runtime_error&) { refused = true; }
-        Check(refused && id == -7 && results[0].state == 7 && results[0].return_value == -7);
+        Require(refused && id == -7 && results[0].state == 7 && results[0].return_value == -7);
     }
-    Check(sceKernelAioPollRequest(retained[0], &state) == 0 && state == 0x10003);
-    { std::ifstream stream(file, std::ios::binary); Check(stream.get() == 'Z' && stream.get() == std::char_traits<char>::eof()); }
+    Require(sceKernelAioPollRequest(retained[0], &state) == 0 && state == 0x10003);
+    { std::ifstream stream(file, std::ios::binary); Require(stream.get() == 'Z' && stream.get() == std::char_traits<char>::eof()); }
     for (const auto id : retained) DeleteAio(id);
     std::int32_t ids[2]{};
-    Check(sceKernelAioSubmitReadCommandsMultiple(requests, 2, 1, ids) == 0);
-    Check(ids[0] != ids[1] && results[0].state == 3 && results[1].state == 3);
+    Require(sceKernelAioSubmitReadCommandsMultiple(requests, 2, 1, ids) == 0);
+    Require(ids[0] != ids[1] && results[0].state == 3 && results[1].state == 3);
     for (const auto id : ids) DeleteAio(id);
-    Check(sceKernelClose(fd) == 0 && std::filesystem::remove(file));
+    Require(sceKernelClose(fd) == 0 && std::filesystem::remove(file));
 }
 
 static int g_aioSourceCalls = 0;
@@ -113,9 +106,9 @@ static void FailAioSource(std::uintptr_t address, std::size_t) {
 
 static void CheckAioRollback() {
     const auto file = std::filesystem::path("anyps5-aio-rollback-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
-    { std::ofstream stream(file, std::ios::binary); stream << "zz"; Check(static_cast<bool>(stream)); }
+    { std::ofstream stream(file, std::ios::binary); stream << "zz"; Require(static_cast<bool>(stream)); }
     const int fd = sceKernelOpen(file.string().c_str(), SCE_KERNEL_O_RDWR, 0);
-    Check(fd >= 0);
+    Require(fd >= 0);
     std::array<KernelAioResult, 2> results{{{-7, 7}, {-7, 7}}};
     char byte = 'A';
     g_aioSourceAddress = reinterpret_cast<std::uintptr_t>(&byte);
@@ -128,14 +121,14 @@ static void CheckAioRollback() {
             bool refused = false;
             const auto calls = g_aioSourceCalls;
             try { submit(requests, 2, 1, ids); } catch (const std::runtime_error& error) { refused = std::strcmp(error.what(), "AIO source fault injection") == 0; }
-            Check(refused && ids[0] == -7 && ids[1] == -7);
-            Check(g_aioSourceCalls == calls + 2 && results[0].state == 3 && results[0].return_value == 1 && results[1].state == 7);
+            Require(refused && ids[0] == -7 && ids[1] == -7);
+            Require(g_aioSourceCalls == calls + 2 && results[0].state == 3 && results[0].return_value == 1 && results[1].state == 7);
         }
         GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
     }
-    Check(sceKernelClose(fd) == 0);
-    { std::ifstream stream(file, std::ios::binary); Check(stream.get() == 'A' && stream.get() == 'z' && stream.get() == std::char_traits<char>::eof()); }
-    Check(std::filesystem::remove(file));
+    Require(sceKernelClose(fd) == 0);
+    { std::ifstream stream(file, std::ios::binary); Require(stream.get() == 'A' && stream.get() == 'z' && stream.get() == std::char_traits<char>::eof()); }
+    Require(std::filesystem::remove(file));
     CheckAioAdmission();
 }
 
@@ -147,15 +140,15 @@ static void CheckAioIdentityExhaustion() {
     std::int32_t ids[2]{-7, -7};
     bool refused = false;
     try { sceKernelAioSubmitReadCommandsMultiple(requests, 2, 1, ids); } catch (const std::runtime_error&) { refused = true; }
-    Check(refused && ids[0] == -7 && ids[1] == -7 && results[0].state == 7 && results[1].state == 7);
+    Require(refused && ids[0] == -7 && ids[1] == -7 && results[0].state == 7 && results[1].state == 7);
     const auto final = SubmitEmptyAio();
-    Check(final == maximum);
+    Require(final == maximum);
     DeleteAio(final);
     refused = false;
     try { sceKernelAioSubmitReadCommands(requests, 1, 1, ids); } catch (const std::runtime_error&) { refused = true; }
-    Check(refused && ids[0] == -7 && results[0].state == 7);
+    Require(refused && ids[0] == -7 && results[0].state == 7);
     std::int32_t state = 0;
-    Check(sceKernelAioPollRequest(final, &state) == 0 && state == SCE_KERNEL_ERROR_ESRCH);
+    Require(sceKernelAioPollRequest(final, &state) == 0 && state == SCE_KERNEL_ERROR_ESRCH);
 }
 
 static std::mutex g_aioGateMutex;
@@ -170,7 +163,7 @@ static void HoldAioSource(std::uintptr_t address, std::size_t) {
     std::unique_lock lock(g_aioGateMutex);
     g_aioGateEntered = true;
     g_aioGateChanged.notify_all();
-    Check(g_aioGateChanged.wait_for(lock, std::chrono::seconds(5), [] { return g_aioGateReleased; }));
+    Require(g_aioGateChanged.wait_for(lock, std::chrono::seconds(5), [] { return g_aioGateReleased; }));
     if (g_aioGateFails) throw std::runtime_error("AIO gated transfer failure");
 }
 
@@ -188,57 +181,57 @@ static void CheckAioProcessingOwnership(bool fail) {
     g_aioGateSource = reinterpret_cast<std::uintptr_t>(&byte);
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(HoldAioSource);
     std::thread submitter([&] {
-        try { Check(sceKernelAioSubmitWriteCommands(&request, 1, 1, &submittedId) == 0); }
+        try { Require(sceKernelAioSubmitWriteCommands(&request, 1, 1, &submittedId) == 0); }
         catch (const std::runtime_error& error) { submitFailed = std::strcmp(error.what(), "AIO gated transfer failure") == 0; }
     });
     {
         std::unique_lock lock(g_aioGateMutex);
-        Check(g_aioGateChanged.wait_for(lock, std::chrono::seconds(5), [] { return g_aioGateEntered; }));
+        Require(g_aioGateChanged.wait_for(lock, std::chrono::seconds(5), [] { return g_aioGateEntered; }));
     }
     std::int32_t state = -7;
-    Check(sceKernelAioPollRequest(pending, &state) == 0 && state == 2);
+    Require(sceKernelAioPollRequest(pending, &state) == 0 && state == 2);
     for (const auto operation : {sceKernelAioCancelRequest, sceKernelAioDeleteRequest}) {
         state = -7;
         bool refused = false;
         try { operation(pending, &state); } catch (const std::runtime_error&) { refused = true; }
-        Check(refused && state == -7);
+        Require(refused && state == -7);
     }
     for (const auto operation : {sceKernelAioCancelRequests, sceKernelAioDeleteRequests}) {
         std::int32_t ids[2]{completed, pending};
         std::int32_t states[2]{-7, -7};
         bool refused = false;
         try { operation(ids, 2, states); } catch (const std::runtime_error&) { refused = true; }
-        Check(refused && states[0] == -7 && states[1] == -7);
+        Require(refused && states[0] == -7 && states[1] == -7);
     }
-    Check(sceKernelAioPollRequest(completed, &state) == 0 && state == 3);
-    Check(sceKernelAioPollRequest(pending, &state) == 0 && state == 2);
+    Require(sceKernelAioPollRequest(completed, &state) == 0 && state == 3);
+    Require(sceKernelAioPollRequest(pending, &state) == 0 && state == 2);
     std::uint32_t timeout = 1000;
-    Check(sceKernelAioWaitRequest(pending, &state, &timeout) == SCE_KERNEL_ERROR_ETIMEDOUT && state == 2);
+    Require(sceKernelAioWaitRequest(pending, &state, &timeout) == SCE_KERNEL_ERROR_ETIMEDOUT && state == 2);
     std::int32_t pendingIds[1]{pending};
     state = -7;
-    Check(sceKernelAioWaitRequests(pendingIds, 1, &state, 1, &timeout) == SCE_KERNEL_ERROR_ETIMEDOUT && state == 2);
+    Require(sceKernelAioWaitRequests(pendingIds, 1, &state, 1, &timeout) == SCE_KERNEL_ERROR_ETIMEDOUT && state == 2);
     auto* unreadableTimeout = reinterpret_cast<std::uint32_t*>(0x10);
     auto* unwritableState = reinterpret_cast<std::int32_t*>(0x10);
     state = -7;
-    Check(sceKernelAioWaitRequest(pending, &state, unreadableTimeout) == SCE_KERNEL_ERROR_EFAULT && state == -7);
-    Check(sceKernelAioWaitRequests(pendingIds, 1, &state, 1, unreadableTimeout) == SCE_KERNEL_ERROR_EFAULT && state == -7);
-    Check(sceKernelAioWaitRequest(pending, unwritableState, &timeout) == SCE_KERNEL_ERROR_EFAULT);
-    Check(sceKernelAioWaitRequests(pendingIds, 1, unwritableState, 1, &timeout) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelAioWaitRequest(pending, &state, unreadableTimeout) == SCE_KERNEL_ERROR_EFAULT && state == -7);
+    Require(sceKernelAioWaitRequests(pendingIds, 1, &state, 1, unreadableTimeout) == SCE_KERNEL_ERROR_EFAULT && state == -7);
+    Require(sceKernelAioWaitRequest(pending, unwritableState, &timeout) == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelAioWaitRequests(pendingIds, 1, unwritableState, 1, &timeout) == SCE_KERNEL_ERROR_EFAULT);
     std::int32_t completedIds[1]{completed};
-    Check(sceKernelAioWaitRequest(completed, &state, unreadableTimeout) == 0 && state == 0x10003);
+    Require(sceKernelAioWaitRequest(completed, &state, unreadableTimeout) == 0 && state == 0x10003);
     state = -7;
-    Check(sceKernelAioWaitRequests(completedIds, 1, &state, 1, unreadableTimeout) == 0 && state == 0x10003);
+    Require(sceKernelAioWaitRequests(completedIds, 1, &state, 1, unreadableTimeout) == 0 && state == 0x10003);
     std::atomic<bool> waiterDone{false};
     std::int32_t waited = -7;
     std::thread waiter([&] {
-        Check(sceKernelAioWaitRequest(pending, &waited, nullptr) == 0);
+        Require(sceKernelAioWaitRequest(pending, &waited, nullptr) == 0);
         waiterDone.store(true);
     });
     const auto waiterDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     while (AioProcessingWaitersForTest_nid_no_patch() == 0 && std::chrono::steady_clock::now() < waiterDeadline) std::this_thread::yield();
-    Check(AioProcessingWaitersForTest_nid_no_patch() == 1);
+    Require(AioProcessingWaitersForTest_nid_no_patch() == 1);
     const auto concurrent = SubmitEmptyAio();
-    Check(!waiterDone.load() && result.state == 7 && submittedId == -7);
+    Require(!waiterDone.load() && result.state == 7 && submittedId == -7);
     {
         std::lock_guard lock(g_aioGateMutex);
         g_aioGateReleased = true;
@@ -247,25 +240,25 @@ static void CheckAioProcessingOwnership(bool fail) {
     submitter.join();
     waiter.join();
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
-    Check(waiterDone.load() && submitFailed == fail);
-    Check(AioProcessingWaitersForTest_nid_no_patch() == 0);
+    Require(waiterDone.load() && submitFailed == fail);
+    Require(AioProcessingWaitersForTest_nid_no_patch() == 0);
     if (fail) {
-        Check(waited == SCE_KERNEL_ERROR_ESRCH && submittedId == -7 && result.state == 7);
+        Require(waited == SCE_KERNEL_ERROR_ESRCH && submittedId == -7 && result.state == 7);
     } else {
-        Check(waited == 3 && submittedId == pending);
-        Check(result.state == 3 && result.return_value == SCE_KERNEL_ERROR_EBADF);
+        Require(waited == 3 && submittedId == pending);
+        Require(result.state == 3 && result.return_value == SCE_KERNEL_ERROR_EBADF);
         DeleteAio(pending);
     }
     for (const auto id : {completed, concurrent}) DeleteAio(id);
 }
 
 int main(int argc, char** argv) {
-    Check(argc == 2);
+    Require(argc == 2);
     if (argc > 1 && std::strcmp(argv[1], "identity") == 0) { CheckAioIdentity(); return 0; }
     if (argc > 1 && std::strcmp(argv[1], "admission") == 0) { CheckAioAdmission(); return 0; }
     if (argc > 1 && std::strcmp(argv[1], "rollback") == 0) { CheckAioRollback(); return 0; }
     if (argc > 1 && std::strcmp(argv[1], "identity-exhaustion") == 0) { CheckAioIdentityExhaustion(); return 0; }
     if (argc > 1 && std::strcmp(argv[1], "processing") == 0) { CheckAioProcessingOwnership(false); return 0; }
     if (argc > 1 && std::strcmp(argv[1], "processing-rollback") == 0) { CheckAioProcessingOwnership(true); return 0; }
-    Check(false);
+    Require(false);
 }

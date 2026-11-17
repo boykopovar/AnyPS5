@@ -1,4 +1,5 @@
 #include "prx/libSceJsc/libSceJsc.hpp"
+#include "Testing.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -14,40 +15,33 @@ using ObserversFunction = LoggerObserverVector* (APS5_VABI*)();
 
 static_assert(std::is_same_v<decltype(&_ZN3WTF6Logger9observersEv), ObserversFunction>);
 
-void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "WTF Logger check failed at line %d\n", line);
-        std::abort();
-    }
-}
-
 LoggerObserverVector* Observers() {
     return _ZN3WTF6Logger9observersEv();
 }
 
 void TestLayout() {
-    Check(sizeof(LoggerObserverVector) == 16, __LINE__);
-    Check(offsetof(LoggerObserverVector, buffer) == 0, __LINE__);
-    Check(offsetof(LoggerObserverVector, capacity) == 8, __LINE__);
-    Check(offsetof(LoggerObserverVector, size) == 12, __LINE__);
+    Require(sizeof(LoggerObserverVector) == 16);
+    Require(offsetof(LoggerObserverVector, buffer) == 0);
+    Require(offsetof(LoggerObserverVector, capacity) == 8);
+    Require(offsetof(LoggerObserverVector, size) == 12);
 }
 
 void TestStartsEmpty() {
     LoggerObserverVector* observers = Observers();
-    Check(observers != nullptr, __LINE__);
-    Check(reinterpret_cast<std::uintptr_t>(observers) % alignof(LoggerObserverVector) == 0, __LINE__);
-    Check(observers->buffer == nullptr, __LINE__);
-    Check(observers->capacity == 0, __LINE__);
-    Check(observers->size == 0, __LINE__);
+    Require(observers != nullptr);
+    Require(reinterpret_cast<std::uintptr_t>(observers) % alignof(LoggerObserverVector) == 0);
+    Require(observers->buffer == nullptr);
+    Require(observers->capacity == 0);
+    Require(observers->size == 0);
 }
 
 void TestSameVectorOnEveryCall() {
     LoggerObserverVector* first = Observers();
-    Check(Observers() == first, __LINE__);
+    Require(Observers() == first);
     LoggerObserverVector* fromThread = nullptr;
     std::thread thread([&] { fromThread = Observers(); });
     thread.join();
-    Check(fromThread == first, __LINE__);
+    Require(fromThread == first);
 }
 
 void TestKeepsRegisteredObservers() {
@@ -64,13 +58,13 @@ void TestKeepsRegisteredObservers() {
     });
     thread.join();
     LoggerObserverVector* again = Observers();
-    Check(again->buffer == storage, __LINE__);
-    Check(again->capacity == 4, __LINE__);
-    Check(again->size == 2, __LINE__);
-    Check(again->buffer[0] == &firstObserver, __LINE__);
-    Check(again->buffer[1] == &secondObserver, __LINE__);
+    Require(again->buffer == storage);
+    Require(again->capacity == 4);
+    Require(again->size == 2);
+    Require(again->buffer[0] == &firstObserver);
+    Require(again->buffer[1] == &secondObserver);
     *again = {};
-    Check(Observers()->buffer == nullptr && Observers()->size == 0, __LINE__);
+    Require(Observers()->buffer == nullptr && Observers()->size == 0);
 }
 
 } // namespace

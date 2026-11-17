@@ -10,6 +10,7 @@
 
 #include "prx/libSceSsl/SslTypes.hpp"
 #include "SslCertificateFixture.hpp"
+#include "Testing.hpp"
 
 #include <mbedtls/ctr_drbg.h>
 #include <mbedtls/entropy.h>
@@ -35,12 +36,6 @@ namespace {
 
 constexpr int ErrorInvalidId = static_cast<int>(0x8095f006);
 constexpr int ErrorUnknownCa = static_cast<int>(0x8095f00c);
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::exit(1);
-}
 
 std::string ThrownMessage(int connection) {
     try {

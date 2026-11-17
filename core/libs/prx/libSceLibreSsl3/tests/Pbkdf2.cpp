@@ -1,6 +1,7 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <cerrno>
 #include <cstdint>
@@ -17,12 +18,6 @@
 
 namespace {
 
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL3 PKCS5_PBKDF2_HMAC check failed at line %u\n", location.line());
-    std::abort();
-}
-
 long PeakKilobytes() {
 #ifdef __linux__
     rusage usage{};
@@ -31,16 +26,6 @@ long PeakKilobytes() {
 #else
     return 0;
 #endif
-}
-
-template <typename TAction>
-void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, location);
 }
 
 void* APS5_VABI Allocate(std::size_t bytes) { return std::malloc(bytes ? bytes : 1); }
@@ -104,14 +89,14 @@ int main() {
     const auto* const saltText = reinterpret_cast<const unsigned char*>("salt");
     unsigned char key[20] {};
     errno = 71;
-    RequireThrows([&] { PKCS5_PBKDF2_HMAC_nid_postfix(unreadable, -1, saltText, 4, 2, sha256, 20, key); });
-    RequireThrows([&] { PKCS5_PBKDF2_HMAC_nid_postfix(unreadable, 8, saltText, 4, 2, sha256, 20, key); });
-    RequireThrows([&] { PKCS5_PBKDF2_HMAC_nid_postfix("password", 8, unreadableSalt, 4, 2, sha256, 20, key); });
-    RequireThrows([&] { PKCS5_PBKDF2_HMAC_nid_postfix("password", 8, saltText, 4, 2, sha256, 20, reinterpret_cast<unsigned char*>(0x10)); });
+    ExpectErr<std::invalid_argument>([&] { PKCS5_PBKDF2_HMAC_nid_postfix(unreadable, -1, saltText, 4, 2, sha256, 20, key); });
+    ExpectErr<std::invalid_argument>([&] { PKCS5_PBKDF2_HMAC_nid_postfix(unreadable, 8, saltText, 4, 2, sha256, 20, key); });
+    ExpectErr<std::invalid_argument>([&] { PKCS5_PBKDF2_HMAC_nid_postfix("password", 8, unreadableSalt, 4, 2, sha256, 20, key); });
+    ExpectErr<std::invalid_argument>([&] { PKCS5_PBKDF2_HMAC_nid_postfix("password", 8, saltText, 4, 2, sha256, 20, reinterpret_cast<unsigned char*>(0x10)); });
     Require(errno == 71);
     const long peakBefore = PeakKilobytes();
-    RequireThrows([&] { PKCS5_PBKDF2_HMAC_nid_postfix(unreadable, 0x7fffffff, saltText, 4, 2, sha256, 20, key); });
-    RequireThrows([&] { PKCS5_PBKDF2_HMAC_nid_postfix("password", 8, unreadableSalt, 0x7fffffff, 2, sha256, 20, key); });
+    ExpectErr<std::invalid_argument>([&] { PKCS5_PBKDF2_HMAC_nid_postfix(unreadable, 0x7fffffff, saltText, 4, 2, sha256, 20, key); });
+    ExpectErr<std::invalid_argument>([&] { PKCS5_PBKDF2_HMAC_nid_postfix("password", 8, unreadableSalt, 0x7fffffff, 2, sha256, 20, key); });
     Require(errno == 71 && PeakKilobytes() - peakBefore < 64 * 1024);
     Require(Derive(sha256, "", "salt", 1, 32) == "f135c27993baf98773c5cdb40a5706ce6a345cde61b000a67858650cd6a324d7");
     Require(Derive(sha256, "password", "salt", 0, 20) == Derive(sha256, "password", "salt", 1, 20));

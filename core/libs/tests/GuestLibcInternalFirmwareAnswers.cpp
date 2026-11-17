@@ -1,16 +1,10 @@
 #include "prx/libSceLibcInternal/include/MathInternals.hpp"
 #include "prx/libSceLibcInternal/include/RuntimeInternals.hpp"
+#include "Testing.hpp"
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
-
-static void Require(bool value, const char* message) {
-    if (!value) {
-        std::fprintf(stderr, "%s\n", message);
-        std::abort();
-    }
-}
 
 static void TestDaysto() {
     Require(_Daysto_nid_postfix(1, 0) == 0, "_Daysto(1, 0)");

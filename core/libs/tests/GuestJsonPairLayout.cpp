@@ -1,5 +1,6 @@
 #include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -11,9 +12,6 @@
 using namespace SceJson2;
 
 struct Parameter { void* allocator; void* context; std::size_t bufferSize; std::int32_t mode; std::uint32_t reserved[3]; };
-static void Require(bool condition, const char* message) {
-    if (!condition) { std::fprintf(stderr, "%s\n", message); std::abort(); }
-}
 struct PairTrace { std::map<void*, std::size_t> live; std::size_t generation = 0; };
 static void* APS5_VABI AllocatePair(void*, std::size_t bytes, void* context) {
     auto& trace = *static_cast<PairTrace*>(context);

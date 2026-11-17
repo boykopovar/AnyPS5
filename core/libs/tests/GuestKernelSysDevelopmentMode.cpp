@@ -1,19 +1,9 @@
 #include "prx/libkernel_sys/include/AdditionalExports.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
-
-namespace {
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "kernel sys development mode: %s\n", message);
-        std::abort();
-    }
-}
-
-} // namespace
 
 int main() {
     *__error_nid_postfix() = 123;

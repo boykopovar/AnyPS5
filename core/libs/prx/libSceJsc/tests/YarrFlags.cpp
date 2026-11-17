@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceJsc/libSceJsc.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -12,15 +13,6 @@ using Jsc::WtfAbi::StringView;
 using Jsc::YarrAbi::OptionalFlags;
 
 namespace {
-
-void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "Yarr flags check failed at line %d\n", line);
-        std::abort();
-    }
-}
-
-#define Require(value) Check((value), __LINE__)
 
 StringView View8(const char* text) {
     return {text, static_cast<unsigned>(std::strlen(text)), true};

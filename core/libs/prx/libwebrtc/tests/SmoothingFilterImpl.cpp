@@ -1,6 +1,7 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libc/libc.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 
 #include <chrono>
 #include <cmath>
@@ -11,12 +12,6 @@
 #include <thread>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc webrtc::SmoothingFilterImpl check failed at line %u\n", location.line());
-    std::abort();
-}
 
 using AddSample = void (APS5_VABI*)(WebRtcSmoothingFilterImpl*, float);
 using GetAverage = WebRtcOptionalFloat (APS5_VABI*)(WebRtcSmoothingFilterImpl*);

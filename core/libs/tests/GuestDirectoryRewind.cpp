@@ -4,6 +4,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/File/include/DirectoryDescriptor.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cerrno>
@@ -16,14 +17,6 @@
 #include <limits>
 #include <set>
 #include <string>
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "Directory rewind check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static std::set<std::string> ReadAll(int directory) {
     std::set<std::string> names;

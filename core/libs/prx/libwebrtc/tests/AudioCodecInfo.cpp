@@ -1,4 +1,5 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "Testing.hpp"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -16,21 +17,6 @@
 #include <stdexcept>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc AudioCodecInfo check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> void RequireInvalidArgument(TAction action, std::source_location location = std::source_location::current()) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, location);
-}
 
 void Check(int sampleRateHz, std::uint64_t numChannels, int defaultBitrateBps, int minBitrateBps, int maxBitrateBps) {
     struct Guarded {
@@ -54,7 +40,7 @@ void Check(int sampleRateHz, std::uint64_t numChannels, int defaultBitrateBps, i
 }
 
 void TestNullObject() {
-    RequireInvalidArgument([] { _ZN6webrtc14AudioCodecInfoC1Eimiii_nid_postfix(nullptr, 48000, 1, 32000, 0, 64000); });
+    ExpectErr<std::invalid_argument>([] { _ZN6webrtc14AudioCodecInfoC1Eimiii_nid_postfix(nullptr, 48000, 1, 32000, 0, 64000); });
 }
 
 struct GuardedPage {
@@ -100,7 +86,7 @@ struct GuardedPage {
 void TestGuardedPointer() {
     GuardedPage page;
     page.SetReadOnly();
-    RequireInvalidArgument([&] { _ZN6webrtc14AudioCodecInfoC1Eimiii_nid_postfix(page.As<WebRtcAudioCodecInfo>(), 48000, 1, 32000, 0, 64000); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc14AudioCodecInfoC1Eimiii_nid_postfix(page.As<WebRtcAudioCodecInfo>(), 48000, 1, 32000, 0, 64000); });
 }
 
 }

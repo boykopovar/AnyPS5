@@ -1,6 +1,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdlib>
@@ -41,10 +42,6 @@ extern std::uintptr_t _ZTVSt8messagesIcE_nid_postfix[9];
 
 }
 
-static void Require(bool condition) {
-    if (!condition) throw std::runtime_error("Guest locale check failed");
-}
-
 void* APS5_VABI TestHeapAllocate(std::size_t bytes) { return std::malloc(bytes); }
 void APS5_VABI TestHeapFree(void* pointer) { std::free(pointer); }
 void* APS5_VABI TestHeapCalloc(std::size_t count, std::size_t bytes) { return std::calloc(count, bytes); }
@@ -54,17 +51,6 @@ void* APS5_VABI TestHeapRealign(void* pointer, std::size_t bytes, std::size_t) {
 int APS5_VABI TestHeapPosixAlign(void** pointer, std::size_t, std::size_t bytes) {
     *pointer = std::malloc(bytes);
     return *pointer == nullptr ? 12 : 0;
-}
-
-template<typename TAction>
-static void RequireException(TAction action) {
-    bool caught = false;
-    try {
-        action();
-    } catch (const std::exception&) {
-        caught = true;
-    }
-    Require(caught);
 }
 
 static void CheckInputFacetObjects() {
@@ -160,7 +146,7 @@ static void CheckMessagesVtableObject() {
     Require(std::memcmp(longResult.pointer, text, sizeof(text)) == 0);
     _ZdlPv_nid_postfix(longResult.pointer);
     _ZdlPv_nid_postfix(longFallback.pointer);
-    RequireException([&] { vtable->get(&result, &facet, 0, 0, 0, nullptr); });
+    ExpectErr([&] { vtable->get(&result, &facet, 0, 0, 0, nullptr); });
     auto* owned = static_cast<GuestLocale::Facet*>(_Znwm_nid_postfix(sizeof(GuestLocale::Facet)));
     *owned = {&vtable->facet, 0, 0};
     vtable->facet.deleteObject(owned);
@@ -216,8 +202,8 @@ static void CheckGuestCalls() {
     Require(release(&locale->base) == nullptr);
     Require(locale->base.references == initial);
     Require(release(&locale->base) == nullptr && locale->base.references == initial);
-    RequireException([&] { retain(nullptr); });
-    RequireException([&] { locale->base.vtable->deleteObject(&locale->base); });
+    ExpectErr([&] { retain(nullptr); });
+    ExpectErr([&] { locale->base.vtable->deleteObject(&locale->base); });
     Require(locale->base.references == initial);
     std::vector<std::thread> threads;
     for (int thread = 0; thread < 4; ++thread) {
@@ -243,11 +229,11 @@ static void CheckLocinfoAlignment() {
     for (std::size_t index = 0; index < bytes.size(); ++index) Require(bytes[index] == (index >= 8 && index < 72 ? std::byte{} : std::byte{0x5a}));
     _ZNSt8_LocinfoD1Ev_nid_postfix(storage);
 
-    RequireException([&] { _ZNSt8_LocinfoC1EPKc_nid_postfix(storage, "unknown-locale"); });
-    RequireException([] { _ZNSt8_LocinfoC1EPKc_nid_postfix(nullptr, "C"); });
-    RequireException([&] { _ZNSt8_LocinfoC1EPKc_nid_postfix(storage, reinterpret_cast<const char*>(0x10)); });
-    RequireException([&] { _ZNSt8_LocinfoC1EPKc_nid_postfix(storage, ""); });
-    RequireException([&] { _ZNSt8_LocinfoC1EPKc_nid_postfix(storage, "CX"); });
+    ExpectErr([&] { _ZNSt8_LocinfoC1EPKc_nid_postfix(storage, "unknown-locale"); });
+    ExpectErr([] { _ZNSt8_LocinfoC1EPKc_nid_postfix(nullptr, "C"); });
+    ExpectErr([&] { _ZNSt8_LocinfoC1EPKc_nid_postfix(storage, reinterpret_cast<const char*>(0x10)); });
+    ExpectErr([&] { _ZNSt8_LocinfoC1EPKc_nid_postfix(storage, ""); });
+    ExpectErr([&] { _ZNSt8_LocinfoC1EPKc_nid_postfix(storage, "CX"); });
 }
 
 static void CheckCharacterTables() {
@@ -284,12 +270,12 @@ static void CheckCharacterConversions() {
     std::mbstate_t state{};
     char byte{};
     std::uint16_t wide{};
-    RequireException([&] { _Mbtowcx_nid_postfix(&wide, "]", 0, &state); });
-    RequireException([&] { _Mbtowcx_nid_postfix(nullptr, "]", 1, &state); });
-    RequireException([&] { _Mbtowcx_nid_postfix(&wide, nullptr, 1, &state); });
-    RequireException([&] { _Mbtowcx_nid_postfix(&wide, "]", 1, nullptr); });
-    RequireException([&] { _Wctombx_nid_postfix(nullptr, ']', &state); });
-    RequireException([&] { _Wctombx_nid_postfix(&byte, ']', nullptr); });
+    ExpectErr([&] { _Mbtowcx_nid_postfix(&wide, "]", 0, &state); });
+    ExpectErr([&] { _Mbtowcx_nid_postfix(nullptr, "]", 1, &state); });
+    ExpectErr([&] { _Mbtowcx_nid_postfix(&wide, nullptr, 1, &state); });
+    ExpectErr([&] { _Mbtowcx_nid_postfix(&wide, "]", 1, nullptr); });
+    ExpectErr([&] { _Wctombx_nid_postfix(nullptr, ']', &state); });
+    ExpectErr([&] { _Wctombx_nid_postfix(&byte, ']', nullptr); });
 }
 
 static void CheckStreamDestruction() {
@@ -304,7 +290,7 @@ static void CheckStreamDestruction() {
     Require(object.stream.locale == nullptr && object.before == 0x12345678 && object.after == 0x87654321);
     object.stream.locale = &_ZSt21_sceLibcClassicLocale_nid_postfix;
     object.stream.callbacks = &object;
-    RequireException([&] { _ZNSt8ios_baseD2Ev_nid_postfix(&object.stream); });
+    ExpectErr([&] { _ZNSt8ios_baseD2Ev_nid_postfix(&object.stream); });
     Require(object.stream.locale == &_ZSt21_sceLibcClassicLocale_nid_postfix);
 }
 
@@ -324,7 +310,7 @@ static void CheckStreamWidth() {
     const auto reset = _ZSt4setwi_nid_postfix(0);
     reset.function(&object.stream, reset.argument);
     Require(object.stream.width == 0);
-    RequireException([&] { manipulator.function(nullptr, manipulator.argument); });
+    ExpectErr([&] { manipulator.function(nullptr, manipulator.argument); });
 }
 
 static void CheckStreamPrecision() {
@@ -346,7 +332,7 @@ static void CheckStreamPrecision() {
     const auto negative = _ZSt12setprecisioni_nid_postfix(-3);
     negative.function(&object.stream, negative.argument);
     Require(object.stream.precision == -3);
-    RequireException([&] { manipulator.function(nullptr, manipulator.argument); });
+    ExpectErr([&] { manipulator.function(nullptr, manipulator.argument); });
 }
 
 static void CheckStandardStreams() {
@@ -357,7 +343,7 @@ static void CheckStandardStreams() {
     } streams[9];
     auto* classic = &_ZSt21_sceLibcClassicLocale_nid_postfix;
     for (auto& object : streams) object.stream.locale = classic;
-    RequireException([&] { _ZNSt8ios_base7_AddstdEPS__nid_postfix(nullptr); });
+    ExpectErr([&] { _ZNSt8ios_base7_AddstdEPS__nid_postfix(nullptr); });
     _ZNSt8ios_base7_AddstdEPS__nid_postfix(&streams[0].stream);
     _ZNSt8ios_base7_AddstdEPS__nid_postfix(&streams[1].stream);
 
@@ -555,7 +541,7 @@ static void CheckNumPut() {
     Require(NumPut([&](auto out, auto* ios) { return put->putDouble(facet, out, ios, '*', 12345678901234.0); }, classic, 0x1000, 0, 0) == "12345678901234");
     Require(NumPut([&](auto out, auto* ios) { return put->putDouble(facet, out, ios, '*', -infinity); }, classic, 0x400, 6, 0) == "-inf");
     Require(NumPut([&](auto out, auto* ios) { return put->putLongDouble(facet, out, ios, '*', -2.25L); }, classic, 0, 3, 0) == "-2.25");
-    RequireException([&] { NumPut([&](auto out, auto* ios) { return put->putDouble(facet, out, ios, '*', 1.0); }, classic, 0x1000, -45, 0); });
+    ExpectErr([&] { NumPut([&](auto out, auto* ios) { return put->putDouble(facet, out, ios, '*', 1.0); }, classic, 0x1000, -45, 0); });
     GuestLocale::Facet punct{&g_testNumpunctVtable.facet, 1, 0};
     std::vector<GuestLocale::Facet*> facets(_ZNSt8numpunctIcE2idE_nid_postfix + 1);
     facets.back() = &punct;
@@ -680,7 +666,7 @@ static void CheckCtypeVtableObject() {
     auto* owned = static_cast<GuestLocale::CtypeFacet*>(_Znwm_nid_postfix(sizeof(GuestLocale::CtypeFacet)));
     *owned = facet;
     vtable->facet.deleteObject(&owned->base);
-    RequireException([&] { vtable->facet.destroy(nullptr); });
+    ExpectErr([&] { vtable->facet.destroy(nullptr); });
 }
 
 static void CheckTimePutVtableObject() {

@@ -6,6 +6,7 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
 #include "prx/libkernel/Apr/include/AprCommandBuffer.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <atomic>
 #include <cerrno>
@@ -26,13 +27,7 @@
 #include <windows.h>
 #endif
 
-static void RequireAt(bool value, int line) {
-    if (value) return;
-    std::fprintf(stderr, "GuestAmpr.cpp:%d: requirement failed\n", line);
-    std::abort();
-}
 
-#define Require(value) RequireAt((value), __LINE__)
 
 namespace {
 

@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -8,14 +9,6 @@
 using NKWebKit::WebCoreAbi::ResourceRequestBase;
 using NKWebKit::WtfAbi::StringImpl;
 using NKWebKit::WtfAbi::URL;
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "ResourceRequestBase check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static StringImpl Make(const char* text) {
     return StringImpl{2, static_cast<unsigned>(std::strlen(text)), text, 4};

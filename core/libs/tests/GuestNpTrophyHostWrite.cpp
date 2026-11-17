@@ -4,6 +4,7 @@
 #include <windows.h>
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -17,13 +18,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "NpTrophy host write: %s\n", message);
-        std::exit(1);
-    }
-}
 
 DWORD Protection(const void* address) {
     MEMORY_BASIC_INFORMATION information{};

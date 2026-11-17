@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceGnmDriver/include/Api.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -14,10 +15,6 @@ namespace {
 
 constexpr int InvalidArgument = static_cast<int>(0x80d11000u);
 constexpr std::uint32_t Filler = 0x80000000u;
-
-void check(bool condition, const std::string& what) {
-    if (!condition) throw std::runtime_error("GnmDriver: " + what);
-}
 
 constexpr std::uint32_t Header(std::uint32_t opcode, std::uint32_t bodyWords) {
     return 0xc0000000u | ((bodyWords - 1) << 16) | (opcode << 8);
@@ -43,43 +40,43 @@ bool ThrowsRuntimeError(TFunction function) {
 }
 
 void TestWriters() {
-    check(sceGnmGetOffChipTessellationBufferSize_nid_disambig1() == 0x800000, "the off-chip tessellation buffer size is not 8 MiB");
-    check(!sceGnmDriverTraceInProgress_nid_disambig1(), "a retail driver trace was reported in progress");
+    Require(sceGnmGetOffChipTessellationBufferSize_nid_disambig1() == 0x800000, "the off-chip tessellation buffer size is not 8 MiB");
+    Require(!sceGnmDriverTraceInProgress_nid_disambig1(), "a retail driver trace was reported in progress");
     std::array<std::uint32_t, 0x100> words{};
     words.fill(0xdeadbeefu);
-    check(sceGnmDrawInitDefaultHardwareState175(words.data(), 0xff) == 0 && words[0] == 0xdeadbeefu, "the draw default state wrote into a short buffer");
-    check(sceGnmDrawInitDefaultHardwareState175(words.data(), 0x100) == 0x100, "the draw default state is not 256 dwords");
-    check(words[0] == Header(0x28, 2) && words[1] == 0x80000000u && words[2] == 0x80000000u && words[3] == Header(0x12, 1) && words[5] == Header(0x58, 6), "the draw default state does not start with CONTEXT_CONTROL, CLEAR_STATE and ACQUIRE_MEM");
-    check(WholePackets(words.data(), words.size()), "the draw default state is not whole PM4 packets");
+    Require(sceGnmDrawInitDefaultHardwareState175(words.data(), 0xff) == 0 && words[0] == 0xdeadbeefu, "the draw default state wrote into a short buffer");
+    Require(sceGnmDrawInitDefaultHardwareState175(words.data(), 0x100) == 0x100, "the draw default state is not 256 dwords");
+    Require(words[0] == Header(0x28, 2) && words[1] == 0x80000000u && words[2] == 0x80000000u && words[3] == Header(0x12, 1) && words[5] == Header(0x58, 6), "the draw default state does not start with CONTEXT_CONTROL, CLEAR_STATE and ACQUIRE_MEM");
+    Require(WholePackets(words.data(), words.size()), "the draw default state is not whole PM4 packets");
 
     words.fill(0xdeadbeefu);
-    check(sceGnmDispatchInitDefaultHardwareState(words.data(), 0x100) == 0x100, "the dispatch default state is not 256 dwords");
-    check(words[0] == (Header(0x76, 2) | 2u) && words[1] == 0x216 && words[2] == 0xffffffffu, "the dispatch default state does not start with a compute SET_SH_REG");
-    check(WholePackets(words.data(), words.size()), "the dispatch default state is not whole PM4 packets");
+    Require(sceGnmDispatchInitDefaultHardwareState(words.data(), 0x100) == 0x100, "the dispatch default state is not 256 dwords");
+    Require(words[0] == (Header(0x76, 2) | 2u) && words[1] == 0x216 && words[2] == 0xffffffffu, "the dispatch default state does not start with a compute SET_SH_REG");
+    Require(WholePackets(words.data(), words.size()), "the dispatch default state is not whole PM4 packets");
 
     const std::uint32_t regs[7] = {0x1000, 0, 0x11, 0x22, 64, 1, 1};
     const std::uint32_t highAddress[7] = {0x1000, 1, 0x11, 0x22, 64, 1, 1};
     words.fill(0);
-    check(sceGnmSetCsShader(words.data(), 0x18, regs) == -1, "a compute shader was written into 24 dwords");
-    check(sceGnmSetCsShader(words.data(), 0x19, highAddress) == -1, "a compute shader with a nonzero high address word was accepted");
-    check(sceGnmSetCsShader(words.data(), 0x19, regs) == 0, "the compute shader was not written");
+    Require(sceGnmSetCsShader(words.data(), 0x18, regs) == -1, "a compute shader was written into 24 dwords");
+    Require(sceGnmSetCsShader(words.data(), 0x19, highAddress) == -1, "a compute shader with a nonzero high address word was accepted");
+    Require(sceGnmSetCsShader(words.data(), 0x19, regs) == 0, "the compute shader was not written");
     const std::uint32_t shader[] = {Header(0x76, 3), 0x20c, 0x1000, 0, Header(0x76, 3), 0x212, 0x11, 0x22, Header(0x76, 4), 0x207, 64, 1, 1, Header(0x10, 11)};
-    check(std::memcmp(words.data(), shader, sizeof(shader)) == 0 && WholePackets(words.data(), 0x19), "the compute shader packets are wrong");
+    Require(std::memcmp(words.data(), shader, sizeof(shader)) == 0 && WholePackets(words.data(), 0x19), "the compute shader packets are wrong");
 
     words.fill(0xdeadbeefu);
-    check(sceGnmInsertPushMarker(words.data(), 5, "ab") == -1, "a push marker was written into the wrong size");
-    check(sceGnmInsertPushMarker(words.data(), 6, "ab") == 0, "the push marker was not written");
-    check(words[0] == Header(0x10, 5) && words[1] == 0x68750001u && std::memcmp(&words[2], "ab", 3) == 0 && WholePackets(words.data(), 6), "the push marker packet is wrong");
-    check(sceGnmInsertPopMarker(words.data(), 5) == -1, "a pop marker was written into 5 dwords");
-    check(sceGnmInsertPopMarker(words.data(), 6) == 0 && words[0] == Header(0x10, 5) && words[1] == 0x68750002u && WholePackets(words.data(), 6), "the pop marker packet is wrong");
+    Require(sceGnmInsertPushMarker(words.data(), 5, "ab") == -1, "a push marker was written into the wrong size");
+    Require(sceGnmInsertPushMarker(words.data(), 6, "ab") == 0, "the push marker was not written");
+    Require(words[0] == Header(0x10, 5) && words[1] == 0x68750001u && std::memcmp(&words[2], "ab", 3) == 0 && WholePackets(words.data(), 6), "the push marker packet is wrong");
+    Require(sceGnmInsertPopMarker(words.data(), 5) == -1, "a pop marker was written into 5 dwords");
+    Require(sceGnmInsertPopMarker(words.data(), 6) == 0 && words[0] == Header(0x10, 5) && words[1] == 0x68750002u && WholePackets(words.data(), 6), "the pop marker packet is wrong");
 
     words.fill(0xdeadbeefu);
     const auto untouched = words;
-    check(sceGnmInsertDingDongMarker_nid_disambig1(nullptr, 4) == -1, "a null ding dong buffer was accepted");
-    check(sceGnmInsertDingDongMarker_nid_disambig1(words.data(), 3) == -1 && words == untouched, "a ding dong marker was written into 3 dwords");
-    check(sceGnmInsertDingDongMarker_nid_disambig1(words.data(), 5) == -1 && words == untouched, "a ding dong marker was written into 5 dwords");
-    check(sceGnmInsertDingDongMarker_nid_disambig1(words.data(), 4) == 0, "the ding dong marker was not written");
-    check(words[0] == Header(0x10, 3) && words[1] == 0 && words[2] == 0 && words[3] == 0 && words[4] == 0xdeadbeefu && WholePackets(words.data(), 4),
+    Require(sceGnmInsertDingDongMarker_nid_disambig1(nullptr, 4) == -1, "a null ding dong buffer was accepted");
+    Require(sceGnmInsertDingDongMarker_nid_disambig1(words.data(), 3) == -1 && words == untouched, "a ding dong marker was written into 3 dwords");
+    Require(sceGnmInsertDingDongMarker_nid_disambig1(words.data(), 5) == -1 && words == untouched, "a ding dong marker was written into 5 dwords");
+    Require(sceGnmInsertDingDongMarker_nid_disambig1(words.data(), 4) == 0, "the ding dong marker was not written");
+    Require(words[0] == Header(0x10, 3) && words[1] == 0 && words[2] == 0 && words[3] == 0 && words[4] == 0xdeadbeefu && WholePackets(words.data(), 4),
         "the ding dong marker packet is wrong");
 }
 
@@ -92,21 +89,21 @@ void TestSubmitValidation() {
     const std::uint32_t empty[] = {0};
     const std::uint32_t unaligned[] = {6};
     const std::uint32_t tooLarge[] = {0x400000};
-    check(sceGnmSubmitCommandBuffers(1, nullptr, bytes, nullptr, nullptr) == InvalidArgument, "a submission without draw buffers was accepted");
-    check(sceGnmSubmitCommandBuffers(1, dcbs, nullptr, nullptr, nullptr) == InvalidArgument, "a submission without draw sizes was accepted");
-    check(sceGnmSubmitCommandBuffers(1, nullDcbs, bytes, nullptr, nullptr) == InvalidArgument, "a null draw buffer was accepted");
-    check(sceGnmSubmitCommandBuffers(1, dcbs, empty, nullptr, nullptr) == InvalidArgument, "an empty draw buffer was accepted");
-    check(sceGnmSubmitCommandBuffers(1, dcbs, unaligned, nullptr, nullptr) == InvalidArgument, "a draw buffer of 6 bytes was accepted");
-    check(sceGnmSubmitCommandBuffers(1, dcbs, tooLarge, nullptr, nullptr) == InvalidArgument, "a draw buffer over the size limit was accepted");
-    check(sceGnmSubmitCommandBuffers(1, dcbs, bytes, nullptr, bytes) == InvalidArgument, "a constant buffer size without constant buffers was accepted");
-    check(sceGnmSubmitCommandBuffers(1, dcbs, bytes, nullCcbs, bytes) == InvalidArgument, "a null constant buffer with a size was accepted");
-    check(sceGnmSubmitCommandBuffers(1, dcbs, bytes, dcbs, unaligned) == InvalidArgument, "a constant buffer of 6 bytes was accepted");
-    check(sceGnmSubmitCommandBuffers(1, dcbs, bytes, dcbs, tooLarge) == InvalidArgument, "a constant buffer over the size limit was accepted");
-    check(sceGnmSubmitAndFlipCommandBuffers(0, dcbs, bytes, nullptr, nullptr, 0, 0, 0, 0) == InvalidArgument, "a flip without command buffers was accepted");
+    Require(sceGnmSubmitCommandBuffers(1, nullptr, bytes, nullptr, nullptr) == InvalidArgument, "a submission without draw buffers was accepted");
+    Require(sceGnmSubmitCommandBuffers(1, dcbs, nullptr, nullptr, nullptr) == InvalidArgument, "a submission without draw sizes was accepted");
+    Require(sceGnmSubmitCommandBuffers(1, nullDcbs, bytes, nullptr, nullptr) == InvalidArgument, "a null draw buffer was accepted");
+    Require(sceGnmSubmitCommandBuffers(1, dcbs, empty, nullptr, nullptr) == InvalidArgument, "an empty draw buffer was accepted");
+    Require(sceGnmSubmitCommandBuffers(1, dcbs, unaligned, nullptr, nullptr) == InvalidArgument, "a draw buffer of 6 bytes was accepted");
+    Require(sceGnmSubmitCommandBuffers(1, dcbs, tooLarge, nullptr, nullptr) == InvalidArgument, "a draw buffer over the size limit was accepted");
+    Require(sceGnmSubmitCommandBuffers(1, dcbs, bytes, nullptr, bytes) == InvalidArgument, "a constant buffer size without constant buffers was accepted");
+    Require(sceGnmSubmitCommandBuffers(1, dcbs, bytes, nullCcbs, bytes) == InvalidArgument, "a null constant buffer with a size was accepted");
+    Require(sceGnmSubmitCommandBuffers(1, dcbs, bytes, dcbs, unaligned) == InvalidArgument, "a constant buffer of 6 bytes was accepted");
+    Require(sceGnmSubmitCommandBuffers(1, dcbs, bytes, dcbs, tooLarge) == InvalidArgument, "a constant buffer over the size limit was accepted");
+    Require(sceGnmSubmitAndFlipCommandBuffers(0, dcbs, bytes, nullptr, nullptr, 0, 0, 0, 0) == InvalidArgument, "a flip without command buffers was accepted");
     std::uint32_t typeZero[] = {0, 0};
     std::uint32_t* typeZeroDcbs[] = {typeZero};
     const std::uint32_t typeZeroBytes[] = {sizeof(typeZero)};
-    check(ThrowsRuntimeError([&] { sceGnmSubmitCommandBuffers(1, typeZeroDcbs, typeZeroBytes, nullptr, nullptr); }), "a type-0 packet was accepted");
+    Require(ThrowsRuntimeError([&] { sceGnmSubmitCommandBuffers(1, typeZeroDcbs, typeZeroBytes, nullptr, nullptr); }), "a type-0 packet was accepted");
 }
 
 alignas(256) std::array<std::uint32_t, 4> Label{};
@@ -121,57 +118,57 @@ void TestFillerSubmit() {
     std::uint32_t* ccbs[] = {constant};
     const std::uint32_t drawBytes[] = {sizeof(draw)};
     const std::uint32_t constantBytes[] = {sizeof(constant)};
-    check(sceGnmSubmitCommandBuffers(1, dcbs, drawBytes, ccbs, constantBytes) == 0, "the submission with filler packets failed");
+    Require(sceGnmSubmitCommandBuffers(1, dcbs, drawBytes, ccbs, constantBytes) == 0, "the submission with filler packets failed");
     AgcDriverWaitIdle_nid_postfix();
-    check(Label[0] == 0x1234, "the WRITE_DATA between filler packets did not land");
+    Require(Label[0] == 0x1234, "the WRITE_DATA between filler packets did not land");
 
     std::uint32_t second[] = {Header(0x37, 4), 0x500, low, high, 0x5678, Filler};
     std::uint32_t* secondDcbs[] = {second};
     const std::uint32_t secondBytes[] = {sizeof(second)};
     const std::uint32_t noConstant[] = {0};
-    check(sceGnmSubmitCommandBuffers(1, secondDcbs, secondBytes, nullptr, noConstant) == 0, "a submission with zero-sized constant buffers failed");
+    Require(sceGnmSubmitCommandBuffers(1, secondDcbs, secondBytes, nullptr, noConstant) == 0, "a submission with zero-sized constant buffers failed");
     AgcDriverWaitIdle_nid_postfix();
-    check(Label[0] == 0x5678, "the WRITE_DATA before a trailing filler packet did not land");
-    check(sceGnmSubmitDone() == 0, "sceGnmSubmitDone failed");
+    Require(Label[0] == 0x5678, "the WRITE_DATA before a trailing filler packet did not land");
+    Require(sceGnmSubmitDone() == 0, "sceGnmSubmitDone failed");
 }
 
 void TestQueries() {
-    check(sceGnmGetTheTessellationFactorRingBufferBaseAddress() == 0xff0000000ull, "the tessellation factor ring base address is not 0xff0000000");
-    check(sceGnmLogicalCuMaskToPhysicalCuMask(0, 0x1fu) == 0x1fu, "the CU mask with a first argument of 0 was changed");
-    check(sceGnmLogicalCuMaskToPhysicalCuMask(1, 0xabcdu) == 0xabcdu, "the CU mask with a first argument of 1 was changed");
-    check(sceGnmLogicalCuMaskToPhysicalCuMask(0xffffffffu, 0xffffffffu) == 0xffffffffu, "the CU mask with a first argument of 0xffffffff was changed");
-    check(sceGnmLogicalCuMaskToPhysicalCuMask(7, 0) == 0, "an empty CU mask was changed");
-    check(sceGnmLogicalCuIndexToPhysicalCuIndex(0, 0) == -1, "the CU index with engine 0 and cuIndex 0 was not -1");
-    check(sceGnmLogicalCuIndexToPhysicalCuIndex(1, 8) == -1, "the CU index with engine 1 and cuIndex 8 was not -1");
-    check(sceGnmLogicalCuIndexToPhysicalCuIndex(2, 0) == 0, "the CU index with engine 2 was not 0");
-    check(sceGnmLogicalCuIndexToPhysicalCuIndex(0, 9) == 0, "the CU index with cuIndex 9 was not 0");
-    check(sceGnmLogicalCuIndexToPhysicalCuIndex(0xffffffffu, 0xffffffffu) == 0, "the CU index with engine and cuIndex 0xffffffff was not 0");
+    Require(sceGnmGetTheTessellationFactorRingBufferBaseAddress() == 0xff0000000ull, "the tessellation factor ring base address is not 0xff0000000");
+    Require(sceGnmLogicalCuMaskToPhysicalCuMask(0, 0x1fu) == 0x1fu, "the CU mask with a first argument of 0 was changed");
+    Require(sceGnmLogicalCuMaskToPhysicalCuMask(1, 0xabcdu) == 0xabcdu, "the CU mask with a first argument of 1 was changed");
+    Require(sceGnmLogicalCuMaskToPhysicalCuMask(0xffffffffu, 0xffffffffu) == 0xffffffffu, "the CU mask with a first argument of 0xffffffff was changed");
+    Require(sceGnmLogicalCuMaskToPhysicalCuMask(7, 0) == 0, "an empty CU mask was changed");
+    Require(sceGnmLogicalCuIndexToPhysicalCuIndex(0, 0) == -1, "the CU index with engine 0 and cuIndex 0 was not -1");
+    Require(sceGnmLogicalCuIndexToPhysicalCuIndex(1, 8) == -1, "the CU index with engine 1 and cuIndex 8 was not -1");
+    Require(sceGnmLogicalCuIndexToPhysicalCuIndex(2, 0) == 0, "the CU index with engine 2 was not 0");
+    Require(sceGnmLogicalCuIndexToPhysicalCuIndex(0, 9) == 0, "the CU index with cuIndex 9 was not 0");
+    Require(sceGnmLogicalCuIndexToPhysicalCuIndex(0xffffffffu, 0xffffffffu) == 0, "the CU index with engine and cuIndex 0xffffffff was not 0");
 }
 
 void TestEmbeddedShaders() {
     std::array<std::uint32_t, 0x100> words{};
-    check(sceGnmSetEmbeddedPsShader_nid_disambig1(nullptr, 0x100, 0, 0) == -1, "a null embedded pixel shader buffer was accepted");
-    check(sceGnmSetEmbeddedPsShader_nid_disambig1(words.data(), 0x100, 2, 0) == static_cast<int>(0x8EEE00FFu), "an unknown embedded pixel shader id was accepted");
+    Require(sceGnmSetEmbeddedPsShader_nid_disambig1(nullptr, 0x100, 0, 0) == -1, "a null embedded pixel shader buffer was accepted");
+    Require(sceGnmSetEmbeddedPsShader_nid_disambig1(words.data(), 0x100, 2, 0) == static_cast<int>(0x8EEE00FFu), "an unknown embedded pixel shader id was accepted");
 
     words.fill(0xdeadbeefu);
-    check(sceGnmSetEmbeddedPsShader_nid_disambig1(words.data(), 0x100, 0, 0) == 0, "the black embedded pixel shader failed");
-    check(words[0] == Header(0x76, 3) && words[1] == 8, "the black embedded pixel shader does not start with SET_SH_REG 8");
-    check(WholePackets(words.data(), 28), "the black embedded pixel shader is not whole PM4 packets");
-    check(words[28] == 0xc00a1000u && words[29] == 0, "the black embedded pixel shader does not end with the NOP packet");
+    Require(sceGnmSetEmbeddedPsShader_nid_disambig1(words.data(), 0x100, 0, 0) == 0, "the black embedded pixel shader failed");
+    Require(words[0] == Header(0x76, 3) && words[1] == 8, "the black embedded pixel shader does not start with SET_SH_REG 8");
+    Require(WholePackets(words.data(), 28), "the black embedded pixel shader is not whole PM4 packets");
+    Require(words[28] == 0xc00a1000u && words[29] == 0, "the black embedded pixel shader does not end with the NOP packet");
 
     words.fill(0xdeadbeefu);
-    check(sceGnmSetEmbeddedPsShader_nid_disambig1(words.data(), 0x100, 1, 0) == 0, "the depth-only embedded pixel shader failed");
-    check(words[0] == Header(0x76, 3) && words[1] == 8, "the depth-only embedded pixel shader does not start with SET_SH_REG 8");
-    check(WholePackets(words.data(), 28), "the depth-only embedded pixel shader is not whole PM4 packets");
+    Require(sceGnmSetEmbeddedPsShader_nid_disambig1(words.data(), 0x100, 1, 0) == 0, "the depth-only embedded pixel shader failed");
+    Require(words[0] == Header(0x76, 3) && words[1] == 8, "the depth-only embedded pixel shader does not start with SET_SH_REG 8");
+    Require(WholePackets(words.data(), 28), "the depth-only embedded pixel shader is not whole PM4 packets");
 
-    check(sceGnmSetEmbeddedVsShader_nid_disambig1(nullptr, 0x100, 0, 0) == -1, "a null embedded vertex shader buffer was accepted");
-    check(sceGnmSetEmbeddedVsShader_nid_disambig1(words.data(), 0x100, 1, 0) == static_cast<int>(0x8EEE00FFu), "an unknown embedded vertex shader id was accepted");
+    Require(sceGnmSetEmbeddedVsShader_nid_disambig1(nullptr, 0x100, 0, 0) == -1, "a null embedded vertex shader buffer was accepted");
+    Require(sceGnmSetEmbeddedVsShader_nid_disambig1(words.data(), 0x100, 1, 0) == static_cast<int>(0x8EEE00FFu), "an unknown embedded vertex shader id was accepted");
 
     words.fill(0xdeadbeefu);
-    check(sceGnmSetEmbeddedVsShader_nid_disambig1(words.data(), 0x100, 0, 0) == 0, "the fullscreen embedded vertex shader failed");
-    check(words[0] == Header(0x76, 3) && words[1] == 0x48, "the fullscreen embedded vertex shader does not start with SET_SH_REG 0x48");
-    check(WholePackets(words.data(), 17), "the fullscreen embedded vertex shader is not whole PM4 packets");
-    check(words[17] == 0xc00a1000u && words[18] == 0, "the fullscreen embedded vertex shader does not end with the NOP packet");
+    Require(sceGnmSetEmbeddedVsShader_nid_disambig1(words.data(), 0x100, 0, 0) == 0, "the fullscreen embedded vertex shader failed");
+    Require(words[0] == Header(0x76, 3) && words[1] == 0x48, "the fullscreen embedded vertex shader does not start with SET_SH_REG 0x48");
+    Require(WholePackets(words.data(), 17), "the fullscreen embedded vertex shader is not whole PM4 packets");
+    Require(words[17] == 0xc00a1000u && words[18] == 0, "the fullscreen embedded vertex shader does not end with the NOP packet");
 }
 
 }

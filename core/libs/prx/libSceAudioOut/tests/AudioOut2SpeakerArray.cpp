@@ -1,6 +1,7 @@
 #include "prx/libSceAudioOut/include/AudioOut2.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <cmath>
 #include <cstddef>
@@ -8,12 +9,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
-
-static void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
 
 template<typename TFunction>
 static bool RejectsArgument(TFunction&& function) {

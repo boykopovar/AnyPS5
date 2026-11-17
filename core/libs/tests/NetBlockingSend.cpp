@@ -7,6 +7,7 @@ static int InterceptSendto(SOCKET socket, const char* buffer, int length, int fl
 #define sendto(...) InterceptSendto(__VA_ARGS__)
 #endif
 #include "../prx/libSceNet/Export.cpp"
+#include "Testing.hpp"
 #ifdef _WIN32
 #undef send
 #undef sendto
@@ -23,12 +24,6 @@ static int InterceptSendto(SOCKET socket, const char* buffer, int length, int fl
     return ::sendto(socket, buffer, std::min(length, 16384), flags, address, addressLength);
 }
 #endif
-
-static void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "blocking send: %s\n", message);
-    std::exit(1);
-}
 
 static void SetOption(int descriptor, int option, int value) {
     Require(sceNetSetsockopt(descriptor, NET_SOL_SOCKET, option, &value, sizeof(value)) == 0, "set socket option");

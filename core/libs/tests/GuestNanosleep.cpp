@@ -3,6 +3,7 @@
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -28,8 +29,6 @@ static constexpr std::int64_t NANOS_PER_MILLISECOND = 1000000LL;
 static constexpr std::int64_t SLEEP_NANOS = 50 * NANOS_PER_MILLISECOND;
 static constexpr std::int64_t EARLY_WAKE_MARGIN_NANOS = 5 * NANOS_PER_MILLISECOND;
 static constexpr std::int64_t NO_SLEEP_LIMIT_NANOS = 2 * NANOS_PER_SECOND;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static std::int64_t MonotonicNanos() {
     KernelTimespec time{-1, -1};

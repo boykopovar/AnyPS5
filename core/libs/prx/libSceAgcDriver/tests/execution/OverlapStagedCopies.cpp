@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "Testing.hpp"
 #include "VulkanTestDevice.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -64,10 +65,6 @@ std::uint32_t* NewBlock() {
     return block;
 }
 
-void check(bool condition, const std::string& what) {
-    if (!condition) throw std::runtime_error("overlap staged copies: " + what);
-}
-
 std::vector<std::uint32_t> Dispatches(std::uint32_t count) {
     const auto codeAddress = reinterpret_cast<std::uintptr_t>(IncrementCode.data());
     const auto data = reinterpret_cast<std::uintptr_t>(Data);
@@ -108,13 +105,13 @@ std::vector<std::uint32_t> AtomicPair() {
 void AtomicRound(std::uint32_t& expected, const std::string& what) {
     auto words = AtomicPair();
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
-    check(sceAgcDriverSubmitAcb(ComputeQueue, &packet) == 0, "submission failed");
+    Require(sceAgcDriverSubmitAcb(ComputeQueue, &packet) == 0, "submission failed");
     AgcDriverWaitIdle_nid_postfix();
     expected += 2;
     AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Counters), BufferBytes);
     for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
         const auto value = std::atomic_ref<std::uint32_t>(Counters[lane]).load(std::memory_order_acquire);
-        check(value == expected, what + ": counter " + std::to_string(lane) + " is " + std::to_string(value) + ", expected " + std::to_string(expected));
+        Require(value == expected, what + ": counter " + std::to_string(lane) + " is " + std::to_string(value) + ", expected " + std::to_string(expected));
     }
 }
 
@@ -134,12 +131,12 @@ void ReadRound(std::uint32_t round) {
         words.insert(words.end(), {0xc0027600u, 0x20cu, static_cast<std::uint32_t>(codeAddress >> 8u), static_cast<std::uint32_t>(codeAddress >> 40u), 0xc0031500u, 1u, 1u, 1u, 0x8041u});
     }
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
-    check(sceAgcDriverSubmitAcb(ComputeQueue, &packet) == 0, "submission failed");
+    Require(sceAgcDriverSubmitAcb(ComputeQueue, &packet) == 0, "submission failed");
     AgcDriverWaitIdle_nid_postfix();
     AgcDriver::GuestMemory::FlushGpuWrites(target, BufferBytes);
     for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
         const auto value = std::atomic_ref<std::uint32_t>(Target[lane]).load(std::memory_order_acquire);
-        check(value == lane + 7u, "a read of an earlier unordered dispatch's staged output, round " + std::to_string(round) + ": lane " + std::to_string(lane) + " read " + std::to_string(value) + ", expected " + std::to_string(lane + 7u));
+        Require(value == lane + 7u, "a read of an earlier unordered dispatch's staged output, round " + std::to_string(round) + ": lane " + std::to_string(lane) + " read " + std::to_string(value) + ", expected " + std::to_string(lane + 7u));
     }
 }
 
@@ -154,17 +151,17 @@ void StagedRun(std::uint32_t round) {
     }
     const auto before = AgcDriver::Graphics::Recorder::OverlapCounts().overlapped;
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
-    check(sceAgcDriverSubmitAcb(ComputeQueue, &packet) == 0, "submission failed");
+    Require(sceAgcDriverSubmitAcb(ComputeQueue, &packet) == 0, "submission failed");
     AgcDriverWaitIdle_nid_postfix();
     const auto joined = AgcDriver::Graphics::Recorder::OverlapCounts().overlapped - before;
     for (std::size_t build = 0; build < StoreCodes.size(); ++build) {
         AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Staged[build]), BufferBytes);
         for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
             const auto value = std::atomic_ref<std::uint32_t>(Staged[build][lane]).load(std::memory_order_acquire);
-            check(value == lane + static_cast<std::uint32_t>(build) + 1u, "staged unordered dispatches, round " + std::to_string(round) + ", build " + std::to_string(build + 1) + ": lane " + std::to_string(lane) + " is " + std::to_string(value));
+            Require(value == lane + static_cast<std::uint32_t>(build) + 1u, "staged unordered dispatches, round " + std::to_string(round) + ", build " + std::to_string(build + 1) + ": lane " + std::to_string(lane) + " is " + std::to_string(value));
         }
     }
-    check(joined == StoreCodes.size() - 1, "staged unordered dispatches of four builds, round " + std::to_string(round) + ": " + std::to_string(joined) + " joined a run, expected 3");
+    Require(joined == StoreCodes.size() - 1, "staged unordered dispatches of four builds, round " + std::to_string(round) + ": " + std::to_string(joined) + " joined a run, expected 3");
 }
 
 void RefusedRun() {
@@ -182,13 +179,13 @@ void RefusedRun() {
     const auto submitted = sceAgcDriverSubmitAcb(ComputeQueue, &packet);
     AgcDriverWaitIdle_nid_postfix();
     AgcDriver::Graphics::SetDeviceLocalFullForTests(false);
-    check(submitted == 0, "submission failed");
-    check(AgcDriver::Graphics::StagingShadowsRefused() > refused, "a device-local heap reported full still gave the written buffers device-local shadows");
+    Require(submitted == 0, "submission failed");
+    Require(AgcDriver::Graphics::StagingShadowsRefused() > refused, "a device-local heap reported full still gave the written buffers device-local shadows");
     for (std::size_t build = 0; build < StoreCodes.size(); ++build) {
         AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Staged[build]), BufferBytes);
         for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
             const auto value = std::atomic_ref<std::uint32_t>(Staged[build][lane]).load(std::memory_order_acquire);
-            check(value == lane + static_cast<std::uint32_t>(build) + 1u, "dispatches whose write shadows were refused, build " + std::to_string(build + 1) + ": lane " + std::to_string(lane) + " is " + std::to_string(value) + ", expected " + std::to_string(lane + build + 1u));
+            Require(value == lane + static_cast<std::uint32_t>(build) + 1u, "dispatches whose write shadows were refused, build " + std::to_string(build + 1) + ": lane " + std::to_string(lane) + " is " + std::to_string(value) + ", expected " + std::to_string(lane + build + 1u));
         }
     }
 }
@@ -196,13 +193,13 @@ void RefusedRun() {
 void Round(std::uint32_t dispatches, std::uint32_t& expected, const std::string& what) {
     auto words = Dispatches(dispatches);
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
-    check(sceAgcDriverSubmitAcb(ComputeQueue, &packet) == 0, "submission failed");
+    Require(sceAgcDriverSubmitAcb(ComputeQueue, &packet) == 0, "submission failed");
     AgcDriverWaitIdle_nid_postfix();
     expected += dispatches;
     AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Data), BufferBytes);
     for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
         const auto value = std::atomic_ref<std::uint32_t>(Data[lane]).load(std::memory_order_acquire);
-        check(value == expected, what + ": lane " + std::to_string(lane) + " is " + std::to_string(value) + ", expected " + std::to_string(expected));
+        Require(value == expected, what + ": lane " + std::to_string(lane) + " is " + std::to_string(value) + ", expected " + std::to_string(expected));
     }
 }
 
@@ -228,9 +225,9 @@ int main() {
             StagedRun(round);
             const auto snapshots = AgcDriver::Graphics::ChangedCopySnapshotsMade() - snapshotsBefore;
             if (round == 1) changedCopyBacks = snapshots != 0;
-            check(!changedCopyBacks || snapshots != 0, "round " + std::to_string(round) + " of the staged builds took no changed-copy snapshot, so an idle build still held the one of its earlier use");
+            Require(!changedCopyBacks || snapshots != 0, "round " + std::to_string(round) + " of the staged builds took no changed-copy snapshot, so an idle build still held the one of its earlier use");
             for (int wait = 0; wait < 5000 && AgcDriver::Graphics::ChangedCopySnapshotBytes() != 0; ++wait) std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            check(AgcDriver::Graphics::ChangedCopySnapshotBytes() == 0, std::to_string(AgcDriver::Graphics::ChangedCopySnapshotBytes()) + " bytes of changed-copy snapshots are still held after the queue went idle");
+            Require(AgcDriver::Graphics::ChangedCopySnapshotBytes() == 0, std::to_string(AgcDriver::Graphics::ChangedCopySnapshotBytes()) + " bytes of changed-copy snapshots are still held after the queue went idle");
             std::printf("overlap staged copies: round %u took %llu changed-copy snapshots and none outlived its batch\n", round, static_cast<unsigned long long>(snapshots));
         }
         std::puts("overlap staged copies: unordered staged dispatches of four builds ran in one run");

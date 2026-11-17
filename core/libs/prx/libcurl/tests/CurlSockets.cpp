@@ -8,6 +8,7 @@
 #include "prx/libkernel/Socket/include/SocketPoll.hpp"
 #include "prx/libkernel/Socket/include/SocketRuntime.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
+#include "Testing.hpp"
 #ifdef _WIN32
 #include <ws2tcpip.h>
 #else
@@ -31,13 +32,6 @@
 #include <string>
 #include <thread>
 #include <vector>
-
-static void Require(bool condition, std::source_location where = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "socket test failed at %s:%u\n", where.file_name(), where.line());
-        std::abort();
-    }
-}
 
 static int NativeClose(curl_socket_t socket) {
 #ifdef _WIN32

@@ -4,6 +4,7 @@
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "prx/libkernel/Pthread/include/Cond.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <cstdint>
 #include <cstdlib>
@@ -13,8 +14,6 @@ static constexpr int SCE_OK = 0;
 static constexpr int POSIX_EPERM = 1;
 static constexpr int POSIX_EINVAL = 22;
 static constexpr std::uintptr_t ADAPTIVE_INITIALIZER = 1;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static int PosixTimed(PthreadCond* cond, PthreadMutex* mutex) {
     KernelTimespec deadline{};

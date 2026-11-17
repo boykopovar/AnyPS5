@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cfenv>
 #include <cfloat>
@@ -11,12 +12,6 @@
 #include <cstring>
 #include <limits>
 #include <source_location>
-
-static void Require(bool value, std::source_location location = std::source_location::current()) {
-    if (value) return;
-    std::fprintf(stderr, "%s:%u: requirement failed\n", location.file_name(), location.line());
-    std::abort();
-}
 
 [[gnu::noinline]] static long double Extended(std::uint16_t signExponent, std::uint64_t mantissa) {
     long double value = 0;

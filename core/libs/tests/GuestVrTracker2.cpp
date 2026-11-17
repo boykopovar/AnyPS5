@@ -1,6 +1,7 @@
 #include "prx/libSceVrTracker2/include/Api.hpp"
 #include "prx/libkernel/libkernel.hpp"
 #include "ProcessParametersFixture.hpp"
+#include "Testing.hpp"
 
 #include <algorithm>
 #include <array>
@@ -26,13 +27,6 @@ constexpr std::int32_t NotInitialized = static_cast<std::int32_t>(0x8A740001u);
 constexpr std::int32_t InvalidArgument = static_cast<std::int32_t>(0x8A740006u);
 constexpr std::uint32_t TrackerMemory = 32u << 20;
 constexpr std::size_t WorkMemoryTail = 64u << 10;
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "VrTracker2: %s\n", message);
-        std::abort();
-    }
-}
 
 std::array<std::uint8_t, 32> Filled() {
     std::array<std::uint8_t, 32> buffer{};

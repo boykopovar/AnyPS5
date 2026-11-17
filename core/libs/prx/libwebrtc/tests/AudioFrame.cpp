@@ -1,4 +1,5 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -9,21 +10,6 @@
 #include <stdexcept>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc AudioFrame check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TException, typename TAction> void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
-    try {
-        action();
-    } catch (const TException&) {
-        return;
-    }
-    Require(false, location);
-}
 
 std::unique_ptr<WebRtcAudioFrame> Filled() {
     auto frame = std::make_unique<WebRtcAudioFrame>();
@@ -118,17 +104,17 @@ void TestOperationsMute() {
     frame->muted = false;
     frame->samplesPerChannel = 961;
     frame->numChannels = 8;
-    RequireThrows<std::runtime_error>([&] { _ZN6webrtc20AudioFrameOperations4MuteEPNS_10AudioFrameE_nid_postfix(frame.get()); });
+    ExpectErr<std::runtime_error>([&] { _ZN6webrtc20AudioFrameOperations4MuteEPNS_10AudioFrameE_nid_postfix(frame.get()); });
     Require(!frame->muted);
 }
 
 void TestNullFrame() {
-    RequireThrows<std::invalid_argument>([] { _ZN6webrtc10AudioFrameC1Ev_nid_postfix(nullptr); });
-    RequireThrows<std::invalid_argument>([] { _ZN6webrtc10AudioFrame4MuteEv_nid_postfix(nullptr); });
-    RequireThrows<std::invalid_argument>([] { _ZNK6webrtc10AudioFrame5mutedEv_nid_postfix(nullptr); });
-    RequireThrows<std::invalid_argument>([] { _ZNK6webrtc10AudioFrame4dataEv_nid_postfix(nullptr); });
-    RequireThrows<std::invalid_argument>([] { _ZN6webrtc10AudioFrame12mutable_dataEv_nid_postfix(nullptr); });
-    RequireThrows<std::invalid_argument>([] { _ZN6webrtc20AudioFrameOperations4MuteEPNS_10AudioFrameE_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZN6webrtc10AudioFrameC1Ev_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZN6webrtc10AudioFrame4MuteEv_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZNK6webrtc10AudioFrame5mutedEv_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZNK6webrtc10AudioFrame4dataEv_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZN6webrtc10AudioFrame12mutable_dataEv_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZN6webrtc20AudioFrameOperations4MuteEPNS_10AudioFrameE_nid_postfix(nullptr); });
 }
 
 }
@@ -178,10 +164,10 @@ void TestUpdateFrameLimits() {
     static std::int16_t samples[WebRtcAudioFrameMaxDataSizeSamples];
     UpdateFrame(frame.get(), 0, samples, 960, 48000, 0, 0, 8);
     Require(!frame->muted && frame->numChannels == 8);
-    RequireThrows<std::invalid_argument>([&] { UpdateFrame(frame.get(), 0, samples, 10, 48000, 0, 0, 9); });
+    ExpectErr<std::invalid_argument>([&] { UpdateFrame(frame.get(), 0, samples, 10, 48000, 0, 0, 9); });
     Require(frame->numChannels == 8);
-    RequireThrows<std::invalid_argument>([&] { UpdateFrame(frame.get(), 0, samples, 961, 48000, 0, 0, 8); });
-    RequireThrows<std::invalid_argument>([&] { UpdateFrame(nullptr, 0, samples, 10, 48000, 0, 0, 1); });
+    ExpectErr<std::invalid_argument>([&] { UpdateFrame(frame.get(), 0, samples, 961, 48000, 0, 0, 8); });
+    ExpectErr<std::invalid_argument>([&] { UpdateFrame(nullptr, 0, samples, 10, 48000, 0, 0, 1); });
 }
 
 void TestDataView() {
@@ -205,7 +191,7 @@ void TestDataView() {
     frame->samplesPerChannel = 5;
     view = _ZNK6webrtc10AudioFrame9data_viewEv_nid_postfix(frame.get());
     Require(view.data == nullptr && view.size == 0 && view.samplesPerChannel == 5);
-    RequireThrows<std::invalid_argument>([] { _ZNK6webrtc10AudioFrame9data_viewEv_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZNK6webrtc10AudioFrame9data_viewEv_nid_postfix(nullptr); });
 }
 
 int main() {

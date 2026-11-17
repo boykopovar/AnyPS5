@@ -6,6 +6,7 @@
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include "BdaAbi.hpp"
+#include "Testing.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <array>
@@ -121,10 +122,6 @@ struct Inputs {
     alignas(256) std::array<std::uint32_t, 64> output{};
     std::uint32_t data = 7u;
 };
-
-void Require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 std::span<const std::shared_ptr<const ShaderRecompiler::SrtGuestWords>> countedDependencies;
 std::size_t comparedBytes = 0;

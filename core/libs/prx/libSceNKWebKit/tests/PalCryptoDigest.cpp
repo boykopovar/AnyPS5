@@ -1,6 +1,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -19,14 +20,6 @@ static_assert(offsetof(NKWebKit::WtfAbi::Vector<std::uint8_t>, buffer) == 0);
 static_assert(offsetof(NKWebKit::WtfAbi::Vector<std::uint8_t>, capacity) == 8);
 static_assert(offsetof(NKWebKit::WtfAbi::Vector<std::uint8_t>, size) == 12);
 static_assert(std::is_same_v<std::underlying_type_t<PAL::CryptoDigest::Algorithm>, int>);
-
-static void Check(bool value, const char* name, int line) {
-    if (!value) {
-        std::fprintf(stderr, "PAL::CryptoDigest check failed for %s at line %d\n", name, line);
-        std::abort();
-    }
-}
-#define Require(value, name) Check((value), (name), __LINE__)
 
 using Algorithm = PAL::CryptoDigest::Algorithm;
 

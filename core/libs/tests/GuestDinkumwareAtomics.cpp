@@ -1,12 +1,11 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <thread>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 constexpr int Relaxed = 0, Acquire = 2, Release = 3, AcqRel = 4, SeqCst = 5;
 

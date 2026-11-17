@@ -1,4 +1,5 @@
 #include "prx/libSceSystemLogger2/libSceSystemLogger2.hpp"
+#include "Testing.hpp"
 
 #include <cerrno>
 #include <cstddef>
@@ -23,12 +24,6 @@ constexpr std::size_t kDetailOffset = 0xCC;
 constexpr std::size_t kExNameOffset = 0x168;
 constexpr std::size_t kEx2NameOffset = 0x4D0;
 constexpr std::size_t kRnpsTokenOffset = 0x158;
-
-void Require(bool value, std::source_location location = std::source_location::current()) {
-    if (value) return;
-    std::fprintf(stderr, "libSceSystemLogger2 check failed at line %u\n", location.line());
-    std::abort();
-}
 
 void StoreU32(std::uint8_t* record, std::size_t offset, std::uint32_t value) {
     std::memcpy(record + offset, &value, sizeof(value));

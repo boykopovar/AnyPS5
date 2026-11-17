@@ -1,6 +1,7 @@
 #include "prx/libSceNpWebApi2/include/Api.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cerrno>
 #include <cstdint>
@@ -10,8 +11,6 @@
 #endif
 #include <cstring>
 #include <stdexcept>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static void ClobberErrno(std::uintptr_t, std::size_t) {
     errno = 99;

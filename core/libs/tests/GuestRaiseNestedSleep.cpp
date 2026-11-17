@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -12,8 +13,6 @@ static constexpr KernelUseconds OuterSleep = 1000000;
 static constexpr KernelUseconds HandlerSleep = 20000;
 
 using Clock = std::chrono::steady_clock;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static std::atomic<int> handled{0};
 static std::atomic<bool> started{false};

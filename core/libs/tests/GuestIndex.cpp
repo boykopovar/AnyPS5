@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <climits>
 #include <cstddef>
@@ -16,13 +17,6 @@
 namespace {
 
 using Search = char* (APS5_VABI*)(const char*, int);
-
-void Require(bool value, const char* message) {
-    if (!value) {
-        std::fprintf(stderr, "%s\n", message);
-        std::abort();
-    }
-}
 
 char* Expected(const char* text, int character) {
     const char wanted = static_cast<char>(character);

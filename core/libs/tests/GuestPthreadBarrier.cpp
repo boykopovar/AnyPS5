@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <atomic>
 #include <cstdlib>
@@ -13,8 +14,6 @@ static constexpr int PROCESS_PRIVATE = 0;
 static constexpr int PROCESS_SHARED = 1;
 static constexpr int BARRIER_SERIAL_THREAD = -1;
 static constexpr unsigned WAITERS = 4;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 struct Context {
     PthreadBarrierPrivate* barrier = nullptr;

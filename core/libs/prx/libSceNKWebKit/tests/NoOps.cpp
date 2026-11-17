@@ -1,20 +1,12 @@
 #include "prx/libSceNKWebKit/include/NoOpExports.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 
 extern "C" std::uint64_t APS5_VABI NotImplementedCalls_nid_no_patch();
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "libSceNKWebKit no-op check failed at line %d\n", line);
-        std::abort();
-    }
-}
-
-#define Require(value) Check((value), __LINE__)
 
 int main() {
     const auto before = NotImplementedCalls_nid_no_patch();

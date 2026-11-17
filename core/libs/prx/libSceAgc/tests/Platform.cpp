@@ -2,6 +2,7 @@
 #include "prx/libSceAgc/include/Agc.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdio>
@@ -9,16 +10,12 @@
 
 namespace {
 
-void check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
-
 template <typename TAction>
 void expectFailure(TAction action) {
     try {
         action();
     } catch (const std::runtime_error& error) {
-        check(error.what()[0] != '\0', "empty exception message");
+        Require(error.what()[0] != '\0', "empty exception message");
         return;
     }
     throw std::runtime_error("expected an exception");
@@ -26,9 +23,9 @@ void expectFailure(TAction action) {
 
 void testTrinityMode() {
     std::array<bool, 3> flags{true, true, true};
-    check(sceAgcGetIsTrinityMode(&flags[1]) == 0, "Trinity mode query did not return 0");
-    check(!flags[1], "base PS5 GPU reported as Trinity");
-    check(flags[0] && flags[2], "Trinity mode query wrote past its one-byte flag");
+    Require(sceAgcGetIsTrinityMode(&flags[1]) == 0, "Trinity mode query did not return 0");
+    Require(!flags[1], "base PS5 GPU reported as Trinity");
+    Require(flags[0] && flags[2], "Trinity mode query wrote past its one-byte flag");
 }
 
 void testRejections() {
@@ -38,7 +35,7 @@ void testRejections() {
 
 void testExportLinked() {
     auto* volatile linked = &sceAgcSuspendPointAndCheckStatus;
-    check(linked != nullptr, "sceAgcSuspendPointAndCheckStatus is not linked");
+    Require(linked != nullptr, "sceAgcSuspendPointAndCheckStatus is not linked");
 }
 
 }

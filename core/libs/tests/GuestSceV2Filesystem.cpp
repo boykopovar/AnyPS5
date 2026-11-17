@@ -1,6 +1,7 @@
 #include "AppArchiveFixture.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -23,12 +24,6 @@ constexpr int TypeRegular = 1;
 constexpr int TypeDirectory = 2;
 constexpr int TypeUnknown = 8;
 constexpr int Loop = 62;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "sce v2 filesystem: %s\n", message);
-    std::abort();
-}
 
 std::string root;
 

@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -11,10 +12,6 @@
 #include <vector>
 
 namespace {
-
-void check(bool condition, const std::string& what) {
-    if (!condition) throw std::runtime_error("pipelined predicated label order: " + what);
-}
 
 alignas(256) std::array<std::uint32_t, 4> Predicate{};
 alignas(256) std::array<std::uint32_t, 4> Target{};
@@ -41,9 +38,9 @@ int main() {
         WriteData(words, Target.data(), 1, true);
         WriteData(words, Target.data(), 2, false);
         Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
-        check(sceAgcDriverSubmitDcb(&packet) == 0, "submission failed");
+        Require(sceAgcDriverSubmitDcb(&packet) == 0, "submission failed");
         AgcDriverWaitIdle_nid_postfix();
-        check(Target[0] == 2, "a predicated WRITE_DATA landed after the unpredicated WRITE_DATA that follows it (target " + std::to_string(Target[0]) + ", expected 2)");
+        Require(Target[0] == 2, "a predicated WRITE_DATA landed after the unpredicated WRITE_DATA that follows it (target " + std::to_string(Target[0]) + ", expected 2)");
         LibcRunShutdown_nid_postfix();
         std::puts("pipelined predicated label order test passed");
         return 0;

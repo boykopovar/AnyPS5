@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/CompileBudget.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -13,10 +14,6 @@ namespace {
 using namespace std::chrono_literals;
 using AgcDriver::BackgroundCompileLimitFor;
 using AgcDriver::CompileBudget;
-
-void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 void CheckLimitPolicy() {
     Require(BackgroundCompileLimitFor(nullptr) == 8192u * 1024u, "an unset APS5_BACKGROUND_COMPILE_KIB is not 8 MiB");

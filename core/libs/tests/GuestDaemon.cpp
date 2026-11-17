@@ -1,10 +1,10 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdlib>
 #include <stdexcept>
 #include <string>
 
-static void Require(bool value) { if (!value) std::abort(); }
 static bool ReportsNotImplemented(int noChdir, int noClose) {
     try {
         daemon_nid_postfix(noChdir, noClose);

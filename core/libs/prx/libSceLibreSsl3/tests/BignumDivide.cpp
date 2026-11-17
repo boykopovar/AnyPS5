@@ -1,6 +1,7 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -9,12 +10,6 @@
 #include <string>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL3 BN_div check failed at line %u\n", location.line());
-    std::abort();
-}
 
 int liveBlocks = 0;
 int zeroedCallsBeforeFailure = -1;

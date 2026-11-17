@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -7,14 +8,6 @@
 #include <string>
 
 using NKWebKit::WtfAbi::StringView;
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "SecurityOrigin check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static bool Local(const char* text) {
     return _ZN7WebCore14SecurityOrigin30isLocalHostOrLoopbackIPAddressEN3WTF10StringViewE(StringView{text, static_cast<unsigned>(std::strlen(text)), true});

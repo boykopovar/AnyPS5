@@ -3,13 +3,12 @@
 #include "prx/libSceNpTrophy2/include/NpTrophy2Constants.hpp"
 #include "prx/libSceNpTrophy2/include/NpTrophy2Types.hpp"
 #include "tests/ExportLookup.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static void APS5_VABI OnUnlock(int, int, void*) {}
 

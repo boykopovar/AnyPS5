@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <thread>
@@ -17,8 +18,6 @@ static constexpr int SigUnblock = 2;
 static constexpr int SigSetmask = 3;
 
 static std::uint32_t Bit(int signal) { return 1u << (signal - 1); }
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static int calls = 0;
 static int callsAfterNestedRaise = 0;

@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/specifics/linux/ElfTypes.hpp"
 #include "tests/GuestUnwindModuleInfoFixture.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -18,10 +19,6 @@ static_assert(offsetof(GuestImageMeta, count) == 0x58 && offsetof(GuestImageMeta
 
 [[gnu::section("__APS5DATA,__meta"), gnu::used]] static GuestImageMeta meta;
 static UnwindFixture fixture;
-
-static void Require(bool value, const char* message) {
-    if (!value) throw std::runtime_error(message);
-}
 
 static std::uint64_t Address(const void* pointer) {
     return reinterpret_cast<std::uint64_t>(pointer);

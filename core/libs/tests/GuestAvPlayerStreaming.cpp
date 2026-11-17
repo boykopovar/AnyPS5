@@ -1,4 +1,5 @@
 #include "prx/libSceAvPlayerStreaming/libSceAvPlayerStreaming.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cerrno>
@@ -8,10 +9,6 @@
 #include <cstring>
 
 namespace {
-
-void Require(bool value) {
-    if (!value) std::abort();
-}
 
 void RequireUnchanged(const std::array<unsigned char, 0x300>& block) {
     for (const unsigned char byte : block) Require(byte == 0x5A);

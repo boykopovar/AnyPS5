@@ -4,6 +4,7 @@
 #include "prx/libSceCommonDialog/include/DialogUse.hpp"
 #include "prx/libSceCommonDialog/include/Exports.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -22,10 +23,6 @@
 #endif
 
 namespace {
-
-void Require(bool value) {
-    if (!value) std::abort();
-}
 
 void ClobberErrno(std::uintptr_t, std::size_t) {
     errno = 99;

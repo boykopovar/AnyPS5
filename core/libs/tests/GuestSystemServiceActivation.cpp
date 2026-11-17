@@ -1,5 +1,6 @@
 #include "prx/libSceSystemService/include/SystemService.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
@@ -13,8 +14,6 @@ constexpr std::uintptr_t untouchedHandle = 0x5A5A5A5A5A5A5A5Au;
 constexpr std::uint32_t untouchedStatus = 0x5A5A5A5Au;
 constexpr std::int32_t untouchedResult = 0x5A5A5A5A;
 constexpr std::uint8_t untouchedFlag = 0x5A;
-
-void Require(bool value) { if (!value) std::abort(); }
 
 struct Codec {
     int (APS5_VABI* init)(std::uintptr_t*);

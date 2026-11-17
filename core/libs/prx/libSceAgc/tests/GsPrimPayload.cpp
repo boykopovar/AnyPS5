@@ -3,6 +3,7 @@
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceAgc/Shader/include/ShaderConstants.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdint>
@@ -14,16 +15,12 @@ namespace {
 
 constexpr std::uint32_t Sentinel = 0xccccccccu;
 
-void check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
-
 template <typename TAction>
 void expectFailure(TAction action, const char* message) {
     try {
         action();
     } catch (const std::exception& error) {
-        check(error.what()[0] != '\0', "empty exception message");
+        Require(error.what()[0] != '\0', "empty exception message");
         return;
     }
     throw std::runtime_error(message);
@@ -38,9 +35,9 @@ Shader makeGs(std::vector<ShaderRegister>& cx) {
 
 void expectPayload(const Shader& gs, std::uint32_t expected, const char* message) {
     std::array<std::uint32_t, 2> out{Sentinel, Sentinel};
-    check(sceAgcGetGsPrimPayload(out.data(), &gs) == 0, message);
-    check(out[0] == expected, message);
-    check(out[1] == Sentinel, "the payload write went past four bytes");
+    Require(sceAgcGetGsPrimPayload(out.data(), &gs) == 0, message);
+    Require(out[0] == expected, message);
+    Require(out[1] == Sentinel, "the payload write went past four bytes");
 }
 
 void testNoRegisters() {
@@ -92,7 +89,7 @@ void testRejections() {
     Shader missing{};
     missing.num_cx_registers = 1;
     expectFailure([&] { sceAgcGetGsPrimPayload(&out, &missing); }, "a register count without a register array was accepted");
-    check(out == Sentinel, "a rejected call wrote the payload");
+    Require(out == Sentinel, "a rejected call wrote the payload");
 }
 
 }

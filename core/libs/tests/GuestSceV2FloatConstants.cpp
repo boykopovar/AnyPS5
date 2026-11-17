@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -63,12 +64,6 @@ const Constant Constants[] = {
     {"8_HugevalE", _ZNSt8__sce_v28_HugevalE_nid_postfix, 16, {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0x7f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}},
     {"8_LDenormE", _ZNSt8__sce_v28_LDenormE_nid_postfix, 16, {0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}},
 };
-
-void Require(bool condition, const char* label) {
-    if (condition) return;
-    std::fprintf(stderr, "sce v2 float constants: %s\n", label);
-    std::abort();
-}
 
 double Double(const unsigned char* bytes) {
     double value;

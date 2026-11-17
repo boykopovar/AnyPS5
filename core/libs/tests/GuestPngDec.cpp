@@ -3,6 +3,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "Decoder/Png.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <cerrno>
 #include <cstddef>
@@ -29,12 +30,6 @@ static void TamperContextOnRead(std::uintptr_t address, std::size_t) {
     if (gTamperContext && address >= gWatchReadStart && address < gWatchReadEnd) {
         std::memset(static_cast<std::uint8_t*>(gTamperContext) + sizeof(void*), 0, 16);
     }
-}
-
-static void Require(bool value, std::source_location location = std::source_location::current()) {
-    if (value) return;
-    std::fprintf(stderr, "%s:%u: PNG decoder assertion failed\n", location.file_name(), location.line());
-    std::abort();
 }
 
 static const std::uint8_t PALETTE_TRNS[] = {

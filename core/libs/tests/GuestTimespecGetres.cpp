@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "Testing.hpp"
 #include <climits>
 #include <cstdint>
 #include <cstdio>
@@ -12,13 +13,6 @@
 #else
 #include <sys/mman.h>
 #endif
-
-static void Check(bool condition, int line) {
-    if (condition) return;
-    std::fprintf(stderr, "timespec_getres check failed at line %d\n", line);
-    std::abort();
-}
-#define Require(condition) Check((condition), __LINE__)
 
 static int calls, observedClock, response, errorToSet;
 static KernelTimespec* observedPointer;

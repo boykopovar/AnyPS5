@@ -1,5 +1,6 @@
 #include "prx/libSceAvPlayer/include/HttpStream.hpp"
 #include "prx/libSceHttp/libSceHttp.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <chrono>
 #include <cstdio>
@@ -13,12 +14,6 @@
 
 extern "C" {
 #include <libavformat/avio.h>
-}
-
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "AvPlayer HTTP transport: %s\n", message);
-    std::abort();
 }
 
 int main(int argc, char** argv) {

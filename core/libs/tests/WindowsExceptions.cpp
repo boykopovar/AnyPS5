@@ -15,6 +15,7 @@
 #include <typeinfo>
 #include <windows.h>
 #include "../prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 extern "C" {
 extern const unsigned char _ZTVN10__cxxabiv117__class_type_infoE_nid_postfix[];
@@ -71,10 +72,6 @@ static void TestTypeInfoVtables() {
 
 extern "C" [[noreturn]] void (NotImplemented_nid_no_patch)(const char*);
 
-static void RequireHandle(bool value) {
-    if (!value) throw std::runtime_error("child process setup failed");
-}
-
 [[gnu::noinline, noreturn]] static void ThrowUncaughtProbe() {
     throw std::runtime_error("unhandled site probe");
 }
@@ -92,14 +89,14 @@ static std::string RunChild(const wchar_t* argument, DWORD& exitCode) {
     attributes.bInheritHandle = TRUE;
     HANDLE readPipe = nullptr;
     HANDLE writePipe = nullptr;
-    RequireHandle(CreatePipe(&readPipe, &writePipe, &attributes, 0) != 0);
-    RequireHandle(SetHandleInformation(readPipe, HANDLE_FLAG_INHERIT, 0) != 0);
+    Require(CreatePipe(&readPipe, &writePipe, &attributes, 0) != 0, "child process setup failed");
+    Require(SetHandleInformation(readPipe, HANDLE_FLAG_INHERIT, 0) != 0, "child process setup failed");
     std::array<wchar_t, 32768> image{};
-    RequireHandle(GetModuleFileNameW(nullptr, image.data(), static_cast<DWORD>(image.size())) != 0);
+    Require(GetModuleFileNameW(nullptr, image.data(), static_cast<DWORD>(image.size())) != 0, "child process setup failed");
     std::array<wchar_t, 32768> command{};
     const std::size_t imageLength = std::wcslen(image.data());
     const std::size_t argumentLength = std::wcslen(argument);
-    RequireHandle(1 + imageLength + argumentLength + 1 < command.size());
+    Require(1 + imageLength + argumentLength + 1 < command.size(), "child process setup failed");
     command[0] = L'"';
     std::memcpy(command.data() + 1, image.data(), imageLength * sizeof(wchar_t));
     std::memcpy(command.data() + 1 + imageLength, argument, (argumentLength + 1) * sizeof(wchar_t));
@@ -110,7 +107,7 @@ static std::string RunChild(const wchar_t* argument, DWORD& exitCode) {
     startup.hStdOutput = writePipe;
     startup.hStdError = writePipe;
     PROCESS_INFORMATION child{};
-    RequireHandle(CreateProcessW(image.data(), command.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &startup, &child) != 0);
+    Require(CreateProcessW(image.data(), command.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &startup, &child) != 0, "child process setup failed");
     CloseHandle(writePipe);
     CloseHandle(child.hThread);
     std::array<char, 65536> output{};
@@ -120,8 +117,8 @@ static std::string RunChild(const wchar_t* argument, DWORD& exitCode) {
         outputLength += chunk;
     }
     CloseHandle(readPipe);
-    RequireHandle(WaitForSingleObject(child.hProcess, 20000) == WAIT_OBJECT_0);
-    RequireHandle(GetExitCodeProcess(child.hProcess, &exitCode) != 0);
+    Require(WaitForSingleObject(child.hProcess, 20000) == WAIT_OBJECT_0, "child process setup failed");
+    Require(GetExitCodeProcess(child.hProcess, &exitCode) != 0, "child process setup failed");
     CloseHandle(child.hProcess);
     output[outputLength < output.size() ? outputLength : output.size() - 1] = 0;
     return std::string(output.data());
@@ -130,15 +127,15 @@ static std::string RunChild(const wchar_t* argument, DWORD& exitCode) {
 static void testUnhandledThrowSite() {
     DWORD exitCode = 0;
     const std::string output = RunChild(L"\" throw-uncaught", exitCode);
-    RequireHandle(exitCode == 0xC0000409);
+    Require(exitCode == 0xC0000409, "child process setup failed");
     const char* probeMarker = std::strstr(output.c_str(), "probe ");
-    RequireHandle(probeMarker != nullptr);
+    Require(probeMarker != nullptr, "child process setup failed");
     const auto probe = static_cast<std::uintptr_t>(std::strtoull(probeMarker + 6, nullptr, 16));
-    RequireHandle(probe != 0);
+    Require(probe != 0, "child process setup failed");
     const char* marker = std::strstr(output.c_str(), "thrown from ");
-    RequireHandle(marker != nullptr);
+    Require(marker != nullptr, "child process setup failed");
     const auto logged = static_cast<std::uintptr_t>(std::strtoull(marker + 13, nullptr, 16));
-    RequireHandle(logged != 0);
+    Require(logged != 0, "child process setup failed");
     if (logged <= probe || logged - probe >= 0x1000) throw std::runtime_error("unhandled exception named the wrapper instead of the throw site");
 }
 

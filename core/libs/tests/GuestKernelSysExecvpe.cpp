@@ -1,6 +1,7 @@
 #include "prx/libkernel_sys/include/AdditionalExports.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <chrono>
@@ -18,13 +19,6 @@ constexpr int GuestEacces = 13;
 constexpr int GuestEnoexec = 8;
 constexpr int GuestE2big = 7;
 constexpr int GuestEfault = 14;
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "kernel sys execvpe: %s\n", message);
-        std::abort();
-    }
-}
 
 void RequireFailure(int result, int error, const char* message) {
     Require(result == -1 && *__error_nid_postfix() == error, message);

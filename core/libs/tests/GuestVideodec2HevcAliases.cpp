@@ -1,6 +1,7 @@
 #include "prx/libSceVideodec2/include/Api.hpp"
 #include "H264Fixture.hpp"
 #include "HevcFixture.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <stdexcept>
@@ -9,10 +10,6 @@
 #include <vector>
 
 using namespace SceVideodec2;
-
-static void Require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 static auto Fields(const DecoderMemoryInfo& memory) {
     return std::tie(memory.thisSize, memory.cpuMemorySize, memory.cpuMemory, memory.gpuMemorySize, memory.gpuMemory,

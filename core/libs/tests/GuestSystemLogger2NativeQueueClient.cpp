@@ -1,5 +1,6 @@
 #include "prx/libSceSystemLogger2NativeQueueClient/libSceSystemLogger2NativeQueueClient.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "Testing.hpp"
 
 #include <cerrno>
 #include <cstddef>
@@ -18,21 +19,6 @@ constexpr int getEventResult = static_cast<int>(0x818C0006u);
 constexpr std::size_t eventBytes = 0x72F4;
 constexpr std::size_t checkResultBytes = 0x40;
 constexpr std::size_t guard = 0x20;
-
-void Require(bool value) {
-    if (!value) std::abort();
-}
-
-template <typename Fn>
-void RequireThrows(Fn&& fn) {
-    bool threw = false;
-    try {
-        fn();
-    } catch (const std::runtime_error&) {
-        threw = true;
-    }
-    Require(threw);
-}
 
 void RequireZeroedThenUntouched(const std::vector<unsigned char>& block, std::size_t zeroed) {
     for (std::size_t i = 0; i < block.size(); ++i) Require(block[i] == (i < zeroed ? 0 : 0x5A));
@@ -54,7 +40,7 @@ int main() {
 
         Require(sceSystemLogger2NativeQueueClientGetEvent(nullptr) == invalidArgument);
         errno = 71;
-        RequireThrows([] { sceSystemLogger2NativeQueueClientGetEvent(reinterpret_cast<void*>(0x10)); });
+        ExpectErr<std::runtime_error>([] { sceSystemLogger2NativeQueueClientGetEvent(reinterpret_cast<void*>(0x10)); });
         Require(errno == 71);
         std::vector<unsigned char> event(eventBytes + guard, 0x5A);
         errno = 71;
@@ -66,10 +52,10 @@ int main() {
         Require(sceSystemLogger2NativeQueueClientCheckData(data.data(), nullptr) == invalidArgument);
         Require(sceSystemLogger2NativeQueueClientCheckData(nullptr, nullptr) == invalidArgument);
         errno = 71;
-        RequireThrows([&] { sceSystemLogger2NativeQueueClientCheckData(data.data(), reinterpret_cast<void*>(0x10)); });
+        ExpectErr<std::runtime_error>([&] { sceSystemLogger2NativeQueueClientCheckData(data.data(), reinterpret_cast<void*>(0x10)); });
         Require(errno == 71);
         errno = 71;
-        RequireThrows([] { sceSystemLogger2NativeQueueClientCheckData(nullptr, reinterpret_cast<void*>(0x10)); });
+        ExpectErr<std::runtime_error>([] { sceSystemLogger2NativeQueueClientCheckData(nullptr, reinterpret_cast<void*>(0x10)); });
         Require(errno == 71);
         std::vector<unsigned char> result(checkResultBytes + guard, 0x5A);
         errno = 71;

@@ -1,6 +1,7 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdlib>
 #include <initializer_list>
@@ -13,8 +14,6 @@
 #endif
 
 static constexpr int SCE_OK = 0;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 class GuardPage {
 public:

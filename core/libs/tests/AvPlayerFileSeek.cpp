@@ -1,18 +1,12 @@
 #include "prx/libSceAvPlayer/include/FileReplacementStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
 #include <source_location>
 
 namespace {
-
-void Check(bool condition, const std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "seek requirement failed at %s:%u\n", location.file_name(), location.line());
-        std::abort();
-    }
-}
 
 struct File {
     std::uint64_t size;
@@ -42,26 +36,26 @@ void CheckSeeks(std::uint64_t size) {
     File file{size};
     {
         AvPlayer::FileReplacementStream stream({&file, Open, Close, Read, Size});
-        Check(stream.Open("in-memory seek fixture"));
+        Require(stream.Open("in-memory seek fixture"));
         auto* context = stream.Context();
         const auto seek = [&](std::int64_t offset, int whence) { return context->seek(context->opaque, offset, whence); };
         const auto limit = static_cast<std::int64_t>(size);
-        Check(seek(0, AVSEEK_SIZE) == limit);
-        Check(seek(4, SEEK_SET) == 4);
-        Check(seek(5, SEEK_CUR) == 9);
-        Check(seek(-3, SEEK_CUR) == 6);
-        Check(seek(-1, SEEK_END) == limit - 1);
-        Check(seek(1, SEEK_END) == limit);
-        Check(seek(std::numeric_limits<std::int64_t>::max(), SEEK_CUR) == limit);
-        Check(seek(std::numeric_limits<std::int64_t>::min(), SEEK_CUR) == 0);
-        Check(seek(std::numeric_limits<std::int64_t>::min(), SEEK_END) == 0);
-        Check(seek(3, SEEK_SET | AVSEEK_FORCE) == 3);
-        Check(seek(12, 12345) == -1);
-        Check(seek(0, SEEK_CUR) == 3);
-        Check(seek(std::numeric_limits<std::int64_t>::max(), SEEK_SET) == limit);
-        Check(seek(-1, SEEK_CUR) == limit - 1);
+        Require(seek(0, AVSEEK_SIZE) == limit);
+        Require(seek(4, SEEK_SET) == 4);
+        Require(seek(5, SEEK_CUR) == 9);
+        Require(seek(-3, SEEK_CUR) == 6);
+        Require(seek(-1, SEEK_END) == limit - 1);
+        Require(seek(1, SEEK_END) == limit);
+        Require(seek(std::numeric_limits<std::int64_t>::max(), SEEK_CUR) == limit);
+        Require(seek(std::numeric_limits<std::int64_t>::min(), SEEK_CUR) == 0);
+        Require(seek(std::numeric_limits<std::int64_t>::min(), SEEK_END) == 0);
+        Require(seek(3, SEEK_SET | AVSEEK_FORCE) == 3);
+        Require(seek(12, 12345) == -1);
+        Require(seek(0, SEEK_CUR) == 3);
+        Require(seek(std::numeric_limits<std::int64_t>::max(), SEEK_SET) == limit);
+        Require(seek(-1, SEEK_CUR) == limit - 1);
     }
-    Check(file.opened == 1 && file.closed == 1);
+    Require(file.opened == 1 && file.closed == 1);
 }
 
 }
@@ -73,9 +67,9 @@ int main() {
         File file{size};
         {
             AvPlayer::FileReplacementStream stream({&file, Open, Close, Read, Size});
-            Check(!stream.Open("unrepresentable file size"));
-            Check(stream.Context() == nullptr);
+            Require(!stream.Open("unrepresentable file size"));
+            Require(stream.Context() == nullptr);
         }
-        Check(file.opened == 1 && file.closed == 1);
+        Require(file.opened == 1 && file.closed == 1);
     }
 }

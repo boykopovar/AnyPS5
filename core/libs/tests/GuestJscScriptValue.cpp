@@ -1,6 +1,7 @@
 #include "prx/libSceJsc/include/Api.hpp"
 #include "prx/libSceJsc/include/InventoryExports.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstddef>
@@ -10,10 +11,6 @@
 #include <type_traits>
 
 namespace {
-
-void Require(bool condition) {
-    if (!condition) std::abort();
-}
 
 std::array<unsigned char, 16> ValueHolding(const std::uint64_t* slot) {
     std::array<unsigned char, 16> object{};

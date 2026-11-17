@@ -1,6 +1,7 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <cstdint>
 #include <cstdlib>
@@ -12,8 +13,6 @@ static constexpr std::uintptr_t APPLICATION_AREA_END = 0x000010FC00000000ull;
 static constexpr std::uintptr_t APPLICATION_AREA_END = 0x000000FC00000000ull;
 #endif
 static int global = 0;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 struct WorkerContext {
     std::atomic<bool> queried{false};

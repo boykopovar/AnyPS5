@@ -2,6 +2,7 @@
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libc/include/GuestErrno.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -37,12 +38,6 @@ constexpr int ORdwr = 0x0002;
 constexpr int ONonblock = 0x0004;
 constexpr int OCreat = 0x0200;
 constexpr int OExcl = 0x0800;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "check failed at line %u\n", static_cast<unsigned>(location.line()));
-    std::exit(1);
-}
 
 int Error() {
     return *__error_nid_postfix();

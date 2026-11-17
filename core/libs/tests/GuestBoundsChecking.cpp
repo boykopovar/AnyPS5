@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -29,13 +30,6 @@ void APS5_VABI RecordConstraint(const char* message, void* pointer, int error) {
     constraintError = error;
     if (pointer != nullptr) {
         std::fprintf(stderr, "constraint handler received a non-null pointer\n");
-        std::abort();
-    }
-}
-
-void Require(bool value, const char* message) {
-    if (!value) {
-        std::fprintf(stderr, "%s\n", message);
         std::abort();
     }
 }

@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileCounter.hpp"
+#include "Testing.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -19,10 +20,6 @@
 namespace {
 
 using AgcDriver::ProfileCounter;
-
-void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 void CheckSums(std::size_t threads) {
     constexpr std::uint64_t Adds = 200000;

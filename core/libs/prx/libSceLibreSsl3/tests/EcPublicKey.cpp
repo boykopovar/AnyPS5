@@ -1,6 +1,7 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libSceLibreSsl/include/Ec.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -16,12 +17,6 @@ constexpr int Secp256r1 = 415;
 constexpr int Secp384r1 = 715;
 constexpr std::uint64_t PassedNullParameter = 0x10fff043;
 constexpr std::uint64_t EcLibraryFailure = 0x10fff010;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "requirement failed at line %u\n", static_cast<unsigned>(location.line()));
-    std::abort();
-}
 
 std::vector<unsigned char> Hex(const char* text) {
     std::vector<unsigned char> bytes;

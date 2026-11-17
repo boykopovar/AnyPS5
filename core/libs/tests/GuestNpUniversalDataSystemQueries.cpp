@@ -1,17 +1,11 @@
 #include "prx/libSceNpUniversalDataSystem/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
-
-static void Require(bool value, int line) {
-    if (value) return;
-    std::fprintf(stderr, "UDS query check failed at line %d\n", line);
-    std::abort();
-}
-#define CHECK(value) Require((value), __LINE__)
 
 template <typename Call>
 static bool RejectsArgument(Call&& call) {
@@ -36,59 +30,59 @@ int main() {
     constexpr int invalidArgument = static_cast<int>(0x80553102u);
     constexpr int invalidParamSize = static_cast<int>(0x80553112u);
     constexpr int alreadyInitialized = static_cast<int>(0x80553118u);
-    CHECK(sceNpUniversalDataSystemInitialize(nullptr) == invalidArgument);
+    Require(sceNpUniversalDataSystemInitialize(nullptr) == invalidArgument);
     const NpUniversalDataSystemInitParam init{sizeof(NpUniversalDataSystemInitParam), 0x10000};
     for (const std::size_t size : {std::size_t{0}, std::size_t{8}, std::size_t{0xf}, std::size_t{0x11}, std::size_t{0x18},
                                    std::size_t{0x20}, std::size_t{0x100}, ~std::size_t{0}}) {
         const NpUniversalDataSystemInitParam wrongSize{size, 0x10000};
-        CHECK(sceNpUniversalDataSystemInitialize(&wrongSize) == invalidParamSize);
+        Require(sceNpUniversalDataSystemInitialize(&wrongSize) == invalidParamSize);
     }
     const NpUniversalDataSystemInitParam emptyPool{sizeof(NpUniversalDataSystemInitParam), 0};
-    CHECK(sceNpUniversalDataSystemInitialize(&emptyPool) == invalidArgument);
+    Require(sceNpUniversalDataSystemInitialize(&emptyPool) == invalidArgument);
     const NpUniversalDataSystemInitParam wrongSizeEmptyPool{0x18, 0};
-    CHECK(sceNpUniversalDataSystemInitialize(&wrongSizeEmptyPool) == invalidParamSize);
-    CHECK(sceNpUniversalDataSystemInitialize(&init) == 0);
+    Require(sceNpUniversalDataSystemInitialize(&wrongSizeEmptyPool) == invalidParamSize);
+    Require(sceNpUniversalDataSystemInitialize(&init) == 0);
     const NpUniversalDataSystemInitParam wrongSize{0x18, 0x10000};
-    CHECK(sceNpUniversalDataSystemInitialize(&init) == alreadyInitialized);
-    CHECK(sceNpUniversalDataSystemInitialize(&wrongSize) == alreadyInitialized);
-    CHECK(sceNpUniversalDataSystemInitialize(nullptr) == alreadyInitialized);
+    Require(sceNpUniversalDataSystemInitialize(&init) == alreadyInitialized);
+    Require(sceNpUniversalDataSystemInitialize(&wrongSize) == alreadyInitialized);
+    Require(sceNpUniversalDataSystemInitialize(nullptr) == alreadyInitialized);
 
     NpUniversalDataSystemMemoryStat memory;
     std::memset(&memory, 0x5a, sizeof(memory));
-    CHECK(RejectsArgument([] { sceNpUniversalDataSystemGetMemoryStat(nullptr); }));
-    CHECK(sceNpUniversalDataSystemGetMemoryStat(&memory) == 0 && Zeroed(memory));
+    Require(RejectsArgument([] { sceNpUniversalDataSystemGetMemoryStat(nullptr); }));
+    Require(sceNpUniversalDataSystemGetMemoryStat(&memory) == 0 && Zeroed(memory));
     NpUniversalDataSystemStorageStat storage;
     std::memset(&storage, 0x5a, sizeof(storage));
-    CHECK(RejectsArgument([] { sceNpUniversalDataSystemGetStorageStat(1, nullptr); }));
-    CHECK(sceNpUniversalDataSystemGetStorageStat(1, &storage) == 0 && Zeroed(storage));
+    Require(RejectsArgument([] { sceNpUniversalDataSystemGetStorageStat(1, nullptr); }));
+    Require(sceNpUniversalDataSystemGetStorageStat(1, &storage) == 0 && Zeroed(storage));
 
     NpUniversalDataSystemEvent* event = nullptr;
-    CHECK(sceNpUniversalDataSystemCreateEvent("QueryEvent", nullptr, &event, nullptr) == 0 && event != nullptr);
+    Require(sceNpUniversalDataSystemCreateEvent("QueryEvent", nullptr, &event, nullptr) == 0 && event != nullptr);
     std::size_t size = 0;
-    CHECK(sceNpUniversalDataSystemEventEstimateSize(nullptr, &size) == static_cast<int>(0x80553116u));
-    CHECK(sceNpUniversalDataSystemEventEstimateSize(event, nullptr) == static_cast<int>(0x80553102u));
-    CHECK(sceNpUniversalDataSystemEventEstimateSize(event, &size) == 0 && size == 34);
+    Require(sceNpUniversalDataSystemEventEstimateSize(nullptr, &size) == static_cast<int>(0x80553116u));
+    Require(sceNpUniversalDataSystemEventEstimateSize(event, nullptr) == static_cast<int>(0x80553102u));
+    Require(sceNpUniversalDataSystemEventEstimateSize(event, &size) == 0 && size == 34);
 
     char text[8];
     std::memset(text, 'x', sizeof(text));
     std::size_t length = 0;
-    CHECK(sceNpUniversalDataSystemEventToString(nullptr, text, sizeof(text), &length) == static_cast<int>(0x80553116u));
-    CHECK(text[0] == 'x' && length == 0);
-    CHECK(sceNpUniversalDataSystemEventToString(event, text, sizeof(text), &length) == 0 && length == 61 && std::strcmp(text, "{\n    \"") == 0);
+    Require(sceNpUniversalDataSystemEventToString(nullptr, text, sizeof(text), &length) == static_cast<int>(0x80553116u));
+    Require(text[0] == 'x' && length == 0);
+    Require(sceNpUniversalDataSystemEventToString(event, text, sizeof(text), &length) == 0 && length == 61 && std::strcmp(text, "{\n    \"") == 0);
     length = 0;
-    CHECK(sceNpUniversalDataSystemEventToString(event, nullptr, 0, &length) == 0 && length == 61);
+    Require(sceNpUniversalDataSystemEventToString(event, nullptr, 0, &length) == 0 && length == 61);
     char tiny[2] = {'x', 'x'};
-    CHECK(sceNpUniversalDataSystemEventToString(event, tiny, sizeof(tiny), nullptr) == 0 && tiny[0] == '{' && tiny[1] == '\0');
-    CHECK(sceNpUniversalDataSystemDestroyEvent(event) == 0);
+    Require(sceNpUniversalDataSystemEventToString(event, tiny, sizeof(tiny), nullptr) == 0 && tiny[0] == '{' && tiny[1] == '\0');
+    Require(sceNpUniversalDataSystemDestroyEvent(event) == 0);
 
     int udsHandle = -1;
-    CHECK(sceNpUniversalDataSystemCreateHandle(&udsHandle) == 0 && udsHandle != -1);
-    CHECK(sceNpUniversalDataSystemDestroyHandle(udsHandle) == 0);
-    CHECK(sceNpUniversalDataSystemAbortHandle(udsHandle) == 0);
+    Require(sceNpUniversalDataSystemCreateHandle(&udsHandle) == 0 && udsHandle != -1);
+    Require(sceNpUniversalDataSystemDestroyHandle(udsHandle) == 0);
+    Require(sceNpUniversalDataSystemAbortHandle(udsHandle) == 0);
 
-    CHECK(sceNpUniversalDataSystemTerminate() == 0);
-    CHECK(sceNpUniversalDataSystemInitialize(&init) == 0);
-    CHECK(sceNpUniversalDataSystemInitialize(&init) == alreadyInitialized);
+    Require(sceNpUniversalDataSystemTerminate() == 0);
+    Require(sceNpUniversalDataSystemInitialize(&init) == 0);
+    Require(sceNpUniversalDataSystemInitialize(&init) == alreadyInitialized);
 
     std::puts("UDS query tests passed");
     return 0;

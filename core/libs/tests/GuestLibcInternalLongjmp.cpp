@@ -3,6 +3,7 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/general/AsmMacros.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -81,8 +82,6 @@ asm(".text\n"
     "    ret\n");
 
 namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
 
 std::uint32_t BlockedMask() {
     GuestSignalSet current{};

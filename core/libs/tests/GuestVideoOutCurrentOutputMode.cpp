@@ -2,6 +2,7 @@
 #include "prx/libSceVideoOut/include/InventoryExports.hpp"
 #include "prx/libSceVideoOut/include/Output.hpp"
 #include "tests/VideoOutTestEnvironment.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -13,10 +14,6 @@ static constexpr int MAIN_BUS = 0;
 static constexpr int NO_DEVICE = static_cast<int>(0x80290018u);
 static constexpr int INVALID_ADDRESS = static_cast<int>(0x80290002u);
 static constexpr std::uint64_t MAIN_OUTPUT = 0x7000;
-
-static void Require(bool value, const char* message) {
-    if (!value) throw std::logic_error(message);
-}
 
 static bool Throws(std::uint64_t target, void* mode) {
     try {

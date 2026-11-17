@@ -1,4 +1,5 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstddef>
@@ -14,13 +15,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "FastBitVector check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 using ClearRange = void (APS5_VABI *)(WTF::FastBitVector*, std::size_t, std::size_t);
 static_assert(std::is_same_v<decltype(&_ZN3WTF13FastBitVector10clearRangeEmm), ClearRange>);
@@ -52,17 +46,6 @@ struct GuardedOwner {
     }
 };
 
-template<class Function>
-void RequireThrows(Function function) {
-    bool threw = false;
-    try {
-        function();
-    } catch (const std::exception&) {
-        threw = true;
-    }
-    Require(threw);
-}
-
 void TestClearRange() {
     ClearRange clear = &_ZN3WTF13FastBitVector10clearRangeEmm;
     std::mt19937 random(13117);
@@ -90,18 +73,18 @@ void TestClearRange() {
     }
     WTF::FastBitVector empty;
     clear(&empty, 0, 0);
-    RequireThrows([&] { clear(nullptr, 0, 0); });
-    RequireThrows([&] { clear(&empty, 0, 1); });
-    RequireThrows([&] { clear(&empty, 1, 0); });
+    ExpectErr([&] { clear(nullptr, 0, 0); });
+    ExpectErr([&] { clear(&empty, 0, 1); });
+    ExpectErr([&] { clear(&empty, 1, 0); });
     WTF::FastBitVector missing{{nullptr, 64}};
-    RequireThrows([&] { clear(&missing, 0, 64); });
+    ExpectErr([&] { clear(&missing, 0, 64); });
     std::array<std::uint32_t, 2> words{0x12345678, 0xABCDEF01};
     const auto before = words;
     WTF::FastBitVector guarded{{words.data(), 63}};
-    RequireThrows([&] { clear(&guarded, 0, 64); });
-    RequireThrows([&] { clear(&guarded, 32, 31); });
+    ExpectErr([&] { clear(&guarded, 0, 64); });
+    ExpectErr([&] { clear(&guarded, 32, 31); });
     WTF::FastBitVector overflow{{words.data(), std::numeric_limits<std::size_t>::max()}};
-    RequireThrows([&] { clear(&overflow, 0, 1); });
+    ExpectErr([&] { clear(&overflow, 0, 1); });
     Require(words == before);
     std::printf("FastBitVector clearRange: %zu exhaustive interval cases passed\n", cases);
 }
@@ -131,14 +114,14 @@ void TestResize() {
     GuardedOwner value(65);
     const auto original = value.owner;
     const std::array<std::uint32_t, 3> contents{value.owner.words[0], value.owner.words[1], value.owner.words[2]};
-    RequireThrows([&] { resize(nullptr, 0); });
-    RequireThrows([&] { resize(&value.owner, 32); });
-    RequireThrows([&] { resize(&value.owner, std::numeric_limits<std::size_t>::max()); });
+    ExpectErr([&] { resize(nullptr, 0); });
+    ExpectErr([&] { resize(&value.owner, 32); });
+    ExpectErr([&] { resize(&value.owner, std::numeric_limits<std::size_t>::max()); });
     Require(value.owner.words == original.words && value.owner.numBits == original.numBits);
     Require(std::memcmp(value.owner.words, contents.data(), sizeof(contents)) == 0);
     value.CheckGuards();
     WTF::FastBitVectorWordOwner missing{nullptr, 1};
-    RequireThrows([&] { resize(&missing, 64); });
+    ExpectErr([&] { resize(&missing, 64); });
     Require(missing.words == nullptr && missing.numBits == 1);
     std::printf("FastBitVector resizeSlow: %zu boundary and growth cases passed\n", cases);
 }
@@ -176,12 +159,12 @@ void TestCopy() {
     GuardedOwner source(33);
     GuardedOwner target(65);
     const auto original = target.owner;
-    RequireThrows([&] { copy(nullptr, &source.owner); });
-    RequireThrows([&] { copy(&target.owner, nullptr); });
+    ExpectErr([&] { copy(nullptr, &source.owner); });
+    ExpectErr([&] { copy(&target.owner, nullptr); });
     WTF::FastBitVectorWordOwner missing{nullptr, 1};
-    RequireThrows([&] { copy(&target.owner, &missing); });
+    ExpectErr([&] { copy(&target.owner, &missing); });
     WTF::FastBitVectorWordOwner overflow{nullptr, std::numeric_limits<std::size_t>::max()};
-    RequireThrows([&] { copy(&target.owner, &overflow); });
+    ExpectErr([&] { copy(&target.owner, &overflow); });
     Require(target.owner.words == original.words && target.owner.numBits == original.numBits);
     for (std::size_t i = 0; i < 3; ++i)
         Require(target.owner.words[i] == 0xA5A50000u + static_cast<std::uint32_t>(i));

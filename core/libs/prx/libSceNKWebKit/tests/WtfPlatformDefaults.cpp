@@ -1,5 +1,6 @@
 #include "prx/libSceNKWebKit/include/WtfPlatformDefaultsExports.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -17,15 +18,6 @@ using NKWebKit::WtfAbi::StringImpl;
 static_assert(sizeof(String) == 8);
 static_assert(alignof(String) == 8);
 static_assert(!std::is_trivially_copyable_v<String>);
-
-void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "WTF platform defaults check failed at line %d\n", line);
-        std::abort();
-    }
-}
-
-#define Require(value) Check((value), __LINE__)
 
 StringImpl MakeImpl(const char* text) {
     StringImpl impl{};

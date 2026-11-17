@@ -1,4 +1,5 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <cstddef>
 #include <cstdio>
@@ -17,24 +18,6 @@ using NKWebKit::WtfAbi::StringImpl;
 using NKWebKit::WtfAbi::StringVector;
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "WTF language check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
-
-template<class Function>
-void RequireThrows(Function function) {
-    bool threw = false;
-    try {
-        function();
-    } catch (const std::exception&) {
-        threw = true;
-    }
-    Require(threw);
-}
 
 using AddObserver = void (APS5_VABI *)(void*, void (APS5_VABI *)(void*));
 using RemoveObserver = void (APS5_VABI *)(void*);
@@ -251,10 +234,10 @@ void TestReplacedDuringDispatch() {
 
 void TestInvalidContexts() {
     ClearCounters();
-    RequireThrows([] { _ZN3WTF25addLanguageChangeObserverEPvPFvS0_E(nullptr, First); });
-    RequireThrows([] { _ZN3WTF25addLanguageChangeObserverEPvPFvS0_E(reinterpret_cast<void*>(-1), First); });
-    RequireThrows([] { _ZN3WTF28removeLanguageChangeObserverEPv(nullptr); });
-    RequireThrows([] { _ZN3WTF28removeLanguageChangeObserverEPv(reinterpret_cast<void*>(-1)); });
+    ExpectErr([] { _ZN3WTF25addLanguageChangeObserverEPvPFvS0_E(nullptr, First); });
+    ExpectErr([] { _ZN3WTF25addLanguageChangeObserverEPvPFvS0_E(reinterpret_cast<void*>(-1), First); });
+    ExpectErr([] { _ZN3WTF28removeLanguageChangeObserverEPv(nullptr); });
+    ExpectErr([] { _ZN3WTF28removeLanguageChangeObserverEPv(reinterpret_cast<void*>(-1)); });
     _ZN3WTF17languageDidChangeEv();
     Require(firstCalls == 0);
     ClearOverride();
@@ -265,7 +248,7 @@ void TestNullObserver() {
     ClearCounters();
     int a = 0;
     _ZN3WTF25addLanguageChangeObserverEPvPFvS0_E(&a, nullptr);
-    RequireThrows([] { _ZN3WTF17languageDidChangeEv(); });
+    ExpectErr([] { _ZN3WTF17languageDidChangeEv(); });
     _ZN3WTF28removeLanguageChangeObserverEPv(&a);
     _ZN3WTF17languageDidChangeEv();
     Require(firstCalls == 0);
@@ -424,11 +407,11 @@ void TestNullPointers() {
     StringVector list;
     String language;
     bool exactMatch = false;
-    RequireThrows([&] { _ZN3WTF30overrideUserPreferredLanguagesERKNS_6VectorINS_6StringELm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEE(nullptr); });
-    RequireThrows([&] { _ZN3WTF28displayNameForLanguageLocaleERKNS_6StringE(nullptr); });
-    RequireThrows([&] { _ZN3WTF33indexOfBestMatchingLanguageInListERKNS_6StringERKNS_6VectorIS0_Lm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEERb(nullptr, &list, &exactMatch); });
-    RequireThrows([&] { _ZN3WTF33indexOfBestMatchingLanguageInListERKNS_6StringERKNS_6VectorIS0_Lm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEERb(&language, nullptr, &exactMatch); });
-    RequireThrows([&] { _ZN3WTF33indexOfBestMatchingLanguageInListERKNS_6StringERKNS_6VectorIS0_Lm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEERb(&language, &list, nullptr); });
+    ExpectErr([&] { _ZN3WTF30overrideUserPreferredLanguagesERKNS_6VectorINS_6StringELm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEE(nullptr); });
+    ExpectErr([&] { _ZN3WTF28displayNameForLanguageLocaleERKNS_6StringE(nullptr); });
+    ExpectErr([&] { _ZN3WTF33indexOfBestMatchingLanguageInListERKNS_6StringERKNS_6VectorIS0_Lm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEERb(nullptr, &list, &exactMatch); });
+    ExpectErr([&] { _ZN3WTF33indexOfBestMatchingLanguageInListERKNS_6StringERKNS_6VectorIS0_Lm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEERb(&language, nullptr, &exactMatch); });
+    ExpectErr([&] { _ZN3WTF33indexOfBestMatchingLanguageInListERKNS_6StringERKNS_6VectorIS0_Lm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEERb(&language, &list, nullptr); });
     std::printf("WTF language: null pointers throw for override, matching and display name\n");
 }
 

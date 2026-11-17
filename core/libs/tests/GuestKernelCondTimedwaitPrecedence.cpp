@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -12,12 +13,6 @@ constexpr int PosixEperm = 1;
 constexpr int PosixEinval = 22;
 constexpr int PosixEtimedout = 60;
 constexpr int PosixEbusy = 16;
-
-void Require(bool condition) {
-    if (!condition) {
-        std::abort();
-    }
-}
 
 void TestTimedwaitPrecedence() {
     PthreadMutex mutex = nullptr;

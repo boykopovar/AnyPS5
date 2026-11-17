@@ -1,4 +1,5 @@
 #include "prx/libScePad/include/PadIdentify.hpp"
+#include "Testing.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -10,12 +11,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "pad_identify: %s\n", message);
-    std::exit(1);
-}
 
 void PatternHasOnePulsePerPlayer() {
     for (unsigned player = 1; player <= Pad::kIdentifyMaxPlayer; ++player) {

@@ -1,6 +1,7 @@
 #include "prx/libSceJsc/include/Api.hpp"
 #include "prx/libSceJsc/include/InventoryExports.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstddef>
@@ -14,10 +15,6 @@ std::array<unsigned char, 64> Filled(unsigned char value) {
     std::array<unsigned char, 64> bytes{};
     std::memset(bytes.data(), value, bytes.size());
     return bytes;
-}
-
-void Require(bool condition) {
-    if (!condition) std::abort();
 }
 
 void RequireZeroedPrefix(const std::array<unsigned char, 64>& bytes, std::size_t zeroed) {

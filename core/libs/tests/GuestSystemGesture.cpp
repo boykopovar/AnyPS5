@@ -1,6 +1,7 @@
 #include "prx/libSceSystemGesture/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <algorithm>
 #include <array>
@@ -16,8 +17,6 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static bool SameRectangle(const SystemGestureRectangle& left, const SystemGestureRectangle& right) {
     return std::memcmp(&left, &right, sizeof(SystemGestureRectangle)) == 0;

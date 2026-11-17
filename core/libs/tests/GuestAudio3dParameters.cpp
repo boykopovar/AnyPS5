@@ -1,5 +1,6 @@
 #include "prx/libSceAudio3d/include/Audio3d.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <bit>
 #include <cerrno>
@@ -13,11 +14,6 @@
 static_assert(sizeof(Audio3dOpenParameters) == 0x28);
 static_assert(offsetof(Audio3dOpenParameters, num_beds) == 0x20);
 
-static void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
 
 static void CheckDefaults(const void* memory) {
     Audio3dOpenParameters parameters{};

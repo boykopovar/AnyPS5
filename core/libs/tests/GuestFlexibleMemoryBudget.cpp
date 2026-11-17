@@ -4,6 +4,7 @@
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -16,13 +17,6 @@ extern "C" {
 
 std::uint64_t GuestImageSegmentBytes_nid_no_patch();
 
-}
-
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "Flexible memory budget check failed at %s:%u\n", location.file_name(), static_cast<unsigned>(location.line()));
-        std::abort();
-    }
 }
 
 static void CheckPosixRelease(std::size_t before) {

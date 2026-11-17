@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -19,13 +20,6 @@ constexpr int ErrorCheck = 1;
 constexpr int Recursive = 2;
 constexpr int Normal = 3;
 constexpr int Adaptive = 4;
-
-void Require(bool value, const char* message) {
-    if (!value) {
-        std::fprintf(stderr, "%s\n", message);
-        std::abort();
-    }
-}
 
 PthreadMutex MakeMutex(int type) {
     PthreadMutexattr attr = nullptr;

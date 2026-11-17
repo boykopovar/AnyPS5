@@ -2,6 +2,7 @@
 #include "FreeTypeFontFixture.hpp"
 #include "prx/libSceFreeType/include/GuestFreeType.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -19,15 +20,6 @@
 #include <vector>
 
 using namespace FreeType;
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "FreeType charmap check failed at line %d\n", line);
-        std::abort();
-    }
-}
-
-#define Require(value) Check((value), __LINE__)
 
 static std::vector<std::pair<std::uint64_t, std::uint32_t>> Walk(GuestFaceRec* guest, FT_Face host) {
     std::vector<std::pair<std::uint64_t, std::uint32_t>> result;

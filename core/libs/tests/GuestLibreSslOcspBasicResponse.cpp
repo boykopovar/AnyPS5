@@ -2,6 +2,7 @@
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -29,22 +30,6 @@ static constexpr std::int32_t Indices[] {0, 1, 2, 3, -1, MinIndex, MaxIndex};
 static int first;
 static int third;
 static int beyond;
-
-static void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "failed: %s\n", message);
-    std::abort();
-}
-
-template<typename TAction> static void RequireThrows(TAction action, const char* message) {
-    try { action(); } catch (const std::exception&) { return; }
-    Require(false, message);
-}
-
-template<typename TAction> static void RequireInvalidArgument(TAction action, const char* message) {
-    try { action(); } catch (const std::invalid_argument&) { return; }
-    Require(false, message);
-}
 
 template<std::size_t TSize, typename TValue> static void Store(std::array<std::byte, TSize>& object, std::size_t offset, TValue value) {
     Require(offset + sizeof(value) <= TSize, "store stays inside the object");
@@ -105,7 +90,7 @@ static void VerifyMissingSigner() {
 
     ERR_clear_error_nid_postfix();
     LibreSslStack nonemptyExternal{1, nullptr, 0, 1, nullptr};
-    RequireThrows([&] { OCSP_basic_verify_nid_postfix(&response, &nonemptyExternal, nullptr, noIntern); },
+    ExpectErr([&] { OCSP_basic_verify_nid_postfix(&response, &nonemptyExternal, nullptr, noIntern); },
         "a nonempty external stack reaches unsupported signer matching");
     Require(ERR_peek_error_nid_postfix() == 0, "unsupported signer matching adds no fabricated error");
 
@@ -113,12 +98,12 @@ static void VerifyMissingSigner() {
     char* internalEntries[]{reinterpret_cast<char*>(&candidate)};
     internalStack = {1, internalEntries, 1, 1, nullptr};
     externalStack = {};
-    RequireThrows([&] { OCSP_basic_verify_nid_postfix(&response, &externalStack, nullptr, 0); },
+    ExpectErr([&] { OCSP_basic_verify_nid_postfix(&response, &externalStack, nullptr, 0); },
         "the internal stack is searched after the external stack misses");
     Require(ERR_peek_error_nid_postfix() == 0, "unsupported internal signer matching adds no fabricated error");
 
     data.responderId = nullptr;
-    RequireThrows([&] { OCSP_basic_verify_nid_postfix(&response, nullptr, nullptr, noIntern); }, "a missing responder id throws");
+    ExpectErr([&] { OCSP_basic_verify_nid_postfix(&response, nullptr, nullptr, noIntern); }, "a missing responder id throws");
     ERR_clear_error_nid_postfix();
 }
 
@@ -195,15 +180,15 @@ static void AddCertificates() {
     free_nid_postfix(response.certs->data);
     free_nid_postfix(response.certs);
 
-    RequireInvalidArgument([&] { OCSP_basic_add1_cert_nid_postfix(nullptr, &certificates[0]); }, "a null response throws");
+    ExpectErr<std::invalid_argument>([&] { OCSP_basic_add1_cert_nid_postfix(nullptr, &certificates[0]); }, "a null response throws");
     std::array<char*, 4> elements{};
     LibreSslStack negative{-1, elements.data(), 0, 4, nullptr};
     LibreSslOcspBasicResponse negativeResponse{};
     negativeResponse.certs = &negative;
-    RequireInvalidArgument([&] { OCSP_basic_add1_cert_nid_postfix(&negativeResponse, &certificates[0]); }, "a negative stack count throws");
+    ExpectErr<std::invalid_argument>([&] { OCSP_basic_add1_cert_nid_postfix(&negativeResponse, &certificates[0]); }, "a negative stack count throws");
     LibreSslStack empty{0, elements.data(), 0, 0, nullptr};
     negativeResponse.certs = &empty;
-    RequireInvalidArgument([&] { OCSP_basic_add1_cert_nid_postfix(&negativeResponse, &certificates[0]); }, "a zero stack capacity throws");
+    ExpectErr<std::invalid_argument>([&] { OCSP_basic_add1_cert_nid_postfix(&negativeResponse, &certificates[0]); }, "a zero stack capacity throws");
     Require(negative.num == -1 && empty.num == 0 && certificates[0].references == 8, "corrupt stacks are left unchanged");
 }
 
@@ -343,14 +328,14 @@ int main() {
     Require(Count(guest) == 3, "the count does not read the entry array");
     Require(Get(guest, 3) == nullptr, "an index equal to the count returns null before the entry array is read");
     Require(Get(guest, -1) == nullptr, "a negative index returns null before the entry array is read");
-    RequireInvalidArgument([&] { Get(guest, 0); }, "a null entry array with index 0 throws");
-    RequireInvalidArgument([&] { Get(guest, 2); }, "a null entry array with the last index throws");
+    ExpectErr<std::invalid_argument>([&] { Get(guest, 0); }, "a null entry array with index 0 throws");
+    ExpectErr<std::invalid_argument>([&] { Get(guest, 2); }, "a null entry array with the last index throws");
 
     Build(guest, 3);
     Store(guest.basic, 0, static_cast<const void*>(nullptr));
-    RequireInvalidArgument([&] { Count(guest); }, "a null response data pointer throws in the count");
+    ExpectErr<std::invalid_argument>([&] { Count(guest); }, "a null response data pointer throws in the count");
     for (const auto index : Indices)
-        RequireInvalidArgument([&] { Get(guest, index); }, "a null response data pointer throws for every index");
+        ExpectErr<std::invalid_argument>([&] { Get(guest, index); }, "a null response data pointer throws for every index");
     VerifyMissingSigner();
     return 0;
 }

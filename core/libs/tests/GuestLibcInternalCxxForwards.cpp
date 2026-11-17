@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdio>
@@ -14,12 +15,6 @@ namespace {
 alignas(64) std::array<std::byte, 64> storage{};
 unsigned releases = 0;
 void* lastReleased = nullptr;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "libc internal C++ runtime forwards: %s\n", message);
-    std::abort();
-}
 
 void* APS5_VABI allocate(std::size_t) { return storage.data(); }
 

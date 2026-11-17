@@ -12,11 +12,9 @@
 #include "prx/libSceNet/libSceNet.hpp"
 #include "prx/libkernel/libkernel.hpp"
 #include "prx/libkernel/Socket/include/SocketPoll.hpp"
+#include "Testing.hpp"
 
 
-static void Require(bool condition) {
-    if (!condition) std::abort();
-}
 
 static bool Failed(std::int64_t result, int error) {
     return result == static_cast<int>(0x80410100u | static_cast<unsigned>(error)) && *sceNetErrnoLoc() == error;

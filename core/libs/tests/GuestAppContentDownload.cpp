@@ -1,6 +1,7 @@
 #include "prx/libSceAppContent/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "ProcessParametersFixture.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <chrono>
@@ -14,12 +15,6 @@
 #include <initializer_list>
 #include <stdexcept>
 #include <string>
-
-static void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "AppContent download: %s\n", message);
-    std::exit(1);
-}
 
 int main(int argc, char** argv) {
     Require(argc == 2, "expected a quota in MiB");

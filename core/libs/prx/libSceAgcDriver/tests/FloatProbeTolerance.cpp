@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/FloatProbeTolerance.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <iostream>
@@ -9,10 +10,6 @@ using AgcDriver::Float32ProbeOp;
 using AgcDriver::Float32ResultsAgree;
 
 namespace {
-
-void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 constexpr std::array<std::array<std::uint32_t, 3>, 10> kRdna2Rcp{{
     {0x40400000u, 0x3eaaaaaau, 0x3eaaaaabu}, {0x40e00000u, 0x3e124924u, 0x3e124925u}, {0xc0e00000u, 0xbe124924u, 0xbe124925u},

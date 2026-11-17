@@ -1,4 +1,5 @@
 #include "prx/libSceGLSlimVSH/libSceGLSlimVSH.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstdio>
@@ -13,15 +14,6 @@
 #else
 #include <sys/mman.h>
 #endif
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "GLSlim state check failed at line %d\n", line);
-        std::abort();
-    }
-}
-
-#define Require(value) Check((value), __LINE__)
 
 static void Error(GLenum expected) {
     Require(glGetError_nid_postfix() == expected);

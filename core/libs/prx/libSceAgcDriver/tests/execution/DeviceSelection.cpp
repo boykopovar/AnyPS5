@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "Testing.hpp"
 #include "VulkanTestDevice.hpp"
 #include <cctype>
 #include <cstdio>
@@ -15,10 +16,6 @@ void SetRequest(const std::string& value) {
 #else
     if (setenv("ANYPS5_GPU", value.c_str(), 1) != 0) throw std::runtime_error("cannot set ANYPS5_GPU");
 #endif
-}
-
-void Require(const bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
 }
 
 }

@@ -3,12 +3,11 @@
 #include <cstdint>
 #include "prx/libSceUserService/UserService.hpp"
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
+#include "Testing.hpp"
 #include <cstdlib>
 #include <cerrno>
 
 namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
 
 constexpr int kStatusNone = 0;
 constexpr int kStatusInitialized = 1;

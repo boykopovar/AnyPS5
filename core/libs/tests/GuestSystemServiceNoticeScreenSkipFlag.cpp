@@ -1,14 +1,9 @@
 #include "prx/libSceSystemService/include/SystemService.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdlib>
-
-namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
-
-}
 
 int main() {
     bool value = true;

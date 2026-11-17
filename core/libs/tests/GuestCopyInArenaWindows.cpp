@@ -1,5 +1,6 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "Testing.hpp"
 
 #include <cerrno>
 #include <cstddef>
@@ -8,14 +9,6 @@
 #include <cstring>
 #include <vector>
 #include <windows.h>
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "guest copy-in arena check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 int main() {
     constexpr std::size_t bytes = 65536;

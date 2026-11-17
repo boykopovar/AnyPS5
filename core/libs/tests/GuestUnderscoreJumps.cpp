@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/AsmMacros.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -77,8 +78,6 @@ asm(".text\n"
     "    popq %rbp\n"
     "    popq %rbx\n"
     "    ret\n");
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static constexpr std::uint32_t Filler = 0xa5a5a5a5u;
 

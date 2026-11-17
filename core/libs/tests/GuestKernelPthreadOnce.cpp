@@ -2,6 +2,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <atomic>
 #include <cerrno>
@@ -15,12 +16,6 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
-
-static void Require(bool condition) {
-    if (!condition) {
-        std::abort();
-    }
-}
 
 static constexpr unsigned THREAD_COUNT = 16;
 static constexpr int POSIX_EFAULT = 14;

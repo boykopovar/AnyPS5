@@ -1,16 +1,11 @@
 #include "prx/libSceProprietaryVoiceChatHelperPrx/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
 #include <string>
-
-static void Require(bool value, const char* what) {
-    if (value) return;
-    std::printf("ProprietaryVoiceChatHelper: %s\n", what);
-    std::abort();
-}
 
 template <typename TError, typename TCall>
 static bool Throws(TCall call) {

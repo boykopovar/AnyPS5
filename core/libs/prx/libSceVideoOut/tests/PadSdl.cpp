@@ -7,6 +7,7 @@
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libSceIme/include/ImeInput.hpp"
 #include "prx/libSceIme/include/ModalDialog.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -21,13 +22,6 @@
 #undef main
 
 namespace {
-
-static void Require(bool condition, std::source_location where = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "pad_sdl: check failed at line %u\n", static_cast<unsigned>(where.line()));
-        std::abort();
-    }
-}
 
 std::vector<ImeHostPad> forwarded;
 

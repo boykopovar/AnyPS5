@@ -1,10 +1,10 @@
 #include "Translation/TranslationContext.hpp"
 #include "RdnaDecoder/RdnaVectorOpDecoder.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <stdexcept>
 
 using namespace ShaderRecompiler;
-static void Require(bool value) { if (!value) throw std::runtime_error("vector min/max/med regression"); }
 static void Check(std::uint32_t encoding, RdnaOpcode opcode, IrOpcode expected) {
     const std::array<std::uint32_t, 2> code{(encoding << 16u) | 1u, 1u | (2u << 9u) | (3u << 18u)};
     const RdnaInstruction instruction = DecodeRdnaVop3(0u, code, 0u);

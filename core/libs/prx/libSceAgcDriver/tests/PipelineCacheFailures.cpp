@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineCache.hpp"
 #include "AllocationFailure.hpp"
 #include "ShaderCacheDirectory.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -30,13 +31,6 @@ std::uint64_t& DeviceProcLookups() {
 }
 
 namespace {
-
-void Check(bool value, const char* reason) {
-    if (value) return;
-    std::fprintf(stderr, "FAIL: %s\n", reason);
-    std::fflush(stderr);
-    std::_Exit(1);
-}
 
 std::mutex mutex;
 std::condition_variable changed;
@@ -71,13 +65,13 @@ VKAPI_ATTR VkResult VKAPI_CALL Create(VkDevice, const VkPipelineCacheCreateInfo*
 
 VKAPI_ATTR void VKAPI_CALL Destroy(VkDevice, VkPipelineCache cache, const VkAllocationCallbacks*) {
     std::lock_guard lock(mutex);
-    Check(caches.erase(cache) == 1, "destroyed an unknown cache");
+    Require(caches.erase(cache) == 1, "destroyed an unknown cache");
     changed.notify_all();
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL Merge(VkDevice, VkPipelineCache destination, std::uint32_t count, const VkPipelineCache* sources) {
     std::lock_guard lock(mutex);
-    Check(count == 1, "expected one merge source");
+    Require(count == 1, "expected one merge source");
     caches.at(destination) = caches.at(sources[0]);
     return VK_SUCCESS;
 }
@@ -86,7 +80,7 @@ VKAPI_ATTR VkResult VKAPI_CALL Data(VkDevice, VkPipelineCache cache, std::size_t
     std::lock_guard lock(mutex);
     const auto& bytes = caches.at(cache);
     if (output != nullptr) {
-        Check(*size >= bytes.size(), "cache snapshot buffer is too small");
+        Require(*size >= bytes.size(), "cache snapshot buffer is too small");
         std::memcpy(output, bytes.data(), bytes.size());
     }
     *size = bytes.size();
@@ -109,7 +103,7 @@ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL Resolve(VkDevice, const char* name) {
 
 std::vector<char> Read(const std::filesystem::path& path) {
     std::ifstream file(path, std::ios::binary);
-    Check(static_cast<bool>(file), "saved cache file is missing");
+    Require(static_cast<bool>(file), "saved cache file is missing");
     return {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
 }
 
@@ -121,14 +115,14 @@ void Grow(VkPipelineCache cache, std::size_t bytes = 128) {
 }
 
 int main(int argc, char** argv) {
-    Check(argc == 2, "expected startup, now, busy, destructor, worker or read-retry");
+    Require(argc == 2, "expected startup, now, busy, destructor, worker or read-retry");
     const std::string_view mode(argv[1]);
-    Check(mode == "startup" || mode == "now" || mode == "busy" || mode == "destructor" || mode == "worker" || mode == "read-retry", "unknown mode");
+    Require(mode == "startup" || mode == "now" || mode == "busy" || mode == "destructor" || mode == "worker" || mode == "read-retry", "unknown mode");
 #ifndef _WIN32
     if (mode == "read-retry") return 77;
 #endif
     const auto root = std::filesystem::temp_directory_path() / ("aps5-cache-allocation-" + std::to_string(std::random_device{}()));
-    Check(std::filesystem::create_directory(root), "test cache directory already exists");
+    Require(std::filesystem::create_directory(root), "test cache directory already exists");
     struct Cleanup {
         std::filesystem::path path;
         ~Cleanup() { std::error_code error; std::filesystem::remove_all(path, error); }
@@ -154,13 +148,13 @@ int main(int argc, char** argv) {
         } catch (const std::bad_alloc&) {
             failed = true;
         }
-        Check(failed && faults == 1, "saver startup allocation failure was not propagated");
-        Check(caches.empty(), "failed saver startup leaked the Vulkan pipeline cache");
+        Require(failed && faults == 1, "saver startup allocation failure was not propagated");
+        Require(caches.empty(), "failed saver startup leaked the Vulkan pipeline cache");
         {
             PipelineCache retry(context, properties);
-            Check(retry.Handle() != VK_NULL_HANDLE, "cache creation could not retry after failed saver startup");
+            Require(retry.Handle() != VK_NULL_HANDLE, "cache creation could not retry after failed saver startup");
         }
-        Check(caches.empty(), "successful retry leaked a Vulkan pipeline cache");
+        Require(caches.empty(), "successful retry leaked a Vulkan pipeline cache");
         std::puts("startup: propagated the allocation failure, released the cache and allowed recreation");
         return 0;
     }
@@ -169,7 +163,7 @@ int main(int argc, char** argv) {
     cache->SaveNow();
     std::filesystem::path file;
     for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) if (entry.path().extension() == ".bin") file = entry.path();
-    Check(!file.empty(), "initial save created no cache file");
+    Require(!file.empty(), "initial save created no cache file");
 #ifdef _WIN32
     if (mode == "read-retry") {
         {
@@ -178,17 +172,17 @@ int main(int argc, char** argv) {
             writer.SaveNow();
         }
         const auto before = Read(file);
-        Check(before.size() == 24 + 40960, "the second writer did not update the cache file");
+        Require(before.size() == 24 + 40960, "the second writer did not update the cache file");
         Grow(cache->Handle(), 65536);
         std::error_code error;
         const auto native = ShaderRecompiler::NativeCachePath_nid_no_patch(file, error);
-        Check(!error, "could not resolve the test cache path");
+        Require(!error, "could not resolve the test cache path");
         struct TailLock {
             HANDLE handle = INVALID_HANDLE_VALUE;
             OVERLAPPED region{};
             void Release() {
                 if (handle == INVALID_HANDLE_VALUE) return;
-                Check(UnlockFileEx(handle, 0, 1, 0, &region) != 0, "could not unlock the cache body");
+                Require(UnlockFileEx(handle, 0, 1, 0, &region) != 0, "could not unlock the cache body");
                 CloseHandle(handle);
                 handle = INVALID_HANDLE_VALUE;
             }
@@ -196,24 +190,24 @@ int main(int argc, char** argv) {
         } locked;
         locked.handle = CreateFileW(native.c_str(), GENERIC_READ | GENERIC_WRITE,
             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-        Check(locked.handle != INVALID_HANDLE_VALUE, "could not open the cache body lock handle");
+        Require(locked.handle != INVALID_HANDLE_VALUE, "could not open the cache body lock handle");
         locked.region.Offset = 16384;
-        Check(LockFileEx(locked.handle, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &locked.region) != 0,
+        Require(LockFileEx(locked.handle, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &locked.region) != 0,
             "could not lock the cache body");
         {
             std::ifstream header(file, std::ios::binary);
             std::array<char, 24> bytes{};
-            Check(static_cast<bool>(header.read(bytes.data(), bytes.size())), "the body lock unexpectedly blocked the header");
+            Require(static_cast<bool>(header.read(bytes.data(), bytes.size())), "the body lock unexpectedly blocked the header");
         }
         std::vector<std::byte> unreadable;
-        Check(!ShaderRecompiler::ReadWholeFile(file, unreadable), "the body lock did not block a complete cache read");
+        Require(!ShaderRecompiler::ReadWholeFile(file, unreadable), "the body lock did not block a complete cache read");
         cache->SaveNow();
         locked.Release();
-        Check(Read(file) == before, "a failed cache read overwrote the other writer's file");
+        Require(Read(file) == before, "a failed cache read overwrote the other writer's file");
         cache->SaveNow();
-        Check(Read(file).size() == 24 + 65536, "a transient cache read failure prevented the later save");
+        Require(Read(file).size() == 24 + 65536, "a transient cache read failure prevented the later save");
         cache.reset();
-        Check(caches.empty(), "cache read retry leaked Vulkan objects");
+        Require(caches.empty(), "cache read retry leaked Vulkan objects");
         std::puts("read-retry: kept the unreadable cache file and saved new pipelines after it became readable");
         return 0;
     }
@@ -225,23 +219,23 @@ int main(int argc, char** argv) {
     if (mode == "destructor") cache.reset();
     else if (mode == "worker") {
         std::unique_lock lock(mutex);
-        Check(changed.wait_for(lock, 14s, [] { return faults == 1; }), "background save did not reach the allocation failure");
+        Require(changed.wait_for(lock, 14s, [] { return faults == 1; }), "background save did not reach the allocation failure");
     } else if (mode == "busy") cache->SaveUnlessBusy();
     else cache->SaveNow();
-    Check(faults == 1 && !armed, "the snapshot allocation was not exercised");
-    Check(Read(file) == original, "a failed snapshot replaced the previous cache file");
+    Require(faults == 1 && !armed, "the snapshot allocation was not exercised");
+    Require(Read(file) == original, "a failed snapshot replaced the previous cache file");
     {
         std::unique_lock lock(mutex);
-        if (mode == "worker") Check(changed.wait_for(lock, 2s, [] { return caches.size() == 1; }), "background snapshot did not release its temporary cache");
-        Check(caches.size() == (cache ? 1u : 0u), "failed snapshot leaked its temporary merged cache");
+        if (mode == "worker") Require(changed.wait_for(lock, 2s, [] { return caches.size() == 1; }), "background snapshot did not release its temporary cache");
+        Require(caches.size() == (cache ? 1u : 0u), "failed snapshot leaked its temporary merged cache");
     }
     if (!cache) {
         cache = std::make_unique<PipelineCache>(context, properties);
         Grow(cache->Handle());
     }
     cache->SaveNow();
-    Check(Read(file).size() == 24 + 128 && Read(file) != original, "a failed snapshot prevented a later successful save");
+    Require(Read(file).size() == 24 + 128 && Read(file) != original, "a failed snapshot prevented a later successful save");
     cache.reset();
-    Check(caches.empty(), "pipeline cache allocation test leaked Vulkan objects");
+    Require(caches.empty(), "pipeline cache allocation test leaked Vulkan objects");
     std::printf("%.*s: allocation failure kept the old file, released temporary caches and allowed a retry\n", static_cast<int>(mode.size()), mode.data());
 }

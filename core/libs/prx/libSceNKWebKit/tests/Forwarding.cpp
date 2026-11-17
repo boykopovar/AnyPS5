@@ -1,4 +1,5 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -8,15 +9,6 @@
 #include <cstring>
 #include <stdexcept>
 #include <type_traits>
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "libSceNKWebKit forwarding check failed at line %d\n", line);
-        std::abort();
-    }
-}
-
-#define Require(value) Check((value), __LINE__)
 
 using StubForward = int (APS5_VABI *)();
 

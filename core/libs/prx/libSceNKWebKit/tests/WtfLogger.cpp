@@ -1,4 +1,5 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -10,24 +11,6 @@
 #include <type_traits>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "WTF::Logger check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
-
-template<class Function>
-void RequireThrows(Function function) {
-    bool threw = false;
-    try {
-        function();
-    } catch (const std::exception&) {
-        threw = true;
-    }
-    Require(threw);
-}
 
 using LogArgumentToString = NKWebKit::WtfAbi::String (APS5_VABI *)(const void*);
 using LogSiteIdentifierToString = NKWebKit::WtfAbi::String (APS5_VABI *)(const NKWebKit::WtfAbi::LogSiteIdentifier*);
@@ -60,8 +43,8 @@ void TestLogSiteIdentifier() {
     RequireText(_ZNK3WTF6Logger17LogSiteIdentifier8toStringEv(&unnamed), "run(1F) ");
     RequireText(_ZNK3WTF6Logger17LogSiteIdentifier8toStringEv(&emptyClass), "::run(0) ");
     RequireText(_ZNK3WTF6Logger17LogSiteIdentifier8toStringEv(&highByte), "caf\xE9::m(1) ");
-    RequireThrows([&] { _ZNK3WTF6Logger17LogSiteIdentifier8toStringEv(&nullMethod); });
-    RequireThrows([] { _ZNK3WTF6Logger17LogSiteIdentifier8toStringEv(nullptr); });
+    ExpectErr([&] { _ZNK3WTF6Logger17LogSiteIdentifier8toStringEv(&nullMethod); });
+    ExpectErr([] { _ZNK3WTF6Logger17LogSiteIdentifier8toStringEv(nullptr); });
     std::printf("WTF::Logger::LogSiteIdentifier::toString: names and hex passed\n");
 }
 

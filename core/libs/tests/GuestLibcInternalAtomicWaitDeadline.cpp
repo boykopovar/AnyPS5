@@ -1,4 +1,5 @@
 #include "prx/libSceLibcInternal/libSceLibcInternal.hpp"
+#include "Testing.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -18,12 +19,6 @@ constexpr std::uint64_t NoDeadline = 0xFFFFFFFFFFFFFFFFULL;
 constexpr std::uint64_t NoTimeout = 0xFFFFFFFFULL;
 constexpr std::uint64_t TenDays = 864000000ULL;
 constexpr std::uint64_t Slack = 60000ULL;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "libc internal atomic wait deadline: %s\n", message);
-    std::abort();
-}
 
 std::uint64_t Clock() {
 #ifdef _WIN32

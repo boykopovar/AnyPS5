@@ -1,6 +1,7 @@
 #include "prx/libSceAgc/include/Agc.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "Testing.hpp"
 #include "VulkanTestDevice.hpp"
 #include <algorithm>
 #include <array>
@@ -16,10 +17,6 @@ constexpr std::size_t Guard = 16;
 alignas(256) std::array<std::uint32_t, 3 * 65536 / 4 + 64> output{};
 constexpr std::array<std::uint32_t, 4> Pattern{0x7fc01234u, 0x80000000u, 0x01234567u, 0xffffffffu};
 
-void check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
-
 void fill(std::uint64_t size, bool alias) {
     output.fill(Untouched);
     auto pattern = Pattern;
@@ -28,8 +25,8 @@ void fill(std::uint64_t size, bool alias) {
     const auto before = output;
     std::array<std::uint32_t, 256> words{};
     CommandBuffer buffer{words.data(), words.data() + words.size(), words.data(), words.data() + words.size(), nullptr, nullptr, 0};
-    check(sceAgcCbMemsetExclusive(&buffer, destination, alias ? destination : pattern.data(), size) == words.data(), "wrong command pointer");
-    check(output == before, "recording performed the fill on the CPU");
+    Require(sceAgcCbMemsetExclusive(&buffer, destination, alias ? destination : pattern.data(), size) == words.data(), "wrong command pointer");
+    Require(output == before, "recording performed the fill on the CPU");
     pattern.fill(0);
     Packet packet{words.data(), static_cast<std::uint32_t>(buffer.cursor_up - words.data()), 0, {}};
     AgcDriver::Submit(&packet, 0);

@@ -3,6 +3,7 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -16,13 +17,6 @@
 #else
 #include <dlfcn.h>
 #endif
-
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "System flexible memory check failed at %s:%u\n", location.file_name(), static_cast<unsigned>(location.line()));
-        std::abort();
-    }
-}
 
 using MapSystemFlexible = int32_t (APS5_VABI*)(void**, std::size_t, int, int, const char*);
 

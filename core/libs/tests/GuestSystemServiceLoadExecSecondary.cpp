@@ -1,5 +1,6 @@
 #include "prx/libSceSystemService/include/SystemService.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -19,13 +20,6 @@ namespace {
 
 constexpr const char* Started = "--started-by-load-exec";
 constexpr const char* Secondary = "--secondary";
-
-void Require(bool value, const char* message) {
-    if (!value) {
-        std::fprintf(stderr, "LoadExec secondary: %s\n", message);
-        std::abort();
-    }
-}
 
 std::filesystem::path Own() {
 #ifdef __APPLE__

@@ -1,5 +1,6 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include "Testing.hpp"
 #include <windows.h>
 #include <Sse4aEmulation.hpp>
 #include <codegen/IAmd64OnlyConverter.hpp>
@@ -25,10 +26,6 @@ namespace {
 
 using namespace Elfpatcher::Windows;
 using Bytes = std::vector<std::uint8_t>;
-
-void require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 void requireFailure(const std::function<void()>& operation, const char* message) {
     try {
@@ -222,14 +219,14 @@ std::size_t g_executions = 0;
 void requireEnvironment(const State& input, const State& state, const std::uint16_t written, const std::string& description) {
     for (unsigned reg = 0; reg < 16; ++reg) {
         if (((written >> reg) & 1) != 0) continue;
-        require(std::memcmp(state.Xmm[reg], input.Xmm[reg], 16) == 0, "Lowered sequence clobbered xmm" + std::to_string(reg) + ": " + description);
+        Require(std::memcmp(state.Xmm[reg], input.Xmm[reg], 16) == 0, "Lowered sequence clobbered xmm" + std::to_string(reg) + ": " + description);
     }
-    require(((state.FlagsOut ^ input.FlagsIn) & kStatusFlags) == 0, "Lowered sequence changed RFLAGS: " + description);
-    require(state.RspAfter == state.RspBefore, "Lowered sequence did not restore rsp: " + description);
+    Require(((state.FlagsOut ^ input.FlagsIn) & kStatusFlags) == 0, "Lowered sequence changed RFLAGS: " + description);
+    Require(state.RspAfter == state.RspBefore, "Lowered sequence did not restore rsp: " + description);
     for (int slot = 0; slot < 16; ++slot) {
         std::uint64_t value;
         std::memcpy(&value, state.RedZone + slot * 8, 8);
-        require(value == kCanary, "Lowered sequence wrote into the red zone: " + description);
+        Require(value == kCanary, "Lowered sequence wrote into the red zone: " + description);
     }
 }
 
@@ -259,7 +256,7 @@ void reciprocalExecution() {
                     }
                     emit(site, {opcode, static_cast<std::uint8_t>(0xC0 | ((destination & 7) << 3) | (source & 7))});
                     const auto match = matcher->Match(site.data(), site.size());
-                    require(match && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline, "Packed reciprocal was not lowered");
+                    Require(match && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline, "Packed reciprocal was not lowered");
                     for (const auto& lanes : inputs) {
                         State input{};
                         for (std::size_t reg = 0; reg < 16; ++reg) {
@@ -279,14 +276,14 @@ void reciprocalExecution() {
                         std::memcpy(actual, state.Xmm[destination], sizeof(actual));
                         for (std::size_t lane = 0; lane < 4; ++lane) {
                             const float expected = opcode == 0x52 ? 1.0f / std::sqrt(lanes[lane]) : 1.0f / lanes[lane];
-                            require(std::isnan(expected) ? std::isnan(actual[lane]) : std::memcmp(&expected, &actual[lane], sizeof(float)) == 0, "Packed reciprocal result differs from division and square root");
+                            Require(std::isnan(expected) ? std::isnan(actual[lane]) : std::memcmp(&expected, &actual[lane], sizeof(float)) == 0, "Packed reciprocal result differs from division and square root");
                         }
                         requireEnvironment(input, state, static_cast<std::uint16_t>(1u << destination), "packed reciprocal");
                         if (wide) {
                             const std::uint8_t zero[16] = {};
                             for (std::size_t reg = 0; reg < 16; ++reg) {
                                 const auto* expected = vex && reg == destination ? zero : input.Ymm[reg] + 16;
-                                require(std::memcmp(state.Ymm[reg] + 16, expected, 16) == 0, "Packed reciprocal changed the wrong upper YMM bits");
+                                Require(std::memcmp(state.Ymm[reg] + 16, expected, 16) == 0, "Packed reciprocal changed the wrong upper YMM bits");
                             }
                         }
                     }
@@ -299,18 +296,18 @@ void reciprocalExecution() {
 void executeCase(const Harness& harness, const Codegen::IAmd64OnlyInstructionMatcher& matcher, const Case& item, std::mt19937_64& random, const int images) {
     const auto site = encode(item);
     const auto match = matcher.Match(site.data(), site.size());
-    require(match.has_value() && match->Lowering != Codegen::Amd64OnlyLowering::Unsupported, "SSE4a instruction was not lowered: " + describe(item));
+    Require(match.has_value() && match->Lowering != Codegen::Amd64OnlyLowering::Unsupported, "SSE4a instruction was not lowered: " + describe(item));
     Bytes body;
     std::size_t returnBranchOffset = 0;
     if (match->Lowering == Codegen::Amd64OnlyLowering::InPlace) {
-        require(match->ReplacementBytes.size() == site.size(), "In-place lowering changed the length: " + describe(item));
+        Require(match->ReplacementBytes.size() == site.size(), "In-place lowering changed the length: " + describe(item));
         body = match->ReplacementBytes;
         returnBranchOffset = body.size();
         body.insert(body.end(), {0xE9, 0, 0, 0, 0});
     } else {
         body = match->StubBody;
         returnBranchOffset = match->ReturnBranchOffset;
-        require(body.size() % 16 == 0 || body.size() == returnBranchOffset + 5, "Stub body with constants is not padded to 16 bytes: " + describe(item));
+        Require(body.size() % 16 == 0 || body.size() == returnBranchOffset + 5, "Stub body with constants is not padded to 16 bytes: " + describe(item));
     }
     const auto operands = Codegen::DecodeSse4a(site.data(), site.size());
     auto field = operands;
@@ -333,8 +330,8 @@ void executeCase(const Harness& harness, const Codegen::IAmd64OnlyInstructionMat
         harness.Run(body, returnBranchOffset, state);
         ++g_executions;
         const auto expected = referenceLow(field, input);
-        require(expected == libcReferenceLow(operands, input), "Transcribed reference disagrees with the libc emulation: " + describe(item));
-        require(low(state.Xmm[operands.Destination]) == expected, "Lowered sequence computed the wrong field: " + describe(item));
+        Require(expected == libcReferenceLow(operands, input), "Transcribed reference disagrees with the libc emulation: " + describe(item));
+        Require(low(state.Xmm[operands.Destination]) == expected, "Lowered sequence computed the wrong field: " + describe(item));
         requireEnvironment(input, state, static_cast<std::uint16_t>(1u << operands.Destination), describe(item));
     }
 }
@@ -402,7 +399,7 @@ void executeSha256(const Harness& harness, const Codegen::IAmd64OnlyInstructionM
     for (const auto& step : steps) sites.push_back(encodeSha256(step));
     const std::vector<std::span<const std::uint8_t>> spans(sites.begin(), sites.end());
     const auto match = steps.size() == 1 ? matcher.Match(sites[0].data(), sites[0].size()) : matcher.MatchSequence(spans, {});
-    require(match.has_value() && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline, "SHA-256 was not lowered through a stub: " + describeSha256(steps));
+    Require(match.has_value() && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline, "SHA-256 was not lowered through a stub: " + describeSha256(steps));
     std::uint16_t written = 0;
     for (const auto& step : steps) written = static_cast<std::uint16_t>(written | (1u << step.Destination));
     const std::array<std::uint64_t, 4> flags = {0x202, 0x203, 0x246, 0xAC7};
@@ -416,7 +413,7 @@ void executeSha256(const Harness& harness, const Codegen::IAmd64OnlyInstructionM
         State expected = input;
         for (const auto& step : steps) sha256Reference(step, expected.Xmm);
         for (unsigned reg = 0; reg < 16; ++reg)
-            if (((written >> reg) & 1) != 0) require(std::memcmp(state.Xmm[reg], expected.Xmm[reg], 16) == 0, "Lowered SHA-256 computed the wrong xmm" + std::to_string(reg) + ": " + describeSha256(steps));
+            if (((written >> reg) & 1) != 0) Require(std::memcmp(state.Xmm[reg], expected.Xmm[reg], 16) == 0, "Lowered SHA-256 computed the wrong xmm" + std::to_string(reg) + ": " + describeSha256(steps));
         requireEnvironment(input, state, written, describeSha256(steps));
     }
 }
@@ -525,7 +522,7 @@ void executeSha1(const Harness& harness, const Codegen::IAmd64OnlyInstructionMat
     for (const auto& step : steps) sites.push_back(encodeSha1(step));
     const std::vector<std::span<const std::uint8_t>> spans(sites.begin(), sites.end());
     const auto match = steps.size() == 1 ? matcher.Match(sites[0].data(), sites[0].size()) : matcher.MatchSequence(spans, {});
-    require(match.has_value() && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline, "SHA-1 was not lowered through a stub: " + describeSha1(steps));
+    Require(match.has_value() && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline, "SHA-1 was not lowered through a stub: " + describeSha1(steps));
     std::uint16_t written = 0;
     for (const auto& step : steps) written = static_cast<std::uint16_t>(written | (1u << step.Destination));
     const std::array<std::uint64_t, 4> flags = {0x202, 0x203, 0x246, 0xAC7};
@@ -539,7 +536,7 @@ void executeSha1(const Harness& harness, const Codegen::IAmd64OnlyInstructionMat
         State expected = input;
         for (const auto& step : steps) sha1Reference(step, input, expected.Xmm);
         for (unsigned reg = 0; reg < 16; ++reg)
-            if (((written >> reg) & 1) != 0) require(std::memcmp(state.Xmm[reg], expected.Xmm[reg], 16) == 0, "Lowered SHA-1 computed the wrong xmm" + std::to_string(reg) + ": " + describeSha1(steps));
+            if (((written >> reg) & 1) != 0) Require(std::memcmp(state.Xmm[reg], expected.Xmm[reg], 16) == 0, "Lowered SHA-1 computed the wrong xmm" + std::to_string(reg) + ": " + describeSha1(steps));
         requireEnvironment(input, state, written, describeSha1(steps));
     }
 }
@@ -574,7 +571,7 @@ void clzeroExecution(const Harness& harness, const Codegen::IAmd64OnlyInstructio
     std::uint8_t* low = nullptr;
     for (std::uintptr_t hint = 0x10000000; low == nullptr && hint < 0x80000000; hint += 0x10000000)
         low = static_cast<std::uint8_t*>(VirtualAlloc(reinterpret_cast<void*>(hint), size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
-    require(high != nullptr && low != nullptr, "Cannot allocate the CLZERO buffers");
+    Require(high != nullptr && low != nullptr, "Cannot allocate the CLZERO buffers");
     struct ClzeroCase {
         std::optional<Codegen::Amd64OnlyMatch> Match;
         std::uint8_t* Buffer;
@@ -587,7 +584,7 @@ void clzeroExecution(const Harness& harness, const Codegen::IAmd64OnlyInstructio
         {matcher.MatchSequence(pair, {}), high, 0, "clzero; clzero"}};
     const std::array<std::uint64_t, 4> flags = {0x202, 0x203, 0x246, 0xAC7};
     for (const auto& item : cases) {
-        require(item.Match.has_value() && item.Match->Lowering == Codegen::Amd64OnlyLowering::Trampoline, "CLZERO was not lowered through a stub: " + item.Name);
+        Require(item.Match.has_value() && item.Match->Lowering == Codegen::Amd64OnlyLowering::Trampoline, "CLZERO was not lowered through a stub: " + item.Name);
         for (int image = 0; image < 64; ++image) {
             const auto address = reinterpret_cast<std::uint64_t>(item.Buffer) + 64 + random() % (size - 128);
             Bytes body = {0x48, 0xB8};
@@ -605,7 +602,7 @@ void clzeroExecution(const Harness& harness, const Codegen::IAmd64OnlyInstructio
             const auto line = address & ~std::uint64_t{63};
             for (std::size_t index = 0; index < size; ++index) {
                 const auto at = reinterpret_cast<std::uint64_t>(item.Buffer + index);
-                require(item.Buffer[index] == (at >= line && at < line + 64 ? 0x00 : 0xA5), "Lowered CLZERO did not clear exactly the addressed line: " + item.Name);
+                Require(item.Buffer[index] == (at >= line && at < line + 64 ? 0x00 : 0xA5), "Lowered CLZERO did not clear exactly the addressed line: " + item.Name);
             }
             requireEnvironment(input, state, 0, item.Name);
         }
@@ -674,26 +671,26 @@ void peBuilder() {
     const auto source = elfFixture(text);
     const auto headers = elfHeaders();
     const auto converted = Codegen::MakeAmd64OnlyConverter()->Convert(source, {headers[0]});
-    require(converted.Trampolines.size() == 1, "PE fixture conversion did not produce one stub");
+    Require(converted.Trampolines.size() == 1, "PE fixture conversion did not produce one stub");
     const WindowsLoadImage image(converted.Bytes, headers);
     auto sections = image.BuildSections();
     auto nextRva = image.GetEndRva();
     const auto stubSectionRva = nextRva;
     WindowsTrampolineBuilder().Build(converted.Trampolines, image, sections, nextRva);
-    require(sections.size() == 3 && sections.back().Name == ".amdstub" && sections.back().Rva == stubSectionRva && (sections.back().Characteristics & SectionExecute) != 0 && nextRva == AlignRva(stubSectionRva + sections.back().Data.size()), "Stub section was not appended");
+    Require(sections.size() == 3 && sections.back().Name == ".amdstub" && sections.back().Rva == stubSectionRva && (sections.back().Characteristics & SectionExecute) != 0 && nextRva == AlignRva(stubSectionRva + sections.back().Data.size()), "Stub section was not appended");
     const auto& text0 = sections[0];
     const auto siteRva = LoadRva + 2;
-    require(text0.Data[2] == 0xE9 && text0.Data[7] == 0x90 && text0.Data[8] == 0xC3, "PE site was not replaced by a jump");
+    Require(text0.Data[2] == 0xE9 && text0.Data[7] == 0x90 && text0.Data[8] == 0xC3, "PE site was not replaced by a jump");
     const auto stubRva = static_cast<std::uint32_t>(static_cast<std::int64_t>(siteRva + 5) + read<std::int32_t>(text0.Data, 3));
-    require(stubRva == stubSectionRva && stubRva % 16 == 0, "PE jump does not land on the 16-aligned stub");
+    Require(stubRva == stubSectionRva && stubRva % 16 == 0, "PE jump does not land on the 16-aligned stub");
     const auto& body = sections.back().Data;
-    require(body.size() == 32 && body[0] == 0x66 && body[9] == 0xE9 && body[16] == 0x00 && body[17] == 0x00 && body[18] == 0x02, "PE stub body is wrong");
-    require(static_cast<std::int64_t>(stubRva + 9 + 5) + read<std::int32_t>(body, 10) == siteRva + 6, "PE stub does not return past the site");
-    require(read<std::int32_t>(body, 5) == 7 && (stubRva + 16) % 16 == 0, "PE mask constant is not 16-aligned");
+    Require(body.size() == 32 && body[0] == 0x66 && body[9] == 0xE9 && body[16] == 0x00 && body[17] == 0x00 && body[18] == 0x02, "PE stub body is wrong");
+    Require(static_cast<std::int64_t>(stubRva + 9 + 5) + read<std::int32_t>(body, 10) == siteRva + 6, "PE stub does not return past the site");
+    Require(read<std::int32_t>(body, 5) == 7 && (stubRva + 16) % 16 == 0, "PE mask constant is not 16-aligned");
     std::array<PeDirectory, 16> directories{};
     const auto file = WindowsPeWriter().Write(sections, LoadRva, directories);
-    require(file.size() > 0x400, "PE writer rejected the stub section");
-    require(read<std::uint16_t>(file, 0x96) == 0x22, "PE writer marked a fixed image as relocation-stripped");
+    Require(file.size() > 0x400, "PE writer rejected the stub section");
+    Require(read<std::uint16_t>(file, 0x96) == 0x22, "PE writer marked a fixed image as relocation-stripped");
     auto altered = converted.Bytes;
     altered[0x205] = 0xDC;
     requireFailure([&] {
@@ -712,7 +709,7 @@ void peBuilder() {
     auto untouched = image.BuildSections();
     auto untouchedRva = image.GetEndRva();
     WindowsTrampolineBuilder().Build({}, image, untouched, untouchedRva);
-    require(untouched.size() == 2 && untouchedRva == image.GetEndRva(), "Empty site list changed the image");
+    Require(untouched.size() == 2 && untouchedRva == image.GetEndRva(), "Empty site list changed the image");
 }
 
 }

@@ -1,4 +1,5 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdint>
@@ -9,21 +10,6 @@
 #include <stdexcept>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc PacketOptions check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> void RequireInvalidArgument(TAction action, std::source_location location = std::source_location::current()) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, location);
-}
 
 std::array<unsigned char, sizeof(WebRtcPacketOptions)> Bytes(const WebRtcPacketOptions& options) {
     std::array<unsigned char, sizeof(WebRtcPacketOptions)> bytes {};
@@ -103,9 +89,9 @@ void TestNullArgumentsThrow() {
     options.packetId = 7;
     options.batchable = true;
     const auto expected = Bytes(options);
-    RequireInvalidArgument([] { _ZN6webrtc13PacketOptionsC1Ev_nid_postfix(nullptr); });
-    RequireInvalidArgument([&] { _ZN6webrtc13PacketOptionsC1ERKS0__nid_postfix(nullptr, &options); });
-    RequireInvalidArgument([&] { _ZN6webrtc13PacketOptionsC1ERKS0__nid_postfix(&options, nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZN6webrtc13PacketOptionsC1Ev_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc13PacketOptionsC1ERKS0__nid_postfix(nullptr, &options); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc13PacketOptionsC1ERKS0__nid_postfix(&options, nullptr); });
     Require(Bytes(options) == expected);
 }
 

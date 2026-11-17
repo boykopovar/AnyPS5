@@ -1,6 +1,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/WebKitValueExports.hpp"
 #include "prx/libSceNKWebKit/src/Configuration.hpp"
+#include "Testing.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -9,27 +10,6 @@
 #include <source_location>
 #include <stdexcept>
 
-namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "WKPage zoom check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
-
-template<class Function>
-void RequireInvalidArgument(Function function) {
-    bool threw = false;
-    try {
-        function();
-    } catch (const std::invalid_argument&) {
-        threw = true;
-    }
-    Require(threw);
-}
-
-}
 
 int main() {
     auto page = NKWebKit::Make<NKWebKit::Page>();
@@ -88,12 +68,12 @@ int main() {
     Require(WKPageGetPageZoomFactor(pageRef) == 1.25);
     Require(WKPageGetTextZoomFactor(pageRef) == 1.75);
 
-    RequireInvalidArgument([] { WKPageGetPageZoomFactor(nullptr); });
-    RequireInvalidArgument([] { WKPageGetTextZoomFactor(nullptr); });
-    RequireInvalidArgument([] { WKPageSetPageZoomFactor(nullptr, 1.5); });
-    RequireInvalidArgument([] { WKPageSetTextZoomFactor(nullptr, 1.5); });
-    RequireInvalidArgument([] { WKPageSetPageAndTextZoomFactors(nullptr, 1.5, 1.5); });
-    RequireInvalidArgument([] { WKPageSupportsTextZoom(nullptr); });
+    ExpectErr<std::invalid_argument>([] { WKPageGetPageZoomFactor(nullptr); });
+    ExpectErr<std::invalid_argument>([] { WKPageGetTextZoomFactor(nullptr); });
+    ExpectErr<std::invalid_argument>([] { WKPageSetPageZoomFactor(nullptr, 1.5); });
+    ExpectErr<std::invalid_argument>([] { WKPageSetTextZoomFactor(nullptr, 1.5); });
+    ExpectErr<std::invalid_argument>([] { WKPageSetPageAndTextZoomFactors(nullptr, 1.5, 1.5); });
+    ExpectErr<std::invalid_argument>([] { WKPageSupportsTextZoom(nullptr); });
 
     WKRelease(pageRef);
     return 0;

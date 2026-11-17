@@ -1,5 +1,6 @@
 #include "prx/libSceAvPlayer.native/include/Api.hpp"
 #include "prx/libSceAvPlayer/include/Api.hpp"
+#include "Testing.hpp"
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -7,8 +8,6 @@
 #ifdef _WIN32
 #include "prx/libc/include/WindowsFormatting.hpp"
 #endif
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 struct CapturedLog {
     void* userData;

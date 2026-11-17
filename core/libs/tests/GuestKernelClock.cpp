@@ -3,6 +3,7 @@
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdlib>
 
@@ -12,10 +13,6 @@ static constexpr int GUEST_CLOCK_MONOTONIC = 4;
 static constexpr int GUEST_EFAULT = 14;
 static constexpr int GUEST_EINVAL = 22;
 static constexpr std::int64_t NANOS_PER_SECOND = 1000000000LL;
-
-static void Require(bool value) {
-    if (!value) std::abort();
-}
 
 static void TestClockRealtime() {
     KernelTimespec res{-1, -1};

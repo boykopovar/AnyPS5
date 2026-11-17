@@ -2,6 +2,7 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceIme/include/ModalDialog.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <chrono>
@@ -13,8 +14,6 @@ namespace {
 void ClobberErrno(std::uintptr_t, std::size_t) {
     errno = 99;
 }
-
-void Require(bool value) { if (!value) std::abort(); }
 
 constexpr int kStatusRunning = 2;
 constexpr int kStatusFinished = 3;

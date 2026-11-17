@@ -1,5 +1,6 @@
 #include "SceTypes.hpp"
 #include "prx/libSceUserService/UserService.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -8,12 +9,6 @@
 #include <stdexcept>
 
 namespace {
-
-void Require(bool condition) {
-    if (!condition) {
-        std::abort();
-    }
-}
 
 void TestStorageAccountBound() {
     bool threw = false;

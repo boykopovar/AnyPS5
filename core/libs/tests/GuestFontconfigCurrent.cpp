@@ -1,13 +1,8 @@
 #include "prx/libfontconfig/include/Configuration.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
-
-static void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
 
 int main() {
     Require(FcConfigGetCurrent() == nullptr, "FcConfigGetCurrent returns no configuration");

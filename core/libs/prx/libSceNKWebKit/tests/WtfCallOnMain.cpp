@@ -1,5 +1,6 @@
 #include "prx/libSceNKWebKit/include/WebKitValueExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -12,13 +13,6 @@ namespace {
 using NKWebKit::WtfAbi::VoidCallableWrapper;
 using NKWebKit::WtfAbi::VoidCallableWrapperVtable;
 using NKWebKit::WtfAbi::VoidFunction;
-
-void Require(bool condition, const char* what) {
-    if (!condition) {
-        std::fprintf(stderr, "FAILED: %s\n", what);
-        std::abort();
-    }
-}
 
 struct CountingWrapper {
     VoidCallableWrapper base;

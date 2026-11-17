@@ -1,6 +1,7 @@
 #include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "JsonTestAllocator.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -22,9 +23,6 @@ struct Parameter {
     std::uint32_t reserved[3];
 };
 static_assert(sizeof(Parameter) == 40);
-static void Require(bool valid, const char* message) {
-    if (!valid) { std::fprintf(stderr, "%s\n", message); std::abort(); }
-}
 struct Context { std::size_t size = 0; int error = 0; void* memory = nullptr; int calls = 0; };
 static void* APS5_VABI AllocateMemory(std::size_t size, void* context) {
     auto& trace = *static_cast<Context*>(context);

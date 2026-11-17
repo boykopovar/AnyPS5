@@ -7,6 +7,7 @@
 #include "prx/libScePad/include/PadInputTypes.hpp"
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libSceUserService/UserService.hpp"
+#include "Testing.hpp"
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -14,12 +15,6 @@
 #undef main
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "pad_port0: %s\n", message);
-    std::exit(1);
-}
 
 void SetPort0State(const char* value) {
 #ifdef _WIN32

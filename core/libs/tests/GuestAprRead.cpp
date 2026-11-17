@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/Apr/include/AprCommandBuffer.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -26,10 +27,6 @@ namespace {
 constexpr std::size_t FileBytes = (16u << 20u) + 257u;
 constexpr std::size_t MappingBytes = 17u << 20u;
 constexpr const char* FilePath = "apr_read_generated.bin";
-
-void Require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 std::uint8_t FileByte(std::uint64_t offset) {
     return static_cast<std::uint8_t>((offset * 37u) ^ (offset >> 8u) ^ (offset >> 16u));

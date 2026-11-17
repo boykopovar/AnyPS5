@@ -29,6 +29,7 @@
 #include <cstdlib>
 #include <cstring>
 #include "../src/WtfStringAbi.hpp"
+#include "Testing.hpp"
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -37,12 +38,6 @@
 #include <type_traits>
 
 namespace {
-
-void Require(bool condition) {
-    if (!condition) {
-        std::abort();
-    }
-}
 
 template <typename Function, typename... Args>
 void* TryResult(Function function, Args... args) {
@@ -1086,283 +1081,270 @@ const auto SixHash = &_ZN3WTF31sixCharacterHashStringToIntegerEPKc;
 const auto IsReload = &_ZN7WebCore8isReloadENS_13FrameLoadTypeE;
 const auto IsBackForward = &_ZN7WebCore21isBackForwardLoadTypeENS_13FrameLoadTypeE;
 
-void Check(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "WTF additional test failed at line %u\n", location.line());
-        std::abort();
-    }
-}
-
-template<typename T> void Throws(T action) {
-    bool threw = false;
-    try { action(); } catch (const std::exception&) { threw = true; }
-    Check(threw);
-}
-
 const unsigned char* U8(const char* data) { return reinterpret_cast<const unsigned char*>(data); }
 std::string Bytes(const CString& value) {
     return value.buffer ? std::string(reinterpret_cast<const char*>(value.buffer + 1), value.buffer->length) : std::string();
 }
 void Text(const String& value, const char* expected) {
-    Check(value.impl != nullptr);
-    Check(Bytes(UTF8(&value, 1)) == expected);
+    Require(value.impl != nullptr);
+    Require(Bytes(UTF8(&value, 1)) == expected);
 }
 
 void TestStorageAndQueries() {
     String null;
     auto empty = Create8(U8(""), 0);
-    Check(null.impl == nullptr && empty.impl != nullptr && empty.impl->length == 0);
+    Require(null.impl == nullptr && empty.impl != nullptr && empty.impl->length == 0);
     auto fromNull = Create16(nullptr, 99);
-    Check(fromNull.impl == empty.impl);
+    Require(fromNull.impl == empty.impl);
     unsigned char* data8 = reinterpret_cast<unsigned char*>(1);
     auto empty8 = Uninit8(0, data8);
-    Check(!data8 && empty8.impl == empty.impl);
+    Require(!data8 && empty8.impl == empty.impl);
     char16_t* data16 = reinterpret_cast<char16_t*>(1);
     auto empty16 = Uninit16(0, data16);
-    Check(!data16 && empty16.impl == empty.impl);
+    Require(!data16 && empty16.impl == empty.impl);
     auto made8 = Uninit8(3, data8);
     std::memcpy(data8, "aBa", 3);
-    Check(made8.impl->refCount == 2 && made8.impl->hashAndFlags == 4);
-    Check(made8.impl->data == reinterpret_cast<unsigned char*>(made8.impl) + 20);
+    Require(made8.impl->refCount == 2 && made8.impl->hashAndFlags == 4);
+    Require(made8.impl->data == reinterpret_cast<unsigned char*>(made8.impl) + 20);
     auto made16 = Uninit16(3, data16);
     data16[0] = 'a'; data16[1] = 'B'; data16[2] = 'a';
-    Check(made16.impl->hashAndFlags == 0);
-    Check(Equal(made8.impl, made16.impl) && EqualRefs(*made8.impl, *made16.impl));
-    Check(Equal8(made16.impl, U8("aBa"), 3) && Equal16(made8.impl, u"aBa", 3));
-    Check(EqualZ(made16.impl, U8("aBa")) && !EqualZ(made16.impl, U8("aB")));
-    Check(Equal(nullptr, nullptr) && !Equal(nullptr, empty.impl));
-    Check(Equal8(nullptr, nullptr, 4) && !Equal8(empty.impl, nullptr, 0));
-    Check(EqualNullity(nullptr, empty.impl) && EqualRawNullity(nullptr, 0, empty.impl));
-    Check(!EqualNullity(nullptr, made8.impl) && !EqualRawNullity(u"aB", 2, made8.impl));
+    Require(made16.impl->hashAndFlags == 0);
+    Require(Equal(made8.impl, made16.impl) && EqualRefs(*made8.impl, *made16.impl));
+    Require(Equal8(made16.impl, U8("aBa"), 3) && Equal16(made8.impl, u"aBa", 3));
+    Require(EqualZ(made16.impl, U8("aBa")) && !EqualZ(made16.impl, U8("aB")));
+    Require(Equal(nullptr, nullptr) && !Equal(nullptr, empty.impl));
+    Require(Equal8(nullptr, nullptr, 4) && !Equal8(empty.impl, nullptr, 0));
+    Require(EqualNullity(nullptr, empty.impl) && EqualRawNullity(nullptr, 0, empty.impl));
+    Require(!EqualNullity(nullptr, made8.impl) && !EqualRawNullity(u"aB", 2, made8.impl));
     auto lower = Create8(U8("aba"), 3);
-    Check(EqualCase(made16.impl, lower.impl) && EqualCaseNonNull(made8.impl, lower.impl));
-    Check(EqualCase(nullptr, nullptr) && !EqualCase(nullptr, empty.impl));
-    Throws([&] { EqualCaseNonNull(nullptr, lower.impl); });
-    Check(BytesSize(made8.impl) == 27 && BytesSize(made16.impl) == 30);
-    Check(ConcurrentHash(made8.impl) == ConcurrentHash(made16.impl));
-    Check(made8.impl->hashAndFlags == 4);
+    Require(EqualCase(made16.impl, lower.impl) && EqualCaseNonNull(made8.impl, lower.impl));
+    Require(EqualCase(nullptr, nullptr) && !EqualCase(nullptr, empty.impl));
+    ExpectErr([&] { EqualCaseNonNull(nullptr, lower.impl); });
+    Require(BytesSize(made8.impl) == 27 && BytesSize(made16.impl) == 30);
+    Require(ConcurrentHash(made8.impl) == ConcurrentHash(made16.impl));
+    Require(made8.impl->hashAndFlags == 4);
     auto hash = Hash(made8.impl);
-    Check(hash != 0 && made8.impl->hashAndFlags == ((hash << 8) | 4));
-    Check(Hash(made16.impl) == hash);
+    Require(hash != 0 && made8.impl->hashAndFlags == ((hash << 8) | 4));
+    Require(Hash(made16.impl) == hash);
     auto hello = Create8(U8("hello"), 5);
-    Check(Hash(hello.impl) == 0x00D17551U);
+    Require(Hash(hello.impl) == 0x00D17551U);
     unsigned bytesRead = 99;
     unsigned utf16Read = 99;
     const char* valid = "hello";
-    Check(_ZN3WTF7Unicode51calculateStringHashAndLengthFromUTF8MaskingTop8BitsEPKcS2_RjS3_(valid, valid + 5, bytesRead, utf16Read) == 0x00D17551U);
-    Check(bytesRead == 5 && utf16Read == 5);
+    Require(_ZN3WTF7Unicode51calculateStringHashAndLengthFromUTF8MaskingTop8BitsEPKcS2_RjS3_(valid, valid + 5, bytesRead, utf16Read) == 0x00D17551U);
+    Require(bytesRead == 5 && utf16Read == 5);
     for (const char* invalid : {"\xc0\xaf", "\xe0\x80\x80", "\xed\xa0\x80", "\xf4\x90\x80\x80", "\xe2\x82"}) {
         bytesRead = 99;
-        Check(!_ZN3WTF7Unicode51calculateStringHashAndLengthFromUTF8MaskingTop8BitsEPKcS2_RjS3_(invalid, invalid + std::strlen(invalid), bytesRead, utf16Read));
-        Check(bytesRead == 99 && utf16Read == 0);
+        Require(!_ZN3WTF7Unicode51calculateStringHashAndLengthFromUTF8MaskingTop8BitsEPKcS2_RjS3_(invalid, invalid + std::strlen(invalid), bytesRead, utf16Read));
+        Require(bytesRead == 99 && utf16Read == 0);
     }
     auto released = Create8(U8("fastMalloc"), 10);
     auto* storage = std::exchange(released.impl, nullptr);
-    Check(_ZN3WTF14fastMallocSizeEPKv(storage) >= 30);
+    Require(_ZN3WTF14fastMallocSizeEPKv(storage) >= 30);
     _ZN3WTF8fastFreeEPv(storage);
-    Check(Starts(made8.impl, 'a') && Ends(made16.impl, 'a'));
-    Check(!Starts(empty.impl, 0) && !Ends(empty.impl, 0));
-    Check(Prefix(made16.impl, "aB", 2) && Suffix(made8.impl, "Ba", 2));
-    Check(Prefix(empty.impl, nullptr, 0) && !Prefix(made8.impl, "aBab", 4));
-    Check(!Suffix(made16.impl, "bb", 2));
-    Throws([&] { Prefix(made8.impl, nullptr, 1); });
-    Check(ReverseFind(made8.impl, 'a', 99) == 2 && ReverseFind(made16.impl, 'a', 1) == 0);
-    Check(ReverseFind(empty.impl, 'a', 0) == std::size_t(-1));
-    Check(ReverseFind(made8.impl, 0x100, 99) == std::size_t(-1));
+    Require(Starts(made8.impl, 'a') && Ends(made16.impl, 'a'));
+    Require(!Starts(empty.impl, 0) && !Ends(empty.impl, 0));
+    Require(Prefix(made16.impl, "aB", 2) && Suffix(made8.impl, "Ba", 2));
+    Require(Prefix(empty.impl, nullptr, 0) && !Prefix(made8.impl, "aBab", 4));
+    Require(!Suffix(made16.impl, "bb", 2));
+    ExpectErr([&] { Prefix(made8.impl, nullptr, 1); });
+    Require(ReverseFind(made8.impl, 'a', 99) == 2 && ReverseFind(made16.impl, 'a', 1) == 0);
+    Require(ReverseFind(empty.impl, 'a', 0) == std::size_t(-1));
+    Require(ReverseFind(made8.impl, 0x100, 99) == std::size_t(-1));
     auto narrow = Narrow(u"caf\u00e9", 4);
-    Check((narrow.impl->hashAndFlags & 4) != 0);
+    Require((narrow.impl->hashAndFlags & 4) != 0);
     auto wide = Narrow(u"x\u0100", 2);
-    Check((wide.impl->hashAndFlags & 4) == 0);
-    Check(Character(&null, 0) == 0 && Character(&made8, 99) == 0);
-    Check(ImplCharacter(made8.impl, 1) == 'B');
-    Throws([&] { ImplCharacter(made8.impl, 3); });
-    Throws([&] { BytesSize(nullptr); });
-    Throws([&] { Uninit16(0xFFFFFFFF, data16); });
-    Check(Safe(&null) && Safe(&made8) && Safe(&empty));
-    { auto copy = made8; Check(!Safe(&made8)); }
-    Check(Safe(&made8));
+    Require((wide.impl->hashAndFlags & 4) == 0);
+    Require(Character(&null, 0) == 0 && Character(&made8, 99) == 0);
+    Require(ImplCharacter(made8.impl, 1) == 'B');
+    ExpectErr([&] { ImplCharacter(made8.impl, 3); });
+    ExpectErr([&] { BytesSize(nullptr); });
+    ExpectErr([&] { Uninit16(0xFFFFFFFF, data16); });
+    Require(Safe(&null) && Safe(&made8) && Safe(&empty));
+    { auto copy = made8; Require(!Safe(&made8)); }
+    Require(Safe(&made8));
 }
 
 void TestASCIIAndViews() {
     auto original = Create16(u"Ab\u00c9z", 4);
     auto lower = ImplLower(original.impl);
     auto upper = ImplUpper(original.impl);
-    Check(Equal16(lower.impl, u"ab\u00c9z", 4));
-    Check(Equal16(upper.impl, u"AB\u00c9Z", 4));
-    { auto same = ImplLower(lower.impl); Check(same.impl == lower.impl && lower.impl->refCount == 4); }
-    Check(lower.impl->refCount == 2);
-    Check(Equal16(Lower(&original).impl, u"ab\u00c9z", 4));
-    Check(Equal16(Upper(&original).impl, u"AB\u00c9Z", 4));
+    Require(Equal16(lower.impl, u"ab\u00c9z", 4));
+    Require(Equal16(upper.impl, u"AB\u00c9Z", 4));
+    { auto same = ImplLower(lower.impl); Require(same.impl == lower.impl && lower.impl->refCount == 4); }
+    Require(lower.impl->refCount == 2);
+    Require(Equal16(Lower(&original).impl, u"ab\u00c9z", 4));
+    Require(Equal16(Upper(&original).impl, u"AB\u00c9Z", 4));
     String null;
-    Check(!Lower(&null).impl && !Upper(&null).impl);
+    Require(!Lower(&null).impl && !Upper(&null).impl);
     StringView view{U8("aBcD"), 4, true};
     StringView wide{u"aBcD", 4, false};
     StringView empty{"", 0, true};
     StringView absent{nullptr, 0, true};
     Text(ViewLower(&view), "abcd");
     Text(ViewUpper(&wide), "ABCD");
-    Check(!ViewLower(&absent).impl && ViewUpper(&empty).impl);
-    Check(ViewStarts(&view, 'a') && ViewEnds(&wide, 'D'));
-    Check(!ViewStarts(&absent, 0) && !ViewEnds(&empty, 0));
-    Check(EqualViews(view, wide) && !EqualViews(absent, empty));
-    Check(EqualViews(absent, absent) && EqualViews(empty, empty));
+    Require(!ViewLower(&absent).impl && ViewUpper(&empty).impl);
+    Require(ViewStarts(&view, 'a') && ViewEnds(&wide, 'D'));
+    Require(!ViewStarts(&absent, 0) && !ViewEnds(&empty, 0));
+    Require(EqualViews(view, wide) && !EqualViews(absent, empty));
+    Require(EqualViews(absent, absent) && EqualViews(empty, empty));
     StringView match{u"Bc", 2, false};
-    Check(Find(&view, match, 0) == 1 && Find(&wide, {"D", 1, true}, 2) == 3);
-    Check(Find(&view, match, 2) == std::size_t(-1));
-    Check(Find(&view, absent, 4) == 4 && Find(&view, absent, 5) == std::size_t(-1));
+    Require(Find(&view, match, 0) == 1 && Find(&wide, {"D", 1, true}, 2) == 3);
+    Require(Find(&view, match, 2) == std::size_t(-1));
+    Require(Find(&view, absent, 4) == 4 && Find(&view, absent, 5) == std::size_t(-1));
     unsigned char output8[5] = {0, 0, 0, 0, 77};
     char16_t output16[5] = {0, 0, 0, 0, 77};
     Case8(&view, 0, output8);
     Case16(&view, 1, output16);
-    Check(!std::memcmp(output8, "ABCD", 4) && output8[4] == 77);
-    Check(!std::memcmp(output16, u"abcd", 8) && output16[4] == 77);
+    Require(!std::memcmp(output8, "ABCD", 4) && output8[4] == 77);
+    Require(!std::memcmp(output16, u"abcd", 8) && output16[4] == 77);
     Case16(&wide, 0, output16);
-    Check(!std::memcmp(output16, u"ABCD", 8));
+    Require(!std::memcmp(output16, u"ABCD", 8));
     Case8(&absent, 0, nullptr);
-    Throws([&] { Case8(&wide, 1, output8); });
-    Throws([&] { Case16(&wide, 1, nullptr); });
+    ExpectErr([&] { Case8(&wide, 1, output8); });
+    ExpectErr([&] { Case16(&wide, 1, nullptr); });
     auto special = Create16(u"\0\n\x7f\u00e9\u0100", 5);
-    Check(Bytes(Ascii(&special)) == std::string("\0?\x7f??", 5));
-    Check(Bytes(Latin1(&special)) == std::string("\0\n\x7f\xe9?", 5));
-    Check(Ascii(&null).buffer != nullptr && Latin1(&null).buffer != nullptr);
+    Require(Bytes(Ascii(&special)) == std::string("\0?\x7f??", 5));
+    Require(Bytes(Latin1(&special)) == std::string("\0\n\x7f\xe9?", 5));
+    Require(Ascii(&null).buffer != nullptr && Latin1(&null).buffer != nullptr);
 }
 
 void TestUTFConversions() {
     String null;
-    Check(Bytes(UTF8(&null, 1)).empty());
-    Check(!FromUTF8(nullptr, 9).impl && !FromUTF8Z(nullptr).impl);
+    Require(Bytes(UTF8(&null, 1)).empty());
+    Require(!FromUTF8(nullptr, 9).impl && !FromUTF8Z(nullptr).impl);
     auto ascii = FromUTF8(U8("abc"), 3);
-    Check((ascii.impl->hashAndFlags & 4) != 0);
+    Require((ascii.impl->hashAndFlags & 4) != 0);
     auto unicode = FromUTF8(U8("caf\xc3\xa9\xf0\x9f\x98\x80"), 9);
-    Check(unicode.impl && unicode.impl->length == 6 && !(unicode.impl->hashAndFlags & 4));
-    Check(Character(&unicode, 4) == 0x1F600 && Character(&unicode, 5) == 0);
-    Check(Bytes(ImplUTF8(unicode.impl, 1)) == "caf\xc3\xa9\xf0\x9f\x98\x80");
+    Require(unicode.impl && unicode.impl->length == 6 && !(unicode.impl->hashAndFlags & 4));
+    Require(Character(&unicode, 4) == 0x1F600 && Character(&unicode, 5) == 0);
+    Require(Bytes(ImplUTF8(unicode.impl, 1)) == "caf\xc3\xa9\xf0\x9f\x98\x80");
     StringView view{unicode.impl->data, unicode.impl->length, false};
-    Check(Bytes(ViewUTF8(&view, 1)) == Bytes(UTF8(&unicode, 1)));
+    Require(Bytes(ViewUTF8(&view, 1)) == Bytes(UTF8(&unicode, 1)));
     for (const char* invalid : {"\xc0\xaf", "\xe0\x80\x80", "\xed\xa0\x80", "\xf4\x90\x80\x80", "\x80", "\xe2\x82"}) {
-        Check(!FromUTF8Z(U8(invalid)).impl);
+        Require(!FromUTF8Z(U8(invalid)).impl);
     }
     auto fallback = LatinFallback(U8("\xff"), 1);
-    Check(Equal16(fallback.impl, u"\xff", 1) && (fallback.impl->hashAndFlags & 4));
+    Require(Equal16(fallback.impl, u"\xff", 1) && (fallback.impl->hashAndFlags & 4));
     auto zero = FromUTF8(U8("a\0b"), 3);
-    Check(zero.impl->length == 3 && Character(&zero, 1) == 0);
+    Require(zero.impl->length == 3 && Character(&zero, 1) == 0);
     char16_t bad[] = {0xD800, 'X', 0xDC00, 0xDFFF};
     auto malformed = Create16(bad, 4);
-    Check(ImplCharacter(malformed.impl, 0) == 0 && ImplCharacter(malformed.impl, 2) == 0);
-    Check(Bytes(UTF8(&malformed, 0)) == "\xed\xa0\x80X\xed\xb0\x80\xed\xbf\xbf");
-    Check(Bytes(UTF8(&malformed, 2)) == "\xef\xbf\xbdX\xef\xbf\xbd\xef\xbf\xbd");
-    Throws([&] { UTF8(&malformed, 1); });
-    Check(Bytes(Utf8For16(bad, 4, 0)) == "\xed\xa0\x80X\xed\xb0\x80\xed\xbf\xbf");
-    Check(Bytes(Utf8For16(bad, 4, 2)) == "\xef\xbf\xbdX\xef\xbf\xbd\xef\xbf\xbd");
-    Throws([&] { Utf8For16(bad, 4, 1); });
+    Require(ImplCharacter(malformed.impl, 0) == 0 && ImplCharacter(malformed.impl, 2) == 0);
+    Require(Bytes(UTF8(&malformed, 0)) == "\xed\xa0\x80X\xed\xb0\x80\xed\xbf\xbf");
+    Require(Bytes(UTF8(&malformed, 2)) == "\xef\xbf\xbdX\xef\xbf\xbd\xef\xbf\xbd");
+    ExpectErr([&] { UTF8(&malformed, 1); });
+    Require(Bytes(Utf8For16(bad, 4, 0)) == "\xed\xa0\x80X\xed\xb0\x80\xed\xbf\xbf");
+    Require(Bytes(Utf8For16(bad, 4, 2)) == "\xef\xbf\xbdX\xef\xbf\xbd\xef\xbf\xbd");
+    ExpectErr([&] { Utf8For16(bad, 4, 1); });
     char16_t paired[] = {'c', 'a', 'f', 0xE9, 0xD83D, 0xDE00};
-    Check(Bytes(Utf8For16(paired, 6, 1)) == "caf\xc3\xa9\xf0\x9f\x98\x80");
-    Check(Bytes(Utf8For16(paired, 0, 1)).empty() && Bytes(Utf8For16(nullptr, 0, 1)).empty());
-    Throws([&] { Utf8For16(nullptr, 1, 1); });
-    Check(Bytes(Utf8For8(U8("caf\xe9\x80"), 5)) == "caf\xc3\xa9\xc2\x80");
-    Check(Bytes(Utf8For8(U8("a\0b"), 3)) == std::string("a\0b", 3));
-    Check(Bytes(Utf8For8(U8("x"), 0)).empty() && Bytes(Utf8For8(nullptr, 0)).empty());
-    Throws([&] { Utf8For8(nullptr, 1); });
+    Require(Bytes(Utf8For16(paired, 6, 1)) == "caf\xc3\xa9\xf0\x9f\x98\x80");
+    Require(Bytes(Utf8For16(paired, 0, 1)).empty() && Bytes(Utf8For16(nullptr, 0, 1)).empty());
+    ExpectErr([&] { Utf8For16(nullptr, 1, 1); });
+    Require(Bytes(Utf8For8(U8("caf\xe9\x80"), 5)) == "caf\xc3\xa9\xc2\x80");
+    Require(Bytes(Utf8For8(U8("a\0b"), 3)) == std::string("a\0b", 3));
+    Require(Bytes(Utf8For8(U8("x"), 0)).empty() && Bytes(Utf8For8(nullptr, 0)).empty());
+    ExpectErr([&] { Utf8For8(nullptr, 1); });
     Text(FromCodePoint(0x1F600), "\xf0\x9f\x98\x80");
-    Check(!FromCodePoint(-1).impl && !FromCodePoint(0x110000).impl);
+    Require(!FromCodePoint(-1).impl && !FromCodePoint(0x110000).impl);
     auto surrogate = FromCodePoint(0xD800);
-    Check(surrogate.impl && surrogate.impl->length == 1 && Character(&surrogate, 0) == 0);
-    Throws([&] { FromUTF8(U8(""), std::size_t(0x80000000)); });
+    Require(surrogate.impl && surrogate.impl->length == 1 && Character(&surrogate, 0) == 0);
+    ExpectErr([&] { FromUTF8(U8(""), std::size_t(0x80000000)); });
 }
 
 void TestSubstrings() {
     auto original = Create8(U8("abcdefghijklmnopqrstuvwx"), 24);
-    { auto same = Substring(original.impl, 0, 99); Check(same.impl == original.impl); }
+    { auto same = Substring(original.impl, 0, 99); Require(same.impl == original.impl); }
     Text(Substring(original.impl, 23, 99), "x");
-    Check(Substring(original.impl, 99, 9).impl->length == 0);
+    Require(Substring(original.impl, 99, 9).impl->length == 0);
     auto shared = SharedSubstring(&original, 1, 20);
-    Check((shared.impl->hashAndFlags & 3) == 2);
-    Check(shared.impl->data == static_cast<const unsigned char*>(original.impl->data) + 1);
-    Check(original.impl->refCount == 4);
+    Require((shared.impl->hashAndFlags & 3) == 2);
+    Require(shared.impl->data == static_cast<const unsigned char*>(original.impl->data) + 1);
+    Require(original.impl->refCount == 4);
     {
         auto nested = SharedSubstring(&shared, 1, 18);
         Text(nested, "cdefghijklmnopqrst");
-        Check(original.impl->refCount == 6 && shared.impl->refCount == 2);
+        Require(original.impl->refCount == 6 && shared.impl->refCount == 2);
     }
-    Check(original.impl->refCount == 4);
+    Require(original.impl->refCount == 4);
     auto small = SharedSubstring(&original, 1, 3);
-    Check((small.impl->hashAndFlags & 3) == 0);
+    Require((small.impl->hashAndFlags & 3) == 0);
     Text(small, "bcd");
     String null;
-    Check(!SharedSubstring(&null, 5, 9).impl);
+    Require(!SharedSubstring(&null, 5, 9).impl);
     auto wide = Create16(u"abcdefghijklmnopqrstuvwx", 24);
     auto wideShared = SharedSubstring(&wide, 2, 20);
-    Check((wideShared.impl->hashAndFlags & 3) == 2 && !(wideShared.impl->hashAndFlags & 4));
+    Require((wideShared.impl->hashAndFlags & 3) == 2 && !(wideShared.impl->hashAndFlags & 4));
     Text(wideShared, "cdefghijklmnopqrstuv");
 }
 
 void TestCStrings() {
     char* data;
     auto value = CStringNew(3, data);
-    Check(data[3] == 0 && value.buffer->refCount == 1);
+    Require(data[3] == 0 && value.buffer->refCount == 1);
     std::memcpy(data, "abc", 3);
     CString shared(value);
-    Check(value.buffer->refCount == 2);
+    Require(value.buffer->refCount == 2);
     char* writable = CStringMutable(&shared);
     writable[0] = 'z';
-    Check(Bytes(value) == "abc" && Bytes(shared) == "zbc");
-    Check(value.buffer->refCount == 1 && shared.buffer->refCount == 1);
-    Check(CStringLess(value, shared) && !CStringEqual(value, shared));
-    Check(CStringEqualZ(value, "abc") && !CStringEqualZ(value, nullptr));
+    Require(Bytes(value) == "abc" && Bytes(shared) == "zbc");
+    Require(value.buffer->refCount == 1 && shared.buffer->refCount == 1);
+    Require(CStringLess(value, shared) && !CStringEqual(value, shared));
+    Require(CStringEqualZ(value, "abc") && !CStringEqualZ(value, nullptr));
     auto embedded = CStringNew(3, data);
     std::memcpy(data, "a\0b", 3);
     auto different = CStringNew(3, data);
     std::memcpy(data, "a\0c", 3);
-    Check(!CStringEqual(embedded, different) && CStringEqualZ(embedded, "a"));
-    Check(CStringHash(&embedded) == CStringHash(&different));
-    Check(!CStringHashEqual(embedded, different));
+    Require(!CStringEqual(embedded, different) && CStringEqualZ(embedded, "a"));
+    Require(CStringHash(&embedded) == CStringHash(&different));
+    Require(!CStringHashEqual(embedded, different));
     CString absent;
     auto empty = CStringNew(0, data);
-    Check(data[0] == 0 && !CStringEqual(absent, empty));
-    Check(CStringHash(&absent) == 0 && CStringHash(&empty) != 0);
-    Check(CStringEqualZ(absent, nullptr) && CStringLess(absent, empty));
-    Check(!CStringMutable(&absent));
+    Require(data[0] == 0 && !CStringEqual(absent, empty));
+    Require(CStringHash(&absent) == 0 && CStringHash(&empty) != 0);
+    Require(CStringEqualZ(absent, nullptr) && CStringLess(absent, empty));
+    Require(!CStringMutable(&absent));
     CStringGrow(&value, 8);
-    Check(value.buffer->length == 8 && !std::memcmp(Bytes(value).data(), "abc\0", 4));
+    Require(value.buffer->length == 8 && !std::memcmp(Bytes(value).data(), "abc\0", 4));
     writable = CStringMutable(&value);
     std::memcpy(writable + 3, "defgh", 5);
     writable[8] = 0;
-    Check(Bytes(value) == "abcdefgh");
-    Throws([&] { CStringGrow(&value, 8); });
-    Throws([&] { CStringGrow(&absent, 1); });
-    Throws([&] { CStringNew(std::size_t(-1), data); });
+    Require(Bytes(value) == "abcdefgh");
+    ExpectErr([&] { CStringGrow(&value, 8); });
+    ExpectErr([&] { CStringGrow(&absent, 1); });
+    ExpectErr([&] { CStringNew(std::size_t(-1), data); });
     Text(FromCString(embedded), "a");
-    Check(!FromCString(absent).impl);
+    Require(!FromCString(absent).impl);
     auto deleted = reinterpret_cast<CStringBuffer*>(std::uintptr_t(-1));
     CString a(deleted), b(deleted);
-    Check(CStringHashEqual(a, b) && !CStringHashEqual(a, value));
+    Require(CStringHashEqual(a, b) && !CStringHashEqual(a, value));
     a.buffer = nullptr; b.buffer = nullptr;
 }
 
 void TestPrimitiveState() {
-    Check(AllPrivileges().storage == 7);
+    Require(AllPrivileges().storage == 7);
     SetPrivileges({0});
-    Check(!HasPrivilege(1));
+    Require(!HasPrivilege(1));
     AddPrivilege(1); AddPrivilege(4);
-    Check(HasPrivilege(1) && HasPrivilege(4) && !HasPrivilege(2));
+    Require(HasPrivilege(1) && HasPrivilege(4) && !HasPrivilege(2));
     RemovePrivilege(1);
-    Check(!HasPrivilege(1) && HasPrivilege(4));
+    Require(!HasPrivilege(1) && HasPrivilege(4));
     SetPrivileges({2});
-    Check(HasPrivilege(2) && !HasPrivilege(4));
+    Require(HasPrivilege(2) && !HasPrivilege(4));
     SetPrivileges({0});
-    Check(SixHash("AAAAAA") == 0 && SixHash("AAAAAB") == 1);
-    Check(SixHash("AAAAAa") == 26 && SixHash("AAAAA0") == 52);
-    Check(SixHash("999999") == 965660735U);
-    Throws([&] { SixHash(nullptr); });
-    Throws([&] { SixHash("short"); });
-    Throws([&] { SixHash("AAAAAAA"); });
-    Throws([&] { SixHash("AAAAA!"); });
+    Require(SixHash("AAAAAA") == 0 && SixHash("AAAAAB") == 1);
+    Require(SixHash("AAAAAa") == 26 && SixHash("AAAAA0") == 52);
+    Require(SixHash("999999") == 965660735U);
+    ExpectErr([&] { SixHash(nullptr); });
+    ExpectErr([&] { SixHash("short"); });
+    ExpectErr([&] { SixHash("AAAAAAA"); });
+    ExpectErr([&] { SixHash("AAAAA!"); });
     for (std::uint8_t type = 0; type < 10; ++type) {
-        Check(IsReload(type) == (type == 4 || type == 8 || type == 9));
-        Check(IsBackForward(type) == (type >= 1 && type <= 3));
+        Require(IsReload(type) == (type == 4 || type == 8 || type == 9));
+        Require(IsBackForward(type) == (type >= 1 && type <= 3));
     }
-    Throws([&] { IsReload(255); });
-    Throws([&] { IsBackForward(255); });
+    ExpectErr([&] { IsReload(255); });
+    ExpectErr([&] { IsBackForward(255); });
 }
 
 void TestIntegersAndConstructors() {
@@ -1379,29 +1361,29 @@ void TestIntegersAndConstructors() {
     Text(_ZN3WTF6String6numberEy(std::numeric_limits<unsigned long long>::max()), "18446744073709551615");
     Text(_ZN3WTF6String6numberEy(0), "0");
     { String value; _ZN3WTF6StringC1EPKDsj(&value, u"test", 4); Text(value, "test"); }
-    { String value; _ZN3WTF6StringC1EPKDsj(&value, nullptr, 0); Check(!value.impl); }
+    { String value; _ZN3WTF6StringC1EPKDsj(&value, nullptr, 0); Require(!value.impl); }
     { String value; _ZN3WTF6StringC2EPKDsj(&value, u"test", 4); Text(value, "test"); }
-    { String value; _ZN3WTF6StringC2EPKDsj(&value, nullptr, 0); Check(!value.impl); }
+    { String value; _ZN3WTF6StringC2EPKDsj(&value, nullptr, 0); Require(!value.impl); }
     { String value; _ZN3WTF6StringC1EPKc(&value, "test"); Text(value, "test"); }
-    { String value; _ZN3WTF6StringC1EPKc(&value, nullptr); Check(!value.impl); }
+    { String value; _ZN3WTF6StringC1EPKc(&value, nullptr); Require(!value.impl); }
     { String value; _ZN3WTF6StringC2EPKc(&value, "test"); Text(value, "test"); }
-    { String value; _ZN3WTF6StringC2EPKc(&value, nullptr); Check(!value.impl); }
+    { String value; _ZN3WTF6StringC2EPKc(&value, nullptr); Require(!value.impl); }
     { String value; _ZN3WTF6StringC1EPKcj(&value, "test", 4); Text(value, "test"); }
-    { String value; _ZN3WTF6StringC1EPKcj(&value, nullptr, 0); Check(!value.impl); }
+    { String value; _ZN3WTF6StringC1EPKcj(&value, nullptr, 0); Require(!value.impl); }
     { String value; _ZN3WTF6StringC2EPKcj(&value, "test", 4); Text(value, "test"); }
-    { String value; _ZN3WTF6StringC2EPKcj(&value, nullptr, 0); Check(!value.impl); }
+    { String value; _ZN3WTF6StringC2EPKcj(&value, nullptr, 0); Require(!value.impl); }
     { String value; _ZN3WTF6StringC1EPKhj(&value, U8("test"), 4); Text(value, "test"); }
-    { String value; _ZN3WTF6StringC1EPKhj(&value, nullptr, 0); Check(!value.impl); }
+    { String value; _ZN3WTF6StringC1EPKhj(&value, nullptr, 0); Require(!value.impl); }
     { String value; _ZN3WTF6StringC2EPKhj(&value, U8("test"), 4); Text(value, "test"); }
-    { String value; _ZN3WTF6StringC2EPKhj(&value, nullptr, 0); Check(!value.impl); }
-    { CString value; _ZN3WTF7CStringC1EPKc(&value, "test"); Check(Bytes(value) == "test"); }
-    { CString value; _ZN3WTF7CStringC1EPKc(&value, nullptr); Check(!value.buffer); }
-    { CString value; _ZN3WTF7CStringC2EPKc(&value, "test"); Check(Bytes(value) == "test"); }
-    { CString value; _ZN3WTF7CStringC2EPKc(&value, nullptr); Check(!value.buffer); }
-    { CString value; _ZN3WTF7CStringC1EPKcm(&value, "test", 4); Check(Bytes(value) == "test"); }
-    { CString value; _ZN3WTF7CStringC1EPKcm(&value, nullptr, 0); Check(!value.buffer); }
-    { CString value; _ZN3WTF7CStringC2EPKcm(&value, "test", 4); Check(Bytes(value) == "test"); }
-    { CString value; _ZN3WTF7CStringC2EPKcm(&value, nullptr, 0); Check(!value.buffer); }
+    { String value; _ZN3WTF6StringC2EPKhj(&value, nullptr, 0); Require(!value.impl); }
+    { CString value; _ZN3WTF7CStringC1EPKc(&value, "test"); Require(Bytes(value) == "test"); }
+    { CString value; _ZN3WTF7CStringC1EPKc(&value, nullptr); Require(!value.buffer); }
+    { CString value; _ZN3WTF7CStringC2EPKc(&value, "test"); Require(Bytes(value) == "test"); }
+    { CString value; _ZN3WTF7CStringC2EPKc(&value, nullptr); Require(!value.buffer); }
+    { CString value; _ZN3WTF7CStringC1EPKcm(&value, "test", 4); Require(Bytes(value) == "test"); }
+    { CString value; _ZN3WTF7CStringC1EPKcm(&value, nullptr, 0); Require(!value.buffer); }
+    { CString value; _ZN3WTF7CStringC2EPKcm(&value, "test", 4); Require(Bytes(value) == "test"); }
+    { CString value; _ZN3WTF7CStringC2EPKcm(&value, nullptr, 0); Require(!value.buffer); }
 }
 
 std::u16string Units(const String& value) {
@@ -1424,77 +1406,77 @@ void TestFoldQuoteMarks() {
         {0x203A, u'\''}, {0x300C, u'\''}, {0x300D, u'\''}, {0x300E, u'\''}, {0x300F, u'\''}, {0xFE41, u'\''},
         {0xFE42, u'\''}, {0xFE43, u'\''}, {0xFE44, u'\''}, {0xFF07, u'\''}, {0xFF62, u'\''}, {0xFF63, u'\''},
     };
-    Check(sizeof(marks) / sizeof(marks[0]) == 30);
+    Require(sizeof(marks) / sizeof(marks[0]) == 30);
     for (const auto& mark : marks) {
         const char16_t input[] = {u'a', mark.code, u'b'};
         auto wide = Create16(input, 3);
         auto folded = fold(&wide);
-        Check(folded.impl != wide.impl);
-        Check(!(folded.impl->hashAndFlags & 4));
-        Check(Units(folded) == std::u16string({u'a', mark.folded, u'b'}));
-        Check(Units(wide) == std::u16string(input, 3));
+        Require(folded.impl != wide.impl);
+        Require(!(folded.impl->hashAndFlags & 4));
+        Require(Units(folded) == std::u16string({u'a', mark.folded, u'b'}));
+        Require(Units(wide) == std::u16string(input, 3));
         const char16_t single[] = {mark.code};
         auto lone = Create16(single, 1);
-        Check(Units(fold(&lone)) == std::u16string(1, mark.folded));
+        Require(Units(fold(&lone)) == std::u16string(1, mark.folded));
     }
     const char16_t unchanged[] = {u'"', u'\'', u'a', 0x2017, 0x2020, 0x2038, 0x203B, 0x300B, 0x3010, 0xFE40, 0xFE45, 0xFF01, 0xFF08, 0xFF61, 0xFF64, 0x05F2, 0x05F5, 0x00AA, 0x00BC, 0x4E2D};
     auto plain = Create16(unchanged, sizeof(unchanged) / sizeof(unchanged[0]));
     auto plainResult = fold(&plain);
-    Check(plainResult.impl == plain.impl);
-    Check(plain.impl->refCount == 4);
+    Require(plainResult.impl == plain.impl);
+    Require(plain.impl->refCount == 4);
     const char16_t mixed[] = {0x201C, u'h', u'i', 0x201D, u' ', 0x2018, u'x', 0x2019, 0x4E2D, 0x300C, 0x300D, 0xFF07, 0xFF02};
     auto mixedString = Create16(mixed, 13);
-    Check(Units(fold(&mixedString)) == std::u16string({u'"', u'h', u'i', u'"', u' ', u'\'', u'x', u'\'', 0x4E2D, u'\'', u'\'', u'\'', u'"'}));
+    Require(Units(fold(&mixedString)) == std::u16string({u'"', u'h', u'i', u'"', u' ', u'\'', u'x', u'\'', 0x4E2D, u'\'', u'\'', u'\'', u'"'}));
     const char16_t asciiAfter[] = {0x201C, u'a', 0x201D};
     auto wideAscii = Create16(asciiAfter, 3);
     auto wideAsciiResult = fold(&wideAscii);
-    Check(Units(wideAsciiResult) == u"\"a\"");
-    Check(!(wideAsciiResult.impl->hashAndFlags & 4));
+    Require(Units(wideAsciiResult) == u"\"a\"");
+    Require(!(wideAsciiResult.impl->hashAndFlags & 4));
 
     const unsigned char latin[] = {0xAB, 'a', 0xBB, 0xE9, 0xA0};
     auto narrow = Create8(latin, 5);
-    Check(narrow.impl->hashAndFlags & 4);
+    Require(narrow.impl->hashAndFlags & 4);
     auto narrowResult = fold(&narrow);
-    Check(narrowResult.impl != narrow.impl);
-    Check(narrowResult.impl->hashAndFlags & 4);
-    Check(Units(narrowResult) == std::u16string({u'"', u'a', u'"', 0xE9, 0xA0}));
-    Check(Units(narrow) == std::u16string({0xAB, u'a', 0xBB, 0xE9, 0xA0}));
+    Require(narrowResult.impl != narrow.impl);
+    Require(narrowResult.impl->hashAndFlags & 4);
+    Require(Units(narrowResult) == std::u16string({u'"', u'a', u'"', 0xE9, 0xA0}));
+    Require(Units(narrow) == std::u16string({0xAB, u'a', 0xBB, 0xE9, 0xA0}));
     auto narrowPlain = Create8(U8("it's"), 4);
     auto narrowPlainResult = fold(&narrowPlain);
-    Check(narrowPlainResult.impl == narrowPlain.impl);
-    Check(narrowPlain.impl->refCount == 4);
+    Require(narrowPlainResult.impl == narrowPlain.impl);
+    Require(narrowPlain.impl->refCount == 4);
 
     auto empty = Create16(u"", 0);
     auto emptyResult = fold(&empty);
-    Check(emptyResult.impl == empty.impl);
-    Check(!emptyResult.impl->length);
+    Require(emptyResult.impl == empty.impl);
+    Require(!emptyResult.impl->length);
     String absent;
-    Check(!fold(&absent).impl);
-    Throws([&] { fold(nullptr); });
+    Require(!fold(&absent).impl);
+    ExpectErr([&] { fold(nullptr); });
 }
 
 void TestDefaultMIMEType() {
     const auto defaultType = &_ZN7WebCore15defaultMIMETypeEv;
     const String& first = defaultType();
     const String& second = defaultType();
-    Check(&first == &second);
-    Check(first.impl);
-    Check(first.impl->length == 24);
-    Check(first.impl->hashAndFlags & 4);
-    Check(!(first.impl->hashAndFlags & 48));
-    Check(Units(first) == u"application/octet-stream");
-    Check(first.impl->refCount & 1);
+    Require(&first == &second);
+    Require(first.impl);
+    Require(first.impl->length == 24);
+    Require(first.impl->hashAndFlags & 4);
+    Require(!(first.impl->hashAndFlags & 48));
+    Require(Units(first) == u"application/octet-stream");
+    Require(first.impl->refCount & 1);
     const unsigned refCount = first.impl->refCount;
     {
         String copy(first);
-        Check(copy.impl == first.impl);
-        Check(first.impl->refCount == refCount + 2);
+        Require(copy.impl == first.impl);
+        Require(first.impl->refCount == refCount + 2);
     }
-    Check(first.impl->refCount == refCount);
-    Check(ConcurrentHash(first.impl) == (first.impl->hashAndFlags >> 8));
+    Require(first.impl->refCount == refCount);
+    Require(ConcurrentHash(first.impl) == (first.impl->hashAndFlags >> 8));
     auto fresh = Create8(U8("application/octet-stream"), 24);
-    Check(Equal(first.impl, fresh.impl));
-    Check(EqualZ(first.impl, U8("application/octet-stream")));
+    Require(Equal(first.impl, fresh.impl));
+    Require(EqualZ(first.impl, U8("application/octet-stream")));
 }
 
 void TestRedirectChainAllowsReuse() {
@@ -1503,26 +1485,26 @@ void TestRedirectChainAllowsReuse() {
     const double now = _ZN3WTF8WallTime3nowEv().m_value;
     const double infinity = std::numeric_limits<double>::infinity();
     for (int reuse = 0; reuse < 2; ++reuse) {
-        Check(allows({WallTime{infinity}, Status::NoRedirection}, reuse));
-        Check(allows({WallTime{0.0}, Status::NoRedirection}, reuse));
-        Check(allows({WallTime{std::nan("")}, Status::NoRedirection}, reuse));
-        Check(!allows({WallTime{infinity}, Status::NotCachedRedirection}, reuse));
-        Check(!allows({WallTime{0.0}, Status::NotCachedRedirection}, reuse));
+        Require(allows({WallTime{infinity}, Status::NoRedirection}, reuse));
+        Require(allows({WallTime{0.0}, Status::NoRedirection}, reuse));
+        Require(allows({WallTime{std::nan("")}, Status::NoRedirection}, reuse));
+        Require(!allows({WallTime{infinity}, Status::NotCachedRedirection}, reuse));
+        Require(!allows({WallTime{0.0}, Status::NotCachedRedirection}, reuse));
     }
-    Check(allows({WallTime{infinity}, Status::CachedRedirection}, 0));
-    Check(allows({WallTime{now + 1.0e9}, Status::CachedRedirection}, 0));
-    Check(!allows({WallTime{now - 1.0e9}, Status::CachedRedirection}, 0));
-    Check(!allows({WallTime{0.0}, Status::CachedRedirection}, 0));
-    Check(!allows({WallTime{-infinity}, Status::CachedRedirection}, 0));
-    Check(!allows({WallTime{std::nan("")}, Status::CachedRedirection}, 0));
-    Check(allows({WallTime{now - 1.0e9}, Status::CachedRedirection}, 1));
-    Check(allows({WallTime{0.0}, Status::CachedRedirection}, 1));
-    Check(allows({WallTime{-infinity}, Status::CachedRedirection}, 1));
-    Check(allows({WallTime{std::nan("")}, Status::CachedRedirection}, 1));
-    Check(allows({WallTime{now - 1.0e9}, Status::CachedRedirection}, 2));
-    Check(allows({WallTime{now + 1.0e9}, Status::CachedRedirection}, 1));
-    Check(!allows({WallTime{infinity}, static_cast<Status>(3)}, 0));
-    Check(!allows({WallTime{infinity}, static_cast<Status>(255)}, 1));
+    Require(allows({WallTime{infinity}, Status::CachedRedirection}, 0));
+    Require(allows({WallTime{now + 1.0e9}, Status::CachedRedirection}, 0));
+    Require(!allows({WallTime{now - 1.0e9}, Status::CachedRedirection}, 0));
+    Require(!allows({WallTime{0.0}, Status::CachedRedirection}, 0));
+    Require(!allows({WallTime{-infinity}, Status::CachedRedirection}, 0));
+    Require(!allows({WallTime{std::nan("")}, Status::CachedRedirection}, 0));
+    Require(allows({WallTime{now - 1.0e9}, Status::CachedRedirection}, 1));
+    Require(allows({WallTime{0.0}, Status::CachedRedirection}, 1));
+    Require(allows({WallTime{-infinity}, Status::CachedRedirection}, 1));
+    Require(allows({WallTime{std::nan("")}, Status::CachedRedirection}, 1));
+    Require(allows({WallTime{now - 1.0e9}, Status::CachedRedirection}, 2));
+    Require(allows({WallTime{now + 1.0e9}, Status::CachedRedirection}, 1));
+    Require(!allows({WallTime{infinity}, static_cast<Status>(3)}, 0));
+    Require(!allows({WallTime{infinity}, static_cast<Status>(255)}, 1));
 }
 
 void TestSharedStringHash() {
@@ -1537,31 +1519,31 @@ void TestSharedStringHash() {
         {"http://example.com/", u"http://example.com/", 19, 0x836f1d81u},
     };
     for (const auto& vector : vectors) {
-        Check(hash16(vector.utf16, vector.length) == vector.expected);
+        Require(hash16(vector.utf16, vector.length) == vector.expected);
         String narrow;
         _ZN3WTF6StringC1EPKcj(&narrow, vector.latin1, vector.length);
-        Check(!vector.length || (narrow.impl->hashAndFlags & 4));
-        Check(hashString(&narrow) == vector.expected);
+        Require(!vector.length || (narrow.impl->hashAndFlags & 4));
+        Require(hashString(&narrow) == vector.expected);
         String wide;
         _ZN3WTF6StringC1EPKDsj(&wide, vector.utf16, vector.length);
-        Check(!vector.length || !(wide.impl->hashAndFlags & 4));
-        Check(hashString(&wide) == vector.expected);
+        Require(!vector.length || !(wide.impl->hashAndFlags & 4));
+        Require(hashString(&wide) == vector.expected);
     }
     const char16_t nonLatin1[] = {0x00e9, 0x4e2d};
-    Check(hash16(nonLatin1, 2) == 0x77f0e865u);
+    Require(hash16(nonLatin1, 2) == 0x77f0e865u);
     String nonLatin1String;
     _ZN3WTF6StringC1EPKDsj(&nonLatin1String, nonLatin1, 2);
-    Check(hashString(&nonLatin1String) == 0x77f0e865u);
+    Require(hashString(&nonLatin1String) == 0x77f0e865u);
     const char16_t deletedValue[] = {3163, 53528};
-    Check(hash16(deletedValue, 2) == 0xffffffffu);
+    Require(hash16(deletedValue, 2) == 0xffffffffu);
     String deletedString;
     _ZN3WTF6StringC1EPKDsj(&deletedString, deletedValue, 2);
-    Check(hashString(&deletedString) == 0xffffffffu);
+    Require(hashString(&deletedString) == 0xffffffffu);
     String absent;
-    Check(hashString(&absent) == 0x04ec889eu);
-    Check(hash16(nullptr, 0) == 0x04ec889eu);
-    Throws([&] { hash16(nullptr, 1); });
-    Throws([&] { hashString(nullptr); });
+    Require(hashString(&absent) == 0x04ec889eu);
+    Require(hash16(nullptr, 0) == 0x04ec889eu);
+    ExpectErr([&] { hash16(nullptr, 1); });
+    ExpectErr([&] { hashString(nullptr); });
 }
 
 void Run() {
@@ -1630,9 +1612,9 @@ void TestURLStringHelpers() {
     URL narrowURL{narrow.impl, 0, 0, 0, 0, 0, 0, 0, 0};
     for (unsigned length : {29U, 30U, 40U, 0xFFFFFFFFU}) {
         auto same = URLEllipsize(&narrowURL, length);
-        Check(same.impl == narrow.impl && narrow.impl->refCount == 4);
+        Require(same.impl == narrow.impl && narrow.impl->refCount == 4);
     }
-    Check(narrow.impl->refCount == 2);
+    Require(narrow.impl->refCount == 2);
     Text(URLEllipsize(&narrowURL, 28), "http://exampl...m/abcdefghij");
     Text(URLEllipsize(&narrowURL, 10), "http...hij");
     Text(URLEllipsize(&narrowURL, 11), "http...hij");
@@ -1643,34 +1625,34 @@ void TestURLStringHelpers() {
     Text(URLEllipsize(&narrowURL, 2), "...");
     Text(URLEllipsize(&narrowURL, 1), "http://example.com/abcdefghij...");
     Text(URLEllipsize(&narrowURL, 0), "http://example.com/abcdefghij...");
-    Check(Is8Bit(URLEllipsize(&narrowURL, 10)) && Is8Bit(URLEllipsize(&narrowURL, 3)));
-    Check(URLEllipsize(&narrowURL, 10).impl != narrow.impl);
+    Require(Is8Bit(URLEllipsize(&narrowURL, 10)) && Is8Bit(URLEllipsize(&narrowURL, 3)));
+    Require(URLEllipsize(&narrowURL, 10).impl != narrow.impl);
 
     auto wide = Create16(u"http://wide.test/path", 21);
     URL wideURL{wide.impl, 0, 0, 0, 0, 0, 0, 0, 0};
-    Check(URLEllipsize(&wideURL, 21).impl == wide.impl);
+    Require(URLEllipsize(&wideURL, 21).impl == wide.impl);
     auto wideShort = URLEllipsize(&wideURL, 10);
     Text(wideShort, "http...ath");
-    Check(!Is8Bit(wideShort));
+    Require(!Is8Bit(wideShort));
     auto wideDots = URLEllipsize(&wideURL, 3);
     Text(wideDots, "...");
-    Check(!Is8Bit(wideDots));
+    Require(!Is8Bit(wideDots));
     auto wideLong = URLEllipsize(&wideURL, 1);
     Text(wideLong, "http://wide.test/path...");
-    Check(!Is8Bit(wideLong));
+    Require(!Is8Bit(wideLong));
 
     URL absent{};
-    Check(URLEllipsize(&absent, 0).impl == nullptr && URLEllipsize(&absent, 10).impl == nullptr);
+    Require(URLEllipsize(&absent, 0).impl == nullptr && URLEllipsize(&absent, 10).impl == nullptr);
     auto empty = Create8(U8(""), 0);
     URL emptyURL{empty.impl, 0, 0, 0, 0, 0, 0, 0, 0};
-    Check(URLEllipsize(&emptyURL, 0).impl == empty.impl && URLEllipsize(&emptyURL, 5).impl == empty.impl);
-    Throws([&] { URLEllipsize(nullptr, 10); });
+    Require(URLEllipsize(&emptyURL, 0).impl == empty.impl && URLEllipsize(&emptyURL, 5).impl == empty.impl);
+    ExpectErr([&] { URLEllipsize(nullptr, 10); });
 
     Text(DataURLMime(Literal("data:text/HTML;base64,x")), "text/html");
     Text(DataURLMime(Literal("data:Text/X,y")), "text/x");
     Text(DataURLMime(Literal("data:,x")), "text/plain");
     Text(DataURLMime(Literal("data:;base64,x")), "text/plain");
-    Check(Is8Bit(DataURLMime(Literal("data:,x"))));
+    Require(Is8Bit(DataURLMime(Literal("data:,x"))));
     Text(DataURLMime(Literal("data:a,b;c")), "a,b");
     Text(DataURLMime(Literal("data:text/plain")), "");
     Text(DataURLMime(Literal("data:")), "");
@@ -1681,7 +1663,7 @@ void TestURLStringHelpers() {
     auto wideData = Create16(u"data:TEXT/Plain;x", 17);
     auto wideMime = DataURLMime(ViewOf(wideData));
     Text(wideMime, "text/plain");
-    Check(!Is8Bit(wideMime));
+    Require(!Is8Bit(wideMime));
     auto accented = Create16(u"data:É/X,", 9);
     Text(DataURLMime(ViewOf(accented)), "\xC3\x89/x");
     auto widePlain = Create16(u"data:,x", 7);
@@ -1695,7 +1677,7 @@ const auto LastComponent = &_ZN3WTF14FileSystemImpl40lastComponentOfPathIgnoring
 bool NameIs8Bit(const String& value) { return value.impl && (value.impl->hashAndFlags & 4); }
 
 std::u16string NameUnits(const String& value) {
-    Check(value.impl != nullptr);
+    Require(value.impl != nullptr);
     std::u16string units;
     for (unsigned i = 0; i < value.impl->length; ++i) {
         units.push_back(NameIs8Bit(value) ? static_cast<const unsigned char*>(value.impl->data)[i] : static_cast<const char16_t*>(value.impl->data)[i]);
@@ -1715,11 +1697,11 @@ void TestFileNameHelpers() {
         if (escaped) {
             static const char Hex[] = "0123456789ABCDEF";
             std::u16string expected{u'%', static_cast<char16_t>(Hex[c >> 4]), static_cast<char16_t>(Hex[c & 15])};
-            Check(NameUnits(encoded) == expected);
+            Require(NameUnits(encoded) == expected);
         } else {
-            Check(NameUnits(encoded) == std::u16string(1, unit));
+            Require(NameUnits(encoded) == std::u16string(1, unit));
         }
-        Check(NameIs8Bit(encoded));
+        Require(NameIs8Bit(encoded));
     }
 
     Text(EncodeName(&(const String&)NameString("a b/c%")), "a%20b%2Fc%25");
@@ -1727,70 +1709,70 @@ void TestFileNameHelpers() {
     Text(EncodeName(&(const String&)NameString("a\\b|c:d*e?f<g>h\"i")), "a%5Cb%7Cc%3Ad%2Ae%3Ff%3Cg%3Eh%22i");
 
     auto accented = Wide(u"café");
-    Check(!NameIs8Bit(accented));
+    Require(!NameIs8Bit(accented));
     auto accentedEncoded = EncodeName(&accented);
-    Check(NameUnits(accentedEncoded) == u"café" && NameIs8Bit(accentedEncoded));
-    Check(accentedEncoded.impl != accented.impl);
+    Require(NameUnits(accentedEncoded) == u"café" && NameIs8Bit(accentedEncoded));
+    Require(accentedEncoded.impl != accented.impl);
 
     const unsigned char latin1Source[] = {'c', 'a', 'f', 0xE9, '/'};
     auto latin1Bytes = Create8(latin1Source, 5);
     auto latin1Encoded = EncodeName(&latin1Bytes);
-    Check(NameUnits(latin1Encoded) == u"café%2F" && NameIs8Bit(latin1Encoded));
+    Require(NameUnits(latin1Encoded) == u"café%2F" && NameIs8Bit(latin1Encoded));
     auto latin1Decoded = DecodeName(&latin1Encoded);
-    Check(NameUnits(latin1Decoded) == u"café/" && NameIs8Bit(latin1Decoded));
+    Require(NameUnits(latin1Decoded) == u"café/" && NameIs8Bit(latin1Decoded));
 
     auto wide = Wide(u"a中 b");
     auto wideEncoded = EncodeName(&wide);
-    Check(NameUnits(wideEncoded) == u"a中%20b" && !NameIs8Bit(wideEncoded));
+    Require(NameUnits(wideEncoded) == u"a中%20b" && !NameIs8Bit(wideEncoded));
 
     auto paired = Wide(u"\xD83D\xDE00");
     auto pairedEncoded = EncodeName(&paired);
-    Check(NameUnits(pairedEncoded) == u"\xD83D\xDE00" && !NameIs8Bit(pairedEncoded));
+    Require(NameUnits(pairedEncoded) == u"\xD83D\xDE00" && !NameIs8Bit(pairedEncoded));
 
     auto loneLeadEnd = Wide(u"a\xD83D");
-    Check(NameUnits(EncodeName(&loneLeadEnd)) == u"a%+D83D");
+    Require(NameUnits(EncodeName(&loneLeadEnd)) == u"a%+D83D");
     auto loneLeadMiddle = Wide(u"\xD83D" u"a");
-    Check(NameUnits(EncodeName(&loneLeadMiddle)) == u"%+D83Da");
+    Require(NameUnits(EncodeName(&loneLeadMiddle)) == u"%+D83Da");
     auto loneTrailStart = Wide(u"\xDE00" u"a");
-    Check(NameUnits(EncodeName(&loneTrailStart)) == u"%+DE00a");
+    Require(NameUnits(EncodeName(&loneTrailStart)) == u"%+DE00a");
     auto loneTrailMiddle = Wide(u"a\xDE00");
-    Check(NameUnits(EncodeName(&loneTrailMiddle)) == u"a%+DE00");
+    Require(NameUnits(EncodeName(&loneTrailMiddle)) == u"a%+DE00");
     auto doubleLead = Wide(u"\xD83D\xD83D\xDE00");
-    Check(NameUnits(EncodeName(&doubleLead)) == u"%+D83D\xD83D\xDE00");
+    Require(NameUnits(EncodeName(&doubleLead)) == u"%+D83D\xD83D\xDE00");
     auto doubleTrail = Wide(u"\xD83D\xDE00\xDE00");
-    Check(NameUnits(EncodeName(&doubleTrail)) == u"\xD83D\xDE00%+DE00");
+    Require(NameUnits(EncodeName(&doubleTrail)) == u"\xD83D\xDE00%+DE00");
     auto reversed = Wide(u"\xDE00\xD83D");
-    Check(NameUnits(EncodeName(&reversed)) == u"%+DE00%+D83D");
+    Require(NameUnits(EncodeName(&reversed)) == u"%+DE00%+D83D");
 
     auto latinWide = Wide(u"a/é");
-    Check(!NameIs8Bit(latinWide) && !NameIs8Bit(wide) && !NameIs8Bit(paired));
+    Require(!NameIs8Bit(latinWide) && !NameIs8Bit(wide) && !NameIs8Bit(paired));
     auto latinWideEncoded = EncodeName(&latinWide);
-    Check(NameUnits(latinWideEncoded) == u"a%2Fé" && NameIs8Bit(latinWideEncoded));
+    Require(NameUnits(latinWideEncoded) == u"a%2Fé" && NameIs8Bit(latinWideEncoded));
     auto highByte = Wide(u"\x00ff\x0100");
-    Check(NameUnits(EncodeName(&highByte)) == u"\x00ff\x0100");
+    Require(NameUnits(EncodeName(&highByte)) == u"\x00ff\x0100");
 
     String null;
-    Check(EncodeName(&null).impl == nullptr);
+    Require(EncodeName(&null).impl == nullptr);
     auto empty = NameString("");
     auto emptyEncoded = EncodeName(&empty);
-    Check(emptyEncoded.impl == empty.impl && empty.impl->length == 0);
-    Throws([&] { EncodeName(nullptr); });
+    Require(emptyEncoded.impl == empty.impl && empty.impl->length == 0);
+    ExpectErr([&] { EncodeName(nullptr); });
 
     StringImpl privateEmpty{4, 0, nullptr, 0};
     String privateHolder(&privateEmpty);
-    Check(EncodeName(&privateHolder).impl == &privateEmpty);
-    Check(DecodeName(&privateHolder).impl == &privateEmpty);
-    Check(LastComponent(&privateHolder).impl == &privateEmpty);
-    Check(privateEmpty.refCount == 4);
+    Require(EncodeName(&privateHolder).impl == &privateEmpty);
+    Require(DecodeName(&privateHolder).impl == &privateEmpty);
+    Require(LastComponent(&privateHolder).impl == &privateEmpty);
+    Require(privateEmpty.refCount == 4);
 
     auto plain = NameString("name.txt");
     auto plainEncoded = EncodeName(&plain);
     Text(plainEncoded, "name.txt");
-    Check(plainEncoded.impl != plain.impl);
+    Require(plainEncoded.impl != plain.impl);
 
     auto roundTrip = Wide(u"a b/\x01\x7Fé中\xD83D\xDE00\xD83D%\xDE00");
     auto roundTripEncoded = EncodeName(&roundTrip);
-    Check(NameUnits(DecodeName(&roundTripEncoded)) == NameUnits(roundTrip));
+    Require(NameUnits(DecodeName(&roundTripEncoded)) == NameUnits(roundTrip));
 
     Text(DecodeName(&(const String&)NameString("a%20b%2fc%2Fd")), "a b/c/d");
     Text(DecodeName(&(const String&)NameString("%41")), "A");
@@ -1798,27 +1780,27 @@ void TestFileNameHelpers() {
     Text(DecodeName(&(const String&)NameString("plain+text")), "plain+text");
     Text(DecodeName(&(const String&)NameString("%41%42")), "AB");
     auto e9 = DecodeName(&(const String&)NameString("%+00e9"));
-    Check(NameUnits(e9) == u"é" && NameIs8Bit(e9));
+    Require(NameUnits(e9) == u"é" && NameIs8Bit(e9));
     auto latin1 = DecodeName(&(const String&)NameString("%E9"));
-    Check(NameUnits(latin1) == u"é" && NameIs8Bit(latin1));
+    Require(NameUnits(latin1) == u"é" && NameIs8Bit(latin1));
     auto cjk = DecodeName(&(const String&)NameString("x%+4E2Dy"));
-    Check(NameUnits(cjk) == u"x中y" && !NameIs8Bit(cjk));
+    Require(NameUnits(cjk) == u"x中y" && !NameIs8Bit(cjk));
     auto lone = DecodeName(&(const String&)NameString("%+d83D"));
-    Check(NameUnits(lone) == u"\xD83D");
+    Require(NameUnits(lone) == u"\xD83D");
     auto nul = DecodeName(&(const String&)NameString("a%00b"));
-    Check(NameUnits(nul) == std::u16string(u"a\0b", 3));
+    Require(NameUnits(nul) == std::u16string(u"a\0b", 3));
     auto widePlain = Wide(u"中%41");
-    Check(NameUnits(DecodeName(&widePlain)) == u"中A");
+    Require(NameUnits(DecodeName(&widePlain)) == u"中A");
 
     for (const char* invalid : {"%", "%4", "a%4", "%G1", "%1G", "%+", "%+4", "%+41", "%+004", "%+00G1", "%+G041", "%+0G41", "%+00", "x%", "x%4"}) {
         auto result = DecodeName(&(const String&)NameString(invalid));
-        Check(result.impl == nullptr);
+        Require(result.impl == nullptr);
     }
     auto truncatedInSharedParent = [&](const char* parentText, unsigned length) {
         auto parent = NameString(parentText);
         auto part = SharedSubstring(&parent, 0, length);
-        Check((part.impl->hashAndFlags & 3) == 2 && part.impl->length == length);
-        Check(DecodeName(&part).impl == nullptr);
+        Require((part.impl->hashAndFlags & 3) == 2 && part.impl->length == length);
+        Require(DecodeName(&part).impl == nullptr);
     };
     truncatedInSharedParent("aaaaaaaaaaaaaaaa%41", 18);
     truncatedInSharedParent("aaaaaaaaaaaaaaaa%+0041", 17);
@@ -1826,25 +1808,25 @@ void TestFileNameHelpers() {
     truncatedInSharedParent("aaaaaaaaaaaaaaaa%+4141", 20);
 
     auto invalidWide = Wide(u"中%4");
-    Check(DecodeName(&invalidWide).impl == nullptr);
+    Require(DecodeName(&invalidWide).impl == nullptr);
     auto nonHexWide = Wide(u"%١٢");
-    Check(DecodeName(&nonHexWide).impl == nullptr);
+    Require(DecodeName(&nonHexWide).impl == nullptr);
 
-    Check(DecodeName(&null).impl == nullptr);
+    Require(DecodeName(&null).impl == nullptr);
     auto emptyDecoded = DecodeName(&empty);
-    Check(emptyDecoded.impl == empty.impl);
-    Throws([&] { DecodeName(nullptr); });
+    Require(emptyDecoded.impl == empty.impl);
+    ExpectErr([&] { DecodeName(nullptr); });
     auto unchanged = NameString("abc");
-    Check(DecodeName(&unchanged).impl != unchanged.impl);
+    Require(DecodeName(&unchanged).impl != unchanged.impl);
 
     auto sameImpl = [&](const char* path) {
         auto input = NameString(path);
         auto result = LastComponent(&input);
-        Check(result.impl == input.impl);
+        Require(result.impl == input.impl);
     };
     sameImpl("abc");
     sameImpl("");
-    Check(LastComponent(&null).impl == nullptr);
+    Require(LastComponent(&null).impl == nullptr);
 
     Text(LastComponent(&(const String&)NameString("/abc")), "abc");
     Text(LastComponent(&(const String&)NameString("a/b/c")), "c");
@@ -1864,12 +1846,12 @@ void TestFileNameHelpers() {
 
     auto widePath = Wide(u"中/文/");
     auto wideLast = LastComponent(&widePath);
-    Check(NameUnits(wideLast) == u"文" && !NameIs8Bit(wideLast));
+    Require(NameUnits(wideLast) == u"文" && !NameIs8Bit(wideLast));
     auto wideNoSlash = Wide(u"中文");
-    Check(LastComponent(&wideNoSlash).impl == wideNoSlash.impl);
+    Require(LastComponent(&wideNoSlash).impl == wideNoSlash.impl);
     auto wideTail = Wide(u"a/文");
-    Check(NameUnits(LastComponent(&wideTail)) == u"文");
-    Throws([&] { LastComponent(nullptr); });
+    Require(NameUnits(LastComponent(&wideTail)) == u"文");
+    ExpectErr([&] { LastComponent(nullptr); });
 }
 
 void TestFileSystemRepresentations() {
@@ -1877,23 +1859,23 @@ void TestFileSystemRepresentations() {
     const auto FromRepresentation = &_ZN3WTF14FileSystemImpl34stringFromFileSystemRepresentationEPKc;
     const auto Append = &_ZN3WTF14FileSystemImpl25pathByAppendingComponentsENS_10StringViewERKNS_6VectorIS1_Lm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEE;
 
-    Check(Bytes(Representation(&(const String&)NameString("/data/a b"))) == "/data/a b");
+    Require(Bytes(Representation(&(const String&)NameString("/data/a b"))) == "/data/a b");
     const unsigned char latin1Path[] = {'/', 'c', 'a', 'f', 0xE9};
     auto latin1 = Create8(latin1Path, 5);
-    Check(Bytes(Representation(&latin1)) == "/caf\xC3\xA9");
-    Check(Bytes(Representation(&(const String&)Wide(u"/a/caf\u00E9/\u4E2D"))) == "/a/caf\xC3\xA9/\xE4\xB8\xAD");
-    Check(Bytes(Representation(&(const String&)Wide(u"x\xD800y"))) == "x\xED\xA0\x80y");
+    Require(Bytes(Representation(&latin1)) == "/caf\xC3\xA9");
+    Require(Bytes(Representation(&(const String&)Wide(u"/a/caf\u00E9/\u4E2D"))) == "/a/caf\xC3\xA9/\xE4\xB8\xAD");
+    Require(Bytes(Representation(&(const String&)Wide(u"x\xD800y"))) == "x\xED\xA0\x80y");
     String nullString;
     CString nullRepresentation = Representation(&nullString);
-    Check(nullRepresentation.buffer && Bytes(nullRepresentation).empty());
-    Throws([&] { Representation(nullptr); });
+    Require(nullRepresentation.buffer && Bytes(nullRepresentation).empty());
+    ExpectErr([&] { Representation(nullptr); });
 
-    Check(!FromRepresentation(nullptr).impl);
+    Require(!FromRepresentation(nullptr).impl);
     auto fromUTF8 = FromRepresentation("/a/caf\xC3\xA9/\xE4\xB8\xAD");
-    Check(NameUnits(fromUTF8) == u"/a/caf\u00E9/\u4E2D");
-    Check(!FromRepresentation("bad\xFF").impl);
+    Require(NameUnits(fromUTF8) == u"/a/caf\u00E9/\u4E2D");
+    Require(!FromRepresentation("bad\xFF").impl);
     auto empty = FromRepresentation("");
-    Check(empty.impl && !empty.impl->length);
+    Require(empty.impl && !empty.impl->length);
 
     NKWebKit::WtfAbi::Vector<StringView> components(3);
     components.buffer[0] = Literal("b");
@@ -1901,41 +1883,41 @@ void TestFileSystemRepresentations() {
     components.buffer[2] = Literal("c.txt");
     components.size = 3;
     auto joined = Append(Literal("/a"), &components);
-    Check(NameUnits(joined) == u"/a/b//c.txt" && NameIs8Bit(joined));
+    Require(NameUnits(joined) == u"/a/b//c.txt" && NameIs8Bit(joined));
     auto trailing = Append(Literal("/a/"), &components);
-    Check(NameUnits(trailing) == u"/a//b//c.txt");
+    Require(NameUnits(trailing) == u"/a//b//c.txt");
     auto relative = Append(Literal(""), &components);
-    Check(NameUnits(relative) == u"/b//c.txt");
+    Require(NameUnits(relative) == u"/b//c.txt");
 
     NKWebKit::WtfAbi::Vector<StringView> none;
     auto alone = Append(Literal("/only"), &none);
-    Check(NameUnits(alone) == u"/only" && NameIs8Bit(alone));
+    Require(NameUnits(alone) == u"/only" && NameIs8Bit(alone));
     auto nothing = Append(Literal(""), &none);
-    Check(nothing.impl && !nothing.impl->length && NameIs8Bit(nothing));
+    Require(nothing.impl && !nothing.impl->length && NameIs8Bit(nothing));
     auto nullPath = Append(StringView{nullptr, 0, true}, &none);
-    Check(nullPath.impl && !nullPath.impl->length);
+    Require(nullPath.impl && !nullPath.impl->length);
 
     const std::u16string widePath = u"/\u4E2D";
     auto wideJoined = Append(StringView{widePath.data(), 2, false}, &components);
-    Check(NameUnits(wideJoined) == u"/\u4E2D/b//c.txt" && !NameIs8Bit(wideJoined));
+    Require(NameUnits(wideJoined) == u"/\u4E2D/b//c.txt" && !NameIs8Bit(wideJoined));
     const std::u16string latinUnit = u"\u00E9";
     auto latinAlone = Append(StringView{latinUnit.data(), 1, false}, &none);
-    Check(NameUnits(latinAlone) == u"\u00E9" && NameIs8Bit(latinAlone));
+    Require(NameUnits(latinAlone) == u"\u00E9" && NameIs8Bit(latinAlone));
     const std::u16string emptyWide;
     auto emptyWideAlone = Append(StringView{emptyWide.data(), 0, false}, &none);
-    Check(NameIs8Bit(emptyWideAlone));
+    Require(NameIs8Bit(emptyWideAlone));
     NKWebKit::WtfAbi::Vector<StringView> wideComponent(1);
     wideComponent.buffer[0] = StringView{latinUnit.data(), 1, false};
     wideComponent.size = 1;
     auto upconverted = Append(Literal("/a"), &wideComponent);
-    Check(NameUnits(upconverted) == u"/a/\u00E9" && !NameIs8Bit(upconverted));
+    Require(NameUnits(upconverted) == u"/a/\u00E9" && !NameIs8Bit(upconverted));
     wideComponent.buffer[0] = StringView{emptyWide.data(), 0, false};
     auto emptyUpconverted = Append(Literal("/a"), &wideComponent);
-    Check(NameUnits(emptyUpconverted) == u"/a/" && !NameIs8Bit(emptyUpconverted));
+    Require(NameUnits(emptyUpconverted) == u"/a/" && !NameIs8Bit(emptyUpconverted));
 
     wideComponent.buffer[0] = StringView{nullptr, 1, true};
-    Throws([&] { Append(Literal("/a"), &wideComponent); });
-    Throws([&] { Append(Literal("/a"), nullptr); });
+    ExpectErr([&] { Append(Literal("/a"), &wideComponent); });
+    ExpectErr([&] { Append(Literal("/a"), nullptr); });
 }
 
 const auto ParserEqual = &_ZN3WTF9URLParser14allValuesEqualERKNS_3URLES3_;
@@ -1950,54 +1932,54 @@ void TestURLParserChecks() {
     const unsigned hostEnd = static_cast<unsigned>(raw.find(":8443"));
     URL url{text.impl, valid | (5U << 3) | (5U << 6), 8, 12, 17, hostEnd,
         static_cast<unsigned>(raw.rfind('/') + 1), static_cast<unsigned>(raw.find('?')), static_cast<unsigned>(raw.find('#'))};
-    Check(ParserEqual(&url, &url) && ParserConsistent(&url));
+    Require(ParserEqual(&url, &url) && ParserConsistent(&url));
 
     auto copy = FromUTF8Z(U8("https://u%20:p%40@example.test:8443/a/b?q=1#frag"));
-    Check(copy.impl != text.impl);
+    Require(copy.impl != text.impl);
     URL same = url;
     same.impl = copy.impl;
-    Check(ParserEqual(&url, &same) && ParserEqual(&same, &url));
+    Require(ParserEqual(&url, &same) && ParserEqual(&same, &url));
     auto wide = Create16(u"https://u%20:p%40@example.test:8443/a/b?q=1#frag", 48);
-    Check(!(wide.impl->hashAndFlags & 4));
+    Require(!(wide.impl->hashAndFlags & 4));
     same.impl = wide.impl;
-    Check(ParserEqual(&url, &same) && ParserEqual(&same, &url));
+    Require(ParserEqual(&url, &same) && ParserEqual(&same, &url));
     auto other = FromUTF8Z(U8("https://u%20:p%40@example.test:8443/a/b?q=1#frog"));
     same.impl = other.impl;
-    Check(!ParserEqual(&url, &same) && ParserConsistent(&same));
+    Require(!ParserEqual(&url, &same) && ParserConsistent(&same));
     auto shorter = FromUTF8Z(U8("https://u%20:p%40@example.test:8443/a/b?q=1#fra"));
     same.impl = shorter.impl;
-    Check(!ParserEqual(&url, &same));
+    Require(!ParserEqual(&url, &same));
 
     for (unsigned flip : {valid, http, opaque, 1U << 3, 4U << 3, 1U << 6, 1U << 31}) {
         URL changed = url;
         changed.bits ^= flip;
-        Check(!ParserEqual(&url, &changed) && !ParserEqual(&changed, &url));
+        Require(!ParserEqual(&url, &changed) && !ParserEqual(&changed, &url));
     }
     unsigned URL::* const offsets[] = {&URL::userStart, &URL::userEnd, &URL::passwordEnd, &URL::hostEnd,
         &URL::pathAfterLastSlash, &URL::pathEnd, &URL::queryEnd};
     for (auto offset : offsets) {
         URL changed = url;
         changed.*offset += 1;
-        Check(!ParserEqual(&url, &changed) && !ParserEqual(&changed, &url));
+        Require(!ParserEqual(&url, &changed) && !ParserEqual(&changed, &url));
     }
 
     URL absent{};
     URL absentCopy{};
-    Check(ParserEqual(&absent, &absentCopy) && ParserConsistent(&absent));
+    Require(ParserEqual(&absent, &absentCopy) && ParserConsistent(&absent));
     auto empty = FromUTF8Z(U8(""));
-    Check(empty.impl && empty.impl->length == 0);
+    Require(empty.impl && empty.impl->length == 0);
     URL emptyURL{empty.impl, 0, 0, 0, 0, 0, 0, 0, 0};
-    Check(!ParserEqual(&absent, &emptyURL) && !ParserEqual(&emptyURL, &absent));
-    Check(ParserConsistent(&emptyURL));
+    Require(!ParserEqual(&absent, &emptyURL) && !ParserEqual(&emptyURL, &absent));
+    Require(ParserConsistent(&emptyURL));
     absent.queryEnd = 1;
-    Check(!ParserConsistent(&absent));
+    Require(!ParserConsistent(&absent));
 
     {
         URL changed = url;
         changed.bits = (changed.bits & 63U) | ((changed.userStart + 1) << 6);
-        Check(!ParserConsistent(&changed));
+        Require(!ParserConsistent(&changed));
         changed.bits = (changed.bits & 63U) | (changed.userStart << 6);
-        Check(ParserConsistent(&changed));
+        Require(ParserConsistent(&changed));
     }
     const std::pair<unsigned URL::*, unsigned URL::*> orders[] = {{&URL::userStart, &URL::userEnd},
         {&URL::userEnd, &URL::passwordEnd}, {&URL::passwordEnd, &URL::hostEnd}, {&URL::pathAfterLastSlash, &URL::pathEnd},
@@ -2005,53 +1987,53 @@ void TestURLParserChecks() {
     for (const auto& [lower, upper] : orders) {
         URL changed = url;
         changed.*lower = changed.*upper + 1;
-        Check(!ParserConsistent(&changed));
+        Require(!ParserConsistent(&changed));
         changed.*lower = changed.*upper;
-        Check(ParserConsistent(&changed));
+        Require(ParserConsistent(&changed));
     }
     {
         URL changed = url;
         changed.pathAfterLastSlash = changed.hostEnd + 4;
-        Check(!ParserConsistent(&changed));
+        Require(!ParserConsistent(&changed));
         changed.pathAfterLastSlash = changed.hostEnd + 5;
-        Check(ParserConsistent(&changed));
+        Require(ParserConsistent(&changed));
         changed.bits &= ~(7U << 3);
         changed.pathAfterLastSlash = changed.hostEnd;
-        Check(ParserConsistent(&changed));
+        Require(ParserConsistent(&changed));
     }
     {
         URL changed = url;
         changed.queryEnd = text.impl->length;
-        Check(ParserConsistent(&changed));
+        Require(ParserConsistent(&changed));
         changed.queryEnd = text.impl->length + 1;
-        Check(!ParserConsistent(&changed));
+        Require(!ParserConsistent(&changed));
         changed.queryEnd = url.queryEnd;
         changed.bits &= ~(valid | http | opaque);
-        Check(ParserConsistent(&changed));
+        Require(ParserConsistent(&changed));
         changed.bits |= http | opaque;
-        Check(ParserConsistent(&changed));
+        Require(ParserConsistent(&changed));
     }
     {
         auto abc = FromUTF8Z(U8("abc"));
         URL wrapped{abc.impl, valid | (1U << 3), 0, 0, 0, 0xFFFFFFFFU, 0, 0, 0};
-        Check(ParserConsistent(&wrapped));
+        Require(ParserConsistent(&wrapped));
         wrapped.bits = valid | (2U << 3);
-        Check(!ParserConsistent(&wrapped));
+        Require(!ParserConsistent(&wrapped));
         wrapped.pathAfterLastSlash = 1;
         wrapped.pathEnd = 1;
         wrapped.queryEnd = 1;
-        Check(ParserConsistent(&wrapped));
+        Require(ParserConsistent(&wrapped));
     }
 
     StringImpl corrupt{2, 3, nullptr, 4};
     StringImpl corruptCopy{2, 3, nullptr, 4};
     URL broken{&corrupt, 0, 0, 0, 0, 0, 0, 0, 0};
     URL brokenCopy{&corruptCopy, 0, 0, 0, 0, 0, 0, 0, 0};
-    Throws([&] { ParserEqual(&broken, &brokenCopy); });
-    Check(ParserEqual(&broken, &broken));
-    Throws([&] { ParserEqual(nullptr, &url); });
-    Throws([&] { ParserEqual(&url, nullptr); });
-    Throws([&] { ParserConsistent(nullptr); });
+    ExpectErr([&] { ParserEqual(&broken, &brokenCopy); });
+    Require(ParserEqual(&broken, &broken));
+    ExpectErr([&] { ParserEqual(nullptr, &url); });
+    ExpectErr([&] { ParserEqual(&url, nullptr); });
+    ExpectErr([&] { ParserConsistent(nullptr); });
 }
 
 void TestURLsAndReallocation() {
@@ -2066,7 +2048,7 @@ void TestURLsAndReallocation() {
     PinnedBits fields{1, 1, 0, 5, 5};
     unsigned bits;
     std::memcpy(&bits, &fields, sizeof(bits));
-    Check(bits == (1U | 2U | (5U << 3) | (5U << 6)));
+    Require(bits == (1U | 2U | (5U << 3) | (5U << 6)));
     auto string = FromUTF8Z(U8("https://u%20:p%40@example.test:8443/a/b?q=1#frag"));
     URL url{string.impl, bits, 8, 12, 17, 29, 37, 38, 42};
     std::string raw = Bytes(UTF8(&string, 1));
@@ -2074,82 +2056,82 @@ void TestURLsAndReallocation() {
     url.pathAfterLastSlash = static_cast<unsigned>(raw.rfind('/') + 1);
     url.pathEnd = static_cast<unsigned>(raw.find('?'));
     url.queryEnd = static_cast<unsigned>(raw.find('#'));
-    Check(ViewText(URLProtocol(&url)) == "https");
-    Check(ViewText(URLHost(&url)) == "example.test");
-    Check(ViewText(URLUser(&url)) == "u%20" && ViewText(URLPassword(&url)) == "p%40");
-    Check(ViewText(URLPath(&url)) == "/a/b");
-    Check(ViewText(URLQuery(&url)) == "?q=1");
-    Check(ViewText(URLFragment(&url)) == "frag" && ViewText(URLFragmentSign(&url)) == "#frag");
-    Check(URLIsProtocol(&url, {"https", 5, true}) && !URLIsProtocol(&url, {"http", 4, true}));
-    Check(URLHierarchical(&url) && !URLBlank(&url) && !URLSrcdoc(&url));
+    Require(ViewText(URLProtocol(&url)) == "https");
+    Require(ViewText(URLHost(&url)) == "example.test");
+    Require(ViewText(URLUser(&url)) == "u%20" && ViewText(URLPassword(&url)) == "p%40");
+    Require(ViewText(URLPath(&url)) == "/a/b");
+    Require(ViewText(URLQuery(&url)) == "?q=1");
+    Require(ViewText(URLFragment(&url)) == "frag" && ViewText(URLFragmentSign(&url)) == "#frag");
+    Require(URLIsProtocol(&url, {"https", 5, true}) && !URLIsProtocol(&url, {"http", 4, true}));
+    Require(URLHierarchical(&url) && !URLBlank(&url) && !URLSrcdoc(&url));
     auto wideString = Create16(u"http://wide.test/path", 21);
     URL wide{wideString.impl, 1U | 2U | (4U << 6), 7, 7, 7, 16, 17, 21, 21};
-    Check(ViewText(URLProtocol(&wide)) == "http" && !URLHost(&wide).is8Bit);
-    Check(ViewText(URLHost(&wide)) == "wide.test" && ViewText(URLPath(&wide)) == "/path");
+    Require(ViewText(URLProtocol(&wide)) == "http" && !URLHost(&wide).is8Bit);
+    Require(ViewText(URLHost(&wide)) == "wide.test" && ViewText(URLPath(&wide)) == "/path");
     auto about = FromUTF8Z(U8("about:blank#"));
     URL blank{about.impl, 1U | 4U | (5U << 6), 6, 6, 6, 6, 6, 11, 11};
-    Check(URLBlank(&blank) && !URLSrcdoc(&blank) && !URLHierarchical(&blank));
-    Check(URLFragment(&blank).data && URLFragment(&blank).length == 0);
+    Require(URLBlank(&blank) && !URLSrcdoc(&blank) && !URLHierarchical(&blank));
+    Require(URLFragment(&blank).data && URLFragment(&blank).length == 0);
     auto src = FromUTF8Z(U8("about:srcdoc"));
     blank.impl = src.impl; blank.pathEnd = 12; blank.queryEnd = 12;
-    Check(URLSrcdoc(&blank) && !URLBlank(&blank));
+    Require(URLSrcdoc(&blank) && !URLBlank(&blank));
     URL absent{};
-    Check(!URLProtocol(&absent).data && !URLHost(&absent).data && !URLPath(&absent).data);
-    Check(!URLPassword(&absent).data && !URLQuery(&absent).data && !URLFragment(&absent).data);
-    Check(URLUser(&absent).data && URLUser(&absent).length == 0);
-    Check(!URLHierarchical(&absent) && !URLIsProtocol(&absent, {"", 0, true}));
+    Require(!URLProtocol(&absent).data && !URLHost(&absent).data && !URLPath(&absent).data);
+    Require(!URLPassword(&absent).data && !URLQuery(&absent).data && !URLFragment(&absent).data);
+    Require(URLUser(&absent).data && URLUser(&absent).length == 0);
+    Require(!URLHierarchical(&absent) && !URLIsProtocol(&absent, {"", 0, true}));
     auto js = FromUTF8Z(U8(" \tJaVa\nScRiPt:alert(1)"));
     URL javascript{js.impl, 0, 0, 0, 0, 0, 0, 0, 0};
-    Check(URLJavaScript(&javascript));
-    Check(IsJavaScript({js.impl->data, js.impl->length, true}));
-    Check(!IsJavaScript({"javascriptx:", 12, true}) && !IsJavaScript({nullptr, 0, true}));
-    Check(IsHTTP({"HTTP:", 5, true}) && IsHTTP({u"HtTpS:", 6, false}));
-    Check(!IsHTTP({" https:", 7, true}) && !IsHTTP({"httpx:", 6, true}));
-    Check(URLEqualIgnoringFragment(&url, &url));
+    Require(URLJavaScript(&javascript));
+    Require(IsJavaScript({js.impl->data, js.impl->length, true}));
+    Require(!IsJavaScript({"javascriptx:", 12, true}) && !IsJavaScript({nullptr, 0, true}));
+    Require(IsHTTP({"HTTP:", 5, true}) && IsHTTP({u"HtTpS:", 6, false}));
+    Require(!IsHTTP({" https:", 7, true}) && !IsHTTP({"httpx:", 6, true}));
+    Require(URLEqualIgnoringFragment(&url, &url));
     auto urlDiffFragStr = FromUTF8Z(U8("https://u%20:p%40@example.test:8443/a/b?q=1#other"));
     URL urlDiffFrag = url;
     urlDiffFrag.impl = urlDiffFragStr.impl;
     std::string rawDiffFrag = Bytes(UTF8(&urlDiffFragStr, 1));
     urlDiffFrag.queryEnd = static_cast<unsigned>(rawDiffFrag.find('#'));
-    Check(URLEqualIgnoringFragment(&url, &urlDiffFrag));
+    Require(URLEqualIgnoringFragment(&url, &urlDiffFrag));
     auto urlNoFragStr = FromUTF8Z(U8("https://u%20:p%40@example.test:8443/a/b?q=1"));
     URL urlNoFrag = url;
     urlNoFrag.impl = urlNoFragStr.impl;
     std::string rawNoFrag = Bytes(UTF8(&urlNoFragStr, 1));
     urlNoFrag.queryEnd = static_cast<unsigned>(rawNoFrag.length());
-    Check(URLEqualIgnoringFragment(&url, &urlNoFrag));
+    Require(URLEqualIgnoringFragment(&url, &urlNoFrag));
     auto urlEmptyFragStr = FromUTF8Z(U8("https://u%20:p%40@example.test:8443/a/b?q=1#"));
     URL urlEmptyFrag = url;
     urlEmptyFrag.impl = urlEmptyFragStr.impl;
     std::string rawEmptyFrag = Bytes(UTF8(&urlEmptyFragStr, 1));
     urlEmptyFrag.queryEnd = static_cast<unsigned>(rawEmptyFrag.find('#'));
-    Check(URLEqualIgnoringFragment(&url, &urlEmptyFrag));
-    Check(URLEqualIgnoringFragment(&urlNoFrag, &urlEmptyFrag));
+    Require(URLEqualIgnoringFragment(&url, &urlEmptyFrag));
+    Require(URLEqualIgnoringFragment(&urlNoFrag, &urlEmptyFrag));
     auto aboutNoFrag = FromUTF8Z(U8("about:blank"));
     URL blankAbout{about.impl, 1U | 4U | (5U << 6), 6, 6, 6, 6, 6, 11, 11};
     blankAbout.queryEnd = static_cast<unsigned>(Bytes(UTF8(&about, 1)).find('#'));
     URL blankNoFrag = blankAbout;
     blankNoFrag.impl = aboutNoFrag.impl;
     blankNoFrag.queryEnd = static_cast<unsigned>(Bytes(UTF8(&aboutNoFrag, 1)).length());
-    Check(URLEqualIgnoringFragment(&blankAbout, &blankNoFrag));
+    Require(URLEqualIgnoringFragment(&blankAbout, &blankNoFrag));
     auto urlDiffQueryStr = FromUTF8Z(U8("https://u%20:p%40@example.test:8443/a/b?q=2#frag"));
     URL urlDiffQuery = url;
     urlDiffQuery.impl = urlDiffQueryStr.impl;
     std::string rawDiffQuery = Bytes(UTF8(&urlDiffQueryStr, 1));
     urlDiffQuery.queryEnd = static_cast<unsigned>(rawDiffQuery.find('#'));
-    Check(!URLEqualIgnoringFragment(&url, &urlDiffQuery));
+    Require(!URLEqualIgnoringFragment(&url, &urlDiffQuery));
     auto urlDiffPathStr = FromUTF8Z(U8("https://u%20:p%40@example.test:8443/a/c?q=1#frag"));
     URL urlDiffPath = url;
     urlDiffPath.impl = urlDiffPathStr.impl;
     std::string rawDiffPath = Bytes(UTF8(&urlDiffPathStr, 1));
     urlDiffPath.queryEnd = static_cast<unsigned>(rawDiffPath.find('#'));
-    Check(!URLEqualIgnoringFragment(&url, &urlDiffPath));
+    Require(!URLEqualIgnoringFragment(&url, &urlDiffPath));
     auto urlDiffHostStr = FromUTF8Z(U8("https://u%20:p%40@other.test:8443/a/b?q=1#frag"));
     URL urlDiffHost = url;
     urlDiffHost.impl = urlDiffHostStr.impl;
     std::string rawDiffHost = Bytes(UTF8(&urlDiffHostStr, 1));
     urlDiffHost.queryEnd = static_cast<unsigned>(rawDiffHost.find('#'));
-    Check(!URLEqualIgnoringFragment(&url, &urlDiffHost));
+    Require(!URLEqualIgnoringFragment(&url, &urlDiffHost));
     auto wideHash = [](const StringImpl* impl) {
         if (!impl || !impl->data) return 0U;
         const auto* chars = static_cast<const char16_t*>(impl->data);
@@ -2166,7 +2148,7 @@ void TestURLsAndReallocation() {
     URL urlWide2 = wide;
     urlWide2.impl = wide2.impl;
     urlWide2.queryEnd = wideHash(urlWide2.impl);
-    Check(URLEqualIgnoringFragment(&urlWide1, &urlWide2));
+    Require(URLEqualIgnoringFragment(&urlWide1, &urlWide2));
     auto wideNoFrag = Create16(u"http://wide.test/path", 21);
     URL urlWideNoFrag = wide;
     urlWideNoFrag.impl = wideNoFrag.impl;
@@ -2176,18 +2158,18 @@ void TestURLsAndReallocation() {
     urlNarrow8.impl = narrow8Str.impl;
     std::string rawNarrow8 = Bytes(UTF8(&narrow8Str, 1));
     urlNarrow8.queryEnd = static_cast<unsigned>(rawNarrow8.find('#'));
-    Check(URLEqualIgnoringFragment(&urlWide1, &urlNarrow8));
-    Check(URLEqualIgnoringFragment(&urlNarrow8, &urlWideNoFrag));
+    Require(URLEqualIgnoringFragment(&urlWide1, &urlNarrow8));
+    Require(URLEqualIgnoringFragment(&urlNarrow8, &urlWideNoFrag));
     auto narrow8DiffStr = FromUTF8Z(U8("http://wide.test/other#sec1"));
     URL urlNarrow8Diff = wide;
     urlNarrow8Diff.impl = narrow8DiffStr.impl;
     std::string rawNarrow8Diff = Bytes(UTF8(&narrow8DiffStr, 1));
     urlNarrow8Diff.queryEnd = static_cast<unsigned>(rawNarrow8Diff.find('#'));
-    Check(!URLEqualIgnoringFragment(&urlWide1, &urlNarrow8Diff));
-    Check(URLEqualIgnoringFragment(&absent, &absent));
-    Check(URLEqualIgnoringFragment(&javascript, &javascript));
-    Check(!URLEqualIgnoringFragment(&url, &absent));
-    Check(!URLEqualIgnoringFragment(&absent, &url));
+    Require(!URLEqualIgnoringFragment(&urlWide1, &urlNarrow8Diff));
+    Require(URLEqualIgnoringFragment(&absent, &absent));
+    Require(URLEqualIgnoringFragment(&javascript, &javascript));
+    Require(!URLEqualIgnoringFragment(&url, &absent));
+    Require(!URLEqualIgnoringFragment(&absent, &url));
     auto jsFrag1 = FromUTF8Z(U8(" \tJaVa\nScRiPt:alert(1)#x"));
     auto jsFrag2 = FromUTF8Z(U8(" \tJaVa\nScRiPt:alert(1)#y"));
     URL urlJsFrag1{jsFrag1.impl, 0, 0, 0, 0, 0, 0, 0, 0};
@@ -2196,313 +2178,313 @@ void TestURLsAndReallocation() {
     URL urlJsFrag2{jsFrag2.impl, 0, 0, 0, 0, 0, 0, 0, 0};
     std::string rawJsFrag2 = Bytes(UTF8(&jsFrag2, 1));
     urlJsFrag2.queryEnd = static_cast<unsigned>(rawJsFrag2.find('#'));
-    Check(!URLEqualIgnoringFragment(&urlJsFrag1, &urlJsFrag2));
-    Check(!URLEqualIgnoringFragment(&absent, &javascript));
-    Throws([&] { URLEqualIgnoringFragment(nullptr, &url); });
-    Throws([&] { URLEqualIgnoringFragment(&url, nullptr); });
+    Require(!URLEqualIgnoringFragment(&urlJsFrag1, &urlJsFrag2));
+    Require(!URLEqualIgnoringFragment(&absent, &javascript));
+    ExpectErr([&] { URLEqualIgnoringFragment(nullptr, &url); });
+    ExpectErr([&] { URLEqualIgnoringFragment(&url, nullptr); });
     auto urlNoPortStr = FromUTF8Z(U8("http://example.test/path"));
     URL urlNoPort{urlNoPortStr.impl, 1U | 2U | (0U << 3) | (4U << 6), 7, 7, 7, 19, 20, 24, 24};
-    Check(URLPortAllowed(&urlNoPort));
+    Require(URLPortAllowed(&urlNoPort));
     auto urlPort80Str = FromUTF8Z(U8("http://example.test:80/path"));
     URL urlPort80{urlPort80Str.impl, 1U | 2U | (3U << 3) | (4U << 6), 7, 7, 7, 19, 23, 27, 27};
-    Check(URLPortAllowed(&urlPort80));
+    Require(URLPortAllowed(&urlPort80));
     auto urlPort443Str = FromUTF8Z(U8("http://example.test:443/path"));
     URL urlPort443{urlPort443Str.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
-    Check(URLPortAllowed(&urlPort443));
+    Require(URLPortAllowed(&urlPort443));
     auto urlPort8080Str = FromUTF8Z(U8("http://example.test:8080/path"));
     URL urlPort8080{urlPort8080Str.impl, 1U | 2U | (5U << 3) | (4U << 6), 7, 7, 7, 19, 25, 29, 29};
-    Check(URLPortAllowed(&urlPort8080));
+    Require(URLPortAllowed(&urlPort8080));
     auto urlPort0Str = FromUTF8Z(U8("http://example.test:0/path"));
     URL urlPort0{urlPort0Str.impl, 1U | 2U | (2U << 3) | (4U << 6), 7, 7, 7, 19, 22, 26, 26};
-    Check(URLPortAllowed(&urlPort0));
+    Require(URLPortAllowed(&urlPort0));
     auto urlPort10081Str = FromUTF8Z(U8("http://example.test:10081/path"));
     URL urlPort10081{urlPort10081Str.impl, 1U | 2U | (6U << 3) | (4U << 6), 7, 7, 7, 19, 26, 30, 30};
-    Check(URLPortAllowed(&urlPort10081));
+    Require(URLPortAllowed(&urlPort10081));
     auto urlPort1Str = FromUTF8Z(U8("http://example.test:1/path"));
     URL urlPort1{urlPort1Str.impl, 1U | 2U | (2U << 3) | (4U << 6), 7, 7, 7, 19, 22, 26, 26};
-    Check(!URLPortAllowed(&urlPort1));
+    Require(!URLPortAllowed(&urlPort1));
     auto urlPort7Str = FromUTF8Z(U8("http://example.test:7/path"));
     URL urlPort7{urlPort7Str.impl, 1U | 2U | (2U << 3) | (4U << 6), 7, 7, 7, 19, 22, 26, 26};
-    Check(!URLPortAllowed(&urlPort7));
+    Require(!URLPortAllowed(&urlPort7));
     auto urlPort21Str = FromUTF8Z(U8("http://example.test:21/path"));
     URL urlPort21{urlPort21Str.impl, 1U | 2U | (3U << 3) | (4U << 6), 7, 7, 7, 19, 23, 27, 27};
-    Check(!URLPortAllowed(&urlPort21));
+    Require(!URLPortAllowed(&urlPort21));
     auto urlPort22Str = FromUTF8Z(U8("http://example.test:22/path"));
     URL urlPort22{urlPort22Str.impl, 1U | 2U | (3U << 3) | (4U << 6), 7, 7, 7, 19, 23, 27, 27};
-    Check(!URLPortAllowed(&urlPort22));
+    Require(!URLPortAllowed(&urlPort22));
     auto urlPort25Str = FromUTF8Z(U8("http://example.test:25/path"));
     URL urlPort25{urlPort25Str.impl, 1U | 2U | (3U << 3) | (4U << 6), 7, 7, 7, 19, 23, 27, 27};
-    Check(!URLPortAllowed(&urlPort25));
+    Require(!URLPortAllowed(&urlPort25));
     auto urlPort87Str = FromUTF8Z(U8("http://example.test:87/path"));
     URL urlPort87{urlPort87Str.impl, 1U | 2U | (3U << 3) | (4U << 6), 7, 7, 7, 19, 23, 27, 27};
-    Check(!URLPortAllowed(&urlPort87));
+    Require(!URLPortAllowed(&urlPort87));
     auto urlPort10080Str = FromUTF8Z(U8("http://example.test:10080/path"));
     URL urlPort10080{urlPort10080Str.impl, 1U | 2U | (6U << 3) | (4U << 6), 7, 7, 7, 19, 26, 30, 30};
-    Check(!URLPortAllowed(&urlPort10080));
+    Require(!URLPortAllowed(&urlPort10080));
     auto ftpPort20Str = FromUTF8Z(U8("ftp://example.test:20/path"));
     URL ftpPort20{ftpPort20Str.impl, 1U | 0U | (3U << 3) | (3U << 6), 6, 6, 6, 18, 22, 26, 26};
-    Check(!URLPortAllowed(&ftpPort20));
+    Require(!URLPortAllowed(&ftpPort20));
     auto ftpPort21Str = FromUTF8Z(U8("ftp://example.test:21/path"));
     URL ftpPort21{ftpPort21Str.impl, 1U | 0U | (3U << 3) | (3U << 6), 6, 6, 6, 18, 22, 26, 26};
-    Check(URLPortAllowed(&ftpPort21));
+    Require(URLPortAllowed(&ftpPort21));
     auto ftpPort22Str = FromUTF8Z(U8("ftp://example.test:22/path"));
     URL ftpPort22{ftpPort22Str.impl, 1U | 0U | (3U << 3) | (3U << 6), 6, 6, 6, 18, 22, 26, 26};
-    Check(URLPortAllowed(&ftpPort22));
+    Require(URLPortAllowed(&ftpPort22));
     auto ftpPort25Str = FromUTF8Z(U8("ftp://example.test:25/path"));
     URL ftpPort25{ftpPort25Str.impl, 1U | 0U | (3U << 3) | (3U << 6), 6, 6, 6, 18, 22, 26, 26};
-    Check(!URLPortAllowed(&ftpPort25));
+    Require(!URLPortAllowed(&ftpPort25));
     auto ftpUpper21Str = FromUTF8Z(U8("FTP://example.test:21/path"));
     URL ftpUpper21{ftpUpper21Str.impl, 1U | 0U | (3U << 3) | (3U << 6), 6, 6, 6, 18, 22, 26, 26};
-    Check(URLPortAllowed(&ftpUpper21));
+    Require(URLPortAllowed(&ftpUpper21));
     auto ftpUpper22Str = FromUTF8Z(U8("FTP://example.test:22/path"));
     URL ftpUpper22{ftpUpper22Str.impl, 1U | 0U | (3U << 3) | (3U << 6), 6, 6, 6, 18, 22, 26, 26};
-    Check(URLPortAllowed(&ftpUpper22));
+    Require(URLPortAllowed(&ftpUpper22));
     auto ftpUpper25Str = FromUTF8Z(U8("FTP://example.test:25/path"));
     URL ftpUpper25{ftpUpper25Str.impl, 1U | 0U | (3U << 3) | (3U << 6), 6, 6, 6, 18, 22, 26, 26};
-    Check(!URLPortAllowed(&ftpUpper25));
+    Require(!URLPortAllowed(&ftpUpper25));
     auto filePort1Str = FromUTF8Z(U8("file://example.test:1/path"));
     URL filePort1{filePort1Str.impl, 1U | 0U | (2U << 3) | (4U << 6), 7, 7, 7, 19, 22, 26, 26};
-    Check(URLPortAllowed(&filePort1));
+    Require(URLPortAllowed(&filePort1));
     auto filePort21Str = FromUTF8Z(U8("file://example.test:21/path"));
     URL filePort21{filePort21Str.impl, 1U | 0U | (3U << 3) | (4U << 6), 7, 7, 7, 19, 23, 27, 27};
-    Check(URLPortAllowed(&filePort21));
+    Require(URLPortAllowed(&filePort21));
     auto filePort25Str = FromUTF8Z(U8("file://example.test:25/path"));
     URL filePort25{filePort25Str.impl, 1U | 0U | (3U << 3) | (4U << 6), 7, 7, 7, 19, 23, 27, 27};
-    Check(URLPortAllowed(&filePort25));
+    Require(URLPortAllowed(&filePort25));
     auto filePort10080Str = FromUTF8Z(U8("file://example.test:10080/path"));
     URL filePort10080{filePort10080Str.impl, 1U | 0U | (6U << 3) | (4U << 6), 7, 7, 7, 19, 26, 30, 30};
-    Check(URLPortAllowed(&filePort10080));
+    Require(URLPortAllowed(&filePort10080));
     auto fileUpper25Str = FromUTF8Z(U8("FILE://example.test:25/path"));
     URL fileUpper25{fileUpper25Str.impl, 1U | 0U | (3U << 3) | (4U << 6), 7, 7, 7, 19, 23, 27, 27};
-    Check(URLPortAllowed(&fileUpper25));
+    Require(URLPortAllowed(&fileUpper25));
     auto urlMinusPortStr = FromUTF8Z(U8("http://example.test:-80/path"));
     URL urlMinusPort{urlMinusPortStr.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
-    Check(URLPortAllowed(&urlMinusPort));
+    Require(URLPortAllowed(&urlMinusPort));
     auto urlOverflowPortStr = FromUTF8Z(U8("http://example.test:65536/path"));
     URL urlOverflowPort{urlOverflowPortStr.impl, 1U | 2U | (6U << 3) | (4U << 6), 7, 7, 7, 19, 26, 30, 30};
-    Check(URLPortAllowed(&urlOverflowPort));
+    Require(URLPortAllowed(&urlOverflowPort));
     auto urlBarePlusPortStr = FromUTF8Z(U8("http://example.test:+/path"));
     URL urlBarePlusPort{urlBarePlusPortStr.impl, 1U | 2U | (2U << 3) | (4U << 6), 7, 7, 7, 19, 22, 26, 26};
-    Check(URLPortAllowed(&urlBarePlusPort));
+    Require(URLPortAllowed(&urlBarePlusPort));
     auto urlPlus25PortStr = FromUTF8Z(U8("http://example.test:+25/path"));
     URL urlPlus25Port{urlPlus25PortStr.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
-    Check(!URLPortAllowed(&urlPlus25Port));
+    Require(!URLPortAllowed(&urlPlus25Port));
     auto urlSpace25PortStr = FromUTF8Z(U8("http://example.test: 25 /path"));
     URL urlSpace25Port{urlSpace25PortStr.impl, 1U | 2U | (5U << 3) | (4U << 6), 7, 7, 7, 19, 25, 29, 29};
-    Check(!URLPortAllowed(&urlSpace25Port));
+    Require(!URLPortAllowed(&urlSpace25Port));
     auto urlTab25PortStr = FromUTF8Z(U8("http://example.test:\t25/path"));
     URL urlTab25Port{urlTab25PortStr.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
-    Check(!URLPortAllowed(&urlTab25Port));
+    Require(!URLPortAllowed(&urlTab25Port));
     auto urlLf25PortStr = FromUTF8Z(U8("http://example.test:\n25/path"));
     URL urlLf25Port{urlLf25PortStr.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
-    Check(!URLPortAllowed(&urlLf25Port));
+    Require(!URLPortAllowed(&urlLf25Port));
     auto urlCr25PortStr = FromUTF8Z(U8("http://example.test:\r25/path"));
     URL urlCr25Port{urlCr25PortStr.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
-    Check(!URLPortAllowed(&urlCr25Port));
+    Require(!URLPortAllowed(&urlCr25Port));
     auto urlFf25PortStr = FromUTF8Z(U8("http://example.test:\f25/path"));
     URL urlFf25Port{urlFf25PortStr.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
-    Check(!URLPortAllowed(&urlFf25Port));
+    Require(!URLPortAllowed(&urlFf25Port));
     auto urlTrailingTab25PortStr = FromUTF8Z(U8("http://example.test:25\t/path"));
     URL urlTrailingTab25Port{urlTrailingTab25PortStr.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
-    Check(!URLPortAllowed(&urlTrailingTab25Port));
+    Require(!URLPortAllowed(&urlTrailingTab25Port));
     auto urlTrailingLf25PortStr = FromUTF8Z(U8("http://example.test:25\n/path"));
     URL urlTrailingLf25Port{urlTrailingLf25PortStr.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
-    Check(!URLPortAllowed(&urlTrailingLf25Port));
+    Require(!URLPortAllowed(&urlTrailingLf25Port));
     auto urlTrailingCr25PortStr = FromUTF8Z(U8("http://example.test:25\r/path"));
     URL urlTrailingCr25Port{urlTrailingCr25PortStr.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
-    Check(!URLPortAllowed(&urlTrailingCr25Port));
+    Require(!URLPortAllowed(&urlTrailingCr25Port));
     auto urlTrailingFf25PortStr = FromUTF8Z(U8("http://example.test:25\f/path"));
     URL urlTrailingFf25Port{urlTrailingFf25PortStr.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
-    Check(!URLPortAllowed(&urlTrailingFf25Port));
+    Require(!URLPortAllowed(&urlTrailingFf25Port));
     auto urlJunk25PortStr = FromUTF8Z(U8("http://example.test:25x/path"));
     URL urlJunk25Port{urlJunk25PortStr.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
-    Check(URLPortAllowed(&urlJunk25Port));
+    Require(URLPortAllowed(&urlJunk25Port));
     auto urlJunk80PortStr = FromUTF8Z(U8("http://example.test:80junk/path"));
     URL urlJunk80Port{urlJunk80PortStr.impl, 1U | 2U | (7U << 3) | (4U << 6), 7, 7, 7, 19, 27, 31, 31};
-    Check(URLPortAllowed(&urlJunk80Port));
+    Require(URLPortAllowed(&urlJunk80Port));
     auto widePort8080 = Create16(u"http://wide.test:8080/path", 26);
     URL urlWidePort8080{widePort8080.impl, 1U | 2U | (5U << 3) | (4U << 6), 7, 7, 7, 16, 22, 26, 26};
-    Check(URLPortAllowed(&urlWidePort8080));
+    Require(URLPortAllowed(&urlWidePort8080));
     auto widePort25 = Create16(u"http://wide.test:25/path", 24);
     URL urlWidePort25{widePort25.impl, 1U | 2U | (3U << 3) | (4U << 6), 7, 7, 7, 16, 20, 24, 24};
-    Check(!URLPortAllowed(&urlWidePort25));
+    Require(!URLPortAllowed(&urlWidePort25));
     auto wideFtpPort21 = Create16(u"ftp://wide.test:21/path", 23);
     URL urlWideFtpPort21{wideFtpPort21.impl, 1U | 0U | (3U << 3) | (3U << 6), 6, 6, 6, 15, 19, 23, 23};
-    Check(URLPortAllowed(&urlWideFtpPort21));
+    Require(URLPortAllowed(&urlWideFtpPort21));
     auto wideFilePort25 = Create16(u"file://wide.test:25/path", 24);
     URL urlWideFilePort25{wideFilePort25.impl, 1U | 0U | (3U << 3) | (4U << 6), 7, 7, 7, 16, 20, 24, 24};
-    Check(URLPortAllowed(&urlWideFilePort25));
+    Require(URLPortAllowed(&urlWideFilePort25));
     auto wideFtpUpper21 = Create16(u"FTP://wide.test:21/path", 23);
     URL urlWideFtpUpper21{wideFtpUpper21.impl, 1U | 0U | (3U << 3) | (3U << 6), 6, 6, 6, 15, 19, 23, 23};
-    Check(URLPortAllowed(&urlWideFtpUpper21));
+    Require(URLPortAllowed(&urlWideFtpUpper21));
     auto wideFileUpper25 = Create16(u"FILE://wide.test:25/path", 24);
     URL urlWideFileUpper25{wideFileUpper25.impl, 1U | 0U | (3U << 3) | (4U << 6), 7, 7, 7, 16, 20, 24, 24};
-    Check(URLPortAllowed(&urlWideFileUpper25));
+    Require(URLPortAllowed(&urlWideFileUpper25));
     auto wideTab25 = Create16(u"http://wide.test:\t25/path", 25);
     URL urlWideTab25{wideTab25.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 16, 21, 25, 25};
-    Check(!URLPortAllowed(&urlWideTab25));
+    Require(!URLPortAllowed(&urlWideTab25));
     auto wideLf25 = Create16(u"http://wide.test:\n25/path", 25);
     URL urlWideLf25{wideLf25.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 16, 21, 25, 25};
-    Check(!URLPortAllowed(&urlWideLf25));
+    Require(!URLPortAllowed(&urlWideLf25));
     auto wideCr25 = Create16(u"http://wide.test:\r25/path", 25);
     URL urlWideCr25{wideCr25.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 16, 21, 25, 25};
-    Check(!URLPortAllowed(&urlWideCr25));
+    Require(!URLPortAllowed(&urlWideCr25));
     auto wideFf25 = Create16(u"http://wide.test:\f25/path", 25);
     URL urlWideFf25{wideFf25.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 16, 21, 25, 25};
-    Check(!URLPortAllowed(&urlWideFf25));
+    Require(!URLPortAllowed(&urlWideFf25));
     auto wideTrailingTab25 = Create16(u"http://wide.test:25\t/path", 25);
     URL urlWideTrailingTab25{wideTrailingTab25.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 16, 21, 25, 25};
-    Check(!URLPortAllowed(&urlWideTrailingTab25));
+    Require(!URLPortAllowed(&urlWideTrailingTab25));
     auto wideTrailingLf25 = Create16(u"http://wide.test:25\n/path", 25);
     URL urlWideTrailingLf25{wideTrailingLf25.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 16, 21, 25, 25};
-    Check(!URLPortAllowed(&urlWideTrailingLf25));
+    Require(!URLPortAllowed(&urlWideTrailingLf25));
     auto wideTrailingCr25 = Create16(u"http://wide.test:25\r/path", 25);
     URL urlWideTrailingCr25{wideTrailingCr25.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 16, 21, 25, 25};
-    Check(!URLPortAllowed(&urlWideTrailingCr25));
+    Require(!URLPortAllowed(&urlWideTrailingCr25));
     auto wideTrailingFf25 = Create16(u"http://wide.test:25\f/path", 25);
     URL urlWideTrailingFf25{wideTrailingFf25.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 16, 21, 25, 25};
-    Check(!URLPortAllowed(&urlWideTrailingFf25));
+    Require(!URLPortAllowed(&urlWideTrailingFf25));
     auto wideJunk25 = Create16(u"http://wide.test:25x/path", 25);
     URL urlWideJunk25{wideJunk25.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 16, 21, 25, 25};
-    Check(URLPortAllowed(&urlWideJunk25));
+    Require(URLPortAllowed(&urlWideJunk25));
     auto urlWraparoundPortStr = FromUTF8Z(U8("25://example.test/path"));
     URL urlWraparoundPort{urlWraparoundPortStr.impl, 1U | 2U | (3U << 3) | (2U << 6), 5, 5, 5, ~0U, 23, 22, 22};
-    Check(URLPortAllowed(&urlWraparoundPort));
-    Check(URLPortAllowed(&absent));
-    Throws([&] { URLPortAllowed(nullptr); });
+    Require(URLPortAllowed(&urlWraparoundPort));
+    Require(URLPortAllowed(&absent));
+    ExpectErr([&] { URLPortAllowed(nullptr); });
     {
-        Check(URLProtocolHostAndPortAreEqual(&url, &url));
-        Check(URLProtocolHostAndPortAreEqual(&url, &urlNoFrag));
-        Check(URLProtocolHostAndPortAreEqual(&url, &urlDiffQuery));
-        Check(URLProtocolHostAndPortAreEqual(&url, &urlDiffPath));
+        Require(URLProtocolHostAndPortAreEqual(&url, &url));
+        Require(URLProtocolHostAndPortAreEqual(&url, &urlNoFrag));
+        Require(URLProtocolHostAndPortAreEqual(&url, &urlDiffQuery));
+        Require(URLProtocolHostAndPortAreEqual(&url, &urlDiffPath));
         auto urlUpperSchemeStr = FromUTF8Z(U8("HTTPS://u%20:p%40@example.test:8443/a/b?q=1#frag"));
         URL urlUpperScheme = url;
         urlUpperScheme.impl = urlUpperSchemeStr.impl;
-        Check(URLProtocolHostAndPortAreEqual(&url, &urlUpperScheme));
+        Require(URLProtocolHostAndPortAreEqual(&url, &urlUpperScheme));
         auto urlUpperHostStr = FromUTF8Z(U8("https://u%20:p%40@EXAMPLE.TEST:8443/a/b?q=1#frag"));
         URL urlUpperHost = url;
         urlUpperHost.impl = urlUpperHostStr.impl;
-        Check(URLProtocolHostAndPortAreEqual(&url, &urlUpperHost));
+        Require(URLProtocolHostAndPortAreEqual(&url, &urlUpperHost));
         auto urlHttpStr = FromUTF8Z(U8("http://u%20:p%40@example.test:8443/a/b?q=1#frag"));
         URL urlHttp = url;
         urlHttp.impl = urlHttpStr.impl;
         urlHttp.bits = 1U | 2U | (5U << 3) | (4U << 6);
-        Check(!URLProtocolHostAndPortAreEqual(&url, &urlHttp));
-        Check(!URLProtocolHostAndPortAreEqual(&url, &urlDiffHost));
+        Require(!URLProtocolHostAndPortAreEqual(&url, &urlHttp));
+        Require(!URLProtocolHostAndPortAreEqual(&url, &urlDiffHost));
         auto urlShortHostStr = FromUTF8Z(U8("https://u%20:p%40@ex.test:8443/a/b?q=1#frag"));
         URL urlShortHost = url;
         urlShortHost.impl = urlShortHostStr.impl;
         urlShortHost.hostEnd = 25;
-        Check(!URLProtocolHostAndPortAreEqual(&url, &urlShortHost));
+        Require(!URLProtocolHostAndPortAreEqual(&url, &urlShortHost));
         auto urlDiffPortStr = FromUTF8Z(U8("https://u%20:p%40@example.test:9443/a/b?q=1#frag"));
         URL urlDiffPort = url;
         urlDiffPort.impl = urlDiffPortStr.impl;
-        Check(!URLProtocolHostAndPortAreEqual(&url, &urlDiffPort));
+        Require(!URLProtocolHostAndPortAreEqual(&url, &urlDiffPort));
         auto urlPort80Str = FromUTF8Z(U8("http://example.test:80/path"));
         URL urlPort80{urlPort80Str.impl, 1U | 2U | (3U << 3) | (4U << 6), 7, 7, 7, 19, 23, 27, 27};
         auto urlNoPortStr = FromUTF8Z(U8("http://example.test/path"));
         URL urlNoPort{urlNoPortStr.impl, 1U | 2U | (0U << 3) | (4U << 6), 7, 7, 7, 19, 20, 24, 24};
-        Check(!URLProtocolHostAndPortAreEqual(&urlPort80, &urlNoPort));
+        Require(!URLProtocolHostAndPortAreEqual(&urlPort80, &urlNoPort));
         auto urlNoPort2Str = FromUTF8Z(U8("http://example.test/other"));
         URL urlNoPort2{urlNoPort2Str.impl, 1U | 2U | (0U << 3) | (4U << 6), 7, 7, 7, 19, 20, 25, 25};
-        Check(URLProtocolHostAndPortAreEqual(&urlNoPort, &urlNoPort2));
+        Require(URLProtocolHostAndPortAreEqual(&urlNoPort, &urlNoPort2));
         auto widePort = Create16(u"http://wide.test:8080/path", 26);
         URL urlWidePort{widePort.impl, 1U | 2U | (5U << 3) | (4U << 6), 7, 7, 7, 16, 22, 26, 26};
         auto widePortMatch = Create16(u"HTTP://WIDE.TEST:8080/other", 27);
         URL urlWideMatch{widePortMatch.impl, 1U | 2U | (5U << 3) | (4U << 6), 7, 7, 7, 16, 22, 27, 27};
-        Check(URLProtocolHostAndPortAreEqual(&urlWidePort, &urlWideMatch));
+        Require(URLProtocolHostAndPortAreEqual(&urlWidePort, &urlWideMatch));
         auto narrowPortStr = FromUTF8Z(U8("http://wide.test:8080/narrow"));
         URL urlNarrowPort{narrowPortStr.impl, 1U | 2U | (5U << 3) | (4U << 6), 7, 7, 7, 16, 22, 28, 28};
-        Check(URLProtocolHostAndPortAreEqual(&urlWidePort, &urlNarrowPort));
+        Require(URLProtocolHostAndPortAreEqual(&urlWidePort, &urlNarrowPort));
         auto urlPort0Str = FromUTF8Z(U8("http://example.test:0/path"));
         URL urlPort0{urlPort0Str.impl, 1U | 2U | (2U << 3) | (4U << 6), 7, 7, 7, 19, 22, 26, 26};
-        Check(URLProtocolHostAndPortAreEqual(&urlPort0, &urlPort0));
-        Check(!URLProtocolHostAndPortAreEqual(&urlPort0, &urlNoPort));
-        Check(!URLProtocolHostAndPortAreEqual(&urlPort0, &urlPort80));
+        Require(URLProtocolHostAndPortAreEqual(&urlPort0, &urlPort0));
+        Require(!URLProtocolHostAndPortAreEqual(&urlPort0, &urlNoPort));
+        Require(!URLProtocolHostAndPortAreEqual(&urlPort0, &urlPort80));
         auto urlPortMaxStr = FromUTF8Z(U8("http://example.test:65535/path"));
         URL urlPortMax{urlPortMaxStr.impl, 1U | 2U | (6U << 3) | (4U << 6), 7, 7, 7, 19, 26, 30, 30};
-        Check(URLProtocolHostAndPortAreEqual(&urlPortMax, &urlPortMax));
-        Check(!URLProtocolHostAndPortAreEqual(&urlPortMax, &urlPort80));
+        Require(URLProtocolHostAndPortAreEqual(&urlPortMax, &urlPortMax));
+        Require(!URLProtocolHostAndPortAreEqual(&urlPortMax, &urlPort80));
         auto urlEmptyPortStr = FromUTF8Z(U8("http://example.test:/path"));
         URL urlEmptyPort{urlEmptyPortStr.impl, 1U | 2U | (1U << 3) | (4U << 6), 7, 7, 7, 19, 21, 25, 25};
-        Check(!URLProtocolHostAndPortAreEqual(&urlEmptyPort, &urlPort80));
-        Check(URLProtocolHostAndPortAreEqual(&urlEmptyPort, &urlNoPort));
+        Require(!URLProtocolHostAndPortAreEqual(&urlEmptyPort, &urlPort80));
+        Require(URLProtocolHostAndPortAreEqual(&urlEmptyPort, &urlNoPort));
         auto urlMalformedPortStr = FromUTF8Z(U8("http://example.test:8x/path"));
         URL urlMalformedPort{urlMalformedPortStr.impl, 1U | 2U | (3U << 3) | (4U << 6), 7, 7, 7, 19, 23, 27, 27};
-        Check(!URLProtocolHostAndPortAreEqual(&urlMalformedPort, &urlPort80));
-        Check(URLProtocolHostAndPortAreEqual(&urlMalformedPort, &urlNoPort));
+        Require(!URLProtocolHostAndPortAreEqual(&urlMalformedPort, &urlPort80));
+        Require(URLProtocolHostAndPortAreEqual(&urlMalformedPort, &urlNoPort));
         auto urlOutOfRangePortStr = FromUTF8Z(U8("http://example.test:70000/path"));
         URL urlOutOfRangePort{urlOutOfRangePortStr.impl, 1U | 2U | (6U << 3) | (4U << 6), 7, 7, 7, 19, 26, 30, 30};
-        Check(!URLProtocolHostAndPortAreEqual(&urlOutOfRangePort, &urlPort80));
-        Check(URLProtocolHostAndPortAreEqual(&urlOutOfRangePort, &urlNoPort));
+        Require(!URLProtocolHostAndPortAreEqual(&urlOutOfRangePort, &urlPort80));
+        Require(URLProtocolHostAndPortAreEqual(&urlOutOfRangePort, &urlNoPort));
         auto urlPlusPort80Str = FromUTF8Z(U8("http://example.test:+80/path"));
         URL urlPlusPort80{urlPlusPort80Str.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
-        Check(URLProtocolHostAndPortAreEqual(&urlPlusPort80, &urlPort80));
-        Check(!URLProtocolHostAndPortAreEqual(&urlPlusPort80, &urlNoPort));
+        Require(URLProtocolHostAndPortAreEqual(&urlPlusPort80, &urlPort80));
+        Require(!URLProtocolHostAndPortAreEqual(&urlPlusPort80, &urlNoPort));
         auto urlSpacePort80Str = FromUTF8Z(U8("http://example.test: 80 /path"));
         URL urlSpacePort80{urlSpacePort80Str.impl, 1U | 2U | (5U << 3) | (4U << 6), 7, 7, 7, 19, 25, 29, 29};
-        Check(URLProtocolHostAndPortAreEqual(&urlSpacePort80, &urlPort80));
-        Check(!URLProtocolHostAndPortAreEqual(&urlSpacePort80, &urlNoPort));
+        Require(URLProtocolHostAndPortAreEqual(&urlSpacePort80, &urlPort80));
+        Require(!URLProtocolHostAndPortAreEqual(&urlSpacePort80, &urlNoPort));
         auto urlTabPort80Str = FromUTF8Z(U8("http://example.test:\t80/path"));
         URL urlTabPort80{urlTabPort80Str.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
-        Check(URLProtocolHostAndPortAreEqual(&urlTabPort80, &urlPort80));
+        Require(URLProtocolHostAndPortAreEqual(&urlTabPort80, &urlPort80));
         auto urlNewlinePort80Str = FromUTF8Z(U8("http://example.test:\n80/path"));
         URL urlNewlinePort80{urlNewlinePort80Str.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
-        Check(URLProtocolHostAndPortAreEqual(&urlNewlinePort80, &urlPort80));
+        Require(URLProtocolHostAndPortAreEqual(&urlNewlinePort80, &urlPort80));
         auto urlReturnPort80Str = FromUTF8Z(U8("http://example.test:\r80/path"));
         URL urlReturnPort80{urlReturnPort80Str.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
-        Check(URLProtocolHostAndPortAreEqual(&urlReturnPort80, &urlPort80));
+        Require(URLProtocolHostAndPortAreEqual(&urlReturnPort80, &urlPort80));
         auto urlFormFeedPort80Str = FromUTF8Z(U8("http://example.test:\f80/path"));
         URL urlFormFeedPort80{urlFormFeedPort80Str.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
-        Check(URLProtocolHostAndPortAreEqual(&urlFormFeedPort80, &urlPort80));
+        Require(URLProtocolHostAndPortAreEqual(&urlFormFeedPort80, &urlPort80));
         auto widePlusPort = Create16(u"http://wide.test:+8080/path", 27);
         URL urlWidePlusPort{widePlusPort.impl, 1U | 2U | (6U << 3) | (4U << 6), 7, 7, 7, 16, 23, 27, 27};
-        Check(URLProtocolHostAndPortAreEqual(&urlWidePlusPort, &urlWidePort));
+        Require(URLProtocolHostAndPortAreEqual(&urlWidePlusPort, &urlWidePort));
         auto wideSpacePort = Create16(u"http://wide.test: 8080 /path", 28);
         URL urlWideSpacePort{wideSpacePort.impl, 1U | 2U | (7U << 3) | (4U << 6), 7, 7, 7, 16, 24, 28, 28};
-        Check(URLProtocolHostAndPortAreEqual(&urlWideSpacePort, &urlWidePort));
+        Require(URLProtocolHostAndPortAreEqual(&urlWideSpacePort, &urlWidePort));
         auto wideTabPort = Create16(u"http://wide.test:\t8080/path", 27);
         URL urlWideTabPort{wideTabPort.impl, 1U | 2U | (6U << 3) | (4U << 6), 7, 7, 7, 16, 23, 27, 27};
-        Check(URLProtocolHostAndPortAreEqual(&urlWideTabPort, &urlWidePort));
+        Require(URLProtocolHostAndPortAreEqual(&urlWideTabPort, &urlWidePort));
         auto wideNewlinePort = Create16(u"http://wide.test:\n8080/path", 27);
         URL urlWideNewlinePort{wideNewlinePort.impl, 1U | 2U | (6U << 3) | (4U << 6), 7, 7, 7, 16, 23, 27, 27};
-        Check(URLProtocolHostAndPortAreEqual(&urlWideNewlinePort, &urlWidePort));
+        Require(URLProtocolHostAndPortAreEqual(&urlWideNewlinePort, &urlWidePort));
         auto wideReturnPort = Create16(u"http://wide.test:\r8080/path", 27);
         URL urlWideReturnPort{wideReturnPort.impl, 1U | 2U | (6U << 3) | (4U << 6), 7, 7, 7, 16, 23, 27, 27};
-        Check(URLProtocolHostAndPortAreEqual(&urlWideReturnPort, &urlWidePort));
+        Require(URLProtocolHostAndPortAreEqual(&urlWideReturnPort, &urlWidePort));
         auto wideFormFeedPort = Create16(u"http://wide.test:\f8080/path", 27);
         URL urlWideFormFeedPort{wideFormFeedPort.impl, 1U | 2U | (6U << 3) | (4U << 6), 7, 7, 7, 16, 23, 27, 27};
-        Check(URLProtocolHostAndPortAreEqual(&urlWideFormFeedPort, &urlWidePort));
+        Require(URLProtocolHostAndPortAreEqual(&urlWideFormFeedPort, &urlWidePort));
         auto urlMinusPortStr = FromUTF8Z(U8("http://example.test:-80/path"));
         URL urlMinusPort{urlMinusPortStr.impl, 1U | 2U | (4U << 3) | (4U << 6), 7, 7, 7, 19, 24, 28, 28};
-        Check(!URLProtocolHostAndPortAreEqual(&urlMinusPort, &urlPort80));
-        Check(URLProtocolHostAndPortAreEqual(&urlMinusPort, &urlNoPort));
+        Require(!URLProtocolHostAndPortAreEqual(&urlMinusPort, &urlPort80));
+        Require(URLProtocolHostAndPortAreEqual(&urlMinusPort, &urlNoPort));
         auto urlBarePlusPortStr = FromUTF8Z(U8("http://example.test:+/path"));
         URL urlBarePlusPort{urlBarePlusPortStr.impl, 1U | 2U | (2U << 3) | (4U << 6), 7, 7, 7, 19, 22, 26, 26};
-        Check(!URLProtocolHostAndPortAreEqual(&urlBarePlusPort, &urlPort80));
-        Check(URLProtocolHostAndPortAreEqual(&urlBarePlusPort, &urlNoPort));
+        Require(!URLProtocolHostAndPortAreEqual(&urlBarePlusPort, &urlPort80));
+        Require(URLProtocolHostAndPortAreEqual(&urlBarePlusPort, &urlNoPort));
         auto urlPortOutOfBoundsStr = FromUTF8Z(U8("http://example.test:80"));
         URL urlPortOutOfBounds{urlPortOutOfBoundsStr.impl, 1U | 2U | (5U << 3) | (4U << 6), 7, 7, 7, 19, 24, 22, 22};
-        Check(URLProtocolHostAndPortAreEqual(&urlPortOutOfBounds, &urlNoPort));
-        Check(!URLProtocolHostAndPortAreEqual(&urlPortOutOfBounds, &urlPort80));
-        Check(URLProtocolHostAndPortAreEqual(&absent, &absent));
-        Check(!URLProtocolHostAndPortAreEqual(&url, &absent));
-        Check(!URLProtocolHostAndPortAreEqual(&absent, &url));
-        Throws([&] { URLProtocolHostAndPortAreEqual(nullptr, &url); });
-        Throws([&] { URLProtocolHostAndPortAreEqual(&url, nullptr); });
+        Require(URLProtocolHostAndPortAreEqual(&urlPortOutOfBounds, &urlNoPort));
+        Require(!URLProtocolHostAndPortAreEqual(&urlPortOutOfBounds, &urlPort80));
+        Require(URLProtocolHostAndPortAreEqual(&absent, &absent));
+        Require(!URLProtocolHostAndPortAreEqual(&url, &absent));
+        Require(!URLProtocolHostAndPortAreEqual(&absent, &url));
+        ExpectErr([&] { URLProtocolHostAndPortAreEqual(nullptr, &url); });
+        ExpectErr([&] { URLProtocolHostAndPortAreEqual(&url, nullptr); });
     }
     URLInvalidate(&url);
-    Check(url.impl == string.impl && url.bits == 0 && url.userStart == 0 && url.userEnd == 0);
-    Check(url.passwordEnd == 0 && url.hostEnd == 0 && url.pathEnd == 0 && url.pathAfterLastSlash == 0 && url.queryEnd == 0);
-    Throws([&] { URLInvalidate(nullptr); });
-    Throws([&] { URLProtocol(nullptr); });
+    Require(url.impl == string.impl && url.bits == 0 && url.userStart == 0 && url.userEnd == 0);
+    Require(url.passwordEnd == 0 && url.hostEnd == 0 && url.pathEnd == 0 && url.pathAfterLastSlash == 0 && url.queryEnd == 0);
+    ExpectErr([&] { URLInvalidate(nullptr); });
+    ExpectErr([&] { URLProtocol(nullptr); });
     auto* memory = static_cast<unsigned char*>(JSRealloc(nullptr, 5));
     std::memcpy(memory, "hello", 5);
     memory = static_cast<unsigned char*>(JSRealloc(memory, 50));
-    Check(!std::memcmp(memory, "hello", 5));
+    Require(!std::memcmp(memory, "hello", 5));
     memory = static_cast<unsigned char*>(JSRealloc(memory, 2));
-    Check(memory[0] == 'h' && memory[1] == 'e');
-    Check(!JSRealloc(memory, 0));
+    Require(memory[0] == 'h' && memory[1] == 'e');
+    Require(!JSRealloc(memory, 0));
     TestURLStringHelpers();
     TestURLParserChecks();
 }
@@ -2511,91 +2493,91 @@ void TestURLLastPathComponentAndReferrer() {
     auto httpBits = [](unsigned schemeEnd, unsigned portLength) { return 1U | 2U | (portLength << 3) | (schemeEnd << 6); };
     auto simple = FromUTF8Z(U8("http://h/a/b"));
     URL url{simple.impl, httpBits(4, 0), 7, 7, 7, 8, 11, 12, 12};
-    Check(ViewText(URLLastPathComponent(&url)) == "b");
+    Require(ViewText(URLLastPathComponent(&url)) == "b");
     auto trailing = FromUTF8Z(U8("http://h/a/b/"));
     URL slashed{trailing.impl, httpBits(4, 0), 7, 7, 7, 8, 13, 13, 13};
-    Check(ViewText(URLLastPathComponent(&slashed)) == "b");
+    Require(ViewText(URLLastPathComponent(&slashed)) == "b");
     auto root = FromUTF8Z(U8("http://h/"));
     URL rootUrl{root.impl, httpBits(4, 0), 7, 7, 7, 8, 9, 9, 9};
-    Check(!URLLastPathComponent(&rootUrl).data);
+    Require(!URLLastPathComponent(&rootUrl).data);
     auto hostOnly = FromUTF8Z(U8("http://h"));
     URL noPath{hostOnly.impl, httpBits(4, 0), 7, 7, 7, 8, 8, 8, 8};
-    Check(!URLLastPathComponent(&noPath).data);
+    Require(!URLLastPathComponent(&noPath).data);
     auto opaque = FromUTF8Z(U8("mailto:abc"));
     URL mailto{opaque.impl, 1U | 4U | (6U << 6), 7, 7, 7, 7, 7, 10, 10};
-    Check(ViewText(URLLastPathComponent(&mailto)) == "mailto:abc");
+    Require(ViewText(URLLastPathComponent(&mailto)) == "mailto:abc");
     auto wide = Create16(u"http://h/a/b", 12);
     URL wideUrl{wide.impl, httpBits(4, 0), 7, 7, 7, 8, 11, 12, 12};
     auto wideResult = URLLastPathComponent(&wideUrl);
-    Check(!wideResult.is8Bit && wideResult.length == 1 && ViewText(wideResult) == "b");
+    Require(!wideResult.is8Bit && wideResult.length == 1 && ViewText(wideResult) == "b");
     auto port = FromUTF8Z(U8("http://h:80/dir/file.txt?q"));
     URL withPort{port.impl, httpBits(4, 3), 7, 7, 7, 8, 16, 24, 26};
-    Check(ViewText(URLLastPathComponent(&withPort)) == "file.txt");
+    Require(ViewText(URLLastPathComponent(&withPort)) == "file.txt");
     auto slashDot = FromUTF8Z(U8("foo:/.//a"));
     URL dotted{slashDot.impl, 1U | (3U << 6), 4, 4, 4, 4, 8, 9, 9};
-    Check(ViewText(URLLastPathComponent(&dotted)) == "a");
+    Require(ViewText(URLLastPathComponent(&dotted)) == "a");
     auto beforePath = FromUTF8Z(U8("foo:/.a"));
     URL guarded{beforePath.impl, 1U | (3U << 6), 4, 4, 4, 4, 5, 7, 7};
-    Check(!URLLastPathComponent(&guarded).data);
+    Require(!URLLastPathComponent(&guarded).data);
     auto emptyComponent = FromUTF8Z(U8("http://h//"));
     URL doubled{emptyComponent.impl, httpBits(4, 0), 7, 7, 7, 8, 10, 10, 10};
     auto emptyResult = URLLastPathComponent(&doubled);
-    Check(emptyResult.data && emptyResult.length == 0);
+    Require(emptyResult.data && emptyResult.length == 0);
     URL absent{};
-    Check(!URLLastPathComponent(&absent).data);
+    Require(!URLLastPathComponent(&absent).data);
     URL pastEnd = url;
     pastEnd.pathEnd = 50;
-    Throws([&] { URLLastPathComponent(&pastEnd); });
-    Throws([&] { URLLastPathComponent(nullptr); });
+    ExpectErr([&] { URLLastPathComponent(&pastEnd); });
+    ExpectErr([&] { URLLastPathComponent(nullptr); });
 
     auto full = FromUTF8Z(U8("https://u:p@h:80/a?q#f"));
     URL credentialed{full.impl, httpBits(5, 3), 8, 9, 11, 13, 17, 18, 20};
     auto stripped = URLStrippedForReferrer(&credentialed);
-    Check(Bytes(UTF8(&stripped, 1)) == "https://h:80/a?q" && stripped.impl != full.impl && stripped.impl->length == 16);
+    Require(Bytes(UTF8(&stripped, 1)) == "https://h:80/a?q" && stripped.impl != full.impl && stripped.impl->length == 16);
     auto plain = FromUTF8Z(U8("http://h/a?q"));
     URL untouched{plain.impl, httpBits(4, 0), 7, 7, 7, 8, 9, 10, 12};
     auto same = URLStrippedForReferrer(&untouched);
-    Check(same.impl == plain.impl && plain.impl->refCount == 4);
+    Require(same.impl == plain.impl && plain.impl->refCount == 4);
     auto fragment = FromUTF8Z(U8("http://h/a#f"));
     URL fragmentOnly{fragment.impl, httpBits(4, 0), 7, 7, 7, 8, 9, 10, 10};
     auto noFragment = URLStrippedForReferrer(&fragmentOnly);
-    Check(Bytes(UTF8(&noFragment, 1)) == "http://h/a");
+    Require(Bytes(UTF8(&noFragment, 1)) == "http://h/a");
     auto userOnly = FromUTF8Z(U8("http://u@h/a"));
     URL userUrl{userOnly.impl, httpBits(4, 0), 7, 8, 8, 10, 11, 12, 12};
     auto noUser = URLStrippedForReferrer(&userUrl);
-    Check(Bytes(UTF8(&noUser, 1)) == "http://h/a");
+    Require(Bytes(UTF8(&noUser, 1)) == "http://h/a");
     auto wideFull = Create16(u"http://u@h/a#f", 14);
     URL wideCredentialed{wideFull.impl, httpBits(4, 0), 7, 8, 8, 10, 11, 12, 12};
     auto wideStripped = URLStrippedForReferrer(&wideCredentialed);
-    Check(!(wideStripped.impl->hashAndFlags & 4) && wideStripped.impl->length == 10 && Bytes(UTF8(&wideStripped, 1)) == "http://h/a");
+    Require(!(wideStripped.impl->hashAndFlags & 4) && wideStripped.impl->length == 10 && Bytes(UTF8(&wideStripped, 1)) == "http://h/a");
     URL invalid{plain.impl, 0, 0, 0, 0, 0, 0, 0, 0};
     {
         const unsigned before = plain.impl->refCount;
         auto kept = URLStrippedForReferrer(&invalid);
-        Check(kept.impl == plain.impl && plain.impl->refCount == before + 2);
+        Require(kept.impl == plain.impl && plain.impl->refCount == before + 2);
     }
-    Check(plain.impl->refCount == 4);
+    Require(plain.impl->refCount == 4);
     URL badBounds = untouched;
     badBounds.queryEnd = 99;
-    Throws([&] { URLStrippedForReferrer(&badBounds); });
+    ExpectErr([&] { URLStrippedForReferrer(&badBounds); });
     auto passwordOnly = FromUTF8Z(U8("http://:p@h/"));
     URL passwordUrl{passwordOnly.impl, httpBits(4, 0), 7, 7, 9, 11, 12, 12, 12};
     auto noPassword = URLStrippedForReferrer(&passwordUrl);
-    Check(Bytes(UTF8(&noPassword, 1)) == "http://h/");
+    Require(Bytes(UTF8(&noPassword, 1)) == "http://h/");
     URL reversedCredentials = userUrl;
     reversedCredentials.userStart = 200;
-    Throws([&] { URLStrippedForReferrer(&reversedCredentials); });
+    ExpectErr([&] { URLStrippedForReferrer(&reversedCredentials); });
     auto hostless = FromUTF8Z(U8("mailto:@x"));
     URL atSign{hostless.impl, 1U | 4U | (6U << 6), 7, 7, 7, 7, 7, 9, 9};
-    Check(URLStrippedForReferrer(&atSign).impl == hostless.impl);
+    Require(URLStrippedForReferrer(&atSign).impl == hostless.impl);
     auto allCredentials = FromUTF8Z(U8("ab"));
     URL consumed{allCredentials.impl, 1U, 0, 0, 0, 0, 0, 0, 0};
     auto vanished = URLStrippedForReferrer(&consumed);
-    Check(vanished.impl && vanished.impl->length == 0 && vanished.impl != allCredentials.impl);
+    Require(vanished.impl && vanished.impl->length == 0 && vanished.impl != allCredentials.impl);
     URL queryBeforeCredentials = userUrl;
     queryBeforeCredentials.queryEnd = 8;
-    Throws([&] { URLStrippedForReferrer(&queryBeforeCredentials); });
-    Throws([&] { URLStrippedForReferrer(nullptr); });
+    ExpectErr([&] { URLStrippedForReferrer(&queryBeforeCredentials); });
+    ExpectErr([&] { URLStrippedForReferrer(nullptr); });
 }
 
 }  // namespace Wtf2Tests

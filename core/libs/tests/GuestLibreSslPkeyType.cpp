@@ -1,6 +1,7 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <climits>
 #include <cstdint>
 #include <cstring>
@@ -10,22 +11,6 @@
 #include <initializer_list>
 #include <source_location>
 #include <stdexcept>
-
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL EVP_PKEY check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> static void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
-    try { action(); } catch (const std::exception&) { return; }
-    Require(false, location);
-}
-
-template<typename TAction> static void RequireInvalidArgument(TAction action, std::source_location location = std::source_location::current()) {
-    try { action(); } catch (const std::invalid_argument&) { return; }
-    Require(false, location);
-}
 
 static std::uint64_t ErrorCode(int library, int function, int reason) {
     return (static_cast<std::uint64_t>(library) << 24) |
@@ -41,7 +26,7 @@ static void TestGet1EcKey() {
     ERR_clear_error_nid_postfix();
     LibreSslPutError_nid_no_patch(1, 2, 3);
     LibreSslPutError_nid_no_patch(4, 5, 6);
-    RequireThrows([] { EVP_PKEY_get1_EC_KEY_nid_postfix(nullptr); });
+    ExpectErr([] { EVP_PKEY_get1_EC_KEY_nid_postfix(nullptr); });
     Require(ERR_peek_error_nid_postfix() == ErrorCode(1, 2, 3));
     int ecType = EcKeyType;
     unsigned char before[sizeof(ecType)];
@@ -58,7 +43,7 @@ static void TestGet1EcKey() {
 
 int main() {
     TestGet1EcKey();
-    RequireInvalidArgument([] { EVP_PKEY_id_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([] { EVP_PKEY_id_nid_postfix(nullptr); });
     Require(EVP_PKEY_type_nid_postfix(6) == 6);
     Require(EVP_PKEY_type_nid_postfix(19) == 6);
     Require(EVP_PKEY_type_nid_postfix(408) == 408);

@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -12,8 +13,6 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 #ifdef _WIN32
 static void CheckDescription(const std::wstring& expected) {

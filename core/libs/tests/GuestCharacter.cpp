@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cctype>
 #include <clocale>
@@ -7,7 +8,6 @@
 #include <cstdlib>
 #include <cstring>
 
-static void Require(bool value) { if (!value) std::abort(); }
 static int ConsoleClass(int c) {
     if (c < 0 || c > 255) return 0;
     int bits = 0;

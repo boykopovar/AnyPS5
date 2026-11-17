@@ -1,4 +1,5 @@
 #include "prx/libc/include/WindowsMappings.hpp"
+#include "Testing.hpp"
 
 #include <chrono>
 #include <cstdio>
@@ -13,10 +14,6 @@ using GuestArena::WindowsMappings;
 
 constexpr std::size_t PieceBytes = 16384;
 constexpr std::size_t PageBytes = 4096;
-
-void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 std::set<std::uintptr_t> WatchedPages(std::uintptr_t base, std::size_t bytes, std::size_t granule) {
     std::set<std::uintptr_t> written;

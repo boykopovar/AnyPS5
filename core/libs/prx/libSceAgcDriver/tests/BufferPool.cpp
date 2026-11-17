@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "AllocationFailure.hpp"
 #include "SlabReturn.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <algorithm>
 #include <chrono>
@@ -32,13 +33,7 @@ namespace {
 
 thread_local int failAfterMap = -1;
 
-int failures = 0;
 
-void Expect(bool condition, const std::string& what) {
-    if (condition) return;
-    std::fprintf(stderr, "FAIL: %s\n", what.c_str());
-    ++failures;
-}
 
 constexpr std::size_t MiB = std::size_t{1} << 20u;
 constexpr VkMemoryPropertyFlags HostVisible = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
@@ -1507,7 +1502,7 @@ void MemoryAccountingBufferReuse() {
         context.bufferPool.reset();
         Expect(MemoryAccounting::Read(context.device).allocations.empty() && mock.liveBytes == 0 && mock.liveBuffers.empty(), "buffer reuse cleanup left a Vulkan or ledger allocation");
     }
-    if (failures == 0) std::puts("pooled buffer category changes and exact-size rebinding passed");
+    if (Failures() == 0) std::puts("pooled buffer category changes and exact-size rebinding passed");
 }
 
 void MemoryAccountingIdleReclaim() {
@@ -1545,7 +1540,7 @@ void MemoryAccountingIdleReclaim() {
     }
     context.bufferPool.reset();
     Expect(MemoryAccounting::Read(context.device).allocations.empty() && mock.liveBytes == 0, "reclaim fixture cleanup left accounted memory");
-    if (failures == 0) std::puts("idle device reclaim allocation accounting passed");
+    if (Failures() == 0) std::puts("idle device reclaim allocation accounting passed");
 }
 
 void MemoryAccountingBudgetCap(bool floor = false) {
@@ -1592,7 +1587,7 @@ void MemoryAccountingBudgetSnapshot() {
     reported.heapUsage[0] = 300 * MiB;
     const auto floor = CalculateStorageTextureBudget(small, &reported, 0, 0);
     Expect(floor.heap && *floor.heap == 0 && floor.reserved == 332 * MiB && floor.available == 0 && floor.ceiling == 512 * MiB && floor.selectedBudget == 512 * MiB, "a heap over its budget lost saturating availability or the shared ceiling and selection floor");
-    if (failures == 0) std::puts("storage budget snapshots preserve pressure, fallbacks and the floor");
+    if (Failures() == 0) std::puts("storage budget snapshots preserve pressure, fallbacks and the floor");
 }
 
 void TableFill() {
@@ -1654,19 +1649,19 @@ int main(int argc, char** argv) {
             MemoryAccountingChecks();
             MemoryAccountingBufferReuse();
             MemoryAccountingIdleReclaim();
-            return failures == 0 ? 0 : 1;
+            return Failures() == 0 ? 0 : 1;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--memory-accounting-budget-cap") {
             MemoryAccountingBudgetCap();
-            return failures == 0 ? 0 : 1;
+            return Failures() == 0 ? 0 : 1;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--memory-accounting-budget-floor") {
             MemoryAccountingBudgetCap(true);
-            return failures == 0 ? 0 : 1;
+            return Failures() == 0 ? 0 : 1;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--memory-accounting-budget-snapshot") {
             MemoryAccountingBudgetSnapshot();
-            return failures == 0 ? 0 : 1;
+            return Failures() == 0 ? 0 : 1;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--small-device-retention") {
             SmallDeviceRetention();
@@ -1674,14 +1669,14 @@ int main(int argc, char** argv) {
                 IdleDeviceReclaim();
                 IdleReclaimPreservesWorkingSet();
             }
-            return failures == 0 ? 0 : 1;
+            return Failures() == 0 ? 0 : 1;
         }
         if (argc == 2) {
             const bool host = std::strcmp(argv[1], "--slab-return-host") == 0;
             Expect(host || std::strcmp(argv[1], "--slab-return-device") == 0, "unknown slab return test mode");
             AgcDriver::Tests::SlabReturnWithoutAllocation(mockContext(), host ? 1u : 0u);
             Expect(mock.liveBytes == 0, "slab return test leaked memory");
-            return failures == 0 ? 0 : 1;
+            return Failures() == 0 ? 0 : 1;
         }
         AgcDriver::Tests::SlabReturnWithoutAllocation(mockContext(), 0);
         AgcDriver::Tests::SlabReturnWithoutAllocation(mockContext(), 1);
@@ -1733,7 +1728,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());
         return 1;
     }
-    if (failures != 0) return 1;
+    if (Failures() != 0) return 1;
     std::puts("buffer pool tests passed");
     return 0;
 }

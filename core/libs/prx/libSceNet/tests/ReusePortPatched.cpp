@@ -1,4 +1,5 @@
 #include "prx/libSceNet/libSceNet.hpp"
+#include "Testing.hpp"
 #include <nid/NidCompute.hpp>
 #include <cstdint>
 #include <cstdio>
@@ -10,12 +11,6 @@
 #else
 #include <dlfcn.h>
 #endif
-
-static void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
 
 template<typename TFunction>
 static TFunction Function(void* module, const char* name) {

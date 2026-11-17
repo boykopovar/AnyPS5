@@ -3,6 +3,7 @@
 #include "prx/libSceFont/include/FontDriver.hpp"
 #include "prx/libc/include/General.hpp"
 #include "tests/FontFixture.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -34,14 +35,6 @@
 #ifdef __GLIBC__
 #include <malloc.h>
 #endif
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "Font check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static void CheckAttributeGuestMemory(FontHandle font) {
 #ifdef _WIN32

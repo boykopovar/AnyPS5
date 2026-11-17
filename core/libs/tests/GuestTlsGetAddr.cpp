@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
@@ -58,12 +59,6 @@ Cell* ThreadCell() { return &Value; }
 
 }
 #endif
-
-namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
-
-}
 
 int main() {
     const auto index = CellIndex();

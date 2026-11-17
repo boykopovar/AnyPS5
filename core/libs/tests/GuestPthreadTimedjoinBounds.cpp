@@ -1,6 +1,7 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -15,10 +16,6 @@ static constexpr int GUEST_EDEADLK = 11;
 static constexpr int GUEST_EINVAL = 22;
 static constexpr int GUEST_EOPNOTSUPP = 45;
 static constexpr int GUEST_ETIMEDOUT = 60;
-
-static void Require(bool value) {
-    if (!value) std::abort();
-}
 
 static KernelTimespec FutureDeadline(std::int64_t seconds) {
     KernelTimespec now{};

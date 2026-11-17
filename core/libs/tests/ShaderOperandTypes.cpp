@@ -2,6 +2,7 @@
 #include "IntermediateRepresentation/IrProgram.hpp"
 #include "Translation/TranslationContext.hpp"
 #include "RdnaDecoder/RdnaVectorOpDecoder.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -10,12 +11,6 @@
 #include <vector>
 
 using namespace ShaderRecompiler;
-
-static void Require(bool condition, const char* message) {
-    if (!condition) {
-        throw std::runtime_error(message);
-    }
-}
 
 static void CheckSelectTypes() {
     IrProgram program;

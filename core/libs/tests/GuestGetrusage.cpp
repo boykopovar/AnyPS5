@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <chrono>
 #include <cstdint>
 #include <cstring>
@@ -11,7 +12,6 @@ struct Timeval {
     std::int64_t tv_usec;
 };
 
-static void Require(bool value) { if (!value) std::abort(); }
 static std::int64_t CpuMicros(int who) {
     GuestResourceUsage usage{};
     *__error_nid_postfix() = 77;

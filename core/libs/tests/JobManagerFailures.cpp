@@ -1,5 +1,6 @@
 #include "prx/libSceJobManager/libSceJobManager.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <condition_variable>
 #include <cstdint>
 #include <cstdio>
@@ -18,11 +19,8 @@ int threads = 0;
 int queues = 0;
 int registrations = 0;
 
-bool Fail() { return ++calls == failure; }
+bool ShouldFail() { return ++calls == failure; }
 
-void Check(bool condition) {
-    if (!condition) std::abort();
-}
 
 struct EventQueue {
     std::mutex lock;
@@ -35,7 +33,7 @@ struct EventQueue {
 extern "C" {
 
 int APS5_VABI scePthreadAttrInit(PthreadAttr* value) {
-    if (Fail()) return 12;
+    if (ShouldFail()) return 12;
     *value = reinterpret_cast<PthreadAttr>(new int);
     ++attributes;
     return 0;
@@ -48,13 +46,13 @@ int APS5_VABI scePthreadAttrDestroy(PthreadAttr* value) {
     return 0;
 }
 
-int APS5_VABI scePthreadAttrSetinheritsched(PthreadAttr*, int) { return Fail() ? 22 : 0; }
-int APS5_VABI scePthreadAttrSetschedparam(PthreadAttr*, const KernelSchedParam*) { return Fail() ? 22 : 0; }
-int APS5_VABI scePthreadAttrSetstacksize(PthreadAttr*, std::size_t) { return Fail() ? 22 : 0; }
-int APS5_VABI scePthreadAttrSetaffinity(PthreadAttr*, KernelCpumask) { return Fail() ? 22 : 0; }
+int APS5_VABI scePthreadAttrSetinheritsched(PthreadAttr*, int) { return ShouldFail() ? 22 : 0; }
+int APS5_VABI scePthreadAttrSetschedparam(PthreadAttr*, const KernelSchedParam*) { return ShouldFail() ? 22 : 0; }
+int APS5_VABI scePthreadAttrSetstacksize(PthreadAttr*, std::size_t) { return ShouldFail() ? 22 : 0; }
+int APS5_VABI scePthreadAttrSetaffinity(PthreadAttr*, KernelCpumask) { return ShouldFail() ? 22 : 0; }
 
 int APS5_VABI scePthreadCreate(Pthread* value, const PthreadAttr*, PthreadEntry entry, void* argument, const char*) {
-    if (Fail()) return 11;
+    if (ShouldFail()) return 11;
     *value = reinterpret_cast<Pthread>(new std::thread([=] { entry(argument); }));
     ++threads;
     return 0;
@@ -69,7 +67,7 @@ int APS5_VABI scePthreadJoin(Pthread value, void**) {
 }
 
 int APS5_VABI sceKernelCreateEqueue(KernelEqueue* value, const char*) {
-    if (Fail()) return 12;
+    if (ShouldFail()) return 12;
     *value = reinterpret_cast<KernelEqueue>(new EventQueue);
     ++queues;
     return 0;
@@ -105,7 +103,7 @@ int APS5_VABI sceKernelGetEventFilter(const KernelEvent* event) { return event->
 std::uintptr_t APS5_VABI sceKernelGetEventId(const KernelEvent* event) { return event->ident; }
 
 int APS5_VABI sceAgcDriverAddEqEvent(KernelEqueue, int, void*) {
-    if (Fail()) return 22;
+    if (ShouldFail()) return 22;
     ++registrations;
     return 0;
 }
@@ -129,27 +127,27 @@ int main() {
             calls = 0;
             bool threw = false;
             try {
-                Check(_ZN3sce3Job10JobManager10initializeEPvmjjjmPKNS1_12ConfigParamsE(manager, memory, size, 3, 2, computeSequences, computeSequences ? 5 : 0, nullptr) == 0);
+                Require(_ZN3sce3Job10JobManager10initializeEPvmjjjmPKNS1_12ConfigParamsE(manager, memory, size, 3, 2, computeSequences, computeSequences ? 5 : 0, nullptr) == 0);
             } catch (const std::runtime_error&) {
                 threw = true;
                 ++failures;
             }
             if (threw) {
-                Check(_ZN3sce3Job10JobManager27getSequenceFactoryInterfaceENS1_8PriorityE(manager, 0) == nullptr);
-                Check(_ZN3sce3Job10JobManager8shutdownEv(manager) == static_cast<int>(0x81581010u));
+                Require(_ZN3sce3Job10JobManager27getSequenceFactoryInterfaceENS1_8PriorityE(manager, 0) == nullptr);
+                Require(_ZN3sce3Job10JobManager8shutdownEv(manager) == static_cast<int>(0x81581010u));
             } else {
-                Check(_ZN3sce3Job10JobManager8shutdownEv(manager) == 0);
+                Require(_ZN3sce3Job10JobManager8shutdownEv(manager) == 0);
             }
-            Check(attributes == 0 && threads == 0 && queues == 0 && registrations == 0);
+            Require(attributes == 0 && threads == 0 && queues == 0 && registrations == 0);
             if (!threw) break;
             const int injected = failure;
             failure = 0;
-            Check(_ZN3sce3Job10JobManager10initializeEPvmjjjmPKNS1_12ConfigParamsE(manager, memory, size, 3, 2, computeSequences, computeSequences ? 5 : 0, nullptr) == 0);
-            Check(_ZN3sce3Job10JobManager8shutdownEv(manager) == 0);
-            Check(attributes == 0 && threads == 0 && queues == 0 && registrations == 0);
+            Require(_ZN3sce3Job10JobManager10initializeEPvmjjjmPKNS1_12ConfigParamsE(manager, memory, size, 3, 2, computeSequences, computeSequences ? 5 : 0, nullptr) == 0);
+            Require(_ZN3sce3Job10JobManager8shutdownEv(manager) == 0);
+            Require(attributes == 0 && threads == 0 && queues == 0 && registrations == 0);
             failure = injected;
         }
-        Check(failures == (computeSequences ? 27 : 18));
+        Require(failures == (computeSequences ? 27 : 18));
         std::printf("initialization failures recovered: %d\n", failures);
     }
     ::operator delete(memory, std::align_val_t{256});

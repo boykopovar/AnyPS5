@@ -1,6 +1,7 @@
 #include "prx/libScePosixForWebKit/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libScePosixForWebKit/GuestResolver.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -8,13 +9,6 @@
 #include <cstring>
 #include <source_location>
 #include <thread>
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "Service database check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 bool NetworkPort(const GuestResolver::ServiceEntry* entry, std::uint16_t port) {
     unsigned char bytes[4];

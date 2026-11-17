@@ -1,4 +1,5 @@
 #include "prx/libharfbuzz/libharfbuzz.hpp"
+#include "Testing.hpp"
 
 #include <hb.h>
 
@@ -17,13 +18,6 @@
 #else
 #include <dlfcn.h>
 #endif
-
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "HarfBuzz font check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 template <typename TFunction, typename TModule>
 static TFunction Import(TModule module, const char* name) {

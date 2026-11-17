@@ -1,4 +1,5 @@
 #include "prx/libcairo/include/Path.hpp"
+#include "Testing.hpp"
 
 #include <CairoBackend.h>
 
@@ -31,25 +32,18 @@ struct Case {
     const char* text;
 };
 
-void Check(bool result, const char* message) {
-    if (!result) {
-        std::fprintf(stderr, "Cairo toy-text comparison failed: %s\n", message);
-        std::abort();
-    }
-}
-
 void Compare(const Case& test) {
     constexpr int Width = 256;
     constexpr int Height = 96;
     CairoSurface* guestSurface = cairo_image_surface_create(0, Width, Height);
     cairo_surface_t* nativeSurface = aps5_cairo_image_surface_create(CAIRO_FORMAT_ARGB32, Width, Height);
-    Check(guestSurface != nullptr && nativeSurface != nullptr, "surfaces allocated");
-    Check(cairo_surface_status(guestSurface) == CAIRO_STATUS_SUCCESS &&
+    Require(guestSurface != nullptr && nativeSurface != nullptr, "surfaces allocated");
+    Require(cairo_surface_status(guestSurface) == CAIRO_STATUS_SUCCESS &&
           aps5_cairo_surface_status(nativeSurface) == CAIRO_STATUS_SUCCESS, "surface creation");
 
     CairoContext* guest = cairo_create(guestSurface);
     cairo_t* native = aps5_cairo_create(nativeSurface);
-    Check(guest != nullptr && native != nullptr, "contexts allocated");
+    Require(guest != nullptr && native != nullptr, "contexts allocated");
 
     cairo_select_font_face(guest, test.family, test.slant, test.weight);
     aps5_cairo_select_font_face(native, test.family, static_cast<cairo_font_slant_t>(test.slant),
@@ -65,26 +59,26 @@ void Compare(const Case& test) {
     double xGuest = -1000, yGuest = -1000, xNative = -2000, yNative = -2000;
     cairo_get_current_point(guest, &xGuest, &yGuest);
     aps5_cairo_get_current_point(native, &xNative, &yNative);
-    Check(std::abs(xGuest - xNative) < 1e-10 && std::abs(yGuest - yNative) < 1e-10,
+    Require(std::abs(xGuest - xNative) < 1e-10 && std::abs(yGuest - yNative) < 1e-10,
           "text advances current point exactly as native Cairo");
-    Check(aps5_cairo_status(native) == (test.family ? CAIRO_STATUS_SUCCESS : CAIRO_STATUS_NULL_POINTER),
+    Require(aps5_cairo_status(native) == (test.family ? CAIRO_STATUS_SUCCESS : CAIRO_STATUS_NULL_POINTER),
           "native font-family status");
     cairo_surface_flush(guestSurface);
     aps5_cairo_surface_flush(nativeSurface);
 
     const int guestStride = cairo_image_surface_get_stride(guestSurface);
     const int nativeStride = aps5_cairo_image_surface_get_stride(nativeSurface);
-    Check(guestStride == nativeStride && guestStride == Width * 4, "image stride");
+    Require(guestStride == nativeStride && guestStride == Width * 4, "image stride");
     const std::size_t bytes = static_cast<std::size_t>(guestStride) * Height;
     const auto* guestPixels = cairo_image_surface_get_data(guestSurface);
     const auto* nativePixels = aps5_cairo_image_surface_get_data(nativeSurface);
-    Check(guestPixels && nativePixels, "image data");
-    Check(std::memcmp(guestPixels, nativePixels, bytes) == 0,
+    Require(guestPixels && nativePixels, "image data");
+    Require(std::memcmp(guestPixels, nativePixels, bytes) == 0,
           "all raster pixels match independently executed pinned Cairo");
     if (test.family && test.text && test.text[0] != '\0' && test.size >= 12) {
         std::size_t nonzero = 0;
         for (std::size_t index = 0; index < bytes; ++index) nonzero += guestPixels[index] != 0;
-        Check(nonzero > 0, "nonempty text modifies the image");
+        Require(nonzero > 0, "nonempty text modifies the image");
     }
 
     cairo_destroy(guest);
@@ -96,7 +90,7 @@ void Compare(const Case& test) {
 void CheckRejectedGuestStrings() {
     CairoSurface* surface = cairo_image_surface_create(0, 160, 64);
     CairoContext* context = cairo_create(surface);
-    Check(context != nullptr, "context for invalid guest strings");
+    Require(context != nullptr, "context for invalid guest strings");
     const auto invalid = reinterpret_cast<const char*>(std::uintptr_t{1});
     const auto rejects = [](auto callback) {
         errno = EDOM;
@@ -106,8 +100,8 @@ void CheckRejectedGuestStrings() {
         } catch (const std::runtime_error&) {
             rejected = true;
         }
-        Check(rejected, "unreadable guest string rejected without host fault");
-        Check(errno == EDOM, "invalid string does not alter guest errno");
+        Require(rejected, "unreadable guest string rejected without host fault");
+        Require(errno == EDOM, "invalid string does not alter guest errno");
     };
     rejects([&] { cairo_select_font_face(context, invalid, 0, 0); });
     rejects([&] { cairo_show_text(context, invalid); });
@@ -124,7 +118,7 @@ void CheckRejectedGuestStrings() {
     const auto* pixels = cairo_image_surface_get_data(surface);
     std::size_t nonzero = 0;
     for (std::size_t i = 0; i < 160u * 64u * 4u; ++i) nonzero += pixels[i] != 0;
-    Check(nonzero != 0, "failed guest strings do not poison valid rendering");
+    Require(nonzero != 0, "failed guest strings do not poison valid rendering");
     cairo_destroy(context);
     cairo_surface_destroy(surface);
 }

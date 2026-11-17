@@ -6,6 +6,7 @@
 #include "prx/libSceVideoOut/include/DisplayWindow.hpp"
 #include "prx/libScePad/include/Pad.hpp"
 #include "prx/libScePad/include/PadState.hpp"
+#include "Testing.hpp"
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -19,12 +20,6 @@
 namespace {
 
 using Clock = std::chrono::steady_clock;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "pad_identify_wiring: %s\n", message);
-    std::exit(1);
-}
 
 void SetIdentifyMode(const char* value) {
 #ifdef _WIN32

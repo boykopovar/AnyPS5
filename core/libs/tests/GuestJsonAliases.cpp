@@ -1,5 +1,6 @@
 #include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <bit>
 #include <cstddef>
@@ -17,9 +18,6 @@ using AliasFreeCallback = void (APS5_VABI*)(void*, void*);
 using AliasNotifyCallback = void (APS5_VABI*)(int, std::size_t, void*);
 struct Callbacks { AliasAllocateCallback allocate; AliasFreeCallback free; AliasNotifyCallback notify; };
 static_assert(sizeof(Value) == 32 && sizeof(Parameter) == 24 && sizeof(Pair) == 48);
-static void Require(bool valid, const char* message) {
-    if (!valid) { std::fprintf(stderr, "%s\n", message); std::abort(); }
-}
 struct AliasTrace {
     std::map<void*, std::size_t> live;
     int budget = -1;

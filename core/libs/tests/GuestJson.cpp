@@ -1,6 +1,7 @@
 #include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "JsonTestAllocator.hpp"
+#include "Testing.hpp"
 #include <bit>
 #include <cstddef>
 #include <clocale>
@@ -21,14 +22,6 @@ using SetNullAccessCallback = int (APS5_VABI*)(void*, NullAccessCallback, void*)
 
 extern "C" {
 }
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "Json check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 constexpr int JsonErrorParse = static_cast<int>(0x80848101);
 

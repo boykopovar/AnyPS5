@@ -1,6 +1,7 @@
 #include "prx/libSceNpTrophy/include/Api.hpp"
 #include <cerrno>
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cerrno>
@@ -30,13 +31,6 @@ constexpr int TitleConfNotInstalled = static_cast<int>(0x80551626u);
 constexpr int TrophyNotUnlocked = static_cast<int>(0x8055161au);
 constexpr int InvalidGroupId = static_cast<int>(0x8055160bu);
 constexpr int IconFileNotFound = static_cast<int>(0x80551614u);
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "NpTrophy: %s\n", message);
-        std::abort();
-    }
-}
 
 void PutBigEndian(std::vector<std::uint8_t>& bytes, std::size_t at, std::uint64_t value, int width) {
     for (int i = 0; i < width; ++i) bytes[at + i] = static_cast<std::uint8_t>(value >> (8 * (width - 1 - i)));

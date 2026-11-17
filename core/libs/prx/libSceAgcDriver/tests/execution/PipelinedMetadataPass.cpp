@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "Testing.hpp"
 #include "VulkanTestDevice.hpp"
 #include <algorithm>
 #include <array>
@@ -55,10 +56,6 @@ std::byte* const Memory = allocateMemory();
 const std::span<std::uint32_t, Width * Height> Surface{reinterpret_cast<std::uint32_t*>(Memory), Width * Height};
 const std::span<std::uint8_t, 4096> Cmask{reinterpret_cast<std::uint8_t*>(Memory + 4096), 4096};
 
-void check(bool condition, const std::string& what) {
-    if (!condition) throw std::runtime_error("pipelined metadata pass: " + what);
-}
-
 void setContext(std::vector<std::uint32_t>& words, std::uint32_t offset, std::uint32_t value) {
     words.insert(words.end(), {0xc0016900u, offset, value});
 }
@@ -102,7 +99,7 @@ void eliminate(std::vector<std::uint32_t>& words) {
 
 void submit(std::vector<std::uint32_t>& words) {
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
-    check(sceAgcDriverSubmitDcb(&packet) == 0, "submission failed");
+    Require(sceAgcDriverSubmitDcb(&packet) == 0, "submission failed");
     AgcDriverWaitIdle_nid_postfix();
 }
 
@@ -111,9 +108,9 @@ void expectEliminated(const std::string& what) {
         std::lock_guard lock(AgcDriver::GuestMemory::GpuMutex());
         AgcDriver::Graphics::StorageTexture::FlushPending(reinterpret_cast<std::uintptr_t>(Surface.data()), Surface.size_bytes(), nullptr, "test");
     }
-    for (std::size_t i = 0; i < Surface.size(); ++i) check(Surface[i] == Clear, what + ": texel " + std::to_string(i) + " holds " + std::to_string(Surface[i]));
+    for (std::size_t i = 0; i < Surface.size(); ++i) Require(Surface[i] == Clear, what + ": texel " + std::to_string(i) + " holds " + std::to_string(Surface[i]));
     const auto cmaskBytes = AgcDriver::Graphics::CmaskLayout(Width, Height).Bytes();
-    for (std::size_t i = 0; i < cmaskBytes; ++i) check(Cmask[i] == 0xffu, what + ": the CMASK was not left expanded");
+    for (std::size_t i = 0; i < cmaskBytes; ++i) Require(Cmask[i] == 0xffu, what + ": the CMASK was not left expanded");
 }
 
 }
@@ -158,7 +155,7 @@ int main() {
         eliminate(second);
         submit(second);
         releaser.join();
-        check(DrawPipeline::PipelinedMetadataPasses() == before + 1u, "the second eliminate was not ordered with the commits (" + std::to_string(DrawPipeline::PipelinedMetadataPasses() - before) + " pipelined)");
+        Require(DrawPipeline::PipelinedMetadataPasses() == before + 1u, "the second eliminate was not ordered with the commits (" + std::to_string(DrawPipeline::PipelinedMetadataPasses() - before) + " pipelined)");
         expectEliminated("the eliminate after the queued stores");
         {
             GuestAllocations::Mutation mutation;

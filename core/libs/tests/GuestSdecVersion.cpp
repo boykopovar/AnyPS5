@@ -1,6 +1,7 @@
 #include "prx/libSceVdecSavc/include/Api.hpp"
 #include "prx/libSceVdecSavc2/include/Api.hpp"
 #include "prx/libSceVdecShevc/include/Api.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -8,12 +9,6 @@
 #include <initializer_list>
 
 namespace {
-
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
 
 using GetVersion = void (APS5_VABI*)(std::uint32_t*);
 

@@ -4,6 +4,7 @@
 #include "prx/libSceLibreSsl/include/Ec.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -34,12 +35,6 @@ constexpr int Asn1RWrongTag = 168;
 constexpr int EvpRUnsupportedPrivateKeyAlgorithm = 118;
 constexpr int EvpRUnsupportedAlgorithm = 156;
 constexpr int X509RUnsupportedAlgorithm = 111;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "requirement failed at line %u\n", static_cast<unsigned>(location.line()));
-    std::abort();
-}
 
 std::vector<unsigned char> Hex(const char* text) {
     std::vector<unsigned char> bytes;

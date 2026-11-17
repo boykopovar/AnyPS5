@@ -1,6 +1,7 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -35,17 +36,6 @@ struct Algorithm {
     std::size_t digestSize;
     const char* expected[6];
 };
-
-static void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "failed: %s\n", what);
-    std::abort();
-}
-
-template<typename TAction> static void RequireThrows(TAction action, const char* what) {
-    try { action(); } catch (const std::exception&) { return; }
-    Require(false, what);
-}
 
 static std::string Hex(const unsigned char* data, std::size_t size) {
     static constexpr char digits[] = "0123456789abcdef";
@@ -134,7 +124,7 @@ static void TestDigestVerifyInitNullKey() {
     Require(ERR_get_error_nid_postfix() == 0x20fff043 && ERR_get_error_nid_postfix() == 0x03fff06c,
         "null key preserves queued error order");
     Require(ERR_get_error_nid_postfix() == 0, "null key adds no queued error");
-    RequireThrows([] { EVP_DigestVerifyInit_nid_postfix(nullptr, nullptr, nullptr, nullptr, nullptr); }, "null digest context");
+    ExpectErr([] { EVP_DigestVerifyInit_nid_postfix(nullptr, nullptr, nullptr, nullptr, nullptr); }, "null digest context");
 }
 
 int main() {
@@ -218,9 +208,9 @@ int main() {
         Require(algorithm.final(digest, context) == 1 && algorithm.final(copyDigest, copy) == 1, "final of a copied context");
         Require(Hex(digest, algorithm.digestSize) == algorithm.expected[1] && !std::memcmp(digest, copyDigest, sizeof(digest)), "copied context digest");
         if (!wide) Require(num(context) == 0, "final clears the buffered count");
-        RequireThrows([&] { algorithm.init(nullptr); }, "null context");
-        RequireThrows([&] { algorithm.update(context, nullptr, 1); }, "null data");
-        if (!wide) RequireThrows([&] { algorithm.final(nullptr, context); }, "null digest");
+        ExpectErr([&] { algorithm.init(nullptr); }, "null context");
+        ExpectErr([&] { algorithm.update(context, nullptr, 1); }, "null data");
+        if (!wide) ExpectErr([&] { algorithm.final(nullptr, context); }, "null digest");
     }
 
     alignas(16) unsigned char context[256] {};
@@ -247,7 +237,7 @@ int main() {
 
     length = 64;
     std::memcpy(context + 104, &length, 4);
-    RequireThrows([&] { SHA256_Update_nid_postfix(reinterpret_cast<Sha256Context*>(context), "a", 1); }, "corrupt buffered count");
+    ExpectErr([&] { SHA256_Update_nid_postfix(reinterpret_cast<Sha256Context*>(context), "a", 1); }, "corrupt buffered count");
 
     const auto* abc = reinterpret_cast<const unsigned char*>("abc");
     Require(SHA256_nid_postfix(abc, 3, digest) == digest && Hex(digest, 32) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "SHA256 one-shot");

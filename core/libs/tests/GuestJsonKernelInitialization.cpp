@@ -1,5 +1,6 @@
 #include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -13,9 +14,6 @@
 using namespace SceJson2;
 
 struct Parameter { void* allocator; void* context; std::size_t bufferSize; std::int32_t mode; std::uint32_t reserved[3]; };
-static void Require(bool condition, const char* message) {
-    if (!condition) { std::fprintf(stderr, "%s\n", message); std::abort(); }
-}
 static std::uint32_t Sdk = 0x06000000;
 extern "C" const void* ApplicationProcessParameters_nid_no_patch() {
     static std::uint32_t words[]{0, 0, 0, 0, 0};

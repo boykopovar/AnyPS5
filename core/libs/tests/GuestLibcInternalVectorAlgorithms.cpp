@@ -1,5 +1,6 @@
 #include "prx/libSceLibcInternal/include/VectorAlgorithms.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <bit>
 #include <cfloat>
@@ -17,12 +18,6 @@
 #include <xmmintrin.h>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "libc internal vector algorithms: %s\n", message);
-    std::abort();
-}
 
 template <typename Function>
 bool Throws(Function function) {

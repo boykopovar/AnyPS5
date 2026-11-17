@@ -1,5 +1,6 @@
 #include "prx/libSceSdma/libSceSdma.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -16,10 +17,6 @@ constexpr int InvalidArgument = static_cast<int>(0x80990005);
 constexpr int Busy = static_cast<int>(0x80990006);
 constexpr int RingFull = static_cast<int>(0x80990064);
 constexpr int FencePending = static_cast<int>(0x80990065);
-
-void Require(bool value) {
-    if (!value) std::abort();
-}
 
 struct Engine {
     std::vector<std::uint8_t> buffer;

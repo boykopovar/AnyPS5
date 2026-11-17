@@ -1,4 +1,5 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -11,21 +12,6 @@ namespace {
 using NKWebKit::WebCoreAbi::URLDecomposition;
 using NKWebKit::WtfAbi::String;
 using NKWebKit::WtfAbi::URL;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "URLDecomposition check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> void RequireInvalidArgument(TAction action, std::source_location location = std::source_location::current()) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, location);
-}
 
 struct FakeDecomposition {
     URLDecomposition base;
@@ -151,8 +137,8 @@ void TestNullObjects() {
     for (auto getter : {_ZNK7WebCore16URLDecomposition8protocolEv, _ZNK7WebCore16URLDecomposition4hostEv, _ZNK7WebCore16URLDecomposition8hostnameEv,
              _ZNK7WebCore16URLDecomposition4portEv, _ZNK7WebCore16URLDecomposition8pathnameEv, _ZNK7WebCore16URLDecomposition6searchEv,
              _ZNK7WebCore16URLDecomposition4hashEv}) {
-        RequireInvalidArgument([&] { getter(nullptr); });
-        RequireInvalidArgument([&] { getter(&noVtable); });
+        ExpectErr<std::invalid_argument>([&] { getter(nullptr); });
+        ExpectErr<std::invalid_argument>([&] { getter(&noVtable); });
     }
 }
 

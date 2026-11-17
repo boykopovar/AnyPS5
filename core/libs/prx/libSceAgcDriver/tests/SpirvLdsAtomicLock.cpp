@@ -1,4 +1,5 @@
 #include "Recompiler.hpp"
+#include "Testing.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <array>
@@ -47,10 +48,6 @@ struct Usage {
     bool fenceBetweenLock = false;
     bool releaseWithoutReleaseSemantics = false;
 };
-
-void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 std::vector<std::uint32_t> RecompileProgram(std::span<const std::uint32_t> code, bool ldsLockFences) {
     const std::array<std::uint32_t, 7> capabilities{spv::CapabilityShader, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle, spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess};

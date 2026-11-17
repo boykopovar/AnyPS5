@@ -4,6 +4,7 @@
 #include <windows.h>
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -14,13 +15,6 @@
 #include <fstream>
 #include <random>
 #include <string>
-
-static void Require(bool value, const char* message) {
-    if (!value) {
-        std::fprintf(stderr, "Stream buffer host write: %s\n", message);
-        std::exit(1);
-    }
-}
 
 static DWORD Protection(const void* address) {
     MEMORY_BASIC_INFORMATION information{};

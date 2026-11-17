@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <windows.h>
 #include <array>
 #include <atomic>
@@ -11,8 +12,6 @@ static constexpr int SIGUSR1 = 30;
 static constexpr int SCE_OK = 0;
 static constexpr int Rounds = 100;
 static constexpr std::size_t Threads = 32;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static std::atomic<int> handled{0};
 static std::atomic<int> waiting{0};

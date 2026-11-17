@@ -2,6 +2,7 @@
 #include "prx/libc/include/General.hpp"
 #include "SceTypes.hpp"
 #include "ProcessParametersFixture.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <chrono>
 #include <cerrno>
@@ -17,8 +18,6 @@
 #include <string>
 
 namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
 
 template <typename TException = std::logic_error, typename TAction>
 bool Throws(TAction action) {

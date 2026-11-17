@@ -3,6 +3,7 @@
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceAgc/Shader/include/ShaderConstants.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <algorithm>
@@ -21,16 +22,12 @@ std::size_t preparedCount = 0;
 unsigned mappings = 0;
 unsigned links = 0;
 
-void check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
-
 template <typename TAction>
 void expectFailure(TAction action) {
     try {
         action();
     } catch (const std::exception& error) {
-        check(error.what()[0] != '\0', "empty exception message");
+        Require(error.what()[0] != '\0', "empty exception message");
         return;
     }
     throw std::runtime_error("expected an exception");
@@ -52,23 +49,23 @@ ShaderSemantic semantic(std::uint32_t id, std::uint32_t hardwareMapping, std::ui
 
 void checkIdentity(const Registers& regs, std::uint32_t first, const char* message) {
     for (std::uint32_t i = first; i < regs.size(); ++i) {
-        check(regs[i].offset == ShaderRegs::SPI_PS_INPUT_CNTL_0 + i && regs[i].value == i, message);
+        Require(regs[i].offset == ShaderRegs::SPI_PS_INPUT_CNTL_0 + i && regs[i].value == i, message);
     }
 }
 
 void testIdentity() {
     auto regs = filled();
-    check(sceAgcCreateInterpolantMapping_10000(regs.data(), nullptr, nullptr) == 0, "mapping without shaders failed");
+    Require(sceAgcCreateInterpolantMapping_10000(regs.data(), nullptr, nullptr) == 0, "mapping without shaders failed");
     checkIdentity(regs, 0, "mapping without a pixel shader is not the identity");
     Shader ps{};
     regs = filled();
-    check(sceAgcCreateInterpolantMapping_10000(regs.data(), nullptr, &ps) == 0, "mapping without inputs failed");
+    Require(sceAgcCreateInterpolantMapping_10000(regs.data(), nullptr, &ps) == 0, "mapping without inputs failed");
     checkIdentity(regs, 0, "mapping without inputs is not the identity");
     regs = filled();
-    check(sceAgcUpdateInterpolantMapping_10000(regs.data(), nullptr, &ps) == 0, "update without inputs failed");
-    check(preparedCount == 0u, "update without inputs prepared registers");
+    Require(sceAgcUpdateInterpolantMapping_10000(regs.data(), nullptr, &ps) == 0, "update without inputs failed");
+    Require(preparedCount == 0u, "update without inputs prepared registers");
     const auto untouched = filled();
-    check(std::memcmp(regs.data(), untouched.data(), sizeof(regs)) == 0, "update without inputs wrote registers");
+    Require(std::memcmp(regs.data(), untouched.data(), sizeof(regs)) == 0, "update without inputs wrote registers");
 }
 
 void testMapping() {
@@ -91,31 +88,31 @@ void testMapping() {
     ps.num_input_semantics = static_cast<std::uint32_t>(inputs.size());
 
     auto split = filled();
-    check(sceAgcCreateInterpolantMapping_10000(split.data(), &gs, &ps) == 0, "split f16 mapping failed");
-    check(std::memcmp(split.data(), preparedMapping.data(), sizeof(split)) == 0, "prepared split mapping differs from published registers");
+    Require(sceAgcCreateInterpolantMapping_10000(split.data(), &gs, &ps) == 0, "split f16 mapping failed");
+    Require(std::memcmp(split.data(), preparedMapping.data(), sizeof(split)) == 0, "prepared split mapping differs from published registers");
     for (std::uint32_t i = 0; i < inputs.size(); ++i) {
-        check(split[i].offset == ShaderRegs::SPI_PS_INPUT_CNTL_0 + i, "interpolant register offset changed");
+        Require(split[i].offset == ShaderRegs::SPI_PS_INPUT_CNTL_0 + i, "interpolant register offset changed");
     }
-    check(split[0].value == 0x02680707u, "high f16 half provided by the gs is not mapped");
-    check(split[1].value == 0x02280124u, "high f16 half missing from the gs does not use its default");
-    check(split[2].value == 0x02480220u, "unmatched high f16 half does not use its default");
-    check(split[3].value == 0x00000609u, "32-bit interpolant mapping changed");
-    check(split[4].value == 0x03180002u, "full f16 interpolant mapping changed");
+    Require(split[0].value == 0x02680707u, "high f16 half provided by the gs is not mapped");
+    Require(split[1].value == 0x02280124u, "high f16 half missing from the gs does not use its default");
+    Require(split[2].value == 0x02480220u, "unmatched high f16 half does not use its default");
+    Require(split[3].value == 0x00000609u, "32-bit interpolant mapping changed");
+    Require(split[4].value == 0x03180002u, "full f16 interpolant mapping changed");
     checkIdentity(split, static_cast<std::uint32_t>(inputs.size()), "unused interpolants are not the identity");
 
     auto update = filled();
     const auto untouched = filled();
     const std::size_t written = inputs.size() * sizeof(ShaderRegister);
-    check(sceAgcUpdateInterpolantMapping_10000(update.data(), &gs, &ps) == 0, "update mapping failed");
-    check(preparedCount == inputs.size(), "update prepared registers past its inputs");
-    check(std::memcmp(update.data(), preparedMapping.data(), written) == 0, "prepared update differs from published registers");
-    check(std::memcmp(update.data(), split.data(), written) == 0, "update mapping differs from the split f16 mapping");
-    check(std::memcmp(update.data() + inputs.size(), untouched.data(), sizeof(update) - written) == 0, "update wrote past its inputs");
+    Require(sceAgcUpdateInterpolantMapping_10000(update.data(), &gs, &ps) == 0, "update mapping failed");
+    Require(preparedCount == inputs.size(), "update prepared registers past its inputs");
+    Require(std::memcmp(update.data(), preparedMapping.data(), written) == 0, "prepared update differs from published registers");
+    Require(std::memcmp(update.data(), split.data(), written) == 0, "update mapping differs from the split f16 mapping");
+    Require(std::memcmp(update.data() + inputs.size(), untouched.data(), sizeof(update) - written) == 0, "update wrote past its inputs");
 
     auto regular = filled();
-    check(sceAgcCreateInterpolantMapping_0100(regular.data(), &gs, &ps) == 0, "mapping failed");
-    check(std::memcmp(regular.data(), preparedMapping.data(), sizeof(regular)) == 0, "prepared mapping differs from published registers");
-    check(regular[3].value == split[3].value && regular[4].value == split[4].value, "mappings differ outside the high f16 half mode");
+    Require(sceAgcCreateInterpolantMapping_0100(regular.data(), &gs, &ps) == 0, "mapping failed");
+    Require(std::memcmp(regular.data(), preparedMapping.data(), sizeof(regular)) == 0, "prepared mapping differs from published registers");
+    Require(regular[3].value == split[3].value && regular[4].value == split[4].value, "mappings differ outside the high f16 half mode");
     checkIdentity(regular, static_cast<std::uint32_t>(inputs.size()), "unused interpolants are not the identity");
 }
 
@@ -139,27 +136,27 @@ void testUpdateMapping() {
 
     auto update = filled();
     const auto untouched = filled();
-    check(sceAgcUpdateInterpolantMapping_10000(update.data(), &gs, &ps) == 0, "update mapping failed");
-    check(update[0].value == 0x00000625u, "custom interpolant update changed");
-    check(update[1].value == 0x01380107u, "low f16 half update changed");
-    check(update[2].value == 0x02480220u, "unmatched high f16 half update changed");
-    check(update[3].value == 0x03680709u, "full f16 interpolant update changed");
+    Require(sceAgcUpdateInterpolantMapping_10000(update.data(), &gs, &ps) == 0, "update mapping failed");
+    Require(update[0].value == 0x00000625u, "custom interpolant update changed");
+    Require(update[1].value == 0x01380107u, "low f16 half update changed");
+    Require(update[2].value == 0x02480220u, "unmatched high f16 half update changed");
+    Require(update[3].value == 0x03680709u, "full f16 interpolant update changed");
     for (std::uint32_t i = 0; i < inputs.size(); ++i) {
-        check(update[i].offset == ShaderRegs::SPI_PS_INPUT_CNTL_0 + i, "updated register offset changed");
+        Require(update[i].offset == ShaderRegs::SPI_PS_INPUT_CNTL_0 + i, "updated register offset changed");
     }
     const std::size_t written = inputs.size() * sizeof(ShaderRegister);
-    check(std::memcmp(update.data() + inputs.size(), untouched.data(), sizeof(update) - written) == 0, "update wrote past its inputs");
+    Require(std::memcmp(update.data() + inputs.size(), untouched.data(), sizeof(update) - written) == 0, "update wrote past its inputs");
 
     auto create = filled();
-    check(sceAgcCreateInterpolantMapping_10000(create.data(), &gs, &ps) == 0, "split f16 mapping failed");
-    check(std::memcmp(create.data(), update.data(), written) == 0, "update differs from the split f16 mapping");
+    Require(sceAgcCreateInterpolantMapping_10000(create.data(), &gs, &ps) == 0, "split f16 mapping failed");
+    Require(std::memcmp(create.data(), update.data(), written) == 0, "update differs from the split f16 mapping");
     checkIdentity(create, static_cast<std::uint32_t>(inputs.size()), "unused interpolants are not the identity");
 
     inputs[1].default_value = 0;
     inputs[3].default_value = 0;
     update = filled();
-    check(sceAgcUpdateInterpolantMapping_10000(update.data(), &gs, &ps) == 0, "update with split f16 defaults failed");
-    check(update[1].value == 0x01380007u && update[3].value == 0x03680409u, "f16 DEFAULT_VAL does not come from the low default");
+    Require(sceAgcUpdateInterpolantMapping_10000(update.data(), &gs, &ps) == 0, "update with split f16 defaults failed");
+    Require(update[1].value == 0x01380007u && update[3].value == 0x03680409u, "f16 DEFAULT_VAL does not come from the low default");
 }
 
 void testUpdate0100Mapping() {
@@ -168,8 +165,8 @@ void testUpdate0100Mapping() {
     Shader ps{};
     auto regs = filled();
     const auto untouched = filled();
-    check(sceAgcUpdateInterpolantMapping_0100(regs.data(), nullptr, &ps) == 0, "_0100 update without inputs failed");
-    check(std::memcmp(regs.data(), untouched.data(), sizeof(regs)) == 0, "_0100 update without inputs wrote registers");
+    Require(sceAgcUpdateInterpolantMapping_0100(regs.data(), nullptr, &ps) == 0, "_0100 update without inputs failed");
+    Require(std::memcmp(regs.data(), untouched.data(), sizeof(regs)) == 0, "_0100 update without inputs wrote registers");
 
     std::array<ShaderSemantic, 4> inputs{semantic(1, 0, 0), semantic(2, 0, 1), semantic(3, 0, 2), semantic(4, 0, 3)};
     inputs[0].is_custom = 1;
@@ -188,17 +185,17 @@ void testUpdate0100Mapping() {
     ps.num_input_semantics = static_cast<std::uint32_t>(inputs.size());
 
     regs = filled();
-    check(sceAgcUpdateInterpolantMapping_0100(regs.data(), &vs, &ps) == 0, "_0100 update mapping failed");
-    check(regs[0].value == 0x00000625u, "_0100 update does not encode default value 2");
-    check(regs[1].value == 0x01380107u, "_0100 update does not encode default value 1");
-    check(regs[2].value == 0x02580020u, "_0100 unmatched interpolant update changed");
-    check(regs[3].value == 0x03680709u, "_0100 full f16 interpolant update changed");
+    Require(sceAgcUpdateInterpolantMapping_0100(regs.data(), &vs, &ps) == 0, "_0100 update mapping failed");
+    Require(regs[0].value == 0x00000625u, "_0100 update does not encode default value 2");
+    Require(regs[1].value == 0x01380107u, "_0100 update does not encode default value 1");
+    Require(regs[2].value == 0x02580020u, "_0100 unmatched interpolant update changed");
+    Require(regs[3].value == 0x03680709u, "_0100 full f16 interpolant update changed");
     for (std::uint32_t i = 0; i < inputs.size(); ++i) {
-        check(regs[i].offset == ShaderRegs::SPI_PS_INPUT_CNTL_0 + i, "_0100 update register offset changed");
+        Require(regs[i].offset == ShaderRegs::SPI_PS_INPUT_CNTL_0 + i, "_0100 update register offset changed");
     }
     const std::size_t written = inputs.size() * sizeof(ShaderRegister);
-    check(std::memcmp(regs.data() + inputs.size(), untouched.data(), sizeof(regs) - written) == 0, "_0100 update wrote past its inputs");
-    check(mappings == mappingsBefore && links == linksBefore, "_0100 update resolved an ABI");
+    Require(std::memcmp(regs.data() + inputs.size(), untouched.data(), sizeof(regs) - written) == 0, "_0100 update wrote past its inputs");
+    Require(mappings == mappingsBefore && links == linksBefore, "_0100 update resolved an ABI");
 }
 
 void testUpdate0100Boundary() {
@@ -218,23 +215,23 @@ void testUpdate0100Boundary() {
     std::array<ShaderRegister, 33> regs{};
     std::memset(regs.data(), 0xcc, sizeof(regs));
     const auto untouched = regs;
-    check(sceAgcUpdateInterpolantMapping_0100(regs.data(), &vs, &ps) == 0, "_0100 update rejected a producer without outputs");
+    Require(sceAgcUpdateInterpolantMapping_0100(regs.data(), &vs, &ps) == 0, "_0100 update rejected a producer without outputs");
     constexpr std::array<std::uint32_t, 4> defaults{0x000u, 0x100u, 0x200u, 0x300u};
     for (std::uint32_t i = 0; i < inputs.size(); ++i) {
-        check(regs[i].offset == ShaderRegs::SPI_PS_INPUT_CNTL_0 + i, "_0100 full default mapping register offset changed");
-        check(regs[i].value == (0x20u | defaults[i % 4u]), "_0100 full default mapping changed");
+        Require(regs[i].offset == ShaderRegs::SPI_PS_INPUT_CNTL_0 + i, "_0100 full default mapping register offset changed");
+        Require(regs[i].value == (0x20u | defaults[i % 4u]), "_0100 full default mapping changed");
     }
-    check(std::memcmp(&regs.back(), &untouched.back(), sizeof(ShaderRegister)) == 0, "_0100 full default mapping wrote past 32 inputs");
+    Require(std::memcmp(&regs.back(), &untouched.back(), sizeof(ShaderRegister)) == 0, "_0100 full default mapping wrote past 32 inputs");
     vs.output_semantics = outputs.data();
     vs.num_output_semantics = static_cast<std::uint16_t>(outputs.size());
     regs = untouched;
-    check(sceAgcUpdateInterpolantMapping_0100(regs.data(), &vs, &ps) == 0, "_0100 update rejected 32 matched inputs");
+    Require(sceAgcUpdateInterpolantMapping_0100(regs.data(), &vs, &ps) == 0, "_0100 update rejected 32 matched inputs");
     for (std::uint32_t i = 0; i < inputs.size(); ++i) {
-        check(regs[i].offset == ShaderRegs::SPI_PS_INPUT_CNTL_0 + i, "_0100 full matched mapping register offset changed");
-        check(regs[i].value == ((31u - i) | defaults[i % 4u]), "_0100 full matched mapping changed");
+        Require(regs[i].offset == ShaderRegs::SPI_PS_INPUT_CNTL_0 + i, "_0100 full matched mapping register offset changed");
+        Require(regs[i].value == ((31u - i) | defaults[i % 4u]), "_0100 full matched mapping changed");
     }
-    check(std::memcmp(&regs.back(), &untouched.back(), sizeof(ShaderRegister)) == 0, "_0100 full matched mapping wrote past 32 inputs");
-    check(mappings == mappingsBefore && links == linksBefore, "_0100 full mapping resolved an ABI");
+    Require(std::memcmp(&regs.back(), &untouched.back(), sizeof(ShaderRegister)) == 0, "_0100 full matched mapping wrote past 32 inputs");
+    Require(mappings == mappingsBefore && links == linksBefore, "_0100 full mapping resolved an ABI");
 }
 
 void testUnversionedMapping() {
@@ -260,16 +257,16 @@ void testUnversionedMapping() {
     const auto untouched = filled();
 
     auto create = filled();
-    check(sceAgcCreateInterpolantMapping_nid_postfix(create.data(), &gs, &ps) == 0, "unversioned mapping failed");
+    Require(sceAgcCreateInterpolantMapping_nid_postfix(create.data(), &gs, &ps) == 0, "unversioned mapping failed");
     for (std::uint32_t i = 0; i < inputs.size(); ++i) {
-        check(create[i].offset == ShaderRegs::SPI_PS_INPUT_CNTL_0 + i && create[i].value == flatDefault[i], "unversioned mapping changed");
+        Require(create[i].offset == ShaderRegs::SPI_PS_INPUT_CNTL_0 + i && create[i].value == flatDefault[i], "unversioned mapping changed");
     }
     checkIdentity(create, static_cast<std::uint32_t>(inputs.size()), "unused interpolants are not the identity");
 
     auto update = filled();
-    check(sceAgcUpdateInterpolantMapping_nid_postfix(update.data(), &gs, &ps) == 0, "unversioned update failed");
-    check(std::memcmp(update.data(), create.data(), written) == 0, "unversioned update differs from its mapping");
-    check(std::memcmp(update.data() + inputs.size(), untouched.data(), sizeof(update) - written) == 0, "unversioned update wrote past its inputs");
+    Require(sceAgcUpdateInterpolantMapping_nid_postfix(update.data(), &gs, &ps) == 0, "unversioned update failed");
+    Require(std::memcmp(update.data(), create.data(), written) == 0, "unversioned update differs from its mapping");
+    Require(std::memcmp(update.data() + inputs.size(), untouched.data(), sizeof(update) - written) == 0, "unversioned update wrote past its inputs");
 }
 
 void testRejections() {
@@ -285,7 +282,7 @@ void testRejections() {
     expectFailure([&] { sceAgcUpdateInterpolantMapping_0100(regs.data(), &gs, &ps); });
     expectFailure([&] { sceAgcCreateInterpolantMapping_10000(regs.data(), &gs, &ps); });
     expectFailure([&] { sceAgcUpdateInterpolantMapping_10000(regs.data(), &gs, &ps); });
-    check(std::memcmp(regs.data(), saved.data(), sizeof(regs)) == 0, "rejected mapping wrote registers");
+    Require(std::memcmp(regs.data(), saved.data(), sizeof(regs)) == 0, "rejected mapping wrote registers");
     ps.num_input_semantics = 1;
     expectFailure([&] { sceAgcCreateInterpolantMapping_10000(regs.data(), nullptr, &ps); });
     expectFailure([&] { sceAgcCreateInterpolantMapping_10000(nullptr, &gs, &ps); });
@@ -306,7 +303,7 @@ void testRejections() {
 }
 
 extern "C" void AgcDriverResolveShaderAbi_nid_postfix(const Shader* shader, std::span<const ShaderRegister> context, std::span<const ShaderRegister> primitive) {
-    check(shader != nullptr && context.size() <= preparedMapping.size() && primitive.empty(), "invalid mapping preparation call");
+    Require(shader != nullptr && context.size() <= preparedMapping.size() && primitive.empty(), "invalid mapping preparation call");
     mappedPixel = shader;
     std::copy(context.begin(), context.end(), preparedMapping.begin());
     preparedCount = context.size();
@@ -314,7 +311,7 @@ extern "C" void AgcDriverResolveShaderAbi_nid_postfix(const Shader* shader, std:
 }
 
 extern "C" void AgcDriverResolveGraphicsAbi_nid_postfix(const Shader* vertex, const Shader* pixel, std::uint32_t primitiveType) {
-    check(vertex != nullptr && pixel == mappedPixel && primitiveType == 0u, "invalid mapping link call");
+    Require(vertex != nullptr && pixel == mappedPixel && primitiveType == 0u, "invalid mapping link call");
     ++links;
 }
 
@@ -327,7 +324,7 @@ int main() {
         testUpdate0100Boundary();
         testUnversionedMapping();
         testRejections();
-        check(mappings == 10u && links == 8u, "mapping preparation call count changed");
+        Require(mappings == 10u && links == 8u, "mapping preparation call count changed");
         LibcRunShutdown_nid_postfix();
         std::puts("AGC interpolant mapping tests passed");
         return 0;

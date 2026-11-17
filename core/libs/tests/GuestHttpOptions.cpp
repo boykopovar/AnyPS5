@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "ProcessParametersFixture.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -18,12 +19,6 @@ constexpr int BeforeInit = static_cast<int>(0x80431001u);
 constexpr int InvalidId = static_cast<int>(0x80431100u);
 constexpr int InvalidValue = static_cast<int>(0x804311FEu);
 constexpr int UnknownId = 0x7fff0000;
-
-void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", what);
-    std::abort();
-}
 
 int Get(int (APS5_VABI *getter)(int, int*), int id) {
     int value = -1;

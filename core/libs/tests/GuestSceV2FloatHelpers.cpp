@@ -1,9 +1,8 @@
 #include "prx/libc/libc.hpp"
+#include "Testing.hpp"
 #include <bit>
 #include <cstdint>
 #include <cstdlib>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 struct TestCase { std::uint64_t input; short code; short extendedCode; };
 struct FloatTestCase { std::uint32_t input; short code; };

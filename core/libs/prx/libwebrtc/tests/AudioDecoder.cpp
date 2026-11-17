@@ -1,4 +1,5 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -8,12 +9,6 @@
 #include <stdexcept>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc AudioDecoder check failed at line %u\n", location.line());
-    std::abort();
-}
 
 unsigned char decoderStorage[64];
 unsigned char bufferStorage[32];
@@ -56,15 +51,6 @@ void TestErrorCode() {
 
 }
 
-template<typename TException, typename TAction> void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
-    try {
-        action();
-    } catch (const TException&) {
-        return;
-    }
-    Require(false, location);
-}
-
 void TestParseResultMove() {
     int frame = 0;
     WebRtcAudioDecoderParseResult source {0x12345678u, -3, &frame};
@@ -81,15 +67,15 @@ void TestParseResultMove() {
     WebRtcAudioDecoderParseResult self {9, 2, &frame};
     _ZN6webrtc12AudioDecoder11ParseResultC1EOS1__nid_postfix(&self, &self);
     Require(self.timestamp == 9 && self.priority == 2 && self.frame == &frame);
-    RequireThrows<std::invalid_argument>([&] { _ZN6webrtc12AudioDecoder11ParseResultC1EOS1__nid_postfix(nullptr, &empty); });
-    RequireThrows<std::invalid_argument>([&] { _ZN6webrtc12AudioDecoder11ParseResultC1EOS1__nid_postfix(&moved, nullptr); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc12AudioDecoder11ParseResultC1EOS1__nid_postfix(nullptr, &empty); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc12AudioDecoder11ParseResultC1EOS1__nid_postfix(&moved, nullptr); });
 }
 
 void TestParseResultDestructor() {
     WebRtcAudioDecoderParseResult empty {1, 2, nullptr};
     _ZN6webrtc12AudioDecoder11ParseResultD1Ev_nid_postfix(&empty);
     Require(empty.timestamp == 1 && empty.priority == 2 && empty.frame == nullptr);
-    RequireThrows<std::invalid_argument>([] { _ZN6webrtc12AudioDecoder11ParseResultD1Ev_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZN6webrtc12AudioDecoder11ParseResultD1Ev_nid_postfix(nullptr); });
 }
 
 struct FakeFrame {

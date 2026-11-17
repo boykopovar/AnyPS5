@@ -1,9 +1,6 @@
 #include "prx/libScePad/include/PadAudioHapticQueue.hpp"
+#include "Testing.hpp"
 #include <cstdio>
-
-static void Require(bool value, const char* message) {
-    if (!value) throw std::runtime_error(message);
-}
 
 template<typename TAction>
 static bool Throws(TAction action) {

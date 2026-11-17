@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include "TestProgress.hpp"
 #include <relinker/pipeline/Conversion.hpp>
 #include <relinker/patching/GamePatch.hpp>
@@ -14,16 +15,12 @@ namespace {
 using namespace Relinker;
 using namespace Relinker::GamePatch;
 
-void require(const bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
-
 template<typename TAction>
 void rejects(TAction action, const std::string& fragment) {
     try {
         action();
     } catch (const Domain::RelinkerException& error) {
-        require(std::string(error.what()).find(fragment) != std::string::npos, "wrong error, expected `" + fragment + "` in: " + error.what());
+        Require(std::string(error.what()).find(fragment) != std::string::npos, "wrong error, expected `" + fragment + "` in: " + error.what());
         return;
     }
     throw std::runtime_error("accepted: expected `" + fragment + "`");
@@ -155,16 +152,16 @@ void grammarAccepted() {
         "va = 4096\n"
         "expected = \"00ff\"\n"
         "value = \"AB12\"\n");
-    require(file.MainTarget == std::string("eboot.elf"), "main_target was not read");
-    require(file.Entries.size() == 2, "wrong entry count");
+    Require(file.MainTarget == std::string("eboot.elf"), "main_target was not read");
+    Require(file.Entries.size() == 2, "wrong entry count");
     const auto& typed = file.Entries[0];
-    require(typed.Name == "pool_size" && typed.Target == "eboot.elf" && typed.VirtualAddress == 0x1234, "typed entry fields");
-    require(typed.Expected == std::vector<std::uint8_t>({0, 0, 0, 0x10}) && typed.Value == std::vector<std::uint8_t>({0, 0, 0, 0x18}), "typed encoding is not little-endian");
-    require(typed.Description == "has # inside" && typed.Line == 9, "description or line");
+    Require(typed.Name == "pool_size" && typed.Target == "eboot.elf" && typed.VirtualAddress == 0x1234, "typed entry fields");
+    Require(typed.Expected == std::vector<std::uint8_t>({0, 0, 0, 0x10}) && typed.Value == std::vector<std::uint8_t>({0, 0, 0, 0x18}), "typed encoding is not little-endian");
+    Require(typed.Description == "has # inside" && typed.Line == 9, "description or line");
     const auto& raw = file.Entries[1];
-    require(raw.Name.empty() && raw.VirtualAddress == 4096, "raw entry fields");
-    require(raw.Expected == std::vector<std::uint8_t>({0x00, 0xff}) && raw.Value == std::vector<std::uint8_t>({0xab, 0x12}), "raw hex bytes");
-    require(!ParsePatchFile("format = 1\n").MainTarget && ParsePatchFile("format = 1\n").Entries.empty(), "empty file");
+    Require(raw.Name.empty() && raw.VirtualAddress == 4096, "raw entry fields");
+    Require(raw.Expected == std::vector<std::uint8_t>({0x00, 0xff}) && raw.Value == std::vector<std::uint8_t>({0xab, 0x12}), "raw hex bytes");
+    Require(!ParsePatchFile("format = 1\n").MainTarget && ParsePatchFile("format = 1\n").Entries.empty(), "empty file");
 }
 
 void stringControls() {
@@ -194,12 +191,12 @@ void stringControlRoundTrip() {
     for (const std::string description : {std::string("tab\ttext"), std::string("caf\xc3\xa9 \xe6\x97\xa5 \xf0\x9f\x98\x80 # text")}) {
         const auto file = ParsePatchFile("# \t" + description + "\r\nformat = 1 # \t" + description + "\r\n[[patch]]\r\n"
             "target = \"main.elf\"\r\nva = 4096\r\nexpected = \"00\"\r\nvalue = \"01\"\r\ndescription = \"" + description + "\"\r\n");
-        require(file.Entries.size() == 1 && file.Entries.front().Description == description, "valid tab or Unicode was not preserved");
+        Require(file.Entries.size() == 1 && file.Entries.front().Description == description, "valid tab or Unicode was not preserved");
         const auto& parsed = file.Entries.front();
         const AppliedPatch applied{parsed.Target, parsed.VirtualAddress, 0x1000, parsed.Expected, parsed.Value, parsed.Description, parsed.Name};
         const auto reparsed = ParsePatchFile(WriteManifest({applied}, "main.elf", ""));
-        require(reparsed.Entries.size() == 1 && reparsed.Entries.front().Description == description, "valid patch string did not round-trip through the manifest");
-        require(reparsed.Entries.front().Expected == parsed.Expected && reparsed.Entries.front().Value == parsed.Value, "patch bytes changed during the string round trip");
+        Require(reparsed.Entries.size() == 1 && reparsed.Entries.front().Description == description, "valid patch string did not round-trip through the manifest");
+        Require(reparsed.Entries.front().Expected == parsed.Expected && reparsed.Entries.front().Value == parsed.Value, "patch bytes changed during the string round trip");
     }
 }
 
@@ -245,12 +242,12 @@ void integerRanges() {
     for (const auto& c : {Case{"u8", "255", "256", 1}, Case{"u16", "65535", "65536", 2}, Case{"u32", "0xffffffff", "0x100000000", 4}, Case{"u64", "0xffffffffffffffff", "0x10000000000000000", 8},
                           Case{"i8", "127", "128", 1}, Case{"i16", "32767", "32768", 2}, Case{"i32", "0x7fffffff", "0x80000000", 4}, Case{"i64", "0x7fffffffffffffff", "0x8000000000000000", 8}}) {
         const auto accepted = ParsePatchFile(typedEntry(c.Type, "0", c.Fits));
-        require(accepted.Entries.front().Value.size() == c.Width, std::string("width of ") + c.Type);
+        Require(accepted.Entries.front().Value.size() == c.Width, std::string("width of ") + c.Type);
         rejects([&] { ParsePatchFile(typedEntry(c.Type, "0", c.Overflows)); }, "line 7");
     }
-    require(ParsePatchFile(typedEntry("i32", "-1", "-2147483648")).Entries.front().Value == std::vector<std::uint8_t>({0, 0, 0, 0x80}), "i32 minimum");
-    require(ParsePatchFile(typedEntry("i8", "-128", "-1")).Entries.front().Value == std::vector<std::uint8_t>({0xff}), "i8 -1");
-    require(ParsePatchFile(typedEntry("i64", "-1", "-1")).Entries.front().Expected == std::vector<std::uint8_t>(8, 0xff), "i64 -1");
+    Require(ParsePatchFile(typedEntry("i32", "-1", "-2147483648")).Entries.front().Value == std::vector<std::uint8_t>({0, 0, 0, 0x80}), "i32 minimum");
+    Require(ParsePatchFile(typedEntry("i8", "-128", "-1")).Entries.front().Value == std::vector<std::uint8_t>({0xff}), "i8 -1");
+    Require(ParsePatchFile(typedEntry("i64", "-1", "-1")).Entries.front().Expected == std::vector<std::uint8_t>(8, 0xff), "i64 -1");
     rejects([] { ParsePatchFile(typedEntry("i8", "0", "-129")); }, "line 7");
     rejects([] { ParsePatchFile(typedEntry("u8", "0", "-1")); }, "line 7");
     rejects([] { ParsePatchFile(typedEntry("i16", "40000", "0")); }, "line 6");
@@ -283,7 +280,7 @@ std::string namedEntry(const std::string& name, const std::string& extra = {}) {
 }
 
 void names() {
-    require(ParsePatchFile(namedEntry("pool_size_2")).Entries.front().Name == "pool_size_2", "valid name");
+    Require(ParsePatchFile(namedEntry("pool_size_2")).Entries.front().Name == "pool_size_2", "valid name");
     for (const char* bad : {"Upper", "has-dash", "has space", "", "dot.ted", "\xc3\xa9"}) rejects([&] { ParsePatchFile(namedEntry(bad)); }, "line 3: name must be");
     rejects([] { ParsePatchFile(header("[[patch]]\nname = 5\ntarget = \"a\"\nva = 1\nexpected = \"00\"\nvalue = \"01\"\n")); }, "line 3: name must be");
     rejects([] { ParsePatchFile(namedEntry("same") + "\n[[patch]]\nname = \"same\"\ntarget = \"a\"\nva = 9\nexpected = \"00\"\nvalue = \"01\"\n"); }, "line 10: duplicate name");
@@ -293,9 +290,9 @@ void names() {
 void ranges() {
     const ElfReader reader(twoSegmentFixture());
     const auto resolved = ResolveRanges(reader, {entry("t", 0x1000, {0, 1}, {9, 9}), entry("t", 0x1100, {0x80}, {1}), entry("t", 0x11fc, {0xfc, 0xfd, 0xfe, 0xff}, {0, 0, 0, 0})});
-    require(resolved[0].Offset == 0x1000 && resolved[0].Length == 2, "first segment translation");
-    require(resolved[1].Offset == 0x2000, "second segment translation");
-    require(resolved[2].Offset == 0x20fc, "second segment end");
+    Require(resolved[0].Offset == 0x1000 && resolved[0].Length == 2, "first segment translation");
+    Require(resolved[1].Offset == 0x2000, "second segment translation");
+    Require(resolved[2].Offset == 0x20fc, "second segment end");
     rejects([&] { ResolveRanges(reader, {entry("t", 0x10fe, {0, 0, 0, 0}, {1, 1, 1, 1})}); }, "one PT_LOAD");
     rejects([&] { ResolveRanges(reader, {entry("t", 0x1200, {0}, {1})}); }, "one PT_LOAD");
     rejects([&] { ResolveRanges(reader, {entry("t", 0x11fe, {0, 0, 0}, {1, 1, 1})}); }, "one PT_LOAD");
@@ -310,7 +307,7 @@ void headerRange() {
     rejects([&] { ResolveRanges(reader, {entry("t", 0x40, {0}, {1})}); }, "program header table");
     rejects([&] { ResolveRanges(reader, {entry("t", 0xaf, {0}, {1})}); }, "program header table");
     const auto ok = ResolveRanges(reader, {entry("t", 0xb0, {0}, {1})});
-    require(ok.front().Offset == 0xb0, "range after the header table was rejected");
+    Require(ok.front().Offset == 0xb0, "range after the header table was rejected");
 }
 
 void applyAndMismatch() {
@@ -318,15 +315,15 @@ void applyAndMismatch() {
     const auto original = bytes;
     const std::vector<PatchEntry> entries{entry("t", 0x1000, {0, 1}, {9, 8}, "first"), entry("t", 0x1100, {0x80}, {1})};
     const auto patched = PatchTarget(bytes, "t", entries);
-    require(patched.Applied.size() == 2 && patched.Applied[0].Offset == 0x1000 && patched.Applied[0].Name == "first", "applied records");
-    require(bytes[0x1000] == 9 && bytes[0x1001] == 8 && bytes[0x2000] == 1, "values were not written");
+    Require(patched.Applied.size() == 2 && patched.Applied[0].Offset == 0x1000 && patched.Applied[0].Name == "first", "applied records");
+    Require(bytes[0x1000] == 9 && bytes[0x1001] == 8 && bytes[0x2000] == 1, "values were not written");
     for (std::size_t index = 0; index < bytes.size(); ++index)
-        if (index != 0x1000 && index != 0x1001 && index != 0x2000) require(bytes[index] == original[index], "byte outside the patch changed");
+        if (index != 0x1000 && index != 0x1001 && index != 0x2000) Require(bytes[index] == original[index], "byte outside the patch changed");
 
     bytes = original;
     rejects([&] { PatchTarget(bytes, "t", {entry("t", 0x1000, {0, 1}, {9, 8}), entry("t", 0x1100, {0x81}, {1})}); }, "expected 81 found 80");
-    require(bytes == original, "a mismatch wrote bytes");
-    require(PatchTarget(bytes, "other", entries).Applied.empty() && bytes == original, "entry hit another target");
+    Require(bytes == original, "a mismatch wrote bytes");
+    Require(PatchTarget(bytes, "other", entries).Applied.empty() && bytes == original, "entry hit another target");
 }
 
 void programmaticWidths() {
@@ -344,9 +341,9 @@ void programmaticWidths() {
         const std::vector<PatchEntry> entries{entry("t", 0x1100, {0x80}, {1}), patch};
         rejects([&] { ResolveRanges(reader, entries); }, "same nonzero width");
         rejects([&] { PatchTarget(bytes, "t", entries); }, "same nonzero width");
-        require(bytes == original, "an invalid patch width wrote bytes");
+        Require(bytes == original, "an invalid patch width wrote bytes");
         rejects([&] { ApplyPatches(bytes, "t", entries, {{0x2000, 1, 0x1100}, {0x1000, patch.Expected.size(), 0x1000}}); }, "same nonzero width");
-        require(bytes == original, "direct application of an invalid patch width wrote bytes");
+        Require(bytes == original, "direct application of an invalid patch width wrote bytes");
         for (const bool outputMode : {false, true}) {
             PatchFile file;
             file.MainTarget = "t";
@@ -362,19 +359,19 @@ void applicationRangeWidths() {
     const std::vector<PatchEntry> entries{entry("t", 0x1000, {0}, {9}), entry("t", 0x1002, {2, 3}, {8, 7})};
     for (const std::uint64_t length : {0u, 1u, 3u}) {
         rejects([&] { ApplyPatches(bytes, "t", entries, {{0, 1, 0x1000}, {2, length, 0x1002}}); }, "range length does not match");
-        require(bytes == original, "a mismatched range length wrote bytes");
+        Require(bytes == original, "a mismatched range length wrote bytes");
     }
     rejects([&] { ApplyPatches(bytes, "t", {entry("t", 0x1003, {3, 4}, {8, 7})}, {{3, 1, 0x1003}}); }, "range length does not match");
-    require(bytes == original, "a truncated comparison range wrote bytes");
+    Require(bytes == original, "a truncated comparison range wrote bytes");
     for (const std::uint64_t offset : std::array<std::uint64_t, 4>{3, 4, 5, UINT64_MAX}) {
         rejects([&] { ApplyPatches(bytes, "t", entries, {{0, 1, 0x1000}, {offset, 2, 0x1002}}); }, "range exceeds the image");
-        require(bytes == original, "an out-of-bounds patch wrote bytes");
+        Require(bytes == original, "an out-of-bounds patch wrote bytes");
     }
     rejects([&] { ApplyPatches(bytes, "t", entries, {{0, 1, 0x1000}}); }, "ranges do not match");
-    require(bytes == original, "a missing range wrote bytes");
+    Require(bytes == original, "a missing range wrote bytes");
     const auto applied = ApplyPatches(bytes, "t", entries, {{0, 1, 0x1000}, {2, 2, 0x1002}});
-    require(bytes == std::vector<std::uint8_t>({9, 1, 8, 7}) && applied.size() == 2, "valid boundary patches failed");
-    require(ApplyPatches(bytes, "t", {}, {}).empty(), "empty patch list was rejected");
+    Require(bytes == std::vector<std::uint8_t>({9, 1, 8, 7}) && applied.size() == 2, "valid boundary patches failed");
+    Require(ApplyPatches(bytes, "t", {}, {}).empty(), "empty patch list was rejected");
 }
 
 void overlapWithWriters() {
@@ -417,24 +414,24 @@ void conversion() {
     ConversionOptions plain;
     plain.TargetName = "custom-name.bin";
     const auto baseline = converter.Convert(conversionInput(executable), plain);
-    require(baseline.AppliedPatches.empty(), "patches applied without entries");
+    Require(baseline.AppliedPatches.empty(), "patches applied without entries");
 
     ConversionOptions patched = plain;
     patched.Patches = {entry("custom-name.bin", 0x1001, {0}, {0x90}, "nop"), entry("sce_module/plugin.prx", 0x1002, {0}, {0x41})};
     const auto output = converter.Convert(conversionInput(executable), patched);
-    require(output.AppliedPatches.size() == 2, "executable and module patches were not both applied");
-    require(output.AppliedPatches[0].Target == "custom-name.bin" && output.AppliedPatches[1].Target == "sce_module/plugin.prx", "applied targets");
-    require(output.Executable != baseline.Executable && output.Modules.front().Bytes != baseline.Modules.front().Bytes, "patches changed nothing");
-    require(progress.Messages.find("Patch: custom-name.bin [nop] va=0x1001 off=0x1001 00 -> 90\n") != std::string::npos, "progress line: " + progress.Messages);
-    require(progress.Messages.find("Patch: sce_module/plugin.prx va=0x1002 off=0x1002 00 -> 41\n") != std::string::npos, "module progress line");
+    Require(output.AppliedPatches.size() == 2, "executable and module patches were not both applied");
+    Require(output.AppliedPatches[0].Target == "custom-name.bin" && output.AppliedPatches[1].Target == "sce_module/plugin.prx", "applied targets");
+    Require(output.Executable != baseline.Executable && output.Modules.front().Bytes != baseline.Modules.front().Bytes, "patches changed nothing");
+    Require(progress.Messages.find("Patch: custom-name.bin [nop] va=0x1001 off=0x1001 00 -> 90\n") != std::string::npos, "progress line: " + progress.Messages);
+    Require(progress.Messages.find("Patch: sce_module/plugin.prx va=0x1002 off=0x1002 00 -> 41\n") != std::string::npos, "module progress line");
 
     ConversionOptions other = patched;
     other.TargetName = "other.bin";
     auto different = executable;
     different[0x1005] = 0x90;
     const auto second = converter.Convert(conversionInput(different), other);
-    require(second.Modules.size() == output.Modules.size() && second.Modules.front().Bytes == output.Modules.front().Bytes, "shared modules differ between executables");
-    require(second.AppliedPatches.size() == 1, "an executable entry hit another target");
+    Require(second.Modules.size() == output.Modules.size() && second.Modules.front().Bytes == output.Modules.front().Bytes, "shared modules differ between executables");
+    Require(second.AppliedPatches.size() == 1, "an executable entry hit another target");
 
     ConversionOptions failing = plain;
     failing.Patches = {entry("custom-name.bin", 0x1001, {7}, {1})};
@@ -452,7 +449,7 @@ void conversion() {
     }
 
     const auto repeated = converter.Convert(conversionInput(executable), plain);
-    require(repeated.Executable == baseline.Executable && repeated.Modules.front().Bytes == baseline.Modules.front().Bytes, "no entries changed the output");
+    Require(repeated.Executable == baseline.Executable && repeated.Modules.front().Bytes == baseline.Modules.front().Bytes, "no entries changed the output");
 }
 
 std::vector<std::uint8_t> framedLeafFixture() {
@@ -496,9 +493,9 @@ void framedLeafPatches() {
     options.Target = TargetSystem::Windows;
     options.FrameRedZone = true;
     converter.Convert(conversionInput(executable), options);
-    require(progress.Messages.find("1 framed (1 without a frame pointer, 1 rsp operands moved, 2 in 1 operand stubs; 1 exits)") != std::string::npos, "the fixture's leaf was not framed with a moved displacement and an operand stub: " + progress.Messages);
+    Require(progress.Messages.find("1 framed (1 without a frame pointer, 1 rsp operands moved, 2 in 1 operand stubs; 1 exits)") != std::string::npos, "the fixture's leaf was not framed with a moved displacement and an operand stub: " + progress.Messages);
     options.Patches = {entry("custom-name.bin", 0x1010, {0xcc}, {0x90})};
-    require(converter.Convert(conversionInput(executable), options).AppliedPatches.size() == 1, "a patch outside the framed leaf was not applied");
+    Require(converter.Convert(conversionInput(executable), options).AppliedPatches.size() == 1, "a patch outside the framed leaf was not applied");
     options.Patches = {entry("custom-name.bin", 0x1049, {0xf0}, {0xe8})};
     rejects([&] { converter.Convert(conversionInput(executable), options); }, "overlaps red-zone moved displacement at off=0x1049 length 1");
     options.Patches = {entry("custom-name.bin", 0x104c, {0x04}, {0x0c})};
@@ -522,10 +519,10 @@ void verify() {
     const auto before = bytes;
     const std::vector<VerifyTarget> modules{{"sce_module/libc.prx", twoSegmentFixture()}};
     auto input = VerifyPatches(file, executables, modules, false);
-    require(input.size() == 3 && input[0].Status == VerifyStatus::Applicable && input[0].Name == "one" && input[0].Offset == 0x1000, "input applicable");
-    require(input[1].Status == VerifyStatus::Mismatch && input[1].Detail.find("expected ff found 80") != std::string::npos, "input mismatch");
-    require(input[2].Status == VerifyStatus::Applicable, "module entry in input mode");
-    require(bytes == before && executables.front().Bytes == before, "verify wrote bytes");
+    Require(input.size() == 3 && input[0].Status == VerifyStatus::Applicable && input[0].Name == "one" && input[0].Offset == 0x1000, "input applicable");
+    Require(input[1].Status == VerifyStatus::Mismatch && input[1].Detail.find("expected ff found 80") != std::string::npos, "input mismatch");
+    Require(input[2].Status == VerifyStatus::Applicable, "module entry in input mode");
+    Require(bytes == before && executables.front().Bytes == before, "verify wrote bytes");
 
     auto patchedBytes = twoSegmentFixture();
     patchedBytes[0x1000] = 9;
@@ -533,12 +530,12 @@ void verify() {
     patchedBytes[0x2000] = 1;
     const std::vector<VerifyTarget> outputs{{"main.elf", patchedBytes}};
     auto output = VerifyPatches(file, outputs, {}, true);
-    require(output[0].Status == VerifyStatus::Applied && output[1].Status == VerifyStatus::Applied, "output applied");
-    require(output[2].Status == VerifyStatus::NotChecked && output[2].Detail == "module, or executable not named with --executable", "output module not-checked");
+    Require(output[0].Status == VerifyStatus::Applied && output[1].Status == VerifyStatus::Applied, "output applied");
+    Require(output[2].Status == VerifyStatus::NotChecked && output[2].Detail == "module, or executable not named with --executable", "output module not-checked");
     rejects([&] { VerifyPatches(file, {{"main.elf", patchedBytes}, {"main.elf", patchedBytes}}, {}, true); }, "ambiguous patch target: main.elf");
     rejects([&] { VerifyPatches(file, {{"main.elf", patchedBytes}, {"bin/a.elf", patchedBytes}, {"bin/a.elf", patchedBytes}}, {}, true); }, "ambiguous patch target: bin/a.elf");
     output = VerifyPatches(file, {{"main.elf", twoSegmentFixture()}}, {}, true);
-    require(output[0].Status == VerifyStatus::Mismatch && output[0].Detail.find("not applied") != std::string::npos, "unpatched output");
+    Require(output[0].Status == VerifyStatus::Mismatch && output[0].Detail.find("not applied") != std::string::npos, "unpatched output");
 
     rejects([&] { VerifyPatches(ParsePatchFile(header("[[patch]]\ntarget = \"typo.prx\"\nva = 0x1000\nexpected = \"00\"\nvalue = \"01\"\n")), executables, modules, false); }, "unmatched patch target: typo.prx");
     rejects([&] { VerifyPatches(ParsePatchFile(header("[[patch]]\ntarget = \"typo.prx\"\nva = 0x1000\nexpected = \"00\"\nvalue = \"01\"\n")), executables, modules, false); }, "--verify-output");
@@ -548,15 +545,15 @@ void verify() {
     rejects([&] { VerifyPatches(file, {{"main.elf", exec}}, {}, true); }, "has no linux_base");
     const auto based = ParsePatchFile(header("main_target = \"main.elf\"\nlinux_base = 0x400000\n[[patch]]\nname = \"one\"\ntarget = \"main.elf\"\nva = 0x1000\nexpected = \"0001\"\nvalue = \"0908\"\n"
                                              "[[patch]]\ntarget = \"main.elf\"\nva = 0x1100\nexpected = \"ff\"\nvalue = \"01\"\n"));
-    require(based.LinuxBase == 0x400000, "linux_base was not read");
+    Require(based.LinuxBase == 0x400000, "linux_base was not read");
     auto rebased = patchedBytes;
     Io::WriteU16(rebased, 16, 2);
     for (const std::size_t field : {64 + 16, 64 + 24, 120 + 16, 120 + 24}) Io::WriteU64(rebased, field, Io::ReadU64(rebased, field) + 0x400000);
     output = VerifyPatches(based, {{"main.elf", rebased}}, {}, true);
-    require(output.size() == 2 && output[0].Status == VerifyStatus::Applied && output[1].Status == VerifyStatus::Applied, "fixed-base output applied");
-    require(output[0].VirtualAddress == 0x1000 && output[0].Offset == 0x1000 && output[1].Offset == 0x2000, "fixed-base output reported the rebased address");
+    Require(output.size() == 2 && output[0].Status == VerifyStatus::Applied && output[1].Status == VerifyStatus::Applied, "fixed-base output applied");
+    Require(output[0].VirtualAddress == 0x1000 && output[0].Offset == 0x1000 && output[1].Offset == 0x2000, "fixed-base output reported the rebased address");
     output = VerifyPatches(based, {{"main.elf", exec}}, {}, true);
-    require(output[0].Status == VerifyStatus::Mismatch && output[0].Detail.find("PT_LOAD") != std::string::npos, "linux_base was not applied");
+    Require(output[0].Status == VerifyStatus::Mismatch && output[0].Detail.find("PT_LOAD") != std::string::npos, "linux_base was not applied");
     rejects([&] { VerifyPatches(based, outputs, {}, true); }, "has linux_base = 0x400000");
     rejects([&] { VerifyPatches(ParsePatchFile(header("main_target = \"main.elf\"\nlinux_base = 0x400000\n[[patch]]\ntarget = \"main.elf\"\nva = 0xffffffffffffff00\nexpected = \"00\"\nvalue = \"01\"\n")), {{"main.elf", rebased}}, {}, true); }, "lies outside the address space at linux_base");
     rejects([&] { VerifyPatches(file, {{"main.elf", {'M', 'Z', 0x90, 0}}}, {}, true); }, "verify the input instead");
@@ -565,18 +562,18 @@ void verify() {
 
     auto sce = twoSegmentFixture();
     Io::WriteU16(sce, 16, 0xfe10);
-    require(VerifyPatches(ParsePatchFile(header("[[patch]]\ntarget = \"main.elf\"\nva = 0x1000\nexpected = \"00\"\nvalue = \"01\"\n")), {{"main.elf", sce}}, {}, false).front().Status == VerifyStatus::Applicable,
+    Require(VerifyPatches(ParsePatchFile(header("[[patch]]\ntarget = \"main.elf\"\nva = 0x1000\nexpected = \"00\"\nvalue = \"01\"\n")), {{"main.elf", sce}}, {}, false).front().Status == VerifyStatus::Applicable,
             "input mode must accept any e_type");
 
-    require(OutputExecutablePath("out/app.elf", "bin/tool.elf") == std::filesystem::path("out/bin.tool.elf.elf"), "output executable name");
-    require(OutputExecutablePath("out/app.exe", "./a/b/c.bin") == std::filesystem::path("out/a.b.c.bin.exe"), "output executable extension");
+    Require(OutputExecutablePath("out/app.elf", "bin/tool.elf") == std::filesystem::path("out/bin.tool.elf.elf"), "output executable name");
+    Require(OutputExecutablePath("out/app.exe", "./a/b/c.bin") == std::filesystem::path("out/a.b.c.bin.exe"), "output executable extension");
     for (const char* bad : {"../x", "/abs/x", "dir/", ""}) rejects([&] { OutputExecutablePath("out/app.elf", bad); }, "--executable must be a file");
 }
 
 void rangeFailureInVerify() {
     const auto file = ParsePatchFile(header("[[patch]]\ntarget = \"main.elf\"\nva = 0x1200\nexpected = \"00\"\nvalue = \"01\"\n"));
     const auto results = VerifyPatches(file, {{"main.elf", twoSegmentFixture()}}, {}, false);
-    require(results.front().Status == VerifyStatus::Mismatch && results.front().Detail.find("PT_LOAD") != std::string::npos, "range failure should be a mismatch");
+    Require(results.front().Status == VerifyStatus::Mismatch && results.front().Detail.find("PT_LOAD") != std::string::npos, "range failure should be a mismatch");
 }
 
 std::vector<std::uint8_t> peFixture() {
@@ -611,33 +608,33 @@ void verifyWindowsOutput() {
     const auto pe = peFixture();
     const auto file = ParsePatchFile(header(top + patch("0x10000", "0001", "0908") + patch("0x101ff", "0101", "0700") + patch("0x10300", "ff", "00") + patch("0x12001", "ff", "01")
                                             + patch("0x13800", "00", "01") + patch("0x11fff", "ffff", "0000") + patch("0x10000", "00", "01", "sce_module/libc.prx") + patch("0x12fff", "ffff", "0000")));
-    require(file.Entries[0].OutputRva == 0x10000, "output_rva was not read");
+    Require(file.Entries[0].OutputRva == 0x10000, "output_rva was not read");
     const auto results = VerifyPatches(file, {{"main.elf", pe}}, {}, true);
-    require(results[0].Status == VerifyStatus::Applied && results[0].Offset == 0x400 && results[0].VirtualAddress == 0x1000 && results[0].Detail == "0908", "PE entry in file data: " + results[0].Detail);
-    require(results[1].Status == VerifyStatus::Applied && results[1].Offset == 0x5ff, "PE entry crossing the end of the file data: " + results[1].Detail);
-    require(results[2].Status == VerifyStatus::Applied && results[2].Detail.find("not stored in the file") != std::string::npos, "PE entry in zero fill: " + results[2].Detail);
-    require(results[3].Status == VerifyStatus::Mismatch && results[3].Detail.find("expected 01 found 00") != std::string::npos, "PE entry in a section without file data: " + results[3].Detail);
-    require(results[4].Status == VerifyStatus::Mismatch && results[4].Detail.find("not inside the sections") != std::string::npos, "PE entry outside every section: " + results[4].Detail);
-    require(results[5].Status == VerifyStatus::Applied && results[5].Detail.find("not stored in the file") != std::string::npos, "PE entry across two sections: " + results[5].Detail);
-    require(results[6].Status == VerifyStatus::NotChecked, "PE module entry");
-    require(results[7].Status == VerifyStatus::Mismatch && results[7].Detail.find("not inside the sections") != std::string::npos, "PE entry past the last section: " + results[7].Detail);
+    Require(results[0].Status == VerifyStatus::Applied && results[0].Offset == 0x400 && results[0].VirtualAddress == 0x1000 && results[0].Detail == "0908", "PE entry in file data: " + results[0].Detail);
+    Require(results[1].Status == VerifyStatus::Applied && results[1].Offset == 0x5ff, "PE entry crossing the end of the file data: " + results[1].Detail);
+    Require(results[2].Status == VerifyStatus::Applied && results[2].Detail.find("not stored in the file") != std::string::npos, "PE entry in zero fill: " + results[2].Detail);
+    Require(results[3].Status == VerifyStatus::Mismatch && results[3].Detail.find("expected 01 found 00") != std::string::npos, "PE entry in a section without file data: " + results[3].Detail);
+    Require(results[4].Status == VerifyStatus::Mismatch && results[4].Detail.find("not inside the sections") != std::string::npos, "PE entry outside every section: " + results[4].Detail);
+    Require(results[5].Status == VerifyStatus::Applied && results[5].Detail.find("not stored in the file") != std::string::npos, "PE entry across two sections: " + results[5].Detail);
+    Require(results[6].Status == VerifyStatus::NotChecked, "PE module entry");
+    Require(results[7].Status == VerifyStatus::Mismatch && results[7].Detail.find("not inside the sections") != std::string::npos, "PE entry past the last section: " + results[7].Detail);
 
     auto unpatched = pe;
     unpatched[0x400] = 0;
     unpatched[0x401] = 1;
     const auto single = ParsePatchFile(header(top + patch("0x10000", "0001", "0908")));
     const auto missing = VerifyPatches(single, {{"main.elf", unpatched}}, {}, true);
-    require(missing[0].Status == VerifyStatus::Mismatch && missing[0].Detail.find("not applied") != std::string::npos, "unpatched PE output: " + missing[0].Detail);
+    Require(missing[0].Status == VerifyStatus::Mismatch && missing[0].Detail.find("not applied") != std::string::npos, "unpatched PE output: " + missing[0].Detail);
     auto truncated = pe;
     truncated.resize(0x500);
     const auto cut = VerifyPatches(ParsePatchFile(header(top + patch("0x10100", "00", "01"))), {{"main.elf", truncated}}, {}, true);
-    require(cut[0].Status == VerifyStatus::Mismatch && cut[0].Detail.find("out of bounds") != std::string::npos, "PE section data past the end of the file: " + cut[0].Detail);
+    Require(cut[0].Status == VerifyStatus::Mismatch && cut[0].Detail.find("out of bounds") != std::string::npos, "PE section data past the end of the file: " + cut[0].Detail);
 
     rejects([&] { VerifyPatches(ParsePatchFile(header(top + patch("", "0001", "0908"))), {{"main.elf", pe}}, {}, true); }, "has no output_rva");
     rejects([&] { VerifyPatches(ParsePatchFile(header(top + "linux_base = 0x400000\n" + patch("0x10000", "0001", "0908"))), {{"main.elf", pe}}, {}, true); }, "has linux_base = 0x400000");
     rejects([&] { VerifyPatches(ParsePatchFile(header(top + patch("0x10000", "0001", "0908") + patch("0x10001", "01", "08"))), {{"main.elf", pe}}, {}, true); }, "overlaps");
     for (const char* bad : {"\"0x10000\"", "-1", "0x100000000"}) rejectsText(header(patch(bad, "00", "01")), 5, "output_rva must be an integer from 0 to 0xffffffff");
-    require(ParsePatchFile(header(patch("0xffffffff", "00", "01"))).Entries[0].OutputRva == 0xffffffff, "largest output_rva was not read");
+    Require(ParsePatchFile(header(patch("0xffffffff", "00", "01"))).Entries[0].OutputRva == 0xffffffff, "largest output_rva was not read");
     auto notPe = pe;
     Io::WriteU16(notPe, 0x98, 0x10b);
     rejects([&] { VerifyPatches(single, {{"main.elf", notPe}}, {}, true); }, "verify the input instead");
@@ -652,16 +649,16 @@ void verifyWindowsOutput() {
     options.Target = TargetSystem::Windows;
     options.Patches = {entry("custom-name.bin", 0x1001, {0}, {0x90}, "nop"), entry("sce_module/plugin.prx", 0x1002, {0}, {0x41})};
     const auto converted = converter.Convert(conversionInput(conversionFixture()), options);
-    require(converted.AppliedPatches.size() == 2 && converted.AppliedPatches[0].OutputRva == 0x10001 && !converted.AppliedPatches[1].OutputRva, "Windows conversion did not record the executable entry's output_rva");
+    Require(converted.AppliedPatches.size() == 2 && converted.AppliedPatches[0].OutputRva == 0x10001 && !converted.AppliedPatches[1].OutputRva, "Windows conversion did not record the executable entry's output_rva");
     const auto text = WriteManifest(converted.AppliedPatches, "custom-name.bin", "");
-    require(text.find("va = 0x1001\noutput_rva = 0x10001\n") != std::string::npos && text.find("va = 0x1002\nexpected") != std::string::npos, "manifest output_rva: " + text);
+    Require(text.find("va = 0x1001\noutput_rva = 0x10001\n") != std::string::npos && text.find("va = 0x1002\nexpected") != std::string::npos, "manifest output_rva: " + text);
     const auto verified = VerifyPatches(ParsePatchFile(text), {{"custom-name.bin", converted.Executable}}, {}, true);
-    require(verified[0].Status == VerifyStatus::Applied && verified[1].Status == VerifyStatus::NotChecked, "converted PE output was not verified: " + verified[0].Detail);
+    Require(verified[0].Status == VerifyStatus::Applied && verified[1].Status == VerifyStatus::NotChecked, "converted PE output was not verified: " + verified[0].Detail);
     auto tampered = converted.Executable;
     tampered[verified[0].Offset] = 0;
-    require(VerifyPatches(ParsePatchFile(text), {{"custom-name.bin", tampered}}, {}, true)[0].Status == VerifyStatus::Mismatch, "tampered PE output was accepted");
+    Require(VerifyPatches(ParsePatchFile(text), {{"custom-name.bin", tampered}}, {}, true)[0].Status == VerifyStatus::Mismatch, "tampered PE output was accepted");
     options.Target = TargetSystem::Linux;
-    require(!converter.Convert(conversionInput(conversionFixture()), options).AppliedPatches[0].OutputRva, "Linux conversion recorded an output_rva");
+    Require(!converter.Convert(conversionInput(conversionFixture()), options).AppliedPatches[0].OutputRva, "Linux conversion recorded an output_rva");
 }
 
 void manifest() {
@@ -669,22 +666,22 @@ void manifest() {
     const AppliedPatch second{"sce_module/libc.prx", 0x2000, 0x2000, {5}, {6}, "", ""};
     AppliedPatch duplicate = first;
     const auto merged = AggregateManifest({{first, second}, {duplicate, second}});
-    require(merged.size() == 2, "records were not deduplicated");
+    Require(merged.size() == 2, "records were not deduplicated");
     rejects([&] { WriteManifest(merged, "main.elf", ""); }, "Patch manifest cannot hold the description: set \"x\" later");
 
     const AppliedPatch plain{"main.elf", 0x1000, 0x1000, {0, 1}, {9, 8}, "plain description", "alpha"};
     const auto text = WriteManifest(AggregateManifest({{plain}, {second}}), "main.elf", "");
     const auto parsed = ParsePatchFile(text);
-    require(parsed.MainTarget == std::string("main.elf"), "main_target did not round-trip");
-    require(parsed.Entries.size() == 2, "entry count did not round-trip");
-    require(parsed.Entries[0].Name == "alpha" && parsed.Entries[0].Target == "main.elf" && parsed.Entries[0].VirtualAddress == 0x1000, "first entry");
-    require(parsed.Entries[0].Expected == plain.Expected && parsed.Entries[0].Value == plain.Value && parsed.Entries[0].Description == "plain description", "first bytes");
-    require(parsed.Entries[1].Name.empty() && parsed.Entries[1].Target == "sce_module/libc.prx" && parsed.Entries[1].Description.empty(), "second entry");
-    require(text.find("name = \"alpha\"") != std::string::npos && text.find("main_target = \"main.elf\"") != std::string::npos, "manifest text");
-    require(WriteManifest(AggregateManifest({{plain}, {second}}), "main.elf", "") == text, "manifest is not deterministic");
-    require(text.find("linux_base") == std::string::npos && !parsed.LinuxBase, "a manifest without a base wrote linux_base");
+    Require(parsed.MainTarget == std::string("main.elf"), "main_target did not round-trip");
+    Require(parsed.Entries.size() == 2, "entry count did not round-trip");
+    Require(parsed.Entries[0].Name == "alpha" && parsed.Entries[0].Target == "main.elf" && parsed.Entries[0].VirtualAddress == 0x1000, "first entry");
+    Require(parsed.Entries[0].Expected == plain.Expected && parsed.Entries[0].Value == plain.Value && parsed.Entries[0].Description == "plain description", "first bytes");
+    Require(parsed.Entries[1].Name.empty() && parsed.Entries[1].Target == "sce_module/libc.prx" && parsed.Entries[1].Description.empty(), "second entry");
+    Require(text.find("name = \"alpha\"") != std::string::npos && text.find("main_target = \"main.elf\"") != std::string::npos, "manifest text");
+    Require(WriteManifest(AggregateManifest({{plain}, {second}}), "main.elf", "") == text, "manifest is not deterministic");
+    Require(text.find("linux_base") == std::string::npos && !parsed.LinuxBase, "a manifest without a base wrote linux_base");
     const auto based = WriteManifest({plain}, "main.elf", "", 0x400000);
-    require(based.find("main_target = \"main.elf\"\nlinux_base = 0x400000\n") != std::string::npos && ParsePatchFile(based).LinuxBase == 0x400000, "linux_base did not round-trip");
+    Require(based.find("main_target = \"main.elf\"\nlinux_base = 0x400000\n") != std::string::npos && ParsePatchFile(based).LinuxBase == 0x400000, "linux_base did not round-trip");
     rejectsText(header("linux_base = \"0x400000\"\n"), 2, "linux_base must be a non-negative integer");
     rejectsText(header("linux_base = -1\n"), 2, "linux_base must be a non-negative integer");
 }
@@ -713,13 +710,13 @@ void relocationOverlap() {
 void manifestConfig() {
     const AppliedPatch patch{"main.elf", 0x1000, 0x1000, {0}, {1}, "", ""};
     const auto config = [&](const std::string& path) { return WriteManifest({patch}, "main.elf", path); };
-    require(config("").find("config =") == std::string::npos, "empty config was recorded");
-    require(config("dir/p.toml").find("config = \"dir/p.toml\"\n") != std::string::npos, "forward-slash path");
+    Require(config("").find("config =") == std::string::npos, "empty config was recorded");
+    Require(config("dir/p.toml").find("config = \"dir/p.toml\"\n") != std::string::npos, "forward-slash path");
     rejects([&] { config("dir/p\x7f.toml"); }, "Patch manifest cannot hold the config");
     rejects([&] { config("dir/p\x01.toml"); }, "Patch manifest cannot hold the config: p\x01.toml");
     const auto quoted = config("we\"ird/p.toml");
-    require(quoted.find("config = \"p.toml\"\n") != std::string::npos, "quote path was not reduced to the file name");
-    require(ParsePatchFile(quoted).Entries.size() == 1, "manifest with a reduced config did not parse");
+    Require(quoted.find("config = \"p.toml\"\n") != std::string::npos, "quote path was not reduced to the file name");
+    Require(ParsePatchFile(quoted).Entries.size() == 1, "manifest with a reduced config did not parse");
     rejects([&] { config("dir/a\"b.toml"); }, "Patch manifest cannot hold the config");
     const auto hold = [&](AppliedPatch bad, const std::string& field) { rejects([&] { WriteManifest({bad}, "main.elf", ""); }, "Patch manifest cannot hold the " + field + ": "); };
     auto bad = patch;
@@ -744,18 +741,18 @@ void typedManifest() {
     Io::WriteU32(bytes, 0x1000, 0xffffffff);
     const auto before = bytes;
     const auto patched = PatchTarget(bytes, "main.elf", file.Entries);
-    require(patched.Applied.size() == 3 && patched.Applied[0].Type == "i32" && patched.Applied[0].Min && patched.Applied[0].Min->Negative, "typed fields are not carried");
+    Require(patched.Applied.size() == 3 && patched.Applied[0].Type == "i32" && patched.Applied[0].Min && patched.Applied[0].Min->Negative, "typed fields are not carried");
     const auto text = WriteManifest(AggregateManifest({patched.Applied}), "main.elf", "");
-    require(text.find("type = \"i32\"") != std::string::npos && text.find("expected = -1\n") != std::string::npos && text.find("min = -5\n") != std::string::npos
+    Require(text.find("type = \"i32\"") != std::string::npos && text.find("expected = -1\n") != std::string::npos && text.find("min = -5\n") != std::string::npos
             && text.find("max = 0x7f000000\n") != std::string::npos && text.find("align = 0x1000\n") != std::string::npos && text.find("value = 0x18000000\n") != std::string::npos, "typed manifest text: " + text);
-    require(text.find("expected = \"84\"") != std::string::npos, "raw entry stayed raw");
+    Require(text.find("expected = \"84\"") != std::string::npos, "raw entry stayed raw");
     const auto reparsed = ParsePatchFile(text);
-    require(reparsed.Entries.size() == 3 && reparsed.Entries[0].Name == "neg" && reparsed.Entries[0].Type == "i32", "typed round-trip");
+    Require(reparsed.Entries.size() == 3 && reparsed.Entries[0].Name == "neg" && reparsed.Entries[0].Type == "i32", "typed round-trip");
     for (std::size_t index = 0; index < 3; ++index)
-        require(reparsed.Entries[index].Expected == file.Entries[index].Expected && reparsed.Entries[index].Value == file.Entries[index].Value, "round-trip bytes");
+        Require(reparsed.Entries[index].Expected == file.Entries[index].Expected && reparsed.Entries[index].Value == file.Entries[index].Value, "round-trip bytes");
     auto again = before;
     PatchTarget(again, "main.elf", reparsed.Entries);
-    require(again == bytes, "re-applying the manifest gives different bytes");
+    Require(again == bytes, "re-applying the manifest gives different bytes");
 }
 
 }

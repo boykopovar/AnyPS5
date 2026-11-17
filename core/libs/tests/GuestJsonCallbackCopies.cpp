@@ -1,5 +1,6 @@
 #include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <bit>
 #include <cstddef>
@@ -18,9 +19,6 @@ using NullHandler = const Value& (APS5_VABI*)(ValueType, const Value*, void*);
 using MismatchHandler = const Value& (APS5_VABI*)(ValueType, const Value*, const Value*, void*);
 using FloatHandler = Value* (APS5_VABI*)(Value*, std::int32_t, double, const Value*, void*, bool*);
 using ElementHandler = void (APS5_VABI*)(int, const String*, const std::size_t*, const Value*, const Value*, void*);
-static void Require(bool condition, const char* message) {
-    if (!condition) { std::fprintf(stderr, "%s\n", message); std::abort(); }
-}
 struct CopyAllocations { std::map<void*, std::size_t> live; std::size_t generation = 0; };
 static void* APS5_VABI AllocateCopy(void*, std::size_t bytes, void* context) {
     auto& trace = *static_cast<CopyAllocations*>(context);

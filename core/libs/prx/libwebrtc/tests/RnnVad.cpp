@@ -1,4 +1,5 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "Testing.hpp"
 
 #include <cmath>
 #include <cstddef>
@@ -34,21 +35,6 @@ constexpr float Probabilities[] = {0x1.37754cp-3f, 0x1.706e5p-5f, 0x1.7a9cp-6f, 
 constexpr WebRtcAvailableCpuFeatures NoFeatures{false, false, false};
 constexpr WebRtcAvailableCpuFeatures Sse2{true, false, false};
 constexpr WebRtcAvailableCpuFeatures Avx2{false, true, false};
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc RnnVad check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> void RequireInvalidArgument(TAction action, std::source_location location = std::source_location::current()) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, location);
-}
 
 bool Same(const WebRtcAvailableCpuFeatures& left, const WebRtcAvailableCpuFeatures& right) {
     return left.sse2 == right.sse2 && left.avx2 == right.avx2 && left.neon == right.neon;
@@ -129,16 +115,16 @@ void TestSilence(const WebRtcAvailableCpuFeatures& features) {
 
 void TestInvalid() {
     WebRtcRnnVad vad;
-    RequireInvalidArgument([] { construct(nullptr, &NoFeatures); });
-    RequireInvalidArgument([&] { construct(&vad, nullptr); });
+    ExpectErr<std::invalid_argument>([] { construct(nullptr, &NoFeatures); });
+    ExpectErr<std::invalid_argument>([&] { construct(&vad, nullptr); });
     std::memset(&vad, 0, sizeof(vad));
-    RequireInvalidArgument([&] { compute(&vad, Features, false); });
-    RequireInvalidArgument([&] { compute(&vad, nullptr, true); });
-    RequireInvalidArgument([&] { destroy(&vad); });
-    RequireInvalidArgument([] { compute(nullptr, Features, false); });
-    RequireInvalidArgument([] { destroy(nullptr); });
+    ExpectErr<std::invalid_argument>([&] { compute(&vad, Features, false); });
+    ExpectErr<std::invalid_argument>([&] { compute(&vad, nullptr, true); });
+    ExpectErr<std::invalid_argument>([&] { destroy(&vad); });
+    ExpectErr<std::invalid_argument>([] { compute(nullptr, Features, false); });
+    ExpectErr<std::invalid_argument>([] { destroy(nullptr); });
     Construct(vad, NoFeatures);
-    RequireInvalidArgument([&] { compute(&vad, nullptr, false); });
+    ExpectErr<std::invalid_argument>([&] { compute(&vad, nullptr, false); });
     destroy(&vad);
 }
 

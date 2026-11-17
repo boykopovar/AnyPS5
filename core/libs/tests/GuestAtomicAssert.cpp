@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/libc.hpp"
+#include "Testing.hpp"
 #include <csignal>
 #include <cstdlib>
 #include <filesystem>
@@ -15,8 +16,6 @@
 #endif
 
 extern "C" FileStream* __stderrp_nid_postfix;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 struct Outcome {
     std::string output;

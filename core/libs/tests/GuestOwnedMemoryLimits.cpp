@@ -1,4 +1,5 @@
 #include "prx/libc/include/WindowsMappings.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -6,10 +7,6 @@
 #include <vector>
 
 using Mappings = GuestArena::WindowsMappings;
-
-static void Require(bool value, const char* message) {
-    if (!value) throw std::runtime_error(message);
-}
 
 int main() {
     try {

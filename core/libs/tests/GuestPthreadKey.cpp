@@ -1,6 +1,7 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <cerrno>
 #include <cstdlib>
@@ -11,8 +12,6 @@ static constexpr int SCE_OK = 0;
 static constexpr int POSIX_EINVAL = 22;
 static constexpr int POSIX_EAGAIN = 35;
 static constexpr std::size_t POSIX_THREAD_KEYS_MAX = 128;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static std::atomic<int> deletedCalls{0}, reusedCalls{0}, liveCalls{0};
 static std::atomic<void*> liveValue{nullptr};

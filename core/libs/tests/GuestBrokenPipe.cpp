@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <csignal>
 #include <cstdint>
 #include <cstdlib>
@@ -13,10 +14,6 @@ constexpr int BrokenPipe = 13;
 constexpr int PipeError = 32;
 constexpr int TryAgain = 35;
 volatile std::sig_atomic_t brokenPipeSignals = 0;
-
-void Require(bool value) {
-    if (!value) std::abort();
-}
 
 void APS5_VABI CountBrokenPipe(int signal) {
     if (signal == BrokenPipe) brokenPipeSignals = brokenPipeSignals + 1;

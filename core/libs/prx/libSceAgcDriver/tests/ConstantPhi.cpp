@@ -1,6 +1,7 @@
 #include "IntermediateRepresentation/IrBuilder.hpp"
 #include "Optimization/ConstantFolder.hpp"
 #include "Optimization/DeadCodeEliminator.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <pthread.h>
 #include <string>
@@ -9,10 +10,6 @@
 using namespace ShaderRecompiler;
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 void CheckDiamond(unsigned mode) {
     IrProgram program;

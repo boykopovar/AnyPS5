@@ -1,17 +1,11 @@
 #include "prx/libSceVideoOut/include/InventoryExports.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-
-static void Require(bool value, const char* message) {
-    if (!value) {
-        std::fprintf(stderr, "%s\n", message);
-        std::abort();
-    }
-}
 
 static int ModeIsVr(std::uint32_t flags, std::uint8_t fill) {
     std::array<std::uint8_t, 0x40> mode;

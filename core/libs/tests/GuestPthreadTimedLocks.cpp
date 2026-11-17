@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -11,8 +12,6 @@ static constexpr int SCE_OK = 0;
 static constexpr int GUEST_EDEADLK = 11;
 static constexpr int GUEST_EINVAL = 22;
 static constexpr auto HoldTime = std::chrono::milliseconds(50);
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 struct Holder {
     void* lock;

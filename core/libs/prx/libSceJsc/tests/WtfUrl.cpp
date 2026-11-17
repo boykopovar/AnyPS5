@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceJsc/libSceJsc.hpp"
+#include "Testing.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -12,15 +13,6 @@
 using namespace Jsc::WtfAbi;
 
 namespace {
-
-void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "WTF URL check failed at line %d\n", line);
-        std::abort();
-    }
-}
-
-#define Require(value) Check((value), __LINE__)
 
 StringImpl Make8(const char* text) {
     return {2, static_cast<unsigned>(std::strlen(text)), text, StringImplFlag8Bit};

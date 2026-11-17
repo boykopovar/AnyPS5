@@ -1,17 +1,7 @@
 #include "prx/libSceMsgDialog/include/MsgDialogText.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <cstdlib>
-
-namespace {
-
-void Require(bool value, const char* what) {
-    if (!value) {
-        std::fprintf(stderr, "msg_dialog_text: %s\n", what);
-        std::abort();
-    }
-}
-
-}
 
 int main() {
     Require(MsgDialog::DecodeUtf8("") == u"", "an empty string is not empty");

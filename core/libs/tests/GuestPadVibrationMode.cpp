@@ -1,9 +1,8 @@
 #include "SceTypes.hpp"
 #include "prx/libScePad/include/Pad.hpp"
+#include "Testing.hpp"
 #include <cstdlib>
 #include <initializer_list>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 int main() {
     for (int handle : {-1, 0, 1, 12345})

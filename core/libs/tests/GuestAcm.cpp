@@ -14,10 +14,7 @@
 #include <unistd.h>
 #endif
 #include "SceTypes.hpp"
-
-static void Require(bool value) {
-    if (!value) std::abort();
-}
+#include "Testing.hpp"
 
 static std::uintptr_t AdvanceRing(std::byte* ring, std::uint32_t capacity, std::uint32_t count, std::uint32_t index, std::uint32_t& nextCount, std::uint32_t& next) {
     std::memcpy(ring + 0x8, &capacity, sizeof(capacity));

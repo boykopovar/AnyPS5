@@ -4,6 +4,7 @@
 #include "prx/libSceIme/include/ImeInput.hpp"
 #include "prx/libSceIme/include/ImeKeyboardView.hpp"
 #include "prx/libSceVideoOut/include/ImeTextInput.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -36,12 +37,6 @@ bool ReadClipboard(std::string& text) {
 }
 
 void APS5_VABI Ignore(void*, const ImeEvent*) {}
-
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
 
 void Edit(const char* utf8, std::int32_t start, std::int32_t length, unsigned windowId = WindowId) {
     SDL_Event event{};

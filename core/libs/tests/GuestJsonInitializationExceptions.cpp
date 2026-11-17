@@ -1,5 +1,6 @@
 #include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -12,9 +13,6 @@
 using namespace SceJson2;
 
 struct Parameter { void* allocator; void* context; std::size_t bufferSize; std::int32_t mode; std::uint32_t reserved[3]; };
-static void Require(bool condition, const char* message) {
-    if (!condition) { std::fprintf(stderr, "%s\n", message); std::abort(); }
-}
 #if defined(JSON2_EXCEPTION_LEGACY_SDK)
 static constexpr unsigned ResourceCount = 11;
 static constexpr std::size_t HeaderSize = 24;

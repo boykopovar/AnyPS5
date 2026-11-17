@@ -1,4 +1,5 @@
 #include "prx/libSceLibcInternal/libSceLibcInternal.hpp"
+#include "Testing.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -12,12 +13,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "libc internal integer extrema: %s\n", message);
-    std::abort();
-}
 
 template<typename TValue>
 using Single = TValue (APS5_VABI*)(const void*, const void*);

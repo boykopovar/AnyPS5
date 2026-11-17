@@ -1,5 +1,6 @@
 #include "prx/ulobjmgr/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <limits>
@@ -8,8 +9,6 @@ namespace {
 
 constexpr int efault = 14;
 constexpr int einval = 22;
-
-void Require(bool value) { if (!value) std::abort(); }
 
 }
 

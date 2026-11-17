@@ -1,5 +1,6 @@
 #include "prx/libSceFreeTypeOt/include/Memory.hpp"
 #include "prx/libSceFreeTypeOt/include/System.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -61,12 +62,6 @@ struct Library {
         library.memory = &recorder.memory;
     }
 };
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "FreeType Ot system: %s\n", message);
-    std::exit(1);
-}
 
 template <class Call>
 bool Throws(Call call) {

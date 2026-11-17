@@ -1,5 +1,6 @@
 #include "prx/libSceAgc/DcbFlow/include/Memory.hpp"
 #include "prx/libSceAgc/Acb/include/Memory.hpp"
+#include "Testing.hpp"
 
 #include <algorithm>
 #include <array>
@@ -10,10 +11,6 @@
 namespace {
 
 constexpr std::uint32_t Sentinel = 0xabcdef01u;
-
-void check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 struct Storage {
     std::array<std::uint32_t, 16> words{};
@@ -31,7 +28,7 @@ std::uint32_t* APS5_VABI writeDcb(CommandBuffer* buffer, std::uint8_t atomicOp, 
 }
 
 void testPacket(Writer writer, std::uint32_t size, std::uint8_t atomicOp, std::uintptr_t address, std::uint32_t engineBits) {
-    check(size == 36, "ATOMIC_MEM packet size");
+    Require(size == 36, "ATOMIC_MEM packet size");
     Storage storage;
     auto* packet = writer(&storage.buffer, atomicOp, 0x5, reinterpret_cast<const volatile void*>(address), 2, 0x1122334455667788ull, 0x99aabbccddeeff00ull, 0x1abc);
     const std::array<std::uint32_t, 9> expected{
@@ -45,18 +42,18 @@ void testPacket(Writer writer, std::uint32_t size, std::uint8_t atomicOp, std::u
         0x99aabbccu,
         0x1abcu,
     };
-    check(packet == storage.words.data() && std::equal(expected.begin(), expected.end(), packet), "incorrect ATOMIC_MEM packet");
-    check(storage.buffer.cursor_up == packet + size / sizeof(std::uint32_t), "the cursor did not advance by the packet size");
-    check(std::all_of(storage.words.begin() + expected.size(), storage.words.end(), [](std::uint32_t word) { return word == Sentinel; }), "ATOMIC_MEM wrote past its nine words");
+    Require(packet == storage.words.data() && std::equal(expected.begin(), expected.end(), packet), "incorrect ATOMIC_MEM packet");
+    Require(storage.buffer.cursor_up == packet + size / sizeof(std::uint32_t), "the cursor did not advance by the packet size");
+    Require(std::all_of(storage.words.begin() + expected.size(), storage.words.end(), [](std::uint32_t word) { return word == Sentinel; }), "ATOMIC_MEM wrote past its nine words");
 }
 
 void testMasking() {
     Storage compute;
     const auto* packet = sceAgcAcbAtomicMem(&compute.buffer, 0xff, 0xff, reinterpret_cast<const volatile void*>(0x1002ull), 0xff, 0, 0, 0xffff);
-    check(packet[1] == (0x7fu | 0xf00u | (3u << 25u)) && packet[2] == 0x1002u && packet[8] == 0x1fffu, "compute ATOMIC_MEM did not mask its fields");
+    Require(packet[1] == (0x7fu | 0xf00u | (3u << 25u)) && packet[2] == 0x1002u && packet[8] == 0x1fffu, "compute ATOMIC_MEM did not mask its fields");
     Storage draw;
     const auto* drawPacket = sceAgcDcbAtomicMem(&draw.buffer, 0xff, 0xff, 0xff, 0xff, reinterpret_cast<const volatile void*>(0x1002ull), 0, 0, 0xffff);
-    check(drawPacket[1] == (0x7fu | 0xf00u | (3u << 25u) | 0xc0000000u) && drawPacket[2] == 0x1002u && drawPacket[8] == 0x1fffu, "draw ATOMIC_MEM did not mask its fields");
+    Require(drawPacket[1] == (0x7fu | 0xf00u | (3u << 25u) | 0xc0000000u) && drawPacket[2] == 0x1002u && drawPacket[8] == 0x1fffu, "draw ATOMIC_MEM did not mask its fields");
 }
 
 }

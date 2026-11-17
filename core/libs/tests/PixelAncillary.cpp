@@ -4,13 +4,13 @@
 #include "Optimization/MaskedSelectEliminator.hpp"
 #include "Optimization/ShaderInfoCollector.hpp"
 #include "Recompiler.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
 
 using namespace ShaderRecompiler;
-static void Require(bool value) { if (!value) throw std::runtime_error("packed pixel ancillary regression"); }
 
 constexpr std::uint32_t UnmodelledBits = 0xE000F0FFu;
 constexpr std::uint32_t SelectOther = 0x5A3C9E17u;

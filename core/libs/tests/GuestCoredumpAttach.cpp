@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "ProcessParametersFixture.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -21,8 +22,6 @@ int APS5_VABI Handler(void*) {
     handlerRan = true;
     return 0;
 }
-
-void Require(bool value) { if (!value) std::abort(); }
 
 template <typename TAttach>
 bool Throws(TAttach attach, const char* function) {

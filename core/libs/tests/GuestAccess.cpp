@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
+#include "Testing.hpp"
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -15,8 +16,6 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static const char* UnreadablePage() {
 #ifdef _WIN32

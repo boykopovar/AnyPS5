@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdio>
@@ -24,15 +25,6 @@ unsigned releases = 0;
 unsigned handlerCalls = 0;
 std::size_t lastSize = 0;
 std::size_t lastAlignment = 0;
-
-void Require(bool condition, int line) {
-    if (!condition) {
-        std::fprintf(stderr, "Guest new handler check failed at line %d\n", line);
-        std::abort();
-    }
-}
-
-#define REQUIRE(condition) Require((condition), __LINE__)
 
 void* APS5_VABI allocate(std::size_t bytes) {
     ++allocations;
@@ -68,7 +60,7 @@ void APS5_VABI throwingHandler() {
 void APS5_VABI allocatingHandler() {
     ++handlerCalls;
     failuresLeft = 0;
-    REQUIRE(_Znwm_nid_postfix(8) == storage.data());
+    Require(_Znwm_nid_postfix(8) == storage.data());
 }
 
 void Reset(unsigned failures) {
@@ -95,26 +87,26 @@ int RunDefaultHeap() {
     ApplicationHeapRegister_nid_no_patch(none.data());
     constexpr std::size_t huge = std::numeric_limits<std::size_t>::max();
 
-    REQUIRE(Throws([] { _Znwm_nid_postfix(huge); }));
-    REQUIRE(Throws([] { _Znam_nid_postfix(huge); }));
-    REQUIRE(_ZnwmRKSt9nothrow_t_nid_postfix(huge, nullptr) == nullptr);
-    REQUIRE(_ZnamRKSt9nothrow_t_nid_postfix(huge, nullptr) == nullptr);
-    REQUIRE(Throws([] { _ZnamSt11align_val_t_nid_postfix(huge, 64); }));
-    REQUIRE(_ZnwmSt11align_val_tRKSt9nothrow_t_nid_postfix(huge, 64, nullptr) == nullptr);
-    REQUIRE(_ZnamSt11align_val_tRKSt9nothrow_t_nid_postfix(huge, 64, nullptr) == nullptr);
+    Require(Throws([] { _Znwm_nid_postfix(huge); }));
+    Require(Throws([] { _Znam_nid_postfix(huge); }));
+    Require(_ZnwmRKSt9nothrow_t_nid_postfix(huge, nullptr) == nullptr);
+    Require(_ZnamRKSt9nothrow_t_nid_postfix(huge, nullptr) == nullptr);
+    Require(Throws([] { _ZnamSt11align_val_t_nid_postfix(huge, 64); }));
+    Require(_ZnwmSt11align_val_tRKSt9nothrow_t_nid_postfix(huge, 64, nullptr) == nullptr);
+    Require(_ZnamSt11align_val_tRKSt9nothrow_t_nid_postfix(huge, 64, nullptr) == nullptr);
 
     handlerCalls = 0;
-    REQUIRE(_ZSt15set_new_handlerPFvvE_nid_postfix(&uninstallingHandler) == nullptr);
-    REQUIRE(Throws([] { _Znwm_nid_postfix(huge); }));
-    REQUIRE(handlerCalls == 3 && _ZSt15get_new_handlerv_nid_postfix() == nullptr);
+    Require(_ZSt15set_new_handlerPFvvE_nid_postfix(&uninstallingHandler) == nullptr);
+    Require(Throws([] { _Znwm_nid_postfix(huge); }));
+    Require(handlerCalls == 3 && _ZSt15get_new_handlerv_nid_postfix() == nullptr);
 
     handlerCalls = 0;
-    REQUIRE(_ZSt15set_new_handlerPFvvE_nid_postfix(&throwingHandler) == nullptr);
-    REQUIRE(_ZnwmRKSt9nothrow_t_nid_postfix(huge, nullptr) == nullptr && handlerCalls == 1);
-    REQUIRE(_ZSt15set_new_handlerPFvvE_nid_postfix(nullptr) == &throwingHandler);
+    Require(_ZSt15set_new_handlerPFvvE_nid_postfix(&throwingHandler) == nullptr);
+    Require(_ZnwmRKSt9nothrow_t_nid_postfix(huge, nullptr) == nullptr && handlerCalls == 1);
+    Require(_ZSt15set_new_handlerPFvvE_nid_postfix(nullptr) == &throwingHandler);
 
     void* small = _Znwm_nid_postfix(24);
-    REQUIRE(small != nullptr);
+    Require(small != nullptr);
     std::memset(small, 0x5a, 24);
     _ZdlPv_nid_postfix(small);
 
@@ -134,110 +126,110 @@ int main(int argc, char** argv) {
     api[6] = reinterpret_cast<void*>(&posixAlign);
     ApplicationHeapRegister_nid_no_patch(api.data());
 
-    REQUIRE(_ZSt15get_new_handlerv_nid_postfix() == nullptr);
+    Require(_ZSt15get_new_handlerv_nid_postfix() == nullptr);
 
     Reset(0);
     void* nothrowPointer = _Znwm_nid_postfix(8);
     const int nothrowTag = 0;
-    REQUIRE(nothrowPointer == storage.data() && releases == 0);
+    Require(nothrowPointer == storage.data() && releases == 0);
     _ZdlPvRKSt9nothrow_t_nid_postfix(nothrowPointer, &nothrowTag);
 
-    REQUIRE(releases == 1);
+    Require(releases == 1);
     _ZdlPvRKSt9nothrow_t_nid_postfix(nullptr, &nothrowTag);
 
-    REQUIRE(releases == 1);
+    Require(releases == 1);
 
     Reset(1);
-    REQUIRE(Throws([] { _Znwm_nid_postfix(8); }) && handlerCalls == 0 && allocations == 1);
+    Require(Throws([] { _Znwm_nid_postfix(8); }) && handlerCalls == 0 && allocations == 1);
     Reset(1);
-    REQUIRE(Throws([] { _Znam_nid_postfix(8); }) && handlerCalls == 0 && allocations == 1);
+    Require(Throws([] { _Znam_nid_postfix(8); }) && handlerCalls == 0 && allocations == 1);
     Reset(1);
-    REQUIRE(_ZnwmRKSt9nothrow_t_nid_postfix(8, nullptr) == nullptr && handlerCalls == 0);
+    Require(_ZnwmRKSt9nothrow_t_nid_postfix(8, nullptr) == nullptr && handlerCalls == 0);
     Reset(1);
-    REQUIRE(_ZnamRKSt9nothrow_t_nid_postfix(8, nullptr) == nullptr && handlerCalls == 0);
+    Require(_ZnamRKSt9nothrow_t_nid_postfix(8, nullptr) == nullptr && handlerCalls == 0);
 
-    REQUIRE(_ZSt15set_new_handlerPFvvE_nid_postfix(&countingHandler) == nullptr);
-    REQUIRE(_ZSt15get_new_handlerv_nid_postfix() == &countingHandler);
+    Require(_ZSt15set_new_handlerPFvvE_nid_postfix(&countingHandler) == nullptr);
+    Require(_ZSt15get_new_handlerv_nid_postfix() == &countingHandler);
     Reset(2);
-    REQUIRE(_Znwm_nid_postfix(8) == storage.data() && handlerCalls == 2 && allocations == 3);
+    Require(_Znwm_nid_postfix(8) == storage.data() && handlerCalls == 2 && allocations == 3);
     Reset(3);
-    REQUIRE(_Znam_nid_postfix(8) == storage.data() && handlerCalls == 3 && allocations == 4);
+    Require(_Znam_nid_postfix(8) == storage.data() && handlerCalls == 3 && allocations == 4);
     Reset(1);
-    REQUIRE(_ZnwmRKSt9nothrow_t_nid_postfix(8, nullptr) == storage.data() && handlerCalls == 1 && allocations == 2);
+    Require(_ZnwmRKSt9nothrow_t_nid_postfix(8, nullptr) == storage.data() && handlerCalls == 1 && allocations == 2);
     Reset(1);
-    REQUIRE(_ZnamRKSt9nothrow_t_nid_postfix(8, nullptr) == storage.data() && handlerCalls == 1 && allocations == 2);
+    Require(_ZnamRKSt9nothrow_t_nid_postfix(8, nullptr) == storage.data() && handlerCalls == 1 && allocations == 2);
     Reset(0);
-    REQUIRE(_Znwm_nid_postfix(8) == storage.data() && handlerCalls == 0 && allocations == 1);
+    Require(_Znwm_nid_postfix(8) == storage.data() && handlerCalls == 0 && allocations == 1);
     Reset(1);
-    REQUIRE(_Znwm_nid_postfix(0) == storage.data() && lastSize == 1 && handlerCalls == 1);
+    Require(_Znwm_nid_postfix(0) == storage.data() && lastSize == 1 && handlerCalls == 1);
 
-    REQUIRE(_ZSt15set_new_handlerPFvvE_nid_postfix(&uninstallingHandler) == &countingHandler);
+    Require(_ZSt15set_new_handlerPFvvE_nid_postfix(&uninstallingHandler) == &countingHandler);
     Reset(100);
-    REQUIRE(Throws([] { _Znwm_nid_postfix(8); }));
-    REQUIRE(handlerCalls == 3 && allocations == 4 && _ZSt15get_new_handlerv_nid_postfix() == nullptr);
+    Require(Throws([] { _Znwm_nid_postfix(8); }));
+    Require(handlerCalls == 3 && allocations == 4 && _ZSt15get_new_handlerv_nid_postfix() == nullptr);
 
-    REQUIRE(_ZSt15set_new_handlerPFvvE_nid_postfix(&throwingHandler) == nullptr);
+    Require(_ZSt15set_new_handlerPFvvE_nid_postfix(&throwingHandler) == nullptr);
     Reset(1);
-    REQUIRE(Throws([] { _Znwm_nid_postfix(8); }) && handlerCalls == 1 && allocations == 1);
+    Require(Throws([] { _Znwm_nid_postfix(8); }) && handlerCalls == 1 && allocations == 1);
     Reset(1);
-    REQUIRE(_ZnwmRKSt9nothrow_t_nid_postfix(8, nullptr) == nullptr && handlerCalls == 1 && allocations == 1);
+    Require(_ZnwmRKSt9nothrow_t_nid_postfix(8, nullptr) == nullptr && handlerCalls == 1 && allocations == 1);
     Reset(1);
-    REQUIRE(_ZnamRKSt9nothrow_t_nid_postfix(8, nullptr) == nullptr && handlerCalls == 1 && allocations == 1);
+    Require(_ZnamRKSt9nothrow_t_nid_postfix(8, nullptr) == nullptr && handlerCalls == 1 && allocations == 1);
 
-    REQUIRE(_ZSt15set_new_handlerPFvvE_nid_postfix(&allocatingHandler) == &throwingHandler);
+    Require(_ZSt15set_new_handlerPFvvE_nid_postfix(&allocatingHandler) == &throwingHandler);
     Reset(1);
-    REQUIRE(_Znwm_nid_postfix(16) == storage.data() && handlerCalls == 1);
+    Require(_Znwm_nid_postfix(16) == storage.data() && handlerCalls == 1);
 
-    REQUIRE(_ZSt15set_new_handlerPFvvE_nid_postfix(nullptr) == &allocatingHandler);
-    REQUIRE(_ZSt15get_new_handlerv_nid_postfix() == nullptr);
+    Require(_ZSt15set_new_handlerPFvvE_nid_postfix(nullptr) == &allocatingHandler);
+    Require(_ZSt15get_new_handlerv_nid_postfix() == nullptr);
 
     Reset(0);
     void* aligned = _ZnwmSt11align_val_t_nid_postfix(24, 16);
-    REQUIRE(aligned == storage.data() && lastSize == 24 && lastAlignment == 16 && allocations == 1);
+    Require(aligned == storage.data() && lastSize == 24 && lastAlignment == 16 && allocations == 1);
     _ZdlPvSt11align_val_t_nid_postfix(aligned, 16);
 
     Reset(1);
-    REQUIRE(Throws([] { _ZnwmSt11align_val_t_nid_postfix(8, 32); }) && handlerCalls == 0 && allocations == 1);
+    Require(Throws([] { _ZnwmSt11align_val_t_nid_postfix(8, 32); }) && handlerCalls == 0 && allocations == 1);
 
     Reset(0);
-    REQUIRE(_ZnwmSt11align_val_t_nid_postfix(0, 16) == storage.data() && lastSize == 1 && lastAlignment == 16);
+    Require(_ZnwmSt11align_val_t_nid_postfix(0, 16) == storage.data() && lastSize == 1 && lastAlignment == 16);
     Reset(2);
     _ZSt15set_new_handlerPFvvE_nid_postfix(&countingHandler);
 
-    REQUIRE(_ZnwmSt11align_val_t_nid_postfix(8, 16) == storage.data() && handlerCalls == 2 && allocations == 3);
+    Require(_ZnwmSt11align_val_t_nid_postfix(8, 16) == storage.data() && handlerCalls == 2 && allocations == 3);
     _ZSt15set_new_handlerPFvvE_nid_postfix(nullptr);
 
     Reset(0);
     void* array = _ZnamSt11align_val_t_nid_postfix(40, 64);
-    REQUIRE(array == storage.data() && lastSize == 40 && lastAlignment == 64 && allocations == 1);
+    Require(array == storage.data() && lastSize == 40 && lastAlignment == 64 && allocations == 1);
     _ZdaPvSt11align_val_t_nid_postfix(array, 64);
-    REQUIRE(releases == 1);
+    Require(releases == 1);
     Reset(0);
-    REQUIRE(_ZnamSt11align_val_t_nid_postfix(0, 32) == storage.data() && lastSize == 1 && lastAlignment == 32);
+    Require(_ZnamSt11align_val_t_nid_postfix(0, 32) == storage.data() && lastSize == 1 && lastAlignment == 32);
     Reset(1);
-    REQUIRE(Throws([] { _ZnamSt11align_val_t_nid_postfix(8, 32); }) && handlerCalls == 0 && allocations == 1);
+    Require(Throws([] { _ZnamSt11align_val_t_nid_postfix(8, 32); }) && handlerCalls == 0 && allocations == 1);
 
     Reset(0);
-    REQUIRE(_ZnwmSt11align_val_tRKSt9nothrow_t_nid_postfix(24, 128, &nothrowTag) == storage.data() && lastSize == 24 && lastAlignment == 128);
+    Require(_ZnwmSt11align_val_tRKSt9nothrow_t_nid_postfix(24, 128, &nothrowTag) == storage.data() && lastSize == 24 && lastAlignment == 128);
     Reset(1);
-    REQUIRE(_ZnwmSt11align_val_tRKSt9nothrow_t_nid_postfix(24, 128, &nothrowTag) == nullptr && allocations == 1);
+    Require(_ZnwmSt11align_val_tRKSt9nothrow_t_nid_postfix(24, 128, &nothrowTag) == nullptr && allocations == 1);
     Reset(0);
-    REQUIRE(_ZnamSt11align_val_tRKSt9nothrow_t_nid_postfix(56, 256, &nothrowTag) == storage.data() && lastSize == 56 && lastAlignment == 256);
+    Require(_ZnamSt11align_val_tRKSt9nothrow_t_nid_postfix(56, 256, &nothrowTag) == storage.data() && lastSize == 56 && lastAlignment == 256);
     Reset(1);
-    REQUIRE(_ZnamSt11align_val_tRKSt9nothrow_t_nid_postfix(56, 256, &nothrowTag) == nullptr && allocations == 1);
+    Require(_ZnamSt11align_val_tRKSt9nothrow_t_nid_postfix(56, 256, &nothrowTag) == nullptr && allocations == 1);
 
     _ZSt15set_new_handlerPFvvE_nid_postfix(&countingHandler);
     Reset(2);
-    REQUIRE(_ZnamSt11align_val_t_nid_postfix(8, 64) == storage.data() && handlerCalls == 2 && allocations == 3);
+    Require(_ZnamSt11align_val_t_nid_postfix(8, 64) == storage.data() && handlerCalls == 2 && allocations == 3);
     Reset(1);
-    REQUIRE(_ZnwmSt11align_val_tRKSt9nothrow_t_nid_postfix(8, 64, &nothrowTag) == storage.data() && handlerCalls == 1 && allocations == 2);
+    Require(_ZnwmSt11align_val_tRKSt9nothrow_t_nid_postfix(8, 64, &nothrowTag) == storage.data() && handlerCalls == 1 && allocations == 2);
     Reset(1);
-    REQUIRE(_ZnamSt11align_val_tRKSt9nothrow_t_nid_postfix(8, 64, &nothrowTag) == storage.data() && handlerCalls == 1 && allocations == 2);
+    Require(_ZnamSt11align_val_tRKSt9nothrow_t_nid_postfix(8, 64, &nothrowTag) == storage.data() && handlerCalls == 1 && allocations == 2);
     _ZSt15set_new_handlerPFvvE_nid_postfix(&throwingHandler);
     Reset(1);
-    REQUIRE(_ZnwmSt11align_val_tRKSt9nothrow_t_nid_postfix(8, 64, &nothrowTag) == nullptr && handlerCalls == 1 && allocations == 1);
+    Require(_ZnwmSt11align_val_tRKSt9nothrow_t_nid_postfix(8, 64, &nothrowTag) == nullptr && handlerCalls == 1 && allocations == 1);
     Reset(1);
-    REQUIRE(_ZnamSt11align_val_tRKSt9nothrow_t_nid_postfix(8, 64, &nothrowTag) == nullptr && handlerCalls == 1 && allocations == 1);
+    Require(_ZnamSt11align_val_tRKSt9nothrow_t_nid_postfix(8, 64, &nothrowTag) == nullptr && handlerCalls == 1 && allocations == 1);
     _ZSt15set_new_handlerPFvvE_nid_postfix(nullptr);
 
     Reset(0);
@@ -245,13 +237,13 @@ int main(int argc, char** argv) {
     _ZdlPvSt11align_val_tRKSt9nothrow_t_nid_postfix(storage.data(), 64, &nothrowTag);
     _ZdaPvmSt11align_val_t_nid_postfix(storage.data(), 40, 64);
     _ZdaPvSt11align_val_tRKSt9nothrow_t_nid_postfix(storage.data(), 64, &nothrowTag);
-    REQUIRE(releases == 4);
+    Require(releases == 4);
     _ZdaPvRKSt9nothrow_t_nid_postfix(nullptr, &nothrowTag);
     _ZdlPvSt11align_val_tRKSt9nothrow_t_nid_postfix(nullptr, 64, &nothrowTag);
     _ZdaPvSt11align_val_t_nid_postfix(nullptr, 64);
     _ZdaPvmSt11align_val_t_nid_postfix(nullptr, 0, 64);
     _ZdaPvSt11align_val_tRKSt9nothrow_t_nid_postfix(nullptr, 64, &nothrowTag);
-    REQUIRE(releases == 4);
+    Require(releases == 4);
 
     std::puts("Guest new handler checks passed");
     return 0;

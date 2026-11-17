@@ -2,13 +2,12 @@
 #include "prx/libSceSpSysCallWrapper/libSceSpSysCallWrapper.hpp"
 #include "prx/libSceNet/libSceNet.hpp"
 #include "prx/libkernel/libkernel.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 
 namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
 
 struct Shared {
     PthreadMutex mutex = nullptr;

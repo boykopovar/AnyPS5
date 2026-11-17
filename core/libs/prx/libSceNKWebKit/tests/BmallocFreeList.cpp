@@ -1,4 +1,5 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -9,24 +10,6 @@
 #include <type_traits>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "bmalloc::FreeList check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
-
-template<class Function>
-void RequireThrows(Function function) {
-    bool threw = false;
-    try {
-        function();
-    } catch (const std::exception&) {
-        threw = true;
-    }
-    Require(threw);
-}
 
 using Constructor = void (APS5_VABI *)(bmalloc::FreeList*);
 using InitializeBump = void (APS5_VABI *)(bmalloc::FreeList*, char*, unsigned);
@@ -125,10 +108,10 @@ void TestClear() {
 }
 
 void TestNullSelf() {
-    RequireThrows([] { _ZN7bmalloc8FreeListC1Ev(nullptr); });
-    RequireThrows([] { _ZN7bmalloc8FreeList5clearEv(nullptr); });
-    RequireThrows([] { _ZN7bmalloc8FreeList14initializeListEPNS_8FreeCellEmj(nullptr, nullptr, 0, 0); });
-    RequireThrows([] { _ZN7bmalloc8FreeList14initializeBumpEPcj(nullptr, nullptr, 0); });
+    ExpectErr([] { _ZN7bmalloc8FreeListC1Ev(nullptr); });
+    ExpectErr([] { _ZN7bmalloc8FreeList5clearEv(nullptr); });
+    ExpectErr([] { _ZN7bmalloc8FreeList14initializeListEPNS_8FreeCellEmj(nullptr, nullptr, 0, 0); });
+    ExpectErr([] { _ZN7bmalloc8FreeList14initializeBumpEPcj(nullptr, nullptr, 0); });
     std::printf("bmalloc::FreeList: null self throws for all four exports\n");
 }
 

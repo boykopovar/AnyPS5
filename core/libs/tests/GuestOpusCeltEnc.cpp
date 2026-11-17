@@ -2,6 +2,7 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include <cerrno>
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -17,19 +18,6 @@ namespace {
 
 void ClobberErrno(std::uintptr_t, std::size_t) {
     errno = 99;
-}
-
-void Require(bool value, const std::source_location& location = std::source_location::current()) {
-    if (!value) {
-        std::fprintf(stderr, "Require failed at %s:%d\n", location.file_name(), static_cast<int>(location.line()));
-        std::abort();
-    }
-}
-
-template <typename TFunction>
-void RequireThrows(TFunction function) {
-    try { function(); } catch (const std::runtime_error&) { return; }
-    std::abort();
 }
 
 template <std::size_t Size>
@@ -173,7 +161,7 @@ void RequireEarlyAnswers(int callerApplication) {
     Require(sceOpusCeltEncCtl(ToState(blank), 4000) == EncoderError(0x16));
     Require(errno == 71);
     errno = 71;
-    RequireThrows([&] { sceOpusCeltEncCtl(reinterpret_cast<OpusCeltEncoder*>(0x10), 4000); });
+    ExpectErr<std::runtime_error>([&] { sceOpusCeltEncCtl(reinterpret_cast<OpusCeltEncoder*>(0x10), 4000); });
     Require(errno == 71);
     Require(sceOpusCeltEncCtl(ToState(wideMarker), 4000) == EncoderError(0x16));
     for (const int request : std::array<int, 6>{0, 3999, 4048, -3, 2147483647, -2147483647 - 1})
@@ -200,8 +188,8 @@ void RequireEarlyAnswers(int callerApplication) {
     Require(sceOpusCeltEncGetAjmContext(ToState(marked), &contextWords[1]) == 0);
     Require(contextWords == std::array<std::uint32_t, 3>{0xBAD0C0DEu, 0x0A1B2C3Du, 0xBAD0C0DEu});
     errno = 71;
-    RequireThrows([&] { sceOpusCeltEncGetAjmContext(reinterpret_cast<const OpusCeltEncoder*>(0x10), &ajmContext); });
-    RequireThrows([&] { sceOpusCeltEncGetAjmContext(ToState(marked), reinterpret_cast<std::uint32_t*>(0x10)); });
+    ExpectErr<std::runtime_error>([&] { sceOpusCeltEncGetAjmContext(reinterpret_cast<const OpusCeltEncoder*>(0x10), &ajmContext); });
+    ExpectErr<std::runtime_error>([&] { sceOpusCeltEncGetAjmContext(ToState(marked), reinterpret_cast<std::uint32_t*>(0x10)); });
     Require(errno == 71);
 
     std::array<std::uint8_t, 1024> multistream{};
@@ -254,7 +242,7 @@ void RequireEarlyAnswers(int callerApplication) {
     Require(sceOpusCeltMultistreamEncCreate(ToMultistreamState(blank), 24000, 2, 1, identity.data(), OPUS_APPLICATION_VOIP) == EncoderError(0x11));
     Require(errno == 71);
     errno = 71;
-    RequireThrows([&] { sceOpusCeltMultistreamEncCreate(ToMultistreamState(blank), 24000, 2, 1, reinterpret_cast<const std::uint8_t*>(0x10), lowDelay); });
+    ExpectErr<std::runtime_error>([&] { sceOpusCeltMultistreamEncCreate(ToMultistreamState(blank), 24000, 2, 1, reinterpret_cast<const std::uint8_t*>(0x10), lowDelay); });
     Require(errno == 71);
 }
 
@@ -275,8 +263,8 @@ int main() {
     Require(sceOpusCeltEncDestroy(nullptr) == static_cast<int>(errorBase + 0x01));
     std::uint32_t context = 0;
     Require(sceOpusCeltEncInitialize(&context) == 0);
-    RequireThrows([&] { sceOpusCeltEncInitialize(&context); });
-    RequireThrows([&] { sceOpusCeltEncTerminate(nullptr); });
+    ExpectErr<std::runtime_error>([&] { sceOpusCeltEncInitialize(&context); });
+    ExpectErr<std::runtime_error>([&] { sceOpusCeltEncTerminate(nullptr); });
 
     std::array<std::uint8_t, 65536> invalidState{};
     std::array<std::int16_t, 5760> samples{};
@@ -317,14 +305,14 @@ int main() {
     Require(packet[0] == 0x5A && packet[1] == 0x5A);
     Require(sceOpusCeltEncEncode(ToState(state), samples.data(), 120, packet, sizeof(packet)) > 2);
     Require(sceOpusCeltEncEncode(ToState(state), samples.data(), 240, packet, sizeof(packet)) > 2);
-    RequireThrows([&] { sceOpusCeltEncEncode(ToState(state), samples.data(), 960, packet, -1); });
+    ExpectErr<std::runtime_error>([&] { sceOpusCeltEncEncode(ToState(state), samples.data(), 960, packet, -1); });
     Require(sceOpusCeltEncEncodeFloat(nullptr, floatSamples.data(), 960, packet, sizeof(packet)) == static_cast<int>(errorBase + 0x01));
     Require(sceOpusCeltEncEncodeFloat(ToState(state), nullptr, 960, packet, sizeof(packet)) == static_cast<int>(errorBase + 0x02));
     Require(sceOpusCeltEncEncodeFloat(ToState(state), floatSamples.data(), 0, packet, sizeof(packet)) == static_cast<int>(errorBase + 0x03));
     Require(sceOpusCeltEncEncodeFloat(ToState(invalidState), floatSamples.data(), -1, packet, sizeof(packet)) == static_cast<int>(errorBase + 0x16));
     Require(sceOpusCeltEncEncodeFloat(ToState(invalidState), nullptr, 960, packet, sizeof(packet)) == static_cast<int>(errorBase + 0x02));
-    RequireThrows([&] { sceOpusCeltEncEncodeFloat(ToState(state), floatSamples.data(), -1, packet, sizeof(packet)); });
-    RequireThrows([&] { sceOpusCeltEncEncodeFloat(ToState(state), floatSamples.data(), 1100000, packet, sizeof(packet)); });
+    ExpectErr<std::runtime_error>([&] { sceOpusCeltEncEncodeFloat(ToState(state), floatSamples.data(), -1, packet, sizeof(packet)); });
+    ExpectErr<std::runtime_error>([&] { sceOpusCeltEncEncodeFloat(ToState(state), floatSamples.data(), 1100000, packet, sizeof(packet)); });
 
     auto snapshot = state;
     Require(sceOpusCeltEncDestroy(ToState(state)) == 0);
@@ -420,8 +408,8 @@ int main() {
     ++instanceId;
     Require(sceOpusCeltEncDestroy(ToState(liveState)) == 0);
     Require(sceOpusCeltEncTerminate(&context) == 0);
-    RequireThrows([&] { sceOpusCeltEncTerminate(&context); });
-    RequireThrows([&] { sceOpusCeltEncCreateEx(&context, ToState(liveState), 48000, 2, callerApplication); });
+    ExpectErr<std::runtime_error>([&] { sceOpusCeltEncTerminate(&context); });
+    ExpectErr<std::runtime_error>([&] { sceOpusCeltEncCreateEx(&context, ToState(liveState), 48000, 2, callerApplication); });
     Require(sceOpusCeltEncCreate(ToState(liveState), 48000, 1, callerApplication) == 0);
     ++instanceId;
     Require(sceOpusCeltEncCreate(ToState(liveState), 48000, 2, callerApplication) == 0);

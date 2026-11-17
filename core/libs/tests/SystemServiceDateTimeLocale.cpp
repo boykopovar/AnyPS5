@@ -1,4 +1,5 @@
 #include "prx/libSceSystemService/DateTimeLocale.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <map>
 #include <optional>
@@ -8,19 +9,11 @@
 
 namespace {
 
-int failures = 0;
-
-void Require(bool condition, const std::string& what) {
-    if (condition) return;
-    std::fprintf(stderr, "check failed: %s\n", what.c_str());
-    ++failures;
-}
-
 std::string Show(const std::optional<int>& value) { return value ? std::to_string(*value) : "none"; }
 
 void RequireDate(const char* pattern, std::optional<int> expected) {
     const auto actual = SystemServiceDateTime::DateFormatOfStrftime(pattern);
-    Require(actual == expected, std::string("strftime date \"") + pattern + "\" gave " + Show(actual) + ", expected " + Show(expected));
+    Expect(actual == expected, std::string("strftime date \"") + pattern + "\" gave " + Show(actual) + ", expected " + Show(expected));
 }
 
 void RequireStrftimeDates() {
@@ -69,7 +62,7 @@ void RequireStrftimeDatesWithoutConsoleFormat() {
 
 void RequireTime(const char* pattern, std::optional<int> expected) {
     const auto actual = SystemServiceDateTime::TimeFormatOfStrftime(pattern);
-    Require(actual == expected, std::string("strftime time \"") + pattern + "\" gave " + Show(actual) + ", expected " + Show(expected));
+    Expect(actual == expected, std::string("strftime time \"") + pattern + "\" gave " + Show(actual) + ", expected " + Show(expected));
 }
 
 void RequireStrftimeTimes() {
@@ -106,7 +99,7 @@ void RequireStrftimeTimesWithoutConsoleFormat() {
 
 void RequireLdmlDate(const char* pattern, std::optional<int> expected) {
     const auto actual = SystemServiceDateTime::DateFormatOfLdml(pattern);
-    Require(actual == expected, std::string("pattern date \"") + pattern + "\" gave " + Show(actual) + ", expected " + Show(expected));
+    Expect(actual == expected, std::string("pattern date \"") + pattern + "\" gave " + Show(actual) + ", expected " + Show(expected));
 }
 
 void RequireLdmlDates() {
@@ -151,7 +144,7 @@ void RequireLdmlDatesWithoutConsoleFormat() {
 
 void RequireLdmlTime(const char* pattern, std::optional<int> expected) {
     const auto actual = SystemServiceDateTime::TimeFormatOfLdml(pattern);
-    Require(actual == expected, std::string("pattern time \"") + pattern + "\" gave " + Show(actual) + ", expected " + Show(expected));
+    Expect(actual == expected, std::string("pattern time \"") + pattern + "\" gave " + Show(actual) + ", expected " + Show(expected));
 }
 
 void RequireLdmlTimes() {
@@ -198,11 +191,11 @@ SystemServiceDateTime::HostPatterns Host(SystemServiceDateTime::PatternSyntax sy
 void RequireResolution(const SystemServiceDateTime::HostPatterns& host, int date, int time, std::size_t dateNotices, std::size_t timeNotices, const std::string& what) {
     std::vector<std::string> notices;
     const auto notice = [&notices](const std::string& line) { notices.push_back(line); };
-    Require(SystemServiceDateTime::ResolveHostDateFormat(host, notice) == date, what + ": date format");
-    Require(notices.size() == dateNotices, what + ": date notices, got " + std::to_string(notices.size()));
+    Expect(SystemServiceDateTime::ResolveHostDateFormat(host, notice) == date, what + ": date format");
+    Expect(notices.size() == dateNotices, what + ": date notices, got " + std::to_string(notices.size()));
     notices.clear();
-    Require(SystemServiceDateTime::ResolveHostTimeFormat(host, notice) == time, what + ": time format");
-    Require(notices.size() == timeNotices, what + ": time notices, got " + std::to_string(notices.size()));
+    Expect(SystemServiceDateTime::ResolveHostTimeFormat(host, notice) == time, what + ": time format");
+    Expect(notices.size() == timeNotices, what + ": time notices, got " + std::to_string(notices.size()));
 }
 
 void RequireResolver() {
@@ -231,12 +224,12 @@ void RequireNoticeText() {
     ResolveHostTimeFormat(unavailable, notice);
     ResolveHostDateFormat(Host(PatternSyntax::Strftime, "%Y/%d/%m", "%p"), notice);
     ResolveHostTimeFormat(Host(PatternSyntax::Strftime, "%Y/%d/%m", "%p %T"), notice);
-    Require(notices.size() == 4, "four notices");
+    Expect(notices.size() == 4, "four notices");
     if (notices.size() != 4) return;
-    Require(notices[0] == "ANYPS5_DATE_FORMAT=auto: LC_ALL selects the C locale; using day, month, year (1)", "unavailable date notice: " + notices[0]);
-    Require(notices[1] == "ANYPS5_TIME_FORMAT=auto: LC_ALL selects the C locale; using 24-hour (1)", "unavailable time notice: " + notices[1]);
-    Require(notices[2] == "ANYPS5_DATE_FORMAT=auto: the date pattern \"%Y/%d/%m\" of test host has no console date format; using day, month, year (1)", "unmapped date notice: " + notices[2]);
-    Require(notices[3] == "ANYPS5_TIME_FORMAT=auto: the time pattern \"%p %T\" of test host has no console time format; using 24-hour (1)", "unmapped time notice: " + notices[3]);
+    Expect(notices[0] == "ANYPS5_DATE_FORMAT=auto: LC_ALL selects the C locale; using day, month, year (1)", "unavailable date notice: " + notices[0]);
+    Expect(notices[1] == "ANYPS5_TIME_FORMAT=auto: LC_ALL selects the C locale; using 24-hour (1)", "unavailable time notice: " + notices[1]);
+    Expect(notices[2] == "ANYPS5_DATE_FORMAT=auto: the date pattern \"%Y/%d/%m\" of test host has no console date format; using day, month, year (1)", "unmapped date notice: " + notices[2]);
+    Expect(notices[3] == "ANYPS5_TIME_FORMAT=auto: the time pattern \"%p %T\" of test host has no console time format; using 24-hour (1)", "unmapped time notice: " + notices[3]);
 }
 
 struct FakeLocale {
@@ -277,18 +270,18 @@ SystemServiceDateTime::HostPatterns PosixHost(const std::map<std::string, std::s
 
 void RequirePosixPick(const std::map<std::string, std::string>& variables, int date, int time, const std::string& what) {
     const auto host = PosixHost(variables);
-    Require(host.available, what + ": available (" + host.source + ")");
+    Expect(host.available, what + ": available (" + host.source + ")");
     std::vector<std::string> notices;
     const auto notice = [&notices](const std::string& line) { notices.push_back(line); };
-    Require(SystemServiceDateTime::ResolveHostDateFormat(host, notice) == date, what + ": date format");
-    Require(SystemServiceDateTime::ResolveHostTimeFormat(host, notice) == time, what + ": time format");
-    Require(notices.empty(), what + ": no notice");
+    Expect(SystemServiceDateTime::ResolveHostDateFormat(host, notice) == date, what + ": date format");
+    Expect(SystemServiceDateTime::ResolveHostTimeFormat(host, notice) == time, what + ": time format");
+    Expect(notices.empty(), what + ": no notice");
 }
 
 void RequirePosixUnavailable(const std::map<std::string, std::string>& variables, const std::string& source, const std::string& what) {
     const auto host = PosixHost(variables);
-    Require(!host.available, what + ": unavailable");
-    Require(host.source == source, what + ": source \"" + host.source + "\", expected \"" + source + "\"");
+    Expect(!host.available, what + ": unavailable");
+    Expect(host.source == source, what + ": source \"" + host.source + "\", expected \"" + source + "\"");
 }
 
 void RequirePosixSource() {
@@ -323,10 +316,10 @@ void RequirePosixSource() {
 #if !defined(_WIN32) && !defined(__APPLE__)
 void RequireRealLangInfo() {
     const auto c = SystemServiceDateTime::ReadLangInfo("C");
-    Require(c.available, "the C locale reads");
-    Require(c.dateFormat == "%m/%d/%y", "C D_FMT is " + c.dateFormat);
-    Require(c.timeFormat == "%H:%M:%S", "C T_FMT is " + c.timeFormat);
-    Require(!SystemServiceDateTime::ReadLangInfo("no_SUCH_locale.nothing").available, "an unknown locale does not read");
+    Expect(c.available, "the C locale reads");
+    Expect(c.dateFormat == "%m/%d/%y", "C D_FMT is " + c.dateFormat);
+    Expect(c.timeFormat == "%H:%M:%S", "C T_FMT is " + c.timeFormat);
+    Expect(!SystemServiceDateTime::ReadLangInfo("no_SUCH_locale.nothing").available, "an unknown locale does not read");
 }
 #endif
 
@@ -337,8 +330,8 @@ void RequireSetting(const char* configured, int expected, const std::string& wha
         return 7;
     };
     const int value = SystemServiceDateTime::ParseSetting(configured, "ANYPS5_TEST", "test value", 2, 1, host, "caller");
-    Require(value == expected, what + ": gave " + std::to_string(value));
-    Require(hostCalls == (expected == 7 ? 1 : 0), what + ": host calls " + std::to_string(hostCalls));
+    Expect(value == expected, what + ": gave " + std::to_string(value));
+    Expect(hostCalls == (expected == 7 ? 1 : 0), what + ": host calls " + std::to_string(hostCalls));
 }
 
 void RequireRefused(const char* configured) {
@@ -349,7 +342,7 @@ void RequireRefused(const char* configured) {
         const std::string expected = std::string("caller: ANYPS5_TEST must be a console test value number from 0 to 2 or auto, not \"") + configured + "\"";
         refused = expected == error.what();
     }
-    Require(refused, std::string("refused with the variable's name: \"") + configured + "\"");
+    Expect(refused, std::string("refused with the variable's name: \"") + configured + "\"");
 }
 
 void RequireSettings() {
@@ -384,7 +377,7 @@ int main() {
     RequireRealLangInfo();
 #endif
     RequireSettings();
-    if (failures != 0) return 1;
+    if (Failures() != 0) return 1;
     std::puts("system service date and time locale: all checks passed");
     return 0;
 }

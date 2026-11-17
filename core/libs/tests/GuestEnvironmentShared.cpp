@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -8,13 +9,6 @@
 #include <string_view>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "guest environment shared: %s\n", message);
-        std::abort();
-    }
-}
 
 const char* Enumerated(const char* name) {
     if (environ_nid_postfix == nullptr) return nullptr;

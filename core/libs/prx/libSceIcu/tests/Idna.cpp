@@ -12,7 +12,6 @@
 
 namespace UidnaClose {
 
-using IcuRecoveredTest::Require;
 
 static_assert(std::is_same_v<decltype(&uidna_close_nid_postfix), void (APS5_VABI*)(UIDNA*)>);
 
@@ -57,8 +56,6 @@ void Run() {
 
 namespace UidnaNameToASCII {
 
-using IcuRecoveredTest::Require;
-using IcuRecoveredTest::RequireThrows;
 
 static_assert(std::is_same_v<decltype(&uidna_nameToASCII_nid_postfix), std::int32_t (APS5_VABI*)(const UIDNA*, const char16_t*, std::int32_t, char16_t*, std::int32_t, UIDNAInfo*, std::int32_t*)>);
 
@@ -142,17 +139,17 @@ void Run() {
 
     for (const auto incoming : passing) {
         std::int32_t status = incoming;
-        RequireThrows([&] { uidna_nameToASCII_nid_postfix(idna, name.data(), -1, dest.data(), 0, pInfo, &status); });
+        ExpectErr([&] { uidna_nameToASCII_nid_postfix(idna, name.data(), -1, dest.data(), 0, pInfo, &status); });
         Require(status == incoming);
         Require(name == probeName && dest == probeDest);
 
         status = incoming;
-        RequireThrows([&] { uidna_nameToASCII_nid_postfix(idna, nullptr, 0, nullptr, 0, pInfo, &status); });
+        ExpectErr([&] { uidna_nameToASCII_nid_postfix(idna, nullptr, 0, nullptr, 0, pInfo, &status); });
         Require(status == incoming);
         Require(Unchanged(idnaStorage));
     }
 
-    RequireThrows([&] { uidna_nameToASCII_nid_postfix(idna, name.data(), 3, dest.data(), 4, pInfo, nullptr); });
+    ExpectErr([&] { uidna_nameToASCII_nid_postfix(idna, name.data(), 3, dest.data(), 4, pInfo, nullptr); });
     Require(name == probeName && dest == probeDest);
 }
 
@@ -160,8 +157,6 @@ void Run() {
 
 namespace UidnaNameToUnicode {
 
-using IcuRecoveredTest::Require;
-using IcuRecoveredTest::RequireThrows;
 
 static_assert(std::is_same_v<decltype(&uidna_nameToUnicode_nid_postfix), std::int32_t (APS5_VABI*)(const UIDNA*, const char16_t*, std::int32_t, char16_t*, std::int32_t, UIDNAInfo*, std::int32_t*)>);
 
@@ -245,17 +240,17 @@ void Run() {
 
     for (const auto incoming : passing) {
         std::int32_t status = incoming;
-        RequireThrows([&] { uidna_nameToUnicode_nid_postfix(idna, name.data(), -1, dest.data(), 0, pInfo, &status); });
+        ExpectErr([&] { uidna_nameToUnicode_nid_postfix(idna, name.data(), -1, dest.data(), 0, pInfo, &status); });
         Require(status == incoming);
         Require(name == probeName && dest == probeDest);
 
         status = incoming;
-        RequireThrows([&] { uidna_nameToUnicode_nid_postfix(idna, nullptr, 0, nullptr, 0, pInfo, &status); });
+        ExpectErr([&] { uidna_nameToUnicode_nid_postfix(idna, nullptr, 0, nullptr, 0, pInfo, &status); });
         Require(status == incoming);
         Require(Unchanged(idnaStorage));
     }
 
-    RequireThrows([&] { uidna_nameToUnicode_nid_postfix(idna, name.data(), 3, dest.data(), 4, pInfo, nullptr); });
+    ExpectErr([&] { uidna_nameToUnicode_nid_postfix(idna, name.data(), 3, dest.data(), 4, pInfo, nullptr); });
     Require(name == probeName && dest == probeDest);
 }
 
@@ -263,8 +258,6 @@ void Run() {
 
 namespace UidnaOpenUTS46 {
 
-using IcuRecoveredTest::Require;
-using IcuRecoveredTest::RequireThrows;
 
 static_assert(std::is_same_v<decltype(&uidna_openUTS46_nid_postfix), UIDNA* (APS5_VABI*)(std::uint32_t, std::int32_t*)>);
 
@@ -283,15 +276,15 @@ void Run() {
 
     for (const auto incoming : passing) {
         std::int32_t status = incoming;
-        RequireThrows([&] { uidna_openUTS46_nid_postfix(0, &status); });
+        ExpectErr([&] { uidna_openUTS46_nid_postfix(0, &status); });
         Require(status == incoming);
 
         status = incoming;
-        RequireThrows([&] { uidna_openUTS46_nid_postfix(0xffffffffu, &status); });
+        ExpectErr([&] { uidna_openUTS46_nid_postfix(0xffffffffu, &status); });
         Require(status == incoming);
     }
 
-    RequireThrows([&] { uidna_openUTS46_nid_postfix(0, nullptr); });
+    ExpectErr([&] { uidna_openUTS46_nid_postfix(0, nullptr); });
 }
 
 } // namespace UidnaOpenUTS46

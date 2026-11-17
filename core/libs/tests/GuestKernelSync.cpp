@@ -2,6 +2,7 @@
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
@@ -16,13 +17,6 @@
 #include <windows.h>
 #endif
 
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "Kernel sync check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 static bool Recorded(const char* guest) {
     const auto paths = WrittenPaths_nid_no_patch();
     return std::find(paths.begin(), paths.end(), ResolvePath_nid_no_patch(guest).lexically_normal()) != paths.end();

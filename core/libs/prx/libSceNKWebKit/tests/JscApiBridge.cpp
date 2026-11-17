@@ -1,6 +1,7 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 #include "prx/libSceJsc/libSceJsc.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -8,14 +9,6 @@
 using namespace NKWebKit;
 
 namespace {
-
-void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "JscApiBridge check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 struct ScopedJsString {
     JSStringRef ref = nullptr;

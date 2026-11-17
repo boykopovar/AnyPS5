@@ -1,4 +1,5 @@
 #include "prx/libSceGnmDriver/include/Api.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -10,10 +11,6 @@ namespace {
 constexpr std::uint32_t Untouched = 0xdeadbeefu;
 constexpr std::uint32_t Regs[12] = {0x1000, 0, 0x2000, 0x3000, 0x4000, 0x5000, 0x6000, 0x7000, 0x8000, 0x9000, 0xa000, 0xb000};
 constexpr std::uint32_t BadRegs[12] = {0x1000, 1};
-
-void Require(bool condition, const std::string& what) {
-    if (!condition) throw std::runtime_error("Gnm shader writers: " + what);
-}
 
 constexpr std::uint32_t Header(std::uint32_t opcode, std::uint32_t bodyWords) {
     return 0xc0000000u | ((bodyWords - 1) << 16) | (opcode << 8);

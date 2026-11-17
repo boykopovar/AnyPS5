@@ -1,4 +1,5 @@
 #include "prx/libSceFreeTypeOt/include/Polar.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -10,12 +11,6 @@ namespace {
 using FreeType::GuestVector;
 
 constexpr std::int64_t Degree = 1 << 16;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "FreeType Ot polar: %s\n", message);
-    std::exit(1);
-}
 
 template <typename TCall> bool Throws(TCall call) {
     try {

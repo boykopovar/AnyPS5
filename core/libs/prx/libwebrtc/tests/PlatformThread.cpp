@@ -1,5 +1,6 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libc/include/General.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -8,21 +9,6 @@
 #include <stdexcept>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc PlatformThread check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TException, typename TAction> void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
-    try {
-        action();
-    } catch (const TException&) {
-        return;
-    }
-    Require(false, location);
-}
 
 const int vtable = 0;
 void* joined = nullptr;
@@ -84,7 +70,7 @@ void TestJoin() {
 
     ResetJoins(3);
     WebRtcPlatformThread failing = Thread(&handle, true, true);
-    RequireThrows<std::runtime_error>([&] { _ZN3rtc14PlatformThread8FinalizeEv_nid_postfix(&failing); });
+    ExpectErr<std::runtime_error>([&] { _ZN3rtc14PlatformThread8FinalizeEv_nid_postfix(&failing); });
     Require(joins == 1);
 }
 
@@ -124,10 +110,10 @@ void TestMoveAssignment() {
 
 void TestNullThreadsThrow() {
     WebRtcPlatformThread thread = Thread(nullptr, false, false);
-    RequireThrows<std::invalid_argument>([] { _ZN3rtc14PlatformThread8FinalizeEv_nid_postfix(nullptr); });
-    RequireThrows<std::invalid_argument>([] { _ZN3rtc14PlatformThreadD1Ev_nid_postfix(nullptr); });
-    RequireThrows<std::invalid_argument>([&] { _ZN3rtc14PlatformThreadaSEOS0__nid_postfix(nullptr, &thread); });
-    RequireThrows<std::invalid_argument>([&] { _ZN3rtc14PlatformThreadaSEOS0__nid_postfix(&thread, nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZN3rtc14PlatformThread8FinalizeEv_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZN3rtc14PlatformThreadD1Ev_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([&] { _ZN3rtc14PlatformThreadaSEOS0__nid_postfix(nullptr, &thread); });
+    ExpectErr<std::invalid_argument>([&] { _ZN3rtc14PlatformThreadaSEOS0__nid_postfix(&thread, nullptr); });
 }
 
 }

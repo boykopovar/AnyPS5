@@ -1,15 +1,10 @@
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
-
-static void Require(bool condition) {
-    if (condition) return;
-    std::fprintf(stderr, "zero run mismatch\n");
-    std::abort();
-}
 
 template<typename TValue>
 static std::uint32_t Reference(TValue value, bool leading) {

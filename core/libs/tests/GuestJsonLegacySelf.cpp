@@ -1,5 +1,6 @@
 #include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -16,9 +17,6 @@ using NullHandler = const Value& (APS5_VABI*)(ValueType, const Value*, void*);
 extern "C" const void* ApplicationProcessParameters_nid_no_patch() {
     static const std::uint32_t words[]{0, 0, 0, 0, 0x05000000};
     return words;
-}
-static void Require(bool condition, const char* message) {
-    if (!condition) { std::fprintf(stderr, "%s\n", message); std::abort(); }
 }
 struct LegacySelfTrace {
     std::map<void*, std::size_t> live;

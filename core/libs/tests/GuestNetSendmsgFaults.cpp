@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceNet/include/Net.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -13,13 +14,6 @@ namespace {
 
 constexpr std::size_t Page = 0x4000;
 constexpr std::int64_t Efault = static_cast<std::int64_t>(static_cast<int>(0x8041010eu));
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 struct Sockets {
     int sender = -1;

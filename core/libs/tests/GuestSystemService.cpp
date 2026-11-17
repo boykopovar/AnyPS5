@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
 #include "prx/libSceUserService/UserService.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -24,8 +25,6 @@
 namespace {
 
 constexpr int browserUnavailable = static_cast<int>(0x8002002Du);
-
-void Require(bool value) { if (!value) std::abort(); }
 
 template<typename TCall>
 bool Throws(TCall call) {

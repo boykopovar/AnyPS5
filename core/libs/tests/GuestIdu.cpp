@@ -1,5 +1,6 @@
 #include "prx/libSceIdu/libSceIdu.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cerrno>
@@ -26,10 +27,6 @@ constexpr int notInitialized = static_cast<int>(0xFFFFFF9Au);
 
 void ClobberErrno(std::uintptr_t, std::size_t) { errno = 99; }
 
-void Require(bool value) {
-    if (!value) std::abort();
-}
-
 std::array<unsigned char, 0x40> Block(std::uint32_t firstWord) {
     std::array<unsigned char, 0x40> block{};
     block.fill(0x5A);
@@ -51,17 +48,6 @@ char* UnreadablePage() {
     Require(page != MAP_FAILED);
     return static_cast<char*>(page);
 #endif
-}
-
-template <typename Call>
-void RequireFault(Call call) {
-    bool threw = false;
-    try {
-        static_cast<void>(call());
-    } catch (const std::invalid_argument&) {
-        threw = true;
-    }
-    Require(threw);
 }
 
 } // namespace
@@ -158,15 +144,15 @@ int main() {
     Require(sceIduIsRifInstalled(name) == notInitialized);
     Require(errno == 71);
     errno = 71;
-    RequireFault([&] { return sceIduInit(unreadable); });
+    ExpectErr<std::invalid_argument>([&] { return sceIduInit(unreadable); });
     Require(errno == 71);
-    RequireFault([&] { return sceIduGetFsStats(unreadable); });
+    ExpectErr<std::invalid_argument>([&] { return sceIduGetFsStats(unreadable); });
     errno = 71;
-    RequireFault([&] { return sceIduNotificationHide(unreadable); });
+    ExpectErr<std::invalid_argument>([&] { return sceIduNotificationHide(unreadable); });
     Require(errno == 71);
-    RequireFault([&] { return sceIduIsRifInstalled(unreadable); });
-    RequireFault([&] { return sceIduInstallRif(unreadable, any.data(), 1); });
-    RequireFault([&] { return sceIduStartTitle(any.data(), 0, nullptr, unreadable); });
+    ExpectErr<std::invalid_argument>([&] { return sceIduIsRifInstalled(unreadable); });
+    ExpectErr<std::invalid_argument>([&] { return sceIduInstallRif(unreadable, any.data(), 1); });
+    ExpectErr<std::invalid_argument>([&] { return sceIduStartTitle(any.data(), 0, nullptr, unreadable); });
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
     GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     Require(sceIduInstallRif(name, unreadable, 1) == notInitialized);

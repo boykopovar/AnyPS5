@@ -1,6 +1,7 @@
 #include "prx/libSceSystemService/include/SystemService.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -10,10 +11,6 @@
 #include <windows.h>
 
 namespace {
-
-void Require(bool value) {
-    if (!value) std::abort();
-}
 
 [[noreturn]] void UnexpectedLaunch() {
     std::_Exit(86);

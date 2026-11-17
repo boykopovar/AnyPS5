@@ -1,13 +1,13 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdlib>
 #include <initializer_list>
 
 constexpr int noChild = 10;
 constexpr int invalidArgument = 22;
 constexpr int untouched = 0x5a5a5a5a;
-static void Require(bool value) { if (!value) std::abort(); }
 static void RequireFailure(int pid, int options, int error) {
     int status = untouched;
     *__error_nid_postfix() = 0;

@@ -3,6 +3,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -22,14 +23,6 @@
 #include <unistd.h>
 #endif
 
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "Directory entry check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
-
 static constexpr int ErrorEinval = static_cast<int>(0x80020016u);
 static constexpr int ErrorEfault = static_cast<int>(0x8002000Eu);
 static constexpr int ErrorEbadf = static_cast<int>(0x80020009u);
@@ -42,13 +35,13 @@ public:
         GetSystemInfo(&info);
         size = info.dwPageSize;
         memory = static_cast<char*>(VirtualAlloc(nullptr, size, MEM_RESERVE | MEM_COMMIT, PAGE_READONLY));
-        Check(memory != nullptr, __LINE__);
+        Require(memory != nullptr);
 #else
         const long pageSize = sysconf(_SC_PAGESIZE);
-        Check(pageSize > 0, __LINE__);
+        Require(pageSize > 0);
         size = static_cast<std::size_t>(pageSize);
         memory = static_cast<char*>(mmap(nullptr, size, PROT_READ, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
-        Check(memory != MAP_FAILED, __LINE__);
+        Require(memory != MAP_FAILED);
 #endif
     }
 

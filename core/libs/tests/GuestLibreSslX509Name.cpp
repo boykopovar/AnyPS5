@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <climits>
 #include <cstddef>
 #include <cstdint>
@@ -56,17 +57,6 @@ static const LibreSslX509NameEntry* Entry(const TestNameEntry* entry) {
     return reinterpret_cast<const LibreSslX509NameEntry*>(entry);
 }
 
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL X509_NAME check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> static void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
-    try { action(); } catch (const std::exception&) { return; }
-    Require(false, location);
-}
-
 static void TestGetEntry() {
     TestNameEntry first {};
     TestNameEntry second {};
@@ -88,7 +78,7 @@ static void TestGetEntry() {
     entries.num = 3;
     Require(X509_NAME_get_entry_nid_postfix(Name(&name), 2) == nullptr);
     entries.data = nullptr;
-    RequireThrows([&] { X509_NAME_get_entry_nid_postfix(Name(&name), 0); });
+    ExpectErr([&] { X509_NAME_get_entry_nid_postfix(Name(&name), 0); });
     Require(X509_NAME_get_entry_nid_postfix(Name(&name), 3) == nullptr);
 }
 
@@ -173,14 +163,14 @@ static void TestIndexByNid() {
     LibreSslX509Name noEntries {};
     Require(X509_NAME_get_index_by_NID_nid_postfix(&emptyName, 13, -1) == -1);
     Require(X509_NAME_get_index_by_NID_nid_postfix(&noEntries, 13, -1) == -1);
-    RequireThrows([&] { X509_NAME_get_index_by_NID_nid_postfix(name, 13, INT_MAX); });
+    ExpectErr([&] { X509_NAME_get_index_by_NID_nid_postfix(name, 13, INT_MAX); });
     decoded.objects[2].data = nullptr;
-    RequireThrows([&] { X509_NAME_get_index_by_NID_nid_postfix(name, 13, -1); });
+    ExpectErr([&] { X509_NAME_get_index_by_NID_nid_postfix(name, 13, -1); });
     Require(X509_NAME_get_index_by_NID_nid_postfix(name, 14, -1) == 0);
     decoded.entries[1].object = nullptr;
-    RequireThrows([&] { X509_NAME_get_index_by_NID_nid_postfix(name, 13, -1); });
+    ExpectErr([&] { X509_NAME_get_index_by_NID_nid_postfix(name, 13, -1); });
     decoded.slots[1] = nullptr;
-    RequireThrows([&] { X509_NAME_get_index_by_NID_nid_postfix(name, 13, -1); });
+    ExpectErr([&] { X509_NAME_get_index_by_NID_nid_postfix(name, 13, -1); });
     Require(X509_NAME_get_index_by_NID_nid_postfix(name, 14, -1) == 0);
 }
 
@@ -216,14 +206,14 @@ static void TestTextByNid() {
     Require(BufferHolds(buffer, "a\0b", 4));
     Require(X509_NAME_get_text_by_NID_nid_postfix(name, 48, buffer, 64) == 5);
     Require(BufferHolds(buffer, "a@b.c", 6));
-    RequireThrows([&] { X509_NAME_get_text_by_NID_nid_postfix(name, 13, buffer, INT_MIN); });
+    ExpectErr([&] { X509_NAME_get_text_by_NID_nid_postfix(name, 13, buffer, INT_MIN); });
     decoded.values[2].data = nullptr;
-    RequireThrows([&] { X509_NAME_get_text_by_NID_nid_postfix(name, 13, buffer, 64); });
+    ExpectErr([&] { X509_NAME_get_text_by_NID_nid_postfix(name, 13, buffer, 64); });
     std::memset(buffer, 0x7f, sizeof(buffer));
     Require(X509_NAME_get_text_by_NID_nid_postfix(name, 13, buffer, 1) == 0);
     Require(BufferHolds(buffer, "", 1));
     decoded.entries[2].value = nullptr;
-    RequireThrows([&] { X509_NAME_get_text_by_NID_nid_postfix(name, 13, buffer, 64); });
+    ExpectErr([&] { X509_NAME_get_text_by_NID_nid_postfix(name, 13, buffer, 64); });
 }
 
 static const unsigned char RsaEncryptionOid[] {0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01};

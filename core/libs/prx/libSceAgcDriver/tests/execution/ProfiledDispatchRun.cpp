@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "Testing.hpp"
 #include "VulkanTestDevice.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -46,10 +47,6 @@ std::uint32_t* NewBlock() {
     return block;
 }
 
-void check(bool condition, const std::string& what) {
-    if (!condition) throw std::runtime_error("profiled dispatch run: " + what);
-}
-
 void Register(const std::uint32_t* code, std::size_t bytes) {
     Shader shader{};
     shader.file_header = 0x34333231;
@@ -75,7 +72,7 @@ void Round(std::uint32_t round, std::uint32_t* staged, std::uint32_t* inPlace) {
     AddDispatch(words, StoreTwo.data(), inPlace, InPlaceBytes);
     const auto before = AgcDriver::Graphics::Recorder::OverlapCounts().overlapped;
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
-    check(sceAgcDriverSubmitAcb(ComputeQueue, &packet) == 0, "submission failed");
+    Require(sceAgcDriverSubmitAcb(ComputeQueue, &packet) == 0, "submission failed");
     AgcDriverWaitIdle_nid_postfix();
     const auto joined = AgcDriver::Graphics::Recorder::OverlapCounts().overlapped - before;
     AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(staged), StagedBytes);
@@ -83,10 +80,10 @@ void Round(std::uint32_t round, std::uint32_t* staged, std::uint32_t* inPlace) {
     for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
         const auto first = std::atomic_ref<std::uint32_t>(staged[lane]).load(std::memory_order_acquire);
         const auto second = std::atomic_ref<std::uint32_t>(inPlace[lane]).load(std::memory_order_acquire);
-        check(first == lane + 1u, "round " + std::to_string(round) + ": the staged dispatch stored " + std::to_string(first) + " at lane " + std::to_string(lane) + ", expected " + std::to_string(lane + 1u));
-        check(second == lane + 2u, "round " + std::to_string(round) + ": the dispatch that joined the run stored " + std::to_string(second) + " at lane " + std::to_string(lane) + ", expected " + std::to_string(lane + 2u));
+        Require(first == lane + 1u, "round " + std::to_string(round) + ": the staged dispatch stored " + std::to_string(first) + " at lane " + std::to_string(lane) + ", expected " + std::to_string(lane + 1u));
+        Require(second == lane + 2u, "round " + std::to_string(round) + ": the dispatch that joined the run stored " + std::to_string(second) + " at lane " + std::to_string(lane) + ", expected " + std::to_string(lane + 2u));
     }
-    check(joined == 1, "round " + std::to_string(round) + ": " + std::to_string(joined) + " dispatches joined the run under GPU timing, expected 1");
+    Require(joined == 1, "round " + std::to_string(round) + ": " + std::to_string(joined) + " dispatches joined the run under GPU timing, expected 1");
 }
 
 }
@@ -102,7 +99,7 @@ int main() {
             const auto probe = OpenVulkanTestDevice();
             if (!probe) return VulkanTestSkipped;
         }
-        check(AgcDriver::Graphics::Recorder::GpuTimingEnabled(), "GPU timing is off");
+        Require(AgcDriver::Graphics::Recorder::GpuTimingEnabled(), "GPU timing is off");
         Register(StoreOne.data(), sizeof(StoreOne));
         Register(StoreTwo.data(), sizeof(StoreTwo));
         auto* staged = NewBlock();

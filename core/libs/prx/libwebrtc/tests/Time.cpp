@@ -1,5 +1,6 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
+#include "Testing.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -11,12 +12,6 @@
 namespace {
 
 constexpr int GuestClockMonotonic = 4;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc time check failed at line %u\n", location.line());
-    std::abort();
-}
 
 std::int64_t MonotonicNanoseconds() {
     KernelTimespec now{};

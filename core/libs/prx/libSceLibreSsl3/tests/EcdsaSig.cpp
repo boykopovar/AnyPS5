@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <bit>
@@ -18,12 +19,6 @@
 namespace {
 
 using Getter = decltype(&ECDSA_SIG_get0_nid_postfix);
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL3 ECDSA signature getter check failed at line %u\n", location.line());
-    std::abort();
-}
 
 void Run(Getter getter) {
     std::array<int, 3> values{};

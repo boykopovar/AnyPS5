@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -13,13 +14,6 @@ constexpr int Ebusy = 16;
 constexpr int TypeErrorCheck = 1;
 constexpr int TypeRecursive = 2;
 constexpr int TypeNormal = 3;
-
-void Require(bool value, const char* message) {
-    if (!value) {
-        std::fprintf(stderr, "%s\n", message);
-        std::abort();
-    }
-}
 
 void WaitFor(const std::atomic<bool>& flag, const char* message) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);

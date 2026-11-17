@@ -1,5 +1,6 @@
 #include "prx/libSceJxr/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -26,12 +27,6 @@ static_assert(offsetof(JxrPixelInfo, bitsPerUnit) == 24 && offsetof(JxrPixelInfo
 static_assert(offsetof(JxrPixelInfo, interpretation) == 40 && offsetof(JxrPixelInfo, sampleFormat) == 52);
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "JXR lookup: %s\n", message);
-    std::exit(1);
-}
 
 struct Reference {
     std::array<std::uint8_t, 16> guid{};

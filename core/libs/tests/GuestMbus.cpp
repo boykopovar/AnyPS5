@@ -1,6 +1,7 @@
 #include "prx/libSceMbus/include/Api.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cerrno>
@@ -16,13 +17,6 @@ static_assert(std::is_same_v<decltype(&sceMbusEventCallbackFuncsInit_), void (AP
 namespace {
 
 void ClobberErrno(std::uintptr_t, std::size_t) { errno = 99; }
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "DeviceService: %s\n", message);
-        std::abort();
-    }
-}
 
 void CheckDeviceIdConversion() {
     constexpr auto unconvertibleClass = static_cast<std::int32_t>(0x809B0008u);

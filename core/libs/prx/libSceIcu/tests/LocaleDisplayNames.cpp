@@ -13,9 +13,7 @@
 namespace UldnClose {
 
 using IcuRecoveredTest::Filler;
-using IcuRecoveredTest::Require;
 using IcuRecoveredTest::RequireNoThrow;
-using IcuRecoveredTest::RequireThrows;
 using IcuRecoveredTest::Unchanged;
 
 static_assert(std::is_same_v<decltype(&uldn_close_nid_postfix), void (APS5_VABI*)(ULocaleDisplayNames*)>);
@@ -25,9 +23,9 @@ void Run() {
     RequireNoThrow([] { uldn_close_nid_postfix(nullptr); });
 
     const auto storage = Filler();
-    RequireThrows([&] { uldn_close_nid_postfix(reinterpret_cast<ULocaleDisplayNames*>(const_cast<std::uint32_t*>(storage.data()))); });
+    ExpectErr([&] { uldn_close_nid_postfix(reinterpret_cast<ULocaleDisplayNames*>(const_cast<std::uint32_t*>(storage.data()))); });
     Require(Unchanged(storage));
-    RequireThrows([&] { uldn_close_nid_postfix(reinterpret_cast<ULocaleDisplayNames*>(std::uintptr_t{1})); });
+    ExpectErr([&] { uldn_close_nid_postfix(reinterpret_cast<ULocaleDisplayNames*>(std::uintptr_t{1})); });
 }
 
 } // namespace UldnClose
@@ -35,9 +33,7 @@ void Run() {
 namespace UldnOpenForContext {
 
 using IcuRecoveredTest::Filler;
-using IcuRecoveredTest::Require;
 using IcuRecoveredTest::RequireNoThrow;
-using IcuRecoveredTest::RequireThrows;
 using IcuRecoveredTest::Unchanged;
 
 static_assert(std::is_same_v<decltype(&uldn_openForContext_nid_postfix), ULocaleDisplayNames* (APS5_VABI*)(const char*, std::int32_t*, std::int32_t, std::int32_t*)>);
@@ -60,16 +56,16 @@ void Run() {
 
     for (const auto incoming : passing) {
         std::int32_t status = incoming;
-        RequireThrows([&] { uldn_openForContext_nid_postfix("en", contexts, 2, &status); });
+        ExpectErr([&] { uldn_openForContext_nid_postfix("en", contexts, 2, &status); });
         Require(status == incoming);
 
         status = incoming;
-        RequireThrows([&] { uldn_openForContext_nid_postfix(nullptr, nullptr, 7, &status); });
+        ExpectErr([&] { uldn_openForContext_nid_postfix(nullptr, nullptr, 7, &status); });
         Require(status == incoming);
     }
 
     Require(Unchanged(storage));
-    RequireThrows([&] { uldn_openForContext_nid_postfix("en", contexts, 2, nullptr); });
+    ExpectErr([&] { uldn_openForContext_nid_postfix("en", contexts, 2, nullptr); });
 }
 
 } // namespace UldnOpenForContext
@@ -84,7 +80,7 @@ void Run() {
     } catch (const std::runtime_error&) {
         threw = true;
     }
-    IcuRecoveredTest::Require(threw && errno == 71);
+    Require(threw && errno == 71);
 }
 
 }

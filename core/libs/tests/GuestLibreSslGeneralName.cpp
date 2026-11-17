@@ -1,6 +1,7 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -22,12 +23,6 @@ static_assert(std::is_same_v<decltype(&OCSP_RESPONSE_free_nid_postfix), FreeResp
 static_assert(sizeof(LibreSslGeneralName) == 16);
 
 namespace {
-
-void Require(bool success, std::source_location where = std::source_location::current()) {
-    if (success) return;
-    std::fprintf(stderr, "LibreSSL ASN.1 free test failed at line %u\n", where.line());
-    std::abort();
-}
 
 std::unordered_map<void*, std::size_t> live;
 std::unordered_map<void*, std::size_t> wipes;

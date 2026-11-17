@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -14,13 +15,6 @@ namespace {
 constexpr int Waiters = 3;
 constexpr int Einval = 22;
 constexpr int Etimedout = 60;
-
-void Require(bool value, const char* message) {
-    if (!value) {
-        std::fprintf(stderr, "%s\n", message);
-        std::abort();
-    }
-}
 
 struct State {
     PthreadMutex mutex = nullptr;

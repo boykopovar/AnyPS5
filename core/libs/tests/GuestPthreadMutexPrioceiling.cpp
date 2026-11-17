@@ -2,6 +2,7 @@
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -26,8 +27,6 @@ static constexpr int PRIO_NONE = 0;
 static constexpr int PRIO_INHERIT = 1;
 static constexpr int PRIO_PROTECT = 2;
 static constexpr auto HoldTime = std::chrono::milliseconds(50);
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 template <typename Call>
 static bool Throws(Call call) {

@@ -1,4 +1,5 @@
 #include "LoweringExecution.hpp"
+#include "Testing.hpp"
 #include <codegen/x86/Avx2TwinLowering.hpp>
 #include <codegen/x86/IAmd64OnlyInstructionMatcher.hpp>
 #include <array>
@@ -12,10 +13,6 @@ namespace {
 
 using LoweringExecution::Bytes;
 using Vector = std::array<std::uint32_t, 8>;
-
-void require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 struct Case {
     const char* Name;
@@ -41,14 +38,14 @@ std::vector<Case> cases(std::uint8_t imm) {
 void decoding() {
     for (const auto& item : cases(0x5B)) {
         const auto twin = Codegen::DecodeAvx2Twin(item.Site.data(), item.Site.size());
-        require(twin && std::string(twin->Name) == item.Name && twin->Replacement == item.Replacement, std::string(item.Name) + " was not rewritten to its AVX1 twin");
+        Require(twin && std::string(twin->Name) == item.Name && twin->Replacement == item.Replacement, std::string(item.Name) + " was not rewritten to its AVX1 twin");
     }
     const Bytes prefixed{0x64, 0x67, 0xC4, 0x62, 0x7D, 0x58, 0x05, 0x10, 0x20, 0x30, 0x40};
     const auto rip = Codegen::DecodeAvx2Twin(prefixed.data(), prefixed.size());
-    require(rip && rip->Replacement == Bytes{0x64, 0x67, 0xC4, 0x62, 0x7D, 0x18, 0x05, 0x10, 0x20, 0x30, 0x40}, "A prefixed, extended or RIP-relative VPBROADCASTD lost a byte");
+    Require(rip && rip->Replacement == Bytes{0x64, 0x67, 0xC4, 0x62, 0x7D, 0x18, 0x05, 0x10, 0x20, 0x30, 0x40}, "A prefixed, extended or RIP-relative VPBROADCASTD lost a byte");
     const Bytes extended{0xC4, 0x42, 0x79, 0x59, 0x0C, 0x88};
     const auto movddup = Codegen::DecodeAvx2Twin(extended.data(), extended.size());
-    require(movddup && movddup->Replacement == Bytes{0xC4, 0x41, 0x7B, 0x12, 0x0C, 0x88}, "VPBROADCASTQ xmm lost its register extensions in VMOVDDUP");
+    Require(movddup && movddup->Replacement == Bytes{0xC4, 0x41, 0x7B, 0x12, 0x0C, 0x88}, "VPBROADCASTQ xmm lost its register extensions in VMOVDDUP");
     for (const Bytes bytes : {
              Bytes{0xC4, 0xE2, 0x7D, 0x58, 0xC1},
              Bytes{0xC4, 0xE2, 0x7D, 0x59, 0xC1},
@@ -63,7 +60,7 @@ void decoding() {
              Bytes{0xC4, 0xE2, 0x7D, 0x78, 0x00},
              Bytes{0xC4, 0xE3},
              Bytes{0x90}})
-        require(!Codegen::DecodeAvx2Twin(bytes.data(), bytes.size()), "An instruction without an AVX1 twin was rewritten");
+        Require(!Codegen::DecodeAvx2Twin(bytes.data(), bytes.size()), "An instruction without an AVX1 twin was rewritten");
 }
 
 void matching() {
@@ -71,13 +68,13 @@ void matching() {
     const auto rosetta = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
     const auto avx = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Avx);
     for (const auto& item : cases(1)) {
-        require(!intel->Match(item.Site.data(), item.Site.size()) && !rosetta->Match(item.Site.data(), item.Site.size()), std::string("Intel or Rosetta mode rewrote ") + item.Name);
+        Require(!intel->Match(item.Site.data(), item.Site.size()) && !rosetta->Match(item.Site.data(), item.Site.size()), std::string("Intel or Rosetta mode rewrote ") + item.Name);
         const auto match = avx->Match(item.Site.data(), item.Site.size());
-        require(match && match->Lowering == Codegen::Amd64OnlyLowering::InPlace && match->ReplacementBytes == item.Replacement && match->InstructionName == item.Name, std::string("AVX mode did not rewrite ") + item.Name + " in place");
+        Require(match && match->Lowering == Codegen::Amd64OnlyLowering::InPlace && match->ReplacementBytes == item.Replacement && match->InstructionName == item.Name, std::string("AVX mode did not rewrite ") + item.Name + " in place");
         Codegen::StubBodyBuilder body;
         avx->EmitOutOfLine(body, item.Site);
         const auto lowered = body.Finish();
-        require(Bytes(lowered.Bytes.begin(), lowered.Bytes.begin() + static_cast<std::ptrdiff_t>(lowered.ReturnBranchOffset)) == item.Replacement, std::string("A moved ") + item.Name + " was not emitted as its twin");
+        Require(Bytes(lowered.Bytes.begin(), lowered.Bytes.begin() + static_cast<std::ptrdiff_t>(lowered.ReturnBranchOffset)) == item.Replacement, std::string("A moved ") + item.Name + " was not emitted as its twin");
     }
 }
 

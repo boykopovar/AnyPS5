@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #ifdef __linux__
 #include "prx/libc/include/GuestAllocations.hpp"
 #include <cerrno>
@@ -50,8 +51,6 @@ static void ObserveUnmap(std::uintptr_t address, std::size_t bytes) {
 #endif
 
 thread_local unsigned char threadLocalBlock[512 * 1024];
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static std::uintptr_t Descend(std::uintptr_t floor);
 static std::uintptr_t (*volatile descend)(std::uintptr_t) = Descend;

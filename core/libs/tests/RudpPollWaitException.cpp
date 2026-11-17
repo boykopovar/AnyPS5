@@ -1,6 +1,7 @@
 #include "prx/libSceRudp/include/Api.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <atomic>
@@ -15,12 +16,6 @@
 namespace {
 
 thread_local bool failAllocations = false;
-
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "failed: %s\n", message);
-    std::abort();
-}
 
 }
 

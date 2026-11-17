@@ -1,5 +1,6 @@
 #include "prx/libSceGnmDriverForNeoMode/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
@@ -10,8 +11,6 @@ constexpr std::uint32_t Untouched = 0xa5a5a5a5u;
 constexpr std::uint32_t U = Untouched;
 
 std::uint32_t g_words[16];
-
-void Require(bool value) { if (!value) std::abort(); }
 
 std::uint32_t* Fresh() {
     for (auto& word : g_words) word = Untouched;

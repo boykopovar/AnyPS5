@@ -3,6 +3,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdio>
 #include <cstdlib>
@@ -25,12 +26,6 @@ struct NestedExceptionLayout {
     const void* vtable;
     GuestExceptionPointer ptr;
 };
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "libc internal nested exception: %s\n", message);
-    std::abort();
-}
 
 }
 

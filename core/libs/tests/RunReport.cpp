@@ -2,6 +2,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/RunReport.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "Testing.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -35,9 +36,6 @@ struct NotRun : std::runtime_error {
     using std::runtime_error::runtime_error;
 };
 
-void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 int passed = 0, failed = 0, notRun = 0;
 void Run(const char* name, void (*test)()) {

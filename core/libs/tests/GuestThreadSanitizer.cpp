@@ -3,10 +3,7 @@
 #include <cstdlib>
 
 #include "prx/libSceDbgThreadSanitizer/include/Api.hpp"
-
-static void Require(bool value) {
-    if (!value) std::abort();
-}
+#include "Testing.hpp"
 
 int main() {
     Require(sceKernelIsThreadSanitizerEnabled() == 0);

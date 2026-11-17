@@ -1,12 +1,11 @@
 #include "prx/libScePadTracker/include/Api.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 
 namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
 
 constexpr int kErrInvalidArg = static_cast<int>(0x80c40003);
 constexpr std::uint32_t kFill = 0xaaaaaaaau;

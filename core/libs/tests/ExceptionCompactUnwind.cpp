@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/exceptions/CompactUnwind.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdint>
@@ -8,13 +9,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "exception_compact_unwind: %s\n", message);
-        std::abort();
-    }
-}
 
 void Append32(std::vector<unsigned char>& bytes, std::uint32_t value) {
     for (int shift = 0; shift < 32; shift += 8) bytes.push_back(static_cast<unsigned char>(value >> shift));

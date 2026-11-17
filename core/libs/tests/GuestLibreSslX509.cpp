@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
@@ -29,24 +30,13 @@ static const LibreSslX509* Certificate(const TestX509* certificate) {
     return reinterpret_cast<const LibreSslX509*>(certificate);
 }
 
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL X509 check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> static void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
-    try { action(); } catch (const std::exception&) { return; }
-    Require(false, location);
-}
-
 static void TestIssuerName() {
     int issuer = 0;
     int subject = 0;
     TestCertInfo info {};
     TestX509 certificate {};
-    RequireThrows([] { X509_get_issuer_name_nid_postfix(nullptr); });
-    RequireThrows([&] { X509_get_issuer_name_nid_postfix(Certificate(&certificate)); });
+    ExpectErr([] { X509_get_issuer_name_nid_postfix(nullptr); });
+    ExpectErr([&] { X509_get_issuer_name_nid_postfix(Certificate(&certificate)); });
     certificate.certInfo = &info;
     Require(X509_get_issuer_name_nid_postfix(Certificate(&certificate)) == nullptr);
     info.issuer = &issuer;
@@ -59,8 +49,8 @@ static void TestSubjectName() {
     int subject = 0;
     TestCertInfo info {};
     TestX509 certificate {};
-    RequireThrows([] { X509_get_subject_name_nid_postfix(nullptr); });
-    RequireThrows([&] { X509_get_subject_name_nid_postfix(Certificate(&certificate)); });
+    ExpectErr([] { X509_get_subject_name_nid_postfix(nullptr); });
+    ExpectErr([&] { X509_get_subject_name_nid_postfix(Certificate(&certificate)); });
     certificate.certInfo = &info;
     Require(X509_get_subject_name_nid_postfix(Certificate(&certificate)) == nullptr);
     info.issuer = &issuer;
@@ -73,8 +63,8 @@ static void TestSerialNumber() {
     int version = 0;
     TestCertInfo info {};
     TestX509 certificate {};
-    RequireThrows([] { X509_get_serialNumber_nid_postfix(nullptr); });
-    RequireThrows([&] { X509_get_serialNumber_nid_postfix(Certificate(&certificate)); });
+    ExpectErr([] { X509_get_serialNumber_nid_postfix(nullptr); });
+    ExpectErr([&] { X509_get_serialNumber_nid_postfix(Certificate(&certificate)); });
     certificate.certInfo = &info;
     Require(X509_get_serialNumber_nid_postfix(Certificate(&certificate)) == nullptr);
     info.version = &version;

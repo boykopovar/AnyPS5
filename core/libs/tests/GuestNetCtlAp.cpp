@@ -1,5 +1,6 @@
 #include "prx/libSceNetCtlAp/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cerrno>
 #include <cstdlib>
@@ -8,8 +9,6 @@
 #include <stdexcept>
 
 namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
 
 constexpr int kErrNotStarted = static_cast<int>(0x8041298F);
 constexpr int kErrInvalidType = static_cast<int>(0x80412990);

@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <climits>
 #include <cstdint>
@@ -25,12 +26,6 @@ constexpr auto SequenceNotConstructed = Error(13, 0xfff, 149);
 constexpr auto Asn1TooLong = Error(13, 0xfff, 155);
 constexpr auto WrongTag = Error(13, 0xfff, 168);
 constexpr auto SslAsn1Error = Error(20, 0xfff, 13);
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "failed: %s\n", message);
-    std::abort();
-}
 
 void CheckFailure(const unsigned char* data, int length, std::initializer_list<std::uint64_t> expected) {
     LibreSslCtx context;

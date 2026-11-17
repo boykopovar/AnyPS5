@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -8,12 +9,6 @@
 
 constexpr auto Invalid = static_cast<std::size_t>(-1);
 constexpr auto Incomplete = static_cast<std::size_t>(-2);
-
-static void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "failed: %s\n", what);
-    std::abort();
-}
 
 static std::size_t Decode(const char* text, std::size_t count, std::uint16_t& value) {
     unsigned char state[16]{};

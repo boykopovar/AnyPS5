@@ -1,6 +1,7 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdint>
@@ -27,12 +28,6 @@ void* APS5_VABI TestRealign(void* pointer, std::size_t size, std::size_t) { retu
 int APS5_VABI TestPosixAlign(void** pointer, std::size_t, std::size_t size) {
     *pointer = std::malloc(size);
     return *pointer ? 0 : 12;
-}
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc rtc::ThreadManager check failed at line %u\n", location.line());
-    std::abort();
 }
 
 void* FakeThread(std::uintptr_t value) {

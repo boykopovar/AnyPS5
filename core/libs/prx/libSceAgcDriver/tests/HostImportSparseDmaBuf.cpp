@@ -2,6 +2,7 @@
 #include "AllocationFailure.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "Testing.hpp"
 #ifdef __linux__
 #include "prx/libc/include/GuestArena.hpp"
 #include <fcntl.h>
@@ -34,14 +35,6 @@ int main() {
 using namespace AgcDriver::Graphics;
 
 namespace {
-
-int failures = 0;
-
-void Expect(bool condition, const std::string& what) {
-    if (condition) return;
-    std::fprintf(stderr, "FAIL: %s\n", what.c_str());
-    ++failures;
-}
 
 constexpr std::uint64_t Alignment = 65536;
 constexpr std::uint64_t ChunkBytes = std::uint64_t{64} << 20u;
@@ -626,8 +619,8 @@ int main() {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;
     }
-    if (failures != 0) {
-        std::fprintf(stderr, "%d sparse dma-buf import checks failed\n", failures);
+    if (Failures() != 0) {
+        std::fprintf(stderr, "%u sparse dma-buf import checks failed\n", Failures());
         return 1;
     }
     std::printf("host import sparse dma-buf tests passed\n");

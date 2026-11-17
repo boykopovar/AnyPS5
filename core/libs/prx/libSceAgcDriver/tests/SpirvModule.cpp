@@ -1,6 +1,7 @@
 #include "SpirvBackend/SpirvModule.hpp"
 #include "SpirvBackend/SpirvSpecialization.hpp"
 #include "Recompiler.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdio>
@@ -14,15 +15,6 @@
 using namespace ShaderRecompiler;
 
 namespace {
-
-int failures = 0;
-
-void check(bool condition, const char* what) {
-    if (!condition) {
-        std::fprintf(stderr, "%s\n", what);
-        ++failures;
-    }
-}
 
 std::map<std::uint32_t, std::size_t> opcodeCounts(const std::vector<std::uint32_t>& words) {
     std::map<std::uint32_t, std::size_t> counts;
@@ -49,40 +41,40 @@ void testRepeatedTypesShareOneId() {
     SpirvModule module;
     const auto first = module.Type(spv::OpTypeInt, 32u, 0u);
     const auto second = module.Type(spv::OpTypeInt, 32u, 0u);
-    check(first == second, "a repeated OpTypeInt 32 0 returned a different id");
-    check(declared(module, spv::OpTypeInt) == 1, "a repeated OpTypeInt 32 0 was declared more than once");
-    check(module.Type(spv::OpTypeVoid) == module.Type(spv::OpTypeVoid), "a repeated OpTypeVoid returned a different id");
-    check(declared(module, spv::OpTypeVoid) == 1, "OpTypeVoid was not declared exactly once");
-    check(module.Type(spv::OpTypeBool) == module.Type(spv::OpTypeBool), "a repeated OpTypeBool returned a different id");
-    check(module.Type(spv::OpTypeFloat, 32u) == module.Type(spv::OpTypeFloat, 32u), "a repeated OpTypeFloat 32 returned a different id");
-    check(declared(module, spv::OpTypeFloat) == 1, "OpTypeFloat was not declared exactly once");
+    Expect(first == second, "a repeated OpTypeInt 32 0 returned a different id");
+    Expect(declared(module, spv::OpTypeInt) == 1, "a repeated OpTypeInt 32 0 was declared more than once");
+    Expect(module.Type(spv::OpTypeVoid) == module.Type(spv::OpTypeVoid), "a repeated OpTypeVoid returned a different id");
+    Expect(declared(module, spv::OpTypeVoid) == 1, "OpTypeVoid was not declared exactly once");
+    Expect(module.Type(spv::OpTypeBool) == module.Type(spv::OpTypeBool), "a repeated OpTypeBool returned a different id");
+    Expect(module.Type(spv::OpTypeFloat, 32u) == module.Type(spv::OpTypeFloat, 32u), "a repeated OpTypeFloat 32 returned a different id");
+    Expect(declared(module, spv::OpTypeFloat) == 1, "OpTypeFloat was not declared exactly once");
 }
 
 void testOperandShapesDoNotCollide() {
     SpirvModule module;
     const auto oneWord = module.Type(spv::OpTypeInt, 32u);
     const auto twoWords = module.Type(spv::OpTypeInt, 32u, 0u);
-    check(oneWord != twoWords, "OpTypeInt with one operand collided with OpTypeInt with two");
-    check(declared(module, spv::OpTypeInt) == 2, "the two OpTypeInt shapes were not both declared");
+    Expect(oneWord != twoWords, "OpTypeInt with one operand collided with OpTypeInt with two");
+    Expect(declared(module, spv::OpTypeInt) == 2, "the two OpTypeInt shapes were not both declared");
     const auto voidType = module.Type(spv::OpTypeVoid);
     const auto boolType = module.Type(spv::OpTypeBool);
-    check(voidType != boolType, "OpTypeVoid collided with OpTypeBool");
-    check(module.Type(spv::OpTypeInt, 32u, 0u) != module.Type(spv::OpTypeInt, 32u, 1u), "unsigned and signed OpTypeInt 32 collided");
-    check(module.Type(spv::OpTypeInt, 32u, 0u) != module.Type(spv::OpTypeInt, 64u, 0u), "OpTypeInt 32 collided with OpTypeInt 64");
-    check(module.Type(spv::OpTypeFloat, 32u) != module.Type(spv::OpTypeFloat, 64u), "OpTypeFloat 32 collided with OpTypeFloat 64");
+    Expect(voidType != boolType, "OpTypeVoid collided with OpTypeBool");
+    Expect(module.Type(spv::OpTypeInt, 32u, 0u) != module.Type(spv::OpTypeInt, 32u, 1u), "unsigned and signed OpTypeInt 32 collided");
+    Expect(module.Type(spv::OpTypeInt, 32u, 0u) != module.Type(spv::OpTypeInt, 64u, 0u), "OpTypeInt 32 collided with OpTypeInt 64");
+    Expect(module.Type(spv::OpTypeFloat, 32u) != module.Type(spv::OpTypeFloat, 64u), "OpTypeFloat 32 collided with OpTypeFloat 64");
 }
 
 void testOperandKindsAgree() {
     SpirvModule module;
     const auto fromUnsigned = module.Type(spv::OpTypeInt, 32u, 0u);
     const auto fromSigned = module.Type(spv::OpTypeInt, static_cast<std::int32_t>(32), static_cast<std::int32_t>(0));
-    check(fromUnsigned == fromSigned, "OpTypeInt disagreed between unsigned and signed operands");
+    Expect(fromUnsigned == fromSigned, "OpTypeInt disagreed between unsigned and signed operands");
     const auto typeU32 = module.Type(spv::OpTypeInt, 32u, 0u);
     const auto fromEnum = module.Type(spv::OpTypePointer, spv::StorageClassFunction, typeU32);
     const auto fromWord = module.Type(spv::OpTypePointer, static_cast<std::uint32_t>(spv::StorageClassFunction), typeU32);
-    check(fromEnum == fromWord, "OpTypePointer disagreed between enum and integer operands");
-    check(fromEnum == module.Type(spv::OpTypePointer, spv::StorageClassFunction, typeU32), "a repeated enum-operand OpTypePointer returned a different id");
-    check(declared(module, spv::OpTypePointer) == 1, "OpTypePointer was not declared exactly once");
+    Expect(fromEnum == fromWord, "OpTypePointer disagreed between enum and integer operands");
+    Expect(fromEnum == module.Type(spv::OpTypePointer, spv::StorageClassFunction, typeU32), "a repeated enum-operand OpTypePointer returned a different id");
+    Expect(declared(module, spv::OpTypePointer) == 1, "OpTypePointer was not declared exactly once");
 }
 
 void testDecoratedTypesStayDistinct() {
@@ -90,36 +82,36 @@ void testDecoratedTypesStayDistinct() {
     const auto typeU32 = module.Type(spv::OpTypeInt, 32u, 0u);
     const auto plain = module.Type(spv::OpTypeRuntimeArray, typeU32);
     const auto decorated = module.DecoratedType(spv::OpTypeRuntimeArray, {{spv::OpDecorate, {spv::DecorationArrayStride, 4u}}}, typeU32);
-    check(plain != decorated, "a plain OpTypeRuntimeArray collided with the decorated one");
-    check(decorated == module.DecoratedType(spv::OpTypeRuntimeArray, {{spv::OpDecorate, {spv::DecorationArrayStride, 4u}}}, typeU32), "a repeated decorated type returned a different id");
-    check(declared(module, spv::OpTypeRuntimeArray) == 2, "the plain and decorated OpTypeRuntimeArray were not both declared");
+    Expect(plain != decorated, "a plain OpTypeRuntimeArray collided with the decorated one");
+    Expect(decorated == module.DecoratedType(spv::OpTypeRuntimeArray, {{spv::OpDecorate, {spv::DecorationArrayStride, 4u}}}, typeU32), "a repeated decorated type returned a different id");
+    Expect(declared(module, spv::OpTypeRuntimeArray) == 2, "the plain and decorated OpTypeRuntimeArray were not both declared");
 }
 
 void testConstantsShareOneId() {
     SpirvModule module;
     const auto typeU32 = module.Type(spv::OpTypeInt, 32u, 0u);
     const auto typeBool = module.Type(spv::OpTypeBool);
-    check(module.Constant(spv::OpConstant, typeU32, 0u) == module.Constant(spv::OpConstant, typeU32, 0u), "a repeated OpConstant 0 returned a different id");
-    check(module.Constant(spv::OpConstant, typeU32, 0u) != module.Constant(spv::OpConstant, typeU32, 1u), "OpConstant 0 collided with OpConstant 1");
-    check(module.Constant(spv::OpConstant, typeU32, 1000u) != module.Constant(spv::OpConstant, typeU32, 0u), "OpConstant 1000 collided with OpConstant 0");
-    check(module.Constant(spv::OpConstantTrue, typeBool) == module.Constant(spv::OpConstantTrue, typeBool), "a repeated OpConstantTrue returned a different id");
-    check(module.Constant(spv::OpConstantTrue, typeBool) != module.Constant(spv::OpConstantFalse, typeBool), "OpConstantTrue collided with OpConstantFalse");
-    check(declared(module, spv::OpConstant) == 3, "OpConstant was not declared once per distinct value");
-    check(declared(module, spv::OpConstantTrue) == 1, "OpConstantTrue was not declared exactly once");
+    Expect(module.Constant(spv::OpConstant, typeU32, 0u) == module.Constant(spv::OpConstant, typeU32, 0u), "a repeated OpConstant 0 returned a different id");
+    Expect(module.Constant(spv::OpConstant, typeU32, 0u) != module.Constant(spv::OpConstant, typeU32, 1u), "OpConstant 0 collided with OpConstant 1");
+    Expect(module.Constant(spv::OpConstant, typeU32, 1000u) != module.Constant(spv::OpConstant, typeU32, 0u), "OpConstant 1000 collided with OpConstant 0");
+    Expect(module.Constant(spv::OpConstantTrue, typeBool) == module.Constant(spv::OpConstantTrue, typeBool), "a repeated OpConstantTrue returned a different id");
+    Expect(module.Constant(spv::OpConstantTrue, typeBool) != module.Constant(spv::OpConstantFalse, typeBool), "OpConstantTrue collided with OpConstantFalse");
+    Expect(declared(module, spv::OpConstant) == 3, "OpConstant was not declared once per distinct value");
+    Expect(declared(module, spv::OpConstantTrue) == 1, "OpConstantTrue was not declared exactly once");
     const auto signedId = module.Constant(spv::OpConstant, module.Type(spv::OpTypeInt, 32u, 1u), static_cast<std::uint32_t>(-1));
-    check(signedId != 0, "a signed OpConstant produced a zero id");
+    Expect(signedId != 0, "a signed OpConstant produced a zero id");
 }
 
 void testOperandFreeConstantsShareOneId() {
     SpirvModule module;
     const auto typeBool = module.Type(spv::OpTypeBool);
     const auto typeVoid = module.Type(spv::OpTypeVoid);
-    check(module.Constant(spv::OpConstantTrue, typeBool) == module.Constant(spv::OpConstantTrue, typeBool), "a repeated OpConstantTrue returned a different id");
-    check(module.Constant(spv::OpConstantTrue, typeBool) != module.Constant(spv::OpConstantFalse, typeBool), "OpConstantTrue collided with OpConstantFalse");
-    check(module.Constant(spv::OpConstantTrue, typeVoid) != module.Constant(spv::OpConstantTrue, typeBool), "OpConstantTrue of different types collided");
-    check(declared(module, spv::OpConstantTrue) == 2, "OpConstantTrue was not declared once per type");
-    check(declared(module, spv::OpConstantFalse) == 1, "OpConstantFalse was not declared exactly once");
-    check(module.Type(spv::OpTypeVoid) == typeVoid, "a repeated operand-free type returned a different id");
+    Expect(module.Constant(spv::OpConstantTrue, typeBool) == module.Constant(spv::OpConstantTrue, typeBool), "a repeated OpConstantTrue returned a different id");
+    Expect(module.Constant(spv::OpConstantTrue, typeBool) != module.Constant(spv::OpConstantFalse, typeBool), "OpConstantTrue collided with OpConstantFalse");
+    Expect(module.Constant(spv::OpConstantTrue, typeVoid) != module.Constant(spv::OpConstantTrue, typeBool), "OpConstantTrue of different types collided");
+    Expect(declared(module, spv::OpConstantTrue) == 2, "OpConstantTrue was not declared once per type");
+    Expect(declared(module, spv::OpConstantFalse) == 1, "OpConstantFalse was not declared exactly once");
+    Expect(module.Type(spv::OpTypeVoid) == typeVoid, "a repeated operand-free type returned a different id");
 }
 
 void testIdsSurviveInterleavedAllocation() {
@@ -127,9 +119,9 @@ void testIdsSurviveInterleavedAllocation() {
     const auto typeU32 = module.Type(spv::OpTypeInt, 32u, 0u);
     const auto constant = module.Constant(spv::OpConstant, typeU32, 4u);
     for (int i = 0; i < 8; ++i) {
-        check(module.AllocateId() != 0, "AllocateId returned zero");
-        check(module.Type(spv::OpTypeInt, 32u, 0u) == typeU32, "a memoized type changed id after AllocateId");
-        check(module.Constant(spv::OpConstant, typeU32, 4u) == constant, "a memoized constant changed id after AllocateId");
+        Expect(module.AllocateId() != 0, "AllocateId returned zero");
+        Expect(module.Type(spv::OpTypeInt, 32u, 0u) == typeU32, "a memoized type changed id after AllocateId");
+        Expect(module.Constant(spv::OpConstant, typeU32, 4u) == constant, "a memoized constant changed id after AllocateId");
     }
 }
 
@@ -138,10 +130,10 @@ void testModulesAreIndependent() {
     SpirvModule second;
     const auto firstId = first.Type(spv::OpTypeInt, 32u, 0u);
     const auto secondId = second.Type(spv::OpTypeInt, 32u, 0u);
-    check(firstId == 1, "the first id of a fresh module was not 1");
-    check(secondId == 1, "a second module did not start its ids from 1");
+    Expect(firstId == 1, "the first id of a fresh module was not 1");
+    Expect(secondId == 1, "a second module did not start its ids from 1");
     first.Type(spv::OpTypeVoid);
-    check(second.Type(spv::OpTypeInt, 32u, 0u) == secondId, "a second module's ids moved when the first module was used");
+    Expect(second.Type(spv::OpTypeInt, 32u, 0u) == secondId, "a second module's ids moved when the first module was used");
 }
 
 void testIdsStayUniqueBeyondCacheCapacity() {
@@ -153,11 +145,11 @@ void testIdsStayUniqueBeyondCacheCapacity() {
         ids.push_back(module.Constant(spv::OpConstant, typeU32, value));
     }
     const std::set<std::uint32_t> distinct(ids.begin(), ids.end());
-    check(distinct.size() == ids.size(), "distinct constants shared an id once the cache was overrun");
+    Expect(distinct.size() == ids.size(), "distinct constants shared an id once the cache was overrun");
     for (std::uint32_t value = 0; value < 4096; ++value) {
         if (module.Constant(spv::OpConstant, typeU32, value) != ids[value]) {
             std::fprintf(stderr, "constant %u changed id after the cache was overrun\n", value);
-            ++failures;
+            Expect(false);
             break;
         }
     }
@@ -166,8 +158,8 @@ void testIdsStayUniqueBeyondCacheCapacity() {
         largest = largest < id ? id : largest;
     }
     const auto first = ids.front();
-    check(largest - first + 1 == distinct.size(), "the constant ids were not contiguous, so some were never declared");
-    check(first > typeU32, "a constant was numbered before the type it uses");
+    Expect(largest - first + 1 == distinct.size(), "the constant ids were not contiguous, so some were never declared");
+    Expect(first > typeU32, "a constant was numbered before the type it uses");
 }
 
 void testEmittedWordsAreStable() {
@@ -180,12 +172,12 @@ void testEmittedWordsAreStable() {
         module.AddFunction(spv::OpNop);
     }
     const auto words = module.Finalize();
-    check(!words.empty(), "Finalize produced no words");
+    Expect(!words.empty(), "Finalize produced no words");
     const auto counts = opcodeCounts(words);
-    check(counts.at(spv::OpTypeVector) == 1, "OpTypeVector was declared more than once");
-    check(counts.at(spv::OpTypePointer) == 1, "OpTypePointer was declared more than once");
-    check(counts.at(spv::OpConstant) == 8, "OpConstant was not declared once per distinct value");
-    check(counts.at(spv::OpNop) == 32, "the function body lost instructions");
+    Expect(counts.at(spv::OpTypeVector) == 1, "OpTypeVector was declared more than once");
+    Expect(counts.at(spv::OpTypePointer) == 1, "OpTypePointer was declared more than once");
+    Expect(counts.at(spv::OpConstant) == 8, "OpConstant was not declared once per distinct value");
+    Expect(counts.at(spv::OpNop) == 32, "the function body lost instructions");
 }
 
 }
@@ -224,7 +216,7 @@ void testStructExtractsAreNotShuffled() {
             if ((specialized[cursor] >> 16u) == 0u) break;
             if ((specialized[cursor] & 0xffffu) == spv::OpVectorShuffle) shuffled = true;
         }
-        check(shuffled == vectorSource, vectorSource ? "extracts of one vector were not folded into a shuffle" : "extracts of a struct were folded into a vector shuffle");
+        Expect(shuffled == vectorSource, vectorSource ? "extracts of one vector were not folded into a shuffle" : "extracts of a struct were folded into a vector shuffle");
     }
 }
 
@@ -277,10 +269,10 @@ void checkFoldedSwitch(const std::vector<std::uint32_t>& words, std::uint32_t de
         if (opcode == spv::OpStore && specialized[cursor + 2u] == 14u) storesFolded = true;
     }
     const std::string context = std::string(" (") + what + ")";
-    check(!counts.contains(spv::OpUnreachable), ("blocks the folded switch left unreachable were kept" + context).c_str());
-    check(counts.at(spv::OpLabel) == 3u, ("the specialized function does not have exactly its three live blocks" + context).c_str());
-    check(storesFolded && constants.contains(14u), ("the folded product the live case stores is missing" + context).c_str());
-    check(!constants.contains(deadSum), ("a folded constant without uses was kept" + context).c_str());
+    Expect(!counts.contains(spv::OpUnreachable), ("blocks the folded switch left unreachable were kept" + context).c_str());
+    Expect(counts.at(spv::OpLabel) == 3u, ("the specialized function does not have exactly its three live blocks" + context).c_str());
+    Expect(storesFolded && constants.contains(14u), ("the folded product the live case stores is missing" + context).c_str());
+    Expect(!constants.contains(deadSum), ("a folded constant without uses was kept" + context).c_str());
 }
 
 void testFoldingLeavesNoDeadBlocksOrConstants() {
@@ -297,7 +289,7 @@ void testIdsBeyondTheBoundAreRejected() {
     } catch (const std::exception&) {
         rejected = true;
     }
-    check(rejected, "a module whose ids reach its bound was specialized");
+    Expect(rejected, "a module whose ids reach its bound was specialized");
 }
 
 void testPrivateCompositeTableLoadFolding() {
@@ -360,28 +352,28 @@ void testPrivateCompositeTableLoadFolding() {
             };
             const auto [folded, expectedConstant] = build(false, false);
             const auto foldedCounts = opcodeCounts(folded);
-            check(!foldedCounts.contains(accessOp), "a constant-index composite table access chain was not removed");
-            check(!foldedCounts.contains(spv::OpLogicalOr), "a right-false OpLogicalOr was not simplified");
-            check(!foldedCounts.contains(spv::OpSelect), "an identical-arm OpSelect was not simplified");
-            check(foldedCounts.contains(spv::OpLoad) && foldedCounts.at(spv::OpLoad) == 1u, "a constant-index composite table load was not folded");
+            Expect(!foldedCounts.contains(accessOp), "a constant-index composite table access chain was not removed");
+            Expect(!foldedCounts.contains(spv::OpLogicalOr), "a right-false OpLogicalOr was not simplified");
+            Expect(!foldedCounts.contains(spv::OpSelect), "an identical-arm OpSelect was not simplified");
+            Expect(foldedCounts.contains(spv::OpLoad) && foldedCounts.at(spv::OpLoad) == 1u, "a constant-index composite table load was not folded");
             bool addedThirty = false;
             for (std::size_t cursor = 5; cursor < folded.size(); cursor += folded[cursor] >> 16u) {
                 if ((folded[cursor] >> 16u) == 0u) break;
                 if ((folded[cursor] & 0xffffu) == spv::OpIAdd && folded[cursor + 4u] == expectedConstant) addedThirty = true;
             }
-            check(addedThirty, "a constant-index composite table load did not fold to its element constant");
+            Expect(addedThirty, "a constant-index composite table load did not fold to its element constant");
 
             const auto [dynamic, unusedDynamic] = build(true, false);
             static_cast<void>(unusedDynamic);
             const auto dynamicCounts = opcodeCounts(dynamic);
-            check(dynamicCounts.contains(accessOp) && dynamicCounts.at(accessOp) == 1u, "a dynamic-index composite table access chain was removed");
-            check(dynamicCounts.contains(spv::OpLoad) && dynamicCounts.at(spv::OpLoad) == 2u, "a dynamic-index composite table load was folded");
+            Expect(dynamicCounts.contains(accessOp) && dynamicCounts.at(accessOp) == 1u, "a dynamic-index composite table access chain was removed");
+            Expect(dynamicCounts.contains(spv::OpLoad) && dynamicCounts.at(spv::OpLoad) == 2u, "a dynamic-index composite table load was folded");
 
             const auto [mutated, unusedMutated] = build(false, true);
             static_cast<void>(unusedMutated);
             const auto mutatedCounts = opcodeCounts(mutated);
-            check(mutatedCounts.contains(accessOp) && mutatedCounts.at(accessOp) == 2u, "a mutated composite table access chain was removed");
-            check(mutatedCounts.contains(spv::OpLoad) && mutatedCounts.at(spv::OpLoad) == 2u, "a mutated composite table load was folded despite a store through an access chain");
+            Expect(mutatedCounts.contains(accessOp) && mutatedCounts.at(accessOp) == 2u, "a mutated composite table access chain was removed");
+            Expect(mutatedCounts.contains(spv::OpLoad) && mutatedCounts.at(spv::OpLoad) == 2u, "a mutated composite table load was folded despite a store through an access chain");
         }
     }
 }
@@ -435,13 +427,13 @@ void testBlockBallotsOfOnePredicateShareOneBallot() {
         if (opcode == spv::OpGroupNonUniformBallot) ballotSources[words[offset + 2u]] = words[offset + 4u];
         if (opcode == spv::OpCopyObject) copySources[words[offset + 2u]] = words[offset + 3u];
     }
-    check(ballotSources.size() == 5u, "a block did not ballot each predicate exactly once");
-    check(copySources.size() == 2u && copySources.contains(repeated) && copySources.contains(afterHelper), "a repeated ballot in one block was not a copy of the first");
-    check(copySources[repeated] == first && copySources[afterHelper] == first, "a repeated ballot did not copy the block's first ballot");
-    check(ballotSources[distinct] == other, "a ballot of another predicate was reused");
-    check(ballotSources.contains(inHelper), "a helper function reused a ballot of the function it interrupted");
-    check(ballotSources.contains(afterCall), "a ballot after a function call reused one from before the call");
-    check(ballotSources.contains(afterLabel), "a ballot in a later block reused one from an earlier block");
+    Expect(ballotSources.size() == 5u, "a block did not ballot each predicate exactly once");
+    Expect(copySources.size() == 2u && copySources.contains(repeated) && copySources.contains(afterHelper), "a repeated ballot in one block was not a copy of the first");
+    Expect(copySources[repeated] == first && copySources[afterHelper] == first, "a repeated ballot did not copy the block's first ballot");
+    Expect(ballotSources[distinct] == other, "a ballot of another predicate was reused");
+    Expect(ballotSources.contains(inHelper), "a helper function reused a ballot of the function it interrupted");
+    Expect(ballotSources.contains(afterCall), "a ballot after a function call reused one from before the call");
+    Expect(ballotSources.contains(afterLabel), "a ballot in a later block reused one from an earlier block");
 }
 
 void testInternedSpirvSharesEqualWords() {
@@ -451,13 +443,13 @@ void testInternedSpirvSharesEqualWords() {
     const auto first = InternSpirv(words);
     const auto second = InternSpirv(words);
     const auto other = InternSpirv(changed);
-    check(std::ranges::equal(first.Words(), words) && std::ranges::equal(other.Words(), changed), "interned SPIR-V changed its words");
-    check(first.data() == second.data(), "two equal specialized modules kept separate copies of their words");
-    check(first.data() != other.data(), "different SPIR-V was interned into one copy");
+    Expect(std::ranges::equal(first.Words(), words) && std::ranges::equal(other.Words(), changed), "interned SPIR-V changed its words");
+    Expect(first.data() == second.data(), "two equal specialized modules kept separate copies of their words");
+    Expect(first.data() != other.data(), "different SPIR-V was interned into one copy");
     auto edited = second;
     edited[6] = spv::CapabilityFloat64;
     const auto again = InternSpirv(words);
-    check(edited[6] == spv::CapabilityFloat64 && first[6] == spv::CapabilityShader && again.data() == first.data(), "a write to one holder of interned SPIR-V changed the others");
+    Expect(edited[6] == spv::CapabilityFloat64 && first[6] == spv::CapabilityShader && again.data() == first.data(), "a write to one holder of interned SPIR-V changed the others");
 }
 
 void testInternedSpirvReleasesUnusedWords() {
@@ -466,12 +458,12 @@ void testInternedSpirvReleasesUnusedWords() {
     {
         const auto first = InternSpirv(words);
         const auto second = InternSpirv(words);
-        check(first.data() == second.data(), "two equal specialized modules kept separate copies of their words");
+        Expect(first.data() == second.data(), "two equal specialized modules kept separate copies of their words");
         released = first.Weaken();
     }
-    check(released.Expired(), "the SPIR-V interning table kept words no holder uses");
+    Expect(released.Expired(), "the SPIR-V interning table kept words no holder uses");
     const auto again = InternSpirv(words);
-    check(std::ranges::equal(again.Words(), words) && released.Lock().empty(), "SPIR-V interned again after its release changed its words");
+    Expect(std::ranges::equal(again.Words(), words) && released.Lock().empty(), "SPIR-V interned again after its release changed its words");
 }
 
 std::vector<std::uint32_t> foldedBitcasts(bool separateBlocks, bool differentInput, bool differentType, std::uint32_t nanOpcode, std::uint32_t decorationMask = 0u) {
@@ -558,18 +550,18 @@ void testFoldedBitcastsAndNanTests() {
             const auto found = counts.find(op);
             return found == counts.end() ? 0u : found->second;
         };
-        check(count(same, spv::OpBitcast) == 1u, "folding a select left repeated bitcasts of one value in a block");
-        check(count(other, spv::OpBitcast) == 2u, "folding merged bitcasts of different input values");
-        check(count(branches, spv::OpBitcast) == 2u, "folding reused a bitcast from a sibling branch");
+        Expect(count(same, spv::OpBitcast) == 1u, "folding a select left repeated bitcasts of one value in a block");
+        Expect(count(other, spv::OpBitcast) == 2u, "folding merged bitcasts of different input values");
+        Expect(count(branches, spv::OpBitcast) == 2u, "folding reused a bitcast from a sibling branch");
         if (nanOpcode != 0u) {
-            check(count(same, nanOpcode) == 1u, "folding left repeated NaN tests of one value in a block");
-            check(count(other, nanOpcode) == 2u, "folding merged NaN tests of different input values");
-            check(count(branches, nanOpcode) == 2u, "folding reused a NaN test from a sibling branch");
+            Expect(count(same, nanOpcode) == 1u, "folding left repeated NaN tests of one value in a block");
+            Expect(count(other, nanOpcode) == 2u, "folding merged NaN tests of different input values");
+            Expect(count(branches, nanOpcode) == 2u, "folding reused a NaN test from a sibling branch");
         }
     }
-    check(opcodeCounts(foldedBitcasts(false, false, true, 0u))[spv::OpBitcast] == 2u, "folding merged bitcasts to different result types");
+    Expect(opcodeCounts(foldedBitcasts(false, false, true, 0u))[spv::OpBitcast] == 2u, "folding merged bitcasts to different result types");
     for (const auto decorations : {1u, 2u, 3u, 4u, 8u}) {
-        check(opcodeCounts(foldedBitcasts(false, false, false, 0u, decorations))[spv::OpBitcast] == 2u, "folding merged a decorated bitcast with another value");
+        Expect(opcodeCounts(foldedBitcasts(false, false, false, 0u, decorations))[spv::OpBitcast] == 2u, "folding merged a decorated bitcast with another value");
     }
 }
 
@@ -582,7 +574,7 @@ void testInstructionLengthBounds() {
     } catch (const std::runtime_error&) {
         threw = true;
     }
-    check(threw, "an instruction exceeding 65535 words did not throw");
+    Expect(threw, "an instruction exceeding 65535 words did not throw");
 }
 
 void testDeferredPhiValidation() {
@@ -594,7 +586,7 @@ void testDeferredPhiValidation() {
     } catch (const std::runtime_error&) {
         threwNop = true;
     }
-    check(threwNop, "PatchDeferredPhi on OpNop did not throw");
+    Expect(threwNop, "PatchDeferredPhi on OpNop did not throw");
 
     bool threwOutOfBounds = false;
     try {
@@ -602,7 +594,7 @@ void testDeferredPhiValidation() {
     } catch (const std::runtime_error&) {
         threwOutOfBounds = true;
     }
-    check(threwOutOfBounds, "PatchDeferredPhi with out-of-bounds offset did not throw");
+    Expect(threwOutOfBounds, "PatchDeferredPhi with out-of-bounds offset did not throw");
 
     SpirvModule moduleNonDeferred;
     moduleNonDeferred.EmitFunctionInstruction({spv::OpPhi, 11u, 12u, 0u, 0u});
@@ -612,7 +604,7 @@ void testDeferredPhiValidation() {
     } catch (const std::runtime_error&) {
         threwNonDeferred = true;
     }
-    check(threwNonDeferred, "PatchDeferredPhi on non-deferred OpPhi offset did not throw");
+    Expect(threwNonDeferred, "PatchDeferredPhi on non-deferred OpPhi offset did not throw");
 
     SpirvModule moduleCount;
     const auto deferred = moduleCount.AddDeferredPhi(1u, 2u, 1);
@@ -623,7 +615,7 @@ void testDeferredPhiValidation() {
     } catch (const std::runtime_error&) {
         threwExcess = true;
     }
-    check(threwExcess, "PatchDeferredPhi beyond registered incoming count did not throw");
+    Expect(threwExcess, "PatchDeferredPhi beyond registered incoming count did not throw");
 }
 
 int main() {
@@ -647,8 +639,8 @@ int main() {
     testInternedSpirvReleasesUnusedWords();
     testInstructionLengthBounds();
     testDeferredPhiValidation();
-    if (failures != 0) {
-        std::fprintf(stderr, "%d check(s) failed\n", failures);
+    if (Failures() != 0) {
+        std::fprintf(stderr, "%u check(s) failed\n", Failures());
         return 1;
     }
     return 0;

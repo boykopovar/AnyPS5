@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -7,15 +8,6 @@
 #include <cstring>
 #include <string>
 #include <vector>
-
-static int failures = 0;
-
-static void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "%s\n", message);
-        ++failures;
-    }
-}
 
 static std::vector<std::int64_t> Draw(std::size_t count) {
     std::vector<std::int64_t> values;
@@ -25,7 +17,7 @@ static std::vector<std::int64_t> Draw(std::size_t count) {
 }
 
 static void RequireSequence(const std::vector<std::int64_t>& actual, const std::vector<std::int64_t>& expected, const char* message) {
-    Require(actual == expected, message);
+    Expect(actual == expected, message);
 }
 
 static std::string FirstStateWord(const char* table) {
@@ -74,8 +66,8 @@ int main() {
         "srandom(0x80000000) must match the measured sequence");
 
     std::vector<char> tiny(16);
-    Require(initstate_nid_postfix(1, tiny.data(), 0) == nullptr, "initstate of 0 bytes must return null");
-    Require(initstate_nid_postfix(1, tiny.data(), 7) == nullptr, "initstate of 7 bytes must return null");
+    Expect(initstate_nid_postfix(1, tiny.data(), 0) == nullptr, "initstate of 0 bytes must return null");
+    Expect(initstate_nid_postfix(1, tiny.data(), 7) == nullptr, "initstate of 7 bytes must return null");
 
     const std::array<StateCase, 13> states {{
         {8, {1646035001, 1025921153, 510616708, 590357944, 771515668}, "000000001465fc2d"},
@@ -98,15 +90,15 @@ int main() {
         buffers.emplace_back(static_cast<std::size_t>(state.size) + 16, static_cast<char>(0xa5));
         char* const buffer = buffers.back().data();
         char* const returned = initstate_nid_postfix(1, buffer, state.size);
-        Require(returned != nullptr, "initstate must not return null from 8 bytes up");
+        Expect(returned != nullptr, "initstate must not return null from 8 bytes up");
         RequireSequence(Draw(5), state.values, "initstate must draw the measured values");
-        Require(FirstStateWord(buffer) == state.firstStateWord, "initstate must save the measured type word and first state word");
+        Expect(FirstStateWord(buffer) == state.firstStateWord, "initstate must save the measured type word and first state word");
     }
 
     std::vector<char> last(128);
     char* const replaced = initstate_nid_postfix(5, last.data(), 128);
-    Require(replaced != nullptr, "initstate must not return null from 8 bytes up");
-    Require(setstate_nid_postfix(replaced) != nullptr, "setstate of the state initstate returned must not return null");
+    Expect(replaced != nullptr, "initstate must not return null from 8 bytes up");
+    Expect(setstate_nid_postfix(replaced) != nullptr, "setstate of the state initstate returned must not return null");
 
-    return failures == 0 ? 0 : 1;
+    return Failures() == 0 ? 0 : 1;
 }

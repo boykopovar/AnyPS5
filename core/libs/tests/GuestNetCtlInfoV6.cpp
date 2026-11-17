@@ -13,13 +13,12 @@
 #include <unistd.h>
 #endif
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <vector>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 constexpr int kErrInvalidCode = static_cast<int>(0x80412106);
 constexpr int kErrInvalidAddr = static_cast<int>(0x80412107);

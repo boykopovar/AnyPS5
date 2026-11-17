@@ -1,5 +1,6 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libSceAudioIn/include/AudioIn.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <atomic>
@@ -42,12 +43,6 @@ struct ScopedErrnoClobberHooks {
         GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
     }
 };
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "AudioIn error check failed at line %u\n", location.line());
-    std::abort();
-}
 
 void SetEnvironment(const char* name, const std::string& value) {
 #ifdef _WIN32

@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/ImageMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
 #include "AllocationFailure.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -27,10 +28,6 @@ namespace {
 constexpr VkDeviceSize KiB = VkDeviceSize{1} << 10u;
 constexpr VkDeviceSize MiB = VkDeviceSize{1} << 20u;
 constexpr std::size_t RecordCount = 32768;
-
-void Expect(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 template<typename T>
 T Handle(std::size_t value) {
@@ -90,11 +87,11 @@ std::size_t reclaimImageCount = 0;
 bool reclaimReportsBytes = true;
 
 void Clean() {
-    Expect(mock.live == 0 && mock.liveBytes == 0, "image allocator leaked driver memory");
-    Expect(mock.invalidFrees == 0, "image allocator freed an undefined or already-freed handle");
-    Expect(mock.invalidBinds == 0, "image allocator produced an invalid or overlapping binding");
-    Expect(mock.maps == 0, "image allocation mapped image memory on the host");
-    Expect(mock.allocations == mock.frees, "driver allocations and frees are unbalanced");
+    Require(mock.live == 0 && mock.liveBytes == 0, "image allocator leaked driver memory");
+    Require(mock.invalidFrees == 0, "image allocator freed an undefined or already-freed handle");
+    Require(mock.invalidBinds == 0, "image allocator produced an invalid or overlapping binding");
+    Require(mock.maps == 0, "image allocation mapped image memory on the host");
+    Require(mock.allocations == mock.frees, "driver allocations and frees are unbalanced");
 }
 
 void ResetMock() {
@@ -258,7 +255,7 @@ struct ImageSpec {
 
 ImageSpec NewImage(VkDeviceSize size = 64 * KiB, VkDeviceSize alignment = 256, std::uint32_t types = 1u, bool required = false, bool preferred = false) {
     std::lock_guard lock(mockMutex);
-    Expect(mock.nextImage != RecordCount, "image mock exhausted its image records");
+    Require(mock.nextImage != RecordCount, "image mock exhausted its image records");
     const auto index = mock.nextImage++;
     mock.images[index].requirements = {size, alignment, types};
     mock.images[index].required = required ? VK_TRUE : VK_FALSE;
@@ -285,8 +282,8 @@ ImageAllocation Take(const Context& context, const ImageSpec& image, bool budget
 }
 
 void Bind(const ImageSpec& image, const ImageAllocation& allocation) {
-    Expect(allocation.Size() == mock.images[Index(image.image)].requirements.size, "image lease size does not describe the image requirements");
-    Expect(allocation.MemoryType() == mock.memories[Index(MemoryOf(allocation))].type, "image lease reports the wrong actual memory type");
+    Require(allocation.Size() == mock.images[Index(image.image)].requirements.size, "image lease size does not describe the image requirements");
+    Require(allocation.MemoryType() == mock.memories[Index(MemoryOf(allocation))].type, "image lease reports the wrong actual memory type");
     Check(BindImageMemory(VK_NULL_HANDLE, image.image, MemoryOf(allocation), OffsetOf(allocation)), "mock image binding");
 }
 
@@ -314,16 +311,16 @@ void ConcurrentBurst() {
             Bind(images.back(), allocations.back());
         }
         std::printf("image allocation: 4096 simultaneous 64 KiB images used %zu driver allocations and %llu bytes\n", mock.allocations, static_cast<unsigned long long>(mock.liveBytes));
-        Expect(mock.allocations <= 128, "4096 small images still allocate driver memory independently");
-        Expect(mock.liveBytes <= 300 * MiB, "small-image block growth wastes too much memory");
-        Expect(mock.requirements2 == images.size(), "image requirements did not use dedicated-allocation queries");
+        Require(mock.allocations <= 128, "4096 small images still allocate driver memory independently");
+        Require(mock.liveBytes <= 300 * MiB, "small-image block growth wastes too much memory");
+        Require(mock.requirements2 == images.size(), "image requirements did not use dedicated-allocation queries");
         const auto before = mock.allocations;
         for (std::size_t index = 0; index < images.size(); index += 2) Drop(images[index], allocations[index]);
         for (std::size_t index = 0; index < images.size(); index += 2) {
             allocations[index] = Take(context, images[index]);
             Bind(images[index], allocations[index]);
         }
-        Expect(mock.allocations == before, "returned image ranges were not reused inside live blocks");
+        Require(mock.allocations == before, "returned image ranges were not reused inside live blocks");
         for (std::size_t index = 0; index < images.size(); ++index) Drop(images[index], allocations[index]);
     }
     Clean();
@@ -388,14 +385,14 @@ void BoundaryRanges() {
             allocations[index] = Take(context, images[index]);
             Bind(images[index], allocations[index]);
         }
-        Expect(mock.allocations == 1, "four aligned 1 MiB image ranges did not fit one 4 MiB block");
+        Require(mock.allocations == 1, "four aligned 1 MiB image ranges did not fit one 4 MiB block");
         const auto returnedMemory = MemoryOf(allocations[1]);
         const auto returnedOffset = OffsetOf(allocations[1]);
         Drop(images[1], allocations[1]);
         images[1] = NewImage(MiB - 1, MiB);
         allocations[1] = Take(context, images[1]);
         Bind(images[1], allocations[1]);
-        Expect(MemoryOf(allocations[1]) == returnedMemory && OffsetOf(allocations[1]) == returnedOffset && mock.allocations == 1, "bitmap range spanning multiple words was not reused");
+        Require(MemoryOf(allocations[1]) == returnedMemory && OffsetOf(allocations[1]) == returnedOffset && mock.allocations == 1, "bitmap range spanning multiple words was not reused");
         for (std::size_t index = 0; index < images.size(); ++index) Drop(images[index], allocations[index]);
     }
     Clean();
@@ -413,7 +410,7 @@ void UnboundAllocationRollback() {
         const auto second = NewImage();
         auto replacement = Take(context, second);
         Bind(second, replacement);
-        Expect(MemoryOf(replacement) == memory && OffsetOf(replacement) == offset && mock.allocations == 1, "an allocation returned before binding did not release its range");
+        Require(MemoryOf(replacement) == memory && OffsetOf(replacement) == offset && mock.allocations == 1, "an allocation returned before binding did not release its range");
         Drop(second, replacement);
     }
     Clean();
@@ -431,8 +428,8 @@ void BlockAlignmentFallback() {
             allocations[index] = Take(context, images[index]);
             Bind(images[index], allocations[index]);
         }
-        Expect(mock.liveBytes == images.size() * 64 * KiB, "block-aligned images wasted a whole slab block per allocation");
-        Expect(context.bufferPool->ImageSlabBlocks() == 0, "one-image-per-block alignment entered the shared image arena");
+        Require(mock.liveBytes == images.size() * 64 * KiB, "block-aligned images wasted a whole slab block per allocation");
+        Require(context.bufferPool->ImageSlabBlocks() == 0, "one-image-per-block alignment entered the shared image arena");
         for (std::size_t index = 0; index < images.size(); ++index) Drop(images[index], allocations[index]);
     }
     Clean();
@@ -445,7 +442,7 @@ void BlockAlignmentFallback() {
         auto secondAllocation = Take(context, second);
         Bind(first, firstAllocation);
         Bind(second, secondAllocation);
-        Expect(mock.allocations == 1 && MemoryOf(firstAllocation) == MemoryOf(secondAllocation), "two-image alignment unnecessarily bypassed suballocation");
+        Require(mock.allocations == 1 && MemoryOf(firstAllocation) == MemoryOf(secondAllocation), "two-image alignment unnecessarily bypassed suballocation");
         Drop(first, firstAllocation);
         Drop(second, secondAllocation);
     }
@@ -463,7 +460,7 @@ void TypeIsolation() {
             Bind(images[index], allocations[index]);
         }
         for (std::size_t first = 0; first < images.size(); ++first) {
-            for (std::size_t second = first + 1; second < images.size(); ++second) Expect(MemoryOf(allocations[first]) != MemoryOf(allocations[second]), "image blocks mixed incompatible memory types");
+            for (std::size_t second = first + 1; second < images.size(); ++second) Require(MemoryOf(allocations[first]) != MemoryOf(allocations[second]), "image blocks mixed incompatible memory types");
         }
         for (std::size_t index = 0; index < images.size(); ++index) Drop(images[index], allocations[index]);
         bool rejected = false;
@@ -472,7 +469,7 @@ void TypeIsolation() {
         } catch (const std::runtime_error&) {
             rejected = true;
         }
-        Expect(rejected, "host-only image requirements changed the existing device-memory selection policy");
+        Require(rejected, "host-only image requirements changed the existing device-memory selection policy");
     }
     Clean();
 }
@@ -487,12 +484,12 @@ void DedicatedRequirements() {
             allocations[index] = Take(context, images[index]);
             Bind(images[index], allocations[index]);
         }
-        Expect(MemoryOf(allocations[0]) != MemoryOf(allocations[1]), "required dedicated images share a driver allocation");
+        Require(MemoryOf(allocations[0]) != MemoryOf(allocations[1]), "required dedicated images share a driver allocation");
         for (std::size_t index = 0; index < 3; ++index) {
             const auto memory = MemoryOf(allocations[index]);
-            Expect(mock.memories[Index(memory)].dedicated == images[index].image, "dedicated image omitted its allocation chain");
+            Require(mock.memories[Index(memory)].dedicated == images[index].image, "dedicated image omitted its allocation chain");
             Drop(images[index], allocations[index]);
-            Expect(!mock.memories[Index(memory)].active, "dedicated memory was retained for reuse by another image");
+            Require(!mock.memories[Index(memory)].active, "dedicated memory was retained for reuse by another image");
         }
         for (std::size_t index = 3; index < images.size(); ++index) Drop(images[index], allocations[index]);
         const auto another = NewImage(64 * KiB, 256, 1u, true);
@@ -514,7 +511,7 @@ void LargeAndLinearImages() {
         auto second = Take(context, large);
         Bind(linear, first);
         Bind(large, second);
-        Expect(context.bufferPool->ImageSlabBlocks() == 0 && OffsetOf(first) == 0 && OffsetOf(second) == 0, "linear or large image entered the small optimal-image arena");
+        Require(context.bufferPool->ImageSlabBlocks() == 0 && OffsetOf(first) == 0 && OffsetOf(second) == 0, "linear or large image entered the small optimal-image arena");
         Drop(linear, first);
         Drop(large, second);
     }
@@ -534,7 +531,7 @@ void RejectedImageForms() {
             } catch (const std::runtime_error&) {
                 rejected = true;
             }
-            Expect(rejected, "image allocation accepted a binding mode requiring a separate allocator");
+            Require(rejected, "image allocation accepted a binding mode requiring a separate allocator");
         }
         auto external = NewImage();
         VkExternalMemoryImageCreateInfo exportInfo{VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO};
@@ -546,8 +543,8 @@ void RejectedImageForms() {
         } catch (const std::runtime_error&) {
             rejected = true;
         }
-        Expect(rejected, "external image allocation omitted its required import/export contract");
-        Expect(mock.allocations == 0, "rejected image forms made driver allocations");
+        Require(rejected, "external image allocation omitted its required import/export contract");
+        Require(mock.allocations == 0, "rejected image forms made driver allocations");
         const auto compatible = NewImage();
         auto withFormatList = compatible;
         VkImageFormatListCreateInfo formats{VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO};
@@ -557,7 +554,7 @@ void RejectedImageForms() {
         withFormatList.info.pNext = &formats;
         auto allocation = Take(context, withFormatList);
         Bind(withFormatList, allocation);
-        Expect(context.bufferPool->ImageSlabBlocks() == 0 && OffsetOf(allocation) == 0, "image creation metadata was passed through the ordinary slab arena");
+        Require(context.bufferPool->ImageSlabBlocks() == 0 && OffsetOf(allocation) == 0, "image creation metadata was passed through the ordinary slab arena");
         Drop(withFormatList, allocation);
     }
     Clean();
@@ -572,14 +569,14 @@ void BudgetPressureUsesLiveBlock() {
         const auto first = NewImage(64 * KiB, 256, 3u);
         auto firstAllocation = Take(context, first, true);
         Bind(first, firstAllocation);
-        Expect(firstAllocation.MemoryType() == 0, "budget fixture did not begin in device-local memory");
+        Require(firstAllocation.MemoryType() == 0, "budget fixture did not begin in device-local memory");
         const auto driverAllocations = mock.allocations;
         mock.reportedUsage = mock.reportedBudget;
         const auto second = NewImage(64 * KiB, 256, 3u);
         auto secondAllocation = Take(context, second, true);
         Bind(second, secondAllocation);
-        Expect(secondAllocation.MemoryType() == 0 && MemoryOf(secondAllocation) == MemoryOf(firstAllocation), "heap pressure ignored already-allocated compatible device memory");
-        Expect(mock.allocations == driverAllocations, "heap pressure allocated new host memory while a compatible device range was available");
+        Require(secondAllocation.MemoryType() == 0 && MemoryOf(secondAllocation) == MemoryOf(firstAllocation), "heap pressure ignored already-allocated compatible device memory");
+        Require(mock.allocations == driverAllocations, "heap pressure allocated new host memory while a compatible device range was available");
         Drop(first, firstAllocation);
         Drop(second, secondAllocation);
     }
@@ -597,8 +594,8 @@ void SmallBudgetHeadroom() {
         auto allocation = Take(context, image, true);
         Bind(image, allocation);
         const auto& memory = mock.memories[Index(MemoryOf(allocation))];
-        Expect(memory.type == 0 && memory.bytes == 64 * KiB, "a small amount of device headroom was oversubscribed by a new image block");
-        Expect(context.bufferPool->ImageSlabBlocks() == 0, "an image arena block exceeded reported heap headroom");
+        Require(memory.type == 0 && memory.bytes == 64 * KiB, "a small amount of device headroom was oversubscribed by a new image block");
+        Require(context.bufferPool->ImageSlabBlocks() == 0, "an image arena block exceeded reported heap headroom");
         Drop(image, allocation);
     }
     Clean();
@@ -616,9 +613,9 @@ void ReleasedMemoryAccounting() {
         Bind(second, secondAllocation);
         const auto before = ImageMemoryReleasedBytes();
         Drop(first, firstAllocation);
-        Expect(ImageMemoryReleasedBytes() == before, "returning a partial image block reported reclaimable driver bytes");
+        Require(ImageMemoryReleasedBytes() == before, "returning a partial image block reported reclaimable driver bytes");
         Drop(second, secondAllocation);
-        Expect(ImageMemoryReleasedBytes() - before == 4 * MiB, "returning the last image range did not report its whole reclaimable block");
+        Require(ImageMemoryReleasedBytes() - before == 4 * MiB, "returning the last image range did not report its whole reclaimable block");
     }
     Clean();
     ResetMock();
@@ -630,10 +627,10 @@ void ReleasedMemoryAccounting() {
         auto pendingGpuOwner = cpuOwner;
         const auto before = ImageMemoryReleasedBytes();
         cpuOwner.reset();
-        Expect(ImageMemoryReleasedBytes() == before, "a deferred image lease reported bytes before the last owner released it");
+        Require(ImageMemoryReleasedBytes() == before, "a deferred image lease reported bytes before the last owner released it");
         Unbind(image);
         pendingGpuOwner.reset();
-        Expect(ImageMemoryReleasedBytes() - before == 4 * MiB, "the final deferred image lease failed to report its reclaimable block");
+        Require(ImageMemoryReleasedBytes() - before == 4 * MiB, "the final deferred image lease failed to report its reclaimable block");
     }
     Clean();
     ResetMock();
@@ -644,7 +641,7 @@ void ReleasedMemoryAccounting() {
         Bind(image, allocation);
         const auto before = ImageMemoryReleasedBytes();
         Drop(image, allocation);
-        Expect(ImageMemoryReleasedBytes() - before == 64 * KiB, "a dedicated image release reported the wrong reclaimable byte count");
+        Require(ImageMemoryReleasedBytes() - before == 64 * KiB, "a dedicated image release reported the wrong reclaimable byte count");
     }
     Clean();
 }
@@ -664,8 +661,8 @@ void ReleasedMemoryIsThreadLocal() {
             workerReleased = ImageMemoryReleasedBytes() - workerBefore;
         });
         worker.join();
-        Expect(ImageMemoryReleasedBytes() == before, "another thread inflated local reclaimed-memory accounting");
-        Expect(workerReleased == 4 * MiB, "worker-thread release did not account for its own returned block");
+        Require(ImageMemoryReleasedBytes() == before, "another thread inflated local reclaimed-memory accounting");
+        Require(workerReleased == 4 * MiB, "worker-thread release did not account for its own returned block");
     }
     Clean();
 }
@@ -682,14 +679,14 @@ void MoveAndPoolLifetime() {
         const auto memory = MemoryOf(first);
         survivor = std::move(first);
         first.Reset();
-        Expect(MemoryOf(survivor) == memory && mock.memories[Index(memory)].active, "moving an image allocation lost its memory");
+        Require(MemoryOf(survivor) == memory && mock.memories[Index(memory)].active, "moving an image allocation lost its memory");
         auto second = std::move(survivor);
         survivor.Reset();
         survivor = std::move(second);
         context.bufferPool.reset();
-        Expect(mock.memories[Index(memory)].active, "image allocation did not retain its pool owner");
+        Require(mock.memories[Index(memory)].active, "image allocation did not retain its pool owner");
     }
-    Expect(mock.live != 0, "image lease lost memory when its creating Context went away");
+    Require(mock.live != 0, "image lease lost memory when its creating Context went away");
     Drop(image, survivor);
     survivor.Reset();
     Clean();
@@ -713,10 +710,10 @@ void MoveAssignmentReleasesDestination() {
         const auto third = NewImage();
         auto replacement = Take(context, third);
         Bind(third, replacement);
-        Expect(MemoryOf(replacement) == releasedMemory && OffsetOf(replacement) == releasedOffset, "move assignment did not release its previous destination range");
+        Require(MemoryOf(replacement) == releasedMemory && OffsetOf(replacement) == releasedOffset, "move assignment did not release its previous destination range");
         auto& alias = destination;
         destination = std::move(alias);
-        Expect(destination && MemoryOf(destination) == MemoryOf(replacement), "self move invalidated a live image allocation");
+        Require(destination && MemoryOf(destination) == MemoryOf(replacement), "self move invalidated a live image allocation");
         Drop(first, destination);
         Drop(third, replacement);
     }
@@ -778,7 +775,7 @@ void HostAllocationFailures() {
         }
         Clean();
     }
-    Expect(failures != 0 && successes != 0, "host-allocation fault sweep did not exercise both outcomes");
+    Require(failures != 0 && successes != 0, "host-allocation fault sweep did not exercise both outcomes");
     ResetMock();
     {
         auto context = NewContext();
@@ -816,7 +813,7 @@ void HostFailuresPreserveLiveSiblings() {
             } catch (const std::bad_alloc&) {
             }
             SetAllocationFailureCountdown(-1);
-            Expect(mock.memories[Index(memory)].active, "a failed new image block released a live sibling block");
+            Require(mock.memories[Index(memory)].active, "a failed new image block released a live sibling block");
             if (extra) {
                 Bind(another, extra);
                 Drop(another, extra);
@@ -835,14 +832,14 @@ void EmptyBlockReclamation() {
         auto allocation = Take(context, image);
         Bind(image, allocation);
         Drop(image, allocation);
-        Expect(context.bufferPool->ImageSlabBlocks() == 1, "empty image block was not retained for reuse");
+        Require(context.bufferPool->ImageSlabBlocks() == 1, "empty image block was not retained for reuse");
         VkMemoryAllocateInfo request{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
         request.allocationSize = 3 * MiB;
         request.memoryTypeIndex = 0;
         mock.results[0] = VK_ERROR_OUT_OF_DEVICE_MEMORY;
         mock.resultCount = 1;
         const auto memory = context.bufferPool->AllocateMemory(request, "test image block trim");
-        Expect(context.bufferPool->ImageSlabBlocks() == 0 && mock.frees == 1, "allocation pressure did not reclaim the empty image block");
+        Require(context.bufferPool->ImageSlabBlocks() == 0 && mock.frees == 1, "allocation pressure did not reclaim the empty image block");
         FreeMemory(VK_NULL_HANDLE, memory, nullptr);
     }
     Clean();
@@ -856,7 +853,7 @@ void EmptyBlockReclamation() {
         Bind(image, allocation);
         mock.reportedUsage = mock.reportedBudget + MiB;
         Drop(image, allocation);
-        Expect(context.bufferPool->ImageSlabBlocks() == 0 && mock.live == 0, "over-budget device memory retained an empty image block");
+        Require(context.bufferPool->ImageSlabBlocks() == 0 && mock.live == 0, "over-budget device memory retained an empty image block");
     }
     Clean();
 }
@@ -874,8 +871,8 @@ void VulkanFailures() {
             } catch (const std::runtime_error&) {
                 failed = true;
             }
-            Expect(failed, "a failed Vulkan allocation was accepted");
-            Expect(mock.allocations == 0 && mock.invalidFrees == 0, "a failed Vulkan output was treated as an owned handle");
+            Require(failed, "a failed Vulkan allocation was accepted");
+            Require(mock.allocations == 0 && mock.invalidFrees == 0, "a failed Vulkan output was treated as an owned handle");
         }
         Clean();
     }
@@ -886,7 +883,7 @@ void VulkanFailures() {
         mock.refusedDevice = VK_ERROR_OUT_OF_DEVICE_MEMORY;
         auto allocation = Take(context, image);
         Bind(image, allocation);
-        Expect(mock.memories[Index(MemoryOf(allocation))].type == 1, "refused device allocation did not select a valid host fallback");
+        Require(mock.memories[Index(MemoryOf(allocation))].type == 1, "refused device allocation did not select a valid host fallback");
         Drop(image, allocation);
     }
     Clean();
@@ -901,7 +898,7 @@ void SmallHeapFallback() {
         auto allocation = Take(context, image);
         Bind(image, allocation);
         const auto& memory = mock.memories[Index(MemoryOf(allocation))];
-        Expect(memory.type == 0 && memory.bytes <= mock.deviceLimit, "a refused arena block prevented an exact-size device allocation that fits");
+        Require(memory.type == 0 && memory.bytes <= mock.deviceLimit, "a refused arena block prevented an exact-size device allocation that fits");
         Drop(image, allocation);
     }
     Clean();
@@ -924,7 +921,7 @@ void ReentrantPressureReclaim(bool reportsBytes) {
             Bind(images[index], allocations[index]);
         }
         const auto firstBlock = MemoryOf(allocations[0]);
-        for (std::size_t index = 1; index < images.size(); ++index) Expect(MemoryOf(allocations[index]) == firstBlock, "pressure fixture did not fill one image block");
+        for (std::size_t index = 1; index < images.size(); ++index) Require(MemoryOf(allocations[index]) == firstBlock, "pressure fixture did not fill one image block");
         Unbind(images[0]);
         reclaimImages[0] = &allocations[0];
         reclaimImageCount = 1;
@@ -934,8 +931,8 @@ void ReentrantPressureReclaim(bool reportsBytes) {
         const auto next = NewImage(512 * KiB);
         auto allocation = Take(context, next);
         Bind(next, allocation);
-        Expect(reclaimCalls != 0, "image block exhaustion did not attempt cache reclamation");
-        Expect(MemoryOf(allocation) == firstBlock, "reclamation-created space was ignored before a failed new block allocation");
+        Require(reclaimCalls != 0, "image block exhaustion did not attempt cache reclamation");
+        Require(MemoryOf(allocation) == firstBlock, "reclamation-created space was ignored before a failed new block allocation");
         Drop(next, allocation);
         for (std::size_t index = 1; index < images.size(); ++index) Drop(images[index], allocations[index]);
         reclaimAction = nullptr;
@@ -975,7 +972,7 @@ void InterleavedPressureAccounting(bool legacy) {
             pressureAllocations[index] = Take(context, pressureImages[index]);
             Bind(pressureImages[index], pressureAllocations[index]);
         }
-        Expect(context.bufferPool->ImageSlabBlocks() == PressureBlocks, "interleaved pressure fixture did not fill eighty image blocks");
+        Require(context.bufferPool->ImageSlabBlocks() == PressureBlocks, "interleaved pressure fixture did not fill eighty image blocks");
         mock.deviceLimit = PressureBlocks * 4 * MiB;
         reclaimAction = ReleaseInterleavedImages;
         VkMemoryAllocateInfo request{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
@@ -990,7 +987,7 @@ void InterleavedPressureAccounting(bool legacy) {
         }
         reclaimAction = nullptr;
         std::printf("image allocation: %s accounting %s after dropping %zu interleaved images\n", legacy ? "legacy per-image" : "returned-block", succeeded ? "recovered" : "failed", pressureDropped);
-        Expect(succeeded != legacy, "pressure recovery did not distinguish retained slices from returned driver memory");
+        Require(succeeded != legacy, "pressure recovery did not distinguish retained slices from returned driver memory");
         for (std::size_t index = 0; index < pressureImages.size(); ++index) Drop(pressureImages[index], pressureAllocations[index]);
     }
     Clean();
@@ -1024,7 +1021,7 @@ void MultithreadedRanges() {
             });
         }
         for (auto& worker : workers) worker.join();
-        Expect(!failed.load(), "concurrent image allocation or release failed");
+        Require(!failed.load(), "concurrent image allocation or release failed");
     }
     Clean();
 }
@@ -1036,9 +1033,9 @@ void MemoryAccountingRanges() {
     auto context = NewContext();
     const auto find = [&](VkDeviceMemory memory) {
         const auto snapshot = MemoryAccounting::Read(context.device);
-        Expect(snapshot.complete, "image memory accounting became incomplete");
+        Require(snapshot.complete, "image memory accounting became incomplete");
         const auto found = std::find_if(snapshot.allocations.begin(), snapshot.allocations.end(), [&](const auto& allocation) { return allocation.memory == memory; });
-        Expect(found != snapshot.allocations.end(), "an image allocation is missing from memory accounting");
+        Require(found != snapshot.allocations.end(), "an image allocation is missing from memory accounting");
         return *found;
     };
     const auto firstImage = NewImage(257);
@@ -1046,22 +1043,22 @@ void MemoryAccountingRanges() {
     auto first = Take(context, firstImage);
     auto second = Take(context, secondImage);
     const auto memory = first.Memory();
-    Expect(second.Memory() == memory, "accounting fixture images did not share a block");
-    Expect(find(memory).bytes == 4 * MiB && find(memory).retained == 4 * MiB - 512 - 64 * KiB, "shared image memory has the wrong active or retained charge");
+    Require(second.Memory() == memory, "accounting fixture images did not share a block");
+    Require(find(memory).bytes == 4 * MiB && find(memory).retained == 4 * MiB - 512 - 64 * KiB, "shared image memory has the wrong active or retained charge");
     first.Reset();
-    Expect(find(memory).retained == 4 * MiB - 64 * KiB, "releasing one image lost its live sibling's charge");
+    Require(find(memory).retained == 4 * MiB - 64 * KiB, "releasing one image lost its live sibling's charge");
     second.Reset();
-    Expect(find(memory).retained == 4 * MiB, "an empty image block was not counted as retained");
+    Require(find(memory).retained == 4 * MiB, "an empty image block was not counted as retained");
     first = Take(context, firstImage);
-    Expect(first.Memory() == memory && find(memory).retained == 4 * MiB - 512, "reusing an image range kept its retained charge");
+    Require(first.Memory() == memory && find(memory).retained == 4 * MiB - 512, "reusing an image range kept its retained charge");
     auto dedicated = Take(context, NewImage(64 * KiB, 256, 1u, true));
-    Expect(find(dedicated.Memory()).bytes == 64 * KiB && find(dedicated.Memory()).retained == 0, "dedicated image memory has the wrong charge");
+    Require(find(dedicated.Memory()).bytes == 64 * KiB && find(dedicated.Memory()).retained == 0, "dedicated image memory has the wrong charge");
     dedicated.Reset();
-    Expect(MemoryAccounting::Read(context.device).allocations.size() == 1, "dedicated image destruction left an allocation counted");
+    Require(MemoryAccounting::Read(context.device).allocations.size() == 1, "dedicated image destruction left an allocation counted");
     auto standalone = Take(context, NewImage(2 * MiB));
     const auto standaloneMemory = standalone.Memory();
     standalone.Reset();
-    Expect(find(standaloneMemory).retained == 2 * MiB, "a retained standalone image has the wrong charge");
+    Require(find(standaloneMemory).retained == 2 * MiB, "a retained standalone image has the wrong charge");
     first.Reset();
     mock.results[0] = VK_ERROR_OUT_OF_DEVICE_MEMORY;
     mock.resultCount = 1;
@@ -1069,24 +1066,24 @@ void MemoryAccountingRanges() {
     request.allocationSize = 8 * MiB;
     request.memoryTypeIndex = 0;
     const auto replacement = context.bufferPool->AllocateMemory(request, "test accounting trim");
-    Expect(MemoryAccounting::Read(context.device).allocations.size() == 1 && find(replacement).bytes == 8 * MiB, "trimming image blocks left freed memory counted");
+    Require(MemoryAccounting::Read(context.device).allocations.size() == 1 && find(replacement).bytes == 8 * MiB, "trimming image blocks left freed memory counted");
     MemoryAccounting::Free(context, replacement);
     context.bufferPool.reset();
-    Expect(MemoryAccounting::Read(context.device).allocations.empty(), "image pool destruction left an allocation counted");
+    Require(MemoryAccounting::Read(context.device).allocations.empty(), "image pool destruction left an allocation counted");
     auto fallbackContext = NewContext();
     mock.refusedDevice = VK_ERROR_OUT_OF_DEVICE_MEMORY;
     auto fallback = Take(fallbackContext, NewImage(64 * KiB, 256, 3u));
-    Expect(find(fallback.Memory()).heap == 1 && find(fallback.Memory()).bytes == 64 * KiB, "image host fallback has the wrong memory charge");
+    Require(find(fallback.Memory()).heap == 1 && find(fallback.Memory()).bytes == 64 * KiB, "image host fallback has the wrong memory charge");
     fallback.Reset();
     fallbackContext.bufferPool.reset();
-    Expect(MemoryAccounting::Read(context.device).allocations.empty(), "image host fallback destruction left an allocation counted");
+    Require(MemoryAccounting::Read(context.device).allocations.empty(), "image host fallback destruction left an allocation counted");
     Clean();
 }
 
 int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::strcmp(argv[1], "--memory-accounting") == 0) {
-            Expect(MemoryAccounting::Enabled(), "memory accounting is not enabled");
+            Require(MemoryAccounting::Enabled(), "memory accounting is not enabled");
             MemoryAccountingRanges();
             std::puts("image allocation: memory accounting for shared ranges, dedicated memory, retention, reuse, trimming and host fallback passed");
             return 0;

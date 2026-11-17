@@ -1,5 +1,6 @@
 #include "prx/libSceAutoMounterClient/include/Api.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -11,12 +12,6 @@ namespace {
 
 void ClobberErrno(std::uintptr_t, std::size_t) {
     errno = EACCES;
-}
-
-void Require(bool condition) {
-    if (!condition) {
-        std::abort();
-    }
 }
 
 constexpr int AUTOMOUNTER_ERROR_INVALID_ARGUMENT = static_cast<int>(0x80F40002u);

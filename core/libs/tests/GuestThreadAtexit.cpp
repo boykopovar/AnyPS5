@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
@@ -9,8 +10,6 @@
 namespace {
 
 using Destructor = void (APS5_VABI*)(void*);
-
-void Require(bool value) { if (!value) std::abort(); }
 
 int dsoHandle = 0;
 std::vector<std::intptr_t> calls;

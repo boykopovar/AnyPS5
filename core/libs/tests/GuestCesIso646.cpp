@@ -1,5 +1,6 @@
 #include "prx/libSceCesCs/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -15,8 +16,6 @@ constexpr int invalidEncode = static_cast<int>(0x805C0014);
 constexpr int unassignedCode = static_cast<int>(0x805C0020);
 constexpr int invalidDstBuffer = static_cast<int>(0x805C0030);
 constexpr int dstBufferEnd = static_cast<int>(0x805C0031);
-
-void Require(bool value) { if (!value) std::abort(); }
 
 void RequireByte(const std::uint8_t* profile, std::uint8_t sbc, std::uint32_t code) {
     std::uint8_t utf8[4];

@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <barrier>
 #include <chrono>
@@ -52,12 +53,6 @@ std::shared_ptr<const VertexInputLayout> get(VertexInputCache& cache, const Cont
     return result != nullptr ? result : std::make_shared<const VertexInputLayout>(BuildVertexInputLayout(ctx, attributes));
 }
 
-template<class TAction> void fails(TAction&& fn) {
-    bool failed = false;
-    try { fn(); } catch (const std::runtime_error&) { failed = true; }
-    Require(failed, "invalid vertex input was accepted");
-}
-
 std::vector<VertexAttribute> randomInput(std::mt19937& random) {
     std::vector<VertexAttribute> input;
     const auto size = random() % 9;
@@ -92,13 +87,13 @@ void rememberedFormats(const Context& ctx) {
     auto unsupported = attribute();
     unsupported.components = 1;
     unsupported.resource.fields[3] = 5u << 12u;
-    fails([&] { BuildVertexInputLayout(ctx, std::span(&unsupported, 1)); });
-    fails([&] { BuildVertexInputLayout(remembered, std::span(&unsupported, 1)); });
+    ExpectErr<std::runtime_error>([&] { BuildVertexInputLayout(ctx, std::span(&unsupported, 1)); });
+    ExpectErr<std::runtime_error>([&] { BuildVertexInputLayout(remembered, std::span(&unsupported, 1)); });
     const auto count = queries.load();
-    fails([&] { BuildVertexInputLayout(remembered, std::span(&unsupported, 1)); });
+    ExpectErr<std::runtime_error>([&] { BuildVertexInputLayout(remembered, std::span(&unsupported, 1)); });
     Require(queries == count, "a remembered unsupported vertex format was queried again");
     auto duplicate = std::array{attribute(3), attribute(3)};
-    fails([&] { BuildVertexInputLayout(remembered, duplicate); });
+    ExpectErr<std::runtime_error>([&] { BuildVertexInputLayout(remembered, duplicate); });
 }
 
 std::array<bool, VK_FORMAT_ASTC_12x12_SRGB_BLOCK + 1> lacking{};
@@ -225,11 +220,11 @@ void run() {
     Require(get(cache, ctx, 1, attributes) == first && queries == count, "live addresses or counts rebuilt the layout");
     auto invalid = attributes;
     invalid[0].resource.fields[0] += 1;
-    fails([&] { get(cache, ctx, 1, invalid); });
+    ExpectErr<std::runtime_error>([&] { get(cache, ctx, 1, invalid); });
     invalid = attributes;
     invalid[0].resource.fields[0] = 0;
     invalid[0].resource.fields[1] &= 0xffff0000u;
-    fails([&] { get(cache, ctx, 1, invalid); });
+    ExpectErr<std::runtime_error>([&] { get(cache, ctx, 1, invalid); });
     for (unsigned field = 0; field < 8; ++field) {
         invalid = attributes;
         switch (field) {
@@ -242,8 +237,8 @@ void run() {
             case 6: invalid[0].resource.fields[1] = 4096u << 16u; break;
             case 7: invalid[0].resource.fields[3] = 5u << 12u; break;
         }
-        fails([&] { get(cache, ctx, 1, invalid); });
-        fails([&] { BuildVertexInputLayout(ctx, invalid); });
+        ExpectErr<std::runtime_error>([&] { get(cache, ctx, 1, invalid); });
+        ExpectErr<std::runtime_error>([&] { BuildVertexInputLayout(ctx, invalid); });
     }
     attributes[0].resource.fields[1] = 16u << 16u;
     auto second = get(cache, ctx, 2, attributes);
@@ -259,7 +254,7 @@ void run() {
     auto restricted = ctx;
     restricted.limits.maxVertexInputBindings = 1;
     VertexInputCache restrictedCache(restricted);
-    fails([&] { get(restrictedCache, restricted, 1, attributes); });
+    ExpectErr<std::runtime_error>([&] { get(restrictedCache, restricted, 1, attributes); });
     Require(get(cache, ctx, 1, {})->attributes.empty(), "empty layout failed");
     VertexInputCache generated(ctx, 16);
     std::mt19937 random(719);
@@ -282,7 +277,7 @@ void run() {
                 Require(VertexBufferExtent(input[0]) == 32u * (records - 1u) + 16u, "cached layout froze the indirect descriptor extent");
                 Require(VertexBufferExtent(input[0]) == VertexBufferReadSize(input[0], records - 1u, 1), "the indirect extent is not the fetch of the last record");
             } else {
-                fails([&] { VertexBufferExtent(input[0]); });
+                ExpectErr<std::runtime_error>([&] { VertexBufferExtent(input[0]); });
             }
         }
         auto last = attribute();
@@ -324,7 +319,7 @@ void run() {
         const auto nullLayout = live.TryGet(103, input);
         Require(live.TryGet(103, input) == nullLayout && nullLayout->attributes[0].format == VK_FORMAT_R32G32B32A32_SFLOAT, "null vertex descriptor was rejected or narrowed on reuse");
         input[0].resource.fields[2] = 1;
-        fails([&] { get(live, ctx, 103, input); });
+        ExpectErr<std::runtime_error>([&] { get(live, ctx, 103, input); });
         input[0] = attribute();
         input[0].resource.fields[3] |= 2u << 28u;
         input[0].resource.fields[2] = 6;
@@ -332,7 +327,7 @@ void run() {
         Require(VertexBufferReadSize(input[0], 5, 1) == 176, "bounded vertex fetch failed");
         input[0].resource.fields[2] = 5;
         Require(live.TryGet(104, input) == bounded, "bounded record count rebuilt the layout");
-        fails([&] { VertexBufferReadSize(input[0], 5, 1); });
+        ExpectErr<std::runtime_error>([&] { VertexBufferReadSize(input[0], 5, 1); });
     }
     {
         VertexInputCache thrashing(ctx, 2);
@@ -346,7 +341,7 @@ void run() {
         Require(thrashing.TryGet(65537, input) == nullptr, "bypass hash collision was not conservative");
         same(*get(thrashing, ctx, 65537, input), BuildVertexInputLayout(ctx, input));
         input[0].resource.fields[0] = 1;
-        fails([&] { get(thrashing, ctx, 1, input); });
+        ExpectErr<std::runtime_error>([&] { get(thrashing, ctx, 1, input); });
         Require(thrashing.TryGet(0, input) == nullptr && thrashing.TryGet(2, {}) == nullptr, "empty or unidentified layout entered the cache");
         input[0] = attribute();
         input[0].resource.fields[1] = 16u << 16u;

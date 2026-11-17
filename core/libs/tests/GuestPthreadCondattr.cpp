@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Cond.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdlib>
 #include <initializer_list>
 #ifdef _WIN32
@@ -17,8 +18,6 @@ static constexpr int SceEfault = static_cast<int>(0x8002000Eu);
 static constexpr int GuestEinval = 22;
 static constexpr int GuestEfault = 14;
 static constexpr KernelClockid Monotonic = 4;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static void CheckClock(const PthreadCondattr* attr, KernelClockid expected) {
     const auto handle = *attr;

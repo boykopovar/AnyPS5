@@ -6,6 +6,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
+#include "Testing.hpp"
 #include "VulkanTestDevice.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -34,10 +35,6 @@ constexpr std::size_t BlockBytes = 65536;
 
 alignas(256) constexpr std::array<std::uint32_t, 11> TableCode{0xf4080200u, 0xfa000000u, 0xbf8cc07fu, 0x34020082u, 0xe0301000u, 0x80020201u, 0xbf8c3f70u, 0x4a060481u, 0xe0701000u, 0x80010301u, 0xbf810000u};
 
-void Expect(bool condition, const std::string& what) {
-    if (!condition) throw std::runtime_error("dispatch recapture: " + what);
-}
-
 class GuestBlock {
 public:
     GuestBlock() {
@@ -56,7 +53,7 @@ public:
             GuestWriteWatch::GuestWriteWatchRegister_nid_postfix(block, BlockBytes);
         }
 #endif
-        Expect(block != nullptr, "cannot allocate a guest block");
+        Require(block != nullptr, "cannot allocate a guest block");
         std::memset(block, 0, BlockBytes);
         GuestAllocations::Mutation().Add(block, BlockBytes, true, true, true);
     }
@@ -99,7 +96,7 @@ void Dispatch(const GuestBlock& table, const GuestBlock& output) {
         0xc0031500u, 1u, 1u, 1u, 0x8041u,
     };
     Packet packet{commands.data(), static_cast<std::uint32_t>(commands.size()), 0, {}};
-    Expect(sceAgcDriverSubmitDcb(&packet) == 0, "the dispatch submission failed");
+    Require(sceAgcDriverSubmitDcb(&packet) == 0, "the dispatch submission failed");
     AgcDriverWaitIdle_nid_postfix();
     AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(output.Words()), BufferBytes);
 }
@@ -109,7 +106,7 @@ std::uint32_t Lane(const GuestBlock& output, std::uint32_t lane) {
 }
 
 void ExpectOutput(const GuestBlock& output, std::uint32_t base, const std::string& what) {
-    for (std::uint32_t lane = 0; lane < Lanes; ++lane) Expect(Lane(output, lane) == base + lane + 1u, what + ": lane " + std::to_string(lane) + " stored " + std::to_string(Lane(output, lane)) + ", expected " + std::to_string(base + lane + 1u));
+    for (std::uint32_t lane = 0; lane < Lanes; ++lane) Require(Lane(output, lane) == base + lane + 1u, what + ": lane " + std::to_string(lane) + " stored " + std::to_string(Lane(output, lane)) + ", expected " + std::to_string(base + lane + 1u));
 }
 
 }
@@ -150,16 +147,16 @@ int main() {
         Dispatch(table, output);
         const auto redone = AgcDriver::DriverDetail::captureChangeRetries.load() - retries;
         std::printf("the same dispatch with its table's V# moved to another buffer after its capture: the table changed %d time(s), lane 0 stored 0x%x (%s), %llu packet(s) prepared again\n", TableChanges.load(), Lane(output, 0), Lane(output, 0) == 0x2001u ? "the moved V# was bound" : "the V# captured before the change was bound", static_cast<unsigned long long>(redone));
-        Expect(TableChanges.load() == 1, "the check seam did not run before the dispatch was recorded");
+        Require(TableChanges.load() == 1, "the check seam did not run before the dispatch was recorded");
         ExpectOutput(output, 0x2000u, "the dispatch whose table changed before it was recorded");
-        Expect(redone == 1, "the dispatch was prepared again " + std::to_string(redone) + " times, not once");
+        Require(redone == 1, "the dispatch was prepared again " + std::to_string(redone) + " times, not once");
 
         const auto steady = AgcDriver::DriverDetail::captureChangeRetries.load();
         Dispatch(table, output);
         const auto again = AgcDriver::DriverDetail::captureChangeRetries.load() - steady;
         std::printf("the same dispatch with its table unchanged: lane 0 stored 0x%x, %llu packet(s) prepared again\n", Lane(output, 0), static_cast<unsigned long long>(again));
         ExpectOutput(output, 0x2000u, "the dispatch with an unchanged table");
-        Expect(again == 0, "a dispatch whose captured memory did not change was prepared again");
+        Require(again == 0, "a dispatch whose captured memory did not change was prepared again");
 
         AgcDriver::DriverDetail::Driver::SetCaptureCheckHook(nullptr);
         AgcDriverShutdown_nid_postfix();

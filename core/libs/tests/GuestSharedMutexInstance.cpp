@@ -1,17 +1,11 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <thread>
-
-static void Check(bool condition, int line) {
-    if (condition) return;
-    std::fprintf(stderr, "shared mutex instance check failed at line %d\n", line);
-    std::abort();
-}
-#define Require(condition) Check((condition), __LINE__)
 
 namespace {
 

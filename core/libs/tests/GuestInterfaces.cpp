@@ -23,6 +23,7 @@
 #endif
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -39,8 +40,6 @@ static_assert(offsetof(GuestInterfaceAddress, address) == 24);
 static_assert(offsetof(GuestInterfaceAddress, netmask) == 32);
 static_assert(offsetof(GuestInterfaceAddress, destination) == 40);
 static_assert(offsetof(GuestInterfaceAddress, data) == 48);
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 struct HostInterfaceAddress {
     int family;
@@ -130,12 +129,6 @@ static void SendLoopbackDatagram() {
 #endif
 
 #ifdef _WIN32
-static void RequireWindowsLink(bool value, const char* message) {
-    if (!value) {
-        std::fprintf(stderr, "guest_interfaces: %s\n", message);
-        std::abort();
-    }
-}
 
 static void CheckWindowsLinks() {
     GuestInterfaceAddress* first = nullptr;
@@ -176,12 +169,12 @@ static void CheckWindowsLinks() {
                 const auto* address = static_cast<const std::uint8_t*>(item->address);
                 Require(address != nullptr);
                 if (address[1] == 18) {
-                    RequireWindowsLink(count == 0, "duplicate AF_LINK entry");
+                    Require(count == 0, "duplicate AF_LINK entry");
                     links[snapshot] = item;
                     ++count;
                 } else {
-                    RequireWindowsLink(count == 1, "address entry has no preceding AF_LINK entry");
-                    RequireWindowsLink(item->flags == links[snapshot]->flags, "link and address flags disagree");
+                    Require(count == 1, "address entry has no preceding AF_LINK entry");
+                    Require(item->flags == links[snapshot]->flags, "link and address flags disagree");
                     bool nativeAddress = false;
                     for (auto* unicast = adapter->FirstUnicastAddress; unicast; unicast = unicast->Next) {
                         const auto* hostAddress = unicast->Address.lpSockaddr;
@@ -191,33 +184,33 @@ static void CheckWindowsLinks() {
                         nativeAddress = nativeAddress || (expected.family == (ipv4 ? AF_INET : AF_INET6) &&
                             std::memcmp(address + (ipv4 ? 4 : 8), expected.address, ipv4 ? 4 : 16) == 0);
                     }
-                    RequireWindowsLink(nativeAddress, "address belongs to a different native interface index");
+                    Require(nativeAddress, "address belongs to a different native interface index");
                 }
             }
-            RequireWindowsLink(count == 1, "native adapter has no AF_LINK entry");
+            Require(count == 1, "native adapter has no AF_LINK entry");
             const auto* link = static_cast<const std::uint8_t*>(links[snapshot]->address);
             const auto* data = static_cast<const std::uint8_t*>(links[snapshot]->data);
-            RequireWindowsLink(data != nullptr, "AF_LINK entry has no if_data");
+            Require(data != nullptr, "AF_LINK entry has no if_data");
             std::uint16_t guestIndex = 0;
             std::uint16_t dataLength = 0;
             std::uint32_t mtu = 0;
             std::memcpy(&guestIndex, link + 2, sizeof(guestIndex));
             std::memcpy(&dataLength, data + 6, sizeof(dataLength));
             std::memcpy(&mtu, data + 8, sizeof(mtu));
-            RequireWindowsLink(guestIndex == index, "AF_LINK index differs from native adapter");
+            Require(guestIndex == index, "AF_LINK index differs from native adapter");
             const std::uint8_t type = adapter->IfType == IF_TYPE_ETHERNET_CSMACD ? 0x6
                 : adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK ? 0x18 : adapter->IfType == IF_TYPE_PPP ? 0x17 : 0x1;
-            RequireWindowsLink(link[4] == type, "AF_LINK type differs from native adapter");
+            Require(link[4] == type, "AF_LINK type differs from native adapter");
             Require(link[0] >= 54 && link[0] % 8 == 0 && link[5] == name.size() && link[7] == 0);
             Require(std::memcmp(link + 8, name.data(), name.size()) == 0);
             Require(links[snapshot]->netmask == nullptr && links[snapshot]->destination == nullptr);
             Require(dataLength == 152 && data[0] == link[4] && data[2] == link[6]);
-            RequireWindowsLink(mtu == adapter->Mtu, "AF_LINK MTU differs from native adapter");
+            Require(mtu == adapter->Mtu, "AF_LINK MTU differs from native adapter");
             if (adapter->IfType == IF_TYPE_SOFTWARE_LOOPBACK) {
-                RequireWindowsLink(link[4] == 0x18 && link[6] == 0 && data[3] == 0, "loopback link type or hardware address is incorrect");
+                Require(link[4] == 0x18 && link[6] == 0 && data[3] == 0, "loopback link type or hardware address is incorrect");
                 loopback = true;
             } else {
-                RequireWindowsLink(link[6] == adapter->PhysicalAddressLength &&
+                Require(link[6] == adapter->PhysicalAddressLength &&
                     std::memcmp(link + 8 + name.size(), adapter->PhysicalAddress, link[6]) == 0, "AF_LINK MAC differs from native adapter");
                 hardware = hardware || adapter->PhysicalAddressLength != 0;
             }
@@ -228,7 +221,7 @@ static void CheckWindowsLinks() {
         MIB_IF_ROW2 final{};
         final.InterfaceLuid = adapter->Luid;
         Require(GetIfEntry2(&final) == NO_ERROR);
-        RequireWindowsLink(initial.InterfaceIndex == index && final.InterfaceIndex == index, "adapter and counter indices disagree");
+        Require(initial.InterfaceIndex == index && final.InterfaceIndex == index, "adapter and counter indices disagree");
         const auto counters = [](const MIB_IF_ROW2& row) {
             return std::array<std::uint64_t, 12>{row.InUcastPkts + row.InNUcastPkts, row.InErrors,
                 row.OutUcastPkts + row.OutNUcastPkts, row.OutErrors, 0, row.InOctets, row.OutOctets,
@@ -241,8 +234,8 @@ static void CheckWindowsLinks() {
             std::uint64_t newValue = 0;
             std::memcpy(&oldValue, before + offset, sizeof(oldValue));
             std::memcpy(&newValue, after + offset, sizeof(newValue));
-            RequireWindowsLink(newValue >= oldValue, "interface counter decreased between snapshots");
-            RequireWindowsLink(oldValue >= lower[(offset - 24) / 8] && newValue <= upper[(offset - 24) / 8],
+            Require(newValue >= oldValue, "interface counter decreased between snapshots");
+            Require(oldValue >= lower[(offset - 24) / 8] && newValue <= upper[(offset - 24) / 8],
                 "interface counter differs from native bounds");
         }
     }
@@ -257,13 +250,13 @@ static void CheckWindowsLinks() {
                     const auto* link = static_cast<const std::uint8_t*>(candidate->address);
                     if (link[1] == 18 && std::strcmp(candidate->name, item->name) == 0) ++owners;
                 }
-                RequireWindowsLink(owners == 1, "address entry does not have exactly one same-name AF_LINK entry");
+                Require(owners == 1, "address entry does not have exactly one same-name AF_LINK entry");
             }
         }
-        RequireWindowsLink(links == adapters, "AF_LINK count differs from native adapter count");
+        Require(links == adapters, "AF_LINK count differs from native adapter count");
     }
-    RequireWindowsLink(loopback, "no loopback AF_LINK checked");
-    RequireWindowsLink(hardware, "no non-loopback MAC and MTU checked");
+    Require(loopback, "no loopback AF_LINK checked");
+    Require(hardware, "no non-loopback MAC and MTU checked");
     freeifaddrs_nid_postfix(first);
     freeifaddrs_nid_postfix(second);
 }

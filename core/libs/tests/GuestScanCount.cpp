@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdarg>
 #include <cstddef>
@@ -26,15 +27,6 @@ static int APS5_VABI ScanList(const char* input, const char* format, ...) {
     return result;
 }
 
-static int failures = 0;
-
-static void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "%s\n", message);
-        ++failures;
-    }
-}
-
 template<class TValue> static void CheckCount(const char* modifier, int count) {
     struct alignas(8) Destination {
         TValue value;
@@ -49,7 +41,7 @@ template<class TValue> static void CheckCount(const char* modifier, int count) {
         std::fprintf(stderr, "%%%sn after %d bytes: count=%lld, guard=%s, assignments=%d\n",
             modifier, count, static_cast<long long>(destination.value),
             destination.guard == guard ? "unchanged" : "overwritten", assigned);
-        ++failures;
+        Expect(false);
     }
 }
 
@@ -61,24 +53,24 @@ int main() {
     for (const auto scan : {sscanf_s_nid_postfix, ScanList}) {
         const int sizedNull = scan == ScanList ? -23 : EOF;
         handlerCalls = 0;
-        Require(scan("7", "%d", static_cast<int*>(nullptr)) == EOF, "Null integer destination must return EOF");
-        Require(scan("1.5", "%f", static_cast<float*>(nullptr)) == EOF, "Null real destination must return EOF");
-        Require(scan("abc", "%s", static_cast<char*>(nullptr), std::size_t{4}) == sizedNull, "Null string destination must return -23 for vsscanf_s and EOF for sscanf_s");
-        Require(scan == ScanList || scan("a", "%c", static_cast<char*>(nullptr), std::size_t{1}) == EOF, "Null character destination must return EOF");
-        Require(scan == ScanList || scan("abc", "%[a-z]", static_cast<char*>(nullptr), std::size_t{4}) == EOF, "Null scanset destination must return EOF");
-        Require(handlerCalls == (scan == ScanList ? 1 : 0), "Only vsscanf_s calls the constraint handler for a null destination");
-        Require(scan("", "%n", static_cast<int*>(nullptr)) == EOF, "Null count destination must return EOF");
+        Expect(scan("7", "%d", static_cast<int*>(nullptr)) == EOF, "Null integer destination must return EOF");
+        Expect(scan("1.5", "%f", static_cast<float*>(nullptr)) == EOF, "Null real destination must return EOF");
+        Expect(scan("abc", "%s", static_cast<char*>(nullptr), std::size_t{4}) == sizedNull, "Null string destination must return -23 for vsscanf_s and EOF for sscanf_s");
+        Expect(scan == ScanList || scan("a", "%c", static_cast<char*>(nullptr), std::size_t{1}) == EOF, "Null character destination must return EOF");
+        Expect(scan == ScanList || scan("abc", "%[a-z]", static_cast<char*>(nullptr), std::size_t{4}) == EOF, "Null scanset destination must return EOF");
+        Expect(handlerCalls == (scan == ScanList ? 1 : 0), "Only vsscanf_s calls the constraint handler for a null destination");
+        Expect(scan("", "%n", static_cast<int*>(nullptr)) == EOF, "Null count destination must return EOF");
         int first = -1;
         int later = -1;
-        Require(scan("7 8 9", "%d%d%d", &first, static_cast<int*>(nullptr), &later) == EOF && first == 7 && later == -1,
+        Expect(scan("7 8 9", "%d%d%d", &first, static_cast<int*>(nullptr), &later) == EOF && first == 7 && later == -1,
             "Null destination after an assignment must stop with EOF");
         first = -1;
-        Require(scan("7", "%d%n%d", &first, static_cast<int*>(nullptr), &later) == EOF && first == 7 && later == -1,
+        Expect(scan("7", "%d%n%d", &first, static_cast<int*>(nullptr), &later) == EOF && first == 7 && later == -1,
             "Null count after an assignment must stop with EOF");
         first = -1;
-        Require(scan("x", "%d%d", &first, static_cast<int*>(nullptr)) == 0 && first == -1,
+        Expect(scan("x", "%d%d", &first, static_cast<int*>(nullptr)) == 0 && first == -1,
             "Matching failure must stop before an unreachable null destination");
-        Require(scan("7 8", "%*d%d", &first) == 1 && first == 8, "Suppressed conversions must not consume destinations");
+        Expect(scan("7 8", "%*d%d", &first) == 1 && first == 8, "Suppressed conversions must not consume destinations");
     }
     for (const int count : {0, 3, 127}) {
         CheckCount<signed char>("hh", count);
@@ -97,18 +89,18 @@ int main() {
     std::int64_t before = -1;
     std::int64_t after = -1;
     char word[4] = {};
-    Require(sscanf_s_nid_postfix(" 12 abc!", "%ln%d %3[a-z]%jn!", &before, &number,
+    Expect(sscanf_s_nid_postfix(" 12 abc!", "%ln%d %3[a-z]%jn!", &before, &number,
         word, std::size_t{4}, &after) == 2, "Count conversions must not increase assignments");
-    Require(before == 0 && number == 12 && std::strcmp(word, "abc") == 0 && after == 7,
+    Expect(before == 0 && number == 12 && std::strcmp(word, "abc") == 0 && after == 7,
         "Counts must include leading whitespace and earlier conversions");
 
     after = -1;
-    Require(sscanf_s_nid_postfix("123x", "%*d%tn", &after) == 0 && after == 3,
+    Expect(sscanf_s_nid_postfix("123x", "%*d%tn", &after) == 0 && after == 3,
         "Count must include suppressed input without consuming a capacity argument");
     after = -1;
-    Require(sscanf_s_nid_postfix("x", "%d%lln", &number, &after) == 0 && after == -1,
+    Expect(sscanf_s_nid_postfix("x", "%d%lln", &number, &after) == 0 && after == -1,
         "Matching failure must leave a later count untouched");
-    Require(sscanf_s_nid_postfix("", "%d%lln", &number, &after) == EOF && after == -1,
+    Expect(sscanf_s_nid_postfix("", "%d%lln", &number, &after) == EOF && after == -1,
         "Input failure must leave a later count untouched");
-    return failures == 0 ? 0 : 1;
+    return Failures() == 0 ? 0 : 1;
 }

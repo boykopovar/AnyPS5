@@ -1,5 +1,6 @@
 #include "prx/libSceRazorCpu/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -7,8 +8,6 @@
 #include <cstring>
 
 namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
 
 int g_markerCallbacks = 0;
 

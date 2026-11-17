@@ -1,6 +1,7 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 
 #include <algorithm>
 #include <array>
@@ -30,20 +31,7 @@ int APS5_VABI TestPosixAlign(void** pointer, std::size_t, std::size_t size) {
     return *pointer ? 0 : 12;
 }
 
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc rtcp::App check failed at line %u\n", location.line());
-    std::abort();
-}
 
-template<typename TAction> void RequireInvalidArgument(TAction action, std::source_location location = std::source_location::current()) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, location);
-}
 
 const void* const Vtable = reinterpret_cast<const void*>(std::uintptr_t {0x1234});
 
@@ -141,12 +129,12 @@ void TestNullArgumentsThrow() {
     std::vector<std::uint8_t> payload(8, 0x11);
     WebRtcRtcpCommonHeader header {204, 1, 0, 8, payload.data()};
     WebRtcRtcpApp app = Constructed();
-    RequireInvalidArgument([&] { _ZN6webrtc4rtcp3App5ParseERKNS0_12CommonHeaderE_nid_postfix(nullptr, &header); });
-    RequireInvalidArgument([&] { _ZN6webrtc4rtcp3App5ParseERKNS0_12CommonHeaderE_nid_postfix(&app, nullptr); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc4rtcp3App5ParseERKNS0_12CommonHeaderE_nid_postfix(nullptr, &header); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc4rtcp3App5ParseERKNS0_12CommonHeaderE_nid_postfix(&app, nullptr); });
     header.payload = nullptr;
-    RequireInvalidArgument([&] { _ZN6webrtc4rtcp3App5ParseERKNS0_12CommonHeaderE_nid_postfix(&app, &header); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc4rtcp3App5ParseERKNS0_12CommonHeaderE_nid_postfix(&app, &header); });
     Require(app.subType == 0 && app.senderSsrc == 0 && app.data.data == nullptr);
-    RequireInvalidArgument([] { _ZN6webrtc4rtcp3AppD1Ev_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZN6webrtc4rtcp3AppD1Ev_nid_postfix(nullptr); });
 }
 
 
@@ -221,7 +209,7 @@ void TestCreateSendsAFullBuffer() {
     Require(!Slot<Create>(app, 3)(&app, buffer.data(), &index, 11, &sent, &Send));
     Require(index == 0 && sent.calls == 1);
     index = 4;
-    RequireInvalidArgument([&] { Slot<Create>(app, 3)(&app, buffer.data(), &index, 12, nullptr, nullptr); });
+    ExpectErr<std::invalid_argument>([&] { Slot<Create>(app, 3)(&app, buffer.data(), &index, 12, nullptr, nullptr); });
 }
 
 void TestDeletingDestructor() {
@@ -234,7 +222,7 @@ void TestDeletingDestructor() {
 }
 
 void TestNullConstructorThrows() {
-    RequireInvalidArgument([] { _ZN6webrtc4rtcp3AppC1Ev_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZN6webrtc4rtcp3AppC1Ev_nid_postfix(nullptr); });
 }
 
 }

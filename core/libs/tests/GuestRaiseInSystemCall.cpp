@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -19,7 +20,6 @@ static constexpr DWORD PipeBytes = 4096;
 static constexpr std::uint64_t BlockBytes = 4u * PipeBytes;
 static constexpr std::size_t RipOffset = 0xe0;
 static constexpr ULONG ThreadSuspendCount = 35;
-static void Require(bool value) { if (!value) std::abort(); }
 
 static std::FILE* shared = nullptr;
 static std::atomic<int> deliveries{0};

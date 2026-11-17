@@ -21,9 +21,7 @@
 namespace UsearchOpen {
 
 using IcuRecoveredTest::Filler;
-using IcuRecoveredTest::Require;
 using IcuRecoveredTest::RequireNoThrow;
-using IcuRecoveredTest::RequireThrows;
 using IcuRecoveredTest::Unchanged;
 
 static_assert(std::is_same_v<decltype(&usearch_open_nid_postfix), UStringSearch* (APS5_VABI*)(const char16_t*, std::int32_t, const char16_t*, std::int32_t, const char*, UBreakIterator*, std::int32_t*)>);
@@ -141,11 +139,11 @@ void Run() {
 
     for (const auto incoming : passing) {
         std::int32_t status = incoming;
-        RequireThrows([&] { usearch_open_nid_postfix(pattern, 4, text, 8, "en", iterator, &status); });
+        ExpectErr([&] { usearch_open_nid_postfix(pattern, 4, text, 8, "en", iterator, &status); });
         Require(status == incoming);
 
         status = incoming;
-        RequireThrows([&] { usearch_open_nid_postfix(nullptr, 0, nullptr, 0, "de", nullptr, &status); });
+        ExpectErr([&] { usearch_open_nid_postfix(nullptr, 0, nullptr, 0, "de", nullptr, &status); });
         Require(status == incoming);
 
         status = incoming;
@@ -154,7 +152,7 @@ void Run() {
     }
 
     Require(Unchanged(storage));
-    RequireThrows([&] { usearch_open_nid_postfix(pattern, 4, text, 8, "en", iterator, nullptr); });
+    ExpectErr([&] { usearch_open_nid_postfix(pattern, 4, text, 8, "en", iterator, nullptr); });
     GuestPointers(pattern, text, iterator);
 }
 

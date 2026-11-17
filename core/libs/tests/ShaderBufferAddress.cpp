@@ -1,10 +1,10 @@
 #include "Translation/TranslationContext.hpp"
 #include "RdnaDecoder/RdnaMemoryOpDecoder.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <stdexcept>
 
 using namespace ShaderRecompiler;
-static void Require(bool value) { if (!value) throw std::runtime_error("buffer address operand regression"); }
 static void CheckRegister(IrValue* value, IrOpcode opcode, unsigned index) {
     Require(value->Opcode() == opcode);
     Require(value->Argument(0)->Register().index == index);

@@ -1,25 +1,13 @@
 #include "prx/libSceAudioOut/include/AudioOut.hpp"
 #include "prx/libSceAudioOut/include/AudioOut2.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
 #include <stdexcept>
-
-static void Require(bool value) { if (!value) std::abort(); }
-
-template<typename TAction>
-static void Reject(TAction action) {
-    bool rejected = false;
-    try {
-        action();
-    } catch (const std::exception&) {
-        rejected = true;
-    }
-    Require(rejected);
-}
 
 int main() {
     constexpr int masteringInvalidFlags = static_cast<int>(0x80260201);
@@ -43,7 +31,7 @@ int main() {
     }
 
     Require(sceAudioOutMasteringInit(1) == masteringInvalidFlags);
-    Reject([] { sceAudioOutMasteringInit(2); });
+    ExpectErr([] { sceAudioOutMasteringInit(2); });
     Require(sceAudioOutMasteringInit(0) == 0);
     Require(sceAudioOutMasteringInit(0) == 0);
 
@@ -67,8 +55,8 @@ int main() {
     {
         AudioOut2MasteringParamsHeader param{1};
         Require(sceAudioOutMasteringSetParam(&param, 0) == 0);
-        Reject([] { AudioOut2MasteringParamsHeader other{5}; sceAudioOutMasteringSetParam(&other, 0); });
-        Reject([] { sceAudioOutMasteringSetParam(nullptr, 0); });
+        ExpectErr([] { AudioOut2MasteringParamsHeader other{5}; sceAudioOutMasteringSetParam(&other, 0); });
+        ExpectErr([] { sceAudioOutMasteringSetParam(nullptr, 0); });
     }
 
     Require(sceAudioOutMasteringTerm() == 0);

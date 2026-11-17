@@ -5,6 +5,7 @@
 #include "prx/libc/include/GuestLocale.hpp"
 #include "prx/libc/GuestStringStorage.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <climits>
 #include <cstddef>
@@ -56,11 +57,6 @@ int APS5_VABI TestPosixAlign(void** pointer, std::size_t, std::size_t size) {
     return *pointer ? 0 : 12;
 }
 
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "LibcInternal messages: %s\n", message);
-    std::abort();
-}
 
 template<typename Action>
 bool Throws(Action action) {

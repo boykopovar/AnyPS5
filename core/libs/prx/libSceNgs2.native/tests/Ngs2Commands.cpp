@@ -1,6 +1,7 @@
 #include "Ngs2Test.hpp"
 #include "prx/libSceNgs2.native/include/Api.hpp"
 #include "prx/libSceNgs2.native/include/Ngs2Types.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdint>
@@ -67,16 +68,6 @@ constexpr int SystemIndexRange = static_cast<int>(0x804a8410u);
 
 static int APS5_VABI TestBufferAllocHandler(Ngs2ContextBufferInfo*) {
     return 0;
-}
-
-void AssertThrows(auto&& func) {
-    bool threw = false;
-    try {
-        func();
-    } catch (const std::exception&) {
-        threw = true;
-    }
-    Require(threw);
 }
 
 void TestSystemCommandsAndQueries() {
@@ -201,8 +192,8 @@ void TestSystemCommandsAndQueries() {
     Require(rackCount == 1);
     Require(rackHandles[0] == rack);
 
-    AssertThrows([&] { sceNgs2SystemQueryInfo(system, 0xf04004, nullptr, 0); });
-    AssertThrows([&] { sceNgs2SystemQueryInfo(system, 0xf04070, nullptr, 0); });
+    ExpectErr([&] { sceNgs2SystemQueryInfo(system, 0xf04004, nullptr, 0); });
+    ExpectErr([&] { sceNgs2SystemQueryInfo(system, 0xf04070, nullptr, 0); });
     Require(sceNgs2SystemQueryInfo(system, 0xdeadbeef, nullptr, 0) == InvalidSystemQueryId);
 
     Require(sceNgs2RackDestroy(rack, nullptr) == SCE_NGS2_OK);
@@ -244,7 +235,7 @@ void TestRackCommandsAndQueries() {
 
     std::array<std::uint8_t, 32> modRecord{};
     Require(sceNgs2RackQueryInfo(rack, (5u << 24) | 0xf14002, modRecord.data(), sizeof(modRecord)) == InvalidRackModuleIndex);
-    AssertThrows([&] { sceNgs2RackQueryInfo(rack, 0xf14070, nullptr, 0); });
+    ExpectErr([&] { sceNgs2RackQueryInfo(rack, 0xf14070, nullptr, 0); });
     Require(sceNgs2RackQueryInfo(rack, 0x99999999, nullptr, 0) == InvalidRackQueryId);
 
     Require(sceNgs2RackDestroy(rack, nullptr) == SCE_NGS2_OK);
@@ -304,7 +295,7 @@ void TestStreamExports() {
     Require(sceNgs2StreamCreate(system, reinterpret_cast<const void*>(0x10), &bufInfo, &streamHandle) == InvalidOptionSize);
     Require(sceNgs2StreamCreate(system, &opt, &bufInfo, nullptr) == InvalidOutAddress);
     Require(sceNgs2StreamCreate(0xdead, &opt, &bufInfo, &streamHandle) == InvalidSystemHandle);
-    AssertThrows([&] { sceNgs2StreamCreate(system, &opt, &bufInfo, &streamHandle); });
+    ExpectErr([&] { sceNgs2StreamCreate(system, &opt, &bufInfo, &streamHandle); });
 
     Ngs2BufferAllocator alloc{};
     Require(sceNgs2StreamCreateWithAllocator(system, &opt, nullptr, &streamHandle) == InvalidBufferAllocator);
@@ -314,7 +305,7 @@ void TestStreamExports() {
     Require(sceNgs2StreamCreateWithAllocator(system, reinterpret_cast<const void*>(0x10), &alloc, &streamHandle) == InvalidOptionSize);
     Require(sceNgs2StreamCreateWithAllocator(system, &opt, &alloc, nullptr) == InvalidOutAddress);
     Require(sceNgs2StreamCreateWithAllocator(0xdead, &opt, &alloc, &streamHandle) == InvalidSystemHandle);
-    AssertThrows([&] { sceNgs2StreamCreateWithAllocator(system, &opt, &alloc, &streamHandle); });
+    ExpectErr([&] { sceNgs2StreamCreateWithAllocator(system, &opt, &alloc, &streamHandle); });
 
     Require(sceNgs2StreamDestroy(0, nullptr) == InvalidStreamHandle);
     Require(sceNgs2StreamRunCommands(0, nullptr, 0) == InvalidStreamHandle);
@@ -326,12 +317,12 @@ void TestStreamExports() {
 
 void TestModuleEnumerations() {
     void* configTable[4] = {};
-    AssertThrows([&] { sceNgs2ModuleEnumConfigs(configTable, 4); });
+    ExpectErr([&] { sceNgs2ModuleEnumConfigs(configTable, 4); });
     Require(sceNgs2ModuleArrayEnumItems(nullptr, nullptr, 0) == 0);
     Require(sceNgs2ModuleArrayEnumItems(reinterpret_cast<const void*>(0x10), nullptr, 0) == 0);
     Require(sceNgs2ModuleQueueEnumItems(nullptr, nullptr, 0) == 0);
     std::uint8_t dummyQ[16]{};
-    AssertThrows([&] { sceNgs2ModuleQueueEnumItems(dummyQ, nullptr, 0); });
+    ExpectErr([&] { sceNgs2ModuleQueueEnumItems(dummyQ, nullptr, 0); });
 
     alignas(8) std::uint8_t arrayData[64] = {};
     const std::uint32_t itemSize = 4;

@@ -4,6 +4,7 @@
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libScePad/include/InputCommandFile.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <vector>
 #include <set>
@@ -22,7 +23,6 @@
 #include <thread>
 #include <utility>
 
-static void Require(bool value) { if (!value) std::abort(); }
 
 static void CheckTrackerLightBar(int handle) {
     std::uint32_t sequence = 0;

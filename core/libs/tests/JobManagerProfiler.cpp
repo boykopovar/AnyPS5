@@ -4,6 +4,7 @@
 #include "prx/libSceAgc/libSceAgc.hpp"
 #include "SceTypes.hpp"
 #include "prx/libSceAgcDriver/tests/execution/VulkanTestDevice.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -36,14 +37,7 @@ struct Event {
 std::mutex eventLock;
 std::vector<Event> events;
 
-void Check(bool condition, int line) {
-    if (!condition) {
-        std::fprintf(stderr, "job manager profiler check failed at line %d\n", line);
-        std::abort();
-    }
-}
 
-#define Require(value) Check((value), __LINE__)
 
 void Record(Event event) {
     const std::lock_guard guard(eventLock);

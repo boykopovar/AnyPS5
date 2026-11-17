@@ -1,6 +1,7 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -17,12 +18,6 @@ using Print = int (APS5_VABI*)(LibreSsl::Bio*, void*, std::uint64_t, int);
 static_assert(std::is_same_v<decltype(&X509V3_EXT_print_nid_postfix), Print>);
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL X509V3_EXT_print check failed at line %u\n", location.line());
-    std::abort();
-}
 
 std::unordered_map<void*, std::size_t> live;
 int allocations = 0;

@@ -3,6 +3,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "ProcessParametersFixture.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cerrno>
@@ -15,13 +16,6 @@
 namespace {
 
 alignas(16) std::array<std::byte, 0x40> process{};
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "KERNEL SYS SDK VERSION: %s\n", message);
-        std::abort();
-    }
-}
 
 }
 

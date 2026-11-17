@@ -1,14 +1,9 @@
 #include "prx/libSceNetCtl/libSceNetCtl.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
-
-static void Require(bool value, std::source_location location = std::source_location::current()) {
-    if (value) return;
-    std::fprintf(stderr, "NetCtl ApRp constant-success check failed at line %u\n", location.line());
-    std::abort();
-}
 
 static void CheckEveryExportAnswersSuccessBeforeInitialization() {
     Require(sceNetCtlApRpCheckCallback() == 0);

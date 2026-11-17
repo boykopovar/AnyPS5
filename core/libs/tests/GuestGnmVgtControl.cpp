@@ -1,4 +1,5 @@
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -25,10 +26,6 @@ namespace {
 constexpr std::uint32_t Sentinel = 0xdeadbeefu;
 using SetControl = int (APS5_VABI*)(std::uint32_t*, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t);
 using ResetControl = int (APS5_VABI*)(std::uint32_t*, std::uint32_t);
-
-void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 void* Load(const std::filesystem::path& path) {
 #ifdef _WIN32

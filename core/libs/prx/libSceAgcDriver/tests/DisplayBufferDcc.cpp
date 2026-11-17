@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/DisplayBuffer.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureFormat.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -27,14 +28,6 @@ using AgcDriver::Graphics::TextureDimension;
 using AgcDriver::Graphics::TextureTileMode;
 
 namespace {
-
-int failures = 0;
-
-void Expect(bool condition, const std::string& what) {
-    if (condition) return;
-    std::fprintf(stderr, "FAIL: %s\n", what.c_str());
-    ++failures;
-}
 
 template<typename TAction>
 std::string Rejection(TAction action) {
@@ -292,7 +285,7 @@ int main() {
     KeyCountTests();
     RetileTests();
     ExtentTests();
-    if (failures != 0) return 1;
+    if (Failures() != 0) return 1;
     std::puts("display buffer DCC tests passed");
     return 0;
 }

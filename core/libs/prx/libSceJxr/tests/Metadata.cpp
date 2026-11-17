@@ -1,5 +1,6 @@
 #include "prx/libSceJxr/libSceJxr.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdio>
 #include <cstdlib>
@@ -17,12 +18,6 @@ using Cleanup = decltype(&FreeDescMetadata_nid_postfix);
 void* lastFreed = nullptr;
 unsigned frees = 0;
 Jxr::MetadataVariant* retagTarget = nullptr;
-
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "JXR metadata: %s\n", message);
-    std::exit(1);
-}
 
 void* APS5_VABI Allocate_nid_no_patch(std::size_t size) { return std::malloc(size); }
 void APS5_VABI Free_nid_no_patch(void* pointer) {

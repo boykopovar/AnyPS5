@@ -1,5 +1,6 @@
 #include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -33,9 +34,6 @@ static constexpr unsigned AuxiliaryBytes = 72;
 static constexpr unsigned ShapeCount = 4;
 #endif
 static constexpr unsigned ModuleFreeCalls = 12;
-static void Require(bool condition, const char* message) {
-    if (!condition) { std::fprintf(stderr, "%s\n", message); std::abort(); }
-}
 struct DestructionTrace;
 struct DestructionDomain { DestructionTrace* trace; void* receiver; unsigned index; };
 struct DestructionTrace {

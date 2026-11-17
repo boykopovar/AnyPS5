@@ -1,5 +1,6 @@
 #include "prx/libSceNet/libSceNet.hpp"
 #include "prx/libkernel/libkernel.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -8,12 +9,6 @@
 #include <cstring>
 #include <initializer_list>
 #include <utility>
-
-static void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
 
 static int Create(int family, int type) {
     const int result = sceNetSocket("reuseport-test", family, type, 0);

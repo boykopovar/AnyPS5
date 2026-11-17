@@ -1,4 +1,5 @@
 #include "prx/libSceIme/include/ModalDialog.hpp"
+#include "Testing.hpp"
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -10,12 +11,6 @@ constexpr std::uint32_t Left = 0x0080;
 constexpr std::uint32_t Right = 0x0020;
 constexpr std::uint32_t Circle = 0x2000;
 constexpr std::uint32_t Cross = 0x4000;
-
-void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "FAIL %s\n", what);
-    std::exit(1);
-}
 
 void IgnoreText(ImeHostInputKind, const char16_t*, std::size_t) {}
 

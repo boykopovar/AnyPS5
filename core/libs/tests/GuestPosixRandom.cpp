@@ -1,5 +1,6 @@
 #include "prx/libScePosixForWebKit/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -7,13 +8,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "Posix random check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 int main() {
     std::array<unsigned char, 4099> first{};

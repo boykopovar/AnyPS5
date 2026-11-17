@@ -1,4 +1,5 @@
 #include "prx/libSceSystemService/LanguageLocale.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
@@ -9,12 +10,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool value, std::string_view what) {
-    if (value) return;
-    std::fprintf(stderr, "check failed: %.*s\n", static_cast<int>(what.size()), what.data());
-    std::abort();
-}
 
 struct ParsedTag {
     std::string_view text;

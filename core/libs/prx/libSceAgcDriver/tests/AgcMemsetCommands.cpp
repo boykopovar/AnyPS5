@@ -1,6 +1,7 @@
 #include "prx/libSceAgc/include/Agc.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -21,34 +22,30 @@ using Pattern = std::array<std::uint32_t, 4>;
 constexpr Pattern First{0x7fc01234u, 0x80000000u, 0xabcdef01u, 0xffffffffu};
 constexpr Pattern Second{11u, 22u, 33u, 44u};
 
-void check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
-
 void inspect(std::span<const std::uint32_t> words, std::uint64_t address, std::uint64_t size, const Pattern& pattern, std::uint32_t mask) {
     std::map<std::uint32_t, std::uint32_t> registers;
     unsigned dispatches = 0;
     for (std::size_t i = 0; i < words.size();) {
         const auto count = ((words[i] >> 16u) & 0x3fffu) + 2u;
-        check((words[i] >> 30u) == 3u && count <= words.size() - i, "malformed command packet");
+        Require((words[i] >> 30u) == 3u && count <= words.size() - i, "malformed command packet");
         const auto opcode = (words[i] >> 8u) & 0xffu;
         if (opcode == 0x76u) {
             for (std::size_t j = 2; j < count; ++j) registers[words[i + 1] + static_cast<std::uint32_t>(j - 2)] = words[i + j];
         } else {
-            check(opcode == 0x15u && count == 5u, "unexpected packet");
-            check(words[i + 1] == 16u && words[i + 2] == 1u && words[i + 3] == 1u && words[i + 4] == 0x41u, "wrong dispatch shape or initiator");
-            check(registers[0x207] == 256u && registers[0x208] == 1u && registers[0x209] == 1u, "wrong threadgroup shape");
-            check(registers[0x216] == mask && registers[0x217] == mask, "wrong exclusive masks");
-            check(registers[0x240] == static_cast<std::uint32_t>(address), "wrong destination low word");
-            check(registers[0x241] == (((address >> 32u) & 0xffffu) | 0x100000u), "wrong destination high word or stride");
-            check(registers[0x242] == static_cast<std::uint32_t>(size >> 4u) && registers[0x243] == 0x4bfacu, "wrong record count or descriptor format");
-            for (unsigned j = 0; j < 4; ++j) check(registers[0x244 + j] == pattern[j], "pattern was not snapshotted at the required time");
-            check(registers[0x248] == static_cast<std::uint32_t>((size + 0xffffu) >> 16u), "wrong wrapping chunk count");
+            Require(opcode == 0x15u && count == 5u, "unexpected packet");
+            Require(words[i + 1] == 16u && words[i + 2] == 1u && words[i + 3] == 1u && words[i + 4] == 0x41u, "wrong dispatch shape or initiator");
+            Require(registers[0x207] == 256u && registers[0x208] == 1u && registers[0x209] == 1u, "wrong threadgroup shape");
+            Require(registers[0x216] == mask && registers[0x217] == mask, "wrong exclusive masks");
+            Require(registers[0x240] == static_cast<std::uint32_t>(address), "wrong destination low word");
+            Require(registers[0x241] == (((address >> 32u) & 0xffffu) | 0x100000u), "wrong destination high word or stride");
+            Require(registers[0x242] == static_cast<std::uint32_t>(size >> 4u) && registers[0x243] == 0x4bfacu, "wrong record count or descriptor format");
+            for (unsigned j = 0; j < 4; ++j) Require(registers[0x244 + j] == pattern[j], "pattern was not snapshotted at the required time");
+            Require(registers[0x248] == static_cast<std::uint32_t>((size + 0xffffu) >> 16u), "wrong wrapping chunk count");
             ++dispatches;
         }
         i += count;
     }
-    check(dispatches == 1 && registers[0x216] == 0xffffffffu && registers[0x217] == 0xffffffffu, "dispatch missing or thread masks not restored");
+    Require(dispatches == 1 && registers[0x216] == 0xffffffffu && registers[0x217] == 0xffffffffu, "dispatch missing or thread masks not restored");
 }
 
 void boundaries() {
@@ -62,17 +59,17 @@ void boundaries() {
             const std::uint64_t address = 0x9876543210abcdefull;
             std::array<std::byte, 17> unaligned{};
             std::memcpy(unaligned.data() + 1, First.data(), 16);
-            check(sceAgcCbMemsetExclusive(&buffer, reinterpret_cast<void*>(address), unaligned.data() + 1, size) == storage.data(), "wrong returned packet pointer");
+            Require(sceAgcCbMemsetExclusive(&buffer, reinterpret_cast<void*>(address), unaligned.data() + 1, size) == storage.data(), "wrong returned packet pointer");
             inspect({storage.data(), static_cast<std::size_t>(buffer.cursor_up - storage.data())}, address, size, First, (id & ~0x1f) == 0x840fc0 ? 0xff00ffu : 0x3fcffu);
-            for (auto* tail = buffer.cursor_up; tail != storage.data() + storage.size(); ++tail) check(*tail == 0xfeedfaceu, "command recording wrote past its cursor");
+            for (auto* tail = buffer.cursor_up; tail != storage.data() + storage.size(); ++tail) Require(*tail == 0xfeedfaceu, "command recording wrote past its cursor");
         }
     }
     Pattern destination = First;
     std::array<std::uint32_t, 256> storage{};
     CommandBuffer buffer{storage.data(), storage.data() + storage.size(), storage.data(), storage.data() + storage.size(), nullptr, nullptr, 0};
     sceAgcCbMemsetExclusive(&buffer, destination.data(), destination.data(), 16);
-    check(destination == First, "command recording changed the destination");
-    check(registrations == 1 && registered != nullptr && registered->user_data->srt_size_dw == 9 && registered->shader_size != 0, "fill shader was not registered exactly once");
+    Require(destination == First, "command recording changed the destination");
+    Require(registrations == 1 && registered != nullptr && registered->user_data->srt_size_dw == 9 && registered->shader_size != 0, "fill shader was not registered exactly once");
 }
 
 struct Segments {
@@ -83,7 +80,7 @@ struct Segments {
 
 bool APS5_VABI allocate(CommandBuffer* buffer, std::uint32_t count, void* opaque) {
     auto& state = *static_cast<Segments*>(opaque);
-    check(count > buffer->reserved_dw, "callback request omitted packet space");
+    Require(count > buffer->reserved_dw, "callback request omitted packet space");
     if (state.packets.empty()) state.pattern = First;
     if (count - buffer->reserved_dw == 11u) {
         state.pattern = Second;
@@ -102,11 +99,11 @@ void callbacks() {
     CommandBuffer buffer{nullptr, nullptr, nullptr, nullptr, allocate, &state, 3};
     const auto address = reinterpret_cast<std::uint64_t>(state.pattern.data());
     auto* first = sceAgcCbMemsetExclusive(&buffer, state.pattern.data(), state.pattern.data(), 65537);
-    check(first == state.packets.front().data() && state.userData && state.pattern == Second, "allocation callbacks were not exercised");
+    Require(first == state.packets.front().data() && state.userData && state.pattern == Second, "allocation callbacks were not exercised");
     std::vector<std::uint32_t> words;
     for (const auto& packet : state.packets) {
         words.insert(words.end(), packet.begin(), packet.end() - 3);
-        for (auto i = packet.size() - 3; i < packet.size(); ++i) check(packet[i] == 0xfeedfaceu, "reserved callback words overwritten");
+        for (auto i = packet.size() - 3; i < packet.size(); ++i) Require(packet[i] == 0xfeedfaceu, "reserved callback words overwritten");
     }
     inspect(words, address, 65537, First, 0x3fcffu);
 }

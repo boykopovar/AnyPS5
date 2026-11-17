@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -6,12 +7,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "failed: %s\n", message);
-    std::abort();
-}
 
 int APS5_VABI NewCallback(void*, void*, LibreSslExData*, int, std::int64_t, void*) {
     std::abort();

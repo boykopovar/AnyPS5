@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/LogMacros.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -14,12 +15,6 @@
 #endif
 
 namespace {
-
-void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "log macros test failed: %s\n", what);
-    std::exit(1);
-}
 
 template<typename TAction>
 std::vector<std::string> CaptureWrites(TAction action) {

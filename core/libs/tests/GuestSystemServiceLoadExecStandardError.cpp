@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceSystemService/include/SystemService.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -13,10 +14,6 @@ namespace {
 
 constexpr const char* Marker = "APS5_LOAD_EXEC_STANDARD_ERROR";
 constexpr const char* AfterLoadExec = "--after-load-exec";
-
-void Require(bool value) {
-    if (!value) std::abort();
-}
 
 std::string Drain(int descriptor) {
     std::string text;

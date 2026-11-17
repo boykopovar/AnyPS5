@@ -1,16 +1,11 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "libc internal _Pad destructor: %s\n", message);
-    std::abort();
-}
 
 template <typename Function>
 bool Throws(Function function) {

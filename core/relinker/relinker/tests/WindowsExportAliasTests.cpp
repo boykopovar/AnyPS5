@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include <relinker/guest/GuestImage.hpp>
 #include <elfpatcher/general/GuestModuleWriter.hpp>
 #include <elfpatcher/windows/WindowsLoadImage.hpp>
@@ -10,7 +11,6 @@
 #include <stdexcept>
 
 using Bytes = std::vector<std::uint8_t>;
-static void Check(bool ok, const char* message) { if (!ok) throw std::runtime_error(message); }
 static void Ph(Bytes& b, int i, unsigned type, unsigned flags, unsigned off, unsigned va, unsigned size) {
     const auto p=64+i*56; Io::WriteU32(b,p,type); Io::WriteU32(b,p+4,flags);
     Io::WriteU64(b,p+8,off);Io::WriteU64(b,p+16,va);Io::WriteU64(b,p+24,va);
@@ -41,39 +41,39 @@ static std::size_t Offset(const Bytes& pe,std::uint32_t rva) {
 }
 template<class F> static void Reject(F&& f,const char* expected) {
     bool rejected=false;try{f();}catch(const Domain::RelinkerException& e){rejected=std::string(e.what()).find(expected)!=std::string::npos;}
-    Check(rejected,expected);
+    Require(rejected,expected);
 }
 static void Positive(bool reverse) {
     const auto bytes=Fixture(reverse);const auto g=Relinker::GuestImageReader().Read("generic.prx",bytes,true);
-    Check(g.Symbols.size()==4&&g.Bytes==bytes,"input symbols/bytes changed");
-    Check(g.Symbols[1].Name=="alias"&&g.Symbols[2].Name=="alias","stripped lookup names");
-    Check(g.Symbols[1].QualifiedName==(reverse?"alias#B#A":"alias#A#A")&&g.Symbols[2].QualifiedName==(reverse?"alias#A#A":"alias#B#A"),"qualified names lost");
-    Check(g.Symbols[1].Info==18&&g.Symbols[2].Info==18&&g.Symbols[1].Visibility==3&&g.Symbols[2].Visibility==3&&g.Symbols[1].Section==1&&g.Symbols[2].Section==1&&g.Symbols[1].Value==0x20&&g.Symbols[2].Value==0x20&&g.Symbols[1].Size==1&&g.Symbols[2].Size==1,"raw tuple changed");
-    Check((Io::ReadU64(g.Dynamic.RelaData,8)>>32)==1&&(Io::ReadU64(g.Dynamic.RelaData,32)>>32)==2,"alias relocation indices changed");
-    Check(g.Symbols[3].QualifiedName=="imported#A#B"&&g.Symbols[3].Library=="fixtureHost.prx","qualified import changed");
+    Require(g.Symbols.size()==4&&g.Bytes==bytes,"input symbols/bytes changed");
+    Require(g.Symbols[1].Name=="alias"&&g.Symbols[2].Name=="alias","stripped lookup names");
+    Require(g.Symbols[1].QualifiedName==(reverse?"alias#B#A":"alias#A#A")&&g.Symbols[2].QualifiedName==(reverse?"alias#A#A":"alias#B#A"),"qualified names lost");
+    Require(g.Symbols[1].Info==18&&g.Symbols[2].Info==18&&g.Symbols[1].Visibility==3&&g.Symbols[2].Visibility==3&&g.Symbols[1].Section==1&&g.Symbols[2].Section==1&&g.Symbols[1].Value==0x20&&g.Symbols[2].Value==0x20&&g.Symbols[1].Size==1&&g.Symbols[2].Size==1,"raw tuple changed");
+    Require((Io::ReadU64(g.Dynamic.RelaData,8)>>32)==1&&(Io::ReadU64(g.Dynamic.RelaData,32)>>32)==2,"alias relocation indices changed");
+    Require(g.Symbols[3].QualifiedName=="imported#A#B"&&g.Symbols[3].Library=="fixtureHost.prx","qualified import changed");
     Domain::GuestRuntime runtime;const auto pe=Elfpatcher::GuestModuleWriter().WriteWindows(g,runtime);
     const auto directory=Offset(pe,Io::ReadU32(pe,Io::ReadU32(pe,0x3c)+24+112));
-    Check(Io::ReadU32(pe,directory+20)==1&&Io::ReadU32(pe,directory+24)==1,"multiple PE exports");
+    Require(Io::ReadU32(pe,directory+20)==1&&Io::ReadU32(pe,directory+24)==1,"multiple PE exports");
     const auto function=Io::ReadU32(pe,Offset(pe,Io::ReadU32(pe,directory+28)));
     const auto nameRva=Io::ReadU32(pe,Offset(pe,Io::ReadU32(pe,directory+32)));
-    Check(std::strcmp(reinterpret_cast<const char*>(pe.data()+Offset(pe,nameRva)),"alias")==0,"wrong export name");
+    Require(std::strcmp(reinterpret_cast<const char*>(pe.data()+Offset(pe,nameRva)),"alias")==0,"wrong export name");
     Elfpatcher::Windows::WindowsLoadImage image(g.Bytes,g.Headers,false);
-    Check(function==image.GetRva(0x20,1),"wrong export RVA");
-    for(auto target:{0x2800,0x2808})Check(Io::ReadU64(pe,Offset(pe,image.GetRva(target,8)))==Elfpatcher::Windows::ImageBase+function,"wrong alias relocation value");
+    Require(function==image.GetRva(0x20,1),"wrong export RVA");
+    for(auto target:{0x2800,0x2808})Require(Io::ReadU64(pe,Offset(pe,image.GetRva(target,8)))==Elfpatcher::Windows::ImageBase+function,"wrong alias relocation value");
 }
 int main() {
     try {
         Positive(false);Positive(true);
         const auto linux=Relinker::GuestImageReader().Read("generic.prx",Fixture());
-        Check(linux.Symbols.size()==4&&linux.Symbols[1].Name=="alias"&&linux.Symbols[2].Name=="alias","Linux did not retain alias symbol indices");
+        Require(linux.Symbols.size()==4&&linux.Symbols[1].Name=="alias"&&linux.Symbols[2].Name=="alias","Linux did not retain alias symbol indices");
         const std::array<std::pair<unsigned,std::uint64_t>,7> changes={{{4,0x22},{4,0x11},{5,0},{6,2},{8,0x28},{16,2},{6,Relinker::AbsoluteSection}}};
         for(const auto& [field,value]:changes){auto b=Fixture();auto off=0x2400+48+field;if(field<6)b[off]=value;else if(field==6)Io::WriteU16(b,off,value);else Io::WriteU64(b,off,value);Reject([&]{Relinker::GuestImageReader().Read("generic.prx",b,true);},"Duplicate or empty export");}
         auto good=Relinker::GuestImageReader().Read("generic.prx",Fixture(),true);
-        auto symbolic=good;symbolic.Symbolic=true;Domain::GuestRuntime symbolicRuntime,ordinaryRuntime;Check(Elfpatcher::GuestModuleWriter().WriteWindows(symbolic,symbolicRuntime)==Elfpatcher::GuestModuleWriter().WriteWindows(good,ordinaryRuntime)&&symbolicRuntime.Imports.size()==ordinaryRuntime.Imports.size(),"DF_SYMBOLIC changed Windows binding");
-        for(unsigned kind=0;kind<10;++kind){auto g=good;auto& s=g.Symbols[2];switch(kind){case 0:s.Value+=8;break;case 1:s.Size+=1;break;case 2:s.Info=0x22;break;case 3:s.Info=0x11;break;case 4:s.Visibility=0;break;case 5:s.Section=2;break;case 6:g.Symbols[1].Info=s.Info=0x11;break;case 7:g.Symbols[1].Section=s.Section=Relinker::AbsoluteSection;break;case 8:g.Symbols[1].Info=s.Info=0x16;g.Dynamic.RelaData.clear();break;case 9:g.Symbols[1].Info=s.Info=0x10;break;}Check(!Relinker::IdenticalOrdinaryFunctionExport(g.Symbols[1],s),"nonordinary/conflicting tuple accepted");Domain::GuestRuntime r;Reject([&]{Elfpatcher::GuestModuleWriter().WriteWindows(g,r);},kind==8?"TLS":"Duplicate guest export");}
-        Check(Domain::DeclaredImportModule("same#A#B",{{1,"one"},{2,"two"}})=="one"&&Domain::DeclaredImportModule("same#A#C",{{1,"one"},{2,"two"}})=="two","module-qualified IDs merged");
-        Check(Domain::DeclaredImportModule("own#A#A",{{1,"one"}},{0}).empty()&&Domain::ImportModule("own#A#A",{{1,"one"}},{},{0}).empty(),"an import of the module's own ID named a dependency");
-        Check(Domain::DeclaredImportModule("listed#A#B",{{1,"one"}},{1})=="one","a dependency sharing the module's own ID was dropped");
+        auto symbolic=good;symbolic.Symbolic=true;Domain::GuestRuntime symbolicRuntime,ordinaryRuntime;Require(Elfpatcher::GuestModuleWriter().WriteWindows(symbolic,symbolicRuntime)==Elfpatcher::GuestModuleWriter().WriteWindows(good,ordinaryRuntime)&&symbolicRuntime.Imports.size()==ordinaryRuntime.Imports.size(),"DF_SYMBOLIC changed Windows binding");
+        for(unsigned kind=0;kind<10;++kind){auto g=good;auto& s=g.Symbols[2];switch(kind){case 0:s.Value+=8;break;case 1:s.Size+=1;break;case 2:s.Info=0x22;break;case 3:s.Info=0x11;break;case 4:s.Visibility=0;break;case 5:s.Section=2;break;case 6:g.Symbols[1].Info=s.Info=0x11;break;case 7:g.Symbols[1].Section=s.Section=Relinker::AbsoluteSection;break;case 8:g.Symbols[1].Info=s.Info=0x16;g.Dynamic.RelaData.clear();break;case 9:g.Symbols[1].Info=s.Info=0x10;break;}Require(!Relinker::IdenticalOrdinaryFunctionExport(g.Symbols[1],s),"nonordinary/conflicting tuple accepted");Domain::GuestRuntime r;Reject([&]{Elfpatcher::GuestModuleWriter().WriteWindows(g,r);},kind==8?"TLS":"Duplicate guest export");}
+        Require(Domain::DeclaredImportModule("same#A#B",{{1,"one"},{2,"two"}})=="one"&&Domain::DeclaredImportModule("same#A#C",{{1,"one"},{2,"two"}})=="two","module-qualified IDs merged");
+        Require(Domain::DeclaredImportModule("own#A#A",{{1,"one"}},{0}).empty()&&Domain::ImportModule("own#A#A",{{1,"one"}},{},{0}).empty(),"an import of the module's own ID named a dependency");
+        Require(Domain::DeclaredImportModule("listed#A#B",{{1,"one"}},{1})=="one","a dependency sharing the module's own ID was dropped");
         Reject([&]{static_cast<void>(Domain::DeclaredImportModule("other#A#D",{{1,"one"}},{0}));},"Unknown import module ID");
         auto zeroBucket=Fixture();Io::WriteU32(zeroBucket,0x2600,0);
         Reject([&]{Relinker::GuestImageReader().Read("generic.prx",zeroBucket,true);},"Invalid SysV hash header");
@@ -90,7 +90,7 @@ int main() {
         auto multiBucket=Fixture();
         Io::WriteU32(multiBucket,0x2600,2);Io::WriteU32(multiBucket,0x2604,4);Io::WriteU32(multiBucket,0x2608,1);Io::WriteU32(multiBucket,0x260c,2);
         auto goodMulti=Relinker::GuestImageReader().Read("generic.prx",multiBucket,true);
-        Check(goodMulti.Symbols.size()==4,"valid multi-bucket SysV hash accepted");
+        Require(goodMulti.Symbols.size()==4,"valid multi-bucket SysV hash accepted");
         auto rel=Fixture();
         Io::WriteU64(rel,0x2080,17);
         Io::WriteU64(rel,0x2088,0x2700);
@@ -111,7 +111,7 @@ int main() {
         Io::WriteU64(validNoPlt,0x2080,20);
         Io::WriteU64(validNoPlt,0x2088,7);
         auto goodNoPlt=Relinker::GuestImageReader().Read("generic.prx",validNoPlt,true);
-        Check(goodNoPlt.Symbols.size()==4,"valid RELAENT and PLTREL without tables accepted");
+        Require(goodNoPlt.Symbols.size()==4,"valid RELAENT and PLTREL without tables accepted");
         std::cout<<"WINDOWS_EXPORT_ALIAS_CASES_PASSED\npreserved-indices reversed-order conflicting-fields strict-nonwindows qualified-import writer-guard\n";
     } catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}
 }

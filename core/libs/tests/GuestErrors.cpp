@@ -1,6 +1,7 @@
 #include "prx/libc/include/WindowsFormatting.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <climits>
 #include <cstdio>
@@ -9,7 +10,6 @@
 #include <stdexcept>
 #include <thread>
 
-static void Require(bool value) { if (!value) std::abort(); }
 static const char* const freebsd[97] = {
     "No error: 0", "Operation not permitted", "No such file or directory",
     "No such process", "Interrupted system call", "Input/output error",

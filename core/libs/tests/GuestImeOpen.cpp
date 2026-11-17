@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 #include "prx/libSceIme/include/ImeInput.hpp"
 #include "prx/libSceVideoOut/include/ImeTextInput.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -155,12 +156,6 @@ int32_t APS5_VABI SetCaretInsideFilter(char16_t* outText, uint32_t* outTextLengt
     }
     *outTextLength = sourceTextLength;
     return 0;
-}
-
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
 }
 
 struct Buffers {

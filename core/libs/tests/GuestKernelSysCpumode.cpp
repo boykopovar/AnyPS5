@@ -1,15 +1,10 @@
 #include "prx/libkernel_sys/include/Api.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
 
 namespace {
-
-void Require(bool condition, const char* what) {
-    if (condition) return;
-    std::fprintf(stderr, "%s\n", what);
-    std::abort();
-}
 
 bool Throws(void (*action)()) {
     try {

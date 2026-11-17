@@ -2,6 +2,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceLibcInternal/include/Api.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -20,12 +21,6 @@ extern GuestSignalSet _sigintr_nid_postfix;
 }
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
 
 bool Same(const GuestSigaction& first, const GuestSigaction& second) {
     return first.handler == second.handler && first.flags == second.flags &&

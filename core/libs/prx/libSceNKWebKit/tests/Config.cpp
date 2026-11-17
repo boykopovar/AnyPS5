@@ -2,20 +2,13 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 #include "prx/libSceNKWebKit/src/Object.hpp"
 #include "prx/libSceNKWebKit/src/Types.hpp"
+#include "Testing.hpp"
 
 #include <stdexcept>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 extern "C" {
 }

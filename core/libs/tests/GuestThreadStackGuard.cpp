@@ -1,4 +1,5 @@
 #include "prx/libkernel/include/Api.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -8,8 +9,6 @@ static constexpr int SCE_OK = 0;
 static constexpr std::uintptr_t GUEST_PAGE = 0x4000;
 static constexpr std::size_t GUARD_SIZE = 3 * GUEST_PAGE;
 static constexpr std::size_t STACK_SIZES[] = {65536, 1u << 20, 16u << 20};
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static void* APS5_VABI GuardStackBottom(void* requested) {
     PthreadAttr attr = nullptr;

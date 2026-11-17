@@ -1,13 +1,11 @@
 #include <cstdio>
 #include "prx/libSceCesCs/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <initializer_list>
 #include <cstdlib>
 #include <cstring>
-
-static void RequireImpl(bool value, int line) { if (!value) { std::fprintf(stderr, "REQFAIL line %d\n", line); std::fflush(stderr); std::abort(); } }
-#define Require(v) RequireImpl((v), __LINE__)
 
 static const std::uint8_t* Bytes(const char* text) { return reinterpret_cast<const std::uint8_t*>(text); }
 

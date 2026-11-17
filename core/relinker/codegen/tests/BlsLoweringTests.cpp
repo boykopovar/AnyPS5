@@ -1,4 +1,5 @@
 #include "LoweringExecution.hpp"
+#include "Testing.hpp"
 #include <codegen/x86/BlsLowering.hpp>
 #include <codegen/x86/IAmd64OnlyInstructionMatcher.hpp>
 #include <codegen/CodegenException.hpp>
@@ -17,10 +18,6 @@ using Codegen::BlsOperation;
 
 constexpr std::array kOperations{BlsOperation::Reset, BlsOperation::Mask, BlsOperation::Isolate};
 
-void require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
-
 std::uint8_t extension(BlsOperation operation) {
     return static_cast<std::uint8_t>(operation);
 }
@@ -38,21 +35,21 @@ void decoding() {
                 for (std::uint8_t src = 0; src < 16; ++src) {
                     const auto bytes = instruction(operation, wide, dst, src);
                     const auto operands = Codegen::DecodeBls(bytes.data(), bytes.size());
-                    require(operands && operands->Operation == operation && operands->Wide == wide && operands->Destination == dst && operands->Source == src && !operands->Memory, "BLS register decoding changed an operand");
+                    Require(operands && operands->Operation == operation && operands->Wide == wide && operands->Destination == dst && operands->Source == src && !operands->Memory, "BLS register decoding changed an operand");
                 }
             }
         }
         const Bytes memory{0x64, 0x67, 0xC4, 0x02, 0xA8, 0xF3, static_cast<std::uint8_t>(0x84 | (extension(operation) << 3)), 0xAC, 0x10, 0, 0, 0};
         const auto operands = Codegen::DecodeBls(memory.data(), memory.size());
-        require(operands && operands->Operation == operation && operands->Destination == 10 && operands->Memory && operands->Memory->RexIndexBase == 3 && operands->Memory->Prefixes == Bytes{0x64, 0x67}, "BLS memory extensions or prefixes were lost");
+        Require(operands && operands->Operation == operation && operands->Destination == 10 && operands->Memory && operands->Memory->RexIndexBase == 3 && operands->Memory->Prefixes == Bytes{0x64, 0x67}, "BLS memory extensions or prefixes were lost");
     }
     for (const Bytes bytes : {Bytes{0x90}, Bytes{0xC4, 0xE2, 0xF0}, Bytes{0xC4, 0xE1, 0xF0, 0xF3, 0xC8}, Bytes{0xC4, 0xE2, 0xF0, 0xF3, 0xC0}, Bytes{0xC4, 0xE2, 0xF0, 0xF3, 0xE0}, Bytes{0xC4, 0xE2, 0xF0, 0xF2, 0xC8}})
-        require(!Codegen::DecodeBls(bytes.data(), bytes.size()), "Unrelated, truncated or non-BLS opcode matched BLS");
+        Require(!Codegen::DecodeBls(bytes.data(), bytes.size()), "Unrelated, truncated or non-BLS opcode matched BLS");
     for (const Bytes bytes : {Bytes{0xC4, 0xE2, 0xF4, 0xF3, 0xC8}, Bytes{0xC4, 0xE2, 0xF1, 0xF3, 0xD0}, Bytes{0xC4, 0xE2, 0xF0, 0xF3, 0xD8, 0x90}, Bytes{0xC4, 0xE2, 0xF0, 0xF3, 0x8C}}) {
         bool rejected = false;
         try { (void)Codegen::DecodeBls(bytes.data(), bytes.size()); }
         catch (const Codegen::CodegenException&) { rejected = true; }
-        require(rejected, "Malformed BLS was accepted");
+        Require(rejected, "Malformed BLS was accepted");
     }
     const Bytes overflow{0xC4, 0xE2, 0xF0, 0xF3, 0x8C, 0x24, 0xFF, 0xFF, 0xFF, 0x7F};
     bool rejected = false;
@@ -60,7 +57,7 @@ void decoding() {
         Codegen::StubBodyBuilder body;
         Codegen::EmitBls(body, *Codegen::DecodeBls(overflow.data(), overflow.size()));
     } catch (const Codegen::CodegenException&) { rejected = true; }
-    require(rejected, "An overflowing stack displacement was silently wrapped");
+    Require(rejected, "An overflowing stack displacement was silently wrapped");
 }
 
 void matching() {
@@ -69,11 +66,11 @@ void matching() {
     for (const auto operation : kOperations) {
         const auto bytes = instruction(operation, true, 0, 6);
         const auto name = Codegen::BlsName(operation);
-        require(!intel->Match(bytes.data(), bytes.size()), std::string("Intel mode rewrote ") + name);
+        Require(!intel->Match(bytes.data(), bytes.size()), std::string("Intel mode rewrote ") + name);
         const auto match = rosetta->Match(bytes.data(), bytes.size());
-        require(match && match->InstructionName == name && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline && !match->Optional, std::string("Rosetta mode did not require a trampoline for ") + name);
+        Require(match && match->InstructionName == name && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline && !match->Optional, std::string("Rosetta mode did not require a trampoline for ") + name);
         const std::array<std::span<const std::uint8_t>, 2> sequence{bytes, bytes};
-        require(rosetta->MatchSequence(sequence, {}).has_value(), std::string("A sequence could not move out of line for ") + name);
+        Require(rosetta->MatchSequence(sequence, {}).has_value(), std::string("A sequence could not move out of line for ") + name);
     }
 }
 
@@ -84,7 +81,7 @@ using LoweringExecution::State;
 
 Execution executable(const Bytes& site, std::uint64_t memoryValue) {
     const auto operands = Codegen::DecodeBls(site.data(), site.size());
-    require(operands.has_value(), "Execution site was not BLS");
+    Require(operands.has_value(), "Execution site was not BLS");
     return Execution(site, memoryValue, operands->Memory && operands->Memory->RipRelative, [](Codegen::StubBodyBuilder& body, const Bytes& relocated) {
         Codegen::EmitBls(body, *Codegen::DecodeBls(relocated.data(), relocated.size()));
     });
@@ -112,9 +109,9 @@ void check(const State& state, const Codegen::BlsOperands& operands, std::uint64
     }
     flags |= (expected >> (operands.Wide ? 63 : 31)) != 0 ? LoweringExecution::kSign : 0u;
     for (std::size_t reg = 0; reg < 16; ++reg)
-        require(state.Output[reg] == (reg == operands.Destination ? expected : state.Input[reg]), std::string(name) + " changed a source/scratch register or produced an incorrect result");
-    require((state.Flags & LoweringExecution::kFlagMask) == flags, std::string(name) + " did not produce its defined flags");
-    for (const auto value : state.RedZone) require(value == LoweringExecution::kSentinel, std::string(name) + " overwrote the caller's red zone");
+        Require(state.Output[reg] == (reg == operands.Destination ? expected : state.Input[reg]), std::string(name) + " changed a source/scratch register or produced an incorrect result");
+    Require((state.Flags & LoweringExecution::kFlagMask) == flags, std::string(name) + " did not produce its defined flags");
+    for (const auto value : state.RedZone) Require(value == LoweringExecution::kSentinel, std::string(name) + " overwrote the caller's red zone");
 }
 
 void execution() {

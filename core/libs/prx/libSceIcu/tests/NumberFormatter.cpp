@@ -11,9 +11,7 @@
 namespace UnumfClose {
 
 using IcuRecoveredTest::Filler;
-using IcuRecoveredTest::Require;
 using IcuRecoveredTest::RequireNoThrow;
-using IcuRecoveredTest::RequireThrows;
 using IcuRecoveredTest::Unchanged;
 
 static_assert(std::is_same_v<decltype(&unumf_close_nid_postfix), void (APS5_VABI*)(UNumberFormatter*)>);
@@ -23,9 +21,9 @@ void Run() {
     RequireNoThrow([] { unumf_close_nid_postfix(nullptr); });
 
     const auto storage = Filler();
-    RequireThrows([&] { unumf_close_nid_postfix(reinterpret_cast<UNumberFormatter*>(const_cast<std::uint32_t*>(storage.data()))); });
+    ExpectErr([&] { unumf_close_nid_postfix(reinterpret_cast<UNumberFormatter*>(const_cast<std::uint32_t*>(storage.data()))); });
     Require(Unchanged(storage));
-    RequireThrows([&] { unumf_close_nid_postfix(reinterpret_cast<UNumberFormatter*>(std::uintptr_t{1})); });
+    ExpectErr([&] { unumf_close_nid_postfix(reinterpret_cast<UNumberFormatter*>(std::uintptr_t{1})); });
 }
 
 } // namespace UnumfClose
@@ -33,9 +31,7 @@ void Run() {
 namespace UnumfCloseResult {
 
 using IcuRecoveredTest::Filler;
-using IcuRecoveredTest::Require;
 using IcuRecoveredTest::RequireNoThrow;
-using IcuRecoveredTest::RequireThrows;
 using IcuRecoveredTest::Unchanged;
 
 static_assert(std::is_same_v<decltype(&unumf_closeResult_nid_postfix), void (APS5_VABI*)(UFormattedNumber*)>);
@@ -45,9 +41,9 @@ void Run() {
     RequireNoThrow([] { unumf_closeResult_nid_postfix(nullptr); });
 
     const auto storage = Filler();
-    RequireThrows([&] { unumf_closeResult_nid_postfix(reinterpret_cast<UFormattedNumber*>(const_cast<std::uint32_t*>(storage.data()))); });
+    ExpectErr([&] { unumf_closeResult_nid_postfix(reinterpret_cast<UFormattedNumber*>(const_cast<std::uint32_t*>(storage.data()))); });
     Require(Unchanged(storage));
-    RequireThrows([&] { unumf_closeResult_nid_postfix(reinterpret_cast<UFormattedNumber*>(std::uintptr_t{1})); });
+    ExpectErr([&] { unumf_closeResult_nid_postfix(reinterpret_cast<UFormattedNumber*>(std::uintptr_t{1})); });
 }
 
 } // namespace UnumfCloseResult
@@ -55,9 +51,7 @@ void Run() {
 namespace UnumfOpenResult {
 
 using IcuRecoveredTest::Filler;
-using IcuRecoveredTest::Require;
 using IcuRecoveredTest::RequireNoThrow;
-using IcuRecoveredTest::RequireThrows;
 using IcuRecoveredTest::Unchanged;
 
 static_assert(std::is_same_v<decltype(&unumf_openResult_nid_postfix), UFormattedNumber* (APS5_VABI*)(std::int32_t*)>);
@@ -73,11 +67,11 @@ void Run() {
 
     for (const auto incoming : passing) {
         std::int32_t status = incoming;
-        RequireThrows([&] { unumf_openResult_nid_postfix(&status); });
+        ExpectErr([&] { unumf_openResult_nid_postfix(&status); });
         Require(status == incoming);
     }
 
-    RequireThrows([&] { unumf_openResult_nid_postfix(nullptr); });
+    ExpectErr([&] { unumf_openResult_nid_postfix(nullptr); });
 }
 
 } // namespace UnumfOpenResult

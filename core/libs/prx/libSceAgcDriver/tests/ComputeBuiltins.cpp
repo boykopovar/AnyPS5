@@ -2,6 +2,7 @@
 #include "IntermediateRepresentation/IrProgram.hpp"
 #include "Optimization/ShaderStageInputInfo.hpp"
 #include "SpirvBackend/SpirvEmitter.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -13,10 +14,6 @@
 namespace {
 
 using namespace ShaderRecompiler;
-
-void require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 IrValue& builtin(IrBuilder& builder, StageInputKind kind) {
     return builder.Emit(IrOpcode::GetBuiltin, IrType::U32, {&builder.Constant(static_cast<std::uint32_t>(kind)), &builder.Constant(0u)});
@@ -68,21 +65,21 @@ bool declaresBuiltin(const std::vector<std::uint32_t>& words, spv::BuiltIn built
 
 void checkComputeBuiltins() {
     const auto workgroup = emit(IrShaderStage::Compute, {StageInputKind::WorkgroupId}, false);
-    require(declaresBuiltin(workgroup, spv::BuiltInWorkgroupId), "a compute program that reads WorkgroupId did not declare it");
+    Require(declaresBuiltin(workgroup, spv::BuiltInWorkgroupId), "a compute program that reads WorkgroupId did not declare it");
 
     const auto global = emit(IrShaderStage::Compute, {StageInputKind::GlobalInvocationId}, true);
-    require(declaresBuiltin(global, spv::BuiltInGlobalInvocationId), "a wave64 compute program that reads GlobalInvocationId did not declare it");
-    require(declaresBuiltin(global, spv::BuiltInWorkgroupId), "the emulated GlobalInvocationId did not declare WorkgroupId");
-    require(declaresBuiltin(global, spv::BuiltInLocalInvocationIndex), "the emulated GlobalInvocationId did not declare LocalInvocationIndex");
+    Require(declaresBuiltin(global, spv::BuiltInGlobalInvocationId), "a wave64 compute program that reads GlobalInvocationId did not declare it");
+    Require(declaresBuiltin(global, spv::BuiltInWorkgroupId), "the emulated GlobalInvocationId did not declare WorkgroupId");
+    Require(declaresBuiltin(global, spv::BuiltInLocalInvocationIndex), "the emulated GlobalInvocationId did not declare LocalInvocationIndex");
 
     const auto local = emit(IrShaderStage::Compute, {StageInputKind::LocalInvocationIndex}, false);
-    require(declaresBuiltin(local, spv::BuiltInLocalInvocationIndex), "a compute program that reads LocalInvocationIndex did not declare it");
+    Require(declaresBuiltin(local, spv::BuiltInLocalInvocationIndex), "a compute program that reads LocalInvocationIndex did not declare it");
 }
 
 void checkUnusedBuiltinsStayUndeclared() {
     const auto words = emit(IrShaderStage::Compute, {}, false);
-    require(!declaresBuiltin(words, spv::BuiltInWorkgroupId), "a compute program without WorkgroupId declared it");
-    require(!declaresBuiltin(words, spv::BuiltInGlobalInvocationId), "a compute program without GlobalInvocationId declared it");
+    Require(!declaresBuiltin(words, spv::BuiltInWorkgroupId), "a compute program without WorkgroupId declared it");
+    Require(!declaresBuiltin(words, spv::BuiltInGlobalInvocationId), "a compute program without GlobalInvocationId declared it");
 }
 
 }

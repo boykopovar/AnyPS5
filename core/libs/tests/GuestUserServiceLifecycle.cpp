@@ -14,15 +14,9 @@
 #include <cerrno>
 #include <stdexcept>
 #include "prx/libSceUserService/Export.cpp"
+#include "Testing.hpp"
 
 namespace {
-
-void Require(bool value, std::source_location location = std::source_location::current()) {
-    if (!value) {
-        std::fprintf(stderr, "UserService lifecycle failure at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 template <typename Predicate>
 void WaitUntil(Predicate predicate) {

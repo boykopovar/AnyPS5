@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdio>
@@ -10,12 +11,6 @@
 #include <string_view>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL3 time check failed at line %u\n", location.line());
-    std::abort();
-}
 
 Asn1String Time(std::string_view text, int type = 24) {
     return {static_cast<int>(text.size()), type,

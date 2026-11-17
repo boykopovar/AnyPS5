@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include "VulkanTestDevice.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -20,10 +21,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 template<typename TAction>
 std::string ExpectFailure(TAction action) {

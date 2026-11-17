@@ -3,6 +3,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
+#include "Testing.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -38,14 +39,6 @@ struct GuestStatfs {
     char f_mntonname[88];
 };
 static_assert(sizeof(GuestStatfs) == 472);
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "fstatfs check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static constexpr std::uint32_t StatfsVersion = 0x20030518;
 static constexpr int GuestEbadf = 9;

@@ -2,6 +2,7 @@
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdio>
@@ -21,12 +22,6 @@ constexpr std::uint64_t ErrorCode(int library, int function, int reason) {
     return (static_cast<std::uint64_t>(library) << 24) |
            (static_cast<std::uint64_t>(function) << 12) |
            static_cast<std::uint64_t>(reason);
-}
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "failed: %s\n", message);
-    std::terminate();
 }
 
 void* APS5_VABI Allocate(std::size_t size) {

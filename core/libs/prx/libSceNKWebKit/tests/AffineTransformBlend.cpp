@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cmath>
@@ -7,14 +8,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-
-static void Check(bool value, const char* name, int line) {
-    if (!value) {
-        std::fprintf(stderr, "AffineTransform blend check failed for %s at line %d\n", name, line);
-        std::abort();
-    }
-}
-#define Require(value, name) Check((value), (name), __LINE__)
 
 using Matrix = std::array<double, 6>;
 

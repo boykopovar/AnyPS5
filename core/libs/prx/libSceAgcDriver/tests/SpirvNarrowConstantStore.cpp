@@ -1,6 +1,7 @@
 #include "BdaAbi.hpp"
 #include "NarrowConstantStoreFixture.hpp"
 #include "Recompiler.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdio>
 #include <exception>
@@ -17,27 +18,23 @@ namespace {
 
 using namespace ShaderRecompiler;
 
-void Check(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
-
 void CheckStorageOnlyModule(const RecompileResult& result, std::string_view name) {
     const auto& words = result.spirv.Words();
-    Check(words.size() >= 5 && words[0] == spv::MagicNumber, std::string(name) + ": missing SPIR-V module");
+    Require(words.size() >= 5 && words[0] == spv::MagicNumber, std::string(name) + ": missing SPIR-V module");
     bool byteType = false;
     bool store = false;
     for (std::size_t offset = 5; offset < words.size();) {
         const auto count = words[offset] >> spv::WordCountShift;
         const auto opcode = words[offset] & spv::OpCodeMask;
-        Check(count != 0 && count <= words.size() - offset, std::string(name) + ": malformed SPIR-V instruction");
+        Require(count != 0 && count <= words.size() - offset, std::string(name) + ": malformed SPIR-V instruction");
         if (opcode == spv::OpCapability && count == 2) {
-            Check(words[offset + 1] != spv::CapabilityInt8, std::string(name) + ": introduced unsupported Int8 arithmetic");
+            Require(words[offset + 1] != spv::CapabilityInt8, std::string(name) + ": introduced unsupported Int8 arithmetic");
         }
         if (opcode == spv::OpTypeInt && count == 4 && words[offset + 2] == 8) byteType = true;
         if (opcode == spv::OpStore) store = true;
         offset += count;
     }
-    Check(byteType && store, std::string(name) + ": lost the byte storage regression fixture");
+    Require(byteType && store, std::string(name) + ": lost the byte storage regression fixture");
 #if ANYPS5_ENABLE_SPIRV_TOOLS
     std::string diagnostics;
     spvtools::SpirvTools validator(SPV_ENV_VULKAN_1_1);
@@ -45,7 +42,7 @@ void CheckStorageOnlyModule(const RecompileResult& result, std::string_view name
         if (message != nullptr) diagnostics += std::string(message) + '\n';
     });
     const bool valid = validator.Validate(words.data(), words.size());
-    Check(valid, std::string(name) + ": emitted invalid SPIR-V:\n" + diagnostics);
+    Require(valid, std::string(name) + ": emitted invalid SPIR-V:\n" + diagnostics);
 #endif
 }
 

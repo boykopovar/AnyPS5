@@ -9,8 +9,6 @@
 
 namespace {
 
-using IcuRecoveredTest::Require;
-using IcuRecoveredTest::RequireThrows;
 
 static_assert(std::is_same_v<decltype(&uloc_getDefault), const char* (APS5_VABI*)()>);
 static_assert(std::is_same_v<decltype(&uloc_setDefault_nid_postfix), void (APS5_VABI*)(const char*, std::int32_t*)>);
@@ -43,8 +41,8 @@ void Check(std::string_view systemId, std::string_view defaultName) {
     Require(uloc_getDefault() == name);
 
     status = 0;
-    RequireThrows([&] { uloc_setDefault_nid_postfix("fr_FR", &status); });
-    RequireThrows([] { uloc_setDefault_nid_postfix(nullptr, nullptr); });
+    ExpectErr([&] { uloc_setDefault_nid_postfix("fr_FR", &status); });
+    ExpectErr([] { uloc_setDefault_nid_postfix(nullptr, nullptr); });
     Require(uloc_getDefault() == name);
 }
 

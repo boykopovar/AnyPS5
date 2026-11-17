@@ -1,6 +1,7 @@
 #include "prx/libfreetype/libfreetype.hpp"
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
+#include "Testing.hpp"
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include FT_MULTIPLE_MASTERS_H
@@ -16,10 +17,6 @@
 namespace {
 
 constexpr std::int64_t Untouched = 0x5a5a5a5a;
-
-void Require(bool value) {
-    if (!value) std::abort();
-}
 
 std::vector<unsigned char> ReadFont(const char* name) {
     std::ifstream file(std::string(FREETYPE_TEST_FONTS) + "/" + name, std::ios::binary);

@@ -1,6 +1,7 @@
 #include "prx/libSceOpusCeltDec/libSceOpusCeltDec.hpp"
 #include "prx/libSceOpusDec/libSceOpusDec.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -8,14 +9,6 @@
 #include <stdexcept>
 
 namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
-
-template <typename TFunction>
-void RequireThrows(TFunction function) {
-    try { function(); } catch (const std::runtime_error&) { return; }
-    std::abort();
-}
 
 const std::uint8_t CELT_PACKET[] = {
     0xFC, 0xB5, 0x1F, 0xBC, 0xC8, 0xCA, 0x0B, 0xC2, 0x18, 0x1A, 0xFB, 0xDB, 0x3E, 0x2B, 0x6B, 0x0A, 0x67, 0x71, 0x25, 0x2F, 0x51, 0x57, 0x4F, 0x78,
@@ -85,7 +78,7 @@ void RequireDecoding(const Api& api) {
         for (std::size_t index = 1; index <= 1920; ++index) Require(floats[index] == Converted(reference[index]));
     }
     floats.fill(2.0f);
-    RequireThrows([&] { api.decodeFloat(states[2].data(), CELT_PACKET, sizeof(CELT_PACKET), floats.data() + 1, 7679); });
+    ExpectErr<std::runtime_error>([&] { api.decodeFloat(states[2].data(), CELT_PACKET, sizeof(CELT_PACKET), floats.data() + 1, 7679); });
     Require(std::all_of(floats.begin(), floats.end(), [](auto value) { return value == 2.0f; }));
     for (auto& state : states) Require(api.destroy(state.data()) == 0);
     Require(api.terminate(&context) == 0);
@@ -114,8 +107,8 @@ void RequireTimeoutVariants() {
     pcm.fill(12345);
     floats.fill(2.0f);
     for (std::uint32_t timeout : {0u, 1u, 1000u, 0xFFFFFFFEu}) {
-        RequireThrows([&] { sceOpusDecDecodeWithPriorityAndTimeout(states[1].data(), CELT_PACKET, sizeof(CELT_PACKET), pcm.data(), 3840, 40, timeout, &batch); });
-        RequireThrows([&] { sceOpusDecDecodeFloatWithPriorityAndTimeout(states[1].data(), CELT_PACKET, sizeof(CELT_PACKET), floats.data(), 7680, 40, timeout, &batch); });
+        ExpectErr<std::runtime_error>([&] { sceOpusDecDecodeWithPriorityAndTimeout(states[1].data(), CELT_PACKET, sizeof(CELT_PACKET), pcm.data(), 3840, 40, timeout, &batch); });
+        ExpectErr<std::runtime_error>([&] { sceOpusDecDecodeFloatWithPriorityAndTimeout(states[1].data(), CELT_PACKET, sizeof(CELT_PACKET), floats.data(), 7680, 40, timeout, &batch); });
     }
     Require(batch == 0xA5A5A5A5u);
     Require(std::all_of(pcm.begin(), pcm.end(), [](auto value) { return value == 12345; }));

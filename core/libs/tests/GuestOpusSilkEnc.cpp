@@ -1,6 +1,7 @@
 #include "prx/libSceOpusSilkEnc/include/Api.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -17,19 +18,6 @@ namespace {
 
 void ClobberErrno(std::uintptr_t, std::size_t) {
     errno = 99;
-}
-
-void Require(bool value, const std::source_location& location = std::source_location::current()) {
-    if (!value) {
-        std::fprintf(stderr, "Require failed at %s:%d\n", location.file_name(), static_cast<int>(location.line()));
-        std::abort();
-    }
-}
-
-template <typename TFunction>
-void RequireThrows(TFunction function) {
-    try { function(); } catch (const std::runtime_error&) { return; }
-    std::abort();
 }
 
 template <std::size_t Size>
@@ -184,10 +172,10 @@ void RequireEarlyAnswers(int callerApplication) {
     Require(sceOpusSilkEncCtl(ToState(blank), 4000) == EncoderError(0x15));
     Require(errno == 71);
     errno = 71;
-    RequireThrows([&] { sceOpusSilkEncCtl(reinterpret_cast<OpusSilkEncoder*>(0x10), 4000); });
+    ExpectErr<std::runtime_error>([&] { sceOpusSilkEncCtl(reinterpret_cast<OpusSilkEncoder*>(0x10), 4000); });
     Require(errno == 71);
     errno = 71;
-    RequireThrows([&] { sceOpusSilkEncEncodeWithPriority(reinterpret_cast<OpusSilkEncoder*>(0x10), pcm.data(), 960, packet.data(), 1500, 50); });
+    ExpectErr<std::runtime_error>([&] { sceOpusSilkEncEncodeWithPriority(reinterpret_cast<OpusSilkEncoder*>(0x10), pcm.data(), 960, packet.data(), 1500, 50); });
     Require(errno == 71);
     Require(sceOpusSilkEncCtl(ToState(wideMarker), 4000) == EncoderError(0x15));
     for (const int request : std::array<int, 9>{0, -3, 3999, 4032, 4047, 11001, 11004, 2147483647, -2147483647 - 1})
@@ -210,8 +198,8 @@ void RequireEarlyAnswers(int callerApplication) {
     Require(sceOpusSilkEncGetAjmContext(ToState(marked), &contextWords[1]) == 0);
     Require(contextWords == std::array<std::uint32_t, 3>{0xBAD0C0DEu, 0x6B7C8D9Eu, 0xBAD0C0DEu});
     errno = 71;
-    RequireThrows([&] { sceOpusSilkEncGetAjmContext(reinterpret_cast<const OpusSilkEncoder*>(0x10), &ajmContext); });
-    RequireThrows([&] { sceOpusSilkEncGetAjmContext(ToState(marked), reinterpret_cast<std::uint32_t*>(0x10)); });
+    ExpectErr<std::runtime_error>([&] { sceOpusSilkEncGetAjmContext(reinterpret_cast<const OpusSilkEncoder*>(0x10), &ajmContext); });
+    ExpectErr<std::runtime_error>([&] { sceOpusSilkEncGetAjmContext(ToState(marked), reinterpret_cast<std::uint32_t*>(0x10)); });
     Require(errno == 71);
 }
 
@@ -232,8 +220,8 @@ int main() {
     Require(sceOpusSilkEncDestroy(nullptr) == static_cast<int>(errorBase + 0x01));
     std::uint32_t context = 0;
     Require(sceOpusSilkEncInitialize(&context) == 0);
-    RequireThrows([&] { sceOpusSilkEncInitialize(&context); });
-    RequireThrows([&] { sceOpusSilkEncTerminate(nullptr); });
+    ExpectErr<std::runtime_error>([&] { sceOpusSilkEncInitialize(&context); });
+    ExpectErr<std::runtime_error>([&] { sceOpusSilkEncTerminate(nullptr); });
 
     std::array<std::uint8_t, 65536> invalidState{};
     std::array<std::int16_t, 5760> samples{};
@@ -274,14 +262,14 @@ int main() {
     Require(sceOpusSilkEncEncode(ToState(state), samples.data(), 120, packet, sizeof(packet)) == static_cast<int>(errorBase + 0x03));
     Require(sceOpusSilkEncEncode(ToState(state), samples.data(), 240, packet, sizeof(packet)) == static_cast<int>(errorBase + 0x03));
     Require(packet[0] == 0x5A && packet[1] == 0x5A);
-    RequireThrows([&] { sceOpusSilkEncEncode(ToState(state), samples.data(), 960, packet, -1); });
+    ExpectErr<std::runtime_error>([&] { sceOpusSilkEncEncode(ToState(state), samples.data(), 960, packet, -1); });
     Require(sceOpusSilkEncEncodeFloat(nullptr, floatSamples.data(), 960, packet, sizeof(packet)) == static_cast<int>(errorBase + 0x01));
     Require(sceOpusSilkEncEncodeFloat(ToState(state), nullptr, 960, packet, sizeof(packet)) == static_cast<int>(errorBase + 0x02));
     Require(sceOpusSilkEncEncodeFloat(ToState(state), floatSamples.data(), 0, packet, sizeof(packet)) == static_cast<int>(errorBase + 0x03));
     Require(sceOpusSilkEncEncodeFloat(ToState(invalidState), floatSamples.data(), -1, packet, sizeof(packet)) == static_cast<int>(errorBase + 0x15));
     Require(sceOpusSilkEncEncodeFloat(ToState(invalidState), nullptr, 960, packet, sizeof(packet)) == static_cast<int>(errorBase + 0x02));
-    RequireThrows([&] { sceOpusSilkEncEncodeFloat(ToState(state), floatSamples.data(), -1, packet, sizeof(packet)); });
-    RequireThrows([&] { sceOpusSilkEncEncodeFloat(ToState(state), floatSamples.data(), 1100000, packet, sizeof(packet)); });
+    ExpectErr<std::runtime_error>([&] { sceOpusSilkEncEncodeFloat(ToState(state), floatSamples.data(), -1, packet, sizeof(packet)); });
+    ExpectErr<std::runtime_error>([&] { sceOpusSilkEncEncodeFloat(ToState(state), floatSamples.data(), 1100000, packet, sizeof(packet)); });
 
     auto snapshot = state;
     Require(sceOpusSilkEncDestroy(ToState(state)) == 0);
@@ -377,8 +365,8 @@ int main() {
     ++instanceId;
     Require(sceOpusSilkEncDestroy(ToState(liveState)) == 0);
     Require(sceOpusSilkEncTerminate(&context) == 0);
-    RequireThrows([&] { sceOpusSilkEncTerminate(&context); });
-    RequireThrows([&] { sceOpusSilkEncCreateEx(&context, ToState(liveState), 48000, 2, callerApplication); });
+    ExpectErr<std::runtime_error>([&] { sceOpusSilkEncTerminate(&context); });
+    ExpectErr<std::runtime_error>([&] { sceOpusSilkEncCreateEx(&context, ToState(liveState), 48000, 2, callerApplication); });
     Require(sceOpusSilkEncCreate(ToState(liveState), 48000, 1, callerApplication) == 0);
     ++instanceId;
     Require(sceOpusSilkEncCreate(ToState(liveState), 48000, 2, callerApplication) == 0);

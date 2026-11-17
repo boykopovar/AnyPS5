@@ -1,15 +1,10 @@
 #include "prx/libSceAmpr/include/Api.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-
-static void Require(bool value) {
-    if (value) return;
-    std::fputs("Ampr command buffer size check failed\n", stderr);
-    std::abort();
-}
 
 int main() {
     Require(sceAmprCommandBufferGetSize(nullptr) == 0);

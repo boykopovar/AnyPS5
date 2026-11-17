@@ -2,6 +2,7 @@
 #include "prx/libSceLibreSsl3/include/Cipher.hpp"
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 
 #include <mbedtls/chacha20.h>
 #include <mbedtls/chachapoly.h>
@@ -24,12 +25,6 @@ constexpr int GetTag = 0x10;
 constexpr int SetTag = 0x11;
 constexpr int SetIvFixed = 0x12;
 constexpr int GetIvLength = 0x25;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL3 ChaCha check failed at line %u\n", location.line());
-    std::abort();
-}
 
 void* APS5_VABI Allocate(std::size_t size) {
     return std::malloc(size);

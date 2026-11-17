@@ -1,5 +1,6 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -15,12 +16,6 @@
 #include <type_traits>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "ICU C string: %s\n", message);
-    std::abort();
-}
 
 template<class TCall>
 bool Rejects(TCall call) {

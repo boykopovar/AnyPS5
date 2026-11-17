@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Execution/include/HostHdr.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "tests/VideoOutTestEnvironment.hpp"
+#include "Testing.hpp"
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -32,10 +33,6 @@ constexpr std::uint32_t Width = 259;
 constexpr std::uint32_t Height = 137;
 constexpr std::uint32_t ClearWord = 600u | (500u << 10u) | (300u << 20u) | (3u << 30u);
 
-void check(bool condition, const std::string& reason) {
-    if (!condition) throw std::runtime_error(reason);
-}
-
 std::span<std::byte> alignedBuffer(std::vector<std::byte>& allocation, std::size_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(allocation.data());
     const auto aligned = (address + 65535u) & ~static_cast<std::uintptr_t>(65535u);
@@ -56,11 +53,11 @@ void flip(int handle, const std::shared_ptr<VideoOutConfig>& cfg, int index) {
         std::lock_guard lock(cfg->mutex);
         target = cfg->flipStatus.count + 1;
     }
-    check(sceVideoOutSubmitFlip(handle, index, 1, index) == 0, "flip submission failed");
+    Require(sceVideoOutSubmitFlip(handle, index, 1, index) == 0, "flip submission failed");
     std::unique_lock lock(cfg->mutex);
-    check(cfg->vblankCond.wait_for(lock, std::chrono::seconds(15), [&] { return cfg->failure != nullptr || cfg->flipStatus.count == target; }), "presentation did not complete");
+    Require(cfg->vblankCond.wait_for(lock, std::chrono::seconds(15), [&] { return cfg->failure != nullptr || cfg->flipStatus.count == target; }), "presentation did not complete");
     if (cfg->failure) std::rethrow_exception(cfg->failure);
-    check(cfg->flipStatus.currentBuffer == index && cfg->flipStatus.flipPendingNum == 0, "presentation status is wrong");
+    Require(cfg->flipStatus.currentBuffer == index && cfg->flipStatus.flipPendingNum == 0, "presentation status is wrong");
 }
 
 std::vector<std::vector<std::byte>> readDumps(std::size_t bytes) {
@@ -86,7 +83,7 @@ void findDump(const std::vector<std::vector<std::byte>>& dumps, const std::vecto
         best = std::min(best, worst);
     }
     std::printf("%s: largest difference from the CPU conversion %d\n", what, best);
-    check(best <= 1, std::string(what) + " has no frame dump within one level of the CPU conversion");
+    Require(best <= 1, std::string(what) + " has no frame dump within one level of the CPU conversion");
 }
 
 int run() {
@@ -106,7 +103,7 @@ int run() {
         std::printf("skipped, no display or Vulkan device: %s\n", error.what());
         return SkipReturnCode;
     }
-    check(handle > 0, "sceVideoOutOpen failed");
+    Require(handle > 0, "sceVideoOutOpen failed");
     auto cfg = VideoOutDriver::Get().GetConfig(handle);
     const std::size_t tiledBytes = static_cast<std::size_t>((Width + 127u) / 128u) * ((Height + 127u) / 128u) * 65536u;
     const std::size_t linearBytes = static_cast<std::size_t>(Width) * Height * 4u;
@@ -123,33 +120,33 @@ int run() {
     VideoOutBufferAttribute2 attribute{};
     VideoOutBuffers buffer{pq.data(), nullptr, {nullptr, nullptr}};
     sceVideoOutSetBufferAttribute2(&attribute, Bgr10Pq, 0, Width, Height, 0, 0, 0);
-    check(sceVideoOutRegisterBuffers2(handle, 0, 0, &buffer, 1, &attribute, 0, nullptr) == 0, "the tiled PQ buffer was not registered");
+    Require(sceVideoOutRegisterBuffers2(handle, 0, 0, &buffer, 1, &attribute, 0, nullptr) == 0, "the tiled PQ buffer was not registered");
     buffer = {linear.data(), nullptr, {nullptr, nullptr}};
     sceVideoOutSetBufferAttribute2(&attribute, Rgb10Pq, 1, Width, Height, 0, 0, 0);
-    check(sceVideoOutRegisterBuffers2(handle, 1, 1, &buffer, 1, &attribute, 0, nullptr) == 0, "the linear PQ buffer was not registered");
+    Require(sceVideoOutRegisterBuffers2(handle, 1, 1, &buffer, 1, &attribute, 0, nullptr) == 0, "the linear PQ buffer was not registered");
     buffer = {sdr.data(), nullptr, {nullptr, nullptr}};
     sceVideoOutSetBufferAttribute2(&attribute, Bgra8, 0, Width, Height, 0, 0, 0);
-    check(sceVideoOutRegisterBuffers2(handle, 2, 2, &buffer, 1, &attribute, 0, nullptr) == 0, "the SDR buffer was not registered");
+    Require(sceVideoOutRegisterBuffers2(handle, 2, 2, &buffer, 1, &attribute, 0, nullptr) == 0, "the SDR buffer was not registered");
     buffer = {cleared.data(), keys.data(), {nullptr, nullptr}};
     sceVideoOutSetBufferAttribute2(&attribute, Rgb10Pq, 0, Width, Height, 0, 0x208, ClearWord);
-    check(sceVideoOutRegisterBuffers2(handle, 3, 3, &buffer, 1, &attribute, VIDEO_OUT_BUFFER_ATTRIBUTE_CATEGORY_COMPRESSED, nullptr) == 0, "the DCC PQ buffer was not registered");
+    Require(sceVideoOutRegisterBuffers2(handle, 3, 3, &buffer, 1, &attribute, VIDEO_OUT_BUFFER_ATTRIBUTE_CATEGORY_COMPRESSED, nullptr) == 0, "the DCC PQ buffer was not registered");
 
     const auto present = [&](int index) { flip(handle, cfg, index); };
     const auto host = AgcDriver::CurrentHostHdr();
     VideoOutOutputStatus status{};
-    check(sceVideoOutGetOutputStatus(handle, &status) == 0 && status.dynamicRange == (host.available ? 2u : 1u), "the output status does not follow the host's HDR output");
+    Require(sceVideoOutGetOutputStatus(handle, &status) == 0 && status.dynamicRange == (host.available ? 2u : 1u), "the output status does not follow the host's HDR output");
     if (host.available) {
         for (const int index : {0, 1, 3, -1}) {
             present(index);
-            check(AgcDriverPresentingHdr10_nid_postfix(), "PQ display buffer " + std::to_string(index) + " did not reach an HDR10 swapchain");
+            Require(AgcDriverPresentingHdr10_nid_postfix(), "PQ display buffer " + std::to_string(index) + " did not reach an HDR10 swapchain");
         }
         present(2);
-        check(!AgcDriverPresentingHdr10_nid_postfix(), "the SDR buffer did not bring the SDR swapchain back");
+        Require(!AgcDriverPresentingHdr10_nid_postfix(), "the SDR buffer did not bring the SDR swapchain back");
         present(0);
-        check(AgcDriverPresentingHdr10_nid_postfix(), "the HDR10 swapchain did not come back for a PQ buffer");
+        Require(AgcDriverPresentingHdr10_nid_postfix(), "the HDR10 swapchain did not come back for a PQ buffer");
         AgcDriverSetHostDisplayHdr_nid_postfix(AgcDriver::DisplayHdrFromOutput(true, 600.0f, 0.05f, 350.0f));
         present(0);
-        check(AgcDriverPresentingHdr10_nid_postfix() && AgcDriver::CurrentHostHdr().display.maxLuminance == 600.0f, "a new monitor luminance left the HDR10 swapchain");
+        Require(AgcDriverPresentingHdr10_nid_postfix() && AgcDriver::CurrentHostHdr().display.maxLuminance == 600.0f, "a new monitor luminance left the HDR10 swapchain");
         std::printf("HDR10 presentation passed (peak %.1f nits)\n", host.display.maxLuminance);
     } else {
         std::printf("HDR output is unavailable on this host (display in HDR: %s, surface offers HDR10: %s): HDR10 presentation not exercised\n", host.display.hdr ? "yes" : "no", host.surfaceHdr10 ? "yes" : "no");
@@ -159,10 +156,10 @@ int run() {
     for (const int index : {0, 1, 3}) {
         present(index);
         present(index);
-        check(!AgcDriverPresentingHdr10_nid_postfix(), "PQ display buffer " + std::to_string(index) + " reached an HDR10 swapchain without HDR output");
+        Require(!AgcDriverPresentingHdr10_nid_postfix(), "PQ display buffer " + std::to_string(index) + " reached an HDR10 swapchain without HDR output");
     }
     const auto whiteNits = AgcDriver::PqToSdrWhiteNits(AgcDriver::CurrentHostHdr());
-    check(whiteNits == 437.0f, "the SDR conversion does not use the peak the title was told");
+    Require(whiteNits == 437.0f, "the SDR conversion does not use the peak the title was told");
     const auto tiledExpected = AgcDriver::DecodeDisplayBuffer({reinterpret_cast<std::uint64_t>(pq.data()), Bgr10Pq, Width, Height}, pq);
     const auto linearExpected = AgcDriver::DecodeDisplayBuffer({reinterpret_cast<std::uint64_t>(linear.data()), Rgb10Pq, Width, Height, 1, 0}, linear);
     const auto clearPixel = AgcDriver::PqToSdrPixel(ClearWord, true, whiteNits);

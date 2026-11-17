@@ -1,17 +1,10 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
 #include <string_view>
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "AccessibilityObjectRoles check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 namespace {
 

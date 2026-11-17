@@ -2,6 +2,7 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -11,12 +12,6 @@
 #include <source_location>
 
 static void ClobberErrno(std::uintptr_t, std::size_t) { errno = 99; }
-
-static void Require(bool value, std::source_location location = std::source_location::current()) {
-    if (value) return;
-    std::fprintf(stderr, "%s:%u: system logger assertion failed\n", location.file_name(), location.line());
-    std::abort();
-}
 
 int main() {
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);

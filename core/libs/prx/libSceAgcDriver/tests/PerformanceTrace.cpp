@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
 #include "prx/libSceAgcDriver/Execution/include/TraceFile.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
+#include "Testing.hpp"
 #include "zlib.h"
 #include <atomic>
 #include <condition_variable>
@@ -22,16 +23,12 @@ using Edge = TraceWindow::Edge;
 using std::chrono::microseconds;
 using std::chrono::milliseconds;
 
-void Check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
-
 void WindowByFrames() {
     auto window = TraceWindow::Parse("3:2", nullptr).value();
     std::vector<Edge> edges;
     for (std::uint64_t present = 0; present < 8; ++present) edges.push_back(window.Present(present, std::chrono::seconds(present)));
-    Check(edges == std::vector<Edge>{Edge::None, Edge::None, Edge::None, Edge::Open, Edge::None, Edge::Close, Edge::None, Edge::None}, "frame window opened or closed at the wrong present");
-    Check(window.Describe() == "frames 3:2", "frame window description changed");
+    Require(edges == std::vector<Edge>{Edge::None, Edge::None, Edge::None, Edge::Open, Edge::None, Edge::Close, Edge::None, Edge::None}, "frame window opened or closed at the wrong present");
+    Require(window.Describe() == "frames 3:2", "frame window description changed");
 }
 
 void WindowBySeconds() {
@@ -39,22 +36,22 @@ void WindowBySeconds() {
     std::vector<Edge> edges;
     for (const auto elapsed : {milliseconds(0), milliseconds(1999), milliseconds(2000), milliseconds(2999), milliseconds(3000), milliseconds(5000)})
         edges.push_back(window.Present(0, elapsed));
-    Check(edges == std::vector<Edge>{Edge::None, Edge::None, Edge::Open, Edge::None, Edge::Close, Edge::None}, "seconds window opened or closed at the wrong present");
-    Check(window.Describe() == "seconds 2:1", "seconds window description changed");
+    Require(edges == std::vector<Edge>{Edge::None, Edge::None, Edge::Open, Edge::None, Edge::Close, Edge::None}, "seconds window opened or closed at the wrong present");
+    Require(window.Describe() == "seconds 2:1", "seconds window description changed");
 }
 
 void WindowRejects() {
-    Check(!TraceWindow::Parse(nullptr, nullptr).has_value(), "a window was made without a switch");
+    Require(!TraceWindow::Parse(nullptr, nullptr).has_value(), "a window was made without a switch");
     for (const auto* text : {"5", "a:1", "1:0", "1:", ":1", "1:2:3", "-1:2"}) {
         bool rejected = false;
         try { TraceWindow::Parse(text, nullptr); }
         catch (const std::invalid_argument&) { rejected = true; }
-        Check(rejected, "a malformed window was accepted");
+        Require(rejected, "a malformed window was accepted");
     }
     bool rejected = false;
     try { TraceWindow::Parse("1:1", "1:1"); }
     catch (const std::invalid_argument&) { rejected = true; }
-    Check(rejected, "frames and seconds were accepted together");
+    Require(rejected, "frames and seconds were accepted together");
 }
 
 void WindowTrigger() {
@@ -68,35 +65,35 @@ void WindowTrigger() {
     const auto utf8 = path.u8string();
     const std::string trigger(utf8.begin(), utf8.end());
     auto seconds = TraceWindow::Parse(nullptr, "2:1", trigger.c_str()).value();
-    Check(seconds.Present(0, milliseconds(2000)) == Edge::None, "missing trigger opened the window");
+    Require(seconds.Present(0, milliseconds(2000)) == Edge::None, "missing trigger opened the window");
     std::ofstream(path).close();
-    Check(seconds.Present(1, milliseconds(2249)) == Edge::None, "trigger polling was not throttled");
-    Check(seconds.Present(2, milliseconds(2250)) == Edge::Open, "trigger did not open the seconds window");
+    Require(seconds.Present(1, milliseconds(2249)) == Edge::None, "trigger polling was not throttled");
+    Require(seconds.Present(2, milliseconds(2250)) == Edge::Open, "trigger did not open the seconds window");
     std::filesystem::remove(path);
-    Check(seconds.Present(3, milliseconds(3249)) == Edge::None, "seconds duration began before the trigger");
-    Check(seconds.Present(4, milliseconds(3250)) == Edge::Close, "seconds window did not close after its full duration");
+    Require(seconds.Present(3, milliseconds(3249)) == Edge::None, "seconds duration began before the trigger");
+    Require(seconds.Present(4, milliseconds(3250)) == Edge::Close, "seconds window did not close after its full duration");
     std::ofstream(path).close();
-    Check(seconds.Present(5, milliseconds(5000)) == Edge::None, "trigger reopened a completed window");
+    Require(seconds.Present(5, milliseconds(5000)) == Edge::None, "trigger reopened a completed window");
     auto frames = TraceWindow::Parse("3:2", nullptr, trigger.c_str()).value();
-    Check(frames.Present(2, milliseconds(0)) == Edge::None, "preexisting trigger bypassed the frame lower bound");
-    Check(frames.Present(3, milliseconds(1)) == Edge::Open, "preexisting trigger did not open at the frame lower bound");
-    Check(frames.Present(4, milliseconds(2)) == Edge::None, "trigger shortened the frame window");
-    Check(frames.Present(5, milliseconds(3)) == Edge::Close, "triggered frame window did not close");
+    Require(frames.Present(2, milliseconds(0)) == Edge::None, "preexisting trigger bypassed the frame lower bound");
+    Require(frames.Present(3, milliseconds(1)) == Edge::Open, "preexisting trigger did not open at the frame lower bound");
+    Require(frames.Present(4, milliseconds(2)) == Edge::None, "trigger shortened the frame window");
+    Require(frames.Present(5, milliseconds(3)) == Edge::Close, "triggered frame window did not close");
     std::filesystem::remove(path);
     auto late = TraceWindow::Parse("3:2", nullptr, trigger.c_str()).value();
-    Check(late.Present(100, milliseconds(0)) == Edge::None, "late frame window opened without a trigger");
+    Require(late.Present(100, milliseconds(0)) == Edge::None, "late frame window opened without a trigger");
     std::ofstream(path).close();
-    Check(late.Present(120, milliseconds(250)) == Edge::Open, "late frame trigger was ignored");
-    Check(late.Present(121, milliseconds(500)) == Edge::None, "frame duration began at its original lower bound");
-    Check(late.Present(122, milliseconds(750)) == Edge::Close, "late frame window did not close after its full length");
+    Require(late.Present(120, milliseconds(250)) == Edge::Open, "late frame trigger was ignored");
+    Require(late.Present(121, milliseconds(500)) == Edge::None, "frame duration began at its original lower bound");
+    Require(late.Present(122, milliseconds(750)) == Edge::Close, "late frame window did not close after its full length");
     auto early = TraceWindow::Parse(nullptr, "2:1", trigger.c_str()).value();
-    Check(early.Present(0, milliseconds(1999)) == Edge::None, "preexisting trigger bypassed the time lower bound");
-    Check(early.Present(1, milliseconds(2000)) == Edge::Open, "preexisting trigger did not open at the time lower bound");
+    Require(early.Present(0, milliseconds(1999)) == Edge::None, "preexisting trigger bypassed the time lower bound");
+    Require(early.Present(1, milliseconds(2000)) == Edge::Open, "preexisting trigger did not open at the time lower bound");
     const auto reject = [](auto&& action) {
         bool rejected = false;
         try { action(); }
         catch (const std::exception&) { rejected = true; }
-        Check(rejected, "invalid trigger configuration was accepted");
+        Require(rejected, "invalid trigger configuration was accepted");
     };
     reject([] { TraceWindow::Parse(nullptr, nullptr, "scene.ready"); });
     reject([] { TraceWindow::Parse("0:1", nullptr, ""); });
@@ -105,12 +102,12 @@ void WindowTrigger() {
     const auto badPath = trigger + "/child";
     std::error_code error;
     const auto status = std::filesystem::status(std::filesystem::path(std::u8string_view(reinterpret_cast<const char8_t*>(badPath.c_str()))), error);
-    Check(!std::filesystem::exists(status), "a path beneath a regular file unexpectedly exists");
-    Check(error == std::errc::not_a_directory || error == std::errc::no_such_file_or_directory, "unexpected error for a trigger beneath a regular file");
+    Require(!std::filesystem::exists(status), "a path beneath a regular file unexpectedly exists");
+    Require(error == std::errc::not_a_directory || error == std::errc::no_such_file_or_directory, "unexpected error for a trigger beneath a regular file");
     if (error == std::errc::not_a_directory)
         reject([&] { TraceWindow::Parse("0:1", nullptr, badPath.c_str())->Present(0, milliseconds(0)); });
     else
-        Check(TraceWindow::Parse("0:1", nullptr, badPath.c_str())->Present(0, milliseconds(0)) == Edge::None, "a missing trigger beneath a regular file opened the window");
+        Require(TraceWindow::Parse("0:1", nullptr, badPath.c_str())->Present(0, milliseconds(0)) == Edge::None, "a missing trigger beneath a regular file opened the window");
 }
 
 void WindowEnvironment() {
@@ -142,21 +139,21 @@ void WindowEnvironment() {
         for (std::size_t index = 0; index < names.size(); ++index) set(names[index], saved[index] ? saved[index]->c_str() : nullptr);
     };
     const auto environment = std::unique_ptr<int, decltype(restore)>(&token, restore);
-    Check(set(names[0], frameSpec.c_str()) == 0 && set(names[1], nullptr) == 0 && set(names[2], marker.c_str()) == 0, "cannot configure the native trace environment");
-    Check(TraceWindow::TriggerConfigured(), "the native trigger environment was not detected");
+    Require(set(names[0], frameSpec.c_str()) == 0 && set(names[1], nullptr) == 0 && set(names[2], marker.c_str()) == 0, "cannot configure the native trace environment");
+    Require(TraceWindow::TriggerConfigured(), "the native trigger environment was not detected");
     auto window = TraceWindow::FromEnvironment().value();
-    Check(window.Present(0, milliseconds(0)) == Edge::None, "environment trace opened before the marker existed");
+    Require(window.Present(0, milliseconds(0)) == Edge::None, "environment trace opened before the marker existed");
     std::ofstream(marker).close();
-    Check(window.Present(1, milliseconds(250)) == Edge::Open, "environment reader did not use the Unicode marker path");
+    Require(window.Present(1, milliseconds(250)) == Edge::Open, "environment reader did not use the Unicode marker path");
     std::filesystem::remove(marker);
-    Check(window.Present(2, milliseconds(251)) == Edge::Close, "environment trace did not retain its bounded frame window");
-    Check(set(names[2], nullptr) == 0 && !TraceWindow::TriggerConfigured(), "clearing the native trigger environment did not disable its gate");
-    Check(TraceWindow::FromEnvironment()->Present(0, milliseconds(0)) == Edge::Open, "an unset environment marker changed ordinary tracing");
-    Check(set(names[0], nullptr) == 0 && set(names[2], marker.c_str()) == 0, "cannot configure the missing-window environment case");
+    Require(window.Present(2, milliseconds(251)) == Edge::Close, "environment trace did not retain its bounded frame window");
+    Require(set(names[2], nullptr) == 0 && !TraceWindow::TriggerConfigured(), "clearing the native trigger environment did not disable its gate");
+    Require(TraceWindow::FromEnvironment()->Present(0, milliseconds(0)) == Edge::Open, "an unset environment marker changed ordinary tracing");
+    Require(set(names[0], nullptr) == 0 && set(names[2], marker.c_str()) == 0, "cannot configure the missing-window environment case");
     bool rejected = false;
     try { TraceWindow::FromEnvironment(); }
     catch (const std::invalid_argument&) { rejected = true; }
-    Check(rejected, "an environment trigger was accepted without a trace window");
+    Require(rejected, "an environment trigger was accepted without a trace window");
 }
 
 void BufferCap() {
@@ -165,19 +162,19 @@ void BufferCap() {
     const auto origin = Clock::now();
     for (int index = 0; index < 3; ++index) thread.Add("Driver.Packet", nullptr, origin + milliseconds(index), origin + milliseconds(index) + microseconds(30));
     const auto snapshot = thread.Collect();
-    Check(snapshot.slices.size() == 2 && snapshot.dropped, "a full buffer did not stop and set the dropped flag");
-    Check(snapshot.eventsLost == 1 && snapshot.eventsFullAt == origin + milliseconds(2) && !snapshot.totalsFull, "a full buffer did not report the lost slice and its time apart from the totals");
-    Check(snapshot.totals.size() == 1 && snapshot.totals[0].count == 3 && snapshot.totals[0].length == microseconds(90), "totals missed a slice past the cap");
+    Require(snapshot.slices.size() == 2 && snapshot.dropped, "a full buffer did not stop and set the dropped flag");
+    Require(snapshot.eventsLost == 1 && snapshot.eventsFullAt == origin + milliseconds(2) && !snapshot.totalsFull, "a full buffer did not report the lost slice and its time apart from the totals");
+    Require(snapshot.totals.size() == 1 && snapshot.totals[0].count == 3 && snapshot.totals[0].length == microseconds(90), "totals missed a slice past the cap");
 }
 
 void LostEventsCount() {
     std::atomic<std::uint64_t> presents{1};
     TraceThread thread("queue worker 0x0", presents, 2);
     const auto origin = Clock::now();
-    Check(!thread.Collect().eventsFullAt && thread.Collect().eventsLost == 0, "a thread that lost nothing reported a loss");
+    Require(!thread.Collect().eventsFullAt && thread.Collect().eventsLost == 0, "a thread that lost nothing reported a loss");
     for (int index = 0; index < 10; ++index) thread.Add("Driver.Packet", nullptr, origin + milliseconds(index), origin + milliseconds(index) + microseconds(30));
     const auto snapshot = thread.Collect();
-    Check(snapshot.eventsLost == 8 && snapshot.eventsFullAt == origin + milliseconds(2), "the lost slices were not counted from the first one");
+    Require(snapshot.eventsLost == 8 && snapshot.eventsFullAt == origin + milliseconds(2), "the lost slices were not counted from the first one");
 }
 
 void TotalsOverflow() {
@@ -187,29 +184,29 @@ void TotalsOverflow() {
     const auto origin = Clock::now();
     for (const auto& scope : scopes) thread.Add(&scope, nullptr, origin, origin + microseconds(30));
     const auto snapshot = thread.Collect();
-    Check(snapshot.totalsFull && snapshot.dropped && snapshot.eventsLost == 0 && !snapshot.eventsFullAt, "a full totals table was not reported apart from the event buffer");
-    Check(snapshot.totals.size() == 512 && snapshot.slices.size() == 600, "a full totals table stopped the event buffer or kept more than its entries");
+    Require(snapshot.totalsFull && snapshot.dropped && snapshot.eventsLost == 0 && !snapshot.eventsFullAt, "a full totals table was not reported apart from the event buffer");
+    Require(snapshot.totals.size() == 512 && snapshot.slices.size() == 600, "a full totals table stopped the event buffer or kept more than its entries");
     TraceThread weighted("weighted", presents, 1);
     weighted.Count("OwnedDraw.blocks", 17);
     weighted.Count("OwnedDraw.blocks", 3);
     weighted.Count("OwnedDraw.zero", 0);
     const auto weightedSnapshot = weighted.Collect();
-    Check(weightedSnapshot.totals.size() == 1 && weightedSnapshot.totals[0].count == 20 && weightedSnapshot.slices.empty(), "weighted counts were not accumulated without trace slices");
+    Require(weightedSnapshot.totals.size() == 1 && weightedSnapshot.totals[0].count == 20 && weightedSnapshot.slices.empty(), "weighted counts were not accumulated without trace slices");
     TraceThread countThread("count worker", presents, 1);
     for (std::size_t index = 0; index < 512; ++index) countThread.Count(&scopes[index]);
     countThread.Count("OwnedDraw.arm_attempt");
     countThread.Count("OwnedDraw.arm_blocks_requested", 17);
     const auto counts = countThread.Collect();
-    Check(counts.totalsFull && counts.dropped && counts.slices.empty(), "a lost owned counter did not mark the totals full");
+    Require(counts.totalsFull && counts.dropped && counts.slices.empty(), "a lost owned counter did not mark the totals full");
     const auto line = TraceFormat::Summary(AgcDriver::TraceSummary{}, std::vector<TraceThread::Snapshot>{counts}, {});
-    Check(line.find("\"trace_dropped\":true") != std::string::npos && line.find("\"totals_full\":true") != std::string::npos, "the summary hid a lost owned counter");
+    Require(line.find("\"trace_dropped\":true") != std::string::npos && line.find("\"totals_full\":true") != std::string::npos, "the summary hid a lost owned counter");
 }
 
 void CapacitySettings() {
-    Check(TraceThread::ParseCapacity(nullptr) == TraceThread::DefaultCapacity, "the default event capacity changed");
-    Check(TraceThread::ParseCapacity("1") == 1, "the smallest event capacity was rejected");
-    Check(TraceThread::ParseCapacity("3145728") == 3145728, "a larger event capacity was rejected");
-    Check(TraceThread::ParseCapacity("4194304") == TraceThread::MaximumCapacity, "the maximum event capacity was rejected");
+    Require(TraceThread::ParseCapacity(nullptr) == TraceThread::DefaultCapacity, "the default event capacity changed");
+    Require(TraceThread::ParseCapacity("1") == 1, "the smallest event capacity was rejected");
+    Require(TraceThread::ParseCapacity("3145728") == 3145728, "a larger event capacity was rejected");
+    Require(TraceThread::ParseCapacity("4194304") == TraceThread::MaximumCapacity, "the maximum event capacity was rejected");
     std::atomic<std::uint64_t> presents{1};
     const auto requested = std::to_string(TraceThread::DefaultCapacity + 1);
     TraceThread thread("queue worker 0x0", presents, TraceThread::ParseCapacity(requested.c_str()));
@@ -217,16 +214,16 @@ void CapacitySettings() {
     for (std::size_t index = 0; index <= TraceThread::DefaultCapacity; ++index)
         thread.Add("Driver.Packet", nullptr, origin, origin + microseconds(30));
     auto snapshot = thread.Collect();
-    Check(snapshot.slices.size() == TraceThread::DefaultCapacity + 1 && !snapshot.dropped, "the configured buffer stopped at the default capacity");
+    Require(snapshot.slices.size() == TraceThread::DefaultCapacity + 1 && !snapshot.dropped, "the configured buffer stopped at the default capacity");
     thread.Add("Driver.Packet", nullptr, origin, origin + microseconds(30));
     snapshot = thread.Collect();
-    Check(snapshot.slices.size() == TraceThread::DefaultCapacity + 1 && snapshot.dropped, "the configured buffer grew beyond its capacity");
-    Check(snapshot.totals.size() == 1 && snapshot.totals[0].count == TraceThread::DefaultCapacity + 2, "totals lost the event past the configured capacity");
+    Require(snapshot.slices.size() == TraceThread::DefaultCapacity + 1 && snapshot.dropped, "the configured buffer grew beyond its capacity");
+    Require(snapshot.totals.size() == 1 && snapshot.totals[0].count == TraceThread::DefaultCapacity + 2, "totals lost the event past the configured capacity");
     for (const auto* text : {"", "0", "-1", "+1", "1.5", " 1", "1 ", "1x", "4194305", "18446744073709551616"}) {
         bool rejected = false;
         try { TraceThread::ParseCapacity(text); }
         catch (const std::invalid_argument& error) { rejected = std::string_view(error.what()).starts_with("APS5_TRACE_EVENTS="); }
-        Check(rejected, "an invalid event capacity did not report its setting");
+        Require(rejected, "an invalid event capacity did not report its setting");
     }
 }
 
@@ -240,32 +237,32 @@ void FoldShortSlices() {
     presents.store(2);
     thread.Add("Driver.Completion", nullptr, origin + microseconds(50), origin + microseconds(90));
     const auto snapshot = thread.Collect();
-    Check(snapshot.slices.size() == 3 && !snapshot.dropped, "short slices were written or long ones lost");
-    Check(std::string_view(snapshot.slices[0].scope) == "Driver.Draw", "the first long slice is missing");
-    Check(snapshot.slices[1].scope == nullptr && snapshot.slices[1].begin == origin && snapshot.slices[1].length == microseconds(10), "the folded sample of the previous present is wrong");
-    Check(std::string_view(snapshot.slices[2].scope) == "Driver.Completion", "the slice after the present is missing");
-    Check(snapshot.totals.size() == 4, "totals did not keep scope and stage apart");
-    for (const auto& total : snapshot.totals) Check(total.count == 1, "a total counted a slice twice");
+    Require(snapshot.slices.size() == 3 && !snapshot.dropped, "short slices were written or long ones lost");
+    Require(std::string_view(snapshot.slices[0].scope) == "Driver.Draw", "the first long slice is missing");
+    Require(snapshot.slices[1].scope == nullptr && snapshot.slices[1].begin == origin && snapshot.slices[1].length == microseconds(10), "the folded sample of the previous present is wrong");
+    Require(std::string_view(snapshot.slices[2].scope) == "Driver.Completion", "the slice after the present is missing");
+    Require(snapshot.totals.size() == 4, "totals did not keep scope and stage apart");
+    for (const auto& total : snapshot.totals) Require(total.count == 1, "a total counted a slice twice");
 }
 
 void EscapeStrings() {
     std::string output;
     TraceFormat::AppendString(output, "a\"b\\c\n\xe9");
-    Check(output == "\"a\\\"b\\\\c\\u000a\\u00e9\"", "string escaping is not valid JSON");
+    Require(output == "\"a\\\"b\\\\c\\u000a\\u00e9\"", "string escaping is not valid JSON");
 }
 
 void Utf8Strings() {
     std::string output;
     TraceFormat::AppendString(output, "Ghost of Y\xc5\x8dtei \xe2\x84\xa2 \xf0\x9f\x8e\xae");
-    Check(output == "\"Ghost of Y\xc5\x8dtei \xe2\x84\xa2 \xf0\x9f\x8e\xae\"", "a UTF-8 title was not written as its own characters");
+    Require(output == "\"Ghost of Y\xc5\x8dtei \xe2\x84\xa2 \xf0\x9f\x8e\xae\"", "a UTF-8 title was not written as its own characters");
     output.clear();
     TraceFormat::AppendString(output, "\xc0\xaf\xed\xa0\x80\xf4\x90\x80\x80\xe2\x84\x7f\xc5");
-    Check(output == "\"\\u00c0\\u00af\\u00ed\\u00a0\\u0080\\u00f4\\u0090\\u0080\\u0080\\u00e2\\u0084\\u007f\\u00c5\"", "a byte outside a valid UTF-8 sequence was not escaped");
+    Require(output == "\"\\u00c0\\u00af\\u00ed\\u00a0\\u0080\\u00f4\\u0090\\u0080\\u0080\\u00e2\\u0084\\u007f\\u00c5\"", "a byte outside a valid UTF-8 sequence was not escaped");
     AgcDriver::TraceSummary summary;
     summary.title = AgcDriver::TraceTitle{"PPSA26344", "Ghost of Y\xc5\x8dtei", "01.000.000"};
     const auto origin = Clock::now();
     const std::vector<Clock::time_point> presents{origin, origin + milliseconds(16)};
-    Check(TraceFormat::Summary(summary, {}, presents).find("\"title\":\"Ghost of Y\xc5\x8dtei\"") != std::string::npos, "the summary line did not keep a UTF-8 title");
+    Require(TraceFormat::Summary(summary, {}, presents).find("\"title\":\"Ghost of Y\xc5\x8dtei\"") != std::string::npos, "the summary line did not keep a UTF-8 title");
 }
 
 void EventsShape() {
@@ -287,7 +284,7 @@ void EventsShape() {
         "{\"name\":\"Driver.Packet.draw\",\"ph\":\"X\",\"ts\":12.000,\"pid\":7,\"tid\":1,\"dur\":25.000},\n"
         "{\"name\":\"present\",\"ph\":\"i\",\"ts\":0.000,\"pid\":7,\"tid\":1,\"s\":\"g\",\"args\":{\"present\":5}}\n"
         "]}\n";
-    Check(json == expected, "trace events changed shape");
+    Require(json == expected, "trace events changed shape");
 }
 
 void BatchIds() {
@@ -296,7 +293,7 @@ void BatchIds() {
     const std::vector<TraceThread::Snapshot> threads{{"queue worker 0x0", slices, {}, false}};
     const std::vector<Clock::time_point> presents{origin, origin + milliseconds(16)};
     const auto json = TraceFormat::Events(7, origin, threads, 0, presents, 5);
-    Check(json.find("{\"name\":\"Driver.Packet.dispatch\",\"ph\":\"X\",\"ts\":10.000,\"pid\":7,\"tid\":1,\"dur\":30.000,\"args\":{\"batch\":42}}") != std::string::npos, "a slice's batch id was not written");
+    Require(json.find("{\"name\":\"Driver.Packet.dispatch\",\"ph\":\"X\",\"ts\":10.000,\"pid\":7,\"tid\":1,\"dur\":30.000,\"args\":{\"batch\":42}}") != std::string::npos, "a slice's batch id was not written");
     std::atomic<std::uint64_t> count{1};
     TraceThread thread("queue worker 0x0", count, 4);
     AgcDriver::TraceBatchTag = 9;
@@ -304,11 +301,11 @@ void BatchIds() {
     AgcDriver::TraceBatchTag = 0;
     thread.Add("Driver.Packet", nullptr, origin + milliseconds(1), origin + milliseconds(1) + microseconds(30));
     const auto snapshot = thread.Collect();
-    Check(snapshot.slices.size() == 2 && snapshot.slices[0].batch == 9 && snapshot.slices[1].batch == 0, "a slice did not take its thread's batch id");
+    Require(snapshot.slices.size() == 2 && snapshot.slices[0].batch == 9 && snapshot.slices[1].batch == 0, "a slice did not take its thread's batch id");
     const AgcDriver::TraceClockSample first{1000.0, origin + microseconds(10)};
     const AgcDriver::TraceClockSample last{41000.0, origin + microseconds(30)};
     const std::vector<AgcDriver::TraceGpuRange> ranges{{"batch", 5000.0, 9000.0, 3}};
-    Check(TraceFormat::GpuSlices(ranges, first, last, origin)[0].batch == 3, "a GPU range lost its batch id");
+    Require(TraceFormat::GpuSlices(ranges, first, last, origin)[0].batch == 3, "a GPU range lost its batch id");
 }
 
 void FullBufferEvents() {
@@ -321,10 +318,10 @@ void FullBufferEvents() {
     const std::string expected =
         "{\"name\":\"trace buffer full\",\"ph\":\"i\",\"ts\":3000.000,\"pid\":7,\"tid\":1,\"s\":\"t\",\"args\":{\"events_lost\":7}},\n"
         "{\"name\":\"present\"";
-    Check(json.find(expected) != std::string::npos, "the cut-off instant event is missing or has the wrong shape");
+    Require(json.find(expected) != std::string::npos, "the cut-off instant event is missing or has the wrong shape");
     snapshot.eventsLost = 0;
     snapshot.eventsFullAt.reset();
-    Check(TraceFormat::Events(7, origin, std::vector<TraceThread::Snapshot>{snapshot}, 0, presents, 5).find("trace buffer full") == std::string::npos, "a thread that lost nothing got a cut-off event");
+    Require(TraceFormat::Events(7, origin, std::vector<TraceThread::Snapshot>{snapshot}, 0, presents, 5).find("trace buffer full") == std::string::npos, "a thread that lost nothing got a cut-off event");
 }
 
 void SummaryFields() {
@@ -356,40 +353,40 @@ void SummaryFields() {
         "\"phase_totals_ms\":{\"Driver.Completion\":2.000,\"Driver.Packet\":12.000,\"Driver.Packet.draw\":10.000,\"Driver.Present\":6.000,\"Driver.Present.inflight_wait\":4.000},"
         "\"top_phases_ms_per_frame\":{\"Driver.Packet\":6.000,\"Driver.Packet.draw\":5.000,\"Driver.Present\":3.000,\"Driver.Present.inflight_wait\":2.000,\"Driver.Completion\":1.000},"
         "\"owned_draw_counts\":{},\"graphics_track\":{},\"trace_dropped\":false,\"trace\":\"aps5-trace-abc-7.json.gz\"}\n";
-    Check(line == expected, "summary line changed");
+    Require(line == expected, "summary line changed");
     auto unboundSummary = summary;
     unboundSummary.ownedDrawUnbound = 3;
     const auto unboundLine = TraceFormat::Summary(unboundSummary, threads, presents);
-    Check(unboundLine.find("\"owned_draw_counts\":{\"OwnedDraw.unbound\":3},\"graphics_track\":{},\"trace_dropped\":true") != std::string::npos, "unbound draw counts were not marked as incomplete");
+    Require(unboundLine.find("\"owned_draw_counts\":{\"OwnedDraw.unbound\":3},\"graphics_track\":{},\"trace_dropped\":true") != std::string::npos, "unbound draw counts were not marked as incomplete");
     auto counted = threads;
     counted[0].totals.push_back({"OwnedDraw.arm_attempt", nullptr, {}, 5});
     counted[1].totals.push_back({"OwnedDraw.arm_attempt", nullptr, {}, 3});
     counted[1].totals.push_back({"OwnedDraw.reused", nullptr, {}, 2});
     counted[0].totals.push_back({"OwnedDraw.arm_blocks_requested", nullptr, {}, 17});
     const auto countedLine = TraceFormat::Summary(summary, counted, presents);
-    Check(countedLine.find("\"owned_draw_counts\":{\"OwnedDraw.arm_attempt\":8,\"OwnedDraw.arm_blocks_requested\":17,\"OwnedDraw.reused\":2}") != std::string::npos, "named owned counts were not summed across threads");
+    Require(countedLine.find("\"owned_draw_counts\":{\"OwnedDraw.arm_attempt\":8,\"OwnedDraw.arm_blocks_requested\":17,\"OwnedDraw.reused\":2}") != std::string::npos, "named owned counts were not summed across threads");
     counted[0].totals.push_back({"Graphics.Barrier.draw", nullptr, {}, 4});
     counted[1].totals.push_back({"Graphics.Barrier.draw", nullptr, {}, 3});
     counted[1].totals.push_back({"Graphics.Copy.bytes", nullptr, {}, 65536});
     counted[0].totals.push_back({"Graphics.RenderPass", nullptr, {}, 2});
     counted[0].totals.push_back({"Graphics.Draw", nullptr, milliseconds(5), 1});
     const auto graphicsLine = TraceFormat::Summary(summary, counted, presents);
-    Check(graphicsLine.find("\"graphics_track\":{\"Graphics.Barrier.draw\":7,\"Graphics.Copy.bytes\":65536,\"Graphics.RenderPass\":2}") != std::string::npos, "graphics counts were not summed across threads");
-    Check(graphicsLine.find("\"Graphics.Draw\":2.500") != std::string::npos, "a timed Graphics scope was taken out of the phases");
+    Require(graphicsLine.find("\"graphics_track\":{\"Graphics.Barrier.draw\":7,\"Graphics.Copy.bytes\":65536,\"Graphics.RenderPass\":2}") != std::string::npos, "graphics counts were not summed across threads");
+    Require(graphicsLine.find("\"Graphics.Draw\":2.500") != std::string::npos, "a timed Graphics scope was taken out of the phases");
     const std::vector<TraceThread::Total> before{{"OwnedDraw.arm_attempt", nullptr, {}, 2}};
     const std::vector<TraceThread::Total> after{{"OwnedDraw.arm_attempt", nullptr, {}, 5}};
     const auto countDelta = TraceFormat::Since(after, before);
-    Check(countDelta.size() == 1 && countDelta[0].count == 3, "interval owned count was not reduced by its previous total");
+    Require(countDelta.size() == 1 && countDelta[0].count == 3, "interval owned count was not reduced by its previous total");
     auto dropped = threads;
     dropped[1].dropped = true;
-    Check(TraceFormat::Summary(summary, dropped, presents).find("\"trace_dropped\":true") != std::string::npos, "a dropped thread did not mark the summary");
-    Check(line.find("trace_dropped_threads") == std::string::npos, "a summary without drops listed threads");
+    Require(TraceFormat::Summary(summary, dropped, presents).find("\"trace_dropped\":true") != std::string::npos, "a dropped thread did not mark the summary");
+    Require(line.find("trace_dropped_threads") == std::string::npos, "a summary without drops listed threads");
     dropped[0].dropped = true;
     dropped[0].eventsLost = 2240000;
     dropped[0].eventsFullAt = presents.front() + milliseconds(32);
     dropped[1].totalsFull = true;
     const auto detailed = TraceFormat::Summary(summary, dropped, presents);
-    Check(detailed.find("\"trace_dropped\":true,\"trace_dropped_threads\":{\"queue worker 0x0\":{\"events_full_after_s\":0.032,\"events_lost\":2240000,\"totals_full\":false},\"presenter\":{\"totals_full\":true}},\"trace\":") != std::string::npos, "the dropped threads were not listed with their reasons");
+    Require(detailed.find("\"trace_dropped\":true,\"trace_dropped_threads\":{\"queue worker 0x0\":{\"events_full_after_s\":0.032,\"events_lost\":2240000,\"totals_full\":false},\"presenter\":{\"totals_full\":true}},\"trace\":") != std::string::npos, "the dropped threads were not listed with their reasons");
     auto shared = threads;
     shared.push_back({"shader prepare", {}, {}, true});
     shared.push_back({"shader prepare", {}, {}, true});
@@ -399,8 +396,8 @@ void SummaryFields() {
     shared[3].eventsFullAt = presents.front() + milliseconds(10);
     shared[3].totalsFull = true;
     const auto merged = TraceFormat::Summary(summary, shared, presents);
-    Check(merged.find("\"trace_dropped_threads\":{\"shader prepare\":{\"events_full_after_s\":0.010,\"events_lost\":12,\"totals_full\":true}},\"trace\":") != std::string::npos, "threads with one name were not merged into one entry");
-    Check(merged.find("shader prepare") == merged.rfind("shader prepare"), "threads with one name were listed twice");
+    Require(merged.find("\"trace_dropped_threads\":{\"shader prepare\":{\"events_full_after_s\":0.010,\"events_lost\":12,\"totals_full\":true}},\"trace\":") != std::string::npos, "threads with one name were not merged into one entry");
+    Require(merged.find("shader prepare") == merged.rfind("shader prepare"), "threads with one name were listed twice");
 }
 
 void SummaryRetainsAllPhases() {
@@ -412,12 +409,12 @@ void SummaryRetainsAllPhases() {
     const std::vector<Clock::time_point> presents{origin, origin + milliseconds(16), origin + milliseconds(32)};
     const auto line = TraceFormat::Summary(summary, threads, presents);
     const auto totals = line.substr(line.find("\"phase_totals_ms\":"), line.find("\"top_phases_ms_per_frame\":") - line.find("\"phase_totals_ms\":"));
-    Check(totals.find("\"phase0\":10.000") != std::string::npos, "raw totals were divided by the present count");
-    Check(totals.find("\"rare\":3.000") != std::string::npos, "a phase outside the top eight was lost or not summed across threads");
-    Check(line.substr(line.find("\"top_phases_ms_per_frame\":")).find("\"rare\"") == std::string::npos, "the top eight phases no longer have their original limit");
+    Require(totals.find("\"phase0\":10.000") != std::string::npos, "raw totals were divided by the present count");
+    Require(totals.find("\"rare\":3.000") != std::string::npos, "a phase outside the top eight was lost or not summed across threads");
+    Require(line.substr(line.find("\"top_phases_ms_per_frame\":")).find("\"rare\"") == std::string::npos, "the top eight phases no longer have their original limit");
     const auto empty = TraceFormat::Summary(summary, threads, {});
-    Check(empty.find(totals) != std::string::npos, "raw totals were lost without presents");
-    Check(TraceFormat::Summary(summary, {}, {}).find("\"phase_totals_ms\":{}") != std::string::npos, "empty totals did not produce an empty object");
+    Require(empty.find(totals) != std::string::npos, "raw totals were lost without presents");
+    Require(TraceFormat::Summary(summary, {}, {}).find("\"phase_totals_ms\":{}") != std::string::npos, "empty totals did not produce an empty object");
 }
 
 void GpuClock() {
@@ -426,26 +423,26 @@ void GpuClock() {
     const AgcDriver::TraceClockSample last{41000.0, origin + microseconds(30)};
     const std::vector<AgcDriver::TraceGpuRange> ranges{{"batch", 5000.0, 9000.0}, {"draw", 6000.0, 7000.0}, {"batch", -39000.0, -30000.0}, {"copy", 8000.0, 8000.0}};
     const auto slices = TraceFormat::GpuSlices(ranges, first, last, origin);
-    Check(slices.size() == 2, "a GPU range before the window or without length was kept");
-    Check(std::string_view(slices[0].scope) == "batch" && slices[0].stage == nullptr && slices[0].begin == origin + microseconds(12) && slices[0].length == microseconds(2), "a GPU range was not mapped between the two calibrations");
-    Check(std::string_view(slices[1].scope) == "draw" && slices[1].begin == origin + std::chrono::nanoseconds(12500) && slices[1].length == std::chrono::nanoseconds(500), "a nested GPU range was not mapped");
+    Require(slices.size() == 2, "a GPU range before the window or without length was kept");
+    Require(std::string_view(slices[0].scope) == "batch" && slices[0].stage == nullptr && slices[0].begin == origin + microseconds(12) && slices[0].length == microseconds(2), "a GPU range was not mapped between the two calibrations");
+    Require(std::string_view(slices[1].scope) == "draw" && slices[1].begin == origin + std::chrono::nanoseconds(12500) && slices[1].length == std::chrono::nanoseconds(500), "a nested GPU range was not mapped");
     const AgcDriver::TraceClockSample same{1000.0, origin + microseconds(10)};
-    Check(TraceFormat::GpuSlices(ranges, same, same, origin)[0].begin == origin + microseconds(14), "one calibration does not map at the CPU rate");
+    Require(TraceFormat::GpuSlices(ranges, same, same, origin)[0].begin == origin + microseconds(14), "one calibration does not map at the CPU rate");
 }
 
 void IntervalDue() {
-    Check(!AgcDriver::TraceInterval::Parse(nullptr).has_value(), "an interval was made without a switch");
+    Require(!AgcDriver::TraceInterval::Parse(nullptr).has_value(), "an interval was made without a switch");
     for (const auto* text : {"", "0", "-5", "1.5", "a", "5s", "1:2", "99999999999"}) {
         bool rejected = false;
         try { AgcDriver::TraceInterval::Parse(text); }
         catch (const std::invalid_argument&) { rejected = true; }
-        Check(rejected, "a malformed interval was accepted");
+        Require(rejected, "a malformed interval was accepted");
     }
     auto interval = AgcDriver::TraceInterval::Parse("30").value();
-    Check(interval.Describe() == "summary_every 30", "interval description changed");
-    Check(!interval.Due(milliseconds(29999)) && interval.Due(milliseconds(30000)), "the interval was due at the wrong time");
+    Require(interval.Describe() == "summary_every 30", "interval description changed");
+    Require(!interval.Due(milliseconds(29999)) && interval.Due(milliseconds(30000)), "the interval was due at the wrong time");
     interval.Restart(milliseconds(30500));
-    Check(interval.Begun() == milliseconds(30500) && !interval.Due(milliseconds(60499)) && interval.Due(milliseconds(60500)), "a restarted interval did not count from its restart");
+    Require(interval.Begun() == milliseconds(30500) && !interval.Due(milliseconds(60499)) && interval.Due(milliseconds(60500)), "a restarted interval did not count from its restart");
 }
 
 void SummaryOnlyThread() {
@@ -458,21 +455,21 @@ void SummaryOnlyThread() {
     presents.store(2);
     thread.Add("Driver.Completion", nullptr, origin + milliseconds(5), origin + microseconds(5005));
     auto snapshot = thread.Collect();
-    Check(snapshot.slices.empty() && !snapshot.dropped, "a thread that is not buffering kept a slice");
-    Check(snapshot.totals.size() == 2 && snapshot.totals[0].count + snapshot.totals[1].count == 3, "a thread that is not buffering missed a total");
+    Require(snapshot.slices.empty() && !snapshot.dropped, "a thread that is not buffering kept a slice");
+    Require(snapshot.totals.size() == 2 && snapshot.totals[0].count + snapshot.totals[1].count == 3, "a thread that is not buffering missed a total");
     buffering.store(true);
     thread.Add("Driver.Packet", nullptr, origin + milliseconds(6), origin + milliseconds(7));
-    Check(thread.Collect().slices.empty(), "a zero capacity buffer held a slice");
+    Require(thread.Collect().slices.empty(), "a zero capacity buffer held a slice");
 }
 
 void TotalsSince() {
     const std::vector<TraceThread::Total> before{{"Driver.Packet", nullptr, milliseconds(4), 2}, {"Driver.Present", nullptr, milliseconds(1), 1}};
     const std::vector<TraceThread::Total> now{{"Driver.Packet", nullptr, milliseconds(10), 5}, {"Driver.Present", nullptr, milliseconds(1), 1}, {"Driver.Completion", nullptr, milliseconds(3), 2}};
     const auto delta = TraceFormat::Since(now, before);
-    Check(delta.size() == 2, "a total without a new slice was kept or a new one lost");
-    Check(delta[0].length == milliseconds(6) && delta[0].count == 3, "a total was not reduced by the previous interval");
-    Check(std::string_view(delta[1].scope) == "Driver.Completion" && delta[1].length == milliseconds(3) && delta[1].count == 2, "a total without a previous value changed");
-    Check(TraceFormat::Since(now, {}).size() == 3, "the first interval dropped a total");
+    Require(delta.size() == 2, "a total without a new slice was kept or a new one lost");
+    Require(delta[0].length == milliseconds(6) && delta[0].count == 3, "a total was not reduced by the previous interval");
+    Require(std::string_view(delta[1].scope) == "Driver.Completion" && delta[1].length == milliseconds(3) && delta[1].count == 2, "a total without a previous value changed");
+    Require(TraceFormat::Since(now, {}).size() == 3, "the first interval dropped a total");
 }
 
 void IntervalSummaryFields() {
@@ -503,7 +500,7 @@ void IntervalSummaryFields() {
         "\"phase_totals_ms\":{\"Driver.Packet\":12.000},"
         "\"top_phases_ms_per_frame\":{\"Driver.Packet\":6.000},"
         "\"owned_draw_counts\":{},\"graphics_track\":{},\"trace_dropped\":false,\"trace\":\"\"}\n";
-    Check(line == expected, "interval summary line changed");
+    Require(line == expected, "interval summary line changed");
 }
 
 void IntervalDroppedThreads() {
@@ -514,15 +511,15 @@ void IntervalDroppedThreads() {
     const std::vector<Clock::time_point> presents{origin + milliseconds(100), origin + milliseconds(116)};
     threads[0].eventsFullAt = origin + milliseconds(40);
     auto line = TraceFormat::Summary(summary, threads, presents);
-    Check(line.find("\"queue worker 0x0\":{\"events_lost\":5,\"totals_full\":false}") != std::string::npos, "a loss before the interval printed its time");
+    Require(line.find("\"queue worker 0x0\":{\"events_lost\":5,\"totals_full\":false}") != std::string::npos, "a loss before the interval printed its time");
     threads[0].eventsFullAt = origin + milliseconds(104);
     line = TraceFormat::Summary(summary, threads, presents);
-    Check(line.find("{\"events_full_after_s\":0.004,\"events_lost\":5,") != std::string::npos, "a loss inside the interval lost its time");
+    Require(line.find("{\"events_full_after_s\":0.004,\"events_lost\":5,") != std::string::npos, "a loss inside the interval lost its time");
     threads[0].eventsFullAt = origin + milliseconds(120);
     line = TraceFormat::Summary(summary, threads, presents);
-    Check(line.find("\"queue worker 0x0\":{\"events_lost\":5,\"totals_full\":false}") != std::string::npos && line.find("events_full_after_s") == std::string::npos, "a loss after the last present printed its time");
+    Require(line.find("\"queue worker 0x0\":{\"events_lost\":5,\"totals_full\":false}") != std::string::npos && line.find("events_full_after_s") == std::string::npos, "a loss after the last present printed its time");
     line = TraceFormat::Summary(summary, threads, {});
-    Check(line.find("\"queue worker 0x0\":{\"events_lost\":5,\"totals_full\":false}") != std::string::npos && line.find("events_full_after_s") == std::string::npos, "an interval without presents printed a loss time");
+    Require(line.find("\"queue worker 0x0\":{\"events_lost\":5,\"totals_full\":false}") != std::string::npos && line.find("events_full_after_s") == std::string::npos, "an interval without presents printed a loss time");
 }
 
 void SummaryMachineFields() {
@@ -540,19 +537,19 @@ void SummaryMachineFields() {
     summary.title = AgcDriver::TraceTitle{"PPSA00000", "Example", "01.002.000"};
     const std::vector<Clock::time_point> presents{origin, origin + milliseconds(16)};
     const auto line = TraceFormat::Summary(summary, {}, presents);
-    Check(line.find("\"os\":\"OS 1\",\"cpu\":\"CPU \\\"X\\\"\",\"cpu_threads\":16,\"memory_mib\":32000,\"title_id\":\"PPSA00000\",\"title\":\"Example\",\"content_version\":\"01.002.000\",\"resolution\":\"1920x1080\"") != std::string::npos, "the summary line did not name the machine and title");
+    Require(line.find("\"os\":\"OS 1\",\"cpu\":\"CPU \\\"X\\\"\",\"cpu_threads\":16,\"memory_mib\":32000,\"title_id\":\"PPSA00000\",\"title\":\"Example\",\"content_version\":\"01.002.000\",\"resolution\":\"1920x1080\"") != std::string::npos, "the summary line did not name the machine and title");
     summary.title.reset();
-    Check(TraceFormat::Summary(summary, {}, presents).find("title_id") == std::string::npos, "a summary without param.json named a title");
+    Require(TraceFormat::Summary(summary, {}, presents).find("title_id") == std::string::npos, "a summary without param.json named a title");
     summary.host.reset();
     const auto bare = TraceFormat::Summary(summary, {}, presents);
-    Check(bare.find("\"os\":\"OS 1\",\"resolution\":\"1920x1080\"") != std::string::npos && bare.find("cpu") == std::string::npos, "a summary on a host without a CPU name changed its fields");
+    Require(bare.find("\"os\":\"OS 1\",\"resolution\":\"1920x1080\"") != std::string::npos && bare.find("cpu") == std::string::npos, "a summary on a host without a CPU name changed its fields");
 }
 
 void FrameMicroseconds() {
     const auto origin = Clock::now();
     const std::vector<Clock::time_point> presents{origin, origin + microseconds(16667), origin + microseconds(50000), origin + microseconds(50000)};
-    Check(TraceFormat::FrameMicroseconds(presents) == std::vector<std::uint32_t>{16667, 33333, 0}, "frame intervals in microseconds changed");
-    Check(TraceFormat::FrameMicroseconds({}).empty(), "no presents gave frame intervals");
+    Require(TraceFormat::FrameMicroseconds(presents) == std::vector<std::uint32_t>{16667, 33333, 0}, "frame intervals in microseconds changed");
+    Require(TraceFormat::FrameMicroseconds({}).empty(), "no presents gave frame intervals");
 }
 
 void BenchFormat() {
@@ -572,19 +569,19 @@ void BenchFormat() {
         "\"cpu\":\"CPU\",\"cpu_threads\":8,\"memory_mib\":16000,\"intervals_dropped\":3,\"intervals\":[\n"
         "{\"start_s\":0.000,\"end_s\":30.500,\"first_present\":0,\"resolution\":\"1920x1080\",\"gpu_busy_ms\":120.250,\"frame_us\":[16667,16666]},\n"
         "{\"start_s\":30.500,\"end_s\":61.000,\"first_present\":1830,\"resolution\":\"2560x1440\",\"gpu_busy_ms\":98.500,\"frame_us\":[]}\n]}\n";
-    Check(TraceFormat::Bench(summary, intervals, 3) == expected, "benchmark file changed");
+    Require(TraceFormat::Bench(summary, intervals, 3) == expected, "benchmark file changed");
 }
 
 void BenchRotation() {
     AgcDriver::TraceBenchIntervals kept;
     std::uint64_t dropped = 0;
     for (std::size_t index = 0; index < AgcDriver::TraceBench::MaximumIntervals; ++index) AgcDriver::TraceBench::Keep(kept, std::make_shared<const AgcDriver::TraceBenchInterval>(AgcDriver::TraceBenchInterval{static_cast<double>(index)}), dropped);
-    Check(kept.size() == AgcDriver::TraceBench::MaximumIntervals && dropped == 0, "intervals were dropped before the file was full");
+    Require(kept.size() == AgcDriver::TraceBench::MaximumIntervals && dropped == 0, "intervals were dropped before the file was full");
     for (std::size_t index = 0; index < 5; ++index) AgcDriver::TraceBench::Keep(kept, std::make_shared<const AgcDriver::TraceBenchInterval>(AgcDriver::TraceBenchInterval{static_cast<double>(AgcDriver::TraceBench::MaximumIntervals + index)}), dropped);
-    Check(kept.size() == AgcDriver::TraceBench::MaximumIntervals && dropped == 5, "a full file did not drop one interval per new one");
-    Check(kept.front()->startS == 5 && kept.back()->startS == static_cast<double>(AgcDriver::TraceBench::MaximumIntervals + 4), "the file did not keep the newest intervals");
+    Require(kept.size() == AgcDriver::TraceBench::MaximumIntervals && dropped == 5, "a full file did not drop one interval per new one");
+    Require(kept.front()->startS == 5 && kept.back()->startS == static_cast<double>(AgcDriver::TraceBench::MaximumIntervals + 4), "the file did not keep the newest intervals");
     const auto file = TraceFormat::Bench({}, kept, dropped);
-    Check(file.find("\"intervals_dropped\":5,") != std::string::npos && file.find("{\"start_s\":5.000,") != std::string::npos && file.find("{\"start_s\":4.000,") == std::string::npos, "the file does not match the kept intervals");
+    Require(file.find("\"intervals_dropped\":5,") != std::string::npos && file.find("{\"start_s\":5.000,") != std::string::npos && file.find("{\"start_s\":4.000,") == std::string::npos, "the file does not match the kept intervals");
 }
 
 void BenchWriterKeepsNewest() {
@@ -615,8 +612,8 @@ void BenchWriterKeepsNewest() {
     changed.notify_all();
     writer.Flush();
     writer.Stop();
-    Check(written == std::vector<std::uint64_t>{1, 4}, "a benchmark snapshot was written after a newer one replaced it");
-    Check(writer.Superseded() == 2, "replaced benchmark snapshots were not counted");
+    Require(written == std::vector<std::uint64_t>{1, 4}, "a benchmark snapshot was written after a newer one replaced it");
+    Require(writer.Superseded() == 2, "replaced benchmark snapshots were not counted");
 }
 
 void BenchWriterStopWrites() {
@@ -625,17 +622,17 @@ void BenchWriterStopWrites() {
         AgcDriver::TraceBenchWriter writer([&](const AgcDriver::TraceBenchSnapshot& snapshot) { written.push_back(snapshot.dropped); });
         writer.Write({{}, {}, 7});
     }
-    Check(written == std::vector<std::uint64_t>{7}, "stopping the benchmark writer lost its pending snapshot");
+    Require(written == std::vector<std::uint64_t>{7}, "stopping the benchmark writer lost its pending snapshot");
 }
 
 std::string ReadGzip(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
     const std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
-    Check(bytes.size() > 18, "the gzip file is truncated");
+    Require(bytes.size() > 18, "the gzip file is truncated");
     std::size_t size = 0;
     for (unsigned index = 0; index < 4; ++index) size |= static_cast<std::size_t>(bytes[bytes.size() - 4 + index]) << (8 * index);
     z_stream stream{};
-    Check(inflateInit2(&stream, -MAX_WBITS) == Z_OK, "inflateInit2 failed");
+    Require(inflateInit2(&stream, -MAX_WBITS) == Z_OK, "inflateInit2 failed");
     std::string inflated(size, 0);
     stream.next_in = const_cast<Bytef*>(bytes.data() + 10);
     stream.avail_in = static_cast<uInt>(bytes.size() - 18);
@@ -643,7 +640,7 @@ std::string ReadGzip(const std::filesystem::path& path) {
     stream.avail_out = static_cast<uInt>(inflated.size());
     const int status = inflate(&stream, Z_FINISH);
     inflateEnd(&stream);
-    Check(status == Z_STREAM_END && stream.avail_out == 0, "the gzip file does not inflate to its size");
+    Require(status == Z_STREAM_END && stream.avail_out == 0, "the gzip file does not inflate to its size");
     return inflated;
 }
 
@@ -655,7 +652,7 @@ void ReplaceGzipFile() {
     temporary += ".tmp";
     AgcDriver::TraceFile::ReplaceGzip(path, "{\"first\":1}\n");
     AgcDriver::TraceFile::ReplaceGzip(path, "{\"second\":2}\n");
-    Check(ReadGzip(path) == "{\"second\":2}\n" && !std::filesystem::exists(temporary), "the benchmark file was not replaced");
+    Require(ReadGzip(path) == "{\"second\":2}\n" && !std::filesystem::exists(temporary), "the benchmark file was not replaced");
     const auto blocked = directory / "aps5-bench-blocked.json.gz";
     auto blockedTemporary = blocked;
     blockedTemporary += ".tmp";
@@ -685,22 +682,22 @@ void ReplaceGzipFile() {
     }
 #endif
     std::filesystem::remove_all(directory);
-    Check(failed && blockedKept && !temporaryLeft, "a replace that could not move its file over the destination did not fail cleanly or left its temporary file");
-    Check(kept == "{\"second\":2}\n", "a failed replace of another file damaged the benchmark file");
+    Require(failed && blockedKept && !temporaryLeft, "a replace that could not move its file over the destination did not fail cleanly or left its temporary file");
+    Require(kept == "{\"second\":2}\n", "a failed replace of another file damaged the benchmark file");
 #ifdef __linux__
-    Check(fullFailed && !fullLeft, "a replace whose write failed left its temporary file behind");
+    Require(fullFailed && !fullLeft, "a replace whose write failed left its temporary file behind");
 #endif
-    Check(writeFailed && keptAfterWrite == "{\"second\":2}\n", "a failed rewrite damaged the previous benchmark file");
+    Require(writeFailed && keptAfterWrite == "{\"second\":2}\n", "a failed rewrite damaged the previous benchmark file");
 }
 
 void BenchSwitch() {
-    Check(!AgcDriver::TraceBench::Parse(nullptr, false), "the benchmark file was enabled without its switch");
-    Check(AgcDriver::TraceBench::Parse("1", true), "APS5_TRACE_BENCH=1 was not accepted");
+    Require(!AgcDriver::TraceBench::Parse(nullptr, false), "the benchmark file was enabled without its switch");
+    Require(AgcDriver::TraceBench::Parse("1", true), "APS5_TRACE_BENCH=1 was not accepted");
     for (const auto& [text, every] : {std::pair{"1", false}, std::pair{"0", true}, std::pair{"yes", true}, std::pair{"", true}}) {
         bool rejected = false;
         try { AgcDriver::TraceBench::Parse(text, every); }
         catch (const std::invalid_argument&) { rejected = true; }
-        Check(rejected, "a malformed or unsupported APS5_TRACE_BENCH was accepted");
+        Require(rejected, "a malformed or unsupported APS5_TRACE_BENCH was accepted");
     }
 }
 
@@ -732,8 +729,8 @@ void CaptureOwnsSnapshots() {
         stage.assign("changed stage");
         gpuName.assign("changed gpu");
     }
-    Check(TraceFormat::Events(capture->process, capture->presents.front(), capture->threads, capture->presenter, capture->presents, capture->summary.firstPresent) == expectedEvents, "closed capture borrowed slices or labels, changed ordering or included a late append");
-    Check(TraceFormat::Summary(capture->summary, capture->threads, capture->presents) == expectedSummary, "closed capture changed totals or loss cutoff");
+    Require(TraceFormat::Events(capture->process, capture->presents.front(), capture->threads, capture->presenter, capture->presents, capture->summary.firstPresent) == expectedEvents, "closed capture borrowed slices or labels, changed ordering or included a late append");
+    Require(TraceFormat::Summary(capture->summary, capture->threads, capture->presents) == expectedSummary, "closed capture changed totals or loss cutoff");
 }
 
 void CaptureWriterDrainAndFailure() {
@@ -754,13 +751,13 @@ void CaptureWriterDrainAndFailure() {
             events = text;
             line = TraceFormat::Summary(closed->summary, closed->threads, closed->presents);
         });
-        Check(output.Write("aps5-trace-capture-7.json.gz"), "closed capture was not queued");
+        Require(output.Write("aps5-trace-capture-7.json.gz"), "closed capture was not queued");
         output.Stop();
         bool failed = false;
         try { output.Flush(); }
         catch (const std::runtime_error& error) { failed = std::string_view(error.what()) == "closed capture write failed"; }
-        Check(failed == fail && calls == 1 && released.expired(), "closed capture stop lost or repeated its job, hid a failure or retained its payload");
-        Check(fail ? events.empty() && line.empty() : !events.empty() && line.find("aps5-trace-capture-7.json.gz") != std::string::npos, "closed capture events and summary lost their pairing");
+        Require(failed == fail && calls == 1 && released.expired(), "closed capture stop lost or repeated its job, hid a failure or retained its payload");
+        Require(fail ? events.empty() && line.empty() : !events.empty() && line.find("aps5-trace-capture-7.json.gz") != std::string::npos, "closed capture events and summary lost their pairing");
     }
 }
 
@@ -774,9 +771,9 @@ void GzipFile() {
     const std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
     input.close();
     std::filesystem::remove(path);
-    Check(bytes.size() > 18 && bytes[0] == 0x1f && bytes[1] == 0x8b && bytes[2] == 8 && bytes[3] == 0, "the gzip header is wrong");
+    Require(bytes.size() > 18 && bytes[0] == 0x1f && bytes[1] == 0x8b && bytes[2] == 8 && bytes[3] == 0, "the gzip header is wrong");
     z_stream stream{};
-    Check(inflateInit2(&stream, -MAX_WBITS) == Z_OK, "inflateInit2 failed");
+    Require(inflateInit2(&stream, -MAX_WBITS) == Z_OK, "inflateInit2 failed");
     std::string inflated(text.size() + 1, 0);
     stream.next_in = const_cast<Bytef*>(bytes.data() + 10);
     stream.avail_in = static_cast<uInt>(bytes.size() - 18);
@@ -786,15 +783,15 @@ void GzipFile() {
     inflated.resize(inflated.size() - stream.avail_out);
     const bool consumed = stream.avail_in == 0;
     inflateEnd(&stream);
-    Check(status == Z_STREAM_END && consumed, "the deflate stream does not end at the trailer");
-    Check(inflated == text, "the gzip file does not hold the text");
+    Require(status == Z_STREAM_END && consumed, "the deflate stream does not end at the trailer");
+    Require(inflated == text, "the gzip file does not hold the text");
     const auto word = [&](std::size_t at) {
         std::uint32_t value = 0;
         for (unsigned index = 0; index < 4; ++index) value |= static_cast<std::uint32_t>(bytes[at + index]) << (8 * index);
         return value;
     };
-    Check(word(bytes.size() - 8) == crc32(0, reinterpret_cast<const Bytef*>(text.data()), static_cast<uInt>(text.size())), "the CRC-32 is wrong");
-    Check(word(bytes.size() - 4) == text.size(), "the size is wrong");
+    Require(word(bytes.size() - 8) == crc32(0, reinterpret_cast<const Bytef*>(text.data()), static_cast<uInt>(text.size())), "the CRC-32 is wrong");
+    Require(word(bytes.size() - 4) == text.size(), "the size is wrong");
 }
 
 void Directory() {
@@ -804,14 +801,14 @@ void Directory() {
         std::optional<std::wstring> value;
         ~Restore() { _wputenv_s(L"APS5_TRACE_DIR", value ? value->c_str() : L""); }
     } restore{previous != nullptr ? std::optional<std::wstring>(previous) : std::nullopt};
-    Check(_wputenv_s(L"APS5_TRACE_DIR", L"") == 0, "clearing the trace directory failed");
-    Check(AgcDriver::TraceFile::Directory() == std::filesystem::path(L"."), "the default trace directory changed");
-    Check(_wputenv_s(L"APS5_TRACE_DIR", L"trace-output") == 0, "setting an ASCII trace directory failed");
-    Check(AgcDriver::TraceFile::Directory() == std::filesystem::path(L"trace-output"), "the ASCII trace directory changed");
+    Require(_wputenv_s(L"APS5_TRACE_DIR", L"") == 0, "clearing the trace directory failed");
+    Require(AgcDriver::TraceFile::Directory() == std::filesystem::path(L"."), "the default trace directory changed");
+    Require(_wputenv_s(L"APS5_TRACE_DIR", L"trace-output") == 0, "setting an ASCII trace directory failed");
+    Require(AgcDriver::TraceFile::Directory() == std::filesystem::path(L"trace-output"), "the ASCII trace directory changed");
     const auto expected = std::filesystem::temp_directory_path() / (L"aps5-trace-\u2122-\u65e5\u672c\u8a9e-" + std::to_wstring(Clock::now().time_since_epoch().count()));
-    Check(_wputenv_s(L"APS5_TRACE_DIR", expected.c_str()) == 0, "setting a Unicode trace directory failed");
+    Require(_wputenv_s(L"APS5_TRACE_DIR", expected.c_str()) == 0, "setting a Unicode trace directory failed");
     const auto directory = AgcDriver::TraceFile::Directory();
-    Check(directory == expected, "the Unicode trace directory was not preserved");
+    Require(directory == expected, "the Unicode trace directory was not preserved");
     std::filesystem::create_directories(directory);
     struct Remove {
         std::filesystem::path path;
@@ -821,8 +818,8 @@ void Directory() {
     AgcDriver::TraceFile::WriteGzip(directory / "aps5-trace.json.gz", "{\"traceEvents\":[]}");
     std::ifstream summary(expected / "aps5-summary.jsonl", std::ios::binary);
     const std::string written((std::istreambuf_iterator<char>(summary)), std::istreambuf_iterator<char>());
-    Check(written == "{\"presents\":1}\n", "the summary was not written in the Unicode directory");
-    Check(std::filesystem::file_size(expected / "aps5-trace.json.gz") > 18, "the trace was not written in the Unicode directory");
+    Require(written == "{\"presents\":1}\n", "the summary was not written in the Unicode directory");
+    Require(std::filesystem::file_size(expected / "aps5-trace.json.gz") > 18, "the trace was not written in the Unicode directory");
 #endif
 }
 
@@ -834,7 +831,7 @@ void AppendLines() {
     const std::string written((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
     input.close();
     std::filesystem::remove(path);
-    Check(written == "{\"presents\":1}\n{\"presents\":2}\n", "summary lines were not appended");
+    Require(written == "{\"presents\":1}\n{\"presents\":2}\n", "summary lines were not appended");
 }
 
 }

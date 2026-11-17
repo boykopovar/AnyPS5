@@ -3,6 +3,7 @@
 #include "prx/libSceHmd/Hmd.hpp"
 #include "prx/libSceHmd2/Hmd2.hpp"
 #include "prx/libSceUserService/UserService.hpp"
+#include "Testing.hpp"
 
 #include <cerrno>
 #include <array>
@@ -13,19 +14,11 @@
 #include <exception>
 
 namespace Hmd2 {
-
 }
 
 namespace {
 
 alignas(16) std::array<std::byte, 0x40> process{};
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "HMD2: %s\n", message);
-        std::abort();
-    }
-}
 
 constexpr std::array<std::uint32_t, 4> bufferSetIds{0, 1, 16, ~0u};
 constexpr std::array<std::uint64_t, 4> frameIds{0, 1, 0x123456789, ~0ull};

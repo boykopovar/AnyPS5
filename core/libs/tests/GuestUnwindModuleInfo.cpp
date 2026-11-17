@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "tests/GuestUnwindModuleInfoFixture.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -10,8 +11,6 @@
 #include <string>
 #include <windows.h>
 #include <psapi.h>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static bool Throws(std::uint64_t address) {
     ModuleInfoForUnwind info{};

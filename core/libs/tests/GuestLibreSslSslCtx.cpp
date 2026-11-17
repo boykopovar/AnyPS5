@@ -6,6 +6,7 @@
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <climits>
 #include <cstddef>
@@ -45,17 +46,6 @@ static LibreSslCtx* Context(TestCtx* ctx) {
     return reinterpret_cast<LibreSslCtx*>(ctx);
 }
 
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL SSL_CTX check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> static void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
-    try { action(); } catch (const std::exception&) { return; }
-    Require(false, location);
-}
-
 static void TestUseCertificateNull() {
     constexpr std::uint64_t nullCertificateError = (20ULL << 24) | (0xfffULL << 12) | 67;
     ERR_clear_error_nid_postfix();
@@ -93,13 +83,13 @@ static void TestUseCertificateNull() {
 static void TestUseCertificateNonNull() {
     int certificate = 0;
     ERR_clear_error_nid_postfix();
-    RequireThrows([&] { SSL_CTX_use_certificate_nid_postfix(nullptr, &certificate); });
+    ExpectErr([&] { SSL_CTX_use_certificate_nid_postfix(nullptr, &certificate); });
     Require(ERR_get_error_nid_postfix() == 0);
 }
 
 static void TestGetVerifyMode() {
     TestCtx ctx {};
-    RequireThrows([] { SSL_CTX_get_verify_mode_nid_postfix(nullptr); });
+    ExpectErr([] { SSL_CTX_get_verify_mode_nid_postfix(nullptr); });
     Require(SSL_CTX_get_verify_mode_nid_postfix(Context(&ctx)) == 0);
     ctx.verifyMode = 0x03;
     Require(SSL_CTX_get_verify_mode_nid_postfix(Context(&ctx)) == 0x03);
@@ -111,7 +101,7 @@ static void TestGetCertStore() {
     int store = 0;
     int ciphers = 0;
     TestCtx ctx {};
-    RequireThrows([] { SSL_CTX_get_cert_store_nid_postfix(nullptr); });
+    ExpectErr([] { SSL_CTX_get_cert_store_nid_postfix(nullptr); });
     Require(SSL_CTX_get_cert_store_nid_postfix(Context(&ctx)) == nullptr);
     ctx.cipherList = &ciphers;
     ctx.certStore = &store;
@@ -121,7 +111,7 @@ static void TestGetCertStore() {
 
 static void TestSetCertStore() {
     TestCtx ctx {};
-    RequireThrows([] { SSL_CTX_set_cert_store_nid_postfix(nullptr, nullptr); });
+    ExpectErr([] { SSL_CTX_set_cert_store_nid_postfix(nullptr, nullptr); });
     auto* oldStore = X509_STORE_new_nid_postfix();
     auto* store = X509_STORE_new_nid_postfix();
     Require(oldStore != nullptr && store != nullptr);
@@ -159,14 +149,14 @@ static void TestLoadVerifyLocations() {
     Require(ERR_get_error_nid_postfix() == 0x20fff043);
     Require(ERR_get_error_nid_postfix() == 0x20fff044);
     Require(ERR_get_error_nid_postfix() == 0);
-    RequireThrows([] { SSL_CTX_load_verify_locations_nid_postfix(nullptr, nullptr, nullptr); });
+    ExpectErr([] { SSL_CTX_load_verify_locations_nid_postfix(nullptr, nullptr, nullptr); });
 }
 
 static void TestSetQuietShutdown() {
     TestCtxInternal internal {};
     TestCtx ctx {};
-    RequireThrows([] { SSL_CTX_set_quiet_shutdown_nid_postfix(nullptr, 1); });
-    RequireThrows([&] { SSL_CTX_set_quiet_shutdown_nid_postfix(Context(&ctx), 1); });
+    ExpectErr([] { SSL_CTX_set_quiet_shutdown_nid_postfix(nullptr, 1); });
+    ExpectErr([&] { SSL_CTX_set_quiet_shutdown_nid_postfix(Context(&ctx), 1); });
     ctx.internal = &internal;
     SSL_CTX_set_quiet_shutdown_nid_postfix(Context(&ctx), 1);
     Require(internal.quietShutdown == 1);
@@ -181,7 +171,7 @@ static void TestSetQuietShutdown() {
 static void TestSetPasswordCallback() {
     int callback = 0;
     TestCtx ctx {};
-    RequireThrows([&] { SSL_CTX_set_default_passwd_cb_nid_postfix(nullptr, &callback); });
+    ExpectErr([&] { SSL_CTX_set_default_passwd_cb_nid_postfix(nullptr, &callback); });
     SSL_CTX_set_default_passwd_cb_nid_postfix(Context(&ctx), &callback);
     Require(ctx.defaultPasswdCallback == &callback && ctx.defaultPasswdCallbackUserdata == nullptr);
     SSL_CTX_set_default_passwd_cb_nid_postfix(Context(&ctx), nullptr);
@@ -191,7 +181,7 @@ static void TestSetPasswordCallback() {
 static void TestSetPasswordUserdata() {
     int userdata = 0;
     TestCtx ctx {};
-    RequireThrows([&] { SSL_CTX_set_default_passwd_cb_userdata_nid_postfix(nullptr, &userdata); });
+    ExpectErr([&] { SSL_CTX_set_default_passwd_cb_userdata_nid_postfix(nullptr, &userdata); });
     SSL_CTX_set_default_passwd_cb_userdata_nid_postfix(Context(&ctx), &userdata);
     Require(ctx.defaultPasswdCallbackUserdata == &userdata && ctx.defaultPasswdCallback == nullptr && ctx.internal == nullptr);
     SSL_CTX_set_default_passwd_cb_userdata_nid_postfix(Context(&ctx), nullptr);
@@ -216,8 +206,8 @@ static void TestUsePrivateKey() {
     Require(SSL_CTX_use_PrivateKey_nid_postfix(inaccessible, nullptr) == 0);
     Require(ERR_get_error_nid_postfix() == nullParameter);
 
-    RequireThrows([] { SSL_CTX_use_PrivateKey_nid_postfix(nullptr, reinterpret_cast<void*>(1)); });
-    RequireThrows([&] { SSL_CTX_use_PrivateKey_nid_postfix(inaccessible, reinterpret_cast<void*>(1)); });
+    ExpectErr([] { SSL_CTX_use_PrivateKey_nid_postfix(nullptr, reinterpret_cast<void*>(1)); });
+    ExpectErr([&] { SSL_CTX_use_PrivateKey_nid_postfix(inaccessible, reinterpret_cast<void*>(1)); });
     Require(std::memcmp(&ctx, original, sizeof(ctx)) == 0);
     Require(ERR_get_error_nid_postfix() == 0);
 }
@@ -227,8 +217,8 @@ static void TestSetExData() {
     TestCtx ctx {};
     int first = 1;
     int second = 2;
-    RequireThrows([] { SSL_CTX_set_ex_data_nid_postfix(nullptr, 0, nullptr); });
-    RequireThrows([&] { SSL_CTX_set_ex_data_nid_postfix(Context(&ctx), 0, nullptr); });
+    ExpectErr([] { SSL_CTX_set_ex_data_nid_postfix(nullptr, 0, nullptr); });
+    ExpectErr([&] { SSL_CTX_set_ex_data_nid_postfix(Context(&ctx), 0, nullptr); });
     ctx.internal = &internal;
     Require(SSL_CTX_set_ex_data_nid_postfix(Context(&ctx), 6, &first) == 1);
     Require(internal.exData && internal.exData->num == 7 && internal.exData->numAlloc == 8);
@@ -264,8 +254,8 @@ static void TestGetExData() {
     LibreSslStack stack {2, slots, 0, 2, nullptr};
     TestCtxInternal internal {};
     TestCtx ctx {};
-    RequireThrows([] { SSL_CTX_get_ex_data_nid_postfix(nullptr, 0); });
-    RequireThrows([&] { SSL_CTX_get_ex_data_nid_postfix(Context(&ctx), 0); });
+    ExpectErr([] { SSL_CTX_get_ex_data_nid_postfix(nullptr, 0); });
+    ExpectErr([&] { SSL_CTX_get_ex_data_nid_postfix(Context(&ctx), 0); });
     ctx.internal = &internal;
     Require(SSL_CTX_get_ex_data_nid_postfix(Context(&ctx), 0) == nullptr);
     internal.exData = &stack;

@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -8,14 +9,6 @@
 #include <exception>
 #include <limits>
 
-
-namespace {
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "failed: %s\n", message);
-    std::terminate();
-}
-}
 
 int main() {
     alignas(8) std::array<std::byte, 64> pkey{};

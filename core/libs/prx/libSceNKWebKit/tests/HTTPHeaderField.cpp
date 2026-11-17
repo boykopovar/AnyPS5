@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -11,14 +12,6 @@ using NKWebKit::WebCoreAbi::HTTPHeaderField;
 using NKWebKit::WebCoreAbi::OptionalHTTPHeaderField;
 using NKWebKit::WtfAbi::String;
 using NKWebKit::WtfAbi::StringImpl;
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "HTTPHeaderField check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static StringImpl Make(const char* text) {
     return StringImpl{4, static_cast<unsigned>(std::strlen(text)), text, 4};

@@ -1,5 +1,6 @@
 #include "Translation/TranslationContext.hpp"
 #include "RdnaDecoder/RdnaImageOpDecoder.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <bit>
 #include <stdexcept>
@@ -10,10 +11,6 @@
 using namespace ShaderRecompiler;
 
 namespace {
-
-void Require(bool value, std::source_location location = std::source_location::current()) {
-    if (!value) throw std::runtime_error("image BY2/BY4 regression at line " + std::to_string(location.line()));
-}
 
 constexpr std::array<std::uint32_t, 8> Encodings{0x42u, 0x43u, 0x4au, 0x4bu, 0x52u, 0x53u, 0x5au, 0x5bu};
 constexpr std::array<RdnaOpcode, 8> Opcodes{RdnaOpcode::ImageLoadBy2, RdnaOpcode::ImageLoadBy4, RdnaOpcode::ImageLoadMipBy2, RdnaOpcode::ImageLoadMipBy4, RdnaOpcode::ImageStoreBy2, RdnaOpcode::ImageStoreBy4, RdnaOpcode::ImageStoreMipBy2, RdnaOpcode::ImageStoreMipBy4};

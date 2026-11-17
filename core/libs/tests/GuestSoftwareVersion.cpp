@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -10,8 +11,6 @@
 static_assert(offsetof(SceKernelProsperoSystemSwVersion, versionString) == 0x08);
 static_assert(offsetof(SceKernelProsperoSystemSwVersion, version) == 0x24);
 static_assert(sizeof(SceKernelProsperoSystemSwVersion) == 0x28);
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static void CheckProsperoSystemSwVersion() {
     *__error_nid_postfix() = 13;

@@ -1,18 +1,11 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <initializer_list>
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "pipe fault check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static constexpr int GuestEfault = 14;
 

@@ -1,4 +1,5 @@
 #include "prx/libc/include/GuestWriteWatch.hpp"
+#include "Testing.hpp"
 
 #include <atomic>
 #include <csignal>
@@ -18,10 +19,6 @@
 using namespace GuestWriteWatch;
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 struct Mapping {
     Mapping(int flags, int protection) : protection(protection) {

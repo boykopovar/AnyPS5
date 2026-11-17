@@ -1,6 +1,7 @@
 #include "prx/libSceFiber/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -13,12 +14,6 @@ constexpr std::int32_t FiberErrorNull = static_cast<std::int32_t>(0x80590001);
 constexpr std::int32_t FiberErrorAlignment = static_cast<std::int32_t>(0x80590002);
 constexpr std::int32_t FiberErrorRange = static_cast<std::int32_t>(0x80590003);
 constexpr std::int32_t FiberErrorInvalid = static_cast<std::int32_t>(0x80590004);
-
-void Require(bool condition) {
-    if (!condition) {
-        std::abort();
-    }
-}
 
 alignas(16) std::uint8_t g_stackA[16384];
 alignas(16) std::uint8_t g_stackB[16384];

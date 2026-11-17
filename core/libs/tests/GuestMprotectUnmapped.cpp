@@ -3,6 +3,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -22,12 +23,6 @@ namespace {
 constexpr std::size_t Page = 0x4000;
 constexpr int ProtectRead = 1;
 constexpr int ProtectReadWrite = 3;
-
-void Require(bool condition, const char* what) {
-    if (condition) return;
-    std::fprintf(stderr, "%s\n", what);
-    std::abort();
-}
 
 int Protect(const void* address, std::size_t bytes, int protection) {
     try {

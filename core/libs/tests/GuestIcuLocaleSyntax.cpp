@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -20,23 +21,6 @@
 #endif
 
 namespace {
-
-void Require(bool value, std::source_location location = std::source_location::current()) {
-    if (value) return;
-    std::fprintf(stderr, "ICU locale syntax check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<class Exception, class Function>
-void RequireThrow(Function function) {
-    bool thrown = false;
-    try {
-        function();
-    } catch (const Exception&) {
-        thrown = true;
-    }
-    Require(thrown);
-}
 
 void CheckVariant() {
     struct Case {
@@ -84,7 +68,7 @@ void CheckVariant() {
     Require(uloc_getVariant_nid_postfix(nullptr, nullptr, 32, &status) == 0 && status == 7);
     Require(uloc_getVariant_nid_postfix("en_US_POSIX", buffer.data(), 32, &status) == 0 && status == 7);
     Require(std::all_of(buffer.begin(), buffer.end(), [](char value) { return value == 'Q'; }));
-    RequireThrow<std::invalid_argument>([&] { uloc_getVariant_nid_postfix("en_US", buffer.data(), 32, nullptr); });
+    ExpectErr<std::invalid_argument>([&] { uloc_getVariant_nid_postfix("en_US", buffer.data(), 32, nullptr); });
     status = 0;
     std::array<char, 32> expected{};
     const std::int32_t expectedLength = uloc_getVariant_nid_postfix(uloc_getDefault(), expected.data(), 32, &status);
@@ -94,7 +78,7 @@ void CheckVariant() {
     Require(uloc_getVariant_nid_postfix(nullptr, buffer.data(), 32, &status) == expectedLength && status <= 0);
     Require(std::equal(buffer.begin(), buffer.begin() + expectedLength + 1, expected.begin()));
     status = 0;
-    RequireThrow<std::invalid_argument>([&] { uloc_getVariant_nid_postfix("en_US", nullptr, 1, &status); });
+    ExpectErr<std::invalid_argument>([&] { uloc_getVariant_nid_postfix("en_US", nullptr, 1, &status); });
 }
 
 void CheckKeywordUpdates() {
@@ -193,9 +177,9 @@ void CheckKeywordErrors() {
     const auto before = buffer;
     Require(uloc_setKeywordValue_nid_postfix("calendar", "japanese", buffer.data(), 32, &status) == 0);
     Require(status == 7 && buffer == before);
-    RequireThrow<std::invalid_argument>([&] { uloc_setKeywordValue_nid_postfix("calendar", "japanese", buffer.data(), 32, nullptr); });
+    ExpectErr<std::invalid_argument>([&] { uloc_setKeywordValue_nid_postfix("calendar", "japanese", buffer.data(), 32, nullptr); });
     status = 0;
-    RequireThrow<std::invalid_argument>([&] { uloc_setKeywordValue_nid_postfix("calendar", "japanese", nullptr, 32, &status); });
+    ExpectErr<std::invalid_argument>([&] { uloc_setKeywordValue_nid_postfix("calendar", "japanese", nullptr, 32, &status); });
 }
 
 void CheckGuestStatus() {

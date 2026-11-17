@@ -1,4 +1,5 @@
 #include "prx/libSceAgc/Shader/include/InterpolantMapping.hpp"
+#include "Testing.hpp"
 #include "VulkanTestDevice.hpp"
 #include "SceShaders.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
@@ -17,10 +18,6 @@
 #include <thread>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 alignas(256) const std::array<std::uint32_t, 11> VertexCode{0x7e0002ffu, 0, 0x7e0202ffu, 0, 0x7e0402ffu, 0, 0x7e0602ffu, 0x3f800000u, 0xf80008cfu, 0x03020100u, 0xbf810000u};
 alignas(256) const std::array<std::uint32_t, 1> PixelCode{0xbf810000u};

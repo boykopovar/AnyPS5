@@ -1,5 +1,6 @@
 #include "prx/libSceGameLiveStreaming/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -14,8 +15,6 @@ static_assert(sizeof(GameLiveStreamingStatus2) == 72);
 static_assert(sizeof(GameLiveStreamingStatus) == 72);
 
 namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
 
 constexpr std::int32_t kInvalidUserId = -1;
 

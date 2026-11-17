@@ -1,5 +1,6 @@
 #include "prx/libkernel_sys/libkernel_sys.hpp"
 #include "prx/libc/libc.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <bit>
 #include <cstdint>
@@ -26,13 +27,6 @@ namespace {
 constexpr int GuestEperm = 1;
 constexpr int GuestEsrch = 3;
 constexpr int GuestEfault = 14;
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "KERNEL SYS CONSOLE IDENTITY: %s\n", message);
-        std::abort();
-    }
-}
 
 void CheckConsoleKind(bool ps4) {
     Require(sceKernelIsCEX() == 1, "the console must be reported as a retail unit");

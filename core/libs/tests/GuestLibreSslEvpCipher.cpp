@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -10,17 +11,6 @@
 
 static const LibreSslEvpCipher* Cipher(const unsigned char* memory) {
     return reinterpret_cast<const LibreSslEvpCipher*>(memory);
-}
-
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL EVP_CIPHER check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> static void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
-    try { action(); } catch (const std::exception&) { return; }
-    Require(false, location);
 }
 
 constexpr std::size_t CipherSize = 88;
@@ -50,7 +40,7 @@ static void TestBlockSize() {
     std::memcpy(before, cipher, sizeof(cipher));
     Require(EVP_CIPHER_block_size_nid_postfix(Cipher(cipher)) == 16);
     Require(std::memcmp(before, cipher, sizeof(cipher)) == 0);
-    RequireThrows([] { EVP_CIPHER_block_size_nid_postfix(nullptr); });
+    ExpectErr([] { EVP_CIPHER_block_size_nid_postfix(nullptr); });
 }
 
 int main() {

@@ -1,5 +1,6 @@
 #include "IntermediateRepresentation/IrBuilder.hpp"
 #include "Optimization/GotoPhiRefiner.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <exception>
@@ -12,10 +13,6 @@
 using namespace ShaderRecompiler;
 
 namespace {
-
-void require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 struct Graph {
     IrProgram program;
@@ -93,9 +90,9 @@ void CheckJunctionGuard(bool constantGuard) {
     auto& use = builder.Emit(IrOpcode::ReferenceU32, IrType::Void, {&merged});
     const auto replaced = Refine(graph);
     if (constantGuard) {
-        require(replaced == 1u && use.Argument(0)->Resolve() == &takenValue, "a junction Phi whose other arm's goto guard is constant false was not narrowed below the true branch");
+        Require(replaced == 1u && use.Argument(0)->Resolve() == &takenValue, "a junction Phi whose other arm's goto guard is constant false was not narrowed below the true branch");
     } else {
-        require(replaced == 0u && use.Argument(0) == &merged, "a junction Phi arm whose goto guard is not a constant was dropped");
+        Require(replaced == 0u && use.Argument(0) == &merged, "a junction Phi arm whose goto guard is not a constant was dropped");
     }
 }
 
@@ -136,9 +133,9 @@ void CheckNestedJunctionAfterJunction(bool nestedValue) {
     merged.AddPhiOperand(latch, nestedValue ? &nestedPhi : &entryValue);
     const auto replaced = Refine(graph);
     if (nestedValue) {
-        require(replaced == 0u && use.Argument(0) == &merged, "a junction Phi was narrowed to a nested junction value that is recomputed between the junction and the use");
+        Require(replaced == 0u && use.Argument(0) == &merged, "a junction Phi was narrowed to a nested junction value that is recomputed between the junction and the use");
     } else {
-        require(replaced == 1u && use.Argument(0)->Resolve() == &entryValue, "a junction Phi whose latch arm is an entry value was not narrowed below the true branch");
+        Require(replaced == 1u && use.Argument(0)->Resolve() == &entryValue, "a junction Phi whose latch arm is an entry value was not narrowed below the true branch");
     }
 }
 
@@ -169,7 +166,7 @@ void CheckJunctionRerunBeforeUse() {
     builder.SetInsertionPoint(*after);
     auto& use = builder.Emit(IrOpcode::ReferenceU32, IrType::Void, {&merged});
     const auto replaced = Refine(graph);
-    require(replaced == 0u && use.Argument(0) == &merged, "a junction Phi was narrowed at a use the junction can reach again without the goto branch");
+    Require(replaced == 0u && use.Argument(0) == &merged, "a junction Phi was narrowed at a use the junction can reach again without the goto branch");
 }
 
 void CheckLoopHeaderInnerJunction() {
@@ -206,7 +203,7 @@ void CheckLoopHeaderInnerJunction() {
     builder.SetInsertionPoint(*below);
     auto& use = builder.Emit(IrOpcode::ReferenceU32, IrType::Void, {&merged});
     const auto replaced = Refine(graph);
-    require(replaced == 0u && use.Argument(0) == &merged, "a junction Phi was narrowed to a loop value redefined after the inner junction it came through");
+    Require(replaced == 0u && use.Argument(0) == &merged, "a junction Phi was narrowed to a loop value redefined after the inner junction it came through");
 }
 
 void CheckDeepJunctionChain() {
@@ -239,7 +236,7 @@ void CheckDeepJunctionChain() {
     builder.SetInsertionPoint(*graph.blocks[from]);
     auto& use = builder.Emit(IrOpcode::ReferenceU32, IrType::Void, {value});
     const auto replaced = Refine(graph);
-    require(replaced != 0u && use.Argument(0)->Resolve() == &base, "a junction Phi below 48 chained junctions was not narrowed to the value that entered the first one");
+    Require(replaced != 0u && use.Argument(0)->Resolve() == &base, "a junction Phi below 48 chained junctions was not narrowed to the value that entered the first one");
 }
 
 }

@@ -3,6 +3,7 @@
 #include "prx/libSceAudioOut/src/AudioOut2Internal.hpp"
 #include "prx/libSceAudioOut/src/AudioOut2PadMix.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 
 #include <cerrno>
 #include <chrono>
@@ -21,8 +22,6 @@
 #include <thread>
 #include <utility>
 #include <vector>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static void SetEnvironment(const char* name, const std::string& value) {
 #ifdef _WIN32

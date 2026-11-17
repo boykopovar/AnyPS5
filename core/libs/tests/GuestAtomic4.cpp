@@ -1,7 +1,6 @@
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 #include <cstdlib>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 int main() {
     {

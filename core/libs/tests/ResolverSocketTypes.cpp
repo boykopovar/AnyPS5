@@ -1,16 +1,11 @@
 #include "prx/libScePosixForWebKit/libScePosixForWebKit.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "resolver socket types: %s\n", message);
-    std::abort();
-}
 
 void Resolve(const char* node, const char* service, int family, int type, int protocol, bool noHints) {
     const auto check = [&](bool condition, const char* message) {

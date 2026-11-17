@@ -1,15 +1,10 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-
-static void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "FAIL: %s\n", what);
-    std::abort();
-}
 
 int main() {
     std::array<unsigned char, 96> source{};

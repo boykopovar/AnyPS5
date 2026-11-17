@@ -1,9 +1,9 @@
 #include "prx/libScePad/include/Pad.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
 
-static void Require(bool value) { if (!value) std::abort(); }
 
 
 int main() {

@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include <dlfcn.h>
 #include <array>
 #include <cstddef>
@@ -30,12 +31,6 @@ std::size_t allocated;
 unsigned releases;
 bool wiped;
 bool failAllocation;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL3 PKEY lifecycle failed at line %u\n", location.line());
-    std::exit(1);
-}
 
 void* Allocate(std::size_t bytes) {
     Require(!live);

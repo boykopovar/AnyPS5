@@ -1,4 +1,5 @@
 #include "prx/libScePlayReady/libScePlayReady.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -8,12 +9,6 @@
 namespace {
 
 constexpr int InvalidArgument = static_cast<int>(0x80070057);
-
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
 
 bool Filled(const unsigned char* bytes, std::size_t begin, std::size_t end, unsigned char value) {
     for (std::size_t i = begin; i < end; ++i)

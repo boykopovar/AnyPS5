@@ -14,13 +14,7 @@
 #include <source_location>
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/Socket/include/SocketPoll.hpp"
-
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
+#include "Testing.hpp"
 
 int main() {
     Require(sceNetInit_nid_postfix() == 0);

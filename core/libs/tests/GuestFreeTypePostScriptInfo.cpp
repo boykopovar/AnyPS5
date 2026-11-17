@@ -1,6 +1,7 @@
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "FreeTypeFontFixture.hpp"
 #include "prx/libSceFreeType/include/PostScriptInfo.hpp"
+#include "Testing.hpp"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -22,13 +23,6 @@
 #endif
 
 using namespace FreeType;
-
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "PostScript font information check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 template <typename TFunction, typename TModule>
 static TFunction Import(TModule module, const char* name, const char* nid, bool patched) {

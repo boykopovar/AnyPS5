@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include "SceTypes.hpp"
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
+#include "Testing.hpp"
 
 #include <cerrno>
 #include <cstdint>
@@ -14,8 +15,6 @@
 #include <cstring>
 
 namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
 
 alignas(16) std::array<std::byte, 64> process{};
 

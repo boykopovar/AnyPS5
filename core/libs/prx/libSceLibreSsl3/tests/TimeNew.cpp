@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -12,12 +13,6 @@
 #include <string_view>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL3 ASN1_TIME check failed at line %u\n", location.line());
-    std::abort();
-}
 
 constexpr std::uint64_t MallocFailure = 0x0dfff041;
 int liveBlocks = 0;

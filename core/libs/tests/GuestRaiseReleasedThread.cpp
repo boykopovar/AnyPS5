@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <malloc.h>
 #include <atomic>
 #include <cstdio>
@@ -12,8 +13,6 @@
 static constexpr int GUEST_SIGUSR1 = 30;
 static constexpr int SCE_OK = 0;
 static constexpr int DETACH_DETACHED = 1;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static std::atomic<void*> watched{nullptr};
 static std::atomic<bool> watchedReleased{false};

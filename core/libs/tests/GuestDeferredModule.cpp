@@ -1,19 +1,13 @@
 #include "prx/libkernel/include/Api.hpp"
 #define WIN32_LEAN_AND_MEAN
 #include "GuestDeferredModule.hpp"
+#include "Testing.hpp"
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <future>
 #include <string>
-
-static void Require(bool value, const char* what) {
-    if (!value) {
-        std::fprintf(stderr, "%s\n", what);
-        std::exit(1);
-    }
-}
 
 static void* Handle(int id) { return reinterpret_cast<void*>(static_cast<std::uintptr_t>(id)); }
 

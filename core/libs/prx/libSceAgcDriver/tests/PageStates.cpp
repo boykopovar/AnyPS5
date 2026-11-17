@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -21,10 +22,6 @@ namespace {
 using namespace AgcDriver::GuestMemory;
 constexpr std::size_t Unit = 65536;
 constexpr std::size_t ChunkGuestBytes = 256ull << 20u;
-
-void Require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 class Range {
 public:

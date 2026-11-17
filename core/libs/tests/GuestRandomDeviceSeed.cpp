@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/HostEntropy.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -20,13 +21,6 @@ void HostEntropy_nid_no_patch(void* buffer, std::size_t size) {
     if (failEntropy) throw std::runtime_error("entropy unavailable");
     auto* bytes = static_cast<unsigned char*>(buffer);
     for (std::size_t i = 0; i < size; ++i) bytes[i] = static_cast<unsigned char>(i * 37 + 11);
-}
-
-static void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "%s\n", message);
-        std::abort();
-    }
 }
 
 static std::uint32_t Word(const char* buffer, std::size_t index) {

@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 #include <climits>
 #include <cstdint>
 #include <cstdlib>
@@ -9,12 +10,6 @@ namespace {
 
 constexpr int GuestEinval = 22;
 constexpr int GuestEfault = 14;
-
-void Require(bool condition) {
-    if (!condition) {
-        std::abort();
-    }
-}
 
 bool Equals(const GuestSignalSet& set, std::uint32_t w0, std::uint32_t w1, std::uint32_t w2, std::uint32_t w3) {
     return set.bits[0] == w0 && set.bits[1] == w1 && set.bits[2] == w2 && set.bits[3] == w3;

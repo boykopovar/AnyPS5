@@ -1,17 +1,8 @@
 #include "prx/libkernel/include/Api.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <vector>
-
-namespace {
-
-void Require(bool condition) {
-    if (!condition) {
-        std::abort();
-    }
-}
-
-}
 
 int main() {
     int stackValue = 1;

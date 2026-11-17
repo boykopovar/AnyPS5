@@ -8,6 +8,7 @@
 #endif
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libScePosixForWebKit/GuestResolver.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstdint>
@@ -20,12 +21,6 @@
 #include <string>
 #include <thread>
 
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "Resolver check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 int main() {
     auto* legacy = gethostbyname_nid_postfix("127.0.0.1");
     Require(legacy && legacy->name && std::strcmp(legacy->name, "127.0.0.1") == 0);

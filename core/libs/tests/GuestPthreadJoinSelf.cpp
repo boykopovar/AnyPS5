@@ -1,6 +1,7 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -9,8 +10,6 @@
 
 static constexpr int SCE_OK = 0;
 static constexpr int GUEST_EDEADLK = 11;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static void* APS5_VABI JoinSelf(void*) {
     Require(scePthreadEqual(scePthreadSelf(), scePthreadSelf()) == 1);

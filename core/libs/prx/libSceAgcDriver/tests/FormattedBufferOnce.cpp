@@ -1,5 +1,6 @@
 #include "BdaAbi.hpp"
 #include "Recompiler.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdio>
 #include <exception>
@@ -13,10 +14,6 @@
 namespace {
 
 using namespace ShaderRecompiler;
-
-void Check(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 SpirvTarget Target() {
     static constexpr std::array<std::uint32_t, 5> capabilities{
@@ -40,11 +37,11 @@ struct Counts {
 };
 
 Counts Count(std::span<const std::uint32_t> words) {
-    Check(words.size() >= 5 && words[0] == spv::MagicNumber, "formatted buffer once: missing SPIR-V module");
+    Require(words.size() >= 5 && words[0] == spv::MagicNumber, "formatted buffer once: missing SPIR-V module");
     Counts counts{words.size()};
     for (std::size_t offset = 5; offset < words.size();) {
         const auto count = words[offset] >> spv::WordCountShift;
-        Check(count != 0 && count <= words.size() - offset, "formatted buffer once: malformed SPIR-V instruction");
+        Require(count != 0 && count <= words.size() - offset, "formatted buffer once: malformed SPIR-V instruction");
         const auto opcode = words[offset] & spv::OpCodeMask;
         if (opcode == spv::OpSwitch) ++counts.switches;
         if (opcode == spv::OpArrayLength) ++counts.arrayLengths;
@@ -90,7 +87,7 @@ Counts Compile(std::size_t loads, bool formattedStores = false, bool gpu = false
     request.context.memory = memory;
     request.useCache = false;
     const auto result = Recompile(request);
-    Check(result.registrationModule == registration, std::string("formatted buffer once: the module was ") + (registration ? "not " : "") + "emitted in registration form");
+    Require(result.registrationModule == registration, std::string("formatted buffer once: the module was ") + (registration ? "not " : "") + "emitted in registration form");
     return Count(result.spirv.Words());
 }
 
@@ -133,29 +130,29 @@ int main() {
         const auto gpuOne = Compile(1, false, true);
         const auto pixelSpecialized = Compile(1, false, false, true, false);
         const auto pixelRegistration = Compile(1, false, false, true, true);
-        Check(pixelRegistration.compareExchanges == pixelSpecialized.compareExchanges, "formatted buffer once: in registration form a store through an aligned V# kept the unaligned compare-exchange path (" + std::to_string(pixelRegistration.compareExchanges) + " compare-exchanges, " + std::to_string(pixelSpecialized.compareExchanges) + " specialized)");
-        Check(pixelRegistration.words < pixelSpecialized.words + pixelSpecialized.words / 2u, "formatted buffer once: in registration form a formatted load from a known descriptor kept every format's decoder (" + std::to_string(pixelRegistration.words) + " words, " + std::to_string(pixelSpecialized.words) + " specialized)");
-        Check(one.words < gpuOne.words / 2u, "formatted buffer once: a formatted load from a known descriptor kept every format's decoder (" + std::to_string(one.words) + " words, a GPU-selected descriptor needs " + std::to_string(gpuOne.words) + ")");
-        Check(one.calls == none.calls + 1 && one.functions == none.functions + 1, "formatted buffer once: one formatted load emitted " + std::to_string(one.calls - none.calls) + " calls and " + std::to_string(one.functions - none.functions) + " functions more than none, expected one call to one shared function");
-        Check(three.calls == one.calls + 2 && three.functions == one.functions, "formatted buffer once: two more formatted loads from the same descriptor emitted " + std::to_string(three.calls - one.calls) + " calls and " + std::to_string(three.functions - one.functions) + " functions more, expected two calls and no function");
-        Check(three.switches == one.switches, "formatted buffer once: two more formatted loads from the same descriptor emitted " + std::to_string(three.switches - one.switches) + " more format switches");
-        Check(one.notInlined == none.notInlined + 1, "formatted buffer once: the shared formatted access function may be inlined back into its callers");
+        Require(pixelRegistration.compareExchanges == pixelSpecialized.compareExchanges, "formatted buffer once: in registration form a store through an aligned V# kept the unaligned compare-exchange path (" + std::to_string(pixelRegistration.compareExchanges) + " compare-exchanges, " + std::to_string(pixelSpecialized.compareExchanges) + " specialized)");
+        Require(pixelRegistration.words < pixelSpecialized.words + pixelSpecialized.words / 2u, "formatted buffer once: in registration form a formatted load from a known descriptor kept every format's decoder (" + std::to_string(pixelRegistration.words) + " words, " + std::to_string(pixelSpecialized.words) + " specialized)");
+        Require(one.words < gpuOne.words / 2u, "formatted buffer once: a formatted load from a known descriptor kept every format's decoder (" + std::to_string(one.words) + " words, a GPU-selected descriptor needs " + std::to_string(gpuOne.words) + ")");
+        Require(one.calls == none.calls + 1 && one.functions == none.functions + 1, "formatted buffer once: one formatted load emitted " + std::to_string(one.calls - none.calls) + " calls and " + std::to_string(one.functions - none.functions) + " functions more than none, expected one call to one shared function");
+        Require(three.calls == one.calls + 2 && three.functions == one.functions, "formatted buffer once: two more formatted loads from the same descriptor emitted " + std::to_string(three.calls - one.calls) + " calls and " + std::to_string(three.functions - one.functions) + " functions more, expected two calls and no function");
+        Require(three.switches == one.switches, "formatted buffer once: two more formatted loads from the same descriptor emitted " + std::to_string(three.switches - one.switches) + " more format switches");
+        Require(one.notInlined == none.notInlined + 1, "formatted buffer once: the shared formatted access function may be inlined back into its callers");
         const auto storeOne = Compile(1, true);
         const auto storeThree = Compile(3, true);
-        Check(storeOne.functions == none.functions + 2 && storeOne.calls == none.calls + 2, "formatted buffer once: a formatted load and a formatted store to another resource emitted " + std::to_string(storeOne.functions - none.functions) + " functions and " + std::to_string(storeOne.calls - none.calls) + " calls more than none, expected one function and one call each");
-        Check(storeThree.functions == storeOne.functions && storeThree.calls == storeOne.calls + 4 && storeThree.switches == storeOne.switches, "formatted buffer once: two more formatted loads and stores emitted " + std::to_string(storeThree.functions - storeOne.functions) + " functions, " + std::to_string(storeThree.calls - storeOne.calls) + " calls and " + std::to_string(storeThree.switches - storeOne.switches) + " switches more, expected four calls only");
-        Check(three.words - one.words < (one.words - none.words) / 2u, "formatted buffer once: 2 more formatted loads added " + std::to_string(three.words - one.words) + " SPIR-V words, as many as the first one with its shared function (" + std::to_string(one.words - none.words) + ")");
+        Require(storeOne.functions == none.functions + 2 && storeOne.calls == none.calls + 2, "formatted buffer once: a formatted load and a formatted store to another resource emitted " + std::to_string(storeOne.functions - none.functions) + " functions and " + std::to_string(storeOne.calls - none.calls) + " calls more than none, expected one function and one call each");
+        Require(storeThree.functions == storeOne.functions && storeThree.calls == storeOne.calls + 4 && storeThree.switches == storeOne.switches, "formatted buffer once: two more formatted loads and stores emitted " + std::to_string(storeThree.functions - storeOne.functions) + " functions, " + std::to_string(storeThree.calls - storeOne.calls) + " calls and " + std::to_string(storeThree.switches - storeOne.switches) + " switches more, expected four calls only");
+        Require(three.words - one.words < (one.words - none.words) / 2u, "formatted buffer once: 2 more formatted loads added " + std::to_string(three.words - one.words) + " SPIR-V words, as many as the first one with its shared function (" + std::to_string(one.words - none.words) + ")");
 #if ANYPS5_ENABLE_SPIRV_TOOLS
-        Check(atomicThenLoad.words > 5u, "a 64-bit buffer atomic followed by a buffer read did not produce a SPIR-V module");
+        Require(atomicThenLoad.words > 5u, "a 64-bit buffer atomic followed by a buffer read did not produce a SPIR-V module");
 #else
-        Check(scalarOne.arrayLengths == 1u && scalarThree.arrayLengths == 3u, "scalar buffer reads across generated labels emitted " + std::to_string(scalarThree.arrayLengths) + " OpArrayLength instructions for 3 reads (expected one per label)");
-        Check(atomicThenLoad.arrayLengths > 1u, "a buffer query inside the 64-bit atomic path was reused after its merge (expected at least 2 OpArrayLength instructions, got " + std::to_string(atomicThenLoad.arrayLengths) + ")");
+        Require(scalarOne.arrayLengths == 1u && scalarThree.arrayLengths == 3u, "scalar buffer reads across generated labels emitted " + std::to_string(scalarThree.arrayLengths) + " OpArrayLength instructions for 3 reads (expected one per label)");
+        Require(atomicThenLoad.arrayLengths > 1u, "a buffer query inside the 64-bit atomic path was reused after its merge (expected at least 2 OpArrayLength instructions, got " + std::to_string(atomicThenLoad.arrayLengths) + ")");
 #endif
         const auto gpuThree = Compile(3, false, true);
-        Check(gpuThree.functions == gpuOne.functions && gpuThree.calls > gpuOne.calls, "formatted buffer once: two more formatted loads from a GPU-selected descriptor emitted " + std::to_string(gpuThree.functions - gpuOne.functions) + " more functions, expected calls to the shared one");
-        Check(gpuThree.switches == gpuOne.switches, "formatted buffer once: two more formatted loads from a GPU-selected descriptor emitted " + std::to_string(gpuThree.switches - gpuOne.switches) + " more format switches");
-        Check(gpuThree.words - gpuOne.words < gpuOne.words / 10u, "formatted buffer once: 2 more formatted loads from a GPU-selected descriptor added " + std::to_string(gpuThree.words - gpuOne.words) + " SPIR-V words to a " + std::to_string(gpuOne.words) + "-word module");
-        Check(gpuOne.words < 40000u, "formatted buffer once: a formatted load from a GPU-selected descriptor takes " + std::to_string(gpuOne.words) + " SPIR-V words, expected under 40000 since every driver that inlines the shared function copies all of it");
+        Require(gpuThree.functions == gpuOne.functions && gpuThree.calls > gpuOne.calls, "formatted buffer once: two more formatted loads from a GPU-selected descriptor emitted " + std::to_string(gpuThree.functions - gpuOne.functions) + " more functions, expected calls to the shared one");
+        Require(gpuThree.switches == gpuOne.switches, "formatted buffer once: two more formatted loads from a GPU-selected descriptor emitted " + std::to_string(gpuThree.switches - gpuOne.switches) + " more format switches");
+        Require(gpuThree.words - gpuOne.words < gpuOne.words / 10u, "formatted buffer once: 2 more formatted loads from a GPU-selected descriptor added " + std::to_string(gpuThree.words - gpuOne.words) + " SPIR-V words to a " + std::to_string(gpuOne.words) + "-word module");
+        Require(gpuOne.words < 40000u, "formatted buffer once: a formatted load from a GPU-selected descriptor takes " + std::to_string(gpuOne.words) + " SPIR-V words, expected under 40000 since every driver that inlines the shared function copies all of it");
         std::printf("formatted buffer once tests passed (%zu words for 1 load, %zu for 3; GPU-selected %zu and %zu; pixel %zu specialized, %zu registration)\n", one.words, three.words, gpuOne.words, gpuThree.words, pixelSpecialized.words, pixelRegistration.words);
         return 0;
     } catch (const std::exception& error) {

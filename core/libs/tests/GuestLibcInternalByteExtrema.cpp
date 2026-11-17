@@ -1,4 +1,5 @@
 #include "prx/libSceLibcInternal/libSceLibcInternal.hpp"
+#include "Testing.hpp"
 
 #include <algorithm>
 #include <array>
@@ -12,12 +13,6 @@
 namespace {
 
 using Extremum = std::uint8_t (APS5_VABI*)(const void*, const void*);
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "libc internal byte extrema: %s\n", message);
-    std::abort();
-}
 
 void CheckValues(Extremum call, bool minimum) {
     for (unsigned first = 0; first < 256; ++first) {

@@ -1,4 +1,5 @@
 #include "Optimization/SsaBuilder/SsaPass.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdio>
 #include <stdexcept>
@@ -8,10 +9,6 @@ using namespace ShaderRecompiler;
 using namespace ShaderRecompiler::Detail;
 
 namespace {
-
-void Require(bool condition, const char* what) {
-    if (!condition) throw std::runtime_error(what);
-}
 
 IrValue& Constant(IrProgram& program, Variable variable, std::uint32_t number) {
     auto& value = program.CreateValue(IrOpcode::Void, VariableType(variable));

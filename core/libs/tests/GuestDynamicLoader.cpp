@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdlib>
 #include <cstdint>
@@ -23,11 +24,6 @@
 #include <source_location>
 #include <thread>
 
-static void Require(bool value, const std::source_location& location = std::source_location::current()) {
-    if (value) return;
-    std::fprintf(stderr, "guest_dynamic_loader: failed at %s:%u\n", location.file_name(), location.line());
-    std::abort();
-}
 extern "C" int APS5_VABI GuestDefaultScopeOnly(int a, int b) { return a * b; }
 template<typename TFunction>
 static bool ThrowsRuntimeError(TFunction function) {

@@ -1,6 +1,7 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -39,12 +40,6 @@ static constexpr const char* RfcPublicKey =
 static constexpr int Compressed = 2;
 static constexpr int Uncompressed = 4;
 static const Bytes Infinity{0};
-
-static void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "failed: %s\n", what);
-    std::abort();
-}
 
 static Bytes FromHex(const char* hex) {
     Bytes out;

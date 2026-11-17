@@ -1,4 +1,5 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdint>
@@ -11,23 +12,6 @@
 #include <type_traits>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "Yarr errorMessage / SymbolImpl check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
-
-template<class Function>
-void RequireThrows(Function function) {
-    try {
-        function();
-    } catch (const std::exception&) {
-        return;
-    }
-    Require(false);
-}
 
 using ErrorCode = NKWebKit::YarrAbi::ErrorCode;
 using ErrorMessage = NKWebKit::HttpAbi::ASCIILiteral (APS5_VABI *)(ErrorCode);
@@ -94,8 +78,8 @@ void TestMessages() {
 }
 
 void TestOutOfRange() {
-    RequireThrows([] { _ZN3JSC4Yarr12errorMessageENS0_9ErrorCodeE(static_cast<ErrorCode>(32)); });
-    RequireThrows([] { _ZN3JSC4Yarr12errorMessageENS0_9ErrorCodeE(static_cast<ErrorCode>(255)); });
+    ExpectErr([] { _ZN3JSC4Yarr12errorMessageENS0_9ErrorCodeE(static_cast<ErrorCode>(32)); });
+    ExpectErr([] { _ZN3JSC4Yarr12errorMessageENS0_9ErrorCodeE(static_cast<ErrorCode>(255)); });
     std::printf("Yarr errorMessage: codes 32 and 255 throw\n");
 }
 

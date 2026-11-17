@@ -2,6 +2,7 @@
 #include "prx/libSceLibreSsl/include/CipherList.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -154,17 +155,6 @@ static_assert(TableSize == 87);
 
 static LibreSslCtx* Context(TestCtx* ctx) {
     return reinterpret_cast<LibreSslCtx*>(ctx);
-}
-
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL cipher list check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> static void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
-    try { action(); } catch (const std::exception&) { return; }
-    Require(false, location);
 }
 
 static std::uint64_t IdOf(const void* cipher) {
@@ -329,10 +319,10 @@ static void TestKnownCiphers() {
 static void TestArguments() {
     Fixture nullInternal;
     nullInternal.ctx.internal = nullptr;
-    RequireThrows([] { SSL_CTX_set_cipher_list_nid_postfix(nullptr, "AES128-SHA"); });
-    RequireThrows([] { SSL_CTX_set_cipher_list_nid_postfix(nullptr, nullptr); });
-    RequireThrows([&] { SSL_CTX_set_cipher_list_nid_postfix(Context(&nullInternal.ctx), "AES128-SHA"); });
-    RequireThrows([&] { SSL_CTX_set_cipher_list_nid_postfix(Context(&nullInternal.ctx), nullptr); });
+    ExpectErr([] { SSL_CTX_set_cipher_list_nid_postfix(nullptr, "AES128-SHA"); });
+    ExpectErr([] { SSL_CTX_set_cipher_list_nid_postfix(nullptr, nullptr); });
+    ExpectErr([&] { SSL_CTX_set_cipher_list_nid_postfix(Context(&nullInternal.ctx), "AES128-SHA"); });
+    ExpectErr([&] { SSL_CTX_set_cipher_list_nid_postfix(Context(&nullInternal.ctx), nullptr); });
     Require(nullInternal.ctx.cipherList == nullptr);
 
     Fixture fresh;

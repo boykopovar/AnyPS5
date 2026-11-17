@@ -1,4 +1,5 @@
 #include "prx/libSceFace/include/Api.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cerrno>
@@ -20,12 +21,6 @@
 namespace {
 
 constexpr int InvalidParameter = static_cast<int>(0x808b0002u);
-
-void Require(bool condition, const char* description) {
-    if (condition) return;
-    std::fprintf(stderr, "Face detection output: %s\n", description);
-    std::abort();
-}
 
 char* GuardedPageEnd() {
 #ifdef _WIN32

@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -109,17 +110,6 @@ static_assert(offsetof(TestSsl, s3) == 48 && offsetof(TestSsl, d1) == 56 && offs
 static_assert(offsetof(TestSsl, clientVersion) == 172 && offsetof(TestSsl, maxSendFragment) == 176 && offsetof(TestSsl, tlsextHostname) == 184);
 static_assert(offsetof(TestSsl, encReadCtx) == 208 && offsetof(TestSsl, readHash) == 216 && offsetof(TestSsl, internal) == 224);
 
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL SSL settings check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> static void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
-    try { action(); } catch (const std::exception&) { return; }
-    Require(false, location);
-}
-
 template<typename T> static void Fill(T& value, unsigned char seed) {
     auto* bytes = reinterpret_cast<unsigned char*>(&value);
     for (std::size_t index = 0; index < sizeof(T); ++index) bytes[index] = static_cast<unsigned char>(seed + index);
@@ -162,7 +152,7 @@ static void TestSetVerify() {
     int second = 0;
     Connection connection;
     Connection expected = connection;
-    RequireThrows([&] { SSL_set_verify_nid_postfix(nullptr, 1, &first); });
+    ExpectErr([&] { SSL_set_verify_nid_postfix(nullptr, 1, &first); });
     SSL_set_verify_nid_postfix(connection.Ssl(), 3, &first);
     expected.ssl.verifyMode = 3;
     expected.internal.verifyCallback = &first;
@@ -177,7 +167,7 @@ static void TestSetVerify() {
     connection.ssl.internal = nullptr;
     SSL_set_verify_nid_postfix(connection.Ssl(), 2, nullptr);
     Require(connection.ssl.verifyMode == 2);
-    RequireThrows([&] { SSL_set_verify_nid_postfix(connection.Ssl(), 5, &first); });
+    ExpectErr([&] { SSL_set_verify_nid_postfix(connection.Ssl(), 5, &first); });
     Require(connection.ssl.verifyMode == 2);
 }
 
@@ -189,13 +179,13 @@ static void TestGetAlpnSelected() {
     const Connection expected = connection;
     const unsigned char* data = reinterpret_cast<const unsigned char*>(1);
     unsigned int length = 77;
-    RequireThrows([&] { SSL_get0_alpn_selected_nid_postfix(nullptr, &data, &length); });
-    RequireThrows([&] { SSL_get0_alpn_selected_nid_postfix(connection.Ssl(), nullptr, &length); });
-    RequireThrows([&] { SSL_get0_alpn_selected_nid_postfix(connection.Ssl(), &data, nullptr); });
+    ExpectErr([&] { SSL_get0_alpn_selected_nid_postfix(nullptr, &data, &length); });
+    ExpectErr([&] { SSL_get0_alpn_selected_nid_postfix(connection.Ssl(), nullptr, &length); });
+    ExpectErr([&] { SSL_get0_alpn_selected_nid_postfix(connection.Ssl(), &data, nullptr); });
     SSL_get0_alpn_selected_nid_postfix(connection.Ssl(), &data, &length);
     Require(data == nullptr && length == 0);
     connection.ssl.s3 = &state;
-    RequireThrows([&] { SSL_get0_alpn_selected_nid_postfix(connection.Ssl(), &data, &length); });
+    ExpectErr([&] { SSL_get0_alpn_selected_nid_postfix(connection.Ssl(), &data, &length); });
     state.internal = &stateInternal;
     Fill(stateInternal, 0x70);
     stateInternal.alpnSelected = protocol;
@@ -226,7 +216,7 @@ static void TestSetConnectState() {
     connection.internal.shutdown = 3;
     connection.internal.state = 0x1234;
     Connection expected = connection;
-    RequireThrows([] { SSL_set_connect_state_nid_postfix(nullptr); });
+    ExpectErr([] { SSL_set_connect_state_nid_postfix(nullptr); });
     SSL_set_connect_state_nid_postfix(connection.Ssl());
     expected.ssl.server = 0;
     expected.internal.shutdown = 0;
@@ -239,20 +229,20 @@ static void TestSetConnectState() {
     Require(connection.internal.handshakeFunc == nullptr);
     connection.ssl.server = 1;
     method.internal = nullptr;
-    RequireThrows([&] { SSL_set_connect_state_nid_postfix(connection.Ssl()); });
+    ExpectErr([&] { SSL_set_connect_state_nid_postfix(connection.Ssl()); });
     connection.ssl.method = nullptr;
-    RequireThrows([&] { SSL_set_connect_state_nid_postfix(connection.Ssl()); });
+    ExpectErr([&] { SSL_set_connect_state_nid_postfix(connection.Ssl()); });
     connection.ssl.method = &method;
     method.internal = &methodInternal;
     connection.ssl.internal = nullptr;
-    RequireThrows([&] { SSL_set_connect_state_nid_postfix(connection.Ssl()); });
+    ExpectErr([&] { SSL_set_connect_state_nid_postfix(connection.Ssl()); });
     Require(connection.ssl.server == 1);
 }
 
 static void TestControlReadAhead() {
     Connection connection;
     Connection expected = connection;
-    RequireThrows([] { SSL_ctrl_nid_postfix(nullptr, 40, 0, nullptr); });
+    ExpectErr([] { SSL_ctrl_nid_postfix(nullptr, 40, 0, nullptr); });
     connection.internal.readAhead = -1;
     expected.internal.readAhead = -1;
     Require(Control(connection, 40, 5) == -1);
@@ -263,8 +253,8 @@ static void TestControlReadAhead() {
     Require(Control(connection, 41, 1) == INT64_C(-1698898192));
     Require(Control(connection, 40, 0) == 1);
     connection.ssl.internal = nullptr;
-    RequireThrows([&] { Control(connection, 40, 0); });
-    RequireThrows([&] { Control(connection, 41, 0); });
+    ExpectErr([&] { Control(connection, 40, 0); });
+    ExpectErr([&] { Control(connection, 41, 0); });
 }
 
 static void TestControlMessageCallbackArgument() {
@@ -277,7 +267,7 @@ static void TestControlMessageCallbackArgument() {
     Require(Control(connection, 16, 0, nullptr) == 1);
     Require(connection.internal.msgCallbackArg == nullptr);
     connection.ssl.internal = nullptr;
-    RequireThrows([&] { Control(connection, 16, 0, &argument); });
+    ExpectErr([&] { Control(connection, 16, 0, &argument); });
 }
 
 static void TestControlOptionsAndMode() {
@@ -300,10 +290,10 @@ static void TestControlOptionsAndMode() {
     expected.internal.mode = 0x5;
     Require(Same(connection.ssl, expected.ssl) && Same(connection.internal, expected.internal));
     connection.ssl.internal = nullptr;
-    RequireThrows([&] { Control(connection, 32, 1); });
-    RequireThrows([&] { Control(connection, 77, 1); });
-    RequireThrows([&] { Control(connection, 33, 1); });
-    RequireThrows([&] { Control(connection, 78, 1); });
+    ExpectErr([&] { Control(connection, 32, 1); });
+    ExpectErr([&] { Control(connection, 77, 1); });
+    ExpectErr([&] { Control(connection, 33, 1); });
+    ExpectErr([&] { Control(connection, 78, 1); });
 }
 
 static void TestControlMaxCertList() {
@@ -317,8 +307,8 @@ static void TestControlMaxCertList() {
     expected.internal.maxCertList = -5;
     Require(Same(connection.ssl, expected.ssl) && Same(connection.internal, expected.internal));
     connection.ssl.internal = nullptr;
-    RequireThrows([&] { Control(connection, 50, 0); });
-    RequireThrows([&] { Control(connection, 51, 0); });
+    ExpectErr([&] { Control(connection, 50, 0); });
+    ExpectErr([&] { Control(connection, 51, 0); });
 }
 
 static void TestControlMtu() {
@@ -337,17 +327,17 @@ static void TestControlMtu() {
     Require(Control(connection, 17, INT64_MIN) == 0);
     Require(SSL_ctrl_nid_postfix(nullptr, 17, 227, nullptr) == 0);
     Require(SSL_ctrl_nid_postfix(nullptr, 17, -1, nullptr) == 0);
-    RequireThrows([] { SSL_ctrl_nid_postfix(nullptr, 17, 228, nullptr); });
-    RequireThrows([&] { Control(connection, 17, 228); });
+    ExpectErr([] { SSL_ctrl_nid_postfix(nullptr, 17, 228, nullptr); });
+    ExpectErr([&] { Control(connection, 17, 228); });
     connection.ssl.method = &method;
     expected.ssl.method = &method;
     Require(Control(connection, 17, 228) == 0);
     Require(Control(connection, 17, 1500) == 0);
     Require(Same(connection.ssl, expected.ssl));
     methodInternal.version = 0xFEFF;
-    RequireThrows([&] { Control(connection, 17, 1500); });
+    ExpectErr([&] { Control(connection, 17, 1500); });
     connection.ssl.d1 = &dtls;
-    RequireThrows([&] { Control(connection, 17, 1500); });
+    ExpectErr([&] { Control(connection, 17, 1500); });
     dtls.internal = &dtlsInternal;
     TestDtls1Internal dtlsExpected = dtlsInternal;
     Require(Control(connection, 17, 227) == 0);
@@ -359,7 +349,7 @@ static void TestControlMtu() {
     dtlsExpected.mtu = 0x500;
     Require(Same(dtlsInternal, dtlsExpected));
     method.internal = nullptr;
-    RequireThrows([&] { Control(connection, 17, 1500); });
+    ExpectErr([&] { Control(connection, 17, 1500); });
 }
 
 static void TestControlMaxSendFragment() {
@@ -373,7 +363,7 @@ static void TestControlMaxSendFragment() {
     }
     Require(SSL_ctrl_nid_postfix(nullptr, 52, 511, nullptr) == 0);
     Require(SSL_ctrl_nid_postfix(nullptr, 52, 16385, nullptr) == 0);
-    RequireThrows([] { SSL_ctrl_nid_postfix(nullptr, 52, 512, nullptr); });
+    ExpectErr([] { SSL_ctrl_nid_postfix(nullptr, 52, 512, nullptr); });
     Require(Control(connection, 52, 512) == 1);
     expected.ssl.maxSendFragment = 512;
     Require(Same(connection.ssl, expected.ssl));
@@ -391,10 +381,10 @@ static void TestControlRenegotiationInfoSupport() {
     Connection connection;
     connection.ssl.internal = nullptr;
     Connection expected = connection;
-    RequireThrows([] { SSL_ctrl_nid_postfix(nullptr, 76, 0, nullptr); });
+    ExpectErr([] { SSL_ctrl_nid_postfix(nullptr, 76, 0, nullptr); });
     Require(Control(connection, 76, 1) == 0);
     connection.ssl.s3 = &state;
-    RequireThrows([&] { Control(connection, 76, 0); });
+    ExpectErr([&] { Control(connection, 76, 0); });
     state.internal = &stateInternal;
     Fill(stateInternal, 0x60);
     stateInternal.sendConnectionBinding = 1;
@@ -408,7 +398,7 @@ static void TestControlRenegotiationInfoSupport() {
 }
 
 static void TestControlNullConnection() {
-    for (int command : {16, 32, 33, 50, 51, 77, 78}) RequireThrows([&] { SSL_ctrl_nid_postfix(nullptr, command, 1, nullptr); });
+    for (int command : {16, 32, 33, 50, 51, 77, 78}) ExpectErr([&] { SSL_ctrl_nid_postfix(nullptr, command, 1, nullptr); });
 }
 
 int main() {

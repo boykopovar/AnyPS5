@@ -1,19 +1,13 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceNet/include/Net.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <source_location>
-
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 static void Failed(int result, int error) {
     Require(result == static_cast<int>(0x80410100u | static_cast<unsigned>(error)));

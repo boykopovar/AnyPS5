@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include "VulkanTestDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ShaderPreparation.hpp"
 #include "SceShaders.hpp"
@@ -14,10 +15,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 alignas(256) constexpr std::array<std::uint32_t, 64> VertexCode{0xbf810000u};
 alignas(256) constexpr std::array<std::uint32_t, 64> PixelCode{0xc8020002u, 0xc8060102u, 0xc80a0202u, 0xc80e0302u, 0xf800180fu, 0x03020100u, 0xbf810000u};

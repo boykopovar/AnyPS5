@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libkernel/Pthread/include/Cancel.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -8,10 +9,6 @@
 #include <thread>
 
 namespace {
-
-void Require(bool value, const char* message) {
-    if (!value) throw std::runtime_error(message);
-}
 
 template<class TPredicate>
 bool Until(TPredicate predicate, int milliseconds = 3000) {

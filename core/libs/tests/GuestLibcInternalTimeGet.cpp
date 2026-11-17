@@ -2,6 +2,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -15,12 +16,6 @@
 #endif
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "libc internal time_get: %s\n", message);
-    std::exit(1);
-}
 
 void* APS5_VABI TestAllocate(std::size_t size) { return std::malloc(size); }
 void APS5_VABI TestFree(void* pointer) { std::free(pointer); }

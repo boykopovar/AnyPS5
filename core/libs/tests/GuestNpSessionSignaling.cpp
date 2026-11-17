@@ -1,6 +1,7 @@
 #include "prx/libSceNpSessionSignaling/include/Api.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -22,13 +23,6 @@ constexpr int AlreadyInitialized = static_cast<int>(0x80553302u);
 constexpr int ContextLimit = static_cast<int>(0x80553307u);
 constexpr int ContextNotFound = static_cast<int>(0x80553308u);
 constexpr int GroupNotFound = static_cast<int>(0x8055330Au);
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "NpSessionSignaling: %s\n", message);
-        std::abort();
-    }
-}
 
 }
 

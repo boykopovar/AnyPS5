@@ -1,4 +1,5 @@
 #include "Decoder/Jpeg.hpp"
+#include "Testing.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -7,8 +8,6 @@
 #include <stdexcept>
 #include <utility>
 #include <vector>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 template<typename TFunction>
 static bool ThrowsInvalidArgument(TFunction function) {

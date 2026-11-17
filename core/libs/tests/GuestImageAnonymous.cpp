@@ -1,11 +1,10 @@
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "Testing.hpp"
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 int initialized = 0x5a5a5a5a;
 

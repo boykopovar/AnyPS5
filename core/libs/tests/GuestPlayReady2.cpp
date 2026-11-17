@@ -1,4 +1,5 @@
 #include "prx/libScePlayReady2/libScePlayReady2.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cerrno>
@@ -21,12 +22,6 @@
 namespace {
 
 constexpr int ErrorInvalidArgument = static_cast<int>(0x80070057u);
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
 
 class GuardedPage {
 public:

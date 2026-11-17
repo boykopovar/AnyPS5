@@ -1,5 +1,6 @@
 #include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <bit>
 #include <cstddef>
@@ -15,9 +16,6 @@ using namespace SceJson2;
 struct Parameter { void* allocator; void* context; std::size_t bufferSize; std::int32_t mode; std::uint32_t reserved[3]; };
 using Mismatch = const Value& (APS5_VABI*)(ValueType, const Value*, const Value*, void*);
 static_assert(sizeof(Value) == 32 && sizeof(Parameter) == 40 && offsetof(Parameter, mode) == 24);
-static void Require(bool valid, const char* message) {
-    if (!valid) { std::fprintf(stderr, "%s\n", message); std::abort(); }
-}
 static void CheckParameters() {
     int first = 1, second = 2;
     const Parameter parameters[]{

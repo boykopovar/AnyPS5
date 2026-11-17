@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -21,13 +22,6 @@ static constexpr int DETACHED_ROUNDS = 200;
 static constexpr auto SUSPENDED_WINDOW = std::chrono::milliseconds(50);
 static void* const CANCELED = reinterpret_cast<void*>(std::uintptr_t{1});
 static void* const FINISHED = reinterpret_cast<void*>(std::uintptr_t{7});
-
-static void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "%s\n", message);
-        std::abort();
-    }
-}
 
 struct Started {
     std::atomic<bool> ran{false};

@@ -4,6 +4,7 @@
 #include "prx/libSceVideoOut/include/Output.hpp"
 #include "prx/libSceVideoOut/include/VideoOutDriver.hpp"
 #include "tests/VideoOutTestEnvironment.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -22,8 +23,6 @@ static constexpr int UNKNOWN_OUTPUT_MODE = static_cast<int>(0x8029001E);
 static constexpr int UNAVAILABLE_OUTPUT_MODE = static_cast<int>(0x80290019);
 static constexpr std::uint64_t TILING_MODE_LINEAR = 0;
 static constexpr std::uint64_t PIXEL_FORMAT = 0x8000000022000000ull;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static void SetEnvironment(const char* name, const char* value) {
 #ifdef _WIN32

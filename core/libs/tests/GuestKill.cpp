@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <csignal>
 #include <cstdint>
 #include <cstdlib>
@@ -10,7 +11,6 @@ using Handler = void (APS5_VABI *)(int);
 
 volatile std::sig_atomic_t received = 0;
 void APS5_VABI Callback(int value) { received = value; }
-static void Require(bool value) { if (!value) std::abort(); }
 static void Fails(int pid, int guest, int error) {
     *__error_nid_postfix() = 0;
     Require(kill_nid_postfix(pid, guest) == -1 && *__error_nid_postfix() == error);

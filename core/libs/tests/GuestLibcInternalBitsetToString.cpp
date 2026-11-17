@@ -1,4 +1,5 @@
 #include "prx/libSceLibcInternal/libSceLibcInternal.hpp"
+#include "Testing.hpp"
 
 #include <bitset>
 #include <cstddef>
@@ -10,12 +11,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "libc internal bitset to_string: %s\n", message);
-    std::abort();
-}
 
 constexpr std::size_t Guard = 8;
 

@@ -3,6 +3,7 @@
 #include "prx/libc/libc.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -14,12 +15,6 @@
 #include <unordered_map>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL3 HMAC_CTX check failed at line %u\n", location.line());
-    std::abort();
-}
 
 std::unordered_map<void*, std::size_t> allocations;
 std::size_t callocCalls = 0;

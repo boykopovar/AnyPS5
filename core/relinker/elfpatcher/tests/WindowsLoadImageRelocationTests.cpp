@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include <elfpatcher/windows/WindowsLoadImage.hpp>
 #include <domain/Types.hpp>
 #include <io/BufferUtils.hpp>
@@ -11,15 +12,6 @@
 using namespace Elfpatcher::Windows;
 
 namespace {
-
-void RequireThrows(const std::function<void()>& operation, const std::string& message) {
-    try {
-        operation();
-    } catch (const Domain::RelinkerException&) {
-        return;
-    }
-    throw std::runtime_error(message);
-}
 
 std::vector<std::uint8_t> ElfFixture() {
     std::vector<std::uint8_t> bytes(64, 0);
@@ -47,9 +39,9 @@ int main() {
         image.GetRelocatedAddress(0x1fff);
         image.GetRelocatedAddress(0x2000);
 
-        RequireThrows([&] { image.GetRelocatedAddress(0x2001); },
+        ExpectErr<Domain::RelinkerException>([&] { image.GetRelocatedAddress(0x2001); },
             "GetRelocatedAddress accepted an address beyond the mapped image");
-        RequireThrows([&] { image.GetRelocatedAddress(0xfff); },
+        ExpectErr<Domain::RelinkerException>([&] { image.GetRelocatedAddress(0xfff); },
             "GetRelocatedAddress accepted an address before the mapped image");
 
         std::cout << "Windows load image relocation bounds passed\n";

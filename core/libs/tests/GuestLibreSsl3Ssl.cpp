@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 
 #include <algorithm>
 #include <array>
@@ -21,12 +22,6 @@ namespace {
 constexpr std::uint64_t TooLarge = 0x0DFFF0DF;
 constexpr std::uint64_t TooSmall = 0x0DFFF0E0;
 constexpr std::uint64_t WrongIntegerType = 0x0DFFF0E1;
-
-void Require(bool condition, const char* message, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "line %u: %s\n", location.line(), message);
-    std::abort();
-}
 
 template<class TObject>
 struct Guarded {

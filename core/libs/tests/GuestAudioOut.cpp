@@ -1,6 +1,7 @@
 #include "prx/libSceAudioOut/include/AudioOut.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cmath>
@@ -37,12 +38,6 @@ constexpr std::uint32_t standardFreq = 48000;
 constexpr std::uint32_t standardLen = 256;
 constexpr int unity = 32768;
 constexpr int defaultMixLevel = 11626;
-
-void Require(bool value) {
-    if (!value) {
-        std::abort();
-    }
-}
 
 void TestPortHandleBounds() {
     constexpr int invalidHandles[] = {

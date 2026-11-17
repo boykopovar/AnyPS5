@@ -1,4 +1,5 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -10,13 +11,6 @@
 namespace {
 
 using namespace NKWebKit::WtfAbi;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "Cookie path check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 void Text(const String& value, std::u16string_view expected) {
     Require(value.impl && value.impl->length == expected.size());

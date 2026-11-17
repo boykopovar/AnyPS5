@@ -1,14 +1,7 @@
 #include "prx/libSceDtsEnc/libSceDtsEnc.hpp"
+#include "Testing.hpp"
 
 #include <cstdlib>
-
-namespace {
-
-void Require(bool value) {
-    if (!value) std::abort();
-}
-
-} // namespace
 
 int main() {
     constexpr int invalidHandle = static_cast<int>(0x80FA0001u);

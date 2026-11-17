@@ -1,5 +1,6 @@
 #include "prx/libSceVideoRecordingP/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cerrno>
@@ -16,13 +17,6 @@ constexpr int NotOpen = static_cast<int>(0x80a80006);
 constexpr int NoVideoFormat = static_cast<int>(0x80a80008);
 constexpr int MinimumHeap = 0x1000;
 constexpr std::uint8_t Sentinel = 0xA5;
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "VideoRecording: %s\n", message);
-        std::abort();
-    }
-}
 
 template <typename TCall>
 bool Throws(TCall call) {

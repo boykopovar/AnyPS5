@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "ControlFlow/RequestSerializer.hpp"
 #include "Optimization/ResourceProgram.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -27,10 +28,6 @@ namespace {
 
 std::string mode;
 std::atomic<unsigned> entered{0};
-
-void Require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 void SetEnvironment(const char* name, const char* value) {
 #ifdef _WIN32

@@ -2,6 +2,7 @@
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include FT_PARAMETER_TAGS_H
@@ -15,10 +16,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool value) {
-    if (!value) std::abort();
-}
 
 std::vector<unsigned char> ReadFont(const char* name) {
     std::ifstream file(std::string(FREETYPE_TEST_FONTS) + "/" + name, std::ios::binary);

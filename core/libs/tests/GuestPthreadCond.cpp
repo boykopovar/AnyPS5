@@ -4,11 +4,10 @@
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "prx/libkernel/Pthread/include/Cond.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdlib>
 
 static constexpr int POSIX_EINVAL = 22;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 int main() {
     PthreadCond cond = nullptr;

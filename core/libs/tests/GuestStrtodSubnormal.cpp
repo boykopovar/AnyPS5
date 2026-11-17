@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <bit>
 #include <cerrno>
 #include <cstdint>
@@ -10,13 +11,6 @@
 #if defined(__SSE__) || defined(__x86_64__) || defined(_M_X64)
 #include <xmmintrin.h>
 #endif
-
-static void Require(bool value, const char* message) {
-    if (!value) {
-        std::fprintf(stderr, "%s\n", message);
-        std::abort();
-    }
-}
 
 static std::string ExactSmallestSubnormalDecimal() {
     std::string digits = "1";

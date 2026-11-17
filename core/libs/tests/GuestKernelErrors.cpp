@@ -4,6 +4,7 @@
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "prx/libkernel/Pthread/include/Rwlock.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -39,8 +40,6 @@ static constexpr int PRIO_INHERIT = 1;
 static constexpr int PRIO_PROTECT = 2;
 static constexpr int MUTEX_TYPE_ADAPTIVE = 4;
 static constexpr int POSIX_EDEADLK = 11;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static void WaitForEventFlagWaiters(KernelEventFlag handle, int expected) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);

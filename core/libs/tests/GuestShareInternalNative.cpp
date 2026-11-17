@@ -1,4 +1,5 @@
 #include "prx/libSceShareInternal.native/libSceShareInternal.native.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cerrno>
@@ -10,12 +11,6 @@
 namespace {
 
 constexpr int ErrorInvalidArgument = static_cast<int>(0x81960002u);
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
 
 void CheckIdOnly() {
     for (const auto call : std::array<decltype(&sceShareFeaturePermitCompatible), 3>{

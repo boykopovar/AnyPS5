@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -24,11 +25,6 @@ static std::string ReadAll(const std::filesystem::path& path) {
     return text.str();
 }
 
-static void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stdout, "%s\n", message);
-    std::abort();
-}
 
 int main() {
 #ifdef _WIN32

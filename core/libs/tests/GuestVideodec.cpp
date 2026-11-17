@@ -8,6 +8,7 @@
 #include <vector>
 #include "prx/libc/include/General.hpp"
 #include "H264Fixture.hpp"
+#include "Testing.hpp"
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -41,10 +42,6 @@ constexpr std::uint32_t Pitch = 64;
 constexpr std::uint32_t PictureHeight = 48;
 constexpr std::size_t FrameBytes = static_cast<std::size_t>(Pitch) * PictureHeight * 3 / 2;
 
-void check(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
-
 class PageTail {
     void* memory = nullptr;
     std::size_t page = 0;
@@ -57,16 +54,16 @@ public:
         GetSystemInfo(&info);
         page = info.dwPageSize;
         memory = VirtualAlloc(nullptr, page * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-        check(memory != nullptr, "the guard pages could not be allocated");
+        Require(memory != nullptr, "the guard pages could not be allocated");
         DWORD previous;
-        check(VirtualProtect(static_cast<unsigned char*>(memory) + page, page, PAGE_NOACCESS, &previous) != 0, "the guard page could not be protected");
+        Require(VirtualProtect(static_cast<unsigned char*>(memory) + page, page, PAGE_NOACCESS, &previous) != 0, "the guard page could not be protected");
 #else
         page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
         memory = mmap(nullptr, page * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-        check(memory != MAP_FAILED, "the guard pages could not be allocated");
-        check(mprotect(static_cast<unsigned char*>(memory) + page, page, PROT_NONE) == 0, "the guard page could not be protected");
+        Require(memory != MAP_FAILED, "the guard pages could not be allocated");
+        Require(mprotect(static_cast<unsigned char*>(memory) + page, page, PROT_NONE) == 0, "the guard page could not be protected");
 #endif
-        check(bytes <= page, "the guarded value does not fit in a page");
+        Require(bytes <= page, "the guarded value does not fit in a page");
         data = static_cast<unsigned char*>(memory) + page - bytes;
         std::memcpy(data, source, bytes);
     }
@@ -82,9 +79,9 @@ public:
     void ReadOnly() {
 #ifdef _WIN32
         DWORD previous;
-        check(VirtualProtect(memory, page, PAGE_READONLY, &previous) != 0, "the page could not be made read-only");
+        Require(VirtualProtect(memory, page, PAGE_READONLY, &previous) != 0, "the page could not be made read-only");
 #else
-        check(mprotect(memory, page, PROT_READ) == 0, "the page could not be made read-only");
+        Require(mprotect(memory, page, PROT_READ) == 0, "the page could not be made read-only");
 #endif
     }
     template <typename T>
@@ -100,8 +97,8 @@ struct Session {
                                 static_cast<std::int32_t>(CodedHeight), 4, 0};
         const ResourceInfo resource{sizeof(ResourceInfo), 16u << 20u, nullptr, 16u << 20u, nullptr,
                                     FrameBytes, 256};
-        check(sceVideodecCreateDecoder(&config, &resource, &ctrl) == 0, "decoder creation failed");
-        check(ctrl.handle != nullptr && ctrl.version == 1, "the control block was not filled");
+        Require(sceVideodecCreateDecoder(&config, &resource, &ctrl) == 0, "decoder creation failed");
+        Require(ctrl.handle != nullptr && ctrl.version == 1, "the control block was not filled");
     }
 
     ~Session() { sceVideodecDeleteDecoder(&ctrl); }
@@ -111,16 +108,16 @@ struct Session {
 
 void testDecode(const std::vector<std::vector<std::uint8_t>>& units, std::uint32_t cropTop, std::uint32_t cropBottom) {
     Session session;
-    check(units.size() == PictureHashes.size(), "unexpected access unit count");
+    Require(units.size() == PictureHashes.size(), "unexpected access unit count");
     std::vector<std::uint64_t> hashes;
     std::vector<std::uint64_t> timestamps;
     std::vector<std::uint64_t> attachments;
     const auto collect = [&](PictureInfo& picture) {
         if (!picture.isValid) return;
-        check(picture.framePitch == Pitch && picture.frameHeight == PictureHeight, "unexpected picture geometry");
-        check(picture.frameWidth == Width, "unexpected picture width");
-        check(picture.codecType == 0 && !picture.isErrorPic, "unexpected picture flags");
-        check(picture.codec.avc.frameCropTopOffset == cropTop && picture.codec.avc.frameCropBottomOffset == cropBottom, "unexpected crop");
+        Require(picture.framePitch == Pitch && picture.frameHeight == PictureHeight, "unexpected picture geometry");
+        Require(picture.frameWidth == Width, "unexpected picture width");
+        Require(picture.codecType == 0 && !picture.isErrorPic, "unexpected picture flags");
+        Require(picture.codec.avc.frameCropTopOffset == cropTop && picture.codec.avc.frameCropBottomOffset == cropBottom, "unexpected crop");
         hashes.push_back(hashNv12(session.buffer.data(), Pitch, PictureHeight));
         timestamps.push_back(picture.ptsData);
         attachments.push_back(picture.attachedData);
@@ -130,22 +127,22 @@ void testDecode(const std::vector<std::vector<std::uint8_t>>& units, std::uint32
         auto target = session.MakeTarget();
         PictureInfo picture{sizeof(PictureInfo)};
         const auto status = sceVideodecDecode(&session.ctrl, &input, &target, &picture);
-        check(status == 0, "decode of unit " + std::to_string(unit) + " failed with " + std::to_string(status));
+        Require(status == 0, "decode of unit " + std::to_string(unit) + " failed with " + std::to_string(status));
         collect(picture);
     }
     for (;;) {
         auto target = session.MakeTarget();
         PictureInfo picture{sizeof(PictureInfo)};
-        check(sceVideodecFlush(&session.ctrl, &target, &picture) == 0, "flush failed");
+        Require(sceVideodecFlush(&session.ctrl, &target, &picture) == 0, "flush failed");
         if (!picture.isValid) break;
         collect(picture);
     }
-    check(hashes.size() == PictureHashes.size(), "missing pictures");
+    Require(hashes.size() == PictureHashes.size(), "missing pictures");
     for (std::size_t index = 0; index < hashes.size(); ++index) {
-        check(hashes[index] == PictureHashes[index], "picture " + std::to_string(index) + " differs from the reference");
+        Require(hashes[index] == PictureHashes[index], "picture " + std::to_string(index) + " differs from the reference");
         const auto unit = DisplayOrderUnits[index];
-        check(timestamps[index] == 1000 + unit, "pictures out of display order");
-        check(attachments[index] == 0xa0 + unit, "picture attachment out of display order");
+        Require(timestamps[index] == 1000 + unit, "pictures out of display order");
+        Require(attachments[index] == 0xa0 + unit, "picture attachment out of display order");
     }
 }
 
@@ -163,23 +160,23 @@ void testErrors() {
                             static_cast<std::int32_t>(CodedHeight), 4, 0};
     const ResourceInfo resource{sizeof(ResourceInfo), 16u << 20u, nullptr, 16u << 20u, nullptr, FrameBytes, 256};
     Ctrl ctrl{sizeof(Ctrl)};
-    check(sceVideodecCreateDecoder(nullptr, &resource, &ctrl) == ErrorArgumentPointer, "a null configuration was accepted");
-    check(sceVideodecCreateDecoder(&config, &resource, nullptr) == ErrorArgumentPointer, "a null control block was accepted");
+    Require(sceVideodecCreateDecoder(nullptr, &resource, &ctrl) == ErrorArgumentPointer, "a null configuration was accepted");
+    Require(sceVideodecCreateDecoder(&config, &resource, nullptr) == ErrorArgumentPointer, "a null control block was accepted");
     const ConfigInfo shortConfig{sizeof(ConfigInfo) - 8};
-    check(sceVideodecCreateDecoder(&shortConfig, &resource, &ctrl) == ErrorStructSize, "a short configuration was accepted");
-    check(sceVideodecCreateDecoder(&config, &resource, &ctrl) == 0, "decoder creation failed");
+    Require(sceVideodecCreateDecoder(&shortConfig, &resource, &ctrl) == ErrorStructSize, "a short configuration was accepted");
+    Require(sceVideodecCreateDecoder(&config, &resource, &ctrl) == 0, "decoder creation failed");
     PictureInfo freshPicture{sizeof(PictureInfo)};
     FrameBuffer unset{sizeof(FrameBuffer), nullptr, FrameBytes};
-    check(sceVideodecFlush(&ctrl, &unset, &freshPicture) == ErrorFrameBufferPointer, "flush accepted a null frame buffer");
-    check(sceVideodecDeleteDecoder(nullptr) == ErrorArgumentPointer, "a null control block was accepted by delete");
+    Require(sceVideodecFlush(&ctrl, &unset, &freshPicture) == ErrorFrameBufferPointer, "flush accepted a null frame buffer");
+    Require(sceVideodecDeleteDecoder(nullptr) == ErrorArgumentPointer, "a null control block was accepted by delete");
     Ctrl shortCtrl{sizeof(Ctrl) - 8};
-    check(sceVideodecDeleteDecoder(&shortCtrl) == ErrorStructSize, "a short control block was accepted by delete");
-    check(sceVideodecReset(nullptr) == ErrorArgumentPointer, "a null control block was accepted by reset");
-    check(sceVideodecReset(&shortCtrl) == ErrorStructSize, "a short control block was accepted by reset");
+    Require(sceVideodecDeleteDecoder(&shortCtrl) == ErrorStructSize, "a short control block was accepted by delete");
+    Require(sceVideodecReset(nullptr) == ErrorArgumentPointer, "a null control block was accepted by reset");
+    Require(sceVideodecReset(&shortCtrl) == ErrorStructSize, "a short control block was accepted by reset");
     Ctrl foreign{sizeof(Ctrl)};
     foreign.handle = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x1234));
-    check(sceVideodecDeleteDecoder(&foreign) == ErrorHandle, "an unknown decoder was deleted");
-    check(sceVideodecReset(&foreign) == ErrorHandle, "an unknown decoder was reset");
+    Require(sceVideodecDeleteDecoder(&foreign) == ErrorHandle, "an unknown decoder was deleted");
+    Require(sceVideodecReset(&foreign) == ErrorHandle, "an unknown decoder was reset");
     const SceVideodec2::InputData empty{sizeof(SceVideodec2::InputData), nullptr, 0, 0, 0, 0};
     FrameBuffer frame{sizeof(FrameBuffer), nullptr, 0};
     PictureInfo picture{sizeof(PictureInfo)};
@@ -187,45 +184,45 @@ void testErrors() {
     auto* const badInput = reinterpret_cast<const SceVideodec2::InputData*>(std::uintptr_t{0x10});
     auto* const badFrame = reinterpret_cast<FrameBuffer*>(std::uintptr_t{0x10});
     auto* const badPicture = reinterpret_cast<PictureInfo*>(std::uintptr_t{0x10});
-    check(sceVideodecDecode(badCtrl, &empty, &frame, &picture) == ErrorArgumentPointer, "an unreadable control block was accepted by decode");
-    check(sceVideodecDecode(&ctrl, badInput, &frame, &picture) == ErrorArgumentPointer, "an unreadable input block was accepted by decode");
-    check(sceVideodecDecode(&ctrl, &empty, badFrame, &picture) == ErrorFrameBufferPointer, "an unreadable frame buffer was accepted by decode");
-    check(sceVideodecDecode(&ctrl, &empty, &frame, badPicture) == ErrorArgumentPointer, "an unreadable picture info was accepted by decode");
-    check(sceVideodecFlush(badCtrl, &frame, &picture) == ErrorArgumentPointer, "an unreadable control block was accepted by flush");
-    check(sceVideodecFlush(&ctrl, badFrame, &picture) == ErrorFrameBufferPointer, "an unreadable frame buffer was accepted by flush");
-    check(sceVideodecFlush(&ctrl, &frame, badPicture) == ErrorArgumentPointer, "an unreadable picture info was accepted by flush");
-    check(sceVideodecDecode(nullptr, &empty, &frame, &picture) == ErrorArgumentPointer, "a null control block was accepted");
-    check(sceVideodecDecode(&ctrl, &empty, &frame, &picture) == ErrorAuPointer, "a null access unit was accepted");
+    Require(sceVideodecDecode(badCtrl, &empty, &frame, &picture) == ErrorArgumentPointer, "an unreadable control block was accepted by decode");
+    Require(sceVideodecDecode(&ctrl, badInput, &frame, &picture) == ErrorArgumentPointer, "an unreadable input block was accepted by decode");
+    Require(sceVideodecDecode(&ctrl, &empty, badFrame, &picture) == ErrorFrameBufferPointer, "an unreadable frame buffer was accepted by decode");
+    Require(sceVideodecDecode(&ctrl, &empty, &frame, badPicture) == ErrorArgumentPointer, "an unreadable picture info was accepted by decode");
+    Require(sceVideodecFlush(badCtrl, &frame, &picture) == ErrorArgumentPointer, "an unreadable control block was accepted by flush");
+    Require(sceVideodecFlush(&ctrl, badFrame, &picture) == ErrorFrameBufferPointer, "an unreadable frame buffer was accepted by flush");
+    Require(sceVideodecFlush(&ctrl, &frame, badPicture) == ErrorArgumentPointer, "an unreadable picture info was accepted by flush");
+    Require(sceVideodecDecode(nullptr, &empty, &frame, &picture) == ErrorArgumentPointer, "a null control block was accepted");
+    Require(sceVideodecDecode(&ctrl, &empty, &frame, &picture) == ErrorAuPointer, "a null access unit was accepted");
     const SceVideodec2::InputData sized{sizeof(SceVideodec2::InputData), reinterpret_cast<const std::uint8_t*>(&config), 0, 0, 0, 0};
-    check(sceVideodecDecode(&ctrl, &sized, &frame, &picture) == ErrorAuSize, "an empty access unit was accepted");
+    Require(sceVideodecDecode(&ctrl, &sized, &frame, &picture) == ErrorAuSize, "an empty access unit was accepted");
     FrameBuffer missing{sizeof(FrameBuffer), nullptr, FrameBytes};
     const auto units = accessUnits(false);
     const SceVideodec2::InputData input{sizeof(SceVideodec2::InputData), units[0].data(), units[0].size(), 0, 0, 0};
-    check(sceVideodecDecode(&ctrl, &input, &missing, &picture) == ErrorFrameBufferPointer, "a null frame buffer was accepted");
+    Require(sceVideodecDecode(&ctrl, &input, &missing, &picture) == ErrorFrameBufferPointer, "a null frame buffer was accepted");
     std::vector<std::uint8_t> storage(static_cast<std::size_t>(FrameBytes));
     FrameBuffer shortBuffer{sizeof(FrameBuffer), storage.data(), FrameBytes - 1};
     int refusals = 0;
     for (std::size_t unit = 0; unit < units.size(); ++unit) {
         const SceVideodec2::InputData unit0{sizeof(SceVideodec2::InputData), units[unit].data(), units[unit].size(), 1000 + unit, unit, 0xa0 + unit};
         const auto status = sceVideodecDecode(&ctrl, &unit0, &shortBuffer, &picture);
-        check(status == 0 || status == ErrorFrameBufferSize, "a decode failed");
+        Require(status == 0 || status == ErrorFrameBufferSize, "a decode failed");
         if (status == ErrorFrameBufferSize) ++refusals;
     }
-    check(refusals > 0, "no picture was refused for the short frame buffer");
+    Require(refusals > 0, "no picture was refused for the short frame buffer");
     FrameBuffer shortFrame{sizeof(FrameBuffer) - 8, storage.data(), FrameBytes};
-    check(sceVideodecDecode(&ctrl, &input, &shortFrame, &picture) == ErrorStructSize, "a short frame buffer structure was accepted");
+    Require(sceVideodecDecode(&ctrl, &input, &shortFrame, &picture) == ErrorStructSize, "a short frame buffer structure was accepted");
     PictureInfo shortPicture{sizeof(PictureInfo) - 8};
-    check(sceVideodecDecode(&ctrl, &input, &frame, &shortPicture) == ErrorStructSize, "a short picture information structure was accepted");
-    check(sceVideodecDecode(&ctrl, &input, nullptr, nullptr) == ErrorArgumentPointer, "decode reported the frame buffer before a null picture info");
-    check(sceVideodecDecode(&ctrl, nullptr, nullptr, &picture) == ErrorArgumentPointer, "decode reported the frame buffer before a null input block");
+    Require(sceVideodecDecode(&ctrl, &input, &frame, &shortPicture) == ErrorStructSize, "a short picture information structure was accepted");
+    Require(sceVideodecDecode(&ctrl, &input, nullptr, nullptr) == ErrorArgumentPointer, "decode reported the frame buffer before a null picture info");
+    Require(sceVideodecDecode(&ctrl, nullptr, nullptr, &picture) == ErrorArgumentPointer, "decode reported the frame buffer before a null input block");
     const SceVideodec2::InputData shortInput{sizeof(SceVideodec2::InputData) - 8, units[0].data(), units[0].size(), 0, 0, 0};
-    check(sceVideodecDecode(&ctrl, &shortInput, &frame, &picture) == ErrorStructSize, "a short input structure was accepted");
-    check(sceVideodecFlush(&ctrl, nullptr, nullptr) == ErrorArgumentPointer, "flush reported the frame buffer before a null picture info");
-    check(sceVideodecFlush(&foreign, &frame, &picture) == ErrorHandle, "flush accepted an unknown decoder");
-    check(sceVideodecDeleteDecoder(&ctrl) == 0, "the decoder was not deleted");
-    check(sceVideodecDeleteDecoder(&ctrl) == ErrorHandle, "the decoder was deleted twice");
-    check(sceVideodecReset(&ctrl) == ErrorHandle, "a deleted decoder was reset");
-    check(sceVideodecDecode(&ctrl, &input, &frame, &picture) == ErrorHandle, "a decode succeeded on a deleted decoder");
+    Require(sceVideodecDecode(&ctrl, &shortInput, &frame, &picture) == ErrorStructSize, "a short input structure was accepted");
+    Require(sceVideodecFlush(&ctrl, nullptr, nullptr) == ErrorArgumentPointer, "flush reported the frame buffer before a null picture info");
+    Require(sceVideodecFlush(&foreign, &frame, &picture) == ErrorHandle, "flush accepted an unknown decoder");
+    Require(sceVideodecDeleteDecoder(&ctrl) == 0, "the decoder was not deleted");
+    Require(sceVideodecDeleteDecoder(&ctrl) == ErrorHandle, "the decoder was deleted twice");
+    Require(sceVideodecReset(&ctrl) == ErrorHandle, "a deleted decoder was reset");
+    Require(sceVideodecDecode(&ctrl, &input, &frame, &picture) == ErrorHandle, "a decode succeeded on a deleted decoder");
 }
 
 void testReset() {
@@ -234,10 +231,10 @@ void testReset() {
     const SceVideodec2::InputData input{sizeof(SceVideodec2::InputData), units[0].data(), units[0].size(), 1000, 0, 0xa0};
     auto target = session.MakeTarget();
     PictureInfo picture{sizeof(PictureInfo)};
-    check(sceVideodecDecode(&session.ctrl, &input, &target, &picture) == 0, "decode failed");
-    check(sceVideodecReset(&session.ctrl) == 0, "reset failed");
-    check(sceVideodecFlush(&session.ctrl, &target, &picture) == 0, "flush failed");
-    check(!picture.isValid, "a reset decoder produced a picture");
+    Require(sceVideodecDecode(&session.ctrl, &input, &target, &picture) == 0, "decode failed");
+    Require(sceVideodecReset(&session.ctrl) == 0, "reset failed");
+    Require(sceVideodecFlush(&session.ctrl, &target, &picture) == 0, "flush failed");
+    Require(!picture.isValid, "a reset decoder produced a picture");
 }
 
 constexpr std::uint8_t High10Picture[] = {
@@ -255,10 +252,10 @@ void testDeepPicture() {
     try {
         auto target = session.MakeTarget();
         PictureInfo picture{sizeof(PictureInfo)};
-        check(sceVideodecDecode(&session.ctrl, &input, &target, &picture) == 0, "decode of the 10-bit picture failed");
+        Require(sceVideodecDecode(&session.ctrl, &input, &target, &picture) == 0, "decode of the 10-bit picture failed");
         if (picture.isValid) ++pictures;
         for (;;) {
-            check(sceVideodecFlush(&session.ctrl, &target, &picture) == 0, "flush of the 10-bit picture failed");
+            Require(sceVideodecFlush(&session.ctrl, &target, &picture) == 0, "flush of the 10-bit picture failed");
             if (!picture.isValid) break;
             ++pictures;
         }
@@ -266,7 +263,7 @@ void testDeepPicture() {
         if (std::string(error.what()).find("deeper than 8 bits") == std::string::npos) throw;
         refused = true;
     }
-    check(refused, "10-bit pictures copied as 8-bit pictures: " + std::to_string(pictures));
+    Require(refused, "10-bit pictures copied as 8-bit pictures: " + std::to_string(pictures));
 }
 
 constexpr std::uint8_t High10ReorderedPicture[] = {
@@ -282,8 +279,8 @@ void testDeepReorderedPicture() {
     const SceVideodec2::InputData input{sizeof(SceVideodec2::InputData), High10ReorderedPicture, sizeof(High10ReorderedPicture), 1000, 0, 0xa0};
     auto target = session.MakeTarget();
     PictureInfo picture{sizeof(PictureInfo)};
-    check(sceVideodecDecode(&session.ctrl, &input, &target, &picture) == 0, "decode of the reordered 10-bit picture failed");
-    check(!picture.isValid, "the reordered 10-bit picture was not held for the flush");
+    Require(sceVideodecDecode(&session.ctrl, &input, &target, &picture) == 0, "decode of the reordered 10-bit picture failed");
+    Require(!picture.isValid, "the reordered 10-bit picture was not held for the flush");
     bool refused = false;
     try {
         sceVideodecFlush(&session.ctrl, &target, &picture);
@@ -291,21 +288,21 @@ void testDeepReorderedPicture() {
         if (std::string(error.what()).find("deeper than 8 bits") == std::string::npos) throw;
         refused = true;
     }
-    check(refused, "a flushed 10-bit picture was copied as an 8-bit picture");
+    Require(refused, "a flushed 10-bit picture was copied as an 8-bit picture");
 }
 
 void testQueryResourceInfo(std::int32_t width, std::int32_t height, std::uint32_t profile, std::uint32_t level) {
     const ConfigInfo config{sizeof(ConfigInfo), 1, profile, level, width, height, 4, 0};
     ResourceInfo resource{sizeof(ResourceInfo)};
-    check(sceVideodecQueryResourceInfo(&config, &resource) == 0, "the resource query failed");
+    Require(sceVideodecQueryResourceInfo(&config, &resource) == 0, "the resource query failed");
     const SceVideodec2::DecoderConfigInfo mapped{sizeof(SceVideodec2::DecoderConfigInfo), 1, 1, profile, level, width, height, 4, 1};
     SceVideodec2::DecoderMemoryInfo memory{sizeof(SceVideodec2::DecoderMemoryInfo)};
-    check(sceVideodec2QueryDecoderMemoryInfo_nid_postfix(&mapped, &memory) == 0, "the Videodec2 memory query failed");
-    check(resource.thisSize == sizeof(ResourceInfo), "the resource information size was changed");
-    check(resource.cpuMemorySize == memory.cpuMemorySize, "the CPU memory size differs from libSceVideodec2");
-    check(resource.cpuGpuMemorySize == memory.cpuGpuMemorySize, "the CPU-GPU memory size differs from libSceVideodec2");
-    check(resource.maxFrameBufferSize == memory.maxFrameBufferSize, "the frame buffer size differs from libSceVideodec2");
-    check(resource.frameBufferAlignment == memory.frameBufferAlignment, "the frame buffer alignment differs from libSceVideodec2");
+    Require(sceVideodec2QueryDecoderMemoryInfo_nid_postfix(&mapped, &memory) == 0, "the Videodec2 memory query failed");
+    Require(resource.thisSize == sizeof(ResourceInfo), "the resource information size was changed");
+    Require(resource.cpuMemorySize == memory.cpuMemorySize, "the CPU memory size differs from libSceVideodec2");
+    Require(resource.cpuGpuMemorySize == memory.cpuGpuMemorySize, "the CPU-GPU memory size differs from libSceVideodec2");
+    Require(resource.maxFrameBufferSize == memory.maxFrameBufferSize, "the frame buffer size differs from libSceVideodec2");
+    Require(resource.frameBufferAlignment == memory.frameBufferAlignment, "the frame buffer alignment differs from libSceVideodec2");
 }
 
 void testQueryResourceInfo() {
@@ -315,53 +312,53 @@ void testQueryResourceInfo() {
     const ConfigInfo config{sizeof(ConfigInfo), 1, 100, 42, static_cast<std::int32_t>(Width),
                             static_cast<std::int32_t>(CodedHeight), 4, 0};
     ResourceInfo resource{sizeof(ResourceInfo)};
-    check(sceVideodecQueryResourceInfo(&config, &resource) == 0, "the resource query failed");
-    check(resource.maxFrameBufferSize >= FrameBytes, "the frame buffer size does not hold a decoded picture");
+    Require(sceVideodecQueryResourceInfo(&config, &resource) == 0, "the resource query failed");
+    Require(resource.maxFrameBufferSize >= FrameBytes, "the frame buffer size does not hold a decoded picture");
     Ctrl ctrl{sizeof(Ctrl)};
-    check(sceVideodecCreateDecoder(&config, &resource, &ctrl) == 0, "the queried resources were refused");
-    check(sceVideodecDeleteDecoder(&ctrl) == 0, "the decoder was not deleted");
+    Require(sceVideodecCreateDecoder(&config, &resource, &ctrl) == 0, "the queried resources were refused");
+    Require(sceVideodecDeleteDecoder(&ctrl) == 0, "the decoder was not deleted");
     auto* const badConfig = reinterpret_cast<const ConfigInfo*>(std::uintptr_t{0x10});
     auto* const badResource = reinterpret_cast<ResourceInfo*>(std::uintptr_t{0x10});
     auto* const badCtrl = reinterpret_cast<Ctrl*>(std::uintptr_t{0x10});
-    check(sceVideodecQueryResourceInfo(nullptr, &resource) == ErrorArgumentPointer, "a null configuration was accepted");
-    check(sceVideodecQueryResourceInfo(&config, nullptr) == ErrorArgumentPointer, "null resource information was accepted");
-    check(sceVideodecQueryResourceInfo(badConfig, &resource) == ErrorArgumentPointer, "an unreadable configuration was accepted");
-    check(sceVideodecQueryResourceInfo(&config, badResource) == ErrorArgumentPointer, "an unwritable resource information pointer was accepted");
-    check(sceVideodecCreateDecoder(badConfig, &resource, &ctrl) == ErrorArgumentPointer, "an unreadable configuration was accepted by create");
-    check(sceVideodecCreateDecoder(&config, badResource, &ctrl) == ErrorArgumentPointer, "an unreadable resource was accepted by create");
-    check(sceVideodecCreateDecoder(&config, &resource, badCtrl) == ErrorArgumentPointer, "an unwritable control block was accepted by create");
-    check(sceVideodecDeleteDecoder(badCtrl) == ErrorArgumentPointer, "an unreadable control block was accepted by delete");
-    check(sceVideodecReset(badCtrl) == ErrorArgumentPointer, "an unreadable control block was accepted by reset");
+    Require(sceVideodecQueryResourceInfo(nullptr, &resource) == ErrorArgumentPointer, "a null configuration was accepted");
+    Require(sceVideodecQueryResourceInfo(&config, nullptr) == ErrorArgumentPointer, "null resource information was accepted");
+    Require(sceVideodecQueryResourceInfo(badConfig, &resource) == ErrorArgumentPointer, "an unreadable configuration was accepted");
+    Require(sceVideodecQueryResourceInfo(&config, badResource) == ErrorArgumentPointer, "an unwritable resource information pointer was accepted");
+    Require(sceVideodecCreateDecoder(badConfig, &resource, &ctrl) == ErrorArgumentPointer, "an unreadable configuration was accepted by create");
+    Require(sceVideodecCreateDecoder(&config, badResource, &ctrl) == ErrorArgumentPointer, "an unreadable resource was accepted by create");
+    Require(sceVideodecCreateDecoder(&config, &resource, badCtrl) == ErrorArgumentPointer, "an unwritable control block was accepted by create");
+    Require(sceVideodecDeleteDecoder(badCtrl) == ErrorArgumentPointer, "an unreadable control block was accepted by delete");
+    Require(sceVideodecReset(badCtrl) == ErrorArgumentPointer, "an unreadable control block was accepted by reset");
     const ResourceInfo sentinel{sizeof(ResourceInfo), 7, nullptr, 7, nullptr, 7, 7};
     auto refused = sentinel;
     auto shortConfig = config;
     shortConfig.thisSize = sizeof(ConfigInfo) - 8;
-    check(sceVideodecQueryResourceInfo(&shortConfig, &refused) == ErrorStructSize, "a short configuration was accepted");
+    Require(sceVideodecQueryResourceInfo(&shortConfig, &refused) == ErrorStructSize, "a short configuration was accepted");
     auto shortResource = sentinel;
     shortResource.thisSize = sizeof(ResourceInfo) - 8;
-    check(sceVideodecQueryResourceInfo(&config, &shortResource) == ErrorStructSize, "short resource information was accepted");
+    Require(sceVideodecQueryResourceInfo(&config, &shortResource) == ErrorStructSize, "short resource information was accepted");
     auto unsized = config;
     unsized.maxFrameWidth = 0;
-    check(sceVideodecQueryResourceInfo(&unsized, &refused) == ErrorConfigInfo, "a configuration without a frame size was accepted");
-    check(refused.cpuMemorySize == 7 && refused.cpuGpuMemorySize == 7 && refused.maxFrameBufferSize == 7 && refused.frameBufferAlignment == 7,
+    Require(sceVideodecQueryResourceInfo(&unsized, &refused) == ErrorConfigInfo, "a configuration without a frame size was accepted");
+    Require(refused.cpuMemorySize == 7 && refused.cpuGpuMemorySize == 7 && refused.maxFrameBufferSize == 7 && refused.frameBufferAlignment == 7,
           "a refused query wrote the resource information");
-    check(shortResource.cpuMemorySize == 7 && shortResource.maxFrameBufferSize == 7, "a refused query wrote the resource information");
+    Require(shortResource.cpuMemorySize == 7 && shortResource.maxFrameBufferSize == 7, "a refused query wrote the resource information");
 
     auto wideConfig = config;
     wideConfig.thisSize = std::uint64_t{1} << 32;
     auto wideResource = resource;
     wideResource.thisSize = std::uint64_t{1} << 32;
-    check(sceVideodecQueryResourceInfo(&wideConfig, &wideResource) == 0, "a size field with only its upper bits set was refused by query");
+    Require(sceVideodecQueryResourceInfo(&wideConfig, &wideResource) == 0, "a size field with only its upper bits set was refused by query");
     Ctrl wideCtrl{std::uint64_t{1} << 32};
-    check(sceVideodecCreateDecoder(&wideConfig, &resource, &wideCtrl) == 0, "a size field with only its upper bits set was refused by create");
+    Require(sceVideodecCreateDecoder(&wideConfig, &resource, &wideCtrl) == 0, "a size field with only its upper bits set was refused by create");
     wideCtrl.thisSize = std::uint64_t{1} << 32;
-    check(sceVideodecDeleteDecoder(&wideCtrl) == 0, "a control block size with only its upper bits set was refused by delete");
+    Require(sceVideodecDeleteDecoder(&wideCtrl) == 0, "a control block size with only its upper bits set was refused by delete");
 
     Ctrl kept{0x5a5a5a5a5a5a5a5au, reinterpret_cast<void*>(std::uintptr_t{0x5a}), 0x5au};
     auto unsizedConfig = config;
     unsizedConfig.maxFrameWidth = 0;
-    check(sceVideodecCreateDecoder(&unsizedConfig, &resource, &kept) == ErrorConfigInfo, "create accepted a configuration without a frame size");
-    check(kept.thisSize == 0x5a5a5a5a5a5a5a5au && kept.handle == reinterpret_cast<void*>(std::uintptr_t{0x5a}) && kept.version == 0x5au, "a failed create wrote the control block");
+    Require(sceVideodecCreateDecoder(&unsizedConfig, &resource, &kept) == ErrorConfigInfo, "create accepted a configuration without a frame size");
+    Require(kept.thisSize == 0x5a5a5a5a5a5a5a5au && kept.handle == reinterpret_cast<void*>(std::uintptr_t{0x5a}) && kept.version == 0x5au, "a failed create wrote the control block");
 
     const std::uint64_t shortSize = 8;
     PageTail shortCtrl(&shortSize, sizeof(shortSize));
@@ -371,23 +368,23 @@ void testQueryResourceInfo() {
     FrameBuffer frame{sizeof(FrameBuffer), nullptr, 0};
     PictureInfo picture{sizeof(PictureInfo)};
     Ctrl sized{sizeof(Ctrl)};
-    check(sceVideodecDeleteDecoder(shortCtrl.As<Ctrl>()) == ErrorStructSize, "delete gave a pointer error for a short control block at the end of a page");
-    check(sceVideodecReset(shortCtrl.As<Ctrl>()) == ErrorStructSize, "reset gave a pointer error for a short control block at the end of a page");
-    check(sceVideodecFlush(shortCtrl.As<Ctrl>(), &frame, &picture) == ErrorStructSize, "flush gave a pointer error for a short control block at the end of a page");
-    check(sceVideodecFlush(&sized, shortFrame.As<FrameBuffer>(), &picture) == ErrorStructSize, "flush gave a pointer error for a short frame buffer at the end of a page");
-    check(sceVideodecFlush(&sized, &frame, shortPicture.As<PictureInfo>()) == ErrorStructSize, "flush gave a pointer error for a short picture at the end of a page");
-    check(sceVideodecDecode(shortCtrl.As<Ctrl>(), &empty, &frame, &picture) == ErrorStructSize, "decode gave a pointer error for a short control block at the end of a page");
-    check(sceVideodecDecode(&sized, &empty, shortFrame.As<FrameBuffer>(), &picture) == ErrorStructSize, "decode gave a pointer error for a short frame buffer at the end of a page");
+    Require(sceVideodecDeleteDecoder(shortCtrl.As<Ctrl>()) == ErrorStructSize, "delete gave a pointer error for a short control block at the end of a page");
+    Require(sceVideodecReset(shortCtrl.As<Ctrl>()) == ErrorStructSize, "reset gave a pointer error for a short control block at the end of a page");
+    Require(sceVideodecFlush(shortCtrl.As<Ctrl>(), &frame, &picture) == ErrorStructSize, "flush gave a pointer error for a short control block at the end of a page");
+    Require(sceVideodecFlush(&sized, shortFrame.As<FrameBuffer>(), &picture) == ErrorStructSize, "flush gave a pointer error for a short frame buffer at the end of a page");
+    Require(sceVideodecFlush(&sized, &frame, shortPicture.As<PictureInfo>()) == ErrorStructSize, "flush gave a pointer error for a short picture at the end of a page");
+    Require(sceVideodecDecode(shortCtrl.As<Ctrl>(), &empty, &frame, &picture) == ErrorStructSize, "decode gave a pointer error for a short control block at the end of a page");
+    Require(sceVideodecDecode(&sized, &empty, shortFrame.As<FrameBuffer>(), &picture) == ErrorStructSize, "decode gave a pointer error for a short frame buffer at the end of a page");
 
     PageTail readOnlyResource(&resource, sizeof(resource));
     readOnlyResource.ReadOnly();
-    check(sceVideodecQueryResourceInfo(&config, readOnlyResource.As<ResourceInfo>()) == ErrorArgumentPointer, "query accepted a read-only resource information block");
+    Require(sceVideodecQueryResourceInfo(&config, readOnlyResource.As<ResourceInfo>()) == ErrorArgumentPointer, "query accepted a read-only resource information block");
     const Ctrl unwritten{sizeof(Ctrl)};
     PageTail readOnlyCtrl(&unwritten, sizeof(unwritten));
     readOnlyCtrl.ReadOnly();
-    check(sceVideodecCreateDecoder(&config, &resource, readOnlyCtrl.As<Ctrl>()) == ErrorArgumentPointer, "create accepted a read-only control block");
-    check(sceVideodecCreateDecoder(&config, &resource, &ctrl) == 0, "create failed after a refused read-only control block");
-    check(sceVideodecDeleteDecoder(&ctrl) == 0, "the decoder created after a refused read-only control block was not deleted");
+    Require(sceVideodecCreateDecoder(&config, &resource, readOnlyCtrl.As<Ctrl>()) == ErrorArgumentPointer, "create accepted a read-only control block");
+    Require(sceVideodecCreateDecoder(&config, &resource, &ctrl) == 0, "create failed after a refused read-only control block");
+    Require(sceVideodecDeleteDecoder(&ctrl) == 0, "the decoder created after a refused read-only control block was not deleted");
 }
 
 }

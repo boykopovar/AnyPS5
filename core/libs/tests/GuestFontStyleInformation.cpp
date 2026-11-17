@@ -2,6 +2,7 @@
 #include "prx/libSceFont/libSceFont.hpp"
 #include "prx/libSceFontFt/libSceFontFt.hpp"
 #include "tests/FontFixture.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -12,14 +13,6 @@
 #include <string>
 #include <string_view>
 #include <vector>
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "Font style information check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 using FontFixture::BuildFont;
 using FontFixture::Words;

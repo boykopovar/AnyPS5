@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
@@ -13,8 +14,6 @@ extern const TypeRecord _ZTISt9bad_alloc_nid_postfix;
 extern const TypeRecord _ZTISt20bad_array_new_length_nid_postfix;
 extern const Vtable _ZTVSt20bad_array_new_length_nid_postfix;
 }
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 int main() {
     const auto& type = _ZTISt20bad_array_new_length_nid_postfix;

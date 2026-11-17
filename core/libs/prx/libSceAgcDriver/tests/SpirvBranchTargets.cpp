@@ -3,6 +3,7 @@
 #include "Optimization/ShaderStageInputInfo.hpp"
 #include "SpirvBackend/SpirvEmitter.hpp"
 #include "SpirvBackend/SpirvOptimizer.hpp"
+#include "Testing.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <array>
 #include <cstdint>
@@ -20,10 +21,6 @@
 namespace {
 
 using namespace ShaderRecompiler;
-
-void require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 std::vector<std::uint32_t> recompile(std::span<const std::uint32_t> code) {
     const std::array<std::uint32_t, 12> userData{0x10000000u, 0x00100000u, 0x40u, 0x00027facu, 0u, 0u, 0u, 0u, 7u, 9u, 0x10002000u, 0u};
@@ -47,7 +44,7 @@ std::vector<std::uint32_t> recompile(std::span<const std::uint32_t> code) {
     request.layout = {0, 0, 0, 128};
     request.useCache = false;
     auto result = Recompile(request);
-    require(!result.spirv.empty(), "the shader did not recompile");
+    Require(!result.spirv.empty(), "the shader did not recompile");
     return result.spirv.Copy();
 }
 
@@ -55,9 +52,9 @@ void requireDistinctTargets(const char* name, std::span<const std::uint32_t> cod
     const auto words = recompile(code);
     for (std::size_t cursor = 5; cursor < words.size();) {
         const auto count = words[cursor] >> 16u;
-        require(count != 0 && cursor + count <= words.size(), std::string(name) + ": truncated SPIR-V instruction");
+        Require(count != 0 && cursor + count <= words.size(), std::string(name) + ": truncated SPIR-V instruction");
         if ((words[cursor] & 0xffffu) == spv::OpBranchConditional) {
-            require(words[cursor + 2] != words[cursor + 3], std::string(name) + ": OpBranchConditional with the same true and false label, invalid in SPIR-V 1.6");
+            Require(words[cursor + 2] != words[cursor + 3], std::string(name) + ": OpBranchConditional with the same true and false label, invalid in SPIR-V 1.6");
         }
         cursor += count;
     }
@@ -160,9 +157,9 @@ void requireCrossRegionNan(bool conjunct, bool certified = false, bool unproved 
             storedNan |= value != constants.end() && value->second == 0x7fc12345u;
         }
     }
-    if (entryFact != EntryFact::None) require(entryChecks == (entryFact == EntryFact::Saturate ? 0u : 1u), "an entry certificate must reuse magnitude aliases and unconditional bounds without assuming an arithmetic result is bounded");
-    if (certified) require(combinedSelects == (unproved ? 2u : 1u), "a certified finite condition must retain only its exact-fallback selection");
-    else require(storedNan, "a NaN predicate crossing arithmetic regions lost its exceptional value");
+    if (entryFact != EntryFact::None) Require(entryChecks == (entryFact == EntryFact::Saturate ? 0u : 1u), "an entry certificate must reuse magnitude aliases and unconditional bounds without assuming an arithmetic result is bounded");
+    if (certified) Require(combinedSelects == (unproved ? 2u : 1u), "a certified finite condition must retain only its exact-fallback selection");
+    else Require(storedNan, "a NaN predicate crossing arithmetic regions lost its exceptional value");
 }
 #endif
 

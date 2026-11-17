@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -20,22 +21,6 @@
 #endif
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "ICU converter helpers: %s\n", message);
-    std::abort();
-}
-
-template<class TCall>
-void RequiresInvalidArgument(TCall call) {
-    try {
-        call();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, "null normalization argument must throw");
-}
 
 char Ebcdic(unsigned char value) {
     if (value >= 'a' && value <= 'i') return static_cast<char>(0x81 + value - 'a');
@@ -109,11 +94,11 @@ void NameMatching() {
     CheckStrip(ToEbcdic(longName), ToEbcdic("0" + std::string(4096, 'q') + "1200"), true);
     Require(ucnv_compareNames_nid_postfix("utf8", "utf16") == '8' - '1', "names are compared lexically, not numerically");
     char output[4] = {'@', '@', '@', 0};
-    RequiresInvalidArgument([&] { ucnv_compareNames_nid_postfix(nullptr, ""); });
-    RequiresInvalidArgument([&] { ucnv_compareNames_nid_postfix("", nullptr); });
+    ExpectErr<std::invalid_argument>([&] { ucnv_compareNames_nid_postfix(nullptr, ""); });
+    ExpectErr<std::invalid_argument>([&] { ucnv_compareNames_nid_postfix("", nullptr); });
     for (auto call : {ucnv_io_stripASCIIForCompare_nid_postfix, ucnv_io_stripEBCDICForCompare_nid_postfix}) {
-        RequiresInvalidArgument([&] { call(nullptr, ""); });
-        RequiresInvalidArgument([&] { call(output, nullptr); });
+        ExpectErr<std::invalid_argument>([&] { call(nullptr, ""); });
+        ExpectErr<std::invalid_argument>([&] { call(output, nullptr); });
         Require(output[0] == '@' && output[1] == '@' && output[2] == '@', "invalid strip leaves output unchanged");
     }
 }

@@ -1,29 +1,11 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/WebKitValueExports.hpp"
 #include "prx/libSceNKWebKit/src/Configuration.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
-
-template<typename Fn>
-static void RequireThrows(Fn&& fn) {
-    bool threw = false;
-    try {
-        fn();
-    } catch (const std::invalid_argument&) {
-        threw = true;
-    }
-    Require(threw);
-}
 
 int main() {
     const void* contextRef = WKContextCreate();
@@ -57,11 +39,11 @@ int main() {
     Require(pool->secureSchemes.size() == 1);
     Require(pool->secureSchemes[0] == "custom-secure");
 
-    RequireThrows([&] { WKContextRegisterURLSchemeAsBypassingContentSecurityPolicy(nullptr, schemeA); });
-    RequireThrows([&] { WKContextRegisterURLSchemeAsCachePartitioned(contextRef, nullptr); });
-    RequireThrows([&] { WKContextRegisterURLSchemeAsCanDisplayOnlyIfCanRequest(schemeA, schemeC); });
-    RequireThrows([&] { WKContextRegisterURLSchemeAsEmptyDocument(contextRef, contextRef); });
-    RequireThrows([&] { WKContextRegisterURLSchemeAsSecure(nullptr, nullptr); });
+    ExpectErr<std::invalid_argument>([&] { WKContextRegisterURLSchemeAsBypassingContentSecurityPolicy(nullptr, schemeA); });
+    ExpectErr<std::invalid_argument>([&] { WKContextRegisterURLSchemeAsCachePartitioned(contextRef, nullptr); });
+    ExpectErr<std::invalid_argument>([&] { WKContextRegisterURLSchemeAsCanDisplayOnlyIfCanRequest(schemeA, schemeC); });
+    ExpectErr<std::invalid_argument>([&] { WKContextRegisterURLSchemeAsEmptyDocument(contextRef, contextRef); });
+    ExpectErr<std::invalid_argument>([&] { WKContextRegisterURLSchemeAsSecure(nullptr, nullptr); });
 
     WKRelease(schemeE);
     WKRelease(schemeD);

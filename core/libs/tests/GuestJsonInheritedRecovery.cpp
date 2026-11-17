@@ -1,5 +1,6 @@
 #include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -17,9 +18,6 @@ struct Parameter { void* allocator; void* context; std::size_t bufferSize; std::
 static_assert(sizeof(Value) == 32 && sizeof(Parameter) == 40);
 using ReadCallback = int (APS5_VABI*)(char&, void*);
 using FloatCallback = Value* (APS5_VABI*)(Value*, std::int32_t, double, const Value*, void*, bool*);
-static void Require(bool valid, const char* message) {
-    if (!valid) { std::fprintf(stderr, "%s\n", message); std::abort(); }
-}
 struct RecoveryAllocationTrace {
     std::map<void*, std::size_t> live;
     std::vector<std::size_t> requests;

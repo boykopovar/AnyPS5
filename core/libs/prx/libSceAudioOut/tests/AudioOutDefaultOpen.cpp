@@ -2,6 +2,7 @@
 #include "SDL.h"
 #include "prx/libSceAudioOut/include/AudioOutSdl.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -19,10 +20,6 @@ int opened = 0;
 int closed = 0;
 int queuedLive = 0;
 int queuedDead = 0;
-
-void Require(bool value, const char* message) {
-    if (!value) throw std::runtime_error(message);
-}
 
 bool live(SDL_AudioDeviceID id) { return id == device && !unplugged; }
 }

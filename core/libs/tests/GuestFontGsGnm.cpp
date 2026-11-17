@@ -4,6 +4,7 @@
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "prx/libSceFont/libSceFont.hpp"
 #include "prx/libSceFontGs/libSceFontGs.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -37,8 +38,6 @@ void APS5_VABI RecordError(int error) {
     g_lastError = error;
     ++g_errorCount;
 }
-
-void Require(bool value) { if (!value) std::abort(); }
 
 struct TestDrawupRecord {
     std::uint8_t type;

@@ -1,5 +1,6 @@
 #include "Translation/TranslationContext.hpp"
 #include "RdnaDecoder/RdnaMemoryOpDecoder.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <stdexcept>
@@ -8,10 +9,6 @@
 using namespace ShaderRecompiler;
 
 namespace {
-
-void Require(bool value, const std::string& message) {
-    if (!value) throw std::runtime_error("buffer atomic csub: " + message);
-}
 
 void CheckTranslation(bool glc) {
     constexpr std::uint32_t destination = 5u;

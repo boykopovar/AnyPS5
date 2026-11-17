@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -7,12 +8,6 @@
 #include <string>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "ICU string comparison check failed at line %u\n", location.line());
-    std::abort();
-}
 
 std::int32_t Compare(const std::u16string& first, std::int32_t firstLength, const std::u16string& second, std::int32_t secondLength, bool codePointOrder) {
     return u_strCompare_nid_postfix(first.c_str(), firstLength, second.c_str(), secondLength, codePointOrder);

@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include <cstdio>
 #ifndef __linux__
 int main() { std::puts("skipped, dma-buf run-list imports are Linux only"); return 77; }
@@ -28,7 +29,6 @@ std::uint8_t* Mapping = nullptr;
 int Backing = -1;
 PFN_vkGetDeviceProcAddr OriginalProc = nullptr;
 std::atomic<unsigned> HostQueries{0};
-void Require(bool ok, const char* text) { if (!ok) throw std::runtime_error(text); }
 bool Runs(std::uintptr_t address, std::size_t bytes, int* file, GuestArena::SharedBackingRun* runs, std::size_t capacity, std::size_t* count) {
  const auto begin = reinterpret_cast<std::uintptr_t>(Mapping);
  if (address < begin || bytes > 2 * Chunk || address - begin > 2 * Chunk - bytes) return false;

@@ -1,6 +1,7 @@
 #include "prx/libSceContentSearch/include/Api.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
@@ -14,8 +15,6 @@ namespace {
 void ClobberErrno(std::uintptr_t, std::size_t) {
     errno = 99;
 }
-
-void Require(bool value) { if (!value) std::abort(); }
 
 template <typename TAction>
 bool ThrowsRuntimeError(TAction action) {

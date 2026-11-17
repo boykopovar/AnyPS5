@@ -1,6 +1,7 @@
 #define _WIN32_WINNT 0x0602
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestStacks.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -11,10 +12,6 @@ static DWORD originalThread;
 static thread_local std::uint64_t tlsValue;
 static std::uint64_t* originalTls;
 static std::size_t originalCapacity;
-
-static void Require(bool value) {
-    if (!value) std::abort();
-}
 
 static void APS5_VABI OnGuestStack(void* arguments) {
     std::uintptr_t local = 0;

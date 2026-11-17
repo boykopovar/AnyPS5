@@ -1,5 +1,6 @@
 #include "prx/libSceNet/libSceNet.hpp"
 #include "prx/libkernel/libkernel.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -14,13 +15,6 @@ constexpr int SolSocket = 0xffff;
 constexpr int SoAcceptConn = 0x2;
 
 using Address = std::array<std::uint8_t, 28>;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 std::uint32_t Size(int family) {
     return family == 2 ? 16 : 28;

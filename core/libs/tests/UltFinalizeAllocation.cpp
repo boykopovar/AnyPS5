@@ -1,4 +1,5 @@
 #include "prx/libSceUlt/libSceUlt.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -25,13 +26,6 @@ void operator delete(void* memory) noexcept { std::free(memory); }
 void operator delete(void* memory, std::size_t) noexcept { ::operator delete(memory); }
 
 struct alignas(8) Object { std::uint8_t bytes[256]{}; };
-
-static void Require(bool passed, const char* message) {
-    if (!passed) {
-        std::fprintf(stderr, "%s\n", message);
-        std::abort();
-    }
-}
 
 int main() {
     Require(sceUltInitialize() == ULT_OK, "initialization failed");

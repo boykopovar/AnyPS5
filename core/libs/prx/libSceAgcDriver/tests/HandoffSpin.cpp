@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/HandoffSpin.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -16,10 +17,6 @@ using namespace std::chrono_literals;
 using AgcDriver::HandoffSpinWindowFor;
 using AgcDriver::LockSpinning;
 using AgcDriver::SpinUntil;
-
-void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 void CheckWindowPolicy() {
     Require(HandoffSpinWindowFor(nullptr, 20) == 150us, "20 usable processors do not spin for 150 us");

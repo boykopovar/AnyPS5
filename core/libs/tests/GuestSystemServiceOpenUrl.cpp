@@ -3,6 +3,7 @@
 #include "prx/libSceSystemService/HostUrl.hpp"
 #include "prx/libSceSystemService/HostUrlPolicy.hpp"
 #include "prx/libSceSystemService/HostUrlBackends.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -18,8 +19,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
 
 void SetEnvironment(const char* name, const char* value) {
 #ifdef _WIN32

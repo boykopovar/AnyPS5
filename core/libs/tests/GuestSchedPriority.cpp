@@ -2,6 +2,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
@@ -14,7 +15,6 @@ extern "C" {
 static constexpr int PrioProcess = 0;
 static constexpr int PrioGroup = 1;
 static constexpr int PrioUser = 2;
-static void Require(bool value) { if (!value) std::abort(); }
 static bool Rejects(int policy) {
     *__error_nid_postfix() = 0;
     const bool max = sched_get_priority_max_nid_postfix(policy) == -1 && *__error_nid_postfix() == 22;

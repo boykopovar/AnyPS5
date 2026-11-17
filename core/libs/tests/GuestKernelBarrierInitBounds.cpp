@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <atomic>
 #include <climits>
@@ -17,12 +18,6 @@ constexpr int PosixEfault = 14;
 constexpr int BarrierSerialThread = -1;
 constexpr int ProcessPrivate = 0;
 constexpr int ProcessShared = 1;
-
-void Require(bool condition) {
-    if (!condition) {
-        std::abort();
-    }
-}
 
 void TestBarrierInitBounds() {
     Require(pthread_barrier_init_nid_postfix(nullptr, nullptr, 1) == PosixEinval);

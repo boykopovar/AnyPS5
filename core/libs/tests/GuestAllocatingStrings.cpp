@@ -4,6 +4,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstdarg>
@@ -22,10 +23,6 @@
 #endif
 
 namespace {
-
-void Require(bool value) {
-    if (!value) std::abort();
-}
 
 bool failAllocation = false;
 std::size_t allocations = 0;

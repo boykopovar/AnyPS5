@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -14,12 +15,6 @@ constexpr std::size_t Size = 0x10000;
 constexpr int Read = 0x1;
 constexpr int Write = 0x2;
 constexpr int Execute = 0x4;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "requirement failed at line %u\n", static_cast<unsigned>(location.line()));
-    std::abort();
-}
 
 int Create(const char* name, int maxProt) {
     int fd = -1;

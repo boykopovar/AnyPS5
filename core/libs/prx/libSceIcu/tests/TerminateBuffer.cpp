@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -13,12 +14,6 @@ constexpr std::int32_t NotTerminated = -124;
 constexpr std::int32_t Overflow = 15;
 constexpr std::int32_t Minimum = std::numeric_limits<std::int32_t>::min();
 constexpr std::int32_t Maximum = std::numeric_limits<std::int32_t>::max();
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "ICU termination check failed at line %u\n", location.line());
-    std::abort();
-}
 
 enum class Outcome { Write, Warning, Failure, Unchanged };
 

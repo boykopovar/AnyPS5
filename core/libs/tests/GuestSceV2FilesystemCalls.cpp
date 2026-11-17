@@ -1,6 +1,7 @@
 #include "AppArchiveFixture.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -25,12 +26,6 @@ constexpr int NoSystemCall = 78;
 constexpr int NotSupported = 45;
 constexpr std::uint32_t KernelNoSuchFile = 0x80020002u;
 constexpr std::uint32_t KernelNotDirectory = 0x80020014u;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "sce v2 filesystem calls: %s\n", message);
-    std::abort();
-}
 
 void Write(const char* path, std::size_t bytes, unsigned seed) {
     std::ofstream file(path, std::ios::binary | std::ios::trunc);

@@ -3,6 +3,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -15,12 +16,6 @@ constexpr int GuestEinval = 22;
 constexpr int ClockMonotonic = 4;
 
 const GuestSigevent None{0, 0, 0, {}};
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "check failed at line %u\n", static_cast<unsigned>(location.line()));
-    std::abort();
-}
 
 int GetError() {
     return *__error_nid_postfix();

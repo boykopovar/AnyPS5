@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <cstdint>
 #include <cstdlib>
@@ -23,12 +24,6 @@ std::atomic<int> gSignalCount{0};
 void APS5_VABI TestSignalHandler(int sig) {
     gLastReceivedSignal.store(sig);
     gSignalCount.fetch_add(1);
-}
-
-void Require(bool condition) {
-    if (!condition) {
-        std::abort();
-    }
 }
 
 void TestNullAndFaultRejection() {

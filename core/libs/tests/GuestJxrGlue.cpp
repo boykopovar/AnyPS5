@@ -5,6 +5,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
 #include "prx/libSceJxr/src/EncoderMetadata.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <vector>
 #include <utility>
@@ -19,8 +20,6 @@ extern "C" const void* GetPixelFormatFromHash(unsigned char hash);
 extern "C" std::size_t JxrTranscodeFixtureOverlapOffset();
 
 namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
 
 void* lastCalloc = nullptr;
 std::size_t lastCount = 0;
@@ -42,7 +41,6 @@ bool sawTranscodeParameters = false;
 void* expectedDecoder = nullptr;
 std::byte* encoderForMutation = nullptr;
 bool mutateWriteCallback = false;
-void Require(bool value);
 template <typename Function>
 std::uintptr_t FunctionAddress(Function function);
 std::int64_t APS5_VABI WritePixelsAfterMutation(void*, std::uint32_t, std::uint8_t*, std::uint32_t);

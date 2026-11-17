@@ -950,6 +950,7 @@ if(BUILD_TESTING)
         add_test(NAME linux_named_imports COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_linux_named_imports.py $<TARGET_FILE:relinker>)
         add_library(guest_module_args_host SHARED elfpatcher/tests/GuestModuleArgsHost.cpp)
+        target_include_directories(guest_module_args_host PRIVATE ${CMAKE_SOURCE_DIR}/core/test/include)
         target_include_directories(guest_module_args_host PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../libs)
         set_target_properties(guest_module_args_host PROPERTIES
             PREFIX "" SUFFIX ".prx" WINDOWS_EXPORT_ALL_SYMBOLS ON)

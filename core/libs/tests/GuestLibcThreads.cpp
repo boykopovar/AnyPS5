@@ -3,6 +3,7 @@
 #include "prx/libkernel/Pthread/include/Cond.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <atomic>
 #include <barrier>
@@ -15,17 +16,7 @@
 #include <thread>
 
 
-static void Require(bool value) { if (!value) std::abort(); }
 
-template<typename TException, typename TCall>
-static void RequireThrows(TCall call) {
-    try {
-        call();
-    } catch (const TException&) {
-        return;
-    }
-    std::abort();
-}
 
 constexpr int success = 0;
 constexpr int timedout = 2;
@@ -53,25 +44,25 @@ static void MutexBasics() {
     void* mutex = CreateMutex(tryable);
     Require(_Mtx_lock_nid_postfix(&mutex) == success);
     Require(_Mtx_lock_nid_postfix(&mutex) == busy);
-    RequireThrows<std::logic_error>([&] { _Mtx_destroy_nid_postfix(&mutex); });
+    ExpectErr<std::logic_error>([&] { _Mtx_destroy_nid_postfix(&mutex); });
     std::thread([&] { Require(_Mtx_unlock_nid_postfix(&mutex) == success); }).join();
     Require(_Mtx_unlock_nid_postfix(&mutex) == success);
     Require(_Mtx_unlock_nid_postfix(&mutex) == success);
     void* invalidMutex = nullptr;
-    RequireThrows<std::invalid_argument>([&] { _Mtx_lock_nid_postfix(&invalidMutex); });
+    ExpectErr<std::invalid_argument>([&] { _Mtx_lock_nid_postfix(&invalidMutex); });
     void* foreignCondition = nullptr;
     Require(_Cnd_init_nid_postfix(&foreignCondition) == success && foreignCondition != nullptr);
     void* foreignMutex = foreignCondition;
-    RequireThrows<std::invalid_argument>([&] { _Mtx_lock_nid_postfix(&foreignMutex); });
+    ExpectErr<std::invalid_argument>([&] { _Mtx_lock_nid_postfix(&foreignMutex); });
     _Cnd_destroy_nid_postfix(&foreignCondition);
     _Mtx_destroy_nid_postfix(&mutex);
 
     Require(mutex == nullptr);
-    RequireThrows<std::invalid_argument>([&] { _Mtx_lock_nid_postfix(&mutex); });
+    ExpectErr<std::invalid_argument>([&] { _Mtx_lock_nid_postfix(&mutex); });
     void* emptyMutex = nullptr;
     _Mtx_destroy_nid_postfix(&emptyMutex);
 
-    RequireThrows<std::invalid_argument>([] { _Mtx_destroy_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([] { _Mtx_destroy_nid_postfix(nullptr); });
 
     void* plainMutex = CreateMutex(plain);
     Require(_Mtx_lock_nid_postfix(&plainMutex) == success && _Mtx_lock_nid_postfix(&plainMutex) == busy);
@@ -95,9 +86,9 @@ static void MutexBasics() {
     Require(_Mtx_unlock_nid_postfix(&unknownBitsMutex) == success);
     _Mtx_destroy_nid_postfix(&unknownBitsMutex);
 
-    RequireThrows<std::invalid_argument>([] { _Mtx_init_nid_postfix(nullptr, tryable); });
-    RequireThrows<std::invalid_argument>([] { _Mtx_lock_nid_postfix(nullptr); });
-    RequireThrows<std::invalid_argument>([] { _Mtx_unlock_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([] { _Mtx_init_nid_postfix(nullptr, tryable); });
+    ExpectErr<std::invalid_argument>([] { _Mtx_lock_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([] { _Mtx_unlock_nid_postfix(nullptr); });
 }
 
 static void DefaultNameOverrideMutex() {
@@ -120,7 +111,7 @@ static void DefaultNameOverrideMutex() {
     Require(_Mtx_unlock_nid_postfix(&recursiveMutex) == success && _Mtx_unlock_nid_postfix(&recursiveMutex) == success);
     _Mtx_destroy_nid_postfix(&recursiveMutex);
 
-    RequireThrows<std::invalid_argument>([] { _Mtx_init_with_default_name_override_nid_postfix(nullptr, tryable, "null"); });
+    ExpectErr<std::invalid_argument>([] { _Mtx_init_with_default_name_override_nid_postfix(nullptr, tryable, "null"); });
 }
 
 static void RecursiveMutex() {
@@ -171,9 +162,9 @@ static void TimedMutex() {
     Require(_Mtx_unlock_nid_postfix(&mutex) == success);
 
     void* empty = nullptr;
-    RequireThrows<std::invalid_argument>([&] { _Mtx_timedlock_nid_postfix(&empty, &future); });
-    RequireThrows<std::invalid_argument>([&] { _Mtx_timedlock_nid_postfix(nullptr, &future); });
-    RequireThrows<std::invalid_argument>([&] { _Mtx_timedlock_nid_postfix(&mutex, nullptr); });
+    ExpectErr<std::invalid_argument>([&] { _Mtx_timedlock_nid_postfix(&empty, &future); });
+    ExpectErr<std::invalid_argument>([&] { _Mtx_timedlock_nid_postfix(nullptr, &future); });
+    ExpectErr<std::invalid_argument>([&] { _Mtx_timedlock_nid_postfix(&mutex, nullptr); });
     _Mtx_destroy_nid_postfix(&mutex);
 
     void* recursiveMutex = CreateMutex(recursive);
@@ -238,19 +229,19 @@ static void ConditionBroadcast() {
     Require(_Mtx_unlock_nid_postfix(&recursiveMutex) == success && _Mtx_unlock_nid_postfix(&recursiveMutex) == success);
     _Mtx_destroy_nid_postfix(&recursiveMutex);
 
-    RequireThrows<std::invalid_argument>([&] { _Cnd_wait_nid_postfix(&mutex, &mutex); });
+    ExpectErr<std::invalid_argument>([&] { _Cnd_wait_nid_postfix(&mutex, &mutex); });
     void* invalidCondition = nullptr;
-    RequireThrows<std::invalid_argument>([&] { _Cnd_broadcast_nid_postfix(&invalidCondition); });
-    RequireThrows<std::invalid_argument>([] { _Cnd_broadcast_nid_postfix(nullptr); });
-    RequireThrows<std::invalid_argument>([] { _Cnd_init_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([&] { _Cnd_broadcast_nid_postfix(&invalidCondition); });
+    ExpectErr<std::invalid_argument>([] { _Cnd_broadcast_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([] { _Cnd_init_nid_postfix(nullptr); });
     _Cnd_destroy_nid_postfix(&condition);
 
     Require(condition == nullptr);
-    RequireThrows<std::invalid_argument>([&] { _Cnd_broadcast_nid_postfix(&condition); });
+    ExpectErr<std::invalid_argument>([&] { _Cnd_broadcast_nid_postfix(&condition); });
     void* emptyCondition = nullptr;
     _Cnd_destroy_nid_postfix(&emptyCondition);
 
-    RequireThrows<std::invalid_argument>([] { _Cnd_destroy_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([] { _Cnd_destroy_nid_postfix(nullptr); });
     _Mtx_destroy_nid_postfix(&mutex);
 
 }
@@ -309,12 +300,6 @@ static unsigned APS5_VABI TestPadGo(GuestPad* base) {
     return 42;
 }
 
-static void RequireExit(bool value, const char* message) {
-    if (!value) {
-        std::fprintf(stderr, "CRT exit lifecycle: %s\n", message);
-        std::abort();
-    }
-}
 
 struct CrtExitState {
     int code = 0;
@@ -328,10 +313,10 @@ struct CrtExitState {
 
 static void APS5_VABI CrtExitDestructor(void* value) {
     auto& state = *static_cast<CrtExitState*>(value);
-    RequireExit(_Thrd_current_nid_postfix() == state.self, "identity during destructor");
-    RequireExit(_Tss_get_nid_postfix(state.key) == nullptr, "value cleared before destructor");
+    Require(_Thrd_current_nid_postfix() == state.self, "identity during destructor");
+    Require(_Tss_get_nid_postfix(state.key) == nullptr, "value cleared before destructor");
     if (state.destructors.fetch_add(1) == 0)
-        RequireExit(_Tss_set_nid_postfix(state.key, &state) == 0, "reinstall value for another cleanup pass");
+        Require(_Tss_set_nid_postfix(state.key, &state) == 0, "reinstall value for another cleanup pass");
 }
 
 static auto volatile crtExit = &_Thrd_exit_nid_postfix;
@@ -339,12 +324,12 @@ static auto volatile crtExit = &_Thrd_exit_nid_postfix;
 static void* APS5_VABI CrtExitEntry(void* value) {
     auto& state = *static_cast<CrtExitState*>(value);
     state.self = _Thrd_current_nid_postfix();
-    RequireExit(state.self && _Thrd_equal_nid_postfix(state.self, state.self) == 1, "current identity");
-    RequireExit(_Thrd_equal_nid_postfix(state.self, state.parent) == 0, "different parent identity");
-    RequireExit(_Tss_get_nid_postfix(state.key) == nullptr, "child starts with empty value");
-    RequireExit(_Tss_set_nid_postfix(state.key, &state) == 0, "set child value");
+    Require(state.self && _Thrd_equal_nid_postfix(state.self, state.self) == 1, "current identity");
+    Require(_Thrd_equal_nid_postfix(state.self, state.parent) == 0, "different parent identity");
+    Require(_Tss_get_nid_postfix(state.key) == nullptr, "child starts with empty value");
+    Require(_Tss_set_nid_postfix(state.key, &state) == 0, "set child value");
     state.ready->arrive_and_wait();
-    RequireExit(_Tss_get_nid_postfix(state.key) == &state, "child value isolation");
+    Require(_Tss_get_nid_postfix(state.key) == &state, "child value isolation");
     crtExit(state.code);
     state.returned = true;
     return nullptr;
@@ -358,28 +343,28 @@ static void ThreadExitLifecycle() {
     std::array<Pthread, 5> threads{};
     int key = -1, parentValue = 31;
     void* parent = _Thrd_current_nid_postfix();
-    RequireExit(_Tss_create_nid_postfix(&key, CrtExitDestructor) == 0, "create destructor key");
-    RequireExit(_Tss_set_nid_postfix(key, &parentValue) == 0, "set parent value");
+    Require(_Tss_create_nid_postfix(&key, CrtExitDestructor) == 0, "create destructor key");
+    Require(_Tss_set_nid_postfix(key, &parentValue) == 0, "set parent value");
     for (unsigned i = 0; i < states.size(); ++i) {
         states[i].code = codes[i];
         states[i].key = key;
         states[i].ready = &ready;
         states[i].parent = parent;
-        RequireExit(scePthreadCreate(&threads[i], nullptr, CrtExitEntry, &states[i], "CRT exit audit") == 0, "create child");
+        Require(scePthreadCreate(&threads[i], nullptr, CrtExitEntry, &states[i], "CRT exit audit") == 0, "create child");
     }
-    RequireExit(_Tss_get_nid_postfix(key) == &parentValue, "parent isolated before release");
+    Require(_Tss_get_nid_postfix(key) == &parentValue, "parent isolated before release");
     ready.arrive_and_wait();
     for (unsigned i = 0; i < states.size(); ++i) {
         void* result = nullptr;
-        RequireExit(scePthreadJoin(threads[i], &result) == 0, "join exiting child");
-        RequireExit(reinterpret_cast<std::uintptr_t>(result) == expected[i], "full zero-extended exit result");
-        RequireExit(!states[i].returned, "exit must not return");
-        RequireExit(states[i].destructors == 2, "reinstalled destructor runs twice before join returns");
-        RequireExit(states[i].self == threads[i], "created and current identity match");
+        Require(scePthreadJoin(threads[i], &result) == 0, "join exiting child");
+        Require(reinterpret_cast<std::uintptr_t>(result) == expected[i], "full zero-extended exit result");
+        Require(!states[i].returned, "exit must not return");
+        Require(states[i].destructors == 2, "reinstalled destructor runs twice before join returns");
+        Require(states[i].self == threads[i], "created and current identity match");
     }
-    RequireExit(_Tss_get_nid_postfix(key) == &parentValue, "parent isolated after children exit");
-    RequireExit(_Tss_delete_nid_postfix(key) == 0, "delete key");
-    RequireExit(_Tss_get_nid_postfix(key) == nullptr, "deleted key value unavailable");
+    Require(_Tss_get_nid_postfix(key) == &parentValue, "parent isolated after children exit");
+    Require(_Tss_delete_nid_postfix(key) == 0, "delete key");
+    Require(_Tss_get_nid_postfix(key) == nullptr, "deleted key value unavailable");
     std::puts("PASS CRT lifecycle: five concurrent exit codes, full return width, identity, parent/child isolation, two destructor passes, key deletion");
 }
 
@@ -392,11 +377,11 @@ static void PadLaunchAndJoin() {
     RegisterPthreadCreate_nid_no_patch(nullptr);
     RegisterPthreadJoin_nid_no_patch(nullptr);
     void* unregThread = nullptr;
-    RequireThrows<std::runtime_error>([&] {
+    ExpectErr<std::runtime_error>([&] {
         _ZNSt4_Pad7_LaunchEPP7pthread_nid_postfix(reinterpret_cast<GuestPad*>(&unregPad), &unregThread);
 
     });
-    RequireThrows<std::runtime_error>([&] {
+    ExpectErr<std::runtime_error>([&] {
         int code = 0;
         _Thrd_join_nid_postfix(&unregPad, &code);
 
@@ -454,7 +439,7 @@ static void PadLaunchWithAttributes() {
 static void PadDetach() {
     unsigned (APS5_VABI* vtable[1])(GuestPad*) = {TestPadGo};
     RegisterPthreadDetach_nid_no_patch(nullptr);
-    RequireThrows<std::runtime_error>([] { _Thrd_detach_nid_postfix(nullptr); });
+    ExpectErr<std::runtime_error>([] { _Thrd_detach_nid_postfix(nullptr); });
 
     RegisterPthreadCreate_nid_no_patch(HostPthreadCreate);
     RegisterPthreadDetach_nid_no_patch(HostPthreadDetach);
@@ -531,9 +516,9 @@ static void ForwardedCalls() {
     Require(_Mtx_current_owns_nid_postfix(nullptr) == 1);
 
     RegisterThreadForwards_nid_no_patch(nullptr);
-    RequireThrows<std::runtime_error>([] { _Thrd_current_nid_postfix(); });
-    RequireThrows<std::runtime_error>([] { _Thrd_id_nid_postfix(); });
-    RequireThrows<std::runtime_error>([] { _Tss_get_nid_postfix(0); });
+    ExpectErr<std::runtime_error>([] { _Thrd_current_nid_postfix(); });
+    ExpectErr<std::runtime_error>([] { _Thrd_id_nid_postfix(); });
+    ExpectErr<std::runtime_error>([] { _Tss_get_nid_postfix(0); });
 }
 
 struct VersionedShared {

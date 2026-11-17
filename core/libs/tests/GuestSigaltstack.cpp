@@ -1,12 +1,12 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
 #include <thread>
 
-static void Require(bool value) { if (!value) std::abort(); }
 static GuestStack Query() {
     GuestStack current;
     std::memset(&current, 0xa5, sizeof(current));

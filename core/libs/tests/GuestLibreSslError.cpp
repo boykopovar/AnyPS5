@@ -2,6 +2,7 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -9,19 +10,8 @@
 #include <thread>
 #include <type_traits>
 
-static void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "failed: %s\n", what);
-    std::abort();
-}
-
 static std::uint64_t Pack(std::uint64_t library, std::uint64_t function, std::uint64_t reason) {
     return library << 24 | function << 12 | reason;
-}
-
-template<typename TAction> static void RequireThrows(TAction action, const char* what) {
-    try { action(); } catch (const std::exception&) { return; }
-    Require(false, what);
 }
 
 int main() {
@@ -140,13 +130,13 @@ int main() {
     Require(ENGINE_load_private_key_nid_postfix(nullptr, "key", nullptr, nullptr) == nullptr, "a null engine loads a key");
     Require(ERR_get_error_nid_postfix() == nullEngine, "ENGINE_load_private_key of null pushes ERR_R_PASSED_NULL_PARAMETER");
     Require(ERR_get_error_nid_postfix() == 0, "each call pushes one error");
-    RequireThrows([&] { ENGINE_get_next_nid_postfix(&notAnEngine); }, "ENGINE_get_next of a pointer that is no engine");
-    RequireThrows([&] { ENGINE_init_nid_postfix(&notAnEngine); }, "ENGINE_init of a pointer that is no engine");
-    RequireThrows([&] { ENGINE_finish_nid_postfix(&notAnEngine); }, "ENGINE_finish of a pointer that is no engine");
-    RequireThrows([&] { ENGINE_free_nid_postfix(&notAnEngine); }, "ENGINE_free of a pointer that is no engine");
-    RequireThrows([&] { ENGINE_ctrl_nid_postfix(&notAnEngine, 1, 0, nullptr, nullptr); }, "ENGINE_ctrl of a pointer that is no engine");
-    RequireThrows([&] { ENGINE_ctrl_cmd_nid_postfix(&notAnEngine, "SO_PATH", 0, nullptr, nullptr, 1); }, "ENGINE_ctrl_cmd of a pointer that is no engine");
-    RequireThrows([&] { ENGINE_load_private_key_nid_postfix(&notAnEngine, "key", nullptr, nullptr); }, "ENGINE_load_private_key of a pointer that is no engine");
+    ExpectErr([&] { ENGINE_get_next_nid_postfix(&notAnEngine); }, "ENGINE_get_next of a pointer that is no engine");
+    ExpectErr([&] { ENGINE_init_nid_postfix(&notAnEngine); }, "ENGINE_init of a pointer that is no engine");
+    ExpectErr([&] { ENGINE_finish_nid_postfix(&notAnEngine); }, "ENGINE_finish of a pointer that is no engine");
+    ExpectErr([&] { ENGINE_free_nid_postfix(&notAnEngine); }, "ENGINE_free of a pointer that is no engine");
+    ExpectErr([&] { ENGINE_ctrl_nid_postfix(&notAnEngine, 1, 0, nullptr, nullptr); }, "ENGINE_ctrl of a pointer that is no engine");
+    ExpectErr([&] { ENGINE_ctrl_cmd_nid_postfix(&notAnEngine, "SO_PATH", 0, nullptr, nullptr, 1); }, "ENGINE_ctrl_cmd of a pointer that is no engine");
+    ExpectErr([&] { ENGINE_load_private_key_nid_postfix(&notAnEngine, "key", nullptr, nullptr); }, "ENGINE_load_private_key of a pointer that is no engine");
     Require(ERR_peek_error_nid_postfix() == 0, "a refused engine pushes no error");
 
     std::puts("guest_libressl_error: ok");

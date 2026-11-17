@@ -1,19 +1,10 @@
 #include "prx/libSceLibcInternal/include/RecoveredInventory.hpp"
+#include "Testing.hpp"
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <initializer_list>
-
-namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "relative sleep: %s\n", message);
-    std::abort();
-}
-
-}
 
 int main(int argc, char** argv) {
     if (argc == 2) {

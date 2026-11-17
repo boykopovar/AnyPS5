@@ -1,6 +1,7 @@
 #include "prx/libSceFontFt/include/Api.hpp"
 #include "prx/libSceFont/include/Api.hpp"
 #include "prx/libSceFont/include/FontTypes.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -20,14 +21,6 @@
 #else
 #include <unistd.h>
 #endif
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "System font check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static int allocations = 0;
 static void* APS5_VABI Allocate(void*, std::uint32_t size) {

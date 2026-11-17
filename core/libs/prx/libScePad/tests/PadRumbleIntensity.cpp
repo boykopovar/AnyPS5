@@ -1,4 +1,5 @@
 #include "prx/libScePad/include/PadRumbleIntensity.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -9,12 +10,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "pad_rumble_intensity: %s\n", message);
-    std::exit(1);
-}
 
 void SetEnvironment(const char* value) {
 #ifdef _WIN32

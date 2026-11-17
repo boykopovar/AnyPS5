@@ -1,6 +1,7 @@
 #include "Ngs2Test.hpp"
 
 #include "prx/libc/include/General.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdint>
@@ -38,13 +39,6 @@ static void SetUnit(std::vector<std::uint8_t>& data, std::uint32_t channels, std
     unit[0] = predictorShift;
     unit[1] = flags;
     std::memset(unit + 2, nibbles, FrameBytes - 2);
-}
-
-template <typename TFunction>
-static void RequireThrows(TFunction function) {
-    bool threw = false;
-    try { function(); } catch (const std::exception&) { threw = true; }
-    Require(threw);
 }
 
 static bool SameBlock(const Ngs2WaveformBlock& block, std::uint64_t offset, std::uint64_t size, std::uint32_t repeats, std::uint32_t samples) {
@@ -100,7 +94,7 @@ static void TestParseHeader() {
     Unit(data, 1, 1, 0)[1] = 0;
     Require(RejectsData(data));
     PutBe32(data, 0x0c, 0);
-    RequireThrows([&] { sceNgs2ParseWaveformData(data.data(), data.size(), &info); });
+    ExpectErr([&] { sceNgs2ParseWaveformData(data.data(), data.size(), &info); });
 
     auto truncated = Vag(1, 2);
     PutBe32(truncated, 0x0c, 80);
@@ -114,9 +108,9 @@ static void TestParseHeader() {
     PutBe32(large, 0x0c, 0x92492490);
     Require(sceNgs2ParseWaveformData(large.data(), HeaderSize + 0x92492490ull, &info) == SCE_NGS2_OK && info.data_size == 0x92492490 && info.num_samples == 0xffffffe0);
     PutBe32(large, 0x0c, 0x924924a0);
-    RequireThrows([&] { sceNgs2ParseWaveformData(large.data(), HeaderSize + 0x924924a0ull, &info); });
+    ExpectErr([&] { sceNgs2ParseWaveformData(large.data(), HeaderSize + 0x924924a0ull, &info); });
     PutBe32(large, 0x0c, 0x924924c0);
-    RequireThrows([&] { sceNgs2ParseWaveformData(large.data(), HeaderSize + 0x924924c0ull, &info); });
+    ExpectErr([&] { sceNgs2ParseWaveformData(large.data(), HeaderSize + 0x924924c0ull, &info); });
 }
 
 static void TestParseLoop() {
@@ -295,13 +289,13 @@ static void TestErrors() {
     const Ngs2WaveformBlock block{HeaderSize, 16, 0, 0, 28, 0, 0};
     Playback playback(1);
     SetUnit(data, 1, 0, 0, 0x0c, 0x80, 0x11);
-    RequireThrows([&] { playback.Add(data.data(), &block, 1, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_RESET); });
+    ExpectErr([&] { playback.Add(data.data(), &block, 1, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_RESET); });
     SetUnit(data, 1, 0, 0, 0x0d, 0, 0x11);
-    RequireThrows([&] { playback.Add(data.data(), &block, 1, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_RESET); });
+    ExpectErr([&] { playback.Add(data.data(), &block, 1, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_RESET); });
     Require(playback.State().waveform_data == nullptr);
     SetUnit(data, 1, 0, 0, 0x0c, 0, 0x11);
     const Ngs2WaveformBlock longer{HeaderSize, 16, 0, 0, 29, 0, 0};
-    RequireThrows([&] { playback.Add(data.data(), &longer, 1, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_RESET); });
+    ExpectErr([&] { playback.Add(data.data(), &longer, 1, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_RESET); });
     playback.Add(data.data(), &block, 1, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_RESET);
     const auto output = playback.Render();
     for (std::uint32_t i = 0; i < Grain; i++) Require(output[i] == (i >= 3 && i - 3 < FrameSamples ? 1 : 0));

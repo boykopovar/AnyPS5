@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 #include "prx/libSceIme/include/ImeInput.hpp"
 #include "prx/libSceIme/include/ImeKeyboardView.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -15,12 +16,6 @@ constexpr int StatusRunning = 1;
 constexpr int StatusFinished = 2;
 constexpr std::uint32_t EndStatusOk = 0;
 constexpr std::uint32_t EndStatusUserCanceled = 1;
-
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
 
 void Publish(ImeHostInputKind kind, const char* text = "", std::int32_t start = 0, std::int32_t length = 0) {
     ImeHostInput input{};

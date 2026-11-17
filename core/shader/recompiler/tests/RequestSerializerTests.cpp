@@ -1,4 +1,5 @@
 #include "ControlFlow/RequestSerializer.hpp"
+#include "Testing.hpp"
 
 #include <algorithm>
 #include <array>
@@ -43,10 +44,6 @@ constexpr char kLayerVersion23[] =
     "AAAAAAAAAAAAAAAAAAkAAAANAAAAAQUKBQABAAAAAAAAAAAABQAAAAAABAAAAAAAAAABAwUHAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
     "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAACwAAABAAAABAAAAAAQYAAAAAAAAAAAAAAAAAADTvzasAAAA5"
     "AAAABAAAAAkAAAAAAXhWNBIBAQE5MAAAAAA=";
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) throw std::runtime_error("RequestSerializerTests failed at line " + std::to_string(location.line()));
-}
 
 template <typename TRange>
 concept AssignableMemory = requires(ShaderRecompiler::GuestContext& context, TRange&& range) {

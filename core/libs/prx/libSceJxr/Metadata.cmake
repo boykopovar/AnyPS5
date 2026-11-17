@@ -11,6 +11,7 @@ target_link_libraries(libSceJxr PRIVATE jxr_metadata_native)
 if(BUILD_TESTING)
     if(MINGW)
         add_executable(guest_jxr_metadata_tests tests/Metadata.cpp $<TARGET_OBJECTS:anyps5_windows_test_exit>)
+        target_include_directories(guest_jxr_metadata_tests PRIVATE ${CMAKE_SOURCE_DIR}/core/test/include)
         target_link_options(guest_jxr_metadata_tests PRIVATE LINKER:--wrap=main)
         set_target_properties(guest_jxr_metadata_tests PROPERTIES
             RUNTIME_OUTPUT_DIRECTORY "$<1:${ANYPS5_TEST_OUTPUT_DIRECTORY}/jxr-metadata>")

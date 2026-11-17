@@ -1,6 +1,7 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdio>
 #include <cstdlib>
@@ -14,12 +15,6 @@ namespace {
 constexpr int kOk = 0;
 constexpr int kNoconv = 3;
 constexpr std::uint64_t kStateSentinel = 0x1122334455667788ULL;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "libc internal codecvt char: %s\n", message);
-    std::abort();
-}
 
 void APS5_VABI Destroy(GuestLocale::Facet*) {}
 void APS5_VABI Retain(GuestLocale::Facet*) {}

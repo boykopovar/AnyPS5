@@ -1,17 +1,11 @@
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <random>
 #include <vector>
-
-static void Require(bool condition) {
-    if (!condition) {
-        std::fputs("GuestCaseCompareRandom check failed\n", stderr);
-        std::abort();
-    }
-}
 
 static int Fold(char c) {
     const auto value = static_cast<unsigned char>(c);

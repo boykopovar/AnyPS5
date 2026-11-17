@@ -3,6 +3,7 @@
 #include "prx/libSceLibreSsl/include/ObjectTable.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -45,12 +46,6 @@ constexpr int Country = 14;
 constexpr int Organization = 17;
 constexpr int CommonName = 13;
 constexpr int OrganizationalUnit = 18;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "failed: %s\n", message);
-    std::abort();
-}
 
 class Builder {
 public:

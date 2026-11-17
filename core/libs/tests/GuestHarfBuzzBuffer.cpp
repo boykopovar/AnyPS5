@@ -1,4 +1,5 @@
 #include "prx/libharfbuzz/libharfbuzz.hpp"
+#include "Testing.hpp"
 
 #include <hb.h>
 
@@ -10,15 +11,6 @@
 #include <random>
 #include <string_view>
 #include <vector>
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "HarfBuzz buffer check failed at line %d\n", line);
-        std::abort();
-    }
-}
-
-#define Require(value) Check((value), __LINE__)
 
 struct BufferPair {
     hb_buffer_t* guest = hb_buffer_create_nid_postfix();

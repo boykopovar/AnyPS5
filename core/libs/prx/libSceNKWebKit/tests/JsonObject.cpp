@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -8,14 +9,6 @@
 #include <string>
 #include <utility>
 #include <vector>
-
-static void Check(bool condition, int line) {
-    if (!condition) {
-        std::fprintf(stderr, "Check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(cond) Check((cond), __LINE__)
 
 using NKWebKit::JsonAbi::Object;
 using NKWebKit::JsonAbi::ObjectBase;

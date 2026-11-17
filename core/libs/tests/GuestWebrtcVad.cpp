@@ -1,17 +1,11 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "Testing.hpp"
 #include <fvad.h>
 #include <array>
 #include <cstdlib>
 #include <cstdio>
 #include <limits>
 #include <source_location>
-
-static void Require(bool condition, const std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "VAD check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 int main() {
     using Samples = std::array<std::int16_t, 1440>;

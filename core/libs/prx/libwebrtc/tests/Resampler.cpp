@@ -1,6 +1,7 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cmath>
@@ -26,21 +27,6 @@ void* APS5_VABI TestRealign(void* pointer, std::size_t size, std::size_t) { retu
 int APS5_VABI TestPosixAlign(void** pointer, std::size_t, std::size_t size) {
     *pointer = std::malloc(size);
     return *pointer ? 0 : 12;
-}
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc resampler check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> void RequireInvalidArgument(TAction action, std::source_location location = std::source_location::current()) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, location);
 }
 
 double Tone(double frequency, double rate, std::size_t index) {
@@ -125,19 +111,19 @@ void TestPushSincResamplerMatchesUpstream() {
 }
 
 void TestPushSincResamplerRejectsBadSizes() {
-    RequireInvalidArgument([] {
+    ExpectErr<std::invalid_argument>([] {
         WebRtcPushSincResampler push;
         _ZN6webrtc17PushSincResamplerC1Emm_nid_postfix(&push, 48, 160);
     });
-    RequireInvalidArgument([] {
+    ExpectErr<std::invalid_argument>([] {
         WebRtcPushSincResampler push;
         _ZN6webrtc17PushSincResamplerC1Emm_nid_postfix(&push, 480, 0);
     });
-    RequireInvalidArgument([] {
+    ExpectErr<std::invalid_argument>([] {
         WebRtcPushSincResampler push;
         _ZN6webrtc17PushSincResamplerC1Emm_nid_postfix(&push, 3841, 160);
     });
-    RequireInvalidArgument([] {
+    ExpectErr<std::invalid_argument>([] {
         WebRtcPushSincResampler push;
         _ZN6webrtc17PushSincResamplerC1Emm_nid_postfix(&push, 480, 3841);
     });
@@ -149,10 +135,10 @@ void TestPushSincResamplerRejectsBadSizes() {
     WebRtcPushSincResampler push;
     _ZN6webrtc17PushSincResamplerC1Emm_nid_postfix(&push, 480, 160);
     std::vector<float> source(480), destination(160);
-    RequireInvalidArgument([&] { _ZN6webrtc17PushSincResampler8ResampleEPKfmPfm_nid_postfix(&push, source.data(), 479, destination.data(), 160); });
-    RequireInvalidArgument([&] { _ZN6webrtc17PushSincResampler8ResampleEPKfmPfm_nid_postfix(&push, source.data(), 480, destination.data(), 159); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc17PushSincResampler8ResampleEPKfmPfm_nid_postfix(&push, source.data(), 479, destination.data(), 160); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc17PushSincResampler8ResampleEPKfmPfm_nid_postfix(&push, source.data(), 480, destination.data(), 159); });
     _ZN6webrtc17PushSincResamplerD1Ev_nid_postfix(&push);
-    RequireInvalidArgument([] { _ZN6webrtc17PushSincResamplerC1Emm_nid_postfix(nullptr, 480, 160); });
+    ExpectErr<std::invalid_argument>([] { _ZN6webrtc17PushSincResamplerC1Emm_nid_postfix(nullptr, 480, 160); });
 }
 
 void TestPushSincResamplerDeletingDestructor() {
@@ -188,7 +174,7 @@ void TestPushResamplerStereo() {
     RequireTone(FitTone(output, 2, 1, 320, 2000, 16000), 8000);
     std::vector<std::int16_t> wrongChannels(480);
     const std::vector<std::int16_t> source = InterleavedTones(480, 2, 0, 48000);
-    RequireInvalidArgument([&] {
+    ExpectErr<std::invalid_argument>([&] {
         _ZN6webrtc13PushResamplerIsE8ResampleENS_15InterleavedViewIKsEENS2_IsEE_nid_postfix(
             &resampler, WebRtcInterleavedView {2, 480, source.data(), source.size()}, WebRtcMutableInterleavedView16 {3, 160, wrongChannels.data(), wrongChannels.size()});
     });
@@ -197,11 +183,11 @@ void TestPushResamplerStereo() {
 }
 
 void TestPushResamplerRejectsBadShapesAndKeepsItsState() {
-    RequireInvalidArgument([] {
+    ExpectErr<std::invalid_argument>([] {
         WebRtcPushResampler16 resampler;
         _ZN6webrtc13PushResamplerIsEC1Emmm_nid_postfix(&resampler, 480, 160, 9);
     });
-    RequireInvalidArgument([] {
+    ExpectErr<std::invalid_argument>([] {
         WebRtcPushResampler16 resampler;
         _ZN6webrtc13PushResamplerIsEC1Emmm_nid_postfix(&resampler, 3841, 160, 1);
     });
@@ -211,15 +197,15 @@ void TestPushResamplerRejectsBadShapesAndKeepsItsState() {
     const std::vector<std::int16_t> input = InterleavedTones(480, 2, 0, 48000);
     std::vector<std::int16_t> output(320);
     std::vector<std::int16_t> large(9 * 3841);
-    RequireInvalidArgument([&] {
+    ExpectErr<std::invalid_argument>([&] {
         _ZN6webrtc13PushResamplerIsE8ResampleENS_15InterleavedViewIKsEENS2_IsEE_nid_postfix(
             &resampler, WebRtcInterleavedView {9, 3841, large.data(), large.size()}, WebRtcMutableInterleavedView16 {9, 160, large.data(), 9 * 160});
     });
-    RequireInvalidArgument([&] {
+    ExpectErr<std::invalid_argument>([&] {
         _ZN6webrtc13PushResamplerIsE8ResampleENS_15InterleavedViewIKsEENS2_IsEE_nid_postfix(
             &resampler, WebRtcInterleavedView {2, 480, input.data(), input.size() - 1}, WebRtcMutableInterleavedView16 {2, 160, output.data(), output.size()});
     });
-    RequireInvalidArgument([&] {
+    ExpectErr<std::invalid_argument>([&] {
         _ZN6webrtc13PushResamplerIsE8ResampleENS_15InterleavedViewIKsEENS2_IsEE_nid_postfix(
             &resampler, WebRtcInterleavedView {2, 480, input.data(), input.size()}, WebRtcMutableInterleavedView16 {2, 160, output.data(), output.size() + 2});
     });
@@ -243,7 +229,7 @@ void TestPushResamplerSameRateCopies() {
                 &resampler, WebRtcConstMonoView16 {source.data(), 160}, WebRtcMonoView16 {mono.data(), 160}) == 160);
     Require(std::memcmp(mono.data(), source.data(), 320) == 0);
     std::vector<std::int16_t> small(80);
-    RequireInvalidArgument([&] {
+    ExpectErr<std::invalid_argument>([&] {
         _ZN6webrtc13PushResamplerIsE8ResampleEN3rtc9ArrayViewIKsLln4711EEENS3_IsLln4711EEE_nid_postfix(
             &resampler, WebRtcConstMonoView16 {source.data(), 160}, WebRtcMonoView16 {small.data(), 80});
     });
@@ -272,11 +258,11 @@ void TestPushResamplerMonoMatchesTheFloatPath() {
     _ZN6webrtc13PushResamplerIsED1Ev_nid_postfix(&resampler);
     WebRtcPushResampler16 empty;
     _ZN6webrtc13PushResamplerIsEC1Ev_nid_postfix(&empty);
-    RequireInvalidArgument([&] {
+    ExpectErr<std::invalid_argument>([&] {
         _ZN6webrtc13PushResamplerIsE8ResampleEN3rtc9ArrayViewIKsLln4711EEENS3_IsLln4711EEE_nid_postfix(
             &empty, WebRtcConstMonoView16 {destination.data(), 160}, WebRtcMonoView16 {destination.data(), 480});
     });
-    RequireInvalidArgument([] {
+    ExpectErr<std::invalid_argument>([] {
         WebRtcPushResampler16 zero;
         _ZN6webrtc13PushResamplerIsEC1Emmm_nid_postfix(&zero, 160, 480, 0);
     });
@@ -343,14 +329,14 @@ void TestRemixQuadToStereoAndUpmix() {
 
     WebRtcAudioFrame* target = NewFrame(160, 2, 16000);
     std::vector<std::int16_t> three(480);
-    RequireInvalidArgument([&] { Remix(three, 3, 160, resampler, target); });
+    ExpectErr<std::invalid_argument>([&] { Remix(three, 3, 160, resampler, target); });
     const std::vector<std::int16_t> tooShort(100);
-    RequireInvalidArgument([&] {
+    ExpectErr<std::invalid_argument>([&] {
         _ZN6webrtc3voe16RemixAndResampleENS_15InterleavedViewIKsEEiPNS_13PushResamplerIsEEPNS_10AudioFrameE_nid_postfix(
             WebRtcInterleavedView {1, 160, tooShort.data(), tooShort.size()}, 16000, &resampler, target);
     });
     std::vector<std::int16_t> nine(9 * 160);
-    RequireInvalidArgument([&] { Remix(nine, 9, 160, resampler, target); });
+    ExpectErr<std::invalid_argument>([&] { Remix(nine, 9, 160, resampler, target); });
     delete frame;
     delete stereo;
     delete target;

@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -21,10 +22,6 @@ namespace {
 
 using AgcDriver::DriverDetail::DrawPipeline;
 
-void check(bool condition, const std::string& what) {
-    if (!condition) throw std::runtime_error("pipelined DMA: " + what);
-}
-
 std::array<std::uint32_t, 7> DmaData(bool immediate, std::uint64_t source, std::uint32_t data, std::uint64_t destination, std::uint32_t bytes) {
     return {0xc0055000u, immediate ? (2u << 29u) : 0u, immediate ? data : static_cast<std::uint32_t>(source), immediate ? 0u : static_cast<std::uint32_t>(source >> 32u), static_cast<std::uint32_t>(destination), static_cast<std::uint32_t>(destination >> 32u), bytes};
 }
@@ -40,7 +37,7 @@ void Append(std::vector<std::uint32_t>& words, const std::array<std::uint32_t, C
 
 void Submit(std::vector<std::uint32_t>& words) {
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
-    check(sceAgcDriverSubmitDcb(&packet) == 0, "submission failed");
+    Require(sceAgcDriverSubmitDcb(&packet) == 0, "submission failed");
 }
 
 struct Gate {
@@ -63,11 +60,11 @@ void ExpectDrains(std::vector<std::uint32_t>& words, std::uint32_t opcode, Gate&
     });
     Submit(words);
     releaser.join();
-    check(DrawPipeline::DrainRequestsByOpcode(opcode) == before + 1, what);
+    Require(DrawPipeline::DrainRequestsByOpcode(opcode) == before + 1, what);
 }
 
 void ExpectNoDrain(std::uint32_t opcode, std::uint64_t before, const char* what) {
-    check(DrawPipeline::DrainRequestsByOpcode(opcode) == before, what);
+    Require(DrawPipeline::DrainRequestsByOpcode(opcode) == before, what);
 }
 
 }
@@ -97,11 +94,11 @@ int main() {
         words.insert(words.end(), copy.begin(), copy.end());
         Submit(words);
         AgcDriverWaitIdle_nid_postfix();
-        for (const auto word : first) check(word == 0x5eed1234u, "the immediate fill did not land");
-        for (std::size_t i = 0; i < second.size(); ++i) check(second[i] == (i < 128 ? 0x5eed1234u : 0u), "the copy did not see the fill before it, or wrote past its bytes");
+        for (const auto word : first) Require(word == 0x5eed1234u, "the immediate fill did not land");
+        for (std::size_t i = 0; i < second.size(); ++i) Require(second[i] == (i < 128 ? 0x5eed1234u : 0u), "the copy did not see the fill before it, or wrote past its bytes");
         const auto stores = storesOnCpu.load() + storesOnGpu.load() + storesBehindCompletions.load() - cpuBefore;
-        check(stores == 2, "the DMA_DATA packets were not committed (" + std::to_string(stores) + " committed stores)");
-        check(storesDrained.load() == drainedBefore, "a DMA_DATA packet still drained");
+        Require(stores == 2, "the DMA_DATA packets were not committed (" + std::to_string(stores) + " committed stores)");
+        Require(storesDrained.load() == drainedBefore, "a DMA_DATA packet still drained");
 
         const auto source = reinterpret_cast<std::uint64_t>(first.data());
         const auto held = reinterpret_cast<std::uint64_t>(pending.data());

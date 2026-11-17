@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <map>
@@ -7,14 +8,6 @@
 using namespace AgcDriver::Graphics;
 
 namespace {
-
-int failures = 0;
-
-void Expect(bool condition, const char* what) {
-    if (condition) return;
-    std::fprintf(stderr, "FAIL: %s\n", what);
-    ++failures;
-}
 
 struct Keys {
     std::map<std::uint64_t, DccKeys> ranges;
@@ -141,8 +134,8 @@ int main() {
     followedClearRemakes();
     filledKeysRemake();
     serveRules();
-    if (failures != 0) {
-        std::fprintf(stderr, "%d DCC key sharing checks failed\n", failures);
+    if (Failures() != 0) {
+        std::fprintf(stderr, "%u DCC key sharing checks failed\n", Failures());
         return 1;
     }
     std::printf("DCC key sharing tests passed\n");

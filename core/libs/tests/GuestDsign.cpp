@@ -1,9 +1,8 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdlib>
 #include <limits>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 int main() {
     constexpr short Negative = static_cast<short>(0x8000);

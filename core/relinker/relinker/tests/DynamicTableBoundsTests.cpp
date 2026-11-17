@@ -1,5 +1,6 @@
 #include "ElfFixture.hpp"
 #include "RelinkerProcess.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <iostream>
 #include <stdexcept>
@@ -8,10 +9,6 @@
 namespace {
 
 using namespace RelinkerTests;
-
-void require(const bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 const Bytes kCode = {0xC3};
 
@@ -43,7 +40,7 @@ void WriteRelaEntry(Bytes& image, const std::uint64_t info) {
 
 int main(const int argc, char** argv) {
     try {
-        require(argc == 2, "usage: dynamic_table_bounds_tests <relinker>");
+        Require(argc == 2, "usage: dynamic_table_bounds_tests <relinker>");
         const std::string binary = argv[1];
         const TempDirectory directory;
         const auto input = directory.Path() / "input.elf";
@@ -57,8 +54,8 @@ int main(const int argc, char** argv) {
             WriteFile(input, image);
 
             const auto run = RunRelinker(binary, {"--skip-sce-module", "--to-intel", input.string(), output.string()}, directory.Path() / "relinker.log");
-            require(run.ExitCode != 0, "Relinker read a symbol table outside the file and exited 0:\n" + run.Output);
-            require(run.Output.find("Symbol table entry out of bounds") != std::string::npos,
+            Require(run.ExitCode != 0, "Relinker read a symbol table outside the file and exited 0:\n" + run.Output);
+            Require(run.Output.find("Symbol table entry out of bounds") != std::string::npos,
                     "Relinker did not report the symbol table entry as out of bounds:\n" + run.Output);
         }
 
@@ -68,8 +65,8 @@ int main(const int argc, char** argv) {
             WriteFile(input, image);
 
             const auto run = RunRelinker(binary, {"--skip-sce-module", "--to-intel", input.string(), output.string()}, directory.Path() / "relinker.log");
-            require(run.ExitCode != 0, "Relinker read a relocation table outside the file and exited 0:\n" + run.Output);
-            require(run.Output.find("Virtual address not mapped by any PT_LOAD segment") != std::string::npos,
+            Require(run.ExitCode != 0, "Relinker read a relocation table outside the file and exited 0:\n" + run.Output);
+            Require(run.Output.find("Virtual address not mapped by any PT_LOAD segment") != std::string::npos,
                     "Relinker did not report the relocation table entry as out of bounds:\n" + run.Output);
         }
 
@@ -79,8 +76,8 @@ int main(const int argc, char** argv) {
             WriteFile(input, image);
 
             const auto run = RunRelinker(binary, {"--skip-sce-module", "--to-intel", input.string(), output.string()}, directory.Path() / "relinker.log");
-            require(run.ExitCode != 0, "Relinker read a string table outside the file and exited 0:\n" + run.Output);
-            require(run.Output.find("Virtual address not mapped by any PT_LOAD segment") != std::string::npos,
+            Require(run.ExitCode != 0, "Relinker read a string table outside the file and exited 0:\n" + run.Output);
+            Require(run.Output.find("Virtual address not mapped by any PT_LOAD segment") != std::string::npos,
                     "Relinker did not report the string table entry as out of bounds:\n" + run.Output);
         }
 

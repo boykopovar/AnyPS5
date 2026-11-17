@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include <elfpatcher/windows/WindowsIconResourceBuilder.hpp>
 #include <elfpatcher/windows/WindowsPeFormat.hpp>
 #include <domain/Types.hpp>
@@ -17,10 +18,6 @@ const std::vector<std::uint8_t> Png{
     0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xf8, 0xcf, 0xc0, 0xf0,
     0x1f, 0x00, 0x05, 0x00, 0x01, 0xff, 0x89, 0x99, 0x3d, 0x1d, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45,
     0x4e, 0x44, 0xae, 0x42, 0x60, 0x82};
-
-void require(const bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 std::uint32_t readU32(const std::vector<std::uint8_t>& data, const std::size_t offset) {
     return static_cast<std::uint32_t>(data[offset]) | static_cast<std::uint32_t>(data[offset + 1]) << 8 |
@@ -61,10 +58,10 @@ void checkChunks() {
         try { builder.Build(image, path, sections, 0x10000); }
         catch (const Domain::RelinkerException& error) {
             rejected = true;
-            require(std::string(error.what()).find(std::string(utf8.begin(), utf8.end())) != std::string::npos, "Icon failure omitted the path");
+            Require(std::string(error.what()).find(std::string(utf8.begin(), utf8.end())) != std::string::npos, "Icon failure omitted the path");
         }
-        require(rejected != valid, "Unexpected validation result for " + name);
-        require(sections.size() == (valid ? 1u : 0u), "Unexpected section mutation for " + name);
+        Require(rejected != valid, "Unexpected validation result for " + name);
+        Require(sections.size() == (valid ? 1u : 0u), "Unexpected section mutation for " + name);
     };
     const std::vector<std::uint8_t> data(Png.begin() + 41, Png.begin() + 54);
     const auto idat = chunk("IDAT", data);
@@ -106,19 +103,19 @@ void run() {
     const std::uint32_t nextRva = 0x50000;
     std::vector<Elfpatcher::Windows::PeSection> sections;
     const auto directory = builder.Build(Png, iconPath, sections, nextRva);
-    require(sections.size() == 1, "Expected one section");
-    require(sections[0].Name == ".rsrc", "Unexpected section name: " + sections[0].Name);
-    require(sections[0].Rva == nextRva, "Unexpected section RVA");
-    require(sections[0].Characteristics == (Elfpatcher::Windows::SectionRead | 0x40u), "Unexpected section characteristics");
+    Require(sections.size() == 1, "Expected one section");
+    Require(sections[0].Name == ".rsrc", "Unexpected section name: " + sections[0].Name);
+    Require(sections[0].Rva == nextRva, "Unexpected section RVA");
+    Require(sections[0].Characteristics == (Elfpatcher::Windows::SectionRead | 0x40u), "Unexpected section characteristics");
     const auto& data = sections[0].Data;
-    require(data.size() == 184 + Png.size(), "Unexpected section size");
-    require(directory.Rva == nextRva && directory.Size == data.size(), "Unexpected resource directory");
-    require(readU32(data, 16) == 3 && readU32(data, 24) == 14, "Unexpected resource types");
-    require(readU32(data, 128) == nextRva + 184 && readU32(data, 132) == Png.size(), "Unexpected RT_ICON data entry");
-    require(readU32(data, 144) == nextRva + 160 && readU32(data, 148) == 20, "Unexpected RT_GROUP_ICON data entry");
-    require(data[166] == 1 && data[167] == 1, "Unexpected icon dimensions");
-    require(readU32(data, 174) == Png.size(), "Unexpected icon size in group entry");
-    require(std::equal(Png.begin(), Png.end(), data.begin() + 184), "Icon bytes changed");
+    Require(data.size() == 184 + Png.size(), "Unexpected section size");
+    Require(directory.Rva == nextRva && directory.Size == data.size(), "Unexpected resource directory");
+    Require(readU32(data, 16) == 3 && readU32(data, 24) == 14, "Unexpected resource types");
+    Require(readU32(data, 128) == nextRva + 184 && readU32(data, 132) == Png.size(), "Unexpected RT_ICON data entry");
+    Require(readU32(data, 144) == nextRva + 160 && readU32(data, 148) == 20, "Unexpected RT_GROUP_ICON data entry");
+    Require(data[166] == 1 && data[167] == 1, "Unexpected icon dimensions");
+    Require(readU32(data, 174) == Png.size(), "Unexpected icon size in group entry");
+    Require(std::equal(Png.begin(), Png.end(), data.begin() + 184), "Icon bytes changed");
 
     const std::filesystem::path badPath(u8"\u65e5\u672c/bad/icon0.png");
     const auto badUtf8 = badPath.u8string();
@@ -129,11 +126,11 @@ void run() {
     try {
         builder.Build(truncated, badPath, badSections, nextRva);
     } catch (const Domain::RelinkerException& e) {
-        require(std::string(e.what()).find(std::string(badUtf8.begin(), badUtf8.end())) != std::string::npos, std::string("Failure does not name the icon: ") + e.what());
-        require(badSections.empty(), "Section added despite the failure");
+        Require(std::string(e.what()).find(std::string(badUtf8.begin(), badUtf8.end())) != std::string::npos, std::string("Failure does not name the icon: ") + e.what());
+        Require(badSections.empty(), "Section added despite the failure");
         caughtTruncated = true;
     }
-    require(caughtTruncated, "Build succeeded for a malformed icon");
+    Require(caughtTruncated, "Build succeeded for a malformed icon");
 
     for (const auto badRva : {0u, 0x8000u, 0x10001u, 0x10800u}) {
         std::vector<Elfpatcher::Windows::PeSection> invalidRvaSections;
@@ -142,10 +139,10 @@ void run() {
             builder.Build(Png, iconPath, invalidRvaSections, badRva);
         } catch (const Domain::RelinkerException& error) {
             caught = true;
-            require(std::string(error.what()).find("Invalid Windows resource section RVA") != std::string::npos, "Unexpected error for bad RVA");
-            require(invalidRvaSections.empty(), "Section added on bad RVA");
+            Require(std::string(error.what()).find("Invalid Windows resource section RVA") != std::string::npos, "Unexpected error for bad RVA");
+            Require(invalidRvaSections.empty(), "Section added on bad RVA");
         }
-        require(caught, "Build succeeded for invalid resource section RVA");
+        Require(caught, "Build succeeded for invalid resource section RVA");
     }
 
     std::vector<Elfpatcher::Windows::PeSection> duplicateSections{
@@ -156,10 +153,10 @@ void run() {
         builder.Build(Png, iconPath, duplicateSections, 0x20000);
     } catch (const Domain::RelinkerException& error) {
         caughtDuplicate = true;
-        require(std::string(error.what()).find("Duplicate Windows resource section") != std::string::npos, "Unexpected error for duplicate resource section");
-        require(duplicateSections.size() == 1, "Section added on duplicate resource section");
+        Require(std::string(error.what()).find("Duplicate Windows resource section") != std::string::npos, "Unexpected error for duplicate resource section");
+        Require(duplicateSections.size() == 1, "Section added on duplicate resource section");
     }
-    require(caughtDuplicate, "Build succeeded with duplicate resource section");
+    Require(caughtDuplicate, "Build succeeded with duplicate resource section");
 
     std::vector<Elfpatcher::Windows::PeSection> overlappingSections{
         {".text", 0x10000, Elfpatcher::Windows::SectionRead | 0x20u, std::vector<std::uint8_t>(0x50000, 0)}
@@ -169,10 +166,10 @@ void run() {
         builder.Build(Png, iconPath, overlappingSections, 0x50000);
     } catch (const Domain::RelinkerException& error) {
         caughtOverlap = true;
-        require(std::string(error.what()).find("Windows resource section overlaps preceding section") != std::string::npos, "Unexpected error for overlapping section");
-        require(overlappingSections.size() == 1, "Section added on overlapping section");
+        Require(std::string(error.what()).find("Windows resource section overlaps preceding section") != std::string::npos, "Unexpected error for overlapping section");
+        Require(overlappingSections.size() == 1, "Section added on overlapping section");
     }
-    require(caughtOverlap, "Build succeeded with overlapping resource section");
+    Require(caughtOverlap, "Build succeeded with overlapping resource section");
 
     std::vector<Elfpatcher::Windows::PeSection> virtualOverlap{
         {".data", 0x10000, Elfpatcher::Windows::SectionRead | 0x40u, std::vector<std::uint8_t>(0x1000, 0), 0x41000}
@@ -182,12 +179,12 @@ void run() {
         builder.Build(Png, iconPath, virtualOverlap, 0x50000);
     } catch (const Domain::RelinkerException& error) {
         caughtVirtualOverlap = true;
-        require(std::string(error.what()).find("Windows resource section overlaps preceding section") != std::string::npos, "Unexpected error for virtual overlap");
-        require(virtualOverlap.size() == 1, "Section added on virtual overlap");
+        Require(std::string(error.what()).find("Windows resource section overlaps preceding section") != std::string::npos, "Unexpected error for virtual overlap");
+        Require(virtualOverlap.size() == 1, "Section added on virtual overlap");
     }
-    require(caughtVirtualOverlap, "Build succeeded with a resource section overlapping virtual data");
+    Require(caughtVirtualOverlap, "Build succeeded with a resource section overlapping virtual data");
     const auto following = builder.Build(Png, iconPath, virtualOverlap, 0x60000);
-    require(following.Rva == 0x60000 && virtualOverlap.size() == 2, "Build rejected a resource section after virtual data");
+    Require(following.Rva == 0x60000 && virtualOverlap.size() == 2, "Build rejected a resource section after virtual data");
 }
 
 }

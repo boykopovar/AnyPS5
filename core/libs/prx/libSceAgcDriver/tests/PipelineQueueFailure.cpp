@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/PipelineLibrary.hpp"
 #include "AllocationFailure.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -19,13 +20,6 @@ using namespace std::chrono_literals;
 
 namespace {
 
-void Check(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "FAIL: %s\n", message);
-    std::fflush(stderr);
-    std::_Exit(1);
-}
-
 void Schedule(VkDevice device, std::function<void()> work) {
     OptimizedPipeline pipeline;
     pipeline.device = device;
@@ -37,15 +31,15 @@ void Schedule(VkDevice device, std::function<void()> work) {
 }
 
 int main(int argc, char** argv) {
-    Check(argc == 2, "expected wait, clear or stop");
+    Require(argc == 2, "expected wait, clear or stop");
     const std::string_view mode(argv[1]);
-    Check(mode == "wait" || mode == "clear" || mode == "stop", "unknown drain mode");
+    Require(mode == "wait" || mode == "clear" || mode == "stop", "unknown drain mode");
     const auto device = reinterpret_cast<VkDevice>(std::uintptr_t{1});
     const auto otherDevice = reinterpret_cast<VkDevice>(std::uintptr_t{2});
     std::atomic<unsigned> completed{0};
     Schedule(device, [&] { ++completed; });
     WaitForOptimizedPipelines(device);
-    Check(completed == 1, "the initial job did not run");
+    Require(completed == 1, "the initial job did not run");
 
     bool allocationFailed = false;
     OptimizedPipeline fresh;
@@ -55,9 +49,9 @@ int main(int argc, char** argv) {
     SetAllocationFailureCountdown(0);
     try { fresh.Schedule(); } catch (const std::bad_alloc&) { allocationFailed = true; }
     SetAllocationFailureCountdown(-1);
-    Check(allocationFailed, "the new device allocation did not fail");
+    Require(allocationFailed, "the new device allocation did not fail");
     WaitForOptimizedPipelines(otherDevice);
-    Check(completed == 1, "a rejected job ran");
+    Require(completed == 1, "a rejected job ran");
 
     std::mutex mutex;
     std::condition_variable changed;
@@ -71,7 +65,7 @@ int main(int argc, char** argv) {
     });
     {
         std::unique_lock lock(mutex);
-        Check(changed.wait_for(lock, 3s, [&] { return entered; }), "the worker did not start");
+        Require(changed.wait_for(lock, 3s, [&] { return entered; }), "the worker did not start");
     }
 
     allocationFailed = false;
@@ -90,8 +84,8 @@ int main(int argc, char** argv) {
         }
         SetAllocationFailureCountdown(-1);
     }
-    Check(allocationFailed, "the queued jobs never needed another allocation");
-    Check(completed == 1, "queued jobs ran while the worker was held");
+    Require(allocationFailed, "the queued jobs never needed another allocation");
+    Require(completed == 1, "queued jobs ran while the worker was held");
     {
         std::lock_guard lock(mutex);
         released = true;
@@ -111,22 +105,22 @@ int main(int argc, char** argv) {
     });
     {
         std::unique_lock lock(mutex);
-        Check(changed.wait_for(lock, 3s, [&] { return drained; }), "a failed queue allocation left an unfinished job");
+        Require(changed.wait_for(lock, 3s, [&] { return drained; }), "a failed queue allocation left an unfinished job");
     }
     drain.join();
     if (mode != "stop") {
-        Check(completed == accepted + 1, "an accepted job was lost or ran twice");
+        Require(completed == accepted + 1, "an accepted job was lost or ran twice");
         Schedule(device, [&] { ++completed; });
         Schedule(otherDevice, [&] { ++completed; });
         WaitForOptimizedPipelines(device);
         WaitForOptimizedPipelines(otherDevice);
-        Check(completed == accepted + 3, "the queue did not recover after allocation failure");
+        Require(completed == accepted + 3, "the queue did not recover after allocation failure");
         StopPipelineLibraryWorker();
     }
     WaitForOptimizedPipelines(device);
     ClearPipelineLibraries(device);
     ClearPipelineLibraries(otherDevice);
-    Check(PipelineLibraryWorkers() == 0, "the pipeline worker did not stop");
+    Require(PipelineLibraryWorkers() == 0, "the pipeline worker did not stop");
     std::printf("%.*s: rejected new-device and queue-growth allocations; %u jobs accepted before rejection, queue drained\n",
         static_cast<int>(mode.size()), mode.data(), accepted);
     return 0;

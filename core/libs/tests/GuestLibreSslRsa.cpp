@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -46,17 +47,6 @@ static const LibreSslRsa* Rsa(const TestRsa* rsa) {
     return reinterpret_cast<const LibreSslRsa*>(rsa);
 }
 
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL RSA check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> static void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
-    try { action(); } catch (const std::exception&) { return; }
-    Require(false, location);
-}
-
 static void TestFlags() {
     TestRsaMethod method {};
     TestRsa rsa {};
@@ -68,7 +58,7 @@ static void TestFlags() {
     method.flags = -1;
     Require(RSA_flags_nid_postfix(Rsa(&rsa)) == -1);
     rsa.meth = nullptr;
-    RequireThrows([&] { RSA_flags_nid_postfix(Rsa(&rsa)); });
+    ExpectErr([&] { RSA_flags_nid_postfix(Rsa(&rsa)); });
 }
 
 static int Size(TestBignum* modulus) {
@@ -108,12 +98,12 @@ static void TestSize() {
     words[15] = 0;
     Require(Size(&modulus) == 120);
     modulus.top = -1;
-    RequireThrows([&] { Size(&modulus); });
+    ExpectErr([&] { Size(&modulus); });
     modulus.top = 1;
     modulus.d = nullptr;
-    RequireThrows([&] { Size(&modulus); });
-    RequireThrows([] { Size(nullptr); });
-    RequireThrows([] { RSA_size_nid_postfix(nullptr); });
+    ExpectErr([&] { Size(&modulus); });
+    ExpectErr([] { Size(nullptr); });
+    ExpectErr([] { RSA_size_nid_postfix(nullptr); });
 }
 
 constexpr int BignumStaticData = 0x02;
@@ -200,7 +190,7 @@ static void TestFree() {
 
     rsa = RSA_new_nid_postfix();
     rsa->meth = nullptr;
-    RequireThrows([&] { RSA_free_nid_postfix(rsa); });
+    ExpectErr([&] { RSA_free_nid_postfix(rsa); });
 }
 
 using Bytes = std::vector<unsigned char>;
@@ -333,8 +323,8 @@ static void TestPublicKeyInfo() {
     Require(Decode(published, 293, &consumed) == nullptr && consumed == 0);
     RequireRefused(Bytes(published.begin(), published.end() - 1));
     Require(Decode(published, 0) == nullptr && Decode(published, -1) == nullptr);
-    RequireThrows([&] { d2i_RSA_PUBKEY_nid_postfix(nullptr, nullptr, 294); });
-    RequireThrows([&] {
+    ExpectErr([&] { d2i_RSA_PUBKEY_nid_postfix(nullptr, nullptr, 294); });
+    ExpectErr([&] {
         const unsigned char* none = nullptr;
         d2i_RSA_PUBKEY_nid_postfix(nullptr, &none, 294);
     });
@@ -537,8 +527,8 @@ static void TestPublicDecrypt() {
     Require(Zero(out.data(), 256) && out[256] == 0xEE);
     Require(RSA_public_decrypt_nid_postfix(0, nullptr, out.data(), rsa, PaddingPkcs1) == -1);
     for (int padding : {0, PaddingSslv23, PaddingOaep, 6, 7}) Require(RSA_public_decrypt_nid_postfix(256, signature.data(), out.data(), rsa, padding) == -1);
-    RequireThrows([&] { RSA_public_decrypt_nid_postfix(256, nullptr, out.data(), rsa, PaddingPkcs1); });
-    RequireThrows([&] { RSA_public_decrypt_nid_postfix(256, signature.data(), nullptr, rsa, PaddingPkcs1); });
+    ExpectErr([&] { RSA_public_decrypt_nid_postfix(256, nullptr, out.data(), rsa, PaddingPkcs1); });
+    ExpectErr([&] { RSA_public_decrypt_nid_postfix(256, signature.data(), nullptr, rsa, PaddingPkcs1); });
     const auto payload = Pattern(245, 5);
     const auto sevenPadding = Recover(Concat({{0x00, 0x01}, Bytes(7, 0xFF), {0x00}, Pattern(246, 5)}));
     const auto eightPadding = Recover(Concat({{0x00, 0x01}, Bytes(8, 0xFF), {0x00}, payload}));
@@ -624,7 +614,7 @@ static void TestPublicEncrypt() {
         Require(RSA_public_encrypt_nid_postfix(longest + 1, longMessage.data(), first.data(), rsa, padding) == -1);
         Require(RSA_public_encrypt_nid_postfix(0, nullptr, first.data(), rsa, padding) == 256);
         Require(padding == PaddingPkcs1 ? Pkcs1Block(Recover(first), {}) : OaepBlock(Recover(first), {}));
-        RequireThrows([&] { RSA_public_encrypt_nid_postfix(-1, message.data(), first.data(), rsa, padding); });
+        ExpectErr([&] { RSA_public_encrypt_nid_postfix(-1, message.data(), first.data(), rsa, padding); });
     }
     auto raw = Concat({{0x00}, Pattern(255, 3)});
     Require(RSA_public_encrypt_nid_postfix(256, raw.data(), first.data(), rsa, PaddingNone) == 256 && Recover(first) == raw);
@@ -633,8 +623,8 @@ static void TestPublicEncrypt() {
     Require(RSA_public_encrypt_nid_postfix(-1, raw.data(), first.data(), rsa, PaddingNone) == -1);
     Require(RSA_public_encrypt_nid_postfix(256, Hex(CavpModulus).data(), first.data(), rsa, PaddingNone) == -1);
     for (int padding : {0, PaddingX931, 6, 7}) Require(RSA_public_encrypt_nid_postfix(32, message.data(), first.data(), rsa, padding) == -1);
-    RequireThrows([&] { RSA_public_encrypt_nid_postfix(32, message.data(), nullptr, rsa, PaddingPkcs1); });
-    RequireThrows([&] { RSA_public_encrypt_nid_postfix(32, nullptr, first.data(), rsa, PaddingPkcs1); });
+    ExpectErr([&] { RSA_public_encrypt_nid_postfix(32, message.data(), nullptr, rsa, PaddingPkcs1); });
+    ExpectErr([&] { RSA_public_encrypt_nid_postfix(32, nullptr, first.data(), rsa, PaddingPkcs1); });
     RSA_free_nid_postfix(rsa);
 }
 
@@ -655,8 +645,8 @@ static void TestPublicEncryptSslv23() {
     Require(RSA_public_encrypt_nid_postfix(246, longMessage.data(), first.data(), rsa, PaddingSslv23) == -1);
     Require(RSA_public_encrypt_nid_postfix(0, nullptr, first.data(), rsa, PaddingSslv23) == 256);
     Require(Sslv23Block(Recover(first), {}));
-    RequireThrows([&] { RSA_public_encrypt_nid_postfix(-1, message.data(), first.data(), rsa, PaddingSslv23); });
-    RequireThrows([&] { RSA_public_encrypt_nid_postfix(32, nullptr, first.data(), rsa, PaddingSslv23); });
+    ExpectErr([&] { RSA_public_encrypt_nid_postfix(-1, message.data(), first.data(), rsa, PaddingSslv23); });
+    ExpectErr([&] { RSA_public_encrypt_nid_postfix(32, nullptr, first.data(), rsa, PaddingSslv23); });
     RSA_free_nid_postfix(rsa);
 }
 
@@ -732,14 +722,14 @@ static void TestPublicKeyChecks() {
         Require(RSA_public_decrypt_nid_postfix(6, message.data(), out.data(), key.rsa, 8) == 77 && crypts.calls == 2 && crypts.length == 6);
         method = *defaultMethod;
         method.operations[0] = nullptr;
-        RequireThrows([&] { RSA_public_encrypt_nid_postfix(32, message.data(), out.data(), key.rsa, PaddingPkcs1); });
+        ExpectErr([&] { RSA_public_encrypt_nid_postfix(32, message.data(), out.data(), key.rsa, PaddingPkcs1); });
         key.rsa->meth = nullptr;
-        RequireThrows([&] { RSA_public_decrypt_nid_postfix(32, message.data(), out.data(), key.rsa, PaddingPkcs1); });
+        ExpectErr([&] { RSA_public_decrypt_nid_postfix(32, message.data(), out.data(), key.rsa, PaddingPkcs1); });
         key.rsa->meth = defaultMethod;
         key.rsa->e = nullptr;
-        RequireThrows([&] { RSA_public_decrypt_nid_postfix(32, message.data(), out.data(), key.rsa, PaddingPkcs1); });
+        ExpectErr([&] { RSA_public_decrypt_nid_postfix(32, message.data(), out.data(), key.rsa, PaddingPkcs1); });
     }
-    RequireThrows([&] { RSA_public_encrypt_nid_postfix(32, message.data(), out.data(), nullptr, PaddingPkcs1); });
+    ExpectErr([&] { RSA_public_encrypt_nid_postfix(32, message.data(), out.data(), nullptr, PaddingPkcs1); });
 }
 
 constexpr int DigestSha1 = 64;
@@ -802,7 +792,7 @@ static void TestVerify() {
     Require(Verify(DigestMd5Sha1, otherSsl, sslSignature, rsa) == 0);
     Require(Verify(DigestMd5Sha1, ssl, Sign(Bytes(ssl.begin(), ssl.end() - 1)), rsa) == 0);
     Require(Verify(DigestSha256, ssl, sslSignature, rsa) == 0);
-    RequireThrows([&] { RSA_verify_nid_postfix(DigestMd5Sha1, nullptr, 36, sslSignature.data(), 256, rsa); });
+    ExpectErr([&] { RSA_verify_nid_postfix(DigestMd5Sha1, nullptr, 36, sslSignature.data(), 256, rsa); });
     const auto sha256 = Hex("608648016503040201");
     Require(Verify(DigestSha256, digest, Sign(DigestInfo(sha256, Null, digest)), rsa) == 1);
     Require(Verify(DigestSha256, digest, Sign(DigestInfo(sha256, {}, digest)), rsa) == 1);
@@ -843,14 +833,14 @@ static void TestVerify() {
     method.verify = nullptr;
     Require(Verify(DigestSha256, digest, signature, rsa) == 1 && verifies.calls == 1);
     rsa->meth = nullptr;
-    RequireThrows([&] { Verify(DigestSha256, digest, signature, rsa); });
+    ExpectErr([&] { Verify(DigestSha256, digest, signature, rsa); });
     rsa->flags &= ~RsaFlagSignVerify;
     rsa->meth = defaultMethod;
-    RequireThrows([&] { Verify(DigestSha256, digest, signature, nullptr); });
-    RequireThrows([&] { RSA_verify_nid_postfix(DigestSha256, nullptr, 32, signature.data(), 256, rsa); });
+    ExpectErr([&] { Verify(DigestSha256, digest, signature, nullptr); });
+    ExpectErr([&] { RSA_verify_nid_postfix(DigestSha256, nullptr, 32, signature.data(), 256, rsa); });
     Require(RSA_verify_nid_postfix(DigestSha256, nullptr, 32, tampered.data(), 256, rsa) == 0);
     Require(RSA_verify_nid_postfix(DigestSha256, nullptr, 0, signature.data(), 256, rsa) == 0);
-    RequireThrows([&] { RSA_verify_nid_postfix(DigestSha256, digest.data(), 32, nullptr, 256, rsa); });
+    ExpectErr([&] { RSA_verify_nid_postfix(DigestSha256, digest.data(), 32, nullptr, 256, rsa); });
     Require(RSA_verify_nid_postfix(DigestSha256, digest.data(), 32, nullptr, 255, rsa) == 0);
     RSA_free_nid_postfix(rsa);
 }

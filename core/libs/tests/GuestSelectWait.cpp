@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -11,13 +12,6 @@ struct GuestTimeval {
     std::int64_t seconds;
     std::int64_t microseconds;
 };
-
-static void Require(bool value, const char* message) {
-    if (!value) {
-        std::fprintf(stderr, "%s\n", message);
-        std::abort();
-    }
-}
 
 int main() {
     using Clock = std::chrono::steady_clock;

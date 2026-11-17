@@ -1,4 +1,5 @@
 #include "prx/libc/include/GuestPtr.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -7,12 +8,6 @@
 #include <limits>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "guest pointer: %s\n", message);
-    std::abort();
-}
 
 struct Payload {
     std::uint32_t first;

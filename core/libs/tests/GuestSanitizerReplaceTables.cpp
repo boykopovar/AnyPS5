@@ -1,12 +1,9 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
-
-static void Require(bool value) {
-    if (!value) std::abort();
-}
 
 template <typename Table>
 static void RequireEmpty(const Table* table, std::uint64_t size) {

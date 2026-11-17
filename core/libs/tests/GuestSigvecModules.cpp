@@ -1,5 +1,6 @@
 #include "prx/libc/include/LegacySignals.hpp"
 #include "prx/libc/include/GuestErrno.hpp"
+#include "Testing.hpp"
 #include <nid/NidCompute.hpp>
 #include <array>
 #include <bit>
@@ -15,12 +16,6 @@
 #endif
 
 namespace {
-
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "sigvec modules: %s\n", message);
-    std::abort();
-}
 
 class Module {
 public:

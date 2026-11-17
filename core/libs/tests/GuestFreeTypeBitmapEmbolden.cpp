@@ -1,6 +1,7 @@
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include FT_BITMAP_H
 
@@ -13,14 +14,6 @@
 #include <stdexcept>
 
 using namespace FreeType;
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "FreeType bitmap embolden check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static void Matches(const GuestBitmap& guest, const FT_Bitmap& native) {
     Require(guest.rows == native.rows && guest.width == native.width && guest.pitch == native.pitch);

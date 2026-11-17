@@ -1,4 +1,5 @@
 #include "prx/libSceFreeType/include/Api.hpp"
+#include "Testing.hpp"
 #include <ft2build.h>
 #include FT_BBOX_H
 
@@ -20,13 +21,6 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
-
-static void Require(bool value, std::source_location location = std::source_location::current()) {
-    if (!value) {
-        std::fprintf(stderr, "boundary check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 class Guarded {
     unsigned char* memory;

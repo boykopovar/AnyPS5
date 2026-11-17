@@ -2,6 +2,7 @@
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libScePad/include/PadTriggerEffect.hpp"
 #include "prx/libScePad/libScePad.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdint>
@@ -14,12 +15,6 @@ namespace {
 
 int handle = -1;
 std::uint32_t seen = 0;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "guest_pad_trigger_effects: %s\n", message);
-    std::exit(1);
-}
 
 PadOutputState Fetch() {
     PadOutputState out{};

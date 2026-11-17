@@ -1,8 +1,7 @@
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 #include <cstdlib>
 #include <vector>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static std::vector<int> order;
 

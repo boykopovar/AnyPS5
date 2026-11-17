@@ -2,6 +2,7 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 #include "prx/libc/include/general/ExportMacros.hpp"
 #include "prx/libSceJsc/include/Api.hpp"
+#include "Testing.hpp"
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -13,10 +14,6 @@
 using namespace NKWebKit;
 
 namespace {
-
-void Require(bool condition) {
-    if (!condition) std::abort();
-}
 
 struct ScopedJsString {
     JSStringRef ref = nullptr;

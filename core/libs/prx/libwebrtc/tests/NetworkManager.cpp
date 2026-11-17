@@ -1,18 +1,9 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
-
-namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc NetworkManager check failed at line %u\n", location.line());
-    std::abort();
-}
-
-}
 
 int main() {
     unsigned char manager[64] = {};

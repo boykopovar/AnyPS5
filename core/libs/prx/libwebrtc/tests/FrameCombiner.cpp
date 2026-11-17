@@ -1,6 +1,7 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdint>
@@ -25,21 +26,6 @@ void* APS5_VABI TestRealign(void* pointer, std::size_t size, std::size_t) { retu
 int APS5_VABI TestPosixAlign(void** pointer, std::size_t, std::size_t size) {
     *pointer = std::malloc(size);
     return *pointer ? 0 : 12;
-}
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc FrameCombiner check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> void RequireInvalidArgument(TAction action, std::source_location location = std::source_location::current()) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, location);
 }
 
 struct Combiner {
@@ -239,11 +225,11 @@ void TestRejectsUpstreamPreconditions() {
     auto first = Filled(44100, 1, 5);
     auto second = Filled(44100, 1, 6);
     auto output = Frame();
-    RequireInvalidArgument([&] { combiner.Combine({first.get(), second.get()}, 1, 44100, 2, output.get()); });
-    RequireInvalidArgument([&] { combiner.Combine({}, 2, -1, 0, output.get()); });
-    RequireInvalidArgument([&] { combiner.Combine({}, 8, 192000, 0, output.get()); });
-    RequireInvalidArgument([&] { combiner.Combine({}, 2, 48000, 0, nullptr); });
-    RequireInvalidArgument([] { _ZN6webrtc13FrameCombinerC1Eb_nid_postfix(nullptr, true); });
+    ExpectErr<std::invalid_argument>([&] { combiner.Combine({first.get(), second.get()}, 1, 44100, 2, output.get()); });
+    ExpectErr<std::invalid_argument>([&] { combiner.Combine({}, 2, -1, 0, output.get()); });
+    ExpectErr<std::invalid_argument>([&] { combiner.Combine({}, 8, 192000, 0, output.get()); });
+    ExpectErr<std::invalid_argument>([&] { combiner.Combine({}, 2, 48000, 0, nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZN6webrtc13FrameCombinerC1Eb_nid_postfix(nullptr, true); });
 }
 
 }

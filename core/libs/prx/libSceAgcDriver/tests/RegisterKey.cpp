@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawRegisterKey.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderInputState.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdio>
@@ -12,10 +13,6 @@ using namespace AgcDriver;
 using namespace AgcDriver::DriverDetail;
 
 namespace {
-
-void check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 std::uint64_t baselineRegisterStateKey(const QueueState& queue, bool allUserWords = false) {
     std::uint64_t key = 0xcbf29ce484222325ull;
@@ -56,26 +53,26 @@ void testFingerprints() {
     const auto initialKey = RegisterStateKey(queue, false, true, nullptr, &parts);
     const auto initialParts = parts;
     queue.context[0x000] = 1;
-    check(RegisterStateKey(queue, false, true, nullptr, &parts) != initialKey, "stable register mutation did not change the key");
-    check(parts.userDataRegisters == initialParts.userDataRegisters && parts.auxiliaryRegisters == initialParts.auxiliaryRegisters, "stable register change altered a dynamic-register fingerprint");
-    check(parts.stableRegisters != initialParts.stableRegisters, "stable register change was not attributed");
+    Require(RegisterStateKey(queue, false, true, nullptr, &parts) != initialKey, "stable register mutation did not change the key");
+    Require(parts.userDataRegisters == initialParts.userDataRegisters && parts.auxiliaryRegisters == initialParts.auxiliaryRegisters, "stable register change altered a dynamic-register fingerprint");
+    Require(parts.stableRegisters != initialParts.stableRegisters, "stable register change was not attributed");
     queue = QueueState{};
     queue.shader[0x00b] = 2;
     queue.shader[0x00c] = 1;
     const auto beforeRuntimeKey = RegisterStateKey(queue, false, true, nullptr, &parts);
     const auto beforeRuntimeMutation = parts;
     queue.shader[0x00c] = 2;
-    check(RegisterStateKey(queue, false, true, nullptr, &parts) != beforeRuntimeKey, "runtime-register mutation did not change the key");
-    check(parts.userDataRegisters != beforeRuntimeMutation.userDataRegisters && parts.auxiliaryRegisters == beforeRuntimeMutation.auxiliaryRegisters && parts.stableRegisters == beforeRuntimeMutation.stableRegisters, "user-data register change was not isolated");
+    Require(RegisterStateKey(queue, false, true, nullptr, &parts) != beforeRuntimeKey, "runtime-register mutation did not change the key");
+    Require(parts.userDataRegisters != beforeRuntimeMutation.userDataRegisters && parts.auxiliaryRegisters == beforeRuntimeMutation.auxiliaryRegisters && parts.stableRegisters == beforeRuntimeMutation.stableRegisters, "user-data register change was not isolated");
     queue = QueueState{};
     auto reference = baselineRegisterStateKey(queue);
     auto tracked = RegisterStateKey(queue);
     const auto compare = [&] {
         const auto expected = baselineRegisterStateKey(queue);
         const auto actual = RegisterStateKey(queue);
-        check(actual == RegisterStateKey(queue, false, false), "incremental fingerprint missed a mutation");
-        check(RegisterStateKey(queue, true) == RegisterStateKey(queue, true, false), "all-user fingerprint missed a mutation");
-        check((expected == reference) == (actual == tracked), "exact key changed its dependency set");
+        Require(actual == RegisterStateKey(queue, false, false), "incremental fingerprint missed a mutation");
+        Require(RegisterStateKey(queue, true) == RegisterStateKey(queue, true, false), "all-user fingerprint missed a mutation");
+        Require((expected == reference) == (actual == tracked), "exact key changed its dependency set");
         reference = expected;
         tracked = actual;
     };
@@ -125,7 +122,7 @@ void testFingerprints() {
     queue.ClearContext(); compare();
     queue.context = *queue.savedContext; compare();
     auto moved = std::move(queue.context);
-    check(queue.context.empty(), "moved register bank retained its population");
+    Require(queue.context.empty(), "moved register bank retained its population");
     queue.context.emplace(0x200, 1); compare();
     queue.context = std::move(moved); compare();
     queue.context = queue.context; compare();
@@ -136,9 +133,9 @@ void testFingerprints() {
     auto low = std::make_shared<const Registers::Mask>(std::vector<std::uint64_t>{1});
     auto high = std::make_shared<const Registers::Mask>(std::vector<std::uint64_t>{0, 1});
     const auto lowHash = registers.Fingerprint(low);
-    check(registers.Fingerprint(high) != lowHash && registers.Fingerprint(low) == lowHash, "projection switch reused another mask's hash");
+    Require(registers.Fingerprint(high) != lowHash && registers.Fingerprint(low) == lowHash, "projection switch reused another mask's hash");
     registers[64] = 8;
-    check(registers.Fingerprint(low) == lowHash && registers.Fingerprint(high) == registers.RecomputeFingerprint(*high), "projection switch lost a masked write");
+    Require(registers.Fingerprint(low) == lowHash && registers.Fingerprint(high) == registers.RecomputeFingerprint(*high), "projection switch lost a masked write");
 }
 
 void testShaderSetKey() {
@@ -149,7 +146,7 @@ void testShaderSetKey() {
     ShaderRegistry second;
     first[0x100].push_back(std::make_shared<ShaderSnapshot>());
     second[0x100].push_back(std::make_shared<ShaderSnapshot>());
-    check(DrawShaderSetKey(queue, first) != DrawShaderSetKey(queue, second), "different shader snapshots shared a shader-set key");
+    Require(DrawShaderSetKey(queue, first) != DrawShaderSetKey(queue, second), "different shader snapshots shared a shader-set key");
 }
 
 

@@ -1,6 +1,7 @@
 #include "SceTypes.hpp"
 #include "prx/libScePad/include/Pad.hpp"
 #include "prx/libScePad/include/PadState.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstdint>
@@ -8,8 +9,6 @@
 
 using ReadHistoryFn = int (APS5_VABI*)(std::int32_t, PadHistoryData*, std::uint32_t);
 using OpenExt2Fn = int (APS5_VABI*)(std::int32_t, std::int32_t, const void*);
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 template <typename Function, typename Export>
 static Function As(Export function) {

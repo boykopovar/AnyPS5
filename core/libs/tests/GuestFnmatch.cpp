@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libScePosixForWebKit/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
@@ -14,12 +15,6 @@ struct Case {
     int flags;
     int result;
 };
-static void Require(bool value) {
-    if (!value) {
-        std::fputs("Guest byte case check failed\n", stderr);
-        std::abort();
-    }
-}
 
 static int FoldCByte(int byte) {
     return byte >= 'A' && byte <= 'Z' ? byte + 'a' - 'A' : byte;

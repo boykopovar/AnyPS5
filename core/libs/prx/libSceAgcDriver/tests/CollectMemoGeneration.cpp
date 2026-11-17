@@ -3,6 +3,7 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -34,10 +35,6 @@ constexpr std::uint64_t Page = 4096;
 constexpr std::uint64_t Span = 128 * Block;
 std::uint64_t Base = std::uint64_t{1} << 32;
 constexpr std::chrono::seconds Patience{10};
-
-void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 #ifndef _WIN32
 struct FakeWatch {

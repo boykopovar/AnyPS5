@@ -1,5 +1,6 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "unicode/ucpmap.h"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -7,12 +8,6 @@
 #include <vector>
 
 namespace {
-
-void Expect(bool condition, const char* what) {
-    if (condition) return;
-    std::fprintf(stderr, "failed: %s\n", what);
-    std::abort();
-}
 
 void ExpectInt(std::int64_t actual, std::int64_t expected, const char* what) {
     if (actual == expected) return;
@@ -61,11 +56,11 @@ void TestCategories() {
 
     Ranges all{{}, static_cast<std::size_t>(-1)};
     u_enumCharTypes_nid_postfix(Collect, &all);
-    Expect(!all.seen.empty(), "u_enumCharTypes reports ranges");
-    Expect(all.seen.front().start == 0 && all.seen.front().limit == 0x20 && all.seen.front().type == 15, "first range is Cc");
-    Expect(all.seen.back().limit == 0x110000, "last range ends at U+110000");
+    Require(!all.seen.empty(), "u_enumCharTypes reports ranges");
+    Require(all.seen.front().start == 0 && all.seen.front().limit == 0x20 && all.seen.front().type == 15, "first range is Cc");
+    Require(all.seen.back().limit == 0x110000, "last range ends at U+110000");
     for (std::size_t index = 1; index < all.seen.size(); ++index)
-        Expect(all.seen[index].start == all.seen[index - 1].limit, "ranges are contiguous");
+        Require(all.seen[index].start == all.seen[index - 1].limit, "ranges are contiguous");
     Ranges two{{}, 2};
     u_enumCharTypes_nid_postfix(Collect, &two);
     ExpectInt(static_cast<std::int64_t>(two.seen.size()), 2, "u_enumCharTypes stops when the callback returns false");
@@ -73,27 +68,27 @@ void TestCategories() {
 }
 
 void TestClassifiers() {
-    Expect(u_islower_nid_postfix(0x61) && !u_islower_nid_postfix(0x41), "u_islower");
-    Expect(u_isupper_nid_postfix(0x41) && !u_isupper_nid_postfix(0x61), "u_isupper");
-    Expect(u_istitle_nid_postfix(0x1c5) && !u_istitle_nid_postfix(0x41), "u_istitle");
-    Expect(u_isdigit_nid_postfix(0x660) && !u_isdigit_nid_postfix(0x41), "u_isdigit");
-    Expect(u_isxdigit_nid_postfix(0xff21) && !u_isxdigit_nid_postfix(0x67), "u_isxdigit");
-    Expect(u_isalpha_nid_postfix(0x4e00) && !u_isalpha_nid_postfix(0x345), "u_isalpha");
-    Expect(u_isalnum_nid_postfix(0x35) && !u_isalnum_nid_postfix(0x21), "u_isalnum");
-    Expect(u_isdefined_nid_postfix(0x41) && !u_isdefined_nid_postfix(0x378), "u_isdefined");
-    Expect(u_isbase_nid_postfix(0x20dd) && !u_isbase_nid_postfix(0x301), "u_isbase");
-    Expect(u_iscntrl_nid_postfix(0x7) && u_iscntrl_nid_postfix(0x2028) && !u_iscntrl_nid_postfix(0x41), "u_iscntrl");
-    Expect(u_ispunct_nid_postfix(0x21) && !u_ispunct_nid_postfix(0x24), "u_ispunct");
-    Expect(u_isgraph_nid_postfix(0x41) && !u_isgraph_nid_postfix(0x20), "u_isgraph");
-    Expect(u_isprint_nid_postfix(0x20) && !u_isprint_nid_postfix(0x7), "u_isprint");
-    Expect(u_isIDStart_nid_postfix(0x61) && !u_isIDStart_nid_postfix(0x31), "u_isIDStart");
-    Expect(u_isIDPart_nid_postfix(0x31) && !u_isIDPart_nid_postfix(0x2d), "u_isIDPart");
-    Expect(u_isIDIgnorable_nid_postfix(0x0) && u_isIDIgnorable_nid_postfix(0x200b) && !u_isIDIgnorable_nid_postfix(0x9), "u_isIDIgnorable");
-    Expect(u_isJavaIDStart_nid_postfix(0x24) && !u_isJavaIDStart_nid_postfix(0x31), "u_isJavaIDStart");
-    Expect(u_isJavaIDPart_nid_postfix(0x31) && !u_isJavaIDPart_nid_postfix(0x2d), "u_isJavaIDPart");
-    Expect(u_isUAlphabetic_nid_postfix(0x345) && !u_isUAlphabetic_nid_postfix(0x31), "u_isUAlphabetic");
-    Expect(u_isULowercase_nid_postfix(0x61) && !u_isULowercase_nid_postfix(0x1c5), "u_isULowercase");
-    Expect(u_isUUppercase_nid_postfix(0x41) && !u_isUUppercase_nid_postfix(0x1c5), "u_isUUppercase");
+    Require(u_islower_nid_postfix(0x61) && !u_islower_nid_postfix(0x41), "u_islower");
+    Require(u_isupper_nid_postfix(0x41) && !u_isupper_nid_postfix(0x61), "u_isupper");
+    Require(u_istitle_nid_postfix(0x1c5) && !u_istitle_nid_postfix(0x41), "u_istitle");
+    Require(u_isdigit_nid_postfix(0x660) && !u_isdigit_nid_postfix(0x41), "u_isdigit");
+    Require(u_isxdigit_nid_postfix(0xff21) && !u_isxdigit_nid_postfix(0x67), "u_isxdigit");
+    Require(u_isalpha_nid_postfix(0x4e00) && !u_isalpha_nid_postfix(0x345), "u_isalpha");
+    Require(u_isalnum_nid_postfix(0x35) && !u_isalnum_nid_postfix(0x21), "u_isalnum");
+    Require(u_isdefined_nid_postfix(0x41) && !u_isdefined_nid_postfix(0x378), "u_isdefined");
+    Require(u_isbase_nid_postfix(0x20dd) && !u_isbase_nid_postfix(0x301), "u_isbase");
+    Require(u_iscntrl_nid_postfix(0x7) && u_iscntrl_nid_postfix(0x2028) && !u_iscntrl_nid_postfix(0x41), "u_iscntrl");
+    Require(u_ispunct_nid_postfix(0x21) && !u_ispunct_nid_postfix(0x24), "u_ispunct");
+    Require(u_isgraph_nid_postfix(0x41) && !u_isgraph_nid_postfix(0x20), "u_isgraph");
+    Require(u_isprint_nid_postfix(0x20) && !u_isprint_nid_postfix(0x7), "u_isprint");
+    Require(u_isIDStart_nid_postfix(0x61) && !u_isIDStart_nid_postfix(0x31), "u_isIDStart");
+    Require(u_isIDPart_nid_postfix(0x31) && !u_isIDPart_nid_postfix(0x2d), "u_isIDPart");
+    Require(u_isIDIgnorable_nid_postfix(0x0) && u_isIDIgnorable_nid_postfix(0x200b) && !u_isIDIgnorable_nid_postfix(0x9), "u_isIDIgnorable");
+    Require(u_isJavaIDStart_nid_postfix(0x24) && !u_isJavaIDStart_nid_postfix(0x31), "u_isJavaIDStart");
+    Require(u_isJavaIDPart_nid_postfix(0x31) && !u_isJavaIDPart_nid_postfix(0x2d), "u_isJavaIDPart");
+    Require(u_isUAlphabetic_nid_postfix(0x345) && !u_isUAlphabetic_nid_postfix(0x31), "u_isUAlphabetic");
+    Require(u_isULowercase_nid_postfix(0x61) && !u_isULowercase_nid_postfix(0x1c5), "u_isULowercase");
+    Require(u_isUUppercase_nid_postfix(0x41) && !u_isUUppercase_nid_postfix(0x1c5), "u_isUUppercase");
 }
 
 void TestNumbers() {
@@ -103,16 +98,16 @@ void TestNumbers() {
     ExpectInt(u_digit_nid_postfix(0xff21, 16), 10, "u_digit(U+FF21, 16)");
     ExpectInt(u_digit_nid_postfix(0x38, 8), -1, "u_digit(8, 8)");
     ExpectInt(u_digit_nid_postfix(0x30, 1), -1, "u_digit(0, 1)");
-    Expect(u_getNumericValue_nid_postfix(0xbd) == 0.5, "u_getNumericValue(U+00BD)");
-    Expect(u_getNumericValue_nid_postfix(0x216b) == 12.0, "u_getNumericValue(U+216B)");
-    Expect(u_getNumericValue_nid_postfix(0x41) == -123456789.0, "u_getNumericValue(A)");
+    Require(u_getNumericValue_nid_postfix(0xbd) == 0.5, "u_getNumericValue(U+00BD)");
+    Require(u_getNumericValue_nid_postfix(0x216b) == 12.0, "u_getNumericValue(U+216B)");
+    Require(u_getNumericValue_nid_postfix(0x41) == -123456789.0, "u_getNumericValue(A)");
     std::uint8_t version[4] = {9, 9, 9, 9};
     u_charAge_nid_postfix(0x41, version);
-    Expect(version[0] == 1 && version[1] == 1 && version[2] == 0 && version[3] == 0, "u_charAge(A)");
+    Require(version[0] == 1 && version[1] == 1 && version[2] == 0 && version[3] == 0, "u_charAge(A)");
     u_charAge_nid_postfix(0x20ac, version);
-    Expect(version[0] == 2 && version[1] == 1, "u_charAge(U+20AC)");
+    Require(version[0] == 2 && version[1] == 1, "u_charAge(U+20AC)");
     u_charAge_nid_postfix(0x20c1, version);
-    Expect(version[0] == 17 && version[1] == 0, "u_charAge(U+20C1)");
+    Require(version[0] == 17 && version[1] == 0, "u_charAge(U+20C1)");
     u_charAge_nid_postfix(0x41, nullptr);
     ExpectInt(u_getCombiningClass_nid_postfix(0x301), 230, "u_getCombiningClass(U+0301)");
     ExpectInt(u_getCombiningClass_nid_postfix(0x316), 220, "u_getCombiningClass(U+0316)");
@@ -124,7 +119,7 @@ void TestBidiAndCase() {
     ExpectInt(u_charDirection_nid_postfix(0x5d0), 1, "u_charDirection(U+05D0)");
     ExpectInt(u_charDirection_nid_postfix(0x31), 2, "u_charDirection(1)");
     ExpectInt(u_charDirection_nid_postfix(0x627), 13, "u_charDirection(U+0627)");
-    Expect(u_isMirrored_nid_postfix(0x28) && !u_isMirrored_nid_postfix(0x41), "u_isMirrored");
+    Require(u_isMirrored_nid_postfix(0x28) && !u_isMirrored_nid_postfix(0x41), "u_isMirrored");
     ExpectInt(u_charMirror_nid_postfix(0x28), 0x29, "u_charMirror(()");
     ExpectInt(u_charMirror_nid_postfix(0x226e), 0x226f, "u_charMirror(U+226E)");
     ExpectInt(u_charMirror_nid_postfix(0x41), 0x41, "u_charMirror(A)");
@@ -163,11 +158,11 @@ void TestPropertyValues() {
     ExpectInt(u_getIntPropertyMaxValue_nid_postfix(0x100f), 2, "u_getIntPropertyMaxValue(NFKC_QC)");
     ExpectInt(u_getIntPropertyMaxValue_nid_postfix(0x6000), -1, "u_getIntPropertyMaxValue(0x6000)");
 
-    Expect(u_hasBinaryProperty_nid_postfix(0x41, 0) && !u_hasBinaryProperty_nid_postfix(0x31, 0), "u_hasBinaryProperty(Alphabetic)");
-    Expect(u_hasBinaryProperty_nid_postfix(0x2ffe, 72), "u_hasBinaryProperty(IDS_Unary_Operator)");
-    Expect(u_hasBinaryProperty_nid_postfix(0xc5, 9) == 0 && u_hasBinaryProperty_nid_postfix(0x340, 9), "u_hasBinaryProperty(Full_Composition_Exclusion)");
-    Expect(u_hasBinaryProperty_nid_postfix(0x41, 54) && !u_hasBinaryProperty_nid_postfix(0x61, 54), "u_hasBinaryProperty(Changes_When_Casefolded)");
-    Expect(!u_hasBinaryProperty_nid_postfix(0x41, 0x100f) && !u_hasBinaryProperty_nid_postfix(0x41, -1), "u_hasBinaryProperty outside binary properties");
+    Require(u_hasBinaryProperty_nid_postfix(0x41, 0) && !u_hasBinaryProperty_nid_postfix(0x31, 0), "u_hasBinaryProperty(Alphabetic)");
+    Require(u_hasBinaryProperty_nid_postfix(0x2ffe, 72), "u_hasBinaryProperty(IDS_Unary_Operator)");
+    Require(u_hasBinaryProperty_nid_postfix(0xc5, 9) == 0 && u_hasBinaryProperty_nid_postfix(0x340, 9), "u_hasBinaryProperty(Full_Composition_Exclusion)");
+    Require(u_hasBinaryProperty_nid_postfix(0x41, 54) && !u_hasBinaryProperty_nid_postfix(0x61, 54), "u_hasBinaryProperty(Changes_When_Casefolded)");
+    Require(!u_hasBinaryProperty_nid_postfix(0x41, 0x100f) && !u_hasBinaryProperty_nid_postfix(0x41, -1), "u_hasBinaryProperty outside binary properties");
 
     ExpectInt(u_getIntPropertyValue_nid_postfix(0x41, 0x1005), 1, "u_getIntPropertyValue(A, gc)");
     ExpectInt(u_getIntPropertyValue_nid_postfix(0x41, 0x100a), 25, "u_getIntPropertyValue(A, sc)");
@@ -181,30 +176,30 @@ void TestPropertyValues() {
 void TestIntPropertyMap() {
     std::int32_t status = 0;
     const UCPMap* map = u_getIntPropertyMap_nid_postfix(0x1005, &status);
-    Expect(map != nullptr, "u_getIntPropertyMap(gc) returns a map");
+    Require(map != nullptr, "u_getIntPropertyMap(gc) returns a map");
     ExpectInt(status, 0, "u_getIntPropertyMap(gc) preserves successful status");
     ExpectInt(ucpmap_get(map, 0x41), 1, "u_getIntPropertyMap(gc, A)");
     ExpectInt(ucpmap_get(map, 0x301), 6, "u_getIntPropertyMap(gc, U+0301)");
 
     status = 0;
-    Expect(u_getIntPropertyMap_nid_postfix(-1, &status) == nullptr, "u_getIntPropertyMap rejects an invalid property");
+    Require(u_getIntPropertyMap_nid_postfix(-1, &status) == nullptr, "u_getIntPropertyMap rejects an invalid property");
     ExpectInt(status, 1, "u_getIntPropertyMap reports illegal argument");
 
     status = 1;
-    Expect(u_getIntPropertyMap_nid_postfix(0x1005, &status) == nullptr, "u_getIntPropertyMap skips failed status");
+    Require(u_getIntPropertyMap_nid_postfix(0x1005, &status) == nullptr, "u_getIntPropertyMap skips failed status");
     ExpectInt(status, 1, "u_getIntPropertyMap preserves failed status");
 }
 
 void TestDataFileProperties() {
-    Expect(u_hasBinaryProperty_nid_postfix(0x1f600, 57) && !u_hasBinaryProperty_nid_postfix(0x41, 57), "u_hasBinaryProperty(Emoji)");
-    Expect(u_hasBinaryProperty_nid_postfix(0x1f600, 58) && !u_hasBinaryProperty_nid_postfix(0x263a, 58), "u_hasBinaryProperty(Emoji_Presentation)");
-    Expect(u_hasBinaryProperty_nid_postfix(0x1f3fb, 59) && !u_hasBinaryProperty_nid_postfix(0x1f600, 59), "u_hasBinaryProperty(Emoji_Modifier)");
-    Expect(u_hasBinaryProperty_nid_postfix(0x1f44d, 60) && !u_hasBinaryProperty_nid_postfix(0x1f600, 60), "u_hasBinaryProperty(Emoji_Modifier_Base)");
-    Expect(u_hasBinaryProperty_nid_postfix(0x23, 61) && !u_hasBinaryProperty_nid_postfix(0x41, 61), "u_hasBinaryProperty(Emoji_Component)");
-    Expect(u_hasBinaryProperty_nid_postfix(0xa9, 64) && !u_hasBinaryProperty_nid_postfix(0x41, 64), "u_hasBinaryProperty(Extended_Pictographic)");
-    Expect(u_hasBinaryProperty_nid_postfix(0x1f600, 65) && !u_hasBinaryProperty_nid_postfix(0x41, 65), "u_hasBinaryProperty(Basic_Emoji)");
-    Expect(u_hasBinaryProperty_nid_postfix(0x1f600, 71) && !u_hasBinaryProperty_nid_postfix(0x1f1e6, 68), "u_hasBinaryProperty(RGI_Emoji)");
-    Expect(u_hasBinaryProperty_nid_postfix(0x41, 56) && !u_hasBinaryProperty_nid_postfix(0x61, 56), "u_hasBinaryProperty(Changes_When_NFKC_Casefolded)");
+    Require(u_hasBinaryProperty_nid_postfix(0x1f600, 57) && !u_hasBinaryProperty_nid_postfix(0x41, 57), "u_hasBinaryProperty(Emoji)");
+    Require(u_hasBinaryProperty_nid_postfix(0x1f600, 58) && !u_hasBinaryProperty_nid_postfix(0x263a, 58), "u_hasBinaryProperty(Emoji_Presentation)");
+    Require(u_hasBinaryProperty_nid_postfix(0x1f3fb, 59) && !u_hasBinaryProperty_nid_postfix(0x1f600, 59), "u_hasBinaryProperty(Emoji_Modifier)");
+    Require(u_hasBinaryProperty_nid_postfix(0x1f44d, 60) && !u_hasBinaryProperty_nid_postfix(0x1f600, 60), "u_hasBinaryProperty(Emoji_Modifier_Base)");
+    Require(u_hasBinaryProperty_nid_postfix(0x23, 61) && !u_hasBinaryProperty_nid_postfix(0x41, 61), "u_hasBinaryProperty(Emoji_Component)");
+    Require(u_hasBinaryProperty_nid_postfix(0xa9, 64) && !u_hasBinaryProperty_nid_postfix(0x41, 64), "u_hasBinaryProperty(Extended_Pictographic)");
+    Require(u_hasBinaryProperty_nid_postfix(0x1f600, 65) && !u_hasBinaryProperty_nid_postfix(0x41, 65), "u_hasBinaryProperty(Basic_Emoji)");
+    Require(u_hasBinaryProperty_nid_postfix(0x1f600, 71) && !u_hasBinaryProperty_nid_postfix(0x1f1e6, 68), "u_hasBinaryProperty(RGI_Emoji)");
+    Require(u_hasBinaryProperty_nid_postfix(0x41, 56) && !u_hasBinaryProperty_nid_postfix(0x61, 56), "u_hasBinaryProperty(Changes_When_NFKC_Casefolded)");
 
     ExpectInt(u_getIntPropertyValue_nid_postfix(0x1f600, 57), 1, "u_getIntPropertyValue(U+1F600, Emoji)");
     ExpectInt(u_getIntPropertyValue_nid_postfix(0xfb01, 0x100f), 0, "u_getIntPropertyValue(U+FB01, NFKC_QC)");
@@ -223,14 +218,14 @@ void TestDataFileProperties() {
 
     std::int32_t status = 0;
     const UCPMap* insc = u_getIntPropertyMap_nid_postfix(0x1017, &status);
-    Expect(insc != nullptr && status == 0, "u_getIntPropertyMap(InSC) returns a map");
+    Require(insc != nullptr && status == 0, "u_getIntPropertyMap(InSC) returns a map");
     ExpectInt(ucpmap_get(insc, 0x915), 5, "u_getIntPropertyMap(InSC, U+0915)");
     ExpectInt(ucpmap_get(insc, 0x41), 0, "u_getIntPropertyMap(InSC, A)");
     const UCPMap* vo = u_getIntPropertyMap_nid_postfix(0x1018, &status);
-    Expect(vo != nullptr && status == 0, "u_getIntPropertyMap(vo) returns a map");
+    Require(vo != nullptr && status == 0, "u_getIntPropertyMap(vo) returns a map");
     ExpectInt(ucpmap_get(vo, 0x4e00), 3, "u_getIntPropertyMap(vo, U+4E00)");
     const UCPMap* nfkc = u_getIntPropertyMap_nid_postfix(0x100f, &status);
-    Expect(nfkc != nullptr && status == 0, "u_getIntPropertyMap(NFKC_QC) returns a map");
+    Require(nfkc != nullptr && status == 0, "u_getIntPropertyMap(NFKC_QC) returns a map");
     ExpectInt(ucpmap_get(nfkc, 0xfb01), 0, "u_getIntPropertyMap(NFKC_QC, U+FB01)");
 }
 

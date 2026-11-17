@@ -1,14 +1,11 @@
 #include "prx/libSceDepth2/libSceDepth2.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdint>
 #include <cstdlib>
 
 namespace {
-
-void Require(bool value) {
-    if (!value) std::abort();
-}
 
 constexpr int invalidValue = static_cast<int>(0x80BB0000u);
 constexpr int nonZeroArgument = static_cast<int>(0x80BB0004u);

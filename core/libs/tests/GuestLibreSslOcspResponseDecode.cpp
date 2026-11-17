@@ -1,6 +1,7 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -17,17 +18,6 @@ using Decode = LibreSslOcspResponse* (APS5_VABI*)(LibreSslOcspResponse**, const 
 static_assert(std::is_same_v<decltype(&d2i_OCSP_RESPONSE_nid_postfix), Decode>);
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL OCSP response decode check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
-    try { action(); } catch (const std::invalid_argument&) { return; }
-    Require(false, location);
-}
 
 std::unordered_map<void*, std::size_t> live;
 int allocations = 0;
@@ -292,7 +282,7 @@ void TestReuse() {
     type->data = borrowed;
     type->flags = 0x01;
     input = Successful;
-    RequireThrows([&] { d2i_OCSP_RESPONSE_nid_postfix(&target, &input, sizeof(Successful)); });
+    ExpectErr<std::invalid_argument>([&] { d2i_OCSP_RESPONSE_nid_postfix(&target, &input, sizeof(Successful)); });
     Require(target == response && input == Successful && type->data == borrowed);
     Require(std::memcmp(borrowed, BasicResponseType, sizeof(borrowed)) == 0);
     type->data = nullptr;
@@ -430,9 +420,9 @@ void TestMalformed() {
 
 void TestArguments() {
     ERR_clear_error_nid_postfix();
-    RequireThrows([] { d2i_OCSP_RESPONSE_nid_postfix(nullptr, nullptr, 5); });
+    ExpectErr<std::invalid_argument>([] { d2i_OCSP_RESPONSE_nid_postfix(nullptr, nullptr, 5); });
     const unsigned char* input = nullptr;
-    RequireThrows([&] { d2i_OCSP_RESPONSE_nid_postfix(nullptr, &input, 5); });
+    ExpectErr<std::invalid_argument>([&] { d2i_OCSP_RESPONSE_nid_postfix(nullptr, &input, 5); });
     Require(Errors().empty());
     LibreSslOcspResponse* target = nullptr;
     Require(d2i_OCSP_RESPONSE_nid_postfix(&target, &input, 0) == nullptr && !input && !target);

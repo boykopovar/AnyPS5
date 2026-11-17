@@ -6,13 +6,7 @@
 #include <cstring>
 #include <source_location>
 #include "prx/libSceNet/libSceNet.hpp"
-
-static void Require(bool condition, std::source_location where = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "check failed at line %u\n", where.line());
-        std::abort();
-    }
-}
+#include "Testing.hpp"
 
 static void CheckProtocol(int socket, int expected) {
     for (const std::uint32_t capacity : {0u, 1u, 3u, 4u, 8u}) {

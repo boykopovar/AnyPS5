@@ -1,14 +1,11 @@
 #include "prx/libSceNKWebKit/include/FieldSettersExports.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
-
-static void Require(bool condition) {
-    if (!condition) std::abort();
-}
 
 #define CHECK64(name, offset) \
     do { \

@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
@@ -19,8 +20,6 @@ static constexpr int PRIO_NONE = 0;
 static constexpr int PRIO_INHERIT = 1;
 static constexpr int PRIO_PROTECT = 2;
 static constexpr int GuestSched_Rr = 3;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static constexpr int GUEST_EFAULT = 14;
 static constexpr int SCE_KERNEL_ERROR_EFAULT = static_cast<int>(0x8002000Eu);

@@ -1,6 +1,7 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <array>
 #include <cstdint>
@@ -17,18 +18,6 @@
 namespace {
 
 constexpr std::int32_t Unsupported = 16;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "ICU configuration check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction>
-void RequireThrows(TAction action) {
-    try { action(); } catch (const std::exception&) { return; }
-    Require(false);
-}
 
 void Locking() {
     int marker = 0;
@@ -53,8 +42,8 @@ void Locking() {
         u_setAtomicIncDecFunctions_nid_postfix(&marker, &marker, &marker, &status);
         Require(status == incoming);
     }
-    RequireThrows([&] { u_setMutexFunctions_nid_postfix(&marker, nullptr, nullptr, nullptr, nullptr, nullptr); });
-    RequireThrows([&] { u_setAtomicIncDecFunctions_nid_postfix(&marker, nullptr, nullptr, nullptr); });
+    ExpectErr([&] { u_setMutexFunctions_nid_postfix(&marker, nullptr, nullptr, nullptr, nullptr, nullptr); });
+    ExpectErr([&] { u_setAtomicIncDecFunctions_nid_postfix(&marker, nullptr, nullptr, nullptr); });
 }
 
 void* APS5_VABI Allocate_nid_no_patch(const void*, std::size_t) { return nullptr; }
@@ -85,7 +74,7 @@ void Memory() {
         u_setMemoryFunctions_nid_postfix(&marker, nullptr, nullptr, nullptr, &status);
         Require(status == incoming);
     }
-    RequireThrows([&] { u_setMemoryFunctions_nid_postfix(&marker, Allocate_nid_no_patch, Reallocate_nid_no_patch, Release_nid_no_patch, nullptr); });
+    ExpectErr([&] { u_setMemoryFunctions_nid_postfix(&marker, Allocate_nid_no_patch, Reallocate_nid_no_patch, Release_nid_no_patch, nullptr); });
 
     std::vector<std::thread> threads;
     std::vector<std::int32_t> results(8, 99);
@@ -192,8 +181,8 @@ void TimeZoneDirectory() {
     status = 0;
     u_setTimeZoneFilesDirectory_nid_postfix(nullptr, &status);
 
-    RequireThrows([&] { u_getTimeZoneFilesDirectory_nid_postfix(nullptr); });
-    RequireThrows([&] { u_setTimeZoneFilesDirectory_nid_postfix("/x", nullptr); });
+    ExpectErr([&] { u_getTimeZoneFilesDirectory_nid_postfix(nullptr); });
+    ExpectErr([&] { u_setTimeZoneFilesDirectory_nid_postfix("/x", nullptr); });
 }
 
 void Cleanup() {
@@ -316,8 +305,8 @@ void UprvMemoryWithUserFunctions() {
 
     const auto* const unreadable = reinterpret_cast<const char*>(0x10);
     errno = 71;
-    RequireThrows([&] { uprv_strdup_nid_postfix(unreadable); });
-    RequireThrows([&] { uprv_strndup_nid_postfix(unreadable, 4); });
+    ExpectErr([&] { uprv_strdup_nid_postfix(unreadable); });
+    ExpectErr([&] { uprv_strndup_nid_postfix(unreadable, 4); });
     Require(errno == 71);
     std::memset(g_arena, 0x55, sizeof(g_arena));
     char* nothing = uprv_strndup_nid_postfix(unreadable, 0);

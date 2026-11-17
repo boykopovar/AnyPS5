@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
+#include "Testing.hpp"
 #include <nid/NidCompute.hpp>
 #include <thread>
 #include <chrono>
@@ -22,12 +23,6 @@
 #include <dlfcn.h>
 #endif
 
-static void Require(bool value, std::source_location location = std::source_location::current()) {
-    if (!value) {
-        std::fprintf(stderr, "Kernel sys API check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 static void* LoadLibraryFile(const std::filesystem::path& path) {
 #ifdef _WIN32

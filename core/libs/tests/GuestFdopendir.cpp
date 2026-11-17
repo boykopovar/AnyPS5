@@ -4,6 +4,7 @@
 #include "prx/libc/include/GuestDirectory.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/File/include/File.hpp"
+#include "Testing.hpp"
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -14,7 +15,6 @@
 #include <map>
 #include <string>
 
-static void Require(bool value) { if (!value) std::abort(); }
 int main() {
     const auto root = std::filesystem::path("anyps5-fdopendir-test-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));

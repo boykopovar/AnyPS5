@@ -1,5 +1,6 @@
 #include "GuestSystemServiceOpenUrlFakes.hpp"
 #include "prx/libSceSystemService/HostUrlPolicy.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -10,8 +11,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
 
 void CheckBusy() {
     FakeClock clock;

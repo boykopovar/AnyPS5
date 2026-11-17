@@ -1,6 +1,7 @@
 #include "prx/libSceNpCommon/include/Api.hpp"
 #include "prx/libSceUserService/UserService.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -52,12 +53,6 @@ constexpr int NpJsonTooDeep = static_cast<int>(0x80550603);
 constexpr int NpServerErrorBadCode = static_cast<int>(0x80559C02);
 constexpr std::uint32_t EventFlagWaitAnd = 1;
 constexpr std::uint32_t EventFlagShared = 0x100;
-
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
 
 void* APS5_VABI ReturnArgument(void* arg) {
     Pthread self {};

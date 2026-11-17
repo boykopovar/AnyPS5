@@ -1,4 +1,5 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -11,13 +12,6 @@ using NKWebKit::WebCoreAbi::LocalLoadPolicy;
 using NKWebKit::WebCoreAbi::MessagePortChannelProvider;
 using NKWebKit::WebCoreAbi::PlatformStrategies;
 using NKWebKit::WebCoreAbi::WebAnimationHashSet;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "WebCore registration slots check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 using GetPlatformStrategies = PlatformStrategies* (APS5_VABI *)();
 using SetPlatformStrategies = void (APS5_VABI *)(PlatformStrategies*);

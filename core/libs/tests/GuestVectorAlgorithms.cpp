@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <bit>
 #include <cstddef>
@@ -11,7 +12,6 @@
 #include <vector>
 
 
-static void Require(bool value) { if (!value) std::abort(); }
 
 static void CheckMinValue() {
     const std::uint64_t edges[] = {0, 1, 0xffffffff, 0x100000000, 0x7fffffffffffffff, 0x8000000000000000, 0xfffffffffffffffe, 0xffffffffffffffff};

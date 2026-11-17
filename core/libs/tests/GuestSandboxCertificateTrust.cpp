@@ -1,16 +1,9 @@
 #include "prx/libkernel/File/include/TrustedRoots.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "Certificate trust check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static constexpr char Certificate[] = R"(-----BEGIN CERTIFICATE-----
 MIIBijCCATGgAwIBAgIUFMQYJ1in3pTJaCqjg6JVgSBNQgkwCgYIKoZIzj0EAwIw

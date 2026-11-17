@@ -1,4 +1,5 @@
 #include "prx/libSceAudioIn/include/AudioIn.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -13,13 +14,6 @@ constexpr int ErrorInvalidState = static_cast<int>(0x80260109);
 
 constexpr int UserId = 0x10000000;
 constexpr std::uint32_t HandleBase = 0x30000000;
-
-void Require(bool value, const std::source_location location = std::source_location::current()) {
-    if (!value) {
-        std::fprintf(stderr, "Require failed at line %u\n", static_cast<unsigned>(location.line()));
-        std::abort();
-    }
-}
 
 } // namespace
 

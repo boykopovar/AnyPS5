@@ -1,5 +1,6 @@
 #include "prx/libSceAgc/Cb/include/Sync.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <atomic>
@@ -18,10 +19,6 @@ namespace {
 constexpr std::size_t Threads = 8;
 constexpr std::size_t PacketsPerThread = 20000;
 constexpr std::uint32_t FirstSize = 2;
-
-void check(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 std::size_t totalWords() {
     std::size_t words = 0;
@@ -48,19 +45,19 @@ void testConcurrentNops() {
         });
     }
     for (auto& worker : workers) worker.join();
-    for (const auto& error : errors) check(error.empty(), "a concurrent NOP failed: " + error);
-    check(buffer.cursor_up == words.data() + words.size(), "concurrent allocations lost cursor advances");
+    for (const auto& error : errors) Require(error.empty(), "a concurrent NOP failed: " + error);
+    Require(buffer.cursor_up == words.data() + words.size(), "concurrent allocations lost cursor advances");
     std::array<std::size_t, Threads> seen{};
     for (std::size_t cursor = 0; cursor < words.size();) {
         const auto header = words[cursor];
-        check((header & 0xc000ffffu) == 0xc0001000u, "packet " + std::to_string(cursor) + " has no NOP header");
+        Require((header & 0xc000ffffu) == 0xc0001000u, "packet " + std::to_string(cursor) + " has no NOP header");
         const auto size = ((header >> 16u) & 0x3fffu) + 2u;
-        check(size >= FirstSize && size < FirstSize + Threads && cursor + size <= words.size(), "NOP at " + std::to_string(cursor) + " has a size no thread wrote");
-        for (std::uint32_t word = 1; word < size; ++word) check(words[cursor + word] == 0, "NOP at " + std::to_string(cursor) + " was overwritten");
+        Require(size >= FirstSize && size < FirstSize + Threads && cursor + size <= words.size(), "NOP at " + std::to_string(cursor) + " has a size no thread wrote");
+        for (std::uint32_t word = 1; word < size; ++word) Require(words[cursor + word] == 0, "NOP at " + std::to_string(cursor) + " was overwritten");
         ++seen[size - FirstSize];
         cursor += size;
     }
-    for (std::size_t thread = 0; thread < Threads; ++thread) check(seen[thread] == PacketsPerThread, "thread " + std::to_string(thread) + " packets were overwritten");
+    for (std::size_t thread = 0; thread < Threads; ++thread) Require(seen[thread] == PacketsPerThread, "thread " + std::to_string(thread) + " packets were overwritten");
 }
 
 constexpr std::size_t OtherBuffers = 256;
@@ -107,10 +104,10 @@ void testGrowthDoesNotBlockOtherBuffers() {
     });
     sceAgcCbNop_nid_postfix(&buffer, 2);
     appender.join();
-    check(error.empty(), "an append to another buffer failed: " + error);
-    check(growth.othersFinished, "appends to other buffers waited for a buffer that was growing");
-    check(buffer.cursor_up == growth.grown.data() + 2, "the grown buffer did not receive its packet");
-    for (const auto& other : others) check(other.cursor_up == other.top, "another buffer lost its packet");
+    Require(error.empty(), "an append to another buffer failed: " + error);
+    Require(growth.othersFinished, "appends to other buffers waited for a buffer that was growing");
+    Require(buffer.cursor_up == growth.grown.data() + 2, "the grown buffer did not receive its packet");
+    for (const auto& other : others) Require(other.cursor_up == other.top, "another buffer lost its packet");
 }
 
 struct SlowGrowth {
@@ -147,14 +144,14 @@ void testGrowthSerializesItsOwnBuffer() {
     });
     sceAgcCbNop_nid_postfix(&buffer, 3);
     second.join();
-    check(error.empty(), "an append during growth failed: " + error);
-    check(growth.calls.load() == 1, "an append during growth called the allocation callback again");
-    check(buffer.cursor_up == growth.grown.data() + 9, "appends around growth lost cursor advances");
-    check(growth.grown[0] == 0xc0001000u, "the callback's packet is not first in the grown buffer");
+    Require(error.empty(), "an append during growth failed: " + error);
+    Require(growth.calls.load() == 1, "an append during growth called the allocation callback again");
+    Require(buffer.cursor_up == growth.grown.data() + 9, "appends around growth lost cursor advances");
+    Require(growth.grown[0] == 0xc0001000u, "the callback's packet is not first in the grown buffer");
     const auto first = ((growth.grown[2] >> 16u) & 0x3fffu) + 2u;
-    check(first == 3 || first == 4, "the grown buffer holds a packet no thread wrote");
+    Require(first == 3 || first == 4, "the grown buffer holds a packet no thread wrote");
     const auto next = ((growth.grown[2 + first] >> 16u) & 0x3fffu) + 2u;
-    check(first + next == 7, "a packet appended around growth was overwritten");
+    Require(first + next == 7, "a packet appended around growth was overwritten");
 }
 
 }

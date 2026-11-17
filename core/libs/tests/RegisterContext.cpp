@@ -1,5 +1,6 @@
 #include "prx/libc/include/exceptions/Unwind.hpp"
 #include "prx/libc/src/specifics/x86_64/RegisterContext.cpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdio>
@@ -93,10 +94,6 @@ struct Registers {
     std::array<std::uintptr_t, 17> values{};
     std::uintptr_t after = Guard;
 };
-
-void Require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 void CheckCapture() {
     Capture captured;

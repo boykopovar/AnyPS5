@@ -1,12 +1,9 @@
 #include "prx/libSceRemotePlayClientIpc/libSceRemotePlayClientIpc.hpp"
+#include "Testing.hpp"
 
 #include <cstdlib>
 
 namespace {
-
-void Require(bool value) {
-    if (!value) std::abort();
-}
 
 constexpr int notConnected = static_cast<int>(0x8122101Du);
 

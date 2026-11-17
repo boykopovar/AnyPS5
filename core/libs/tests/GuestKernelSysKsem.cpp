@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Semaphore/include/Ksem.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -31,12 +32,6 @@ constexpr int Enospc = 28;
 constexpr int Eagain = 35;
 constexpr int Etimedout = 60;
 constexpr int Eoverflow = 84;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "check failed at line %u\n", static_cast<unsigned>(location.line()));
-    std::exit(1);
-}
 
 int Error() {
     return *__error_nid_postfix();

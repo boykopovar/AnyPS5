@@ -1,11 +1,10 @@
 #include "prx/libSceMoveTracker/include/Api.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdlib>
 
 namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
 
 constexpr int kErrInvalidArg = static_cast<int>(0x80ef0003);
 constexpr std::uint32_t kFill = 0xaaaaaaaau;

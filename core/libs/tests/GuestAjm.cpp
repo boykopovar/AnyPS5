@@ -1,6 +1,7 @@
 #include "prx/libSceAjm.native/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <cerrno>
 #include <cmath>
@@ -21,8 +22,6 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 namespace {
 

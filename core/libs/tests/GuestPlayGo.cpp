@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
@@ -19,12 +20,6 @@
 
 static void ClobberErrno(std::uintptr_t, std::size_t) {
     errno = 99;
-}
-
-static void Require(bool value, const std::source_location location = std::source_location::current()) {
-    if (value) return;
-    std::fprintf(stderr, "requirement failed at line %u\n", location.line());
-    std::abort();
 }
 
 template <typename Operation>

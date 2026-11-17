@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -14,12 +15,6 @@ static_assert(offsetof(SceKernelProsperoSystemSwVersion, versionString) == 0x08)
 static_assert(offsetof(SceKernelProsperoSystemSwVersion, version) == 0x24);
 
 namespace {
-
-void Require(bool condition) {
-    if (!condition) {
-        std::abort();
-    }
-}
 
 void TestProsperoSystemSwVersionNullPointer() {
     *__error_nid_postfix() = 42;

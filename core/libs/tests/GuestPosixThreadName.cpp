@@ -1,6 +1,7 @@
 #include "SceTypes.hpp"
 #include "prx/libScePosixForWebKit/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdlib>
 #include <cstring>
@@ -9,8 +10,6 @@
 static constexpr int GUEST_EINVAL = 22;
 static constexpr int GUEST_EFAULT = 14;
 static constexpr int GUEST_ENAMETOOLONG = 63;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static std::string ReadName(Pthread thread) {
     std::array<char, 64> buffer{};

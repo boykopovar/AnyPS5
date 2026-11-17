@@ -1,11 +1,10 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 constexpr int DontWait = 0x80;
 constexpr int WouldBlock = 35;

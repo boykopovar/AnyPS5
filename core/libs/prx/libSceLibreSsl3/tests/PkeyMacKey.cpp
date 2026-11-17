@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include <dlfcn.h>
 #include <cstddef>
 #include <cstdint>
@@ -43,12 +44,6 @@ constexpr int MaxDigestSize = 64;
 int outstanding = 0;
 int allocations = 0;
 int failOn = 0;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL3 PKEY MAC key failed at line %u\n", location.line());
-    std::exit(1);
-}
 
 void* Allocate(std::size_t bytes) {
     ++allocations;

@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/GuestTime.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <climits>
 #include <cerrno>
@@ -113,12 +114,6 @@ static void Check(const char16_t* format, const char* input, const char16_t* exp
     }
 }
 
-static void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "snwprintf_s: %s\n", message);
-        std::abort();
-    }
-}
 
 static void CheckBounded() {
     constexpr std::size_t rsizeMax = SIZE_MAX >> 1;

@@ -1,4 +1,5 @@
 #include "prx/libSceRudp/libSceRudp.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -8,12 +9,6 @@
 #include <limits>
 #include <source_location>
 #include <thread>
-
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "empty poll check failed at line %u\n", location.line());
-    std::abort();
-}
 
 static void APS5_VABI Handler(int, int, int, void*) {}
 

@@ -3,6 +3,7 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 
 #include <mbedtls/ccm.h>
 
@@ -24,12 +25,6 @@ constexpr int GetTag = 0x10;
 constexpr int SetTag = 0x11;
 constexpr int SetL = 0x14;
 constexpr int GetIvLength = 0x25;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL3 AES-CCM check failed at line %u\n", location.line());
-    std::abort();
-}
 
 void* APS5_VABI Allocate(std::size_t size) {
     void* memory = std::malloc(size);

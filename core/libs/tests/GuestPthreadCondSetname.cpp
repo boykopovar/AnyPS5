@@ -1,11 +1,10 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdlib>
 #include <stdexcept>
 
 static constexpr int GuestEinval = 22;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 template <class TCall>
 static bool ThrowsInvalidArgument(TCall call) {

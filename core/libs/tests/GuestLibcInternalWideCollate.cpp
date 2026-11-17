@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -17,12 +18,6 @@ extern GuestLocale::Implementation* _ZSt21_sceLibcClassicLocale_nid_postfix;
 }
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "libc internal collate<wchar_t>: %s\n", message);
-    std::abort();
-}
 
 template <typename Function>
 bool Throws(Function function) {

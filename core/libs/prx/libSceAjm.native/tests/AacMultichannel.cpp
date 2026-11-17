@@ -1,4 +1,5 @@
 #include "prx/libSceAjm.native/libSceAjm.native.hpp"
+#include "Testing.hpp"
 
 #include <algorithm>
 #include <array>
@@ -23,14 +24,7 @@ constexpr std::uint64_t Multiple = 1ull << 12;
 constexpr std::uint64_t Nondelay = 1ull << 33;
 constexpr std::array<double, 5> Frequencies{311, 677, 1013, 1423, 1871};
 
-void Require(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "AAC multichannel check failed at line %d\n", line);
-        std::abort();
-    }
-}
 
-#define CHECK(value) Require((value), __LINE__)
 
 constexpr std::string_view Aac3 =
     "fff14cc02fdffcdc004c61766336312e332e31303000025ca65b69683d390b44995ade70e6f5adf1cb5532eaf28f9924"
@@ -265,27 +259,27 @@ std::vector<std::uint8_t> FromHex(std::string_view text) {
 std::vector<std::span<const std::uint8_t>> Frames(const std::vector<std::uint8_t>& stream) {
     std::vector<std::span<const std::uint8_t>> result;
     for (std::size_t offset = 0; offset < stream.size();) {
-        CHECK(stream.size() - offset >= 7);
+        Require(stream.size() - offset >= 7);
         const std::size_t size = ((std::size_t{stream[offset + 3]} & 3) << 11) | (std::size_t{stream[offset + 4]} << 3) | (stream[offset + 5] >> 5);
-        CHECK(size >= 7 && size <= stream.size() - offset);
+        Require(size >= 7 && size <= stream.size() - offset);
         result.emplace_back(stream.data() + offset, size);
         offset += size;
     }
-    CHECK(result.size() == 7);
+    Require(result.size() == 7);
     return result;
 }
 
 class Batch {
 public:
     explicit Batch(std::uint32_t owner) : context(owner) {
-        CHECK(sceAjmBatchInitialize(storage.data(), storage.size(), &info) == 0);
+        Require(sceAjmBatchInitialize(storage.data(), storage.size(), &info) == 0);
     }
 
     void Submit() {
         AjmBatchError error{};
         std::uint32_t id = 0;
-        CHECK(sceAjmBatchStart(context, &info, SCE_AJM_PRIORITY_MIN, &error, &id) == 0);
-        CHECK(sceAjmBatchWait(context, id, 0, &error) == 0);
+        Require(sceAjmBatchStart(context, &info, SCE_AJM_PRIORITY_MIN, &error, &id) == 0);
+        Require(sceAjmBatchWait(context, id, 0, &error) == 0);
     }
 
     AjmBatchInfo info{};
@@ -297,26 +291,26 @@ private:
 
 std::uint32_t Create(std::uint32_t context, std::uint32_t channels, bool raw, bool floating, bool delay = false) {
     std::uint32_t instance = 0;
-    CHECK(sceAjmInstanceCreate(context, 2, (std::uint64_t{channels} << 3) | (floating ? 2ull << 7 : 0) | (delay ? 0 : Nondelay), &instance) == 0);
+    Require(sceAjmInstanceCreate(context, 2, (std::uint64_t{channels} << 3) | (floating ? 2ull << 7 : 0) | (delay ? 0 : Nondelay), &instance) == 0);
     Batch batch(context);
     std::array<std::int32_t, 2> result{-1, -1};
     const std::array<std::uint32_t, 2> config{raw ? 2u : 1u, 3u};
-    CHECK(sceAjmBatchJobInitialize(&batch.info, instance, config.data(), sizeof(config), result.data()) == 0);
+    Require(sceAjmBatchJobInitialize(&batch.info, instance, config.data(), sizeof(config), result.data()) == 0);
     batch.Submit();
-    CHECK(result[0] == 0 && result[1] == 0);
+    Require(result[0] == 0 && result[1] == 0);
     return instance;
 }
 
 Sideband Run(std::uint32_t context, std::uint32_t instance, std::span<const std::uint8_t> input, void* output, std::size_t capacity, std::uint64_t flags = 0) {
     Batch batch(context);
     Sideband result{};
-    CHECK(sceAjmBatchJobRun(&batch.info, instance, flags | Stream, input.data(), input.size(), output, capacity, &result, sizeof(result)) == 0);
+    Require(sceAjmBatchJobRun(&batch.info, instance, flags | Stream, input.data(), input.size(), output, capacity, &result, sizeof(result)) == 0);
     batch.Submit();
     return result;
 }
 
 void CheckSignal(const std::vector<float>& pcm, std::size_t channels) {
-    CHECK(pcm.size() == 7 * 1024 * channels);
+    Require(pcm.size() == 7 * 1024 * channels);
     for (std::size_t channel = 0; channel < channels; ++channel) {
         for (std::size_t frequency = 0; frequency < channels; ++frequency) {
             double cross = 0, signalEnergy = 0, referenceEnergy = 0;
@@ -329,7 +323,7 @@ void CheckSignal(const std::vector<float>& pcm, std::size_t channels) {
             }
             const double correlation = cross / std::sqrt(signalEnergy * referenceEnergy);
             if (!(channel == frequency ? correlation > 0.9 : std::fabs(correlation) < 0.05)) std::fprintf(stderr, "channels %zu channel %zu reference %zu correlation %f\n", channels, channel, frequency, correlation);
-            CHECK(channel == frequency ? correlation > 0.9 : std::fabs(correlation) < 0.05);
+            Require(channel == frequency ? correlation > 0.9 : std::fabs(correlation) < 0.05);
         }
     }
 }
@@ -346,12 +340,12 @@ std::vector<float> Decode(std::uint32_t context, std::uint32_t channels, bool ra
         auto* output = reinterpret_cast<std::uint8_t*>(storage.data()) + 4;
         const auto result = Run(context, instance, packet, output, 1024 * channels * sampleBytes, channels == 4 ? Format : 0);
         const std::size_t produced = delay && index < 2 ? 0 : 1024 * channels;
-        CHECK(result.result == 0 && result.internalResult == 0 && result.consumed == static_cast<int>(packet.size()));
-        CHECK(result.produced == static_cast<int>(produced * sampleBytes));
-        CHECK(result.total == (delay ? (index < 2 ? 0 : index - 1) : index + 1) * 1024);
-        if (channels == 4 && produced != 0) CHECK(result.extra[0] == 4 && result.extra[1] == 0x33 && result.extra[2] == 48000 && result.extra[3] == (floating ? 2u : 0u));
-        CHECK(storage.front() == 0x5a5a5a5a);
-        CHECK(storage[(1024 * channels * sampleBytes + 4) / 4] == 0x5a5a5a5a);
+        Require(result.result == 0 && result.internalResult == 0 && result.consumed == static_cast<int>(packet.size()));
+        Require(result.produced == static_cast<int>(produced * sampleBytes));
+        Require(result.total == (delay ? (index < 2 ? 0 : index - 1) : index + 1) * 1024);
+        if (channels == 4 && produced != 0) Require(result.extra[0] == 4 && result.extra[1] == 0x33 && result.extra[2] == 48000 && result.extra[3] == (floating ? 2u : 0u));
+        Require(storage.front() == 0x5a5a5a5a);
+        Require(storage[(1024 * channels * sampleBytes + 4) / 4] == 0x5a5a5a5a);
         for (std::size_t sample = 0; sample < produced; ++sample) {
             if (floating) {
                 float value = 0;
@@ -366,23 +360,23 @@ std::vector<float> Decode(std::uint32_t context, std::uint32_t channels, bool ra
     }
     Batch query(context);
     std::array<std::uint32_t, 4> codec{0xffffffff, 0xffffffff, 0xffffffff, 0xffffffff};
-    CHECK(sceAjmBatchJobGetCodecInfo(&query.info, instance, codec.data(), sizeof(codec)) == 0);
+    Require(sceAjmBatchJobGetCodecInfo(&query.info, instance, codec.data(), sizeof(codec)) == 0);
     query.Submit();
-    CHECK(std::all_of(codec.begin(), codec.end(), [](auto v) { return v == 0; }));
+    Require(std::all_of(codec.begin(), codec.end(), [](auto v) { return v == 0; }));
     std::array<std::uint32_t, 8> format{};
     format.fill(0x5a5a5a5a);
     Batch info(context);
-    CHECK(sceAjmBatchJobGetInfo(&info.info, instance, format.data()) == 0);
+    Require(sceAjmBatchJobGetInfo(&info.info, instance, format.data()) == 0);
     if (channels == 4) {
         info.Submit();
-        CHECK(format[0] == 0 && format[1] == 0 && format[2] == 4 && format[3] == 0x33 && format[4] == 48000 && format[5] == (floating ? 2u : 0u));
+        Require(format[0] == 0 && format[1] == 0 && format[2] == 4 && format[3] == 0x33 && format[4] == 48000 && format[5] == (floating ? 2u : 0u));
     } else {
         try { info.Submit(); }
         catch (const std::runtime_error&) {
-            CHECK(std::all_of(format.begin(), format.end(), [](auto v) { return v == 0x5a5a5a5a; }));
+            Require(std::all_of(format.begin(), format.end(), [](auto v) { return v == 0x5a5a5a5a; }));
         }
     }
-    CHECK(sceAjmInstanceDestroy(context, instance) == 0);
+    Require(sceAjmInstanceDestroy(context, instance) == 0);
     return pcm;
 }
 
@@ -395,14 +389,14 @@ void CheckFormatGuard(std::uint32_t context, std::uint32_t channels, bool raw, c
     std::memset(&status, 0x5a, sizeof(status));
     const auto original = status;
     Batch batch(context);
-    CHECK(sceAjmBatchJobRun(&batch.info, instance, Stream | Format, packet.data(), packet.size(), output.data(), output.size() * 4, &status, sizeof(status)) == 0);
+    Require(sceAjmBatchJobRun(&batch.info, instance, Stream | Format, packet.data(), packet.size(), output.data(), output.size() * 4, &status, sizeof(status)) == 0);
     bool threw = false;
     try { batch.Submit(); } catch (const std::runtime_error&) { threw = true; }
     if (threw) {
-        CHECK(std::memcmp(&status, &original, sizeof(status)) == 0);
-        CHECK(std::all_of(output.begin(), output.end(), [](auto v) { return v == -123.0f; }));
+        Require(std::memcmp(&status, &original, sizeof(status)) == 0);
+        Require(std::all_of(output.begin(), output.end(), [](auto v) { return v == -123.0f; }));
     } else {
-        CHECK(sceAjmInstanceDestroy(context, instance) == 0);
+        Require(sceAjmInstanceDestroy(context, instance) == 0);
         instance = Create(context, channels, raw, true);
     }
     std::fill(output.begin(), output.end(), -123.0f);
@@ -410,9 +404,9 @@ void CheckFormatGuard(std::uint32_t context, std::uint32_t channels, bool raw, c
     const auto fresh = Create(context, channels, raw, true);
     std::vector<float> expected(output.size());
     const auto freshResult = Run(context, fresh, packet, expected.data(), expected.size() * 4);
-    CHECK(normal.result == 0 && freshResult.result == 0 && output == expected);
-    CHECK(sceAjmInstanceDestroy(context, fresh) == 0);
-    CHECK(sceAjmInstanceDestroy(context, instance) == 0);
+    Require(normal.result == 0 && freshResult.result == 0 && output == expected);
+    Require(sceAjmInstanceDestroy(context, fresh) == 0);
+    Require(sceAjmInstanceDestroy(context, instance) == 0);
 }
 
 void CheckMixedFormatGuard(std::uint32_t context, const std::vector<std::uint8_t>& four, const std::vector<std::uint8_t>& three) {
@@ -426,14 +420,14 @@ void CheckMixedFormatGuard(std::uint32_t context, const std::vector<std::uint8_t
     std::memset(&status, 0x5a, sizeof(status));
     const auto original = status;
     Batch batch(context);
-    CHECK(sceAjmBatchJobRun(&batch.info, instance, Stream | Format | Multiple, mixed.data(), mixed.size(), output.data(), output.size() * 4, &status, sizeof(status)) == 0);
+    Require(sceAjmBatchJobRun(&batch.info, instance, Stream | Format | Multiple, mixed.data(), mixed.size(), output.data(), output.size() * 4, &status, sizeof(status)) == 0);
     bool threw = false;
     try { batch.Submit(); } catch (const std::runtime_error&) { threw = true; }
     if (threw) {
-        CHECK(std::memcmp(&status, &original, sizeof(status)) == 0);
-        CHECK(std::all_of(output.begin(), output.end(), [](auto v) { return v == -123.0f; }));
+        Require(std::memcmp(&status, &original, sizeof(status)) == 0);
+        Require(std::all_of(output.begin(), output.end(), [](auto v) { return v == -123.0f; }));
     } else {
-        CHECK(sceAjmInstanceDestroy(context, instance) == 0);
+        Require(sceAjmInstanceDestroy(context, instance) == 0);
         instance = Create(context, 5, false, true);
     }
     std::fill(output.begin(), output.end(), -123.0f);
@@ -441,51 +435,51 @@ void CheckMixedFormatGuard(std::uint32_t context, const std::vector<std::uint8_t
     const auto fresh = Create(context, 5, false, true);
     std::vector<float> expected(output.size(), -123.0f);
     const auto freshResult = Run(context, fresh, first, expected.data(), expected.size() * 4, Format);
-    CHECK(result.result == 0 && freshResult.result == 0 && output == expected);
-    CHECK(sceAjmInstanceDestroy(context, fresh) == 0);
-    CHECK(sceAjmInstanceDestroy(context, instance) == 0);
+    Require(result.result == 0 && freshResult.result == 0 && output == expected);
+    Require(sceAjmInstanceDestroy(context, fresh) == 0);
+    Require(sceAjmInstanceDestroy(context, instance) == 0);
 }
 
 void CheckBulkAndReset(std::uint32_t context, std::uint32_t channels, const std::vector<std::uint8_t>& input, const std::vector<float>& reference) {
     const auto instance = Create(context, channels, false, true);
     std::vector<float> output(reference.size());
     const auto result = Run(context, instance, input, output.data(), output.size() * 4, Multiple);
-    CHECK(result.result == 0 && result.consumed == static_cast<int>(input.size()) && result.produced == static_cast<int>(output.size() * 4));
-    CHECK(result.total == 7 * 1024 && result.extra[0] == 7 && output == reference);
+    Require(result.result == 0 && result.consumed == static_cast<int>(input.size()) && result.produced == static_cast<int>(output.size() * 4));
+    Require(result.total == 7 * 1024 && result.extra[0] == 7 && output == reference);
     Batch reset(context);
     std::array<std::int32_t, 2> status{-1, -1};
-    CHECK(sceAjmBatchJobClearContext(&reset.info, instance, status.data()) == 0);
+    Require(sceAjmBatchJobClearContext(&reset.info, instance, status.data()) == 0);
     reset.Submit();
-    CHECK(status[0] == 0 && status[1] == 0);
+    Require(status[0] == 0 && status[1] == 0);
     const auto restart = Run(context, instance, input, output.data(), output.size() * 4, Multiple);
-    CHECK(restart.result == 0 && restart.total == 7 * 1024 && restart.produced == static_cast<int>(output.size() * 4));
+    Require(restart.result == 0 && restart.total == 7 * 1024 && restart.produced == static_cast<int>(output.size() * 4));
     CheckSignal(output, channels);
-    CHECK(sceAjmInstanceDestroy(context, instance) == 0);
+    Require(sceAjmInstanceDestroy(context, instance) == 0);
 }
 
 } // namespace
 
 int main() {
     std::uint32_t context = 0;
-    CHECK(sceAjmInitialize(0, &context) == 0);
+    Require(sceAjmInitialize(0, &context) == 0);
     const std::array<std::vector<std::uint8_t>, 3> streams{FromHex(Aac3), FromHex(Aac4), FromHex(Aac5)};
     for (std::uint32_t channels = 3; channels <= 5; ++channels) {
         const auto& input = streams[channels - 3];
         const auto floating = Decode(context, channels, false, input, true);
         CheckSignal(floating, channels);
         CheckBulkAndReset(context, channels, input, floating);
-        CHECK(Decode(context, channels, true, input, true) == floating);
+        Require(Decode(context, channels, true, input, true) == floating);
         const auto integer = Decode(context, channels, false, input, false);
-        CHECK(integer.size() == floating.size());
-        for (std::size_t i = 0; i < integer.size(); ++i) CHECK(std::fabs(integer[i] - floating[i]) <= 0.5f / 32768);
+        Require(integer.size() == floating.size());
+        for (std::size_t i = 0; i < integer.size(); ++i) Require(std::fabs(integer[i] - floating[i]) <= 0.5f / 32768);
         const auto delayed = Decode(context, channels, false, input, true, true);
-        CHECK(delayed.size() == floating.size() - 2048 * channels);
-        CHECK(std::equal(delayed.begin(), delayed.end(), floating.begin() + 2048 * channels));
+        Require(delayed.size() == floating.size() - 2048 * channels);
+        Require(std::equal(delayed.begin(), delayed.end(), floating.begin() + 2048 * channels));
         if (channels != 4) {
             CheckFormatGuard(context, channels, false, input);
             CheckFormatGuard(context, channels, true, input);
         }
     }
     CheckMixedFormatGuard(context, streams[1], streams[0]);
-    CHECK(sceAjmFinalize(context) == 0);
+    Require(sceAjmFinalize(context) == 0);
 }

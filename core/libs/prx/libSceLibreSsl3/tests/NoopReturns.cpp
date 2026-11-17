@@ -2,17 +2,7 @@
 #include <cstdlib>
 #include <cstring>
 #include "prx/libSceLibreSsl3/include/Api.hpp"
-
-namespace {
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "LibreSsl3 noop returns: %s\n", message);
-        std::abort();
-    }
-}
-
-}
+#include "Testing.hpp"
 
 int main() {
     unsigned char context[0x100];

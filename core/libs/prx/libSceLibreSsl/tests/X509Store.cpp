@@ -2,6 +2,7 @@
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstdint>
@@ -20,22 +21,6 @@ struct Stack {
     std::int32_t numAlloc;
     int (APS5_VABI* comp)(const void*, const void*);
 };
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "failed: %s\n", message);
-    std::abort();
-}
-
-template<typename TAction>
-void RequireThrows(TAction action, const char* message) {
-    try {
-        action();
-    } catch (const std::exception&) {
-        return;
-    }
-    Require(false, message);
-}
 
 template<typename TAction>
 void RequireInvalidArgument(TAction action, const char* message) {
@@ -170,7 +155,7 @@ void AddNullCrl() {
     Require(std::memcmp(before.data(), store, before.size()) == 0, "a null CRL leaves the store unchanged");
     X509_STORE_free_nid_postfix(store);
 
-    RequireThrows([] { X509_STORE_add_crl_nid_postfix(reinterpret_cast<LibreSslX509Store*>(1), reinterpret_cast<void*>(1)); }, "a non-null CRL is unsupported before store access");
+    ExpectErr([] { X509_STORE_add_crl_nid_postfix(reinterpret_cast<LibreSslX509Store*>(1), reinterpret_cast<void*>(1)); }, "a non-null CRL is unsupported before store access");
 }
 
 const char* Host(const LibreSslX509VerifyParam* param, int index) {

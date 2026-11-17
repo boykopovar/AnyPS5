@@ -1,5 +1,6 @@
 #include "prx/libSceVideoNativeExtEssential/libSceVideoNativeExtEssential.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cerrno>
@@ -11,10 +12,6 @@
 namespace {
 
 void ClobberErrno(std::uintptr_t, std::size_t) { errno = 99; }
-
-void Require(bool value) {
-    if (!value) std::abort();
-}
 
 constexpr int notInitialized = static_cast<int>(0xF0000000u);
 constexpr int invalidArgument = static_cast<int>(0xF0000003u);

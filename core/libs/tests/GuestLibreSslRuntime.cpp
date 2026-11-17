@@ -2,6 +2,7 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -11,17 +12,6 @@
 #include <cstring>
 #include <source_location>
 #include <stdexcept>
-
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL runtime check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> static void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
-    try { action(); } catch (const std::exception&) { return; }
-    Require(false, location);
-}
 
 static void InitializeHeap() {
     void* const api[10] {};
@@ -44,7 +34,7 @@ int main() {
     std::array<std::size_t, 256> counts {};
     for (const auto value : first) ++counts[value];
     Require(*std::max_element(counts.begin(), counts.end()) < 64);
-    RequireThrows([] { RAND_bytes_nid_postfix(nullptr, 1); });
+    ExpectErr([] { RAND_bytes_nid_postfix(nullptr, 1); });
 
     RAND_add_nid_postfix(first.data(), 16, 8.0);
     RAND_add_nid_postfix(nullptr, 0, 0.0);
@@ -63,7 +53,7 @@ int main() {
     std::memset(name, 'x', sizeof(name));
     Require(RAND_file_name_nid_postfix(name, 0) == nullptr && name[0] == 'x');
     Require(RAND_file_name_nid_postfix(nullptr, 0) == nullptr);
-    RequireThrows([] { RAND_file_name_nid_postfix(nullptr, 1); });
+    ExpectErr([] { RAND_file_name_nid_postfix(nullptr, 1); });
 
     auto* block = static_cast<unsigned char*>(CRYPTO_malloc_nid_postfix(64, "file.c", 10));
     Require(block != nullptr);

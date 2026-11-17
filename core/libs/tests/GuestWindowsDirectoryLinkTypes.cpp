@@ -4,6 +4,7 @@
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
+#include "Testing.hpp"
 #include <windows.h>
 #include <winioctl.h>
 #include <array>
@@ -18,14 +19,7 @@
 #include <string>
 #include <vector>
 
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "Directory link type check failed at line %d\n", line);
-        std::exit(1);
-    }
-}
 
-#define Require(value) Check((value), __LINE__)
 
 static void Junction(const std::filesystem::path& link, const std::filesystem::path& target) {
     Require(std::filesystem::create_directory(link));

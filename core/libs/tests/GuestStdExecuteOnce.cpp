@@ -1,13 +1,12 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <atomic>
 #include <cstdlib>
 #include <thread>
 
 using Callback = int (APS5_VABI *)(void*, void*, void**);
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static std::atomic<int> calls{0}, arrived{0};
 static int control = 0, nested = 0, failing = 0, throwing = 0;

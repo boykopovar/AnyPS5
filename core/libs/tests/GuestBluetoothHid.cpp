@@ -1,5 +1,6 @@
 #include "prx/libSceBluetoothHid/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <cerrno>
 #include <cstdint>
@@ -16,13 +17,6 @@ int callbackCalls = 0;
 
 void APS5_VABI Callback(const BluetoothHidEvent*, std::int32_t, void*) {
     ++callbackCalls;
-}
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "BluetoothHid: %s\n", message);
-        std::abort();
-    }
 }
 
 }

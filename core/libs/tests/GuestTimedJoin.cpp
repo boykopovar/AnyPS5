@@ -2,6 +2,7 @@
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -20,10 +21,6 @@ static_assert(sizeof(KernelTimespec)==16 && alignof(KernelTimespec)==8 && offset
 
 using TimedJoin = decltype(&pthread_timedjoin_np_nid_postfix);
 static TimedJoin timedJoin;
-
-void Require(bool value,const char* message) {
-    if (!value) { std::fprintf(stderr,"timed join: %s\n",message); std::abort(); }
-}
 
 KernelTimespec After(int milliseconds) {
     KernelTimespec result{};

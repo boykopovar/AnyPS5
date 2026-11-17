@@ -5,6 +5,7 @@
 #include "prx/libSceAgc/Shader/include/ShaderConstants.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <span>
@@ -24,10 +25,6 @@ unsigned mappings = 0;
 unsigned links = 0;
 bool rejectLink = false;
 const Shader* mappedPixel = nullptr;
-
-void Require(bool condition) {
-    if (!condition) throw std::runtime_error("shader helper preparation mismatch");
-}
 
 void OptionalGeometryOutputRegister(ShaderSpecialRegs& special, const Shader& vertex, const Shader& hull) {
     using namespace ShaderRegs;

@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -9,14 +10,6 @@
 #include <cstring>
 #include <new>
 #include <stdexcept>
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "RegionGeometry check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 struct RegionHolder {
     alignas(alignof(WebCore::Region)) char storage[sizeof(WebCore::Region)];

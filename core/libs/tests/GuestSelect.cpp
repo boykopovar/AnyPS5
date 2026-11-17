@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -30,8 +31,6 @@ struct GuestDescriptorSet {
         return ((words[descriptor / 64] >> (descriptor % 64)) & 1u) != 0;
     }
 };
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 constexpr int GuestEbadf = 9;
 constexpr int GuestEfault = 14;

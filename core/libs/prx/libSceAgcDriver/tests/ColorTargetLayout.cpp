@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/ColorTargetTransfer.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -15,33 +16,26 @@ namespace {
 
 using namespace AgcDriver::Graphics;
 
-template<typename TAction>
-void reject(TAction action) {
-    try { action(); }
-    catch (const std::runtime_error&) { return; }
-    throw std::runtime_error("expected color layout rejection");
-}
-
 }
 
 void RunColorTargetLayoutTests() {
     Require(DecodeColorTileMode(0x4dc6c000) == ColorTileMode::RenderTarget, "logged color descriptor was rejected");
     Require(DecodeColorTileMode(0x09000000) == ColorTileMode::Linear, "linear descriptor changed");
     Require(DecodeColorTileMode(0x4dc6c001) == ColorTileMode::RenderTarget, "2D array color descriptor with MIP0_DEPTH 1 was rejected");
-    reject([] { DecodeColorTileMode(0x4dc6e000); });
-    reject([] { DecodeColorTileMode(0xcdc6c000); });
-    reject([] { DecodeColorTileMode(0x09004000); });
+    ExpectErr<std::runtime_error>([] { DecodeColorTileMode(0x4dc6e000); });
+    ExpectErr<std::runtime_error>([] { DecodeColorTileMode(0xcdc6c000); });
+    ExpectErr<std::runtime_error>([] { DecodeColorTileMode(0x09004000); });
     Require(DecodeColorTileMode(0x4cc6c000) == ColorTileMode::RenderTarget, "1D color descriptor was rejected");
-    reject([] { DecodeColorTileMode(0x4cc6c001); });
-    reject([] { DecodeColorTileMode(0x4fc6c000); });
+    ExpectErr<std::runtime_error>([] { DecodeColorTileMode(0x4cc6c001); });
+    ExpectErr<std::runtime_error>([] { DecodeColorTileMode(0x4fc6c000); });
     Require(DecodeColorTileMode(0x08000000) == ColorTileMode::Linear, "linear 1D color descriptor was rejected");
-    reject([] { DecodeColorTileMode(0x08014000); });
-    reject([] { DecodeColorTileMode(0x08024000); });
+    ExpectErr<std::runtime_error>([] { DecodeColorTileMode(0x08014000); });
+    ExpectErr<std::runtime_error>([] { DecodeColorTileMode(0x08024000); });
     Require(DecodeColorTileMode(0x0da58000) == ColorTileMode::D4KBX, "a SW_4KB_D_X color descriptor with its Z-mode FMASK swizzle was rejected");
     Require(DecodeColorTileMode(0x0da54000) == ColorTileMode::S4KBX, "a SW_4KB_S_X color descriptor with its Z-mode FMASK swizzle was rejected");
     Require(DecodeColorTileMode(0x09058000) == ColorTileMode::D4KBX, "a SW_4KB_D_X color descriptor without an FMASK swizzle was rejected");
-    reject([] { DecodeColorTileMode(0x0d458000); });
-    reject([] { ColorTargetLayout(0, 1, ColorTileMode::RenderTarget); });
+    ExpectErr<std::runtime_error>([] { DecodeColorTileMode(0x0d458000); });
+    ExpectErr<std::runtime_error>([] { ColorTargetLayout(0, 1, ColorTileMode::RenderTarget); });
     const ColorTargetLayout padded(63, 2, ColorTileMode::Linear);
     Require(padded.Bytes() == 512 && padded.LinearBytes() == 504 && padded.Offset(0, 1) == 256, "linear rows are not padded to 256 bytes");
     const ColorTargetLayout screen(3840, 2160, ColorTileMode::RenderTarget);
@@ -90,7 +84,7 @@ void RunColorTargetLayoutTests() {
         }
     }
     Require(DecodeColorTileMode(0x4dc24000) == ColorTileMode::Standard64KB, "64 KiB standard color descriptor was rejected");
-    reject([&] { layout.Offset(257, 0); });
+    ExpectErr<std::runtime_error>([&] { layout.Offset(257, 0); });
     Require(CmaskLayout(1, 1).Bytes() == 4096 && CmaskLayout(1024, 512).Bytes() == 4096 && CmaskLayout(1025, 513).Bytes() == 16384 && CmaskLayout(1920, 1080).Bytes() == 24576 && CmaskLayout(2432, 1368).Bytes() == 36864 && CmaskLayout(3328, 1872).Bytes() == 65536 && CmaskLayout(3840, 2160).Bytes() == 81920, "CMASK size differs from addrlib's pipe-aligned SW_64KB_Z_X CMASK");
     struct CmaskReference {
         std::uint32_t width;
@@ -115,9 +109,9 @@ void RunColorTargetLayoutTests() {
             }
         }
     }
-    reject([] { CmaskLayout(0, 1); });
-    reject([] { CmaskLayout(61, 13).Nibble(8, 0); });
-    reject([] { CmaskLayout(61, 13).Nibble(0, 2); });
+    ExpectErr<std::runtime_error>([] { CmaskLayout(0, 1); });
+    ExpectErr<std::runtime_error>([] { CmaskLayout(61, 13).Nibble(8, 0); });
+    ExpectErr<std::runtime_error>([] { CmaskLayout(61, 13).Nibble(0, 2); });
     std::vector<std::byte> tiled(layout.Bytes(), std::byte{0x5a});
     std::vector<std::byte> linear(layout.LinearBytes());
     std::vector<std::byte> restored(linear.size());
@@ -137,8 +131,8 @@ void RunColorTargetLayoutTests() {
     for (std::size_t i = 0; i < tiled.size(); ++i) {
         if (!visited[i / 4]) Require(tiled[i] == std::byte{0x5a}, "color tiling overwrote padding");
     }
-    reject([&] { layout.Detile(std::span(tiled).first(4), restored); });
-    reject([&] { layout.Tile(std::span(linear).first(4), tiled); });
+    ExpectErr<std::runtime_error>([&] { layout.Detile(std::span(tiled).first(4), restored); });
+    ExpectErr<std::runtime_error>([&] { layout.Tile(std::span(linear).first(4), tiled); });
     static std::vector<std::byte> storage(2 * 65536);
     const std::span guest(reinterpret_cast<std::byte*>((reinterpret_cast<std::uintptr_t>(storage.data()) + 0xffffu) & ~std::uintptr_t{0xffffu}), 65536);
     std::fill(guest.begin(), guest.end(), std::byte{0x6b});
@@ -172,10 +166,10 @@ void RunColorTargetLayoutTests() {
     xorLayout.Tile(xorLinear, xorTiled);
     xorLayout.Detile(xorTiled, xorRestored);
     Require(xorRestored == xorLinear, "color tiling round trip with a pipe/bank XOR lost pixels");
-    reject([] { static_cast<void>(ColorTargetLayout(64, 64, ColorTileMode::Standard64KB, 4, 0x100)); });
-    reject([] { static_cast<void>(ColorTargetLayout(64, 64, ColorTileMode::Linear, 4, 0x100)); });
-    reject([] { static_cast<void>(ColorTargetLayout(64, 64, ColorTileMode::RenderTarget, 4, 0x80)); });
-    reject([] { static_cast<void>(ColorTargetLayout(64, 64, ColorTileMode::RenderTarget, 4, 0x10000)); });
+    ExpectErr<std::runtime_error>([] { static_cast<void>(ColorTargetLayout(64, 64, ColorTileMode::Standard64KB, 4, 0x100)); });
+    ExpectErr<std::runtime_error>([] { static_cast<void>(ColorTargetLayout(64, 64, ColorTileMode::Linear, 4, 0x100)); });
+    ExpectErr<std::runtime_error>([] { static_cast<void>(ColorTargetLayout(64, 64, ColorTileMode::RenderTarget, 4, 0x80)); });
+    ExpectErr<std::runtime_error>([] { static_cast<void>(ColorTargetLayout(64, 64, ColorTileMode::RenderTarget, 4, 0x10000)); });
 
     std::fill(guest.begin(), guest.end(), std::byte{0x6b});
     target = {reinterpret_cast<std::uintptr_t>(guest.data()), {2, 2}, VK_FORMAT_R8G8B8A8_UNORM, guest.size(), 0xe4, ColorTileMode::RenderTarget};
@@ -206,21 +200,21 @@ void RunColorTargetLayoutTests() {
         xor4Kb.Tile(source, tiled4Kb);
         xor4Kb.Detile(tiled4Kb, back);
         Require(back == source, "4 KiB XOR color tiling round trip lost pixels");
-        reject([mode] { static_cast<void>(ColorTargetLayout(40, 20, mode, 4, 0x1000)); });
+        ExpectErr<std::runtime_error>([mode] { static_cast<void>(ColorTargetLayout(40, 20, mode, 4, 0x1000)); });
     }
 
     Require(DecodeColorTileMode(0x0dc68000u) == ColorTileMode::D64KBX, "the observed SW_64KB_D_X color descriptor was rejected");
     Require(DecodeColorTileMode(0x4dc60000u) == ColorTileMode::Z64KBX, "the observed SW_64KB_Z_X color descriptor was rejected");
     Require(ColorTextureTileMode(ColorTileMode::Z64KBX) == TextureTileMode::kZ64KBX, "a Z-order XOR color target did not map to its texture mode");
     Require(ColorTileModeIsXor(ColorTileMode::Z64KBX) && ColorTileModeBlockBytes(ColorTileMode::Z64KBX) == 65536u, "a Z-order XOR color target lost its block alignment or XOR flag");
-    reject([] { DecodeColorTileMode((0x4dc60000u & ~(0x1fu << 19u)) | (1u << 19u)); });
+    ExpectErr<std::runtime_error>([] { DecodeColorTileMode((0x4dc60000u & ~(0x1fu << 19u)) | (1u << 19u)); });
     Require(ColorTextureTileMode(ColorTileMode::D64KBX) == TextureTileMode::kD64KBX, "a display XOR color target did not map to its texture mode");
     Require(ColorTileModeIsXor(ColorTileMode::D64KBX) && ColorTileModeBlockBytes(ColorTileMode::D64KBX) == 65536u, "a display XOR color target lost its block alignment or XOR flag");
-    reject([] { DecodeColorTileMode(0x0cc68000u); });
-    reject([] { DecodeColorTileMode((0x0dc68000u & ~(0x1fu << 19u)) | (1u << 19u)); });
-    reject([] { ColorTargetLayout(64, 64, ColorTileMode::D64KBX, 4, 0x80); });
-    reject([] { ColorTargetLayout(64, 64, ColorTileMode::D64KBX, 4, 0x10000); });
-    for (const std::uint32_t columnBits : {0x1000u, 0x2000u, 0x3000u}) reject([columnBits] { ColorTargetLayout(64, 64, ColorTileMode::D64KBX, 4, columnBits); });
+    ExpectErr<std::runtime_error>([] { DecodeColorTileMode(0x0cc68000u); });
+    ExpectErr<std::runtime_error>([] { DecodeColorTileMode((0x0dc68000u & ~(0x1fu << 19u)) | (1u << 19u)); });
+    ExpectErr<std::runtime_error>([] { ColorTargetLayout(64, 64, ColorTileMode::D64KBX, 4, 0x80); });
+    ExpectErr<std::runtime_error>([] { ColorTargetLayout(64, 64, ColorTileMode::D64KBX, 4, 0x10000); });
+    for (const std::uint32_t columnBits : {0x1000u, 0x2000u, 0x3000u}) ExpectErr<std::runtime_error>([columnBits] { ColorTargetLayout(64, 64, ColorTileMode::D64KBX, 4, columnBits); });
     const std::array<std::array<std::size_t, 2>, 5> sourceOffsets{{{27647u, 66048u}, {29694u, 212992u}, {62204u, 344064u}, {45304u, 540672u}, {110832u, 933888u}}};
     for (const std::uint32_t bpe : {1u, 2u, 4u, 8u, 16u}) {
         const ColorTargetLayout sourceLayout(257, 129, ColorTileMode::D64KBX, bpe, 0x4000);

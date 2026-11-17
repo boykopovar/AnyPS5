@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/AtomicWaitForwards.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -43,12 +44,6 @@ int APS5_VABI Wait64(std::uint64_t* address, std::uint64_t expected, KernelUseco
 int APS5_VABI Wake(void* address, std::int32_t count) {
     last = {address, 0, false, 0, nullptr, count, last.calls + 1};
     return 0;
-}
-
-void Require(bool condition, const char* label) {
-    if (condition) return;
-    std::fprintf(stderr, "std atomic wait: %s\n", label);
-    std::abort();
 }
 
 template <typename T, typename Fn>

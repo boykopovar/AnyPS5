@@ -1,5 +1,6 @@
 #include "SceTypes.hpp"
 #include "prx/libkernel_sys/libkernel_sys.hpp"
+#include "Testing.hpp"
 #include <cstdlib>
 
 namespace {
@@ -9,8 +10,6 @@ constexpr int SCE_KERNEL_ERROR_EPERM = static_cast<int>(0x80020001);
 constexpr int SCE_KERNEL_ERROR_ENOENT = static_cast<int>(0x80020002);
 constexpr int SCE_KERNEL_ERROR_ENOTSUP = static_cast<int>(0x8002002d);
 constexpr int SCE_KERNEL_ERROR_ENOSYS = static_cast<int>(0x8002004e);
-
-void Require(bool value) { if (!value) std::abort(); }
 
 }
 

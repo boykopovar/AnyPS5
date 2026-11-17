@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -8,13 +9,6 @@
 #include <limits>
 #include <source_location>
 #include <stdexcept>
-
-static void Require(bool value, std::source_location location = std::source_location::current()) {
-    if (!value) {
-        std::fprintf(stderr, "check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 static int APS5_VABI Compare(const void* key, const void* record) {
     const auto left = *static_cast<const unsigned char*>(key);

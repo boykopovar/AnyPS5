@@ -1,6 +1,7 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -10,12 +11,6 @@
 #include <string_view>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL3 EVP_sha512_256 check failed at line %u\n", location.line());
-    std::abort();
-}
 
 void* APS5_VABI Allocate(std::size_t bytes) { return std::malloc(bytes ? bytes : 1); }
 void APS5_VABI Release(void* block) { std::free(block); }

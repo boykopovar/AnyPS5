@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstdint>
@@ -11,12 +12,6 @@
 namespace {
 
 using Version = std::array<std::uint8_t, 4>;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "ICU version: %s\n", message);
-    std::abort();
-}
 
 bool ExpectedInvariant(std::uint32_t unit) {
     if (unit > 0x7f) return false;

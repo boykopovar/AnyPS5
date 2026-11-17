@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "Testing.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -21,14 +22,6 @@
 #include <string>
 
 namespace {
-
-int failures = 0;
-
-void Check(bool condition, const char* what) {
-    if (condition) return;
-    std::fprintf(stderr, "%s\n", what);
-    ++failures;
-}
 
 template <typename Function>
 std::string Failure(Function function) {
@@ -112,35 +105,35 @@ AgcDriver::Graphics::ColorTarget Decode(std::uint32_t samples, std::uint32_t fra
 
 void MultisampledTargetsDecode() {
     const auto cleared = Decode(4u, 4u, FastClear | Compression);
-    Check(cleared.samples == 4u, "a 4x GCN color target did not decode with 4 samples");
-    Check(cleared.cmaskAddress == AddressOf(cmaskMemory) && cleared.cmaskBytes == CmaskBytes, "a 4x GCN color target lost its CMASK address or size");
-    Check(cleared.cmaskFastClear, "a 4x GCN color target with FAST_CLEAR is not a CMASK fast clear");
+    Expect(cleared.samples == 4u, "a 4x GCN color target did not decode with 4 samples");
+    Expect(cleared.cmaskAddress == AddressOf(cmaskMemory) && cleared.cmaskBytes == CmaskBytes, "a 4x GCN color target lost its CMASK address or size");
+    Expect(cleared.cmaskFastClear, "a 4x GCN color target with FAST_CLEAR is not a CMASK fast clear");
     const auto compressed = Decode(8u, 8u, Compression);
-    Check(compressed.samples == 8u && compressed.cmaskAddress == AddressOf(cmaskMemory) && !compressed.cmaskFastClear, "an 8x FMASK-compressed GCN color target decoded wrong");
+    Expect(compressed.samples == 8u && compressed.cmaskAddress == AddressOf(cmaskMemory) && !compressed.cmaskFastClear, "an 8x FMASK-compressed GCN color target decoded wrong");
     const auto plain = Decode(2u, 2u, 0u);
-    Check(plain.samples == 2u && plain.cmaskAddress == 0u, "a 2x GCN color target without compression took a CMASK");
-    Check(Failure([] { Decode(4u, 4u, FastClear, false); }).find("has no CMASK address") != std::string::npos, "a 4x GCN fast clear without a CMASK address was accepted");
+    Expect(plain.samples == 2u && plain.cmaskAddress == 0u, "a 2x GCN color target without compression took a CMASK");
+    Expect(Failure([] { Decode(4u, 4u, FastClear, false); }).find("has no CMASK address") != std::string::npos, "a 4x GCN fast clear without a CMASK address was accepted");
 }
 
 void FewerFragmentsDecode() {
     const auto fmask = AddressOf(fmaskMemory);
     const auto eqaa = Decode(4u, 2u, Compression, true, fmask);
-    Check(eqaa.samples == 4u && eqaa.coverageSamples == 4u && eqaa.eqaaFragments == 2u, "a 4-sample 2-fragment GCN color target did not decode as EQAA at its 4 coverage samples");
-    Check(eqaa.fmaskAddress == fmask && eqaa.cmaskAddress == AddressOf(cmaskMemory), "a 4-sample 2-fragment GCN color target lost its FMASK or CMASK base");
-    Check(eqaa.gcnFmaskBytes == Width * Height, "the FMASK of a 4-sample 2-fragment GCN color target does not hold 2 bits per sample, one byte per pixel");
+    Expect(eqaa.samples == 4u && eqaa.coverageSamples == 4u && eqaa.eqaaFragments == 2u, "a 4-sample 2-fragment GCN color target did not decode as EQAA at its 4 coverage samples");
+    Expect(eqaa.fmaskAddress == fmask && eqaa.cmaskAddress == AddressOf(cmaskMemory), "a 4-sample 2-fragment GCN color target lost its FMASK or CMASK base");
+    Expect(eqaa.gcnFmaskBytes == Width * Height, "the FMASK of a 4-sample 2-fragment GCN color target does not hold 2 bits per sample, one byte per pixel");
     const auto eightTwo = Decode(8u, 2u, Compression, true, fmask);
-    Check(eightTwo.samples == 8u && eightTwo.eqaaFragments == 2u && eightTwo.gcnFmaskBytes == Width * Height * 2u, "the FMASK of an 8-sample 2-fragment GCN color target does not hold 2 bits per sample, two bytes per pixel");
+    Expect(eightTwo.samples == 8u && eightTwo.eqaaFragments == 2u && eightTwo.gcnFmaskBytes == Width * Height * 2u, "the FMASK of an 8-sample 2-fragment GCN color target does not hold 2 bits per sample, two bytes per pixel");
     const auto eightFour = Decode(8u, 4u, Compression, true, fmask);
-    Check(eightFour.samples == 8u && eightFour.eqaaFragments == 4u && eightFour.gcnFmaskBytes == Width * Height * 4u, "the FMASK of an 8-sample 4-fragment GCN color target does not hold 4 bits per sample, four bytes per pixel");
+    Expect(eightFour.samples == 8u && eightFour.eqaaFragments == 4u && eightFour.gcnFmaskBytes == Width * Height * 4u, "the FMASK of an 8-sample 4-fragment GCN color target does not hold 4 bits per sample, four bytes per pixel");
     const auto oneFragment = Decode(4u, 1u, 0u, true, fmask);
-    Check(oneFragment.samples == 1u && oneFragment.coverageSamples == 4u && oneFragment.eqaaFragments == 0u, "a 4-sample 1-fragment GCN color target did not decode as one stored sample with 4 coverage samples");
-    Check(oneFragment.fmaskAddress == 0u && oneFragment.gcnFmaskBytes == 0u && oneFragment.cmaskAddress == 0u, "an uncompressed 4-sample 1-fragment GCN color target took an FMASK or CMASK");
+    Expect(oneFragment.samples == 1u && oneFragment.coverageSamples == 4u && oneFragment.eqaaFragments == 0u, "a 4-sample 1-fragment GCN color target did not decode as one stored sample with 4 coverage samples");
+    Expect(oneFragment.fmaskAddress == 0u && oneFragment.gcnFmaskBytes == 0u && oneFragment.cmaskAddress == 0u, "an uncompressed 4-sample 1-fragment GCN color target took an FMASK or CMASK");
     const auto compressedOne = Decode(4u, 1u, Compression, true, fmask);
-    Check(compressedOne.samples == 1u && compressedOne.fmaskAddress == fmask && compressedOne.gcnFmaskBytes == Width * Height, "the FMASK of a compressed 4-sample 1-fragment GCN color target does not hold 1 bit for each of 8 samples, one byte per pixel");
-    Check(Failure([] { Decode(4u, 2u, 0u, true, AddressOf(fmaskMemory)); }).find("supported only with FMASK") != std::string::npos, "a 4-sample 2-fragment GCN color target without COMPRESSION was accepted");
-    Check(Failure([] { Decode(4u, 2u, Compression, true, 0u); }).find("has no FMASK address") != std::string::npos, "a compressed 4-sample 2-fragment GCN color target without an FMASK base was accepted");
-    Check(Failure([] { Decode(2u, 4u, 0u); }).find("more fragments than samples") != std::string::npos, "a 2-sample 4-fragment GCN color target was accepted");
-    Check(Failure([] { Decode(4u, 1u, FastClear, true, AddressOf(fmaskMemory)); }).find("fast clear (CMASK) is not implemented") != std::string::npos, "a fast-cleared 4-sample 1-fragment GCN color target was accepted");
+    Expect(compressedOne.samples == 1u && compressedOne.fmaskAddress == fmask && compressedOne.gcnFmaskBytes == Width * Height, "the FMASK of a compressed 4-sample 1-fragment GCN color target does not hold 1 bit for each of 8 samples, one byte per pixel");
+    Expect(Failure([] { Decode(4u, 2u, 0u, true, AddressOf(fmaskMemory)); }).find("supported only with FMASK") != std::string::npos, "a 4-sample 2-fragment GCN color target without COMPRESSION was accepted");
+    Expect(Failure([] { Decode(4u, 2u, Compression, true, 0u); }).find("has no FMASK address") != std::string::npos, "a compressed 4-sample 2-fragment GCN color target without an FMASK base was accepted");
+    Expect(Failure([] { Decode(2u, 4u, 0u); }).find("more fragments than samples") != std::string::npos, "a 2-sample 4-fragment GCN color target was accepted");
+    Expect(Failure([] { Decode(4u, 1u, FastClear, true, AddressOf(fmaskMemory)); }).find("fast clear (CMASK) is not implemented") != std::string::npos, "a fast-cleared 4-sample 1-fragment GCN color target was accepted");
 }
 
 AgcDriver::Graphics::ColorTarget DecodeMultisampledSlice(std::uint64_t base, std::uint32_t samples, std::uint32_t fragments, std::uint32_t flags, std::uint32_t slice) {
@@ -155,23 +148,23 @@ void MultisampledSlicesDecode() {
     static std::byte* const memory = LowMemory(MultisampledSliceMemoryBytes);
     const auto base = AddressOf(memory);
     if (memory == nullptr || base + MultisampledSliceMemoryBytes > (std::uint64_t{1} << 40u)) {
-        Check(false, "cannot allocate multisampled array slice test memory below 1 TiB");
+        Expect(false, "cannot allocate multisampled array slice test memory below 1 TiB");
         return;
     }
     const auto cmask = AddressOf(cmaskMemory);
     const auto fmask = AddressOf(fmaskMemory);
     const auto msaa = DecodeMultisampledSlice(base, 4u, 4u, FastClear | Compression, 1u);
-    Check(msaa.address == base + 4u * ColorBytes && msaa.surfaceAddress == msaa.address && msaa.bytes == ColorBytes, "slice 1 of a 4x GCN array does not start one slice of its 4 fragments past the array base");
-    Check(msaa.cmaskAddress == cmask + CmaskBytes && msaa.cmaskBytes == CmaskBytes, "the CMASK of slice 1 of a 4x GCN array does not start one CMASK slice past the CMASK base");
+    Expect(msaa.address == base + 4u * ColorBytes && msaa.surfaceAddress == msaa.address && msaa.bytes == ColorBytes, "slice 1 of a 4x GCN array does not start one slice of its 4 fragments past the array base");
+    Expect(msaa.cmaskAddress == cmask + CmaskBytes && msaa.cmaskBytes == CmaskBytes, "the CMASK of slice 1 of a 4x GCN array does not start one CMASK slice past the CMASK base");
     const auto eqaa = DecodeMultisampledSlice(base, 4u, 2u, Compression, 2u);
-    Check(eqaa.address == base + 2u * 2u * ColorBytes, "slice 2 of a 4-sample 2-fragment GCN array does not start two slices of its 2 fragments past the array base");
-    Check(eqaa.gcnFmaskBytes == Width * Height && eqaa.fmaskAddress == fmask + 2u * eqaa.gcnFmaskBytes, "the FMASK of slice 2 of a 4-sample 2-fragment GCN array does not start two FMASK slices past the FMASK base");
-    Check(eqaa.cmaskAddress == cmask + 2u * CmaskBytes, "the CMASK of slice 2 of a 4-sample 2-fragment GCN array does not start two CMASK slices past the CMASK base");
+    Expect(eqaa.address == base + 2u * 2u * ColorBytes, "slice 2 of a 4-sample 2-fragment GCN array does not start two slices of its 2 fragments past the array base");
+    Expect(eqaa.gcnFmaskBytes == Width * Height && eqaa.fmaskAddress == fmask + 2u * eqaa.gcnFmaskBytes, "the FMASK of slice 2 of a 4-sample 2-fragment GCN array does not start two FMASK slices past the FMASK base");
+    Expect(eqaa.cmaskAddress == cmask + 2u * CmaskBytes, "the CMASK of slice 2 of a 4-sample 2-fragment GCN array does not start two CMASK slices past the CMASK base");
     const auto oneFragment = DecodeMultisampledSlice(base, 4u, 1u, Compression, 3u);
-    Check(oneFragment.address == base + 3u * ColorBytes && oneFragment.cmaskAddress == 0u, "slice 3 of a compressed 4-sample 1-fragment GCN array does not start three one-fragment slices past the array base");
-    Check(oneFragment.gcnFmaskBytes == Width * Height && oneFragment.fmaskAddress == fmask + 3u * oneFragment.gcnFmaskBytes, "the FMASK of slice 3 of a compressed 4-sample 1-fragment GCN array does not start three FMASK slices past the FMASK base");
+    Expect(oneFragment.address == base + 3u * ColorBytes && oneFragment.cmaskAddress == 0u, "slice 3 of a compressed 4-sample 1-fragment GCN array does not start three one-fragment slices past the array base");
+    Expect(oneFragment.gcnFmaskBytes == Width * Height && oneFragment.fmaskAddress == fmask + 3u * oneFragment.gcnFmaskBytes, "the FMASK of slice 3 of a compressed 4-sample 1-fragment GCN array does not start three FMASK slices past the FMASK base");
     const auto first = DecodeMultisampledSlice(base, 4u, 2u, Compression, 0u);
-    Check(first.address == base && first.fmaskAddress == fmask && first.cmaskAddress == cmask, "slice 0 of a 4-sample 2-fragment GCN array does not start at the array, FMASK and CMASK bases");
+    Expect(first.address == base && first.fmaskAddress == fmask && first.cmaskAddress == cmask, "slice 0 of a 4-sample 2-fragment GCN array does not start at the array, FMASK and CMASK bases");
 }
 
 std::string FmaskDecompress(std::uint32_t visibleHeight) {
@@ -214,26 +207,26 @@ void LaterSlicesDecode() {
     static std::byte* const sliceMemory = LowMemory(SliceMemoryBytes);
     const auto base = AddressOf(sliceMemory);
     if (sliceMemory == nullptr || base + SliceMemoryBytes > (std::uint64_t{1} << 40u)) {
-        Check(false, "cannot allocate array slice test memory below 1 TiB");
+        Expect(false, "cannot allocate array slice test memory below 1 TiB");
         return;
     }
     const auto third = DecodeSlice(base, Thin2D, 3u, 1u);
-    Check(third.surfaceAddress == base + 3u * TiledSliceBytes && third.address == third.surfaceAddress && third.bytes == TiledSliceBytes, "slice 3 of a 2D-tiled GCN array is not at the array base plus three slices");
-    Check(third.pipeBankXor == GcnLayerBankXor(GcnTiling(TextureTileMode::kGcnThin2D, 4u), 3u) && third.pipeBankXor == (5u << 11u), "slice 3 of a 2D-tiled GCN array does not take the bank rotation the texture path gives array layer 3, (16 / 2 - 1) * 3 modulo 16 on the bank bits");
+    Expect(third.surfaceAddress == base + 3u * TiledSliceBytes && third.address == third.surfaceAddress && third.bytes == TiledSliceBytes, "slice 3 of a 2D-tiled GCN array is not at the array base plus three slices");
+    Expect(third.pipeBankXor == GcnLayerBankXor(GcnTiling(TextureTileMode::kGcnThin2D, 4u), 3u) && third.pipeBankXor == (5u << 11u), "slice 3 of a 2D-tiled GCN array does not take the bank rotation the texture path gives array layer 3, (16 / 2 - 1) * 3 modulo 16 on the bank bits");
     const auto display = DecodeSlice(base, Display2D, 1u, 1u);
-    Check(display.surfaceAddress == base + TiledSliceBytes && display.pipeBankXor == GcnLayerBankXor(GcnTiling(TextureTileMode::kGcnDisplay2D, 4u), 1u) && display.pipeBankXor == (7u << 11u), "slice 1 of a display 2D-tiled GCN array does not take the bank rotation of array layer 1");
-    Check(DecodeSlice(base, Thin2D, 0u, 1u).pipeBankXor == 0u, "slice 0 of a 2D-tiled GCN array has a bank XOR");
+    Expect(display.surfaceAddress == base + TiledSliceBytes && display.pipeBankXor == GcnLayerBankXor(GcnTiling(TextureTileMode::kGcnDisplay2D, 4u), 1u) && display.pipeBankXor == (7u << 11u), "slice 1 of a display 2D-tiled GCN array does not take the bank rotation of array layer 1");
+    Expect(DecodeSlice(base, Thin2D, 0u, 1u).pipeBankXor == 0u, "slice 0 of a 2D-tiled GCN array has a bank XOR");
     const auto micro = DecodeSlice(base, Thin1D, 2u, 1u);
-    Check(micro.surfaceAddress == base + 2u * TiledSliceBytes && micro.pipeBankXor == 0u, "slice 2 of a 1D-tiled GCN array is not at the base plus two slices without a bank XOR");
-    Check(DecodeSlice(base, Thin2D, 0u, 4u).samples == 4u, "slice 0 of a 2D-tiled 4x GCN array did not decode");
-    Check(Failure([base] { DecodeSlice(base, Thin2D, 1u, 4u); }).find("multisampled color views of a later slice of a 2D-tiled array") != std::string::npos, "slice 1 of a 2D-tiled 4x GCN array was accepted");
+    Expect(micro.surfaceAddress == base + 2u * TiledSliceBytes && micro.pipeBankXor == 0u, "slice 2 of a 1D-tiled GCN array is not at the base plus two slices without a bank XOR");
+    Expect(DecodeSlice(base, Thin2D, 0u, 4u).samples == 4u, "slice 0 of a 2D-tiled 4x GCN array did not decode");
+    Expect(Failure([base] { DecodeSlice(base, Thin2D, 1u, 4u); }).find("multisampled color views of a later slice of a 2D-tiled array") != std::string::npos, "slice 1 of a 2D-tiled 4x GCN array was accepted");
 }
 
 void PaddedTargetsAreCovered() {
-    Check(FmaskDecompress(Height).empty(), "an FMASK decompress over a whole 4x GCN target was refused");
+    Expect(FmaskDecompress(Height).empty(), "an FMASK decompress over a whole 4x GCN target was refused");
     const auto padded = FmaskDecompress(Height - 4u);
-    Check(padded.empty(), ("an FMASK decompress over the rows of a 4x GCN target its tile padding does not add was refused: " + padded).c_str());
-    Check(FmaskDecompress(Height - 16u).find("over part of a color target") != std::string::npos, "an FMASK decompress over part of a 4x GCN target was accepted");
+    Expect(padded.empty(), ("an FMASK decompress over the rows of a 4x GCN target its tile padding does not add was refused: " + padded).c_str());
+    Expect(FmaskDecompress(Height - 16u).find("over part of a color target") != std::string::npos, "an FMASK decompress over part of a 4x GCN target was accepted");
 }
 
 }
@@ -257,7 +250,7 @@ int main() {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;
     }
-    if (failures != 0) return 1;
+    if (Failures() != 0) return 1;
     std::puts("GCN multisampled color targets decode with their CMASK, EQAA and one-fragment targets with their FMASK base and size, and a metadata pass over the visible rows of a padded target is covered");
     return 0;
 }

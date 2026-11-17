@@ -8,6 +8,7 @@ endif()
 
 find_package(Threads REQUIRED)
 add_executable(edge_watch_tests ../EdgeWatch.cpp ../../prx/libkernel/Equeue/src/EdgeWatch.cpp)
+target_include_directories(edge_watch_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../../test/include)
 target_include_directories(edge_watch_tests PRIVATE ../.. ../../prx/libc/include)
 target_compile_features(edge_watch_tests PRIVATE cxx_std_20)
 target_link_libraries(edge_watch_tests PRIVATE Threads::Threads)

@@ -1,13 +1,12 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 using Pton = int (APS5_VABI *)(int, const char*, void*);
 using Ntop = const char* (APS5_VABI *)(int, const void*, char*, std::uint32_t);

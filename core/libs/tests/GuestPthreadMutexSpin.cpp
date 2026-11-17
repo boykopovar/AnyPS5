@@ -2,6 +2,7 @@
 #include "prx/libkernel/Pthread/include/Cond.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -15,8 +16,6 @@ static constexpr int ROUNDS = 2000;
 static constexpr int TURNS = 300;
 
 extern "C" std::uint64_t MutexYieldsForTest_nid_no_patch();
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 struct Counts {
     int tries = 0;

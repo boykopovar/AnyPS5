@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -18,12 +19,6 @@ int APS5_VABI Init(LibreSslEvpCipherCtx*, const unsigned char* key, const unsign
     lastKey = key;
     lastIv = iv;
     return 1;
-}
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL3 EVP_EncryptInit check failed at line %u\n", location.line());
-    std::abort();
 }
 
 }

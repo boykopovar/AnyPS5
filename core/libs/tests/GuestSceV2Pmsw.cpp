@@ -1,20 +1,11 @@
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
-
-namespace {
-
-void Require(bool condition, const char* label) {
-    if (condition) return;
-    std::fprintf(stderr, "sce v2 pmsw: %s\n", label);
-    std::abort();
-}
-
-}
 
 int main() {
     double value = 1.0;

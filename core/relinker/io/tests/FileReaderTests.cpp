@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include <io/FileReader.hpp>
 #include <io/NativePath.hpp>
 #include <domain/Types.hpp>
@@ -14,16 +15,12 @@ namespace {
 
 using Bytes = std::vector<std::uint8_t>;
 
-void require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
-
 template<typename TAction>
 void requireError(const TAction& action, const std::string& message) {
     try {
         action();
     } catch (const Domain::RelinkerException& error) {
-        require(error.what() == message, "Unexpected prefix-read error: " + std::string(error.what()));
+        Require(error.what() == message, "Unexpected prefix-read error: " + std::string(error.what()));
         return;
     }
     throw std::runtime_error("Invalid prefix read was accepted: " + message);
@@ -37,7 +34,7 @@ void prefixes(const std::filesystem::path& path, const Bytes& expected) {
             std::size_t{4096}, std::size_t{4097}, std::size_t{8191}, std::size_t{8192}, std::size_t{8193},
             expected.size(), expected.size() + 1, maximum}) {
         const auto count = std::min(expected.size(), limit);
-        require(reader.ReadPrefix(name, limit) == Bytes(expected.begin(), expected.begin() + count),
+        Require(reader.ReadPrefix(name, limit) == Bytes(expected.begin(), expected.begin() + count),
             "Incorrect file prefix for limit " + std::to_string(limit));
     }
 }
@@ -53,9 +50,9 @@ void fileContents(const std::filesystem::path& directory) {
         if (!expected.empty())
             output.write(reinterpret_cast<const char*>(expected.data()), static_cast<std::streamsize>(expected.size()));
         output.close();
-        require(static_cast<bool>(output), "Cannot prepare the prefix-read fixture");
+        Require(static_cast<bool>(output), "Cannot prepare the prefix-read fixture");
         prefixes(path, expected);
-        require(Io::FileReader().Read(Io::Utf8Path(path)) == expected, "Prefix reads changed the input file");
+        Require(Io::FileReader().Read(Io::Utf8Path(path)) == expected, "Prefix reads changed the input file");
     }
 }
 
@@ -76,11 +73,11 @@ void invalidRequests(const std::filesystem::path& directory) {
 void zeroReportedFileSize() {
 #ifdef __linux__
     const std::filesystem::path path = "/proc/self/cmdline";
-    require(std::filesystem::is_regular_file(path) && std::filesystem::file_size(path) == 0,
+    Require(std::filesystem::is_regular_file(path) && std::filesystem::file_size(path) == 0,
         "Expected a regular proc file with a zero reported size");
     std::ifstream input(path, std::ios::binary);
     const Bytes expected{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
-    require(!expected.empty(), "Cannot read the proc prefix fixture");
+    Require(!expected.empty(), "Cannot read the proc prefix fixture");
     prefixes(path, expected);
 #endif
 }

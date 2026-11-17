@@ -4,6 +4,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -15,13 +16,6 @@
 #include <string>
 #include <thread>
 
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "Positioned race check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 int main() {
     const auto root = std::filesystem::path("anyps5-positioned-race-" +
         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));

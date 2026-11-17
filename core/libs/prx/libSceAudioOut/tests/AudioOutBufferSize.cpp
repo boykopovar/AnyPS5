@@ -2,6 +2,7 @@
 #include "SDL.h"
 #include "prx/libSceAudioOut/include/AudioOutSdl.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -18,10 +19,6 @@ int queued = 0;
 std::uint32_t queuedBytes = 0;
 const void* supplied = nullptr;
 std::uint32_t suppliedBytes = 0;
-
-void Require(bool value, const char* message) {
-    if (!value) throw std::runtime_error(message);
-}
 
 void RunPassThrough() {
     std::vector<float> samples(512u * 8u);

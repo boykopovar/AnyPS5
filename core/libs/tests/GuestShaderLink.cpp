@@ -3,13 +3,13 @@
 #include "SceShaders.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceAgc/Shader/include/ShaderConstants.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 #include <span>
 
-static void Require(bool value) { if (!value) std::abort(); }
 static unsigned preparations = 0;
 static unsigned mappings = 0;
 static unsigned links = 0;

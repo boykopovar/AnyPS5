@@ -3,6 +3,7 @@
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "SceTypes.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <bit>
 #include <cstdlib>
@@ -10,8 +11,6 @@
 static constexpr int SCE_OK = 0;
 static constexpr unsigned MAX_HOST_CPUS = 256;
 static constexpr int CALLS_PER_THREAD = 64;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static bool InMask(int cpu, KernelCpumask mask) {
     return cpu >= 0 && cpu < 64 && (mask >> cpu & 1) != 0;

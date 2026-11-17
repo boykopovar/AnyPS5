@@ -2,6 +2,7 @@
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -9,8 +10,6 @@
 
 static constexpr int POSIX_EINVAL = 22;
 static constexpr std::size_t INITIAL_DEFAULT = 1u << 20;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static std::size_t NewAttrStackSize() {
     PthreadAttr attr = nullptr;

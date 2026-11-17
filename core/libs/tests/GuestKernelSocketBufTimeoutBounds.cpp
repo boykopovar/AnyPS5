@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdlib>
@@ -35,12 +36,6 @@ struct GuestTimeval {
     std::int64_t seconds;
     std::int64_t microseconds;
 };
-
-void Require(bool condition) {
-    if (!condition) {
-        std::abort();
-    }
-}
 
 int GetIntOption(int descriptor, int option) {
     int value = -1;

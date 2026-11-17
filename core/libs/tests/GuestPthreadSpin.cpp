@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
@@ -20,8 +21,6 @@ static constexpr int GUEST_EINVAL = 22;
 static constexpr int GuestPthread_Process_Private = 0;
 static constexpr int GuestPthread_Process_Shared = 1;
 static constexpr int Increments = 200000;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 class ReadOnlyPage {
 public:

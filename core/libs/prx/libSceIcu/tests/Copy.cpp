@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -12,11 +13,6 @@ namespace {
 
 using Buffer = std::array<char16_t, 32>;
 
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "ICU copy: %s\n", message);
-    std::abort();
-}
 
 Buffer Pattern() {
     Buffer result{};

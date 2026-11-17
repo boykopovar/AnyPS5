@@ -5,6 +5,7 @@
 #include "prx/libSceUserService/UserService.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -34,13 +35,6 @@ constexpr int InGameMessageInvalidArgument = static_cast<int>(0x80552B02u);
 constexpr int InGameMessageContextNotFound = static_cast<int>(0x80552B03u);
 constexpr int InGameMessageHandleNotFound = static_cast<int>(0x80552B05u);
 constexpr int InGameMessageNotConnected = static_cast<int>(0x80552B08u);
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "NpManager: %s\n", message);
-        std::abort();
-    }
-}
 
 struct StateCall {
     int calls;

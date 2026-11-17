@@ -1,11 +1,11 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <csignal>
 #include <cstdlib>
 #include <pthread.h>
 
 static constexpr int FaultSignals[] = {SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGTRAP};
-static void Require(bool value) { if (!value) std::abort(); }
 
 static void* APS5_VABI CheckMask(void* arg) {
     sigset_t mask;

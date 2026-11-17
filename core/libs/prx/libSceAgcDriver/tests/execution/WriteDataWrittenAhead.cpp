@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include "VulkanTestDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
@@ -36,10 +37,6 @@ struct DriverTestAccess {
 }
 
 namespace {
-
-void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 constexpr std::size_t BlockBytes = 65536;
 

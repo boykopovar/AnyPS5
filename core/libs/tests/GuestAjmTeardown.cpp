@@ -1,6 +1,7 @@
 #include "SceTypes.hpp"
 #include "prx/libSceAjm.native/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -34,12 +35,6 @@ struct SidebandResult {
 Functions ajm{};
 std::uint32_t context = 0;
 std::uint32_t instance = 0;
-
-[[noreturn]] void Fail(const char* message) {
-    std::fprintf(stderr, "%s\n", message);
-    std::fflush(stderr);
-    std::_Exit(1);
-}
 
 template <typename T>
 T Resolve(void* library, const char* name) {

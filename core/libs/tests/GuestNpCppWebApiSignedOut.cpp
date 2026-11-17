@@ -1,10 +1,9 @@
 #include "prx/libSceNpCppWebApi/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static constexpr int NotSignedIn = static_cast<int>(0x80552907);
 static constexpr int TransactionNotStarted = static_cast<int>(0x80553508);

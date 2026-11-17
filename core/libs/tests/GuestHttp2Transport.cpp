@@ -17,6 +17,7 @@
 #include "prx/libSceSsl/include/Ssl.hpp"
 #include "prx/libSceSsl/SslTypes.hpp"
 #include "SslCertificateFixture.hpp"
+#include "Testing.hpp"
 #include <mbedtls/ctr_drbg.h>
 #include <mbedtls/entropy.h>
 #include <mbedtls/net_sockets.h>
@@ -48,10 +49,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (!condition) { std::fprintf(stderr, "HTTP2: %s\n", message); std::abort(); }
-}
 
 template<class TCall>
 bool Throws(TCall call) {

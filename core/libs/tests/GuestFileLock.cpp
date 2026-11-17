@@ -2,6 +2,7 @@
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <barrier>
 #include <chrono>
@@ -15,10 +16,6 @@
 #include <windows.h>
 
 class FileStream;
-
-static void Require(bool condition) {
-    if (!condition) std::abort();
-}
 
 static int Duplicate(int source, int kind, int target = 20) {
     if (kind == 0) return dup_nid_postfix(source);

@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libSceLibreSsl/include/Ec.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <atomic>
@@ -10,13 +11,6 @@
 #include <limits>
 #include <stdexcept>
 #include <thread>
-
-static void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "%s\n", message);
-        std::abort();
-    }
-}
 
 using PkeyBitsFunction = int (APS5_VABI *)(const LibreSsl3EvpPkey*);
 

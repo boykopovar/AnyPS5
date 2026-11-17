@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceHttp/include/Http.hpp"
 #include "prx/libSceHttp/src/HttpErrors.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -28,13 +29,6 @@ void* operator new(std::size_t size) {
 
 void operator delete(void* memory) noexcept { std::free(memory); }
 void operator delete(void* memory, std::size_t) noexcept { ::operator delete(memory); }
-
-static void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "%s\n", message);
-        std::abort();
-    }
-}
 
 static bool Inactive() {
     int enabled = -1;

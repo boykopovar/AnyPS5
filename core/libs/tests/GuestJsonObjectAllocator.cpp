@@ -1,5 +1,6 @@
 #include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -20,9 +21,6 @@ struct TreeHeader { TreeNode* head; std::size_t count; std::uint64_t reserved; V
 struct Parameter { void* allocator; void* context; std::size_t bufferSize; std::int32_t mode; std::uint32_t reserved[3]; };
 static_assert(sizeof(TreeNode) == 104 && offsetof(TreeNode, pair) == 48 && offsetof(TreeNode, color) == 96);
 using ReadCallback = int (APS5_VABI*)(char&, void*);
-static void Require(bool valid, const char* message) {
-    if (!valid) { std::fprintf(stderr, "%s\n", message); std::abort(); }
-}
 struct ObjectAllocationTrace {
     std::map<void*, std::size_t> live;
     std::vector<std::size_t> requests;

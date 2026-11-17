@@ -1,5 +1,6 @@
 #include "prx/libc/libc.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <bit>
 #include <cstdio>
@@ -8,12 +9,6 @@
 #include <stdexcept>
 
 namespace {
-
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "sigvec: %s\n", message);
-    std::abort();
-}
 
 GuestSignalSet Mask() {
     GuestSignalSet value{};

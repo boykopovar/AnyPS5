@@ -1,6 +1,7 @@
 #include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -17,10 +18,6 @@ using namespace SceJson2;
 extern "C" const void* ApplicationProcessParameters_nid_no_patch() {
     static const std::uint32_t words[]{0, 0, 0, 0, 0x05000000};
     return words;
-}
-
-static void Require(bool value, const char* message) {
-    if (!value) { std::fprintf(stderr, "%s\n", message); std::abort(); }
 }
 
 static std::atomic<std::size_t> heapAllocations{0};

@@ -1,5 +1,6 @@
 #include "prx/libSceGnmDriver/include/Api.hpp"
 #include "prx/libkernel_sys/include/Api.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -14,10 +15,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool value, const char* message) {
-    if (!value) throw std::runtime_error(message);
-}
 
 void Put32(std::vector<std::uint8_t>& bytes, std::size_t at, std::uint32_t value) {
     std::memcpy(bytes.data() + at, &value, sizeof(value));

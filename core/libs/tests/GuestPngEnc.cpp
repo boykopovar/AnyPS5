@@ -2,13 +2,12 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "Decoder/Png.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <utility>
 #include <vector>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 int main() {
     constexpr int invalidAddr = static_cast<int>(0x80690101);

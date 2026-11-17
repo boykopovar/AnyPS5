@@ -1,4 +1,5 @@
 #include "Ngs2Test.hpp"
+#include "Testing.hpp"
 
 #include <algorithm>
 #include <array>
@@ -104,13 +105,6 @@ public:
     const std::uint32_t channels;
     const std::uintptr_t voice;
 };
-
-template <typename TFunction>
-static void RequireThrows(TFunction function) {
-    bool threw = false;
-    try { function(); } catch (const std::exception&) { threw = true; }
-    Require(threw);
-}
 
 static void SameState(Playback& actual, Playback& reference, const std::uint8_t* actualData,
                       const std::uint8_t* referenceData, std::uint32_t bytes) {
@@ -292,9 +286,9 @@ static void TestPitch(const PcmFixture& fixture) {
 static void TestBounds(const PcmFixture& fixture) {
     Playback playback(fixture.type, 2);
     const Ngs2WaveformBlock shortBlock{0, fixture.data.size() - 1, 1, 0, 4, 0, 0};
-    RequireThrows([&] { playback.Add(fixture.data.data(), &shortBlock, 1); });
+    ExpectErr([&] { playback.Add(fixture.data.data(), &shortBlock, 1); });
     const Ngs2WaveformBlock overflow{0, fixture.data.size(), 0, UINT32_MAX, UINT32_MAX, 0, 0};
-    RequireThrows([&] { playback.Add(fixture.data.data(), &overflow, 1, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_RESET); });
+    ExpectErr([&] { playback.Add(fixture.data.data(), &overflow, 1, SCE_NGS2_WAVEFORM_BLOCKS_FLAG_RESET); });
 }
 
 static void TestNumericEdges() {

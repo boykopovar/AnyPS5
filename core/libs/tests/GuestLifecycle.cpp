@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <cstdint>
 #include <cstring>
@@ -12,10 +13,6 @@
 #endif
 
 namespace {
-
-void Require(bool value) {
-    if (!value) throw std::runtime_error("lifecycle check failed");
-}
 
 int order = 0;
 int firstAt = -1;

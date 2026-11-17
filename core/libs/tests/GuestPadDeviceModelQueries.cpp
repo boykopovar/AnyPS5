@@ -1,9 +1,8 @@
 #include "SceTypes.hpp"
 #include "prx/libScePad/include/Pad.hpp"
+#include "Testing.hpp"
 #include <cstdlib>
 #include <initializer_list>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static void ExpectQueriesReturn(int expected) {
     for (const int handle : {-1, 0, PAD_HANDLE, PAD_HANDLE + 1, PAD_SPECIAL_HANDLE, PAD_REMOTE_HANDLE, 12345}) {

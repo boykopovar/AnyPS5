@@ -1,6 +1,7 @@
 #include "prx/libSceSystemService/include/SystemService.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdlib>
@@ -11,8 +12,6 @@ namespace {
 
 constexpr std::uint8_t Fill = 0xA5;
 constexpr int SystemServiceRejected = static_cast<int>(0x80A10005u);
-
-void Require(bool value) { if (!value) std::abort(); }
 
 template<typename TCall>
 bool Throws(TCall call) {

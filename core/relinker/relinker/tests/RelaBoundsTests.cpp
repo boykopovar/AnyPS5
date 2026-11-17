@@ -1,5 +1,6 @@
 #include "ElfFixture.hpp"
 #include "RelinkerProcess.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <iostream>
 #include <stdexcept>
@@ -8,10 +9,6 @@
 namespace {
 
 using namespace RelinkerTests;
-
-void require(const bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 const Bytes kCode = {0xC3};
 
@@ -34,8 +31,8 @@ void RunAndRequireRejected(const std::string& binary, const Bytes& image, const 
     const auto output = directory.Path() / "output.elf";
     WriteFile(input, image);
     const auto run = RunRelinker(binary, {"--skip-sce-module", "--to-intel", input.string(), output.string()}, directory.Path() / "relinker.log");
-    require(run.ExitCode != 0, "Relinker accepted a relocation table " + what + " and exited 0:\n" + run.Output);
-    require(run.Output.find("Relocation table is out of bounds") != std::string::npos,
+    Require(run.ExitCode != 0, "Relinker accepted a relocation table " + what + " and exited 0:\n" + run.Output);
+    Require(run.Output.find("Relocation table is out of bounds") != std::string::npos,
             "Relinker did not report the table as out of bounds for a table " + what + ":\n" + run.Output);
 }
 
@@ -43,7 +40,7 @@ void RunAndRequireRejected(const std::string& binary, const Bytes& image, const 
 
 int main(const int argc, char** argv) {
     try {
-        require(argc == 2, "usage: rela_bounds_tests <relinker>");
+        Require(argc == 2, "usage: rela_bounds_tests <relinker>");
         const std::string binary = argv[1];
 
         {

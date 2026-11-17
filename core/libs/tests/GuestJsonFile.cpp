@@ -1,6 +1,7 @@
 #include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -12,9 +13,6 @@
 using namespace SceJson2;
 
 struct Parameter { void* allocator; void* context; std::size_t bufferSize; std::int32_t mode; std::uint32_t reserved[3]; };
-static void Require(bool valid, const char* message) {
-    if (!valid) { std::fprintf(stderr, "%s\n", message); std::abort(); }
-}
 struct FileTrace {
     std::string_view input;
     std::size_t position = 0;

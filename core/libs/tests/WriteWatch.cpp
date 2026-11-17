@@ -1,4 +1,5 @@
 #include "prx/libc/include/GuestWriteWatch.hpp"
+#include "Testing.hpp"
 
 #include <algorithm>
 #include <array>
@@ -31,10 +32,6 @@
 using namespace GuestWriteWatch;
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 struct Region {
     explicit Region(std::size_t pageCount) : page(static_cast<std::size_t>(::getpagesize())), bytes(pageCount * page) {

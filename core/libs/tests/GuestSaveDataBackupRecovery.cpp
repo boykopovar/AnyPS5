@@ -2,6 +2,7 @@
 #include "prx/libSceSaveData/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -37,11 +38,6 @@ int calls = 0;
 bool failStep = false;
 int rollbackCall = 0;
 int rollbackCalls = 0;
-
-void Require(bool condition, const std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    throw std::runtime_error("backup recovery requirement failed at line " + std::to_string(location.line()));
-}
 
 std::string Read(const std::filesystem::path& path) {
     std::ifstream stream(path, std::ios::binary);

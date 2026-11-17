@@ -1,6 +1,7 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/File/include/KernelStatfs.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -14,14 +15,7 @@ int backendError;
 int guestError;
 int calls;
 
-void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "fstatvfs conversion check failed at line %d\n", line);
-        std::abort();
-    }
 }
-}
-#define Require(value) Check((value), __LINE__)
 
 extern "C" int* APS5_VABI __error_nid_postfix() { return &guestError; }
 

@@ -1,6 +1,7 @@
 #include "prx/libScePngEnc/include/Api.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "Decoder/Png.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <cerrno>
 #include <cstddef>
@@ -19,8 +20,6 @@
 static void ClobberErrno(std::uintptr_t, std::size_t) {
     errno = EACCES;
 }
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 struct PngEncContextMirror {
     std::uintptr_t self;

@@ -1,4 +1,5 @@
 #include "prx/libSceFreeTypeOt/include/Stream.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdint>
@@ -43,12 +44,6 @@ constexpr int InvalidArgument = 0x06;
 constexpr int OutOfMemory = 0x40;
 constexpr int InvalidStreamOperation = 0x55;
 constexpr auto Max = std::numeric_limits<std::uint64_t>::max();
-
-void Require(bool result, const char* message) {
-    if (result) return;
-    std::fprintf(stderr, "FreeType stream: %s\n", message);
-    std::exit(1);
-}
 
 template <class Call>
 bool Throws(Call call) {

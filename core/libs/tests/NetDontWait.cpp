@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceNet/include/Net.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <barrier>
@@ -17,12 +18,6 @@
 namespace {
 
 constexpr int DontWait = 0x80;
-
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "net dontwait: %s\n", message);
-    std::exit(1);
-}
 
 void SetOption(int descriptor, int option, int value) {
     Require(sceNetSetsockopt(descriptor, 0xffff, option, &value, sizeof(value)) == 0, "set socket option");

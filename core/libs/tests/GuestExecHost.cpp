@@ -3,6 +3,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel_sys/include/AdditionalExports.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -24,13 +25,6 @@ namespace {
 
 bool cleaned = false;
 
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "Exec fixture: %s\n", message);
-        std::fflush(stderr);
-        std::_Exit(98);
-    }
-}
 
 std::filesystem::path Root() {
 #ifdef _WIN32

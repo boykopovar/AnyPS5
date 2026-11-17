@@ -2,6 +2,7 @@
 #include <codegen/x86/IAmd64OnlyInstructionMatcher.hpp>
 #include <codegen/CodegenException.hpp>
 #include "LoweringExecution.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -22,10 +23,6 @@
 namespace {
 
 using Bytes = std::vector<std::uint8_t>;
-
-void require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 struct Form {
     std::uint8_t Opcode;
@@ -67,29 +64,29 @@ void decoding() {
                 for (std::uint8_t source = 0; source < 16; ++source) {
                     const auto bytes = maskedStore(form, wide, mask, source, 0, {0x07});
                     const auto operands = Codegen::DecodeMaskedStore(bytes.data(), bytes.size());
-                    require(operands && std::string(operands->Name) == form.Name && operands->ElementSize == form.ElementSize && operands->Wide == wide && operands->Mask == mask, "Masked store decoding changed the form, width or mask register");
-                    require(operands->Memory.Rm == 7 && operands->Memory.Mod == 0 && operands->Memory.RexIndexBase == 0 && operands->Instruction == bytes, "Masked store decoding changed the memory operand");
+                    Require(operands && std::string(operands->Name) == form.Name && operands->ElementSize == form.ElementSize && operands->Wide == wide && operands->Mask == mask, "Masked store decoding changed the form, width or mask register");
+                    Require(operands->Memory.Rm == 7 && operands->Memory.Mod == 0 && operands->Memory.RexIndexBase == 0 && operands->Instruction == bytes, "Masked store decoding changed the memory operand");
                 }
             }
         }
     }
     const auto extended = maskedStore(kForms[0], true, 3, 4, 3, {0x84, 0xD1, 0x78, 0x56, 0x34, 0x12}, {0x64, 0x67});
     const auto operands = Codegen::DecodeMaskedStore(extended.data(), extended.size());
-    require(operands && operands->Memory.RexIndexBase == 3 && operands->Memory.Sib == 0xD1 && operands->Memory.Displacement == 0x12345678 && operands->Memory.Prefixes == Bytes{0x64, 0x67}, "Masked store extensions, SIB or prefixes were lost");
+    Require(operands && operands->Memory.RexIndexBase == 3 && operands->Memory.Sib == 0xD1 && operands->Memory.Displacement == 0x12345678 && operands->Memory.Prefixes == Bytes{0x64, 0x67}, "Masked store extensions, SIB or prefixes were lost");
     const auto rip = maskedStore(kForms[1], false, 1, 2, 0, {0x05, 0x10, 0x00, 0x00, 0x00});
     const auto ripOperands = Codegen::DecodeMaskedStore(rip.data(), rip.size());
-    require(ripOperands && ripOperands->Memory.RipRelative && ripOperands->DisplacementOffset == 5 && ripOperands->Memory.Displacement == 0x10, "RIP-relative masked store was not recognised");
+    Require(ripOperands && ripOperands->Memory.RipRelative && ripOperands->DisplacementOffset == 5 && ripOperands->Memory.Displacement == 0x10, "RIP-relative masked store was not recognised");
     const auto stack = maskedStore(kForms[2], false, 1, 2, 0, {0x44, 0x24, 0x08});
     const auto stackOperands = Codegen::DecodeMaskedStore(stack.data(), stack.size());
-    require(stackOperands && stackOperands->Memory.StackBase && stackOperands->DisplacementOffset == 6, "RSP-based masked store was not recognised");
+    Require(stackOperands && stackOperands->Memory.StackBase && stackOperands->DisplacementOffset == 6, "RSP-based masked store was not recognised");
     for (const auto& bytes : {
              Bytes{0xC4, 0xE2, 0x75, 0x2C, 0x07}, Bytes{0xC4, 0xE2, 0x75, 0x2D, 0x07}, Bytes{0xC4, 0xE2, 0x75, 0x8C, 0x07},
              Bytes{0xC4, 0xE2, 0xF5, 0x2E, 0x07}, Bytes{0xC4, 0xE2, 0xF5, 0x2F, 0x07}, Bytes{0xC4, 0xE2, 0x75, 0x2E, 0xC7},
              Bytes{0xC4, 0xE1, 0x75, 0x2E, 0x07}, Bytes{0xC4, 0xE2, 0x74, 0x2E, 0x07}, Bytes{0xC5, 0xF5, 0x2E, 0x07},
              Bytes{0xC4, 0xE2, 0x75, 0x2E}, Bytes{0x66, 0xC4, 0xE2, 0x75, 0x2E, 0x07}})
-        require(!Codegen::DecodeMaskedStore(bytes.data(), bytes.size()), "A load, register form, other map or prefix matched a masked store");
-    require(rejected(Bytes{0xC4, 0xE2, 0x75, 0x2E, 0x07, 0x00}), "A masked store with trailing bytes was accepted");
-    require(rejected(Bytes{0xC4, 0xE2, 0x75, 0x2E, 0x47}), "A truncated masked store was accepted");
+        Require(!Codegen::DecodeMaskedStore(bytes.data(), bytes.size()), "A load, register form, other map or prefix matched a masked store");
+    Require(rejected(Bytes{0xC4, 0xE2, 0x75, 0x2E, 0x07, 0x00}), "A masked store with trailing bytes was accepted");
+    Require(rejected(Bytes{0xC4, 0xE2, 0x75, 0x2E, 0x47}), "A truncated masked store was accepted");
 }
 
 void body() {
@@ -102,15 +99,15 @@ void body() {
         0xF6, 0xC1, 0x01, 0x74, 0x0A, 0xF0, 0x80, 0x48, 0x00, 0x00, 0xF0, 0x80, 0x48, 0x07, 0x00,
         0xF6, 0xC1, 0x02, 0x74, 0x0A, 0xF0, 0x80, 0x48, 0x08, 0x00, 0xF0, 0x80, 0x48, 0x0F, 0x00,
         0x59, 0x58, 0x9D, 0x48, 0x8D, 0xA4, 0x24, 0x80, 0x00, 0x00, 0x00, 0xC4, 0xE2, 0x71, 0x2F, 0x17};
-    require(Bytes(lowered.Bytes.begin(), lowered.Bytes.begin() + static_cast<std::ptrdiff_t>(lowered.ReturnBranchOffset)) == expected, "VMASKMOVPD stub does not probe its elements before the store");
+    Require(Bytes(lowered.Bytes.begin(), lowered.Bytes.begin() + static_cast<std::ptrdiff_t>(lowered.ReturnBranchOffset)) == expected, "VMASKMOVPD stub does not probe its elements before the store");
     const auto segment = maskedStore(kForms[0], true, 9, 2, 0, {0x44, 0x24, 0x08}, {0x64});
     Codegen::StubBodyBuilder segmentBuilder;
     Codegen::EmitMaskedStore(segmentBuilder, *Codegen::DecodeMaskedStore(segment.data(), segment.size()));
     const auto segmentBody = segmentBuilder.Finish().Bytes;
     const Bytes lea{0x64, 0x48, 0x8D, 0x84, 0x24, 0xA0, 0x00, 0x00, 0x00, 0xC4, 0xC1, 0x7C, 0x50, 0xC9};
-    require(std::search(segmentBody.begin(), segmentBody.end(), lea.begin(), lea.end()) == segmentBody.begin() + 8, "RSP-based masked store address does not skip the spill frame");
+    Require(std::search(segmentBody.begin(), segmentBody.end(), lea.begin(), lea.end()) == segmentBody.begin() + 8, "RSP-based masked store address does not skip the spill frame");
     const Bytes probe{0x64, 0xF0, 0x80, 0x48, 0x1F, 0x00};
-    require(std::search(segmentBody.begin(), segmentBody.end(), probe.begin(), probe.end()) != segmentBody.end(), "Masked store probes lost the segment prefix");
+    Require(std::search(segmentBody.begin(), segmentBody.end(), probe.begin(), probe.end()) != segmentBody.end(), "Masked store probes lost the segment prefix");
     const auto overflow = maskedStore(kForms[0], false, 1, 2, 0, {0x84, 0x24, 0xFF, 0xFF, 0xFF, 0x7F});
     bool thrown = false;
     try {
@@ -119,7 +116,7 @@ void body() {
     } catch (const Codegen::CodegenException&) {
         thrown = true;
     }
-    require(thrown, "An overflowing stack displacement was silently wrapped");
+    Require(thrown, "An overflowing stack displacement was silently wrapped");
 }
 
 void matching() {
@@ -127,14 +124,14 @@ void matching() {
     const auto rosetta = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
     for (const auto& form : kForms) {
         const auto bytes = maskedStore(form, true, 1, 0, 0, {0x00});
-        require(!intel->Match(bytes.data(), bytes.size()), "Intel mode lowered a masked store");
+        Require(!intel->Match(bytes.data(), bytes.size()), "Intel mode lowered a masked store");
         const auto match = rosetta->Match(bytes.data(), bytes.size());
-        require(match && match->InstructionName == form.Name && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline && !match->Optional, "Rosetta mode did not require a masked store trampoline");
+        Require(match && match->InstructionName == form.Name && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline && !match->Optional, "Rosetta mode did not require a masked store trampoline");
         const std::array<std::span<const std::uint8_t>, 2> sequence{bytes, bytes};
-        require(rosetta->MatchSequence(sequence, {}).has_value(), "A masked store sequence could not move out of line");
+        Require(rosetta->MatchSequence(sequence, {}).has_value(), "A masked store sequence could not move out of line");
     }
     const Bytes load{0xC4, 0xE2, 0x75, 0x2C, 0x00};
-    require(!rosetta->Match(load.data(), load.size()), "Rosetta mode lowered a masked load");
+    Require(!rosetta->Match(load.data(), load.size()), "Rosetta mode lowered a masked load");
 }
 
 #if (defined(__linux__) || defined(__APPLE__)) && defined(__x86_64__)
@@ -253,7 +250,7 @@ const std::array kAddressings{
 
 void execution() {
     const auto region = static_cast<std::uint8_t*>(mmap(nullptr, (kDataPages + 2) * kPage, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
-    require(region != MAP_FAILED, "Cannot map masked store test pages");
+    Require(region != MAP_FAILED, "Cannot map masked store test pages");
     auto* const code = region;
     auto* const data = region + kPage;
     protectedPage = data + kDataPages * kPage;
@@ -279,7 +276,7 @@ void execution() {
                 const auto& addressing = kAddressings[mode];
                 const auto site = maskedStore(form, wide, addressing.Mask, addressing.Source, addressing.RexIndexBase, addressing.Memory);
                 const auto match = matcher->Match(site.data(), site.size());
-                require(match && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline, "Masked store stub was not produced");
+                Require(match && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline, "Masked store stub was not produced");
                 for (const int offset : {-40, -16, -4, -2, 0, 8}) {
                     auto* const target = protectedPage + offset;
                     const bool stackBased = mode == 4;
@@ -288,7 +285,7 @@ void execution() {
                     const auto siteAddress = mode == 5 ? reinterpret_cast<std::uint64_t>(target) - site.size() : reinterpret_cast<std::uint64_t>(code);
                     Codegen::ApplyStubRelocations(body, match->Relocations, siteAddress, reinterpret_cast<std::uint64_t>(code), 0);
                     body.at(match->ReturnBranchOffset) = 0xC3;
-                    require(body.size() <= kPage, "Masked store stub exceeds its code page");
+                    Require(body.size() <= kPage, "Masked store stub exceeds its code page");
                     std::memcpy(code, body.data(), body.size());
                     for (const auto pattern : patterns) {
                         Machine machine{};
@@ -317,10 +314,10 @@ void execution() {
                         machine.Stack = reinterpret_cast<std::uint64_t>(stack);
                         machine.Code = reinterpret_cast<std::uint64_t>(code);
                         const auto input = machine;
-                        require(mprotect(protectedPage, kPage, PROT_READ | PROT_WRITE) == 0, "Cannot unprotect the watched page");
+                        Require(mprotect(protectedPage, kPage, PROT_READ | PROT_WRITE) == 0, "Cannot unprotect the watched page");
                         std::memset(target - 16, kFill, 64);
                         std::memset(stack - 8 - 128, kSentinel, 128);
-                        require(mprotect(protectedPage, kPage, PROT_READ) == 0, "Cannot protect the watched page");
+                        Require(mprotect(protectedPage, kPage, PROT_READ) == 0, "Cannot protect the watched page");
                         faults = 0;
                         run(machine);
                         ++runs;
@@ -329,19 +326,19 @@ void execution() {
                             const bool active = (pattern >> element & 1) != 0;
                             for (unsigned byte = 0; byte < form.ElementSize; ++byte) {
                                 const auto at = element * form.ElementSize + byte;
-                                require(target[at] == (active ? input.Ymm[addressing.Source][at] : kFill), "Masked store wrote an inactive element or lost an active one");
+                                Require(target[at] == (active ? input.Ymm[addressing.Source][at] : kFill), "Masked store wrote an inactive element or lost an active one");
                                 touchesProtected = touchesProtected || (active && target + at >= protectedPage);
                             }
                         }
                         for (int at = -16; at < 0; ++at)
-                            require(target[at] == kFill, "Masked store wrote before its operand");
+                            Require(target[at] == kFill, "Masked store wrote before its operand");
                         for (unsigned at = elements * form.ElementSize; at < 48; ++at)
-                            require(target[at] == kFill, "Masked store wrote past its operand");
-                        require(faults == (touchesProtected ? 1 : 0), "Masked store stub did not fault exactly once on the protected page");
+                            Require(target[at] == kFill, "Masked store wrote past its operand");
+                        Require(faults == (touchesProtected ? 1 : 0), "Masked store stub did not fault exactly once on the protected page");
                         for (unsigned at = 0; at < 128; ++at)
-                            require(stack[-8 - 128 + static_cast<int>(at)] == kSentinel, "Masked store stub wrote into the red zone");
-                        require(std::memcmp(machine.Ymm, input.Ymm, sizeof(input.Ymm)) == 0, "Masked store stub changed a vector register");
-                        require(std::memcmp(machine.Gpr, input.Gpr, sizeof(input.Gpr)) == 0, "Masked store stub changed a general register");
+                            Require(stack[-8 - 128 + static_cast<int>(at)] == kSentinel, "Masked store stub wrote into the red zone");
+                        Require(std::memcmp(machine.Ymm, input.Ymm, sizeof(input.Ymm)) == 0, "Masked store stub changed a vector register");
+                        Require(std::memcmp(machine.Gpr, input.Gpr, sizeof(input.Gpr)) == 0, "Masked store stub changed a general register");
                         if ((machine.Flags & 0x8D5) != (input.Flags & 0x8D5)) {
                             char detail[256];
                             std::snprintf(detail, sizeof(detail), "Masked store stub changed the flags: %s %s, addressing %zu, offset %d, mask pattern 0x%02X, %d fault(s), flags 0x%03llX in, 0x%03llX out",
@@ -349,7 +346,7 @@ void execution() {
                                 static_cast<unsigned long long>(input.Flags & 0x8D5), static_cast<unsigned long long>(machine.Flags & 0x8D5));
                             throw std::runtime_error(detail);
                         }
-                        require(machine.Stack == input.Stack, "Masked store stub did not restore RSP");
+                        Require(machine.Stack == input.Stack, "Masked store stub did not restore RSP");
                     }
                 }
             }

@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstddef>
@@ -8,12 +9,6 @@
 #include <stdexcept>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL3 EC_GROUP_cmp check failed at line %u\n", location.line());
-    std::abort();
-}
 
 template <typename Function>
 bool RejectsNull(Function function) {

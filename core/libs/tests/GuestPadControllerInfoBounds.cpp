@@ -1,15 +1,10 @@
 #include "SceTypes.hpp"
 #include "prx/libScePad/include/Pad.hpp"
 #include "prx/libScePad/include/PadState.hpp"
+#include "Testing.hpp"
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
-
-static void Require(bool value) {
-    if (!value) {
-        std::abort();
-    }
-}
 
 int main() {
     PadControllerInformation info{};

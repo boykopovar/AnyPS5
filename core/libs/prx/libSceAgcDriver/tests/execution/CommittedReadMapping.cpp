@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
+#include "Testing.hpp"
 #include "VulkanTestDevice.hpp"
 #include <algorithm>
 #include <array>
@@ -15,9 +16,6 @@
 #endif
 
 namespace {
-void Require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 #ifdef _WIN32
 void Run() {
     constexpr std::size_t bytes = 65536;

@@ -1,4 +1,5 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -8,13 +9,6 @@
 #include <type_traits>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "WebCore helpers check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 using String = NKWebKit::WtfAbi::String;
 using AtomString = NKWebKit::WtfAbi::AtomString;

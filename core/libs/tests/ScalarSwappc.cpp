@@ -2,13 +2,13 @@
 #include "IntermediateRepresentation/IrProgram.hpp"
 #include "RdnaDecoder/RdnaScalarOpDecoder.hpp"
 #include "Translation/TranslationContext.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdio>
 #include <stdexcept>
 #include <string>
 
 using namespace ShaderRecompiler;
-static void Require(bool value) { if (!value) throw std::runtime_error("scalar swappc regression"); }
 
 template <typename Fn>
 static void ExpectThrow(const char* needle, Fn fn) {

@@ -25,6 +25,7 @@
 
 
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <algorithm>
 #include <array>
@@ -196,23 +197,7 @@ constexpr std::array<const char*, 95> expectedNames {
     "X-XSS-Protection",
 };
 
-void Require(bool condition, const char* message, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "HTTPHeaderMap line %u: %s\n", location.line(), message);
-        std::abort();
-    }
-}
 
-template<class TFunction>
-void RequireThrows(TFunction function) {
-    bool threw = false;
-    try {
-        function();
-    } catch (const std::exception&) {
-        threw = true;
-    }
-    Require(threw, "expected exception");
-}
 
 String Text(const char* text) {
     return _ZN3WTF10StringImpl6createEPKhj(reinterpret_cast<const unsigned char*>(text), std::strlen(text));
@@ -302,9 +287,9 @@ void TestNames() {
         Require(!removeEnum(&map, i) && !removeString(&map, canonical), "missing removal");
         guarded.Check();
     }
-    RequireThrows([] { nameString(-1); });
-    RequireThrows([] { nameString(95); });
-    RequireThrows([] { nameString(std::numeric_limits<int>::max()); });
+    ExpectErr([] { nameString(-1); });
+    ExpectErr([] { nameString(95); });
+    ExpectErr([] { nameString(std::numeric_limits<int>::max()); });
 }
 
 void TestValuesAndDuplicates() {
@@ -464,7 +449,7 @@ void TestStringLookup() {
     Expect(retained, u"second");
     set(&map, uncommon, Text(""));
     Require(lookupUncommon(&map, uncommon).impl != nullptr, "empty value is present");
-    RequireThrows([&] { lookup(nullptr, accept); });
+    ExpectErr([&] { lookup(nullptr, accept); });
 }
 
 void TestGrowth() {
@@ -527,54 +512,54 @@ void TestInvalidStorage() {
     auto name = Text("Accept");
     auto unknown = Text("X-Unknown");
     auto value = Text("value");
-    RequireThrows([] { construct1(nullptr); });
-    RequireThrows([] { construct2(nullptr); });
-    RequireThrows([&] { add(nullptr, name, value); });
-    RequireThrows([&] { set(nullptr, name, value); });
-    RequireThrows([&] { append(nullptr, name, value); });
-    RequireThrows([&] { removeString(nullptr, name); });
-    RequireThrows([] { removeEnum(nullptr, 0); });
-    RequireThrows([] { get(nullptr, 0); });
-    RequireThrows([] { containsEnum(nullptr, 0); });
-    RequireThrows([&] { containsString(nullptr, name); });
+    ExpectErr([] { construct1(nullptr); });
+    ExpectErr([] { construct2(nullptr); });
+    ExpectErr([&] { add(nullptr, name, value); });
+    ExpectErr([&] { set(nullptr, name, value); });
+    ExpectErr([&] { append(nullptr, name, value); });
+    ExpectErr([&] { removeString(nullptr, name); });
+    ExpectErr([] { removeEnum(nullptr, 0); });
+    ExpectErr([] { get(nullptr, 0); });
+    ExpectErr([] { containsEnum(nullptr, 0); });
+    ExpectErr([&] { containsString(nullptr, name); });
     Map broken {};
     broken.common = {nullptr, 1, 1};
-    RequireThrows([&] { get(&broken, 0); });
-    RequireThrows([&] { containsEnum(&broken, 0); });
-    RequireThrows([&] { removeEnum(&broken, 0); });
-    RequireThrows([&] { set(&broken, name, value); });
-    RequireThrows([&] { append(&broken, name, value); });
+    ExpectErr([&] { get(&broken, 0); });
+    ExpectErr([&] { containsEnum(&broken, 0); });
+    ExpectErr([&] { removeEnum(&broken, 0); });
+    ExpectErr([&] { set(&broken, name, value); });
+    ExpectErr([&] { append(&broken, name, value); });
     broken = {};
     broken.uncommon = {nullptr, 1, 1};
-    RequireThrows([&] { containsString(&broken, unknown); });
-    RequireThrows([&] { removeString(&broken, unknown); });
-    RequireThrows([&] { add(&broken, unknown, value); });
+    ExpectErr([&] { containsString(&broken, unknown); });
+    ExpectErr([&] { removeString(&broken, unknown); });
+    ExpectErr([&] { add(&broken, unknown, value); });
     broken = {};
     broken.common = {nullptr, 3, 0};
-    RequireThrows([&] { append(&broken, name, value); });
+    ExpectErr([&] { append(&broken, name, value); });
     broken = {};
     broken.common = {nullptr, 0, 1};
-    RequireThrows([&] { get(&broken, 0); });
+    ExpectErr([&] { get(&broken, 0); });
     StringImpl invalid {2, 6, nullptr, 4};
     String bad(&invalid);
-    RequireThrows([&] { containsString(&broken, bad); });
+    ExpectErr([&] { containsString(&broken, bad); });
     bad.impl = nullptr;
     Guarded guarded;
     set(&guarded.map, name, value);
     StringImpl huge {2, std::numeric_limits<unsigned>::max(), nullptr, 4};
     String overflow(&huge);
-    RequireThrows([&] { add(&guarded.map, name, overflow); });
+    ExpectErr([&] { add(&guarded.map, name, overflow); });
     overflow.impl = nullptr;
     Common dummy {0, String()};
     broken = {};
     const auto maximum = std::numeric_limits<unsigned>::max() / sizeof(Common);
     broken.common = {&dummy, static_cast<unsigned>(maximum), static_cast<unsigned>(maximum)};
-    RequireThrows([&] { append(&broken, name, value); });
+    ExpectErr([&] { append(&broken, name, value); });
     broken.common.size = broken.common.capacity = static_cast<unsigned>(maximum - 1);
-    RequireThrows([&] { append(&broken, name, value); });
+    ExpectErr([&] { append(&broken, name, value); });
     StringImpl noData {2, 1, nullptr, 4};
     String inaccessible(&noData);
-    RequireThrows([&] { add(&guarded.map, name, inaccessible); });
+    ExpectErr([&] { add(&guarded.map, name, inaccessible); });
     inaccessible.impl = nullptr;
 }
 

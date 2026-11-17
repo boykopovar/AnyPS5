@@ -2,6 +2,7 @@
 #include "prx/libSceHmd/Hmd.hpp"
 #include "prx/libSceHmd/include/Api.hpp"
 #include "prx/libSceHmd/include/InventoryExports.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cerrno>
@@ -19,13 +20,6 @@ constexpr std::uint32_t LastSdkBeforeStartupState = 0x044fffff;
 constexpr std::uint32_t FirstSdkWithStartupState = 0x04500000;
 
 alignas(16) std::array<std::byte, 0x40> process{};
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "HMD: %s\n", message);
-        std::abort();
-    }
-}
 
 void InstallProcessParameters() {
     const std::uint64_t size = process.size();

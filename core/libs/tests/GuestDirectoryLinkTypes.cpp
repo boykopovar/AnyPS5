@@ -2,6 +2,7 @@
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -12,14 +13,6 @@
 #include <fstream>
 #include <map>
 #include <string>
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "Directory link type check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static constexpr std::uint8_t TypeDirectory = 4;
 static constexpr std::uint8_t TypeRegular = 8;

@@ -11,16 +11,9 @@
 #include <stdexcept>
 #include <thread>
 #include "../prx/libSceUlt/Export.cpp"
+#include "Testing.hpp"
 
 namespace {
-
-void Require(bool value, int line) {
-    if (value) return;
-    std::fprintf(stderr, "ULT lifecycle check failed at line %d\n", line);
-    std::abort();
-}
-
-#define CHECK(value) Require((value), __LINE__)
 
 struct alignas(8) Runtime { std::byte bytes[4096]{}; };
 struct alignas(8) Thread { std::byte bytes[512]{}; };
@@ -62,35 +55,35 @@ bool gateCreate = false;
 #endif
 
 void Await(std::binary_semaphore& gate) {
-    CHECK(gate.try_acquire_for(std::chrono::seconds(2)));
+    Require(gate.try_acquire_for(std::chrono::seconds(2)));
 }
 
 std::int32_t APS5_VABI Entry(std::uint64_t argument) {
     void* self = nullptr;
-    CHECK(sceUltUlthreadGetSelf(&self) == ULT_OK && self != nullptr);
-    CHECK(sceUltUlthreadYield() == ULT_OK);
+    Require(sceUltUlthreadGetSelf(&self) == ULT_OK && self != nullptr);
+    Require(sceUltUlthreadYield() == ULT_OK);
     return static_cast<std::int32_t>(argument);
 }
 
 void Create(Runtime& runtime, Thread& thread) {
-    CHECK(sceUltUlthreadRuntimeCreate(&runtime, "runtime", 1, 1, nullptr, nullptr, 0) == ULT_OK);
-    CHECK(sceUltUlthreadCreate(&thread, "thread", Entry, 73, nullptr, 0, &runtime, nullptr, 0) == ULT_OK);
+    Require(sceUltUlthreadRuntimeCreate(&runtime, "runtime", 1, 1, nullptr, nullptr, 0) == ULT_OK);
+    Require(sceUltUlthreadCreate(&thread, "thread", Entry, 73, nullptr, 0, &runtime, nullptr, 0) == ULT_OK);
     entryFinished.wait(false);
 }
 
 void Finish(Runtime& runtime, Thread& thread) {
     std::int32_t status = -1;
-    CHECK(sceUltUlthreadJoin(&thread, &status) == ULT_OK && status == 73);
-    CHECK(hostThreads.load() == 0);
-    CHECK(sceUltUlthreadJoin(&thread, &status) == ULT_ERROR_STATE && status == 73);
-    CHECK(sceUltUlthreadRuntimeDestroy(&runtime) == ULT_OK);
-    CHECK(sceUltFinalize() == ULT_OK);
+    Require(sceUltUlthreadJoin(&thread, &status) == ULT_OK && status == 73);
+    Require(hostThreads.load() == 0);
+    Require(sceUltUlthreadJoin(&thread, &status) == ULT_ERROR_STATE && status == 73);
+    Require(sceUltUlthreadRuntimeDestroy(&runtime) == ULT_OK);
+    Require(sceUltFinalize() == ULT_OK);
 }
 
 void CreateFailure(int failure) {
     Runtime runtime;
     Thread thread;
-    CHECK(sceUltUlthreadRuntimeCreate(&runtime, "runtime", 1, 1, nullptr, nullptr, 0) == ULT_OK);
+    Require(sceUltUlthreadRuntimeCreate(&runtime, "runtime", 1, 1, nullptr, nullptr, 0) == ULT_OK);
     createFailure = failure;
     bool threw = false;
     int result = ULT_OK;
@@ -99,17 +92,17 @@ void CreateFailure(int failure) {
     } catch (const std::runtime_error&) {
         threw = true;
     }
-    CHECK(threw == (failure != 1));
-    if (failure == 1) CHECK(result == ULT_ERROR_AGAIN);
+    Require(threw == (failure != 1));
+    if (failure == 1) Require(result == ULT_ERROR_AGAIN);
     if (failure == 3) {
-        CHECK(sceUltFinalize() == ULT_ERROR_BUSY);
-        CHECK(sceUltUlthreadRuntimeDestroy(&runtime) == ULT_ERROR_STATE);
+        Require(sceUltFinalize() == ULT_ERROR_BUSY);
+        Require(sceUltUlthreadRuntimeDestroy(&runtime) == ULT_ERROR_STATE);
         Finish(runtime, thread);
         return;
     }
-    CHECK(hostThreads.load() == 0 && !entryFinished.load());
-    CHECK(sceUltUlthreadTryJoin(&thread, nullptr) == ULT_ERROR_STATE);
-    CHECK(sceUltUlthreadCreate(&thread, "retry", Entry, 73, nullptr, 0, &runtime, nullptr, 0) == ULT_OK);
+    Require(hostThreads.load() == 0 && !entryFinished.load());
+    Require(sceUltUlthreadTryJoin(&thread, nullptr) == ULT_ERROR_STATE);
+    Require(sceUltUlthreadCreate(&thread, "retry", Entry, 73, nullptr, 0, &runtime, nullptr, 0) == ULT_OK);
     Finish(runtime, thread);
 }
 
@@ -125,19 +118,19 @@ void Ownership(bool nonblocking) {
     });
     Await(joining);
     std::int32_t secondStatus = -2;
-    CHECK(sceUltUlthreadJoin(&thread, &secondStatus) == ULT_ERROR_STATE && secondStatus == -2);
-    CHECK(sceUltUlthreadTryJoin(&thread, &secondStatus) == ULT_ERROR_STATE && secondStatus == -2);
-    CHECK(joinCalls.load() == 1);
-    CHECK(sceUltUlthreadCreate(&thread, "replacement", Entry, 74, nullptr, 0, &runtime, nullptr, 0) == ULT_ERROR_STATE);
-    CHECK(sceUltUlthreadRuntimeDestroy(&runtime) == ULT_ERROR_STATE);
-    CHECK(sceUltFinalize() == ULT_ERROR_BUSY);
+    Require(sceUltUlthreadJoin(&thread, &secondStatus) == ULT_ERROR_STATE && secondStatus == -2);
+    Require(sceUltUlthreadTryJoin(&thread, &secondStatus) == ULT_ERROR_STATE && secondStatus == -2);
+    Require(joinCalls.load() == 1);
+    Require(sceUltUlthreadCreate(&thread, "replacement", Entry, 74, nullptr, 0, &runtime, nullptr, 0) == ULT_ERROR_STATE);
+    Require(sceUltUlthreadRuntimeDestroy(&runtime) == ULT_ERROR_STATE);
+    Require(sceUltFinalize() == ULT_ERROR_BUSY);
     releaseJoin.release();
     first.join();
-    CHECK(firstResult == ULT_OK && firstStatus == 73 && hostThreads.load() == 0);
-    CHECK(sceUltUlthreadTryJoin(&thread, &secondStatus) == ULT_ERROR_STATE && secondStatus == -2);
+    Require(firstResult == ULT_OK && firstStatus == 73 && hostThreads.load() == 0);
+    Require(sceUltUlthreadTryJoin(&thread, &secondStatus) == ULT_ERROR_STATE && secondStatus == -2);
     gateJoin = false;
     entryFinished.store(false);
-    CHECK(sceUltUlthreadCreate(&thread, "replacement", Entry, 73, nullptr, 0, &runtime, nullptr, 0) == ULT_OK);
+    Require(sceUltUlthreadCreate(&thread, "replacement", Entry, 73, nullptr, 0, &runtime, nullptr, 0) == ULT_OK);
     Finish(runtime, thread);
 }
 
@@ -156,11 +149,11 @@ void JoinFailure(int failure) {
     } catch (const std::runtime_error&) {
         threw = true;
     }
-    CHECK(threw == (failure >= 2));
-    if (!threw) CHECK(result == ULT_ERROR_STATE);
-    CHECK(status == -1 && hostThreads.load() == 1);
+    Require(threw == (failure >= 2));
+    if (!threw) Require(result == ULT_ERROR_STATE);
+    Require(status == -1 && hostThreads.load() == 1);
     if (failure == 3) {
-        CHECK(sentinelExecutions == 1 && ThreadCancel::CleanupMark() == before);
+        Require(sentinelExecutions == 1 && ThreadCancel::CleanupMark() == before);
         std::thread replacement([&] { Finish(runtime, thread); });
         replacement.join();
     } else Finish(runtime, thread);
@@ -170,28 +163,28 @@ void JoinFailure(int failure) {
 void Publication() {
     Runtime runtime;
     Thread thread;
-    CHECK(sceUltUlthreadRuntimeCreate(&runtime, "runtime", 1, 1, nullptr, nullptr, 0) == ULT_OK);
+    Require(sceUltUlthreadRuntimeCreate(&runtime, "runtime", 1, 1, nullptr, nullptr, 0) == ULT_OK);
     gateCreate = true;
     std::thread creator([&] {
-        CHECK(sceUltUlthreadCreate(&thread, "thread", Entry, 73, nullptr, 0, &runtime, nullptr, 0) == ULT_OK);
+        Require(sceUltUlthreadCreate(&thread, "thread", Entry, 73, nullptr, 0, &runtime, nullptr, 0) == ULT_OK);
     });
     Await(creating);
     std::int32_t status = -1;
     std::thread joiner([&] {
         actor = 2;
-        CHECK(sceUltUlthreadJoin(&thread, &status) == ULT_OK);
+        Require(sceUltUlthreadJoin(&thread, &status) == ULT_OK);
     });
     Await(registryAttempt);
     const bool registryAvailable = gMutex.try_lock();
     if (registryAvailable) gMutex.unlock();
-    CHECK(!registryAvailable && joinCalls.load() == 0);
+    Require(!registryAvailable && joinCalls.load() == 0);
     releaseRegistryAttempt.release();
     releaseCreate.release();
     creator.join();
     joiner.join();
-    CHECK(status == 73 && hostThreads.load() == 0);
-    CHECK(sceUltUlthreadRuntimeDestroy(&runtime) == ULT_OK);
-    CHECK(sceUltFinalize() == ULT_OK);
+    Require(status == 73 && hostThreads.load() == 0);
+    Require(sceUltUlthreadRuntimeDestroy(&runtime) == ULT_OK);
+    Require(sceUltFinalize() == ULT_OK);
 }
 
 std::int32_t APS5_VABI Replacement(std::uint64_t argument) {
@@ -215,24 +208,24 @@ void Generation() {
     std::int32_t contenderStatus = -2;
     const int contender = sceUltUlthreadJoin(&thread, &contenderStatus);
     if (contender == ULT_OK) {
-        CHECK(contenderStatus == 73);
-        CHECK(sceUltUlthreadCreate(&thread, "replacement", Replacement, 92, nullptr, 0, &runtime, nullptr, 0) == ULT_OK);
+        Require(contenderStatus == 73);
+        Require(sceUltUlthreadCreate(&thread, "replacement", Replacement, 92, nullptr, 0, &runtime, nullptr, 0) == ULT_OK);
         Await(replacementStarted);
     } else {
-        CHECK(contender == ULT_ERROR_STATE && contenderStatus == -2);
-        CHECK(sceUltUlthreadCreate(&thread, "replacement", Replacement, 92, nullptr, 0, &runtime, nullptr, 0) == ULT_ERROR_STATE);
+        Require(contender == ULT_ERROR_STATE && contenderStatus == -2);
+        Require(sceUltUlthreadCreate(&thread, "replacement", Replacement, 92, nullptr, 0, &runtime, nullptr, 0) == ULT_ERROR_STATE);
     }
     releaseSelection.release();
     original.join();
-    CHECK(originalGeneration.load() == 73 && originalResult == ULT_OK && originalStatus == 73);
-    CHECK(contender == ULT_ERROR_STATE && hostThreads.load() == 0);
-    CHECK(sceUltUlthreadCreate(&thread, "replacement", Replacement, 92, nullptr, 0, &runtime, nullptr, 0) == ULT_OK);
+    Require(originalGeneration.load() == 73 && originalResult == ULT_OK && originalStatus == 73);
+    Require(contender == ULT_ERROR_STATE && hostThreads.load() == 0);
+    Require(sceUltUlthreadCreate(&thread, "replacement", Replacement, 92, nullptr, 0, &runtime, nullptr, 0) == ULT_OK);
     Await(replacementStarted);
-    CHECK(sceUltUlthreadTryJoin(&thread, &contenderStatus) == ULT_ERROR_AGAIN && contenderStatus == -2);
+    Require(sceUltUlthreadTryJoin(&thread, &contenderStatus) == ULT_ERROR_AGAIN && contenderStatus == -2);
     releaseReplacement.release();
-    CHECK(sceUltUlthreadJoin(&thread, &contenderStatus) == ULT_OK && contenderStatus == 92);
-    CHECK(sceUltUlthreadRuntimeDestroy(&runtime) == ULT_OK);
-    CHECK(sceUltFinalize() == ULT_OK);
+    Require(sceUltUlthreadJoin(&thread, &contenderStatus) == ULT_OK && contenderStatus == 92);
+    Require(sceUltUlthreadRuntimeDestroy(&runtime) == ULT_OK);
+    Require(sceUltFinalize() == ULT_OK);
 }
 
 void CleanupSetup() {
@@ -247,7 +240,7 @@ void CleanupSetup() {
     } catch (const std::runtime_error&) {
         threw = true;
     }
-    CHECK(threw && status == -1 && joinCalls.load() == 0);
+    Require(threw && status == -1 && joinCalls.load() == 0);
     std::thread replacement([&] { Finish(runtime, thread); });
     replacement.join();
 }
@@ -316,7 +309,7 @@ int APS5_VABI scePthreadJoin(Pthread value, void** result) {
     const int call = joinCalls.fetch_add(1);
 #ifdef ULT_LIFECYCLE_INTERPOSE
     if (actor == 1) {
-        CHECK(value != nullptr);
+        Require(value != nullptr);
         const auto generation = reinterpret_cast<HostThread*>(value)->generation;
         originalGeneration.store(generation);
         if (generation != 73) return 22;
@@ -336,7 +329,7 @@ int APS5_VABI scePthreadJoin(Pthread value, void** result) {
         __pthread_cleanup_pop_imp_nid_postfix(1);
         throw std::runtime_error("Injected failure after cancellation cleanup");
     }
-    CHECK(value != nullptr);
+    Require(value != nullptr);
     std::unique_ptr<HostThread> state(reinterpret_cast<HostThread*>(value));
     state->thread.join();
     if (result != nullptr) *result = state->result;
@@ -347,7 +340,7 @@ int APS5_VABI scePthreadJoin(Pthread value, void** result) {
 }
 
 int main(int argc, char** argv) {
-    CHECK(argc == 2);
+    Require(argc == 2);
     if (std::strcmp(argv[1], "create-error") == 0) CreateFailure(1);
     else if (std::strcmp(argv[1], "create-exception") == 0) CreateFailure(2);
     else if (std::strcmp(argv[1], "published-exception") == 0) CreateFailure(3);
@@ -361,5 +354,5 @@ int main(int argc, char** argv) {
     else if (std::strcmp(argv[1], "generation") == 0) Generation();
     else if (std::strcmp(argv[1], "cleanup-setup") == 0) CleanupSetup();
 #endif
-    else CHECK(false);
+    else Require(false);
 }

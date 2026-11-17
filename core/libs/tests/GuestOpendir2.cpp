@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/GuestDirectory.hpp"
+#include "Testing.hpp"
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -46,8 +47,6 @@ std::int64_t APS5_VABI FakeSeek(int, std::int64_t, int) {
 }
 
 }
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static std::map<std::string, int> Entries(void* directory) {
     std::map<std::string, int> entries;

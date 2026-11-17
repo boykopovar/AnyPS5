@@ -44,9 +44,7 @@ void Run() {
 namespace UdtitvfmtCloseResult {
 
 using IcuRecoveredTest::Filler;
-using IcuRecoveredTest::Require;
 using IcuRecoveredTest::RequireNoThrow;
-using IcuRecoveredTest::RequireThrows;
 using IcuRecoveredTest::Unchanged;
 
 static_assert(std::is_same_v<decltype(&udtitvfmt_closeResult_nid_postfix), void (APS5_VABI*)(UFormattedDateInterval*)>);
@@ -56,17 +54,15 @@ void Run() {
     RequireNoThrow([] { udtitvfmt_closeResult_nid_postfix(nullptr); });
 
     const auto storage = Filler();
-    RequireThrows([&] { udtitvfmt_closeResult_nid_postfix(reinterpret_cast<UFormattedDateInterval*>(const_cast<std::uint32_t*>(storage.data()))); });
+    ExpectErr([&] { udtitvfmt_closeResult_nid_postfix(reinterpret_cast<UFormattedDateInterval*>(const_cast<std::uint32_t*>(storage.data()))); });
     Require(Unchanged(storage));
-    RequireThrows([&] { udtitvfmt_closeResult_nid_postfix(reinterpret_cast<UFormattedDateInterval*>(std::uintptr_t{1})); });
+    ExpectErr([&] { udtitvfmt_closeResult_nid_postfix(reinterpret_cast<UFormattedDateInterval*>(std::uintptr_t{1})); });
 }
 
 } // namespace UdtitvfmtCloseResult
 
 namespace UdtitvfmtFormatCalendarToResult {
 
-using IcuRecoveredTest::Require;
-using IcuRecoveredTest::RequireThrows;
 
 static_assert(std::is_same_v<decltype(&udtitvfmt_formatCalendarToResult_nid_postfix),
                              void (APS5_VABI*)(const UDateIntervalFormat*, UCalendar*, UCalendar*, UFormattedDateInterval*, std::int32_t*)>);
@@ -109,16 +105,14 @@ void Run() {
         Require(formatterStorage == 0x11111111 && fromStorage == 0x22222222 && toStorage == 0x33333333);
     }
 
-    RequireThrows([&] { udtitvfmt_formatCalendarToResult_nid_postfix(nullptr, nullptr, nullptr, nullptr, nullptr); });
-    RequireThrows([&] { udtitvfmt_formatCalendarToResult_nid_postfix(formatter, fromCalendar, toCalendar, result, nullptr); });
+    ExpectErr([&] { udtitvfmt_formatCalendarToResult_nid_postfix(nullptr, nullptr, nullptr, nullptr, nullptr); });
+    ExpectErr([&] { udtitvfmt_formatCalendarToResult_nid_postfix(formatter, fromCalendar, toCalendar, result, nullptr); });
 }
 
 } // namespace UdtitvfmtFormatCalendarToResult
 
 namespace UdtitvfmtFormatToResult {
 
-using IcuRecoveredTest::Require;
-using IcuRecoveredTest::RequireThrows;
 
 static_assert(std::is_same_v<decltype(&udtitvfmt_formatToResult_nid_postfix),
                              void (APS5_VABI*)(const UDateIntervalFormat*, double, double, UFormattedDateInterval*, std::int32_t*)>);
@@ -173,12 +167,12 @@ void ForeignResultThrowsWithoutTouchingIt() {
 
         for (std::int32_t incoming : {ZeroError, WarningStart, NotTerminatedWarning, -1}) {
             std::int32_t status = incoming;
-            RequireThrows([&] { udtitvfmt_formatToResult_nid_postfix(nullptr, 10.0, 20.0, forged, &status); });
+            ExpectErr([&] { udtitvfmt_formatToResult_nid_postfix(nullptr, 10.0, 20.0, forged, &status); });
             Require(status == incoming);
             Require(raw == snapshot);
 
             status = incoming;
-            RequireThrows([&] {
+            ExpectErr([&] {
                 udtitvfmt_formatToResult_nid_postfix(unalignedFormatter, -50.0, 50.0, forged, &status);
             });
             Require(status == incoming);
@@ -188,13 +182,13 @@ void ForeignResultThrowsWithoutTouchingIt() {
 }
 
 void UnsupportedPathsThrow() {
-    RequireThrows([] { udtitvfmt_formatToResult_nid_postfix(nullptr, 0.0, 0.0, nullptr, nullptr); });
+    ExpectErr([] { udtitvfmt_formatToResult_nid_postfix(nullptr, 0.0, 0.0, nullptr, nullptr); });
 
     alignas(8) std::array<std::uint8_t, 32> raw{};
     auto* nonNullResult = reinterpret_cast<UFormattedDateInterval*>(raw.data());
     for (std::int32_t incoming : {ZeroError, NotTerminatedWarning, -1}) {
         std::int32_t status = incoming;
-        RequireThrows([&] { udtitvfmt_formatToResult_nid_postfix(nullptr, 0.0, 1000.0, nonNullResult, &status); });
+        ExpectErr([&] { udtitvfmt_formatToResult_nid_postfix(nullptr, 0.0, 1000.0, nonNullResult, &status); });
         Require(status == incoming);
     }
 }
@@ -212,8 +206,6 @@ void Run() {
 
 namespace UdtitvfmtOpen {
 
-using IcuRecoveredTest::Require;
-using IcuRecoveredTest::RequireThrows;
 
 static_assert(std::is_same_v<decltype(&udtitvfmt_open_nid_postfix),
                              UDateIntervalFormat* (APS5_VABI*)(const char*, const char16_t*, std::int32_t, const char16_t*, std::int32_t, std::int32_t*)>);
@@ -279,8 +271,8 @@ void ArgumentValidation() {
 }
 
 void NullStatusThrows() {
-    RequireThrows([&] { udtitvfmt_open_nid_postfix("en_US", u"yMMMd", -1, nullptr, 0, nullptr); });
-    RequireThrows([&] { udtitvfmt_open_nid_postfix(nullptr, nullptr, 1, nullptr, 0, nullptr); });
+    ExpectErr([&] { udtitvfmt_open_nid_postfix("en_US", u"yMMMd", -1, nullptr, 0, nullptr); });
+    ExpectErr([&] { udtitvfmt_open_nid_postfix(nullptr, nullptr, 1, nullptr, 0, nullptr); });
 }
 
 } // namespace
@@ -296,9 +288,7 @@ void Run() {
 namespace UdtitvfmtOpenResult {
 
 using IcuRecoveredTest::Filler;
-using IcuRecoveredTest::Require;
 using IcuRecoveredTest::RequireNoThrow;
-using IcuRecoveredTest::RequireThrows;
 using IcuRecoveredTest::Unchanged;
 
 static_assert(std::is_same_v<decltype(&udtitvfmt_openResult_nid_postfix), UFormattedDateInterval* (APS5_VABI*)(std::int32_t*)>);
@@ -314,11 +304,11 @@ void Run() {
 
     for (const auto incoming : passing) {
         std::int32_t status = incoming;
-        RequireThrows([&] { udtitvfmt_openResult_nid_postfix(&status); });
+        ExpectErr([&] { udtitvfmt_openResult_nid_postfix(&status); });
         Require(status == incoming);
     }
 
-    RequireThrows([&] { udtitvfmt_openResult_nid_postfix(nullptr); });
+    ExpectErr([&] { udtitvfmt_openResult_nid_postfix(nullptr); });
 }
 
 } // namespace UdtitvfmtOpenResult

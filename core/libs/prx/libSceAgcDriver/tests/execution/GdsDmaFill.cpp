@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "Testing.hpp"
 #include "VulkanTestDevice.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -53,17 +54,13 @@ constexpr std::array<std::uint32_t, 25> AppendProgram{
     0xbf810000,
 };
 
-void check(bool condition, const std::string& what) {
-    if (!condition) throw std::runtime_error("GDS DMA fill: " + what);
-}
-
 std::uint8_t* GuestBlock() {
 #ifdef _WIN32
     auto* block = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, BlockBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
 #else
     auto* block = static_cast<std::uint8_t*>(std::aligned_alloc(65536, BlockBytes));
 #endif
-    check(block != nullptr, "cannot allocate a guest block");
+    Require(block != nullptr, "cannot allocate a guest block");
     std::memset(block, 0, BlockBytes);
     GuestAllocations::Mutation().Add(block, BlockBytes, true, true, true);
     return block;
@@ -107,7 +104,7 @@ std::array<std::uint32_t, 3> SetShaderRegister(std::uint32_t offset, std::uint32
 
 void Submit(std::vector<std::uint32_t> words) {
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
-    check(sceAgcDriverSubmitDcb(&packet) == 0, "submission failed");
+    Require(sceAgcDriverSubmitDcb(&packet) == 0, "submission failed");
 }
 
 void AppendDispatch(std::vector<std::uint32_t>& words, const void* code, const void* output) {
@@ -132,7 +129,7 @@ void ExpectGds(std::uint8_t* readBack, std::uint32_t value, const char* what) {
     AgcDriverWaitIdle_nid_postfix();
     std::array<std::uint32_t, FillBytes / 4> read{};
     AgcDriver::GuestMemory::Read(Address(readBack), std::as_writable_bytes(std::span(read)), 4);
-    for (const auto word : read) check(word == value, what);
+    for (const auto word : read) Require(word == value, what);
 }
 
 }
@@ -148,9 +145,9 @@ int main() {
         if (!device) return VulkanTestSkipped;
         using namespace AgcDriver::DriverDetail;
         const bool sharedMapping = AgcDriver::Pm4::GdsShared();
-        check(sharedMapping == (AgcDriver::Pm4::ImportableGdsRequested() && std::getenv("APS5_NO_SHARED_GDS") == nullptr), sharedMapping ? "the GDS is in shared memory although that was not requested or is switched off" : "the GDS kept its private mapping although shared memory was requested");
+        Require(sharedMapping == (AgcDriver::Pm4::ImportableGdsRequested() && std::getenv("APS5_NO_SHARED_GDS") == nullptr), sharedMapping ? "the GDS is in shared memory although that was not requested or is switched off" : "the GDS kept its private mapping although shared memory was requested");
         const bool shared = AgcDriver::Pm4::GdsImportable();
-        check(!shared || sharedMapping, "the GDS counts as importable without a shared mapping");
+        Require(!shared || sharedMapping, "the GDS counts as importable without a shared mapping");
         if (sharedMapping && !shared) std::printf("the device refused the host import of the shared GDS: the copy path is checked\n");
         auto* readBack = GuestBlock();
         auto* filled = GuestBlock();
@@ -174,9 +171,9 @@ int main() {
         Append(words, FillGds(0x5eed1234u));
         Submit(std::move(words));
         AgcDriverWaitIdle_nid_postfix();
-        check(storesDrained.load() == drainedBefore, "an immediate DMA_DATA fill of GDS drained the device");
+        Require(storesDrained.load() == drainedBefore, "an immediate DMA_DATA fill of GDS drained the device");
         if (dmaFills.load() == fillsBefore) std::printf("buffer fill not recorded: the device does not store fills into imported guest memory\n");
-        check(storesOnGpu.load() + storesBehindCompletions.load() == gpuBefore, "the fill of GDS after recorded work was recorded as a GPU store over the GDS");
+        Require(storesOnGpu.load() + storesBehindCompletions.load() == gpuBefore, "the fill of GDS after recorded work was recorded as a GPU store over the GDS");
         ExpectGds(readBack, 0x5eed1234u, "a GDS to memory copy did not see the immediate fill before it");
 
         for (std::uint32_t round = 0; round < 3; ++round) {
@@ -190,9 +187,9 @@ int main() {
             AgcDriverWaitIdle_nid_postfix();
             std::array<std::uint32_t, 2> returned{};
             AgcDriver::GuestMemory::Read(Address(output), std::as_writable_bytes(std::span(returned)), 4);
-            check(returned[0] == value && returned[1] == value, "a dispatch using the GDS after a fill read " + std::to_string(returned[0]) + " and " + std::to_string(returned[1]) + ", not the fill's " + std::to_string(value));
-            check(storesDrained.load() == dispatchDrainsBefore, "a fill of GDS before a dispatch using it drained the device");
-            check(storesOnGpu.load() + storesBehindCompletions.load() == dispatchGpuBefore, "a fill of GDS before a dispatch using it was recorded as a GPU store over the GDS");
+            Require(returned[0] == value && returned[1] == value, "a dispatch using the GDS after a fill read " + std::to_string(returned[0]) + " and " + std::to_string(returned[1]) + ", not the fill's " + std::to_string(value));
+            Require(storesDrained.load() == dispatchDrainsBefore, "a fill of GDS before a dispatch using it drained the device");
+            Require(storesOnGpu.load() + storesBehindCompletions.load() == dispatchGpuBefore, "a fill of GDS before a dispatch using it was recorded as a GPU store over the GDS");
         }
 
         {
@@ -209,9 +206,9 @@ int main() {
             AgcDriverWaitIdle_nid_postfix();
             std::array<std::uint32_t, 2> returned{};
             AgcDriver::GuestMemory::Read(Address(output), std::as_writable_bytes(std::span(returned)), 4);
-            check(returned[0] == 2000u && returned[1] == 2000u, "a dispatch using the GDS after a copy into it read " + std::to_string(returned[0]) + " and " + std::to_string(returned[1]) + ", not the copied 2000");
-            check(storesDrained.load() == copyDrainsBefore, "a DMA_DATA copy into the GDS drained the device");
-            check(storesOnGpu.load() + storesBehindCompletions.load() == copyGpuBefore, "a DMA_DATA copy into the GDS was recorded as a GPU store over the GDS");
+            Require(returned[0] == 2000u && returned[1] == 2000u, "a dispatch using the GDS after a copy into it read " + std::to_string(returned[0]) + " and " + std::to_string(returned[1]) + ", not the copied 2000");
+            Require(storesDrained.load() == copyDrainsBefore, "a DMA_DATA copy into the GDS drained the device");
+            Require(storesOnGpu.load() + storesBehindCompletions.load() == copyGpuBefore, "a DMA_DATA copy into the GDS was recorded as a GPU store over the GDS");
         }
 
         {
@@ -230,8 +227,8 @@ int main() {
             const bool queued = DrawPipeline::Queue0().Overlaps(gds, FillBytes);
             const auto drains = DrawPipeline::DrainRequestsByOpcode(0x50);
             release.store(true, std::memory_order_release);
-            check(drains == drainsBefore, "an immediate DMA_DATA fill of GDS drained the draw pipeline");
-            check(queued, "an immediate DMA_DATA fill of GDS was not queued behind the held draw pipeline item");
+            Require(drains == drainsBefore, "an immediate DMA_DATA fill of GDS drained the draw pipeline");
+            Require(queued, "an immediate DMA_DATA fill of GDS was not queued behind the held draw pipeline item");
         }
         ExpectGds(readBack, 0x0badf00du, "a GDS to memory copy did not see the fill queued in the draw pipeline");
 
@@ -254,8 +251,8 @@ int main() {
             AgcDriverWaitIdle_nid_postfix();
             std::array<std::uint32_t, FillBytes / 4> read{};
             AgcDriver::GuestMemory::Read(Address(readBack), std::as_writable_bytes(std::span(read)), 4);
-            for (const auto word : read) check(word == 0x600dcafeu, "a GDS to memory copy behind a fill of GDS queued in the draw pipeline read the GDS before the fill");
-            check(drains != drainsBefore, "a GDS to memory copy behind a fill of GDS queued in the draw pipeline did not drain it");
+            for (const auto word : read) Require(word == 0x600dcafeu, "a GDS to memory copy behind a fill of GDS queued in the draw pipeline read the GDS before the fill");
+            Require(drains != drainsBefore, "a GDS to memory copy behind a fill of GDS queued in the draw pipeline did not drain it");
         }
 
         {
@@ -279,7 +276,7 @@ int main() {
             release.store(true, std::memory_order_release);
             AgcDriverWaitIdle_nid_postfix();
             ExpectGds(readBack, 0x0c0ffee0u, "a memory to GDS copy behind a fill of GDS queued in the draw pipeline was overwritten by the fill");
-            check(drains != drainsBefore, "a memory to GDS copy behind a fill of GDS queued in the draw pipeline did not drain it");
+            Require(drains != drainsBefore, "a memory to GDS copy behind a fill of GDS queued in the draw pipeline did not drain it");
         }
 
         {
@@ -303,15 +300,15 @@ int main() {
             AgcDriver::GuestMemory::Read(Address(output), std::as_writable_bytes(std::span(first)), 4);
             AgcDriver::GuestMemory::Read(Address(secondOutput), std::as_writable_bytes(std::span(second)), 4);
             AgcDriver::GuestMemory::Read(Address(readBack), std::as_writable_bytes(std::span(counters)), 4);
-            check(first[0] == 500u, "the dispatch before the fill read " + std::to_string(first[0]) + ", not the earlier fill's 500");
-            check(second[0] == 3000u, "the dispatch after the fill, in the same submission, read " + std::to_string(second[0]) + ", not the fill's 3000");
-            check(counters[0] == 3032u && counters[1] == 2968u && counters[2] == 3032u, "the GDS counters after a dispatch, a fill and a dispatch are " + std::to_string(counters[0]) + ", " + std::to_string(counters[1]) + " and " + std::to_string(counters[2]) + ", not 3032, 2968 and 3032: the first dispatch's atomics landed after the fill");
+            Require(first[0] == 500u, "the dispatch before the fill read " + std::to_string(first[0]) + ", not the earlier fill's 500");
+            Require(second[0] == 3000u, "the dispatch after the fill, in the same submission, read " + std::to_string(second[0]) + ", not the fill's 3000");
+            Require(counters[0] == 3032u && counters[1] == 2968u && counters[2] == 3032u, "the GDS counters after a dispatch, a fill and a dispatch are " + std::to_string(counters[0]) + ", " + std::to_string(counters[1]) + " and " + std::to_string(counters[2]) + ", not 3032, 2968 and 3032: the first dispatch's atomics landed after the fill");
             if (shared) {
-                check(storesDrained.load() == drainsBefore, "a fill of the shared GDS behind a dispatch still using it drained the device");
-                check(storesOnGpu.load() + storesBehindCompletions.load() == gpuStoresBefore + 1, "a fill of the shared GDS behind a dispatch still using it was not stored on the GPU");
-                check(copiesBehindPendingSources.load() == gpuCopiesBefore + 1, "the copy out of the shared GDS behind the dispatches using it was not recorded on the GPU");
+                Require(storesDrained.load() == drainsBefore, "a fill of the shared GDS behind a dispatch still using it drained the device");
+                Require(storesOnGpu.load() + storesBehindCompletions.load() == gpuStoresBefore + 1, "a fill of the shared GDS behind a dispatch still using it was not stored on the GPU");
+                Require(copiesBehindPendingSources.load() == gpuCopiesBefore + 1, "the copy out of the shared GDS behind the dispatches using it was not recorded on the GPU");
             } else {
-                check(storesDrained.load() == drainsBefore + 1, "a fill behind a dispatch still using the GDS did not drain the device as main does");
+                Require(storesDrained.load() == drainsBefore + 1, "a fill behind a dispatch still using the GDS did not drain the device as main does");
             }
         }
 
@@ -336,12 +333,12 @@ int main() {
             AgcDriver::GuestMemory::Read(Address(orderReadBack), std::as_writable_bytes(std::span(value)), 4);
             std::array<std::uint32_t, 1> stored{};
             AgcDriver::GuestMemory::Read(Address(orderOutput), std::as_writable_bytes(std::span(stored)), 4);
-            check(stored[0] == 0x5eed0001u, "the dispatch that writes the copy's source stored " + std::to_string(stored[0]) + ", not 0x5eed0001");
-            check(value[0] == OrderValue, "a GDS fill after a copy into the GDS from the output of a dispatch that does not use the GDS read back as " + std::to_string(value[0]) + ", not the fill's value: the copy landed after the fill");
+            Require(stored[0] == 0x5eed0001u, "the dispatch that writes the copy's source stored " + std::to_string(stored[0]) + ", not 0x5eed0001");
+            Require(value[0] == OrderValue, "a GDS fill after a copy into the GDS from the output of a dispatch that does not use the GDS read back as " + std::to_string(value[0]) + ", not the fill's value: the copy landed after the fill");
             if (shared) {
-                check(copiesBehindPendingSources.load() > gpuCopiesBefore, "the copy into the shared GDS behind the dispatch writing its source was not recorded on the GPU");
-                check(storesOnGpu.load() + storesBehindCompletions.load() > gpuStoresBefore, "the fill of the shared GDS behind the GPU copy into it was not stored on the GPU");
-                check(storesDrained.load() == drainsBefore, "a DMA_DATA into or out of the shared GDS behind a dispatch drained the device");
+                Require(copiesBehindPendingSources.load() > gpuCopiesBefore, "the copy into the shared GDS behind the dispatch writing its source was not recorded on the GPU");
+                Require(storesOnGpu.load() + storesBehindCompletions.load() > gpuStoresBefore, "the fill of the shared GDS behind the GPU copy into it was not stored on the GPU");
+                Require(storesDrained.load() == drainsBefore, "a DMA_DATA into or out of the shared GDS behind a dispatch drained the device");
             }
         }
 

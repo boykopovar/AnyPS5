@@ -1,16 +1,9 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdlib>
 #include <limits>
-
-namespace {
-
-void Require(bool value) {
-    if (!value) std::abort();
-}
-
-}
 
 int main() {
     Require(strcmp_nid_postfix("abc", "abc") == 0);

@@ -1,4 +1,5 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -8,13 +9,6 @@
 #include <type_traits>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "PAL::fileSizeDescription check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 using FileSizeDescription = NKWebKit::WtfAbi::String (APS5_VABI *)(std::uint64_t);
 static_assert(std::is_same_v<decltype(&_ZN3PAL19fileSizeDescriptionEm), FileSizeDescription>);

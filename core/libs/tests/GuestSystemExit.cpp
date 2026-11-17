@@ -3,6 +3,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -60,7 +61,6 @@ void APS5_VABI QuickFirst() {
     std::puts("Guest quick_exit handlers completed");
     std::fflush(stdout);
 }
-void Require(bool value) { if (!value) std::abort(); }
 void UnexpectedCleanup() { std::_Exit(3); }
 #ifdef _WIN32
 void WINAPI UnexpectedDetach(PVOID) { TerminateProcess(GetCurrentProcess(), 4); }

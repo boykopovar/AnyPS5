@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -16,12 +17,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "JXR list stream check failed at line %u\n", location.line());
-    std::abort();
-}
 
 template <typename Function>
 Function Exported(Function linked, const char* name) {

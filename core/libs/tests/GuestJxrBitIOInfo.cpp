@@ -2,6 +2,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceJxr/libSceJxr.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -30,9 +31,6 @@ std::size_t JxrBitIOInfoFixtureStructSize(void* value);
 }
 
 namespace {
-
-void Check(bool value, int line) { if (!value) { std::fprintf(stderr, "GuestJxrBitIOInfo.cpp:%d: requirement failed\n", line); std::abort(); } }
-#define Require(value) Check((value), __LINE__)
 
 std::array<void*, 8> allocations{};
 std::array<std::size_t, 8> allocationSizes{};

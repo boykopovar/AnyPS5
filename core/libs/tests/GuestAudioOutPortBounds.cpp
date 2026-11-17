@@ -1,16 +1,11 @@
 #include "prx/libSceAudioOut/include/AudioOut.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdlib>
 
 namespace {
-
-void Require(bool value) {
-    if (!value) {
-        std::abort();
-    }
-}
 
 void TestInvalidPortHandles() {
     constexpr int invalidPort = -2144993277;

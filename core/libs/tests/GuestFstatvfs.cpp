@@ -4,6 +4,7 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <chrono>
 #include <cstddef>
@@ -14,14 +15,6 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "fstatvfs check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static void RequireFailure(int descriptor, int error) {
     std::array<std::uint64_t, 11> output;

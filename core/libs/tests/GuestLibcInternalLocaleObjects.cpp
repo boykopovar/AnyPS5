@@ -3,6 +3,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdio>
@@ -11,12 +12,6 @@
 #include <stdexcept>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "libc internal locale objects: %s\n", message);
-    std::abort();
-}
 
 template <typename Function>
 bool Throws(Function function) {

@@ -1,4 +1,5 @@
 #include "prx/libSceJxr/libSceJxr.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -17,22 +18,6 @@ std::size_t sourceOffset;
 std::size_t readCalls;
 std::size_t lastSize;
 Jxr::Stream* lastStream;
-
-void Require(bool result, const char* message) {
-    if (result) return;
-    std::fprintf(stderr, "JXR simple bit I/O: %s\n", message);
-    std::abort();
-}
-
-template<typename TAction>
-void RequireInvalidArgument(TAction action, const char* message) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, message);
-}
 
 std::int64_t APS5_VABI ReadSource(Jxr::Stream* stream, void* buffer, std::size_t size) {
     ++readCalls;
@@ -66,7 +51,7 @@ void KnownPattern() {
     Require(getBit32_SB_nid_postfix(&io, 32) == 0x12345678, "32-bit read differs");
     Require(getBit32_SB_nid_postfix(&io, 1) == 1, "1-bit read differs");
     Require(getByteRead_SB_nid_postfix(&io) == 7 && readCalls == 7 && io.bitsLeft == 4 && io.accumulator == 0, "byte count or buffered bits differ");
-    RequireInvalidArgument([&] { detach_SB_nid_postfix(&io); }, "detach accepted unread bits");
+    ExpectErr<std::invalid_argument>([&] { detach_SB_nid_postfix(&io); }, "detach accepted unread bits");
     Require(io.stream == &stream, "rejected detach changed the reader");
     flushToByte_SB_nid_postfix(&io);
     Require(io.accumulator == 0 && io.bitsLeft == 0 && io.bytesRead == 7, "flush differs");
@@ -111,18 +96,18 @@ void Reference() {
 
 void Rejected() {
     Jxr::SimpleBitIo io{nullptr, 3, 0x80, 0};
-    RequireInvalidArgument([&] { getBit32_SB_nid_postfix(&io, 1); }, "read accepted a null stream");
+    ExpectErr<std::invalid_argument>([&] { getBit32_SB_nid_postfix(&io, 1); }, "read accepted a null stream");
     Jxr::Stream stream{};
     io.stream = &stream;
-    RequireInvalidArgument([&] { getBit32_SB_nid_postfix(&io, 1); }, "read accepted a null read callback");
+    ExpectErr<std::invalid_argument>([&] { getBit32_SB_nid_postfix(&io, 1); }, "read accepted a null read callback");
     Require(io.bytesRead == 3 && io.accumulator == 0x80 && io.bitsLeft == 0, "rejected read changed the reader");
     io.bitsLeft = 9;
-    RequireInvalidArgument([&] { getBit32_SB_nid_postfix(&io, 0); }, "read accepted more than 8 buffered bits");
-    RequireInvalidArgument([] { attach_SB_nid_postfix(nullptr, nullptr); }, "attach accepted a null reader");
-    RequireInvalidArgument([] { getBit32_SB_nid_postfix(nullptr, 1); }, "read accepted a null reader");
-    RequireInvalidArgument([] { getByteRead_SB_nid_postfix(nullptr); }, "byte count accepted a null reader");
-    RequireInvalidArgument([] { flushToByte_SB_nid_postfix(nullptr); }, "flush accepted a null reader");
-    RequireInvalidArgument([] { detach_SB_nid_postfix(nullptr); }, "detach accepted a null reader");
+    ExpectErr<std::invalid_argument>([&] { getBit32_SB_nid_postfix(&io, 0); }, "read accepted more than 8 buffered bits");
+    ExpectErr<std::invalid_argument>([] { attach_SB_nid_postfix(nullptr, nullptr); }, "attach accepted a null reader");
+    ExpectErr<std::invalid_argument>([] { getBit32_SB_nid_postfix(nullptr, 1); }, "read accepted a null reader");
+    ExpectErr<std::invalid_argument>([] { getByteRead_SB_nid_postfix(nullptr); }, "byte count accepted a null reader");
+    ExpectErr<std::invalid_argument>([] { flushToByte_SB_nid_postfix(nullptr); }, "flush accepted a null reader");
+    ExpectErr<std::invalid_argument>([] { detach_SB_nid_postfix(nullptr); }, "detach accepted a null reader");
 }
 
 }

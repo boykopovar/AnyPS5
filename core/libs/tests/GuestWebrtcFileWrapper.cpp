@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "tests/TemporaryFile.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdio>
 #include <cstdlib>
@@ -14,20 +15,6 @@ constexpr auto Close = _ZN6webrtc11FileWrapper5CloseEv_nid_postfix;
 constexpr auto Flush = _ZN6webrtc11FileWrapper5FlushEv_nid_postfix;
 constexpr auto Write = _ZN6webrtc11FileWrapper5WriteEPKvm_nid_postfix;
 constexpr auto Move = _ZN6webrtc11FileWrapperC1EOS0__nid_postfix;
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "WebRTC file wrapper: %s\n", message);
-        std::abort();
-    }
-}
-
-template <typename TCall>
-void RequireThrows(TCall call) {
-    try { call(); }
-    catch (const std::invalid_argument&) { return; }
-    Require(false, "invalid object or operation must throw");
-}
 
 void RoundTrip() {
     FileStream stream(TemporaryFile::Open());
@@ -45,7 +32,7 @@ void RoundTrip() {
     Require(fread_nid_postfix(result.data() + 1, 1, bytes.size(), &stream) == bytes.size(), "read back bytes");
     Require(std::memcmp(result.data() + 1, bytes.data(), bytes.size()) == 0, "binary data is preserved");
     Require(result.front() == 0x5a && result.back() == 0x5a, "read preserves guards");
-    RequireThrows([&] { Write(&wrapper, nullptr, 1); });
+    ExpectErr<std::invalid_argument>([&] { Write(&wrapper, nullptr, 1); }, "invalid object or operation must throw");
     Require(Close(&wrapper), "close succeeds");
     Require(wrapper.file == nullptr && !stream.IsOpen(), "close clears wrapper and closes stream");
     Require(Close(&wrapper), "closing twice succeeds");
@@ -120,12 +107,12 @@ int main() {
 #endif
     WebRtcFileWrapper empty{};
     Require(Close(&empty), "close unopened wrapper");
-    RequireThrows([] { Close(nullptr); });
-    RequireThrows([] { Flush(nullptr); });
-    RequireThrows([] { Write(nullptr, "x", 1); });
-    RequireThrows([&] { Flush(&empty); });
-    RequireThrows([&] { Write(&empty, "x", 1); });
-    RequireThrows([&] { Move(nullptr, &empty); });
-    RequireThrows([&] { Move(&empty, nullptr); });
-    RequireThrows([&] { Move(&empty, &empty); });
+    ExpectErr<std::invalid_argument>([] { Close(nullptr); }, "invalid object or operation must throw");
+    ExpectErr<std::invalid_argument>([] { Flush(nullptr); }, "invalid object or operation must throw");
+    ExpectErr<std::invalid_argument>([] { Write(nullptr, "x", 1); }, "invalid object or operation must throw");
+    ExpectErr<std::invalid_argument>([&] { Flush(&empty); }, "invalid object or operation must throw");
+    ExpectErr<std::invalid_argument>([&] { Write(&empty, "x", 1); }, "invalid object or operation must throw");
+    ExpectErr<std::invalid_argument>([&] { Move(nullptr, &empty); }, "invalid object or operation must throw");
+    ExpectErr<std::invalid_argument>([&] { Move(&empty, nullptr); }, "invalid object or operation must throw");
+    ExpectErr<std::invalid_argument>([&] { Move(&empty, &empty); }, "invalid object or operation must throw");
 }

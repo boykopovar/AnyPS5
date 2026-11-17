@@ -5,6 +5,7 @@
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -16,10 +17,6 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
-
-static void Require(bool value) {
-    if (!value) std::abort();
-}
 
 #ifdef _WIN32
 static void RequireCpuBound(std::uint64_t cpuNanos, std::uint64_t wallNanos, const char* name) {

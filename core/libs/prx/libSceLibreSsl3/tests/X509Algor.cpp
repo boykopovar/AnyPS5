@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "Testing.hpp"
 
 #include <cerrno>
 #include <cstdio>
@@ -14,12 +15,6 @@
 #endif
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL3 X509_ALGOR_get0 check failed at line %u\n", location.line());
-    std::abort();
-}
 
 class ReadOnlyPage {
 public:

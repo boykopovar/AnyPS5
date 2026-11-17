@@ -3,6 +3,7 @@
 #include "prx/libc/libc.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -16,12 +17,6 @@
 namespace {
 
 using String = Asn1String;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL3 ECDSA check failed at line %u\n", location.line());
-    std::abort();
-}
 
 std::unordered_map<void*, std::size_t> allocations;
 std::unordered_map<void*, std::size_t> zeroed;

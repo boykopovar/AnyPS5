@@ -1,6 +1,7 @@
 #include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "JsonTestAllocator.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -14,9 +15,6 @@ using Mismatch = const Value& (APS5_VABI*)(ValueType, const Value*, const Value*
 using Null = const Value& (APS5_VABI*)(ValueType, const Value*, void*);
 using Special = Value* (APS5_VABI*)(Value*, std::int32_t, double, const Value*, void*, bool*);
 using Element = void (APS5_VABI*)(int, const String*, const std::size_t*, const Value*, const Value*, void*);
-static void Require(bool valid, const char* message) {
-    if (!valid) { std::fprintf(stderr, "%s\n", message); std::abort(); }
-}
 struct CallbackTrace { int calls = 0; const Value* source = nullptr; const Value* parent = nullptr; const Value* replacement = nullptr; bool reenter = false; int function = -1; };
 static const Value& APS5_VABI RecoverMismatch(ValueType requested, const Value* source, const Value* parent, void* context) {
     auto& trace = *static_cast<CallbackTrace*>(context);

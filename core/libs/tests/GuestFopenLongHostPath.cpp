@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <chrono>
 #include <cstdio>
@@ -14,10 +15,6 @@
 #include <windows.h>
 
 namespace {
-
-void Require(bool value, const char* message) {
-    if (!value) throw std::runtime_error(message);
-}
 
 std::filesystem::path Extended(const std::filesystem::path& path) {
     const auto& native = path.native();

@@ -1,4 +1,5 @@
 #include "prx/libSceNet/libSceNet.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -9,12 +10,6 @@
 #include <string_view>
 
 namespace {
-
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "empty stream: %s\n", message);
-    std::exit(1);
-}
 
 void SetOption(int descriptor, int option, int value) {
     Require(sceNetSetsockopt(descriptor, 0xffff, option, &value, sizeof(value)) == 0, "set option");

@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <chrono>
 #include <cstddef>
@@ -20,13 +21,6 @@ unsigned int APS5_VABI GuestAlarm_nid_no_patch(unsigned int);
 
 using Handler = void (APS5_VABI *)(int);
 
-}
-
-static void Require(bool value, const char* message) {
-    if (!value) {
-        std::fprintf(stderr, "%s\n", message);
-        std::abort();
-    }
 }
 
 static std::int64_t ReadRemaining() {

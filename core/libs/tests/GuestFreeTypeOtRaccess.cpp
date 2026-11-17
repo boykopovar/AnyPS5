@@ -1,5 +1,6 @@
 #include "prx/libSceFreeTypeOt/include/Memory.hpp"
 #include "prx/libSceFreeTypeOt/include/Raccess.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -33,12 +34,6 @@ void APS5_VABI RecordFree(GuestMemoryRec* memory, void* block) {
 
 void* APS5_VABI RecordRealloc(GuestMemoryRec*, std::int64_t, std::int64_t size, void* block) {
     return std::realloc(block, static_cast<std::size_t>(size));
-}
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "FreeType Ot raccess: %s\n", message);
-    std::exit(1);
 }
 
 void Put16(std::vector<std::uint8_t>& bytes, std::size_t at, std::uint32_t value) {

@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include <elfpatcher/general/ElfConstants.hpp>
 #include <elfpatcher/general/ProgramHeaderLayoutBuilder.hpp>
 #include <io/ByteWriter.hpp>
@@ -11,8 +12,6 @@ class KeepAll : public Elfpatcher::ISegmentFilter {
 public:
     bool ShouldSkip(const Domain::ProgramHeader&) const override { return false; }
 };
-
-static void Require(bool ok, const char* what) { if (!ok) throw std::runtime_error(std::string("program layout: ") + what); }
 
 static Domain::ProgramHeader Load(std::uint64_t vaddr, std::uint64_t memorySize, std::uint64_t fileSize, std::uint32_t flags) {
     Domain::ProgramHeader load{};

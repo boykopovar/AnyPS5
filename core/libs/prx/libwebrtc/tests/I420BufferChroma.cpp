@@ -1,4 +1,5 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdio>
@@ -9,12 +10,6 @@
 #include <string_view>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc I420 chroma check failed at line %u\n", location.line());
-    std::abort();
-}
 
 struct Buffer {
     const void* const* vtable;
@@ -36,15 +31,6 @@ int APS5_VABI Height(const void* buffer) {
     Require(buffer == expectedBuffer);
     ++heightCalls;
     return static_cast<const Buffer*>(buffer)->height;
-}
-
-template<typename TAction> void RequireInvalidArgument(TAction action) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false);
 }
 
 void Test(bool width) {
@@ -70,13 +56,13 @@ void Test(bool width) {
     Require(heightCalls == (width ? 0 : 12));
     buffer.width = std::numeric_limits<int>::max();
     buffer.height = std::numeric_limits<int>::max();
-    RequireInvalidArgument([&] { function(&buffer); });
-    RequireInvalidArgument([&] { function(nullptr); });
+    ExpectErr<std::invalid_argument>([&] { function(&buffer); });
+    ExpectErr<std::invalid_argument>([&] { function(nullptr); });
     buffer.vtable = nullptr;
-    RequireInvalidArgument([&] { function(&buffer); });
+    ExpectErr<std::invalid_argument>([&] { function(&buffer); });
     buffer.vtable = vtable.data();
     vtable[width ? 5 : 6] = nullptr;
-    RequireInvalidArgument([&] { function(&buffer); });
+    ExpectErr<std::invalid_argument>([&] { function(&buffer); });
 }
 
 }

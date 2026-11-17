@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -9,7 +10,6 @@
 
 static constexpr int SigUsr1 = 30;
 static constexpr int Raises = 100;
-static void Require(bool value) { if (!value) std::abort(); }
 
 static std::atomic<int> deliveries{0};
 static std::atomic<bool> stop{false};

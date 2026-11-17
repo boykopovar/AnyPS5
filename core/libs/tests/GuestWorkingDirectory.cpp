@@ -2,6 +2,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <chrono>
 #include <cstdio>
@@ -10,7 +11,6 @@
 #include <fstream>
 #include <limits>
 
-static void Require(bool value) { if (!value) std::abort(); }
 static int allocations = 0;
 static int releases = 0;
 static void* APS5_VABI Allocate(std::size_t bytes) { ++allocations; return GuestHeap::GuestHeapAllocate_nid_postfix(bytes); }

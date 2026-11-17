@@ -1,13 +1,10 @@
 #include "prx/libkernel/System/include/HostCpu.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <iostream>
 #include <stdexcept>
 #include <string>
 #include <vector>
-
-static void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 static constexpr std::uint32_t Bit(unsigned bit) {
     return std::uint32_t{1} << bit;

@@ -3,6 +3,7 @@
 #include "prx/libSceNpEntitlementAccess/include/Api.hpp"
 #include "prx/libSceHttp/include/Http.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstddef>
@@ -10,8 +11,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 int main() {
     constexpr int recordingInvalid = static_cast<int>(0x80a80003);

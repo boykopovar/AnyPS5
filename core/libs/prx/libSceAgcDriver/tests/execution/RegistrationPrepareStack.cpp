@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <condition_variable>
 #include <cstdint>
@@ -24,10 +25,6 @@ namespace {
 
 constexpr std::uint64_t PoolStackBytes = 64ull << 20u;
 constexpr std::uint64_t MostCommittedBytes = 8ull << 20u;
-
-void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error("registration prepare stack: " + message);
-}
 
 struct StackUse {
     std::thread::id thread;

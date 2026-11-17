@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include <elfpatcher/windows/WindowsLoadImage.hpp>
 #include <elfpatcher/windows/WindowsPeFormat.hpp>
 #include <elfpatcher/windows/WindowsTrampolineBuilder.hpp>
@@ -15,10 +16,6 @@ namespace {
 
 using namespace Elfpatcher::Windows;
 using Bytes = std::vector<std::uint8_t>;
-
-void require(const bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 template<typename TValue>
 void write(Bytes& bytes, const std::size_t offset, const TValue value) {
@@ -64,10 +61,10 @@ void requireRejected(const WindowsLoadImage& image, const std::vector<Codegen::T
     try {
         WindowsTrampolineBuilder().Build(sites, image, sections, nextRva);
     } catch (const Domain::RelinkerException& error) {
-        require(std::string(error.what()).find(expected) != std::string::npos, "Unexpected error '" + std::string(error.what()) + "', expected '" + expected + "'");
-        require(sections.size() == original.size() && nextRva == originalRva, "Rejected build changed the section list for '" + expected + "'");
+        Require(std::string(error.what()).find(expected) != std::string::npos, "Unexpected error '" + std::string(error.what()) + "', expected '" + expected + "'");
+        Require(sections.size() == original.size() && nextRva == originalRva, "Rejected build changed the section list for '" + expected + "'");
         for (std::size_t index = 0; index < sections.size(); ++index)
-            require(sections[index].Data == original[index].Data, "Rejected build patched section " + sections[index].Name + " for '" + expected + "'");
+            Require(sections[index].Data == original[index].Data, "Rejected build patched section " + sections[index].Name + " for '" + expected + "'");
         return;
     }
     throw std::runtime_error("Build succeeded, expected '" + expected + "'");
@@ -80,9 +77,9 @@ void run() {
     auto sections = image.BuildSections();
     auto nextRva = endRva;
     WindowsTrampolineBuilder().Build({site(0x1002), site(0x1010)}, image, sections, nextRva);
-    require(sections.size() == 3 && sections.back().Name == ".amdstub" && sections.back().Rva == endRva, "Stub section was not appended");
-    require(nextRva == AlignRva(static_cast<std::uint64_t>(endRva) + sections.back().Data.size()), "Next RVA does not follow the stub section");
-    require(sections[0].Data[2] == 0xE9 && sections[0].Data[7] == 0x90 && sections[0].Data[0x10] == 0xE9 && sections[0].Data[0x15] == 0x90, "Sites were not replaced by jumps");
+    Require(sections.size() == 3 && sections.back().Name == ".amdstub" && sections.back().Rva == endRva, "Stub section was not appended");
+    Require(nextRva == AlignRva(static_cast<std::uint64_t>(endRva) + sections.back().Data.size()), "Next RVA does not follow the stub section");
+    Require(sections[0].Data[2] == 0xE9 && sections[0].Data[7] == 0x90 && sections[0].Data[0x10] == 0xE9 && sections[0].Data[0x15] == 0x90, "Sites were not replaced by jumps");
 
     const auto fresh = image.BuildSections();
     requireRejected(image, {site(0x1002), site(0x1004)}, fresh, endRva, "Overlapping AMD-only trampoline sites");
@@ -102,7 +99,7 @@ void run() {
     auto untouched = image.BuildSections();
     auto untouchedRva = endRva;
     WindowsTrampolineBuilder().Build({}, image, untouched, untouchedRva);
-    require(untouched.size() == fresh.size() && untouchedRva == endRva, "Empty site list changed the image");
+    Require(untouched.size() == fresh.size() && untouchedRva == endRva, "Empty site list changed the image");
 }
 
 }

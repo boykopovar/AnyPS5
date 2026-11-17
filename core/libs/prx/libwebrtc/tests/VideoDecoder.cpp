@@ -1,6 +1,7 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/GuestStringStorage.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdint>
@@ -25,21 +26,6 @@ void* APS5_VABI TestRealign(void* pointer, std::size_t size, std::size_t) { retu
 int APS5_VABI TestPosixAlign(void** pointer, std::size_t, std::size_t size) {
     *pointer = std::malloc(size);
     return *pointer ? 0 : 12;
-}
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc VideoDecoder check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> void RequireInvalidArgument(TAction action, std::source_location location = std::source_location::current()) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, location);
 }
 
 struct FakeDecoder {
@@ -115,14 +101,14 @@ void TestInvalidArgumentsThrow() {
     auto vtable = Vtable();
     FakeDecoder fake {vtable.data(), nullptr, nullptr};
     WebRtcVideoDecoderInfo info = Filled();
-    RequireInvalidArgument([&] { GetDecoderInfo(&info, fake); });
+    ExpectErr<std::invalid_argument>([&] { GetDecoderInfo(&info, fake); });
     fake.name = "unknown";
-    RequireInvalidArgument([&] { GetDecoderInfo(nullptr, fake); });
-    RequireInvalidArgument([&] { _ZNK6webrtc12VideoDecoder14GetDecoderInfoEv_nid_postfix(&info, nullptr); });
+    ExpectErr<std::invalid_argument>([&] { GetDecoderInfo(nullptr, fake); });
+    ExpectErr<std::invalid_argument>([&] { _ZNK6webrtc12VideoDecoder14GetDecoderInfoEv_nid_postfix(&info, nullptr); });
     vtable[8] = nullptr;
-    RequireInvalidArgument([&] { GetDecoderInfo(&info, fake); });
+    ExpectErr<std::invalid_argument>([&] { GetDecoderInfo(&info, fake); });
     FakeDecoder empty {nullptr, "unknown", nullptr};
-    RequireInvalidArgument([&] { GetDecoderInfo(&info, empty); });
+    ExpectErr<std::invalid_argument>([&] { GetDecoderInfo(&info, empty); });
     Require(info.isHardwareAccelerated);
 }
 

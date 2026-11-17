@@ -1,16 +1,11 @@
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
-
-static void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "failed: %s\n", what);
-    std::abort();
-}
 
 int main() {
     static_assert(sizeof(void*) == 8);

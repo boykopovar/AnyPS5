@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/File/include/File.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -9,14 +10,6 @@
 #include <string>
 #include <vector>
 #include <windows.h>
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "Sandbox certificate race check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 constexpr char CertificateBegin[] = "-----BEGIN CERTIFICATE-----";
 

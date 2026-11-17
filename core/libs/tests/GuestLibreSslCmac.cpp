@@ -2,6 +2,7 @@
 #include "prx/libSceLibreSsl/include/Cmac.hpp"
 #include "prx/libSceLibreSsl/ErrorQueue.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdio>
@@ -89,12 +90,6 @@ void InitializePatched(const char* directory) {
 
 namespace {
 
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "failed: %s\n", message);
-    std::abort();
-}
-
 int allocationsUntilFailure = -1;
 std::vector<std::pair<void*, std::size_t>> allocations;
 
@@ -134,11 +129,6 @@ void InitializeHeap() {
         reinterpret_cast<void*>(Reallocate), reinterpret_cast<void*>(Align), reinterpret_cast<void*>(Realign),
         reinterpret_cast<void*>(PosixAlign)};
     ApplicationHeapRegister_nid_no_patch(api.data());
-}
-
-template<typename TAction> void RequireThrows(TAction action) {
-    try { action(); } catch (const std::exception&) { return; }
-    Require(false, "unsupported input must throw");
 }
 
 std::vector<unsigned char> Hex(std::string_view text) {
@@ -257,11 +247,11 @@ void Lifecycle() {
     Require(CMAC_Update_nid_postfix(context.get(), message.data(), message.size()) == 1 && Final(context.get()) == expected, "narrowed key length tag");
     Require(CMAC_Init_nid_postfix(context.get(), key.data(), 24, Methods[1], nullptr) == 1, "switch AES key size");
     Require(CMAC_Init_nid_postfix(context.get(), key.data(), 32, Methods[2], nullptr) == 1, "switch AES key size again");
-    RequireThrows([&] { CMAC_Init_nid_postfix(nullptr, key.data(), 16, Methods[0], nullptr); });
-    RequireThrows([&] { CMAC_Update_nid_postfix(nullptr, nullptr, 0); });
-    RequireThrows([&] { CMAC_Final_nid_postfix(nullptr, output.data(), &length); });
-    RequireThrows([&] { CMAC_Update_nid_postfix(context.get(), nullptr, 1); });
-    RequireThrows([&] { CMAC_Final_nid_postfix(context.get(), output.data(), nullptr); });
+    ExpectErr([&] { CMAC_Init_nid_postfix(nullptr, key.data(), 16, Methods[0], nullptr); });
+    ExpectErr([&] { CMAC_Update_nid_postfix(nullptr, nullptr, 0); });
+    ExpectErr([&] { CMAC_Final_nid_postfix(nullptr, output.data(), &length); });
+    ExpectErr([&] { CMAC_Update_nid_postfix(context.get(), nullptr, 1); });
+    ExpectErr([&] { CMAC_Final_nid_postfix(context.get(), output.data(), nullptr); });
     CMAC_CTX_free_nid_postfix(nullptr);
 }
 

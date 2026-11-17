@@ -2,6 +2,7 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include "SceTypes.hpp"
 #include "prx/libSceIme/include/ImeInput.hpp"
+#include "Testing.hpp"
 
 #ifdef __linux__
 #include <sys/mman.h>
@@ -27,12 +28,6 @@ constexpr std::uint32_t EndStatusAborted = 2;
 constexpr int ErrorInvalidAddress = static_cast<int>(0x80bc0031u);
 constexpr int ErrorInvalidInputTextBuffer = static_cast<int>(0x80bc0017u);
 constexpr int ErrorNotOpened = static_cast<int>(0x80bc0002u);
-
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
 
 }
 

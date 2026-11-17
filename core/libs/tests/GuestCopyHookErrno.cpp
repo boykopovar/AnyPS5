@@ -1,18 +1,11 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "Testing.hpp"
 
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "guest copy hook errno check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static int g_reads = 0;
 static int g_writes = 0;

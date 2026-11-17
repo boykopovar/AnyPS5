@@ -1,12 +1,11 @@
 #include "prx/libSceImeBackend/include/Api.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstddef>
 #include <cstdlib>
 
 namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
 
 void CheckParamInit() {
     sceImeBackendParamInit(nullptr);

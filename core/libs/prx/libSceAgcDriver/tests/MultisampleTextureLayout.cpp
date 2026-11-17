@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTextureLayout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -57,13 +58,6 @@ constexpr ReferenceCase kReferences[] = {
     {TextureTileMode::kZ64KBX, 4u, 4u, 64u, 64u, 192u, 128u, 393216ull, {{0ull, 6637700ull, 460808ull, 1000460ull, 2815728ull, 6219892ull, 1182776ull}}},
     {TextureTileMode::kZ64KBX, 4u, 8u, 32u, 64u, 160u, 128u, 655360ull, {{0ull, 11126788ull, 787464ull, 1720844ull, 4716528ull, 10359028ull, 1967736ull}}},
 };
-
-template<typename TFunction>
-void requireRefusal(TFunction action) {
-    bool refused = false;
-    try { action(); } catch (const std::exception&) { refused = true; }
-    Require(refused, "multisampled layout accepted an unsupported operation");
-}
 
 void checkReference(const ReferenceCase& reference) {
     MultisampleTextureLayout layout(reference.tileMode, reference.elementBytes, reference.fragments, 129u, 67u, 17u);
@@ -168,9 +162,9 @@ void checkHoistedTile(const ReferenceCase& reference) {
     MultisampleTextureLayout layout(reference.tileMode, reference.elementBytes, reference.fragments, 5u, 3u, 2u);
     std::vector<std::byte> source(layout.Bytes(), std::byte{0xa5}), destination(layout.Bytes(), std::byte{0x5a});
     const auto savedSource = source, savedDestination = destination;
-    requireRefusal([&] { layout.TileHoisted(std::span(source).first(layout.LinearBytes() - 1u), destination); });
-    requireRefusal([&] { layout.TileHoisted(source, std::span(destination).first(layout.Bytes() - 1u)); });
-    requireRefusal([&] { layout.TileHoisted(source, source); });
+    ExpectErr([&] { layout.TileHoisted(std::span(source).first(layout.LinearBytes() - 1u), destination); });
+    ExpectErr([&] { layout.TileHoisted(source, std::span(destination).first(layout.Bytes() - 1u)); });
+    ExpectErr([&] { layout.TileHoisted(source, source); });
     Require(source == savedSource && destination == savedDestination, "a refused hoisted multisampled retile changed a buffer");
 }
 
@@ -210,33 +204,33 @@ void checkPagedSnapshot() {
     const std::vector<std::uint32_t> words(2u, 0x04030201u);
     const std::vector<std::size_t> starts{repeated, 0u};
     const std::vector<std::byte> stored(pageBytes, std::byte{0x7e});
-    requireRefusal([&] { ExpandPagedSnapshot(2u * pageBytes, words, starts, stored, 0u, repeated); });
-    requireRefusal([&] { ExpandPagedSnapshot(2u * pageBytes, words, starts, stored, 6u, repeated); });
-    requireRefusal([&] { ExpandPagedSnapshot(3u * pageBytes, words, starts, stored, pageBytes, repeated); });
-    requireRefusal([&] { ExpandPagedSnapshot(2u * pageBytes, words, starts, std::span(stored).first(pageBytes - 1u), pageBytes, repeated); });
+    ExpectErr([&] { ExpandPagedSnapshot(2u * pageBytes, words, starts, stored, 0u, repeated); });
+    ExpectErr([&] { ExpandPagedSnapshot(2u * pageBytes, words, starts, stored, 6u, repeated); });
+    ExpectErr([&] { ExpandPagedSnapshot(3u * pageBytes, words, starts, stored, pageBytes, repeated); });
+    ExpectErr([&] { ExpandPagedSnapshot(2u * pageBytes, words, starts, std::span(stored).first(pageBytes - 1u), pageBytes, repeated); });
 }
 
 void checkRefusals() {
     for (const auto& extent : {std::array{0u, 3u, 1u}, std::array{5u, 0u, 1u}, std::array{16385u, 3u, 1u}, std::array{5u, 16385u, 1u}, std::array{5u, 3u, 0u}, std::array{5u, 3u, 8193u}}) {
-        requireRefusal([&] { MultisampleTextureLayout invalid(TextureTileMode::kR64KBX, 8u, 8u, extent[0], extent[1], extent[2]); });
+        ExpectErr([&] { MultisampleTextureLayout invalid(TextureTileMode::kR64KBX, 8u, 8u, extent[0], extent[1], extent[2]); });
     }
-    for (auto elementBytes : {0u, 3u, 32u}) requireRefusal([&] { MultisampleTextureLayout invalid(TextureTileMode::kR64KBX, elementBytes, 8u, 5u, 3u, 1u); });
-    for (auto fragments : {0u, 1u, 3u, 16u}) requireRefusal([&] { MultisampleTextureLayout invalid(TextureTileMode::kR64KBX, 8u, fragments, 5u, 3u, 1u); });
-    for (auto tileMode : {TextureTileMode::kLinear, TextureTileMode::kStandard4KB, TextureTileMode::kStandard64KB, TextureTileMode::kS64KBX, TextureTileMode::kD64KBX}) requireRefusal([&] { MultisampleTextureLayout invalid(tileMode, 8u, 8u, 5u, 3u, 1u); });
-    for (auto elementBytes : {8u, 16u}) requireRefusal([&] { MultisampleTextureLayout invalid(TextureTileMode::kZ64KBX, elementBytes, 8u, 5u, 3u, 1u); });
-    for (auto xorBytes : {1u, 255u, 0x1000u, 0x2000u, 0x10000u}) requireRefusal([&] { MultisampleTextureLayout invalid(TextureTileMode::kR64KBX, 8u, 8u, 5u, 3u, 1u, xorBytes); });
+    for (auto elementBytes : {0u, 3u, 32u}) ExpectErr([&] { MultisampleTextureLayout invalid(TextureTileMode::kR64KBX, elementBytes, 8u, 5u, 3u, 1u); });
+    for (auto fragments : {0u, 1u, 3u, 16u}) ExpectErr([&] { MultisampleTextureLayout invalid(TextureTileMode::kR64KBX, 8u, fragments, 5u, 3u, 1u); });
+    for (auto tileMode : {TextureTileMode::kLinear, TextureTileMode::kStandard4KB, TextureTileMode::kStandard64KB, TextureTileMode::kS64KBX, TextureTileMode::kD64KBX}) ExpectErr([&] { MultisampleTextureLayout invalid(tileMode, 8u, 8u, 5u, 3u, 1u); });
+    for (auto elementBytes : {8u, 16u}) ExpectErr([&] { MultisampleTextureLayout invalid(TextureTileMode::kZ64KBX, elementBytes, 8u, 5u, 3u, 1u); });
+    for (auto xorBytes : {1u, 255u, 0x1000u, 0x2000u, 0x10000u}) ExpectErr([&] { MultisampleTextureLayout invalid(TextureTileMode::kR64KBX, 8u, 8u, 5u, 3u, 1u, xorBytes); });
 
     MultisampleTextureLayout layout(TextureTileMode::kR64KBX, 8u, 8u, 5u, 3u, 2u);
-    for (const auto& coordinate : {std::array{5u, 0u, 0u, 0u}, std::array{0u, 3u, 0u, 0u}, std::array{0u, 0u, 2u, 0u}, std::array{0u, 0u, 0u, 8u}}) requireRefusal([&] { layout.Offset(coordinate[0], coordinate[1], coordinate[2], coordinate[3]); });
+    for (const auto& coordinate : {std::array{5u, 0u, 0u, 0u}, std::array{0u, 3u, 0u, 0u}, std::array{0u, 0u, 2u, 0u}, std::array{0u, 0u, 0u, 8u}}) ExpectErr([&] { layout.Offset(coordinate[0], coordinate[1], coordinate[2], coordinate[3]); });
     std::vector<std::byte> source(layout.Bytes(), std::byte{0xa5}), destination(layout.Bytes(), std::byte{0x5a});
     const auto savedSource = source, savedDestination = destination;
-    requireRefusal([&] { layout.Detile(std::span(source).first(layout.Bytes() - 1u), destination); });
-    requireRefusal([&] { layout.Detile(source, std::span(destination).first(layout.LinearBytes() - 1u)); });
-    requireRefusal([&] { layout.Tile(std::span(source).first(layout.LinearBytes() - 1u), destination); });
-    requireRefusal([&] { layout.Tile(source, std::span(destination).first(layout.Bytes() - 1u)); });
-    requireRefusal([&] { layout.Detile(source, source); });
-    requireRefusal([&] { layout.Tile(source, source); });
-    requireRefusal([&] { layout.Detile(source, std::span(source).subspan(8u)); });
+    ExpectErr([&] { layout.Detile(std::span(source).first(layout.Bytes() - 1u), destination); });
+    ExpectErr([&] { layout.Detile(source, std::span(destination).first(layout.LinearBytes() - 1u)); });
+    ExpectErr([&] { layout.Tile(std::span(source).first(layout.LinearBytes() - 1u), destination); });
+    ExpectErr([&] { layout.Tile(source, std::span(destination).first(layout.Bytes() - 1u)); });
+    ExpectErr([&] { layout.Detile(source, source); });
+    ExpectErr([&] { layout.Tile(source, source); });
+    ExpectErr([&] { layout.Detile(source, std::span(source).subspan(8u)); });
     Require(source == savedSource && destination == savedDestination, "refused multisampled transfer changed a buffer");
 }
 

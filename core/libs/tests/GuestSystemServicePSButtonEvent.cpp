@@ -1,5 +1,6 @@
 #include "prx/libSceSystemService/include/SystemService.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
@@ -10,8 +11,6 @@ namespace {
 
 constexpr int invalidArgument = static_cast<int>(0x80A10003u);
 constexpr unsigned char untouched = 0x5A;
-
-void Require(bool value) { if (!value) std::abort(); }
 
 SystemServicePSButtonEvent* Output(unsigned char* buffer) {
     return reinterpret_cast<SystemServicePSButtonEvent*>(buffer);

@@ -1,5 +1,6 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -11,21 +12,6 @@
 namespace {
 
 constexpr int Ebusy = 16;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc SequenceCheckerImpl check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> void RequireInvalidArgument(TAction action, std::source_location location = std::source_location::current()) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, location);
-}
 
 WebRtcTaskQueueBase* Queue() {
     static char storage;
@@ -111,7 +97,7 @@ void TestLock() {
 }
 
 void TestNull() {
-    RequireInvalidArgument([] { _ZN6webrtc32webrtc_sequence_checker_internal19SequenceCheckerImplC2Eb_nid_postfix(nullptr, true); });
+    ExpectErr<std::invalid_argument>([] { _ZN6webrtc32webrtc_sequence_checker_internal19SequenceCheckerImplC2Eb_nid_postfix(nullptr, true); });
 }
 
 }

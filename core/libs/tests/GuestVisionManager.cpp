@@ -1,16 +1,9 @@
 #include "prx/libSceVisionManager/libSceVisionManager.hpp"
+#include "Testing.hpp"
 
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
-
-namespace {
-
-void Require(bool value) {
-    if (!value) std::abort();
-}
-
-} // namespace
 
 int main() {
     constexpr int notOpen = static_cast<int>(0x80E70025u);

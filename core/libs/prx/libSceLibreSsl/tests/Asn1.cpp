@@ -1,6 +1,7 @@
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -28,32 +29,6 @@ namespace {
 static_assert(sizeof(Asn1String) == 24);
 static_assert(offsetof(Asn1String, data) == 8);
 static_assert(offsetof(Asn1String, flags) == 16);
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "failed: %s\n", message);
-    std::abort();
-}
-
-template<typename TAction>
-void RequireThrows(TAction action, const char* message) {
-    try {
-        action();
-    } catch (const std::exception&) {
-        return;
-    }
-    Require(false, message);
-}
-
-template<typename TAction>
-void RequireInvalidArgument(TAction action, const char* message) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, message);
-}
 
 void CheckConversion(int type, std::span<const unsigned char> input, std::span<const unsigned char> expected, int length = -2) {
     std::vector<unsigned char> storage(input.begin(), input.end());
@@ -123,9 +98,9 @@ void Accessors() {
     Require(ASN1_STRING_data_nid_postfix(&value) == nullptr, "null data is preserved");
     Require(ASN1_STRING_length_nid_postfix(&value) == -9, "length is returned without normalization");
     Require(ASN1_STRING_type_nid_postfix(&value) == 0x7fffffff, "type is returned without normalization");
-    RequireInvalidArgument([] { ASN1_STRING_data_nid_postfix(nullptr); }, "null data accessor input");
-    RequireInvalidArgument([] { ASN1_STRING_length_nid_postfix(nullptr); }, "null length accessor input");
-    RequireInvalidArgument([] { ASN1_STRING_type_nid_postfix(nullptr); }, "null type accessor input");
+    ExpectErr<std::invalid_argument>([] { ASN1_STRING_data_nid_postfix(nullptr); }, "null data accessor input");
+    ExpectErr<std::invalid_argument>([] { ASN1_STRING_length_nid_postfix(nullptr); }, "null length accessor input");
+    ExpectErr<std::invalid_argument>([] { ASN1_STRING_type_nid_postfix(nullptr); }, "null type accessor input");
 }
 
 void Integers() {
@@ -172,15 +147,15 @@ void Integers() {
     Require(value.length == original.length && value.type == original.type && value.data == original.data
         && value.flags == original.flags && minimum == std::array<unsigned char, 8>{0x80, 0, 0, 0, 0, 0, 0, 0}, "minimum integer preserves input");
     value.type = 2;
-    RequireInvalidArgument([&] { ASN1_INTEGER_get_nid_postfix(&value); }, "positive magnitude above signed maximum");
+    ExpectErr<std::invalid_argument>([&] { ASN1_INTEGER_get_nid_postfix(&value); }, "positive magnitude above signed maximum");
     value.type = 0x102;
     minimum.back() = 1;
-    RequireInvalidArgument([&] { ASN1_INTEGER_get_nid_postfix(&value); }, "negative magnitude below signed minimum");
+    ExpectErr<std::invalid_argument>([&] { ASN1_INTEGER_get_nid_postfix(&value); }, "negative magnitude below signed minimum");
     value.data = maximum.data();
     maximum[0] = 0x80;
     for (int type : {2, 0x102}) {
         value.type = type;
-        RequireInvalidArgument([&] { ASN1_INTEGER_get_nid_postfix(&value); }, "source signed-overflow path throws");
+        ExpectErr<std::invalid_argument>([&] { ASN1_INTEGER_get_nid_postfix(&value); }, "source signed-overflow path throws");
     }
     std::array<unsigned char, 9> zero{};
     value = {9, 2, zero.data(), 0};
@@ -218,7 +193,7 @@ void Print() {
     BIO_free_nid_postfix(readOnly);
     ERR_clear_error_nid_postfix();
     value.data = nullptr;
-    RequireInvalidArgument([&] { ASN1_STRING_print_nid_postfix(nullptr, &value); }, "null data with a positive length");
+    ExpectErr<std::invalid_argument>([&] { ASN1_STRING_print_nid_postfix(nullptr, &value); }, "null data with a positive length");
 }
 
 void Strings() {
@@ -258,11 +233,11 @@ void Strings() {
         Require(ASN1_STRING_to_UTF8_nid_postfix(nullptr, &value) == -1, "tag checked before output");
     }
     Asn1String value{0, 12, nullptr, 0};
-    RequireThrows([&] { ASN1_STRING_to_UTF8_nid_postfix(nullptr, &value); }, "null conversion output");
+    ExpectErr([&] { ASN1_STRING_to_UTF8_nid_postfix(nullptr, &value); }, "null conversion output");
     value.length = 1;
-    RequireThrows([&] { ASN1_STRING_to_UTF8_nid_postfix(&result, &value); }, "null nonempty string data");
+    ExpectErr([&] { ASN1_STRING_to_UTF8_nid_postfix(&result, &value); }, "null nonempty string data");
     value.length = -1;
-    RequireThrows([&] { ASN1_STRING_to_UTF8_nid_postfix(&result, &value); }, "null terminated-string data");
+    ExpectErr([&] { ASN1_STRING_to_UTF8_nid_postfix(&result, &value); }, "null terminated-string data");
 }
 
 std::string PrintedTime(int type, const char* text, int expected) {
@@ -294,9 +269,9 @@ void Times() {
     Require(ASN1_TIME_print_nid_postfix(nullptr, &time) == 0, "an invalid time returns 0 without a BIO");
     Asn1String empty{0, 23, nullptr, 0};
     Require(ASN1_TIME_print_nid_postfix(nullptr, &empty) == 0, "an empty time is bad");
-    RequireInvalidArgument([] { ASN1_TIME_print_nid_postfix(nullptr, nullptr); }, "a null time");
+    ExpectErr<std::invalid_argument>([] { ASN1_TIME_print_nid_postfix(nullptr, nullptr); }, "a null time");
     time.data = nullptr;
-    RequireInvalidArgument([&] { ASN1_TIME_print_nid_postfix(nullptr, &time); }, "null time data with a positive length");
+    ExpectErr<std::invalid_argument>([&] { ASN1_TIME_print_nid_postfix(nullptr, &time); }, "null time data with a positive length");
 }
 
 class GuardedPage {

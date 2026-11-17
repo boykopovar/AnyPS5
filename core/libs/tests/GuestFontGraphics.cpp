@@ -1,6 +1,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "prx/libSceFont/libSceFont.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -49,7 +50,6 @@ void APS5_VABI RecordError(int error) {
     ++g_errorCount;
 }
 
-void Require(bool value) { if (!value) std::abort(); }
 
 template <typename T>
 void Fill(T& object, std::uint8_t value) {

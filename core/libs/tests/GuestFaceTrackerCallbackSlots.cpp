@@ -1,16 +1,11 @@
 #include "prx/libSceFaceTracker/include/Api.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <vector>
 
 namespace {
-
-void Require(bool condition) {
-    if (!condition) {
-        std::abort();
-    }
-}
 
 constexpr int kErrNullContext = static_cast<int>(0x812a0002);
 constexpr int kErrNotInitialized = static_cast<int>(0x812a0003);

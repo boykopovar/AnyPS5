@@ -1,6 +1,7 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -68,17 +69,6 @@ constexpr std::uint64_t SessionIdContextTooLong = 0x14FFF111;
 
 static_assert(sizeof(LibreSslCtx) == CtxSize && sizeof(LibreSslCtxInternal) == InternalSize);
 static_assert(StatsCbHit + 4 == 248 && TicketKeys + 48 == 360 && CtxSidCtx + 32 == 88);
-
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL SSL_CTX fields check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> static void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
-    try { action(); } catch (const std::exception&) { return; }
-    Require(false, location);
-}
 
 static void* Pointer(std::uintptr_t value) {
     return reinterpret_cast<void*>(value);
@@ -178,7 +168,7 @@ struct Fixture {
     }
 
     template<typename TAction> void Throws(TAction action, std::source_location location = std::source_location::current()) {
-        RequireThrows(action, location);
+        ExpectErr(action, location);
         Verify(0, location);
     }
 };
@@ -411,11 +401,11 @@ static void TestSetSessionIdContext() {
 
 static void TestNullContext() {
     const unsigned char sidCtx[] = {1};
-    RequireThrows([] { SSL_CTX_ctrl_nid_postfix(nullptr, 32, 1, nullptr); });
-    RequireThrows([] { SSL_CTX_callback_ctrl_nid_postfix(nullptr, 15, nullptr); });
-    RequireThrows([] { SSL_CTX_set_msg_callback_nid_postfix(nullptr, nullptr); });
-    RequireThrows([] { SSL_CTX_set_verify_nid_postfix(nullptr, 1, nullptr); });
-    RequireThrows([&] { SSL_CTX_set_session_id_context_nid_postfix(nullptr, sidCtx, 1); });
+    ExpectErr([] { SSL_CTX_ctrl_nid_postfix(nullptr, 32, 1, nullptr); });
+    ExpectErr([] { SSL_CTX_callback_ctrl_nid_postfix(nullptr, 15, nullptr); });
+    ExpectErr([] { SSL_CTX_set_msg_callback_nid_postfix(nullptr, nullptr); });
+    ExpectErr([] { SSL_CTX_set_verify_nid_postfix(nullptr, 1, nullptr); });
+    ExpectErr([&] { SSL_CTX_set_session_id_context_nid_postfix(nullptr, sidCtx, 1); });
     Require(ERR_get_error_nid_postfix() == 0);
 }
 
@@ -438,7 +428,7 @@ static void TestCheckPrivateKey() {
 
     Fixture noInternal;
     noInternal.SetCtx<void*>(CtxInternal, nullptr);
-    RequireThrows([&] { SSL_CTX_check_private_key_nid_postfix(noInternal.Context()); });
+    ExpectErr([&] { SSL_CTX_check_private_key_nid_postfix(noInternal.Context()); });
     noInternal.Verify(0, std::source_location::current());
 }
 
@@ -466,7 +456,7 @@ static void TestAddClientCa() {
     Require(SSL_CTX_add_client_CA_nid_postfix(f.Context(), nullptr) == 0);
     Require(ERR_get_error_nid_postfix() == 0x02001002);
     f.Verify(0, std::source_location::current());
-    RequireThrows([] { SSL_CTX_add_client_CA_nid_postfix(nullptr, nullptr); });
+    ExpectErr([] { SSL_CTX_add_client_CA_nid_postfix(nullptr, nullptr); });
     Require(ERR_get_error_nid_postfix() == 0);
     f.SetCtx<void*>(CtxInternal, nullptr);
     f.Throws([&] { SSL_CTX_add_client_CA_nid_postfix(f.Context(), nullptr); });

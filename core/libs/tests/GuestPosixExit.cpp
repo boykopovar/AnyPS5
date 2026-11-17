@@ -1,19 +1,13 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Cancel.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
 
 namespace {
-
-void Require(bool value, const char* message) {
-    if (!value) {
-        std::fprintf(stderr, "%s\n", message);
-        std::abort();
-    }
-}
 
 struct Context {
     PthreadKey key = 0;

@@ -3,6 +3,7 @@
 #include "prx/libc/include/Shutdown.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceAgc/Shader/include/ShaderConstants.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cmath>
@@ -22,16 +23,12 @@ struct GsSetup {
     Shader shader;
 };
 
-void check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
-
 template <typename TAction>
 void expectFailure(TAction action) {
     try {
         action();
     } catch (const std::exception& error) {
-        check(error.what()[0] != '\0', "empty exception message");
+        Require(error.what()[0] != '\0', "empty exception message");
         return;
     }
     throw std::runtime_error("expected an exception");
@@ -61,9 +58,9 @@ void makeGs(GsSetup& setup, std::uint32_t onchip, std::uint32_t subgroup, std::u
 
 void expectRegs(const Shader* gs, std::uint32_t budget, float factor, std::uint32_t pcAlloc, std::uint32_t rsrc4, const char* message) {
     auto regs = filled();
-    check(sceAgcGetGsOversubscription(regs.data(), gs, budget, factor) == 0, message);
-    check(regs[0].offset == ShaderRegs::GE_PC_ALLOC && regs[1].offset == ShaderRegs::SPI_SHADER_PGM_RSRC4_GS, message);
-    check(regs[0].value == pcAlloc && regs[1].value == rsrc4, message);
+    Require(sceAgcGetGsOversubscription(regs.data(), gs, budget, factor) == 0, message);
+    Require(regs[0].offset == ShaderRegs::GE_PC_ALLOC && regs[1].offset == ShaderRegs::SPI_SHADER_PGM_RSRC4_GS, message);
+    Require(regs[0].value == pcAlloc && regs[1].value == rsrc4, message);
 }
 
 void testBudgetLimits() {
@@ -119,7 +116,7 @@ void testRejections() {
     expectFailure([&] { sceAgcGetGsOversubscription(regs.data(), &setup.shader, 1u << 20u, 0.5f); });
     setup.shader.num_cx_registers = 4;
     expectFailure([&] { sceAgcGetGsOversubscription(regs.data(), &setup.shader, 1u << 20u, 0.5f); });
-    check(std::memcmp(regs.data(), saved.data(), sizeof(regs)) == 0, "rejected call wrote registers");
+    Require(std::memcmp(regs.data(), saved.data(), sizeof(regs)) == 0, "rejected call wrote registers");
 }
 
 }

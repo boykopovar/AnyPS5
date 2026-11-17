@@ -1,4 +1,5 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdio>
@@ -9,21 +10,6 @@
 #include <stdexcept>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc SentPacket check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> void RequireInvalidArgument(TAction action) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false);
-}
 
 constexpr std::array<std::int64_t, 5> Values {0, -1, 1234567890123, std::numeric_limits<std::int64_t>::min(), std::numeric_limits<std::int64_t>::max()};
 
@@ -46,7 +32,7 @@ void TestDefault() {
             Require(packet.info.ipOverheadBytes == 0);
         }
     }
-    RequireInvalidArgument([] { _ZN3rtc10SentPacketC1Ell_nid_postfix(nullptr, 1, 2); });
+    ExpectErr<std::invalid_argument>([] { _ZN3rtc10SentPacketC1Ell_nid_postfix(nullptr, 1, 2); });
 }
 
 void TestCopy() {
@@ -86,8 +72,8 @@ void TestCopy() {
     }
     WebRtcSentPacket packet;
     WebRtcPacketInfo info {};
-    RequireInvalidArgument([&] { _ZN3rtc10SentPacketC1EllRKNS_10PacketInfoE_nid_postfix(nullptr, 1, 2, &info); });
-    RequireInvalidArgument([&] { _ZN3rtc10SentPacketC1EllRKNS_10PacketInfoE_nid_postfix(&packet, 1, 2, nullptr); });
+    ExpectErr<std::invalid_argument>([&] { _ZN3rtc10SentPacketC1EllRKNS_10PacketInfoE_nid_postfix(nullptr, 1, 2, &info); });
+    ExpectErr<std::invalid_argument>([&] { _ZN3rtc10SentPacketC1EllRKNS_10PacketInfoE_nid_postfix(&packet, 1, 2, nullptr); });
 }
 
 }

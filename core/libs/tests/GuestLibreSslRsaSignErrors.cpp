@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -24,12 +25,6 @@ constexpr std::uint64_t Sentinel = (8u << 24) | (0xfffu << 12) | 123u;
 int CallbackResult = 0;
 int CallbackReason = 0;
 int CallbackCalls = 0;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "RSA_sign error check failed at line %u\n", location.line());
-    std::abort();
-}
 
 std::uint64_t RsaError(int reason) {
     return (4u << 24) | (0xfffu << 12) | static_cast<unsigned int>(reason);

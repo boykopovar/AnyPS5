@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <atomic>
 #include <new>
@@ -11,8 +12,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 #ifndef _WIN32
 static std::atomic<std::size_t> lastAllocationSize{0};

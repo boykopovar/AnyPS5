@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceNet/include/Net.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -14,8 +15,6 @@ constexpr int GuestInet = 2;
 constexpr int GuestStream = 1;
 constexpr int GuestConnectionRefused = 61;
 constexpr auto RefusalLimit = std::chrono::milliseconds(1000);
-
-void Require(bool value) { if (!value) std::abort(); }
 
 std::array<std::uint8_t, 16> ClosedLoopbackPort() {
     std::array<std::uint8_t, 16> address{16, 2, 0, 0, 127, 0, 0, 1};

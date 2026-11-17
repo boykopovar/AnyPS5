@@ -3,6 +3,7 @@
 #include "prx/libc/include/GuestDirectory.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -20,8 +21,6 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static const char* UnreadablePage() {
 #ifdef _WIN32

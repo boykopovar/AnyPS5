@@ -1,6 +1,7 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libc/libc.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -17,12 +18,6 @@
 namespace {
 
 std::unordered_map<void*, std::size_t> allocations;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc PendingTaskSafetyFlag check failed at line %u\n", location.line());
-    std::abort();
-}
 
 void* APS5_VABI Allocate_nid_no_patch(std::size_t size) {
     auto* pointer = std::malloc(size);
@@ -42,15 +37,6 @@ void* APS5_VABI Realign_nid_no_patch(void* pointer, std::size_t size, std::size_
 int APS5_VABI PosixAlign_nid_no_patch(void** pointer, std::size_t alignment, std::size_t size) {
     *pointer = Align_nid_no_patch(alignment, size);
     return *pointer ? 0 : 12;
-}
-
-template<typename TAction> void RequireInvalidArgument(TAction action, std::source_location location = std::source_location::current()) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, location);
 }
 
 void TestAlive() {
@@ -89,9 +75,9 @@ void TestCreate() {
 }
 
 void TestNullFlag() {
-    RequireInvalidArgument([] { _ZN6webrtc21PendingTaskSafetyFlag6CreateEv_nid_postfix(nullptr); });
-    RequireInvalidArgument([] { _ZN6webrtc21PendingTaskSafetyFlag11SetNotAliveEv_nid_postfix(nullptr); });
-    RequireInvalidArgument([] { _ZNK6webrtc21PendingTaskSafetyFlag5aliveEv_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZN6webrtc21PendingTaskSafetyFlag6CreateEv_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZN6webrtc21PendingTaskSafetyFlag11SetNotAliveEv_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZNK6webrtc21PendingTaskSafetyFlag5aliveEv_nid_postfix(nullptr); });
 }
 
 class GuardedPage {
@@ -126,9 +112,9 @@ private:
 
 void TestGuardedFlag() {
     GuardedPage guard;
-    RequireInvalidArgument([&] { _ZN6webrtc21PendingTaskSafetyFlag6CreateEv_nid_postfix(guard.As<WebRtcPendingTaskSafetyFlag*>()); });
-    RequireInvalidArgument([&] { _ZN6webrtc21PendingTaskSafetyFlag11SetNotAliveEv_nid_postfix(guard.As<WebRtcPendingTaskSafetyFlag>()); });
-    RequireInvalidArgument([&] { _ZNK6webrtc21PendingTaskSafetyFlag5aliveEv_nid_postfix(guard.As<const WebRtcPendingTaskSafetyFlag>()); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc21PendingTaskSafetyFlag6CreateEv_nid_postfix(guard.As<WebRtcPendingTaskSafetyFlag*>()); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc21PendingTaskSafetyFlag11SetNotAliveEv_nid_postfix(guard.As<WebRtcPendingTaskSafetyFlag>()); });
+    ExpectErr<std::invalid_argument>([&] { _ZNK6webrtc21PendingTaskSafetyFlag5aliveEv_nid_postfix(guard.As<const WebRtcPendingTaskSafetyFlag>()); });
 }
 
 }

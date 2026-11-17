@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -10,12 +11,6 @@
 #include <string>
 
 namespace {
-
-void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "failed: %s\n", what);
-    std::abort();
-}
 
 std::uint32_t Network(std::uint8_t a, std::uint8_t b, std::uint8_t c, std::uint8_t d) {
     const std::uint8_t bytes[4] = {a, b, c, d};

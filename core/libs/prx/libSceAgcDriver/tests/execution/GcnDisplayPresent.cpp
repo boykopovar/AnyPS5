@@ -9,6 +9,7 @@
 #include "prx/libc/include/Shutdown.hpp"
 #include "tests/VideoOutTestEnvironment.hpp"
 #include "Decoder/Png.hpp"
+#include "Testing.hpp"
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
 #include <SDL_vulkan.h>
@@ -48,10 +49,6 @@ constexpr std::size_t PixelBytes = static_cast<std::size_t>(Width) * Height * 4u
 constexpr std::size_t BlockBytes = 2u * 1024u * 1024u;
 constexpr std::size_t BufferSpacing = BlockBytes / 2u;
 constexpr std::size_t BufferOffset = 32768u;
-
-void Require(bool condition, const std::string& reason) {
-    if (!condition) throw std::runtime_error(reason);
-}
 
 void SetEnvironment(const char* name, const std::string& value) {
 #ifdef _WIN32

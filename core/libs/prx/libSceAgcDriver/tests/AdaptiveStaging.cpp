@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/AdaptiveStaging.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <functional>
 #include <iostream>
@@ -9,10 +10,6 @@
 namespace {
 
 using AgcDriver::Graphics::AdaptiveStaging;
-
-void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 constexpr std::uint64_t Begin = 0x200000000;
 constexpr std::uint64_t End = Begin + 0xca80000;

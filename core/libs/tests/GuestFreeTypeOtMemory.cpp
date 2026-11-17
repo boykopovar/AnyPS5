@@ -1,4 +1,5 @@
 #include "prx/libSceFreeTypeOt/include/Memory.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -60,12 +61,6 @@ void* APS5_VABI RecordRealloc(GuestMemoryRec* memory, std::int64_t current, std:
 void Reset(Recorder& recorder) {
     recorder = Recorder{};
     recorder.memory = {&recorder, RecordAlloc, RecordFree, RecordRealloc};
-}
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "FreeType Ot memory: %s\n", message);
-    std::exit(1);
 }
 
 bool Filled(const void* block, std::size_t size, unsigned char value) {

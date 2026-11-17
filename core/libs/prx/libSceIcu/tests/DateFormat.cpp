@@ -1,5 +1,6 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libSceIcu/tests/RecoveredSignatureChecks.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstdint>
@@ -24,7 +25,6 @@
 
 namespace UdatClose {
 
-using IcuRecoveredTest::Require;
 
 static_assert(std::is_same_v<decltype(&udat_close_nid_postfix), void (APS5_VABI*)(UDateFormat*)>);
 
@@ -58,8 +58,6 @@ void Run() {
 
 namespace UdatFormat {
 
-using IcuRecoveredTest::Require;
-using IcuRecoveredTest::RequireThrows;
 
 static_assert(std::is_same_v<decltype(&udat_format_nid_postfix),
                              std::int32_t (APS5_VABI*)(const UDateFormat*, double, char16_t*, std::int32_t, UFieldPosition*, std::int32_t*)>);
@@ -130,20 +128,20 @@ void UnsupportedPathsThrow() {
     auto* format = reinterpret_cast<const UDateFormat*>(&buffer);
     auto* position = reinterpret_cast<UFieldPosition*>(&buffer);
 
-    RequireThrows([&] { udat_format_nid_postfix(nullptr, 0.0, nullptr, 0, nullptr, nullptr); });
-    RequireThrows([&] { udat_format_nid_postfix(format, 0.0, buffer.data(), -1, position, nullptr); });
+    ExpectErr([&] { udat_format_nid_postfix(nullptr, 0.0, nullptr, 0, nullptr, nullptr); });
+    ExpectErr([&] { udat_format_nid_postfix(format, 0.0, buffer.data(), -1, position, nullptr); });
 
     for (std::int32_t incoming : {0, -1, -124}) {
         std::int32_t status = incoming;
-        RequireThrows([&] { udat_format_nid_postfix(format, 0.0, nullptr, 0, nullptr, &status); });
+        ExpectErr([&] { udat_format_nid_postfix(format, 0.0, nullptr, 0, nullptr, &status); });
         Require(status == incoming);
 
         status = incoming;
-        RequireThrows([&] { udat_format_nid_postfix(format, 0.0, buffer.data(), 0, position, &status); });
+        ExpectErr([&] { udat_format_nid_postfix(format, 0.0, buffer.data(), 0, position, &status); });
         Require(status == incoming);
 
         status = incoming;
-        RequireThrows([&] { udat_format_nid_postfix(format, 0.0, buffer.data(), 4, nullptr, &status); });
+        ExpectErr([&] { udat_format_nid_postfix(format, 0.0, buffer.data(), 4, nullptr, &status); });
         Require(status == incoming);
     }
     for (char16_t unit : buffer) Require(unit == Fill);
@@ -161,8 +159,6 @@ void Run() {
 
 namespace UdatFormatForFields {
 
-using IcuRecoveredTest::Require;
-using IcuRecoveredTest::RequireThrows;
 
 static_assert(std::is_same_v<decltype(&udat_formatForFields_nid_postfix),
                              std::int32_t (APS5_VABI*)(const void*, double, char16_t*, std::int32_t, void*, std::int32_t*)>);
@@ -223,8 +219,8 @@ void IllegalBufferArguments() {
 
 void NullStatusThrows() {
     std::array<char16_t, 2> buffer{Sentinel, Sentinel};
-    RequireThrows([&] { udat_formatForFields_nid_postfix(nullptr, 0.0, nullptr, 0, nullptr, nullptr); });
-    RequireThrows([&] { udat_formatForFields_nid_postfix(nullptr, 0.0, buffer.data(), -1, nullptr, nullptr); });
+    ExpectErr([&] { udat_formatForFields_nid_postfix(nullptr, 0.0, nullptr, 0, nullptr, nullptr); });
+    ExpectErr([&] { udat_formatForFields_nid_postfix(nullptr, 0.0, buffer.data(), -1, nullptr, nullptr); });
     Require(buffer[0] == Sentinel && buffer[1] == Sentinel);
 }
 
@@ -240,8 +236,6 @@ void Run() {
 
 namespace UdatGetSymbols {
 
-using IcuRecoveredTest::Require;
-using IcuRecoveredTest::RequireThrows;
 
 static_assert(std::is_same_v<decltype(&udat_getSymbols_nid_postfix),
                              std::int32_t (APS5_VABI*)(const void*, std::int32_t, std::int32_t, char16_t*, std::int32_t, std::int32_t*)>);
@@ -278,11 +272,11 @@ void NonNullFormatterThrows() {
     std::array<char16_t, 4> buffer{u'X', u'Y', u'Z', u'W'};
     for (std::int32_t incoming : {0, -124, 1, 15}) {
         auto status = incoming;
-        RequireThrows([&] { udat_getSymbols_nid_postfix(storage.data(), 0, 0, buffer.data(), 4, &status); });
+        ExpectErr([&] { udat_getSymbols_nid_postfix(storage.data(), 0, 0, buffer.data(), 4, &status); });
         Require(status == incoming);
         Require(buffer[0] == u'X' && buffer[1] == u'Y' && buffer[2] == u'Z' && buffer[3] == u'W');
     }
-    RequireThrows([&] { udat_getSymbols_nid_postfix(storage.data(), 7, -1, nullptr, 0, nullptr); });
+    ExpectErr([&] { udat_getSymbols_nid_postfix(storage.data(), 7, -1, nullptr, 0, nullptr); });
 }
 
 }
@@ -296,23 +290,12 @@ void Run() {
 
 namespace UdatOpen {
 
-using IcuRecoveredTest::Require;
 
 static_assert(std::is_same_v<decltype(&udat_open_nid_postfix),
                              UDateFormat* (APS5_VABI*)(std::int32_t, std::int32_t, const char*, const char16_t*, std::int32_t,
                                                        const char16_t*, std::int32_t, std::int32_t*)>);
 
 namespace {
-
-template<typename TException, typename TAction>
-void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
-    try {
-        action();
-    } catch (const TException&) {
-        return;
-    }
-    Require(false, location);
-}
 
 void FailureShortCircuit() {
     const char* badLocale = reinterpret_cast<const char*>(std::uintptr_t{1});
@@ -334,17 +317,17 @@ void FailureShortCircuit() {
 void NonFailureThrows() {
     const char16_t zone[] = u"UTC";
     const char16_t pattern[] = u"yyyy-MM-dd";
-    RequireThrows<std::invalid_argument>([&] {
+    ExpectErr<std::invalid_argument>([&] {
         udat_open_nid_postfix(0, 0, "en_US", zone, 3, pattern, 10, nullptr);
     });
     for (std::int32_t incoming : {std::numeric_limits<std::int32_t>::min(), -128, -124, -1, 0}) {
         for (std::int32_t timeStyle : {-2, 0, 2}) {
             std::int32_t status = incoming;
-            RequireThrows<std::exception>([&] {
+            ExpectErr<std::exception>([&] {
                 udat_open_nid_postfix(timeStyle, 0, "en_US", zone, 3, pattern, 10, &status);
             });
             Require(status == incoming);
-            RequireThrows<std::exception>([&] {
+            ExpectErr<std::exception>([&] {
                 udat_open_nid_postfix(timeStyle, 0, nullptr, nullptr, -1, nullptr, -1, &status);
             });
             Require(status == incoming);
@@ -363,8 +346,6 @@ void Run() {
 
 namespace UdatToPattern {
 
-using IcuRecoveredTest::Require;
-using IcuRecoveredTest::RequireThrows;
 
 static_assert(std::is_same_v<decltype(&udat_toPattern_nid_postfix),
                              std::int32_t (APS5_VABI*)(const UDateFormat*, std::int8_t, char16_t*, std::int32_t, std::int32_t*)>);
@@ -463,8 +444,8 @@ void NullFormatHandle() {
 
 void NullStatusThrows() {
     char16_t buffer[2] = {u'p', u'q'};
-    RequireThrows([&] { udat_toPattern_nid_postfix(nullptr, 0, nullptr, 0, nullptr); });
-    RequireThrows([&] { udat_toPattern_nid_postfix(nullptr, 1, buffer, 2, nullptr); });
+    ExpectErr([&] { udat_toPattern_nid_postfix(nullptr, 0, nullptr, 0, nullptr); });
+    ExpectErr([&] { udat_toPattern_nid_postfix(nullptr, 1, buffer, 2, nullptr); });
     Require(buffer[0] == u'p' && buffer[1] == u'q');
 }
 
@@ -490,7 +471,7 @@ void Run() {
         } catch (const std::runtime_error&) {
             threw = true;
         }
-        IcuRecoveredTest::Require(threw && errno == 71);
+        Require(threw && errno == 71);
     };
 
     const std::size_t pageSize =
@@ -502,10 +483,10 @@ void Run() {
     void* roPage = nullptr;
 #ifdef _WIN32
     roPage = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-    IcuRecoveredTest::Require(roPage != nullptr);
+    Require(roPage != nullptr);
 #else
     roPage = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    IcuRecoveredTest::Require(roPage != MAP_FAILED);
+    Require(roPage != MAP_FAILED);
 #endif
     const std::int32_t zero = 0;
     const std::int32_t failing = 1;
@@ -513,9 +494,9 @@ void Run() {
     std::memcpy(static_cast<char*>(roPage) + 16, &failing, sizeof(failing));
 #ifdef _WIN32
     DWORD oldProtect = 0;
-    IcuRecoveredTest::Require(VirtualProtect(roPage, pageSize, PAGE_READONLY, &oldProtect) != 0);
+    Require(VirtualProtect(roPage, pageSize, PAGE_READONLY, &oldProtect) != 0);
 #else
-    IcuRecoveredTest::Require(mprotect(roPage, pageSize, PROT_READ) == 0);
+    Require(mprotect(roPage, pageSize, PROT_READ) == 0);
 #endif
     auto* roZero = static_cast<std::int32_t*>(roPage);
     auto* roFailing = reinterpret_cast<std::int32_t*>(static_cast<char*>(roPage) + 16);
@@ -524,18 +505,18 @@ void Run() {
 
     rejectsRuntime([&] { udat_format_nid_postfix(nullptr, 0.0, nullptr, 1, nullptr, badStatus); });
     rejectsRuntime([&] { udat_format_nid_postfix(nullptr, 0.0, nullptr, 1, nullptr, roZero); });
-    IcuRecoveredTest::Require(udat_format_nid_postfix(nullptr, 0.0, buffer, 2, nullptr, roFailing) == -1);
+    Require(udat_format_nid_postfix(nullptr, 0.0, buffer, 2, nullptr, roFailing) == -1);
 
     rejectsRuntime([&] { udat_formatForFields_nid_postfix(nullptr, 0.0, nullptr, 1, nullptr, badStatus); });
     rejectsRuntime([&] { udat_formatForFields_nid_postfix(nullptr, 0.0, nullptr, 1, nullptr, roZero); });
-    IcuRecoveredTest::Require(udat_formatForFields_nid_postfix(nullptr, 0.0, buffer, 2, nullptr, roFailing) == -1);
+    Require(udat_formatForFields_nid_postfix(nullptr, 0.0, buffer, 2, nullptr, roFailing) == -1);
 
     rejectsRuntime([&] { udat_open_nid_postfix(0, 0, nullptr, nullptr, 0, nullptr, 0, badStatus); });
-    IcuRecoveredTest::Require(udat_open_nid_postfix(0, 0, nullptr, nullptr, 0, nullptr, 0, roFailing) == nullptr);
+    Require(udat_open_nid_postfix(0, 0, nullptr, nullptr, 0, nullptr, 0, roFailing) == nullptr);
 
     rejectsRuntime([&] { udat_toPattern_nid_postfix(nullptr, 0, nullptr, 1, badStatus); });
     rejectsRuntime([&] { udat_toPattern_nid_postfix(nullptr, 0, nullptr, 1, roZero); });
-    IcuRecoveredTest::Require(udat_toPattern_nid_postfix(nullptr, 0, buffer, 2, roFailing) == -1);
+    Require(udat_toPattern_nid_postfix(nullptr, 0, buffer, 2, roFailing) == -1);
 
 #ifdef _WIN32
     VirtualFree(roPage, 0, MEM_RELEASE);

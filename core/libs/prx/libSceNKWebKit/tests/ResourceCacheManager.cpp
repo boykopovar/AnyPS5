@@ -1,6 +1,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/WebKitValueExports.hpp"
 #include "prx/libSceNKWebKit/src/Types.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -8,24 +9,6 @@
 #include <stdexcept>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "ResourceCacheManager check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
-
-template<class Function>
-void RequireInvalidArgument(Function function) {
-    bool threw = false;
-    try {
-        function();
-    } catch (const std::invalid_argument&) {
-        threw = true;
-    }
-    Require(threw);
-}
 
 bool callbackCalled = false;
 void OnOrigins(const void* arrayRef, const void* errorRef, void* context) {
@@ -73,16 +56,16 @@ int main() {
     WKResourceCacheManagerClearCacheForOrigin(mgrRef, nullptr, 3);
 
     auto badObj = NKWebKit::Make<NKWebKit::Array>();
-    RequireInvalidArgument([&] { WKResourceCacheManagerClearCacheForOrigin(mgrRef, badObj.Get(), 1); });
+    ExpectErr<std::invalid_argument>([&] { WKResourceCacheManagerClearCacheForOrigin(mgrRef, badObj.Get(), 1); });
 
     mgr->origins.push_back("example.org");
     WKResourceCacheManagerGetCacheOrigins(mgrRef, nullptr, OnOrigins);
     Require(callbackCalled);
     WKResourceCacheManagerGetCacheOrigins(mgrRef, nullptr, nullptr);
 
-    RequireInvalidArgument([] { WKResourceCacheManagerClearCacheForAllOrigins(nullptr, 0); });
-    RequireInvalidArgument([&] { WKResourceCacheManagerClearCacheForOrigin(nullptr, originRef, 0); });
-    RequireInvalidArgument([] { WKResourceCacheManagerGetCacheOrigins(nullptr, nullptr, OnOrigins); });
+    ExpectErr<std::invalid_argument>([] { WKResourceCacheManagerClearCacheForAllOrigins(nullptr, 0); });
+    ExpectErr<std::invalid_argument>([&] { WKResourceCacheManagerClearCacheForOrigin(nullptr, originRef, 0); });
+    ExpectErr<std::invalid_argument>([] { WKResourceCacheManagerGetCacheOrigins(nullptr, nullptr, OnOrigins); });
 
     return 0;
 }

@@ -1,5 +1,6 @@
 #include "prx/libSceCesCs/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
@@ -13,8 +14,6 @@ constexpr int unassignedCode = static_cast<int>(0x805C0020);
 constexpr int invalidDstBuffer = static_cast<int>(0x805C0030);
 constexpr std::uint64_t fnvBasis = 0xCBF29CE484222325ULL;
 constexpr std::uint32_t poison = 0xDEADBEEF;
-
-void Require(bool value) { if (!value) std::abort(); }
 
 std::uint64_t Fnv(std::uint64_t hash, std::uint64_t value, int bytes) {
     for (int i = 0; i < bytes; ++i) {

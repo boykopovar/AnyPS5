@@ -1,6 +1,7 @@
 #include "prx/libc/include/exceptions/Runtime.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/exceptions/Unwind.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -33,12 +34,6 @@ Call stop;
 Call cleanup;
 int traceArgument;
 int stopArgument;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "unwind callback check failed: %s\n", message);
-    std::exit(1);
-}
 
 _Unwind_Reason_Code APS5_VABI Trace(_Unwind_Context* context, void* argument) {
     ++trace.count;

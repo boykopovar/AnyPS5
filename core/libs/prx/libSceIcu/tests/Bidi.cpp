@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -29,26 +30,10 @@ constexpr std::int32_t EuropeanNumber = 2;
 constexpr std::int32_t RightToLeftArabic = 13;
 constexpr std::int32_t ClassDefault = 23;
 
-void Expect(bool condition, const char* what) {
-    if (condition) return;
-    std::fprintf(stderr, "failed: %s\n", what);
-    std::abort();
-}
-
 void ExpectInt(std::int64_t actual, std::int64_t expected, const char* what) {
     if (actual == expected) return;
     std::fprintf(stderr, "%s returned %lld, expected %lld\n", what, static_cast<long long>(actual), static_cast<long long>(expected));
     std::abort();
-}
-
-template <typename Exception, typename Function>
-void ExpectThrow(Function function, const char* what) {
-    try {
-        function();
-    } catch (const Exception&) {
-        return;
-    }
-    Expect(false, what);
 }
 
 void ExpectVisualRun(Icu::BiDi* bidi, std::int32_t run, std::int32_t start, std::int32_t length, std::int32_t direction,
@@ -71,7 +56,7 @@ std::int32_t APS5_VABI DefaultClass(const void*, std::int32_t) {
 
 void TestParagraph() {
     auto* bidi = ubidi_open_nid_postfix();
-    Expect(bidi != nullptr, "ubidi_open");
+    Require(bidi != nullptr, "ubidi_open");
     ExpectInt(ubidi_getParaLevel_nid_postfix(bidi), 0, "ubidi_getParaLevel before setPara");
     std::int32_t error = Success;
     ExpectInt(ubidi_countRuns_nid_postfix(bidi, &error), -1, "ubidi_countRuns before setPara");
@@ -112,17 +97,17 @@ void TestClassCallback() {
     std::int32_t error = Success;
     ubidi_setClassCallback_nid_postfix(bidi, MarkXRightToLeft, &calls, &oldFunction, &oldContext, &error);
     ExpectInt(error, Success, "ubidi_setClassCallback");
-    Expect(oldFunction == nullptr && oldContext == nullptr, "ubidi_setClassCallback initial callback");
+    Require(oldFunction == nullptr && oldContext == nullptr, "ubidi_setClassCallback initial callback");
 
     const char16_t text[] = u"axb";
     ubidi_setPara_nid_postfix(bidi, text, -1, 0, nullptr, &error);
     ExpectInt(error, Success, "ubidi_setPara with callback");
-    Expect(calls >= 3, "ubidi_setPara called the class callback");
+    Require(calls >= 3, "ubidi_setPara called the class callback");
     ExpectInt(ubidi_countRuns_nid_postfix(bidi, &error), 3, "ubidi_countRuns with callback");
     ExpectVisualRun(bidi, 1, 1, 1, Rtl, "ubidi_getVisualRun with callback");
 
     ubidi_setClassCallback_nid_postfix(bidi, nullptr, nullptr, &oldFunction, &oldContext, &error);
-    Expect(oldFunction == MarkXRightToLeft && oldContext == &calls, "ubidi_setClassCallback previous callback");
+    Require(oldFunction == MarkXRightToLeft && oldContext == &calls, "ubidi_setClassCallback previous callback");
     ubidi_setPara_nid_postfix(bidi, text, -1, 0, nullptr, &error);
     ExpectInt(ubidi_countRuns_nid_postfix(bidi, &error), 1, "ubidi_countRuns after removing callback");
 
@@ -156,7 +141,7 @@ void TestArguments() {
     std::int32_t error = Success;
     ubidi_setPara_nid_postfix(nullptr, u"a", -1, 0, nullptr, &error);
     ExpectInt(error, IllegalArgument, "ubidi_setPara(null)");
-    ExpectThrow<std::invalid_argument>([] { ubidi_getLogicalRun_nid_postfix(nullptr, 0, nullptr, nullptr); },
+    ExpectErr<std::invalid_argument>([] { ubidi_getLogicalRun_nid_postfix(nullptr, 0, nullptr, nullptr); },
                                        "ubidi_getLogicalRun(null)");
     ubidi_close_nid_postfix(nullptr);
 }
@@ -169,13 +154,13 @@ public:
         GetSystemInfo(&info);
         bytes = info.dwPageSize;
         data = VirtualAlloc(nullptr, bytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-        Expect(data != nullptr, "VirtualAlloc");
+        Require(data != nullptr, "VirtualAlloc");
 #else
         const long page = sysconf(_SC_PAGESIZE);
-        Expect(page > 0, "sysconf");
+        Require(page > 0, "sysconf");
         bytes = static_cast<std::size_t>(page);
         data = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-        Expect(data != nullptr && data != MAP_FAILED, "mmap");
+        Require(data != nullptr && data != MAP_FAILED, "mmap");
 #endif
     }
 
@@ -189,7 +174,7 @@ public:
 
     template <typename T>
     T* Set(const T& value) {
-        Expect(sizeof(value) <= bytes, "ReadOnlyPage size");
+        Require(sizeof(value) <= bytes, "ReadOnlyPage size");
         std::memcpy(data, &value, sizeof(value));
         return static_cast<T*>(data);
     }
@@ -197,9 +182,9 @@ public:
     void Protect() {
 #ifdef _WIN32
         DWORD previous{};
-        Expect(VirtualProtect(data, bytes, PAGE_READONLY, &previous) != 0, "VirtualProtect");
+        Require(VirtualProtect(data, bytes, PAGE_READONLY, &previous) != 0, "VirtualProtect");
 #else
-        Expect(mprotect(data, bytes, PROT_READ) == 0, "mprotect");
+        Require(mprotect(data, bytes, PROT_READ) == 0, "mprotect");
 #endif
     }
 
@@ -217,7 +202,7 @@ void RejectsFaulted(TCall call, const char* what) {
     } catch (const std::runtime_error&) {
         threw = true;
     }
-    Expect(threw, what);
+    Require(threw, what);
     ExpectInt(errno, EINVAL, "errno preserved");
 }
 
@@ -265,7 +250,7 @@ void TestGuestPointers() {
     }
 
     auto* bidi = ubidi_open_nid_postfix();
-    Expect(bidi != nullptr, "ubidi_open");
+    Require(bidi != nullptr, "ubidi_open");
     std::int32_t status = Success;
     const char16_t text[] = u"abc אב";
     ubidi_setPara_nid_postfix(bidi, text, -1, DefaultLtr, nullptr, &status);
@@ -317,7 +302,7 @@ void TestGuestPointers() {
         std::int32_t map[2] = {11, 22};
         RejectsFaulted([&] { ubidi_reorderVisual_nid_postfix(badByte, 2, map); },
                        "ubidi_reorderVisual bad levels");
-        Expect(map[0] == 11 && map[1] == 22, "map untouched on bad levels");
+        Require(map[0] == 11 && map[1] == 22, "map untouched on bad levels");
         RejectsFaulted([&] { ubidi_reorderVisual_nid_postfix(levels, 2, badInt); },
                        "ubidi_reorderVisual bad map");
         ReadOnlyPage page;
@@ -335,7 +320,7 @@ void TestGuestPointers() {
                        "ubidi_reorderVisual huge count with short arrays");
         RejectsFaulted([&] { ubidi_reorderVisual_nid_postfix(badByte, 0x7fffffff, badInt); },
                        "ubidi_reorderVisual huge bad arrays");
-        Expect(map[0] == 11 && map[1] == 22, "map untouched on huge reorder");
+        Require(map[0] == 11 && map[1] == 22, "map untouched on huge reorder");
     }
 
     {
@@ -346,7 +331,7 @@ void TestGuestPointers() {
         RejectsFaulted([&] {
             ubidi_setClassCallback_nid_postfix(bidi, MarkXRightToLeft, &calls, badCallback, &localOldContext, &status);
         }, "ubidi_setClassCallback bad oldFunction");
-        Expect(localOldContext == &status, "oldContext untouched when oldFunction invalid");
+        Require(localOldContext == &status, "oldContext untouched when oldFunction invalid");
         ExpectInt(status, Success, "status unchanged when oldFunction invalid");
 
         ReadOnlyPage contextPage;
@@ -356,7 +341,7 @@ void TestGuestPointers() {
         RejectsFaulted([&] {
             ubidi_setClassCallback_nid_postfix(bidi, MarkXRightToLeft, &calls, &localOldFunction, roOldContext, &status);
         }, "ubidi_setClassCallback ro oldContext");
-        Expect(localOldFunction == DefaultClass && *roOldContext == sentinel,
+        Require(localOldFunction == DefaultClass && *roOldContext == sentinel,
                "oldFunction and ro oldContext untouched on failure");
 
         status = Success;

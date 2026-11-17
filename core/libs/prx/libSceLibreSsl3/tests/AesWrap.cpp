@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "Testing.hpp"
 #ifdef __linux__
 #include <sys/resource.h>
 #endif
@@ -21,12 +22,6 @@ long PeakKilobytes() {
 #else
     return 0;
 #endif
-}
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL3 AES wrap check failed at line %u\n", location.line());
-    std::abort();
 }
 
 std::string Hex(const unsigned char* bytes, std::size_t length) {
@@ -133,22 +128,14 @@ int main() {
     }
     Require(threw);
     const auto* const unreadable = reinterpret_cast<const unsigned char*>(0x10);
-    const auto wrapThrows = [](auto call) {
-        try {
-            call();
-        } catch (const std::invalid_argument&) {
-            return true;
-        }
-        return false;
-    };
     errno = 71;
-    Require(wrapThrows([&] { AES_wrap_key_nid_postfix(reinterpret_cast<AesKey*>(0x10), nullptr, wrapped, plain, sizeof(plain)); }));
-    Require(wrapThrows([&] { AES_wrap_key_nid_postfix(&key, unreadable, wrapped, plain, sizeof(plain)); }));
-    Require(wrapThrows([&] { AES_wrap_key_nid_postfix(&key, nullptr, wrapped, unreadable, sizeof(plain)); }));
-    Require(wrapThrows([&] { AES_wrap_key_nid_postfix(&key, nullptr, reinterpret_cast<unsigned char*>(0x10), plain, sizeof(plain)); }));
+    ExpectErr<std::invalid_argument>([&] { AES_wrap_key_nid_postfix(reinterpret_cast<AesKey*>(0x10), nullptr, wrapped, plain, sizeof(plain)); });
+    ExpectErr<std::invalid_argument>([&] { AES_wrap_key_nid_postfix(&key, unreadable, wrapped, plain, sizeof(plain)); });
+    ExpectErr<std::invalid_argument>([&] { AES_wrap_key_nid_postfix(&key, nullptr, wrapped, unreadable, sizeof(plain)); });
+    ExpectErr<std::invalid_argument>([&] { AES_wrap_key_nid_postfix(&key, nullptr, reinterpret_cast<unsigned char*>(0x10), plain, sizeof(plain)); });
     Require(errno == 71);
     const long peakBefore = PeakKilobytes();
-    Require(wrapThrows([&] { AES_wrap_key_nid_postfix(&key, nullptr, wrapped, unreadable, 0xfffffff8u); }));
+    ExpectErr<std::invalid_argument>([&] { AES_wrap_key_nid_postfix(&key, nullptr, wrapped, unreadable, 0xfffffff8u); });
     Require(errno == 71 && PeakKilobytes() - peakBefore < 64 * 1024);
     CheckRfc3394();
     CheckIv();

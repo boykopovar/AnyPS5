@@ -2,6 +2,7 @@
 #include "prx/libSceNpWebApi/include/Api.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <chrono>
@@ -53,13 +54,6 @@ void ClobberErrno(std::uintptr_t, std::size_t) {
 const char onlineId[20] = "player";
 const char filterParam[16] = {};
 const char body[] = "{}";
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "NpWebApi: %s\n", message);
-        std::abort();
-    }
-}
 
 void APS5_VABI PushEvent() {
 }

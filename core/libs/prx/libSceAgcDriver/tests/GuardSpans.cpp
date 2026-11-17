@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuardSpans.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <iostream>
 #include <limits>
@@ -14,10 +15,6 @@ struct Range {
     std::uint64_t address;
     std::uint64_t bytes;
 };
-
-void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 bool Overlapping(const std::vector<Range>& ranges, std::uint64_t address, std::uint64_t bytes) {
     for (const auto& range : ranges) {

@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -10,13 +11,6 @@
 #else
 #include <sys/mman.h>
 #endif
-
-static void Check(bool condition, int line) {
-    if (condition) return;
-    std::fprintf(stderr, "crt setup check failed at line %d\n", line);
-    std::abort();
-}
-#define Require(condition) Check((condition), __LINE__)
 
 namespace {
 

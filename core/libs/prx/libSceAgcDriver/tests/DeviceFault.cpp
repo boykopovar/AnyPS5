@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/DeviceFault.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <cstdio>
 #include <cstring>
@@ -10,10 +11,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 int faultCalls = 0;
 bool faultFails = false;

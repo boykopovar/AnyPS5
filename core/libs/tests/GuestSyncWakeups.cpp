@@ -3,6 +3,7 @@
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "prx/libkernel/Semaphore/include/Semaphore.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -18,13 +19,6 @@ constexpr KernelUseconds Patience = 5000000;
 constexpr uint32_t WaitOr = 0x02;
 constexpr uint32_t ClearPattern = 0x20;
 constexpr uint32_t MultipleWaiters = 0x20;
-
-void Require(bool value, const char* message) {
-    if (!value) {
-        std::fprintf(stderr, "%s\n", message);
-        std::abort();
-    }
-}
 
 struct Task {
     void (*body)(Task*) = nullptr;

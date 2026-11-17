@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <climits>
 #include <cstddef>
 #include <cstdio>
@@ -88,16 +89,7 @@ static constexpr unsigned char Secp224k1Signature[] = {
     0x97, 0xbb, 0x30, 0xd8, 0x83, 0xe3, 0x4a, 0x77, 0xc0, 0x6c, 0xf4, 0x85, 0x90, 0x73, 0x32,
 };
 
-static void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "failed: %s\n", what);
-    std::abort();
-}
 
-template<typename TAction> static void RequireThrows(TAction action, const char* what) {
-    try { action(); } catch (const std::exception&) { return; }
-    Require(false, what);
-}
 
 template<std::size_t N> static Bytes ToBytes(const unsigned char (&data)[N]) {
     return Bytes(data, data + N);
@@ -204,10 +196,10 @@ static void CheckPointEncoding() {
 
     Require(EC_POINT_new_nid_postfix(nullptr) == nullptr, "EC_POINT_new without a group");
     EC_POINT_free_nid_postfix(nullptr);
-    RequireThrows([&] { EC_POINT_point2oct_nid_postfix(nullptr, point, Uncompressed, nullptr, 0, nullptr); }, "EC_POINT_point2oct without a group");
-    RequireThrows([&] { EC_POINT_point2oct_nid_postfix(group, nullptr, Uncompressed, nullptr, 0, nullptr); }, "EC_POINT_point2oct without a point");
-    RequireThrows([&] { EC_POINT_oct2point_nid_postfix(group, nullptr, generator.data(), generator.size(), nullptr); }, "EC_POINT_oct2point without a point");
-    RequireThrows([&] { EC_POINT_oct2point_nid_postfix(group, point, nullptr, 1, nullptr); }, "EC_POINT_oct2point without a buffer");
+    ExpectErr([&] { EC_POINT_point2oct_nid_postfix(nullptr, point, Uncompressed, nullptr, 0, nullptr); }, "EC_POINT_point2oct without a group");
+    ExpectErr([&] { EC_POINT_point2oct_nid_postfix(group, nullptr, Uncompressed, nullptr, 0, nullptr); }, "EC_POINT_point2oct without a point");
+    ExpectErr([&] { EC_POINT_oct2point_nid_postfix(group, nullptr, generator.data(), generator.size(), nullptr); }, "EC_POINT_oct2point without a point");
+    ExpectErr([&] { EC_POINT_oct2point_nid_postfix(group, point, nullptr, 1, nullptr); }, "EC_POINT_oct2point without a buffer");
     EC_POINT_free_nid_postfix(decoded);
     EC_POINT_free_nid_postfix(point);
     EC_GROUP_free_nid_postfix(group);
@@ -307,7 +299,7 @@ static void CheckKnownSignatures() {
     unsigned char buffer[80];
     unsigned int length = 123;
     Require(ECDSA_sign_nid_postfix(0, SampleDigest, sizeof(SampleDigest), buffer, &length, key) == 0 && length == 0, "ECDSA_sign without a private key");
-    RequireThrows([&] { Verify(SampleDigest, sizeof(SampleDigest), signature, nullptr); }, "ECDSA_verify without a key");
+    ExpectErr([&] { Verify(SampleDigest, sizeof(SampleDigest), signature, nullptr); }, "ECDSA_verify without a key");
     Require(Verify(SampleDigest, sizeof(SampleDigest), Bytes{0x30, 0x00}, nullptr) == -1, "a signature that is not DER is rejected before the key");
     EC_KEY_free_nid_postfix(key);
 
@@ -381,8 +373,8 @@ static void CheckSharedSecrets() {
     Require(ECDH_compute_key_nid_postfix(secret.data(), secret.size(), nullptr, key, nullptr) == -1, "no peer key");
     EcKey* publicOnly = PublicKeyOnly(415, ToBytes(P256Generator));
     Require(ECDH_compute_key_nid_postfix(secret.data(), secret.size(), peerKey, publicOnly, nullptr) == -1, "ECDH_compute_key without a private key");
-    RequireThrows([&] { ECDH_compute_key_nid_postfix(secret.data(), secret.size(), peerKey, nullptr, nullptr); }, "ECDH_compute_key without a key");
-    RequireThrows([&] { ECDH_compute_key_nid_postfix(nullptr, 32, peerKey, key, nullptr); }, "ECDH_compute_key without an output buffer");
+    ExpectErr([&] { ECDH_compute_key_nid_postfix(secret.data(), secret.size(), peerKey, nullptr, nullptr); }, "ECDH_compute_key without a key");
+    ExpectErr([&] { ECDH_compute_key_nid_postfix(nullptr, 32, peerKey, key, nullptr); }, "ECDH_compute_key without an output buffer");
 
     EC_KEY_free_nid_postfix(publicOnly);
     EC_POINT_free_nid_postfix(infinity);
@@ -404,16 +396,16 @@ static void CheckKeyChanges() {
     Require(EC_KEY_check_key_nid_postfix(nullptr) == 0, "EC_KEY_check_key without a key");
     Require(EC_KEY_set_public_key_nid_postfix(empty, point) == 0 && EC_KEY_get0_public_key_nid_postfix(empty) == nullptr, "EC_KEY_set_public_key without a group");
     Require(ECDSA_sign_nid_postfix(0, digest, sizeof(digest), signature, &length, empty) == 0, "ECDSA_sign without a group");
-    RequireThrows([&] { EC_KEY_get0_public_key_nid_postfix(nullptr); }, "EC_KEY_get0_public_key without a key");
-    RequireThrows([&] { EC_KEY_set_public_key_nid_postfix(nullptr, point); }, "EC_KEY_set_public_key without a key");
-    RequireThrows([&] { ECDSA_sign_nid_postfix(0, digest, sizeof(digest), signature, &length, nullptr); }, "ECDSA_sign without a key");
+    ExpectErr([&] { EC_KEY_get0_public_key_nid_postfix(nullptr); }, "EC_KEY_get0_public_key without a key");
+    ExpectErr([&] { EC_KEY_set_public_key_nid_postfix(nullptr, point); }, "EC_KEY_set_public_key without a key");
+    ExpectErr([&] { ECDSA_sign_nid_postfix(0, digest, sizeof(digest), signature, &length, nullptr); }, "ECDSA_sign without a key");
     EC_KEY_free_nid_postfix(empty);
 
     EcKey* key = EC_KEY_new_by_curve_name_nid_postfix(415);
     EcKey* peer = EC_KEY_new_by_curve_name_nid_postfix(415);
     Require(EC_KEY_generate_key_nid_postfix(key) == 1 && EC_KEY_generate_key_nid_postfix(peer) == 1, "P-256 keys");
     const EcGroup* keyGroup = EC_KEY_get0_group_nid_postfix(key);
-    RequireThrows([&] { ECDSA_sign_nid_postfix(0, digest, sizeof(digest), signature, nullptr, key); }, "ECDSA_sign without a length");
+    ExpectErr([&] { ECDSA_sign_nid_postfix(0, digest, sizeof(digest), signature, nullptr, key); }, "ECDSA_sign without a length");
     Require(ECDSA_sign_nid_postfix(0, digest, sizeof(digest), nullptr, &length, key) == 1 && length >= 8 && length <= 72, "ECDSA_sign without a buffer returns the length");
 
     const Bytes own = Encode(keyGroup, EC_KEY_get0_public_key_nid_postfix(key), Uncompressed);

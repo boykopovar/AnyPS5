@@ -1,6 +1,7 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
@@ -10,8 +11,6 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 struct AppInfo {
     std::uint32_t appId;

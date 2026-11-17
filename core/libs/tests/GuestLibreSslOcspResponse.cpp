@@ -2,6 +2,7 @@
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libSceLibreSsl/ErrorQueue.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -24,22 +25,6 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
-
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL OCSP response check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> static void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
-    try { action(); } catch (const std::exception&) { return; }
-    Require(false, location);
-}
-
-template<typename TAction> static void RequireNotImplemented(TAction action, std::source_location location = std::source_location::current()) {
-    try { action(); } catch (const std::runtime_error&) { return; }
-    Require(false, location);
-}
 
 class ReadOnlyPage {
 public:
@@ -121,7 +106,7 @@ static void TestResponseStatus() {
     value = {9, Integer, nullptr, 0};
     Require(Status(&value) == -1);
     Require(Status(nullptr) == 0);
-    RequireThrows([] { OCSP_response_status_nid_postfix(nullptr); });
+    ExpectErr([] { OCSP_response_status_nid_postfix(nullptr); });
 }
 
 static void TestBasicResponseFree() {
@@ -134,7 +119,7 @@ static void TestBasicResponseFree() {
 
 static void TestGet1Basic() {
     ERR_clear_error_nid_postfix();
-    RequireThrows([] { OCSP_response_get1_basic_nid_postfix(nullptr); });
+    ExpectErr([] { OCSP_response_get1_basic_nid_postfix(nullptr); });
     Require(ERR_peek_error_nid_postfix() == 0);
 
     LibreSslOcspResponse response {};
@@ -195,28 +180,28 @@ static void TestSingleStatus() {
 
     status = {1, nullptr};
     Require(OCSP_single_get0_status_nid_postfix(&single, nullptr, nullptr, &thisResult, nullptr) == 1);
-    RequireThrows([&] { OCSP_single_get0_status_nid_postfix(&single, &reason, nullptr, nullptr, nullptr); });
-    RequireThrows([&] { OCSP_single_get0_status_nid_postfix(&single, nullptr, &revocationTime, nullptr, nullptr); });
+    ExpectErr([&] { OCSP_single_get0_status_nid_postfix(&single, &reason, nullptr, nullptr, nullptr); });
+    ExpectErr([&] { OCSP_single_get0_status_nid_postfix(&single, nullptr, &revocationTime, nullptr, nullptr); });
 
     status = {5, nullptr};
     Require(OCSP_single_get0_status_nid_postfix(&single, &reason, &revocationTime, nullptr, nullptr) == 5);
 
     single.certStatus = nullptr;
-    RequireThrows([&] { OCSP_single_get0_status_nid_postfix(&single, nullptr, nullptr, nullptr, nullptr); });
+    ExpectErr([&] { OCSP_single_get0_status_nid_postfix(&single, nullptr, nullptr, nullptr, nullptr); });
 }
 
 static void TestGuestPointers() {
     errno = 73;
-    RequireNotImplemented([] { OCSP_response_status_nid_postfix(reinterpret_cast<const LibreSslOcspResponse*>(0x10)); });
+    ExpectErr<std::runtime_error>([] { OCSP_response_status_nid_postfix(reinterpret_cast<const LibreSslOcspResponse*>(0x10)); });
     Require(errno == 73);
     LibreSslOcspResponse badStatusResponse {reinterpret_cast<Asn1String*>(0x10), nullptr};
     errno = 73;
-    RequireNotImplemented([&] { OCSP_response_status_nid_postfix(&badStatusResponse); });
+    ExpectErr<std::runtime_error>([&] { OCSP_response_status_nid_postfix(&badStatusResponse); });
     Require(errno == 73);
     Asn1String badDataValue {1, Enumerated, reinterpret_cast<unsigned char*>(0x10), 0};
     LibreSslOcspResponse badDataResponse {&badDataValue, nullptr};
     errno = 73;
-    RequireNotImplemented([&] { OCSP_response_status_nid_postfix(&badDataResponse); });
+    ExpectErr<std::runtime_error>([&] { OCSP_response_status_nid_postfix(&badDataResponse); });
     Require(errno == 73);
 
     Asn1String revoked {}, thisUpdate {}, nextUpdate {}, other {};
@@ -234,42 +219,42 @@ static void TestGuestPointers() {
     ReadOnlyPage roInt(&reason, sizeof(reason));
 
     errno = 73;
-    RequireNotImplemented([&] { OCSP_single_get0_status_nid_postfix(reinterpret_cast<const LibreSslOcspSingleResponse*>(0x10),
+    ExpectErr<std::runtime_error>([&] { OCSP_single_get0_status_nid_postfix(reinterpret_cast<const LibreSslOcspSingleResponse*>(0x10),
         &reason, &revocationTime, &thisResult, &nextResult); });
     Require(errno == 73 && reason == 77 && revocationTime == &other && thisResult == &other && nextResult == &other);
 
     LibreSslOcspSingleResponse badStatusSingle {nullptr, reinterpret_cast<LibreSslOcspCertStatus*>(0x10), &thisUpdate, &nextUpdate, nullptr};
     errno = 73;
-    RequireNotImplemented([&] { OCSP_single_get0_status_nid_postfix(&badStatusSingle, &reason, &revocationTime, &thisResult, &nextResult); });
+    ExpectErr<std::runtime_error>([&] { OCSP_single_get0_status_nid_postfix(&badStatusSingle, &reason, &revocationTime, &thisResult, &nextResult); });
     Require(errno == 73 && reason == 77 && revocationTime == &other && thisResult == &other && nextResult == &other);
 
     LibreSslOcspCertStatus badRevokedStatus {1, reinterpret_cast<void*>(0x10)};
     LibreSslOcspSingleResponse badRevokedSingle {nullptr, &badRevokedStatus, &thisUpdate, &nextUpdate, nullptr};
     errno = 73;
-    RequireNotImplemented([&] { OCSP_single_get0_status_nid_postfix(&badRevokedSingle, &reason, &revocationTime, &thisResult, &nextResult); });
+    ExpectErr<std::runtime_error>([&] { OCSP_single_get0_status_nid_postfix(&badRevokedSingle, &reason, &revocationTime, &thisResult, &nextResult); });
     Require(errno == 73 && reason == 77 && revocationTime == &other && thisResult == &other && nextResult == &other);
 
     LibreSslOcspRevokedInfo badReasonRevoked {&revoked, reinterpret_cast<Asn1String*>(0x10)};
     LibreSslOcspCertStatus badReasonStatus {1, &badReasonRevoked};
     LibreSslOcspSingleResponse badReasonSingle {nullptr, &badReasonStatus, &thisUpdate, &nextUpdate, nullptr};
     errno = 73;
-    RequireNotImplemented([&] { OCSP_single_get0_status_nid_postfix(&badReasonSingle, &reason, &revocationTime, &thisResult, &nextResult); });
+    ExpectErr<std::runtime_error>([&] { OCSP_single_get0_status_nid_postfix(&badReasonSingle, &reason, &revocationTime, &thisResult, &nextResult); });
     Require(errno == 73 && reason == 77 && revocationTime == &other && thisResult == &other && nextResult == &other);
 
     errno = 73;
-    RequireNotImplemented([&] { OCSP_single_get0_status_nid_postfix(&single, &reason, roPtr.As<Asn1String*>(), &thisResult, &nextResult); });
+    ExpectErr<std::runtime_error>([&] { OCSP_single_get0_status_nid_postfix(&single, &reason, roPtr.As<Asn1String*>(), &thisResult, &nextResult); });
     Require(errno == 73 && reason == 77 && thisResult == &other && nextResult == &other);
 
     errno = 73;
-    RequireNotImplemented([&] { OCSP_single_get0_status_nid_postfix(&single, roInt.As<int>(), &revocationTime, &thisResult, &nextResult); });
+    ExpectErr<std::runtime_error>([&] { OCSP_single_get0_status_nid_postfix(&single, roInt.As<int>(), &revocationTime, &thisResult, &nextResult); });
     Require(errno == 73 && revocationTime == &other && thisResult == &other && nextResult == &other);
 
     errno = 73;
-    RequireNotImplemented([&] { OCSP_single_get0_status_nid_postfix(&single, &reason, &revocationTime, roPtr.As<Asn1String*>(), &nextResult); });
+    ExpectErr<std::runtime_error>([&] { OCSP_single_get0_status_nid_postfix(&single, &reason, &revocationTime, roPtr.As<Asn1String*>(), &nextResult); });
     Require(errno == 73 && reason == 77 && revocationTime == &other && nextResult == &other);
 
     errno = 73;
-    RequireNotImplemented([&] { OCSP_single_get0_status_nid_postfix(&single, &reason, &revocationTime, &thisResult, roPtr.As<Asn1String*>()); });
+    ExpectErr<std::runtime_error>([&] { OCSP_single_get0_status_nid_postfix(&single, &reason, &revocationTime, &thisResult, roPtr.As<Asn1String*>()); });
     Require(errno == 73 && reason == 77 && revocationTime == &other && thisResult == &other);
 }
 

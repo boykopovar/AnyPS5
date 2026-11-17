@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -24,13 +25,6 @@ extern "C" {
 
 unsigned int APS5_VABI GuestAlarm_nid_no_patch(unsigned int);
 
-}
-
-static void Require(bool value, const char* message) {
-    if (!value) {
-        std::fprintf(stderr, "%s\n", message);
-        std::abort();
-    }
 }
 
 static std::int64_t Micros(const KernelTimeval& time) {

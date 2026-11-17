@@ -1,6 +1,7 @@
 #include "prx/libSceVoice/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -22,12 +23,6 @@ using CustomerDataFn = int (APS5_VABI*)(std::uint32_t, const void*, std::uint32_
 using QaRecordingFn = int (APS5_VABI*)();
 using AdjustmentFn = void (APS5_VABI*)(float, float);
 using PvtAdjustmentFn = void (APS5_VABI*)(float, float, float, float);
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "Voice extras: %s\n", message);
-    std::abort();
-}
 
 template <typename Function, typename Export>
 Function As(Export function) {

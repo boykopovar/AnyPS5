@@ -2,6 +2,7 @@
 #include "prx/libkernel/Pthread/include/Rwlock.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -16,12 +17,6 @@ constexpr int GuestEinval = 22;
 constexpr int SceOk = 0;
 constexpr int SceKernelErrorEinval = static_cast<int>(0x80020016u);
 constexpr int SceKernelErrorEfault = static_cast<int>(0x8002000Eu);
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "check failed at line %u\n", static_cast<unsigned>(location.line()));
-    std::abort();
-}
 
 void TestValidTypes() {
     PthreadRwlockattr attr = nullptr;

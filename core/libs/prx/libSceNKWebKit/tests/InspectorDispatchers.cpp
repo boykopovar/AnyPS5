@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <cstddef>
 #include <cstdio>
@@ -55,23 +56,16 @@ static const Entry entries[] = {
     {"_ZN9Inspector34ApplicationCacheFrontendDispatchernwEmPv", &_ZN9Inspector34ApplicationCacheFrontendDispatchernwEmPv},
 };
 
-static void Check(bool value, const char* name, int line) {
-    if (!value) {
-        std::fprintf(stderr, "Inspector placement new check failed for %s at line %d\n", name, line);
-        std::abort();
-    }
-}
-
 int main() {
     alignas(16) unsigned char buffer[256];
     const std::size_t sizes[] = {0, 1, 8, 64, sizeof(buffer), ~static_cast<std::size_t>(0)};
     for (const Entry& entry : entries) {
         for (std::size_t size : sizes) {
-            Check(entry.function(size, buffer) == buffer, entry.name, __LINE__);
-            Check(entry.function(size, buffer + 8) == buffer + 8, entry.name, __LINE__);
+            Require(entry.function(size, buffer) == buffer, entry.name);
+            Require(entry.function(size, buffer + 8) == buffer + 8, entry.name);
         }
-        Check(entry.function(sizeof(buffer), nullptr) == nullptr, entry.name, __LINE__);
+        Require(entry.function(sizeof(buffer), nullptr) == nullptr, entry.name);
     }
-    Check(sizeof(entries) / sizeof(entries[0]) == 40, "entries", __LINE__);
+    Require(sizeof(entries) / sizeof(entries[0]) == 40, "entries");
     return 0;
 }

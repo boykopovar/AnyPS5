@@ -1,5 +1,6 @@
 #include "prx/libSceHmdSetupDialog/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <cerrno>
 #include <cstdint>
@@ -7,8 +8,6 @@
 #include <thread>
 
 namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
 
 constexpr int kStatusNone = 0;
 constexpr int kStatusInitialized = 1;

@@ -2,9 +2,8 @@
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdlib>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 constexpr int GuestEperm = 1;
 constexpr int GuestEbadf = 9;

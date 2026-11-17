@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
+#include "Testing.hpp"
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -14,10 +15,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool value) {
-    if (!value) std::abort();
-}
 
 int CheckNoIcon(const char* root) {
     std::filesystem::current_path(root);

@@ -1,6 +1,7 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libSceLibreSsl/include/Ec.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
@@ -9,12 +10,6 @@ namespace {
 
 constexpr int Secp256r1 = 415;
 constexpr int NamedCurveFlag = 1;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
 
 int FlagOf(const EcKey* key) {
     const EcGroup* group = EC_KEY_get0_group_nid_postfix(key);

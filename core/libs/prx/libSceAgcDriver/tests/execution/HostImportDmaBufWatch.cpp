@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "Testing.hpp"
 #include "VulkanTestDevice.hpp"
 #include <array>
 #include <cstdint>
@@ -15,10 +16,6 @@ namespace {
 
 constexpr std::size_t Block = 65536;
 constexpr std::size_t FillBytes = 4096;
-
-void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 std::uint8_t* MapDirectBlock() {
     std::int64_t physical = 0;

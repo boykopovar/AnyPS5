@@ -1,4 +1,5 @@
 #include "prx/libcairo/include/Matrix.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cmath>
 #include <cstdio>
@@ -14,13 +15,6 @@ static_assert(std::is_same_v<decltype(&cairo_matrix_multiply), MatrixMultiply>);
 static_assert(std::is_same_v<decltype(&cairo_matrix_invert), MatrixInvert>);
 
 namespace {
-void Check(bool ok, int line) {
-    if (!ok) {
-        std::fprintf(stderr, "Cairo matrix guest test failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(condition) Check((condition), __LINE__)
 
 bool Close(double a, double b) {
     return std::abs(a - b) <= 1e-11 * (1 + std::abs(a) + std::abs(b));

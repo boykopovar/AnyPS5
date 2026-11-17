@@ -1,5 +1,6 @@
 #include "prx/libc/include/LogFile.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -39,12 +40,6 @@ using namespace log_file;
 std::string g_self;
 std::filesystem::path g_directory;
 int g_failures = 0;
-
-void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "log file test failed: %s\n", what);
-    std::exit(1);
-}
 
 std::string Slurp(const std::filesystem::path& path) {
     std::ifstream stream(path, std::ios::binary);

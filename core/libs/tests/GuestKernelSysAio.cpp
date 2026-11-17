@@ -3,6 +3,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -32,10 +33,6 @@
 #include <unistd.h>
 #endif
 
-namespace {
-
-}
-
 extern "C" {
 
 void AioHoldWorkerForTest_nid_no_patch(bool hold);
@@ -57,12 +54,6 @@ constexpr int OSync = 0x80;
 constexpr int ODsync = 0x1000000;
 constexpr int AioCanceled = 1;
 constexpr int AioAllDone = 3;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "check failed at line %u\n", static_cast<unsigned>(location.line()));
-    std::exit(1);
-}
 
 int Error() {
     return *__error_nid_postfix();

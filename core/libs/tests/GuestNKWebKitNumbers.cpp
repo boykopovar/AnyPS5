@@ -1,4 +1,5 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <cmath>
 #include <cstddef>
@@ -10,14 +11,6 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "WTF number parsing check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static bool Same(double first, double second) {
     return std::memcmp(&first, &second, sizeof(double)) == 0;
@@ -196,16 +189,6 @@ static void StringToDoubleConverter() {
     Converter(longer, 1.25, 1.25f, 74);
 }
 
-template<typename TCall>
-static void RequireInvalidArgument(TCall call, int line) {
-    try {
-        call();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Check(false, line);
-}
-
 static void NullPointers() {
     bool ok = true;
     Require(Same(_ZN3WTF18charactersToDoubleEPKhmPb(nullptr, 0, &ok), 0.0));
@@ -216,27 +199,27 @@ static void NullPointers() {
     std::size_t parsedLength = 12345;
     Require(Same(_ZN3WTF17charactersToFloatEPKhmRm(nullptr, 0, &parsedLength), 0.0f));
     Require(parsedLength == 0);
-    RequireInvalidArgument([] { _ZN3WTF18charactersToDoubleEPKhmPb(nullptr, 1, nullptr); }, __LINE__);
-    RequireInvalidArgument([] { _ZN3WTF18charactersToDoubleEPKDsmPb(nullptr, 1, nullptr); }, __LINE__);
-    RequireInvalidArgument([] { _ZN3WTF17charactersToFloatEPKhmPb(nullptr, 1, nullptr); }, __LINE__);
-    RequireInvalidArgument([] { _ZN3WTF17charactersToFloatEPKDsmPb(nullptr, 1, nullptr); }, __LINE__);
+    ExpectErr<std::invalid_argument>([] { _ZN3WTF18charactersToDoubleEPKhmPb(nullptr, 1, nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZN3WTF18charactersToDoubleEPKDsmPb(nullptr, 1, nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZN3WTF17charactersToFloatEPKhmPb(nullptr, 1, nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZN3WTF17charactersToFloatEPKDsmPb(nullptr, 1, nullptr); });
     const unsigned char latin1[] = {'1'};
     const char16_t wide[] = {u'1'};
-    RequireInvalidArgument([&] { _ZN3WTF17charactersToFloatEPKhmRm(latin1, 1, nullptr); }, __LINE__);
-    RequireInvalidArgument([&] { _ZN3WTF17charactersToFloatEPKDsmRm(wide, 1, nullptr); }, __LINE__);
-    RequireInvalidArgument([] { _ZN3WTF17charactersToFloatEPKhmRm(nullptr, 0, nullptr); }, __LINE__);
+    ExpectErr<std::invalid_argument>([&] { _ZN3WTF17charactersToFloatEPKhmRm(latin1, 1, nullptr); });
+    ExpectErr<std::invalid_argument>([&] { _ZN3WTF17charactersToFloatEPKDsmRm(wide, 1, nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZN3WTF17charactersToFloatEPKhmRm(nullptr, 0, nullptr); });
     parsedLength = 12345;
     Require(Same(_ZN3WTF17double_conversion23StringToDoubleConverter14StringToDoubleEPKcmPm(nullptr, 0, &parsedLength), 0.0));
     Require(parsedLength == 0);
     parsedLength = 12345;
-    RequireInvalidArgument([&] { _ZN3WTF17double_conversion23StringToDoubleConverter13StringToFloatEPKtmPm(nullptr, 1, &parsedLength); }, __LINE__);
+    ExpectErr<std::invalid_argument>([&] { _ZN3WTF17double_conversion23StringToDoubleConverter13StringToFloatEPKtmPm(nullptr, 1, &parsedLength); });
     Require(parsedLength == 0);
     const char bytes[] = {'1'};
     const std::uint16_t units[] = {u'1'};
-    RequireInvalidArgument([&] { _ZN3WTF17double_conversion23StringToDoubleConverter14StringToDoubleEPKcmPm(bytes, 1, nullptr); }, __LINE__);
-    RequireInvalidArgument([&] { _ZN3WTF17double_conversion23StringToDoubleConverter14StringToDoubleEPKtmPm(units, 1, nullptr); }, __LINE__);
-    RequireInvalidArgument([&] { _ZN3WTF17double_conversion23StringToDoubleConverter13StringToFloatEPKcmPm(bytes, 1, nullptr); }, __LINE__);
-    RequireInvalidArgument([] { _ZN3WTF17double_conversion23StringToDoubleConverter13StringToFloatEPKtmPm(nullptr, 0, nullptr); }, __LINE__);
+    ExpectErr<std::invalid_argument>([&] { _ZN3WTF17double_conversion23StringToDoubleConverter14StringToDoubleEPKcmPm(bytes, 1, nullptr); });
+    ExpectErr<std::invalid_argument>([&] { _ZN3WTF17double_conversion23StringToDoubleConverter14StringToDoubleEPKtmPm(units, 1, nullptr); });
+    ExpectErr<std::invalid_argument>([&] { _ZN3WTF17double_conversion23StringToDoubleConverter13StringToFloatEPKcmPm(bytes, 1, nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZN3WTF17double_conversion23StringToDoubleConverter13StringToFloatEPKtmPm(nullptr, 0, nullptr); });
 }
 
 int main() {

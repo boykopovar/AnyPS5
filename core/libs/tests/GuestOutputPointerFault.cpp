@@ -3,6 +3,7 @@
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libkernel/Socket/include/SocketRuntime.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -17,14 +18,6 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "output pointer check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static constexpr int GuestEfault = 14;
 static constexpr int KernelEfault = static_cast<int>(0x8002000Eu);

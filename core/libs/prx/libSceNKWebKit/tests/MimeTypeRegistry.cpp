@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <cassert>
 #include <cstddef>
@@ -10,15 +11,6 @@
 #include <string>
 
 namespace {
-
-void Check(bool condition, int line) {
-    if (!condition) {
-        std::fprintf(stderr, "MimeTypeRegistry test failed at line %d\n", line);
-        std::abort();
-    }
-}
-
-#define Require(condition) Check((condition), __LINE__)
 
 using String = NKWebKit::WtfAbi::String;
 using StringView = NKWebKit::WtfAbi::StringView;

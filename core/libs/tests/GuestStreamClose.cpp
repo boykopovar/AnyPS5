@@ -3,6 +3,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -14,14 +15,6 @@
 #include <string>
 #include <thread>
 #include <vector>
-
-static void Check(bool condition, int line) {
-    if (!condition) {
-        std::fprintf(stderr, "stream close check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static constexpr const char* Appended = "guest_stream_close_appended.txt";
 static constexpr const char* Reused = "guest_stream_close_reused.txt";

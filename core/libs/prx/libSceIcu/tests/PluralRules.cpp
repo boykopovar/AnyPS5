@@ -23,7 +23,6 @@
 
 namespace UplrulesClose {
 
-using IcuRecoveredTest::Require;
 
 static_assert(std::is_same_v<decltype(&uplrules_close_nid_postfix), void (APS5_VABI*)(UPluralRules*)>);
 
@@ -59,9 +58,7 @@ void Run() {
 namespace UplrulesOpenForType {
 
 using IcuRecoveredTest::Filler;
-using IcuRecoveredTest::Require;
 using IcuRecoveredTest::RequireNoThrow;
-using IcuRecoveredTest::RequireThrows;
 using IcuRecoveredTest::Unchanged;
 
 static_assert(std::is_same_v<decltype(&uplrules_openForType_nid_postfix), UPluralRules* (APS5_VABI*)(const char*, std::int32_t, std::int32_t*)>);
@@ -96,7 +93,7 @@ void Run() {
     for (const auto incoming : passing) {
         for (const auto type : usable) {
             std::int32_t status = incoming;
-            RequireThrows([&] { uplrules_openForType_nid_postfix("en", type, &status); });
+            ExpectErr([&] { uplrules_openForType_nid_postfix("en", type, &status); });
             Require(status == incoming);
         }
 
@@ -107,7 +104,7 @@ void Run() {
         }
     }
 
-    RequireThrows([&] { uplrules_openForType_nid_postfix("en", 0, nullptr); });
+    ExpectErr([&] { uplrules_openForType_nid_postfix("en", 0, nullptr); });
 }
 
 } // namespace UplrulesOpenForType
@@ -123,7 +120,7 @@ void Run() {
         } catch (const std::runtime_error&) {
             threw = true;
         }
-        IcuRecoveredTest::Require(threw && errno == 71);
+        Require(threw && errno == 71);
     };
 
     const std::size_t pageSize =
@@ -135,10 +132,10 @@ void Run() {
     void* roPage = nullptr;
 #ifdef _WIN32
     roPage = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-    IcuRecoveredTest::Require(roPage != nullptr);
+    Require(roPage != nullptr);
 #else
     roPage = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    IcuRecoveredTest::Require(roPage != MAP_FAILED);
+    Require(roPage != MAP_FAILED);
 #endif
     const std::int32_t zero = 0;
     const std::int32_t failing = 1;
@@ -146,9 +143,9 @@ void Run() {
     std::memcpy(static_cast<char*>(roPage) + 16, &failing, sizeof(failing));
 #ifdef _WIN32
     DWORD oldProtect = 0;
-    IcuRecoveredTest::Require(VirtualProtect(roPage, pageSize, PAGE_READONLY, &oldProtect) != 0);
+    Require(VirtualProtect(roPage, pageSize, PAGE_READONLY, &oldProtect) != 0);
 #else
-    IcuRecoveredTest::Require(mprotect(roPage, pageSize, PROT_READ) == 0);
+    Require(mprotect(roPage, pageSize, PROT_READ) == 0);
 #endif
     auto* roZero = static_cast<std::int32_t*>(roPage);
     auto* roFailing = reinterpret_cast<std::int32_t*>(static_cast<char*>(roPage) + 16);
@@ -156,7 +153,7 @@ void Run() {
 
     rejectsRuntime([&] { uplrules_openForType_nid_postfix("en", 0, badStatus); });
     rejectsRuntime([&] { uplrules_openForType_nid_postfix("en", 2, roZero); });
-    IcuRecoveredTest::Require(uplrules_openForType_nid_postfix("en", 2, roFailing) == nullptr);
+    Require(uplrules_openForType_nid_postfix("en", 2, roFailing) == nullptr);
 
 #ifdef _WIN32
     VirtualFree(roPage, 0, MEM_RELEASE);

@@ -2,6 +2,7 @@
 #include "prx/libcurl/libcurl.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/FileStream.hpp"
+#include "Testing.hpp"
 #include <chrono>
 #include <climits>
 #include <cstdlib>
@@ -18,13 +19,6 @@ extern "C" int CurlSocketNonblock_nid_no_patch(curl_socket_t socket, int nonbloc
     return CurlHostNonblock_nid_no_patch(socket, nonblocking);
 }
 #endif
-
-static void Require(bool value, std::source_location location = std::source_location::current()) {
-    if (!value) {
-        std::fprintf(stderr, "failure at %u\n", location.line());
-        std::exit(1);
-    }
-}
 
 static size_t APS5_VABI Write(char* buffer, size_t size, size_t count, void* opaque) {
     static_cast<std::string*>(opaque)->append(buffer, size * count);

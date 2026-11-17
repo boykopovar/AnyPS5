@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
 #include "tests/TemporaryFile.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -25,12 +26,6 @@ struct FilebufStorage {
 };
 
 static_assert(offsetof(FilebufStorage, file) == 0xa8);
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "filebuf unlock: %s\n", message);
-    std::abort();
-}
 
 int TryFromOtherThread(FileStream* stream) {
     int result = 0;

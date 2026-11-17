@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "nid/Sha1.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -23,9 +24,6 @@ bool armed = false;
 bool replaceAtProbe = false;
 bool replaceBeforeProbe = false;
 bool swapped = false;
-void Require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 struct Object {
     explicit Object(const char* suffix) : name("/anyps5-io-reuse-" + std::to_string(getpid()) + suffix) {
         const auto digest = Nid::Sha1(std::vector<std::uint8_t>(name.begin(), name.end()));

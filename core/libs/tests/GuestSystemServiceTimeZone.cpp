@@ -1,12 +1,11 @@
 #include "prx/libSceSystemService/include/SystemService.hpp"
 #include "SceTypes.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
+#include "Testing.hpp"
 #include <cstdlib>
 #include <ctime>
 
 namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
 
 void SetTimeZone(const char* zone) {
 #ifdef _WIN32

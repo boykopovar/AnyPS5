@@ -4,6 +4,7 @@
 #include "prx/libc/include/GuestHeap.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
+#include "Testing.hpp"
 #include <cstring>
 #include <atomic>
 #include <exception>
@@ -23,13 +24,6 @@ namespace {
 
 using AgcDriver::Graphics::Require;
 
-template<typename TAction>
-void reject(TAction action) {
-    try { action(); }
-    catch (const std::runtime_error&) { return; }
-    throw std::runtime_error("expected guest allocation ownership rejection");
-}
-
 void heapHeaderTests() {
     for (const auto [alignment, bytes] : std::array<std::pair<std::size_t, std::size_t>, 4>{{{32, 32}, {256, 32}, {32, 131072}, {32, 0}}}) {
         void* pointer = GuestHeap::GuestHeapAlign_nid_postfix(alignment, bytes);
@@ -41,11 +35,11 @@ void heapHeaderTests() {
         void* forgedRaw = static_cast<std::byte*>(pointer) - 2 * sizeof(void*);
         if (forgedRaw == savedRaw) forgedRaw = reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(savedRaw) - sizeof(void*));
         raw = forgedRaw;
-        reject([&] { GuestHeap::GuestHeapFree_nid_postfix(pointer); });
-        reject([&] { GuestHeap::GuestHeapReallocate_nid_postfix(pointer, 64); });
-        reject([&] { GuestHeap::GuestHeapRealign_nid_postfix(pointer, 64, 256); });
-        reject([&] { GuestHeap::GuestHeapReallocate_nid_postfix(pointer, 0); });
-        reject([&] { GuestHeap::GuestHeapRealign_nid_postfix(pointer, 0, alignment); });
+        ExpectErr<std::runtime_error>([&] { GuestHeap::GuestHeapFree_nid_postfix(pointer); });
+        ExpectErr<std::runtime_error>([&] { GuestHeap::GuestHeapReallocate_nid_postfix(pointer, 64); });
+        ExpectErr<std::runtime_error>([&] { GuestHeap::GuestHeapRealign_nid_postfix(pointer, 64, 256); });
+        ExpectErr<std::runtime_error>([&] { GuestHeap::GuestHeapReallocate_nid_postfix(pointer, 0); });
+        ExpectErr<std::runtime_error>([&] { GuestHeap::GuestHeapRealign_nid_postfix(pointer, 0, alignment); });
         {
             const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
             Require(lease.size() == (bytes == 0 ? 0u : 2u), "rejected heap operation changed the registered allocations");
@@ -63,12 +57,12 @@ void heapHeaderTests() {
         raw = savedRaw;
         for (const auto corruptedBytes : {std::size_t{0}, savedBytes * 2}) {
             blockBytes = corruptedBytes;
-            reject([&] { GuestHeap::GuestHeapFree_nid_postfix(pointer); });
+            ExpectErr<std::runtime_error>([&] { GuestHeap::GuestHeapFree_nid_postfix(pointer); });
             Require(GuestHeap::GuestHeapUsableSize_nid_postfix(pointer) == bytes, "size corruption removed the allocation");
         }
         blockBytes = savedBytes;
         raw = reinterpret_cast<void**>(neighbor)[-2];
-        reject([&] { GuestHeap::GuestHeapFree_nid_postfix(pointer); });
+        ExpectErr<std::runtime_error>([&] { GuestHeap::GuestHeapFree_nid_postfix(pointer); });
         raw = savedRaw;
         GuestHeap::GuestHeapFree_nid_postfix(pointer);
         GuestHeap::GuestHeapFree_nid_postfix(neighbor);
@@ -82,7 +76,7 @@ void heapHeaderTests() {
         GuestAllocations::Mutation mutation;
         mutation.Add(pointer, 32, true, true, false);
     }
-    reject([&] { GuestHeap::GuestHeapFree_nid_postfix(pointer); });
+    ExpectErr<std::runtime_error>([&] { GuestHeap::GuestHeapFree_nid_postfix(pointer); });
     GuestAllocations::Mutation().Remove(pointer);
 }
 
@@ -207,11 +201,11 @@ void RunGuestAllocationTests() {
     {
         auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
         Require(lease.size() == 1 && lease.front()->address == reinterpret_cast<std::uintptr_t>(pointer), "guest heap registration is missing");
-        reject([&] { GuestHeap::GuestHeapFree_nid_postfix(pointer); });
-        reject([&] { GuestHeap::GuestHeapReallocate_nid_postfix(pointer, 64); });
+        ExpectErr<std::runtime_error>([&] { GuestHeap::GuestHeapFree_nid_postfix(pointer); });
+        ExpectErr<std::runtime_error>([&] { GuestHeap::GuestHeapReallocate_nid_postfix(pointer, 64); });
         GuestAllocations::Mutation mutation;
         bool applied = false;
-        reject([&] { mutation.Protect(pointer, 32, true, false, true, [&] { applied = true; }); });
+        ExpectErr<std::runtime_error>([&] { mutation.Protect(pointer, 32, true, false, true, [&] { applied = true; }); });
         Require(!applied, "pinned guest protection changed");
     }
     pointer = GuestHeap::GuestHeapReallocate_nid_postfix(pointer, 64);
@@ -232,14 +226,14 @@ void RunGuestAllocationTests() {
     {
         GuestAllocations::Mutation mutation;
         mutation.Add(mapping.data(), mapping.size(), true, true, true);
-        reject([&] { mutation.RequireAvailable(mapping.data() + 32, 16); });
+        ExpectErr<std::runtime_error>([&] { mutation.RequireAvailable(mapping.data() + 32, 16); });
         mutation.Protect(mapping.data() + 32, 32, true, false, true, [] {});
     }
     {
         const auto lease = GuestAllocations::GuestAllocationsAcquire_nid_postfix();
         Require(lease.size() == 3 && lease[0]->bytes == 32 && !lease[1]->writable && lease[2]->bytes == 64, "partial protection did not split the mapping");
         GuestAllocations::Mutation mutation;
-        reject([&] { mutation.Unmap(mapping.data() + 32, 32, [](const void*, std::size_t, const void*, bool) {}); });
+        ExpectErr<std::runtime_error>([&] { mutation.Unmap(mapping.data() + 32, 32, [](const void*, std::size_t, const void*, bool) {}); });
     }
     {
         GuestAllocations::Mutation mutation;
@@ -249,7 +243,7 @@ void RunGuestAllocationTests() {
             applied = true;
         });
         Require(applied, "partial unmap callback was not called");
-        reject([&] { mutation.Protect(mapping.data(), mapping.size(), true, true, true, [] {}); });
+        ExpectErr<std::runtime_error>([&] { mutation.Protect(mapping.data(), mapping.size(), true, true, true, [] {}); });
         mutation.Unmap(mapping.data(), 32, [&](const void*, std::size_t, const void* allocation, bool last) {
             Require(allocation == mapping.data() && !last, "first fragment released remaining mapping");
         });
@@ -277,24 +271,24 @@ void RunGuestAllocationTests() {
         allocationAddress = (*found)->allocationAddress;
         GuestAllocations::Mutation mutation;
         bool applied = false;
-        reject([&] { mutation.Protect(&imageProbe, 1, true, false, true, [&] { applied = true; }); });
+        ExpectErr<std::runtime_error>([&] { mutation.Protect(&imageProbe, 1, true, false, true, [&] { applied = true; }); });
         Require(!applied, "pinned image protection changed");
     }
     {
         GuestAllocations::Mutation mutation;
-        reject([&] { mutation.Find(reinterpret_cast<void*>(allocationAddress)); });
-        reject([&] { mutation.Remove(reinterpret_cast<void*>(allocationAddress)); });
+        ExpectErr<std::runtime_error>([&] { mutation.Find(reinterpret_cast<void*>(allocationAddress)); });
+        ExpectErr<std::runtime_error>([&] { mutation.Remove(reinterpret_cast<void*>(allocationAddress)); });
         bool applied = false;
-        reject([&] { mutation.Unmap(&imageProbe, 1, [&](const void*, std::size_t, const void*, bool) { applied = true; }); });
+        ExpectErr<std::runtime_error>([&] { mutation.Unmap(&imageProbe, 1, [&](const void*, std::size_t, const void*, bool) { applied = true; }); });
         Require(!applied, "image memory was unmapped");
-        reject([&] { mutation.Protect(&imageProbe, 1, true, false, true, [] { throw std::runtime_error("host protection failure"); }); });
+        ExpectErr<std::runtime_error>([&] { mutation.Protect(&imageProbe, 1, true, false, true, [] { throw std::runtime_error("host protection failure"); }); });
     }
     Require(GuestAllocations::GuestAllocationsAcquire_nid_postfix().size() == imageRangeCount, "failed image protection changed registry ranges");
     {
         GuestAllocations::Mutation mutation;
         mutation.Protect(&imageProbe, 1, true, true, true, [] {});
         bool applied = false;
-        reject([&] { mutation.Unmap(&imageProbe, 1, [&](const void*, std::size_t, const void*, bool) { applied = true; }); });
+        ExpectErr<std::runtime_error>([&] { mutation.Unmap(&imageProbe, 1, [&](const void*, std::size_t, const void*, bool) { applied = true; }); });
         Require(!applied, "split image memory became releasable");
     }
 #endif

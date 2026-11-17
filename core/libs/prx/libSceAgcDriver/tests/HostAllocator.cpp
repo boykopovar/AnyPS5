@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -20,19 +21,11 @@
 
 namespace {
 
-int failures = 0;
-
-void Check(bool condition, const char* what) {
-    if (condition) return;
-    std::fprintf(stderr, "FAIL: %s\n", what);
-    ++failures;
-}
-
 void FillAndVerify(unsigned char* bytes, std::size_t size, unsigned char seed) {
     for (std::size_t i = 0; i < size; ++i) bytes[i] = static_cast<unsigned char>(seed + i);
     for (std::size_t i = 0; i < size; ++i) {
         if (bytes[i] != static_cast<unsigned char>(seed + i)) {
-            Check(false, "a block holds the bytes written to it");
+            Expect(false, "a block holds the bytes written to it");
             return;
         }
     }
@@ -44,7 +37,7 @@ void EverySizeRoundTrips() {
         for (std::size_t size = 1; size <= 2048; ++size) {
             auto* block = new unsigned char[size];
 #ifdef _WIN32
-            Check(_msize(block) >= size, "a block holds at least the bytes asked for");
+            Expect(_msize(block) >= size, "a block holds at least the bytes asked for");
 #endif
             FillAndVerify(block, size, static_cast<unsigned char>(size));
             blocks.push_back(block);
@@ -76,8 +69,8 @@ void BlocksCrossIntoLibstdcxx() {
         std::istringstream input(std::string(static_cast<std::size_t>(round % 700) + 1, 'c') + "\nnext");
         std::string line(40, 'd');
         std::getline(input, line);
-        Check(line.size() == static_cast<std::size_t>(round % 700) + 1, "getline replaces the buffer made here");
-        Check(grown.size() == static_cast<std::size_t>(round % 300) + 20 + static_cast<std::size_t>(round % 500), "a grown string keeps its bytes");
+        Expect(line.size() == static_cast<std::size_t>(round % 700) + 1, "getline replaces the buffer made here");
+        Expect(grown.size() == static_cast<std::size_t>(round % 300) + 20 + static_cast<std::size_t>(round % 500), "a grown string keeps its bytes");
     }
 }
 
@@ -93,7 +86,7 @@ void BlocksMoveBetweenThreads() {
     maker.join();
     std::thread freer([&] {
         for (int i = 0; i < perThread; ++i) {
-            Check(made[i][0] == static_cast<std::uint64_t>(i), "a block made on another thread keeps its bytes");
+            Expect(made[i][0] == static_cast<std::uint64_t>(i), "a block made on another thread keeps its bytes");
             made[i].reset();
         }
     });
@@ -131,7 +124,7 @@ void BlocksFlowToAnotherThread() {
                 }
                 for (auto* block : taken) {
                     const auto size = static_cast<std::size_t>(block[0]) * 4 + 1;
-                    Check(block[size - 1] == block[0], "a block freed on another thread keeps its bytes until then");
+                    Expect(block[size - 1] == block[0], "a block freed on another thread keeps its bytes until then");
                     ::operator delete(block);
                 }
                 taken.clear();
@@ -154,7 +147,7 @@ void BlocksFlowToAnotherThread() {
     }
     const auto afterLastRound = PrivateBytes();
     std::printf("private bytes after 4 and after %d rounds of blocks freed on another thread: %zu, %zu\n", rounds, afterEarlyRounds, afterLastRound);
-    Check(afterLastRound < afterEarlyRounds + (64u << 20), "blocks freed on another thread do not pile up");
+    Expect(afterLastRound < afterEarlyRounds + (64u << 20), "blocks freed on another thread do not pile up");
 }
 
 void ThreadsEndWithCachedBlocks() {
@@ -173,10 +166,10 @@ void ThreadsEndWithCachedBlocks() {
         for (auto& thread : threads) thread.join();
         if (wave == 7) afterEarlyWaves = PrivateBytes();
     }
-    Check(exitedThreads.load() == waves * 32, "every thread ran to its end");
+    Expect(exitedThreads.load() == waves * 32, "every thread ran to its end");
     const auto afterLastWave = PrivateBytes();
     std::printf("private bytes after 8 and after %d waves of ending threads: %zu, %zu\n", waves, afterEarlyWaves, afterLastWave);
-    Check(afterLastWave < afterEarlyWaves + (128u << 20), "threads that end give their cached blocks back to the heap");
+    Expect(afterLastWave < afterEarlyWaves + (128u << 20), "threads that end give their cached blocks back to the heap");
     auto* after = new std::uint64_t[128];
     FillAndVerify(reinterpret_cast<unsigned char*>(after), 128 * sizeof(std::uint64_t), 9);
     delete[] after;
@@ -191,8 +184,8 @@ int main() {
     BlocksMoveBetweenThreads();
     BlocksFlowToAnotherThread();
     ThreadsEndWithCachedBlocks();
-    if (failures != 0) {
-        std::fprintf(stderr, "%d host allocator checks failed\n", failures);
+    if (Failures() != 0) {
+        std::fprintf(stderr, "%u host allocator checks failed\n", Failures());
         return 1;
     }
     std::printf("Host allocator tests passed\n");

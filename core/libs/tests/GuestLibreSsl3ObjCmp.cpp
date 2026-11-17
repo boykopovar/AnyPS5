@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl3/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <exception>
 #include <limits>
@@ -14,12 +15,6 @@ struct Object {
     const unsigned char* data;
     int flags;
 };
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "failed: %s\n", message);
-    std::terminate();
-}
 
 int Sign(int value) {
     return value < 0 ? -1 : value > 0 ? 1 : 0;

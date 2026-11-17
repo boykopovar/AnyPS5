@@ -1,5 +1,6 @@
 #include "prx/libSceVoice/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstddef>
@@ -8,8 +9,6 @@
 #include <cstring>
 #include <stdexcept>
 #include <string_view>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 template <typename TCall>
 static bool Throws(TCall call, std::string_view message) {

@@ -1,19 +1,10 @@
 #include "prx/libSceIpmi/include/Api.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-
-namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "libSceIpmi config estimator: %s\n", message);
-    std::abort();
-}
-
-}
 
 int main() {
     alignas(8) unsigned char config[0x40];

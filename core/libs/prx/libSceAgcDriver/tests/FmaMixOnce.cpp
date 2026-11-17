@@ -1,5 +1,6 @@
 #include "BdaAbi.hpp"
 #include "Recompiler.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdio>
 #include <exception>
@@ -13,10 +14,6 @@
 namespace {
 
 using namespace ShaderRecompiler;
-
-void Check(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 SpirvTarget Target() {
     static constexpr std::array<std::uint32_t, 5> capabilities{
@@ -35,11 +32,11 @@ struct Counts {
 };
 
 Counts Count(std::span<const std::uint32_t> words) {
-    Check(words.size() >= 5 && words[0] == spv::MagicNumber, "fma mix once: missing SPIR-V module");
+    Require(words.size() >= 5 && words[0] == spv::MagicNumber, "fma mix once: missing SPIR-V module");
     Counts counts{words.size()};
     for (std::size_t offset = 5; offset < words.size();) {
         const auto count = words[offset] >> spv::WordCountShift;
-        Check(count != 0 && count <= words.size() - offset, "fma mix once: malformed SPIR-V instruction");
+        Require(count != 0 && count <= words.size() - offset, "fma mix once: malformed SPIR-V instruction");
         if ((words[offset] & spv::OpCodeMask) == spv::OpFunction) ++counts.functions;
         offset += count;
     }
@@ -84,24 +81,24 @@ int main() {
         const auto none = Compile(0);
         const auto one = Compile(1);
         const auto three = Compile(3);
-        Check(three.words - one.words < one.words - none.words, "fma mix once: 2 more v_fma_mixlo/mixhi_f16 added " + std::to_string(three.words - one.words) + " SPIR-V words, as many as the first one with its shared emulation (" + std::to_string(one.words - none.words) + ")");
-        Check(one.functions == none.functions + 2u, "fma mix once: one v_fma_mixlo_f16 emitted " + std::to_string(one.functions - none.functions) + " functions more than none, expected one shared f32 path and its shared exact emulation");
-        Check(three.functions == one.functions, "fma mix once: two more v_fma_mixlo/mixhi_f16 in the same float mode emitted " + std::to_string(three.functions - one.functions) + " more functions, expected calls to the shared one");
+        Require(three.words - one.words < one.words - none.words, "fma mix once: 2 more v_fma_mixlo/mixhi_f16 added " + std::to_string(three.words - one.words) + " SPIR-V words, as many as the first one with its shared emulation (" + std::to_string(one.words - none.words) + ")");
+        Require(one.functions == none.functions + 2u, "fma mix once: one v_fma_mixlo_f16 emitted " + std::to_string(one.functions - none.functions) + " functions more than none, expected one shared f32 path and its shared exact emulation");
+        Require(three.functions == one.functions, "fma mix once: two more v_fma_mixlo/mixhi_f16 in the same float mode emitted " + std::to_string(three.functions - one.functions) + " more functions, expected calls to the shared one");
         const auto mode1Preserve = Compile(1, ShaderFloatMode{0xd0u, true, true, false}, true, false, 32u);
-        Check(mode1Preserve.words > 0, "fma mix once: mode 1 with DenormPreserve 32 should compile");
+        Require(mode1Preserve.words > 0, "fma mix once: mode 1 with DenormPreserve 32 should compile");
         const auto mode1PreserveWave64 = Compile(1, ShaderFloatMode{0xd0u, true, true, false}, true, false, 64u);
-        Check(mode1PreserveWave64.words > 0, "fma mix once: mode 1 with DenormPreserve 32 Wave64 should compile");
+        Require(mode1PreserveWave64.words > 0, "fma mix once: mode 1 with DenormPreserve 32 Wave64 should compile");
         const auto mode2 = Compile(1, ShaderFloatMode{0xe0u, true, true, false}, false, false, 32u);
-        Check(mode2.words > 0, "fma mix once: mode 2 should compile");
+        Require(mode2.words > 0, "fma mix once: mode 2 should compile");
         const auto mode2Wave64 = Compile(1, ShaderFloatMode{0xe0u, true, true, false}, false, false, 64u);
-        Check(mode2Wave64.words > 0, "fma mix once: mode 2 Wave64 should compile");
+        Require(mode2Wave64.words > 0, "fma mix once: mode 2 Wave64 should compile");
         bool threwRefusal = false;
         try {
             Compile(1, ShaderFloatMode{0xd0u, true, true, false}, false, true, 32u);
         } catch (const std::runtime_error& error) {
             threwRefusal = std::string_view(error.what()).find("needs DenormPreserve 32") != std::string_view::npos;
         }
-        Check(threwRefusal, "fma mix once: mode 1 without DenormPreserve 32 must throw refusal");
+        Require(threwRefusal, "fma mix once: mode 1 without DenormPreserve 32 must throw refusal");
         std::printf("fma mix once tests passed (%zu words without v_fma_mix, %zu for 1, %zu for 3, %zu for mode1, %zu for mode2)\n", none.words, one.words, three.words, mode1Preserve.words, mode2.words);
         return 0;
     } catch (const std::exception& error) {

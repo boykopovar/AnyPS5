@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -19,12 +20,6 @@ constexpr int EvpRExpectingAnRsaKey = 127;
 constexpr int EvpRExpectingADhKey = 128;
 constexpr int EvpRExpectingADsaKey = 129;
 constexpr int EvpRExpectingAnEcKey = 142;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL3 EVP_PKEY getter check failed at line %u\n", location.line());
-    std::abort();
-}
 
 LibreSsl3EvpPkey KeyWith(std::int32_t type, void* inner) {
     LibreSsl3EvpPkey key{};

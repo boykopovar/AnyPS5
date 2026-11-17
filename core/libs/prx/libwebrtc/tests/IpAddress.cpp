@@ -1,4 +1,5 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -9,21 +10,6 @@
 #include <stdexcept>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc rtc::IPAddress check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> void RequireInvalidArgument(TAction action, std::source_location location = std::source_location::current()) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, location);
-}
 
 WebRtcIpAddress Address(std::int32_t family, std::initializer_list<std::uint8_t> bytes) {
     WebRtcIpAddress address;
@@ -118,12 +104,12 @@ void TestMaskBits() {
 
 void TestNullAddress() {
     WebRtcIpAddress v4 = V4(10, 0, 0, 1);
-    RequireInvalidArgument([] { _ZNK3rtc9IPAddress12ipv4_addressEv_nid_postfix(nullptr); });
-    RequireInvalidArgument([] { _ZNK3rtc9IPAddress12ipv6_addressEv_nid_postfix(nullptr); });
-    RequireInvalidArgument([] { _ZNK3rtc9IPAddress27v4AddressAsHostOrderIntegerEv_nid_postfix(nullptr); });
-    RequireInvalidArgument([&] { _ZNK3rtc9IPAddresseqERKS0__nid_postfix(nullptr, &v4); });
-    RequireInvalidArgument([&] { _ZNK3rtc9IPAddresseqERKS0__nid_postfix(&v4, nullptr); });
-    RequireInvalidArgument([] { _ZN3rtc15CountIPMaskBitsERKNS_9IPAddressE_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZNK3rtc9IPAddress12ipv4_addressEv_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZNK3rtc9IPAddress12ipv6_addressEv_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZNK3rtc9IPAddress27v4AddressAsHostOrderIntegerEv_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([&] { _ZNK3rtc9IPAddresseqERKS0__nid_postfix(nullptr, &v4); });
+    ExpectErr<std::invalid_argument>([&] { _ZNK3rtc9IPAddresseqERKS0__nid_postfix(&v4, nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZN3rtc15CountIPMaskBitsERKNS_9IPAddressE_nid_postfix(nullptr); });
 }
 
 }

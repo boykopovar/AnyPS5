@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
+#include "Testing.hpp"
 #include "VulkanTestDevice.hpp"
 #include <algorithm>
 #include <chrono>
@@ -19,10 +20,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error("library prebuild priority: " + message);
-}
 
 unsigned PrebuildThreads() {
     const char* text = std::getenv("APS5_PREBUILD_THREADS");

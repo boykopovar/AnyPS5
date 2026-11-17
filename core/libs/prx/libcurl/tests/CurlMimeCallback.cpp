@@ -10,6 +10,7 @@
 #include "prx/libcurl/src/CurlHost.hpp"
 #include "prx/libcurl/libcurl.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
@@ -30,13 +31,6 @@ static void CloseSocket(Socket socket) {
     close(socket);
 }
 #endif
-
-static void Require(bool value, std::source_location location = std::source_location::current()) {
-    if (!value) {
-        std::fprintf(stderr, "failure at %u\n", location.line());
-        std::exit(1);
-    }
-}
 
 struct Source {
     std::string bytes;

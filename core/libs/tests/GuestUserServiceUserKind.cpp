@@ -1,13 +1,12 @@
 #include "SceTypes.hpp"
 #include "prx/libSceUserService/UserService.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
 
 namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
 
 std::int32_t Id(std::uint32_t value) {
     std::int32_t id = 0;

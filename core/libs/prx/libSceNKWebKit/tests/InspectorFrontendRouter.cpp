@@ -1,4 +1,5 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -16,24 +17,6 @@ using NKWebKit::InspectorAbi::FrontendRouter;
 using NKWebKit::InspectorAbi::FrontendRouterRef;
 using NKWebKit::WtfAbi::String;
 using NKWebKit::WtfAbi::StringImpl;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "Inspector::FrontendRouter check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
-
-template<class Function>
-void RequireThrows(Function function) {
-    bool threw = false;
-    try {
-        function();
-    } catch (const std::exception&) {
-        threw = true;
-    }
-    Require(threw);
-}
 
 using CreateRouter = FrontendRouterRef (APS5_VABI*)();
 using Constructor = void (APS5_VABI*)(FrontendRouter*);
@@ -359,31 +342,31 @@ void TestNull() {
     FakeChannel channel = MakeChannel(1, ConnectionType::Local);
     StringImpl text{4, 4, "null", 4};
     String message(&text);
-    RequireThrows([] { _ZN9Inspector14FrontendRouterC1Ev(nullptr); });
-    RequireThrows([] { _ZN9Inspector14FrontendRouterC2Ev(nullptr); });
-    RequireThrows([] { _ZN9Inspector14FrontendRouterD1Ev(nullptr); });
-    RequireThrows([] { _ZN9Inspector14FrontendRouterD2Ev(nullptr); });
-    RequireThrows([&] { _ZN9Inspector14FrontendRouter15connectFrontendERNS_15FrontendChannelE(nullptr, &channel.base); });
-    RequireThrows([&] { _ZN9Inspector14FrontendRouter18disconnectFrontendERNS_15FrontendChannelE(nullptr, &channel.base); });
-    RequireThrows([] { _ZN9Inspector14FrontendRouter22disconnectAllFrontendsEv(nullptr); });
-    RequireThrows([] { _ZNK9Inspector14FrontendRouter12hasFrontendsEv(nullptr); });
-    RequireThrows([] { _ZNK9Inspector14FrontendRouter16hasLocalFrontendEv(nullptr); });
-    RequireThrows([] { _ZNK9Inspector14FrontendRouter17hasRemoteFrontendEv(nullptr); });
-    RequireThrows([&] { _ZNK9Inspector14FrontendRouter9sendEventERKN3WTF6StringE(nullptr, &message); });
-    RequireThrows([&] { _ZNK9Inspector14FrontendRouter12sendResponseERKN3WTF6StringE(nullptr, &message); });
+    ExpectErr([] { _ZN9Inspector14FrontendRouterC1Ev(nullptr); });
+    ExpectErr([] { _ZN9Inspector14FrontendRouterC2Ev(nullptr); });
+    ExpectErr([] { _ZN9Inspector14FrontendRouterD1Ev(nullptr); });
+    ExpectErr([] { _ZN9Inspector14FrontendRouterD2Ev(nullptr); });
+    ExpectErr([&] { _ZN9Inspector14FrontendRouter15connectFrontendERNS_15FrontendChannelE(nullptr, &channel.base); });
+    ExpectErr([&] { _ZN9Inspector14FrontendRouter18disconnectFrontendERNS_15FrontendChannelE(nullptr, &channel.base); });
+    ExpectErr([] { _ZN9Inspector14FrontendRouter22disconnectAllFrontendsEv(nullptr); });
+    ExpectErr([] { _ZNK9Inspector14FrontendRouter12hasFrontendsEv(nullptr); });
+    ExpectErr([] { _ZNK9Inspector14FrontendRouter16hasLocalFrontendEv(nullptr); });
+    ExpectErr([] { _ZNK9Inspector14FrontendRouter17hasRemoteFrontendEv(nullptr); });
+    ExpectErr([&] { _ZNK9Inspector14FrontendRouter9sendEventERKN3WTF6StringE(nullptr, &message); });
+    ExpectErr([&] { _ZNK9Inspector14FrontendRouter12sendResponseERKN3WTF6StringE(nullptr, &message); });
     FrontendRouterRef router = MakeRouter();
-    RequireThrows([&] { _ZN9Inspector14FrontendRouter15connectFrontendERNS_15FrontendChannelE(router.ptr, nullptr); });
-    RequireThrows([&] { _ZN9Inspector14FrontendRouter18disconnectFrontendERNS_15FrontendChannelE(router.ptr, nullptr); });
+    ExpectErr([&] { _ZN9Inspector14FrontendRouter15connectFrontendERNS_15FrontendChannelE(router.ptr, nullptr); });
+    ExpectErr([&] { _ZN9Inspector14FrontendRouter18disconnectFrontendERNS_15FrontendChannelE(router.ptr, nullptr); });
     FakeChannel remote = MakeChannel(2, ConnectionType::Remote);
     FakeChannel local = MakeChannel(3, ConnectionType::Local);
     _ZN9Inspector14FrontendRouter15connectFrontendERNS_15FrontendChannelE(router.ptr, &remote.base);
     _ZN9Inspector14FrontendRouter15connectFrontendERNS_15FrontendChannelE(router.ptr, &local.base);
     router.ptr->buffer[1] = nullptr;
     callCount = 0;
-    RequireThrows([&] { _ZNK9Inspector14FrontendRouter9sendEventERKN3WTF6StringE(router.ptr, &message); });
+    ExpectErr([&] { _ZNK9Inspector14FrontendRouter9sendEventERKN3WTF6StringE(router.ptr, &message); });
     Require(callCount == 0);
     callCount = 0;
-    RequireThrows([&] { _ZNK9Inspector14FrontendRouter16hasLocalFrontendEv(router.ptr); });
+    ExpectErr([&] { _ZNK9Inspector14FrontendRouter16hasLocalFrontendEv(router.ptr); });
     Require(callCount == 0);
     std::printf("Inspector::FrontendRouter null arguments and entries: throws at the dereference point passed\n");
 }

@@ -3,6 +3,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <atomic>
 #include <cstddef>
@@ -19,7 +20,6 @@ static_assert(offsetof(SceKernelSystemSwVersion, size) == 0x00);
 static_assert(offsetof(SceKernelSystemSwVersion, versionString) == 0x08);
 static_assert(offsetof(SceKernelSystemSwVersion, version) == 0x24);
 static_assert(sizeof(SceKernelSystemSwVersion) == 0x28);
-static void Require(bool value) { if (!value) std::abort(); }
 static void CheckProcessorCountSysctl() {
     const int mib[] = {6, 3};
     const int processors = static_cast<int>(sysconf_nid_postfix(58));

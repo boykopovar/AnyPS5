@@ -3,6 +3,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestErrno.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -36,12 +37,6 @@ using Codes = std::vector<std::uint64_t>;
 
 const Codes MissingFileErrors{SystemNoSuchFile, BioNoSuchFile, ConfNoSuchFile};
 const Codes NotDirectoryErrors{SystemNotDirectory, BioSystem, ConfSystem};
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "failed: %s\n", message);
-    std::abort();
-}
 
 Codes Drain() {
     Codes codes;

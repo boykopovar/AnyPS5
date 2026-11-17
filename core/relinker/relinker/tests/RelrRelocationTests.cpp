@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include <relinker/parsing/RelrRelocations.hpp>
 #include <relinker/analysis/UnusedNidFilter/IRelativeRelocationIndex.hpp>
 #include <io/BufferUtils.hpp>
@@ -9,10 +10,6 @@
 #include <vector>
 
 namespace {
-
-void Require(const bool condition) {
-    if (!condition) throw std::runtime_error("RELR validation failed");
-}
 
 struct Fixture {
     std::vector<std::uint8_t> Bytes = std::vector<std::uint8_t>(0x2000);

@@ -2,6 +2,7 @@
 #include "FreeTypeFontFixture.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include FT_OUTLINE_H
 
@@ -15,14 +16,6 @@
 #include <vector>
 
 using namespace FreeType;
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "FreeType outline mutation check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static bool Equal(const GuestVector& left, const GuestVector& right) {
     return left.x == right.x && left.y == right.y;

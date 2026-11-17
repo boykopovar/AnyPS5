@@ -1,5 +1,6 @@
 #include "prx/libSceHttp2/include/Http2.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -14,8 +15,6 @@
 #include <sys/resource.h>
 #include <unistd.h>
 #endif
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static constexpr int NotFound = static_cast<int>(0x817B1025);
 static constexpr int InvalidId = static_cast<int>(0x817B1100);

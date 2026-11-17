@@ -2,24 +2,13 @@
 #include <cerrno>
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <initializer_list>
 #include <stdexcept>
-
-static void Require(bool value) { if (!value) std::abort(); }
-
-template <typename TFunction>
-static void RequireThrows(TFunction function) {
-    try {
-        function();
-    } catch (const std::runtime_error&) {
-        return;
-    }
-    std::abort();
-}
 
 static void TestRequestArguments(int notInitialized, int invalidArgument, int invalidSize, int notFound) {
     GameUpdateCheckParam param{};

@@ -1,4 +1,5 @@
 #include "prx/libkernel/Apr/include/AmmPool.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
@@ -17,14 +18,6 @@ void* operator new(std::size_t size) {
 
 void operator delete(void* memory) noexcept { std::free(memory); }
 void operator delete(void* memory, std::size_t) noexcept { std::free(memory); }
-
-static void RequireAt(bool value, int line) {
-    if (value) return;
-    std::fprintf(stderr, "GuestAmmPool.cpp:%d: requirement failed\n", line);
-    std::abort();
-}
-
-#define Require(value) RequireAt((value), __LINE__)
 
 namespace {
 

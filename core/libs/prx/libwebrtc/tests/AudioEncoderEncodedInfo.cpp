@@ -1,6 +1,7 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdint>
@@ -26,21 +27,6 @@ int APS5_VABI TestPosixAlign(void** pointer, std::size_t, std::size_t size) {
     ++allocations;
     *pointer = std::malloc(size);
     return *pointer ? 0 : 12;
-}
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc AudioEncoder::EncodedInfo check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> void RequireInvalidArgument(TAction action, std::source_location location = std::source_location::current()) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, location);
 }
 
 WebRtcAudioEncodedInfoLeaf Leaf(std::size_t bytes, int payloadType) {
@@ -198,12 +184,12 @@ void TestSelfAssignment() {
 
 void TestNullArgumentsThrow() {
     WebRtcAudioEncodedInfo info = Constructed();
-    RequireInvalidArgument([] { _ZN6webrtc12AudioEncoder11EncodedInfoC1Ev_nid_postfix(nullptr); });
-    RequireInvalidArgument([&] { _ZN6webrtc12AudioEncoder11EncodedInfoC1ERKS1__nid_postfix(nullptr, &info); });
-    RequireInvalidArgument([&] { _ZN6webrtc12AudioEncoder11EncodedInfoC1ERKS1__nid_postfix(&info, nullptr); });
-    RequireInvalidArgument([&] { _ZN6webrtc12AudioEncoder11EncodedInfoaSERKS1__nid_postfix(nullptr, &info); });
-    RequireInvalidArgument([&] { _ZN6webrtc12AudioEncoder11EncodedInfoaSERKS1__nid_postfix(&info, nullptr); });
-    RequireInvalidArgument([] { _ZN6webrtc12AudioEncoder11EncodedInfoD1Ev_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZN6webrtc12AudioEncoder11EncodedInfoC1Ev_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc12AudioEncoder11EncodedInfoC1ERKS1__nid_postfix(nullptr, &info); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc12AudioEncoder11EncodedInfoC1ERKS1__nid_postfix(&info, nullptr); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc12AudioEncoder11EncodedInfoaSERKS1__nid_postfix(nullptr, &info); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc12AudioEncoder11EncodedInfoaSERKS1__nid_postfix(&info, nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZN6webrtc12AudioEncoder11EncodedInfoD1Ev_nid_postfix(nullptr); });
 }
 
 }

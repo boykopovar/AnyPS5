@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include "VulkanTestDevice.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
@@ -18,7 +19,6 @@
 
 namespace {
 constexpr auto CompletionDeadline = std::chrono::seconds(20);
-void Require(bool condition, const char* message) { if (!condition) throw std::runtime_error(message); }
 alignas(256) std::array<std::uint32_t, 15> Code{0xf4080200u, 0xfa000000u, 0xbe840381u, 0x9304ff04u, 0x0019660du, 0x8004ff04u, 0x3c6ef35fu, 0x80828102u, 0xbf078002u, 0xbf85fff9u, 0xbf8cc07fu, 0x7e000204u, 0xe0700000u, 0x80020000u, 0xbf810000u};
 std::uint32_t Low(const void* p) { return static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(p)); }
 std::uint32_t High(const void* p) { return static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(p) >> 32u); }

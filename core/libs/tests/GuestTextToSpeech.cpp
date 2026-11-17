@@ -1,16 +1,9 @@
 #include "prx/libSceTextToSpeech/libSceTextToSpeech.hpp"
+#include "Testing.hpp"
 
 #include <climits>
 #include <cstdint>
 #include <cstdlib>
-
-namespace {
-
-void Require(bool value) {
-    if (!value) std::abort();
-}
-
-} // namespace
 
 int main() {
     constexpr int invalidId = static_cast<int>(0x814900FFu);

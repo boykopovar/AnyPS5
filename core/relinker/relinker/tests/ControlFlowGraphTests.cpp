@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include <relinker/analysis/UnusedNidFilter/IControlFlowGraph.hpp>
 #include <relinker/analysis/RelativeJumpTables.hpp>
 #include <codegen/CodegenException.hpp>
@@ -57,10 +58,6 @@ public:
         return targets;
     }
 };
-
-void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 void RequireOffsets(const IControlFlowGraph& graph, std::initializer_list<std::size_t> offsets) {
     std::unordered_set<VirtualAddress> expected;

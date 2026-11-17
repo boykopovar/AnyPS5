@@ -1,5 +1,6 @@
 #include "prx/libSceSrcUtl/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <cerrno>
 #include <cstdint>
@@ -26,12 +27,6 @@ constexpr int INVALID_INPUT_RATE = static_cast<int>(0x815D0004);
 constexpr int INVALID_OUTPUT_RATE = static_cast<int>(0x815D0005);
 constexpr int HANDLE_SIZE = 0x9678;
 constexpr std::uint64_t MAGIC = 0xDEADBEEFBAADF00Dull;
-
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
 
 void CheckHandleSize() {
     constexpr std::uint32_t inputs[] = {22050, 24000, 32000, 44100, 48000, 64000, 88200, 96000, 128000, 176400, 192000};

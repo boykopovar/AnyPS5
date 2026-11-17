@@ -2,6 +2,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/GuestErrno.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <chrono>
@@ -12,17 +13,6 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
-
-namespace {
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "KERNEL SYS APP CATEGORY: %s\n", message);
-        std::abort();
-    }
-}
-
-}
 
 int main() {
     const auto original = std::filesystem::current_path();

@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -14,17 +15,6 @@ static int APS5_VABI Open(void*) { return 1; }
 static int APS5_VABI Close(void*) { return 2; }
 static int APS5_VABI Write(void*, void*) { return 3; }
 static int APS5_VABI Read(void*, void*) { return 4; }
-
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL UI method check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> static void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
-    try { action(); } catch (const std::exception&) { return; }
-    Require(false, location);
-}
 
 static void InitializeHeap() {
     void* const api[10] {};
@@ -55,7 +45,7 @@ static void TestDestroy() {
     char name[] = "prompt";
     UI_destroy_method_nid_postfix(UI_create_method_nid_postfix(name));
     UI_destroy_method_nid_postfix(UI_create_method_nid_postfix(nullptr));
-    RequireThrows([] { UI_destroy_method_nid_postfix(nullptr); });
+    ExpectErr([] { UI_destroy_method_nid_postfix(nullptr); });
 }
 
 static void TestSetOpener() {
@@ -202,15 +192,15 @@ static void TestSetResult() {
     errno = 71;
     const auto* unreadable = reinterpret_cast<const char*>(0x10);
     ui.flags = 0x0101;
-    RequireThrows([&] { UI_set_result_nid_postfix(&ui, &prompt, unreadable); });
+    ExpectErr([&] { UI_set_result_nid_postfix(&ui, &prompt, unreadable); });
     Require(errno == 71 && ui.flags == 0x0101 && !std::strcmp(buffer, "kept"));
     LibreSslUiString unwritable = prompt;
     unwritable.resultBuffer = reinterpret_cast<char*>(0x10);
-    RequireThrows([&] { UI_set_result_nid_postfix(&ui, &unwritable, "abc"); });
+    ExpectErr([&] { UI_set_result_nid_postfix(&ui, &unwritable, "abc"); });
     unwritable.type = 3;
     unwritable.data.booleanData.okCharacters = "yY";
     unwritable.data.booleanData.cancelCharacters = "nN";
-    RequireThrows([&] { UI_set_result_nid_postfix(&ui, &unwritable, "y"); });
+    ExpectErr([&] { UI_set_result_nid_postfix(&ui, &unwritable, "y"); });
     Require(errno == 71 && ERR_peek_error_nid_postfix() == 0);
     alignas(4096) static char pages[8192];
     std::memcpy(pages + 4094, "wxyz", 5);
@@ -227,8 +217,8 @@ static void TestGuestMethods() {
     Require(UI_method_set_writer_nid_postfix(unmapped, Write) == -1 && UI_method_get_writer_nid_postfix(unmapped) == nullptr);
     Require(UI_method_set_reader_nid_postfix(unmapped, Read) == -1 && UI_method_get_reader_nid_postfix(unmapped) == nullptr);
     Require(UI_method_set_closer_nid_postfix(unmapped, Close) == -1 && UI_method_get_closer_nid_postfix(unmapped) == nullptr);
-    RequireThrows([&] { UI_destroy_method_nid_postfix(unmapped); });
-    RequireThrows([] { UI_create_method_nid_postfix(reinterpret_cast<char*>(0x10)); });
+    ExpectErr([&] { UI_destroy_method_nid_postfix(unmapped); });
+    ExpectErr([] { UI_create_method_nid_postfix(reinterpret_cast<char*>(0x10)); });
     Require(errno == 71);
     alignas(4096) static char pages[8192];
     std::memcpy(pages + 4093, "prompt", 7);

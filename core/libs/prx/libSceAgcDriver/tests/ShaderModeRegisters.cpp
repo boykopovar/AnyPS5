@@ -3,6 +3,7 @@
 #include "Recompiler.hpp"
 #include "Translation/InstructionTranslator.hpp"
 #include "BdaAbi.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -18,10 +19,6 @@
 namespace {
 
 using namespace ShaderRecompiler;
-
-void require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 IrProgram translate(std::span<const std::uint32_t> code, std::optional<ShaderFloatMode> mode, std::uint32_t waveSize = 32) {
     const auto decoded = RdnaInstructionDecoder{}.Decode(code);
@@ -44,7 +41,7 @@ void expectRegister(const IrProgram& program, std::uint32_t index, std::uint32_t
             if (reg.bank == RegisterBank::Scalar && reg.index == index) value = instruction->Argument(1);
         }
     }
-    require(value && value->HasImmediate() && value->ImmediateU32() == expected,
+    Require(value && value->HasImmediate() && value->ImmediateU32() == expected,
             "MODE read into s" + std::to_string(index) + " did not produce " + std::to_string(expected));
 }
 
@@ -53,7 +50,7 @@ void expectRejected(std::span<const std::uint32_t> code, std::optional<ShaderFlo
         static_cast<void>(translate(code, mode));
     } catch (const std::runtime_error& error) {
         const std::string message = error.what();
-        require(message.find(diagnostic) != std::string::npos && message.find("at pc " + std::to_string(pc) + " ") != std::string::npos,
+        Require(message.find(diagnostic) != std::string::npos && message.find("at pc " + std::to_string(pc) + " ") != std::string::npos,
                 "unexpected MODE diagnostic: " + message);
         return;
     }
@@ -109,7 +106,7 @@ std::uint32_t denormMode(std::uint32_t value) {
 void requireOpcode(std::uint32_t word, RdnaOpcode expected) {
     const std::array<std::uint32_t, 3> code{word, 0u, endProgram};
     const auto decoded = RdnaInstructionDecoder{}.Decode(code);
-    require(!decoded.instructions.empty() && decoded.instructions.front().op == expected, "test encoding " + std::to_string(word) + " does not decode to the expected opcode");
+    Require(!decoded.instructions.empty() && decoded.instructions.front().op == expected, "test encoding " + std::to_string(word) + " does not decode to the expected opcode");
 }
 
 void verifyEncodings() {
@@ -117,13 +114,13 @@ void verifyEncodings() {
                                        {vCvtF16F32, RdnaOpcode::VCvtF16F32}, {vAddF16, RdnaOpcode::VAddF16}, {roundMode(8), RdnaOpcode::SRoundMode}}) {
         const std::array<std::uint32_t, 2> code{word, endProgram};
         const auto decoded = RdnaInstructionDecoder{}.Decode(code);
-        require(decoded.instructions.front().op == opcode, "test encoding " + std::to_string(word) + " does not decode to the expected opcode");
+        Require(decoded.instructions.front().op == opcode, "test encoding " + std::to_string(word) + " does not decode to the expected opcode");
     }
     requireOpcode(0xba801801, RdnaOpcode::SSetregImm32B32);
     const std::array<std::uint32_t, 2> denorm{denormMode(12), endProgram};
-    require(RdnaInstructionDecoder{}.Decode(denorm).instructions.front().op == RdnaOpcode::SDenormMode, "s_denorm_mode encoding does not decode");
+    Require(RdnaInstructionDecoder{}.Decode(denorm).instructions.front().op == RdnaOpcode::SDenormMode, "s_denorm_mode encoding does not decode");
     const std::array<std::uint32_t, 2> sgpr{0xb9800001, endProgram};
-    require(RdnaInstructionDecoder{}.Decode(sgpr).instructions.front().op == RdnaOpcode::SSetregB32, "s_setreg_b32 encoding does not decode");
+    Require(RdnaInstructionDecoder{}.Decode(sgpr).instructions.front().op == RdnaOpcode::SSetregB32, "s_setreg_b32 encoding does not decode");
 }
 
 void verifyDynamicWrites() {
@@ -279,8 +276,8 @@ void verifyRoundingBeforeDirected32Use() {
             const std::array<std::uint32_t, 3> runtime{roundMode(rounding), instruction, endProgram};
             const std::array<std::uint32_t, 2> declared{instruction, endProgram};
             const auto converted = opcodeSequence(translate(runtime, ShaderFloatMode{0xc0}));
-            require(converted == opcodeSequence(translate(declared, ShaderFloatMode{0xc0u | rounding})), "runtime rounding does not match the declared rounding");
-            require(converted != opcodeSequence(translate(declared, ShaderFloatMode{0xc0})), "runtime rounding did not change the conversion");
+            Require(converted == opcodeSequence(translate(declared, ShaderFloatMode{0xc0u | rounding})), "runtime rounding does not match the declared rounding");
+            Require(converted != opcodeSequence(translate(declared, ShaderFloatMode{0xc0})), "runtime rounding did not change the conversion");
         }
     }
 }
@@ -290,7 +287,7 @@ void verifyRoundingRestoredBeforeUse() {
         for (std::uint32_t directed = 1; directed < 16; ++directed) {
             const std::array<std::uint32_t, 5> restored{roundMode(directed), roundMode(0), instruction, roundMode(directed), endProgram};
             const std::array<std::uint32_t, 2> plain{instruction, endProgram};
-            require(opcodeSequence(translate(restored, ShaderFloatMode{0xc0})) == opcodeSequence(translate(plain, ShaderFloatMode{0xc0})), "restored rounding changed the translation");
+            Require(opcodeSequence(translate(restored, ShaderFloatMode{0xc0})) == opcodeSequence(translate(plain, ShaderFloatMode{0xc0})), "restored rounding changed the translation");
         }
     }
 }
@@ -298,10 +295,10 @@ void verifyRoundingRestoredBeforeUse() {
 void verifyUntouchedFieldsStayAccepted() {
     const std::array<std::uint32_t, 4> f16Only{roundMode(8), vAddF32, roundMode(0), endProgram};
     const std::array<std::uint32_t, 2> plain{vAddF32, endProgram};
-    require(opcodeSequence(translate(f16Only, ShaderFloatMode{0xc0})) == opcodeSequence(translate(plain, ShaderFloatMode{0xc0})), "f16 rounding changed an f32 operation");
+    Require(opcodeSequence(translate(f16Only, ShaderFloatMode{0xc0})) == opcodeSequence(translate(plain, ShaderFloatMode{0xc0})), "f16 rounding changed an f32 operation");
     const std::array<std::uint32_t, 4> f32Only{roundMode(2), vAddF16, roundMode(0), endProgram};
     const std::array<std::uint32_t, 2> plain16{vAddF16, endProgram};
-    require(opcodeSequence(translate(f32Only, ShaderFloatMode{0xc0})) == opcodeSequence(translate(plain16, ShaderFloatMode{0xc0})), "f32 rounding changed an f16 operation");
+    Require(opcodeSequence(translate(f32Only, ShaderFloatMode{0xc0})) == opcodeSequence(translate(plain16, ShaderFloatMode{0xc0})), "f32 rounding changed an f16 operation");
 }
 
 void verifyUnmodelledDirectedRounding() {
@@ -318,9 +315,9 @@ void verifyDirectedF16Conversion() {
         const std::array<std::uint32_t, 3> runtime{roundMode(rounding << 2u), vCvtF16F32, endProgram};
         const std::array<std::uint32_t, 2> declared{vCvtF16F32, endProgram};
         const auto converted = opcodeSequence(translate(runtime, ShaderFloatMode{0xc0}));
-        require(converted == opcodeSequence(translate(declared, ShaderFloatMode{0xc0u | (rounding << 2u)})), "runtime f16 rounding does not match the declared rounding");
+        Require(converted == opcodeSequence(translate(declared, ShaderFloatMode{0xc0u | (rounding << 2u)})), "runtime f16 rounding does not match the declared rounding");
         const auto flushed = opcodeSequence(translate(runtime, ShaderFloatMode{0x00}));
-        require(flushed == opcodeSequence(translate(declared, ShaderFloatMode{rounding << 2u})), "runtime f16 rounding with flushed denormals does not match the declared rounding");
+        Require(flushed == opcodeSequence(translate(declared, ShaderFloatMode{rounding << 2u})), "runtime f16 rounding with flushed denormals does not match the declared rounding");
     }
 }
 
@@ -339,7 +336,7 @@ void verifyDenormBeforeUse() {
     for (std::uint32_t denorm = 0; denorm < 16; ++denorm) {
         const std::array<std::uint32_t, 3> runtime{denormMode(denorm), vAddF16, endProgram};
         const std::array<std::uint32_t, 2> declared{vAddF16, endProgram};
-        require(opcodeSequence(translate(runtime, ShaderFloatMode{0xc0})) == opcodeSequence(translate(declared, ShaderFloatMode{denorm << 4u})),
+        Require(opcodeSequence(translate(runtime, ShaderFloatMode{0xc0})) == opcodeSequence(translate(declared, ShaderFloatMode{denorm << 4u})),
                 "runtime denormal mode does not match the declared denormal mode");
     }
     const std::array<std::uint32_t, 3> flushAll{denormMode(0), vAddF32, endProgram};
@@ -387,12 +384,12 @@ void verifyRecompilePropagation() {
     request.target.maxWorkgroupInvocations = 1024;
     request.layout = {0, 0, 0, 128};
     request.useCache = false;
-    require(!Recompile(request).spirv.empty(), "declared MODE did not reach full recompilation");
+    Require(!Recompile(request).spirv.empty(), "declared MODE did not reach full recompilation");
     request.context.floatMode.reset();
     try {
         static_cast<void>(Recompile(request));
     } catch (const std::runtime_error& error) {
-        require(std::string(error.what()).find("s_round_mode") != std::string::npos, "unexpected full recompilation failure");
+        Require(std::string(error.what()).find("s_round_mode") != std::string::npos, "unexpected full recompilation failure");
         return;
     }
     throw std::runtime_error("full recompilation ignored a runtime MODE change");

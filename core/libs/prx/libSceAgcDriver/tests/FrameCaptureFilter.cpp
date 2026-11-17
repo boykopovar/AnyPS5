@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/FrameCapture.hpp"
 #include "prx/libSceAgcDriver/tools/FrameCaptureFilter.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -17,23 +18,6 @@
 #endif
 
 namespace {
-
-void check(bool condition, const std::string& message) {
-    if (!condition) {
-        std::fprintf(stderr, "FAILED: %s\n", message.c_str());
-        std::exit(1);
-    }
-}
-
-template <typename TFunction>
-void checkThrows(TFunction&& function, const std::string& message) {
-    try {
-        function();
-    } catch (const std::runtime_error&) {
-        return;
-    }
-    check(false, message);
-}
 
 void writeCapture(const std::filesystem::path& path) {
     AgcDriver::FrameCaptureWriter writer(path);
@@ -73,17 +57,17 @@ void testCallFilter(const std::filesystem::path& root) {
 
     const AgcDriver::FrameCaptureReader original(source);
     const AgcDriver::FrameCaptureReader filtered(output);
-    check(filtered.Header() == original.Header(), "filtering changed the capture header");
-    check(filtered.Calls().size() == 3, "filtering retained the removed memory call");
-    check(filtered.Calls()[0].kind == AgcDriver::FrameCallKind::FrameStart && filtered.Calls()[1].kind == AgcDriver::FrameCallKind::Submit && filtered.Calls()[2].kind == AgcDriver::FrameCallKind::End,
+    Require(filtered.Header() == original.Header(), "filtering changed the capture header");
+    Require(filtered.Calls().size() == 3, "filtering retained the removed memory call");
+    Require(filtered.Calls()[0].kind == AgcDriver::FrameCallKind::FrameStart && filtered.Calls()[1].kind == AgcDriver::FrameCallKind::Submit && filtered.Calls()[2].kind == AgcDriver::FrameCallKind::End,
           "filtering changed the order of retained calls");
-    check(filtered.Chunks().size() == 2, "filtering retained an excluded snapshot or memory-group delta");
-    check(filtered.Chunks()[0].kind == AgcDriver::FrameMemoryKind::Range && filtered.Chunks()[1].kind == AgcDriver::FrameMemoryKind::Snapshot,
+    Require(filtered.Chunks().size() == 2, "filtering retained an excluded snapshot or memory-group delta");
+    Require(filtered.Chunks()[0].kind == AgcDriver::FrameMemoryKind::Range && filtered.Chunks()[1].kind == AgcDriver::FrameMemoryKind::Snapshot,
           "filtering removed range metadata or retained a removed memory-group delta");
-    check(filtered.Read(filtered.Chunks()[1]) == std::vector<std::byte>(8192, std::byte{0x31}), "filtering changed retained snapshot bytes");
+    Require(filtered.Read(filtered.Chunks()[1]) == std::vector<std::byte>(8192, std::byte{0x31}), "filtering changed retained snapshot bytes");
     const auto description = AgcDriverTools::DescribeFrameCapture(output);
-    check(description.find("\"kind\":\"submit\"") != std::string::npos, "capture inspection omitted retained calls");
-    check(description.find("\"memory_group\":null") != std::string::npos, "capture inspection omitted non-memory call group markers");
+    Require(description.find("\"kind\":\"submit\"") != std::string::npos, "capture inspection omitted retained calls");
+    Require(description.find("\"memory_group\":null") != std::string::npos, "capture inspection omitted non-memory call group markers");
 }
 
 void testChunkFilter(const std::filesystem::path& root) {
@@ -94,10 +78,10 @@ void testChunkFilter(const std::filesystem::path& root) {
     plan.chunks.insert(1);
     AgcDriverTools::FilterFrameCapture(source, output, plan);
     const AgcDriver::FrameCaptureReader filtered(output);
-    check(filtered.Chunks().size() == 3, "filtering did not remove exactly one memory chunk");
-    check(filtered.Chunks()[0].kind == AgcDriver::FrameMemoryKind::Range && filtered.Chunks()[1].kind == AgcDriver::FrameMemoryKind::Delta && filtered.Chunks()[2].kind == AgcDriver::FrameMemoryKind::Delta,
+    Require(filtered.Chunks().size() == 3, "filtering did not remove exactly one memory chunk");
+    Require(filtered.Chunks()[0].kind == AgcDriver::FrameMemoryKind::Range && filtered.Chunks()[1].kind == AgcDriver::FrameMemoryKind::Delta && filtered.Chunks()[2].kind == AgcDriver::FrameMemoryKind::Delta,
           "filtering changed range metadata or retained the excluded snapshot");
-    check(filtered.Read(filtered.Chunks()[1]) == std::vector<std::byte>(64, std::byte{0x52}), "filtering changed retained delta bytes");
+    Require(filtered.Read(filtered.Chunks()[1]) == std::vector<std::byte>(64, std::byte{0x52}), "filtering changed retained delta bytes");
 }
 
 void testInvalidPlan(const std::filesystem::path& root) {
@@ -105,12 +89,12 @@ void testInvalidPlan(const std::filesystem::path& root) {
     writeCapture(source);
     AgcDriverTools::FrameCaptureFilterPlan outside;
     outside.calls.insert(99);
-    checkThrows([&] { AgcDriverTools::FilterFrameCapture(source, root / "bad-index", outside); }, "filtering accepted an out-of-range call index");
+    ExpectErr<std::runtime_error>([&] { AgcDriverTools::FilterFrameCapture(source, root / "bad-index", outside); }, "filtering accepted an out-of-range call index");
     AgcDriverTools::FrameCaptureFilterPlan alias;
-    checkThrows([&] { AgcDriverTools::FilterFrameCapture(source, source, alias); }, "filtering accepted the source as its output");
+    ExpectErr<std::runtime_error>([&] { AgcDriverTools::FilterFrameCapture(source, source, alias); }, "filtering accepted the source as its output");
     const auto existing = root / "existing";
     std::filesystem::create_directories(existing);
-    checkThrows([&] { AgcDriverTools::FilterFrameCapture(source, existing, alias); }, "filtering overwrote an existing destination");
+    ExpectErr<std::runtime_error>([&] { AgcDriverTools::FilterFrameCapture(source, existing, alias); }, "filtering overwrote an existing destination");
 }
 
 #ifndef _WIN32
@@ -121,11 +105,11 @@ void testDanglingSymlinkDestination(const std::filesystem::path& root) {
     writeCapture(source);
     std::filesystem::create_symlink(missingTarget, destination);
     AgcDriverTools::FrameCaptureFilterPlan plan;
-    checkThrows([&] { AgcDriverTools::FilterFrameCapture(source, destination, plan); }, "filtering accepted a dangling output symlink");
+    ExpectErr<std::runtime_error>([&] { AgcDriverTools::FilterFrameCapture(source, destination, plan); }, "filtering accepted a dangling output symlink");
     std::error_code error;
     const auto status = std::filesystem::symlink_status(destination, error);
-    check(!error && status.type() == std::filesystem::file_type::symlink, "filtering removed a pre-existing dangling output symlink");
-    check(!std::filesystem::exists(missingTarget), "filtering created the dangling symlink target");
+    Require(!error && status.type() == std::filesystem::file_type::symlink, "filtering removed a pre-existing dangling output symlink");
+    Require(!std::filesystem::exists(missingTarget), "filtering created the dangling symlink target");
 }
 #endif
 
@@ -136,12 +120,12 @@ void testPlanReader(const std::filesystem::path& root) {
         output << "aps5-frame-filter 1\ncall 3\nchunk 9\n";
     }
     const auto plan = AgcDriverTools::ReadFrameCaptureFilterPlan(path);
-    check(plan.calls == std::set<std::uint64_t>{3} && plan.chunks == std::set<std::uint64_t>{9}, "plan reader changed its call or chunk indexes");
+    Require(plan.calls == std::set<std::uint64_t>{3} && plan.chunks == std::set<std::uint64_t>{9}, "plan reader changed its call or chunk indexes");
     {
         std::ofstream output(path);
         output << "aps5-frame-filter 1\ncall nope\n";
     }
-    checkThrows([&] { AgcDriverTools::ReadFrameCaptureFilterPlan(path); }, "plan reader accepted a non-numeric index");
+    ExpectErr<std::runtime_error>([&] { AgcDriverTools::ReadFrameCaptureFilterPlan(path); }, "plan reader accepted a non-numeric index");
 }
 
 
@@ -150,7 +134,7 @@ void testOutOfRangeChunk(const std::filesystem::path& root) {
     writeCapture(source);
     AgcDriverTools::FrameCaptureFilterPlan plan;
     plan.chunks.insert(99);
-    checkThrows([&] { AgcDriverTools::FilterFrameCapture(source, root / "bad-chunk", plan); }, "filtering accepted an out-of-range chunk index");
+    ExpectErr<std::runtime_error>([&] { AgcDriverTools::FilterFrameCapture(source, root / "bad-chunk", plan); }, "filtering accepted an out-of-range chunk index");
 }
 
 
@@ -158,7 +142,7 @@ void testNestedDestination(const std::filesystem::path& root) {
     const auto source = root / "source";
     writeCapture(source);
     AgcDriverTools::FrameCaptureFilterPlan plan;
-    checkThrows([&] { AgcDriverTools::FilterFrameCapture(source, source / "nested", plan); }, "filtering accepted an output nested under its source");
+    ExpectErr<std::runtime_error>([&] { AgcDriverTools::FilterFrameCapture(source, source / "nested", plan); }, "filtering accepted an output nested under its source");
 }
 
 
@@ -166,7 +150,7 @@ void testParentDestination(const std::filesystem::path& root) {
     const auto source = root / "source";
     writeCapture(source);
     AgcDriverTools::FrameCaptureFilterPlan plan;
-    checkThrows([&] { AgcDriverTools::FilterFrameCapture(source, root, plan); }, "filtering accepted an output parent of its source");
+    ExpectErr<std::runtime_error>([&] { AgcDriverTools::FilterFrameCapture(source, root, plan); }, "filtering accepted an output parent of its source");
 }
 
 
@@ -178,9 +162,9 @@ void testEmptyPlan(const std::filesystem::path& root) {
     AgcDriverTools::FilterFrameCapture(source, output, plan);
     const AgcDriver::FrameCaptureReader original(source);
     const AgcDriver::FrameCaptureReader filtered(output);
-    check(filtered.Header() == original.Header(), "empty plan changed capture header");
-    check(filtered.Calls().size() == original.Calls().size(), "empty plan changed call count");
-    check(filtered.Chunks().size() == original.Chunks().size(), "empty plan changed chunk count");
+    Require(filtered.Header() == original.Header(), "empty plan changed capture header");
+    Require(filtered.Calls().size() == original.Calls().size(), "empty plan changed call count");
+    Require(filtered.Chunks().size() == original.Chunks().size(), "empty plan changed chunk count");
 }
 
 
@@ -194,8 +178,8 @@ void testReferenceChunk(const std::filesystem::path& root) {
     AgcDriverTools::FrameCaptureFilterPlan plan;
     AgcDriverTools::FilterFrameCapture(source, output, plan);
     const AgcDriver::FrameCaptureReader filtered(output);
-    check(filtered.Chunks().size() == 1 && filtered.Chunks()[0].kind == AgcDriver::FrameMemoryKind::Reference, "filtering dropped a reference chunk");
-    check(filtered.Read(filtered.Chunks()[0]) == reference, "filtering changed reference bytes");
+    Require(filtered.Chunks().size() == 1 && filtered.Chunks()[0].kind == AgcDriver::FrameMemoryKind::Reference, "filtering dropped a reference chunk");
+    Require(filtered.Read(filtered.Chunks()[0]) == reference, "filtering changed reference bytes");
 }
 
 
@@ -209,7 +193,7 @@ void testSharedMemoryGroup(const std::filesystem::path& root) {
     AgcDriverTools::FrameCaptureFilterPlan plan; plan.calls.insert(0);
     AgcDriverTools::FilterFrameCapture(source, output, plan);
     const AgcDriver::FrameCaptureReader filtered(output);
-    check(filtered.Calls().size() == 1 && filtered.Chunks().size() == 1 && filtered.Chunks()[0].kind == AgcDriver::FrameMemoryKind::Delta, "removing one call discarded a shared memory group");
+    Require(filtered.Calls().size() == 1 && filtered.Chunks().size() == 1 && filtered.Chunks()[0].kind == AgcDriver::FrameMemoryKind::Delta, "removing one call discarded a shared memory group");
 }
 
 
@@ -222,56 +206,56 @@ void testAllMemoryGroupCallsRemoved(const std::filesystem::path& root) {
     AgcDriverTools::FrameCaptureFilterPlan plan; plan.calls = {0, 1};
     AgcDriverTools::FilterFrameCapture(source, output, plan);
     const AgcDriver::FrameCaptureReader filtered(output);
-    check(filtered.Calls().empty() && filtered.Chunks().empty(), "removing every call in a memory group retained its deltas");
+    Require(filtered.Calls().empty() && filtered.Chunks().empty(), "removing every call in a memory group retained its deltas");
 }
 
 
 void testMalformedPlanHeader(const std::filesystem::path& root) {
     const auto path = root / "bad-header.plan";
     { std::ofstream output(path); output << "aps5-frame-filter 2\n"; }
-    checkThrows([&] { AgcDriverTools::ReadFrameCaptureFilterPlan(path); }, "plan reader accepted an unsupported version");
+    ExpectErr<std::runtime_error>([&] { AgcDriverTools::ReadFrameCaptureFilterPlan(path); }, "plan reader accepted an unsupported version");
 }
 
 
 void testUnknownPlanEntry(const std::filesystem::path& root) {
     const auto path = root / "unknown-entry.plan";
     { std::ofstream output(path); output << "aps5-frame-filter 1\nrange 1\n"; }
-    checkThrows([&] { AgcDriverTools::ReadFrameCaptureFilterPlan(path); }, "plan reader accepted an unknown entry kind");
+    ExpectErr<std::runtime_error>([&] { AgcDriverTools::ReadFrameCaptureFilterPlan(path); }, "plan reader accepted an unknown entry kind");
 }
 
 
 void testDuplicateCallPlanIndex(const std::filesystem::path& root) {
     const auto path = root / "duplicate-call.plan";
     { std::ofstream output(path); output << "aps5-frame-filter 1\ncall 2\ncall 2\n"; }
-    checkThrows([&] { AgcDriverTools::ReadFrameCaptureFilterPlan(path); }, "plan reader accepted duplicate call indexes");
+    ExpectErr<std::runtime_error>([&] { AgcDriverTools::ReadFrameCaptureFilterPlan(path); }, "plan reader accepted duplicate call indexes");
 }
 
 
 void testDuplicateChunkPlanIndex(const std::filesystem::path& root) {
     const auto path = root / "duplicate-chunk.plan";
     { std::ofstream output(path); output << "aps5-frame-filter 1\nchunk 2\nchunk 2\n"; }
-    checkThrows([&] { AgcDriverTools::ReadFrameCaptureFilterPlan(path); }, "plan reader accepted duplicate chunk indexes");
+    ExpectErr<std::runtime_error>([&] { AgcDriverTools::ReadFrameCaptureFilterPlan(path); }, "plan reader accepted duplicate chunk indexes");
 }
 
 
 void testMissingPlanIndex(const std::filesystem::path& root) {
     const auto path = root / "missing-index.plan";
     { std::ofstream output(path); output << "aps5-frame-filter 1\ncall\n"; }
-    checkThrows([&] { AgcDriverTools::ReadFrameCaptureFilterPlan(path); }, "plan reader accepted a missing index");
+    ExpectErr<std::runtime_error>([&] { AgcDriverTools::ReadFrameCaptureFilterPlan(path); }, "plan reader accepted a missing index");
 }
 
 
 void testNegativePlanIndex(const std::filesystem::path& root) {
     const auto path = root / "negative-index.plan";
     { std::ofstream output(path); output << "aps5-frame-filter 1\ncall -1\n"; }
-    checkThrows([&] { AgcDriverTools::ReadFrameCaptureFilterPlan(path); }, "plan reader accepted a negative index");
+    ExpectErr<std::runtime_error>([&] { AgcDriverTools::ReadFrameCaptureFilterPlan(path); }, "plan reader accepted a negative index");
 }
 
 
 void testOverflowPlanIndex(const std::filesystem::path& root) {
     const auto path = root / "overflow-index.plan";
     { std::ofstream output(path); output << "aps5-frame-filter 1\nchunk 18446744073709551616\n"; }
-    checkThrows([&] { AgcDriverTools::ReadFrameCaptureFilterPlan(path); }, "plan reader accepted an overflowing index");
+    ExpectErr<std::runtime_error>([&] { AgcDriverTools::ReadFrameCaptureFilterPlan(path); }, "plan reader accepted an overflowing index");
 }
 
 
@@ -279,12 +263,12 @@ void testBlankPlanLines(const std::filesystem::path& root) {
     const auto path = root / "blank-lines.plan";
     { std::ofstream output(path); output << "aps5-frame-filter 1\n\ncall 3\n\n"; }
     const auto plan = AgcDriverTools::ReadFrameCaptureFilterPlan(path);
-    check(plan.calls == std::set<std::uint64_t>{3}, "plan reader did not ignore blank lines");
+    Require(plan.calls == std::set<std::uint64_t>{3}, "plan reader did not ignore blank lines");
 }
 
 
 void testMissingPlanFile(const std::filesystem::path& root) {
-    checkThrows([&] { AgcDriverTools::ReadFrameCaptureFilterPlan(root / "missing.plan"); }, "plan reader accepted a missing file");
+    ExpectErr<std::runtime_error>([&] { AgcDriverTools::ReadFrameCaptureFilterPlan(root / "missing.plan"); }, "plan reader accepted a missing file");
 }
 
 
@@ -293,7 +277,7 @@ void testTruncatedCapture(const std::filesystem::path& root) {
     writeCapture(source);
     std::filesystem::resize_file(source / "calls.bin", 10);
     AgcDriverTools::FrameCaptureFilterPlan plan;
-    checkThrows([&] { AgcDriverTools::FilterFrameCapture(source, root / "truncated-output", plan); }, "filtering accepted a truncated capture");
+    ExpectErr<std::runtime_error>([&] { AgcDriverTools::FilterFrameCapture(source, root / "truncated-output", plan); }, "filtering accepted a truncated capture");
 }
 
 
@@ -301,7 +285,7 @@ void testNormalizedSourceAlias(const std::filesystem::path& root) {
     const auto source = root / "source";
     writeCapture(source);
     AgcDriverTools::FrameCaptureFilterPlan plan;
-    checkThrows([&] { AgcDriverTools::FilterFrameCapture(source, root / "other" / ".." / "source", plan); }, "filtering accepted a normalized source path alias");
+    ExpectErr<std::runtime_error>([&] { AgcDriverTools::FilterFrameCapture(source, root / "other" / ".." / "source", plan); }, "filtering accepted a normalized source path alias");
 }
 
 
@@ -313,7 +297,7 @@ void testRangeMetadata(const std::filesystem::path& root) {
     AgcDriverTools::FilterFrameCapture(source, output, plan);
     const AgcDriver::FrameCaptureReader original(source); const AgcDriver::FrameCaptureReader filtered(output);
     const auto& before = original.Chunks().front(); const auto& after = filtered.Chunks().front();
-    check(after.address == before.address && after.bytes == before.bytes && after.rangeKind == before.rangeKind && after.protection == before.protection && after.access == before.access, "filtering changed range metadata");
+    Require(after.address == before.address && after.bytes == before.bytes && after.rangeKind == before.rangeKind && after.protection == before.protection && after.access == before.access, "filtering changed range metadata");
 }
 
 }

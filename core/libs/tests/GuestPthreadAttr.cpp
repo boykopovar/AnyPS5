@@ -2,6 +2,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <chrono>
 #include <cstddef>
@@ -34,8 +35,6 @@ static constexpr int GUEST_EINVAL = 22;
 static constexpr int GUEST_ENOTSUP = 45;
 static constexpr int DETACH_DETACHED = 1;
 static constexpr int DETACHED_THREADS = 32;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 struct ReportedAttributes {
     int priority = 0;

@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Socket/include/SocketRuntime.hpp"
+#include "Testing.hpp"
 #include <sys/socket.h>
 #include <sys/syscall.h>
 #include <unistd.h>
@@ -23,8 +24,6 @@ extern "C" int connect(int descriptor, const sockaddr* address, socklen_t size) 
     }
     return result;
 }
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 int main() {
     const int peer = socket_nid_postfix(2, 2, 0);

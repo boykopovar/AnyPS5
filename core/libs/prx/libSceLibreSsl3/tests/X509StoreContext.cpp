@@ -1,6 +1,7 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 
 #include <algorithm>
 #include <array>
@@ -28,12 +29,6 @@ static_assert(offsetof(LibreSslX509Store, references) == 128);
 static_assert(std::atomic_ref<std::int32_t>::required_alignment <= alignof(std::int32_t));
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL3 X509_STORE_CTX check failed at line %u\n", location.line());
-    std::abort();
-}
 
 template <typename Function>
 bool Throws(Function function) {

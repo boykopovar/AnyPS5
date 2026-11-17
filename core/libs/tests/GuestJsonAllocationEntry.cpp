@@ -1,5 +1,6 @@
 #include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -12,9 +13,6 @@ using namespace SceJson2;
 
 struct Parameter { void* allocator; void* context; std::size_t fileBuffer; };
 using InfoCallback = void (APS5_VABI*)(int, std::int32_t, void*);
-static void Require(bool valid, const char* message) {
-    if (!valid) { std::fprintf(stderr, "%s\n", message); std::abort(); }
-}
 struct EntryTrace {
     std::map<void*, std::size_t> live;
     std::vector<std::size_t> requests;

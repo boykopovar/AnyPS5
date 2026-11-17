@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <exception>
@@ -7,14 +8,6 @@
 using namespace AgcDriver::Graphics;
 
 namespace {
-
-int failures = 0;
-
-void Expect(bool condition, const std::string& what) {
-    if (condition) return;
-    std::fprintf(stderr, "FAIL: %s\n", what.c_str());
-    ++failures;
-}
 
 constexpr std::uint32_t HostType = 0;
 constexpr std::uint32_t DeviceType = 1;
@@ -210,7 +203,7 @@ int main() {
         std::fprintf(stderr, "FAIL: %s\n", error.what());
         return 1;
     }
-    if (failures != 0) return 1;
+    if (Failures() != 0) return 1;
     std::puts("device memory placement tests passed");
     return 0;
 }

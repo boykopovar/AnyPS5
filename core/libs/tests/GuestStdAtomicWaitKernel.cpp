@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "Testing.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -7,16 +8,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <thread>
-
-namespace {
-
-void Require(bool condition, const char* label) {
-    if (condition) return;
-    std::fprintf(stderr, "std atomic wait with libkernel: %s\n", label);
-    std::abort();
-}
-
-}
 
 int main() {
     alignas(4) std::uint8_t bytes[4] = {0x2a, 0xff, 0xff, 0xff};

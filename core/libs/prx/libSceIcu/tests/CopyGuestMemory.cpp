@@ -2,6 +2,7 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -26,12 +27,6 @@ namespace {
 
 constexpr std::size_t Page = 0x4000;
 constexpr std::size_t MappingBytes = Page * 3;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "ICU guest copy check failed at line %u\n", location.line());
-    std::abort();
-}
 
 struct Mapping {
     std::int64_t physical = 0;

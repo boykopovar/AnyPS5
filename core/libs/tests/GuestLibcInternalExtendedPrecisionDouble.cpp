@@ -1,5 +1,6 @@
 #include "prx/libSceLibcInternal/include/MathInternals.hpp"
 #include "prx/libc/include/GuestErrno.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cfloat>
 #include <cmath>
@@ -15,23 +16,6 @@ using Words = std::array<double, 4>;
 
 constexpr double Sentinel = 99.0;
 constexpr int GuestEdom = 33;
-
-void Require(bool value, const char* message) {
-    if (!value) {
-        std::fprintf(stderr, "%s\n", message);
-        std::abort();
-    }
-}
-
-template<typename TCall>
-void RequireInvalid(TCall call, const char* message) {
-    try {
-        call();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, message);
-}
 
 double Power(int exponent) {
     return std::ldexp(1.0, exponent);
@@ -60,7 +44,7 @@ void CheckGetw() {
     const double carry[] = {Power(53), 1.0, 1.0, 2.0};
     Require(_Xp_getw_nid_postfix(carry, 3) == Power(53) + 2.0, "a second word lost in the first sum is folded with the third");
     Require(_Xp_getw_nid_postfix(carry, 4) == Power(53) + 4.0, "a second word lost in the first sum is folded with the third and fourth");
-    RequireInvalid([&] { _Xp_getw_nid_postfix(parts, -1); }, "_Xp_getw rejects a negative count");
+    ExpectErr<std::invalid_argument>([&] { _Xp_getw_nid_postfix(parts, -1); }, "_Xp_getw rejects a negative count");
 }
 
 void CheckSetw() {
@@ -168,7 +152,7 @@ void CheckMovxAddxSubx() {
     Require(_Xp_movx_nid_postfix(words.data(), 3, source.data()) == words.data(), "_Xp_movx returns its array");
     Require(Same(words, Words{1.0, Power(-30), Power(-60), Sentinel}), "_Xp_movx copies n words");
     _Xp_movx_nid_postfix(words.data(), 0, nullptr);
-    RequireInvalid([&] { _Xp_movx_nid_postfix(words.data(), -1, source.data()); }, "_Xp_movx rejects a negative count");
+    ExpectErr<std::invalid_argument>([&] { _Xp_movx_nid_postfix(words.data(), -1, source.data()); }, "_Xp_movx rejects a negative count");
     const Words addend{Power(-30), Power(-60), 0.0, Sentinel};
     words = Words{1.0, 0.0, 0.0, 0.0};
     _Xp_addx_nid_postfix(words.data(), 4, addend.data(), 4);
@@ -205,8 +189,8 @@ void CheckMulx() {
     words = Words{1.0, Power(-30), 0.0, 0.0};
     _Xp_mulx_nid_postfix(words.data(), 4, factor.data(), 0, scratch.data());
     Require(Same(words, Words{1.0, Power(-30), 0.0, 0.0}), "_Xp_mulx by no words writes nothing");
-    RequireInvalid([&] { _Xp_mulx_nid_postfix(words.data(), 4, factor.data(), -1, scratch.data()); }, "_Xp_mulx rejects a negative multiplier count");
-    RequireInvalid([&] { _Xp_mulx_nid_postfix(words.data(), -1, factor.data(), 4, scratch.data()); }, "_Xp_mulx rejects a negative count");
+    ExpectErr<std::invalid_argument>([&] { _Xp_mulx_nid_postfix(words.data(), 4, factor.data(), -1, scratch.data()); }, "_Xp_mulx rejects a negative multiplier count");
+    ExpectErr<std::invalid_argument>([&] { _Xp_mulx_nid_postfix(words.data(), -1, factor.data(), 4, scratch.data()); }, "_Xp_mulx rejects a negative count");
 }
 
 void CheckInvx() {
@@ -230,7 +214,7 @@ void CheckInvx() {
     words = Words{std::numeric_limits<double>::quiet_NaN(), 0.0, 0.0, 0.0};
     _Xp_invx_nid_postfix(words.data(), 4, scratch.data());
     Require(std::isnan(words[0]), "_Xp_invx of NaN is NaN");
-    RequireInvalid([&] { _Xp_invx_nid_postfix(words.data(), -1, scratch.data()); }, "_Xp_invx rejects a negative count");
+    ExpectErr<std::invalid_argument>([&] { _Xp_invx_nid_postfix(words.data(), -1, scratch.data()); }, "_Xp_invx rejects a negative count");
 }
 
 void CheckSqrtx() {
@@ -257,7 +241,7 @@ void CheckSqrtx() {
     words = Words{std::numeric_limits<double>::infinity(), 0.0, 0.0, 0.0};
     _Xp_sqrtx_nid_postfix(words.data(), 4, scratch.data());
     Require(words[0] == std::numeric_limits<double>::infinity(), "_Xp_sqrtx of infinity is infinity");
-    RequireInvalid([&] { _Xp_sqrtx_nid_postfix(words.data(), -1, scratch.data()); }, "_Xp_sqrtx rejects a negative count");
+    ExpectErr<std::invalid_argument>([&] { _Xp_sqrtx_nid_postfix(words.data(), -1, scratch.data()); }, "_Xp_sqrtx rejects a negative count");
 }
 
 }

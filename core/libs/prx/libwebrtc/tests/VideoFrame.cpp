@@ -1,4 +1,5 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "Testing.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -13,22 +14,6 @@ namespace {
 
 int addRefs = 0;
 int releases = 0;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc VideoFrame check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TException, typename TAction>
-void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
-    try {
-        action();
-    } catch (const TException&) {
-        return;
-    }
-    Require(false, location);
-}
 
 void APS5_VABI AddRef_nid_no_patch(const void*) { ++addRefs; }
 int APS5_VABI Release_nid_no_patch(const void*) { ++releases; return 1; }
@@ -112,7 +97,7 @@ void TestDestructor() {
     frame = Filled();
     _ZN6webrtc10VideoFrameC1ERKNS_13scoped_refptrINS_16VideoFrameBufferEEEjlNS_13VideoRotationE_nid_postfix(&frame, &reference, 1, 2, 0);
     frame.packetInfos = &frame;
-    RequireThrows<std::runtime_error>([&] { _ZN6webrtc10VideoFrameD1Ev_nid_postfix(&frame); });
+    ExpectErr<std::runtime_error>([&] { _ZN6webrtc10VideoFrameD1Ev_nid_postfix(&frame); });
     Require(releases == 1);
     frame.packetInfos = nullptr;
     _ZN6webrtc10VideoFrameD1Ev_nid_postfix(&frame);
@@ -125,16 +110,16 @@ void TestInvalid() {
     void* reference = &broken;
     void* none = nullptr;
     WebRtcVideoFrame frame = Filled();
-    RequireThrows<std::invalid_argument>([&] { _ZN6webrtc10VideoFrameC1ERKNS_13scoped_refptrINS_16VideoFrameBufferEEEjlNS_13VideoRotationE_nid_postfix(nullptr, &none, 0, 0, 0); });
-    RequireThrows<std::invalid_argument>([&] { _ZN6webrtc10VideoFrameC1ERKNS_13scoped_refptrINS_16VideoFrameBufferEEEjlNS_13VideoRotationE_nid_postfix(&frame, nullptr, 0, 0, 0); });
-    RequireThrows<std::invalid_argument>([&] { _ZN6webrtc10VideoFrameC1ERKNS_13scoped_refptrINS_16VideoFrameBufferEEEjlNS_13VideoRotationE_nid_postfix(&frame, &reference, 0, 0, 0); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc10VideoFrameC1ERKNS_13scoped_refptrINS_16VideoFrameBufferEEEjlNS_13VideoRotationE_nid_postfix(nullptr, &none, 0, 0, 0); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc10VideoFrameC1ERKNS_13scoped_refptrINS_16VideoFrameBufferEEEjlNS_13VideoRotationE_nid_postfix(&frame, nullptr, 0, 0, 0); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc10VideoFrameC1ERKNS_13scoped_refptrINS_16VideoFrameBufferEEEjlNS_13VideoRotationE_nid_postfix(&frame, &reference, 0, 0, 0); });
     reference = &empty;
-    RequireThrows<std::invalid_argument>([&] { _ZN6webrtc10VideoFrameC1ERKNS_13scoped_refptrINS_16VideoFrameBufferEEEjlNS_13VideoRotationE_nid_postfix(&frame, &reference, 0, 0, 0); });
-    RequireThrows<std::invalid_argument>([] { _ZN6webrtc10VideoFrameD1Ev_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc10VideoFrameC1ERKNS_13scoped_refptrINS_16VideoFrameBufferEEEjlNS_13VideoRotationE_nid_postfix(&frame, &reference, 0, 0, 0); });
+    ExpectErr<std::invalid_argument>([] { _ZN6webrtc10VideoFrameD1Ev_nid_postfix(nullptr); });
     frame = Filled();
     _ZN6webrtc10VideoFrameC1ERKNS_13scoped_refptrINS_16VideoFrameBufferEEEjlNS_13VideoRotationE_nid_postfix(&frame, &none, 0, 0, 0);
     frame.videoFrameBuffer = &broken;
-    RequireThrows<std::invalid_argument>([&] { _ZN6webrtc10VideoFrameD1Ev_nid_postfix(&frame); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc10VideoFrameD1Ev_nid_postfix(&frame); });
     Require(addRefs == 0 && releases == 0);
 }
 

@@ -1,6 +1,7 @@
 #include "prx/libSceSystemService/include/SystemService.hpp"
 #include "SceTypes.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
@@ -9,12 +10,6 @@
 #include <unistd.h>
 
 namespace {
-
-void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "check failed: %s\n", what);
-    std::abort();
-}
 
 void SetVariable(const char* name, std::string_view value) {
     if (value == "-") Require(::unsetenv(name) == 0, name);

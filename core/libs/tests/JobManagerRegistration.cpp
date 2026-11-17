@@ -1,5 +1,6 @@
 #include "prx/libSceJobManager/libSceJobManager.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -16,10 +17,6 @@ std::uint32_t assignedId = 0;
 bool writeId = true;
 int registrationResult = 0;
 std::atomic<std::uint32_t> jobs{0};
-
-void Require(bool condition) {
-    if (!condition) std::abort();
-}
 
 int Initialize(bool unified, void* memory) {
     if (unified) return _ZN3sce3Job10JobManager10initializeEPvmjjjmPKNS1_12ConfigParamsE(manager.data(), memory, workArea.size(), 1, 1, 0, 0, nullptr);

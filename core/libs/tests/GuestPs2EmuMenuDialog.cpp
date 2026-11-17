@@ -1,4 +1,5 @@
 #include "prx/libScePs2EmuMenuDialog/include/Api.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -10,13 +11,6 @@ constexpr int kStatusNone = 0;
 constexpr int kErrUnavailable = static_cast<int>(0x80B8000Fu);
 
 using OneArg = int(APS5_VABI*)(void*);
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "PS2EmuMenuDialog: %s\n", message);
-        std::abort();
-    }
-}
 
 void CheckUntouched(OneArg fn, int expected, const char* message) {
     std::uint8_t buffer[32];

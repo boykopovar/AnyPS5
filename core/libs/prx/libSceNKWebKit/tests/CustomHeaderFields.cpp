@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -12,14 +13,6 @@ using NKWebKit::WebCoreAbi::HTTPHeaderField;
 using NKWebKit::WtfAbi::String;
 
 using Destructor = void(APS5_VABI*)(CustomHeaderFields*);
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "CustomHeaderFields check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 template <typename Action>
 static bool ThrowsInvalidArgument(Action action) {

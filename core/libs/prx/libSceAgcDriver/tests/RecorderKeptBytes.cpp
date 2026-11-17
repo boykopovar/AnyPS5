@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -16,14 +17,6 @@
 using namespace AgcDriver::Graphics;
 
 namespace {
-
-int failures = 0;
-
-void Expect(bool condition, const std::string& what) {
-    if (condition) return;
-    std::fprintf(stderr, "FAIL: %s\n", what.c_str());
-    ++failures;
-}
 
 constexpr std::size_t Budget = Recorder::KeptBytesBudget;
 
@@ -358,8 +351,8 @@ int main() {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;
     }
-    if (failures != 0) {
-        std::fprintf(stderr, "%d recorder kept bytes checks failed\n", failures);
+    if (Failures() != 0) {
+        std::fprintf(stderr, "%u recorder kept bytes checks failed\n", Failures());
         return 1;
     }
     std::printf("recorder kept bytes tests passed\n");

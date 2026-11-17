@@ -4,13 +4,12 @@
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "prx/libkernel/Pthread/include/Cond.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdlib>
 
 static constexpr int SCE_OK = 0;
 static constexpr int POSIX_ETIMEDOUT = 60;
 static constexpr int MUTEX_TYPE_RECURSIVE = 2;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 struct Context {
     PthreadMutex mutex = nullptr;

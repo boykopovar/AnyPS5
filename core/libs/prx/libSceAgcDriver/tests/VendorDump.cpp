@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/DeviceFault.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
@@ -18,10 +19,6 @@ void DumpDeviceFaultVendorBinary(VkDevice device, PFN_vkGetDeviceFaultInfoEXT fa
 }
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 void SetEnv(const char* name, const char* value) {
 #ifdef _WIN32

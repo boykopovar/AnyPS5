@@ -1,6 +1,7 @@
 #include "prx/libc/include/GuestErrno.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel_sys/include/Api.hpp"
+#include "Testing.hpp"
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -16,12 +17,6 @@ constexpr int Efault = 14;
 constexpr int Enotdir = 20;
 constexpr int Einval = 22;
 constexpr int Enametoolong = 63;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "check failed at line %u\n", static_cast<unsigned>(location.line()));
-    std::exit(1);
-}
 
 int Error() {
     return *__error_nid_postfix();

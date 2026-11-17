@@ -1,5 +1,6 @@
 #include "prx/libSceAudioOut/include/AudioOut.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdint>
@@ -8,12 +9,6 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
-
-static void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
 
 namespace {
 

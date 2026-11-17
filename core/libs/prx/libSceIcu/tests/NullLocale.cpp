@@ -9,7 +9,6 @@
 
 namespace {
 
-using IcuRecoveredTest::Require;
 using LocaleFunction = std::int32_t (APS5_VABI*)(const char*, char*, std::int32_t, std::int32_t*);
 using CaseFunction = std::int32_t (APS5_VABI*)(char16_t*, std::int32_t, const char16_t*, std::int32_t, const char*, std::int32_t*);
 

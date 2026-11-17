@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -11,12 +12,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "ICU iterator comparison check failed at line %u\n", location.line());
-    std::abort();
-}
 
 struct Text {
     std::vector<std::int32_t> units;
@@ -91,12 +86,6 @@ void Expect(std::vector<std::int32_t> left, std::vector<std::int32_t> right, std
     Require(result.second == second, location);
 }
 
-template<typename TAction>
-void RequireInvalidArgument(TAction action, std::source_location location = std::source_location::current()) {
-    try { action(); } catch (const std::invalid_argument&) { return; }
-    Require(false, location);
-}
-
 void Arguments() {
     Iterator text({u'a'});
     Require(u_strCompareIter_nid_postfix(nullptr, &text.iterator, 1) == 0);
@@ -140,19 +129,19 @@ void Callbacks() {
         Iterator second({0xd800, 0xdc00});
         auto& target = missing < 2 ? first.iterator : second.iterator;
         if (missing % 2 == 0) target.move = nullptr; else target.next = nullptr;
-        RequireInvalidArgument([&] { u_strCompareIter_nid_postfix(&first.iterator, &second.iterator, 1); });
+        ExpectErr<std::invalid_argument>([&] { u_strCompareIter_nid_postfix(&first.iterator, &second.iterator, 1); });
     }
     {
         Iterator first({0xdc00});
         Iterator second({0xd800, 0xdc00});
         first.iterator.previous = nullptr;
-        RequireInvalidArgument([&] { u_strCompareIter_nid_postfix(&first.iterator, &second.iterator, 1); });
+        ExpectErr<std::invalid_argument>([&] { u_strCompareIter_nid_postfix(&first.iterator, &second.iterator, 1); });
     }
     {
         Iterator first({0xdc00});
         Iterator second({0xd800, 0xdc00});
         second.iterator.current = nullptr;
-        RequireInvalidArgument([&] { u_strCompareIter_nid_postfix(&first.iterator, &second.iterator, 1); });
+        ExpectErr<std::invalid_argument>([&] { u_strCompareIter_nid_postfix(&first.iterator, &second.iterator, 1); });
     }
     {
         Iterator first({0xdc00});

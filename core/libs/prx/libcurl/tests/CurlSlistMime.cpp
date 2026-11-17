@@ -2,14 +2,11 @@
 #include "prx/libcurl/libcurl.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 #include <cstdlib>
 #include <cstring>
 #include <cstdio>
 #include <initializer_list>
-
-static void Require(bool condition) {
-    if (!condition) std::abort();
-}
 
 static guest_curl_slist* GuestNode(const char* text, guest_curl_slist* next) {
     auto* node = static_cast<guest_curl_slist*>(malloc_nid_postfix(sizeof(guest_curl_slist)));

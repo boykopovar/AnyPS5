@@ -6,6 +6,7 @@
 #include <windows.h>
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -17,13 +18,6 @@
 #include <thread>
 
 static_assert(sizeof(NetMsghdr) == 48 && offsetof(NetMsghdr, iov) == 16 && offsetof(NetMsghdr, flags) == 44);
-
-static void Require(bool value, const char* message) {
-    if (!value) {
-        std::fprintf(stderr, "%s\n", message);
-        std::exit(1);
-    }
-}
 
 static DWORD Protection(const void* address) {
     MEMORY_BASIC_INFORMATION information{};

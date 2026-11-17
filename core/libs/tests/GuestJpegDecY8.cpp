@@ -1,6 +1,7 @@
 #include "prx/libSceJpegDec/libSceJpegDec.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "Decoder/Jpeg.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
@@ -10,8 +11,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
 
 struct Source {
     const std::vector<std::uint8_t>& jpeg;

@@ -1,4 +1,5 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -6,21 +7,6 @@
 #include <stdexcept>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc LogMessage check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> void RequireInvalidArgument(TAction action, std::source_location location = std::source_location::current()) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, location);
-}
 
 int MinSeverity() {
     return _ZN3rtc10LogMessage17GetMinLogSeverityEv_nid_postfix();
@@ -126,10 +112,10 @@ void TestFlags() {
 }
 
 void TestInvalid() {
-    RequireInvalidArgument([] { _ZN3rtc10LogMessage14AddLogToStreamEPNS_7LogSinkENS_15LoggingSeverityE_nid_postfix(nullptr, WebRtcLsInfo); });
+    ExpectErr<std::invalid_argument>([] { _ZN3rtc10LogMessage14AddLogToStreamEPNS_7LogSinkENS_15LoggingSeverityE_nid_postfix(nullptr, WebRtcLsInfo); });
     WebRtcLogSink sink{nullptr, nullptr, 0};
     Add(sink, WebRtcLsInfo);
-    RequireInvalidArgument([&] { Add(sink, WebRtcLsError); });
+    ExpectErr<std::invalid_argument>([&] { Add(sink, WebRtcLsError); });
     Require(sink.minSeverity == WebRtcLsInfo);
     Require(sink.next == nullptr);
     Remove(&sink);

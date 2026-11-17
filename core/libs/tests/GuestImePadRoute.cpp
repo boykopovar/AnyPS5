@@ -1,16 +1,11 @@
 #include "prx/libSceIme/include/ImeInput.hpp"
 #include "prx/libSceIme/include/ImeKeyboardView.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
 
 namespace {
-
-void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "FAIL %s\n", what);
-    std::exit(1);
-}
 
 std::vector<ImeHostPad> g_received;
 

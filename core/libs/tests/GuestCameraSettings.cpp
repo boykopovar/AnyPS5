@@ -1,4 +1,5 @@
 #include "prx/libSceCamera/libSceCamera.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <array>
 #include <cstdint>
@@ -39,13 +40,6 @@ AudioGetData ResolveAudio(const char* name) {
         std::abort();
     }
     return reinterpret_cast<AudioGetData>(symbol);
-}
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "Camera settings: %s\n", message);
-        std::abort();
-    }
 }
 
 void CheckAudioAfterOpen() {

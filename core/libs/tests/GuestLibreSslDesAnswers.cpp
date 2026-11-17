@@ -1,17 +1,11 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
-
-static void Require(bool value, std::source_location location = std::source_location::current()) {
-    if (!value) {
-        std::fprintf(stderr, "check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 struct Vector { std::array<unsigned char, 8> key, plain, cipher; };
 static constexpr Vector vectors[] = {

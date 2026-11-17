@@ -4,6 +4,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -35,17 +36,10 @@ int SceV2Selector = 0;
 
 namespace {
 
-unsigned failures = 0;
 unsigned releases = 0;
 void* lastReleased = nullptr;
 std::string caughtType;
 std::string caughtWhat;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "FAIL: %s\n", message);
-    ++failures;
-}
 
 void* APS5_VABI TestAllocate(std::size_t size) { return std::malloc(size); }
 void APS5_VABI TestFree(void* pointer) {
@@ -75,16 +69,16 @@ void CheckDeletingDestructor(Destructor destructor, const LibcException::Categor
     releases = 0;
     lastReleased = nullptr;
     destructor(object);
-    Require(releases == 1 && lastReleased == object, label);
+    Expect(releases == 1 && lastReleased == object, label);
 }
 
 void CheckCompleteDestructor(Destructor destructor, const LibcException::CategoryObject* singleton, const char* name, const char* label) {
     LibcException::CategoryObject object{singleton->vtable};
     releases = 0;
     destructor(&object);
-    Require(releases == 0 && object.vtable == singleton->vtable, label);
+    Expect(releases == 0 && object.vtable == singleton->vtable, label);
     destructor(const_cast<LibcException::CategoryObject*>(singleton));
-    Require(releases == 0 && std::strcmp(CategoryName(singleton), name) == 0, label);
+    Expect(releases == 0 && std::strcmp(CategoryName(singleton), name) == 0, label);
 }
 
 void CheckCategories() {
@@ -107,14 +101,14 @@ void CheckBadVariantAccess() {
     LibcException::ExceptionObject object{vtable, nullptr};
     releases = 0;
     _ZNSt18bad_variant_accessD1Ev_nid_postfix(&object);
-    Require(releases == 0 && object.vtable == vtable, "bad_variant_access D1 frees nothing");
+    Expect(releases == 0 && object.vtable == vtable, "bad_variant_access D1 frees nothing");
 
     auto* allocated = static_cast<LibcException::ExceptionObject*>(_Znwm_nid_postfix(sizeof(void*)));
     allocated->vtable = vtable;
     releases = 0;
     lastReleased = nullptr;
     _ZNSt18bad_variant_accessD0Ev_nid_postfix(allocated);
-    Require(releases == 1 && lastReleased == allocated, "bad_variant_access D0 releases the object through operator delete");
+    Expect(releases == 1 && lastReleased == allocated, "bad_variant_access D0 releases the object through operator delete");
 }
 
 TypeRecord Named(const char* name) {
@@ -132,9 +126,9 @@ void CatchOverflow(const char* message, const void* catchType, const void* other
     caughtType.clear();
     caughtWhat.clear();
     SceV2Catch(ThrowOverflow, message);
-    Require(SceV2Selector == 2, label);
-    Require(caughtType == "St14overflow_error", label);
-    Require(caughtWhat == expected, label);
+    Expect(SceV2Selector == 2, label);
+    Expect(caughtType == "St14overflow_error", label);
+    Expect(caughtWhat == expected, label);
 }
 
 void CheckOverflow() {
@@ -157,12 +151,12 @@ int InitWithOverride(PthreadMutex* mutex, int type, const char* name) {
 
 void CheckErrno() {
     int* const slot = _Geterrno_nid_postfix();
-    Require(slot != nullptr && slot == __error_nid_postfix(), "_Geterrno returns the libc errno slot");
-    Require(_Geterrno_nid_postfix() == slot, "_Geterrno returns the same slot on one thread");
+    Expect(slot != nullptr && slot == __error_nid_postfix(), "_Geterrno returns the libc errno slot");
+    Expect(_Geterrno_nid_postfix() == slot, "_Geterrno returns the same slot on one thread");
     *__error_nid_postfix() = 34;
-    Require(*_Geterrno_nid_postfix() == 34, "_Geterrno reads what libc stored");
+    Expect(*_Geterrno_nid_postfix() == 34, "_Geterrno reads what libc stored");
     *_Geterrno_nid_postfix() = 22;
-    Require(*__error_nid_postfix() == 22, "libc reads what was stored through _Geterrno");
+    Expect(*__error_nid_postfix() == 22, "libc reads what was stored through _Geterrno");
     int* other = nullptr;
     int otherValue = -1;
     bool otherMatches = false;
@@ -173,32 +167,32 @@ void CheckErrno() {
         otherValue = *__error_nid_postfix();
     });
     worker.join();
-    Require(other != nullptr && other != slot && otherMatches && otherValue == 5, "_Geterrno gives each thread its own slot");
-    Require(*_Geterrno_nid_postfix() == 22, "another thread's store leaves this thread's errno alone");
+    Expect(other != nullptr && other != slot && otherMatches && otherValue == 5, "_Geterrno gives each thread its own slot");
+    Expect(*_Geterrno_nid_postfix() == 22, "another thread's store leaves this thread's errno alone");
     *slot = 0;
 }
 
 void CheckMutex() {
     PthreadMutex named = reinterpret_cast<PthreadMutex>(std::uintptr_t{1});
-    Require(InitWithOverride(&named, plain, "override") == success && named != nullptr, "the override creates a mutex");
-    Require(_ZNSt8__sce_v29_Mtx_lockEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&named)) == success, "the mutex locks");
-    Require(_ZNSt8__sce_v29_Mtx_lockEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&named)) == busy, "a plain mutex reports a relock as busy");
-    Require(_ZNSt8__sce_v211_Mtx_unlockEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&named)) == success, "the mutex unlocks");
-    Require(scePthreadMutexLock(&named) == 0, "the handle is a libkernel pthread mutex");
-    Require(scePthreadMutexUnlock(&named) == 0, "libkernel unlocks the handle");
-    Require(_ZNSt8__sce_v212_Mtx_destroyEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&named)) == success, "the mutex is destroyed");
+    Expect(InitWithOverride(&named, plain, "override") == success && named != nullptr, "the override creates a mutex");
+    Expect(_ZNSt8__sce_v29_Mtx_lockEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&named)) == success, "the mutex locks");
+    Expect(_ZNSt8__sce_v29_Mtx_lockEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&named)) == busy, "a plain mutex reports a relock as busy");
+    Expect(_ZNSt8__sce_v211_Mtx_unlockEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&named)) == success, "the mutex unlocks");
+    Expect(scePthreadMutexLock(&named) == 0, "the handle is a libkernel pthread mutex");
+    Expect(scePthreadMutexUnlock(&named) == 0, "libkernel unlocks the handle");
+    Expect(_ZNSt8__sce_v212_Mtx_destroyEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&named)) == success, "the mutex is destroyed");
 
     PthreadMutex nested = nullptr;
-    Require(InitWithOverride(&nested, plain | recursive, nullptr) == success && nested != nullptr, "a null name creates a recursive mutex");
-    Require(_ZNSt8__sce_v29_Mtx_lockEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&nested)) == success, "the recursive mutex locks");
-    Require(_ZNSt8__sce_v212_Mtx_trylockEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&nested)) == success, "the recursive mutex relocks");
-    Require(_ZNSt8__sce_v211_Mtx_unlockEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&nested)) == success, "the first unlock succeeds");
-    Require(_ZNSt8__sce_v211_Mtx_unlockEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&nested)) == success, "the second unlock succeeds");
-    Require(_ZNSt8__sce_v212_Mtx_destroyEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&nested)) == success, "the recursive mutex is destroyed");
+    Expect(InitWithOverride(&nested, plain | recursive, nullptr) == success && nested != nullptr, "a null name creates a recursive mutex");
+    Expect(_ZNSt8__sce_v29_Mtx_lockEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&nested)) == success, "the recursive mutex locks");
+    Expect(_ZNSt8__sce_v212_Mtx_trylockEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&nested)) == success, "the recursive mutex relocks");
+    Expect(_ZNSt8__sce_v211_Mtx_unlockEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&nested)) == success, "the first unlock succeeds");
+    Expect(_ZNSt8__sce_v211_Mtx_unlockEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&nested)) == success, "the second unlock succeeds");
+    Expect(_ZNSt8__sce_v212_Mtx_destroyEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&nested)) == success, "the recursive mutex is destroyed");
 
     PthreadMutex empty = nullptr;
-    Require(InitWithOverride(&empty, plain, "") == success && empty != nullptr, "an empty name creates a mutex");
-    Require(_ZNSt8__sce_v212_Mtx_destroyEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&empty)) == success, "the unnamed mutex is destroyed");
+    Expect(InitWithOverride(&empty, plain, "") == success && empty != nullptr, "an empty name creates a mutex");
+    Expect(_ZNSt8__sce_v212_Mtx_destroyEPP13pthread_mutex_nid_postfix(reinterpret_cast<void**>(&empty)) == success, "the unnamed mutex is destroyed");
 }
 
 }
@@ -224,7 +218,7 @@ int main() {
     CheckMutex();
     CheckErrno();
 
-    if (failures != 0) return 1;
+    if (Failures() != 0) return 1;
     std::puts("libc internal libc forward checks passed");
     return 0;
 }

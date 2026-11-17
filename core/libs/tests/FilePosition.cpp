@@ -3,6 +3,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "tests/TemporaryFile.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -20,14 +21,6 @@
 #else
 #include <unistd.h>
 #endif
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "File position check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static void CheckFseekBounds() {
     FileStream file(TemporaryFile::Open());

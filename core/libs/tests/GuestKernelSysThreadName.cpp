@@ -2,6 +2,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
@@ -14,13 +15,6 @@ namespace {
 constexpr std::int32_t SceEsrch = static_cast<std::int32_t>(0x80020003u);
 constexpr std::int32_t SceEfault = static_cast<std::int32_t>(0x8002000eu);
 constexpr std::int32_t SceEnametoolong = static_cast<std::int32_t>(0x8002003fu);
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "thread name check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 std::atomic<std::uint32_t> workerId{0};
 std::atomic<bool> release{false};

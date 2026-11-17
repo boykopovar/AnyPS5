@@ -1,17 +1,12 @@
 #include "prx/libSceNpAuth/include/Api.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
-
-static void Require(bool condition) {
-    if (!condition) {
-        std::abort();
-    }
-}
 
 static void RequireUnstarted(int request) {
     constexpr int invalidId = static_cast<int>(0x80550307);

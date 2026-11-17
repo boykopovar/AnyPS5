@@ -1,6 +1,7 @@
 #include "prx/libSceVoice/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
@@ -15,14 +16,6 @@ namespace {
 
 constexpr int NotInitialized = static_cast<int>(0x804E0801u);
 constexpr int AlreadyInitialized = static_cast<int>(0x804E0802u);
-
-void Require(bool value) { if (!value) std::abort(); }
-
-template <typename TFunction>
-void RequireThrows(TFunction function) {
-    try { function(); } catch (const std::logic_error&) { return; }
-    std::abort();
-}
 
 void TestNotInitialized() {
     Require(sceVoiceStart(nullptr) == NotInitialized);
@@ -122,7 +115,7 @@ int main() {
     threads.mode = UINT32_MAX;
     Require(sceVoiceSetThreadsParams(&threads) == invalidArgument);
     threads.mode = 1;
-    RequireThrows([&] { sceVoiceSetThreadsParams(&threads); });
+    ExpectErr<std::logic_error>([&] { sceVoiceSetThreadsParams(&threads); });
     VoiceThreadsParams scheduled{1, 700, 0x7f, 700, 0, 0x7f, 700, 0, 0x7f};
     Require(sceVoiceSetThreadsParams(&scheduled) == 0);
     scheduled = {1, 256, 0x1fff, 767, 0, 1, 512, 0, 0x1000};
@@ -131,14 +124,14 @@ int main() {
         for (int slot = 0; slot < 3; ++slot) {
             VoiceThreadsParams outside{1, 700, 0x7f, 700, 0, 0x7f, 700, 0, 0x7f};
             (slot == 0 ? outside.firstPriority : slot == 1 ? outside.secondPriority : outside.thirdPriority) = priority;
-            RequireThrows([&] { sceVoiceSetThreadsParams(&outside); });
+            ExpectErr<std::logic_error>([&] { sceVoiceSetThreadsParams(&outside); });
         }
     }
     for (const std::uint64_t affinity : {std::uint64_t{0}, std::uint64_t{0x2000}, std::uint64_t{0x3fff}, UINT64_MAX}) {
         for (int slot = 0; slot < 3; ++slot) {
             VoiceThreadsParams outside{1, 700, 0x7f, 700, 0, 0x7f, 700, 0, 0x7f};
             (slot == 0 ? outside.firstAffinity : slot == 1 ? outside.secondAffinity : outside.thirdAffinity) = affinity;
-            RequireThrows([&] { sceVoiceSetThreadsParams(&outside); });
+            ExpectErr<std::logic_error>([&] { sceVoiceSetThreadsParams(&outside); });
         }
     }
     threads.mode = 0;
@@ -179,8 +172,8 @@ int main() {
     Require(resourceOutput.info.maxDeviceInputPorts == 4);
     Require(resourceOutput.info.maxDeviceOutputPorts == 4);
     Require(resourceOutput.guard == 0xa5a5a5a5u);
-    RequireThrows([] { sceVoiceEnableChat(); });
-    RequireThrows([] { sceVoiceDisableChat(); });
+    ExpectErr<std::logic_error>([] { sceVoiceEnableChat(); });
+    ExpectErr<std::logic_error>([] { sceVoiceDisableChat(); });
     const auto input = CreatePort(2, 0.5f);
     const auto output = CreatePort(3, 0.25f);
     Require(sceVoiceConnectIPortToOPort(input, output) == 0);
@@ -265,9 +258,9 @@ int main() {
     Require(sceVoiceGetPortInfo(input, &rateInfo) == 0 && rateInfo.frame_size == 19);
     Require(sceVoiceSetBitRate(output + 1, 7300) == portNotFound);
     Require(sceVoiceSetBitRate(128, 7300) == invalidPort);
-    RequireThrows([&] { sceVoiceSetBitRate(output, 7300); });
-    RequireThrows([&] { sceVoiceSetBitRate(input, 7301); });
-    RequireThrows([&] { sceVoiceSetBitRate(input, 0x80000000u); });
+    ExpectErr<std::logic_error>([&] { sceVoiceSetBitRate(output, 7300); });
+    ExpectErr<std::logic_error>([&] { sceVoiceSetBitRate(input, 7301); });
+    ExpectErr<std::logic_error>([&] { sceVoiceSetBitRate(input, 0x80000000u); });
     Require(sceVoiceGetBitRate(input, &portBitrate) == 0 && portBitrate == 7300);
 
     VoicePortParam update{};
@@ -291,12 +284,12 @@ int main() {
     Require(sceVoiceGetPortInfo(input, reinterpret_cast<VoicePortInfo*>(0x10)) == invalidArgument);
     Require(errno == 71);
     update.voice.bitrate = 1;
-    RequireThrows([&] { sceVoiceUpdatePort(input, &update); });
+    ExpectErr<std::logic_error>([&] { sceVoiceUpdatePort(input, &update); });
     Require(sceVoiceGetBitRate(input, &portBitrate) == 0 && portBitrate == 14400);
     update.voice.bitrate = 14400;
     update.port_type = 3;
-    RequireThrows([&] { sceVoiceUpdatePort(input, &update); });
-    RequireThrows([&] { sceVoiceUpdatePort(input, nullptr); });
+    ExpectErr<std::logic_error>([&] { sceVoiceUpdatePort(input, &update); });
+    ExpectErr<std::logic_error>([&] { sceVoiceUpdatePort(input, nullptr); });
     Require(sceVoiceUpdatePort(output + 1, &update) == portNotFound);
     Require(sceVoiceUpdatePort(128, &update) == invalidPort);
     VoicePortParam pcm{};

@@ -1,5 +1,6 @@
 #include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -17,9 +18,6 @@ using LookupCallback = void (APS5_VABI*)(int, const String*, const std::size_t*,
 using NullCallback = const Value& (APS5_VABI*)(ValueType, const Value*, void*);
 using MismatchCallback = const Value& (APS5_VABI*)(ValueType, const Value*, const Value*, void*);
 using FloatCallback = Value* (APS5_VABI*)(Value*, std::int32_t, double, const Value*, void*, bool*);
-static void Require(bool valid, const char* message) {
-    if (!valid) { std::fprintf(stderr, "%s\n", message); std::abort(); }
-}
 struct ArrayTrace {
     std::map<void*, std::size_t> live;
     std::vector<std::size_t> requests;

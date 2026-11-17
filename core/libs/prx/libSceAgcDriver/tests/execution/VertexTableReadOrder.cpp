@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgc/Shader/include/ShaderConstants.hpp"
 #include "SceShaders.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -23,10 +24,6 @@
 namespace {
 
 using AgcDriver::DriverDetail::DrawPipeline;
-
-void check(bool condition, const std::string& what) {
-    if (!condition) throw std::runtime_error("vertex table read order: " + what);
-}
 
 constexpr std::size_t UserDataOffset = 288;
 constexpr std::size_t DirectOffset = 352;
@@ -97,7 +94,7 @@ void StopQueue() {
 void WaitEmpty() {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
     while (DrawPipeline::QueuedItems() != 0) {
-        check(std::chrono::steady_clock::now() < deadline, "the pipeline never emptied");
+        Require(std::chrono::steady_clock::now() < deadline, "the pipeline never emptied");
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 }
@@ -138,25 +135,25 @@ int main() {
         std::vector<AgcDriver::Graphics::DecodeRead> reads;
 
         auto info = Decode(reads);
-        check(info.fetchEmbedded && info.resourcesNum == 1 && info.resources[0].fields[0] == 0x7000u && info.resources[0].fields[2] == 32u, "the tables did not decode to the second vertex buffer");
+        Require(info.fetchEmbedded && info.resourcesNum == 1 && info.resources[0].fields[0] == 0x7000u && info.resources[0].fields[2] == 32u, "the tables did not decode to the second vertex buffer");
 
         info = DecodeBehindQueuedStore(BufferTable.data() + 4, 16, [] {
             BufferTable[4] = 0x9000u;
             BufferTable[6] = 128u;
         }, reads);
-        check(info.resources[0].fields[0] == 0x9000u && info.resources[0].fields[2] == 128u, "the vertex buffer V# was read before the queued store into the vertex buffer table");
-        check(reads.size() == 2 && reads[1].address == Address(BufferTable.data() + 4) && std::memcmp(reads[1].Bytes().data(), BufferTable.data() + 4, 16) == 0, "the recorded V# read is not the stored V#");
-        check(DrawPipeline::QueuedItems() == 0, "the store into the vertex buffer table is still queued");
+        Require(info.resources[0].fields[0] == 0x9000u && info.resources[0].fields[2] == 128u, "the vertex buffer V# was read before the queued store into the vertex buffer table");
+        Require(reads.size() == 2 && reads[1].address == Address(BufferTable.data() + 4) && std::memcmp(reads[1].Bytes().data(), BufferTable.data() + 4, 16) == 0, "the recorded V# read is not the stored V#");
+        Require(DrawPipeline::QueuedItems() == 0, "the store into the vertex buffer table is still queued");
 
         info = DecodeBehindQueuedStore(AttribTable.data(), 4, [] { AttribTable[0] = 0x2cu << 5u; }, reads);
-        check(info.resources[0].fields[0] == 0x1000u && info.resources[0].fields[2] == 64u, "the attribute word was read before the queued store into the vertex attribute table");
-        check(reads.size() == 2 && reads[0].address == Address(AttribTable.data()) && reads[1].address == Address(BufferTable.data()), "the decode did not read the stored attribute word and the V# it names");
+        Require(info.resources[0].fields[0] == 0x1000u && info.resources[0].fields[2] == 64u, "the attribute word was read before the queued store into the vertex attribute table");
+        Require(reads.size() == 2 && reads[0].address == Address(AttribTable.data()) && reads[1].address == Address(BufferTable.data()), "the decode did not read the stored attribute word and the V# it names");
 
         WaitEmpty();
         auto gate = Hold(Elsewhere.data(), sizeof(Elsewhere), [] {});
         info = Decode(reads);
-        check(info.resources[0].fields[0] == 0x1000u, "the decode next to an unrelated queued store changed");
-        check(DrawPipeline::QueuedItems() == 1, "a decode that overlaps nothing queued drained the pipeline");
+        Require(info.resources[0].fields[0] == 0x1000u, "the decode next to an unrelated queued store changed");
+        Require(DrawPipeline::QueuedItems() == 1, "a decode that overlaps nothing queued drained the pipeline");
         gate->release.store(true, std::memory_order_release);
         WaitEmpty();
 
@@ -165,10 +162,10 @@ int main() {
         auto drains = DrawPipeline::Queue0().DecodeDrains();
         info = Decode(reads);
         AgcDriver::GuestMemory::SetReadGuard(nullptr);
-        check(completeAtBufferRead == nullptr, "the queued attribute store did not complete during the decode");
-        check(info.resources[0].fields[0] == 0x9000u && info.resources[0].fields[2] == 128u, "the decode kept the vertex buffer of an attribute word that a queued store replaced during the decode");
-        check(reads.size() == 2 && reads[1].address == Address(BufferTable.data() + 4), "the recorded reads are not the stored attribute word and the V# it names");
-        check(DrawPipeline::Queue0().DecodeDrains() == drains + 1, "the drain the decode caused was not counted");
+        Require(completeAtBufferRead == nullptr, "the queued attribute store did not complete during the decode");
+        Require(info.resources[0].fields[0] == 0x9000u && info.resources[0].fields[2] == 128u, "the decode kept the vertex buffer of an attribute word that a queued store replaced during the decode");
+        Require(reads.size() == 2 && reads[1].address == Address(BufferTable.data() + 4), "the recorded reads are not the stored attribute word and the V# it names");
+        Require(DrawPipeline::Queue0().DecodeDrains() == drains + 1, "the drain the decode caused was not counted");
 
         WaitEmpty();
         auto finished = Hold(BufferTable.data() + 4, 16, [] {
@@ -180,8 +177,8 @@ int main() {
         gate = Hold(Elsewhere.data(), sizeof(Elsewhere), [] {});
         drains = DrawPipeline::Queue0().DecodeDrains();
         info = Decode(reads);
-        check(info.resources[0].fields[0] == 0xb000u && info.resources[0].fields[2] == 256u, "the decode did not read the V# a finished item stored");
-        check(DrawPipeline::QueuedItems() == 1 && DrawPipeline::Queue0().DecodeDrains() == drains, "a decode of a table that a finished item wrote drained the pipeline");
+        Require(info.resources[0].fields[0] == 0xb000u && info.resources[0].fields[2] == 256u, "the decode did not read the V# a finished item stored");
+        Require(DrawPipeline::QueuedItems() == 1 && DrawPipeline::Queue0().DecodeDrains() == drains, "a decode of a table that a finished item wrote drained the pipeline");
         gate->release.store(true, std::memory_order_release);
         WaitEmpty();
 
@@ -191,8 +188,8 @@ int main() {
         drains = DrawPipeline::Queue0().DecodeDrains();
         info = Decode(reads);
         AgcDriver::GuestMemory::SetReadGuard(nullptr);
-        check(completeAtBufferRead == nullptr, "the unrelated queued store did not complete during the decode");
-        check(info.resources[0].fields[0] == 0xb000u && DrawPipeline::Queue0().DecodeDrains() == drains, "a store elsewhere that retired during the decode made the decode drain");
+        Require(completeAtBufferRead == nullptr, "the unrelated queued store did not complete during the decode");
+        Require(info.resources[0].fields[0] == 0xb000u && DrawPipeline::Queue0().DecodeDrains() == drains, "a store elsewhere that retired during the decode made the decode drain");
 
         StopQueue();
         std::puts("vertex table read order tests passed");

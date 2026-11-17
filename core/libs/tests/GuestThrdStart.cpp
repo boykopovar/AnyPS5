@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -8,18 +9,6 @@
 #include <string>
 #include <stdexcept>
 #include <thread>
-
-static void Require(bool value) { if (!value) std::abort(); }
-
-template<typename TException, typename TCall>
-static void RequireThrows(TCall call) {
-    try {
-        call();
-    } catch (const TException&) {
-        return;
-    }
-    std::abort();
-}
 
 constexpr int SCE_OK = 0;
 constexpr int success = 0;
@@ -150,13 +139,13 @@ static void CppEntryPoints() {
 }
 
 static void InvalidArguments() {
-    RequireThrows<std::invalid_argument>([] { _Thrd_start_nid_postfix(nullptr, RecordEntry, nullptr); });
-    RequireThrows<std::invalid_argument>([] {
+    ExpectErr<std::invalid_argument>([] { _Thrd_start_nid_postfix(nullptr, RecordEntry, nullptr); });
+    ExpectErr<std::invalid_argument>([] {
         void* thread = nullptr;
         _Thrd_start_nid_postfix(&thread, nullptr, nullptr);
     });
-    RequireThrows<std::invalid_argument>([] { _Thrd_create_nid_postfix(nullptr, RecordEntry, nullptr); });
-    RequireThrows<std::invalid_argument>([] {
+    ExpectErr<std::invalid_argument>([] { _Thrd_create_nid_postfix(nullptr, RecordEntry, nullptr); });
+    ExpectErr<std::invalid_argument>([] {
         void* thread = nullptr;
         _Thrd_create_nid_postfix(&thread, nullptr, nullptr);
     });

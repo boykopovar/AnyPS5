@@ -1,15 +1,9 @@
 #include "prx/libSceMsgDialog/include/MsgDialogRequest.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <cstdlib>
 
 namespace {
-
-void Require(bool value, const char* what) {
-    if (!value) {
-        std::fprintf(stderr, "msg_dialog_request: %s\n", what);
-        std::abort();
-    }
-}
 
 MsgDialog::ParsedParam Parsed(int buttonType, const char* text = "Question?") {
     MsgDialog::ParsedParam parsed;

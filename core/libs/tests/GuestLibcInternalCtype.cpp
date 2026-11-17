@@ -1,5 +1,6 @@
 #include "prx/libSceLibcInternal/include/Ctype.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -7,12 +8,6 @@
 #include <cstring>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "libc internal ctype: %s\n", message);
-    std::abort();
-}
 
 void TestNarrowCase() {
     GuestLocale::CtypeFacet facet{};

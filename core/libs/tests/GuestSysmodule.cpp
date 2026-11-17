@@ -3,6 +3,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceSysmodule/ModuleTable.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <cerrno>
 #include <cstdint>
@@ -31,8 +32,6 @@
 #endif
 
 namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
 
 template <typename TFunction>
 bool ThrowsRuntimeError(TFunction function) {

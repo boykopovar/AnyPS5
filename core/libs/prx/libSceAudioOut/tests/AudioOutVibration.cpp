@@ -1,16 +1,13 @@
 #include "prx/libSceAudioOut/include/AudioOut.hpp"
 #include "prx/libScePad/include/PadState.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
 #include <stdexcept>
 #include <string_view>
 #include <vector>
-
-static void Require(bool value, const char* message) {
-    if (!value) throw std::runtime_error(message);
-}
 
 struct Case {
     std::string_view name;

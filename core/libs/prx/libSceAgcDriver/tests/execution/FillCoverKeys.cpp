@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "Recompiler.hpp"
+#include "Testing.hpp"
 #include "VulkanTestDevice.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -87,14 +88,6 @@ public:
 private:
     std::uint8_t* block = nullptr;
 };
-
-int failures = 0;
-
-void Expect(bool condition, const std::string& what) {
-    if (condition) return;
-    std::fprintf(stderr, "FAIL: %s\n", what.c_str());
-    ++failures;
-}
 
 const char* CoverName(Cover cover) {
     switch (cover) {
@@ -221,8 +214,8 @@ int main() {
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
         Run(*device, block.Data());
-        if (failures != 0) {
-            std::fprintf(stderr, "%d fill cover checks failed\n", failures);
+        if (Failures() != 0) {
+            std::fprintf(stderr, "%u fill cover checks failed\n", Failures());
             return 1;
         }
         std::puts("fill cover keys tests passed");

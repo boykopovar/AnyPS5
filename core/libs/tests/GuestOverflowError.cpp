@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
@@ -24,8 +25,6 @@ extern const TypeRecord _ZTISt14overflow_error_nid_postfix;
 extern const Vtable _ZTVSt13runtime_error_nid_postfix;
 extern const Vtable _ZTVSt14overflow_error_nid_postfix;
 }
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 #ifdef __APPLE__
 static const char* expectedName = nullptr;

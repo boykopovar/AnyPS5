@@ -14,6 +14,7 @@
 #include <atomic>
 #include <cerrno>
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <chrono>
 #include <cstring>
@@ -53,12 +54,6 @@
 #include <io.h>
 #endif
 
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "Guest memory check failed at %s:%u\n", location.file_name(), static_cast<unsigned>(location.line()));
-        std::abort();
-    }
-}
 
 static const char* NameAt(const void* address) {
     static VirtualQueryInfo info;

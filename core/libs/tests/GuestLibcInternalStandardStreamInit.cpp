@@ -1,6 +1,7 @@
 #include "prx/libSceLibcInternal/include/InventoryExports.hpp"
 #include "prx/libSceLibcInternal/include/InventoryExports6.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -10,12 +11,6 @@
 #include <string>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "libc internal standard stream init: %s\n", message);
-    std::abort();
-}
 
 std::string FileText(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);

@@ -1,6 +1,7 @@
 #include "prx/libSceAgc/Patch/include/Branch.hpp"
 #include "prx/libSceAgc/Cb/include/Branch.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
+#include "Testing.hpp"
 
 #include <algorithm>
 #include <array>
@@ -10,20 +11,6 @@
 #include <stdexcept>
 
 namespace {
-
-void check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
-
-template <typename TAction>
-void expectFailure(TAction action) {
-    try {
-        action();
-    } catch (const std::runtime_error&) {
-        return;
-    }
-    throw std::runtime_error("expected invalid input to fail");
-}
 
 const volatile std::uint64_t* compareAt(std::uint64_t address) {
     return reinterpret_cast<const volatile std::uint64_t*>(static_cast<std::uintptr_t>(address));
@@ -47,9 +34,9 @@ struct Storage {
 void testWriter() {
     Storage storage;
     const std::array expected{0xc00c3f00u, 0x302u, 0x56789ab8u, 0x1234u, 0x55667788u, 0x11223344u, 0xddeeff00u, 0x99aabbccu, 0x33445564u, 0x22u, 0x10000123u, 0x77889900u, 0x66u, 0x20000456u};
-    check(storage.packet == storage.words.data() && std::equal(expected.begin(), expected.end(), storage.packet), "incorrect branch packet");
-    check(storage.buffer.cursor_up == storage.packet + expected.size() && sceAgcCbBranchGetSize() == expected.size() * sizeof(std::uint32_t), "branch size/cursor mismatch");
-    check(storage.packet[expected.size()] == 0xabcdef01u, "branch command overwrote following word");
+    Require(storage.packet == storage.words.data() && std::equal(expected.begin(), expected.end(), storage.packet), "incorrect branch packet");
+    Require(storage.buffer.cursor_up == storage.packet + expected.size() && sceAgcCbBranchGetSize() == expected.size() * sizeof(std::uint32_t), "branch size/cursor mismatch");
+    Require(storage.packet[expected.size()] == 0xabcdef01u, "branch command overwrote following word");
 }
 
 void testUnusedFields() {
@@ -57,14 +44,14 @@ void testUnusedFields() {
     CommandBuffer buffer{words.data(), words.data() + words.size(), words.data(), words.data() + words.size(), nullptr, nullptr, 0};
     auto* packet = sceAgcCbBranch(&buffer, 1, 0, compareAt(0x0000001234567894ull), 0, 0, 0, targetAt(0x0000002233445564ull), 0x123u, 0, nullptr, 0);
     const std::array expected{0xc00c3f00u, 0x1u, 0x34567894u, 0x12u, 0u, 0u, 0u, 0u, 0x33445564u, 0x22u, 0x123u, 0u, 0u, 0u};
-    check(std::equal(expected.begin(), expected.end(), packet), "an always-taken branch without an else target was not written");
+    Require(std::equal(expected.begin(), expected.end(), packet), "an always-taken branch without an else target was not written");
     packet = sceAgcCbBranch(&buffer, 1, 0, nullptr, 0, 0, 0, nullptr, 0, 0, nullptr, 0);
-    check(packet[1] == 1u && packet[2] == 0u && packet[8] == 0u && packet[10] == 0u, "an empty always-taken branch was not written");
+    Require(packet[1] == 1u && packet[2] == 0u && packet[8] == 0u && packet[10] == 0u, "an empty always-taken branch was not written");
     const auto cursor = buffer.cursor_up;
-    expectFailure([&] { sceAgcCbBranch(&buffer, 1, 3, compareAt(0x0000001234567894ull), 0, 0, 0, targetAt(0x2000u), 1, 0, nullptr, 0); });
-    expectFailure([&] { sceAgcCbBranch(&buffer, 1, 0, nullptr, 0, 0, 0, nullptr, 1, 0, nullptr, 0); });
-    expectFailure([&] { sceAgcCbBranch(&buffer, 2, 0, nullptr, 0, 0, 0, targetAt(0x2000u), 1, 0, nullptr, 1); });
-    check(buffer.cursor_up == cursor, "a rejected branch advanced the command buffer");
+    ExpectErr<std::runtime_error>([&] { sceAgcCbBranch(&buffer, 1, 3, compareAt(0x0000001234567894ull), 0, 0, 0, targetAt(0x2000u), 1, 0, nullptr, 0); });
+    ExpectErr<std::runtime_error>([&] { sceAgcCbBranch(&buffer, 1, 0, nullptr, 0, 0, 0, nullptr, 1, 0, nullptr, 0); });
+    ExpectErr<std::runtime_error>([&] { sceAgcCbBranch(&buffer, 2, 0, nullptr, 0, 0, 0, targetAt(0x2000u), 1, 0, nullptr, 1); });
+    Require(buffer.cursor_up == cursor, "a rejected branch advanced the command buffer");
 }
 
 void testCompareAddress() {
@@ -72,12 +59,12 @@ void testCompareAddress() {
     auto expected = storage.words;
     expected[2] = 0xfedcba98u;
     expected[3] = 0x7654u;
-    check(sceAgcBranchPatchSetCompareAddress(storage.packet, compareAt(0x00007654fedcba98ull)) == 0, "compare address setter failed");
-    check(storage.words == expected, "compare address setter wrote the wrong words");
-    expectFailure([&] { sceAgcBranchPatchSetCompareAddress(storage.packet, nullptr); });
-    expectFailure([&] { sceAgcBranchPatchSetCompareAddress(storage.packet, compareAt(0x00007654fedcba9cull)); });
-    expectFailure([&] { sceAgcBranchPatchSetCompareAddress(nullptr, compareAt(0x1000u)); });
-    check(storage.words == expected, "invalid compare address modified the packet");
+    Require(sceAgcBranchPatchSetCompareAddress(storage.packet, compareAt(0x00007654fedcba98ull)) == 0, "compare address setter failed");
+    Require(storage.words == expected, "compare address setter wrote the wrong words");
+    ExpectErr<std::runtime_error>([&] { sceAgcBranchPatchSetCompareAddress(storage.packet, nullptr); });
+    ExpectErr<std::runtime_error>([&] { sceAgcBranchPatchSetCompareAddress(storage.packet, compareAt(0x00007654fedcba9cull)); });
+    ExpectErr<std::runtime_error>([&] { sceAgcBranchPatchSetCompareAddress(nullptr, compareAt(0x1000u)); });
+    Require(storage.words == expected, "invalid compare address modified the packet");
 }
 
 template <typename TSetter>
@@ -87,18 +74,18 @@ void testTarget(TSetter setter, std::size_t field, std::uint32_t cachePolicyBits
     expected[field] = 0x89abcdecu;
     expected[field + 1] = 0x4567u;
     expected[field + 2] = cachePolicyBits | 0xfffffu;
-    check(setter(storage.packet, targetAt(0x0000456789abcdecull), 0xfffffu) == 0, name);
-    check(storage.words == expected, name);
+    Require(setter(storage.packet, targetAt(0x0000456789abcdecull), 0xfffffu) == 0, name);
+    Require(storage.words == expected, name);
     expected[field] = 0x1000u;
     expected[field + 1] = 0;
     expected[field + 2] = cachePolicyBits;
-    check(setter(storage.packet, targetAt(0x1000u), 0) == 0, name);
-    check(storage.words == expected, name);
-    expectFailure([&] { setter(storage.packet, nullptr, 1); });
-    expectFailure([&] { setter(storage.packet, targetAt(0x1002u), 1); });
-    expectFailure([&] { setter(storage.packet, targetAt(0x2000u), 0x100000u); });
-    expectFailure([&] { setter(nullptr, targetAt(0x2000u), 1); });
-    check(storage.words == expected, name);
+    Require(setter(storage.packet, targetAt(0x1000u), 0) == 0, name);
+    Require(storage.words == expected, name);
+    ExpectErr<std::runtime_error>([&] { setter(storage.packet, nullptr, 1); });
+    ExpectErr<std::runtime_error>([&] { setter(storage.packet, targetAt(0x1002u), 1); });
+    ExpectErr<std::runtime_error>([&] { setter(storage.packet, targetAt(0x2000u), 0x100000u); });
+    ExpectErr<std::runtime_error>([&] { setter(nullptr, targetAt(0x2000u), 1); });
+    Require(storage.words == expected, name);
 }
 
 template <typename TSetter>
@@ -108,22 +95,22 @@ void testTargetWithCachePolicy(TSetter setter, std::size_t field, const char* na
     expected[field] = 0x89abcdecu;
     expected[field + 1] = 0x4567u;
     expected[field + 2] = 0x30000004u;
-    check(setter(storage.packet, 3, targetAt(0x0000456789abcdecull), 4) == 0, name);
-    check(storage.words == expected, name);
+    Require(setter(storage.packet, 3, targetAt(0x0000456789abcdecull), 4) == 0, name);
+    Require(storage.words == expected, name);
     expected[field] = 0x1000u;
     expected[field + 1] = 0;
     expected[field + 2] = 0xfffffu;
-    check(setter(storage.packet, 0, targetAt(0x1000u), 0xfffffu) == 0, name);
-    check(storage.words == expected, name);
-    expectFailure([&] { setter(storage.packet, 4, targetAt(0x2000u), 1); });
-    expectFailure([&] { setter(storage.packet, 1, nullptr, 1); });
-    expectFailure([&] { setter(storage.packet, 1, targetAt(0x1002u), 1); });
-    expectFailure([&] { setter(storage.packet, 1, targetAt(0x2000u), 0x100000u); });
-    expectFailure([&] { setter(nullptr, 1, targetAt(0x2000u), 1); });
+    Require(setter(storage.packet, 0, targetAt(0x1000u), 0xfffffu) == 0, name);
+    Require(storage.words == expected, name);
+    ExpectErr<std::runtime_error>([&] { setter(storage.packet, 4, targetAt(0x2000u), 1); });
+    ExpectErr<std::runtime_error>([&] { setter(storage.packet, 1, nullptr, 1); });
+    ExpectErr<std::runtime_error>([&] { setter(storage.packet, 1, targetAt(0x1002u), 1); });
+    ExpectErr<std::runtime_error>([&] { setter(storage.packet, 1, targetAt(0x2000u), 0x100000u); });
+    ExpectErr<std::runtime_error>([&] { setter(nullptr, 1, targetAt(0x2000u), 1); });
     storage.packet[0] = 0xc00b3f00u;
     expected[0] = 0xc00b3f00u;
-    expectFailure([&] { setter(storage.packet, 1, targetAt(0x2000u), 1); });
-    check(storage.words == expected, name);
+    ExpectErr<std::runtime_error>([&] { setter(storage.packet, 1, targetAt(0x2000u), 1); });
+    Require(storage.words == expected, name);
 }
 
 void testMalformedPackets() {
@@ -131,10 +118,10 @@ void testMalformedPackets() {
         Storage storage;
         storage.packet[0] = header;
         const auto malformed = storage.words;
-        expectFailure([&] { sceAgcBranchPatchSetCompareAddress(storage.packet, compareAt(0x1000u)); });
-        expectFailure([&] { sceAgcBranchPatchSetThenTarget(storage.packet, targetAt(0x2000u), 1); });
-        expectFailure([&] { sceAgcBranchPatchSetElseTarget(storage.packet, targetAt(0x2000u), 1); });
-        check(storage.words == malformed, "setter modified a packet that is not a branch");
+        ExpectErr<std::runtime_error>([&] { sceAgcBranchPatchSetCompareAddress(storage.packet, compareAt(0x1000u)); });
+        ExpectErr<std::runtime_error>([&] { sceAgcBranchPatchSetThenTarget(storage.packet, targetAt(0x2000u), 1); });
+        ExpectErr<std::runtime_error>([&] { sceAgcBranchPatchSetElseTarget(storage.packet, targetAt(0x2000u), 1); });
+        Require(storage.words == malformed, "setter modified a packet that is not a branch");
     }
 }
 

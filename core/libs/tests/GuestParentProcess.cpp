@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdlib>
 #ifdef _WIN32
 #include <windows.h>
@@ -8,7 +9,6 @@
 #include <unistd.h>
 #endif
 
-static void Require(bool value) { if (!value) std::abort(); }
 int main() {
     const int self = getpid_nid_postfix();
     Require(getsid_nid_postfix(0) == self);

@@ -1,6 +1,7 @@
 #include "prx/libSceCamera/libSceCamera.hpp"
 #include "prx/libSceCamera/include/Camera.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <chrono>
 #include <cstdint>
@@ -20,12 +21,6 @@ constexpr int ErrorCameraOpen = static_cast<int>(0x8A760015);
 using NoArgumentFn = int (APS5_VABI*)();
 using HandleFn = int (APS5_VABI*)(std::int32_t);
 using OpenFn = int (APS5_VABI*)(std::int32_t, std::int32_t, std::int32_t, void*);
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "Camera2: %s\n", message);
-    std::abort();
-}
 
 template <typename Function, typename Export>
 Function As(Export function) {

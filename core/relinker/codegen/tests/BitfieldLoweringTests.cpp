@@ -1,4 +1,5 @@
 #include "LoweringExecution.hpp"
+#include "Testing.hpp"
 #include <codegen/x86/BitfieldLowering.hpp>
 #include <codegen/x86/IAmd64OnlyInstructionMatcher.hpp>
 #include <codegen/CodegenException.hpp>
@@ -17,10 +18,6 @@ using LoweringExecution::Bytes;
 using Codegen::BitfieldOperation;
 
 constexpr std::array kOperations{BitfieldOperation::ZeroHigh, BitfieldOperation::Extract};
-
-void require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 std::uint8_t opcode(BitfieldOperation operation) {
     return operation == BitfieldOperation::ZeroHigh ? 0xF5 : 0xF7;
@@ -46,7 +43,7 @@ void decoding() {
                     for (std::uint8_t control = 0; control < 16; ++control) {
                         const auto bytes = instruction(operation, wide, dst, src, control);
                         const auto operands = Codegen::DecodeBitfield(bytes.data(), bytes.size());
-                        require(operands && operands->Operation == operation && operands->Wide == wide && operands->Destination == dst && operands->Source == src && operands->Control == control && !operands->Memory, "bitfield register decoding changed an operand");
+                        Require(operands && operands->Operation == operation && operands->Wide == wide && operands->Destination == dst && operands->Source == src && operands->Control == control && !operands->Memory, "bitfield register decoding changed an operand");
                     }
                 }
             }
@@ -54,14 +51,14 @@ void decoding() {
     }
     const Bytes memory{0x64, 0x67, 0xC4, 0x02, 0xA8, 0xF5, 0x8C, 0xAC, 0x10, 0, 0, 0};
     const auto operands = Codegen::DecodeBitfield(memory.data(), memory.size());
-    require(operands && operands->Operation == BitfieldOperation::ZeroHigh && operands->Destination == 9 && operands->Control == 10 && operands->Memory && operands->Memory->RexIndexBase == 3 && operands->Memory->Prefixes == Bytes{0x64, 0x67}, "bitfield memory extensions or prefixes were lost");
+    Require(operands && operands->Operation == BitfieldOperation::ZeroHigh && operands->Destination == 9 && operands->Control == 10 && operands->Memory && operands->Memory->RexIndexBase == 3 && operands->Memory->Prefixes == Bytes{0x64, 0x67}, "bitfield memory extensions or prefixes were lost");
     for (const Bytes bytes : {Bytes{0x90}, Bytes{0xC4, 0xE2, 0xF0}, Bytes{0xC4, 0xE1, 0xF0, 0xF5, 0xC0}, Bytes{0xC4, 0xE2, 0xF1, 0xF7, 0xC0}, Bytes{0xC4, 0xE2, 0xF3, 0xF5, 0xC0}, Bytes{0xC4, 0xE2, 0xF2, 0xF5, 0xC0}, Bytes{0xC4, 0xE2, 0xF3, 0xF6, 0xC0}, Bytes{0xC4, 0xE2, 0xF0, 0xF3, 0xC8}})
-        require(!Codegen::DecodeBitfield(bytes.data(), bytes.size()), "Unrelated, truncated, SHLX, PDEP, PEXT, MULX or BLSR opcode matched a bitfield instruction");
+        Require(!Codegen::DecodeBitfield(bytes.data(), bytes.size()), "Unrelated, truncated, SHLX, PDEP, PEXT, MULX or BLSR opcode matched a bitfield instruction");
     for (const Bytes bytes : {Bytes{0xC4, 0xE2, 0xF4, 0xF5, 0xC0}, Bytes{0xC4, 0xE2, 0xF0, 0xF7, 0xC0, 0x90}, Bytes{0xC4, 0xE2, 0xF0, 0xF5, 0x84}}) {
         bool rejected = false;
         try { (void)Codegen::DecodeBitfield(bytes.data(), bytes.size()); }
         catch (const Codegen::CodegenException&) { rejected = true; }
-        require(rejected, "Malformed bitfield instruction was accepted");
+        Require(rejected, "Malformed bitfield instruction was accepted");
     }
     const Bytes overflow{0xC4, 0xE2, 0xF0, 0xF7, 0x8C, 0x24, 0xFF, 0xFF, 0xFF, 0x7F};
     bool rejected = false;
@@ -69,7 +66,7 @@ void decoding() {
         Codegen::StubBodyBuilder body;
         Codegen::EmitBitfield(body, *Codegen::DecodeBitfield(overflow.data(), overflow.size()));
     } catch (const Codegen::CodegenException&) { rejected = true; }
-    require(rejected, "An overflowing stack displacement was silently wrapped");
+    Require(rejected, "An overflowing stack displacement was silently wrapped");
 }
 
 void matching() {
@@ -78,11 +75,11 @@ void matching() {
     for (const auto operation : kOperations) {
         const auto bytes = instruction(operation, true, 0, 6, 2);
         const auto name = Codegen::BitfieldName(operation);
-        require(!intel->Match(bytes.data(), bytes.size()), std::string("Intel mode rewrote ") + name);
+        Require(!intel->Match(bytes.data(), bytes.size()), std::string("Intel mode rewrote ") + name);
         const auto match = rosetta->Match(bytes.data(), bytes.size());
-        require(match && match->InstructionName == name && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline && !match->Optional, std::string("Rosetta mode did not require a trampoline for ") + name);
+        Require(match && match->InstructionName == name && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline && !match->Optional, std::string("Rosetta mode did not require a trampoline for ") + name);
         const std::array<std::span<const std::uint8_t>, 2> sequence{bytes, bytes};
-        require(rosetta->MatchSequence(sequence, {}).has_value(), std::string("A sequence could not move out of line for ") + name);
+        Require(rosetta->MatchSequence(sequence, {}).has_value(), std::string("A sequence could not move out of line for ") + name);
     }
 }
 
@@ -93,7 +90,7 @@ using LoweringExecution::State;
 
 Execution executable(const Bytes& site, std::uint64_t memoryValue) {
     const auto operands = Codegen::DecodeBitfield(site.data(), site.size());
-    require(operands.has_value(), "Execution site was not a bitfield instruction");
+    Require(operands.has_value(), "Execution site was not a bitfield instruction");
     return Execution(site, memoryValue, operands->Memory && operands->Memory->RipRelative, [](Codegen::StubBodyBuilder& body, const Bytes& relocated) {
         Codegen::EmitBitfield(body, *Codegen::DecodeBitfield(relocated.data(), relocated.size()));
     });
@@ -135,7 +132,7 @@ void check(const State& state, const Codegen::BitfieldOperands& operands, std::u
     }
     if ((state.Flags & wanted.FlagMask) != wanted.Flags)
         throw std::runtime_error(describe() + ": flags are " + std::to_string(state.Flags & wanted.FlagMask) + ", wanted " + std::to_string(wanted.Flags));
-    for (const auto value : state.RedZone) require(value == LoweringExecution::kSentinel, std::string(name) + " overwrote the caller's red zone");
+    for (const auto value : state.RedZone) Require(value == LoweringExecution::kSentinel, std::string(name) + " overwrote the caller's red zone");
 }
 
 void run(const Execution& execution, const Codegen::BitfieldOperands& operands, State state, std::uint64_t memoryValue) {

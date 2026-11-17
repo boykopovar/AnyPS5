@@ -1,5 +1,6 @@
 #include "prx/libSceVideoOut/include/DisplayWindow.hpp"
 #include "prx/libSceVideoOut/include/HostFullscreen.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -14,13 +15,6 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
-
-static void Require(bool value, const char* reason) {
-    if (!value) {
-        std::fprintf(stderr, "%s\n", reason);
-        std::abort();
-    }
-}
 
 class FakeWindow final : public IHostFullscreenWindow {
 public:

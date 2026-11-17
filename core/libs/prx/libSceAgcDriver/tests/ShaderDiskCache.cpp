@@ -2,6 +2,7 @@
 #include "ImageTableAbi.hpp"
 #include "CacheKey.hpp"
 #include "ShaderCachePack.hpp"
+#include "Testing.hpp"
 #include "VertexInputSpecialization.hpp"
 #include "SpirvBackend/SpirvSpecialization.hpp"
 #include "Optimization/ResourceMaterializer.hpp"
@@ -51,10 +52,6 @@ namespace {
 
 using namespace ShaderRecompiler;
 
-void require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
-
 void setEnvironment(const char* name, const std::string& value) {
 #ifdef _WIN32
     _putenv_s(name, value.c_str());
@@ -77,31 +74,31 @@ void verifyHostStandardError() {
     setEnvironment("ANYPS5_NO_SHADER_CACHE", "0");
     setPathEnvironment("ANYPS5_SHADER_CACHE_DIR", directory);
     int capture[2], guest[2];
-    require(::_pipe(capture, 65536, _O_BINARY) == 0, "cannot create host capture");
-    require(::_pipe(guest, 65536, _O_BINARY) == 0, "cannot create guest capture");
+    Require(::_pipe(capture, 65536, _O_BINARY) == 0, "cannot create host capture");
+    Require(::_pipe(guest, 65536, _O_BINARY) == 0, "cannot create guest capture");
     const int original = ::_dup(2);
-    require(original >= 0 && ::_dup2(capture[1], 2) == 0, "cannot capture initial stderr");
+    Require(original >= 0 && ::_dup2(capture[1], 2) == 0, "cannot capture initial stderr");
     const int saved = ::_dup(2);
-    require(saved >= 0 && AdoptHostStandardStream_nid_no_patch(2, saved), "cannot preserve host stderr");
-    require(::_dup2(guest[1], 2) == 0, "cannot redirect guest stderr");
-    require(ShaderDiskCache::Enabled(), "shader disk cache was disabled");
+    Require(saved >= 0 && AdoptHostStandardStream_nid_no_patch(2, saved), "cannot preserve host stderr");
+    Require(::_dup2(guest[1], 2) == 0, "cannot redirect guest stderr");
+    Require(ShaderDiskCache::Enabled(), "shader disk cache was disabled");
     ShaderDiskCache::Shutdown();
     std::fflush(stderr);
     std::fflush(HostStandardErrorFile_nid_no_patch());
-    require(::_dup2(original, 2) == 0, "cannot restore stderr");
+    Require(::_dup2(original, 2) == 0, "cannot restore stderr");
     ::_close(original);
     DWORD hostBytes = 0, guestBytes = 0;
-    require(::PeekNamedPipe(reinterpret_cast<HANDLE>(::_get_osfhandle(capture[0])), nullptr, 0, nullptr, &hostBytes, nullptr) != 0, "cannot inspect host capture");
-    require(::PeekNamedPipe(reinterpret_cast<HANDLE>(::_get_osfhandle(guest[0])), nullptr, 0, nullptr, &guestBytes, nullptr) != 0, "cannot inspect guest capture");
+    Require(::PeekNamedPipe(reinterpret_cast<HANDLE>(::_get_osfhandle(capture[0])), nullptr, 0, nullptr, &hostBytes, nullptr) != 0, "cannot inspect host capture");
+    Require(::PeekNamedPipe(reinterpret_cast<HANDLE>(::_get_osfhandle(guest[0])), nullptr, 0, nullptr, &guestBytes, nullptr) != 0, "cannot inspect guest capture");
     std::string host(hostBytes, '\0');
-    if (hostBytes != 0) require(::_read(capture[0], host.data(), hostBytes) == static_cast<int>(hostBytes), "cannot read host capture");
+    if (hostBytes != 0) Require(::_read(capture[0], host.data(), hostBytes) == static_cast<int>(hostBytes), "cannot read host capture");
     ::_close(capture[0]);
     ::_close(capture[1]);
     ::_close(guest[0]);
     ::_close(guest[1]);
     std::filesystem::remove_all(directory);
-    require(guestBytes == 0, "shader cache diagnostic entered the guest stderr pipe");
-    require(host.find("[shader-disk-cache]") != std::string::npos, "shader cache diagnostic did not reach host stderr");
+    Require(guestBytes == 0, "shader cache diagnostic entered the guest stderr pipe");
+    Require(host.find("[shader-disk-cache]") != std::string::npos, "shader cache diagnostic did not reach host stderr");
 }
 #endif
 
@@ -119,7 +116,7 @@ void removeCacheDirectory(const std::filesystem::path& directory) {
         const auto handle = CreateFileW(file.c_str(), DELETE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                                         nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
         if (handle == INVALID_HANDLE_VALUE) error.assign(static_cast<int>(GetLastError()), std::system_category());
-        require(!error, "cannot open " + file.string() + " for deletion: " + error.message());
+        Require(!error, "cannot open " + file.string() + " for deletion: " + error.message());
         struct Close { HANDLE file; ~Close() { CloseHandle(file); } } close{handle};
         DWORD flags = deleteFile | posixSemantics;
         if (!SetFileInformationByHandle(handle, dispositionInfoEx, &flags, sizeof(flags))) {
@@ -132,7 +129,7 @@ void removeCacheDirectory(const std::filesystem::path& directory) {
                 error.assign(static_cast<int>(failure), std::system_category());
             }
         }
-        require(!error, "cannot delete " + file.string() + ": " + error.message());
+        Require(!error, "cannot delete " + file.string() + ": " + error.message());
     }
     std::filesystem::remove_all(directory, error);
     if (error && pendingDeletes) {
@@ -142,7 +139,7 @@ void removeCacheDirectory(const std::filesystem::path& directory) {
 #else
     std::filesystem::remove_all(directory, error);
 #endif
-    require(!error, "cannot remove the shader cache test directory: " + error.message());
+    Require(!error, "cannot remove the shader cache test directory: " + error.message());
 }
 
 bool sameBinding(const DescriptorBinding& left, const DescriptorBinding& right) {
@@ -159,60 +156,60 @@ bool sameBindings(const std::vector<DescriptorBinding>& left, const std::vector<
 
 void requireSameArtifact(const CompiledShaderArtifact& left, const CompiledShaderArtifact& right, const char* what) {
     const std::string prefix = std::string(what) + ": ";
-    require(left.spirv == right.spirv, prefix + "SPIR-V differs");
-    require(left.meshWindowBuffer == right.meshWindowBuffer, prefix + "mesh window buffer flags differ");
-    require(left.bdaAbiVersion == right.bdaAbiVersion, prefix + "BDA ABI version differs");
-    require(left.descriptorFaults == right.descriptorFaults, prefix + "descriptor fault count differs");
-    require(left.windowLaneGuards == right.windowLaneGuards, prefix + "window lane guards differ");
-    require(left.runtimeAbiVersion == right.runtimeAbiVersion, prefix + "runtime ABI version differs");
-    require(left.memoryOffsetDword == right.memoryOffsetDword, prefix + "memory offset differs");
-    require(left.shaderDataDwords == right.shaderDataDwords && left.imageMetadataDword == right.imageMetadataDword && left.runtimeImageCount == right.runtimeImageCount && left.runtimeImageResources == right.runtimeImageResources, prefix + "compact data layout differs");
-    require(left.hostSubgroupSize == right.hostSubgroupSize && left.fullSubgroups == right.fullSubgroups, prefix + "host subgroup size differs");
-    require(left.vertexInputs == right.vertexInputs, prefix + "vertex inputs differ");
-    require(left.vertexInputPatches == right.vertexInputPatches, prefix + "vertex type patches differ");
-    require(left.registrationModule == right.registrationModule, prefix + "registration module flags differ");
-    require(left.vertexOffsetSgpr == right.vertexOffsetSgpr && left.instanceOffsetSgpr == right.instanceOffsetSgpr, prefix + "offset SGPRs differ");
-    require(left.vertexOffsetShared == right.vertexOffsetShared && left.instanceOffsetShared == right.instanceOffsetShared && left.vertexOffsetConflict == right.vertexOffsetConflict && left.instanceOffsetConflict == right.instanceOffsetConflict, prefix + "offset flags differ");
-    require(left.parameterExports == right.parameterExports, prefix + "parameter exports differ");
-    require(left.stencilReferences == right.stencilReferences, prefix + "stencil reference set differs");
-    require(left.stencilReplaySafe == right.stencilReplaySafe, prefix + "stencil replay proof differs");
-    require(left.bdaWrites == right.bdaWrites, prefix + "BDA write flag differs");
-    require(left.layerReplaySafe == right.layerReplaySafe, prefix + "layer replay proof differs");
-    require(left.stencilReferenceDword == right.stencilReferenceDword, prefix + "stencil replay push offset differs");
-    require(left.fragmentParameters.size() == right.fragmentParameters.size(), prefix + "fragment parameter count differs");
+    Require(left.spirv == right.spirv, prefix + "SPIR-V differs");
+    Require(left.meshWindowBuffer == right.meshWindowBuffer, prefix + "mesh window buffer flags differ");
+    Require(left.bdaAbiVersion == right.bdaAbiVersion, prefix + "BDA ABI version differs");
+    Require(left.descriptorFaults == right.descriptorFaults, prefix + "descriptor fault count differs");
+    Require(left.windowLaneGuards == right.windowLaneGuards, prefix + "window lane guards differ");
+    Require(left.runtimeAbiVersion == right.runtimeAbiVersion, prefix + "runtime ABI version differs");
+    Require(left.memoryOffsetDword == right.memoryOffsetDword, prefix + "memory offset differs");
+    Require(left.shaderDataDwords == right.shaderDataDwords && left.imageMetadataDword == right.imageMetadataDword && left.runtimeImageCount == right.runtimeImageCount && left.runtimeImageResources == right.runtimeImageResources, prefix + "compact data layout differs");
+    Require(left.hostSubgroupSize == right.hostSubgroupSize && left.fullSubgroups == right.fullSubgroups, prefix + "host subgroup size differs");
+    Require(left.vertexInputs == right.vertexInputs, prefix + "vertex inputs differ");
+    Require(left.vertexInputPatches == right.vertexInputPatches, prefix + "vertex type patches differ");
+    Require(left.registrationModule == right.registrationModule, prefix + "registration module flags differ");
+    Require(left.vertexOffsetSgpr == right.vertexOffsetSgpr && left.instanceOffsetSgpr == right.instanceOffsetSgpr, prefix + "offset SGPRs differ");
+    Require(left.vertexOffsetShared == right.vertexOffsetShared && left.instanceOffsetShared == right.instanceOffsetShared && left.vertexOffsetConflict == right.vertexOffsetConflict && left.instanceOffsetConflict == right.instanceOffsetConflict, prefix + "offset flags differ");
+    Require(left.parameterExports == right.parameterExports, prefix + "parameter exports differ");
+    Require(left.stencilReferences == right.stencilReferences, prefix + "stencil reference set differs");
+    Require(left.stencilReplaySafe == right.stencilReplaySafe, prefix + "stencil replay proof differs");
+    Require(left.bdaWrites == right.bdaWrites, prefix + "BDA write flag differs");
+    Require(left.layerReplaySafe == right.layerReplaySafe, prefix + "layer replay proof differs");
+    Require(left.stencilReferenceDword == right.stencilReferenceDword, prefix + "stencil replay push offset differs");
+    Require(left.fragmentParameters.size() == right.fragmentParameters.size(), prefix + "fragment parameter count differs");
     for (std::size_t i = 0; i < left.fragmentParameters.size(); ++i) {
         const auto& a = left.fragmentParameters[i];
         const auto& b = right.fragmentParameters[i];
-        require(a.location == b.location && a.sourceLocation == b.sourceLocation && a.flat == b.flat && a.perVertex == b.perVertex && a.custom == b.custom, prefix + "fragment parameter differs");
+        Require(a.location == b.location && a.sourceLocation == b.sourceLocation && a.flat == b.flat && a.perVertex == b.perVertex && a.custom == b.custom, prefix + "fragment parameter differs");
     }
 }
 
 void requireSameResult(const RecompileResult& left, const RecompileResult& right, const char* what) {
     requireSameArtifact(left, right, what);
     const std::string prefix = std::string(what) + ": ";
-    require(sameBindings(left.bindings, right.bindings), prefix + "bindings differ");
-    require(left.pushConstants == right.pushConstants, prefix + "push constants differ");
-    require(left.readsDepthRemapPush == right.readsDepthRemapPush, prefix + "depth remap push reads differ");
-    require(left.specialization == right.specialization, prefix + "specialization constants differ");
-    require(left.workgroupMemoryDwords == right.workgroupMemoryDwords, prefix + "workgroup memory stride differs");
-    require(left.poisonedSrtReads == right.poisonedSrtReads, prefix + "poisoned SRT read counts differ");
-    require(left.shaderDataUserWords == right.shaderDataUserWords, prefix + "shader-data user words differ");
-    require(left.imageTableRanges == right.imageTableRanges && left.imageTableShader == right.imageTableShader && left.imageTableFaults == right.imageTableFaults && left.imageTablePoison.size() == right.imageTablePoison.size(), prefix + "image table invocation data differs");
-    require(left.imageTableReadRanges == right.imageTableReadRanges, prefix + "image table read ranges differ");
-    require(left.userDataRegisterReads == right.userDataRegisterReads, prefix + "user data register read mask differs");
+    Require(sameBindings(left.bindings, right.bindings), prefix + "bindings differ");
+    Require(left.pushConstants == right.pushConstants, prefix + "push constants differ");
+    Require(left.readsDepthRemapPush == right.readsDepthRemapPush, prefix + "depth remap push reads differ");
+    Require(left.specialization == right.specialization, prefix + "specialization constants differ");
+    Require(left.workgroupMemoryDwords == right.workgroupMemoryDwords, prefix + "workgroup memory stride differs");
+    Require(left.poisonedSrtReads == right.poisonedSrtReads, prefix + "poisoned SRT read counts differ");
+    Require(left.shaderDataUserWords == right.shaderDataUserWords, prefix + "shader-data user words differ");
+    Require(left.imageTableRanges == right.imageTableRanges && left.imageTableShader == right.imageTableShader && left.imageTableFaults == right.imageTableFaults && left.imageTablePoison.size() == right.imageTablePoison.size(), prefix + "image table invocation data differs");
+    Require(left.imageTableReadRanges == right.imageTableReadRanges, prefix + "image table read ranges differ");
+    Require(left.userDataRegisterReads == right.userDataRegisterReads, prefix + "user data register read mask differs");
     for (std::size_t i = 0; i < left.imageTablePoison.size(); ++i) {
         const auto& a = left.imageTablePoison[i];
         const auto& b = right.imageTablePoison[i];
-        require(a.words == b.words && a.dwordCount == b.dwordCount && a.resource == b.resource && a.reason == b.reason, prefix + "image table poison differs");
+        Require(a.words == b.words && a.dwordCount == b.dwordCount && a.resource == b.resource && a.reason == b.reason, prefix + "image table poison differs");
     }
-    require(left.vertexAttributes.size() == right.vertexAttributes.size(), prefix + "vertex attribute count differs");
+    Require(left.vertexAttributes.size() == right.vertexAttributes.size(), prefix + "vertex attribute count differs");
     for (std::size_t i = 0; i < left.vertexAttributes.size(); ++i) {
         const auto& a = left.vertexAttributes[i];
         const auto& b = right.vertexAttributes[i];
-        require(a.location == b.location && a.components == b.components && a.resource.fields == b.resource.fields && a.fetchIndex == b.fetchIndex && a.formatComponents == b.formatComponents, prefix + "vertex attribute differs");
+        Require(a.location == b.location && a.components == b.components && a.resource.fields == b.resource.fields && a.fetchIndex == b.fetchIndex && a.formatComponents == b.formatComponents, prefix + "vertex attribute differs");
     }
-    require(left.barycentricEmulation.active == right.barycentricEmulation.active && left.barycentricEmulation.smooth == right.barycentricEmulation.smooth && left.barycentricEmulation.linear == right.barycentricEmulation.linear, prefix + "barycentric emulation differs");
-    require(left.meshBarycentrics == right.meshBarycentrics, prefix + "mesh barycentric layout differs");
+    Require(left.barycentricEmulation.active == right.barycentricEmulation.active && left.barycentricEmulation.smooth == right.barycentricEmulation.smooth && left.barycentricEmulation.linear == right.barycentricEmulation.linear, prefix + "barycentric emulation differs");
+    Require(left.meshBarycentrics == right.meshBarycentrics, prefix + "mesh barycentric layout differs");
 }
 
 void requireSameVariant(const CompiledVariant& left, const CompiledVariant& right, const char* what) {
@@ -220,11 +217,11 @@ void requireSameVariant(const CompiledVariant& left, const CompiledVariant& righ
     const std::string prefix = std::string(what) + ": ";
     const auto& a = left.info;
     const auto& b = right.info;
-    require(a.stage == b.stage && a.shaderHash == b.shaderHash && a.waveSize == b.waveSize && a.userDataBase == b.userDataBase && a.userDataCount == b.userDataCount && a.scratchDwords == b.scratchDwords && a.paramExportMask == b.paramExportMask, prefix + "compiled info differs");
-    require(a.info == b.info, prefix + "shader info differs");
-    require(a.bindings == b.bindings, prefix + "info binding layout differs");
-    require(left.bindings.layout == right.bindings.layout, prefix + "allocation layout differs");
-    require(left.bindings.pushConstantOffsetBytes == right.bindings.pushConstantOffsetBytes && left.bindings.pushConstantSizeBytes == right.bindings.pushConstantSizeBytes, prefix + "push constant range differs");
+    Require(a.stage == b.stage && a.shaderHash == b.shaderHash && a.waveSize == b.waveSize && a.userDataBase == b.userDataBase && a.userDataCount == b.userDataCount && a.scratchDwords == b.scratchDwords && a.paramExportMask == b.paramExportMask, prefix + "compiled info differs");
+    Require(a.info == b.info, prefix + "shader info differs");
+    Require(a.bindings == b.bindings, prefix + "info binding layout differs");
+    Require(left.bindings.layout == right.bindings.layout, prefix + "allocation layout differs");
+    Require(left.bindings.pushConstantOffsetBytes == right.bindings.pushConstantOffsetBytes && left.bindings.pushConstantSizeBytes == right.bindings.pushConstantSizeBytes, prefix + "push constant range differs");
 }
 
 DescriptorBinding sampleBinding(std::uint32_t seed) {
@@ -451,69 +448,69 @@ void verifyResultRoundTrip() {
     std::vector<std::byte> bytes;
     ShaderDiskCache::EncodeResult(result, bytes);
     RecompileResult decoded;
-    require(ShaderDiskCache::DecodeResult(bytes, decoded), "an encoded result does not decode");
+    Require(ShaderDiskCache::DecodeResult(bytes, decoded), "an encoded result does not decode");
     requireSameResult(result, decoded, "result round trip");
-    require(decoded.variantId == 0 && !decoded.cacheHit, "the per-process fields were stored");
+    Require(decoded.variantId == 0 && !decoded.cacheHit, "the per-process fields were stored");
     auto memoized = result;
     memoized.drawKeyMemo.words.store(std::make_shared<const std::vector<std::uint32_t>>(std::vector<std::uint32_t>{1u, 2u, 3u}));
     std::vector<std::byte> memoizedBytes;
     ShaderDiskCache::EncodeResult(memoized, memoizedBytes);
-    require(memoizedBytes == bytes, "the draw key memo was stored");
+    Require(memoizedBytes == bytes, "the draw key memo was stored");
     RecompileResult memoizedDecoded;
-    require(ShaderDiskCache::DecodeResult(memoizedBytes, memoizedDecoded) && !memoizedDecoded.drawKeyMemo.words.load(), "a decoded result has a draw key memo");
+    Require(ShaderDiskCache::DecodeResult(memoizedBytes, memoizedDecoded) && !memoizedDecoded.drawKeyMemo.words.load(), "a decoded result has a draw key memo");
     for (std::size_t size = 0; size < bytes.size(); size += size < 256 ? 1 : 97) {
         RecompileResult partial;
-        require(!ShaderDiskCache::DecodeResult(std::span(bytes).first(size), partial), "a result truncated to " + std::to_string(size) + " bytes decodes");
+        Require(!ShaderDiskCache::DecodeResult(std::span(bytes).first(size), partial), "a result truncated to " + std::to_string(size) + " bytes decodes");
     }
     auto longer = bytes;
     longer.push_back(std::byte{0});
-    require(!ShaderDiskCache::DecodeResult(longer, decoded), "a result with a trailing byte decodes");
+    Require(!ShaderDiskCache::DecodeResult(longer, decoded), "a result with a trailing byte decodes");
     bytes.clear();
     ShaderDiskCache::EncodeResult(RecompileResult{}, bytes);
-    require(ShaderDiskCache::DecodeResult(bytes, decoded), "an empty result does not decode");
+    Require(ShaderDiskCache::DecodeResult(bytes, decoded), "an empty result does not decode");
     requireSameResult(RecompileResult{}, decoded, "empty result round trip");
     auto incompatible = result;
     incompatible.runtimeAbiVersion = RuntimeAbi::Version + 1u;
     bytes.clear();
     ShaderDiskCache::EncodeResult(incompatible, bytes);
-    require(!ShaderDiskCache::DecodeResult(bytes, decoded), "an incompatible runtime ABI result decodes");
+    Require(!ShaderDiskCache::DecodeResult(bytes, decoded), "an incompatible runtime ABI result decodes");
 }
 
 void verifyElementFlags() {
     ElementFlags flags;
     flags.reserve(256);
-    require(flags.empty(), "reserving element flags changed their size");
+    Require(flags.empty(), "reserving element flags changed their size");
     std::vector<bool> expected;
     for (std::size_t index = 0; index < 70; ++index) {
         flags.push_back(index % 3 == 0);
         expected.push_back(index % 3 == 0);
-        require(flags == expected, "element flags differ from a vector after " + std::to_string(index + 1) + " entries");
+        Require(flags == expected, "element flags differ from a vector after " + std::to_string(index + 1) + " entries");
     }
     flags.reserve(512);
     const auto copy = flags;
-    require(copy == flags && copy.size() == 70 && copy.at(69) && !copy.at(68), "a copy of spilled element flags differs");
-    require(std::count(flags.begin(), flags.end(), true) == 24, "spilled element flags do not iterate");
+    Require(copy == flags && copy.size() == 70 && copy.at(69) && !copy.at(68), "a copy of spilled element flags differs");
+    Require(std::count(flags.begin(), flags.end(), true) == 24, "spilled element flags do not iterate");
     auto writable = flags;
     writable[69] = false;
     writable.back().flip();
     writable[0] = writable[1];
-    require(writable.size() == 70 && writable.back() && !writable[0] && writable[3], "a write through a spilled flag was lost");
+    Require(writable.size() == 70 && writable.back() && !writable[0] && writable[3], "a write through a spilled flag was lost");
     writable.resize(3);
-    require(writable == std::vector<bool>{false, false, false}, "shrinking spilled element flags kept the wrong entries");
+    Require(writable == std::vector<bool>{false, false, false}, "shrinking spilled element flags kept the wrong entries");
     writable.resize(5, true);
     writable[1] = true;
     writable.back().flip();
-    require(writable == std::vector<bool>{false, true, false, true, false}, "a write through an inline flag was lost");
+    Require(writable == std::vector<bool>{false, true, false, true, false}, "a write through an inline flag was lost");
     auto result = sampleResult();
     result.bindings[1].bufferWritten = flags;
     std::vector<std::byte> bytes;
     ShaderDiskCache::EncodeResult(result, bytes);
     RecompileResult decoded;
-    require(ShaderDiskCache::DecodeResult(bytes, decoded) && decoded.bindings[1].bufferWritten == expected, "spilled element flags do not round trip");
+    Require(ShaderDiskCache::DecodeResult(bytes, decoded) && decoded.bindings[1].bufferWritten == expected, "spilled element flags do not round trip");
     flags.assign(3, true);
-    require(flags == std::vector<bool>{true, true, true}, "assigned element flags kept spilled entries");
+    Require(flags == std::vector<bool>{true, true, true}, "assigned element flags kept spilled entries");
     flags.clear();
-    require(flags.empty() && flags == ElementFlags{}, "cleared element flags are not empty");
+    Require(flags.empty() && flags == ElementFlags{}, "cleared element flags are not empty");
 }
 
 void verifyEntryRoundTrip() {
@@ -522,40 +519,40 @@ void verifyEntryRoundTrip() {
     const auto variant = sampleVariant();
     const auto file = ShaderDiskCache::EncodeEntry(key, variant);
     CompiledVariant decoded;
-    require(ShaderDiskCache::DecodeEntry(file, key, decoded) == ShaderDiskCache::LoadStatus::Loaded, "an encoded entry does not decode");
+    Require(ShaderDiskCache::DecodeEntry(file, key, decoded) == ShaderDiskCache::LoadStatus::Loaded, "an encoded entry does not decode");
     requireSameVariant(variant, decoded, "entry round trip");
-    require(decoded.artifact.variantId == 0, "the artifact stored a per-process id");
+    Require(decoded.artifact.variantId == 0, "the artifact stored a per-process id");
 
     for (std::size_t size = 0; size < file.size(); size += size < 512 ? 1 : 131) {
         CompiledVariant partial;
-        require(ShaderDiskCache::DecodeEntry(std::span(file).first(size), key, partial) == ShaderDiskCache::LoadStatus::Rejected, "an entry truncated to " + std::to_string(size) + " bytes is not rejected");
+        Require(ShaderDiskCache::DecodeEntry(std::span(file).first(size), key, partial) == ShaderDiskCache::LoadStatus::Rejected, "an entry truncated to " + std::to_string(size) + " bytes is not rejected");
     }
     for (std::size_t offset = 0; offset < file.size(); offset += offset < 512 ? 1 : 61) {
         auto damaged = file;
         damaged[offset] ^= std::byte{0x10};
         CompiledVariant partial;
         const auto status = ShaderDiskCache::DecodeEntry(damaged, key, partial);
-        require(status == ShaderDiskCache::LoadStatus::Rejected, "an entry with byte " + std::to_string(offset) + " damaged is not rejected");
+        Require(status == ShaderDiskCache::LoadStatus::Rejected, "an entry with byte " + std::to_string(offset) + " damaged is not rejected");
     }
     auto longer = file;
     longer.push_back(std::byte{0});
-    require(ShaderDiskCache::DecodeEntry(longer, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "an entry with a trailing byte is not rejected");
+    Require(ShaderDiskCache::DecodeEntry(longer, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "an entry with a trailing byte is not rejected");
     auto otherKey = key;
     otherKey.back() ^= std::byte{1};
-    require(ShaderDiskCache::DecodeEntry(file, otherKey, decoded) == ShaderDiskCache::LoadStatus::KeyMismatch, "an entry for another key loads");
+    Require(ShaderDiskCache::DecodeEntry(file, otherKey, decoded) == ShaderDiskCache::LoadStatus::KeyMismatch, "an entry for another key loads");
     auto previousVersion = file;
     previousVersion[4] = static_cast<std::byte>(ShaderDiskCache::FormatVersion - 1u);
-    require(ShaderDiskCache::DecodeEntry(previousVersion, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "an entry with the previous format version loads");
+    Require(ShaderDiskCache::DecodeEntry(previousVersion, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "an entry with the previous format version loads");
     auto priorStencilVersion = file;
     priorStencilVersion[4] = std::byte{32};
-    require(ShaderDiskCache::DecodeEntry(priorStencilVersion, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "an artifact with the prior stencil format loads");
+    Require(ShaderDiskCache::DecodeEntry(priorStencilVersion, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "an artifact with the prior stencil format loads");
     auto upstreamVersion = file;
     upstreamVersion[4] = std::byte{33};
-    require(ShaderDiskCache::DecodeEntry(upstreamVersion, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "a stencil artifact with the upstream resource plan format loads");
+    Require(ShaderDiskCache::DecodeEntry(upstreamVersion, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "a stencil artifact with the upstream resource plan format loads");
     auto incompatible = variant;
     incompatible.artifact.runtimeAbiVersion = RuntimeAbi::Version + 1u;
     const auto incompatibleFile = ShaderDiskCache::EncodeEntry(key, incompatible);
-    require(ShaderDiskCache::DecodeEntry(incompatibleFile, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "an entry with an incompatible runtime ABI loads");
+    Require(ShaderDiskCache::DecodeEntry(incompatibleFile, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, "an entry with an incompatible runtime ABI loads");
 }
 
 std::vector<std::byte> packBytes(const std::vector<std::pair<std::vector<std::byte>, std::vector<std::byte>>>& entries) {
@@ -589,33 +586,33 @@ void verifyPrebuiltPackOwnership(const std::filesystem::path& directory) {
     const auto key = sample.Key();
     const auto variant = sampleVariant();
     const auto path = directory / "ownership.pack";
-    require(WriteFileAtomically(path, packBytes({{key, EncodeEntry(key, variant)}})), "cannot write the ownership test pack");
+    Require(WriteFileAtomically(path, packBytes({{key, EncodeEntry(key, variant)}})), "cannot write the ownership test pack");
     CompiledVariant first, second;
     PackLoadTimings timings;
     const std::uint32_t* words = nullptr;
     {
         CachePack pack(path);
-        require(pack.Valid(), "the ownership test pack is invalid");
-        require(pack.Load(key, first, timings) == LoadStatus::Loaded, "cannot load the first packed variant");
-        require(pack.Load(key, second, timings) == LoadStatus::Loaded, "cannot load the second packed variant");
+        Require(pack.Valid(), "the ownership test pack is invalid");
+        Require(pack.Load(key, first, timings) == LoadStatus::Loaded, "cannot load the first packed variant");
+        Require(pack.Load(key, second, timings) == LoadStatus::Loaded, "cannot load the second packed variant");
         words = first.artifact.spirv.Words().data();
-        require(!first.artifact.spirv.empty() && words == second.artifact.spirv.Words().data(), "packed SPIR-V was copied instead of sharing its mapping");
+        Require(!first.artifact.spirv.empty() && words == second.artifact.spirv.Words().data(), "packed SPIR-V was copied instead of sharing its mapping");
     }
     requireSameVariant(variant, first, "packed variant outlives its pack");
 #ifdef _WIN32
     MEMORY_BASIC_INFORMATION region{};
-    require(VirtualQuery(words, &region, sizeof(region)) == sizeof(region) && region.Type == MEM_MAPPED, "packed SPIR-V lost its mapping after pack destruction");
+    Require(VirtualQuery(words, &region, sizeof(region)) == sizeof(region) && region.Type == MEM_MAPPED, "packed SPIR-V lost its mapping after pack destruction");
 #endif
     auto edited = first.artifact.spirv;
     edited[0] ^= 1u;
-    require(edited.Words().data() != words && edited.Words()[0] != first.artifact.spirv.Words()[0], "editing packed SPIR-V modified the shared mapping");
+    Require(edited.Words().data() != words && edited.Words()[0] != first.artifact.spirv.Words()[0], "editing packed SPIR-V modified the shared mapping");
     first = {};
     requireSameVariant(variant, second, "last packed variant retains its mapping");
     std::vector<std::byte> published;
-    require(ReadWholeFile(path, published) && published == packBytes({{key, EncodeEntry(key, variant)}}), "editing packed SPIR-V modified the cache file");
+    Require(ReadWholeFile(path, published) && published == packBytes({{key, EncodeEntry(key, variant)}}), "editing packed SPIR-V modified the cache file");
     second = {};
 #ifdef _WIN32
-    require(VirtualQuery(words, &region, sizeof(region)) == sizeof(region) && region.State == MEM_FREE, "the final packed variant did not release its mapping");
+    Require(VirtualQuery(words, &region, sizeof(region)) == sizeof(region) && region.State == MEM_FREE, "the final packed variant did not release its mapping");
 #endif
     const auto offset = sizeof(PackHeader) + sizeof(PackRecord);
     published.insert(published.begin() + offset, std::byte{});
@@ -628,12 +625,12 @@ void verifyPrebuiltPackOwnership(const std::filesystem::path& directory) {
     std::memcpy(published.data() + sizeof(header), &record, sizeof(record));
     header.indexHash = ShaderRecompiler::HashBytes(std::span<const std::byte>(published).subspan(sizeof(header), sizeof(record)));
     std::memcpy(published.data(), &header, sizeof(header));
-    require(WriteFileAtomically(path, published), "cannot publish an unaligned packed entry");
+    Require(WriteFileAtomically(path, published), "cannot publish an unaligned packed entry");
     {
         CachePack pack(path);
-        require(pack.Valid(), "an unaligned packed entry was rejected");
-        require(pack.Load(key, first, timings) == LoadStatus::Loaded && pack.Load(key, second, timings) == LoadStatus::Loaded, "an unaligned packed entry did not load");
-        require(first.artifact.spirv.Words().data() != second.artifact.spirv.Words().data(), "an unaligned packed module did not use aligned owned storage");
+        Require(pack.Valid(), "an unaligned packed entry was rejected");
+        Require(pack.Load(key, first, timings) == LoadStatus::Loaded && pack.Load(key, second, timings) == LoadStatus::Loaded, "an unaligned packed entry did not load");
+        Require(first.artifact.spirv.Words().data() != second.artifact.spirv.Words().data(), "an unaligned packed module did not use aligned owned storage");
     }
     requireSameVariant(variant, first, "unaligned packed variant outlives its pack");
     requireSameVariant(variant, second, "second unaligned packed variant outlives its pack");
@@ -658,27 +655,27 @@ void verifyPrebuiltPack(const std::filesystem::path& directory) {
     std::filesystem::create_directories(directory);
     const auto writePack = [&](const char* name, const std::vector<std::byte>& bytes) {
         const auto path = directory / name;
-        require(WriteFileAtomically(path, bytes), "cannot write the test pack");
+        Require(WriteFileAtomically(path, bytes), "cannot write the test pack");
         return path;
     };
     PackLoadTimings timings;
     CompiledVariant decoded;
     {
         CachePack pack(writePack("valid.pack", packBytes({{key, file}, {otherKey, otherFile}})));
-        require(pack.Valid(), "a valid pack is rejected: " + pack.Error());
-        require(pack.Count() == 2, "the pack does not hold both entries");
-        require(pack.Load(key, decoded, timings) == LoadStatus::Loaded, "a pack entry does not load");
+        Require(pack.Valid(), "a valid pack is rejected: " + pack.Error());
+        Require(pack.Count() == 2, "the pack does not hold both entries");
+        Require(pack.Load(key, decoded, timings) == LoadStatus::Loaded, "a pack entry does not load");
         requireSameVariant(variant, decoded, "pack round trip");
         auto missingKey = key;
         missingKey.front() ^= std::byte{1};
-        require(pack.Load(missingKey, decoded, timings) == LoadStatus::Absent, "an absent key loads from the pack");
+        Require(pack.Load(missingKey, decoded, timings) == LoadStatus::Absent, "an absent key loads from the pack");
     }
     {
         std::vector<std::pair<std::vector<std::byte>, std::vector<std::byte>>> mismatched;
         mismatched.emplace_back(otherKey, file);
         CachePack pack(writePack("mismatch.pack", packBytes(mismatched)));
-        require(pack.Valid(), "the key mismatch pack is rejected: " + pack.Error());
-        require(pack.Load(otherKey, decoded, timings) != LoadStatus::Loaded, "an entry stored under another key loads");
+        Require(pack.Valid(), "the key mismatch pack is rejected: " + pack.Error());
+        Require(pack.Load(otherKey, decoded, timings) != LoadStatus::Loaded, "an entry stored under another key loads");
     }
     {
         auto bytes = packBytes({{key, file}});
@@ -686,14 +683,14 @@ void verifyPrebuiltPack(const std::filesystem::path& directory) {
         std::memcpy(bytes.data() + sizeof(PackHeader) + offsetof(PackRecord, size), &truncated, sizeof(truncated));
         refreshIndexHash(bytes, 1);
         CachePack pack(writePack("truncated.pack", bytes));
-        require(pack.Valid(), "the truncated-entry pack is rejected: " + pack.Error());
-        require(pack.Load(key, decoded, timings) == LoadStatus::Rejected, "a truncated pack entry loads");
+        Require(pack.Valid(), "the truncated-entry pack is rejected: " + pack.Error());
+        Require(pack.Load(key, decoded, timings) == LoadStatus::Rejected, "a truncated pack entry loads");
     }
     {
         auto bytes = packBytes({{key, file}});
         bytes[sizeof(PackHeader)] ^= std::byte{0x10};
         CachePack pack(writePack("corrupt-index.pack", bytes));
-        require(!pack.Valid(), "a pack with a damaged index is accepted");
+        Require(!pack.Valid(), "a pack with a damaged index is accepted");
     }
     {
         auto bytes = packBytes({{key, file}});
@@ -701,20 +698,20 @@ void verifyPrebuiltPack(const std::filesystem::path& directory) {
         std::memcpy(bytes.data() + sizeof(PackHeader) + offsetof(PackRecord, offset), &outside, sizeof(outside));
         refreshIndexHash(bytes, 1);
         CachePack pack(writePack("corrupt-record.pack", bytes));
-        require(!pack.Valid(), "a pack with an out-of-range record is accepted");
+        Require(!pack.Valid(), "a pack with an out-of-range record is accepted");
     }
     {
         auto bytes = packBytes({{key, file}});
         const auto wrong = SourceVersion() + 1;
         std::memcpy(bytes.data() + offsetof(PackHeader, sourceVersion), &wrong, sizeof(wrong));
         CachePack pack(writePack("wrong-version.pack", bytes));
-        require(!pack.Valid(), "a pack from another compiler source version is accepted");
+        Require(!pack.Valid(), "a pack from another compiler source version is accepted");
     }
     {
         auto bytes = packBytes({{key, file}});
         bytes.front() ^= std::byte{0x10};
         CachePack pack(writePack("unknown-format.pack", bytes));
-        require(!pack.Valid(), "a pack with an unknown format is accepted");
+        Require(!pack.Valid(), "a pack with an unknown format is accepted");
     }
 }
 
@@ -730,32 +727,32 @@ int runPrebuiltLoadingProcess() {
     const auto key = sample.Key();
     const auto expected = sampleVariant();
     CompiledVariant loaded;
-    require(Load(key, loaded), "the prebuilt pack entry does not load");
+    Require(Load(key, loaded), "the prebuilt pack entry does not load");
     requireSameVariant(expected, loaded, "prebuilt load");
-    require(Totals().prebuiltHits == 1, "the prebuilt load was not counted");
+    Require(Totals().prebuiltHits == 1, "the prebuilt load was not counted");
     const auto afterPack = Totals();
-    require(afterPack.prebuiltBytesRead > 0 && afterPack.prebuiltLoadNanoseconds > 0, "the prebuilt load was not timed");
-    require(afterPack.hits == 0 && afterPack.loadFailures == 0 && afterPack.bytesRead == 0 && afterPack.loadNanoseconds == 0, "the prebuilt load reached the writable totals");
+    Require(afterPack.prebuiltBytesRead > 0 && afterPack.prebuiltLoadNanoseconds > 0, "the prebuilt load was not timed");
+    Require(afterPack.hits == 0 && afterPack.loadFailures == 0 && afterPack.bytesRead == 0 && afterPack.loadNanoseconds == 0, "the prebuilt load reached the writable totals");
     auto looseKey = key;
     looseKey.back() ^= std::byte{1};
     CompiledVariant loose;
-    require(Load(looseKey, loose), "the loose prebuilt entry does not load");
+    Require(Load(looseKey, loose), "the loose prebuilt entry does not load");
     requireSameVariant(expected, loose, "loose prebuilt load");
-    require(Totals().prebuiltHits == 2, "the loose prebuilt load was not counted");
-    require(Totals().hits == 0 && Totals().loadFailures == 0 && Totals().bytesRead == 0, "the loose prebuilt load reached the writable totals");
+    Require(Totals().prebuiltHits == 2, "the loose prebuilt load was not counted");
+    Require(Totals().hits == 0 && Totals().loadFailures == 0 && Totals().bytesRead == 0, "the loose prebuilt load reached the writable totals");
     auto corruptKey = looseKey;
     corruptKey.front() ^= std::byte{1};
     CompiledVariant corrupt;
-    require(!Load(corruptKey, corrupt), "a corrupt loose prebuilt entry loads");
-    require(Totals().prebuiltRejected >= 1, "the corrupt loose prebuilt entry was not counted as rejected");
-    require(Totals().loadFailures == 0, "the corrupt loose prebuilt entry reached the writable failures");
+    Require(!Load(corruptKey, corrupt), "a corrupt loose prebuilt entry loads");
+    Require(Totals().prebuiltRejected >= 1, "the corrupt loose prebuilt entry was not counted as rejected");
+    Require(Totals().loadFailures == 0, "the corrupt loose prebuilt entry reached the writable failures");
     auto otherKey = looseKey;
     otherKey.front() ^= std::byte{1};
     CompiledVariant other;
-    require(!Load(otherKey, other), "a key absent from prebuilt storage loads");
+    Require(!Load(otherKey, other), "a key absent from prebuilt storage loads");
     Store(otherKey, std::make_shared<const CompiledVariant>(sampleVariant()));
     Flush();
-    require(Load(otherKey, other), "the writable cache fall-through does not load");
+    Require(Load(otherKey, other), "the writable cache fall-through does not load");
     std::cout << "prebuilt process loaded from the pack and fell through to the writable cache\n";
     return 0;
 }
@@ -766,22 +763,22 @@ void verifyPrebuiltAcrossProcesses(const char* self, const std::filesystem::path
     const auto prebuilt = directory / "prebuilt";
     std::filesystem::create_directories(prebuilt);
     const auto bytes = packBytes({{sample.Key(), EncodeEntry(sample.Key(), sampleVariant())}});
-    require(WriteFileAtomically(prebuilt / "test.pack", bytes), "cannot write the prebuilt pack");
+    Require(WriteFileAtomically(prebuilt / "test.pack", bytes), "cannot write the prebuilt pack");
     auto looseKey = sample.Key();
     looseKey.back() ^= std::byte{1};
-    require(WriteFileAtomically(prebuilt / EntryName(looseKey), EncodeEntry(looseKey, sampleVariant())), "cannot write the loose prebuilt entry");
+    Require(WriteFileAtomically(prebuilt / EntryName(looseKey), EncodeEntry(looseKey, sampleVariant())), "cannot write the loose prebuilt entry");
     auto corruptKey = looseKey;
     corruptKey.front() ^= std::byte{1};
     auto corruptEntry = EncodeEntry(corruptKey, sampleVariant());
     corruptEntry.resize(corruptEntry.size() / 2);
-    require(WriteFileAtomically(prebuilt / EntryName(corruptKey), corruptEntry), "cannot write the corrupt loose prebuilt entry");
+    Require(WriteFileAtomically(prebuilt / EntryName(corruptKey), corruptEntry), "cannot write the corrupt loose prebuilt entry");
     const std::string command = "\"" + std::string(self) + "\" --load-prebuilt";
-    require(std::system(command.c_str()) == 0, "the prebuilt loading process failed");
+    Require(std::system(command.c_str()) == 0, "the prebuilt loading process failed");
 }
 
 void verifyPrebuiltDiscovery(std::string_view layout, bool seed) {
     using namespace ShaderRecompiler::ShaderDiskCache;
-    require(layout == "pack" || layout == "loose" || layout == "versioned" || layout == "file" || layout == "empty" || layout == "missing", "unknown prebuilt discovery layout");
+    Require(layout == "pack" || layout == "loose" || layout == "versioned" || layout == "file" || layout == "empty" || layout == "missing", "unknown prebuilt discovery layout");
     Shutdown();
     SampleRequest sample = prebuiltSample();
     const auto key = sample.Key();
@@ -792,26 +789,26 @@ void verifyPrebuiltDiscovery(std::string_view layout, bool seed) {
         if (layout == "pack") {
             auto otherKey = key;
             otherKey.back() ^= std::byte{1};
-            require(WriteFileAtomically(directory / "a.pack", packBytes({{key, entry}})), "cannot seed the matching prebuilt pack");
-            require(WriteFileAtomically(directory / "z.pack", packBytes({{otherKey, EncodeEntry(otherKey, variant)}})), "cannot seed the other prebuilt pack");
+            Require(WriteFileAtomically(directory / "a.pack", packBytes({{key, entry}})), "cannot seed the matching prebuilt pack");
+            Require(WriteFileAtomically(directory / "z.pack", packBytes({{otherKey, EncodeEntry(otherKey, variant)}})), "cannot seed the other prebuilt pack");
         } else if (layout == "loose") {
-            require(WriteFileAtomically(directory / EntryName(key), entry), "cannot seed the loose prebuilt entry");
+            Require(WriteFileAtomically(directory / EntryName(key), entry), "cannot seed the loose prebuilt entry");
         } else if (layout == "versioned") {
-            require(WriteFileAtomically(directory / EntryDirectory().filename() / EntryName(key), entry), "cannot seed the versioned prebuilt entry");
+            Require(WriteFileAtomically(directory / EntryDirectory().filename() / EntryName(key), entry), "cannot seed the versioned prebuilt entry");
         } else if (layout == "file") {
-            require(WriteFileAtomically(directory, packBytes({{key, entry}})), "cannot seed the direct prebuilt pack");
+            Require(WriteFileAtomically(directory, packBytes({{key, entry}})), "cannot seed the direct prebuilt pack");
         } else if (layout == "empty") {
-            require(WriteFileAtomically(directory / "ignored.txt", entry), "cannot seed the ignored prebuilt file");
+            Require(WriteFileAtomically(directory / "ignored.txt", entry), "cannot seed the ignored prebuilt file");
         }
         std::cout << "prebuilt discovery seeded " << layout << '\n';
         return;
     }
     CompiledVariant loaded;
     const bool expected = layout != "empty" && layout != "missing";
-    require(Load(key, loaded) == expected, "prebuilt discovery returned the wrong result for " + std::string(layout));
+    Require(Load(key, loaded) == expected, "prebuilt discovery returned the wrong result for " + std::string(layout));
     if (expected) requireSameVariant(variant, loaded, "prebuilt discovery");
     const auto totals = Totals();
-    require(totals.prebuiltHits == (expected ? 1u : 0u) && totals.hits == 0 && totals.writes == 0 && Writers() == 0,
+    Require(totals.prebuiltHits == (expected ? 1u : 0u) && totals.hits == 0 && totals.writes == 0 && Writers() == 0,
             "prebuilt discovery did not remain a read-only prebuilt lookup");
     std::cout << "prebuilt discovery verified " << layout << '\n';
 }
@@ -827,10 +824,10 @@ void verifyArtifactStorageIsolation() {
     result.pushConstants[0] ^= std::byte{0xff};
     result.vertexAttributes[0].resource.fields[0] ^= 0x10000u;
     variant.artifact = result;
-    require(ShaderDiskCache::EncodeEntry(key, variant) == before, "invocation data changed the stored artifact");
+    Require(ShaderDiskCache::EncodeEntry(key, variant) == before, "invocation data changed the stored artifact");
     result.vertexInputs[0].components = 2;
     variant.artifact = result;
-    require(ShaderDiskCache::EncodeEntry(key, variant) != before, "the stored artifact ignores vertex input metadata");
+    Require(ShaderDiskCache::EncodeEntry(key, variant) != before, "the stored artifact ignores vertex input metadata");
 }
 
 void verifyMeshBarycentricRequestSerialization() {
@@ -841,7 +838,7 @@ void verifyMeshBarycentricRequestSerialization() {
         sample.request.graphics = GraphicsCompileContext{0, {}, MeshConfiguration{4u, 4u, 12u, 12u, 4u, 64u, 1024u, 0u, 4u}, std::nullopt, {}, layout};
         const auto text = RequestSerializer{}.Serialize(sample.request);
         const auto restored = RequestSerializer{}.Deserialize(text);
-        require(restored.request.graphics.has_value() && restored.request.graphics->meshBarycentrics == layout, "a captured mesh request lost its barycentric layout");
+        Require(restored.request.graphics.has_value() && restored.request.graphics->meshBarycentrics == layout, "a captured mesh request lost its barycentric layout");
     }
 }
 
@@ -861,25 +858,25 @@ void verifyHashBytes() {
     for (const auto& sample : expected) {
         const auto input = std::span<const std::byte>(bytes).first(sample[0]);
         const auto hashes = ShaderRecompiler::ShaderDiskCache::PackKeyHash(input);
-        require(hashes == std::array{sample[1], sample[2]}, "paired cache hashes changed");
-        require(ShaderRecompiler::HashBytes(input, 0x5eed0001ull) == sample[1] && ShaderRecompiler::HashBytes(input, 0x5eed0002ull) == sample[2], "scalar cache hashes changed");
+        Require(hashes == std::array{sample[1], sample[2]}, "paired cache hashes changed");
+        Require(ShaderRecompiler::HashBytes(input, 0x5eed0001ull) == sample[1] && ShaderRecompiler::HashBytes(input, 0x5eed0002ull) == sample[2], "scalar cache hashes changed");
     }
-    require(ShaderRecompiler::HashBytes({}) == 0u, "empty cache checksum changed");
-    require(ShaderRecompiler::ShaderDiskCache::EntryName(bytes) == "31a156cfac950b79ac0b4579d052a463.bin", "cache entry name changed");
+    Require(ShaderRecompiler::HashBytes({}) == 0u, "empty cache checksum changed");
+    Require(ShaderRecompiler::ShaderDiskCache::EntryName(bytes) == "31a156cfac950b79ac0b4579d052a463.bin", "cache entry name changed");
 }
 
 void verifyKeySensitivity() {
     SampleRequest base;
     const auto key = base.Key();
-    require(base.Key() == key, "the key is not deterministic");
-    require(ShaderDiskCache::EntryName(key).size() == 36, "unexpected entry name length");
+    Require(base.Key() == key, "the key is not deterministic");
+    Require(ShaderDiskCache::EntryName(key).size() == 36, "unexpected entry name length");
 
     const auto changes = [&](const std::string& what, const std::function<void(SampleRequest&)>& change) {
         SampleRequest sample;
         change(sample);
         const auto changed = sample.Key();
-        require(changed != key, "the key ignores " + what);
-        require(ShaderDiskCache::EntryName(changed) != ShaderDiskCache::EntryName(key), "the entry name ignores " + what);
+        Require(changed != key, "the key ignores " + what);
+        Require(ShaderDiskCache::EntryName(changed) != ShaderDiskCache::EntryName(key), "the entry name ignores " + what);
     };
     for (std::size_t word = 0; word < base.code.size(); ++word) {
         for (std::uint32_t bit = 0; bit < 32; ++bit) {
@@ -936,12 +933,12 @@ void verifyKeySensitivity() {
         return std::pair{sample.Key(), RecompileCacheKey::ContextHash(sample.request)};
     };
     const auto astro = withMode(astroMode);
-    require(withMode(astroMode) == astro, "the float mode key is not deterministic");
+    Require(withMode(astroMode) == astro, "the float mode key is not deterministic");
     for (const auto& [what, mode] : std::initializer_list<std::pair<const char*, ShaderFloatMode>>{
              {"FLOAT_MODE", {0x00u, true, false, false}}, {"DX10_CLAMP", {0xc0u, false, false, false}},
              {"IEEE_MODE", {0xc0u, true, true, false}}, {"FP16_OVFL", {0xc0u, true, false, true}}}) {
         const auto changed = withMode(mode);
-        require(changed.first != astro.first && changed.second != astro.second, std::string("the key ignores ") + what);
+        Require(changed.first != astro.first && changed.second != astro.second, std::string("the key ignores ") + what);
     }
 
     const auto meshKeys = [&](const std::optional<MeshBarycentricLayout>& layout) {
@@ -961,11 +958,11 @@ void verifyKeySensitivity() {
         {"a flat mesh parameter", MeshBarycentricLayout{{true, true, false}, {FragmentParameter{0, 0, false, false}}}},
     };
     for (std::size_t i = 0; i < meshLayouts.size(); ++i) {
-        require(meshKeys(meshLayouts[i].second) == meshKeys(meshLayouts[i].second), std::string("the key of ") + meshLayouts[i].first + " is not deterministic");
+        Require(meshKeys(meshLayouts[i].second) == meshKeys(meshLayouts[i].second), std::string("the key of ") + meshLayouts[i].first + " is not deterministic");
         for (std::size_t j = i + 1; j < meshLayouts.size(); ++j) {
             const auto left = meshKeys(meshLayouts[i].second);
             const auto right = meshKeys(meshLayouts[j].second);
-            require(left.first != right.first && left.second != right.second, std::string("the mesh key confuses ") + meshLayouts[i].first + " with " + meshLayouts[j].first);
+            Require(left.first != right.first && left.second != right.second, std::string("the mesh key confuses ") + meshLayouts[i].first + " with " + meshLayouts[j].first);
         }
     }
 
@@ -976,19 +973,19 @@ void verifyKeySensitivity() {
         sample.request.graphics = GraphicsCompileContext{0, {}, meshPath ? std::optional(MeshConfiguration{4u, 4u, 12u, 12u, 4u, 64u, 1024u, 0u, 4u}) : std::nullopt, std::nullopt, {}, std::nullopt};
         return std::pair{sample.Key(), RecompileCacheKey::ContextHash(sample.request)};
     };
-    require(pixelKeys(true).first != pixelKeys(false).first && pixelKeys(true).second != pixelKeys(false).second, "a pixel shader on the mesh path shares a key with the vertex path");
+    Require(pixelKeys(true).first != pixelKeys(false).first && pixelKeys(true).second != pixelKeys(false).second, "a pixel shader on the mesh path shares a key with the vertex path");
 
     SampleRequest moved;
     moved.userData[0] ^= 0x10000u;
     moved.request.shader.codeAddress += 0x1000000u;
     moved.request.shader.headerAddress += 0x1000000u;
     moved.header[3] = std::byte{1};
-    require(moved.Key() == key, "the key depends on the user data values or the addresses");
+    Require(moved.Key() == key, "the key depends on the user data values or the addresses");
     std::array<std::byte, 32> descriptors{};
     const std::array regions{MemoryRegion{0x100000u, descriptors}};
     moved.request.context.memory = regions;
     std::fill(moved.userData.begin(), moved.userData.end(), 0xffffffffu);
-    require(moved.Key() == key, "runtime descriptors changed the artifact key");
+    Require(moved.Key() == key, "runtime descriptors changed the artifact key");
     SampleRequest vertex;
     vertex.request.shader.stage = ShaderStage::Vertex;
     vertex.request.context.compute.reset();
@@ -1000,21 +997,21 @@ void verifyKeySensitivity() {
     const auto vertexKey = vertex.Key();
     const auto contextKey = RecompileCacheKey::ContextHash(vertex.request);
     input.resources[0].fields = {0x20000u, 32u << 16u, 128u, (77u << 12u) | 0xfa9u};
-    require(vertex.Key() == vertexKey && RecompileCacheKey::ContextHash(vertex.request) == contextKey, "runtime vertex format, stride, swizzle or address changed the static interface key");
+    Require(vertex.Key() == vertexKey && RecompileCacheKey::ContextHash(vertex.request) == contextKey, "runtime vertex format, stride, swizzle or address changed the static interface key");
     input.resources[0].fields[3] = (20u << 12u) | 0xfacu;
-    require(vertex.Key() != vertexKey && RecompileCacheKey::ContextHash(vertex.request) != contextKey, "integer vertex input reused a float interface");
+    Require(vertex.Key() != vertexKey && RecompileCacheKey::ContextHash(vertex.request) != contextKey, "integer vertex input reused a float interface");
     input.resources[0].fields[3] = (77u << 12u) | 0xfa9u;
     input.resourcesDst[0].registersNum = 2u;
-    require(vertex.Key() != vertexKey, "vertex component interface did not change the artifact key");
+    Require(vertex.Key() != vertexKey, "vertex component interface did not change the artifact key");
     input.fetchEmbedded = true;
     const auto embeddedKey = vertex.Key();
     input.resources[0].fields = {};
     input.resourcesDst[0].fetchIndex = 1u;
-    require(vertex.Key() == embeddedKey, "runtime vertex fetch descriptors changed the artifact key");
+    Require(vertex.Key() == embeddedKey, "runtime vertex fetch descriptors changed the artifact key");
     input.resources[0].fields[3] = (20u << 12u) | 0xfacu;
-    require(vertex.Key() == embeddedKey, "embedded numeric class changed the prepared template key");
+    Require(vertex.Key() == embeddedKey, "embedded numeric class changed the prepared template key");
     input.resourcesNum = 0u;
-    require(vertex.Key() != embeddedKey, "embedded semantic interface did not change the artifact key");
+    Require(vertex.Key() != embeddedKey, "embedded semantic interface did not change the artifact key");
     SampleRequest fragment;
     fragment.request.shader.stage = ShaderStage::Fragment;
     fragment.request.context.compute.reset();
@@ -1023,19 +1020,19 @@ void verifyKeySensitivity() {
     const auto fragmentKey = fragment.Key();
     const auto fragmentContextKey = RecompileCacheKey::ContextHash(fragment.request);
     fragment.request.context.pixel->targetExportMapping.fill(0x1bu);
-    require(fragment.Key() == fragmentKey && RecompileCacheKey::ContextHash(fragment.request) == fragmentContextKey, "runtime export mapping changed the fragment artifact key");
+    Require(fragment.Key() == fragmentKey && RecompileCacheKey::ContextHash(fragment.request) == fragmentContextKey, "runtime export mapping changed the fragment artifact key");
     fragment.request.context.pixel->targetOutputMode[0] = 7;
-    require(fragment.Key() != fragmentKey, "integer fragment output reused a float interface");
+    Require(fragment.Key() != fragmentKey, "integer fragment output reused a float interface");
 }
 
 void verifyFloatModeSerialization() {
     const RequestSerializer serializer;
     SampleRequest sample;
-    require(!serializer.Deserialize(serializer.Serialize(sample.request)).request.context.floatMode.has_value(), "an unknown float mode came back from serialization");
+    Require(!serializer.Deserialize(serializer.Serialize(sample.request)).request.context.floatMode.has_value(), "an unknown float mode came back from serialization");
     const ShaderFloatMode mode{0x04u, false, true, true};
     sample.request.context.floatMode = mode;
     const auto back = serializer.Deserialize(serializer.Serialize(sample.request));
-    require(back.request.context.floatMode == mode, "the float mode did not survive serialization");
+    Require(back.request.context.floatMode == mode, "the float mode did not survive serialization");
 }
 
 int runLargeFileWrite() {
@@ -1089,16 +1086,16 @@ int runLargeFileWrite() {
             std::cout << "skipped, the disk filled up while the file was written: " << after.available << " bytes free afterwards, " << space.available << " before\n";
             return 77;
         }
-        require(false, "cannot write a cache file of more than 2 GiB (" + std::to_string(space.available) + " bytes free before, " + (spaceError ? spaceError.message() : std::to_string(after.available) + " bytes free after") + ")");
+        Require(false, "cannot write a cache file of more than 2 GiB (" + std::to_string(space.available) + " bytes free before, " + (spaceError ? spaceError.message() : std::to_string(after.available) + " bytes free after") + ")");
     }
-    require(std::filesystem::file_size(path) == size, "the cache file of more than 2 GiB has the wrong size");
+    Require(std::filesystem::file_size(path) == size, "the cache file of more than 2 GiB has the wrong size");
     {
         std::ifstream file(path, std::ios::binary);
-        require(static_cast<bool>(file), "cannot open the cache file of more than 2 GiB");
+        Require(static_cast<bool>(file), "cannot open the cache file of more than 2 GiB");
         for (std::size_t index = 0; index < samples.size(); ++index) {
             file.seekg(static_cast<std::streamoff>(samples[index]));
             char value = 0;
-            require(file.get(value) && static_cast<std::byte>(value) == bytes[samples[index]], "the cache file of more than 2 GiB differs at byte " + std::to_string(samples[index]));
+            Require(file.get(value) && static_cast<std::byte>(value) == bytes[samples[index]], "the cache file of more than 2 GiB differs at byte " + std::to_string(samples[index]));
         }
     }
     std::size_t entries = 0;
@@ -1106,9 +1103,9 @@ int runLargeFileWrite() {
         static_cast<void>(entry);
         ++entries;
     }
-    require(entries == 1u, "the cache file of more than 2 GiB left a temporary file behind");
+    Require(entries == 1u, "the cache file of more than 2 GiB left a temporary file behind");
     std::filesystem::remove_all(directory, error);
-    require(!error, "cannot remove the large file test directory: " + error.message());
+    Require(!error, "cannot remove the large file test directory: " + error.message());
     std::cout << "large cache file write test passed\n";
     return 0;
 }
@@ -1120,28 +1117,28 @@ void verifyAtomicReplacement(const std::filesystem::path& directory) {
         explicit Reader(const std::filesystem::path& path)
             : file(CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE,
                                nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr)) {
-            require(file != INVALID_HANDLE_VALUE, "cannot retain the cache file");
+            Require(file != INVALID_HANDLE_VALUE, "cannot retain the cache file");
         }
         ~Reader() { CloseHandle(file); }
         std::vector<std::byte> Read() {
-            require(SetFilePointerEx(file, {}, nullptr, FILE_BEGIN), "cannot seek the retained cache file");
+            Require(SetFilePointerEx(file, {}, nullptr, FILE_BEGIN), "cannot seek the retained cache file");
             std::array<std::byte, 32> bytes{};
             DWORD count = 0;
-            require(ReadFile(file, bytes.data(), static_cast<DWORD>(bytes.size()), &count, nullptr), "cannot read the retained cache file");
+            Require(ReadFile(file, bytes.data(), static_cast<DWORD>(bytes.size()), &count, nullptr), "cannot read the retained cache file");
             return {bytes.begin(), bytes.begin() + count};
         }
 #else
         std::ifstream file;
         explicit Reader(const std::filesystem::path& path) : file(path, std::ios::binary) {
-            require(file.is_open(), "cannot retain the cache file");
+            Require(file.is_open(), "cannot retain the cache file");
         }
         std::vector<std::byte> Read() {
             file.clear();
             file.seekg(0);
-            require(!file.fail(), "cannot seek the retained cache file");
+            Require(!file.fail(), "cannot seek the retained cache file");
             std::array<std::byte, 32> bytes{};
             file.read(reinterpret_cast<char*>(bytes.data()), bytes.size());
-            require(file.eof() && !file.bad(), "cannot read the retained cache file");
+            Require(file.eof() && !file.bad(), "cannot read the retained cache file");
             return {bytes.begin(), bytes.begin() + file.gcount()};
         }
 #endif
@@ -1152,76 +1149,76 @@ void verifyAtomicReplacement(const std::filesystem::path& directory) {
     const auto path = root / "entry.bin";
     const std::vector<std::byte> original{std::byte{0x12}, std::byte{0x00}, std::byte{0x34}};
     const std::vector<std::byte> replacement{std::byte{0xab}, std::byte{0xcd}, std::byte{0x00}, std::byte{0xef}};
-    require(WriteFileAtomically(path, original), "cannot write the initial cache entry");
+    Require(WriteFileAtomically(path, original), "cannot write the initial cache entry");
 #ifdef _WIN32
     {
         const auto renaming = CreateFileW(path.c_str(), DELETE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                                          nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-        require(renaming != INVALID_HANDLE_VALUE, "cannot retain the cache entry's rename handle");
+        Require(renaming != INVALID_HANDLE_VALUE, "cannot retain the cache entry's rename handle");
         struct Close { HANDLE file; ~Close() { CloseHandle(file); } } close{renaming};
         std::vector<std::byte> bytes;
-        require(ReadWholeFile(path, bytes) && bytes == original, "cache reader failed while the published entry retained its rename handle");
+        Require(ReadWholeFile(path, bytes) && bytes == original, "cache reader failed while the published entry retained its rename handle");
     }
     if (PosixReplaceUnsupported(root)) {
         std::fprintf(stderr, "shader disk cache: %s has no POSIX rename (ERROR_INVALID_PARAMETER), so an entry another reader holds open cannot be replaced there; skipping that case\n", root.string().c_str());
-        require(std::filesystem::remove(path), "cannot remove the cache entry");
-        require(std::filesystem::is_empty(root), "atomic replacement left a temporary file behind");
-        require(std::filesystem::remove(root), "cannot remove the empty replacement directory");
+        Require(std::filesystem::remove(path), "cannot remove the cache entry");
+        Require(std::filesystem::is_empty(root), "atomic replacement left a temporary file behind");
+        Require(std::filesystem::remove(root), "cannot remove the empty replacement directory");
         return;
     }
 #endif
     {
         Reader old(path);
-        require(old.Read() == original, "the retained reader did not read the original entry");
-        require(WriteFileAtomically(path, replacement), "cannot replace cache entry with a retained reader");
-        require(old.Read() == original, "replacement changed the retained original entry");
+        Require(old.Read() == original, "the retained reader did not read the original entry");
+        Require(WriteFileAtomically(path, replacement), "cannot replace cache entry with a retained reader");
+        Require(old.Read() == original, "replacement changed the retained original entry");
         std::vector<std::byte> fresh;
-        require(ReadWholeFile(path, fresh) && fresh == replacement, "a fresh reader did not read the replacement entry");
+        Require(ReadWholeFile(path, fresh) && fresh == replacement, "a fresh reader did not read the replacement entry");
         Reader current(path);
-        require(current.Read() == replacement, "the replacement reader did not retain its entry");
-        require(std::filesystem::remove(path), "cannot delete the replacement while readers retain it");
-        require(!ReadWholeFile(path, fresh), "the deleted cache entry remains readable by path");
-        require(old.Read() == original && current.Read() == replacement, "deletion invalidated retained cache readers");
+        Require(current.Read() == replacement, "the replacement reader did not retain its entry");
+        Require(std::filesystem::remove(path), "cannot delete the replacement while readers retain it");
+        Require(!ReadWholeFile(path, fresh), "the deleted cache entry remains readable by path");
+        Require(old.Read() == original && current.Read() == replacement, "deletion invalidated retained cache readers");
     }
-    require(std::filesystem::is_empty(root), "atomic replacement left a temporary file behind");
-    require(std::filesystem::remove(root), "cannot remove the empty replacement directory");
+    Require(std::filesystem::is_empty(root), "atomic replacement left a temporary file behind");
+    Require(std::filesystem::remove(root), "cannot remove the empty replacement directory");
 }
 
 void verifyStore() {
-    require(ShaderDiskCache::Enabled(), "the disk cache is not enabled");
+    Require(ShaderDiskCache::Enabled(), "the disk cache is not enabled");
     SampleRequest sample;
     const auto key = sample.Key();
     const auto variant = std::make_shared<const CompiledVariant>(sampleVariant());
     const auto before = ShaderDiskCache::Totals();
     CompiledVariant loaded;
-    require(!ShaderDiskCache::Load(key, loaded), "an entry loads before it was stored");
+    Require(!ShaderDiskCache::Load(key, loaded), "an entry loads before it was stored");
     ShaderDiskCache::Store(key, variant);
     ShaderDiskCache::Flush();
-    require(ShaderDiskCache::Totals().writes == before.writes + 1, "the store did not write the entry");
+    Require(ShaderDiskCache::Totals().writes == before.writes + 1, "the store did not write the entry");
     const auto path = ShaderDiskCache::EntryDirectory() / ShaderDiskCache::EntryName(key);
-    require(std::filesystem::exists(path), "no entry file at " + path.string());
-    require(ShaderDiskCache::Load(key, loaded), "a stored entry does not load");
+    Require(std::filesystem::exists(path), "no entry file at " + path.string());
+    Require(ShaderDiskCache::Load(key, loaded), "a stored entry does not load");
     requireSameVariant(*variant, loaded, "store round trip");
-    require(ShaderDiskCache::Totals().hits == before.hits + 1, "the load was not counted as a hit");
+    Require(ShaderDiskCache::Totals().hits == before.hits + 1, "the load was not counted as a hit");
 
     std::vector<std::byte> file;
-    require(ReadWholeFile(path, file), "cannot read the entry back");
+    Require(ReadWholeFile(path, file), "cannot read the entry back");
 #ifdef _WIN32
     if (PosixReplaceUnsupported(path.parent_path())) {
         std::fprintf(stderr, "shader disk cache: %s has no POSIX rename (ERROR_INVALID_PARAMETER), so the entry the cache has mapped cannot be replaced there; skipping the damaged-entry checks\n", path.parent_path().string().c_str());
         return;
     }
 #endif
-    require(WriteFileAtomically(path, std::span(file).first(file.size() / 2)), "cannot truncate the entry");
-    require(!ShaderDiskCache::Load(key, loaded), "a truncated entry loads");
+    Require(WriteFileAtomically(path, std::span(file).first(file.size() / 2)), "cannot truncate the entry");
+    Require(!ShaderDiskCache::Load(key, loaded), "a truncated entry loads");
     auto corrupt = file;
     corrupt[corrupt.size() - 5] ^= std::byte{0x40};
-    require(WriteFileAtomically(path, corrupt), "cannot damage the entry");
-    require(!ShaderDiskCache::Load(key, loaded), "a corrupt entry loads");
-    require(ShaderDiskCache::Totals().loadFailures == before.loadFailures + 2, "the rejected entries were not counted");
+    Require(WriteFileAtomically(path, corrupt), "cannot damage the entry");
+    Require(!ShaderDiskCache::Load(key, loaded), "a corrupt entry loads");
+    Require(ShaderDiskCache::Totals().loadFailures == before.loadFailures + 2, "the rejected entries were not counted");
     ShaderDiskCache::Store(key, variant);
     ShaderDiskCache::Flush();
-    require(ShaderDiskCache::Load(key, loaded), "a rewritten entry does not load");
+    Require(ShaderDiskCache::Load(key, loaded), "a rewritten entry does not load");
 }
 
 void verifyPersist() {
@@ -1229,34 +1226,34 @@ void verifyPersist() {
     const auto key = sample.Key();
     const auto variant = sampleVariant();
     const auto persisted = ShaderDiskCache::Persist(key, variant);
-    require(persisted != nullptr, "a persisted entry was not read back");
+    Require(persisted != nullptr, "a persisted entry was not read back");
     const auto path = ShaderDiskCache::EntryDirectory() / ShaderDiskCache::EntryName(key);
 #ifdef _WIN32
     MEMORY_BASIC_INFORMATION region{};
-    require(VirtualQuery(persisted->artifact.spirv.data(), &region, sizeof(region)) == sizeof(region) && region.Type == MEM_MAPPED, "persisted SPIR-V is not a mapped cache entry");
+    Require(VirtualQuery(persisted->artifact.spirv.data(), &region, sizeof(region)) == sizeof(region) && region.Type == MEM_MAPPED, "persisted SPIR-V is not a mapped cache entry");
     const auto close = [](void* handle) { CloseHandle(handle); };
     std::unique_ptr<void, decltype(close)> writer(CreateFileW(path.c_str(), GENERIC_WRITE | DELETE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr), close);
-    require(writer.get() != INVALID_HANDLE_VALUE, "cannot retain the published cache writer");
+    Require(writer.get() != INVALID_HANDLE_VALUE, "cannot retain the published cache writer");
     CompiledVariant loaded;
-    require(ShaderDiskCache::Load(key, loaded), "cannot load a cache entry while its writer retains rename access");
+    Require(ShaderDiskCache::Load(key, loaded), "cannot load a cache entry while its writer retains rename access");
     const auto& loadedWords = loaded.artifact.spirv;
-    require(VirtualQuery(loadedWords.data(), &region, sizeof(region)) == sizeof(region) && region.Type == MEM_MAPPED, "cache loading with a retained writer did not map the entry");
+    Require(VirtualQuery(loadedWords.data(), &region, sizeof(region)) == sizeof(region) && region.Type == MEM_MAPPED, "cache loading with a retained writer did not map the entry");
     writer.reset();
 #endif
     requireSameVariant(variant, *persisted, "persist round trip");
     auto detached = persisted->artifact.spirv;
     detached[0] ^= 1u;
-    require(detached[0] != persisted->artifact.spirv[0], "changing a copied mapped module changed its owner");
+    Require(detached[0] != persisted->artifact.spirv[0], "changing a copied mapped module changed its owner");
 #ifdef _WIN32
     if (PosixReplaceUnsupported(path.parent_path())) {
         std::fprintf(stderr, "shader disk cache: %s has no POSIX rename (ERROR_INVALID_PARAMETER), so a mapped persisted entry cannot be replaced there; skipping that check\n", path.parent_path().string().c_str());
         return;
     }
 #endif
-    require(WriteFileAtomically(path, std::vector<std::byte>(64, std::byte{0x5a})), "cannot replace the persisted entry");
+    Require(WriteFileAtomically(path, std::vector<std::byte>(64, std::byte{0x5a})), "cannot replace the persisted entry");
     std::error_code error;
     std::filesystem::remove(path, error);
-    require(!error, "cannot remove the replaced cache entry");
+    Require(!error, "cannot remove the replaced cache entry");
     requireSameArtifact(variant.artifact, persisted->artifact, "a persisted entry whose file was replaced and removed");
 }
 
@@ -1264,14 +1261,14 @@ void verifyReleaseMapped() {
     const std::vector<std::uint32_t> words{0x07230203u, 0x00010000u, 1u, 2u, 3u};
     const SharedSpirv owned(words);
     ShaderDiskCache::ReleaseMapped(owned);
-    require(!owned.Mapped() && std::ranges::equal(words, owned.Words()), "releasing an owned module changed its words");
+    Require(!owned.Mapped() && std::ranges::equal(words, owned.Words()), "releasing an owned module changed its words");
     SampleRequest sample;
     const auto key = sample.Key();
     const auto variant = sampleVariant();
     const auto persisted = ShaderDiskCache::Persist(key, variant);
-    require(persisted != nullptr, "a persisted entry was not read back");
+    Require(persisted != nullptr, "a persisted entry was not read back");
 #ifdef _WIN32
-    require(persisted->artifact.spirv.Mapped(), "persisted SPIR-V is not a mapped cache entry");
+    Require(persisted->artifact.spirv.Mapped(), "persisted SPIR-V is not a mapped cache entry");
 #endif
     ShaderDiskCache::ReleaseMapped(persisted->artifact.spirv);
     ShaderDiskCache::ReleaseMapped(persisted->artifact.spirv);
@@ -1282,7 +1279,7 @@ void verifyReleaseMapped() {
 void verifyLongHostPaths() {
     using namespace ShaderRecompiler::ShaderDiskCache;
     auto directory = std::filesystem::temp_directory_path() / ("aps5-cache-long-" + std::to_string(std::random_device{}()));
-    require(directory.native().size() < 224, "temporary path is too long for the cache control");
+    Require(directory.native().size() < 224, "temporary path is too long for the cache control");
     directory /= std::wstring(224 - directory.native().size(), L'd');
     const auto extended = [](const auto& path) { return std::filesystem::path(L"\\\\?\\" + path.native()); };
     std::filesystem::create_directories(extended(directory));
@@ -1308,27 +1305,27 @@ void verifyLongHostPaths() {
     entries = ShaderDiskCache::EntryDirectory();
     files.push_back(entries / EntryName(key));
     files.push_back(entries / "last-used");
-    require(files.front().native().size() >= MAX_PATH, "the cache persistence control did not cross MAX_PATH");
+    Require(files.front().native().size() >= MAX_PATH, "the cache persistence control did not cross MAX_PATH");
     const auto persisted = ShaderDiskCache::Persist(key, variant);
     std::vector<std::byte> published;
-    require(ReadWholeFile(files.front(), published) && published == EncodeEntry(key, variant),
+    Require(ReadWholeFile(files.front(), published) && published == EncodeEntry(key, variant),
             "the long-path cache entry was not correctly published before mapping");
-    require(persisted != nullptr, "a long-path cache entry was not persisted and mapped");
+    Require(persisted != nullptr, "a long-path cache entry was not persisted and mapped");
     MEMORY_BASIC_INFORMATION region{};
-    require(VirtualQuery(persisted->artifact.spirv.data(), &region, sizeof(region)) == sizeof(region) && region.Type == MEM_MAPPED,
+    Require(VirtualQuery(persisted->artifact.spirv.data(), &region, sizeof(region)) == sizeof(region) && region.Type == MEM_MAPPED,
             "long-path persisted SPIR-V is not mapped");
     requireSameVariant(variant, *persisted, "long-path persist round trip");
     CompiledVariant loaded;
-    require(ShaderDiskCache::Load(key, loaded), "a long-path persisted cache entry did not load");
+    Require(ShaderDiskCache::Load(key, loaded), "a long-path persisted cache entry did not load");
     requireSameVariant(variant, loaded, "long-path load round trip");
     const auto packPath = directory / (std::wstring(75, L'p') + L".pack");
     files.push_back(packPath);
-    require(WriteFileAtomically(packPath, packBytes({{key, EncodeEntry(key, variant)}})), "cannot publish the long-path cache pack");
+    Require(WriteFileAtomically(packPath, packBytes({{key, EncodeEntry(key, variant)}})), "cannot publish the long-path cache pack");
     CachePack pack(packPath);
-    require(pack.Valid(), "a long-path cache pack was rejected: " + pack.Error());
+    Require(pack.Valid(), "a long-path cache pack was rejected: " + pack.Error());
     PackLoadTimings timings;
     CompiledVariant decoded;
-    require(pack.Load(key, decoded, timings) == LoadStatus::Loaded, "a long-path cache pack entry did not load");
+    Require(pack.Load(key, decoded, timings) == LoadStatus::Loaded, "a long-path cache pack entry did not load");
     requireSameVariant(variant, decoded, "long-path cache pack round trip");
     std::cout << "long-path shader cache persistence and pack tests passed\n";
 }
@@ -1362,11 +1359,11 @@ int runLoadingProcess() {
     ComputeRequest cached(true);
     const auto loaded = Recompile(cached.request);
     const auto totals = ShaderDiskCache::Totals();
-    require(totals.hits == 1 && totals.misses == 0 && totals.loadFailures == 0, "the second process did not load the stored variant (hits " + std::to_string(totals.hits) + ", misses " + std::to_string(totals.misses) + ")");
+    Require(totals.hits == 1 && totals.misses == 0 && totals.loadFailures == 0, "the second process did not load the stored variant (hits " + std::to_string(totals.hits) + ", misses " + std::to_string(totals.misses) + ")");
     ComputeRequest fresh(false);
     const auto compiled = Recompile(fresh.request);
     requireSameResult(compiled, loaded, "loaded against compiled");
-    require(!loaded.spirv.empty(), "the loaded SPIR-V is empty");
+    Require(!loaded.spirv.empty(), "the loaded SPIR-V is empty");
     std::cout << "second process loaded " << loaded.spirv.size() << " SPIR-V words from the disk cache\n";
     return 0;
 }
@@ -1377,10 +1374,10 @@ void verifyAcrossProcesses(const char* self) {
     const auto compiled = Recompile(request.request);
     ShaderDiskCache::Flush();
     const auto after = ShaderDiskCache::Totals();
-    require(after.misses == before.misses + 1 && after.writes == before.writes + 1, "the first compile was not looked up and stored");
-    require(!compiled.spirv.empty(), "the compile produced no SPIR-V");
+    Require(after.misses == before.misses + 1 && after.writes == before.writes + 1, "the first compile was not looked up and stored");
+    Require(!compiled.spirv.empty(), "the compile produced no SPIR-V");
     const std::string command = "\"" + std::string(self) + "\" --load";
-    require(std::system(command.c_str()) == 0, "the loading process failed");
+    Require(std::system(command.c_str()) == 0, "the loading process failed");
 }
 
 struct ClockRequest {
@@ -1417,7 +1414,7 @@ std::string emissionFailure(const RecompileRequest& request) {
         static_cast<void>(PrepareShader(request));
     } catch (const std::runtime_error& error) {
         const std::string message = error.what();
-        require(message.find("reads the shader clock, which needs the device's VK_KHR_shader_clock") != std::string::npos, "unexpected failure: " + message.substr(0, message.find("RecompileRequest:")));
+        Require(message.find("reads the shader clock, which needs the device's VK_KHR_shader_clock") != std::string::npos, "unexpected failure: " + message.substr(0, message.find("RecompileRequest:")));
         return message;
     }
     throw std::runtime_error("a shader clock read compiled without VK_KHR_shader_clock");
@@ -1431,22 +1428,22 @@ void verifyEmissionFailureMemo() {
     const auto before = ShaderDiskCache::Totals();
     ClockRequest clock;
     const auto first = emissionFailure(clock.request);
-    require(diskMisses() == before.misses + 1, "the first compile was not looked up");
-    require(emissionFailure(clock.request) == first, "the second compile failed with another message");
-    require(diskMisses() == before.misses + 1, "the second compile looked up and emitted the program again");
+    Require(diskMisses() == before.misses + 1, "the first compile was not looked up");
+    Require(emissionFailure(clock.request) == first, "the second compile failed with another message");
+    Require(diskMisses() == before.misses + 1, "the second compile looked up and emitted the program again");
 
     ClockRequest layout;
     layout.request.layout = {0, 0, 16, 112};
     static_cast<void>(emissionFailure(layout.request));
-    require(diskMisses() == before.misses + 2, "another binding layout reused the failure");
+    Require(diskMisses() == before.misses + 2, "another binding layout reused the failure");
     ClockRequest stride(16);
     static_cast<void>(emissionFailure(stride.request));
-    require(diskMisses() == before.misses + 2, "a runtime buffer stride change repeated static preparation");
+    Require(diskMisses() == before.misses + 2, "a runtime buffer stride change repeated static preparation");
     ClockRequest relocated;
     relocated.request.shader.codeAddress += 0x1000u;
     static_cast<void>(emissionFailure(relocated.request));
-    require(diskMisses() == before.misses + 3, "a relocated copy reused the failure");
-    require(emissionFailure(clock.request) == first && diskMisses() == before.misses + 3, "the other requests replaced the failure");
+    Require(diskMisses() == before.misses + 3, "a relocated copy reused the failure");
+    Require(emissionFailure(clock.request) == first && diskMisses() == before.misses + 3, "the other requests replaced the failure");
 
     ClockRequest concurrent;
     concurrent.request.layout.pushConstantSizeBytes = 64;
@@ -1454,18 +1451,18 @@ void verifyEmissionFailureMemo() {
     for (auto& future : failures) future = std::async(std::launch::async, [&concurrent] { return emissionFailure(concurrent.request); });
     std::vector<std::string> messages;
     for (auto& future : failures) messages.push_back(future.get());
-    require(std::all_of(messages.begin(), messages.end(), [&](const std::string& message) { return message == messages.front(); }), "concurrent requests failed with different messages");
-    require(diskMisses() == before.misses + 4, "concurrent requests emitted the program " + std::to_string(diskMisses() - before.misses - 3) + " times");
+    Require(std::all_of(messages.begin(), messages.end(), [&](const std::string& message) { return message == messages.front(); }), "concurrent requests failed with different messages");
+    Require(diskMisses() == before.misses + 4, "concurrent requests emitted the program " + std::to_string(diskMisses() - before.misses - 3) + " times");
 
     ShaderDiskCache::Flush();
-    require(ShaderDiskCache::Totals().writes == before.writes, "an emission failure was stored in the disk cache");
+    Require(ShaderDiskCache::Totals().writes == before.writes, "an emission failure was stored in the disk cache");
 }
 
 int runWithoutFailureMemo() {
     ClockRequest clock;
     const auto first = emissionFailure(clock.request);
-    require(emissionFailure(clock.request) == first, "the second compile failed with another message");
-    require(diskMisses() == 2, "APS5_NO_FAILURE_MEMO=1 did not emit the program again (" + std::to_string(diskMisses()) + " lookups)");
+    Require(emissionFailure(clock.request) == first, "the second compile failed with another message");
+    Require(diskMisses() == 2, "APS5_NO_FAILURE_MEMO=1 did not emit the program again (" + std::to_string(diskMisses()) + " lookups)");
     std::cout << "APS5_NO_FAILURE_MEMO=1 emitted the failing program twice\n";
     return 0;
 }
@@ -1473,7 +1470,7 @@ int runWithoutFailureMemo() {
 void verifyFailureMemoSwitch(const char* self) {
     setEnvironment("APS5_NO_FAILURE_MEMO", "1");
     const std::string command = "\"" + std::string(self) + "\" --no-failure-memo";
-    require(std::system(command.c_str()) == 0, "the process with APS5_NO_FAILURE_MEMO=1 failed");
+    Require(std::system(command.c_str()) == 0, "the process with APS5_NO_FAILURE_MEMO=1 failed");
 }
 
 void verifyInvocationIsolation() {
@@ -1481,11 +1478,11 @@ void verifyInvocationIsolation() {
     const auto first = Recompile(request.request);
     request.userData[0] += 0x10000u;
     const auto second = Recompile(request.request);
-    require(first.variantId != 0 && first.variantId == second.variantId, "a buffer address change did not reuse the artifact");
-    require(second.cacheHit, "the second invocation missed the compiled cache");
+    Require(first.variantId != 0 && first.variantId == second.variantId, "a buffer address change did not reuse the artifact");
+    Require(second.cacheHit, "the second invocation missed the compiled cache");
     requireSameArtifact(first, second, "invocations sharing an artifact");
-    require(first.spirv.data() == second.spirv.data(), "invocations duplicated SPIR-V storage");
-    require(!sameBindings(first.bindings, second.bindings) || first.pushConstants != second.pushConstants, "the second invocation reused stale resource data");
+    Require(first.spirv.data() == second.spirv.data(), "invocations duplicated SPIR-V storage");
+    Require(!sameBindings(first.bindings, second.bindings) || first.pushConstants != second.pushConstants, "the second invocation reused stale resource data");
     request.userData[0] -= 0x10000u;
     const auto restored = Recompile(request.request);
     requireSameResult(first, restored, "restored invocation");
@@ -1505,26 +1502,26 @@ void verifyInvocationIsolation() {
     for (const auto& descriptor : descriptors) {
         request.userData = descriptor;
         const auto changed = Recompile(request.request);
-        require(changed.cacheHit && first.variantId == changed.variantId, "buffer metadata changed the compiled variant");
+        Require(changed.cacheHit && first.variantId == changed.variantId, "buffer metadata changed the compiled variant");
         if ((descriptor[0] & 3u) == (original[0] & 3u) && (descriptor[1] & 0xffff0000u) == (original[1] & 0xffff0000u) && descriptor[3] == original[3] && (descriptor[0] != 0u || (descriptor[1] & 0xffffu) != 0u)) {
-            require(first.spirv.data() == changed.spirv.data() && first.PipelineVariantId() == changed.PipelineVariantId(), "buffer address or size rebuilt the specialized module");
+            Require(first.spirv.data() == changed.spirv.data() && first.PipelineVariantId() == changed.PipelineVariantId(), "buffer address or size rebuilt the specialized module");
         }
         if (descriptor[2] == 0u) {
-            require(first.spirv.data() == changed.spirv.data() && first.PipelineVariantId() == changed.PipelineVariantId(), "a null V# did not specialize with the bound slot's substitute");
+            Require(first.spirv.data() == changed.spirv.data() && first.PipelineVariantId() == changed.PipelineVariantId(), "a null V# did not specialize with the bound slot's substitute");
             continue;
         }
         ComputeRequest fresh(false);
         fresh.userData = descriptor;
         requireSameResult(Recompile(fresh.request), changed, "reused binding plan against fresh compilation");
         const auto repeated = Recompile(request.request);
-        require(changed.spirv.data() == repeated.spirv.data() && changed.PipelineVariantId() == repeated.PipelineVariantId(), "buffer specialization did not reuse its module");
+        Require(changed.spirv.data() == repeated.spirv.data() && changed.PipelineVariantId() == repeated.PipelineVariantId(), "buffer specialization did not reuse its module");
     }
     request.userData = original;
     request.userData[3] |= 0x40000000u;
     bool rejected = false;
     try { static_cast<void>(Recompile(request.request)); }
     catch (const std::runtime_error&) { rejected = true; }
-    require(rejected, "an unsupported buffer descriptor type was accepted");
+    Require(rejected, "an unsupported buffer descriptor type was accepted");
 }
 
 void verifyBufferAlignmentSpecialization() {
@@ -1539,25 +1536,25 @@ void verifyBufferAlignmentSpecialization() {
         std::size_t atomics = 0;
         for (std::size_t cursor = 5; cursor < result.spirv.size();) {
             const auto count = result.spirv[cursor] >> 16u;
-            require(count != 0u && count <= result.spirv.size() - cursor, "invalid specialized buffer instruction");
+            Require(count != 0u && count <= result.spirv.size() - cursor, "invalid specialized buffer instruction");
             if ((result.spirv[cursor] & 0xffffu) == spv::OpAtomicCompareExchange) ++atomics;
             cursor += count;
         }
         return atomics;
     };
-    require(countAtomics(aligned) == 0u, "aligned DWORD store retained unaligned atomic updates");
+    Require(countAtomics(aligned) == 0u, "aligned DWORD store retained unaligned atomic updates");
     for (std::uint32_t offset = 1; offset < 4u; ++offset) {
         request.userData[0] = 0x10000000u + offset;
         const auto unaligned = Recompile(request.request);
-        require(unaligned.variantId == aligned.variantId && diskMisses() == misses, "base alignment repeated static shader preparation");
-        require(countAtomics(unaligned) == 2u, "unaligned DWORD store did not split into two atomic updates");
+        Require(unaligned.variantId == aligned.variantId && diskMisses() == misses, "base alignment repeated static shader preparation");
+        Require(countAtomics(unaligned) == 2u, "unaligned DWORD store did not split into two atomic updates");
         request.userData[0] += 0x10000u;
         const auto relocated = Recompile(request.request);
-        require(unaligned.spirv.data() == relocated.spirv.data(), "relocation with unchanged alignment rebuilt the buffer specialization");
+        Require(unaligned.spirv.data() == relocated.spirv.data(), "relocation with unchanged alignment rebuilt the buffer specialization");
     }
     request.userData[0] = 0x10000000u;
     const auto restored = Recompile(request.request);
-    require(restored.spirv.data() == aligned.spirv.data(), "unaligned buffers replaced the aligned specialization");
+    Require(restored.spirv.data() == aligned.spirv.data(), "unaligned buffers replaced the aligned specialization");
 }
 
 void verifyBindingPlanSelection() {
@@ -1581,8 +1578,8 @@ void verifyBindingPlanSelection() {
     const auto plan = builder.Prepare(compiled.layout, info, IrShaderStage::Compute, snapshot);
     BindingAllocationResult full;
     builder.Populate(full, compiled, plan, 0u, snapshot, {});
-    require(full.bindings.size() == 4u, "binding plan lost a descriptor before module selection");
-    require(full.bindings[0].bufferAtomic == std::vector<bool>{true, false} && full.bindings[0].bufferWritten == std::vector<bool>{true, false} && full.bindings[0].bufferRead == std::vector<bool>{false, true}, "binding plan lost buffer access metadata");
+    Require(full.bindings.size() == 4u, "binding plan lost a descriptor before module selection");
+    Require(full.bindings[0].bufferAtomic == std::vector<bool>{true, false} && full.bindings[0].bufferWritten == std::vector<bool>{true, false} && full.bindings[0].bufferRead == std::vector<bool>{false, true}, "binding plan lost buffer access metadata");
     const std::array liveBindings{full.bindings[0].binding, full.bindings[0].binding, full.bindings[3].binding};
     const auto selected = builder.Select(plan, liveBindings);
     snapshot.userData.clear();
@@ -1591,32 +1588,32 @@ void verifyBindingPlanSelection() {
     snapshot.buffers[1].dwords[2] = 128u;
     BindingAllocationResult populated;
     builder.Populate(populated, compiled, selected, 0u, snapshot, {});
-    require(populated.bindings.size() == 2u && populated.pushConstants.empty(), "module selection retained an unused descriptor");
+    Require(populated.bindings.size() == 2u && populated.pushConstants.empty(), "module selection retained an unused descriptor");
     auto expected = full.bindings[0];
     expected.guestDescriptor[0] += 0x10000u;
     expected.guestDescriptor[6] = 128u;
-    require(sameBinding(expected, populated.bindings[0]) && sameBinding(full.bindings[3], populated.bindings[1]), "selected plan changed binding order or reused stale buffer data");
+    Require(sameBinding(expected, populated.bindings[0]) && sameBinding(full.bindings[3], populated.bindings[1]), "selected plan changed binding order or reused stale buffer data");
     bool rejected = false;
     try { static_cast<void>(builder.Select(plan, std::array{UINT32_MAX})); }
     catch (const std::runtime_error&) { rejected = true; }
-    require(rejected, "module selection accepted an unknown binding");
+    Require(rejected, "module selection accepted an unknown binding");
     snapshot.buffers[0].dwordCount = 3u;
     rejected = false;
     try { builder.Populate(populated, compiled, selected, 0u, snapshot, {}); }
     catch (const std::runtime_error&) { rejected = true; }
-    require(rejected, "selected plan accepted an invalid live buffer descriptor");
+    Require(rejected, "selected plan accepted an invalid live buffer descriptor");
     snapshot.buffers[0].dwordCount = 4u;
     const auto rejectsAlignment = [&](const char* diagnostic) {
         try { static_cast<void>(builder.Prepare(compiled.layout, info, IrShaderStage::Compute, snapshot)); }
         catch (const std::runtime_error& error) {
-            require(std::string_view(error.what()).find(diagnostic) != std::string_view::npos, "alignment check returned an unrelated failure");
+            Require(std::string_view(error.what()).find(diagnostic) != std::string_view::npos, "alignment check returned an unrelated failure");
             return;
         }
         throw std::runtime_error("binding plan accepted an unsupported buffer alignment");
     };
     snapshot.buffers[0].dwords[0] |= 2u;
     const auto atomicPlan = builder.Prepare(compiled.layout, info, IrShaderStage::Compute, snapshot);
-    require(std::ranges::any_of(atomicPlan.specialization, [](const PipelineSpecializationConstant& constant) { return constant.id == PipelineSpecialization::BufferBase + 3u && constant.value == 2u; }), "a buffer atomic V# off a DWORD boundary did not record its misalignment");
+    Require(std::ranges::any_of(atomicPlan.specialization, [](const PipelineSpecializationConstant& constant) { return constant.id == PipelineSpecialization::BufferBase + 3u && constant.value == 2u; }), "a buffer atomic V# off a DWORD boundary did not record its misalignment");
     snapshot.buffers[0].dwords[0] &= ~3u;
     info.buffers[1].typedAlignment = 2u;
     snapshot.buffers[1].dwords[0] |= 2u;
@@ -1679,17 +1676,17 @@ void verifyVertexTypeSpecialization() {
                 if (op == spv::OpTypeInt) scalarKinds.emplace(words[cursor + 1u], words[cursor + 3u] != 0u ? 1u : 2u);
                 if (op == spv::OpLoad) {
                     const auto attribute = words[cursor + 2u] == 23u ? 0u : 1u;
-                    require(scalarKinds.at(words[cursor + 1u]) == classes[attribute], "vertex input loaded the wrong numeric type");
+                    Require(scalarKinds.at(words[cursor + 1u]) == classes[attribute], "vertex input loaded the wrong numeric type");
                     ++checked;
                 }
                 if (op == spv::OpBitcast || op == spv::OpCopyObject) {
                     const auto attribute = words[cursor + 2u] == 24u ? 0u : 1u;
-                    require(op == (classes[attribute] == 2u ? spv::OpCopyObject : spv::OpBitcast), "vertex input did not preserve raw component bits");
+                    Require(op == (classes[attribute] == 2u ? spv::OpCopyObject : spv::OpBitcast), "vertex input did not preserve raw component bits");
                     ++checked;
                 }
             }
-            require(checked == 4u, "vertex specialization lost attribute loads");
-            require(std::ranges::equal(artifact.spirv.Words(), original), "vertex specialization mutated the shared template");
+            Require(checked == 4u, "vertex specialization lost attribute loads");
+            Require(std::ranges::equal(artifact.spirv.Words(), original), "vertex specialization mutated the shared template");
         }
     }
     auto invalid = artifact;
@@ -1697,7 +1694,7 @@ void verifyVertexTypeSpecialization() {
     bool rejected = false;
     try { static_cast<void>(SpecializeVertexInputTypes(invalid, std::array{0u, 0u})); }
     catch (const std::runtime_error&) { rejected = true; }
-    require(rejected, "out-of-range vertex type patch was accepted");
+    Require(rejected, "out-of-range vertex type patch was accepted");
 }
 
 void verifyBuiltinSpecialization() {
@@ -1758,9 +1755,9 @@ void verifyBuiltinSpecialization() {
     std::uint32_t phiValue = 0u;
     for (std::size_t cursor = 5; cursor < specialized.size();) {
         const auto count = specialized[cursor] >> 16u;
-        require(count != 0u && count <= specialized.size() - cursor, "builtin specialization produced a truncated instruction");
+        Require(count != 0u && count <= specialized.size() - cursor, "builtin specialization produced a truncated instruction");
         const auto op = static_cast<spv::Op>(specialized[cursor] & 0xffffu);
-        require(op != spv::OpSwitch && op != spv::OpBranchConditional && op != spv::OpPhi && op != spv::OpVectorExtractDynamic, "builtin specialization retained constant control flow or dynamic exports");
+        Require(op != spv::OpSwitch && op != spv::OpBranchConditional && op != spv::OpPhi && op != spv::OpVectorExtractDynamic, "builtin specialization retained constant control flow or dynamic exports");
         if (op == spv::OpStore && specialized[cursor + 1u] == 31u) identity = specialized[cursor + 2u] == 30u;
         if (op == spv::OpStore && specialized[cursor + 1u] == 34u) phiValue = specialized[cursor + 2u];
         cursor += count;
@@ -1769,8 +1766,8 @@ void verifyBuiltinSpecialization() {
     for (std::size_t cursor = 5; cursor < specialized.size(); cursor += specialized[cursor] >> 16u) {
         if ((specialized[cursor] & 0xffffu) == spv::OpConstant && specialized[cursor + 2u] == phiValue) correctPhi = specialized[cursor + 3u] == 1u;
     }
-    require(identity && correctPhi, "builtin specialization selected the wrong export or phi value");
-    require(SpecializeSpirv(specialized) == specialized, "builtin specialization is not stable");
+    Require(identity && correctPhi, "builtin specialization selected the wrong export or phi value");
+    Require(SpecializeSpirv(specialized) == specialized, "builtin specialization is not stable");
 }
 
 void verifySpecializationLiveness() {
@@ -1821,16 +1818,16 @@ void verifySpecializationLiveness() {
     for (std::size_t cursor = 5; cursor < specialized.size();) {
         const auto count = specialized[cursor] >> 16u;
         const auto op = static_cast<spv::Op>(specialized[cursor] & 0xffffu);
-        require(count != 0u && count <= specialized.size() - cursor, "dead computation removal truncated an instruction");
+        Require(count != 0u && count <= specialized.size() - cursor, "dead computation removal truncated an instruction");
         if (op == spv::OpLoad || op == spv::OpCopyObject || op == spv::OpIAdd || op == spv::OpIMul || op == spv::OpCompositeExtract || op == spv::OpFunctionCall) results.emplace(specialized[cursor + 2u], std::vector<std::uint32_t>(specialized.begin() + cursor, specialized.begin() + cursor + count));
         if (op == spv::OpStore) ++stores;
         cursor += count;
     }
-    for (const auto id : {13u, 14u, 15u, 16u, 28u}) require(!results.contains(id), "specialization retained a dead computation or copy chain");
-    require(results.at(17u).at(3) == 12u, "copy propagation lost the live source");
-    require(results.at(26u).at(4) == 15u, "copy propagation rewrote a literal as an ID");
-    require(results.contains(18u) && results.contains(20u) && results.contains(27u) && stores == 3u, "specialization removed an effect or decorated copy");
-    require(SpecializeSpirv(specialized) == specialized, "dead computation removal is not stable");
+    for (const auto id : {13u, 14u, 15u, 16u, 28u}) Require(!results.contains(id), "specialization retained a dead computation or copy chain");
+    Require(results.at(17u).at(3) == 12u, "copy propagation lost the live source");
+    Require(results.at(26u).at(4) == 15u, "copy propagation rewrote a literal as an ID");
+    Require(results.contains(18u) && results.contains(20u) && results.contains(27u) && stores == 3u, "specialization removed an effect or decorated copy");
+    Require(SpecializeSpirv(specialized) == specialized, "dead computation removal is not stable");
 }
 
 constexpr std::uint64_t PlanSrtAddress = 0x7f0000010000ull;
@@ -2138,7 +2135,7 @@ IrResourcePlan handBuiltPlan() {
 
 std::vector<std::byte> encodedPlan(const IrResourcePlan& plan) {
     std::vector<std::byte> bytes;
-    require(ShaderDiskCache::EncodePlan(plan, bytes), "a self-contained plan does not encode");
+    Require(ShaderDiskCache::EncodePlan(plan, bytes), "a self-contained plan does not encode");
     return bytes;
 }
 
@@ -2258,23 +2255,23 @@ void verifyNestedResolutionReuse(const IrResourcePlan& plan, const ResourceSnaps
     constexpr std::uint64_t MemoKey = 0x6e6573746564u;
     const auto first = ResourceMaterializer::ResolveImageTablesShared(info, snapshot, MemoKey);
     const auto same = ResourceMaterializer::ResolveImageTablesShared(info, snapshot, MemoKey);
-    if (std::getenv("APS5_NO_TABLE_RESOLUTION_REUSE") == nullptr) require(first == same, "nested table resolution: an unchanged snapshot was not shared");
+    if (std::getenv("APS5_NO_TABLE_RESOLUTION_REUSE") == nullptr) Require(first == same, "nested table resolution: an unchanged snapshot was not shared");
     auto changed = snapshot;
     auto codes = changed.tables.nested.at(0).codes.Copy();
-    require(!codes.empty(), "nested table resolution: the child fixture is empty");
+    Require(!codes.empty(), "nested table resolution: the child fixture is empty");
     codes[0] = ImageTableAbi::PoisonCode(ImageTableAbi::OutsideDomainPoison);
     changed.tables.nested[0].codes = SharedValues<std::uint32_t>(std::move(codes));
     const auto child = ResourceMaterializer::ResolveImageTablesShared(info, changed, MemoKey);
     const auto freshChild = ResourceMaterializer::ResolveImageTables(info, changed);
-    require(child->map == freshChild.map && child->map != first->map, "nested table resolution: changing only a child reused the old map");
+    Require(child->map == freshChild.map && child->map != first->map, "nested table resolution: changing only a child reused the old map");
     changed = snapshot;
     auto pointers = changed.tables.tables.at(0).pointers.Copy();
-    require(!pointers.empty(), "nested table resolution: the pointer fixture is empty");
+    Require(!pointers.empty(), "nested table resolution: the pointer fixture is empty");
     pointers[0] += 0x120u;
     changed.tables.tables[0].pointers = SharedValues<std::uint64_t>(std::move(pointers));
     const auto pointer = ResourceMaterializer::ResolveImageTablesShared(info, changed, MemoKey);
     const auto freshPointer = ResourceMaterializer::ResolveImageTables(info, changed);
-    require(pointer->map == freshPointer.map && pointer->map != first->map, "nested table resolution: changing only a pointer reused the old map");
+    Require(pointer->map == freshPointer.map && pointer->map != first->map, "nested table resolution: changing only a pointer reused the old map");
 }
 
 std::size_t verifyRoundTripRuntimes(const IrResourcePlan& plan, const IrResourcePlan& decoded, const PlanFixture& fixture, std::uint32_t seed, const std::string& what) {
@@ -2294,7 +2291,7 @@ std::size_t verifyRoundTripRuntimes(const IrResourcePlan& plan, const IrResource
         const auto runtime = view.MakeRuntime(userData, fixture.codeAddress);
         const auto original = materializePlan(plan, runtime);
         const auto loaded = materializePlan(decoded, runtime);
-        require(sameMaterialization(original, loaded), what + ": runtime " + std::to_string(run) + " materialized differently from the decoded plan (" + original.error + " / " + loaded.error + ")");
+        Require(sameMaterialization(original, loaded), what + ": runtime " + std::to_string(run) + " materialized differently from the decoded plan (" + original.error + " / " + loaded.error + ")");
         if (run == 0u && original.ok && !original.snapshot.tables.nested.empty()) verifyNestedResolutionReuse(plan, original.snapshot);
         if (original.ok) ++succeeded;
     }
@@ -2303,42 +2300,42 @@ std::size_t verifyRoundTripRuntimes(const IrResourcePlan& plan, const IrResource
 
 void verifyPlanEntryDamage(const std::vector<std::byte>& key, const IrResourcePlan& plan, const std::string& what) {
     const auto file = ShaderDiskCache::EncodePlanEntry(key, plan);
-    require(!file.empty(), what + ": the plan entry was not encoded");
+    Require(!file.empty(), what + ": the plan entry was not encoded");
     IrResourcePlan decoded;
-    require(ShaderDiskCache::DecodePlanEntry(file, key, decoded) == ShaderDiskCache::LoadStatus::Loaded && encodedPlan(decoded) == encodedPlan(plan), what + ": the plan entry does not decode to the plan");
+    Require(ShaderDiskCache::DecodePlanEntry(file, key, decoded) == ShaderDiskCache::LoadStatus::Loaded && encodedPlan(decoded) == encodedPlan(plan), what + ": the plan entry does not decode to the plan");
     for (std::size_t size = 0; size < file.size(); size += size < 512 ? 1 : 37) {
         IrResourcePlan partial;
-        require(ShaderDiskCache::DecodePlanEntry(std::span(file).first(size), key, partial) == ShaderDiskCache::LoadStatus::Rejected, what + ": a plan entry truncated to " + std::to_string(size) + " bytes is not rejected");
+        Require(ShaderDiskCache::DecodePlanEntry(std::span(file).first(size), key, partial) == ShaderDiskCache::LoadStatus::Rejected, what + ": a plan entry truncated to " + std::to_string(size) + " bytes is not rejected");
     }
     for (std::size_t offset = 0; offset < file.size(); offset += offset < 512 ? 1 : 29) {
         for (const auto bit : {std::byte{0x01}, std::byte{0x80}}) {
             auto damaged = file;
             damaged[offset] ^= bit;
             IrResourcePlan partial;
-            require(ShaderDiskCache::DecodePlanEntry(damaged, key, partial) == ShaderDiskCache::LoadStatus::Rejected, what + ": a plan entry with byte " + std::to_string(offset) + " flipped is not rejected");
+            Require(ShaderDiskCache::DecodePlanEntry(damaged, key, partial) == ShaderDiskCache::LoadStatus::Rejected, what + ": a plan entry with byte " + std::to_string(offset) + " flipped is not rejected");
         }
     }
     auto longer = file;
     longer.push_back(std::byte{0});
-    require(ShaderDiskCache::DecodePlanEntry(longer, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, what + ": a plan entry with a trailing byte is not rejected");
+    Require(ShaderDiskCache::DecodePlanEntry(longer, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, what + ": a plan entry with a trailing byte is not rejected");
     auto otherKey = key;
     otherKey.back() ^= std::byte{1};
-    require(ShaderDiskCache::DecodePlanEntry(file, otherKey, decoded) == ShaderDiskCache::LoadStatus::KeyMismatch, what + ": a plan entry for another key loads");
+    Require(ShaderDiskCache::DecodePlanEntry(file, otherKey, decoded) == ShaderDiskCache::LoadStatus::KeyMismatch, what + ": a plan entry for another key loads");
     auto previousFormat = file;
     previousFormat[4] = static_cast<std::byte>(ShaderDiskCache::FormatVersion - 1u);
-    require(ShaderDiskCache::DecodePlanEntry(previousFormat, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, what + ": a plan entry of the previous format loads");
+    Require(ShaderDiskCache::DecodePlanEntry(previousFormat, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, what + ": a plan entry of the previous format loads");
     auto otherSource = file;
     otherSource[8] ^= std::byte{1};
-    require(ShaderDiskCache::DecodePlanEntry(otherSource, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, what + ": a plan entry of another source version loads");
+    Require(ShaderDiskCache::DecodePlanEntry(otherSource, key, decoded) == ShaderDiskCache::LoadStatus::Rejected, what + ": a plan entry of another source version loads");
     CompiledVariant variant;
-    require(ShaderDiskCache::DecodeEntry(file, key, variant) == ShaderDiskCache::LoadStatus::Rejected, what + ": a plan entry decodes as a compiled variant");
+    Require(ShaderDiskCache::DecodeEntry(file, key, variant) == ShaderDiskCache::LoadStatus::Rejected, what + ": a plan entry decodes as a compiled variant");
 }
 
 void verifyPlanPayloadDamage(const IrResourcePlan& plan, const std::string& what) {
     const auto bytes = encodedPlan(plan);
     for (std::size_t size = 0; size < bytes.size(); ++size) {
         IrResourcePlan partial;
-        require(!ShaderDiskCache::DecodePlan(std::span(bytes).first(size), partial), what + ": a plan truncated to " + std::to_string(size) + " bytes decodes");
+        Require(!ShaderDiskCache::DecodePlan(std::span(bytes).first(size), partial), what + ": a plan truncated to " + std::to_string(size) + " bytes decodes");
     }
     std::size_t rejected = 0;
     for (std::size_t offset = 0; offset < bytes.size(); ++offset) {
@@ -2351,10 +2348,10 @@ void verifyPlanPayloadDamage(const IrResourcePlan& plan, const std::string& what
                 continue;
             }
             std::vector<std::byte> again;
-            require(ShaderDiskCache::EncodePlan(decoded, again), what + ": a plan accepted with byte " + std::to_string(offset) + " flipped is not self-contained");
+            Require(ShaderDiskCache::EncodePlan(decoded, again), what + ": a plan accepted with byte " + std::to_string(offset) + " flipped is not self-contained");
         }
     }
-    require(rejected != 0u, what + ": no damaged plan was rejected");
+    Require(rejected != 0u, what + ": no damaged plan was rejected");
 }
 
 void verifyArgumentDeltaBounds() {
@@ -2368,16 +2365,16 @@ void verifyArgumentDeltaBounds() {
     };
     const auto linked = encodeSecond(true);
     const auto unlinked = encodeSecond(false);
-    require(linked.size() == unlinked.size(), "the linked and unlinked argument plans differ in size");
+    Require(linked.size() == unlinked.size(), "the linked and unlinked argument plans differ in size");
     std::size_t offset = linked.size();
     for (std::size_t index = 0; index < linked.size(); ++index) {
         if (linked[index] == unlinked[index]) continue;
-        require(offset == linked.size() && linked[index] == std::byte{2} && unlinked[index] == std::byte{0}, "the argument code of the second record is not where the plan layout puts it");
+        Require(offset == linked.size() && linked[index] == std::byte{2} && unlinked[index] == std::byte{0}, "the argument code of the second record is not where the plan layout puts it");
         offset = index;
     }
-    require(offset != linked.size(), "the linked and unlinked argument plans encode the same bytes");
+    Require(offset != linked.size(), "the linked and unlinked argument plans encode the same bytes");
     IrResourcePlan decoded;
-    require(ShaderDiskCache::DecodePlan(linked, decoded), "the two-value plan with one argument does not decode");
+    Require(ShaderDiskCache::DecodePlan(linked, decoded), "the two-value plan with one argument does not decode");
     const auto withCode = [&](const std::vector<std::byte>& code) {
         auto bytes = std::vector<std::byte>(linked.begin(), linked.begin() + static_cast<std::ptrdiff_t>(offset));
         bytes.insert(bytes.end(), code.begin(), code.end());
@@ -2387,9 +2384,9 @@ void verifyArgumentDeltaBounds() {
     IrResourcePlan rejected;
     std::vector<std::byte> maximal(9, std::byte{0xff});
     maximal.push_back(std::byte{0x01});
-    require(!ShaderDiskCache::DecodePlan(withCode(maximal), rejected), "an argument code of 2^64-1 (delta INT64_MAX) from the second record decodes");
-    require(!ShaderDiskCache::DecodePlan(withCode({std::byte{4}}), rejected), "an argument before the first record decodes");
-    require(!ShaderDiskCache::DecodePlan(withCode({std::byte{3}}), rejected), "an argument past the last record decodes");
+    Require(!ShaderDiskCache::DecodePlan(withCode(maximal), rejected), "an argument code of 2^64-1 (delta INT64_MAX) from the second record decodes");
+    Require(!ShaderDiskCache::DecodePlan(withCode({std::byte{4}}), rejected), "an argument before the first record decodes");
+    Require(!ShaderDiskCache::DecodePlan(withCode({std::byte{3}}), rejected), "an argument past the last record decodes");
 }
 
 void verifyMalformedPlans() {
@@ -2397,9 +2394,9 @@ void verifyMalformedPlans() {
         auto plan = handBuiltPlan();
         damage(plan);
         std::vector<std::byte> bytes;
-        require(ShaderDiskCache::EncodePlan(plan, bytes), "malformed plan: " + what + " did not encode");
+        Require(ShaderDiskCache::EncodePlan(plan, bytes), "malformed plan: " + what + " did not encode");
         IrResourcePlan decoded;
-        require(!ShaderDiskCache::DecodePlan(bytes, decoded), "malformed plan: " + what + " decodes");
+        Require(!ShaderDiskCache::DecodePlan(bytes, decoded), "malformed plan: " + what + " decodes");
     };
     rejects("a branch with one successor", [](IrResourcePlan& plan) { plan.controlFlow[0].successors.pop_back(); });
     rejects("a successor past the blocks", [](IrResourcePlan& plan) { plan.controlFlow[1].successors[0] = 3u; });
@@ -2420,13 +2417,13 @@ void verifyMalformedPlans() {
     IrValue stray(IrOpcode::Void, IrType::U32, 99u);
     foreign.srtReads[0].value = &stray;
     std::vector<std::byte> bytes;
-    require(!ShaderDiskCache::EncodePlan(foreign, bytes), "a plan reading a value it does not own was encoded");
+    Require(!ShaderDiskCache::EncodePlan(foreign, bytes), "a plan reading a value it does not own was encoded");
     auto unblocked = handBuiltPlan();
     auto& phi = *unblocked.valueStorage.Create(IrOpcode::Phi, IrType::U32, 100u);
     phi.AddArgument(&unblocked.valueStorage[0]);
     unblocked.srtReads[0].value = &phi;
     bytes.clear();
-    require(!ShaderDiskCache::EncodePlan(unblocked, bytes), "a phi without predecessor blocks was encoded");
+    Require(!ShaderDiskCache::EncodePlan(unblocked, bytes), "a phi without predecessor blocks was encoded");
     verifyArgumentDeltaBounds();
 }
 
@@ -2438,44 +2435,44 @@ void verifySharedPlans() {
     const std::vector<std::byte> second{std::byte{0x5a}, std::byte{0x01}, std::byte{0x03}};
     for (const auto* key : {&first, &second}) {
         const auto entry = ShaderDiskCache::EncodePlanEntry(*key, *plan);
-        require(WriteFileAtomically(ShaderDiskCache::EntryDirectory() / ShaderDiskCache::EntryName(*key), entry), "cannot write the shared plan entries");
+        Require(WriteFileAtomically(ShaderDiskCache::EntryDirectory() / ShaderDiskCache::EntryName(*key), entry), "cannot write the shared plan entries");
     }
     constexpr std::uint64_t address = 0x7000u;
     IrResourcePlan expected;
-    require(ShaderDiskCache::DecodePlan(encodedPlan(*plan), expected), "the shared plan fixture does not decode");
+    Require(ShaderDiskCache::DecodePlan(encodedPlan(*plan), expected), "the shared plan fixture does not decode");
     expected.shaderHash = address;
     const auto hits = ShaderDiskCache::Totals().planHits;
     auto a = ShaderDiskCache::LoadSharedPlan(first, address);
     auto b = ShaderDiskCache::LoadSharedPlan(second, address);
-    require(a != nullptr && b != nullptr && ShaderDiskCache::Totals().planHits == hits + 2u, "the shared plan entries did not load");
-    require(a.get() == b.get(), "two plan entries with the same payload for one shader decoded into separate plans");
-    require(samePlan(*a, expected), "a shared plan differs from the stored plan");
+    Require(a != nullptr && b != nullptr && ShaderDiskCache::Totals().planHits == hits + 2u, "the shared plan entries did not load");
+    Require(a.get() == b.get(), "two plan entries with the same payload for one shader decoded into separate plans");
+    Require(samePlan(*a, expected), "a shared plan differs from the stored plan");
     const auto other = ShaderDiskCache::LoadSharedPlan(second, address + 0x100u);
-    require(other != nullptr && other.get() != a.get() && other->shaderHash == address + 0x100u && a->shaderHash == address, "a plan of another shader address was shared");
+    Require(other != nullptr && other.get() != a.get() && other->shaderHash == address + 0x100u && a->shaderHash == address, "a plan of another shader address was shared");
     const std::weak_ptr<const IrResourcePlan> released = a;
     a.reset();
     b.reset();
-    require(released.expired(), "the shared plan table kept a plan no source uses");
+    Require(released.expired(), "the shared plan table kept a plan no source uses");
     const auto again = ShaderDiskCache::LoadSharedPlan(first, address);
-    require(again != nullptr && samePlan(*again, expected), "a released shared plan did not load again");
+    Require(again != nullptr && samePlan(*again, expected), "a released shared plan did not load again");
 }
 
 void verifyPlanRoundTrip() {
     const auto handBuilt = handBuiltPlan();
     const auto handBytes = encodedPlan(handBuilt);
     IrResourcePlan handDecoded;
-    require(ShaderDiskCache::DecodePlan(handBytes, handDecoded), "the hand-built plan does not decode");
-    require(encodedPlan(handDecoded) == handBytes && handDecoded.valueStorage.Size() == handBuilt.valueStorage.Size() && handDecoded.blockStorage.size() == handBuilt.blockStorage.size(), "the hand-built plan changed in a round trip");
+    Require(ShaderDiskCache::DecodePlan(handBytes, handDecoded), "the hand-built plan does not decode");
+    Require(encodedPlan(handDecoded) == handBytes && handDecoded.valueStorage.Size() == handBuilt.valueStorage.Size() && handDecoded.blockStorage.size() == handBuilt.blockStorage.size(), "the hand-built plan changed in a round trip");
     const auto& phi = *handDecoded.descriptorSources[0].dwords[2];
-    require(phi.IsPhi() && phi.PhiBlockCount() == 2u && phi.PhiBlock(0)->Id() == 3u && phi.PhiBlock(1)->Id() == 7u && phi.Argument(1)->ImmediateU32() == 0u, "the decoded phi lost its blocks or operands");
-    require(handDecoded.uniformFill.values[0] == handDecoded.uniformFill.values[1] && handDecoded.uniformFill.values[0] != nullptr && handDecoded.uniformFill.values[2] == nullptr, "the decoded uniform fill lost its shared or null values");
-    require(samePlan(handBuilt, handDecoded), "the decoded hand-built plan differs from the plan in a field or a value");
+    Require(phi.IsPhi() && phi.PhiBlockCount() == 2u && phi.PhiBlock(0)->Id() == 3u && phi.PhiBlock(1)->Id() == 7u && phi.Argument(1)->ImmediateU32() == 0u, "the decoded phi lost its blocks or operands");
+    Require(handDecoded.uniformFill.values[0] == handDecoded.uniformFill.values[1] && handDecoded.uniformFill.values[0] != nullptr && handDecoded.uniformFill.values[2] == nullptr, "the decoded uniform fill lost its shared or null values");
+    Require(samePlan(handBuilt, handDecoded), "the decoded hand-built plan differs from the plan in a field or a value");
     auto bufferTable = handBuiltPlan();
     bufferTable.descriptorSources[1].tableColumn->buffer = true;
     bufferTable.descriptorSources[1].tableColumn->dwordCount = 4u;
     const auto bufferBytes = encodedPlan(bufferTable);
     IrResourcePlan bufferDecoded;
-    require(bufferBytes != handBytes && ShaderDiskCache::DecodePlan(bufferBytes, bufferDecoded) && samePlan(bufferTable, bufferDecoded), "the nested buffer column changed in a disk-cache round trip");
+    Require(bufferBytes != handBytes && ShaderDiskCache::DecodePlan(bufferBytes, bufferDecoded) && samePlan(bufferTable, bufferDecoded), "the nested buffer column changed in a disk-cache round trip");
     PlanFixture handFixture;
     handFixture.userData = {static_cast<std::uint32_t>(PlanSrtAddress), static_cast<std::uint32_t>(PlanSrtAddress >> 32u), 0u, 0u};
     std::vector<std::uint32_t> handSrt(16, 0u);
@@ -2494,12 +2491,12 @@ void verifyPlanRoundTrip() {
         plans.push_back(plan);
         const auto bytes = encodedPlan(*plan);
         IrResourcePlan decoded;
-        require(ShaderDiskCache::DecodePlan(bytes, decoded), fixture.name + ": the plan does not decode");
-        require(encodedPlan(decoded) == bytes, fixture.name + ": the plan changed in a round trip");
-        require(samePlan(*plan, decoded), fixture.name + ": the decoded plan differs from the plan in a field or a value");
-        require(decoded.valueStorage.Size() == plan->valueStorage.Size() && decoded.blockStorage.size() == plan->blockStorage.size(), fixture.name + ": the decoded plan holds another graph");
+        Require(ShaderDiskCache::DecodePlan(bytes, decoded), fixture.name + ": the plan does not decode");
+        Require(encodedPlan(decoded) == bytes, fixture.name + ": the plan changed in a round trip");
+        Require(samePlan(*plan, decoded), fixture.name + ": the decoded plan differs from the plan in a field or a value");
+        Require(decoded.valueStorage.Size() == plan->valueStorage.Size() && decoded.blockStorage.size() == plan->blockStorage.size(), fixture.name + ": the decoded plan holds another graph");
         const auto succeeded = verifyRoundTripRuntimes(*plan, decoded, fixture, 0x5eedu + static_cast<std::uint32_t>(index), fixture.name);
-        require(succeeded != 0u, fixture.name + ": no runtime materialized");
+        Require(succeeded != 0u, fixture.name + ": no runtime materialized");
         std::vector<std::byte> key;
         ShaderDiskCache::BuildPlanKey(request, 32u, key);
         if (index % 4u == 0u) verifyPlanEntryDamage(key, *plan, fixture.name);
@@ -2515,8 +2512,8 @@ void verifyPlanRoundTrip() {
     ReleaseUndrawnResourcePlan(*registeredHandle);
     const auto beforeReload = ShaderDiskCache::Totals();
     const auto reloadedPlan = GetResourcePlan(registeredRequest);
-    require(ShaderDiskCache::Totals().planHits == beforeReload.planHits + 1u, "a released registration plan was not reloaded from the disk cache");
-    require(samePlan(*registeredPlan, *reloadedPlan), "a released registration plan changed when reloaded");
+    Require(ShaderDiskCache::Totals().planHits == beforeReload.planHits + 1u, "a released registration plan was not reloaded from the disk cache");
+    Require(samePlan(*registeredPlan, *reloadedPlan), "a released registration plan changed when reloaded");
 
     auto reloadFixture = fixtures.front();
     reloadFixture.waveSize = 32u;
@@ -2528,7 +2525,7 @@ void verifyPlanRoundTrip() {
     std::vector<std::byte> reloadKey;
     ShaderDiskCache::BuildPlanKey(reloadRequest, 32u, reloadKey);
     const auto reloadPath = ShaderDiskCache::EntryDirectory() / ShaderDiskCache::EntryName(reloadKey);
-    require(std::filesystem::is_regular_file(reloadPath), "the reload regression plan was not persisted");
+    Require(std::filesystem::is_regular_file(reloadPath), "the reload regression plan was not persisted");
     const auto preservedPath = reloadPath.string() + ".reload-preserved";
     std::filesystem::rename(reloadPath, preservedPath);
     ReleaseUndrawnResourcePlan(*reloadHandle);
@@ -2537,7 +2534,7 @@ void verifyPlanRoundTrip() {
     secondLayout.layout.pushConstantSizeBytes = 0u;
     ShaderPreparationContext preparation;
     static_cast<void>(PrepareShader(secondLayout, &preparation));
-    require(preparation.ResourcePrograms() == 1u, "a plan reload retained full IR after an artifact for that layout was already available");
+    Require(preparation.ResourcePrograms() == 1u, "a plan reload retained full IR after an artifact for that layout was already available");
 
     auto relocatedFixture = fixtures.front();
     relocatedFixture.waveSize = 32u;
@@ -2555,31 +2552,31 @@ void verifyPlanRoundTrip() {
     drawn.layout.pushConstantOffsetBytes = 16u;
     drawn.layout.pushConstantSizeBytes = 112u;
     const auto relocatedInvocation = PreparedShaderInvocation::TryCreate(drawn, relocatedHandle);
-    require(relocatedInvocation.has_value(), "the prepared artifact refused a relocated push layout");
+    Require(relocatedInvocation.has_value(), "the prepared artifact refused a relocated push layout");
     RequestMemoryView drawnMemory(drawn.context.memory);
     static_cast<void>(relocatedInvocation->Materialize(*relocatedInvocation->Capture(drawnMemory.MakeRuntime(drawn.context.userData, drawn.shader.codeAddress))));
     auto relocatedProbe = relocatedRequest;
     relocatedProbe.layout.pushConstantSizeBytes = 0u;
     ShaderPreparationContext relocatedPreparation;
     static_cast<void>(PrepareShader(relocatedProbe, &relocatedPreparation));
-    require(relocatedPreparation.ResourcePrograms() == 1u, "a plan reload retained full IR after the prepared artifact served a relocated push layout");
+    Require(relocatedPreparation.ResourcePrograms() == 1u, "a plan reload retained full IR after the prepared artifact served a relocated push layout");
 
     RequestMemoryView registeredMemory(registeredRequest.context.memory);
     const auto runtimeCapture = CaptureResources(registeredRequest, registeredMemory.MakeRuntime(registeredRequest.context.userData, registeredRequest.shader.codeAddress), *registeredHandle);
     const auto beforeKeep = ShaderDiskCache::Totals();
     ReleaseUndrawnResourcePlan(*registeredHandle);
-    require(GetResourcePlan(registeredRequest) == runtimeCapture->plan && ShaderDiskCache::Totals().planHits == beforeKeep.planHits, "a runtime-captured plan was released");
+    Require(GetResourcePlan(registeredRequest) == runtimeCapture->plan && ShaderDiskCache::Totals().planHits == beforeKeep.planHits, "a runtime-captured plan was released");
     const auto covers = [&](const std::function<bool(const IrResourcePlan&)>& predicate) {
         return std::any_of(plans.begin(), plans.end(), [&](const std::shared_ptr<const IrResourcePlan>& plan) { return predicate(*plan); });
     };
-    require(covers([](const IrResourcePlan& plan) { return std::any_of(plan.descriptorSources.begin(), plan.descriptorSources.end(), [](const DescriptorSource& source) { return source.tableColumn.has_value() && source.tableColumn->keyDomains.empty(); }); }), "no fixture plans a whole image table");
-    require(covers([](const IrResourcePlan& plan) { return std::any_of(plan.descriptorSources.begin(), plan.descriptorSources.end(), [](const DescriptorSource& source) { return source.tableColumn.has_value() && !source.tableColumn->keyDomains.empty(); }); }), "no fixture plans an image table with a key domain");
-    require(covers([](const IrResourcePlan& plan) { return std::any_of(plan.descriptorSources.begin(), plan.descriptorSources.end(), [](const DescriptorSource& source) { return source.tableColumn.has_value() && source.tableColumn->address; }); }), "no fixture plans an image table through a pointer");
-    require(covers([](const IrResourcePlan& plan) { return std::any_of(plan.descriptorSources.begin(), plan.descriptorSources.end(), [](const DescriptorSource& source) { return source.tableColumn.has_value() && source.tableColumn->selected; }); }), "no fixture plans a selected image table record");
-    require(covers([](const IrResourcePlan& plan) { return std::any_of(plan.controlFlow.begin(), plan.controlFlow.end(), [](const ResourceBlock& block) { return block.condition != nullptr; }); }), "no fixture plans a control-flow condition");
-    require(covers([](const IrResourcePlan& plan) { return std::any_of(plan.valueStorage.begin(), plan.valueStorage.end(), [](const auto& value) { return value.IsPhi(); }); }), "no fixture plans a phi");
-    require(covers([](const IrResourcePlan& plan) { return !plan.guardedSrtSlots.empty(); }), "no fixture plans a guarded SRT read");
-    require(covers([](const IrResourcePlan& plan) { return std::any_of(plan.pureFlatSlots.begin(), plan.pureFlatSlots.end(), [](std::uint8_t pure) { return pure != 0u; }); }), "no fixture plans a pure flat slot");
+    Require(covers([](const IrResourcePlan& plan) { return std::any_of(plan.descriptorSources.begin(), plan.descriptorSources.end(), [](const DescriptorSource& source) { return source.tableColumn.has_value() && source.tableColumn->keyDomains.empty(); }); }), "no fixture plans a whole image table");
+    Require(covers([](const IrResourcePlan& plan) { return std::any_of(plan.descriptorSources.begin(), plan.descriptorSources.end(), [](const DescriptorSource& source) { return source.tableColumn.has_value() && !source.tableColumn->keyDomains.empty(); }); }), "no fixture plans an image table with a key domain");
+    Require(covers([](const IrResourcePlan& plan) { return std::any_of(plan.descriptorSources.begin(), plan.descriptorSources.end(), [](const DescriptorSource& source) { return source.tableColumn.has_value() && source.tableColumn->address; }); }), "no fixture plans an image table through a pointer");
+    Require(covers([](const IrResourcePlan& plan) { return std::any_of(plan.descriptorSources.begin(), plan.descriptorSources.end(), [](const DescriptorSource& source) { return source.tableColumn.has_value() && source.tableColumn->selected; }); }), "no fixture plans a selected image table record");
+    Require(covers([](const IrResourcePlan& plan) { return std::any_of(plan.controlFlow.begin(), plan.controlFlow.end(), [](const ResourceBlock& block) { return block.condition != nullptr; }); }), "no fixture plans a control-flow condition");
+    Require(covers([](const IrResourcePlan& plan) { return std::any_of(plan.valueStorage.begin(), plan.valueStorage.end(), [](const auto& value) { return value.IsPhi(); }); }), "no fixture plans a phi");
+    Require(covers([](const IrResourcePlan& plan) { return !plan.guardedSrtSlots.empty(); }), "no fixture plans a guarded SRT read");
+    Require(covers([](const IrResourcePlan& plan) { return std::any_of(plan.pureFlatSlots.begin(), plan.pureFlatSlots.end(), [](std::uint8_t pure) { return pure != 0u; }); }), "no fixture plans a pure flat slot");
 }
 
 void verifyPlanBudget() {
@@ -2601,7 +2598,7 @@ void verifyPlanBudget() {
         const auto before = ResourcePlanTotals();
         const auto plan = planOf(index);
         const auto after = ResourcePlanTotals();
-        require(after.heldPlans == before.heldPlans + 1u && after.heldBytes > before.heldBytes + plan->valueStorage.Size() * sizeof(IrValue), "plan budget: a loaded plan was not accounted with its values");
+        Require(after.heldPlans == before.heldPlans + 1u && after.heldBytes > before.heldBytes + plan->valueStorage.Size() * sizeof(IrValue), "plan budget: a loaded plan was not accounted with its values");
         sizes.push_back(after.heldBytes - before.heldBytes);
         encoded.push_back(encodedPlan(*plan));
     }
@@ -2611,16 +2608,16 @@ void verifyPlanBudget() {
     const auto budget = ((beforeTrim.heldBytes - sizes[1] - sizes[2] + std::min(sizes[1], sizes[2]) / 2u) / 3u + 1u) * 4u;
     SetResourcePlanBudget(budget);
     const auto afterTrim = ResourcePlanTotals();
-    require(afterTrim.evictions == beforeTrim.evictions + 2u && afterTrim.heldBytes == beforeTrim.heldBytes - sizes[1] - sizes[2] && afterTrim.heldBytes <= budget / 4u * 3u, "plan budget: the trim did not drop exactly the two least recently used plans down to three quarters of the budget");
+    Require(afterTrim.evictions == beforeTrim.evictions + 2u && afterTrim.heldBytes == beforeTrim.heldBytes - sizes[1] - sizes[2] && afterTrim.heldBytes <= budget / 4u * 3u, "plan budget: the trim did not drop exactly the two least recently used plans down to three quarters of the budget");
     const auto residentDisk = ShaderDiskCache::Totals();
     static_cast<void>(planOf(3));
     static_cast<void>(planOf(0));
-    require(ShaderDiskCache::Totals().planHits == residentDisk.planHits && ResourcePlanTotals().reloads == afterTrim.reloads, "plan budget: a recently used plan was evicted");
+    Require(ShaderDiskCache::Totals().planHits == residentDisk.planHits && ResourcePlanTotals().reloads == afterTrim.reloads, "plan budget: a recently used plan was evicted");
     const auto beforeReload = ShaderDiskCache::Totals();
     const auto reloaded = planOf(1);
     const auto afterReload = ShaderDiskCache::Totals();
-    require(afterReload.planHits == beforeReload.planHits + 1u && afterReload.planMisses == beforeReload.planMisses && afterReload.planWrites == beforeReload.planWrites, "plan budget: an evicted plan did not reload as a disk cache hit without a new write");
-    require(ResourcePlanTotals().reloads == afterTrim.reloads + 1u && encodedPlan(*reloaded) == encoded[1], "plan budget: the reloaded plan differs from the evicted one");
+    Require(afterReload.planHits == beforeReload.planHits + 1u && afterReload.planMisses == beforeReload.planMisses && afterReload.planWrites == beforeReload.planWrites, "plan budget: an evicted plan did not reload as a disk cache hit without a new write");
+    Require(ResourcePlanTotals().reloads == afterTrim.reloads + 1u && encodedPlan(*reloaded) == encoded[1], "plan budget: the reloaded plan differs from the evicted one");
     SetResourcePlanBudget(0u);
     static_cast<void>(planOf(2));
     static_cast<void>(planOf(3));
@@ -2628,9 +2625,9 @@ void verifyPlanBudget() {
     const auto beforeOwned = ResourcePlanTotals();
     SetResourcePlanBudget(1u);
     const auto afterOwned = ResourcePlanTotals();
-    require(afterOwned.evictions >= beforeOwned.evictions + 2u && afterOwned.heldPlans >= 2u, "plan budget: a budget of one byte did not evict the unowned plans or evicted the owned ones");
+    Require(afterOwned.evictions >= beforeOwned.evictions + 2u && afterOwned.heldPlans >= 2u, "plan budget: a budget of one byte did not evict the unowned plans or evicted the owned ones");
     const auto beforeOwnedHits = ShaderDiskCache::Totals().planHits;
-    require(planOf(0) == owned && planOf(1) == reloaded && ShaderDiskCache::Totals().planHits == beforeOwnedHits, "plan budget: a plan with another owner was evicted");
+    Require(planOf(0) == owned && planOf(1) == reloaded && ShaderDiskCache::Totals().planHits == beforeOwnedHits, "plan budget: a plan with another owner was evicted");
     SetResourcePlanBudget(0u);
     auto preparedFixture = base;
     preparedFixture.code.insert(preparedFixture.code.begin(), 0xbf80000au);
@@ -2641,17 +2638,17 @@ void verifyPlanBudget() {
     drawn.layout.pushConstantOffsetBytes = 16u;
     drawn.layout.pushConstantSizeBytes = 112u;
     const auto invocation = PreparedShaderInvocation::TryCreate(drawn, preparedHandle);
-    require(invocation.has_value(), "plan budget: the prepared artifact refused a relocated push layout");
+    Require(invocation.has_value(), "plan budget: the prepared artifact refused a relocated push layout");
     RequestMemoryView drawnMemory(drawn.context.memory);
     static_cast<void>(invocation->Capture(drawnMemory.MakeRuntime(drawn.context.userData, drawn.shader.codeAddress)));
     ShaderDiskCache::Flush();
     const auto beforePreparedTrim = ResourcePlanTotals();
     SetResourcePlanBudget(1u);
-    require(ResourcePlanTotals().evictions > beforePreparedTrim.evictions, "plan budget: the captured plan of a prepared shader was not evicted");
+    Require(ResourcePlanTotals().evictions > beforePreparedTrim.evictions, "plan budget: the captured plan of a prepared shader was not evicted");
     const auto beforePrepared = ShaderDiskCache::Totals();
     static_cast<void>(invocation->Capture(drawnMemory.MakeRuntime(drawn.context.userData, drawn.shader.codeAddress)));
     const auto afterPrepared = ShaderDiskCache::Totals();
-    require(afterPrepared.planHits == beforePrepared.planHits + 1u && afterPrepared.planMisses == beforePrepared.planMisses && afterPrepared.planWrites == beforePrepared.planWrites && afterPrepared.misses == beforePrepared.misses && afterPrepared.writes == beforePrepared.writes && ResourcePlanTotals().reloads == beforePreparedTrim.reloads + 1u, "plan budget: a prepared shader's evicted plan did not reload from its own disk cache entry");
+    Require(afterPrepared.planHits == beforePrepared.planHits + 1u && afterPrepared.planMisses == beforePrepared.planMisses && afterPrepared.planWrites == beforePrepared.planWrites && afterPrepared.misses == beforePrepared.misses && afterPrepared.writes == beforePrepared.writes && ResourcePlanTotals().reloads == beforePreparedTrim.reloads + 1u, "plan budget: a prepared shader's evicted plan did not reload from its own disk cache entry");
     SetResourcePlanBudget(0u);
 }
 
@@ -2668,30 +2665,30 @@ void verifySharedPlanBudget() {
     const auto planOf = [&](std::size_t index) { return GetResourcePlan(fixtures[index].Request(true)); };
     SetResourcePlanBudget(0u);
     const auto encoded = encodedPlan(*planOf(0));
-    require(encodedPlan(*planOf(1)) == encoded, "shared plan budget: the two sources did not build the same plan");
+    Require(encodedPlan(*planOf(1)) == encoded, "shared plan budget: the two sources did not build the same plan");
     ShaderDiskCache::Flush();
     SetResourcePlanBudget(1u);
     SetResourcePlanBudget(0u);
     auto first = planOf(0);
     auto second = planOf(1);
-    require(first == second, "shared plan budget: the two sources did not receive one shared plan from the disk cache");
+    Require(first == second, "shared plan budget: the two sources did not receive one shared plan from the disk cache");
     const auto heldHits = ShaderDiskCache::Totals().planHits;
     SetResourcePlanBudget(1u);
-    require(planOf(0) == first && planOf(1) == first && ShaderDiskCache::Totals().planHits == heldHits, "shared plan budget: a shared plan that a caller holds was evicted");
+    Require(planOf(0) == first && planOf(1) == first && ShaderDiskCache::Totals().planHits == heldHits, "shared plan budget: a shared plan that a caller holds was evicted");
     SetResourcePlanBudget(0u);
     first.reset();
     second.reset();
     const auto beforeTrim = ResourcePlanTotals();
     SetResourcePlanBudget(1u);
     const auto afterTrim = ResourcePlanTotals();
-    require(afterTrim.evictions == beforeTrim.evictions + 2u && afterTrim.heldPlans + 2u == beforeTrim.heldPlans, "shared plan budget: a plan shared by two idle sources was not evicted from both");
+    Require(afterTrim.evictions == beforeTrim.evictions + 2u && afterTrim.heldPlans + 2u == beforeTrim.heldPlans, "shared plan budget: a plan shared by two idle sources was not evicted from both");
     SetResourcePlanBudget(0u);
     const auto beforeReload = ShaderDiskCache::Totals();
     const auto reloadedFirst = planOf(0);
     const auto reloadedSecond = planOf(1);
     const auto afterReload = ShaderDiskCache::Totals();
-    require(afterReload.planHits == beforeReload.planHits + 2u && afterReload.planMisses == beforeReload.planMisses && afterReload.planWrites == beforeReload.planWrites && ResourcePlanTotals().reloads == afterTrim.reloads + 2u, "shared plan budget: the evicted shared plan did not reload from the disk cache without a miss or a write");
-    require(reloadedFirst == reloadedSecond && encodedPlan(*reloadedFirst) == encoded, "shared plan budget: the reloaded sources do not share the plan they held before");
+    Require(afterReload.planHits == beforeReload.planHits + 2u && afterReload.planMisses == beforeReload.planMisses && afterReload.planWrites == beforeReload.planWrites && ResourcePlanTotals().reloads == afterTrim.reloads + 2u, "shared plan budget: the evicted shared plan did not reload from the disk cache without a miss or a write");
+    Require(reloadedFirst == reloadedSecond && encodedPlan(*reloadedFirst) == encoded, "shared plan budget: the reloaded sources do not share the plan they held before");
 }
 
 void verifyQueuedPlanWrite() {
@@ -2709,9 +2706,9 @@ void verifyQueuedPlanWrite() {
     const auto beforeTrim = ResourcePlanTotals();
     SetResourcePlanBudget(1u);
     const auto trimmed = ShaderDiskCache::Totals();
-    require(trimmed.planWrites < writesBefore + fillers + 1u, "queued plan write: the writer emptied its queue before the trim, so the plan's write was not pending");
+    Require(trimmed.planWrites < writesBefore + fillers + 1u, "queued plan write: the writer emptied its queue before the trim, so the plan's write was not pending");
     auto held = GetResourcePlan(fixture.Request(true));
-    require(ShaderDiskCache::Totals().planMisses == trimmed.planMisses && ResourcePlanTotals().reloads == beforeTrim.reloads, "queued plan write: a plan whose disk write was still queued was evicted and missed on its next use");
+    Require(ShaderDiskCache::Totals().planMisses == trimmed.planMisses && ResourcePlanTotals().reloads == beforeTrim.reloads, "queued plan write: a plan whose disk write was still queued was evicted and missed on its next use");
     SetResourcePlanBudget(0u);
     held.reset();
     ShaderDiskCache::Flush();
@@ -2720,7 +2717,7 @@ void verifyQueuedPlanWrite() {
     const auto beforeReload = ShaderDiskCache::Totals();
     static_cast<void>(GetResourcePlan(fixture.Request(true)));
     const auto afterReload = ShaderDiskCache::Totals();
-    require(afterReload.planHits == beforeReload.planHits + 1u && afterReload.planMisses == beforeReload.planMisses && afterReload.planWrites == beforeReload.planWrites, "queued plan write: the plan evicted after its write finished did not reload as a disk cache hit");
+    Require(afterReload.planHits == beforeReload.planHits + 1u && afterReload.planMisses == beforeReload.planMisses && afterReload.planWrites == beforeReload.planWrites, "queued plan write: the plan evicted after its write finished did not reload as a disk cache hit");
 }
 
 void verifyPlanReport() {
@@ -2747,10 +2744,10 @@ void verifyPlanReport() {
     const auto after = ResourcePlanTotals();
     const auto evicted = after.evictions - before.evictions;
     const auto reloaded = after.reloads - before.reloads;
-    require(evicted != 0u && reloaded == 1u, "plan report: the delayed reporter's hook did not evict and reload a plan");
-    require(delayed.evictions <= evicted && overlapping.evictions <= evicted && delayed.evictions + overlapping.evictions == evicted && delayed.reloads <= reloaded && overlapping.reloads <= reloaded && delayed.reloads + overlapping.reloads == reloaded, "plan report: a reporter delayed past the next interval counted it twice or underflowed");
+    Require(evicted != 0u && reloaded == 1u, "plan report: the delayed reporter's hook did not evict and reload a plan");
+    Require(delayed.evictions <= evicted && overlapping.evictions <= evicted && delayed.evictions + overlapping.evictions == evicted && delayed.reloads <= reloaded && overlapping.reloads <= reloaded && delayed.reloads + overlapping.reloads == reloaded, "plan report: a reporter delayed past the next interval counted it twice or underflowed");
     const auto later = TakeResourcePlanInterval();
-    require(later.evictions == 0u && later.reloads == 0u, "plan report: the interval after two overlapping reporters is not empty");
+    Require(later.evictions == 0u && later.reloads == 0u, "plan report: the interval after two overlapping reporters is not empty");
 }
 
 void verifyPlanKey() {
@@ -2764,32 +2761,32 @@ void verifyPlanKey() {
         return key;
     };
     const auto key = planKey([](RecompileRequest&) {});
-    require(planKey([](RecompileRequest&) {}) == key, "the plan key is not deterministic");
+    Require(planKey([](RecompileRequest&) {}) == key, "the plan key is not deterministic");
     std::vector<std::byte> variantKey;
     ShaderDiskCache::BuildKey(fixture.Request(true), 32u, variantKey);
-    require(variantKey != key && ShaderDiskCache::EntryName(variantKey) != ShaderDiskCache::EntryName(key), "the plan and the compiled variant share an entry");
-    require(planKey([](RecompileRequest& request) { request.layout = {1u, 4u, 16u, 64u}; }) == key, "the binding layout changed the plan key");
-    require(planKey([](RecompileRequest& request) { request.shader.codeAddress += 0x1000u; request.context.memory = {}; }) == key, "the code address or the memory changed the plan key");
+    Require(variantKey != key && ShaderDiskCache::EntryName(variantKey) != ShaderDiskCache::EntryName(key), "the plan and the compiled variant share an entry");
+    Require(planKey([](RecompileRequest& request) { request.layout = {1u, 4u, 16u, 64u}; }) == key, "the binding layout changed the plan key");
+    Require(planKey([](RecompileRequest& request) { request.shader.codeAddress += 0x1000u; request.context.memory = {}; }) == key, "the code address or the memory changed the plan key");
     auto userData = fixture.userData;
     userData[0] ^= 0x100u;
-    require(planKey([&](RecompileRequest& request) { request.context.userData = userData; }) == key, "user data values changed the plan key");
+    Require(planKey([&](RecompileRequest& request) { request.context.userData = userData; }) == key, "user data values changed the plan key");
     const auto original = fixture.code;
     for (std::size_t word = 0; word < original.size(); ++word) {
         for (std::uint32_t bit = 0; bit < 32u; ++bit) {
             fixture.code = original;
             fixture.code[word] ^= 1u << bit;
-            require(planKey([](RecompileRequest&) {}) != key, "the plan key ignores code word " + std::to_string(word) + " bit " + std::to_string(bit));
+            Require(planKey([](RecompileRequest&) {}) != key, "the plan key ignores code word " + std::to_string(word) + " bit " + std::to_string(bit));
         }
     }
     fixture.code = original;
     fixture.code.push_back(0xbf810000u);
-    require(planKey([](RecompileRequest&) {}) != key, "the plan key ignores an appended code word");
+    Require(planKey([](RecompileRequest&) {}) != key, "the plan key ignores an appended code word");
     fixture.code = original;
-    require(planKey([](RecompileRequest&) {}, 64u) != key, "the plan key ignores the host subgroup size");
-    require(planKey([](RecompileRequest& request) { request.target.subgroupSize = 64u; }) != key, "the plan key ignores the target");
-    require(planKey([](RecompileRequest& request) { request.target.srgbDecodeFormats = 2u; }) != key, "the plan key ignores the sRGB formats decoded in the shader");
-    require(planKey([](RecompileRequest& request) { request.context.waveSize = 64u; request.context.compute->numThreads[0] = 64u; }) != key, "the plan key ignores the wave size");
-    require(planKey([](RecompileRequest& request) { request.context.floatMode = ShaderFloatMode{0xc0u, true, false, false}; }) != key, "the plan key ignores the float mode");
+    Require(planKey([](RecompileRequest&) {}, 64u) != key, "the plan key ignores the host subgroup size");
+    Require(planKey([](RecompileRequest& request) { request.target.subgroupSize = 64u; }) != key, "the plan key ignores the target");
+    Require(planKey([](RecompileRequest& request) { request.target.srgbDecodeFormats = 2u; }) != key, "the plan key ignores the sRGB formats decoded in the shader");
+    Require(planKey([](RecompileRequest& request) { request.context.waveSize = 64u; request.context.compute->numThreads[0] = 64u; }) != key, "the plan key ignores the wave size");
+    Require(planKey([](RecompileRequest& request) { request.context.floatMode = ShaderFloatMode{0xc0u, true, false, false}; }) != key, "the plan key ignores the float mode");
 }
 
 void appendWords(std::vector<std::byte>& out, std::span<const std::uint32_t> words) {
@@ -2837,7 +2834,7 @@ std::vector<std::vector<std::byte>> preparedOutputs(std::vector<PlanFixture>& fi
         appendWords(bytes, GetPreparedArtifact(*handle).spirv.Words());
         ShaderDiskCache::EncodeResult(*result, bytes);
         appendSnapshot(bytes, *capture);
-        require(ShaderDiskCache::EncodePlan(*capture->plan, bytes), fixture.name + ": the captured plan does not encode");
+        Require(ShaderDiskCache::EncodePlan(*capture->plan, bytes), fixture.name + ": the captured plan does not encode");
         if (plans != nullptr) plans->push_back(capture->plan);
         outputs.push_back(std::move(bytes));
     }
@@ -2870,23 +2867,23 @@ int runPlanLoadingProcess(std::string_view mode) {
     const auto builds = FrontEndBuilds();
     const auto counts = " (front end builds " + std::to_string(builds) + ", plan hits " + std::to_string(totals.planHits) + ", plan misses " + std::to_string(totals.planMisses) + ", plan load failures " + std::to_string(totals.planLoadFailures) + ", variant hits " + std::to_string(totals.hits) + ", variant misses " + std::to_string(totals.misses) + ")";
     if (mode == "--load-plan-switch") {
-        require(builds == count && totals.planHits == 0u && totals.planMisses == count && totals.misses == count, "another switch value reused stored plans or variants" + counts);
+        Require(builds == count && totals.planHits == 0u && totals.planMisses == count && totals.misses == count, "another switch value reused stored plans or variants" + counts);
         std::cout << "a process with another switch value rebuilt all " << count << " plans\n";
         return 0;
     }
     if (mode == "--load-plan") {
-        require(builds == 0u && totals.planHits == count && totals.planMisses == 0u && totals.planLoadFailures == 0u && totals.hits == count && totals.misses == 0u, "the second process ran the front end" + counts);
+        Require(builds == 0u && totals.planHits == count && totals.planMisses == 0u && totals.planLoadFailures == 0u && totals.hits == count && totals.misses == 0u, "the second process ran the front end" + counts);
     } else if (mode == "--load-plan-reuse-off") {
-        require(builds == 0u && totals.planHits == count && totals.planMisses == 0u && totals.planLoadFailures == 0u && totals.hits == count && totals.misses == 0u, "turning the image table reuse off changed the stored plan or variant keys" + counts);
+        Require(builds == 0u && totals.planHits == count && totals.planMisses == 0u && totals.planLoadFailures == 0u && totals.hits == count && totals.misses == 0u, "turning the image table reuse off changed the stored plan or variant keys" + counts);
     } else if (mode == "--load-plan-off") {
-        require(builds == count && totals.planHits == 0u && totals.planMisses == 0u && totals.planWrites == 0u && totals.hits == count && totals.misses == 0u, "APS5_NO_PERF_DISK_PLANS=1 used the stored plans or missed the stored variants" + counts);
+        Require(builds == count && totals.planHits == 0u && totals.planMisses == 0u && totals.planWrites == 0u && totals.hits == count && totals.misses == 0u, "APS5_NO_PERF_DISK_PLANS=1 used the stored plans or missed the stored variants" + counts);
     } else {
-        require(builds == 1u && totals.planHits == count - 1u && totals.planLoadFailures == 1u && totals.planWrites == 1u && totals.hits == count && totals.misses == 0u, "the damaged plan was not rejected and rebuilt alone" + counts);
+        Require(builds == 1u && totals.planHits == count - 1u && totals.planLoadFailures == 1u && totals.planWrites == 1u && totals.hits == count && totals.misses == 0u, "the damaged plan was not rejected and rebuilt alone" + counts);
     }
     for (std::size_t index = 0; index < count; ++index) {
         std::vector<std::byte> expected;
-        require(ReadWholeFile(planOutputPath(index), expected), "cannot read the first process's output for " + fixtures[index].name);
-        require(outputs[index] == expected, fixtures[index].name + ": the SPIR-V, bindings, push constants, snapshot or plan differ from the first process");
+        Require(ReadWholeFile(planOutputPath(index), expected), "cannot read the first process's output for " + fixtures[index].name);
+        Require(outputs[index] == expected, fixtures[index].name + ": the SPIR-V, bindings, push constants, snapshot or plan differ from the first process");
     }
     if (mode == "--load-plan") {
         auto changed = planFixtures();
@@ -2895,7 +2892,7 @@ int runPlanLoadingProcess(std::string_view mode) {
         const auto request = fixture.Request(true);
         static_cast<void>(PrepareShader(request));
         const auto after = ShaderDiskCache::Totals();
-        require(FrontEndBuilds() == 1u && after.planHits == count && after.planMisses == 1u, "a changed code word reused a stored plan");
+        Require(FrontEndBuilds() == 1u && after.planHits == count && after.planMisses == 1u, "a changed code word reused a stored plan");
         std::cout << "second process prepared " << count << " shaders from stored plans without running the front end\n";
     } else if (mode == "--load-plan-reuse-off") {
         std::cout << "with the image table reuse off, a process loaded all " << count << " stored plans and variants with the same output\n";
@@ -2906,7 +2903,7 @@ int runPlanLoadingProcess(std::string_view mode) {
     }
     for (std::size_t index = 0; index < count; ++index) {
         const auto fresh = GetResourcePlan(fixtures[index].Request(false));
-        require(samePlan(*plans[index], *fresh), fixtures[index].name + ": the plan this process used differs from the plan its front end builds");
+        Require(samePlan(*plans[index], *fresh), fixtures[index].name + ": the plan this process used differs from the plan its front end builds");
     }
     ShaderDiskCache::Flush();
     return 0;
@@ -2919,9 +2916,9 @@ void verifyPlanAcrossProcesses(const char* self) {
     const auto outputs = preparedOutputs(fixtures);
     ShaderDiskCache::Flush();
     const auto after = ShaderDiskCache::Totals();
-    require(FrontEndBuilds() - builds == fixtures.size() && after.planMisses - before.planMisses == fixtures.size() && after.planWrites - before.planWrites == fixtures.size(), "the first process did not build and store every plan");
+    Require(FrontEndBuilds() - builds == fixtures.size() && after.planMisses - before.planMisses == fixtures.size() && after.planWrites - before.planWrites == fixtures.size(), "the first process did not build and store every plan");
     std::filesystem::create_directories(planOutputPath(0).parent_path());
-    for (std::size_t index = 0; index < outputs.size(); ++index) require(WriteFileAtomically(planOutputPath(index), outputs[index]), "cannot write the first process's output");
+    for (std::size_t index = 0; index < outputs.size(); ++index) Require(WriteFileAtomically(planOutputPath(index), outputs[index]), "cannot write the first process's output");
     auto refused = fixtures[1];
     refused.codeAddress = 0x200000u;
     refused.code = {0xf40c0200u};
@@ -2932,40 +2929,40 @@ void verifyPlanAcrossProcesses(const char* self) {
         threw = true;
     }
     ShaderDiskCache::Flush();
-    require(threw && ShaderDiskCache::Totals().planWrites == after.planWrites && !std::filesystem::exists(planEntryPath(refused)), "a plan the front end refused was stored");
+    Require(threw && ShaderDiskCache::Totals().planWrites == after.planWrites && !std::filesystem::exists(planEntryPath(refused)), "a plan the front end refused was stored");
     std::uintmax_t planBytes = 0;
     for (auto& fixture : fixtures) planBytes += std::filesystem::file_size(planEntryPath(fixture));
     std::cout << fixtures.size() << " plan entries, " << planBytes / fixtures.size() << " bytes per entry on average\n";
     const auto run = [&](const char* mode) {
         const std::string command = "\"" + std::string(self) + "\" " + mode;
-        require(std::system(command.c_str()) == 0, std::string("the process ") + mode + " failed");
+        Require(std::system(command.c_str()) == 0, std::string("the process ") + mode + " failed");
     };
     run("--load-plan");
     run("--load-plan-off");
     run("--load-plan-reuse-off");
     std::vector<std::byte> entry;
     const auto damaged = planEntryPath(fixtures.front());
-    require(ReadWholeFile(damaged, entry), "cannot read a stored plan entry");
+    Require(ReadWholeFile(damaged, entry), "cannot read a stored plan entry");
     entry[entry.size() / 2] ^= std::byte{0x20};
-    require(WriteFileAtomically(damaged, entry), "cannot damage a stored plan entry");
+    Require(WriteFileAtomically(damaged, entry), "cannot damage a stored plan entry");
     run("--load-plan-corrupt");
     std::vector<std::byte> rewritten;
     std::vector<std::byte> key;
     ShaderDiskCache::BuildPlanKey(fixtures.front().Request(true), 32u, key);
     IrResourcePlan plan;
-    require(ReadWholeFile(damaged, rewritten) && ShaderDiskCache::DecodePlanEntry(rewritten, key, plan) == ShaderDiskCache::LoadStatus::Loaded, "the rebuilt plan was not stored again");
+    Require(ReadWholeFile(damaged, rewritten) && ShaderDiskCache::DecodePlanEntry(rewritten, key, plan) == ShaderDiskCache::LoadStatus::Loaded, "the rebuilt plan was not stored again");
     run("--load-plan-switch");
 }
 
 void verifyDefaultDirectory(const char* self) {
     setEnvironment("ANYPS5_SHADER_CACHE_DIR", "");
     setEnvironment("ANYPS5_NO_SHADER_CACHE", "1");
-    require(ShaderRecompiler::ShaderCacheDirectory().empty(), "ANYPS5_NO_SHADER_CACHE=1 did not disable the cache");
+    Require(ShaderRecompiler::ShaderCacheDirectory().empty(), "ANYPS5_NO_SHADER_CACHE=1 did not disable the cache");
     setEnvironment("ANYPS5_NO_SHADER_CACHE", "0");
     const auto directory = ShaderRecompiler::ShaderCacheDirectory();
-    require(directory.filename() == "shader_cache", "the default cache directory is not named shader_cache");
+    Require(directory.filename() == "shader_cache", "the default cache directory is not named shader_cache");
     std::error_code error;
-    require(std::filesystem::equivalent(directory.parent_path(), std::filesystem::absolute(self).parent_path(), error) && !error, "the default cache directory is not beside the executable");
+    Require(std::filesystem::equivalent(directory.parent_path(), std::filesystem::absolute(self).parent_path(), error) && !error, "the default cache directory is not beside the executable");
 }
 
 }
@@ -2974,9 +2971,9 @@ int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::string_view(argv[1]) == "--housekeeping-safety") {
             const auto directory = ShaderDiskCache::EntryDirectory();
-            require(!directory.empty(), "the housekeeping fixture cache is disabled");
+            Require(!directory.empty(), "the housekeeping fixture cache is disabled");
             ShaderDiskCache::Shutdown();
-            require(ShaderDiskCache::Writers() == 0, "the housekeeping writer did not stop");
+            Require(ShaderDiskCache::Writers() == 0, "the housekeeping writer did not stop");
             std::cout << "housekeeping version " << directory.filename().string() << '\n';
             return 0;
         }

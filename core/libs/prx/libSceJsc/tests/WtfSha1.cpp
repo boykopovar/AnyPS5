@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceJsc/libSceJsc.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstddef>
@@ -15,13 +16,6 @@ using Jsc::WtfAbi::SHA1;
 using Jsc::WtfAbi::SHA1Digest;
 
 namespace {
-
-void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "WTF SHA1 check failed at line %d\n", line);
-        std::abort();
-    }
-}
 
 constexpr std::array<std::uint32_t, 5> InitialHash{0x67452301U, 0xEFCDAB89U, 0x98BADCFEU, 0x10325476U, 0xC3D2E1F0U};
 
@@ -95,8 +89,8 @@ int main() {
         SHA1Digest digest;
         digest.fill(0xA5);
         _ZN3WTF4SHA111computeHashERSt5arrayIhLm20EE(&sha1, &digest);
-        Check(Hex(digest) == value.digest, __LINE__);
-        Check(IsReset(sha1), __LINE__);
+        Require(Hex(digest) == value.digest);
+        Require(IsReset(sha1));
     }
 
     {
@@ -105,8 +99,8 @@ int main() {
         SHA1Digest second;
         _ZN3WTF4SHA111computeHashERSt5arrayIhLm20EE(&sha1, &first);
         _ZN3WTF4SHA111computeHashERSt5arrayIhLm20EE(&sha1, &second);
-        Check(Hex(first) == cases[1].digest, __LINE__);
-        Check(Hex(second) == cases[0].digest, __LINE__);
+        Require(Hex(first) == cases[1].digest);
+        Require(Hex(second) == cases[0].digest);
     }
 
     {
@@ -115,11 +109,11 @@ int main() {
         SHA1Digest digest;
         digest.fill(0xA5);
         const auto before = sha1;
-        Check(ThrowsInvalidArgument([&] { _ZN3WTF4SHA111computeHashERSt5arrayIhLm20EE(&sha1, &digest); }), __LINE__);
-        Check(std::memcmp(&before, &sha1, sizeof(sha1)) == 0, __LINE__);
-        for (auto byte : digest) Check(byte == 0xA5, __LINE__);
-        Check(ThrowsInvalidArgument([&] { _ZN3WTF4SHA111computeHashERSt5arrayIhLm20EE(nullptr, &digest); }), __LINE__);
-        Check(ThrowsInvalidArgument([&] { _ZN3WTF4SHA111computeHashERSt5arrayIhLm20EE(&sha1, nullptr); }), __LINE__);
+        Require(ThrowsInvalidArgument([&] { _ZN3WTF4SHA111computeHashERSt5arrayIhLm20EE(&sha1, &digest); }));
+        Require(std::memcmp(&before, &sha1, sizeof(sha1)) == 0);
+        for (auto byte : digest) Require(byte == 0xA5);
+        Require(ThrowsInvalidArgument([&] { _ZN3WTF4SHA111computeHashERSt5arrayIhLm20EE(nullptr, &digest); }));
+        Require(ThrowsInvalidArgument([&] { _ZN3WTF4SHA111computeHashERSt5arrayIhLm20EE(&sha1, nullptr); }));
     }
     return 0;
 }

@@ -1,5 +1,6 @@
 #include "Translation/TranslationContext.hpp"
 #include "RdnaDecoder/RdnaVectorOpDecoder.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <iostream>
@@ -16,10 +17,6 @@ constexpr std::uint32_t Destination = 5u;
 constexpr std::uint32_t Source0 = 256u + 6u;
 constexpr std::uint32_t Source1 = 256u + 7u;
 constexpr std::uint32_t Source2 = 256u + 8u;
-
-void Require(bool value, const std::string& message) {
-    if (!value) throw std::runtime_error("vector output modifiers: " + message);
-}
 
 std::array<std::uint32_t, 2> EncodeVop3(std::uint32_t opcode, std::uint32_t omod, std::uint32_t clamp = 0u, bool ternary = false) {
     const std::uint32_t word0 = 0xd4000000u | (opcode << 16u) | (clamp << 15u) | Destination;

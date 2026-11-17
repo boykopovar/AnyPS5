@@ -1,14 +1,11 @@
 #include "Recompiler.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <exception>
 #include <stdexcept>
 #include <string>
 
 namespace {
-
-void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 ShaderRecompiler::MeshTargetLimits Limits(std::uint32_t vertexGranularity, std::uint32_t primitiveGranularity) {
     ShaderRecompiler::MeshTargetLimits limits{};

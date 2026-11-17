@@ -5,6 +5,7 @@
 #include "prx/libSceFreeType/include/PostScriptInfo.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libkernel/libkernel.hpp"
+#include "Testing.hpp"
 
 #include FT_SFNT_NAMES_H
 #include FT_TRUETYPE_TABLES_H
@@ -25,13 +26,6 @@
 #endif
 
 using namespace FreeType;
-
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "FreeType output guard check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 static std::vector<unsigned char> NamedFont() {
     std::vector<unsigned char> post(32, 0);

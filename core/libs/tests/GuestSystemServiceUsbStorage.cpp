@@ -1,6 +1,7 @@
 #include "prx/libSceSystemService/include/SystemService.hpp"
 #include "prx/libSceUsbStorage/UsbStorage.hpp"
 #include "prx/libSceUsbStorage/include/HostVolumes.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -16,13 +17,6 @@
 namespace {
 
 void APS5_VABI CallbackStub(const UsbStorageEvent*, void*) {}
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "SYSTEMSERVICE USBSTORAGE: %s\n", message);
-        std::abort();
-    }
-}
 
 void WriteFile(const std::filesystem::path& path, std::string_view text) {
     std::filesystem::create_directories(path.parent_path());

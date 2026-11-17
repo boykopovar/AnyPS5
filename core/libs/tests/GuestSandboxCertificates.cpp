@@ -4,6 +4,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -11,13 +12,6 @@
 #include <fstream>
 #include <string>
 
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "Sandbox certificates check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 static std::string ReadKernel(const std::string& path) {
     const int descriptor = sceKernelOpen(path.c_str(), 0, 0);
     Require(descriptor >= 0);

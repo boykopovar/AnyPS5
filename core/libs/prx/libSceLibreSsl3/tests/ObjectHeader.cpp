@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdio>
@@ -10,12 +11,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool value, std::source_location location = std::source_location::current()) {
-    if (value) return;
-    std::fprintf(stderr, "ASN1 object header check failed at line %u\n", location.line());
-    std::abort();
-}
 
 void Check(std::span<const unsigned char> bytes, int result, std::size_t consumed,
            std::int64_t length, int tag, int tagClass, int reason = 0) {

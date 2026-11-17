@@ -2,6 +2,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -18,12 +19,6 @@
 #endif
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "NP common state predicates: %s\n", message);
-    std::exit(1);
-}
 
 template <typename TValue, std::size_t N>
 void WriteField(std::array<std::byte, N>& object, std::size_t offset, TValue value) {

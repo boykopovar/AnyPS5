@@ -1,13 +1,12 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
 #include <string>
 #include <thread>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 int main() {
     const char* word = sceKernelGetFsSandboxRandomWord();

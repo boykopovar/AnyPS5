@@ -2,14 +2,13 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <climits>
 #include <cstdint>
 #include <initializer_list>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 constexpr int GuestEbadf = 9;
 constexpr int Unix = 1;

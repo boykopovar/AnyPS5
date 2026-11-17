@@ -1,4 +1,5 @@
 #include "FixtureDeviceSelection.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -10,10 +11,6 @@
 #include <string>
 
 namespace {
-
-void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 void SetRequest(const char* value) {
 #ifdef _WIN32

@@ -2,6 +2,7 @@
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include FT_TRUETYPE_TABLES_H
 
@@ -15,13 +16,6 @@
 
 using namespace FreeType;
 
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "FreeType sfnt table check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 #define Same(field) Require(actual.field == expected.field)
 #define SameArray(field) Require(std::memcmp(actual.field, expected.field, sizeof(actual.field)) == 0)
 

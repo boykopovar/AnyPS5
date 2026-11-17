@@ -1,22 +1,11 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
 #include <thread>
-
-static void Require(bool value) { if (!value) std::abort(); }
-
-template<typename TFunction>
-static void RequireThrows(TFunction function) {
-    try {
-        function();
-    } catch (const std::runtime_error&) {
-        return;
-    }
-    std::abort();
-}
 
 static Uint128 Make(std::uint64_t high, std::uint64_t low) { return (static_cast<Uint128>(high) << 64) | low; }
 
@@ -34,10 +23,10 @@ static void CheckLockFree() {
 static void CheckGenericTraps() {
     alignas(16) unsigned char object[24] = {};
     unsigned char other[24] = {};
-    RequireThrows([&] { __atomic_load_nid_postfix(sizeof(object), object, other, 5); });
-    RequireThrows([&] { __atomic_store_nid_postfix(sizeof(object), object, other, 5); });
-    RequireThrows([&] { __atomic_exchange_nid_postfix(sizeof(object), object, other, other, 5); });
-    RequireThrows([&] { __atomic_compare_exchange_nid_postfix(sizeof(object), object, other, other, 5, 5); });
+    ExpectErr<std::runtime_error>([&] { __atomic_load_nid_postfix(sizeof(object), object, other, 5); });
+    ExpectErr<std::runtime_error>([&] { __atomic_store_nid_postfix(sizeof(object), object, other, 5); });
+    ExpectErr<std::runtime_error>([&] { __atomic_exchange_nid_postfix(sizeof(object), object, other, other, 5); });
+    ExpectErr<std::runtime_error>([&] { __atomic_compare_exchange_nid_postfix(sizeof(object), object, other, other, 5, 5); });
 }
 
 static void CheckSixteenByte() {

@@ -3,6 +3,7 @@
 #include "prx/libkernel/Pthread/include/ThreadLifecycle.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -33,8 +34,6 @@ static constexpr int MUTEX_TYPE_RECURSIVE = 2;
 static constexpr int GuestPthread_Cancel_Enable = 0;
 static constexpr int GuestPthread_Cancel_Asynchronous = 2;
 static constexpr std::intptr_t WorkerRetval = 0x1234;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 #ifdef _WIN32
 static constexpr std::uintptr_t GuestPage = 0x4000;

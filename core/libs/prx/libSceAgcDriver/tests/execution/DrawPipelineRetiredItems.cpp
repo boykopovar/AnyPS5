@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
+#include "Testing.hpp"
 #include <iostream>
 #include <memory>
 #include <stdexcept>
@@ -7,10 +8,6 @@ namespace {
 
 using AgcDriver::DriverDetail::DrawFinisher;
 using AgcDriver::DriverDetail::DrawPipeline;
-
-void Require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 void RetiredItemLeavesTheEnqueuingThread() {
     auto& pipeline = DrawPipeline::Queue0();

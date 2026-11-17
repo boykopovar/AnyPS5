@@ -1,5 +1,6 @@
 #include "prx/libSceNKWebKitRequirements/include/Sqlite.hpp"
 #include "prx/libc/include/General.hpp"
+#include "Testing.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -42,12 +43,6 @@ constexpr int SQLITE_ATTACH = 24;
 constexpr int SQLITE_CHECKPOINT_PASSIVE = 0;
 const auto SQLITE_STATIC = reinterpret_cast<NKWebKit::GuestSqliteDestructor>(std::intptr_t{0});
 const auto SQLITE_TRANSIENT = reinterpret_cast<NKWebKit::GuestSqliteDestructor>(std::intptr_t{-1});
-
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "NKWebKit SQLite assertion failed: %s\n", message);
-    std::abort();
-}
 
 int destroyedBuffers = 0;
 int destroyedCollations = 0;

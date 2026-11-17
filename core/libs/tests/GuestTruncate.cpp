@@ -2,6 +2,7 @@
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -20,8 +21,6 @@ extern "C" _invalid_parameter_handler _set_thread_local_invalid_parameter_handle
 #else
 #include <unistd.h>
 #endif
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 constexpr int GuestEnoent = 2;
 constexpr int GuestEbadf = 9;

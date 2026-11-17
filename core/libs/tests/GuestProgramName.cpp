@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
@@ -10,8 +11,6 @@ extern "C" {
 extern const char* __progname_nid_postfix;
 
 }
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 int main() {
     const char* const original = __progname_nid_postfix;

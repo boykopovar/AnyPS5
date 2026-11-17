@@ -1,5 +1,6 @@
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestList.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdio>
@@ -12,15 +13,6 @@
 #include FT_LIST_H
 
 using namespace FreeType;
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "FreeType list check failed at line %d\n", line);
-        std::abort();
-    }
-}
-
-#define Require(value) Check((value), __LINE__)
 
 constexpr std::size_t Count = 16;
 template<typename TNode>

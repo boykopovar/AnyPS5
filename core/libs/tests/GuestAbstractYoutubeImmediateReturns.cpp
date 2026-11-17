@@ -1,4 +1,5 @@
 #include "prx/libSceAbstractYoutube/libSceAbstractYoutube.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdint>
@@ -8,12 +9,6 @@
 #include <source_location>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libSceAbstractYoutube immediate returns check failed at line %u\n", location.line());
-    std::abort();
-}
 
 std::array<unsigned char, 64> Filled() {
     std::array<unsigned char, 64> bytes{};

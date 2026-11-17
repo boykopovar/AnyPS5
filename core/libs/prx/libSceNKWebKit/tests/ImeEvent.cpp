@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/WebKitValueExports.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -14,13 +15,6 @@ struct ImeEventLayout {
     int keyCode;
     int caretIndex;
 };
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "ImeEvent check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 }
 

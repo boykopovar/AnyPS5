@@ -1,21 +1,11 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libSceLibcInternal/include/InventoryExports.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-
-namespace {
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "LibcInternal runtime hooks: %s\n", message);
-        std::abort();
-    }
-}
-
-}
 
 int main() {
     int locks[8];

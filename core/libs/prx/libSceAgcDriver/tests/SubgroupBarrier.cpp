@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/SubgroupBarrier.hpp"
 #include "Recompiler.hpp"
+#include "Testing.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <array>
 #include <cstdint>
@@ -48,10 +49,6 @@ struct Barriers {
     std::uint32_t subgroupMemory = 0;
 };
 
-void require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
-
 struct MemoryBarriers {
     std::uint32_t workgroup = 0;
     std::uint32_t device = 0;
@@ -99,7 +96,7 @@ MemoryBarriers memoryBarriers(std::span<const std::uint32_t> code, bool deviceSc
     for (std::size_t at = 5; at < words.size() && (words[at] >> 16u) != 0; at += words[at] >> 16u) {
         if (static_cast<spv::Op>(words[at] & 0xffffu) != spv::OpMemoryBarrier) continue;
         const auto scope = constants.find(words[at + 1]);
-        require(scope != constants.end(), "a memory barrier scope is not a 32-bit constant");
+        Require(scope != constants.end(), "a memory barrier scope is not a 32-bit constant");
         if (scope->second == spv::ScopeWorkgroup) ++barriers.workgroup;
         if (scope->second == spv::ScopeDevice) ++barriers.device;
     }
@@ -115,7 +112,7 @@ Barriers recompile(std::uint32_t threads, bool waveLdsMemoryBarriers) {
         const auto op = static_cast<spv::Op>(words[at] & 0xffffu);
         if (op != spv::OpControlBarrier && op != spv::OpMemoryBarrier) continue;
         const auto scope = constants.find(words[at + 1]);
-        require(scope != constants.end(), "a barrier scope is not a 32-bit constant");
+        Require(scope != constants.end(), "a barrier scope is not a 32-bit constant");
         if (scope->second != spv::ScopeSubgroup) continue;
         if (op == spv::OpControlBarrier) ++barriers.subgroupControl;
         else ++barriers.subgroupMemory;
@@ -125,8 +122,8 @@ Barriers recompile(std::uint32_t threads, bool waveLdsMemoryBarriers) {
 
 void verifyDriverQuirk() {
     for (const auto& item : Cases) {
-        require(AgcDriver::SubgroupControlBarrierUsable(item.driver) == item.controlBarrier, "driver " + std::to_string(static_cast<int>(item.driver)) + ": expected subgroup control barriers to be " + (item.controlBarrier ? "usable" : "unusable"));
-        require(AgcDriver::WorkgroupScopeFenceUsable(item.driver) == item.workgroupFence, "driver " + std::to_string(static_cast<int>(item.driver)) + ": expected workgroup-scope fences to be " + (item.workgroupFence ? "usable" : "unusable"));
+        Require(AgcDriver::SubgroupControlBarrierUsable(item.driver) == item.controlBarrier, "driver " + std::to_string(static_cast<int>(item.driver)) + ": expected subgroup control barriers to be " + (item.controlBarrier ? "usable" : "unusable"));
+        Require(AgcDriver::WorkgroupScopeFenceUsable(item.driver) == item.workgroupFence, "driver " + std::to_string(static_cast<int>(item.driver)) + ": expected workgroup-scope fences to be " + (item.workgroupFence ? "usable" : "unusable"));
     }
 }
 
@@ -134,25 +131,25 @@ void verifyLdsMemoryBarrierScope() {
     const std::array<std::pair<const char*, std::span<const std::uint32_t>>, 3> programs{{{"ds_write_b16", LdsHalfStore}, {"ds_add_u32", LdsAtomicAdd}, {"ds_max_f32", LdsAtomicMax}}};
     for (const auto& [name, code] : programs) {
         const auto workgroup = memoryBarriers(code, false);
-        require(workgroup.workgroup == 1 && workgroup.device == 0, std::string(name) + " did not order its LDS update with one workgroup-scope OpMemoryBarrier");
+        Require(workgroup.workgroup == 1 && workgroup.device == 0, std::string(name) + " did not order its LDS update with one workgroup-scope OpMemoryBarrier");
         const auto device = memoryBarriers(code, true);
-        require(device.workgroup == 0 && device.device == 1, std::string(name) + " with device-scope LDS memory barriers did not order its LDS update with one device-scope OpMemoryBarrier");
+        Require(device.workgroup == 0 && device.device == 1, std::string(name) + " with device-scope LDS memory barriers did not order its LDS update with one device-scope OpMemoryBarrier");
     }
 }
 
 void verifyEmittedBarriers() {
     const auto control = recompile(256, false);
-    require(control.subgroupControl != 0 && control.subgroupMemory == 0, "a wave32 program in a workgroup of eight waves did not order its LDS accesses with subgroup-scope OpControlBarrier only");
+    Require(control.subgroupControl != 0 && control.subgroupMemory == 0, "a wave32 program in a workgroup of eight waves did not order its LDS accesses with subgroup-scope OpControlBarrier only");
     const auto memory = recompile(256, true);
-    require(memory.subgroupControl == 0 && memory.subgroupMemory != 0, "with wave LDS memory barriers, a wave32 program in a workgroup of eight waves did not order its LDS accesses with subgroup-scope OpMemoryBarrier only");
+    Require(memory.subgroupControl == 0 && memory.subgroupMemory != 0, "with wave LDS memory barriers, a wave32 program in a workgroup of eight waves did not order its LDS accesses with subgroup-scope OpMemoryBarrier only");
     const auto single = recompile(32, true);
-    require(single.subgroupControl == 0 && single.subgroupMemory == 0, "with wave LDS memory barriers, a single-wave workgroup did not keep workgroup-scope barriers");
+    Require(single.subgroupControl == 0 && single.subgroupMemory == 0, "with wave LDS memory barriers, a single-wave workgroup did not keep workgroup-scope barriers");
 }
 
 void verifyLdsLockFenceDrivers() {
     for (const auto& item : Cases) {
-        require(AgcDriver::LdsLockFencesRequired(item.driver) == (item.driver == VK_DRIVER_ID_MOLTENVK), "driver " + std::to_string(static_cast<int>(item.driver)) + ": expected LDS lock fences only on MoltenVK");
-        require(AgcDriver::DeviceAtomicWorkgroupMemoryBarriersRequired(item.driver) == (item.driver == VK_DRIVER_ID_AMD_PROPRIETARY), "driver " + std::to_string(static_cast<int>(item.driver)) + ": expected workgroup-memory device atomic barriers only on AMD proprietary");
+        Require(AgcDriver::LdsLockFencesRequired(item.driver) == (item.driver == VK_DRIVER_ID_MOLTENVK), "driver " + std::to_string(static_cast<int>(item.driver)) + ": expected LDS lock fences only on MoltenVK");
+        Require(AgcDriver::DeviceAtomicWorkgroupMemoryBarriersRequired(item.driver) == (item.driver == VK_DRIVER_ID_AMD_PROPRIETARY), "driver " + std::to_string(static_cast<int>(item.driver)) + ": expected workgroup-memory device atomic barriers only on AMD proprietary");
     }
 }
 
@@ -169,8 +166,8 @@ void verifyDeviceAtomicMemoryBarrierSemantics() {
             if (static_cast<spv::Op>(words[at] & 0xffffu) != spv::OpMemoryBarrier) continue;
             const auto scope = constants.find(words[at + 1]);
             const auto semantics = constants.find(words[at + 2]);
-            require(scope != constants.end() && semantics != constants.end(), "device atomic barrier operands are not 32-bit constants");
-            require(scope->second == spv::ScopeDevice, "device atomic barrier did not use device scope");
+            Require(scope != constants.end() && semantics != constants.end(), "device atomic barrier operands are not 32-bit constants");
+            Require(scope->second == spv::ScopeDevice, "device atomic barrier did not use device scope");
             if (semantics->second == (spv::MemorySemanticsAcquireReleaseMask | spv::MemorySemanticsUniformMemoryMask)) ++uniformCount;
             if (semantics->second == (spv::MemorySemanticsAcquireReleaseMask | spv::MemorySemanticsWorkgroupMemoryMask)) ++workgroupCount;
         }
@@ -178,9 +175,9 @@ void verifyDeviceAtomicMemoryBarrierSemantics() {
     };
     for (const auto& [name, code] : programs) {
         const auto uniform = inspect(code, false);
-        require(uniform.first == 1 && uniform.second == 0, std::string(name) + " did not emit UniformMemory barrier by default");
+        Require(uniform.first == 1 && uniform.second == 0, std::string(name) + " did not emit UniformMemory barrier by default");
         const auto workgroup = inspect(code, true);
-        require(workgroup.first == 0 && workgroup.second == 1, std::string(name) + " with workgroup-memory barrier flag did not emit WorkgroupMemory barrier");
+        Require(workgroup.first == 0 && workgroup.second == 1, std::string(name) + " with workgroup-memory barrier flag did not emit WorkgroupMemory barrier");
     }
 }
 

@@ -1,4 +1,5 @@
 #include "LoweringExecution.hpp"
+#include "Testing.hpp"
 #include <codegen/x86/MovbeLowering.hpp>
 #include <codegen/x86/IAmd64OnlyInstructionMatcher.hpp>
 #include <codegen/CodegenException.hpp>
@@ -16,10 +17,6 @@ using LoweringExecution::Bytes;
 
 constexpr std::array<std::uint8_t, 3> kWidths{16, 32, 64};
 
-void require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
-
 Bytes site(bool store, std::uint8_t width, std::uint8_t reg, const Bytes& tail) {
     Bytes bytes;
     if (width == 16) bytes.push_back(0x66);
@@ -36,20 +33,20 @@ void decoding() {
             for (std::uint8_t reg = 0; reg < 16; ++reg) {
                 const auto bytes = site(store, width, reg, {0x06});
                 const auto operands = Codegen::DecodeMovbe(bytes.data(), bytes.size());
-                require(operands && operands->Store == store && operands->Width == width && operands->Register == reg && !operands->Memory.RipRelative, "MOVBE decoding changed an operand");
+                Require(operands && operands->Store == store && operands->Width == width && operands->Register == reg && !operands->Memory.RipRelative, "MOVBE decoding changed an operand");
             }
         }
     }
     const Bytes memory{0x64, 0x67, 0x4F, 0x0F, 0x38, 0xF1, 0x8C, 0xAC, 0x10, 0, 0, 0};
     const auto operands = Codegen::DecodeMovbe(memory.data(), memory.size());
-    require(operands && operands->Store && operands->Width == 64 && operands->Register == 9 && operands->Memory.RexIndexBase == 3 && operands->Memory.Prefixes == Bytes{0x64, 0x67}, "MOVBE memory extensions or prefixes were lost");
+    Require(operands && operands->Store && operands->Width == 64 && operands->Register == 9 && operands->Memory.RexIndexBase == 3 && operands->Memory.Prefixes == Bytes{0x64, 0x67}, "MOVBE memory extensions or prefixes were lost");
     for (const Bytes bytes : {Bytes{0x90}, Bytes{0xF2, 0x0F, 0x38, 0xF0, 0x06}, Bytes{0xF2, 0x0F, 0x38, 0xF1, 0x06}, Bytes{0x0F, 0x38, 0xF2, 0x06}, Bytes{0x0F, 0x38}, Bytes{0x0F, 0x38, 0x00, 0x06}})
-        require(!Codegen::DecodeMovbe(bytes.data(), bytes.size()), "CRC32, a truncated or an unrelated opcode matched MOVBE");
+        Require(!Codegen::DecodeMovbe(bytes.data(), bytes.size()), "CRC32, a truncated or an unrelated opcode matched MOVBE");
     for (const Bytes bytes : {Bytes{0x0F, 0x38, 0xF0, 0xC0}, Bytes{0x0F, 0x38, 0xF0, 0x06, 0x90}, Bytes{0x0F, 0x38, 0xF1, 0x84}}) {
         bool rejected = false;
         try { (void)Codegen::DecodeMovbe(bytes.data(), bytes.size()); }
         catch (const Codegen::CodegenException&) { rejected = true; }
-        require(rejected, "Malformed MOVBE was accepted");
+        Require(rejected, "Malformed MOVBE was accepted");
     }
 }
 
@@ -59,11 +56,11 @@ void matching() {
     const auto avx = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Avx);
     for (const bool store : {false, true}) {
         const auto bytes = site(store, 64, 0, {0x06});
-        require(!intel->Match(bytes.data(), bytes.size()) && !rosetta->Match(bytes.data(), bytes.size()), "Intel or Rosetta mode rewrote MOVBE");
+        Require(!intel->Match(bytes.data(), bytes.size()) && !rosetta->Match(bytes.data(), bytes.size()), "Intel or Rosetta mode rewrote MOVBE");
         const auto match = avx->Match(bytes.data(), bytes.size());
-        require(match && match->InstructionName == "MOVBE" && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline && !match->Optional, "AVX mode did not require a trampoline for MOVBE");
+        Require(match && match->InstructionName == "MOVBE" && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline && !match->Optional, "AVX mode did not require a trampoline for MOVBE");
         const std::array<std::span<const std::uint8_t>, 2> sequence{bytes, bytes};
-        require(avx->MatchSequence(sequence, {}).has_value(), "A MOVBE sequence could not move out of line");
+        Require(avx->MatchSequence(sequence, {}).has_value(), "A MOVBE sequence could not move out of line");
     }
 }
 
@@ -129,7 +126,7 @@ void execution() {
                                 if (memory != wanted)
                                     throw std::runtime_error(describe + ": memory is " + std::to_string(memory) + ", wanted " + std::to_string(wanted));
                             }
-                            for (const auto red : trial.RedZone) require(red == LoweringExecution::kSentinel, "MOVBE overwrote the caller's red zone");
+                            for (const auto red : trial.RedZone) Require(red == LoweringExecution::kSentinel, "MOVBE overwrote the caller's red zone");
                         }
                     }
                 }

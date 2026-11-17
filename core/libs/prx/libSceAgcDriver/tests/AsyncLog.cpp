@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/AsyncLog.hpp"
 #include "tests/TemporaryFile.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <csignal>
@@ -33,10 +34,6 @@ namespace {
 
 using namespace std::chrono_literals;
 using Clock = AgcDriver::AsyncLog::Clock;
-
-void Check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 std::string ReadAll(std::FILE* file) {
     std::fflush(file);
@@ -124,7 +121,7 @@ std::string LargeLine(std::size_t index, std::size_t bytes) {
 
 void OrderPerThread() {
     std::FILE* file = TemporaryFile::Open();
-    Check(file != nullptr, "temporary file");
+    Require(file != nullptr, "temporary file");
     auto& log = AgcDriver::AsyncLog::Get();
     std::string expected;
     for (int i = 0; i < 2000; ++i) {
@@ -135,17 +132,17 @@ void OrderPerThread() {
         expected += plain;
     }
     log.Flush();
-    Check(ReadAll(file) == expected, "deferred and written lines changed order or content");
+    Require(ReadAll(file) == expected, "deferred and written lines changed order or content");
     std::fclose(file);
 }
 
 void LongLine() {
     std::FILE* file = TemporaryFile::Open();
-    Check(file != nullptr, "temporary file");
+    Require(file != nullptr, "temporary file");
     const std::string longText(3000, 'x');
     AgcDriver::AsyncLog::Get().Defer(file, "%s|%d\n", AgcDriver::LogLiteral{longText.c_str()}, 7);
     AgcDriver::AsyncLog::Get().Flush();
-    Check(ReadAll(file) == longText + "|7\n", "a line longer than the stack buffer changed");
+    Require(ReadAll(file) == longText + "|7\n", "a line longer than the stack buffer changed");
     std::fclose(file);
 }
 
@@ -154,13 +151,13 @@ void Coalescing() {
     const std::string line = "[gpu] coalescing test line\n";
     int printed = 0;
     for (int i = 0; i < 50; ++i) printed += log.Admit(line) ? 1 : 0;
-    Check(printed == 3, "identical lines in one window were not limited to the first three");
-    Check(log.Admit("[gpu] another line\n"), "a different line was suppressed");
+    Require(printed == 3, "identical lines in one window were not limited to the first three");
+    Require(log.Admit("[gpu] another line\n"), "a different line was suppressed");
 }
 
 void FlushWaitsForHeldStream() {
     std::FILE* file = TemporaryFile::Open();
-    Check(file != nullptr, "temporary file");
+    Require(file != nullptr, "temporary file");
     auto& log = AgcDriver::AsyncLog::Get();
     {
         HeldStream held(file);
@@ -172,31 +169,31 @@ void FlushWaitsForHeldStream() {
         log.Flush();
         const bool waited = held.Released();
         releaser.join();
-        Check(waited, "Flush returned while the logger still waited for the stream");
+        Require(waited, "Flush returned while the logger still waited for the stream");
     }
-    Check(ReadAll(file) == "held 7 line\n", "the line queued behind a held stream changed");
+    Require(ReadAll(file) == "held 7 line\n", "the line queued behind a held stream changed");
     std::fclose(file);
 }
 
 void BoundedFlushGivesUp() {
     std::FILE* file = TemporaryFile::Open();
-    Check(file != nullptr, "temporary file");
+    Require(file != nullptr, "temporary file");
     auto& log = AgcDriver::AsyncLog::Get();
-    Check(log.FlushFor(0ms), "FlushFor waited with nothing queued");
+    Require(log.FlushFor(0ms), "FlushFor waited with nothing queued");
     {
         HeldStream held(file);
         log.Defer(file, "bounded %d\n", 1);
-        Check(!log.FlushFor(100ms), "FlushFor reported a line written while its stream was held");
+        Require(!log.FlushFor(100ms), "FlushFor reported a line written while its stream was held");
         held.Release();
-        Check(log.FlushFor(10s), "FlushFor missed the line written after the stream was released");
+        Require(log.FlushFor(10s), "FlushFor missed the line written after the stream was released");
     }
-    Check(ReadAll(file) == "bounded 1\n", "the line queued behind a held stream changed");
+    Require(ReadAll(file) == "bounded 1\n", "the line queued behind a held stream changed");
     std::fclose(file);
 }
 
 void FullQueueBlocksCaller() {
     std::FILE* file = TemporaryFile::Open();
-    Check(file != nullptr, "temporary file");
+    Require(file != nullptr, "temporary file");
     auto& log = AgcDriver::AsyncLog::Get();
     constexpr std::size_t lineBytes = 1024 * 1024;
     constexpr std::size_t lines = 2 * AgcDriver::AsyncLog::Capacity / lineBytes + 4;
@@ -227,7 +224,7 @@ void FullQueueBlocksCaller() {
         held.Release();
         producer.join();
     }
-    Check(blocked, "the caller was not blocked by a full queue");
+    Require(blocked, "the caller was not blocked by a full queue");
     log.Flush();
     std::fflush(file);
     std::rewind(file);
@@ -235,9 +232,9 @@ void FullQueueBlocksCaller() {
     for (std::size_t i = 0; i < lines; ++i) {
         const std::string expected = LargeLine(i, lineBytes);
         line.resize(expected.size());
-        Check(std::fread(line.data(), 1, line.size(), file) == line.size() && line == expected, "a line written through a full queue changed or went missing");
+        Require(std::fread(line.data(), 1, line.size(), file) == line.size() && line == expected, "a line written through a full queue changed or went missing");
     }
-    Check(std::fgetc(file) == EOF, "a full queue wrote extra output");
+    Require(std::fgetc(file) == EOF, "a full queue wrote extra output");
     std::fclose(file);
 }
 
@@ -250,7 +247,7 @@ constexpr int ChildLines = 50;
 #else
     std::FILE* file = std::fopen(path.c_str(), "wb");
 #endif
-    Check(file != nullptr, "child output file");
+    Require(file != nullptr, "child output file");
 #ifdef _WIN32
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
@@ -311,17 +308,17 @@ void LinesSurviveEnd(const std::string& self, const std::string& mode) {
     const bool started = std::filesystem::exists(output, error);
     const std::string text = started ? ReadFile(output) : std::string();
     std::filesystem::remove(output, error);
-    Check(started, "the child did not start");
-    Check(status != 0, "the child did not end abnormally");
-    Check(lived < 6s, "the child took too long to end");
+    Require(started, "the child did not start");
+    Require(status != 0, "the child did not end abnormally");
+    Require(lived < 6s, "the child took too long to end");
     if (mode == "blocked") {
-        Check(lived >= 1900ms, "the child ended before the flush gave up");
-        Check(text.empty(), "the child wrote through a held stream");
+        Require(lived >= 1900ms, "the child ended before the flush gave up");
+        Require(text.empty(), "the child wrote through a held stream");
         return;
     }
     std::string expected;
     for (int i = 0; i < ChildLines; ++i) expected += "deferred " + std::to_string(i) + "\nplain " + std::to_string(i) + "\n";
-    Check(text == expected, "lines queued before the process ended were lost or changed");
+    Require(text == expected, "lines queued before the process ended were lost or changed");
 }
 
 }

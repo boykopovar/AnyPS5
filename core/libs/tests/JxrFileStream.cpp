@@ -1,6 +1,7 @@
 #include "prx/libSceJxr/libSceJxr.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdint>
@@ -11,12 +12,6 @@
 #include <stdexcept>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "JXR file stream check failed at line %u\n", location.line());
-    std::abort();
-}
 
 constexpr const char* Path = "guest_jxr_file_stream.bin";
 constexpr std::array<std::uint8_t, 10> Data {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};

@@ -1,4 +1,5 @@
 #include "Recompiler.hpp"
+#include "Testing.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <array>
 #include <cstdint>
@@ -14,10 +15,6 @@
 namespace {
 
 using namespace ShaderRecompiler;
-
-void require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 constexpr std::array<std::uint32_t, 4> CvtF16F32Store{0x7e021500u, 0xe0700000u, 0x80000100u, 0xbf810000u};
 constexpr std::array<std::uint32_t, 4> MovStore{0x7e020300u, 0xe0700000u, 0x80000100u, 0xbf810000u};
@@ -47,7 +44,7 @@ std::vector<std::uint32_t> recompile(bool preserve, bool flush, bool flushCapabi
     request.layout = {0, 0, 0, 128};
     request.useCache = false;
     auto result = Recompile(request);
-    require(!result.spirv.empty(), "the shader did not recompile");
+    Require(!result.spirv.empty(), "the shader did not recompile");
     return result.spirv.Copy();
 }
 
@@ -62,7 +59,7 @@ Modes scan(std::span<const std::uint32_t> words) {
     for (std::size_t cursor = 5; cursor < words.size();) {
         const auto count = words[cursor] >> 16u;
         const auto op = static_cast<spv::Op>(words[cursor] & 0xffffu);
-        require(count != 0 && cursor + count <= words.size(), "truncated SPIR-V instruction");
+        Require(count != 0 && cursor + count <= words.size(), "truncated SPIR-V instruction");
         if (op == spv::OpCapability && words[cursor + 1] == spv::CapabilityDenormPreserve) modes.preserveCapability = true;
         if (op == spv::OpExecutionMode && count == 4 && words[cursor + 3] == 32u) {
             if (words[cursor + 2] == spv::ExecutionModeDenormPreserve) modes.preserve32 = true;
@@ -75,22 +72,22 @@ Modes scan(std::span<const std::uint32_t> words) {
 
 void verify() {
     const auto preserved = scan(recompile(true, false));
-    require(preserved.preserve32 && preserved.preserveCapability && !preserved.flush32, "float32DenormPreserve did not emit the 32-bit DenormPreserve execution mode and capability");
+    Require(preserved.preserve32 && preserved.preserveCapability && !preserved.flush32, "float32DenormPreserve did not emit the 32-bit DenormPreserve execution mode and capability");
     const auto plain = scan(recompile(false, false));
-    require(!plain.preserve32 && !plain.flush32, "a target without float32DenormPreserve or float32FlushToZero set a 32-bit denormal execution mode");
+    Require(!plain.preserve32 && !plain.flush32, "a target without float32DenormPreserve or float32FlushToZero set a 32-bit denormal execution mode");
     const auto flushed = scan(recompile(true, true));
-    require(flushed.flush32 && !flushed.preserve32, "the hardware 32-bit flush did not take precedence over the preserve flag");
+    Require(flushed.flush32 && !flushed.preserve32, "the hardware 32-bit flush did not take precedence over the preserve flag");
     const auto nativeFlush = scan(recompile(true, true, false));
-    require(!nativeFlush.preserve32 && !nativeFlush.flush32, "a hardware flush without the DenormFlushToZero capability declared a 32-bit denormal execution mode");
+    Require(!nativeFlush.preserve32 && !nativeFlush.flush32, "a hardware flush without the DenormFlushToZero capability declared a 32-bit denormal execution mode");
     const auto flushingMode = scan(recompile(true, true, true, ShaderFloatMode{0xc0u, true, false, false}, MovStore));
-    require(flushingMode.flush32 && !flushingMode.preserve32, "FLOAT_MODE 0xc0 flushes f32 denormals but the module did not take the hardware flush");
+    Require(flushingMode.flush32 && !flushingMode.preserve32, "FLOAT_MODE 0xc0 flushes f32 denormals but the module did not take the hardware flush");
     for (const std::uint32_t mode : {0xd0u, 0xe0u, 0xf0u}) {
         char name[64];
         std::snprintf(name, sizeof(name), "FLOAT_MODE 0x%02x keeps f32 denormals", mode);
         const auto kept = scan(recompile(true, true, true, ShaderFloatMode{mode, true, false, false}, MovStore));
-        require(kept.preserve32 && kept.preserveCapability && !kept.flush32, std::string(name) + ", but the module did not declare DenormPreserve 32 instead of the hardware flush");
+        Require(kept.preserve32 && kept.preserveCapability && !kept.flush32, std::string(name) + ", but the module did not declare DenormPreserve 32 instead of the hardware flush");
         const auto unpreserved = scan(recompile(false, true, true, ShaderFloatMode{mode, true, false, false}, MovStore));
-        require(!unpreserved.flush32 && !unpreserved.preserve32, std::string(name) + ", but the module took the hardware flush on a device that cannot preserve them");
+        Require(!unpreserved.flush32 && !unpreserved.preserve32, std::string(name) + ", but the module took the hardware flush on a device that cannot preserve them");
     }
 }
 

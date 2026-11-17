@@ -1,15 +1,12 @@
 #include "prx/libSceAudioIn/AudioInCapture.hpp"
 #include "prx/libScePad/include/HostAudioInControl.hpp"
 #include "prx/libScePad/include/HostVolumeControl.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
-
-static void Require(bool value) {
-    if (!value) std::abort();
-}
 
 static void TestFocusMuteState() {
     HostVolumeConfigure_nid_no_patch(nullptr, nullptr);

@@ -1,5 +1,6 @@
 #include "prx/libSceRudp/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstddef>
@@ -36,12 +37,6 @@ Function Resolve(const char* name) {
         std::abort();
     }
     return reinterpret_cast<Function>(symbol);
-}
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "Rudp unconnected: %s\n", message);
-    std::abort();
 }
 
 void APS5_VABI Handler(int, int, int, void*) {}

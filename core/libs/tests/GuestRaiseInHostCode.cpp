@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "tests/TemporaryFile.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -12,7 +13,6 @@
 
 static constexpr int SigUsr1 = 30;
 static constexpr int Raises = 100;
-static void Require(bool value) { if (!value) std::abort(); }
 
 static std::FILE* shared = nullptr;
 static std::atomic<int> deliveries{0};

@@ -2,6 +2,7 @@
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstdio>
@@ -19,14 +20,6 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
-
-static void Check(bool condition, int line) {
-    if (!condition) {
-        std::fprintf(stderr, "getlogin_r check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static std::string HostLogin() {
 #ifdef _WIN32

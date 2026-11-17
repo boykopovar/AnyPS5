@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -13,12 +14,6 @@ constexpr std::int32_t IllegalArgument = 1;
 constexpr std::int32_t BufferOverflow = 15;
 constexpr std::int32_t NotTerminated = -124;
 constexpr std::int32_t UsingFallback = -128;
-
-void Require(bool condition, const std::string& message) {
-    if (condition) return;
-    std::fprintf(stderr, "%s\n", message.c_str());
-    std::abort();
-}
 
 void CheckPosix(std::uint32_t hostID, const char* expected) {
     char buffer[64];

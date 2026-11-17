@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include <codegen/x86/MulxLowering.hpp>
 #include <codegen/x86/IAmd64OnlyInstructionMatcher.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
@@ -24,10 +25,6 @@ namespace {
 
 using Bytes = std::vector<std::uint8_t>;
 
-void require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
-
 Bytes instruction(bool wide, std::uint8_t dst, std::uint8_t first, std::uint8_t second) {
     return {0xC4, static_cast<std::uint8_t>(0xE2 ^ ((dst & 8) << 4) ^ ((second & 8) << 2)),
         static_cast<std::uint8_t>((wide ? 0x80 : 0) | ((~first & 15) << 3) | 3), 0xF6,
@@ -41,21 +38,21 @@ void decoding() {
                 for (std::uint8_t second = 0; second < 16; ++second) {
                     const auto bytes = instruction(wide, dst, first, second);
                     const auto operands = Codegen::DecodeMulx(bytes.data(), bytes.size());
-                    require(operands && operands->Wide == wide && operands->HighDestination == dst && operands->LowDestination == first && operands->Source == second && !operands->Memory, "MULX register decoding changed an operand");
+                    Require(operands && operands->Wide == wide && operands->HighDestination == dst && operands->LowDestination == first && operands->Source == second && !operands->Memory, "MULX register decoding changed an operand");
                 }
             }
         }
     }
     const Bytes memory{0x64, 0x67, 0xC4, 0x02, 0xAB, 0xF6, 0x8C, 0xAC, 0x10, 0, 0, 0};
     const auto operands = Codegen::DecodeMulx(memory.data(), memory.size());
-    require(operands && operands->HighDestination == 9 && operands->LowDestination == 10 && operands->Memory && operands->Memory->RexIndexBase == 3 && operands->Memory->Prefixes == Bytes{0x64, 0x67}, "MULX memory extensions or prefixes were lost");
+    Require(operands && operands->HighDestination == 9 && operands->LowDestination == 10 && operands->Memory && operands->Memory->RexIndexBase == 3 && operands->Memory->Prefixes == Bytes{0x64, 0x67}, "MULX memory extensions or prefixes were lost");
     for (const Bytes bytes : {Bytes{0x90}, Bytes{0xC4, 0xE2, 0xF0}, Bytes{0xC4, 0xE1, 0xF3, 0xF6, 0xC0}, Bytes{0xC4, 0xE2, 0xF0, 0xF6, 0xC0}})
-        require(!Codegen::DecodeMulx(bytes.data(), bytes.size()), "Unrelated or truncated opcode matched MULX");
+        Require(!Codegen::DecodeMulx(bytes.data(), bytes.size()), "Unrelated or truncated opcode matched MULX");
     for (const Bytes bytes : {Bytes{0xC4, 0xE2, 0xF7, 0xF6, 0xC0}, Bytes{0xC4, 0xE2, 0xF3, 0xF6, 0x84}}) {
         bool rejected = false;
         try { (void)Codegen::DecodeMulx(bytes.data(), bytes.size()); }
         catch (const Codegen::CodegenException&) { rejected = true; }
-        require(rejected, "Malformed MULX was accepted");
+        Require(rejected, "Malformed MULX was accepted");
     }
     const Bytes overflow{0xC4, 0xE2, 0xF3, 0xF6, 0x84, 0x24, 0xFF, 0xFF, 0xFF, 0x7F};
     bool rejected = false;
@@ -63,7 +60,7 @@ void decoding() {
         Codegen::StubBodyBuilder body;
         Codegen::EmitMulx(body, *Codegen::DecodeMulx(overflow.data(), overflow.size()));
     } catch (const Codegen::CodegenException&) { rejected = true; }
-    require(rejected, "An overflowing stack displacement was silently wrapped");
+    Require(rejected, "An overflowing stack displacement was silently wrapped");
     for (const bool wide : {false, true}) {
         for (const auto [displacement, rejects32, rejects64] : {std::tuple<std::int32_t, bool, bool>{-199, false, true}, {-195, true, true}, {-192, true, true}, {-184, true, true}, {-176, true, true}, {-169, true, true}, {-168, false, false}}) {
             Bytes site{0xC4, 0xE2, static_cast<std::uint8_t>(wide ? 0xF3 : 0x73), 0xF6, 0x84, 0x24};
@@ -74,7 +71,7 @@ void decoding() {
                 Codegen::StubBodyBuilder body;
                 Codegen::EmitMulx(body, *Codegen::DecodeMulx(site.data(), site.size()));
             } catch (const Codegen::CodegenException&) { rejected = true; }
-            require(rejected == (wide ? rejects64 : rejects32), "MULX spill alias detection has an incorrect boundary");
+            Require(rejected == (wide ? rejects64 : rejects32), "MULX spill alias detection has an incorrect boundary");
         }
     }
 }
@@ -83,26 +80,26 @@ void matching() {
     const auto bytes = instruction(true, 0, 1, 6);
     const auto intel = Codegen::MakeAmd64OnlyInstructionMatcher();
     const auto rosetta = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
-    require(!intel->Match(bytes.data(), bytes.size()), "Intel mode rewrote MULX");
+    Require(!intel->Match(bytes.data(), bytes.size()), "Intel mode rewrote MULX");
     const auto match = rosetta->Match(bytes.data(), bytes.size());
-    require(match && match->InstructionName == "MULX" && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline && !match->Optional, "Rosetta mode did not require a MULX trampoline");
+    Require(match && match->InstructionName == "MULX" && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline && !match->Optional, "Rosetta mode did not require a MULX trampoline");
     const std::array<std::span<const std::uint8_t>, 2> sequence{bytes, bytes};
-    require(rosetta->MatchSequence(sequence, {}).has_value(), "A MULX sequence could not move out of line");
+    Require(rosetta->MatchSequence(sequence, {}).has_value(), "A MULX sequence could not move out of line");
     const auto converter = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTarget::Rosetta);
     for (const Bytes site : {bytes, Bytes{0xC4, 0xE2, 0xF3, 0xF6, 0x05, 0x40, 0, 0, 0}}) {
         Bytes file(0x300, 0xCC);
         std::copy(site.begin(), site.end(), file.begin() + 0x200);
         const Domain::ProgramHeader segment{1, 5, 0x200, 0x1000, 0, site.size(), site.size(), 16};
         const auto converted = converter->Convert(file, {segment});
-        require(converted.Trampolines.size() == 1 && converted.Reports.size() == 1 && converted.Reports[0].InstructionName == "MULX", "Converter did not report a MULX trampoline");
-        require(converted.Trampolines[0].Offset == 0x200 && converted.Trampolines[0].Length == site.size(), "Converter changed the MULX site extent");
-        require(converted.Bytes == file, "MULX conversion changed the input image before patching");
+        Require(converted.Trampolines.size() == 1 && converted.Reports.size() == 1 && converted.Reports[0].InstructionName == "MULX", "Converter did not report a MULX trampoline");
+        Require(converted.Trampolines[0].Offset == 0x200 && converted.Trampolines[0].Length == site.size(), "Converter changed the MULX site extent");
+        Require(converted.Bytes == file, "MULX conversion changed the input image before patching");
         if (site.size() == 9) {
             const auto& relocations = converted.Trampolines[0].Relocations;
-            require(relocations.size() == 1 && relocations[0].SiteTarget == 9 + 0x40, "MULX lost its RIP-relative memory target");
+            Require(relocations.size() == 1 && relocations[0].SiteTarget == 9 + 0x40, "MULX lost its RIP-relative memory target");
         }
         const auto intelConverted = Codegen::MakeAmd64OnlyConverter()->Convert(file, {segment});
-        require(intelConverted.Reports.empty() && intelConverted.Bytes == file, "Intel conversion rewrote MULX");
+        Require(intelConverted.Reports.empty() && intelConverted.Bytes == file, "Intel conversion rewrote MULX");
     }
 }
 
@@ -120,7 +117,7 @@ class Execution {
 public:
     Execution(const Bytes& site, std::uint64_t memoryValue, std::optional<std::size_t> clobberOffset = std::nullopt) {
         auto operands = Codegen::DecodeMulx(site.data(), site.size());
-        require(operands.has_value(), "Execution site was not MULX");
+        Require(operands.has_value(), "Execution site was not MULX");
         for (auto reg : {3, 5, 6, 7, 12, 13, 14, 15}) push(static_cast<std::uint8_t>(reg));
 #if defined(_WIN32)
         bytes.insert(bytes.end(), {0x48, 0x89, 0xCF});
@@ -191,22 +188,22 @@ public:
         memory(0x8D, 4, 4, 128);
         for (auto reg : {15, 14, 13, 12, 7, 6, 5, 3}) pop(static_cast<std::uint8_t>(reg));
         bytes.push_back(0xC3);
-        require(bytes.size() < 4096, "Execution wrapper exceeded its code page");
+        Require(bytes.size() < 4096, "Execution wrapper exceeded its code page");
 #if defined(_WIN32)
         code = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, 8192, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
-        require(code != nullptr, "Cannot allocate execution test pages");
+        Require(code != nullptr, "Cannot allocate execution test pages");
 #else
         code = static_cast<std::uint8_t*>(mmap(nullptr, 8192, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0));
-        require(code != MAP_FAILED, "Cannot allocate execution test pages");
+        Require(code != MAP_FAILED, "Cannot allocate execution test pages");
 #endif
         std::memcpy(code, bytes.data(), bytes.size());
         std::memcpy(code + 4096 + 24, &memoryValue, sizeof(memoryValue));
 #if defined(_WIN32)
         DWORD previous = 0;
-        require(VirtualProtect(code, 4096, PAGE_EXECUTE_READ, &previous) != 0, "Cannot make MULX test code executable");
-        require(FlushInstructionCache(GetCurrentProcess(), code, bytes.size()) != 0, "Cannot flush execution test code");
+        Require(VirtualProtect(code, 4096, PAGE_EXECUTE_READ, &previous) != 0, "Cannot make MULX test code executable");
+        Require(FlushInstructionCache(GetCurrentProcess(), code, bytes.size()) != 0, "Cannot flush execution test code");
 #else
-        require(mprotect(code, 4096, PROT_READ | PROT_EXEC) == 0, "Cannot make MULX test code executable");
+        Require(mprotect(code, 4096, PROT_READ | PROT_EXEC) == 0, "Cannot make MULX test code executable");
 #endif
     }
 
@@ -268,7 +265,7 @@ void check(const State& state, const Codegen::MulxOperands& operands, std::uint6
     const auto [high, low] = product(state.Input[2], source, operands.Wide);
     for (std::size_t reg = 0; reg < 16; ++reg) {
         const auto expected = reg == operands.HighDestination ? high : reg == operands.LowDestination ? low : state.Input[reg];
-        require(state.Output[reg] == expected, "MULX changed an unrelated register or produced an incorrect result");
+        Require(state.Output[reg] == expected, "MULX changed an unrelated register or produced an incorrect result");
     }
     if ((state.Flags & 0x8D5u) != (state.InputFlags & 0x8D5u)) {
         char text[192];
@@ -278,7 +275,7 @@ void check(const State& state, const Codegen::MulxOperands& operands, std::uint6
             static_cast<unsigned>(operands.HighDestination), static_cast<unsigned>(operands.LowDestination));
         throw std::runtime_error(text);
     }
-    for (const auto value : state.RedZone) require(value == Execution::kSentinel, "MULX overwrote the caller's red zone");
+    for (const auto value : state.RedZone) Require(value == Execution::kSentinel, "MULX overwrote the caller's red zone");
 }
 
 State initialState() {

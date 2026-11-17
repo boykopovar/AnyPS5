@@ -1,18 +1,9 @@
+#include "Testing.hpp"
 #include <dlfcn.h>
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
 #include <string_view>
-
-namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::exit(1);
-}
-
-}
 
 int main(int argc, char** argv) {
     Require(argc == 2, "usage: mimalloc_restart_tests off|on|once|log");

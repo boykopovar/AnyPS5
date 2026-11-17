@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -82,22 +83,6 @@ void InitializeHeap() {
     ApplicationHeapInitialize_nid_no_patch(process.data());
 }
 
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "JXR quantizer: %s\n", message);
-    std::abort();
-}
-
-template<typename TAction>
-void RequireInvalidArgument(TAction action, const char* message) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, message);
-}
-
 std::uint32_t seed = 0x13579bdf;
 std::uint32_t Next() {
     seed = seed * 1664525u + 1013904223u;
@@ -132,16 +117,16 @@ void TestRemap() {
     remapQP_nid_postfix(&plain, 1, 1);
     Require(plain.qp == 31 << 15 && plain.offset == ((plain.qp * 3 + 1) >> 3), "index 255 with shift 1");
 
-    RequireInvalidArgument([] { remapQP_nid_postfix(nullptr, 1, 1); }, "null quantizer");
+    ExpectErr<std::invalid_argument>([] { remapQP_nid_postfix(nullptr, 1, 1); }, "null quantizer");
     Quantizer wide{};
     wide.index = 255;
-    RequireInvalidArgument([&] { remapQP_nid_postfix(&wide, 11, 1); }, "QP over 32 bits");
+    ExpectErr<std::invalid_argument>([&] { remapQP_nid_postfix(&wide, 11, 1); }, "QP over 32 bits");
     wide.index = 3;
-    RequireInvalidArgument([&] { remapQP_nid_postfix(&wide, -1, 1); }, "negative shift");
+    ExpectErr<std::invalid_argument>([&] { remapQP_nid_postfix(&wide, -1, 1); }, "negative shift");
     for (const std::uint8_t index : {std::uint8_t{3}, std::uint8_t{255}}) {
         wide.index = index;
-        RequireInvalidArgument([&] { remapQP_nid_postfix(&wide, INT32_MAX, 1); }, "largest shift");
-        RequireInvalidArgument([&] { remapQP_nid_postfix(&wide, INT32_MIN, 1); }, "smallest shift");
+        ExpectErr<std::invalid_argument>([&] { remapQP_nid_postfix(&wide, INT32_MAX, 1); }, "largest shift");
+        ExpectErr<std::invalid_argument>([&] { remapQP_nid_postfix(&wide, INT32_MIN, 1); }, "smallest shift");
     }
     wide.index = 3;
     remapQP_nid_postfix(&wide, -1, 0);
@@ -173,9 +158,9 @@ void TestFormat() {
     }
     formatQuantizer_nid_postfix(nullptr, 0, 0, 0, 0, 0);
     std::array<void*, 16> table{};
-    RequireInvalidArgument([] { formatQuantizer_nid_postfix(nullptr, 0, 1, 0, 0, 0); }, "null quantizer table");
-    RequireInvalidArgument([&] { formatQuantizer_nid_postfix(table.data(), 0, 1, 0, 0, 0); }, "null channel");
-    RequireInvalidArgument([&] { formatQuantizer_nid_postfix(table.data(), 0, 17, 0, 0, 0); }, "17 channels");
+    ExpectErr<std::invalid_argument>([] { formatQuantizer_nid_postfix(nullptr, 0, 1, 0, 0, 0); }, "null quantizer table");
+    ExpectErr<std::invalid_argument>([&] { formatQuantizer_nid_postfix(table.data(), 0, 1, 0, 0, 0); }, "null channel");
+    ExpectErr<std::invalid_argument>([&] { formatQuantizer_nid_postfix(table.data(), 0, 17, 0, 0, 0); }, "17 channels");
 }
 
 void TestAcPredMode() {
@@ -197,7 +182,7 @@ void TestAcPredMode() {
     Require(getACPredMode_nid_postfix(block.data(), 0) == 2, "balanced energy");
     block[1] = 0;
     Require(getACPredMode_nid_postfix(block.data(), 0) == 1, "vertical energy");
-    RequireInvalidArgument([] { getACPredMode_nid_postfix(nullptr, 0); }, "null macroblock");
+    ExpectErr<std::invalid_argument>([] { getACPredMode_nid_postfix(nullptr, 0); }, "null macroblock");
 }
 
 void TestZigzag() {
@@ -215,7 +200,7 @@ void TestZigzag() {
 } // namespace
 
 void TestFree() {
-    RequireInvalidArgument([] { freeQuantizer_nid_postfix(nullptr); }, "freeQuantizer accepted a null table");
+    ExpectErr<std::invalid_argument>([] { freeQuantizer_nid_postfix(nullptr); }, "freeQuantizer accepted a null table");
     void* table[16] = {};
     const int empty = liveBlocks;
     freeQuantizer_nid_postfix(table);

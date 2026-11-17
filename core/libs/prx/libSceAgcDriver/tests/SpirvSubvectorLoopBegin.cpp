@@ -3,6 +3,7 @@
 #undef SPV_ENABLE_UTILITY_CODE
 #include "Recompiler.hpp"
 #include "SubvectorLoopFixture.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -19,10 +20,6 @@
 namespace {
 
 using namespace ShaderRecompiler;
-
-void require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 std::vector<std::uint32_t> recompile(bool robustBufferAccess2) {
     const std::array<std::uint32_t, 8> userData{0x10000000u, 0u, 0x100u, 0x31016facu, 0x10001000u, 0u, 0x900u, 0x31016facu};
@@ -47,7 +44,7 @@ std::vector<std::uint32_t> recompile(bool robustBufferAccess2) {
     request.layout = {0, 0, 0, 128};
     request.useCache = false;
     auto result = Recompile(request);
-    require(!result.spirv.empty(), "the shader did not recompile");
+    Require(!result.spirv.empty(), "the shader did not recompile");
     return result.spirv.Copy();
 }
 
@@ -60,10 +57,10 @@ enum class EmptyExecTest {
 class BranchConditions {
 public:
     explicit BranchConditions(std::vector<std::uint32_t> module) : words(std::move(module)) {
-        require(words.size() >= 5, "the SPIR-V header is missing");
+        Require(words.size() >= 5, "the SPIR-V header is missing");
         for (std::size_t offset = 5; offset < words.size();) {
             const auto count = words[offset] >> spv::WordCountShift;
-            require(count != 0 && count <= words.size() - offset, "a SPIR-V instruction is truncated");
+            Require(count != 0 && count <= words.size() - offset, "a SPIR-V instruction is truncated");
             const auto opcode = static_cast<spv::Op>(words[offset] & spv::OpCodeMask);
             bool result = false;
             bool type = false;

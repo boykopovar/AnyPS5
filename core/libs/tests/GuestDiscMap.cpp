@@ -1,5 +1,6 @@
 #include "prx/libSceDiscMap/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -8,13 +9,6 @@
 namespace {
 
 constexpr std::int32_t noBitmapInfo = static_cast<std::int32_t>(0x81100004);
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "DiscMap: %s\n", message);
-        std::abort();
-    }
-}
 
 }
 

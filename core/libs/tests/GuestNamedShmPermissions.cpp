@@ -2,6 +2,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "nid/Sha1.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
@@ -11,10 +12,6 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
-
-static void Require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 static void RemoveHostObject(const std::string& hostName) {
 #ifdef __APPLE__

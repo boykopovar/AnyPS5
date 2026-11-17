@@ -14,13 +14,12 @@
 #include <stdexcept>
 #include <string>
 #include "ProcessParametersFixture.hpp"
+#include "Testing.hpp"
 
 static constexpr int ErrorParameter = static_cast<int>(0x80D90002);
 static constexpr int ErrorBusy = static_cast<int>(0x80D90003);
 static constexpr int ErrorNotFound = static_cast<int>(0x80D90005);
 static constexpr int ErrorDrmNoEntitlement = static_cast<int>(0x80D90007);
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static void SetEntitlements(const std::filesystem::path& file) {
 #ifdef _WIN32

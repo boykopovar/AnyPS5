@@ -5,11 +5,9 @@
 #include <cstring>
 #include "prx/libSceNet/libSceNet.hpp"
 #include "prx/libkernel/libkernel.hpp"
+#include "Testing.hpp"
 
 
-static void Require(bool condition) {
-    if (!condition) std::abort();
-}
 
 static void CheckOption(int socket, int option, int expected) {
     for (const std::uint32_t capacity : {0u, 1u, 3u, 4u, 8u}) {

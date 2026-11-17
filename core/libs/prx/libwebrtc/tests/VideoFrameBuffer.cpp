@@ -1,4 +1,5 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -6,12 +7,6 @@
 #include <source_location>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc VideoFrameBuffer check failed at line %u\n", location.line());
-    std::abort();
-}
 
 struct FakeBuffer {
     WebRtcVideoFrameBuffer base;

@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstddef>
 #include <cstdio>
@@ -35,22 +36,11 @@ static const LibreSslUiString* UiString(const TestUiString* string) {
     return reinterpret_cast<const LibreSslUiString*>(string);
 }
 
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL UI string check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> static void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
-    try { action(); } catch (const std::exception&) { return; }
-    Require(false, location);
-}
-
 static void TestUserData() {
     int data = 0;
     int strings = 0;
     TestUi ui {};
-    RequireThrows([] { UI_get0_user_data_nid_postfix(nullptr); });
+    ExpectErr([] { UI_get0_user_data_nid_postfix(nullptr); });
     Require(UI_get0_user_data_nid_postfix(Ui(&ui)) == nullptr);
     ui.strings = &strings;
     ui.userData = &data;
@@ -86,7 +76,7 @@ static void TestInputFlags() {
 
 static void TestGuestPointers() {
     errno = 71;
-    RequireThrows([] { UI_get0_user_data_nid_postfix(reinterpret_cast<const LibreSslUi*>(0x10)); });
+    ExpectErr([] { UI_get0_user_data_nid_postfix(reinterpret_cast<const LibreSslUi*>(0x10)); });
     const auto* const unmapped = reinterpret_cast<const LibreSslUiString*>(0x10);
     Require(UI_get_string_type_nid_postfix(unmapped) == 0 && UI_get_input_flags_nid_postfix(unmapped) == 0);
     Require(errno == 71);

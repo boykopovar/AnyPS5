@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include <elfpatcher/general/SectionHeaderTableBuilder.hpp>
 #include <elfpatcher/general/ElfConstants.hpp>
 #include <io/ByteWriter.hpp>
@@ -6,8 +7,6 @@
 #include <iostream>
 #include <limits>
 #include <stdexcept>
-
-static void Require(bool ok) { if (!ok) throw std::runtime_error("Section range validation failed"); }
 
 static std::vector<std::uint8_t> Fixture() {
     std::vector<std::uint8_t> bytes(512, 0);

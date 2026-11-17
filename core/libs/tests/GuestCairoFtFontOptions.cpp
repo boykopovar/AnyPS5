@@ -1,16 +1,11 @@
 #include "prx/libcairo/libcairo.hpp"
 #include "prx/libfontconfig/libfontconfig.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <initializer_list>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "cairo ft font options: %s\n", message);
-    std::abort();
-}
 
 void Integer(FcPattern* pattern, const char* name, int expected) {
     int value = -1;

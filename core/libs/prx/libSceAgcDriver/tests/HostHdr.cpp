@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/Execution/include/DisplayFormat.hpp"
 #include "prx/libSceAgcDriver/Execution/include/HostHdr.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DccMetadata.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -13,14 +14,6 @@
 #include <string>
 
 namespace {
-
-int failures = 0;
-
-void Expect(bool condition, const std::string& what) {
-    if (condition) return;
-    std::fprintf(stderr, "FAIL: %s\n", what.c_str());
-    ++failures;
-}
 
 void resetHost() {
     AgcDriverSetHostDisplayHdr_nid_postfix({});
@@ -183,7 +176,7 @@ int main() {
     hostState();
     reportedWhiteLevel();
     forceSdr();
-    if (failures != 0) return 1;
+    if (Failures() != 0) return 1;
     std::puts("host HDR tests passed");
     return 0;
 }

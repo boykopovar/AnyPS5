@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -11,13 +12,6 @@
 #include <initializer_list>
 #include <stdexcept>
 #include <thread>
-
-static void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "%s\n", message);
-        std::abort();
-    }
-}
 
 static void CheckRetire() {
     constexpr int rounds = 20000;

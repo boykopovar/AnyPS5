@@ -1,19 +1,13 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "Testing.hpp"
 
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
-
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "Page table stats check failed at %s:%u\n", location.file_name(), static_cast<unsigned>(location.line()));
-        std::abort();
-    }
-}
 
 constexpr std::size_t PageTableGranule = 0x200000;
 constexpr std::size_t GpuDirectorySpan = 0x40000000;

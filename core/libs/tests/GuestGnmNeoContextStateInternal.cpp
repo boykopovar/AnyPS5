@@ -1,6 +1,7 @@
 #include "prx/libSceGnmDriverForNeoMode/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "ProcessParametersFixture.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -20,12 +21,6 @@ constexpr std::array<std::uint32_t, 19> ContextStateBefore400{
 constexpr std::size_t BufferWords = 0x110;
 
 using Buffer = std::array<std::uint32_t, BufferWords>;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "GnmNeo InternalCommand: %s\n", message);
-    std::abort();
-}
 
 Buffer Fresh() {
     Buffer buffer;

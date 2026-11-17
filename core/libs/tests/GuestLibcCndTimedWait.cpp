@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
@@ -14,8 +15,6 @@
 #endif
 #include <windows.h>
 #endif
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 #ifdef _WIN32
 struct TimerResolution {
@@ -33,16 +32,6 @@ struct TimerResolution {
     ~TimerResolution() { set(5000, FALSE, &current); }
 };
 #endif
-
-template<typename TException, typename TCall>
-static void RequireThrows(TCall call) {
-    try {
-        call();
-    } catch (const TException&) {
-        return;
-    }
-    std::abort();
-}
 
 constexpr int success = 0;
 constexpr int timedout = 2;
@@ -154,15 +143,15 @@ int main() {
         }
         farSignaler.join();
     } else {
-        RequireThrows<std::overflow_error>([&] { _Cnd_timedwait_nid_postfix(&condition, &mutex, &farTime); });
+        ExpectErr<std::overflow_error>([&] { _Cnd_timedwait_nid_postfix(&condition, &mutex, &farTime); });
     }
 
     Require(_Mtx_unlock_nid_postfix(&mutex) == success);
-    RequireThrows<std::invalid_argument>([&] { _Cnd_timedwait_nid_postfix(&condition, &mutex, nullptr); });
+    ExpectErr<std::invalid_argument>([&] { _Cnd_timedwait_nid_postfix(&condition, &mutex, nullptr); });
     const Xtime overflowCarryTime{std::numeric_limits<std::int64_t>::max(), 1000000000};
-    RequireThrows<std::overflow_error>([&] { _Cnd_timedwait_nid_postfix(&condition, &mutex, &overflowCarryTime); });
+    ExpectErr<std::overflow_error>([&] { _Cnd_timedwait_nid_postfix(&condition, &mutex, &overflowCarryTime); });
     const Xtime overflowSecTime{std::numeric_limits<std::int64_t>::max(), 0};
-    RequireThrows<std::overflow_error>([&] { _Cnd_timedwait_nid_postfix(&condition, &mutex, &overflowSecTime); });
+    ExpectErr<std::overflow_error>([&] { _Cnd_timedwait_nid_postfix(&condition, &mutex, &overflowSecTime); });
     _Cnd_destroy_nid_postfix(&condition);
     _Mtx_destroy_nid_postfix(&mutex);
 

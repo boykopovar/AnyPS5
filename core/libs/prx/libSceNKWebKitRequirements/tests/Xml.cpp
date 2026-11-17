@@ -1,4 +1,5 @@
 #include "prx/libSceNKWebKitRequirements/libSceNKWebKitRequirements.hpp"
+#include "Testing.hpp"
 
 #include <libxml/parser.h>
 
@@ -12,13 +13,6 @@
 #include <vector>
 
 namespace {
-
-void AssertTrue(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "Assertion failed: %s\n", message);
-        std::abort();
-    }
-}
 
 struct ParserEvents {
     bool startedDoc = false;
@@ -104,13 +98,13 @@ void TestBasicStringsAndDict() {
 
     const char hello[] = "Hello libxml2";
     uint8_t* dup = xmlStrdup_nid_postfix(reinterpret_cast<const uint8_t*>(hello));
-    AssertTrue(dup != nullptr, "xmlStrdup returned null");
-    AssertTrue(std::strcmp(reinterpret_cast<char*>(dup), hello) == 0, "xmlStrdup mismatch");
+    Require(dup != nullptr, "xmlStrdup returned null");
+    Require(std::strcmp(reinterpret_cast<char*>(dup), hello) == 0, "xmlStrdup mismatch");
     std::free(dup);
 
     uint8_t* ndup = xmlStrndup_nid_postfix(reinterpret_cast<const uint8_t*>(hello), 5);
-    AssertTrue(ndup != nullptr, "xmlStrndup returned null");
-    AssertTrue(std::strcmp(reinterpret_cast<char*>(ndup), "Hello") == 0, "xmlStrndup mismatch");
+    Require(ndup != nullptr, "xmlStrndup returned null");
+    Require(std::strcmp(reinterpret_cast<char*>(ndup), "Hello") == 0, "xmlStrndup mismatch");
     std::free(ndup);
 }
 
@@ -136,10 +130,10 @@ void TestPushParserChunks() {
     sax.serror = SaxSerror;
 
     NKWebKit::GuestParserCtxt* ctxt = xmlCreatePushParserCtxt_nid_postfix(&sax, &events, nullptr, 0, "test.xml");
-    AssertTrue(ctxt != nullptr, "xmlCreatePushParserCtxt returned null");
+    Require(ctxt != nullptr, "xmlCreatePushParserCtxt returned null");
 
     int optRet = xmlCtxtUseOptions_nid_postfix(ctxt, 1);
-    AssertTrue(optRet == 0, "xmlCtxtUseOptions failed");
+    Require(optRet == 0, "xmlCtxtUseOptions failed");
 
     size_t docLen = std::strlen(xmlDoc);
     size_t chunkSize = 7;
@@ -147,24 +141,24 @@ void TestPushParserChunks() {
         size_t size = (docLen - offset > chunkSize) ? chunkSize : (docLen - offset);
         int terminate = (offset + size == docLen) ? 1 : 0;
         int parseRet = xmlParseChunk_nid_postfix(ctxt, xmlDoc + offset, static_cast<int>(size), terminate);
-        AssertTrue(parseRet == 0, "xmlParseChunk failed");
+        Require(parseRet == 0, "xmlParseChunk failed");
     }
 
     int64_t consumed = xmlByteConsumed_nid_postfix(ctxt);
-    AssertTrue(consumed > 0, "xmlByteConsumed should be positive");
+    Require(consumed > 0, "xmlByteConsumed should be positive");
 
-    AssertTrue(events.startedDoc, "startDocument not called");
-    AssertTrue(events.endedDoc, "endDocument not called");
-    AssertTrue(events.elementCount == 3, "expected 3 elements (<root>, <test:item>, <test:item>)");
-    AssertTrue(events.endElementCount == 3, "expected 3 end elements");
-    AssertTrue(events.commentContent.find("test-comment-data") != std::string::npos, "comment not captured");
-    AssertTrue(events.cdataContent.find("cdata-payload") != std::string::npos, "cdata not captured");
-    AssertTrue(events.textContent.find("Sample text") != std::string::npos, "text not captured");
+    Require(events.startedDoc, "startDocument not called");
+    Require(events.endedDoc, "endDocument not called");
+    Require(events.elementCount == 3, "expected 3 elements (<root>, <test:item>, <test:item>)");
+    Require(events.endElementCount == 3, "expected 3 end elements");
+    Require(events.commentContent.find("test-comment-data") != std::string::npos, "comment not captured");
+    Require(events.cdataContent.find("cdata-payload") != std::string::npos, "cdata not captured");
+    Require(events.textContent.find("Sample text") != std::string::npos, "text not captured");
 
     if (ctxt->dict) {
         const uint8_t* lookedUp = xmlDictLookup_nid_postfix(ctxt->dict, reinterpret_cast<const uint8_t*>("root"), 4);
-        AssertTrue(lookedUp != nullptr, "xmlDictLookup returned null");
-        AssertTrue(std::strcmp(reinterpret_cast<const char*>(lookedUp), "root") == 0, "xmlDictLookup mismatch");
+        Require(lookedUp != nullptr, "xmlDictLookup returned null");
+        Require(std::strcmp(reinterpret_cast<const char*>(lookedUp), "root") == 0, "xmlDictLookup mismatch");
     }
 
     xmlStopParser_nid_postfix(ctxt);
@@ -180,14 +174,14 @@ void TestErrorHandling() {
     sax.error = SaxError;
 
     NKWebKit::GuestParserCtxt* ctxt = xmlCreatePushParserCtxt_nid_postfix(&sax, &events, nullptr, 0, "bad.xml");
-    AssertTrue(ctxt != nullptr, "xmlCreatePushParserCtxt returned null");
+    Require(ctxt != nullptr, "xmlCreatePushParserCtxt returned null");
 
     int ret = xmlParseChunk_nid_postfix(ctxt, badXml, static_cast<int>(std::strlen(badXml)), 1);
-    AssertTrue(ret != 0, "malformed xml should produce non-zero return code");
+    Require(ret != 0, "malformed xml should produce non-zero return code");
 
     NKWebKit::GuestXmlError* err = xmlCtxtGetLastError_nid_postfix(ctxt);
-    AssertTrue(err != nullptr, "xmlCtxtGetLastError returned null");
-    AssertTrue(err->code != 0, "error code should be non-zero");
+    Require(err != nullptr, "xmlCtxtGetLastError returned null");
+    Require(err->code != 0, "error code should be non-zero");
 
     xmlFreeParserCtxt_nid_postfix(ctxt);
 }
@@ -195,10 +189,10 @@ void TestErrorHandling() {
 void TestMemoryParserAndEntities() {
     const char memXml[] = "<greeting>Hello Memory Parser</greeting>";
     NKWebKit::GuestParserCtxt* ctxt = xmlCreateMemoryParserCtxt_nid_postfix(memXml, static_cast<int>(std::strlen(memXml)));
-    AssertTrue(ctxt != nullptr, "xmlCreateMemoryParserCtxt returned null");
+    Require(ctxt != nullptr, "xmlCreateMemoryParserCtxt returned null");
 
     int contentRet = xmlParseContent_nid_postfix(ctxt);
-    AssertTrue(contentRet == 0, "xmlParseContent failed");
+    Require(contentRet == 0, "xmlParseContent failed");
 
     int encRet = xmlSwitchEncoding_nid_postfix(ctxt, 1);
     (void)encRet;
@@ -209,9 +203,9 @@ void TestMemoryParserAndEntities() {
     xmlSAX2EndDocument_nid_postfix(ctxt);
 
     NKWebKit::GuestEntity* ent = xmlGetPredefinedEntity_nid_postfix(reinterpret_cast<const uint8_t*>("amp"));
-    AssertTrue(ent != nullptr, "xmlGetPredefinedEntity('amp') returned null");
-    AssertTrue(ent->name != nullptr && std::strcmp(reinterpret_cast<const char*>(ent->name), "amp") == 0, "entity name mismatch");
-    AssertTrue(ent->content != nullptr && std::strcmp(reinterpret_cast<const char*>(ent->content), "&") == 0, "entity content mismatch");
+    Require(ent != nullptr, "xmlGetPredefinedEntity('amp') returned null");
+    Require(ent->name != nullptr && std::strcmp(reinterpret_cast<const char*>(ent->name), "amp") == 0, "entity name mismatch");
+    Require(ent->content != nullptr && std::strcmp(reinterpret_cast<const char*>(ent->content), "&") == 0, "entity content mismatch");
 
     NKWebKit::GuestEntity* docEnt = xmlGetDocEntity_nid_postfix(ctxt->myDoc, reinterpret_cast<const uint8_t*>("amp"));
     (void)docEnt;
@@ -255,7 +249,7 @@ template <int H>
 void* APS5_VABI IoOpen(const char* name) {
     (void)name;
     ++g_io[H].opens;
-    AssertTrue(g_streamCount < 32, "too many I/O streams");
+    Require(g_streamCount < 32, "too many I/O streams");
     IoStream* stream = &g_streams[g_streamCount++];
     stream->handler = H;
     stream->offset = 0;
@@ -349,8 +343,8 @@ int ParseWithExternalEntities() {
         "<!DOCTYPE r [<!ENTITY a SYSTEM \"alpha:one\"><!ENTITY b SYSTEM \"beta:two\">]>"
         "<r>&a;|&b;</r>";
     NKWebKit::GuestParserCtxt* ctxt = xmlCreatePushParserCtxt_nid_postfix(nullptr, nullptr, nullptr, 0, "io.xml");
-    AssertTrue(ctxt != nullptr, "xmlCreatePushParserCtxt returned null");
-    AssertTrue(xmlCtxtUseOptions_nid_postfix(ctxt, 2) == 0, "xmlCtxtUseOptions(XML_PARSE_NOENT) failed");
+    Require(ctxt != nullptr, "xmlCreatePushParserCtxt returned null");
+    Require(xmlCtxtUseOptions_nid_postfix(ctxt, 2) == 0, "xmlCtxtUseOptions(XML_PARSE_NOENT) failed");
     const int result = xmlParseChunk_nid_postfix(ctxt, doc, static_cast<int>(std::strlen(doc)), 1);
     if (ctxt->myDoc) {
         xmlFreeDoc_nid_postfix(ctxt->myDoc);
@@ -361,14 +355,14 @@ int ParseWithExternalEntities() {
 }
 
 void ExpectServed(int handler, const char* message) {
-    AssertTrue(g_io[handler].opens == 1, message);
-    AssertTrue(g_io[handler].reads > static_cast<int>(std::strlen(g_io[handler].payload)), message);
-    AssertTrue(g_io[handler].closes == 1, message);
-    AssertTrue(g_io[handler].foreign == 0, message);
+    Require(g_io[handler].opens == 1, message);
+    Require(g_io[handler].reads > static_cast<int>(std::strlen(g_io[handler].payload)), message);
+    Require(g_io[handler].closes == 1, message);
+    Require(g_io[handler].foreign == 0, message);
 }
 
 void ExpectUntouched(int handler, const char* message) {
-    AssertTrue(g_io[handler].opens == 0 && g_io[handler].reads == 0 && g_io[handler].closes == 0, message);
+    Require(g_io[handler].opens == 0 && g_io[handler].reads == 0 && g_io[handler].closes == 0, message);
 }
 
 void TestInputHandlersAndOpenContexts() {
@@ -378,16 +372,16 @@ void TestInputHandlersAndOpenContexts() {
     g_io[1].payload = "beta-payload";
     const int first = RegisterInput<0>();
     const int second = RegisterInput<1>();
-    AssertTrue(first >= 0 && second == first + 1, "input registrations should take consecutive entries");
+    Require(first >= 0 && second == first + 1, "input registrations should take consecutive entries");
 
     ResetIoCounters();
     g_io[0].onFirstRead = RegisterLateHandler;
-    AssertTrue(ParseWithExternalEntities() == 0, "parse through two guest input handlers failed");
-    AssertTrue(g_lateRegistration == second + 1, "registration made while alpha was open should succeed");
+    Require(ParseWithExternalEntities() == 0, "parse through two guest input handlers failed");
+    Require(g_lateRegistration == second + 1, "registration made while alpha was open should succeed");
     ExpectServed(0, "alpha entity should be read and closed through alpha's callbacks after a later registration");
     ExpectServed(1, "beta entity should be read and closed through beta's callbacks");
     ExpectUntouched(2, "the late handler matches nothing and must not receive alpha's or beta's stream");
-    AssertTrue(g_io[2].matches >= 1, "the late handler should be consulted for beta");
+    Require(g_io[2].matches >= 1, "the late handler should be consulted for beta");
 }
 
 void TestFailedRegistrations() {
@@ -395,110 +389,110 @@ void TestFailedRegistrations() {
     for (int i = 0; i < 20 && inputResult >= 0; ++i) {
         inputResult = RegisterInput<3>();
     }
-    AssertTrue(inputResult == -1, "input registrations should fail once libxml2's table is full");
-    AssertTrue(RegisterInput<4>() == -1, "a registration into a full table should fail");
+    Require(inputResult == -1, "input registrations should fail once libxml2's table is full");
+    Require(RegisterInput<4>() == -1, "a registration into a full table should fail");
 
     ResetIoCounters();
-    AssertTrue(ParseWithExternalEntities() == 0, "parse after failed registrations failed");
+    Require(ParseWithExternalEntities() == 0, "parse after failed registrations failed");
     ExpectServed(0, "alpha should still be served after failed registrations");
     ExpectServed(1, "beta should still be served after failed registrations");
     ExpectUntouched(3, "filler handlers match nothing");
-    AssertTrue(g_io[4].matches == 0, "a rejected handler must never be called");
+    Require(g_io[4].matches == 0, "a rejected handler must never be called");
     ExpectUntouched(4, "a rejected handler must never be called");
 
     const int firstOutput = RegisterOutput<0>();
     const int secondOutput = RegisterOutput<1>();
-    AssertTrue(firstOutput >= 0 && secondOutput == firstOutput + 1, "output registrations should take consecutive entries");
+    Require(firstOutput >= 0 && secondOutput == firstOutput + 1, "output registrations should take consecutive entries");
     int outputResult = 0;
     for (int i = 0; i < 20 && outputResult >= 0; ++i) {
         outputResult = RegisterOutput<3>();
     }
-    AssertTrue(outputResult == -1, "output registrations should fail once libxml2's table is full");
-    AssertTrue(RegisterOutput<5>() == -1, "an output registration into a full table should fail");
+    Require(outputResult == -1, "output registrations should fail once libxml2's table is full");
+    Require(RegisterOutput<5>() == -1, "an output registration into a full table should fail");
 }
 
 void TestDocumentOutlivesContext() {
     const char docXml[] = "<!DOCTYPE r [<!ENTITY kept \"kept value\">]><r>&kept;</r>";
     NKWebKit::GuestParserCtxt* ctxt = xmlCreatePushParserCtxt_nid_postfix(nullptr, nullptr, nullptr, 0, "kept.xml");
-    AssertTrue(ctxt != nullptr, "xmlCreatePushParserCtxt returned null");
-    AssertTrue(xmlParseChunk_nid_postfix(ctxt, docXml, static_cast<int>(std::strlen(docXml)), 1) == 0, "the document should parse");
+    Require(ctxt != nullptr, "xmlCreatePushParserCtxt returned null");
+    Require(xmlParseChunk_nid_postfix(ctxt, docXml, static_cast<int>(std::strlen(docXml)), 1) == 0, "the document should parse");
     NKWebKit::GuestDoc* doc = ctxt->myDoc;
-    AssertTrue(doc != nullptr, "the parser should build a document");
+    Require(doc != nullptr, "the parser should build a document");
     ctxt->myDoc = nullptr;
     xmlFreeParserCtxt_nid_postfix(ctxt);
 
     const char otherXml[] = "<!DOCTYPE o [<!ENTITY other \"other value\">]><o>&other;</o>";
     NKWebKit::GuestParserCtxt* other = xmlCreatePushParserCtxt_nid_postfix(nullptr, nullptr, nullptr, 0, "other.xml");
-    AssertTrue(other != nullptr, "xmlCreatePushParserCtxt returned null");
-    AssertTrue(xmlParseChunk_nid_postfix(other, otherXml, static_cast<int>(std::strlen(otherXml)), 1) == 0, "the second document should parse");
+    Require(other != nullptr, "xmlCreatePushParserCtxt returned null");
+    Require(xmlParseChunk_nid_postfix(other, otherXml, static_cast<int>(std::strlen(otherXml)), 1) == 0, "the second document should parse");
     NKWebKit::GuestDoc* otherDoc = other->myDoc;
-    AssertTrue(otherDoc != nullptr && otherDoc != doc, "a later context must not reuse a document that is still alive");
+    Require(otherDoc != nullptr && otherDoc != doc, "a later context must not reuse a document that is still alive");
     other->myDoc = nullptr;
     xmlFreeParserCtxt_nid_postfix(other);
-    AssertTrue(xmlGetDocEntity_nid_postfix(doc, reinterpret_cast<const uint8_t*>("other")) == nullptr, "the first document must not see the second document's entities");
+    Require(xmlGetDocEntity_nid_postfix(doc, reinterpret_cast<const uint8_t*>("other")) == nullptr, "the first document must not see the second document's entities");
     xmlFreeDoc_nid_postfix(otherDoc);
 
-    AssertTrue(doc->type == 9, "the document should keep its type after the context is freed");
-    AssertTrue(doc->doc == doc, "the document should still point to itself");
-    AssertTrue(doc->version != nullptr && std::strcmp(reinterpret_cast<const char*>(doc->version), "1.0") == 0, "the document version should survive the context");
+    Require(doc->type == 9, "the document should keep its type after the context is freed");
+    Require(doc->doc == doc, "the document should still point to itself");
+    Require(doc->version != nullptr && std::strcmp(reinterpret_cast<const char*>(doc->version), "1.0") == 0, "the document version should survive the context");
     NKWebKit::GuestEntity* kept = xmlGetDocEntity_nid_postfix(doc, reinterpret_cast<const uint8_t*>("kept"));
-    AssertTrue(kept != nullptr && kept->content != nullptr, "the document entity should be found after the context is freed");
-    AssertTrue(std::strcmp(reinterpret_cast<const char*>(kept->content), "kept value") == 0, "the document entity content mismatch");
+    Require(kept != nullptr && kept->content != nullptr, "the document entity should be found after the context is freed");
+    Require(std::strcmp(reinterpret_cast<const char*>(kept->content), "kept value") == 0, "the document entity content mismatch");
     xmlFreeDoc_nid_postfix(doc);
 }
 
 void TestEntityResultsStayDistinct() {
     NKWebKit::GuestEntity* amp = xmlGetPredefinedEntity_nid_postfix(reinterpret_cast<const uint8_t*>("amp"));
     NKWebKit::GuestEntity* lt = xmlGetPredefinedEntity_nid_postfix(reinterpret_cast<const uint8_t*>("lt"));
-    AssertTrue(amp != nullptr && lt != nullptr && amp != lt, "two predefined entities should have their own guest entities");
-    AssertTrue(std::strcmp(reinterpret_cast<const char*>(amp->name), "amp") == 0 && std::strcmp(reinterpret_cast<const char*>(amp->content), "&") == 0, "the first predefined entity should keep its fields after a second lookup");
-    AssertTrue(std::strcmp(reinterpret_cast<const char*>(lt->name), "lt") == 0 && std::strcmp(reinterpret_cast<const char*>(lt->content), "<") == 0, "the second predefined entity fields mismatch");
-    AssertTrue(xmlGetPredefinedEntity_nid_postfix(reinterpret_cast<const uint8_t*>("amp")) == amp, "a repeated lookup should return the same guest entity");
-    AssertTrue(amp->doc == nullptr, "a predefined entity has no document");
+    Require(amp != nullptr && lt != nullptr && amp != lt, "two predefined entities should have their own guest entities");
+    Require(std::strcmp(reinterpret_cast<const char*>(amp->name), "amp") == 0 && std::strcmp(reinterpret_cast<const char*>(amp->content), "&") == 0, "the first predefined entity should keep its fields after a second lookup");
+    Require(std::strcmp(reinterpret_cast<const char*>(lt->name), "lt") == 0 && std::strcmp(reinterpret_cast<const char*>(lt->content), "<") == 0, "the second predefined entity fields mismatch");
+    Require(xmlGetPredefinedEntity_nid_postfix(reinterpret_cast<const uint8_t*>("amp")) == amp, "a repeated lookup should return the same guest entity");
+    Require(amp->doc == nullptr, "a predefined entity has no document");
 
     const char docXml[] = "<!DOCTYPE r [<!ENTITY first \"one\"><!ENTITY second \"two\">]><r/>";
     NKWebKit::GuestParserCtxt* ctxt = xmlCreatePushParserCtxt_nid_postfix(nullptr, nullptr, nullptr, 0, "entities.xml");
-    AssertTrue(ctxt != nullptr, "xmlCreatePushParserCtxt returned null");
-    AssertTrue(xmlParseChunk_nid_postfix(ctxt, docXml, static_cast<int>(std::strlen(docXml)), 1) == 0, "the document should parse");
+    Require(ctxt != nullptr, "xmlCreatePushParserCtxt returned null");
+    Require(xmlParseChunk_nid_postfix(ctxt, docXml, static_cast<int>(std::strlen(docXml)), 1) == 0, "the document should parse");
     NKWebKit::GuestDoc* doc = ctxt->myDoc;
-    AssertTrue(doc != nullptr, "the parser should build a document");
+    Require(doc != nullptr, "the parser should build a document");
     ctxt->myDoc = nullptr;
     xmlFreeParserCtxt_nid_postfix(ctxt);
     NKWebKit::GuestEntity* first = xmlGetDocEntity_nid_postfix(doc, reinterpret_cast<const uint8_t*>("first"));
     NKWebKit::GuestEntity* second = xmlGetDocEntity_nid_postfix(doc, reinterpret_cast<const uint8_t*>("second"));
-    AssertTrue(first != nullptr && second != nullptr && first != second, "two document entities should have their own guest entities");
-    AssertTrue(std::strcmp(reinterpret_cast<const char*>(first->content), "one") == 0 && std::strcmp(reinterpret_cast<const char*>(second->content), "two") == 0, "a document entity should keep its fields after a second lookup");
-    AssertTrue(first->doc == doc && second->doc == doc, "a document entity should point to its owning document");
-    AssertTrue(xmlGetDocEntity_nid_postfix(doc, reinterpret_cast<const uint8_t*>("first")) == first, "a repeated document lookup should return the same guest entity");
+    Require(first != nullptr && second != nullptr && first != second, "two document entities should have their own guest entities");
+    Require(std::strcmp(reinterpret_cast<const char*>(first->content), "one") == 0 && std::strcmp(reinterpret_cast<const char*>(second->content), "two") == 0, "a document entity should keep its fields after a second lookup");
+    Require(first->doc == doc && second->doc == doc, "a document entity should point to its owning document");
+    Require(xmlGetDocEntity_nid_postfix(doc, reinterpret_cast<const uint8_t*>("first")) == first, "a repeated document lookup should return the same guest entity");
     xmlFreeDoc_nid_postfix(doc);
 }
 
 void TestFreedDocumentLeavesContext() {
     const char head[] = "<?xml version=\"1.0\"?><r><a>text</a>";
     NKWebKit::GuestParserCtxt* ctxt = xmlCreatePushParserCtxt_nid_postfix(nullptr, nullptr, nullptr, 0, "freed.xml");
-    AssertTrue(ctxt != nullptr, "xmlCreatePushParserCtxt returned null");
-    AssertTrue(xmlParseChunk_nid_postfix(ctxt, head, static_cast<int>(std::strlen(head)), 0) == 0, "the first chunk should parse");
+    Require(ctxt != nullptr, "xmlCreatePushParserCtxt returned null");
+    Require(xmlParseChunk_nid_postfix(ctxt, head, static_cast<int>(std::strlen(head)), 0) == 0, "the first chunk should parse");
     NKWebKit::GuestDoc* doc = ctxt->myDoc;
-    AssertTrue(doc != nullptr, "the parser should have started a document");
+    Require(doc != nullptr, "the parser should have started a document");
     xmlFreeDoc_nid_postfix(doc);
-    AssertTrue(ctxt->myDoc == nullptr, "freeing the document should clear the context's document");
-    AssertTrue(xmlCtxtUseOptions_nid_postfix(ctxt, 0) == 0, "the context should stay usable after its document is freed");
-    AssertTrue(ctxt->myDoc == nullptr, "a later call should not bring back the freed document");
+    Require(ctxt->myDoc == nullptr, "freeing the document should clear the context's document");
+    Require(xmlCtxtUseOptions_nid_postfix(ctxt, 0) == 0, "the context should stay usable after its document is freed");
+    Require(ctxt->myDoc == nullptr, "a later call should not bring back the freed document");
     xmlFreeParserCtxt_nid_postfix(ctxt);
 }
 
 void TestGuestCharsetReachesHost() {
     NKWebKit::GuestParserCtxt* ctxt = xmlCreatePushParserCtxt_nid_postfix(nullptr, nullptr, nullptr, 0, "charset.xml");
-    AssertTrue(ctxt != nullptr, "xmlCreatePushParserCtxt returned null");
+    Require(ctxt != nullptr, "xmlCreatePushParserCtxt returned null");
     const auto changed = ctxt->charset == 1 ? 2 : 1;
     ctxt->charset = changed;
-    AssertTrue(xmlCtxtUseOptions_nid_postfix(ctxt, 0) == 0, "xmlCtxtUseOptions failed");
-    AssertTrue(ctxt->charset == changed, "a guest charset should reach the host context and survive the next sync");
+    Require(xmlCtxtUseOptions_nid_postfix(ctxt, 0) == 0, "xmlCtxtUseOptions failed");
+    Require(ctxt->charset == changed, "a guest charset should reach the host context and survive the next sync");
     xmlFreeParserCtxt_nid_postfix(ctxt);
 }
 
 void TestUnknownContexts() {
-    AssertTrue(xmlCtxtGetLastError_nid_postfix(nullptr) == nullptr, "xmlCtxtGetLastError(NULL) should return NULL");
+    Require(xmlCtxtGetLastError_nid_postfix(nullptr) == nullptr, "xmlCtxtGetLastError(NULL) should return NULL");
     xmlSAX2StartDocument_nid_postfix(nullptr);
     xmlSAX2EndDocument_nid_postfix(nullptr);
     xmlSAX2InternalSubset_nid_postfix(nullptr, reinterpret_cast<const uint8_t*>("r"), nullptr, nullptr);
@@ -511,7 +505,7 @@ void TestUnknownContexts() {
         } catch (const std::invalid_argument&) {
             thrown = true;
         }
-        AssertTrue(thrown, message);
+        Require(thrown, message);
     };
     rejects([&] { xmlCtxtGetLastError_nid_postfix(&stray); }, "xmlCtxtGetLastError should reject a context it did not create");
     rejects([&] { xmlSAX2StartDocument_nid_postfix(&stray); }, "xmlSAX2StartDocument should reject a context it did not create");

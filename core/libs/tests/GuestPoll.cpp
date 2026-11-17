@@ -10,6 +10,7 @@
 #endif
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -37,7 +38,6 @@ using NativeSocket = int;
 constexpr NativeSocket NativeInvalid = -1;
 static void CloseNative(NativeSocket socket) { close(socket); }
 #endif
-static void Require(bool value) { if (!value) std::abort(); }
 #ifndef _WIN32
 static std::atomic<std::size_t> failAllocationOfSize{0};
 void* operator new(std::size_t bytes) {

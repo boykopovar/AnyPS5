@@ -1,6 +1,7 @@
 #include "SceTypes.hpp"
 #include "prx/libScePad/include/Pad.hpp"
 #include "prx/libScePad/include/PadState.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -28,12 +29,6 @@ static_assert(offsetof(PadControllerInformation, reserve) == 20);
 
 static_assert(sizeof(PadDeviceClassExtendedInformation) == 20);
 static_assert(offsetof(PadDeviceClassExtendedInformation, deviceClass) == 0);
-
-static void Require(bool condition) {
-    if (!condition) {
-        std::abort();
-    }
-}
 
 int main() {
     constexpr int errorNotInitialized = static_cast<int>(0x80920005u);

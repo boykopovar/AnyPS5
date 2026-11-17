@@ -4,6 +4,7 @@
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "RdnaDecoder/RdnaMemoryOpDecoder.hpp"
 #include "ControlFlow/GraphBuilder.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -17,10 +18,6 @@
 #include <vector>
 
 using namespace ShaderRecompiler;
-
-static void Require(bool value) {
-    if (!value) throw std::runtime_error("scalar call regression");
-}
 
 template <typename TFunction>
 static void ExpectThrow(const char* needle, TFunction fn) {

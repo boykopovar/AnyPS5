@@ -1,14 +1,7 @@
 #include "prx/libScePatchCheckerClient/libScePatchCheckerClient.hpp"
+#include "Testing.hpp"
 
 #include <cstdlib>
-
-namespace {
-
-void Require(bool value) {
-    if (!value) std::abort();
-}
-
-} // namespace
 
 int main() {
     constexpr int notInitialized = static_cast<int>(0x80182402u);

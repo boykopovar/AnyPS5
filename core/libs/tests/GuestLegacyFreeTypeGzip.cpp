@@ -1,5 +1,6 @@
 #include "prx/libfreetype/libfreetype.hpp"
 #include "prx/libfreetype/include/GuestStream.hpp"
+#include "Testing.hpp"
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include <algorithm>
@@ -58,10 +59,6 @@ struct Counter {
     int failures = 0;
     std::set<void*> live;
 };
-
-void Require(bool value) {
-    if (!value) std::abort();
-}
 
 template <class F>
 bool Rejects(F call) {

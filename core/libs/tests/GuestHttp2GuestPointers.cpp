@@ -1,4 +1,5 @@
 #include "prx/libSceHttp2/include/Http2.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -9,14 +10,6 @@ namespace {
 constexpr int nullPointer = static_cast<int>(0x817B1225);
 constexpr int invalidValue = static_cast<int>(0x817B11FE);
 constexpr int savedErrno = 71;
-
-void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "HTTP2 guest pointer check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 #define RequireErrno(call, expected)  \
     do {                              \

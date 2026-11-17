@@ -1,5 +1,6 @@
 #include "prx/libfreetype/libfreetype.hpp"
 #include "prx/libfreetype/include/GuestStream.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdint>
@@ -15,10 +16,6 @@ struct Counter {
     int allocations = 0;
     int frees = 0;
 };
-
-void Require(bool condition) {
-    if (!condition) std::abort();
-}
 
 void* APS5_VABI Allocate(FreeType::GuestMemoryRec* memory, std::int64_t size) {
     ++static_cast<Counter*>(memory->user)->allocations;

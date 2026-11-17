@@ -1,5 +1,6 @@
 #include "prx/libSceOpusCeltDec/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -10,14 +11,6 @@
 #include <opus.h>
 
 namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
-
-template <typename TFunction>
-void RequireThrows(TFunction function) {
-    try { function(); } catch (const std::runtime_error&) { return; }
-    std::abort();
-}
 
 const std::uint8_t CELT_STEREO[] = {
     0x75, 0x00, 0xFC, 0xB5, 0x1F, 0xBC, 0xC8, 0xCA, 0x0B, 0xC2, 0x18, 0x1A, 0xFB, 0xDB, 0x3E, 0x2B, 0x6B, 0x0A, 0x67, 0x71, 0x25, 0x2F, 0x51, 0x57,
@@ -92,17 +85,17 @@ int main() {
     Require(sceOpusCeltDecDecode(invalidState.data(), &packet, 1, &output, 2) == static_cast<int>(errorBase + 1));
     Require(output == 12345);
 
-    RequireThrows([&] { sceOpusCeltDecInitialize(&context); });
+    ExpectErr<std::runtime_error>([&] { sceOpusCeltDecInitialize(&context); });
     Require(sceOpusCeltDecGetSize(1) == 640 && sceOpusCeltDecGetSize(2) == 640);
     Require(sceOpusCeltDecGetSize(3) == static_cast<int>(errorBase + 3));
     std::array<std::uint8_t, 640> state{}, monoState{};
     Require(sceOpusCeltDecCreateEx(&context, state.data(), 48000, 2) == 0);
     Require(sceOpusCeltDecCreateEx(&context, monoState.data(), 48000, 1) == 0);
-    RequireThrows([&] { sceOpusCeltDecCreateEx(&context, state.data(), 48000, 2); });
-    RequireThrows([&] { sceOpusCeltDecTerminate(&context); });
+    ExpectErr<std::runtime_error>([&] { sceOpusCeltDecCreateEx(&context, state.data(), 48000, 2); });
+    ExpectErr<std::runtime_error>([&] { sceOpusCeltDecTerminate(&context); });
     std::array<std::int16_t, 1922> pcm{};
     pcm.fill(12345);
-    RequireThrows([&] { sceOpusCeltDecDecode(state.data(), HYBRID_PACKET, sizeof(HYBRID_PACKET), pcm.data() + 1, 3840); });
+    ExpectErr<std::runtime_error>([&] { sceOpusCeltDecDecode(state.data(), HYBRID_PACKET, sizeof(HYBRID_PACKET), pcm.data() + 1, 3840); });
     Require(std::all_of(pcm.begin(), pcm.end(), [](auto value) { return value == 12345; }));
     std::size_t offset = 0;
     bool audible = false;
@@ -110,7 +103,7 @@ int main() {
         const int bytes = CELT_STEREO[offset] | (CELT_STEREO[offset + 1] << 8);
         const auto* packet = CELT_STEREO + offset + 2;
         pcm.fill(12345);
-        RequireThrows([&] { sceOpusCeltDecDecode(state.data(), packet, bytes, pcm.data() + 1, 3839); });
+        ExpectErr<std::runtime_error>([&] { sceOpusCeltDecDecode(state.data(), packet, bytes, pcm.data() + 1, 3839); });
         Require(sceOpusCeltDecDecode(state.data(), packet, bytes, pcm.data() + 1, 3840) == 3840);
         Require(pcm.front() == 12345 && pcm.back() == 12345);
         audible = audible || std::any_of(pcm.begin() + 1, pcm.end() - 1, [](auto value) { return value != 0; });
@@ -136,7 +129,7 @@ int main() {
             std::array<std::int16_t, 1922> tone{};
             for (int frame = 0; frame < 4; ++frame) {
                 tone.fill(12345);
-                RequireThrows([&] { sceOpusCeltDecDecode(toneState.data(), CELT_TONE[frame], 60, tone.data() + 1, samples * channels * 2 - 1); });
+                ExpectErr<std::runtime_error>([&] { sceOpusCeltDecDecode(toneState.data(), CELT_TONE[frame], 60, tone.data() + 1, samples * channels * 2 - 1); });
                 Require(sceOpusCeltDecDecode(toneState.data(), CELT_TONE[frame], 60, tone.data() + 1, samples * channels * 2) == samples * channels * 2);
                 Require(tone[0] == 12345 && tone[samples * channels + 1] == 12345);
                 std::array<std::int16_t, 1920> expected{};
@@ -157,6 +150,6 @@ int main() {
     Require(sceOpusCeltDecDecode(state.data(), CELT_STEREO + 2, CELT_STEREO[0], pcm.data(), 3840) == static_cast<int>(errorBase + 1));
     Require(sceOpusCeltDecDestroy(monoState.data()) == 0);
     Require(sceOpusCeltDecTerminate(&context) == 0);
-    RequireThrows([&] { sceOpusCeltDecTerminate(&context); });
-    RequireThrows([&] { sceOpusCeltDecCreateEx(&context, state.data(), 48000, 2); });
+    ExpectErr<std::runtime_error>([&] { sceOpusCeltDecTerminate(&context); });
+    ExpectErr<std::runtime_error>([&] { sceOpusCeltDecCreateEx(&context, state.data(), 48000, 2); });
 }

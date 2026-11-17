@@ -22,8 +22,6 @@
 
 namespace UfmtvalGetString {
 
-using IcuRecoveredTest::Require;
-using IcuRecoveredTest::RequireThrows;
 
 static_assert(std::is_same_v<decltype(&ufmtval_getString_nid_postfix), const char16_t* (APS5_VABI*)(const UFormattedValue*, std::int32_t*, std::int32_t*)>);
 
@@ -77,12 +75,12 @@ void Run() {
         Require(length == 0x5a5a5a5a);
     }
 
-    RequireThrows([&] { ufmtval_getString_nid_postfix(nullptr, nullptr, nullptr); });
+    ExpectErr([&] { ufmtval_getString_nid_postfix(nullptr, nullptr, nullptr); });
 
     for (const auto incoming : passing) {
         std::int32_t status = incoming;
         std::int32_t length = 0x5a5a5a5a;
-        RequireThrows([&] { ufmtval_getString_nid_postfix(value, &length, &status); });
+        ExpectErr([&] { ufmtval_getString_nid_postfix(value, &length, &status); });
         Require(status == incoming);
         Require(length == 0x5a5a5a5a);
         Require(Unchanged(storage));
@@ -93,8 +91,6 @@ void Run() {
 
 namespace UfmtvalNextPosition {
 
-using IcuRecoveredTest::Require;
-using IcuRecoveredTest::RequireThrows;
 
 static_assert(std::is_same_v<decltype(&ufmtval_nextPosition_nid_postfix), std::int8_t (APS5_VABI*)(const UFormattedValue*, UConstrainedFieldPosition*, std::int32_t*)>);
 
@@ -150,11 +146,11 @@ void Run() {
         Require(Unchanged(valueStorage));
     }
 
-    RequireThrows([&] { ufmtval_nextPosition_nid_postfix(nullptr, nullptr, nullptr); });
+    ExpectErr([&] { ufmtval_nextPosition_nid_postfix(nullptr, nullptr, nullptr); });
 
     for (const auto incoming : passing) {
         std::int32_t status = incoming;
-        RequireThrows([&] { ufmtval_nextPosition_nid_postfix(value, position, &status); });
+        ExpectErr([&] { ufmtval_nextPosition_nid_postfix(value, position, &status); });
         Require(status == incoming);
         Require(Unchanged(valueStorage) && Unchanged(positionStorage));
     }
@@ -173,7 +169,7 @@ void Run() {
         } catch (const std::runtime_error&) {
             threw = true;
         }
-        IcuRecoveredTest::Require(threw && errno == 71);
+        Require(threw && errno == 71);
     };
 
     const std::size_t pageSize =
@@ -185,10 +181,10 @@ void Run() {
     void* roPage = nullptr;
 #ifdef _WIN32
     roPage = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-    IcuRecoveredTest::Require(roPage != nullptr);
+    Require(roPage != nullptr);
 #else
     roPage = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    IcuRecoveredTest::Require(roPage != MAP_FAILED);
+    Require(roPage != MAP_FAILED);
 #endif
     const std::int32_t zero = 0;
     const std::int32_t failing = 1;
@@ -196,9 +192,9 @@ void Run() {
     std::memcpy(static_cast<char*>(roPage) + 16, &failing, sizeof(failing));
 #ifdef _WIN32
     DWORD oldProtect = 0;
-    IcuRecoveredTest::Require(VirtualProtect(roPage, pageSize, PAGE_READONLY, &oldProtect) != 0);
+    Require(VirtualProtect(roPage, pageSize, PAGE_READONLY, &oldProtect) != 0);
 #else
-    IcuRecoveredTest::Require(mprotect(roPage, pageSize, PROT_READ) == 0);
+    Require(mprotect(roPage, pageSize, PROT_READ) == 0);
 #endif
     auto* roZero = static_cast<std::int32_t*>(roPage);
     auto* roFailing = reinterpret_cast<std::int32_t*>(static_cast<char*>(roPage) + 16);
@@ -207,12 +203,12 @@ void Run() {
 
     rejectsRuntime([&] { ufmtval_getString_nid_postfix(nullptr, nullptr, badStatus); });
     rejectsRuntime([&] { ufmtval_getString_nid_postfix(nullptr, nullptr, roZero); });
-    IcuRecoveredTest::Require(ufmtval_getString_nid_postfix(dummyValue, nullptr, roFailing) == nullptr);
+    Require(ufmtval_getString_nid_postfix(dummyValue, nullptr, roFailing) == nullptr);
 
     rejectsRuntime([&] { ufmtval_nextPosition_nid_postfix(nullptr, nullptr, badStatus); });
     rejectsRuntime([&] { ufmtval_nextPosition_nid_postfix(nullptr, nullptr, roZero); });
     rejectsRuntime([&] { ufmtval_nextPosition_nid_postfix(dummyValue, nullptr, roZero); });
-    IcuRecoveredTest::Require(ufmtval_nextPosition_nid_postfix(dummyValue, nullptr, roFailing) == 0);
+    Require(ufmtval_nextPosition_nid_postfix(dummyValue, nullptr, roFailing) == 0);
 
 #ifdef _WIN32
     VirtualFree(roPage, 0, MEM_RELEASE);

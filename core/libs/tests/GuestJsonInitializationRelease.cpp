@@ -1,5 +1,6 @@
 #include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -17,9 +18,6 @@ extern "C" const void* ApplicationProcessParameters_nid_no_patch() {
     return words;
 }
 #endif
-static void Require(bool condition, const char* message) {
-    if (!condition) { std::fprintf(stderr, "%s\n", message); std::abort(); }
-}
 struct InitializationTrace {
     std::map<void*, std::size_t> ids;
     std::vector<std::size_t> releases;

@@ -3,6 +3,7 @@
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/HostStandardStreams.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -19,8 +20,6 @@ extern "C" {
 extern FileStream _Stdout_nid_postfix;
 extern FileStream _Stderr_nid_postfix;
 }
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static DWORD Available(int descriptor, void* buffer, DWORD capacity, DWORD& read) {
     const auto handle = reinterpret_cast<HANDLE>(::_get_osfhandle(descriptor));

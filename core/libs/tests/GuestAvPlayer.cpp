@@ -32,6 +32,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libSceAvPlayer/include/AvPlayer.hpp"
+#include "Testing.hpp"
 
 namespace {
 
@@ -640,10 +641,6 @@ constexpr std::array<std::uint8_t, 1571> AnamorphicMovie{
     0x31, 0x30, 0x30
 };
 
-void Check(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
-
 int LumaFor(int frame) {
     return 20 + frame * 7;
 }
@@ -652,7 +649,7 @@ void WriteMovie() {
     std::filesystem::create_directories("app0");
     std::ofstream file(MoviePath, std::ios::binary | std::ios::trunc);
     file.write(reinterpret_cast<const char*>(Movie.data()), static_cast<std::streamsize>(Movie.size()));
-    Check(static_cast<bool>(file), "cannot write the movie");
+    Require(static_cast<bool>(file), "cannot write the movie");
 }
 
 struct Block {
@@ -812,27 +809,27 @@ int FrameIndex(std::uint64_t timestamp) {
 
 void CheckVideoPicture(const AvPlayerFrameInfoEx& info) {
     const auto& video = info.details.video;
-    Check(video.width == 112 && video.height == 64 && video.pitch == Pitch, "unexpected frame geometry");
-    Check(video.crop_left_offset == 0 && video.crop_top_offset == 0 && video.crop_right_offset == Pitch - Width && video.crop_bottom_offset == 4, "unexpected crop offsets");
-    Check(video.luma_bit_depth == 8 && video.chroma_bit_depth == 8, "unexpected bit depth");
-    Check(video.aspect_ratio == 0.0f, "unexpected aspect ratio");
-    Check(std::memcmp(video.language_code, "eng", 4) == 0, "missing video language");
+    Require(video.width == 112 && video.height == 64 && video.pitch == Pitch, "unexpected frame geometry");
+    Require(video.crop_left_offset == 0 && video.crop_top_offset == 0 && video.crop_right_offset == Pitch - Width && video.crop_bottom_offset == 4, "unexpected crop offsets");
+    Require(video.luma_bit_depth == 8 && video.chroma_bit_depth == 8, "unexpected bit depth");
+    Require(video.aspect_ratio == 0.0f, "unexpected aspect ratio");
+    Require(std::memcmp(video.language_code, "eng", 4) == 0, "missing video language");
     const int index = FrameIndex(info.timestamp);
-    Check(index >= 0 && index < FrameCount, "frame timestamp out of range");
+    Require(index >= 0 && index < FrameCount, "frame timestamp out of range");
     const auto* luma = static_cast<const std::uint8_t*>(info.p_data);
     const auto* chroma = luma + Pitch * 64;
     for (const int row : {2, 30, 57, 63}) {
-        Check(std::abs(luma[row * Pitch + 10] - LumaFor(index)) <= 6, "left luma mismatch for frame " + std::to_string(index));
-        Check(std::abs(luma[row * Pitch + 90] - (255 - LumaFor(index))) <= 6, "right luma mismatch for frame " + std::to_string(index));
+        Require(std::abs(luma[row * Pitch + 10] - LumaFor(index)) <= 6, "left luma mismatch for frame " + std::to_string(index));
+        Require(std::abs(luma[row * Pitch + 90] - (255 - LumaFor(index))) <= 6, "right luma mismatch for frame " + std::to_string(index));
     }
     for (const int row : {0, 15, 31}) {
-        Check(std::abs(chroma[row * Pitch + 20] - 128) <= 6 && std::abs(chroma[row * Pitch + 21] - 128) <= 6, "chroma mismatch");
+        Require(std::abs(chroma[row * Pitch + 20] - 128) <= 6 && std::abs(chroma[row * Pitch + 21] - 128) <= 6, "chroma mismatch");
     }
 }
 
 void CheckVideoFrame(const AvPlayerFrameInfoEx& info) {
     CheckVideoPicture(info);
-    Check(IsAllocation(info.p_data, true), "video frame is not a texture allocation");
+    Require(IsAllocation(info.p_data, true), "video frame is not a texture allocation");
 }
 
 int Loudest(const AvPlayerFrameInfo& info) {
@@ -843,72 +840,72 @@ int Loudest(const AvPlayerFrameInfo& info) {
 }
 
 void CheckAudioFrame(const AvPlayerFrameInfo& info, std::uint16_t channels, const char* language) {
-    Check(info.details.audio.channel_count == channels && info.details.audio.sample_rate == SampleRate, "unexpected audio format");
-    Check(info.details.audio.size > 0 && info.details.audio.size <= 1024u * channels * 2 && info.details.audio.size % (channels * 2u) == 0, "unexpected audio size");
-    Check(std::memcmp(info.details.audio.language_code, language, 4) == 0, "unexpected audio language");
-    Check(IsAllocation(info.p_data, false), "audio frame is not a plain allocation");
+    Require(info.details.audio.channel_count == channels && info.details.audio.sample_rate == SampleRate, "unexpected audio format");
+    Require(info.details.audio.size > 0 && info.details.audio.size <= 1024u * channels * 2 && info.details.audio.size % (channels * 2u) == 0, "unexpected audio size");
+    Require(std::memcmp(info.details.audio.language_code, language, 4) == 0, "unexpected audio language");
+    Require(IsAllocation(info.p_data, false), "audio frame is not a plain allocation");
 }
 
 void CheckEnglishAudio(const AvPlayerFrameInfo& info) {
     CheckAudioFrame(info, 2, "eng");
-    Check(Loudest(info) <= 16, "the English track is not silent");
+    Require(Loudest(info) <= 16, "the English track is not silent");
 }
 
 void CheckStreamInfo(AvPlayerInternal* player) {
-    Check(sceAvPlayerStreamCount(player) == 3, "unexpected stream count");
+    Require(sceAvPlayerStreamCount(player) == 3, "unexpected stream count");
     for (std::uint32_t index = 0; index < 3; ++index) {
         AvPlayerStreamInfo info{};
-        Check(sceAvPlayerGetStreamInfo(player, index, &info) == 0, "stream info failed");
-        Check(info.duration >= 950 && info.duration <= 1100, "unexpected stream duration");
+        Require(sceAvPlayerGetStreamInfo(player, index, &info) == 0, "stream info failed");
+        Require(info.duration >= 950 && info.duration <= 1100, "unexpected stream duration");
         if (index == VideoStream) {
-            Check(info.type == 1, "video stream type");
-            Check(info.details.video.width == 112 && info.details.video.height == 64, "unexpected video stream size");
-            Check(std::strcmp(info.details.video.language_code, "eng") == 0, "unexpected video language");
+            Require(info.type == 1, "video stream type");
+            Require(info.details.video.width == 112 && info.details.video.height == 64, "unexpected video stream size");
+            Require(std::strcmp(info.details.video.language_code, "eng") == 0, "unexpected video language");
         } else {
             const bool english = index == EnglishAudioStream;
-            Check(info.type == 2, "audio stream type");
-            Check(info.details.audio.channel_count == (english ? 2 : 1) && info.details.audio.sample_rate == SampleRate, "unexpected audio stream");
-            Check(std::strcmp(info.details.audio.language_code, english ? "eng" : "fra") == 0, "unexpected audio language");
+            Require(info.type == 2, "audio stream type");
+            Require(info.details.audio.channel_count == (english ? 2 : 1) && info.details.audio.sample_rate == SampleRate, "unexpected audio stream");
+            Require(std::strcmp(info.details.audio.language_code, english ? "eng" : "fra") == 0, "unexpected audio language");
         }
     }
     AvPlayerStreamInfo unused{};
-    Check(sceAvPlayerGetStreamInfo(player, 3, &unused) == OperationFailed, "invalid stream accepted");
-    Check(sceAvPlayerGetStreamInfo(player, 0, nullptr) == InvalidParams, "null stream info accepted");
+    Require(sceAvPlayerGetStreamInfo(player, 3, &unused) == OperationFailed, "invalid stream accepted");
+    Require(sceAvPlayerGetStreamInfo(player, 0, nullptr) == InvalidParams, "null stream info accepted");
     errno = 71;
-    Check(sceAvPlayerGetStreamInfo(player, 0, reinterpret_cast<AvPlayerStreamInfo*>(0x10)) == InvalidParams, "unmapped stream info accepted");
-    Check(errno == 71, "preserve errno on unmapped stream info");
+    Require(sceAvPlayerGetStreamInfo(player, 0, reinterpret_cast<AvPlayerStreamInfo*>(0x10)) == InvalidParams, "unmapped stream info accepted");
+    Require(errno == 71, "preserve errno on unmapped stream info");
 }
 
 void CheckStreamInfoEx(AvPlayerInternal* player) {
     for (std::uint32_t index = 0; index < 3; ++index) {
         AvPlayerStreamInfoEx info{};
         info.this_size = sizeof(info);
-        Check(sceAvPlayerGetStreamInfoEx(player, index, &info) == 0, "extended stream info failed");
-        Check(info.this_size == sizeof(info), "extended stream info size overwritten");
-        Check(info.duration >= 950 && info.duration <= 1100, "unexpected extended stream duration");
+        Require(sceAvPlayerGetStreamInfoEx(player, index, &info) == 0, "extended stream info failed");
+        Require(info.this_size == sizeof(info), "extended stream info size overwritten");
+        Require(info.duration >= 950 && info.duration <= 1100, "unexpected extended stream duration");
         if (index == VideoStream) {
             const auto& video = info.details.video;
-            Check(info.type == 1, "extended video stream type");
-            Check(video.width == 112 && video.height == 64 && video.pitch == Pitch, "unexpected extended video geometry");
-            Check(video.crop_left_offset == 0 && video.crop_top_offset == 0 && video.crop_right_offset == Pitch - Width && video.crop_bottom_offset == 4, "unexpected extended crop offsets");
-            Check(video.luma_bit_depth == 8 && video.chroma_bit_depth == 8 && !video.video_full_range_flag, "unexpected extended video format");
-            Check(video.aspect_ratio == 0.0f, "unexpected extended aspect ratio");
-            Check(std::memcmp(video.language_code, "eng", 4) == 0, "unexpected extended video language");
+            Require(info.type == 1, "extended video stream type");
+            Require(video.width == 112 && video.height == 64 && video.pitch == Pitch, "unexpected extended video geometry");
+            Require(video.crop_left_offset == 0 && video.crop_top_offset == 0 && video.crop_right_offset == Pitch - Width && video.crop_bottom_offset == 4, "unexpected extended crop offsets");
+            Require(video.luma_bit_depth == 8 && video.chroma_bit_depth == 8 && !video.video_full_range_flag, "unexpected extended video format");
+            Require(video.aspect_ratio == 0.0f, "unexpected extended aspect ratio");
+            Require(std::memcmp(video.language_code, "eng", 4) == 0, "unexpected extended video language");
         } else {
             const bool english = index == EnglishAudioStream;
             const auto& audio = info.details.audio;
-            Check(info.type == 2, "extended audio stream type");
-            Check(audio.channel_count == (english ? 2 : 1) && audio.sample_rate == SampleRate, "unexpected extended audio stream");
-            Check(std::memcmp(audio.language_code, english ? "eng" : "fra", 4) == 0, "unexpected extended audio language");
+            Require(info.type == 2, "extended audio stream type");
+            Require(audio.channel_count == (english ? 2 : 1) && audio.sample_rate == SampleRate, "unexpected extended audio stream");
+            Require(std::memcmp(audio.language_code, english ? "eng" : "fra", 4) == 0, "unexpected extended audio language");
         }
     }
     AvPlayerStreamInfoEx unused{};
-    Check(sceAvPlayerGetStreamInfoEx(player, 3, &unused) == OperationFailed, "invalid extended stream accepted");
-    Check(sceAvPlayerGetStreamInfoEx(player, 0, nullptr) == InvalidParams, "null extended stream info accepted");
+    Require(sceAvPlayerGetStreamInfoEx(player, 3, &unused) == OperationFailed, "invalid extended stream accepted");
+    Require(sceAvPlayerGetStreamInfoEx(player, 0, nullptr) == InvalidParams, "null extended stream info accepted");
     errno = 71;
-    Check(sceAvPlayerGetStreamInfoEx(player, 0, reinterpret_cast<AvPlayerStreamInfoEx*>(0x10)) == InvalidParams, "unmapped extended stream info accepted");
-    Check(errno == 71, "preserve errno on unmapped extended stream info");
-    Check(sceAvPlayerGetStreamInfoEx(nullptr, 0, &unused) == InvalidParams, "null player accepted");
+    Require(sceAvPlayerGetStreamInfoEx(player, 0, reinterpret_cast<AvPlayerStreamInfoEx*>(0x10)) == InvalidParams, "unmapped extended stream info accepted");
+    Require(errno == 71, "preserve errno on unmapped extended stream info");
+    Require(sceAvPlayerGetStreamInfoEx(nullptr, 0, &unused) == InvalidParams, "null player accepted");
 }
 
 void WritePs4ParamSfo() {
@@ -920,154 +917,154 @@ void WritePs4ParamSfo() {
     file.write(reinterpret_cast<const char*>(header), sizeof(header));
     file.write(reinterpret_cast<const char*>(entries), sizeof(entries));
     file << std::string("TITLE\0TITLE_ID\0\0\0\0\0\0", 20) << std::string("Example\0", 8) << "CUSA00000" << std::string("\0\0\0", 3);
-    Check(static_cast<bool>(file), "cannot write the PS4 param.sfo");
+    Require(static_cast<bool>(file), "cannot write the PS4 param.sfo");
 }
 
 void TestPs4StreamTypes() {
     Events events;
     AvPlayerInitData init = InitData(&events);
     auto* player = sceAvPlayerInit(&init);
-    Check(player != nullptr, "PS4 init failed");
-    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "PS4 add source failed");
-    Check(WaitFor([&] { return events.Seen(EventReady); }), "PS4 ready event missing");
+    Require(player != nullptr, "PS4 init failed");
+    Require(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "PS4 add source failed");
+    Require(WaitFor([&] { return events.Seen(EventReady); }), "PS4 ready event missing");
     for (std::uint32_t index = 0; index < 3; ++index) {
         const std::uint32_t expected = index == VideoStream ? 0 : 1;
         AvPlayerStreamInfo info{};
-        Check(sceAvPlayerGetStreamInfo(player, index, &info) == 0, "PS4 stream info failed");
-        Check(info.type == expected, "a PS4 process reports video as type 0 and audio as type 1");
+        Require(sceAvPlayerGetStreamInfo(player, index, &info) == 0, "PS4 stream info failed");
+        Require(info.type == expected, "a PS4 process reports video as type 0 and audio as type 1");
         AvPlayerStreamInfoEx extended{};
         extended.this_size = sizeof(extended);
-        Check(sceAvPlayerGetStreamInfoEx(player, index, &extended) == 0, "PS4 extended stream info failed");
-        Check(extended.type == expected, "a PS4 process reports extended video as type 0 and audio as type 1");
+        Require(sceAvPlayerGetStreamInfoEx(player, index, &extended) == 0, "PS4 extended stream info failed");
+        Require(extended.type == expected, "a PS4 process reports extended video as type 0 and audio as type 1");
     }
-    Check(sceAvPlayerClose(player) == 0, "PS4 close failed");
+    Require(sceAvPlayerClose(player) == 0, "PS4 close failed");
 
     AvPlayerInitData autoInit = InitData(nullptr);
     player = sceAvPlayerInit(&autoInit);
-    Check(player != nullptr, "PS4 auto start init failed");
-    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "PS4 auto start source failed");
+    Require(player != nullptr, "PS4 auto start init failed");
+    Require(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "PS4 auto start source failed");
     AvPlayerFrameInfo frame{};
-    Check(WaitFor([&] { return sceAvPlayerGetVideoData(player, &frame) != 0; }), "PS4 auto start never produced a video frame");
+    Require(WaitFor([&] { return sceAvPlayerGetVideoData(player, &frame) != 0; }), "PS4 auto start never produced a video frame");
     AvPlayerFrameInfo sound{};
-    Check(WaitFor([&] { return sceAvPlayerGetAudioData(player, &sound) != 0; }), "PS4 auto start did not enable the audio stream");
+    Require(WaitFor([&] { return sceAvPlayerGetAudioData(player, &sound) != 0; }), "PS4 auto start did not enable the audio stream");
     CheckEnglishAudio(sound);
-    Check(sceAvPlayerClose(player) == 0, "PS4 auto start close failed");
+    Require(sceAvPlayerClose(player) == 0, "PS4 auto start close failed");
 }
 
 void TestPlayback() {
     Events events;
     AvPlayerInitData init = InitData(&events);
     auto* player = sceAvPlayerInit(&init);
-    Check(player != nullptr, "init failed");
+    Require(player != nullptr, "init failed");
     AvPlayerPostInitData post{};
     post.demux_video_buffer_size = 64 * 1024;
-    Check(sceAvPlayerPostInit(player, &post) == 0, "post init failed");
-    Check(sceAvPlayerPostInit(player, nullptr) == InvalidParams, "post init accepted null data");
+    Require(sceAvPlayerPostInit(player, &post) == 0, "post init failed");
+    Require(sceAvPlayerPostInit(player, nullptr) == InvalidParams, "post init accepted null data");
     errno = 71;
-    Check(sceAvPlayerPostInit(player, reinterpret_cast<const AvPlayerPostInitData*>(0x10)) == InvalidParams, "unmapped post init accepted");
-    Check(errno == 71, "preserve errno on unmapped post init");
-    Check(sceAvPlayerStreamCount(player) == OperationFailed, "stream count without a source");
-    Check(sceAvPlayerSetTrickSpeed(player, 100) == OperationFailed, "trick speed accepted without a source");
-    Check(sceAvPlayerSetTrickSpeed(player, 0) == OperationFailed, "trick speed checked the speed before the source");
-    Check(!sceAvPlayerIsActive(player), "active without a source");
-    Check(sceAvPlayerAddSource(player, "/app0/missing.mp4") == OperationFailed, "missing file accepted");
-    Check(sceAvPlayerAddSource(player, "/app0/missing/../avplayer.mp4") == OperationFailed, "missing parent accepted");
-    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4/../avplayer.mp4") == OperationFailed, "file parent accepted");
-    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source failed");
-    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == OperationFailed, "second source accepted");
-    Check(WaitFor([&] { return events.Seen(EventReady); }), "ready event missing");
+    Require(sceAvPlayerPostInit(player, reinterpret_cast<const AvPlayerPostInitData*>(0x10)) == InvalidParams, "unmapped post init accepted");
+    Require(errno == 71, "preserve errno on unmapped post init");
+    Require(sceAvPlayerStreamCount(player) == OperationFailed, "stream count without a source");
+    Require(sceAvPlayerSetTrickSpeed(player, 100) == OperationFailed, "trick speed accepted without a source");
+    Require(sceAvPlayerSetTrickSpeed(player, 0) == OperationFailed, "trick speed checked the speed before the source");
+    Require(!sceAvPlayerIsActive(player), "active without a source");
+    Require(sceAvPlayerAddSource(player, "/app0/missing.mp4") == OperationFailed, "missing file accepted");
+    Require(sceAvPlayerAddSource(player, "/app0/missing/../avplayer.mp4") == OperationFailed, "missing parent accepted");
+    Require(sceAvPlayerAddSource(player, "/app0/avplayer.mp4/../avplayer.mp4") == OperationFailed, "file parent accepted");
+    Require(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source failed");
+    Require(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == OperationFailed, "second source accepted");
+    Require(WaitFor([&] { return events.Seen(EventReady); }), "ready event missing");
 
     CheckStreamInfo(player);
-    Check(sceAvPlayerEnableStream(player, 7) == OperationFailed, "invalid stream enabled");
-    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "enable video failed");
-    Check(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "enable audio failed");
-    Check(sceAvPlayerIsActive(player), "not active before start");
-    Check(sceAvPlayerPause(player) == OperationFailed, "pause accepted before start");
-    Check(sceAvPlayerStart(player) == 0, "start failed");
-    Check(WaitFor([&] { return events.Seen(EventPlay); }), "play event missing");
+    Require(sceAvPlayerEnableStream(player, 7) == OperationFailed, "invalid stream enabled");
+    Require(sceAvPlayerEnableStream(player, VideoStream) == 0, "enable video failed");
+    Require(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "enable audio failed");
+    Require(sceAvPlayerIsActive(player), "not active before start");
+    Require(sceAvPlayerPause(player) == OperationFailed, "pause accepted before start");
+    Require(sceAvPlayerStart(player) == 0, "start failed");
+    Require(WaitFor([&] { return events.Seen(EventPlay); }), "play event missing");
 
     AvPlayerFrameInfoEx frame{};
     AvPlayerFrameInfo sound{};
     AvPlayerFrameInfo videoSimple{};
-    Check(!sceAvPlayerGetAudioData(nullptr, &sound), "null player audio accepted");
-    Check(!sceAvPlayerGetAudioData(player, nullptr), "null audio info accepted");
+    Require(!sceAvPlayerGetAudioData(nullptr, &sound), "null player audio accepted");
+    Require(!sceAvPlayerGetAudioData(player, nullptr), "null audio info accepted");
     errno = 71;
-    Check(!sceAvPlayerGetAudioData(player, reinterpret_cast<AvPlayerFrameInfo*>(0x10)), "unmapped audio info accepted");
-    Check(errno == 71, "preserve errno on unmapped audio info");
+    Require(!sceAvPlayerGetAudioData(player, reinterpret_cast<AvPlayerFrameInfo*>(0x10)), "unmapped audio info accepted");
+    Require(errno == 71, "preserve errno on unmapped audio info");
 
-    Check(!sceAvPlayerGetVideoData(nullptr, &videoSimple), "null player video accepted");
-    Check(!sceAvPlayerGetVideoData(player, nullptr), "null video info accepted");
+    Require(!sceAvPlayerGetVideoData(nullptr, &videoSimple), "null player video accepted");
+    Require(!sceAvPlayerGetVideoData(player, nullptr), "null video info accepted");
     errno = 71;
-    Check(!sceAvPlayerGetVideoData(player, reinterpret_cast<AvPlayerFrameInfo*>(0x10)), "unmapped video info accepted");
-    Check(errno == 71, "preserve errno on unmapped video info");
+    Require(!sceAvPlayerGetVideoData(player, reinterpret_cast<AvPlayerFrameInfo*>(0x10)), "unmapped video info accepted");
+    Require(errno == 71, "preserve errno on unmapped video info");
 
-    Check(!sceAvPlayerGetVideoDataEx(nullptr, &frame), "null player video ex accepted");
-    Check(!sceAvPlayerGetVideoDataEx(player, nullptr), "null video ex info accepted");
+    Require(!sceAvPlayerGetVideoDataEx(nullptr, &frame), "null player video ex accepted");
+    Require(!sceAvPlayerGetVideoDataEx(player, nullptr), "null video ex info accepted");
     errno = 71;
-    Check(!sceAvPlayerGetVideoDataEx(player, reinterpret_cast<AvPlayerFrameInfoEx*>(0x10)), "unmapped video ex info accepted");
-    Check(errno == 71, "preserve errno on unmapped video ex info");
+    Require(!sceAvPlayerGetVideoDataEx(player, reinterpret_cast<AvPlayerFrameInfoEx*>(0x10)), "unmapped video ex info accepted");
+    Require(errno == 71, "preserve errno on unmapped video ex info");
 
     int frames = 0;
     int sounds = 0;
     std::uint64_t last = 0;
-    Check(WaitFor([&] {
+    Require(WaitFor([&] {
         if (sceAvPlayerGetAudioData(player, &sound)) {
             CheckEnglishAudio(sound);
             ++sounds;
         }
         if (sceAvPlayerGetVideoDataEx(player, &frame)) {
             CheckVideoFrame(frame);
-            Check(frames == 0 || frame.timestamp > last, "video timestamps not increasing");
+            Require(frames == 0 || frame.timestamp > last, "video timestamps not increasing");
             last = frame.timestamp;
             ++frames;
         }
         return frames >= 2 && sounds >= 2;
     }), "playback stalled");
-    Check(sceAvPlayerCurrentTime(player) > 0, "clock not running");
-    Check(sceAvPlayerSetTrickSpeed(player, 0) == InvalidParams, "zero trick speed accepted");
-    Check(sceAvPlayerSetTrickSpeed(player, 100) == 0, "normal trick speed rejected");
+    Require(sceAvPlayerCurrentTime(player) > 0, "clock not running");
+    Require(sceAvPlayerSetTrickSpeed(player, 0) == InvalidParams, "zero trick speed accepted");
+    Require(sceAvPlayerSetTrickSpeed(player, 100) == 0, "normal trick speed rejected");
 
-    Check(sceAvPlayerPause(player) == 0, "pause failed");
-    Check(WaitFor([&] { return events.Seen(EventPause); }), "pause event missing");
+    Require(sceAvPlayerPause(player) == 0, "pause failed");
+    Require(WaitFor([&] { return events.Seen(EventPause); }), "pause event missing");
     const auto paused = sceAvPlayerCurrentTime(player);
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    Check(!sceAvPlayerGetVideoDataEx(player, &frame) && !sceAvPlayerGetAudioData(player, &sound), "data delivered while paused");
-    Check(sceAvPlayerCurrentTime(player) == paused, "clock moved while paused");
-    Check(sceAvPlayerIsActive(player), "inactive while paused");
-    Check(sceAvPlayerJumpToTime(player, 300) == 0, "jump while paused failed");
-    Check(WaitFor([&] { return events.Seen(EventWarning, JumpComplete); }), "jump completion missing while paused");
-    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "no frame at a jump while paused");
+    Require(!sceAvPlayerGetVideoDataEx(player, &frame) && !sceAvPlayerGetAudioData(player, &sound), "data delivered while paused");
+    Require(sceAvPlayerCurrentTime(player) == paused, "clock moved while paused");
+    Require(sceAvPlayerIsActive(player), "inactive while paused");
+    Require(sceAvPlayerJumpToTime(player, 300) == 0, "jump while paused failed");
+    Require(WaitFor([&] { return events.Seen(EventWarning, JumpComplete); }), "jump completion missing while paused");
+    Require(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "no frame at a jump while paused");
     CheckVideoFrame(frame);
-    Check(frame.timestamp >= 300 && frame.timestamp <= 367, "paused jump landed at " + std::to_string(frame.timestamp));
+    Require(frame.timestamp >= 300 && frame.timestamp <= 367, "paused jump landed at " + std::to_string(frame.timestamp));
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    Check(!sceAvPlayerGetVideoDataEx(player, &frame) && !sceAvPlayerGetAudioData(player, &sound), "data delivered after the frame at a paused jump");
+    Require(!sceAvPlayerGetVideoDataEx(player, &frame) && !sceAvPlayerGetAudioData(player, &sound), "data delivered after the frame at a paused jump");
     events.Clear();
-    Check(sceAvPlayerResume(player) == 0, "resume failed");
-    Check(sceAvPlayerResume(player) == OperationFailed, "resume accepted while playing");
-    Check(WaitFor([&] { return events.Seen(EventPlay); }), "resume event missing");
+    Require(sceAvPlayerResume(player) == 0, "resume failed");
+    Require(sceAvPlayerResume(player) == OperationFailed, "resume accepted while playing");
+    Require(WaitFor([&] { return events.Seen(EventPlay); }), "resume event missing");
 
-    Check(sceAvPlayerJumpToTime(player, 700) == 0, "jump failed");
-    Check(WaitFor([&] { return events.Seen(EventWarning, JumpComplete); }), "jump completion missing");
-    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "no frame after the jump");
+    Require(sceAvPlayerJumpToTime(player, 700) == 0, "jump failed");
+    Require(WaitFor([&] { return events.Seen(EventWarning, JumpComplete); }), "jump completion missing");
+    Require(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "no frame after the jump");
     CheckVideoFrame(frame);
-    Check(frame.timestamp >= 700 && frame.timestamp <= 767, "jump landed at " + std::to_string(frame.timestamp));
+    Require(frame.timestamp >= 700 && frame.timestamp <= 767, "jump landed at " + std::to_string(frame.timestamp));
 
     events.Clear();
     const auto forward = sceAvPlayerCurrentTime(player);
-    Check(sceAvPlayerSetTrickSpeed(player, -100) == 0, "reverse trick speed rejected");
+    Require(sceAvPlayerSetTrickSpeed(player, -100) == 0, "reverse trick speed rejected");
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
-    Check(!sceAvPlayerGetVideoDataEx(player, &frame) && !sceAvPlayerGetAudioData(player, &sound), "data delivered in reverse");
+    Require(!sceAvPlayerGetVideoDataEx(player, &frame) && !sceAvPlayerGetAudioData(player, &sound), "data delivered in reverse");
     const auto rewound = sceAvPlayerCurrentTime(player);
-    Check(rewound + 150 <= forward, "clock did not run backwards: " + std::to_string(forward) + " to " + std::to_string(rewound));
-    Check(sceAvPlayerSetTrickSpeed(player, 100) == 0, "forward trick speed rejected after reverse");
-    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "no frame after reverse");
+    Require(rewound + 150 <= forward, "clock did not run backwards: " + std::to_string(forward) + " to " + std::to_string(rewound));
+    Require(sceAvPlayerSetTrickSpeed(player, 100) == 0, "forward trick speed rejected after reverse");
+    Require(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "no frame after reverse");
     CheckVideoFrame(frame);
-    Check(frame.timestamp + 100 >= rewound && frame.timestamp <= rewound + 100, "playback resumed at " + std::to_string(frame.timestamp) + " after rewinding to " + std::to_string(rewound));
-    Check(!events.Seen(EventWarning, JumpComplete), "rewinding reported a jump");
+    Require(frame.timestamp + 100 >= rewound && frame.timestamp <= rewound + 100, "playback resumed at " + std::to_string(frame.timestamp) + " after rewinding to " + std::to_string(rewound));
+    Require(!events.Seen(EventWarning, JumpComplete), "rewinding reported a jump");
 
-    Check(sceAvPlayerSetAvSyncMode(player, 2) == InvalidParams, "invalid sync mode accepted");
-    Check(sceAvPlayerSetAvSyncMode(player, 1) == 0, "sync mode rejected");
-    Check(WaitFor([&] {
+    Require(sceAvPlayerSetAvSyncMode(player, 2) == InvalidParams, "invalid sync mode accepted");
+    Require(sceAvPlayerSetAvSyncMode(player, 1) == 0, "sync mode rejected");
+    Require(WaitFor([&] {
         if (sceAvPlayerGetVideoDataEx(player, &frame)) {
             CheckVideoFrame(frame);
             last = frame.timestamp;
@@ -1075,18 +1072,18 @@ void TestPlayback() {
         while (sceAvPlayerGetAudioData(player, &sound)) CheckEnglishAudio(sound);
         return !sceAvPlayerIsActive(player);
     }), "playback never ended");
-    Check(FrameIndex(last) >= FrameCount - 2, "last frame missing");
-    Check(WaitFor([&] { return events.Seen(EventStop); }), "end of stream stop event missing");
-    Check(sceAvPlayerCurrentTime(player) >= 950, "clock not at the end");
-    Check(sceAvPlayerStop(player) == 0, "stop after the end failed");
+    Require(FrameIndex(last) >= FrameCount - 2, "last frame missing");
+    Require(WaitFor([&] { return events.Seen(EventStop); }), "end of stream stop event missing");
+    Require(sceAvPlayerCurrentTime(player) >= 950, "clock not at the end");
+    Require(sceAvPlayerStop(player) == 0, "stop after the end failed");
 
     events.Clear();
-    Check(sceAvPlayerSetLooping(player, 1) == 0, "looping rejected");
-    Check(sceAvPlayerStart(player) == 0, "restart failed");
+    Require(sceAvPlayerSetLooping(player, 1) == 0, "looping rejected");
+    Require(sceAvPlayerStart(player) == 0, "restart failed");
     bool wrapped = false;
     last = 0;
     frames = 0;
-    Check(WaitFor([&] {
+    Require(WaitFor([&] {
         while (sceAvPlayerGetAudioData(player, &sound)) CheckEnglishAudio(sound);
         if (sceAvPlayerGetVideoDataEx(player, &frame)) {
             CheckVideoFrame(frame);
@@ -1096,91 +1093,91 @@ void TestPlayback() {
         }
         return wrapped && frames > FrameCount + 5;
     }), "looping never wrapped");
-    Check(WaitFor([&] { return events.Seen(EventWarning, LoopingBack); }), "looping warning missing");
-    Check(sceAvPlayerIsActive(player), "looping player went inactive");
-    Check(sceAvPlayerStop(player) == 0, "stop failed");
-    Check(sceAvPlayerStop(player) == OperationFailed, "second stop accepted");
-    Check(!sceAvPlayerIsActive(player), "active after stop");
-    Check(WaitFor([&] { return events.Seen(EventStop); }), "stop event missing");
-    Check(sceAvPlayerClose(player) == 0, "close failed");
-    Check(sceAvPlayerClose(nullptr) == InvalidParams, "null close accepted");
+    Require(WaitFor([&] { return events.Seen(EventWarning, LoopingBack); }), "looping warning missing");
+    Require(sceAvPlayerIsActive(player), "looping player went inactive");
+    Require(sceAvPlayerStop(player) == 0, "stop failed");
+    Require(sceAvPlayerStop(player) == OperationFailed, "second stop accepted");
+    Require(!sceAvPlayerIsActive(player), "active after stop");
+    Require(WaitFor([&] { return events.Seen(EventStop); }), "stop event missing");
+    Require(sceAvPlayerClose(player) == 0, "close failed");
+    Require(sceAvPlayerClose(nullptr) == InvalidParams, "null close accepted");
     std::lock_guard lock(allocations.mutex);
-    Check(allocations.blocks.empty(), "allocations leaked");
-    Check(allocations.textures >= 4, "video buffers not allocated as textures");
+    Require(allocations.blocks.empty(), "allocations leaked");
+    Require(allocations.textures >= 4, "video buffers not allocated as textures");
 }
 
 void TestVp9OpusPlayback() {
     {
         std::ofstream file(WebmPath, std::ios::binary | std::ios::trunc);
         file.write(reinterpret_cast<const char*>(WebmMovie.data()), static_cast<std::streamsize>(WebmMovie.size()));
-        Check(static_cast<bool>(file), "cannot write the WebM movie");
+        Require(static_cast<bool>(file), "cannot write the WebM movie");
     }
     const auto play = [](bool withAudio) {
         Events events;
         AvPlayerInitData init = InitData(&events);
         auto* player = sceAvPlayerInit(&init);
-        Check(player != nullptr, "WebM init failed");
-        Check(sceAvPlayerAddSource(player, "/app0/avplayer.webm") == 0, "WebM add source failed");
-        Check(WaitFor([&] { return events.Seen(EventReady); }), "WebM ready event missing");
-        Check(sceAvPlayerStreamCount(player) == 2, "unexpected WebM stream count");
+        Require(player != nullptr, "WebM init failed");
+        Require(sceAvPlayerAddSource(player, "/app0/avplayer.webm") == 0, "WebM add source failed");
+        Require(WaitFor([&] { return events.Seen(EventReady); }), "WebM ready event missing");
+        Require(sceAvPlayerStreamCount(player) == 2, "unexpected WebM stream count");
         AvPlayerStreamInfo video{};
-        Check(sceAvPlayerGetStreamInfo(player, 0, &video) == 0 && video.type == 1 && video.details.video.width == 112 && video.details.video.height == 64, "unexpected VP9 stream");
+        Require(sceAvPlayerGetStreamInfo(player, 0, &video) == 0 && video.type == 1 && video.details.video.width == 112 && video.details.video.height == 64, "unexpected VP9 stream");
         AvPlayerStreamInfo audio{};
-        Check(sceAvPlayerGetStreamInfo(player, 1, &audio) == 0 && audio.type == 2 && audio.details.audio.channel_count == 2 && audio.details.audio.sample_rate == SampleRate, "unexpected Opus stream");
-        Check(sceAvPlayerEnableStream(player, 0) == 0 && (!withAudio || sceAvPlayerEnableStream(player, 1) == 0), "enable WebM streams failed");
-        if (!withAudio) Check(sceAvPlayerSetAvSyncMode(player, 1) == 0, "WebM no-sync mode rejected");
-        Check(sceAvPlayerStart(player) == 0, "WebM start failed");
+        Require(sceAvPlayerGetStreamInfo(player, 1, &audio) == 0 && audio.type == 2 && audio.details.audio.channel_count == 2 && audio.details.audio.sample_rate == SampleRate, "unexpected Opus stream");
+        Require(sceAvPlayerEnableStream(player, 0) == 0 && (!withAudio || sceAvPlayerEnableStream(player, 1) == 0), "enable WebM streams failed");
+        if (!withAudio) Require(sceAvPlayerSetAvSyncMode(player, 1) == 0, "WebM no-sync mode rejected");
+        Require(sceAvPlayerStart(player) == 0, "WebM start failed");
         AvPlayerFrameInfoEx frame{};
         AvPlayerFrameInfo sound{};
         int frames = 0;
         int sounds = 0;
         std::uint64_t last = 0;
-        Check(WaitFor([&] {
+        Require(WaitFor([&] {
             if (withAudio && sceAvPlayerGetAudioData(player, &sound)) {
                 CheckEnglishAudio(sound);
                 ++sounds;
             }
             if (sceAvPlayerGetVideoDataEx(player, &frame)) {
                 CheckVideoFrame(frame);
-                Check(frames == 0 || frame.timestamp > last, "WebM video timestamps do not increase");
+                Require(frames == 0 || frame.timestamp > last, "WebM video timestamps do not increase");
                 last = frame.timestamp;
                 ++frames;
             }
             return !sceAvPlayerIsActive(player);
         }), "WebM playback never ended");
-        Check(sceAvPlayerClose(player) == 0, "WebM close failed");
+        Require(sceAvPlayerClose(player) == 0, "WebM close failed");
         std::lock_guard lock(allocations.mutex);
-        Check(allocations.blocks.empty(), "WebM allocations leaked");
+        Require(allocations.blocks.empty(), "WebM allocations leaked");
         return std::pair{frames, sounds};
     };
     const auto [decoded, silent] = play(false);
-    Check(decoded == WebmVideoFrames && silent == 0, "WebM video-only playback delivered " + std::to_string(decoded) + " of " + std::to_string(WebmVideoFrames) + " frames");
+    Require(decoded == WebmVideoFrames && silent == 0, "WebM video-only playback delivered " + std::to_string(decoded) + " of " + std::to_string(WebmVideoFrames) + " frames");
     const auto [frames, sounds] = play(true);
-    Check(frames >= 1 && sounds >= 2, "WebM delivered " + std::to_string(frames) + " frames and " + std::to_string(sounds) + " audio chunks");
+    Require(frames >= 1 && sounds >= 2, "WebM delivered " + std::to_string(frames) + " frames and " + std::to_string(sounds) + " audio chunks");
 }
 
 void TestChangeStream() {
     Events events;
     AvPlayerInitData init = InitData(&events);
     auto* player = sceAvPlayerInit(&init);
-    Check(player != nullptr, "init failed");
-    Check(sceAvPlayerChangeStream(player, EnglishAudioStream, FrenchAudioStream) == OperationFailed, "stream changed without a source");
-    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source failed");
-    Check(WaitFor([&] { return events.Seen(EventReady); }), "ready event missing");
-    Check(sceAvPlayerChangeStream(nullptr, EnglishAudioStream, FrenchAudioStream) == InvalidParams, "null player accepted");
-    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "enable video failed");
-    Check(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "enable audio failed");
-    Check(sceAvPlayerChangeStream(player, VideoStream, FrenchAudioStream) == OperationFailed, "video changed to audio");
-    Check(sceAvPlayerChangeStream(player, EnglishAudioStream, 9) == OperationFailed, "changed to a missing stream");
-    Check(sceAvPlayerChangeStream(player, FrenchAudioStream, EnglishAudioStream) == OperationFailed, "changed from a disabled stream");
-    Check(sceAvPlayerChangeStream(player, EnglishAudioStream, FrenchAudioStream) == 0, "change before start failed");
-    Check(sceAvPlayerChangeStream(player, FrenchAudioStream, EnglishAudioStream) == 0, "change back before start failed");
-    Check(sceAvPlayerStart(player) == 0, "start failed");
+    Require(player != nullptr, "init failed");
+    Require(sceAvPlayerChangeStream(player, EnglishAudioStream, FrenchAudioStream) == OperationFailed, "stream changed without a source");
+    Require(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source failed");
+    Require(WaitFor([&] { return events.Seen(EventReady); }), "ready event missing");
+    Require(sceAvPlayerChangeStream(nullptr, EnglishAudioStream, FrenchAudioStream) == InvalidParams, "null player accepted");
+    Require(sceAvPlayerEnableStream(player, VideoStream) == 0, "enable video failed");
+    Require(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "enable audio failed");
+    Require(sceAvPlayerChangeStream(player, VideoStream, FrenchAudioStream) == OperationFailed, "video changed to audio");
+    Require(sceAvPlayerChangeStream(player, EnglishAudioStream, 9) == OperationFailed, "changed to a missing stream");
+    Require(sceAvPlayerChangeStream(player, FrenchAudioStream, EnglishAudioStream) == OperationFailed, "changed from a disabled stream");
+    Require(sceAvPlayerChangeStream(player, EnglishAudioStream, FrenchAudioStream) == 0, "change before start failed");
+    Require(sceAvPlayerChangeStream(player, FrenchAudioStream, EnglishAudioStream) == 0, "change back before start failed");
+    Require(sceAvPlayerStart(player) == 0, "start failed");
 
     AvPlayerFrameInfo sound{};
     AvPlayerFrameInfoEx frame{};
     int english = 0;
-    Check(WaitFor([&] {
+    Require(WaitFor([&] {
         if (sceAvPlayerGetAudioData(player, &sound)) {
             CheckEnglishAudio(sound);
             ++english;
@@ -1189,10 +1186,10 @@ void TestChangeStream() {
     }), "no English audio");
 
     events.Clear();
-    Check(sceAvPlayerChangeStream(player, EnglishAudioStream, FrenchAudioStream) == 0, "change to the French track failed");
+    Require(sceAvPlayerChangeStream(player, EnglishAudioStream, FrenchAudioStream) == 0, "change to the French track failed");
     int french = 0;
     int loudest = 0;
-    Check(WaitFor([&] {
+    Require(WaitFor([&] {
         if (sceAvPlayerGetAudioData(player, &sound)) {
             if (french == 0 && std::memcmp(sound.details.audio.language_code, "eng", 4) == 0) {
                 CheckEnglishAudio(sound);
@@ -1204,76 +1201,76 @@ void TestChangeStream() {
         }
         return french >= 4;
     }), "no French audio after the change");
-    Check(loudest > 1000, "the French track decoded silent");
-    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "no video after the change");
+    Require(loudest > 1000, "the French track decoded silent");
+    Require(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "no video after the change");
     CheckVideoFrame(frame);
-    Check(!events.Seen(EventWarning, JumpComplete), "changing streams reported a jump");
-    Check(sceAvPlayerChangeStream(player, EnglishAudioStream, FrenchAudioStream) == OperationFailed, "changed from the replaced stream");
-    Check(sceAvPlayerClose(player) == 0, "close failed");
+    Require(!events.Seen(EventWarning, JumpComplete), "changing streams reported a jump");
+    Require(sceAvPlayerChangeStream(player, EnglishAudioStream, FrenchAudioStream) == OperationFailed, "changed from the replaced stream");
+    Require(sceAvPlayerClose(player) == 0, "close failed");
     std::lock_guard lock(allocations.mutex);
-    Check(allocations.blocks.empty(), "allocations leaked");
+    Require(allocations.blocks.empty(), "allocations leaked");
 }
 
 void TestExtendedExports() {
     Events events;
     AvPlayerInitData init = InitData(&events);
     auto* player = sceAvPlayerInit(&init);
-    Check(player != nullptr, "init failed");
-    Check(sceAvPlayerSetLogCallback(reinterpret_cast<void*>(&OnLog), nullptr) == 0, "log callback rejected");
-    Check(sceAvPlayerSetAvailableBandwidth(player, 4000, 1000, 8000) == 0, "bandwidth rejected");
-    Check(sceAvPlayerSetAvailableBandwidth(nullptr, 4000, 1000, 8000) == InvalidParams, "bandwidth accepted for a null player");
-    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source failed");
-    Check(sceAvPlayerSetAvailableBandwidth(player, 4000, 1000, 8000) == OperationFailed, "bandwidth accepted after a source");
-    Check(WaitFor([&] { return events.Seen(EventReady); }), "ready event missing");
+    Require(player != nullptr, "init failed");
+    Require(sceAvPlayerSetLogCallback(reinterpret_cast<void*>(&OnLog), nullptr) == 0, "log callback rejected");
+    Require(sceAvPlayerSetAvailableBandwidth(player, 4000, 1000, 8000) == 0, "bandwidth rejected");
+    Require(sceAvPlayerSetAvailableBandwidth(nullptr, 4000, 1000, 8000) == InvalidParams, "bandwidth accepted for a null player");
+    Require(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source failed");
+    Require(sceAvPlayerSetAvailableBandwidth(player, 4000, 1000, 8000) == OperationFailed, "bandwidth accepted after a source");
+    Require(WaitFor([&] { return events.Seen(EventReady); }), "ready event missing");
     CheckStreamInfoEx(player);
-    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "enable video failed");
-    Check(sceAvPlayerStartEx(nullptr, nullptr) == InvalidParams, "start accepted a null player");
-    Check(sceAvPlayerStartEx(player, nullptr) == InvalidParams, "start accepted null parameters");
+    Require(sceAvPlayerEnableStream(player, VideoStream) == 0, "enable video failed");
+    Require(sceAvPlayerStartEx(nullptr, nullptr) == InvalidParams, "start accepted a null player");
+    Require(sceAvPlayerStartEx(player, nullptr) == InvalidParams, "start accepted null parameters");
     errno = 71;
-    Check(sceAvPlayerStartEx(player, reinterpret_cast<const AvPlayer::StartInfo*>(0x10)) == InvalidParams, "unmapped start parameters accepted");
-    Check(errno == 71, "preserve errno on unmapped start info");
+    Require(sceAvPlayerStartEx(player, reinterpret_cast<const AvPlayer::StartInfo*>(0x10)) == InvalidParams, "unmapped start parameters accepted");
+    Require(errno == 71, "preserve errno on unmapped start info");
     AvPlayer::StartInfo startInfo{0, 700};
-    Check(sceAvPlayerStartEx(player, &startInfo) == InvalidParams, "start accepted an invalid parameter size");
+    Require(sceAvPlayerStartEx(player, &startInfo) == InvalidParams, "start accepted an invalid parameter size");
     startInfo.size = sizeof(startInfo);
-    Check(sceAvPlayerStartEx(player, &startInfo) == 0, "extended start failed");
-    Check(WaitFor([&] { return events.Seen(EventPlay); }), "play event missing");
+    Require(sceAvPlayerStartEx(player, &startInfo) == 0, "extended start failed");
+    Require(WaitFor([&] { return events.Seen(EventPlay); }), "play event missing");
     AvPlayerFrameInfoEx frame{};
-    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "no frame after the extended start");
+    Require(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "no frame after the extended start");
     CheckVideoFrame(frame);
-    Check(frame.timestamp >= 700 && frame.timestamp <= 767, "extended start ignored the requested position");
-    Check(!events.Seen(EventWarning, JumpComplete), "extended start reported a jump");
-    Check(sceAvPlayerStop(player) == 0, "extended stop failed");
+    Require(frame.timestamp >= 700 && frame.timestamp <= 767, "extended start ignored the requested position");
+    Require(!events.Seen(EventWarning, JumpComplete), "extended start reported a jump");
+    Require(sceAvPlayerStop(player) == 0, "extended stop failed");
     startInfo.startTime = 0;
-    Check(sceAvPlayerStartEx(player, &startInfo) == 0, "extended restart failed");
-    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "no frame after extended restart");
-    Check(frame.timestamp <= 67, "zero-position start did not restart playback");
-    Check(sceAvPlayerClose(player) == 0, "close failed");
-    Check(sceAvPlayerAddSourceEx(nullptr, 0, nullptr) == InvalidParams, "null player add source rejected");
-    Check(sceAvPlayerDisableStream(nullptr, 0) == InvalidParams, "null player disable stream rejected");
+    Require(sceAvPlayerStartEx(player, &startInfo) == 0, "extended restart failed");
+    Require(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "no frame after extended restart");
+    Require(frame.timestamp <= 67, "zero-position start did not restart playback");
+    Require(sceAvPlayerClose(player) == 0, "close failed");
+    Require(sceAvPlayerAddSourceEx(nullptr, 0, nullptr) == InvalidParams, "null player add source rejected");
+    Require(sceAvPlayerDisableStream(nullptr, 0) == InvalidParams, "null player disable stream rejected");
 }
 
 void CheckAspectRatios(std::span<const std::uint8_t> movie, bool videoOnly, float streamAspect, float frameAspect, const char* what) {
     {
         std::ofstream file("app0/aspect.mp4", std::ios::binary | std::ios::trunc);
         file.write(reinterpret_cast<const char*>(movie.data()), static_cast<std::streamsize>(movie.size()));
-        Check(static_cast<bool>(file), "cannot write the aspect movie");
+        Require(static_cast<bool>(file), "cannot write the aspect movie");
     }
     Events events;
     AvPlayerInitData init = InitData(&events);
     auto* player = sceAvPlayerInit(&init);
-    Check(player != nullptr, "aspect init failed");
-    Check(sceAvPlayerAddSource(player, "/app0/aspect.mp4") == 0, "aspect add source failed");
-    Check(WaitFor([&] { return events.Seen(EventReady); }), "aspect ready event missing");
+    Require(player != nullptr, "aspect init failed");
+    Require(sceAvPlayerAddSource(player, "/app0/aspect.mp4") == 0, "aspect add source failed");
+    Require(WaitFor([&] { return events.Seen(EventReady); }), "aspect ready event missing");
     AvPlayerStreamInfo info{};
-    Check(sceAvPlayerGetStreamInfo(player, VideoStream, &info) == 0, "aspect stream info failed");
-    Check(std::fabs(info.details.video.aspect_ratio - streamAspect) < 0.001f, std::string("unexpected stream aspect ratio for ") + what);
-    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "aspect enable video failed");
-    if (videoOnly) Check(sceAvPlayerSetAvSyncMode(player, 1) == 0, "aspect no-sync mode rejected");
-    Check(sceAvPlayerStart(player) == 0, "aspect start failed");
+    Require(sceAvPlayerGetStreamInfo(player, VideoStream, &info) == 0, "aspect stream info failed");
+    Require(std::fabs(info.details.video.aspect_ratio - streamAspect) < 0.001f, std::string("unexpected stream aspect ratio for ") + what);
+    Require(sceAvPlayerEnableStream(player, VideoStream) == 0, "aspect enable video failed");
+    if (videoOnly) Require(sceAvPlayerSetAvSyncMode(player, 1) == 0, "aspect no-sync mode rejected");
+    Require(sceAvPlayerStart(player) == 0, "aspect start failed");
     AvPlayerFrameInfoEx frame{};
-    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "aspect frame missing");
-    Check(std::fabs(frame.details.video.aspect_ratio - frameAspect) < 0.001f, std::string("unexpected frame aspect ratio for ") + what);
-    Check(sceAvPlayerClose(player) == 0, "aspect close failed");
+    Require(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "aspect frame missing");
+    Require(std::fabs(frame.details.video.aspect_ratio - frameAspect) < 0.001f, std::string("unexpected frame aspect ratio for ") + what);
+    Require(sceAvPlayerClose(player) == 0, "aspect close failed");
 }
 
 void TestSampleAspect() {
@@ -1285,29 +1282,29 @@ void TestWithoutAllocators() {
     AvPlayerInitData init = InitData(nullptr);
     init.memory_replacement = {};
     auto* player = sceAvPlayerInit(&init);
-    Check(player != nullptr, "init without allocators failed");
-    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source failed");
+    Require(player != nullptr, "init without allocators failed");
+    Require(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source failed");
     AvPlayerFrameInfoEx frame{};
-    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "no frame without allocators");
+    Require(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "no frame without allocators");
     CheckVideoPicture(frame);
-    Check(!IsAllocation(frame.p_data, true) && !IsAllocation(frame.p_data, false), "frame came from a missing allocator");
-    Check(sceAvPlayerClose(player) == 0, "close failed");
+    Require(!IsAllocation(frame.p_data, true) && !IsAllocation(frame.p_data, false), "frame came from a missing allocator");
+    Require(sceAvPlayerClose(player) == 0, "close failed");
 
     AvPlayerInitDataEx extended{};
     extended.this_size = sizeof(extended);
     AvPlayerInternal* handle = nullptr;
-    Check(sceAvPlayerInitEx(&extended, &handle) == 0 && handle != nullptr, "extended init without allocators failed");
-    Check(sceAvPlayerInitEx(nullptr, &handle) == InvalidParams, "extended init accepted null data");
+    Require(sceAvPlayerInitEx(&extended, &handle) == 0 && handle != nullptr, "extended init without allocators failed");
+    Require(sceAvPlayerInitEx(nullptr, &handle) == InvalidParams, "extended init accepted null data");
     errno = 71;
-    Check(sceAvPlayerInitEx(&extended, reinterpret_cast<AvPlayerInternal**>(0x10)) == InvalidParams, "extended init rejected unwritable handle");
-    Check(errno == 71, "errno preserved");
+    Require(sceAvPlayerInitEx(&extended, reinterpret_cast<AvPlayerInternal**>(0x10)) == InvalidParams, "extended init rejected unwritable handle");
+    Require(errno == 71, "errno preserved");
     AvPlayerInternal* unused = nullptr;
     extended.default_language = reinterpret_cast<const char*>(0x10);
-    Check(sceAvPlayerInitEx(&extended, &unused) == InvalidParams && unused == nullptr, "extended init accepted an unmapped default language");
+    Require(sceAvPlayerInitEx(&extended, &unused) == InvalidParams && unused == nullptr, "extended init accepted an unmapped default language");
     init.default_language = reinterpret_cast<const char*>(0x10);
-    Check(sceAvPlayerInit(&init) == nullptr, "init accepted an unmapped default language");
-    Check(errno == 71, "errno preserved across an unmapped default language");
-    Check(sceAvPlayerClose(handle) == 0, "close failed");
+    Require(sceAvPlayerInit(&init) == nullptr, "init accepted an unmapped default language");
+    Require(errno == 71, "errno preserved across an unmapped default language");
+    Require(sceAvPlayerClose(handle) == 0, "close failed");
 }
 
 void TestOptionalVideoBuffersRespectMemoryLimit() {
@@ -1316,15 +1313,15 @@ void TestOptionalVideoBuffersRespectMemoryLimit() {
         AvPlayerInitData init = InitData(nullptr);
         init.num_output_video_framebuffers = 2;
         auto* player = sceAvPlayerInit(&init);
-        Check(player != nullptr, "init with limited texture memory failed");
-        if (unsynced) Check(sceAvPlayerSetAvSyncMode(player, 1) == 0, "sync mode with limited texture memory rejected");
-        Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source with limited texture memory failed");
-        Check(WaitFor([&] { return TextureCount() == expectedTextures && sceAvPlayerIsActive(player); }), "unexpected optional video buffer count");
+        Require(player != nullptr, "init with limited texture memory failed");
+        if (unsynced) Require(sceAvPlayerSetAvSyncMode(player, 1) == 0, "sync mode with limited texture memory rejected");
+        Require(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source with limited texture memory failed");
+        Require(WaitFor([&] { return TextureCount() == expectedTextures && sceAvPlayerIsActive(player); }), "unexpected optional video buffer count");
         AvPlayerFrameInfoEx frame{};
-        Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "no frame with limited texture memory");
+        Require(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "no frame with limited texture memory");
         CheckVideoPicture(frame);
-        Check(sceAvPlayerClose(player) == 0, "close with limited texture memory failed");
-        Check(TextureCount() == 0, "limited texture allocations were not released");
+        Require(sceAvPlayerClose(player) == 0, "close with limited texture memory failed");
+        Require(TextureCount() == 0, "limited texture allocations were not released");
     };
 
     run(2, 2, false);
@@ -1342,13 +1339,13 @@ void TestFileReplacementAutoStart() {
     AvPlayerInitData init = InitData(nullptr);
     init.file_replacement = {&file, OpenFile, CloseFile, ReadFile, FileSize};
     auto* player = sceAvPlayerInit(&init);
-    Check(player != nullptr, "init failed");
-    Check(sceAvPlayerAddSource(player, "/app0/replaced.mp4") == 0, "replaced source failed");
+    Require(player != nullptr, "init failed");
+    Require(sceAvPlayerAddSource(player, "/app0/replaced.mp4") == 0, "replaced source failed");
     AvPlayerFrameInfo frame{};
-    Check(WaitFor([&] { return sceAvPlayerGetVideoData(player, &frame) != 0; }), "auto start never produced a frame");
-    Check(frame.details.video.width == 112 && frame.details.video.height == 64 && IsAllocation(frame.p_data, true), "unexpected auto start frame");
-    Check(sceAvPlayerClose(player) == 0, "close failed");
-    Check(!file.stream.is_open(), "replaced file left open");
+    Require(WaitFor([&] { return sceAvPlayerGetVideoData(player, &frame) != 0; }), "auto start never produced a frame");
+    Require(frame.details.video.width == 112 && frame.details.video.height == 64 && IsAllocation(frame.p_data, true), "unexpected auto start frame");
+    Require(sceAvPlayerClose(player) == 0, "close failed");
+    Require(!file.stream.is_open(), "replaced file left open");
 }
 
 void TestHandedOutFramesStayIntact() {
@@ -1357,9 +1354,9 @@ void TestHandedOutFramesStayIntact() {
     AvPlayerInitData init = InitData(nullptr);
     init.num_output_video_framebuffers = Buffers;
     auto* player = sceAvPlayerInit(&init);
-    Check(player != nullptr, "init failed");
-    Check(sceAvPlayerSetAvSyncMode(player, 1) == 0, "sync mode rejected");
-    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source failed");
+    Require(player != nullptr, "init failed");
+    Require(sceAvPlayerSetAvSyncMode(player, 1) == 0, "sync mode rejected");
+    Require(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source failed");
     struct Taken {
         const std::uint8_t* luma;
         int index;
@@ -1367,18 +1364,18 @@ void TestHandedOutFramesStayIntact() {
     std::deque<Taken> taken;
     for (int round = 0; round < 16; ++round) {
         AvPlayerFrameInfoEx frame{};
-        Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "no frame for round " + std::to_string(round));
+        Require(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "no frame for round " + std::to_string(round));
         CheckVideoFrame(frame);
         taken.push_back({static_cast<const std::uint8_t*>(frame.p_data), FrameIndex(frame.timestamp)});
         if (taken.size() > Retained) taken.pop_front();
         std::this_thread::sleep_for(std::chrono::milliseconds(30));
         for (std::size_t k = 0; k < taken.size(); ++k) {
-            for (std::size_t other = k + 1; other < taken.size(); ++other) Check(taken[k].luma != taken[other].luma, "one buffer handed out twice among the last " + std::to_string(Retained) + " frames");
+            for (std::size_t other = k + 1; other < taken.size(); ++other) Require(taken[k].luma != taken[other].luma, "one buffer handed out twice among the last " + std::to_string(Retained) + " frames");
             const int index = taken[k].index;
-            Check(std::abs(taken[k].luma[30 * Pitch + 10] - LumaFor(index)) <= 6, "frame " + std::to_string(index) + " was overwritten " + std::to_string(taken.size() - 1 - k) + " frames after it was handed out");
+            Require(std::abs(taken[k].luma[30 * Pitch + 10] - LumaFor(index)) <= 6, "frame " + std::to_string(index) + " was overwritten " + std::to_string(taken.size() - 1 - k) + " frames after it was handed out");
         }
     }
-    Check(sceAvPlayerClose(player) == 0, "close failed");
+    Require(sceAvPlayerClose(player) == 0, "close failed");
 }
 
 void TestPs5ExtendedInitLayout() {
@@ -1403,37 +1400,37 @@ void TestPs5ExtendedInitLayout() {
         if (!autoStart) std::fill(raw.begin() + static_cast<std::ptrdiff_t>(Ps5ThreadParameters), raw.end(), std::uint8_t{1});
         std::memcpy(raw.data() + Ps5VideoFrameBuffers, &Buffers, sizeof(Buffers));
         AvPlayerInternal* player = nullptr;
-        Check(sceAvPlayerInitEx(reinterpret_cast<const AvPlayerInitDataEx*>(raw.data()), &player) == 0 && player != nullptr, "PS5 extended init failed");
-        Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source after the PS5 extended init failed");
+        Require(sceAvPlayerInitEx(reinterpret_cast<const AvPlayerInitDataEx*>(raw.data()), &player) == 0 && player != nullptr, "PS5 extended init failed");
+        Require(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source after the PS5 extended init failed");
         AvPlayerStreamInfo audioInfo{};
-        Check(sceAvPlayerGetStreamInfo(player, EnglishAudioStream, &audioInfo) == 0, "PS5 audio stream info failed");
-        Check(audioInfo.type == 2, "PS5 audio stream must use type 2 so Unity enables it");
+        Require(sceAvPlayerGetStreamInfo(player, EnglishAudioStream, &audioInfo) == 0, "PS5 audio stream info failed");
+        Require(audioInfo.type == 2, "PS5 audio stream must use type 2 so Unity enables it");
         AvPlayerStreamInfoEx audioInfoEx{};
         audioInfoEx.this_size = sizeof(audioInfoEx);
-        Check(sceAvPlayerGetStreamInfoEx(player, EnglishAudioStream, &audioInfoEx) == 0 && audioInfoEx.type == 2, "PS5 extended audio stream type is incorrect");
+        Require(sceAvPlayerGetStreamInfoEx(player, EnglishAudioStream, &audioInfoEx) == 0 && audioInfoEx.type == 2, "PS5 extended audio stream type is incorrect");
         AvPlayerStreamInfoEx videoInfo{};
         videoInfo.this_size = sizeof(videoInfo);
-        Check(sceAvPlayerGetStreamInfoEx(player, VideoStream, &videoInfo) == 0, "PS5 video stream info failed");
+        Require(sceAvPlayerGetStreamInfoEx(player, VideoStream, &videoInfo) == 0, "PS5 video stream info failed");
         double frameRate = 0;
         std::memcpy(&frameRate, reinterpret_cast<const std::uint8_t*>(&videoInfo) + 0x40, sizeof(frameRate));
-        Check(std::fabs(frameRate - FrameRate) < 0.01, "PS5 extended video frame rate at 0x40 is missing");
+        Require(std::fabs(frameRate - FrameRate) < 0.01, "PS5 extended video frame rate at 0x40 is missing");
         if (autoStart) {
-            Check(WaitFor([&] { return events.Seen(EventPlay); }), "auto start at 0x74 of the PS5 extended init did not start playback");
+            Require(WaitFor([&] { return events.Seen(EventPlay); }), "auto start at 0x74 of the PS5 extended init did not start playback");
             AvPlayerFrameInfo audioFrame{};
-            Check(WaitFor([&] { return sceAvPlayerGetAudioData(player, &audioFrame) != 0; }), "PS5 auto start did not enable audio");
+            Require(WaitFor([&] { return sceAvPlayerGetAudioData(player, &audioFrame) != 0; }), "PS5 auto start did not enable audio");
         } else {
-            Check(WaitFor([&] { return events.Seen(EventReady); }), "ready event missing after the PS5 extended init");
+            Require(WaitFor([&] { return events.Seen(EventReady); }), "ready event missing after the PS5 extended init");
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
-            Check(!events.Seen(EventPlay), "playback started although auto start at 0x74 of the PS5 extended init is 0");
-            Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "enable video after the PS5 extended init failed");
-            Check(sceAvPlayerStart(player) == 0, "start after the PS5 extended init failed");
+            Require(!events.Seen(EventPlay), "playback started although auto start at 0x74 of the PS5 extended init is 0");
+            Require(sceAvPlayerEnableStream(player, VideoStream) == 0, "enable video after the PS5 extended init failed");
+            Require(sceAvPlayerStart(player) == 0, "start after the PS5 extended init failed");
         }
-        Check(WaitFor([&] { return TextureCount() == Buffers + DecodeAheadBuffers; }), "video frame buffer count at 0x228 of the PS5 extended init not used");
+        Require(WaitFor([&] { return TextureCount() == Buffers + DecodeAheadBuffers; }), "video frame buffer count at 0x228 of the PS5 extended init not used");
         AvPlayerFrameInfoEx videoFrame{};
-        Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &videoFrame) != 0; }), "PS5 playback did not deliver video");
+        Require(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &videoFrame) != 0; }), "PS5 playback did not deliver video");
         std::memcpy(&frameRate, reinterpret_cast<const std::uint8_t*>(&videoFrame) + 0x48, sizeof(frameRate));
-        Check(std::fabs(frameRate - FrameRate) < 0.01, "PS5 video frame rate at 0x48 is missing");
-        Check(sceAvPlayerClose(player) == 0, "close after the PS5 extended init failed");
+        Require(std::fabs(frameRate - FrameRate) < 0.01, "PS5 video frame rate at 0x48 is missing");
+        Require(sceAvPlayerClose(player) == 0, "close after the PS5 extended init failed");
     };
     run(false);
     run(true);
@@ -1444,104 +1441,104 @@ void TestAutoStartKeepsStartedPlayback() {
     for (int attempt = 0; attempt < 400 && !startedByTitle; ++attempt) {
         AvPlayerInitData init = InitData(nullptr);
         auto* player = sceAvPlayerInit(&init);
-        Check(player != nullptr, "init failed");
-        Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source failed");
+        Require(player != nullptr, "init failed");
+        Require(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source failed");
         startedByTitle = sceAvPlayerEnableStream(player, VideoStream) == 0 && sceAvPlayerEnableStream(player, EnglishAudioStream) == 0;
         if (startedByTitle) {
             const auto releasedTextures = [] {
                 std::lock_guard lock(allocations.mutex);
                 return allocations.textures - ActiveTextureCountLocked();
             };
-            Check(sceAvPlayerStart(player) == 0, "start failed");
+            Require(sceAvPlayerStart(player) == 0, "start failed");
             const int released = releasedTextures();
             AvPlayerFrameInfoEx frame{};
-            Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "no video after the title's start");
+            Require(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "no video after the title's start");
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            Check(releasedTextures() == released, "auto-start restarted playback the title had started");
-            Check(IsAllocation(frame.p_data, true), "auto-start released the frame the title holds");
+            Require(releasedTextures() == released, "auto-start restarted playback the title had started");
+            Require(IsAllocation(frame.p_data, true), "auto-start released the frame the title holds");
         }
-        Check(sceAvPlayerClose(player) == 0, "close failed");
+        Require(sceAvPlayerClose(player) == 0, "close failed");
     }
-    Check(startedByTitle, "auto-start won every race against the title's own start");
+    Require(startedByTitle, "auto-start won every race against the title's own start");
 }
 
 void TestRestartAfterPausedJumpKeepsClockRunning() {
     Events events;
     AvPlayerInitData init = InitData(&events);
     auto* player = sceAvPlayerInit(&init);
-    Check(player != nullptr, "init failed");
-    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source failed");
-    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "enable video failed");
-    Check(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "enable audio failed");
-    Check(sceAvPlayerStart(player) == 0, "start failed");
+    Require(player != nullptr, "init failed");
+    Require(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source failed");
+    Require(sceAvPlayerEnableStream(player, VideoStream) == 0, "enable video failed");
+    Require(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "enable audio failed");
+    Require(sceAvPlayerStart(player) == 0, "start failed");
     AvPlayerFrameInfoEx frame{};
-    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "no video after start");
-    Check(sceAvPlayerPause(player) == 0, "pause failed");
-    Check(sceAvPlayerSetLooping(player, 1) == 0, "looping rejected");
-    Check(sceAvPlayerJumpToTime(player, 0) == 0, "jump while paused failed");
-    Check(sceAvPlayerStart(player) == 0, "restart after the paused jump failed");
+    Require(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "no video after start");
+    Require(sceAvPlayerPause(player) == 0, "pause failed");
+    Require(sceAvPlayerSetLooping(player, 1) == 0, "looping rejected");
+    Require(sceAvPlayerJumpToTime(player, 0) == 0, "jump while paused failed");
+    Require(sceAvPlayerStart(player) == 0, "restart after the paused jump failed");
     std::uint64_t last = 0;
-    Check(WaitFor([&] {
+    Require(WaitFor([&] {
         if (sceAvPlayerGetVideoDataEx(player, &frame)) last = frame.timestamp;
         return last >= 200;
     }), "playback froze after a restart that followed a paused jump");
-    Check(sceAvPlayerCurrentTime(player) > 0, "clock stayed frozen after the restart");
-    Check(sceAvPlayerClose(player) == 0, "close failed");
+    Require(sceAvPlayerCurrentTime(player) > 0, "clock stayed frozen after the restart");
+    Require(sceAvPlayerClose(player) == 0, "close failed");
 }
 
 void TestJumpPastTheLatestTimeReportsTheDuration() {
     Events events;
     AvPlayerInitData init = InitData(&events);
     auto* player = sceAvPlayerInit(&init);
-    Check(player != nullptr, "init failed");
-    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source failed");
+    Require(player != nullptr, "init failed");
+    Require(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source failed");
     std::uint64_t duration = 0;
     for (const auto stream : {VideoStream, EnglishAudioStream}) {
         AvPlayerStreamInfo info{};
-        Check(sceAvPlayerGetStreamInfo(player, stream, &info) == 0, "stream info failed");
+        Require(sceAvPlayerGetStreamInfo(player, stream, &info) == 0, "stream info failed");
         duration = std::max(duration, info.duration);
     }
-    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "enable video failed");
-    Check(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "enable audio failed");
-    Check(sceAvPlayerJumpToTime(player, std::numeric_limits<std::uint64_t>::max()) == 0, "jump to the latest time failed");
-    Check(sceAvPlayerStart(player) == 0, "start failed");
+    Require(sceAvPlayerEnableStream(player, VideoStream) == 0, "enable video failed");
+    Require(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "enable audio failed");
+    Require(sceAvPlayerJumpToTime(player, std::numeric_limits<std::uint64_t>::max()) == 0, "jump to the latest time failed");
+    Require(sceAvPlayerStart(player) == 0, "start failed");
     const auto current = sceAvPlayerCurrentTime(player);
-    Check(current == duration, "current time " + std::to_string(current) + " after a jump to the latest time, expected the duration " + std::to_string(duration));
-    Check(sceAvPlayerClose(player) == 0, "close failed");
+    Require(current == duration, "current time " + std::to_string(current) + " after a jump to the latest time, expected the duration " + std::to_string(duration));
+    Require(sceAvPlayerClose(player) == 0, "close failed");
 }
 
 void TestPausedPreparationAfterAudioStarts(std::uint32_t syncMode) {
     Events events;
     auto init = InitData(&events);
     auto* player = sceAvPlayerInit(&init);
-    Check(player != nullptr, "init failed");
-    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source failed");
-    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "enable video failed");
-    Check(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "enable audio failed");
-    Check(sceAvPlayerSetAvSyncMode(player, syncMode) == 0, "sync mode failed");
-    Check(sceAvPlayerStart(player) == 0, "start failed");
+    Require(player != nullptr, "init failed");
+    Require(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source failed");
+    Require(sceAvPlayerEnableStream(player, VideoStream) == 0, "enable video failed");
+    Require(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "enable audio failed");
+    Require(sceAvPlayerSetAvSyncMode(player, syncMode) == 0, "sync mode failed");
+    Require(sceAvPlayerStart(player) == 0, "start failed");
     AvPlayerFrameInfo audio{};
-    Check(WaitFor([&] { return sceAvPlayerGetAudioData(player, &audio) != 0; }), "no initial audio frame");
-    Check(sceAvPlayerPause(player) == 0, "pause failed");
+    Require(WaitFor([&] { return sceAvPlayerGetAudioData(player, &audio) != 0; }), "no initial audio frame");
+    Require(sceAvPlayerPause(player) == 0, "pause failed");
     AvPlayerFrameInfoEx frame{};
-    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "first video frame blocked during paused preparation after audio started");
+    Require(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "first video frame blocked during paused preparation after audio started");
     CheckVideoFrame(frame);
-    Check(!sceAvPlayerGetVideoDataEx(player, &frame), "paused preparation delivered more than the initial video frame");
-    Check(sceAvPlayerClose(player) == 0, "close failed");
+    Require(!sceAvPlayerGetVideoDataEx(player, &frame), "paused preparation delivered more than the initial video frame");
+    Require(sceAvPlayerClose(player) == 0, "close failed");
 }
 
 void TestUnsyncedVideoKeepsUpWithAudio() {
     Events events;
     AvPlayerInitData init = InitData(&events);
     auto* player = sceAvPlayerInit(&init);
-    Check(player != nullptr, "init failed");
-    Check(sceAvPlayerSetAvSyncMode(player, 1) == 0, "sync mode rejected");
-    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source failed");
-    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "enable video failed");
-    Check(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "enable audio failed");
-    Check(sceAvPlayerStart(player) == 0, "start failed");
+    Require(player != nullptr, "init failed");
+    Require(sceAvPlayerSetAvSyncMode(player, 1) == 0, "sync mode rejected");
+    Require(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "add source failed");
+    Require(sceAvPlayerEnableStream(player, VideoStream) == 0, "enable video failed");
+    Require(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "enable audio failed");
+    Require(sceAvPlayerStart(player) == 0, "start failed");
     AvPlayerFrameInfo sound{};
-    Check(WaitFor([&] { return sceAvPlayerGetAudioData(player, &sound) != 0; }), "no audio");
+    Require(WaitFor([&] { return sceAvPlayerGetAudioData(player, &sound) != 0; }), "no audio");
     const auto start = std::chrono::steady_clock::now();
     const auto first = sound.timestamp;
     std::uint64_t worst = 0;
@@ -1555,100 +1552,100 @@ void TestUnsyncedVideoKeepsUpWithAudio() {
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(66));
     }
-    Check(worst <= 150, "video fell " + std::to_string(worst) + " ms behind the audio");
-    Check(sceAvPlayerClose(player) == 0, "close failed");
+    Require(worst <= 150, "video fell " + std::to_string(worst) + " ms behind the audio");
+    Require(sceAvPlayerClose(player) == 0, "close failed");
 }
 
 void TestLoopWarningAtPlayback() {
     Events events;
     AvPlayerInitData init = InitData(&events);
     auto* player = sceAvPlayerInit(&init);
-    Check(player != nullptr, "loop timing init failed");
-    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "loop timing source failed");
-    Check(WaitFor([&] { return events.Seen(EventReady); }), "loop timing ready missing");
-    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "loop timing video failed");
-    Check(sceAvPlayerSetAvSyncMode(player, 1) == 0, "loop timing sync mode failed");
-    Check(sceAvPlayerSetLooping(player, 1) == 0, "loop timing looping failed");
-    Check(sceAvPlayerStart(player) == 0, "loop timing start failed");
-    Check(WaitFor([&] { return events.Seen(EventPlay); }), "loop timing play missing");
+    Require(player != nullptr, "loop timing init failed");
+    Require(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "loop timing source failed");
+    Require(WaitFor([&] { return events.Seen(EventReady); }), "loop timing ready missing");
+    Require(sceAvPlayerEnableStream(player, VideoStream) == 0, "loop timing video failed");
+    Require(sceAvPlayerSetAvSyncMode(player, 1) == 0, "loop timing sync mode failed");
+    Require(sceAvPlayerSetLooping(player, 1) == 0, "loop timing looping failed");
+    Require(sceAvPlayerStart(player) == 0, "loop timing start failed");
+    Require(WaitFor([&] { return events.Seen(EventPlay); }), "loop timing play missing");
     AvPlayerFrameInfoEx frame{};
     for (int index = 0; index <= FrameCount * 3; ++index) {
-        Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "loop timing frame missing");
-        Check(FrameIndex(frame.timestamp) == index % FrameCount, "loop timing frame out of order");
+        Require(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "loop timing frame missing");
+        Require(FrameIndex(frame.timestamp) == index % FrameCount, "loop timing frame out of order");
         const int loops = index / FrameCount;
-        Check(events.Count(EventWarning, LoopingBack) >= loops, "loop frame handed out before its warning");
+        Require(events.Count(EventWarning, LoopingBack) >= loops, "loop frame handed out before its warning");
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
-        Check(events.Count(EventWarning, LoopingBack) == loops, "loop warning did not match the playback boundary");
+        Require(events.Count(EventWarning, LoopingBack) == loops, "loop warning did not match the playback boundary");
     }
     events.Clear();
-    Check(sceAvPlayerSetLooping(player, 0) == 0, "loop timing disable looping failed");
-    Check(sceAvPlayerJumpToTime(player, 0) == 0, "loop timing jump failed");
-    Check(WaitFor([&] { return events.Seen(EventWarning, JumpComplete); }), "loop timing jump warning missing");
+    Require(sceAvPlayerSetLooping(player, 0) == 0, "loop timing disable looping failed");
+    Require(sceAvPlayerJumpToTime(player, 0) == 0, "loop timing jump failed");
+    Require(WaitFor([&] { return events.Seen(EventWarning, JumpComplete); }), "loop timing jump warning missing");
     for (int index = 0; index < FrameCount; ++index) {
-        Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "loop timing seek frame missing");
-        Check(FrameIndex(frame.timestamp) == index, "loop timing seek frame out of order");
+        Require(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "loop timing seek frame missing");
+        Require(FrameIndex(frame.timestamp) == index, "loop timing seek frame out of order");
     }
-    Check(sceAvPlayerStop(player) == 0, "loop timing stop failed");
-    Check(WaitFor([&] { return events.Seen(EventStop); }), "loop timing stop event missing");
-    Check(events.Count(EventWarning, LoopingBack) == 0, "seek delivered a pending loop warning");
+    Require(sceAvPlayerStop(player) == 0, "loop timing stop failed");
+    Require(WaitFor([&] { return events.Seen(EventStop); }), "loop timing stop event missing");
+    Require(events.Count(EventWarning, LoopingBack) == 0, "seek delivered a pending loop warning");
     events.Clear();
-    Check(sceAvPlayerStart(player) == 0, "loop timing restart failed");
-    Check(WaitFor([&] { return events.Seen(EventPlay); }), "loop timing restart event missing");
+    Require(sceAvPlayerStart(player) == 0, "loop timing restart failed");
+    Require(WaitFor([&] { return events.Seen(EventPlay); }), "loop timing restart event missing");
     for (int index = 0; index < FrameCount; ++index) {
-        Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "loop timing restart frame missing");
-        Check(FrameIndex(frame.timestamp) == index, "loop timing restart frame out of order");
+        Require(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "loop timing restart frame missing");
+        Require(FrameIndex(frame.timestamp) == index, "loop timing restart frame out of order");
     }
-    Check(sceAvPlayerStop(player) == 0, "loop timing restart stop failed");
-    Check(WaitFor([&] { return events.Seen(EventStop); }), "loop timing restart stop event missing");
-    Check(events.Count(EventWarning, LoopingBack) == 0, "restart delivered a pending loop warning");
-    Check(sceAvPlayerClose(player) == 0, "loop timing close failed");
+    Require(sceAvPlayerStop(player) == 0, "loop timing restart stop failed");
+    Require(WaitFor([&] { return events.Seen(EventStop); }), "loop timing restart stop event missing");
+    Require(events.Count(EventWarning, LoopingBack) == 0, "restart delivered a pending loop warning");
+    Require(sceAvPlayerClose(player) == 0, "loop timing close failed");
 }
 
 void TestAudioLoopWarningAtPlayback() {
     Events events;
     AvPlayerInitData init = InitData(&events);
     auto* player = sceAvPlayerInit(&init);
-    Check(player != nullptr, "audio loop timing init failed");
-    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "audio loop timing source failed");
-    Check(WaitFor([&] { return events.Seen(EventReady); }), "audio loop timing ready missing");
-    Check(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "audio loop timing stream failed");
-    Check(sceAvPlayerSetLooping(player, 1) == 0, "audio loop timing looping failed");
-    Check(sceAvPlayerStart(player) == 0, "audio loop timing start failed");
-    Check(WaitFor([&] { return events.Seen(EventPlay); }), "audio loop timing play missing");
+    Require(player != nullptr, "audio loop timing init failed");
+    Require(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "audio loop timing source failed");
+    Require(WaitFor([&] { return events.Seen(EventReady); }), "audio loop timing ready missing");
+    Require(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "audio loop timing stream failed");
+    Require(sceAvPlayerSetLooping(player, 1) == 0, "audio loop timing looping failed");
+    Require(sceAvPlayerStart(player) == 0, "audio loop timing start failed");
+    Require(WaitFor([&] { return events.Seen(EventPlay); }), "audio loop timing play missing");
     AvPlayerFrameInfo frame{};
-    Check(WaitFor([&] { return sceAvPlayerGetAudioData(player, &frame) != 0; }), "audio loop timing first frame missing");
+    Require(WaitFor([&] { return sceAvPlayerGetAudioData(player, &frame) != 0; }), "audio loop timing first frame missing");
     int loops = 0;
     for (int index = 0; index < 256 && loops < 3; ++index) {
         const auto previous = frame.timestamp;
-        Check(WaitFor([&] { return sceAvPlayerGetAudioData(player, &frame) != 0; }), "audio loop timing frame missing");
+        Require(WaitFor([&] { return sceAvPlayerGetAudioData(player, &frame) != 0; }), "audio loop timing frame missing");
         if (frame.timestamp < previous) ++loops;
-        if (loops > 0) Check(WaitFor([&] { return events.Count(EventWarning, LoopingBack) >= loops; }), "audio loop timing warning missing");
+        if (loops > 0) Require(WaitFor([&] { return events.Count(EventWarning, LoopingBack) >= loops; }), "audio loop timing warning missing");
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
-        Check(events.Count(EventWarning, LoopingBack) == loops, "audio loop warning did not match the playback boundary");
+        Require(events.Count(EventWarning, LoopingBack) == loops, "audio loop warning did not match the playback boundary");
     }
-    Check(loops == 3, "audio loop timing did not wrap three times");
-    Check(sceAvPlayerClose(player) == 0, "audio loop timing close failed");
+    Require(loops == 3, "audio loop timing did not wrap three times");
+    Require(sceAvPlayerClose(player) == 0, "audio loop timing close failed");
 }
 
 void TestLoopWarningSharedByStreams() {
     Events events;
     AvPlayerInitData init = InitData(&events);
     auto* player = sceAvPlayerInit(&init);
-    Check(player != nullptr, "shared loop timing init failed");
-    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "shared loop timing source failed");
-    Check(WaitFor([&] { return events.Seen(EventReady); }), "shared loop timing ready missing");
-    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "shared loop timing video failed");
-    Check(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "shared loop timing audio failed");
-    Check(sceAvPlayerSetLooping(player, 1) == 0, "shared loop timing looping failed");
-    Check(sceAvPlayerStart(player) == 0, "shared loop timing start failed");
-    Check(WaitFor([&] { return events.Seen(EventPlay); }), "shared loop timing play missing");
+    Require(player != nullptr, "shared loop timing init failed");
+    Require(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "shared loop timing source failed");
+    Require(WaitFor([&] { return events.Seen(EventReady); }), "shared loop timing ready missing");
+    Require(sceAvPlayerEnableStream(player, VideoStream) == 0, "shared loop timing video failed");
+    Require(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "shared loop timing audio failed");
+    Require(sceAvPlayerSetLooping(player, 1) == 0, "shared loop timing looping failed");
+    Require(sceAvPlayerStart(player) == 0, "shared loop timing start failed");
+    Require(WaitFor([&] { return events.Seen(EventPlay); }), "shared loop timing play missing");
     AvPlayerFrameInfoEx frame{};
     AvPlayerFrameInfo sound{};
     std::uint64_t lastVideo = 0;
     std::uint64_t lastAudio = 0;
     bool videoWrapped = false;
     bool audioWrapped = false;
-    Check(WaitFor([&] {
+    Require(WaitFor([&] {
         if (!audioWrapped && sceAvPlayerGetAudioData(player, &sound)) {
             CheckEnglishAudio(sound);
             audioWrapped = sound.timestamp < lastAudio;
@@ -1661,30 +1658,30 @@ void TestLoopWarningSharedByStreams() {
         }
         return audioWrapped && videoWrapped;
     }), "shared loop timing streams did not both wrap");
-    Check(sceAvPlayerPause(player) == 0, "shared loop timing pause failed");
-    Check(WaitFor([&] { return events.Seen(EventPause); }), "shared loop timing pause event missing");
-    Check(events.Count(EventWarning, LoopingBack) == 1, "audio and video reported the same loop more than once");
-    Check(sceAvPlayerClose(player) == 0, "shared loop timing close failed");
+    Require(sceAvPlayerPause(player) == 0, "shared loop timing pause failed");
+    Require(WaitFor([&] { return events.Seen(EventPause); }), "shared loop timing pause event missing");
+    Require(events.Count(EventWarning, LoopingBack) == 1, "audio and video reported the same loop more than once");
+    Require(sceAvPlayerClose(player) == 0, "shared loop timing close failed");
 }
 
 void TestLoopWarningWaitsForOldPassAudio() {
     Events events;
     AvPlayerInitData init = InitData(&events);
     auto* player = sceAvPlayerInit(&init);
-    Check(player != nullptr, "old-pass audio loop init failed");
-    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "old-pass audio loop source failed");
-    Check(WaitFor([&] { return events.Seen(EventReady); }), "old-pass audio loop ready missing");
-    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "old-pass audio loop video failed");
-    Check(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "old-pass audio loop audio failed");
-    Check(sceAvPlayerSetLooping(player, 1) == 0, "old-pass audio loop looping failed");
-    Check(sceAvPlayerStart(player) == 0, "old-pass audio loop start failed");
-    Check(WaitFor([&] { return events.Seen(EventPlay); }), "old-pass audio loop play missing");
+    Require(player != nullptr, "old-pass audio loop init failed");
+    Require(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "old-pass audio loop source failed");
+    Require(WaitFor([&] { return events.Seen(EventReady); }), "old-pass audio loop ready missing");
+    Require(sceAvPlayerEnableStream(player, VideoStream) == 0, "old-pass audio loop video failed");
+    Require(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "old-pass audio loop audio failed");
+    Require(sceAvPlayerSetLooping(player, 1) == 0, "old-pass audio loop looping failed");
+    Require(sceAvPlayerStart(player) == 0, "old-pass audio loop start failed");
+    Require(WaitFor([&] { return events.Seen(EventPlay); }), "old-pass audio loop play missing");
     AvPlayerFrameInfoEx frame{};
     AvPlayerFrameInfo sound{};
     std::uint64_t lastAudio = 0;
     bool audioWrapped = false;
     bool lastVideoFrame = false;
-    Check(WaitFor([&] {
+    Require(WaitFor([&] {
         if (sceAvPlayerGetVideoDataEx(player, &frame)) {
             CheckVideoFrame(frame);
             lastVideoFrame = FrameIndex(frame.timestamp) == FrameCount - 1;
@@ -1697,34 +1694,34 @@ void TestLoopWarningWaitsForOldPassAudio() {
         }
         return audioWrapped;
     }), "old-pass audio loop never reached the end of the first pass");
-    Check(lastVideoFrame && !audioWrapped, "old-pass audio loop: audio crossed the boundary before the video's last frame");
+    Require(lastVideoFrame && !audioWrapped, "old-pass audio loop: audio crossed the boundary before the video's last frame");
     WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }, 100);
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    Check(events.Count(EventWarning, LoopingBack) == 0, "loop warning delivered while the old pass still had audio to hand out");
-    Check(WaitFor([&] {
+    Require(events.Count(EventWarning, LoopingBack) == 0, "loop warning delivered while the old pass still had audio to hand out");
+    Require(WaitFor([&] {
         if (!sceAvPlayerGetAudioData(player, &sound)) return false;
         CheckEnglishAudio(sound);
         audioWrapped = sound.timestamp < lastAudio;
         lastAudio = sound.timestamp;
-        if (!audioWrapped) Check(events.Count(EventWarning, LoopingBack) == 0, "loop warning delivered before the old pass's last audio frame");
+        if (!audioWrapped) Require(events.Count(EventWarning, LoopingBack) == 0, "loop warning delivered before the old pass's last audio frame");
         return audioWrapped;
     }), "old-pass audio loop audio never wrapped");
-    Check(events.Count(EventWarning, LoopingBack) == 1, "loop audio frame handed out before its warning");
-    Check(sceAvPlayerClose(player) == 0, "old-pass audio loop close failed");
+    Require(events.Count(EventWarning, LoopingBack) == 1, "loop audio frame handed out before its warning");
+    Require(sceAvPlayerClose(player) == 0, "old-pass audio loop close failed");
 }
 
 void TestNoSyncVideoCanLeadAudioClock() {
     Events events;
     AvPlayerInitData init = InitData(&events);
     auto* player = sceAvPlayerInit(&init);
-    Check(player != nullptr, "no-sync init failed");
-    Check(sceAvPlayerSetAvSyncMode(player, 1) == 0, "no-sync mode rejected");
-    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "no-sync source failed");
-    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "no-sync video failed");
-    Check(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "no-sync audio failed");
-    Check(sceAvPlayerStart(player) == 0, "no-sync start failed");
+    Require(player != nullptr, "no-sync init failed");
+    Require(sceAvPlayerSetAvSyncMode(player, 1) == 0, "no-sync mode rejected");
+    Require(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "no-sync source failed");
+    Require(sceAvPlayerEnableStream(player, VideoStream) == 0, "no-sync video failed");
+    Require(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "no-sync audio failed");
+    Require(sceAvPlayerStart(player) == 0, "no-sync start failed");
     AvPlayerFrameInfo audio{};
-    Check(WaitFor([&] { return sceAvPlayerGetAudioData(player, &audio) != 0; }), "no-sync audio unavailable");
+    Require(WaitFor([&] { return sceAvPlayerGetAudioData(player, &audio) != 0; }), "no-sync audio unavailable");
     std::uint64_t lead = 0;
     const bool available = WaitFor([&] {
         AvPlayerFrameInfoEx video{};
@@ -1734,49 +1731,49 @@ void TestNoSyncVideoCanLeadAudioClock() {
         if (video.timestamp > clock) lead = std::max(lead, video.timestamp - clock);
         return lead >= 100;
     }, 500);
-    Check(sceAvPlayerClose(player) == 0, "no-sync close failed");
+    Require(sceAvPlayerClose(player) == 0, "no-sync close failed");
     std::printf("No-sync video lead: %llu ms\n", static_cast<unsigned long long>(lead));
-    Check(available, "no-sync video was gated by the audio-backed player clock");
+    Require(available, "no-sync video was gated by the audio-backed player clock");
     std::lock_guard lock(allocations.mutex);
-    Check(allocations.blocks.empty(), "no-sync allocations leaked");
+    Require(allocations.blocks.empty(), "no-sync allocations leaked");
 }
 
 void TestNoSyncClockIgnoresEarlyAudio() {
     Events events;
     AvPlayerInitData init = InitData(&events);
     auto* player = sceAvPlayerInit(&init);
-    Check(player != nullptr, "no-sync clock init failed");
-    Check(sceAvPlayerSetAvSyncMode(player, 1) == 0, "no-sync clock mode rejected");
-    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "no-sync clock source failed");
-    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "no-sync clock video stream failed");
-    Check(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "no-sync clock audio stream failed");
-    Check(sceAvPlayerStart(player) == 0, "no-sync clock start failed");
+    Require(player != nullptr, "no-sync clock init failed");
+    Require(sceAvPlayerSetAvSyncMode(player, 1) == 0, "no-sync clock mode rejected");
+    Require(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "no-sync clock source failed");
+    Require(sceAvPlayerEnableStream(player, VideoStream) == 0, "no-sync clock video stream failed");
+    Require(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "no-sync clock audio stream failed");
+    Require(sceAvPlayerStart(player) == 0, "no-sync clock start failed");
     AvPlayerFrameInfo sound{};
-    Check(WaitFor([&] { return sceAvPlayerGetAudioData(player, &sound) != 0; }), "no-sync clock audio unavailable");
+    Require(WaitFor([&] { return sceAvPlayerGetAudioData(player, &sound) != 0; }), "no-sync clock audio unavailable");
     const auto start = std::chrono::steady_clock::now();
     const auto first = sound.timestamp;
-    Check(WaitFor([&] { return sceAvPlayerGetAudioData(player, &sound) != 0 && sound.timestamp >= first + 600; }), "no-sync clock audio was not pulled ahead");
+    Require(WaitFor([&] { return sceAvPlayerGetAudioData(player, &sound) != 0 && sound.timestamp >= first + 600; }), "no-sync clock audio was not pulled ahead");
     const auto clock = sceAvPlayerCurrentTime(player);
     const auto elapsed = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count());
-    Check(sceAvPlayerClose(player) == 0, "no-sync clock close failed");
-    Check(clock <= first + elapsed + 100, "no-sync clock followed audio pulled early: " + std::to_string(clock - first) + " ms after " + std::to_string(elapsed) + " ms");
+    Require(sceAvPlayerClose(player) == 0, "no-sync clock close failed");
+    Require(clock <= first + elapsed + 100, "no-sync clock followed audio pulled early: " + std::to_string(clock - first) + " ms after " + std::to_string(elapsed) + " ms");
 }
 
 void TestLoopWarningWaitsForPlayback() {
     Events events;
     AvPlayerInitData init = InitData(&events);
     auto* player = sceAvPlayerInit(&init);
-    Check(player != nullptr, "loop warning init failed");
-    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "loop warning source failed");
-    Check(sceAvPlayerSetLooping(player, 1) == 0, "loop warning setting failed");
-    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "loop warning video failed");
-    Check(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "loop warning audio failed");
-    Check(sceAvPlayerStart(player) == 0, "loop warning start failed");
+    Require(player != nullptr, "loop warning init failed");
+    Require(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "loop warning source failed");
+    Require(sceAvPlayerSetLooping(player, 1) == 0, "loop warning setting failed");
+    Require(sceAvPlayerEnableStream(player, VideoStream) == 0, "loop warning video failed");
+    Require(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "loop warning audio failed");
+    Require(sceAvPlayerStart(player) == 0, "loop warning start failed");
     AvPlayerFrameInfoEx frame{};
-    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "loop warning first frame missing");
+    Require(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "loop warning first frame missing");
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    Check(!events.Seen(EventWarning, LoopingBack), "loop warning arrived while the first playback still had buffered audio and video");
-    Check(sceAvPlayerClose(player) == 0, "loop warning close failed");
+    Require(!events.Seen(EventWarning, LoopingBack), "loop warning arrived while the first playback still had buffered audio and video");
+    Require(sceAvPlayerClose(player) == 0, "loop warning close failed");
 }
 
 void TestEofStopLatency() {
@@ -1786,13 +1783,13 @@ void TestEofStopLatency() {
         Events events;
         AvPlayerInitData init = InitData(&events);
         auto* player = sceAvPlayerInit(&init);
-        Check(player != nullptr, "eof latency init failed");
-        Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "eof latency add source failed");
-        Check(WaitFor([&] { return events.Seen(EventReady); }), "eof latency ready event missing");
-        Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "eof latency enable video failed");
-        Check(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "eof latency enable audio failed");
-        Check(sceAvPlayerStart(player) == 0, "eof latency start failed");
-        Check(WaitFor([&] { return events.Seen(EventPlay); }), "eof latency play event missing");
+        Require(player != nullptr, "eof latency init failed");
+        Require(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "eof latency add source failed");
+        Require(WaitFor([&] { return events.Seen(EventReady); }), "eof latency ready event missing");
+        Require(sceAvPlayerEnableStream(player, VideoStream) == 0, "eof latency enable video failed");
+        Require(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "eof latency enable audio failed");
+        Require(sceAvPlayerStart(player) == 0, "eof latency start failed");
+        Require(WaitFor([&] { return events.Seen(EventPlay); }), "eof latency play event missing");
         AvPlayerFrameInfoEx frame{};
         AvPlayerFrameInfo sound{};
         const auto drainDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
@@ -1806,23 +1803,23 @@ void TestEofStopLatency() {
             }
             std::this_thread::yield();
         }
-        Check(ended, "eof latency playback never ended");
+        Require(ended, "eof latency playback never ended");
         const auto inactive = std::chrono::steady_clock::now();
-        Check(WaitFor([&] { return events.Seen(EventStop); }), "eof latency stop event missing");
+        Require(WaitFor([&] { return events.Seen(EventStop); }), "eof latency stop event missing");
         std::chrono::steady_clock::time_point stopAt{};
         {
             std::lock_guard lock(events.mutex);
-            Check(events.hasStop, "eof latency stop timestamp missing");
+            Require(events.hasStop, "eof latency stop timestamp missing");
             stopAt = events.stopAt;
             const int stops = static_cast<int>(std::count_if(events.received.begin(), events.received.end(), [](const auto& event) { return event.first == EventStop; }));
-            Check(stops == 1, "eof latency stop delivered " + std::to_string(stops) + " times");
+            Require(stops == 1, "eof latency stop delivered " + std::to_string(stops) + " times");
         }
         elapsed[static_cast<std::size_t>(round)] = stopAt > inactive ? stopAt - inactive : std::chrono::steady_clock::duration::zero();
-        Check(sceAvPlayerCurrentTime(player) >= 950, "eof latency clock not at the end");
-        Check(!sceAvPlayerIsActive(player), "eof latency active after the end");
-        Check(sceAvPlayerClose(player) == 0, "eof latency close failed");
+        Require(sceAvPlayerCurrentTime(player) >= 950, "eof latency clock not at the end");
+        Require(!sceAvPlayerIsActive(player), "eof latency active after the end");
+        Require(sceAvPlayerClose(player) == 0, "eof latency close failed");
         std::lock_guard lock(allocations.mutex);
-        Check(allocations.blocks.empty(), "eof latency allocations leaked");
+        Require(allocations.blocks.empty(), "eof latency allocations leaked");
     }
     std::sort(elapsed.begin(), elapsed.end());
     const auto median = elapsed[elapsed.size() / 2];
@@ -1831,7 +1828,7 @@ void TestEofStopLatency() {
     for (const auto& sample : elapsed) std::printf(" %.3f", std::chrono::duration_cast<std::chrono::microseconds>(sample).count() / 1000.0);
     std::printf("\n");
     std::fflush(stdout);
-    Check(median < std::chrono::milliseconds(10), "eof stop median " + std::to_string(medianMs) + " ms exceeds 10 ms");
+    Require(median < std::chrono::milliseconds(10), "eof stop median " + std::to_string(medianMs) + " ms exceeds 10 ms");
 }
 
 struct ClosingEvents {
@@ -1850,7 +1847,7 @@ void MarkControllerExited(void* flag) {
 pthread_key_t ControllerExitKey() {
     static const pthread_key_t key = [] {
         pthread_key_t created{};
-        Check(pthread_key_create(&created, MarkControllerExited) == 0, "controller exit key creation failed");
+        Require(pthread_key_create(&created, MarkControllerExited) == 0, "controller exit key creation failed");
         return created;
     }();
     return key;
@@ -1859,14 +1856,14 @@ pthread_key_t ControllerExitKey() {
 void APS5_VABI CloseOnEvent(void* object, std::int32_t id, std::int32_t, void* data) {
     auto& events = *static_cast<ClosingEvents*>(object);
     if (id != events.closeEvent) return;
-    if (id == EventWarning) Check(data != nullptr && *static_cast<std::int32_t*>(data) == LoopingBack, "callback-close warning is not the loop warning");
-    Check(pthread_setspecific(ControllerExitKey(), events.controllerExited.get()) == 0, "controller exit key set failed");
+    if (id == EventWarning) Require(data != nullptr && *static_cast<std::int32_t*>(data) == LoopingBack, "callback-close warning is not the loop warning");
+    Require(pthread_setspecific(ControllerExitKey(), events.controllerExited.get()) == 0, "controller exit key set failed");
     std::lock_guard lock(events.mutex);
-    Check(sceAvPlayerClose(events.player) == 0, "close from event callback failed");
+    Require(sceAvPlayerClose(events.player) == 0, "close from event callback failed");
     events.player = nullptr;
     AvPlayerInitData init = InitData(nullptr);
     events.replacement = sceAvPlayerInit(&init);
-    Check(events.replacement != nullptr, "replacement player init from callback failed");
+    Require(events.replacement != nullptr, "replacement player init from callback failed");
     events.closed = true;
 }
 
@@ -1879,21 +1876,21 @@ void TestCloseFromEventCallback(std::int32_t event) {
     {
         std::lock_guard lock(events.mutex);
         events.player = sceAvPlayerInit(&init);
-        Check(events.player != nullptr, "callback-close init failed");
-        Check(sceAvPlayerAddSource(events.player, "/app0/avplayer.mp4") == 0, "callback-close source failed");
+        Require(events.player != nullptr, "callback-close init failed");
+        Require(sceAvPlayerAddSource(events.player, "/app0/avplayer.mp4") == 0, "callback-close source failed");
     }
     if (event == EventWarning) {
-        Check(WaitFor([&] {
+        Require(WaitFor([&] {
             std::lock_guard lock(events.mutex);
             return sceAvPlayerStreamCount(events.player) > 0;
         }), "callback-close loop source never became ready");
         std::lock_guard lock(events.mutex);
-        Check(sceAvPlayerEnableStream(events.player, VideoStream) == 0, "callback-close loop video failed");
-        Check(sceAvPlayerSetAvSyncMode(events.player, 1) == 0, "callback-close loop sync mode failed");
-        Check(sceAvPlayerSetLooping(events.player, 1) == 0, "callback-close loop looping failed");
-        Check(sceAvPlayerStart(events.player) == 0, "callback-close loop start failed");
+        Require(sceAvPlayerEnableStream(events.player, VideoStream) == 0, "callback-close loop video failed");
+        Require(sceAvPlayerSetAvSyncMode(events.player, 1) == 0, "callback-close loop sync mode failed");
+        Require(sceAvPlayerSetLooping(events.player, 1) == 0, "callback-close loop looping failed");
+        Require(sceAvPlayerStart(events.player) == 0, "callback-close loop start failed");
     }
-    Check(WaitFor([&] {
+    Require(WaitFor([&] {
         std::lock_guard lock(events.mutex);
         if (events.closed) return true;
         if (event == EventWarning) {
@@ -1908,66 +1905,66 @@ void TestCloseFromEventCallback(std::int32_t event) {
         }
         return false;
     }), "event callback did not finish closing the player");
-    Check(WaitFor([&] { return events.controllerExited->load(std::memory_order_acquire); }), "closed player's event thread did not exit");
+    Require(WaitFor([&] { return events.controllerExited->load(std::memory_order_acquire); }), "closed player's event thread did not exit");
     {
         std::lock_guard lock(events.mutex);
-        Check(sceAvPlayerClose(events.replacement) == 0, "replacement player close failed");
+        Require(sceAvPlayerClose(events.replacement) == 0, "replacement player close failed");
     }
     std::lock_guard lock(allocations.mutex);
-    Check(allocations.blocks.empty(), "callback close leaked media allocations");
+    Require(allocations.blocks.empty(), "callback close leaked media allocations");
 }
 
 void TestVideoSyncTolerance() {
     Events events;
     AvPlayerInitData init = InitData(&events);
     auto* player = sceAvPlayerInit(&init);
-    Check(player != nullptr, "sync tolerance init failed");
-    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "sync tolerance source failed");
-    Check(WaitFor([&] { return events.Seen(EventReady); }), "sync tolerance ready missing");
-    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "sync tolerance video failed");
-    Check(sceAvPlayerStart(player) == 0, "sync tolerance start failed");
-    Check(WaitFor([&] { return events.Seen(EventPlay); }), "sync tolerance play missing");
+    Require(player != nullptr, "sync tolerance init failed");
+    Require(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "sync tolerance source failed");
+    Require(WaitFor([&] { return events.Seen(EventReady); }), "sync tolerance ready missing");
+    Require(sceAvPlayerEnableStream(player, VideoStream) == 0, "sync tolerance video failed");
+    Require(sceAvPlayerStart(player) == 0, "sync tolerance start failed");
+    Require(WaitFor([&] { return events.Seen(EventPlay); }), "sync tolerance play missing");
     AvPlayerFrameInfoEx frame{};
-    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "sync tolerance first frame missing");
-    Check(FrameIndex(frame.timestamp) == 0, "first frame not index 0");
+    Require(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "sync tolerance first frame missing");
+    Require(FrameIndex(frame.timestamp) == 0, "first frame not index 0");
     AvPlayer::SetAvPlayerClockForTest_nid_no_patch(player, 5.0);
-    Check(!WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }, 200), "frame beyond sync tolerance delivered prematurely");
+    Require(!WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }, 200), "frame beyond sync tolerance delivered prematurely");
     AvPlayer::SetAvPlayerClockForTest_nid_no_patch(player, 10.0);
-    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "frame within sync tolerance was not delivered");
-    Check(FrameIndex(frame.timestamp) == 1, "unexpected second frame index");
-    Check(sceAvPlayerClose(player) == 0, "sync tolerance close failed");
+    Require(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "frame within sync tolerance was not delivered");
+    Require(FrameIndex(frame.timestamp) == 1, "unexpected second frame index");
+    Require(sceAvPlayerClose(player) == 0, "sync tolerance close failed");
     std::lock_guard lock(allocations.mutex);
-    Check(allocations.blocks.empty(), "sync tolerance allocations leaked");
+    Require(allocations.blocks.empty(), "sync tolerance allocations leaked");
 }
 
 void TestSyncedVideoFollowsClockWithSlowConsumer() {
     Events events;
     AvPlayerInitData init = InitData(&events);
     auto* player = sceAvPlayerInit(&init);
-    Check(player != nullptr, "slow consumer init failed");
-    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "slow consumer source failed");
-    Check(WaitFor([&] { return events.Seen(EventReady); }), "slow consumer ready missing");
-    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "slow consumer video failed");
-    Check(sceAvPlayerStart(player) == 0, "slow consumer start failed");
+    Require(player != nullptr, "slow consumer init failed");
+    Require(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "slow consumer source failed");
+    Require(WaitFor([&] { return events.Seen(EventReady); }), "slow consumer ready missing");
+    Require(sceAvPlayerEnableStream(player, VideoStream) == 0, "slow consumer video failed");
+    Require(sceAvPlayerStart(player) == 0, "slow consumer start failed");
     AvPlayerFrameInfoEx frame{};
-    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "slow consumer first frame missing");
+    Require(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "slow consumer first frame missing");
     const auto start = std::chrono::steady_clock::now();
     const auto first = static_cast<std::int64_t>(frame.timestamp);
     std::int64_t worst = 0;
     for (int poll = 1; poll <= 2; ++poll) {
         std::this_thread::sleep_until(start + std::chrono::milliseconds(400 * poll));
-        Check(sceAvPlayerGetVideoDataEx(player, &frame) != 0, "slow consumer frame " + std::to_string(poll) + " missing");
+        Require(sceAvPlayerGetVideoDataEx(player, &frame) != 0, "slow consumer frame " + std::to_string(poll) + " missing");
         CheckVideoFrame(frame);
         const auto elapsed = static_cast<std::int64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count());
         worst = std::max(worst, first + elapsed - static_cast<std::int64_t>(frame.timestamp));
     }
-    Check(worst <= 150, "the picture handed out fell " + std::to_string(worst) + " ms behind the presentation clock");
-    Check(sceAvPlayerClose(player) == 0, "slow consumer close failed");
+    Require(worst <= 150, "the picture handed out fell " + std::to_string(worst) + " ms behind the presentation clock");
+    Require(sceAvPlayerClose(player) == 0, "slow consumer close failed");
 }
 
 std::int64_t VideoLagBehindClock(AvPlayerInternal* player, const std::string& what) {
     AvPlayerFrameInfoEx frame{};
-    Check(sceAvPlayerGetVideoDataEx(player, &frame) != 0, what + " frame missing");
+    Require(sceAvPlayerGetVideoDataEx(player, &frame) != 0, what + " frame missing");
     CheckVideoFrame(frame);
     return static_cast<std::int64_t>(sceAvPlayerCurrentTime(player)) - static_cast<std::int64_t>(frame.timestamp);
 }
@@ -1976,61 +1973,61 @@ void TestSyncedVideoCatchesUpAfterResume() {
     Events events;
     AvPlayerInitData init = InitData(&events);
     auto* player = sceAvPlayerInit(&init);
-    Check(player != nullptr, "resume catch-up init failed");
-    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "resume catch-up source failed");
-    Check(WaitFor([&] { return events.Seen(EventReady); }), "resume catch-up ready missing");
-    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "resume catch-up video failed");
-    Check(sceAvPlayerStart(player) == 0, "resume catch-up start failed");
+    Require(player != nullptr, "resume catch-up init failed");
+    Require(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "resume catch-up source failed");
+    Require(WaitFor([&] { return events.Seen(EventReady); }), "resume catch-up ready missing");
+    Require(sceAvPlayerEnableStream(player, VideoStream) == 0, "resume catch-up video failed");
+    Require(sceAvPlayerStart(player) == 0, "resume catch-up start failed");
     AvPlayerFrameInfoEx frame{};
-    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "resume catch-up first frame missing");
-    Check(sceAvPlayerPause(player) == 0, "resume catch-up pause failed");
+    Require(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "resume catch-up first frame missing");
+    Require(sceAvPlayerPause(player) == 0, "resume catch-up pause failed");
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
-    Check(sceAvPlayerResume(player) == 0, "resume catch-up resume failed");
+    Require(sceAvPlayerResume(player) == 0, "resume catch-up resume failed");
     std::this_thread::sleep_for(std::chrono::milliseconds(600));
     const auto lag = VideoLagBehindClock(player, "resume catch-up");
-    Check(lag <= 150, "after resume the picture handed out fell " + std::to_string(lag) + " ms behind the presentation clock");
-    Check(sceAvPlayerClose(player) == 0, "resume catch-up close failed");
+    Require(lag <= 150, "after resume the picture handed out fell " + std::to_string(lag) + " ms behind the presentation clock");
+    Require(sceAvPlayerClose(player) == 0, "resume catch-up close failed");
 }
 
 void TestVideoCatchesUpAfterSwitchToSyncedMode() {
     Events events;
     AvPlayerInitData init = InitData(&events);
     auto* player = sceAvPlayerInit(&init);
-    Check(player != nullptr, "sync switch init failed");
-    Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "sync switch source failed");
-    Check(WaitFor([&] { return events.Seen(EventReady); }), "sync switch ready missing");
-    Check(sceAvPlayerSetAvSyncMode(player, 1) == 0, "sync switch no-sync mode rejected");
-    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "sync switch video failed");
-    Check(sceAvPlayerStart(player) == 0, "sync switch start failed");
+    Require(player != nullptr, "sync switch init failed");
+    Require(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "sync switch source failed");
+    Require(WaitFor([&] { return events.Seen(EventReady); }), "sync switch ready missing");
+    Require(sceAvPlayerSetAvSyncMode(player, 1) == 0, "sync switch no-sync mode rejected");
+    Require(sceAvPlayerEnableStream(player, VideoStream) == 0, "sync switch video failed");
+    Require(sceAvPlayerStart(player) == 0, "sync switch start failed");
     AvPlayerFrameInfoEx frame{};
-    Check(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "sync switch first frame missing");
+    Require(WaitFor([&] { return sceAvPlayerGetVideoDataEx(player, &frame) != 0; }), "sync switch first frame missing");
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
-    Check(sceAvPlayerSetAvSyncMode(player, 0) == 0, "sync switch default mode rejected");
+    Require(sceAvPlayerSetAvSyncMode(player, 0) == 0, "sync switch default mode rejected");
     std::this_thread::sleep_for(std::chrono::milliseconds(400));
     const auto lag = VideoLagBehindClock(player, "sync switch");
-    Check(lag <= 150, "after switching to default sync the picture handed out fell " + std::to_string(lag) + " ms behind the presentation clock");
-    Check(sceAvPlayerClose(player) == 0, "sync switch close failed");
+    Require(lag <= 150, "after switching to default sync the picture handed out fell " + std::to_string(lag) + " ms behind the presentation clock");
+    Require(sceAvPlayerClose(player) == 0, "sync switch close failed");
 }
 
 void TestAudioClockDriftGating() {
     const auto open = [](Events& events) {
         AvPlayerInitData init = InitData(&events);
         auto* player = sceAvPlayerInit(&init);
-        Check(player != nullptr, "audio drift gating init failed");
-        Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "audio drift gating source failed");
-        Check(WaitFor([&] { return events.Seen(EventReady); }), "audio drift gating ready missing");
-        Check(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "audio drift gating audio failed");
-        Check(sceAvPlayerStart(player) == 0, "audio drift gating start failed");
-        Check(WaitFor([&] { return events.Seen(EventPlay); }), "audio drift gating play missing");
+        Require(player != nullptr, "audio drift gating init failed");
+        Require(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "audio drift gating source failed");
+        Require(WaitFor([&] { return events.Seen(EventReady); }), "audio drift gating ready missing");
+        Require(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "audio drift gating audio failed");
+        Require(sceAvPlayerStart(player) == 0, "audio drift gating start failed");
+        Require(WaitFor([&] { return events.Seen(EventPlay); }), "audio drift gating play missing");
         return player;
     };
     const auto close = [](AvPlayerInternal* player) {
-        Check(sceAvPlayerClose(player) == 0, "audio drift gating close failed");
+        Require(sceAvPlayerClose(player) == 0, "audio drift gating close failed");
         std::lock_guard lock(allocations.mutex);
-        Check(allocations.blocks.empty(), "audio drift gating allocations leaked");
+        Require(allocations.blocks.empty(), "audio drift gating allocations leaked");
     };
     const auto take = [](AvPlayerInternal* player, AvPlayerFrameInfo& sound, const char* missing) {
-        Check(WaitFor([&] { return sceAvPlayerGetAudioData(player, &sound) != 0; }), missing);
+        Require(WaitFor([&] { return sceAvPlayerGetAudioData(player, &sound) != 0; }), missing);
     };
 
     std::uint64_t secondTs = 0;
@@ -2040,11 +2037,11 @@ void TestAudioClockDriftGating() {
         auto* player = open(events);
         AvPlayerFrameInfo sound{};
         take(player, sound, "probe first audio frame missing");
-        Check(sound.timestamp == 0, "first audio frame timestamp unexpected");
+        Require(sound.timestamp == 0, "first audio frame timestamp unexpected");
         take(player, sound, "probe second audio frame missing");
-        Check(sound.timestamp > 0 && sound.timestamp <= 30, "second audio frame timestamp unexpected");
+        Require(sound.timestamp > 0 && sound.timestamp <= 30, "second audio frame timestamp unexpected");
         secondTs = sound.timestamp;
-        Check(WaitFor([&] {
+        Require(WaitFor([&] {
             while (sceAvPlayerGetAudioData(player, &sound)) {
                 if (sound.timestamp > 50) {
                     beyondTs = sound.timestamp;
@@ -2055,7 +2052,7 @@ void TestAudioClockDriftGating() {
         }), "probe audio beyond 50ms missing");
         close(player);
     }
-    Check(beyondTs > 50, "probe timestamps unsuitable for drift gating");
+    Require(beyondTs > 50, "probe timestamps unsuitable for drift gating");
 
     {
         Events events;
@@ -2065,8 +2062,8 @@ void TestAudioClockDriftGating() {
         AvPlayer::SetAvPlayerClockForTest_nid_no_patch(player, 0.0);
         std::this_thread::sleep_for(std::chrono::milliseconds(40));
         take(player, sound, "within-threshold second audio missing");
-        Check(sound.timestamp == secondTs, "within-threshold second timestamp changed");
-        Check(sceAvPlayerCurrentTime(player) == 0, "clock rebased despite audio being within drift threshold");
+        Require(sound.timestamp == secondTs, "within-threshold second timestamp changed");
+        Require(sceAvPlayerCurrentTime(player) == 0, "clock rebased despite audio being within drift threshold");
         close(player);
     }
 
@@ -2078,8 +2075,8 @@ void TestAudioClockDriftGating() {
         AvPlayer::SetAvPlayerClockForTest_nid_no_patch(player, static_cast<double>(secondTs + 50));
         std::this_thread::sleep_for(std::chrono::milliseconds(40));
         take(player, sound, "clock-lead boundary second audio missing");
-        Check(sound.timestamp == secondTs, "clock-lead boundary second timestamp changed");
-        Check(sceAvPlayerCurrentTime(player) == secondTs + 50, "exact 50ms clock-lead boundary rebased");
+        Require(sound.timestamp == secondTs, "clock-lead boundary second timestamp changed");
+        Require(sceAvPlayerCurrentTime(player) == secondTs + 50, "exact 50ms clock-lead boundary rebased");
         close(player);
     }
 
@@ -2090,14 +2087,14 @@ void TestAudioClockDriftGating() {
         take(player, sound, "audio-lead boundary first audio missing");
         AvPlayer::SetAvPlayerClockForTest_nid_no_patch(player, static_cast<double>(beyondTs - 50));
         std::this_thread::sleep_for(std::chrono::milliseconds(40));
-        Check(WaitFor([&] {
+        Require(WaitFor([&] {
             while (sceAvPlayerGetAudioData(player, &sound)) {
                 if (sound.timestamp >= beyondTs) return true;
             }
             return false;
         }), "audio-lead boundary frame missing");
-        Check(sound.timestamp == beyondTs, "audio-lead boundary timestamp unexpected");
-        Check(sceAvPlayerCurrentTime(player) == beyondTs - 50, "exact 50ms audio-lead boundary rebased");
+        Require(sound.timestamp == beyondTs, "audio-lead boundary timestamp unexpected");
+        Require(sceAvPlayerCurrentTime(player) == beyondTs - 50, "exact 50ms audio-lead boundary rebased");
         close(player);
     }
 
@@ -2109,8 +2106,8 @@ void TestAudioClockDriftGating() {
         AvPlayer::SetAvPlayerClockForTest_nid_no_patch(player, static_cast<double>(secondTs + 51));
         std::this_thread::sleep_for(std::chrono::milliseconds(40));
         take(player, sound, "clock-lead rebase second audio missing");
-        Check(sound.timestamp == secondTs, "clock-lead rebase second timestamp changed");
-        Check(sceAvPlayerCurrentTime(player) == secondTs, "clock-lead beyond 50ms did not rebase");
+        Require(sound.timestamp == secondTs, "clock-lead rebase second timestamp changed");
+        Require(sceAvPlayerCurrentTime(player) == secondTs, "clock-lead beyond 50ms did not rebase");
         close(player);
     }
 
@@ -2121,14 +2118,14 @@ void TestAudioClockDriftGating() {
         take(player, sound, "audio-lead rebase first audio missing");
         AvPlayer::SetAvPlayerClockForTest_nid_no_patch(player, 0.0);
         std::this_thread::sleep_for(std::chrono::milliseconds(40));
-        Check(WaitFor([&] {
+        Require(WaitFor([&] {
             while (sceAvPlayerGetAudioData(player, &sound)) {
                 if (sound.timestamp > 50) return true;
             }
             return false;
         }), "audio-lead rebase frame missing");
-        Check(sound.timestamp == beyondTs, "audio-lead rebase timestamp unexpected");
-        Check(sceAvPlayerCurrentTime(player) == beyondTs, "audio-lead beyond 50ms did not rebase");
+        Require(sound.timestamp == beyondTs, "audio-lead rebase timestamp unexpected");
+        Require(sceAvPlayerCurrentTime(player) == beyondTs, "audio-lead beyond 50ms did not rebase");
         close(player);
     }
 }
@@ -2308,38 +2305,38 @@ void WriteShortAudioMovie() {
     std::filesystem::create_directories("app0");
     std::ofstream file("app0/short-audio.mp4", std::ios::binary | std::ios::trunc);
     file.write(reinterpret_cast<const char*>(ShortAudioMovie.data()), static_cast<std::streamsize>(ShortAudioMovie.size()));
-    Check(static_cast<bool>(file), "cannot write the short audio movie");
+    Require(static_cast<bool>(file), "cannot write the short audio movie");
 }
 
 void TestAudioEofClockRebase() {
     const auto open = [](Events& events, bool hold) {
         AvPlayerInitData init = InitData(&events);
         auto* player = sceAvPlayerInit(&init);
-        Check(player != nullptr, "audio eof clock init failed");
-        Check(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "audio eof clock source failed");
-        Check(WaitFor([&] { return events.Seen(EventReady); }), "audio eof clock ready missing");
-        Check(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "audio eof clock audio failed");
+        Require(player != nullptr, "audio eof clock init failed");
+        Require(sceAvPlayerAddSource(player, "/app0/avplayer.mp4") == 0, "audio eof clock source failed");
+        Require(WaitFor([&] { return events.Seen(EventReady); }), "audio eof clock ready missing");
+        Require(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "audio eof clock audio failed");
         if (hold) AvPlayer::HoldAvPlayerAudioEofForTest_nid_no_patch(player, true);
-        Check(sceAvPlayerStart(player) == 0, "audio eof clock start failed");
-        Check(WaitFor([&] { return events.Seen(EventPlay); }), "audio eof clock play missing");
+        Require(sceAvPlayerStart(player) == 0, "audio eof clock start failed");
+        Require(WaitFor([&] { return events.Seen(EventPlay); }), "audio eof clock play missing");
         return player;
     };
     const auto close = [](AvPlayerInternal* player) {
         AvPlayer::HoldAvPlayerAudioEofForTest_nid_no_patch(player, false);
-        Check(sceAvPlayerClose(player) == 0, "audio eof clock close failed");
+        Require(sceAvPlayerClose(player) == 0, "audio eof clock close failed");
         std::lock_guard lock(allocations.mutex);
-        Check(allocations.blocks.empty(), "audio eof clock allocations leaked");
+        Require(allocations.blocks.empty(), "audio eof clock allocations leaked");
     };
     const auto pullQueued = [](AvPlayerInternal* player) {
         std::uint64_t timestamp = 0;
-        Check(AvPlayer::NextQueuedAvPlayerAudioTimestampForTest_nid_no_patch(player, &timestamp), "audio eof clock queue empty");
+        Require(AvPlayer::NextQueuedAvPlayerAudioTimestampForTest_nid_no_patch(player, &timestamp), "audio eof clock queue empty");
         AvPlayer::SetAvPlayerClockForTest_nid_no_patch(player, static_cast<double>(timestamp));
         AvPlayerFrameInfo sound{};
-        Check(sceAvPlayerGetAudioData(player, &sound) != 0, "audio eof clock drain failed");
-        Check(sound.timestamp == timestamp, "audio eof clock drained an unexpected frame");
+        Require(sceAvPlayerGetAudioData(player, &sound) != 0, "audio eof clock drain failed");
+        Require(sound.timestamp == timestamp, "audio eof clock drained an unexpected frame");
     };
     const auto leaveFinalFrame = [&](AvPlayerInternal* player, bool afterEof) {
-        Check(WaitFor([&] {
+        Require(WaitFor([&] {
             const auto queued = AvPlayer::QueuedAvPlayerAudioForTest_nid_no_patch(player);
             const auto ready = afterEof ? AvPlayer::AvPlayerAudioEndedForTest_nid_no_patch(player) : AvPlayer::AvPlayerAudioEofHeldForTest_nid_no_patch(player);
             if (ready && queued >= 1) return true;
@@ -2350,12 +2347,12 @@ void TestAudioEofClockRebase() {
     };
     const auto pullFinal = [](AvPlayerInternal* player, AvPlayerFrameInfo& sound) {
         std::uint64_t last = 0;
-        Check(AvPlayer::NextQueuedAvPlayerAudioTimestampForTest_nid_no_patch(player, &last), "final audio frame was not queued");
-        Check(last > 50, "final audio timestamp is inside the drift gate");
+        Require(AvPlayer::NextQueuedAvPlayerAudioTimestampForTest_nid_no_patch(player, &last), "final audio frame was not queued");
+        Require(last > 50, "final audio timestamp is inside the drift gate");
         AvPlayer::SetAvPlayerClockForTest_nid_no_patch(player, static_cast<double>(last - 42));
         std::this_thread::sleep_for(std::chrono::milliseconds(40));
-        Check(sceAvPlayerGetAudioData(player, &sound) != 0, "final audio frame missing");
-        Check(sound.timestamp == last, "final audio timestamp changed");
+        Require(sceAvPlayerGetAudioData(player, &sound) != 0, "final audio frame missing");
+        Require(sound.timestamp == last, "final audio timestamp changed");
         return last;
     };
 
@@ -2365,10 +2362,10 @@ void TestAudioEofClockRebase() {
         leaveFinalFrame(player, false);
         AvPlayerFrameInfo sound{};
         const auto last = pullFinal(player, sound);
-        Check(sceAvPlayerCurrentTime(player) == last - 42, "clock rebased before audio eof was marked");
+        Require(sceAvPlayerCurrentTime(player) == last - 42, "clock rebased before audio eof was marked");
         AvPlayer::HoldAvPlayerAudioEofForTest_nid_no_patch(player, false);
-        Check(WaitFor([&] { return AvPlayer::AvPlayerAudioEndedForTest_nid_no_patch(player); }), "audio eof was not marked");
-        Check(sceAvPlayerCurrentTime(player) == last, "clock was not reconciled after audio eof");
+        Require(WaitFor([&] { return AvPlayer::AvPlayerAudioEndedForTest_nid_no_patch(player); }), "audio eof was not marked");
+        Require(sceAvPlayerCurrentTime(player) == last, "clock was not reconciled after audio eof");
         close(player);
     }
 
@@ -2378,7 +2375,7 @@ void TestAudioEofClockRebase() {
         leaveFinalFrame(player, true);
         AvPlayerFrameInfo sound{};
         const auto last = pullFinal(player, sound);
-        Check(sceAvPlayerCurrentTime(player) == last, "clock was not reconciled when the final frame followed eof");
+        Require(sceAvPlayerCurrentTime(player) == last, "clock was not reconciled when the final frame followed eof");
         close(player);
     }
 }
@@ -2388,27 +2385,27 @@ void TestAudioClockAdvancesAfterEof() {
     Events events;
     AvPlayerInitData init = InitData(&events);
     auto* player = sceAvPlayerInit(&init);
-    Check(player != nullptr, "audio eof advance init failed");
-    Check(sceAvPlayerAddSource(player, "/app0/short-audio.mp4") == 0, "audio eof advance source failed");
-    Check(WaitFor([&] { return events.Seen(EventReady); }), "audio eof advance ready missing");
-    Check(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "audio eof advance audio failed");
-    Check(sceAvPlayerStart(player) == 0, "audio eof advance start failed");
-    Check(WaitFor([&] { return events.Seen(EventPlay); }), "audio eof advance play missing");
+    Require(player != nullptr, "audio eof advance init failed");
+    Require(sceAvPlayerAddSource(player, "/app0/short-audio.mp4") == 0, "audio eof advance source failed");
+    Require(WaitFor([&] { return events.Seen(EventReady); }), "audio eof advance ready missing");
+    Require(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "audio eof advance audio failed");
+    Require(sceAvPlayerStart(player) == 0, "audio eof advance start failed");
+    Require(WaitFor([&] { return events.Seen(EventPlay); }), "audio eof advance play missing");
     AvPlayerFrameInfo sound{};
     std::uint64_t last = 0;
-    Check(WaitFor([&] {
+    Require(WaitFor([&] {
         while (sceAvPlayerGetAudioData(player, &sound)) last = sound.timestamp;
         return AvPlayer::AvPlayerAudioEndedForTest_nid_no_patch(player);
     }), "short audio did not end");
-    Check(last > 0 && last < 500, "short audio timestamp unexpected");
+    Require(last > 0 && last < 500, "short audio timestamp unexpected");
     const auto before = sceAvPlayerCurrentTime(player);
     std::this_thread::sleep_for(std::chrono::milliseconds(80));
     for (int poll = 0; poll < 5; ++poll) sceAvPlayerGetAudioData(player, &sound);
     const auto after = sceAvPlayerCurrentTime(player);
-    Check(after >= before + 40, "clock stopped after audio eof: " + std::to_string(before) + " to " + std::to_string(after));
-    Check(sceAvPlayerClose(player) == 0, "audio eof advance close failed");
+    Require(after >= before + 40, "clock stopped after audio eof: " + std::to_string(before) + " to " + std::to_string(after));
+    Require(sceAvPlayerClose(player) == 0, "audio eof advance close failed");
     std::lock_guard lock(allocations.mutex);
-    Check(allocations.blocks.empty(), "audio eof advance allocations leaked");
+    Require(allocations.blocks.empty(), "audio eof advance allocations leaked");
 }
 
 void TestTrailingVideoAfterShortAudio() {
@@ -2416,31 +2413,31 @@ void TestTrailingVideoAfterShortAudio() {
     Events events;
     AvPlayerInitData init = InitData(&events);
     auto* player = sceAvPlayerInit(&init);
-    Check(player != nullptr, "trailing video init failed");
-    Check(sceAvPlayerAddSource(player, "/app0/short-audio.mp4") == 0, "trailing video source failed");
-    Check(WaitFor([&] { return events.Seen(EventReady); }), "trailing video ready missing");
-    Check(sceAvPlayerEnableStream(player, VideoStream) == 0, "trailing video stream failed");
-    Check(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "trailing video audio failed");
-    Check(sceAvPlayerStart(player) == 0, "trailing video start failed");
-    Check(WaitFor([&] { return events.Seen(EventPlay); }), "trailing video play missing");
+    Require(player != nullptr, "trailing video init failed");
+    Require(sceAvPlayerAddSource(player, "/app0/short-audio.mp4") == 0, "trailing video source failed");
+    Require(WaitFor([&] { return events.Seen(EventReady); }), "trailing video ready missing");
+    Require(sceAvPlayerEnableStream(player, VideoStream) == 0, "trailing video stream failed");
+    Require(sceAvPlayerEnableStream(player, EnglishAudioStream) == 0, "trailing video audio failed");
+    Require(sceAvPlayerStart(player) == 0, "trailing video start failed");
+    Require(WaitFor([&] { return events.Seen(EventPlay); }), "trailing video play missing");
     AvPlayerFrameInfo sound{};
     std::uint64_t last = 0;
-    Check(WaitFor([&] {
+    Require(WaitFor([&] {
         while (sceAvPlayerGetAudioData(player, &sound)) last = sound.timestamp;
         return AvPlayer::AvPlayerAudioEndedForTest_nid_no_patch(player);
     }), "trailing video audio did not end");
-    Check(last > 0 && last < 500, "trailing video audio timestamp unexpected");
+    Require(last > 0 && last < 500, "trailing video audio timestamp unexpected");
     std::uint64_t latest = 0;
-    Check(WaitFor([&] {
+    Require(WaitFor([&] {
         sceAvPlayerGetAudioData(player, &sound);
         sceAvPlayerCurrentTime(player);
         AvPlayerFrameInfoEx frame{};
         if (sceAvPlayerGetVideoDataEx(player, &frame)) latest = std::max(latest, frame.timestamp);
         return latest > last + 100;
     }, 3000), "trailing video was not delivered after audio eof");
-    Check(sceAvPlayerClose(player) == 0, "trailing video close failed");
+    Require(sceAvPlayerClose(player) == 0, "trailing video close failed");
     std::lock_guard lock(allocations.mutex);
-    Check(allocations.blocks.empty(), "trailing video allocations leaked");
+    Require(allocations.blocks.empty(), "trailing video allocations leaked");
 }
 
 }
@@ -2450,7 +2447,7 @@ namespace {
 std::string replacedUrl;
 
 std::int32_t APS5_VABI OpenRemoteReplacement(void* object, const char* path) {
-    Check(path == replacedUrl, "file replacement did not receive the original URL");
+    Require(path == replacedUrl, "file replacement did not receive the original URL");
     return OpenFile(object, "/app0/replaced.mp4");
 }
 
@@ -2469,43 +2466,43 @@ void TestHttpSources(const std::string& base) {
         Events events;
         auto init = InitData(&events);
         auto* player = sceAvPlayerInit(&init);
-        Check(player != nullptr, "HTTP init failed");
-        Check(sceAvPlayerAddSource(player, (base + route).c_str()) == 0, "HTTP add source failed");
-        Check(WaitFor([&] { return events.Seen(EventReady); }), "HTTP ready event missing");
-        Check(sceAvPlayerEnableStream(player, 0) == 0, "HTTP video enable failed");
-        Check(sceAvPlayerSetAvSyncMode(player, 1) == 0 && sceAvPlayerStart(player) == 0, "HTTP video start failed");
+        Require(player != nullptr, "HTTP init failed");
+        Require(sceAvPlayerAddSource(player, (base + route).c_str()) == 0, "HTTP add source failed");
+        Require(WaitFor([&] { return events.Seen(EventReady); }), "HTTP ready event missing");
+        Require(sceAvPlayerEnableStream(player, 0) == 0, "HTTP video enable failed");
+        Require(sceAvPlayerSetAvSyncMode(player, 1) == 0 && sceAvPlayerStart(player) == 0, "HTTP video start failed");
         int frames = 0;
         AvPlayerFrameInfoEx info{};
-        Check(WaitFor([&] {
+        Require(WaitFor([&] {
             if (sceAvPlayerGetVideoDataEx(player, &info)) {
                 CheckVideoFrame(info);
                 ++frames;
             }
             return !sceAvPlayerIsActive(player);
         }), "HTTP playback did not finish");
-        Check(frames == expected, "HTTP delivered " + std::to_string(frames) + " frames instead of " + std::to_string(expected));
-        Check(sceAvPlayerClose(player) == 0, "HTTP close failed");
+        Require(frames == expected, "HTTP delivered " + std::to_string(frames) + " frames instead of " + std::to_string(expected));
+        Require(sceAvPlayerClose(player) == 0, "HTTP close failed");
     }
     Events events;
     auto init = InitData(&events);
     auto* player = sceAvPlayerInit(&init);
     for (const auto& path : {base + "/bad/avplayer.mp4", base + "/range/no\r\nheader.mp4"}) {
-        Check(sceAvPlayerAddSource(player, path.c_str()) == OperationFailed, "invalid HTTP response or URL accepted");
+        Require(sceAvPlayerAddSource(player, path.c_str()) == OperationFailed, "invalid HTTP response or URL accepted");
     }
     bool callbackFailure = false;
     try { sceAvPlayerAddSource(player, (base + "/bad-late/avplayer.mp4").c_str()); }
     catch (const std::runtime_error&) { callbackFailure = true; }
-    Check(callbackFailure, "late HTTP callback failure did not survive the C ABI boundary");
-    Check(sceAvPlayerClose(player) == 0, "failed HTTP player close failed");
+    Require(callbackFailure, "late HTTP callback failure did not survive the C ABI boundary");
+    Require(sceAvPlayerClose(player) == 0, "failed HTTP player close failed");
     HostFile file;
     init = InitData(&events);
     init.file_replacement = {&file, OpenRemoteReplacement, CloseFile, ReadFile, FileSize};
     replacedUrl = "https://no-network/replaced.mp4";
     player = sceAvPlayerInit(&init);
-    Check(sceAvPlayerAddSource(player, replacedUrl.c_str()) == 0 && sceAvPlayerStreamCount(player) == 3, "file replacement did not take priority over HTTPS transport");
-    Check(sceAvPlayerClose(player) == 0, "replacement HTTP player close failed");
+    Require(sceAvPlayerAddSource(player, replacedUrl.c_str()) == 0 && sceAvPlayerStreamCount(player) == 3, "file replacement did not take priority over HTTPS transport");
+    Require(sceAvPlayerClose(player) == 0, "replacement HTTP player close failed");
     std::lock_guard lock(allocations.mutex);
-    Check(allocations.blocks.empty(), "HTTP playback allocations leaked");
+    Require(allocations.blocks.empty(), "HTTP playback allocations leaked");
 }
 
 }
@@ -2537,17 +2534,17 @@ public:
         GetSystemInfo(&info);
         pageSize = static_cast<std::size_t>(info.dwPageSize);
         base = static_cast<char*>(VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
-        Check(base != nullptr, "allocate guarded page");
+        Require(base != nullptr, "allocate guarded page");
         DWORD previous = 0;
-        Check(VirtualProtect(base + pageSize, pageSize, PAGE_NOACCESS, &previous) != 0, "protect guard page");
+        Require(VirtualProtect(base + pageSize, pageSize, PAGE_NOACCESS, &previous) != 0, "protect guard page");
 #else
         const long configured = sysconf(_SC_PAGESIZE);
-        Check(configured > 0, "query page size");
+        Require(configured > 0, "query page size");
         pageSize = static_cast<std::size_t>(configured);
         void* mapping = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-        Check(mapping != MAP_FAILED, "allocate guarded page");
+        Require(mapping != MAP_FAILED, "allocate guarded page");
         base = static_cast<char*>(mapping);
-        Check(mprotect(base + pageSize, pageSize, PROT_NONE) == 0, "protect guard page");
+        Require(mprotect(base + pageSize, pageSize, PROT_NONE) == 0, "protect guard page");
 #endif
     }
 
@@ -2583,22 +2580,22 @@ void TestAddSourceGuestBounds() {
     AvPlayerInitData init{};
     init.num_output_video_framebuffers = 2;
     AvPlayerInternal* player = sceAvPlayerInit(&init);
-    Check(player != nullptr, "init player for AddSource bounds test");
+    Require(player != nullptr, "init player for AddSource bounds test");
 
     constexpr int savedErrno = 71;
 
     errno = savedErrno;
-    Check(sceAvPlayerAddSource(nullptr, "/app0/missing.mp4") == AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS &&
+    Require(sceAvPlayerAddSource(nullptr, "/app0/missing.mp4") == AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS &&
               errno == savedErrno,
           "null handle preserves errno");
 
     errno = savedErrno;
-    Check(sceAvPlayerAddSource(player, nullptr) == AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS &&
+    Require(sceAvPlayerAddSource(player, nullptr) == AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS &&
               errno == savedErrno,
           "null filename preserves errno");
 
     errno = savedErrno;
-    Check(sceAvPlayerAddSource(player, reinterpret_cast<const char*>(std::uintptr_t{0x10})) ==
+    Require(sceAvPlayerAddSource(player, reinterpret_cast<const char*>(std::uintptr_t{0x10})) ==
                   AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS &&
               errno == savedErrno,
           "unmapped filename returns invalid params without mutating errno");
@@ -2607,7 +2604,7 @@ void TestAddSourceGuestBounds() {
     char* const unterminated = guarded.GuardStart() - 16;
     std::memset(unterminated, 'a', 16);
     errno = savedErrno;
-    Check(sceAvPlayerAddSource(player, unterminated) == AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS &&
+    Require(sceAvPlayerAddSource(player, unterminated) == AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS &&
               errno == savedErrno,
           "unterminated filename hitting guard page returns invalid params without mutating errno");
 
@@ -2616,29 +2613,29 @@ void TestAddSourceGuestBounds() {
     char* const validAtBoundary = guarded.GuardStart() - missingSize;
     std::memcpy(validAtBoundary, missing, missingSize);
     errno = savedErrno;
-    Check(sceAvPlayerAddSource(player, validAtBoundary) == AvPlayer::SCE_AVPLAYER_ERROR_OPERATION_FAILED &&
+    Require(sceAvPlayerAddSource(player, validAtBoundary) == AvPlayer::SCE_AVPLAYER_ERROR_OPERATION_FAILED &&
               errno == savedErrno,
           "terminated filename before guard page reaches AddSource cleanly");
 
     const std::string oversized(65537, 'a');
     errno = savedErrno;
-    Check(sceAvPlayerAddSource(player, oversized.c_str()) == AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS &&
+    Require(sceAvPlayerAddSource(player, oversized.c_str()) == AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS &&
               errno == savedErrno,
           "oversized filename returns invalid params without mutating errno");
 
     const std::string maxAllowed(65536, 'a');
     errno = savedErrno;
-    Check(sceAvPlayerAddSource(player, maxAllowed.c_str()) == AvPlayer::SCE_AVPLAYER_ERROR_OPERATION_FAILED &&
+    Require(sceAvPlayerAddSource(player, maxAllowed.c_str()) == AvPlayer::SCE_AVPLAYER_ERROR_OPERATION_FAILED &&
               errno == savedErrno,
           "maximum length filename passes copy step");
 
     errno = savedErrno;
-    Check(sceAvPlayerAddSource(player, "") == AvPlayer::SCE_AVPLAYER_ERROR_OPERATION_FAILED &&
+    Require(sceAvPlayerAddSource(player, "") == AvPlayer::SCE_AVPLAYER_ERROR_OPERATION_FAILED &&
               errno == savedErrno,
           "empty filename fails as operation failed without mutating errno");
 
     errno = savedErrno;
-    Check(sceAvPlayerAddSourceEx(player, 0, reinterpret_cast<const AvPlayerSourceDetails*>(guarded.GuardStart() - 4)) ==
+    Require(sceAvPlayerAddSourceEx(player, 0, reinterpret_cast<const AvPlayerSourceDetails*>(guarded.GuardStart() - 4)) ==
                   AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS &&
               errno == savedErrno,
           "guard-page-straddling source details return invalid params without mutating errno");
@@ -2647,7 +2644,7 @@ void TestAddSourceGuestBounds() {
     guardUri.uri.name = unterminated;
     guardUri.uri.length = 32;
     errno = savedErrno;
-    Check(sceAvPlayerAddSourceEx(player, 0, &guardUri) == AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS &&
+    Require(sceAvPlayerAddSourceEx(player, 0, &guardUri) == AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS &&
               errno == savedErrno,
           "guard-page-straddling sourceDetails URI returns invalid params without mutating errno");
 
@@ -2658,11 +2655,11 @@ void TestAddSourceGuestBounds() {
     exactBoundary.uri.name = boundaryBytes;
     exactBoundary.uri.length = static_cast<uint32_t>(unterminatedLength);
     errno = savedErrno;
-    Check(sceAvPlayerAddSourceEx(player, 0, &exactBoundary) == AvPlayer::SCE_AVPLAYER_ERROR_OPERATION_FAILED &&
+    Require(sceAvPlayerAddSourceEx(player, 0, &exactBoundary) == AvPlayer::SCE_AVPLAYER_ERROR_OPERATION_FAILED &&
               errno == savedErrno,
           "bounded sourceDetails URI right before guard page reaches AddSource cleanly");
 
-    Check(sceAvPlayerClose(player) == AvPlayer::SCE_OK, "close player after AddSource bounds test");
+    Require(sceAvPlayerClose(player) == AvPlayer::SCE_OK, "close player after AddSource bounds test");
 }
 
 }
@@ -2696,7 +2693,7 @@ int main(int argc, char** argv) {
             std::puts("AvPlayer paused first video tests passed");
             return 0;
         }
-        Check(argc == 1, "unknown AvPlayer test arguments");
+        Require(argc == 1, "unknown AvPlayer test arguments");
         WriteMovie();
         TestLoopWarningAtPlayback();
         TestAudioLoopWarningAtPlayback();
@@ -2730,20 +2727,20 @@ int main(int argc, char** argv) {
         TestTrailingVideoAfterShortAudio();
         {
             errno = 71;
-            Check(sceAvPlayerInit(reinterpret_cast<AvPlayerInitData*>(static_cast<std::uintptr_t>(0x10))) == nullptr && errno == 71,
+            Require(sceAvPlayerInit(reinterpret_cast<AvPlayerInitData*>(static_cast<std::uintptr_t>(0x10))) == nullptr && errno == 71,
                   "unreadable init data must return null without changing errno");
             AvPlayerInternal* badHandle = nullptr;
             errno = 71;
-            Check(sceAvPlayerInitEx(reinterpret_cast<const AvPlayerInitDataEx*>(static_cast<std::uintptr_t>(0x10)), &badHandle) ==
+            Require(sceAvPlayerInitEx(reinterpret_cast<const AvPlayerInitDataEx*>(static_cast<std::uintptr_t>(0x10)), &badHandle) ==
                       AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS &&
                       badHandle == nullptr && errno == 71,
                   "unreadable extended init data must fail without changing errno");
             AvPlayerInitData init{};
             init.num_output_video_framebuffers = 2;
             AvPlayerInternal* player = sceAvPlayerInit(&init);
-            Check(player != nullptr, "valid init creates player");
+            Require(player != nullptr, "valid init creates player");
             errno = 71;
-            Check(sceAvPlayerAddSourceEx(player, 0, reinterpret_cast<const AvPlayerSourceDetails*>(static_cast<std::uintptr_t>(0x10))) ==
+            Require(sceAvPlayerAddSourceEx(player, 0, reinterpret_cast<const AvPlayerSourceDetails*>(static_cast<std::uintptr_t>(0x10))) ==
                       AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS &&
                       errno == 71,
                   "unreadable source details must fail without changing errno");
@@ -2751,15 +2748,15 @@ int main(int argc, char** argv) {
             badUri.uri.name = reinterpret_cast<const char*>(static_cast<std::uintptr_t>(0x10));
             badUri.uri.length = 8;
             errno = 71;
-            Check(sceAvPlayerAddSourceEx(player, 0, &badUri) == AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS && errno == 71,
+            Require(sceAvPlayerAddSourceEx(player, 0, &badUri) == AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS && errno == 71,
                   "unreadable source URI must fail without changing errno");
             AvPlayerSourceDetails oversizedUri{};
             oversizedUri.uri.name = "movie.mp4";
             oversizedUri.uri.length = 0xFFFFFFFFu;
             errno = 71;
-            Check(sceAvPlayerAddSourceEx(player, 0, &oversizedUri) == AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS && errno == 71,
+            Require(sceAvPlayerAddSourceEx(player, 0, &oversizedUri) == AvPlayer::SCE_AVPLAYER_ERROR_INVALID_PARAMS && errno == 71,
                   "oversized source URI length must fail without allocating");
-            Check(sceAvPlayerClose(player) == 0, "close player");
+            Require(sceAvPlayerClose(player) == 0, "close player");
         }
         TestAddSourceGuestBounds();
         std::puts("AvPlayer tests passed");

@@ -1,4 +1,5 @@
 #include "prx/libSceNet/libSceNet.hpp"
+#include "Testing.hpp"
 #include <nid/NidCompute.hpp>
 #include <algorithm>
 #include <array>
@@ -12,12 +13,6 @@
 #else
 #include <dlfcn.h>
 #endif
-
-static void Require(bool value, std::source_location location = std::source_location::current()) {
-    if (value) return;
-    std::fprintf(stderr, "Patched IPV6_V6ONLY check failed at line %u\n", location.line());
-    std::abort();
-}
 
 template<typename TFunction>
 static TFunction Function(void* module, const char* name) {

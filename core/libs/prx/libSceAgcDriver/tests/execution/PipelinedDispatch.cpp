@@ -8,6 +8,7 @@
 #include "prx/libc/include/Shutdown.hpp"
 #include "DepthFastClearHarness.hpp"
 #include "TargetAddressWindow.hpp"
+#include "Testing.hpp"
 #include "VulkanTestDevice.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -98,10 +99,6 @@ alignas(256) constexpr std::array<std::uint32_t, 23> KeyFillCode{
     0x8a867e06u, 0xbefe0406u, 0xbf85fff9u, 0xbefe0404u, 0xe0102000u, 0x80000604u, 0xbf810000u};
 
 alignas(256) constexpr std::array<std::uint32_t, 15> PlaneClearCode{0xd7460004u, 0x0401060cu, 0xf4280204u, 0xfa000000u, 0xd7460005u, 0x0405060du, 0x7e0c020eu, 0xbf8cc07fu, 0x7e000208u, 0x7e020209u, 0x7e04020au, 0x7e06020bu, 0xf0200f28u, 0x00000004u, 0xbf810000u};
-
-void check(bool condition, const std::string& what) {
-    if (!condition) throw std::runtime_error("pipelined dispatch: " + what);
-}
 
 template <typename Ready>
 void WaitUntil(Ready ready, const std::string& what) {
@@ -201,7 +198,7 @@ Shader ComputeShader(const void* code, std::uint32_t bytes) {
 
 void Submit(std::vector<std::uint32_t>& words) {
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
-    check(sceAgcDriverSubmitDcb(&packet) == 0, "submission failed");
+    Require(sceAgcDriverSubmitDcb(&packet) == 0, "submission failed");
 }
 
 void Settle(std::span<const std::uint32_t> words) {
@@ -294,7 +291,7 @@ int main() {
         Scratch = NewBlock();
         Table = NewBlock();
         NewTargetPair();
-        check((reinterpret_cast<std::uintptr_t>(TargetA) >> 32u) == (reinterpret_cast<std::uintptr_t>(TargetB) >> 32u), "the two targets do not share their high address dword");
+        Require((reinterpret_cast<std::uintptr_t>(TargetA) >> 32u) == (reinterpret_cast<std::uintptr_t>(TargetB) >> 32u), "the two targets do not share their high address dword");
         const auto initialDescriptor = BufferDescriptor(TargetA, BufferBytes);
         std::copy(initialDescriptor.begin(), initialDescriptor.end(), Table);
         const std::array<std::uint32_t, 5> values{0x0a0b0c0du, 0x11112222u, 0x33334444u, 0x55556666u, 0x77778888u};
@@ -307,12 +304,12 @@ int main() {
             AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Output), BufferBytes);
             const auto drains = DrawPipeline::DrainRequestsByOpcode(DispatchOpcode) - drainsBefore;
             for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
-                check(Input[lane] == value, "the immediate fill did not land in lane " + std::to_string(lane));
-                check(Output[lane] == value + 1u, "round " + std::to_string(round) + ": lane " + std::to_string(lane) + " of the output is " + std::to_string(Output[lane]) + ", expected " + std::to_string(value + 1u) + " (the dispatch did not see the fill before it)");
+                Require(Input[lane] == value, "the immediate fill did not land in lane " + std::to_string(lane));
+                Require(Output[lane] == value + 1u, "round " + std::to_string(round) + ": lane " + std::to_string(lane) + " of the output is " + std::to_string(Output[lane]) + ", expected " + std::to_string(value + 1u) + " (the dispatch did not see the fill before it)");
             }
             std::printf("pipelined dispatch: input fill round %zu, fill 0x%08x, dispatch drains %llu\n", round, value, static_cast<unsigned long long>(drains));
-            if (!pipelinedDispatch) check(drains >= 1, "a dispatch did not drain the pipeline, and APS5_PIPELINE_DISPATCH is off");
-            if (pipelinedDispatch) check(drains <= 1, "a dispatch drained the pipeline more than once (" + std::to_string(drains) + ")");
+            if (!pipelinedDispatch) Require(drains >= 1, "a dispatch did not drain the pipeline, and APS5_PIPELINE_DISPATCH is off");
+            if (pipelinedDispatch) Require(drains <= 1, "a dispatch drained the pipeline more than once (" + std::to_string(drains) + ")");
         }
         for (std::size_t round = 0; round < 3; ++round) {
             const auto value = 0xc0de0000u + static_cast<std::uint32_t>(round);
@@ -324,12 +321,12 @@ int main() {
             AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Output), BufferBytes);
             const auto drains = DrawPipeline::DrainRequestsByOpcode(DispatchOpcode) - drainsBefore;
             for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
-                check(Scratch[lane] == value, "the scratch fill did not land in lane " + std::to_string(lane));
-                check(Output[lane] == Input[lane] + 1u, "scratch round " + std::to_string(round) + ": lane " + std::to_string(lane) + " of the output is " + std::to_string(Output[lane]) + ", expected " + std::to_string(Input[lane] + 1u));
+                Require(Scratch[lane] == value, "the scratch fill did not land in lane " + std::to_string(lane));
+                Require(Output[lane] == Input[lane] + 1u, "scratch round " + std::to_string(round) + ": lane " + std::to_string(lane) + " of the output is " + std::to_string(Output[lane]) + ", expected " + std::to_string(Input[lane] + 1u));
             }
             std::printf("pipelined dispatch: scratch fill round %zu, fill 0x%08x, dispatch drains %llu\n", round, value, static_cast<unsigned long long>(drains));
-            if (!pipelinedDispatch) check(drains >= 1, "a dispatch did not drain the pipeline, and APS5_PIPELINE_DISPATCH is off");
-            if (pipelinedDispatch) check(drains == 0, "a dispatch that reads nothing pending drained the pipeline (" + std::to_string(drains) + ")");
+            if (!pipelinedDispatch) Require(drains >= 1, "a dispatch did not drain the pipeline, and APS5_PIPELINE_DISPATCH is off");
+            if (pipelinedDispatch) Require(drains == 0, "a dispatch that reads nothing pending drained the pipeline (" + std::to_string(drains) + ")");
         }
         const std::array<std::uint32_t, 4> tableValues{0x6a6a0001u, 0x6b6b0002u, 0x6c6c0003u, 0x6d6d0004u};
         for (std::size_t round = 0; round < tableValues.size(); ++round) {
@@ -357,11 +354,11 @@ int main() {
             AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Output), BufferBytes);
             const auto drains = DrawPipeline::DrainRequestsByOpcode(DispatchOpcode) - drainsBefore + DrawPipeline::DrainRequestsByReason(DrawPipeline::DrainReason::Capture) - captureDrainsBefore;
             for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
-                check(Output[lane] == value + 1u, "descriptor round " + std::to_string(round) + ": lane " + std::to_string(lane) + " of the output is " + std::to_string(Output[lane]) + ", expected " + std::to_string(value + 1u) + " (the dispatch read the buffer the table named before the pending fill of the table)");
+                Require(Output[lane] == value + 1u, "descriptor round " + std::to_string(round) + ": lane " + std::to_string(lane) + " of the output is " + std::to_string(Output[lane]) + ", expected " + std::to_string(value + 1u) + " (the dispatch read the buffer the table named before the pending fill of the table)");
             }
             std::printf("pipelined dispatch: descriptor round %zu, fill 0x%08x, dispatch drains %llu\n", round, value, static_cast<unsigned long long>(drains));
-            if (!pipelinedDispatch) check(drains >= 1, "a dispatch did not drain the pipeline, and APS5_PIPELINE_DISPATCH is off");
-            if (pipelinedDispatch) check(drains == 1, "a dispatch whose table entry is pending a write drained " + std::to_string(drains) + " times, expected once");
+            if (!pipelinedDispatch) Require(drains >= 1, "a dispatch did not drain the pipeline, and APS5_PIPELINE_DISPATCH is off");
+            if (pipelinedDispatch) Require(drains == 1, "a dispatch whose table entry is pending a write drained " + std::to_string(drains) + " times, expected once");
         }
         const std::array<std::uint32_t, 5> scalarValues{0x13572468u, 0x2468ace0u, 0x0f1e2d3cu, 0x9abcdef0u, 0x31415926u};
         for (std::size_t round = 0; round < scalarValues.size(); ++round) {
@@ -373,11 +370,11 @@ int main() {
             AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Output), BufferBytes);
             const auto drains = DrawPipeline::DrainRequestsByOpcode(DispatchOpcode) - drainsBefore;
             for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
-                check(Output[lane] == value + 1u, "scalar round " + std::to_string(round) + ": lane " + std::to_string(lane) + " of the output is " + std::to_string(Output[lane]) + ", expected " + std::to_string(value + 1u) + " (a stale input)");
+                Require(Output[lane] == value + 1u, "scalar round " + std::to_string(round) + ": lane " + std::to_string(lane) + " of the output is " + std::to_string(Output[lane]) + ", expected " + std::to_string(value + 1u) + " (a stale input)");
             }
             std::printf("pipelined dispatch: scalar read round %zu, fill 0x%08x, dispatch drains %llu\n", round, value, static_cast<unsigned long long>(drains));
-            if (!pipelinedDispatch) check(drains >= 1, "a dispatch did not drain the pipeline, and APS5_PIPELINE_DISPATCH is off");
-            if (pipelinedDispatch) check(drains <= 1, "a dispatch drained the pipeline more than once (" + std::to_string(drains) + ")");
+            if (!pipelinedDispatch) Require(drains >= 1, "a dispatch did not drain the pipeline, and APS5_PIPELINE_DISPATCH is off");
+            if (pipelinedDispatch) Require(drains <= 1, "a dispatch drained the pipeline more than once (" + std::to_string(drains) + ")");
         }
         std::uint32_t missKey = 0;
         const std::array<std::uint32_t, 3> missValues{0x7a7a0001u, 0x7b7b0002u, 0x7c7c0003u};
@@ -397,12 +394,12 @@ int main() {
             AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Scratch), BufferBytes);
             AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Output), BufferBytes);
             for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
-                check(Scratch[lane] == current, "missed round " + std::to_string(round) + ": the queued scratch fill did not land in lane " + std::to_string(lane));
-                check(Output[lane] == current + 1u, "missed round " + std::to_string(round) + ": lane " + std::to_string(lane) + " of the output is " + std::to_string(Output[lane]) + ", expected " + std::to_string(current + 1u) + " (the dispatch whose reads are clear of the queued write)");
+                Require(Scratch[lane] == current, "missed round " + std::to_string(round) + ": the queued scratch fill did not land in lane " + std::to_string(lane));
+                Require(Output[lane] == current + 1u, "missed round " + std::to_string(round) + ": lane " + std::to_string(lane) + " of the output is " + std::to_string(Output[lane]) + ", expected " + std::to_string(current + 1u) + " (the dispatch whose reads are clear of the queued write)");
             }
             std::printf("pipelined dispatch: missed dispatch round %zu, reads clear of the queued write: %s\n", round, Describe(clearHandling).c_str());
-            if (dispatchMisses) check(clearHandling.queued && clearHandling.drains == 0, "a missed plain dispatch whose reads are clear of the queued write did not queue behind it: " + Describe(clearHandling));
-            if (!dispatchMisses) check(!clearHandling.queued && clearHandling.drains >= 1, "a missed dispatch did not drain the pipeline, and APS5_PIPELINE_DISPATCH_MISSES is off: " + Describe(clearHandling));
+            if (dispatchMisses) Require(clearHandling.queued && clearHandling.drains == 0, "a missed plain dispatch whose reads are clear of the queued write did not queue behind it: " + Describe(clearHandling));
+            if (!dispatchMisses) Require(!clearHandling.queued && clearHandling.drains >= 1, "a missed dispatch did not drain the pipeline, and APS5_PIPELINE_DISPATCH_MISSES is off: " + Describe(clearHandling));
 
             const auto tableFill = FillPacket(static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(TargetB)), Table, 4u);
             std::vector<std::uint32_t> overlap(tableFill.begin(), tableFill.end());
@@ -411,10 +408,10 @@ int main() {
             const auto overlapHandling = SubmitBehindHeldCommitter(overlap, Output, BufferBytes, "a missed dispatch whose table has a queued write");
             AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Output), BufferBytes);
             for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
-                check(Output[lane] == fresh + 1u, "missed round " + std::to_string(round) + ": lane " + std::to_string(lane) + " of the output is " + std::to_string(Output[lane]) + ", expected " + std::to_string(fresh + 1u) + " (the dispatch read its table before the queued write of the table)");
+                Require(Output[lane] == fresh + 1u, "missed round " + std::to_string(round) + ": lane " + std::to_string(lane) + " of the output is " + std::to_string(Output[lane]) + ", expected " + std::to_string(fresh + 1u) + " (the dispatch read its table before the queued write of the table)");
             }
             std::printf("pipelined dispatch: missed dispatch round %zu, table under a queued write: %s\n", round, Describe(overlapHandling).c_str());
-            check(!overlapHandling.queued && overlapHandling.drains >= 1, "a missed plain dispatch whose table has a queued write did not drain the pipeline: " + Describe(overlapHandling));
+            Require(!overlapHandling.queued && overlapHandling.drains >= 1, "a missed plain dispatch whose table has a queued write did not drain the pipeline: " + Describe(overlapHandling));
         }
 
         Shader htileShader = ComputeShader(HtileMaskCode.data(), sizeof(HtileMaskCode));
@@ -440,10 +437,10 @@ int main() {
             AgcDriver::GuestMemory::FlushGpuWrites(htileAddress, htileRecords * 32u);
             for (std::uint32_t word = 0; word < htileRecords * 8u; ++word) {
                 const auto expected = word < htileRecords * 4u ? (seed & htileKeep) | htileValue : seed;
-                check(htile[word] == expected, "HTILE round " + std::to_string(round) + ": word " + std::to_string(word) + " is " + std::to_string(htile[word]) + ", expected " + std::to_string(expected));
+                Require(htile[word] == expected, "HTILE round " + std::to_string(round) + ": word " + std::to_string(word) + " is " + std::to_string(htile[word]) + ", expected " + std::to_string(expected));
             }
             std::printf("pipelined dispatch: HTILE mask round %zu: %s\n", round, Describe(handling).c_str());
-            if (expectInline(round)) check(!handling.queued && handling.drains >= 1, "an HTILE mask dispatch did not keep the inline path in round " + std::to_string(round) + ": " + Describe(handling));
+            if (expectInline(round)) Require(!handling.queued && handling.drains >= 1, "an HTILE mask dispatch did not keep the inline path in round " + std::to_string(round) + ": " + Describe(handling));
         }
 
         auto* keys = NewBlock();
@@ -458,10 +455,10 @@ int main() {
             AgcDriver::GuestMemory::FlushGpuWrites(keysAddress, keyDwords * 8u);
             for (std::uint32_t word = 0; word < keyDwords * 2u; ++word) {
                 const auto expected = word < keyDwords ? keyCode : 0u;
-                check(keys[word] == expected, "key fill round " + std::to_string(round) + ": dword " + std::to_string(word) + " is " + std::to_string(keys[word]) + ", expected " + std::to_string(expected));
+                Require(keys[word] == expected, "key fill round " + std::to_string(round) + ": dword " + std::to_string(word) + " is " + std::to_string(keys[word]) + ", expected " + std::to_string(expected));
             }
             std::printf("pipelined dispatch: key fill round %zu: %s\n", round, Describe(handling).c_str());
-            if (expectInline(round)) check(!handling.queued && handling.drains >= 1, "a key fill dispatch did not keep the inline path in round " + std::to_string(round) + ": " + Describe(handling));
+            if (expectInline(round)) Require(!handling.queued && handling.drains >= 1, "a key fill dispatch did not keep the inline path in round " + std::to_string(round) + ": " + Describe(handling));
         }
 
         auto* plane = NewBlock(true);
@@ -469,13 +466,13 @@ int main() {
         const auto planeAddress = reinterpret_cast<std::uintptr_t>(plane);
         Settle(FillPacket(0x3f800000u, color, 16u));
         auto* const driverRecorder = AgcDriver::Graphics::Recorder::Active();
-        check(driverRecorder != nullptr, "the driver's device has no active recorder");
+        Require(driverRecorder != nullptr, "the driver's device has no active recorder");
         const auto depthDevice = OpenVulkanTestDevice();
-        check(depthDevice != nullptr, "the depth surface device did not open");
+        Require(depthDevice != nullptr, "the depth surface device did not open");
         AgcDriver::VulkanDeviceTestAccess::ContextOf(*depthDevice).recorder->Activate();
         const auto depthShaders = DepthFastClearHarness::Compile(*depthDevice);
         const DepthFastClearHarness::Surface surface{planeAddress, 0, 0, false, VK_FORMAT_D32_SFLOAT};
-        check(DepthFastClearHarness::Draw(*depthDevice, depthShaders, surface, {.depthWrite = true, .depthCompare = VK_COMPARE_OP_ALWAYS}) == DepthFastClearHarness::Covered, "the depth draw did not cover the plane");
+        Require(DepthFastClearHarness::Draw(*depthDevice, depthShaders, surface, {.depthWrite = true, .depthCompare = VK_COMPARE_OP_ALWAYS}) == DepthFastClearHarness::Covered, "the depth draw did not cover the plane");
         driverRecorder->Activate();
         const auto planeView = PlaneDescriptor(plane);
         const auto colorBuffer = BufferDescriptor(color, 16u);
@@ -484,15 +481,15 @@ int main() {
         std::copy(colorBuffer.begin(), colorBuffer.end(), planeData.begin() + planeView.size());
         const auto planeBytes = static_cast<std::size_t>(AgcDriver::Graphics::DepthSliceBytes({DepthFastClearHarness::Width, DepthFastClearHarness::Height}, 4u));
         for (std::size_t round = 0; round < 3; ++round) {
-            check(AgcDriver::Graphics::DepthSurfaceAt(planeAddress), "depth plane round " + std::to_string(round) + ": the plane is no longer a depth surface");
+            Require(AgcDriver::Graphics::DepthSurfaceAt(planeAddress), "depth plane round " + std::to_string(round) + ": the plane is no longer a depth surface");
             const auto before = AgcDriver::Graphics::DepthClearCounts();
             auto words = ComputeDispatch(PlaneClearCode.data(), {8u, 8u, 1u}, (12u << 1u) | 0x80u | 0x100u | 0x200u | (1u << 11u), planeData, {DepthFastClearHarness::Width / 8u, DepthFastClearHarness::Height / 8u, 1u});
             const auto handling = SubmitBehindHeldCommitter(words, plane, planeBytes, "a depth plane clear dispatch");
             const auto matched = AgcDriver::Graphics::DepthClearCounts().matched - before.matched;
             std::printf("pipelined dispatch: depth plane clear round %zu: %s, %llu depth plane clears matched\n", round, Describe(handling).c_str(), static_cast<unsigned long long>(matched));
             if (expectInline(round)) {
-                check(!handling.queued && handling.drains >= 1, "a depth plane clear dispatch did not keep the inline path in round " + std::to_string(round) + ": " + Describe(handling));
-                check(matched == 1u, "depth plane round " + std::to_string(round) + ": the inline path matched " + std::to_string(matched) + " depth plane clears, expected 1");
+                Require(!handling.queued && handling.drains >= 1, "a depth plane clear dispatch did not keep the inline path in round " + std::to_string(round) + ": " + Describe(handling));
+                Require(matched == 1u, "depth plane round " + std::to_string(round) + ": the inline path matched " + std::to_string(matched) + " depth plane clears, expected 1");
             }
         }
         LibcRunShutdown_nid_postfix();

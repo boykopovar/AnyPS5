@@ -30,6 +30,7 @@ if(BUILD_TESTING)
     endif()
 
     add_library(guest_loadexec_host SHARED ${LIBS_INCLUDE_DIR}/tests/GuestLoadExecHost.cpp)
+    target_include_directories(guest_loadexec_host PRIVATE ${CMAKE_SOURCE_DIR}/core/test/include)
     target_include_directories(guest_loadexec_host PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_loadexec_host PRIVATE libSceSystemService libc libkernel)
     set_target_properties(guest_loadexec_host PROPERTIES PREFIX "" SUFFIX ".prx" BUILD_RPATH "$ORIGIN")

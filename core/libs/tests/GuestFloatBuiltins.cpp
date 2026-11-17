@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <bit>
 #include <cmath>
 #include <cstdint>
@@ -9,12 +10,6 @@
 #include <limits>
 #include <source_location>
 #include <xmmintrin.h>
-
-static void Require(bool value, std::source_location location = std::source_location::current()) {
-    if (value) return;
-    std::fprintf(stderr, "%s:%u: requirement failed\n", location.file_name(), location.line());
-    std::abort();
-}
 
 static __complex__ float TestComplex(float real, float imaginary) {
     __complex__ float value{};

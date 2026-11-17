@@ -1,6 +1,7 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -37,12 +38,6 @@ void* APS5_VABI Reallocate_nid_no_patch(void*, std::size_t) { throw std::runtime
 void* APS5_VABI Align_nid_no_patch(std::size_t, std::size_t) { throw std::runtime_error("unexpected aligned allocation"); }
 void* APS5_VABI Realign_nid_no_patch(void*, std::size_t, std::size_t) { throw std::runtime_error("unexpected aligned reallocation"); }
 int APS5_VABI PosixAlign_nid_no_patch(void**, std::size_t, std::size_t) { throw std::runtime_error("unexpected posix_memalign"); }
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "ICU enumeration: %s\n", message);
-    std::abort();
-}
 
 template<class F>
 bool Rejects(F call) {
@@ -110,7 +105,7 @@ void Dispatch() {
     Require(words.closes == 1 && words.closed == &enumeration, "close calls the close callback");
 }
 
-void Failures() {
+void FailurePaths() {
     Words words;
     UEnumeration enumeration = Enumeration(words);
     std::int32_t status = IllegalArgument;
@@ -171,7 +166,7 @@ int main() {
         reinterpret_cast<void*>(PosixAlign_nid_no_patch)};
     ApplicationHeapRegister_nid_no_patch(api.data());
     Dispatch();
-    Failures();
+    FailurePaths();
     MissingCallbacks();
     GuestMemory();
     return 0;

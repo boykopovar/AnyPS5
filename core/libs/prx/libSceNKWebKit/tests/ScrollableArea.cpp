@@ -1,4 +1,5 @@
 #include "prx/libSceNKWebKit/include/WebCoreExports.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -11,13 +12,6 @@ constexpr int kUnit = 64;
 
 WebCore::LayoutUnit Px(int px) {
     return WebCore::LayoutUnit{px * kUnit};
-}
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "ScrollableArea check failed at line %u\n", location.line());
-        std::abort();
-    }
 }
 
 }

@@ -1,11 +1,10 @@
 #include "prx/libkernel/Pthread/include/Atfork.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <cstddef>
 #include <cstdlib>
 #include <thread>
 #include <vector>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static std::atomic<int> calls{0};
 

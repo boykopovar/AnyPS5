@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -8,13 +9,6 @@
 #include <cstring>
 #include <string>
 #include <vector>
-
-static void Require(bool condition) {
-    if (!condition) {
-        std::fputs("GuestWmemmoveSnapshot check failed\n", stderr);
-        std::abort();
-    }
-}
 
 int main() {
     constexpr std::array<char16_t, 8> values = {0, 1, 0xff, 0xff00, 0xd800, 0xdc00, 0xffff, 0x1234};

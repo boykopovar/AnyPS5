@@ -1,18 +1,11 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
-
-namespace {
-
-void Require(bool value) {
-    if (!value) throw std::runtime_error("reallocalign check failed");
-}
-
-}
 
 int main() {
     void* api[10]{};

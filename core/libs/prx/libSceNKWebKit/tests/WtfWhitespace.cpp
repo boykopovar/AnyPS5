@@ -1,4 +1,5 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -12,13 +13,6 @@ namespace {
 using namespace NKWebKit::WtfAbi;
 using Predicate = bool (APS5_VABI *)(char16_t);
 std::u16string calls;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "WTF whitespace check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 bool APS5_VABI Whitespace(char16_t c) {
     calls.push_back(c);

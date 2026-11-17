@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
 #include "prx/libSceLibreSsl/include/ObjectTable.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstdint>
@@ -12,22 +13,6 @@ namespace {
 
 constexpr std::uint64_t UnknownNidError = (8ull << 24) | (0xfffull << 12) | 101;
 constexpr std::array UnassignedNids = {102, 118, 350, 511, 772, 774, 775};
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "failed: %s\n", message);
-    std::abort();
-}
-
-template<typename TAction>
-void RequireThrows(TAction action, const char* message) {
-    try {
-        action();
-    } catch (const std::exception&) {
-        return;
-    }
-    Require(false, message);
-}
 
 bool IsUnassigned(int nid) {
     for (const int value : UnassignedNids) if (value == nid) return true;
@@ -68,9 +53,9 @@ void CheckBuiltIn() {
         if (IsUnassigned(nid) || nid == 393) continue;
         Require(OBJ_sn2nid_nid_postfix(OBJ_nid2sn_nid_postfix(nid)) == nid, "every assigned short name maps back to its NID");
     }
-    RequireThrows([] { OBJ_sn2nid_nid_postfix(nullptr); }, "a null name");
+    ExpectErr([] { OBJ_sn2nid_nid_postfix(nullptr); }, "a null name");
     errno = 71;
-    RequireThrows([] { OBJ_sn2nid_nid_postfix(reinterpret_cast<const char*>(0x10)); }, "an unreadable name");
+    ExpectErr([] { OBJ_sn2nid_nid_postfix(reinterpret_cast<const char*>(0x10)); }, "an unreadable name");
     Require(errno == 71, "an unreadable name keeps errno");
     alignas(4096) static char pages[8192];
     std::memcpy(pages + 4093, "SHA256", 7);

@@ -1,5 +1,6 @@
 #include "prx/libSceWebBrowserDialog/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -13,12 +14,6 @@ constexpr int INVALID_STATE = static_cast<int>(0x80B80006u);
 constexpr int NOT_RUNNING = static_cast<int>(0x80B8000Bu);
 constexpr int PARAM_INVALID = static_cast<int>(0x80B8000Au);
 constexpr int ARG_NULL = static_cast<int>(0x80B8000Du);
-
-void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "FAIL: %s\n", what);
-    std::abort();
-}
 
 WebBrowserDialogCookieParam Cookie(const char* url, const char* cookie) {
     WebBrowserDialogCookieParam param {};

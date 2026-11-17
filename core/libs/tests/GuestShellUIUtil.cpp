@@ -1,4 +1,5 @@
 #include "prx/libSceShellUIUtil/libSceShellUIUtil.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -11,12 +12,6 @@ namespace {
 
 constexpr int NotInitialized = static_cast<int>(0x80BA0001u);
 constexpr int InvalidArgument = static_cast<int>(0x80BA0020u);
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "ShellUIUtil: %s\n", message);
-    std::abort();
-}
 
 const ShellUIUtilLaunchParameter* LaunchParameter(const std::uint32_t* words) {
     return reinterpret_cast<const ShellUIUtilLaunchParameter*>(words);

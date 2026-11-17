@@ -9,6 +9,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceAgcDriver/tests/execution/VulkanTestDevice.hpp"
 #include "prx/libSceAgcDriver/tests/GuestMemoryLifetimeSupport.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -24,10 +25,6 @@ namespace {
 constexpr std::size_t BlockBytes = 65536;
 constexpr std::size_t FillBytes = 4096;
 constexpr std::array<std::uint32_t, 4> Pattern{0x12345678u, 0x89abcdefu, 0x24681357u, 0xfedcba98u};
-
-void Require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 std::uint64_t Address(const void* pointer) {
     return reinterpret_cast<std::uintptr_t>(pointer);

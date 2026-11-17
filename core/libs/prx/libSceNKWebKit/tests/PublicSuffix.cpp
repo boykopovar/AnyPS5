@@ -1,5 +1,6 @@
 #include "prx/libSceNKWebKit/include/PublicSuffixExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdio>
@@ -15,13 +16,6 @@ using NKWebKit::WtfAbi::String;
 using NKWebKit::WtfAbi::StringImpl;
 using SuffixQuery = bool (APS5_VABI*)(const String*);
 static_assert(std::is_same_v<decltype(&_ZN7WebCore14isPublicSuffixERKN3WTF6StringE), SuffixQuery>);
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "public suffix check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 void Check(std::string_view text, bool expected) {
     const auto string = _ZN3WTF6String8fromUTF8EPKhm(reinterpret_cast<const unsigned char*>(text.data()), text.size());

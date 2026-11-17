@@ -1,5 +1,6 @@
 #include "prx/libSceAt9Enc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdlib>
@@ -7,8 +8,6 @@
 namespace {
 
 constexpr int32_t invalidArgument = static_cast<int32_t>(0x81210001u);
-
-void Require(bool value) { if (!value) std::abort(); }
 
 }
 

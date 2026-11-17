@@ -1,6 +1,7 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstdio>
@@ -89,12 +90,6 @@ LibreSsl3Bignum* Number(int capacity) {
 
 void Clean() {
     for (const auto& allocation : allocations) Require(allocation.pointer == nullptr);
-}
-
-template<typename TCall> void Throws(TCall call) {
-    bool threw = false;
-    try { call(); } catch (const std::invalid_argument&) { threw = true; }
-    Require(threw);
 }
 
 class ReadOnlyPage {
@@ -234,13 +229,13 @@ void Disposal() {
 }
 
 void Invalid() {
-    Throws([] { RSA_set0_key_nid_postfix(nullptr, nullptr, nullptr, nullptr); });
-    Throws([] { RSA_set0_factors_nid_postfix(nullptr, nullptr, nullptr); });
-    Throws([] { RSA_set0_crt_params_nid_postfix(nullptr, nullptr, nullptr, nullptr); });
+    ExpectErr<std::invalid_argument>([] { RSA_set0_key_nid_postfix(nullptr, nullptr, nullptr, nullptr); });
+    ExpectErr<std::invalid_argument>([] { RSA_set0_factors_nid_postfix(nullptr, nullptr, nullptr); });
+    ExpectErr<std::invalid_argument>([] { RSA_set0_crt_params_nid_postfix(nullptr, nullptr, nullptr, nullptr); });
     std::uint64_t limb = 0x1234;
     LibreSsl3Bignum bad{&limb, 1, -1, 0, 0};
     const auto original = bad;
-    Throws([&] { BN_clear_free_nid_postfix(&bad); });
+    ExpectErr<std::invalid_argument>([&] { BN_clear_free_nid_postfix(&bad); });
     Require(std::memcmp(&bad, &original, sizeof(bad)) == 0 && limb == 0x1234);
     auto* old = Number(2);
     auto* first = Number(3);
@@ -251,9 +246,9 @@ void Invalid() {
     rsa.iqmp = &bad;
     const auto before = rsa;
     const auto beforeFrees = frees;
-    Throws([&] { RSA_set0_key_nid_postfix(&rsa, first, second, nullptr); });
-    Throws([&] { RSA_set0_factors_nid_postfix(&rsa, first, second); });
-    Throws([&] { RSA_set0_crt_params_nid_postfix(&rsa, first, nullptr, second); });
+    ExpectErr<std::invalid_argument>([&] { RSA_set0_key_nid_postfix(&rsa, first, second, nullptr); });
+    ExpectErr<std::invalid_argument>([&] { RSA_set0_factors_nid_postfix(&rsa, first, second); });
+    ExpectErr<std::invalid_argument>([&] { RSA_set0_crt_params_nid_postfix(&rsa, first, nullptr, second); });
     Require(std::memcmp(&rsa, &before, sizeof(rsa)) == 0 && frees == beforeFrees);
     BN_clear_free_nid_postfix(old);
     BN_clear_free_nid_postfix(first);

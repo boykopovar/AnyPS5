@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -11,11 +12,6 @@
 #endif
 
 namespace {
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "environment binding: %s\n", message);
-    std::abort();
-}
 
 #ifdef _WIN32
 using Module = HMODULE;

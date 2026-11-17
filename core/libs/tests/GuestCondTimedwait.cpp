@@ -5,6 +5,7 @@
 #include "prx/libkernel/Pthread/Posix/Common.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -21,8 +22,6 @@ static constexpr int POSIX_EINVAL = 22;
 static constexpr int POSIX_ETIMEDOUT = 60;
 static constexpr int MUTEX_TYPE_RECURSIVE = 2;
 static constexpr KernelClockid CLOCK_MONOTONIC_ID = 4;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 struct Context {
     PthreadMutex mutex = nullptr;

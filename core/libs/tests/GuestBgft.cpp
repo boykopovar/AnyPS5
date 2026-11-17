@@ -1,12 +1,12 @@
 #include "prx/libSceBgft/libSceBgft.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 
-static void Require(bool value) { if (!value) std::abort(); }
 
 class RawParams {
 public:

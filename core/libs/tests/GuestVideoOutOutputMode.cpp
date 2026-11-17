@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "tests/VideoOutTestEnvironment.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstdint>
@@ -19,8 +20,6 @@ static constexpr int INVALID_HANDLE = static_cast<int>(0x8029000B);
 static constexpr int RESOURCE_BUSY = static_cast<int>(0x80290009);
 static constexpr int UNSUPPORTED_OUTPUT_MODE = static_cast<int>(0x80290016);
 static constexpr int UNKNOWN_OUTPUT_MODE = static_cast<int>(0x8029001E);
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 int main() {
     VideoOutTestEnvironment environment;

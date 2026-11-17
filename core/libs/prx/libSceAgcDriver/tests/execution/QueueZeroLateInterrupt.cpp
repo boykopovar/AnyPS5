@@ -7,6 +7,7 @@
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
+#include "Testing.hpp"
 #include "VulkanTestDevice.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -36,17 +37,13 @@ constexpr std::size_t BlockBytes = 65536;
 
 alignas(256) constexpr std::array<std::uint32_t, 8> Code{0x34020082u, 0xe0301000u, 0x80000201u, 0xbf8c3f70u, 0x4a060481u, 0xe0701000u, 0x80010301u, 0xbf810000u};
 
-void check(bool condition, const std::string& what) {
-    if (!condition) throw std::runtime_error("queue zero late interrupt: " + what);
-}
-
 std::uint32_t* NewBlock() {
 #ifdef _WIN32
     auto* block = static_cast<std::uint32_t*>(VirtualAlloc(nullptr, BlockBytes, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
 #else
     auto* block = static_cast<std::uint32_t*>(std::aligned_alloc(BlockBytes, BlockBytes));
 #endif
-    check(block != nullptr, "cannot allocate a guest block");
+    Require(block != nullptr, "cannot allocate a guest block");
     std::memset(block, 0, BlockBytes);
     GuestAllocations::Mutation().Add(block, BlockBytes, true, true, false);
     return block;
@@ -88,10 +85,10 @@ int main() {
         for (std::uint32_t lane = 0; lane < Lanes; ++lane) input[lane] = 0x5b000000u | lane;
 
         KernelEqueue eq = 0;
-        check(sceKernelCreateEqueue(&eq, "AGC late interrupt") == 0, "event queue creation failed");
+        Require(sceKernelCreateEqueue(&eq, "AGC late interrupt") == 0, "event queue creation failed");
         auto owner = EqueuePin_nid_postfix(eq);
         int tag = 0;
-        check(sceAgcDriverAddEqEvent(eq, 0, &tag) == 0, "graphics event registration failed");
+        Require(sceAgcDriverAddEqEvent(eq, 0, &tag) == 0, "graphics event registration failed");
 
         const auto codeAddress = reinterpret_cast<std::uintptr_t>(Code.data());
         const auto labelAddress = reinterpret_cast<std::uintptr_t>(label);
@@ -107,12 +104,12 @@ int main() {
         std::vector<std::uint32_t> release{0xc0064900u, 0x06000528u, (2u << 29u) | (2u << 24u) | (1u << 16u), static_cast<std::uint32_t>(labelAddress), static_cast<std::uint32_t>(labelAddress >> 32u), 1u, 0u, 0u};
         const auto submit = [](std::vector<std::uint32_t>& words) {
             Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
-            check(sceAgcDriverSubmitDcb(&packet) == 0, "submission failed");
+            Require(sceAgcDriverSubmitDcb(&packet) == 0, "submission failed");
         };
         const auto waitFor = [](const auto& done, const char* what) {
             const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
             while (!done() && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            check(done(), what);
+            Require(done(), what);
         };
         const auto dormant = [] { return AgcDriver::DriverDetail::queue0Dormant.load(std::memory_order_relaxed); };
         auto& pipeline = AgcDriver::DriverDetail::DrawPipeline::Queue0();
@@ -130,15 +127,15 @@ int main() {
         int delivered = 0;
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
         while ((delivered = owner->GetTriggeredEvents(events.data(), 1)) == 0 && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        check(delivered == 1 && events[0].udata == &tag, "an end-of-pipe interrupt the draw pipeline committed after queue 0 went idle was not delivered");
+        Require(delivered == 1 && events[0].udata == &tag, "an end-of-pipe interrupt the draw pipeline committed after queue 0 went idle was not delivered");
 
         AgcDriverWaitIdle_nid_postfix();
-        check(label[0] == 1u, "the end-of-pipe label was not written");
-        for (std::uint32_t lane = 0; lane < Lanes; ++lane) check(output[lane] == input[lane] + 1u, "the dispatch before the interrupt stored a wrong value");
+        Require(label[0] == 1u, "the end-of-pipe label was not written");
+        for (std::uint32_t lane = 0; lane < Lanes; ++lane) Require(output[lane] == input[lane] + 1u, "the dispatch before the interrupt stored a wrong value");
 
-        check(sceAgcDriverDeleteEqEvent(eq, 0) == 0, "graphics event deletion failed");
+        Require(sceAgcDriverDeleteEqEvent(eq, 0) == 0, "graphics event deletion failed");
         owner.reset();
-        check(sceKernelDeleteEqueue(eq) == 0, "event queue deletion failed");
+        Require(sceKernelDeleteEqueue(eq) == 0, "event queue deletion failed");
         AgcDriverShutdown_nid_postfix();
         std::puts("queue zero late interrupt tests passed");
         return 0;

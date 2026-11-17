@@ -2,6 +2,7 @@
 #include "prx/libSceAvSetting/include/InventoryExports.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cerrno>
@@ -15,12 +16,6 @@ namespace {
 
 void ClobberErrno(std::uintptr_t, std::size_t) {
     errno = EACCES;
-}
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "AVSETTING PREDICATES: %s\n", message);
-    std::abort();
 }
 
 void Write(void* destination, const void* source, std::size_t bytes) {

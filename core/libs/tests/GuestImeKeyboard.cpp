@@ -1,5 +1,6 @@
 #include "prx/libSceIme/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -12,12 +13,6 @@ constexpr int InvalidUserId = static_cast<int>(0x80bc0010u);
 constexpr int NoResourceId = static_cast<int>(0x80bc0023u);
 constexpr int InvalidMode = static_cast<int>(0x80bc0024u);
 constexpr int InvalidAddress = static_cast<int>(0x80bc0031u);
-
-static void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
 
 static void RequireUntouched(const KeyboardInfo& info) {
     const auto* bytes = reinterpret_cast<const unsigned char*>(&info);

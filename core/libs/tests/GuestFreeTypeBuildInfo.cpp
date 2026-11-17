@@ -1,6 +1,7 @@
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "FreeTypeQueryOutputFixture.hpp"
+#include "Testing.hpp"
 
 #include FT_MODULE_H
 
@@ -12,13 +13,6 @@
 #include <stdexcept>
 
 using FreeType::GuestLibrary;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "FreeType build info check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 void CheckVersion(GuestLibrary* guest, FT_Library native) {
     std::array<FT_Int, 3> expected{};

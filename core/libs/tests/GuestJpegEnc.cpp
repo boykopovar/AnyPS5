@@ -3,6 +3,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "Decoder/Jpeg.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <cerrno>
 #include <cstdint>
@@ -18,8 +19,6 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 alignas(4) static unsigned char image[16 * 16 * 4];
 static unsigned char jpeg[4096];

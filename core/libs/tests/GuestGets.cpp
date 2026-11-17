@@ -2,6 +2,7 @@
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "tests/TemporaryFile.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <atomic>
 #include <cerrno>
@@ -26,12 +27,6 @@ namespace {
 
 using Gets = char* (APS5_VABI*)(char*);
 Gets readLine;
-
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "gets: %s\n", message);
-    std::abort();
-}
 
 class Input {
     FileStream* previous = __stdinp_nid_postfix;

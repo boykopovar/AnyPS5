@@ -4,6 +4,7 @@
 #include "prx/libSceVideoOut/include/KeyboardInput.hpp"
 #include "SDL_events.h"
 #include "SDL_keyboard.h"
+#include "Testing.hpp"
 
 #include <cerrno>
 #include <cstddef>
@@ -26,12 +27,6 @@
 #endif
 
 static constexpr int InitialUserId = 0x10000000;
-
-static void Require(bool value, std::source_location location = std::source_location::current()) {
-    if (value) return;
-    std::fprintf(stderr, "%s:%u: keyboard assertion failed\n", location.file_name(), location.line());
-    std::abort();
-}
 
 class GuardedOutput {
 public:

@@ -1,6 +1,7 @@
 #include "prx/libSceSystemService/include/SystemService.hpp"
 #include "SceTypes.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstdlib>
 #include <limits>
@@ -9,8 +10,6 @@
 #include <utility>
 
 namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
 
 void SetLanguage(const char* value) {
 #ifdef _WIN32

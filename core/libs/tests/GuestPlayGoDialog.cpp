@@ -2,6 +2,7 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -9,8 +10,6 @@
 #include <cstring>
 
 static void ClobberErrno(std::uintptr_t, std::size_t) { errno = 99; }
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 int main() {
     GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);

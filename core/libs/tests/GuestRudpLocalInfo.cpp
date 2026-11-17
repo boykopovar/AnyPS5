@@ -1,15 +1,12 @@
 #include "prx/libSceRudp/include/Api.hpp"
 #include "prx/libSceNet/include/Net.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-
-static void Require(bool value) {
-    if (!value) std::abort();
-}
 
 static void APS5_VABI Handler(int, int, int, void*) {}
 

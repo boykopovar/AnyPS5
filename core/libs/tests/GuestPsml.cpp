@@ -1,5 +1,6 @@
 #include "prx/libScePsml_debug/libScePsml_debug.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <atomic>
 #include <cerrno>
@@ -10,8 +11,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
 
 constexpr std::int32_t kErrNotInitialized = static_cast<std::int32_t>(0x8A810001);
 

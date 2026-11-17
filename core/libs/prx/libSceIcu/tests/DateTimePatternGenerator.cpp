@@ -49,7 +49,6 @@ void Run() {
 
 namespace UdatpgGetBestPattern {
 
-using IcuRecoveredTest::Require;
 
 namespace {
 
@@ -121,7 +120,6 @@ void Run() {
 
 namespace UdatpgGetBestPatternWithOptions {
 
-using IcuRecoveredTest::Require;
 
 static_assert(std::is_same_v<
     decltype(&udatpg_getBestPatternWithOptions_nid_postfix),
@@ -215,7 +213,6 @@ void Run() {
 
 namespace UdatpgGetFieldDisplayName {
 
-using IcuRecoveredTest::Require;
 
 static_assert(std::is_same_v<decltype(&udatpg_getFieldDisplayName_nid_postfix),
                              std::int32_t (APS5_VABI*)(const UDateTimePatternGenerator*,
@@ -276,7 +273,6 @@ void Run() {
 
 namespace UdatpgGetSkeleton {
 
-using IcuRecoveredTest::Require;
 
 static_assert(std::is_same_v<decltype(&udatpg_getSkeleton_nid_postfix),
               std::int32_t (APS5_VABI*)(UDateTimePatternGenerator*, const char16_t*, std::int32_t, char16_t*, std::int32_t, std::int32_t*)>);
@@ -345,7 +341,6 @@ void Run() {
 
 namespace UdatpgOpen {
 
-using IcuRecoveredTest::Require;
 
 static_assert(std::is_same_v<decltype(&udatpg_open_nid_postfix), UDateTimePatternGenerator* (APS5_VABI*)(const char*, std::int32_t*)>);
 

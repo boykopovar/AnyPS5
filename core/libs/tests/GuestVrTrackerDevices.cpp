@@ -1,5 +1,6 @@
 #include "prx/libSceVrTracker/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cerrno>
 #include <cstdlib>
@@ -26,14 +27,6 @@ struct QueryResult {
 std::uint8_t g_onion[16];
 std::uint8_t g_garlic[16];
 std::uint8_t g_work[16];
-
-void Require(bool value) { if (!value) std::abort(); }
-
-template <typename TFunction>
-void RequireThrows(TFunction function) {
-    try { function(); } catch (const std::runtime_error&) { return; }
-    std::abort();
-}
 
 QueryResult FreshResult() {
     QueryResult result;
@@ -113,7 +106,7 @@ void CheckInit() {
     bad.size = sizeof(VrTrackerLegacy::InitParam) - 8;
     Require(sceVrTrackerInit(reinterpret_cast<const VrTrackerInitParam*>(&bad)) == ArgumentInvalid);
     bad.size = 144;
-    RequireThrows([&] { sceVrTrackerInit(reinterpret_cast<const VrTrackerInitParam*>(&bad)); });
+    ExpectErr<std::runtime_error>([&] { sceVrTrackerInit(reinterpret_cast<const VrTrackerInitParam*>(&bad)); });
     bad = ValidInit();
     bad.calibration_settings.move_position = 1;
     Require(sceVrTrackerInit(reinterpret_cast<const VrTrackerInitParam*>(&bad)) == ArgumentInvalid);

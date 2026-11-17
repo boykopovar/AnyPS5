@@ -5,6 +5,7 @@
 #include "prx/libkernel/Pthread/include/Cancel.hpp"
 #include "SceTypes.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -28,12 +29,6 @@ static constexpr int CANCEL_DEFERRED = 0;
 static constexpr int KERNEL_EINVAL = static_cast<int>(0x80020016);
 static constexpr KernelUseconds WAIT_MICROSECONDS = 60000000;
 static void* const CANCELED = reinterpret_cast<void*>(std::uintptr_t{1});
-
-static void Require(bool value, std::source_location location = std::source_location::current()) {
-    if (value) return;
-    std::fprintf(stderr, "%s:%u: requirement failed\n", location.file_name(), location.line());
-    std::abort();
-}
 
 static PthreadSem sem = nullptr;
 static void* posixSem = nullptr;

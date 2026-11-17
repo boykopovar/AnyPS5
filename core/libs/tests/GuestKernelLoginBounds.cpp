@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdlib>
@@ -12,12 +13,6 @@ namespace {
 constexpr int GuestEfault = 14;
 constexpr int GuestEinval = 22;
 constexpr int GuestErange = 34;
-
-void Require(bool condition) {
-    if (!condition) {
-        std::abort();
-    }
-}
 
 void TestGetloginrNullAndSizeBounds() {
     *__error_nid_postfix() = 123;

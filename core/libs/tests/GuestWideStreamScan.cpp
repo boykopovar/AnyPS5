@@ -2,6 +2,7 @@
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "tests/TemporaryFile.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdarg>
 #include <cstdint>
@@ -22,12 +23,6 @@ extern FileStream* __stdinp_nid_postfix;
 #define APS5_VA_BEGIN(last) std::va_list args; va_start(args, last)
 #define APS5_VA_END() va_end(args)
 #endif
-
-static void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "failed: %s\n", what);
-    std::abort();
-}
 
 static int APS5_VABI ScanStream(FileStream* stream, const char16_t* format, ...) {
     APS5_VA_BEGIN(format);

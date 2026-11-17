@@ -2,6 +2,7 @@
 #include "prx/libSceAgcDriver/tests/execution/VulkanTestDevice.hpp"
 #include "prx/libSceAgc/Shader/include/ShaderConstants.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdint>
@@ -28,16 +29,12 @@ constexpr int InvalidShaderHalves = static_cast<int>(0x8a6c0008u);
 constexpr std::uint32_t GsStage = 1u << 22u;
 constexpr std::uint32_t HsStage = 1u << 21u;
 
-void check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
-
 template <typename TAction>
 void expectFailure(TAction action) {
     try {
         action();
     } catch (const std::exception& error) {
-        check(error.what()[0] != '\0', "empty exception message");
+        Require(error.what()[0] != '\0', "empty exception message");
         return;
     }
     throw std::runtime_error("expected an exception");
@@ -132,38 +129,38 @@ std::uint8_t* aligned(std::vector<std::uint8_t>& storage, std::size_t alignment)
 void testFusion(std::size_t misalignment, std::uint32_t terminator = SSetpcS6) {
     Halves halves(terminator);
     SizeAlign size{};
-    check(sceAgcGetFusedShaderSize_0080(&size, &halves.front, &halves.back) == 0, "fused size query failed");
-    check(size.m_size == 6 * sizeof(ShaderRegister) && size.m_align == 4, "fused size is not the back half's register list");
+    Require(sceAgcGetFusedShaderSize_0080(&size, &halves.front, &halves.back) == 0, "fused size query failed");
+    Require(size.m_size == 6 * sizeof(ShaderRegister) && size.m_align == 4, "fused size is not the back half's register list");
     SizeAlign unversioned{~0ull, ~std::size_t{0}};
-    check(sceAgcGetFusedShaderSize(&unversioned, &halves.front, &halves.back) == 0, "unversioned fused size query failed");
-    check(unversioned.m_size == size.m_size && unversioned.m_align == (~std::size_t{0} << 32u | 4u), "unversioned fused size must store a 32-bit alignment");
+    Require(sceAgcGetFusedShaderSize(&unversioned, &halves.front, &halves.back) == 0, "unversioned fused size query failed");
+    Require(unversioned.m_size == size.m_size && unversioned.m_align == (~std::size_t{0} << 32u | 4u), "unversioned fused size must store a 32-bit alignment");
     std::vector<std::uint8_t> storage(size.m_size + 512, 0xcd);
     auto* scratch = aligned(storage, 256) + misalignment;
     Shader fused{};
-    check(sceAgcFuseShaderHalves_0200(&fused, &halves.front, &halves.back, scratch) == 0, "fusion failed");
-    for (std::size_t i = 0; i < 16; ++i) check(scratch[size.m_size + i] == 0xcd, "fusion wrote past the reported size");
+    Require(sceAgcFuseShaderHalves_0200(&fused, &halves.front, &halves.back, scratch) == 0, "fusion failed");
+    for (std::size_t i = 0; i < 16; ++i) Require(scratch[size.m_size + i] == 0xcd, "fusion wrote past the reported size");
     const auto base = reinterpret_cast<std::uintptr_t>(fused.code);
     const auto* memory = reinterpret_cast<const std::uint8_t*>(base);
-    check(fused.type == static_cast<std::uint8_t>(ShaderRegs::ShaderBinaryType::Gs), "fused shader is not a GS");
-    check(base % 256 == 0 && fused.shader_size == 256 + halves.back.shader_size, "fused code placement is wrong");
-    check(word(memory, 0) == SMovS0 && word(memory, 1) == VMovV0, "front program was not copied");
-    for (std::size_t i = 2; i < 64; ++i) check(word(memory, i) == SNop, "front program does not fall through to the back half");
-    check(std::memcmp(memory + 256, halves.backCode.data(), halves.back.shader_size) == 0, "back program was not copied");
-    check(reinterpret_cast<std::uintptr_t>(fused.sh_registers) == reinterpret_cast<std::uintptr_t>(scratch), "fused registers are not in the caller's memory");
+    Require(fused.type == static_cast<std::uint8_t>(ShaderRegs::ShaderBinaryType::Gs), "fused shader is not a GS");
+    Require(base % 256 == 0 && fused.shader_size == 256 + halves.back.shader_size, "fused code placement is wrong");
+    Require(word(memory, 0) == SMovS0 && word(memory, 1) == VMovV0, "front program was not copied");
+    for (std::size_t i = 2; i < 64; ++i) Require(word(memory, i) == SNop, "front program does not fall through to the back half");
+    Require(std::memcmp(memory + 256, halves.backCode.data(), halves.back.shader_size) == 0, "back program was not copied");
+    Require(reinterpret_cast<std::uintptr_t>(fused.sh_registers) == reinterpret_cast<std::uintptr_t>(scratch), "fused registers are not in the caller's memory");
     const auto* backLo = find(fused, 0x088u);
     const auto* frontLo = find(fused, 0x0C8u);
-    check(backLo != nullptr && backLo->value == static_cast<std::uint32_t>((base + 256) >> 8u), "back program address was not patched");
-    check(frontLo != nullptr && frontLo->value == static_cast<std::uint32_t>(base >> 8u), "fused program address was not patched");
-    check(find(fused, 0x08Au)->value == ((1u << 24u) | (1u << 6u) | 5u), "RSRC1 register counts were not merged");
-    check(find(fused, 0x08Bu)->value == ((6u << 1u) | (1u << 7u) | (1u << 15u)), "RSRC2 user SGPRs were not taken from the front half");
-    check(find(fused, 0x0B2u) == nullptr, "a front-only SH register was added to the fused list");
-    check(find(fused, 0x080u) == nullptr, "front program checksum was kept");
-    check(fused.num_sh_registers == halves.back.num_sh_registers && fused.num_cx_registers == halves.back.num_cx_registers, "fused register counts are wrong");
-    check(fused.cx_registers[0].offset == 0x29Bu && fused.cx_registers[0].value == 2u, "context registers are not the back half's");
-    check(fused.num_input_semantics == 2 && fused.input_semantics[1].semantic == 2, "front inputs were not kept");
-    check(fused.num_output_semantics == 1 && fused.output_semantics[0].semantic == 3, "back outputs were not kept");
-    check(fused.scratch_size_dw_per_thread == 16, "scratch size is not the larger half's");
-    check(fused.specials != nullptr && fused.specials != halves.back.specials && fused.specials->ge_cntl.value == 0x77u, "back specials were not copied");
+    Require(backLo != nullptr && backLo->value == static_cast<std::uint32_t>((base + 256) >> 8u), "back program address was not patched");
+    Require(frontLo != nullptr && frontLo->value == static_cast<std::uint32_t>(base >> 8u), "fused program address was not patched");
+    Require(find(fused, 0x08Au)->value == ((1u << 24u) | (1u << 6u) | 5u), "RSRC1 register counts were not merged");
+    Require(find(fused, 0x08Bu)->value == ((6u << 1u) | (1u << 7u) | (1u << 15u)), "RSRC2 user SGPRs were not taken from the front half");
+    Require(find(fused, 0x0B2u) == nullptr, "a front-only SH register was added to the fused list");
+    Require(find(fused, 0x080u) == nullptr, "front program checksum was kept");
+    Require(fused.num_sh_registers == halves.back.num_sh_registers && fused.num_cx_registers == halves.back.num_cx_registers, "fused register counts are wrong");
+    Require(fused.cx_registers[0].offset == 0x29Bu && fused.cx_registers[0].value == 2u, "context registers are not the back half's");
+    Require(fused.num_input_semantics == 2 && fused.input_semantics[1].semantic == 2, "front inputs were not kept");
+    Require(fused.num_output_semantics == 1 && fused.output_semantics[0].semantic == 3, "back outputs were not kept");
+    Require(fused.scratch_size_dw_per_thread == 16, "scratch size is not the larger half's");
+    Require(fused.specials != nullptr && fused.specials != halves.back.specials && fused.specials->ge_cntl.value == 0x77u, "back specials were not copied");
     const auto inside = [&](std::uintptr_t address) {
         const auto begin = reinterpret_cast<std::uintptr_t>(storage.data());
         return address >= begin && address < begin + storage.size();
@@ -172,9 +169,9 @@ void testFusion(std::size_t misalignment, std::uint32_t terminator = SSetpcS6) {
         const auto address = reinterpret_cast<std::uintptr_t>(pointer);
         return !inside(address) && address >= base + fused.shader_size && address < base + fused.shader_size + fused.header_size + alignof(Shader);
     };
-    check(!inside(base) && program(fused.cx_registers) && program(fused.specials) && program(fused.input_semantics) && program(fused.output_semantics), "fused tables are not beside the fused code");
-    check(program(fused.user_data) && program(fused.user_data->direct_resource_offset) && program(fused.user_data->sharp_resource_offset[1]), "fused user data is not beside the fused code");
-    check(fused.user_data->direct_resource_count == 2 && fused.user_data->direct_resource_offset[1] == 9u && fused.user_data->sharp_resource_offset[1][0].offset_dw == 12 && fused.user_data->sharp_resource_offset[0] == nullptr && fused.user_data->eud_size_dw == 4, "fused user data is wrong");
+    Require(!inside(base) && program(fused.cx_registers) && program(fused.specials) && program(fused.input_semantics) && program(fused.output_semantics), "fused tables are not beside the fused code");
+    Require(program(fused.user_data) && program(fused.user_data->direct_resource_offset) && program(fused.user_data->sharp_resource_offset[1]), "fused user data is not beside the fused code");
+    Require(fused.user_data->direct_resource_count == 2 && fused.user_data->direct_resource_offset[1] == 9u && fused.user_data->sharp_resource_offset[1][0].offset_dw == 12 && fused.user_data->sharp_resource_offset[0] == nullptr && fused.user_data->eud_size_dw == 4, "fused user data is wrong");
 }
 
 void testScratchReuse() {
@@ -182,24 +179,24 @@ void testScratchReuse() {
     Halves second;
     second.backCode[0] = VMovV0;
     SizeAlign size{};
-    check(sceAgcGetFusedShaderSize_0080(&size, &first.front, &first.back) == 0, "fused size query failed");
+    Require(sceAgcGetFusedShaderSize_0080(&size, &first.front, &first.back) == 0, "fused size query failed");
     std::vector<std::uint8_t> scratch(size.m_size);
     Shader firstFused{};
     Shader secondFused{};
-    check(sceAgcFuseShaderHalves_0200(&firstFused, &first.front, &first.back, scratch.data()) == 0, "first fusion failed");
+    Require(sceAgcFuseShaderHalves_0200(&firstFused, &first.front, &first.back, scratch.data()) == 0, "first fusion failed");
     const auto firstCode = reinterpret_cast<std::uintptr_t>(firstFused.code);
-    check(sceAgcFuseShaderHalves_0200(&secondFused, &second.front, &second.back, scratch.data()) == 0, "second fusion failed");
+    Require(sceAgcFuseShaderHalves_0200(&secondFused, &second.front, &second.back, scratch.data()) == 0, "second fusion failed");
     const auto secondCode = reinterpret_cast<std::uintptr_t>(secondFused.code);
-    check(firstCode != secondCode, "two fused programs share one code address");
-    check(word(reinterpret_cast<const void*>(firstCode), 64) == SMovS0, "fusing into reused memory overwrote the first fused program");
-    check(word(reinterpret_cast<const void*>(secondCode), 64) == VMovV0, "second fused program has the wrong back half");
+    Require(firstCode != secondCode, "two fused programs share one code address");
+    Require(word(reinterpret_cast<const void*>(firstCode), 64) == SMovS0, "fusing into reused memory overwrote the first fused program");
+    Require(word(reinterpret_cast<const void*>(secondCode), 64) == VMovV0, "second fused program has the wrong back half");
     Shader again{};
-    check(sceAgcFuseShaderHalves_0200(&again, &first.front, &first.back, scratch.data()) == 0, "repeated fusion failed");
-    check(reinterpret_cast<std::uintptr_t>(again.code) == firstCode, "the same halves were fused into a second program");
+    Require(sceAgcFuseShaderHalves_0200(&again, &first.front, &first.back, scratch.data()) == 0, "repeated fusion failed");
+    Require(reinterpret_cast<std::uintptr_t>(again.code) == firstCode, "the same halves were fused into a second program");
     first.backCode[0] = VMovV0;
     Shader changed{};
-    check(sceAgcFuseShaderHalves_0200(&changed, &first.front, &first.back, scratch.data()) == 0, "fusion of changed halves failed");
-    check(reinterpret_cast<std::uintptr_t>(changed.code) != firstCode && word(reinterpret_cast<const void*>(firstCode), 64) == SMovS0, "changed halves reused the earlier fused program");
+    Require(sceAgcFuseShaderHalves_0200(&changed, &first.front, &first.back, scratch.data()) == 0, "fusion of changed halves failed");
+    Require(reinterpret_cast<std::uintptr_t>(changed.code) != firstCode && word(reinterpret_cast<const void*>(firstCode), 64) == SMovS0, "changed halves reused the earlier fused program");
 }
 
 void testOffchipLdsEnable() {
@@ -210,23 +207,23 @@ void testOffchipLdsEnable() {
             halves.frontSh[2].value |= frontEnable;
             halves.backSh[3].value |= backEnable;
             SizeAlign size{};
-            check(sceAgcGetFusedShaderSize_0080(&size, &halves.front, &halves.back) == 0, "offchip LDS enable rejected by the size query");
+            Require(sceAgcGetFusedShaderSize_0080(&size, &halves.front, &halves.back) == 0, "offchip LDS enable rejected by the size query");
             std::vector<std::uint8_t> storage(size.m_size + 512, 0xcd);
             Shader fused{};
-            check(sceAgcFuseShaderHalves_0200(&fused, &halves.front, &halves.back, aligned(storage, 256)) == 0, "offchip LDS enable rejected by fusion");
+            Require(sceAgcFuseShaderHalves_0200(&fused, &halves.front, &halves.back, aligned(storage, 256)) == 0, "offchip LDS enable rejected by fusion");
             const auto* resource = find(fused, 0x08bu);
-            check(resource != nullptr && resource->value == ((6u << 1u) | (1u << 7u) | (1u << 15u) | frontEnable), "fusion did not take offchip LDS enable and user SGPRs from the front half");
+            Require(resource != nullptr && resource->value == ((6u << 1u) | (1u << 7u) | (1u << 15u) | frontEnable), "fusion did not take offchip LDS enable and user SGPRs from the front half");
         }
     }
     Halves reported;
     reported.frontSh[2].value = 0x00070004u;
     reported.backSh[3].value = 0x00ab0020u;
     SizeAlign size{};
-    check(sceAgcGetFusedShaderSize_0080(&size, &reported.front, &reported.back) == 0, "reported shader resources rejected by size query");
+    Require(sceAgcGetFusedShaderSize_0080(&size, &reported.front, &reported.back) == 0, "reported shader resources rejected by size query");
     std::vector<std::uint8_t> storage(size.m_size + 512, 0xcd);
     Shader fused{};
-    check(sceAgcFuseShaderHalves_0200(&fused, &reported.front, &reported.back, aligned(storage, 256)) == 0, "reported shader resources rejected by fusion");
-    check(find(fused, 0x08bu)->value == 0x00af0004u, "reported shader resources did not retain the front offchip LDS enable");
+    Require(sceAgcFuseShaderHalves_0200(&fused, &reported.front, &reported.back, aligned(storage, 256)) == 0, "reported shader resources rejected by fusion");
+    Require(find(fused, 0x08bu)->value == 0x00af0004u, "reported shader resources did not retain the front offchip LDS enable");
 }
 
 void testResourceMerging() {
@@ -252,12 +249,12 @@ void testResourceMerging() {
         halves.backSh[2].value = entry.back1;
         halves.backSh[3].value = entry.back2;
         SizeAlign size{};
-        check(sceAgcGetFusedShaderSize_0080(&size, &halves.front, &halves.back) == 0, "resource merge size query failed");
+        Require(sceAgcGetFusedShaderSize_0080(&size, &halves.front, &halves.back) == 0, "resource merge size query failed");
         std::vector<std::uint8_t> scratch(size.m_size);
         Shader fused{};
-        check(sceAgcFuseShaderHalves_0200(&fused, &halves.front, &halves.back, scratch.data()) == 0, "resource merge failed");
-        check(find(fused, 0x08au)->value == entry.expected1, "resource register 1 merge mismatch");
-        check(find(fused, 0x08bu)->value == entry.expected2, "resource register 2 merge mismatch");
+        Require(sceAgcFuseShaderHalves_0200(&fused, &halves.front, &halves.back, scratch.data()) == 0, "resource merge failed");
+        Require(find(fused, 0x08au)->value == entry.expected1, "resource register 1 merge mismatch");
+        Require(find(fused, 0x08bu)->value == entry.expected2, "resource register 2 merge mismatch");
     }
 }
 
@@ -270,15 +267,15 @@ void testRejections() {
     expectFailure([&] { sceAgcFuseShaderHalves_0200(&fused, &halves.front, &halves.back, nullptr); });
     {
         Halves swapped;
-        check(sceAgcGetFusedShaderSize_0080(&size, &swapped.back, &swapped.front) == InvalidShaderHalves, "swapped halves were accepted by the size query");
-        check(sceAgcGetFusedShaderSize(nullptr, &swapped.back, &swapped.front) == InvalidShaderHalves, "the unversioned size query checked its output before the halves");
-        check(sceAgcFuseShaderHalves_0200(&fused, &swapped.back, &swapped.front, nullptr) == InvalidShaderHalves, "swapped halves were fused");
+        Require(sceAgcGetFusedShaderSize_0080(&size, &swapped.back, &swapped.front) == InvalidShaderHalves, "swapped halves were accepted by the size query");
+        Require(sceAgcGetFusedShaderSize(nullptr, &swapped.back, &swapped.front) == InvalidShaderHalves, "the unversioned size query checked its output before the halves");
+        Require(sceAgcFuseShaderHalves_0200(&fused, &swapped.back, &swapped.front, nullptr) == InvalidShaderHalves, "swapped halves were fused");
     }
     {
         Halves stages;
         stages.backSpecials.vgt_shader_stages_en.value = 0;
         std::vector<std::uint8_t> storage(4096);
-        check(sceAgcFuseShaderHalves_0200(&fused, &stages.front, &stages.back, storage.data()) == InvalidShaderHalves, "halves with different GS stages were fused");
+        Require(sceAgcFuseShaderHalves_0200(&fused, &stages.front, &stages.back, storage.data()) == InvalidShaderHalves, "halves with different GS stages were fused");
     }
     {
         Halves noJump;
@@ -313,24 +310,24 @@ void testFrontConstantBuffer() {
     Halves halves;
     setFrontConstants(halves, 0x11110000u);
     SizeAlign size{};
-    check(sceAgcGetFusedShaderSize_0080(&size, &halves.front, &halves.back) == 0, "size query refused a front half with an embedded constant buffer");
+    Require(sceAgcGetFusedShaderSize_0080(&size, &halves.front, &halves.back) == 0, "size query refused a front half with an embedded constant buffer");
     std::vector<std::uint8_t> scratch(size.m_size);
     Shader fused{};
-    check(sceAgcFuseShaderHalves_0200(&fused, &halves.front, &halves.back, scratch.data()) == 0, "fusion refused a front half with an embedded constant buffer");
+    Require(sceAgcFuseShaderHalves_0200(&fused, &halves.front, &halves.back, scratch.data()) == 0, "fusion refused a front half with an embedded constant buffer");
     const auto* memory = static_cast<const std::uint8_t*>(const_cast<const void*>(fused.code));
-    check(word(memory, 0) == SMovS0 && word(memory, 1) == SGetpcS60 && word(memory, 2) == SAddS60Literal && word(memory, 4) == SAddcS61Zero && word(memory, 5) == VMovV0, "front program was not copied");
-    for (std::size_t i = 6; i < 64; ++i) check(word(memory, i) == SNop, "front program does not fall through to the back half");
-    check(std::memcmp(memory + 256, halves.backCode.data(), halves.back.shader_size) == 0, "back program was not copied");
-    check(fused.shader_size == 272 + 32, "fused code does not end after the moved constants");
-    for (std::uint32_t i = 0; i < 8; ++i) check(word(memory, 68 + i) == 0x11110000u + i, "front constants were not moved after the back program");
-    check(8 + word(memory, 3) == 272, "front s_getpc_b64 offset does not point at the moved constants");
-    check(halves.frontCode[3] == 24u, "fusion changed the title's front half");
+    Require(word(memory, 0) == SMovS0 && word(memory, 1) == SGetpcS60 && word(memory, 2) == SAddS60Literal && word(memory, 4) == SAddcS61Zero && word(memory, 5) == VMovV0, "front program was not copied");
+    for (std::size_t i = 6; i < 64; ++i) Require(word(memory, i) == SNop, "front program does not fall through to the back half");
+    Require(std::memcmp(memory + 256, halves.backCode.data(), halves.back.shader_size) == 0, "back program was not copied");
+    Require(fused.shader_size == 272 + 32, "fused code does not end after the moved constants");
+    for (std::uint32_t i = 0; i < 8; ++i) Require(word(memory, 68 + i) == 0x11110000u + i, "front constants were not moved after the back program");
+    Require(8 + word(memory, 3) == 272, "front s_getpc_b64 offset does not point at the moved constants");
+    Require(halves.frontCode[3] == 24u, "fusion changed the title's front half");
     Halves other;
     setFrontConstants(other, 0x22220000u);
     Shader otherFused{};
-    check(sceAgcFuseShaderHalves_0200(&otherFused, &other.front, &other.back, scratch.data()) == 0, "second fusion failed");
+    Require(sceAgcFuseShaderHalves_0200(&otherFused, &other.front, &other.back, scratch.data()) == 0, "second fusion failed");
     const auto* otherMemory = static_cast<const std::uint8_t*>(const_cast<const void*>(otherFused.code));
-    check(otherMemory != memory && word(otherMemory, 68) == 0x22220000u && word(memory, 68) == 0x11110000u, "halves that differ only in front constants share a fused program");
+    Require(otherMemory != memory && word(otherMemory, 68) == 0x22220000u && word(memory, 68) == 0x11110000u, "halves that differ only in front constants share a fused program");
     Halves overrun;
     setFrontConstants(overrun, 0x33330000u, 3);
     expectFailure([&] { sceAgcGetFusedShaderSize_0080(&size, &overrun.front, &overrun.back); });
@@ -349,9 +346,9 @@ void testFrontConstantBuffer() {
     setFrontConstants(literal, 0x55550000u);
     literal.frontCode[0] = SMovS0Literal;
     Shader literalFused{};
-    check(sceAgcFuseShaderHalves_0200(&literalFused, &literal.front, &literal.back, scratch.data()) == 0, "fusion refused a front half whose literal looks like s_getpc_b64");
+    Require(sceAgcFuseShaderHalves_0200(&literalFused, &literal.front, &literal.back, scratch.data()) == 0, "fusion refused a front half whose literal looks like s_getpc_b64");
     const auto* literalMemory = static_cast<const std::uint8_t*>(const_cast<const void*>(literalFused.code));
-    check(word(literalMemory, 0) == SMovS0Literal && word(literalMemory, 1) == SGetpcS60 && word(literalMemory, 3) == 24u, "a literal that looks like s_getpc_b64 was relocated as one");
+    Require(word(literalMemory, 0) == SMovS0Literal && word(literalMemory, 1) == SGetpcS60 && word(literalMemory, 3) == 24u, "a literal that looks like s_getpc_b64 was relocated as one");
 }
 
 void testHullHalves() {
@@ -374,20 +371,20 @@ void testHullHalves() {
     back.specials = &specials;
     back.type = static_cast<std::uint8_t>(ShaderRegs::ShaderBinaryType::HsBack);
     SizeAlign size{};
-    check(sceAgcGetFusedShaderSize_0080(&size, &front, &back) == 0 && size.m_size == backSh.size() * sizeof(ShaderRegister) && size.m_align == 4, "hull size query changed");
+    Require(sceAgcGetFusedShaderSize_0080(&size, &front, &back) == 0 && size.m_size == backSh.size() * sizeof(ShaderRegister) && size.m_align == 4, "hull size query changed");
     std::vector<ShaderRegister> scratch(backSh.size());
     Shader fused{};
-    check(sceAgcFuseShaderHalves_0200(&fused, &front, &back, scratch.data()) == 0, "hull fusion failed");
-    check(fused.type == static_cast<std::uint8_t>(ShaderRegs::ShaderBinaryType::Hs) && fused.code == back.code && fused.sh_registers == scratch.data() && fused.user_data == nullptr, "hull halves were not fused at the register level");
+    Require(sceAgcFuseShaderHalves_0200(&fused, &front, &back, scratch.data()) == 0, "hull fusion failed");
+    Require(fused.type == static_cast<std::uint8_t>(ShaderRegs::ShaderBinaryType::Hs) && fused.code == back.code && fused.sh_registers == scratch.data() && fused.user_data == nullptr, "hull halves were not fused at the register level");
     const auto address = reinterpret_cast<std::uint64_t>(front.code);
-    check(scratch[0].value == 0x11u && scratch[1].value == 0x22u, "hull checksums were not taken from the front half");
-    check(scratch[2].value == 7u && scratch[3].value == (6u << 1u), "hull resource registers were not merged");
-    check(scratch[4].value == static_cast<std::uint32_t>(address >> 8u) && scratch[5].value == (0xab00u | static_cast<std::uint32_t>((address >> 40u) & 0xffu)), "hull local program address does not point at the front half");
-    check(backSh[4].value == 0u, "hull fusion wrote the back half's registers");
+    Require(scratch[0].value == 0x11u && scratch[1].value == 0x22u, "hull checksums were not taken from the front half");
+    Require(scratch[2].value == 7u && scratch[3].value == (6u << 1u), "hull resource registers were not merged");
+    Require(scratch[4].value == static_cast<std::uint32_t>(address >> 8u) && scratch[5].value == (0xab00u | static_cast<std::uint32_t>((address >> 40u) & 0xffu)), "hull local program address does not point at the front half");
+    Require(backSh[4].value == 0u, "hull fusion wrote the back half's registers");
     const auto backBefore = backSh;
     Shader refused{};
     expectFailure([&] { sceAgcFuseShaderHalves_0200(&refused, &front, &back, nullptr); });
-    check(std::memcmp(backSh.data(), backBefore.data(), sizeof(backSh)) == 0, "hull fusion without scratch wrote the back half");
+    Require(std::memcmp(backSh.data(), backBefore.data(), sizeof(backSh)) == 0, "hull fusion without scratch wrote the back half");
     Shader noFrontSpecials = front;
     noFrontSpecials.specials = nullptr;
     expectFailure([&] { sceAgcFuseShaderHalves_0200(&refused, &noFrontSpecials, &back, scratch.data()); });
@@ -399,16 +396,16 @@ void testHullHalves() {
 void testUnversionedSize() {
     Halves halves;
     SizeAlign size{};
-    check(sceAgcGetFusedShaderSize(&size, &halves.front, &halves.back) == 0, "unversioned fused size query failed");
-    check(size.m_size == halves.back.num_sh_registers * sizeof(ShaderRegister) && size.m_align == 4, "unversioned fused size did not cover the back half's register list");
+    Require(sceAgcGetFusedShaderSize(&size, &halves.front, &halves.back) == 0, "unversioned fused size query failed");
+    Require(size.m_size == halves.back.num_sh_registers * sizeof(ShaderRegister) && size.m_align == 4, "unversioned fused size did not cover the back half's register list");
     SizeAlign merged{};
-    check(sceAgcGetFusedShaderSize_0080(&merged, &halves.front, &halves.back) == 0 && merged.m_size == size.m_size, "unversioned size differed from the _0080 merged geometry size");
-    check(sceAgcGetFusedShaderSize(&size, &halves.back, &halves.front) == InvalidShaderHalves, "unversioned query accepted swapped halves");
+    Require(sceAgcGetFusedShaderSize_0080(&merged, &halves.front, &halves.back) == 0 && merged.m_size == size.m_size, "unversioned size differed from the _0080 merged geometry size");
+    Require(sceAgcGetFusedShaderSize(&size, &halves.back, &halves.front) == InvalidShaderHalves, "unversioned query accepted swapped halves");
     expectFailure([&] { sceAgcGetFusedShaderSize(nullptr, &halves.front, &halves.back); });
     halves.front.type = static_cast<std::uint8_t>(ShaderRegs::ShaderBinaryType::HsFront);
-    check(sceAgcGetFusedShaderSize(&size, &halves.front, &halves.back) == InvalidShaderHalves, "unversioned query accepted mismatched stage halves");
+    Require(sceAgcGetFusedShaderSize(&size, &halves.front, &halves.back) == InvalidShaderHalves, "unversioned query accepted mismatched stage halves");
     halves.back.type = static_cast<std::uint8_t>(ShaderRegs::ShaderBinaryType::HsBack);
-    check(sceAgcGetFusedShaderSize(&size, &halves.front, &halves.back) == 0 && size.m_size == halves.back.num_sh_registers * sizeof(ShaderRegister), "unversioned query rejected hull halves");
+    Require(sceAgcGetFusedShaderSize(&size, &halves.front, &halves.back) == 0 && size.m_size == halves.back.num_sh_registers * sizeof(ShaderRegister), "unversioned query rejected hull halves");
 }
 
 }

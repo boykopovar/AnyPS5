@@ -1,5 +1,6 @@
 #include "prx/libSceAudioOut/libSceAudioOut.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cerrno>
@@ -23,12 +24,6 @@ struct EncodeParam {
 };
 
 using Output = std::array<float, 40>;
-
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
 
 bool Near(float value, double expected) {
     return std::fabs(static_cast<double>(value) - expected) <= Tolerance;

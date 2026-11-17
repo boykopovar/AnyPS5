@@ -1,18 +1,9 @@
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <thread>
-
-namespace {
-
-void Require(bool condition) {
-    if (!condition) {
-        std::abort();
-    }
-}
-
-}
 
 int main() {
     Require(!_ZN3WTF12isMainThreadEv());

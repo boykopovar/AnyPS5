@@ -1,5 +1,6 @@
 #include "prx/libSceNetCtl/libSceNetCtl.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstdio>
@@ -14,11 +15,6 @@
 #endif
 
 
-static void Require(bool value, std::source_location location = std::source_location::current()) {
-    if (value) return;
-    std::fprintf(stderr, "NetCtl IPv6 callback check failed at line %u\n", location.line());
-    std::abort();
-}
 
 struct Probe {
     int calls = 0;

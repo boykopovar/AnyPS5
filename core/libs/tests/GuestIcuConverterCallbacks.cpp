@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstdint>
@@ -7,12 +8,6 @@
 #include <stdexcept>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "ICU converter callbacks: %s\n", message);
-    std::abort();
-}
 
 template<class TCall>
 bool Rejects(TCall call) {

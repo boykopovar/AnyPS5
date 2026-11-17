@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libScePosixForWebKit/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -20,13 +21,6 @@
 #endif
 
 extern "C" char* suboptarg_nid_postfix;
-
-static void Require(bool condition) {
-    if (!condition) {
-        std::fputs("Guest string check failed\n", stderr);
-        std::abort();
-    }
-}
 
 static bool CheckMemcpyOverlap() {
     bool correct = true;

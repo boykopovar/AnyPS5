@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -29,12 +30,6 @@ constexpr std::int32_t BufferOverflow = 15;
 constexpr std::int32_t CodePointLimit = 0x110000;
 
 using Ranges = std::vector<std::pair<std::int32_t, std::int32_t>>;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "ICU set: %s\n", message);
-    std::abort();
-}
 
 template<class F>
 bool Rejects(F call) {

@@ -1,6 +1,7 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "prx/libSceIcu/tests/RecoveredSignatureChecks.hpp"
 #include "prx/libSceIcu/Status.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -14,7 +15,6 @@
 
 namespace UcalClone {
 
-using IcuRecoveredTest::Require;
 
 static_assert(std::is_same_v<decltype(&ucal_clone_nid_postfix), UCalendar* (APS5_VABI*)(const UCalendar*, std::int32_t*)>);
 
@@ -43,7 +43,6 @@ void Run() {
 
 namespace UcalClose {
 
-using IcuRecoveredTest::Require;
 
 static_assert(std::is_same_v<decltype(&ucal_close_nid_postfix), void (APS5_VABI*)(UCalendar*)>);
 
@@ -76,7 +75,6 @@ void Run() {
 
 namespace UcalGet {
 
-using IcuRecoveredTest::Require;
 
 static_assert(std::is_same_v<decltype(&ucal_get_nid_postfix), std::int32_t (APS5_VABI*)(const UCalendar*, UCalendarDateFields, std::int32_t*)>);
 
@@ -104,7 +102,6 @@ void Run() {
 
 namespace UcalGetCanonicalTimeZoneID {
 
-using IcuRecoveredTest::Require;
 
 namespace {
 
@@ -214,7 +211,6 @@ void Run() {
 
 namespace UcalGetDefaultTimeZone {
 
-using IcuRecoveredTest::Require;
 
 static_assert(std::is_same_v<decltype(&ucal_getDefaultTimeZone_nid_postfix), std::int32_t (APS5_VABI*)(char16_t*, std::int32_t, std::int32_t*)>);
 
@@ -264,8 +260,6 @@ void Run() {
 
 namespace UcalGetKeywordValuesForLocale {
 
-using IcuRecoveredTest::Require;
-using IcuRecoveredTest::RequireThrows;
 
 static_assert(std::is_same_v<decltype(&ucal_getKeywordValuesForLocale_nid_postfix),
                              UEnumeration* (APS5_VABI*)(const char*, const char*, std::int8_t, std::int32_t*)>);
@@ -286,16 +280,14 @@ void Run() {
         }
     }
 
-    RequireThrows([&] { ucal_getKeywordValuesForLocale_nid_postfix("calendar", "en_US", 0, nullptr); });
-    RequireThrows([&] { ucal_getKeywordValuesForLocale_nid_postfix(nullptr, nullptr, 1, nullptr); });
+    ExpectErr([&] { ucal_getKeywordValuesForLocale_nid_postfix("calendar", "en_US", 0, nullptr); });
+    ExpectErr([&] { ucal_getKeywordValuesForLocale_nid_postfix(nullptr, nullptr, 1, nullptr); });
 }
 
 } // namespace UcalGetKeywordValuesForLocale
 
 namespace UcalGetTimeZoneDisplayName {
 
-using IcuRecoveredTest::Require;
-using IcuRecoveredTest::RequireThrows;
 
 static_assert(std::is_same_v<decltype(&ucal_getTimeZoneDisplayName_nid_postfix),
                              std::int32_t (APS5_VABI*)(const void*, std::int32_t, const char*, char16_t*, std::int32_t, std::int32_t*)>);
@@ -325,21 +317,21 @@ void FailureShortCircuit() {
 void NonFailurePathsThrow() {
     int opaqueCalendar = 0;
     std::array<char16_t, 4> buffer{u'X', u'Y', u'Z', u'W'};
-    RequireThrows([&] {
+    ExpectErr([&] {
         ucal_getTimeZoneDisplayName_nid_postfix(&opaqueCalendar, 0, "en_US", buffer.data(), 4, nullptr);
     });
     Require(buffer == std::array<char16_t, 4>{u'X', u'Y', u'Z', u'W'});
 
     for (std::int32_t incoming : {0, -128, -124, -1, std::numeric_limits<std::int32_t>::min()}) {
         std::int32_t status = incoming;
-        RequireThrows([&] {
+        ExpectErr([&] {
             ucal_getTimeZoneDisplayName_nid_postfix(&opaqueCalendar, 0, "en_US", buffer.data(), 4, &status);
         });
         Require(status == incoming);
         Require(buffer == std::array<char16_t, 4>{u'X', u'Y', u'Z', u'W'});
 
         status = incoming;
-        RequireThrows([&] {
+        ExpectErr([&] {
             ucal_getTimeZoneDisplayName_nid_postfix(nullptr, 2, nullptr, nullptr, 0, &status);
         });
         Require(status == incoming);
@@ -357,8 +349,6 @@ void Run() {
 
 namespace UcalOpen {
 
-using IcuRecoveredTest::Require;
-using IcuRecoveredTest::RequireThrows;
 
 static_assert(std::is_same_v<decltype(&ucal_open_nid_postfix),
                              UCalendar* (APS5_VABI*)(const char16_t*, std::int32_t, const char*, std::int32_t, std::int32_t*)>);
@@ -386,16 +376,16 @@ void FailingStatusShortCircuits() {
 
 void UnsupportedPathsThrow() {
     const char16_t zoneId[] = u"UTC";
-    RequireThrows([&] { ucal_open_nid_postfix(nullptr, -1, nullptr, 0, nullptr); });
-    RequireThrows([&] { ucal_open_nid_postfix(zoneId, 3, "en_US", 1, nullptr); });
+    ExpectErr([&] { ucal_open_nid_postfix(nullptr, -1, nullptr, 0, nullptr); });
+    ExpectErr([&] { ucal_open_nid_postfix(zoneId, 3, "en_US", 1, nullptr); });
 
     for (const std::int32_t incoming : {0, -1, -124, -128, std::numeric_limits<std::int32_t>::min()}) {
         std::int32_t status = incoming;
-        RequireThrows([&] { ucal_open_nid_postfix(nullptr, -1, nullptr, 0, &status); });
+        ExpectErr([&] { ucal_open_nid_postfix(nullptr, -1, nullptr, 0, &status); });
         Require(status == incoming);
 
         status = incoming;
-        RequireThrows([&] { ucal_open_nid_postfix(zoneId, 3, "en_US", 1, &status); });
+        ExpectErr([&] { ucal_open_nid_postfix(zoneId, 3, "en_US", 1, &status); });
         Require(status == incoming);
     }
 }
@@ -411,8 +401,6 @@ void Run() {
 
 namespace UcalSetGregorianChange {
 
-using IcuRecoveredTest::Require;
-using IcuRecoveredTest::RequireThrows;
 
 static_assert(std::is_same_v<decltype(&ucal_setGregorianChange_nid_postfix), void (APS5_VABI*)(UCalendar*, UDate, std::int32_t*)>);
 
@@ -448,7 +436,7 @@ void FailureShortCircuit() {
 }
 
 void NullStatus() {
-    RequireThrows([] {
+    ExpectErr([] {
         ucal_setGregorianChange_nid_postfix(nullptr, 0.0, nullptr);
     });
 }
@@ -466,21 +454,10 @@ void Run() {
 
 namespace UcalSetMillis {
 
-using IcuRecoveredTest::Require;
 
 static_assert(std::is_same_v<decltype(&ucal_setMillis_nid_postfix), void (APS5_VABI*)(UCalendar*, UDate, std::int32_t*)>);
 
 namespace {
-
-template<typename TAction>
-void RequireThrows(TAction action) {
-    try {
-        action();
-    } catch (...) {
-        return;
-    }
-    Require(false);
-}
 
 void TestPreexistingFailure() {
     for (std::int32_t failureCode : {1, 2, 7, 10, 15, 16, 1000}) {
@@ -505,7 +482,7 @@ void TestPreexistingFailure() {
 }
 
 void TestNullStatus() {
-    RequireThrows([] {
+    ExpectErr([] {
         ucal_setMillis_nid_postfix(nullptr, 0.0, nullptr);
     });
 }

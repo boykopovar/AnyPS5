@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/AsmMacros.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <climits>
 #include <cstdint>
 #include <cstddef>
@@ -79,8 +80,6 @@ asm(".text\n"
     "    popq %rbp\n"
     "    popq %rbx\n"
     "    ret\n");
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static bool Equals(const GuestSignalSet& set, std::uint32_t w0, std::uint32_t w1, std::uint32_t w2, std::uint32_t w3) {
     return set.bits[0] == w0 && set.bits[1] == w1 && set.bits[2] == w2 && set.bits[3] == w3;

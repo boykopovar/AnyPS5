@@ -1,5 +1,6 @@
 #include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <bit>
 #include <cstddef>
@@ -12,9 +13,6 @@
 using namespace SceJson2;
 
 static_assert(sizeof(Value) == 32 && offsetof(Value, payload) == 16 && offsetof(Value, type) == 28);
-static void Require(bool condition, const char* message) {
-    if (!condition) { std::fprintf(stderr, "%s\n", message); std::abort(); }
-}
 static void Prefix(const Value& value, int type) {
     Require(!value.parent && !value.auxiliary && value.type == type, "Value must expose its native parent, auxiliary and inline type fields");
     Require(value.reserved == 0xa5a5a5a5U, "Value construction must preserve the reserved word");

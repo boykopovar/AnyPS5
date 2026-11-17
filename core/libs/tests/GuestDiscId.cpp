@@ -1,4 +1,5 @@
 #include "prx/libSceDiscId/include/Api.hpp"
+#include "Testing.hpp"
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -11,12 +12,6 @@ namespace {
 
 constexpr int ErrorInvalidArgument = static_cast<int>(0x81680016);
 constexpr int ErrorDeviceUnavailable = static_cast<int>(0x816800ff);
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "DISC ID: %s\n", message);
-    std::abort();
-}
 
 }
 

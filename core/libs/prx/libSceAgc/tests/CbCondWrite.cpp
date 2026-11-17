@@ -1,5 +1,6 @@
 #include "prx/libSceAgc/Cb/include/Branch.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstddef>
@@ -10,20 +11,6 @@
 namespace {
 
 constexpr std::uint32_t Sentinel = 0xabcdef01u;
-
-void check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
-
-template <typename TAction>
-void expectFailure(TAction action) {
-    try {
-        action();
-    } catch (const std::runtime_error&) {
-        return;
-    }
-    throw std::runtime_error("expected invalid input to fail");
-}
 
 const volatile void* at(std::uintptr_t address) {
     return reinterpret_cast<const volatile void*>(address);
@@ -40,15 +27,15 @@ void testPacket() {
     for (std::uint32_t compareFunction = 0; compareFunction <= 6; ++compareFunction) {
         Storage storage;
         const auto* packet = sceAgcCbCondWrite(&storage.buffer, compareFunction, 1, at(0x0000123456789abcu), 0xdeadbeefu, at(0x0000fedcba987654u), 0x11223344u, 0xff00ff00u);
-        check(packet == storage.words.data() && packet[0] == 0xc0074500u, "COND_WRITE header mismatch");
-        check(packet[1] == (0x110u | compareFunction), "COND_WRITE control mismatch");
-        check(packet[2] == 0xba987654u && packet[3] == 0x0000fedcu, "COND_WRITE poll address mismatch");
-        check(packet[4] == 0x11223344u && packet[5] == 0xff00ff00u, "COND_WRITE reference or mask mismatch");
-        check(packet[6] == 0x56789abcu && packet[7] == 0x00001234u, "COND_WRITE write address mismatch");
-        check(packet[8] == 0xdeadbeefu, "COND_WRITE data mismatch");
-        check(storage.buffer.cursor_up == storage.words.data() + 9 && storage.words[9] == Sentinel, "COND_WRITE cursor advance");
+        Require(packet == storage.words.data() && packet[0] == 0xc0074500u, "COND_WRITE header mismatch");
+        Require(packet[1] == (0x110u | compareFunction), "COND_WRITE control mismatch");
+        Require(packet[2] == 0xba987654u && packet[3] == 0x0000fedcu, "COND_WRITE poll address mismatch");
+        Require(packet[4] == 0x11223344u && packet[5] == 0xff00ff00u, "COND_WRITE reference or mask mismatch");
+        Require(packet[6] == 0x56789abcu && packet[7] == 0x00001234u, "COND_WRITE write address mismatch");
+        Require(packet[8] == 0xdeadbeefu, "COND_WRITE data mismatch");
+        Require(storage.buffer.cursor_up == storage.words.data() + 9 && storage.words[9] == Sentinel, "COND_WRITE cursor advance");
     }
-    check(sceAgcCbCondWriteGetSize() == 9 * sizeof(std::uint32_t), "COND_WRITE size mismatch");
+    Require(sceAgcCbCondWriteGetSize() == 9 * sizeof(std::uint32_t), "COND_WRITE size mismatch");
 }
 
 void testConsoleArguments() {
@@ -68,9 +55,9 @@ void testConsoleArguments() {
     for (const Case& entry : cases) {
         Storage storage;
         const auto* packet = sceAgcCbCondWrite(&storage.buffer, entry.compareFunction, entry.writeSpace, at(entry.writeAddress), entry.writeData, at(entry.pollAddress), 0, 1);
-        check(packet == storage.words.data(), "console COND_WRITE arguments were refused");
-        for (std::size_t index = 0; index < entry.packet.size(); ++index) check(packet[index] == entry.packet[index], "console COND_WRITE packet mismatch");
-        check(storage.buffer.cursor_up == storage.words.data() + 9 && storage.words[9] == Sentinel, "console COND_WRITE cursor advance");
+        Require(packet == storage.words.data(), "console COND_WRITE arguments were refused");
+        for (std::size_t index = 0; index < entry.packet.size(); ++index) Require(packet[index] == entry.packet[index], "console COND_WRITE packet mismatch");
+        Require(storage.buffer.cursor_up == storage.words.data() + 9 && storage.words[9] == Sentinel, "console COND_WRITE cursor advance");
     }
 }
 
@@ -79,9 +66,9 @@ void testInvalid() {
     const auto before = storage.words;
     const auto poll = at(0x1000u);
     const auto write = at(0x2000u);
-    expectFailure([&] { sceAgcCbCondWrite(&storage.buffer, 3, 1, at(0x0001000000000000u), 0, poll, 0, 0); });
-    expectFailure([&] { sceAgcCbCondWrite(&storage.buffer, 3, 1, write, 0, at(0x0001000000000000u), 0, 0); });
-    check(storage.words == before && storage.buffer.cursor_up == storage.words.data(), "failed COND_WRITE modified the buffer");
+    ExpectErr<std::runtime_error>([&] { sceAgcCbCondWrite(&storage.buffer, 3, 1, at(0x0001000000000000u), 0, poll, 0, 0); });
+    ExpectErr<std::runtime_error>([&] { sceAgcCbCondWrite(&storage.buffer, 3, 1, write, 0, at(0x0001000000000000u), 0, 0); });
+    Require(storage.words == before && storage.buffer.cursor_up == storage.words.data(), "failed COND_WRITE modified the buffer");
 }
 }
 

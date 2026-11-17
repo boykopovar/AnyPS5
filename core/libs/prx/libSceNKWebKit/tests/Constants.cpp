@@ -1,17 +1,9 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "libSceNKWebKit constant check failed at line %d\n", line);
-        std::abort();
-    }
-}
-
-#define Require(value) Check((value), __LINE__)
 
 int main() {
     Require(WKAccessibilityCanUseSecondaryAXThread() == 0);

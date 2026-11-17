@@ -2,6 +2,7 @@
 #include "prx/libSceAgc/DcbDraw/include/Stats.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -9,22 +10,18 @@
 
 namespace {
 
-void check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
-
 void testShaderInstrumentation() {
-    check(sceAgcGetShaderInstrumentation() == 0, "shader instrumentation starts cleared");
-    check(sceAgcSetShaderInstrumentation(0x80000005u) == 0, "setting shader instrumentation failed");
-    check(sceAgcGetShaderInstrumentation() == 0x80000005u, "shader instrumentation flags were not kept");
-    check(sceAgcSetShaderInstrumentation(0) == 0 && sceAgcGetShaderInstrumentation() == 0, "shader instrumentation was not cleared");
+    Require(sceAgcGetShaderInstrumentation() == 0, "shader instrumentation starts cleared");
+    Require(sceAgcSetShaderInstrumentation(0x80000005u) == 0, "setting shader instrumentation failed");
+    Require(sceAgcGetShaderInstrumentation() == 0x80000005u, "shader instrumentation flags were not kept");
+    Require(sceAgcSetShaderInstrumentation(0) == 0 && sceAgcGetShaderInstrumentation() == 0, "shader instrumentation was not cleared");
 }
 
 void testOcclusionQuerySizes() {
-    check(sceAgcDcbBeginOcclusionQueryGetSize(0) == 0x10u, "begin occlusion query size for type 0");
-    check(sceAgcDcbBeginOcclusionQueryGetSize(1) == 0x120u, "begin occlusion query size for type 1");
-    check(sceAgcDcbBeginOcclusionQueryGetSize(2) == 0, "begin occlusion query size for an unknown type");
-    check(sceAgcDcbEndOcclusionQueryGetSize() == 0x10u, "end occlusion query size");
+    Require(sceAgcDcbBeginOcclusionQueryGetSize(0) == 0x10u, "begin occlusion query size for type 0");
+    Require(sceAgcDcbBeginOcclusionQueryGetSize(1) == 0x120u, "begin occlusion query size for type 1");
+    Require(sceAgcDcbBeginOcclusionQueryGetSize(2) == 0, "begin occlusion query size for an unknown type");
+    Require(sceAgcDcbEndOcclusionQueryGetSize() == 0x10u, "end occlusion query size");
 }
 
 }

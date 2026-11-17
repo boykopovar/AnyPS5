@@ -13,6 +13,7 @@
 #include "prx/libSceNet/libSceNet.hpp"
 #include "prx/libkernel/libkernel.hpp"
 #include "prx/libkernel/Socket/include/SocketPoll.hpp"
+#include "Testing.hpp"
 
 namespace {
 
@@ -27,13 +28,6 @@ struct Linger {
     std::int32_t enabled;
     std::int32_t seconds;
 };
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 bool Failed(int result, int error) {
     return result == (NetError | error) && *sceNetErrnoLoc() == error;

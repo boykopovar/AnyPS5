@@ -1,19 +1,12 @@
 #include "FontFixture.hpp"
 #include "prx/libSceFontFt/include/Api.hpp"
 #include "prx/libSceFont/include/Api.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "Font output pointer check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static void* APS5_VABI Allocate(void*, std::uint32_t size) {
     return std::malloc(size);

@@ -1,17 +1,11 @@
 #include "prx/libSceMsgDialog/include/MsgDialogParam.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
 namespace {
-
-void Require(bool value, const char* what) {
-    if (!value) {
-        std::fprintf(stderr, "msg_dialog_param: %s\n", what);
-        std::abort();
-    }
-}
 
 struct UserMessage {
     std::int32_t buttonType;

@@ -2,6 +2,7 @@
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
+#include "Testing.hpp"
 #include <barrier>
 #include <chrono>
 #include <cstdint>
@@ -12,15 +13,6 @@
 #include <string>
 #include <thread>
 #include <vector>
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "Truncate race check failed at line %d\n", line);
-        std::abort();
-    }
-}
-
-#define Require(value) Check((value), __LINE__)
 
 static bool CheckRace(const std::filesystem::path& file, bool duplicate) {
     constexpr std::size_t PayloadBytes = 8u << 20;

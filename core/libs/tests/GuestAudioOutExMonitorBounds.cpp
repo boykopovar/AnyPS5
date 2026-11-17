@@ -1,6 +1,7 @@
 #include "prx/libSceAudioOut/include/AudioOut.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdlib>
@@ -17,12 +18,6 @@ constexpr int audioOutErrorInvalidSize = static_cast<int>(0x80260006);
 constexpr int errorExInvalidMode = static_cast<int>(0x80260015);
 constexpr int errorExInvalidControl = static_cast<int>(0x80268009);
 constexpr std::uint32_t exMonitorInfoSize = 1024;
-
-void Require(bool condition) {
-    if (!condition) {
-        std::abort();
-    }
-}
 
 template <typename TAction>
 bool Throws(TAction&& action) {

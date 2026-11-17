@@ -1,4 +1,5 @@
 #include "prx/libkernel/System/include/MacActivity.hpp"
+#include "Testing.hpp"
 #include <dlfcn.h>
 #include <iostream>
 #include <stdexcept>
@@ -8,10 +9,6 @@
 namespace {
 
 using namespace HostPerformance;
-
-void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 bool Contains(const std::string& text, const std::string& part) {
     return text.find(part) != std::string::npos;

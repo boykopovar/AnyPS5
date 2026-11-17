@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <climits>
 #include <cstddef>
@@ -480,17 +481,6 @@ constexpr PssVerify PssVerifies[] {
     {13, -1, -1, 0x00, false, 1, 0},
 };
 
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL RSA PSS check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> static void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
-    try { action(); } catch (const std::exception&) { return; }
-    Require(false, location);
-}
-
 static bool QueueHolds(std::uint64_t error) {
     const std::uint64_t first = ERR_get_error_nid_postfix();
     const std::uint64_t second = ERR_get_error_nid_postfix();
@@ -612,7 +602,7 @@ static void TestAddVectors() {
             break;
         }
         case AddThrows:
-            RequireThrows([&] { Add(key, out, mHash, digest, vector.saltLength); });
+            ExpectErr([&] { Add(key, out, mHash, digest, vector.saltLength); });
             break;
         }
     }
@@ -633,7 +623,7 @@ static void TestVerifyVectors() {
         }
         Require(em.size() == key.Size());
         if (vector.position >= 0) em[static_cast<std::size_t>(vector.position)] ^= vector.flip;
-        if (vector.expected < 0) RequireThrows([&] { Verify(key, mHash, DigestFor(combo.digest), em, vector.saltLength); });
+        if (vector.expected < 0) ExpectErr([&] { Verify(key, mHash, DigestFor(combo.digest), em, vector.saltLength); });
         else {
             ERR_clear_error_nid_postfix();
             Require(Verify(key, mHash, DigestFor(combo.digest), em, vector.saltLength) == vector.expected);
@@ -656,8 +646,8 @@ static void TestSaltBounds() {
         for (int saltLength : {-3, INT_MIN}) Require(Add(key, out, mHash, digest, saltLength) == 0 && Untouched(out, 0) && !Verify(key, mHash, digest, em, saltLength));
         Require(Add(key, out, mHash, digest, INT_MAX - hashBytes - 2) == 0 && Untouched(out, topZero) && (!topZero || !out[0]));
         Require(!Verify(key, mHash, digest, em, INT_MAX - hashBytes - 2));
-        for (int saltLength : {INT_MAX - hashBytes - 1, INT_MAX}) RequireThrows([&] { Add(key, out, mHash, digest, saltLength); });
-        RequireThrows([&] { Verify(key, mHash, digest, em, INT_MAX - hashBytes - 1); });
+        for (int saltLength : {INT_MAX - hashBytes - 1, INT_MAX}) ExpectErr([&] { Add(key, out, mHash, digest, saltLength); });
+        ExpectErr([&] { Verify(key, mHash, digest, em, INT_MAX - hashBytes - 1); });
     }
 }
 
@@ -676,7 +666,7 @@ static void TestRoundTrips() {
                 Bytes out;
                 const int resolved = saltLength == -1 ? hashBytes : saltLength == -2 ? longest : saltLength;
                 if (resolved < 0) {
-                    RequireThrows([&] { Add(key, out, mHash, digest, saltLength); });
+                    ExpectErr([&] { Add(key, out, mHash, digest, saltLength); });
                     continue;
                 }
                 if (resolved > longest) {
@@ -802,19 +792,19 @@ static void TestThrows() {
     Bytes out;
     Bytes em(key.Size(), 0);
     em.back() = 0xbc;
-    RequireThrows([&] { RSA_padding_add_PKCS1_PSS_nid_postfix(nullptr, out.data(), mHash.data(), sha256, -1); });
-    RequireThrows([&] { RSA_verify_PKCS1_PSS_nid_postfix(nullptr, mHash.data(), sha256, em.data(), -1); });
+    ExpectErr([&] { RSA_padding_add_PKCS1_PSS_nid_postfix(nullptr, out.data(), mHash.data(), sha256, -1); });
+    ExpectErr([&] { RSA_verify_PKCS1_PSS_nid_postfix(nullptr, mHash.data(), sha256, em.data(), -1); });
     out.assign(key.Size() + Slack, Fill);
-    RequireThrows([&] { RSA_padding_add_PKCS1_PSS_nid_postfix(key.rsa, nullptr, mHash.data(), sha256, -1); });
-    RequireThrows([&] { RSA_padding_add_PKCS1_PSS_nid_postfix(low.rsa, nullptr, mHash.data(), sha256, 95); });
-    RequireThrows([&] { RSA_verify_PKCS1_PSS_nid_postfix(key.rsa, mHash.data(), sha256, nullptr, -1); });
+    ExpectErr([&] { RSA_padding_add_PKCS1_PSS_nid_postfix(key.rsa, nullptr, mHash.data(), sha256, -1); });
+    ExpectErr([&] { RSA_padding_add_PKCS1_PSS_nid_postfix(low.rsa, nullptr, mHash.data(), sha256, 95); });
+    ExpectErr([&] { RSA_verify_PKCS1_PSS_nid_postfix(key.rsa, mHash.data(), sha256, nullptr, -1); });
     key.rsa->n = nullptr;
-    RequireThrows([&] { RSA_padding_add_PKCS1_PSS_nid_postfix(key.rsa, out.data(), mHash.data(), sha256, -1); });
-    RequireThrows([&] { RSA_verify_PKCS1_PSS_nid_postfix(key.rsa, mHash.data(), sha256, em.data(), -1); });
+    ExpectErr([&] { RSA_padding_add_PKCS1_PSS_nid_postfix(key.rsa, out.data(), mHash.data(), sha256, -1); });
+    ExpectErr([&] { RSA_verify_PKCS1_PSS_nid_postfix(key.rsa, mHash.data(), sha256, em.data(), -1); });
     key.rsa->n = &key.number;
     for (int saltLength : {INT_MAX - 33, INT_MAX}) {
-        RequireThrows([&] { Add(key, out, mHash, sha256, saltLength); });
-        RequireThrows([&] { Verify(key, mHash, sha256, em, saltLength); });
+        ExpectErr([&] { Add(key, out, mHash, sha256, saltLength); });
+        ExpectErr([&] { Verify(key, mHash, sha256, em, saltLength); });
     }
     Require(Add(key, out, mHash, sha256, INT_MAX - 34) == 0 && Untouched(out, 0) && Verify(key, mHash, sha256, em, INT_MAX - 34) == 0);
 
@@ -836,23 +826,23 @@ static void TestThrows() {
     ERR_clear_error_nid_postfix();
     Require(Add(key, out, mHash, &custom, 0) == 0 && QueueHolds(EvpTooLarge) && Verify(key, mHash, &custom, em, -2) == 0 && QueueHolds(EvpTooLarge));
     custom.mdSize = INT_MAX;
-    RequireThrows([&] { Add(key, out, mHash, &custom, -1); });
+    ExpectErr([&] { Add(key, out, mHash, &custom, -1); });
     TestKey one(1);
-    RequireThrows([&] { Add(one, out, mHash, &custom, -2); });
-    RequireThrows([&] { Verify(key, mHash, &custom, em, -1); });
+    ExpectErr([&] { Add(one, out, mHash, &custom, -2); });
+    ExpectErr([&] { Verify(key, mHash, &custom, em, -1); });
     custom.mdSize = 0;
-    RequireThrows([&] { Add(key, out, mHash, &custom, 0); });
-    RequireThrows([&] { Verify(key, mHash, &custom, em, -2); });
+    ExpectErr([&] { Add(key, out, mHash, &custom, 0); });
+    ExpectErr([&] { Verify(key, mHash, &custom, em, -2); });
     TestKey empty(0);
     TestKey single(1);
     Require(empty.Size() == 0 && single.Size() == 1);
     const Bytes zero(1, 0);
-    RequireThrows([&] { Verify(empty, mHash, &custom, zero, -2); });
+    ExpectErr([&] { Verify(empty, mHash, &custom, zero, -2); });
     Require(Verify(single, mHash, &custom, zero, -2) == 0);
     Require(Verify(empty, mHash, &custom, zero, -1) == 0);
     custom.mdSize = 32;
     custom.contextSize = 0;
-    RequireThrows([&] { Add(key, out, mHash, &custom, 0); });
+    ExpectErr([&] { Add(key, out, mHash, &custom, 0); });
 }
 
 int main() {

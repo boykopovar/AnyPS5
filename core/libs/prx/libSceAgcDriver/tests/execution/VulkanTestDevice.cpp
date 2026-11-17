@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include "VulkanTestDevice.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -21,10 +22,6 @@ void SetVariable(const char* name, const char* value) {
 #else
     if ((*value == '\0' ? unsetenv(name) : setenv(name, value, 1)) != 0) throw std::runtime_error(std::string("cannot set ") + name);
 #endif
-}
-
-void Require(const bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
 }
 
 #ifdef _WIN32

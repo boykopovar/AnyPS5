@@ -1,6 +1,7 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <bit>
 #include <climits>
@@ -13,12 +14,6 @@ namespace {
 using CategoryName = const char* (APS5_VABI*)(const void*) noexcept;
 using VtableName = const char* (APS5_VABI*)(const LibcException::CategoryObject*);
 using VtableMessage = GuestLocale::String* (APS5_VABI*)(GuestLocale::String*, const LibcException::CategoryObject*, int);
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "libc internal constant members: %s\n", message);
-    std::abort();
-}
 
 const char* LibcName(const LibcException::CategoryObject* category) {
     return std::bit_cast<VtableName>(static_cast<const void* const*>(category->vtable)[2])(category);

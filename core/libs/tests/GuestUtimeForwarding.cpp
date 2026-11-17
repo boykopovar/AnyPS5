@@ -1,5 +1,6 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -13,15 +14,7 @@ int calls;
 const char* expectedPath;
 const LibcUtimbuf* expectedTimes;
 
-void Require(bool condition, int line) {
-    if (!condition) {
-        std::fprintf(stderr, "Utime forwarding check failed at line %d\n", line);
-        std::abort();
-    }
 }
-}
-
-#define Check(value) Require((value), __LINE__)
 
 extern "C" int* APS5_VABI __error_nid_postfix() {
     return &guestError;
@@ -35,11 +28,11 @@ extern "C" bool GuestCopyIn_nid_no_patch(void* destination, const void* source, 
 
 extern "C" int APS5_VABI utimes_nid_postfix(const char* path, const KernelTimeval* times) {
     ++calls;
-    Check(path == expectedPath);
-    Check((times == nullptr) == (expectedTimes == nullptr));
+    Require(path == expectedPath);
+    Require((times == nullptr) == (expectedTimes == nullptr));
     if (expectedTimes) {
-        Check(times[0].tv_sec == expectedTimes->actime && times[0].tv_usec == 0);
-        Check(times[1].tv_sec == expectedTimes->modtime && times[1].tv_usec == 0);
+        Require(times[0].tv_sec == expectedTimes->actime && times[0].tv_usec == 0);
+        Require(times[1].tv_sec == expectedTimes->modtime && times[1].tv_usec == 0);
     }
     guestError = backendError;
     return backendResult;
@@ -57,9 +50,9 @@ int main() {
                 backendError = result == 0 ? 22 : 14;
                 guestError = 71;
                 const int previousCalls = calls;
-                Check(utime_nid_postfix(name, value) == result);
-                Check(calls == previousCalls + 1);
-                Check(guestError == (result == 0 ? 71 : 14));
+                Require(utime_nid_postfix(name, value) == result);
+                Require(calls == previousCalls + 1);
+                Require(guestError == (result == 0 ? 71 : 14));
             }
         }
     }

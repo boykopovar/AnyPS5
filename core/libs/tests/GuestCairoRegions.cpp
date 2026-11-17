@@ -1,4 +1,5 @@
 #include "prx/libcairo/include/Region.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cerrno>
@@ -19,15 +20,6 @@
 
 static_assert(sizeof(CairoRectangleInt) == 16);
 static_assert(std::is_standard_layout_v<CairoRectangleInt>);
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "Cairo region check failed at line %d\n", line);
-        std::abort();
-    }
-}
-
-#define Require(value) Check((value), __LINE__)
 
 class ReadOnlyPage {
 public:

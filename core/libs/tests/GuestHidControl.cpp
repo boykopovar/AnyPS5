@@ -1,4 +1,5 @@
 #include "prx/libSceHidControl/libSceHidControl.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cerrno>
@@ -15,12 +16,6 @@ namespace {
 
 constexpr int ErrorInvalidArgument = static_cast<int>(0x803b3001);
 constexpr int ErrorNotInitialized = static_cast<int>(0x803b3002);
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "HID CONTROL: %s\n", message);
-    std::abort();
-}
 
 bool AllBytes(const std::uint8_t* data, std::size_t size, std::uint8_t value) {
     for (std::size_t index = 0; index < size; ++index) {

@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
@@ -40,22 +41,11 @@ static const LibreSslSsl* Connection(const TestSsl* ssl) {
     return reinterpret_cast<const LibreSslSsl*>(ssl);
 }
 
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL SSL session check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> static void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
-    try { action(); } catch (const std::exception&) { return; }
-    Require(false, location);
-}
-
 static void TestGetSession() {
     TestSession session {};
     TestCert cert {};
     TestSsl ssl {};
-    RequireThrows([] { SSL_get_session_nid_postfix(nullptr); });
+    ExpectErr([] { SSL_get_session_nid_postfix(nullptr); });
     Require(SSL_get_session_nid_postfix(Connection(&ssl)) == nullptr);
     ssl.cert = &cert;
     ssl.session = &session;
@@ -66,7 +56,7 @@ static void TestCurrentCipher() {
     int cipher = 0;
     TestSession session {};
     TestSsl ssl {};
-    RequireThrows([] { SSL_get_current_cipher_nid_postfix(nullptr); });
+    ExpectErr([] { SSL_get_current_cipher_nid_postfix(nullptr); });
     Require(SSL_get_current_cipher_nid_postfix(Connection(&ssl)) == nullptr);
     ssl.session = &session;
     Require(SSL_get_current_cipher_nid_postfix(Connection(&ssl)) == nullptr);
@@ -80,10 +70,10 @@ static void TestGetCertificate() {
     int key = 0;
     TestCert cert {};
     TestSsl ssl {};
-    RequireThrows([] { SSL_get_certificate_nid_postfix(nullptr); });
+    ExpectErr([] { SSL_get_certificate_nid_postfix(nullptr); });
     Require(SSL_get_certificate_nid_postfix(Connection(&ssl)) == nullptr);
     ssl.cert = &cert;
-    RequireThrows([&] { SSL_get_certificate_nid_postfix(Connection(&ssl)); });
+    ExpectErr([&] { SSL_get_certificate_nid_postfix(Connection(&ssl)); });
     cert.pkeys[0].x509 = &other;
     cert.pkeys[2].x509 = &x509;
     cert.pkeys[2].privatekey = &key;
@@ -99,10 +89,10 @@ static void TestGetPrivateKey() {
     int other = 0;
     TestCert cert {};
     TestSsl ssl {};
-    RequireThrows([] { SSL_get_privatekey_nid_postfix(nullptr); });
+    ExpectErr([] { SSL_get_privatekey_nid_postfix(nullptr); });
     Require(SSL_get_privatekey_nid_postfix(Connection(&ssl)) == nullptr);
     ssl.cert = &cert;
-    RequireThrows([&] { SSL_get_privatekey_nid_postfix(Connection(&ssl)); });
+    ExpectErr([&] { SSL_get_privatekey_nid_postfix(Connection(&ssl)); });
     cert.pkeys[0].privatekey = &other;
     cert.pkeys[3].x509 = &x509;
     cert.pkeys[3].privatekey = &key;

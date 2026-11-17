@@ -2,20 +2,13 @@
 #include "prx/libSceFont/include/Api.hpp"
 #include "prx/libSceFont/include/FontTypes.hpp"
 #include "prx/libSceFontFt/include/Api.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "Font render characters check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static int allocations = 0;
 static void* APS5_VABI Allocate(void*, std::uint32_t size) {

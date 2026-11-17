@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -9,12 +10,6 @@
 namespace {
 
 constexpr std::size_t Page = 0x4000;
-
-void Require(bool condition, const char* what) {
-    if (condition) return;
-    std::fprintf(stderr, "%s\n", what);
-    std::abort();
-}
 
 void RequireReported(void* address, int expected, const char* what) {
     VirtualQueryInfo info{};

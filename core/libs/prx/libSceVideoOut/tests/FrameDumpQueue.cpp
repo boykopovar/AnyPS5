@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Execution/include/DisplayBuffer.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "tests/VideoOutTestEnvironment.hpp"
+#include "Testing.hpp"
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -40,10 +41,6 @@ const std::size_t DumpBytes = 54 + static_cast<std::size_t>(DumpWidth) * DumpHei
 constexpr int Frames = 4;
 bool WaitMode = false;
 
-void check(bool condition, const char* reason) {
-    if (!condition) throw std::runtime_error(reason);
-}
-
 std::string frameName(int index) {
     char name[32];
     std::snprintf(name, sizeof(name), "frame_%03d.bmp", index);
@@ -56,9 +53,9 @@ class HeldDump final {
 public:
     explicit HeldDump(int index) {
         const auto name = frameName(index);
-        check(mkfifo(name.c_str(), 0600) == 0, "a frame dump pipe could not be created");
+        Require(mkfifo(name.c_str(), 0600) == 0, "a frame dump pipe could not be created");
         descriptor = open(name.c_str(), O_RDWR);
-        check(descriptor >= 0, "a frame dump pipe could not be opened");
+        Require(descriptor >= 0, "a frame dump pipe could not be opened");
     }
 
     ~HeldDump() { close(descriptor); }
@@ -70,9 +67,9 @@ public:
         std::vector<char> dump(DumpBytes);
         for (std::size_t done = 0; done < dump.size();) {
             pollfd waiting{descriptor, POLLIN, 0};
-            check(poll(&waiting, 1, 15000) == 1, "a queued frame dump was not written");
+            Require(poll(&waiting, 1, 15000) == 1, "a queued frame dump was not written");
             const auto count = read(descriptor, dump.data() + done, dump.size() - done);
-            check(count > 0, "a frame dump pipe could not be read");
+            Require(count > 0, "a frame dump pipe could not be read");
             done += static_cast<std::size_t>(count);
         }
         return dump;
@@ -81,20 +78,20 @@ public:
 
 std::vector<char> readDump(int index) {
     std::ifstream file(frameName(index), std::ios::binary);
-    check(file.is_open(), "a frame dump is missing");
+    Require(file.is_open(), "a frame dump is missing");
     return {std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
 }
 
 void checkDump(std::span<const char> dump, std::span<const std::byte> decoded) {
-    check(dump.size() == DumpBytes, "a frame dump has the wrong size");
+    Require(dump.size() == DumpBytes, "a frame dump has the wrong size");
     std::uint32_t extent[2];
     std::memcpy(extent, dump.data() + 18, sizeof(extent));
-    check(extent[0] == DumpWidth && extent[1] == static_cast<std::uint32_t>(-static_cast<std::int32_t>(DumpHeight)), "a frame dump has the wrong extent");
+    Require(extent[0] == DumpWidth && extent[1] == static_cast<std::uint32_t>(-static_cast<std::int32_t>(DumpHeight)), "a frame dump has the wrong extent");
     for (std::uint32_t y = 0; y < DumpHeight; ++y) {
         for (std::uint32_t x = 0; x < DumpWidth; ++x) {
             const auto dumped = dump.data() + 54 + (static_cast<std::size_t>(y) * DumpWidth + x) * 4;
             const auto source = decoded.data() + (static_cast<std::size_t>(y) * Scale * Width + static_cast<std::size_t>(x) * Scale) * 4;
-            check(std::memcmp(dumped, source, 4) == 0, "a frame dump pixel differs from the display buffer");
+            Require(std::memcmp(dumped, source, 4) == 0, "a frame dump pixel differs from the display buffer");
         }
     }
 }
@@ -116,8 +113,8 @@ void testDumpQueue() {
     const auto linearStorage = makeStorage(linearBytes, linearAllocation);
     const AgcDriver::DisplayBuffer tiled{reinterpret_cast<std::uint64_t>(tiledStorage.data()), 0x8000000000000000ull, Width, Height};
     const AgcDriver::DisplayBuffer linear{reinterpret_cast<std::uint64_t>(linearStorage.data()), 0x8000000000000000ull, Width, Height, 1};
-    check(AgcDriver::DisplayBufferSize(tiled) == tiledStorage.size(), "incorrect padded tiled display footprint");
-    check(AgcDriver::DisplayBufferSize(linear) == linearStorage.size(), "incorrect linear display footprint");
+    Require(AgcDriver::DisplayBufferSize(tiled) == tiledStorage.size(), "incorrect padded tiled display footprint");
+    Require(AgcDriver::DisplayBufferSize(linear) == linearStorage.size(), "incorrect linear display footprint");
     const auto fill = [](const AgcDriver::DisplayBuffer& display, std::span<std::byte> storage) {
         for (std::uint32_t y = 0; y < Height; ++y) {
             for (std::uint32_t x = 0; x < Width; ++x) {
@@ -139,8 +136,8 @@ void testDumpQueue() {
     VideoOutBufferAttribute2 linearAttribute{};
     sceVideoOutSetBufferAttribute2(&tiledAttribute, tiled.pixelFormat, 0, Width, Height, 0, 0, 0);
     sceVideoOutSetBufferAttribute2(&linearAttribute, linear.pixelFormat, 1, Width, Height, 0, 0, 0);
-    check(sceVideoOutRegisterBuffers2(handle, 0, 0, &tiledBuffer, 1, &tiledAttribute, 0, nullptr) == 0, "tiled buffer registration failed");
-    check(sceVideoOutRegisterBuffers2(handle, 1, 1, &linearBuffer, 1, &linearAttribute, 0, nullptr) == 0, "linear buffer registration failed");
+    Require(sceVideoOutRegisterBuffers2(handle, 0, 0, &tiledBuffer, 1, &tiledAttribute, 0, nullptr) == 0, "tiled buffer registration failed");
+    Require(sceVideoOutRegisterBuffers2(handle, 1, 1, &linearBuffer, 1, &linearAttribute, 0, nullptr) == 0, "linear buffer registration failed");
     const HeldDump first(0);
     const HeldDump last(Frames - 1);
     std::vector<char> firstDump;
@@ -154,9 +151,9 @@ void testDumpQueue() {
     try {
         for (int frame = 0; frame < Frames; ++frame) {
             const int index = frame % 2;
-            check(sceVideoOutSubmitFlip(handle, index, 1, frame) == 0, "the flip was not accepted");
+            Require(sceVideoOutSubmitFlip(handle, index, 1, frame) == 0, "the flip was not accepted");
             std::unique_lock lock(cfg->mutex);
-            check(cfg->vblankCond.wait_for(lock, std::chrono::seconds(15), [&] { return (cfg->failure && cfg->flipStatus.flipPendingNum == 0) || cfg->flipStatus.count == static_cast<std::uint64_t>(frame) + 1; }), "the flip did not complete");
+            Require(cfg->vblankCond.wait_for(lock, std::chrono::seconds(15), [&] { return (cfg->failure && cfg->flipStatus.flipPendingNum == 0) || cfg->flipStatus.count == static_cast<std::uint64_t>(frame) + 1; }), "the flip did not complete");
             if (cfg->failure) std::rethrow_exception(cfg->failure);
         }
     } catch (...) {
@@ -165,7 +162,7 @@ void testDumpQueue() {
     if (WaitMode) reader.join();
     else firstDump = first.Release();
     if (failure) std::rethrow_exception(failure);
-    if (WaitMode) check(std::chrono::steady_clock::now() - started >= std::chrono::milliseconds(1500), "the presenter did not wait for the writer");
+    if (WaitMode) Require(std::chrono::steady_clock::now() - started >= std::chrono::milliseconds(1500), "the presenter did not wait for the writer");
     checkDump(firstDump, tiledPixels);
     const auto lastDump = last.Release();
     checkDump(lastDump, linearPixels);
@@ -183,7 +180,7 @@ int main(int argc, char** argv) {
     WaitMode = argc > 1 && std::strcmp(argv[1], "wait") == 0;
     VideoOutTestEnvironment environment;
     try {
-        if (WaitMode) check(Scale == 1, "the wait test needs APS5_DUMP_SCALE=1");
+        if (WaitMode) Require(Scale == 1, "the wait test needs APS5_DUMP_SCALE=1");
         testDumpQueue();
         std::puts(WaitMode ? "VideoOut frame dump wait test passed" : "VideoOut frame dump queue test passed");
         return 0;

@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -6,13 +7,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <vector>
-
-static void Require(bool condition) {
-    if (!condition) {
-        std::fputs("GuestTimingsafeBoundary check failed\n", stderr);
-        std::abort();
-    }
-}
 
 #ifdef _WIN32
 #include <windows.h>

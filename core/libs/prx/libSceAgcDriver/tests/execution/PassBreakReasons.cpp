@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/MultisampleTarget.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Recorder.hpp"
 #include "DepthFastClearHarness.hpp"
+#include "Testing.hpp"
 #include "VulkanTestDevice.hpp"
 #include <array>
 #include <cstddef>
@@ -70,10 +71,6 @@ Counts Snapshot() {
     return {DrawPassTotals()[0], DrawPassBreaks()};
 }
 
-void Expect(bool condition, const std::string& what) {
-    if (!condition) throw std::runtime_error("pass break reasons: " + what);
-}
-
 std::string Describe(const Counts& before, const Counts& after) {
     std::string text = std::to_string(after.passes.passesBegun - before.passes.passesBegun) + " begun, " + std::to_string(after.passes.passesContinued - before.passes.passesContinued) + " continued;";
     for (std::size_t i = 0; i < PassBreakCount; ++i) {
@@ -83,10 +80,10 @@ std::string Describe(const Counts& before, const Counts& after) {
 }
 
 void ExpectBreak(const Counts& before, const Counts& after, PassBreak reason, const std::string& what) {
-    Expect(after.passes.passesBegun - before.passes.passesBegun == 1 && after.passes.passesContinued == before.passes.passesContinued, what + " did not begin exactly one pass: " + Describe(before, after));
+    Require(after.passes.passesBegun - before.passes.passesBegun == 1 && after.passes.passesContinued == before.passes.passesContinued, what + " did not begin exactly one pass: " + Describe(before, after));
     for (std::size_t i = 0; i < PassBreakCount; ++i) {
         const std::uint64_t expected = i == static_cast<std::size_t>(reason) ? 1u : 0u;
-        Expect(after.breaks[i] - before.breaks[i] == expected, what + " was not counted once as '" + PassBreakNames[static_cast<std::size_t>(reason)] + "': " + Describe(before, after));
+        Require(after.breaks[i] - before.breaks[i] == expected, what + " was not counted once as '" + PassBreakNames[static_cast<std::size_t>(reason)] + "': " + Describe(before, after));
     }
 }
 
@@ -102,7 +99,7 @@ void Draw(const Context& context, AgcDriver::VulkanDevice& device, const Shaders
     state.color.surfaceExtent = state.color.extent;
     state.color.tileMode = ColorTileMode::RenderTarget;
     state.color.samples = Samples;
-    Expect(MultisampledColorBytes(state.color) == color.Bytes().size(), "the color backing differs from its multisample footprint");
+    Require(MultisampledColorBytes(state.color) == color.Bytes().size(), "the color backing differs from its multisample footprint");
     state.colors = {state.color};
     state.hasColorTarget = true;
     state.depth = DepthTarget{depth, 0, {Width, Height}, VK_FORMAT_D32_SFLOAT, 1.0f, 0, 0, false, Samples};
@@ -145,7 +142,7 @@ int main() {
         std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
         Recorder recorder(context);
         recorder.Activate();
-        Expect(MultisampledDepthBytes_nid_no_patch({Width, Height}, sizeof(float), Samples) == DepthA.Bytes().size(), "the depth backing differs from its multisample footprint");
+        Require(MultisampledDepthBytes_nid_no_patch({Width, Height}, sizeof(float), Samples) == DepthA.Bytes().size(), "the depth backing differs from its multisample footprint");
         const auto depthA = DepthA.Address();
         const auto depthB = DepthB.Address();
         const auto depthC = DepthC.Address();
@@ -164,7 +161,7 @@ int main() {
         before = after;
         Draw(context, *device, shaders, ColorA, depthA);
         after = Snapshot();
-        Expect(after.passes.passesContinued - before.passes.passesContinued == 1 && after.breaks == before.breaks, "a draw with the open pass's key and no hazard did not continue it: " + Describe(before, after));
+        Require(after.passes.passesContinued - before.passes.passesContinued == 1 && after.breaks == before.breaks, "a draw with the open pass's key and no hazard did not continue it: " + Describe(before, after));
         recorder.Commands();
         before = Snapshot();
         Draw(context, *device, shaders, ColorA, depthA);

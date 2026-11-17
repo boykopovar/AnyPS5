@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/SonyCrt.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <chrono>
 #include <cstddef>
@@ -15,13 +16,6 @@
 #include <thread>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "safe error messages: %s\n", message);
-        std::abort();
-    }
-}
 
 thread_local int violations = 0;
 thread_local void* violationBuffer = nullptr;

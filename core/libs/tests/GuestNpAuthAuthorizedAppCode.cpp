@@ -1,16 +1,13 @@
 #include "prx/libSceNpAuth/include/Api.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
-
-static void Require(bool condition) {
-    if (!condition) std::abort();
-}
 
 static void ClobberErrno(std::uintptr_t, std::size_t) { errno = 99; }
 

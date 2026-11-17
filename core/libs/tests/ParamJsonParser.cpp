@@ -1,4 +1,5 @@
 #include "prx/libkernel/AppMetadata/include/ParamJsonParser.hpp"
+#include "Testing.hpp"
 #include <chrono>
 #include <clocale>
 #include <cstdint>
@@ -9,10 +10,6 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
-
-static void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 static ParsedParamJson ParseSize(const std::filesystem::path& path, const std::string& size) {
     {

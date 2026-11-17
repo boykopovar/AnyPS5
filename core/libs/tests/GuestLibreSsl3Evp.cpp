@@ -1,6 +1,7 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libc/libc.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdio>
@@ -14,16 +15,7 @@ using LibreSsl3::DigestContext;
 using LibreSsl3::DigestMethod;
 
 
-static void Require(bool value, std::source_location location = std::source_location::current()) {
-    if (value) return;
-    std::fprintf(stderr, "LibreSSL3 EVP check failed at line %u\n", location.line());
-    std::abort();
-}
 
-template<typename TAction> static void Throws(TAction action) {
-    try { action(); } catch (const std::exception&) { return; }
-    Require(false);
-}
 
 static bool failAllocation;
 static std::array<std::pair<void*, std::size_t>, 2> expectedCleared{};
@@ -104,7 +96,7 @@ static void Methods() {
         Require(method->flags == 8 && method->blockSize == 64);
         Require(!method->copy && !method->cleanup && !method->control);
         Require(!method->sign && !method->verify && method->requiredKeyTypes[0] == 6 && method->requiredKeyTypes[1] == 19);
-        Throws([&] { method->init(nullptr); });
+        ExpectErr([&] { method->init(nullptr); });
         DigestContext noData{};
         noData.digest = method;
         noData.flags = 0x1234;
@@ -113,8 +105,8 @@ static void Methods() {
         const auto saved = noData;
         Require(method->update(&noData, nullptr, 0) == 1);
         Require(std::memcmp(&noData, &saved, sizeof(saved)) == 0);
-        Throws([&] { method->update(nullptr, nullptr, 0); });
-        Throws([&] { method->update(&noData, "a", 1); });
+        ExpectErr([&] { method->update(nullptr, nullptr, 0); });
+        ExpectErr([&] { method->update(&noData, "a", 1); });
     }
     Require(Hash(sha1, "", 1) == "da39a3ee5e6b4b0d3255bfef95601890afd80709");
     Require(Hash(sha1, "abc", 1) == "a9993e364706816aba3e25717850c26c9cd0d89d");
@@ -153,23 +145,23 @@ static void Ownership() {
     context->digest = &foreign;
     context->flags = 0x123;
     DigestContext saved = *context;
-    Throws([&] { EVP_DigestInit_nid_postfix(context, &foreign); });
+    ExpectErr([&] { EVP_DigestInit_nid_postfix(context, &foreign); });
     Require(std::memcmp(context, &saved, sizeof(saved)) == 0);
     EVP_MD_CTX_free_nid_postfix(context);
     context = EVP_MD_CTX_new_nid_postfix();
     context->digest = &foreign;
     context->data = malloc_nid_postfix(1);
     saved = *context;
-    Throws([&] { EVP_MD_CTX_free_nid_postfix(context); });
+    ExpectErr([&] { EVP_MD_CTX_free_nid_postfix(context); });
     Require(std::memcmp(context, &saved, sizeof(saved)) == 0);
     free_nid_postfix(context->data);
     context->data = nullptr;
     context->digest = nullptr;
     context->flags = 0;
     EVP_MD_CTX_free_nid_postfix(context);
-    Throws([&] { EVP_DigestInit_nid_postfix(nullptr, EVP_sha1_nid_postfix()); });
+    ExpectErr([&] { EVP_DigestInit_nid_postfix(nullptr, EVP_sha1_nid_postfix()); });
     DigestContext stack{};
-    Throws([&] { EVP_DigestInit_nid_postfix(&stack, nullptr); });
+    ExpectErr([&] { EVP_DigestInit_nid_postfix(&stack, nullptr); });
 }
 
 static void AllocationAndClearing() {
@@ -182,7 +174,7 @@ static void AllocationAndClearing() {
     context = EVP_MD_CTX_new_nid_postfix();
     failAllocation = true;
     Require(EVP_MD_CTX_new_nid_postfix() == nullptr);
-    Throws([&] { EVP_DigestInit_nid_postfix(context, EVP_sha1_nid_postfix()); });
+    ExpectErr([&] { EVP_DigestInit_nid_postfix(context, EVP_sha1_nid_postfix()); });
     Require(context->digest == EVP_sha1_nid_postfix() && !context->data && !context->keyContext);
     Require(context->update == context->digest->update && context->flags == 0);
     failAllocation = false;

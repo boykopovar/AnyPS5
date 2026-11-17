@@ -1,4 +1,5 @@
 #include "prx/libSceSaveData/SaveDataFile.hpp"
+#include "Testing.hpp"
 
 #include <chrono>
 #include <cstdio>
@@ -9,14 +10,6 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "Save-data write failure check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static std::vector<char> ReadFile(const std::filesystem::path& path) {
     std::ifstream file(path, std::ios::binary);

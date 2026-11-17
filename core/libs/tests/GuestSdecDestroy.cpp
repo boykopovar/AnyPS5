@@ -1,5 +1,6 @@
 #include "prx/libSceVdecSavc/libSceVdecSavc.hpp"
 #include "prx/libSceVdecSavc2/libSceVdecSavc2.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cerrno>
@@ -9,12 +10,6 @@
 #include <cstring>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
 
 using Decoder = std::array<std::uint64_t, 4>;
 

@@ -1,4 +1,5 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -8,21 +9,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc I420Buffer check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> void RequireInvalidArgument(TAction action, std::source_location location = std::source_location::current()) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, location);
-}
 
 const std::uint8_t* APS5_VABI BaseDataY(const WebRtcI420Buffer* buffer) {
     return buffer->data;
@@ -83,9 +69,9 @@ void TestOverriddenGetters() {
 }
 
 void TestNullBufferThrows() {
-    RequireInvalidArgument([] { _ZN6webrtc10I420Buffer12MutableDataYEv_nid_postfix(nullptr); });
-    RequireInvalidArgument([] { _ZN6webrtc10I420Buffer12MutableDataUEv_nid_postfix(nullptr); });
-    RequireInvalidArgument([] { _ZN6webrtc10I420Buffer12MutableDataVEv_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZN6webrtc10I420Buffer12MutableDataYEv_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZN6webrtc10I420Buffer12MutableDataUEv_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZN6webrtc10I420Buffer12MutableDataVEv_nid_postfix(nullptr); });
 }
 
 }

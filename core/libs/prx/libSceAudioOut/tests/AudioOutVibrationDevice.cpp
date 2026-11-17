@@ -5,6 +5,7 @@
 #include "prx/libScePad/include/PadAudioHapticQueue.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -37,10 +38,6 @@ struct Block {
 std::vector<Block> blocks;
 std::vector<int> clears;
 PadAudioHapticQueue timeline;
-
-void Require(bool value, const char* message) {
-    if (!value) throw std::runtime_error(message);
-}
 
 float Expected(std::int16_t sample, int volume, bool floating) {
     const float value = sample / 32768.0f;

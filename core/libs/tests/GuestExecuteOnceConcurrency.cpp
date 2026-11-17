@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -11,14 +12,6 @@
 
 using Callback = int (APS5_VABI *)(void*, void*, void**);
 using ExecuteFunction = int (APS5_VABI *)(int*, Callback, void*);
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "Execute-once concurrency check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static ExecuteFunction execute = nullptr;
 

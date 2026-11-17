@@ -19,6 +19,7 @@
 #endif
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -50,8 +51,6 @@ void NetCtlSetStunServers_nid_no_patch(const sockaddr_in*, std::size_t, int);
 }
 
 namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
 
 constexpr int kErrInvalidCode = static_cast<int>(0x80412106);
 constexpr int kErrInvalidAddr = static_cast<int>(0x80412107);

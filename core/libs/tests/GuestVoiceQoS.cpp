@@ -1,14 +1,13 @@
 #include "prx/libSceVoice/include/Api.hpp"
 #include "prx/libSceVoiceQoS/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
 #include <string_view>
 #include <vector>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 template <typename TCall>
 static bool NotImplemented(TCall call) {

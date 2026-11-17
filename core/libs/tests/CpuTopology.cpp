@@ -1,15 +1,10 @@
 #include "prx/libc/include/CpuTopology.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <random>
-
-static void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "cpu topology test failed: %s\n", what);
-    std::exit(1);
-}
 
 static std::uint64_t Parse(const char* text) {
     const auto path = std::filesystem::temp_directory_path() / ("anyps5_cpu_topology_test_cpus-" + std::to_string(std::random_device{}()));

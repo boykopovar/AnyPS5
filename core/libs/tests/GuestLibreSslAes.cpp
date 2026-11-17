@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -17,17 +18,6 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
-
-static void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "failed: %s\n", what);
-    std::abort();
-}
-
-template<typename TAction> static void RequireThrows(TAction action, const char* what) {
-    try { action(); } catch (const std::exception&) { return; }
-    Require(false, what);
-}
 
 static std::vector<unsigned char> Bytes(const char* hex) {
     std::vector<unsigned char> bytes;
@@ -130,9 +120,9 @@ template<typename TSetup> static void RequireGuestKeyPointers(TSetup setup, cons
     const AesKey before = Sentinel();
     AesKey key = before;
     errno = 71;
-    RequireThrows([&] { setup(unmapped, 128, &key); }, what);
+    ExpectErr([&] { setup(unmapped, 128, &key); }, what);
     Require(errno == 71 && !std::memcmp(&key, &before, sizeof(key)), what);
-    RequireThrows([&] { setup(userKey.data(), 128, reinterpret_cast<AesKey*>(std::uintptr_t {0x10})); }, what);
+    ExpectErr([&] { setup(userKey.data(), 128, reinterpret_cast<AesKey*>(std::uintptr_t {0x10})); }, what);
     Require(errno == 71, what);
     Require(setup(unmapped, 64, &key) == -2 && errno == 71, what);
 
@@ -143,14 +133,14 @@ template<typename TSetup> static void RequireGuestKeyPointers(TSetup setup, cons
     Require(setup(userKey.data(), 128, &expected) == 0, what);
     key = before;
     Require(setup(edge, 128, &key) == 0 && !std::memcmp(&key, &expected, sizeof(key)) && errno == 71, what);
-    RequireThrows([&] { setup(keyPage.End() - 8, 128, &key); }, what);
+    ExpectErr([&] { setup(keyPage.End() - 8, 128, &key); }, what);
     Require(errno == 71, what);
 
     GuardedPage schedulePage;
     auto* readOnly = reinterpret_cast<AesKey*>(schedulePage.End() - sizeof(AesKey));
     std::memcpy(static_cast<void*>(readOnly), &before, sizeof(before));
     schedulePage.ReadOnly();
-    RequireThrows([&] { setup(userKey.data(), 128, readOnly); }, what);
+    ExpectErr([&] { setup(userKey.data(), 128, readOnly); }, what);
     Require(errno == 71 && !std::memcmp(readOnly, &before, sizeof(before)), what);
 }
 
@@ -196,7 +186,7 @@ int main() {
     Require(AES_set_decrypt_key_nid_postfix(zero, 129, &bad) == -2 && bad.rounds == 7 && bad.roundKeys[0] == 1, "unsupported decrypt key length keeps the key");
     Require(AES_set_encrypt_key_nid_postfix(nullptr, 128, &bad) == -1 && AES_set_encrypt_key_nid_postfix(zero, 128, nullptr) == -1, "null key arguments");
     unsigned char block[16] {};
-    RequireThrows([&] { AES_encrypt_nid_postfix(zero, block, &bad); }, "key schedule with an invalid round count");
+    ExpectErr([&] { AES_encrypt_nid_postfix(zero, block, &bad); }, "key schedule with an invalid round count");
     RequireRefusalsKeepKey(&AES_set_encrypt_key_nid_postfix, "refused encrypt key setup leaves the key unchanged");
     RequireRefusalsKeepKey(&AES_set_decrypt_key_nid_postfix, "refused decrypt key setup leaves the key unchanged");
     RequireSchedule(&AES_set_encrypt_key_nid_postfix, "2b7e151628aed2a6abf7158809cf4f3c",
@@ -279,7 +269,7 @@ int main() {
 
     Require(!std::memcmp(back.data(), message.data(), 64), "SP 800-38A F.3.14 CFB128 decrypt");
     num = 16;
-    RequireThrows([&] { AES_cfb128_encrypt_nid_postfix(message.data(), out.data(), 1, &encrypt, iv.data(), &num, 1); }, "CFB128 position out of range");
+    ExpectErr([&] { AES_cfb128_encrypt_nid_postfix(message.data(), out.data(), 1, &encrypt, iv.data(), &num, 1); }, "CFB128 position out of range");
 
     auto counter = Bytes("f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff");
     unsigned char keystream[16] {};
@@ -296,7 +286,7 @@ int main() {
     Require(Hex(out.data(), 37) == "e13338e36cb71962e00d020b4cedbd86d3dae15b04bb352fa0f59febfcb4da3e67da610697", "CTR counter wraps across all 128 bits");
     Require(position == 5 && Hex(counter.data(), 16) == "00000000000000000000000000000002", "CTR position and counter after a partial block");
     position = 16;
-    RequireThrows([&] { AES_ctr128_encrypt_nid_postfix(message.data(), out.data(), 1, &encrypt, counter.data(), keystream, &position); }, "CTR position out of range");
+    ExpectErr([&] { AES_ctr128_encrypt_nid_postfix(message.data(), out.data(), 1, &encrypt, counter.data(), keystream, &position); }, "CTR position out of range");
 
     RequireGuestKeyPointers(&AES_set_encrypt_key_nid_postfix, "encrypt key setup");
     RequireGuestKeyPointers(&AES_set_decrypt_key_nid_postfix, "decrypt key setup");

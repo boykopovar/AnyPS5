@@ -2,6 +2,7 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -84,22 +85,6 @@ constexpr const char* OtherSha256Signature =
     "613e57c1b9021d8b04cb8e90d5d56b58c61932c36b5c2d583caee13a43f2d9f9c5a1a672a78d7dd81f2b228231951ba2"
     "0e0ed8c59d04e0b0a926f6c5fd8e76d7f3d8e25eb299edf1e70239f5419f948020dd72f0985bc33c5df826551b37d031"
     "36760feece2bee3255c733c7c98c0dd23f3be2c17b8c37e7829efcffc1fc7d05";
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "failed: %s\n", message);
-    std::abort();
-}
-
-template<typename TAction>
-void RequireThrows(TAction action, const char* message) {
-    try {
-        action();
-    } catch (const std::exception&) {
-        return;
-    }
-    Require(false, message);
-}
 
 std::vector<unsigned char> Bytes(const char* hex) {
     const auto digit = [](char c) { return c >= 'a' ? c - 'a' + 10 : c - '0'; };
@@ -259,9 +244,9 @@ void UninitializedDigest(const Key& key) {
 
 void MissingOrForeignState(const Key& key) {
     ERR_clear_error_nid_postfix();
-    RequireThrows([] { EVP_DigestVerifyFinal_nid_postfix(nullptr, nullptr, 0); }, "a null digest context follows the source's unchecked read");
+    ExpectErr([] { EVP_DigestVerifyFinal_nid_postfix(nullptr, nullptr, 0); }, "a null digest context follows the source's unchecked read");
     EvpMdContext empty {};
-    RequireThrows([&] { EVP_DigestVerifyFinal_nid_postfix(&empty, nullptr, 0); },
+    ExpectErr([&] { EVP_DigestVerifyFinal_nid_postfix(&empty, nullptr, 0); },
         "a digest context without a key context follows the source's unchecked read");
     Require(References(key) == 1, "the missing state touches no key reference");
     int marker = 0;
@@ -269,10 +254,10 @@ void MissingOrForeignState(const Key& key) {
     EvpMdContext context {};
     EVP_MD_CTX_init_nid_postfix(&context);
     context.pkeyContext = const_cast<void*>(static_cast<const void*>(&foreign));
-    RequireThrows([&] { EVP_DigestVerifyFinal_nid_postfix(&context, nullptr, 0); }, "a key context this library did not create throws");
-    RequireThrows([&] { EVP_DigestVerifyInit_nid_postfix(&context, nullptr, EVP_sha256_nid_postfix(), nullptr, key.pkey); },
+    ExpectErr([&] { EVP_DigestVerifyFinal_nid_postfix(&context, nullptr, 0); }, "a key context this library did not create throws");
+    ExpectErr([&] { EVP_DigestVerifyInit_nid_postfix(&context, nullptr, EVP_sha256_nid_postfix(), nullptr, key.pkey); },
         "an existing foreign key context throws during the initialization");
-    RequireThrows([&] { EVP_MD_CTX_cleanup_nid_postfix(&context); }, "freeing a foreign key context throws");
+    ExpectErr([&] { EVP_MD_CTX_cleanup_nid_postfix(&context); }, "freeing a foreign key context throws");
     Require(References(key) == 1, "a foreign key context takes no key reference");
     context.pkeyContext = nullptr;
     Require(EVP_DigestVerifyInit_nid_postfix(&context, nullptr, nullptr, nullptr, nullptr) == 0, "an initialization without a key fails");

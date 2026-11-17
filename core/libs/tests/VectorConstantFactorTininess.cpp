@@ -1,5 +1,6 @@
 #include "Translation/TranslationContext.hpp"
 #include "RdnaDecoder/RdnaVectorOpDecoder.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -20,10 +21,6 @@ enum class Tininess {
     ExponentsOnly,
     Full,
 };
-
-void Require(bool value, const std::string& message) {
-    if (!value) throw std::runtime_error("f32 constant factor: " + message);
-}
 
 const IrBlock& Translate(IrProgram& program, const std::string& name, const std::vector<std::uint32_t>& words, RdnaOpcode opcode, std::uint32_t floatMode) {
     const RdnaInstruction instruction = DecodeRdnaVectorOp(std::span<const std::uint32_t>(words), 0u);

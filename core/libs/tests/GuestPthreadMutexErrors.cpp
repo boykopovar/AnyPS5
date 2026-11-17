@@ -2,6 +2,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
@@ -20,8 +21,6 @@ static constexpr int POSIX_EINVAL = 22;
 static constexpr int POSIX_ETIMEDOUT = 60;
 static const PthreadMutex AdaptiveInitializer = reinterpret_cast<PthreadMutex>(std::uintptr_t{1});
 static const PthreadMutex DestroyedMutex = reinterpret_cast<PthreadMutex>(std::uintptr_t{2});
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 template <typename Call>
 static bool Throws(Call call) {

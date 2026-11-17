@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl3/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstddef>
 #include <cstdio>
@@ -60,22 +61,6 @@ static LibreSsl3Dsa FilledDsa() {
     return dsa;
 }
 
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL key component check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> static void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
-    try { action(); } catch (const std::exception&) { return; }
-    Require(false, location);
-}
-
-template<typename TAction> static void RequireNotImplemented(TAction action, std::source_location location = std::source_location::current()) {
-    try { action(); } catch (const std::runtime_error&) { return; }
-    Require(false, location);
-}
-
 class ReadOnlyPage {
 public:
     explicit ReadOnlyPage(const void* initial = nullptr, std::size_t size = 0) {
@@ -133,8 +118,8 @@ static void TestRsaKey() {
     RSA_get0_key_nid_postfix(&key, &first, nullptr, &third);
     Require(first == nullptr && third == nullptr);
     RSA_get0_key_nid_postfix(nullptr, nullptr, nullptr, nullptr);
-    RequireThrows([&] { RSA_get0_key_nid_postfix(nullptr, &first, &second, &third); });
-    RequireThrows([&] { RSA_get0_key_nid_postfix(nullptr, nullptr, nullptr, &third); });
+    ExpectErr([&] { RSA_get0_key_nid_postfix(nullptr, &first, &second, &third); });
+    ExpectErr([&] { RSA_get0_key_nid_postfix(nullptr, nullptr, nullptr, &third); });
 }
 
 static void TestDhPqg() {
@@ -153,8 +138,8 @@ static void TestDhPqg() {
     DH_get0_pqg_nid_postfix(&key, &first, nullptr, &third);
     Require(first == nullptr && third == nullptr);
     DH_get0_pqg_nid_postfix(nullptr, nullptr, nullptr, nullptr);
-    RequireThrows([&] { DH_get0_pqg_nid_postfix(nullptr, &first, &second, &third); });
-    RequireThrows([&] { DH_get0_pqg_nid_postfix(nullptr, nullptr, &second, nullptr); });
+    ExpectErr([&] { DH_get0_pqg_nid_postfix(nullptr, &first, &second, &third); });
+    ExpectErr([&] { DH_get0_pqg_nid_postfix(nullptr, nullptr, &second, nullptr); });
 }
 
 static void TestDhKey() {
@@ -173,8 +158,8 @@ static void TestDhKey() {
     DH_get0_key_nid_postfix(&key, &first, &second);
     Require(first == &Number[3] && second == nullptr);
     DH_get0_key_nid_postfix(nullptr, nullptr, nullptr);
-    RequireThrows([&] { DH_get0_key_nid_postfix(nullptr, &first, &second); });
-    RequireThrows([&] { DH_get0_key_nid_postfix(nullptr, &first, nullptr); });
+    ExpectErr([&] { DH_get0_key_nid_postfix(nullptr, &first, &second); });
+    ExpectErr([&] { DH_get0_key_nid_postfix(nullptr, &first, nullptr); });
 }
 
 static void TestDsaPqg() {
@@ -193,8 +178,8 @@ static void TestDsaPqg() {
     DSA_get0_pqg_nid_postfix(&key, &first, nullptr, &third);
     Require(first == nullptr && third == nullptr);
     DSA_get0_pqg_nid_postfix(nullptr, nullptr, nullptr, nullptr);
-    RequireThrows([&] { DSA_get0_pqg_nid_postfix(nullptr, &first, &second, &third); });
-    RequireThrows([&] { DSA_get0_pqg_nid_postfix(nullptr, &first, nullptr, nullptr); });
+    ExpectErr([&] { DSA_get0_pqg_nid_postfix(nullptr, &first, &second, &third); });
+    ExpectErr([&] { DSA_get0_pqg_nid_postfix(nullptr, &first, nullptr, nullptr); });
 }
 
 static void TestDsaKey() {
@@ -213,8 +198,8 @@ static void TestDsaKey() {
     DSA_get0_key_nid_postfix(&key, &first, &second);
     Require(first == &Number[4] && second == nullptr);
     DSA_get0_key_nid_postfix(nullptr, nullptr, nullptr);
-    RequireThrows([&] { DSA_get0_key_nid_postfix(nullptr, &first, &second); });
-    RequireThrows([&] { DSA_get0_key_nid_postfix(nullptr, nullptr, &second); });
+    ExpectErr([&] { DSA_get0_key_nid_postfix(nullptr, &first, &second); });
+    ExpectErr([&] { DSA_get0_key_nid_postfix(nullptr, nullptr, &second); });
 }
 
 static void TestGuestPointers() {
@@ -230,66 +215,66 @@ static void TestGuestPointers() {
     const void* third = Unset;
 
     errno = 73;
-    RequireNotImplemented([&] { RSA_get0_key_nid_postfix(reinterpret_cast<const LibreSsl3Rsa*>(0x10), &first, &second, &third); });
+    ExpectErr<std::runtime_error>([&] { RSA_get0_key_nid_postfix(reinterpret_cast<const LibreSsl3Rsa*>(0x10), &first, &second, &third); });
     Require(errno == 73 && first == Unset && second == Unset && third == Unset);
     errno = 73;
-    RequireNotImplemented([&] { RSA_get0_key_nid_postfix(&rsa, badPtr, &second, &third); });
+    ExpectErr<std::runtime_error>([&] { RSA_get0_key_nid_postfix(&rsa, badPtr, &second, &third); });
     Require(errno == 73 && second == Unset && third == Unset);
     errno = 73;
-    RequireNotImplemented([&] { RSA_get0_key_nid_postfix(&rsa, &first, badPtr, &third); });
+    ExpectErr<std::runtime_error>([&] { RSA_get0_key_nid_postfix(&rsa, &first, badPtr, &third); });
     Require(errno == 73 && first == Unset && third == Unset);
     errno = 73;
-    RequireNotImplemented([&] { RSA_get0_key_nid_postfix(&rsa, &first, &second, badPtr); });
+    ExpectErr<std::runtime_error>([&] { RSA_get0_key_nid_postfix(&rsa, &first, &second, badPtr); });
     Require(errno == 73 && first == Unset && second == Unset);
     const void* shared = Unset;
     errno = 73;
-    RequireNotImplemented([&] { RSA_get0_key_nid_postfix(&rsa, &shared, &shared, badPtr); });
+    ExpectErr<std::runtime_error>([&] { RSA_get0_key_nid_postfix(&rsa, &shared, &shared, badPtr); });
     Require(errno == 73 && shared == Unset);
 
     errno = 73;
-    RequireNotImplemented([&] { DH_get0_pqg_nid_postfix(reinterpret_cast<const LibreSsl3Dh*>(0x10), &first, &second, &third); });
+    ExpectErr<std::runtime_error>([&] { DH_get0_pqg_nid_postfix(reinterpret_cast<const LibreSsl3Dh*>(0x10), &first, &second, &third); });
     Require(errno == 73 && first == Unset && second == Unset && third == Unset);
     errno = 73;
-    RequireNotImplemented([&] { DH_get0_pqg_nid_postfix(&dh, badPtr, &second, &third); });
+    ExpectErr<std::runtime_error>([&] { DH_get0_pqg_nid_postfix(&dh, badPtr, &second, &third); });
     Require(errno == 73 && second == Unset && third == Unset);
     errno = 73;
-    RequireNotImplemented([&] { DH_get0_pqg_nid_postfix(&dh, &first, badPtr, &third); });
+    ExpectErr<std::runtime_error>([&] { DH_get0_pqg_nid_postfix(&dh, &first, badPtr, &third); });
     Require(errno == 73 && first == Unset && third == Unset);
     errno = 73;
-    RequireNotImplemented([&] { DH_get0_pqg_nid_postfix(&dh, &first, &second, badPtr); });
+    ExpectErr<std::runtime_error>([&] { DH_get0_pqg_nid_postfix(&dh, &first, &second, badPtr); });
     Require(errno == 73 && first == Unset && second == Unset);
 
     errno = 73;
-    RequireNotImplemented([&] { DH_get0_key_nid_postfix(reinterpret_cast<const LibreSsl3Dh*>(0x10), &first, &second); });
+    ExpectErr<std::runtime_error>([&] { DH_get0_key_nid_postfix(reinterpret_cast<const LibreSsl3Dh*>(0x10), &first, &second); });
     Require(errno == 73 && first == Unset && second == Unset);
     errno = 73;
-    RequireNotImplemented([&] { DH_get0_key_nid_postfix(&dh, badPtr, &second); });
+    ExpectErr<std::runtime_error>([&] { DH_get0_key_nid_postfix(&dh, badPtr, &second); });
     Require(errno == 73 && second == Unset);
     errno = 73;
-    RequireNotImplemented([&] { DH_get0_key_nid_postfix(&dh, &first, badPtr); });
+    ExpectErr<std::runtime_error>([&] { DH_get0_key_nid_postfix(&dh, &first, badPtr); });
     Require(errno == 73 && first == Unset);
 
     errno = 73;
-    RequireNotImplemented([&] { DSA_get0_pqg_nid_postfix(reinterpret_cast<const LibreSsl3Dsa*>(0x10), &first, &second, &third); });
+    ExpectErr<std::runtime_error>([&] { DSA_get0_pqg_nid_postfix(reinterpret_cast<const LibreSsl3Dsa*>(0x10), &first, &second, &third); });
     Require(errno == 73 && first == Unset && second == Unset && third == Unset);
     errno = 73;
-    RequireNotImplemented([&] { DSA_get0_pqg_nid_postfix(&dsa, badPtr, &second, &third); });
+    ExpectErr<std::runtime_error>([&] { DSA_get0_pqg_nid_postfix(&dsa, badPtr, &second, &third); });
     Require(errno == 73 && second == Unset && third == Unset);
     errno = 73;
-    RequireNotImplemented([&] { DSA_get0_pqg_nid_postfix(&dsa, &first, badPtr, &third); });
+    ExpectErr<std::runtime_error>([&] { DSA_get0_pqg_nid_postfix(&dsa, &first, badPtr, &third); });
     Require(errno == 73 && first == Unset && third == Unset);
     errno = 73;
-    RequireNotImplemented([&] { DSA_get0_pqg_nid_postfix(&dsa, &first, &second, badPtr); });
+    ExpectErr<std::runtime_error>([&] { DSA_get0_pqg_nid_postfix(&dsa, &first, &second, badPtr); });
     Require(errno == 73 && first == Unset && second == Unset);
 
     errno = 73;
-    RequireNotImplemented([&] { DSA_get0_key_nid_postfix(reinterpret_cast<const LibreSsl3Dsa*>(0x10), &first, &second); });
+    ExpectErr<std::runtime_error>([&] { DSA_get0_key_nid_postfix(reinterpret_cast<const LibreSsl3Dsa*>(0x10), &first, &second); });
     Require(errno == 73 && first == Unset && second == Unset);
     errno = 73;
-    RequireNotImplemented([&] { DSA_get0_key_nid_postfix(&dsa, badPtr, &second); });
+    ExpectErr<std::runtime_error>([&] { DSA_get0_key_nid_postfix(&dsa, badPtr, &second); });
     Require(errno == 73 && second == Unset);
     errno = 73;
-    RequireNotImplemented([&] { DSA_get0_key_nid_postfix(&dsa, &first, badPtr); });
+    ExpectErr<std::runtime_error>([&] { DSA_get0_key_nid_postfix(&dsa, &first, badPtr); });
     Require(errno == 73 && first == Unset);
 }
 

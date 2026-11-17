@@ -1,4 +1,5 @@
 #include "Recompiler.hpp"
+#include "Testing.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <array>
 #include <cstdint>
@@ -13,10 +14,6 @@
 namespace {
 
 using namespace ShaderRecompiler;
-
-void require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 constexpr std::array<std::uint32_t, 4> CvtF16F32Store{0x7e021500u, 0xe0700000u, 0x80000100u, 0xbf810000u};
 
@@ -41,7 +38,7 @@ std::vector<std::uint32_t> recompile(std::span<const std::uint32_t> capabilities
     request.layout = {0, 0, 0, 128};
     request.useCache = false;
     auto result = Recompile(request);
-    require(!result.spirv.empty(), "v_cvt_f16_f32 did not recompile");
+    Require(!result.spirv.empty(), "v_cvt_f16_f32 did not recompile");
     return result.spirv.Copy();
 }
 
@@ -57,7 +54,7 @@ Usage scan(std::span<const std::uint32_t> words) {
     for (std::size_t cursor = 5; cursor < words.size();) {
         const auto count = words[cursor] >> 16u;
         const auto op = static_cast<spv::Op>(words[cursor] & 0xffffu);
-        require(count != 0 && cursor + count <= words.size(), "truncated SPIR-V instruction");
+        Require(count != 0 && cursor + count <= words.size(), "truncated SPIR-V instruction");
         if (op == spv::OpFConvert) ++usage.floatConverts;
         if (op == spv::OpCapability && words[cursor + 1] == spv::CapabilityFloat16) usage.float16Capability = true;
         if (op == spv::OpExecutionMode && count == 4 && words[cursor + 3] == 16u) {
@@ -72,14 +69,14 @@ Usage scan(std::span<const std::uint32_t> words) {
 void verifyNative() {
     const std::array<std::uint32_t, 5> capabilities{spv::CapabilityShader, spv::CapabilityGroupNonUniform, spv::CapabilityFloat16, spv::CapabilityRoundingModeRTE, spv::CapabilityDenormPreserve};
     const auto usage = scan(recompile(capabilities));
-    require(usage.floatConverts != 0 && usage.float16Capability, "a device that rounds 16-bit floats to nearest even did not get OpFConvert to f16");
-    require(usage.roundingModeRte16 && usage.denormPreserve16, "native f16 conversion without the 16-bit RoundingModeRTE and DenormPreserve execution modes");
+    Require(usage.floatConverts != 0 && usage.float16Capability, "a device that rounds 16-bit floats to nearest even did not get OpFConvert to f16");
+    Require(usage.roundingModeRte16 && usage.denormPreserve16, "native f16 conversion without the 16-bit RoundingModeRTE and DenormPreserve execution modes");
 }
 
 void verifyEmulated() {
     const std::array<std::uint32_t, 3> withoutRte{spv::CapabilityShader, spv::CapabilityGroupNonUniform, spv::CapabilityFloat16};
     const auto usage = scan(recompile(withoutRte));
-    require(usage.floatConverts == 0 && !usage.float16Capability && !usage.roundingModeRte16, "a device without RoundingModeRTE for 16-bit floats got native f16 conversion");
+    Require(usage.floatConverts == 0 && !usage.float16Capability && !usage.roundingModeRte16, "a device without RoundingModeRTE for 16-bit floats got native f16 conversion");
 }
 
 }

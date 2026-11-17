@@ -1,6 +1,7 @@
 #include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "JsonTestAllocator.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -52,13 +53,6 @@ void operator delete(void* pointer, std::size_t) noexcept { ::operator delete(po
 void* operator new[](std::size_t bytes) { return ::operator new(bytes); }
 void operator delete[](void* pointer) noexcept { ::operator delete(pointer); }
 void operator delete[](void* pointer, std::size_t) noexcept { ::operator delete(pointer); }
-
-static void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "%s\n", message);
-        std::abort();
-    }
-}
 
 struct CallbackFailure {};
 struct Context { bool throwAfterConstruction = false; int calls = 0; };

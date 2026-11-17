@@ -1,4 +1,5 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -9,21 +10,6 @@
 #include <stdexcept>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc KeyParams check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TException, typename TAction> void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
-    try {
-        action();
-    } catch (const TException&) {
-        return;
-    }
-    Require(false, location);
-}
 
 WebRtcKeyParams Filled() {
     WebRtcKeyParams params;
@@ -49,10 +35,10 @@ void TestEcdsa() {
 void TestUnknownTypesThrow() {
     for (std::int32_t type : {2, 3, -1, 0x7fffffff}) {
         WebRtcKeyParams params = Filled();
-        RequireThrows<std::invalid_argument>([&] { _ZN3rtc9KeyParamsC1ENS_7KeyTypeE_nid_postfix(&params, type); });
+        ExpectErr<std::invalid_argument>([&] { _ZN3rtc9KeyParamsC1ENS_7KeyTypeE_nid_postfix(&params, type); });
         Require(Unchanged(params));
     }
-    RequireThrows<std::invalid_argument>([] { _ZN3rtc9KeyParamsC1ENS_7KeyTypeE_nid_postfix(nullptr, WebRtcKeyTypeEcdsa); });
+    ExpectErr<std::invalid_argument>([] { _ZN3rtc9KeyParamsC1ENS_7KeyTypeE_nid_postfix(nullptr, WebRtcKeyTypeEcdsa); });
 }
 
 }

@@ -1,4 +1,5 @@
 #include "prx/libSceXml/include/Api.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstddef>
@@ -11,12 +12,6 @@ namespace {
 
 constexpr std::uint8_t GUARD = 0xa5;
 constexpr std::uint8_t FILL = 0x5a;
-
-void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "failed: %s\n", what);
-    std::abort();
-}
 
 template <std::size_t Size>
 struct Guarded {

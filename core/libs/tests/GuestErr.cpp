@@ -4,6 +4,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
 #include "tests/TemporaryFile.hpp"
+#include "Testing.hpp"
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -33,12 +34,6 @@ int g_hookStatus = -1;
 void APS5_VABI Hook(int status) {
     g_hookStatus = status;
     throw ExitRequested{status};
-}
-
-void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "failed: %s\n", what);
-    std::abort();
 }
 
 class Capture {

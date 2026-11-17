@@ -1,4 +1,5 @@
 #include "prx/libSceNet/include/Net.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -6,10 +7,6 @@
 #include <string_view>
 #include <thread>
 #include <vector>
-
-static void Require(bool condition) {
-    if (!condition) std::abort();
-}
 
 static void Exhausted() {
     *sceNetErrnoLoc() = 33;

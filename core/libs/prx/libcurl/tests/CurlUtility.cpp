@@ -1,16 +1,11 @@
 #include "prx/libcurl/src/CurlHost.hpp"
 #include "prx/libcurl/libcurl.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 #include <cassert>
 #include <cstdlib>
 #include <cstring>
 #include <string>
-
-static void Require(bool condition) {
-    if (!condition) {
-        std::abort();
-    }
-}
 
 int main() {
     ApplicationHeapInitialize_nid_no_patch(ApplicationEmptyProcessParameters_nid_no_patch());

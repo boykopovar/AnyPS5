@@ -1,5 +1,6 @@
 #include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -28,9 +29,6 @@ static constexpr std::size_t ModuleResources = 12;
 static constexpr unsigned KernelResources = 2;
 static constexpr std::size_t ModuleFreeCalls = ModuleResources;
 #endif
-static void Require(bool condition, const char* message) {
-    if (!condition) { std::fprintf(stderr, "%s\n", message); std::abort(); }
-}
 static int Initialize(bool legacy, void* self, const Parameter* parameter) {
     return legacy ? _ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE(self, parameter) :
                     _ZN3sce4Json11Initializer10initializeEPKNS0_14InitParameter2E(self, reinterpret_cast<const InitParameter2*>(parameter));

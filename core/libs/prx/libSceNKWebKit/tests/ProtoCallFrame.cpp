@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <climits>
@@ -10,14 +11,6 @@
 #include <cstring>
 
 using NKWebKit::JscAbi::ProtoCallFrame;
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "ProtoCallFrame check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 namespace {
 

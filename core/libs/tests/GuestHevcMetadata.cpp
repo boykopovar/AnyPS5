@@ -4,6 +4,7 @@
 #include "prx/libc/include/GuestWriteWatch.hpp"
 #include "HevcFixture.hpp"
 #include "HevcMetadataFixture.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -29,18 +30,7 @@ namespace {
 
 constexpr std::uint32_t codecHevc = 974921;
 
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "HEVC metadata: %s\n", message);
-    std::abort();
-}
 
-template<typename TCall>
-void Rejects(TCall call, const char* message) {
-    try { call(); }
-    catch (const std::runtime_error&) { return; }
-    Require(false, message);
-}
 
 template<typename TCall>
 bool TryProjection(TCall call) {
@@ -374,7 +364,7 @@ void GuestArgumentWrites() {
             mapping.Initialize();
             expected.assign(mapping.memory, mapping.memory + 2 * GuestMetadataMapping::block);
             mapping.Protect(mapping.memory + block * GuestMetadataMapping::block, GuestMetadataMapping::block, 0x02);
-            Rejects(query, "read-only early argument destination did not refuse");
+            ExpectErr<std::runtime_error>(query, "read-only early argument destination did not refuse");
             Require(std::memcmp(mapping.memory, expected.data(), expected.size()) == 0, "rejected early scope partially cleared either destination");
         }
 #endif
@@ -442,7 +432,7 @@ void GuestMetadataWrites() {
                     owned ? sizeof(*mapping.Info()) : sizeof(std::uint32_t));
                 Require(!access.Open(), "read-only metadata mapping unexpectedly writable");
             }
-            Rejects(query, "read-only metadata query did not reject access");
+            ExpectErr<std::runtime_error>(query, "read-only metadata query did not reject access");
             if (owned) std::memset(initial.data() + 16 + offsetof(Videodec2Hevc::PictureInfo, isValid), 0, 4);
             Require(std::memcmp(first, initial.data(), initial.size()) == 0, "rejected payload write changed more than its early validity word");
 #endif

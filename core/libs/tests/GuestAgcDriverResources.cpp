@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Resource/include/Lifecycle.hpp"
 #include "prx/libSceAgcDriver/include/AgcDriver.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -12,7 +13,6 @@
 #include <string_view>
 
 static constexpr int Unavailable = static_cast<int>(0x8A6C9018);
-static void Require(bool value) { if (!value) std::abort(); }
 
 struct ResourceDescriptor {
     const void* memory;

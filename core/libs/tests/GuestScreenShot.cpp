@@ -2,6 +2,7 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include "ProcessParametersFixture.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -26,12 +27,6 @@ constexpr int ErrorOverlaySize = static_cast<int>(0x80BE000E);
 
 alignas(16) std::array<std::byte, 0x40> process{};
 std::string pathPrefix;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "ScreenShot: %s\n", message);
-    std::abort();
-}
 
 void InstallProcessParameters(std::uint32_t sdkVersion) {
     const std::uint64_t size = process.size();

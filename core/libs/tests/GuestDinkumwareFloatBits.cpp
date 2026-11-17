@@ -1,12 +1,11 @@
 #include "prx/libc/libc.hpp"
+#include "Testing.hpp"
 #include <bit>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static double D(std::uint64_t bits) { return std::bit_cast<double>(bits); }
 

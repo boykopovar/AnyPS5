@@ -1,4 +1,5 @@
 #include "prx/libcairo/include/InventoryExports.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -17,12 +18,6 @@ static_assert(sizeof(Values) == sizeof(int) * 4);
 static_assert(std::is_same_v<decltype(cairo_font_options_create()), cairo_font_options_t*>);
 static_assert(std::is_same_v<decltype(cairo_font_options_get_antialias(nullptr)), cairo_antialias_t>);
 static_assert(std::is_same_v<decltype(cairo_font_options_destroy(nullptr)), void>);
-
-void Require(bool valid, const char* reason) {
-    if (valid) return;
-    std::fprintf(stderr, "cairo font options: %s\n", reason);
-    std::abort();
-}
 
 Values ReadValues(const cairo_font_options_t* options) {
     Values values{};

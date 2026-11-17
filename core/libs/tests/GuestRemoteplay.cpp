@@ -1,11 +1,10 @@
 #include "prx/libSceRemoteplay/include/Api.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 int main() {
     constexpr auto invalidArgument = static_cast<int>(0x80FC0001u);

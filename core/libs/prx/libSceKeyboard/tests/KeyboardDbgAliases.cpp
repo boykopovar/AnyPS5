@@ -1,14 +1,9 @@
 #include "prx/libSceKeyboard/libSceKeyboard.hpp"
 #include "prx/libSceKeyboard/include/keyboard_structs.h"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
-
-static void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
 
 int main() {
     Require(sceDbgKeyboardOpen(1, 0, 0, nullptr) == KEYBOARD_ERROR_NOT_INITIALIZED, "the debug open must answer as sceKeyboardOpen before initialization");

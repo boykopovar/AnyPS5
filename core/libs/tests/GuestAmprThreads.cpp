@@ -5,6 +5,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/exceptions/Runtime.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -63,14 +64,6 @@ static constexpr int GuestErange = 34;
 static constexpr int GuestEilseq = 86;
 static constexpr std::int64_t NanosPerSecond = 1000000000;
 static constexpr auto Failed = static_cast<std::size_t>(-1);
-
-#define Require(value) RequireAt((value), __LINE__)
-
-static void RequireAt(bool value, int line) {
-    if (value) return;
-    std::fprintf(stderr, "requirement failed at line %d\n", line);
-    std::abort();
-}
 
 static std::int64_t RealtimeNanos() {
     KernelTimespec now{};
@@ -248,16 +241,6 @@ static void TestWcstombs() {
     Require(result == 3);
 }
 
-template<typename TException, typename TCall>
-static void RequireThrows(TCall call) {
-    try {
-        call();
-    } catch (const TException&) {
-        return;
-    }
-    std::abort();
-}
-
 struct SignalContext {
     void* condition = nullptr;
     void* mutex = nullptr;
@@ -336,15 +319,15 @@ static void TestConditionSignal() {
     Require(context.consumed == 2 && context.tokens == 0);
     Require(_Cnd_broadcast_nid_postfix(&context.condition) == ThrdSuccess);
 
-    RequireThrows<std::invalid_argument>([] { _Cnd_signal_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([] { _Cnd_signal_nid_postfix(nullptr); });
     void* empty = nullptr;
-    RequireThrows<std::invalid_argument>([&] { _Cnd_signal_nid_postfix(&empty); });
-    RequireThrows<std::invalid_argument>([&] { _Cnd_signal_nid_postfix(&context.mutex); });
-    RequireThrows<std::invalid_argument>([] { _Cnd_init_with_name_nid_postfix(nullptr, "AmprSignal"); });
+    ExpectErr<std::invalid_argument>([&] { _Cnd_signal_nid_postfix(&empty); });
+    ExpectErr<std::invalid_argument>([&] { _Cnd_signal_nid_postfix(&context.mutex); });
+    ExpectErr<std::invalid_argument>([] { _Cnd_init_with_name_nid_postfix(nullptr, "AmprSignal"); });
     _Cnd_destroy_nid_postfix(&context.condition);
 
     Require(context.condition == nullptr);
-    RequireThrows<std::invalid_argument>([&] { _Cnd_signal_nid_postfix(&context.condition); });
+    ExpectErr<std::invalid_argument>([&] { _Cnd_signal_nid_postfix(&context.condition); });
 
     void* unnamed = nullptr;
     Require(_Cnd_init_with_name_nid_postfix(&unnamed, nullptr) == ThrdSuccess && unnamed != nullptr);

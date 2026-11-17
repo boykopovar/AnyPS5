@@ -3,6 +3,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
 #include "prx/libc/include/ScanQuadLength.hpp"
+#include "Testing.hpp"
 #include <bit>
 #include <algorithm>
 #include <array>
@@ -27,9 +28,6 @@
 #define __builtin_sysv_va_end va_end
 #endif
 
-static void Require(bool condition) {
-    if (!condition) throw std::runtime_error("Formatting check failed");
-}
 
 static int APS5_VABI FormatList(char* buffer, size_t size, const char* format, ...) {
     __builtin_sysv_va_list args;

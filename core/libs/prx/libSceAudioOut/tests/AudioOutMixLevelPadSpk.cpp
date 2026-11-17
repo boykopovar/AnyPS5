@@ -1,5 +1,6 @@
 #include "prx/libSceAudioOut/include/AudioOut.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -11,8 +12,6 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static void SetEnvironment(const char* name, const std::string& value) {
 #ifdef _WIN32

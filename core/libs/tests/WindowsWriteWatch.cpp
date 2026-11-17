@@ -1,5 +1,6 @@
 #define NOMINMAX
 #include "prx/libc/include/WindowsMappings.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <atomic>
 #include <iostream>
@@ -13,10 +14,6 @@ using Collection = Mappings::Collection;
 constexpr std::size_t Small = 4096;
 constexpr std::size_t Bytes = 65536;
 std::atomic<unsigned> faults{0};
-
-void Require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 LONG CALLBACK HandleWrite(EXCEPTION_POINTERS* exception) {
     const auto* record = exception->ExceptionRecord;

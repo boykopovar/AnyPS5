@@ -1,5 +1,6 @@
 #include "prx/libSceJxr/include/Api.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -21,22 +22,6 @@ constexpr std::size_t RingAlignment = 16384;
 constexpr std::int32_t WriteMask = ~8192;
 constexpr std::int32_t ReadMask = WriteMask & ~1;
 constexpr std::size_t PacketSize = 4096;
-
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "JXR bit I/O: %s\n", message);
-    std::abort();
-}
-
-template<typename TAction>
-void RequireInvalidArgument(TAction action, const char* message) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, message);
-}
 
 struct Ring {
     std::vector<std::uint8_t> storage = std::vector<std::uint8_t>(RingAlignment * 3);
@@ -171,9 +156,9 @@ void RunDetachRead() {
     const auto currentPacketBit = reinterpret_cast<std::uintptr_t>(invalid.current) & std::uintptr_t{4096};
     invalid.start = reinterpret_cast<std::uint8_t*>(lastRegion | currentPacketBit);
     throwingState.io = &invalid;
-    RequireInvalidArgument([&] { detachISRead_nid_postfix(nullptr, &invalid); }, "detach rejects overflowing packet end");
+    ExpectErr<std::invalid_argument>([&] { detachISRead_nid_postfix(nullptr, &invalid); }, "detach rejects overflowing packet end");
     Require(invalid.stream == &throwingStream && throwingState.calls.empty(), "invalid detach leaves stream attached");
-    RequireInvalidArgument([] { detachISRead_nid_postfix(nullptr, nullptr); }, "null detach state");
+    ExpectErr<std::invalid_argument>([] { detachISRead_nid_postfix(nullptr, nullptr); }, "null detach state");
 }
 
 Jxr::BitIo Attach(Ring& ring, std::size_t offset, std::uint32_t bitsUsed, std::size_t reference) {
@@ -326,8 +311,8 @@ void RunAttachReadEdges() {
     RunAttachRead(true, 123, 0, 0, 0, true);
     Jxr::BitIo io{};
     Jxr::Stream stream{};
-    RequireInvalidArgument([&] { attachISRead_nid_postfix(&io, &stream, nullptr); }, "attach read rejects a missing callback");
-    RequireInvalidArgument([] { attachISRead_nid_postfix(nullptr, nullptr, nullptr); }, "attach read rejects null state and stream");
+    ExpectErr<std::invalid_argument>([&] { attachISRead_nid_postfix(&io, &stream, nullptr); }, "attach read rejects a missing callback");
+    ExpectErr<std::invalid_argument>([] { attachISRead_nid_postfix(nullptr, nullptr, nullptr); }, "attach read rejects null state and stream");
 }
 
 Jxr::BitIo* attachingIo = nullptr;
@@ -384,13 +369,13 @@ void RunAttachWrite() {
     std::array<std::byte, sizeof(*io)> before;
     std::memcpy(before.data(), io, sizeof(*io));
     throwPosition = true;
-    RequireInvalidArgument([&] { attachISWrite_nid_postfix(io, &stream); }, "attachment propagates callback exceptions");
+    ExpectErr<std::invalid_argument>([&] { attachISWrite_nid_postfix(io, &stream); }, "attachment propagates callback exceptions");
     Require(std::memcmp(before.data(), io, sizeof(*io)) == 0, "throwing position callback prevents initialization");
     throwPosition = false;
     stream.getPosition = nullptr;
-    RequireInvalidArgument([&] { attachISWrite_nid_postfix(io, &stream); }, "attachment needs a position callback");
-    RequireInvalidArgument([&] { attachISWrite_nid_postfix(io, nullptr); }, "attachment needs a stream");
-    RequireInvalidArgument([&] { attachISWrite_nid_postfix(nullptr, &stream); }, "attachment needs bit state");
+    ExpectErr<std::invalid_argument>([&] { attachISWrite_nid_postfix(io, &stream); }, "attachment needs a position callback");
+    ExpectErr<std::invalid_argument>([&] { attachISWrite_nid_postfix(io, nullptr); }, "attachment needs a stream");
+    ExpectErr<std::invalid_argument>([&] { attachISWrite_nid_postfix(nullptr, &stream); }, "attachment needs bit state");
     std::destroy_at(io);
 }
 
@@ -508,7 +493,7 @@ void RunEdges() {
     Require(getBit16_S_nid_postfix(nullptr, &copy, 5) == ((LoadBigEndian(ring.base + 10) << 3) >> 27), "getBit16_S value");
     Require(copy.current == ring.base + 10 && copy.bitsUsed == 8, "getBit16_S state");
     auto crossing = Attach(ring, 4096, 0, 0);
-    RequireInvalidArgument([&] { getBit16_S_nid_postfix(nullptr, &crossing, 1); }, "getBit16_S packet without stream");
+    ExpectErr<std::invalid_argument>([&] { getBit16_S_nid_postfix(nullptr, &crossing, 1); }, "getBit16_S packet without stream");
 
     RunZeroBits(ring);
 
@@ -517,39 +502,39 @@ void RunEdges() {
         odd.mask = WriteMask;
         const auto before = odd;
         const std::vector<std::uint8_t> snapshot(ring.base, ring.base + RingAlignment);
-        RequireInvalidArgument([&] { putBit16z_nid_postfix(&odd, 0, 0); }, "odd-position unmasked store");
-        RequireInvalidArgument([&] { putBit16_nid_postfix(&odd, 1, 1); }, "odd-position masked store");
-        RequireInvalidArgument([&] { putBit32_nid_postfix(&odd, 0xffffffffu, 32); }, "odd-position 32-bit store");
-        RequireInvalidArgument([&] { fillToByte_nid_postfix(&odd); }, "odd-position byte fill");
+        ExpectErr<std::invalid_argument>([&] { putBit16z_nid_postfix(&odd, 0, 0); }, "odd-position unmasked store");
+        ExpectErr<std::invalid_argument>([&] { putBit16_nid_postfix(&odd, 1, 1); }, "odd-position masked store");
+        ExpectErr<std::invalid_argument>([&] { putBit32_nid_postfix(&odd, 0xffffffffu, 32); }, "odd-position 32-bit store");
+        ExpectErr<std::invalid_argument>([&] { fillToByte_nid_postfix(&odd); }, "odd-position byte fill");
         Require(std::memcmp(&odd, &before, sizeof(odd)) == 0, "rejected odd-position stores keep the state");
         Require(std::memcmp(ring.base, snapshot.data(), RingAlignment) == 0, "rejected odd-position stores keep the buffer");
     }
 
-    RequireInvalidArgument([] { getBit16_nid_postfix(nullptr, 1); }, "null read state");
-    RequireInvalidArgument([] { putBit16_nid_postfix(nullptr, 1, 1); }, "null write state");
-    RequireInvalidArgument([] { getSizeRead_nid_postfix(nullptr); }, "null size state");
-    RequireInvalidArgument([] { getSizeWrite_nid_postfix(nullptr); }, "null size write state");
-    RequireInvalidArgument([] { getPosRead_nid_postfix(nullptr); }, "null position state");
-    RequireInvalidArgument([] { flushToByte_nid_postfix(nullptr); }, "null flush state");
-    RequireInvalidArgument([] { fillToByte_nid_postfix(nullptr); }, "null fill state");
+    ExpectErr<std::invalid_argument>([] { getBit16_nid_postfix(nullptr, 1); }, "null read state");
+    ExpectErr<std::invalid_argument>([] { putBit16_nid_postfix(nullptr, 1, 1); }, "null write state");
+    ExpectErr<std::invalid_argument>([] { getSizeRead_nid_postfix(nullptr); }, "null size state");
+    ExpectErr<std::invalid_argument>([] { getSizeWrite_nid_postfix(nullptr); }, "null size write state");
+    ExpectErr<std::invalid_argument>([] { getPosRead_nid_postfix(nullptr); }, "null position state");
+    ExpectErr<std::invalid_argument>([] { flushToByte_nid_postfix(nullptr); }, "null flush state");
+    ExpectErr<std::invalid_argument>([] { fillToByte_nid_postfix(nullptr); }, "null fill state");
     auto edge = Attach(ring, 0, 0, 0);
-    RequireInvalidArgument([&] { peekBit16_nid_postfix(&edge, 17); }, "17-bit peek");
-    RequireInvalidArgument([&] { flushBit16_nid_postfix(&edge, 17); }, "17-bit flush");
-    RequireInvalidArgument([&] { getBit16s_nid_postfix(&edge, 16); }, "16-bit signed read");
-    RequireInvalidArgument([&] { getBit32_nid_postfix(&edge, 33); }, "33-bit read");
-    RequireInvalidArgument([&] { putBit16z_nid_postfix(&edge, 2, 1); }, "wide unmasked value");
-    RequireInvalidArgument([&] { putBit16_nid_postfix(&edge, 0, 17); }, "17-bit write");
-    RequireInvalidArgument([&] { putBit32_nid_postfix(&edge, 0, 33); }, "33-bit write");
+    ExpectErr<std::invalid_argument>([&] { peekBit16_nid_postfix(&edge, 17); }, "17-bit peek");
+    ExpectErr<std::invalid_argument>([&] { flushBit16_nid_postfix(&edge, 17); }, "17-bit flush");
+    ExpectErr<std::invalid_argument>([&] { getBit16s_nid_postfix(&edge, 16); }, "16-bit signed read");
+    ExpectErr<std::invalid_argument>([&] { getBit32_nid_postfix(&edge, 33); }, "33-bit read");
+    ExpectErr<std::invalid_argument>([&] { putBit16z_nid_postfix(&edge, 2, 1); }, "wide unmasked value");
+    ExpectErr<std::invalid_argument>([&] { putBit16_nid_postfix(&edge, 0, 17); }, "17-bit write");
+    ExpectErr<std::invalid_argument>([&] { putBit32_nid_postfix(&edge, 0, 33); }, "33-bit write");
     edge.mask = WriteMask;
     edge.bitsUsed = 16;
-    RequireInvalidArgument([&] { putBit16z_nid_postfix(&edge, 0, 0); }, "write position past the word");
-    RequireInvalidArgument([&] { fillToByte_nid_postfix(&edge); }, "fill position past the word");
+    ExpectErr<std::invalid_argument>([&] { putBit16z_nid_postfix(&edge, 0, 0); }, "write position past the word");
+    ExpectErr<std::invalid_argument>([&] { fillToByte_nid_postfix(&edge); }, "fill position past the word");
     edge.bitsUsed = 0;
     edge.mask = -1;
-    RequireInvalidArgument([&] { flushBit16_nid_postfix(&edge, 1); }, "odd wrap mask");
+    ExpectErr<std::invalid_argument>([&] { flushBit16_nid_postfix(&edge, 1); }, "odd wrap mask");
     edge.mask = ReadMask;
     edge.current = nullptr;
-    RequireInvalidArgument([&] { getBit16_nid_postfix(&edge, 1); }, "null current pointer");
+    ExpectErr<std::invalid_argument>([&] { getBit16_nid_postfix(&edge, 1); }, "null current pointer");
 }
 
 } // namespace

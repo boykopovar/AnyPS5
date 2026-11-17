@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -11,10 +12,6 @@
 #include <fcntl.h>
 #include <unistd.h>
 #endif
-
-static void Require(bool value) {
-    if (!value) std::abort();
-}
 
 static void RequireFailure(int result, int error) {
     Require(result == -1);

@@ -1,16 +1,11 @@
 #include "prx/libSceVoiceChat/include/Api.hpp"
 #include "prx/libSceVoiceChat/include/InventoryExports.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-
-static void Require(bool value, const char* what) {
-    if (value) return;
-    std::printf("VoiceChat: %s\n", what);
-    std::abort();
-}
 
 int main() {
     constexpr int kSignedOut = static_cast<int>(0x80550006u);

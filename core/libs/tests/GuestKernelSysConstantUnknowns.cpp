@@ -1,14 +1,9 @@
 #include "prx/libkernel_sys/include/AdditionalExports.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-
-static void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
 
 int main() {
     Require(libkernel_sysUnknown_pCbBddNl66Y_nid_no_patch() == 0, "pCbBddNl66Y returns 0");

@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -33,12 +34,6 @@ struct Record {
     std::string module;
     std::size_t bytes;
 };
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "guest backtrace: %s\n", message);
-    std::abort();
-}
 
 std::vector<Record> Parse(const std::vector<unsigned char>& buffer, std::size_t used, int count) {
     std::vector<Record> records;

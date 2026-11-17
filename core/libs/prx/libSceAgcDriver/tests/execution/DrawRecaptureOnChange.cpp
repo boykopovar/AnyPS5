@@ -9,6 +9,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
+#include "Testing.hpp"
 #include "VulkanTestDevice.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -329,10 +330,6 @@ unsigned Brightest(const GuestBlock& target) {
     return brightest;
 }
 
-void Expect(bool condition, const std::string& what) {
-    if (!condition) throw std::runtime_error("draw recapture: " + what);
-}
-
 void ChangedTableIsBound(const GuestBlock& vertices, const GuestBlock& data, const GuestBlock& target) {
     std::memset(target.Bytes(0), 0, ColorBytes);
     WriteDescriptor(vertices, 0, {});
@@ -342,9 +339,9 @@ void ChangedTableIsBound(const GuestBlock& vertices, const GuestBlock& data, con
     const auto brightest = Brightest(target);
     const auto redone = AgcDriver::DriverDetail::captureChangeRetries.load() - retries;
     std::printf("a draw whose descriptor table changed from a zero V# to a valid one after its capture: the table changed %d time(s), brightest color byte %u (%s), %llu packet(s) prepared again\n", TableChanges.load(), brightest, brightest == 255u ? "the valid V# was bound" : "the zero V# captured before the change was bound", static_cast<unsigned long long>(redone));
-    Expect(TableChanges.load() == 1, "the check seam did not run before the draw was recorded");
-    Expect(brightest == 255u, "the draw bound the zero V# captured before the table changed, not the valid V# in memory when it was recorded");
-    Expect(redone == 1, "the draw was prepared again " + std::to_string(redone) + " times, not once");
+    Require(TableChanges.load() == 1, "the check seam did not run before the draw was recorded");
+    Require(brightest == 255u, "the draw bound the zero V# captured before the table changed, not the valid V# in memory when it was recorded");
+    Require(redone == 1, "the draw was prepared again " + std::to_string(redone) + " times, not once");
 }
 
 void UnchangedTableIsNotRedone(const GuestBlock& vertices, const GuestBlock& data, const GuestBlock& target) {
@@ -354,8 +351,8 @@ void UnchangedTableIsNotRedone(const GuestBlock& vertices, const GuestBlock& dat
     const auto brightest = Brightest(target);
     const auto redone = AgcDriver::DriverDetail::captureChangeRetries.load() - retries;
     std::printf("the same draw with its table unchanged: brightest color byte %u, %llu packet(s) prepared again\n", brightest, static_cast<unsigned long long>(redone));
-    Expect(brightest == 255u, "the draw with an unchanged valid table did not draw");
-    Expect(redone == 0, "a draw whose captured memory did not change was prepared again");
+    Require(brightest == 255u, "the draw with an unchanged valid table did not draw");
+    Require(redone == 0, "a draw whose captured memory did not change was prepared again");
 }
 
 void ChangedRawCodeIsRecompiled(const GuestBlock& vertices, const GuestBlock& data, const GuestBlock& target, const GuestBlock& code) {
@@ -368,10 +365,10 @@ void ChangedRawCodeIsRecompiled(const GuestBlock& vertices, const GuestBlock& da
     const auto brightest = Brightest(target);
     const auto redone = AgcDriver::DriverDetail::captureChangeRetries.load() - retries;
     std::printf("an unregistered vertex program whose code stopped adding the +8 x offset after its capture: the code changed %d time(s), brightest color byte %u (%s), %llu packet(s) prepared again\n", CodePatches.load(), brightest, brightest == 255u ? "the code in memory ran" : "the code captured before the change ran", static_cast<unsigned long long>(redone));
-    Expect(CodePatches.load() == 1, "the check seam did not run before the unregistered program's draw was recorded");
-    Expect(AgcDriver::DriverDetail::RawGraphicsDrawnIn(code.At(0), code.At(0) + sizeof(std::uint32_t)), "the vertex program was not captured as unregistered code");
-    Expect(brightest == 255u, "the draw ran the unregistered vertex code captured before it changed, not the code in memory when it was recorded");
-    Expect(redone == 1, "the draw of the changed unregistered program was prepared again " + std::to_string(redone) + " times, not once");
+    Require(CodePatches.load() == 1, "the check seam did not run before the unregistered program's draw was recorded");
+    Require(AgcDriver::DriverDetail::RawGraphicsDrawnIn(code.At(0), code.At(0) + sizeof(std::uint32_t)), "the vertex program was not captured as unregistered code");
+    Require(brightest == 255u, "the draw ran the unregistered vertex code captured before it changed, not the code in memory when it was recorded");
+    Require(redone == 1, "the draw of the changed unregistered program was prepared again " + std::to_string(redone) + " times, not once");
 }
 
 using FetchOutput = std::array<std::uint32_t, OutputSlots * 4u>;
@@ -425,8 +422,8 @@ void FetchOffsetIsFoldedOnceOnRecapture(const GuestBlock& fetch, const GuestBloc
     const auto control = ReadFetchOutput(output);
     const auto controlRedone = AgcDriver::DriverDetail::captureChangeRetries.load() - retries;
     std::printf("a draw whose program folds s16 = %u into its first vertex (GE_INDX_OFFSET %u), with its vertex V# unchanged: wrote%s, %llu packet(s) prepared again\n", FetchVertexOffset, FetchIndexOffset, WrittenSlots(control).c_str(), static_cast<unsigned long long>(controlRedone));
-    Expect(controlRedone == 0, "the control draw, whose captured memory did not change, was prepared again");
-    Expect(control == FoldedOnce(), "the control draw did not fetch and store slots GE_INDX_OFFSET + s16 + vertex with v5 = GE_INDX_OFFSET + vertex, so s16 was not folded into its first vertex exactly once and this case cannot see a second fold");
+    Require(controlRedone == 0, "the control draw, whose captured memory did not change, was prepared again");
+    Require(control == FoldedOnce(), "the control draw did not fetch and store slots GE_INDX_OFFSET + s16 + vertex with v5 = GE_INDX_OFFSET + vertex, so s16 was not folded into its first vertex exactly once and this case cannot see a second fold");
 
     WriteFetchDescriptor(fetch, 0, SlotDescriptor(fetch.At(StaleSlotsOffset)));
     ClearFetchOutput(output);
@@ -436,10 +433,10 @@ void FetchOffsetIsFoldedOnceOnRecapture(const GuestBlock& fetch, const GuestBloc
     const auto changed = ReadFetchOutput(output);
     const auto redone = AgcDriver::DriverDetail::captureChangeRetries.load() - retries;
     std::printf("the same draw with its vertex V# moved after its capture (checked on the %s): the V# changed %d time(s), wrote%s, %llu packet(s) prepared again\n", FetchCheckedOnFinisher.load() ? "draw finisher" : "queue worker", FetchChanges.load(), WrittenSlots(changed).c_str(), static_cast<unsigned long long>(redone));
-    Expect(FetchChanges.load() == 1, "the check seam did not run before the fetching draw was recorded");
-    if (AgcDriver::DriverDetail::DrawFinisher::Enabled() && AgcDriver::DriverDetail::DrawPipeline::Depth() != 0) Expect(FetchCheckedOnFinisher.load(), "the fetching draw was checked on the queue worker, not the draw finisher, so restartFinishedDraw was not exercised");
-    Expect(changed == control, "the recaptured draw differs from the control: slots " + std::to_string(FetchVertexOffset) + " further on mean the retry folded s16 into the first vertex again, slots " + std::to_string(StaleSlotShift) + " further on mean it bound the V# captured before the change");
-    Expect(redone == 1, "the draw was prepared again " + std::to_string(redone) + " times, not once");
+    Require(FetchChanges.load() == 1, "the check seam did not run before the fetching draw was recorded");
+    if (AgcDriver::DriverDetail::DrawFinisher::Enabled() && AgcDriver::DriverDetail::DrawPipeline::Depth() != 0) Require(FetchCheckedOnFinisher.load(), "the fetching draw was checked on the queue worker, not the draw finisher, so restartFinishedDraw was not exercised");
+    Require(changed == control, "the recaptured draw differs from the control: slots " + std::to_string(FetchVertexOffset) + " further on mean the retry folded s16 into the first vertex again, slots " + std::to_string(StaleSlotShift) + " further on mean it bound the V# captured before the change");
+    Require(redone == 1, "the draw was prepared again " + std::to_string(redone) + " times, not once");
 }
 
 }

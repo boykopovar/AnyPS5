@@ -1,20 +1,10 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libSceLibcInternal/include/InventoryExports.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-
-namespace {
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "LibcInternal empty facet members: %s\n", message);
-        std::abort();
-    }
-}
-
-}
 
 int main() {
     unsigned char object[0x80];

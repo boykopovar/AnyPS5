@@ -1,6 +1,7 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libc/libc.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -16,10 +17,6 @@ std::size_t allocated = 0;
 std::size_t freed = 0;
 std::size_t failAllocationOfSize = 0;
 int guestReleases = 0;
-
-void Require(bool condition) {
-    if (!condition) throw std::runtime_error("EncodedImage assertion failed");
-}
 
 void* APS5_VABI Allocate_nid_no_patch(std::size_t size) {
     if (failAllocationOfSize && size == failAllocationOfSize) {
@@ -57,14 +54,6 @@ std::int32_t APS5_VABI GuestRelease_nid_no_patch(const void*) {
 
 void* const GuestVtable[] = {nullptr, nullptr, nullptr, reinterpret_cast<void*>(&GuestRelease_nid_no_patch)};
 void* const BrokenVtable[] = {nullptr, nullptr, nullptr, nullptr};
-
-template<typename TFunction>
-void ExpectInvalid(TFunction function) {
-    bool threw = false;
-    try { function(); }
-    catch (const std::invalid_argument&) { threw = true; }
-    Require(threw);
-}
 
 template<typename TResult, std::size_t TSlot, typename... TArguments>
 TResult Call(const WebRtcEncodedImageBuffer* buffer, TArguments... arguments) {
@@ -115,8 +104,8 @@ void TestDefault() {
     Require(!image.hasCorruptionDetectionFilterSettings);
     _ZN6webrtc12EncodedImageD1Ev_nid_postfix(&image);
     Require(allocated == 0 && freed == 0);
-    ExpectInvalid([] { _ZN6webrtc12EncodedImageC1Ev_nid_postfix(nullptr); });
-    ExpectInvalid([] { _ZN6webrtc12EncodedImageD1Ev_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZN6webrtc12EncodedImageC1Ev_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZN6webrtc12EncodedImageD1Ev_nid_postfix(nullptr); });
 }
 
 void TestBuffer() {
@@ -155,8 +144,8 @@ void TestBuffer() {
     catch (const std::bad_alloc&) { threw = true; }
     Require(threw && allocations.empty());
 
-    ExpectInvalid([&] { Create(nullptr, 1); });
-    ExpectInvalid([&] { _ZN6webrtc18EncodedImageBuffer6CreateEPKhm_nid_postfix(nullptr, bytes, 1); });
+    ExpectErr<std::invalid_argument>([&] { Create(nullptr, 1); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc18EncodedImageBuffer6CreateEPKhm_nid_postfix(nullptr, bytes, 1); });
     Require(allocations.empty());
 }
 
@@ -184,9 +173,9 @@ void TestDestructor() {
     _ZN6webrtc12EncodedImageD1Ev_nid_postfix(&image);
     Require(guestReleases == 1);
     guestBuffer.vtable = BrokenVtable + 2;
-    ExpectInvalid([&] { _ZN6webrtc12EncodedImageD1Ev_nid_postfix(&image); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc12EncodedImageD1Ev_nid_postfix(&image); });
     guestBuffer.vtable = nullptr;
-    ExpectInvalid([&] { _ZN6webrtc12EncodedImageD1Ev_nid_postfix(&image); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc12EncodedImageD1Ev_nid_postfix(&image); });
 
     Construct(image);
     auto& map = image.spatialLayerFrameSizeBytes;
@@ -215,7 +204,7 @@ void TestDestructor() {
     image.packetInfos = PacketInfos(1, 1);
     auto* entries = image.packetInfos->begin;
     image.packetInfos->end = reinterpret_cast<WebRtcRtpPacketInfoEntry*>(reinterpret_cast<std::uint8_t*>(entries) + 8);
-    ExpectInvalid([&] { _ZN6webrtc12EncodedImageD1Ev_nid_postfix(&image); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc12EncodedImageD1Ev_nid_postfix(&image); });
     _ZdlPv_nid_postfix(entries[0].csrcsBegin);
     _ZdlPv_nid_postfix(entries);
     _ZdlPv_nid_postfix(image.packetInfos);
@@ -227,12 +216,12 @@ void TestDestructor() {
     map.beginNode = map.root->links.left;
     map.size = 1;
     image.encodedData = Create(bytes, sizeof(bytes));
-    ExpectInvalid([&] { _ZN6webrtc12EncodedImageD1Ev_nid_postfix(&image); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc12EncodedImageD1Ev_nid_postfix(&image); });
     map.size = 3;
-    ExpectInvalid([&] { _ZN6webrtc12EncodedImageD1Ev_nid_postfix(&image); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc12EncodedImageD1Ev_nid_postfix(&image); });
     map.root->links.left->links.left = map.root;
     map.size = 2;
-    ExpectInvalid([&] { _ZN6webrtc12EncodedImageD1Ev_nid_postfix(&image); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc12EncodedImageD1Ev_nid_postfix(&image); });
     Require(allocations.size() == 4);
     map.root->links.left->links.left = nullptr;
     _ZN6webrtc12EncodedImageD1Ev_nid_postfix(&image);
@@ -240,7 +229,7 @@ void TestDestructor() {
 
     Construct(image);
     map.beginNode = nullptr;
-    ExpectInvalid([&] { _ZN6webrtc12EncodedImageD1Ev_nid_postfix(&image); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc12EncodedImageD1Ev_nid_postfix(&image); });
 }
 
 }

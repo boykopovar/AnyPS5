@@ -1,5 +1,6 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -7,13 +8,6 @@
 #include <type_traits>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "WebCore::presentingApplicationPID check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 static_assert(std::is_same_v<decltype(&_ZN7WebCore24presentingApplicationPIDEv), int (APS5_VABI *)()>);
 

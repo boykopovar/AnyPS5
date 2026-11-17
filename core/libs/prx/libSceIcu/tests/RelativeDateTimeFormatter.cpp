@@ -23,7 +23,6 @@
 
 namespace UreldatefmtClose {
 
-using IcuRecoveredTest::Require;
 
 static_assert(std::is_same_v<decltype(&ureldatefmt_close_nid_postfix), void (APS5_VABI*)(URelativeDateTimeFormatter*)>);
 
@@ -53,9 +52,7 @@ void Run() {
 namespace UreldatefmtFormat {
 
 using IcuRecoveredTest::Filler;
-using IcuRecoveredTest::Require;
 using IcuRecoveredTest::RequireNoThrow;
-using IcuRecoveredTest::RequireThrows;
 using IcuRecoveredTest::Unchanged;
 
 static_assert(std::is_same_v<decltype(&ureldatefmt_format_nid_postfix), std::int32_t (APS5_VABI*)(const URelativeDateTimeFormatter*, double, std::int32_t, char16_t*, std::int32_t, std::int32_t*)>);
@@ -90,11 +87,11 @@ void Run() {
 
     for (const auto incoming : passing) {
         std::int32_t status = incoming;
-        RequireThrows([&] { ureldatefmt_format_nid_postfix(formatter, -3.5, 0, destination, 8, &status); });
+        ExpectErr([&] { ureldatefmt_format_nid_postfix(formatter, -3.5, 0, destination, 8, &status); });
         Require(status == incoming);
 
         status = incoming;
-        RequireThrows([&] { ureldatefmt_format_nid_postfix(formatter, 2.0, 5, nullptr, 0, &status); });
+        ExpectErr([&] { ureldatefmt_format_nid_postfix(formatter, 2.0, 5, nullptr, 0, &status); });
         Require(status == incoming);
 
         status = incoming;
@@ -107,7 +104,7 @@ void Run() {
     }
 
     Require(Unchanged(storage));
-    RequireThrows([&] { ureldatefmt_format_nid_postfix(formatter, 0.0, 0, destination, 8, nullptr); });
+    ExpectErr([&] { ureldatefmt_format_nid_postfix(formatter, 0.0, 0, destination, 8, nullptr); });
 }
 
 } // namespace UreldatefmtFormat
@@ -115,9 +112,7 @@ void Run() {
 namespace UreldatefmtOpen {
 
 using IcuRecoveredTest::Filler;
-using IcuRecoveredTest::Require;
 using IcuRecoveredTest::RequireNoThrow;
-using IcuRecoveredTest::RequireThrows;
 using IcuRecoveredTest::Unchanged;
 
 static_assert(std::is_same_v<decltype(&ureldatefmt_open_nid_postfix), URelativeDateTimeFormatter* (APS5_VABI*)(const char*, UNumberFormat*, std::int32_t, std::int32_t, std::int32_t*)>);
@@ -140,16 +135,16 @@ void Run() {
 
     for (const auto incoming : passing) {
         std::int32_t status = incoming;
-        RequireThrows([&] { ureldatefmt_open_nid_postfix("en", adopted, 1, 0, &status); });
+        ExpectErr([&] { ureldatefmt_open_nid_postfix("en", adopted, 1, 0, &status); });
         Require(status == incoming);
 
         status = incoming;
-        RequireThrows([&] { ureldatefmt_open_nid_postfix(nullptr, nullptr, 3, 301, &status); });
+        ExpectErr([&] { ureldatefmt_open_nid_postfix(nullptr, nullptr, 3, 301, &status); });
         Require(status == incoming);
     }
 
     Require(Unchanged(storage));
-    RequireThrows([&] { ureldatefmt_open_nid_postfix("en", adopted, 1, 0, nullptr); });
+    ExpectErr([&] { ureldatefmt_open_nid_postfix("en", adopted, 1, 0, nullptr); });
 }
 
 } // namespace UreldatefmtOpen
@@ -165,7 +160,7 @@ void Run() {
         } catch (const std::runtime_error&) {
             threw = true;
         }
-        IcuRecoveredTest::Require(threw && errno == 71);
+        Require(threw && errno == 71);
     };
 
     const std::size_t pageSize =
@@ -177,10 +172,10 @@ void Run() {
     void* roPage = nullptr;
 #ifdef _WIN32
     roPage = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-    IcuRecoveredTest::Require(roPage != nullptr);
+    Require(roPage != nullptr);
 #else
     roPage = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    IcuRecoveredTest::Require(roPage != MAP_FAILED);
+    Require(roPage != MAP_FAILED);
 #endif
     const std::int32_t zero = 0;
     const std::int32_t failing = 1;
@@ -188,9 +183,9 @@ void Run() {
     std::memcpy(static_cast<char*>(roPage) + 16, &failing, sizeof(failing));
 #ifdef _WIN32
     DWORD oldProtect = 0;
-    IcuRecoveredTest::Require(VirtualProtect(roPage, pageSize, PAGE_READONLY, &oldProtect) != 0);
+    Require(VirtualProtect(roPage, pageSize, PAGE_READONLY, &oldProtect) != 0);
 #else
-    IcuRecoveredTest::Require(mprotect(roPage, pageSize, PROT_READ) == 0);
+    Require(mprotect(roPage, pageSize, PROT_READ) == 0);
 #endif
     auto* roZero = static_cast<std::int32_t*>(roPage);
     auto* roFailing = reinterpret_cast<std::int32_t*>(static_cast<char*>(roPage) + 16);
@@ -199,10 +194,10 @@ void Run() {
 
     rejectsRuntime([&] { ureldatefmt_format_nid_postfix(nullptr, 0.0, 0, nullptr, 1, badStatus); });
     rejectsRuntime([&] { ureldatefmt_format_nid_postfix(nullptr, 0.0, 0, nullptr, 1, roZero); });
-    IcuRecoveredTest::Require(ureldatefmt_format_nid_postfix(nullptr, 0.0, 0, buffer, 2, roFailing) == 0);
+    Require(ureldatefmt_format_nid_postfix(nullptr, 0.0, 0, buffer, 2, roFailing) == 0);
 
     rejectsRuntime([&] { ureldatefmt_open_nid_postfix("en", nullptr, 0, 0, badStatus); });
-    IcuRecoveredTest::Require(ureldatefmt_open_nid_postfix("en", nullptr, 0, 0, roFailing) == nullptr);
+    Require(ureldatefmt_open_nid_postfix("en", nullptr, 0, 0, roFailing) == nullptr);
 
 #ifdef _WIN32
     VirtualFree(roPage, 0, MEM_RELEASE);

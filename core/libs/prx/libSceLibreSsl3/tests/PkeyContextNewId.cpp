@@ -4,6 +4,7 @@
 #include "prx/libSceLibreSsl3/include/RsaCrypto.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <climits>
@@ -20,12 +21,6 @@ namespace {
 
 std::unordered_map<void*, std::size_t> allocations;
 int failingCalloc = -1;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL3 EVP_PKEY_CTX_new_id check failed at line %u\n", location.line());
-    std::abort();
-}
 
 void* APS5_VABI Allocate_nid_no_patch(std::size_t size) {
     void* result = std::malloc(size ? size : 1);

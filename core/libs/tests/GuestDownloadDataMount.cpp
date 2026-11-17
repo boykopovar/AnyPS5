@@ -1,5 +1,6 @@
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include "prx/libc/include/General.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -8,8 +9,6 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static void WriteParamSfo(const std::filesystem::path& path) {
     struct Entry { std::uint16_t key, format; std::uint32_t length, maximum, offset; };

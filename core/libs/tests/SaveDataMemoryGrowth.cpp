@@ -1,6 +1,7 @@
 #include "prx/libSceSaveData/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -12,14 +13,6 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "Save-data memory growth check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static std::vector<char> Read(const std::filesystem::path& path) {
     std::ifstream file(path, std::ios::binary);

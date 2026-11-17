@@ -1,6 +1,7 @@
 #include "prx/libSceHttp/include/Http.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -19,12 +20,6 @@ constexpr int OutOfSize = static_cast<int>(0x80431104u);
 constexpr int InvalidValue = static_cast<int>(0x804311FEu);
 constexpr int InvalidDomain = static_cast<int>(0x804321FEu);
 constexpr int InvalidUrl = static_cast<int>(0x80433060u);
-
-void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", what);
-    std::abort();
-}
 
 int AddResult(int context, const char* url, const char* cookie) {
     return sceHttpAddCookie(context, url, cookie, std::strlen(cookie));

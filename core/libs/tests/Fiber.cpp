@@ -2,6 +2,7 @@
 #include <cerrno>
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -20,10 +21,6 @@
 #endif
 
 using Entry = void (APS5_VABI*)(std::uint64_t, std::uint64_t);
-
-static void Require(bool value, const char* what) {
-    if (!value) { std::fprintf(stderr, "Fiber check failed: %s\n", what); std::abort(); }
-}
 
 namespace {
 

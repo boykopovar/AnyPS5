@@ -1,5 +1,6 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
 #include "unicode/utf8.h"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -12,22 +13,6 @@
 #include <stdexcept>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "ICU UTF-8 check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<class TCall>
-void Rejects(TCall call) {
-    try {
-        call();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false);
-}
 
 std::int32_t Error(int consumed, int strict) {
     if (strict == -3) return 0xfffd;
@@ -195,19 +180,19 @@ void TerminatedAndBounded() {
 void InvalidArguments() {
     std::array<std::uint8_t, 4> text{0xf0, 0x90, 0x80, 0x80};
     std::int32_t index = 1;
-    Rejects([&] { utf8_nextCharSafeBody_nid_postfix(text.data(), nullptr, 4, 0xf0, -1); });
-    Rejects([&] { utf8_prevCharSafeBody_nid_postfix(text.data(), 0, nullptr, 0x80, -1); });
-    Rejects([&] { utf8_nextCharSafeBody_nid_postfix(nullptr, &index, 4, 0xf0, -1); });
-    Rejects([&] { utf8_prevCharSafeBody_nid_postfix(nullptr, 0, &index, 0x80, -1); });
-    Rejects([&] { utf8_back1SafeBody_nid_postfix(nullptr, 0, 0); });
-    Rejects([&] { utf8_appendCharSafeBody_nid_postfix(nullptr, 0, 4, 0x10000, nullptr); });
-    Rejects([&] { utf8_appendCharSafeBody_nid_postfix(text.data(), -1, 4, 0x80, nullptr); });
+    ExpectErr<std::invalid_argument>([&] { utf8_nextCharSafeBody_nid_postfix(text.data(), nullptr, 4, 0xf0, -1); });
+    ExpectErr<std::invalid_argument>([&] { utf8_prevCharSafeBody_nid_postfix(text.data(), 0, nullptr, 0x80, -1); });
+    ExpectErr<std::invalid_argument>([&] { utf8_nextCharSafeBody_nid_postfix(nullptr, &index, 4, 0xf0, -1); });
+    ExpectErr<std::invalid_argument>([&] { utf8_prevCharSafeBody_nid_postfix(nullptr, 0, &index, 0x80, -1); });
+    ExpectErr<std::invalid_argument>([&] { utf8_back1SafeBody_nid_postfix(nullptr, 0, 0); });
+    ExpectErr<std::invalid_argument>([&] { utf8_appendCharSafeBody_nid_postfix(nullptr, 0, 4, 0x10000, nullptr); });
+    ExpectErr<std::invalid_argument>([&] { utf8_appendCharSafeBody_nid_postfix(text.data(), -1, 4, 0x80, nullptr); });
     index = -1;
-    Rejects([&] { utf8_nextCharSafeBody_nid_postfix(text.data(), &index, 4, 0xf0, -1); });
+    ExpectErr<std::invalid_argument>([&] { utf8_nextCharSafeBody_nid_postfix(text.data(), &index, 4, 0xf0, -1); });
     index = 3;
-    Rejects([&] { utf8_nextCharSafeBody_nid_postfix(text.data(), &index, 2, 0xf0, -1); });
-    Rejects([&] { utf8_prevCharSafeBody_nid_postfix(text.data(), 4, &index, 0x80, -1); });
-    Rejects([&] { utf8_back1SafeBody_nid_postfix(text.data(), -1, 0); });
+    ExpectErr<std::invalid_argument>([&] { utf8_nextCharSafeBody_nid_postfix(text.data(), &index, 2, 0xf0, -1); });
+    ExpectErr<std::invalid_argument>([&] { utf8_prevCharSafeBody_nid_postfix(text.data(), 4, &index, 0x80, -1); });
+    ExpectErr<std::invalid_argument>([&] { utf8_back1SafeBody_nid_postfix(text.data(), -1, 0); });
     index = 0;
     Require(utf8_nextCharSafeBody_nid_postfix(nullptr, &index, 0, 0xf0, -1) == -1 && index == 0);
     Require(utf8_prevCharSafeBody_nid_postfix(nullptr, 0, &index, 0x80, -1) == -1 && index == 0);
@@ -216,9 +201,9 @@ void InvalidArguments() {
         const int position = INT32_MAX - (width - 1);
         std::int8_t error = 0;
         Require(utf8_appendCharSafeBody_nid_postfix(nullptr, position, INT32_MAX, value, &error) == position && error == 1);
-        Rejects([&] { utf8_appendCharSafeBody_nid_postfix(nullptr, position + 1, INT32_MAX, value, &error); });
+        ExpectErr<std::invalid_argument>([&] { utf8_appendCharSafeBody_nid_postfix(nullptr, position + 1, INT32_MAX, value, &error); });
     }
-    Rejects([] { utf8_appendCharSafeBody_nid_postfix(nullptr, INT32_MAX, INT32_MIN, -1, nullptr); });
+    ExpectErr<std::invalid_argument>([] { utf8_appendCharSafeBody_nid_postfix(nullptr, INT32_MAX, INT32_MIN, -1, nullptr); });
     std::int8_t error = 0;
     Require(utf8_appendCharSafeBody_nid_postfix(nullptr, INT32_MAX, INT32_MIN, -1, &error) == INT32_MAX && error == 1);
     Require(utf8_appendCharSafeBody_nid_postfix(nullptr, 0, INT32_MIN, -1, nullptr) == 0);

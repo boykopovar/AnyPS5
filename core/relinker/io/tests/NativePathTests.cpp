@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include <io/FileReader.hpp>
 #include <io/FileWriter.hpp>
 #include <io/NativePath.hpp>
@@ -9,10 +10,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 template<typename TAction>
 void RequireInvalidPath(TAction action) {

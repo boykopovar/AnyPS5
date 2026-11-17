@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <algorithm>
 #include <array>
@@ -36,20 +37,8 @@ using SelectProtocol = int (APS5_VABI*)(unsigned char**, unsigned char*, const u
 using Protocol = std::vector<unsigned char>;
 using Protocols = std::vector<Protocol>;
 
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "LibreSSL protocol check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
-
 template<typename TAction> void RequireInvalidArgument(TAction action, std::source_location location = std::source_location::current()) {
     try { action(); } catch (const std::invalid_argument&) { return; } catch (const std::exception&) {}
-    Require(false, location);
-}
-
-template<typename TAction> void RequireNotImplemented(TAction action, std::source_location location = std::source_location::current()) {
-    try { action(); } catch (const std::runtime_error&) { return; }
     Require(false, location);
 }
 
@@ -274,19 +263,19 @@ void RunGuestFaults(SelectProtocol select) {
     ReadOnlyPage roLen(&length, sizeof(length));
 
     errno = 73;
-    RequireNotImplemented([&] { select(&output, &length, peerPages.End(), 1, validList, sizeof(validList)); });
+    ExpectErr<std::runtime_error>([&] { select(&output, &length, peerPages.End(), 1, validList, sizeof(validList)); });
     Require(errno == 73 && output == sentinelOutput && length == 0xA5);
 
     errno = 73;
-    RequireNotImplemented([&] { select(&output, &length, validList, sizeof(validList), supportedPages.End(), 1); });
+    ExpectErr<std::runtime_error>([&] { select(&output, &length, validList, sizeof(validList), supportedPages.End(), 1); });
     Require(errno == 73 && output == sentinelOutput && length == 0xA5);
 
     errno = 73;
-    RequireNotImplemented([&] { select(roOut.As<unsigned char*>(), &length, validList, sizeof(validList), validList, sizeof(validList)); });
+    ExpectErr<std::runtime_error>([&] { select(roOut.As<unsigned char*>(), &length, validList, sizeof(validList), validList, sizeof(validList)); });
     Require(errno == 73 && length == 0xA5);
 
     errno = 73;
-    RequireNotImplemented([&] { select(&output, roLen.As<unsigned char>(), validList, sizeof(validList), validList, sizeof(validList)); });
+    ExpectErr<std::runtime_error>([&] { select(&output, roLen.As<unsigned char>(), validList, sizeof(validList), validList, sizeof(validList)); });
     Require(errno == 73 && output == sentinelOutput);
 }
 

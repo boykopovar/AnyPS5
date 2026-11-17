@@ -3,6 +3,7 @@
 #include "prx/libSceVideoOut/include/Event.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "tests/VideoOutTestEnvironment.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -18,12 +19,6 @@ constexpr int InvalidEventQueue = static_cast<int>(0x8029000Cu);
 constexpr int InvalidEvent = static_cast<int>(0x8029000Du);
 constexpr int SetModeEvent = 8;
 constexpr std::int64_t DefaultOutputMode = 1;
-
-void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "FAIL: %s\n", what);
-    std::abort();
-}
 
 int Collect(KernelEqueue queue, std::array<KernelEvent, 2>& events) {
     KernelUseconds timeout = 0;

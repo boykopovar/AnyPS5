@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdlib>
@@ -18,8 +19,6 @@ static constexpr int GUEST_RLIMIT_NPROC = 7;
 static constexpr int GUEST_RLIMIT_NOFILE = 8;
 static constexpr int GUEST_RLIM_NLIMITS = 15;
 static constexpr std::int64_t GUEST_RLIM_INFINITY = std::numeric_limits<std::int64_t>::max();
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static bool Throws(int resource, const GuestResourceLimit& limit) {
     try {

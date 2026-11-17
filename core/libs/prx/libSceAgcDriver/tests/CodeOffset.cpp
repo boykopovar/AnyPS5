@@ -1,13 +1,8 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-
-static void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "FAIL: %s\n", what);
-    std::abort();
-}
 
 int main() {
     const auto* first = reinterpret_cast<const void*>(&AgcDriver::GuestMemory::CodeOffset);

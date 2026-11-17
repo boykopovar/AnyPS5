@@ -1,6 +1,7 @@
 #include "prx/libSceVdecCore/include/Api.hpp"
 #include "prx/libSceVdecCore/include/Decoder.hpp"
 #include "H264Fixture.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <atomic>
@@ -21,13 +22,6 @@ constexpr std::size_t Rounds = 40;
 constexpr std::int64_t PtsBase = 1000;
 constexpr std::int64_t DtsBase = 2000;
 constexpr std::uint64_t UserBase = 3000;
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "VdecCore concurrent output: %s\n", message);
-        std::abort();
-    }
-}
 
 VdecCoreConfigInfo Config() {
     VdecCoreConfigInfo config{};

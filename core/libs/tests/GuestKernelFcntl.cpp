@@ -3,6 +3,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -22,7 +23,6 @@
 #include <sys/eventfd.h>
 #endif
 
-static void Require(bool value) { if (!value) std::abort(); }
 static constexpr int DuplicateCommand = 0;
 static constexpr int GetDescriptorFlags = 1;
 static constexpr int SetDescriptorFlags = 2;

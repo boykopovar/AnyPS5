@@ -1,17 +1,7 @@
+#include "Testing.hpp"
 #include <codegen/x86/X64InstructionRewriter.hpp>
 #include <iostream>
 #include <stdexcept>
-
-static void Require(bool ok) {
-    if (!ok)
-        throw std::runtime_error("Invalid rewrite boundary accepted");
-}
-
-static void RequireTruncatedBranchRejected(bool ok) {
-    if (!ok)
-        throw std::runtime_error(
-            "Length-changing rewrite accepted a section with a truncated relative branch");
-}
 
 int main() {
     try {
@@ -96,7 +86,7 @@ int main() {
                 rejected = true;
             }
 
-            RequireTruncatedBranchRejected(rejected);
+            Require(rejected, "Length-changing rewrite accepted a section with a truncated relative branch");
         }
 
         const auto unaffected = rewriter.Rewrite(
@@ -117,7 +107,7 @@ int main() {
         } catch (const std::exception&) {
             forwardWraparoundRejected = true;
         }
-        RequireTruncatedBranchRejected(forwardWraparoundRejected);
+        Require(forwardWraparoundRejected, "Length-changing rewrite accepted a section with a truncated relative branch");
 
         std::vector<std::uint8_t> backwardWraparound(0x10004, 0x90);
         backwardWraparound[0] = 0x66;
@@ -130,7 +120,7 @@ int main() {
         } catch (const std::exception&) {
             backwardWraparoundRejected = true;
         }
-        RequireTruncatedBranchRejected(backwardWraparoundRejected);
+        Require(backwardWraparoundRejected, "Length-changing rewrite accepted a section with a truncated relative branch");
 
         std::cout << "24 rewrite boundary cases passed\n";
     } catch (const std::exception& error) {

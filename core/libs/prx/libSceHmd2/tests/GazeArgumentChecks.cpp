@@ -1,5 +1,6 @@
 #include "prx/libSceHmd2/include/Api.hpp"
 #include "prx/libSceHmd2/Hmd2.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -13,12 +14,6 @@ constexpr std::int32_t ParameterInvalid = static_cast<std::int32_t>(0x8a720009);
 
 constexpr std::uint8_t Sentinel = 0x5a;
 constexpr std::size_t ProbeSize = 16 * 1024;
-
-void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "FAIL: %s\n", what);
-    std::abort();
-}
 
 struct Probe {
     unsigned char* bytes;

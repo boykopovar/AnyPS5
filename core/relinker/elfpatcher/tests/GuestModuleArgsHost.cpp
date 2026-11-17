@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -9,12 +10,6 @@ struct Pending {
     std::size_t args = 0;
     const void* argp = nullptr;
 } pending;
-
-[[noreturn]] void Fail(const char* message) noexcept {
-    std::fprintf(stderr, "Guest module argument fixture: %s\n", message);
-    std::fflush(stderr);
-    std::_Exit(EXIT_FAILURE);
-}
 
 FILE* Events() {
     const auto* path = std::getenv("ANYPS5_GUEST_MODULE_ARGS");

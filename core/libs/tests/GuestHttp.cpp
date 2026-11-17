@@ -4,6 +4,7 @@
 #include <cerrno>
 #include <array>
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cctype>
@@ -19,7 +20,6 @@
 
 alignas(16) static std::array<std::byte, 0x40> processParameters{};
 
-static void Require(bool value) { if (!value) std::abort(); }
 
 static bool Equal(const char* left, const char* right) { return std::strcmp(left, right) == 0; }
 

@@ -1,5 +1,6 @@
 #include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -18,9 +19,6 @@ struct Parameter { void* allocator; void* context; std::size_t bufferSize; };
 using Handler = const Value& (APS5_VABI*)(ValueType, const Value*, const Value*, void*);
 using ReadCallback = int (APS5_VABI*)(char&, void*);
 using NullHandler = const Value& (APS5_VABI*)(ValueType, const Value*, void*);
-static void Require(bool valid, const char* message) {
-    if (!valid) { std::fprintf(stderr, "%s\n", message); std::abort(); }
-}
 struct LegacyTrace {
     std::map<void*, std::size_t> guest;
     std::map<void*, std::size_t> heap;

@@ -1,5 +1,6 @@
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
+#include "Testing.hpp"
 #include FT_FONT_FORMATS_H
 #include FT_PFR_H
 #include <array>
@@ -10,12 +11,6 @@
 namespace {
 
 unsigned imports = 0;
-
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "PFR null face: %s\n", message);
-    std::exit(1);
-}
 
 void CheckError(int result, const char* operation) {
     if (result == 6) return;

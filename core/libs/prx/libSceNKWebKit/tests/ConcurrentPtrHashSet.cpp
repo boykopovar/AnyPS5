@@ -1,4 +1,5 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <atomic>
 #include <cstddef>
@@ -13,24 +14,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "ConcurrentPtrHashSet check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
-
-template<class Function>
-void RequireThrows(Function function) {
-    bool threw = false;
-    try {
-        function();
-    } catch (const std::exception&) {
-        threw = true;
-    }
-    Require(threw);
-}
 
 using Set = WTF::ConcurrentPtrHashSet;
 using Table = WTF::ConcurrentPtrHashSetTable;
@@ -203,20 +186,20 @@ void TestConcurrentAdds() {
 }
 
 void TestInvalidArguments() {
-    RequireThrows([] { _ZN3WTF20ConcurrentPtrHashSetC1Ev(nullptr); });
-    RequireThrows([] { _ZN3WTF20ConcurrentPtrHashSetD1Ev(nullptr); });
-    RequireThrows([] { _ZN3WTF20ConcurrentPtrHashSet5clearEv(nullptr); });
-    RequireThrows([] { _ZN3WTF20ConcurrentPtrHashSet15deleteOldTablesEv(nullptr); });
+    ExpectErr([] { _ZN3WTF20ConcurrentPtrHashSetC1Ev(nullptr); });
+    ExpectErr([] { _ZN3WTF20ConcurrentPtrHashSetD1Ev(nullptr); });
+    ExpectErr([] { _ZN3WTF20ConcurrentPtrHashSet5clearEv(nullptr); });
+    ExpectErr([] { _ZN3WTF20ConcurrentPtrHashSet15deleteOldTablesEv(nullptr); });
     Set set;
     _ZN3WTF20ConcurrentPtrHashSetC1Ev(&set);
     auto* table = CurrentTable(&set);
     auto add = &_ZN3WTF20ConcurrentPtrHashSet7addSlowEPNS0_5TableEjjjPv;
-    RequireThrows([&] { add(nullptr, table, 31, 0, 0, Key(1)); });
-    RequireThrows([&] { add(&set, nullptr, 31, 0, 0, Key(1)); });
-    RequireThrows([&] { add(&set, table, 31, 0, 0, nullptr); });
-    RequireThrows([&] { add(&set, table, 15, 0, 0, Key(1)); });
-    RequireThrows([&] { add(&set, table, 31, 32, 0, Key(1)); });
-    RequireThrows([&] { add(&set, table, 31, 0, 32, Key(1)); });
+    ExpectErr([&] { add(nullptr, table, 31, 0, 0, Key(1)); });
+    ExpectErr([&] { add(&set, nullptr, 31, 0, 0, Key(1)); });
+    ExpectErr([&] { add(&set, table, 31, 0, 0, nullptr); });
+    ExpectErr([&] { add(&set, table, 15, 0, 0, Key(1)); });
+    ExpectErr([&] { add(&set, table, 31, 32, 0, Key(1)); });
+    ExpectErr([&] { add(&set, table, 31, 0, 32, Key(1)); });
     Require(table->load == 0 && set.lock == 0);
     Require(add(&set, &set.stubTable, 0, 0, 0, Key(1)));
     Require(InlineContains(&set, Key(1)) && set.tablesSize == 1 && set.stubTable.load == 11);

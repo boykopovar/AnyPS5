@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/exceptions/Runtime.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -25,8 +26,6 @@ extern const unsigned char _ZTVN10__cxxabiv121__vmi_class_type_infoE_nid_postfix
 }
 
 namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
 
 void Destroy(void*) {}
 

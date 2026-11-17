@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <csignal>
 #include <initializer_list>
 #include <cstdint>
@@ -94,7 +95,6 @@ void APS5_VABI MaskCallback(int value) {
     sigprocmask_nid_postfix(1, nullptr, &maskInHandler);
 
 }
-static void Require(bool value) { if (!value) std::abort(); }
 static void CheckSignalPointerFaults() {
     constexpr std::size_t page = 0x4000;
     void* memory = nullptr;

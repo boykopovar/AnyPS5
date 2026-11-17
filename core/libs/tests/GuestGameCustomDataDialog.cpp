@@ -1,6 +1,7 @@
 #include "prx/libSceGameCustomDataDialog/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceUserService/UserService.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -10,8 +11,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
 
 constexpr int kStatusNone = 0;
 constexpr int kStatusInitialized = 1;

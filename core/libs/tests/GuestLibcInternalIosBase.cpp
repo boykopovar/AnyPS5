@@ -4,6 +4,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -20,12 +21,6 @@ namespace {
 
 unsigned releases = 0;
 void* lastReleased = nullptr;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "libc internal ios_base destructor: %s\n", message);
-    std::abort();
-}
 
 void* APS5_VABI TestAllocate(std::size_t size) { return std::malloc(size); }
 void APS5_VABI TestFree(void* pointer) {

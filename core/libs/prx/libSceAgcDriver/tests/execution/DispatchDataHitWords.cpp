@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "Testing.hpp"
 #include "VulkanTestDevice.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -51,10 +52,6 @@ std::uint32_t* NewBlock() {
     return block;
 }
 
-void check(bool condition, const std::string& what) {
-    if (!condition) throw std::runtime_error("dispatch data hit words: " + what);
-}
-
 template <typename Ready>
 void WaitUntil(Ready ready, const std::string& what) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
@@ -96,7 +93,7 @@ void CheckOutput(std::uint32_t expected, const std::string& what) {
         }
         return true;
     }, what + " to store");
-    for (std::uint32_t lane = 0; lane < Lanes; ++lane) check(Output[lane] == expected, what + ": lane " + std::to_string(lane) + " is " + std::to_string(Output[lane]) + ", expected " + std::to_string(expected));
+    for (std::uint32_t lane = 0; lane < Lanes; ++lane) Require(Output[lane] == expected, what + ": lane " + std::to_string(lane) + " is " + std::to_string(Output[lane]) + ", expected " + std::to_string(expected));
 }
 
 void Round(std::uint32_t value, const std::string& what) {
@@ -104,7 +101,7 @@ void Round(std::uint32_t value, const std::string& what) {
     for (std::uint32_t lane = 0; lane < Lanes; ++lane) Output[lane] = Unwritten;
     auto words = Dispatch();
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
-    check(sceAgcDriverSubmitAcb(ComputeQueue, &packet) == 0, "submission failed");
+    Require(sceAgcDriverSubmitAcb(ComputeQueue, &packet) == 0, "submission failed");
     AgcDriverWaitIdle_nid_postfix();
     CheckOutput(value + 1u, what);
 }
@@ -137,7 +134,7 @@ int main() {
             const auto what = "data hit " + std::to_string(round + 1) + ", resolved ahead on the compute queue";
             Round(values[round], what);
             const auto added = AgcDriver::Graphics::SnapshotMismatches() - mismatches;
-            check(added == 0, what + ": its snapshots differ from the registered memory serving them (" + std::to_string(added) + " snapshot mismatches)");
+            Require(added == 0, what + ": its snapshots differ from the registered memory serving them (" + std::to_string(added) + " snapshot mismatches)");
         }
         std::printf("dispatch data hit words: %zu data hits resolved ahead read their own live words\n", values.size());
 

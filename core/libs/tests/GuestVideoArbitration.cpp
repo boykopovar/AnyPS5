@@ -1,5 +1,6 @@
 #include "prx/libSceVideoArbitration/libSceVideoArbitration.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cerrno>
@@ -11,10 +12,6 @@ namespace {
 
 void ClobberErrno(std::uintptr_t, std::size_t) {
     errno = EACCES;
-}
-
-void Require(bool value) {
-    if (!value) std::abort();
 }
 
 struct ArbitrationParam {

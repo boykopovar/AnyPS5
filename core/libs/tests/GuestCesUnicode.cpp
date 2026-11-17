@@ -1,6 +1,7 @@
 #include "prx/libSceCesCs/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceCesCs/JisX0208.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -17,10 +18,6 @@ constexpr int UNASSIGNED_CODE = static_cast<int>(0x805C0020);
 constexpr int INVALID_DST_BUFFER = static_cast<int>(0x805C0030);
 constexpr int DST_BUFFER_END = static_cast<int>(0x805C0031);
 constexpr uint32_t SENTINEL = 0xA5A5A5A5;
-
-void Require(bool value) {
-    if (!value) std::abort();
-}
 
 void Hash(uint64_t& hash, const void* data, uint32_t size) {
     const auto* bytes = static_cast<const uint8_t*>(data);

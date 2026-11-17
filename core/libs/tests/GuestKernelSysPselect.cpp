@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -34,12 +35,6 @@ struct DescriptorSet {
     void Add(int descriptor) { words[descriptor / 64] |= std::uint64_t{1} << (descriptor % 64); }
     bool Has(int descriptor) const { return ((words[descriptor / 64] >> (descriptor % 64)) & 1u) != 0; }
 };
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "check failed at line %u\n", static_cast<unsigned>(location.line()));
-    std::exit(1);
-}
 
 int Error() {
     return *__error_nid_postfix();

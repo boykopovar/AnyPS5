@@ -1,6 +1,7 @@
 #include "prx/libSceLibcInternal/include/Ctype.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -65,23 +66,6 @@ void* APS5_VABI HeapRealign(void* pointer, std::size_t bytes, std::size_t) { ret
 int APS5_VABI HeapPosixAlign(void** pointer, std::size_t, std::size_t bytes) {
     *pointer = std::malloc(bytes);
     return *pointer == nullptr ? 12 : 0;
-}
-
-void Require(bool value, std::source_location location = std::source_location::current()) {
-    if (value) return;
-    std::fprintf(stderr, "Ctype case check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<class Function>
-void RequireInvalid(Function function) {
-    bool thrown = false;
-    try {
-        function();
-    } catch (const std::invalid_argument&) {
-        thrown = true;
-    }
-    Require(thrown);
 }
 
 unsigned char Mapped(unsigned value, bool upper) {
@@ -212,11 +196,11 @@ void CheckEmptyAndInvalidRanges() {
         char byte = 'x';
         Require(method.range(nullptr, &byte, &byte) == &byte && byte == 'x');
         std::array<char, 2> bytes{'A', 'B'};
-        RequireInvalid([&] { method.range(&facet, bytes.data() + 1, bytes.data()); });
+        ExpectErr<std::invalid_argument>([&] { method.range(&facet, bytes.data() + 1, bytes.data()); });
         Require(bytes[0] == 'A' && bytes[1] == 'B');
-        RequireInvalid([&] { method.range(nullptr, bytes.data(), bytes.data() + bytes.size()); });
+        ExpectErr<std::invalid_argument>([&] { method.range(nullptr, bytes.data(), bytes.data() + bytes.size()); });
         Require(bytes[0] == 'A' && bytes[1] == 'B');
-        RequireInvalid([&] { method.range(&facet, page.End(), page.End() + 1); });
+        ExpectErr<std::invalid_argument>([&] { method.range(&facet, page.End(), page.End() + 1); });
     }
 }
 
@@ -225,25 +209,25 @@ void CheckPointerFaults() {
     GuardedPage page;
     for (const auto& method : CaseMethods) {
         Facet facet = tables.MakeFacet();
-        RequireInvalid([&] { method.scalar(nullptr, 'A'); });
-        RequireInvalid([&] { method.scalar(reinterpret_cast<const Facet*>(page.End()), 'A'); });
+        ExpectErr<std::invalid_argument>([&] { method.scalar(nullptr, 'A'); });
+        ExpectErr<std::invalid_argument>([&] { method.scalar(reinterpret_cast<const Facet*>(page.End()), 'A'); });
         (method.upper ? facet.upper : facet.lower) = nullptr;
-        RequireInvalid([&] { method.scalar(&facet, 'A'); });
+        ExpectErr<std::invalid_argument>([&] { method.scalar(&facet, 'A'); });
         (method.upper ? facet.upper : facet.lower) = reinterpret_cast<const std::int16_t*>(page.End());
-        RequireInvalid([&] { method.scalar(&facet, 'A'); });
+        ExpectErr<std::invalid_argument>([&] { method.scalar(&facet, 'A'); });
         facet = tables.MakeFacet();
         page.Data()[0] = 'A';
         page.SetWritable(false);
-        RequireInvalid([&] { method.range(&facet, page.Data(), page.Data() + 1); });
+        ExpectErr<std::invalid_argument>([&] { method.range(&facet, page.Data(), page.Data() + 1); });
         Require(page.Data()[0] == 'A');
         page.SetWritable(true);
         page.End()[-1] = 'A';
-        RequireInvalid([&] { method.range(&facet, page.End() - 1, page.End() + 1); });
+        ExpectErr<std::invalid_argument>([&] { method.range(&facet, page.End() - 1, page.End() + 1); });
         Require(static_cast<unsigned char>(page.End()[-1]) == Mapped('A', method.upper));
         page.End()[-2] = 'B';
         (method.upper ? facet.upper : facet.lower) = reinterpret_cast<const std::int16_t*>(page.End() - 2);
         std::array<char, 2> bytes{0, 1};
-        RequireInvalid([&] { method.range(&facet, bytes.data(), bytes.data() + bytes.size()); });
+        ExpectErr<std::invalid_argument>([&] { method.range(&facet, bytes.data(), bytes.data() + bytes.size()); });
         Require(bytes[0] == 'B' && bytes[1] == 1);
     }
 }
@@ -364,8 +348,8 @@ void CheckDestructors() {
         Require(releasedCount == 1 && released[0] == owned);
 
         releasedCount = 0;
-        RequireInvalid([&] { methods.destroy(nullptr); });
-        RequireInvalid([&] { methods.deleteObject(nullptr); });
+        ExpectErr<std::invalid_argument>([&] { methods.destroy(nullptr); });
+        ExpectErr<std::invalid_argument>([&] { methods.deleteObject(nullptr); });
         Require(releasedCount == 0);
     }
 }

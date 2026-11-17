@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "Testing.hpp"
 #include "VulkanTestDevice.hpp"
 #include <array>
 #include <atomic>
@@ -19,10 +20,6 @@
 namespace {
 
 using AgcDriver::DriverDetail::DrawPipeline;
-
-void check(bool condition, const std::string& what) {
-    if (!condition) throw std::runtime_error("GPU-written indirect buffer, queued writer: " + what);
-}
 
 struct Gate {
     std::atomic<bool> release{false};
@@ -72,13 +69,13 @@ int main() {
             });
             std::vector<std::uint32_t> words{0xc0023f00u, Low(CommandMemory.data()), High(CommandMemory.data()) & 0xffffu, 5u};
             Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
-            check(sceAgcDriverSubmitDcb(&packet) == 0, "the submission failed");
+            Require(sceAgcDriverSubmitDcb(&packet) == 0, "the submission failed");
             releaser.join();
         }
         AgcDriverWaitIdle_nid_postfix();
         AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(MarkerMemory.data()), sizeof(MarkerMemory));
-        check(CommandMemory[0] == WriteData, "the queued writer did not store its packet header");
-        check(MarkerMemory[0] == Marker, "an INDIRECT_BUFFER under a write still queued in the draw pipeline ran the command buffer as it was at submission: the marker is " + std::to_string(MarkerMemory[0]));
+        Require(CommandMemory[0] == WriteData, "the queued writer did not store its packet header");
+        Require(MarkerMemory[0] == Marker, "an INDIRECT_BUFFER under a write still queued in the draw pipeline ran the command buffer as it was at submission: the marker is " + std::to_string(MarkerMemory[0]));
         LibcRunShutdown_nid_postfix();
         std::puts("an INDIRECT_BUFFER under a queued draw pipeline write runs the packet the write stored");
         return 0;

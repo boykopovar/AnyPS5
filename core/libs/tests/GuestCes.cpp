@@ -1,13 +1,12 @@
 #include "prx/libSceCesCs/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
 #include <cstdlib>
 #include <cstring>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static void RequireSbcToUtf8(const std::uint8_t* profile, std::uint8_t sbc, const char* expected) {
     std::uint8_t utf8[4] = {};

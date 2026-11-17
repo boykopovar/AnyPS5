@@ -1,18 +1,11 @@
 #include "prx/libSceFont/include/Api.hpp"
 #include "prx/libSceFont/include/FontTypes.hpp"
+#include "Testing.hpp"
 #include <cmath>
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "Font style frame check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static bool Near(float value, float expected) {
     return std::fabs(value - expected) < 1e-5f;

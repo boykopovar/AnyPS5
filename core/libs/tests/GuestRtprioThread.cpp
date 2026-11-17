@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -23,8 +24,6 @@ static constexpr int GUEST_EPERM = 1;
 static constexpr int GUEST_ESRCH = 3;
 static constexpr int GUEST_EINVAL = 22;
 static constexpr int GUEST_EFAULT = 14;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 struct Report {
     int policy;

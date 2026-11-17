@@ -1,4 +1,5 @@
 #include "prx/libSceSulphaDrv/libSceSulphaDrv.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -21,12 +22,6 @@ namespace {
 
 constexpr int ErrorNotInitialized = static_cast<int>(0x804D0002u);
 constexpr int ErrorInvalidArgument = static_cast<int>(0x804D0003u);
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
 
 struct SulphaConfig {
     std::uint64_t size;

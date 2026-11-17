@@ -1,5 +1,6 @@
 #include "SceTypes.hpp"
 #include "prx/libSceUserService/UserService.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -7,12 +8,6 @@
 namespace {
 
 constexpr int SCE_USER_SERVICE_ERROR_INVALID_ARGUMENT = USER_SERVICE_ERROR_INVALID_ARGUMENT;
-
-void Require(bool value) {
-    if (!value) {
-        std::abort();
-    }
-}
 
 int CountLoggedInUsers(const UserServiceLoginUserIdList& list) {
     int count = 0;

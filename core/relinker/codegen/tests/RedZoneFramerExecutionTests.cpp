@@ -3,6 +3,7 @@
 #define NOMINMAX
 #include <windows.h>
 #endif
+#include "Testing.hpp"
 #include <codegen/x86/RedZoneFramer.hpp>
 #include <codegen/x86/StubBodyBuilder.hpp>
 #include <algorithm>
@@ -25,10 +26,6 @@
 #if (defined(__linux__) || defined(_WIN32)) && (defined(__x86_64__) || defined(_M_X64))
 
 namespace {
-
-void require(const bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 constexpr std::size_t kArenaBytes = 0x10000;
 constexpr std::size_t kStubBase = 0x4000;
@@ -121,13 +118,13 @@ public:
 #ifdef _WIN32
         steppingThread = GetCurrentThreadId();
         handler = AddVectoredExceptionHandler(1, clobberBelowRsp);
-        require(handler != nullptr, "cannot install the single-step handler");
+        Require(handler != nullptr, "cannot install the single-step handler");
 #else
         struct sigaction action {};
         action.sa_sigaction = clobberBelowRsp;
         action.sa_flags = SA_SIGINFO;
         sigemptyset(&action.sa_mask);
-        require(sigaction(SIGTRAP, &action, &previous) == 0, "cannot install the SIGTRAP handler");
+        Require(sigaction(SIGTRAP, &action, &previous) == 0, "cannot install the SIGTRAP handler");
 #endif
     }
 
@@ -342,7 +339,7 @@ std::vector<Leaf> widenedLeaves() {
 
 void writeRel32(std::uint8_t* at, const std::uint64_t target, const std::uint64_t next) {
     const auto displacement = static_cast<std::int64_t>(target) - static_cast<std::int64_t>(next);
-    require(displacement >= std::numeric_limits<std::int32_t>::min() && displacement <= std::numeric_limits<std::int32_t>::max(), "a stub jump is out of rel32 range");
+    Require(displacement >= std::numeric_limits<std::int32_t>::min() && displacement <= std::numeric_limits<std::int32_t>::max(), "a stub jump is out of rel32 range");
     const auto value = static_cast<std::uint32_t>(static_cast<std::int32_t>(displacement));
     for (std::size_t index = 0; index < 4; ++index) at[index] = static_cast<std::uint8_t>(value >> (index * 8));
 }
@@ -378,7 +375,7 @@ Image place(const std::vector<Leaf>& leaves) {
         image.Ends.push_back(image.Bytes.size());
     }
     image.Bytes.resize((image.Bytes.size() + 15) / 16 * 16 + 16, 0xcc);
-    require(image.Bytes.size() <= kStubBase, "the leaves do not fit before the stubs");
+    Require(image.Bytes.size() <= kStubBase, "the leaves do not fit before the stubs");
     return image;
 }
 
@@ -397,7 +394,7 @@ Framing load(const Image& image, const bool frame) {
 #else
     const auto& runner = Runner;
 #endif
-    require(runner.size() <= kArenaBytes - kRunnerBase, "the runner does not fit in the executable arena");
+    Require(runner.size() <= kArenaBytes - kRunnerBase, "the runner does not fit in the executable arena");
     std::copy(runner.begin(), runner.end(), arena + kRunnerBase);
     Framing framing;
     if (!frame) return framing;
@@ -410,9 +407,9 @@ Framing load(const Image& image, const bool frame) {
     std::size_t cursor = kStubBase;
     for (const auto& site : framing.Sites) {
         const auto at = static_cast<std::size_t>(site.Address - base);
-        require(std::equal(site.OriginalBytes.begin(), site.OriginalBytes.end(), arena + at), "a framed site's bytes changed before it was patched");
+        Require(std::equal(site.OriginalBytes.begin(), site.OriginalBytes.end(), arena + at), "a framed site's bytes changed before it was patched");
         cursor = (cursor + 15) / 16 * 16;
-        require(cursor + site.Body.size() <= kProbeBase, "the stubs do not fit before the calibration probe");
+        Require(cursor + site.Body.size() <= kProbeBase, "the stubs do not fit before the calibration probe");
         auto* stub = arena + cursor;
         std::copy(site.Body.begin(), site.Body.end(), stub);
         Codegen::ApplyStubRelocations(std::span<std::uint8_t>(stub, site.ReturnBranchOffset), site.Relocations, site.Address, base + cursor, site.Offset);
@@ -436,17 +433,17 @@ Run run(const std::size_t start, const bool clobber) {
     steps = 0;
     outsideSteps = 0;
 #ifdef _WIN32
-    require(FlushInstructionCache(GetCurrentProcess(), arena, kArenaBytes) != 0, "cannot flush the generated code");
+    Require(FlushInstructionCache(GetCurrentProcess(), arena, kArenaBytes) != 0, "cannot flush the generated code");
     singleStepping = clobber;
     steppingFinished = false;
 #endif
     const auto result = entry(reinterpret_cast<std::uint64_t>(arena + start), kA, kB, kC, kD, clobber ? 1 : 0);
 #ifdef _WIN32
     singleStepping = false;
-    require(steppingFinished == clobber || calibratingSingleStep, "single-stepping did not finish at the runner's return point");
+    Require(steppingFinished == clobber || calibratingSingleStep, "single-stepping did not finish at the runner's return point");
 #endif
-    require(outsideSteps == 0, "single-stepping escaped the generated code");
-    require(clobber || steps == 0, "single-stepping ran without the clobber requested");
+    Require(outsideSteps == 0, "single-stepping escaped the generated code");
+    Require(clobber || steps == 0, "single-stepping ran without the clobber requested");
     return {result, static_cast<int>(steps)};
 }
 
@@ -486,12 +483,12 @@ Codegen::RedZoneFrameReport runLeaves(const std::vector<Leaf>& leaves) {
         }
         plain.push_back(run(image.Starts[index], false));
         clobbered.push_back(clobberedRun(image.Starts[index]));
-        require(plain.back().Result == leaves[index].Expected, std::string(leaves[index].Name) + ": the unframed leaf returned " + hex(plain.back().Result) + " without the clobber, not " + hex(leaves[index].Expected));
-        require(clobbered.back().Steps > 0, std::string(leaves[index].Name) + ": the clobber did not run");
-        require(clobbered.back().Result != leaves[index].Expected, std::string(leaves[index].Name) + ": the unframed leaf survived writes below rsp, so the case proves nothing");
+        Require(plain.back().Result == leaves[index].Expected, std::string(leaves[index].Name) + ": the unframed leaf returned " + hex(plain.back().Result) + " without the clobber, not " + hex(leaves[index].Expected));
+        Require(clobbered.back().Steps > 0, std::string(leaves[index].Name) + ": the clobber did not run");
+        Require(clobbered.back().Result != leaves[index].Expected, std::string(leaves[index].Name) + ": the unframed leaf survived writes below rsp, so the case proves nothing");
     }
     const auto framing = load(image, true);
-    require(framing.Report.Framed == leaves.size(), "only " + std::to_string(framing.Report.Framed) + " of " + std::to_string(leaves.size()) + " leaves were framed");
+    Require(framing.Report.Framed == leaves.size(), "only " + std::to_string(framing.Report.Framed) + " of " + std::to_string(leaves.size()) + " leaves were framed");
     for (std::size_t index = 0; index < leaves.size(); ++index) {
         if (!leaves[index].HostRuns) {
             std::cout << leaves[index].Name << ": framed but not executed, this CPU cannot execute an instruction in it\n";
@@ -499,9 +496,9 @@ Codegen::RedZoneFrameReport runLeaves(const std::vector<Leaf>& leaves) {
         }
         const auto calm = run(image.Starts[index], false);
         const auto framed = clobberedRun(image.Starts[index]);
-        require(calm.Result == leaves[index].Expected, std::string(leaves[index].Name) + ": the framed leaf returned " + hex(calm.Result) + " without the clobber, not " + hex(leaves[index].Expected));
-        require(framed.Steps > 0, std::string(leaves[index].Name) + ": the clobber did not run over the framed leaf");
-        require(framed.Result == leaves[index].Expected, std::string(leaves[index].Name) + ": the framed leaf returned " + hex(framed.Result) + " under writes below rsp, not " + hex(leaves[index].Expected));
+        Require(calm.Result == leaves[index].Expected, std::string(leaves[index].Name) + ": the framed leaf returned " + hex(calm.Result) + " without the clobber, not " + hex(leaves[index].Expected));
+        Require(framed.Steps > 0, std::string(leaves[index].Name) + ": the clobber did not run over the framed leaf");
+        Require(framed.Result == leaves[index].Expected, std::string(leaves[index].Name) + ": the framed leaf returned " + hex(framed.Result) + " under writes below rsp, not " + hex(leaves[index].Expected));
         std::cout << leaves[index].Name << ": unframed " << hex(plain[index].Result) << " alone and " << hex(clobbered[index].Result) << " under the clobber (" << clobbered[index].Steps << " steps); framed " << hex(framed.Result) << " under the clobber (" << framed.Steps << " steps)\n";
     }
     return framing.Report;
@@ -512,12 +509,12 @@ void verifySkippedLeaves(const std::vector<Leaf>& leaves) {
     const auto framing = load(image, true);
     for (std::size_t index = 0; index < leaves.size(); ++index) {
         const auto executed = run(image.Starts[index], false);
-        require(executed.Result == leaves[index].Expected,
+        Require(executed.Result == leaves[index].Expected,
                 std::string(leaves[index].Name) + ": returned " + hex(executed.Result) + " after framing pass, not " + hex(leaves[index].Expected));
     }
-    require(framing.Report.RedZoneFunctions == leaves.size() && framing.Report.Framed == 0 && framing.Sites.empty() && framing.Displacements.empty(),
+    Require(framing.Report.RedZoneFunctions == leaves.size() && framing.Report.Framed == 0 && framing.Sites.empty() && framing.Displacements.empty(),
             "a leaf with a direct rsp operand was framed");
-    require(framing.Report.Skipped.at("other use of rsp") == leaves.size(),
+    Require(framing.Report.Skipped.at("other use of rsp") == leaves.size(),
             "not every leaf with a direct rsp operand was skipped as another use of rsp");
 }
 
@@ -533,11 +530,11 @@ int main() {
         const SingleStepHandler singleStepHandler;
         runLeaves(framedLeaves());
         const auto stubbed = runLeaves(stubbedLeaves());
-        require(stubbed.OperandStubs == 3 && stubbed.StubbedOperands == 5, "the leaves were framed with " + std::to_string(stubbed.OperandStubs) + " operand stubs carrying " + std::to_string(stubbed.StubbedOperands) + " rsp operands, not 3 carrying 5");
+        Require(stubbed.OperandStubs == 3 && stubbed.StubbedOperands == 5, "the leaves were framed with " + std::to_string(stubbed.OperandStubs) + " operand stubs carrying " + std::to_string(stubbed.StubbedOperands) + " rsp operands, not 3 carrying 5");
         const auto backward = runLeaves(backwardStubbedLeaves());
-        require(backward.OperandStubs == 2 && backward.StubbedOperands == 3 && backward.MovedOperands == 5, "the leaves comparing at rsp before a branch were framed with " + std::to_string(backward.OperandStubs) + " operand stubs carrying " + std::to_string(backward.StubbedOperands) + " rsp operands and " + std::to_string(backward.MovedOperands) + " moved in place, not 2 carrying 3 and 5");
+        Require(backward.OperandStubs == 2 && backward.StubbedOperands == 3 && backward.MovedOperands == 5, "the leaves comparing at rsp before a branch were framed with " + std::to_string(backward.OperandStubs) + " operand stubs carrying " + std::to_string(backward.StubbedOperands) + " rsp operands and " + std::to_string(backward.MovedOperands) + " moved in place, not 2 carrying 3 and 5");
         const auto widened = runLeaves(widenedLeaves());
-        require(widened.WidenedPrologues == 8 && widened.WidenedExits == 9 && widened.WidenedOperands == 12, "the leaves with short prologues and exits were framed with " + std::to_string(widened.WidenedPrologues) + " widened prologues, " + std::to_string(widened.WidenedExits) + " widened exits and " + std::to_string(widened.WidenedOperands) + " rsp operands in them, not 8, 9 and 12");
+        Require(widened.WidenedPrologues == 8 && widened.WidenedExits == 9 && widened.WidenedOperands == 12, "the leaves with short prologues and exits were framed with " + std::to_string(widened.WidenedPrologues) + " widened prologues, " + std::to_string(widened.WidenedExits) + " widened exits and " + std::to_string(widened.WidenedOperands) + " rsp operands in them, not 8, 9 and 12");
         verifySkippedLeaves(skippedDirectRspLeaves());
         std::cout << "red-zone framer execution tests passed\n";
         return 0;

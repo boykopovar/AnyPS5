@@ -3,6 +3,7 @@
 #include <nid/NidCompute.hpp>
 #include "SceTypes.hpp"
 #include "prx/libkernel/File/include/KernelStatfs.hpp"
+#include "Testing.hpp"
 #include <span>
 #include <array>
 #include <cstddef>
@@ -32,12 +33,6 @@
 #include <unistd.h>
 #endif
 
-static void Require(bool value, std::source_location location = std::source_location::current()) {
-    if (!value) {
-        std::fprintf(stderr, "Kernel sys API check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 #ifdef _WIN32
 static void RemoveLinks(const std::filesystem::path& root) {

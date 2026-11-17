@@ -2,6 +2,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -11,13 +12,6 @@
 namespace {
 
 constexpr int GuestEbadf = 9;
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "KERNEL SYS DUP: %s\n", message);
-        std::abort();
-    }
-}
 
 } // namespace
 

@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -16,23 +17,7 @@
 
 namespace {
 
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "ICU unescape check failed at line %u\n", location.line());
-    std::abort();
-}
 
-template<typename TAction>
-void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
-    try { action(); } catch (const std::exception&) { return; }
-    Require(false, location);
-}
-
-template<typename TAction>
-void RequireInvalidArgument(TAction action, std::source_location location = std::source_location::current()) {
-    try { action(); } catch (const std::invalid_argument&) { return; }
-    Require(false, location);
-}
 
 struct Input {
     std::u16string text;
@@ -123,9 +108,9 @@ void SingleEscapes() {
     }
     offset = 0;
     Require(u_unescapeAt_nid_postfix(nullptr, &offset, -1, nullptr) == -1 && offset == 0);
-    RequireInvalidArgument([&] { u_unescapeAt_nid_postfix(nullptr, &offset, 1, nullptr); });
-    RequireInvalidArgument([] { u_unescapeAt_nid_postfix(Read_nid_no_patch, nullptr, 1, nullptr); });
-    RequireInvalidArgument([] { u_unescapeAt_nid_postfix(nullptr, nullptr, -1, nullptr); });
+    ExpectErr<std::invalid_argument>([&] { u_unescapeAt_nid_postfix(nullptr, &offset, 1, nullptr); });
+    ExpectErr<std::invalid_argument>([] { u_unescapeAt_nid_postfix(Read_nid_no_patch, nullptr, 1, nullptr); });
+    ExpectErr<std::invalid_argument>([] { u_unescapeAt_nid_postfix(nullptr, nullptr, -1, nullptr); });
 }
 
 void String(const char* escaped, std::u16string_view expected) {
@@ -171,8 +156,8 @@ void Strings() {
     destination[0] = 0xa55a;
     Require(u_unescape_nid_postfix("abc\\u12", destination, 3) == 0 && destination[0] == 0 && destination[1] == u'b' && destination[2] == u'c');
     std::fill(std::begin(destination), std::end(destination), 0xa55a);
-    RequireInvalidArgument([] { u_unescape_nid_postfix(nullptr, nullptr, 0); });
-    RequireInvalidArgument([&] { u_unescape_nid_postfix(nullptr, destination, 3); });
+    ExpectErr<std::invalid_argument>([] { u_unescape_nid_postfix(nullptr, nullptr, 0); });
+    ExpectErr<std::invalid_argument>([&] { u_unescape_nid_postfix(nullptr, destination, 3); });
     Require(destination[0] == 0xa55a && destination[1] == 0xa55a && destination[2] == 0xa55a);
     for (std::uint32_t value = 0; value <= 0x10ffff; value += 17) {
         char escaped[16];
@@ -203,7 +188,7 @@ void NegativeCapacity() {
     for (const auto& test : {Case{"a\\n", minimum, 0}, Case{"\\na", minimum, 0}, Case{"ab\\n", minimum + 1, 0}, Case{"\\nab", minimum, 0}}) {
         std::array<char16_t, 8> output;
         output.fill(0xa55a);
-        RequireThrows([&] { u_unescape_nid_postfix(test.escaped, output.data() + 1, test.capacity); });
+        ExpectErr([&] { u_unescape_nid_postfix(test.escaped, output.data() + 1, test.capacity); });
         Require(std::all_of(output.begin(), output.end(), [](char16_t unit) { return unit == 0xa55a; }));
         Require(u_unescape_nid_postfix(test.escaped, nullptr, test.capacity) == static_cast<std::int32_t>(std::string_view(test.escaped).size()) - 1);
     }

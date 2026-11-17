@@ -1,6 +1,7 @@
 #include "prx/libSceSystemService/include/SystemService.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -29,8 +30,6 @@ struct GuardedBuffer {
         return true;
     }
 };
-
-void Require(bool value) { if (!value) std::abort(); }
 
 template<typename TCall>
 bool Throws(TCall call) {

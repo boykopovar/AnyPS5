@@ -1,6 +1,7 @@
 #include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "JsonTestAllocator.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <bit>
 #include <cmath>
@@ -22,13 +23,6 @@ struct Parameter {
     std::uint32_t reserved[3];
 };
 static_assert(sizeof(Parameter) == 40);
-
-static void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "%s\n", message);
-        std::abort();
-    }
-}
 
 static std::string Serialize(Value& value, bool toString = false) {
     String output;

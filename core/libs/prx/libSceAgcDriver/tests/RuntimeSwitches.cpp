@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
@@ -11,10 +12,6 @@ using AgcDriver::Graphics::RuntimeSwitch;
 namespace RuntimeSwitches = AgcDriver::Graphics::RuntimeSwitches;
 
 namespace {
-
-void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 void SetEnvironment(const char* name, const char* value) {
 #ifdef _WIN32

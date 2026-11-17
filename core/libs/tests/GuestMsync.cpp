@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -17,12 +18,6 @@ constexpr int Invalidate = 0x2;
 constexpr int Invalid = 22;
 constexpr int NoMemory = 12;
 constexpr int Busy = 16;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "msync check failed at line %u\n", static_cast<unsigned>(location.line()));
-    std::abort();
-}
 
 bool Succeeds(void* address, std::size_t length, int flags) {
     *__error_nid_postfix() = 77;

@@ -1,4 +1,5 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "Testing.hpp"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -14,21 +15,6 @@
 #include <stdexcept>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc AudioSourceInterface::options check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> void RequireInvalidArgument(TAction action, std::source_location location = std::source_location::current()) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, location);
-}
 
 void TestEveryOptionIsUnset() {
     WebRtcAudioOptions options;
@@ -51,7 +37,7 @@ void TestSourceIsNotRead() {
 
 void TestNullResultThrows() {
     int source = 0;
-    RequireInvalidArgument([&] { _ZNK6webrtc20AudioSourceInterface7optionsEv_nid_postfix(nullptr, &source); });
+    ExpectErr<std::invalid_argument>([&] { _ZNK6webrtc20AudioSourceInterface7optionsEv_nid_postfix(nullptr, &source); });
 }
 
 struct GuardedPage {
@@ -98,7 +84,7 @@ void TestGuardedResultThrows() {
     GuardedPage page;
     page.SetReadOnly();
     int source = 0;
-    RequireInvalidArgument([&] { _ZNK6webrtc20AudioSourceInterface7optionsEv_nid_postfix(page.As<WebRtcAudioOptions>(), &source); });
+    ExpectErr<std::invalid_argument>([&] { _ZNK6webrtc20AudioSourceInterface7optionsEv_nid_postfix(page.As<WebRtcAudioOptions>(), &source); });
 }
 
 }

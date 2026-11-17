@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <nid/NidCompute.hpp>
 #include <array>
 #include <cstddef>
@@ -18,22 +19,6 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
-
-static void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::exit(1);
-}
-
-template<typename TAction>
-static void RequireInvalidArgument(TAction action, const char* message) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, message);
-}
 
 template<typename TChar>
 using Prefix = int (APS5_VABI*)(const TChar**, TChar**);
@@ -165,11 +150,11 @@ template<typename TChar>
 static void CheckNull(Prefix<TChar> function) {
     TChar sentinel{};
     TChar* end = &sentinel;
-    RequireInvalidArgument([&] { function(nullptr, &end); }, "null cursor");
-    RequireInvalidArgument([&] { function(nullptr, nullptr); }, "null cursor without end pointer");
+    ExpectErr<std::invalid_argument>([&] { function(nullptr, &end); }, "null cursor");
+    ExpectErr<std::invalid_argument>([&] { function(nullptr, nullptr); }, "null cursor without end pointer");
     const TChar* input = nullptr;
-    RequireInvalidArgument([&] { function(&input, &end); }, "null input");
-    RequireInvalidArgument([&] { function(&input, nullptr); }, "null input without end pointer");
+    ExpectErr<std::invalid_argument>([&] { function(&input, &end); }, "null input");
+    ExpectErr<std::invalid_argument>([&] { function(&input, nullptr); }, "null input without end pointer");
     Require(input == nullptr && end == &sentinel, "null arguments leave the outputs unchanged");
 }
 

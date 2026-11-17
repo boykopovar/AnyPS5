@@ -1,4 +1,5 @@
 #include "prx/libSceVideoCoreServerInterface/include/Api.hpp"
+#include "Testing.hpp"
 
 #include <cerrno>
 #include <cstdint>
@@ -21,13 +22,6 @@ int callbackCalls = 0;
 
 void APS5_VABI Callback(std::uint32_t, std::uint64_t) {
     ++callbackCalls;
-}
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "VideoCoreServerInterface: %s\n", message);
-        std::abort();
-    }
 }
 
 void* Resolve(const char* name) {

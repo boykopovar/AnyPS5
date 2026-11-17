@@ -1,4 +1,5 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdio>
@@ -7,21 +8,6 @@
 #include <stdexcept>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc RTCCertificate check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> void RequireInvalidArgument(TAction action, std::source_location location = std::source_location::current()) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, location);
-}
 
 struct FakeIdentity {
     const void* const* vtable;
@@ -56,14 +42,14 @@ void TestWithoutIdentityDoesNothing() {
 }
 
 void TestInvalidArgumentsThrow() {
-    RequireInvalidArgument([] { _ZN3rtc14RTCCertificateD1Ev_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZN3rtc14RTCCertificateD1Ev_nid_postfix(nullptr); });
     FakeIdentity withoutVtable {nullptr};
     WebRtcRtcCertificate certificate {1, &withoutVtable};
-    RequireInvalidArgument([&] { _ZN3rtc14RTCCertificateD1Ev_nid_postfix(&certificate); });
+    ExpectErr<std::invalid_argument>([&] { _ZN3rtc14RTCCertificateD1Ev_nid_postfix(&certificate); });
     const std::array<const void*, 2> vtable {reinterpret_cast<const void*>(&CompleteDestructor), nullptr};
     FakeIdentity withoutDestructor {vtable.data()};
     certificate.identity = &withoutDestructor;
-    RequireInvalidArgument([&] { _ZN3rtc14RTCCertificateD1Ev_nid_postfix(&certificate); });
+    ExpectErr<std::invalid_argument>([&] { _ZN3rtc14RTCCertificateD1Ev_nid_postfix(&certificate); });
 }
 
 }

@@ -1,5 +1,6 @@
 #include "prx/libSceFreeType/include/MemoryRecord.hpp"
 #include "prx/libSceFreeTypeOt/include/Outline.hpp"
+#include "Testing.hpp"
 
 #include <bit>
 #include <cstdint>
@@ -34,12 +35,6 @@ struct Recorder {
     std::vector<void*> freed;
     int failAt = -1;
 };
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "FreeType Ot outline: %s\n", message);
-    std::exit(1);
-}
 
 Recorder* Owner(GuestMemoryRec* memory) {
     return static_cast<Recorder*>(memory->user);

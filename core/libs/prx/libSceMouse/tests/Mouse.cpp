@@ -4,6 +4,7 @@
 #include "prx/libSceVideoOut/include/MouseInput.hpp"
 #include "SDL_events.h"
 #include "SDL_mouse.h"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdlib>
@@ -13,8 +14,6 @@ extern "C" {
 bool MouseIsOpen_nid_no_patch();
 
 }
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 struct AbsoluteRecord {
     std::uint64_t timestamp;

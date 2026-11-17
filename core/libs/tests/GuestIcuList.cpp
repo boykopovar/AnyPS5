@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "Testing.hpp"
 
 #include <algorithm>
 #include <cstddef>
@@ -47,12 +48,6 @@ void APS5_VABI Release_nid_no_patch(const void*, void* block) {
     }
     heap.live.erase(found);
     std::free(block);
-}
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "ICU list: %s\n", message);
-    std::abort();
 }
 
 template<class F>

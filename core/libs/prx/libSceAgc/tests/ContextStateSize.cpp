@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdint>
@@ -10,16 +11,12 @@
 
 namespace {
 
-void check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
-
 template <typename TAction>
 void expectFailure(TAction action) {
     try {
         action();
     } catch (const std::runtime_error& error) {
-        check(error.what()[0] != '\0', "empty exception message");
+        Require(error.what()[0] != '\0', "empty exception message");
         return;
     }
     throw std::runtime_error("expected an exception");
@@ -28,28 +25,28 @@ void expectFailure(TAction action) {
 void testSizes() {
     const std::array<std::uint64_t, 4> sizes{20, 108, 108, 128};
     for (std::uint32_t operation = 0; operation < sizes.size(); ++operation) {
-        check(sceAgcDcbContextStateOpGetSize(operation) == sizes[operation], "context state size mismatch");
+        Require(sceAgcDcbContextStateOpGetSize(operation) == sizes[operation], "context state size mismatch");
         std::array<std::uint32_t, 64> words{};
         CommandBuffer buffer{words.data(), words.data() + words.size(), words.data(), words.data() + words.size(),
                              nullptr, nullptr, 0};
-        check(sceAgcDcbContextStateOp_0100(&buffer, operation) == words.data(), "context state op did not start at the cursor");
+        Require(sceAgcDcbContextStateOp_0100(&buffer, operation) == words.data(), "context state op did not start at the cursor");
         const auto written = static_cast<std::uint64_t>(buffer.cursor_up - words.data()) * sizeof(std::uint32_t);
-        check(written == sizes[operation], "context state size differs from the written packets");
+        Require(written == sizes[operation], "context state size differs from the written packets");
 
         std::array<std::uint32_t, 64> unversionedWords{};
         CommandBuffer unversionedBuffer{unversionedWords.data(), unversionedWords.data() + unversionedWords.size(),
                                         unversionedWords.data(), unversionedWords.data() + unversionedWords.size(),
                                         nullptr, nullptr, 0};
-        check(sceAgcDcbContextStateOp(&unversionedBuffer, operation) == unversionedWords.data(), "context state op did not start at the cursor");
+        Require(sceAgcDcbContextStateOp(&unversionedBuffer, operation) == unversionedWords.data(), "context state op did not start at the cursor");
         const auto unversionedWritten = static_cast<std::uint64_t>(unversionedBuffer.cursor_up - unversionedWords.data()) * sizeof(std::uint32_t);
-        check(unversionedWritten == sizes[operation], "context state size differs from the written packets");
-        check(words == unversionedWords, "unversioned context state op mismatch with versioned op");
+        Require(unversionedWritten == sizes[operation], "context state size differs from the written packets");
+        Require(words == unversionedWords, "unversioned context state op mismatch with versioned op");
     }
 }
 
 void testInvalidOperations() {
     for (const std::uint32_t operation : {4u, 15u, 16u, 0xffu, 0x100u, 0x103u, 0xffffffffu}) {
-        check(sceAgcDcbContextStateOpGetSize(operation) == 0, "an invalid context state operation did not return size 0");
+        Require(sceAgcDcbContextStateOpGetSize(operation) == 0, "an invalid context state operation did not return size 0");
     }
     std::array<std::uint32_t, 64> words{};
     CommandBuffer buffer{words.data(), words.data() + words.size(), words.data(), words.data() + words.size(), nullptr, nullptr, 0};

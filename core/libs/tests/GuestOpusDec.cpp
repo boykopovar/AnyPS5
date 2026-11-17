@@ -2,6 +2,7 @@
 #include "prx/libSceOpusDec/include/InventoryExports.hpp"
 #include <cerrno>
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -13,14 +14,6 @@
 #include <opus.h>
 
 namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
-
-template <typename TFunction>
-void RequireThrows(TFunction function) {
-    try { function(); } catch (const std::runtime_error&) { return; }
-    std::abort();
-}
 
 const std::uint8_t OPUS_STEREO[] = {
     0x46, 0x00, 0x7C, 0x87, 0xFC, 0xB1, 0x1D, 0xC0, 0xE3, 0x07, 0xD5, 0x9C, 0x4D, 0x91, 0x62, 0x6B, 0x73, 0x86, 0x05, 0xE8, 0xDB, 0xC6, 0x23, 0x6D,
@@ -113,25 +106,25 @@ int main() {
     Require(output == 12345);
 
     Require(sceOpusDecInitialize(&otherContext) == 0 && context != otherContext);
-    RequireThrows([&] { sceOpusDecInitialize(&context); });
+    ExpectErr<std::runtime_error>([&] { sceOpusDecInitialize(&context); });
     Require(sceOpusDecGetSize(1) == 640 && sceOpusDecGetSize(2) == 640);
     std::array<std::uint8_t, 640> state{}, otherState{}, monoState{};
     Require(sceOpusDecCreateEx(&context, state.data(), 48000, 2) == 0);
     Require(sceOpusDecCreateEx(&otherContext, otherState.data(), 48000, 2) == 0);
     Require(sceOpusDecCreateEx(&context, monoState.data(), 48000, 1) == 0);
-    RequireThrows([&] { sceOpusDecTerminate(&context); });
-    RequireThrows([&] { sceOpusDecCreateEx(&context, state.data(), 48000, 2); });
+    ExpectErr<std::runtime_error>([&] { sceOpusDecTerminate(&context); });
+    ExpectErr<std::runtime_error>([&] { sceOpusDecCreateEx(&context, state.data(), 48000, 2); });
     Require(sceOpusDecGetSize(3) == static_cast<int>(errorBase + 3));
     std::array<std::uint8_t, 640> unsupported{};
     for (int rate : {0, 22050, 44100, 96000})
         Require(sceOpusDecCreateEx(&context, unsupported.data(), rate, 2) == static_cast<int>(errorBase + 2));
     std::array<std::int16_t, 1922> pcm{}, reference{};
     pcm.fill(12345);
-    RequireThrows([&] { sceOpusDecDecode(state.data(), OPUS_STEREO + 2, 70, pcm.data() + 1, 3839); });
+    ExpectErr<std::runtime_error>([&] { sceOpusDecDecode(state.data(), OPUS_STEREO + 2, 70, pcm.data() + 1, 3839); });
     Require(std::all_of(pcm.begin(), pcm.end(), [](auto value) { return value == 12345; }));
     const std::uint8_t malformed[] = {0x7f};
-    RequireThrows([&] { sceOpusDecDecode(state.data(), malformed, 1, pcm.data() + 1, 3840); });
-    RequireThrows([&] { sceOpusDecDecode(state.data(), nullptr, 0, pcm.data() + 1, 3840); });
+    ExpectErr<std::runtime_error>([&] { sceOpusDecDecode(state.data(), malformed, 1, pcm.data() + 1, 3840); });
+    ExpectErr<std::runtime_error>([&] { sceOpusDecDecode(state.data(), nullptr, 0, pcm.data() + 1, 3840); });
     Require(std::all_of(pcm.begin(), pcm.end(), [](auto value) { return value == 12345; }));
     std::size_t offset = 0;
     for (int frame = 0; frame < 3; ++frame) {
@@ -169,7 +162,7 @@ int main() {
         for (std::size_t at = 0, frame = 0; frame < 3; ++frame) {
             const int bytes = OPUS_STEREO[at] | (OPUS_STEREO[at + 1] << 8);
             resampled.fill(12345);
-            RequireThrows([&] { sceOpusDecDecode(rateState.data(), OPUS_STEREO + at + 2, bytes, resampled.data() + 1, samples * 4 - 1); });
+            ExpectErr<std::runtime_error>([&] { sceOpusDecDecode(rateState.data(), OPUS_STEREO + at + 2, bytes, resampled.data() + 1, samples * 4 - 1); });
             Require(sceOpusDecDecode(rateState.data(), OPUS_STEREO + at + 2, bytes, resampled.data() + 1, samples * 4) == samples * 4);
             Require(resampled[0] == 12345 && resampled[samples * 2 + 1] == 12345);
             for (int index = 1; index <= samples * 2; ++index) peak = std::max(peak, std::abs(static_cast<int>(resampled[index])));
@@ -187,13 +180,13 @@ int main() {
     std::array<std::int16_t, 3842> rejected;
     rejected.fill(12345);
     const std::uint8_t invalidFraming[] = {0x7d, 1};
-    RequireThrows([&] { sceOpusDecDecode(state.data(), invalidFraming, 2, rejected.data() + 1, 7680); });
+    ExpectErr<std::runtime_error>([&] { sceOpusDecDecode(state.data(), invalidFraming, 2, rejected.data() + 1, 7680); });
     Require(std::all_of(rejected.begin(), rejected.end(), [](auto value) { return value == 12345; }));
     Require(sceOpusDecDestroy(state.data()) == 0);
     Require(sceOpusDecDestroy(monoState.data()) == 0);
     Require(sceOpusDecTerminate(&context) == 0);
-    RequireThrows([&] { sceOpusDecTerminate(&context); });
-    RequireThrows([&] { sceOpusDecCreateEx(&context, state.data(), 48000, 2); });
+    ExpectErr<std::runtime_error>([&] { sceOpusDecTerminate(&context); });
+    ExpectErr<std::runtime_error>([&] { sceOpusDecCreateEx(&context, state.data(), 48000, 2); });
     Require(sceOpusDecDecode(otherState.data(), OPUS_STEREO + offset + 2, OPUS_STEREO[offset], reference.data(), 3840) == 3840);
     Require(sceOpusDecDestroy(otherState.data()) == 0);
     Require(sceOpusDecTerminate(&otherContext) == 0);

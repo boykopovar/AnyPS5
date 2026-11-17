@@ -1,17 +1,8 @@
 #include "prx/libSceDepth/libSceDepth.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
-
-namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "DEPTH RECTIFICATION: %s\n", message);
-    std::abort();
-}
-
-}
 
 int main() {
     Require(sceDepthCalculateRectificationInformation() == 0, "sceDepthCalculateRectificationInformation result");

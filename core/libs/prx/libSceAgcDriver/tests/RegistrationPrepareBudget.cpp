@@ -1,16 +1,9 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/RegistrationPreparationBudget.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
-
-namespace {
-
-void Require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
-
-}
 
 int main() {
     try {

@@ -1,4 +1,5 @@
 #include "prx/libSceLibcInternal/include/MultiPrecision.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdio>
 #include <cstdlib>
@@ -9,12 +10,6 @@ namespace {
 using Words = std::array<unsigned long long, 5>;
 
 constexpr unsigned long long DigitMask = 0xFFFFFFFFull;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "libc internal multiprecision: %s\n", message);
-    std::abort();
-}
 
 template<typename TCall>
 bool Rejects(const TCall& call) {

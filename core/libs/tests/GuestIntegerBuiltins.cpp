@@ -1,21 +1,10 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
-
-static void Require(bool value) { if (!value) std::abort(); }
-
-template<typename TFunction>
-static void RequireThrows(TFunction function) {
-    try {
-        function();
-    } catch (const std::runtime_error&) {
-        return;
-    }
-    std::abort();
-}
 
 static Uint128 Make(std::uint64_t high, std::uint64_t low) {
     return (static_cast<Uint128>(high) << 64) | low;
@@ -134,11 +123,11 @@ static void CheckDivision() {
     Require(__udivmodti4_nid_postfix(Make(1, 5), 2, &remainder128) == Make(0, 0x8000000000000002ull) && remainder128 == 1);
     Require(__udivsi3_nid_postfix(7, 0) == 0 && __umodsi3_nid_postfix(7, 0) == 7);
     Require(__udivmodsi4_nid_postfix(7, 0, &uremainder32) == 0 && uremainder32 == 7);
-    RequireThrows([] { __divsi3_nid_postfix(1, 0); });
-    RequireThrows([] { __modsi3_nid_postfix(1, 0); });
-    RequireThrows([] { __udivdi3_nid_postfix(1, 0); });
-    RequireThrows([] { __umoddi3_nid_postfix(1, 0); });
-    RequireThrows([] { __udivmodti4_nid_postfix(1, 0, nullptr); });
+    ExpectErr<std::runtime_error>([] { __divsi3_nid_postfix(1, 0); });
+    ExpectErr<std::runtime_error>([] { __modsi3_nid_postfix(1, 0); });
+    ExpectErr<std::runtime_error>([] { __udivdi3_nid_postfix(1, 0); });
+    ExpectErr<std::runtime_error>([] { __umoddi3_nid_postfix(1, 0); });
+    ExpectErr<std::runtime_error>([] { __udivmodti4_nid_postfix(1, 0, nullptr); });
     Require(__divsi3_nid_postfix(INT32_MIN, -1) == INT32_MIN && __modsi3_nid_postfix(INT32_MIN, -1) == 0);
     Require(__divsi3_nid_postfix(0, 5) == 0 && __modsi3_nid_postfix(0, 5) == 0);
     Require(__divdi3_nid_postfix(0, 5) == 0 && __moddi3_nid_postfix(0, 5) == 0);
@@ -152,27 +141,27 @@ static void CheckDivision() {
     Require(__udivmodti4_nid_postfix(Make(~0ull, ~0ull), Make(~0ull, ~0ull), &remainder128) == 1 && remainder128 == 0);
     Require(__udivmodti4_nid_postfix(Make(0, 10), Make(1, 0), &remainder128) == 0 && remainder128 == 10);
     errno = 71;
-    RequireThrows([] {
+    ExpectErr<std::runtime_error>([] {
         __divmodsi4_nid_postfix(10, 3, reinterpret_cast<std::int32_t*>(0x10));
     });
     Require(errno == 71);
     errno = 71;
-    RequireThrows([] {
+    ExpectErr<std::runtime_error>([] {
         __divmoddi4_nid_postfix(10, 3, reinterpret_cast<std::int64_t*>(0x10));
     });
     Require(errno == 71);
     errno = 71;
-    RequireThrows([] {
+    ExpectErr<std::runtime_error>([] {
         __udivmodsi4_nid_postfix(10, 3, reinterpret_cast<std::uint32_t*>(0x10));
     });
     Require(errno == 71);
     errno = 71;
-    RequireThrows([] {
+    ExpectErr<std::runtime_error>([] {
         __udivmoddi4_nid_postfix(10, 3, reinterpret_cast<std::uint64_t*>(0x10));
     });
     Require(errno == 71);
     errno = 71;
-    RequireThrows([] {
+    ExpectErr<std::runtime_error>([] {
         __udivmodti4_nid_postfix(10, 3, reinterpret_cast<Uint128*>(0x10));
     });
     Require(errno == 71);
@@ -191,25 +180,25 @@ static void CheckOverflow() {
     Require(__muloti4_nid_postfix(static_cast<Int128>(Make(0, 1ull << 63)), -static_cast<Int128>(Make(1, 0)), &overflow) == Int128Min
         && overflow == 0);
     errno = 71;
-    RequireThrows([] {
+    ExpectErr<std::runtime_error>([] {
         __mulosi4_nid_postfix(2, 3, reinterpret_cast<int*>(0x10));
     });
     Require(errno == 71);
     errno = 71;
-    RequireThrows([] {
+    ExpectErr<std::runtime_error>([] {
         __mulodi4_nid_postfix(2, 3, reinterpret_cast<int*>(0x10));
     });
     Require(errno == 71);
     errno = 71;
-    RequireThrows([] {
+    ExpectErr<std::runtime_error>([] {
         __muloti4_nid_postfix(2, 3, reinterpret_cast<int*>(0x10));
     });
     Require(errno == 71);
     Require(__mulvsi3_nid_postfix(-46341, 46340) == -2147441940);
     Require(__mulvdi3_nid_postfix(-4, 5) == -20 && __mulvti3_nid_postfix(-4, 5) == -20);
-    RequireThrows([] { __mulvsi3_nid_postfix(46341, 46341); });
-    RequireThrows([] { __mulvdi3_nid_postfix(INT64_MIN, -1); });
-    RequireThrows([] { __mulvti3_nid_postfix(Int128Min, 2); });
+    ExpectErr<std::runtime_error>([] { __mulvsi3_nid_postfix(46341, 46341); });
+    ExpectErr<std::runtime_error>([] { __mulvdi3_nid_postfix(INT64_MIN, -1); });
+    ExpectErr<std::runtime_error>([] { __mulvti3_nid_postfix(Int128Min, 2); });
     Require(__addvsi3_nid_postfix(INT32_MAX, INT32_MIN) == -1 && __addvdi3_nid_postfix(-1, 1) == 0);
     Require(__addvti3_nid_postfix(Int128Max, -1) == Int128Max - 1);
     Require(__subvsi3_nid_postfix(INT32_MIN, -1) == INT32_MIN + 1 && __subvdi3_nid_postfix(0, INT64_MAX) == -INT64_MAX);
@@ -218,9 +207,9 @@ static void CheckOverflow() {
     Require(__subvdi3_nid_postfix(INT64_MIN, 1) == INT64_MAX && __subvti3_nid_postfix(Int128Max, -1) == Int128Min);
     Require(__negvsi2_nid_postfix(5) == -5 && __negvdi2_nid_postfix(-5) == 5 && __negvti2_nid_postfix(Int128Max) == Int128Min + 1);
     Require(__absvsi2_nid_postfix(-5) == 5 && __absvdi2_nid_postfix(5) == 5 && __absvti2_nid_postfix(-Int128Max) == Int128Max);
-    RequireThrows([] { __negvsi2_nid_postfix(INT32_MIN); });
-    RequireThrows([] { __absvdi2_nid_postfix(INT64_MIN); });
-    RequireThrows([] { __absvti2_nid_postfix(Int128Min); });
+    ExpectErr<std::runtime_error>([] { __negvsi2_nid_postfix(INT32_MIN); });
+    ExpectErr<std::runtime_error>([] { __absvdi2_nid_postfix(INT64_MIN); });
+    ExpectErr<std::runtime_error>([] { __absvti2_nid_postfix(Int128Min); });
     Require(__mulosi4_nid_postfix(INT32_MIN, 1, &overflow) == INT32_MIN && overflow == 0);
     Require(__mulosi4_nid_postfix(INT32_MIN, -1, &overflow) == INT32_MIN && overflow == 1);
     Require(__mulosi4_nid_postfix(0, INT32_MIN, &overflow) == 0 && overflow == 0);

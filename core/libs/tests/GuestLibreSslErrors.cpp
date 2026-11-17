@@ -2,6 +2,7 @@
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libSceLibreSsl/ErrorQueue.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <atomic>
 #include <cerrno>
@@ -32,13 +33,6 @@ struct ErrorString {
 };
 
 #include "ErrorStrings.inc"
-}
-
-static void Require(bool value, const char* message) {
-    if (value) return;
-    std::fputs(message, stderr);
-    std::fputc('\n', stderr);
-    std::abort();
 }
 
 static void ExpectString(std::uint64_t code, const char* expected) {

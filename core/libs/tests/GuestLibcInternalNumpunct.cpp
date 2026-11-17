@@ -3,6 +3,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdio>
@@ -11,12 +12,6 @@
 #include <string>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "libc internal numpunct: %s\n", message);
-    std::abort();
-}
 
 std::string Text(const GuestLocale::String& string) {
     return {string.capacity > 15 ? string.pointer : string.buffer, string.size};

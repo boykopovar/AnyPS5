@@ -1,6 +1,7 @@
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestObjects.hpp"
 #include "FreeTypeGuestOutputFixture.hpp"
+#include "Testing.hpp"
 
 #include FT_STROKER_H
 
@@ -20,12 +21,6 @@
 #endif
 
 using namespace FreeType;
-
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "FreeType stroker output check failed at line %u\n", location.line());
-    std::abort();
-}
 
 template <typename TModule, typename TFunction>
 static TFunction Import(TModule module, const char* name, const char* nid, bool patched, bool kernel = false) {

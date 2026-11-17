@@ -1,5 +1,6 @@
 #include "Translation/TranslationContext.hpp"
 #include "RdnaDecoder/RdnaVectorOpDecoder.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <iostream>
@@ -23,10 +24,6 @@ struct Term {
 
 constexpr Term Register(std::uint32_t index) { return {false, index}; }
 constexpr Term Constant() { return {true, Literal}; }
-
-void Require(bool value, const std::string& message) {
-    if (!value) throw std::runtime_error("vop2 multiply-add: " + message);
-}
 
 Term Leaf(const IrValue* value, const std::string& name) {
     Require(value->Opcode() == IrOpcode::BitCastF32U32, name + " operand is not a plain f32 read");

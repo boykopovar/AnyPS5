@@ -1,5 +1,6 @@
 #include "ElfFixture.hpp"
 #include "RelinkerProcess.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <iostream>
 #include <stdexcept>
@@ -8,10 +9,6 @@
 namespace {
 
 using namespace RelinkerTests;
-
-void require(const bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 const Bytes kConstantStub = {
     0x48, 0xC7, 0xC0, 0x09, 0x00, 0x00, 0x00,
@@ -198,23 +195,23 @@ std::string RunScanner(const std::string& binary, const Bytes& code) {
     const auto output = directory.Path() / "output.elf";
     WriteFile(input, MakeExecutable(code));
     const auto run = RunRelinker(binary, {"--skip-sce-module", input.string(), output.string()}, directory.Path() / "relinker.log");
-    require(run.ExitCode != 0, "Relinker accepted a forbidden syscall instruction:\n" + run.Output);
+    Require(run.ExitCode != 0, "Relinker accepted a forbidden syscall instruction:\n" + run.Output);
     return run.Output;
 }
 
 void RequireNumber(const std::string& binary, const Bytes& code, const std::string& expected, const std::string& description) {
     const auto output = RunScanner(binary, code);
-    require(output.find("Forbidden syscall instruction at code offset 0x") != std::string::npos,
+    Require(output.find("Forbidden syscall instruction at code offset 0x") != std::string::npos,
             "Relinker did not report the " + description + " as forbidden:\n" + output);
-    require(output.find(expected) != std::string::npos,
+    Require(output.find(expected) != std::string::npos,
             "Relinker did not report " + expected + " for the " + description + ":\n" + output);
 }
 
 void RequireNoNumber(const std::string& binary, const Bytes& code, const std::string& description) {
     const auto output = RunScanner(binary, code);
-    require(output.find("Forbidden syscall instruction at code offset 0x") != std::string::npos,
+    Require(output.find("Forbidden syscall instruction at code offset 0x") != std::string::npos,
             "Relinker did not report the " + description + " as forbidden:\n" + output);
-    require(output.find("syscall number") == std::string::npos,
+    Require(output.find("syscall number") == std::string::npos,
             "Relinker reported a syscall number for the " + description + ":\n" + output);
 }
 
@@ -222,9 +219,9 @@ const std::string kStubHint = "; it is a ps5-payload-dev SDK syscall stub, which
 
 void RequireHint(const std::string& binary, const Bytes& code, const bool expected, const std::string& description) {
     const auto output = RunScanner(binary, code);
-    require(output.find("Forbidden syscall instruction at code offset 0x") != std::string::npos,
+    Require(output.find("Forbidden syscall instruction at code offset 0x") != std::string::npos,
             "Relinker did not report the " + description + " as forbidden:\n" + output);
-    require((output.find(kStubHint) != std::string::npos) == expected,
+    Require((output.find(kStubHint) != std::string::npos) == expected,
             std::string("Relinker ") + (expected ? "did not name" : "named") + " --trap-sdk-syscall-stubs for the " + description + ":\n" + output);
 }
 
@@ -238,11 +235,11 @@ void RequireSdkStubsAreTrapped(const std::string& binary) {
     const auto output = directory.Path() / "output.elf";
     WriteFile(input, MakeExecutable(code));
     const auto run = RunRelinker(binary, {"--skip-sce-module", "--trap-sdk-syscall-stubs", input.string(), output.string()}, directory.Path() / "relinker.log");
-    require(run.ExitCode == 0, "Relinker did not trap known SDK syscall stubs:\n" + run.Output);
+    Require(run.ExitCode == 0, "Relinker did not trap known SDK syscall stubs:\n" + run.Output);
     const auto relinked = ReadFile(output);
-    require(Read<std::uint16_t>(relinked, kCodeOffset + numberedOffset) == 0x0B0Fu,
+    Require(Read<std::uint16_t>(relinked, kCodeOffset + numberedOffset) == 0x0B0Fu,
             "Relinker did not replace the numbered SDK syscall with UD2");
-    require(Read<std::uint16_t>(relinked, kCodeOffset + genericOffset) == 0x0B0Fu,
+    Require(Read<std::uint16_t>(relinked, kCodeOffset + genericOffset) == 0x0B0Fu,
             "Relinker did not replace the generic SDK syscall with UD2");
 }
 
@@ -252,19 +249,19 @@ void RequireInterruptTableIsTrapped(const std::string& binary) {
     const auto output = directory.Path() / "output.elf";
     WriteFile(input, MakeExecutable(kInterruptTable));
     const auto run = RunRelinker(binary, {"--skip-sce-module", input.string(), output.string()}, directory.Path() / "relinker.log");
-    require(run.ExitCode == 0, "Relinker refused int 0x80 in a software interrupt table:\n" + run.Output);
-    require(run.Output.find("Trapping int 0x80 in a software interrupt table at code offset 0x") != std::string::npos,
+    Require(run.ExitCode == 0, "Relinker refused int 0x80 in a software interrupt table:\n" + run.Output);
+    Require(run.Output.find("Trapping int 0x80 in a software interrupt table at code offset 0x") != std::string::npos,
             "Relinker did not report the trapped interrupt table entry:\n" + run.Output);
     const auto relinked = ReadFile(output);
-    require(Read<std::uint16_t>(relinked, kCodeOffset + 6) == 0x0B0Fu,
+    Require(Read<std::uint16_t>(relinked, kCodeOffset + 6) == 0x0B0Fu,
             "Relinker did not replace the interrupt table's int 0x80 with UD2");
-    require(Read<std::uint16_t>(relinked, kCodeOffset + 3) == 0x7FCDu && Read<std::uint16_t>(relinked, kCodeOffset + 9) == 0x81CDu,
+    Require(Read<std::uint16_t>(relinked, kCodeOffset + 3) == 0x7FCDu && Read<std::uint16_t>(relinked, kCodeOffset + 9) == 0x81CDu,
             "Relinker changed the neighbouring interrupt table entries");
 }
 
 void RequireForbidden(const std::string& binary, const Bytes& code, const std::string& description) {
     const auto output = RunScanner(binary, code);
-    require(output.find("Forbidden syscall instruction at code offset 0x") != std::string::npos,
+    Require(output.find("Forbidden syscall instruction at code offset 0x") != std::string::npos,
             "Relinker did not report the " + description + " as forbidden:\n" + output);
 }
 
@@ -274,8 +271,8 @@ void RequireUnknownSyscallsStillFail(const std::string& binary) {
     const auto output = directory.Path() / "output.elf";
     WriteFile(input, MakeExecutable(kRegisterStub));
     const auto run = RunRelinker(binary, {"--skip-sce-module", "--trap-sdk-syscall-stubs", input.string(), output.string()}, directory.Path() / "relinker.log");
-    require(run.ExitCode != 0, "Relinker accepted an unknown syscall in SDK-stub trap mode:\n" + run.Output);
-    require(run.Output.find("Forbidden syscall instruction at code offset 0x") != std::string::npos,
+    Require(run.ExitCode != 0, "Relinker accepted an unknown syscall in SDK-stub trap mode:\n" + run.Output);
+    Require(run.Output.find("Forbidden syscall instruction at code offset 0x") != std::string::npos,
             "Relinker did not report an unknown syscall in SDK-stub trap mode:\n" + run.Output);
 }
 
@@ -283,7 +280,7 @@ void RequireUnknownSyscallsStillFail(const std::string& binary) {
 
 int main(const int argc, char** argv) {
     try {
-        require(argc == 2, "usage: syscall_scanner_tests <relinker>");
+        Require(argc == 2, "usage: syscall_scanner_tests <relinker>");
         const std::string binary = argv[1];
 
         RequireNumber(binary, kConstantStub, "syscall number 9", "64-bit constant stub");

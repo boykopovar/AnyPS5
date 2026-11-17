@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/PqToSdr.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/HalfFloatScanout.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureSwizzleEquations.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -12,13 +13,6 @@
 #include <stdexcept>
 #include <tuple>
 #include <vector>
-
-static void Require(bool condition) { if (!condition) std::abort(); }
-template<typename TAction> static void Reject(TAction action) {
-    bool rejected = false;
-    try { action(); } catch (const std::exception&) { rejected = true; }
-    Require(rejected);
-}
 
 static std::size_t EquationOffset(std::uint32_t elementBytes, std::uint32_t blocksPerRow, std::uint32_t blockHeight, std::uint32_t x, std::uint32_t y) {
     const auto* equation = AgcDriver::Graphics::FindTextureSwizzleEquation(27u, elementBytes);
@@ -76,10 +70,10 @@ static void HalfFloatDisplay() {
     buffer = {65536, rgba16Float, 3840, 2160};
     Require(AgcDriver::DisplayBufferSize(buffer) == 30u * 34u * 65536u);
     buffer.dccAddress = 0x20000;
-    Reject([&] { AgcDriver::DisplayBufferSize(buffer); });
+    ExpectErr([&] { AgcDriver::DisplayBufferSize(buffer); });
     buffer.dccAddress = 0;
     buffer.pixelFormat = 0xc001000700000000ull;
-    Reject([&] { AgcDriver::DisplayBufferSize(buffer); });
+    ExpectErr([&] { AgcDriver::DisplayBufferSize(buffer); });
     for (const auto [pixelFormat, elementBytes, blockHeight] : {std::tuple{rgba16Float, 8u, 64u}, std::tuple{std::uint64_t{0x8000000000000000ull}, 4u, 128u}}) {
         buffer = {65536, pixelFormat, 300, 200};
         for (std::uint32_t y = 0; y < buffer.height; ++y) {
@@ -155,7 +149,7 @@ static void PqDisplay() {
     }
     for (const auto pixelFormat : {0x8100070000000000ull, 0x8100000400000000ull, 0x8000070400000000ull, 0x8100070400000001ull, 0x8100070600000000ull, 0xc001070700000000ull}) {
         Require(!AgcDriver::DisplayPq(pixelFormat));
-        Reject([&] { AgcDriver::DisplayBufferSize({65536, pixelFormat, 64, 64}); });
+        ExpectErr([&] { AgcDriver::DisplayBufferSize({65536, pixelFormat, 64, 64}); });
     }
     for (const float white : {100.0f, 150.0f, 1000.0f}) {
         for (std::uint32_t red = 0; red < 1024; red += 31) {
@@ -203,13 +197,13 @@ int main() {
     pixels = AgcDriver::DecodeDisplayBuffer(buffer, source);
     const std::array<unsigned char, 16> swapped{3,2,1,4, 7,6,5,8, 11,10,9,12, 15,14,13,16};
     for (unsigned i = 0; i < pixels.size(); ++i) Require(std::to_integer<unsigned>(pixels[i]) == swapped[i]);
-    Reject([&] { AgcDriver::DecodeDisplayBuffer(buffer, source.first(23)); });
+    ExpectErr([&] { AgcDriver::DecodeDisplayBuffer(buffer, source.first(23)); });
     buffer.pitchInPixel = 1;
-    Reject([&] { AgcDriver::DisplayBufferSize(buffer); });
+    ExpectErr([&] { AgcDriver::DisplayBufferSize(buffer); });
     buffer.pitchInPixel = 0;
     Require(AgcDriver::DisplayBufferSize(buffer) == 16);
     buffer.tilingMode = 2;
-    Reject([&] { AgcDriver::DisplayBufferSize(buffer); });
+    ExpectErr([&] { AgcDriver::DisplayBufferSize(buffer); });
     buffer.tilingMode = 0;
     Require(AgcDriver::DisplayBufferSize(buffer) == 65536);
     HalfFloatCodes();

@@ -1,14 +1,7 @@
 #include "prx/libSceAbstractTwitter/libSceAbstractTwitter.hpp"
+#include "Testing.hpp"
 
 #include <cstdlib>
-
-namespace {
-
-void Require(bool value) {
-    if (!value) std::abort();
-}
-
-} // namespace
 
 int main() {
     constexpr int notSupported = static_cast<int>(0x809E0005u);

@@ -1,4 +1,5 @@
 #include "prx/libSceJsc/libSceJsc.hpp"
+#include "Testing.hpp"
 
 #include <climits>
 #include <cstddef>
@@ -21,13 +22,6 @@ static_assert(std::is_same_v<decltype(&_ZN3JSC14ProtoCallFrame14needArityCheckEv
 static_assert(std::is_same_v<decltype(&_ZN3JSC14ProtoCallFrame4initEPNS_9CodeBlockEPNS_14JSGlobalObjectEPNS_8JSObjectENS_7JSValueEiPS7_), InitFunction>);
 
 constexpr unsigned char kPoison = 0xA5;
-
-void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "ProtoCallFrame check failed at line %d\n", line);
-        std::abort();
-    }
-}
 
 struct alignas(8) FrameBytes {
     unsigned char bytes[sizeof(ProtoCallFrame)];
@@ -68,29 +62,29 @@ void TestInitWritesEveryField() {
     std::uint64_t args[3] = {0x1111, 0x2222, 0x3333};
     const std::uint64_t thisValue = 0xFFFE000000000007ull;
     Init(frame, &globalObject, &callee, thisValue, 4, args);
-    Check(frame.Read<std::uint64_t>(0) == 0, __LINE__);
-    Check(frame.Read<std::uintptr_t>(8) == reinterpret_cast<std::uintptr_t>(&callee), __LINE__);
-    Check(frame.Read<std::int32_t>(16) == 4, __LINE__);
-    Check(frame.Read<std::int32_t>(20) == 0, __LINE__);
-    Check(frame.Read<std::uint64_t>(24) == thisValue, __LINE__);
-    Check(frame.Read<std::uint32_t>(32) == 5, __LINE__);
-    Check(frame.Read<unsigned char>(36) == 0, __LINE__);
-    for (std::size_t offset = 37; offset < 40; ++offset) Check(frame.bytes[offset] == kPoison, __LINE__);
-    Check(frame.Read<std::uint64_t*>(40) == args, __LINE__);
-    Check(frame.Read<std::uintptr_t>(48) == reinterpret_cast<std::uintptr_t>(&globalObject), __LINE__);
-    Check(args[0] == 0x1111 && args[1] == 0x2222 && args[2] == 0x3333, __LINE__);
+    Require(frame.Read<std::uint64_t>(0) == 0);
+    Require(frame.Read<std::uintptr_t>(8) == reinterpret_cast<std::uintptr_t>(&callee));
+    Require(frame.Read<std::int32_t>(16) == 4);
+    Require(frame.Read<std::int32_t>(20) == 0);
+    Require(frame.Read<std::uint64_t>(24) == thisValue);
+    Require(frame.Read<std::uint32_t>(32) == 5);
+    Require(frame.Read<unsigned char>(36) == 0);
+    for (std::size_t offset = 37; offset < 40; ++offset) Require(frame.bytes[offset] == kPoison);
+    Require(frame.Read<std::uint64_t*>(40) == args);
+    Require(frame.Read<std::uintptr_t>(48) == reinterpret_cast<std::uintptr_t>(&globalObject));
+    Require(args[0] == 0x1111 && args[1] == 0x2222 && args[2] == 0x3333);
 }
 
 void TestInitAcceptsNullPointers() {
     FrameBytes frame;
     Init(frame, nullptr, nullptr, 0, 1, nullptr);
-    Check(frame.Read<std::uint64_t>(0) == 0, __LINE__);
-    Check(frame.Read<std::uint64_t>(8) == 0, __LINE__);
-    Check(frame.Read<std::int32_t>(16) == 1, __LINE__);
-    Check(frame.Read<std::uint64_t>(24) == 0, __LINE__);
-    Check(frame.Read<std::uint32_t>(32) == 1, __LINE__);
-    Check(frame.Read<std::uint64_t*>(40) == nullptr, __LINE__);
-    Check(frame.Read<std::uint64_t>(48) == 0, __LINE__);
+    Require(frame.Read<std::uint64_t>(0) == 0);
+    Require(frame.Read<std::uint64_t>(8) == 0);
+    Require(frame.Read<std::int32_t>(16) == 1);
+    Require(frame.Read<std::uint64_t>(24) == 0);
+    Require(frame.Read<std::uint32_t>(32) == 1);
+    Require(frame.Read<std::uint64_t*>(40) == nullptr);
+    Require(frame.Read<std::uint64_t>(48) == 0);
 }
 
 void TestPaddedArgumentCount() {
@@ -116,8 +110,8 @@ void TestPaddedArgumentCount() {
     for (const Case& test : cases) {
         FrameBytes frame;
         Init(frame, nullptr, nullptr, 0, test.count, nullptr);
-        Check(frame.Read<std::uint32_t>(32) == test.padded, __LINE__);
-        Check(frame.Read<std::int32_t>(16) == test.count, __LINE__);
+        Require(frame.Read<std::uint32_t>(32) == test.padded);
+        Require(frame.Read<std::int32_t>(16) == test.count);
     }
 }
 
@@ -125,20 +119,20 @@ void TestInitClearsArityMismatchAndTag() {
     FrameBytes frame;
     frame.Write<bool>(36, true);
     frame.Write<std::int32_t>(20, 0x1234);
-    Check(_ZN3JSC14ProtoCallFrame14needArityCheckEv(frame.Frame()), __LINE__);
+    Require(_ZN3JSC14ProtoCallFrame14needArityCheckEv(frame.Frame()));
     Init(frame, nullptr, nullptr, 0, 2, nullptr);
-    Check(!_ZN3JSC14ProtoCallFrame14needArityCheckEv(frame.Frame()), __LINE__);
-    Check(frame.Read<std::int32_t>(20) == 0, __LINE__);
+    Require(!_ZN3JSC14ProtoCallFrame14needArityCheckEv(frame.Frame()));
+    Require(frame.Read<std::int32_t>(20) == 0);
 }
 
 void TestNeedArityCheckReadsTheFlag() {
     FrameBytes frame;
     frame.Write<bool>(36, false);
-    Check(!_ZN3JSC14ProtoCallFrame14needArityCheckEv(frame.Frame()), __LINE__);
+    Require(!_ZN3JSC14ProtoCallFrame14needArityCheckEv(frame.Frame()));
     frame.Write<bool>(36, true);
     FrameBytes before = frame;
-    Check(_ZN3JSC14ProtoCallFrame14needArityCheckEv(frame.Frame()), __LINE__);
-    Check(std::memcmp(before.bytes, frame.bytes, sizeof(frame.bytes)) == 0, __LINE__);
+    Require(_ZN3JSC14ProtoCallFrame14needArityCheckEv(frame.Frame()));
+    Require(std::memcmp(before.bytes, frame.bytes, sizeof(frame.bytes)) == 0);
 }
 
 void TestCodeBlockReadsSlotZero() {
@@ -146,10 +140,10 @@ void TestCodeBlockReadsSlotZero() {
     int codeBlock = 0;
     frame.Write<std::uintptr_t>(0, reinterpret_cast<std::uintptr_t>(&codeBlock));
     FrameBytes before = frame;
-    Check(_ZNK3JSC14ProtoCallFrame9codeBlockEv(frame.Frame()) == &codeBlock, __LINE__);
-    Check(std::memcmp(before.bytes, frame.bytes, sizeof(frame.bytes)) == 0, __LINE__);
+    Require(_ZNK3JSC14ProtoCallFrame9codeBlockEv(frame.Frame()) == &codeBlock);
+    Require(std::memcmp(before.bytes, frame.bytes, sizeof(frame.bytes)) == 0);
     Init(frame, nullptr, nullptr, 0, 1, nullptr);
-    Check(_ZNK3JSC14ProtoCallFrame9codeBlockEv(frame.Frame()) == nullptr, __LINE__);
+    Require(_ZNK3JSC14ProtoCallFrame9codeBlockEv(frame.Frame()) == nullptr);
 }
 
 void TestReinitReplacesFields() {
@@ -159,21 +153,21 @@ void TestReinitReplacesFields() {
     std::uint64_t args[2] = {};
     Init(frame, &firstGlobal, &firstGlobal, 0xA, 3, args);
     Init(frame, &secondGlobal, nullptr, 0xB, 6, nullptr);
-    Check(frame.Read<std::uint64_t>(8) == 0, __LINE__);
-    Check(frame.Read<std::int32_t>(16) == 6, __LINE__);
-    Check(frame.Read<std::uint64_t>(24) == 0xB, __LINE__);
-    Check(frame.Read<std::uint32_t>(32) == 7, __LINE__);
-    Check(frame.Read<std::uint64_t*>(40) == nullptr, __LINE__);
-    Check(frame.Read<std::uintptr_t>(48) == reinterpret_cast<std::uintptr_t>(&secondGlobal), __LINE__);
+    Require(frame.Read<std::uint64_t>(8) == 0);
+    Require(frame.Read<std::int32_t>(16) == 6);
+    Require(frame.Read<std::uint64_t>(24) == 0xB);
+    Require(frame.Read<std::uint32_t>(32) == 7);
+    Require(frame.Read<std::uint64_t*>(40) == nullptr);
+    Require(frame.Read<std::uintptr_t>(48) == reinterpret_cast<std::uintptr_t>(&secondGlobal));
 }
 
 void TestNullFrameThrows() {
-    Check(Throws([] { _ZNK3JSC14ProtoCallFrame9codeBlockEv(nullptr); }), __LINE__);
-    Check(Throws([] { _ZN3JSC14ProtoCallFrame14needArityCheckEv(nullptr); }), __LINE__);
-    Check(Throws([] {
+    Require(Throws([] { _ZNK3JSC14ProtoCallFrame9codeBlockEv(nullptr); }));
+    Require(Throws([] { _ZN3JSC14ProtoCallFrame14needArityCheckEv(nullptr); }));
+    Require(Throws([] {
         _ZN3JSC14ProtoCallFrame4initEPNS_9CodeBlockEPNS_14JSGlobalObjectEPNS_8JSObjectENS_7JSValueEiPS7_(
             nullptr, nullptr, nullptr, nullptr, 0, 1, nullptr);
-    }), __LINE__);
+    }));
 }
 
 } // namespace

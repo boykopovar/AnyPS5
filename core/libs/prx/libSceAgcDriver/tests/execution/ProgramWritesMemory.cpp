@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <initializer_list>
@@ -18,25 +19,21 @@ bool writes(std::initializer_list<std::uint32_t> words) {
     return AgcDriver::DriverDetail::ProgramWritesMemory(snapshot, 0);
 }
 
-void expect(bool condition, const std::string& what) {
-    if (!condition) throw std::runtime_error("program memory writes: " + what);
-}
-
 }
 
 int main() {
     try {
-        expect(!writes({0xf800000fu, 0x00000000u, EndProgram}), "an export-only program writes memory");
-        expect(!writes({0xe0300000u, 0x80000100u, EndProgram}), "a buffer load writes memory");
-        expect(writes({0xe0700000u, 0x80000100u, EndProgram}), "a buffer store does not write memory");
-        expect(writes({0xf0200f00u, 0x00000000u, EndProgram}), "an image store does not write memory");
-        expect(writes({0xd8360000u, 0x00000000u, EndProgram}), "a GDS write does not write memory");
-        expect(writes({0xbe802000u, EndProgram}), "an indirect jump is treated as reading only");
-        expect(writes({0x7e000280u}), "code that never ends decodes as reading only");
+        Require(!writes({0xf800000fu, 0x00000000u, EndProgram}), "an export-only program writes memory");
+        Require(!writes({0xe0300000u, 0x80000100u, EndProgram}), "a buffer load writes memory");
+        Require(writes({0xe0700000u, 0x80000100u, EndProgram}), "a buffer store does not write memory");
+        Require(writes({0xf0200f00u, 0x00000000u, EndProgram}), "an image store does not write memory");
+        Require(writes({0xd8360000u, 0x00000000u, EndProgram}), "a GDS write does not write memory");
+        Require(writes({0xbe802000u, EndProgram}), "an indirect jump is treated as reading only");
+        Require(writes({0x7e000280u}), "code that never ends decodes as reading only");
         AgcDriver::DriverDetail::ShaderSnapshot store{};
         store.code = {0xe0700000u, 0x80000100u, EndProgram};
-        expect(AgcDriver::DriverDetail::ProgramWritesMemory(store, 0) && AgcDriver::DriverDetail::ProgramWritesMemory(store, 0), "the cached answer differs");
-        expect(!AgcDriver::DriverDetail::ProgramWritesMemory(store, 2), "the program from an offset past the store writes memory");
+        Require(AgcDriver::DriverDetail::ProgramWritesMemory(store, 0) && AgcDriver::DriverDetail::ProgramWritesMemory(store, 0), "the cached answer differs");
+        Require(!AgcDriver::DriverDetail::ProgramWritesMemory(store, 2), "the program from an offset past the store writes memory");
         LibcRunShutdown_nid_postfix();
         std::puts("program memory writes tests passed");
         return 0;

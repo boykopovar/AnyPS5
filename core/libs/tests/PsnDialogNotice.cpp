@@ -1,15 +1,9 @@
 #include "prx/libSceIme/include/PsnDialogNotice.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <cstdlib>
 
 namespace {
-
-void Require(bool value, const char* what) {
-    if (!value) {
-        std::fprintf(stderr, "psn_dialog_notice: %s\n", what);
-        std::abort();
-    }
-}
 
 const char16_t* const kPsnText = u"This feature needs PlayStation Network, which AnyPS5 does not provide, so it is not available.";
 const char16_t* const kGenericText = u"This system feature is not available in AnyPS5.";

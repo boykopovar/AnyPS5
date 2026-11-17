@@ -1,15 +1,10 @@
 #include "SceTypes.hpp"
 #include "prx/libSceUserService/UserService.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdlib>
 #include <cstdio>
-
-namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
-
-}
 
 int main() {
     SceUserServiceEvent event{};

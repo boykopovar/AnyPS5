@@ -1,33 +1,13 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/WebKitValueExports.hpp"
 #include "prx/libSceNKWebKit/src/Configuration.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
 #include <stdexcept>
 
-namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "WKPage rubber banding check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
-
-template<class Function>
-void RequireInvalidArgument(Function function) {
-    bool threw = false;
-    try {
-        function();
-    } catch (const std::invalid_argument&) {
-        threw = true;
-    }
-    Require(threw);
-}
-
-}
 
 int main() {
     auto page = NKWebKit::Make<NKWebKit::Page>();
@@ -68,19 +48,19 @@ int main() {
     Require(WKPageRubberBandsAtRight(pageRef));
     Require(WKPageRubberBandsAtTop(pageRef));
 
-    RequireInvalidArgument([] { WKPageHorizontalRubberBandingIsEnabled(nullptr); });
-    RequireInvalidArgument([] { WKPageVerticalRubberBandingIsEnabled(nullptr); });
-    RequireInvalidArgument([] { WKPageRubberBandsAtBottom(nullptr); });
-    RequireInvalidArgument([] { WKPageRubberBandsAtLeft(nullptr); });
-    RequireInvalidArgument([] { WKPageRubberBandsAtRight(nullptr); });
-    RequireInvalidArgument([] { WKPageRubberBandsAtTop(nullptr); });
+    ExpectErr<std::invalid_argument>([] { WKPageHorizontalRubberBandingIsEnabled(nullptr); });
+    ExpectErr<std::invalid_argument>([] { WKPageVerticalRubberBandingIsEnabled(nullptr); });
+    ExpectErr<std::invalid_argument>([] { WKPageRubberBandsAtBottom(nullptr); });
+    ExpectErr<std::invalid_argument>([] { WKPageRubberBandsAtLeft(nullptr); });
+    ExpectErr<std::invalid_argument>([] { WKPageRubberBandsAtRight(nullptr); });
+    ExpectErr<std::invalid_argument>([] { WKPageRubberBandsAtTop(nullptr); });
 
-    RequireInvalidArgument([] { WKPageSetEnableHorizontalRubberBanding(nullptr, false); });
-    RequireInvalidArgument([] { WKPageSetEnableVerticalRubberBanding(nullptr, false); });
-    RequireInvalidArgument([] { WKPageSetRubberBandsAtBottom(nullptr, false); });
-    RequireInvalidArgument([] { WKPageSetRubberBandsAtLeft(nullptr, false); });
-    RequireInvalidArgument([] { WKPageSetRubberBandsAtRight(nullptr, false); });
-    RequireInvalidArgument([] { WKPageSetRubberBandsAtTop(nullptr, false); });
+    ExpectErr<std::invalid_argument>([] { WKPageSetEnableHorizontalRubberBanding(nullptr, false); });
+    ExpectErr<std::invalid_argument>([] { WKPageSetEnableVerticalRubberBanding(nullptr, false); });
+    ExpectErr<std::invalid_argument>([] { WKPageSetRubberBandsAtBottom(nullptr, false); });
+    ExpectErr<std::invalid_argument>([] { WKPageSetRubberBandsAtLeft(nullptr, false); });
+    ExpectErr<std::invalid_argument>([] { WKPageSetRubberBandsAtRight(nullptr, false); });
+    ExpectErr<std::invalid_argument>([] { WKPageSetRubberBandsAtTop(nullptr, false); });
 
     WKRelease(pageRef);
     return 0;

@@ -1,4 +1,5 @@
 #include "prx/libSceFreeType/include/Api.hpp"
+#include "Testing.hpp"
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include FT_STROKER_H
@@ -36,12 +37,6 @@ static_assert(sizeof(FT_StrokerBorder) == 4);
 namespace {
 
 bool nativeInside;
-
-void Require(bool result, const char* message) {
-    if (result) return;
-    std::fprintf(stderr, "FreeType outline border: %s\n", message);
-    std::exit(1);
-}
 
 int APS5_VABI Native(const GuestOutline* input) {
     if (!input) return nativeInside ? FT_Outline_GetInsideBorder(nullptr) : FT_Outline_GetOutsideBorder(nullptr);

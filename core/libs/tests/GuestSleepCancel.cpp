@@ -3,6 +3,7 @@
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libkernel/Pthread/include/Cancel.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -11,12 +12,6 @@
 #include <source_location>
 #include <string_view>
 #include <thread>
-
-static void Require(bool value, std::source_location location = std::source_location::current()) {
-    if (value) return;
-    std::fprintf(stderr, "%s:%u: requirement failed\n", location.file_name(), location.line());
-    std::abort();
-}
 
 static constexpr auto ObservationLimit = std::chrono::seconds(3);
 static constexpr unsigned LongSleep = 10;

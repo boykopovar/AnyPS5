@@ -1,6 +1,7 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libc/libc.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdio>
 #include <cstdlib>
@@ -13,12 +14,6 @@ namespace {
 std::unordered_map<void*, std::size_t> allocations;
 std::vector<void*> released;
 std::vector<void*> expected;
-
-void Require(bool condition, const char* message, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "OCSP_CERTID_free check failed at line %u: %s\n", location.line(), message);
-    std::abort();
-}
 
 void* APS5_VABI Allocate_nid_no_patch(std::size_t size) {
     void* pointer = std::calloc(1, size);

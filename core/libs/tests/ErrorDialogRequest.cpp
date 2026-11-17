@@ -1,17 +1,7 @@
 #include "prx/libSceErrorDialog/include/ErrorDialogRequest.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <cstdlib>
-
-namespace {
-
-void Require(bool value, const char* what) {
-    if (!value) {
-        std::fprintf(stderr, "error_dialog_request: %s\n", what);
-        std::abort();
-    }
-}
-
-}
 
 int main() {
     const ModalDialogRequest request = ErrorDialog::BuildRequest(static_cast<std::int32_t>(0x80020001u));

@@ -3,14 +3,11 @@
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdlib>
 
 static constexpr int SCE_OK = 0;
 static constexpr int GUEST_EINVAL = 22;
-
-static void Require(bool value) {
-    if (!value) std::abort();
-}
 
 int main() {
     KernelTimespec res{-1, -1};

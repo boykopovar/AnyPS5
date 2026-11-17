@@ -1,5 +1,6 @@
 #include "prx/libSceM4aacEnc/libSceM4aacEnc.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -21,12 +22,6 @@ constexpr int32_t ErrorInputFormat = static_cast<int32_t>(0x80A90006u);
 constexpr int32_t ErrorOutputFormat = static_cast<int32_t>(0x80A90007u);
 constexpr int32_t ErrorInputSize = static_cast<int32_t>(0x80A90008u);
 constexpr int32_t Stale = 0x5A5A5A5A;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "M4AACENC: %s\n", message);
-    std::abort();
-}
 
 void CheckCreate() {
     int32_t error = Stale;

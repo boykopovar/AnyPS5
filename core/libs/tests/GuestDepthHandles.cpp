@@ -1,4 +1,5 @@
 #include "prx/libSceDepth/libSceDepth.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdint>
@@ -6,12 +7,6 @@
 #include <cstdlib>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "DEPTH HANDLES: %s\n", message);
-    std::abort();
-}
 
 constexpr int ErrorInvalidHandle = static_cast<int>(0x80BB0005u);
 constexpr int ResultCameraFactoryCalibrationFailure = static_cast<int>(0x80BBFFFFu);

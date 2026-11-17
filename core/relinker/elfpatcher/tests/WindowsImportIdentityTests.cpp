@@ -1,5 +1,6 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#include "Testing.hpp"
 #include <windows.h>
 #include <elfpatcher/windows/WindowsEntryStubBuilder.hpp>
 #include <elfpatcher/windows/WindowsImportBuilder.hpp>
@@ -22,10 +23,6 @@ using namespace Elfpatcher::Windows;
 
 constexpr std::uint32_t GotRva = LoadRva + 0x1000;
 constexpr std::array<const char*, 3> LocaleObjects{"-mLzBSk-VGs", "a54t8+k7KpY", "KfcTPbeaOqg"};
-
-void require(const bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 Fs::path createFixtureDirectory(const Fs::path& parent) {
     std::random_device random;
@@ -77,14 +74,14 @@ void generateProbe(const Fs::path& file, const std::string& libraries, const std
     const auto image = WindowsPeWriter().Write({entry, got, imports.Section, startup.Data, startup.Code}, startup.Code.Rva, directories, false, ImageBase, true, false);
     std::ofstream stream(file, std::ios::binary);
     stream.write(reinterpret_cast<const char*>(image.data()), static_cast<std::streamsize>(image.size()));
-    require(static_cast<bool>(stream), "Cannot write " + file.string());
+    Require(static_cast<bool>(stream), "Cannot write " + file.string());
 }
 
 DWORD runProbe(const Fs::path& probe, std::string& output) {
     SECURITY_ATTRIBUTES security{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
     HANDLE input = nullptr;
     HANDLE written = nullptr;
-    require(CreatePipe(&input, &written, &security, 0) && SetHandleInformation(input, HANDLE_FLAG_INHERIT, 0), "Cannot create the probe's pipe");
+    Require(CreatePipe(&input, &written, &security, 0) && SetHandleInformation(input, HANDLE_FLAG_INHERIT, 0), "Cannot create the probe's pipe");
     STARTUPINFOW startup{};
     startup.cb = sizeof(startup);
     startup.dwFlags = STARTF_USESTDHANDLES;
@@ -93,7 +90,7 @@ DWORD runProbe(const Fs::path& probe, std::string& output) {
     startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
     PROCESS_INFORMATION process{};
     const auto filename = probe.wstring();
-    require(CreateProcessW(filename.c_str(), nullptr, nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, probe.parent_path().wstring().c_str(), &startup, &process) != 0,
+    Require(CreateProcessW(filename.c_str(), nullptr, nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, probe.parent_path().wstring().c_str(), &startup, &process) != 0,
         "Cannot start " + probe.filename().string() + ": " + std::to_string(GetLastError()));
     CloseHandle(written);
     if (WaitForSingleObject(process.hProcess, 120000) != WAIT_OBJECT_0) {
@@ -101,7 +98,7 @@ DWORD runProbe(const Fs::path& probe, std::string& output) {
         throw std::runtime_error(probe.filename().string() + " timed out");
     }
     DWORD status = 0;
-    require(GetExitCodeProcess(process.hProcess, &status) != 0, "Cannot read the probe's exit code");
+    Require(GetExitCodeProcess(process.hProcess, &status) != 0, "Cannot read the probe's exit code");
     char buffer[4096];
     DWORD size = 0;
     while (ReadFile(input, buffer, sizeof(buffer), &size, nullptr) && size != 0) output.append(buffer, size);
@@ -147,10 +144,10 @@ int main(int argc, char** argv) {
         generateProbe(directory / "different.exe", libraries, different, {{0, 6}});
         std::string output;
         const auto sameStatus = runProbe(directory / "same.exe", output);
-        require(sameStatus == 0, "A libSceAmpr.prx-qualified import of the locale objects did not resolve to libc's object (exit " + std::to_string(sameStatus) + ")\n" + output);
+        Require(sameStatus == 0, "A libSceAmpr.prx-qualified import of the locale objects did not resolve to libc's object (exit " + std::to_string(sameStatus) + ")\n" + output);
         output.clear();
         const auto differentStatus = runProbe(directory / "different.exe", output);
-        require(differentStatus == 1, "The probe did not tell two different addresses apart (exit " + std::to_string(differentStatus) + ")\n" + output);
+        Require(differentStatus == 1, "The probe did not tell two different addresses apart (exit " + std::to_string(differentStatus) + ")\n" + output);
         std::error_code error;
         Fs::remove_all(directory, error);
         std::cout << "Windows import identity tests passed\n";

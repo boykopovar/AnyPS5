@@ -1,6 +1,7 @@
 #include "prx/libSceSaveData.native/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <algorithm>
 #include <array>
@@ -17,9 +18,6 @@
 
 static constexpr int SaveDataErrorParameter = -2137063424;
 
-static void Require(bool value, const char* message) {
-    if (!value) throw std::runtime_error(message);
-}
 
 
 static std::vector<std::string> Search(std::uint32_t key, std::uint32_t order, std::uint32_t capacity, std::uint32_t* hits) {

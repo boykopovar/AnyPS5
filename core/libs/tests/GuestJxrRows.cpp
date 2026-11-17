@@ -1,6 +1,7 @@
 #include "prx/libSceJxr/include/Api.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libkernel/libkernel.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -50,22 +51,6 @@ constexpr std::size_t Width = 12;
 constexpr std::size_t Height = 8;
 constexpr std::size_t ContextBytes = 704;
 
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "JXR rows: %s\n", message);
-    std::abort();
-}
-
-template<typename TAction>
-void RequireInvalidArgument(TAction action, const char* message) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, message);
-}
-
 struct Pair {
     void* guest;
     void* native;
@@ -105,7 +90,7 @@ void TestImageBuffer() {
                                     "checkImageBuffer differs from jxrlib");
                 }
     Require(pair.Same(), "checkImageBuffer changed the codec");
-    RequireInvalidArgument([] { checkImageBuffer_nid_postfix(nullptr, 1, 1); }, "null codec");
+    ExpectErr<std::invalid_argument>([] { checkImageBuffer_nid_postfix(nullptr, 1, 1); }, "null codec");
 }
 
 void TestTiles() {
@@ -123,16 +108,16 @@ void TestTiles() {
         }
 
     Pair pair(20, 3, Yuv444, false);
-    RequireInvalidArgument([] { getTilePos_nid_postfix(nullptr, 0, 0); }, "null codec");
+    ExpectErr<std::invalid_argument>([] { getTilePos_nid_postfix(nullptr, 0, 0); }, "null codec");
     JxrRowsSetTiles_nid_no_patch(pair.guest, 4096, 0, 0, 0);
-    RequireInvalidArgument([&] { getTilePos_nid_postfix(pair.Codec(), 0, 0); }, "too many tile columns");
+    ExpectErr<std::invalid_argument>([&] { getTilePos_nid_postfix(pair.Codec(), 0, 0); }, "too many tile columns");
     JxrRowsSetTiles_nid_no_patch(pair.guest, 0, 4096, 0, 0);
-    RequireInvalidArgument([&] { getTilePos_nid_postfix(pair.Codec(), 0, 0); }, "too many tile rows");
+    ExpectErr<std::invalid_argument>([&] { getTilePos_nid_postfix(pair.Codec(), 0, 0); }, "too many tile rows");
     JxrRowsSetTiles_nid_no_patch(pair.guest, 1, 1, 2, 0);
-    RequireInvalidArgument([&] { getTilePos_nid_postfix(pair.Codec(), 1, 0); }, "current tile column past the last");
+    ExpectErr<std::invalid_argument>([&] { getTilePos_nid_postfix(pair.Codec(), 1, 0); }, "current tile column past the last");
     getTilePos_nid_postfix(pair.Codec(), 0, 0);
     JxrRowsSetTiles_nid_no_patch(pair.guest, 1, 1, 0, 2);
-    RequireInvalidArgument([&] { getTilePos_nid_postfix(pair.Codec(), 0, 1); }, "current tile row past the last");
+    ExpectErr<std::invalid_argument>([&] { getTilePos_nid_postfix(pair.Codec(), 0, 1); }, "current tile row past the last");
 }
 
 void TestRowPointers() {
@@ -157,33 +142,33 @@ void TestRowPointers() {
                 Require(pair.Same(), "advanceOneMBRow differs from jxrlib");
             }
 
-    RequireInvalidArgument([] { initMRPtr_nid_postfix(nullptr); }, "initMRPtr null codec");
-    RequireInvalidArgument([] { advanceMRPtr_nid_postfix(nullptr); }, "advanceMRPtr null codec");
-    RequireInvalidArgument([] { swapMRPtr_nid_postfix(nullptr); }, "swapMRPtr null codec");
-    RequireInvalidArgument([] { advanceOneMBRow_nid_postfix(nullptr); }, "advanceOneMBRow null codec");
+    ExpectErr<std::invalid_argument>([] { initMRPtr_nid_postfix(nullptr); }, "initMRPtr null codec");
+    ExpectErr<std::invalid_argument>([] { advanceMRPtr_nid_postfix(nullptr); }, "advanceMRPtr null codec");
+    ExpectErr<std::invalid_argument>([] { swapMRPtr_nid_postfix(nullptr); }, "swapMRPtr null codec");
+    ExpectErr<std::invalid_argument>([] { advanceOneMBRow_nid_postfix(nullptr); }, "advanceOneMBRow null codec");
 
     Pair pair(30, 3, Yuv444, true);
     JxrRowsSetSecondary_nid_no_patch(pair.guest, 1);
-    RequireInvalidArgument([&] { advanceMRPtr_nid_postfix(pair.Codec()); }, "secondary codec");
+    ExpectErr<std::invalid_argument>([&] { advanceMRPtr_nid_postfix(pair.Codec()); }, "secondary codec");
     JxrRowsSetSecondary_nid_no_patch(pair.guest, 0);
     JxrRowsSetFormat_nid_no_patch(pair.guest, ColorFormats);
-    RequireInvalidArgument([&] { advanceMRPtr_nid_postfix(pair.Codec()); }, "unknown color format");
+    ExpectErr<std::invalid_argument>([&] { advanceMRPtr_nid_postfix(pair.Codec()); }, "unknown color format");
     JxrRowsSetFormat_nid_no_patch(pair.guest, -1);
-    RequireInvalidArgument([&] { advanceMRPtr_nid_postfix(pair.Codec()); }, "negative color format");
+    ExpectErr<std::invalid_argument>([&] { advanceMRPtr_nid_postfix(pair.Codec()); }, "negative color format");
     JxrRowsSetFormat_nid_no_patch(pair.guest, Yuv444);
     JxrRowsSetChannels_nid_no_patch(pair.guest, 0, 17);
-    RequireInvalidArgument([&] { advanceMRPtr_nid_postfix(pair.Codec()); }, "advanceMRPtr more than 16 channels");
-    RequireInvalidArgument([&] { advanceOneMBRow_nid_postfix(pair.Codec()); }, "advanceOneMBRow more than 16 channels");
+    ExpectErr<std::invalid_argument>([&] { advanceMRPtr_nid_postfix(pair.Codec()); }, "advanceMRPtr more than 16 channels");
+    ExpectErr<std::invalid_argument>([&] { advanceOneMBRow_nid_postfix(pair.Codec()); }, "advanceOneMBRow more than 16 channels");
     JxrRowsSetChannels_nid_no_patch(pair.guest, 0, 3);
     JxrRowsSetChannels_nid_no_patch(pair.guest, 1, 17);
-    RequireInvalidArgument([&] { advanceMRPtr_nid_postfix(pair.Codec()); }, "alpha codec with more than 16 channels");
-    RequireInvalidArgument([&] { advanceOneMBRow_nid_postfix(pair.Codec()); }, "alpha codec row with more than 16 channels");
+    ExpectErr<std::invalid_argument>([&] { advanceMRPtr_nid_postfix(pair.Codec()); }, "alpha codec with more than 16 channels");
+    ExpectErr<std::invalid_argument>([&] { advanceOneMBRow_nid_postfix(pair.Codec()); }, "alpha codec row with more than 16 channels");
     JxrRowsSetChannels_nid_no_patch(pair.guest, 1, 1);
     JxrRowsSetRowBuffer_nid_no_patch(pair.guest, 0, 2, 0, nullptr);
-    RequireInvalidArgument([&] { advanceMRPtr_nid_postfix(pair.Codec()); }, "null previous row buffer");
+    ExpectErr<std::invalid_argument>([&] { advanceMRPtr_nid_postfix(pair.Codec()); }, "null previous row buffer");
     JxrRowsSetRowBuffer_nid_no_patch(pair.guest, 0, 2, 0, JxrRowsCodec_nid_no_patch(pair.guest, 0));
     JxrRowsSetRowBuffer_nid_no_patch(pair.guest, 1, 0, 1, nullptr);
-    RequireInvalidArgument([&] { advanceMRPtr_nid_postfix(pair.Codec()); }, "null alpha current row buffer");
+    ExpectErr<std::invalid_argument>([&] { advanceMRPtr_nid_postfix(pair.Codec()); }, "null alpha current row buffer");
 }
 
 void TestCodingContext() {
@@ -193,7 +178,7 @@ void TestCodingContext() {
         JxrRowsReferenceReset_nid_no_patch(pair.native);
         Require(pair.Same(), "ResetCodingContext differs from jxrlib");
     }
-    RequireInvalidArgument([] { ResetCodingContext_nid_postfix(nullptr); }, "null coding context");
+    ExpectErr<std::invalid_argument>([] { ResetCodingContext_nid_postfix(nullptr); }, "null coding context");
 }
 
 #ifdef _WIN32
@@ -226,7 +211,7 @@ public:
     template<typename TAction>
     void Reject(TAction action, const char* message) const {
         const std::vector<unsigned char> before(At(0), At(Pages));
-        RequireInvalidArgument(action, message);
+        ExpectErr<std::invalid_argument>(action, message);
         Require(std::memcmp(At(0), before.data(), before.size()) == 0, message);
     }
 

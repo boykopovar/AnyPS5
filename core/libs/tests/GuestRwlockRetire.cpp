@@ -1,12 +1,9 @@
 #include "SceTypes.hpp"
 #include "prx/libkernel/Pthread/include/Rwlock.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <cstdlib>
 #include <thread>
-
-static void Require(bool result) {
-    if (!result) std::abort();
-}
 
 static void CheckHandoff(bool write) {
     constexpr int rounds = 2000;

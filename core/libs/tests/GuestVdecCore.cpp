@@ -1,6 +1,7 @@
 #include "prx/libSceVdecCore/include/Api.hpp"
 #include "prx/libSceVdecCore/include/Decoder.hpp"
 #include "H264Fixture.hpp"
+#include "Testing.hpp"
 
 #include <algorithm>
 #include <array>
@@ -35,13 +36,6 @@ constexpr std::uint32_t CodecAvc = 0;
 constexpr std::uint32_t CodecHevc = 4;
 constexpr std::uint32_t DecoderVdec2 = 2;
 constexpr std::uint32_t DecoderVdec2Special2 = 8;
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "VdecCore: %s\n", message);
-        std::abort();
-    }
-}
 
 void* Resolve(const char* name) {
 #ifdef _WIN32

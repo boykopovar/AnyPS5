@@ -1,6 +1,7 @@
 #include "prx/libSceFontFt/include/Api.hpp"
 #include "prx/libSceFont/include/Api.hpp"
 #include "prx/libSceFont/include/FontTypes.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
@@ -9,14 +10,6 @@
 #include <initializer_list>
 #include <utility>
 #include <vector>
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "Font scissor check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static int allocations = 0;
 static void* APS5_VABI Allocate(void*, std::uint32_t size) {

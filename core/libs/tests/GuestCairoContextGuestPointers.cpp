@@ -1,4 +1,5 @@
 #include "prx/libcairo/include/Path.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cerrno>
@@ -7,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <source_location>
 #include <stdexcept>
 #include <type_traits>
 
@@ -34,15 +36,6 @@ static_assert(std::is_same_v<decltype(&cairo_clip_extents), void (APS5_VABI*)(Ca
 
 namespace {
 
-void Require(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "Cairo context guest pointer test failed at line %d\n", line);
-        std::abort();
-    }
-}
-
-#define CHECK(condition) Require((condition), __LINE__)
-
 bool Close(double a, double b) {
     return std::abs(a - b) <= 1e-9 * (1.0 + std::abs(a) + std::abs(b));
 }
@@ -57,18 +50,18 @@ struct ReadOnlyPage {
         GetSystemInfo(&info);
         size = info.dwPageSize;
         address = VirtualAlloc(nullptr, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-        CHECK(address != nullptr);
+        Require(address != nullptr);
         std::memcpy(address, data, bytes);
         DWORD previous = 0;
-        CHECK(VirtualProtect(address, size, PAGE_READONLY, &previous) != 0);
+        Require(VirtualProtect(address, size, PAGE_READONLY, &previous) != 0);
 #else
         const long page = sysconf(_SC_PAGESIZE);
-        CHECK(page > 0);
+        Require(page > 0);
         size = static_cast<std::size_t>(page);
         address = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-        CHECK(address != MAP_FAILED);
+        Require(address != MAP_FAILED);
         std::memcpy(address, data, bytes);
-        CHECK(mprotect(address, size, PROT_READ) == 0);
+        Require(mprotect(address, size, PROT_READ) == 0);
 #endif
     }
 
@@ -83,7 +76,7 @@ struct ReadOnlyPage {
 };
 
 template <typename Fn>
-void ExpectThrowsPreservingErrno(Fn&& fn, int line) {
+void ExpectThrowsPreservingErrno(Fn&& fn, const std::source_location& location = std::source_location::current()) {
     errno = 71;
     bool threw = false;
     try {
@@ -91,19 +84,19 @@ void ExpectThrowsPreservingErrno(Fn&& fn, int line) {
     } catch (const std::runtime_error&) {
         threw = true;
     }
-    Require(threw && errno == 71, line);
+    Require(threw && errno == 71, location);
 }
 
-#define EXPECT_REJECTED(...) ExpectThrowsPreservingErrno([&] { __VA_ARGS__; }, __LINE__)
+#define EXPECT_REJECTED(...) ExpectThrowsPreservingErrno([&] { __VA_ARGS__; })
 
 } // namespace
 
 int main() {
     CairoSurface* surface = cairo_image_surface_create(0, 128, 128);
-    CHECK(surface != nullptr);
+    Require(surface != nullptr);
     CairoContext* context = cairo_create(surface);
     cairo_surface_destroy(surface);
-    CHECK(context != nullptr);
+    Require(context != nullptr);
 
     const std::array<double, 6> seeded{2.0, 0.0, 0.0, 3.0, 10.0, -5.0};
     const ReadOnlyPage roPage(seeded.data(), sizeof(seeded));
@@ -128,21 +121,21 @@ int main() {
     cairo_transform(context, &translate);
     CairoMatrix actual{};
     cairo_get_matrix(context, &actual);
-    CHECK(Close(actual.xx, 2.0) && Close(actual.yy, 3.0) && Close(actual.x0, 6.0) && Close(actual.y0, 1.0));
+    Require(Close(actual.xx, 2.0) && Close(actual.yy, 3.0) && Close(actual.x0, 6.0) && Close(actual.y0, 1.0));
 
     double x = 3.0;
     double y = 4.0;
     cairo_user_to_device(context, &x, &y);
-    CHECK(Close(x, 12.0) && Close(y, 13.0));
+    Require(Close(x, 12.0) && Close(y, 13.0));
     cairo_device_to_user(context, &x, &y);
-    CHECK(Close(x, 3.0) && Close(y, 4.0));
+    Require(Close(x, 3.0) && Close(y, 4.0));
 
     double dx = 5.0;
     double dy = -2.0;
     cairo_user_to_device_distance(context, &dx, &dy);
-    CHECK(Close(dx, 10.0) && Close(dy, -6.0));
+    Require(Close(dx, 10.0) && Close(dy, -6.0));
     cairo_device_to_user_distance(context, &dx, &dy);
-    CHECK(Close(dx, 5.0) && Close(dy, -2.0));
+    Require(Close(dx, 5.0) && Close(dy, -2.0));
 
     EXPECT_REJECTED(cairo_set_dash(context, nullptr, 2, 0.5));
     EXPECT_REJECTED(cairo_set_dash(context, badDouble, 2, 0.5));
@@ -151,19 +144,19 @@ int main() {
     EXPECT_REJECTED(cairo_set_dash(context, dashPattern.data(), 0x7fffffff, 0.5));
     EXPECT_REJECTED(cairo_set_dash(context, badDouble, 0x7fffffff, 0.5));
     cairo_set_dash(context, dashPattern.data(), 2, 1.5);
-    CHECK(cairo_get_dash_count(context) == 2);
+    Require(cairo_get_dash_count(context) == 2);
     EXPECT_REJECTED(cairo_set_dash(context, dashPattern.data(), 0x7fffffff, 0.5));
-    CHECK(cairo_get_dash_count(context) == 2);
+    Require(cairo_get_dash_count(context) == 2);
 
     std::array<double, 2> outDashes{99.0, 99.0};
     double outOffset = 99.0;
     EXPECT_REJECTED(cairo_get_dash(context, badDouble, &outOffset));
     EXPECT_REJECTED(cairo_get_dash(context, roDoubles, &outOffset));
-    CHECK(Close(outOffset, 99.0));
+    Require(Close(outOffset, 99.0));
     EXPECT_REJECTED(cairo_get_dash(context, outDashes.data(), roDoubles));
-    CHECK(Close(outDashes[0], 99.0) && Close(outDashes[1], 99.0));
+    Require(Close(outDashes[0], 99.0) && Close(outDashes[1], 99.0));
     cairo_get_dash(context, outDashes.data(), &outOffset);
-    CHECK(Close(outDashes[0], 4.0) && Close(outDashes[1], 2.0) && Close(outOffset, 1.5));
+    Require(Close(outDashes[0], 4.0) && Close(outDashes[1], 2.0) && Close(outOffset, 1.5));
 
     cairo_identity_matrix(context);
     cairo_new_path(context);
@@ -174,11 +167,11 @@ int main() {
     double py = 88.0;
     EXPECT_REJECTED(cairo_get_current_point(context, &px, roDoubles));
     EXPECT_REJECTED(cairo_get_current_point(context, badDouble, &py));
-    CHECK(Close(px, 77.0) && Close(py, 88.0));
+    Require(Close(px, 77.0) && Close(py, 88.0));
     cairo_get_current_point(context, &px, nullptr);
-    CHECK(Close(px, 30.0));
+    Require(Close(px, 30.0));
     cairo_get_current_point(context, nullptr, &py);
-    CHECK(Close(py, 50.0));
+    Require(Close(py, 50.0));
 
     double x1 = 91.0;
     double y1 = 92.0;
@@ -192,14 +185,14 @@ int main() {
     EXPECT_REJECTED(cairo_stroke_extents(nullptr, &x1, nullptr, nullptr, badDouble));
     EXPECT_REJECTED(cairo_clip_extents(context, &x1, &y1, &x2, roDoubles));
     EXPECT_REJECTED(cairo_clip_extents(nullptr, &x1, nullptr, nullptr, roDoubles));
-    CHECK(Close(x1, 91.0) && Close(y1, 92.0) && Close(x2, 93.0) && Close(y2, 94.0));
+    Require(Close(x1, 91.0) && Close(y1, 92.0) && Close(x2, 93.0) && Close(y2, 94.0));
 
     cairo_path_extents(context, &x1, &y1, &x2, &y2);
-    CHECK(Close(x1, 10.0) && Close(y1, 20.0) && Close(x2, 30.0) && Close(y2, 50.0));
+    Require(Close(x1, 10.0) && Close(y1, 20.0) && Close(x2, 30.0) && Close(y2, 50.0));
     cairo_stroke_extents(context, &x1, &y1, &x2, &y2);
-    CHECK(x1 < 10.0 && y1 < 20.0 && x2 > 30.0 && y2 > 50.0);
+    Require(x1 < 10.0 && y1 < 20.0 && x2 > 30.0 && y2 > 50.0);
     cairo_clip_extents(context, &x1, &y1, &x2, &y2);
-    CHECK(Close(x1, 0.0) && Close(y1, 0.0) && Close(x2, 128.0) && Close(y2, 128.0));
+    Require(Close(x1, 0.0) && Close(y1, 0.0) && Close(x2, 128.0) && Close(y2, 128.0));
 
     cairo_destroy(context);
     std::puts("guest Cairo context guest pointer tests passed");

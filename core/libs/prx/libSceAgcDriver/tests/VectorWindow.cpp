@@ -2,6 +2,7 @@
 #include "ControlFlow/GraphBuilder.hpp"
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "Translation/InstructionTranslator.hpp"
+#include "Testing.hpp"
 #include <spirv/unified1/spirv.hpp>
 #include <algorithm>
 #include <array>
@@ -55,10 +56,6 @@ struct Shape {
     std::size_t accessChains = 0;
     std::size_t selects = 0;
 };
-
-void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 std::vector<std::uint32_t> RecompileProgram(std::span<const std::uint32_t> code, std::span<const std::uint32_t> userData) {
     const std::array<std::uint32_t, 7> capabilities{spv::CapabilityShader, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformVote, spv::CapabilityGroupNonUniformShuffle, spv::CapabilityInt64, spv::CapabilityPhysicalStorageBufferAddresses};

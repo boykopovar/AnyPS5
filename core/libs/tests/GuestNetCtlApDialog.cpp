@@ -5,10 +5,9 @@
 #include <cstdlib>
 #include <cstring>
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
+#include "Testing.hpp"
 
 namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
 
 constexpr int kStatusNone = 0;
 constexpr int kStatusInitialized = 1;

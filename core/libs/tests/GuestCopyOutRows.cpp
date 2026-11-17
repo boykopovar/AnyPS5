@@ -1,4 +1,5 @@
 #include "prx/libc/include/General.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cerrno>
@@ -12,14 +13,6 @@
 #else
 #include <sys/mman.h>
 #endif
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "GuestCopyOutRows check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static std::uint8_t* MapPages(std::size_t count) {
 #ifdef _WIN32

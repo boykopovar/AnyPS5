@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include "VulkanTestDevice.hpp"
 #include "SceShaders.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawCache.hpp"
@@ -17,10 +18,6 @@ namespace {
 
 using AgcDriver::DriverDetail::ShaderSnapshot;
 using ShaderRecompiler::MemoryRegion;
-
-void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error("builtin program memory: " + message);
-}
 
 struct GuestVertex {
     struct Header {

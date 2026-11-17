@@ -2,6 +2,7 @@
 #include "prx/libSceAudioIn/include/Exports.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdlib>
@@ -17,12 +18,6 @@ constexpr int audioInErrorInvalidParam = static_cast<int>(0x80260106);
 constexpr int audioInErrorInvalidState = static_cast<int>(0x80260109);
 constexpr int audioInErrorInvalidDevice = static_cast<int>(0x8026010F);
 constexpr int userId = 0x10000000;
-
-void Require(bool condition) {
-    if (!condition) {
-        std::abort();
-    }
-}
 
 template <typename TAction>
 bool Throws(TAction&& action) {

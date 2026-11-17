@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -20,8 +21,6 @@
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
 #endif
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static void RequireLockAllDenied(int flags) {
     *__error_nid_postfix() = 0;

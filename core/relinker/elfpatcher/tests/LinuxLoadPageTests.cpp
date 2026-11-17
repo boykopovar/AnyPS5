@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include <elfpatcher/linux/LinuxElfPatcher.hpp>
 #include <elfpatcher/general/EntryStubBuilder.hpp>
 #include <elfpatcher/general/ProgramHeaderLayoutBuilder.hpp>
@@ -22,10 +23,6 @@ namespace {
 using Bytes = std::vector<std::uint8_t>;
 
 constexpr std::uint64_t kPage = 0x1000;
-
-void Require(const bool ok, const std::string& what) {
-    if (!ok) throw std::runtime_error("linux load pages: " + what);
-}
 
 template <typename T>
 T Read(const Bytes& bytes, const std::uint64_t offset) {

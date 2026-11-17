@@ -1,5 +1,6 @@
 #include "prx/libSceFreeTypeOt/include/Bitmap.hpp"
 #include "prx/libSceFreeTypeOt/include/GlyphSlot.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -67,11 +68,6 @@ struct Fixture {
     Fixture& operator=(const Fixture&) = delete;
 };
 
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "FreeType Ot glyph slot: %s\n", message);
-    std::exit(1);
-}
 
 bool Zeroed(const unsigned char* bytes, std::size_t size) {
     for (std::size_t i = 0; i < size; ++i) {

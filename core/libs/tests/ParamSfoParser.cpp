@@ -1,4 +1,5 @@
 #include "prx/libkernel/AppMetadata/include/ParamSfoParser.hpp"
+#include "Testing.hpp"
 #include <chrono>
 #include <cstdint>
 #include <cstring>
@@ -16,10 +17,6 @@ struct Entry {
     std::uint16_t format;
     std::vector<std::uint8_t> data;
 };
-
-void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 Entry Text(const std::string& key, const std::string& value) {
     std::vector<std::uint8_t> data(value.begin(), value.end());

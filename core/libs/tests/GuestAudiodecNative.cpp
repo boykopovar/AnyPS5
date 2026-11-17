@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "tests/ExportLookup.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -30,12 +31,6 @@ constexpr int ErrorInvalidAuSize = static_cast<int>(0x807F0011u);
 constexpr int ErrorInvalidPcmSize = static_cast<int>(0x807F0012u);
 constexpr int ErrorInvalidPriority = static_cast<int>(0x807FF000u);
 constexpr int ErrorAlreadyRegistered = static_cast<int>(0x80930009u);
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "GuestAudiodecNative: %s\n", message);
-    std::abort();
-}
 
 }
 

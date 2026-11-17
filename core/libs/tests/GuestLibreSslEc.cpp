@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
@@ -25,17 +26,6 @@ static constexpr Curve Curves[] = {
 };
 
 static constexpr int UnknownNids[] = {0, -1, 1, 406, 691, 746, 921, 937, 948, 100000};
-
-static void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "failed: %s\n", what);
-    std::abort();
-}
-
-template<typename TAction> static void RequireThrows(TAction action, const char* what) {
-    try { action(); } catch (const std::exception&) { return; }
-    Require(false, what);
-}
 
 static void CheckNamedCurves() {
     for (const Curve& curve : Curves) {
@@ -92,10 +82,10 @@ static void CheckNullArguments() {
     EC_GROUP_free_nid_postfix(nullptr);
     EC_KEY_free_nid_postfix(nullptr);
     Require(ECDSA_size_nid_postfix(nullptr) == 0, "ECDSA_size of a null key");
-    RequireThrows([] { EC_GROUP_get_degree_nid_postfix(nullptr); }, "EC_GROUP_get_degree of a null group");
-    RequireThrows([] { EC_KEY_get0_group_nid_postfix(nullptr); }, "EC_KEY_get0_group of a null key");
+    ExpectErr([] { EC_GROUP_get_degree_nid_postfix(nullptr); }, "EC_GROUP_get_degree of a null group");
+    ExpectErr([] { EC_KEY_get0_group_nid_postfix(nullptr); }, "EC_KEY_get0_group of a null key");
     EcGroup* group = EC_GROUP_new_by_curve_name_nid_postfix(415);
-    RequireThrows([&] { EC_KEY_set_group_nid_postfix(nullptr, group); }, "EC_KEY_set_group of a null key");
+    ExpectErr([&] { EC_KEY_set_group_nid_postfix(nullptr, group); }, "EC_KEY_set_group of a null key");
     EC_GROUP_free_nid_postfix(group);
 }
 

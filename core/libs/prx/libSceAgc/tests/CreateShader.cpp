@@ -1,5 +1,6 @@
 #include "prx/libSceAgc/Shader/include/CreateShader.hpp"
 #include "prx/libSceAgc/Shader/include/ShaderConstants.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstddef>
@@ -14,10 +15,6 @@ unsigned registrations = 0;
 
 alignas(256) const std::array<std::uint32_t, 64> code{0xbf810000u};
 alignas(256) const std::array<std::uint32_t, 64> movedCode{0xbf810000u};
-
-void check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 template <typename T>
 T* relative(T* target, const void* field) {
@@ -52,9 +49,9 @@ Shader* create(Binary& binary, const std::array<std::uint32_t, 64>& at = code) {
     registered = nullptr;
     registrations = 0;
     Shader* created = nullptr;
-    check(sceAgcCreateShader(&created, &binary.shader, at.data()) == 0, "sceAgcCreateShader failed");
-    check(created == &binary.shader && registered == &binary.shader && registrations == 1, "the created shader is not the header, registered once");
-    check(binary.shader.code == at.data(), "the code address was not stored in the header");
+    Require(sceAgcCreateShader(&created, &binary.shader, at.data()) == 0, "sceAgcCreateShader failed");
+    Require(created == &binary.shader && registered == &binary.shader && registrations == 1, "the created shader is not the header, registered once");
+    Require(binary.shader.code == at.data(), "the code address was not stored in the header");
     return created;
 }
 
@@ -62,12 +59,12 @@ void testCompute() {
     Binary binary;
     fill(binary, ShaderRegs::ShaderBinaryType::Cs, ShaderRegs::COMPUTE_PGM_LO);
     create(binary);
-    check(binary.shader.sh_registers == binary.registers.data() && binary.shader.specials == &binary.specials, "the relative register and special pointers were not resolved");
-    check(binary.shader.user_data == nullptr && binary.shader.cx_registers == nullptr && binary.shader.input_semantics == nullptr && binary.shader.output_semantics == nullptr, "a null relative pointer did not stay null");
+    Require(binary.shader.sh_registers == binary.registers.data() && binary.shader.specials == &binary.specials, "the relative register and special pointers were not resolved");
+    Require(binary.shader.user_data == nullptr && binary.shader.cx_registers == nullptr && binary.shader.input_semantics == nullptr && binary.shader.output_semantics == nullptr, "a null relative pointer did not stay null");
     const auto program = reinterpret_cast<std::uint64_t>(code.data()) + 0x1000u;
-    check(binary.registers[0].value == static_cast<std::uint32_t>(program >> 8u), "COMPUTE_PGM_LO does not hold the code address plus its offset");
-    check(binary.registers[1].value == (0xabcdef00u | static_cast<std::uint32_t>((program >> 40u) & 0xffu)), "COMPUTE_PGM_HI did not keep its upper bits around the address byte");
-    check(binary.registers[2].offset == 0x20au && binary.registers[2].value == 0x1234u, "a register other than the program address changed");
+    Require(binary.registers[0].value == static_cast<std::uint32_t>(program >> 8u), "COMPUTE_PGM_LO does not hold the code address plus its offset");
+    Require(binary.registers[1].value == (0xabcdef00u | static_cast<std::uint32_t>((program >> 40u) & 0xffu)), "COMPUTE_PGM_HI did not keep its upper bits around the address byte");
+    Require(binary.registers[2].offset == 0x20au && binary.registers[2].value == 0x1234u, "a register other than the program address changed");
 }
 
 void testPixelWithUserData() {
@@ -81,12 +78,12 @@ void testPixelWithUserData() {
     binary.userData.direct_resource_offset = relative(binary.direct.data(), &binary.userData.direct_resource_offset);
     for (std::size_t i = 0; i < binary.sharps.size(); ++i) binary.userData.sharp_resource_offset[i] = relative(&binary.sharps[i], &binary.userData.sharp_resource_offset[i]);
     create(binary);
-    check(binary.shader.user_data == &binary.userData && binary.shader.cx_registers == binary.context.data(), "the relative user data and context register pointers were not resolved");
-    check(binary.shader.input_semantics == binary.inputs.data() && binary.shader.output_semantics == binary.outputs.data(), "the relative semantic pointers were not resolved");
-    check(binary.userData.direct_resource_offset == binary.direct.data(), "the user data's direct resource pointer was not resolved");
-    for (std::size_t i = 0; i < binary.sharps.size(); ++i) check(binary.userData.sharp_resource_offset[i] == &binary.sharps[i], "a user data sharp resource pointer was not resolved");
+    Require(binary.shader.user_data == &binary.userData && binary.shader.cx_registers == binary.context.data(), "the relative user data and context register pointers were not resolved");
+    Require(binary.shader.input_semantics == binary.inputs.data() && binary.shader.output_semantics == binary.outputs.data(), "the relative semantic pointers were not resolved");
+    Require(binary.userData.direct_resource_offset == binary.direct.data(), "the user data's direct resource pointer was not resolved");
+    for (std::size_t i = 0; i < binary.sharps.size(); ++i) Require(binary.userData.sharp_resource_offset[i] == &binary.sharps[i], "a user data sharp resource pointer was not resolved");
     const auto program = reinterpret_cast<std::uint64_t>(code.data()) + 0x1000u;
-    check(binary.registers[0].value == static_cast<std::uint32_t>(program >> 8u) && binary.registers[1].value == (0xabcdef00u | static_cast<std::uint32_t>((program >> 40u) & 0xffu)), "SPI_SHADER_PGM_LO_PS and _HI_PS do not hold the code address");
+    Require(binary.registers[0].value == static_cast<std::uint32_t>(program >> 8u) && binary.registers[1].value == (0xabcdef00u | static_cast<std::uint32_t>((program >> 40u) & 0xffu)), "SPI_SHADER_PGM_LO_PS and _HI_PS do not hold the code address");
 }
 
 void testCreatedAgain() {
@@ -96,13 +93,13 @@ void testCreatedAgain() {
     binary.userData.direct_resource_offset = relative(binary.direct.data(), &binary.userData.direct_resource_offset);
     create(binary);
     create(binary);
-    check(binary.shader.sh_registers == binary.registers.data() && binary.shader.specials == &binary.specials && binary.shader.user_data == &binary.userData, "a second create resolved the header's pointers again");
-    check(binary.userData.direct_resource_offset == binary.direct.data(), "a second create resolved the user data's pointers again");
+    Require(binary.shader.sh_registers == binary.registers.data() && binary.shader.specials == &binary.specials && binary.shader.user_data == &binary.userData, "a second create resolved the header's pointers again");
+    Require(binary.userData.direct_resource_offset == binary.direct.data(), "a second create resolved the user data's pointers again");
     const auto program = reinterpret_cast<std::uint64_t>(code.data()) + 0x1000u;
-    check(binary.registers[0].value == static_cast<std::uint32_t>(program >> 8u) && binary.registers[1].value == (0xabcdef00u | static_cast<std::uint32_t>((program >> 40u) & 0xffu)), "a second create from the same code moved the program address");
+    Require(binary.registers[0].value == static_cast<std::uint32_t>(program >> 8u) && binary.registers[1].value == (0xabcdef00u | static_cast<std::uint32_t>((program >> 40u) & 0xffu)), "a second create from the same code moved the program address");
     create(binary, movedCode);
     const auto moved = reinterpret_cast<std::uint64_t>(movedCode.data()) + 0x1000u;
-    check(binary.registers[0].value == static_cast<std::uint32_t>(moved >> 8u) && binary.registers[1].value == (0xabcdef00u | static_cast<std::uint32_t>((moved >> 40u) & 0xffu)), "a create from other code did not rebase the program address onto it");
+    Require(binary.registers[0].value == static_cast<std::uint32_t>(moved >> 8u) && binary.registers[1].value == (0xabcdef00u | static_cast<std::uint32_t>((moved >> 40u) & 0xffu)), "a create from other code did not rebase the program address onto it");
 }
 
 void testWithoutProgramAddress() {
@@ -110,7 +107,7 @@ void testWithoutProgramAddress() {
     fill(binary, ShaderRegs::ShaderBinaryType::Fs, 0x30u);
     const auto registers = binary.registers;
     create(binary);
-    check(binary.registers[0].offset == registers[0].offset && binary.registers[0].value == registers[0].value && binary.registers[1].value == registers[1].value && binary.registers[2].value == registers[2].value, "a fetch shader's registers changed");
+    Require(binary.registers[0].offset == registers[0].offset && binary.registers[0].value == registers[0].value && binary.registers[1].value == registers[1].value && binary.registers[2].value == registers[2].value, "a fetch shader's registers changed");
 }
 
 }

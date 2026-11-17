@@ -344,6 +344,7 @@ if(BUILD_TESTING)
         set_tests_properties(guest_video_out_wqhd_detection PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         add_executable(guest_video_out_wqhd_detection_exit_tests ${LIBS_INCLUDE_DIR}/tests/GuestVideoOutWqhdDetection.cpp)
+        target_include_directories(guest_video_out_wqhd_detection_exit_tests PRIVATE ${CMAKE_SOURCE_DIR}/core/test/include)
         set_target_properties(guest_video_out_wqhd_detection_exit_tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<1:${ANYPS5_TEST_OUTPUT_DIRECTORY}>")
         target_include_directories(guest_video_out_wqhd_detection_exit_tests PRIVATE ${LIBS_INCLUDE_DIR})
         target_link_libraries(guest_video_out_wqhd_detection_exit_tests PRIVATE libSceVideoOut libSceAgcDriver libkernel libc)

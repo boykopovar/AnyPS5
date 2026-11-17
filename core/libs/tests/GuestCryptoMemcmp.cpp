@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl3/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdio>
@@ -15,13 +16,6 @@
 #endif
 
 namespace {
-
-void Require(bool value) {
-    if (!value) {
-        std::fprintf(stderr, "CRYPTO_memcmp check failed\n");
-        std::abort();
-    }
-}
 
 class GuardedPage {
 public:

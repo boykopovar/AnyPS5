@@ -6,6 +6,7 @@
 #include "prx/libkernel/Pthread/include/Cond.hpp"
 #include "prx/libkernel/Pthread/include/Cancel.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cerrno>
@@ -20,8 +21,6 @@ static constexpr int CANCEL_DISABLE = 1;
 static constexpr int CANCEL_DEFERRED = 0;
 static constexpr int CANCEL_ASYNCHRONOUS = 2;
 static void* const CANCELED = reinterpret_cast<void*>(std::uintptr_t{1});
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 struct Shared {
     PthreadMutex mutex = nullptr;

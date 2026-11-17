@@ -1,6 +1,7 @@
 #include "prx/libSceNKWebKit/include/WebCoreProcessSwitchesExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -17,15 +18,6 @@ using NKWebKit::WebCoreAbi::ResourceLoadObserver;
 constexpr unsigned CanAccessRawCookies = 1u << 0;
 constexpr unsigned CanAccessCredentials = 1u << 1;
 constexpr unsigned CanCommunicateWithWindowServer = 1u << 2;
-
-void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "WebCore process switches check failed at line %d\n", line);
-        std::abort();
-    }
-}
-
-#define Require(value) Check((value), __LINE__)
 
 bool HasPrivilege(unsigned privilege) {
     return _ZN3WTF19hasProcessPrivilegeENS_16ProcessPrivilegeE(privilege);

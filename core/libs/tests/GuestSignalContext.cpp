@@ -3,6 +3,7 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/System/include/UserContext.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -38,13 +39,6 @@ std::uint32_t g_handlerMask = 0;
 bool g_handlerAligned = false;
 bool g_handlerInfoClean = false;
 bool g_handlerCopySane = false;
-
-void Require(bool value, const char* what) {
-    if (!value) {
-        std::fprintf(stderr, "Signal context check failed: %s\n", what);
-        std::abort();
-    }
-}
 
 std::uint64_t StackTop() {
     return (reinterpret_cast<std::uint64_t>(g_stack.bytes) + StackBytes) & ~static_cast<std::uint64_t>(15);

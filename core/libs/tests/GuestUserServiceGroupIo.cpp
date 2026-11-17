@@ -1,6 +1,7 @@
 #include "prx/libSceUserService/UserService.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <cerrno>
 #include <climits>
@@ -16,7 +17,6 @@ std::int64_t writeResult = 4;
 int opens{};
 int closes{};
 std::string written;
-void Require(bool value) { if (!value) std::abort(); }
 }
 
 extern "C" {

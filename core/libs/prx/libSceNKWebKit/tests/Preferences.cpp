@@ -1,6 +1,7 @@
 #include "prx/libSceNKWebKit/src/Preferences.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
 #include "prx/libSceNKWebKit/src/Types.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cmath>
 #include <cstdio>
@@ -10,26 +11,6 @@
 #include <string>
 
 namespace {
-
-void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "WKPreferences check failed at line %d\n", line);
-        std::abort();
-    }
-}
-
-#define Require(value) Check((value), __LINE__)
-
-template<typename TException, typename TFunction>
-void RequireThrows(TFunction function) {
-    bool threw = false;
-    try {
-        function();
-    } catch (const TException&) {
-        threw = true;
-    }
-    Require(threw);
-}
 
 NKWebKit::Retained<NKWebKit::Preferences> Create() {
     return NKWebKit::Retained<NKWebKit::Preferences>::Adopt(
@@ -233,8 +214,8 @@ void Booleans() {
             Require(entry.get(copy.Get()) == !value);
             Require(entry.get(preferences.Get()) == value);
         }
-        RequireThrows<std::invalid_argument>([&] { entry.get(nullptr); });
-        RequireThrows<std::invalid_argument>([&] { entry.set(nullptr, true); });
+        ExpectErr<std::invalid_argument>([&] { entry.get(nullptr); });
+        ExpectErr<std::invalid_argument>([&] { entry.set(nullptr, true); });
     }
 }
 
@@ -481,9 +462,9 @@ void Strings() {
         entry.set(preferences.Get(), nullString.Get());
         auto nullValue = StringCopy(entry.copy(preferences.Get()));
         Require(!nullValue->null && nullValue->characters.empty());
-        RequireThrows<std::invalid_argument>([&] { entry.copy(nullptr); });
-        RequireThrows<std::invalid_argument>([&] { entry.set(nullptr, nullptr); });
-        RequireThrows<std::invalid_argument>([&] { entry.set(preferences.Get(), preferences.Get()); });
+        ExpectErr<std::invalid_argument>([&] { entry.copy(nullptr); });
+        ExpectErr<std::invalid_argument>([&] { entry.set(nullptr, nullptr); });
+        ExpectErr<std::invalid_argument>([&] { entry.set(preferences.Get(), preferences.Get()); });
     }
 }
 
@@ -513,8 +494,8 @@ void Features() {
     Require(!WKPreferencesGetApplicationChromeModeEnabled(preferences.Get()));
     WKPreferencesSetApplicationChromeModeEnabled(preferences.Get(), true);
     Require(WKPreferencesGetApplicationChromeModeEnabled(preferences.Get()));
-    RequireThrows<std::invalid_argument>([&] { WKPreferencesSetApplicationChromeModeEnabled(nullptr, true); });
-    RequireThrows<std::invalid_argument>([&] { WKPreferencesGetApplicationChromeModeEnabled(nullptr); });
+    ExpectErr<std::invalid_argument>([&] { WKPreferencesSetApplicationChromeModeEnabled(nullptr, true); });
+    ExpectErr<std::invalid_argument>([&] { WKPreferencesGetApplicationChromeModeEnabled(nullptr); });
     WKPreferencesSetCompositingBordersVisible(preferences.Get(), true);
     WKPreferencesSetFullScreenEnabled(preferences.Get(), true);
     WKPreferencesSetDefaultFontSize(preferences.Get(), 23);
@@ -542,10 +523,10 @@ void Features() {
     auto original = Create();
     Require(WKPreferencesGetJavaScriptEnabled(original.Get()));
     Require(WKPreferencesGetDefaultFontSize(original.Get()) == 16);
-    RequireThrows<std::invalid_argument>([] { WKPreferencesEnableAllExperimentalFeatures(nullptr); });
-    RequireThrows<std::invalid_argument>([] { WKPreferencesResetAllInternalDebugFeatures(nullptr); });
-    RequireThrows<std::invalid_argument>([] { WKPreferencesResetTestRunnerOverrides(nullptr); });
-    RequireThrows<std::invalid_argument>([&] { WKPreferencesSetExperimentalFeatureForKey(preferences.Get(), true, preferences.Get()); });
+    ExpectErr<std::invalid_argument>([] { WKPreferencesEnableAllExperimentalFeatures(nullptr); });
+    ExpectErr<std::invalid_argument>([] { WKPreferencesResetAllInternalDebugFeatures(nullptr); });
+    ExpectErr<std::invalid_argument>([] { WKPreferencesResetTestRunnerOverrides(nullptr); });
+    ExpectErr<std::invalid_argument>([&] { WKPreferencesSetExperimentalFeatureForKey(preferences.Get(), true, preferences.Get()); });
 }
 
 void DialogElementFeatureKey() {
@@ -573,24 +554,24 @@ void CreationAndUnknownDefaults() {
     first->Set(u"ShouldRestrictBaseURLSchemes", false);
     auto copy = Copy(first.Get());
     Require(copy->GetBool(u"ShouldRestrictBaseURLSchemes"));
-    RequireThrows<std::invalid_argument>([] { WKPreferencesCreateCopy(nullptr); });
-    RequireThrows<std::invalid_argument>([&] { WKPreferencesCreateWithIdentifier(first.Get()); });
-    RequireThrows<std::invalid_argument>([&] { WKPreferencesGetJavaScriptEnabled(identifier.Get()); });
-    RequireThrows<std::runtime_error>([&] { WKPreferencesGetMediaSourceEnabled(second.Get()); });
+    ExpectErr<std::invalid_argument>([] { WKPreferencesCreateCopy(nullptr); });
+    ExpectErr<std::invalid_argument>([&] { WKPreferencesCreateWithIdentifier(first.Get()); });
+    ExpectErr<std::invalid_argument>([&] { WKPreferencesGetJavaScriptEnabled(identifier.Get()); });
+    ExpectErr<std::runtime_error>([&] { WKPreferencesGetMediaSourceEnabled(second.Get()); });
     WKPreferencesSetMediaSourceEnabled(second.Get(), false);
     Require(!WKPreferencesGetMediaSourceEnabled(second.Get()));
     WKPreferencesSetMediaSourceEnabled(second.Get(), true);
     Require(WKPreferencesGetMediaSourceEnabled(second.Get()));
     auto copyMediaSourceEnabled = Copy(second.Get());
     Require(WKPreferencesGetMediaSourceEnabled(copyMediaSourceEnabled.Get()));
-    RequireThrows<std::runtime_error>([&] { WKPreferencesGetEncryptedMediaAPIEnabled(second.Get()); });
+    ExpectErr<std::runtime_error>([&] { WKPreferencesGetEncryptedMediaAPIEnabled(second.Get()); });
     WKPreferencesSetEncryptedMediaAPIEnabled(second.Get(), false);
     Require(!WKPreferencesGetEncryptedMediaAPIEnabled(second.Get()));
     WKPreferencesSetEncryptedMediaAPIEnabled(second.Get(), true);
     Require(WKPreferencesGetEncryptedMediaAPIEnabled(second.Get()));
     auto copyEncryptedMediaAPIEnabled = Copy(second.Get());
     Require(WKPreferencesGetEncryptedMediaAPIEnabled(copyEncryptedMediaAPIEnabled.Get()));
-    RequireThrows<std::runtime_error>([&] { WKPreferencesGetSourceBufferChangeTypeEnabled(second.Get()); });
+    ExpectErr<std::runtime_error>([&] { WKPreferencesGetSourceBufferChangeTypeEnabled(second.Get()); });
     WKPreferencesSetSourceBufferChangeTypeEnabled(second.Get(), false);
     Require(!WKPreferencesGetSourceBufferChangeTypeEnabled(second.Get()));
     WKPreferencesSetSourceBufferChangeTypeEnabled(second.Get(), true);
@@ -598,12 +579,12 @@ void CreationAndUnknownDefaults() {
     auto copySourceBufferChangeTypeEnabled = Copy(second.Get());
     Require(WKPreferencesGetSourceBufferChangeTypeEnabled(copySourceBufferChangeTypeEnabled.Get()));
     auto sourceKey = NKWebKit::Make<NKWebKit::String>(std::u16string(u"SourceBufferChangeTypeEnabled"));
-    RequireThrows<std::runtime_error>([&] { WKPreferencesSetExperimentalFeatureForKey(second.Get(), false, sourceKey.Get()); });
+    ExpectErr<std::runtime_error>([&] { WKPreferencesSetExperimentalFeatureForKey(second.Get(), false, sourceKey.Get()); });
     auto mediaKey = NKWebKit::Make<NKWebKit::String>(std::u16string(u"MediaSourceEnabled"));
     WKPreferencesSetExperimentalFeatureForKey(first.Get(), false, mediaKey.Get());
     Require(!WKPreferencesGetMediaSourceEnabled(first.Get()));
     auto copiedUnknown = Copy(anonymous.Get());
-    RequireThrows<std::runtime_error>([&] { WKPreferencesGetMediaSourceEnabled(copiedUnknown.Get()); });
+    ExpectErr<std::runtime_error>([&] { WKPreferencesGetMediaSourceEnabled(copiedUnknown.Get()); });
 }
 
 }

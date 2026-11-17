@@ -1,10 +1,9 @@
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <ctime>
 #include <cstdlib>
 #include <limits>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 int main() {
     Require(timespec_get_nid_postfix(nullptr, TIME_UTC) == 0);

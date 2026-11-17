@@ -2,6 +2,7 @@
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "tests/TemporaryFile.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -13,13 +14,6 @@
 #include <thread>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "binary word I/O: %s\n", message);
-        std::abort();
-    }
-}
 
 void CheckRoundTrip(const char* path) {
     constexpr std::array values{0, 1, -1, std::numeric_limits<int>::min(), std::numeric_limits<int>::max(),

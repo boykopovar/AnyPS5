@@ -1,4 +1,5 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -15,24 +16,6 @@ using NKWebKit::InspectorAbi::BackendDispatcher;
 using NKWebKit::InspectorAbi::DisconnectReason;
 using NKWebKit::InspectorAbi::FrontendRouter;
 using NKWebKit::InspectorAbi::InspectorAgentBase;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "Inspector::AgentRegistry check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
-
-template<class Function>
-void RequireThrows(Function function) {
-    bool threw = false;
-    try {
-        function();
-    } catch (const std::exception&) {
-        threw = true;
-    }
-    Require(threw);
-}
 
 using Constructor = void (APS5_VABI*)(AgentRegistry*);
 using Destructor = void (APS5_VABI*)(AgentRegistry*);
@@ -223,17 +206,17 @@ void TestDestruction() {
 }
 
 void TestNull() {
-    RequireThrows([] { _ZN9Inspector13AgentRegistryC2Ev(nullptr); });
-    RequireThrows([] { _ZN9Inspector13AgentRegistryD1Ev(nullptr); });
-    RequireThrows([] { _ZN9Inspector13AgentRegistryD2Ev(nullptr); });
-    RequireThrows([] { _ZN9Inspector13AgentRegistry13discardValuesEv(nullptr); });
-    RequireThrows([] { _ZN9Inspector13AgentRegistry27didCreateFrontendAndBackendEPNS_14FrontendRouterEPNS_17BackendDispatcherE(nullptr, nullptr, nullptr); });
-    RequireThrows([] { _ZN9Inspector13AgentRegistry29willDestroyFrontendAndBackendENS_16DisconnectReasonE(nullptr, DisconnectReason::InspectorDestroyed); });
+    ExpectErr([] { _ZN9Inspector13AgentRegistryC2Ev(nullptr); });
+    ExpectErr([] { _ZN9Inspector13AgentRegistryD1Ev(nullptr); });
+    ExpectErr([] { _ZN9Inspector13AgentRegistryD2Ev(nullptr); });
+    ExpectErr([] { _ZN9Inspector13AgentRegistry13discardValuesEv(nullptr); });
+    ExpectErr([] { _ZN9Inspector13AgentRegistry27didCreateFrontendAndBackendEPNS_14FrontendRouterEPNS_17BackendDispatcherE(nullptr, nullptr, nullptr); });
+    ExpectErr([] { _ZN9Inspector13AgentRegistry29willDestroyFrontendAndBackendENS_16DisconnectReasonE(nullptr, DisconnectReason::InspectorDestroyed); });
     {
         FakeAgent* first = MakeAgent(1);
         AgentRegistry registry = MakeNullRegistry(first);
         callCount = 0;
-        RequireThrows([&] { _ZN9Inspector13AgentRegistry13discardValuesEv(&registry); });
+        ExpectErr([&] { _ZN9Inspector13AgentRegistry13discardValuesEv(&registry); });
         Require(callCount == 0);
         registry.size = 1;
         _ZN9Inspector13AgentRegistryD2Ev(&registry);
@@ -242,7 +225,7 @@ void TestNull() {
         FakeAgent* first = MakeAgent(1);
         AgentRegistry registry = MakeNullRegistry(first);
         callCount = 0;
-        RequireThrows([&] { _ZN9Inspector13AgentRegistryD1Ev(&registry); });
+        ExpectErr([&] { _ZN9Inspector13AgentRegistryD1Ev(&registry); });
         Require(callCount == 0);
         registry.size = 1;
         _ZN9Inspector13AgentRegistryD2Ev(&registry);

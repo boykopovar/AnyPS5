@@ -1,5 +1,6 @@
 #include "../tools/ComputePipelineFixture.hpp"
 #include "prx/libSceAgcDriver/Execution/include/VulkanDevice.hpp"
+#include "Testing.hpp"
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -7,10 +8,6 @@
 #include <string_view>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 void CheckResult(const AgcDriver::ComputePipelineReplayResult& result) {
     Require(!result.deviceName.empty() && result.vendorId != 0 && result.apiVersion != 0, "replay did not report its device");

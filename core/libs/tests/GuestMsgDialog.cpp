@@ -2,6 +2,7 @@
 #include "prx/libSceMsgDialog/include/MsgDialogParam.hpp"
 #include "prx/libSceIme/include/ModalDialog.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
@@ -21,12 +22,6 @@ constexpr int ErrBusy = static_cast<int>(0x80B80007u);
 constexpr int ErrParam = static_cast<int>(0x80B80001u);
 constexpr int ErrNotRunning = static_cast<int>(0x80B8000Bu);
 constexpr int ErrArgNull = static_cast<int>(0x80B8000Du);
-
-void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "msg dialog: %s\n", what);
-    std::abort();
-}
 
 struct UserMessage {
     std::int32_t buttonType;

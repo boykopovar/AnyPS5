@@ -1,4 +1,5 @@
 #include "prx/libSceCamera/libSceCamera.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -13,13 +14,6 @@ constexpr int ErrorNotOpen = static_cast<int>(0x802E0004u);
 constexpr int ErrorFormatUnknown = static_cast<int>(0x802E0007u);
 constexpr int ErrorNotConnected = static_cast<int>(0x802E0010u);
 constexpr std::int32_t SystemUser = 0xFF;
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "Camera: %s\n", message);
-        std::abort();
-    }
-}
 
 template <typename TCall>
 void RequireNotImplemented(TCall call, const std::string& name) {

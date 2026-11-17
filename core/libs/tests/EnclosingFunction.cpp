@@ -1,17 +1,12 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/exceptions/Unwind.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "enclosing function check failed: %s\n", message);
-    std::exit(1);
-}
 
 int dataMarker = 7;
 

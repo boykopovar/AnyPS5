@@ -1,4 +1,5 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -8,13 +9,6 @@
 #include <type_traits>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "Inspector::IdentifiersFactory check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 void RequireString(const NKWebKit::WtfAbi::String& value, const char* expected) {
     const auto length = static_cast<unsigned>(std::strlen(expected));

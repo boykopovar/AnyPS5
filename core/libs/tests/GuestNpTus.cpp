@@ -1,6 +1,7 @@
 #include "prx/libSceNpTus/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstdint>
@@ -14,8 +15,6 @@ static constexpr int ABORTED = static_cast<int>(0x80550707);
 static constexpr int INSUFFICIENT_ARGUMENT = static_cast<int>(0x8055070C);
 static constexpr int INVALID_ID = static_cast<int>(0x8055070E);
 static constexpr int TOO_MANY_SLOTID = static_cast<int>(0x80550718);
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static void RequireFinished(int reqId, int expected) {
     int result = 0;

@@ -1,17 +1,12 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 
 static constexpr int SCE_OK = 0;
 static constexpr std::uintptr_t ChainReach = std::uintptr_t{64} << 10;
-
-static void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "guest pthread frame chain: %s\n", what);
-    std::abort();
-}
 
 struct Walk {
     int frames = 0;

@@ -1,16 +1,11 @@
 #include "prx/libScePngDec/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
-
-static void Require(bool value, std::source_location location = std::source_location::current()) {
-    if (value) return;
-    std::fprintf(stderr, "%s:%u: PNG work-memory assertion failed\n", location.file_name(), location.line());
-    std::abort();
-}
 
 int main() {
     const PngDecCreateParam w1None{sizeof(PngDecCreateParam), 0, 1};

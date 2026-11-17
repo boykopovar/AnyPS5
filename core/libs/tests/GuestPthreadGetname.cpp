@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdlib>
@@ -12,8 +13,6 @@ static constexpr int SCE_KERNEL_ERROR_EINVAL = static_cast<int>(0x80020016);
 static constexpr int SCE_KERNEL_ERROR_EFAULT = static_cast<int>(0x8002000e);
 static constexpr int SCE_KERNEL_ERROR_ENAMETOOLONG = static_cast<int>(0x8002003f);
 static constexpr int SCE_KERNEL_ERROR_ESRCH = static_cast<int>(0x80020003);
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static std::array<unsigned char, 64> Read(Pthread thread, int expected) {
     std::array<unsigned char, 64> buffer{};

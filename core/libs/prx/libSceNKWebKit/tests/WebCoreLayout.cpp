@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -9,14 +10,6 @@
 #include <string>
 
 using NKWebKit::WtfAbi::String;
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "WebCore layout check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static String Narrow(const std::string& text) {
     return _ZN3WTF10StringImpl6createEPKhj(reinterpret_cast<const unsigned char*>(text.data()), static_cast<unsigned>(text.size()));

@@ -1,14 +1,9 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdlib>
-
-static void Require(bool condition) {
-    if (!condition) {
-        std::abort();
-    }
-}
 
 static void TestNullOutputs() {
     Require(sceKernelConvertLocaltimeToUtc(0, 0, nullptr, nullptr, nullptr) == 0);

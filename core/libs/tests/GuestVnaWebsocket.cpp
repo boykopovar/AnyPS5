@@ -1,4 +1,5 @@
 #include "prx/libSceVnaWebsocket/libSceVnaWebsocket.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cerrno>
@@ -9,10 +10,6 @@
 #include <string>
 
 namespace {
-
-void Require(bool value) {
-    if (!value) std::abort();
-}
 
 template <typename TAction>
 bool ThrowsMessage(TAction action, const char* expected) {

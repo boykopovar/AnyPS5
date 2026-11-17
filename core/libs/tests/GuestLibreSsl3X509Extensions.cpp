@@ -1,16 +1,11 @@
 #include "prx/libSceLibreSsl3/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <climits>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <source_location>
-
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL X509 extension check failed at line %u\n", location.line());
-    std::abort();
-}
 
 static void TestGet0Extensions() {
     LibreSsl3Stack extensions {};

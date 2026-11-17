@@ -1,17 +1,12 @@
 #include "prx/libSceAudioOut/include/AudioOut.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdlib>
 
 namespace {
-
-void Require(bool value) {
-    if (!value) {
-        std::abort();
-    }
-}
 
 void TestLifecycle() {
     Require(sceAudioOutInit() == 0 || sceAudioOutInit() == static_cast<int>(0x8026000e));

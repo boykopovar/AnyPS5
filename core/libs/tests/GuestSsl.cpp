@@ -2,6 +2,7 @@
 #include <cerrno>
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "ProcessParametersFixture.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstring>
 #include <cstddef>
@@ -9,8 +10,6 @@
 #include <cstdlib>
 #include <exception>
 #include <string>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 template <typename TCall>
 static bool Throws(TCall call) {

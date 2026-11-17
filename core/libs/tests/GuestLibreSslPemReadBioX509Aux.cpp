@@ -1,6 +1,7 @@
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -77,12 +78,6 @@ struct CallbackState {
     std::array<std::int64_t, 2> results{};
     int calls;
 };
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "failed: %s\n", message);
-    std::abort();
-}
 
 int APS5_VABI Gets(Bio* bio, char* destination, int size) {
     auto* const state = static_cast<ReadState*>(bio->data);

@@ -8,6 +8,7 @@ if(NOT APPLE)
 endif()
 
 add_executable(pipe_write_tests ../PipeWrite.cpp ../../prx/libkernel/Socket/src/Udp.cpp)
+target_include_directories(pipe_write_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../../test/include)
 target_include_directories(pipe_write_tests PRIVATE ../..)
 target_compile_features(pipe_write_tests PRIVATE cxx_std_20)
 target_link_options(pipe_write_tests PRIVATE LINKER:-dead_strip)

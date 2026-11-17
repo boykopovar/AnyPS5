@@ -13,14 +13,9 @@
 #include <source_location>
 #include "prx/libSceNet/libSceNet.hpp"
 #include "prx/libkernel/Socket/include/SocketPoll.hpp"
+#include "Testing.hpp"
 
 
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 static void CheckFlag(int socket, int expected) {
     for (const std::uint32_t capacity : {0u, 1u, 3u, 4u, 8u}) {

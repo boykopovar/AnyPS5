@@ -1,5 +1,6 @@
 #include "prx/libSceNpCppWebApi/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -10,13 +11,6 @@
 #include <string>
 
 namespace {
-
-void Require(bool value, std::source_location at = std::source_location::current()) {
-    if (!value) {
-        std::fprintf(stderr, "requirement failed at %s:%u\n", at.file_name(), at.line());
-        std::abort();
-    }
-}
 
 constexpr std::size_t kStringSize = 0x20;
 constexpr std::size_t kGuardSize = 0x10;

@@ -2,6 +2,7 @@
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "SceTypes.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -9,12 +10,6 @@
 #include <cstdlib>
 #include <source_location>
 #include <thread>
-
-static void Require(bool value, std::source_location location = std::source_location::current()) {
-    if (value) return;
-    std::fprintf(stderr, "%s:%u: requirement failed\n", location.file_name(), location.line());
-    std::abort();
-}
 
 static constexpr auto ObservationTime = std::chrono::milliseconds(1500);
 

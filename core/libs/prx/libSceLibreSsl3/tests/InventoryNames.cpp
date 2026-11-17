@@ -1,19 +1,10 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
 #include <stdexcept>
-
-namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL3 inventory-name check failed at line %u\n", location.line());
-    std::abort();
-}
-
-}
 
 int main() {
     std::uint64_t limbs[1] = {0x8000000000000001ULL};

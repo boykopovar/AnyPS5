@@ -4,6 +4,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceLibreSsl/ErrorQueue.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -130,13 +131,6 @@ void InitializePatched(const std::filesystem::path& directory) {
 
 namespace {
 
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "%s\n", message);
-        std::abort();
-    }
-}
-
 int allocationsUntilFailure = -1;
 std::atomic<int> allocations{0};
 void* wipePointer = nullptr;
@@ -176,16 +170,6 @@ void InitializeHeap() {
     ApplicationHeapRegister_nid_no_patch(api.data());
 }
 
-template<class TFunction>
-void RequireUnsupported(TFunction function) {
-    bool threw = false;
-    try {
-        function();
-    } catch (const std::runtime_error&) {
-        threw = true;
-    }
-    Require(threw, "unsupported BIO path did not throw");
-}
 
 void RequireError(std::uint64_t expected) {
     Require(ERR_peek_error_nid_postfix() == expected, "BIO error code or ordering");
@@ -535,7 +519,7 @@ void TestUnsupported() {
     RequireError(0x20fff078);
     bio->initialized = 1;
     bio->extraData = bio;
-    RequireUnsupported([&] { BIO_free_nid_postfix(bio); });
+    ExpectErr<std::runtime_error>([&] { BIO_free_nid_postfix(bio); });
     Require(bio->references == 1, "unsupported ex-data preserves reference");
     bio->extraData = nullptr;
     const BioMethod* method = bio->method;

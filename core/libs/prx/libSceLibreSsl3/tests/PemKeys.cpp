@@ -5,6 +5,7 @@
 #include "prx/libSceLibreSsl/include/Ec.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -316,12 +317,6 @@ constexpr char GarbagePkcs8RecordPem[] =
     "-----END PRIVATE KEY-----\n";
 
 int passwordCallbackCalls = 0;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "requirement failed at line %u\n", static_cast<unsigned>(location.line()));
-    std::abort();
-}
 
 int APS5_VABI CountingPasswordCallback(char* buffer, int size, int readFlag, void* userData) {
     static_cast<void>(buffer);

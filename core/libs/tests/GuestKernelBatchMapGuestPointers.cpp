@@ -3,6 +3,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -21,14 +22,6 @@
 namespace {
 
 constexpr std::size_t GuestPageSize = 0x4000;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "guest kernel batch map guest pointers check failed at %s:%u\n",
-            location.file_name(), static_cast<unsigned>(location.line()));
-        std::abort();
-    }
-}
 
 std::size_t HostPageSize() {
 #ifdef _WIN32

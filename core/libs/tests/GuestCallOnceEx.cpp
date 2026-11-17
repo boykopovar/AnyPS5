@@ -1,4 +1,5 @@
 #include "prx/libSceLibcInternal/libSceLibcInternal.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <atomic>
 #include <barrier>
@@ -20,23 +21,6 @@
 namespace {
 
 constexpr unsigned Workers = 16;
-
-void Require(bool value, std::source_location location = std::source_location::current()) {
-    if (value) return;
-    std::fprintf(stderr, "Call-once-ex check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<class Exception, class Function>
-void RequireThrow(Function function) {
-    bool thrown = false;
-    try {
-        function();
-    } catch (const Exception&) {
-        thrown = true;
-    }
-    Require(thrown);
-}
 
 void APS5_VABI Increment(void* argument) {
     ++*static_cast<int*>(argument);
@@ -141,7 +125,7 @@ void CheckFlagsAndArguments() {
     _Call_onceEx_nid_postfix(&flag, NullArgument, nullptr);
     Require(flag == 1 && nullCalls == 1);
     flag = 0;
-    RequireThrow<std::invalid_argument>([&] { _Call_onceEx_nid_postfix(&flag, nullptr, nullptr); });
+    ExpectErr<std::invalid_argument>([&] { _Call_onceEx_nid_postfix(&flag, nullptr, nullptr); });
     Require(flag == 0);
     Mutation state;
     _Call_onceEx_nid_postfix(&state.flag, MutateFlag, &state);
@@ -311,17 +295,17 @@ private:
 
 void CheckVirtualPointers() {
     FlagPage page;
-    RequireThrow<std::invalid_argument>([] { _Do_call_nid_postfix(nullptr); });
-    RequireThrow<std::invalid_argument>([&] { _Do_call_nid_postfix(page.Unreadable()); });
+    ExpectErr<std::invalid_argument>([] { _Do_call_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([&] { _Do_call_nid_postfix(page.Unreadable()); });
     CallTarget target{nullptr};
-    RequireThrow<std::invalid_argument>([&] { _Do_call_nid_postfix(&target); });
+    ExpectErr<std::invalid_argument>([&] { _Do_call_nid_postfix(&target); });
     target.table = reinterpret_cast<const VirtualCallback*>(page.Unreadable());
-    RequireThrow<std::invalid_argument>([&] { _Do_call_nid_postfix(&target); });
+    ExpectErr<std::invalid_argument>([&] { _Do_call_nid_postfix(&target); });
     const std::array<VirtualCallback, 2> emptyTable{nullptr, SecondSlot};
     target.table = emptyTable.data();
-    RequireThrow<std::invalid_argument>([&] { _Do_call_nid_postfix(&target); });
+    ExpectErr<std::invalid_argument>([&] { _Do_call_nid_postfix(&target); });
     std::int32_t flag = 0;
-    RequireThrow<std::invalid_argument>([&] { _Call_onceEx_nid_postfix(&flag, _Do_call_nid_postfix, &target); });
+    ExpectErr<std::invalid_argument>([&] { _Call_onceEx_nid_postfix(&flag, _Do_call_nid_postfix, &target); });
     Require(flag == 0 && target.observed == nullptr && target.firstCalls == 0 && target.secondCalls == 0);
     const std::array<VirtualCallback, 2> table{FirstSlot, SecondSlot};
     target.table = table.data();
@@ -331,10 +315,10 @@ void CheckVirtualPointers() {
 
 void CheckPointers() {
     int calls = 0;
-    RequireThrow<std::invalid_argument>([&] { _Call_onceEx_nid_postfix(nullptr, Increment, &calls); });
-    RequireThrow<std::invalid_argument>([&] { _Call_onceEx_nid_postfix(reinterpret_cast<std::int32_t*>(0x10), Increment, &calls); });
+    ExpectErr<std::invalid_argument>([&] { _Call_onceEx_nid_postfix(nullptr, Increment, &calls); });
+    ExpectErr<std::invalid_argument>([&] { _Call_onceEx_nid_postfix(reinterpret_cast<std::int32_t*>(0x10), Increment, &calls); });
     FlagPage page;
-    RequireThrow<std::invalid_argument>([&] { _Call_onceEx_nid_postfix(page.Unreadable(), Increment, &calls); });
+    ExpectErr<std::invalid_argument>([&] { _Call_onceEx_nid_postfix(page.Unreadable(), Increment, &calls); });
     Require(calls == 0);
     *page.Flag() = -3;
     page.SetWritable(false);
@@ -343,7 +327,7 @@ void CheckPointers() {
     page.SetWritable(true);
     *page.Flag() = 0;
     page.SetWritable(false);
-    RequireThrow<std::invalid_argument>([&] { _Call_onceEx_nid_postfix(page.Flag(), Increment, &calls); });
+    ExpectErr<std::invalid_argument>([&] { _Call_onceEx_nid_postfix(page.Flag(), Increment, &calls); });
     Require(calls == 1 && *page.Flag() == 0);
     page.SetWritable(true);
     std::thread retry([&] { _Call_onceEx_nid_postfix(page.Flag(), Increment, &calls); });

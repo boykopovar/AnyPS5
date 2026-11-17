@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include "VectorExecution.hpp"
 #include <codegen/x86/LaneSplitLowering.hpp>
 #include <codegen/x86/IAmd64OnlyInstructionMatcher.hpp>
@@ -13,10 +14,6 @@ namespace {
 
 using LoweringExecution::Bytes;
 using Codegen::LaneSplitShape;
-
-void require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 Bytes vex(std::uint8_t map, std::uint8_t prefix, bool wide256, std::uint8_t opcode, std::uint8_t reg, std::uint8_t vvvv, std::uint8_t rm, int immediate = -1) {
     Bytes bytes{0xC4, static_cast<std::uint8_t>(((reg & 8) ? 0 : 0x80) | 0x40 | ((rm & 8) ? 0 : 0x20) | map),
@@ -81,25 +78,25 @@ void decoding() {
     for (const auto& form : forms()) {
         const auto bytes = site(form, true, 9, 3, 12, 0x21);
         const auto operands = Codegen::DecodeLaneSplit(bytes.data(), bytes.size());
-        require(operands && operands->Shape == form.Shape && operands->Destination == 9 && operands->Opcode == form.Opcode, "a 256-bit integer form was not decoded");
-        if (form.Shape == LaneSplitShape::ShiftImmediate) require(operands->First == 3, "a shift by immediate lost its source");
-        if (form.Shape == LaneSplitShape::Binary) require(operands->First == 3 && operands->Second == 12, "a binary form lost an operand");
+        Require(operands && operands->Shape == form.Shape && operands->Destination == 9 && operands->Opcode == form.Opcode, "a 256-bit integer form was not decoded");
+        if (form.Shape == LaneSplitShape::ShiftImmediate) Require(operands->First == 3, "a shift by immediate lost its source");
+        if (form.Shape == LaneSplitShape::Binary) Require(operands->First == 3 && operands->Second == 12, "a binary form lost an operand");
         const auto narrow = site(form, false, 9, 3, 12, 0x21);
-        require(!Codegen::DecodeLaneSplit(narrow.data(), narrow.size()), "a 128-bit form was taken as a 256-bit one");
+        Require(!Codegen::DecodeLaneSplit(narrow.data(), narrow.size()), "a 128-bit form was taken as a 256-bit one");
     }
     const Bytes twoByte{0xC5, 0xF5, 0xFE, 0xC2};
     const auto shortForm = Codegen::DecodeLaneSplit(twoByte.data(), twoByte.size());
-    require(shortForm && shortForm->Destination == 0 && shortForm->First == 1 && shortForm->Second == 2, "a two-byte VEX VPADDD was not decoded");
+    Require(shortForm && shortForm->Destination == 0 && shortForm->First == 1 && shortForm->Second == 2, "a two-byte VEX VPADDD was not decoded");
     const Bytes memory{0x64, 0xC4, 0x41, 0x75, 0xFE, 0x44, 0x24, 0x10};
     const auto loaded = Codegen::DecodeLaneSplit(memory.data(), memory.size());
-    require(loaded && loaded->Memory && loaded->Memory->Prefixes == Bytes{0x64} && loaded->Destination == 8, "a memory VPADDD lost its prefix or operand");
+    Require(loaded && loaded->Memory && loaded->Memory->Prefixes == Bytes{0x64} && loaded->Destination == 8, "a memory VPADDD lost its prefix or operand");
     for (const Bytes bytes : {Bytes{0xC5, 0xFD, 0x6F, 0xC1}, Bytes{0xC4, 0xE2, 0x7D, 0x36, 0xC1}, Bytes{0xC4, 0xE2, 0x7D, 0x47, 0xC1}, Bytes{0xC5, 0xFC, 0x58, 0xC1}, Bytes{0xC5, 0xFD, 0xD7, 0xC1}, Bytes{0xC4, 0xE2, 0x7D, 0x30, 0xC1}, Bytes{0x90}})
-        require(!Codegen::DecodeLaneSplit(bytes.data(), bytes.size()), "an instruction that is not lane-local integer AVX2 was split");
+        Require(!Codegen::DecodeLaneSplit(bytes.data(), bytes.size()), "an instruction that is not lane-local integer AVX2 was split");
     for (const Bytes bytes : {Bytes{0xC5, 0xF5, 0x72, 0x30, 0x01}, Bytes{0xC5, 0xF5, 0xFE, 0xC2, 0x90}, Bytes{0xC4, 0xE3, 0x75, 0x0E, 0xC2}}) {
         bool rejected = false;
         try { (void)Codegen::DecodeLaneSplit(bytes.data(), bytes.size()); }
         catch (const Codegen::CodegenException&) { rejected = true; }
-        require(rejected, "a malformed 256-bit integer instruction was accepted");
+        Require(rejected, "a malformed 256-bit integer instruction was accepted");
     }
 }
 
@@ -108,9 +105,9 @@ void matching() {
     const auto rosetta = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
     const auto avx = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Avx);
     const Bytes bytes{0xC5, 0xF5, 0xFE, 0xC2};
-    require(!intel->Match(bytes.data(), bytes.size()) && !rosetta->Match(bytes.data(), bytes.size()), "Intel or Rosetta mode split a 256-bit integer instruction");
+    Require(!intel->Match(bytes.data(), bytes.size()) && !rosetta->Match(bytes.data(), bytes.size()), "Intel or Rosetta mode split a 256-bit integer instruction");
     const auto match = avx->Match(bytes.data(), bytes.size());
-    require(match && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline && match->RelocatableWindow && match->InstructionName == "256-bit integer", "AVX mode did not lower a 256-bit integer instruction through a movable stub");
+    Require(match && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline && match->RelocatableWindow && match->InstructionName == "256-bit integer", "AVX mode did not lower a 256-bit integer instruction through a movable stub");
 }
 
 #if LOWERING_EXECUTION_AVAILABLE
@@ -156,7 +153,7 @@ void check(const Form& form, std::uint8_t dst, std::uint8_t first, std::uint8_t 
         if (machine.Ymm[reg] != expected)
             throw std::runtime_error("lane split of opcode " + std::to_string(form.Opcode) + " map " + std::to_string(form.Map) + " dst " + std::to_string(dst) + " first " + std::to_string(first) + " second " + std::to_string(second) + ": ymm" + std::to_string(reg) + " is wrong");
     }
-    for (const auto slot : machine.RedZone) require(slot == LoweringExecution::kSentinel, "a lane split overwrote the red zone");
+    for (const auto slot : machine.RedZone) Require(slot == LoweringExecution::kSentinel, "a lane split overwrote the red zone");
 }
 
 void execution() {

@@ -1,6 +1,7 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdio>
@@ -15,12 +16,6 @@ unsigned releases = 0;
 std::size_t lastSize = 0;
 std::size_t lastAlignment = 0;
 void* lastReleased = nullptr;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "libc internal aligned new: %s\n", message);
-    std::abort();
-}
 
 void* APS5_VABI allocate(std::size_t bytes) {
     ++allocations;

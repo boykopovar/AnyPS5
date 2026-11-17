@@ -1,6 +1,7 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 
 #include <algorithm>
 #include <array>
@@ -15,12 +16,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "ASN.1 value check failed at line %u\n", location.line());
-    std::abort();
-}
 
 std::unordered_map<void*, std::size_t> allocations;
 bool failAllocation = false;
@@ -95,7 +90,7 @@ void Strings() {
     Require(allocations.empty());
 }
 
-void Failures() {
+void FailurePaths() {
     Asn1String string{0, 22, nullptr, 0x40};
     Require(ASN1_STRING_set_nid_postfix(&string, "old", 3) == 1);
     auto* previous = string.data;
@@ -239,7 +234,7 @@ int main() {
         reinterpret_cast<void*>(Align_nid_no_patch), reinterpret_cast<void*>(Realign_nid_no_patch), reinterpret_cast<void*>(PosixAlign_nid_no_patch)};
     ApplicationHeapRegister_nid_no_patch(api.data());
     Strings();
-    Failures();
+    FailurePaths();
     Integers();
     Compare();
     Destruction();

@@ -4,6 +4,7 @@
 #include "prx/libSceCommonDialog/include/Api.hpp"
 #include "prx/libSceCommonDialog/include/DialogUse.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstddef>
 #include <cerrno>
@@ -29,12 +30,6 @@ constexpr std::int32_t ResultUserCanceled = 1;
 constexpr std::int32_t ModeSend = 1;
 constexpr std::int32_t ModeRecv = 2;
 
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "InvitationDialog: %s\n", message);
-        std::abort();
-    }
-}
 
 template <typename TCall>
 void RequireUnsettled(TCall call, const char* message) {

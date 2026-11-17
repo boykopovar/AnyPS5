@@ -2,6 +2,7 @@
 #include "prx/libSceHttpCache/libSceHttpCache.hpp"
 #include "prx/libSceRtc/libSceRtc.hpp"
 #include "prx/libSceUserService/libSceUserService.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -38,8 +39,6 @@ constexpr int InvalidUser = static_cast<int>(0x817a0013);
 constexpr int TooManyCaches = static_cast<int>(0x817a0002);
 constexpr int UserServiceAlreadyInitialized = static_cast<int>(0x80960003);
 constexpr std::int32_t InitialUser = 0x10000000;
-
-void Require(bool value) { if (!value) std::abort(); }
 
 void TestWithoutCache() {
     Require(sceHttpCacheTerm(1) == NotFound);

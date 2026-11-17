@@ -1,15 +1,10 @@
 #include "Mixer.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
-
-static void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
 
 int main() {
     std::int16_t pcm[4] = {16384, -16384, 8192, -8192};

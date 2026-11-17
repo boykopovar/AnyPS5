@@ -1,13 +1,12 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdlib>
 #include <initializer_list>
 
 static void APS5_VABI Handler(int, void*) {}
 static void APS5_VABI Other(int, void*) {}
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 int main() {
     auto* handler = reinterpret_cast<void*>(&Handler);

@@ -5,6 +5,7 @@
 #include "prx/libSceIme/include/ImeInput.hpp"
 #include "prx/libSceIme/include/ImeKeyboardView.hpp"
 #include "prx/libSceVideoOut/include/ImeTextInput.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -29,8 +30,6 @@ constexpr int ErrorNotInUse = static_cast<int>(0x80bc0107u);
 constexpr int ErrorInvalidMaxTextLength = static_cast<int>(0x80bc0016u);
 constexpr int ErrorInvalidInputTextBuffer = static_cast<int>(0x80bc0017u);
 constexpr int ErrorInvalidAddress = static_cast<int>(0x80bc0031u);
-
-void Require(bool value) { if (!value) std::abort(); }
 
 constexpr unsigned WindowId = 7;
 ImeTextInput g_window;

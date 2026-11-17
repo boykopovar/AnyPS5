@@ -1,5 +1,6 @@
 #include "prx/libSceOpusSilkEnc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -9,13 +10,6 @@
 #include <opus.h>
 
 namespace {
-
-void Require(bool value, const std::source_location& location = std::source_location::current()) {
-    if (!value) {
-        std::fprintf(stderr, "Require failed at %s:%d\n", location.file_name(), static_cast<int>(location.line()));
-        std::abort();
-    }
-}
 
 template <std::size_t Size>
 OpusSilkEncoder* ToState(std::array<std::uint8_t, Size>& block) {

@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <cmath>
 #include <cstddef>
@@ -11,23 +12,6 @@
 #include <utility>
 
 namespace {
-
-void Require(bool condition) {
-    if (!condition) {
-        std::abort();
-    }
-}
-
-template <typename F>
-void RequireThrows(F&& f) {
-    bool caught = false;
-    try {
-        f();
-    } catch (const std::exception&) {
-        caught = true;
-    }
-    Require(caught);
-}
 
 using NKWebKit::WtfAbi::String;
 using NKWebKit::WtfAbi::StringImpl;
@@ -63,9 +47,9 @@ void TestURL() {
     Require(_ZNK3WTF3URL10protocolIsEPKc(&url, "https"));
     Require(!_ZNK3WTF3URL10protocolIsEPKc(&url, "http"));
     Require(!_ZNK3WTF3URL10protocolIsEPKc(&url, "ftp"));
-    RequireThrows([&] { _ZNK3WTF3URL10protocolIsEPKc(&url, nullptr); });
+    ExpectErr([&] { _ZNK3WTF3URL10protocolIsEPKc(&url, nullptr); });
     Require(!_ZNK3WTF3URL10protocolIsEPKc(&url, ""));
-    RequireThrows([] { _ZNK3WTF3URL10protocolIsEPKc(nullptr, "https"); });
+    ExpectErr([] { _ZNK3WTF3URL10protocolIsEPKc(nullptr, "https"); });
 
     URL invalidUrl{uStr.impl, 0U, 8, 13, 20, 36, 45, 49, 57};
     Require(!_ZNK3WTF3URL10protocolIsEPKc(&invalidUrl, "https"));
@@ -87,19 +71,19 @@ void TestURL() {
 
     auto hp = _ZNK3WTF3URL11hostAndPortEv(&url);
     Require(ToString(hp) == "api.example.com:8443");
-    RequireThrows([] { _ZNK3WTF3URL11hostAndPortEv(nullptr); });
+    ExpectErr([] { _ZNK3WTF3URL11hostAndPortEv(nullptr); });
 
     auto php = _ZNK3WTF3URL19protocolHostAndPortEv(&url);
     Require(ToString(php) == "https://api.example.com:8443");
-    RequireThrows([] { _ZNK3WTF3URL19protocolHostAndPortEv(nullptr); });
+    ExpectErr([] { _ZNK3WTF3URL19protocolHostAndPortEv(nullptr); });
 
     auto u = _ZNK3WTF3URL4userEv(&url);
     Require(ToString(u) == "alice");
-    RequireThrows([] { _ZNK3WTF3URL4userEv(nullptr); });
+    ExpectErr([] { _ZNK3WTF3URL4userEv(nullptr); });
 
     auto p = _ZNK3WTF3URL8passwordEv(&url);
     Require(ToString(p) == "secret");
-    RequireThrows([] { _ZNK3WTF3URL8passwordEv(nullptr); });
+    ExpectErr([] { _ZNK3WTF3URL8passwordEv(nullptr); });
 
     Require(_ZNK3WTF3URL16isMatchingDomainENS_10StringViewE(&url, {"api.example.com", 15, true}));
     Require(_ZNK3WTF3URL16isMatchingDomainENS_10StringViewE(&url, {"example.com", 11, true}));
@@ -107,7 +91,7 @@ void TestURL() {
     Require(!_ZNK3WTF3URL16isMatchingDomainENS_10StringViewE(&url, {"google.com", 10, true}));
     Require(!_ZNK3WTF3URL16isMatchingDomainENS_10StringViewE(&url, {"ple.com", 7, true}));
     Require(!_ZNK3WTF3URL16isMatchingDomainENS_10StringViewE(&url, {"sub.api.example.com", 19, true}));
-    RequireThrows([] { _ZNK3WTF3URL16isMatchingDomainENS_10StringViewE(nullptr, {"example.com", 11, true}); });
+    ExpectErr([] { _ZNK3WTF3URL16isMatchingDomainENS_10StringViewE(nullptr, {"example.com", 11, true}); });
 
     auto fStr = _ZN3WTF10StringImpl6createEPKhj(reinterpret_cast<const unsigned char*>("file:///etc/hosts"), 17);
     URL fileUrl{fStr.impl, 1U | (4U << 6), 7, 7, 7, 7, 8, 17, 17};
@@ -116,7 +100,7 @@ void TestURL() {
 
     auto nonFilePath = _ZNK3WTF3URL14fileSystemPathEv(&url);
     Require(ToString(nonFilePath).empty());
-    RequireThrows([] { _ZNK3WTF3URL14fileSystemPathEv(nullptr); });
+    ExpectErr([] { _ZNK3WTF3URL14fileSystemPathEv(nullptr); });
 
     URL noHostUrl{fStr.impl, 1U | (4U << 6), 7, 7, 7, 7, 7, 17, 17};
     auto noHp = _ZNK3WTF3URL11hostAndPortEv(&noHostUrl);
@@ -141,7 +125,7 @@ void TestURL() {
     String stripped(ownedUrl.impl);
     ownedUrl.impl = nullptr;
     Require(ToString(stripped) == "https://alice:secret@api.example.com:8443/v1/data");
-    RequireThrows([] { _ZN3WTF3URL32removeQueryAndFragmentIdentifierEv(nullptr); });
+    ExpectErr([] { _ZN3WTF3URL32removeQueryAndFragmentIdentifierEv(nullptr); });
 }
 
 void TestStringImplReplace() {
@@ -150,7 +134,7 @@ void TestStringImplReplace() {
     Require(ToString(rep1) == "bonono");
     auto noRep1 = _ZN3WTF10StringImpl7replaceEDsDs(str8.impl, 'z', 'x');
     Require(noRep1.impl == str8.impl);
-    RequireThrows([] { _ZN3WTF10StringImpl7replaceEDsDs(nullptr, 'a', 'b'); });
+    ExpectErr([] { _ZN3WTF10StringImpl7replaceEDsDs(nullptr, 'a', 'b'); });
 
     auto rep2 = _ZN3WTF10StringImpl7replaceEDsPKhj(str8.impl, 'a', reinterpret_cast<const unsigned char*>("12"), 2);
     Require(ToString(rep2) == "b12n12n12");
@@ -159,8 +143,8 @@ void TestStringImplReplace() {
     const unsigned char emptyRep[] = "";
     auto repEmpty = _ZN3WTF10StringImpl7replaceEDsPKhj(str8.impl, 'a', emptyRep, 0);
     Require(ToString(repEmpty) == "bnn");
-    RequireThrows([] { _ZN3WTF10StringImpl7replaceEDsPKhj(nullptr, 'a', reinterpret_cast<const unsigned char*>("b"), 1); });
-    RequireThrows([&] { _ZN3WTF10StringImpl7replaceEDsPKhj(str8.impl, 'a', nullptr, 0); });
+    ExpectErr([] { _ZN3WTF10StringImpl7replaceEDsPKhj(nullptr, 'a', reinterpret_cast<const unsigned char*>("b"), 1); });
+    ExpectErr([&] { _ZN3WTF10StringImpl7replaceEDsPKhj(str8.impl, 'a', nullptr, 0); });
 
     const char16_t wideB[] = u"banana";
     auto str16 = _ZN3WTF10StringImpl6createEPKDsj(wideB, 6);
@@ -203,11 +187,11 @@ void TestStringViewSplitResultIterator() {
     _ZN3WTF10StringView11SplitResult8IteratorppEv(&singleIt);
     Require(singleIt.isDone);
 
-    RequireThrows([] { _ZN3WTF10StringView11SplitResult8Iterator17findNextSubstringEv(nullptr); });
-    RequireThrows([] { _ZN3WTF10StringView11SplitResult8IteratorppEv(nullptr); });
+    ExpectErr([] { _ZN3WTF10StringView11SplitResult8Iterator17findNextSubstringEv(nullptr); });
+    ExpectErr([] { _ZN3WTF10StringView11SplitResult8IteratorppEv(nullptr); });
     SplitResultIterator brokenIt{nullptr, 0, 0, false};
-    RequireThrows([&] { _ZN3WTF10StringView11SplitResult8Iterator17findNextSubstringEv(&brokenIt); });
-    RequireThrows([&] { _ZN3WTF10StringView11SplitResult8IteratorppEv(&brokenIt); });
+    ExpectErr([&] { _ZN3WTF10StringView11SplitResult8Iterator17findNextSubstringEv(&brokenIt); });
+    ExpectErr([&] { _ZN3WTF10StringView11SplitResult8IteratorppEv(&brokenIt); });
 }
 
 void TestPersistence() {
@@ -260,19 +244,19 @@ void TestPersistence() {
     _ZN3WTF11Persistence7EncoderC2Ev(&enc2);
     _ZN3WTF11Persistence7EncoderD2Ev(&enc2);
 
-    RequireThrows([] { _ZN3WTF11Persistence7EncoderlsEb(nullptr, true); });
-    RequireThrows([] { _ZN3WTF11Persistence7EncoderlsEh(nullptr, 0); });
-    RequireThrows([] { _ZN3WTF11Persistence7EncoderlsEs(nullptr, 0); });
-    RequireThrows([] { _ZN3WTF11Persistence7EncoderlsEt(nullptr, 0); });
-    RequireThrows([] { _ZN3WTF11Persistence7EncoderlsEi(nullptr, 0); });
-    RequireThrows([] { _ZN3WTF11Persistence7EncoderlsEj(nullptr, 0); });
-    RequireThrows([] { _ZN3WTF11Persistence7EncoderlsEl(nullptr, 0); });
-    RequireThrows([] { _ZN3WTF11Persistence7EncoderlsEm(nullptr, 0); });
-    RequireThrows([] { _ZN3WTF11Persistence7EncoderlsEf(nullptr, 0.0f); });
-    RequireThrows([] { _ZN3WTF11Persistence7EncoderlsEd(nullptr, 0.0); });
-    RequireThrows([] { _ZN3WTF11Persistence7Encoder14encodeChecksumEv(nullptr); });
-    RequireThrows([] { _ZN3WTF11Persistence7Decoder14verifyChecksumEv(nullptr); });
-    RequireThrows([] { _ZNK3WTF11Persistence7Decoder28bufferIsLargeEnoughToContainEm(nullptr, 10); });
+    ExpectErr([] { _ZN3WTF11Persistence7EncoderlsEb(nullptr, true); });
+    ExpectErr([] { _ZN3WTF11Persistence7EncoderlsEh(nullptr, 0); });
+    ExpectErr([] { _ZN3WTF11Persistence7EncoderlsEs(nullptr, 0); });
+    ExpectErr([] { _ZN3WTF11Persistence7EncoderlsEt(nullptr, 0); });
+    ExpectErr([] { _ZN3WTF11Persistence7EncoderlsEi(nullptr, 0); });
+    ExpectErr([] { _ZN3WTF11Persistence7EncoderlsEj(nullptr, 0); });
+    ExpectErr([] { _ZN3WTF11Persistence7EncoderlsEl(nullptr, 0); });
+    ExpectErr([] { _ZN3WTF11Persistence7EncoderlsEm(nullptr, 0); });
+    ExpectErr([] { _ZN3WTF11Persistence7EncoderlsEf(nullptr, 0.0f); });
+    ExpectErr([] { _ZN3WTF11Persistence7EncoderlsEd(nullptr, 0.0); });
+    ExpectErr([] { _ZN3WTF11Persistence7Encoder14encodeChecksumEv(nullptr); });
+    ExpectErr([] { _ZN3WTF11Persistence7Decoder14verifyChecksumEv(nullptr); });
+    ExpectErr([] { _ZNK3WTF11Persistence7Decoder28bufferIsLargeEnoughToContainEm(nullptr, 10); });
 }
 
 void TestString() {
@@ -286,7 +270,7 @@ void TestString() {
     auto emptySpStr = _ZN3WTF10StringImpl6createEPKhj(reinterpret_cast<const unsigned char*>(",,,,"), 4);
     auto vecEmpty = _ZNK3WTF6String5splitEDs(&emptySpStr, ',');
     Require(vecEmpty.size == 0);
-    RequireThrows([] { _ZNK3WTF6String5splitEDs(nullptr, ','); });
+    ExpectErr([] { _ZNK3WTF6String5splitEDs(nullptr, ','); });
 
     auto vec2 = _ZNK3WTF6String25splitAllowingEmptyEntriesEDs(&spStr, ',');
     Require(vec2.size == 4);
@@ -299,7 +283,7 @@ void TestString() {
     auto vecAllowEmpty = _ZNK3WTF6String25splitAllowingEmptyEntriesEDs(&emptyAllow, ',');
     Require(vecAllowEmpty.size == 1);
     Require(ToString(vecAllowEmpty.buffer[0]).empty());
-    RequireThrows([] { _ZNK3WTF6String25splitAllowingEmptyEntriesEDs(nullptr, ','); });
+    ExpectErr([] { _ZNK3WTF6String25splitAllowingEmptyEntriesEDs(nullptr, ','); });
 
     auto ntStr = _ZN3WTF10StringImpl6createEPKhj(reinterpret_cast<const unsigned char*>("test"), 4);
     auto ntVec = _ZNK3WTF6String29charactersWithNullTerminationEv(&ntStr);
@@ -308,7 +292,7 @@ void TestString() {
 
     auto ntEmpty = _ZNK3WTF6String29charactersWithNullTerminationEv(&emptyAllow);
     Require(ntEmpty.size == 1 && ntEmpty.buffer[0] == 0);
-    RequireThrows([] { _ZNK3WTF6String29charactersWithNullTerminationEv(nullptr); });
+    ExpectErr([] { _ZNK3WTF6String29charactersWithNullTerminationEv(nullptr); });
 
     auto numStr = _ZN3WTF10StringImpl6createEPKhj(reinterpret_cast<const unsigned char*>("123.5"), 5);
     bool okF = false;
@@ -353,8 +337,8 @@ void TestString() {
     _ZNK3WTF6String8toDoubleEPb(&emptyAllow, &emptyOkD);
     Require(!emptyOkD);
 
-    RequireThrows([] { _ZNK3WTF6String7toFloatEPb(nullptr, nullptr); });
-    RequireThrows([] { _ZNK3WTF6String8toDoubleEPb(nullptr, nullptr); });
+    ExpectErr([] { _ZNK3WTF6String7toFloatEPb(nullptr, nullptr); });
+    ExpectErr([] { _ZNK3WTF6String8toDoubleEPb(nullptr, nullptr); });
 
     auto origStr = _ZN3WTF10StringImpl6createEPKhj(reinterpret_cast<const unsigned char*>("isolated"), 8);
     auto copy1 = _ZNKR3WTF6String12isolatedCopyEv(&origStr);
@@ -367,7 +351,7 @@ void TestString() {
 
     auto emptyCopy1 = _ZNKR3WTF6String12isolatedCopyEv(&emptyAllow);
     Require(ToString(emptyCopy1).empty());
-    RequireThrows([] { _ZNKR3WTF6String12isolatedCopyEv(nullptr); });
+    ExpectErr([] { _ZNKR3WTF6String12isolatedCopyEv(nullptr); });
 
     auto origStr2 = _ZN3WTF10StringImpl6createEPKhj(reinterpret_cast<const unsigned char*>("isolated"), 8);
     auto copy2 = _ZNO3WTF6String12isolatedCopyEv(&origStr2);
@@ -380,7 +364,7 @@ void TestString() {
     String emptyRval = _ZN3WTF10StringImpl6createEPKhj(reinterpret_cast<const unsigned char*>(""), 0);
     auto emptyCopy2 = _ZNO3WTF6String12isolatedCopyEv(&emptyRval);
     Require(ToString(emptyCopy2).empty());
-    RequireThrows([] { _ZNO3WTF6String12isolatedCopyEv(nullptr); });
+    ExpectErr([] { _ZNO3WTF6String12isolatedCopyEv(nullptr); });
 }
 
 }  // namespace

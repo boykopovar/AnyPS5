@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include <array>
 #include <cstdio>
 #include <filesystem>
@@ -11,10 +12,6 @@
 #endif
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 struct Import {
     const char* name;

@@ -1,8 +1,7 @@
 #include "prx/libSceBemp2sys/libSceBemp2sys.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdlib>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 namespace {
 

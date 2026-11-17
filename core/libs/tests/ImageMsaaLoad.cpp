@@ -1,11 +1,11 @@
 #include "Translation/TranslationContext.hpp"
 #include "RdnaDecoder/RdnaImageOpDecoder.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <stdexcept>
 #include <vector>
 
 using namespace ShaderRecompiler;
-static void Require(bool value) { if (!value) throw std::runtime_error("image msaa load regression"); }
 static std::uint32_t Word0(std::uint32_t dmask, std::uint32_t dimension) {
     return (0x3cu << 26u) | (dmask << 8u) | (dimension << 3u) | 1u;
 }

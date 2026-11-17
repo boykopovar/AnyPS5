@@ -1,6 +1,7 @@
 #include "prx/libSceAudioOut/libSceAudioOut.hpp"
 #include "prx/libSceAudioOut/src/AudioOut2PadMix.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 
 #include <cerrno>
 #include <cstddef>
@@ -10,8 +11,6 @@
 #include <filesystem>
 #include <random>
 #include <string>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 namespace {
 

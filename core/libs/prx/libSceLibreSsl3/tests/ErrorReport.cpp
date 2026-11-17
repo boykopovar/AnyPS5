@@ -1,6 +1,7 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
@@ -10,12 +11,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool condition, std::source_location where = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL3 error report assertion failed at line %u\n", where.line());
-    std::exit(1);
-}
 
 struct Report {
     std::vector<std::string> lines;

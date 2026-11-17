@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <cctype>
 #include <climits>
@@ -89,13 +90,6 @@ static constexpr int SceOk = 0;
 static constexpr int SceEnoent = static_cast<int>(0x80020002);
 static constexpr int SceEbadf = static_cast<int>(0x80020009);
 static constexpr int SceEinval = static_cast<int>(0x80020016);
-
-static void Require(bool value, std::source_location location = std::source_location::current()) {
-    if (!value) {
-        std::fprintf(stderr, "kqueue check failed at %s:%u\n", location.file_name(), static_cast<unsigned>(location.line()));
-        std::abort();
-    }
-}
 
 static double ProcessCpuSeconds() {
 #ifdef _WIN32

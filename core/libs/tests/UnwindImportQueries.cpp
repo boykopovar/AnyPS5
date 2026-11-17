@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
@@ -6,12 +7,6 @@
 namespace {
 
 std::atomic<long> queries {0};
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "unwind import query check failed: %s\n", message);
-    std::exit(1);
-}
 
 SIZE_T WINAPI CountedQuery(LPCVOID address, PMEMORY_BASIC_INFORMATION memory, SIZE_T size) {
     ++queries;

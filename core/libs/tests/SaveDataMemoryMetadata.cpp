@@ -1,6 +1,7 @@
 #include "prx/libSceSaveData/include/Api.hpp"
 #include "prx/libSceSaveData.native/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <algorithm>
 #include <array>
@@ -32,14 +33,6 @@ namespace {
 constexpr int kSaveDataNotInitialized = -2137063423;
 constexpr int kSaveDataParameter = -2137063424;
 }
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "Save-data memory check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static std::vector<char> Read(const std::filesystem::path& path) {
     std::ifstream file(path, std::ios::binary);

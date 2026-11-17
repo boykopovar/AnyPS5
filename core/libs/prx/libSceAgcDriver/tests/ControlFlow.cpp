@@ -4,6 +4,7 @@
 #include "ControlFlow/Structurizer.hpp"
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "Recompiler.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdio>
@@ -41,10 +42,6 @@ struct Program {
 };
 
 using RouteState = std::map<std::uint32_t, bool>;
-
-void require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 class StructuralDominators {
 public:
@@ -118,7 +115,7 @@ void verifyStructured(const std::string& prefix, const ControlFlowGraph& graph) 
     for (const auto& block : graph.blocks) {
         const auto& terminator = block.terminator;
         if (terminator.mergeBlock == InvalidControlFlowId) continue;
-        require(mergeOwners.emplace(terminator.mergeBlock, block.id).second, prefix + "block " + std::to_string(terminator.mergeBlock) + " merges two constructs");
+        Require(mergeOwners.emplace(terminator.mergeBlock, block.id).second, prefix + "block " + std::to_string(terminator.mergeBlock) + " merges two constructs");
         if (terminator.loopHeader) loopExits.emplace_back(terminator.mergeBlock, terminator.continueBlock);
     }
     for (const auto& block : graph.blocks) {
@@ -129,7 +126,7 @@ void verifyStructured(const std::string& prefix, const ControlFlowGraph& graph) 
             for (const auto successor : graph.FindBlock(member).successors) {
                 if (successor == terminator.mergeBlock || (dominators.Dominates(block.id, successor) && !dominators.Dominates(terminator.mergeBlock, successor))) continue;
                 const bool loopExit = std::any_of(loopExits.begin(), loopExits.end(), [&](const auto& exits) { return successor == exits.first || successor == exits.second; });
-                require(loopExit, prefix + "block " + std::to_string(member) + " of the selection at block " + std::to_string(block.id) + " branches to block " + std::to_string(successor) + " outside the construct");
+                Require(loopExit, prefix + "block " + std::to_string(member) + " of the selection at block " + std::to_string(block.id) + " branches to block " + std::to_string(successor) + " outside the construct");
             }
         }
     }
@@ -139,7 +136,7 @@ void verifyStructured(const std::string& prefix, const ControlFlowGraph& graph) 
         for (const auto member : constructBlocks(graph, dominators, loop.id, loop.terminator.mergeBlock)) {
             const auto& terminator = graph.FindBlock(member).terminator;
             if (terminator.loopHeader || dominators.Dominates(continueBlock, member)) continue;
-            require(terminator.mergeBlock != continueBlock, prefix + "the selection at block " + std::to_string(member) + " in the loop at block " + std::to_string(loop.id) + " merges at the loop's continue block " + std::to_string(continueBlock));
+            Require(terminator.mergeBlock != continueBlock, prefix + "the selection at block " + std::to_string(member) + " in the loop at block " + std::to_string(loop.id) + " merges at the loop's continue block " + std::to_string(continueBlock));
         }
     }
 }
@@ -181,8 +178,8 @@ void verifyPredecessorRebuild() {
     const std::vector<std::vector<std::uint32_t>> expected{{}, {0u}, {0u, 1u, 2u}, {}};
     for (unsigned repeat = 0; repeat < 2u; ++repeat) {
         rebuildPredecessors(graph);
-        require(graph.blocks[0].successors == std::vector<std::uint32_t>{1u, 2u} && graph.blocks[1].successors == std::vector<std::uint32_t>{2u}, "predecessor rebuild lost successor normalization");
-        for (std::size_t index = 0; index < expected.size(); ++index) require(graph.blocks[index].predecessors == expected[index], "predecessor rebuild changed the incoming edges");
+        Require(graph.blocks[0].successors == std::vector<std::uint32_t>{1u, 2u} && graph.blocks[1].successors == std::vector<std::uint32_t>{2u}, "predecessor rebuild lost successor normalization");
+        for (std::size_t index = 0; index < expected.size(); ++index) Require(graph.blocks[index].predecessors == expected[index], "predecessor rebuild changed the incoming edges");
     }
 }
 
@@ -197,14 +194,14 @@ std::uint32_t followEmptyBlocks(const std::string& prefix, const ControlFlowGrap
         const auto& block = graph.FindBlock(blockId);
         const auto& terminator = block.terminator;
         const bool empty = block.instructionBegin == block.instructionEnd;
-        require(terminator.gotoValue < 0 || empty, prefix + "block " + std::to_string(block.id) + " sets a route variable after guest instructions");
+        Require(terminator.gotoValue < 0 || empty, prefix + "block " + std::to_string(block.id) + " sets a route variable after guest instructions");
         if (terminator.gotoValue >= 0) routes[terminator.gotoVariable] = terminator.gotoValue != 0;
         if (!empty) return blockId;
         if (terminator.kind == TerminatorKind::Branch) {
             blockId = terminator.trueBlock;
         } else if (terminator.kind == TerminatorKind::ConditionalBranch && terminator.condition == BranchCondition::GotoVariable) {
             const auto route = routes.find(terminator.gotoVariable);
-            require(route != routes.end(), prefix + "block " + std::to_string(block.id) + " reads route variable " + std::to_string(terminator.gotoVariable) + " before any path sets it");
+            Require(route != routes.end(), prefix + "block " + std::to_string(block.id) + " reads route variable " + std::to_string(terminator.gotoVariable) + " before any path sets it");
             blockId = route->second ? terminator.trueBlock : terminator.falseBlock;
         } else {
             return blockId;
@@ -227,8 +224,8 @@ void verifySameExecutions(const std::string& prefix, const ControlFlowGraph& ori
         visited.push_back(state);
         const auto& copy = structured.FindBlock(copyId);
         const auto& source = original.FindBlock(sourceId);
-        require(copy.instructionBegin == source.instructionBegin && copy.instructionEnd == source.instructionEnd, prefix + "block " + std::to_string(copy.id) + " runs other instructions than block " + std::to_string(source.id));
-        require(copy.terminator.kind == source.terminator.kind && copy.terminator.condition == source.terminator.condition, prefix + "block " + std::to_string(copy.id) + " branches differently from block " + std::to_string(source.id));
+        Require(copy.instructionBegin == source.instructionBegin && copy.instructionEnd == source.instructionEnd, prefix + "block " + std::to_string(copy.id) + " runs other instructions than block " + std::to_string(source.id));
+        Require(copy.terminator.kind == source.terminator.kind && copy.terminator.condition == source.terminator.condition, prefix + "block " + std::to_string(copy.id) + " branches differently from block " + std::to_string(source.id));
         if (source.terminator.kind == TerminatorKind::Branch || source.terminator.kind == TerminatorKind::ConditionalBranch) pending.emplace_back(copy.terminator.trueBlock, source.terminator.trueBlock, routes);
         if (source.terminator.kind == TerminatorKind::ConditionalBranch) pending.emplace_back(copy.terminator.falseBlock, source.terminator.falseBlock, routes);
     }
@@ -304,7 +301,7 @@ std::size_t recompile(const std::string& name, std::span<const std::uint32_t> co
     request.layout = {0, 0, 0, 128};
     request.useCache = false;
     const auto result = Recompile(request);
-    require(!result.spirv.empty(), name + ": no SPIR-V for a " + std::to_string(subgroupSize) + "-lane subgroup");
+    Require(!result.spirv.empty(), name + ": no SPIR-V for a " + std::to_string(subgroupSize) + "-lane subgroup");
     return result.spirv.size();
 }
 
@@ -324,7 +321,7 @@ void verifyCallLinkMaskReadByScalarInstruction() {
         } catch (const std::exception& error) {
             refused = std::string_view(error.what()).find("escapes the constant-offset call/return model") != std::string_view::npos;
         }
-        require(refused, "a wave32 program reading a call's return address high half was not refused");
+        Require(refused, "a wave32 program reading a call's return address high half was not refused");
     }
 }
 
@@ -404,7 +401,7 @@ std::vector<std::uint32_t> branchProgram(std::span<const std::array<std::uint32_
     }
     for (const auto& [instruction, target] : patches) {
         const auto displacement = static_cast<std::int64_t>(starts[target]) - static_cast<std::int64_t>(instruction) - 1;
-        require(displacement >= -32768 && displacement <= 32767, "a generated test branch is out of range");
+        Require(displacement >= -32768 && displacement <= 32767, "a generated test branch is out of range");
         code[instruction] |= static_cast<std::uint32_t>(displacement) & 0xffffu;
     }
     return code;
@@ -432,7 +429,7 @@ void verifyIrreducibleLoopEntry() {
     const auto code = branchProgram(targets, order);
     const std::string name("a loop entered at either of its two blocks runs behind reach flags");
     const auto result = verifyGraph(name, code);
-    require(result.clonedInstructions == 0 && result.routeVariables != 0, name + ": expected the reach flag fallback, got " + std::to_string(result.clonedInstructions) + " cloned instructions and " + std::to_string(result.routeVariables) + " route variables");
+    Require(result.clonedInstructions == 0 && result.routeVariables != 0, name + ": expected the reach flag fallback, got " + std::to_string(result.clonedInstructions) + " cloned instructions and " + std::to_string(result.routeVariables) + " route variables");
     static_cast<void>(recompile(name, code, 32u));
     static_cast<void>(recompile(name, code, 64u));
 }
@@ -441,19 +438,19 @@ void verifyProgram(const Program& program) {
     const std::string name(program.name);
     const auto result = verifyGraph(name, program.code);
     if (std::getenv("APS5_FORCE_STRUCTURIZER_FALLBACK") != nullptr) {
-        require(result.clonedInstructions == 0 && result.routeVariables != 0, name + ": expected the reach flag fallback, got " + std::to_string(result.clonedInstructions) + " cloned instructions and " + std::to_string(result.routeVariables) + " route variables");
+        Require(result.clonedInstructions == 0 && result.routeVariables != 0, name + ": expected the reach flag fallback, got " + std::to_string(result.clonedInstructions) + " cloned instructions and " + std::to_string(result.routeVariables) + " route variables");
     } else if (program.split == Split::None) {
-        require(result.clonedInstructions == 0 && result.routeVariables == 0, name + ": expected no clone or routing, got " + std::to_string(result.clonedInstructions) + " cloned instructions and " + std::to_string(result.routeVariables) + " route variables");
+        Require(result.clonedInstructions == 0 && result.routeVariables == 0, name + ": expected no clone or routing, got " + std::to_string(result.clonedInstructions) + " cloned instructions and " + std::to_string(result.routeVariables) + " route variables");
     } else if (program.split == Split::Clone) {
-        require(result.clonedInstructions != 0 && result.routeVariables == 0, name + ": expected a clone, got " + std::to_string(result.clonedInstructions) + " cloned instructions and " + std::to_string(result.routeVariables) + " route variables");
+        Require(result.clonedInstructions != 0 && result.routeVariables == 0, name + ": expected a clone, got " + std::to_string(result.clonedInstructions) + " cloned instructions and " + std::to_string(result.routeVariables) + " route variables");
     } else {
-        require(result.clonedInstructions <= program.clonedLimit && result.routeVariables != 0, name + ": expected routing with at most " + std::to_string(program.clonedLimit) + " cloned instructions, got " + std::to_string(result.clonedInstructions) + " cloned instructions and " + std::to_string(result.routeVariables) + " route variables");
+        Require(result.clonedInstructions <= program.clonedLimit && result.routeVariables != 0, name + ": expected routing with at most " + std::to_string(program.clonedLimit) + " cloned instructions, got " + std::to_string(result.clonedInstructions) + " cloned instructions and " + std::to_string(result.routeVariables) + " route variables");
     }
     const auto words = recompile(name, program.code, 64u);
     static_cast<void>(recompile(name, program.code, 32u));
     if (!program.reference.empty()) {
         const auto reference = recompile(name, program.reference, 64u);
-        require(words * 10u <= reference * 11u, name + ": " + std::to_string(words) + " SPIR-V words, more than 10% over the " + std::to_string(reference) + " of the program without the entering branch");
+        Require(words * 10u <= reference * 11u, name + ": " + std::to_string(words) + " SPIR-V words, more than 10% over the " + std::to_string(reference) + " of the program without the entering branch");
     }
 }
 
@@ -471,9 +468,9 @@ void verifyEmptyLoopContinues() {
             if (!block.terminator.loopHeader) continue;
             loops = true;
             const auto& continueTarget = graph.FindBlock(block.terminator.continueBlock);
-            require(continueTarget.instructionBegin == continueTarget.instructionEnd, std::string(name) + ": the continue block " + std::to_string(continueTarget.id) + " of the loop at block " + std::to_string(block.id) + " holds instructions");
+            Require(continueTarget.instructionBegin == continueTarget.instructionEnd, std::string(name) + ": the continue block " + std::to_string(continueTarget.id) + " of the loop at block " + std::to_string(block.id) + " holds instructions");
         }
-        require(loops, std::string(name) + ": no loop was structured");
+        Require(loops, std::string(name) + ": no loop was structured");
     }
 }
 
@@ -507,20 +504,20 @@ std::string refusal(std::span<const std::uint32_t> code) {
 
 void verifyJumpTable(const std::string& name, std::span<const std::uint32_t> code, std::uint32_t loadPc, const std::vector<std::uint64_t>& values, const std::vector<std::uint32_t>& targets) {
     const auto graph = GraphBuilder{}.Build(RdnaInstructionDecoder{}.Decode(code));
-    require(graph.codeTableLoads.size() == 1u && graph.codeTableLoads.front().programCounter == loadPc && graph.codeTableLoads.front().values == values, name + ": wrong code table");
+    Require(graph.codeTableLoads.size() == 1u && graph.codeTableLoads.front().programCounter == loadPc && graph.codeTableLoads.front().values == values, name + ": wrong code table");
     std::vector<std::uint32_t> lowered;
     for (const auto& block : graph.blocks) {
         if (block.terminator.indirectPcSgpr != InvalidControlFlowId) lowered.insert(lowered.end(), block.terminator.indirectTargetProgramCounters.begin(), block.terminator.indirectTargetProgramCounters.end());
     }
     std::sort(lowered.begin(), lowered.end());
-    require(lowered == targets, name + ": the jump does not reach exactly the table targets");
+    Require(lowered == targets, name + ": the jump does not reach exactly the table targets");
 }
 
 void verifyLongBranch(const std::string& name, std::span<const std::uint32_t> code, std::uint32_t branchPc, std::uint32_t target) {
     const auto decoded = RdnaInstructionDecoder{}.Decode(code);
     const auto graph = GraphBuilder{}.Build(decoded);
     const auto source = std::find_if(graph.blocks.begin(), graph.blocks.end(), [&](const BasicBlock& block) { return block.instructionEnd != block.instructionBegin && decoded.instructions[block.instructionEnd - 1u].programCounter == branchPc; });
-    require(source != graph.blocks.end() && source->terminator.kind == TerminatorKind::Branch && graph.FindBlock(source->terminator.trueBlock).startProgramCounter == target, name + ": the jump does not branch to " + std::to_string(target));
+    Require(source != graph.blocks.end() && source->terminator.kind == TerminatorKind::Branch && graph.FindBlock(source->terminator.trueBlock).startProgramCounter == target, name + ": the jump does not branch to " + std::to_string(target));
 }
 
 void verifyScheduledJumpTable() {
@@ -553,11 +550,11 @@ void verifyScheduledJumpTable() {
     interpolatedVcc = patched(std::move(interpolatedVcc), 2u, {0x8f6a836au});
     interpolatedVcc = patched(std::move(interpolatedVcc), 10u, {0xd4000000u});
     verifyJumpTable("interpolated two-dword table through vcc", interpolatedVcc, 0x24u, {0xcu, 0x14u, 0x1cu}, {0x44u, 0x4cu, 0x54u});
-    require(refusal(patched(interpolatedVcc, 8u, {0xbeea0380u})).find("unsupported dynamic s_setpc_b64") != std::string::npos, "a scheduled table accepted an overwritten VCC index");
+    Require(refusal(patched(interpolatedVcc, 8u, {0xbeea0380u})).find("unsupported dynamic s_setpc_b64") != std::string::npos, "a scheduled table accepted an overwritten VCC index");
     for (const auto index : {8u, 12u}) {
         for (const auto word : {0xbe880380u, 0xbe8c0380u, 0xbe8d0380u}) {
             const auto clobbered = patched(interpolated, index, {word});
-            require(refusal(clobbered).find("unsupported dynamic s_setpc_b64") != std::string::npos, "a scheduled table accepted a clobbered index or base");
+            Require(refusal(clobbered).find("unsupported dynamic s_setpc_b64") != std::string::npos, "a scheduled table accepted a clobbered index or base");
         }
     }
     auto baseFirst = code;
@@ -572,7 +569,7 @@ void verifyScheduledJumpTable() {
     for (const auto entry : {0xbf820001u, 0xbf820004u, 0xbf820005u}) {
         auto skipsBase = baseFirst;
         skipsBase.insert(skipsBase.begin(), entry);
-        require(refusal(skipsBase).find("unsupported dynamic s_setpc_b64") != std::string::npos, "a scheduled table accepted a branch that skipped its base setup");
+        Require(refusal(skipsBase).find("unsupported dynamic s_setpc_b64") != std::string::npos, "a scheduled table accepted a branch that skipped its base setup");
     }
     const std::vector<std::vector<std::uint32_t>> refused{
         patched(code, 1, {0xbe880380u}),
@@ -580,16 +577,16 @@ void verifyScheduledJumpTable() {
         patched(code, 1, {0xbf820001u}),
         patched(code, 3, {0xbf850000u}),
     };
-    for (const auto& rejected : refused) require(refusal(rejected).find("unsupported dynamic s_setpc_b64") != std::string::npos, "a rewritten or conditional two-dword table index was accepted");
+    for (const auto& rejected : refused) Require(refusal(rejected).find("unsupported dynamic s_setpc_b64") != std::string::npos, "a rewritten or conditional two-dword table index was accepted");
 }
 
 void verifyNullSwappc() {
     const std::array<std::uint32_t, 2> jump{0xbefd210cu, 0xbf810000u};
     const auto swappc = RdnaInstructionDecoder{}.Decode(jump).instructions.front();
-    require(swappc.op == RdnaOpcode::SSetpcB64 && swappc.opcodeId == 0x21u && swappc.destination.kind == RdnaOperandKind::Null &&
+    Require(swappc.op == RdnaOpcode::SSetpcB64 && swappc.opcodeId == 0x21u && swappc.destination.kind == RdnaOperandKind::Null &&
         swappc.source0.kind == RdnaOperandKind::ScalarRegister && swappc.source0.reg == 12u, "s_swappc_b64 null, s[12:13] does not decode as s_setpc_b64 s[12:13]");
     const std::array<std::uint32_t, 3> front{0x7e020281u, 0xbefd2106u, 0xbf810000u};
-    require(DecodeRdnaFrontProgram(front).code.size() == 2u, "a front program ending in s_swappc_b64 null, s[6:7] does not end there");
+    Require(DecodeRdnaFrontProgram(front).code.size() == 2u, "a front program ending in s_swappc_b64 null, s[6:7] does not end there");
     verifyJumpTable("dword jump table after its base", DwordTableGetpcFirst, 0x20u, {0x20u, 0x18u, 0x10u}, {0x3cu, 0x44u, 0x4cu});
     verifyJumpTable("dword jump table after its index", DwordTableIndexFirst, 0x1cu, {0x18u, 0x10u, 0x08u}, {0x38u, 0x40u, 0x48u});
     verifyLongBranch("long branch through vcc", LongBranchVcc, 0x10u, 0x18u);
@@ -607,7 +604,7 @@ void verifyNullSwappc() {
     };
     for (const auto& [name, code, message] : refused) {
         const auto error = refusal(code);
-        require(error.find(message) != std::string::npos, std::string(name) + ": expected a refusal with '" + std::string(message) + "', got '" + error + "'");
+        Require(error.find(message) != std::string::npos, std::string(name) + ": expected a refusal with '" + std::string(message) + "', got '" + error + "'");
     }
 }
 
@@ -618,8 +615,8 @@ void VerifyUserDataTail() {
     const std::vector<std::uint32_t> code{0x7e000280u, 0xbe802008u, 0xbf9f0000u};
     const auto decoded = decoder.Decode(code);
     const auto tail = FindUserDataTail(decoded, 8u, 2u);
-    require(tail && tail->programCounter == 4u && tail->userDataRegister == 8u, "unchanged user-data tail was not recognized");
-    require(!FindUserDataTail(decoded, 9u, 2u) && !FindUserDataTail(decoded, 8u, 1u), "tail outside user data was accepted");
+    Require(tail && tail->programCounter == 4u && tail->userDataRegister == 8u, "unchanged user-data tail was not recognized");
+    Require(!FindUserDataTail(decoded, 9u, 2u) && !FindUserDataTail(decoded, 8u, 1u), "tail outside user data was accepted");
     const std::vector<std::vector<std::uint32_t>> refused{
         {0xbe880380u, 0xbe802008u, 0xbf9f0000u},
         {0xbe890300u, 0xbe802008u, 0xbf9f0000u},
@@ -630,10 +627,10 @@ void VerifyUserDataTail() {
         {0xbe802008u, 0xbf810000u},
         {0xbe802008u, 0xbf800000u, 0xbf9f0000u},
     };
-    for (const auto& rejected : refused) require(!FindUserDataTail(decoder.Decode(rejected), 8u, 4u), "a modified, branching or malformed tail was accepted");
+    for (const auto& rejected : refused) Require(!FindUserDataTail(decoder.Decode(rejected), 8u, 4u), "a modified, branching or malformed tail was accepted");
     const std::vector<std::uint32_t> continuation{0xbf820001u, 0x7e000281u, 0xbf810000u};
     const auto linked = LinkUserDataTail(decoded, *tail, decoder.Decode(continuation));
-    require(linked == std::vector<std::uint32_t>({0x7e000280u, 0xbf820000u, 0xbf820001u, 0x7e000281u, 0xbf810000u}), "linking did not preserve relative branches and register operations");
+    Require(linked == std::vector<std::uint32_t>({0x7e000280u, 0xbf820000u, 0xbf820001u, 0x7e000281u, 0xbf810000u}), "linking did not preserve relative branches and register operations");
     static_cast<void>(GraphBuilder{}.Build(decoder.Decode(linked)));
     const std::vector<std::uint32_t> readsPc{0xbe8c1f00u, 0xbf810000u};
     bool refusedPc = false;
@@ -642,7 +639,7 @@ void VerifyUserDataTail() {
     } catch (const std::invalid_argument& error) {
         refusedPc = std::string_view(error.what()).find("reads its program counter") != std::string_view::npos;
     }
-    require(refusedPc, "a continuation reading its relocated PC was accepted");
+    Require(refusedPc, "a continuation reading its relocated PC was accepted");
 }
 
 void VerifyConstantHighTail() {
@@ -658,9 +655,9 @@ void VerifyConstantHighTail() {
     for (std::size_t index = 0; index < accepted.size(); ++index) {
         const auto program = decoder.Decode(accepted[index]);
         const auto tail = FindUserDataTail(program, 0u, 5u);
-        require(tail && tail->userDataRegister == 4u && tail->constantHigh == values[index], "constant high half was not resolved without a sixth user SGPR");
+        Require(tail && tail->userDataRegister == 4u && tail->constantHigh == values[index], "constant high half was not resolved without a sixth user SGPR");
         const auto linked = LinkUserDataTail(program, *tail, decoder.Decode(end));
-        require(std::equal(accepted[index].begin(), accepted[index].end() - 2u, linked.begin()), "constant high tail changed preceding scalar operations");
+        Require(std::equal(accepted[index].begin(), accepted[index].end() - 2u, linked.begin()), "constant high tail changed preceding scalar operations");
         auto mismatched = *tail;
         mismatched.constantHigh = values[index] ^ 1u;
         bool rejected = false;
@@ -669,7 +666,7 @@ void VerifyConstantHighTail() {
         } catch (const std::invalid_argument&) {
             rejected = true;
         }
-        require(rejected, "linker accepted a stale high-half proof");
+        Require(rejected, "linker accepted a stale high-half proof");
     }
     const std::vector<std::vector<std::uint32_t>> refused{
         {0xbe850382u, 0xbe850300u, 0xbe802004u, 0xbf9f0000u},
@@ -678,8 +675,8 @@ void VerifyConstantHighTail() {
         {0xbe850382u, 0xf4000140u, 0xfa000000u, 0xbe802004u, 0xbf9f0000u},
         {0xbf840001u, 0xbe850382u, 0xbe802004u, 0xbf9f0000u},
     };
-    for (const auto& code : refused) require(!FindUserDataTail(decoder.Decode(code), 0u, 6u), "unknown, overwritten or conditional tail address was accepted");
-    require(!FindUserDataTail(decoder.Decode(accepted.front()), 0u, 4u), "tail low half outside user data was accepted");
+    for (const auto& code : refused) Require(!FindUserDataTail(decoder.Decode(code), 0u, 6u), "unknown, overwritten or conditional tail address was accepted");
+    Require(!FindUserDataTail(decoder.Decode(accepted.front()), 0u, 4u), "tail low half outside user data was accepted");
 }
 
 int main(int argc, char** argv) {

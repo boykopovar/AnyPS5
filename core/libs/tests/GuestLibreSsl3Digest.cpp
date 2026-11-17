@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl3/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
@@ -7,12 +8,6 @@
 #include <source_location>
 #include <stdexcept>
 #include <string>
-
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL3 digest check failed at line %u\n", location.line());
-    std::abort();
-}
 
 template<typename TAction> static void RequireInvalidArgument(TAction action, std::source_location location = std::source_location::current()) {
     try { action(); } catch (const std::invalid_argument&) { return; } catch (const std::exception&) {}

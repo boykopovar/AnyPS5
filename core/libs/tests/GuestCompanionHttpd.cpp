@@ -1,5 +1,6 @@
 #include "prx/libSceCompanionHttpd/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -9,13 +10,6 @@ namespace {
 
 constexpr int InvalidParam = static_cast<int>(0x80E40004u);
 constexpr int NoEvent = static_cast<int>(0x80E40008u);
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "CompanionHttpd: %s\n", message);
-        std::abort();
-    }
-}
 
 int APS5_VABI RequestCallback(int, int, const void*, void*, void*) {
     std::fprintf(stderr, "CompanionHttpd: the request callback was called\n");

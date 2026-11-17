@@ -2,6 +2,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceJxr/libSceJxr.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -41,9 +42,6 @@ void JxrDecodeFixtureSetStreamOwner(void* value, int owner);
 }
 
 namespace {
-
-void Check(bool value, int line) { if (!value) { std::fprintf(stderr, "GuestJxrDecodeCreate.cpp:%d: requirement failed\n", line); std::abort(); } }
-#define Require(value) Check((value), __LINE__)
 
 bool failCalloc = false;
 std::size_t callocCalls = 0;

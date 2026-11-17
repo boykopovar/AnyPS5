@@ -1,4 +1,5 @@
 #include "prx/libSceNKWebKit/include/SerializedCryptoKeyWrapExports.hpp"
+#include "Testing.hpp"
 
 #include <cstddef>
 #include <cstdio>
@@ -16,15 +17,6 @@ static_assert(offsetof(ByteVector, capacity) == 8);
 static_assert(offsetof(ByteVector, size) == 12);
 
 using Transform = decltype(&_ZN7WebCore23wrapSerializedCryptoKeyERKN3WTF6VectorIhLm0ENS0_15CrashOnOverflowELm16ENS0_10FastMallocEEES6_RS4_);
-
-void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "serialized crypto key wrap check failed at line %d\n", line);
-        std::abort();
-    }
-}
-
-#define Require(value) Check((value), __LINE__)
 
 ByteVector Bytes(std::initializer_list<unsigned char> values) {
     ByteVector vector;

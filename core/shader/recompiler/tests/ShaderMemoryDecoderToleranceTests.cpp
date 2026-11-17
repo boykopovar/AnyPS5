@@ -4,6 +4,7 @@
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "RdnaDecoder/RdnaMemoryOpDecoder.hpp"
 #include "Translation/TranslationContext.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -16,13 +17,6 @@
 using namespace ShaderRecompiler;
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "Requirement failed: %s\n", message);
-        std::abort();
-    }
-}
 
 template <typename T, typename U>
 void ExpectEq(const T& actual, const U& expected, const char* message) {

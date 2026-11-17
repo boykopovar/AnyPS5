@@ -4,6 +4,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -19,8 +20,6 @@
 #include <initializer_list>
 #include <limits>
 #include <random>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static void SetTimeZone(const char* zone) {
 #ifdef _WIN32

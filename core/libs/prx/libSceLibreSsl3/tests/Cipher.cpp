@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -10,21 +11,6 @@
 #include <stdexcept>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL3 EVP_CIPHER check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> void RequireInvalidArgument(TAction action, std::source_location location = std::source_location::current()) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, location);
-}
 
 LibreSsl3EvpCipher Filled() {
     LibreSsl3EvpCipher cipher;
@@ -52,7 +38,7 @@ template<typename TRead> void CheckField(TRead read, std::int32_t LibreSsl3EvpCi
         Require(read(&cipher) == value);
         Require(std::memcmp(&before, &cipher, sizeof(cipher)) == 0);
     }
-    RequireInvalidArgument([&] { read(nullptr); });
+    ExpectErr<std::invalid_argument>([&] { read(nullptr); });
 }
 
 void TestKeyLength() {

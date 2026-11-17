@@ -1,15 +1,10 @@
 #include "prx/libSceAjm.native/include/Api.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 
 namespace {
-
-void Require(bool condition) {
-    if (!condition) {
-        std::abort();
-    }
-}
 
 bool AllZero(const void* data, std::size_t size) {
     const std::uint8_t* bytes = static_cast<const std::uint8_t*>(data);

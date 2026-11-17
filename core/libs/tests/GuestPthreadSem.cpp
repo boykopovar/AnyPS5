@@ -2,6 +2,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -18,8 +19,6 @@
 #endif
 
 static constexpr int SCE_OK = 0;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static void CheckValueLimit() {
     constexpr unsigned int maximum = 0x7fffffffu;

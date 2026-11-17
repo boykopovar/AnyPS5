@@ -1,5 +1,6 @@
 #include "prx/libSceNKWebKitRequirements/libSceNKWebKitRequirements.hpp"
 #include "prx/libkernel_sys/include/AdditionalExports.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -26,13 +27,6 @@
 namespace {
 
 using Handler = void (APS5_VABI *)(Ubsan::CfiCheckFailData*, std::uint64_t, std::uint64_t);
-
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stdout, "UBSan CFI: %s\n", message);
-    std::fflush(stdout);
-    std::abort();
-}
 
 template<typename TException, typename TAction>
 bool Throws(TAction action) {

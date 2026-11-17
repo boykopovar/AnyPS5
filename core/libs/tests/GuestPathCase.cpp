@@ -4,13 +4,12 @@
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 
 #include <chrono>
 #include <cstdlib>
 #include <fstream>
 #include <stdexcept>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static void CheckRead(const std::string& path, char expected) {
     const int fd = sceKernelOpen(path.c_str(), SCE_KERNEL_O_RDONLY, 0);

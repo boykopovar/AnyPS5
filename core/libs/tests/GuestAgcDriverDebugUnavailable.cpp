@@ -1,12 +1,12 @@
 #include "prx/libSceAgcDriver/include/AgcDriver.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdlib>
 
 static constexpr int DebugUnavailable = static_cast<int>(0x8A6C1000);
 static constexpr int FeatureUnavailable = static_cast<int>(0x8A6D0001);
-static void Require(bool value) { if (!value) std::abort(); }
 
 int main() {
     Require(sceAgcDriverGetShaderDebuggingStatus() == 1);

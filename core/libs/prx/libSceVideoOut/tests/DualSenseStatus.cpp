@@ -1,4 +1,5 @@
 #include "prx/libSceVideoOut/include/DualSenseStatus.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdint>
@@ -6,12 +7,6 @@
 #include <cstdlib>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "dualsense_status: %s\n", message);
-    std::exit(1);
-}
 
 void ParseUsb() {
     std::array<std::uint8_t, 64> report{};

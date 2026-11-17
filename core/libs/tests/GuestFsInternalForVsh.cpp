@@ -1,15 +1,10 @@
 #include "prx/libSceFsInternalForVsh/libSceFsInternalForVsh.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 
 namespace {
-
-void Require(bool value) {
-    if (!value) {
-        std::abort();
-    }
-}
 
 void CheckWorkspaceOptInit(decltype(&sceFsInitCreateWorkspaceOpt) init) {
     for (int call = 0; call < 2; ++call) {

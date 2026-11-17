@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/StackWalk.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdio>
 #include <cstring>
@@ -18,10 +19,6 @@ using Step = DwarfFrames::Step;
 
 constexpr std::size_t FunctionOffset = 0x100;
 constexpr std::size_t FunctionSize = 0x40;
-
-void Check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 class Section {
 public:
@@ -106,16 +103,16 @@ void Prologue() {
     stack.words[33] = 0x1234;
 
     auto registers = Registers(function, stack.At(33), 0x9999);
-    Check(frames.Unwind(registers, true, stack.Reader()) == Step::Stepped, "the entry of a function did not step");
-    Check(registers[16] == 0x1234 && registers[7] == stack.At(34) && registers[6] == 0x9999, "the entry of a function stepped to the wrong frame");
+    Require(frames.Unwind(registers, true, stack.Reader()) == Step::Stepped, "the entry of a function did not step");
+    Require(registers[16] == 0x1234 && registers[7] == stack.At(34) && registers[6] == 0x9999, "the entry of a function stepped to the wrong frame");
 
     registers = Registers(function + 2, stack.At(32), 0x9999);
-    Check(frames.Unwind(registers, true, stack.Reader()) == Step::Stepped, "the frame after the push did not step");
-    Check(registers[16] == 0x1234 && registers[7] == stack.At(34) && registers[6] == 0x5555, "the frame after the push did not restore the frame pointer");
+    Require(frames.Unwind(registers, true, stack.Reader()) == Step::Stepped, "the frame after the push did not step");
+    Require(registers[16] == 0x1234 && registers[7] == stack.At(34) && registers[6] == 0x5555, "the frame after the push did not restore the frame pointer");
 
     registers = Registers(function + 0x20, stack.At(8), stack.At(32));
-    Check(frames.Unwind(registers, false, stack.Reader()) == Step::Stepped, "the body of a function did not step");
-    Check(registers[16] == 0x1234 && registers[7] == stack.At(34) && registers[6] == 0x5555, "the body of a function did not step through the frame pointer");
+    Require(frames.Unwind(registers, false, stack.Reader()) == Step::Stepped, "the body of a function did not step");
+    Require(registers[16] == 0x1234 && registers[7] == stack.At(34) && registers[6] == 0x5555, "the body of a function did not step through the frame pointer");
 }
 
 void Outside() {
@@ -124,14 +121,14 @@ void Outside() {
     const auto function = section.Function();
     Stack stack;
     auto registers = Registers(function + FunctionSize, stack.At(8), 0);
-    Check(frames.Unwind(registers, true, stack.Reader()) == Step::NoRecord, "a pc after the function had a record");
+    Require(frames.Unwind(registers, true, stack.Reader()) == Step::NoRecord, "a pc after the function had a record");
     registers = Registers(function - 1, stack.At(8), 0);
-    Check(frames.Unwind(registers, true, stack.Reader()) == Step::NoRecord, "a pc before the function had a record");
-    Check(frames.Covers(function + 0x10) && !frames.Covers(function + FunctionSize), "the record covers the wrong range");
+    Require(frames.Unwind(registers, true, stack.Reader()) == Step::NoRecord, "a pc before the function had a record");
+    Require(frames.Covers(function + 0x10) && !frames.Covers(function + FunctionSize), "the record covers the wrong range");
     registers = Registers(function, stack.At(63) + 4, 0);
     const auto before = registers;
-    Check(frames.Unwind(registers, true, stack.Reader()) == Step::Failed && registers == before, "a read outside the stack was not refused");
-    Check(DwarfFrames(0, 0, nullptr, nullptr).Unwind(registers, true, stack.Reader()) == Step::NoRecord, "a module without records stepped");
+    Require(frames.Unwind(registers, true, stack.Reader()) == Step::Failed && registers == before, "a read outside the stack was not refused");
+    Require(DwarfFrames(0, 0, nullptr, nullptr).Unwind(registers, true, stack.Reader()) == Step::NoRecord, "a module without records stepped");
 }
 
 void ReturnColumn32() {
@@ -141,9 +138,9 @@ void ReturnColumn32() {
     stack.words[10] = 0x4321;
     auto registers = Registers(section.Function(), stack.At(10), 0);
 #ifdef _WIN32
-    Check(frames.Unwind(registers, true, stack.Reader()) == Step::Stepped && registers[16] == 0x4321 && registers[7] == stack.At(11), "the MinGW return column was not read");
+    Require(frames.Unwind(registers, true, stack.Reader()) == Step::Stepped && registers[16] == 0x4321 && registers[7] == stack.At(11), "the MinGW return column was not read");
 #else
-    Check(frames.Unwind(registers, true, stack.Reader()) == Step::NoRecord, "a return column above 16 was accepted");
+    Require(frames.Unwind(registers, true, stack.Reader()) == Step::NoRecord, "a return column above 16 was accepted");
 #endif
 }
 
@@ -159,8 +156,8 @@ void Collapsed() {
         std::snprintf(name, sizeof(name), "m+0x%llx", static_cast<unsigned long long>(address));
         return std::string(name);
     });
-    Check(text == "m+0x30;m+0x20;m+0x10 2\n[truncated];m+0x40;m+0x10 1\n", "collapsed stacks changed format");
-    Check(stacks.Truncated() == 1, "the truncated walk was not counted");
+    Require(text == "m+0x30;m+0x20;m+0x10 2\n[truncated];m+0x40;m+0x10 1\n", "collapsed stacks changed format");
+    Require(stacks.Truncated() == 1, "the truncated walk was not counted");
 }
 
 }

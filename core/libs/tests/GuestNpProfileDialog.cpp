@@ -2,6 +2,7 @@
 #include "prx/libSceIme/include/ModalDialog.hpp"
 #include "prx/libSceIme/include/PsnDialogNotice.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -11,8 +12,6 @@
 #include <string>
 
 namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
 
 constexpr int kStatusNone = 0;
 constexpr int kStatusInitialized = 1;

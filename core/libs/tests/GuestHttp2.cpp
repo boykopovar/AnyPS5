@@ -2,6 +2,7 @@
 #include "prx/libSceHttp2/include/Http2.hpp"
 #include "prx/libSceHttp2/Transport.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -10,8 +11,6 @@
 #include <stdexcept>
 #include <thread>
 #include <initializer_list>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static constexpr int InvalidId = static_cast<int>(0x817B1100);
 static constexpr int InvalidValue = static_cast<int>(0x817B11FE);

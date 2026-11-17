@@ -1,6 +1,7 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -19,12 +20,6 @@ static_assert(std::is_same_v<decltype(&OCSP_response_get1_basic_nid_postfix), Ge
 static_assert(std::is_same_v<decltype(&OCSP_BASICRESP_free_nid_postfix), FreeBasic>);
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL OCSP basic response check failed at line %u\n", location.line());
-    std::abort();
-}
 
 std::unordered_map<void*, std::size_t> live;
 int allocations = 0;

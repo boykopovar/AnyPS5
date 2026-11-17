@@ -2,6 +2,7 @@
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libharfbuzz/include/Lifecycle.hpp"
 #include "prx/libharfbuzz/include/InventoryExports.hpp"
+#include "Testing.hpp"
 
 #include <hb-ft.h>
 
@@ -23,13 +24,6 @@
 #else
 #include <dlfcn.h>
 #endif
-
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "HarfBuzz lifecycle check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 template <typename TFunction, typename TModule>
 static TFunction Import(TModule module, const char* name) {

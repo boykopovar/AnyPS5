@@ -1,5 +1,6 @@
 #include "prx/libScePosixForWebKit/include/Api.hpp"
 #include "prx/libScePosixForWebKit/GuestResolver.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -21,19 +22,6 @@
 #endif
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "resolver guest access check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction>
-void Reject(TAction action) {
-    try { action(); }
-    catch (const std::invalid_argument&) { return; }
-    Require(false);
-}
 
 class Pages {
 public:
@@ -156,7 +144,7 @@ void HostEntry() {
     names.ReadOnly();
     auto* legacy = gethostbyname_nid_postfix(node);
     Require(legacy && std::strcmp(legacy->name, node) == 0);
-    Reject([&] { gethostbyname_nid_postfix(names.End()); });
+    ExpectErr<std::invalid_argument>([&] { gethostbyname_nid_postfix(names.End()); });
 
     GuestResolver::HostEntry entry{};
     GuestResolver::HostEntry* result = nullptr;
@@ -178,7 +166,7 @@ void HostEntry() {
     std::array<char, sizeof(entry)> saved;
     std::memcpy(saved.data(), &before, sizeof(before));
     std::fill_n(output.End(16), 16, static_cast<char>(0x5a));
-    Reject([&] { scePosixForWebKit_gethostbyname_r(node, &entry, output.End(16), 128, &result, &hostError); });
+    ExpectErr<std::invalid_argument>([&] { scePosixForWebKit_gethostbyname_r(node, &entry, output.End(16), 128, &result, &hostError); });
     Require(result == nullptr && std::memcmp(&entry, saved.data(), sizeof(entry)) == 0);
     Require(std::all_of(output.End(16), output.End(), [](char value) { return value == 0x5a; }));
 
@@ -186,12 +174,12 @@ void HostEntry() {
     std::memcpy(readOnlyEntry, &entry, sizeof(entry));
     header.ReadOnly();
     std::fill_n(buffer, 48, static_cast<char>(0x5a));
-    Reject([&] { scePosixForWebKit_gethostbyname_r(node, readOnlyEntry, buffer, 48, &result, &hostError); });
+    ExpectErr<std::invalid_argument>([&] { scePosixForWebKit_gethostbyname_r(node, readOnlyEntry, buffer, 48, &result, &hostError); });
     Require(std::all_of(buffer, output.End(), [](char value) { return value == 0x5a; }));
     Require(std::memcmp(readOnlyEntry, saved.data(), sizeof(entry)) == 0);
-    Reject([&] { scePosixForWebKit_gethostbyname_r(node, &entry, buffer, 48,
+    ExpectErr<std::invalid_argument>([&] { scePosixForWebKit_gethostbyname_r(node, &entry, buffer, 48,
         reinterpret_cast<GuestResolver::HostEntry**>(output.End()), &hostError); });
-    Reject([&] { scePosixForWebKit_gethostbyname_r(node, &entry, buffer, 0, &result,
+    ExpectErr<std::invalid_argument>([&] { scePosixForWebKit_gethostbyname_r(node, &entry, buffer, 0, &result,
         reinterpret_cast<int*>(output.End())); });
     Require(result == nullptr && errno == 34);
 }

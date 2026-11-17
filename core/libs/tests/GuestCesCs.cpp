@@ -1,5 +1,6 @@
 #include "prx/libSceCesCs/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -9,8 +10,6 @@
 namespace {
 
 constexpr int invalidProfile = static_cast<int>(0x805C0004);
-
-void Require(bool value) { if (!value) std::abort(); }
 
 struct Sheet {
     alignas(8) std::uint8_t bytes[64];

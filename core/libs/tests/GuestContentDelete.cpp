@@ -1,5 +1,6 @@
 #include "prx/libSceContentDelete/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
@@ -7,8 +8,6 @@
 #include <string>
 
 namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
 
 template <typename TAction>
 std::string LogicErrorMessage(TAction action) {

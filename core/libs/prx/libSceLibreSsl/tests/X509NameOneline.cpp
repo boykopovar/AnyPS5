@@ -2,6 +2,7 @@
 #include "prx/libSceLibreSsl/include/ObjectTable.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -17,22 +18,6 @@ namespace {
 constexpr std::uint64_t UnknownNid = (8ull << 24) | (0xfffull << 12) | 101;
 constexpr std::uint64_t BufferMalloc = (7ull << 24) | (0xfffull << 12) | 65;
 constexpr std::uint64_t X509Malloc = (11ull << 24) | (0xfffull << 12) | 65;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "failed: %s\n", message);
-    std::abort();
-}
-
-template<typename TAction>
-void RequireThrows(TAction action, const char* message) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, message);
-}
 
 class Builder {
 public:
@@ -153,23 +138,23 @@ void UndefinedInputs() {
     name.Add(Object(13), "a");
     LibreSslX509Name* built = name.Build();
     built->entries->data[0] = nullptr;
-    RequireThrows([&] { X509_NAME_oneline_nid_postfix(built, nullptr, 0); }, "a null entry");
+    ExpectErr<std::invalid_argument>([&] { X509_NAME_oneline_nid_postfix(built, nullptr, 0); }, "a null entry");
     Builder broken;
     broken.Add(Object(13), "a");
     built = broken.Build();
     reinterpret_cast<LibreSslX509NameEntry*>(built->entries->data[0])->value = nullptr;
-    RequireThrows([&] { X509_NAME_oneline_nid_postfix(built, nullptr, 0); }, "an entry without a value");
+    ExpectErr<std::invalid_argument>([&] { X509_NAME_oneline_nid_postfix(built, nullptr, 0); }, "an entry without a value");
     char buffer[64];
     Builder missingArray;
     missingArray.Add(Object(13), "a");
     built = missingArray.Build();
     built->entries->data = nullptr;
-    RequireThrows([&] { X509_NAME_oneline_nid_postfix(built, buffer, sizeof(buffer)); }, "an entry stack without its array");
+    ExpectErr<std::invalid_argument>([&] { X509_NAME_oneline_nid_postfix(built, buffer, sizeof(buffer)); }, "an entry stack without its array");
     Builder missingData;
     missingData.Add(Object(13), "a");
     built = missingData.Build();
     static_cast<Asn1String*>(reinterpret_cast<LibreSslX509NameEntry*>(built->entries->data[0])->value)->data = nullptr;
-    RequireThrows([&] { X509_NAME_oneline_nid_postfix(built, buffer, sizeof(buffer)); }, "a value with a length and no data");
+    ExpectErr<std::invalid_argument>([&] { X509_NAME_oneline_nid_postfix(built, buffer, sizeof(buffer)); }, "a value with a length and no data");
 }
 
 std::vector<std::size_t> allocated;

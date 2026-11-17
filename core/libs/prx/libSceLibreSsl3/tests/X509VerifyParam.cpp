@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cerrno>
@@ -17,12 +18,6 @@
 #endif
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL3 X509_VERIFY_PARAM check failed at line %u\n", location.line());
-    std::abort();
-}
 
 constexpr std::uint64_t PolicyCheck = 0x80;
 constexpr std::uint64_t ExplicitPolicy = 0x100;

@@ -4,6 +4,7 @@
 #include "prx/libSceNgs2.native/include/Api.hpp"
 #include "prx/libSceNgs2.native/include/Ngs2Types.hpp"
 #include "prx/libSceNgs2/include/Api.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -56,14 +57,6 @@ int APS5_VABI sceNgs2GeomApply(const Ngs2GeomListenerWork*, const Ngs2GeomSource
 int APS5_VABI sceNgs2ReportRegisterHandler(std::uint32_t, Ngs2ReportHandler, std::uintptr_t, Ngs2Handle*);
 int APS5_VABI sceNgs2ReportUnregisterHandler(Ngs2Handle);
 }
-
-inline void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "NGS2 check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 inline bool FrameInfoThrows(const Ngs2WaveformFormat& format) {
     std::uint32_t values[4] = {0xa1, 0xa2, 0xa3, 0xa4};

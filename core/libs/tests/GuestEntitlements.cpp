@@ -1,5 +1,6 @@
 #include "prx/libSceNpEntitlementAccess/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 
 #include <cerrno>
 #include <cstdint>
@@ -18,8 +19,6 @@
 #else
 #include <unistd.h>
 #endif
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static std::string CaptureStderr(void (*body)()) {
     std::fflush(stderr);

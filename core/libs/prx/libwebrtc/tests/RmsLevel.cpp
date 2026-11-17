@@ -1,4 +1,5 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "Testing.hpp"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -26,21 +27,6 @@ const auto construct = reinterpret_cast<ConstructFn>(&_ZN6webrtc8RmsLevelC1Ev_ni
 const auto destroy = reinterpret_cast<ConstructFn>(&_ZN6webrtc8RmsLevelD1Ev_nid_postfix);
 const auto analyze = reinterpret_cast<AnalyzeFn>(&_ZN6webrtc8RmsLevel7AnalyzeEN3rtc9ArrayViewIKsLln4711EEE_nid_postfix);
 const auto average = reinterpret_cast<AverageFn>(&_ZN6webrtc8RmsLevel7AverageEv_nid_postfix);
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc RmsLevel check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> void RequireInvalidArgument(TAction action, std::source_location location = std::source_location::current()) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, location);
-}
 
 bool Cleared(const WebRtcRmsLevel& level) {
     return level.sumSquare == 0.f && level.sampleCount == 0 && level.maxSumSquare == 0.f && !level.hasBlockSize;
@@ -102,10 +88,10 @@ void TestBlockSize() {
 }
 
 void TestNull() {
-    RequireInvalidArgument([] { construct(nullptr); });
-    RequireInvalidArgument([] { destroy(nullptr); });
-    RequireInvalidArgument([] { analyze(nullptr, nullptr, 0); });
-    RequireInvalidArgument([] { average(nullptr); });
+    ExpectErr<std::invalid_argument>([] { construct(nullptr); });
+    ExpectErr<std::invalid_argument>([] { destroy(nullptr); });
+    ExpectErr<std::invalid_argument>([] { analyze(nullptr, nullptr, 0); });
+    ExpectErr<std::invalid_argument>([] { average(nullptr); });
 }
 
 struct GuardedPage {
@@ -163,15 +149,15 @@ void TestGuardedPointers() {
         construct(page.As<WebRtcRmsLevel>());
         page.SetReadOnly();
         std::vector<std::int16_t> samples(160, 1000);
-        RequireInvalidArgument([&] { construct(page.As<WebRtcRmsLevel>()); });
-        RequireInvalidArgument([&] { analyze(page.As<WebRtcRmsLevel>(), samples.data(), samples.size()); });
-        RequireInvalidArgument([&] { average(page.As<WebRtcRmsLevel>()); });
+        ExpectErr<std::invalid_argument>([&] { construct(page.As<WebRtcRmsLevel>()); });
+        ExpectErr<std::invalid_argument>([&] { analyze(page.As<WebRtcRmsLevel>(), samples.data(), samples.size()); });
+        ExpectErr<std::invalid_argument>([&] { average(page.As<WebRtcRmsLevel>()); });
     }
     {
         GuardedPage dataPage;
         dataPage.SetInaccessible();
         auto level = Constructed();
-        RequireInvalidArgument([&] { analyze(&level, dataPage.As<const std::int16_t>(), 160); });
+        ExpectErr<std::invalid_argument>([&] { analyze(&level, dataPage.As<const std::int16_t>(), 160); });
     }
 }
 

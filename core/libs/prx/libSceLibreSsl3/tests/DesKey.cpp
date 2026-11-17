@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdio>
@@ -6,12 +7,6 @@
 #include <source_location>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL3 DES_set_key_unchecked check failed at line %u\n", location.line());
-    std::abort();
-}
 
 using Block = std::array<unsigned char, 8>;
 using Schedule = std::array<unsigned char, 128>;

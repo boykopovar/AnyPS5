@@ -3,6 +3,7 @@
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libkernel/Pthread/include/Rwlock.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -18,10 +19,6 @@ static constexpr int GUEST_EBUSY = 16;
 static constexpr int GUEST_EINVAL = 22;
 static constexpr int BARRIER_SERIAL = -1;
 static constexpr int PROCESS_PRIVATE = 0;
-
-static void Require(bool value) {
-    if (!value) std::abort();
-}
 
 static void TestRwlockAttributesAndInit() {
     PthreadRwlockattr attr = nullptr;

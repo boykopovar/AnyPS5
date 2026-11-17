@@ -7,7 +7,6 @@
 
 namespace {
 
-using IcuRecoveredTest::Require;
 
 static_assert(std::is_same_v<decltype(&uprv_getUTCtime_nid_postfix), double (APS5_VABI*)()>);
 static_assert(std::is_same_v<decltype(&uprv_getRawUTCtime_nid_postfix), double (APS5_VABI*)()>);

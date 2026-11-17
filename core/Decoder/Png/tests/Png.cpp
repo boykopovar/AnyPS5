@@ -12,8 +12,7 @@
 #define STBI_ONLY_PNG
 #define STBI_NO_STDIO
 #include "stb_image.h"
-
-static void Require(bool value) { if (!value) std::abort(); }
+#include "Testing.hpp"
 
 template<typename TFunction>
 static bool ThrowsInvalidArgument(TFunction function) {

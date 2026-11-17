@@ -3,6 +3,7 @@
 #include "prx/libc/libc.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -23,22 +24,7 @@ namespace {
 
 using String = Asn1String;
 
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL3 ASN.1 check failed at line %u\n", location.line());
-    std::abort();
-}
 
-template <typename Callable>
-void RequireInvalidArgument(Callable call) {
-    bool thrown = false;
-    try {
-        call();
-    } catch (const std::invalid_argument&) {
-        thrown = true;
-    }
-    Require(thrown);
-}
 
 std::unordered_map<void*, std::size_t> allocations;
 std::size_t freeCalls = 0;
@@ -183,14 +169,14 @@ void Ownership() {
 void FaultingArguments() {
     const unsigned char encoded[] = {2, 1, 42};
     const unsigned char* cursor = nullptr;
-    RequireInvalidArgument([&] { d2i_ASN1_INTEGER_nid_postfix(nullptr, &cursor, 1); });
-    RequireInvalidArgument([&] { d2i_ASN1_INTEGER_nid_postfix(nullptr, nullptr, 1); });
+    ExpectErr<std::invalid_argument>([&] { d2i_ASN1_INTEGER_nid_postfix(nullptr, &cursor, 1); });
+    ExpectErr<std::invalid_argument>([&] { d2i_ASN1_INTEGER_nid_postfix(nullptr, nullptr, 1); });
     auto* old = static_cast<String*>(Allocate_nid_no_patch(sizeof(String)));
     unsigned char bytes[] = {0x2a};
     *old = {-1, 2, bytes, 0};
     void* output = old;
     cursor = encoded;
-    RequireInvalidArgument([&] { d2i_ASN1_INTEGER_nid_postfix(&output, &cursor, sizeof(encoded)); });
+    ExpectErr<std::invalid_argument>([&] { d2i_ASN1_INTEGER_nid_postfix(&output, &cursor, sizeof(encoded)); });
     Require(output == old && cursor == encoded);
     old->length = 0;
     old->data = nullptr;

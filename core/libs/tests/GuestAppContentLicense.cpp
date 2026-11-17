@@ -1,6 +1,7 @@
 #include "prx/libSceAppContent/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "ProcessParametersFixture.hpp"
+#include "Testing.hpp"
 
 #include <cerrno>
 #include <array>
@@ -44,12 +45,6 @@ Function Resolve(const char* name) {
         std::abort();
     }
     return reinterpret_cast<Function>(symbol);
-}
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "AppContent license: %s\n", message);
-    std::abort();
 }
 
 }

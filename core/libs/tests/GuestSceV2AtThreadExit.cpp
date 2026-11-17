@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -13,14 +14,6 @@ namespace {
 constexpr int Success = 0;
 constexpr int Busy = 3;
 constexpr int TryRecursive = 0x102;
-
-unsigned failures = 0;
-
-void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "FAIL: sce v2 at_thread_exit: %s\n", what);
-    ++failures;
-}
 
 struct Pair {
     void* mutex = nullptr;
@@ -62,23 +55,23 @@ void CheckSingleEntries() {
         Pair pair;
         pair.Register(true);
         Broadcast();
-        Require(pair.ready == 1 && pair.Probe() == Success, "a flag entry is set and leaves the mutex free");
+        Expect(pair.ready == 1 && pair.Probe() == Success, "a flag entry is set and leaves the mutex free");
     }
     {
         Pair pair;
         pair.Lock();
         pair.Register(true);
         Broadcast();
-        Require(pair.ready == 1 && pair.Probe() == Busy, "a flag entry relocks and unlocks once");
+        Expect(pair.ready == 1 && pair.Probe() == Busy, "a flag entry relocks and unlocks once");
         pair.Release();
     }
     {
         Pair pair;
         pair.Lock();
         pair.Register(false);
-        Require(pair.Probe() == Busy, "the registering thread keeps the mutex");
+        Expect(pair.Probe() == Busy, "the registering thread keeps the mutex");
         Broadcast();
-        Require(pair.ready == 0 && pair.Probe() == Success, "an entry without a flag releases the held mutex");
+        Expect(pair.ready == 0 && pair.Probe() == Success, "an entry without a flag releases the held mutex");
     }
     {
         Pair pair;
@@ -86,7 +79,7 @@ void CheckSingleEntries() {
         pair.Lock();
         pair.Register(false);
         Broadcast();
-        Require(pair.Probe() == Busy, "an entry without a flag unlocks only once");
+        Expect(pair.Probe() == Busy, "an entry without a flag unlocks only once");
         pair.Release();
     }
     {
@@ -97,7 +90,7 @@ void CheckSingleEntries() {
         pair.Register(false);
         pair.Register(false);
         Broadcast();
-        Require(pair.ready == 1 && pair.Probe() == Success, "three entries on one mutex balance its locks");
+        Expect(pair.ready == 1 && pair.Probe() == Success, "three entries on one mutex balance its locks");
     }
     {
         Pair pair;
@@ -105,7 +98,7 @@ void CheckSingleEntries() {
         pair.Register(true);
         _ZNSt8__sce_v230_Cnd_unregister_at_thread_exitEPP13pthread_mutex_nid_postfix(&pair.mutex);
         Broadcast();
-        Require(pair.ready == 0 && pair.Probe() == Success, "unregistering removes every entry of the mutex");
+        Expect(pair.ready == 0 && pair.Probe() == Success, "unregistering removes every entry of the mutex");
     }
     {
         Pair pair;
@@ -113,7 +106,7 @@ void CheckSingleEntries() {
         Broadcast();
         pair.ready = 0;
         Broadcast();
-        Require(pair.ready == 0, "an entry is removed once it is broadcast");
+        Expect(pair.ready == 0, "an entry is removed once it is broadcast");
     }
 }
 
@@ -122,13 +115,13 @@ void CheckThreads() {
     std::thread other([&] { pair.Register(true); });
     other.join();
     Broadcast();
-    Require(pair.ready == 0, "another thread's entry is not broadcast here");
+    Expect(pair.ready == 0, "another thread's entry is not broadcast here");
     std::thread owner([&] {
         pair.Register(true);
         Broadcast();
     });
     owner.join();
-    Require(pair.ready == 1, "the registering thread broadcasts its own entry");
+    Expect(pair.ready == 1, "the registering thread broadcasts its own entry");
     Pair waited;
     waited.Lock();
     std::thread exiting([&] {
@@ -138,7 +131,7 @@ void CheckThreads() {
     while (waited.ready == 0) _ZNSt8__sce_v29_Cnd_waitEPP12pthread_condPP13pthread_mutex_nid_postfix(&waited.condition, &waited.mutex);
     _ZNSt8__sce_v211_Mtx_unlockEPP13pthread_mutex_nid_postfix(&waited.mutex);
     exiting.join();
-    Require(waited.ready == 1, "a waiter wakes when the flag is set");
+    Expect(waited.ready == 1, "a waiter wakes when the flag is set");
 }
 
 void CheckManyEntries() {
@@ -151,7 +144,7 @@ void CheckManyEntries() {
     Broadcast();
     bool all = true;
     for (int i = 0; i < Count; ++i) all = all && pairs[i].ready == (i == 25 ? 0 : 1);
-    Require(all, "entries beyond one block of 20 are kept and broadcast");
+    Expect(all, "entries beyond one block of 20 are kept and broadcast");
     delete[] pairs;
 }
 
@@ -167,22 +160,22 @@ void CheckGlobalMutex() {
         registered = true;
     });
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    Require(!registered, "registering waits for the at-thread-exit mutex");
+    Expect(!registered, "registering waits for the at-thread-exit mutex");
     _ZNSt8__sce_v228_Unlock_at_thread_exit_mutexEv_nid_postfix();
     _ZNSt8__sce_v228_Unlock_at_thread_exit_mutexEv_nid_postfix();
     blocked.join();
-    Require(registered, "the at-thread-exit mutex is recursive and released");
+    Expect(registered, "the at-thread-exit mutex is recursive and released");
     Broadcast();
-    Require(pair.ready == 1 && other.ready == 0, "entries registered under the held mutex are kept");
+    Expect(pair.ready == 1 && other.ready == 0, "entries registered under the held mutex are kept");
 }
 
 }
 
 int main() {
-    Require(scePthreadSelf() != nullptr, "libkernel threads are loaded");
+    Expect(scePthreadSelf() != nullptr, "libkernel threads are loaded");
     CheckSingleEntries();
     CheckThreads();
     CheckManyEntries();
     CheckGlobalMutex();
-    return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+    return Failures() == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

@@ -1,5 +1,6 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -7,12 +8,6 @@
 #include <thread>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc CurrentThreadId check failed at line %u\n", location.line());
-    std::abort();
-}
 
 int CurrentThreadId() {
     return _ZN3rtc15CurrentThreadIdEv_nid_postfix();

@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdarg>
 #include <cstddef>
 #include <cstdio>
@@ -62,13 +63,6 @@ int APS5_VABI WideThrough(WideList print, void* stream, const char16_t* format, 
     va_end(args);
 #endif
     return result;
-}
-
-void Require(bool value, const char* message) {
-    if (!value) {
-        std::fprintf(stderr, "%s\n", message);
-        std::abort();
-    }
 }
 
 template<class Function>

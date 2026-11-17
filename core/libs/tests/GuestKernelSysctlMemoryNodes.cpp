@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -10,12 +11,6 @@
 #include <source_location>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "assertion failed at line %u\n", static_cast<unsigned>(location.line()));
-    std::abort();
-}
 
 void CheckHwRealmemSysctl() {
     int mib[4] = {};

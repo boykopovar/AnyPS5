@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Mutex.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -8,7 +9,6 @@
 #include <thread>
 
 static constexpr int SigUsr1 = 30;
-static void Require(bool value) { if (!value) std::abort(); }
 static std::atomic<int> deliveries{0};
 static void APS5_VABI Handler(int, void*) { deliveries.fetch_add(1); }
 

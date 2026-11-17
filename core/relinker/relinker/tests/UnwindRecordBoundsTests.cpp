@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
 #include <io/BufferUtils.hpp>
 #include <algorithm>
@@ -6,8 +7,6 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
-
-static void Require(bool ok) { if (!ok) throw std::runtime_error("Unwind record validation failed"); }
 
 static std::vector<std::uint8_t> Fixture() {
     std::vector<std::uint8_t> bytes(128, 0);

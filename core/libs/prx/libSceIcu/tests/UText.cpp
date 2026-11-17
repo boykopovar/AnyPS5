@@ -10,8 +10,6 @@
 
 namespace UtextClose {
 
-using IcuRecoveredTest::Require;
-using IcuRecoveredTest::RequireThrows;
 
 static_assert(std::is_same_v<decltype(&utext_close), UText* (APS5_VABI*)(UText*)>);
 

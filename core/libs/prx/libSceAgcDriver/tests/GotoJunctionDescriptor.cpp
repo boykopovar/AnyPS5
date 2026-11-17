@@ -2,6 +2,7 @@
 #include "Optimization/ResourceMaterializer.hpp"
 #include "Optimization/ResourceProgram.hpp"
 #include "Recompiler.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -15,10 +16,6 @@
 namespace {
 
 using namespace ShaderRecompiler;
-
-void require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 RecompileRequest ComputeRequest(std::span<const std::uint32_t> code, std::span<const std::uint32_t> userData) {
     static const std::array<std::uint32_t, 2> capabilities{1u, 61u};
@@ -44,17 +41,17 @@ RecompileRequest ComputeRequest(std::span<const std::uint32_t> code, std::span<c
 }
 
 const IrValue* Operand(const IrValue* value, std::size_t index) {
-    require(value != nullptr && index < value->ArgumentCount(), "a resolved value lacks an operand");
+    Require(value != nullptr && index < value->ArgumentCount(), "a resolved value lacks an operand");
     const auto* operand = value->Argument(index);
-    require(operand != nullptr, "a resolved value has a null operand");
+    Require(operand != nullptr, "a resolved value has a null operand");
     return operand->Resolve();
 }
 
 std::uint32_t UserDataRegister(const IrValue* value) {
-    require(!value->IsPhi(), "the T# address still merges values from both loop exits");
-    require(value->Opcode() == IrOpcode::GetUserData, "the T# address is not the user data the loop sets before its early exit");
+    Require(!value->IsPhi(), "the T# address still merges values from both loop exits");
+    Require(value->Opcode() == IrOpcode::GetUserData, "the T# address is not the user data the loop sets before its early exit");
     const auto* reg = Operand(value, 0u);
-    require(reg->Type() == IrType::ScalarReg, "user data without a scalar register operand");
+    Require(reg->Type() == IrType::ScalarReg, "user data without a scalar register operand");
     return reg->Register().index;
 }
 
@@ -72,20 +69,20 @@ void verifyDescriptorBelowGotoBranch() {
     auto program = PrepareResourceProgram(ComputeRequest(code, userData));
     static_cast<void>(ResourceMaterializer{}.ExtractPlan(program));
     const auto& plan = program.Resources();
-    require(plan.info.images.size() == 1u, "the image loaded below the goto branch was not planned");
+    Require(plan.info.images.size() == 1u, "the image loaded below the goto branch was not planned");
     const auto& source = plan.descriptorSources.at(plan.info.images[0].source);
-    require(source.dwordCount == 8u && !source.tableColumn.has_value(), "the T# is not an eight-dword descriptor read through the SRT");
+    Require(source.dwordCount == 8u && !source.tableColumn.has_value(), "the T# is not an eight-dword descriptor read through the SRT");
     for (std::uint32_t dword = 0; dword < source.dwordCount; ++dword) {
         const auto* read = source.dwords[dword] != nullptr ? source.dwords[dword]->Resolve() : nullptr;
-        require(read != nullptr && read->Opcode() == IrOpcode::ReadConst, "T# dword " + std::to_string(dword) + " is not read through the SRT");
-        require(Operand(read, 0u)->Opcode() == IrOpcode::GetSrtResource && Operand(read, 1u)->HasImmediate(), "T# dword " + std::to_string(dword) + " does not name an SRT slot");
+        Require(read != nullptr && read->Opcode() == IrOpcode::ReadConst, "T# dword " + std::to_string(dword) + " is not read through the SRT");
+        Require(Operand(read, 0u)->Opcode() == IrOpcode::GetSrtResource && Operand(read, 1u)->HasImmediate(), "T# dword " + std::to_string(dword) + " does not name an SRT slot");
         const auto slot = Operand(read, 1u)->ImmediateU32();
-        require(slot < plan.srtReads.size() && plan.srtReads[slot].value != nullptr, "T# dword " + std::to_string(dword) + " names a missing SRT slot");
+        Require(slot < plan.srtReads.size() && plan.srtReads[slot].value != nullptr, "T# dword " + std::to_string(dword) + " names a missing SRT slot");
         const auto* load = plan.srtReads[slot].value->Resolve();
-        require(load->Opcode() == IrOpcode::LoadAddressU32, "SRT slot " + std::to_string(slot) + " is not a load through an address");
+        Require(load->Opcode() == IrOpcode::LoadAddressU32, "SRT slot " + std::to_string(slot) + " is not a load through an address");
         const auto* address = Operand(load, 0u);
-        require(address->Opcode() == IrOpcode::GetAddressResource, "SRT slot " + std::to_string(slot) + " is not loaded through an address resource");
-        require(UserDataRegister(Operand(address, 0u)) == 4u && UserDataRegister(Operand(address, 1u)) == 5u, "SRT slot " + std::to_string(slot) + " is not loaded through s[4:5]");
+        Require(address->Opcode() == IrOpcode::GetAddressResource, "SRT slot " + std::to_string(slot) + " is not loaded through an address resource");
+        Require(UserDataRegister(Operand(address, 0u)) == 4u && UserDataRegister(Operand(address, 1u)) == 5u, "SRT slot " + std::to_string(slot) + " is not loaded through s[4:5]");
     }
 }
 

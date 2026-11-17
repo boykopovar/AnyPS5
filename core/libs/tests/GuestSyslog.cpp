@@ -1,6 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "tests/TemporaryFile.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -21,7 +22,6 @@ extern "C" {
 extern const char* __progname_nid_postfix;
 #endif
 }
-static void Require(bool value) { if (!value) std::abort(); }
 static void RedirectStderr(int descriptor) {
     std::fflush(stderr);
 #ifdef _WIN32

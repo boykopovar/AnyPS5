@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -9,13 +10,6 @@
 #include <cstring>
 #include <thread>
 #include <x86intrin.h>
-
-static void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "%s\n", message);
-        std::abort();
-    }
-}
 
 int main(int argc, char** argv) {
     constexpr std::uint64_t minuteMicros = 60ULL * 1000 * 1000;

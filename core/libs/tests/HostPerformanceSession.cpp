@@ -1,4 +1,5 @@
 #include "prx/libkernel/System/include/HostPerformance.hpp"
+#include "Testing.hpp"
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -8,10 +9,6 @@
 namespace {
 
 using namespace HostPerformance;
-
-void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 class FakeBackend final : public IBackend {
 public:

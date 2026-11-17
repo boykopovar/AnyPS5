@@ -1,5 +1,6 @@
 #include "prx/libSceZlib/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -12,18 +13,6 @@
 #include <stdexcept>
 #include <thread>
 #include <vector>
-
-static void Require(bool value, const std::source_location& location = std::source_location::current()) {
-    if (value) return;
-    std::fprintf(stderr, "Zlib assertion failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction>
-static void RequireThrows(TAction action) {
-    try { action(); } catch (const std::runtime_error&) { return; }
-    std::abort();
-}
 
 static std::uint32_t Adler32(const std::uint8_t* data, std::size_t length) {
     std::uint32_t s1 = 1, s2 = 0;
@@ -87,7 +76,7 @@ int main() {
     Require(sceZlibInitialize(output, 0) == static_cast<std::int32_t>(0x81120016));
     Require(sceZlibInitialize(nullptr, 0) == 0);
     Require(sceZlibInitialize(nullptr, 0) == static_cast<std::int32_t>(0x81120033));
-    RequireThrows([&] { sceZlibInflate(compressed.data(), compressed.size(), output + 1, 8192, &id); });
+    ExpectErr<std::runtime_error>([&] { sceZlibInflate(compressed.data(), compressed.size(), output + 1, 8192, &id); });
     for (const auto capacity : {0u, 1u, 2047u, 2049u, 65535u, 65537u}) {
         Require(sceZlibInflate(compressed.data(), compressed.size(), output, capacity, &id) == static_cast<std::int32_t>(0x81120016));
         Require(id == 0);
@@ -204,7 +193,7 @@ int main() {
     Require(interrupted);
     Require(sceZlibGetResult(id, &produced, &status) == static_cast<std::int32_t>(0x81120032));
     std::array<std::uint8_t, 65536> scratch{};
-    RequireThrows([&] { sceZlibInitialize(scratch.data(), scratch.size()); });
+    ExpectErr<std::runtime_error>([&] { sceZlibInitialize(scratch.data(), scratch.size()); });
     Require(sceZlibInitialize(nullptr, 0) == 0);
     Require(sceZlibInflate(compressed.data(), compressed.size(), output, 65536, &id) == 0);
     Require(sceZlibFinalize() == 0);

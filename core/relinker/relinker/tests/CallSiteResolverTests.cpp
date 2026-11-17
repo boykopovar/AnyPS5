@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include <relinker/analysis/CallSiteResolver.hpp>
 #include <cstdint>
 #include <cstring>
@@ -9,15 +10,11 @@
 
 namespace {
 
-void require(bool condition, const std::string& name) {
-    if (!condition) throw std::runtime_error(name);
-}
-
 void check(const std::string& name, const std::vector<std::uint8_t>& text, bool expected) {
     auto resolver = Relinker::MakeCallSiteResolver();
     const auto sites = resolver->ResolveCallSites(text, 0x1000, 0x1100, 8);
-    require(sites == (expected ? std::vector<Relinker::FileByteOffset>{0x1000} : std::vector<Relinker::FileByteOffset>{}), name);
-    require(resolver->ResolveCallSites(text, 0x1000, 0x1200, 8).empty(), name + " unexpected address");
+    Require(sites == (expected ? std::vector<Relinker::FileByteOffset>{0x1000} : std::vector<Relinker::FileByteOffset>{}), name);
+    Require(resolver->ResolveCallSites(text, 0x1000, 0x1200, 8).empty(), name + " unexpected address");
 }
 
 void checkAddressSize() {
@@ -32,18 +29,18 @@ void checkAddressSize() {
                 const auto displacement = static_cast<std::uint32_t>(slot - address - text.size());
                 std::memcpy(text.data() + text.size() - 4, &displacement, 4);
                 const std::vector<Relinker::FileByteOffset> expected{address};
-                require(resolver->ResolveCallSites(text, address, slot, 8) == expected, "EIP-relative import access missing");
-                require(resolver->ResolveCallSites(text, address, slot + 0x100000000ULL, 8).empty(), "EIP-relative access used the unwrapped slot");
-                require(resolver->ResolveCallSites(text, address, slot, 0).empty(), "Empty EIP-relative target range matched");
-                require(resolver->ResolveCallSites(text, address, slot - 1, 1).empty(), "EIP-relative target matched range end");
-                require(resolver->ResolveCallSites(text, address, slot - 1, 2) == expected, "EIP-relative target missing inside range");
+                Require(resolver->ResolveCallSites(text, address, slot, 8) == expected, "EIP-relative import access missing");
+                Require(resolver->ResolveCallSites(text, address, slot + 0x100000000ULL, 8).empty(), "EIP-relative access used the unwrapped slot");
+                Require(resolver->ResolveCallSites(text, address, slot, 0).empty(), "Empty EIP-relative target range matched");
+                Require(resolver->ResolveCallSites(text, address, slot - 1, 1).empty(), "EIP-relative target matched range end");
+                Require(resolver->ResolveCallSites(text, address, slot - 1, 2) == expected, "EIP-relative target missing inside range");
             }
         }
     }
     const std::vector<std::uint8_t> rip{0x48, 0x8b, 0x05, 0xf9, 0x17, 0, 0};
     auto resolver = Relinker::MakeCallSiteResolver();
-    require(resolver->ResolveCallSites(rip, 0x100001000ULL, 0x100002800ULL, 8) == std::vector<Relinker::FileByteOffset>{0x100001000ULL}, "RIP-relative access was truncated");
-    require(resolver->ResolveCallSites(rip, 0x100001000ULL, 0x2800, 8).empty(), "RIP-relative access matched a wrapped slot");
+    Require(resolver->ResolveCallSites(rip, 0x100001000ULL, 0x100002800ULL, 8) == std::vector<Relinker::FileByteOffset>{0x100001000ULL}, "RIP-relative access was truncated");
+    Require(resolver->ResolveCallSites(rip, 0x100001000ULL, 0x2800, 8).empty(), "RIP-relative access matched a wrapped slot");
 }
 
 std::vector<std::uint8_t> ripInstruction(std::vector<std::uint8_t> prefixes, std::uint8_t opcode, std::uint8_t modrm) {

@@ -1,6 +1,7 @@
 #include "prx/libSceMove/include/Api.hpp"
 #include "ProcessParametersFixture.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -9,8 +10,6 @@
 #include <stdexcept>
 
 namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
 
 constexpr int kOk = 0;
 constexpr int kNoControllerConnected = 1;

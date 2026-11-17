@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -7,12 +8,6 @@
 #include <string>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "ICU substring search check failed at line %u\n", location.line());
-    std::abort();
-}
 
 constexpr std::ptrdiff_t None = -1;
 

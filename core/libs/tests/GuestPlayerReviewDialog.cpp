@@ -4,6 +4,7 @@
 #include <cstdint>
 #include "prx/libSceUserService/UserService.hpp"
 #include "prx/libSceCommonDialog/CommonDialog.hpp"
+#include "Testing.hpp"
 #include <cstdlib>
 #include <thread>
 #include <cerrno>
@@ -11,8 +12,6 @@
 namespace {
 
 constexpr int RACE_ROUNDS = 200000;
-
-void Require(bool value) { if (!value) std::abort(); }
 
 void RequireTerminateWinsOverOpen(const PlayerReviewDialogParam& param) {
     std::atomic<int> round{0};

@@ -2,6 +2,7 @@
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <climits>
@@ -86,8 +87,6 @@ struct UmtxTime {
     std::uint32_t flags;
     std::uint32_t clockId;
 };
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static KernelTimespec FailsafeTimeout() { return {10, 0}; }
 

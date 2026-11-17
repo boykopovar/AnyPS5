@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -18,12 +19,6 @@ constexpr int SetFlags = 4;
 constexpr int Synchronous = 0x80;
 constexpr int ReadWrite = 2;
 constexpr int Create = 0x200;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "check failed at line %u\n", static_cast<unsigned>(location.line()));
-    std::exit(1);
-}
 
 std::uint64_t Synced() {
     return FileSynchronousWritesForTest_nid_no_patch();

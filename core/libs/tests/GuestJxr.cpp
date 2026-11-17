@@ -3,6 +3,7 @@
 #include "prx/libSceJxr/src/EncoderMetadata.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -42,21 +43,9 @@ void JxrFreeTileFixtureClearTiles();
 
 namespace {
 
-void Check(bool value, int line) { if (!value) { std::fprintf(stderr, "GuestJxr.cpp:%d: requirement failed\n", line); std::abort(); } }
-#define Require(value) Check((value), __LINE__)
-
 bool recordTileFrees = false;
 std::array<void*, 16> tileFrees{};
 std::size_t tileFreeCount = 0;
-template <typename F>
-void RequireThrows(F&& function) {
-    try {
-        function();
-        std::abort();
-    } catch (const std::invalid_argument&) {
-    }
-}
-
 void* lastFreed = nullptr;
 int frees = 0;
 int freeCalls = 0;
@@ -1059,9 +1048,9 @@ void TestDecodeInitialize() {
     const auto miscSize = JxrDecodeFixtureMiscSize_nid_no_patch();
     auto* misc = JxrDecodeFixtureMisc_nid_no_patch(decoder);
 
-    RequireThrows([&] { PKImageDecode_Initialize_nid_postfix(nullptr, &stream); });
-    RequireThrows([&] { PKImageDecode_Initialize_nid_postfix(decoder, nullptr); });
-    RequireThrows([&] { PKImageDecode_Initialize_nid_postfix(decoder, &withoutGetPosition); });
+    ExpectErr<std::invalid_argument>([&] { PKImageDecode_Initialize_nid_postfix(nullptr, &stream); });
+    ExpectErr<std::invalid_argument>([&] { PKImageDecode_Initialize_nid_postfix(decoder, nullptr); });
+    ExpectErr<std::invalid_argument>([&] { PKImageDecode_Initialize_nid_postfix(decoder, &withoutGetPosition); });
     Require(JxrDecodeFixtureStream_nid_no_patch(decoder) == nullptr);
 
     std::memset(misc, 0xa5, miscSize);
@@ -1099,30 +1088,30 @@ void TestDecodeQueries() {
     JxrDecodeFixtureSetImage_nid_no_patch(decoder, 0x80000001u, 7, 3, 300.5f, 72.25f, &custom);
 
     JxrGuestGuid queried{};
-    RequireThrows([&] { PKImageDecode_GetPixelFormat_nid_postfix(nullptr, &queried); });
-    RequireThrows([&] { PKImageDecode_GetPixelFormat_nid_postfix(decoder, nullptr); });
+    ExpectErr<std::invalid_argument>([&] { PKImageDecode_GetPixelFormat_nid_postfix(nullptr, &queried); });
+    ExpectErr<std::invalid_argument>([&] { PKImageDecode_GetPixelFormat_nid_postfix(decoder, nullptr); });
     Require(PKImageDecode_GetPixelFormat_nid_postfix(decoder, &queried) == 0);
     Require(GuidEquals(queried, custom));
 
     std::int32_t width = 0;
     std::int32_t height = 0;
-    RequireThrows([&] { PKImageDecode_GetSize_nid_postfix(nullptr, &width, &height); });
-    RequireThrows([&] { PKImageDecode_GetSize_nid_postfix(decoder, nullptr, &height); });
-    RequireThrows([&] { PKImageDecode_GetSize_nid_postfix(decoder, &width, nullptr); });
+    ExpectErr<std::invalid_argument>([&] { PKImageDecode_GetSize_nid_postfix(nullptr, &width, &height); });
+    ExpectErr<std::invalid_argument>([&] { PKImageDecode_GetSize_nid_postfix(decoder, nullptr, &height); });
+    ExpectErr<std::invalid_argument>([&] { PKImageDecode_GetSize_nid_postfix(decoder, &width, nullptr); });
     Require(PKImageDecode_GetSize_nid_postfix(decoder, &width, &height) == 0);
     Require(width == static_cast<std::int32_t>(0x80000001u) && height == 7);
 
     float resolutionX = 0;
     float resolutionY = 0;
-    RequireThrows([&] { PKImageDecode_GetResolution_nid_postfix(nullptr, &resolutionX, &resolutionY); });
-    RequireThrows([&] { PKImageDecode_GetResolution_nid_postfix(decoder, nullptr, &resolutionY); });
-    RequireThrows([&] { PKImageDecode_GetResolution_nid_postfix(decoder, &resolutionX, nullptr); });
+    ExpectErr<std::invalid_argument>([&] { PKImageDecode_GetResolution_nid_postfix(nullptr, &resolutionX, &resolutionY); });
+    ExpectErr<std::invalid_argument>([&] { PKImageDecode_GetResolution_nid_postfix(decoder, nullptr, &resolutionY); });
+    ExpectErr<std::invalid_argument>([&] { PKImageDecode_GetResolution_nid_postfix(decoder, &resolutionX, nullptr); });
     Require(PKImageDecode_GetResolution_nid_postfix(decoder, &resolutionX, &resolutionY) == 0);
     Require(resolutionX == 300.5f && resolutionY == 72.25f);
 
     std::uint32_t frames = 0;
-    RequireThrows([&] { PKImageDecode_GetFrameCount_nid_postfix(nullptr, &frames); });
-    RequireThrows([&] { PKImageDecode_GetFrameCount_nid_postfix(decoder, nullptr); });
+    ExpectErr<std::invalid_argument>([&] { PKImageDecode_GetFrameCount_nid_postfix(nullptr, &frames); });
+    ExpectErr<std::invalid_argument>([&] { PKImageDecode_GetFrameCount_nid_postfix(decoder, nullptr); });
     Require(PKImageDecode_GetFrameCount_nid_postfix(decoder, &frames) == 0);
     Require(frames == 3);
 
@@ -1145,9 +1134,9 @@ void TestDecodeQueries() {
 }
 
 void TestDecodeRelease() {
-    RequireThrows([&] { PKImageDecode_Release_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([&] { PKImageDecode_Release_nid_postfix(nullptr); });
     void* nullDecoder = nullptr;
-    RequireThrows([&] { PKImageDecode_Release_nid_postfix(&nullDecoder); });
+    ExpectErr<std::invalid_argument>([&] { PKImageDecode_Release_nid_postfix(&nullDecoder); });
 
     Jxr::Stream closable{};
     closable.close = &MockClose;
@@ -1157,7 +1146,7 @@ void TestDecodeRelease() {
     JxrDecodeFixtureSetStream_nid_no_patch(ownedWithoutStream, nullptr, 1);
     int freesBefore = frees;
     streamCloseCount = 0;
-    RequireThrows([&] { PKImageDecode_Release_nid_postfix(&ownedWithoutStream); });
+    ExpectErr<std::invalid_argument>([&] { PKImageDecode_Release_nid_postfix(&ownedWithoutStream); });
     Require(ownedWithoutStream != nullptr && frees == freesBefore && streamCloseCount == 0);
     JxrDecodeFixtureSetStream_nid_no_patch(ownedWithoutStream, nullptr, 0);
     Require(PKImageDecode_Release_nid_postfix(&ownedWithoutStream) == 0);
@@ -1166,7 +1155,7 @@ void TestDecodeRelease() {
     void* ownedWithoutClose = NewDecoder();
     JxrDecodeFixtureSetStream_nid_no_patch(ownedWithoutClose, &unclosable, 1);
     freesBefore = frees;
-    RequireThrows([&] { PKImageDecode_Release_nid_postfix(&ownedWithoutClose); });
+    ExpectErr<std::invalid_argument>([&] { PKImageDecode_Release_nid_postfix(&ownedWithoutClose); });
     Require(ownedWithoutClose != nullptr && frees == freesBefore && streamCloseCount == 0);
     JxrDecodeFixtureSetStream_nid_no_patch(ownedWithoutClose, &unclosable, 0);
     Require(PKImageDecode_Release_nid_postfix(&ownedWithoutClose) == 0);

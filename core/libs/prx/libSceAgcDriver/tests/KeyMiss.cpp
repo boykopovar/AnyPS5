@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <optional>
 #include <stdexcept>
@@ -11,10 +12,6 @@ using Graphics::ShaderResources;
 using ShaderRecompiler::DescriptorRole;
 
 namespace {
-
-void check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 struct Binding {
     DescriptorRole role;
@@ -52,19 +49,19 @@ std::vector<Binding> bindings() {
 
 void expectOnly(const ContentKeyDiff& diff, std::optional<ContentKeyComponent> component, const char* message) {
     for (std::size_t i = 0; i < diff.size(); ++i) {
-        check(diff[i] == (component && i == static_cast<std::size_t>(*component)), message);
+        Require(diff[i] == (component && i == static_cast<std::size_t>(*component)), message);
     }
 }
 
 void testDispatchKey() {
     ContentKeyDiff diff;
     const auto base = shaderKey(true, false, bindings());
-    check(ShaderResources::DiffContentKeys(base, base, false, diff), "equal keys were not comparable");
+    Require(ShaderResources::DiffContentKeys(base, base, false, diff), "equal keys were not comparable");
     expectOnly(diff, std::nullopt, "equal keys reported a difference");
     const auto change = [&](std::size_t binding, std::size_t word, ContentKeyComponent expected, const char* message) {
         auto changed = bindings();
         changed[binding].words[word] += 1;
-        check(ShaderResources::DiffContentKeys(base, shaderKey(true, false, changed), false, diff), message);
+        Require(ShaderResources::DiffContentKeys(base, shaderKey(true, false, changed), false, diff), message);
         expectOnly(diff, expected, message);
     };
     change(0, 0, ContentKeyComponent::BufferWord0, "V# word 0");
@@ -77,30 +74,30 @@ void testDispatchKey() {
     auto two = bindings();
     two[0].words[0] += 1;
     two[0].words[3] += 1;
-    check(ShaderResources::DiffContentKeys(base, shaderKey(true, false, two), false, diff), "two components");
-    check(diff[static_cast<std::size_t>(ContentKeyComponent::BufferWord0)] && diff[static_cast<std::size_t>(ContentKeyComponent::BufferWord3)] && !diff[static_cast<std::size_t>(ContentKeyComponent::BufferWord1)], "two components in one miss are both counted");
+    Require(ShaderResources::DiffContentKeys(base, shaderKey(true, false, two), false, diff), "two components");
+    Require(diff[static_cast<std::size_t>(ContentKeyComponent::BufferWord0)] && diff[static_cast<std::size_t>(ContentKeyComponent::BufferWord3)] && !diff[static_cast<std::size_t>(ContentKeyComponent::BufferWord1)], "two components in one miss are both counted");
     auto fewer = bindings();
     fewer.pop_back();
-    check(!ShaderResources::DiffContentKeys(base, shaderKey(true, false, fewer), false, diff), "different shapes were compared");
+    Require(!ShaderResources::DiffContentKeys(base, shaderKey(true, false, fewer), false, diff), "different shapes were compared");
     expectOnly(diff, ContentKeyComponent::Layout, "shape change is a layout change");
     const auto noData = shaderKey(false, false, bindings());
     auto changedData = bindings();
     changedData[3].words[0] += 1;
-    check(ShaderResources::DiffContentKeys(noData, shaderKey(false, false, changedData), false, diff), "data words left out");
+    Require(ShaderResources::DiffContentKeys(noData, shaderKey(false, false, changedData), false, diff), "data words left out");
     expectOnly(diff, std::nullopt, "data words are not part of the key without dataWords");
     std::vector<Binding> table{{DescriptorRole::ImageTable, {50, 51, 52, 53, 54, 55, 56, 57}, 1, {1}}, {DescriptorRole::SamplerTable, {60, 61, 62, 63}}};
     const auto tableBase = shaderKey(true, false, table);
     auto tableWord = table;
     tableWord[0].words[2] += 1;
-    check(ShaderResources::DiffContentKeys(tableBase, shaderKey(true, false, tableWord), false, diff), "image table word");
+    Require(ShaderResources::DiffContentKeys(tableBase, shaderKey(true, false, tableWord), false, diff), "image table word");
     expectOnly(diff, ContentKeyComponent::Image, "image table word");
     auto tableShape = table;
     tableShape[0].shapes[0] += 1;
-    check(ShaderResources::DiffContentKeys(tableBase, shaderKey(true, false, tableShape), false, diff), "image table shape");
+    Require(ShaderResources::DiffContentKeys(tableBase, shaderKey(true, false, tableShape), false, diff), "image table shape");
     expectOnly(diff, ContentKeyComponent::Image, "image table shape");
     auto samplerWord = table;
     samplerWord[1].words[1] += 1;
-    check(ShaderResources::DiffContentKeys(tableBase, shaderKey(true, false, samplerWord), false, diff), "sampler table word");
+    Require(ShaderResources::DiffContentKeys(tableBase, shaderKey(true, false, samplerWord), false, diff), "sampler table word");
     expectOnly(diff, ContentKeyComponent::Sampler, "sampler table word");
 }
 
@@ -113,13 +110,13 @@ std::vector<std::uint32_t> withDevice(std::vector<std::uint32_t> key, std::uint3
 void testDispatchKeyWithDevice() {
     ContentKeyDiff diff;
     const auto base = withDevice(shaderKey(false, false, bindings()), 5);
-    check(ShaderResources::DiffContentKeys(base, base, false, diff), "dispatch key with device words was not comparable");
+    Require(ShaderResources::DiffContentKeys(base, base, false, diff), "dispatch key with device words was not comparable");
     expectOnly(diff, std::nullopt, "equal dispatch keys with device words reported a difference");
     auto buffer = bindings();
     buffer[0].words[0] += 1;
-    check(ShaderResources::DiffContentKeys(base, withDevice(shaderKey(false, false, buffer), 5), false, diff), "dispatch V# word 0 with device words");
+    Require(ShaderResources::DiffContentKeys(base, withDevice(shaderKey(false, false, buffer), 5), false, diff), "dispatch V# word 0 with device words");
     expectOnly(diff, ContentKeyComponent::BufferWord0, "dispatch V# word 0 with device words");
-    check(ShaderResources::DiffContentKeys(base, withDevice(shaderKey(false, false, bindings()), 6), false, diff), "dispatch device change");
+    Require(ShaderResources::DiffContentKeys(base, withDevice(shaderKey(false, false, bindings()), 6), false, diff), "dispatch device change");
     expectOnly(diff, ContentKeyComponent::Other, "dispatch device change");
 }
 
@@ -127,7 +124,7 @@ void testDrawKey() {
     ContentKeyDiff diff;
     const auto base = drawKey(5, shaderKey(true, true, bindings()), 0x1000);
     const auto compare = [&](const std::vector<std::uint32_t>& key, std::optional<ContentKeyComponent> expected, const char* message) {
-        check(ShaderResources::DiffContentKeys(base, key, true, diff), message);
+        Require(ShaderResources::DiffContentKeys(base, key, true, diff), message);
         expectOnly(diff, expected, message);
     };
     compare(drawKey(5, shaderKey(true, true, bindings()), 0x2000), ContentKeyComponent::DrawTarget, "draw target");

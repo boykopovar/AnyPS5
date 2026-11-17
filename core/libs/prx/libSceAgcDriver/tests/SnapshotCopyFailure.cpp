@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/SnapshotCopies.hpp"
 #include "AllocationFailure.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdio>
 #include <new>
@@ -17,10 +18,6 @@ bool Consistent(const SnapshotCopies& copies) {
         bytes += found->second.bytes.size();
     }
     return bytes == copies.bytes;
-}
-
-void Require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
 }
 
 void CheckInsertionFailures() {

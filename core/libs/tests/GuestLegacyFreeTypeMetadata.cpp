@@ -1,6 +1,7 @@
 #include "prx/libfreetype/libfreetype.hpp"
 #include "prx/libSceFreeType/libSceFreeType.hpp"
 #include "FontFixture.hpp"
+#include "Testing.hpp"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -27,12 +28,6 @@
 
 using namespace LegacyFreeType;
 
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "Legacy FreeType metadata check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 static auto Load(const char* path) {
 #ifdef _WIN32

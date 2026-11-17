@@ -1,5 +1,6 @@
 #include "prx/libwebrtc/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -16,13 +17,6 @@
 namespace {
 
 constexpr int Ebusy = 16;
-
-void Require(bool value, const char* message) {
-    if (!value) {
-        std::fprintf(stderr, "%s\n", message);
-        std::abort();
-    }
-}
 
 bool HeldByAnotherThread(const WebRtcRecursiveCriticalSection& section) {
     int result = -1;

@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -22,12 +23,6 @@ constexpr int NoSuchFile = 2;
 constexpr int IsDirectory = 21;
 constexpr int NotSupported = 45;
 constexpr int NoSystemCall = 78;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "unversioned filesystem: %s\n", message);
-    std::abort();
-}
 
 void Write(const char* path, std::size_t bytes, unsigned seed) {
     std::ofstream file(path, std::ios::binary | std::ios::trunc);

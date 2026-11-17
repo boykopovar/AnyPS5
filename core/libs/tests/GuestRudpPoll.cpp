@@ -1,5 +1,6 @@
 #include "prx/libSceRudp/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 
 #include <algorithm>
 #include <array>
@@ -14,10 +15,6 @@
 
 extern "C" {
 
-}
-
-static void Require(bool value) {
-    if (!value) std::abort();
 }
 
 static void APS5_VABI Handler(int, int, int, void*) {}

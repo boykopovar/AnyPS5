@@ -1,5 +1,6 @@
 #include "FreeTypeFontFixture.hpp"
 #include "prx/libSceFreeTypeOt/libSceFreeTypeOt.hpp"
+#include "Testing.hpp"
 #include <ft2build.h>
 #include FT_FREETYPE_H
 
@@ -15,12 +16,6 @@ namespace {
 using FreeType::GuestFaceRec;
 using FreeType::GuestGlyphSlotRec;
 using FreeType::GuestLibrary;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "libSceFreeTypeOt render internal: %s\n", message);
-    std::exit(1);
-}
 
 template<typename TCall>
 bool Throws(TCall call) {

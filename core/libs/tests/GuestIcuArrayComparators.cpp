@@ -1,16 +1,11 @@
 #include "prx/libSceIcu/include/LegacyExports.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "ICU array comparators: %s\n", message);
-    std::abort();
-}
 
 std::int32_t CompareInt32(std::int32_t left, std::int32_t right) {
     return uprv_int32Comparator_nid_postfix(nullptr, &left, &right);

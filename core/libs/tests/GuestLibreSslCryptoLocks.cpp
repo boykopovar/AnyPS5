@@ -1,19 +1,12 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
-
-static void Require(bool value) { if (!value) std::abort(); }
-
-template<typename TAction>
-static void RequireThrows(TAction action) {
-    try { action(); } catch (const std::invalid_argument&) { return; }
-    std::abort();
-}
 
 static void APS5_VABI Locking(int, int, const char*, int) {}
 static int APS5_VABI AddLock(int*, int, int, const char*, int) { return 0; }
@@ -42,7 +35,7 @@ static void CheckThreadIdNumeric() {
     CRYPTO_THREADID_set_numeric_nid_postfix(&id, 0);
     unsigned char zero[sizeof(id)]{};
     Require(std::memcmp(&id, zero, sizeof(id)) == 0);
-    RequireThrows([] { CRYPTO_THREADID_set_numeric_nid_postfix(nullptr, 1); });
+    ExpectErr<std::invalid_argument>([] { CRYPTO_THREADID_set_numeric_nid_postfix(nullptr, 1); });
     errno = 71;
     CRYPTO_THREADID_set_numeric_nid_postfix(reinterpret_cast<CryptoThreadId*>(0x10), 0x1234567890abcdefull);
     Require(errno == 71);

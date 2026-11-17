@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/ThreadPriority.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
@@ -13,10 +14,6 @@ using namespace AgcDriver;
 
 constexpr std::uint64_t Unlimited = std::numeric_limits<std::uint64_t>::max();
 constexpr RtkitLimits Rtkit{20, 200000};
-
-void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 void ParseTests() {
     for (const char* text : {static_cast<const char*>(nullptr), "", "off"}) Require(ParseThreadPriorityMode(text) == ThreadPriorityMode::Off, std::string("APS5_THREAD_PRIORITY=") + (text == nullptr ? "(unset)" : text) + " must leave priorities alone");

@@ -1,33 +1,13 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/include/WebKitValueExports.hpp"
 #include "prx/libSceNKWebKit/src/Configuration.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
 #include <stdexcept>
 
-namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "WKPage layout check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
-
-template<class Function>
-void RequireInvalidArgument(Function function) {
-    bool threw = false;
-    try {
-        function();
-    } catch (const std::invalid_argument&) {
-        threw = true;
-    }
-    Require(threw);
-}
-
-}
 
 int main() {
     auto page = NKWebKit::Make<NKWebKit::Page>();
@@ -109,26 +89,26 @@ int main() {
     WKPageSetPageLength(pageRef, -50.0);
     Require(WKPageGetPageLength(pageRef) == -50.0);
 
-    RequireInvalidArgument([] { WKPageAreScrollbarAnimationsSuppressed(nullptr); });
-    RequireInvalidArgument([] { WKPageSetSuppressScrollbarAnimations(nullptr, true); });
-    RequireInvalidArgument([] { WKPageHasHorizontalScrollbar(nullptr); });
-    RequireInvalidArgument([] { WKPageHasVerticalScrollbar(nullptr); });
-    RequireInvalidArgument([] { WKPageWillHandleHorizontalScrollEvents(nullptr); });
-    RequireInvalidArgument([] { WKPageGetScrollPinningBehavior(nullptr); });
-    RequireInvalidArgument([] { WKPageSetScrollPinningBehavior(nullptr, 0); });
-    RequireInvalidArgument([] { WKPageUseFixedLayout(nullptr); });
-    RequireInvalidArgument([] { WKPageSetUseFixedLayout(nullptr, true); });
-    RequireInvalidArgument([] { WKPageFixedLayoutSize(nullptr); });
-    RequireInvalidArgument([] { WKPageSetFixedLayoutSize(nullptr, { 100.0, 100.0 }); });
-    RequireInvalidArgument([] { WKPageGetPaginationMode(nullptr); });
-    RequireInvalidArgument([] { WKPageSetPaginationMode(nullptr, 0); });
-    RequireInvalidArgument([] { WKPageGetPaginationBehavesLikeColumns(nullptr); });
-    RequireInvalidArgument([] { WKPageSetPaginationBehavesLikeColumns(nullptr, true); });
-    RequireInvalidArgument([] { WKPageSetPaginationLineGridEnabled(nullptr, true); });
-    RequireInvalidArgument([] { WKPageGetGapBetweenPages(nullptr); });
-    RequireInvalidArgument([] { WKPageSetGapBetweenPages(nullptr, 10.0); });
-    RequireInvalidArgument([] { WKPageGetPageLength(nullptr); });
-    RequireInvalidArgument([] { WKPageSetPageLength(nullptr, 100.0); });
+    ExpectErr<std::invalid_argument>([] { WKPageAreScrollbarAnimationsSuppressed(nullptr); });
+    ExpectErr<std::invalid_argument>([] { WKPageSetSuppressScrollbarAnimations(nullptr, true); });
+    ExpectErr<std::invalid_argument>([] { WKPageHasHorizontalScrollbar(nullptr); });
+    ExpectErr<std::invalid_argument>([] { WKPageHasVerticalScrollbar(nullptr); });
+    ExpectErr<std::invalid_argument>([] { WKPageWillHandleHorizontalScrollEvents(nullptr); });
+    ExpectErr<std::invalid_argument>([] { WKPageGetScrollPinningBehavior(nullptr); });
+    ExpectErr<std::invalid_argument>([] { WKPageSetScrollPinningBehavior(nullptr, 0); });
+    ExpectErr<std::invalid_argument>([] { WKPageUseFixedLayout(nullptr); });
+    ExpectErr<std::invalid_argument>([] { WKPageSetUseFixedLayout(nullptr, true); });
+    ExpectErr<std::invalid_argument>([] { WKPageFixedLayoutSize(nullptr); });
+    ExpectErr<std::invalid_argument>([] { WKPageSetFixedLayoutSize(nullptr, { 100.0, 100.0 }); });
+    ExpectErr<std::invalid_argument>([] { WKPageGetPaginationMode(nullptr); });
+    ExpectErr<std::invalid_argument>([] { WKPageSetPaginationMode(nullptr, 0); });
+    ExpectErr<std::invalid_argument>([] { WKPageGetPaginationBehavesLikeColumns(nullptr); });
+    ExpectErr<std::invalid_argument>([] { WKPageSetPaginationBehavesLikeColumns(nullptr, true); });
+    ExpectErr<std::invalid_argument>([] { WKPageSetPaginationLineGridEnabled(nullptr, true); });
+    ExpectErr<std::invalid_argument>([] { WKPageGetGapBetweenPages(nullptr); });
+    ExpectErr<std::invalid_argument>([] { WKPageSetGapBetweenPages(nullptr, 10.0); });
+    ExpectErr<std::invalid_argument>([] { WKPageGetPageLength(nullptr); });
+    ExpectErr<std::invalid_argument>([] { WKPageSetPageLength(nullptr, 100.0); });
 
     WKRelease(pageRef);
     return 0;

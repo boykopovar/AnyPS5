@@ -1,5 +1,6 @@
 #include "SceTypes.hpp"
 #include "prx/libSceUserService/UserService.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -8,12 +9,6 @@
 #include <initializer_list>
 
 namespace {
-
-void Require(bool condition) {
-    if (!condition) {
-        std::abort();
-    }
-}
 
 bool MemoryMatches(const char* buffer, std::size_t offset, std::size_t count, char expected) {
     for (std::size_t i = 0; i < count; ++i) {

@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <bit>
 #include <cstddef>
@@ -41,13 +42,6 @@ int APS5_VABI TestPosixAlign(void** pointer, std::size_t, std::size_t size) {
     return *pointer ? 0 : 12;
 }
 
-void Require(bool condition, int line) {
-    if (condition) return;
-    std::fprintf(stderr, "libc internal exception virtuals check failed at line %d\n", line);
-    std::exit(1);
-}
-#define REQUIRE(value) Require((value), __LINE__)
-
 const void* VtableOf(const void* object) { return *static_cast<const void* const*>(object); }
 
 const char* TypeName(const void* object) {
@@ -64,17 +58,17 @@ void CheckPlainDoraise(void (APS5_VABI *raise)(const LibcException::ExceptionObj
     try { raise(&source); }
     catch (const std::exception& error) {
         caught = true;
-        REQUIRE(&error != reinterpret_cast<const std::exception*>(&source));
-        REQUIRE(VtableOf(&error) == &table[2]);
-        REQUIRE(std::strcmp(TypeName(&error), name) == 0);
-        REQUIRE(std::strcmp(What(&error), message) == 0);
+        Require(&error != reinterpret_cast<const std::exception*>(&source));
+        Require(VtableOf(&error) == &table[2]);
+        Require(std::strcmp(TypeName(&error), name) == 0);
+        Require(std::strcmp(What(&error), message) == 0);
     }
-    REQUIRE(caught);
+    Require(caught);
 
     bool rejected = false;
     try { raise(nullptr); }
     catch (const std::invalid_argument&) { rejected = true; }
-    REQUIRE(rejected);
+    Require(rejected);
 }
 
 void CheckBadAllocDoraise() {
@@ -83,7 +77,7 @@ void CheckBadAllocDoraise() {
     LibcException::ExceptionObject source {&_ZTVSt9bad_alloc_nid_postfix[2], nullptr};
     try { sceLibcInternalBadAllocDoraise_nid_no_patch(&source); }
     catch (const std::bad_alloc&) { caught = true; }
-    REQUIRE(caught);
+    Require(caught);
 }
 
 void CheckBadTypeidDoraise() {
@@ -92,14 +86,14 @@ void CheckBadTypeidDoraise() {
     LibcException::ExceptionObject source {&_ZTVSt10bad_typeid_nid_postfix[2], nullptr};
     try { sceLibcInternalBadTypeidDoraise_nid_no_patch(&source); }
     catch (const std::bad_typeid&) { caught = true; }
-    REQUIRE(caught);
+    Require(caught);
 }
 
 void CheckBadVariantAccessWhat() {
     LibcException::ExceptionObject object {&_ZTVSt18bad_variant_access_nid_postfix[2], nullptr};
     const char* text = sceLibcInternalBadVariantAccessWhat_nid_no_patch(&object);
-    REQUIRE(text != nullptr && std::strcmp(text, "bad_variant_access") == 0);
-    REQUIRE(text == What(&object));
+    Require(text != nullptr && std::strcmp(text, "bad_variant_access") == 0);
+    Require(text == What(&object));
 }
 
 LibcException::FutureErrorObject FutureError(int value) {
@@ -118,12 +112,12 @@ void CheckFutureErrorWhat() {
     for (const auto& error : errors) {
         const auto object = FutureError(error.value);
         const char* text = sceLibcInternalFutureErrorWhat_nid_no_patch(&object);
-        REQUIRE(text != nullptr && std::strcmp(text, error.text) == 0);
-        REQUIRE(text == What(&object));
+        Require(text != nullptr && std::strcmp(text, error.text) == 0);
+        Require(text == What(&object));
     }
     for (int value : {0, 5, 22, -1}) {
         const auto object = FutureError(value);
-        REQUIRE(sceLibcInternalFutureErrorWhat_nid_no_patch(&object) == nullptr);
+        Require(sceLibcInternalFutureErrorWhat_nid_no_patch(&object) == nullptr);
     }
 }
 
@@ -138,17 +132,17 @@ void CheckFutureErrorDoraise() {
     catch (const std::future_error& error) {
         caught = true;
         const auto* object = reinterpret_cast<const LibcException::FutureErrorObject*>(&error);
-        REQUIRE(object != &source);
-        REQUIRE(object->vtable == &_ZTVSt12future_error_nid_postfix[2]);
-        REQUIRE(std::strcmp(TypeName(object), "St12future_error") == 0);
-        REQUIRE(object->code.reserved == source.code.reserved && object->code.value == 3 && object->code.category == source.code.category);
-        REQUIRE(object->message.size == 25 && object->message.capacity == 31);
-        REQUIRE(object->message.pointer != source.message.pointer);
-        REQUIRE(std::strcmp(object->message.pointer, "promise already satisfied") == 0);
-        REQUIRE(std::strcmp(What(object), "promise already satisfied") == 0);
+        Require(object != &source);
+        Require(object->vtable == &_ZTVSt12future_error_nid_postfix[2]);
+        Require(std::strcmp(TypeName(object), "St12future_error") == 0);
+        Require(object->code.reserved == source.code.reserved && object->code.value == 3 && object->code.category == source.code.category);
+        Require(object->message.size == 25 && object->message.capacity == 31);
+        Require(object->message.pointer != source.message.pointer);
+        Require(std::strcmp(object->message.pointer, "promise already satisfied") == 0);
+        Require(std::strcmp(What(object), "promise already satisfied") == 0);
     }
-    REQUIRE(caught);
-    REQUIRE(std::strcmp(source.message.pointer, "promise already satisfied") == 0);
+    Require(caught);
+    Require(std::strcmp(source.message.pointer, "promise already satisfied") == 0);
     _ZdlPv_nid_postfix(source.message.pointer);
 
     auto inline_ = FutureError(4);
@@ -159,26 +153,26 @@ void CheckFutureErrorDoraise() {
     catch (const std::future_error& error) {
         caught = true;
         const auto* object = reinterpret_cast<const LibcException::FutureErrorObject*>(&error);
-        REQUIRE(object->code.value == 4 && object->message.size == 2 && object->message.capacity == 15);
-        REQUIRE(std::strcmp(object->message.buffer, "ns") == 0);
-        REQUIRE(std::strcmp(What(object), "no state") == 0);
+        Require(object->code.value == 4 && object->message.size == 2 && object->message.capacity == 15);
+        Require(std::strcmp(object->message.buffer, "ns") == 0);
+        Require(std::strcmp(What(object), "no state") == 0);
     }
-    REQUIRE(caught);
+    Require(caught);
 
     bool rejected = false;
     try { sceLibcInternalFutureErrorDoraise_nid_no_patch(nullptr); }
     catch (const std::invalid_argument&) { rejected = true; }
-    REQUIRE(rejected);
+    Require(rejected);
 }
 
 void CheckMessage(const LibcException::CategoryObject* category, int value, const char* expected) {
     GuestLocale::String result {};
     std::memset(&result, 0xcd, sizeof(result));
-    REQUIRE(sceLibcInternalFutureErrorCategoryMessage_nid_no_patch(&result, category, value) == &result);
+    Require(sceLibcInternalFutureErrorCategoryMessage_nid_no_patch(&result, category, value) == &result);
     const auto length = std::strlen(expected);
-    REQUIRE(result.reserved == 0 && result.size == length && (result.capacity & 15) == 15);
+    Require(result.reserved == 0 && result.size == length && (result.capacity & 15) == 15);
     const char* text = result.capacity <= 15 ? result.buffer : result.pointer;
-    REQUIRE(std::memcmp(text, expected, length + 1) == 0);
+    Require(std::memcmp(text, expected, length + 1) == 0);
     if (result.capacity > 15) _ZdlPv_nid_postfix(result.pointer);
 }
 
@@ -203,16 +197,16 @@ void CheckSystemErrorDoraise() {
         catch (const std::system_error& second) {
             caught = true;
             const auto* object = reinterpret_cast<const LibcException::SystemErrorObject*>(&second);
-            REQUIRE(object != source);
-            REQUIRE(object->base.vtable == &_ZTVSt12system_error_nid_postfix[2]);
-            REQUIRE(std::strcmp(TypeName(object), "St12system_error") == 0);
-            REQUIRE(object->base.message == source->base.message);
-            REQUIRE(std::strcmp(What(object), What(source)) == 0);
-            REQUIRE(object->code.value == source->code.value && object->code.category == source->code.category);
+            Require(object != source);
+            Require(object->base.vtable == &_ZTVSt12system_error_nid_postfix[2]);
+            Require(std::strcmp(TypeName(object), "St12system_error") == 0);
+            Require(object->base.message == source->base.message);
+            Require(std::strcmp(What(object), What(source)) == 0);
+            Require(object->code.value == source->code.value && object->code.category == source->code.category);
         }
-        REQUIRE(What(source)[0] != 0);
+        Require(What(source)[0] != 0);
     }
-    REQUIRE(caught);
+    Require(caught);
 
     LibcException::SystemErrorObject custom {};
     _ZNSt13runtime_errorC1EPKc_nid_postfix(&custom.base, "custom failure");
@@ -223,18 +217,18 @@ void CheckSystemErrorDoraise() {
     catch (const std::runtime_error& error) {
         caught = true;
         const auto* object = reinterpret_cast<const LibcException::SystemErrorObject*>(&error);
-        REQUIRE(std::strcmp(TypeName(object), "St12system_error") == 0);
-        REQUIRE(std::strcmp(What(object), "custom failure") == 0);
-        REQUIRE(object->code.value == 22 && object->code.category == custom.code.category);
+        Require(std::strcmp(TypeName(object), "St12system_error") == 0);
+        Require(std::strcmp(What(object), "custom failure") == 0);
+        Require(object->code.value == 22 && object->code.category == custom.code.category);
     }
-    REQUIRE(caught);
+    Require(caught);
     _ZNSt12system_errorD1Ev_nid_postfix(&custom.base);
-    REQUIRE(custom.base.message == nullptr);
+    Require(custom.base.message == nullptr);
 
     bool rejected = false;
     try { sceLibcInternalSystemErrorDoraise_nid_no_patch(nullptr); }
     catch (const std::invalid_argument&) { rejected = true; }
-    REQUIRE(rejected);
+    Require(rejected);
 }
 
 }

@@ -1,6 +1,7 @@
 #include "prx/libSceSystemService/include/SystemService.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <exception>
@@ -11,8 +12,6 @@ namespace {
 
 constexpr std::uint32_t CategoryType = 7;
 constexpr std::uint32_t Sentinel = 0xA5A5A5A5u;
-
-void Require(bool value) { if (!value) std::abort(); }
 
 template<typename TCall>
 bool Throws(TCall call) {

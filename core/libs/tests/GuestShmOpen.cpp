@@ -1,13 +1,13 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 
-static void Require(bool value) { if (!value) std::abort(); }
 static const char* const anonymous = reinterpret_cast<const char*>(1);
 static void RequireInvalid(const char* path, int flags) {
     *__error_nid_postfix() = 0;

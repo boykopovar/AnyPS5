@@ -13,6 +13,7 @@
 #include "prx/libSceSsl/SslTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SslCertificateFixture.hpp"
+#include "Testing.hpp"
 
 #include <mbedtls/ctr_drbg.h>
 #include <mbedtls/entropy.h>
@@ -66,12 +67,6 @@ struct GuestTimeval {
     std::int64_t seconds;
     std::int64_t microseconds;
 };
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::exit(1);
-}
 
 template <typename TCall>
 bool Throws(TCall call) {

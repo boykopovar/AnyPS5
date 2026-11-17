@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -12,17 +13,6 @@
 
 static_assert(sizeof(Asn1String) == 24 && offsetof(Asn1String, data) == 8 && offsetof(Asn1String, flags) == 16);
 
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL 3 ASN.1 check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> static void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
-    try { action(); } catch (const std::exception&) { return; }
-    Require(false, location);
-}
-
 static void TestGet0Data() {
     unsigned char bytes[] {1, 2, 3};
     Asn1String string {3, 2, bytes, 0};
@@ -31,7 +21,7 @@ static void TestGet0Data() {
     Require(ASN1_STRING_get0_data_nid_postfix(&string) == nullptr);
     string = {-1, 0x102, bytes, 0x010};
     Require(ASN1_STRING_get0_data_nid_postfix(&string) == bytes);
-    RequireThrows([] { ASN1_STRING_get0_data_nid_postfix(nullptr); });
+    ExpectErr([] { ASN1_STRING_get0_data_nid_postfix(nullptr); });
 }
 
 static void InitializeHeap() {
@@ -77,7 +67,7 @@ static void TestIntegerFree() {
 
     Asn1String* negative = NewInteger(4, 2, 0);
     negative->length = -1;
-    RequireThrows([&] { ASN1_INTEGER_free_nid_postfix(negative); });
+    ExpectErr([&] { ASN1_INTEGER_free_nid_postfix(negative); });
     Require(negative->data != nullptr && negative->data[0] == 0x5A && negative->data[3] == 0x5A);
     negative->length = 4;
     ASN1_INTEGER_free_nid_postfix(negative);

@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/PassHazards.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstring>
 #include <cstdio>
@@ -8,14 +9,6 @@
 using namespace AgcDriver::Graphics;
 
 namespace {
-
-int failures = 0;
-
-void Expect(bool condition, const char* what) {
-    if (condition) return;
-    std::fprintf(stderr, "FAIL: %s\n", what);
-    ++failures;
-}
 
 using Ranges = std::vector<std::pair<std::uint64_t, std::uint64_t>>;
 using Images = std::vector<std::pair<VkImage, bool>>;
@@ -261,8 +254,8 @@ int main() {
     testImages();
     testAttachments();
     testWriteOnly();
-    if (failures != 0) {
-        std::fprintf(stderr, "%d pass hazard checks failed\n", failures);
+    if (Failures() != 0) {
+        std::fprintf(stderr, "%u pass hazard checks failed\n", Failures());
         return 1;
     }
     std::printf("pass hazard tests passed\n");

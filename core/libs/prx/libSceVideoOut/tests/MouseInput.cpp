@@ -6,19 +6,13 @@
 #include "SDL.h"
 #include "SDL_events.h"
 #include "SDL_mouse.h"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #undef main
 
 namespace {
-
-void Require(bool condition, const char* reason) {
-    if (!condition) {
-        std::fprintf(stderr, "mouse input: %s\n", reason);
-        std::abort();
-    }
-}
 
 SDL_Event Motion(unsigned windowId, int xrel, int yrel) {
     SDL_Event event{};

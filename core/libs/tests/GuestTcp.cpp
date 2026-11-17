@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -10,10 +11,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <thread>
-
-static void Require(bool condition) {
-    if (!condition) std::abort();
-}
 
 static void StreamReceiveReportsNoSender() {
     const int listener = socket_nid_postfix(2, 1, 0);

@@ -1,6 +1,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/general/AsmMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <cmath>
 #include <cstdint>
@@ -44,15 +45,6 @@ asm(".text\n"
     "    ret\n");
 
 namespace {
-
-void Check(bool condition, int line) {
-    if (!condition) {
-        std::fprintf(stderr, "MediaTime check failed at line %d\n", line);
-        std::abort();
-    }
-}
-
-#define Require(cond) Check((cond), __LINE__)
 
 void TestMediaTimeBasics() {
     WTF::MediaTime def;

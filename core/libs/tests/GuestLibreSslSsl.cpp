@@ -7,6 +7,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include "prx/libSceLibreSsl/include/Error.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -61,17 +62,6 @@ static LibreSslSsl* Ssl(TestSsl* ssl) {
     return reinterpret_cast<LibreSslSsl*>(ssl);
 }
 
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL SSL check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> static void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
-    try { action(); } catch (const std::exception&) { return; }
-    Require(false, location);
-}
-
 static void TestCheckPrivateKey() {
     constexpr std::uint64_t firstCode = (8ULL << 24) | (0xfffULL << 12) | 101;
     constexpr std::uint64_t nullSslCode = (20ULL << 24) | (0xfffULL << 12) | 67;
@@ -83,7 +73,7 @@ static void TestCheckPrivateKey() {
     Require(ERR_get_error_nid_postfix() == nullSslCode);
     Require(ERR_get_error_nid_postfix() == 0);
 
-    RequireThrows([] { SSL_check_private_key_nid_postfix(reinterpret_cast<const LibreSslSsl*>(std::uintptr_t{1})); });
+    ExpectErr([] { SSL_check_private_key_nid_postfix(reinterpret_cast<const LibreSslSsl*>(std::uintptr_t{1})); });
     Require(ERR_peek_error_nid_postfix() == 0);
 
     TestSsl ssl;
@@ -94,7 +84,7 @@ static void TestCheckPrivateKey() {
     unsigned char before[sizeof(ssl)];
     std::memcpy(before, &ssl, sizeof(ssl));
     ERR_clear_error_nid_postfix();
-    RequireThrows([&] { SSL_check_private_key_nid_postfix(Ssl(&ssl)); });
+    ExpectErr([&] { SSL_check_private_key_nid_postfix(Ssl(&ssl)); });
     Require(ERR_peek_error_nid_postfix() == 0);
     Require(std::memcmp(before, &ssl, sizeof(ssl)) == 0);
 }
@@ -103,7 +93,7 @@ static void TestGetSslCtx() {
     int context = 0;
     int session = 0;
     TestSsl ssl {};
-    RequireThrows([] { SSL_get_SSL_CTX_nid_postfix(nullptr); });
+    ExpectErr([] { SSL_get_SSL_CTX_nid_postfix(nullptr); });
     Require(SSL_get_SSL_CTX_nid_postfix(Ssl(&ssl)) == nullptr);
     ssl.ctx = &context;
     ssl.session = &session;
@@ -119,7 +109,7 @@ static void TestGet1Session() {
     TestSsl ssl {};
     std::array<unsigned char, sizeof(TestSsl)> before {};
     std::memcpy(before.data(), &ssl, sizeof(ssl));
-    RequireThrows([] { SSL_get1_session_nid_postfix(nullptr); });
+    ExpectErr([] { SSL_get1_session_nid_postfix(nullptr); });
     Require(std::memcmp(&ssl, before.data(), sizeof(ssl)) == 0);
     Require(ERR_peek_error_nid_postfix() == firstError);
     Require(LibreSslPeekLastError_nid_no_patch() == secondError);
@@ -136,7 +126,7 @@ static void TestGetRbio() {
     int read = 0;
     int write = 0;
     TestSsl ssl {};
-    RequireThrows([] { SSL_get_rbio_nid_postfix(nullptr); });
+    ExpectErr([] { SSL_get_rbio_nid_postfix(nullptr); });
     Require(SSL_get_rbio_nid_postfix(Ssl(&ssl)) == nullptr);
     ssl.rbio = &read;
     ssl.wbio = &write;
@@ -148,7 +138,7 @@ static void TestGetWbio() {
     int write = 0;
     int buffer = 0;
     TestSsl ssl {};
-    RequireThrows([] { SSL_get_wbio_nid_postfix(nullptr); });
+    ExpectErr([] { SSL_get_wbio_nid_postfix(nullptr); });
     Require(SSL_get_wbio_nid_postfix(Ssl(&ssl)) == nullptr);
     ssl.rbio = &read;
     ssl.wbio = &write;
@@ -158,7 +148,7 @@ static void TestGetWbio() {
 
 static void TestVersion() {
     TestSsl ssl {};
-    RequireThrows([] { SSL_version_nid_postfix(nullptr); });
+    ExpectErr([] { SSL_version_nid_postfix(nullptr); });
     Require(SSL_version_nid_postfix(Ssl(&ssl)) == 0);
     ssl.version = 0x0303;
     Require(SSL_version_nid_postfix(Ssl(&ssl)) == 0x0303);
@@ -168,7 +158,7 @@ static void TestVersion() {
 
 static void TestVerifyResult() {
     TestSsl ssl {};
-    RequireThrows([] { SSL_get_verify_result_nid_postfix(nullptr); });
+    ExpectErr([] { SSL_get_verify_result_nid_postfix(nullptr); });
     Require(SSL_get_verify_result_nid_postfix(Ssl(&ssl)) == 0);
     ssl.verifyResult = 20;
     Require(SSL_get_verify_result_nid_postfix(Ssl(&ssl)) == 20);
@@ -196,8 +186,8 @@ static void TestGetPeerCertificateNullPaths() {
 static void TestGetShutdown() {
     TestSslInternal internal {};
     TestSsl ssl {};
-    RequireThrows([] { SSL_get_shutdown_nid_postfix(nullptr); });
-    RequireThrows([&] { SSL_get_shutdown_nid_postfix(Ssl(&ssl)); });
+    ExpectErr([] { SSL_get_shutdown_nid_postfix(nullptr); });
+    ExpectErr([&] { SSL_get_shutdown_nid_postfix(Ssl(&ssl)); });
     ssl.internal = &internal;
     Require(SSL_get_shutdown_nid_postfix(Ssl(&ssl)) == 0);
     internal.rwstate = 3;
@@ -210,8 +200,8 @@ static void TestGetShutdown() {
 static void TestWant() {
     TestSslInternal internal {};
     TestSsl ssl {};
-    RequireThrows([] { SSL_want_nid_postfix(nullptr); });
-    RequireThrows([&] { SSL_want_nid_postfix(Ssl(&ssl)); });
+    ExpectErr([] { SSL_want_nid_postfix(nullptr); });
+    ExpectErr([&] { SSL_want_nid_postfix(Ssl(&ssl)); });
     ssl.internal = &internal;
     Require(SSL_want_nid_postfix(Ssl(&ssl)) == 0);
     internal.rwstate = 1;
@@ -236,8 +226,8 @@ static void TestSetExData() {
     TestSsl ssl {};
     int first = 1;
     int replacement = 2;
-    RequireThrows([] { SSL_set_ex_data_nid_postfix(nullptr, 0, nullptr); });
-    RequireThrows([&] { SSL_set_ex_data_nid_postfix(Ssl(&ssl), 0, nullptr); });
+    ExpectErr([] { SSL_set_ex_data_nid_postfix(nullptr, 0, nullptr); });
+    ExpectErr([&] { SSL_set_ex_data_nid_postfix(Ssl(&ssl), 0, nullptr); });
     ssl.internal = &internal;
     Require(SSL_set_ex_data_nid_postfix(Ssl(&ssl), -1, &first) == 1);
     auto* stack = static_cast<LibreSslStack*>(internal.exData.stack);
@@ -297,7 +287,7 @@ static void TestGetPeerCertChain() {
     int session = 0;
     ssl.session = &session;
     std::memcpy(before, &ssl, sizeof(ssl));
-    RequireThrows([&] { SSL_get_peer_cert_chain_nid_postfix(Ssl(&ssl)); });
+    ExpectErr([&] { SSL_get_peer_cert_chain_nid_postfix(Ssl(&ssl)); });
     Require(std::memcmp(&ssl, before, sizeof(ssl)) == 0);
     Require(ERR_peek_error_nid_postfix() == firstError);
     Require(ERR_get_error_nid_postfix() == firstError);

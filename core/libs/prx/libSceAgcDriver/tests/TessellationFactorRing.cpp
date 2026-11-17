@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/State/include/Configuration.hpp"
 #include "prx/libSceAgcDriver/include/AgcDriver.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
@@ -15,10 +16,6 @@ struct RingOutput {
     uint32_t size = 0;
     uint32_t canary = Canary;
 };
-
-void Require(bool value) {
-    if (!value) std::abort();
-}
 
 template<typename TAction>
 bool Rejects(TAction action) {

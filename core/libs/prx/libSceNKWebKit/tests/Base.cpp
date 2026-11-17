@@ -8,6 +8,7 @@
 #include "prx/libSceNKWebKit/src/OpenPanelParameters.hpp"
 #include "prx/libSceNKWebKit/src/Types.hpp"
 #include "prx/libSceNKWebKit/src/RenderTree.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <cassert>
 #include <chrono>
@@ -28,14 +29,6 @@
 using WKPoint = NKWebKit::PointValue;
 using WKSize = NKWebKit::SizeValue;
 using WKRect = NKWebKit::RectValue;
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "libSceNKWebKit Base check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static void TestTypeIDs() {
     Require(WKArrayGetTypeID() == 1);

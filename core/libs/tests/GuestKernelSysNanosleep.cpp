@@ -2,6 +2,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -19,10 +20,6 @@ static constexpr std::int64_t SLEEP_NANOS = 20 * NANOS_PER_MILLISECOND;
 static std::atomic<bool> cancelThreadReady{false};
 static std::atomic<bool> cancelThreadRelease{false};
 static std::atomic<bool> cancelSleepReturned{false};
-
-static void Require(bool value) {
-    if (!value) std::abort();
-}
 
 static void PosixRejects(const KernelTimespec* request, int error) {
     *__error_nid_postfix() = GUEST_EACCES;

@@ -1,17 +1,11 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "LibcInternal facet queries: %s\n", message);
-        std::abort();
-    }
-}
 
 void CheckCodecvtQueries() {
     unsigned char facet[0x20];

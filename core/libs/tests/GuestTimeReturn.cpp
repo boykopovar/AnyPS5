@@ -1,17 +1,11 @@
 #include "prx/libc/include/SonyCrt.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
-
-static void Require(bool value, const char* message) {
-    if (!value) {
-        std::fprintf(stderr, "%s\n", message);
-        std::abort();
-    }
-}
 
 static std::int64_t HostSeconds() {
     return static_cast<std::int64_t>(std::time(nullptr));

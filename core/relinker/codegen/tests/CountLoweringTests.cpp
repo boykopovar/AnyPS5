@@ -1,4 +1,5 @@
 #include "LoweringExecution.hpp"
+#include "Testing.hpp"
 #include <codegen/x86/CountLowering.hpp>
 #include <codegen/x86/IAmd64OnlyInstructionMatcher.hpp>
 #include <codegen/CodegenException.hpp>
@@ -18,10 +19,6 @@ using Codegen::CountOperation;
 
 constexpr std::array kOperations{CountOperation::TrailingZeros, CountOperation::LeadingZeros};
 constexpr std::array<std::uint8_t, 3> kWidths{16, 32, 64};
-
-void require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 std::uint8_t opcode(CountOperation operation) {
     return operation == CountOperation::TrailingZeros ? 0xBC : 0xBD;
@@ -56,21 +53,21 @@ void decoding() {
                 for (std::uint8_t src = 0; src < 16; ++src) {
                     const auto bytes = instruction(operation, width, dst, src);
                     const auto operands = Codegen::DecodeCount(bytes.data(), bytes.size());
-                    require(operands && operands->Operation == operation && operands->Width == width && operands->Destination == dst && operands->Source == src && !operands->Memory, "count register decoding changed an operand");
+                    Require(operands && operands->Operation == operation && operands->Width == width && operands->Destination == dst && operands->Source == src && !operands->Memory, "count register decoding changed an operand");
                 }
             }
         }
     }
     const Bytes memory{0x64, 0x67, 0xF3, 0x4F, 0x0F, 0xBD, 0x8C, 0xAC, 0x10, 0, 0, 0};
     const auto operands = Codegen::DecodeCount(memory.data(), memory.size());
-    require(operands && operands->Operation == CountOperation::LeadingZeros && operands->Width == 64 && operands->Destination == 9 && operands->Memory && operands->Memory->RexIndexBase == 3 && operands->Memory->Prefixes == Bytes{0x64, 0x67}, "count memory extensions or prefixes were lost");
+    Require(operands && operands->Operation == CountOperation::LeadingZeros && operands->Width == 64 && operands->Destination == 9 && operands->Memory && operands->Memory->RexIndexBase == 3 && operands->Memory->Prefixes == Bytes{0x64, 0x67}, "count memory extensions or prefixes were lost");
     for (const Bytes bytes : {Bytes{0x90}, Bytes{0x0F, 0xBC, 0xC0}, Bytes{0x0F, 0xBD, 0xC0}, Bytes{0x48, 0x0F, 0xBC, 0xC0}, Bytes{0xF2, 0x0F, 0xBC, 0xC0}, Bytes{0xF3, 0x0F, 0xB8, 0xC0}, Bytes{0xF3, 0x0F}, Bytes{0xF3, 0x0F, 0xBE, 0xC0}})
-        require(!Codegen::DecodeCount(bytes.data(), bytes.size()), "BSF, BSR, POPCNT, a truncated or an unrelated opcode matched a count instruction");
+        Require(!Codegen::DecodeCount(bytes.data(), bytes.size()), "BSF, BSR, POPCNT, a truncated or an unrelated opcode matched a count instruction");
     for (const Bytes bytes : {Bytes{0xF2, 0xF3, 0x0F, 0xBC, 0xC0}, Bytes{0xF3, 0x0F, 0xBC, 0xC0, 0x90}, Bytes{0xF3, 0x0F, 0xBD, 0x84}}) {
         bool rejected = false;
         try { (void)Codegen::DecodeCount(bytes.data(), bytes.size()); }
         catch (const Codegen::CodegenException&) { rejected = true; }
-        require(rejected, "Malformed count instruction was accepted");
+        Require(rejected, "Malformed count instruction was accepted");
     }
     const Bytes overflow{0xF3, 0x48, 0x0F, 0xBC, 0x8C, 0x24, 0xFF, 0xFF, 0xFF, 0x7F};
     bool rejected = false;
@@ -78,7 +75,7 @@ void decoding() {
         Codegen::StubBodyBuilder body;
         Codegen::EmitCount(body, *Codegen::DecodeCount(overflow.data(), overflow.size()));
     } catch (const Codegen::CodegenException&) { rejected = true; }
-    require(rejected, "An overflowing stack displacement was silently wrapped");
+    Require(rejected, "An overflowing stack displacement was silently wrapped");
 }
 
 void matching() {
@@ -88,18 +85,18 @@ void matching() {
     for (const auto operation : kOperations) {
         const auto bytes = instruction(operation, 64, 0, 6);
         const auto name = Codegen::CountName(operation);
-        require(!intel->Match(bytes.data(), bytes.size()), std::string("Intel mode rewrote ") + name);
-        require(!rosetta->Match(bytes.data(), bytes.size()), std::string("Rosetta mode rewrote ") + name);
+        Require(!intel->Match(bytes.data(), bytes.size()), std::string("Intel mode rewrote ") + name);
+        Require(!rosetta->Match(bytes.data(), bytes.size()), std::string("Rosetta mode rewrote ") + name);
         const auto match = avx->Match(bytes.data(), bytes.size());
-        require(match && match->InstructionName == name && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline && !match->Optional, std::string("AVX mode did not require a trampoline for ") + name);
+        Require(match && match->InstructionName == name && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline && !match->Optional, std::string("AVX mode did not require a trampoline for ") + name);
         const std::array<std::span<const std::uint8_t>, 2> sequence{bytes, bytes};
-        require(avx->MatchSequence(sequence, {}).has_value(), std::string("A sequence could not move out of line for ") + name);
+        Require(avx->MatchSequence(sequence, {}).has_value(), std::string("A sequence could not move out of line for ") + name);
     }
     const Bytes bsf{0x48, 0x0F, 0xBC, 0xC6};
-    require(!avx->Match(bsf.data(), bsf.size()), "AVX mode rewrote BSF");
+    Require(!avx->Match(bsf.data(), bsf.size()), "AVX mode rewrote BSF");
     const Bytes andn{0xC4, 0xE2, 0xF8, 0xF2, 0xC6};
     const auto inherited = avx->Match(andn.data(), andn.size());
-    require(inherited && inherited->InstructionName == "ANDN", "AVX mode dropped the Rosetta lowerings");
+    Require(inherited && inherited->InstructionName == "ANDN", "AVX mode dropped the Rosetta lowerings");
 }
 
 #if LOWERING_EXECUTION_AVAILABLE
@@ -109,7 +106,7 @@ using LoweringExecution::State;
 
 Execution executable(const Bytes& site, std::uint64_t memoryValue) {
     const auto operands = Codegen::DecodeCount(site.data(), site.size());
-    require(operands.has_value(), "Execution site was not a count instruction");
+    Require(operands.has_value(), "Execution site was not a count instruction");
     return Execution(site, memoryValue, operands->Memory && operands->Memory->RipRelative, [](Codegen::StubBodyBuilder& body, const Bytes& relocated) {
         Codegen::EmitCount(body, *Codegen::DecodeCount(relocated.data(), relocated.size()));
     });
@@ -147,7 +144,7 @@ void check(const State& state, const Codegen::CountOperands& operands, std::uint
     const auto flags = (result == operands.Width ? LoweringExecution::kCarry : 0u) | (result == 0 ? LoweringExecution::kZero : 0u);
     if ((state.Flags & mask) != flags)
         throw std::runtime_error(describe() + ": flags are " + std::to_string(state.Flags & mask) + ", wanted " + std::to_string(flags));
-    for (const auto value : state.RedZone) require(value == LoweringExecution::kSentinel, std::string(name) + " overwrote the caller's red zone");
+    for (const auto value : state.RedZone) Require(value == LoweringExecution::kSentinel, std::string(name) + " overwrote the caller's red zone");
 }
 
 void run(const Execution& execution, const Codegen::CountOperands& operands, State state, std::uint64_t memoryValue) {

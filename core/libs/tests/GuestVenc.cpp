@@ -1,6 +1,7 @@
 #include "prx/libSceVenc/libSceVenc.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -17,12 +18,6 @@ void ClobberErrno(std::uintptr_t, std::size_t) {
 
 constexpr int VencError(std::uint32_t code) {
     return static_cast<int>(0x80C70000u | code);
-}
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "VENC: %s\n", message);
-    std::abort();
 }
 
 struct PointerBlock {

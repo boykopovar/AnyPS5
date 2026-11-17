@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -12,13 +13,6 @@ namespace {
 
 using NKWebKit::WtfAbi::HTMLIntegerParsingError;
 using NKWebKit::WtfAbi::StringView;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "HTML integer check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 void Check(StringView input, bool hasValue, unsigned valueOrError) {
     auto result = _ZN7WebCore27parseHTMLNonNegativeIntegerEN3WTF10StringViewE(input);

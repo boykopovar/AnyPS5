@@ -1,5 +1,6 @@
 #include "prx/libSceNpCppWebApi/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -11,11 +12,6 @@ using Size = std::size_t (APS5_VABI*)(const void*);
 using Empty = bool (APS5_VABI*)(const void*);
 using Element = void* (APS5_VABI*)(void*, std::uint64_t);
 
-static void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", what);
-    std::abort();
-}
 
 static constexpr int ParameterNotInitialized = static_cast<int>(0x80553502);
 static constexpr int ParameterInvalidArgument = static_cast<int>(0x80553503);

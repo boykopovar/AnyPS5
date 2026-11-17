@@ -1,16 +1,11 @@
 #include "prx/libSceVideoOut/include/Port0Presence.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
 #include <string>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "video_out_port0_presence: %s\n", message);
-    std::exit(1);
-}
 
 using Port0Presence::Mode;
 using Port0Presence::Presence;

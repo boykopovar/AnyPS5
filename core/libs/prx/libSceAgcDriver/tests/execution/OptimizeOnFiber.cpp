@@ -1,4 +1,5 @@
 #include "prx/libSceFiber/include/Api.hpp"
+#include "Testing.hpp"
 #if defined(ANYPS5_ENABLE_SPIRV_TOOLS) && ANYPS5_ENABLE_SPIRV_TOOLS
 #include "SpirvBackend/SpirvOptimizer.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
@@ -82,10 +83,6 @@ constexpr std::array<std::uint32_t, 410> Module{
 
 std::vector<std::uint32_t> Optimized;
 std::exception_ptr Failure;
-
-void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 std::vector<std::uint32_t> Optimize() {
     return ShaderRecompiler::ValidateAndOptimizeSpirv(Module, VulkanVersion, SpirvVersion);

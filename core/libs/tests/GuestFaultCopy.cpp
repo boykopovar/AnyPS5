@@ -1,5 +1,6 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "Testing.hpp"
 
 #include <atomic>
 #include <cerrno>
@@ -13,14 +14,6 @@
 #include <thread>
 #include <unistd.h>
 #include <vector>
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "guest fault copy check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static void* const Unmapped = reinterpret_cast<void*>(0x10);
 static void* const NonCanonical = reinterpret_cast<void*>(0x8000000000000000ull);

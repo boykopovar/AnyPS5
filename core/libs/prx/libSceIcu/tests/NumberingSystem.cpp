@@ -11,7 +11,6 @@
 
 namespace UnumsysClose {
 
-using IcuRecoveredTest::Require;
 
 static_assert(std::is_same_v<decltype(&unumsys_close_nid_postfix), void (APS5_VABI*)(UNumberingSystem*)>);
 
@@ -46,9 +45,7 @@ void Run() {
 namespace UnumsysOpen {
 
 using IcuRecoveredTest::Filler;
-using IcuRecoveredTest::Require;
 using IcuRecoveredTest::RequireNoThrow;
-using IcuRecoveredTest::RequireThrows;
 using IcuRecoveredTest::Unchanged;
 
 static_assert(std::is_same_v<decltype(&unumsys_open_nid_postfix), UNumberingSystem* (APS5_VABI*)(const char*, std::int32_t*)>);
@@ -68,15 +65,15 @@ void Run() {
 
     for (const auto incoming : passing) {
         std::int32_t status = incoming;
-        RequireThrows([&] { unumsys_open_nid_postfix("en", &status); });
+        ExpectErr([&] { unumsys_open_nid_postfix("en", &status); });
         Require(status == incoming);
 
         status = incoming;
-        RequireThrows([&] { unumsys_open_nid_postfix("en@numbers=hanidec", &status); });
+        ExpectErr([&] { unumsys_open_nid_postfix("en@numbers=hanidec", &status); });
         Require(status == incoming);
     }
 
-    RequireThrows([&] { unumsys_open_nid_postfix("en", nullptr); });
+    ExpectErr([&] { unumsys_open_nid_postfix("en", nullptr); });
 }
 
 } // namespace UnumsysOpen
@@ -84,9 +81,7 @@ void Run() {
 namespace UnumsysOpenByName {
 
 using IcuRecoveredTest::Filler;
-using IcuRecoveredTest::Require;
 using IcuRecoveredTest::RequireNoThrow;
-using IcuRecoveredTest::RequireThrows;
 using IcuRecoveredTest::Unchanged;
 
 static_assert(std::is_same_v<decltype(&unumsys_openByName_nid_postfix), UNumberingSystem* (APS5_VABI*)(const char*, std::int32_t*)>);
@@ -106,15 +101,15 @@ void Run() {
 
     for (const auto incoming : passing) {
         std::int32_t status = incoming;
-        RequireThrows([&] { unumsys_openByName_nid_postfix("latn", &status); });
+        ExpectErr([&] { unumsys_openByName_nid_postfix("latn", &status); });
         Require(status == incoming);
 
         status = incoming;
-        RequireThrows([&] { unumsys_openByName_nid_postfix("", &status); });
+        ExpectErr([&] { unumsys_openByName_nid_postfix("", &status); });
         Require(status == incoming);
     }
 
-    RequireThrows([&] { unumsys_openByName_nid_postfix("latn", nullptr); });
+    ExpectErr([&] { unumsys_openByName_nid_postfix("latn", nullptr); });
 }
 
 } // namespace UnumsysOpenByName

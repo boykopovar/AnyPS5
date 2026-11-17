@@ -1,5 +1,6 @@
 #include "prx/libSceCesCs/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
@@ -7,8 +8,6 @@
 #include <iterator>
 #include <stdexcept>
 #include <string>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static const std::uint8_t* Bytes(const char* text) { return reinterpret_cast<const std::uint8_t*>(text); }
 

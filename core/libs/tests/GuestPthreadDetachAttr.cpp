@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -9,8 +10,6 @@
 static constexpr int SCE_OK = 0;
 static constexpr int ROUNDS = 50;
 static constexpr int DETACHED = 1;
-
-static void Require(bool condition) { if (!condition) std::abort(); }
 
 struct Worker {
     std::atomic<bool> release{false};

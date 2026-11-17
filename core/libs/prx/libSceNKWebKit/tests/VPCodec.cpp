@@ -1,4 +1,5 @@
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -13,13 +14,6 @@
 namespace {
 using namespace NKWebKit::WtfAbi;
 using WebCore::VPCodecConfigurationRecord;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "VP codec check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 std::optional<VPCodecConfigurationRecord> Parse(std::string_view text, bool bytes) {
     if (bytes)

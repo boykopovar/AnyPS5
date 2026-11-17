@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include "VectorExecution.hpp"
 #include <codegen/x86/WidenBroadcastLowering.hpp>
 #include <codegen/x86/IAmd64OnlyInstructionMatcher.hpp>
@@ -12,10 +13,6 @@
 namespace {
 
 using LoweringExecution::Bytes;
-
-void require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 Bytes site(std::uint8_t opcode, bool wide256, std::uint8_t dst, std::uint8_t src) {
     return {0xC4, static_cast<std::uint8_t>(((dst & 8) ? 0 : 0x80) | 0x40 | ((src & 8) ? 0 : 0x20) | 2), static_cast<std::uint8_t>(0x78 | (wide256 ? 4 : 0) | 1), opcode,
@@ -32,30 +29,30 @@ void decoding() {
     for (const auto opcode : kWidenOpcodes) {
         const auto bytes = site(opcode, true, 9, 3);
         const auto operands = Codegen::DecodeWidenBroadcast(bytes.data(), bytes.size());
-        require(operands && operands->Kind == Codegen::WidenBroadcastKind::Widen && operands->Destination == 9 && operands->Source == 3, "a 256-bit widening move was not decoded");
+        Require(operands && operands->Kind == Codegen::WidenBroadcastKind::Widen && operands->Destination == 9 && operands->Source == 3, "a 256-bit widening move was not decoded");
         const auto narrow = site(opcode, false, 9, 3);
-        require(!Codegen::DecodeWidenBroadcast(narrow.data(), narrow.size()), "a 128-bit widening move, which AVX has, was lowered");
+        Require(!Codegen::DecodeWidenBroadcast(narrow.data(), narrow.size()), "a 128-bit widening move, which AVX has, was lowered");
     }
     for (const auto& [opcode, wide] : std::array<std::pair<std::uint8_t, bool>, 9>{{{0x18, false}, {0x18, true}, {0x58, false}, {0x58, true}, {0x19, true}, {0x59, false}, {0x59, true}, {0x78, true}, {0x79, false}}}) {
         const auto bytes = site(opcode, wide, 1, 14);
-        require(Codegen::DecodeWidenBroadcast(bytes.data(), bytes.size()).has_value(), "a register-source broadcast was not decoded");
+        Require(Codegen::DecodeWidenBroadcast(bytes.data(), bytes.size()).has_value(), "a register-source broadcast was not decoded");
     }
     for (const Bytes bytes : {memorySite(0x18, true, 0), memorySite(0x58, true, 0), memorySite(0x59, true, 0), site(0x19, false, 0, 1), Bytes{0xC4, 0xE2, 0xFD, 0x31, 0xC1}, Bytes{0xC4, 0xE2, 0x7D, 0x36, 0xC1}, Bytes{0x90}})
-        require(!Codegen::DecodeWidenBroadcast(bytes.data(), bytes.size()), "an AVX broadcast, a twin or an unrelated instruction was taken as widen/broadcast");
+        Require(!Codegen::DecodeWidenBroadcast(bytes.data(), bytes.size()), "an AVX broadcast, a twin or an unrelated instruction was taken as widen/broadcast");
     const Bytes trailing{0xC4, 0xE2, 0x7D, 0x31, 0xC1, 0x90};
     bool rejected = false;
     try { (void)Codegen::DecodeWidenBroadcast(trailing.data(), trailing.size()); }
     catch (const Codegen::CodegenException&) { rejected = true; }
-    require(rejected, "trailing bytes were accepted");
+    Require(rejected, "trailing bytes were accepted");
 }
 
 void matching() {
     const auto avx = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Avx);
     const auto rosetta = Codegen::MakeAmd64OnlyInstructionMatcher(Codegen::Amd64OnlyTarget::Rosetta);
     const auto bytes = site(0x31, true, 0, 1);
-    require(!rosetta->Match(bytes.data(), bytes.size()), "Rosetta mode lowered a widening move");
+    Require(!rosetta->Match(bytes.data(), bytes.size()), "Rosetta mode lowered a widening move");
     const auto match = avx->Match(bytes.data(), bytes.size());
-    require(match && match->InstructionName == "VPMOVZXBD" && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline && match->RelocatableWindow, "AVX mode did not lower VPMOVZXBD through a movable stub");
+    Require(match && match->InstructionName == "VPMOVZXBD" && match->Lowering == Codegen::Amd64OnlyLowering::Trampoline && match->RelocatableWindow, "AVX mode did not lower VPMOVZXBD through a movable stub");
 }
 
 #if LOWERING_EXECUTION_AVAILABLE
@@ -117,7 +114,7 @@ void verify(const Machine& start, const Machine& end, std::uint8_t dst, const Ve
         const auto expected = reg == dst ? wanted : start.Ymm[reg];
         if (end.Ymm[reg] != expected) throw std::runtime_error(describe + ": ymm" + std::to_string(reg) + " is wrong");
     }
-    for (const auto slot : end.RedZone) require(slot == LoweringExecution::kSentinel, describe + " overwrote the red zone");
+    for (const auto slot : end.RedZone) Require(slot == LoweringExecution::kSentinel, describe + " overwrote the red zone");
 }
 
 void execution() {
@@ -153,8 +150,8 @@ void execution() {
 void pageEndMemory() {
     const auto pageSize = LoweringExecution::PageSize();
     auto* area = LoweringExecution::AllocatePages(pageSize * 2);
-    require(area != nullptr, "cannot allocate the guarded operand pages");
-    require(LoweringExecution::ProtectPages(area + pageSize, pageSize, false, false), "cannot protect the page after the operand");
+    Require(area != nullptr, "cannot allocate the guarded operand pages");
+    Require(LoweringExecution::ProtectPages(area + pageSize, pageSize, false, false), "cannot protect the page after the operand");
     const auto memory = VectorExecution::Initial().Memory;
     const auto runAtPageEnd = [&](const Bytes& instruction, unsigned width, std::uint8_t dst, const Vector& wanted, const std::string& describe) {
         auto* operand = area + pageSize - width;

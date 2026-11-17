@@ -1,9 +1,9 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdlib>
 
-static void Require(bool value) { if (!value) std::abort(); }
 int main() {
     *__error_nid_postfix() = 13;
     Require(system_nid_postfix(nullptr) == 1);

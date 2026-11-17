@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include <relinker/output/CallRegistryWriter.hpp>
 #include <iostream>
 #include <locale>
@@ -6,10 +7,6 @@
 #include <string>
 
 namespace {
-
-void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 class GroupedPunctuation : public std::numpunct<char> {
 public:

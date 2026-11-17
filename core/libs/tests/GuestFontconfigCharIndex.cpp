@@ -2,6 +2,7 @@
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestFreeType.hpp"
 #include "FreeTypeFontFixture.hpp"
+#include "Testing.hpp"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -13,10 +14,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool value) {
-    if (!value) std::abort();
-}
 
 std::vector<unsigned char> SymbolOnlyFont(std::uint32_t codepoint, int width) {
     std::vector<unsigned char> head;

@@ -1,4 +1,5 @@
 #include "prx/libSceFios2/include/Api.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdlib>
@@ -9,12 +10,6 @@ namespace {
 constexpr std::int32_t FiosOk = 0;
 constexpr std::int32_t FiosErrorBadPtr = static_cast<std::int32_t>(0x80820006u);
 constexpr std::int32_t FiosErrorBadIndex = static_cast<std::int32_t>(0x8082001Cu);
-
-void Require(bool condition) {
-    if (!condition) {
-        std::abort();
-    }
-}
 
 int APS5_VABI TestFilterCallback(void*, std::int32_t, void*) {
     return 0;

@@ -1,6 +1,7 @@
 #include "prx/libSceAjm.native/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -10,9 +11,6 @@
 #include <vector>
 
 namespace {
-void Require(bool value, const char* message) {
-    if (!value) throw std::runtime_error(message);
-}
 
 void Submit(std::uint32_t context, const AjmBatchInfo& info) {
     AjmBatchError error{};

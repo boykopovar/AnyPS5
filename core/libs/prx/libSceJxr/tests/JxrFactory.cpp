@@ -3,6 +3,7 @@
 #include "prx/libSceJxr/Factory.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -18,22 +19,6 @@ constexpr std::int64_t UnsupportedFormat = -106;
 
 bool failAllocation = false;
 int liveBlocks = 0;
-
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "JXR factory: %s\n", message);
-    std::abort();
-}
-
-template<typename TAction>
-void RequireInvalidArgument(TAction action, const char* message) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, message);
-}
 
 void* APS5_VABI Allocate(std::size_t size) {
     ++liveBlocks;
@@ -101,8 +86,8 @@ void Factory() {
     Require(PKFree_nid_postfix(&stream) == 0 && !stream, "stream release fails");
 
     Require(factory->release(&factory) == 0 && !factory, "factory release fails");
-    RequireInvalidArgument([] { PKCreateFactory_nid_postfix(nullptr, 0); }, "null factory pointer is accepted");
-    RequireInvalidArgument([] { PKCreateFactory_CreateStream_nid_postfix(nullptr); }, "null stream pointer is accepted");
+    ExpectErr<std::invalid_argument>([] { PKCreateFactory_nid_postfix(nullptr, 0); }, "null factory pointer is accepted");
+    ExpectErr<std::invalid_argument>([] { PKCreateFactory_CreateStream_nid_postfix(nullptr); }, "null stream pointer is accepted");
 
     failAllocation = true;
     raw = reinterpret_cast<void*>(1);
@@ -126,8 +111,8 @@ void Codecs() {
         Require(factory->createCodec(&iid, &codec) == UnsupportedFormat, "unknown IID code");
     }
     Require(codec == reinterpret_cast<void*>(1), "unknown IID writes the codec");
-    RequireInvalidArgument([&] { factory->createCodec(nullptr, &codec); }, "null IID is accepted");
-    RequireInvalidArgument([&] {
+    ExpectErr<std::invalid_argument>([&] { factory->createCodec(nullptr, &codec); }, "null IID is accepted");
+    ExpectErr<std::invalid_argument>([&] {
         const std::uint32_t iid = 1;
         factory->createCodec(&iid, nullptr);
     }, "null codec pointer is accepted");
@@ -139,7 +124,7 @@ void Codecs() {
     Require(value->convert != nullptr, "converter Convert slot");
     Require(value->decoder == nullptr, "converter decoder is set");
     Require(PKFree_nid_postfix(&converter) == 0 && !converter, "converter release fails");
-    RequireInvalidArgument([&] { factory->createFormatConverter(nullptr); }, "null converter pointer is accepted");
+    ExpectErr<std::invalid_argument>([&] { factory->createFormatConverter(nullptr); }, "null converter pointer is accepted");
 
     failAllocation = true;
     converter = reinterpret_cast<void*>(1);

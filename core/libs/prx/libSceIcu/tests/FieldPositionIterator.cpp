@@ -12,7 +12,6 @@
 
 namespace UfieldpositerClose {
 
-using IcuRecoveredTest::Require;
 
 static_assert(std::is_same_v<decltype(&ufieldpositer_close_nid_postfix), void (APS5_VABI*)(UFieldPositionIterator*)>);
 
@@ -46,8 +45,6 @@ void Run() {
 
 namespace UfieldpositerOpen {
 
-using IcuRecoveredTest::Require;
-using IcuRecoveredTest::RequireThrows;
 
 static_assert(std::is_same_v<decltype(&ufieldpositer_open_nid_postfix), UFieldPositionIterator* (APS5_VABI*)(std::int32_t*)>);
 
@@ -60,7 +57,7 @@ void Open() {
         Require(iterator == nullptr);
         Require(status == incoming);
     }
-    RequireThrows([&] { ufieldpositer_open_nid_postfix(nullptr); });
+    ExpectErr([&] { ufieldpositer_open_nid_postfix(nullptr); });
 }
 
 }

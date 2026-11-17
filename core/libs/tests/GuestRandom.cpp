@@ -1,12 +1,12 @@
 #include "prx/libSceRandom/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 
-static void Require(bool value) { if (!value) std::abort(); }
 int main() {
     constexpr int invalid = static_cast<int>(0x817C0016);
     unsigned char buffer[80];

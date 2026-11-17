@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl/libSceLibreSsl.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -24,12 +25,6 @@ struct alignas(8) RawCipher {
 static_assert(sizeof(RawCipher) == 88);
 static_assert(offsetof(RawCipher, strength) == 80);
 static_assert(offsetof(RawCipher, algorithm) == 84);
-
-static void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "failed: %s\n", message);
-    std::abort();
-}
 
 static void RequireString(const char* actual, const char* expected) {
     Require(actual && std::strcmp(actual, expected) == 0, expected);

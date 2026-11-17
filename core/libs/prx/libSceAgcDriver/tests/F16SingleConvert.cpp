@@ -1,5 +1,6 @@
 #include "BdaAbi.hpp"
 #include "Recompiler.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdio>
 #include <exception>
@@ -17,10 +18,6 @@ namespace {
 
 using namespace ShaderRecompiler;
 
-void Check(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
-
 SpirvTarget Target(bool nativeFloat16) {
     static constexpr std::array<std::uint32_t, 5> plain{
         spv::CapabilityInt64, spv::CapabilityFloat64, spv::CapabilityPhysicalStorageBufferAddresses, spv::CapabilityStorageBuffer8BitAccess, spv::CapabilityClipDistance,
@@ -37,14 +34,14 @@ SpirvTarget Target(bool nativeFloat16) {
 }
 
 std::size_t ZeroPairs(std::span<const std::uint32_t> words) {
-    Check(words.size() >= 5 && words[0] == spv::MagicNumber, "f16 single convert: missing SPIR-V module");
+    Require(words.size() >= 5 && words[0] == spv::MagicNumber, "f16 single convert: missing SPIR-V module");
     std::unordered_set<std::uint32_t> floats;
     std::unordered_set<std::uint32_t> pairs;
     std::unordered_set<std::uint32_t> zeros;
     std::size_t count = 0;
     for (std::size_t offset = 5; offset < words.size();) {
         const auto length = words[offset] >> spv::WordCountShift;
-        Check(length != 0 && length <= words.size() - offset, "f16 single convert: malformed SPIR-V instruction");
+        Require(length != 0 && length <= words.size() - offset, "f16 single convert: malformed SPIR-V instruction");
         const auto opcode = words[offset] & spv::OpCodeMask;
         if (opcode == spv::OpTypeFloat && length == 3u && words[offset + 2u] == 32u) floats.insert(words[offset + 1u]);
         if (opcode == spv::OpTypeVector && length == 4u && floats.contains(words[offset + 2u]) && words[offset + 3u] == 2u) pairs.insert(words[offset + 1u]);
@@ -82,7 +79,7 @@ int main() {
     try {
         for (const bool nativeFloat16 : {false, true}) {
             const auto pairs = Compile(nativeFloat16);
-            Check(pairs == 0u, std::string("f16 single convert: four v_rcp_f16 emitted ") + std::to_string(pairs) + " (x, 0.0) f32 pairs to convert one f16 each" + (nativeFloat16 ? " with native f16" : " without native f16"));
+            Require(pairs == 0u, std::string("f16 single convert: four v_rcp_f16 emitted ") + std::to_string(pairs) + " (x, 0.0) f32 pairs to convert one f16 each" + (nativeFloat16 ? " with native f16" : " without native f16"));
         }
         std::puts("f16 single convert tests passed");
         return 0;

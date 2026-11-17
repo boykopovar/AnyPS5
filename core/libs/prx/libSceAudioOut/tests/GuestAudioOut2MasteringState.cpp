@@ -1,5 +1,6 @@
 #include "prx/libSceAudioOut/libSceAudioOut.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -14,12 +15,6 @@ constexpr std::uint32_t StatesIdV2 = 2;
 constexpr std::uint32_t CompressorDefaultId = 0x01010001;
 constexpr std::uint32_t CompressorV2Id = 0x01020001;
 constexpr std::uint32_t LimiterDefaultId = 0x01010003;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "audio out2 mastering state: %s\n", message);
-    std::exit(1);
-}
 
 }
 

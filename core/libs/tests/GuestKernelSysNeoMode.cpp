@@ -1,6 +1,7 @@
 #include "prx/libkernel_sys/libkernel_sys.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -23,13 +24,6 @@ struct Entry {
     std::uint16_t format;
     std::vector<std::uint8_t> data;
 };
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "KERNEL SYS NEO MODE: %s\n", message);
-        std::abort();
-    }
-}
 
 Entry Text(const std::string& key, const std::string& value) {
     std::vector<std::uint8_t> data(value.begin(), value.end());

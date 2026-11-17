@@ -1,5 +1,6 @@
 #include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -11,9 +12,6 @@
 using namespace SceJson2;
 
 
-static void Require(bool valid, const char* message) {
-    if (!valid) { std::fprintf(stderr, "%s\n", message); std::abort(); }
-}
 int main() {
     constexpr auto none = std::numeric_limits<std::size_t>::max();
     char bytes[]{'a', 'b', 'X', '\0', 'X', static_cast<char>(0xff), '\0'};

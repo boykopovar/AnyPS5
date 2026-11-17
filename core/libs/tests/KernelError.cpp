@@ -2,13 +2,12 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <limits>
 #include <stdexcept>
 #include <utility>
-
-static void Require(bool value) { if (!value) throw std::runtime_error("Kernel error conversion check failed"); }
 
 int main() {
     *__error_nid_postfix() = 123;

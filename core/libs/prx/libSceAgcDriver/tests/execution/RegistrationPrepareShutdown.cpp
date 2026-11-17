@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Shaders/ShaderRegistry.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -12,10 +13,6 @@
 #include <thread>
 
 namespace {
-
-void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error("registration prepare shutdown: " + message);
-}
 
 void CheckShutdownWaits() {
     std::mutex mutex;

@@ -1,11 +1,11 @@
 #include "Translation/TranslationContext.hpp"
 #include "RdnaDecoder/RdnaImageOpDecoder.hpp"
 #include "Recompiler.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <stdexcept>
 
 using namespace ShaderRecompiler;
-static void Require(bool value) { if (!value) throw std::runtime_error("ray tracing miss regression"); }
 struct Form {
     std::uint32_t word0;
     std::uint32_t word1;

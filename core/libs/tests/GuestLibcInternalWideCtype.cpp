@@ -1,4 +1,5 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -40,12 +41,6 @@ using NarrowFunction = char (APS5_VABI*)(const GuestLocale::Facet*, char16_t, ch
 using WidenFunction = char16_t (APS5_VABI*)(const GuestLocale::Facet*, char);
 using DoIsFunction = bool (APS5_VABI*)(const GuestLocale::Facet*, short, char16_t);
 using WideVtable = std::array<std::uintptr_t, 18>;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "guest libc internal wide ctype: %s\n", message);
-    std::abort();
-}
 
 template<typename Function>
 void StoreFunction(WideVtable& table, std::size_t slot, Function function) {

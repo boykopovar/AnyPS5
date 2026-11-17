@@ -1,4 +1,5 @@
 #include "prx/libSceFreeTypeOt/include/SizeMetrics.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -35,12 +36,6 @@ struct Fixture {
         face.available_sizes = sizes;
     }
 };
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "FreeType Ot size metrics: %s\n", message);
-    std::exit(1);
-}
 
 template <typename TCall> bool Throws(TCall call) {
     try {

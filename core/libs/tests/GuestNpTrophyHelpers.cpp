@@ -1,5 +1,6 @@
 #include "prx/libSceNpTrophy/include/Api.hpp"
 #include "prx/libSceNpTrophy/include/InventoryExports.hpp"
+#include "Testing.hpp"
 
 #include <algorithm>
 #include <array>
@@ -38,12 +39,6 @@ Function Resolve(const char* name) {
         std::abort();
     }
     return reinterpret_cast<Function>(symbol);
-}
-
-void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "NpTrophy helpers: %s\n", what);
-    std::abort();
 }
 
 template <typename TValue, std::size_t TCount, typename TFunction>

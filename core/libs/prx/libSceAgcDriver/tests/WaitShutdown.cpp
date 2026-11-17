@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -20,10 +21,6 @@ struct alignas(64) LabelState {
     volatile std::uint32_t after = 0;
     volatile std::uint32_t queued = 0;
 };
-
-void Require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 void DelayExit() {
     std::this_thread::sleep_for(std::chrono::seconds(1));

@@ -1,5 +1,6 @@
 #include "Translation/TranslationContext.hpp"
 #include "RdnaDecoder/RdnaMemoryOpDecoder.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdio>
 #include <initializer_list>
@@ -9,10 +10,6 @@
 #include <vector>
 
 using namespace ShaderRecompiler;
-
-static void Require(bool value, const std::string& message) {
-    if (!value) throw std::runtime_error(message);
-}
 
 static RdnaInstruction Smem(std::uint32_t pc, std::uint32_t opcode, std::uint32_t destination, std::uint32_t base, std::uint32_t offset) {
     const std::array<std::uint32_t, 2> code{(0x3du << 26u) | (opcode << 18u) | (destination << 6u) | (base / 2u), (125u << 25u) | offset};

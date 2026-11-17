@@ -1,5 +1,6 @@
 #include "prx/libSceAudiodec/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -16,14 +17,6 @@ constexpr std::int32_t ErrorArg = static_cast<std::int32_t>(0x807F0002);
 constexpr std::int32_t ErrorInvalidHandle = static_cast<std::int32_t>(0x807F000F);
 constexpr std::int32_t ErrorM4aacInvalidSamplingFreq = static_cast<std::int32_t>(0x807F0300);
 constexpr std::int32_t Slots = 64;
-
-void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "Audiodec lifecycle check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 std::int32_t CreateMp3() {
     AudiodecParamMp3 param{sizeof(param), 1};

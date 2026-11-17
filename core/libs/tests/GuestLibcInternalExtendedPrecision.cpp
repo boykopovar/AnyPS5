@@ -1,5 +1,6 @@
 #include "prx/libSceLibcInternal/include/MathInternals.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 
 #include <cfenv>
 #include <cmath>
@@ -13,12 +14,6 @@
 namespace {
 
 constexpr int RangeError = 34;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "libc internal extended precision: %s\n", message);
-    std::abort();
-}
 
 template <typename T>
 bool Same(T left, T right) {

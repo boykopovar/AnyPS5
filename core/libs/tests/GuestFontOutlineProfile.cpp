@@ -2,6 +2,7 @@
 #include "prx/libSceFont/libSceFont.hpp"
 #include "prx/libSceFontFt/libSceFontFt.hpp"
 #include "tests/FontFixture.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -11,14 +12,6 @@
 #include <cstring>
 #include <initializer_list>
 #include <vector>
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "Font outline profile check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static void* APS5_VABI Allocate(void*, std::uint32_t size) {
     return std::malloc(size);

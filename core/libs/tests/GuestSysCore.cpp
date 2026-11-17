@@ -1,15 +1,8 @@
 #include "prx/libSceSysCore/libSceSysCore.hpp"
+#include "Testing.hpp"
 
 #include <cstddef>
 #include <cstdlib>
-
-namespace {
-
-void Require(bool value) {
-    if (!value) std::abort();
-}
-
-} // namespace
 
 int main() {
     constexpr int invalidArgument = static_cast<int>(0x80AA0001u);

@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <barrier>
 #include <cstdint>
@@ -18,10 +19,6 @@
 
 using Raise = int (APS5_VABI*)(int);
 Raise raiseFlags;
-
-void Require(bool condition, const char* message) {
-    if (!condition) { std::fprintf(stderr,"feraiseexcept: %s\n",message); std::abort(); }
-}
 
 struct Environment { std::array<std::uint32_t,7> x87; std::uint32_t sse; };
 Environment Read() {

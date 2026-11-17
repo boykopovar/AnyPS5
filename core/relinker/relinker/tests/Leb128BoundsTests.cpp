@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
 #include <io/BufferUtils.hpp>
 #include <algorithm>
@@ -7,12 +8,6 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
-
-static void Require(bool condition) {
-    if (!condition) {
-        throw std::runtime_error("Assertion failed");
-    }
-}
 
 static std::vector<std::uint8_t> EncodeSleb128(std::int64_t value) {
     std::vector<std::uint8_t> result;

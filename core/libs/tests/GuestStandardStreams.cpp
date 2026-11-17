@@ -2,6 +2,7 @@
 #include "prx/libc/include/FileStream.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "tests/TemporaryFile.hpp"
+#include "Testing.hpp"
 #include <climits>
 #include <cstdlib>
 #include <fcntl.h>
@@ -35,7 +36,6 @@ extern int _thread_autoinit_dummy_decl_nid_postfix;
 extern int _thread_autoinit_dummy_decl_stub_nid_postfix;
 
 }
-static void Require(bool value) { if (!value) std::abort(); }
 static int APS5_VABI WriteFormatted(FileStream* stream, const char* format, ...) {
 #ifdef _WIN32
     __builtin_sysv_va_list args;

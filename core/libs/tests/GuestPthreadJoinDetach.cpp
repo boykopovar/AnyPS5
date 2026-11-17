@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -17,13 +18,6 @@
 
 static constexpr int SCE_OK = 0;
 static constexpr int GuestEfault = 14;
-
-static void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "%s\n", message);
-        std::exit(1);
-    }
-}
 
 struct Joinee {
     Pthread thread = nullptr;

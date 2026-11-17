@@ -1,4 +1,5 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <nid/NidCompute.hpp>
 #include <array>
 #include <barrier>
@@ -14,12 +15,6 @@
 #else
 #include <dlfcn.h>
 #endif
-
-static void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::exit(1);
-}
 
 template<typename TValue>
 using Fetch = TValue (APS5_VABI*)(volatile TValue*, TValue);

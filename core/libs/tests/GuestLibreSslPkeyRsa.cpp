@@ -1,6 +1,7 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -26,17 +27,6 @@ static_assert(sizeof(TestPkey) == 56 && offsetof(TestPkey, ameth) == 16 && offse
 constexpr int PkeyRsa = 6;
 constexpr std::uint64_t ExpectingAnRsaKey = 0x06fff07f;
 constexpr std::uint64_t DifferentKeyTypes = 0x06fff065;
-
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL EVP_PKEY RSA check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> static void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
-    try { action(); } catch (const std::exception&) { return; }
-    Require(false, location);
-}
 
 static TestPkey* Fields(void* pkey) {
     return static_cast<TestPkey*>(pkey);
@@ -93,7 +83,7 @@ static void TestSetAndGet() {
     Require(EVP_PKEY_set1_RSA_nid_postfix(pkey, nullptr) == 0);
     RequireRsaKey(pkey, nullptr);
     Require(second->references == 1 && Fields(pkey)->ameth == method);
-    RequireThrows([&] { EVP_PKEY_get1_RSA_nid_postfix(pkey); });
+    ExpectErr([&] { EVP_PKEY_get1_RSA_nid_postfix(pkey); });
 
     EVP_PKEY_free_nid_postfix(pkey);
     Require(second->references == 1);
@@ -104,7 +94,7 @@ static void TestSetAndGet() {
     first = RSA_new_nid_postfix();
     Require(EVP_PKEY_set1_RSA_nid_postfix(pkey, first) == 1);
     RSA_free_nid_postfix(first);
-    RequireThrows([&] { EVP_PKEY_set1_RSA_nid_postfix(pkey, first); });
+    ExpectErr([&] { EVP_PKEY_set1_RSA_nid_postfix(pkey, first); });
     RequireRsaKey(pkey, first);
     Require(first->references == 1);
     EVP_PKEY_free_nid_postfix(pkey);
@@ -114,8 +104,8 @@ static void TestSetAndGet() {
     RequireRsaKey(pkey, nullptr);
     EVP_PKEY_free_nid_postfix(pkey);
 
-    RequireThrows([] { EVP_PKEY_set1_RSA_nid_postfix(nullptr, nullptr); });
-    RequireThrows([] { EVP_PKEY_get1_RSA_nid_postfix(nullptr); });
+    ExpectErr([] { EVP_PKEY_set1_RSA_nid_postfix(nullptr, nullptr); });
+    ExpectErr([] { EVP_PKEY_get1_RSA_nid_postfix(nullptr); });
 }
 
 static void TestGetWithoutRsa() {
@@ -148,8 +138,8 @@ static void TestCopyParameters() {
     RequireCopy(first, fresh, DifferentKeyTypes);
     RequireCopy(fresh, first, DifferentKeyTypes);
     RequireCopy(fresh, other, 0);
-    RequireThrows([&] { EVP_PKEY_copy_parameters_nid_postfix(nullptr, first); });
-    RequireThrows([&] { EVP_PKEY_copy_parameters_nid_postfix(first, nullptr); });
+    ExpectErr([&] { EVP_PKEY_copy_parameters_nid_postfix(nullptr, first); });
+    ExpectErr([&] { EVP_PKEY_copy_parameters_nid_postfix(first, nullptr); });
     for (void* pkey : {first, second, fresh, other}) EVP_PKEY_free_nid_postfix(pkey);
     RSA_free_nid_postfix(rsa);
 }

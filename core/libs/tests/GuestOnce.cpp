@@ -2,6 +2,7 @@
 #include "prx/libkernel/Pthread/include/ThreadLifecycle.hpp"
 #include "prx/libkernel/Pthread/include/Cancel.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <atomic>
 #include <cstddef>
@@ -12,7 +13,6 @@
 static_assert(sizeof(GuestOnce) == 16 && offsetof(GuestOnce, mutex) == 8);
 using Initializer = void (APS5_VABI *)();
 
-static void Require(bool value) { if (!value) std::abort(); }
 static GuestOnce control{}, nested{}, retry{};
 static std::atomic<int> calls{0}, arrived{0};
 static int published = 0, nestedValue = 0, attempts = 0;

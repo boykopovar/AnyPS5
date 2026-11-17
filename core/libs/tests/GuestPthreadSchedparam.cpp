@@ -2,6 +2,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdlib>
 #include <cstdint>
 #include <future>
@@ -15,8 +16,6 @@ static constexpr int GUEST_SCHED_OTHER = 2;
 static constexpr int GUEST_SCHED_RR = 3;
 static constexpr int EXPLICIT_SCHED = 0;
 static constexpr int INHERIT_SCHED = 4;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static void RequireAttributes(Pthread thread, int policy, int priority) {
     *__error_nid_postfix() = 1234;

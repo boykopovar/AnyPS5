@@ -3,6 +3,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -21,10 +22,6 @@ namespace {
 constexpr std::uint32_t DmaDataOpcode = 0x50;
 
 using AgcDriver::DriverDetail::DrawPipeline;
-
-void check(bool condition, const std::string& what) {
-    if (!condition) throw std::runtime_error("pipelined prefetch: " + what);
-}
 
 alignas(256) std::array<std::uint32_t, 1024> Source{};
 alignas(256) std::array<std::uint32_t, 1024> Destination{};
@@ -71,7 +68,7 @@ Behind SubmitBehindBusyPipeline(const std::array<std::uint32_t, 7>& dma, std::ui
     std::vector<std::uint32_t> words(dma.begin(), dma.end());
     AppendLabel(words, labelValue);
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
-    check(sceAgcDriverSubmitDcb(&packet) == 0, "submission failed");
+    Require(sceAgcDriverSubmitDcb(&packet) == 0, "submission failed");
     const auto start = std::chrono::steady_clock::now();
     std::size_t outstanding = 0;
     for (;;) {
@@ -84,7 +81,7 @@ Behind SubmitBehindBusyPipeline(const std::array<std::uint32_t, 7>& dma, std::ui
     blocker.release = true;
     Finish();
     AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(Label.data()), sizeof(Label));
-    check(Label[0] == labelValue, "the label behind the DMA_DATA did not land");
+    Require(Label[0] == labelValue, "the label behind the DMA_DATA did not land");
     return {outstanding, DrawPipeline::DrainRequestsByOpcode(DmaDataOpcode) - before};
 }
 
@@ -104,12 +101,12 @@ int main() {
         const auto prefetch = DmaData(2u, source, 0, static_cast<std::uint32_t>(sizeof(Source)));
         const auto copy = DmaData(0u, source, destination, 512);
         const auto prefetched = SubmitBehindBusyPipeline(prefetch, 0x11111111u, true);
-        check(prefetched.outstanding >= 2, "a DMA_DATA prefetch drained the draw pipeline: the label behind it never queued behind the held commit (" + std::to_string(prefetched.outstanding) + " outstanding)");
-        check(prefetched.drains == 0, "a DMA_DATA prefetch drained the draw pipeline (" + std::to_string(prefetched.drains) + " packet drains)");
+        Require(prefetched.outstanding >= 2, "a DMA_DATA prefetch drained the draw pipeline: the label behind it never queued behind the held commit (" + std::to_string(prefetched.outstanding) + " outstanding)");
+        Require(prefetched.drains == 0, "a DMA_DATA prefetch drained the draw pipeline (" + std::to_string(prefetched.drains) + " packet drains)");
         const auto copied = SubmitBehindBusyPipeline(copy, 0x22222222u, true);
-        check(copied.outstanding >= 2, "a DMA_DATA copy that misses every queued write drained the draw pipeline: the label behind it never queued behind the held commit (" + std::to_string(copied.outstanding) + " outstanding)");
-        check(copied.drains == 0, "a DMA_DATA copy that misses every queued write drained the draw pipeline (" + std::to_string(copied.drains) + " packet drains)");
-        for (std::size_t i = 0; i < Destination.size(); ++i) check(Destination[i] == (i < 128 ? Source[i] : 0u), "the copy did not land, or wrote past its bytes");
+        Require(copied.outstanding >= 2, "a DMA_DATA copy that misses every queued write drained the draw pipeline: the label behind it never queued behind the held commit (" + std::to_string(copied.outstanding) + " outstanding)");
+        Require(copied.drains == 0, "a DMA_DATA copy that misses every queued write drained the draw pipeline (" + std::to_string(copied.drains) + " packet drains)");
+        for (std::size_t i = 0; i < Destination.size(); ++i) Require(Destination[i] == (i < 128 ? Source[i] : 0u), "the copy did not land, or wrote past its bytes");
         LibcRunShutdown_nid_postfix();
         std::puts("a DMA_DATA prefetch and a copy that misses every queued write keep the draw pipeline");
         return 0;

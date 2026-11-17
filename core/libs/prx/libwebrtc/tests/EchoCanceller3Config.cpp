@@ -1,4 +1,5 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "Testing.hpp"
 
 #include <cstddef>
 #include <cstdio>
@@ -8,21 +9,6 @@
 #include <stdexcept>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc EchoCanceller3Config check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> void RequireInvalidArgument(TAction action, std::source_location location = std::source_location::current()) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, location);
-}
 
 struct ByteRange {
     std::size_t first;
@@ -208,7 +194,7 @@ void TestDefaultConstructor() {
     std::memset(&copy, 0x5A, sizeof(copy));
     _ZN6webrtc20EchoCanceller3ConfigC1ERKS0__nid_postfix(&copy, &storage.config);
     Require(MembersEqual(copy, storage.config));
-    RequireInvalidArgument([] { _ZN6webrtc20EchoCanceller3ConfigC1Ev_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZN6webrtc20EchoCanceller3ConfigC1Ev_nid_postfix(nullptr); });
 }
 
 void TestCopyConstructor() {
@@ -232,10 +218,10 @@ void TestAssignment() {
 void TestNullArgumentsThrow() {
     WebRtcEchoCanceller3Config config = Pattern(5);
     WebRtcEchoCanceller3Config expected = config;
-    RequireInvalidArgument([&] { _ZN6webrtc20EchoCanceller3ConfigC1ERKS0__nid_postfix(nullptr, &config); });
-    RequireInvalidArgument([&] { _ZN6webrtc20EchoCanceller3ConfigC1ERKS0__nid_postfix(&config, nullptr); });
-    RequireInvalidArgument([&] { _ZN6webrtc20EchoCanceller3ConfigaSERKS0__nid_postfix(nullptr, &config); });
-    RequireInvalidArgument([&] { _ZN6webrtc20EchoCanceller3ConfigaSERKS0__nid_postfix(&config, nullptr); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc20EchoCanceller3ConfigC1ERKS0__nid_postfix(nullptr, &config); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc20EchoCanceller3ConfigC1ERKS0__nid_postfix(&config, nullptr); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc20EchoCanceller3ConfigaSERKS0__nid_postfix(nullptr, &config); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc20EchoCanceller3ConfigaSERKS0__nid_postfix(&config, nullptr); });
     Require(std::memcmp(&config, &expected, sizeof(config)) == 0);
 }
 

@@ -6,14 +6,11 @@
 #include <stdexcept>
 #include <vector>
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "Testing.hpp"
 
 
 
 namespace {
-
-void Require(bool value) {
-    if (!value) throw std::runtime_error("ICU UTF-16 scalar test failed");
-}
 
 bool Pair(std::uint16_t first, std::uint16_t second) {
     return (first & 0xfc00) == 0xd800 && (second & 0xfc00) == 0xdc00;

@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -40,12 +41,6 @@ struct VulkanObjects {
     std::array<bool, 32> poolUsed{};
 } objects;
 
-void RequireTest(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
-
 VKAPI_ATTR VkResult VKAPI_CALL CreateLayout(VkDevice, const VkDescriptorSetLayoutCreateInfo*, const VkAllocationCallbacks*, VkDescriptorSetLayout* layout) {
     *layout = reinterpret_cast<VkDescriptorSetLayout>(objects.next++);
     ++objects.layouts;
@@ -55,12 +50,12 @@ VKAPI_ATTR VkResult VKAPI_CALL CreateLayout(VkDevice, const VkDescriptorSetLayou
 }
 
 VKAPI_ATTR void VKAPI_CALL DestroyLayout(VkDevice, VkDescriptorSetLayout, const VkAllocationCallbacks*) {
-    RequireTest(objects.layouts != 0, "layout destroyed twice");
+    Require(objects.layouts != 0, "layout destroyed twice");
     --objects.layouts;
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL CreatePool(VkDevice, const VkDescriptorPoolCreateInfo*, const VkAllocationCallbacks*, VkDescriptorPool* pool) {
-    RequireTest(objects.next < objects.poolUsed.size(), "mock pool capacity exceeded");
+    Require(objects.next < objects.poolUsed.size(), "mock pool capacity exceeded");
     *pool = reinterpret_cast<VkDescriptorPool>(objects.next++);
     ++objects.pools;
     ++objects.createdPools;
@@ -69,7 +64,7 @@ VKAPI_ATTR VkResult VKAPI_CALL CreatePool(VkDevice, const VkDescriptorPoolCreate
 }
 
 VKAPI_ATTR void VKAPI_CALL DestroyPool(VkDevice, VkDescriptorPool, const VkAllocationCallbacks*) {
-    RequireTest(objects.pools != 0, "pool destroyed twice");
+    Require(objects.pools != 0, "pool destroyed twice");
     --objects.pools;
 }
 
@@ -123,10 +118,10 @@ bool LayoutFailure(bool updateAfterBind) {
         }
         failNextAllocation = false;
         objects.failAfterLayout = false;
-        RequireTest(failed && objects.createdLayouts == 1, "layout publication failure was not exercised");
+        Require(failed && objects.createdLayouts == 1, "layout publication failure was not exercised");
         const auto layout = cache.Layout(key, std::span(&binding, 1), updateAfterBind);
-        RequireTest(layout != VK_NULL_HANDLE && objects.createdLayouts == 2, "layout creation did not recover");
-        RequireTest(cache.Layout(key, std::span(&binding, 1), updateAfterBind) == layout && objects.createdLayouts == 2, "layout cache hit created another object");
+        Require(layout != VK_NULL_HANDLE && objects.createdLayouts == 2, "layout creation did not recover");
+        Require(cache.Layout(key, std::span(&binding, 1), updateAfterBind) == layout && objects.createdLayouts == 2, "layout cache hit created another object");
     }
     std::printf("layout updateAfterBind=%d: unowned=%u\n", updateAfterBind, objects.layouts);
     return objects.layouts == 0;
@@ -147,11 +142,11 @@ bool PoolFailure(bool updateAfterBind, bool grow) {
         }
         failNextAllocation = false;
         objects.failAfterPool = false;
-        RequireTest(objects.createdPools == (grow ? 2u : 1u), "pool publication path was not exercised");
+        Require(objects.createdPools == (grow ? 2u : 1u), "pool publication path was not exercised");
         if (allocation.set != VK_NULL_HANDLE) cache.Free(allocation);
         if (grow) cache.Free(first);
         const auto recovered = cache.Allocate(layout, std::span(&size, 1), updateAfterBind);
-        RequireTest(recovered.set != VK_NULL_HANDLE, "pool allocation did not recover");
+        Require(recovered.set != VK_NULL_HANDLE, "pool allocation did not recover");
         cache.Free(recovered);
     }
     std::printf("pool updateAfterBind=%d grow=%d: unowned=%u\n", updateAfterBind, grow, objects.pools);

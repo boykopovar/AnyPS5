@@ -2,6 +2,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -45,21 +46,7 @@ struct Mutation {
     bool throwWrite = false;
 } mutation;
 
-void Require(bool result, const char* message) {
-    if (result) return;
-    std::fprintf(stderr, "JXR stream: %s\n", message);
-    std::abort();
-}
 
-template<typename TAction>
-void RequireInvalidArgument(TAction action, const char* message) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, message);
-}
 
 std::int64_t APS5_VABI Read(Jxr::Stream* stream, void* buffer, std::size_t size) {
     calls.push_back('r');
@@ -301,7 +288,7 @@ void DetachWrites(Jxr::Stream& stream) {
     mutation = {};
     io.stream = &stream;
     io.bitsUsed = 7;
-    RequireInvalidArgument([&] { detachISWrite_nid_postfix(nullptr, &io); }, "detach rejected an unaligned bit position");
+    ExpectErr<std::invalid_argument>([&] { detachISWrite_nid_postfix(nullptr, &io); }, "detach rejected an unaligned bit position");
     Require(calls.empty() && io.stream == &stream, "unaligned detach performed I/O or cleared stream");
 }
 
@@ -320,8 +307,8 @@ std::int64_t APS5_VABI ObserveWrite(Jxr::Stream*, const void* buffer, std::size_
 }
 
 void NullState(Jxr::Stream& stream) {
-    RequireInvalidArgument([] { readIS_nid_postfix(nullptr, nullptr); }, "read accepted a null bit state");
-    RequireInvalidArgument([] { writeIS_nid_postfix(nullptr, nullptr); }, "write accepted a null bit state");
+    ExpectErr<std::invalid_argument>([] { readIS_nid_postfix(nullptr, nullptr); }, "read accepted a null bit state");
+    ExpectErr<std::invalid_argument>([] { writeIS_nid_postfix(nullptr, nullptr); }, "write accepted a null bit state");
 
     auto* packet = ring.data() + PacketSize;
     Jxr::Stream partial = stream;
@@ -330,10 +317,10 @@ void NullState(Jxr::Stream& stream) {
         Jxr::BitIo io{7, 19, 13, ~8192, ring.data(), packet, selected, 91};
         const auto initial = io;
         calls.clear();
-        RequireInvalidArgument([&] { readIS_nid_postfix(nullptr, &io); }, "read accepted a null stream or seek callback");
+        ExpectErr<std::invalid_argument>([&] { readIS_nid_postfix(nullptr, &io); }, "read accepted a null stream or seek callback");
         Require(calls.empty() && std::memcmp(&io, &initial, sizeof(io)) == 0, "rejected read seek performed I/O or mutated state");
         partial.write = nullptr;
-        RequireInvalidArgument([&] { writeIS_nid_postfix(nullptr, &io); }, "write accepted a null stream or write callback");
+        ExpectErr<std::invalid_argument>([&] { writeIS_nid_postfix(nullptr, &io); }, "write accepted a null stream or write callback");
         Require(calls.empty() && std::memcmp(&io, &initial, sizeof(io)) == 0, "rejected write performed I/O or mutated state");
         partial = stream;
     }
@@ -343,7 +330,7 @@ void NullState(Jxr::Stream& stream) {
     Jxr::BitIo io{7, 19, 13, ~8192, ring.data(), packet, &partial, 91};
     auto initial = io;
     calls.clear();
-    RequireInvalidArgument([&] { readIS_nid_postfix(nullptr, &io); }, "read accepted a null read callback");
+    ExpectErr<std::invalid_argument>([&] { readIS_nid_postfix(nullptr, &io); }, "read accepted a null read callback");
     Require(calls == std::vector<char>({'s'}) && lastPosition == 91, "null read callback was not reached after the seek");
     Require(std::memcmp(&io, &initial, sizeof(io)) == 0, "null read callback mutated state");
 
@@ -354,7 +341,7 @@ void NullState(Jxr::Stream& stream) {
     initial = io;
     calls.clear();
     lastBuffer = ring.data();
-    RequireInvalidArgument([&] { readIS_nid_postfix(nullptr, &io); }, "read accepted a null packet");
+    ExpectErr<std::invalid_argument>([&] { readIS_nid_postfix(nullptr, &io); }, "read accepted a null packet");
     Require(calls == std::vector<char>({'s', 'r'}) && lastBuffer == nullptr && lastSize == PacketSize, "null packet did not reach the read callback first");
     Require(io.referenceOffset == 91 + PacketSize && io.start == nullptr && io.shadow == initial.shadow, "null packet read did not stop at the shadow copy");
 
@@ -371,7 +358,7 @@ void NullState(Jxr::Stream& stream) {
         io = initial;
         writeResult = result;
         calls.clear();
-        RequireInvalidArgument([&] { writeIS_nid_postfix(nullptr, &io); }, "successful write advanced a null packet");
+        ExpectErr<std::invalid_argument>([&] { writeIS_nid_postfix(nullptr, &io); }, "successful write advanced a null packet");
         Require(calls == std::vector<char>({'w'}) && std::memcmp(&io, &initial, sizeof(io)) == 0, "successful write of a null packet mutated state");
     }
 }
@@ -408,7 +395,7 @@ void GuestMapping(Jxr::Stream& stream) {
     std::array<std::uint8_t, mappingSize> before;
     std::copy_n(bytes, mappingSize, before.begin());
     calls.clear();
-    RequireInvalidArgument([&] { readIS_nid_postfix(nullptr, &io); }, "read-only guest packet backing was not rejected");
+    ExpectErr<std::invalid_argument>([&] { readIS_nid_postfix(nullptr, &io); }, "read-only guest packet backing was not rejected");
     Require(calls == std::vector<char>({'s'}), "rejected guest packet write invoked the read callback");
     Require(std::memcmp(&io, &initial, sizeof(io)) == 0 && std::equal(before.begin(), before.end(), bytes), "rejected guest packet write mutated state or backing");
     Require(sceKernelMprotect(mapping, mappingSize, 3) == 0, "restore writable guest packet backing");
@@ -444,8 +431,8 @@ void Allocation() {
     Require(WMPFree_nid_postfix(&memory) == 0 && memory == nullptr, "free of a null pointer failed");
     memory = &calls;
     Require(WMPAlloc_nid_postfix(&memory, Max) == -101 && memory == nullptr, "failed allocation did not report out of memory");
-    RequireInvalidArgument([] { WMPAlloc_nid_postfix(nullptr, 24); }, "allocation accepted a null pointer");
-    RequireInvalidArgument([] { WMPFree_nid_postfix(nullptr); }, "free accepted a null pointer");
+    ExpectErr<std::invalid_argument>([] { WMPAlloc_nid_postfix(nullptr, 24); }, "allocation accepted a null pointer");
+    ExpectErr<std::invalid_argument>([] { WMPFree_nid_postfix(nullptr); }, "free accepted a null pointer");
 }
 
 void MemoryCreate() {
@@ -466,7 +453,7 @@ void MemoryCreate() {
         }
         CloseMemory(stream);
     }
-    RequireInvalidArgument([&] { CreateWS_Memory_nid_postfix(nullptr, bytes.data(), bytes.size()); }, "memory stream creation accepted a null stream pointer");
+    ExpectErr<std::invalid_argument>([&] { CreateWS_Memory_nid_postfix(nullptr, bytes.data(), bytes.size()); }, "memory stream creation accepted a null stream pointer");
 }
 
 void MemoryRead() {
@@ -485,7 +472,7 @@ void MemoryRead() {
     Require(ReadWS_Memory_nid_postfix(stream, nullptr, Max) == 0 && stream->state[2] == 20, "read past the end checked for overflow first");
     Require(SetPosWS_Memory_nid_postfix(stream, 1) == 0 && ReadWS_Memory_nid_postfix(stream, target.data(), Max) == -103, "wrapping read did not overflow");
     Require(stream->state[2] == 1 && Filled(target.data(), target.data() + 8, 0xcc), "wrapping read copied or moved");
-    RequireInvalidArgument([&] { ReadWS_Memory_nid_postfix(stream, nullptr, 1); }, "read accepted a null destination");
+    ExpectErr<std::invalid_argument>([&] { ReadWS_Memory_nid_postfix(stream, nullptr, 1); }, "read accepted a null destination");
     Require(stream->state[2] == 1, "rejected read moved");
     CloseMemory(stream);
 }
@@ -501,7 +488,7 @@ void MemoryWrite() {
     Require(WriteWS_Memory_nid_postfix(stream, source.data(), 3) == 0 && stream->state[2] == 8 && std::equal(source.begin(), source.begin() + 3, target.begin() + 5), "write up to the end failed");
     Require(SetPosWS_Memory_nid_postfix(stream, 1) == 0 && WriteWS_Memory_nid_postfix(stream, source.data(), Max) == -103 && stream->state[2] == 1, "wrapping write did not overflow");
     Require(WriteWS_Memory_nid_postfix(stream, nullptr, 0) == 0 && stream->state[2] == 1, "empty in-bounds write failed");
-    RequireInvalidArgument([&] { WriteWS_Memory_nid_postfix(stream, nullptr, 1); }, "write accepted a null source");
+    ExpectErr<std::invalid_argument>([&] { WriteWS_Memory_nid_postfix(stream, nullptr, 1); }, "write accepted a null source");
     Require(SetPosWS_Memory_nid_postfix(stream, 9) == 0 && WriteWS_Memory_nid_postfix(stream, source.data(), 0) == -103 && stream->state[2] == 9, "empty write past the end did not overflow");
     Require(std::equal(source.begin(), source.begin() + 5, target.begin()) && std::equal(source.begin(), source.begin() + 3, target.begin() + 5), "failed writes changed the buffer");
     CloseMemory(stream);
@@ -517,14 +504,14 @@ void MemoryPosition() {
         Require(GetPosWS_Memory_nid_postfix(stream, &position) == 0 && position == offset, "get position differs");
     }
     Require(stream->state[0] == reinterpret_cast<std::uintptr_t>(bytes.data()) && stream->state[1] == 8, "position calls changed the buffer");
-    RequireInvalidArgument([] { EOSWS_Memory_nid_postfix(nullptr); }, "end of stream accepted a null stream");
-    RequireInvalidArgument([&] { ReadWS_Memory_nid_postfix(nullptr, bytes.data(), 1); }, "read accepted a null stream");
-    RequireInvalidArgument([&] { WriteWS_Memory_nid_postfix(nullptr, bytes.data(), 1); }, "write accepted a null stream");
-    RequireInvalidArgument([] { SetPosWS_Memory_nid_postfix(nullptr, 0); }, "set position accepted a null stream");
-    RequireInvalidArgument([&] { GetPosWS_Memory_nid_postfix(nullptr, &position); }, "get position accepted a null stream");
-    RequireInvalidArgument([&] { GetPosWS_Memory_nid_postfix(stream, nullptr); }, "get position accepted a null result");
+    ExpectErr<std::invalid_argument>([] { EOSWS_Memory_nid_postfix(nullptr); }, "end of stream accepted a null stream");
+    ExpectErr<std::invalid_argument>([&] { ReadWS_Memory_nid_postfix(nullptr, bytes.data(), 1); }, "read accepted a null stream");
+    ExpectErr<std::invalid_argument>([&] { WriteWS_Memory_nid_postfix(nullptr, bytes.data(), 1); }, "write accepted a null stream");
+    ExpectErr<std::invalid_argument>([] { SetPosWS_Memory_nid_postfix(nullptr, 0); }, "set position accepted a null stream");
+    ExpectErr<std::invalid_argument>([&] { GetPosWS_Memory_nid_postfix(nullptr, &position); }, "get position accepted a null stream");
+    ExpectErr<std::invalid_argument>([&] { GetPosWS_Memory_nid_postfix(stream, nullptr); }, "get position accepted a null result");
     errno = 71;
-    RequireInvalidArgument([&] { GetPosWS_Memory_nid_postfix(stream, reinterpret_cast<std::size_t*>(0x10)); }, "get position accepted an inaccessible guest result");
+    ExpectErr<std::invalid_argument>([&] { GetPosWS_Memory_nid_postfix(stream, reinterpret_cast<std::size_t*>(0x10)); }, "get position accepted an inaccessible guest result");
     Require(errno == 71, "get position invalid guest result changed errno");
     CloseMemory(stream);
 }

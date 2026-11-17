@@ -1,6 +1,7 @@
 #include "prx/libSceAudioSystem/libSceAudioSystem.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestHeap.hpp"
+#include "Testing.hpp"
 
 #include <cerrno>
 #include <cstdint>
@@ -14,12 +15,6 @@ namespace {
 
 void ClobberErrno(std::uintptr_t, std::size_t) {
     errno = 99;
-}
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "AUDIOSYSTEM VALUE SLOTS: %s\n", message);
-    std::abort();
 }
 
 std::int32_t Read(const std::int32_t* value) {
@@ -44,16 +39,6 @@ void Give(std::int32_t value) {
 
 void Store(std::int32_t value) {
     Require(libSceAudioSystemUnknown_uoPBJTVWhrg_nid_no_patch(value) == 0, "uoPBJTVWhrg result");
-}
-
-template <typename TFunction>
-void RequireThrows(TFunction function, const char* message) {
-    try {
-        function();
-    } catch (const std::runtime_error&) {
-        return;
-    }
-    Require(false, message);
 }
 
 }
@@ -95,10 +80,10 @@ int main() {
     Require(Taken(out) == 0, "pending read after clear with errno");
     Require(errno == 71, "FkFcs7NTFDo preserved errno on success");
     errno = 71;
-    RequireThrows([&] { libSceAudioSystemUnknown_mS9gpe47Eio_nid_no_patch(reinterpret_cast<std::int32_t*>(0x10)); }, "mS9gpe47Eio threw on unmapped output");
+    ExpectErr<std::runtime_error>([&] { libSceAudioSystemUnknown_mS9gpe47Eio_nid_no_patch(reinterpret_cast<std::int32_t*>(0x10)); }, "mS9gpe47Eio threw on unmapped output");
     Require(errno == 71, "mS9gpe47Eio preserved errno on unmapped output");
     errno = 71;
-    RequireThrows([&] { libSceAudioSystemUnknown_FkFcs7NTFDo_nid_no_patch(reinterpret_cast<std::int32_t*>(0x10)); }, "FkFcs7NTFDo threw on unmapped output");
+    ExpectErr<std::runtime_error>([&] { libSceAudioSystemUnknown_FkFcs7NTFDo_nid_no_patch(reinterpret_cast<std::int32_t*>(0x10)); }, "FkFcs7NTFDo threw on unmapped output");
     Require(errno == 71, "FkFcs7NTFDo preserved errno on unmapped output");
 
     std::puts("AudioSystem value slot tests passed");

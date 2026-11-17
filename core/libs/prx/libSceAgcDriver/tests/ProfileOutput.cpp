@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <chrono>
 #include <future>
@@ -6,10 +7,6 @@
 #include <sstream>
 
 namespace {
-
-void Check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 void FormatAndDrain() {
     std::string written;
@@ -19,7 +16,7 @@ void FormatAndDrain() {
         output.Print("%s %.2f %llu\n", "shader", 1.25, 42ull);
         output.Print("%s\n", longLine.c_str());
     }
-    Check(written == "shader 1.25 42\n" + longLine + "\n", "formatting or shutdown drain changed the output");
+    Require(written == "shader 1.25 42\n" + longLine + "\n", "formatting or shutdown drain changed the output");
 }
 
 void SlowWriter() {
@@ -51,20 +48,20 @@ void SlowWriter() {
             changed.notify_one();
         }
     } cleanup{mutex, release, released};
-    Check(output.Write("12345678"), "first write was rejected");
-    Check(entered.get_future().wait_for(std::chrono::seconds(2)) == std::future_status::ready, "writer did not start");
+    Require(output.Write("12345678"), "first write was rejected");
+    Require(entered.get_future().wait_for(std::chrono::seconds(2)) == std::future_status::ready, "writer did not start");
     producer = std::async(std::launch::async, [&] { return output.Write("abcdefgh"); });
-    Check(producer.wait_for(std::chrono::seconds(2)) == std::future_status::ready, "producer blocked behind the diagnostic writer");
-    Check(producer.get(), "write within the bound was rejected");
-    Check(!output.Write("z"), "queue bound did not include the in-flight output");
+    Require(producer.wait_for(std::chrono::seconds(2)) == std::future_status::ready, "producer blocked behind the diagnostic writer");
+    Require(producer.get(), "write within the bound was rejected");
+    Require(!output.Write("z"), "queue bound did not include the in-flight output");
     {
         std::lock_guard lock(mutex);
         released = true;
     }
     release.notify_one();
     output.Flush();
-    Check(written.starts_with("12345678abcdefgh"), "accepted chunks changed order");
-    Check(written.find("[profile-output] dropped 1 chunks") != std::string::npos, "bounded overflow was not reported");
+    Require(written.starts_with("12345678abcdefgh"), "accepted chunks changed order");
+    Require(written.find("[profile-output] dropped 1 chunks") != std::string::npos, "bounded overflow was not reported");
 }
 
 void ConcurrentWriters() {
@@ -82,10 +79,10 @@ void ConcurrentWriters() {
     std::vector<std::string> lines;
     for (std::string line; std::getline(stream, line);) lines.push_back(line);
     std::sort(lines.begin(), lines.end());
-    Check(lines.size() == 800 && std::adjacent_find(lines.begin(), lines.end()) == lines.end(), "concurrent writes lost or duplicated chunks");
+    Require(lines.size() == 800 && std::adjacent_find(lines.begin(), lines.end()) == lines.end(), "concurrent writes lost or duplicated chunks");
     for (int thread = 0; thread < 8; ++thread) {
         for (int item = 0; item < 100; ++item)
-            Check(std::binary_search(lines.begin(), lines.end(), std::to_string(thread) + ":" + std::to_string(item)), "concurrent formatting changed a chunk");
+            Require(std::binary_search(lines.begin(), lines.end(), std::to_string(thread) + ":" + std::to_string(item)), "concurrent formatting changed a chunk");
     }
 }
 
@@ -104,7 +101,7 @@ void WriterFailure() {
         } catch (const std::runtime_error& error) {
             failed = std::string(error.what()) == "test writer failure";
         }
-        Check(failed, "writer failure was not propagated");
+        Require(failed, "writer failure was not propagated");
     }
 }
 
@@ -115,14 +112,14 @@ void ExplicitStop() {
     output.Stop();
     output.Stop();
     output.Flush();
-    Check(written == "pending output", "explicit stop did not drain pending output");
-    Check(!output.Write("after stop"), "write after stop was accepted");
-    Check(!output.Write(""), "empty write after stop was accepted");
+    Require(written == "pending output", "explicit stop did not drain pending output");
+    Require(!output.Write("after stop"), "write after stop was accepted");
+    Require(!output.Write(""), "empty write after stop was accepted");
     output.Print("late small diagnostic %d", 1);
     output.Print("%s", std::string(6000, 'x').c_str());
     output.Print("%s", std::string(10000, 'x').c_str());
     output.Flush();
-    Check(written == "pending output", "late output reached the stopped writer");
+    Require(written == "pending output", "late output reached the stopped writer");
 }
 
 void StopWithProducers() {
@@ -139,15 +136,15 @@ void StopWithProducers() {
             }
         });
     }
-    Check(output.Write("x"), "initial write was rejected");
+    Require(output.Write("x"), "initial write was rejected");
     ++accepted;
     start.store(true);
     start.notify_all();
     output.Stop();
     for (auto& producer : producers) producer.join();
     output.Flush();
-    Check(written == std::string(accepted.load(), 'x'), "stop did not drain exactly the accepted output");
-    Check(!output.Write("late"), "concurrent stop left the writer open");
+    Require(written == std::string(accepted.load(), 'x'), "stop did not drain exactly the accepted output");
+    Require(!output.Write("late"), "concurrent stop left the writer open");
 }
 
 }

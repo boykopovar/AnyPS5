@@ -1,4 +1,5 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdio>
@@ -9,12 +10,6 @@
 #include <stdexcept>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "VideoEncoder InitEncode check failed at line %u\n", location.line());
-    std::abort();
-}
 
 using Vtable = std::array<void (APS5_VABI *)(), 5>;
 

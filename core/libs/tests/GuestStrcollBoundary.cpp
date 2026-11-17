@@ -1,17 +1,11 @@
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <vector>
-
-static void Require(bool condition) {
-    if (!condition) {
-        std::fputs("GuestStrcollBoundary check failed\n", stderr);
-        std::abort();
-    }
-}
 
 #ifdef _WIN32
 #include <windows.h>

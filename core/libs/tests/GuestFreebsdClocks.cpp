@@ -2,6 +2,7 @@
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <climits>
 #include <cstdint>
@@ -33,8 +34,6 @@ static constexpr std::int64_t NANOS_PER_MILLISECOND = 1000000LL;
 static constexpr std::int64_t BURN_NANOS = 200 * NANOS_PER_MILLISECOND;
 static constexpr std::int64_t IDLE_LIMIT_NANOS = 100 * NANOS_PER_MILLISECOND;
 static constexpr std::int64_t GIVE_UP_NANOS = 10 * NANOS_PER_SECOND;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static void SetTimeZone(const char* zone) {
 #ifdef _WIN32

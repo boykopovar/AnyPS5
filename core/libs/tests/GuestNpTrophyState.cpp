@@ -1,5 +1,6 @@
 #include "prx/libSceNpTrophy/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -18,12 +19,6 @@ namespace {
 
 constexpr int NotRegistered = static_cast<int>(0x8055160fu);
 const std::filesystem::path StatePath("_trophy/trophy03.1");
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "NpTrophy state: %s\n", message);
-    std::abort();
-}
 
 void Write(const std::filesystem::path& path, const std::string& bytes) {
     std::filesystem::create_directories(path.parent_path());

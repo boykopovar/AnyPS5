@@ -2,6 +2,7 @@
 #include "RdnaDecoder/RdnaInstructionDecoder.hpp"
 #include "RdnaDecoder/RdnaScalarOpDecoder.hpp"
 #include "Translation/TranslationContext.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdio>
 #include <map>
@@ -29,10 +30,6 @@ const std::array<ApertureSource, 4> ApertureSources{{
 
 constexpr std::uint32_t MovB32 = 0x03u;
 constexpr std::uint32_t MovB64 = 0x04u;
-
-void Require(bool value, const std::string& message) {
-    if (!value) throw std::runtime_error(message);
-}
 
 std::string Hex(std::uint32_t value) {
     char text[16];

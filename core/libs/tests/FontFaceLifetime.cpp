@@ -1,5 +1,6 @@
 #include "tests/FontFixture.hpp"
 #include "prx/libSceFont/include/FontInternal.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <atomic>
 #include <barrier>
@@ -9,13 +10,6 @@
 #include <string_view>
 #include <thread>
 #include <vector>
-
-static void Require(bool value, const char* step) {
-    if (!value) {
-        std::fprintf(stderr, "Font face lifetime: %s\n", step);
-        std::abort();
-    }
-}
 
 static void FinalizeFace(void* object) {
     auto* face = static_cast<FT_Face>(object);

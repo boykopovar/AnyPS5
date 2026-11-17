@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <atomic>
 #include <cerrno>
@@ -12,7 +13,6 @@ using Callback = int (APS5_VABI *)(void*, void*, void**);
 static int ExecuteOnce(int* flag, Callback callback, void* arg) {
     return _ZSt13_Execute_onceRSt9once_flagPFiPvS1_PS1_ES1__nid_postfix(flag, callback, arg);
 }
-static void Require(bool value) { if (!value) std::abort(); }
 
 static std::atomic<int> calls{0}, arrived{0};
 static int nullCalls = -7, unmappedCalls = -7;

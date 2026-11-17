@@ -1,6 +1,7 @@
 #include "ElfFixture.hpp"
 #include "RelinkerProcess.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -12,10 +13,6 @@
 namespace {
 
 using namespace RelinkerTests;
-
-void require(const bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 const Bytes kMainCode = {0xC3};
 
@@ -40,7 +37,7 @@ std::uint64_t expected(const std::uint64_t value, const std::uint64_t destinatio
 
 int main(const int argc, char** argv) {
     try {
-        require(argc == 2, "usage: guest_intel_trampolines_tests <relinker>");
+        Require(argc == 2, "usage: guest_intel_trampolines_tests <relinker>");
         const TempDirectory directory;
         const auto input = directory.Path() / "input.elf";
         const auto output = directory.Path() / "output.elf";
@@ -50,24 +47,24 @@ int main(const int argc, char** argv) {
         WriteFile(modules / "sample.prx", MakeModule(kModuleCode));
 
         const auto run = RunRelinker(argv[1], {"--to-intel", input.string(), output.string()}, directory.Path() / "relinker.log");
-        require(run.ExitCode == 0, "Relinker failed:\n" + run.Output);
+        Require(run.ExitCode == 0, "Relinker failed:\n" + run.Output);
 
         const auto module = directory.Path() / "app0" / "sce_module" / "sample.prx.guest.prx";
-        require(std::filesystem::exists(module), "The relinker did not write the converted guest module:\n" + run.Output);
+        Require(std::filesystem::exists(module), "The relinker did not write the converted guest module:\n" + run.Output);
 
         const MappedImage image(ReadFile(module));
         for (const auto site : kSites) {
             const auto* bytes = image.At<const std::uint8_t>(site);
-            require(bytes[0] == 0xE9, "SSE4a site in the guest module was not replaced by a jump");
-            for (std::size_t index = 5; index < kSiteLength; ++index) require(bytes[index] == 0x90, "SSE4a site tail in the guest module is not padded with NOPs");
+            Require(bytes[0] == 0xE9, "SSE4a site in the guest module was not replaced by a jump");
+            for (std::size_t index = 5; index < kSiteLength; ++index) Require(bytes[index] == 0x90, "SSE4a site tail in the guest module is not padded with NOPs");
             std::int32_t displacement;
             std::memcpy(&displacement, bytes + 1, sizeof(displacement));
-            require(site + 5 + displacement >= kCodeSize, "Guest module SSE4a stub is inside the original code segment");
+            Require(site + 5 + displacement >= kCodeSize, "Guest module SSE4a stub is inside the original code segment");
         }
 
         const auto function = image.At<SseStub>(0);
         for (const auto [value, destination] : {std::pair{0x1122334455667788ull, 0x0123456789ABCDEFull}, {0ull, ~0ull}, {~0ull, 0ull}, {0x9E3779B97F4A7C15ull, 0x0F1E2D3C4B5A6978ull}})
-            require(function(value, destination) == expected(value, destination), "Relinked guest module trampolines computed the wrong value");
+            Require(function(value, destination) == expected(value, destination), "Relinked guest module trampolines computed the wrong value");
         std::cout << "Guest Intel trampoline execution tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

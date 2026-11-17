@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include <elfpatcher/windows/WindowsEntryStubBuilder.hpp>
 #include <cstddef>
 #include <cstdint>
@@ -12,16 +13,12 @@ extern std::size_t largest;
 
 namespace {
 
-void require(const bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
-
 void checkNormalAllocation(const Elfpatcher::Windows::WindowsImports& imports, const std::uint32_t dataRva) {
     WindowsEntryStubAllocation::largest = 0;
     const auto stub = Elfpatcher::Windows::WindowsEntryStubBuilder().Build(
         dataRva, 0x1000, imports, {}, {}, ".", false, false);
-    require(!stub.Data.Data.empty(), "Normal entry-stub allocation was empty");
-    require(WindowsEntryStubAllocation::largest > 4096, "The allocation tracker missed the startup buffers");
+    Require(!stub.Data.Data.empty(), "Normal entry-stub allocation was empty");
+    Require(WindowsEntryStubAllocation::largest > 4096, "The allocation tracker missed the startup buffers");
 }
 
 void checkBoundaryBeforeAllocation(const Elfpatcher::Windows::WindowsImports& imports) {
@@ -33,10 +30,10 @@ void checkBoundaryBeforeAllocation(const Elfpatcher::Windows::WindowsImports& im
             limit - remaining, 0x1000, imports, {}, {}, ".", false, false);
     } catch (const Domain::RelinkerException& error) {
         const auto largest = WindowsEntryStubAllocation::largest;
-        require(std::string(error.what()) == "PE image exceeds the supported 2 GiB address range",
+        Require(std::string(error.what()) == "PE image exceeds the supported 2 GiB address range",
             "The entry-stub boundary failed with another error");
-        require(error.FailureOffset > limit, "The rejected endpoint was within the supported range");
-        require(largest <= remaining, "The entry stub allocated past the RVA limit before rejecting it");
+        Require(error.FailureOffset > limit, "The rejected endpoint was within the supported range");
+        Require(largest <= remaining, "The entry stub allocated past the RVA limit before rejecting it");
         return;
     }
     throw std::runtime_error("An entry-stub allocation crossing the 2 GiB limit was accepted");

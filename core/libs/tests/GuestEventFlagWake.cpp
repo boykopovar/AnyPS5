@@ -1,6 +1,7 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -21,8 +22,6 @@ static constexpr std::uint32_t EVF_WAITMODE_OR = 0x02;
 static constexpr std::uint32_t EVF_WAITMODE_CLEAR_ALL = 0x10;
 static constexpr std::uint32_t EVF_WAITMODE_CLEAR_PAT = 0x20;
 static constexpr int WAITERS = 8;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static void WaitForWaiters(KernelEventFlag flag, int expected) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);

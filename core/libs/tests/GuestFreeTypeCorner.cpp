@@ -1,5 +1,6 @@
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeTypeOt/include/Calc.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -7,12 +8,6 @@
 #include <stdexcept>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "FreeType corner: %s\n", message);
-    std::exit(1);
-}
 
 template <typename TCall> bool Throws(TCall call) {
     try {

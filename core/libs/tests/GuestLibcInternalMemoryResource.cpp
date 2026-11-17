@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -30,12 +31,6 @@ using Allocate = void* (APS5_VABI*)(void*, std::size_t, std::size_t);
 using Deallocate = void (APS5_VABI*)(void*, void*, std::size_t, std::size_t);
 using IsEqual = bool (APS5_VABI*)(const void*, const void*);
 using Destroy = void (APS5_VABI*)(void*);
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "libSceLibcInternal memory resource: %s\n", message);
-    std::abort();
-}
 
 const void* const* Vtable(const void* resource) {
     return *static_cast<const void* const* const*>(resource);

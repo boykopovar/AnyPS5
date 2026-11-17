@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/DeferredDestruction.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/MemoryAccounting.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
@@ -12,14 +13,6 @@
 using namespace AgcDriver::Graphics;
 
 namespace {
-
-int failures = 0;
-
-void Expect(bool condition, const std::string& what) {
-    if (condition) return;
-    std::fprintf(stderr, "FAIL: %s\n", what.c_str());
-    ++failures;
-}
 
 std::vector<std::string> events;
 VkResult idleResult = VK_SUCCESS;
@@ -238,8 +231,8 @@ void AccountingUntilFree() {
     MemoryAccounting::ForgetDevice(later);
     MemoryAccounting::ForgetDevice(device);
     inspectFree = false;
-    if (failures == 0) std::puts("deferred memory accounting preserves per-device resolvers across loader changes");
-    if (failures == 0) std::puts("deferred memory accounting survives queuing and failed waits, and clears at actual frees");
+    if (Failures() == 0) std::puts("deferred memory accounting preserves per-device resolvers across loader changes");
+    if (Failures() == 0) std::puts("deferred memory accounting survives queuing and failed waits, and clears at actual frees");
 }
 
 }
@@ -248,7 +241,7 @@ int main(int argc, char** argv) {
     try {
         if (argc == 2 && std::strcmp(argv[1], "--memory-accounting") == 0) {
             AccountingUntilFree();
-            return failures == 0 ? 0 : 1;
+            return Failures() == 0 ? 0 : 1;
         }
         DeferredUntilTheQueueIsIdle();
         OtherDevicesDestroyAtOnce();
@@ -257,7 +250,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "FAIL: %s\n", error.what());
         return 1;
     }
-    if (failures != 0) return 1;
+    if (Failures() != 0) return 1;
     std::puts("deferred destruction tests passed");
     return 0;
 }

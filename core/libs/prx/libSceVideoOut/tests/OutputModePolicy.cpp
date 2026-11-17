@@ -1,15 +1,9 @@
 #include "prx/libSceVideoOut/include/Output.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <initializer_list>
 #include <stdexcept>
-
-static void Require(bool value, const char* reason) {
-    if (!value) {
-        std::fprintf(stderr, "%s\n", reason);
-        std::abort();
-    }
-}
 
 int main() {
     constexpr int unsupported = static_cast<int>(0x80290016);

@@ -1,5 +1,6 @@
 #include "prx/libSceAjmi/include/Api.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cerrno>
@@ -21,24 +22,8 @@
 
 namespace {
 
-void Require(bool ok, const char* description) {
-    if (ok) return;
-    std::fprintf(stderr, "AJMI inline guest pointer: %s\n", description);
-    std::abort();
-}
-
 void ClobberErrno(std::uintptr_t, std::size_t) {
     errno = 99;
-}
-
-template <typename Operation>
-void RequireRejected(Operation call, const char* description) {
-    try {
-        call();
-    } catch (const std::runtime_error&) {
-        return;
-    }
-    Require(false, description);
 }
 
 char* GuardedPageEnd() {
@@ -72,11 +57,11 @@ int main() {
     const std::array<std::uint8_t, 5> data{4, 6, 8, 10, 12};
     const void* payload = nullptr;
     errno = 71;
-    RequireRejected([&] { sceAjmiBatchJobInlineBuffer_nid_no_patch(reinterpret_cast<void*>(0x10), nullptr, 0, nullptr); }, "unreadable destination header accepted");
+    ExpectErr<std::runtime_error>([&] { sceAjmiBatchJobInlineBuffer_nid_no_patch(reinterpret_cast<void*>(0x10), nullptr, 0, nullptr); }, "unreadable destination header accepted");
     Require(errno == 71, "invalid destination changed errno");
-    RequireRejected([&] { sceAjmiBatchJobInlineBuffer_nid_no_patch(job.data(), reinterpret_cast<const void*>(0x10), 5, nullptr); }, "unreadable data input accepted");
+    ExpectErr<std::runtime_error>([&] { sceAjmiBatchJobInlineBuffer_nid_no_patch(job.data(), reinterpret_cast<const void*>(0x10), 5, nullptr); }, "unreadable data input accepted");
     Require(errno == 71, "invalid source changed errno");
-    RequireRejected([&] { sceAjmiBatchJobInlineBuffer_nid_no_patch(job.data(), data.data(), data.size(), reinterpret_cast<const void**>(0x10)); }, "unwritable payload address accepted");
+    ExpectErr<std::runtime_error>([&] { sceAjmiBatchJobInlineBuffer_nid_no_patch(job.data(), data.data(), data.size(), reinterpret_cast<const void**>(0x10)); }, "unwritable payload address accepted");
     Require(errno == 71, "invalid address output changed errno");
 
     job.fill(0xA5);
@@ -91,9 +76,9 @@ int main() {
     char* end = GuardedPageEnd();
     std::memset(end - 16, 0xA5, 16);
     Require(sceAjmiBatchJobInlineBuffer_nid_no_patch(end - 16, data.data(), data.size(), nullptr) == end, "batch at writable page end was refused");
-    RequireRejected([&] { sceAjmiBatchJobInlineBuffer_nid_no_patch(end - 12, data.data(), data.size(), nullptr); }, "batch writing past page boundary was accepted");
+    ExpectErr<std::runtime_error>([&] { sceAjmiBatchJobInlineBuffer_nid_no_patch(end - 12, data.data(), data.size(), nullptr); }, "batch writing past page boundary was accepted");
     std::memcpy(end - 4, data.data(), 4);
-    RequireRejected([&] { sceAjmiBatchJobInlineBuffer_nid_no_patch(job.data(), end - 4, 5, nullptr); }, "input crossing page boundary was accepted");
+    ExpectErr<std::runtime_error>([&] { sceAjmiBatchJobInlineBuffer_nid_no_patch(job.data(), end - 4, 5, nullptr); }, "input crossing page boundary was accepted");
 
     std::array<std::uint8_t, 128> batchJob{};
     batchJob.fill(0xA5);
@@ -103,13 +88,13 @@ int main() {
     for (void* badPosition : {static_cast<void*>(nullptr), reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x10)), static_cast<void*>(end - 8)}) {
         if (badPosition == end - 8) std::memset(end - 8, 0x5A, 8);
         errno = 71;
-        RequireRejected([&] {
+        ExpectErr<std::runtime_error>([&] {
             sceAjmBatchJobControlBufferRa_nid_disambig1(badPosition, 1, 0, inputSample.data(), inputSample.size(), sidebandSample.data(), sidebandSample.size(), nullptr);
         }, "invalid ControlBufferRa position accepted");
         Require(errno == 71, "ControlBufferRa bad position changed errno");
         if (badPosition == end - 8) Require(static_cast<std::uint8_t>(end[-8]) == 0x5A, "ControlBufferRa partially wrote page end");
         errno = 71;
-        RequireRejected([&] {
+        ExpectErr<std::runtime_error>([&] {
             sceAjmBatchJobRunBufferRa_nid_disambig1(badPosition, 1, 0, inputSample.data(), inputSample.size(), outputSample.data(), outputSample.size(), nullptr, 0, nullptr);
         }, "invalid RunBufferRa position accepted");
         Require(errno == 71, "RunBufferRa bad position changed errno");
@@ -119,12 +104,12 @@ int main() {
     const AjmBuffer oneOut{outputSample.data(), outputSample.size()};
     for (const AjmBuffer* badList : {static_cast<const AjmBuffer*>(nullptr), reinterpret_cast<const AjmBuffer*>(static_cast<std::uintptr_t>(0x10)), reinterpret_cast<const AjmBuffer*>(end - 8)}) {
         errno = 71;
-        RequireRejected([&] {
+        ExpectErr<std::runtime_error>([&] {
             sceAjmBatchJobRunSplitBufferRa_nid_disambig1(batchJob.data(), 1, 0, badList, 1, &oneOut, 1, nullptr, 0, nullptr);
         }, "invalid SplitBufferRa input_buffers accepted");
         Require(errno == 71 && batchJob[0] == 0xA5, "SplitBufferRa bad input_buffers changed errno or job");
         errno = 71;
-        RequireRejected([&] {
+        ExpectErr<std::runtime_error>([&] {
             sceAjmBatchJobRunSplitBufferRa_nid_disambig1(batchJob.data(), 1, 0, &oneIn, 1, badList, 1, nullptr, 0, nullptr);
         }, "invalid SplitBufferRa output_buffers accepted");
         Require(errno == 71 && batchJob[0] == 0xA5, "SplitBufferRa bad output_buffers changed errno or job");

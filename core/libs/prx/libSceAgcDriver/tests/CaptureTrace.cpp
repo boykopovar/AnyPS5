@@ -3,6 +3,7 @@
 #endif
 
 #include "prx/libSceAgcDriver/Execution/include/CaptureTrace.hpp"
+#include "Testing.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -34,10 +35,6 @@ struct CaptureTraceTestAccess {
 
 namespace {
 
-void Check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
-
 void RemoveEnvironmentVariable(const char* name) {
 #ifdef _WIN32
     _putenv_s(name, "");
@@ -53,7 +50,7 @@ bool FileExists(const char* path) {
 
 std::string ReadFile(const char* path) {
     std::ifstream stream(path, std::ios::binary);
-    Check(stream.is_open(), "the trace file was not created at the expected path");
+    Require(stream.is_open(), "the trace file was not created at the expected path");
     std::ostringstream buffer;
     buffer << stream.rdbuf();
     return buffer.str();
@@ -69,36 +66,36 @@ bool WaitForRecord(const char* path, const std::string& record) {
 
 const char* RequiredPathVariable() {
     const char* configured = std::getenv("APS5_CAPTURE_TRACE_PATH");
-    Check(configured != nullptr && configured[0] != '\0',
+    Require(configured != nullptr && configured[0] != '\0',
           "this case requires a non-empty APS5_CAPTURE_TRACE_PATH");
     return configured;
 }
 
 void PathDefault() {
     RemoveEnvironmentVariable("APS5_CAPTURE_TRACE_PATH");
-    Check(std::string(AgcDriver::CaptureTracePath()) == "capture-trace.log",
+    Require(std::string(AgcDriver::CaptureTracePath()) == "capture-trace.log",
           "an absent APS5_CAPTURE_TRACE_PATH must select capture-trace.log");
 }
 
 void PathEmpty() {
     const char* configured = std::getenv("APS5_CAPTURE_TRACE_PATH");
-    Check(configured != nullptr && configured[0] == '\0',
+    Require(configured != nullptr && configured[0] == '\0',
           "this case requires an empty APS5_CAPTURE_TRACE_PATH");
-    Check(std::string(AgcDriver::CaptureTracePath()) == "capture-trace.log",
+    Require(std::string(AgcDriver::CaptureTracePath()) == "capture-trace.log",
           "an empty APS5_CAPTURE_TRACE_PATH must select capture-trace.log");
 }
 
 void PathExplicit() {
     const char* configured = RequiredPathVariable();
-    Check(std::string(AgcDriver::CaptureTracePath()) == std::string(configured),
+    Require(std::string(AgcDriver::CaptureTracePath()) == std::string(configured),
           "a non-empty APS5_CAPTURE_TRACE_PATH must be selected verbatim");
 }
 
 void ExplicitWrites() {
     const char* configured = RequiredPathVariable();
-    Check(AgcDriver::CaptureTrace::Enabled(), "APS5_CAPTURE_TRACE must enable capture tracing");
+    Require(AgcDriver::CaptureTrace::Enabled(), "APS5_CAPTURE_TRACE must enable capture tracing");
     AgcDriver::CaptureTrace::Log("capture-trace-explicit label=%d", 7);
-    Check(WaitForRecord(configured, "capture-trace-explicit label=7"),
+    Require(WaitForRecord(configured, "capture-trace-explicit label=7"),
           "the configured trace path did not receive the capture record");
     std::remove(configured);
 }
@@ -106,7 +103,7 @@ void ExplicitWrites() {
 void StopUnused() {
     const char* configured = RequiredPathVariable();
     AgcDriver::CaptureTrace::Stop();
-    Check(!FileExists(configured), "stopping an unused trace must not create its file or worker");
+    Require(!FileExists(configured), "stopping an unused trace must not create its file or worker");
 }
 
 void StopDrains() {
@@ -116,52 +113,52 @@ void StopDrains() {
     for (unsigned i = 0; i < 4; ++i) callers.emplace_back([] { AgcDriver::CaptureTrace::Stop(); });
     for (auto& caller : callers) caller.join();
     const auto contents = ReadFile(configured);
-    Check(contents.find("stop-record before\n") != std::string::npos, "stopping lost a queued record");
-    Check(contents.find("capture-trace-summary dropped=0\n") != std::string::npos, "stopping did not write its summary");
+    Require(contents.find("stop-record before\n") != std::string::npos, "stopping lost a queued record");
+    Require(contents.find("capture-trace-summary dropped=0\n") != std::string::npos, "stopping did not write its summary");
     AgcDriver::CaptureTrace::Log("stop-record after");
     AgcDriver::CaptureTrace::Stop();
-    Check(ReadFile(configured) == contents, "a repeated stop or a late record changed the completed trace");
+    Require(ReadFile(configured) == contents, "a repeated stop or a late record changed the completed trace");
 }
 
 #ifdef _WIN32
 void DllShutdown(const char* modulePath) {
     const char* configured = RequiredPathVariable();
     HMODULE module = LoadLibraryA(modulePath);
-    Check(module != nullptr, "the capture trace DLL could not be loaded");
+    Require(module != nullptr, "the capture trace DLL could not be loaded");
     const auto record = reinterpret_cast<void (*)()>(GetProcAddress(module, "CaptureTraceRecord"));
     const auto stop = reinterpret_cast<void (*)()>(GetProcAddress(module, "CaptureTraceStop"));
-    Check(record != nullptr && stop != nullptr, "the capture trace DLL is missing its test entry points");
+    Require(record != nullptr && stop != nullptr, "the capture trace DLL is missing its test entry points");
     record();
     stop();
     stop();
-    Check(FreeLibrary(module) != 0, "the stopped capture trace DLL could not be unloaded");
+    Require(FreeLibrary(module) != 0, "the stopped capture trace DLL could not be unloaded");
     std::istringstream lines(ReadFile(configured));
     std::string line;
     for (unsigned i = 0; i < 32; ++i) {
-        Check(static_cast<bool>(std::getline(lines, line)) && line.ends_with(" unload-record item=" + std::to_string(i)),
+        Require(static_cast<bool>(std::getline(lines, line)) && line.ends_with(" unload-record item=" + std::to_string(i)),
               "DLL shutdown lost or reordered a queued record");
     }
-    Check(static_cast<bool>(std::getline(lines, line)) && line.ends_with(" capture-trace-summary dropped=0"),
+    Require(static_cast<bool>(std::getline(lines, line)) && line.ends_with(" capture-trace-summary dropped=0"),
           "DLL shutdown lost its summary");
-    Check(!std::getline(lines, line), "DLL shutdown wrote extra records or a second summary");
+    Require(!std::getline(lines, line), "DLL shutdown wrote extra records or a second summary");
 }
 #endif
 
 void DefaultWrites() {
     RemoveEnvironmentVariable("APS5_CAPTURE_TRACE_PATH");
-    Check(AgcDriver::CaptureTrace::Enabled(), "APS5_CAPTURE_TRACE must enable capture tracing");
-    Check(std::string(AgcDriver::CaptureTracePath()) == "capture-trace.log",
+    Require(AgcDriver::CaptureTrace::Enabled(), "APS5_CAPTURE_TRACE must enable capture tracing");
+    Require(std::string(AgcDriver::CaptureTracePath()) == "capture-trace.log",
           "an absent APS5_CAPTURE_TRACE_PATH must keep the default path");
     AgcDriver::CaptureTrace::Log("capture-trace-default label=%d", 5);
-    Check(WaitForRecord("capture-trace.log", "capture-trace-default label=5"),
+    Require(WaitForRecord("capture-trace.log", "capture-trace-default label=5"),
           "the default trace path did not receive the capture record");
     std::remove("capture-trace.log");
 }
 
 void OpenFailure() {
     const char* configured = RequiredPathVariable();
-    Check(!FileExists(configured), "the configured trace path must not already exist");
-    Check(AgcDriver::CaptureTrace::Enabled(), "APS5_CAPTURE_TRACE must enable capture tracing");
+    Require(!FileExists(configured), "the configured trace path must not already exist");
+    Require(AgcDriver::CaptureTrace::Enabled(), "APS5_CAPTURE_TRACE must enable capture tracing");
     bool threw = false;
     try {
         AgcDriver::CaptureTrace::Log("capture-trace-failure label=%d", 9);
@@ -169,15 +166,15 @@ void OpenFailure() {
         threw = true;
         std::cerr << "unexpected exception: " << error.what() << '\n';
     }
-    Check(!threw, "an unopenable trace path must not throw from Log");
-    Check(!FileExists(configured), "an unopenable trace path must not create the requested file");
-    Check(!FileExists("capture-trace.log"),
+    Require(!threw, "an unopenable trace path must not throw from Log");
+    Require(!FileExists(configured), "an unopenable trace path must not create the requested file");
+    Require(!FileExists("capture-trace.log"),
           "an unopenable trace path must not fall back to capture-trace.log");
 }
 
 void BestEffortOverflow() {
     const char* configured = RequiredPathVariable();
-    Check(AgcDriver::CaptureTrace::Enabled(), "APS5_CAPTURE_TRACE must enable capture tracing");
+    Require(AgcDriver::CaptureTrace::Enabled(), "APS5_CAPTURE_TRACE must enable capture tracing");
     const std::string oversized(4096, 'x');
     bool threw = false;
     try {
@@ -185,7 +182,7 @@ void BestEffortOverflow() {
     } catch (...) {
         threw = true;
     }
-    Check(!threw, "best-effort capture logging must not propagate formatting failures");
+    Require(!threw, "best-effort capture logging must not propagate formatting failures");
     std::remove(configured);
 }
 
@@ -193,12 +190,12 @@ void FormatOverflow() {
     const char* configured = RequiredPathVariable();
     const std::string oversized(4096, 'x');
     AgcDriver::CaptureTrace::Log("capture-trace-format payload=%s", oversized.c_str());
-    Check(WaitForRecord(configured, "capture-trace-dropped records=1\n"),
+    Require(WaitForRecord(configured, "capture-trace-dropped records=1\n"),
           "an oversized record must be counted instead of throwing or writing a partial record");
     AgcDriver::CaptureTrace::Log("%s", "capture-trace-format-recovered");
-    Check(WaitForRecord(configured, "capture-trace-format-recovered\n"),
+    Require(WaitForRecord(configured, "capture-trace-format-recovered\n"),
           "capture tracing did not recover after an oversized record");
-    Check(ReadFile(configured).find("capture-trace-format payload=") == std::string::npos,
+    Require(ReadFile(configured).find("capture-trace-format payload=") == std::string::npos,
           "the trace contains a truncated oversized record");
     std::remove(configured);
 }
@@ -206,28 +203,28 @@ void FormatOverflow() {
 void PrefixMatching() {
     for (const char* empty : {static_cast<const char*>(nullptr), "", ",,,"}) {
         const AgcDriver::CaptureTraceFilter all(empty);
-        Check(!all.Active() && all.Matches("anything") && all.MayMatchFormat("anything %d"),
+        Require(!all.Active() && all.Matches("anything") && all.MayMatchFormat("anything %d"),
               "an absent or empty prefix list must retain all records");
     }
     char configured[] = ",upload image=,image-write ,flip ,";
     const AgcDriver::CaptureTraceFilter selected(configured);
     configured[1] = 'x';
-    Check(selected.Active(), "a non-empty prefix list must activate filtering");
+    Require(selected.Active(), "a non-empty prefix list must activate filtering");
     for (const auto* record : {"upload image=2a", "image-write image=2a", "flip frame=3"}) {
-        Check(selected.Matches(record), "a selected literal prefix was lost or not copied");
+        Require(selected.Matches(record), "a selected literal prefix was lost or not copied");
     }
     for (const auto* record : {"draw frame=3", "xupload image=2a", "upload image", "flipbook frame=3", ""}) {
-        Check(!selected.Matches(record), "filtering must match prefixes including their spaces and separators");
+        Require(!selected.Matches(record), "filtering must match prefixes including their spaces and separators");
     }
-    Check(!selected.MayMatchFormat("draw shader=%llx"), "an unrelated literal format must be rejected before formatting");
-    Check(selected.MayMatchFormat("upload image=%llx"), "a selected format must remain eligible");
-    Check(selected.MayMatchFormat("%s"), "a dynamically formatted prefix cannot be rejected before formatting");
-    Check(selected.MayMatchFormat("up%s"), "a partially literal prefix cannot be rejected before formatting");
+    Require(!selected.MayMatchFormat("draw shader=%llx"), "an unrelated literal format must be rejected before formatting");
+    Require(selected.MayMatchFormat("upload image=%llx"), "a selected format must remain eligible");
+    Require(selected.MayMatchFormat("%s"), "a dynamically formatted prefix cannot be rejected before formatting");
+    Require(selected.MayMatchFormat("up%s"), "a partially literal prefix cannot be rejected before formatting");
     const AgcDriver::CaptureTraceFilter escaped("load %");
-    Check(escaped.MayMatchFormat("load %% %d") && escaped.Matches("load % 7"),
+    Require(escaped.MayMatchFormat("load %% %d") && escaped.Matches("load % 7"),
           "escaped percent signs must be checked after formatting");
     const AgcDriver::CaptureTraceFilter spaces(" upload");
-    Check(spaces.Matches(" upload image=1") && !spaces.Matches("upload image=1"),
+    Require(spaces.Matches(" upload image=1") && !spaces.Matches("upload image=1"),
           "spaces in configured prefixes must remain significant");
 }
 
@@ -240,15 +237,15 @@ void PrefixWrites() {
     AgcDriver::CaptureTrace::Log("%s", "draw dynamically-formatted=1");
     AgcDriver::CaptureTrace::Log("%s", "upload image=dynamic");
     AgcDriver::CaptureTrace::Log("upload image=%s", oversized.c_str());
-    Check(WaitForRecord(configured, "capture-trace-dropped records=1\n"),
+    Require(WaitForRecord(configured, "capture-trace-dropped records=1\n"),
           "selected oversized records must still report loss, while rejected literal formats must not");
     AgcDriver::CaptureTrace::Log("upload image=recovered");
-    Check(WaitForRecord(configured, "upload image=recovered\n"), "filtered tracing did not recover after overflow");
+    Require(WaitForRecord(configured, "upload image=recovered\n"), "filtered tracing did not recover after overflow");
     const auto contents = ReadFile(configured);
     for (const auto* record : {"capture-trace-filter active=1\n", "upload image=2a\n", "image-write image=2a\n", "upload image=dynamic\n"}) {
-        Check(contents.find(record) != std::string::npos, "a selected record or filtered-trace marker is missing");
+        Require(contents.find(record) != std::string::npos, "a selected record or filtered-trace marker is missing");
     }
-    Check(contents.find("draw ") == std::string::npos, "an excluded formatted record reached the trace");
+    Require(contents.find("draw ") == std::string::npos, "an excluded formatted record reached the trace");
     std::istringstream records(contents);
     std::string record;
     unsigned long long expected = 0;
@@ -256,7 +253,7 @@ void PrefixWrites() {
         std::istringstream fields(record);
         unsigned long long sequence = 0;
         fields >> sequence;
-        Check(sequence == ++expected, "excluded records must not create sequence holes");
+        Require(sequence == ++expected, "excluded records must not create sequence holes");
     }
     std::remove(configured);
 }
@@ -325,10 +322,10 @@ std::string QueueRecord(std::size_t producer, std::size_t item) {
 
 void Disabled() {
     RemoveEnvironmentVariable("APS5_CAPTURE_TRACE");
-    Check(!AgcDriver::CaptureTrace::Enabled(),
+    Require(!AgcDriver::CaptureTrace::Enabled(),
           "capture tracing must stay disabled when APS5_CAPTURE_TRACE is absent");
     AgcDriver::CaptureTrace::Log("capture-trace-disabled label=%d", 3);
-    Check(!FileExists("capture-trace.log"),
+    Require(!FileExists("capture-trace.log"),
           "disabled tracing must not initialize or write capture-trace.log");
 }
 
@@ -354,7 +351,7 @@ void AgcDriver::CaptureTraceTestAccess::QueueDrop(bool shutdownOnly, bool cumula
     const auto summary = "capture-trace-summary dropped=" + std::to_string(lostTotal);
     {
         CaptureTrace trace;
-        Check(trace.output.is_open(), "the queue test trace path must be writable");
+        Require(trace.output.is_open(), "the queue test trace path must be writable");
         auto& output = static_cast<std::ostream&>(trace.output);
         output.rdbuf(&sink);
         auto append = [&](std::size_t producer, std::size_t item) {
@@ -373,7 +370,7 @@ void AgcDriver::CaptureTraceTestAccess::QueueDrop(bool shutdownOnly, bool cumula
             std::size_t finished = 0;
             try {
                 for (std::size_t item = 0; item < 64; ++item) append(0, initialItems++);
-                Check(sink.WaitForWrite(), "the trace worker did not reach the paused sink");
+                Require(sink.WaitForWrite(), "the trace worker did not reach the paused sink");
                 for (;;) {
                     const auto line = QueueRecord(0, initialItems);
                     {
@@ -404,9 +401,9 @@ void AgcDriver::CaptureTraceTestAccess::QueueDrop(bool shutdownOnly, bool cumula
                 }
                 {
                     std::unique_lock lock(stateMutex);
-                    Check(stateChanged.wait_for(lock, std::chrono::seconds(2), [&] { return attempted == Producers; }),
+                    Require(stateChanged.wait_for(lock, std::chrono::seconds(2), [&] { return attempted == Producers; }),
                           "the queue producers did not start");
-                    Check(stateChanged.wait_for(lock, std::chrono::seconds(2), [&] { return finished == Producers; }),
+                    Require(stateChanged.wait_for(lock, std::chrono::seconds(2), [&] { return finished == Producers; }),
                           "a full capture queue must return from every caller while its writer is paused");
                 }
                 if (!shutdownOnly) trace.append("queue-short-during-loss");
@@ -425,10 +422,10 @@ void AgcDriver::CaptureTraceTestAccess::QueueDrop(bool shutdownOnly, bool cumula
             }
             if (!failure && !shutdownOnly) {
                 try {
-                    Check(sink.WaitForRecord(expectedMarkers[round] + "\n"),
+                    Require(sink.WaitForRecord(expectedMarkers[round] + "\n"),
                           "the recovered writer did not report the exact dropped-record count");
                     append(Producers + 1, round);
-                    Check(sink.WaitForRecord(QueueRecord(Producers + 1, round) + "\n"),
+                    Require(sink.WaitForRecord(QueueRecord(Producers + 1, round) + "\n"),
                           "the recovered writer did not accept a new record");
                 } catch (...) {
                     failure = std::current_exception();
@@ -437,7 +434,7 @@ void AgcDriver::CaptureTraceTestAccess::QueueDrop(bool shutdownOnly, bool cumula
         }
     }
     if (failure) std::rethrow_exception(failure);
-    Check(bounded.load(), "the pending capture queue exceeded 16 MiB");
+    Require(bounded.load(), "the pending capture queue exceeded 16 MiB");
     std::istringstream records(sink.Contents());
     std::string record;
     std::size_t sequence = 0;
@@ -453,41 +450,41 @@ void AgcDriver::CaptureTraceTestAccess::QueueDrop(bool shutdownOnly, bool cumula
         std::string producerField;
         std::string itemField;
         fields >> foundSequence >> elapsed >> label >> producerField >> itemField;
-        Check(foundSequence == ++sequence, "the recovered trace lost or reordered sequence numbers");
-        Check(elapsed.ends_with("us"), "the recovered trace lost its elapsed-time field");
-        Check(summaries == 0, "the trace contains a record after its shutdown summary");
+        Require(foundSequence == ++sequence, "the recovered trace lost or reordered sequence numbers");
+        Require(elapsed.ends_with("us"), "the recovered trace lost its elapsed-time field");
+        Require(summaries == 0, "the trace contains a record after its shutdown summary");
         const auto prefix = std::to_string(foundSequence) + " " + elapsed + " ";
         const auto body = record.substr(prefix.size());
         if (body.starts_with("capture-trace-dropped records=")) {
-            Check(markers < rounds && body == expectedMarkers[markers],
+            Require(markers < rounds && body == expectedMarkers[markers],
                   "the trace did not report each dropped-record batch exactly once");
-            Check(queued == queuedByRound[markers] && recovered == markers,
+            Require(queued == queuedByRound[markers] && recovered == markers,
                   "the dropped marker did not follow the queued records and precede recovery");
             ++markers;
             continue;
         }
         if (body == summary) {
-            Check(markers == rounds, "the shutdown total appeared before the loss markers");
+            Require(markers == rounds, "the shutdown total appeared before the loss markers");
             ++summaries;
             continue;
         }
-        Check(label == "queue" && producerField.starts_with("producer=") && itemField.starts_with("item="),
+        Require(label == "queue" && producerField.starts_with("producer=") && itemField.starts_with("item="),
               "the recovered trace contains an incomplete record");
         const auto producer = std::stoull(producerField.substr(9));
         const auto item = std::stoull(itemField.substr(5));
         if (producer == 0) {
-            Check(markers == recovered && item == queued++, "the trace lost or reordered an accepted queued record");
+            Require(markers == recovered && item == queued++, "the trace lost or reordered an accepted queued record");
         } else {
-            Check(!shutdownOnly && producer == Producers + 1 && item == recovered && markers == recovered + 1,
+            Require(!shutdownOnly && producer == Producers + 1 && item == recovered && markers == recovered + 1,
                   "the trace retained a dropped record or lost recovery ordering");
             ++recovered;
         }
-        Check(record == prefix + QueueRecord(producer, item), "the recovered trace changed a record's payload");
+        Require(record == prefix + QueueRecord(producer, item), "the recovered trace changed a record's payload");
     }
-    Check(queued == initialItems, "the recovered trace lost the initial accepted records");
-    Check(recovered == (shutdownOnly ? 0u : rounds), "the trace lost or duplicated its recovery records");
-    Check(markers == rounds && summaries == 1, "the trace did not report each loss marker and one shutdown total");
-    Check(sequence == initialItems + recovered + rounds + 1, "the trace contains an unexpected number of records");
+    Require(queued == initialItems, "the recovered trace lost the initial accepted records");
+    Require(recovered == (shutdownOnly ? 0u : rounds), "the trace lost or duplicated its recovery records");
+    Require(markers == rounds && summaries == 1, "the trace did not report each loss marker and one shutdown total");
+    Require(sequence == initialItems + recovered + rounds + 1, "the trace contains an unexpected number of records");
     std::remove(configured);
 }
 

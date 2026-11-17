@@ -1,17 +1,11 @@
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <random>
 #include <vector>
-
-static void Require(bool condition) {
-    if (!condition) {
-        std::fputs("GuestWideScanBlocks check failed\n", stderr);
-        std::abort();
-    }
-}
 
 static const char16_t* ReferenceChr(const char16_t* s, char16_t c) {
     for (;; ++s) {

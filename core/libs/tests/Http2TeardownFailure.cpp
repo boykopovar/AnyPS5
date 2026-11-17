@@ -1,4 +1,5 @@
 #include "prx/libSceHttp2/include/Http2.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <atomic>
 #include <cstddef>
@@ -26,13 +27,6 @@ void* operator new(std::size_t bytes) {
 
 void operator delete(void* memory) noexcept { std::free(memory); }
 void operator delete(void* memory, std::size_t) noexcept { ::operator delete(memory); }
-
-static void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "%s\n", message);
-        std::abort();
-    }
-}
 
 constexpr int InvalidId = static_cast<int>(0x817B1100);
 

@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -21,18 +22,6 @@ constexpr std::int32_t Invalid = 10;
 constexpr std::int32_t Overflow = 15;
 constexpr std::int32_t NotTerminated = -124;
 constexpr char16_t Fill = 0xa55a;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "ICU UTF-32 check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction>
-void RequireThrows(TAction action) {
-    try { action(); } catch (const std::exception&) { return; }
-    Require(false);
-}
 
 struct FromResult {
     std::u16string text;
@@ -181,8 +170,8 @@ void Status() {
     const std::vector<std::int32_t> text{0x41};
     std::array<char16_t, 4> buffer{};
     std::int32_t length = 0;
-    RequireThrows([&] { u_strFromUTF32_nid_postfix(buffer.data(), 4, &length, text.data(), 1, nullptr); });
-    RequireThrows([&] { u_strFromUTF32WithSub_nid_postfix(buffer.data(), 4, &length, text.data(), 1, -1, nullptr, nullptr); });
+    ExpectErr([&] { u_strFromUTF32_nid_postfix(buffer.data(), 4, &length, text.data(), 1, nullptr); });
+    ExpectErr([&] { u_strFromUTF32WithSub_nid_postfix(buffer.data(), 4, &length, text.data(), 1, -1, nullptr, nullptr); });
 }
 
 struct ToResult {
@@ -328,8 +317,8 @@ void ToStatus() {
 
     std::array<std::int32_t, 4> buffer{};
     std::int32_t length = 0;
-    RequireThrows([&] { u_strToUTF32_nid_postfix(buffer.data(), 4, &length, u"A", 1, nullptr); });
-    RequireThrows([&] { u_strToUTF32WithSub_nid_postfix(buffer.data(), 4, &length, u"A", 1, -1, nullptr, nullptr); });
+    ExpectErr([&] { u_strToUTF32_nid_postfix(buffer.data(), 4, &length, u"A", 1, nullptr); });
+    ExpectErr([&] { u_strToUTF32WithSub_nid_postfix(buffer.data(), 4, &length, u"A", 1, -1, nullptr, nullptr); });
 }
 
 }

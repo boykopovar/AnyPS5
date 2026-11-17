@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdlib>
@@ -12,8 +13,6 @@
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <unistd.h>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 constexpr int Unix = 1;
 constexpr int Stream = 1;

@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <atomic>
 #include <barrier>
@@ -9,14 +10,6 @@
 #include <cstring>
 #include <stdexcept>
 #include <thread>
-
-static void Require(bool condition, int line) {
-    if (!condition) {
-        std::fprintf(stderr, "Queue check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Check(value) Require((value), __LINE__)
 
 struct QueueNode {
     QueueNode* q_forw{nullptr};
@@ -36,9 +29,9 @@ static void CheckLinearInitial() {
     QueueNode canary;
     QueueNode e1{&canary, &canary, 42};
     insque_nid_postfix(&e1, nullptr);
-    Check(e1.q_forw == nullptr);
-    Check(e1.q_back == nullptr);
-    Check(e1.value == 42);
+    Require(e1.q_forw == nullptr);
+    Require(e1.q_back == nullptr);
+    Require(e1.value == 42);
 }
 
 static void CheckLinearSequential() {
@@ -47,39 +40,39 @@ static void CheckLinearSequential() {
     QueueNode e3{nullptr, nullptr, 3};
 
     insque_nid_postfix(&e1, nullptr);
-    Check(e1.q_forw == nullptr && e1.q_back == nullptr);
+    Require(e1.q_forw == nullptr && e1.q_back == nullptr);
 
     insque_nid_postfix(&e2, &e1);
-    Check(e1.q_back == nullptr);
-    Check(e1.q_forw == &e2);
-    Check(e2.q_back == &e1);
-    Check(e2.q_forw == nullptr);
+    Require(e1.q_back == nullptr);
+    Require(e1.q_forw == &e2);
+    Require(e2.q_back == &e1);
+    Require(e2.q_forw == nullptr);
 
     insque_nid_postfix(&e3, &e2);
-    Check(e1.q_back == nullptr);
-    Check(e1.q_forw == &e2);
-    Check(e2.q_back == &e1);
-    Check(e2.q_forw == &e3);
-    Check(e3.q_back == &e2);
-    Check(e3.q_forw == nullptr);
+    Require(e1.q_back == nullptr);
+    Require(e1.q_forw == &e2);
+    Require(e2.q_back == &e1);
+    Require(e2.q_forw == &e3);
+    Require(e3.q_back == &e2);
+    Require(e3.q_forw == nullptr);
 
     QueueNode* curr = &e1;
-    Check(curr->value == 1);
+    Require(curr->value == 1);
     curr = curr->q_forw;
-    Check(curr == &e2 && curr->value == 2);
+    Require(curr == &e2 && curr->value == 2);
     curr = curr->q_forw;
-    Check(curr == &e3 && curr->value == 3);
+    Require(curr == &e3 && curr->value == 3);
     curr = curr->q_forw;
-    Check(curr == nullptr);
+    Require(curr == nullptr);
 
     curr = &e3;
-    Check(curr->value == 3);
+    Require(curr->value == 3);
     curr = curr->q_back;
-    Check(curr == &e2 && curr->value == 2);
+    Require(curr == &e2 && curr->value == 2);
     curr = curr->q_back;
-    Check(curr == &e1 && curr->value == 1);
+    Require(curr == &e1 && curr->value == 1);
     curr = curr->q_back;
-    Check(curr == nullptr);
+    Require(curr == nullptr);
 }
 
 static void CheckLinearMiddleInsertAndRemove() {
@@ -94,63 +87,63 @@ static void CheckLinearMiddleInsertAndRemove() {
 
     insque_nid_postfix(&e1_5, &e1);
 
-    Check(e1.q_back == nullptr);
-    Check(e1.q_forw == &e1_5);
-    Check(e1_5.q_back == &e1);
-    Check(e1_5.q_forw == &e2);
-    Check(e2.q_back == &e1_5);
-    Check(e2.q_forw == &e3);
-    Check(e3.q_back == &e2);
-    Check(e3.q_forw == nullptr);
+    Require(e1.q_back == nullptr);
+    Require(e1.q_forw == &e1_5);
+    Require(e1_5.q_back == &e1);
+    Require(e1_5.q_forw == &e2);
+    Require(e2.q_back == &e1_5);
+    Require(e2.q_forw == &e3);
+    Require(e3.q_back == &e2);
+    Require(e3.q_forw == nullptr);
 
     QueueNode* curr = &e1;
-    Check(curr->value == 1);
+    Require(curr->value == 1);
     curr = curr->q_forw;
-    Check(curr == &e1_5 && curr->value == 15);
+    Require(curr == &e1_5 && curr->value == 15);
     curr = curr->q_forw;
-    Check(curr == &e2 && curr->value == 2);
+    Require(curr == &e2 && curr->value == 2);
     curr = curr->q_forw;
-    Check(curr == &e3 && curr->value == 3);
+    Require(curr == &e3 && curr->value == 3);
     curr = curr->q_forw;
-    Check(curr == nullptr);
+    Require(curr == nullptr);
 
     curr = &e3;
-    Check(curr->value == 3);
+    Require(curr->value == 3);
     curr = curr->q_back;
-    Check(curr == &e2 && curr->value == 2);
+    Require(curr == &e2 && curr->value == 2);
     curr = curr->q_back;
-    Check(curr == &e1_5 && curr->value == 15);
+    Require(curr == &e1_5 && curr->value == 15);
     curr = curr->q_back;
-    Check(curr == &e1 && curr->value == 1);
+    Require(curr == &e1 && curr->value == 1);
     curr = curr->q_back;
-    Check(curr == nullptr);
+    Require(curr == nullptr);
 
     remque_nid_postfix(&e1_5);
 
-    Check(e1.q_back == nullptr);
-    Check(e1.q_forw == &e2);
-    Check(e2.q_back == &e1);
-    Check(e2.q_forw == &e3);
-    Check(e3.q_back == &e2);
-    Check(e3.q_forw == nullptr);
+    Require(e1.q_back == nullptr);
+    Require(e1.q_forw == &e2);
+    Require(e2.q_back == &e1);
+    Require(e2.q_forw == &e3);
+    Require(e3.q_back == &e2);
+    Require(e3.q_forw == nullptr);
 
     curr = &e1;
-    Check(curr->value == 1);
+    Require(curr->value == 1);
     curr = curr->q_forw;
-    Check(curr == &e2 && curr->value == 2);
+    Require(curr == &e2 && curr->value == 2);
     curr = curr->q_forw;
-    Check(curr == &e3 && curr->value == 3);
+    Require(curr == &e3 && curr->value == 3);
     curr = curr->q_forw;
-    Check(curr == nullptr);
+    Require(curr == nullptr);
 
     curr = &e3;
-    Check(curr->value == 3);
+    Require(curr->value == 3);
     curr = curr->q_back;
-    Check(curr == &e2 && curr->value == 2);
+    Require(curr == &e2 && curr->value == 2);
     curr = curr->q_back;
-    Check(curr == &e1 && curr->value == 1);
+    Require(curr == &e1 && curr->value == 1);
     curr = curr->q_back;
-    Check(curr == nullptr);
+    Require(curr == nullptr);
 }
 
 static void CheckLinearHeadAndTailRemoval() {
@@ -164,30 +157,30 @@ static void CheckLinearHeadAndTailRemoval() {
 
     remque_nid_postfix(&e1);
 
-    Check(e2.q_back == nullptr);
-    Check(e2.q_forw == &e3);
-    Check(e3.q_back == &e2);
-    Check(e3.q_forw == nullptr);
+    Require(e2.q_back == nullptr);
+    Require(e2.q_forw == &e3);
+    Require(e3.q_back == &e2);
+    Require(e3.q_forw == nullptr);
 
     QueueNode* curr = &e2;
-    Check(curr->value == 2);
+    Require(curr->value == 2);
     curr = curr->q_forw;
-    Check(curr == &e3 && curr->value == 3);
+    Require(curr == &e3 && curr->value == 3);
     curr = curr->q_forw;
-    Check(curr == nullptr);
+    Require(curr == nullptr);
 
     curr = &e3;
-    Check(curr->value == 3);
+    Require(curr->value == 3);
     curr = curr->q_back;
-    Check(curr == &e2 && curr->value == 2);
+    Require(curr == &e2 && curr->value == 2);
     curr = curr->q_back;
-    Check(curr == nullptr);
+    Require(curr == nullptr);
 
     remque_nid_postfix(&e3);
 
-    Check(e2.q_back == nullptr);
-    Check(e2.q_forw == nullptr);
-    Check(e2.value == 2);
+    Require(e2.q_back == nullptr);
+    Require(e2.q_forw == nullptr);
+    Require(e2.value == 2);
 
     remque_nid_postfix(&e2);
 }
@@ -202,98 +195,94 @@ static void CheckCircularQueue() {
     c1.q_back = &c1;
 
     insque_nid_postfix(&c2, &c1);
-    Check(c1.q_forw == &c2);
-    Check(c2.q_back == &c1);
-    Check(c2.q_forw == &c1);
-    Check(c1.q_back == &c2);
+    Require(c1.q_forw == &c2);
+    Require(c2.q_back == &c1);
+    Require(c2.q_forw == &c1);
+    Require(c1.q_back == &c2);
 
     insque_nid_postfix(&c3, &c2);
-    Check(c1.q_forw == &c2);
-    Check(c2.q_forw == &c3);
-    Check(c3.q_forw == &c1);
-    Check(c1.q_back == &c3);
-    Check(c3.q_back == &c2);
-    Check(c2.q_back == &c1);
+    Require(c1.q_forw == &c2);
+    Require(c2.q_forw == &c3);
+    Require(c3.q_forw == &c1);
+    Require(c1.q_back == &c3);
+    Require(c3.q_back == &c2);
+    Require(c2.q_back == &c1);
 
     insque_nid_postfix(&c4, &c3);
-    Check(c1.q_forw == &c2);
-    Check(c2.q_forw == &c3);
-    Check(c3.q_forw == &c4);
-    Check(c4.q_forw == &c1);
-    Check(c1.q_back == &c4);
-    Check(c4.q_back == &c3);
-    Check(c3.q_back == &c2);
-    Check(c2.q_back == &c1);
+    Require(c1.q_forw == &c2);
+    Require(c2.q_forw == &c3);
+    Require(c3.q_forw == &c4);
+    Require(c4.q_forw == &c1);
+    Require(c1.q_back == &c4);
+    Require(c4.q_back == &c3);
+    Require(c3.q_back == &c2);
+    Require(c2.q_back == &c1);
 
     QueueNode* f = &c1;
     const int expectedFwd[] = {100, 200, 300, 400, 100, 200, 300, 400, 100, 200, 300, 400};
     for (int v : expectedFwd) {
-        Check(f->value == v);
+        Require(f->value == v);
         f = f->q_forw;
     }
-    Check(f == &c1);
+    Require(f == &c1);
 
     QueueNode* b = &c1;
     const int expectedBwd[] = {100, 400, 300, 200, 100, 400, 300, 200, 100, 400, 300, 200};
     for (int v : expectedBwd) {
-        Check(b->value == v);
+        Require(b->value == v);
         b = b->q_back;
     }
-    Check(b == &c1);
+    Require(b == &c1);
 
     remque_nid_postfix(&c2);
-    Check(c1.q_forw == &c3);
-    Check(c3.q_back == &c1);
-    Check(c3.q_forw == &c4);
-    Check(c4.q_back == &c3);
-    Check(c4.q_forw == &c1);
-    Check(c1.q_back == &c4);
+    Require(c1.q_forw == &c3);
+    Require(c3.q_back == &c1);
+    Require(c3.q_forw == &c4);
+    Require(c4.q_back == &c3);
+    Require(c4.q_forw == &c1);
+    Require(c1.q_back == &c4);
 
     f = &c1;
     const int remainingFwd[] = {100, 300, 400, 100, 300, 400};
     for (int v : remainingFwd) {
-        Check(f->value == v);
+        Require(f->value == v);
         f = f->q_forw;
     }
-    Check(f == &c1);
+    Require(f == &c1);
 
     b = &c1;
     const int remainingBwd[] = {100, 400, 300, 100, 400, 300};
     for (int v : remainingBwd) {
-        Check(b->value == v);
+        Require(b->value == v);
         b = b->q_back;
     }
-    Check(b == &c1);
+    Require(b == &c1);
 
     remque_nid_postfix(&c4);
-    Check(c1.q_forw == &c3);
-    Check(c3.q_back == &c1);
-    Check(c3.q_forw == &c1);
-    Check(c1.q_back == &c3);
+    Require(c1.q_forw == &c3);
+    Require(c3.q_back == &c1);
+    Require(c3.q_forw == &c1);
+    Require(c1.q_back == &c3);
 
     remque_nid_postfix(&c3);
-    Check(c1.q_forw == &c1);
-    Check(c1.q_back == &c1);
+    Require(c1.q_forw == &c1);
+    Require(c1.q_back == &c1);
 
     remque_nid_postfix(&c1);
-    Check(c1.q_forw == &c1);
-    Check(c1.q_back == &c1);
+    Require(c1.q_forw == &c1);
+    Require(c1.q_back == &c1);
 }
 
 static void CheckNullPointers() {
-    auto throws = [](auto call) {
-        try { call(); } catch (const std::runtime_error&) { return true; }
-        return false;
-    };
-    Check(throws([] { insque_nid_postfix(nullptr, nullptr); }));
+    ExpectErr<std::runtime_error>([] { insque_nid_postfix(nullptr, nullptr); });
 
     QueueNode dummy{nullptr, nullptr, 99};
-    Check(throws([&] { insque_nid_postfix(nullptr, &dummy); }));
-    Check(dummy.q_forw == nullptr);
-    Check(dummy.q_back == nullptr);
-    Check(dummy.value == 99);
+    ExpectErr<std::runtime_error>([&] { insque_nid_postfix(nullptr, &dummy); });
+    Require(dummy.q_forw == nullptr);
+    Require(dummy.q_back == nullptr);
+    Require(dummy.value == 99);
 
-    Check(throws([] { remque_nid_postfix(nullptr); }));
+    ExpectErr<std::runtime_error>([] { remque_nid_postfix(nullptr); });
 }
 
 static void CheckLargeQueueSequences() {
@@ -312,35 +301,35 @@ static void CheckLargeQueueSequences() {
 
     QueueNode* cur = &linearNodes[0];
     for (std::size_t i = 0; i < kSize; ++i) {
-        Check(cur != nullptr);
-        Check(cur->value == static_cast<int>(i));
+        Require(cur != nullptr);
+        Require(cur->value == static_cast<int>(i));
         cur = cur->q_forw;
     }
-    Check(cur == nullptr);
+    Require(cur == nullptr);
 
     cur = &linearNodes[kSize - 1];
     for (std::size_t i = kSize; i > 0; --i) {
-        Check(cur != nullptr);
-        Check(cur->value == static_cast<int>(i - 1));
+        Require(cur != nullptr);
+        Require(cur->value == static_cast<int>(i - 1));
         cur = cur->q_back;
     }
-    Check(cur == nullptr);
+    Require(cur == nullptr);
 
     for (std::size_t i = 2; i < kSize; i += 2) {
         remque_nid_postfix(&linearNodes[i]);
     }
 
     cur = &linearNodes[0];
-    Check(cur->value == 0);
+    Require(cur->value == 0);
     cur = cur->q_forw;
-    Check(cur->value == 1);
+    Require(cur->value == 1);
     cur = cur->q_forw;
     for (std::size_t i = 3; i < kSize; i += 2) {
-        Check(cur != nullptr);
-        Check(cur->value == static_cast<int>(i));
+        Require(cur != nullptr);
+        Require(cur->value == static_cast<int>(i));
         cur = cur->q_forw;
     }
-    Check(cur == nullptr);
+    Require(cur == nullptr);
 
     for (std::size_t i = 0; i < kSize; ++i) {
         if (i % 2 != 0 || i == 0) {
@@ -363,10 +352,10 @@ static void CheckLargeQueueSequences() {
 
     cur = &circNodes[0];
     for (std::size_t i = 0; i < kSize; ++i) {
-        Check(cur->value == static_cast<int>(i));
+        Require(cur->value == static_cast<int>(i));
         cur = cur->q_forw;
     }
-    Check(cur == &circNodes[0]);
+    Require(cur == &circNodes[0]);
 
     for (std::size_t i = 1; i < kSize; i += 2) {
         remque_nid_postfix(&circNodes[i]);
@@ -374,10 +363,10 @@ static void CheckLargeQueueSequences() {
 
     cur = &circNodes[0];
     for (std::size_t i = 0; i < kSize; i += 2) {
-        Check(cur->value == static_cast<int>(i));
+        Require(cur->value == static_cast<int>(i));
         cur = cur->q_forw;
     }
-    Check(cur == &circNodes[0]);
+    Require(cur == &circNodes[0]);
 }
 
 static void CheckPayloadIntegrity() {
@@ -386,25 +375,25 @@ static void CheckPayloadIntegrity() {
     insque_nid_postfix(&p1, nullptr);
     insque_nid_postfix(&p2, &p1);
 
-    Check(p1.canary1 == 0x0123456789ABCDEFULL);
-    Check(std::strcmp(p1.tag, "AnyPS5_Payload_Integrity_Check") == 0);
-    Check(p1.canary2 == 0xFEDCBA9876543210ULL);
+    Require(p1.canary1 == 0x0123456789ABCDEFULL);
+    Require(std::strcmp(p1.tag, "AnyPS5_Payload_Integrity_Check") == 0);
+    Require(p1.canary2 == 0xFEDCBA9876543210ULL);
 
-    Check(p2.canary1 == 0x0123456789ABCDEFULL);
-    Check(std::strcmp(p2.tag, "AnyPS5_Payload_Integrity_Check") == 0);
-    Check(p2.canary2 == 0xFEDCBA9876543210ULL);
+    Require(p2.canary1 == 0x0123456789ABCDEFULL);
+    Require(std::strcmp(p2.tag, "AnyPS5_Payload_Integrity_Check") == 0);
+    Require(p2.canary2 == 0xFEDCBA9876543210ULL);
 
     remque_nid_postfix(&p2);
 
-    Check(p1.canary1 == 0x0123456789ABCDEFULL);
-    Check(std::strcmp(p1.tag, "AnyPS5_Payload_Integrity_Check") == 0);
-    Check(p1.canary2 == 0xFEDCBA9876543210ULL);
+    Require(p1.canary1 == 0x0123456789ABCDEFULL);
+    Require(std::strcmp(p1.tag, "AnyPS5_Payload_Integrity_Check") == 0);
+    Require(p1.canary2 == 0xFEDCBA9876543210ULL);
 
     remque_nid_postfix(&p1);
 
-    Check(p1.canary1 == 0x0123456789ABCDEFULL);
-    Check(std::strcmp(p1.tag, "AnyPS5_Payload_Integrity_Check") == 0);
-    Check(p1.canary2 == 0xFEDCBA9876543210ULL);
+    Require(p1.canary1 == 0x0123456789ABCDEFULL);
+    Require(std::strcmp(p1.tag, "AnyPS5_Payload_Integrity_Check") == 0);
+    Require(p1.canary2 == 0xFEDCBA9876543210ULL);
 }
 
 static void CheckConcurrencyStress() {
@@ -485,7 +474,7 @@ static void CheckConcurrencyStress() {
     for (auto& w : workers) {
         w.join();
     }
-    Check(allPassed.load());
+    Require(allPassed.load());
 }
 
 int main() {

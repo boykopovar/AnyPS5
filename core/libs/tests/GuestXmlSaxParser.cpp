@@ -1,4 +1,5 @@
 #include "prx/libSceXml/include/Api.hpp"
+#include "Testing.hpp"
 
 #include <cstddef>
 #include <cstdio>
@@ -9,12 +10,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "failed: %s\n", what);
-    std::abort();
-}
 
 struct TestAllocator {
     XmlMemAllocator base;

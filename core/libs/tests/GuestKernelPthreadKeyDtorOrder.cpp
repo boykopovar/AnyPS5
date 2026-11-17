@@ -1,6 +1,7 @@
 #include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <atomic>
 #include <cstddef>
@@ -11,15 +12,6 @@
 
 static constexpr int PosixSuccess = 0;
 static constexpr int PosixEinval = 22;
-
-static void Require(bool condition, int line) {
-    if (!condition) {
-        std::fprintf(stderr, "Assertion failed at line %d\n", line);
-        std::abort();
-    }
-}
-
-#define Check(condition) Require((condition), __LINE__)
 
 static pthread_key_destructor_func_t AsDtor(void (APS5_VABI* function)(void*)) {
     return reinterpret_cast<pthread_key_destructor_func_t>(function);
@@ -45,8 +37,8 @@ static void APS5_VABI OrderDtor(void* arg) {
 static void* APS5_VABI OrderWorker(void* arg) {
     auto* items = static_cast<KeyOrderItem*>(arg);
     for (int i = 0; i < 4; ++i) {
-        Check(pthread_setspecific_nid_postfix(g_orderKeys[i], &items[i]) == PosixSuccess);
-        Check(pthread_getspecific_nid_postfix(g_orderKeys[i]) == &items[i]);
+        Require(pthread_setspecific_nid_postfix(g_orderKeys[i], &items[i]) == PosixSuccess);
+        Require(pthread_getspecific_nid_postfix(g_orderKeys[i]) == &items[i]);
     }
     return nullptr;
 }
@@ -54,7 +46,7 @@ static void* APS5_VABI OrderWorker(void* arg) {
 static void* APS5_VABI ExplicitExitWorker(void* arg) {
     auto* items = static_cast<KeyOrderItem*>(arg);
     for (int i = 0; i < 4; ++i) {
-        Check(pthread_setspecific_nid_postfix(g_orderKeys[i], &items[i]) == PosixSuccess);
+        Require(pthread_setspecific_nid_postfix(g_orderKeys[i], &items[i]) == PosixSuccess);
     }
     pthread_exit_nid_postfix(nullptr);
     return nullptr;
@@ -75,7 +67,7 @@ static void APS5_VABI ActiveDtor(void*) {
 
 static void* APS5_VABI NullValueWorker(void*) {
     static int val = 123;
-    Check(pthread_setspecific_nid_postfix(g_activeKey, &val) == PosixSuccess);
+    Require(pthread_setspecific_nid_postfix(g_activeKey, &val) == PosixSuccess);
     return nullptr;
 }
 
@@ -95,9 +87,9 @@ static void APS5_VABI SurvivingDtor(void*) {
 static void* APS5_VABI DeleteBeforeExitWorker(void*) {
     static int val1 = 11;
     static int val2 = 22;
-    Check(pthread_setspecific_nid_postfix(g_deletedKey, &val1) == PosixSuccess);
-    Check(pthread_setspecific_nid_postfix(g_survivingKey, &val2) == PosixSuccess);
-    Check(pthread_key_delete_nid_postfix(g_deletedKey) == PosixSuccess);
+    Require(pthread_setspecific_nid_postfix(g_deletedKey, &val1) == PosixSuccess);
+    Require(pthread_setspecific_nid_postfix(g_survivingKey, &val2) == PosixSuccess);
+    Require(pthread_key_delete_nid_postfix(g_deletedKey) == PosixSuccess);
     return nullptr;
 }
 
@@ -108,7 +100,7 @@ static PthreadKey g_victimKey = 0;
 
 static void APS5_VABI InitiatorDtor(void*) {
     ++g_initiatorCalls;
-    Check(pthread_key_delete_nid_postfix(g_victimKey) == PosixSuccess);
+    Require(pthread_key_delete_nid_postfix(g_victimKey) == PosixSuccess);
 }
 
 static void APS5_VABI VictimDtor(void*) {
@@ -118,8 +110,8 @@ static void APS5_VABI VictimDtor(void*) {
 static void* APS5_VABI DeleteDuringDtorWorker(void*) {
     static int val1 = 101;
     static int val2 = 202;
-    Check(pthread_setspecific_nid_postfix(g_initiatorKey, &val1) == PosixSuccess);
-    Check(pthread_setspecific_nid_postfix(g_victimKey, &val2) == PosixSuccess);
+    Require(pthread_setspecific_nid_postfix(g_initiatorKey, &val1) == PosixSuccess);
+    Require(pthread_setspecific_nid_postfix(g_victimKey, &val2) == PosixSuccess);
     return nullptr;
 }
 
@@ -128,15 +120,15 @@ static PthreadKey g_selfDeleteKey = 0;
 
 static void APS5_VABI SelfDeleteDtor(void*) {
     ++g_selfDeleteCalls;
-    Check(pthread_key_delete_nid_postfix(g_selfDeleteKey) == PosixSuccess);
+    Require(pthread_key_delete_nid_postfix(g_selfDeleteKey) == PosixSuccess);
     static int dummy = 7;
-    Check(pthread_setspecific_nid_postfix(g_selfDeleteKey, &dummy) == PosixEinval);
-    Check(pthread_key_delete_nid_postfix(g_selfDeleteKey) == PosixEinval);
+    Require(pthread_setspecific_nid_postfix(g_selfDeleteKey, &dummy) == PosixEinval);
+    Require(pthread_key_delete_nid_postfix(g_selfDeleteKey) == PosixEinval);
 }
 
 static void* APS5_VABI SelfDeleteWorker(void*) {
     static int val = 55;
-    Check(pthread_setspecific_nid_postfix(g_selfDeleteKey, &val) == PosixSuccess);
+    Require(pthread_setspecific_nid_postfix(g_selfDeleteKey, &val) == PosixSuccess);
     return nullptr;
 }
 
@@ -147,12 +139,12 @@ static int g_iterationVal = 999;
 static void APS5_VABI IterationDtor(void*) {
     const int count = ++g_iterationCount;
     if (count < 10) {
-        Check(pthread_setspecific_nid_postfix(g_iterationKey, &g_iterationVal) == PosixSuccess);
+        Require(pthread_setspecific_nid_postfix(g_iterationKey, &g_iterationVal) == PosixSuccess);
     }
 }
 
 static void* APS5_VABI IterationWorker(void*) {
-    Check(pthread_setspecific_nid_postfix(g_iterationKey, &g_iterationVal) == PosixSuccess);
+    Require(pthread_setspecific_nid_postfix(g_iterationKey, &g_iterationVal) == PosixSuccess);
     return nullptr;
 }
 
@@ -165,16 +157,16 @@ static int g_pongData = 2;
 
 static void APS5_VABI PingDtor(void*) {
     ++g_pingCalls;
-    Check(pthread_setspecific_nid_postfix(g_pongKey, &g_pongData) == PosixSuccess);
+    Require(pthread_setspecific_nid_postfix(g_pongKey, &g_pongData) == PosixSuccess);
 }
 
 static void APS5_VABI PongDtor(void*) {
     ++g_pongCalls;
-    Check(pthread_setspecific_nid_postfix(g_pingKey, &g_pingData) == PosixSuccess);
+    Require(pthread_setspecific_nid_postfix(g_pingKey, &g_pingData) == PosixSuccess);
 }
 
 static void* APS5_VABI PingPongWorker(void*) {
-    Check(pthread_setspecific_nid_postfix(g_pingKey, &g_pingData) == PosixSuccess);
+    Require(pthread_setspecific_nid_postfix(g_pingKey, &g_pingData) == PosixSuccess);
     return nullptr;
 }
 
@@ -193,13 +185,13 @@ static void APS5_VABI MultiThreadDtor(void* val) {
 
 static void* APS5_VABI ThreadOneWorker(void*) {
     static int val1 = 1000;
-    Check(pthread_setspecific_nid_postfix(g_multiThreadKey, &val1) == PosixSuccess);
+    Require(pthread_setspecific_nid_postfix(g_multiThreadKey, &val1) == PosixSuccess);
     return nullptr;
 }
 
 static void* APS5_VABI ThreadTwoWorker(void*) {
     static int val2 = 2000;
-    Check(pthread_setspecific_nid_postfix(g_multiThreadKey, &val2) == PosixSuccess);
+    Require(pthread_setspecific_nid_postfix(g_multiThreadKey, &val2) == PosixSuccess);
     return nullptr;
 }
 
@@ -214,40 +206,40 @@ static void APS5_VABI InteropDtor(void* val) {
 static void* APS5_VABI InteropWorker(void* arg) {
     auto* keyPtr = static_cast<PthreadKey*>(arg);
     static int payload = 888;
-    Check(scePthreadSetspecific(*keyPtr, &payload) == PosixSuccess);
-    Check(pthread_getspecific_nid_postfix(*keyPtr) == &payload);
+    Require(scePthreadSetspecific(*keyPtr, &payload) == PosixSuccess);
+    Require(pthread_getspecific_nid_postfix(*keyPtr) == &payload);
     return nullptr;
 }
 
 static void TestKeyLifecycleAndValidation() {
     PthreadKey key = 0;
-    Check(pthread_key_create_nid_postfix(nullptr, nullptr) == PosixEinval);
-    Check(pthread_key_create_nid_postfix(&key, nullptr) == PosixSuccess);
-    Check(key > 0);
-    Check(pthread_getspecific_nid_postfix(key) == nullptr);
+    Require(pthread_key_create_nid_postfix(nullptr, nullptr) == PosixEinval);
+    Require(pthread_key_create_nid_postfix(&key, nullptr) == PosixSuccess);
+    Require(key > 0);
+    Require(pthread_getspecific_nid_postfix(key) == nullptr);
 
     int testVal = 42;
-    Check(pthread_setspecific_nid_postfix(key, &testVal) == PosixSuccess);
-    Check(pthread_getspecific_nid_postfix(key) == &testVal);
+    Require(pthread_setspecific_nid_postfix(key, &testVal) == PosixSuccess);
+    Require(pthread_getspecific_nid_postfix(key) == &testVal);
 
-    Check(pthread_setspecific_nid_postfix(key, nullptr) == PosixSuccess);
-    Check(pthread_getspecific_nid_postfix(key) == nullptr);
+    Require(pthread_setspecific_nid_postfix(key, nullptr) == PosixSuccess);
+    Require(pthread_getspecific_nid_postfix(key) == nullptr);
 
-    Check(pthread_key_delete_nid_postfix(key) == PosixSuccess);
-    Check(pthread_key_delete_nid_postfix(key) == PosixEinval);
-    Check(pthread_setspecific_nid_postfix(key, &testVal) == PosixEinval);
-    Check(pthread_getspecific_nid_postfix(key) == nullptr);
+    Require(pthread_key_delete_nid_postfix(key) == PosixSuccess);
+    Require(pthread_key_delete_nid_postfix(key) == PosixEinval);
+    Require(pthread_setspecific_nid_postfix(key, &testVal) == PosixEinval);
+    Require(pthread_getspecific_nid_postfix(key) == nullptr);
 
-    Check(pthread_key_delete_nid_postfix(0) == PosixEinval);
-    Check(pthread_key_delete_nid_postfix(-1) == PosixEinval);
-    Check(pthread_key_delete_nid_postfix(513) == PosixEinval);
-    Check(pthread_key_delete_nid_postfix(99999) == PosixEinval);
+    Require(pthread_key_delete_nid_postfix(0) == PosixEinval);
+    Require(pthread_key_delete_nid_postfix(-1) == PosixEinval);
+    Require(pthread_key_delete_nid_postfix(513) == PosixEinval);
+    Require(pthread_key_delete_nid_postfix(99999) == PosixEinval);
 
-    Check(scePthreadKeyDelete(0) == SCE_KERNEL_ERROR_EINVAL);
-    Check(scePthreadKeyDelete(513) == SCE_KERNEL_ERROR_EINVAL);
-    Check(scePthreadKeyDelete(key) == SCE_KERNEL_ERROR_EINVAL);
-    Check(scePthreadSetspecific(key, &testVal) == SCE_KERNEL_ERROR_EINVAL);
-    Check(scePthreadGetspecific(key) == nullptr);
+    Require(scePthreadKeyDelete(0) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadKeyDelete(513) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadKeyDelete(key) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadSetspecific(key, &testVal) == SCE_KERNEL_ERROR_EINVAL);
+    Require(scePthreadGetspecific(key) == nullptr);
 }
 
 static void TestDestructionOrderOnThreadExit() {
@@ -255,8 +247,8 @@ static void TestDestructionOrderOnThreadExit() {
     g_orderCounter = 0;
 
     for (int i = 0; i < 4; ++i) {
-        Check(pthread_key_create_nid_postfix(&g_orderKeys[i], AsDtor(OrderDtor)) == PosixSuccess);
-        Check(g_orderKeys[i] > 0);
+        Require(pthread_key_create_nid_postfix(&g_orderKeys[i], AsDtor(OrderDtor)) == PosixSuccess);
+        Require(g_orderKeys[i] > 0);
     }
 
     std::array<KeyOrderItem, 4> items{};
@@ -265,19 +257,19 @@ static void TestDestructionOrderOnThreadExit() {
     }
 
     Pthread thread = nullptr;
-    Check(pthread_create_nid_postfix(&thread, nullptr, OrderWorker, items.data()) == PosixSuccess);
+    Require(pthread_create_nid_postfix(&thread, nullptr, OrderWorker, items.data()) == PosixSuccess);
     void* result = nullptr;
-    Check(pthread_join_nid_postfix(thread, &result) == PosixSuccess);
+    Require(pthread_join_nid_postfix(thread, &result) == PosixSuccess);
 
-    Check(g_executionOrder.size() == 4);
+    Require(g_executionOrder.size() == 4);
     for (int i = 0; i < 4; ++i) {
-        Check(g_executionOrder[i] == i);
-        Check(items[i].observedOrder == i + 1);
-        Check(items[i].clearedInDestructor);
+        Require(g_executionOrder[i] == i);
+        Require(items[i].observedOrder == i + 1);
+        Require(items[i].clearedInDestructor);
     }
 
     for (int i = 0; i < 4; ++i) {
-        Check(pthread_key_delete_nid_postfix(g_orderKeys[i]) == PosixSuccess);
+        Require(pthread_key_delete_nid_postfix(g_orderKeys[i]) == PosixSuccess);
     }
 }
 
@@ -286,7 +278,7 @@ static void TestDestructionOnExplicitExit() {
     g_orderCounter = 0;
 
     for (int i = 0; i < 4; ++i) {
-        Check(pthread_key_create_nid_postfix(&g_orderKeys[i], AsDtor(OrderDtor)) == PosixSuccess);
+        Require(pthread_key_create_nid_postfix(&g_orderKeys[i], AsDtor(OrderDtor)) == PosixSuccess);
     }
 
     std::array<KeyOrderItem, 4> items{};
@@ -295,19 +287,19 @@ static void TestDestructionOnExplicitExit() {
     }
 
     Pthread thread = nullptr;
-    Check(pthread_create_nid_postfix(&thread, nullptr, ExplicitExitWorker, items.data()) == PosixSuccess);
+    Require(pthread_create_nid_postfix(&thread, nullptr, ExplicitExitWorker, items.data()) == PosixSuccess);
     void* result = nullptr;
-    Check(pthread_join_nid_postfix(thread, &result) == PosixSuccess);
+    Require(pthread_join_nid_postfix(thread, &result) == PosixSuccess);
 
-    Check(g_executionOrder.size() == 4);
+    Require(g_executionOrder.size() == 4);
     for (int i = 0; i < 4; ++i) {
-        Check(g_executionOrder[i] == i);
-        Check(items[i].observedOrder == i + 1);
-        Check(items[i].clearedInDestructor);
+        Require(g_executionOrder[i] == i);
+        Require(items[i].observedOrder == i + 1);
+        Require(items[i].clearedInDestructor);
     }
 
     for (int i = 0; i < 4; ++i) {
-        Check(pthread_key_delete_nid_postfix(g_orderKeys[i]) == PosixSuccess);
+        Require(pthread_key_delete_nid_postfix(g_orderKeys[i]) == PosixSuccess);
     }
 }
 
@@ -315,127 +307,127 @@ static void TestNullValueSkipped() {
     g_nullDtorCalls = 0;
     g_activeDtorCalls = 0;
 
-    Check(pthread_key_create_nid_postfix(&g_nullKey, AsDtor(NullDtor)) == PosixSuccess);
-    Check(pthread_key_create_nid_postfix(&g_activeKey, AsDtor(ActiveDtor)) == PosixSuccess);
+    Require(pthread_key_create_nid_postfix(&g_nullKey, AsDtor(NullDtor)) == PosixSuccess);
+    Require(pthread_key_create_nid_postfix(&g_activeKey, AsDtor(ActiveDtor)) == PosixSuccess);
 
     Pthread thread = nullptr;
-    Check(pthread_create_nid_postfix(&thread, nullptr, NullValueWorker, nullptr) == PosixSuccess);
+    Require(pthread_create_nid_postfix(&thread, nullptr, NullValueWorker, nullptr) == PosixSuccess);
     void* result = nullptr;
-    Check(pthread_join_nid_postfix(thread, &result) == PosixSuccess);
+    Require(pthread_join_nid_postfix(thread, &result) == PosixSuccess);
 
-    Check(g_activeDtorCalls == 1);
-    Check(g_nullDtorCalls == 0);
+    Require(g_activeDtorCalls == 1);
+    Require(g_nullDtorCalls == 0);
 
-    Check(pthread_key_delete_nid_postfix(g_nullKey) == PosixSuccess);
-    Check(pthread_key_delete_nid_postfix(g_activeKey) == PosixSuccess);
+    Require(pthread_key_delete_nid_postfix(g_nullKey) == PosixSuccess);
+    Require(pthread_key_delete_nid_postfix(g_activeKey) == PosixSuccess);
 }
 
 static void TestKeyDeleteBeforeThreadExit() {
     g_deletedDtorCalls = 0;
     g_survivingDtorCalls = 0;
 
-    Check(pthread_key_create_nid_postfix(&g_deletedKey, AsDtor(DeletedDtor)) == PosixSuccess);
-    Check(pthread_key_create_nid_postfix(&g_survivingKey, AsDtor(SurvivingDtor)) == PosixSuccess);
+    Require(pthread_key_create_nid_postfix(&g_deletedKey, AsDtor(DeletedDtor)) == PosixSuccess);
+    Require(pthread_key_create_nid_postfix(&g_survivingKey, AsDtor(SurvivingDtor)) == PosixSuccess);
 
     Pthread thread = nullptr;
-    Check(pthread_create_nid_postfix(&thread, nullptr, DeleteBeforeExitWorker, nullptr) == PosixSuccess);
+    Require(pthread_create_nid_postfix(&thread, nullptr, DeleteBeforeExitWorker, nullptr) == PosixSuccess);
     void* result = nullptr;
-    Check(pthread_join_nid_postfix(thread, &result) == PosixSuccess);
+    Require(pthread_join_nid_postfix(thread, &result) == PosixSuccess);
 
-    Check(g_deletedDtorCalls == 0);
-    Check(g_survivingDtorCalls == 1);
+    Require(g_deletedDtorCalls == 0);
+    Require(g_survivingDtorCalls == 1);
 
-    Check(pthread_key_delete_nid_postfix(g_survivingKey) == PosixSuccess);
+    Require(pthread_key_delete_nid_postfix(g_survivingKey) == PosixSuccess);
 }
 
 static void TestKeyDeleteDuringDestructorExecution() {
     g_initiatorCalls = 0;
     g_victimCalls = 0;
 
-    Check(pthread_key_create_nid_postfix(&g_initiatorKey, AsDtor(InitiatorDtor)) == PosixSuccess);
-    Check(pthread_key_create_nid_postfix(&g_victimKey, AsDtor(VictimDtor)) == PosixSuccess);
-    Check(g_initiatorKey < g_victimKey);
+    Require(pthread_key_create_nid_postfix(&g_initiatorKey, AsDtor(InitiatorDtor)) == PosixSuccess);
+    Require(pthread_key_create_nid_postfix(&g_victimKey, AsDtor(VictimDtor)) == PosixSuccess);
+    Require(g_initiatorKey < g_victimKey);
 
     Pthread thread = nullptr;
-    Check(pthread_create_nid_postfix(&thread, nullptr, DeleteDuringDtorWorker, nullptr) == PosixSuccess);
+    Require(pthread_create_nid_postfix(&thread, nullptr, DeleteDuringDtorWorker, nullptr) == PosixSuccess);
     void* result = nullptr;
-    Check(pthread_join_nid_postfix(thread, &result) == PosixSuccess);
+    Require(pthread_join_nid_postfix(thread, &result) == PosixSuccess);
 
-    Check(g_initiatorCalls == 1);
-    Check(g_victimCalls == 0);
+    Require(g_initiatorCalls == 1);
+    Require(g_victimCalls == 0);
 
-    Check(pthread_key_delete_nid_postfix(g_initiatorKey) == PosixSuccess);
-    Check(pthread_key_delete_nid_postfix(g_victimKey) == PosixEinval);
+    Require(pthread_key_delete_nid_postfix(g_initiatorKey) == PosixSuccess);
+    Require(pthread_key_delete_nid_postfix(g_victimKey) == PosixEinval);
 }
 
 static void TestSelfDeleteInsideDestructor() {
     g_selfDeleteCalls = 0;
 
-    Check(pthread_key_create_nid_postfix(&g_selfDeleteKey, AsDtor(SelfDeleteDtor)) == PosixSuccess);
+    Require(pthread_key_create_nid_postfix(&g_selfDeleteKey, AsDtor(SelfDeleteDtor)) == PosixSuccess);
 
     Pthread thread = nullptr;
-    Check(pthread_create_nid_postfix(&thread, nullptr, SelfDeleteWorker, nullptr) == PosixSuccess);
+    Require(pthread_create_nid_postfix(&thread, nullptr, SelfDeleteWorker, nullptr) == PosixSuccess);
     void* result = nullptr;
-    Check(pthread_join_nid_postfix(thread, &result) == PosixSuccess);
+    Require(pthread_join_nid_postfix(thread, &result) == PosixSuccess);
 
-    Check(g_selfDeleteCalls == 1);
-    Check(pthread_key_delete_nid_postfix(g_selfDeleteKey) == PosixEinval);
+    Require(g_selfDeleteCalls == 1);
+    Require(pthread_key_delete_nid_postfix(g_selfDeleteKey) == PosixEinval);
 }
 
 static void TestDestructorIterationRounds() {
     g_iterationCount = 0;
 
-    Check(pthread_key_create_nid_postfix(&g_iterationKey, AsDtor(IterationDtor)) == PosixSuccess);
+    Require(pthread_key_create_nid_postfix(&g_iterationKey, AsDtor(IterationDtor)) == PosixSuccess);
 
     Pthread thread = nullptr;
-    Check(pthread_create_nid_postfix(&thread, nullptr, IterationWorker, nullptr) == PosixSuccess);
+    Require(pthread_create_nid_postfix(&thread, nullptr, IterationWorker, nullptr) == PosixSuccess);
     void* result = nullptr;
-    Check(pthread_join_nid_postfix(thread, &result) == PosixSuccess);
+    Require(pthread_join_nid_postfix(thread, &result) == PosixSuccess);
 
-    Check(g_iterationCount == 4);
-    Check(pthread_key_delete_nid_postfix(g_iterationKey) == PosixSuccess);
+    Require(g_iterationCount == 4);
+    Require(pthread_key_delete_nid_postfix(g_iterationKey) == PosixSuccess);
 }
 
 static void TestPingPongIterations() {
     g_pingCalls = 0;
     g_pongCalls = 0;
 
-    Check(pthread_key_create_nid_postfix(&g_pingKey, AsDtor(PingDtor)) == PosixSuccess);
-    Check(pthread_key_create_nid_postfix(&g_pongKey, AsDtor(PongDtor)) == PosixSuccess);
-    Check(g_pingKey < g_pongKey);
+    Require(pthread_key_create_nid_postfix(&g_pingKey, AsDtor(PingDtor)) == PosixSuccess);
+    Require(pthread_key_create_nid_postfix(&g_pongKey, AsDtor(PongDtor)) == PosixSuccess);
+    Require(g_pingKey < g_pongKey);
 
     Pthread thread = nullptr;
-    Check(pthread_create_nid_postfix(&thread, nullptr, PingPongWorker, nullptr) == PosixSuccess);
+    Require(pthread_create_nid_postfix(&thread, nullptr, PingPongWorker, nullptr) == PosixSuccess);
     void* result = nullptr;
-    Check(pthread_join_nid_postfix(thread, &result) == PosixSuccess);
+    Require(pthread_join_nid_postfix(thread, &result) == PosixSuccess);
 
-    Check(g_pingCalls == 4);
-    Check(g_pongCalls == 4);
+    Require(g_pingCalls == 4);
+    Require(g_pongCalls == 4);
 
-    Check(pthread_key_delete_nid_postfix(g_pingKey) == PosixSuccess);
-    Check(pthread_key_delete_nid_postfix(g_pongKey) == PosixSuccess);
+    Require(pthread_key_delete_nid_postfix(g_pingKey) == PosixSuccess);
+    Require(pthread_key_delete_nid_postfix(g_pongKey) == PosixSuccess);
 }
 
 static void TestMultipleThreadsIndependence() {
     g_threadOneValue = 0;
     g_threadTwoValue = 0;
 
-    Check(pthread_key_create_nid_postfix(&g_multiThreadKey, AsDtor(MultiThreadDtor)) == PosixSuccess);
+    Require(pthread_key_create_nid_postfix(&g_multiThreadKey, AsDtor(MultiThreadDtor)) == PosixSuccess);
 
     Pthread thread1 = nullptr;
-    Check(pthread_create_nid_postfix(&thread1, nullptr, ThreadOneWorker, nullptr) == PosixSuccess);
+    Require(pthread_create_nid_postfix(&thread1, nullptr, ThreadOneWorker, nullptr) == PosixSuccess);
     void* result1 = nullptr;
-    Check(pthread_join_nid_postfix(thread1, &result1) == PosixSuccess);
+    Require(pthread_join_nid_postfix(thread1, &result1) == PosixSuccess);
 
     Pthread thread2 = nullptr;
-    Check(pthread_create_nid_postfix(&thread2, nullptr, ThreadTwoWorker, nullptr) == PosixSuccess);
+    Require(pthread_create_nid_postfix(&thread2, nullptr, ThreadTwoWorker, nullptr) == PosixSuccess);
     void* result2 = nullptr;
-    Check(pthread_join_nid_postfix(thread2, &result2) == PosixSuccess);
+    Require(pthread_join_nid_postfix(thread2, &result2) == PosixSuccess);
 
-    Check(g_threadOneValue == 1000);
-    Check(g_threadTwoValue == 2000);
+    Require(g_threadOneValue == 1000);
+    Require(g_threadTwoValue == 2000);
 
-    Check(pthread_key_delete_nid_postfix(g_multiThreadKey) == PosixSuccess);
+    Require(pthread_key_delete_nid_postfix(g_multiThreadKey) == PosixSuccess);
 }
 
 static void TestSceAndPosixInteroperability() {
@@ -443,19 +435,19 @@ static void TestSceAndPosixInteroperability() {
     g_interopObservedVal = nullptr;
 
     PthreadKey interopKey = 0;
-    Check(scePthreadKeyCreate(&interopKey, AsDtor(InteropDtor)) == PosixSuccess);
-    Check(interopKey > 0);
+    Require(scePthreadKeyCreate(&interopKey, AsDtor(InteropDtor)) == PosixSuccess);
+    Require(interopKey > 0);
 
     Pthread thread = nullptr;
-    Check(scePthreadCreate(&thread, nullptr, InteropWorker, &interopKey, "Interop") == PosixSuccess);
+    Require(scePthreadCreate(&thread, nullptr, InteropWorker, &interopKey, "Interop") == PosixSuccess);
     void* result = nullptr;
-    Check(scePthreadJoin(thread, &result) == PosixSuccess);
+    Require(scePthreadJoin(thread, &result) == PosixSuccess);
 
-    Check(g_interopCalls == 1);
-    Check(g_interopObservedVal != nullptr);
-    Check(*static_cast<int*>(g_interopObservedVal) == 888);
+    Require(g_interopCalls == 1);
+    Require(g_interopObservedVal != nullptr);
+    Require(*static_cast<int*>(g_interopObservedVal) == 888);
 
-    Check(pthread_key_delete_nid_postfix(interopKey) == PosixSuccess);
+    Require(pthread_key_delete_nid_postfix(interopKey) == PosixSuccess);
 }
 
 int main() {

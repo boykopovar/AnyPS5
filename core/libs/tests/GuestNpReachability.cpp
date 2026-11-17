@@ -1,5 +1,6 @@
 #include "prx/libSceNpManager/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstdlib>
 
@@ -8,7 +9,6 @@ static constexpr int ErrorAlreadyRegistered = static_cast<int>(0x80550008);
 static constexpr int ErrorNotRegistered = static_cast<int>(0x80550009);
 static constexpr int ErrorUserNotFound = static_cast<int>(0x80550007);
 static constexpr int ErrorInvalidId = static_cast<int>(0x80550015);
-static void Require(bool value) { if (!value) std::abort(); }
 static constexpr int InitialUserId = 0x10000000;
 static int g_calls = 0;
 static int g_userId = -1;

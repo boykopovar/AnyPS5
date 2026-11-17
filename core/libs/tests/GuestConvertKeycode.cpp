@@ -3,6 +3,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "ProcessParametersFixture.hpp"
 #include "prx/libSceConvertKeycode/ImeKeyboardType.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -14,8 +15,6 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static_assert(ImeKeyboardType::LookUp(INT32_MIN, 0, 0) == 0);
 static_assert(ImeKeyboardType::LookUp(INT32_MAX, 0, 0) == 0);

@@ -1,4 +1,5 @@
 add_executable(agc_driver_registration_prepare_budget_tests tests/RegistrationPrepareBudget.cpp)
+target_include_directories(agc_driver_registration_prepare_budget_tests PRIVATE ${CMAKE_SOURCE_DIR}/core/test/include)
 target_include_directories(agc_driver_registration_prepare_budget_tests PRIVATE ${LIBS_INCLUDE_DIR})
 set_target_properties(agc_driver_registration_prepare_budget_tests PROPERTIES CXX_EXTENSIONS OFF)
 

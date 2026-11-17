@@ -1,4 +1,5 @@
 #include "IntermediateRepresentation/IrBlock.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <bit>
 #include <cstdio>
@@ -17,10 +18,6 @@ extern std::size_t allocations;
 extern bool countAllocations;
 }
 using namespace IrRewriteAllocation;
-
-void Require(bool condition) {
-    if (!condition) throw std::runtime_error("IR use rewrite assertion failed");
-}
 
 struct Graph {
     IrBlock block{1};

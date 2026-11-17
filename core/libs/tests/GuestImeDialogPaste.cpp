@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 #include "prx/libSceIme/include/ImeInput.hpp"
 #include "prx/libSceIme/include/ImeKeyboardView.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -12,12 +13,6 @@
 namespace {
 
 constexpr int StatusRunning = 1;
-
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
 
 void Paste(const std::string& utf8) {
     ImePublishPaste_nid_postfix(utf8.data(), utf8.size());

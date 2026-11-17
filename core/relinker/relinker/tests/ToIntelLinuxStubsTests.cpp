@@ -1,6 +1,7 @@
 #include "ElfFixture.hpp"
 #include "RelinkerProcess.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstring>
 #include <iostream>
@@ -11,10 +12,6 @@
 namespace {
 
 using namespace RelinkerTests;
-
-void require(const bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 const Bytes kCode = {
     0x66, 0x48, 0x0F, 0x6E, 0xCF,
@@ -37,28 +34,28 @@ std::uint64_t expected(const std::uint64_t value, const std::uint64_t destinatio
 
 int main(const int argc, char** argv) {
     try {
-        require(argc == 2, "usage: to_intel_linux_stubs_tests <relinker>");
+        Require(argc == 2, "usage: to_intel_linux_stubs_tests <relinker>");
         const TempDirectory directory;
         const auto input = directory.Path() / "input.elf";
         const auto output = directory.Path() / "output.elf";
         WriteFile(input, MakeExecutable(kCode));
         const auto run = RunRelinker(argv[1], {"--skip-sce-module", "--to-intel", input.string(), output.string()}, directory.Path() / "relinker.log");
-        require(run.ExitCode == 0, "Relinker failed:\n" + run.Output);
-        require(run.Output.find("Intel conversion: 0 in place, 2 stubs") != std::string::npos, "Relinker did not report two stubs:\n" + run.Output);
+        Require(run.ExitCode == 0, "Relinker failed:\n" + run.Output);
+        Require(run.Output.find("Intel conversion: 0 in place, 2 stubs") != std::string::npos, "Relinker did not report two stubs:\n" + run.Output);
 
         const MappedImage image(ReadFile(output));
         for (const auto site : kSites) {
             const auto* bytes = image.At<const std::uint8_t>(site);
-            require(bytes[0] == 0xE9, "SSE4a site was not replaced by a jump");
-            for (std::size_t index = 5; index < kSiteLength; ++index) require(bytes[index] == 0x90, "SSE4a site tail is not padded with NOPs");
+            Require(bytes[0] == 0xE9, "SSE4a site was not replaced by a jump");
+            for (std::size_t index = 5; index < kSiteLength; ++index) Require(bytes[index] == 0x90, "SSE4a site tail is not padded with NOPs");
             std::int32_t displacement;
             std::memcpy(&displacement, bytes + 1, sizeof(displacement));
-            require(site + 5 + displacement >= kCodeSize, "SSE4a stub is inside the original code segment");
+            Require(site + 5 + displacement >= kCodeSize, "SSE4a stub is inside the original code segment");
         }
 
         const auto function = image.At<SseStub>(0);
         for (const auto [value, destination] : {std::pair{0x1122334455667788ull, 0x0123456789ABCDEFull}, {0ull, ~0ull}, {~0ull, 0ull}, {0x9E3779B97F4A7C15ull, 0x0F1E2D3C4B5A6978ull}})
-            require(function(value, destination) == expected(value, destination), "Relinked SSE4a stubs computed the wrong value");
+            Require(function(value, destination) == expected(value, destination), "Relinked SSE4a stubs computed the wrong value");
         std::cout << "--to-intel Linux stub tests passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

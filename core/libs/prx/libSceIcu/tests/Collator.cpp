@@ -14,9 +14,7 @@
 namespace UcolClose {
 
 using IcuRecoveredTest::Filler;
-using IcuRecoveredTest::Require;
 using IcuRecoveredTest::RequireNoThrow;
-using IcuRecoveredTest::RequireThrows;
 using IcuRecoveredTest::Unchanged;
 
 static_assert(std::is_same_v<decltype(&ucol_close_nid_postfix), void (APS5_VABI*)(UCollator*)>);
@@ -26,17 +24,15 @@ void Run() {
     RequireNoThrow([] { ucol_close_nid_postfix(nullptr); });
 
     const auto storage = Filler();
-    RequireThrows([&] { ucol_close_nid_postfix(reinterpret_cast<UCollator*>(const_cast<std::uint32_t*>(storage.data()))); });
+    ExpectErr([&] { ucol_close_nid_postfix(reinterpret_cast<UCollator*>(const_cast<std::uint32_t*>(storage.data()))); });
     Require(Unchanged(storage));
-    RequireThrows([&] { ucol_close_nid_postfix(reinterpret_cast<UCollator*>(std::uintptr_t{1})); });
+    ExpectErr([&] { ucol_close_nid_postfix(reinterpret_cast<UCollator*>(std::uintptr_t{1})); });
 }
 
 } // namespace UcolClose
 
 namespace UcolGetAttribute {
 
-using IcuRecoveredTest::Require;
-using IcuRecoveredTest::RequireThrows;
 
 void Run() {
     for (std::int32_t attr : {0, 1, 2, 3, 4, 5, 6, 7, 8, 100, -1}) {
@@ -64,17 +60,17 @@ void Run() {
         Require(result == -1);
         Require(status == error);
     }
-    RequireThrows([] {
+    ExpectErr([] {
         ucol_getAttribute_nid_postfix(nullptr, 0, nullptr);
     });
-    RequireThrows([&] {
+    ExpectErr([&] {
         ucol_getAttribute_nid_postfix(nonNull, 0, nullptr);
     });
-    RequireThrows([&] {
+    ExpectErr([&] {
         std::int32_t status = 0;
         ucol_getAttribute_nid_postfix(nonNull, 0, &status);
     });
-    RequireThrows([&] {
+    ExpectErr([&] {
         std::int32_t status = -124;
         ucol_getAttribute_nid_postfix(nonNull, 0, &status);
     });
@@ -84,7 +80,6 @@ void Run() {
 
 namespace UcolGetReorderCodes {
 
-using IcuRecoveredTest::Require;
 
 namespace {
 
@@ -126,7 +121,6 @@ void Run() {
 
 namespace UcolGetTailoredSet {
 
-using IcuRecoveredTest::Require;
 
 static_assert(std::is_same_v<decltype(&ucol_getTailoredSet_nid_postfix), USet* (APS5_VABI*)(const UCollator*, std::int32_t*)>);
 
@@ -160,9 +154,7 @@ void Run() {
 namespace UcolOpen {
 
 using IcuRecoveredTest::Filler;
-using IcuRecoveredTest::Require;
 using IcuRecoveredTest::RequireNoThrow;
-using IcuRecoveredTest::RequireThrows;
 using IcuRecoveredTest::Unchanged;
 
 static_assert(std::is_same_v<decltype(&ucol_open_nid_postfix), UCollator* (APS5_VABI*)(const char*, std::int32_t*)>);
@@ -182,23 +174,21 @@ void Run() {
 
     for (const auto incoming : passing) {
         std::int32_t status = incoming;
-        RequireThrows([&] { ucol_open_nid_postfix("en", &status); });
+        ExpectErr([&] { ucol_open_nid_postfix("en", &status); });
         Require(status == incoming);
 
         status = incoming;
-        RequireThrows([&] { ucol_open_nid_postfix("und", &status); });
+        ExpectErr([&] { ucol_open_nid_postfix("und", &status); });
         Require(status == incoming);
     }
 
-    RequireThrows([&] { ucol_open_nid_postfix("en", nullptr); });
+    ExpectErr([&] { ucol_open_nid_postfix("en", nullptr); });
 }
 
 } // namespace UcolOpen
 
 namespace UcolSetAttribute {
 
-using IcuRecoveredTest::Require;
-using IcuRecoveredTest::RequireThrows;
 
 static_assert(std::is_same_v<decltype(&ucol_setAttribute_nid_postfix), void (APS5_VABI*)(UCollator*, UColAttribute, UColAttributeValue, std::int32_t*)>);
 
@@ -262,7 +252,7 @@ void AttributeValues() {
 }
 
 void NullStatusThrows() {
-    RequireThrows([] {
+    ExpectErr([] {
         ucol_setAttribute_nid_postfix(nullptr, UCOL_STRENGTH, UCOL_PRIMARY, nullptr);
     });
 }
@@ -290,7 +280,7 @@ void Run() {
         } catch (const std::runtime_error&) {
             threw = true;
         }
-        IcuRecoveredTest::Require(threw && errno == 71);
+        Require(threw && errno == 71);
     };
 
     auto* badStatus = reinterpret_cast<std::int32_t*>(std::uintptr_t{0x10});

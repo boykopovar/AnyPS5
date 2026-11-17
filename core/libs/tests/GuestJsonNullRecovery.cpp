@@ -1,6 +1,7 @@
 #include "prx/libSceJson2/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "JsonTestAllocator.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -12,9 +13,6 @@ using namespace SceJson2;
 struct Parameter { void* allocator; void* context; std::size_t bufferSize; std::int32_t mode; std::uint32_t reserved[3]; };
 using Handler = const Value& (APS5_VABI*)(ValueType, const Value*, void*);
 using MismatchHandler = const Value& (APS5_VABI*)(ValueType, const Value*, const Value*, void*);
-static void Require(bool valid, const char* message) {
-    if (!valid) { std::fprintf(stderr, "%s\n", message); std::abort(); }
-}
 struct Context { int calls = 0; int requested = -1; const Value* parent = nullptr; const Value* replacement; const Value* reenter = nullptr; };
 static const Value* mismatchSource = nullptr;
 static const Value& APS5_VABI Mismatch(ValueType requested, const Value* self, const Value* parent, void* context) {

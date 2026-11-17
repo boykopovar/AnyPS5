@@ -1,6 +1,7 @@
 #include "prx/libSceHmd2/include/Api.hpp"
 #include "prx/libSceHmd2/Hmd2.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -14,12 +15,6 @@ constexpr std::int32_t InvalidHandle = static_cast<std::int32_t>(0x8a720003);
 constexpr std::int32_t Error0004 = static_cast<std::int32_t>(0x8a720004);
 constexpr std::int32_t ParameterNull = static_cast<std::int32_t>(0x8a720008);
 constexpr std::int32_t ParameterInvalid = static_cast<std::int32_t>(0x8a720009);
-
-void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "FAIL: %s\n", what);
-    std::abort();
-}
 
 template<class T>
 T Read(const unsigned char* bytes, std::size_t offset) {

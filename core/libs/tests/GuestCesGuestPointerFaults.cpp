@@ -1,5 +1,6 @@
 #include "prx/libSceCesCs/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -12,14 +13,6 @@ constexpr int ERR_INVALID_SRC_BUFFER = static_cast<int>(0x805C0010);
 constexpr int ERR_INVALID_ENCODE = static_cast<int>(0x805C0014);
 constexpr int ERR_ILLEGAL_CODE = static_cast<int>(0x805C0015);
 constexpr int ERR_INVALID_DST_BUFFER = static_cast<int>(0x805C0030);
-
-void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "CES guest pointer check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 using SheetInit = void* (APS5_VABI*)(void*);
 

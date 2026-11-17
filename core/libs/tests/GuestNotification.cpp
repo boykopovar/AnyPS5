@@ -2,6 +2,7 @@
 #include "prx/libc/include/general/LogMacros.hpp"
 #endif
 #include "prx/libSceNotification/include/Api.hpp"
+#include "Testing.hpp"
 
 #include <cerrno>
 #include <cstdint>
@@ -10,13 +11,6 @@
 #include <string>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "NOTIFICATION: %s\n", message);
-        std::abort();
-    }
-}
 
 std::uint8_t* Pointer(std::string& value) {
     return reinterpret_cast<std::uint8_t*>(value.data());

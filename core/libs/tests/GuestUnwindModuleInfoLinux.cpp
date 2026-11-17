@@ -1,14 +1,11 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <link.h>
 #include <stdexcept>
-
-static void Require(bool value, const char* message) {
-    if (!value) throw std::runtime_error(message);
-}
 
 struct TableSearch {
     std::uintptr_t address;

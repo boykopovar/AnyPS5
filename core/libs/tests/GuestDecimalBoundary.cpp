@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -8,13 +9,6 @@
 #include <cstring>
 #include <string>
 #include <vector>
-
-static void Require(bool condition) {
-    if (!condition) {
-        std::fputs("GuestDecimalBoundary check failed\n", stderr);
-        std::abort();
-    }
-}
 
 #ifdef _WIN32
 #include <windows.h>

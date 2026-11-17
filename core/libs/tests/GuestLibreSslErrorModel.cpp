@@ -1,6 +1,7 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <barrier>
 #include <cstdint>
@@ -10,13 +11,6 @@
 #include <cstdlib>
 #include <source_location>
 #include <stdexcept>
-
-static void Require(bool value, std::source_location location = std::source_location::current()) {
-    if (!value) {
-        std::fprintf(stderr, "check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
 
 static void Exercise(unsigned seed) {
     std::deque<std::uint64_t> expected;

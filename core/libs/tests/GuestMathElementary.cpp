@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <bit>
 #include <cerrno>
 #include <cstdint>
@@ -7,14 +8,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
-
-static void Require(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "elementary math check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Check(value) Require((value), __LINE__)
 
 constexpr double Infinity = std::numeric_limits<double>::infinity();
 constexpr float InfinityF = std::numeric_limits<float>::infinity();
@@ -137,11 +130,11 @@ static void CheckSincosBits() {
                          static_cast<unsigned long long>(std::bit_cast<std::uint64_t>(cosine)), static_cast<unsigned long long>(item.sine),
                          static_cast<unsigned long long>(item.cosine));
         }
-        Check(std::bit_cast<std::uint64_t>(sine) == item.sine);
-        Check(std::bit_cast<std::uint64_t>(cosine) == item.cosine);
-        Check(errno == ((item.input >> 32 & 0x7fffffffu) == 0x7ff00000u ? EDOM : 1234));
-        Check(std::bit_cast<std::uint64_t>(sine) == std::bit_cast<std::uint64_t>(sin_nid_postfix(x)));
-        Check(std::bit_cast<std::uint64_t>(cosine) == std::bit_cast<std::uint64_t>(cos_nid_postfix(x)));
+        Require(std::bit_cast<std::uint64_t>(sine) == item.sine);
+        Require(std::bit_cast<std::uint64_t>(cosine) == item.cosine);
+        Require(errno == ((item.input >> 32 & 0x7fffffffu) == 0x7ff00000u ? EDOM : 1234));
+        Require(std::bit_cast<std::uint64_t>(sine) == std::bit_cast<std::uint64_t>(sin_nid_postfix(x)));
+        Require(std::bit_cast<std::uint64_t>(cosine) == std::bit_cast<std::uint64_t>(cos_nid_postfix(x)));
     }
     std::uint64_t state = 0x917583ab6542ull;
     for (int i = 0; i < 10000; ++i) {
@@ -150,92 +143,92 @@ static void CheckSincosBits() {
         const double x = std::bit_cast<double>(state);
         double sine, cosine;
         sincos_nid_postfix(x, &sine, &cosine);
-        Check(std::bit_cast<std::uint64_t>(sine) == std::bit_cast<std::uint64_t>(sin_nid_postfix(x)));
-        Check(std::bit_cast<std::uint64_t>(cosine) == std::bit_cast<std::uint64_t>(cos_nid_postfix(x)));
+        Require(std::bit_cast<std::uint64_t>(sine) == std::bit_cast<std::uint64_t>(sin_nid_postfix(x)));
+        Require(std::bit_cast<std::uint64_t>(cosine) == std::bit_cast<std::uint64_t>(cos_nid_postfix(x)));
     }
 }
 
 int main() {
     CheckSincosBits();
-    Check(Near(cbrt_nid_postfix(27.0), 3.0, 1.0));
-    Check(Near(cbrt_nid_postfix(-8.0), -2.0, 1.0));
-    Check(cbrt_nid_postfix(1.0) == 1.0);
-    Check(cbrt_nid_postfix(0.0) == 0.0 && !std::signbit(cbrt_nid_postfix(0.0)));
-    Check(cbrt_nid_postfix(-0.0) == 0.0 && std::signbit(cbrt_nid_postfix(-0.0)));
-    Check(cbrt_nid_postfix(Infinity) == Infinity && cbrt_nid_postfix(-Infinity) == -Infinity);
-    Check(std::isnan(cbrt_nid_postfix(NotANumber)));
-    Check(NearF(cbrtf_nid_postfix(27.0f), 3.0f, 1.0f) && NearF(cbrtf_nid_postfix(-8.0f), -2.0f, 1.0f));
-    Check(std::signbit(cbrtf_nid_postfix(-0.0f)) && cbrtf_nid_postfix(-0.0f) == 0.0f);
-    Check(cbrtf_nid_postfix(InfinityF) == InfinityF && std::isnan(cbrtf_nid_postfix(NotANumberF)));
+    Require(Near(cbrt_nid_postfix(27.0), 3.0, 1.0));
+    Require(Near(cbrt_nid_postfix(-8.0), -2.0, 1.0));
+    Require(cbrt_nid_postfix(1.0) == 1.0);
+    Require(cbrt_nid_postfix(0.0) == 0.0 && !std::signbit(cbrt_nid_postfix(0.0)));
+    Require(cbrt_nid_postfix(-0.0) == 0.0 && std::signbit(cbrt_nid_postfix(-0.0)));
+    Require(cbrt_nid_postfix(Infinity) == Infinity && cbrt_nid_postfix(-Infinity) == -Infinity);
+    Require(std::isnan(cbrt_nid_postfix(NotANumber)));
+    Require(NearF(cbrtf_nid_postfix(27.0f), 3.0f, 1.0f) && NearF(cbrtf_nid_postfix(-8.0f), -2.0f, 1.0f));
+    Require(std::signbit(cbrtf_nid_postfix(-0.0f)) && cbrtf_nid_postfix(-0.0f) == 0.0f);
+    Require(cbrtf_nid_postfix(InfinityF) == InfinityF && std::isnan(cbrtf_nid_postfix(NotANumberF)));
 
-    Check(acos_nid_postfix(1.0) == 0.0 && !std::signbit(acos_nid_postfix(1.0)));
-    Check(Near(acos_nid_postfix(0.0), Pi / 2, 1.0));
-    Check(Near(acos_nid_postfix(-1.0), Pi, 1.0));
-    Check(Near(acos_nid_postfix(0.5), Pi / 3, 1.0));
-    Check(std::isnan(acos_nid_postfix(1.0000001)) && std::isnan(acos_nid_postfix(-2.0)));
-    Check(std::isnan(acos_nid_postfix(Infinity)) && std::isnan(acos_nid_postfix(NotANumber)));
+    Require(acos_nid_postfix(1.0) == 0.0 && !std::signbit(acos_nid_postfix(1.0)));
+    Require(Near(acos_nid_postfix(0.0), Pi / 2, 1.0));
+    Require(Near(acos_nid_postfix(-1.0), Pi, 1.0));
+    Require(Near(acos_nid_postfix(0.5), Pi / 3, 1.0));
+    Require(std::isnan(acos_nid_postfix(1.0000001)) && std::isnan(acos_nid_postfix(-2.0)));
+    Require(std::isnan(acos_nid_postfix(Infinity)) && std::isnan(acos_nid_postfix(NotANumber)));
 
-    Check(atan_nid_postfix(0.0) == 0.0 && !std::signbit(atan_nid_postfix(0.0)));
-    Check(atan_nid_postfix(-0.0) == 0.0 && std::signbit(atan_nid_postfix(-0.0)));
-    Check(Near(atan_nid_postfix(1.0), Pi / 4, 1.0) && Near(atan_nid_postfix(-1.0), -Pi / 4, 1.0));
-    Check(Near(atan_nid_postfix(Infinity), Pi / 2, 1.0) && Near(atan_nid_postfix(-Infinity), -Pi / 2, 1.0));
-    Check(std::isnan(atan_nid_postfix(NotANumber)));
-    Check(atanf_nid_postfix(0.0f) == 0.0f && std::signbit(atanf_nid_postfix(-0.0f)));
-    Check(NearF(atanf_nid_postfix(1.0f), PiF / 4, 1.0f) && NearF(atanf_nid_postfix(-InfinityF), -PiF / 2, 1.0f));
-    Check(std::isnan(atanf_nid_postfix(NotANumberF)));
+    Require(atan_nid_postfix(0.0) == 0.0 && !std::signbit(atan_nid_postfix(0.0)));
+    Require(atan_nid_postfix(-0.0) == 0.0 && std::signbit(atan_nid_postfix(-0.0)));
+    Require(Near(atan_nid_postfix(1.0), Pi / 4, 1.0) && Near(atan_nid_postfix(-1.0), -Pi / 4, 1.0));
+    Require(Near(atan_nid_postfix(Infinity), Pi / 2, 1.0) && Near(atan_nid_postfix(-Infinity), -Pi / 2, 1.0));
+    Require(std::isnan(atan_nid_postfix(NotANumber)));
+    Require(atanf_nid_postfix(0.0f) == 0.0f && std::signbit(atanf_nid_postfix(-0.0f)));
+    Require(NearF(atanf_nid_postfix(1.0f), PiF / 4, 1.0f) && NearF(atanf_nid_postfix(-InfinityF), -PiF / 2, 1.0f));
+    Require(std::isnan(atanf_nid_postfix(NotANumberF)));
 
-    Check(tan_nid_postfix(0.0) == 0.0 && !std::signbit(tan_nid_postfix(0.0)));
-    Check(tan_nid_postfix(-0.0) == 0.0 && std::signbit(tan_nid_postfix(-0.0)));
-    Check(Near(tan_nid_postfix(Pi / 4), 1.0, 2.0));
-    Check(Near(tan_nid_postfix(-Pi / 4), -1.0, 2.0));
-    Check(std::isnan(tan_nid_postfix(Infinity)) && std::isnan(tan_nid_postfix(-Infinity)) && std::isnan(tan_nid_postfix(NotANumber)));
-    Check(tanf_nid_postfix(0.0f) == 0.0f && std::signbit(tanf_nid_postfix(-0.0f)));
-    Check(NearF(tanf_nid_postfix(PiF / 4), 1.0f, 2.0f));
-    Check(std::isnan(tanf_nid_postfix(InfinityF)));
+    Require(tan_nid_postfix(0.0) == 0.0 && !std::signbit(tan_nid_postfix(0.0)));
+    Require(tan_nid_postfix(-0.0) == 0.0 && std::signbit(tan_nid_postfix(-0.0)));
+    Require(Near(tan_nid_postfix(Pi / 4), 1.0, 2.0));
+    Require(Near(tan_nid_postfix(-Pi / 4), -1.0, 2.0));
+    Require(std::isnan(tan_nid_postfix(Infinity)) && std::isnan(tan_nid_postfix(-Infinity)) && std::isnan(tan_nid_postfix(NotANumber)));
+    Require(tanf_nid_postfix(0.0f) == 0.0f && std::signbit(tanf_nid_postfix(-0.0f)));
+    Require(NearF(tanf_nid_postfix(PiF / 4), 1.0f, 2.0f));
+    Require(std::isnan(tanf_nid_postfix(InfinityF)));
 
-    Check(log2_nid_postfix(1.0) == 0.0 && !std::signbit(log2_nid_postfix(1.0)));
-    Check(log2_nid_postfix(2.0) == 1.0 && log2_nid_postfix(8.0) == 3.0 && log2_nid_postfix(1024.0) == 10.0);
-    Check(log2_nid_postfix(0.5) == -1.0 && log2_nid_postfix(0.125) == -3.0);
-    Check(log2_nid_postfix(0.0) == -Infinity && log2_nid_postfix(-0.0) == -Infinity);
-    Check(log2_nid_postfix(Infinity) == Infinity);
-    Check(std::isnan(log2_nid_postfix(-1.0)) && std::isnan(log2_nid_postfix(-Infinity)) && std::isnan(log2_nid_postfix(NotANumber)));
-    Check(log2f_nid_postfix(1.0f) == 0.0f && log2f_nid_postfix(8.0f) == 3.0f && log2f_nid_postfix(0.25f) == -2.0f);
-    Check(log2f_nid_postfix(0.0f) == -InfinityF && log2f_nid_postfix(InfinityF) == InfinityF);
-    Check(std::isnan(log2f_nid_postfix(-1.0f)) && std::isnan(log2f_nid_postfix(NotANumberF)));
+    Require(log2_nid_postfix(1.0) == 0.0 && !std::signbit(log2_nid_postfix(1.0)));
+    Require(log2_nid_postfix(2.0) == 1.0 && log2_nid_postfix(8.0) == 3.0 && log2_nid_postfix(1024.0) == 10.0);
+    Require(log2_nid_postfix(0.5) == -1.0 && log2_nid_postfix(0.125) == -3.0);
+    Require(log2_nid_postfix(0.0) == -Infinity && log2_nid_postfix(-0.0) == -Infinity);
+    Require(log2_nid_postfix(Infinity) == Infinity);
+    Require(std::isnan(log2_nid_postfix(-1.0)) && std::isnan(log2_nid_postfix(-Infinity)) && std::isnan(log2_nid_postfix(NotANumber)));
+    Require(log2f_nid_postfix(1.0f) == 0.0f && log2f_nid_postfix(8.0f) == 3.0f && log2f_nid_postfix(0.25f) == -2.0f);
+    Require(log2f_nid_postfix(0.0f) == -InfinityF && log2f_nid_postfix(InfinityF) == InfinityF);
+    Require(std::isnan(log2f_nid_postfix(-1.0f)) && std::isnan(log2f_nid_postfix(NotANumberF)));
 
     {
         double sine = 9.0;
         double cosine = 9.0;
         sincos_nid_postfix(0.0, &sine, &cosine);
-        Check(sine == 0.0 && !std::signbit(sine) && cosine == 1.0);
+        Require(sine == 0.0 && !std::signbit(sine) && cosine == 1.0);
         sincos_nid_postfix(-0.0, &sine, &cosine);
-        Check(sine == 0.0 && std::signbit(sine) && cosine == 1.0);
+        Require(sine == 0.0 && std::signbit(sine) && cosine == 1.0);
         sincos_nid_postfix(Pi / 2, &sine, &cosine);
-        Check(sine == 1.0 && std::fabs(cosine) < 1.0e-15);
+        Require(sine == 1.0 && std::fabs(cosine) < 1.0e-15);
         sincos_nid_postfix(Pi, &sine, &cosine);
-        Check(std::fabs(sine) < 1.0e-15 && cosine == -1.0);
+        Require(std::fabs(sine) < 1.0e-15 && cosine == -1.0);
         sincos_nid_postfix(Pi / 6, &sine, &cosine);
-        Check(Near(sine, 0.5, 2.0) && Near(cosine, 0.8660254037844386, 2.0));
+        Require(Near(sine, 0.5, 2.0) && Near(cosine, 0.8660254037844386, 2.0));
         sincos_nid_postfix(Infinity, &sine, &cosine);
-        Check(std::isnan(sine) && std::isnan(cosine));
+        Require(std::isnan(sine) && std::isnan(cosine));
         sincos_nid_postfix(NotANumber, &sine, &cosine);
-        Check(std::isnan(sine) && std::isnan(cosine));
+        Require(std::isnan(sine) && std::isnan(cosine));
     }
     {
         float sine = 9.0f;
         float cosine = 9.0f;
         sincosf_nid_postfix(0.0f, &sine, &cosine);
-        Check(sine == 0.0f && !std::signbit(sine) && cosine == 1.0f);
+        Require(sine == 0.0f && !std::signbit(sine) && cosine == 1.0f);
         sincosf_nid_postfix(-0.0f, &sine, &cosine);
-        Check(sine == 0.0f && std::signbit(sine) && cosine == 1.0f);
+        Require(sine == 0.0f && std::signbit(sine) && cosine == 1.0f);
         sincosf_nid_postfix(PiF / 2, &sine, &cosine);
-        Check(sine == 1.0f && std::fabs(cosine) < 1.0e-6f);
+        Require(sine == 1.0f && std::fabs(cosine) < 1.0e-6f);
         sincosf_nid_postfix(PiF / 6, &sine, &cosine);
-        Check(NearF(sine, 0.5f, 2.0f) && NearF(cosine, 0.8660254f, 2.0f));
+        Require(NearF(sine, 0.5f, 2.0f) && NearF(cosine, 0.8660254f, 2.0f));
         sincosf_nid_postfix(InfinityF, &sine, &cosine);
-        Check(std::isnan(sine) && std::isnan(cosine));
+        Require(std::isnan(sine) && std::isnan(cosine));
         sincosf_nid_postfix(NotANumberF, &sine, &cosine);
-        Check(std::isnan(sine) && std::isnan(cosine));
+        Require(std::isnan(sine) && std::isnan(cosine));
     }
     return 0;
 }

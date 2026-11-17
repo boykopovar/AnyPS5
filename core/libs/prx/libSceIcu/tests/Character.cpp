@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -13,12 +14,6 @@
 #endif
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "ICU character check failed at line %u\n", location.line());
-    std::abort();
-}
 
 void IsoControl() {
     for (std::int32_t value = -0x1000; value <= 0x110010; ++value) {

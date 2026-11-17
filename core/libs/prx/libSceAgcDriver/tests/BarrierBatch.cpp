@@ -1,17 +1,10 @@
 #include "prx/libSceAgcDriver/Graphics/include/BarrierBatch.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 
 using namespace AgcDriver::Graphics;
 
 namespace {
-
-int failures = 0;
-
-void Expect(bool condition, const char* what) {
-    if (condition) return;
-    std::fprintf(stderr, "FAIL: %s\n", what);
-    ++failures;
-}
 
 constexpr VkPipelineStageFlags All = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
 constexpr VkPipelineStageFlags Transfer = VK_PIPELINE_STAGE_TRANSFER_BIT;
@@ -104,8 +97,8 @@ int main() {
     testCoversImage();
     testOrderedByTrailing();
     testHostAndImage();
-    if (failures != 0) {
-        std::fprintf(stderr, "%d barrier batch checks failed\n", failures);
+    if (Failures() != 0) {
+        std::fprintf(stderr, "%u barrier batch checks failed\n", Failures());
         return 1;
     }
     std::printf("barrier batch tests passed\n");

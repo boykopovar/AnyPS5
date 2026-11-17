@@ -10,6 +10,7 @@
 #include "prx/libSceSystemLogger2/libSceSystemLogger2.hpp"
 #include "prx/libSceVisionManager/libSceVisionManager.hpp"
 #include "prx/libmdbg_syscore/libmdbg_syscore.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -18,8 +19,6 @@
 #include <cstring>
 
 namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
 
 void CheckAvSetting() {
     constexpr int AvSettingError = static_cast<int>(0x802A00FF);

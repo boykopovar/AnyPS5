@@ -1,5 +1,6 @@
 #include "prx/libSceVideoOut/include/DualSenseHaptics.hpp"
 #include "prx/libScePad/include/PadHapticBuffer.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdint>
@@ -8,12 +9,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "dualsense_haptics: %s\n", message);
-    std::exit(1);
-}
 
 void ReportLayout() {
     std::array<std::int8_t, DualSenseHaptics::SamplesBytes> samples{};

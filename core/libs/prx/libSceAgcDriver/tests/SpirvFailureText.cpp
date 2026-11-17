@@ -2,6 +2,7 @@
 #include "Optimization/ShaderStageInputInfo.hpp"
 #include "SpirvBackend/SpirvEmitter.hpp"
 #include "PipelineSpecialization.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <exception>
@@ -12,10 +13,6 @@
 namespace {
 
 using namespace ShaderRecompiler;
-
-void require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 enum class Failure { MissingComputeInput, UnloweredInstruction };
 
@@ -57,7 +54,7 @@ std::string emissionFailure(Failure failure) {
 
 void requireFailure(Failure failure, std::string_view prefix, std::string_view reason) {
     const auto text = emissionFailure(failure);
-    require(text.starts_with(prefix) && text.find(reason) != std::string::npos, "expected \"" + std::string(prefix) + "...\" with \"" + std::string(reason) + "\", got \"" + text + "\"");
+    Require(text.starts_with(prefix) && text.find(reason) != std::string::npos, "expected \"" + std::string(prefix) + "...\" with \"" + std::string(reason) + "\", got \"" + text + "\"");
 }
 
 }

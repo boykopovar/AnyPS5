@@ -1,5 +1,6 @@
 #include "prx/libkernel/Semaphore/include/Semaphore.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -9,8 +10,6 @@
 static constexpr int SCE_OK = 0;
 static constexpr std::uint32_t SemaFifo = 1;
 static constexpr std::uint32_t SemaPriority = 2;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 struct Waiter {
     KernelSema sem = nullptr;

@@ -1,13 +1,13 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdlib>
 #include <stdexcept>
 #include <vector>
 
-static void Require(bool value) { if (!value) std::abort(); }
 using SetId = int (APS5_VABI *)(std::uint32_t);
 using SetReId = int (APS5_VABI *)(std::uint32_t, std::uint32_t);
 

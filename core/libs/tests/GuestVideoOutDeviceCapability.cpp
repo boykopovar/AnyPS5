@@ -2,6 +2,7 @@
 #include "prx/libSceVideoOut/include/Output.hpp"
 #include "prx/libSceVideoOut/include/VideoOut.hpp"
 #include "tests/VideoOutTestEnvironment.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -13,8 +14,6 @@ static constexpr int SYSTEM_USER = 255;
 static constexpr int MAIN_BUS = 0;
 static constexpr int INVALID_VALUE = static_cast<int>(0x80290001);
 static constexpr int INVALID_HANDLE = static_cast<int>(0x8029000B);
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 int main() {
     VideoOutTestEnvironment environment;

@@ -1,5 +1,6 @@
 #include "prx/libSceRudp/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 
 #include <algorithm>
 #include <array>
@@ -20,12 +21,6 @@ constexpr int Cancelled = static_cast<int>(0x80770014u);
 constexpr int InvalidPoll = static_cast<int>(0x8077001Fu);
 constexpr std::uint64_t Forever = std::numeric_limits<std::uint64_t>::max();
 constexpr int Rounds = 20;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "Rudp poll drain: %s\n", message);
-    std::abort();
-}
 
 struct Round {
     int callResult;

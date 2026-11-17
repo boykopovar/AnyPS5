@@ -2,6 +2,7 @@
 #include "prx/libSceVideoOut/include/InventoryExports.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "tests/VideoOutTestEnvironment.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -17,12 +18,6 @@ constexpr int InvalidValue = static_cast<int>(0x80290001u);
 constexpr int InvalidAddress = static_cast<int>(0x80290002u);
 constexpr int InvalidHandle = static_cast<int>(0x8029000Bu);
 constexpr int UnsupportedOutputMode = static_cast<int>(0x80290016u);
-
-void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "FAIL: %s\n", what);
-    std::abort();
-}
 
 std::array<std::uint8_t, 0x20> ModeRecord(std::uint32_t size) {
     std::array<std::uint8_t, 0x20> mode{};

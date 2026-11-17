@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include <relinker/parsing/ElfReader.hpp>
 #include <relinker/analysis/UnusedNidFilter/IRelativeRelocationIndex.hpp>
 #include <elfpatcher/general/ElfConstants.hpp>
@@ -88,9 +89,6 @@ Bytes CoveredRelroFixture(const std::uint64_t offset, const std::uint64_t fileSi
     return bytes;
 }
 
-void Require(const bool condition) {
-    if (!condition) throw std::runtime_error("Unexpected parsed value");
-}
 
 void RejectSections(Bytes bytes, const std::string& expectedMessage = "", const std::uint64_t expectedOffset = std::numeric_limits<std::uint64_t>::max()) {
     try {

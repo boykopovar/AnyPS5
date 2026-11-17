@@ -1,6 +1,7 @@
 #include "prx/libSceIme/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libSceIme/include/ImeFilterText.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -12,12 +13,6 @@ namespace {
 
 constexpr int kInvalidParam = static_cast<int>(0x80bc0030u);
 constexpr int kInvalidAddress = static_cast<int>(0x80bc0031u);
-
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
 
 struct Result {
     int code;

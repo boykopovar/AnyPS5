@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <cerrno>
 #include <cstdint>
@@ -11,22 +12,6 @@
 #include <stdexcept>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL3 BIO_METHOD check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template <typename TAction>
-void RequireInvalidArgument(TAction action, std::source_location location = std::source_location::current()) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, location);
-}
 
 const char Name[] = "test method";
 int liveBlocks = 0;
@@ -156,11 +141,11 @@ int main() {
     {
         errno = 71;
         auto* const unmapped = reinterpret_cast<LibreSsl::BioMethod*>(0x10);
-        RequireInvalidArgument([&] { BIO_meth_set_write_nid_postfix(unmapped, &Write); });
-        RequireInvalidArgument([&] { BIO_meth_set_read_nid_postfix(unmapped, &Read); });
-        RequireInvalidArgument([&] { BIO_meth_set_ctrl_nid_postfix(unmapped, &Control); });
-        RequireInvalidArgument([&] { BIO_meth_set_create_nid_postfix(unmapped, &Create); });
-        RequireInvalidArgument([&] { BIO_meth_set_destroy_nid_postfix(unmapped, &Destroy); });
+        ExpectErr<std::invalid_argument>([&] { BIO_meth_set_write_nid_postfix(unmapped, &Write); });
+        ExpectErr<std::invalid_argument>([&] { BIO_meth_set_read_nid_postfix(unmapped, &Read); });
+        ExpectErr<std::invalid_argument>([&] { BIO_meth_set_ctrl_nid_postfix(unmapped, &Control); });
+        ExpectErr<std::invalid_argument>([&] { BIO_meth_set_create_nid_postfix(unmapped, &Create); });
+        ExpectErr<std::invalid_argument>([&] { BIO_meth_set_destroy_nid_postfix(unmapped, &Destroy); });
         Require(errno == 71 && liveBlocks == 0);
     }
 }

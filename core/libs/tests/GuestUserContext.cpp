@@ -4,6 +4,7 @@
 #include "prx/libc/include/general/AsmMacros.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/System/include/UserContext.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -149,13 +150,6 @@ Fibre g_dispatcher = {};
 Fibre g_job = {};
 int g_jobRuns = 0;
 bool g_signalJumps = false;
-
-void Require(bool value, const char* what) {
-    if (!value) {
-        std::fprintf(stderr, "User context check failed: %s\n", what);
-        std::abort();
-    }
-}
 
 std::uint16_t ControlWord() {
     std::uint16_t control = 0;

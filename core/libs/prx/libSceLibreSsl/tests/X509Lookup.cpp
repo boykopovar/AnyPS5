@@ -2,6 +2,7 @@
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -21,22 +22,6 @@ struct Stack {
 };
 
 using LookupControl = int (APS5_VABI*)(LibreSslX509Lookup*, int, const char*, std::int64_t, char**);
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "failed: %s\n", message);
-    std::abort();
-}
-
-template<typename TAction>
-void RequireThrows(TAction action, const char* message) {
-    try {
-        action();
-    } catch (const std::exception&) {
-        return;
-    }
-    Require(false, message);
-}
 
 template<typename TAction>
 void RequireInvalidArgument(TAction action, const char* message) {
@@ -62,7 +47,7 @@ void FileMethod() {
         "the file method has no lookup callbacks");
     Require(method->ctrl, "the file method has a control callback");
     auto control = reinterpret_cast<LookupControl>(method->ctrl);
-    RequireThrows([&] { control(nullptr, 1, "certs.pem", 1, nullptr); }, "loading a file needs the certificate model");
+    ExpectErr([&] { control(nullptr, 1, "certs.pem", 1, nullptr); }, "loading a file needs the certificate model");
 }
 
 void AddLookup() {
@@ -303,7 +288,7 @@ void Allocator() {
 
     store = X509_STORE_new_nid_postfix();
     allocations = frees = 0;
-    RequireThrows([&] { X509_STORE_add_lookup_nid_postfix(store, nullptr); }, "null method");
+    ExpectErr([&] { X509_STORE_add_lookup_nid_postfix(store, nullptr); }, "null method");
     Require(allocations == 0 && frees == 0 && Lookups(store)->num == 0, "a refused method allocates nothing");
     X509_STORE_free_nid_postfix(store);
 

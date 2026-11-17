@@ -1,6 +1,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdlib>
@@ -42,8 +43,6 @@ int APS5_VABI TestHeapPosixAlign(void** pointer, std::size_t, std::size_t bytes)
     *pointer = std::malloc(bytes);
     return *pointer != nullptr ? 0 : -1;
 }
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static int gFacetDeletes = 0;
 

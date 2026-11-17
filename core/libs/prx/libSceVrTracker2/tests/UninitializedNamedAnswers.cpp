@@ -1,4 +1,5 @@
 #include "prx/libSceVrTracker2/include/Api.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -10,12 +11,6 @@ constexpr std::int32_t NotInitialized = static_cast<std::int32_t>(0x8A740001u);
 
 constexpr std::uint8_t Sentinel = 0x5a;
 constexpr std::size_t ProbeSize = 16 * 1024;
-
-void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "FAIL: %s\n", what);
-    std::abort();
-}
 
 struct Probe {
     unsigned char* bytes;

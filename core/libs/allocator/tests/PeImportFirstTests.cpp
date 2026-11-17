@@ -1,4 +1,5 @@
 #include "allocator/PeImportFirst.hpp"
+#include "Testing.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -21,10 +22,6 @@ constexpr std::uint32_t SectionRva = 0x1000;
 constexpr std::size_t SectionOffset = 0x200;
 constexpr std::size_t SectionBytes = 0x200;
 constexpr std::size_t DescriptorBytes = 20;
-
-void require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 void put16(std::vector<unsigned char>& bytes, std::size_t offset, std::uint16_t value) {
     std::memcpy(bytes.data() + offset, &value, sizeof(value));
@@ -85,12 +82,12 @@ std::vector<unsigned char> descriptor(const std::vector<unsigned char>& bytes, s
 void writeFile(const std::filesystem::path& path, const std::vector<unsigned char>& bytes) {
     std::ofstream output(path, std::ios::binary | std::ios::trunc);
     output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
-    require(static_cast<bool>(output), "cannot write " + path.string());
+    Require(static_cast<bool>(output), "cannot write " + path.string());
 }
 
 std::vector<unsigned char> readFile(const std::filesystem::path& path) {
     std::ifstream input(path, std::ios::binary);
-    require(static_cast<bool>(input), "cannot read " + path.string());
+    Require(static_cast<bool>(input), "cannot read " + path.string());
     return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
 }
 
@@ -98,38 +95,38 @@ void movesTheNamedImportFirst() {
     const auto original = image({"kernel32.dll", "ucrtbase.dll", "mimalloc-redirect.dll", "advapi32.dll"});
     auto moved = original;
     Allocator::MoveImportFirst(moved, "MIMALLOC-REDIRECT.dll");
-    require(importName(moved, 0) == "mimalloc-redirect.dll" && importName(moved, 1) == "kernel32.dll" && importName(moved, 2) == "ucrtbase.dll" && importName(moved, 3) == "advapi32.dll",
+    Require(importName(moved, 0) == "mimalloc-redirect.dll" && importName(moved, 1) == "kernel32.dll" && importName(moved, 2) == "ucrtbase.dll" && importName(moved, 3) == "advapi32.dll",
         "the named import did not move first, or the others changed their order");
-    require(descriptor(moved, 0) == descriptor(original, 2) && descriptor(moved, 1) == descriptor(original, 0) && descriptor(moved, 2) == descriptor(original, 1) && descriptor(moved, 3) == descriptor(original, 3),
+    Require(descriptor(moved, 0) == descriptor(original, 2) && descriptor(moved, 1) == descriptor(original, 0) && descriptor(moved, 2) == descriptor(original, 1) && descriptor(moved, 3) == descriptor(original, 3),
         "a descriptor did not move whole");
     const auto directoryEnd = SectionOffset + 4 * DescriptorBytes;
-    require(std::equal(moved.begin(), moved.begin() + SectionOffset, original.begin()) && std::equal(moved.begin() + directoryEnd, moved.end(), original.begin() + directoryEnd),
+    Require(std::equal(moved.begin(), moved.begin() + SectionOffset, original.begin()) && std::equal(moved.begin() + directoryEnd, moved.end(), original.begin() + directoryEnd),
         "bytes outside the import descriptors changed");
     auto unchanged = original;
     Allocator::MoveImportFirst(unchanged, "kernel32.dll");
-    require(unchanged == original, "moving the first import changed the image");
+    Require(unchanged == original, "moving the first import changed the image");
 }
 
 void movesTheImportFirstWithATwoDirectoryOptionalHeader(const std::filesystem::path& directory) {
     const auto original = image({"kernel32.dll", "ucrtbase.dll", "mimalloc-redirect.dll", "advapi32.dll"}, 0x20b, 2, 128);
     auto moved = original;
     Allocator::MoveImportFirst(moved, "mimalloc-redirect.dll");
-    require(importName(moved, 0) == "mimalloc-redirect.dll" && importName(moved, 1) == "kernel32.dll" && importName(moved, 2) == "ucrtbase.dll" && importName(moved, 3) == "advapi32.dll",
+    Require(importName(moved, 0) == "mimalloc-redirect.dll" && importName(moved, 1) == "kernel32.dll" && importName(moved, 2) == "ucrtbase.dll" && importName(moved, 3) == "advapi32.dll",
         "the import did not move first with a 128-byte optional header holding two directories");
-    require(descriptor(moved, 0) == descriptor(original, 2) && descriptor(moved, 1) == descriptor(original, 0) && descriptor(moved, 2) == descriptor(original, 1) && descriptor(moved, 3) == descriptor(original, 3),
+    Require(descriptor(moved, 0) == descriptor(original, 2) && descriptor(moved, 1) == descriptor(original, 0) && descriptor(moved, 2) == descriptor(original, 1) && descriptor(moved, 3) == descriptor(original, 3),
         "a descriptor did not move whole with a 128-byte optional header");
     const auto directoryEnd = SectionOffset + 4 * DescriptorBytes;
-    require(std::equal(moved.begin(), moved.begin() + SectionOffset, original.begin()) && std::equal(moved.begin() + directoryEnd, moved.end(), original.begin() + directoryEnd),
+    Require(std::equal(moved.begin(), moved.begin() + SectionOffset, original.begin()) && std::equal(moved.begin() + directoryEnd, moved.end(), original.begin() + directoryEnd),
         "bytes outside the import descriptors changed with a 128-byte optional header");
     auto repeated = moved;
     Allocator::MoveImportFirst(repeated, "mimalloc-redirect.dll");
-    require(repeated == moved, "repeating the move changed the image with a 128-byte optional header");
+    Require(repeated == moved, "repeating the move changed the image with a 128-byte optional header");
     const auto path = directory / "two-directory.dll";
     writeFile(path, original);
     Allocator::MoveImportFirstInFile(path, "mimalloc-redirect.dll");
-    require(readFile(path) == moved, "the file move differs from the in-memory move with a 128-byte optional header");
+    Require(readFile(path) == moved, "the file move differs from the in-memory move with a 128-byte optional header");
     Allocator::MoveImportFirstInFile(path, "mimalloc-redirect.dll");
-    require(readFile(path) == moved, "repeating the move changed the file with a 128-byte optional header");
+    Require(readFile(path) == moved, "repeating the move changed the file with a 128-byte optional header");
 }
 
 void movesTheImportInASectionEndingAboveFourGiB() {
@@ -138,7 +135,7 @@ void movesTheImportInASectionEndingAboveFourGiB() {
     put32(original, OptionalOffset + OptionalBytes + 8, 0x2000);
     auto moved = original;
     Allocator::MoveImportFirst(moved, "mimalloc-redirect.dll");
-    require(importName(moved, 0, highSectionRva) == "mimalloc-redirect.dll" && importName(moved, 1, highSectionRva) == "kernel32.dll" && importName(moved, 2, highSectionRva) == "advapi32.dll",
+    Require(importName(moved, 0, highSectionRva) == "mimalloc-redirect.dll" && importName(moved, 1, highSectionRva) == "kernel32.dll" && importName(moved, 2, highSectionRva) == "advapi32.dll",
         "the import in a section ending above 4 GiB did not move first");
 }
 
@@ -147,7 +144,7 @@ void movesTheImportInAFile(const std::filesystem::path& directory) {
     writeFile(path, image({"kernel32.dll", "mimalloc-redirect.dll"}));
     Allocator::MoveImportFirstInFile(path, "mimalloc-redirect.dll");
     const auto moved = readFile(path);
-    require(importName(moved, 0) == "mimalloc-redirect.dll" && importName(moved, 1) == "kernel32.dll", "the file's import did not move first");
+    Require(importName(moved, 0) == "mimalloc-redirect.dll" && importName(moved, 1) == "kernel32.dll", "the file's import did not move first");
 }
 
 void failsWithoutTouchingTheFile(const std::filesystem::path& directory, const std::string& what, const std::vector<unsigned char>& bytes, const std::string& expected) {
@@ -156,8 +153,8 @@ void failsWithoutTouchingTheFile(const std::filesystem::path& directory, const s
     try {
         Allocator::MoveImportFirstInFile(path, "mimalloc-redirect.dll");
     } catch (const std::exception& error) {
-        require(std::string(error.what()).find(expected) != std::string::npos, what + ": failed with another error: " + error.what());
-        require(readFile(path) == bytes, what + ": the file changed although the move failed");
+        Require(std::string(error.what()).find(expected) != std::string::npos, what + ": failed with another error: " + error.what());
+        Require(readFile(path) == bytes, what + ": the file changed although the move failed");
         return;
     }
     throw std::runtime_error(what + ": the move did not fail");
@@ -168,8 +165,8 @@ void failsWithoutTouchingTheImage(const std::string& what, const std::vector<uns
     try {
         Allocator::MoveImportFirst(copy, "mimalloc-redirect.dll");
     } catch (const std::exception& error) {
-        require(std::string(error.what()).find(expected) != std::string::npos, what + ": failed with another error: " + error.what());
-        require(copy == bytes, what + ": the image changed although the move failed");
+        Require(std::string(error.what()).find(expected) != std::string::npos, what + ": failed with another error: " + error.what());
+        Require(copy == bytes, what + ": the image changed although the move failed");
         return;
     }
     throw std::runtime_error(what + ": the move did not fail");

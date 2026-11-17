@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -7,14 +8,6 @@
 
 using NKWebKit::WtfAbi::String;
 using NKWebKit::WtfAbi::StringImpl;
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "LegacySchemeRegistry query check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 struct Scheme {
     StringImpl impl;

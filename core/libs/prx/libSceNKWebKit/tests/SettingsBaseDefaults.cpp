@@ -1,4 +1,5 @@
 #include "prx/libSceNKWebKit/include/SettingsBaseDefaultsExports.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -9,15 +10,6 @@ using NKWebKit::WtfAbi::String;
 
 static_assert(sizeof(String) == 8);
 static_assert(sizeof(NKWebKit::WtfAbi::StringImpl) == 24);
-
-void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "SettingsBase defaults check failed at line %d\n", line);
-        std::abort();
-    }
-}
-
-#define Require(value) Check((value), __LINE__)
 
 }  // namespace
 

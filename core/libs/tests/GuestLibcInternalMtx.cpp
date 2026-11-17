@@ -3,17 +3,12 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <thread>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "libc internal mtx: %s\n", message);
-    std::abort();
-}
 
 template<typename TCall>
 int OnOtherThread(TCall call, PthreadMutex* mutex) {

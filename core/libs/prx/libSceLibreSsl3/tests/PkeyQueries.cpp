@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl3/libSceLibreSsl3.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdio>
@@ -74,17 +75,6 @@ int APS5_VABI ThrowComparison(const LibreSsl3EvpPkey*, const LibreSsl3EvpPkey*) 
     throw std::runtime_error("comparison callback failure");
 }
 
-template<class TException, class TAction>
-void RequireThrows(TAction action) {
-    bool caught = false;
-    try {
-        action();
-    } catch (const TException&) {
-        caught = true;
-    }
-    Require(caught, "required exception missing");
-}
-
 template<class TObject>
 auto Snapshot(const TObject& object) {
     std::array<unsigned char, sizeof(TObject)> bytes;
@@ -129,8 +119,8 @@ void CheckQueries() {
     }
     SetCallback(method, 96, ThrowQuery);
     SetCallback(method, 112, ThrowQuery);
-    RequireThrows<std::runtime_error>([&] { EVP_PKEY_size_nid_postfix(&key); });
-    RequireThrows<std::runtime_error>([&] { EVP_PKEY_security_bits_nid_postfix(&key); });
+    ExpectErr<std::runtime_error>([&] { EVP_PKEY_size_nid_postfix(&key); });
+    ExpectErr<std::runtime_error>([&] { EVP_PKEY_security_bits_nid_postfix(&key); });
 }
 
 void CheckComparison() {
@@ -144,9 +134,9 @@ void CheckComparison() {
     LibreSsl3EvpPkey second{6, 73, nullptr, secondPayload.data(), 0};
     expectedFirst = &first;
     expectedSecond = &second;
-    RequireThrows<std::invalid_argument>([&] { EVP_PKEY_cmp_nid_postfix(nullptr, &second); });
-    RequireThrows<std::invalid_argument>([&] { EVP_PKEY_cmp_nid_postfix(&first, nullptr); });
-    RequireThrows<std::invalid_argument>([&] { EVP_PKEY_cmp_nid_postfix(nullptr, nullptr); });
+    ExpectErr<std::invalid_argument>([&] { EVP_PKEY_cmp_nid_postfix(nullptr, &second); });
+    ExpectErr<std::invalid_argument>([&] { EVP_PKEY_cmp_nid_postfix(&first, nullptr); });
+    ExpectErr<std::invalid_argument>([&] { EVP_PKEY_cmp_nid_postfix(nullptr, nullptr); });
     for (int mask = 0; mask != 16; ++mask) {
         first.type = (mask & 1) ? 6 : 912;
         first.method = (mask & 2) ? method.data() : nullptr;
@@ -182,11 +172,11 @@ void CheckComparison() {
     first.method = method.data();
     SetCallback(method, 160, ThrowComparison);
     const int calls = publicCalls;
-    RequireThrows<std::runtime_error>([&] { EVP_PKEY_cmp_nid_postfix(&first, &second); });
+    ExpectErr<std::runtime_error>([&] { EVP_PKEY_cmp_nid_postfix(&first, &second); });
     Require(publicCalls == calls, "public comparison after parameter exception");
     SetCallback(method, 160, static_cast<decltype(&CompareParameters)>(nullptr));
     SetCallback(method, 56, ThrowComparison);
-    RequireThrows<std::runtime_error>([&] { EVP_PKEY_cmp_nid_postfix(&first, &second); });
+    ExpectErr<std::runtime_error>([&] { EVP_PKEY_cmp_nid_postfix(&first, &second); });
     SetCallback(method, 56, ComparePublic);
     expectedSecond = &first;
     publicResult = -17;

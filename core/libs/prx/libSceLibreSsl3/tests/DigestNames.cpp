@@ -2,6 +2,7 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 
 #include <mbedtls/md.h>
 
@@ -14,12 +15,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL3 digest names check failed at line %u\n", location.line());
-    std::abort();
-}
 
 void* APS5_VABI Allocate(std::size_t size) {
     return std::malloc(size);

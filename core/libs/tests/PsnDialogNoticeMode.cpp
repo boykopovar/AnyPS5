@@ -1,17 +1,11 @@
 #include "prx/libSceIme/include/PsnDialogNotice.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
 #include <string>
 
 namespace {
-
-void Require(bool value, const char* what) {
-    if (!value) {
-        std::fprintf(stderr, "psn_dialog_notice_mode: %s\n", what);
-        std::abort();
-    }
-}
 
 void RefusesNamingVariable(const char* text) {
     try {

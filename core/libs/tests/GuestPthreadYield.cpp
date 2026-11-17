@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libkernel/Pthread/include/Pthread.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <cstdint>
 #include <cstdlib>
@@ -19,8 +20,6 @@ static constexpr int SCE_OK = 0;
 static constexpr int LONE_YIELDS = 4096;
 static constexpr int ROUNDS = 64;
 static constexpr std::uint64_t YIELD_LIMIT = 100000ull;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static unsigned CurrentHostCpu() {
 #ifdef _WIN32

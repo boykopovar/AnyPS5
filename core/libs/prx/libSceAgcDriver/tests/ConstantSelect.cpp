@@ -1,6 +1,7 @@
 #include "IntermediateRepresentation/IrBuilder.hpp"
 #include "Optimization/ConstantFolder.hpp"
 #include "Optimization/DeadCodeEliminator.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <stdexcept>
@@ -8,10 +9,6 @@
 using namespace ShaderRecompiler;
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 struct Program {
     IrProgram program;

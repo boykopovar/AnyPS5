@@ -1,5 +1,6 @@
 #include "prx/libSceCesCs/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <climits>
 #include <cstdint>
 #include <cstdlib>
@@ -15,14 +16,6 @@ constexpr int unassignedCode = static_cast<int>(0x805C0020);
 constexpr std::uint64_t fnvBasis = 0xCBF29CE484222325ULL;
 constexpr std::uint32_t poison = 0xDEADBEEF;
 constexpr std::size_t sheetSize = 64;
-
-void Require(bool value) { if (!value) std::abort(); }
-
-template<typename Action>
-void RequireThrows(Action action) {
-    try { action(); } catch (const std::runtime_error&) { return; }
-    std::abort();
-}
 
 std::uint64_t Fnv(std::uint64_t hash, std::uint32_t value) {
     for (int i = 0; i < 4; ++i) {
@@ -212,16 +205,16 @@ int main() {
     RequireDecode(sheet, 0x90308130, 0, 4, 0x10000);
     RequireDecode(sheet, 0xE3329A35, unassignedCode, 4, 0);
     RequireEncode(sheet, 0x10000, 0, 4);
-    RequireThrows([&] { RequireDecode(sheet, 0x90308131, 0, 4, 0x10001); });
-    RequireThrows([&] { RequireEncode(sheet, 0x20000, 0, 4); });
+    ExpectErr<std::runtime_error>([&] { RequireDecode(sheet, 0x90308131, 0, 4, 0x10001); });
+    ExpectErr<std::runtime_error>([&] { RequireEncode(sheet, 0x20000, 0, 4); });
 
     Prepare(sheet, Gb2005, Range, 7);
     RequireDecode(sheet, 0xE3329A35, 0, 4, 0x10FFFF);
     RequireDecode(sheet, 0x8135F437, 0, 4, 0xE7C7);
-    RequireThrows([&] { RequireDecode(sheet, 0x95328236, 0, 4, 0x20000); });
+    ExpectErr<std::runtime_error>([&] { RequireDecode(sheet, 0x95328236, 0, 4, 0x20000); });
 
     Prepare(sheet, Gb2005, Range, 1);
-    RequireThrows([&] { RequireEncode(sheet, 0x20000, 0, 4); });
+    ExpectErr<std::runtime_error>([&] { RequireEncode(sheet, 0x20000, 0, 4); });
     Prepare(sheet, Gb2005, None, 0);
     RequireDecode(sheet, 0x95328236, 0, 4, 0x20000);
 
@@ -239,7 +232,7 @@ int main() {
 
     alignas(8) std::uint8_t sjis[sheetSize] = {};
     Require(sceCesUcsProfileInitSJis1997Cp932(sjis) == sjis);
-    RequireThrows([&] { sceCesGbUcsProfileSet4ByteCharRange(sjis, 0); });
-    RequireThrows([&] { sceCesGbUcsProfileSetUdaMapping(sjis, 0); });
+    ExpectErr<std::runtime_error>([&] { sceCesGbUcsProfileSet4ByteCharRange(sjis, 0); });
+    ExpectErr<std::runtime_error>([&] { sceCesGbUcsProfileSetUdaMapping(sjis, 0); });
     return 0;
 }

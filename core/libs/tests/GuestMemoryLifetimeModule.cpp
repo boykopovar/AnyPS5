@@ -1,6 +1,7 @@
 #include "prx/libkernel/DirectMemory/DirectMemory.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <cstring>
 #include <exception>
@@ -16,10 +17,6 @@ bool watched = false;
 struct StaticExitMarker {
     ~StaticExitMarker() { if (fixtureDestroyed != nullptr) *fixtureDestroyed = 1; }
 } marker;
-
-void Require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 void CheckPhysical(std::int64_t expected) {
     std::int64_t start = -1, end = -1;

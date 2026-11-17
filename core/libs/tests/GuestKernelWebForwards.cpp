@@ -2,6 +2,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -13,13 +14,6 @@ namespace {
 constexpr int GuestEnoent = 2;
 constexpr int GuestEbadf = 9;
 constexpr int GuestEfault = 14;
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "KERNEL WEB FORWARDS: %s\n", message);
-        std::abort();
-    }
-}
 
 void RequireFailure(int result, int error, const char* message) {
     Require(result == -1 && *__error_nid_postfix() == error, message);

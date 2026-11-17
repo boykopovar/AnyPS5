@@ -2,6 +2,7 @@
 #include "prx/libSceAgc/DcbFlow/include/Memory.hpp"
 #include "prx/libSceAgc/Acb/include/Memory.hpp"
 #include "prx/libSceAgc/Command/include/Packet.hpp"
+#include "Testing.hpp"
 
 #include <algorithm>
 #include <array>
@@ -15,20 +16,6 @@ namespace {
 constexpr std::array<std::uint32_t, 3> Payload{0x11111111u, 0x22222222u, 0x33333333u};
 constexpr std::uint64_t Address = 0x0000123456789ab0ull;
 constexpr std::uint64_t OtherAddress = 0x0000fedcba987650ull;
-
-void check(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
-
-template <typename TAction>
-void expectFailure(TAction action) {
-    try {
-        action();
-    } catch (const std::runtime_error&) {
-        return;
-    }
-    throw std::runtime_error("expected invalid input to fail");
-}
 
 struct Packet {
     std::array<std::uint32_t, 16> words{};
@@ -61,12 +48,12 @@ std::uint32_t* build(Packet& packet, const Variant& variant, const Fields& field
 void expectPatched(const Variant& variant, const Fields& from, const Fields& to, const char* message) {
     Packet patched;
     auto* packet = build(patched, variant, from);
-    if (from.address != to.address) check(variant.setAddress(packet, to.address) == 0, "address patch failed");
-    if (from.dst != to.dst) check(variant.setDst(packet, to.dst) == 0, "destination patch failed");
-    if (from.cachePolicy != to.cachePolicy) check(variant.setCachePolicy(packet, to.cachePolicy) == 0, "cache policy patch failed");
+    if (from.address != to.address) Require(variant.setAddress(packet, to.address) == 0, "address patch failed");
+    if (from.dst != to.dst) Require(variant.setDst(packet, to.dst) == 0, "destination patch failed");
+    if (from.cachePolicy != to.cachePolicy) Require(variant.setCachePolicy(packet, to.cachePolicy) == 0, "cache policy patch failed");
     Packet expected;
     build(expected, variant, to);
-    check(patched.words == expected.words, message);
+    Require(patched.words == expected.words, message);
 }
 
 void testVariant(const Variant& variant) {
@@ -87,17 +74,17 @@ void testVariant(const Variant& variant) {
     Packet packet;
     auto* written = build(packet, variant, {5, 1, Address, 1});
     const auto before = packet.words;
-    expectFailure([&] { variant.setDst(written, static_cast<std::uint8_t>(variant.maxDst + 1u)); });
-    expectFailure([&] { variant.setDst(written, 0); });
-    expectFailure([&] { variant.setCachePolicy(written, 4); });
-    check(packet.words == before, "rejected patch modified the packet");
+    ExpectErr<std::runtime_error>([&] { variant.setDst(written, static_cast<std::uint8_t>(variant.maxDst + 1u)); });
+    ExpectErr<std::runtime_error>([&] { variant.setDst(written, 0); });
+    ExpectErr<std::runtime_error>([&] { variant.setCachePolicy(written, 4); });
+    Require(packet.words == before, "rejected patch modified the packet");
 
     std::array<std::uint32_t, 8> nop{0xc0021000u, 0u, 0u, 0u, 0u, 0u, 0u, 0u};
     const auto nopBefore = nop;
-    expectFailure([&] { variant.setAddress(nop.data(), Address); });
-    expectFailure([&] { variant.setDst(nop.data(), 5); });
-    expectFailure([&] { variant.setCachePolicy(nop.data(), 1); });
-    check(nop == nopBefore, "patch of another packet modified it");
+    ExpectErr<std::runtime_error>([&] { variant.setAddress(nop.data(), Address); });
+    ExpectErr<std::runtime_error>([&] { variant.setDst(nop.data(), 5); });
+    ExpectErr<std::runtime_error>([&] { variant.setCachePolicy(nop.data(), 1); });
+    Require(nop == nopBefore, "patch of another packet modified it");
 }
 
 void testAddressAlignment() {
@@ -105,15 +92,15 @@ void testAddressAlignment() {
     Packet graphics;
     auto* written = sceAgcDcbWriteData(&graphics.buffer, 5, 1, Address, Payload.data(), static_cast<std::uint32_t>(Payload.size()), 1, 0);
     const auto before = graphics.words;
-    expectFailure([&] { sceAgcWriteDataPatchSetAddressOrOffset(written, Misaligned); });
-    check(graphics.words == before, "a rejected misaligned graphics address patch modified the packet");
+    ExpectErr<std::runtime_error>([&] { sceAgcWriteDataPatchSetAddressOrOffset(written, Misaligned); });
+    Require(graphics.words == before, "a rejected misaligned graphics address patch modified the packet");
 
     Packet compute;
     auto* computed = sceAgcAcbWriteData(&compute.buffer, 5, 1, Address, Payload.data(), static_cast<std::uint32_t>(Payload.size()), 1, 0);
-    check(sceAgcAsyncWriteDataPatchSetAddressOrOffset(computed, Misaligned) == 0, "compute address patch rejected a misaligned address the emitter accepts");
+    Require(sceAgcAsyncWriteDataPatchSetAddressOrOffset(computed, Misaligned) == 0, "compute address patch rejected a misaligned address the emitter accepts");
     Packet expected;
     sceAgcAcbWriteData(&expected.buffer, 5, 1, Misaligned, Payload.data(), static_cast<std::uint32_t>(Payload.size()), 1, 0);
-    check(compute.words == expected.words, "compute address patch does not match a packet built with that address");
+    Require(compute.words == expected.words, "compute address patch does not match a packet built with that address");
 }
 
 }

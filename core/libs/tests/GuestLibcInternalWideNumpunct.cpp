@@ -3,6 +3,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -14,12 +15,6 @@
 namespace {
 
 constexpr std::size_t WideInlineCapacity = 7;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "libc internal wide numpunct: %s\n", message);
-    std::abort();
-}
 
 std::u16string WideText(const GuestLocale::String& string) {
     const char* data = string.capacity > WideInlineCapacity ? string.pointer : string.buffer;

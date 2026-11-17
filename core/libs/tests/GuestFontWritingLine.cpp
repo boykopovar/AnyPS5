@@ -1,19 +1,12 @@
 #include "prx/libSceFont/include/Api.hpp"
 #include "prx/libSceFont/include/FontTypes.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
 #include <initializer_list>
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "Font writing line check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 template <typename F>
 static bool Throws(F f) {

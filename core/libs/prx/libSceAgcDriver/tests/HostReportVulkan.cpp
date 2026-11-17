@@ -1,4 +1,5 @@
 #include "prx/libSceAgcDriver/Execution/include/HostReportVulkan.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -6,14 +7,6 @@
 #include <string>
 
 namespace {
-
-int failures = 0;
-
-void Check(bool condition, const char* what) {
-    if (condition) return;
-    std::fprintf(stderr, "failed: %s\n", what);
-    ++failures;
-}
 
 struct FakeDevice {
     bool bytes = true;
@@ -129,28 +122,28 @@ void IdentityIsRead() {
     auto query = Query(extensions);
     query.requestedPresentMode = "mailbox";
     const auto gpu = AgcDriver::CollectHostGpuFacts(query);
-    Check(gpu.name == "Fake GPU 9000" && gpu.type == "discrete", "the name or type was not read");
-    Check(gpu.vendorId == 0x1002 && gpu.deviceId == 0x73bf && gpu.driverVersion == 0x00abcdef, "the ids or the raw driver version were not read");
-    Check(gpu.apiVersion == VK_MAKE_API_VERSION(0, 1, 3, 250), "the Vulkan version was not read");
-    Check(gpu.driverName == "fake-driver" && gpu.driverInfo == "Fake 24.1.2", "the driver name and info were not read");
-    Check(gpu.deviceLocalMiB == 8192, "the largest device-local heap was not chosen");
-    Check(gpu.subgroupSize == 64 && gpu.candidates.size() == 2 && gpu.requestedPresentMode == "mailbox", "the caller's facts were not kept");
-    Check(gpu.presentModes == std::vector<std::string>{"fifo", "mailbox"}, "the present modes were not read");
-    Check(AgcDriver::DescribeMissingRequirements(gpu).empty(), "a complete device reported a missing item");
+    Expect(gpu.name == "Fake GPU 9000" && gpu.type == "discrete", "the name or type was not read");
+    Expect(gpu.vendorId == 0x1002 && gpu.deviceId == 0x73bf && gpu.driverVersion == 0x00abcdef, "the ids or the raw driver version were not read");
+    Expect(gpu.apiVersion == VK_MAKE_API_VERSION(0, 1, 3, 250), "the Vulkan version was not read");
+    Expect(gpu.driverName == "fake-driver" && gpu.driverInfo == "Fake 24.1.2", "the driver name and info were not read");
+    Expect(gpu.deviceLocalMiB == 8192, "the largest device-local heap was not chosen");
+    Expect(gpu.subgroupSize == 64 && gpu.candidates.size() == 2 && gpu.requestedPresentMode == "mailbox", "the caller's facts were not kept");
+    Expect(gpu.presentModes == std::vector<std::string>{"fifo", "mailbox"}, "the present modes were not read");
+    Expect(AgcDriver::DescribeMissingRequirements(gpu).empty(), "a complete device reported a missing item");
     device.type = VK_PHYSICAL_DEVICE_TYPE_CPU;
-    Check(AgcDriver::CollectHostGpuFacts(Query(extensions)).type == "cpu", "a software device was not named");
+    Expect(AgcDriver::CollectHostGpuFacts(Query(extensions)).type == "cpu", "a software device was not named");
 }
 
 void NoDriverPropertiesLeavesDriverEmpty() {
     device = {};
     const auto extensions = Extensions({VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_KHR_8BIT_STORAGE_EXTENSION_NAME, VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME, VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME});
     const auto gpu = AgcDriver::CollectHostGpuFacts(Query(extensions));
-    Check(gpu.driverName.empty() && gpu.driverInfo.empty(), "a driver was named without VK_KHR_driver_properties");
-    Check(gpu.driverVersionScheme == AgcDriver::HostDriverVersionScheme::Unknown, "a driver version encoding was chosen without VK_KHR_driver_properties");
+    Expect(gpu.driverName.empty() && gpu.driverInfo.empty(), "a driver was named without VK_KHR_driver_properties");
+    Expect(gpu.driverVersionScheme == AgcDriver::HostDriverVersionScheme::Unknown, "a driver version encoding was chosen without VK_KHR_driver_properties");
     const auto* optional = Find(gpu, VK_KHR_DRIVER_PROPERTIES_EXTENSION_NAME);
-    Check(optional != nullptr && !optional->required && !optional->present, "the absent driver properties extension is not listed as optional and missing");
+    Expect(optional != nullptr && !optional->required && !optional->present, "the absent driver properties extension is not listed as optional and missing");
     const auto* budget = Find(gpu, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
-    Check(budget != nullptr && !budget->present, "the absent memory budget extension is not listed as missing");
+    Expect(budget != nullptr && !budget->present, "the absent memory budget extension is not listed as missing");
 }
 
 void DriverVersionSchemeFollowsTheDriver() {
@@ -161,11 +154,11 @@ void DriverVersionSchemeFollowsTheDriver() {
         device.driver = driver;
         return AgcDriver::CollectHostGpuFacts(Query(extensions)).driverVersionScheme;
     };
-    Check(scheme(VK_DRIVER_ID_NVIDIA_PROPRIETARY) == Scheme::Nvidia, "NVIDIA's driver did not get its version encoding");
-    Check(scheme(VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS) == Scheme::IntelWindows, "Intel's Windows driver did not get its version encoding");
-    Check(scheme(VK_DRIVER_ID_MOLTENVK) == Scheme::Unknown, "MoltenVK's version was given an encoding");
+    Expect(scheme(VK_DRIVER_ID_NVIDIA_PROPRIETARY) == Scheme::Nvidia, "NVIDIA's driver did not get its version encoding");
+    Expect(scheme(VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS) == Scheme::IntelWindows, "Intel's Windows driver did not get its version encoding");
+    Expect(scheme(VK_DRIVER_ID_MOLTENVK) == Scheme::Unknown, "MoltenVK's version was given an encoding");
     for (const auto driver : {VK_DRIVER_ID_MESA_RADV, VK_DRIVER_ID_AMD_PROPRIETARY, VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA, VK_DRIVER_ID_MESA_LLVMPIPE, VK_DRIVER_ID_MESA_NVK})
-        Check(scheme(driver) == Scheme::Vulkan, "a driver did not get the Vulkan version encoding");
+        Expect(scheme(driver) == Scheme::Vulkan, "a driver did not get the Vulkan version encoding");
 }
 
 void MissingExtensionsAreFound() {
@@ -176,9 +169,9 @@ void MissingExtensionsAreFound() {
     std::vector<std::string> names;
     for (const auto& item : missing) names.push_back(item.name);
     const std::vector<std::string> expected{VK_KHR_8BIT_STORAGE_EXTENSION_NAME, VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME, "bufferDeviceAddress", "storageBuffer8BitAccess"};
-    Check(names == expected, "the missing extensions and the features that depend on them were not found");
+    Expect(names == expected, "the missing extensions and the features that depend on them were not found");
     const auto message = AgcDriver::DescribeMissingRequirements(gpu);
-    Check(message.find("Fake GPU 9000") != std::string::npos && message.find("VK_KHR_8bit_storage (extension)") != std::string::npos, "the message does not name the GPU and the missing extension");
+    Expect(message.find("Fake GPU 9000") != std::string::npos && message.find("VK_KHR_8bit_storage (extension)") != std::string::npos, "the message does not name the GPU and the missing extension");
 }
 
 void MissingFeaturesAreFound() {
@@ -191,7 +184,7 @@ void MissingFeaturesAreFound() {
     std::vector<std::string> names;
     for (const auto& item : AgcDriver::MissingRequirements(gpu)) names.push_back(item.name);
     const std::vector<std::string> expected{"samplerAnisotropy", "shaderInt64", "shaderSignedZeroInfNanPreserveFloat32"};
-    Check(names == expected, "the unsupported features were not the only missing items");
+    Expect(names == expected, "the unsupported features were not the only missing items");
     device = {};
     device.stores = false;
     device.bc = false;
@@ -200,7 +193,7 @@ void MissingFeaturesAreFound() {
     names.clear();
     for (const auto& item : AgcDriver::MissingRequirements(AgcDriver::CollectHostGpuFacts(Query(extensions)))) names.push_back(item.name);
     const std::vector<std::string> second{"bufferDeviceAddress", "fragmentStoresAndAtomics", "storageBuffer8BitAccess", "textureCompressionBC", "vertexPipelineStoresAndAtomics"};
-    Check(names == second, "the second set of unsupported features was not found");
+    Expect(names == second, "the second set of unsupported features was not found");
 }
 
 void SwapchainIsRequiredOnlyWithAWindow() {
@@ -208,12 +201,12 @@ void SwapchainIsRequiredOnlyWithAWindow() {
     const auto extensions = Extensions({VK_KHR_8BIT_STORAGE_EXTENSION_NAME, VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME, VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME});
     auto query = Query(extensions);
     const auto windowed = AgcDriver::CollectHostGpuFacts(query);
-    Check(Find(windowed, VK_KHR_SWAPCHAIN_EXTENSION_NAME) != nullptr && !AgcDriver::MissingRequirements(windowed).empty(), "a missing swapchain extension was not required with a window");
+    Expect(Find(windowed, VK_KHR_SWAPCHAIN_EXTENSION_NAME) != nullptr && !AgcDriver::MissingRequirements(windowed).empty(), "a missing swapchain extension was not required with a window");
     query.presentation = false;
     query.surface = VK_NULL_HANDLE;
     const auto headless = AgcDriver::CollectHostGpuFacts(query);
-    Check(Find(headless, VK_KHR_SWAPCHAIN_EXTENSION_NAME) == nullptr && AgcDriver::MissingRequirements(headless).empty(), "the swapchain extension was required without a window");
-    Check(headless.presentModes.empty(), "present modes were read without a surface");
+    Expect(Find(headless, VK_KHR_SWAPCHAIN_EXTENSION_NAME) == nullptr && AgcDriver::MissingRequirements(headless).empty(), "the swapchain extension was required without a window");
+    Expect(headless.presentModes.empty(), "present modes were read without a surface");
 }
 
 void MissingEntryPointIsAnError() {
@@ -227,7 +220,7 @@ void MissingEntryPointIsAnError() {
     } catch (const std::runtime_error& error) {
         thrown = std::string(error.what()).find("vkGetPhysicalDeviceProperties2") != std::string::npos;
     }
-    Check(thrown, "a missing entry point was not reported by name");
+    Expect(thrown, "a missing entry point was not reported by name");
 }
 
 }
@@ -240,5 +233,5 @@ int main() {
     MissingFeaturesAreFound();
     SwapchainIsRequiredOnlyWithAWindow();
     MissingEntryPointIsAnError();
-    return failures == 0 ? 0 : 1;
+    return Failures() == 0 ? 0 : 1;
 }

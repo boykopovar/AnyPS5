@@ -1,39 +1,21 @@
 #include "prx/libc/include/HeapDiagnostics.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <initializer_list>
 #include <stdexcept>
 
-namespace {
-
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
-
-template <typename TAction>
-void RequireInvalidArgument(TAction action, const char* message) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, message);
-}
-
-}
 
 int main() {
-    RequireInvalidArgument([] { LibcHeapTraceInfo_nid_no_patch(nullptr); }, "null heap trace info was not rejected");
+    ExpectErr<std::invalid_argument>([] { LibcHeapTraceInfo_nid_no_patch(nullptr); }, "null heap trace info was not rejected");
 
     std::uint64_t dummyMask = 123;
     std::uint64_t dummyTable = 456;
     const std::uint64_t infoSize = sizeof(LibcHeapInfo);
     for (const std::uint64_t badSize : {std::uint64_t{0}, infoSize - 1, infoSize + 8}) {
         LibcHeapInfo bad{badSize, 7, 9, &dummyMask, &dummyTable};
-        RequireInvalidArgument([&] { LibcHeapTraceInfo_nid_no_patch(&bad); }, "unsupported LibcHeapInfo size was not rejected");
+        ExpectErr<std::invalid_argument>([&] { LibcHeapTraceInfo_nid_no_patch(&bad); }, "unsupported LibcHeapInfo size was not rejected");
         Require(bad.size == badSize && bad.unknown1 == 7 && bad.unknown2 == 9, "rejected call modified metadata fields");
         Require(bad.mspace_atomic_id_mask == &dummyMask && bad.mstate_table == &dummyTable, "rejected call modified pointer fields");
     }

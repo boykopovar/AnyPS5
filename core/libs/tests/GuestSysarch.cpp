@@ -1,12 +1,11 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 #if (defined(__linux__) || defined(_WIN32)) && defined(__x86_64__)
 static void* APS5_VABI ReadGsBase(void* arg) {

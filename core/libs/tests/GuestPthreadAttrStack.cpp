@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -8,8 +9,6 @@ static constexpr int SCE_OK = 0;
 static constexpr int SceEinval = static_cast<int>(0x80020016u);
 static constexpr std::size_t DefaultStackSize = 1u << 20;
 static constexpr std::size_t MinimumStackSize = 16384;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 alignas(16) static unsigned char stack[65536];
 

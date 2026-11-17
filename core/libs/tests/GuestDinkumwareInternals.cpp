@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cfenv>
 #include <cmath>
@@ -23,13 +24,6 @@ constexpr short Zero = 0;
 constexpr short Infinite = 1;
 constexpr short NotANumber = 2;
 constexpr int FloatingExceptions = FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW | FE_INEXACT;
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "Dinkumware internals: %s\n", message);
-        std::exit(1);
-    }
-}
 
 void CheckStod(const char* text, std::int64_t pten, double expected, long consumed, int error, const char* message) {
     *__error_nid_postfix() = 0;

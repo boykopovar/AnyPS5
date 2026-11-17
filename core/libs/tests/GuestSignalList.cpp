@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include <cstdlib>
 #include <cstring>
 
@@ -12,8 +13,6 @@ static constexpr int GUEST_SIGHUP = 1;
 static constexpr int GUEST_SIGINT = 2;
 static constexpr int GUEST_SIGSEGV = 11;
 static constexpr int GUEST_SIGUSR2 = 31;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 int main() {
     Require(sys_nsig_nid_postfix == GUEST_NSIG);

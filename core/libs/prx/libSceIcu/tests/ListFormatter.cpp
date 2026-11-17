@@ -11,7 +11,6 @@
 
 namespace UlistfmtClose {
 
-using IcuRecoveredTest::Require;
 
 static_assert(std::is_same_v<decltype(&ulistfmt_close_nid_postfix), void (APS5_VABI*)(UListFormatter*)>);
 
@@ -45,9 +44,7 @@ void Run() {
 namespace UlistfmtCloseResult {
 
 using IcuRecoveredTest::Filler;
-using IcuRecoveredTest::Require;
 using IcuRecoveredTest::RequireNoThrow;
-using IcuRecoveredTest::RequireThrows;
 using IcuRecoveredTest::Unchanged;
 
 static_assert(std::is_same_v<decltype(&ulistfmt_closeResult_nid_postfix), void (APS5_VABI*)(UFormattedList*)>);
@@ -57,17 +54,15 @@ void Run() {
     RequireNoThrow([] { ulistfmt_closeResult_nid_postfix(nullptr); });
 
     const auto storage = Filler();
-    RequireThrows([&] { ulistfmt_closeResult_nid_postfix(reinterpret_cast<UFormattedList*>(const_cast<std::uint32_t*>(storage.data()))); });
+    ExpectErr([&] { ulistfmt_closeResult_nid_postfix(reinterpret_cast<UFormattedList*>(const_cast<std::uint32_t*>(storage.data()))); });
     Require(Unchanged(storage));
-    RequireThrows([&] { ulistfmt_closeResult_nid_postfix(reinterpret_cast<UFormattedList*>(std::uintptr_t{1})); });
+    ExpectErr([&] { ulistfmt_closeResult_nid_postfix(reinterpret_cast<UFormattedList*>(std::uintptr_t{1})); });
 }
 
 } // namespace UlistfmtCloseResult
 
 namespace UlistfmtFormat {
 
-using IcuRecoveredTest::Require;
-using IcuRecoveredTest::RequireThrows;
 
 static_assert(std::is_same_v<decltype(&ulistfmt_format_nid_postfix), std::int32_t (APS5_VABI*)(const UListFormatter*, const char16_t* const*, const std::int32_t*, std::int32_t, char16_t*, std::int32_t, std::int32_t*)>);
 
@@ -128,17 +123,17 @@ void Run() {
 
     for (const auto incoming : passing) {
         std::int32_t status = incoming;
-        RequireThrows([&] { ulistfmt_format_nid_postfix(formatter, strings, lengths.data(), 1, result.data(), 4, &status); });
+        ExpectErr([&] { ulistfmt_format_nid_postfix(formatter, strings, lengths.data(), 1, result.data(), 4, &status); });
         Require(status == incoming);
         Require(result == probeResult);
         Require(Unchanged(formatterStorage));
 
         status = incoming;
-        RequireThrows([&] { ulistfmt_format_nid_postfix(formatter, nullptr, nullptr, 0, nullptr, 0, &status); });
+        ExpectErr([&] { ulistfmt_format_nid_postfix(formatter, nullptr, nullptr, 0, nullptr, 0, &status); });
         Require(status == incoming);
     }
 
-    RequireThrows([&] { ulistfmt_format_nid_postfix(formatter, strings, lengths.data(), 1, result.data(), 4, nullptr); });
+    ExpectErr([&] { ulistfmt_format_nid_postfix(formatter, strings, lengths.data(), 1, result.data(), 4, nullptr); });
     Require(result == probeResult);
 }
 
@@ -146,8 +141,6 @@ void Run() {
 
 namespace UlistfmtFormatStringsToResult {
 
-using IcuRecoveredTest::Require;
-using IcuRecoveredTest::RequireThrows;
 
 static_assert(std::is_same_v<decltype(&ulistfmt_formatStringsToResult_nid_postfix), void (APS5_VABI*)(const UListFormatter*, const char16_t* const*, const std::int32_t*, std::int32_t, UFormattedList*, std::int32_t*)>);
 
@@ -209,13 +202,13 @@ void Run() {
 
     for (const auto incoming : passing) {
         std::int32_t status = incoming;
-        RequireThrows([&] { ulistfmt_formatStringsToResult_nid_postfix(formatter, strings, lengths.data(), 1, result, &status); });
+        ExpectErr([&] { ulistfmt_formatStringsToResult_nid_postfix(formatter, strings, lengths.data(), 1, result, &status); });
         Require(status == incoming);
         Require(Unchanged(formatterStorage) && Unchanged(resultStorage));
         Require(item == probeItem);
     }
 
-    RequireThrows([&] { ulistfmt_formatStringsToResult_nid_postfix(formatter, strings, lengths.data(), 1, result, nullptr); });
+    ExpectErr([&] { ulistfmt_formatStringsToResult_nid_postfix(formatter, strings, lengths.data(), 1, result, nullptr); });
     Require(Unchanged(resultStorage));
 }
 
@@ -223,8 +216,6 @@ void Run() {
 
 namespace UlistfmtOpenForType {
 
-using IcuRecoveredTest::Require;
-using IcuRecoveredTest::RequireThrows;
 
 static_assert(std::is_same_v<decltype(&ulistfmt_openForType_nid_postfix), UListFormatter* (APS5_VABI*)(const char*, UListFormatterType, UListFormatterWidth, std::int32_t*)>);
 
@@ -243,15 +234,15 @@ void Run() {
 
     for (const auto incoming : passing) {
         std::int32_t status = incoming;
-        RequireThrows([&] { ulistfmt_openForType_nid_postfix("en", 0, 0, &status); });
+        ExpectErr([&] { ulistfmt_openForType_nid_postfix("en", 0, 0, &status); });
         Require(status == incoming);
 
         status = incoming;
-        RequireThrows([&] { ulistfmt_openForType_nid_postfix(nullptr, 3, 2, &status); });
+        ExpectErr([&] { ulistfmt_openForType_nid_postfix(nullptr, 3, 2, &status); });
         Require(status == incoming);
     }
 
-    RequireThrows([&] { ulistfmt_openForType_nid_postfix("en", 0, 0, nullptr); });
+    ExpectErr([&] { ulistfmt_openForType_nid_postfix("en", 0, 0, nullptr); });
 }
 
 } // namespace UlistfmtOpenForType
@@ -259,9 +250,7 @@ void Run() {
 namespace UlistfmtOpenResult {
 
 using IcuRecoveredTest::Filler;
-using IcuRecoveredTest::Require;
 using IcuRecoveredTest::RequireNoThrow;
-using IcuRecoveredTest::RequireThrows;
 using IcuRecoveredTest::Unchanged;
 
 static_assert(std::is_same_v<decltype(&ulistfmt_openResult_nid_postfix), UFormattedList* (APS5_VABI*)(std::int32_t*)>);
@@ -277,11 +266,11 @@ void Run() {
 
     for (const auto incoming : passing) {
         std::int32_t status = incoming;
-        RequireThrows([&] { ulistfmt_openResult_nid_postfix(&status); });
+        ExpectErr([&] { ulistfmt_openResult_nid_postfix(&status); });
         Require(status == incoming);
     }
 
-    RequireThrows([&] { ulistfmt_openResult_nid_postfix(nullptr); });
+    ExpectErr([&] { ulistfmt_openResult_nid_postfix(nullptr); });
 }
 
 } // namespace UlistfmtOpenResult

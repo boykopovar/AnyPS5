@@ -1,5 +1,6 @@
 #include "DecoderLengthCases.hpp"
 #include "DecoderMetadataCases.hpp"
+#include "Testing.hpp"
 #include <codegen/CodegenException.hpp>
 #include <codegen/x86/X64InstructionDecoder.hpp>
 #include <cstdint>
@@ -13,10 +14,6 @@
 namespace {
 
 using Bytes = std::vector<std::uint8_t>;
-
-void require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 Bytes parse(std::string_view hex) {
     Bytes bytes;
@@ -51,11 +48,11 @@ int main() {
         for (const auto& testCase : kDecoderLengthCases) {
             const std::string name = testCase.Bytes;
             auto bytes = parse(testCase.Bytes);
-            require(bytes.size() == testCase.Length, "Decoder length case " + name + " does not hold its own length");
-            require(decodedLength(decoder, bytes, name) == testCase.Length, "Wrong length for " + name);
-            require(truncationRejected(decoder, bytes, bytes.size() - 1), "A truncated " + name + " was accepted");
+            Require(bytes.size() == testCase.Length, "Decoder length case " + name + " does not hold its own length");
+            Require(decodedLength(decoder, bytes, name) == testCase.Length, "Wrong length for " + name);
+            Require(truncationRejected(decoder, bytes, bytes.size() - 1), "A truncated " + name + " was accepted");
             bytes.insert(bytes.end(), 15, 0x90);
-            require(decodedLength(decoder, bytes, name + " followed by NOPs") == testCase.Length, "Wrong length for " + name + " followed by NOPs");
+            Require(decodedLength(decoder, bytes, name + " followed by NOPs") == testCase.Length, "Wrong length for " + name + " followed by NOPs");
         }
         for (const auto& testCase : std::vector<std::pair<std::size_t, Bytes>>{
             {14, {0x90}},
@@ -64,14 +61,14 @@ int main() {
         }) {
             Bytes longest(testCase.first, 0x66);
             longest.insert(longest.end(), testCase.second.begin(), testCase.second.end());
-            require(longest.size() == 15, "Maximum-length instruction fixture is not 15 bytes");
-            require(decoder.Decode(longest.data(), longest.size()) == 15, "Valid 15-byte instruction was rejected");
-            require(decoder.DecodeInstruction(longest.data(), longest.size()).Length == 15, "Valid 15-byte instruction metadata was rejected");
+            Require(longest.size() == 15, "Maximum-length instruction fixture is not 15 bytes");
+            Require(decoder.Decode(longest.data(), longest.size()) == 15, "Valid 15-byte instruction was rejected");
+            Require(decoder.DecodeInstruction(longest.data(), longest.size()).Length == 15, "Valid 15-byte instruction metadata was rejected");
             Bytes withTrailingNops = longest;
             withTrailingNops.insert(withTrailingNops.end(), 15, 0x90);
-            require(decoder.Decode(withTrailingNops.data(), withTrailingNops.size()) == 15, "Valid maximum-length instruction consumed trailing bytes");
+            Require(decoder.Decode(withTrailingNops.data(), withTrailingNops.size()) == 15, "Valid maximum-length instruction consumed trailing bytes");
             longest.insert(longest.begin(), 0x66);
-            require(truncationRejected(decoder, longest, longest.size()), "Instruction longer than 15 bytes was accepted");
+            Require(truncationRejected(decoder, longest, longest.size()), "Instruction longer than 15 bytes was accepted");
             try {
                 (void)decoder.DecodeInstruction(longest.data(), longest.size());
                 throw std::runtime_error("Instruction metadata accepted a length above 15 bytes");
@@ -80,7 +77,7 @@ int main() {
         }
         for (const auto* testCase : kDecoderMissingModRmCases) {
             const auto bytes = parse(testCase);
-            require(truncationRejected(decoder, bytes, bytes.size()), "A truncated " + std::string(testCase) + " was accepted");
+            Require(truncationRejected(decoder, bytes, bytes.size()), "A truncated " + std::string(testCase) + " was accepted");
             try {
                 (void)decoder.DecodeInstruction(bytes.data(), bytes.size());
                 throw std::runtime_error("Instruction metadata accepted a missing ModRM for " + std::string(testCase));
@@ -90,65 +87,65 @@ int main() {
         for (const auto& testCase : kDecoderTrapModRmCases) {
             const std::string name = testCase.Bytes;
             auto bytes = parse(testCase.Bytes);
-            require(bytes.size() == testCase.Length, "Trap case " + name + " does not hold its own length");
-            require(truncationRejected(decoder, bytes, bytes.size() - 1), "A truncated " + name + " was accepted");
+            Require(bytes.size() == testCase.Length, "Trap case " + name + " does not hold its own length");
+            Require(truncationRejected(decoder, bytes, bytes.size() - 1), "A truncated " + name + " was accepted");
             bytes.insert(bytes.end(), 15, 0x90);
             const auto info = decoder.DecodeInstruction(bytes.data(), bytes.size());
-            require(info.Length == testCase.Length, "Wrong length for " + name);
-            require(info.FlowKind == Codegen::ControlFlowKind::Trap && !info.HasBranchTarget, "Wrong trap metadata for " + name);
-            require(info.HasModRm && info.ModRmByte == testCase.ModRmByte && info.ModRmOffset == 2, "Wrong ModRM metadata for " + name);
-            require(info.HasMemoryOperand == testCase.HasMemoryOperand, "Wrong memory operand presence for " + name);
-            require(info.HasRipRelativeDisp == testCase.HasRipRelativeDisp, "Wrong RIP-relative operand presence for " + name);
-            require(info.RipRelativeDispOffset == testCase.DisplacementOffset, "Wrong RIP-relative displacement offset for " + name);
+            Require(info.Length == testCase.Length, "Wrong length for " + name);
+            Require(info.FlowKind == Codegen::ControlFlowKind::Trap && !info.HasBranchTarget, "Wrong trap metadata for " + name);
+            Require(info.HasModRm && info.ModRmByte == testCase.ModRmByte && info.ModRmOffset == 2, "Wrong ModRM metadata for " + name);
+            Require(info.HasMemoryOperand == testCase.HasMemoryOperand, "Wrong memory operand presence for " + name);
+            Require(info.HasRipRelativeDisp == testCase.HasRipRelativeDisp, "Wrong RIP-relative operand presence for " + name);
+            Require(info.RipRelativeDispOffset == testCase.DisplacementOffset, "Wrong RIP-relative displacement offset for " + name);
         }
         for (const auto& testCase : kDecoderRipRelativeCases) {
             const std::string name = testCase.Bytes;
             auto bytes = parse(testCase.Bytes);
-            require(bytes.size() == testCase.Length, "RIP-relative case " + name + " does not hold its own length");
+            Require(bytes.size() == testCase.Length, "RIP-relative case " + name + " does not hold its own length");
             bytes.insert(bytes.end(), 15, 0x90);
-            require(decodedLength(decoder, bytes, name) == testCase.Length, "Wrong length for " + name);
+            Require(decodedLength(decoder, bytes, name) == testCase.Length, "Wrong length for " + name);
             const auto info = decoder.DecodeInstruction(bytes.data(), bytes.size());
-            require(info.HasRipRelativeDisp, "RIP-relative operand of " + name + " was not reported");
-            require(info.RipRelativeDispOffset == testCase.DisplacementOffset, "Wrong RIP-relative displacement offset for " + name);
+            Require(info.HasRipRelativeDisp, "RIP-relative operand of " + name + " was not reported");
+            Require(info.RipRelativeDispOffset == testCase.DisplacementOffset, "Wrong RIP-relative displacement offset for " + name);
         }
         for (const auto& testCase : kDecoderBranchCases) {
             const std::string name = testCase.Bytes;
             auto bytes = parse(testCase.Bytes);
-            require(bytes.size() == testCase.Length, "Branch case " + name + " does not hold its own length");
+            Require(bytes.size() == testCase.Length, "Branch case " + name + " does not hold its own length");
             bytes.insert(bytes.end(), 15, 0x90);
             const auto info = decoder.DecodeInstruction(bytes.data(), bytes.size());
-            require(info.Length == testCase.Length, "Wrong length for " + name);
-            require(info.FlowKind == testCase.FlowKind, "Wrong control flow kind for " + name);
-            require(info.HasBranchTarget == testCase.HasBranchTarget, "Wrong branch target presence for " + name);
-            require(!testCase.HasBranchTarget || info.BranchDisp == testCase.BranchDisp, "Wrong branch displacement for " + name);
+            Require(info.Length == testCase.Length, "Wrong length for " + name);
+            Require(info.FlowKind == testCase.FlowKind, "Wrong control flow kind for " + name);
+            Require(info.HasBranchTarget == testCase.HasBranchTarget, "Wrong branch target presence for " + name);
+            Require(!testCase.HasBranchTarget || info.BranchDisp == testCase.BranchDisp, "Wrong branch displacement for " + name);
         }
         for (const auto& testCase : kDecoderTruncatedBranchCases) {
             const std::string name = testCase.Bytes;
             auto bytes = parse(testCase.Bytes);
-            require(bytes.size() == testCase.Length, "Truncated branch case " + name + " does not hold its own length");
+            Require(bytes.size() == testCase.Length, "Truncated branch case " + name + " does not hold its own length");
             bytes.insert(bytes.end(), 15, 0x90);
             const auto info = decoder.DecodeInstruction(bytes.data(), bytes.size());
-            require(info.Length == testCase.Length, "Wrong length for " + name);
-            require(info.FlowKind == testCase.FlowKind, "Wrong control flow kind for " + name);
-            require(info.TruncatesBranchTarget && !info.HasBranchTarget, "Branch target of " + name + " was reported without its 16-bit truncation");
+            Require(info.Length == testCase.Length, "Wrong length for " + name);
+            Require(info.FlowKind == testCase.FlowKind, "Wrong control flow kind for " + name);
+            Require(info.TruncatesBranchTarget && !info.HasBranchTarget, "Branch target of " + name + " was reported without its 16-bit truncation");
         }
         for (const auto& testCase : kDecoderBranchCases) {
             const auto bytes = parse(testCase.Bytes);
-            require(!decoder.DecodeInstruction(bytes.data(), bytes.size()).TruncatesBranchTarget, "Branch target of " + std::string(testCase.Bytes) + " was reported as truncated");
+            Require(!decoder.DecodeInstruction(bytes.data(), bytes.size()).TruncatesBranchTarget, "Branch target of " + std::string(testCase.Bytes) + " was reported as truncated");
         }
         for (const auto segment : {0x64, 0x65}) {
             for (const auto opcode : {0x6c, 0x6d, 0xaa, 0xab, 0xae, 0xaf, 0x6e, 0x6f, 0xa4, 0xa5, 0xa6, 0xa7, 0xac, 0xad}) {
                 const std::vector<std::uint8_t> bytes{static_cast<std::uint8_t>(segment), static_cast<std::uint8_t>(opcode)};
                 const auto info = decoder.DecodeInstruction(bytes.data(), bytes.size());
                 const bool fixedEs = opcode == 0x6c || opcode == 0x6d || opcode == 0xaa || opcode == 0xab || opcode == 0xae || opcode == 0xaf;
-                require(info.HasMemoryOperand, "A string instruction lost its implicit memory operand");
-                require(info.SegmentPrefix == (fixedEs ? 0 : segment), "Wrong effective segment for a string instruction");
+                Require(info.HasMemoryOperand, "A string instruction lost its implicit memory operand");
+                Require(info.SegmentPrefix == (fixedEs ? 0 : segment), "Wrong effective segment for a string instruction");
             }
         }
         const auto threeDNow = parse("0f0f0d11223344a6");
         const auto threeDNowInfo = decoder.DecodeInstruction(threeDNow.data(), threeDNow.size());
-        require(threeDNowInfo.HasModRm && threeDNowInfo.ModRmByte == 0x0d, "3DNow! ModRM was not reported");
-        require(threeDNowInfo.HasRipRelativeDisp && threeDNowInfo.RipRelativeDispOffset == 3, "3DNow! RIP-relative displacement was not reported");
+        Require(threeDNowInfo.HasModRm && threeDNowInfo.ModRmByte == 0x0d, "3DNow! ModRM was not reported");
+        Require(threeDNowInfo.HasRipRelativeDisp && threeDNowInfo.RipRelativeDispOffset == 3, "3DNow! RIP-relative displacement was not reported");
         for (const auto& testCase : std::vector<std::pair<const char*, bool>>{
             {"6590", false},
             {"654889c8", false},
@@ -174,7 +171,7 @@ int main() {
             {"ffe0", false},
         }) {
             const auto bytes = parse(testCase.first);
-            require(decoder.DecodeInstruction(bytes.data(), bytes.size()).HasMemoryOperand == testCase.second,
+            Require(decoder.DecodeInstruction(bytes.data(), bytes.size()).HasMemoryOperand == testCase.second,
                     "Wrong memory operand presence for " + std::string(testCase.first));
         }
         std::cout << "Decoder length tests passed\n";

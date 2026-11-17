@@ -1,6 +1,7 @@
 #include "prx/libSceFreeType/include/Api.hpp"
 #include "prx/libSceFreeType/include/GuestFreeType.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <ft2build.h>
 #include FT_OUTLINE_H
@@ -13,14 +14,6 @@
 #include <vector>
 
 using namespace FreeType;
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "FreeType outline check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static void CompareCheck(std::uint16_t pointCount, std::vector<std::uint16_t>& contours) {
     GuestOutline guest{static_cast<std::uint16_t>(contours.size()), pointCount, nullptr, nullptr, contours.data(), 0x71};

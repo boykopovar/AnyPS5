@@ -1,6 +1,7 @@
 #include "prx/libSceAudiodec/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <cerrno>
 #include <cmath>
@@ -31,8 +32,6 @@
 #define AUDIODEC_SKIP_ADDRESS_LIMIT 1
 #endif
 #endif
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 namespace {
 

@@ -2,12 +2,11 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "Decoder/Jpeg.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstddef>
 #include <cstdlib>
 #include <vector>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 alignas(4) static unsigned char oddMin[8 * 36 + 64];
 alignas(4) static unsigned char oddWide[8 * 40 + 64];

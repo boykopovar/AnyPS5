@@ -1,4 +1,5 @@
 #include "IntermediateRepresentation/IrOpcode.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -7,12 +8,6 @@
 namespace {
 
 using namespace ShaderRecompiler;
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "IrOpcode traits check failed at line %u\n", static_cast<unsigned>(location.line()));
-    std::abort();
-}
 
 } // namespace
 

@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/FileStream.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -125,21 +126,6 @@ struct TestPkey {
     int saveType;
     int references;
 };
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL PEM private key check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
-    try {
-        action();
-    } catch (const std::exception&) {
-        return;
-    }
-    Require(false, location);
-}
 
 std::uint64_t Error(int library, int reason) {
     return static_cast<std::uint64_t>(library) << 24 | std::uint64_t{0xfff} << 12 | static_cast<std::uint64_t>(reason);
@@ -309,18 +295,18 @@ void TestErrors() {
     Require(PEM_read_RSAPrivateKey_nid_postfix(nullptr, nullptr, nullptr, nullptr) == nullptr);
     RequireErrors({Error(9, 7)});
 
-    RequireThrows([] { ReadBio(EncryptedRsaKey); });
-    RequireThrows([] { ReadBio(EncryptedPkcs8Key); });
-    RequireThrows([] { ReadBio(EcKey); });
-    RequireThrows([] { ReadBio(EcPkcs8Key); });
-    RequireThrows([] { ReadFile(EcKey); });
+    ExpectErr([] { ReadBio(EncryptedRsaKey); });
+    ExpectErr([] { ReadBio(EncryptedPkcs8Key); });
+    ExpectErr([] { ReadBio(EcKey); });
+    ExpectErr([] { ReadBio(EcPkcs8Key); });
+    ExpectErr([] { ReadFile(EcKey); });
 }
 
 void TestCertificate() {
     const std::string text = std::string(RsaKey) + Certificate;
     LibreSslX509* certificate = nullptr;
     auto* bio = BIO_new_mem_buf_nid_postfix(text.data(), static_cast<int>(text.size()));
-    RequireThrows([&] { PEM_read_bio_X509_nid_postfix(bio, &certificate, nullptr, nullptr); });
+    ExpectErr([&] { PEM_read_bio_X509_nid_postfix(bio, &certificate, nullptr, nullptr); });
     BIO_free_nid_postfix(bio);
     bio = BIO_new_mem_buf_nid_postfix(RsaKey, static_cast<int>(sizeof(RsaKey) - 1));
     ERR_clear_error_nid_postfix();

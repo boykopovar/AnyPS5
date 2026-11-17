@@ -3,13 +3,13 @@
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libSceVideoOut/include/BufferReuseTracker.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
 #include <mutex>
 
-static void Require(bool value) { if (!value) std::abort(); }
 class Output final : public AgcDriver::IVideoOutput, public AgcDriver::IRenderingWait,
     public AgcDriver::IFlipRequest, public std::enable_shared_from_this<Output> {
 public:

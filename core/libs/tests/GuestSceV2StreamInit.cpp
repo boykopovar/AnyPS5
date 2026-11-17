@@ -1,18 +1,9 @@
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-
-namespace {
-
-void Require(bool condition, const char* label) {
-    if (condition) return;
-    std::fprintf(stderr, "sce v2 stream init: %s\n", label);
-    std::abort();
-}
-
-}
 
 int main() {
     std::int32_t& wide = _ZNSt8__sce_v26_Winit9_Init_cntE_nid_postfix;

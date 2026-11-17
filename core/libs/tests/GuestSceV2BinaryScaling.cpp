@@ -1,9 +1,8 @@
 #include "prx/libc/libc.hpp"
+#include "Testing.hpp"
 #include <bit>
 #include <cstdint>
 #include <cstdlib>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 struct ScaleCase { std::uint64_t input; long long exponent; short code; std::uint64_t result; short extendedCode; std::uint64_t extendedResult; };
 struct FloatScaleCase { std::uint32_t input; long long exponent; short code; std::uint32_t result; };

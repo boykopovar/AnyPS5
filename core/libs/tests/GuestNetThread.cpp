@@ -1,5 +1,6 @@
 #include "prx/libSceNet/include/Net.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -23,11 +24,6 @@ struct Run {
 
 Run run;
 
-void Require(bool value, const char* what) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", what);
-    std::abort();
-}
 
 void APS5_VABI Count(void* arg) {
     ++static_cast<Run*>(arg)->started;

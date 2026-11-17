@@ -1,5 +1,6 @@
 #include "prx/libSceAudiodecCpu/libSceAudiodecCpu.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -27,8 +28,6 @@ constexpr std::uint32_t LpcmBd = 0x1003;
 constexpr std::uint32_t LpcmDvd = 0x1004;
 constexpr std::uint32_t Trhd = 0x100b;
 constexpr std::uint32_t None = 0xffffffffu;
-
-void Require(bool value) { if (!value) std::abort(); }
 
 int Error(std::uint32_t code) { return static_cast<int>(0x80f70000u + code); }
 

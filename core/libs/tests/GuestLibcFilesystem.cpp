@@ -2,6 +2,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -20,12 +21,6 @@ constexpr int TypeNotFound = -1;
 constexpr int TypeRegular = 1;
 constexpr int TypeDirectory = 2;
 constexpr int TypeUnknown = 8;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "filesystem: %s\n", message);
-    std::abort();
-}
 
 std::string root;
 

@@ -1,5 +1,6 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceNKWebKit/libSceNKWebKit.hpp"
+#include "Testing.hpp"
 
 #include <cmath>
 #include <cstddef>
@@ -10,14 +11,6 @@
 #include <string_view>
 
 namespace {
-
-void Check(bool condition, int line) {
-    if (!condition) {
-        std::fprintf(stderr, "DiagnosticLoggingKeys test failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(cond) Check((cond), __LINE__)
 
 void RequireString(const NKWebKit::WtfAbi::String& str, std::string_view expected) {
     Require(str.impl != nullptr);

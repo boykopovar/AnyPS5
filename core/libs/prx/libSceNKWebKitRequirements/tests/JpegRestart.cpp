@@ -1,4 +1,5 @@
 #include "prx/libSceNKWebKitRequirements/libSceNKWebKitRequirements.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -27,10 +28,6 @@ struct Result {
     std::vector<unsigned char> pixels;
     int suspensions = 0;
 };
-
-void Require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 std::vector<unsigned char> Image(bool progressive, bool color) {
     jpeg_compress_struct info{};

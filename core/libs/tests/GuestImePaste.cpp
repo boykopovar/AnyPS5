@@ -1,6 +1,7 @@
 #include "prx/libSceIme/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libSceIme/include/ImeInput.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -41,12 +42,6 @@ int32_t APS5_VABI DigitsOnlyFilter(char16_t* outText, uint32_t* outTextLength, c
     }
     *outTextLength = length;
     return 0;
-}
-
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
 }
 
 struct Buffers {

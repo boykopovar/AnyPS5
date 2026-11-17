@@ -1,5 +1,6 @@
 #include "prx/libSceGnmDriver/include/Api.hpp"
 #include "prx/libSceGnmDriverForNeoMode/include/InitSequences.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -40,10 +41,6 @@ constexpr std::array<std::uint32_t, 118> BaseState{
     0xc0016900u, 0x2f8, 0, 0xc0016900u, 0x2de, 0x1e9,
     0xc0036900u, 0x295, 0x100, 0x100, 4, 0xc0017900u, 0x200, 0xe0000000u,
 };
-
-void Require(bool condition, const std::string& what) {
-    if (!condition) throw std::runtime_error("Gnm default state 200: " + what);
-}
 
 bool WholePackets(const std::uint32_t* words, std::size_t count) {
     std::size_t at = 0;

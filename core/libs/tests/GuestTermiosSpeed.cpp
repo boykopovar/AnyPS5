@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -18,13 +19,6 @@
 namespace {
 
 using SetSpeed = int (APS5_VABI*)(void*, std::uint32_t);
-
-void Require(bool value, const char* message) {
-    if (!value) {
-        std::fprintf(stderr, "cfsetspeed: %s\n", message);
-        std::abort();
-    }
-}
 
 std::uint32_t Read(const unsigned char* data) {
     std::uint32_t result;

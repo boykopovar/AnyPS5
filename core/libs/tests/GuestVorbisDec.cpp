@@ -1,6 +1,7 @@
 #include "prx/libSceVorbisDec/include/Api.hpp"
 #include "prx/libSceVorbisDec/include/GuestVorbisFile.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <vorbis/vorbisenc.h>
 #include <vorbis/vorbisfile.h>
@@ -30,13 +31,6 @@ constexpr long FirstSamples = 44100;
 constexpr long SecondSamples = 11025;
 constexpr std::int64_t DecodedBytes = (FirstSamples * FirstChannels + SecondSamples * SecondChannels) * 2;
 constexpr unsigned char Pattern = 0xA5;
-
-void Check(bool value, int line) {
-    if (value) return;
-    std::fprintf(stderr, "VorbisDec check failed at line %d\n", line);
-    std::abort();
-}
-#define Require(value) Check((value), __LINE__)
 
 template <typename TException, typename TCall>
 bool Throws(TCall call) {

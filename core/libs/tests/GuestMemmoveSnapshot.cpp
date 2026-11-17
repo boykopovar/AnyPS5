@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -8,13 +9,6 @@
 #include <cstring>
 #include <string>
 #include <vector>
-
-static void Require(bool condition) {
-    if (!condition) {
-        std::fputs("GuestMemmoveSnapshot check failed\n", stderr);
-        std::abort();
-    }
-}
 
 int main() {
     for (std::size_t length = 0; length <= 96; ++length) {

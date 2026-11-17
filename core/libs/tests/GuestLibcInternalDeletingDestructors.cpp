@@ -2,6 +2,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceLibcInternal/include/InventoryExports6.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdio>
@@ -15,12 +16,6 @@ namespace {
 
 unsigned releases = 0;
 void* lastReleased = nullptr;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "libc internal deleting destructors: %s\n", message);
-    std::abort();
-}
 
 void* APS5_VABI TestAllocate(std::size_t size) { return std::malloc(size); }
 void APS5_VABI TestFree(void* pointer) {

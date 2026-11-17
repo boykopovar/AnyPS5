@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "DepthFastClearHarness.hpp"
+#include "Testing.hpp"
 #include "VulkanTestDevice.hpp"
 #include <algorithm>
 #include <array>
@@ -24,10 +25,6 @@ using DepthFastClearHarness::Width;
 using ShaderRecompiler::ShaderStage;
 
 alignas(256) std::array<std::byte, Width * Height * 4> Pixels{};
-
-void Expect(bool condition, const std::string& what) {
-    if (!condition) throw std::runtime_error("last fragment outputs: " + what);
-}
 
 std::string Describe(const FragmentOutputLookups& before, const FragmentOutputLookups& after) {
     return std::to_string(after.last - before.last) + " from the last key, " + std::to_string(after.memo - before.memo) + " from the memo, " + std::to_string(after.validated - before.validated) + " validated";
@@ -65,7 +62,7 @@ std::uint32_t Draw(AgcDriver::VulkanDevice& device, const Shaders& compiled, VkC
 }
 
 void ExpectLookup(const FragmentOutputLookups& before, const FragmentOutputLookups& after, std::uint64_t last, std::uint64_t memo, std::uint64_t validated, const std::string& what) {
-    Expect(after.last - before.last == last && after.memo - before.memo == memo && after.validated - before.validated == validated, what + ": " + Describe(before, after));
+    Require(after.last - before.last == last && after.memo - before.memo == memo && after.validated - before.validated == validated, what + ": " + Describe(before, after));
 }
 
 }
@@ -78,27 +75,27 @@ int main() {
         const auto shaders = Compile(*device);
         device->WaitIdle();
         auto before = AgcDriver::Graphics::ThreadFragmentOutputLookups();
-        Expect(Draw(*device, shaders, VK_CULL_MODE_NONE) == Covered, "the first draw did not cover its target");
+        Require(Draw(*device, shaders, VK_CULL_MODE_NONE) == Covered, "the first draw did not cover its target");
         auto after = AgcDriver::Graphics::ThreadFragmentOutputLookups();
         ExpectLookup(before, after, 0, 0, 1, "the first draw of a key");
         before = after;
-        Expect(Draw(*device, shaders, VK_CULL_MODE_NONE) == Covered, "a repeated draw did not cover its target");
+        Require(Draw(*device, shaders, VK_CULL_MODE_NONE) == Covered, "a repeated draw did not cover its target");
         after = AgcDriver::Graphics::ThreadFragmentOutputLookups();
         ExpectLookup(before, after, remembers ? 1 : 0, remembers ? 0 : 1, 0, "a repeat of the thread's last key");
         before = after;
-        Expect(Draw(*device, shaders, VK_CULL_MODE_FRONT_AND_BACK) == 0, "a draw culling both faces wrote pixels");
+        Require(Draw(*device, shaders, VK_CULL_MODE_FRONT_AND_BACK) == 0, "a draw culling both faces wrote pixels");
         after = AgcDriver::Graphics::ThreadFragmentOutputLookups();
         ExpectLookup(before, after, 0, 0, 1, "a draw of another key");
         before = after;
-        Expect(Draw(*device, shaders, VK_CULL_MODE_NONE) == Covered, "the first key after another key did not cover its target");
+        Require(Draw(*device, shaders, VK_CULL_MODE_NONE) == Covered, "the first key after another key did not cover its target");
         after = AgcDriver::Graphics::ThreadFragmentOutputLookups();
         ExpectLookup(before, after, 0, 1, 0, "a key that is not the thread's last");
         before = after;
-        Expect(Draw(*device, shaders, VK_CULL_MODE_NONE) == Covered, "the key repeated after the memo served it did not cover its target");
+        Require(Draw(*device, shaders, VK_CULL_MODE_NONE) == Covered, "the key repeated after the memo served it did not cover its target");
         after = AgcDriver::Graphics::ThreadFragmentOutputLookups();
         ExpectLookup(before, after, remembers ? 1 : 0, remembers ? 0 : 1, 0, "a repeat of the key the memo served last");
         before = after;
-        Expect(Draw(*device, shaders, VK_CULL_MODE_FRONT_AND_BACK) == 0, "the other key repeated after a switch wrote pixels");
+        Require(Draw(*device, shaders, VK_CULL_MODE_FRONT_AND_BACK) == 0, "the other key repeated after a switch wrote pixels");
         after = AgcDriver::Graphics::ThreadFragmentOutputLookups();
         ExpectLookup(before, after, 0, 1, 0, "the other key after a switch back");
         std::printf("last fragment outputs tests passed (%s)\n", remembers ? "on" : "off");

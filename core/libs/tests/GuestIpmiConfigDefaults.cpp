@@ -1,4 +1,5 @@
 #include "prx/libSceIpmi/include/Api.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -15,12 +16,6 @@ struct Store {
     std::size_t size;
     std::uint64_t value;
 };
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "libSceIpmi config default: %s\n", message);
-    std::abort();
-}
 
 template <typename Construct>
 void ExpectWithFill(Construct construct, std::initializer_list<Store> stores, unsigned char fill, const char* name) {

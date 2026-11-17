@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl3/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -16,17 +17,6 @@
 
 static int Before;
 static int After;
-
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL X509 validity check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> static void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
-    try { action(); } catch (const std::exception&) { return; }
-    Require(false, location);
-}
 
 static void TestGetmNotBefore() {
     LibreSsl3X509Validity validity {};
@@ -115,9 +105,9 @@ static void TestGet0Signature() {
     Require(signature == &signatureBits);
     X509_get0_signature_nid_postfix(nullptr, nullptr, &certificate);
     X509_get0_signature_nid_postfix(nullptr, nullptr, nullptr);
-    RequireThrows([&] { X509_get0_signature_nid_postfix(&signature, &signatureAlgorithm, nullptr); });
-    RequireThrows([&] { X509_get0_signature_nid_postfix(&signature, nullptr, nullptr); });
-    RequireThrows([&] { X509_get0_signature_nid_postfix(nullptr, &signatureAlgorithm, nullptr); });
+    ExpectErr([&] { X509_get0_signature_nid_postfix(&signature, &signatureAlgorithm, nullptr); });
+    ExpectErr([&] { X509_get0_signature_nid_postfix(&signature, nullptr, nullptr); });
+    ExpectErr([&] { X509_get0_signature_nid_postfix(nullptr, &signatureAlgorithm, nullptr); });
 }
 
 class ReadOnlyPage {

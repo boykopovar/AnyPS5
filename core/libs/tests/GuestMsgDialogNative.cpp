@@ -4,6 +4,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <cerrno>
 #include <cstdint>
@@ -18,8 +19,6 @@ extern int SceMsgDialogNativeModuleLoaded_nid_no_patch;
 }
 
 namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
 
 void ClobberErrno(std::uintptr_t, std::size_t) {
     errno = 99;

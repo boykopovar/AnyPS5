@@ -1,9 +1,9 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdlib>
 #include <stdexcept>
 
-static void Require(bool value) { if (!value) std::abort(); }
 static bool Throws(int* mode, int* submode) {
     try { sceKernelGetOperationMode(mode, submode); } catch (const std::invalid_argument&) { return true; }
     return false;

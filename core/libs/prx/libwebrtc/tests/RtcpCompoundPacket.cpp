@@ -1,6 +1,7 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdint>
@@ -26,21 +27,6 @@ int APS5_VABI TestPosixAlign(void** pointer, std::size_t, std::size_t size) {
     ++allocations;
     *pointer = std::malloc(size);
     return *pointer ? 0 : 12;
-}
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc rtcp::CompoundPacket check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> void RequireInvalidArgument(TAction action, std::source_location location = std::source_location::current()) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, location);
 }
 
 using PacketReady = void (APS5_VABI*)(void* function, const std::uint8_t* data, std::size_t size);
@@ -178,8 +164,8 @@ void TestDeletingDestructorFreesTheObject() {
 }
 
 void TestNullArgumentsThrow() {
-    RequireInvalidArgument([] { _ZN6webrtc4rtcp14CompoundPacketC1Ev_nid_postfix(nullptr); });
-    RequireInvalidArgument([] { _ZN6webrtc4rtcp14CompoundPacketD1Ev_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZN6webrtc4rtcp14CompoundPacketC1Ev_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZN6webrtc4rtcp14CompoundPacketD1Ev_nid_postfix(nullptr); });
 }
 
 }

@@ -1,6 +1,7 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <climits>
@@ -28,21 +29,6 @@ int APS5_VABI TestPosixAlign(void** pointer, std::size_t, std::size_t size) {
     ++allocations;
     *pointer = std::malloc(size);
     return *pointer ? 0 : 12;
-}
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc LogMessage output check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> void RequireInvalidArgument(TAction action, std::source_location location = std::source_location::current()) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, location);
 }
 
 using Type = WebRtcLogArgType;
@@ -221,11 +207,11 @@ void WriteToStderr() {
 }
 
 void TestNullArgumentsThrow() {
-    RequireInvalidArgument([] { _ZN3rtc10LogMessageC1EPKciNS_15LoggingSeverityE_nid_postfix(nullptr, "f", 1, WebRtcLsInfo); });
-    RequireInvalidArgument([] { _ZN3rtc10LogMessageD1Ev_nid_postfix(nullptr); });
-    RequireInvalidArgument([] { _ZN3rtc10LogMessage6streamEv_nid_postfix(nullptr); });
-    RequireInvalidArgument([] { _ZN3rtc7LogSink12OnLogMessageERKNS_10LogLineRefE_nid_postfix(nullptr, nullptr); });
-    RequireInvalidArgument([] { _ZN3rtc19webrtc_logging_impl3LogEPKNS0_10LogArgTypeEz_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZN3rtc10LogMessageC1EPKciNS_15LoggingSeverityE_nid_postfix(nullptr, "f", 1, WebRtcLsInfo); });
+    ExpectErr<std::invalid_argument>([] { _ZN3rtc10LogMessageD1Ev_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZN3rtc10LogMessage6streamEv_nid_postfix(nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZN3rtc7LogSink12OnLogMessageERKNS_10LogLineRefE_nid_postfix(nullptr, nullptr); });
+    ExpectErr<std::invalid_argument>([] { _ZN3rtc19webrtc_logging_impl3LogEPKNS0_10LogArgTypeEz_nid_postfix(nullptr); });
 }
 
 }

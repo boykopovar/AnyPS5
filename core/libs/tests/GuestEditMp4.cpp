@@ -1,5 +1,6 @@
 #include "prx/libSceEditMp4/include/Api.hpp"
 #include "prx/libc/include/GuestArena.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -10,8 +11,6 @@
 namespace {
 
 void ClobberErrno(std::uintptr_t, std::size_t) { errno = 99; }
-
-void Require(bool value) { if (!value) std::abort(); }
 
 void VerifyParamFields(const std::uint8_t* data) {
     for (std::size_t index = 0; index < 0x10; ++index) Require(data[index] == 0);

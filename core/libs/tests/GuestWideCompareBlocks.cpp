@@ -1,4 +1,5 @@
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -12,13 +13,6 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #endif
-
-static void Require(bool condition) {
-    if (!condition) {
-        std::fputs("GuestWideCompareBlocks check failed\n", stderr);
-        std::abort();
-    }
-}
 
 class Page {
     unsigned char* allocation;

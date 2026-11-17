@@ -1,5 +1,6 @@
 #include "prx/libSceNpCppWebApi/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -15,8 +16,6 @@ using Copy = void (APS5_VABI*)(IntrusivePtr*, const IntrusivePtr*);
 using Assign = void (APS5_VABI*)(IntrusivePtr*, const IntrusivePtr*);
 using Destroy = void (APS5_VABI*)(IntrusivePtr*);
 using Access = void* (APS5_VABI*)(const IntrusivePtr*);
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static constexpr std::size_t ObjectSize = 0x40;
 static constexpr std::size_t VectorReferenceCountOffset = 0x30;

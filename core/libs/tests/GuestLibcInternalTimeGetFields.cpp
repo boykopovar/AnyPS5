@@ -5,6 +5,7 @@
 #include "prx/libc/include/GuestLocale.hpp"
 #include "prx/libc/include/GuestTime.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -72,12 +73,6 @@ void* APS5_VABI HeapRealign(void* pointer, std::size_t size, std::size_t) { retu
 int APS5_VABI HeapPosixAlign(void** pointer, std::size_t, std::size_t size) {
     *pointer = std::malloc(size);
     return *pointer != nullptr ? 0 : 12;
-}
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "libc internal time_get_fields: %s\n", message);
-    std::exit(1);
 }
 
 template<typename TCall>

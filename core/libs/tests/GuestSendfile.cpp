@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -9,7 +10,6 @@
 #include <thread>
 #include <vector>
 
-static void Require(bool value) { if (!value) std::abort(); }
 static bool Fails(int result, int error) { return result == -1 && *__error_nid_postfix() == error; }
 static std::string Receive(int descriptor, std::size_t length) {
     std::string data(length, 0);

@@ -1,11 +1,10 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <string>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 constexpr auto Failed = static_cast<std::size_t>(-1);
 constexpr auto Huge = std::size_t{1} << 63;

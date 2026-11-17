@@ -9,7 +9,6 @@
 
 namespace UresClose {
 
-using IcuRecoveredTest::Require;
 
 static_assert(std::is_same_v<decltype(&ures_close), void (APS5_VABI*)(UResourceBundle*)>);
 

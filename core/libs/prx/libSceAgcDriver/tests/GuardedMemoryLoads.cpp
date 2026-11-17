@@ -6,6 +6,7 @@
 #include "SpirvBackend/SpirvEmitter.hpp"
 #include "SpirvBackend/SpirvAnalysis.hpp"
 #include "PipelineSpecialization.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -24,10 +25,6 @@ constexpr std::uint32_t PoolDwords = 514u;
 constexpr std::uint32_t PoolHeader = 2u;
 
 using namespace ShaderRecompiler;
-
-void require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 struct LoadCase {
     ResourceKind kind;
@@ -119,10 +116,10 @@ class AccessTrace {
 public:
     AccessTrace(const std::vector<std::uint32_t>& module, std::uint32_t misalignment = 0)
         : words(module), misalignment(misalignment) {
-        require(words.size() >= 5, "SPIR-V module header is missing");
+        Require(words.size() >= 5, "SPIR-V module header is missing");
         for (std::size_t offset = 5; offset < words.size();) {
             const auto count = words[offset] >> 16;
-            require(count != 0 && count <= words.size() - offset, "SPIR-V instruction is truncated");
+            Require(count != 0 && count <= words.size() - offset, "SPIR-V instruction is truncated");
             const auto instruction = std::span(words).subspan(offset, count);
             const auto opcode = static_cast<spv::Op>(instruction[0] & 0xffff);
             bool result = false;
@@ -145,7 +142,7 @@ public:
             if (opcode == spv::OpFunction) entry = words[offset + 2] == entryFunction;
             if (entry && opcode == spv::OpLabel) { cursor = offset; break; }
         }
-        require(cursor != 0, "SPIR-V entry block is missing");
+        Require(cursor != 0, "SPIR-V entry block is missing");
         std::vector<std::uint32_t> reads;
         std::uint32_t previous = 0;
         std::uint32_t current = 0;
@@ -155,7 +152,7 @@ public:
             for (; scan < words.size() && (words[scan] & 0xffff) != spv::OpControlBarrier; scan += words[scan] >> 16) {
                 if ((words[scan] & 0xffff) == spv::OpLabel) current = words[scan + 1];
             }
-            require(scan < words.size(), "scratch pool slot acquisition has no workgroup barrier");
+            Require(scan < words.size(), "scratch pool slot acquisition has no workgroup barrier");
             cursor = scan + (words[scan] >> 16);
         }
         for (std::size_t steps = 0; steps < 4096; ++steps) {
@@ -167,15 +164,15 @@ public:
                 for (std::size_t index = 3; index + 1 < instruction.size(); index += 2) {
                     if (instruction[index + 1] == previous) { phiValues[instruction[2]] = instruction[index]; found = true; }
                 }
-                require(found, "SPIR-V phi has no incoming edge for the executed path");
+                Require(found, "SPIR-V phi has no incoming edge for the executed path");
             }
             if ((opcode == spv::OpLoad || opcode == spv::OpAtomicLoad) && isGuestPointer(instruction[3])) {
                 const auto pointer = definition(instruction[3]);
-                require((pointer[0] & 0xffff) == spv::OpAccessChain, "guest read is not an indexed access");
+                Require((pointer[0] & 0xffff) == spv::OpAccessChain, "guest read is not an indexed access");
                 reads.push_back(value(pointer.back()));
-                if (rootName(instruction[3]) == "scratch_dwords") require(pointerStorage(instruction[3]) == spv::StorageClassFunction, "scratch selection accessed non-private storage");
-                if (rootName(instruction[3]) == "scratch_pool") require(pointerStorage(instruction[3]) == spv::StorageClassStorageBuffer, "scratch pool accessed outside a storage buffer");
-                if (rootName(instruction[3]).starts_with("buffers")) require(opcode == spv::OpAtomicLoad ? instruction.size() == 6 : instruction.size() == 5 && (instruction[4] & spv::MemoryAccessVolatileMask), "coherent buffer read lost its volatile access");
+                if (rootName(instruction[3]) == "scratch_dwords") Require(pointerStorage(instruction[3]) == spv::StorageClassFunction, "scratch selection accessed non-private storage");
+                if (rootName(instruction[3]) == "scratch_pool") Require(pointerStorage(instruction[3]) == spv::StorageClassStorageBuffer, "scratch pool accessed outside a storage buffer");
+                if (rootName(instruction[3]).starts_with("buffers")) Require(opcode == spv::OpAtomicLoad ? instruction.size() == 6 : instruction.size() == 5 && (instruction[4] & spv::MemoryAccessVolatileMask), "coherent buffer read lost its volatile access");
             }
             if (opcode == spv::OpBranch || opcode == spv::OpBranchConditional) {
                 const auto destination = opcode == spv::OpBranch ? instruction[1] : instruction[value(instruction[1]) ? 2 : 3];
@@ -184,9 +181,9 @@ public:
                 continue;
             }
             if (opcode == spv::OpReturn) return reads;
-            require(opcode != spv::OpFunctionCall && opcode != spv::OpSwitch && opcode != spv::OpLoopMerge, "access fixture unexpectedly requires a call, switch or loop");
+            Require(opcode != spv::OpFunctionCall && opcode != spv::OpSwitch && opcode != spv::OpLoopMerge, "access fixture unexpectedly requires a call, switch or loop");
             cursor += instruction.size();
-            require(cursor < words.size(), "SPIR-V execution fell outside the function");
+            Require(cursor < words.size(), "SPIR-V execution fell outside the function");
         }
         throw std::runtime_error("SPIR-V access trace exceeded its bounded instruction budget");
     }
@@ -194,7 +191,7 @@ public:
 private:
     std::span<const std::uint32_t> definition(std::uint32_t id) const {
         const auto found = definitions.find(id);
-        require(found != definitions.end(), "SPIR-V access condition refers to an undefined value");
+        Require(found != definitions.end(), "SPIR-V access condition refers to an undefined value");
         return found->second;
     }
 
@@ -208,7 +205,7 @@ private:
     std::uint32_t pointerStorage(std::uint32_t id) const {
         const auto instruction = definition(id);
         if ((instruction[0] & 0xffff) == spv::OpAccessChain) return pointerStorage(instruction[3]);
-        require((instruction[0] & 0xffff) == spv::OpVariable, "access pointer has no variable root");
+        Require((instruction[0] & 0xffff) == spv::OpVariable, "access pointer has no variable root");
         return instruction[3];
     }
 
@@ -240,16 +237,16 @@ private:
         case spv::OpISub: return argument(3) - argument(4);
         case spv::OpIMul: return argument(3) * argument(4);
         case spv::OpShiftLeftLogical:
-            require(argument(4) < 32, "undefined shift in access condition");
+            Require(argument(4) < 32, "undefined shift in access condition");
             return argument(3) << argument(4);
         case spv::OpShiftRightLogical:
-            require(argument(4) < 32, "undefined shift in access condition");
+            Require(argument(4) < 32, "undefined shift in access condition");
             return argument(3) >> argument(4);
         case spv::OpBitwiseAnd: return argument(3) & argument(4);
         case spv::OpBitwiseOr: return argument(3) | argument(4);
         case spv::OpBitFieldUExtract: {
             const auto count = argument(5);
-            require(count <= 32 && argument(4) <= 32 - count, "invalid bitfield in access condition");
+            Require(count <= 32 && argument(4) <= 32 - count, "invalid bitfield in access condition");
             return (argument(3) >> argument(4)) & (count == 32 ? 0xffffffffu : (1u << count) - 1);
         }
         case spv::OpIEqual: return argument(3) == argument(4);
@@ -261,13 +258,13 @@ private:
         case spv::OpLogicalOr: return argument(3) || argument(4);
         case spv::OpLogicalNot: return !argument(3);
         case spv::OpArrayLength:
-            require(isGuestPointer(instruction[3]), "unknown array length in access fixture");
+            Require(isGuestPointer(instruction[3]), "unknown array length in access fixture");
             return rootName(instruction[3]) == "scratch_pool" ? PoolDwords : 16;
         case spv::OpUDiv: return argument(3) / argument(4);
         case spv::OpAtomicIDecrement: return 0;
         case spv::OpLoad:
-            require(!isGuestPointer(instruction[3]), "guest data unexpectedly controls a fixture access");
-            require(rootName(instruction[3]) == "vsharp" || rootName(instruction[3]) == "scratch_pool_slot" || rootName(instruction[3]) == "gl_LocalInvocationIndex" || rootName(instruction[3]).find("subgroup") != std::string::npos, "unknown input to access condition");
+            Require(!isGuestPointer(instruction[3]), "guest data unexpectedly controls a fixture access");
+            Require(rootName(instruction[3]) == "vsharp" || rootName(instruction[3]) == "scratch_pool_slot" || rootName(instruction[3]) == "gl_LocalInvocationIndex" || rootName(instruction[3]).find("subgroup") != std::string::npos, "unknown input to access condition");
             return 0;
         default: throw std::runtime_error("unsupported opcode in access condition: " + std::to_string(opcode));
         }
@@ -297,10 +294,10 @@ std::uint32_t ldsLength(const std::vector<std::uint32_t>& words) {
         spv::HasResultAndType(opcode, &result, &type);
         if (result) definitions.emplace(instruction[type ? 2 : 1], instruction);
     }
-    require(variable != 0, "LDS array is missing");
+    Require(variable != 0, "LDS array is missing");
     const auto pointer = definitions.at(definitions.at(variable)[1]);
     const auto array = definitions.at(pointer[3]);
-    require((array[0] & 0xffff) == spv::OpTypeArray, "LDS variable is not an array");
+    Require((array[0] & 0xffff) == spv::OpTypeArray, "LDS variable is not an array");
     return definitions.at(array[3])[3];
 }
 
@@ -318,7 +315,7 @@ void expectReads(const LoadCase& test, bool robust, bool active, std::uint32_t o
 
 void ldsLoads(IrOpcode opcode, IrType type, std::uint32_t bits, std::uint32_t components) {
     const LoadCase test{ResourceKind::Lds, opcode, type, bits, components};
-    require(ldsLength(emitLoad(test, true, 8, 64, false)) == 16u, "LDS array declares more than the program's dwords");
+    Require(ldsLength(emitLoad(test, true, 8, 64, false)) == 16u, "LDS array declares more than the program's dwords");
     for (const bool robust : {false, true}) {
         expectReads(test, robust, false, 8, {});
         expectReads(test, robust, true, 84, {});
@@ -406,9 +403,9 @@ int main() {
                 }
             }
         }
-        require(compared == 2u * 9u * 3u * 4u * 2u, "exact robust loads: the comparison grid shrank");
+        Require(compared == 2u * 9u * 3u * 4u * 2u, "exact robust loads: the comparison grid shrank");
         const auto plain = emitLoad(test, true, 8, 64, false, true);
-        require(AccessTrace(plain, 0).Run() == std::vector<std::uint32_t>({2}), "exact request without robustBufferAccess2 changed the plain variant");
+        Require(AccessTrace(plain, 0).Run() == std::vector<std::uint32_t>({2}), "exact request without robustBufferAccess2 changed the plain variant");
     });
     run("read-only pixel robust buffer result", [] {
         const auto selections = [](const std::vector<std::uint32_t>& module) {
@@ -422,10 +419,10 @@ int main() {
                 const auto readOnly = selections(emitLoad(test, true, 8, 64, robust, exact));
                 test.written = true;
                 const auto writing = selections(emitLoad(test, true, 8, 64, robust, exact));
-                require(writing == readOnly + (robust && !exact ? 1u : 0u), "only read-only robust pixel loads may omit the result selection");
+                Require(writing == readOnly + (robust && !exact ? 1u : 0u), "only read-only robust pixel loads may omit the result selection");
                 test.written = false;
                 test.coherent = true;
-                require(selections(emitLoad(test, true, 8, 64, robust, exact)) == readOnly, "coherent loads must retain the upstream volatile result folding");
+                Require(selections(emitLoad(test, true, 8, 64, robust, exact)) == readOnly, "coherent loads must retain the upstream volatile result folding");
                 test.coherent = false;
             }
         }
@@ -433,15 +430,15 @@ int main() {
     run("storage writers keep guarded results", [] {
         IrProgram program;
         program.Resources().stage = IrShaderStage::Pixel;
-        require(AnalyzeProgramRequirements(program).readOnlyStorage, "read-only pixel program lost its storage proof");
+        Require(AnalyzeProgramRequirements(program).readOnlyStorage, "read-only pixel program lost its storage proof");
         program.Resources().stage = IrShaderStage::Compute;
-        require(!AnalyzeProgramRequirements(program).readOnlyStorage, "compute entry bookkeeping must keep result guards");
+        Require(!AnalyzeProgramRequirements(program).readOnlyStorage, "compute entry bookkeeping must keep result guards");
         program.Resources().stage = IrShaderStage::Pixel;
         program.Info().usesFaultBuffer = true;
-        require(!AnalyzeProgramRequirements(program).readOnlyStorage, "fault-buffer writes must keep result guards");
+        Require(!AnalyzeProgramRequirements(program).readOnlyStorage, "fault-buffer writes must keep result guards");
         program.Info().usesFaultBuffer = false;
         program.Info().runtimeImageModes.emplace_back().emplace_back().targetMerge = true;
-        require(!AnalyzeProgramRequirements(program).readOnlyStorage, "runtime target merge writes must keep result guards");
+        Require(!AnalyzeProgramRequirements(program).readOnlyStorage, "runtime target merge writes must keep result guards");
         program.Info().runtimeImageModes.clear();
         auto& block = program.CreateBlock();
         program.BlockOrder().push_back(&block);
@@ -454,7 +451,7 @@ int main() {
         load.AddArgument(&address);
         load.AddArgument(&active);
         block.AppendInstruction(&load);
-        require(!AnalyzeProgramRequirements(program).readOnlyStorage, "read-only LDS may allocate storage and must keep result guards");
+        Require(!AnalyzeProgramRequirements(program).readOnlyStorage, "read-only LDS may allocate storage and must keep result guards");
     });
     run("volatile robust buffer omits repeated zero selection", [] {
         const LoadCase test{ResourceKind::Buffer, IrOpcode::LoadBufferU32, IrType::U32};
@@ -471,7 +468,7 @@ int main() {
                 plainTest.coherent = false;
                 const auto plain = emitLoad(plainTest, true, 8, 64, robust, exact);
                 const auto coherent = emitLoad(test, true, 8, 64, robust, exact);
-                require(selections(plain) == selections(coherent) + (robust && !exact ? 1u : 0u), "only volatile guarded robust loads may omit the repeated zero selection");
+                Require(selections(plain) == selections(coherent) + (robust && !exact ? 1u : 0u), "only volatile guarded robust loads may omit the repeated zero selection");
             }
         }
     });

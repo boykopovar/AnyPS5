@@ -3,6 +3,7 @@
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -21,8 +22,6 @@ static constexpr std::int64_t NANOS_PER_MILLISECOND = 1000000LL;
 static constexpr std::int64_t BURN_NANOS = 200 * NANOS_PER_MILLISECOND;
 static constexpr std::int64_t TICK_MARGIN_NANOS = 50 * NANOS_PER_MILLISECOND;
 static constexpr std::int64_t GIVE_UP_NANOS = 10 * NANOS_PER_SECOND;
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static std::int64_t Nanos(int clockId) {
     KernelTimespec time{-1, -1};

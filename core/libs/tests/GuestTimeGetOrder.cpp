@@ -1,4 +1,5 @@
 #include "prx/libSceLibcInternal/include/TimeGetOrder.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <bit>
 #include <cerrno>
@@ -26,12 +27,6 @@ using Query = std::int32_t (APS5_VABI*)(const void*);
 
 static_assert(std::is_same_v<decltype(&_ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE13do_date_orderEv_nid_postfix), Query>);
 static_assert(std::is_same_v<decltype(&_ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE13do_date_orderEv_nid_postfix), Query>);
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "time get order: %s\n", message);
-    std::abort();
-}
 
 template<typename TFunction>
 void RequireInvalid(TFunction query, const void* facet) {

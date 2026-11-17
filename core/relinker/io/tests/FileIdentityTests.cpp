@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include <io/FileIdentity.hpp>
 #include <chrono>
 #include <filesystem>
@@ -8,13 +9,9 @@
 
 namespace {
 
-void require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
-
 void write(const std::filesystem::path& path, const std::string& text) {
     std::ofstream(path, std::ios::binary) << text;
-    require(std::filesystem::is_regular_file(path), "Cannot create " + path.string());
+    Require(std::filesystem::is_regular_file(path), "Cannot create " + path.string());
 }
 
 void requireMissing(
@@ -25,8 +22,8 @@ void requireMissing(
     try {
         Io::SameFile(first, second);
     } catch (const std::filesystem::filesystem_error& error) {
-        require(error.code() == std::errc::no_such_file_or_directory, "SameFile reported the wrong error for a missing path");
-        require(error.path1() == missing, "SameFile reported the wrong missing path");
+        Require(error.code() == std::errc::no_such_file_or_directory, "SameFile reported the wrong error for a missing path");
+        Require(error.path1() == missing, "SameFile reported the wrong missing path");
         return;
     }
     throw std::runtime_error("SameFile accepted a missing file");
@@ -41,12 +38,12 @@ void run(const std::filesystem::path& directory) {
     write(copy, "same");
     std::filesystem::create_hard_link(first, link);
     std::filesystem::create_directory(folder);
-    require(Io::SameFile(first, first), "A file differs from itself");
-    require(Io::SameFile(first, folder / ".." / "first.bin"), "Two spellings of one file differ");
-    require(Io::SameFile(first, link), "A hard link differs from its target");
-    require(!Io::SameFile(first, copy), "A copy with the same contents is the same file");
-    require(Io::SameFile(folder, directory / "folder" / "."), "Two spellings of one directory differ");
-    require(!Io::SameFile(first, folder), "A file is the same as a directory");
+    Require(Io::SameFile(first, first), "A file differs from itself");
+    Require(Io::SameFile(first, folder / ".." / "first.bin"), "Two spellings of one file differ");
+    Require(Io::SameFile(first, link), "A hard link differs from its target");
+    Require(!Io::SameFile(first, copy), "A copy with the same contents is the same file");
+    Require(Io::SameFile(folder, directory / "folder" / "."), "Two spellings of one directory differ");
+    Require(!Io::SameFile(first, folder), "A file is the same as a directory");
     const auto missing = directory / "missing.bin";
     requireMissing(missing, first, missing);
     requireMissing(first, missing, missing);

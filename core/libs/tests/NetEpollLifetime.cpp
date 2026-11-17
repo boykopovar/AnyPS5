@@ -9,6 +9,7 @@ static int InterceptPoll(pollfd* descriptors, nfds_t count, int timeout);
 #define poll InterceptPoll
 #endif
 #include "../prx/libSceNet/Export.cpp"
+#include "Testing.hpp"
 #ifdef _WIN32
 #undef WSAPoll
 #else
@@ -16,12 +17,6 @@ static int InterceptPoll(pollfd* descriptors, nfds_t count, int timeout);
 #endif
 #include <future>
 #include <source_location>
-
-static void Require(bool value, const std::source_location location = std::source_location::current()) {
-    if (value) return;
-    std::fprintf(stderr, "requirement failed at %s:%u\n", location.file_name(), location.line());
-    std::abort();
-}
 
 struct PollGate {
     std::promise<void> arrived;

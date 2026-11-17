@@ -1,15 +1,10 @@
 #include "prx/libSceOpusDec/include/Api.hpp"
 #include "prx/libSceOpusDec/include/InventoryExports.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <initializer_list>
-
-static void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
 
 constexpr int Base = static_cast<int>(0x81740000u);
 

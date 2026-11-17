@@ -1,19 +1,12 @@
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libkernel/include/Api.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
-
-static void Require(bool condition, int line) {
-    if (!condition) {
-        std::fprintf(stderr, "Posix spawn optional PID check failed at line %d\n", line);
-        std::exit(EXIT_FAILURE);
-    }
-}
-#define Check(value) Require((value), __LINE__)
 
 int main(int count, char** arguments) {
 #ifdef _WIN32
@@ -26,7 +19,7 @@ int main(int count, char** arguments) {
     {
         std::ofstream image("app0/eboot.bin");
         image << "image";
-        Check(image.good());
+        Require(image.good());
     }
     char program[] = "/app0/eboot.bin";
     char role[] = "spawn-optional-pid-child";
@@ -35,13 +28,13 @@ int main(int count, char** arguments) {
     for (std::size_t index = 0; index < spawnFunctions.size(); ++index) {
         const auto spawn = spawnFunctions[index];
         std::fprintf(stderr, "Spawn wrapper %zu: testing a null PID output\n", index);
-        Check(spawn(nullptr, program, nullptr, nullptr, childArguments, nullptr) == 0);
+        Require(spawn(nullptr, program, nullptr, nullptr, childArguments, nullptr) == 0);
         int status = -1;
-        Check(waitpid_nid_postfix(-1, &status, 0) > 0);
-        Check((status & 0x7f) == 0 && ((status >> 8) & 0xff) == 43);
-        Check(spawn(nullptr, "/app0/missing.bin", nullptr, nullptr, childArguments, nullptr) == 2);
-        Check(spawn(nullptr, program, nullptr, nullptr, nullptr, nullptr) == 14);
+        Require(waitpid_nid_postfix(-1, &status, 0) > 0);
+        Require((status & 0x7f) == 0 && ((status >> 8) & 0xff) == 43);
+        Require(spawn(nullptr, "/app0/missing.bin", nullptr, nullptr, childArguments, nullptr) == 2);
+        Require(spawn(nullptr, program, nullptr, nullptr, nullptr, nullptr) == 14);
     }
-    Check(std::filesystem::remove("app0/eboot.bin"));
-    Check(std::filesystem::remove("app0"));
+    Require(std::filesystem::remove("app0/eboot.bin"));
+    Require(std::filesystem::remove("app0"));
 }

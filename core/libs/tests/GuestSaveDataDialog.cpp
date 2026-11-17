@@ -3,6 +3,7 @@
 #include "prx/libSceSaveDataDialog.native/SaveDataDialog.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <cerrno>
 #include <cstddef>
@@ -29,13 +30,6 @@ static void ClobberErrnoAndCountResultWrites(std::uintptr_t address, std::size_t
     errno = 99;
     if (g_trackedResultStart != 0 && address < g_trackedResultEnd && address + size > g_trackedResultStart) {
         ++g_trackedResultWrites;
-    }
-}
-
-static void Require(bool value, const char* message) {
-    if (!value) {
-        std::fprintf(stderr, "%s\n", message);
-        std::abort();
     }
 }
 

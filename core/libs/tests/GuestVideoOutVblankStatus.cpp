@@ -3,6 +3,7 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/Shutdown.hpp"
 #include "tests/VideoOutTestEnvironment.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -11,10 +12,6 @@
 
 static constexpr int SYSTEM_USER = 255;
 static constexpr int MAIN_BUS = 0;
-
-static void Require(bool value, const char* message) {
-    if (!value) throw std::runtime_error(message);
-}
 
 int main() {
     VideoOutTestEnvironment environment;

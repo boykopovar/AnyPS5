@@ -1,4 +1,5 @@
 #include "prx/libSceIcu/libSceIcu.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <bit>
 #include <cmath>
@@ -13,12 +14,6 @@ namespace {
 constexpr std::uint64_t NaNBits = 0x7ff8000000000000;
 constexpr std::uint64_t InfinityBits = 0x7ff0000000000000;
 constexpr std::uint64_t NegativeZeroBits = 0x8000000000000000;
-
-void Require(bool condition, const char* message) {
-    if (condition) return;
-    std::fprintf(stderr, "ICU numeric: %s\n", message);
-    std::abort();
-}
 
 double FromBits(std::uint64_t bits) {
     return std::bit_cast<double>(bits);

@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
@@ -77,17 +78,6 @@ constexpr const char* Pkcs1Type1 = "a19dcacb77ded7f5ba0b8dc0d327c85904816811241a
 constexpr const char* Pkcs1SevenPad = "a16e851c07aa9716955ac0c566fb54aad48b208ff764e93545b168bc4eaaf778c812b36e080a1bac203e1390bd663fad05b48c1c08338127bc3276099a7b1c12";
 constexpr const char* OaepLabel = "9350dfbadf3a36cd8a41bf9934dd863b8a6383c13750045101c1317b4cff27c3bee88accb726300a9c9944befb1d8c44343ddd83762fddc896ad196090a9b2df";
 constexpr const char* Sslv23Rollback = "bb4a9c484080f29f82217013924fd5258244489d21d6c44584c6dbcad3b977cb5b9d748d5e7571802383146f4faf273fe545680290866708cf9cd47222b6cbe2";
-
-static void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "LibreSSL RSA private check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> static void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
-    try { action(); } catch (const std::exception&) { return; }
-    Require(false, location);
-}
 
 static void InitializeHeap() {
     void* const api[10] {};
@@ -178,8 +168,8 @@ static void TestPrivateEncrypt() {
     for (auto [length, padding] : refused) Require(Encrypt(key, length, message, out, padding) == -1 && Written(out, {}));
     for (int length : {63, 65, 0, -1}) Require(Encrypt(key, length, block, out, PaddingNone) == -1 && Written(out, {}));
     Require(Encrypt(key, 64, Hex(KeyFields[0]), out, PaddingNone) == -1 && Written(out, {}));
-    RequireThrows([&] { Encrypt(key, -1, message, out, PaddingPkcs1); });
-    RequireThrows([&] { Encrypt(key, -1, message, out, PaddingX931); });
+    ExpectErr([&] { Encrypt(key, -1, message, out, PaddingPkcs1); });
+    ExpectErr([&] { Encrypt(key, -1, message, out, PaddingX931); });
 }
 
 static void TestKeyShapes() {
@@ -245,7 +235,7 @@ static void TestSign() {
         {DigestSha512, Pattern(64, 30)}, {DigestSha256, Pattern(35, 31)}};
     for (const auto& [type, digest] : refused) Require(Sign(key, type, digest, signature, length) == 0 && length == UntouchedLength && Written(signature, {}));
     const auto digest = Pattern(32, 30);
-    RequireThrows([&] { RSA_sign_nid_postfix(DigestSha256, digest.data(), 0x80000000u, signature.data(), &length, key.rsa); });
+    ExpectErr([&] { RSA_sign_nid_postfix(DigestSha256, digest.data(), 0x80000000u, signature.data(), &length, key.rsa); });
 }
 
 static void TestSignAddedObject() {
@@ -337,18 +327,18 @@ static void TestDispatch() {
     method = *defaultMethod;
     method.operations[2] = nullptr;
     method.operations[3] = nullptr;
-    RequireThrows([&] { Encrypt(key, 20, digest, out, PaddingPkcs1); });
-    RequireThrows([&] { Decrypt(key, Pkcs1Empty, out, PaddingPkcs1); });
-    RequireThrows([&] { RSA_sign_nid_postfix(DigestSha256, digest.data(), 32, out.data(), &length, key.rsa); });
+    ExpectErr([&] { Encrypt(key, 20, digest, out, PaddingPkcs1); });
+    ExpectErr([&] { Decrypt(key, Pkcs1Empty, out, PaddingPkcs1); });
+    ExpectErr([&] { RSA_sign_nid_postfix(DigestSha256, digest.data(), 32, out.data(), &length, key.rsa); });
     key.rsa->meth = nullptr;
-    RequireThrows([&] { Encrypt(key, 20, digest, out, PaddingPkcs1); });
-    RequireThrows([&] { RSA_sign_nid_postfix(DigestSha256, digest.data(), 32, out.data(), &length, key.rsa); });
+    ExpectErr([&] { Encrypt(key, 20, digest, out, PaddingPkcs1); });
+    ExpectErr([&] { RSA_sign_nid_postfix(DigestSha256, digest.data(), 32, out.data(), &length, key.rsa); });
     key.rsa->meth = defaultMethod;
-    RequireThrows([&] { RSA_private_encrypt_nid_postfix(20, digest.data(), out.data(), nullptr, PaddingPkcs1); });
-    RequireThrows([&] { RSA_private_decrypt_nid_postfix(64, Hex(Pkcs1Empty).data(), out.data(), nullptr, PaddingPkcs1); });
-    RequireThrows([&] { RSA_sign_nid_postfix(DigestSha256, digest.data(), 32, out.data(), &length, nullptr); });
+    ExpectErr([&] { RSA_private_encrypt_nid_postfix(20, digest.data(), out.data(), nullptr, PaddingPkcs1); });
+    ExpectErr([&] { RSA_private_decrypt_nid_postfix(64, Hex(Pkcs1Empty).data(), out.data(), nullptr, PaddingPkcs1); });
+    ExpectErr([&] { RSA_sign_nid_postfix(DigestSha256, digest.data(), 32, out.data(), &length, nullptr); });
     key.numbers[0].number.top = 9;
-    RequireThrows([&] { Encrypt(key, 20, digest, out, PaddingPkcs1); });
+    ExpectErr([&] { Encrypt(key, 20, digest, out, PaddingPkcs1); });
     key.numbers[0].number.top = 8;
 }
 

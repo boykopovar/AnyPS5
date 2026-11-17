@@ -4,6 +4,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/TextureTiling.hpp"
 #include "Recompiler.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -19,10 +20,6 @@ namespace {
 
 using Range = std::pair<std::uint64_t, std::uint64_t>;
 using Ranges = std::vector<Range>;
-
-void Require(bool condition, const std::string& what) {
-    if (!condition) throw std::runtime_error("draw write ranges: " + what);
-}
 
 bool Contains(const Ranges& ranges, std::uint64_t begin, std::uint64_t end) {
     return std::any_of(ranges.begin(), ranges.end(), [&](const Range& range) { return range.first <= begin && end <= range.second; });

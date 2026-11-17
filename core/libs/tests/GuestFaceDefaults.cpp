@@ -1,6 +1,7 @@
 #include "prx/libSceFace/include/Api.hpp"
 #include "prx/libSceFaceTracker/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -8,12 +9,6 @@
 #include <cstring>
 
 namespace {
-
-void Require(bool value, const char* message) {
-    if (value) return;
-    std::fprintf(stderr, "%s\n", message);
-    std::abort();
-}
 
 constexpr int kFaceErrorParameter = static_cast<int>(0x808b0002u);
 constexpr int kTrackerErrorInvalid = static_cast<int>(0x812a0001u);

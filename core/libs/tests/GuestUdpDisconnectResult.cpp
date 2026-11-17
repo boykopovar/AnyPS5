@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libkernel/Socket/include/SocketRuntime.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 #include <sys/socket.h>
 #include <sys/syscall.h>
 #include <unistd.h>
@@ -35,8 +36,6 @@ extern "C" int getpeername(int descriptor, sockaddr* address, socklen_t* size) {
     }
     return static_cast<int>(::syscall(SYS_getpeername, descriptor, address, size));
 }
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 static void CheckResult(int family, int binding, int error, NativeResult result, bool portZero) {
     const std::uint32_t addressSize = family == 2 ? 16 : 28;

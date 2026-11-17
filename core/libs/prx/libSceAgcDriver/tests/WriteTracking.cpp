@@ -2,6 +2,7 @@
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestWriteWatch.hpp"
+#include "Testing.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -54,9 +55,6 @@ constexpr wchar_t FreshViewMode[] = L"--fresh-view";
 constexpr wchar_t OwnStoreImagesMode[] = L"--own-store-images";
 #endif
 
-void Require(bool condition, const std::string& message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 #ifdef _WIN32
 bool CheckMetadataCommit() {

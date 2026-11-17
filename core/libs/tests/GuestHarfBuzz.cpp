@@ -1,16 +1,10 @@
 #include "prx/libharfbuzz/include/InventoryExports.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 
 namespace {
-
-void Require(bool condition, const char* message) {
-    if (!condition) {
-        std::fprintf(stderr, "check failed: %s\n", message);
-        std::abort();
-    }
-}
 
 constexpr std::uint32_t Tag(char a, char b, char c, char d) {
     return (static_cast<std::uint32_t>(static_cast<std::uint8_t>(a)) << 24) |

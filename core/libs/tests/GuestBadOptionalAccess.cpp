@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
@@ -51,8 +52,6 @@ extern void* const _ZTVN10__cxxabiv120__si_class_type_infoE_nid_postfix[];
 extern void* const _ZTVN10__cxxabiv119__pointer_type_infoE_nid_postfix[];
 extern void* const _ZTVN10__cxxabiv117__pbase_type_infoE_nid_postfix[];
 }
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 #ifdef __APPLE__
 static const std::type_info* expectedType = nullptr;

@@ -1,5 +1,6 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstdint>
@@ -20,9 +21,6 @@
 #endif
 using Comparator = int (APS5_VABI *)(const void*, const void*);
 
-static void Require(bool value, std::source_location location = std::source_location::current()) {
-    if (!value) { std::fprintf(stderr, "Guest search failed at line %u\n", location.line()); std::abort(); }
-}
 struct Record { int key; char payload[13]; };
 static int calls = 0;
 static int APS5_VABI Compare(const void* key, const void* record) {

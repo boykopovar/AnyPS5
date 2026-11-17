@@ -1,15 +1,10 @@
 #include "prx/libc/include/Api.hpp"
+#include "Testing.hpp"
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
-
-static void Require(bool condition) {
-    if (condition) return;
-    std::fprintf(stderr, "count ones mismatch\n");
-    std::abort();
-}
 
 static std::uint32_t Reference(std::uint64_t value) {
     std::uint32_t result = 0;

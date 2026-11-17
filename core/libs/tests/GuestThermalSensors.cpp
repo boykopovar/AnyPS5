@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
+#include "Testing.hpp"
 #include <algorithm>
 #include <climits>
 #include <cstddef>
@@ -21,13 +22,6 @@ extern "C" {
 void ReadThermalSensors_nid_no_patch(const char* root, int celsius[3]);
 bool StorageDescriptorAllowsTemperatureQuery_nid_no_patch(const void* descriptor, std::size_t bytes);
 
-}
-
-static void Require(bool value) {
-    if (!value) {
-        std::fprintf(stderr, "thermal sensors check failed\n");
-        std::abort();
-    }
 }
 
 int main() {

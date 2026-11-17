@@ -1,5 +1,6 @@
 #include "prx/libSceHttp/include/Http.hpp"
 #include "ProcessParametersFixture.hpp"
+#include "Testing.hpp"
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -12,14 +13,6 @@ namespace {
 
 constexpr int invalidValue = static_cast<int>(0x804311FE);
 constexpr int savedErrno = 71;
-
-void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "HTTP guest pointer check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 #define RequireErrno(call, expected)       \
     do {                                    \

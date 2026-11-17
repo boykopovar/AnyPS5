@@ -1,5 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "Testing.hpp"
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -15,7 +16,6 @@ static constexpr int SigUsr1 = 30;
 static constexpr int Rounds = 10;
 static constexpr std::size_t RipOffset = 0xe0;
 static constexpr std::size_t ConvertedBytes = 64u << 20u;
-static void Require(bool value) { if (!value) std::abort(); }
 
 static std::uintptr_t imageBegin = 0;
 static std::uintptr_t imageEnd = 0;

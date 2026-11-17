@@ -2,14 +2,13 @@
 #include "prx/libSceNet/include/Net.hpp"
 #include "prx/libSceHttp2/include/Http2.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-
-static void Require(bool value) { if (!value) std::abort(); }
 
 template <typename TStats>
 static void CheckRejected(int (APS5_VABI *call)(int, TStats*), int id, int expected) {

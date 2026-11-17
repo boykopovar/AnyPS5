@@ -1,3 +1,4 @@
+#include "Testing.hpp"
 #include "TestProgress.hpp"
 #include <relinker/pipeline/Conversion.hpp>
 #include <relinker/guest/GuestImage.hpp>
@@ -16,10 +17,6 @@
 #include <vector>
 
 namespace {
-
-void require(bool condition, const char* message) {
-    if (!condition) throw std::runtime_error(message);
-}
 
 template<typename TAction>
 void reject(TAction action) {
@@ -95,24 +92,24 @@ void convert() {
         auto source = input();
         source.Modules.push_back({"virtual/title/sce_module/plugin.prx", fixture()});
         const auto output = converter.Convert(std::move(source), options);
-        require(output.Executable.size() > 64, "No executable returned");
-        require(output.Executable.front() == (target == Relinker::TargetSystem::Windows ? 'M' : 0x7f), "Wrong target format");
-        require(output.Modules.size() == 1, "Module was not converted");
-        require(output.Modules.front().Path.generic_string() == "virtual/output/app0/sce_module/plugin.prx.guest.prx", "Wrong module layout");
-        require(output.Modules.front().Bytes.front() == output.Executable.front(), "Wrong module format");
-        require(progress.Events.back().Stage == Domain::ProgressStage::Executable && progress.Events.back().Completed == 1, "Conversion did not finish");
-        for (const auto& event : progress.Events) require(event.Completed <= event.Total, "Invalid counters");
+        Require(output.Executable.size() > 64, "No executable returned");
+        Require(output.Executable.front() == (target == Relinker::TargetSystem::Windows ? 'M' : 0x7f), "Wrong target format");
+        Require(output.Modules.size() == 1, "Module was not converted");
+        Require(output.Modules.front().Path.generic_string() == "virtual/output/app0/sce_module/plugin.prx.guest.prx", "Wrong module layout");
+        Require(output.Modules.front().Bytes.front() == output.Executable.front(), "Wrong module format");
+        Require(progress.Events.back().Stage == Domain::ProgressStage::Executable && progress.Events.back().Completed == 1, "Conversion did not finish");
+        for (const auto& event : progress.Events) Require(event.Completed <= event.Total, "Invalid counters");
         if (target == Relinker::TargetSystem::Windows) {
             std::uint64_t previous = 0;
             bool intermediate = false;
             for (const auto& event : progress.Events) {
                 if (event.Stage != Domain::ProgressStage::Image) continue;
-                require(event.Input == "virtual/title/custom-name.bin", "Lost image input identity");
-                require(event.Total == 10000 && event.Completed >= previous, "Image progress moved backwards");
+                Require(event.Input == "virtual/title/custom-name.bin", "Lost image input identity");
+                Require(event.Total == 10000 && event.Completed >= previous, "Image progress moved backwards");
                 intermediate |= event.Completed > 0 && event.Completed < event.Total;
                 previous = event.Completed;
             }
-            require(intermediate && previous == 10000, "Missing image progress");
+            Require(intermediate && previous == 10000, "Missing image progress");
         }
         progress.Events.clear();
     }
@@ -131,7 +128,7 @@ void convert() {
     source = input();
     source.Executable = {};
     reject([&] { converter.Convert(source, {}); });
-    require(progress.Events.back().Completed != 1 || progress.Events.back().Stage != Domain::ProgressStage::Executable, "Failed conversion reported completion");
+    Require(progress.Events.back().Completed != 1 || progress.Events.back().Stage != Domain::ProgressStage::Executable, "Failed conversion reported completion");
 }
 
 void backupCopies() {
@@ -143,16 +140,16 @@ void backupCopies() {
         for (const auto* name : {"libSceFace.prx", "libSceFace.prx.esbak", "libSceFace.prxbak"})
             source.Modules.push_back({std::filesystem::path("virtual/title/sce_module") / name, fixture({}, "libSceFace.prx")});
         const auto output = Relinker::Conversion(progress).Convert(std::move(source), options);
-        require(output.Modules.size() == 1 && output.Modules.front().Path.generic_string() == "virtual/output/app0/sce_module/libSceFace.prx.guest.prx", "A backup copy was converted");
+        Require(output.Modules.size() == 1 && output.Modules.front().Path.generic_string() == "virtual/output/app0/sce_module/libSceFace.prx.guest.prx", "A backup copy was converted");
         for (const auto* name : {"libSceFace.prx.esbak", "libSceFace.prxbak"})
-            require(progress.Messages.find(std::string("Skipping backup copy: sce_module/") + name + " (same SONAME as sce_module/libSceFace.prx)\n") != std::string::npos, "A skipped backup copy was not reported");
+            Require(progress.Messages.find(std::string("Skipping backup copy: sce_module/") + name + " (same SONAME as sce_module/libSceFace.prx)\n") != std::string::npos, "A skipped backup copy was not reported");
     }
     TestProgress progress;
     auto source = input();
     source.Modules.push_back({"virtual/title/sce_module/libSceFace.prx", fixture({}, "libSceFace.prx")});
     source.Modules.push_back({"virtual/title/sce_module/libSceFace.prx.esbak", fixture({}, "libSceFaceOld.prx")});
     const auto output = Relinker::Conversion(progress).Convert(std::move(source), {});
-    require(output.Modules.size() == 2 && progress.Messages.find("Skipping backup copy") == std::string::npos, "A module with another SONAME was skipped as a backup copy");
+    Require(output.Modules.size() == 2 && progress.Messages.find("Skipping backup copy") == std::string::npos, "A module with another SONAME was skipped as a backup copy");
 }
 
 void runtimeLifecyclePolicy() {
@@ -180,7 +177,7 @@ void runtimeLifecyclePolicy() {
             for (auto offset = dynamic; offset < end; offset += 16)
                 if (Io::ReadU64(bytes, offset) == 12) initializesOnMapping = Io::ReadU64(bytes, offset + 8) != 0;
         }
-        require(initializesOnMapping == (std::string_view(directory) != "Media/Plugins"), "Default SDK directories lost their mapping initializer");
+        Require(initializesOnMapping == (std::string_view(directory) != "Media/Plugins"), "Default SDK directories lost their mapping initializer");
     }
 }
 
@@ -196,15 +193,15 @@ void fixedBase() {
     Relinker::ConversionOptions options;
     options.LinuxFixedBase = 0x400000000;
     const auto fixed = converter.Convert(source, options);
-    require(Io::ReadU16(standard.Executable, 16) == 2 && Io::ReadU16(fixed.Executable, 16) == 2, "Fixed base did not select ET_EXEC");
-    require(Io::ReadU16(independent.Executable, 16) == 3, "Lazy binding did not keep ET_DYN");
-    require(standard.LinuxBase == 0x400000 && fixed.LinuxBase == *options.LinuxFixedBase && !independent.LinuxBase, "Conversion reported the wrong Linux base");
-    require(Io::ReadU64(fixed.Executable, 24) == Io::ReadU64(standard.Executable, 24) + *options.LinuxFixedBase - 0x400000, "Fixed entry was not rebased above 4 GiB");
-    require(fixed.Modules.front().Bytes == standard.Modules.front().Bytes, "Executable fixed base changed a bundled module");
+    Require(Io::ReadU16(standard.Executable, 16) == 2 && Io::ReadU16(fixed.Executable, 16) == 2, "Fixed base did not select ET_EXEC");
+    Require(Io::ReadU16(independent.Executable, 16) == 3, "Lazy binding did not keep ET_DYN");
+    Require(standard.LinuxBase == 0x400000 && fixed.LinuxBase == *options.LinuxFixedBase && !independent.LinuxBase, "Conversion reported the wrong Linux base");
+    Require(Io::ReadU64(fixed.Executable, 24) == Io::ReadU64(standard.Executable, 24) + *options.LinuxFixedBase - 0x400000, "Fixed entry was not rebased above 4 GiB");
+    Require(fixed.Modules.front().Bytes == standard.Modules.front().Bytes, "Executable fixed base changed a bundled module");
     for (const auto target : {Relinker::TargetSystem::Windows, Relinker::TargetSystem::MacOs}) {
         Relinker::ConversionOptions other;
         other.Target = target;
-        require(!converter.Convert(source, other).LinuxBase, "A non-Linux conversion reported a Linux base");
+        Require(!converter.Convert(source, other).LinuxBase, "A non-Linux conversion reported a Linux base");
         options.Target = target;
         reject([&] { converter.Convert(source, options); });
     }
@@ -214,9 +211,9 @@ void scanning() {
     TestProgress progress;
     const auto scanner = Relinker::MakeSyscallScanner(progress);
     std::vector<std::uint8_t> code(150000, 0x90);
-    require(scanner->ScanCodeSectionForSyscalls(code, 0, code.size(), "sample.prx").empty(), "Unexpected syscall trap");
-    require(std::any_of(progress.Events.begin(), progress.Events.end(), [](const auto& event) { return event.Completed > 0 && event.Completed < event.Total; }), "Only start and finish were reported");
-    for (const auto& event : progress.Events) require(event.Input == "sample.prx", "Lost scanner input identity");
+    Require(scanner->ScanCodeSectionForSyscalls(code, 0, code.size(), "sample.prx").empty(), "Unexpected syscall trap");
+    Require(std::any_of(progress.Events.begin(), progress.Events.end(), [](const auto& event) { return event.Completed > 0 && event.Completed < event.Total; }), "Only start and finish were reported");
+    for (const auto& event : progress.Events) Require(event.Input == "sample.prx", "Lost scanner input identity");
     progress.Events.clear();
     Domain::ProgramHeader header{};
     header.Type = 1;
@@ -224,13 +221,13 @@ void scanning() {
     header.FileSize = code.size();
     header.MemorySize = code.size();
     const auto converter = Codegen::MakeAmd64OnlyConverter(Codegen::Amd64OnlyTarget::Intel, [&](auto completed, auto total) { progress.Report({Domain::ProgressStage::Lowering, "sample.prx", completed, total}); });
-    require(converter->Convert(code, {header}).Bytes == code, "Progress changed instruction conversion");
+    Require(converter->Convert(code, {header}).Bytes == code, "Progress changed instruction conversion");
     std::uint64_t previous = 0;
     for (const auto& event : progress.Events) {
-        require(event.Completed >= previous && event.Completed <= event.Total, "Instruction conversion progress moved backwards");
+        Require(event.Completed >= previous && event.Completed <= event.Total, "Instruction conversion progress moved backwards");
         previous = event.Completed;
     }
-    require(previous == progress.Events.back().Total, "Instruction conversion progress did not finish");
+    Require(previous == progress.Events.back().Total, "Instruction conversion progress did not finish");
     reject([&] { scanner->ScanCodeSectionForSyscalls(code, 0, (std::uint64_t{1} << 32) + code.size()); });
     auto image = code;
     image.resize(code.size() + 64, 0x90);
@@ -241,12 +238,12 @@ void scanning() {
     previous = 0;
     std::size_t updates = 0;
     const auto instructions = Relinker::CodeInstructionCollector().Collect(image, {header}, [&](auto completed, auto total) {
-        require(completed >= previous && completed <= total, "Image analysis progress moved backwards");
+        Require(completed >= previous && completed <= total, "Image analysis progress moved backwards");
         previous = completed;
         ++updates;
     });
-    require(instructions.size() == code.size(), "Progress changed image code analysis");
-    require(updates > 10 && previous == 10000, "Missing intermediate image analysis progress");
+    Require(instructions.size() == code.size(), "Progress changed image code analysis");
+    Require(updates > 10 && previous == 10000, "Missing intermediate image analysis progress");
     std::vector<std::uint8_t> wrappingImage(0x1000);
     Io::WriteU64(wrappingImage, 24, 0x2000);
     wrappingImage[0x200] = 0xc3;
@@ -285,7 +282,7 @@ void scanning() {
         Io::WriteU64(wrappingImage, 0x128, 0);
         reject([&] { Relinker::CodeInstructionCollector().Collect(wrappingImage, {execHeader, dynamicHeader, wrappingDataHeader}); });
         const auto roots = Relinker::CodeInstructionCollector().Collect(wrappingImage, {execHeader, dynamicHeader, controlDataHeader});
-        require(roots == std::vector<Domain::VirtualAddress>{0x2000, 0x2008}, "Valid initializer array roots were not collected");
+        Require(roots == std::vector<Domain::VirtualAddress>{0x2000, 0x2008}, "Valid initializer array roots were not collected");
         Io::WriteU64(wrappingImage, 0x3c0, 0);
         reject([&] { Relinker::CodeInstructionCollector().Collect(wrappingImage, {execHeader, dynamicHeader, wrappingDataHeader}); });
         Io::WriteU64(wrappingImage, 0x3c0, 0x2008);
@@ -294,7 +291,7 @@ void scanning() {
     code[70001] = 0x05;
     progress.Events.clear();
     reject([&] { scanner->ScanCodeSectionForSyscalls(code, 0, code.size()); });
-    require(progress.Events.back().Completed < progress.Events.back().Total, "Failed scan reported completion");
+    Require(progress.Events.back().Completed < progress.Events.back().Total, "Failed scan reported completion");
 }
 
 void branchAcrossSignedBoundary() {
@@ -312,8 +309,8 @@ void branchAcrossSignedBoundary() {
     header.MemorySize = header.FileSize;
     Io::WriteU64(image, 24, 0x8000000000000000);
     const auto instructions = Relinker::CodeInstructionCollector().Collect(image, {header});
-    require(std::binary_search(instructions.begin(), instructions.end(), 0x8000000000000000ull), "Lost the entry above the signed boundary");
-    require(std::binary_search(instructions.begin(), instructions.end(), 0x7ffffffffffffff0ull), "Lost the branch target below the signed boundary");
+    Require(std::binary_search(instructions.begin(), instructions.end(), 0x8000000000000000ull), "Lost the entry above the signed boundary");
+    Require(std::binary_search(instructions.begin(), instructions.end(), 0x7ffffffffffffff0ull), "Lost the branch target below the signed boundary");
 }
 
 class FailingProgress final : public Domain::IProgress {
@@ -334,9 +331,9 @@ void diagnosticContext() {
         const auto source = input();
         try { Relinker::Conversion(progress).Convert(source, {}); }
         catch (const Domain::RelinkerException& error) {
-            require(error.InputPath == (specific ? progress.InputPath : Io::Utf8Path(source.InputPath)), "Wrong diagnostic input path");
-            require(error.FailureOffset == 0x1234, "Diagnostic offset changed");
-            require(std::string(error.what()) == "diagnostic context", "Diagnostic message changed");
+            Require(error.InputPath == (specific ? progress.InputPath : Io::Utf8Path(source.InputPath)), "Wrong diagnostic input path");
+            Require(error.FailureOffset == 0x1234, "Diagnostic offset changed");
+            Require(std::string(error.what()) == "diagnostic context", "Diagnostic message changed");
             continue;
         }
         throw std::runtime_error("Diagnostic failure was swallowed");
@@ -360,7 +357,7 @@ void cancellation() {
         options.Target = Relinker::TargetSystem::Windows;
         try { Relinker::Conversion(progress).Convert(input(), options); }
         catch (const std::runtime_error& error) {
-            require(std::string(error.what()) == "cancelled", "Callback exception was replaced");
+            Require(std::string(error.what()) == "cancelled", "Callback exception was replaced");
             continue;
         }
         throw std::runtime_error("Callback exception was swallowed");
@@ -370,14 +367,14 @@ void cancellation() {
 void baseRelocations() {
     Elfpatcher::Windows::WindowsRelocationBuilder builder;
     const auto relocs = builder.BuildBaseRelocations({0x10000, 0x10000, 0x10008});
-    require(relocs.size() == 12, "Base relocation duplicates were not deduplicated");
-    require(Io::ReadU32(relocs, 0) == 0x10000, "Wrong base relocation page RVA");
-    require(Io::ReadU32(relocs, 4) == 12, "Wrong base relocation block size");
-    require(Io::ReadU16(relocs, 8) == 0xa000, "Wrong first relocation entry");
-    require(Io::ReadU16(relocs, 10) == 0xa008, "Wrong second relocation entry");
+    Require(relocs.size() == 12, "Base relocation duplicates were not deduplicated");
+    Require(Io::ReadU32(relocs, 0) == 0x10000, "Wrong base relocation page RVA");
+    Require(Io::ReadU32(relocs, 4) == 12, "Wrong base relocation block size");
+    Require(Io::ReadU16(relocs, 8) == 0xa000, "Wrong first relocation entry");
+    Require(Io::ReadU16(relocs, 10) == 0xa008, "Wrong second relocation entry");
     const auto spanning = builder.BuildBaseRelocations({0x10ffc, 0x10fff});
-    require(spanning.size() == 12 && Io::ReadU32(spanning, 0) == 0x10000, "A page-spanning base relocation was not placed in its first page");
-    require(Io::ReadU16(spanning, 8) == 0xaffc && Io::ReadU16(spanning, 10) == 0xafff, "Wrong page-spanning base relocation entries");
+    Require(spanning.size() == 12 && Io::ReadU32(spanning, 0) == 0x10000, "A page-spanning base relocation was not placed in its first page");
+    Require(Io::ReadU16(spanning, 8) == 0xaffc && Io::ReadU16(spanning, 10) == 0xafff, "Wrong page-spanning base relocation entries");
 }
 
 std::size_t fileOffset(const std::vector<std::uint8_t>& pe, std::uint32_t address) {
@@ -457,8 +454,8 @@ void runtimeDirectories() {
         source.Modules.push_back({parent / "needed.prx", fixture()});
         source.RuntimeDirectories.push_back(parent);
         const auto output = converter.Convert(std::move(source), options);
-        require(output.Modules.size() == 1, "Module was not converted");
-        require(exports(output.Modules.front().Bytes, Relinker::GuestInitializeExport) == (std::string_view(directory) == "Media/Modules"), "Wrong start of a runtime module the executable needs");
+        Require(output.Modules.size() == 1, "Module was not converted");
+        Require(exports(output.Modules.front().Bytes, Relinker::GuestInitializeExport) == (std::string_view(directory) == "Media/Modules"), "Wrong start of a runtime module the executable needs");
     }
     for (const auto* directory : {"sce_module", "sce_modules", "prx", "Media/Modules"}) {
         auto source = input();
@@ -469,14 +466,14 @@ void runtimeDirectories() {
         source.RuntimeDirectories.push_back(plugins);
         source.RuntimeDirectories.push_back(parent);
         const auto output = converter.Convert(std::move(source), options);
-        require(output.Modules.size() == 2, "Modules were not converted");
+        Require(output.Modules.size() == 2, "Modules were not converted");
         for (const auto& module : output.Modules) {
             const bool plugin = module.SourcePath.filename() == "plugin.prx";
-            require(exports(module.Bytes, Relinker::GuestInitializeExport) == (plugin || std::string_view(directory) == "Media/Modules"), "Wrong start of a runtime module another runtime module needs");
+            Require(exports(module.Bytes, Relinker::GuestInitializeExport) == (plugin || std::string_view(directory) == "Media/Modules"), "Wrong start of a runtime module another runtime module needs");
             if (plugin) {
                 const auto listed = deferredDependencies(module.Bytes);
-                require(listed == (std::string_view(directory) == "Media/Modules" ? std::vector<std::string>{"needed.prx.guest.prx"} : std::vector<std::string>{}), "Wrong deferred dependencies of a plugin");
-            } else if (exports(module.Bytes, Relinker::GuestInitializeExport)) require(deferredDependencies(module.Bytes).empty(), "A module without dependencies lists some");
+                Require(listed == (std::string_view(directory) == "Media/Modules" ? std::vector<std::string>{"needed.prx.guest.prx"} : std::vector<std::string>{}), "Wrong deferred dependencies of a plugin");
+            } else if (exports(module.Bytes, Relinker::GuestInitializeExport)) Require(deferredDependencies(module.Bytes).empty(), "A module without dependencies lists some");
         }
     }
     {
@@ -487,12 +484,12 @@ void runtimeDirectories() {
         source.Modules.push_back({plugins / "other.prx", fixture()});
         source.RuntimeDirectories.push_back(plugins);
         const auto output = converter.Convert(std::move(source), options);
-        require(output.Modules.size() == 3, "Modules were not converted");
+        Require(output.Modules.size() == 3, "Modules were not converted");
         for (const auto& module : output.Modules) {
             const auto name = module.SourcePath.filename().string();
-            require(exports(module.Bytes, Relinker::GuestInitializeExport), "A plugin was not deferred");
-            require(deferredSweep(module.Bytes) == std::vector<std::string>{"common.prx.guest.prx"}, ("Wrong sweep list of " + name).c_str());
-            require(deferredDependencies(module.Bytes) == (name == "core.prx" ? std::vector<std::string>{"common.prx.guest.prx"} : std::vector<std::string>{}), ("Wrong dependencies of " + name).c_str());
+            Require(exports(module.Bytes, Relinker::GuestInitializeExport), "A plugin was not deferred");
+            Require(deferredSweep(module.Bytes) == std::vector<std::string>{"common.prx.guest.prx"}, ("Wrong sweep list of " + name).c_str());
+            Require(deferredDependencies(module.Bytes) == (name == "core.prx" ? std::vector<std::string>{"common.prx.guest.prx"} : std::vector<std::string>{}), ("Wrong dependencies of " + name).c_str());
         }
     }
 }
@@ -510,8 +507,8 @@ void relocationValidation() {
             converter.Convert(source, {});
             throw std::runtime_error("Unsupported relocation type was accepted");
         } catch (const Domain::RelinkerException& error) {
-            require(std::string(error.what()) == "Unsupported relocation type 0x99", "Wrong error for unsupported relocation");
-            require(error.FailureOffset == 0x2700, "Wrong failure offset for unsupported relocation");
+            Require(std::string(error.what()) == "Unsupported relocation type 0x99", "Wrong error for unsupported relocation");
+            Require(error.FailureOffset == 0x2700, "Wrong failure offset for unsupported relocation");
         }
     }
     {
@@ -534,8 +531,8 @@ void relocationValidation() {
             converter.Convert(source, {});
             throw std::runtime_error("Unsupported PLT relocation type was accepted");
         } catch (const Domain::RelinkerException& error) {
-            require(std::string(error.what()) == "Unsupported PLT relocation type", "Wrong error for unsupported PLT relocation");
-            require(error.FailureOffset == 0x2780, "Wrong failure offset for unsupported PLT relocation");
+            Require(std::string(error.what()) == "Unsupported PLT relocation type", "Wrong error for unsupported PLT relocation");
+            Require(error.FailureOffset == 0x2780, "Wrong failure offset for unsupported PLT relocation");
         }
     }
 }
@@ -566,7 +563,7 @@ void sysvHashBoundsInCodeInstructionCollector() {
             Relinker::CodeInstructionCollector().Collect(img, headers);
             throw std::runtime_error("Collector accepted invalid SysV hash table");
         } catch (const Domain::RelinkerException& error) {
-            require(std::string(error.what()).find(expected) != std::string::npos, "Wrong error message from collector");
+            Require(std::string(error.what()).find(expected) != std::string::npos, "Wrong error message from collector");
         }
     };
     {

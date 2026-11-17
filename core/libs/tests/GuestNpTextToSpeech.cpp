@@ -1,14 +1,7 @@
 #include "prx/libSceNpTextToSpeech/libSceNpTextToSpeech.hpp"
+#include "Testing.hpp"
 
 #include <cstdlib>
-
-namespace {
-
-void Require(bool value) {
-    if (!value) std::abort();
-}
-
-} // namespace
 
 int main() {
     constexpr int notInitialized = static_cast<int>(0x8194F009u);

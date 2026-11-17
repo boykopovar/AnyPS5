@@ -1,5 +1,6 @@
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/GuestStacks.hpp"
+#include "Testing.hpp"
 #include <cstdlib>
 #include <cstdio>
 #include <source_location>
@@ -13,13 +14,6 @@ static std::size_t allocatedBytes;
 static unsigned pins;
 static unsigned resets;
 static unsigned releases;
-
-static void Require(bool value, std::source_location where = std::source_location::current()) {
-    if (!value) {
-        std::fprintf(stderr, "Main-stack failure check at line %u, mode %d\n", where.line(), static_cast<int>(failure));
-        std::abort();
-    }
-}
 
 namespace GuestArena {
 

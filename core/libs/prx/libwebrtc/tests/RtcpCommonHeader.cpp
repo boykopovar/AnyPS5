@@ -1,4 +1,5 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
+#include "Testing.hpp"
 
 #include <array>
 #include <cstdint>
@@ -10,21 +11,6 @@
 #include <vector>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (condition) return;
-    std::fprintf(stderr, "libwebrtc rtcp::CommonHeader check failed at line %u\n", location.line());
-    std::abort();
-}
-
-template<typename TAction> void RequireInvalidArgument(TAction action, std::source_location location = std::source_location::current()) {
-    try {
-        action();
-    } catch (const std::invalid_argument&) {
-        return;
-    }
-    Require(false, location);
-}
 
 WebRtcRtcpCommonHeader Filled() {
     WebRtcRtcpCommonHeader header;
@@ -125,9 +111,9 @@ void TestRejectsAfterReading() {
 
 void TestNullArguments() {
     std::array<std::uint8_t, 4> packet {0x80, 200, 0x00, 0x00};
-    RequireInvalidArgument([&] { _ZN6webrtc4rtcp12CommonHeader5ParseEPKhm_nid_postfix(nullptr, packet.data(), packet.size()); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc4rtcp12CommonHeader5ParseEPKhm_nid_postfix(nullptr, packet.data(), packet.size()); });
     WebRtcRtcpCommonHeader header = Filled();
-    RequireInvalidArgument([&] { _ZN6webrtc4rtcp12CommonHeader5ParseEPKhm_nid_postfix(&header, nullptr, 4); });
+    ExpectErr<std::invalid_argument>([&] { _ZN6webrtc4rtcp12CommonHeader5ParseEPKhm_nid_postfix(&header, nullptr, 4); });
     Require(Unchanged(header));
 }
 

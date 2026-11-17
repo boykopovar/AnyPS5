@@ -1,5 +1,6 @@
 #include "FontFixture.hpp"
 #include "prx/libSceFreeType/libSceFreeType.hpp"
+#include "Testing.hpp"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -13,14 +14,6 @@
 #include <vector>
 
 using namespace FreeType;
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "FreeType subglyph check failed at line %d\n", line);
-        std::abort();
-    }
-}
-#define Require(value) Check((value), __LINE__)
 
 static std::vector<unsigned char> CompositeFont() {
     auto glyf = FontFixture::Words({1, 0, 0, 400, 600, 3, 0});

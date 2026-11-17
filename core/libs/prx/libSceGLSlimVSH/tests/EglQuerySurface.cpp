@@ -1,4 +1,5 @@
 #include "prx/libSceGLSlimVSH/libSceGLSlimVSH.hpp"
+#include "Testing.hpp"
 #include <cstdio>
 #include <cstdlib>
 #ifdef _WIN32
@@ -6,15 +7,6 @@
 #else
 #include <sys/mman.h>
 #endif
-
-static void Check(bool value, int line) {
-    if (!value) {
-        std::fprintf(stderr, "GLSlim eglQuerySurface check failed at line %d\n", line);
-        std::abort();
-    }
-}
-
-#define Require(value) Check((value), __LINE__)
 
 int main() {
     auto display = eglGetDisplay_nid_postfix(nullptr);

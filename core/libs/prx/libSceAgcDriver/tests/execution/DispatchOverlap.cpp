@@ -5,6 +5,7 @@
 #include "prx/libSceAgcDriver/Submit/include/Dcb.hpp"
 #include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/Shutdown.hpp"
+#include "Testing.hpp"
 #include "VulkanTestDevice.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -55,10 +56,6 @@ std::uint32_t* NewBlock() {
     return block;
 }
 
-void check(bool condition, const std::string& what) {
-    if (!condition) throw std::runtime_error("dispatch overlap: " + what);
-}
-
 void Register(const std::uint32_t* code, std::size_t bytes) {
     Shader shader{};
     shader.file_header = 0x34333231;
@@ -93,7 +90,7 @@ void AddUserSgprs(std::vector<std::uint32_t>& words, std::uint32_t count) {
 
 void Submit(std::vector<std::uint32_t>& words) {
     Packet packet{words.data(), static_cast<std::uint32_t>(words.size()), 0, {}};
-    check(sceAgcDriverSubmitAcb(ComputeQueue, &packet) == 0, "submission failed");
+    Require(sceAgcDriverSubmitAcb(ComputeQueue, &packet) == 0, "submission failed");
     AgcDriverWaitIdle_nid_postfix();
 }
 
@@ -107,7 +104,7 @@ void Expect(const std::uint32_t* memory, std::uint32_t add, const std::string& w
     AgcDriver::GuestMemory::FlushGpuWrites(reinterpret_cast<std::uintptr_t>(memory), BufferBytes);
     for (std::uint32_t lane = 0; lane < Lanes; ++lane) {
         const auto value = std::atomic_ref<std::uint32_t>(const_cast<std::uint32_t&>(memory[lane])).load(std::memory_order_acquire);
-        check(value == lane + add, what + ": lane " + std::to_string(lane) + " is " + std::to_string(value) + ", expected " + std::to_string(lane + add));
+        Require(value == lane + add, what + ": lane " + std::to_string(lane) + " is " + std::to_string(value) + ", expected " + std::to_string(lane + add));
     }
 }
 
@@ -213,19 +210,19 @@ int main(int argc, char** argv) {
         for (int round = 0; round < 3; ++round) {
             const auto joined = RunBuilds(false);
             const std::uint64_t expected = off ? 0 : Builds - 1;
-            check(joined == expected, "unordered dispatches of " + std::to_string(Builds) + " builds, round " + std::to_string(round + 1) + ": " + std::to_string(joined) + " joined a run, expected " + std::to_string(expected));
+            Require(joined == expected, "unordered dispatches of " + std::to_string(Builds) + " builds, round " + std::to_string(round + 1) + ": " + std::to_string(joined) + " joined a run, expected " + std::to_string(expected));
             const auto ordered = RunBuilds(true);
-            check(ordered == 0, "dispatches ordered by partial flushes, round " + std::to_string(round + 1) + ": " + std::to_string(ordered) + " joined a run, expected 0");
+            Require(ordered == 0, "dispatches ordered by partial flushes, round " + std::to_string(round + 1) + ": " + std::to_string(ordered) + " joined a run, expected 0");
             SameBuildTwice();
             const auto dependent = ReadAfterWrite(true);
-            check(dependent == 0, "a dispatch reading what the previous unordered one wrote, round " + std::to_string(round + 1) + ": " + std::to_string(dependent) + " joined a run, expected 0");
+            Require(dependent == 0, "a dispatch reading what the previous unordered one wrote, round " + std::to_string(round + 1) + ": " + std::to_string(dependent) + " joined a run, expected 0");
             const auto afterRead = WriteAfterAccess(true);
-            check(afterRead == 0, "a dispatch overwriting what the previous unordered one read, round " + std::to_string(round + 1) + ": " + std::to_string(afterRead) + " joined a run, expected 0");
+            Require(afterRead == 0, "a dispatch overwriting what the previous unordered one read, round " + std::to_string(round + 1) + ": " + std::to_string(afterRead) + " joined a run, expected 0");
             const auto afterWrite = WriteAfterAccess(false);
-            check(afterWrite == 0, "a dispatch overwriting what the previous unordered one wrote, round " + std::to_string(round + 1) + ": " + std::to_string(afterWrite) + " joined a run, expected 0");
+            Require(afterWrite == 0, "a dispatch overwriting what the previous unordered one wrote, round " + std::to_string(round + 1) + ": " + std::to_string(afterWrite) + " joined a run, expected 0");
             const auto disjoint = ReadAfterWrite(false);
             const std::uint64_t disjointExpected = off ? 0 : 1;
-            check(disjoint == disjointExpected, "a dispatch reading memory the previous unordered one does not write, round " + std::to_string(round + 1) + ": " + std::to_string(disjoint) + " joined a run, expected " + std::to_string(disjointExpected));
+            Require(disjoint == disjointExpected, "a dispatch reading memory the previous unordered one does not write, round " + std::to_string(round + 1) + ": " + std::to_string(disjoint) + " joined a run, expected " + std::to_string(disjointExpected));
         }
         std::printf("dispatch overlap: %s\n", off ? "no unordered dispatch joined a run with APS5_NO_DISPATCH_OVERLAP" : "unordered dispatches of distinct builds ran in one run, results kept");
 

@@ -1,6 +1,7 @@
 #include "prx/libSceNpPartner001/include/Api.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -18,8 +19,6 @@
 #endif
 
 namespace {
-
-void Require(bool value) { if (!value) std::abort(); }
 
 template <typename TAction>
 bool Throws(TAction action) {

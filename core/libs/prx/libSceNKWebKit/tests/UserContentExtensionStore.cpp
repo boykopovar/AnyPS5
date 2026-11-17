@@ -2,6 +2,7 @@
 #include "prx/libSceNKWebKit/include/WebKitValueExports.hpp"
 #include "prx/libSceNKWebKit/src/Configuration.hpp"
 #include "prx/libSceNKWebKit/src/Types.hpp"
+#include "Testing.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -9,24 +10,6 @@
 #include <stdexcept>
 
 namespace {
-
-void Require(bool condition, std::source_location location = std::source_location::current()) {
-    if (!condition) {
-        std::fprintf(stderr, "UserContentExtensionStore check failed at line %u\n", location.line());
-        std::abort();
-    }
-}
-
-template<class Function>
-void RequireInvalidArgument(Function function) {
-    bool threw = false;
-    try {
-        function();
-    } catch (const std::invalid_argument&) {
-        threw = true;
-    }
-    Require(threw);
-}
 
 const void* lastResultFilter = nullptr;
 std::uint32_t lastResultStatus = 999;
@@ -83,12 +66,12 @@ int main() {
     WKUserContentExtensionStoreCompile(storeRef, idRef, jsonRef, nullptr, nullptr);
     WKUserContentExtensionStoreLookup(storeRef, idRef, nullptr, nullptr);
 
-    RequireInvalidArgument([&] { WKUserContentExtensionStoreCompile(nullptr, idRef, jsonRef, nullptr, nullptr); });
-    RequireInvalidArgument([&] { WKUserContentExtensionStoreCompile(storeRef, nullptr, jsonRef, nullptr, nullptr); });
-    RequireInvalidArgument([&] { WKUserContentExtensionStoreCompile(storeRef, idRef, nullptr, nullptr, nullptr); });
-    RequireInvalidArgument([&] { WKUserContentExtensionStoreLookup(nullptr, idRef, nullptr, nullptr); });
-    RequireInvalidArgument([&] { WKUserContentExtensionStoreLookup(storeRef, nullptr, nullptr, nullptr); });
-    RequireInvalidArgument([&] { WKUserContentExtensionStoreCreate(storeRef); });
+    ExpectErr<std::invalid_argument>([&] { WKUserContentExtensionStoreCompile(nullptr, idRef, jsonRef, nullptr, nullptr); });
+    ExpectErr<std::invalid_argument>([&] { WKUserContentExtensionStoreCompile(storeRef, nullptr, jsonRef, nullptr, nullptr); });
+    ExpectErr<std::invalid_argument>([&] { WKUserContentExtensionStoreCompile(storeRef, idRef, nullptr, nullptr, nullptr); });
+    ExpectErr<std::invalid_argument>([&] { WKUserContentExtensionStoreLookup(nullptr, idRef, nullptr, nullptr); });
+    ExpectErr<std::invalid_argument>([&] { WKUserContentExtensionStoreLookup(storeRef, nullptr, nullptr, nullptr); });
+    ExpectErr<std::invalid_argument>([&] { WKUserContentExtensionStoreCreate(storeRef); });
 
     WKRelease(defaultStoreRef);
     WKRelease(jsonRef);

@@ -3,6 +3,7 @@
 #include "prx/libSceSaveData.native/include/Api.hpp"
 #include "SceTypes.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "Testing.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -26,8 +27,6 @@ constexpr int SaveDataErrorNotMounted = -2137063420;
 constexpr int SaveDataErrorNoSpaceFs = -2137063414;
 constexpr std::uint64_t BlockBytes = 65536;
 
-int failures = 0;
-
 std::uint64_t fakeAvailable = 0;
 int fakeCalls = 0;
 bool fakeFails = false;
@@ -36,12 +35,6 @@ std::uint64_t FakeFreeSpace(const std::string&) {
     ++fakeCalls;
     if (fakeFails) throw std::runtime_error("fake volume query failed");
     return fakeAvailable;
-}
-
-void Check(bool condition, const std::string& what) {
-    if (condition) return;
-    std::fprintf(stderr, "savedata host space check failed: %s\n", what.c_str());
-    ++failures;
 }
 
 void SetFreeSpaceVariable(const char* value) {
@@ -75,8 +68,8 @@ void CheckValidValuesMount() {
         const std::string name = "HS_VALID_" + std::to_string(index++);
         SaveDataMountResult result{};
         const int code = Mount(name.c_str(), MountReadWrite | MountCreate2, 96, &result);
-        Check(code == 0, "a valid ANYPS5_FREE_SPACE value lets a save be created (" + name + ")");
-        if (code == 0) Check(sceSaveDataUmount2(0, &result.mount_point) == 0, "the created save unmounts (" + name + ")");
+        Expect(code == 0, "a valid ANYPS5_FREE_SPACE value lets a save be created (" + name + ")");
+        if (code == 0) Expect(sceSaveDataUmount2(0, &result.mount_point) == 0, "the created save unmounts (" + name + ")");
     }
     SetFreeSpaceVariable(nullptr);
 }
@@ -90,8 +83,8 @@ void CheckInvalidValueStopsMount() {
     } catch (const std::runtime_error& error) {
         message = error.what();
     }
-    Check(message.find("ANYPS5_FREE_SPACE") != std::string::npos, "an invalid ANYPS5_FREE_SPACE throws an error naming the variable");
-    Check(!std::filesystem::exists("_sd/HS_BOGUS"), "an invalid ANYPS5_FREE_SPACE stops the mount before a save is created");
+    Expect(message.find("ANYPS5_FREE_SPACE") != std::string::npos, "an invalid ANYPS5_FREE_SPACE throws an error naming the variable");
+    Expect(!std::filesystem::exists("_sd/HS_BOGUS"), "an invalid ANYPS5_FREE_SPACE stops the mount before a save is created");
 
     message.clear();
     try {
@@ -99,7 +92,7 @@ void CheckInvalidValueStopsMount() {
     } catch (const std::runtime_error& error) {
         message = error.what();
     }
-    Check(message.find("ANYPS5_FREE_SPACE") != std::string::npos, "an open mount with an invalid ANYPS5_FREE_SPACE also throws");
+    Expect(message.find("ANYPS5_FREE_SPACE") != std::string::npos, "an open mount with an invalid ANYPS5_FREE_SPACE also throws");
     SetFreeSpaceVariable(nullptr);
 }
 
@@ -113,8 +106,8 @@ void CheckEmptyValueStopsMount() {
     } catch (const std::runtime_error& error) {
         message = error.what();
     }
-    Check(message.find("ANYPS5_FREE_SPACE") != std::string::npos, "an empty ANYPS5_FREE_SPACE throws an error naming the variable");
-    Check(!std::filesystem::exists("_sd/HS_EMPTY"), "an empty ANYPS5_FREE_SPACE stops the mount before a save is created");
+    Expect(message.find("ANYPS5_FREE_SPACE") != std::string::npos, "an empty ANYPS5_FREE_SPACE throws an error naming the variable");
+    Expect(!std::filesystem::exists("_sd/HS_EMPTY"), "an empty ANYPS5_FREE_SPACE stops the mount before a save is created");
     SetFreeSpaceVariable(nullptr);
 }
 #endif
@@ -128,54 +121,54 @@ void CheckHostRoom() {
     fakeCalls = 0;
     result = SaveDataMountResult{};
     int code = Mount("HS_FULL", MountReadWrite | MountCreate2, 96, &result);
-    Check(code == SaveDataErrorNoSpaceFs, "a save the full volume cannot hold is NO_SPACE_FS");
-    Check(result.required_blocks == 96, "a full volume reports every requested block as required");
-    Check(!std::filesystem::exists("_sd/HS_FULL"), "a refused save creates no directory");
-    Check(fakeCalls == 1, "the volume is queried once per create");
+    Expect(code == SaveDataErrorNoSpaceFs, "a save the full volume cannot hold is NO_SPACE_FS");
+    Expect(result.required_blocks == 96, "a full volume reports every requested block as required");
+    Expect(!std::filesystem::exists("_sd/HS_FULL"), "a refused save creates no directory");
+    Expect(fakeCalls == 1, "the volume is queried once per create");
 
     fakeAvailable = 96 * BlockBytes - 1;
     result = SaveDataMountResult{};
     code = Mount("HS_TINY", MountReadWrite | MountCreate2, 96, &result);
-    Check(code == SaveDataErrorNoSpaceFs && result.required_blocks == 1, "one byte short reports one block required");
-    Check(!std::filesystem::exists("_sd/HS_TINY"), "a one-byte-short save creates no directory");
+    Expect(code == SaveDataErrorNoSpaceFs && result.required_blocks == 1, "one byte short reports one block required");
+    Expect(!std::filesystem::exists("_sd/HS_TINY"), "a one-byte-short save creates no directory");
 
     fakeAvailable = 96 * BlockBytes;
     code = Mount("HS_EXACT", MountReadWrite | MountCreate2, 96, &result);
-    Check(code == 0, "a volume with exactly the requested room creates the save");
-    if (code == 0) Check(sceSaveDataUmount2(0, &result.mount_point) == 0, "the exact-room save unmounts");
+    Expect(code == 0, "a volume with exactly the requested room creates the save");
+    if (code == 0) Expect(sceSaveDataUmount2(0, &result.mount_point) == 0, "the exact-room save unmounts");
 
     fakeAvailable = UINT64_MAX;
     code = Mount("HS_HUGE", MountReadWrite | MountCreate2, 0, &result);
-    Check(code == 0, "a volume with unbounded room creates a default-size save");
-    if (code == 0) Check(sceSaveDataUmount2(0, &result.mount_point) == 0, "the huge-room save unmounts");
+    Expect(code == 0, "a volume with unbounded room creates a default-size save");
+    if (code == 0) Expect(sceSaveDataUmount2(0, &result.mount_point) == 0, "the huge-room save unmounts");
 
     fakeAvailable = 16384 * BlockBytes - 1;
     result = SaveDataMountResult{};
     code = Mount("HS_DEFAULT", MountReadWrite | MountCreate2, 0, &result);
-    Check(code == SaveDataErrorNoSpaceFs && result.required_blocks == 1, "a default-size save needs the full 16384 blocks");
+    Expect(code == SaveDataErrorNoSpaceFs && result.required_blocks == 1, "a default-size save needs the full 16384 blocks");
 
     fakeFails = true;
     code = Mount("HS_ERROR", MountReadWrite | MountCreate2, 96, &result);
-    Check(code == 0, "a failed volume query keeps today's behaviour and creates the save");
-    if (code == 0) Check(sceSaveDataUmount2(0, &result.mount_point) == 0, "the save created after a failed query unmounts");
+    Expect(code == 0, "a failed volume query keeps today's behaviour and creates the save");
+    if (code == 0) Expect(sceSaveDataUmount2(0, &result.mount_point) == 0, "the save created after a failed query unmounts");
     fakeFails = false;
 
     fakeAvailable = UINT64_MAX;
     code = Mount("HS_OPEN", MountReadWrite | MountCreate2, 96, &result);
-    Check(code == 0, "the save to reopen is created while the volume has room");
-    if (code == 0) Check(sceSaveDataUmount2(0, &result.mount_point) == 0, "the save to reopen unmounts");
+    Expect(code == 0, "the save to reopen is created while the volume has room");
+    if (code == 0) Expect(sceSaveDataUmount2(0, &result.mount_point) == 0, "the save to reopen unmounts");
     fakeAvailable = 0;
     code = Mount("HS_OPEN", MountReadWrite, 0, &result);
-    Check(code == 0, "a full volume still opens an existing save");
-    if (code == 0) Check(sceSaveDataUmount2(0, &result.mount_point) == 0, "the opened save unmounts");
+    Expect(code == 0, "a full volume still opens an existing save");
+    if (code == 0) Expect(sceSaveDataUmount2(0, &result.mount_point) == 0, "the opened save unmounts");
 
     SetFreeSpaceVariable(nullptr);
     fakeAvailable = 0;
     fakeCalls = 0;
     code = Mount("HS_FIXED", MountReadWrite | MountCreate2, 96, &result);
-    Check(code == 0, "the default fixed mode creates a save on a full volume");
-    Check(fakeCalls == 0, "the default fixed mode never queries the volume");
-    if (code == 0) Check(sceSaveDataUmount2(0, &result.mount_point) == 0, "the fixed-mode save unmounts");
+    Expect(code == 0, "the default fixed mode creates a save on a full volume");
+    Expect(fakeCalls == 0, "the default fixed mode never queries the volume");
+    if (code == 0) Expect(sceSaveDataUmount2(0, &result.mount_point) == 0, "the fixed-mode save unmounts");
 
     SetSaveDataFreeSpaceSourceForTest_nid_no_patch(nullptr);
 }
@@ -188,13 +181,13 @@ std::uint64_t MountInfoFreeBlocks(const char* name, std::uint64_t* blocks) {
     mount.dir_name = &dirName;
     mount.mount_mode = MountReadWrite;
     SaveDataMountResult result{};
-    Check(sceSaveDataMount3(&mount, &result) == 0, std::string("open for mount info: ") + name);
+    Expect(sceSaveDataMount3(&mount, &result) == 0, std::string("open for mount info: ") + name);
     SaveDataMountInfo info{};
-    Check(sceSaveDataGetMountInfo(nullptr, &info) == SaveDataErrorParameter, "null mount point to getMountInfo returns PARAMETER");
-    Check(sceSaveDataGetMountInfo(&result.mount_point, nullptr) == SaveDataErrorParameter, "null info to getMountInfo returns PARAMETER");
-    Check(sceSaveDataGetMountInfo(&result.mount_point, &info) == 0, std::string("mount info of ") + name);
-    Check(sceSaveDataUmount2(0, &result.mount_point) == 0, std::string("unmount after mount info: ") + name);
-    Check(sceSaveDataGetMountInfo(&result.mount_point, &info) == SaveDataErrorNotMounted, "unmounted mount point to getMountInfo returns NOT_MOUNTED");
+    Expect(sceSaveDataGetMountInfo(nullptr, &info) == SaveDataErrorParameter, "null mount point to getMountInfo returns PARAMETER");
+    Expect(sceSaveDataGetMountInfo(&result.mount_point, nullptr) == SaveDataErrorParameter, "null info to getMountInfo returns PARAMETER");
+    Expect(sceSaveDataGetMountInfo(&result.mount_point, &info) == 0, std::string("mount info of ") + name);
+    Expect(sceSaveDataUmount2(0, &result.mount_point) == 0, std::string("unmount after mount info: ") + name);
+    Expect(sceSaveDataGetMountInfo(&result.mount_point, &info) == SaveDataErrorNotMounted, "unmounted mount point to getMountInfo returns NOT_MOUNTED");
     *blocks = info.blocks;
     return info.free_blocks;
 }
@@ -213,8 +206,8 @@ std::uint64_t SearchFreeBlocks(const char* pattern, std::uint64_t* blocks) {
     result.dir_names = names;
     result.dir_names_num = 1;
     result.infos = infos;
-    Check(sceSaveDataDirNameSearch(&cond, &result) == 0, "free-blocks search succeeds");
-    Check(result.set_num == 1, "free-blocks search finds the save");
+    Expect(sceSaveDataDirNameSearch(&cond, &result) == 0, "free-blocks search succeeds");
+    Expect(result.set_num == 1, "free-blocks search finds the save");
     *blocks = infos[0].blocks;
     return infos[0].free_blocks;
 }
@@ -225,8 +218,8 @@ void CheckHostFreeBlocks() {
     SaveDataMountResult result{};
     fakeAvailable = UINT64_MAX;
     const int created = Mount("HS_INFO", MountReadWrite | MountCreate2, 200, &result);
-    Check(created == 0, "a save with 200 blocks is created");
-    if (created == 0) Check(sceSaveDataUmount2(0, &result.mount_point) == 0, "the new save unmounts");
+    Expect(created == 0, "a save with 200 blocks is created");
+    if (created == 0) Expect(sceSaveDataUmount2(0, &result.mount_point) == 0, "the new save unmounts");
     {
         std::ofstream data("_sd/HS_INFO/data.bin", std::ios::binary);
         const std::string bytes(40000, 'x');
@@ -235,21 +228,21 @@ void CheckHostFreeBlocks() {
 
     std::uint64_t blocks = 0;
     fakeAvailable = UINT64_MAX;
-    Check(MountInfoFreeBlocks("HS_INFO", &blocks) == 199 && blocks == 200, "an unbounded volume reports the save's own free blocks");
+    Expect(MountInfoFreeBlocks("HS_INFO", &blocks) == 199 && blocks == 200, "an unbounded volume reports the save's own free blocks");
     fakeAvailable = 10 * BlockBytes + 5;
-    Check(MountInfoFreeBlocks("HS_INFO", &blocks) == 10 && blocks == 200, "mount info is bounded by the blocks the volume has");
-    Check(SearchFreeBlocks("HS_INF%", &blocks) == 10 && blocks == 200, "the search reports the same bound");
+    Expect(MountInfoFreeBlocks("HS_INFO", &blocks) == 10 && blocks == 200, "mount info is bounded by the blocks the volume has");
+    Expect(SearchFreeBlocks("HS_INF%", &blocks) == 10 && blocks == 200, "the search reports the same bound");
     fakeAvailable = 0;
-    Check(MountInfoFreeBlocks("HS_INFO", &blocks) == 0, "a full volume reports no free blocks");
+    Expect(MountInfoFreeBlocks("HS_INFO", &blocks) == 0, "a full volume reports no free blocks");
     fakeFails = true;
-    Check(MountInfoFreeBlocks("HS_INFO", &blocks) == 199, "a failed volume query reports the save's own free blocks");
+    Expect(MountInfoFreeBlocks("HS_INFO", &blocks) == 199, "a failed volume query reports the save's own free blocks");
     fakeFails = false;
 
     SetFreeSpaceVariable(nullptr);
     fakeAvailable = 0;
     fakeCalls = 0;
-    Check(MountInfoFreeBlocks("HS_INFO", &blocks) == 199, "the default fixed mode reports the save's own free blocks");
-    Check(fakeCalls == 0, "the default fixed mode never bounds free blocks by the volume");
+    Expect(MountInfoFreeBlocks("HS_INFO", &blocks) == 199, "the default fixed mode reports the save's own free blocks");
+    Expect(fakeCalls == 0, "the default fixed mode never bounds free blocks by the volume");
     SetSaveDataFreeSpaceSourceForTest_nid_no_patch(nullptr);
 }
 
@@ -258,11 +251,11 @@ void CheckDefaultVolumeQuery() {
     SetSaveDataFreeSpaceSourceForTest_nid_no_patch(nullptr);
     SaveDataMountResult result{};
     const int created = Mount("HS_REAL", MountReadWrite | MountCreate2, 1, &result);
-    Check(created == 0, "a 1-block save is created with the default volume query");
-    if (created == 0) Check(sceSaveDataUmount2(0, &result.mount_point) == 0, "the default-query save unmounts");
+    Expect(created == 0, "a 1-block save is created with the default volume query");
+    if (created == 0) Expect(sceSaveDataUmount2(0, &result.mount_point) == 0, "the default-query save unmounts");
 
     std::uint64_t blocks = 0;
-    Check(MountInfoFreeBlocks("HS_REAL", &blocks) > 0, "the default volume query reports room for a 1-block save");
+    Expect(MountInfoFreeBlocks("HS_REAL", &blocks) > 0, "the default volume query reports room for a 1-block save");
     SetFreeSpaceVariable(nullptr);
 }
 
@@ -289,8 +282,8 @@ int main() {
     std::filesystem::current_path(previous);
     std::error_code ignored;
     std::filesystem::remove_all(root, ignored);
-    if (failures != 0) {
-        std::fprintf(stderr, "%d savedata host space check(s) failed\n", failures);
+    if (Failures() != 0) {
+        std::fprintf(stderr, "%u savedata host space check(s) failed\n", Failures());
         return 1;
     }
     std::printf("savedata host space tests passed\n");
