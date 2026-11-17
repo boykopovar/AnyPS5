@@ -34,7 +34,7 @@ std::int32_t CopyBitmap(GuestBitmapLibrary* library, const GuestBitmap* source, 
     if (size > IntMax || size < IntMin) NotImplemented_nid_no_patch(function);
     if (size > 0 && !memory) NotImplemented_nid_no_patch(function);
     std::int32_t error = 0;
-    auto* buffer = static_cast<unsigned char*>(ft_mem_qalloc_nid_postfix(memory, size, &error));
+    auto* buffer = static_cast<unsigned char*>(OtMemQAlloc(memory, size, &error));
     if (!error) {
         *target = *source;
         target->buffer = buffer;
