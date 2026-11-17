@@ -26,7 +26,6 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
-#include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
@@ -36,6 +35,7 @@
 #include "prx/libkernel/File/include/DescriptorControl.hpp"
 #include "prx/libc/include/CreationMask.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
+#include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/Socket/include/SocketPoll.hpp"
 #include "prx/libkernel/File/include/SharedMemory.hpp"
@@ -540,6 +540,10 @@ int APS5_VABI setlogin_nid_postfix(const char* name) {
     if (copied != 0) return static_cast<int>(Fail(copied));
     if (const int error = SetLogin_nid_no_patch(copy.c_str())) return static_cast<int>(Fail(error));
     return 0;
+}
+
+int APS5_VABI sceKernelFlock(int d, int operation) {
+    return flock_nid_postfix(d, operation) == 0 ? 0 : SceKernelError(*__error_nid_postfix());
 }
 
 int APS5_VABI fstatfs_nid_postfix(int d, KernelStatfs* buf) {
@@ -1344,9 +1348,9 @@ void APS5_VABI scePthreadSetName(Pthread thread, const char* name) {
 
 }
 
-int APS5_VABI sceKernelTitleWorkaroundIsEnabled(const KernelTitleWorkaround* workaround, std::int32_t bit, std::int32_t* enabled) {
+static int QueryTitleWorkaround(const KernelTitleWorkaround* workaround, std::int32_t bit, std::int32_t* enabled) {
     if (!workaround || !enabled) return static_cast<int>(0x8002000E);
-    if (static_cast<std::uint32_t>(bit) > 0x7F) return static_cast<int>(0x80020016);
+    if (static_cast<std::uint32_t>(bit) > 0x78) return static_cast<int>(0x80020016);
     KernelTitleWorkaround localWorkaround{};
     const int saved = errno;
     if (!GuestCopyIn_nid_no_patch(&localWorkaround, workaround, sizeof(localWorkaround))) {
@@ -1360,14 +1364,18 @@ int APS5_VABI sceKernelTitleWorkaroundIsEnabled(const KernelTitleWorkaround* wor
     return 0;
 }
 
+int APS5_VABI sceKernelTitleWorkaroundIsEnabled(const KernelTitleWorkaround* workaround, std::int32_t bit, std::int32_t* enabled) {
+    return QueryTitleWorkaround(workaround, bit, enabled);
+}
+
 int APS5_VABI sceKernelTitleWorkdaroundIsEnabled(const KernelTitleWorkaround* workaround, std::int32_t bit, std::int32_t* enabled) {
     return sceKernelTitleWorkaroundIsEnabled(workaround, bit, enabled);
 }
 
 int APS5_VABI sceKernelTitleWorkaroundIsEnabled2(const KernelTitleWorkaround* workaround, std::uint64_t selector, std::uint32_t bit, std::int32_t* enabled) {
     if (!workaround || !enabled) return static_cast<int>(0x8002000E);
-    if (bit > 0x7F || selector >= 0x29) return static_cast<int>(0x80020016);
-    return sceKernelTitleWorkaroundIsEnabled(workaround, static_cast<std::int32_t>(bit), enabled);
+    if (selector >= 0x29) return static_cast<int>(0x80020016);
+    return QueryTitleWorkaround(workaround, static_cast<std::int32_t>(bit), enabled);
 }
 
 int APS5_VABI sceKernelGetProcessType(int pid) {
