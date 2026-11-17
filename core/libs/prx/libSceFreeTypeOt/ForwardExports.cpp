@@ -270,6 +270,16 @@ std::int32_t APS5_VABI FT_QAllocForward_nid_no_patch(FreeType::GuestMemoryRec* m
 }
 APS5_EXPORT("hz-J3hohXW8", FT_QAllocForward_nid_no_patch);
 
+std::int32_t APS5_VABI FT_QReallocForward_nid_no_patch(FreeType::GuestMemoryRec* memory, std::int64_t current, std::int64_t size, void** block) {
+    return FT_QRealloc_nid_postfix(memory, current, size, block);
+}
+APS5_EXPORT("KVbmKCGGowg", FT_QReallocForward_nid_no_patch);
+
+std::int32_t APS5_VABI FT_ReallocForward_nid_no_patch(FreeType::GuestMemoryRec* memory, std::int64_t current, std::int64_t size, void** block) {
+    return FT_Realloc_nid_postfix(memory, current, size, block);
+}
+APS5_EXPORT("HVSaZbxYi2s", FT_ReallocForward_nid_no_patch);
+
 int APS5_VABI FT_Reference_FaceForward_nid_no_patch(FreeType::GuestFaceRec* face) {
     return FT_Reference_Face_nid_postfix(face);
 }
