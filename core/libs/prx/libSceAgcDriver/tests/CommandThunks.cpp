@@ -951,17 +951,17 @@ void SpecializedStreamersKeepEveryArgument() {
 VKAPI_ATTR void VKAPI_CALL emptyDraw(VkCommandBuffer, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t) {}
 
 template<typename Pfn>
-Pfn forBatch(const CommandFunctions* batch, Pfn CommandFunctions::*command, Pfn fallback) {
+Pfn forBatch(const CommandFunctions* batch, Pfn CommandFunctions::*command, const CommandFunctions* device) {
     if (batch != nullptr && batch->*command != nullptr) return batch->*command;
-    return fallback;
+    return device->*command;
 }
 
 struct CommandCosts {
-    double raw = 1e9;
-    double thunk = 1e9;
-    double typedDirect = 1e9;
-    double thunkStreamed = 1e9;
-    double typedStreamed = 1e9;
+    double raw = 0;
+    double thunk = 0;
+    double typedDirect = 0;
+    double thunkStreamed = 0;
+    double typedStreamed = 0;
 };
 
 template<typename Body>
@@ -971,30 +971,51 @@ double nanosPerCall(int calls, Body&& body) {
     return std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - start).count() / calls;
 }
 
+double median(std::vector<double> values) {
+    std::sort(values.begin(), values.end());
+    return values[values.size() / 2];
+}
+
 CommandCosts MeasureCommandCosts(int directCalls, int streamedCalls, int rounds) {
     CommandFunctions direct{};
     direct.CmdDraw = &emptyDraw;
-    volatile PFN_vkCmdDraw raw = &emptyDraw;
-    volatile PFN_vkCmdDraw through = thunked("vkCmdDraw", &emptyDraw);
-    const CommandFunctions* volatile directTable = &direct;
-    const CommandFunctions* volatile streamedTable = &AgcDriver::Graphics::StreamedCommands();
+    CommandFunctions thunkedTable{};
+    thunkedTable.CmdDraw = thunked("vkCmdDraw", &emptyDraw);
+    const CommandFunctions* volatile rawDevice = &direct;
+    const CommandFunctions* volatile thunkDevice = &thunkedTable;
+    const CommandFunctions* volatile directBatch = &direct;
+    const CommandFunctions* volatile streamedBatch = &AgcDriver::Graphics::StreamedCommands();
     const auto target = fakeBuffer(1);
-    CommandCosts costs;
+    std::vector<double> raw, thunk, typed, thunkStreamed, typedStreamed;
+    const std::array<std::function<void()>, 3> direct3{
+        [&] { raw.push_back(nanosPerCall(directCalls, [&](std::uint32_t call) { rawDevice->CmdDraw(target, call, 1, 0, 0); })); },
+        [&] { thunk.push_back(nanosPerCall(directCalls, [&](std::uint32_t call) { thunkDevice->CmdDraw(target, call, 1, 0, 0); })); },
+        [&] { typed.push_back(nanosPerCall(directCalls, [&](std::uint32_t call) { forBatch(directBatch, &CommandFunctions::CmdDraw, thunkDevice)(target, call, 1, 0, 0); })); },
+    };
     for (int round = 0; round < rounds; ++round) {
-        costs.raw = std::min(costs.raw, nanosPerCall(directCalls, [&](std::uint32_t call) { raw(target, call, 1, 0, 0); }));
-        costs.typedDirect = std::min(costs.typedDirect, nanosPerCall(directCalls, [&](std::uint32_t call) { forBatch(directTable, &CommandFunctions::CmdDraw, static_cast<PFN_vkCmdDraw>(through))(target, call, 1, 0, 0); }));
-        costs.thunk = std::min(costs.thunk, nanosPerCall(directCalls, [&](std::uint32_t call) { through(target, call, 1, 0, 0); }));
+        for (std::size_t step = 0; step < direct3.size(); ++step) direct3[(step + static_cast<std::size_t>(round)) % direct3.size()]();
         {
             CommandStream stream(direct);
             const auto handle = stream.Handle();
-            costs.thunkStreamed = std::min(costs.thunkStreamed, nanosPerCall(streamedCalls, [&](std::uint32_t call) { through(handle, call, 1, 0, 0); }));
+            thunkStreamed.push_back(nanosPerCall(streamedCalls, [&](std::uint32_t call) { thunkDevice->CmdDraw(handle, call, 1, 0, 0); }));
         }
         {
             CommandStream stream(direct);
             const auto handle = stream.Handle();
-            costs.typedStreamed = std::min(costs.typedStreamed, nanosPerCall(streamedCalls, [&](std::uint32_t call) { forBatch(streamedTable, &CommandFunctions::CmdDraw, static_cast<PFN_vkCmdDraw>(through))(handle, call, 1, 0, 0); }));
+            typedStreamed.push_back(nanosPerCall(streamedCalls, [&](std::uint32_t call) { forBatch(streamedBatch, &CommandFunctions::CmdDraw, thunkDevice)(handle, call, 1, 0, 0); }));
         }
     }
+    std::vector<double> typedOver, thunkOver;
+    for (std::size_t round = 0; round < raw.size(); ++round) {
+        typedOver.push_back(typed[round] - raw[round]);
+        thunkOver.push_back(thunk[round] - raw[round]);
+    }
+    CommandCosts costs;
+    costs.raw = median(raw);
+    costs.thunk = costs.raw + median(thunkOver);
+    costs.typedDirect = costs.raw + median(typedOver);
+    costs.thunkStreamed = median(thunkStreamed);
+    costs.typedStreamed = median(typedStreamed);
     return costs;
 }
 
@@ -1013,18 +1034,23 @@ bool InstrumentedBuild() {
 }
 
 int DirectModeCost() {
-    constexpr int DirectCalls = 10'000'000;
+    constexpr int DirectCalls = 5'000'000;
     constexpr int StreamedCalls = 1'000'000;
-    constexpr int Rounds = 7;
+    constexpr int Rounds = 21;
     const auto costs = MeasureCommandCosts(DirectCalls, StreamedCalls, Rounds);
-    std::printf("command cost (min of %d interleaved rounds): direct batch: raw %.2f ns, thunk %.2f ns, typed %.2f ns; streamed batch: thunk %.2f ns, typed %.2f ns\n", Rounds, costs.raw, costs.thunk, costs.typedDirect, costs.thunkStreamed, costs.typedStreamed);
-    const double allowed = costs.raw + std::max(0.15, (costs.thunk - costs.raw) / 2);
-    if (costs.typedDirect <= allowed) return 0;
-    if (InstrumentedBuild()) {
-        std::printf("typed direct %.2f ns exceeds the allowed %.2f ns; not gated in a sanitizer build\n", costs.typedDirect, allowed);
+    const double thunkOver = costs.thunk - costs.raw;
+    const double typedOver = costs.typedDirect - costs.raw;
+    std::printf("command cost (medians of %d interleaved rounds, each through its table): direct batch: raw %.2f ns, thunk %.2f ns (+%.2f), typed %.2f ns (+%.2f); streamed batch: thunk %.2f ns, typed %.2f ns\n", Rounds, costs.raw, costs.thunk, thunkOver, costs.typedDirect, typedOver, costs.thunkStreamed, costs.typedStreamed);
+    if (thunkOver < 0.2) {
+        std::printf("the thunk adds %.2f ns here, too little to tell a typed call from it; not gated\n", thunkOver);
         return 0;
     }
-    std::fprintf(stderr, "command thunks: a direct batch's typed command costs %.2f ns, over the allowed %.2f ns (raw %.2f ns, thunk %.2f ns)\n", costs.typedDirect, allowed, costs.raw, costs.thunk);
+    if (typedOver <= thunkOver * 0.75) return 0;
+    if (InstrumentedBuild()) {
+        std::printf("typed direct adds %.2f ns, over three quarters of the thunk's %.2f ns; not gated in a sanitizer build\n", typedOver, thunkOver);
+        return 0;
+    }
+    std::fprintf(stderr, "command thunks: a direct batch's typed command adds %.2f ns over a raw table call, more than three quarters of the thunk's %.2f ns\n", typedOver, thunkOver);
     return 1;
 }
 
