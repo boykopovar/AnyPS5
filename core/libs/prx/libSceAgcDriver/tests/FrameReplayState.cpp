@@ -681,6 +681,29 @@ void testForgottenUnwatchedHashes() {
     check(!hashes.samples.contains({0x100000, Block}), "a store into the last byte of an unwatched block left its hash");
 }
 
+void testCapturedSpans() {
+    constexpr std::uint64_t Page = AgcDriver::FrameRecorder::HostPageBytes;
+    constexpr std::uint64_t Base = 0x7f0000000000;
+    AgcDriver::FrameRecorder::CapturedSpans captured;
+    captured.Add(Base, Base + 3 * Page);
+    captured.Add(Base + Page + 0x100, Base + Page + 0x200);
+    captured.Add(Base + 4 * Page - 0x80, Base + 4 * Page + 0x80);
+    captured.Add(Base + 4 * Page, Base + 5 * Page);
+    captured.Add(Base + 7 * Page, Base + 8 * Page);
+    captured.Add(Base + 8 * Page, Base + 9 * Page);
+    const auto covered = [&](std::uint64_t begin, std::uint64_t end) {
+        std::uint64_t bytes = 0;
+        captured.Covering(begin, end, [&](std::uint64_t first, std::uint64_t stop) { bytes += stop - first; });
+        return bytes;
+    };
+    check(covered(Base + Page, Base + 2 * Page) == Page, "a page inside a readable range was not covered once, so a smaller range starting inside it hid the rest or counted twice");
+    check(covered(Base + Page + 0x300, Base + Page + 0x400) == 0x100, "bytes of a readable range after a smaller range it contains were missed");
+    check(covered(Base + 4 * Page, Base + 5 * Page) == Page, "a host page overlapping the tail of a readable range was not covered once");
+    check(covered(Base + 3 * Page, Base + 4 * Page) == 0x80, "the tail of a readable range ending inside a page was not covered");
+    check(covered(Base + 6 * Page, Base + 10 * Page) == 2 * Page, "adjacent readable ranges were not covered once each");
+    check(captured.spans.size() == 3, "overlapping or adjacent readable ranges were not merged into disjoint spans");
+}
+
 std::vector<std::byte> fillWords(std::initializer_list<std::uint32_t> words) {
     std::vector<std::byte> bytes(words.size() * 4);
     std::size_t at = 0;
@@ -1473,6 +1496,7 @@ int main(int argc, char** argv) {
         else if (mode == "merge_blocks") testMergedBlocks();
         else if (mode == "forget_unwatched_hashes") testForgottenUnwatchedHashes();
         else if (mode == "unaligned_gpu_fill") testUnalignedGpuFill();
+        else if (mode == "captured_spans") testCapturedSpans();
         else if (mode == "reservations" || mode == "reservation_failure") testRepeatedReservations(directory, mode == "reservation_failure");
         else if (mode == "blocking") testBlockingSubmission(directory);
         else if (mode == "environment") testColdPipelines();

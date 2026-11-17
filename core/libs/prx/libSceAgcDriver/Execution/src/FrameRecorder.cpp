@@ -423,23 +423,13 @@ void FrameRecorder::emitShaderDelta(std::span<const Shader* const> shaders) {
     collectShaderPages(shaders, blocks, hostPages);
     if (blocks.empty() && hostPages.empty()) return;
     const auto added = newRanges();
-    std::map<std::uint64_t, std::uint64_t> captured;
+    CapturedSpans captured;
     for (const auto& list : {std::span<const Range>(ranges), std::span<const Range>(added)}) {
         for (const auto& range : list) {
-            if (!range.readable) continue;
-            auto& end = captured[range.address];
-            end = std::max(end, range.address + range.bytes);
+            if (range.readable) captured.Add(range.address, range.address + range.bytes);
         }
     }
-    const auto inside = [&](std::uint64_t begin, std::uint64_t end, const auto& visit) {
-        auto range = captured.upper_bound(begin);
-        if (range != captured.begin()) --range;
-        for (; range != captured.end() && range->first < end; ++range) {
-            const auto first = std::max(begin, range->first);
-            const auto stop = std::min(end, range->second);
-            if (first < stop) visit(first, stop);
-        }
-    };
+    const auto inside = [&](std::uint64_t begin, std::uint64_t end, const auto& visit) { captured.Covering(begin, end, visit); };
     std::vector<Span> spans;
     for (const auto block : blocks) {
         const auto since = blockSince(block);
@@ -475,6 +465,18 @@ std::uint64_t FrameRecorder::blockSince(std::uint64_t block) const {
         since = std::min(since, range.since);
     }
     return covered == FrameCaptureWriter::BlockBytes ? std::max(mark, since) : mark;
+}
+
+void FrameRecorder::CapturedSpans::Add(std::uint64_t begin, std::uint64_t end) {
+    if (begin >= end) return;
+    auto next = spans.upper_bound(begin);
+    if (next != spans.begin() && std::prev(next)->second >= begin) --next;
+    while (next != spans.end() && next->first <= end) {
+        begin = std::min(begin, next->first);
+        end = std::max(end, next->second);
+        next = spans.erase(next);
+    }
+    spans.emplace(begin, end);
 }
 
 void FrameRecorder::UnwatchedHashes::Keep(std::uint64_t begin, std::uint64_t bytes, std::pair<std::uint64_t, std::uint64_t> sample) {

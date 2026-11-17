@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Execution/include/VideoOutput.hpp"
 #include "SceShaders.hpp"
 #include "SceTypes.hpp"
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -53,6 +54,19 @@ public:
     }
     void RewindTailFlips(std::uint64_t flips);
     static void MergeOverlappingBlocks(std::vector<std::pair<std::uint64_t, std::uint64_t>>& blocks);
+    struct CapturedSpans {
+        std::map<std::uint64_t, std::uint64_t> spans;
+        void Add(std::uint64_t begin, std::uint64_t end);
+        template <typename Visit> void Covering(std::uint64_t begin, std::uint64_t end, const Visit& visit) const {
+            auto span = spans.upper_bound(begin);
+            if (span != spans.begin()) --span;
+            for (; span != spans.end() && span->first < end; ++span) {
+                const auto first = std::max(begin, span->first);
+                const auto stop = std::min(end, span->second);
+                if (first < stop) visit(first, stop);
+            }
+        }
+    };
     struct UnwatchedHashes {
         std::map<std::pair<std::uint64_t, std::uint64_t>, std::pair<std::uint64_t, std::uint64_t>> samples;
         std::uint64_t longest = 0;
