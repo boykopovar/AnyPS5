@@ -744,6 +744,9 @@ if(BUILD_TESTING)
         add_test(NAME ab_split COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_ab_split.py)
         set_tests_properties(ab_split PROPERTIES TIMEOUT 20)
+        add_test(NAME package_headers COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_package_headers.py)
+        set_tests_properties(package_headers PROPERTIES TIMEOUT 20)
         add_test(NAME conventions_bom_shebang COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_check_conventions_bom_shebang.py)
         set_tests_properties(conventions_bom_shebang PROPERTIES TIMEOUT 20)
