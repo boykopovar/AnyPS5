@@ -327,7 +327,13 @@ int APS5_VABI sceNpUniversalDataSystemIntRecordArraySetObject(void* record, cons
     const auto* source = FindObject(const_cast<void*>(value));
     if (source == nullptr) return kNullObject;
     auto child = std::make_shared<NpUniversalDataSystemEventPropertyObject>(source->Clone());
-    if (valuePtr != nullptr) *valuePtr = child.get();
+    if (valuePtr != nullptr) {
+        const int savedErrno = errno;
+        void* childPtr = child.get();
+        const bool copied = GuestCopyOut_nid_no_patch(valuePtr, &childPtr, sizeof(childPtr));
+        errno = savedErrno;
+        if (!copied) return kInvalidArgument;
+    }
     array->Add(std::move(child));
     return 0;
 }
@@ -341,7 +347,13 @@ int APS5_VABI sceNpUniversalDataSystemIntRecordArraySetArray(void* record, const
     const auto* source = FindArray(const_cast<void*>(value));
     if (source == nullptr) return kNullArray;
     auto child = std::make_shared<NpUniversalDataSystemEventPropertyArray>(source->Clone());
-    if (valuePtr != nullptr) *valuePtr = child.get();
+    if (valuePtr != nullptr) {
+        const int savedErrno = errno;
+        void* childPtr = child.get();
+        const bool copied = GuestCopyOut_nid_no_patch(valuePtr, &childPtr, sizeof(childPtr));
+        errno = savedErrno;
+        if (!copied) return kInvalidArgument;
+    }
     array->Add(std::move(child));
     return 0;
 }
@@ -449,7 +461,13 @@ int APS5_VABI sceNpUniversalDataSystemIntRecordObjectSetObject(void* record, con
     const auto* source = FindObject(const_cast<void*>(value));
     if (source == nullptr) return kNullObject;
     auto child = std::make_shared<NpUniversalDataSystemEventPropertyObject>(source->Clone());
-    if (valuePtr != nullptr) *valuePtr = child.get();
+    if (valuePtr != nullptr) {
+        const int savedErrno = errno;
+        void* childPtr = child.get();
+        const bool copied = GuestCopyOut_nid_no_patch(valuePtr, &childPtr, sizeof(childPtr));
+        errno = savedErrno;
+        if (!copied) return kInvalidArgument;
+    }
     object->Set(key, std::move(child));
     return 0;
 }
@@ -464,7 +482,13 @@ int APS5_VABI sceNpUniversalDataSystemIntRecordObjectSetArray(void* record, cons
     const auto* source = FindArray(const_cast<void*>(value));
     if (source == nullptr) return kNullArray;
     auto child = std::make_shared<NpUniversalDataSystemEventPropertyArray>(source->Clone());
-    if (valuePtr != nullptr) *valuePtr = child.get();
+    if (valuePtr != nullptr) {
+        const int savedErrno = errno;
+        void* childPtr = child.get();
+        const bool copied = GuestCopyOut_nid_no_patch(valuePtr, &childPtr, sizeof(childPtr));
+        errno = savedErrno;
+        if (!copied) return kInvalidArgument;
+    }
     object->Set(key, std::move(child));
     return 0;
 }
