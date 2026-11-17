@@ -47,7 +47,7 @@ if(BUILD_TESTING)
             endif()
             add_custom_target(avplayer_http_patched_closure)
             add_dependencies(avplayer_http_patched_closure
-                libc libkernel libSceLibcInternal libSceHttp libSceAvPlayer libSceAvPlayer.native nid_patcher)
+                libc libkernel libkernel_sys libSceLibcInternal libSceHttp libSceAvPlayer libSceAvPlayer.native nid_patcher)
             set(httpPatchedAllocatorArguments)
             if(WIN32 AND TARGET mimalloc)
                 add_dependencies(avplayer_http_patched_closure mimalloc pe_import_first)
@@ -63,6 +63,7 @@ if(BUILD_TESTING)
                 -DPATCHER=$<TARGET_FILE:nid_patcher>
                 -DLIBC=$<TARGET_FILE:libc>
                 -DKERNEL=$<TARGET_FILE:libkernel>
+                -DKERNEL_SYS=$<TARGET_FILE:libkernel_sys>
                 -DINTERNAL=$<TARGET_FILE:libSceLibcInternal>
                 -DHTTP=$<TARGET_FILE:libSceHttp>
                 -DAVPLAYER=$<TARGET_FILE:libSceAvPlayer>
