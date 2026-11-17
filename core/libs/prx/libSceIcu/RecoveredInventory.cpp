@@ -163,10 +163,6 @@ int APS5_VABI ureldatefmt_formatNumeric_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI uscript_getCode_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI usearch_getCollator_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }

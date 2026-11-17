@@ -3,6 +3,9 @@
 #include "unicode/uscript.h"
 #include <algorithm>
 #include <array>
+#include <cerrno>
+#include <new>
+#include <string>
 
 namespace {
 
@@ -13,6 +16,65 @@ UScriptCode NativeScript(std::int32_t script) {
 }
 
 extern "C" {
+
+std::int32_t APS5_VABI uscript_getCode_nid_postfix(const char* nameOrAbbrOrLocale, std::int32_t* scripts,
+                                                   std::int32_t capacity, std::int32_t* error) {
+    if (!error) APS5_INVALID_ARG_EX;
+    std::int32_t incoming = 0;
+    int savedErrno = errno;
+    const bool readable = GuestCopyIn_nid_no_patch(&incoming, error, sizeof(incoming));
+    errno = savedErrno;
+    if (!readable) NotImplemented_nid_no_patch(__func__);
+    if (incoming > 0) return 0;
+    if (capacity < 0 || (capacity > 0 && !scripts)) {
+        const std::int32_t updated = U_ILLEGAL_ARGUMENT_ERROR;
+        savedErrno = errno;
+        const bool written = GuestCopyOut_nid_no_patch(error, &updated, sizeof(updated));
+        errno = savedErrno;
+        if (!written) NotImplemented_nid_no_patch(__func__);
+        return 0;
+    }
+
+    std::string nameCopy;
+    if (nameOrAbbrOrLocale) {
+        try {
+            savedErrno = errno;
+            const int copied = CopyGuestString_nid_no_patch(nameOrAbbrOrLocale, 1024 * 1024, nameCopy);
+            errno = savedErrno;
+            if (copied != 0) NotImplemented_nid_no_patch(__func__);
+        } catch (const std::bad_alloc&) {
+            const std::int32_t updated = U_MEMORY_ALLOCATION_ERROR;
+            savedErrno = errno;
+            const bool written = GuestCopyOut_nid_no_patch(error, &updated, sizeof(updated));
+            errno = savedErrno;
+            if (!written) NotImplemented_nid_no_patch(__func__);
+            return 0;
+        }
+    }
+
+    std::array<UScriptCode, USCRIPT_CODE_LIMIT> nativeScripts{};
+    auto status = static_cast<UErrorCode>(incoming);
+    const auto nativeCapacity = std::min(capacity, static_cast<std::int32_t>(nativeScripts.size()));
+    const auto result = ::uscript_getCode(nameOrAbbrOrLocale ? nameCopy.c_str() : nullptr,
+                                          nativeCapacity > 0 ? nativeScripts.data() : nullptr,
+                                          nativeCapacity, &status);
+    const auto copyCount = std::min({result, capacity, static_cast<std::int32_t>(nativeScripts.size())});
+    if (copyCount > 0) {
+        std::array<std::int32_t, USCRIPT_CODE_LIMIT> output{};
+        std::copy_n(nativeScripts.begin(), copyCount, output.begin());
+        savedErrno = errno;
+        const bool written = GuestCopyOut_nid_no_patch(scripts, output.data(),
+                                                       static_cast<std::size_t>(copyCount) * sizeof(output[0]));
+        errno = savedErrno;
+        if (!written) NotImplemented_nid_no_patch(__func__);
+    }
+    const std::int32_t updated = status;
+    savedErrno = errno;
+    const bool written = GuestCopyOut_nid_no_patch(error, &updated, sizeof(updated));
+    errno = savedErrno;
+    if (!written) NotImplemented_nid_no_patch(__func__);
+    return result;
+}
 
 std::int32_t APS5_VABI uscript_getScript_nid_postfix(std::int32_t character, std::int32_t* error) {
     if (!error) return USCRIPT_INVALID_CODE;

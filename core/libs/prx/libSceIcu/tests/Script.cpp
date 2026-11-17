@@ -17,6 +17,12 @@ void Require(bool value, std::source_location location = std::source_location::c
 }
 
 void CheckScript() {
+    std::array<std::int32_t, 2> codes{};
+    std::int32_t codeStatus = 0;
+    Require(uscript_getCode_nid_postfix("Latn", codes.data(), static_cast<std::int32_t>(codes.size()),
+                                        &codeStatus) == 1);
+    Require(codeStatus == 0 && codes[0] == 25);
+
     struct Case {
         std::int32_t character;
         std::int32_t script;
