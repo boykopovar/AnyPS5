@@ -9,6 +9,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import types
 import unittest
@@ -674,6 +675,9 @@ class PadTests(unittest.TestCase):
 class WindowsExitMetadataTests(unittest.TestCase):
     def exit_code(self, owned, records, fallback=5):
         session = title_run.Session.__new__(title_run.Session)
+        session.lock = threading.RLock()
+        session.watch_stop = threading.Event()
+        session.job, session.result, session.released = 100, None, False
         session.owned = ntpath.normcase(ntpath.normpath(owned))
         session.handles = {index: index for index in range(1, len(records) + 1)}
         session.images = {index: ntpath.normcase(ntpath.normpath(record["image"])) if record["image"] else ""

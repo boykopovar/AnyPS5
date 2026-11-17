@@ -780,6 +780,7 @@ if os.name == "nt":
     kernel32.CreateJobObjectW.argtypes = (ctypes.c_void_p, wintypes.LPCWSTR)
     kernel32.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
     kernel32.TerminateJobObject.argtypes = (wintypes.HANDLE, wintypes.UINT)
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
     kernel32.OpenProcess.restype = wintypes.HANDLE
     kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
     kernel32.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
@@ -800,8 +801,7 @@ if os.name == "nt":
     user32.SetWinEventHook.restype = wintypes.HANDLE
     user32.SetWinEventHook.argtypes = (wintypes.DWORD, wintypes.DWORD, wintypes.HMODULE, WinEventCallback, wintypes.DWORD, wintypes.DWORD, wintypes.DWORD)
     user32.UnhookWinEvent.argtypes = (wintypes.HANDLE,)
-    user32.GetMessageW.argtypes = (ctypes.POINTER(wintypes.MSG), wintypes.HWND, wintypes.UINT, wintypes.UINT)
-    user32.PostThreadMessageW.argtypes = (wintypes.DWORD, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+    user32.PeekMessageW.argtypes = (ctypes.POINTER(wintypes.MSG), wintypes.HWND, wintypes.UINT, wintypes.UINT, wintypes.UINT)
 
     def send_to_back(window):
         user32.SetWindowPos(window, wintypes.HWND(1), 0, 0, 0, 0, 0x4013)
@@ -814,34 +814,51 @@ class Session:
     def __init__(self, command, cwd, env, stdout, stderr, owned=None, interactive=False):
         self.owned = os.path.normcase(os.path.realpath(owned or Path(command[0]).parent))
         if os.name == "nt":
+            self.lock = threading.RLock()
+            self.handles, self.images = {}, {}
+            self.job, self.watcher, self.watch_error, self.result = None, None, None, None
+            self.watch_stop = threading.Event()
+            self.released = False
+            self.placed = set()
             self.process = subprocess.Popen(command, cwd=cwd, env=env, stdout=stdout, stderr=stderr,
                                             creationflags=0 if interactive else subprocess.CREATE_NO_WINDOW)
-            self.handles, self.images = {}, {}
-            self.job = kernel32.CreateJobObjectW(None, None)
-            if not self.job or (not kernel32.AssignProcessToJobObject(self.job, int(self.process._handle)) and self.process.poll() is None):
-                error = ctypes.get_last_error()
-                self.process.kill()
-                raise ctypes.WinError(error)
-            self.placed = set()
-            self.watcher = None
-            if not interactive:
-                ready = threading.Event()
-                threading.Thread(target=self.watch_windows, args=(ready,), daemon=True).start()
-                ready.wait()
+            try:
+                self.job = kernel32.CreateJobObjectW(None, None) or None
+                if not self.job or (not kernel32.AssignProcessToJobObject(self.job, int(self.process._handle)) and self.process.poll() is None):
+                    raise ctypes.WinError(ctypes.get_last_error())
+                if not interactive:
+                    ready = threading.Event()
+                    self.watcher = threading.Thread(target=self.watch_windows, args=(ready,), daemon=True)
+                    self.watcher.start()
+                    if not ready.wait(5):
+                        raise RuntimeError("Windows window watcher did not start")
+                    if self.watch_error is not None:
+                        raise self.watch_error
+            except BaseException:
+                try:
+                    if self.process.poll() is None:
+                        self.process.kill()
+                finally:
+                    self.kill()
+                raise
         else:
             self.process = subprocess.Popen(command, cwd=cwd, env=env, stdout=stdout, stderr=stderr, start_new_session=True)
 
     def job_process_ids(self):
-        listing = ProcessIdList()
-        kernel32.QueryInformationJobObject(self.job, 3, ctypes.byref(listing), ctypes.sizeof(listing), None)
-        return set(listing.ids[:listing.listed])
+        with self.lock:
+            if self.job is None or self.watch_stop.is_set():
+                return set()
+            listing = ProcessIdList()
+            kernel32.QueryInformationJobObject(self.job, 3, ctypes.byref(listing), ctypes.sizeof(listing), None)
+            return set(listing.ids[:listing.listed])
 
     def process_ids(self):
-        ids = self.job_process_ids()
-        for pid in ids - self.handles.keys():
-            self.handles[pid] = kernel32.OpenProcess(0x1000, False, pid)
-            self.images[pid] = self.image_path(self.handles[pid]) if self.handles[pid] else ""
-        return ids
+        with self.lock:
+            ids = self.job_process_ids()
+            for pid in ids - self.handles.keys():
+                self.handles[pid] = kernel32.OpenProcess(0x1000, False, pid)
+                self.images[pid] = self.image_path(self.handles[pid]) if self.handles[pid] else ""
+            return ids
 
     def windows(self):
         ids, found = self.process_ids(), []
@@ -863,14 +880,33 @@ class Session:
                     and user32.GetWindowThreadProcessId(window, ctypes.byref(owner)) and owner.value in self.job_process_ids()):
                 send_to_back(window)
 
-        callback = WinEventCallback(created)
-        hook = user32.SetWinEventHook(0x8000, 0x8002, None, callback, 0, 0, 2)
-        self.watcher = kernel32.GetCurrentThreadId()
-        ready.set()
-        message = wintypes.MSG()
-        while user32.GetMessageW(ctypes.byref(message), None, 0, 0) > 0:
-            pass
-        user32.UnhookWinEvent(hook)
+        hook = None
+        try:
+            message = wintypes.MSG()
+            user32.PeekMessageW(ctypes.byref(message), None, 0, 0, 0)
+            if self.watch_stop.is_set():
+                return
+            callback = WinEventCallback(created)
+            hook = user32.SetWinEventHook(0x8000, 0x8002, None, callback, 0, 0, 2)
+            if not hook:
+                raise ctypes.WinError(ctypes.get_last_error())
+            ready.set()
+            while not self.watch_stop.is_set():
+                if user32.PeekMessageW(ctypes.byref(message), None, 0, 0, 1):
+                    if message.message == 0x12:
+                        break
+                else:
+                    self.watch_stop.wait(0.05)
+        except BaseException as error:
+            self.watch_error = error
+        finally:
+            try:
+                if hook and not user32.UnhookWinEvent(hook):
+                    raise ctypes.WinError(ctypes.get_last_error())
+            except BaseException as error:
+                self.watch_error = self.watch_error or error
+            finally:
+                ready.set()
 
     def alive(self):
         self.process.poll()
@@ -890,15 +926,19 @@ class Session:
         return os.path.normcase(os.path.realpath(buffer.value)) if kernel32.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size)) else ""
 
     def exit_code(self):
-        if os.name == "nt" and not self.process_ids():
-            last = None
-            for pid, handle in self.handles.items():
-                code, times = wintypes.DWORD(), [ctypes.c_ulonglong() for _ in range(4)]
-                if (handle and PureWindowsPath(self.images[pid]).is_relative_to(self.owned) and kernel32.GetExitCodeProcess(handle, ctypes.byref(code)) and code.value != 259
-                        and kernel32.GetProcessTimes(handle, *map(ctypes.byref, times)) and (last is None or times[0].value >= last[0])):
-                    last = (times[0].value, code.value)
-            if last:
-                return last[1]
+        if os.name == "nt":
+            with self.lock:
+                if self.released:
+                    return self.result if self.result is not None else self.process.poll()
+                if not self.process_ids():
+                    last = None
+                    for pid, handle in self.handles.items():
+                        code, times = wintypes.DWORD(), [ctypes.c_ulonglong() for _ in range(4)]
+                        if (handle and PureWindowsPath(self.images[pid]).is_relative_to(self.owned) and kernel32.GetExitCodeProcess(handle, ctypes.byref(code)) and code.value != 259
+                                and kernel32.GetProcessTimes(handle, *map(ctypes.byref, times)) and (last is None or times[0].value >= last[0])):
+                            last = (times[0].value, code.value)
+                    if last:
+                        return last[1]
         return self.process.poll()
 
     def send_new_windows_to_back(self):
@@ -917,16 +957,63 @@ class Session:
             except (ProcessLookupError, PermissionError):
                 pass
 
+    def _release_windows(self):
+        errors = []
+        with self.lock:
+            if not self.released:
+                try:
+                    self.result = self.exit_code()
+                except BaseException as error:
+                    errors.append(error)
+                self.released = True
+            for pid, handle in list(self.handles.items()):
+                try:
+                    if handle and not kernel32.CloseHandle(handle):
+                        raise ctypes.WinError(ctypes.get_last_error())
+                except BaseException as error:
+                    errors.append(error)
+                else:
+                    del self.handles[pid]
+            if self.job is not None:
+                try:
+                    if not kernel32.CloseHandle(self.job):
+                        raise ctypes.WinError(ctypes.get_last_error())
+                except BaseException as error:
+                    errors.append(error)
+                else:
+                    self.job = None
+        if errors:
+            raise errors[0]
+
     def kill(self):
         if os.name == "nt":
-            kernel32.TerminateJobObject(self.job, 1)
-            if self.watcher is not None:
-                user32.PostThreadMessageW(self.watcher, 0x12, 0, 0)
-        else:
+            self.watch_stop.set()
             try:
-                os.killpg(self.process.pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                pass
+                error = None
+                with self.lock:
+                    if self.job is not None and not kernel32.TerminateJobObject(self.job, 1):
+                        error = ctypes.WinError(ctypes.get_last_error())
+                    if (self.job is None or error is not None) and self.process.poll() is None:
+                        self.process.kill()
+                self.process.wait(timeout=5)
+                if error is not None:
+                    raise error
+            finally:
+                try:
+                    if self.watcher is not None:
+                        if self.watcher.ident is not None:
+                            self.watcher.join(timeout=5)
+                        if self.watcher.is_alive():
+                            raise RuntimeError("Windows window watcher did not stop")
+                    if self.watch_error is not None:
+                        raise self.watch_error
+                finally:
+                    self._release_windows()
+            return
+        try:
+            os.killpg(self.process.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
         self.process.wait()
 
 
