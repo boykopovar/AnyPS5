@@ -74,6 +74,34 @@ class RelinkerFuzzSeedsTests(unittest.TestCase):
             self.assertNotIn("Traceback", stderr)
             self.assertEqual(stdout, "")
 
+    def test_without_arguments(self):
+        self.assertTrue(relinker_fuzz_seeds.without_arguments(lambda: None))
+        self.assertTrue(relinker_fuzz_seeds.without_arguments(lambda a=1, *rest, **extra: None))
+        self.assertFalse(relinker_fuzz_seeds.without_arguments(lambda a: None))
+
+    def test_all_configurations_writes_more_seeds(self):
+        with tempfile.TemporaryDirectory() as directory:
+            default, extended = Path(directory) / "default", Path(directory) / "extended"
+            self.run_main(default)
+            code, stdout, stderr = self.run_main(extended, "--all-configurations")
+            self.assertEqual(code, 0)
+            self.assertGreater(len(list(extended.iterdir())), len(list(default.iterdir())))
+            self.assertIn(f"{len(list(extended.iterdir()))} seeds written to", stdout)
+
+    def test_images_skips_unimportable_module_with_warning(self):
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "test_zz_broken.py").write_text("raise RuntimeError('boom')\n", encoding="utf-8")
+            stderr = io.StringIO()
+            original = relinker_fuzz_seeds.TESTS
+            relinker_fuzz_seeds.TESTS = Path(directory)
+            try:
+                with contextlib.redirect_stderr(stderr):
+                    self.assertEqual(list(relinker_fuzz_seeds.images()), [])
+            finally:
+                relinker_fuzz_seeds.TESTS = original
+                sys.modules.pop("test_zz_broken", None)
+            self.assertIn("no seeds from test_zz_broken.py", stderr.getvalue())
+
     def test_cli_subprocess_invocation(self):
         with tempfile.TemporaryDirectory() as directory:
             existing = Path(directory) / "file.txt"
