@@ -1,4 +1,4 @@
-#include "prx/libSceNgs2.native/tests/Ngs2Test.hpp"
+#include "prx/libSceNgs2.native/include/Exports.hpp"
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>

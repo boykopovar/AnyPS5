@@ -1,7 +1,7 @@
 #include "prx/libSceNgs2.native/include/Api.hpp"
 #include "prx/libSceNgs2.native/include/Ngs2Types.hpp"
 #include "prx/libSceNgs2.native/src/Ngs2Internal.hpp"
-#include "prx/libSceNgs2.native/tests/Ngs2Test.hpp"
+#include "prx/libSceNgs2.native/include/Exports.hpp"
 #include "prx/libc/include/General.hpp"
 
 #include <algorithm>
