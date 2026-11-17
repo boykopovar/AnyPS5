@@ -46,10 +46,10 @@ struct Builder {
         return emit(IrOpcode::LaneId, IrType::U32, {});
     }
 
-    IrValue& check(IrValue& value, std::uint8_t lanes, std::uint32_t region = 0) {
+    IrValue& check(IrValue& value, std::uint8_t lanes, std::uint32_t region = 0, std::uint32_t execEpoch = 0) {
         auto& condition = emit(IrOpcode::INotEqual32, IrType::Bool, {&value, &constant(0u)});
         chain = chain == nullptr ? &condition : &emit(IrOpcode::LogicalOr, IrType::Bool, {chain, &condition});
-        program.Metadata().nanSpeculationChecks.push_back({&condition, &value, lanes, region});
+        program.Metadata().nanSpeculationChecks.push_back({&condition, &value, lanes, region, execEpoch});
         return condition;
     }
 
@@ -233,6 +233,23 @@ std::vector<Case> Cases() {
             DeadCodeEliminator{}.Eliminate(b.program);
             const IrValue* condition = b.program.Metadata().blockInfo.front().condition->Resolve();
             return condition->Opcode() != IrOpcode::Unreachable && (condition->HasImmediate() || condition->Parent() != nullptr);
+        }},
+        {"a later check behind an EXEC write does not cover an earlier check", [](Builder& b) {
+            auto& v = b.emit(IrOpcode::FPMul16x2, IrType::U32, {&b.unknown(), &b.unknown()});
+            auto& vc = b.check(v, Both);
+            b.check(Packed(b, v), Both, 0, 1);
+            b.prune();
+            return !Removed(vc);
+        }},
+        {"a later check under the same EXEC still covers an earlier check", [](Builder& b) {
+            auto& v = b.emit(IrOpcode::FPMul16x2, IrType::U32, {&b.unknown(), &b.unknown()});
+            auto& vc = b.check(v, Both);
+            b.check(Packed(b, v), Both, 0, 1);
+            auto& v2 = b.emit(IrOpcode::FPMul16x2, IrType::U32, {&b.unknown(), &b.unknown()});
+            auto& v2c = b.check(v2, Both, 0, 1);
+            b.check(Packed(b, v2), Both, 0, 1);
+            b.prune();
+            return !Removed(vc) && Removed(v2c);
         }},
         {"a NaN check through an identity is pruned", [](Builder& b) {
             auto& v = b.emit(IrOpcode::FPMul16x2, IrType::U32, {&b.unknown(), &b.unknown()});

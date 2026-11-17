@@ -445,7 +445,7 @@ void TranslationContext::noteNan(IrValue& condition, IrValue& value, std::uint8_
     ++program.Metadata().nanSpeculationFastOps;
     IrValue& active = ir.LogicalAnd(ir.GetExec(), condition);
     nanSeen = nanSeen == nullptr ? &active : &ir.LogicalOr(*nanSeen, active);
-    program.Metadata().nanSpeculationChecks.push_back({&condition, &value, lanes, nanRegion});
+    program.Metadata().nanSpeculationChecks.push_back({&condition, &value, lanes, nanRegion, program.Metadata().execWrites});
 }
 
 IrU1 TranslationContext::anyHalfNan(IrU32 word) {

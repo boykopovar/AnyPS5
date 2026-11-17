@@ -273,6 +273,10 @@ function(add_shader_recompiler target runtimeTarget)
             MeshBarycentricLayoutOf
             NanSpeculation
             NanSpeculationCounterSites
+            NanSpeculationFallbacks
+            NoteNanSpeculationFallback
+            RestoreNanSpeculation
+            InjectNanSpeculationFailures
             NanSpeculationRetry
             NanSpeculationStageCount
             NanSpeculationStats

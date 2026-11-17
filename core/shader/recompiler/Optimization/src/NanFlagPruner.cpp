@@ -152,11 +152,15 @@ NanFlagPruneStats NanFlagPruner::Prune(IrProgram& program) const {
     const auto& writes = program.Metadata().nanSpeculationLaneWrites;
     const std::unordered_set<const IrValue*> laneWrites(writes.begin(), writes.end());
     std::unordered_map<const IrValue*, std::uint8_t> kept;
+    // A check is masked with the EXEC in force where it was emitted, so a later check covers an earlier one
+    // only while no EXEC write sits between them: a lane switched off in between never raises the later flag.
     std::uint32_t region = checks.back().region;
+    std::uint32_t epoch = checks.back().execEpoch;
     for (auto check = checks.rbegin(); check != checks.rend(); ++check) {
-        if (check->region != region) {
+        if (check->region != region || check->execEpoch != epoch) {
             kept.clear();
             region = check->region;
+            epoch = check->execEpoch;
         }
         IrValue* value = check->value->Resolve();
         IrValue* condition = check->condition;

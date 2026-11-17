@@ -465,6 +465,8 @@ struct SourceEntry : std::enable_shared_from_this<SourceEntry> {
     std::uint64_t planShaderHash = 0;
     std::uint64_t planBytes = 0;
     std::uint64_t planUsed = 0;
+    // A variant of this code was compiled with NaN speculation, or came from the disk cache while it was enabled: any address running it may need the exact fallback.
+    bool nanSpeculated = false;
     bool runtimeCaptured = false;
     // A plan build that threw (an unsupported resource chain or control flow) is remembered and
     // rethrown: the front end ran every pass before failing, ~13 ms per dispatch of a shader the
@@ -984,10 +986,26 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     return {request.layout, {}, std::move(static_cast<CompiledBindingLayout&>(bindings)), std::move(result)};
 }
 
+struct InjectedNanFailures {
+    std::atomic<std::uint32_t> remaining{0};
+    std::atomic<bool> includingExact{false};
+};
+
+InjectedNanFailures& injectedNanFailures() {
+    static InjectedNanFailures failures;
+    return failures;
+}
+
 CompiledVariant compileVariant(const RecompileRequest& request, IrProgram program, std::exception_ptr* emissionFailure = nullptr) {
     return recordEmissionFailure(emissionFailure, [&] {
         prepareInterface(request, program);
         auto variant = emitVariant(request, program);
+        auto& injected = injectedNanFailures();
+        if (injected.remaining.load(std::memory_order_relaxed) != 0u && NanSpeculationApplied(request.shader.codeAddress) && (injected.includingExact.load(std::memory_order_relaxed) || !NanSpeculationSuppressed(request.shader.codeAddress))) {
+            auto left = injected.remaining.load(std::memory_order_relaxed);
+            while (left != 0u && !injected.remaining.compare_exchange_weak(left, left - 1u, std::memory_order_relaxed)) {}
+            if (left != 0u) throw std::runtime_error("injected NaN speculation failure");
+        }
         variant.info = std::move(program).TakeCompiledInfo();
         return variant;
     });
@@ -1724,6 +1742,7 @@ auto CountedCompile(Compile&& compile) {
 }
 
 std::shared_ptr<const CompiledVariant> findOrCompileVariant(SourceEntry& source, const RecompileRequest& request, bool& cacheHit, ShaderPreparationContext* preparation = nullptr) {
+    if (source.nanSpeculated) MarkNanSpeculationApplied(request.shader.codeAddress);
     for (const auto& candidate : source.variants) {
         if (sameLayout(candidate->layout, request.layout)) {
             cacheHit = true;
@@ -1735,7 +1754,8 @@ std::shared_ptr<const CompiledVariant> findOrCompileVariant(SourceEntry& source,
         if (failure.codeAddress == request.shader.codeAddress && sameLayout(failure.layout, request.layout)) std::rethrow_exception(failure.failure);
     }
     cacheHit = false;
-    const bool disk = ShaderDiskCache::Enabled() && !DebugProbeActive();
+    // Counter slots are handed out in compile order and baked into the artifact: an artifact counted by one process would write another process's slot.
+    const bool disk = ShaderDiskCache::Enabled() && !DebugProbeActive() && !NanSpeculation().count;
     std::vector<std::byte> diskKey;
     std::shared_ptr<const CompiledVariant> variant;
     if (disk) {
@@ -1748,6 +1768,11 @@ std::shared_ptr<const CompiledVariant> findOrCompileVariant(SourceEntry& source,
             ShaderDiskCache::ReleaseMapped(loaded.artifact.spirv);
             variant = std::make_shared<const CompiledVariant>(std::move(loaded));
             NoteShader(2);
+            // The artifact does not record whether it was speculated, so it counts as speculated while the feature is on.
+            if (NanSpeculation().enabled) {
+                source.nanSpeculated = true;
+                MarkNanSpeculationApplied(request.shader.codeAddress);
+            }
         }
     }
     if (variant == nullptr) {
@@ -1766,6 +1791,7 @@ std::shared_ptr<const CompiledVariant> findOrCompileVariant(SourceEntry& source,
             if (emissionFailure != nullptr && FailureMemo()) source.emissionFailures.push_back({request.shader.codeAddress, request.layout, emissionFailure});
             throw;
         }
+        if (NanSpeculationApplied(request.shader.codeAddress)) source.nanSpeculated = true;
         if (disk) {
             if (auto persisted = ShaderDiskCache::Persist(diskKey, *variant)) variant = std::move(persisted);
             else ShaderDiskCache::Store(std::move(diskKey), variant);
@@ -2334,8 +2360,11 @@ std::shared_ptr<const RecompileResult> RecompileImpl(const RecompileRequest& req
     return materializeMemoized(*capture.source, request, capture.snapshot, memoHit);
 }
 
-template <typename Impl>
-auto withNanSpeculationFallback(const RecompileRequest& request, Impl&& impl) -> decltype(impl()) {
+// `retry` runs after a failure with speculation suppressed. It defaults to `impl`; a caller whose
+// `impl` holds state built before the suppression (a capture over a speculated source entry) passes
+// one that does not reuse that state.
+template <typename Impl, typename Retry>
+auto withNanSpeculationFallback(const RecompileRequest& request, Impl&& impl, Retry&& retry) -> decltype(impl()) {
     if (!NanSpeculation().enabled || NanSpeculationSuppressed(request.shader.codeAddress)) return impl();
     try {
         return impl();
@@ -2350,7 +2379,7 @@ auto withNanSpeculationFallback(const RecompileRequest& request, Impl&& impl) ->
         const std::string_view reason(error.what());
         std::fprintf(stderr, "[recompile] nan speculation failed for 0x%llx (%u programs fell back): %.200s; recompiling without it\n", static_cast<unsigned long long>(request.shader.codeAddress), NanSpeculationFallbacks(), std::string(reason.substr(0u, reason.find('\n'))).c_str());
         try {
-            auto result = impl();
+            auto result = retry();
             NoteNanSpeculationFallback(static_cast<std::uint32_t>(request.shader.stage));
             return result;
         } catch (...) {
@@ -2358,6 +2387,11 @@ auto withNanSpeculationFallback(const RecompileRequest& request, Impl&& impl) ->
             throw;
         }
     }
+}
+
+template <typename Impl>
+auto withNanSpeculationFallback(const RecompileRequest& request, Impl&& impl) -> decltype(impl()) {
+    return withNanSpeculationFallback(request, impl, impl);
 }
 
 template <typename Impl>
@@ -2373,7 +2407,6 @@ auto retryWithoutNanSpeculation(const RecompileRequest& request, Impl&& impl) ->
         throw;
     } catch (const std::exception& error) {
         if (!NanSpeculationApplied(request.shader.codeAddress) || !SuppressNanSpeculation(request.shader.codeAddress)) throw;
-        NoteNanSpeculationFallback(static_cast<std::uint32_t>(request.shader.stage));
         const std::string_view reason(error.what());
         const std::string text(reason.substr(0u, reason.find('\n')));
         std::fprintf(stderr, "[recompile] nan speculation failed for 0x%llx (%u programs fell back): %.200s; preparing again without it\n", static_cast<unsigned long long>(request.shader.codeAddress), NanSpeculationFallbacks(), text.c_str());
@@ -2629,7 +2662,22 @@ RecompileResult Recompile(const RecompileRequest& request) {
 
 std::shared_ptr<const RecompileResult> Recompile(const RecompileRequest& request, const ResourceCapture& capture, bool* memoHit) {
     if (memoHit != nullptr) *memoHit = false;
-    return recompileReporting(request, [&] { return withNanSpeculationFallback(request, [&] { return RecompileImpl(request, capture, memoHit); }); });
+    // The capture holds the speculated source entry: the retry compiles the exact program over the captured snapshot instead of reusing it.
+    return recompileReporting(request, [&] {
+        return withNanSpeculationFallback(
+            request, [&] { return RecompileImpl(request, capture, memoHit); },
+            [&] {
+                auto program = PrepareResourceProgram(request);
+                const auto variant = CountedCompile([&] { return compileVariant(request, std::move(program)); });
+                return std::make_shared<const RecompileResult>(materializeResult(variant, request, capture.snapshot));
+            });
+    });
+}
+
+void InjectNanSpeculationFailures(std::uint32_t count, bool includingExact) {
+    auto& injected = injectedNanFailures();
+    injected.includingExact.store(includingExact, std::memory_order_relaxed);
+    injected.remaining.store(count, std::memory_order_relaxed);
 }
 
 void SetResultMemoBudget(std::uint64_t bytes) {

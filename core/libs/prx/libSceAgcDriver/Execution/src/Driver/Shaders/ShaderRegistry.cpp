@@ -1416,18 +1416,34 @@ std::shared_ptr<const ShaderRecompiler::ResourceCapture> CaptureInvocation(Shade
         std::lock_guard lock(snapshot.prepared->mutex);
         if (std::ranges::find(offsets, codeOffset) == offsets.end()) offsets.push_back(codeOffset);
     };
+    // The library suppresses speculation before it asks for a second preparation; the fallback only counts, and stays in force, once that preparation captured.
+    bool retried = false;
+    const auto abandon = [&] {
+        if (retried) ShaderRecompiler::RestoreNanSpeculation(request.shader.codeAddress);
+    };
     while (true) {
         try {
-            return memory.Capture(invocation);
+            auto capture = memory.Capture(invocation);
+            if (retried) ShaderRecompiler::NoteNanSpeculationFallback(static_cast<std::uint32_t>(request.shader.stage));
+            return capture;
         } catch (const ShaderRecompiler::ConvertedSampleRequired&) {
-            if (invocation.Request().context.convertedSamples) throw;
+            if (invocation.Request().context.convertedSamples) { abandon(); throw; }
             record(snapshot.prepared->convertedSamples);
         } catch (const ShaderRecompiler::LayerRowSamplesRequired&) {
-            if (invocation.Request().context.layerRowSamples) throw;
+            if (invocation.Request().context.layerRowSamples) { abandon(); throw; }
             record(snapshot.prepared->layerRowSamples);
         } catch (const ShaderRecompiler::NanSpeculationRetry&) {
+            retried = true;
+        } catch (...) {
+            abandon();
+            throw;
         }
-        invocation = InvocationFor(snapshot, codeOffset, request, false, linking);
+        try {
+            invocation = InvocationFor(snapshot, codeOffset, request, false, linking);
+        } catch (...) {
+            abandon();
+            throw;
+        }
     }
 }
 namespace {

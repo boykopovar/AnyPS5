@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <string>
 #include <vector>
 
 using namespace ShaderRecompiler;
@@ -85,11 +86,14 @@ Shape Translated(ShaderStageKind stage, std::vector<std::uint32_t> code, std::ui
 
 int main() {
 #ifdef _WIN32
+    _putenv_s("ANYPS5_NO_SHADER_CACHE", "1");
     _putenv_s("APS5_NAN_SPECULATION", "1");
     _putenv_s("APS5_NAN_SPECULATION_MIN", "1");
     _putenv_s("APS5_NAN_SPECULATION_MIN_OPS", "0");
     _putenv_s("APS5_NAN_SPECULATION_MIN_DENSITY", "0");
 #else
+    // A disk hit would serve the variants the injected failures are meant to hit.
+    setenv("ANYPS5_NO_SHADER_CACHE", "1", 1);
     setenv("APS5_NAN_SPECULATION", "1", 1);
     setenv("APS5_NAN_SPECULATION_MIN", "1", 1);
     setenv("APS5_NAN_SPECULATION_MIN_OPS", "0", 1);
@@ -158,6 +162,75 @@ int main() {
         const auto retried = PreparedShaderInvocation::TryCreate(prepared, after);
         if (!retried.has_value()) return fail("a shader prepared again without speculation does not match its request");
         if (retried->Materialize(*retried->Capture(SrtRuntime{})) == nullptr) return fail("a shader prepared again without speculation did not materialize");
+        // The fallback itself, with a speculated emission that fails.
+        const auto stats = [] { return NanSpeculationStats(static_cast<std::uint32_t>(ShaderRecompiler::ShaderStage::Compute)).fellBack; };
+        const auto uncached = [&](std::uint64_t address) {
+            auto copy = prepared;
+            copy.shader.codeAddress = address;
+            copy.useCache = false;
+            return copy;
+        };
+        {
+            const auto fellBackBefore = stats();
+            const auto injected = uncached(0xa001u);
+            InjectNanSpeculationFailures(1u, false);
+            try {
+                static_cast<void>(ShaderRecompiler::Recompile(injected));
+            } catch (const std::exception& error) {
+                InjectNanSpeculationFailures(0u, false);
+                return fail((std::string("a failed speculated compile was not recovered: ") + error.what()).c_str());
+            }
+            InjectNanSpeculationFailures(0u, false);
+            if (!NanSpeculationSuppressed(0xa001u)) return fail("a recovered program is not suppressed");
+            if (stats() != fellBackBefore + 1u) return fail("a recovered program is not counted as fallen back");
+        }
+        {
+            const auto fellBackBefore = stats();
+            const auto failing = uncached(0xa002u);
+            InjectNanSpeculationFailures(2u, true);
+            bool failed = false;
+            try {
+                static_cast<void>(ShaderRecompiler::Recompile(failing));
+            } catch (const std::exception&) {
+                failed = true;
+            }
+            InjectNanSpeculationFailures(0u, false);
+            if (!failed) return fail("a compile that fails without speculation too succeeded");
+            if (NanSpeculationSuppressed(0xa002u)) return fail("a failed retry left the program suppressed");
+            if (stats() != fellBackBefore) return fail("a failed retry was counted as a fallback");
+        }
+        {
+            // A capture taken over the speculated source entry: the exact retry must not reuse that entry.
+            auto captured = prepared;
+            captured.shader.codeAddress = 0xa003u;
+            // Other code than the earlier cases, so that no variant of this source entry exists yet.
+            static constexpr std::array<std::uint32_t, 3> capturedCode{0x06040300u, 0x06040300u, 0xbf810000u};
+            captured.shader.code = capturedCode;
+            const auto capture = CaptureResources(captured, SrtRuntime{});
+            if (capture == nullptr) return fail("a speculated request did not capture");
+            const auto fellBackBefore = stats();
+            InjectNanSpeculationFailures(1u, false);
+            std::shared_ptr<const RecompileResult> result;
+            try {
+                result = ShaderRecompiler::Recompile(captured, *capture);
+            } catch (const std::exception& error) {
+                InjectNanSpeculationFailures(0u, false);
+                return fail((std::string("a failed speculated captured compile was not recovered: ") + error.what()).c_str());
+            }
+            InjectNanSpeculationFailures(0u, false);
+            if (result == nullptr || !NanSpeculationSuppressed(0xa003u) || stats() != fellBackBefore + 1u) return fail("a recovered captured compile is not suppressed and counted");
+        }
+        {
+            // Identical code at another address reuses the speculated variant and must stay eligible for the fallback.
+            auto first = prepared;
+            first.shader.codeAddress = 0xa004u;
+            static_cast<void>(ShaderRecompiler::Recompile(first));
+            if (!NanSpeculationApplied(0xa004u)) return fail("a compiled speculated program is not marked as speculated");
+            auto second = first;
+            second.shader.codeAddress = 0xa005u;
+            static_cast<void>(ShaderRecompiler::Recompile(second));
+            if (!NanSpeculationApplied(0xa005u)) return fail("a program that reused a speculated variant is not marked as speculated");
+        }
         std::puts("nan speculation fallback tests passed");
         return 0;
     } catch (const std::exception& error) {

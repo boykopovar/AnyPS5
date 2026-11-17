@@ -11,6 +11,10 @@
 #include <string>
 #include <vector>
 
+namespace ShaderRecompiler {
+struct NanSpeculationConfig;
+}
+
 namespace ShaderRecompiler::ShaderDiskCache {
 
 inline constexpr std::uint32_t FormatVersion = 88;
@@ -47,6 +51,7 @@ struct Counters {
 };
 
 [[nodiscard]] std::uint64_t SourceVersion();
+[[nodiscard]] std::uint64_t SourceVersionFor(const NanSpeculationConfig& speculation, bool exactF32);
 
 void BuildKey(const RecompileRequest& request, std::uint32_t hostSubgroupSize, std::vector<std::byte>& key);
 

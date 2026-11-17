@@ -23,6 +23,7 @@ struct NanSpeculationCheck {
     IrValue* value = nullptr;
     std::uint8_t lanes = 0;
     std::uint32_t region = 0;
+    std::uint32_t execEpoch = 0;
 };
 
 struct IrProgramMetadata {
@@ -41,6 +42,7 @@ struct IrProgramMetadata {
     std::vector<IrValue*> dynamicReads;
     std::vector<NanSpeculationCheck> nanSpeculationChecks;
     std::vector<IrValue*> nanSpeculationLaneWrites;
+    std::uint32_t execWrites = 0u;
     std::uint32_t nanSpeculationCandidates = 0u;
     std::uint32_t nanSpeculationKept = 0u;
     std::uint32_t nanSpeculationClean = 0u;

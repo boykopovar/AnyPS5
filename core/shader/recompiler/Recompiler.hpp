@@ -1092,6 +1092,8 @@ struct NanSpeculationStageStats {
 };
 void NoteNanSpeculationProgram(std::uint32_t stage, bool speculated, bool declined);
 void NoteNanSpeculationFallback(std::uint32_t stage);
+// Tests: the next `count` variant compilations of speculated programs throw; `includingExact` also fails the retry without speculation.
+void InjectNanSpeculationFailures(std::uint32_t count, bool includingExact);
 [[nodiscard]] NanSpeculationStageStats NanSpeculationStats(std::uint32_t stage);
 
 class NanSpeculationRetry : public std::runtime_error {

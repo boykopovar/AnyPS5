@@ -1925,17 +1925,24 @@ DiskStore& store() {
 }
 
 std::uint64_t SourceVersion() {
-    auto version = ExactF32Arithmetic() ? Generated::SourceVersion : Generated::SourceVersion ^ 0x9e3779b97f4a7c15ull;
-    const auto& speculation = NanSpeculation();
-    if (speculation.enabled) version ^= 0x6a09e667f3bcc909ull ^ (static_cast<std::uint64_t>(speculation.minimumVectorInstructions) << 32u) ^ speculation.maximumVectorInstructions;
-    if (speculation.enabled && speculation.stageMask != NanSpeculationConfig{}.stageMask) version ^= 0xbb67ae8584caa73bull * speculation.stageMask;
-    if (speculation.enabled) {
-        for (std::size_t stage = 0; stage < speculation.stageMinimum.size(); ++stage) {
-            if (speculation.stageMinimum[stage] != speculation.minimumVectorInstructions) version ^= 0x3c6ef372fe94f82bull * (stage + 1u) * speculation.stageMinimum[stage];
-        }
-        if (speculation.count) version ^= 0xa54ff53a5f1d36f1ull;
-        if (speculation.minimumFastOps != 0u || speculation.minimumDensityPercent != 0u) version ^= 0x510e527fade682d1ull * (static_cast<std::uint64_t>(speculation.minimumFastOps) << 16u | speculation.minimumDensityPercent);
-    }
+    return SourceVersionFor(NanSpeculation(), ExactF32Arithmetic());
+}
+
+std::uint64_t SourceVersionFor(const NanSpeculationConfig& speculation, bool exactF32) {
+    auto version = exactF32 ? Generated::SourceVersion : Generated::SourceVersion ^ 0x9e3779b97f4a7c15ull;
+    if (!speculation.enabled) return version;
+    // Fold every setting through a mixing step: XOR-ing scaled values let different settings (a compute minimum of 128 and a vertex minimum of 64) cancel into one key.
+    const auto mix = [&](std::uint64_t value) {
+        version = (version ^ value) * 0x9e3779b97f4a7c15ull;
+        version ^= version >> 29u;
+    };
+    mix(0x6a09e667f3bcc909ull);
+    mix(speculation.minimumVectorInstructions);
+    mix(speculation.maximumVectorInstructions);
+    mix(speculation.stageMask);
+    for (std::size_t stage = 0; stage < speculation.stageMinimum.size(); ++stage) mix((static_cast<std::uint64_t>(stage) << 32u) | speculation.stageMinimum[stage]);
+    mix(speculation.count ? 1u : 0u);
+    mix((static_cast<std::uint64_t>(speculation.minimumFastOps) << 32u) | speculation.minimumDensityPercent);
     return version;
 }
 

@@ -154,8 +154,18 @@ std::size_t Run(AgcDriver::VulkanDevice& device, bool ieee) {
     };
     request.context.floatMode = ShaderRecompiler::ShaderFloatMode{0xc0u, true, ieee, false};
     request.useCache = false;
+    // The reference is the same program with speculation suppressed, so the NaN payloads and signs are the exact path's, not a model's.
+    const auto address = request.shader.codeAddress;
+    const bool wasSuppressed = ShaderRecompiler::NanSpeculationSuppressed(address);
+    if (!wasSuppressed) static_cast<void>(ShaderRecompiler::SuppressNanSpeculation(address));
+    const auto exact = ShaderRecompiler::Recompile(request);
+    device.Dispatch(exact, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
+    device.WaitIdle();
+    const auto reference = Outputs;
+    Outputs.fill(0xdeadbeefu);
+    if (!wasSuppressed) ShaderRecompiler::RestoreNanSpeculation(address);
     const auto result = ShaderRecompiler::Recompile(request);
-    Require(SelectionMerges(result.spirv.Words()) >= 2u, "nan speculation region: the recompiled shader has no speculated region");
+    Require(SelectionMerges(result.spirv.Words()) >= 2u && result.spirv.Words().size() > exact.spirv.Words().size(), "nan speculation region: the recompiled shader has no speculated region");
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
     device.WaitIdle();
     std::size_t failures = 0;
@@ -173,12 +183,15 @@ std::size_t Run(AgcDriver::VulkanDevice& device, bool ieee) {
         const auto* actual = &Outputs[lane * Words];
         for (std::uint32_t word = 0; word < Words; ++word) {
             bool matches = actual[word] == expected[word];
+            // The speculated copy must also agree with the exact path on every word, bit for bit.
+            if (word != 7u && actual[word] != reference[lane * Words + word]) matches = false;
             if (word == 7u) {
                 const auto x = v4 & 0xffffu;
                 const auto y = v2 & 0xffffu;
                 const auto z = v1 & 0xffffu;
                 const auto low = actual[word] & 0xffffu;
-                matches = Nan(x) || Nan(y) || Nan(z) ? Nan(low) : low == (Arithmetic(HalfOperation::Fma, x, y, z, ieee) & 0xffffu);
+                matches = low == (reference[lane * Words + word] & 0xffffu);
+                if (!Nan(x) && !Nan(y) && !Nan(z)) matches = matches && low == (Arithmetic(HalfOperation::Fma, x, y, z, ieee) & 0xffffu);
             }
             if (matches) continue;
             if (failures++ < 12u) std::cerr << (ieee ? "IEEE 1" : "IEEE 0") << " lane " << lane << " sources " << Hex(a) << " " << Hex(b) << " " << Hex(c) << " word " << word << ": " << Hex(actual[word]) << ", expected " << Hex(expected[word]) << '\n';
@@ -220,6 +233,7 @@ struct PruneCase {
     std::uint32_t checked;
     std::uint32_t a;
     bool partialExec = false;
+    bool execBetween = false;
 };
 
 constexpr std::uint32_t PackedChecked = 0;
@@ -254,6 +268,7 @@ std::vector<PruneCase> PruneCases() {
         {"word mask", {0x360a08ffu, 0x00ffffffu}, [](std::uint32_t v) { return v & 0x00ffffffu; }, WordChecked, WordSignaling},
         {"word copy", {0x7e0a0304u}, [](std::uint32_t v) { return v; }, WordChecked, WordSignaling},
         {"copy under partial exec", {0x7e0a0304u}, [](std::uint32_t v) { return v; }, PackedChecked, LowSignaling, true},
+        {"copy after an EXEC change", {0x7e0a0304u}, [](std::uint32_t v) { return v; }, PackedChecked, LowSignaling, false, true},
     };
 }
 
@@ -261,13 +276,17 @@ std::vector<std::uint32_t> PruneProgram(const PruneCase& test) {
     const bool word = test.checked == WordChecked;
     std::vector<std::uint32_t> code{0x34140084u, 0x34160084u, 0xe03c1000u, 0x8001010au, 0xbf8c3f70u};
     if (test.partialExec) code.insert(code.end(), {0x7d8800b0u, 0xbe88246au});
+    if (test.execBetween) code.push_back(0xbe88047eu);  // s_mov_b64 s[8:9], exec
     code.insert(code.end(), {0x7e0e0280u, 0x7d8800c0u});
     if (word) code.push_back(0x10080501u);
     else code.insert(code.end(), {0xcc104004u, 0x18020501u});
+    // v_cmpx_gt_u32 48, v0: lanes from 48 up stop executing the consumer, inside the same region as the producer.
+    if (test.execBetween) code.push_back(0x7da800b0u);
     code.insert(code.end(), test.consumer.begin(), test.consumer.end());
     if (test.checked == PackedChecked) code.insert(code.end(), {0xcc0f4006u, 0x18020705u});
     else if (test.checked == LowChecked) code.insert(code.end(), {0xd74b0006u, 0x040e0705u});
     else code.push_back(0x060c0705u);
+    if (test.execBetween) code.push_back(0xbefe0408u);
     code.insert(code.end(), {0xe0781000u, 0x8000040bu, 0xbf810000u});
     return code;
 }
@@ -351,6 +370,9 @@ std::size_t RunPruneCase(AgcDriver::VulkanDevice& device, const PruneCase& test,
         const std::uint32_t w = test.checked == LowChecked ? actual[2] & 0xffffu : actual[2];
         if (test.partialExec && lane >= 48u) {
             if (actual[0] == 0xdeadbeefu && actual[1] == 0xdeadbeefu && actual[2] == 0xdeadbeefu) continue;
+        } else if (test.execBetween && lane >= 48u) {
+            // The lanes the EXEC write removed never ran the consumer, but their producer result must stay exact.
+            if (actual[0] == v4) continue;
         } else if (actual[0] == v4 && actual[1] == v5 && w == v6) {
             continue;
         }
