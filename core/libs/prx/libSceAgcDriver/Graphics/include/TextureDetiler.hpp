@@ -65,7 +65,7 @@ namespace AgcDriver::Graphics {
         struct Retired {};
         TextureDetiler(const Context& context, Retired);
         void adopt(TextureDetiler& other) noexcept;
-        bool retireToRecorder();
+        bool retireToRecorders() noexcept;
         VkPipeline multisampleReadbackPipeline(std::uint32_t elementBytes, bool depth);
         VkPipeline multisampleUploadPipeline(std::uint32_t elementBytes);
         VkPipeline pipeline(TextureTileMode tileMode, std::uint32_t elementBytes, bool retile, bool thick, bool image = false);
@@ -108,8 +108,7 @@ namespace AgcDriver::Graphics {
         std::vector<std::pair<std::uint32_t, VkPipeline>> readbackPipelines;
         DescriptorRing readbackDescriptorSets;
         VkShaderModule multisampleUploadModule = VK_NULL_HANDLE;
-        Recorder* recordedBy = nullptr;
-        std::uint64_t recordedById = 0;
+        std::vector<std::pair<Recorder*, std::uint64_t>> recorders;
     };
 
 }

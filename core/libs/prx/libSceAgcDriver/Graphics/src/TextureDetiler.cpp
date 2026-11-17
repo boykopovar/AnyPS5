@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <cstring>
 #include <mutex>
+#include <new>
 #include <stdexcept>
 #include <string>
 
@@ -110,19 +111,30 @@ TextureDetiler::TextureDetiler(const Context& context, Retired) : context(contex
 }
 
 TextureDetiler::~TextureDetiler() {
-    if (recordedBy != nullptr && retireToRecorder()) return;
+    if (!recorders.empty() && retireToRecorders()) return;
     release();
 }
 
-bool TextureDetiler::retireToRecorder() {
-    std::lock_guard gpu(GuestMemory::GpuMutex());
-    if (!Recorder::Alive(recordedById)) return false;
-    auto* recorder = recordedBy;
-    if (recorder->Idle()) return false;
-    std::shared_ptr<TextureDetiler> retired(new TextureDetiler(context, Retired{}));
-    retired->adopt(*this);
-    recorder->Keep(std::move(retired));
-    return true;
+bool TextureDetiler::retireToRecorders() noexcept {
+    try {
+        std::lock_guard gpu(GuestMemory::GpuMutex());
+        std::vector<Recorder*> busy;
+        for (const auto& [recorder, id] : recorders) {
+            if (Recorder::Alive(id) && !recorder->Idle()) busy.push_back(recorder);
+        }
+        if (busy.empty()) return false;
+        std::shared_ptr<TextureDetiler> retired(new TextureDetiler(context, Retired{}));
+        retired->adopt(*this);
+        for (auto* recorder : busy) {
+            if (!recorder->KeepWithOutstanding(retired)) {
+                static_cast<void>(new (std::nothrow) std::shared_ptr<TextureDetiler>(retired));
+                break;
+            }
+        }
+        return true;
+    } catch (...) {
+        return true;
+    }
 }
 
 void TextureDetiler::adopt(TextureDetiler& other) noexcept {

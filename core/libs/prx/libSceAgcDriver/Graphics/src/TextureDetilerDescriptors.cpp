@@ -61,10 +61,7 @@ VkDescriptorSet TextureDetiler::allocateFrom(DescriptorRing& ring, VkDescriptorS
     Check(context.Resolved(&DeviceFunctions::allocateDescriptorSets, "vkAllocateDescriptorSets")(context.device, &allocation, &set), allocateWhat);
     ++ring.used;
     ring.serials[ring.current] = recorder != nullptr ? recorder->OpenSerial() : std::numeric_limits<std::uint64_t>::max();
-    if (recorder != nullptr) {
-        recordedBy = recorder;
-        recordedById = recorder->Id();
-    }
+    if (recorder != nullptr && std::none_of(recorders.begin(), recorders.end(), [&](const auto& used) { return used.first == recorder && used.second == recorder->Id(); })) recorders.emplace_back(recorder, recorder->Id());
     return set;
 }
 

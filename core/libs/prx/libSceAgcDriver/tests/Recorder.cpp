@@ -10964,9 +10964,24 @@ void detilerRetirementTests(const Device& device, Recorder& previous) {
     }
     constexpr int rounds = 4;
     const auto initial = probe.Released();
+    std::uint64_t perDetiler = 0;
     {
         Recorder recorder(context);
         recorder.Activate();
+        {
+            std::lock_guard gpu(GpuMutex());
+            const auto before = probe.Released();
+            {
+                TextureDetiler measured(context);
+                measured.BeginBatch();
+                const auto commands = recorder.Commands();
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+                measured.Dispatch(commands, TextureTileMode::kLinear, 4, source.Handle(), 0, destination.Handle(), 0, layout);
+                recorder.Sync();
+            }
+            perDetiler = probe.Released() - before;
+        }
+        Require(perDetiler != 0, "a detiler destroyed while its recorder was idle released no pipeline or descriptor pool");
         for (int round = 0; round < rounds; ++round) {
             std::memset(destination.Bytes().data(), 0, bytes);
             std::memset(otherDestination.Bytes().data(), 0, bytes);
@@ -11012,8 +11027,33 @@ void detilerRetirementTests(const Device& device, Recorder& previous) {
             recorder.Sync();
         }
         Require(std::memcmp(source.Bytes().data(), destination.Bytes().data(), bytes) == 0, "a detile recorded before another recorder was activated did not run with its own descriptors");
+        std::memset(destination.Bytes().data(), 0, bytes);
+        std::memset(otherDestination.Bytes().data(), 0, bytes);
+        {
+            std::lock_guard gpu(GpuMutex());
+            const auto before = probe.Released();
+            {
+                TextureDetiler shared(context);
+                shared.BeginBatch();
+                auto commands = recorder.Commands();
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+                shared.Dispatch(commands, TextureTileMode::kLinear, 4, source.Handle(), 0, destination.Handle(), 0, layout);
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+                previous.Activate();
+                commands = previous.Commands();
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_HOST_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_ACCESS_HOST_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT);
+                shared.Dispatch(commands, TextureTileMode::kLinear, 4, otherSource.Handle(), 0, otherDestination.Handle(), 0, layout);
+                RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+                previous.Sync();
+            }
+            Require(probe.Released() == before, "a detiler that recorded under two recorders released objects the first recorder's open batch still uses once the second recorder was idle");
+            recorder.Activate();
+            recorder.Sync();
+        }
+        Require(std::memcmp(source.Bytes().data(), destination.Bytes().data(), bytes) == 0, "a detile recorded under the first of two recorders did not run with its own descriptors");
+        Require(std::memcmp(otherSource.Bytes().data(), otherDestination.Bytes().data(), bytes) == 0, "a detile recorded under the second of two recorders did not run with its own descriptors");
     }
-    Require(probe.Released() > initial, "the destroyed detilers' pipelines and descriptor pools were not released once their batches completed");
+    Require(probe.Released() - initial == perDetiler * (2u * rounds + 3u), "the destroyed detilers' pipelines and descriptor pools were not all released exactly once after their batches completed");
     previous.Activate();
     std::cout << "Detiler retirement: passed\n";
 }
