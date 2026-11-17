@@ -4773,7 +4773,22 @@ std::uint64_t StorageTexture::OccasionalLabelStores() {
 }
 
 void StorageTexture::markLayersPending(std::uint32_t first, std::uint32_t count) {
-    if (count != 0) GuestMemory::ForgetKnownZero(layerBegin(first), static_cast<std::size_t>(layerBegin(first + count - 1) + layerBytes(first + count - 1) - layerBegin(first)));
+    if (count != 0) {
+        const auto begin = layerBegin(first);
+        const auto end = layerBegin(first + count - 1) + layerBytes(first + count - 1);
+        const auto marks = GuestMemory::KnownZeroMarks();
+        if (marks != zeroForgetMarks || begin < zeroForgetBegin || end > zeroForgetEnd) {
+            GuestMemory::ForgetKnownZero(begin, static_cast<std::size_t>(end - begin));
+            if (marks == zeroForgetMarks && begin <= zeroForgetEnd && end >= zeroForgetBegin) {
+                zeroForgetBegin = std::min(zeroForgetBegin, begin);
+                zeroForgetEnd = std::max(zeroForgetEnd, end);
+            } else {
+                zeroForgetBegin = begin;
+                zeroForgetEnd = end;
+            }
+            zeroForgetMarks = marks;
+        }
+    }
     {
         auto& records = LayoutWrites();
         std::lock_guard lock(records.mutex);

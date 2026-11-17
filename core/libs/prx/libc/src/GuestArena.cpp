@@ -871,6 +871,10 @@ void GuestArenaForgetKnownZero_nid_no_patch(std::uintptr_t address, std::size_t 
     WindowsMappings::Get().ForgetKnownZero(address, bytes);
 }
 
+std::uint64_t GuestArenaKnownZeroMarks_nid_no_patch() {
+    return WindowsMappings::Get().KnownZeroMarks();
+}
+
 void GuestArenaForgetSection_nid_postfix(void* section) {
     WindowsMappings::Get().ForgetSection(section);
 }
