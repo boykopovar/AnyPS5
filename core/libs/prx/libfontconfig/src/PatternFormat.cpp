@@ -214,9 +214,9 @@ FcChar8* FormatDirname(const FcChar8* text) {
 
 FcBool AddFormatValue(FcPattern* pat, const char* name, FcValue value) {
     switch (value.type) {
-    case FcTypeInteger: return FcPatternAddInteger(pat, name, value.u.i);
+    case FcTypeInteger: return FcPatternAddInteger_nid_postfix(pat, name, value.u.i);
     case FcTypeDouble: return FcPatternAddDouble(pat, name, value.u.d);
-    case FcTypeBool: return FcPatternAddBool(pat, name, value.u.b);
+    case FcTypeBool: return FcPatternAddBool_nid_postfix(pat, name, value.u.b);
     case FcTypeString: return FcPatternAddString(pat, name, value.u.s);
     case FcTypeMatrix: return FcPatternAddMatrix(pat, name, value.u.m);
     case FcTypeCharSet: return FcPatternAddCharSet(pat, name, value.u.c);
@@ -285,7 +285,7 @@ FcBool UnparseValue(FcStrBuf* buf, FcValue value, const char* escape) {
 
 FcBool UnparseList(FcStrBuf* buf, FcPattern* pat, const char* name, const char* escape) {
     FcValue value{};
-    for (int i = 0; FcPatternGet(pat, name, i, &value) == FcResultMatch; ++i) {
+    for (int i = 0; FcPatternGet_nid_postfix(pat, name, i, &value) == FcResultMatch; ++i) {
         if (i) FcStrBufChar(buf, ',');
         if (!UnparseValue(buf, value, escape)) return FcFalse;
     }
@@ -301,7 +301,7 @@ FcChar8* FormatUnparse(FcPattern* pat) {
     for (const auto& object : fontconfig_data::Objects) {
         if (object.name == "family" || object.name == "size") continue;
         FcValue value{};
-        if (FcPatternGet(pat, object.name.data(), 0, &value) != FcResultMatch) continue;
+        if (FcPatternGet_nid_postfix(pat, object.name.data(), 0, &value) != FcResultMatch) continue;
         FcStrBufChar(&buf, ':');
         UnparseString(&buf, reinterpret_cast<const FcChar8*>(object.name.data()), "\\=_:,");
         FcStrBufChar(&buf, '=');
@@ -681,7 +681,7 @@ interpret_filter_out(FcFormatContext* c, FcPattern* pat, FcStrBuf* buf) {
     if (!subpat) return FcFalse;
     do {
         if (!read_word(c)) return FcFalse;
-        FcPatternDel(subpat.get(), reinterpret_cast<char*>(c->word));
+        FcPatternDel_nid_postfix(subpat.get(), reinterpret_cast<char*>(c->word));
     } while (consume_char(c, ','));
     return interpret_subexpr(c, subpat.get(), buf);
 }
@@ -711,7 +711,7 @@ interpret_cond (FcFormatContext *c,
 	pass = pass &&
 	       (negate ^
 		(FcResultMatch ==
-		 FcPatternGet (pat, (const char *) c->word, 0, &v)));
+		 FcPatternGet_nid_postfix (pat, (const char *) c->word, 0, &v)));
     }
     while (consume_char (c, ','));
 
@@ -736,7 +736,7 @@ interpret_count(FcFormatContext* c, FcPattern* pat, FcStrBuf* buf) {
     if (!expect_char(c, '#') || !read_word(c)) return FcFalse;
     int count = 0;
     FcValue value{};
-    while (FcPatternGet(pat, reinterpret_cast<char*>(c->word), count, &value) == FcResultMatch) ++count;
+    while (FcPatternGet_nid_postfix(pat, reinterpret_cast<char*>(c->word), count, &value) == FcResultMatch) ++count;
     const auto text = std::to_string(count);
     return FcStrBufString(buf, reinterpret_cast<const FcChar8*>(text.c_str()));
 }
@@ -760,7 +760,7 @@ interpret_enumerate(FcFormatContext* c, FcPattern* pat, FcStrBuf* buf) {
     for (int index = 0;; ++index) {
         bool done = true;
         for (const auto& name : names) {
-            FcPatternDel(subpat.get(), name.c_str());
+            FcPatternDel_nid_postfix(subpat.get(), name.c_str());
             if (isLanguages) {
                 if (static_cast<std::size_t>(index) < languages.size()) {
                     if (!FcPatternAddString(subpat.get(), name.c_str(),
@@ -769,7 +769,7 @@ interpret_enumerate(FcFormatContext* c, FcPattern* pat, FcStrBuf* buf) {
                 }
             } else {
                 FcValue value{};
-                if (FcPatternGet(pat, name.c_str(), index, &value) == FcResultMatch) {
+                if (FcPatternGet_nid_postfix(pat, name.c_str(), index, &value) == FcResultMatch) {
                     if (!AddFormatValue(subpat.get(), name.c_str(), value)) return FcFalse;
                     done = false;
                 }
@@ -804,17 +804,17 @@ interpret_simple(FcFormatContext* c, FcPattern* pat, FcStrBuf* buf) {
         fallback = reinterpret_cast<char*>(c->word);
     }
     FcValue value{};
-    if (FcPatternGet(pat, name.c_str(), 0, &value) != FcResultMatch && !hasDefault) return FcTrue;
+    if (FcPatternGet_nid_postfix(pat, name.c_str(), 0, &value) != FcResultMatch && !hasDefault) return FcTrue;
     if (colon) FcStrBufChar(buf, ':');
     if (label) {
         FcStrBufString(buf, reinterpret_cast<const FcChar8*>(name.c_str()));
         FcStrBufChar(buf, '=');
     }
-    if (FcPatternGet(pat, name.c_str(), index < 0 ? 0 : index, &value) != FcResultMatch)
+    if (FcPatternGet_nid_postfix(pat, name.c_str(), index < 0 ? 0 : index, &value) != FcResultMatch)
         return !hasDefault || FcStrBufString(buf, reinterpret_cast<const FcChar8*>(fallback.c_str()));
     if (!UnparseValue(buf, value, nullptr)) return FcFalse;
     if (index >= 0) return FcTrue;
-    for (int i = 1; FcPatternGet(pat, name.c_str(), i, &value) == FcResultMatch; ++i) {
+    for (int i = 1; FcPatternGet_nid_postfix(pat, name.c_str(), i, &value) == FcResultMatch; ++i) {
         FcStrBufChar(buf, ',');
         if (!UnparseValue(buf, value, nullptr)) return FcFalse;
     }

@@ -95,6 +95,9 @@ static int testIds() {
     const NpIdFull ps4 = npIdWithTag("heron-4", 0x00347370);
     const NpIdFull other = npIdWithTag("heron-4", 0x00357370);
     ok &= expect(sceNpGetPlatformType(nullptr) == INVALID_ARGUMENT, "a null NpId has a platform");
+    errno = 71;
+    ok &= expect(sceNpGetPlatformType(reinterpret_cast<const NpIdFull*>(0x10)) == INVALID_ARGUMENT, "an unmapped NpId has a platform");
+    ok &= expect(errno == 71, "errno altered on unmapped NpId");
     ok &= expect(sceNpGetPlatformType(&none) == 0, "an untagged NpId is not platform 0");
     ok &= expect(sceNpGetPlatformType(&ps3) == 1, "the ps3 tag is not platform 1");
     ok &= expect(sceNpGetPlatformType(&vita) == 2, "the psp2 tag is not platform 2");
@@ -350,6 +353,15 @@ static int testClock() {
 
     ok &= expect(std::memcmp(version, "00.82\0\0\0", 8) == 0, "the nav SDK version is not 00.82 padded with zeros");
     ok &= expect(version[8] == 'x', "the nav SDK version was written past 8 bytes");
+
+    std::uint32_t sdkVersion = 0;
+    sceNpGetSdkVersionUInt(&sdkVersion);
+    ok &= expect((sdkVersion >> 16) == 0x0100, "the numeric SDK version is not 1.00");
+    errno = 71;
+    sceNpGetSdkVersion(reinterpret_cast<char*>(0x10));
+    sceNpGetNavSdkVersion(reinterpret_cast<char*>(0x10));
+    sceNpGetSdkVersionUInt(reinterpret_cast<std::uint32_t*>(0x10));
+    ok &= expect(errno == 71, "an unwritable version output changed errno");
     return ok ? 0 : 1;
 }
 

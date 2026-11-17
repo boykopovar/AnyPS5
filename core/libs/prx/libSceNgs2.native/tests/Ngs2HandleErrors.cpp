@@ -19,7 +19,7 @@ static void Status(int actual, int expected, const char* message) {
 }
 
 static void CheckExportLinked() {
-    auto* volatile linked = &sceNgs2RackQueryInfo;
+    auto* volatile linked = reinterpret_cast<void*>(&sceNgs2RackQueryInfo);
     Require(linked != nullptr);
 }
 
@@ -29,19 +29,19 @@ static void CheckPendingExports(const char* path) {
         const char* name;
     };
     const Export exports[] = {
-        {sceNgs2ModuleArrayEnumItems, "sceNgs2ModuleArrayEnumItems"},
-        {sceNgs2ModuleEnumConfigs, "sceNgs2ModuleEnumConfigs"},
-        {sceNgs2ModuleQueueEnumItems, "sceNgs2ModuleQueueEnumItems"},
-        {sceNgs2RackRunCommands, "sceNgs2RackRunCommands"},
-        {sceNgs2StreamCreate, "sceNgs2StreamCreate"},
-        {sceNgs2StreamCreateWithAllocator, "sceNgs2StreamCreateWithAllocator"},
-        {sceNgs2StreamDestroy, "sceNgs2StreamDestroy"},
-        {sceNgs2StreamQueryBufferSize, "sceNgs2StreamQueryBufferSize"},
-        {sceNgs2StreamQueryInfo, "sceNgs2StreamQueryInfo"},
-        {sceNgs2StreamResetOption, "sceNgs2StreamResetOption"},
-        {sceNgs2StreamRunCommands, "sceNgs2StreamRunCommands"},
-        {sceNgs2SystemQueryInfo, "sceNgs2SystemQueryInfo"},
-        {sceNgs2SystemRunCommands, "sceNgs2SystemRunCommands"},
+        {reinterpret_cast<int (APS5_VABI*)(void)>(&sceNgs2ModuleArrayEnumItems), "sceNgs2ModuleArrayEnumItems"},
+        {reinterpret_cast<int (APS5_VABI*)(void)>(&sceNgs2ModuleEnumConfigs), "sceNgs2ModuleEnumConfigs"},
+        {reinterpret_cast<int (APS5_VABI*)(void)>(&sceNgs2ModuleQueueEnumItems), "sceNgs2ModuleQueueEnumItems"},
+        {reinterpret_cast<int (APS5_VABI*)(void)>(&sceNgs2RackRunCommands), "sceNgs2RackRunCommands"},
+        {reinterpret_cast<int (APS5_VABI*)(void)>(&sceNgs2StreamCreate), "sceNgs2StreamCreate"},
+        {reinterpret_cast<int (APS5_VABI*)(void)>(&sceNgs2StreamCreateWithAllocator), "sceNgs2StreamCreateWithAllocator"},
+        {reinterpret_cast<int (APS5_VABI*)(void)>(&sceNgs2StreamDestroy), "sceNgs2StreamDestroy"},
+        {reinterpret_cast<int (APS5_VABI*)(void)>(&sceNgs2StreamQueryBufferSize), "sceNgs2StreamQueryBufferSize"},
+        {reinterpret_cast<int (APS5_VABI*)(void)>(&sceNgs2StreamQueryInfo), "sceNgs2StreamQueryInfo"},
+        {reinterpret_cast<int (APS5_VABI*)(void)>(&sceNgs2StreamResetOption), "sceNgs2StreamResetOption"},
+        {reinterpret_cast<int (APS5_VABI*)(void)>(&sceNgs2StreamRunCommands), "sceNgs2StreamRunCommands"},
+        {reinterpret_cast<int (APS5_VABI*)(void)>(&sceNgs2SystemQueryInfo), "sceNgs2SystemQueryInfo"},
+        {reinterpret_cast<int (APS5_VABI*)(void)>(&sceNgs2SystemRunCommands), "sceNgs2SystemRunCommands"},
     };
     if (!ExportsResolveByName(path, exports, "sceNgs2NotExported")) {
         throw std::runtime_error("the pending libSceNgs2.native exports do not all resolve by name");
@@ -508,6 +508,15 @@ static void CheckRackCreateGuestPointers() {
     Require(query.host_buffer_size != 0 && query.host_buffer == nullptr);
 }
 
+static void CheckDestroyGuestPointers() {
+    const auto system = CreateSystem();
+    const auto rack = CreateRack(system, SCE_NGS2_RACK_ID_REVERB);
+    Returned(sceNgs2RackDestroy(rack, reinterpret_cast<Ngs2ContextBufferInfo*>(0x10)), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "sceNgs2RackDestroy", "an unwritable buffer info");
+    Returned(sceNgs2RackDestroy(rack, nullptr), SCE_NGS2_OK, "sceNgs2RackDestroy", "a null buffer info after a refused destroy");
+    Returned(sceNgs2SystemDestroy(system, reinterpret_cast<Ngs2ContextBufferInfo*>(0x10)), SCE_NGS2_ERROR_INVALID_OUT_ADDRESS, "sceNgs2SystemDestroy", "an unwritable buffer info");
+    Returned(sceNgs2SystemDestroy(system, nullptr), SCE_NGS2_OK, "sceNgs2SystemDestroy", "a null buffer info after a refused destroy");
+}
+
 int main(int argc, char** argv) {
     try {
         constexpr int systemError = static_cast<int>(0x804A8201u);
@@ -542,6 +551,7 @@ int main(int argc, char** argv) {
         Require(value == sentinel);
         CheckCreateArguments();
         CheckRackCreateGuestPointers();
+        CheckDestroyGuestPointers();
         CheckResetOption();
         CheckSystemOption();
         CheckSchedulerOptions();
