@@ -8,7 +8,9 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
+#include <exception>
 #include <iostream>
+#include <optional>
 #include <span>
 #include <string>
 
