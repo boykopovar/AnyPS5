@@ -178,7 +178,7 @@ class CommandTests(unittest.TestCase):
                   "result_dir": Path("/tmp/results"), "commit": "abc123"}
         command = ["cmake", "--build", "{build_dir}", "literal;argument", "{commit}"]
         self.assertEqual(performance_bisect.format_command(command, values),
-                         ["cmake", "--build", "/tmp/source/build", "literal;argument", "abc123"])
+                         ["cmake", "--build", str(values["build_dir"]), "literal;argument", "abc123"])
 
     def test_build_commands_expand_paths_without_a_shell(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -609,7 +609,7 @@ class FocusedInputEdgeTests(unittest.TestCase):
 
     def test_recipe_rejects_absolute_build_directories(self):
         with tempfile.TemporaryDirectory() as directory:
-            path = self.recipe_path(Path(directory), build_dir="/tmp/unsafe-build")
+            path = self.recipe_path(Path(directory), build_dir=str(Path(directory) / "unsafe-build"))
             with self.assertRaisesRegex(ValueError, "relative path"):
                 performance_bisect.load_recipe(path)
 
@@ -746,7 +746,7 @@ class FocusedInputEdgeTests(unittest.TestCase):
             repo.mkdir()
             subprocess.run(["git", "init", "-q", str(repo)], check=True)
             command = [sys.executable, "-c", "print('compiler detail'); raise SystemExit(7)"]
-            with self.assertRaisesRegex(RuntimeError, "failed \(7\).*compiler detail"):
+            with self.assertRaisesRegex(RuntimeError, r"failed \(7\).*compiler detail"):
                 performance_bisect.run_build_commands(
                     repo, {"build_dir": "build", "build_commands": [command]},
                     GOOD, Path(directory) / "results")
