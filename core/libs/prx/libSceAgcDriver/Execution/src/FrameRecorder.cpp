@@ -503,19 +503,6 @@ void FrameRecorder::MergeOverlappingBlocks(std::vector<std::pair<std::uint64_t, 
 
 void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::uint64_t> hostPages, std::span<const Range> added) {
     if (abandonIfDiskLow()) return;
-    auto& driver = DriverDetail::Driver::Get();
-    const struct Hold {
-        DriverDetail::Driver& driver;
-        ~Hold() { driver.ReleaseSettled(); }
-    } hold{driver};
-    auto [accepted, completed] = driver.SerialProgress();
-    if (completed < accepted && (!added.empty() || !spans.empty() || !hostPages.empty())) {
-        if (!driver.WaitSettledFor(std::chrono::seconds(10))) {
-            stop("stopped: the GPU work submitted before a memory delta neither finished nor waited for the title within 10 s");
-            return;
-        }
-        std::tie(accepted, completed) = driver.SerialProgress();
-    }
     std::vector<std::pair<std::uint64_t, std::uint64_t>> blocks;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> written;
     for (auto& span : spans) {
@@ -529,6 +516,19 @@ void FrameRecorder::writeDelta(std::span<Span> spans, std::span<const std::uint6
         }
     }
     MergeOverlappingBlocks(blocks);
+    auto& driver = DriverDetail::Driver::Get();
+    const struct Hold {
+        DriverDetail::Driver& driver;
+        ~Hold() { driver.ReleaseSettled(); }
+    } hold{driver};
+    auto [accepted, completed] = driver.SerialProgress();
+    if (completed < accepted && (!added.empty() || !blocks.empty() || !hostPages.empty())) {
+        if (!driver.WaitSettledFor(std::chrono::seconds(10))) {
+            stop("stopped: the GPU work submitted before a memory delta neither finished nor waited for the title within 10 s");
+            return;
+        }
+        std::tie(accepted, completed) = driver.SerialProgress();
+    }
     std::vector<std::array<std::uint64_t, 4>> parked;
     for (const auto& wait : driver.AwaitedWaits()) {
         if (wait.bytes == 0) parked.push_back({wait.address, 0, 0, 0});

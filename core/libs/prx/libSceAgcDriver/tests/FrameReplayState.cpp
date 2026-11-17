@@ -573,6 +573,57 @@ void testGpuWriteBeforeDelta(const std::filesystem::path& directory) {
     if (stale != replayed.end()) throw std::runtime_error("the replay restored a memory delta while a GPU write over its range was still pending, and the next read landed that write over it: the page holds byte " + std::to_string(static_cast<int>(*stale)) + ", not the 0 the capture recorded after the write");
 }
 
+void testUnwrittenDeltaBesideBusyQueue(const std::filesystem::path& directory) {
+    auto* block = allocate(1u << 20);
+    std::fill_n(block, 1u << 20, std::byte{0});
+    auto* commands = reinterpret_cast<std::uint32_t*>(block);
+    auto* gate = reinterpret_cast<std::uint32_t*>(block + 4096);
+    auto* done = gate + 1;
+    const auto low = [](const void* pointer) { return static_cast<std::uint32_t>(address(pointer)); };
+    const auto high = [](const void* pointer) { return static_cast<std::uint32_t>(address(pointer) >> 32u); };
+    const std::array<std::uint32_t, 12> words{0xc0053c00u, 0x13u, low(gate), high(gate), 1u, 0xffffffffu, 4u, 0xc0033700u, 0x00100200u, low(done), high(done), 1u};
+    std::memcpy(commands, words.data(), sizeof(words));
+    auto* recorder = AgcDriver::FrameRecorder::Active();
+    check(recorder != nullptr, "frame recorder is disabled");
+    recorder->FrameBoundary();
+    Packet packet{commands, static_cast<std::uint32_t>(words.size()), 0, {}};
+    check(sceAgcDriverSubmitDcb(&packet) == 0, "the gated label write was not submitted");
+    const auto parked = [&] {
+        std::array<AgcDriver::AwaitedWait, 8> waits{};
+        const auto count = AgcDriverAwaitedWaits_nid_postfix(waits.data(), waits.size());
+        return std::any_of(waits.begin(), waits.begin() + static_cast<std::ptrdiff_t>(count), [&](const auto& wait) { return wait.address == address(gate); });
+    };
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!parked()) {
+        check(std::chrono::steady_clock::now() < deadline, "the queue never waited on its gate");
+        std::this_thread::yield();
+    }
+    struct ActiveRecorder {
+        std::unique_ptr<AgcDriver::Graphics::Recorder> recorder;
+        void reset() {
+            AgcDriver::GuestMemory::SetFlushHook(nullptr);
+            std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+            recorder.reset();
+        }
+        ~ActiveRecorder() { reset(); }
+    } active{std::make_unique<AgcDriver::Graphics::Recorder>(mockContext())};
+    {
+        std::lock_guard gpu(AgcDriver::GuestMemory::GpuMutex());
+        active.recorder->Activate();
+        active.recorder->NotePendingWrite(address(gate), sizeof(std::uint32_t));
+    }
+    AgcDriver::GuestMemory::SetFlushHook([](std::uint64_t, std::size_t) {});
+    check(!AgcDriverSettled_nid_postfix(), "the queue counts as waiting on the title while a GPU write over its gate is pending, so the test cannot tell whether a delta waits for it");
+    recorder->Suspend([] {});
+    active.reset();
+    std::atomic_ref<std::uint32_t>(*gate).store(1, std::memory_order_release);
+    AgcDriverWaitIdle_nid_postfix();
+    check(std::atomic_ref<std::uint32_t>(*done).load(std::memory_order_acquire) == 1, "the queue did not pass its gate");
+    recorder->FrameBoundary();
+    const FrameCaptureReader reader(directory);
+    check(reader.Header().find("neither finished nor waited") == std::string::npos, "a memory delta with no written or unwatched block waited for GPU work it would not read, and the capture stopped");
+}
+
 void testVersionOneRefused(const std::filesystem::path& directory) {
     constexpr std::size_t Size = FrameCaptureWriter::BlockBytes;
     constexpr std::string_view VersionOne = "aps5-frame-calls 1\n";
@@ -1415,6 +1466,7 @@ int main(int argc, char** argv) {
         else if (mode == "fresh_note") testFreshNote(directory);
 #endif
         else if (mode == "gpu_write_before_delta") testGpuWriteBeforeDelta(directory);
+        else if (mode == "unwritten_delta") testUnwrittenDeltaBesideBusyQueue(directory);
         else if (mode == "calls_v1") testVersionOneRefused(directory);
         else if (mode == "trace_window") testTraceWindow(directory);
         else if (mode == "tokens") testEopTokens();
