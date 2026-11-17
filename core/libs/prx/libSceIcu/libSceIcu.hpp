@@ -41,10 +41,12 @@
 #include "Character.hpp"
 #include "Configuration.hpp"
 
+#include "BreakIterator.hpp"
+#include "Data.hpp"
+#include "Currency.hpp"
+
 #include "ConverterHelpers.hpp"
 #include "Utf16Search.hpp"
 #include "RecoveredSignatures.hpp"
 #include "Copy.hpp"
-#include "BreakIterator.hpp"
-#include "Data.hpp"
-#include "Currency.hpp"
+#include "UtfConversions.hpp"
