@@ -35,6 +35,7 @@
 #include <emmintrin.h>
 #include <limits>
 #include <stdexcept>
+#include <type_traits>
 
 #include "prx/libc/include/General.hpp"
 
@@ -280,18 +281,16 @@ short ExpScaled(long double& x, long long scale, long double multiplier) {
 
 template<typename TFloat>
 short TestFloat(TFloat value) {
-    switch (std::fpclassify(value)) {
-    case FP_NAN:
-        return NotANumber;
-    case FP_INFINITE:
-        return Infinite;
-    case FP_ZERO:
-        return Zero;
-    case FP_SUBNORMAL:
-        return Denormal;
-    default:
-        return Finite;
-    }
+    using TBits = std::conditional_t<sizeof(TFloat) == sizeof(std::uint32_t), std::uint32_t, std::uint64_t>;
+    static_assert(sizeof(TFloat) == sizeof(TBits) && std::numeric_limits<TFloat>::is_iec559);
+    constexpr TBits infinity = std::bit_cast<TBits>(std::numeric_limits<TFloat>::infinity());
+    constexpr TBits smallestNormal = std::bit_cast<TBits>(std::numeric_limits<TFloat>::min());
+    const TBits magnitude = std::bit_cast<TBits>(value) & (~TBits{0} >> 1);
+    if (magnitude > infinity) return NotANumber;
+    if (magnitude == infinity) return Infinite;
+    if (magnitude == 0) return Zero;
+    if (magnitude < smallestNormal) return Denormal;
+    return Finite;
 }
 
 template <typename T>
