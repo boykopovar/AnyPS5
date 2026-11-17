@@ -20,8 +20,11 @@
 #include "prx/libSceNKWebKit/include/GLContextExtensionsExports.hpp"
 #include "prx/libc/include/General.hpp"
 
+#include <cerrno>
 #include <climits>
+#include <cstddef>
 #include <cstring>
+#include <stdexcept>
 
 extern "C" {
 
@@ -31,7 +34,21 @@ bool APS5_VABI _ZN7WebCore9GLContext20isExtensionSupportedEPKcS2_(const char* ex
 
     if (!extension)
         NotImplemented_nid_no_patch(__func__);
-    auto length = std::strlen(extension);
+    const int savedErrno = errno;
+    char probe = 0;
+    std::size_t safeLength = 0;
+    bool terminated = false;
+    while (GuestCopyIn_nid_no_patch(&probe, extension + safeLength, sizeof(probe))) {
+        if (!probe) {
+            terminated = true;
+            break;
+        }
+        ++safeLength;
+    }
+    errno = savedErrno;
+    if (!terminated)
+        throw std::invalid_argument(std::string(__func__) + ": unreadable extension string");
+    auto length = safeLength;
     if (length > INT_MAX || (!length && *extensionList != ' ' && *extensionList != '\0'))
         NotImplemented_nid_no_patch(__func__);
     int extensionLen = static_cast<int>(length);
