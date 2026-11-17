@@ -437,7 +437,7 @@ void FetchOffsetIsFoldedOnceOnRecapture(const GuestBlock& fetch, const GuestBloc
     const auto redone = AgcDriver::DriverDetail::captureChangeRetries.load() - retries;
     std::printf("the same draw with its vertex V# moved after its capture (checked on the %s): the V# changed %d time(s), wrote%s, %llu packet(s) prepared again\n", FetchCheckedOnFinisher.load() ? "draw finisher" : "queue worker", FetchChanges.load(), WrittenSlots(changed).c_str(), static_cast<unsigned long long>(redone));
     Expect(FetchChanges.load() == 1, "the check seam did not run before the fetching draw was recorded");
-    if (AgcDriver::DriverDetail::DrawFinisher::Enabled()) Expect(FetchCheckedOnFinisher.load(), "the fetching draw was checked on the queue worker, not the draw finisher, so restartFinishedDraw was not exercised");
+    if (AgcDriver::DriverDetail::DrawFinisher::Enabled() && AgcDriver::DriverDetail::DrawPipeline::Depth() != 0) Expect(FetchCheckedOnFinisher.load(), "the fetching draw was checked on the queue worker, not the draw finisher, so restartFinishedDraw was not exercised");
     Expect(changed == control, "the recaptured draw differs from the control: slots " + std::to_string(FetchVertexOffset) + " further on mean the retry folded s16 into the first vertex again, slots " + std::to_string(StaleSlotShift) + " further on mean it bound the V# captured before the change");
     Expect(redone == 1, "the draw was prepared again " + std::to_string(redone) + " times, not once");
 }

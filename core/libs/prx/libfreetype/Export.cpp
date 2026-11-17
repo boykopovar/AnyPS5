@@ -12,11 +12,11 @@
 
 extern "C" {
 
+#ifdef ANYPS5_BUNDLED_FREETYPE
 void APS5_VABI FT_Set_Default_Properties_nid_postfix(FreeType::GuestLibrary* library) {
     std::string environment;
     if (!CopyGuestEnvironment_nid_no_patch("FREETYPE_PROPERTIES", environment)) return;
-#ifdef ANYPS5_BUNDLED_FREETYPE
-    if (!library) NotImplemented_nid_no_patch(__func__);
+    FT_Library host = library ? library->host : nullptr;
     std::size_t position = 0;
     while (position < environment.size()) {
         if (environment[position] == ' ' || environment[position] == '\t') {
@@ -33,13 +33,16 @@ void APS5_VABI FT_Set_Default_Properties_nid_postfix(FreeType::GuestLibrary* lib
         const std::string module = environment.substr(position, separator - position);
         const std::string property = environment.substr(separator + 1, assignment - separator - 1);
         std::string value = environment.substr(assignment + 1, valueEnd - assignment - 1);
-        ft_property_string_set(library->host, module.c_str(), property.c_str(), value.data());
+        ft_property_string_set(host, module.c_str(), property.c_str(), value.data());
         position = valueEnd;
     }
-#else
-    NotImplemented_nid_no_patch(__func__);
-#endif
 }
+#else
+void APS5_VABI FT_Set_Default_Properties_nid_postfix(FreeType::GuestLibrary* library) {
+    std::string environment;
+    if (library && CopyGuestEnvironment_nid_no_patch("FREETYPE_PROPERTIES", environment)) NotImplemented_nid_no_patch(__func__);
+}
+#endif
 
 }
 
