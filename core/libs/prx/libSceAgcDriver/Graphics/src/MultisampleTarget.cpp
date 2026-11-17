@@ -1403,7 +1403,7 @@ MultisampleTarget& createFilled(const Context& context, const GuestTextureResour
     bool htileCleared = false;
     if (resource.dccAddress != 0) {
         if (use.tileMode != ColorTileMode::Z64KBX) refuse("whose compression metadata over a tile mode " + std::to_string(static_cast<int>(resource.tileMode)) + " surface is not modeled");
-        htileBytes = HtileMetadataBytes(use.extent);
+        htileBytes = HtileMetadataBytes(use.extent, resource.dccPipeAligned);
         char htileRange[64];
         std::snprintf(htileRange, sizeof(htileRange), "0x%llx+0x%llx", static_cast<unsigned long long>(resource.dccAddress), static_cast<unsigned long long>(htileBytes));
         GuestMemory::FlushGpuWrites(resource.dccAddress, static_cast<std::size_t>(htileBytes));
