@@ -146,11 +146,11 @@ int APS5_VABI sceMoveGetDeviceId(int32_t handle, uint32_t* deviceId) {
     return MOVE_NO_CONTROLLER_CONNECTED;
 }
 
-int APS5_VABI sceMoveIsReproductionModel(void) {
+int APS5_VABI sceMoveIsReproductionModel(int32_t handle) {
     std::lock_guard lock(stateMutex);
     if (!initialized) return MOVE_ERROR_NOT_INIT;
+    if (handle <= 0 || !openHandles.contains(handle)) return MOVE_ERROR_INVALID_PORT;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 int APS5_VABI sceMoveIsValidHandle(int32_t handle) {
@@ -159,11 +159,8 @@ int APS5_VABI sceMoveIsValidHandle(int32_t handle) {
     return openHandles.contains(handle) ? 1 : 0;
 }
 
-int APS5_VABI sceMoveReadStateRecentForTracker(void) {
-    std::lock_guard lock(stateMutex);
-    if (!initialized) return MOVE_ERROR_NOT_INIT;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceMoveReadStateRecentForTracker(int32_t handle, int64_t timestamp, void* data, int32_t* outCount) {
+    return sceMoveReadStateRecent(handle, timestamp, data, outCount);
 }
 
 int APS5_VABI sceMoveSetCalibrationMode(int32_t handle, int32_t mode) {
@@ -175,25 +172,18 @@ int APS5_VABI sceMoveSetCalibrationMode(int32_t handle, int32_t mode) {
     return MOVE_OK;
 }
 
-int APS5_VABI sceMoveSetExtensionPortOutput(void) {
-    std::lock_guard lock(stateMutex);
-    if (!initialized) return MOVE_ERROR_NOT_INIT;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceMoveSetExtensionPortOutput(int32_t handle, const void* data) {
+    if (const int result = checkHandle(handle, data != nullptr); result != MOVE_OK) return result;
+    return MOVE_NO_CONTROLLER_CONNECTED;
 }
 
-int APS5_VABI sceMoveSetLightSphereForTracker(void) {
-    std::lock_guard lock(stateMutex);
-    if (!initialized) return MOVE_ERROR_NOT_INIT;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceMoveSetLightSphereForTracker(int32_t handle, uint8_t red, uint8_t green, uint8_t blue) {
+    return sceMoveSetLightSphere(handle, red, green, blue);
 }
 
-int APS5_VABI sceMoveWriteCalibrationInfo(void) {
-    std::lock_guard lock(stateMutex);
-    if (!initialized) return MOVE_ERROR_NOT_INIT;
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceMoveWriteCalibrationInfo(int32_t handle, const void* info) {
+    if (const int result = checkHandle(handle, info != nullptr); result != MOVE_OK) return result;
+    return MOVE_NO_CONTROLLER_CONNECTED;
 }
 
 }
