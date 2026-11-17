@@ -40,6 +40,7 @@
 #include <chrono>
 
 #include <condition_variable>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -202,7 +203,7 @@ std::vector<std::uint64_t> liveRecorders;
 std::atomic<std::uint64_t> nextRecorderId{1};
 std::atomic<std::uint64_t> samplesPassed{0};
 constexpr std::uint32_t SampleFoldCapacity = 64;
-constexpr std::uint32_t SampleCounterPushBytes = 24;
+constexpr std::uint32_t SampleCounterPushBytes = 28;
 constexpr std::uint32_t SegmentSlots = 128;
 constexpr std::uint32_t SegmentFoldCapacity = 1024;
 constexpr std::uint32_t DumpFoldCapacity = 1024;
@@ -3078,7 +3079,7 @@ void Recorder::recordQueuedDumps(VkCommandBuffer commands, std::span<const Batch
     for (const auto& write : writes) {
         if (write.dumpTarget == 0) continue;
         segments = write.dumpSegments;
-        list.insert(list.end(), {static_cast<std::uint32_t>(write.dumpTarget), static_cast<std::uint32_t>(write.dumpTarget >> 32u), write.dumpSegments, 0u});
+        list.insert(list.end(), {static_cast<std::uint32_t>(write.dumpTarget), static_cast<std::uint32_t>(write.dumpTarget >> 32u), write.dumpSegments, write.dumpBlocks});
     }
     Require(list.size() <= 4u * DumpFoldCapacity, "queued occlusion dumps exceed the fold capacity");
     copySegments(commands, segments);
@@ -3145,7 +3146,7 @@ void Recorder::endSamples(Batch& batch) {
     batch.samplesDrawn = false;
 }
 
-void Recorder::foldSamples(Batch& batch, VkDeviceAddress target) {
+void Recorder::foldSamples(Batch& batch, VkDeviceAddress target, std::uint32_t blocks) {
     const auto commands = batch.commands;
     const auto copy = function(cmdCopyQueryPoolResults, "vkCmdCopyQueryPoolResults");
     const auto push = function(cmdPushConstants, "vkCmdPushConstants");
@@ -3169,8 +3170,9 @@ void Recorder::foldSamples(Batch& batch, VkDeviceAddress target) {
             VkDeviceAddress target;
             std::uint32_t count;
             std::uint32_t store;
-        } parameters{sampleCounter->DeviceAddress(), target, count, last && target != 0 ? 1u : 0u};
-        static_assert(sizeof(parameters) == SampleCounterPushBytes);
+            std::uint32_t blocks;
+        } parameters{sampleCounter->DeviceAddress(), target, count, last && target != 0 ? 1u : 0u, blocks};
+        static_assert(offsetof(decltype(parameters), blocks) + sizeof(parameters.blocks) == SampleCounterPushBytes);
         push(commands, sampleLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, SampleCounterPushBytes, &parameters);
         dispatch(commands, 1, 1, 1);
         if (parameters.store == 1u) {
@@ -3189,7 +3191,7 @@ void Recorder::foldSamples(Batch& batch, VkDeviceAddress target) {
     pendingSamples.clear();
 }
 
-bool Recorder::DumpSamples(VkDeviceAddress target, std::uint64_t address) {
+bool Recorder::DumpSamples(VkDeviceAddress target, std::uint64_t address, std::uint32_t blocks) {
     GuestMemory::AssertGpuLockHeld("Recorder::DumpSamples");
     if (target == 0 || !gpuSampleCounter()) return false;
     countingSamples = true;
@@ -3204,19 +3206,20 @@ bool Recorder::DumpSamples(VkDeviceAddress target, std::uint64_t address) {
             queued.address = address;
             queued.dumpTarget = target;
             queued.dumpSegments = static_cast<std::uint32_t>(pendingSamples.size());
+            queued.dumpBlocks = blocks;
             ++open->queuedDumps;
             dumpsQueued.fetch_add(1, std::memory_order_relaxed);
             return true;
         }
         FlushStores();
         Commands();
-        foldSamples(*open, target);
+        foldSamples(*open, target, blocks);
         dumpsAtOnce.fetch_add(1, std::memory_order_relaxed);
         return true;
     }
     Commands();
     endSamples(*open);
-    foldSamples(*open, target);
+    foldSamples(*open, target, blocks);
     if (open->samplePool != nullptr) open->kept.push_back(std::move(open->samplePool));
     open->samplePool.reset();
     open->samples = VK_NULL_HANDLE;

@@ -3207,7 +3207,7 @@ void VulkanDevice::NoteHtileMask(const Graphics::HtileMaskClear& clear) const {
     Graphics::NoteHtileMaskOnGpu(graphicsContext(), clear);
 }
 
-bool VulkanDevice::DumpSamplesOnGpu(std::uint64_t address) {
+bool VulkanDevice::DumpSamplesOnGpu(std::uint64_t address, std::uint32_t blocks) {
     static const bool syncDumps = std::getenv("APS5_SYNC_SAMPLE_DUMPS") != nullptr || std::getenv("APS5_NO_GPU_SAMPLE_DUMPS") != nullptr;
     if (syncDumps) return false;
     if (!state->recorder) return false;
@@ -3222,7 +3222,7 @@ bool VulkanDevice::DumpSamplesOnGpu(std::uint64_t address) {
     if (Graphics::AnyShadowedOverlaps(address, bytes)) Graphics::PublishShadow(address, bytes, Graphics::PublishScope::PartialUnits, Graphics::PublishReason::Label);
     if (!recorder.QueuesSampleDumps()) recorder.FlushStoresOverlapping(address, bytes);
     recorder.FlushKeyStoresOverlapping(address, bytes);
-    if (!recorder.DumpSamples(import->address + (address - import->base), address)) return false;
+    if (!recorder.DumpSamples(import->address + (address - import->base), address, blocks)) return false;
     recorder.NotePendingWrite(address, bytes);
     GuestMemory::MarkWritten(address, bytes);
     return true;

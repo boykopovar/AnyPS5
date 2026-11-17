@@ -1,0 +1,9 @@
+# libSceAgcDriver
+
+## add Functional
+
+- [EVENT_WRITE PIXEL_PIPE_STAT_CONTROL](../../../core/libs/prx/libSceAgcDriver/Execution/src/Pm4.cpp) (libSceAgcDriver, opcode 0x46, event 0x38) - not measured on a console. Only the 16-bit `instance_enable` mask is modelled ([PAL](https://github.com/GPUOpen-Drivers/pal/blob/c5e800072a32f68b6ccc4422936d96167c6e0728/src/core/hw/gfxip/gfx9/chip/gfx9_plus_merged_f32_me_pm4_packets.h#L1716-L1738) layout): later dumps write only the enabled blocks and Z-pass predication sums only them. AnyPS5 counts samples for the whole target, so the lowest enabled block holds them all. The mask starts at all 16 blocks and returns to that on a queue reset. Counters other than occlusion count 0, strides other than 128 bits, reserved bits and a non-zero fourth dword throw. Whether the console's predication reads disabled blocks is not known.
+
+## change [SET_PREDICATION]
+
+- [SET_PREDICATION](../../../core/libs/prx/libSceAgcDriver/Execution/src/Pm4.cpp) (AGC driver) - not measured on a console. Primitive-count predication, the CONTINUE bit, a predicated COND_EXEC, predicated command buffer chains and flips in predicated command buffers throw. Boolean predication follows the AMD PM4 encoding [Mesa](https://gitlab.freedesktop.org/mesa/mesa/-/blob/main/src/amd/common/sid.h) uses: operation 3 reads 64 bits, 4 reads 32 bits, and bit 8 runs predicated packets on a non-zero value (clear: on zero). Z-pass predication (operation 1) sums `end - begin` over the counter pairs a ZPASS_DONE dump writes (16-byte stride, bit 63 marks a written counter), as radeonsi lays out occlusion results, for the blocks the queue's last `PIXEL_PIPE_STAT_CONTROL` enabled (all 16 without one); an unwritten pair runs the packets under the bit 12 no-wait hint and throws under the wait hint. The address must have its low 4 bits clear, as `sceAgcDcbSetPredication` writes it

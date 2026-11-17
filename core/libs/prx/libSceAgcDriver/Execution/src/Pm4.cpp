@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <bit>
 #include <thread>
 #include <chrono>
 #include <cstdio>
@@ -490,6 +491,14 @@ void Validate(std::span<const std::uint32_t> packet, std::uint32_t queue) {
                     size(2);
                     require(eventIndex == 0, "invalid stream-out statistics event index");
                     break;
+                case 0x38:
+                    graphics();
+                    size(4);
+                    require(eventIndex == 1, "invalid pixel pipe statistics control event index");
+                    require((packet[2] & ~0x07fffff8u) == 0 && packet[3] == 0, "unsupported PIXEL_PIPE_STAT_CONTROL reserved bits");
+                    require(((packet[2] >> 3u) & 0x3fu) == 0, "PIXEL_PIPE_STAT_CONTROL counters other than occlusion count 0 are not implemented");
+                    require(((packet[2] >> 9u) & 3u) == 2, "PIXEL_PIPE_STAT_CONTROL dump strides other than 128 bits are not implemented");
+                    break;
                 case 0x39:
                     graphics();
                     size(4);
@@ -703,9 +712,11 @@ bool PredicationPasses(const QueueState& queue) {
     if (predication.operation == 1) {
         constexpr std::uint64_t ready = 1ull << 63u;
         std::array<std::uint64_t, SampleDumpBlocks * SampleDumpStride / sizeof(std::uint64_t)> words{};
-        GuestMemory::Read(predication.address, std::as_writable_bytes(std::span(words)).first(PredicationBytes(predication)), 8);
+        const auto pairs = static_cast<std::size_t>(std::bit_width(queue.sampleDumpBlocks));
+        if (pairs != 0) GuestMemory::Read(predication.address, std::as_writable_bytes(std::span(words)).first(pairs * SampleDumpStride), 8);
         std::uint64_t samples = 0;
         for (std::uint64_t db = 0; db < SampleDumpBlocks; ++db) {
+            if (((queue.sampleDumpBlocks >> db) & 1u) == 0) continue;
             const auto begin = words[db * SampleDumpStride / sizeof(std::uint64_t)];
             const auto end = words[db * SampleDumpStride / sizeof(std::uint64_t) + 1];
             if ((begin & ready) == 0 || (end & ready) == 0) {
@@ -1197,6 +1208,10 @@ void Execute(std::span<const std::uint32_t> packet, QueueState& queue) {
         case 0x2a: queue.indexType = packet[1]; return;
         case 0x91: executeIndexAttributes(readIndexAttributes(packet), queue); return;
         case 0x2f: queue.instanceCount = packet[1]; return;
+        case 0x46:
+            if (!SampleControl(packet)) throw std::runtime_error("packet requires driver execution");
+            queue.sampleDumpBlocks = SampleControlBlocks(packet);
+            return;
         case 0x63: case 0x64: case 0x9f:
             ExecuteIndirectRegisters(packet, ReadIndirectRegisters(packet), queue);
             return;
