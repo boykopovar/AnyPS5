@@ -2567,6 +2567,52 @@ void checkDriverLockFree() {
     registered.get();
 }
 
+void testOrderHoldWake() {
+    constexpr std::uint32_t rounds = 32;
+    alignas(8) static std::uint32_t label = 0;
+    alignas(8) static std::uint32_t armed = 0;
+    alignas(8) static std::uint32_t started = 0;
+    alignas(8) static std::uint32_t done = 0;
+    alignas(8) static std::uint32_t busy = 0;
+    const auto seen = [](std::uint32_t& word, std::uint32_t value) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (std::atomic_ref<std::uint32_t>(word).load() != value) {
+            check(std::chrono::steady_clock::now() < deadline, "a queue did not reach its write in time");
+            std::this_thread::yield();
+        }
+        return std::chrono::steady_clock::now();
+    };
+    std::vector<double> latencies;
+    for (std::uint32_t round = 1; round <= rounds; ++round) {
+        std::vector<std::uint32_t> waiting;
+        for (std::uint32_t index = 0; index < 4096; ++index) {
+            const auto write = writeWord(busy, index);
+            waiting.insert(waiting.end(), write.begin(), write.end());
+        }
+        const auto arm = writeWord(armed, round);
+        waiting.insert(waiting.end(), arm.begin(), arm.end());
+        const auto wait = makePacket(0x3c, {0x13, low(&label), high(&label), round, 0xffffffffu, 0x19});
+        waiting.insert(waiting.end(), wait.begin(), wait.end());
+        const auto finish = writeWord(done, round);
+        waiting.insert(waiting.end(), finish.begin(), finish.end());
+        submitWords(waiting);
+        auto release = writeWord(started, round);
+        const auto publish = writeWord(label, round);
+        release.insert(release.end(), publish.begin(), publish.end());
+        submitWords(release, 0x20);
+        const auto waitsAt = seen(armed, round);
+        const auto startedAt = seen(started, round);
+        latencies.push_back(std::chrono::duration<double, std::milli>(startedAt - waitsAt).count());
+        AgcDriverWaitIdle_nid_postfix();
+        check(std::atomic_ref<std::uint32_t>(done).load() == round, "queue 0 did not pass its wait on the label of the held queue");
+    }
+    std::sort(latencies.begin(), latencies.end());
+    static char reason[200];
+    std::snprintf(reason, sizeof(reason), "a held submission started %.3f ms (median) after queue 0 began to wait on its label; it must start at once", latencies[rounds / 2]);
+    std::printf("order-signal: median %.3f ms, largest %.3f ms\n", latencies[rounds / 2], latencies.back());
+    check(latencies[rounds / 2] < 0.1, reason);
+}
+
 void submitStalledOrderWait(const std::shared_ptr<GatedOutput>& output, std::uint32_t& done) {
     std::vector<std::uint32_t> wait{AgcDriver::RenderingWaitPacketHeader, 7, 0, 0};
     submitWords(wait);
@@ -2870,7 +2916,7 @@ int main(int argc, char** argv) {
         const std::pair<const char*, void (*)()> ringModes[]{
             {"ring", testSubmissionRing}, {"ring-empty", testEmptySubmissionRing}, {"ring-disabled", testDisabledSubmissionRing},
             {"ring-invalid", testInvalidSubmissionRing}, {"ring-report", testSubmissionRingFailureReport}, {"stall-watchdog", testStallWatchdog},
-            {"stall-watchdog-invalid", testInvalidStallWatchdog}, {"stall-watchdog-rewind", testStallWatchdogRewind}, {"stall-watchdog-order", testStallWatchdogOrder}, {"stall-clock", testStallClock}, {"stall-prompt-invalid", testInvalidStallPrompt}, {"stall-prompt-off", testStallPromptOff}, {"stall-prompt-zero", testStallPromptOff}, {"stall-prompt-rearm", testStallPromptRearm}, {"stall-prompt-real", testStallPromptRealPath}, {"stall-prompt-reentry", testStallPromptOneAtATime}, {"stall-prompt-quit", testStallPromptQuit}, {"stall-prompt-lock", testStallPromptLock}, {"stall-prompt-lock-unavailable", testStallPromptLockUnavailable}, {"rewind-trace", testRewindTailTrace}, {"rewind-copy", testRewindControlCopy}, {"rewind-size", testRewindSize}};
+            {"stall-watchdog-invalid", testInvalidStallWatchdog}, {"stall-watchdog-rewind", testStallWatchdogRewind}, {"stall-watchdog-order", testStallWatchdogOrder}, {"order-signal", testOrderHoldWake}, {"stall-clock", testStallClock}, {"stall-prompt-invalid", testInvalidStallPrompt}, {"stall-prompt-off", testStallPromptOff}, {"stall-prompt-zero", testStallPromptOff}, {"stall-prompt-rearm", testStallPromptRearm}, {"stall-prompt-real", testStallPromptRealPath}, {"stall-prompt-reentry", testStallPromptOneAtATime}, {"stall-prompt-quit", testStallPromptQuit}, {"stall-prompt-lock", testStallPromptLock}, {"stall-prompt-lock-unavailable", testStallPromptLockUnavailable}, {"rewind-trace", testRewindTailTrace}, {"rewind-copy", testRewindControlCopy}, {"rewind-size", testRewindSize}};
         if (argc == 2 && std::string(argv[1]) == "ring-report-heap") {
 #ifdef _WIN32
             testSubmissionRingFailureReportHeap();
