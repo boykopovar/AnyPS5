@@ -860,6 +860,34 @@ if(BUILD_TESTING)
     endif()
 endif()
 
+target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/PemKeys.cpp)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_libressl3_pem_keys_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/PemKeys.cpp)
+    target_include_directories(guest_libressl3_pem_keys_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_pem_keys_tests PRIVATE libSceLibreSsl3 libSceLibreSsl libc mbedcrypto)
+    configure_windows_unwind(guest_libressl3_pem_keys_tests)
+    add_test(NAME guest_libressl3_pem_keys COMMAND guest_libressl3_pem_keys_tests)
+    set_tests_properties(guest_libressl3_pem_keys PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_pem_keys PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
+endif()
+
+if(BUILD_TESTING)
+    add_test_executable(guest_libressl3_pkey_context_new_id_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/PkeyContextNewId.cpp)
+    target_include_directories(guest_libressl3_pkey_context_new_id_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl3_pkey_context_new_id_tests PRIVATE libSceLibreSsl3 libSceLibreSsl libc mbedcrypto)
+    configure_windows_unwind(guest_libressl3_pkey_context_new_id_tests)
+    add_test(NAME guest_libressl3_pkey_context_new_id COMMAND guest_libressl3_pkey_context_new_id_tests)
+    set_tests_properties(guest_libressl3_pkey_context_new_id PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libressl3_pkey_context_new_id PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl3>")
+    endif()
+endif()
+
 target_sources(libSceLibreSsl3 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/ObjObj2Txt.cpp)
 
 if(BUILD_TESTING)
