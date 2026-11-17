@@ -21,7 +21,9 @@
 
 #ifndef _WIN32
 static std::size_t failHostAllocationOfSize = 0;
+static std::size_t hostAllocationLimit = SIZE_MAX;
 void* operator new(std::size_t bytes) {
+    if (bytes > hostAllocationLimit) throw std::bad_alloc();
     if (bytes != 0 && failHostAllocationOfSize == bytes) {
         failHostAllocationOfSize = 0;
         throw std::bad_alloc();
@@ -30,6 +32,7 @@ void* operator new(std::size_t bytes) {
     throw std::bad_alloc();
 }
 void* operator new(std::size_t bytes, const std::nothrow_t&) noexcept {
+    if (bytes > hostAllocationLimit) return nullptr;
     if (bytes != 0 && failHostAllocationOfSize == bytes) {
         failHostAllocationOfSize = 0;
         return nullptr;
@@ -203,6 +206,34 @@ static void CheckGuestPointers() {
         Bn tail{limbs, 1, 1, 0, 2};
         Bn* stored = page.Tail<Bn>(&tail, sizeof(tail));
         Require(Printed(stored) == "2A");
+        std::uint64_t* shortLimbs = page.Tail<std::uint64_t>(limbs, sizeof(limbs));
+#ifndef _WIN32
+        hostAllocationLimit = 1 << 20;
+#endif
+        Bn oversized{shortLimbs, 0x7FFFFFFF, 1, 0, 2};
+        Rejects([&] { BN_print_nid_postfix(nullptr, &oversized); });
+        Bn oversizedUnmapped{reinterpret_cast<std::uint64_t*>(0x10), 0x7FFFFFFF, 1, 0, 2};
+        Rejects([&] { BN_print_nid_postfix(nullptr, &oversizedUnmapped); });
+        Bn wrapping{reinterpret_cast<std::uint64_t*>(UINTPTR_MAX - 7), 2, 2, 0, 2};
+        Rejects([&] { BN_print_nid_postfix(nullptr, &wrapping); });
+#ifndef _WIN32
+        hostAllocationLimit = SIZE_MAX;
+#endif
+        Bn shortTop{shortLimbs, 2, 2, 0, 2};
+        Rejects([&] { BN_print_nid_postfix(nullptr, &shortTop); });
+    }
+
+    {
+        std::array<std::uint64_t, 1500> many{};
+        std::string expected = "1";
+        many[many.size() - 1] = 1;
+        for (std::size_t i = many.size() - 1; i-- > 0;) {
+            many[i] = 0x0123456789ABCDEFull ^ i;
+            static constexpr char digits[] = "0123456789ABCDEF";
+            for (int shift = 60; shift >= 0; shift -= 4) expected += digits[(many[i] >> shift) & 15];
+        }
+        Bn wide{many.data(), static_cast<int>(many.size()), static_cast<int>(many.size()), 0, 2};
+        Require(Printed(&wide) == expected);
     }
 
     {

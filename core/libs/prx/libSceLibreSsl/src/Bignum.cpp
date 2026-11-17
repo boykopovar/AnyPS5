@@ -295,6 +295,23 @@ std::string CopyGuestHexDigits(const char* guestAddress, std::size_t limit, cons
     }
 }
 
+template <typename TVisit>
+bool VisitGuestLimbsFromTop(const std::uint64_t* guestLimbs, std::size_t count, const char* caller, TVisit visit) {
+    constexpr std::size_t chunkLimbs = GuestChunkBytes / sizeof(std::uint64_t);
+    const auto base = reinterpret_cast<std::uintptr_t>(guestLimbs);
+    if (count > (UINTPTR_MAX - base) / sizeof(std::uint64_t)) NotImplementedAt_nid_no_patch(caller, __FILE__, __LINE__);
+    std::uint64_t chunk[chunkLimbs];
+    for (std::size_t end = count; end > 0;) {
+        const std::size_t n = end < chunkLimbs ? end : chunkLimbs;
+        end -= n;
+        CopyGuestInPreservingErrno(chunk, reinterpret_cast<const void*>(base + end * sizeof(std::uint64_t)), n * sizeof(std::uint64_t), caller);
+        for (std::size_t i = n; i-- > 0;) {
+            if (!visit(chunk[i])) return false;
+        }
+    }
+    return true;
+}
+
 bool ApplyWord(Bignum* a, std::uint64_t w, bool subtract) {
     Int word;
     if (w) word.mag = {w};
@@ -399,7 +416,12 @@ int APS5_VABI BN_hex2bn_nid_postfix(Bignum** a, const char* str) {
         return 0;
     }
     target->neg = negative ? 1 : 0;
-    CopyGuestOutPreservingErrno(a, &target, sizeof(target), __func__);
+    try {
+        CopyGuestOutPreservingErrno(a, &target, sizeof(target), __func__);
+    } catch (...) {
+        if (owned) FreeBignum(target);
+        throw;
+    }
     return consumed;
 }
 
@@ -431,20 +453,20 @@ int APS5_VABI BN_print_nid_postfix(LibreSsl::Bio* bio, const Bignum* a) {
     Checked(a, __func__);
     Bignum value{};
     CopyGuestInPreservingErrno(&value, a, sizeof(value), __func__);
-    std::vector<std::uint64_t> limbs(value.top > 0 ? static_cast<std::size_t>(value.top) : 0);
-    CopyGuestInPreservingErrno(limbs.data(), value.d, limbs.size() * sizeof(std::uint64_t), __func__);
+    const std::size_t count = value.top > 0 ? static_cast<std::size_t>(value.top) : 0;
+    VisitGuestLimbsFromTop(value.d, count, __func__, [](std::uint64_t) { return true; });
     if (value.neg && LibreSslBioWrite_nid_no_patch(bio, "-", 1) != 1) return 0;
     if (value.top == 0 && LibreSslBioWrite_nid_no_patch(bio, "0", 1) != 1) return 0;
     bool started = false;
-    for (int i = value.top - 1; i >= 0; i--) {
+    return VisitGuestLimbsFromTop(value.d, count, __func__, [&](std::uint64_t limb) {
         for (int shift = 60; shift >= 0; shift -= 4) {
-            const int digit = static_cast<int>(limbs[static_cast<std::size_t>(i)] >> shift) & 15;
+            const int digit = static_cast<int>(limb >> shift) & 15;
             if (!started && digit == 0) continue;
-            if (LibreSslBioWrite_nid_no_patch(bio, &digits[digit], 1) != 1) return 0;
+            if (LibreSslBioWrite_nid_no_patch(bio, &digits[digit], 1) != 1) return false;
             started = true;
         }
-    }
-    return 1;
+        return true;
+    }) ? 1 : 0;
 }
 
 Bignum* APS5_VABI BN_mod_inverse_nid_postfix(Bignum* r, const Bignum* a, const Bignum* n, BignumContext*) {
