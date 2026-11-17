@@ -1553,10 +1553,11 @@ void KeepDrawInput(Recorder* recorder, std::uint64_t address, const DrawInputCop
     recorder->KeepDrawSnapshot(address, copy.buffer->Bytes().size(), copy.generation, copy.registryGeneration, copy.buffer, use, derived, copy.from, lowest);
 }
 
-const HostImport* InPlaceDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t alignment, bool* behindGpuWrite) {
+const HostImport* InPlaceDrawInput(const Context& context, std::uint64_t address, std::size_t bytes, std::size_t alignment, bool* behindGpuWrite, std::size_t fetched, std::uint64_t reads) {
     auto* recorder = context.recorder;
     static const bool copyBehindGpuWrite = std::getenv("APS5_NO_BEHIND_INPUTS_IN_PLACE") != nullptr || std::getenv("APS5_NO_DRAW_INPUTS_IN_PLACE") != nullptr;
-    if (recorder == nullptr || bytes == 0 || (!context.drawInputsInPlace && (behindGpuWrite == nullptr || copyBehindGpuWrite))) return nullptr;
+    const bool small = std::min(fetched, bytes) <= context.drawInputsInPlaceBelow && reads <= InPlaceDrawInputMaxReads;
+    if (recorder == nullptr || bytes == 0 || (!context.drawInputsInPlace && !small && (behindGpuWrite == nullptr || copyBehindGpuWrite))) return nullptr;
     bool behind = false;
     if (behindGpuWrite == nullptr) {
         GuestMemory::FlushGpuWrites(address, bytes);
@@ -1564,7 +1565,7 @@ const HostImport* InPlaceDrawInput(const Context& context, std::uint64_t address
     } else {
         StorageTexture::FlushPending(address, bytes, nullptr, "in-place vertex input");
         behind = recorder->PendingWriteOverlaps(address, bytes);
-        if (!behind && !context.drawInputsInPlace) return nullptr;
+        if (!behind && !context.drawInputsInPlace && !small) return nullptr;
     }
     if (recorder->PendingLabelIn(address, bytes) || recorder->QueuedStoreOverlaps(address, bytes)) return nullptr;
     const auto overlaps = [&](const auto& writer) { return writer->WritesOverlap(address, bytes); };
@@ -1792,6 +1793,7 @@ void requireDrawPlanRepeats(const Context& context, const State& state, const Pm
 
 DrawInputs prepareDrawInputs(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, const DrawPlan& drawPlan, DrawTimer& timer, PerformanceTimer& timing) {
     DrawInputs inputs;
+    const auto reads = draw.indirect ? std::numeric_limits<std::uint64_t>::max() : static_cast<std::uint64_t>(draw.indexCount) * draw.instanceCount;
     inputs.indexBytes = drawPlan.indexBytes;
     inputs.fragmentOutputs = drawPlan.fragmentOutputs;
     inputs.shaderStages = drawPlan.shaderStages;
@@ -1930,7 +1932,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         const bool skipRestart = state.primitiveRestart && (!listTopology || context.primitiveListRestart || state.stages.mesh);
         const auto use = draw.indexSize == 2 ? (skipRestart ? Recorder::SnapshotUse::Index16Restart : Recorder::SnapshotUse::Index16) : (skipRestart ? Recorder::SnapshotUse::Index32Restart : Recorder::SnapshotUse::Index32);
         const bool restartTable = skipRestart && state.stages.mesh && (state.stages.mesh->inputPrimitive == 5 || state.stages.mesh->inputPrimitive == 6);
-        const auto* import = InPlaceDrawInput(context, draw.indexAddress, static_cast<std::size_t>(indexBytes), draw.indexSize);
+        const auto* import = InPlaceDrawInput(context, draw.indexAddress, static_cast<std::size_t>(indexBytes), draw.indexSize, nullptr, static_cast<std::size_t>(indexBytes), reads);
         DrawInputCopy copy;
         if (import == nullptr) copy = CopyDrawInput(context, context.recorder, draw.indexAddress, static_cast<std::size_t>(indexBytes), draw.indexSize, use, 0, !BindsIndexCopy(state));
         else GuestMemory::CheckRange(reinterpret_cast<const void*>(draw.indexAddress), static_cast<std::size_t>(indexBytes), draw.indexSize);
@@ -2058,7 +2060,7 @@ DrawInputs prepareDrawInputs(const Context& context, const State& state, const P
         const auto bytes = static_cast<std::size_t>(end - begin);
         GuestMemory::CheckRange(reinterpret_cast<const void*>(begin), bytes, 1);
         RequireNoMultisampleTarget(begin, bytes, "a vertex buffer read");
-        if (const auto* import = InPlaceDrawInput(context, begin, bytes, plan.alignments[range], &inputs.vertexInputBehindGpuWrite)) {
+        if (const auto* import = InPlaceDrawInput(context, begin, bytes, plan.alignments[range], &inputs.vertexInputBehindGpuWrite, bytes - std::min(rangeFrom[range], bytes), reads)) {
             rangeHandles.push_back(import->buffer);
             rangeOffsets.push_back(HostImportOffset(*import, begin));
             inputs.inPlaceReads.emplace_back(begin, end);
