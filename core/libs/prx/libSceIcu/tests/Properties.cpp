@@ -195,6 +195,45 @@ void TestIntPropertyMap() {
     ExpectInt(status, 1, "u_getIntPropertyMap preserves failed status");
 }
 
+void TestDataFileProperties() {
+    Expect(u_hasBinaryProperty_nid_postfix(0x1f600, 57) && !u_hasBinaryProperty_nid_postfix(0x41, 57), "u_hasBinaryProperty(Emoji)");
+    Expect(u_hasBinaryProperty_nid_postfix(0x1f600, 58) && !u_hasBinaryProperty_nid_postfix(0x263a, 58), "u_hasBinaryProperty(Emoji_Presentation)");
+    Expect(u_hasBinaryProperty_nid_postfix(0x1f3fb, 59) && !u_hasBinaryProperty_nid_postfix(0x1f600, 59), "u_hasBinaryProperty(Emoji_Modifier)");
+    Expect(u_hasBinaryProperty_nid_postfix(0x1f44d, 60) && !u_hasBinaryProperty_nid_postfix(0x1f600, 60), "u_hasBinaryProperty(Emoji_Modifier_Base)");
+    Expect(u_hasBinaryProperty_nid_postfix(0x23, 61) && !u_hasBinaryProperty_nid_postfix(0x41, 61), "u_hasBinaryProperty(Emoji_Component)");
+    Expect(u_hasBinaryProperty_nid_postfix(0xa9, 64) && !u_hasBinaryProperty_nid_postfix(0x41, 64), "u_hasBinaryProperty(Extended_Pictographic)");
+    Expect(u_hasBinaryProperty_nid_postfix(0x1f600, 65) && !u_hasBinaryProperty_nid_postfix(0x41, 65), "u_hasBinaryProperty(Basic_Emoji)");
+    Expect(u_hasBinaryProperty_nid_postfix(0x1f600, 71) && !u_hasBinaryProperty_nid_postfix(0x1f1e6, 68), "u_hasBinaryProperty(RGI_Emoji)");
+    Expect(u_hasBinaryProperty_nid_postfix(0x41, 56) && !u_hasBinaryProperty_nid_postfix(0x61, 56), "u_hasBinaryProperty(Changes_When_NFKC_Casefolded)");
+
+    ExpectInt(u_getIntPropertyValue_nid_postfix(0x1f600, 57), 1, "u_getIntPropertyValue(U+1F600, Emoji)");
+    ExpectInt(u_getIntPropertyValue_nid_postfix(0xfb01, 0x100f), 0, "u_getIntPropertyValue(U+FB01, NFKC_QC)");
+    ExpectInt(u_getIntPropertyValue_nid_postfix(0x41, 0x100f), 1, "u_getIntPropertyValue(A, NFKC_QC)");
+    ExpectInt(u_getIntPropertyValue_nid_postfix(0x93f, 0x1016), 4, "u_getIntPropertyValue(U+093F, InPC)");
+    ExpectInt(u_getIntPropertyValue_nid_postfix(0x915, 0x1016), 0, "u_getIntPropertyValue(U+0915, InPC)");
+    ExpectInt(u_getIntPropertyValue_nid_postfix(0x915, 0x1017), 5, "u_getIntPropertyValue(U+0915, InSC)");
+    ExpectInt(u_getIntPropertyValue_nid_postfix(0x93f, 0x1017), 34, "u_getIntPropertyValue(U+093F, InSC)");
+    ExpectInt(u_getIntPropertyValue_nid_postfix(0x4e00, 0x1018), 3, "u_getIntPropertyValue(U+4E00, vo)");
+    ExpectInt(u_getIntPropertyValue_nid_postfix(0x3001, 0x1018), 2, "u_getIntPropertyValue(U+3001, vo)");
+    ExpectInt(u_getIntPropertyValue_nid_postfix(0x41, 0x1018), 0, "u_getIntPropertyValue(A, vo)");
+
+    ExpectInt(u_getIntPropertyMaxValue_nid_postfix(0x1016), 15, "u_getIntPropertyMaxValue(InPC)");
+    ExpectInt(u_getIntPropertyMaxValue_nid_postfix(0x1017), 36, "u_getIntPropertyMaxValue(InSC)");
+    ExpectInt(u_getIntPropertyMaxValue_nid_postfix(0x1018), 3, "u_getIntPropertyMaxValue(vo)");
+
+    std::int32_t status = 0;
+    const UCPMap* insc = u_getIntPropertyMap_nid_postfix(0x1017, &status);
+    Expect(insc != nullptr && status == 0, "u_getIntPropertyMap(InSC) returns a map");
+    ExpectInt(ucpmap_get(insc, 0x915), 5, "u_getIntPropertyMap(InSC, U+0915)");
+    ExpectInt(ucpmap_get(insc, 0x41), 0, "u_getIntPropertyMap(InSC, A)");
+    const UCPMap* vo = u_getIntPropertyMap_nid_postfix(0x1018, &status);
+    Expect(vo != nullptr && status == 0, "u_getIntPropertyMap(vo) returns a map");
+    ExpectInt(ucpmap_get(vo, 0x4e00), 3, "u_getIntPropertyMap(vo, U+4E00)");
+    const UCPMap* nfkc = u_getIntPropertyMap_nid_postfix(0x100f, &status);
+    Expect(nfkc != nullptr && status == 0, "u_getIntPropertyMap(NFKC_QC) returns a map");
+    ExpectInt(ucpmap_get(nfkc, 0xfb01), 0, "u_getIntPropertyMap(NFKC_QC, U+FB01)");
+}
+
 }
 
 int main() {
@@ -205,5 +244,6 @@ int main() {
     TestPropertyNames();
     TestPropertyValues();
     TestIntPropertyMap();
+    TestDataFileProperties();
     std::puts("ICU property tests passed");
 }
