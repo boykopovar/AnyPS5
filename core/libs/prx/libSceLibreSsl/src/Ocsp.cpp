@@ -1,6 +1,7 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <stdexcept>
 #include <tuple>
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/include/Api.hpp"
@@ -98,7 +99,7 @@ const char* APS5_VABI OCSP_crl_reason_str_nid_postfix(std::int64_t reason) {
 }
 
 int APS5_VABI OCSP_check_validity_nid_postfix(const Asn1String* thisUpdate, const Asn1String* nextUpdate, std::int64_t slack, std::int64_t maxAge) {
-    if (!thisUpdate) NotImplemented_nid_no_patch(__func__);
+    if (!thisUpdate) throw std::invalid_argument("OCSP_check_validity: null thisupd");
     std::int64_t now = 0;
     time_nid_postfix(&now);
     GuestTm thisTime{};

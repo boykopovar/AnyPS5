@@ -181,6 +181,8 @@ int main() {
     unsigned char address[34]{};
     Require(sceRudpActivate(-1, address, sizeof(address)) == static_cast<int>(0x80770004));
     Require(sceRudpBind(ctx, 5, 0, 2) == 0);
+    Require(sceRudpActivate(ctx, address, sizeof(address)) == static_cast<int>(0x80770022u));
+    Require(sceRudpActivate(12345, address, sizeof(address)) == static_cast<int>(0x80770022u));
 
     Require(sceRudpSetOption(ctx, 0, nullptr, 0) == invalidOption);
     CheckOptions(ctx);
@@ -220,6 +222,41 @@ int main() {
         Require(sceRudpGetContextStatus(listener, status, sizeof(status)) == 0);
         for (std::size_t i = 0; i < sizeof(status); ++i) Require(status[i] == (i == 0 ? 6 : i >= 4 && i < 8 ? 0xFF : 0));
         Require(sceRudpTerminate(listener) == 0);
+        Require(sceRudpProcessEvents(0) == 0);
+    }
+    {
+        constexpr int notBound = static_cast<int>(0x80770013u);
+        constexpr int notAcceptable = static_cast<int>(0x80770011u);
+        constexpr int inProgress = static_cast<int>(0x80770021u);
+        Require(sceRudpActivate(12345, address, sizeof(address)) == invalidContextId);
+        int created = -1;
+        Require(sceRudpCreateContext(Handler, nullptr, &created) == 0);
+        Require(sceRudpActivate(created, address, 0x10) == notBound);
+        int listening = -1;
+        Require(sceRudpCreateContext(Handler, nullptr, &listening) == 0);
+        Require(sceRudpBind(listening, 7, 0, 2) == 0);
+        Require(sceRudpListen(listening, 1) == 0);
+        Require(sceRudpActivate(listening, address, 0x10) == notAcceptable);
+        int p2p = -1;
+        Require(sceRudpCreateContext(Handler, nullptr, &p2p) == 0);
+        Require(sceRudpBind(p2p, 8, 0x3000, 1) == 0);
+        Require(sceRudpActivate(p2p, address, 0) == 0);
+        Require(sceRudpActivate(p2p, address, 0x10) == inProgress);
+        unsigned char status[0x30];
+        std::memset(status, 0x5a, sizeof(status));
+        Require(sceRudpGetContextStatus(p2p, status, sizeof(status)) == 0);
+        for (std::size_t i = 0; i < sizeof(status); ++i) Require(status[i] == (i == 0 ? 1 : i >= 4 && i < 8 ? 0xFF : 0));
+        int server = -1;
+        Require(sceRudpCreateContext(Handler, nullptr, &server) == 0);
+        Require(sceRudpBind(server, 9, 0, 2) == 0);
+        address[0] = 0xff;
+        address[1] = 0x1e;
+        Require(sceRudpActivate(server, address, 0xffffffffu) == 0);
+        Require(sceRudpActivate(server, address, 2) == inProgress);
+        Require(sceRudpTerminate(p2p) == 0);
+        Require(sceRudpActivate(p2p, address, 0x10) == invalidContextId);
+        Require(sceRudpGetContextStatus(p2p, status, sizeof(status)) == invalidContextId);
+        Require(sceRudpTerminate(server) == 0 && sceRudpTerminate(listening) == 0 && sceRudpTerminate(created) == 0);
         Require(sceRudpProcessEvents(0) == 0);
     }
 

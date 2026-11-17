@@ -98,6 +98,26 @@ void TestNormalize() {
     ExpectInt(error, IllegalArgument, "unorm2_normalize in place status");
 }
 
+void TestCompatibilityInstances() {
+    std::int32_t error = Success;
+    const auto* nfkc = unorm2_getNFKCInstance(&error);
+    const auto* nfkd = unorm2_getNFKDInstance(&error);
+    const auto* nfkcCf = unorm2_getNFKCCasefoldInstance_nid_postfix(&error);
+    Expect(nfkc && nfkd && nfkcCf && error == Success, "compatibility normalizers");
+    Expect(unorm2_getInstance_nid_postfix(nullptr, "nfkc", Compose, &error) == nfkc, "NFKC instance lookup");
+    Expect(unorm2_getInstance_nid_postfix(nullptr, "nfkc", Decompose, &error) == nfkd, "NFKD instance lookup");
+    Expect(unorm2_getInstance_nid_postfix(nullptr, "nfkc_cf", Compose, &error) == nfkcCf, "NFKC casefold instance lookup");
+    char16_t output[16]{};
+    ExpectInt(unorm2_normalize_nid_postfix(nfkc, u"\uff21\ufb03\u00e9", -1, output, 16, &error), 5, "NFKC length");
+    Expect(std::u16string(output) == u"Affi\u00e9", "NFKC text");
+    ExpectInt(unorm2_normalize_nid_postfix(nfkd, u"\uff21\ufb03\u00e9", -1, output, 16, &error), 6, "NFKD length");
+    Expect(std::u16string(output) == u"Affie\u0301", "NFKD text");
+    ExpectInt(unorm2_normalize_nid_postfix(nfkcCf, u"\uff21\u00ad\u00df", -1, output, 16, &error), 3, "NFKC casefold length");
+    Expect(std::u16string(output) == u"ass", "NFKC casefold text");
+    ExpectInt(u_getFC_NFKC_Closure_nid_postfix(0x037a, output, 16, &error), 2, "casefold closure length");
+    Expect(std::u16string(output) == u" \u03b9" && error == Success, "casefold closure");
+}
+
 void TestQueries() {
     const auto* nfc = Nfc();
     const auto* nfd = Nfd();
@@ -234,6 +254,7 @@ void TestCompare() {
 int main() {
     TestInstances();
     TestNormalize();
+    TestCompatibilityInstances();
     TestQueries();
     TestDecompositions();
     TestAppend();
