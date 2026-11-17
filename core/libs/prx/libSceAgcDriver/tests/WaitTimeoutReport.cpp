@@ -90,8 +90,11 @@ void CheckGroupedWriters() {
         const auto packet = WriteData(&label, write + 1);
         words.insert(words.end(), packet.begin(), packet.end());
     }
-    const auto release = ReleaseMem64(&label, 1);
+    const auto release = ReleaseMem64(&label, 0x100000001ull);
     words.insert(words.end(), release.begin(), release.end());
+    auto clock = ReleaseMem64(&label, 0);
+    clock[2] = 0x60000000u;
+    words.insert(words.end(), clock.begin(), clock.end());
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(&label));
     const std::array<std::uint32_t, 7> wait{0xc0053c00, 0x13, static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), 2, 0xffffffffu, 0x19};
     words.insert(words.end(), wait.begin(), wait.end());
@@ -125,7 +128,7 @@ void CheckGroupedWriters() {
     char lastWrite[32];
     std::snprintf(lastWrite, sizeof(lastWrite), "0x%x", Writes);
     Require(Count(text, writer + " (" + std::to_string(Writes) + " in the write history, the last of value " + lastWrite + ")") == 1, "wait timeout report: the writer line does not count the label's " + std::to_string(Writes) + " writes and name the last value written");
-    Require(Count(text, std::string("earlier write by queue 0x0 opcode 0x49 at ") + target + "+0x8 (1 in the write history, the last of value 0x1)") == 1, "wait timeout report: the 64-bit RELEASE_MEM was not listed with its 8 bytes and its value");
+    Require(Count(text, std::string("earlier write by queue 0x0 opcode 0x49 at ") + target + "+0x8 (2 in the write history)") == 1, "wait timeout report: the RELEASE_MEMs were not listed with their 8 bytes, or the clock release that wrote last was given a value");
     char finishedTarget[32];
     std::snprintf(finishedTarget, sizeof(finishedTarget), "0x%llx", static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(&done)));
     Require(Count(text, std::string("later in this submission: WRITE_DATA at ") + finishedTarget + "+0x4 value 0x1") >= 1, "wait timeout report: the write after the wait was not listed");
@@ -137,7 +140,9 @@ void CheckGroupedWriters() {
 void CheckLaterReference() {
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(&label));
     const std::array<std::uint32_t, 7> wait{0xc0053c00, 0x13, static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), 3, 0xffffffffu, 0x19};
-    std::vector<std::uint32_t> words(wait.begin(), wait.end());
+    const auto release = ReleaseMem64(&label, 0x200000001ull);
+    std::vector<std::uint32_t> words(release.begin(), release.end());
+    words.insert(words.end(), wait.begin(), wait.end());
     const auto finished = WriteData(&done, 2);
     words.insert(words.end(), finished.begin(), finished.end());
     StderrCapture capture;
@@ -160,6 +165,7 @@ void CheckLaterReference() {
     char target[32];
     std::snprintf(target, sizeof(target), "0x%llx", static_cast<unsigned long long>(address));
     Require(Count(text, std::string("WAIT_REG_MEM at ") + target + " timed out after") == 1 && Count(text, "(function 3 ref 0x3 mask") == 1, "wait timeout report: a later wait on the same label with a new reference was not reported");
+    Require(Count(text, std::string("earlier write by queue 0x0 opcode 0x49 at ") + target + "+0x8 (3 in the write history, the last of value 0x200000001)") == 1, "wait timeout report: the 64-bit RELEASE_MEM that wrote last was not listed with both halves of its value");
 }
 
 void CheckStuckWhileOthersProgress() {

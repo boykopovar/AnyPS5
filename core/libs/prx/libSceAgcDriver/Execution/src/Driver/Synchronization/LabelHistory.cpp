@@ -176,7 +176,8 @@ void Driver::traceLabel(std::span<const std::uint32_t> packet, std::uint32_t que
     if (opcode == 0x49 || opcode == 0x37) {
         if (const auto label = Pm4::DecodeLabelWrite(packet)) {
             length = label->Bytes().size();
-            if (length <= sizeof(value)) {
+            const bool clocked = opcode == 0x49 && packet.size() >= 3 && ((packet[2] >> 29u) & 7u) >= 3u;
+            if (length <= sizeof(value) && !clocked) {
                 std::memcpy(&value, label->Bytes().data(), length);
                 valued = true;
             }
