@@ -1067,7 +1067,7 @@ void Driver::noteHeldAtSubmit(Submission& submission, std::size_t cursor) {
     const auto wait = Pm4::DecodeWait(packet);
     const auto address = wait.address;
     const std::size_t bytes = wait.bytes;
-    if (address % bytes != 0 || !GuestMemory::Accessible(reinterpret_cast<const void*>(address), bytes)) return;
+    if (!GuestMemory::Accessible(reinterpret_cast<const void*>(address), bytes)) return;
     const auto worker = workers.find(submission.queue);
     for (std::size_t offset = 0; offset < bytes; offset += 4) {
         const auto dword = address + offset;

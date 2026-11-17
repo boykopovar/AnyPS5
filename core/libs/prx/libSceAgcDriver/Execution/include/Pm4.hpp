@@ -114,8 +114,8 @@ bool WaitSatisfied(std::span<const std::uint32_t> packet);
 bool WaitSatisfiedUnchecked(std::span<const std::uint32_t> packet);
 
 inline std::uint64_t LoadLabel(std::uint64_t address, std::size_t bytes) {
-    if (bytes == 8) return std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(address)).load(std::memory_order_acquire);
-    return std::atomic_ref<std::uint32_t>(*reinterpret_cast<std::uint32_t*>(address)).load(std::memory_order_acquire);
+    if (bytes == 8) return std::atomic_ref<std::uint64_t>(*reinterpret_cast<std::uint64_t*>(address & ~std::uint64_t{7})).load(std::memory_order_acquire);
+    return std::atomic_ref<std::uint32_t>(*reinterpret_cast<std::uint32_t*>(address & ~std::uint64_t{3})).load(std::memory_order_acquire);
 }
 
 // Whether a WAIT_REG_MEM's compare holds for `value` (the 4 or 8 bytes a label the recorder still
