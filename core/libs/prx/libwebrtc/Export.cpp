@@ -387,11 +387,6 @@ int APS5_VABI libwebrtcUnknown21(void) {
     return 0;
 }
 
-int APS5_VABI _ZNK3rtc14RTCCertificate10HasExpiredEm_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 APS5_EXPORT("0Uh0ycY9nog", libwebrtcUnknown22);
 int APS5_VABI libwebrtcUnknown22(void) {
     NotImplemented_nid_no_patch("0Uh0ycY9nog");
@@ -770,16 +765,6 @@ int APS5_VABI _ZN6webrtc17AudioDeviceBuffer22SetRecordingSampleRateEj_nid_postfi
 APS5_EXPORT("QbtLnp-i47c", libwebrtcUnknown42);
 int APS5_VABI libwebrtcUnknown42(void) {
     NotImplemented_nid_no_patch("QbtLnp-i47c");
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc7rnn_vad17FeaturesExtractorC1ERKNS_20AvailableCpuFeaturesE_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI _ZN6webrtc7rnn_vad17FeaturesExtractorD1Ev_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
