@@ -1,0 +1,10 @@
+file(GLOB agcDecoderReferenceFormsSources CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/core/shader/recompiler/RdnaDecoder/src/*.cpp)
+add_test_executable(agc_decoder_reference_forms_tests EXCLUDE_FROM_ALL tests/DecoderReferenceForms.cpp ${agcDecoderReferenceFormsSources})
+target_include_directories(agc_decoder_reference_forms_tests PRIVATE ${PROJECT_SOURCE_DIR}/core/shader/recompiler ${PROJECT_SOURCE_DIR}/core/shader/recompiler/RdnaDecoder/include ${PROJECT_SOURCE_DIR}/core/shader/recompiler/IntermediateRepresentation/include ${PROJECT_SOURCE_DIR}/core/shader/recompiler/ControlFlow/include)
+set_target_properties(agc_decoder_reference_forms_tests PROPERTIES CXX_EXTENSIONS OFF)
+configure_host_test_executable(agc_decoder_reference_forms_tests)
+
+if(BUILD_TESTING)
+    set_target_properties(agc_decoder_reference_forms_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_decoder_reference_forms COMMAND agc_decoder_reference_forms_tests)
+endif()

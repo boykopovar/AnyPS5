@@ -638,6 +638,67 @@ bool IsBranchOpcode(RdnaOpcode opcode) {
 bool IsScalarMemoryOpcode(RdnaOpcode opcode) {
     requireClassifiableOpcode(opcode);
     switch (opcode) {
+        case RdnaOpcode::SAtomicAdd:
+        case RdnaOpcode::SAtomicAddX2:
+        case RdnaOpcode::SAtomicAnd:
+        case RdnaOpcode::SAtomicAndX2:
+        case RdnaOpcode::SAtomicCmpswap:
+        case RdnaOpcode::SAtomicCmpswapX2:
+        case RdnaOpcode::SAtomicDec:
+        case RdnaOpcode::SAtomicDecX2:
+        case RdnaOpcode::SAtomicInc:
+        case RdnaOpcode::SAtomicIncX2:
+        case RdnaOpcode::SAtomicOr:
+        case RdnaOpcode::SAtomicOrX2:
+        case RdnaOpcode::SAtomicSmax:
+        case RdnaOpcode::SAtomicSmaxX2:
+        case RdnaOpcode::SAtomicSmin:
+        case RdnaOpcode::SAtomicSminX2:
+        case RdnaOpcode::SAtomicSub:
+        case RdnaOpcode::SAtomicSubX2:
+        case RdnaOpcode::SAtomicSwap:
+        case RdnaOpcode::SAtomicSwapX2:
+        case RdnaOpcode::SAtomicUmax:
+        case RdnaOpcode::SAtomicUmaxX2:
+        case RdnaOpcode::SAtomicUmin:
+        case RdnaOpcode::SAtomicUminX2:
+        case RdnaOpcode::SAtomicXor:
+        case RdnaOpcode::SAtomicXorX2:
+        case RdnaOpcode::SBufferAtomicAdd:
+        case RdnaOpcode::SBufferAtomicAddX2:
+        case RdnaOpcode::SBufferAtomicAnd:
+        case RdnaOpcode::SBufferAtomicAndX2:
+        case RdnaOpcode::SBufferAtomicCmpswap:
+        case RdnaOpcode::SBufferAtomicCmpswapX2:
+        case RdnaOpcode::SBufferAtomicDec:
+        case RdnaOpcode::SBufferAtomicDecX2:
+        case RdnaOpcode::SBufferAtomicInc:
+        case RdnaOpcode::SBufferAtomicIncX2:
+        case RdnaOpcode::SBufferAtomicOr:
+        case RdnaOpcode::SBufferAtomicOrX2:
+        case RdnaOpcode::SBufferAtomicSmax:
+        case RdnaOpcode::SBufferAtomicSmaxX2:
+        case RdnaOpcode::SBufferAtomicSmin:
+        case RdnaOpcode::SBufferAtomicSminX2:
+        case RdnaOpcode::SBufferAtomicSub:
+        case RdnaOpcode::SBufferAtomicSubX2:
+        case RdnaOpcode::SBufferAtomicSwap:
+        case RdnaOpcode::SBufferAtomicSwapX2:
+        case RdnaOpcode::SBufferAtomicUmax:
+        case RdnaOpcode::SBufferAtomicUmaxX2:
+        case RdnaOpcode::SBufferAtomicUmin:
+        case RdnaOpcode::SBufferAtomicUminX2:
+        case RdnaOpcode::SBufferAtomicXor:
+        case RdnaOpcode::SBufferAtomicXorX2:
+        case RdnaOpcode::SBufferStoreDword:
+        case RdnaOpcode::SBufferStoreDwordx2:
+        case RdnaOpcode::SBufferStoreDwordx4:
+        case RdnaOpcode::SScratchStoreDword:
+        case RdnaOpcode::SScratchStoreDwordx2:
+        case RdnaOpcode::SScratchStoreDwordx4:
+        case RdnaOpcode::SStoreDword:
+        case RdnaOpcode::SStoreDwordx2:
+        case RdnaOpcode::SStoreDwordx4:
         case RdnaOpcode::SLoadDword:
         case RdnaOpcode::SLoadDwordx2:
         case RdnaOpcode::SLoadDwordx4:
