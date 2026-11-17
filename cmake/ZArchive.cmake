@@ -10,6 +10,9 @@ set(ZSTD_MULTITHREAD_SUPPORT OFF CACHE BOOL "" FORCE)
 add_subdirectory(${CMAKE_SOURCE_DIR}/3rdparty/zstd/build/cmake ${CMAKE_BINARY_DIR}/3rdparty/zstd EXCLUDE_FROM_ALL)
 set_target_properties(libzstd_static PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+add_library(xxhash INTERFACE)
+target_include_directories(xxhash SYSTEM INTERFACE ${CMAKE_SOURCE_DIR}/3rdparty/zstd/lib/common)
+
 set(ZARCHIVE_SOURCE_DIR ${CMAKE_SOURCE_DIR}/3rdparty/ZArchive)
 add_library(zarchive STATIC EXCLUDE_FROM_ALL
     ${ZARCHIVE_SOURCE_DIR}/src/zarchivereader.cpp

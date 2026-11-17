@@ -1,7 +1,7 @@
 if(BUILD_TESTING)
     add_test_executable(agc_driver_frame_replay_state_tests tests/FrameReplayState.cpp Execution/src/FrameCapture.cpp)
     target_include_directories(agc_driver_frame_replay_state_tests PRIVATE ${LIBS_INCLUDE_DIR} ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR})
-    target_link_libraries(agc_driver_frame_replay_state_tests PRIVATE libSceAgcDriver libkernel libc libzstd_static)
+    target_link_libraries(agc_driver_frame_replay_state_tests PRIVATE libSceAgcDriver libkernel libc libzstd_static xxhash)
     set_target_properties(agc_driver_frame_replay_state_tests PROPERTIES CXX_EXTENSIONS OFF)
     configure_windows_unwind(agc_driver_frame_replay_state_tests)
     add_dependencies(agc_driver_frame_replay_state_tests agc_frame_replay)

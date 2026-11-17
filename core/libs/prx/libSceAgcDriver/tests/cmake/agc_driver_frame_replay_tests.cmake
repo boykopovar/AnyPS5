@@ -8,7 +8,7 @@ if(BUILD_TESTING)
                 ${ANYPS5_SPIRV_HEADERS_INCLUDE_DIR}
                 $<TARGET_PROPERTY:shader_recompiler_agc_driver,INTERFACE_INCLUDE_DIRECTORIES>
         )
-        target_link_libraries(agc_driver_frame_replay_tests PRIVATE libSceAgc libSceAgcDriver libkernel libc libzstd_static)
+        target_link_libraries(agc_driver_frame_replay_tests PRIVATE libSceAgc libSceAgcDriver libkernel libc libzstd_static xxhash)
         set_target_properties(agc_driver_frame_replay_tests PROPERTIES CXX_EXTENSIONS OFF)
         configure_windows_unwind(agc_driver_frame_replay_tests)
         add_dependencies(agc_driver_frame_replay_tests agc_frame_replay)

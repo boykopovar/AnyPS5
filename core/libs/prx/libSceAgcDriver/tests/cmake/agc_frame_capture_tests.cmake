@@ -1,7 +1,7 @@
 if(BUILD_TESTING)
     add_test_executable(agc_frame_capture_tests tests/FrameCapture.cpp Execution/src/FrameCapture.cpp)
     target_include_directories(agc_frame_capture_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(agc_frame_capture_tests PRIVATE libc libzstd_static)
+    target_link_libraries(agc_frame_capture_tests PRIVATE libc libzstd_static xxhash)
     set_target_properties(agc_frame_capture_tests PROPERTIES CXX_EXTENSIONS OFF)
     configure_windows_unwind(agc_frame_capture_tests)
     add_test(NAME agc_frame_capture COMMAND agc_frame_capture_tests)

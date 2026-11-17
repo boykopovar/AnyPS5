@@ -1,7 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/FrameCapture.hpp"
 #include <zstd.h>
 #define XXH_INLINE_ALL
-#include "common/xxhash.h"
+#include <xxhash.h>
 #include <algorithm>
 #include <array>
 #include <bit>

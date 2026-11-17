@@ -4,14 +4,14 @@ add_executable(agc_frame_capture_filter EXCLUDE_FROM_ALL
         Execution/src/FrameCapture.cpp
 )
 target_include_directories(agc_frame_capture_filter PRIVATE ${LIBS_INCLUDE_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(agc_frame_capture_filter PRIVATE libc libzstd_static)
+target_link_libraries(agc_frame_capture_filter PRIVATE libc libzstd_static xxhash)
 set_target_properties(agc_frame_capture_filter PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(agc_frame_capture_filter)
 
 if(BUILD_TESTING)
     add_test_executable(agc_frame_capture_filter_tests tests/FrameCaptureFilter.cpp tools/FrameCaptureFilter.cpp Execution/src/FrameCapture.cpp)
     target_include_directories(agc_frame_capture_filter_tests PRIVATE ${LIBS_INCLUDE_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(agc_frame_capture_filter_tests PRIVATE libc libzstd_static)
+    target_link_libraries(agc_frame_capture_filter_tests PRIVATE libc libzstd_static xxhash)
     set_target_properties(agc_frame_capture_filter_tests PROPERTIES CXX_EXTENSIONS OFF)
     configure_windows_unwind(agc_frame_capture_filter_tests)
     add_test(NAME agc_frame_capture_filter COMMAND agc_frame_capture_filter_tests)
