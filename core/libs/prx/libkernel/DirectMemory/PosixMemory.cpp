@@ -377,9 +377,11 @@ int APS5_VABI mincore_nid_postfix(const void* address, std::size_t length, char*
             VirtualQueryInfo info{};
             sceKernelVirtualQuery(reinterpret_cast<const void*>(pageCursor), 0, &info, sizeof(info));
             const auto extentEnd = std::min<std::uintptr_t>(info.end, chunkEnd);
+            std::uintptr_t reservedStart = 0;
+            std::uintptr_t reservedEnd = 0;
             std::fill_n(chunk.data() + (pageCursor - cursor) / PS5_PAGE_SIZE,
                         (extentEnd - pageCursor) / PS5_PAGE_SIZE,
-                        static_cast<char>(info.is_committed != 0 ? 1 : 0));
+                        static_cast<char>(GuestReservation(pageCursor, &reservedStart, &reservedEnd) ? 0 : 1));
             pageCursor = extentEnd;
         }
         if (!GuestCopyOut_nid_no_patch(vec + (cursor - first) / PS5_PAGE_SIZE, chunk.data(), chunkPages)) {
