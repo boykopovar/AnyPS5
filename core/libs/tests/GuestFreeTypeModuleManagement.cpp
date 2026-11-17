@@ -54,6 +54,10 @@ static void TestGetRenderer() {
         Require(actual == FT_Get_Renderer(libraries.guest.host, static_cast<FT_Glyph_Format>(format)));
     }
     Require(FT_Get_Renderer_nid_postfix(nullptr, FT_GLYPH_FORMAT_OUTLINE) == FT_Get_Renderer(nullptr, FT_GLYPH_FORMAT_OUTLINE));
+    for (const std::uint32_t format : {0x80000000u, 0xFFFFFFFFu}) {
+        Require(FT_Get_Renderer_nid_postfix(&libraries.guest, format) == nullptr);
+        Require(FT_Get_Renderer_nid_postfix(nullptr, format) == nullptr);
+    }
 }
 
 static void TestRemoveModule() {

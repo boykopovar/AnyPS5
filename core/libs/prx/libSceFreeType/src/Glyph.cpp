@@ -99,6 +99,7 @@ Glyph& Register(GuestLibrary* library, bool isBitmap, std::size_t pointCount) {
 
 int FreeType::FreeTypeNewGlyph_nid_no_patch(GuestLibrary* library, std::uint32_t format, GuestGlyphRec** target) {
     if (!library || !library->host || !target) return FT_Err_Invalid_Argument;
+    if (!InGlyphFormatRange(format)) return FT_Err_Invalid_Glyph_Format;
     const auto nativeFormat = static_cast<FT_Glyph_Format>(format);
     if (nativeFormat != FT_GLYPH_FORMAT_BITMAP && nativeFormat != FT_GLYPH_FORMAT_OUTLINE) {
         FT_Glyph probe = nullptr;
