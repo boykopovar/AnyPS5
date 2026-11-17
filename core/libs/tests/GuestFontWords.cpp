@@ -332,6 +332,8 @@ static void CharacterQueries() {
     Require(sceFontCharacterGetBidiLevel(text[0], &level) == SCE_FONT_OK && level == 3);
     Require(sceFontCharacterGetBidiLevel(text[1], &level) == SCE_FONT_OK && level == 0);
     Require(sceFontCharacterGetBidiLevel(nullptr, &level) == SCE_FONT_ERROR_INVALID_PARAMETER && sceFontCharacterGetBidiLevel(text[0], nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = EBUSY;
+    Require(sceFontCharacterGetBidiLevel(text[0], reinterpret_cast<int*>(std::uintptr_t{0x10})) == SCE_FONT_ERROR_INVALID_PARAMETER && errno == EBUSY);
     void* textOrder = nullptr;
     Require(sceFontCharacterGetTextOrder(text[0], &textOrder) == SCE_FONT_OK && textOrder == &order);
     Require(sceFontCharacterGetTextOrder(nullptr, &textOrder) == SCE_FONT_ERROR_INVALID_PARAMETER && textOrder == nullptr);
