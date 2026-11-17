@@ -177,3 +177,5 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceJsc>")
     endif()
 endif()
+
+target_sources(libSceJsc PRIVATE src/AdditionalCallableExports.cpp)
