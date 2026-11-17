@@ -19,12 +19,13 @@ using ShaderRecompiler::ShaderStage;
 
 constexpr std::uint32_t Threads = 32;
 constexpr std::uint32_t Inputs = 4;
-constexpr std::uint32_t Results = 16;
+constexpr std::uint32_t Results = 32;
+constexpr std::uint32_t Pairs = 9;
 alignas(256) std::array<std::uint32_t, Threads * Inputs> Input{};
 alignas(256) std::array<std::uint32_t, Threads * Results> Output{};
 
-alignas(256) constexpr std::array<std::uint32_t, 48> Code{
-    0x34020084u, 0x34060086u, 0xe0381000u, 0x80000401u, 0xbf8c3f70u,
+alignas(256) constexpr std::array<std::uint32_t, 55> Code{
+    0x34020084u, 0x34060087u, 0xe0381000u, 0x80000401u, 0xbf8c3f70u,
     0x7e3402f4u, 0x7e3602f0u, 0x7e3802ffu, 0x3f7ffffeu, 0x7e3a02f2u, 0x7e3c02ffu, 0x00400000u, 0x7e3e02f6u,
     0x7e4002ffu, 0x3e800000u, 0x7e4202f4u,
     0x101408f4u, 0x1016091au,
@@ -36,6 +37,8 @@ alignas(256) constexpr std::array<std::uint32_t, 48> Code{
     0x582c0b04u, 0x3e800000u, 0xd54b0017u, 0x04164104u,
     0xd54b0218u, 0x4415e904u, 0xd54b0219u, 0x44164304u,
     0xe0781000u, 0x80010a03u, 0xe0781010u, 0x80010e03u, 0xe0781020u, 0x80011203u, 0xe0781030u, 0x80011603u,
+    0x7e4402ffu, 0x3f118e00u, 0x10460cffu, 0x3f118e00u, 0x10480d22u,
+    0xe0741040u, 0x80012303u,
     0xbf810000u,
 };
 
@@ -50,7 +53,7 @@ constexpr std::uint32_t Rows[32][2] = {
     {0x00800000u, 0x3f800000u}, {0x817fffffu, 0x80000000u}, {0x017fffffu, 0x00800000u}, {0x017fffffu, 0x80000001u}
 };
 
-constexpr const char* Names[8] = {
+constexpr const char* Names[Pairs] = {
     "v_mul_f32 2.0",
     "v_mul_f32 0.5",
     "v_mul_f32 0x3f7ffffe",
@@ -58,7 +61,8 @@ constexpr const char* Names[8] = {
     "v_mul_f32 0x00400000",
     "v_mul_legacy_f32 4.0",
     "v_fmamk_f32 0x3e800000",
-    "v_fma_f32 -|2.0|"
+    "v_fma_f32 -|2.0|",
+    "v_mul_f32 0x3f118e00"
 };
 
 struct Pinned {
@@ -78,6 +82,19 @@ constexpr std::array<Pinned, 6> TinyProducts{{
 
 constexpr Pinned TinyOnlyBeforeRounding{2u, 2u, 0x00800000u};
 
+struct TieRow {
+    std::uint32_t tid;
+    std::uint32_t input;
+    std::uint32_t value;
+};
+
+constexpr std::array<TieRow, 4> RoundingTie{{
+    {0u, 0x00e12000u, 0x00800000u},
+    {1u, 0x80e12000u, 0x80800000u},
+    {2u, 0x00e11fffu, 0x00000000u},
+    {3u, 0x00e12001u, 0x00800000u},
+}};
+
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t bytes) {
     const auto address = reinterpret_cast<std::uintptr_t>(data);
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
@@ -96,6 +113,7 @@ bool IsNan(std::uint32_t value) {
 void Run(AgcDriver::VulkanDevice& device, const std::optional<ShaderRecompiler::ShaderFloatMode>& floatMode) {
     Input.fill(0u);
     for (std::uint32_t tid = 0; tid < Threads; ++tid) std::copy(std::begin(Rows[tid]), std::end(Rows[tid]), &Input[tid * Inputs]);
+    for (const TieRow& row : RoundingTie) Input[row.tid * Inputs + 2u] = row.input;
     Output.fill(0xdeadbeefu);
     std::vector<std::uint32_t> userData(8, 0u);
     const auto input = BufferDescriptor(Input.data(), static_cast<std::uint32_t>(Input.size() * 4u));
@@ -121,7 +139,7 @@ void Run(AgcDriver::VulkanDevice& device, const std::optional<ShaderRecompiler::
 void Check(const char* mode) {
     for (std::uint32_t tid = 0; tid < Threads; ++tid) {
         const std::uint32_t* out = &Output[tid * Results];
-        for (std::uint32_t pair = 0; pair < 8u; ++pair) {
+        for (std::uint32_t pair = 0; pair < Pairs; ++pair) {
             const std::uint32_t constant = out[pair * 2u];
             const std::uint32_t reg = out[pair * 2u + 1u];
             const std::string where = std::string("f32 constant factor: lane ") + std::to_string(tid) + " " + mode + " " + Names[pair];
@@ -147,6 +165,13 @@ void CheckTininessAfterRounding(const char* mode) {
     Require(actual == pinned.value, std::string("f32 tininess after rounding: lane ") + std::to_string(pinned.tid) + " " + mode + " " + Names[pinned.pair] + " is " + Hex(actual) + ", expected " + Hex(pinned.value) + ": the exact product 0x3f7ffffe * 0x00800001 is below 2^-126 and rounds to it, and RDNA2 (gfx1036) keeps it (#2682), where a check before rounding flushes it");
 }
 
+void CheckRoundingTie(const char* mode) {
+    for (const TieRow& row : RoundingTie) {
+        const std::uint32_t actual = Output[row.tid * Results + (Pairs - 1u) * 2u];
+        Require(actual == row.value, std::string("f32 rounding tie: lane ") + std::to_string(row.tid) + " " + mode + " " + Names[Pairs - 1u] + " * " + Hex(row.input) + " is " + Hex(actual) + ", expected " + Hex(row.value) + ": 0x3f118e00 * 0x00e12000 is exactly 2^-126 * (1 - 2^-25), half way below 2^-126, and rounds up to it to nearest even on RDNA2 (gfx1036)");
+    }
+}
+
 }
 
 int main() {
@@ -157,14 +182,17 @@ int main() {
         Check("no float mode");
         CheckTinyProducts("no float mode");
         CheckTininessAfterRounding("no float mode");
+        CheckRoundingTie("no float mode");
         Run(*device, ShaderRecompiler::ShaderFloatMode{0xc0u, true, false, false});
         Check("IEEE=0 f32 denormals flushed");
         CheckTinyProducts("IEEE=0 f32 denormals flushed");
         CheckTininessAfterRounding("IEEE=0 f32 denormals flushed");
+        CheckRoundingTie("IEEE=0 f32 denormals flushed");
         Run(*device, ShaderRecompiler::ShaderFloatMode{0x00u, false, true, false});
         Check("IEEE=1 all denormals flushed");
         CheckTinyProducts("IEEE=1 all denormals flushed");
         CheckTininessAfterRounding("IEEE=1 all denormals flushed");
+        CheckRoundingTie("IEEE=1 all denormals flushed");
         Run(*device, ShaderRecompiler::ShaderFloatMode{0xf0u, true, false, false});
         Check("f32 denormals kept");
         std::puts("f32 constant factor tests passed");

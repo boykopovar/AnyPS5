@@ -4,6 +4,7 @@
 #ifndef CORE_LIBS_PRX_LIBSCEAVPLAYER_INCLUDE_AVPLAYER_HPP
 #define CORE_LIBS_PRX_LIBSCEAVPLAYER_INCLUDE_AVPLAYER_HPP
 
+#include <atomic>
 #include <cstdint>
 #include <deque>
 #include <memory>
@@ -32,6 +33,9 @@ constexpr std::int32_t EventWarningId = 0x20;
 
 constexpr std::uint32_t StreamTypeVideo = 1;
 constexpr std::uint32_t StreamTypeAudio = 0;
+constexpr std::uint32_t Ps4StreamTypeVideo = 0;
+constexpr std::uint32_t Ps4StreamTypeAudio = 1;
+constexpr std::uint32_t Ps5StreamTypeVideo = 1;
 constexpr std::uint32_t Ps5StreamTypeAudio = 2;
 constexpr std::uint32_t StreamTypeTimedText = 2;
 
@@ -47,7 +51,8 @@ constexpr std::int32_t NormalSpeed = 100;
 class ISourceEvents {
 public:
     virtual ~ISourceEvents() = default;
-    virtual void OnWarning(std::int32_t code) = 0;
+    virtual std::uint64_t OnWarning(std::int32_t code) = 0;
+    virtual bool WarningDelivered(std::uint64_t ticket) = 0;
     virtual void OnError() = 0;
 };
 
@@ -153,9 +158,11 @@ private:
         std::int32_t warning;
         bool autoStart;
         bool error;
+        std::uint64_t ticket = 0;
     };
 
-    void OnWarning(std::int32_t code) override;
+    std::uint64_t OnWarning(std::int32_t code) override;
+    bool WarningDelivered(std::uint64_t ticket) override;
     void OnError() override;
     void queue(const Event& event);
     void controllerLoop(const bool& closed);
@@ -165,11 +172,13 @@ private:
     bool readyLocked() const;
     int startLocked(std::uint64_t startTime = 0);
     int stopLocked();
+    std::uint32_t guestStreamType(std::uint32_t type) const;
 
     AvPlayerFileReplacement file{};
     AvPlayerMemAllocator memory{};
     AvPlayerEventReplacement callback{};
     bool autoStartEnabled = false;
+    bool ps4Process = false;
     char language[4]{};
     std::uint32_t videoBuffers = 2;
 
@@ -185,6 +194,8 @@ private:
     std::mutex eventMutex;
     TimedWait::Condition eventCondition;
     std::deque<Event> events;
+    std::uint64_t queuedWarnings = 0;
+    std::atomic<std::uint64_t> deliveredWarnings = 0;
     bool quit = false;
     std::shared_ptr<bool> controllerClosed = std::make_shared<bool>(false);
     std::thread controller;

@@ -508,10 +508,6 @@ std::uint64_t APS5_VABI _ZNK7WebCore10ScrollView12contentsSizeEv(const void* sel
     return *reinterpret_cast<const std::uint64_t*>(static_cast<const char*>(self) + 0xe0);
 }
 
-std::uint64_t APS5_VABI WKAuthenticationChallengeGetDecisionListener(const void* self) {
-    return *reinterpret_cast<const std::uint64_t*>(static_cast<const char*>(self) + 0x228);
-}
-
 std::uint64_t APS5_VABI WKAXObjectFrame(const void* self) {
     return *reinterpret_cast<const std::uint64_t*>(static_cast<const char*>(self) + 0x10);
 }

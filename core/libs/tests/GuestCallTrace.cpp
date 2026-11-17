@@ -8,6 +8,7 @@
 #endif
 #include <atomic>
 #include <csignal>
+#include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -45,14 +46,23 @@ static double APS5_VABI Mixed(int a, double b, const char* c, float d, std::uint
 }
 
 static double APS5_VABI Variadic(int count, ...) {
+#ifdef _WIN32
     __builtin_sysv_va_list arguments;
     __builtin_sysv_va_start(arguments, count);
+#else
+    std::va_list arguments;
+    va_start(arguments, count);
+#endif
     double sum = 0;
     for (int index = 0; index < count; ++index) {
         sum += static_cast<double>(__builtin_va_arg(arguments, std::uint64_t)) * (index + 1);
         sum += __builtin_va_arg(arguments, double) * (index + 1);
     }
+#ifdef _WIN32
     __builtin_sysv_va_end(arguments);
+#else
+    va_end(arguments);
+#endif
     return sum;
 }
 
