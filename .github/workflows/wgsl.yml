@@ -31,11 +31,22 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-          submodules: recursive
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - name: Select native compatibility baseline
+        id: native-base
+        env:
+          NATIVE_BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          git fetch --no-tags --no-recurse-submodules origin "$NATIVE_BASE_REF"
+          native_base_commit=$(git merge-base HEAD "$NATIVE_BASE_REF")
+          echo "sha=$native_base_commit" >> "$GITHUB_OUTPUT"
+          echo "Native baseline: $native_base_commit; candidate: $(git rev-parse HEAD)"
+          git submodule update --init 3rdparty/SPIRV-Headers
       - uses: actions/checkout@v7
         with:
           repository: boykopovar/AnyPS5
-          ref: ${{ github.event.pull_request.base.sha || github.event.before }}
+          ref: ${{ steps.native-base.outputs.sha }}
           path: native-main
           persist-credentials: false
       - name: Install software Vulkan and validation layers
