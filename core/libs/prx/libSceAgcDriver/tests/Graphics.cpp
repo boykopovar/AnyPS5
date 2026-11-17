@@ -6010,6 +6010,7 @@ struct MockVulkan {
     std::map<VkPipelineLayout, VkPipelineLayoutCreateFlags> pipelineLayoutFlags;
     std::map<VkPipelineLayout, std::vector<VkPushConstantRange>> pipelineLayoutPushRanges;
     std::map<VkGraphicsPipelineLibraryFlagsEXT, VkPipelineLayout> libraryLayouts;
+    std::vector<VkBool32> preRasterizationDiscards;
     std::uint32_t pipelineCreateCount = 0;
     std::vector<std::array<std::uint32_t, 3>> pipelineSpecializations;
     VkPipeline boundPipeline = VK_NULL_HANDLE;
@@ -6275,6 +6276,7 @@ VKAPI_ATTR VkResult VKAPI_CALL mockCreateGraphicsPipelines(VkDevice, VkPipelineC
     const auto* library = static_cast<const VkGraphicsPipelineLibraryCreateInfoEXT*>(infos[0].pNext);
     Require(library != nullptr && library->sType == VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT, "missing graphics pipeline library description");
     mock.libraryLayouts[library->flags] = infos[0].layout;
+    if (library->flags == VK_GRAPHICS_PIPELINE_LIBRARY_PRE_RASTERIZATION_SHADERS_BIT_EXT && infos[0].pRasterizationState != nullptr) mock.preRasterizationDiscards.push_back(infos[0].pRasterizationState->rasterizerDiscardEnable);
     *pipelines = makeHandle<VkPipeline>();
     ++mock.live;
     return VK_SUCCESS;
@@ -9814,6 +9816,31 @@ void pipelineLibrarySetTests() {
         ClearPipelineLibraries(context.device);
         Require(mock.live == 0, "shader library tests leaked Vulkan objects");
     }
+}
+
+void pipelineLibraryRasterizerDiscardTests() {
+    using namespace AgcDriver::Graphics;
+    mock = MockVulkan{};
+    auto context = mockContext();
+    context.graphicsPipelineLibrary = true;
+    context.limits.framebufferNoAttachmentsSampleCounts = VK_SAMPLE_COUNT_1_BIT;
+    State state{};
+    ShaderRecompiler::RecompileResult vertex, fragment;
+    vertex.spirv = makeModule({});
+    fragment.spirv = makeModule({.fragment = true});
+    vertex.variantId = 201;
+    fragment.variantId = 202;
+    const std::array<CompiledShader, 2> shaders{{{ShaderRecompiler::ShaderStage::Vertex, &vertex, 0}, {ShaderRecompiler::ShaderStage::Fragment, &fragment, PipelinePushSlotBytes}}};
+    const PipelineSetLayouts resources{makeHandle<VkDescriptorSetLayout>(), VK_NULL_HANDLE, false, {}, {}};
+    for (const bool discard : {false, true, false, true}) {
+        state.rasterizerDiscard = discard;
+        Require(Pipeline::Prebuild(context, state, VertexInputLayout{}, resources, shaders), "graphics pipeline library prebuild was skipped");
+    }
+    const auto counters = PipelineLibraryCountersOf(context.device);
+    Require(counters.built[1] == 2 && mock.preRasterizationDiscards == std::vector<VkBool32>{VK_FALSE, VK_TRUE}, "a draw that discards rasterization shared a pre-rasterization library with one that does not");
+    Require(counters.built[0] == 1 && counters.built[2] == 1 && counters.built[3] == 1, "rasterizer discard rebuilt a library outside pre-rasterization");
+    ClearPipelineLibraries(context.device);
+    Require(mock.live == 0, "rasterizer discard library tests leaked Vulkan objects");
 }
 
 void pipelineLibraryClearWaitsForBuildTests() {
@@ -15379,6 +15406,7 @@ int main(int argc, char** argv) {
         pipelineStoreLazyBufferPoolTests();
         retainedPixelStageTests();
         pipelineLibrarySetTests();
+        pipelineLibraryRasterizerDiscardTests();
         pipelineLibraryClearWaitsForBuildTests();
         tessellationPipelineLibraryCacheTests();
         framebufferOwnerTests();

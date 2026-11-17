@@ -430,6 +430,7 @@ bool libraryKeys(PipelineLibraryKeys& keys, const Context& context, const State&
     }
     appendKey(keys.vertexInput, state.topology);
     appendKey(keys.vertexInput, state.primitiveRestart);
+    appendKey(keys.preRasterization, state.rasterizerDiscard);
     appendKey(keys.preRasterization, state.provokingVertexMode);
     appendKey(keys.preRasterization, ViewportCount(state));
     appendKey(keys.preRasterization, state.polygonMode);
