@@ -62,7 +62,6 @@ struct DrawPlanVerifyCounts {
     std::uint64_t afterRecordWorkInline = 0;
 };
 DrawPlanVerifyCounts ReadDrawPlanVerifyCounts();
-void SetPreparedDrawDeviceForTest(PreparedDraw& prepared, VkDevice device);
 
 void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots = {}, std::shared_ptr<const DrawRecipe>* recipe = nullptr, const DrawTraceContext* trace = nullptr, std::uint64_t shape = 0, const PreparedDraw* prepared = nullptr);
 
@@ -230,6 +229,7 @@ VertexPlanScratchState ThreadVertexPlanScratch();
 enum class DrawStopForTest { None = 0, ReturnAfterResolve = 1, ThrowAfterResolve = 2 };
 void SetSpaceKeepFailuresForTest(std::uint32_t count);
 void SetDrawStopAfterResolveForTest(DrawStopForTest stop);
+void SetPreparedDrawDeviceForTest(PreparedDraw& prepared, VkDevice device);
 enum class TargetMemoEvent : std::uint8_t {
     Lookup, Hit, OverlapCached, OverlapComputed, Accept, AcceptWithDepthMiss, DepthHit, AvoidedRefreshLookups,
     Invalid, ThreadChanged, Descriptor, ResidentGone, ResidentEvicted, DepthOverlap, Metadata,
