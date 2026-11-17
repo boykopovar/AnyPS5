@@ -340,6 +340,10 @@ bool APS5_VABI WKBundleBackForwardListItemIsSame(const void* item1Ref, const voi
 bool APS5_VABI WKBundleBackForwardListItemIsTargetItem(const void* itemRef);
 const void* APS5_VABI WKBundlePageGroupCopyIdentifier(const void* groupRef);
 std::uint32_t APS5_VABI WKBundlePageGroupGetTypeID();
+const void* APS5_VABI WKFrameGetMainResourceData(const void* frameRef);
+const void* APS5_VABI WKFrameGetPage(const void* frameRef);
+const void* APS5_VABI WKFrameGetWebArchive(const void* frameRef);
+void APS5_VABI WKFrameStopLoading(const void* frameRef);
 bool APS5_VABI WKPageAreScrollbarAnimationsSuppressed(const void* pageRef);
 bool APS5_VABI WKPageCanGoBack(const void* page);
 bool APS5_VABI WKPageCanGoForward(const void* page);

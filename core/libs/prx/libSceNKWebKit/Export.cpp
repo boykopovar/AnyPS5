@@ -9784,19 +9784,7 @@ int APS5_VABI WKFormSubmissionListenerContinue() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKFrameGetMainResourceData() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKFrameGetPage() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKFrameGetResourceData() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKFrameGetWebArchive() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -9825,10 +9813,6 @@ int APS5_VABI WKFramePolicyListenerUse() {
 }
 
 int APS5_VABI WKFramePolicyListenerUseWithPolicies() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKFrameStopLoading() {
     NotImplemented_nid_no_patch(__func__);
 }
 
