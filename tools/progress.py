@@ -9,7 +9,7 @@ import xml.etree.ElementTree as ET
 import textwrap
 from fractions import Fraction
 from html import escape
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 tokenizer_spec = importlib.util.spec_from_file_location("anyps5_cpp_tokenizer", Path(__file__).with_name("nid_names.py"))
 tokenizer = importlib.util.module_from_spec(tokenizer_spec)
@@ -143,6 +143,276 @@ def stub_calls(text):
         calls |= found
 
 
+TYPE_DECLARATION = re.compile(r"\b(?:struct|class|union|enum(?:\s+class|\s+struct)?)\s+(?:\w+\s*::\s*)*(\w+)\s*"
+                              r"(?:final\s*)?(?::(?!:)([^{;]*))?[{;]")
+TYPE_ALIAS = re.compile(r"\busing\s+(\w+)\s*=\s*([^;]*);")
+TYPEDEF = re.compile(r"\btypedef\b([^;{}]*?)\b(\w+)\s*;")
+BRACED_NAME = re.compile(r"\}\s*(\w+)\s*;")
+CONVERSION = re.compile(r"\boperator\s+(?:(?:const|volatile)\s+)*(?:\w+\s*::\s*)*(\w+)\s*(?:<[^;{}]*>)?\s*[*&]")
+SIMPLE_TYPE = re.compile(r"\s*(?:typename\s+)?(?:\w+\s*::\s*)*(\w+)\s*")
+TEMPLATE_CLAUSE = re.compile(r"\btemplate\s*<([^{};]*)>")
+TEMPLATE_PARAMETER = re.compile(r"\b(?:typename|class)\b\s*(?:\.\.\.)?\s*(\w+)")
+DECLARATION = re.compile(r"(?<![\w.:>])((?:\w+\s*::\s*)*\w+)(\s*<[^<>;(){}]*>)?((?:\s*(?:\bconst\b|\bvolatile\b|\*|&))*)"
+                         r"\s*\b(\w+)(?=\s*(?:[=;,)({\[]|:(?!:)))")
+ARGUMENT = re.compile(r"([*&]?)\s*(\w+)")
+PARAMETER = re.compile(r"\s*((?:\w+\s*::\s*)*\w+)\s*([*&\s]*)(\w+)?\s*")
+STATEMENT_WORDS = frozenset(("return", "else", "do", "throw", "new", "delete", "case", "goto", "co_return", "co_await",
+                             "co_yield", "not", "and", "or", "xor", "bitand", "bitor", "compl", "sizeof", "alignof",
+                             "using", "namespace", "public", "private", "protected", "friend", "operator", "template",
+                             "typename", "struct", "class", "union", "enum", "if", "while", "for", "switch", "catch",
+                             "static_assert", "default"))
+INDEFINITE_TYPES = frozenset(("auto", "const", "volatile", "static", "inline", "constexpr", "constinit", "register",
+                              "extern", "mutable", "thread_local", "explicit", "virtual", "unsigned", "signed"))
+
+
+def closing(text, start):
+    depth = 0
+    for i in range(start, len(text)):
+        if text[i] in "([{":
+            depth += 1
+        elif text[i] in ")]}":
+            depth -= 1
+            if depth == 0:
+                return i
+    return len(text)
+
+
+class TypeIndex:
+    def __init__(self, texts):
+        self.parent, self.known, self.opaque = {}, set(), set()
+        for text in texts:
+            for match in TYPE_DECLARATION.finditer(text):
+                self.known.add(match.group(1))
+                for base in re.findall(r"\w+", match.group(2) or ""):
+                    if base not in ("public", "protected", "private", "virtual"):
+                        self.join(match.group(1), base)
+            for match in TYPE_ALIAS.finditer(text):
+                self.alias(match.group(1), match.group(2))
+            for match in TYPEDEF.finditer(text):
+                self.alias(match.group(2), match.group(1))
+            self.opaque.update(match.group(1) for match in BRACED_NAME.finditer(text))
+            self.opaque.update(match.group(1) for match in CONVERSION.finditer(text))
+        roots = {self.find(name) for name in self.known}
+        self.concrete = {name for name in self.parent if self.find(name) in roots} | self.known
+        self.concrete -= {name for name in self.concrete if self.find(name) in {self.find(o) for o in self.opaque}}
+
+    def find(self, name):
+        self.parent.setdefault(name, name)
+        while self.parent[name] != name:
+            self.parent[name] = self.parent[self.parent[name]]
+            name = self.parent[name]
+        return name
+
+    def join(self, first, second):
+        self.parent[self.find(first)] = self.find(second)
+
+    def alias(self, name, target):
+        simple = SIMPLE_TYPE.fullmatch(target)
+        if simple:
+            self.join(name, simple.group(1))
+        else:
+            self.opaque.add(name)
+
+    def related(self, first, second):
+        return self.find(first) == self.find(second)
+
+
+def split_arguments(text):
+    parts, depth, start = [], 0, 0
+    for i, character in enumerate(text):
+        if character in "([{":
+            depth += 1
+        elif character in ")]}":
+            depth -= 1
+        elif character == "," and not depth:
+            parts.append(text[start:i])
+            start = i + 1
+    return parts + [text[start:]]
+
+
+def split_parameters(text):
+    parts, depth, angle, start, default, reliable = [], 0, 0, 0, None, True
+    for i, character in enumerate(text):
+        if character in "([{":
+            depth += 1
+        elif character in ")]}":
+            depth -= 1
+        elif depth:
+            continue
+        elif default is not None:
+            reliable = reliable and character not in "<>"
+            if character == ",":
+                parts.append((default, True))
+                start, default = i + 1, None
+        elif character == "<":
+            angle += 1
+        elif character == ">" and angle:
+            angle -= 1
+        elif character == "=" and not angle:
+            default = text[start:i]
+        elif character == "," and not angle:
+            parts.append((text[start:i], False))
+            start = i + 1
+    parts.append((default, True) if default is not None else (text[start:], False))
+    return parts, reliable and not angle
+
+
+def parameter_type(declaration):
+    if any(mark in declaration for mark in ("(", "[", "<", "...")):
+        return None
+    plain = re.sub(r"\b(?:const|volatile)\b", " ", declaration)
+    qualified = plain != declaration
+    plain = re.sub(r"\b(?:struct|class|union|enum|typename|register)\b", " ", plain)
+    match = PARAMETER.fullmatch(plain)
+    if not match:
+        return None
+    base = re.split(r"\s*::\s*", match.group(1))[-1]
+    marks = match.group(2).replace(" ", "").replace("\t", "").replace("\n", "")
+    if "&&" in marks or (marks and set(marks) - {"*", "&"}):
+        return None
+    if "&" in marks:
+        return None if qualified or marks.count("&") > 1 else ("reference", base, marks.count("*"))
+    if "*" in marks:
+        return ("pointer", base, marks.count("*"))
+    return None
+
+
+class Definition:
+    def __init__(self, name, text, match, follow_qualified):
+        self.name, self.follow_qualified = name, follow_qualified
+        start = match.end(1)
+        opening = text.index("(", start)
+        parameters = text[opening + 1:closing(text, opening)]
+        self.parameters, self.required, self.maximum = [], 0, 0
+        if parameters.strip() not in ("", "void"):
+            declarations, reliable = split_parameters(parameters)
+            for declaration, has_default in declarations:
+                pack = "..." in declaration
+                self.parameters.append(None if pack else parameter_type(declaration))
+                self.required += not (pack or has_default)
+                self.maximum = float("inf") if pack or self.maximum == float("inf") else self.maximum + 1
+            if not reliable:
+                self.parameters, self.required, self.maximum = [], 0, float("inf")
+        boundary = max(text.rfind(character, 0, match.start(1)) for character in ";{}") + 1
+        self.templates = {parameter for clause in TEMPLATE_CLAUSE.findall(text, boundary, match.start(1))
+                          for parameter in TEMPLATE_PARAMETER.findall(clause)}
+        self.signature = match.group()
+        self.body = text[match.end() - 1:body_end(text, match.end() - 1)]
+        self.calls, self.reaches, self.variables_cache = [], False, None
+
+    def variables(self):
+        if self.variables_cache is None:
+            found = {}
+            for text in (self.signature, self.body):
+                for match in DECLARATION.finditer(text):
+                    base = re.split(r"\s*::\s*", match.group(1))[-1]
+                    if base in STATEMENT_WORDS or base[0].isdigit():
+                        continue
+                    following = text[match.end():match.end() + 64].lstrip()
+                    kind = None
+                    if base not in INDEFINITE_TYPES and not match.group(2) and not following.startswith("["):
+                        kind = (base, match.group(3).count("*"))
+                    found.setdefault(match.group(4), set()).add(kind)
+            self.variables_cache = {name: next(iter(kinds)) if len(kinds) == 1 else None for name, kinds in found.items()}
+        return self.variables_cache
+
+    def argument(self, text):
+        match = ARGUMENT.fullmatch(text.strip())
+        if not match:
+            return None
+        kind = self.variables().get(match.group(2))
+        if kind is None:
+            return None
+        depth = kind[1] + {"*": -1, "&": 1, "": 0}[match.group(1)]
+        return (kind[0], depth) if depth >= 0 else None
+
+
+def accepts(definition, argument, parameter, types):
+    if parameter is None or argument is None:
+        return True
+    kind, base, depth = parameter
+    argument_base, argument_depth = argument
+    if argument_base not in types.concrete or (kind == "pointer" and not argument_depth):
+        return True
+    generic = base in definition.templates or base not in types.concrete
+    if generic:
+        return depth <= argument_depth
+    return depth == argument_depth and types.related(base, argument_base)
+
+
+def call_arguments(body, opening):
+    end = closing(body, opening)
+    inner = body[opening + 1:end]
+    top, depth = [], 0
+    for character in inner:
+        if character in "([{":
+            depth += 1
+        elif character in ")]}":
+            depth -= 1
+        elif not depth:
+            top.append(character)
+    top = re.sub(r"->|<<|>>|<=|>=", " ", "".join(top))
+    if "..." in top or ("<" in top and ">" in top):
+        return None
+    return [] if not inner.strip() else split_arguments(inner)
+
+
+def resolve(caller, arguments, candidates, types):
+    if arguments is None:
+        return candidates
+    count = len(arguments)
+    fitting = [c for c in candidates if c.required <= count <= c.maximum] or candidates
+    kinds = [caller.argument(argument) for argument in arguments]
+    typed = [c for c in fitting if all(accepts(c, kind, parameter, types)
+                                       for kind, parameter in zip(kinds, c.parameters))]
+    return typed or fitting
+
+
+def reaching_definitions(texts, headers, asm_names):
+    types = TypeIndex(texts + headers)
+    exports, files = {}, []
+    for text in texts:
+        helpers = {}
+        for match in STUB_WRAPPER.finditer(text):
+            helpers.setdefault(match.group(1), []).append(Definition(match.group(1), text, match, True))
+        definitions = [Definition(match.group(1), text, match, False) for match in DEFINITION.finditer(text)]
+        for definition in definitions:
+            exports.setdefault(definition.name, []).append(definition)
+        files.append((helpers, definitions))
+    nodes = []
+    for helpers, definitions in files:
+        local = [d for group in helpers.values() for d in group] + definitions
+        for definition in local:
+            for call in CALL.finditer(definition.body):
+                name = call.group(1)
+                if name != STUB and name not in helpers and name not in exports:
+                    continue
+                if not definition.follow_qualified and QUALIFIED.search(definition.body, 0, call.start()):
+                    continue
+                if name == STUB:
+                    definition.calls.append(None)
+                    continue
+                targets = helpers.get(name, [])
+                if len(targets) > 1:
+                    targets = resolve(definition, call_arguments(definition.body, call.end() - 1), targets, types)
+                definition.calls.append((targets, exports.get(name, []) if name not in asm_names else []))
+            nodes.append(definition)
+    callers = {}
+    for node in nodes:
+        for call in node.calls:
+            for target in call[0] + call[1] if call else ():
+                callers.setdefault(id(target), []).append(node)
+    pending = list(nodes)
+    while pending:
+        node = pending.pop()
+        if node.reaches or not any(call is None or any(t.reaches for t in call[0]) or
+                                   (call[1] and all(t.reaches for t in call[1])) for call in node.calls):
+            continue
+        node.reaches = True
+        pending.extend(callers.get(id(node), ()))
+    return files
+
+
 def statements(body):
     depth, start, parts = 0, 1, []
     for i, character in enumerate(body[1:], 1):
@@ -227,9 +497,11 @@ def shared_source_owners(path):
 
 
 def scan_library(path):
-    done, todo, inert, live = set(), set(), set(), set()
+    done, todo, inert, live, assembled = set(), set(), set(), set(), set()
+    flavor = PureWindowsPath if os.name == "nt" else Path
+    path_flavored = flavor(str(path))
     sources = [source.read_text(encoding="utf-8", errors="ignore") for source in path.rglob("*.cpp")
-               if "tests" not in source.relative_to(path).parts]
+               if "tests" not in flavor(str(source)).relative_to(path_flavored).parts]
     texts = [code(source) for source in sources]
     exported = {match.group(1) for text in texts for match in EXPORT.finditer(text)}
     for source in sources:
@@ -240,23 +512,23 @@ def scan_library(path):
             if token.group("code") is None or token.start() not in definitions:
                 continue
             name = definitions[token.start()]
+            assembled.add(name)
             if not name.endswith(("_nid_no_patch", "_nid_no_patch_cut")) or name in exported:
                 done.add(name)
                 live.add(name)
-    for text in texts:
-        calls = stub_calls(text)
+    headers = [code(header.read_text(encoding="utf-8", errors="ignore")) for pattern in ("*.h", "*.hpp")
+               for header in path.rglob(pattern) if "tests" not in flavor(str(header)).relative_to(path_flavored).parts]
+    for text, (_, definitions) in zip(texts, reaching_definitions(texts, headers, assembled)):
         wrappers = inert_wrappers(text)
-        for match in DEFINITION.finditer(text):
-            name = match.group(1)
+        for definition in definitions:
+            name = definition.name
             if name.endswith(("_nid_no_patch", "_nid_no_patch_cut")) and name not in exported:
                 continue
-            body = text[match.end() - 1:body_end(text, match.end() - 1)]
-            if any(call.group(1) in calls and not QUALIFIED.search(body, 0, call.start())
-                   for call in CALL.finditer(body)):
+            if definition.reaches:
                 todo.add(name)
                 continue
             done.add(name)
-            (inert if inert_body(body, wrappers, match.group()) else live).add(name)
+            (inert if inert_body(definition.body, wrappers, definition.signature) else live).add(name)
     todo -= done
     inert -= live
     group = {"name": path.name, "label": path.name.removeprefix("libSce"), "done": len(done), "todo": len(todo),
