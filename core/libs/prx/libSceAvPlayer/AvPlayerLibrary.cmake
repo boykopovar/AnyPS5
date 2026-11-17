@@ -8,7 +8,7 @@ function(add_sce_avplayer_library target)
             ${avPlayerDir}/../libkernel/Time/TimedWait.cpp
     )
     target_include_directories(${target} PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(${target} PRIVATE ffmpeg libSceHttp libc)
+    target_link_libraries(${target} PRIVATE ffmpeg libSceHttp libkernel_sys libc)
     set_target_properties(${target} PROPERTIES
             CXX_VISIBILITY_PRESET hidden
             VISIBILITY_INLINES_HIDDEN ON

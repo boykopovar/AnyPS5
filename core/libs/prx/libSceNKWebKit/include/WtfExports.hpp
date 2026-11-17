@@ -1,11 +1,14 @@
 #pragma once
 
 #include "SceTypes.hpp"
+#include "prx/libSceNKWebKit/src/HttpHeaderMapAbi.hpp"
 #include "prx/libSceNKWebKit/src/PalTypes.hpp"
+#include "prx/libSceNKWebKit/src/WtfFunctionAbi.hpp"
 #include "prx/libSceNKWebKit/src/WtfStringAbi.hpp"
 #include "prx/libSceNKWebKit/src/WtfTextAbi.hpp"
 #include "prx/libSceNKWebKit/src/WtfTimeTypes.hpp"
 #include "prx/libSceNKWebKit/src/WtfMemoryTypes.hpp"
+#include "prx/libSceNKWebKit/src/YarrErrorCodeAbi.hpp"
 #include <cstddef>
 #include <cstdint>
 
@@ -57,11 +60,13 @@ unsigned int APS5_VABI _ZN3JSC27numberOfExceptionFuzzChecksEv();
 void APS5_VABI _ZN3JSC30waitForAsynchronousDisassemblyEv();
 unsigned int APS5_VABI _ZN3JSC31numberOfStaticOSRExitFuzzChecksEv();
 unsigned int APS5_VABI _ZN3JSC38numberOfExecutableAllocationFuzzChecksEv();
+NKWebKit::HttpAbi::ASCIILiteral APS5_VABI _ZN3JSC4Yarr12errorMessageENS0_9ErrorCodeE(NKWebKit::YarrAbi::ErrorCode error);
 void APS5_VABI _ZN3PAL10systemBeepEv();
 NKWebKit::WtfAbi::String APS5_VABI _ZN3PAL19fileSizeDescriptionEm(std::uint64_t size);
 void APS5_VABI _ZN3PAL9SessionID26enableGenerationProtectionEv();
 PAL::SessionID APS5_VABI _ZN3PAL9SessionID26generateEphemeralSessionIDEv();
 PAL::SessionID APS5_VABI _ZN3PAL9SessionID27generatePersistentSessionIDEv();
+unsigned APS5_VABI _ZN3WTF10SymbolImpl17nextHashForSymbolEv();
 std::size_t APS5_VABI _ZN3WTF10StringImpl11reverseFindEDsj(const NKWebKit::WtfAbi::StringImpl* self, char16_t value, unsigned start);
 std::int32_t APS5_VABI _ZN3WTF10StringImpl19characterStartingAtEj(const NKWebKit::WtfAbi::StringImpl* self, unsigned index);
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF10StringImpl19createUninitializedEjRPDs(unsigned length, char16_t*& data);
@@ -101,9 +106,12 @@ char* APS5_VABI _ZN3WTF10fastStrDupEPKc(const char* str);
 bool APS5_VABI _ZN3WTF10hasElapsedERKNS_24TimeWithDynamicClockTypeE(const WTF::TimeWithDynamicClockType& time);
 bool APS5_VABI _ZN3WTF11CStringHash5equalERKNS_7CStringES3_(const NKWebKit::WtfAbi::CString& a, const NKWebKit::WtfAbi::CString& b);
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF11LogArgumentIPKvE8toStringES2_(const void* argument);
+WTF::StackBounds APS5_VABI _ZN3WTF11StackBounds32currentThreadStackBoundsInternalEv();
+void APS5_VABI _ZN3WTF11TimingScope11scopeDidEndEv(WTF::TimingScope* self);
 void* APS5_VABI _ZN3WTF11fastReallocEPvm(void* ptr, std::size_t size);
 void APS5_VABI _ZN3WTF11jsValueFreeEPv(void* ptr);
 bool APS5_VABI _ZN3WTF11portAllowedERKNS_3URLE(const NKWebKit::WtfAbi::URL* url);
+bool APS5_VABI _ZN3WTF11setNonBlockEi(int fileDescriptor);
 bool APS5_VABI _ZN3WTF12isMainThreadEv();
 WTF::MonotonicTime APS5_VABI _ZN3WTF13MonotonicTime3nowEv();
 void APS5_VABI _ZN3WTF13StringBuilder11shrinkToFitEv(NKWebKit::WtfAbi::StringBuilder* self);
@@ -116,9 +124,14 @@ NKWebKit::WtfAbi::ProcessPrivileges APS5_VABI _ZN3WTF13allPrivilegesEv();
 bool APS5_VABI _ZN3WTF13isMainRunLoopEv();
 NKWebKit::WtfAbi::StringViewWithUnderlyingString APS5_VABI _ZN3WTF13normalizedNFCENS_10StringViewE(NKWebKit::WtfAbi::StringView string);
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF13normalizedNFCERKNS_6StringE(const NKWebKit::WtfAbi::String* string);
+void APS5_VABI _ZN3WTF16callOnMainThreadEONS_8FunctionIFvvEEE(NKWebKit::WtfAbi::VoidFunction* function);
+void APS5_VABI _ZN3WTF17callOnMainRunLoopEONS_8FunctionIFvvEEE(NKWebKit::WtfAbi::VoidFunction* function);
+void APS5_VABI _ZN3WTF23callOnMainThreadAndWaitEONS_8FunctionIFvvEEE(NKWebKit::WtfAbi::VoidFunction* function);
+void APS5_VABI _ZN3WTF24callOnMainRunLoopAndWaitEONS_8FunctionIFvvEEE(NKWebKit::WtfAbi::VoidFunction* function);
 void* APS5_VABI _ZN3WTF13jsValueMallocEm(std::size_t size);
 WTF::TryMallocReturnValue* APS5_VABI _ZN3WTF13tryFastCallocEmm(WTF::TryMallocReturnValue* result, std::size_t count, std::size_t size);
 WTF::TryMallocReturnValue* APS5_VABI _ZN3WTF13tryFastMallocEm(WTF::TryMallocReturnValue* result, std::size_t size);
+int APS5_VABI _ZN3WTF14dupCloseOnExecEi(int fileDescriptor);
 std::size_t APS5_VABI _ZN3WTF14fastMallocSizeEPKv(const void* ptr);
 void* APS5_VABI _ZN3WTF14jsValueReallocEPvm(void* ptr, std::size_t size);
 WTF::TryMallocReturnValue* APS5_VABI _ZN3WTF14tryFastReallocEPvm(WTF::TryMallocReturnValue* result, void* ptr, std::size_t size);
@@ -184,6 +197,7 @@ bool APS5_VABI _ZN3WTF5equalEPKNS_10StringImplEPKhj(const NKWebKit::WtfAbi::Stri
 bool APS5_VABI _ZN3WTF5equalEPKNS_10StringImplES2_(const NKWebKit::WtfAbi::StringImpl* a, const NKWebKit::WtfAbi::StringImpl* b);
 bool APS5_VABI _ZN3WTF5equalERKNS_10StringImplES2_(const NKWebKit::WtfAbi::StringImpl& a, const NKWebKit::WtfAbi::StringImpl& b);
 void APS5_VABI _ZN3WTF5sleepERKNS_24TimeWithDynamicClockTypeE(const WTF::TimeWithDynamicClockType& time);
+void APS5_VABI _ZN3WTF5sleepENS_7SecondsE(WTF::Seconds value);
 void APS5_VABI _ZN3WTF6Config17permanentlyFreezeEv();
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF6String13fromCodePointEi(std::int32_t cp);
 NKWebKit::WtfAbi::String APS5_VABI _ZN3WTF6String26fromUTF8WithLatin1FallbackEPKhm(const unsigned char* data, std::size_t length);
@@ -223,6 +237,7 @@ void APS5_VABI _ZN3WTF14FileSystemImpl14MappedFileDataD1Ev(WTF::MappedFileData* 
 void APS5_VABI _ZN3WTF14FileSystemImpl14MappedFileDataD2Ev(WTF::MappedFileData* self);
 int APS5_VABI _ZN3WTF14FileSystemImpl8openFileERKNS_6StringENS0_12FileOpenModeENS0_20FileAccessPermissionEb(const NKWebKit::WtfAbi::String& path, int mode, bool permission, bool failIfFileExists);
 void APS5_VABI _ZN3WTF14FileSystemImpl9closeFileERi(int& handle);
+bool APS5_VABI _ZN3WTF14FileSystemImpl18makeAllDirectoriesERKNS_6StringE(const NKWebKit::WtfAbi::String& path);
 long long APS5_VABI _ZN3WTF14FileSystemImpl8seekFileEixNS0_14FileSeekOriginE(int handle, long long offset, int origin);
 bool APS5_VABI _ZN3WTF14FileSystemImpl12truncateFileEix(int handle, long long offset);
 int APS5_VABI _ZN3WTF14FileSystemImpl15openAndLockFileERKNS_6StringENS0_12FileOpenModeENS_9OptionSetINS0_12FileLockModeEEE(const NKWebKit::WtfAbi::String& path, int mode, unsigned lockMode);
@@ -280,6 +295,8 @@ bool APS5_VABI _ZNK3WTF10StringImpl10startsWithEPKcj(const NKWebKit::WtfAbi::Str
 std::size_t APS5_VABI _ZNK3WTF10StringImpl11sizeInBytesEv(const NKWebKit::WtfAbi::StringImpl* self);
 unsigned APS5_VABI _ZNK3WTF10StringImpl12hashSlowCaseEv(const NKWebKit::WtfAbi::StringImpl* self);
 unsigned APS5_VABI _ZNK3WTF10StringImpl14concurrentHashEv(const NKWebKit::WtfAbi::StringImpl* self);
+NKWebKit::WtfAbi::CString APS5_VABI _ZN3WTF10StringImpl17utf8ForCharactersEPKDsjNS_14ConversionModeE(const char16_t* characters, unsigned length, unsigned mode);
+NKWebKit::WtfAbi::CString APS5_VABI _ZN3WTF10StringImpl17utf8ForCharactersEPKhj(const unsigned char* characters, unsigned length);
 NKWebKit::WtfAbi::CString APS5_VABI _ZNK3WTF10StringImpl4utf8ENS_14ConversionModeE(const NKWebKit::WtfAbi::StringImpl* self, unsigned mode);
 bool APS5_VABI _ZNK3WTF10StringImpl8endsWithEDs(const NKWebKit::WtfAbi::StringImpl* self, char16_t value);
 bool APS5_VABI _ZNK3WTF10StringImpl8endsWithEPKcj(const NKWebKit::WtfAbi::StringImpl* self, const char* data, unsigned length);
