@@ -1431,7 +1431,8 @@ void rewatchSettledImports(HostImports& state) {
         const auto stop = (base + import->second.bytes + settleBlockBytes - 1) & ~(settleBlockBytes - 1);
         if ((first != base || stop != base + import->second.bytes) && comparedImportShares(state, base, first, stop)) continue;
         const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> span{{{first, stop}}};
-        if (StorageTexture::AnyLiveOverlaps(span)) {
+        static const bool keepUnderImages = std::getenv("APS5_NO_REWATCH_UNDER_IMAGES") != nullptr;
+        if (keepUnderImages && StorageTexture::AnyLiveOverlaps(span)) {
             ++state.settlesKeptCompared;
             continue;
         }
@@ -2134,6 +2135,22 @@ ImportRun windowRun(const HostImports& state, ImportRun run, std::uint64_t begin
         }
     }
     if (windowBegin % alignment != 0 || (windowEnd - windowBegin) % alignment != 0) return run;
+    const auto committed = GuestMemory::DescribeCommitted(windowBegin, windowEnd - windowBegin);
+    if (!committed.whole) {
+        const auto part = std::find_if(committed.ranges.begin(), committed.ranges.end(), [&](const auto& span) { return span.first <= begin && span.second >= end; });
+        if (part == committed.ranges.end()) return run;
+        const auto clippedBegin = part->first + (alignment - part->first % alignment) % alignment;
+        const auto clippedEnd = part->second - part->second % alignment;
+        if (clippedBegin > begin || clippedEnd < end) return run;
+        auto it = state.imports.upper_bound(clippedBegin);
+        if (it != state.imports.begin()) --it;
+        for (; it != state.imports.end() && it->first < clippedEnd; ++it) {
+            const auto importEnd = it->second.base + it->second.bytes;
+            if (importEnd > clippedBegin && (it->second.base < clippedBegin || importEnd > clippedEnd)) return run;
+        }
+        windowBegin = clippedBegin;
+        windowEnd = clippedEnd;
+    }
     run.base = windowBegin;
     run.bytes = windowEnd - windowBegin;
     return run;
