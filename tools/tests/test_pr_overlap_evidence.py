@@ -38,6 +38,7 @@ class GitEvidenceTestCase(unittest.TestCase):
         self.git("init", "-q")
         self.git("config", "core.autocrlf", "false")
         self.git("config", "core.safecrlf", "false")
+        self.git("config", "core.filemode", "false")
         self.git("config", "commit.gpgsign", "false")
         self.git("config", "core.hooksPath", str(self.parent / "absent-hooks"))
         self.write("shared.txt", b"".join(f"line {number}\n".encode() for number in range(40)))
