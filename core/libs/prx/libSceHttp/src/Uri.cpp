@@ -10,6 +10,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libSceHttp/src/HttpErrors.hpp"
+#include "prx/libSceHttp/src/GuestAccess.hpp"
 
 namespace {
 
@@ -257,11 +258,14 @@ int APS5_VABI sceHttpUriEscape(char* out, size_t* require, size_t prepare, const
 
     static constexpr char hex[] = "0123456789ABCDEF";
     std::string escaped;
-    for (const char* c = in; *c; ++c) {
-        const auto value = static_cast<unsigned char>(*c);
+    for (const char* c = in; ; ++c) {
+        char character = 0;
+        if (!HttpGuest::CopyIn(&character, c, sizeof(character))) return ERROR_INVALID_VALUE;
+        if (character == '\0') break;
+        const auto value = static_cast<unsigned char>(character);
         if ((value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z') || (value >= '0' && value <= '9')
             || value == '-' || value == '_' || value == '.' || value == '~') {
-            escaped.push_back(*c);
+            escaped.push_back(character);
         } else {
             escaped.push_back('%');
             escaped.push_back(hex[value >> 4]);
