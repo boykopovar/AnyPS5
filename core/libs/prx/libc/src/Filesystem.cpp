@@ -43,9 +43,11 @@ static std::filesystem::path FollowedPath(const std::filesystem::path& path) {
 extern "C" int APS5_VABI access_nid_postfix(const char* path, int mode) {
     if (mode < 0 || (mode & ~7)) { errno = 22; return -1; }
     if (!path) { errno = 14; return -1; }
-    if (!*path) { errno = 2; return -1; }
+    std::string copy;
+    if (const int error = CopyGuestPath_nid_no_patch(path, copy)) { errno = error; return -1; }
+    if (copy.empty()) { errno = 2; return -1; }
     try {
-        const auto resolved = ResolvePath_nid_no_patch(path);
+        const auto resolved = ResolvePath_nid_no_patch(copy.c_str());
 #ifdef _WIN32
         const auto target = FollowedPath(resolved);
         const DWORD attributes = target.empty() ? INVALID_FILE_ATTRIBUTES : GetFileAttributesW(target.c_str());
@@ -137,10 +139,12 @@ extern "C" bool ExecutePermission_nid_no_patch(const std::filesystem::path& nati
 
 extern "C" int APS5_VABI remove_nid_postfix(const char* path) {
     if (!path) { errno = 14; return -1; }
-    if (!*path) { errno = 2; return -1; }
+    std::string copy;
+    if (const int error = CopyGuestPath_nid_no_patch(path, copy)) { errno = error; return -1; }
+    if (copy.empty()) { errno = 2; return -1; }
     try {
-        const auto resolved = ResolvePath_nid_no_patch(path);
-        if (FinalPathComponentIsDot_nid_no_patch(path)) {
+        const auto resolved = ResolvePath_nid_no_patch(copy.c_str());
+        if (FinalPathComponentIsDot_nid_no_patch(copy.c_str())) {
             std::error_code statusError;
             const auto status = std::filesystem::status(resolved, statusError);
             if (statusError) { errno = FilesystemError(statusError); return -1; }

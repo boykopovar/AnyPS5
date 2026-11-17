@@ -53,13 +53,20 @@ template<class TValue> static void CheckCount(const char* modifier, int count) {
     }
 }
 
+static int handlerCalls = 0;
+static void APS5_VABI CountHandler(const char*, void*, int) { ++handlerCalls; }
+
 int main() {
+    set_constraint_handler_s_nid_postfix(reinterpret_cast<void*>(&CountHandler));
     for (const auto scan : {sscanf_s_nid_postfix, ScanList}) {
+        const int sizedNull = scan == ScanList ? -23 : EOF;
+        handlerCalls = 0;
         Require(scan("7", "%d", static_cast<int*>(nullptr)) == EOF, "Null integer destination must return EOF");
         Require(scan("1.5", "%f", static_cast<float*>(nullptr)) == EOF, "Null real destination must return EOF");
-        Require(scan("abc", "%s", static_cast<char*>(nullptr), 4u) == EOF, "Null string destination must return EOF");
-        Require(scan("a", "%c", static_cast<char*>(nullptr), 1u) == EOF, "Null character destination must return EOF");
-        Require(scan("abc", "%[a-z]", static_cast<char*>(nullptr), 4u) == EOF, "Null scanset destination must return EOF");
+        Require(scan("abc", "%s", static_cast<char*>(nullptr), std::size_t{4}) == sizedNull, "Null string destination must return -23 for vsscanf_s and EOF for sscanf_s");
+        Require(scan == ScanList || scan("a", "%c", static_cast<char*>(nullptr), std::size_t{1}) == EOF, "Null character destination must return EOF");
+        Require(scan == ScanList || scan("abc", "%[a-z]", static_cast<char*>(nullptr), std::size_t{4}) == EOF, "Null scanset destination must return EOF");
+        Require(handlerCalls == (scan == ScanList ? 1 : 0), "Only vsscanf_s calls the constraint handler for a null destination");
         Require(scan("", "%n", static_cast<int*>(nullptr)) == EOF, "Null count destination must return EOF");
         int first = -1;
         int later = -1;
@@ -91,7 +98,7 @@ int main() {
     std::int64_t after = -1;
     char word[4] = {};
     Require(sscanf_s_nid_postfix(" 12 abc!", "%ln%d %3[a-z]%jn!", &before, &number,
-        word, 4u, &after) == 2, "Count conversions must not increase assignments");
+        word, std::size_t{4}, &after) == 2, "Count conversions must not increase assignments");
     Require(before == 0 && number == 12 && std::strcmp(word, "abc") == 0 && after == 7,
         "Counts must include leading whitespace and earlier conversions");
 

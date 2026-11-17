@@ -104,7 +104,8 @@ int APS5_VABI sceNpPushIntGetConnectionState(void* state) {
     if (state == nullptr) return PUSH_ERROR_INVALID_ARGUMENT;
     std::lock_guard lock(pushMutex);
     if (!pushInitialized) return PUSH_ERROR_NOT_INITIALIZED;
-    *static_cast<std::int32_t*>(state) = 0;
+    const std::int32_t offline = 0;
+    if (!GuestCopyOut_nid_no_patch(state, &offline, sizeof(offline))) return PUSH_ERROR_INVALID_ARGUMENT;
     return 0;
 }
 

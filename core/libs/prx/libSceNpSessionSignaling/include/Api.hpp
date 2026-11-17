@@ -103,12 +103,12 @@ int APS5_VABI sceNpSessionSignalingGetConnectionFromPeerAddress(std::uint32_t co
 int APS5_VABI sceNpSessionSignalingGetGroupFromSessionId(std::uint32_t contextId, const char* sessionId, std::uint32_t* groupId);
 int APS5_VABI sceNpSessionSignalingGetGroupInfo(std::uint32_t contextId, std::uint32_t groupId, SessionSignalingGroupInfo* groupInfo);
 int APS5_VABI sceNpSessionSignalingGetConnectionFromNetAddress2(std::uint32_t contextId, std::uint32_t groupId, std::uint32_t address, std::uint16_t port, std::uint32_t* connectionId);
-int APS5_VABI sceNpSessionSignalingCreateJoinActivate();
+int APS5_VABI sceNpSessionSignalingCreateJoinActivate(const char* sessionId, std::uint32_t* groupId, std::uint32_t* connectionId);
 int APS5_VABI sceNpSessionSignalingGetConnectionFromNetAddress(std::uint32_t contextId, std::uint32_t address, std::uint16_t port, std::uint32_t* connectionId);
 int APS5_VABI sceNpSessionSignalingGetCustomProperty(std::uint32_t contextId, std::uint32_t* property);
 int APS5_VABI sceNpSessionSignalingGetGroupFromPeerAddress(std::uint32_t contextId, const SessionSignalingPeerAddress* peerAddress, std::uint32_t* groupId);
 int APS5_VABI sceNpSessionSignalingInitializeWithPort(const SessionSignalingInitParam* param, std::uint32_t port, std::uint32_t reserved);
-int APS5_VABI sceNpSessionSignalingJoinActivate();
+int APS5_VABI sceNpSessionSignalingJoinActivate(const char* sessionId, const void* param, std::uint32_t* groupId, std::uint32_t* connectionId);
 int APS5_VABI sceNpSessionSignalingSetCustomProperty(std::uint32_t contextId, const std::uint32_t* property, std::uint32_t* previous);
 int APS5_VABI sceNpSessionSignalingManualUdpAbortConnection();
 int APS5_VABI sceNpSessionSignalingManualUdpCreateJoin();

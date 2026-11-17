@@ -50,6 +50,33 @@ int main() {
         *__error_nid_postfix() = 0;
         Require(sysarch(operation, nullptr) == -1 && *__error_nid_postfix() == 22);
     }
+    for (const int operation : {0, 1, 3, 4, 11, 132}) {
+        *__error_nid_postfix() = 0;
+        Require(sysarch(operation, nullptr) == -1 && *__error_nid_postfix() == 14);
+    }
+    struct {
+        std::uint32_t start;
+        std::uint32_t descsLow;
+        std::uint32_t descsHigh;
+        std::uint32_t num;
+    } ldt{};
+    static_assert(sizeof(ldt) == 16);
+    Require(sysarch(0, &ldt) == 0);
+    ldt.num = 4;
+    Require(sysarch(0, &ldt) == 0 && sysarch(1, &ldt) == 0);
+    ldt.start = 3;
+    ldt.num = 0;
+    *__error_nid_postfix() = 0;
+    Require(sysarch(1, &ldt) == -1 && *__error_nid_postfix() == 22);
+    ldt.start = 0;
+    Require(sysarch(1, &ldt) == 0);
+    std::uint32_t ports[3] = {0x60, 5, 1};
+    Require(sysarch(3, ports) == 0 && ports[0] == 0x60 && ports[1] == 0 && ports[2] == 1);
+    std::uint32_t outsidePorts[3] = {65536, 5, 1};
+    *__error_nid_postfix() = 0;
+    Require(sysarch(3, outsidePorts) == -1 && *__error_nid_postfix() == 22 && outsidePorts[1] == 5);
+    *__error_nid_postfix() = 0;
+    Require(sysarch(4, ports) == -1 && *__error_nid_postfix() == 1);
 #if (defined(__linux__) || defined(_WIN32)) && defined(__x86_64__)
     static std::uint64_t slots[2] = {0x1234567890abcdefull, 0};
     std::uint64_t base = reinterpret_cast<std::uintptr_t>(slots);
@@ -112,6 +139,11 @@ int main() {
     Require(sysarch(130, reinterpret_cast<void*>(1)) == -1 && *__error_nid_postfix() == 14);
     Require(sysarch(9, reinterpret_cast<void*>(1)) == -1 && *__error_nid_postfix() == 14);
     Require(sysarch(130, &read) == 0 && read == base);
+    std::uint32_t low = 0x12345678;
+    Require(sysarch(10, &low) == 0 && sysarch(130, &read) == 0 && read == 0x12345678);
+    *__error_nid_postfix() = 0;
+    Require(sysarch(10, nullptr) == -1 && *__error_nid_postfix() == 14);
+    Require(sysarch(131, &base) == 0 && sysarch(130, &read) == 0 && read == base);
     std::uint64_t zero = 0;
     Require(sysarch(131, &zero) == 0 && sysarch(130, &read) == 0 && read == 0);
 #endif
