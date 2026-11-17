@@ -166,7 +166,6 @@
 #include "prx/libc/include/General.hpp"
 
 #include <cerrno>
-#include <cstring>
 #include <stdexcept>
 #include <utility>
 
@@ -195,6 +194,15 @@ bool CopyGuestOutPreservingErrno(T* destination, const T& value) {
     const bool ok = GuestCopyOut_nid_no_patch(destination, &value, sizeof(T));
     errno = savedErrno;
     return ok;
+}
+
+template <typename T>
+int RetainGuest(T* object, const char* function) {
+    std::int32_t* const references = &object->references;
+    std::int32_t current{};
+    if (!CopyGuestInPreservingErrno(current, references) || !GuestWritable_nid_no_patch(references, sizeof(current)))
+        NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return Retain_nid_no_patch(*references);
 }
 
 template <std::size_t N>
@@ -238,51 +246,60 @@ void CopyRsaOutputs(const LibreSsl3Rsa* rsa, const char* function, const char* n
 extern "C" {
 
 int APS5_VABI EVP_PKEY_bits_nid_postfix(const LibreSsl3EvpPkey* key) {
-    if (!key || !key->method)
+    if (!key)
         return 0;
-    PkeyBitsFunction bits;
-    std::memcpy(&bits, static_cast<const unsigned char*>(key->method) + PkeyBitsOffset, sizeof(bits));
+    LibreSsl3EvpPkey guestKey{};
+    if (!CopyGuestInPreservingErrno(guestKey, key))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (!guestKey.method)
+        return 0;
+    PkeyBitsFunction bits{};
+    if (!CopyGuestInPreservingErrno(bits, reinterpret_cast<const PkeyBitsFunction*>(static_cast<const unsigned char*>(guestKey.method) + PkeyBitsOffset)))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     return bits ? bits(key) : 0;
 }
 
 int APS5_VABI EVP_PKEY_up_ref_nid_postfix(LibreSsl3EvpPkey* key) {
     if (!key)
         throw std::invalid_argument("EVP_PKEY_up_ref requires a key");
-    return Retain_nid_no_patch(key->references);
+    return RetainGuest(key, __func__);
 }
 
 LibreSsl3EcKey* APS5_VABI EVP_PKEY_get0_EC_KEY_nid_postfix(LibreSsl3EvpPkey* key) {
     if (!key)
         throw std::invalid_argument("EVP_PKEY_get0_EC_KEY requires a key");
-    if (key->type != 408) {
+    LibreSsl3EvpPkey guestKey{};
+    if (!CopyGuestInPreservingErrno(guestKey, key))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (guestKey.type != 408) {
         LibreSslPutError_nid_no_patch(EvpLibrary, AnyFunction, ExpectingAnEcKey);
         return nullptr;
     }
-    return static_cast<LibreSsl3EcKey*>(key->key);
+    return static_cast<LibreSsl3EcKey*>(guestKey.key);
 }
 
 int APS5_VABI EC_KEY_up_ref_nid_postfix(LibreSsl3EcKey* key) {
     if (!key)
         throw std::invalid_argument("EC_KEY_up_ref requires a key");
-    return Retain_nid_no_patch(key->references);
+    return RetainGuest(key, __func__);
 }
 
 int APS5_VABI RSA_up_ref_nid_postfix(LibreSsl3Rsa* rsa) {
     if (!rsa)
         throw std::invalid_argument("RSA_up_ref requires a key");
-    return Retain_nid_no_patch(rsa->references);
+    return RetainGuest(rsa, __func__);
 }
 
 int APS5_VABI SSL_CTX_up_ref_nid_postfix(LibreSsl3SslCtx* ctx) {
     if (!ctx)
         throw std::invalid_argument("SSL_CTX_up_ref requires a context");
-    return Retain_nid_no_patch(ctx->references);
+    return RetainGuest(ctx, __func__);
 }
 
 int APS5_VABI BIO_up_ref_nid_postfix(LibreSsl::Bio* bio) {
     if (!bio)
         throw std::invalid_argument("BIO_up_ref requires a BIO");
-    return Retain_nid_no_patch(bio->references);
+    return RetainGuest(bio, __func__);
 }
 
 void APS5_VABI RSA_get0_factors_nid_postfix(const LibreSsl3Rsa* rsa, const void** p, const void** q) {

@@ -347,9 +347,19 @@ int APS5_VABI sceFontGetRenderScalePixel(FontHandle fontHandle, float* w, float*
 }
 
 int APS5_VABI sceFontGetRenderScalePoint(FontHandle fontHandle, float* w, float* h) {
-    const int rc = ReadRenderStyle(fontHandle, false, [&](FontHandleNative* font) { return StyleStateGetScalePoint(&font->cached_style.state, w, h); });
-    if (rc != SCE_FONT_OK) ResetScaleOutputs(w, h);
-    return rc;
+    float localW = 0.0f;
+    float localH = 0.0f;
+    const int rc = ReadRenderStyle(fontHandle, false, [&](FontHandleNative* font) {
+        if (!w && !h) return SCE_FONT_ERROR_INVALID_PARAMETER;
+        return StyleStateGetScalePoint(&font->cached_style.state, w ? &localW : nullptr, h ? &localH : nullptr);
+    });
+    if (rc != SCE_FONT_OK) {
+        ResetScaleOutputs(w, h);
+        return rc;
+    }
+    if (w && !CopyOutGuest(w, localW)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    if (h && !CopyOutGuest(h, localH)) return SCE_FONT_ERROR_INVALID_PARAMETER;
+    return SCE_FONT_OK;
 }
 
 int APS5_VABI sceFontGetRenderEffectSlant(FontHandle fontHandle, float* slantRatio) {
