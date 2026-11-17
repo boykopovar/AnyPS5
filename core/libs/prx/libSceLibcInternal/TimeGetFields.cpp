@@ -201,7 +201,7 @@ struct CtypeTraits<char> {
                 const auto* vt = reinterpret_cast<const GuestLocale::CtypeVtable*>(ctype->vtable);
                 if (vt->caseMethods[0] != nullptr) {
                     using DoToLower = char (APS5_VABI*)(const GuestLocale::Facet*, char);
-                    return reinterpret_cast<DoToLower>(vt->caseMethods[0])(ctype, ch);
+                    return reinterpret_cast<DoToLower>(const_cast<void*>(vt->caseMethods[0]))(ctype, ch);
                 }
             }
             const auto* ct = reinterpret_cast<const GuestLocale::CtypeFacet*>(ctype);
@@ -226,7 +226,7 @@ struct CtypeTraits<std::uint16_t> {
             const auto* vt = reinterpret_cast<const GuestLocale::WideCtypeVtable*>(ctype->vtable);
             if (vt->classificationMethods[0] != nullptr) {
                 using DoIs = bool (APS5_VABI*)(const GuestLocale::Facet*, short, std::uint16_t);
-                return reinterpret_cast<DoIs>(vt->classificationMethods[0])(ctype, mask, ch);
+                return reinterpret_cast<DoIs>(const_cast<void*>(vt->classificationMethods[0]))(ctype, mask, ch);
             }
         }
         const int narrowed = _Wctob_nid_postfix(ch);
@@ -247,7 +247,7 @@ struct CtypeTraits<std::uint16_t> {
             const auto* vt = reinterpret_cast<const GuestLocale::WideCtypeVtable*>(ctype->vtable);
             if (vt->caseMethods[0] != nullptr) {
                 using DoToLower = std::uint16_t (APS5_VABI*)(const GuestLocale::Facet*, std::uint16_t);
-                return reinterpret_cast<DoToLower>(vt->caseMethods[0])(ctype, ch);
+                return reinterpret_cast<DoToLower>(const_cast<void*>(vt->caseMethods[0]))(ctype, ch);
             }
         }
         return static_cast<std::uint16_t>(_Towlower_nid_postfix(ch, nullptr));
