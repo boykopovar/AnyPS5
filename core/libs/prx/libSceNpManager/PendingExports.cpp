@@ -313,18 +313,6 @@ int APS5_VABI sceNpPush2DeleteUserContext(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpPush2Init(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceNpPush2IsInit(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceNpPush2OptionalCheckCallback(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 int APS5_VABI sceNpPush2RegisterDataType(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -341,19 +329,7 @@ int APS5_VABI sceNpPush2SendPushStatisticsDataSystemTelemetry(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpPush2SetGlobalMutex(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 int APS5_VABI sceNpPush2SetNpCommunicationId(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceNpPush2Term(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceNpPush2TriggerEmptyUserEvent(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -377,14 +353,6 @@ int APS5_VABI sceNpPush2WaitCallback(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpPushCheckCallback(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceNpPushInit(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 int APS5_VABI sceNpPushIntBeginInactive(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
@@ -394,10 +362,6 @@ int APS5_VABI sceNpPushIntEndInactive(void) {
     return 0;
 }
 int APS5_VABI sceNpPushIntGetBindUserState(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceNpPushIntGetConnectionState(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -433,19 +397,11 @@ int APS5_VABI sceNpPushStopNotificationA(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
-int APS5_VABI sceNpPushTerm(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 int APS5_VABI sceNpPushUnregisterExtendedDataFilter(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 int APS5_VABI sceNpPushUnregisterNotificationCallback(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceNpRegisterStateCallbackForToolkit(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -462,10 +418,6 @@ int APS5_VABI sceNpSetAdditionalScope(void) {
     return 0;
 }
 int APS5_VABI sceNpSetNpTitleIdVsh(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-int APS5_VABI sceNpUnregisterStateCallbackForToolkit(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

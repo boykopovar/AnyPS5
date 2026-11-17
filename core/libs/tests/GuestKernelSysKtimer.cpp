@@ -70,6 +70,7 @@ void Creation() {
     Require(ktimer_create_nid_postfix(ClockMonotonic, &noSignal, &id) == -1 && Error() == Einval);
     Require(ktimer_create_nid_postfix(ClockMonotonic, &badSignal, &id) == -1 && Error() == Einval);
     Require(ktimer_create_nid_postfix(ClockMonotonic, &None, nullptr) == -1 && Error() == Efault);
+    Require(ktimer_create_nid_postfix(ClockMonotonic, &None, reinterpret_cast<int*>(0x10)) == -1 && Error() == Efault);
 
     std::vector<int> ids;
     for (int expected = 3; expected < 32; ++expected) {
@@ -103,12 +104,23 @@ void Values() {
     const int id = Create();
     GuestItimerspec disarmed = Get(id);
     Require(Nanoseconds(disarmed.it_value) == 0 && Nanoseconds(disarmed.it_interval) == 0);
+    Require(ktimer_gettime_nid_postfix(id, nullptr) == -1 && Error() == Efault);
+    Require(ktimer_gettime_nid_postfix(id, reinterpret_cast<GuestItimerspec*>(0x10)) == -1 && Error() == Efault);
     for (const GuestItimerspec bad : {GuestItimerspec{{0, 0}, {-1, 0}}, GuestItimerspec{{0, 0}, {0, -1}}, GuestItimerspec{{0, 0}, {0, Second}},
                                  GuestItimerspec{{-1, 0}, {1, 0}}, GuestItimerspec{{0, Second}, {1, 0}}})
         Require(ktimer_settime_nid_postfix(id, 0, &bad, nullptr) == -1 && Error() == Einval);
     const GuestItimerspec valid{{0, 0}, {1, 0}};
-    for (const int badFlags : {-1, 2, 4, ~TimerAbstime})
-        Require(ktimer_settime_nid_postfix(id, badFlags, &valid, nullptr) == -1 && Error() == Einval);
+    for (const int flags : {2, 4, 0x7ffffffe}) {
+        Require(ktimer_settime_nid_postfix(id, flags, &valid, nullptr) == 0);
+        const auto relative = Get(id);
+        Require(Nanoseconds(relative.it_value) > 0 && Nanoseconds(relative.it_value) <= Second);
+    }
+    KernelTimespec now{};
+    Require(clock_gettime_nid_postfix(ClockMonotonic, &now) == 0);
+    const GuestItimerspec future{{0, 0}, {now.tv_sec + 5, now.tv_nsec}};
+    Require(ktimer_settime_nid_postfix(id, -1, &future, nullptr) == 0);
+    const auto absolute = Get(id);
+    Require(Nanoseconds(absolute.it_value) > 4 * Second && Nanoseconds(absolute.it_value) <= 5 * Second);
 
     const GuestItimerspec clear{{-1, 0}, {0, 0}};
     Require(ktimer_settime_nid_postfix(id, 0, &clear, nullptr) == 0);
@@ -176,12 +188,26 @@ void Absolute() {
 
 }
 
+static void SettimeGuestBuffers() {
+    const int id = Create();
+    auto* const badValue = reinterpret_cast<GuestItimerspec*>(1);
+    Require(ktimer_settime_nid_postfix(id, 0, badValue, nullptr) == -1 && Error() == Efault);
+    Require(ktimer_settime_nid_postfix(-1, 0, badValue, nullptr) == -1 && Error() == Efault);
+    Require(Nanoseconds(Get(id).it_value) == 0);
+    const GuestItimerspec next{{3, 0}, {20, 0}};
+    Require(ktimer_settime_nid_postfix(id, 0, &next, badValue) == -1 && Error() == Efault);
+    const auto active = Get(id);
+    Require(Nanoseconds(active.it_interval) == 3 * Second && Nanoseconds(active.it_value) > 0);
+    Require(ktimer_delete_nid_postfix(id) == 0);
+}
+
 int main() {
     Creation();
     InvalidIds();
     Values();
     Expiry();
     Absolute();
+    SettimeGuestBuffers();
     std::puts("guest_kernel_sys_ktimer passed");
     return 0;
 }

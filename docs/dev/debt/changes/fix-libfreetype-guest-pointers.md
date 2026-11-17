@@ -1,0 +1,17 @@
+# libfreetype
+
+## change [FT_Face_Properties, FT_Palette_Set_Foreground_Color]
+
+- [FT_Face_Properties, FT_Palette_Set_Foreground_Color](../../../core/libs/prx/libfreetype/src/FaceSettings.cpp) (libfreetype) - the console's FreeType version and build options are unverified. Both take a face opened through libSceFreeType and call the bundled FreeType 2.15.0 functions on its host face. Each record, and the stem-darkening or random-seed value it points to, is read through a checked guest copy (else `Invalid_Argument`, as for a null array) and passed to FreeType one at a time, so, as in FreeType, entries after the first failing one are never read. Property tags cross as the console's 64-bit `FT_ULong`; a tag above 32 bits becomes 0 on Windows and is rejected as unknown, as on Linux. `FT_PARAM_TAG_LCD_FILTER_WEIGHTS` returns `Unimplemented_Feature` because subpixel rendering is disabled. A null face returns `Invalid_Face_Handle` from `FT_Face_Properties`, where FreeType would dereference it. Whether the host renderer honours these settings for guest glyphs is not tested
+
+## change [Output guards]
+
+- [Output guards](../../../core/libs/prx/libfreetype/src/FontMetadata.cpp): Refused host-write access returns `FT_Err_Invalid_Argument` without touching either charset output or the requested metadata record. The BDF property, SFNT language-tag and FNT header records are checked writable, read and written back whole through checked guest copies, so an unmapped or read-only record returns the same error. This is host-boundary validation, not measured console behavior. Windows runtime tests use read-only guest direct-memory mappings, check complete output preservation and both partial charset-output failures, then restore write permission and verify successful queries.
+
+## change [FT_Library_SetLcdGeometry]
+
+- [FT_Library_SetLcdGeometry](../../../core/libs/prx/libfreetype/src/LibraryHelpers.cpp): Console signature, backend options and interoperability between the separately inventoried modules are unmeasured. The adapter follows public FreeType and pinned backend [ftlcdfil.c](https://github.com/freetype/freetype/blob/37515cf56ba3349656049edbed89ffc6f6466f2d/src/base/ftlcdfil.c#L170-L185), which is built without `FT_CONFIG_OPTION_SUBPIXEL_RENDERING`, so the geometry is stored on the guest library's native handle and used by later LCD renders through `libSceFreeType`. A console build with that option would return `FT_Err_Unimplemented_Feature` instead. Guest LP64 vectors are read through a checked guest copy, an unreadable array returning `FT_Err_Invalid_Argument` as a null one does, and converted to host `FT_Vector`; on Windows a coordinate outside the 32-bit host `FT_Pos` range throws through `NotImplemented_nid_no_patch`.
+
+## change [FT_Get_Var_Axis_Flags]
+
+- [FT_Get_Var_Axis_Flags](../../../core/libs/prx/libfreetype/src/LibraryHelpers.cpp): The console signature is unmeasured. The adapter passes the guest `FT_MM_Var` record to the pinned backend [ftmm.c](https://github.com/freetype/freetype/blob/37515cf56ba3349656049edbed89ffc6f6466f2d/src/base/ftmm.c#L599-L620) unchanged, because its 32-byte layout matches the host's, and reads the 16-bit flag array that follows it. The record is the host allocation `FT_Get_MM_Var` returned. A refused host write, or an unmapped or read-only flags output, returns `FT_Err_Invalid_Argument` without changing it, and the flags are written through a checked guest copy; this is host-boundary validation, not measured console behavior.

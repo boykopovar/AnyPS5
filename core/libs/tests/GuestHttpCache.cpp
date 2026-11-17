@@ -3,10 +3,12 @@
 #include "prx/libSceRtc/libSceRtc.hpp"
 #include "prx/libSceUserService/libSceUserService.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -201,9 +203,10 @@ struct Exchange {
     Response response{};
     std::int32_t result = -1;
     int request = 0;
+    const char* tag = nullptr;
 
     int Retrieve(const char* url) {
-        request = sceHttpCacheCreateRequest(cache, user);
+        request = tag == nullptr ? sceHttpCacheCreateRequest(cache, user) : sceHttpCacheCreateRequestWithTag(cache, user, tag);
         Require(request > 0);
         Request query{method, 0, url, requestHeaders.size(), requestHeaders.data()};
         next = Request{};
@@ -346,6 +349,25 @@ void TestRevalidation() {
     Request query{0, 0, "http://stale/a", 0, nullptr};
     std::int32_t result = -1;
     Require(sceHttpCacheRetrieve(exchange.request, &query, nullptr, nullptr, &result) == InvalidValue && result == 2);
+    {
+        const Header badHeaders[] = {{"Cache-Control", "max-age=999"}};
+        const ResponseHeader badReval{304, 0, 1, badHeaders};
+        errno = 71;
+        Require(sceHttpCacheRevalidate(exchange.request, &badReval, &exchange.response,
+                                       reinterpret_cast<std::int32_t*>(static_cast<std::uintptr_t>(0x10))) == InvalidValue &&
+                errno == 71);
+        std::int32_t untouched = -1;
+        errno = 71;
+        Require(sceHttpCacheRevalidate(exchange.request,
+                                       reinterpret_cast<const ResponseHeader*>(static_cast<std::uintptr_t>(0x10)),
+                                       &exchange.response, &untouched) == InvalidValue &&
+                errno == 71);
+        errno = 71;
+        Require(sceHttpCacheRevalidate(exchange.request, &badReval,
+                                       reinterpret_cast<Response*>(static_cast<std::uintptr_t>(0x10)),
+                                       &untouched) == InvalidValue &&
+                errno == 71);
+    }
     Require(exchange.Revalidate(304, {{"Cache-Control", "max-age=600"}, {"ETag", "e2"}, {"X-New", "1"}}) == 0 && exchange.result == 1);
     Require(exchange.response.statusCode == 200 && exchange.response.contentLength == 8);
     Require(Value(exchange.response, "Cache-Control") == "max-age=600" && Value(exchange.response, "ETag") == "e1" && Value(exchange.response, "X-New").empty());
@@ -476,6 +498,107 @@ void TestPublicResponses() {
     Require(sceHttpCacheTerm(exchange.cache) == 0);
 }
 
+void TestTags() {
+    Exchange exchange{sceHttpCacheInit(0)};
+    exchange.tag = "alpha";
+    Cached(exchange, "http://tags/a", {{"Cache-Control", "max-age=3600"}}, "a");
+    exchange.tag = "beta";
+    Cached(exchange, "http://tags/b", {{"Cache-Control", "max-age=3600"}}, "b");
+    exchange.tag = nullptr;
+    Cached(exchange, "http://tags/plain", {{"Cache-Control", "max-age=3600"}}, "p");
+    Require(sceHttpCacheClear(exchange.cache, InitialUser, nullptr) == InvalidValue);
+    Require(sceHttpCacheClear(exchange.cache, InitialUser, "") == InvalidValue);
+    Require(sceHttpCacheClear(9, InitialUser, "alpha") == NotFound);
+    Require(sceHttpCacheCreateRequestWithTag(exchange.cache, InitialUser, nullptr) == InvalidValue);
+    Require(sceHttpCacheCreateRequestWithTag(exchange.cache, InitialUser, "") == InvalidValue);
+    Require(sceHttpCacheCreateRequestWithTag(exchange.cache, InitialUser, "01234567890123456789012345678901") == InvalidValue);
+    Require(sceHttpCacheCreateRequestWithTag(9, InitialUser, "alpha") == NotFound);
+    Require(sceHttpCacheCreateRequestWithTag(exchange.cache, 5, "alpha") == InvalidUser);
+    Require(sceHttpCacheClear(exchange.cache, InitialUser, "alpha") == 0);
+    RequireMiss(exchange, "http://tags/a");
+    Require(exchange.Retrieve("http://tags/b") == 0 && exchange.result == 1);
+    exchange.Done();
+    Require(exchange.Retrieve("http://tags/plain") == 0 && exchange.result == 1);
+    exchange.Done();
+    Require(sceHttpCacheClear(exchange.cache, -1, "beta") == 0);
+    Require(exchange.Retrieve("http://tags/b") == 0 && exchange.result == 1);
+    exchange.Done();
+    const std::int32_t users[]{InitialUser};
+    Require(sceHttpCacheClearAllUserTags(exchange.cache, users, 1) == 0);
+    RequireMiss(exchange, "http://tags/b");
+    Require(exchange.Retrieve("http://tags/plain") == 0 && exchange.result == 1);
+    exchange.Done();
+    Require(sceHttpCacheClearAllUserTags(exchange.cache, users, 0) == 0);
+    Require(exchange.Retrieve("http://tags/plain") == 0 && exchange.result == 1);
+    exchange.Done();
+    Require(sceHttpCacheClearAllUserTags(exchange.cache, reinterpret_cast<const std::int32_t*>(0x10), 1) == InvalidValue);
+    Require(sceHttpCacheClearAllUserTags(exchange.cache, users, 21) == InvalidValue);
+    Require(sceHttpCacheTerm(exchange.cache) == 0);
+}
+
+void TestMemoryPool() {
+    Exchange exchange{sceHttpCacheInit(0)};
+    const int request = sceHttpCacheCreateRequest(exchange.cache, InitialUser);
+    Require(request > 0);
+    Request query{0, 0, "http://pool/a", 0, nullptr};
+    ResponseHeader header{200, 0, 0, nullptr};
+    Response response{};
+    Request next{};
+    std::int32_t result = -1;
+    std::size_t size = 7;
+    std::array<std::uint8_t, 16> pool;
+    pool.fill(0xa5);
+    Require(sceHttpCacheRetrieveWithMemoryPool(request + 0x100, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0) == NotFound);
+    Require(sceHttpCacheRetrieveWithMemoryPool(request, &query, &response, &next, &result, nullptr, nullptr, 0) == InvalidValue);
+    Require(sceHttpCacheRetrieveWithMemoryPool(request, nullptr, &response, &next, nullptr, nullptr, &size, 0) == InvalidValue);
+    Require(sceHttpCacheRetrieveWithMemoryPool(request, &query, &response, &next, nullptr, nullptr, &size, 0) == InvalidValue);
+    query.headerCount = 1;
+    Require(sceHttpCacheRetrieveWithMemoryPool(request, &query, &response, &next, &result, nullptr, &size, 0) == InvalidValue && result == -1);
+    query.headerCount = 0;
+    errno = 71;
+    Require(sceHttpCacheRetrieveWithMemoryPool(request, reinterpret_cast<const Request*>(static_cast<std::uintptr_t>(0x10)),
+                                               nullptr, nullptr, &result, nullptr, &size, 0) == InvalidValue && errno == 71);
+    errno = 71;
+    Require(sceHttpCacheRetrieveWithMemoryPool(request, &query, nullptr, nullptr, reinterpret_cast<std::int32_t*>(static_cast<std::uintptr_t>(0x10)),
+                                               nullptr, &size, 0) == InvalidValue && errno == 71);
+    Require(sceHttpCacheRetrieveWithMemoryPool(request, &query, nullptr, nullptr, &result, nullptr, &size, 0) == 0 && result == 0 && size == 7);
+    result = -1;
+    Require(sceHttpCacheRetrieveWithMemoryPool(request, &query, nullptr, nullptr, &result, pool.data(), nullptr, pool.size()) == 0 && result == 0);
+    Require(pool[0] == 0xa5 && pool[15] == 0xa5);
+    result = -1;
+    Require(sceHttpCacheRevalidateWithMemoryPool(request + 0x100, nullptr, nullptr, nullptr, nullptr, nullptr, 0) == NotFound);
+    Require(sceHttpCacheRevalidateWithMemoryPool(request, &header, &response, &result, nullptr, nullptr, 0) == InvalidValue);
+    Require(sceHttpCacheRevalidateWithMemoryPool(request, nullptr, &response, nullptr, nullptr, &size, 0) == InvalidValue);
+    Require(sceHttpCacheRevalidateWithMemoryPool(request, &header, &response, nullptr, nullptr, &size, 0) == InvalidValue);
+    header.headerCount = 1;
+    Require(sceHttpCacheRevalidateWithMemoryPool(request, &header, &response, &result, nullptr, &size, 0) == InvalidValue && result == -1);
+    header.headerCount = 0;
+    errno = 71;
+    Require(sceHttpCacheRevalidateWithMemoryPool(request, reinterpret_cast<const ResponseHeader*>(static_cast<std::uintptr_t>(0x10)),
+                                                 nullptr, &result, nullptr, &size, 0) == InvalidValue && errno == 71);
+    Require(sceHttpCacheRevalidateWithMemoryPool(request, &header, nullptr, &result, nullptr, &size, 0) == 0 && result == 0 && size == 7);
+    const Header maxAge[]{{"Cache-Control", "max-age=600"}};
+    const ResponseHeader stored{200, 0, 1, maxAge};
+    Require(sceHttpCacheSetResponseHeader(request, &stored) == 0);
+    Require(sceHttpCacheSetData(request, "a", 1) == 0 && sceHttpCacheCompleteRequest(request) == 0);
+    Require(sceHttpCacheDeleteRequest(request) == 0);
+    Require(exchange.Retrieve("http://pool/a") == 0 && exchange.result == 1 && ReadAll(exchange.request) == "a");
+    exchange.Done();
+    Cached(exchange, "http://pool/b", {{"Cache-Control", "max-age=60"}, {"ETag", "b1"}}, "old");
+    Advance(120);
+    Require(exchange.Retrieve("http://pool/b") == 0 && exchange.result == 2);
+    const Header fresh[]{{"Cache-Control", "max-age=600"}, {"ETag", "b2"}};
+    const ResponseHeader replaced{200, 0, 2, fresh};
+    result = -1;
+    Require(sceHttpCacheRevalidateWithMemoryPool(exchange.request, &replaced, nullptr, &result, pool.data(), nullptr, pool.size()) == 0 && result == 0);
+    Require(pool[0] == 0xa5 && pool[15] == 0xa5);
+    Require(sceHttpCacheSetData(exchange.request, "new", 3) == 0 && sceHttpCacheCompleteRequest(exchange.request) == 0);
+    exchange.Done();
+    Require(exchange.Retrieve("http://pool/b") == 0 && exchange.result == 1 && ReadAll(exchange.request) == "new");
+    exchange.Done();
+    Require(sceHttpCacheTerm(exchange.cache) == 0);
+}
+
 }
 
 int main() {
@@ -489,5 +612,77 @@ int main() {
     TestSystemLifecycle();
     TestSystemPathMemory();
     TestPublicResponses();
+    TestTags();
+    TestMemoryPool();
+    {
+        const int cache = sceHttpCacheInit(0);
+        Require(cache > 0);
+        const int request = sceHttpCacheCreateRequest(cache, InitialUser);
+        Require(request > 0);
+        std::int32_t result = 0;
+        Response response{};
+        Request next{};
+        errno = 71;
+        Require(sceHttpCacheRetrieve(request, reinterpret_cast<const Request*>(static_cast<std::uintptr_t>(0x10)),
+                                     &response, &next, &result) == InvalidValue && errno == 71);
+        Request badUrlRequest{};
+        badUrlRequest.method = 1;
+        badUrlRequest.url = reinterpret_cast<const char*>(static_cast<std::uintptr_t>(0x10));
+        errno = 71;
+        Require(sceHttpCacheRetrieve(request, &badUrlRequest, &response, &next, &result) == InvalidValue && errno == 71);
+        Request goodRequest{};
+        goodRequest.method = 0;
+        goodRequest.url = "https://example.com/item";
+        errno = 71;
+        Require(sceHttpCacheRetrieve(request, &goodRequest, &response, &next,
+                                     reinterpret_cast<std::int32_t*>(static_cast<std::uintptr_t>(0x10))) == InvalidValue && errno == 71);
+        errno = 71;
+        Require(sceHttpCacheSetData(request, reinterpret_cast<const void*>(static_cast<std::uintptr_t>(0x10)), 16) == 0 && errno == 71);
+        Require(sceHttpCacheRetrieve(request, &goodRequest, &response, &next, &result) == 0 && result == 0);
+        ResponseHeader pendingHeader{};
+        pendingHeader.statusCode = 200;
+        Header cacheHeaders[] = {{"Cache-Control", "max-age=60"}};
+        pendingHeader.headerCount = 1;
+        pendingHeader.headers = cacheHeaders;
+        Require(sceHttpCacheSetResponseHeader(request, &pendingHeader) == 0);
+        errno = 71;
+        Require(sceHttpCacheSetData(request, reinterpret_cast<const void*>(static_cast<std::uintptr_t>(0x10)), 16) == InvalidValue && errno == 71);
+        const char sampleByte = 'x';
+        errno = 71;
+        Require(sceHttpCacheSetData(request, &sampleByte, std::numeric_limits<std::size_t>::max()) == InvalidValue && errno == 71);
+        Require(sceHttpCacheSetData(request, "ok", 2) == 0);
+        Require(sceHttpCacheCompleteRequest(request) == 0);
+        const int hitRequest = sceHttpCacheCreateRequest(cache, InitialUser);
+        Require(hitRequest > 0);
+        Require(sceHttpCacheRetrieve(hitRequest, &goodRequest,
+                                     reinterpret_cast<Response*>(static_cast<std::uintptr_t>(0x10)),
+                                     &next, &result) == InvalidValue);
+        Require(sceHttpCacheRetrieve(hitRequest, &goodRequest, &response, &next, &result) == 0 && result == 1);
+        errno = 71;
+        Require(sceHttpCacheReadData(hitRequest, 2, reinterpret_cast<void*>(static_cast<std::uintptr_t>(0x10))) == InvalidValue && errno == 71);
+        Require(ReadAll(hitRequest) == "ok");
+        Require(sceHttpCacheDeleteRequest(hitRequest) == 0);
+        Quota badCountQuota{};
+        badCountQuota.count = 0xFFFFFFFFu;
+        badCountQuota.entries = reinterpret_cast<const QuotaEntry*>(static_cast<std::uintptr_t>(0x10));
+        errno = 71;
+        Require(sceHttpCacheSetQuota(cache, &badCountQuota) == InvalidValue && errno == 71);
+        Quota badEntriesQuota{};
+        badEntriesQuota.count = 1;
+        badEntriesQuota.entries = reinterpret_cast<const QuotaEntry*>(static_cast<std::uintptr_t>(0x10));
+        errno = 71;
+        Require(sceHttpCacheSetQuota(cache, &badEntriesQuota) == InvalidValue && errno == 71);
+        QuotaEntry badNameEntry{};
+        badNameEntry.name = reinterpret_cast<const char*>(static_cast<std::uintptr_t>(0x10));
+        Quota badNameQuota{};
+        badNameQuota.count = 1;
+        badNameQuota.entries = &badNameEntry;
+        errno = 71;
+        Require(sceHttpCacheSetQuota(cache, &badNameQuota) == InvalidValue && errno == 71);
+        errno = 71;
+        Require(sceHttpCacheSetQuota(cache, reinterpret_cast<const Quota*>(static_cast<std::uintptr_t>(0x10))) == InvalidValue && errno == 71);
+        Require(sceHttpCacheDeleteRequest(request) == 0);
+        Require(sceHttpCacheTerm(cache) == 0);
+    }
     return 0;
 }

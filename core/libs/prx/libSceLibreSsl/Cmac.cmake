@@ -11,7 +11,8 @@ if(BUILD_TESTING)
     configure_windows_unwind(guest_libressl_cmac_tests)
     add_test(NAME guest_libressl_cmac COMMAND guest_libressl_cmac_tests)
 
-    add_test_executable(guest_libressl_cmac_patched_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslCmac.cpp)
+    add_test_executable(guest_libressl_cmac_patched_tests NO_RUNTIME_DLL_STAGING
+        ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslCmac.cpp)
     target_include_directories(guest_libressl_cmac_patched_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_compile_definitions(guest_libressl_cmac_patched_tests PRIVATE ANYPS5_CMAC_DYNAMIC)
     target_link_libraries(guest_libressl_cmac_patched_tests PRIVATE mbedcrypto ${CMAKE_DL_LIBS})
