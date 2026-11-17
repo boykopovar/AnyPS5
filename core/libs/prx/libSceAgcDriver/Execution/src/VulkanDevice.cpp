@@ -28,6 +28,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Float32FlushControl.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PipelineLinkOptimization.hpp"
 #include "prx/libSceAgcDriver/Execution/include/DrawInputsInPlace.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ReadTrapsOverHostPointerImports.hpp"
 #include "prx/libSceAgcDriver/Execution/include/SubgroupBarrier.hpp"
 #include "prx/libSceAgcDriver/Execution/include/TessellationPipelineCache.hpp"
 #include "prx/libSceAgcDriver/Execution/include/IndexedIndirectPatches.hpp"
@@ -646,6 +647,7 @@ struct VulkanDevice::State {
     VkDeviceSize hostImportAlignment = 0;
     bool drawInputsInPlace = true;
     bool dmaBufImport = false;
+    bool readTrapsOverHostPointerImports = false;
     bool sparseBinding = false;
     bool sparseResidencyBuffer = false;
     bool sparseResidencyAliased = false;
@@ -1933,8 +1935,9 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         }
 #endif
         deviceExtensions.push_back(VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME);
+        state->readTrapsOverHostPointerImports = ReadTrapsOverHostPointerImportsUsable(driverProperties.driverID);
 #ifndef _WIN32
-        state->dmaBufImport = driverProperties.driverID != VK_DRIVER_ID_NVIDIA_PROPRIETARY && hasExtension(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME) && hasExtension(VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME);
+        state->dmaBufImport =driverProperties.driverID != VK_DRIVER_ID_NVIDIA_PROPRIETARY && hasExtension(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME) && hasExtension(VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME);
         if (state->dmaBufImport) {
             deviceExtensions.push_back(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
             deviceExtensions.push_back(VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME);
@@ -4800,6 +4803,7 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.individuallyFreeDescriptorSets = state->individuallyFreeDescriptorSets;
     context.tessellationPipelineCache = state->tessellationPipelineCache;
     context.dmaBufImport = state->dmaBufImport;
+    context.readTrapsOverHostPointerImports = state->readTrapsOverHostPointerImports;
     context.sparseBinding = state->sparseBinding;
     context.sparseResidencyBuffer = state->sparseResidencyBuffer;
     context.sparseResidencyAliased = state->sparseResidencyAliased;

@@ -5530,7 +5530,7 @@ void StorageTexture::StoreReadbackBeforeLabel(const char* reason, VkDevice devic
                 if (auto alive = texture->weak_from_this().lock()) imported.push_back(std::move(alive));
             }
         }
-        std::erase_if(imported, [](const std::shared_ptr<StorageTexture>& texture) { return !HostImportCovers(texture->context, texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes)); });
+        std::erase_if(imported, [](const std::shared_ptr<StorageTexture>& texture) { return !ReadTrappableHostImportCovers(texture->context, texture->descriptor.baseAddress, static_cast<std::size_t>(texture->guestBytes), TrapPage()); });
         std::sort(imported.begin(), imported.end(), [](const std::shared_ptr<StorageTexture>& left, const std::shared_ptr<StorageTexture>& right) { return std::less<const StorageTexture*>{}(left.get(), right.get()); });
     }
     const auto storesOverImport = [&](const StorageTexture* texture) {

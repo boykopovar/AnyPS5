@@ -191,6 +191,7 @@ struct Context {
     bool discreteGpu = false;
     bool integratedGpu = false;
     bool dmaBufImport = false;
+    bool readTrapsOverHostPointerImports = false;
     bool sparseBinding = false;
     bool sparseResidencyBuffer = false;
     bool sparseResidencyAliased = false;

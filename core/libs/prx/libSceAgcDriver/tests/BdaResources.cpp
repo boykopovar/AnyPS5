@@ -214,6 +214,41 @@ void importCrossingTests(const Context& context, const BdaTestAccess& access) {
     ::operator delete(block, std::align_val_t{half});
 }
 
+void readTrappableImportTests(const Context& context) {
+    constexpr std::size_t half = 65536;
+    constexpr std::uint64_t page = 4096;
+    void* block = ::operator new(2 * half, std::align_val_t{half});
+    std::memset(block, 0x33, 2 * half);
+    const auto first = reinterpret_cast<std::uintptr_t>(block);
+    auto importing = context;
+    importing.hostImportAlignment = half;
+    const auto registry = [&](bool add) {
+        auto* mutation = GuestAllocations::GuestAllocationsBegin_nid_postfix();
+        if (add) GuestAllocations::GuestAllocationsAdd_nid_postfix(mutation, block, 2 * half, true, false, true);
+        else GuestAllocations::GuestAllocationsRemove_nid_postfix(mutation, block);
+        GuestAllocations::GuestAllocationsEnd_nid_postfix(mutation);
+    };
+    registry(true);
+    {
+        GuestBufferMemory leased(importing);
+        leased.AcquireRegistered();
+        const auto* import = HostImportFor(importing, first, 2 * half);
+        Require(import != nullptr, "the registered range was not imported");
+        const bool dmaBuf = import->dmaBuf;
+        auto hostPointerTraps = importing;
+        hostPointerTraps.readTrapsOverHostPointerImports = true;
+        auto noHostPointerTraps = importing;
+        noHostPointerTraps.readTrapsOverHostPointerImports = false;
+        Require(ReadTrappableHostImportCovers(hostPointerTraps, first + 3 * page, page, page), "an imported range was not trappable where host pointer imports keep read traps");
+        Require(ReadTrappableHostImportCovers(noHostPointerTraps, first + 3 * page, page, page) == dmaBuf, "a host pointer import was trappable on a driver whose host pointer imports cannot keep read traps, or a dma-buf import was not");
+        Require(!ReadTrappableHostImportCovers(hostPointerTraps, first + 3 * page, page, 3 * page), "a page size that is not a power of two was accepted");
+        Require(!ReadTrappableHostImportCovers(hostPointerTraps, first + 2 * half - page, 2 * page, page), "a range past its import was trappable");
+    }
+    registry(false);
+    Require(!ReadTrappableHostImportCovers(context, first, page, page), "a range was trappable after its import was gone");
+    ::operator delete(block, std::align_val_t{half});
+}
+
 constexpr auto FixedImageConstants = [] {
     std::array<std::uint8_t, 64> bytes{};
     for (auto& value : bytes) value = 0x5c;
@@ -5466,6 +5501,7 @@ void RunBdaResourceTests(const Context& context, const BdaTestAccess& access) {
         if (dropped.enabled) Require(dropped.waiterDrops == after.waiterDrops + 1 && LeaseCounters().cacheDrops == dropped.waiterDrops, "the free did not drop the cached address space");
     }
     importCrossingTests(context, access);
+    readTrappableImportTests(context);
     fixedReadOnlyRangeMirrorTests(context, access);
     addressTableKeyTests();
     snapshotTableTests(context, access);

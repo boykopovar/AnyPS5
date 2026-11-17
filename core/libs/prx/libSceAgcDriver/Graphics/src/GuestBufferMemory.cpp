@@ -4899,6 +4899,23 @@ bool HostImportCovers(const Context& context, std::uint64_t address, std::size_t
     return state.device == context.device && peekImport(state, address, address + bytes) != nullptr;
 }
 
+bool ReadTrappableHostImportCovers(const Context& context, std::uint64_t address, std::size_t bytes, std::uint64_t page) {
+    if (context.hostImportAlignment == 0 || bytes == 0 || page == 0 || (page & (page - 1)) != 0 || bytes > std::numeric_limits<std::uint64_t>::max() - address - page) return false;
+    const auto first = address & ~(page - 1);
+    const auto last = (address + bytes + page - 1) & ~(page - 1);
+    auto& state = Imports();
+    std::lock_guard lock(state.mutex);
+    if (state.device != context.device || peekImport(state, address, address + bytes) == nullptr) return false;
+    auto it = state.imports.upper_bound(first);
+    if (it != state.imports.begin()) --it;
+    for (; it != state.imports.end() && it->first < last; ++it) {
+        const auto& entry = it->second;
+        if (entry.base + entry.bytes <= first) continue;
+        if (!entry.dmaBuf && !context.readTrapsOverHostPointerImports) return false;
+    }
+    return true;
+}
+
 bool ComparedHostImportCovers(const Context& context, std::uint64_t address, std::size_t bytes) {
 #ifdef _WIN32
     static_cast<void>(context);
