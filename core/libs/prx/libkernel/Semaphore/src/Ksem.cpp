@@ -8,12 +8,14 @@
 #include "prx/libkernel/Time/include/Time.hpp"
 #include "prx/libkernel/Time/include/TimedWait.hpp"
 #include <algorithm>
+#include <atomic>
 #include <climits>
 #include <cstdint>
 #include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #ifdef _WIN32
 #include <fcntl.h>
 #include <io.h>
@@ -45,6 +47,7 @@ struct Ksem {
     KernelTimespec changed{};
     unsigned count = 0;
     unsigned waiters = 0;
+    std::atomic<bool> dead{false};
 };
 
 std::mutex g_ksemLock;
@@ -66,7 +69,14 @@ std::shared_ptr<Ksem> Find(std::intptr_t id) {
     if (id < 0 || id > INT_MAX) return {};
     std::lock_guard lock(g_ksemLock);
     const auto found = g_ksems.find(static_cast<int>(id));
-    return found != g_ksems.end() ? found->second : std::shared_ptr<Ksem>{};
+    if (found == g_ksems.end() || found->second->dead.load()) return {};
+    return found->second;
+}
+
+std::size_t SemaphoreCount() {
+    std::set<const Ksem*> semaphores;
+    for (const auto& entry : g_ksems) semaphores.insert(entry.second.get());
+    return semaphores.size();
 }
 
 int ReserveDescriptor() {
@@ -126,9 +136,10 @@ int Wait(std::intptr_t id, bool once, const KernelTimespec* abstime) {
 
 }
 
-bool IsKsemDescriptor(int descriptor) {
+void DuplicateKsemDescriptor(int from, int to) {
     std::lock_guard lock(g_ksemLock);
-    return g_ksems.count(descriptor) != 0;
+    const auto found = g_ksems.find(from);
+    if (found != g_ksems.end()) g_ksems[to] = found->second;
 }
 
 extern "C" bool IsKsemDescriptor_nid_no_patch(int descriptor) {
@@ -187,7 +198,7 @@ int APS5_VABI ksem_init_nid_postfix(std::intptr_t* idp, unsigned int value) {
     ksem->born = ksem->accessed = ksem->changed = Timestamp();
     {
         std::lock_guard lock(g_ksemLock);
-        if (g_ksems.size() < SemMax) {
+        if (SemaphoreCount() < SemMax) {
             g_ksems[descriptor] = std::move(ksem);
             return 0;
         }
@@ -243,6 +254,7 @@ int APS5_VABI ksem_destroy_nid_postfix(std::intptr_t id) {
     {
         std::lock_guard lock(ksem->lock);
         if (ksem->waiters != 0) return Fail(GuestEbusy);
+        ksem->dead = true;
     }
     return close_nid_postfix(static_cast<int>(id));
 }
