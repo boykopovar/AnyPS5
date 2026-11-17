@@ -63,7 +63,6 @@ static constexpr std::uint32_t PREFER_READER = 0x2;
 static constexpr int UMTX_OP_MUTEX_WAKE2 = 22;
 static constexpr int UMTX_OP_SEM2_WAKE = 24;
 static constexpr int UMTX_OP_SHM = 25;
-static constexpr std::uint32_t ROBUST = 0x10;
 static constexpr std::uint32_t USEM_HAS_WAITERS = 0x80000000u;
 
 struct Umutex {

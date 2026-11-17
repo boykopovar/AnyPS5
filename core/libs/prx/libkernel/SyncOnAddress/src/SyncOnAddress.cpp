@@ -104,7 +104,6 @@ constexpr std::uint32_t URWLOCK_MAX_READERS = 0x1fffffffu;
 constexpr int UMTX_OP_MUTEX_WAKE2 = 22;
 constexpr int UMTX_OP_SEM2_WAIT = 23;
 constexpr int UMTX_OP_SEM2_WAKE = 24;
-constexpr std::uint32_t UMUTEX_PRIO_INHERIT = 0x4;
 constexpr std::uint32_t USEM_HAS_WAITERS = 0x80000000u;
 constexpr std::uint32_t USEM_MAX_COUNT = 0x7fffffffu;
 
