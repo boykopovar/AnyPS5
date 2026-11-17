@@ -93,12 +93,26 @@ void ProbeReadableChunks(const void* address, std::size_t totalBytes, const char
     }
 }
 
-WebRtcStringMapNode* EndNode(WebRtcStringMap& map) {
-    return reinterpret_cast<WebRtcStringMapNode*>(&map.root);
+void CopyOutChecked(void* destination, const void* source, std::size_t bytes, const char* message) {
+    ErrnoGuard guard;
+    if (!GuestCopyOut_nid_no_patch(destination, source, bytes))
+        throw std::invalid_argument(message);
 }
 
-const WebRtcStringMapNode* EndNode(const WebRtcStringMap& map) {
-    return reinterpret_cast<const WebRtcStringMapNode*>(&map.root);
+WebRtcSdpAudioFormat ReadFormat(const WebRtcSdpAudioFormat* format, const char* message) {
+    WebRtcSdpAudioFormat host{};
+    CopyInChecked(&host, format, sizeof(host), message);
+    return host;
+}
+
+WebRtcStringMapNode* GuestEndNode(const WebRtcSdpAudioFormat* format) {
+    return reinterpret_cast<WebRtcStringMapNode*>(reinterpret_cast<std::uintptr_t>(format) + offsetof(WebRtcSdpAudioFormat, parameters) + offsetof(WebRtcStringMap, root));
+}
+
+void ResetMap(WebRtcStringMap& map, WebRtcStringMapNode* end) {
+    map.beginNode = end;
+    map.root = nullptr;
+    map.size = 0;
 }
 
 void InitStringEmpty(WebRtcGuestString& string) {
@@ -139,11 +153,13 @@ struct StringGuard {
     }
 };
 
-void CopyString(const WebRtcGuestString& source, WebRtcGuestString& destination) {
+void CopyString(const WebRtcGuestString& source, WebRtcGuestString& destination, const char* message) {
     InitStringEmpty(destination);
     if (source.size <= WebRtcGuestStringInlineCapacity) {
-        if (source.size > 0)
-            std::memcpy(destination.buffer, WebRtcGuestStringData(source), source.size);
+        if (source.size > 0 && source.capacity > WebRtcGuestStringInlineCapacity)
+            CopyInChecked(destination.buffer, source.pointer, source.size, message);
+        else if (source.size > 0)
+            std::memcpy(destination.buffer, source.buffer, source.size);
         destination.buffer[source.size] = '\0';
         destination.size = source.size;
         return;
@@ -152,7 +168,12 @@ void CopyString(const WebRtcGuestString& source, WebRtcGuestString& destination)
     if (capacity > std::numeric_limits<std::size_t>::max() - 1)
         throw std::bad_alloc();
     auto* data = static_cast<char*>(GuestStringStorage::Allocate(capacity + 1));
-    std::memcpy(data, source.pointer, source.size);
+    try {
+        CopyInChecked(data, source.pointer, source.size, message);
+    } catch (...) {
+        GuestStringStorage::Deallocate(data, capacity + 1);
+        throw;
+    }
     data[source.size] = '\0';
     destination.pointer = data;
     destination.size = source.size;
@@ -173,9 +194,13 @@ void MoveString(WebRtcGuestString& destination, WebRtcGuestString& source) {
     InitStringEmpty(source);
 }
 
-void ValidateMapNodes(const WebRtcStringMap& map, const char* message, std::vector<WebRtcStringMapNode*>& outNodes) {
+struct ValidatedNode {
+    WebRtcStringMapNode* address;
+    WebRtcStringMapNode copy;
+};
+
+void ValidateMapNodes(const WebRtcStringMap& map, const WebRtcStringMapNode* end, const char* message, std::vector<ValidatedNode>& outNodes) {
     outNodes.clear();
-    const WebRtcStringMapNode* const end = EndNode(map);
     if (map.size == 0) {
         if (map.root != nullptr || map.beginNode != end)
             throw std::invalid_argument(message);
@@ -200,7 +225,7 @@ void ValidateMapNodes(const WebRtcStringMap& map, const char* message, std::vect
             throw std::invalid_argument(message);
         ValidateString(nodeCopy.key, message);
         ValidateString(nodeCopy.value, message);
-        outNodes.push_back(current.node);
+        outNodes.push_back({current.node, nodeCopy});
         if (nodeCopy.links.right)
             pending.push_back({nodeCopy.links.right, current.node});
         if (nodeCopy.links.left)
@@ -209,21 +234,25 @@ void ValidateMapNodes(const WebRtcStringMap& map, const char* message, std::vect
     if (outNodes.size() != map.size)
         throw std::invalid_argument(message);
     const WebRtcStringMapNode* leftmost = map.root;
-    while (leftmost->links.left)
-        leftmost = leftmost->links.left;
+    WebRtcStringMapNode* left = outNodes.front().copy.links.left;
+    while (left) {
+        leftmost = left;
+        WebRtcStringMapNode* next = nullptr;
+        CopyInChecked(&next, &left->links.left, sizeof(next), message);
+        left = next;
+    }
     if (leftmost != map.beginNode)
         throw std::invalid_argument(message);
 }
 
-void DestroyMapNodes(const std::vector<WebRtcStringMapNode*>& nodes, WebRtcStringMap& map) {
-    for (WebRtcStringMapNode* node : nodes) {
-        ReleaseString(node->value);
-        ReleaseString(node->key);
-        _ZdlPv_nid_postfix(node);
+void DestroyMapNodes(const std::vector<ValidatedNode>& nodes, WebRtcStringMap& map, WebRtcStringMapNode* end) {
+    for (const ValidatedNode& node : nodes) {
+        WebRtcStringMapNode copy = node.copy;
+        ReleaseString(copy.value);
+        ReleaseString(copy.key);
+        _ZdlPv_nid_postfix(node.address);
     }
-    map.beginNode = EndNode(map);
-    map.root = nullptr;
-    map.size = 0;
+    ResetMap(map, end);
 }
 
 struct NodeGuard {
@@ -241,12 +270,10 @@ struct NodeGuard {
     }
 };
 
-void CloneMap(const WebRtcStringMap& source, WebRtcStringMap& destination, const char* message) {
-    std::vector<WebRtcStringMapNode*> validated;
-    ValidateMapNodes(source, message, validated);
-    destination.beginNode = EndNode(destination);
-    destination.root = nullptr;
-    destination.size = 0;
+void CloneMap(const WebRtcStringMap& source, const WebRtcStringMapNode* sourceEnd, WebRtcStringMap& destination, WebRtcStringMapNode* destinationEnd, const char* message) {
+    std::vector<ValidatedNode> validated;
+    ValidateMapNodes(source, sourceEnd, message, validated);
+    ResetMap(destination, destinationEnd);
     if (source.size == 0)
         return;
 
@@ -257,34 +284,36 @@ void CloneMap(const WebRtcStringMap& source, WebRtcStringMap& destination, const
         WebRtcStringMapNode* parent;
     };
     std::vector<CloneTask> tasks;
-    tasks.push_back({source.root, &destination.root, EndNode(destination)});
+    tasks.push_back({source.root, &destination.root, destinationEnd});
     while (!tasks.empty()) {
         const CloneTask task = tasks.back();
         tasks.pop_back();
+        WebRtcStringMapNode sourceNode{};
+        CopyInChecked(&sourceNode, task.source, sizeof(sourceNode), message);
         void* storage = _Znwm_nid_postfix(sizeof(WebRtcStringMapNode));
         auto* node = new (storage) WebRtcStringMapNode{};
         node->links.parent = task.parent;
-        node->links.isBlack = task.source->links.isBlack;
+        node->links.isBlack = sourceNode.links.isBlack;
         InitStringEmpty(node->key);
         InitStringEmpty(node->value);
         guard.nodes.push_back(node);
-        CopyString(task.source->key, node->key);
-        CopyString(task.source->value, node->value);
+        CopyString(sourceNode.key, node->key, message);
+        CopyString(sourceNode.value, node->value, message);
         *task.slot = node;
         if (task.source == source.beginNode)
             destination.beginNode = node;
-        if (task.source->links.right)
-            tasks.push_back({task.source->links.right, &node->links.right, node});
-        if (task.source->links.left)
-            tasks.push_back({task.source->links.left, &node->links.left, node});
+        if (sourceNode.links.right)
+            tasks.push_back({sourceNode.links.right, &node->links.right, node});
+        if (sourceNode.links.left)
+            tasks.push_back({sourceNode.links.left, &node->links.left, node});
     }
     destination.size = source.size;
     guard.active = false;
 }
 
-void ValidateFormat(const WebRtcSdpAudioFormat* format, const char* message, std::vector<WebRtcStringMapNode*>& outNodes) {
-    ValidateString(format->name, message);
-    ValidateMapNodes(format->parameters, message, outNodes);
+void ValidateFormat(const WebRtcSdpAudioFormat& format, const WebRtcStringMapNode* end, const char* message, std::vector<ValidatedNode>& outNodes) {
+    ValidateString(format.name, message);
+    ValidateMapNodes(format.parameters, end, message, outNodes);
 }
 
 }
@@ -292,35 +321,29 @@ void ValidateFormat(const WebRtcSdpAudioFormat* format, const char* message, std
 extern "C" {
 
 void WebRtcValidateSdpAudioFormat_nid_no_patch(const WebRtcSdpAudioFormat* format, const char* message) {
-    WebRtcSdpAudioFormat snapshot{};
-    CopyInChecked(&snapshot, format, sizeof(snapshot), message);
-    std::vector<WebRtcStringMapNode*> nodes;
-    ValidateFormat(format, message, nodes);
+    const WebRtcSdpAudioFormat snapshot = ReadFormat(format, message);
+    std::vector<ValidatedNode> nodes;
+    ValidateFormat(snapshot, GuestEndNode(format), message, nodes);
 }
 
 void APS5_VABI _ZN6webrtc14SdpAudioFormatC1ERKS0__nid_postfix(WebRtcSdpAudioFormat* format, const WebRtcSdpAudioFormat* other) {
     constexpr const char* message = "SdpAudioFormat copy constructor requires valid objects";
     RequireWritable(format, sizeof(*format), message);
-    WebRtcSdpAudioFormat snapshot{};
-    CopyInChecked(&snapshot, other, sizeof(snapshot), message);
-    ValidateString(other->name, message);
+    const WebRtcSdpAudioFormat snapshot = ReadFormat(other, message);
+    WebRtcSdpAudioFormat result = ReadFormat(format, message);
+    ValidateString(snapshot.name, message);
 
     StringGuard nameGuard;
-    CopyString(other->name, nameGuard.value);
+    CopyString(snapshot.name, nameGuard.value, message);
     nameGuard.active = true;
 
-    WebRtcStringMap clonedMap{};
-    CloneMap(other->parameters, clonedMap, message);
+    CloneMap(snapshot.parameters, GuestEndNode(other), result.parameters, GuestEndNode(format), message);
 
-    format->name = nameGuard.value;
+    result.name = nameGuard.value;
+    result.clockrateHz = snapshot.clockrateHz;
+    result.numChannels = snapshot.numChannels;
+    CopyOutChecked(format, &result, sizeof(result), message);
     nameGuard.active = false;
-    format->clockrateHz = other->clockrateHz;
-    format->numChannels = other->numChannels;
-    format->parameters = clonedMap;
-    if (format->parameters.size == 0)
-        format->parameters.beginNode = EndNode(format->parameters);
-    else
-        format->parameters.root->links.parent = EndNode(format->parameters);
 }
 
 void APS5_VABI _ZN6webrtc14SdpAudioFormatC1EOS0__nid_postfix(WebRtcSdpAudioFormat* format, WebRtcSdpAudioFormat* other) {
@@ -330,69 +353,69 @@ void APS5_VABI _ZN6webrtc14SdpAudioFormatC1EOS0__nid_postfix(WebRtcSdpAudioForma
     if (format == other)
         throw std::invalid_argument(message);
 
-    std::vector<WebRtcStringMapNode*> validated;
-    ValidateFormat(other, message, validated);
+    WebRtcSdpAudioFormat source = ReadFormat(other, message);
+    WebRtcSdpAudioFormat result = ReadFormat(format, message);
+    std::vector<ValidatedNode> validated;
+    ValidateFormat(source, GuestEndNode(other), message, validated);
+    if (source.parameters.size != 0)
+        RequireWritable(&source.parameters.root->links.parent, sizeof(source.parameters.root->links.parent), message);
 
-    MoveString(format->name, other->name);
-    format->clockrateHz = other->clockrateHz;
-    format->numChannels = other->numChannels;
-    if (other->parameters.size == 0) {
-        format->parameters.beginNode = EndNode(format->parameters);
-        format->parameters.root = nullptr;
-        format->parameters.size = 0;
+    MoveString(result.name, source.name);
+    result.clockrateHz = source.clockrateHz;
+    result.numChannels = source.numChannels;
+    if (source.parameters.size == 0) {
+        ResetMap(result.parameters, GuestEndNode(format));
     } else {
-        format->parameters.beginNode = other->parameters.beginNode;
-        format->parameters.root = other->parameters.root;
-        format->parameters.size = other->parameters.size;
-        format->parameters.root->links.parent = EndNode(format->parameters);
-        other->parameters.beginNode = EndNode(other->parameters);
-        other->parameters.root = nullptr;
-        other->parameters.size = 0;
+        result.parameters = source.parameters;
+        WebRtcStringMapNode* const end = GuestEndNode(format);
+        CopyOutChecked(&result.parameters.root->links.parent, &end, sizeof(end), message);
+        ResetMap(source.parameters, GuestEndNode(other));
     }
+    CopyOutChecked(format, &result, sizeof(result), message);
+    CopyOutChecked(other, &source, sizeof(source), message);
 }
 
 WebRtcSdpAudioFormat* APS5_VABI _ZN6webrtc14SdpAudioFormataSERKS0__nid_postfix(WebRtcSdpAudioFormat* format, const WebRtcSdpAudioFormat* other) {
     constexpr const char* message = "SdpAudioFormat copy assignment requires valid objects";
     RequireWritable(format, sizeof(*format), message);
-    WebRtcSdpAudioFormat snapshot{};
-    CopyInChecked(&snapshot, other, sizeof(snapshot), message);
+    const WebRtcSdpAudioFormat snapshot = ReadFormat(other, message);
+    WebRtcSdpAudioFormat result = ReadFormat(format, message);
 
-    std::vector<WebRtcStringMapNode*> existingNodes;
-    ValidateFormat(format, message, existingNodes);
+    std::vector<ValidatedNode> existingNodes;
+    ValidateFormat(result, GuestEndNode(format), message, existingNodes);
     if (format == other)
         return format;
 
-    ValidateString(other->name, message);
+    ValidateString(snapshot.name, message);
 
     StringGuard nameGuard;
-    CopyString(other->name, nameGuard.value);
+    CopyString(snapshot.name, nameGuard.value, message);
     nameGuard.active = true;
 
     WebRtcStringMap clonedMap{};
-    CloneMap(other->parameters, clonedMap, message);
+    CloneMap(snapshot.parameters, GuestEndNode(other), clonedMap, GuestEndNode(format), message);
 
-    DestroyMapNodes(existingNodes, format->parameters);
-    ReleaseString(format->name);
+    DestroyMapNodes(existingNodes, result.parameters, GuestEndNode(format));
+    ReleaseString(result.name);
 
-    format->name = nameGuard.value;
+    result.name = nameGuard.value;
     nameGuard.active = false;
-    format->clockrateHz = other->clockrateHz;
-    format->numChannels = other->numChannels;
-    format->parameters = clonedMap;
-    if (format->parameters.size == 0)
-        format->parameters.beginNode = EndNode(format->parameters);
-    else
-        format->parameters.root->links.parent = EndNode(format->parameters);
+    result.clockrateHz = snapshot.clockrateHz;
+    result.numChannels = snapshot.numChannels;
+    result.parameters = clonedMap;
+    CopyOutChecked(format, &result, sizeof(result), message);
     return format;
 }
 
 void APS5_VABI _ZN6webrtc14SdpAudioFormatD1Ev_nid_postfix(WebRtcSdpAudioFormat* format) {
     constexpr const char* message = "SdpAudioFormat destructor requires a valid object";
     RequireWritable(format, sizeof(*format), message);
-    std::vector<WebRtcStringMapNode*> nodes;
-    ValidateFormat(format, message, nodes);
-    DestroyMapNodes(nodes, format->parameters);
-    ReleaseString(format->name);
+    WebRtcSdpAudioFormat host = ReadFormat(format, message);
+    std::vector<ValidatedNode> nodes;
+    ValidateFormat(host, GuestEndNode(format), message, nodes);
+    DestroyMapNodes(nodes, host.parameters, GuestEndNode(format));
+    ReleaseString(host.name);
+    CopyOutChecked(format, &host, sizeof(host), message);
 }
 
 }

@@ -2,15 +2,56 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
 #include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <new>
 #include <source_location>
 #include <stdexcept>
+#include <vector>
+
+#ifndef _WIN32
+std::size_t hostAllocationLimit = SIZE_MAX;
+void* operator new(std::size_t bytes) {
+    if (bytes > hostAllocationLimit) {
+        std::fprintf(stderr, "host allocation of %zu bytes exceeds the test cap\n", bytes);
+        std::abort();
+    }
+    if (void* pointer = std::malloc(bytes ? bytes : 1)) return pointer;
+    throw std::bad_alloc();
+}
+void* operator new(std::size_t bytes, const std::nothrow_t&) noexcept {
+    if (bytes > hostAllocationLimit) {
+        std::fprintf(stderr, "host allocation of %zu bytes exceeds the test cap\n", bytes);
+        std::abort();
+    }
+    return std::malloc(bytes ? bytes : 1);
+}
+void operator delete(void* pointer) noexcept { std::free(pointer); }
+void operator delete(void* pointer, std::size_t) noexcept { std::free(pointer); }
+void operator delete(void* pointer, const std::nothrow_t&) noexcept { std::free(pointer); }
+#endif
 
 namespace {
+
+template<typename TCall> void Capped(TCall call) {
+#ifndef _WIN32
+    hostAllocationLimit = 1 << 20;
+#endif
+    call();
+#ifndef _WIN32
+    hostAllocationLimit = SIZE_MAX;
+#endif
+}
 
 void* lastFreed = nullptr;
 int allocations = 0;
@@ -206,6 +247,187 @@ void TestNullArgumentsThrow() {
     RequireInvalidArgument([] { _ZN6webrtc12AudioEncoder11EncodedInfoD1Ev_nid_postfix(nullptr); });
 }
 
+struct GuardedPage {
+    void* base = nullptr;
+    std::size_t size = 0;
+
+    GuardedPage() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        size = info.dwPageSize;
+        base = VirtualAlloc(nullptr, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+#else
+        size = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        base = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (base == MAP_FAILED)
+            base = nullptr;
+#endif
+        Require(base != nullptr);
+    }
+
+    ~GuardedPage() {
+        if (!base) return;
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, size);
+#endif
+    }
+
+    template<typename T> T* As() const { return static_cast<T*>(base); }
+
+    void SetReadOnly() const {
+#ifdef _WIN32
+        DWORD prev = 0;
+        Require(VirtualProtect(base, size, PAGE_READONLY, &prev) != 0);
+#else
+        Require(mprotect(base, size, PROT_READ) == 0);
+#endif
+    }
+
+    void SetInaccessible() const {
+#ifdef _WIN32
+        DWORD prev = 0;
+        Require(VirtualProtect(base, size, PAGE_NOACCESS, &prev) != 0);
+#else
+        Require(mprotect(base, size, PROT_NONE) == 0);
+#endif
+    }
+};
+
+void TestInaccessibleGuestPointersThrow() {
+    GuardedPage readOnly;
+    readOnly.SetReadOnly();
+    GuardedPage inaccessible;
+    inaccessible.SetInaccessible();
+    auto* readOnlyInfo = readOnly.As<WebRtcAudioEncodedInfo>();
+    auto* inaccessibleInfo = inaccessible.As<WebRtcAudioEncodedInfo>();
+    WebRtcAudioEncodedInfo valid = WithRedundant(2);
+
+    RequireInvalidArgument([&] { _ZN6webrtc12AudioEncoder11EncodedInfoC1Ev_nid_postfix(readOnlyInfo); });
+    RequireInvalidArgument([&] { _ZN6webrtc12AudioEncoder11EncodedInfoC1Ev_nid_postfix(inaccessibleInfo); });
+    RequireInvalidArgument([&] { _ZN6webrtc12AudioEncoder11EncodedInfoC1ERKS1__nid_postfix(readOnlyInfo, &valid); });
+    RequireInvalidArgument([&] { _ZN6webrtc12AudioEncoder11EncodedInfoaSERKS1__nid_postfix(readOnlyInfo, &valid); });
+    RequireInvalidArgument([&] { _ZN6webrtc12AudioEncoder11EncodedInfoD1Ev_nid_postfix(readOnlyInfo); });
+    RequireInvalidArgument([&] { _ZN6webrtc12AudioEncoder11EncodedInfoD1Ev_nid_postfix(inaccessibleInfo); });
+
+    WebRtcAudioEncodedInfo target;
+    std::memset(&target, 0x5A, sizeof(target));
+    WebRtcAudioEncodedInfo untouched = target;
+    const int allocationsBefore = allocations;
+    const int freesBefore = frees;
+    RequireInvalidArgument([&] { _ZN6webrtc12AudioEncoder11EncodedInfoC1ERKS1__nid_postfix(&target, inaccessibleInfo); });
+    Require(std::memcmp(&target, &untouched, sizeof(target)) == 0);
+
+    WebRtcAudioEncodedInfo unreadableLeaves = WithRedundant(0);
+    unreadableLeaves.redundantBegin = inaccessible.As<WebRtcAudioEncodedInfoLeaf>();
+    unreadableLeaves.redundantEnd = unreadableLeaves.redundantBegin + 2;
+    unreadableLeaves.redundantCapacity = unreadableLeaves.redundantEnd;
+    RequireInvalidArgument([&] { _ZN6webrtc12AudioEncoder11EncodedInfoC1ERKS1__nid_postfix(&target, &unreadableLeaves); });
+    Require(std::memcmp(&target, &untouched, sizeof(target)) == 0);
+
+    WebRtcAudioEncodedInfo inverted = WithRedundant(0);
+    inverted.redundantBegin = valid.redundantEnd;
+    inverted.redundantEnd = valid.redundantBegin;
+    inverted.redundantCapacity = valid.redundantEnd;
+    RequireInvalidArgument([&] { _ZN6webrtc12AudioEncoder11EncodedInfoC1ERKS1__nid_postfix(&target, &inverted); });
+    Require(std::memcmp(&target, &untouched, sizeof(target)) == 0);
+    Require(allocations == allocationsBefore && frees == freesBefore);
+
+    WebRtcAudioEncodedInfo assigned = WithRedundant(1);
+    const WebRtcAudioEncodedInfo assignedBefore = assigned;
+    const int allocationsBeforeAssign = allocations;
+    RequireInvalidArgument([&] { _ZN6webrtc12AudioEncoder11EncodedInfoaSERKS1__nid_postfix(&assigned, inaccessibleInfo); });
+    RequireInvalidArgument([&] { _ZN6webrtc12AudioEncoder11EncodedInfoaSERKS1__nid_postfix(&assigned, &unreadableLeaves); });
+    RequireInvalidArgument([&] { _ZN6webrtc12AudioEncoder11EncodedInfoaSERKS1__nid_postfix(&assigned, &inverted); });
+    Require(std::memcmp(&assigned, &assignedBefore, sizeof(assigned)) == 0);
+    Require(allocations == allocationsBeforeAssign && frees == freesBefore);
+
+    _ZN6webrtc12AudioEncoder11EncodedInfoD1Ev_nid_postfix(&assigned);
+    _ZN6webrtc12AudioEncoder11EncodedInfoD1Ev_nid_postfix(&valid);
+}
+
+void TestOversizedRedundantRangesThrow() {
+    constexpr std::size_t huge = std::size_t {1} << 34;
+    WebRtcAudioEncodedInfo source = WithRedundant(0);
+    source.redundantBegin = reinterpret_cast<WebRtcAudioEncodedInfoLeaf*>(std::uintptr_t {0x10});
+    source.redundantEnd = source.redundantBegin + huge;
+    source.redundantCapacity = source.redundantEnd;
+    WebRtcAudioEncodedInfo target;
+    std::memset(&target, 0x5A, sizeof(target));
+    const WebRtcAudioEncodedInfo untouched = target;
+    WebRtcAudioEncodedInfo assigned = WithRedundant(1);
+    const WebRtcAudioEncodedInfo assignedBefore = assigned;
+    const int allocationsBefore = allocations;
+    const int freesBefore = frees;
+    Capped([&] {
+        RequireInvalidArgument([&] { _ZN6webrtc12AudioEncoder11EncodedInfoC1ERKS1__nid_postfix(&target, &source); });
+        RequireInvalidArgument([&] { _ZN6webrtc12AudioEncoder11EncodedInfoaSERKS1__nid_postfix(&assigned, &source); });
+#ifndef _WIN32
+        const auto page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        void* mapping = mmap(nullptr, page * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(mapping != MAP_FAILED && mprotect(static_cast<std::uint8_t*>(mapping) + page, page, PROT_NONE) == 0);
+        auto* tail = reinterpret_cast<WebRtcAudioEncodedInfoLeaf*>(static_cast<std::uint8_t*>(mapping) + page) - 2;
+        tail[0] = Leaf(1, 10);
+        tail[1] = Leaf(2, 11);
+        source.redundantBegin = tail;
+        source.redundantEnd = tail + huge;
+        source.redundantCapacity = source.redundantEnd;
+        RequireInvalidArgument([&] { _ZN6webrtc12AudioEncoder11EncodedInfoC1ERKS1__nid_postfix(&target, &source); });
+        RequireInvalidArgument([&] { _ZN6webrtc12AudioEncoder11EncodedInfoaSERKS1__nid_postfix(&assigned, &source); });
+        source.redundantEnd = tail + 2;
+        source.redundantCapacity = source.redundantEnd;
+        WebRtcAudioEncodedInfo copy;
+        _ZN6webrtc12AudioEncoder11EncodedInfoC1ERKS1__nid_postfix(&copy, &source);
+        Require(HoldsRedundant(copy, 2));
+        _ZN6webrtc12AudioEncoder11EncodedInfoD1Ev_nid_postfix(&copy);
+        munmap(mapping, page * 2);
+#endif
+    });
+    Require(std::memcmp(&target, &untouched, sizeof(target)) == 0);
+    Require(std::memcmp(&assigned, &assignedBefore, sizeof(assigned)) == 0);
+#ifdef _WIN32
+    Require(allocations == allocationsBefore && frees == freesBefore);
+#else
+    Require(allocations == allocationsBefore + 1 && frees == freesBefore + 1);
+#endif
+    _ZN6webrtc12AudioEncoder11EncodedInfoD1Ev_nid_postfix(&assigned);
+}
+
+void TestRedundantListsLongerThanOneCopyChunk() {
+    WebRtcAudioEncodedInfo source = WithRedundant(100);
+    WebRtcAudioEncodedInfo copy;
+    Capped([&] { _ZN6webrtc12AudioEncoder11EncodedInfoC1ERKS1__nid_postfix(&copy, &source); });
+    Require(HoldsRedundant(copy, 100) && Capacity(copy) == 100);
+    WebRtcAudioEncodedInfo assigned = WithRedundant(1);
+    Capped([&] { _ZN6webrtc12AudioEncoder11EncodedInfoaSERKS1__nid_postfix(&assigned, &source); });
+    Require(HoldsRedundant(assigned, 100) && Capacity(assigned) == 100);
+    WebRtcAudioEncodedInfo shorter = WithRedundant(41);
+    Capped([&] { _ZN6webrtc12AudioEncoder11EncodedInfoaSERKS1__nid_postfix(&assigned, &shorter); });
+    Require(HoldsRedundant(assigned, 41) && Capacity(assigned) == 100);
+    _ZN6webrtc12AudioEncoder11EncodedInfoD1Ev_nid_postfix(&shorter);
+    _ZN6webrtc12AudioEncoder11EncodedInfoD1Ev_nid_postfix(&assigned);
+    _ZN6webrtc12AudioEncoder11EncodedInfoD1Ev_nid_postfix(&copy);
+    _ZN6webrtc12AudioEncoder11EncodedInfoD1Ev_nid_postfix(&source);
+}
+
+void TestOverlappingAssignmentCopiesLikeMemmove() {
+    std::vector<WebRtcAudioEncodedInfoLeaf> buffer(200);
+    for (std::size_t index = 0; index < buffer.size(); ++index) buffer[index] = Leaf(index + 1, static_cast<int>(index + 10));
+    WebRtcAudioEncodedInfo target = Constructed();
+    target.redundantBegin = buffer.data() + 1;
+    target.redundantEnd = target.redundantBegin;
+    target.redundantCapacity = buffer.data() + 101;
+    WebRtcAudioEncodedInfo source = Constructed();
+    source.redundantBegin = buffer.data();
+    source.redundantEnd = buffer.data() + 100;
+    source.redundantCapacity = source.redundantEnd;
+    const int allocationsBefore = allocations;
+    _ZN6webrtc12AudioEncoder11EncodedInfoaSERKS1__nid_postfix(&target, &source);
+    Require(allocations == allocationsBefore && target.redundantBegin == buffer.data() + 1 && HoldsRedundant(target, 100));
+}
+
 }
 
 int main() {
@@ -223,5 +445,9 @@ int main() {
     TestAssignmentGrowsToTheSourceSize();
     TestSelfAssignment();
     TestNullArgumentsThrow();
+    TestInaccessibleGuestPointersThrow();
+    TestOversizedRedundantRangesThrow();
+    TestRedundantListsLongerThanOneCopyChunk();
+    TestOverlappingAssignmentCopiesLikeMemmove();
     return 0;
 }

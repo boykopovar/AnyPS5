@@ -100,6 +100,24 @@ struct ReadOnlyPage {
 #endif
     }
 
+    void SetWritable() const {
+#ifdef _WIN32
+        DWORD oldProtect = 0;
+        Require(VirtualProtect(address, size, PAGE_READWRITE, &oldProtect) != 0);
+#else
+        Require(mprotect(address, size, PROT_READ | PROT_WRITE) == 0);
+#endif
+    }
+
+    void SetReadOnly() const {
+#ifdef _WIN32
+        DWORD oldProtect = 0;
+        Require(VirtualProtect(address, size, PAGE_READONLY, &oldProtect) != 0);
+#else
+        Require(mprotect(address, size, PROT_READ) == 0);
+#endif
+    }
+
     ~ReadOnlyPage() {
         if (!address)
             return;
@@ -352,6 +370,41 @@ void TestInvalidGuestInputs() {
     Require(live.empty());
 }
 
+void TestMoveWithReadOnlyRootThrows() {
+    ReadOnlyPage page;
+    page.SetWritable();
+    WebRtcSdpAudioFormat source;
+    InitEmptyFormat(source, "opus", 48000, 2);
+    auto* root = new (page.address) WebRtcStringMapNode{};
+    root->links.isBlack = true;
+    root->links.parent = EndNode(source.parameters);
+    InitGuestString(root->key, "ptime");
+    InitGuestString(root->value, "20");
+    source.parameters.root = root;
+    source.parameters.beginNode = root;
+    source.parameters.size = 1;
+    page.SetReadOnly();
+
+    const WebRtcSdpAudioFormat sourceBefore = source;
+    WebRtcSdpAudioFormat target;
+    std::memset(&target, 0xcd, sizeof(target));
+    const WebRtcSdpAudioFormat targetBefore = target;
+    errno = 57;
+    Require(ThrowsInvalid([&] { _ZN6webrtc14SdpAudioFormatC1EOS0__nid_postfix(&target, &source); }));
+    Require(errno == 57);
+    Require(std::memcmp(&source, &sourceBefore, sizeof(source)) == 0);
+    Require(std::memcmp(&target, &targetBefore, sizeof(target)) == 0);
+    Require(root->links.parent == EndNode(source.parameters));
+
+    WebRtcSdpAudioFormat copied;
+    std::memset(&copied, 0xcd, sizeof(copied));
+    _ZN6webrtc14SdpAudioFormatC1ERKS0__nid_postfix(&copied, &source);
+    Require(copied.parameters.size == 1 && copied.parameters.root != root);
+    Require(ReadGuestString(copied.parameters.root->key) == "ptime");
+    _ZN6webrtc14SdpAudioFormatD1Ev_nid_postfix(&copied);
+    Require(live.empty());
+}
+
 }
 
 int main() {
@@ -365,6 +418,7 @@ int main() {
     TestCopyAssignmentAndSelfAssign();
     TestAllocationFailureCleanup();
     TestInvalidGuestInputs();
+    TestMoveWithReadOnlyRootThrows();
     std::puts("libwebrtc SdpAudioFormat tests passed");
     return 0;
 }
