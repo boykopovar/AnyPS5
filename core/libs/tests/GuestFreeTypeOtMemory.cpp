@@ -418,11 +418,15 @@ void InternalCallers() {
         return;
     }
     procmapQueries = 0;
-    FreeType::GuestOutline outline{};
-    Require(FT_Outline_New_Internal_nid_postfix(&recorder.memory, 512, 16, &outline) == 0, "an internal caller allocates an outline");
-    Require(outline.points && outline.tags && outline.contours && Filled(outline.tags, 512, 0), "an internal caller gets cleared arrays");
-    Require(FT_Outline_Done_Internal_nid_postfix(&recorder.memory, &outline) == 0 && recorder.frees == 4, "an internal caller frees its arrays");
+    auto* tags = static_cast<unsigned char*>(FreeType::OtMemRealloc(&recorder.memory, 1, 0, 512, nullptr, &error));
+    Require(tags && error == 0 && Filled(tags, 512, 0), "an internal caller gets a cleared array");
+    FreeType::OtMemFree(&recorder.memory, tags);
+    Require(recorder.frees == 2, "an internal caller frees its array");
     Require(procmapQueries == 0, "internal callers allocate and free without guest pointer checks");
+    FreeType::GuestOutline outline{};
+    Require(FT_Outline_New_Internal_nid_postfix(&recorder.memory, 512, 16, &outline) == 0, "an outline allocates its arrays");
+    Require(outline.points && outline.tags && outline.contours && Filled(outline.tags, 512, 0), "an outline gets cleared arrays");
+    Require(FT_Outline_Done_Internal_nid_postfix(&recorder.memory, &outline) == 0 && recorder.frees == 5, "an outline frees its arrays");
 #endif
 }
 
