@@ -247,6 +247,11 @@ int APS5_VABI _ZNKSt7codecvtIcc9_MbstatetE2inERS0_PKcS4_RS4_PcS6_RS6__nid_postfi
 int APS5_VABI _ZNKSt7codecvtIcc9_MbstatetE3outERS0_PKcS4_RS4_PcS6_RS6__nid_postfix(GuestLocale::Facet* self, std::uint64_t* state, const char* first1, const char* last1, const char** next1, char* first2, char* last2, char** next2);
 int APS5_VABI _ZNKSt7codecvtIcc9_MbstatetE7unshiftERS0_PcS3_RS3__nid_postfix(GuestLocale::Facet* self, std::uint64_t* state, char* first2, char* last2, char** next2);
 std::size_t APS5_VABI _ZNKSt7codecvtIcc9_MbstatetE6lengthERS0_PKcS4_m_nid_postfix(GuestLocale::Facet* self, std::uint64_t* state, const char* first1, const char* last1, std::size_t count);
+void APS5_VABI _ZNSt7codecvtIcc9_MbstatetEC1Em_nid_postfix(GuestLocale::Facet* self, std::size_t refs);
+void APS5_VABI _ZNSt7codecvtIcc9_MbstatetEC2Em_nid_postfix(GuestLocale::Facet* self, std::size_t refs);
+void APS5_VABI _ZNSt7codecvtIcc9_MbstatetEC1ERKSt8_Locinfom_nid_postfix(GuestLocale::Facet* self, const GuestLocale::LocinfoStorage* info, std::size_t refs);
+void APS5_VABI _ZNSt7codecvtIcc9_MbstatetEC2ERKSt8_Locinfom_nid_postfix(GuestLocale::Facet* self, const GuestLocale::LocinfoStorage* info, std::size_t refs);
+void APS5_VABI _ZNSt7codecvtIcc9_MbstatetED0Ev_nid_postfix(GuestLocale::Facet* self);
 const char* APS5_VABI _ZSt22_Get_future_error_whati_nid_postfix(int code) noexcept;
 const char* APS5_VABI sceLibcInternalFutureErrorMap_nid_no_patch(int code) noexcept;
 char APS5_VABI sceLibcInternalNumpunctDoDecimalPoint_nid_no_patch(const GuestLocale::NumpunctFacet* self);
