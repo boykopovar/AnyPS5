@@ -1,14 +1,27 @@
 #include "prx/libSceVnaWebsocket/libSceVnaWebsocket.hpp"
 
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <stdexcept>
+#include <string>
 
 namespace {
 
 void Require(bool value) {
     if (!value) std::abort();
+}
+
+template <typename TAction>
+bool ThrowsMessage(TAction action, const char* expected) {
+    try {
+        action();
+    } catch (const std::invalid_argument& error) {
+        return std::string(error.what()).find(expected) != std::string::npos;
+    }
+    return false;
 }
 
 std::array<unsigned char, 64> Counting() {
@@ -42,6 +55,20 @@ int main() {
         }
     }
 
+    Require(ThrowsMessage([&] { libSceVnaWebsocketUnknown_J3fL2giuM_plus_0_nid_no_patch(nullptr, &object); }, "J3fL2giuM+0: null object"));
+    Require(ThrowsMessage([&] { libSceVnaWebsocketUnknown_J3fL2giuM_plus_0_nid_no_patch(&object, nullptr); }, "J3fL2giuM+0: null object"));
+    const auto* invalidSource = reinterpret_cast<const void*>(0x10);
+    auto* invalidDestination = reinterpret_cast<void*>(0x10);
+    {
+        const auto source = Counting();
+        std::array<unsigned char, 64> destination{};
+        errno = 71;
+        Require(ThrowsMessage([&] { libSceVnaWebsocketUnknown_J3fL2giuM_plus_0_nid_no_patch(destination.data(), invalidSource); }, "J3fL2giuM+0: unmapped source"));
+        Require(errno == 71);
+        Require(ThrowsMessage([&] { libSceVnaWebsocketUnknown_J3fL2giuM_plus_0_nid_no_patch(invalidDestination, source.data()); }, "J3fL2giuM+0: unmapped destination"));
+        Require(errno == 71);
+    }
+
     {
         const auto source = Counting();
         std::array<unsigned char, 64> destination{};
@@ -53,6 +80,18 @@ int main() {
         auto bytes = Counting();
         Require(libSceVnaWebsocketUnknown_fxgYzL5aGyw_nid_no_patch(bytes.data(), bytes.data() + 4) == bytes.data());
         for (std::size_t i = 0; i < bytes.size(); ++i) Require(bytes[i] == (i < 44 ? i + 4 : i));
+    }
+
+    Require(ThrowsMessage([&] { libSceVnaWebsocketUnknown_fxgYzL5aGyw_nid_no_patch(nullptr, &object); }, "fxgYzL5aGyw: null object"));
+    Require(ThrowsMessage([&] { libSceVnaWebsocketUnknown_fxgYzL5aGyw_nid_no_patch(&object, nullptr); }, "fxgYzL5aGyw: null object"));
+    {
+        const auto source = Counting();
+        std::array<unsigned char, 64> destination{};
+        errno = 71;
+        Require(ThrowsMessage([&] { libSceVnaWebsocketUnknown_fxgYzL5aGyw_nid_no_patch(destination.data(), invalidSource); }, "fxgYzL5aGyw: unmapped source"));
+        Require(errno == 71);
+        Require(ThrowsMessage([&] { libSceVnaWebsocketUnknown_fxgYzL5aGyw_nid_no_patch(invalidDestination, source.data()); }, "fxgYzL5aGyw: unmapped destination"));
+        Require(errno == 71);
     }
     return 0;
 }

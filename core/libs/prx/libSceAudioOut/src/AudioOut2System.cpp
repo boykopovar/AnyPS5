@@ -1,5 +1,6 @@
 #include "prx/libSceAudioOut/include/AudioOut2.hpp"
 #include <atomic>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include "SceTypes.hpp"
@@ -28,8 +29,11 @@ int APS5_VABI sceAudioOut2Set3DLatency(int userId, std::uint32_t output) {
 
 int APS5_VABI sceAudioOut2GetSystemState(AudioOut2SystemState* state) {
     if (!state) return static_cast<int>(0x80260502);
-    state->loudness = 0.0f;
-    return 0;
+    const float loudness = 0.0f;
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(state, &loudness, sizeof(loudness));
+    errno = savedErrno;
+    return copied ? 0 : static_cast<int>(0x80260502);
 }
 
 int APS5_VABI sceAudioOut2GetSystemStateEx(void* state) {

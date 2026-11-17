@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <memory>
 
 #include <stdexcept>
 #include <string>
@@ -27,13 +28,27 @@ int APS5_VABI sceKernelCreateSema(KernelSema* sem, const char* name, uint32_t at
  if (sem == nullptr) {
   APS5_INVALID_ARG_EX;
  }
- if ((attr & ~0x103u) != 0 || (attr & 3u) == 3u || name == nullptr || *name == '\0' || init < 0 || max <= 0 || init > max) {
+ if ((attr & ~0x103u) != 0 || (attr & 3u) == 3u || name == nullptr || init < 0 || max <= 0 || init > max) {
   return SCE_KERNEL_ERROR_EINVAL;
  }
- if (strnlen(name, 32) > 31) return SCE_KERNEL_ERROR_ENAMETOOLONG;
- *sem = new KernelSemaPrivate(init, max, std::string(name), (attr & 3u) == 1u);
- (*sem)->priorityQueue = (attr & 3u) == 2u;
- if (TraceSync()) std::fprintf(stderr, "[sema] create %p '%s' attr=0x%x init=%d max=%d\n", static_cast<void*>(*sem), name, attr, init, max);
+ try {
+  std::string nameCopy;
+  const auto maximum = nameCopy.max_size();
+  for (std::size_t capacity = 32;; capacity += std::min(capacity, maximum - capacity)) {
+   const int error = CopyGuestString_nid_no_patch(name, capacity, nameCopy);
+   if (error == 0) break;
+   if (error != 63) return SceKernelError(error);
+   if (capacity == maximum) return SCE_KERNEL_ERROR_ENOMEM;
+  }
+  auto semaphore = std::make_unique<KernelSemaPrivate>(init, max, nameCopy, (attr & 3u) == 1u);
+  semaphore->priorityQueue = (attr & 3u) == 2u;
+  const KernelSema handle = semaphore.get();
+  if (!GuestCopyOut_nid_no_patch(sem, &handle, sizeof(handle))) return SCE_KERNEL_ERROR_EFAULT;
+  semaphore.release();
+  if (TraceSync()) std::fprintf(stderr, "[sema] create %p '%s' attr=0x%x init=%d max=%d\n", static_cast<void*>(handle), nameCopy.c_str(), attr, init, max);
+ } catch (const std::bad_alloc&) {
+  return SCE_KERNEL_ERROR_ENOMEM;
+ }
  return KERNEL_SEMA_OK;
 }
 
@@ -126,9 +141,10 @@ int APS5_VABI sceKernelWaitSema(KernelSema sem, int need, KernelUseconds* time) 
   }
  } waiterGuard{sem, &waiter};
 
- const auto waitStart = std::chrono::steady_clock::now();
+ const bool traceWaits = KernelTraceWaitEnabled();
+ const auto waitStart = traceWaits ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
  const auto traceWait = [&](bool timedOut) {
-  KernelTraceWait_nid_postfix("sema", caller, static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - waitStart).count()), timedOut);
+  if (traceWaits) KernelTraceWait_nid_postfix("sema", caller, static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - waitStart).count()), timedOut);
  };
  const auto released = [&] { return waiter.released || sem->deleted || sem->cancelGeneration != generation; };
  bool acquired = true;
@@ -166,7 +182,8 @@ int APS5_VABI sceKernelCancelSema(KernelSema sem, int count, int* threads) {
   return SCE_KERNEL_ERROR_EINVAL;
  }
  if (threads != nullptr) {
-  *threads = static_cast<int>(sem->queue.size());
+  const int waiting = static_cast<int>(sem->queue.size());
+  if (!GuestCopyOut_nid_no_patch(threads, &waiting, sizeof(waiting))) return SCE_KERNEL_ERROR_EFAULT;
  }
  sem->tokenCount = count < 0 ? sem->initCount : count;
  sem->queue.clear();

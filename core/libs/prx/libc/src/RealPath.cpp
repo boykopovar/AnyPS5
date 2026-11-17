@@ -140,14 +140,14 @@ bool ResolveGuest(const char* path, std::string& result, int& error) {
         const std::string token = left.substr(0, separator);
         const bool moreFollows = separator != std::string::npos;
         left = moreFollows ? left.substr(separator + 1) : std::string();
-        if (result.size() > 1 && result.size() + 1 >= PathMax) {
-            error = NameTooLong;
-            return false;
-        }
         if (token.empty() || token == ".") continue;
         if (token == "..") {
             DropLastComponent(result);
             continue;
+        }
+        if (result.size() > 1 && result.size() + 1 >= PathMax) {
+            error = NameTooLong;
+            return false;
         }
         std::string candidate = result;
         if (candidate.size() > 1) candidate += '/';

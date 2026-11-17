@@ -109,7 +109,82 @@ def with_relocation(module, table_offset, index, slot, symbol_index, kind):
     return bytes(image)
 
 
+def append_dynamic_tags(image, entries):
+    image = bytearray(image)
+    header = 64 + 2 * 56
+    offset = struct.unpack_from("<Q", image, header + 8)[0]
+    size = struct.unpack_from("<Q", image, header + 32)[0]
+    data = b"".join(struct.pack("<qQ", *entry) for entry in entries) + struct.pack("<qQ", 0, 0)
+    image[offset + size - 16:offset + size - 16 + len(data)] = data
+    struct.pack_into("<QQ", image, header + 32, size + len(entries) * 16, size + len(entries) * 16)
+    return bytes(image)
+
+
 class ImportRelocationTests(unittest.TestCase):
+    def test_conflicting_load_mappings_cannot_supply_symbol_tables(self):
+        for address in (DATA_ADDRESS + 4, DATA_ADDRESS + 0x58, DATA_ADDRESS + 0x110, DATA_ADDRESS + 0x288):
+            for reverse in (False, True):
+                with self.subTest(address=address, reverse=reverse):
+                    image = bytearray(build_module())
+                    struct.pack_into("<H", image, 0x38, 4)
+                    struct.pack_into("<IIQQQQQQ", image, 64 + 3 * 56, 1, 6, 0x2900, address, 0, 8, 8, 1)
+                    if reverse:
+                        first, last = 64 + 56, 64 + 3 * 56
+                        image[first:first + 56], image[last:last + 56] = image[last:last + 56], image[first:first + 56]
+                    with self.assertRaisesRegex(annotate_module.ModuleError, "ambiguous PT_LOAD"):
+                        annotate_module.Module(image).imports()
+
+    def test_same_file_load_overlaps_preserve_symbol_tables(self):
+        original = annotate_module.Module(build_module())
+        for address, offset, size in ((DATA_ADDRESS, 0x2000, 0x810), (DATA_ADDRESS + 0x110, 0x2110, 8),
+                                      (DATA_ADDRESS + 0x110, 0x2900, 0), (DATA_ADDRESS + 0x700, 0x2900, 8)):
+            with self.subTest(address=address, offset=offset, size=size):
+                image = bytearray(build_module())
+                struct.pack_into("<H", image, 0x38, 4)
+                struct.pack_into("<IIQQQQQQ", image, 64 + 3 * 56, 1, 6, offset, address, 0, size, size, 1)
+                module = annotate_module.Module(image)
+                self.assertEqual(module.imports(), original.imports())
+                self.assertEqual(module.exports(), original.exports())
+
+    def test_ambiguous_loads_do_not_emit_offline_symbol_maps(self):
+        image = bytearray(build_module())
+        struct.pack_into("<H", image, 0x38, 4)
+        struct.pack_into("<IIQQQQQQ", image, 64 + 3 * 56, 1, 6, 0x2900, DATA_ADDRESS + 0x110, 0, 8, 8, 1)
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "module.prx"
+            path.write_bytes(image)
+            for mode in ("--symbols-json", "--symbols-ghidra"):
+                with self.subTest(mode=mode):
+                    output = io.StringIO()
+                    with contextlib.redirect_stdout(output), self.assertRaisesRegex(SystemExit, "ambiguous PT_LOAD"):
+                        annotate_module.main([str(path), "--no-names", mode])
+                    self.assertEqual(output.getvalue(), "")
+
+    def test_conflicting_dynamic_metadata_cannot_produce_symbol_maps(self):
+        cases = [(10, [(10, 1)]), (5, [(5, DATA_ADDRESS + 0x150)]), (11, [(11, 16)]),
+                 (2, [(2, 0)]), (9, [(9, 24), (9, 16)])]
+        for tag, entries in cases:
+            with self.subTest(tag=tag), self.assertRaisesRegex(annotate_module.ModuleError, "conflicting duplicate"):
+                annotate_module.Module(append_dynamic_tags(build_module(), entries))
+
+    def test_equal_and_repeatable_dynamic_tags_preserve_symbol_maps(self):
+        data = build_module()
+        original = annotate_module.Module(data)
+        for entries in ([(10, original.strsz)], [(1, 1), (1, 17)], [(0x60001000, 1), (0x60001000, 2)]):
+            with self.subTest(entries=entries):
+                repeated = annotate_module.Module(append_dynamic_tags(data, entries))
+                self.assertEqual(repeated.imports(), original.imports())
+                self.assertEqual(repeated.exports(), original.exports())
+
+    def test_symbols_json_does_not_emit_labels_for_conflicting_tags(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "module.prx"
+            path.write_bytes(append_dynamic_tags(build_module(), [(10, 1)]))
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output), self.assertRaisesRegex(SystemExit, "conflicting duplicate DT_STRSZ"):
+                annotate_module.main([str(path), "--no-names", "--symbols-json"])
+            self.assertEqual(output.getvalue(), "")
+
     def test_dynamic_segment_must_contain_complete_terminated_tags(self):
         for size in (113, 128, 0x10000):
             with self.subTest(size=size):
@@ -237,6 +312,45 @@ class ImportRelocationTests(unittest.TestCase):
         module = annotate_module.Module(build_module(tags=(GNU_HASH, 5, 6, 10, 11, 23, 2, 20), symbols=[], relocations=(), kind="gnu", bloom_count=1))
         self.assertEqual(module.symbol_count, 1)
 
+    def test_empty_gnu_hash_keeps_imports_from_both_relocation_tables(self):
+        symbols = [(IMPORT_NAME, 0, 0x12, 0), (SECOND_IMPORT_NAME, 0, 0x12, 0)]
+        image = bytearray(build_module(tags=(GNU_HASH, 5, 6, 10, 11, 7, 8, 23, 2, 20), symbols=symbols,
+                                      glob_dats=((SLOT + 8, 2),), kind="gnu"))
+        struct.pack_into("<I", image, 0x2018, 0)
+        module = annotate_module.Module(image)
+        self.assertEqual(module.symbol_count, 3)
+        self.assertEqual(module.imports(), {SLOT: symbol_name(IMPORT_NAME), SLOT + 8: symbol_name(SECOND_IMPORT_NAME)})
+        self.assertEqual(module.exports(), ({}, {}))
+        names = annotate_module.Namer({nid(IMPORT_NAME): IMPORT_NAME, nid(SECOND_IMPORT_NAME): SECOND_IMPORT_NAME})
+        self.assertEqual(annotate_module.ghidra_symbols(module, names),
+                         ["imp_%s %#x l" % (IMPORT_NAME, SLOT), "imp_%s %#x l" % (SECOND_IMPORT_NAME, SLOT + 8)])
+
+    def test_empty_gnu_hash_ignores_unused_relocation_symbol_indices(self):
+        image = build_module(tags=(GNU_HASH, 5, 6, 10, 11, 23, 2, 20), symbols=[], kind="gnu")
+        image = with_relocation(image, 0x2280, 0, SLOT, 0xFFFFFFFF, 0)
+        module = annotate_module.Module(image)
+        self.assertEqual(module.symbol_count, 1)
+        self.assertEqual(module.imports(), {})
+
+    def test_empty_gnu_hash_still_validates_relocations_and_symbol_ranges(self):
+        for values, index, message in (({2: 25}, 1, "multiple"), ({23: DATA_ADDRESS + 0x800}, 1, "PT_LOAD"),
+                                       ({}, 0xFFFFFFFF, "PT_LOAD|symbol index .* is outside")):
+            with self.subTest(values=values, index=index):
+                image = bytearray(build_module(tags=(GNU_HASH, 5, 6, 10, 11, 23, 2, 20), values=values,
+                                              symbols=[(IMPORT_NAME, 0, 0x12, 0)], kind="gnu"))
+                struct.pack_into("<I", image, 0x2018, 0)
+                image = with_relocation(image, 0x2280, 0, SLOT, index, 7)
+                with self.assertRaisesRegex(annotate_module.ModuleError, message):
+                    annotate_module.Module(image).imports()
+
+    def test_nonempty_gnu_hash_keeps_its_symbol_count_limit(self):
+        image = build_module(tags=(GNU_HASH, 5, 6, 10, 11, 23, 2, 20),
+                             symbols=[(IMPORT_NAME, 0, 0x12, 0)], relocations=((SLOT, 3),), kind="gnu")
+        module = annotate_module.Module(image)
+        self.assertEqual(module.symbol_count, 2)
+        with self.assertRaisesRegex(annotate_module.ModuleError, "symbol index 3 is outside"):
+            module.imports()
+
     def test_dt_hash_precedence_preserves_unused_invalid_gnu_hash(self):
         tags = (4, GNU_HASH, 5, 6, 10, 11, 23, 2, 20)
         module = build_module(tags=tags, values={GNU_HASH: DATA_ADDRESS + 0x400}, kind="sysv", bloom_count=3)
@@ -309,6 +423,52 @@ class AnnotateModuleTests(unittest.TestCase):
         header = listing.index("; ===== export " + EXPORT_NAME)
         self.assertEqual(instruction(listing, "ret"), listing[header + 1])
         self.assertEqual([], [path.name for path in self.root.iterdir() if path.suffix == ".bin"])
+
+    def test_endbr64_stubs_name_branches_to_both_entry_addresses(self):
+        for address in (0, CODE_ADDRESS, 0x100001000):
+            for prefix in (b"", b"\xf2", b"\x67", b"\xf2\x67"):
+                if address > 0xFFFFFFFF and b"\x67" not in prefix:
+                    continue
+                with self.subTest(address=address, prefix=prefix):
+                    code = b"\xf3\x0f\x1e\xfa" + prefix + b"\xff\x25"
+                    code += struct.pack("<I", (SLOT - address - len(code) - 4) & 0xFFFFFFFF)
+                    branches = []
+                    for opcode in (b"\xe8", b"\xe9"):
+                        for target in (address, address + 4):
+                            location = address + len(code)
+                            branches.append(location)
+                            code += opcode + struct.pack("<i", target - location - 5)
+                    image = bytearray(build_module(code=code + b"\xc3", symbols=[(IMPORT_NAME, 0, 0x12, 0)]))
+                    struct.pack_into("<Q", image, 64 + 16, address)
+                    self.annotate(image)
+                    listing = self.read(".asm").splitlines()
+                    lines = {int(match.group(1), 16): line for line in listing
+                             if (match := annotate_module.LINE_ADDRESS.match(line))}
+                    for location in branches:
+                        self.assertTrue(lines[location].endswith("; -> " + IMPORT_NAME), lines[location])
+                    self.assertTrue(lines[address + 4].endswith("; GOT " + IMPORT_NAME))
+
+    def test_endbr64_followed_by_other_instructions_is_not_a_stub_alias(self):
+        namer = annotate_module.Namer({nid(IMPORT_NAME): IMPORT_NAME})
+        for middle in (b"\x90", b"\x50", b"\xcc"):
+            with self.subTest(middle=middle):
+                code = b"\xf3\x0f\x1e\xfa" + middle + b"\xff\x25"
+                code += struct.pack("<i", SLOT - CODE_ADDRESS - len(code) - 4)
+                listing = annotate_module.disassemble(code, CODE_ADDRESS)
+                self.assertEqual(annotate_module.find_stubs(listing, {SLOT: symbol_name(IMPORT_NAME)}, namer),
+                                 {CODE_ADDRESS + 4 + len(middle): IMPORT_NAME})
+
+    def test_endbr64_stub_alias_requires_a_contiguous_listing(self):
+        namer = annotate_module.Namer({nid(IMPORT_NAME): IMPORT_NAME})
+        for preceding, address in ((["1000: endbr64"], 0x1008), (["1000: endbr64", ""], 0x1004),
+                                   (["1000: endbr64", "; ===== segment 0x1004"], 0x1004),
+                                   (["1000: data16 endbr64"], 0x1004), (["1000: endbr32"], 0x1004)):
+            with self.subTest(preceding=preceding, address=address):
+                listing = preceding + ["%x: jmp *0x17f6(%%rip) # 0x2800" % address]
+                self.assertEqual(annotate_module.find_stubs(listing, {SLOT: symbol_name(IMPORT_NAME)}, namer),
+                                 {address: IMPORT_NAME})
+        listing = ["1000: endbr64", "1004: jmp *%rax"]
+        self.assertEqual(annotate_module.find_stubs(listing, {SLOT: symbol_name(IMPORT_NAME)}, namer), {})
 
     def test_unknown_nid_prints_the_nid(self):
         db = self.root / "db.csv"
@@ -401,6 +561,48 @@ class AnnotateModuleTests(unittest.TestCase):
                     self.assertIn("0 stubs", summary)
                     self.assertNotIn("; GOT ", self.read(".asm"))
                     self.assertNotIn("; -> ", self.read(".asm"))
+
+    def test_lea_destination_width_controls_import_address(self):
+        address = 0x100001000
+        symbols = DEFAULT_SYMBOLS + [(SECOND_IMPORT_NAME, 0, 0x12, 0)]
+        for segment in (b"", b"\x64", b"\x65"):
+            for address_prefix in (b"", b"\x67"):
+                with self.subTest(segment=segment, address_prefix=address_prefix):
+                    code, expected = b"", {}
+                    for opcode in (0x8D, 0x8B):
+                        for width in (16, 32, 64):
+                            for register in range(16):
+                                rex = (0x48 if width == 64 else 0x40) | (4 if register >= 8 else 0)
+                                prefix = segment + (b"\x66" if width == 16 else b"") + address_prefix
+                                if rex != 0x40:
+                                    prefix += bytes([rex])
+                                encoded = prefix + bytes([opcode, 5 | ((register & 7) << 3)])
+                                location = address + len(code)
+                                next_address = location + len(encoded) + 4
+                                code += encoded + struct.pack("<I", (SLOT - next_address) & 0xFFFFFFFF)
+                                if opcode == 0x8D:
+                                    name = None if width == 16 else IMPORT_NAME if width == 32 or address_prefix else SECOND_IMPORT_NAME
+                                else:
+                                    name = None if segment else IMPORT_NAME if address_prefix else SECOND_IMPORT_NAME
+                                expected[location] = (opcode, width, register, name)
+                    module = bytearray(build_module(code=code + b"\xc3", symbols=symbols,
+                                                   relocations=((SLOT, 1), (0x100000000 + SLOT, 3))))
+                    struct.pack_into("<Q", module, 64 + 16, address)
+                    self.annotate(bytes(module))
+                    observed = set()
+                    for line in self.read(".asm").splitlines():
+                        match = annotate_module.LINE_ADDRESS.match(line)
+                        location = int(match.group(1), 16) if match else None
+                        if location not in expected:
+                            continue
+                        observed.add(location)
+                        opcode, width, register, name = expected[location]
+                        with self.subTest(opcode=opcode, width=width, register=register):
+                            if name is None:
+                                self.assertNotIn("; GOT ", line)
+                            else:
+                                self.assertTrue(line.endswith("; GOT " + name), line)
+                    self.assertEqual(observed, set(expected))
 
     def test_lea_ignores_segment_base_when_naming_import_addresses(self):
         address = 0x100001000
@@ -662,6 +864,8 @@ class InputProtectionTests(unittest.TestCase):
             self.assertFalse((root / "report.asm").exists())
 
     def test_cli_rejects_invalid_gnu_bloom_size_without_reports(self):
+        if annotate_module.gnu_objdump() is None:
+            self.skipTest("GNU binutils objdump (objdump or gobjdump) is required to run this test")
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             module = root / "invalid.prx"

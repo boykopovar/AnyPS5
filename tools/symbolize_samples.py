@@ -3,6 +3,7 @@ import bisect
 import collections
 import json
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -52,6 +53,7 @@ class PeModule:
             raise ValueError(f"{path}: not a PE32+ image")
         self.image_base = struct.unpack_from("<Q", data, optional + 24)[0]
         self.size = struct.unpack_from("<I", data, optional + 56)[0]
+        self.headers_size = struct.unpack_from("<I", data, optional + 60)[0]
         directories = struct.unpack_from("<I", data, optional + 108)[0]
         if directories > (optional_size - 112) // 8:
             raise ValueError(f"{path}: PE data directories exceed the optional header")
@@ -77,6 +79,8 @@ class PeModule:
 
     def mapped_range(self, rva):
         matches = [section for section in self.sections if section[0] <= rva < section[0] + section[1]]
+        if 0 <= rva < self.headers_size:
+            matches.append((0, self.headers_size, self.headers_size, 0, 0))
         if not matches:
             raise ValueError(f"RVA {rva:#x} is in no section")
         if len(matches) != 1:
@@ -164,6 +168,10 @@ class PeModule:
         return result
 
     def export_symbols(self, data, rva, size):
+        if size < 40:
+            raise ValueError("PE export directory is smaller than its header")
+        if rva + size > 0x100000000:
+            raise ValueError("PE export directory exceeds address space")
         directory = self.read_bytes(data, rva, 40)
         functions, names, function_rva, name_rva, ordinal_rva = struct.unpack_from("<IIIII", directory, 20)
         if not names:
@@ -196,7 +204,9 @@ class Symbolizer:
         for directory in libs:
             for path in Path(directory).iterdir():
                 if path.is_file():
-                    self.files.setdefault(path.name.lower(), {}).setdefault(path.resolve(), path)
+                    info = path.stat()
+                    identity = (info.st_dev, info.st_ino) if info.st_ino else path.resolve()
+                    self.files.setdefault(path.name.lower(), {}).setdefault(identity, path)
         self.headers = {name.lower(): identity for name, identity in headers.items()}
         self.modules = {}
         self.demangle = demangle and shutil.which("c++filt") is not None
@@ -279,46 +289,77 @@ class Symbolizer:
         return self.demangled[symbol]
 
 
-def read_headers(lines):
+def is_ascii_digits(value):
+    return value.isascii() and value.isdigit()
+
+
+def is_hex(value):
+    return re.fullmatch(r"(?:0[xX])?[0-9a-fA-F]+", value) is not None
+
+
+def read_headers(lines, path=None):
     headers = {}
-    for line in lines:
+    for number, line in enumerate(lines, 1):
         parts = line.split(None, 2)
-        fields = parts[2].rsplit(None, 2) if len(parts) == 3 and parts[:2] == ["#", "module"] else []
-        if len(fields) == 3:
-            name = fields[0].lower()
-            identity = (int(fields[1], 16), int(fields[2], 16))
-            headers[name] = False if name in headers else identity
+        if len(parts) < 2 or parts[:2] != ["#", "module"]:
+            continue
+        fields = parts[2].rsplit(None, 2) if len(parts) == 3 else []
+        if len(fields) != 3 or not (is_hex(fields[1]) and is_hex(fields[2])):
+            location = f"{path}:{number}" if path is not None else f"line {number}"
+            raise ValueError(f"{location}: expected '# module <name> <size> <timestamp>'")
+        name = fields[0].lower()
+        identity = (int(fields[1], 16), int(fields[2], 16))
+        headers[name] = False if name in headers else identity
     return headers
 
 
 class Samples:
     def __init__(self):
         self.headers = {}
+        self.capture_format = None
         self.stacks = collections.Counter()
         self.self_counts = collections.Counter()
         self.inclusive = collections.Counter()
         self.total = collections.Counter()
+        self.threads = set()
 
 
 def load(path, thread=None):
     lines = Path(path).read_text(encoding="utf-8-sig").splitlines()
     samples = Samples()
-    samples.headers = read_headers(lines)
+    samples.headers = read_headers(lines, path)
     current = None
+
+    def record_format(kind, number):
+        if samples.capture_format is not None and samples.capture_format != kind:
+            raise ValueError(f"{path}:{number}: cannot mix collapsed-stack and address records")
+        samples.capture_format = kind
+
     for number, line in enumerate(lines, 1):
         parts = line.split()
-        if len(parts) == 3 and parts[0] == "#" and parts[2] == "samples" and parts[1].isdigit():
+        if len(parts) == 3 and parts[0] == "#" and parts[2] == "samples":
+            if not is_ascii_digits(parts[1]):
+                raise ValueError(f"{path}:{number}: expected '# <n> samples'")
             samples.total["samples"] += int(parts[1])
             continue
         if line.startswith("#") or not line.strip():
             continue
-        if len(parts) == 4 and parts[0] == "thread" and parts[2] == "samples" and parts[1].isdigit() and parts[3].isdigit():
+        if len(parts) == 4 and parts[0] == "thread" and parts[2] == "samples":
+            if not (is_ascii_digits(parts[1]) and is_ascii_digits(parts[3])):
+                raise ValueError(f"{path}:{number}: expected 'thread <id> samples <n>'")
+            record_format("address", number)
             current = parts[1]
+            samples.threads.add(current)
             if thread is None or current == thread:
                 samples.total["threads"] += int(parts[3])
             continue
         fields = line.strip().rsplit(None, 3)
-        if len(fields) == 4 and fields[1].startswith("0x") and fields[2].isdigit() and fields[3].isdigit():
+        if len(fields) == 4 and ((fields[2].isdigit() and fields[3].isdigit()) or re.fullmatch(r"0x[0-9a-fA-F]+", fields[1]) is not None):
+            if re.fullmatch(r"0x[0-9a-fA-F]+", fields[1]) is None:
+                raise ValueError(f"{path}:{number}: expected a hexadecimal offset after the module name")
+            if not (is_ascii_digits(fields[2]) and is_ascii_digits(fields[3])):
+                raise ValueError(f"{path}:{number}: expected 'frame;...;frame count', 'module offset self inclusive' or 'thread <id> samples <n>'")
+            record_format("address", number)
             if thread is not None and current is None:
                 raise ValueError(f"{path}:{number}: thread filtering requires thread headings in an address capture")
             if thread is None or current == thread:
@@ -326,8 +367,9 @@ def load(path, thread=None):
                 samples.inclusive[(fields[0], fields[1])] += int(fields[3])
             continue
         frames, _, count = line.rpartition(" ")
-        if not frames or not count.isdigit():
+        if not frames or not is_ascii_digits(count):
             raise ValueError(f"{path}:{number}: expected 'frame;...;frame count', 'module offset self inclusive' or 'thread <id> samples <n>'")
+        record_format("collapsed", number)
         if thread is not None:
             raise ValueError(f"{path}:{number}: thread filtering requires an address capture; collapsed stacks have no thread IDs")
         samples.stacks[frames] += int(count)
@@ -352,6 +394,8 @@ def validate_window(later, earlier):
         key = name.lower()
         if key not in later.headers or key not in earlier.headers:
             raise ValueError(f"{name}: matching-window validation needs module records in both captures")
+        if later.headers[key] is False or earlier.headers[key] is False:
+            raise ValueError(f"{name}: multiple sampled modules share this name, so their identities cannot be matched")
         if later.headers[key] != earlier.headers[key]:
             raise ValueError(f"{name}: module identity differs between captures")
     for name in ("stacks", "self_counts", "inclusive", "total"):
@@ -363,6 +407,7 @@ def validate_window(later, earlier):
 def window(later, earlier):
     result = Samples()
     result.headers = dict(later.headers)
+    result.capture_format = later.capture_format or earlier.capture_format
     for name in ("stacks", "self_counts", "inclusive", "total"):
         setattr(result, name, subtract(getattr(later, name), getattr(earlier, name)))
     return result
@@ -428,6 +473,8 @@ def main(argv=None):
     parser.add_argument("--require-matching-window", action="store_true",
                         help="with --since, require matching module records and nondecreasing cumulative counters; records cannot prove a common process")
     args = parser.parse_args(argv)
+    if args.top < 1:
+        parser.error("--top must be positive")
     if args.require_matching_window and not args.since:
         parser.error("--require-matching-window needs --since")
     try:
@@ -445,10 +492,14 @@ def symbolize(parser, args):
                 if os.path.realpath(source) == os.path.realpath(output) or (source.exists() and output.exists() and source.samefile(output)):
                     parser.error("symbolized output must be separate from the sample captures")
     samples = load(args.samples, args.thread)
+    if args.thread is not None and samples.threads and args.thread not in samples.threads:
+        raise ValueError(f"{args.samples}: thread {args.thread} is not in the capture (threads: {', '.join(sorted(samples.threads, key=int))})")
     if args.out and not samples.stacks:
         parser.error("--out needs a collapsed-stack file")
     if args.since:
         earlier = load(args.since, args.thread)
+        if samples.capture_format and earlier.capture_format and samples.capture_format != earlier.capture_format:
+            raise ValueError(f"{args.since}: sample captures use different data formats")
         if args.require_matching_window:
             try:
                 validate_window(samples, earlier)

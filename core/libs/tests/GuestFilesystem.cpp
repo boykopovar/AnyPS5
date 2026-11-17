@@ -817,7 +817,7 @@ int main() {
     std::uint64_t throttling[4] = {1, 2, 3, 4};
     Require(sceKernelWriteThrottlingStatus(throttling) == 0);
     Require(throttling[0] == 0xffffffffu && throttling[1] == 0 && throttling[2] == 0 && throttling[3] == 0);
-    Require(sceKernelWriteThrottlingStatus(nullptr) == static_cast<int>(0x8002000eu));
+    Require(sceKernelWriteThrottlingStatus(nullptr) == static_cast<int>(0x80020016u));
     Require(sceKernelWriteThrottlingStatus(reinterpret_cast<std::uint64_t*>(0x10)) == static_cast<int>(0x8002000eu));
     Require(sceKernelDebugOutText(0, nullptr) == static_cast<int>(0x8002000eu));
     auto* captured = TemporaryFile::Open();
@@ -1437,6 +1437,9 @@ int main() {
     Require(futimes_nid_postfix(descriptor, negative) == -1 && *__error_nid_postfix() == 22);
     Require(std::fclose(native) == 0);
     Require(std::filesystem::file_size(sized) == 3);
+#ifdef _WIN32
+    const auto fileParameterHandler = _set_invalid_parameter_handler(RecordInvalidParameter);
+#endif
     Require(sceKernelFchmod(descriptor, 0600) == static_cast<int>(0x80020009u));
     Require(fchmod_nid_postfix(descriptor, 0600) == -1 && *__error_nid_postfix() == 9);
     Require(sceKernelFutimes(descriptor, nullptr) == static_cast<int>(0x80020009u));
@@ -1445,6 +1448,12 @@ int main() {
     Require(sceKernelFdatasync(descriptor) == static_cast<int>(0x80020009u));
     Require(fsync_nid_postfix(descriptor) == -1 && *__error_nid_postfix() == 9);
     Require(sceKernelFsync(descriptor) == static_cast<int>(0x80020009u));
+    Require(sceKernelFchmod(0x7fffffff, 0600) == static_cast<int>(0x80020009u));
+    Require(sceKernelFutimes(0x7fffffff, nullptr) == static_cast<int>(0x80020009u));
+#ifdef _WIN32
+    _set_invalid_parameter_handler(fileParameterHandler);
+    Require(!g_invalidParameter);
+#endif
     const int socket = socket_nid_postfix(2, 2, 0);
     Require(socket >= 0);
     Require(sceKernelFchmod(socket, 0600) == static_cast<int>(0x80020016u));
@@ -1465,6 +1474,9 @@ int main() {
     }
     Require(close_nid_postfix(syncPipe[0]) == 0 && close_nid_postfix(syncPipe[1]) == 0);
     Require(close_nid_postfix(socket) == 0);
+#ifdef _WIN32
+    const auto previousParameterHandler = _set_invalid_parameter_handler(RecordInvalidParameter);
+#endif
     Require(fchmod_nid_postfix(socket, 0600) == -1 && *__error_nid_postfix() == 9);
     Require(futimes_nid_postfix(socket, nullptr) == -1 && *__error_nid_postfix() == 9);
     Require(fdatasync_nid_postfix(socket) == -1 && *__error_nid_postfix() == 9);
@@ -1473,9 +1485,6 @@ int main() {
     Require(sceKernelFsync(socket) == static_cast<int>(0x80020009u));
     Require(sceKernelFdatasync(0x7fffffff) == static_cast<int>(0x80020009u));
     Require(sceKernelFsync(0x7fffffff) == static_cast<int>(0x80020009u));
-#ifdef _WIN32
-    const auto previousParameterHandler = _set_invalid_parameter_handler(RecordInvalidParameter);
-#endif
     FileStat closedStatus{};
     Require(sceKernelFstat(descriptor, &closedStatus) == static_cast<int>(0x80020009u));
     Require(sceKernelFstat(socket, &closedStatus) == static_cast<int>(0x80020009u));

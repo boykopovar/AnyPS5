@@ -1,8 +1,10 @@
 #include "prx/libSceAudioOut/include/AudioOut2.hpp"
+#include "prx/libSceAudioOut/include/InventoryExports.hpp"
 #include "prx/libSceAudioOut/src/AudioOut2Internal.hpp"
 #include "prx/libSceAudioOut/src/AudioOut2PadMix.hpp"
 #include "SceTypes.hpp"
 
+#include <cerrno>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -345,6 +347,9 @@ void TestPrimingAfterRunningDry() {
 void TestLowLatencyCallsRejectBadArguments() {
     AudioOut2ContextParam params{};
     Require(sceAudioOut2ContextResetParam(&params) == 0);
+    errno = 73;
+    Require(sceAudioOut2ContextResetParam(reinterpret_cast<AudioOut2ContextParam*>(0x10)) == static_cast<int>(0x80260502));
+    Require(errno == 73);
     params.num_grains = grain;
     params.queue_depth = queueDepth;
     constexpr int errorInvalidParam = static_cast<int>(0x80268001);
@@ -354,9 +359,16 @@ void TestLowLatencyCallsRejectBadArguments() {
     Require(sceAudioOut2LoContextQueryMemory(&params, nullptr) == 0);
     Require(size == sizeSentinel);
     Require(sceAudioOut2LoContextQueryMemory(&params, &size) == 0);
+    errno = 73;
+    Require(sceAudioOut2LoContextQueryMemory(&params, reinterpret_cast<std::size_t*>(0x10)) == errorInvalidParam);
+    Require(sceAudioOut2LoContextQueryMemoryEx(&params, nullptr, reinterpret_cast<std::size_t*>(0x10)) == errorInvalidParam);
+    Require(errno == 73);
     std::size_t standardSize = sizeSentinel;
     Require(sceAudioOut2ContextQueryMemory(&params, &standardSize) == 0);
-    Require(size == 0x5b1c && standardSize == 0x10000);
+    Require(size == 0x5b1c && standardSize == 61196 + 2912 * static_cast<std::size_t>(params.max_ports));
+    errno = 73;
+    Require(sceAudioOut2ContextQueryMemory(&params, reinterpret_cast<std::size_t*>(0x10)) == static_cast<int>(0x80260502));
+    Require(errno == 73);
 
     const AudioOut2ContextHandle contextSentinel = 0x5A5A;
     AudioOut2ContextHandle context = contextSentinel;

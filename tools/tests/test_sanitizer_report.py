@@ -172,6 +172,11 @@ class SanitizerReportTests(unittest.TestCase):
                          {"fiber": "stack switch", "both": "shared   reason"})
         self.assertEqual(sanitizer_report.load_known(known, ["thread"]), {"racy": "interceptor gap"})
 
+    def test_a_test_known_under_two_selected_sanitizers_keeps_both_reasons(self):
+        known = self.write_known("fiber address stack switch", "fiber undefined misaligned load", "fiber thread interceptor gap")
+        self.assertEqual(sanitizer_report.load_known(known, ["address", "undefined"]), {"fiber": "stack switch; misaligned load"})
+        self.assertEqual(sanitizer_report.load_known(known, ["undefined"]), {"fiber": "misaligned load"})
+
     def test_utf8_bom_does_not_change_the_first_known_test_name(self):
         known = self.write("\ufefffiber address stack switch\n", "known.txt")
         self.assertEqual(sanitizer_report.load_known(known, ["address"]), {"fiber": "stack switch"})
@@ -249,6 +254,26 @@ class SanitizerReportTests(unittest.TestCase):
                          "/src/Copy.cpp:35:16: runtime error: null pointer passed as argument 2")
         self.assertEqual(sanitizer_report.first_report("FAIL: plain assertion\n"), "")
 
+    def test_first_report_keeps_source_paths_with_spaces(self):
+        locations = (r"D:\build folder\src\value.cpp:12:3", "/build folder/src/value.cpp:12:3",
+                     "/build \u03a9 folder/src/value.cpp:12:3")
+        for location in locations:
+            report = location + ": runtime error: signed integer overflow"
+            with self.subTest(location=location):
+                self.assertEqual(sanitizer_report.first_report("startup log\n" + report + "\nstack frame\n"), report)
+
+    def test_cli_keeps_source_paths_in_json_and_markdown(self):
+        report = r"D:\build folder\src\value.cpp:12:3: runtime error: shift exponent 64"
+        junit = self.write(suite(case("overflow", "fail", '<failure/><system-err>' + html.escape(report) + '</system-err>')))
+        original = junit.read_bytes()
+        summary = self.write("existing summary\n", "summary.md")
+        code, stdout, stderr = self.run_main(junit, "--json", "--summary", summary)
+        self.assertEqual(code, 1)
+        self.assertEqual(stderr, "")
+        self.assertEqual(json.loads(stdout)["tests"][0]["report"], report)
+        self.assertIn("| `overflow` | " + report + " |", summary.read_text(encoding="utf-8"))
+        self.assertEqual(junit.read_bytes(), original)
+
     def test_first_report_is_shortened(self):
         report = sanitizer_report.first_report("SUMMARY: AddressSanitizer: " + "x" * 400)
         self.assertEqual(len(report), sanitizer_report.REPORT_LENGTH)
@@ -276,6 +301,15 @@ class SanitizerReportTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("| Failed test |\n| - |\n| `plain` |\n", stdout)
 
+    def test_table_details_preserve_html_text_and_backslashes_before_pipes(self):
+        text, failing = sanitizer_report.summarize(
+            "ASan", {"unexpected": "failed", "known": "failed"},
+            {"known": r"guest<arg>\|host & fallback"},
+            {"unexpected": r"stack<Foo>\|Bar & Baz"},
+        )
+        self.assertTrue(failing)
+        self.assertIn(r"| `unexpected` | stack&lt;Foo&gt;&#92;\|Bar &amp; Baz |", text)
+        self.assertIn(r"| `known` | guest&lt;arg&gt;&#92;\|host &amp; fallback |", text)
 
     def test_names_remain_literal_in_every_summary_table(self):
         names = ("one|two", "`fence`", "line\nnext\rreturn", "carriage\rreturn", "\\|<script>&中文*_")

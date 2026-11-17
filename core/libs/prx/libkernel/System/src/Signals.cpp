@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "SceTypes.hpp"
+#include "prx/libc/include/HostThread.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/JumpBuffer.hpp"
 #include "prx/libkernel/Equeue/Equeue.hpp"
@@ -214,7 +215,10 @@ int NativeSignal(int guest) {
 void ResetToDefault(int guest) {
     handlerReset[guest].store(true);
     handlers[guest].store(nullptr);
-    if (const int native = NativeSignal(guest)) std::signal(native, SIG_DFL);
+    if (const int native = NativeSignal(guest)) {
+        std::signal(native, SIG_DFL);
+        if (native == SIGSEGV) GuestFaultCopyReinstall_nid_no_patch();
+    }
 }
 void RunHandler(int guest, GuestHandler handler) {
     auto& self = CurrentSignals();
@@ -278,6 +282,7 @@ bool Install(int guest, const GuestSigaction& action) {
         handlers[guest].store(previous);
         return false;
     }
+    if (native == SIGSEGV) GuestFaultCopyReinstall_nid_no_patch();
     return true;
 }
 }
@@ -479,7 +484,7 @@ std::chrono::microseconds RemainingAlarm(const AlarmState& alarms, std::chrono::
 
 void NotifyAlarms(AlarmState& alarms) {
     if (!alarms.threadStarted) {
-        std::thread(RunAlarms).detach();
+        Libc::StartHostThread(RunAlarms).detach();
         alarms.threadStarted = true;
     }
     alarms.changed.NotifyAll();
@@ -572,11 +577,11 @@ KernelTimeval ItimerTimeval(std::chrono::microseconds duration) {
 }
 
 extern "C" int APS5_VABI setitimer_nid_postfix(int which, const GuestItimerval* value, GuestItimerval* previous) {
+    GuestItimerval requested{};
+    if (value != nullptr && !GuestCopyIn_nid_no_patch(&requested, value, sizeof(requested))) { *__error_nid_postfix() = 14; return -1; }
     if (which < ItimerReal || which > ItimerProf) { *__error_nid_postfix() = 22; return -1; }
     if (value == nullptr && previous == nullptr) { *__error_nid_postfix() = 14; return -1; }
-    GuestItimerval requested{};
     if (value != nullptr) {
-        if (!GuestCopyIn_nid_no_patch(&requested, value, sizeof(requested))) { *__error_nid_postfix() = 14; return -1; }
         if (!ValidItimer(requested.value)) { *__error_nid_postfix() = 22; return -1; }
         if (!ItimerSet(requested.value)) requested.interval = {};
         else if (!ValidItimer(requested.interval)) { *__error_nid_postfix() = 22; return -1; }
