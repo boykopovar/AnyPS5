@@ -9993,6 +9993,7 @@ void dccMipWriteBackTests(const Device& device, Recorder& recorder) {
         while (StorageTexture::AnyLiveOverlaps(reused)) {
             Require(std::chrono::steady_clock::now() < deadline, std::string(test.name) + ": an earlier case's image is still in the live registry over the reused memory, so this image would store whole");
             recorder.Reap();
+            recorder.FlushDeferredReleases();
             std::this_thread::yield();
         }
         {
