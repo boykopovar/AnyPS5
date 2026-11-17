@@ -99,7 +99,7 @@ int main() {
     std::memcpy(memory, &guest, sizeof(guest));
 #if defined(_WIN32)
     DWORD old = 0;
-    Require(VirtualProtect(memory, 0x1000, PAGE_NOACCESS, &old) == memory);
+    Require(VirtualProtect(memory, 0x1000, PAGE_NOACCESS, &old) != FALSE);
 #else
     Require(mprotect(memory, Page, PROT_NONE) == 0);
 #endif
