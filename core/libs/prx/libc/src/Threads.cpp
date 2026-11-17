@@ -278,7 +278,7 @@ int APS5_VABI _Mtx_timedlock_nid_postfix(void** handle, const Xtime* target) {
     const auto self = std::this_thread::get_id();
     if (mutex->owner.load(std::memory_order_acquire) == self) {
         if ((mutex->type & mutexRecursive) == 0) {
-            std::this_thread::sleep_until(deadline);
+            PreciseSleepUntil(deadline);
             return threadTimedout;
         }
         if (mutex->count == std::numeric_limits<int>::max())
