@@ -2,6 +2,9 @@
 
 ### Functional
 
+- [Matrix.cpp](../../../core/libs/prx/libcairo/Matrix.cpp) - Matrix constructors, transforms and multiplication check guest pointer reads and writes before reaching pinned Cairo 1.18.0; invalid or unwritable pointers throw rather than crash the host. The console's error response to these pointers is unmeasured. Both coordinate outputs are checked before either is written, though changes in page protection during a call cannot be made atomic.
+
+- [Matrix.cpp](../../../core/libs/prx/libcairo/Matrix.cpp), [Region.cpp](../../../core/libs/prx/libcairo/Region.cpp), [Surface.cpp](../../../core/libs/prx/libcairo/Surface.cpp), [Png.cpp](../../../core/libs/prx/libcairo/Png.cpp) and [Context.cpp](../../../core/libs/prx/libcairo/Context.cpp) - Sony's three Cairo patches ([source](https://www.playstation.com/en-us/oss/ps5/cairo/)) are not applied to the Cairo 1.18.0 these exports run, with the image backend only, as on PS5 system software 9.00 and later. The patch that changes behaviour adds `CAIRO_STATUS_NULL_SURFACE_IMAGE` where a surface pattern's image cannot be acquired; no export reaches that path while `cairo_set_source_surface` is a stub. Sony publishes no pixman or libpng source, so their console versions are unknown; this build uses pixman 0.42.2, the newest when Cairo 1.18.0 came out, and libpng 1.6.59.
 - [Matrix.cpp](../../../core/libs/prx/libcairo/Matrix.cpp), [Region.cpp](../../../core/libs/prx/libcairo/Region.cpp), [Surface.cpp](../../../core/libs/prx/libcairo/Surface.cpp), [Png.cpp](../../../core/libs/prx/libcairo/Png.cpp) and [Context.cpp](../../../core/libs/prx/libcairo/Context.cpp) - Sony's three Cairo patches ([source](https://www.playstation.com/en-us/oss/ps5/cairo/)) are not applied to the Cairo 1.18.0 these exports run, with the image backend only (PS5 system software 9.00 and later). The patch that changes behaviour returns an unstored `CAIRO_STATUS_NULL_SURFACE_IMAGE` when pixman cannot create a surface source's image, so the console skips that draw; here the context keeps `CAIRO_STATUS_NO_MEMORY`. Sources from `cairo_set_source_surface` and `cairo_pop_group_to_source` reach it only if that allocation fails. Sony publishes no pixman or libpng source, so console versions are unknown; this build uses pixman 0.42.2, the newest when Cairo 1.18.0 came out, and libpng 1.6.59.
 
 - [Region.cpp](../../../core/libs/prx/libcairo/Region.cpp) - a null region or rectangle, which Cairo dereferences, returns `CAIRO_STATUS_NULL_POINTER` from `cairo_region_union_rectangle`, 0 from `cairo_region_num_rectangles` and leaves `cairo_region_get_rectangle` without effect; an `nth` outside the region, which Cairo reads past the array for, returns an empty rectangle. Negative sizes and coordinate overflow are not separately validated; pixman can reject an invalid box or wrap its endpoints. A merged box wider or taller than `INT32_MAX` overflows a signed subtraction in `cairo_region_get_rectangle`; the result is undefined. Console behaviour is unmeasured.
@@ -65,7 +68,6 @@
 | `cairo_pattern_destroy` | `eZpt6dzI9oo` |
 | `cairo_pattern_set_matrix` | `fDNhBmmwSNs` |
 | `cairo_pattern_set_filter` | `gsqESe70WD0` |
-| `cairo_ft_font_options_substitute` | `ii895dyBjMo` |
 | `cairo_scaled_font_reference` | `mb4bdMeFRs8` |
 | `cairo_font_face_reference` | `nqmUW6Z8xLE` |
 | `cairo_scaled_font_text_to_glyphs` | `ojbXRC0CmUo` |
@@ -75,3 +77,7 @@
 | `cairo_pattern_create_radial` | `uYFjM3ReDRQ` |
 | `cairo_device_destroy` | `wO1D4B90k0k` |
 | `cairo_pattern_add_color_stop_rgba` | `xXWrbaaPNNg` |
+
+### FreeType font-option substitution
+
+- [FreeType font-option substitution](../../../core/libs/prx/libcairo/src/FtFontOptions.cpp) follows Cairo 1.18.0 [cairo-ft-font.c](https://gitlab.freedesktop.org/cairo/cairo/-/blob/1.18.0/src/cairo-ft-font.c), `_cairo_ft_font_options_substitute` and its public wrapper, through the guest Fontconfig exports. PS5 behavior is unmeasured. The existing four-field font-options state has no internal LCD filter; its Cairo default leaves `lcdfilter` untouched. Hint metrics are unused by upstream substitution. Allocation failure stops substitution without rolling back earlier properties, as in the void upstream wrapper.

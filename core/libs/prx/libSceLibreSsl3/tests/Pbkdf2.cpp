@@ -2,13 +2,18 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <source_location>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
+#ifdef __linux__
+#include <sys/resource.h>
+#endif
 
 namespace {
 
@@ -16,6 +21,26 @@ void Require(bool condition, std::source_location location = std::source_locatio
     if (condition) return;
     std::fprintf(stderr, "LibreSSL3 PKCS5_PBKDF2_HMAC check failed at line %u\n", location.line());
     std::abort();
+}
+
+long PeakKilobytes() {
+#ifdef __linux__
+    rusage usage{};
+    getrusage(RUSAGE_SELF, &usage);
+    return usage.ru_maxrss;
+#else
+    return 0;
+#endif
+}
+
+template <typename TAction>
+void RequireThrows(TAction action, std::source_location location = std::source_location::current()) {
+    try {
+        action();
+    } catch (const std::invalid_argument&) {
+        return;
+    }
+    Require(false, location);
 }
 
 void* APS5_VABI Allocate(std::size_t bytes) { return std::malloc(bytes ? bytes : 1); }
@@ -72,6 +97,22 @@ int main() {
             "a1d425a1225833549adb841b51c9b3176a272bdebba1d078478f62b397f33c8d");
     Require(Derive(sha256, "password", "salt", 2, 20) == "ae4d0c95af6b46d32d0adff928f06dd02a303f8e");
     Require(Derive(sha256, "password", -1, "salt", 2, 20) == "ae4d0c95af6b46d32d0adff928f06dd02a303f8e");
+    const std::string chunkedPassword(5000, 'p');
+    Require(Derive(sha256, chunkedPassword, -1, "salt", 2, 20) == Derive(sha256, chunkedPassword, "salt", 2, 20));
+    const auto* const unreadable = reinterpret_cast<const char*>(0x10);
+    const auto* const unreadableSalt = reinterpret_cast<const unsigned char*>(0x10);
+    const auto* const saltText = reinterpret_cast<const unsigned char*>("salt");
+    unsigned char key[20] {};
+    errno = 71;
+    RequireThrows([&] { PKCS5_PBKDF2_HMAC_nid_postfix(unreadable, -1, saltText, 4, 2, sha256, 20, key); });
+    RequireThrows([&] { PKCS5_PBKDF2_HMAC_nid_postfix(unreadable, 8, saltText, 4, 2, sha256, 20, key); });
+    RequireThrows([&] { PKCS5_PBKDF2_HMAC_nid_postfix("password", 8, unreadableSalt, 4, 2, sha256, 20, key); });
+    RequireThrows([&] { PKCS5_PBKDF2_HMAC_nid_postfix("password", 8, saltText, 4, 2, sha256, 20, reinterpret_cast<unsigned char*>(0x10)); });
+    Require(errno == 71);
+    const long peakBefore = PeakKilobytes();
+    RequireThrows([&] { PKCS5_PBKDF2_HMAC_nid_postfix(unreadable, 0x7fffffff, saltText, 4, 2, sha256, 20, key); });
+    RequireThrows([&] { PKCS5_PBKDF2_HMAC_nid_postfix("password", 8, unreadableSalt, 0x7fffffff, 2, sha256, 20, key); });
+    Require(errno == 71 && PeakKilobytes() - peakBefore < 64 * 1024);
     Require(Derive(sha256, "", "salt", 1, 32) == "f135c27993baf98773c5cdb40a5706ce6a345cde61b000a67858650cd6a324d7");
     Require(Derive(sha256, "password", "salt", 0, 20) == Derive(sha256, "password", "salt", 1, 20));
     Require(Derive(EVP_sha512_nid_postfix(), "password", "salt", 3, 100) ==
