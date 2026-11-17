@@ -127,6 +127,7 @@ void CheckGroupedWriters() {
     char finishedTarget[32];
     std::snprintf(finishedTarget, sizeof(finishedTarget), "0x%llx", static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(&done)));
     Require(Count(text, std::string("later in this submission: WRITE_DATA at ") + finishedTarget + "+0x4 value 0x1") >= 1, "wait timeout report: the write after the wait was not listed");
+    Require(Count(text, "draw pipeline: ") >= 1 && Count(text, "queued label none 0x0") >= 1, "wait timeout report: the draw pipeline line does not say that no queued label holds the awaited value");
 }
 
 }

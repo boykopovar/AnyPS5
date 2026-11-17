@@ -3,6 +3,8 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/WaitMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Queues/SubmissionRing.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Pm4.hpp"
@@ -487,6 +489,9 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
                              static_cast<unsigned long long>(Graphics::Recorder::PendingCompletionLabels()), static_cast<unsigned long long>(Graphics::Recorder::PendingWriteBackCompletions()), age,
                              static_cast<unsigned long long>(Graphics::Recorder::WriteGeneration()), static_cast<unsigned long long>(seenGeneration), queue0Dormant.load(std::memory_order_relaxed) ? 1 : 0, completionsPending() ? 1 : 0, labelFlushDue() ? 1 : 0);
             }
+            const auto queuedLabel = DrawPipeline::Queue0().PendingLabel(awaited, awaitedBytes);
+            std::fprintf(stderr, "[gpu]   draw pipeline: %zu outstanding, writes it %d, queued label %s 0x%llx; draw finisher busy %d; this worker holds %zu deferred labels\n", DrawPipeline::Queue0().Outstanding(),
+                         DrawPipeline::Queue0().Overlaps(awaited, awaitedBytes) ? 1 : 0, queuedLabel.has_value() ? "value" : "none", static_cast<unsigned long long>(queuedLabel.value_or(0)), DrawFinisher::Busy() ? 1 : 0, deferredLabels().labels.size());
             context.Print(stderr, "[gpu]   preceding packet %s\n");
         }
         if (!stuckReported && std::chrono::steady_clock::now() - entered > std::chrono::milliseconds(10 * waitTimeoutMs())) {
