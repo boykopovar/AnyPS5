@@ -128,6 +128,30 @@ void schedule() {
     Require(arm4.event == Event::Begin && arm4.phase == 4 && arm4.arm == 0, "the multi-arm cycle did not wrap to arm A");
 }
 
+void rotation() {
+    using Event = AbSchedule::Event;
+    const auto two = AbSchedule::Parse("60:A|X=APS5_NO_BARRIER_BATCH", "", "", true);
+    Require(two.rotate, "the rotation was not kept in the configuration");
+    AbSchedule pairs(two);
+    const std::size_t twoArms[] = {0, 1, 1, 0, 0, 1, 1, 0};
+    for (std::size_t phase = 0; phase < 8; ++phase) {
+        const auto step = pairs.AtPresent(phase + 1, 60.0 * static_cast<double>(phase));
+        Require(step.event == Event::Begin && step.phase == phase && step.arm == twoArms[phase], "the two-arm rotation put arm " + std::to_string(step.arm) + " at phase " + std::to_string(phase));
+    }
+    AbSchedule three(AbSchedule::Parse("60:A|X=APS5_NO_BARRIER_BATCH|Y=APS5_NO_GUARD_SPANS", "", "2", true));
+    const std::size_t threeArms[] = {0, 1, 2, 1, 2, 0, 2, 0, 1, 0, 1, 2};
+    for (std::size_t phase = 0; phase < 12; ++phase) {
+        const auto begin = three.AtPresent(phase * 2 + 1, 60.0 * static_cast<double>(phase));
+        Require(begin.event == Event::Begin && begin.phase == phase && begin.arm == threeArms[phase], "the three-arm rotation put arm " + std::to_string(begin.arm) + " at phase " + std::to_string(phase));
+        Require(begin.arm == (phase % 3 + phase / 3) % 3, "cycle " + std::to_string(phase / 3) + " did not begin with arm " + std::to_string(phase / 3 % 3));
+        const auto settled = three.AtPresent(phase * 2 + 2, 60.0 * static_cast<double>(phase) + 2.0);
+        Require(settled.event == Event::Settled && settled.phase == phase && settled.arm == threeArms[phase], "the settle step of phase " + std::to_string(phase) + " named another arm");
+    }
+    AbSchedule plain(AbSchedule::Parse("60:A|X=APS5_NO_BARRIER_BATCH|Y=APS5_NO_GUARD_SPANS", "", ""));
+    Require(!plain.Settings().rotate, "the rotation was on without being asked");
+    for (std::size_t phase = 0; phase < 6; ++phase) Require(plain.AtPresent(phase + 1, 60.0 * static_cast<double>(phase)).arm == phase % 3, "the arms changed their order without the rotation");
+}
+
 void glue() {
     Require(AgcDriver::Graphics::AbConfigured(), "APS5_AB is not seen");
     Require(AgcDriver::Graphics::AbAtPresent(1, 0.0).empty(), "the A/B printed before its start");
@@ -144,6 +168,35 @@ void glue() {
     lines = AgcDriver::Graphics::AbAtPresent(7, 11.5);
     Require(lines.size() == 1 && lines[0] == "[ab] phase A 2 begins at present 7 (t 11.500 s): APS5_NO_BARRIER_BATCH set\n", "phase A did not come back");
     Require(RuntimeSwitches::Set(RuntimeSwitch::NoBarrierBatch), "phase A did not restore the environment's setting");
+}
+
+int rotated() {
+    try {
+        Require(AgcDriver::Graphics::AbConfigured(), "APS5_AB is not seen");
+        Require(AgcDriver::Graphics::AbAtPresent(1, 0.0).empty(), "the A/B printed before its start");
+        RuntimeSwitches::Assign(RuntimeSwitch::NoBarrierBatch, false);
+        auto lines = AgcDriver::Graphics::AbAtPresent(3, 1.0);
+        Require(lines.size() == 2 && lines[0] == "[ab] in-run A/B: phases of 5.0 s from present 3, settle 2.0 s, the arm order rotates by one at every cycle of 2 phases; A: APS5_NO_BARRIER_BATCH set; X: APS5_NO_BARRIER_BATCH unset\n" && lines[1] == "[ab] phase A 0 begins at present 3 (t 1.000 s): APS5_NO_BARRIER_BATCH set\n", "the rotated start lines differ: " + (lines.empty() ? std::string() : lines.front()));
+        Require(RuntimeSwitches::Set(RuntimeSwitch::NoBarrierBatch), "phase A does not have the environment's setting");
+        lines = AgcDriver::Graphics::AbAtPresent(4, 3.5);
+        Require(lines.size() == 1 && lines[0] == "[ab] phase A 0 settled at present 4 (t 3.500 s)\n", "the settle line of phase A differs");
+        lines = AgcDriver::Graphics::AbAtPresent(5, 6.0);
+        Require(lines.size() == 1 && lines[0] == "[ab] phase X 1 begins at present 5 (t 6.000 s): APS5_NO_BARRIER_BATCH unset\n", "the line of phase X 1 differs");
+        Require(!RuntimeSwitches::Set(RuntimeSwitch::NoBarrierBatch), "phase X did not toggle the listed switch");
+        lines = AgcDriver::Graphics::AbAtPresent(6, 8.5);
+        Require(lines.size() == 1 && lines[0] == "[ab] phase X 1 settled at present 6 (t 8.500 s)\n", "the settle line of phase X 1 differs");
+        lines = AgcDriver::Graphics::AbAtPresent(7, 11.5);
+        Require(lines.size() == 1 && lines[0] == "[ab] phase X 2 begins at present 7 (t 11.500 s): APS5_NO_BARRIER_BATCH unset\n", "the second cycle did not begin with arm X");
+        Require(!RuntimeSwitches::Set(RuntimeSwitch::NoBarrierBatch), "arm X did not keep its setting into the next phase");
+        lines = AgcDriver::Graphics::AbAtPresent(8, 17.0);
+        Require(lines.size() == 1 && lines[0] == "[ab] phase A 3 begins at present 8 (t 17.000 s): APS5_NO_BARRIER_BATCH set\n", "phase 3 did not return to arm A");
+        Require(RuntimeSwitches::Set(RuntimeSwitch::NoBarrierBatch), "arm A did not restore the environment's setting");
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "FAILED: %s\n", error.what());
+        return 1;
+    }
+    std::printf("runtime switch rotation test passed\n");
+    return 0;
 }
 
 int refused() {
@@ -166,6 +219,14 @@ int refused() {
 
 int main(int argc, char** argv) {
     if (argc > 1 && std::string_view(argv[1]) == "refused") return refused();
+    if (argc > 1 && std::string_view(argv[1]) == "rotated") {
+        SetEnvironment("APS5_NO_BARRIER_BATCH", "1");
+        SetEnvironment("APS5_AB", "5:A|X=APS5_NO_BARRIER_BATCH");
+        SetEnvironment("APS5_AB_START", "3");
+        SetEnvironment("APS5_AB_SETTLE", nullptr);
+        SetEnvironment("APS5_AB_ROTATE", "1");
+        return rotated();
+    }
     try {
         SetEnvironment("APS5_NO_BARRIER_BATCH", "1");
         SetEnvironment("APS5_AB", "5:APS5_NO_BARRIER_BATCH");
@@ -175,6 +236,7 @@ int main(int argc, char** argv) {
         parse();
         arms();
         schedule();
+        rotation();
         glue();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "FAILED: %s\n", error.what());

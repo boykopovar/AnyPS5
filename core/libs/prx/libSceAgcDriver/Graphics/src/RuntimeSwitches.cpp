@@ -158,8 +158,9 @@ std::optional<RuntimeSwitch> Find(std::string_view name) {
 
 }
 
-AbSchedule::Config AbSchedule::Parse(std::string_view ab, std::string_view start, std::string_view settle) {
+AbSchedule::Config AbSchedule::Parse(std::string_view ab, std::string_view start, std::string_view settle, bool rotate) {
     Config config;
+    config.rotate = rotate;
     ab = Trim(ab);
     const auto colon = ab.find(':');
     if (colon == std::string_view::npos) throw std::invalid_argument("APS5_AB: expected <seconds>:<switch>[+<switch>...] or <seconds>:<arm>|<arm>[|...], got '" + std::string(ab) + "'");
@@ -203,6 +204,12 @@ AbSchedule::Config AbSchedule::Parse(std::string_view ab, std::string_view start
 
 AbSchedule::AbSchedule(Config config) : config(std::move(config)) {}
 
+std::size_t AbSchedule::ArmOfPhase(std::uint64_t index) const {
+    const auto count = static_cast<std::uint64_t>(config.arms.size());
+    const auto cycle = config.rotate ? index / count : 0;
+    return static_cast<std::size_t>((index + cycle) % count);
+}
+
 AbSchedule::Step AbSchedule::AtPresent(std::uint64_t present, double seconds) {
     if (!firstSeconds.has_value()) firstSeconds = seconds;
     if (!started) {
@@ -218,11 +225,11 @@ AbSchedule::Step AbSchedule::AtPresent(std::uint64_t present, double seconds) {
         ++phase;
         settled = false;
         phaseStart = seconds;
-        return {Event::Begin, phase, static_cast<std::size_t>(phase % config.arms.size())};
+        return {Event::Begin, phase, ArmOfPhase(phase)};
     }
     if (!settled && seconds - phaseStart >= config.settleSeconds) {
         settled = true;
-        return {Event::Settled, phase, static_cast<std::size_t>(phase % config.arms.size())};
+        return {Event::Settled, phase, ArmOfPhase(phase)};
     }
     return {};
 }
@@ -241,8 +248,9 @@ AbState& Ab() {
         const char* ab = std::getenv("APS5_AB");
         const char* start = std::getenv("APS5_AB_START");
         const char* settle = std::getenv("APS5_AB_SETTLE");
+        const bool rotate = std::getenv("APS5_AB_ROTATE") != nullptr;
         if (ab != nullptr) {
-            created->schedule.emplace(AbSchedule::Parse(ab, start != nullptr ? start : "", settle != nullptr ? settle : ""));
+            created->schedule.emplace(AbSchedule::Parse(ab, start != nullptr ? start : "", settle != nullptr ? settle : "", rotate));
             for (std::size_t index = 0; index < SwitchCount; ++index) created->environment[index] = RuntimeSwitches::Set(static_cast<RuntimeSwitch>(index));
         }
         return created;
@@ -283,6 +291,7 @@ std::vector<std::string> AbAtPresent(std::uint64_t present, double seconds) {
             else std::snprintf(from, sizeof(from), "present %llu", static_cast<unsigned long long>(config.startPresent));
             std::snprintf(text, sizeof(text), "[ab] in-run A/B: phases of %.1f s from %s, settle %.1f s", config.phaseSeconds, from, config.settleSeconds);
             std::string header = text;
+            if (config.rotate) header += ", the arm order rotates by one at every cycle of " + std::to_string(config.arms.size()) + " phases";
             for (std::size_t index = 0; index < config.arms.size(); ++index) header += "; " + config.arms[index].name + ": " + SwitchSettings(state, index);
             lines.emplace_back(header + "\n");
         }
