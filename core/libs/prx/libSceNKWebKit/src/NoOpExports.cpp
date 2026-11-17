@@ -32,6 +32,9 @@ void APS5_VABI WKBundlePageSetTopOverhangImage() {
 void APS5_VABI WKContextAddSupportedPlugin() {
 }
 
+void APS5_VABI WKContextAllowSpecificHTTPSCertificateForHost() {
+}
+
 void APS5_VABI WKContextClearSupportedPlugins() {
 }
 
@@ -44,13 +47,28 @@ void APS5_VABI WKContextGetStatisticsWithOptions() {
 void APS5_VABI WKContextMenuItemSetUserData() {
 }
 
+void APS5_VABI WKContextPreconnectToServer() {
+}
+
 void APS5_VABI WKContextRefreshPlugIns() {
 }
 
 void APS5_VABI WKContextSetAdditionalPluginsDirectory() {
 }
 
+void APS5_VABI WKContextSetCanHandleHTTPSServerTrustEvaluation() {
+}
+
+void APS5_VABI WKContextSetCustomWebContentServiceBundleIdentifier() {
+}
+
+void APS5_VABI WKContextSetDiskCacheSpeculativeValidationEnabled() {
+}
+
 void APS5_VABI WKContextSetIconDatabasePath() {
+}
+
+void APS5_VABI WKContextSetMaximumNumberOfProcesses() {
 }
 
 void APS5_VABI WKContextSetPlugInAutoStartOriginHashes() {
@@ -168,6 +186,9 @@ void APS5_VABI _ZN3WTF11Persistence7DecoderD1Ev() {
 }
 
 void APS5_VABI _ZN3WTF11Persistence7DecoderD2Ev() {
+}
+
+void APS5_VABI _ZN3WTF11PrintStream3endEv() {
 }
 
 void APS5_VABI _ZN3WTF18FunctionDispatcherD1Ev() {

@@ -398,6 +398,22 @@ void Http2FlushCookies(int cookieBoxId) {
     if (box != g_cookieBoxes.end()) box->second.cookies.clear();
 }
 
+namespace {
+
+bool ReadCookieText(const char* cookie, std::size_t length, std::string& host) {
+    constexpr std::size_t Chunk = 64 * 1024;
+    host.clear();
+    for (std::size_t done = 0; done < length;) {
+        const std::size_t step = std::min(Chunk, length - done);
+        host.resize(done + step);
+        if (!Http2Guest::CopyIn(host.data() + done, cookie + done, step)) return false;
+        done += step;
+    }
+    return true;
+}
+
+}
+
 extern "C" {
 
 int APS5_VABI sceHttp2AddCookie(int cookieBoxId, const char* url, const char* cookie, std::size_t cookieLength) {
@@ -409,8 +425,8 @@ int APS5_VABI sceHttp2AddCookie(int cookieBoxId, const char* url, const char* co
     if (!CopyUrl(url, urlText)) return ERROR_INVALID_VALUE;
     Url parsed{};
     if (const int result = ParseUrl(urlText, parsed); result != 0) return result;
-    std::string cookieText(cookieLength, '\0');
-    if (!Http2Guest::CopyIn(cookieText.data(), cookie, cookieLength)) return ERROR_INVALID_VALUE;
+    std::string cookieText;
+    if (!ReadCookieText(cookie, cookieLength, cookieText)) return ERROR_INVALID_VALUE;
     return StoreCookie(*box, parsed, cookieText, Now());
 }
 
