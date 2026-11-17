@@ -1701,7 +1701,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
     if (hasExtension(VK_KHR_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME)) {
         VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &barycentricFeatures};
         state->InstanceFunction<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(selected, &features);
-        state->fragmentShaderBarycentric = barycentricFeatures.fragmentShaderBarycentric == VK_TRUE;
+        state->fragmentShaderBarycentric = barycentricFeatures.fragmentShaderBarycentric == VK_TRUE && std::getenv("APS5_NO_FRAGMENT_SHADER_BARYCENTRIC") == nullptr;
         state->fragmentBarycentricBuiltins = state->fragmentShaderBarycentric;
         if (state->fragmentShaderBarycentric && hasExtension(VK_KHR_DRIVER_PROPERTIES_EXTENSION_NAME)) {
             state->fragmentShaderBarycentric = FragmentShaderBarycentricUsable(driverId, state->fragmentShaderBarycentric);

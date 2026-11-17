@@ -10465,7 +10465,8 @@ void rectListTests() {
     auto explicitInterpolation = BuildRectListShaders(vertex, fragment, target);
     Require(!explicitInterpolation.control.spirv.empty() && !explicitInterpolation.evaluation.spirv.empty(), "rect-list shaders for an explicitly interpolated parameter are empty");
     fragment.fragmentParameters[0].custom = true;
-    expectFailure([&] { static_cast<void>(BuildRectListShaders(vertex, fragment, target)); }, "per-vertex interpolation");
+    const auto passThrough = BuildRectListShaders(vertex, fragment, target);
+    Require(std::ranges::equal(passThrough.control.spirv.Words(), explicitInterpolation.control.spirv.Words()) && std::ranges::equal(passThrough.evaluation.spirv.Words(), explicitInterpolation.evaluation.spirv.Words()), "a pass-through parameter read per vertex does not pass the rectangle's corners like an explicitly interpolated one");
     fragment.fragmentParameters[0].perVertex = false;
     fragment.fragmentParameters[0].custom = false;
     vertex.parameterExports.clear();
