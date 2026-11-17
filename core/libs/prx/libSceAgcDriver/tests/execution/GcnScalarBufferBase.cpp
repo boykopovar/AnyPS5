@@ -9,7 +9,9 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
+#include <exception>
 #include <iostream>
+#include <optional>
 #include <span>
 #include <string>
 
@@ -105,7 +107,8 @@ int main() {
         ShaderRecompiler::SetGcnGuestShaders(true);
         const LowBlock block;
         if (!block.Addressable()) {
-            std::puts("skipped, the guest arena block lies above the 44-bit GCN V# address range");
+            Require(GuestArena::GuestAddressOffset != 0, "GCN scalar buffer base: the guest arena block lies above the 44-bit GCN V# address range");
+            std::puts("skipped, the ASan guest arena offset places the block above the 44-bit GCN V# address range");
             return VulkanTestSkipped;
         }
         for (const auto highBits : {0x0000u, 0x1000u, 0x8000u, 0xf000u}) Run(*device, block, highBits);
