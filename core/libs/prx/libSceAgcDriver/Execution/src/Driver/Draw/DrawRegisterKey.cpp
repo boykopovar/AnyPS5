@@ -242,7 +242,7 @@ bool Driver::sameDecode(const DrawDecode& a, const DrawDecode& b) {
     const auto sameTess = [](const std::optional<ShaderRecompiler::TessellationConfiguration>& x, const std::optional<ShaderRecompiler::TessellationConfiguration>& y) {
         if (x.has_value() != y.has_value()) return false;
         if (!x) return true;
-        return x->inputControlPoints == y->inputControlPoints && x->outputControlPoints == y->outputControlPoints && x->domain == y->domain && x->partitioning == y->partitioning && x->outputTopology == y->outputTopology && x->patchesPerGroup == y->patchesPerGroup && x->primitiveGroupSize == y->primitiveGroupSize && x->breakAtInstance == y->breakAtInstance && x->mergedHull == y->mergedHull;
+        return x->inputControlPoints == y->inputControlPoints && x->outputControlPoints == y->outputControlPoints && x->domain == y->domain && x->partitioning == y->partitioning && x->outputTopology == y->outputTopology && x->patchesPerGroup == y->patchesPerGroup && x->primitiveGroupSize == y->primitiveGroupSize && x->breakAtInstance == y->breakAtInstance && x->mergedHull == y->mergedHull && x->onChip == y->onChip;
     };
     if (s.stages.path != t.stages.path || s.stages.registerValue != t.stages.registerValue || s.stages.vertexWaveSize != t.stages.vertexWaveSize || s.stages.fragmentWaveSize != t.stages.fragmentWaveSize || s.stages.hullWaveSize != t.stages.hullWaveSize || !sameMesh(s.stages.mesh, t.stages.mesh) || !sameMesh(s.stages.tessellationGeometry, t.stages.tessellationGeometry) || !sameTess(s.stages.tessellation, t.stages.tessellation) || s.stages.legacyGeometry != t.stages.legacyGeometry) return false;
     if (!sameColor(s.color, t.color) || s.colors.size() != t.colors.size() || s.blends.size() != t.blends.size()) return false;

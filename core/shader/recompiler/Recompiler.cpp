@@ -139,7 +139,7 @@ RdnaProgram DecodeStageProgram(ShaderStageKind stage, std::span<const std::uint3
         program.instructions.erase(std::next(end), program.instructions.end());
         return program;
     }
-    if (stage != ShaderStageKind::Local) return RdnaInstructionDecoder{}.Decode(code);
+    if (stage != ShaderStageKind::Local || GcnGuestShaders()) return RdnaInstructionDecoder{}.Decode(code);
     auto program = DecodeRdnaFrontProgram(code);
     program.instructions.back() = DecodeRdnaInstruction(program.instructions.back().programCounter, EndProgram, 0u);
     return program;
@@ -388,7 +388,10 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     }
     if (inputInfo.vertex != nullptr) {
         constexpr TessellationLowering tessellationLowering;
-        tessellationLowering.Lower(program, inputInfo.vertex->tess, request.target.tessellation ? &*request.target.tessellation : nullptr);
+        auto tessellation = inputInfo.vertex->tess;
+        tessellation.constants = request.graphics ? request.graphics->tessellationConstants : std::nullopt;
+        tessellation.userDataBase = request.context.userDataBaseRegister;
+        tessellationLowering.Lower(program, tessellation, request.target.tessellation ? &*request.target.tessellation : nullptr);
     }
 
     deadCodeEliminator.EliminateUnobservedPhis(program);
@@ -1715,6 +1718,8 @@ auto CountedCompile(Compile&& compile) {
         return result;
     } catch (const ConvertedSampleRequired&) {
         throw;
+    } catch (const TessellationConstantsRequired&) {
+        throw;
     } catch (const std::exception&) {
         NoteFailureOnce();
         throw;
@@ -2337,6 +2342,8 @@ auto recompileReporting(const RecompileRequest& request, Impl&& impl) -> decltyp
     try {
         return impl();
     } catch (const ConvertedSampleRequired&) {
+        throw;
+    } catch (const TessellationConstantsRequired&) {
         throw;
     } catch (const std::exception& e) {
         NoteFailureOnce();

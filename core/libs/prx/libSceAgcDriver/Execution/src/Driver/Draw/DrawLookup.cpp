@@ -33,6 +33,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
                 const auto& tess = *graphics.stages.tessellation;
                 for (const auto value : {tess.inputControlPoints, tess.outputControlPoints, tess.domain, tess.partitioning, tess.outputTopology, tess.patchesPerGroup, tess.primitiveGroupSize, static_cast<std::uint32_t>(tess.breakAtInstance)}) mix(value);
                 mix(tess.mergedHull);
+                mix(tess.onChip);
             }
             mix(graphics.rectList);
             mix(graphics.rasterizerDiscard);

@@ -466,6 +466,7 @@ struct TessellationConfiguration {
     std::uint32_t instancePatches = 0;
     bool drawParameters = false;
     bool mergedHull = false;
+    bool onChip = false;
 };
 
 inline constexpr std::uint32_t MeshDrawPushOffsetBytes = 104;
@@ -525,6 +526,8 @@ struct MeshBarycentricLayout {
     bool operator==(const MeshBarycentricLayout&) const = default;
 };
 
+inline constexpr std::uint32_t TessellationConstantWords = 9;
+
 struct GraphicsCompileContext {
     std::uint32_t firstUserSgpr;
     std::span<const LinkedProgram> linkedPrograms;
@@ -532,6 +535,7 @@ struct GraphicsCompileContext {
     std::optional<TessellationConfiguration> tessellation;
     GraphicsDrawParameters draw;
     std::optional<MeshBarycentricLayout> meshBarycentrics;
+    std::optional<std::array<std::uint32_t, TessellationConstantWords>> tessellationConstants;
     std::optional<GeometryConfiguration> geometry;
 };
 

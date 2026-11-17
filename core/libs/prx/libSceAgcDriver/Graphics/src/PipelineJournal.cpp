@@ -56,7 +56,7 @@ static_assert(sizeof(ShaderRecompiler::TessellationConfiguration) == 40, "Tessel
 constexpr std::uint32_t FileMagic = 0x4c4a5041u;
 // Bumped when the recipe codec, CanonicalPipelineState or the store key change in a way the
 // layout guards above do not catch (a field renumbered or reinterpreted at the same size).
-constexpr std::uint32_t FileFormat = 20u;
+constexpr std::uint32_t FileFormat = 21u;
 constexpr std::uint32_t ModuleRecord = 1u;
 constexpr std::uint32_t GraphicsRecord = 2u;
 constexpr std::uint32_t ComputeRecord = 3u;
@@ -172,6 +172,7 @@ void encodeTessellation(Writer& writer, const ShaderRecompiler::TessellationConf
     writer.U32(tessellation.instancePatches);
     writer.Bool(tessellation.drawParameters);
     writer.Bool(tessellation.mergedHull);
+    writer.Bool(tessellation.onChip);
 }
 
 void decodeTessellation(Reader& reader, ShaderRecompiler::TessellationConfiguration& tessellation) {
@@ -180,6 +181,7 @@ void decodeTessellation(Reader& reader, ShaderRecompiler::TessellationConfigurat
     tessellation.instancePatches = reader.U32();
     tessellation.drawParameters = reader.Bool();
     tessellation.mergedHull = reader.Bool();
+    tessellation.onChip = reader.Bool();
 }
 
 void encodeGeometry(Writer& writer, const ShaderRecompiler::GeometryConfiguration& geometry) {

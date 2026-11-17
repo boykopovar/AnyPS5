@@ -87,7 +87,7 @@ void Driver::tagUserValueWords(DispatchVariant& variant, const DrawProgram& prog
         return std::any_of(variant.runs.begin(), variant.runs.end(), [&](const auto& run) { return run.first < base + bytes && run.second > base; });
     };
     const auto taken = [&](std::uint32_t index) { return ((variant.relocatableWords | variant.valueWords | variant.calleeWords) >> index & 1u) != 0; };
-    if (ShaderRecompiler::GcnGuestShaders() && program.binary.stage == ShaderRecompiler::ShaderStage::Vertex) {
+    if (ShaderRecompiler::GcnGuestShaders() && (program.binary.stage == ShaderRecompiler::ShaderStage::Vertex || program.binary.stage == ShaderRecompiler::ShaderStage::Local)) {
         for (const auto instruction : program.binary.code) {
             if ((instruction & 0xff80ff00u) != 0xbe802100u) continue;
             const auto target = instruction & 0xffu;

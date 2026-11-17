@@ -88,7 +88,7 @@ ShaderRecompiler::RecompileResult Compile(const ShaderRecompiler::SpirvTarget& t
         pixel = info;
     } else {
         vertex = ShaderRecompiler::ShaderVertexStageInfo{};
-        graphics = ShaderRecompiler::GraphicsCompileContext{0u, {}, std::nullopt, std::nullopt, {reinterpret_cast<std::uintptr_t>(Indices.data()), static_cast<std::uint32_t>(Indices.size()), 2, 1}, std::nullopt, geometry};
+        graphics = ShaderRecompiler::GraphicsCompileContext{0u, {}, std::nullopt, std::nullopt, {reinterpret_cast<std::uintptr_t>(Indices.data()), static_cast<std::uint32_t>(Indices.size()), 2, 1}, std::nullopt, std::nullopt, geometry};
     }
     const auto layout = stage == ShaderStage::Fragment ? PixelPushLayout(pushCursor, target) : ShaderRecompiler::BindingLayout{0, 0, pushCursor, AgcDriver::Graphics::PipelinePushSlotBytes - pushCursor};
     ShaderRecompiler::RecompileRequest request{
