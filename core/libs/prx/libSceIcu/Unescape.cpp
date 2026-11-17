@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <string>
 
 namespace {
 
@@ -118,7 +119,11 @@ extern "C" {
 
 std::int32_t APS5_VABI u_unescapeAt_nid_postfix(Icu::UnescapeCharacterAt characterAt, std::int32_t* offset, std::int32_t length, void* context) {
     if (!offset) APS5_INVALID_ARG_EX;
-    return Decode(characterAt, *offset, length, context);
+    std::int32_t position;
+    if (!GuestCopyIn_nid_no_patch(&position, offset, sizeof(position))) APS5_INVALID_ARG_EX;
+    const auto result = Decode(characterAt, position, length, context);
+    if (!GuestCopyOut_nid_no_patch(offset, &position, sizeof(position))) APS5_INVALID_ARG_EX;
+    return result;
 }
 
 std::int32_t APS5_VABI u_unescape_nid_postfix(const char* source, char16_t* destination, std::int32_t capacity) {
@@ -131,35 +136,46 @@ std::int32_t APS5_VABI u_unescape_nid_postfix(const char* source, char16_t* dest
         if (destination && static_cast<std::int64_t>(capacity) - used < std::numeric_limits<std::int32_t>::min())
             NotImplemented_nid_no_patch("u_unescape: capacity minus the output length overflows");
     };
+    std::u16string output;
+    const auto flush = [&] {
+        if (!destination || output.empty()) return;
+        if (!GuestCopyOut_nid_no_patch(destination, output.data(), output.size() * sizeof(char16_t))) APS5_INVALID_ARG_EX;
+    };
+    const auto store = [&](std::int32_t index, char16_t unit) {
+        if (output.size() <= static_cast<std::size_t>(index)) output.resize(static_cast<std::size_t>(index) + 1);
+        output[static_cast<std::size_t>(index)] = unit;
+    };
     std::int32_t written = 0;
     std::int32_t segment = 0;
     for (std::int32_t position = 0; position < length;) {
         const auto byte = static_cast<unsigned char>(source[position++]);
         if (byte != '\\') {
-            if (destination && written < capacity) destination[written] = byte;
+            if (destination && written < capacity) store(written, byte);
             ++written;
             continue;
         }
         if (written != segment) room(segment);
         const auto value = Decode(ByteAt, position, length, const_cast<char*>(source));
         if (value < 0) {
-            if (destination && capacity > 0) destination[0] = 0;
+            if (destination && capacity > 0) store(0, 0);
+            flush();
             return 0;
         }
         room(written);
         const int units = value > 0xffff ? 2 : 1;
         if (destination && written <= capacity && units <= capacity - written) {
-            if (units == 1) destination[written] = static_cast<char16_t>(value);
+            if (units == 1) store(written, static_cast<char16_t>(value));
             else {
-                destination[written] = static_cast<char16_t>(0xd800 + ((value - 0x10000) >> 10));
-                destination[written + 1] = static_cast<char16_t>(0xdc00 + ((value - 0x10000) & 0x3ff));
+                store(written, static_cast<char16_t>(0xd800 + ((value - 0x10000) >> 10)));
+                store(written + 1, static_cast<char16_t>(0xdc00 + ((value - 0x10000) & 0x3ff)));
             }
         }
         written += units;
         segment = written;
     }
     if (written != segment) room(segment);
-    if (destination && written < capacity) destination[written] = 0;
+    if (destination && written < capacity) store(written, 0);
+    flush();
     return written;
 }
 
