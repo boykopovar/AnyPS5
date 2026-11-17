@@ -118,6 +118,8 @@ void Overflow() {
     Require(uprv_mul32_overflow_nid_postfix(low, -1, &result) == 1 && result == low, "negating the minimum overflows");
     Require(Rejects([] { uprv_add32_overflow_nid_postfix(1, 2, nullptr); }), "addition rejects a null result");
     Require(Rejects([] { uprv_mul32_overflow_nid_postfix(1, 2, nullptr); }), "multiplication rejects a null result");
+    Require(Rejects([] { uprv_add32_overflow_nid_postfix(1, 2, reinterpret_cast<std::int32_t*>(1)); }), "addition rejects an unwritable guest result");
+    Require(Rejects([] { uprv_mul32_overflow_nid_postfix(1, 2, reinterpret_cast<std::int32_t*>(1)); }), "multiplication rejects an unwritable guest result");
 }
 
 void MaximumPointer() {

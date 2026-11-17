@@ -49,20 +49,31 @@ def windows_runtime(build):
     raise RuntimeError(f"CMAKE_CXX_COMPILER is not configured in {cache}")
 
 
-def tracy_runtime(platform, build):
+def cmake_option(build, name):
     cache = build / "CMakeCache.txt"
     if not cache.is_file():
-        return []
+        return False
     lines = cache.read_text(encoding="utf-8-sig").split("\n")
-    enabled = next((line.partition("=")[2].upper() for line in lines if line.startswith("APS5_ENABLE_TRACY:")), "OFF")
-    if enabled in ("", "0", "OFF", "NO", "FALSE", "N", "IGNORE", "NOTFOUND") or enabled.endswith("-NOTFOUND"):
+    value = next((line.partition("=")[2].upper() for line in lines if line.startswith(name + ":")), "OFF")
+    return value not in ("", "0", "OFF", "NO", "FALSE", "N", "IGNORE", "NOTFOUND") and not value.endswith("-NOTFOUND")
+
+
+def tracy_runtime(platform, build):
+    if not cmake_option(build, "APS5_ENABLE_TRACY"):
         return []
-    pattern = "libTracyClient.dll" if platform == "windows" else "libTracyClient.so.*"
+    pattern = {"windows": "libTracyClient.dll", "linux": "libTracyClient.so.*", "macos": "libTracyClient.*.dylib"}[platform]
     directory = build / "core/libs/libs"
     clients = sorted(directory.glob(pattern))
-    if len(clients) != 1:
+    if len(clients) != 1 or not clients[0].is_file() or clients[0].stat().st_size == 0:
         raise RuntimeError(f"Missing or ambiguous Tracy runtime for APS5_ENABLE_TRACY: {directory / pattern}")
     return clients
+
+
+def native_auxiliary_runtimes(platform, build):
+    names = {"linux": ("libmimalloc.so",), "windows": ("mimalloc.dll", "mimalloc-redirect.dll"), "macos": ("libmimalloc.dylib",)}[platform]
+    if platform == "linux" and any(cmake_option(build, name) for name in ("ANYPS5_ENABLE_ASAN", "ANYPS5_ENABLE_TSAN")):
+        names = ()
+    return [build / "core/libs/libs" / name for name in names] + tracy_runtime(platform, build)
 
 
 def promote_native_assets(staging, output):
@@ -127,17 +138,15 @@ def package(platform, build, output, version):
         licenses.append((ROOT / "3rdparty/opus/COPYING", "libs/licenses/opus.txt"))
     if "libSceNKWebKitRequirements.prx" in expected:
         licenses.append((ROOT / "3rdparty/sqlite/LICENSE.md", "libs/licenses/sqlite.txt"))
+        licenses.append((ROOT / "3rdparty/libwpe/COPYING", "libs/licenses/libwpe.txt"))
     if "libfontconfig.prx" in expected:
         licenses.append((ROOT / "3rdparty/fontconfig/COPYING", "libs/licenses/fontconfig.txt"))
         licenses.append((ROOT / "core/libs/prx/libfontconfig/Unicode-LICENSE.txt", "libs/licenses/fontconfig-unicode.txt"))
     if platform == "windows":
         runtime = windows_runtime(build)
         files.extend(runtime / name for name in ("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"))
-        files.extend(build / "core/libs/libs" / name for name in ("mimalloc.dll", "mimalloc-redirect.dll"))
-    else:
-        files.append(build / "core/libs/libs/libmimalloc.so")
     licenses.append((ROOT / "3rdparty/mimalloc/LICENSE", "libs/licenses/mimalloc.txt"))
-    files.extend(tracy_runtime(platform, build))
+    files.extend(native_auxiliary_runtimes(platform, build))
     unpatched = [(build / "core/libs/libs/unpatched" / name, "libs/" + name) for name in sorted(expected)]
     unpatched.extend((file, "libs/" + file.name) for file in files if file.suffix != ".prx")
     if platform == "windows":

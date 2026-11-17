@@ -621,5 +621,27 @@ class PatchAdvisorTests(unittest.TestCase):
         run.assert_not_called()
 
 
+    def test_relative_path_rejects_unsafe_names(self):
+        self.assertEqual(suggest_patches.relative_path("a/b.txt"), Path("a", "b.txt"))
+        for name in ("", "/abs/x", "../x", "a/../x", "a\\b", "C:/x", None, "a\x00b"):
+            with self.assertRaises(ValueError, msg=repr(name)):
+                suggest_patches.relative_path(name)
+
+
+    def test_unique_json_keys_rejects_duplicate_keys(self):
+        self.assertEqual(suggest_patches.unique_json_keys([("a", 1), ("b", 2)]), {"a": 1, "b": 2})
+        with self.assertRaises(ValueError):
+            suggest_patches.unique_json_keys([("a", 1), ("a", 2)])
+
+
+    def test_confined_keeps_files_under_the_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            (root / "inside.txt").write_text("x", encoding="utf-8")
+            self.assertEqual(suggest_patches.confined(root, "inside.txt"), root / "inside.txt")
+            with self.assertRaises(ValueError):
+                suggest_patches.confined(root, "../outside.txt")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -198,7 +198,6 @@ int APS5_VABI _ZN3JSC9constructEPNS_14JSGlobalObjectENS_7JSValueES2_RKNS_7ArgLis
 int APS5_VABI _ZN3WTF10AtomString4initEv();
 int APS5_VABI _ZN3WTF10StackTrace17captureStackTraceEii();
 int APS5_VABI _ZN3WTF10StackTrace8demangleEPv();
-int APS5_VABI _ZN3WTF10StringImpl23defaultWritingDirectionEPb();
 int APS5_VABI _ZN3WTF11Persistence5CoderINS_10AtomStringEE6decodeERNS0_7DecoderE();
 int APS5_VABI _ZN3WTF11Persistence5CoderINS_6StringEE6decodeERNS0_7DecoderE();
 int APS5_VABI _ZN3WTF11Persistence5CoderINS_7CStringEE6decodeERNS0_7DecoderE();

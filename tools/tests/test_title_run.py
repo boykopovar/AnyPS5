@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 from pathlib import Path
@@ -158,6 +159,30 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual(title_run.read_summary(path)["presents"], 500)
         self.assertEqual(title_run.read_summary(self.root / "missing.jsonl")["presents"], 0)
 
+    def test_periodic_presents_are_not_recounted_by_capture_windows(self):
+        identity = {"gpu": "GPU", "driver": "Driver", "os": "OS"}
+        first = dict(identity, interval_start_s=0, interval_end_s=10, presents=100, window={"ms": 10000})
+        second = dict(identity, interval_start_s=10, interval_end_s=20, presents=300, window={"ms": 10000})
+        capture = dict(identity, presents=300, window={"ms": 10000}, trace="aps5-trace-window.json.gz")
+        path = self.root / "aps5-summary.jsonl"
+        for rows in ([capture, first, second], [first, capture, second], [first, second, capture]):
+            with self.subTest(capture_position=rows.index(capture)):
+                path.write_text("\n".join(map(json.dumps, rows)), encoding="utf-8")
+                self.assertEqual(title_run.read_summary(path), dict(identity, presents=400, fps=20.0))
+
+    def test_empty_periodic_window_does_not_fall_back_to_capture_frames(self):
+        path = self.root / "aps5-summary.jsonl"
+        interval = {"interval_start_s": 0, "interval_end_s": 10, "presents": 0, "window": {"ms": 10000}}
+        capture = {"presents": 300, "window": {"ms": 10000}, "trace": "capture.json.gz"}
+        path.write_text("\n".join(map(json.dumps, [interval, capture])), encoding="utf-8")
+        self.assertEqual(title_run.read_summary(path), {"presents": 0, "fps": 0.0, "gpu": "", "driver": "", "os": ""})
+
+    def test_capture_only_summary_remains_available(self):
+        path = self.root / "aps5-summary.jsonl"
+        capture = {"presents": 300, "window": {"ms": 10000}, "trace": "capture.json.gz", "gpu": "A", "driver": "1", "os": "W"}
+        path.write_text(json.dumps(capture), encoding="utf-8")
+        self.assertEqual(title_run.read_summary(path), {"presents": 300, "fps": 30.0, "gpu": "A", "driver": "1", "os": "W"})
+
     def test_frame_is_uniform(self):
         black = bmp(self.root / "black.bmp", 8, 4, lambda x, y: (0, 0, 0))
         noisy = bmp(self.root / "noisy.bmp", 8, 4, lambda x, y: (3, 2, 1) if x < 7 else (200, 200, 200))
@@ -286,6 +311,13 @@ class ReportTests(unittest.TestCase):
         now["machine"] = {"os": "", "gpu": "", "driver": "", "cpu": "Ryzen AI 7 350"}
         self.assertTrue(title_run.render_markdown(now).startswith("AnyPS5 `abc1234`, main + #6814. CPU Ryzen AI 7 350. 2 runs"))
 
+    def test_render_markdown_states_the_run_length_of_the_titles(self):
+        for lengths, stated in (((90, 90), "90 s each."), ((30, 120, 45), "30 to 120 s each.")):
+            with self.subTest(lengths=lengths):
+                now = summary({f"PPSA0000{index}": {"name": "Game", "version": "1", "seconds": seconds, "runs": [run("rendering")]}
+                               for index, seconds in enumerate(lengths)})
+                self.assertIn(f" 2 runs per title, {stated}\n", title_run.render_markdown(now))
+
     def test_render_markdown_skips_runs_without_an_error(self):
         now = summary({"PPSA01325": {"name": "Playroom", "version": "01.905.000",
                                      "runs": [run("stalled"), run("crashed", "warm", error="vkQueueSubmit recorder: Vulkan result -4")]}})
@@ -336,6 +368,26 @@ class PreparationTests(unittest.TestCase):
         again = title_run.lock_work(out / "work/PPSA00001.lock")
         self.assertIsNotNone(again)
         again.close()
+
+    def test_unreadable_catalog_and_comparison_files_are_reported_without_a_traceback(self):
+        import contextlib
+        import io
+        package(self.root / "games/PPSA00001", "PPSA00001")
+        unknown = self.root / "unknown.json"
+        unknown.write_text(json.dumps({"PPSA00001": {"rlink": []}}), encoding="utf-8")
+        invalid = self.root / "invalid.json"
+        invalid.write_text("not json", encoding="utf-8")
+        for option, path, message in (("--titles", self.root / "missing.json", "No such file"), ("--titles", self.root / "games", ""),
+                                      ("--titles", unknown, "unknown field rlink"), ("--titles", invalid, "Expecting value"),
+                                      ("--compare", self.root / "missing.json", "No such file"), ("--compare", invalid, "Expecting value")):
+            with self.subTest(option=option, path=path.name):
+                errors = io.StringIO()
+                with contextlib.redirect_stderr(errors), self.assertRaises(SystemExit) as raised:
+                    title_run.main(["--games", str(self.root / "games"), "--out", str(self.root / "out"), option, str(path)])
+                self.assertEqual(raised.exception.code, 2)
+                self.assertIn(f"error: {option}: ", errors.getvalue())
+                self.assertIn(message, errors.getvalue())
+                self.assertFalse((self.root / "out").exists())
 
     def test_smoke_runs_the_marked_titles(self):
         for title_id in ("PPSA00001", "PPSA00002", "PPSA00003"):
@@ -508,6 +560,38 @@ class PreparationTests(unittest.TestCase):
         self.assertIn("| テスト | PPSA00001 |", stdout)
         self.assertIn(f"written to {out.resolve()}", stdout)
 
+    def test_json_comparison_is_the_only_output_on_stdout(self):
+        package(self.root / "games/PPSA00001", "PPSA00001")
+        titles = self.root / "titles.json"
+        titles.write_text(json.dumps({"PPSA00001": {"files": {"app0/pak0.pak": {"content": "pak0.pak"}}}}), encoding="utf-8")
+        previous = self.root / "previous.json"
+        previous.write_text(json.dumps(summary({"PPSA00001": {"name": "Game", "version": "01.000.000", "runs": [run("rendering", fps=30.0)]}})),
+                            encoding="utf-8")
+
+        def prepare(title_id, found, entry, platform, build, work):
+            work.mkdir(parents=True, exist_ok=True)
+            (work / "relink.log").write_text("", encoding="utf-8")
+            return work / title_id
+
+        def run_title(executable, work, run_dir, seconds, extra_env, pad=None):
+            return {"outcome": "exited", "exit_code": 0, "seconds": 0.1, "presents": 0, "fps": 0.0, "first_error": "", "warnings": {},
+                    "frames": [], "report": None, "os": "", "gpu": "", "driver": "", "cpu": ""}
+
+        out = self.root / "out"
+        with tempfile.TemporaryFile("w+", encoding="utf-8") as stdout, tempfile.TemporaryFile("w+", encoding="utf-8") as stderr:
+            with unittest.mock.patch.object(title_run, "prepare", side_effect=prepare), \
+                    unittest.mock.patch.object(title_run, "run_title", side_effect=run_title), \
+                    unittest.mock.patch("sys.stdout", stdout), unittest.mock.patch("sys.stderr", stderr):
+                title_run.main(["--games", str(self.root / "games"), "--out", str(out), "--build", str(self.root / "build"), "--titles", str(titles),
+                                "--runs", "2", "--compare", str(previous), "--json", "PPSA00001"])
+            stdout.seek(0)
+            stderr.seek(0)
+            printed, progress = stdout.read(), stderr.read()
+        self.assertEqual(json.loads(printed)["titles"]["PPSA00001"]["fps"], {"before": 30.0, "now": 0.0})
+        self.assertIn("PPSA00001: --content lacks pak0.pak; running without\n", progress)
+        self.assertIn("PPSA00001 run1: exited\nPPSA00001 run2: exited\n", progress)
+        self.assertIn(f"written to {out.resolve()}", progress)
+
 
 def wait_until(condition, seconds=10):
     deadline = time.monotonic() + seconds
@@ -516,6 +600,98 @@ def wait_until(condition, seconds=10):
             return True
         time.sleep(0.1)
     return False
+
+
+class NativeRuntimePreparationTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.package = package(self.root / "package", "PPSA00001")
+        self.build = self.root / "build"
+        self.libraries = self.build / "core/libs/libs"
+        self.libraries.mkdir(parents=True)
+        self.compiler = self.root / "configured compiler/bin"
+        self.compiler.mkdir(parents=True)
+        for name in ("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"):
+            (self.compiler / name).write_bytes(b"compiler " + name.encode())
+        for name in ("libc.prx", "libmimalloc.so", "mimalloc.dll", "mimalloc-redirect.dll", "libmimalloc.dylib",
+                     "libTracyClient.so.0.14.1", "libTracyClient.dll", "libTracyClient.0.14.1.dylib", "unrelated.dll", "libunrelated.so"):
+            (self.libraries / name).write_bytes(name.encode())
+        self.sequence = 0
+
+    def prepare(self, platform, cache="APS5_ENABLE_TRACY:BOOL=OFF\n"):
+        (self.build / "CMakeCache.txt").write_text(
+            "CMAKE_CXX_COMPILER:FILEPATH=" + (self.compiler / "g++.exe").as_posix() + "\n" + cache, encoding="utf-8")
+        self.sequence += 1
+        work = self.root / f"work{self.sequence}"
+        work.mkdir()
+
+        def convert(command, **kwargs):
+            Path(command[-1]).write_bytes(b"converted fixture")
+            return subprocess.CompletedProcess(command, 0)
+
+        with unittest.mock.patch.object(title_run.subprocess, "run", side_effect=convert):
+            executable = title_run.prepare("PPSA00001", {"package": self.package}, {}, platform, self.build, work)
+        self.assertEqual(executable.read_bytes(), b"converted fixture")
+        return {path.name: path.read_bytes() for path in (work / "libs").iterdir()}
+
+    def test_prepare_stages_only_the_target_allocator_and_compiler_runtimes(self):
+        cases = (("linux", {"libc.prx", "libmimalloc.so"}),
+                 ("windows", {"libc.prx", "mimalloc.dll", "mimalloc-redirect.dll", "libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"}),
+                 ("macos", {"libc.prx", "libmimalloc.dylib"}))
+        for platform, names in cases:
+            with self.subTest(platform=platform):
+                staged = self.prepare(platform)
+                self.assertEqual(set(staged), names)
+                for name in names:
+                    self.assertEqual(staged[name], (b"compiler " if name.startswith(("libgcc", "libstdc++", "libwinpthread")) else b"") + name.encode())
+
+    def test_prepare_stages_the_enabled_target_tracy_client(self):
+        for platform, name in (("linux", "libTracyClient.so.0.14.1"), ("windows", "libTracyClient.dll"), ("macos", "libTracyClient.0.14.1.dylib")):
+            with self.subTest(platform=platform):
+                staged = self.prepare(platform, "APS5_ENABLE_TRACY:BOOL=ON\n")
+                self.assertEqual(staged.get(name), name.encode())
+                self.assertEqual([candidate for candidate in staged if "Tracy" in candidate], [name])
+
+    def test_prepare_ignores_stale_tracy_when_disabled(self):
+        for value in ("OFF", "TRACY-NOTFOUND", ""):
+            with self.subTest(value=value):
+                self.assertFalse(any("Tracy" in name for name in self.prepare("linux", f"APS5_ENABLE_TRACY:BOOL={value}\n")))
+
+    def test_prepare_refuses_missing_or_ambiguous_enabled_tracy(self):
+        (self.libraries / "libTracyClient.so.0.14.1").unlink()
+        with self.assertRaisesRegex(RuntimeError, "Missing or ambiguous Tracy"):
+            self.prepare("linux", "APS5_ENABLE_TRACY:BOOL=ON\n")
+        for name in ("libTracyClient.so.0.13.1", "libTracyClient.so.0.14.1"):
+            (self.libraries / name).write_bytes(name.encode())
+        with self.assertRaisesRegex(RuntimeError, "Missing or ambiguous Tracy"):
+            self.prepare("linux", "APS5_ENABLE_TRACY:BOOL=ON\n")
+
+    def test_prepare_does_not_stage_an_allocator_for_linux_sanitizer_builds(self):
+        for name in ("ANYPS5_ENABLE_ASAN", "ANYPS5_ENABLE_TSAN"):
+            with self.subTest(option=name):
+                staged = self.prepare("linux", f"{name}:BOOL=ON\n")
+                self.assertEqual(staged, {"libc.prx": b"libc.prx"})
+        staged = self.prepare("linux", "ANYPS5_ENABLE_ASAN:BOOL=OFF\nANYPS5_ENABLE_TSAN:BOOL=FALSE\n")
+        self.assertEqual(staged.get("libmimalloc.so"), b"libmimalloc.so")
+
+    def test_prepare_refuses_a_missing_target_allocator(self):
+        (self.libraries / "libmimalloc.so").unlink()
+        with self.assertRaises(FileNotFoundError):
+            self.prepare("linux")
+
+    def test_prepare_accepts_a_tracy_symlink_to_a_regular_file(self):
+        client = self.libraries / "libTracyClient.so.0.14.1"
+        client.unlink()
+        target = self.root / "client-runtime"
+        target.write_bytes(b"linked Tracy client")
+        try:
+            client.symlink_to(target)
+        except (OSError, NotImplementedError) as error:
+            self.skipTest(f"symlinks unavailable: {error}")
+        staged = self.prepare("linux", "APS5_ENABLE_TRACY:BOOL=ON\n")
+        self.assertEqual(staged[client.name], b"linked Tracy client")
 
 
 class PadTests(unittest.TestCase):
@@ -614,7 +790,8 @@ class SessionTests(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "nt", "junctions are Windows-specific")
     def test_exit_code_follows_a_junctioned_interpreter(self):
-        target = Path(sys.executable).parent
+        interpreter = Path(getattr(sys, "_base_executable", sys.executable))
+        target = interpreter.parent
         directory = Path(tempfile.mkdtemp(prefix="title-run-junction-"))
         link = directory / "python"
         session = None
@@ -623,7 +800,7 @@ class SessionTests(unittest.TestCase):
             if made.returncode != 0:
                 self.skipTest("cannot create a junction: " + made.stderr.strip())
             child = "import subprocess, sys; subprocess.Popen([sys.executable, '-c', 'import time, sys; time.sleep(1); sys.exit(7)'])"
-            session = title_run.Session([str(link / Path(sys.executable).name), "-c", child], Path.cwd(), dict(os.environ), subprocess.DEVNULL, subprocess.DEVNULL, owned=link)
+            session = title_run.Session([str(link / interpreter.name), "-c", child], Path.cwd(), dict(os.environ), subprocess.DEVNULL, subprocess.DEVNULL, owned=link)
             self.assertTrue(wait_until(lambda: not session.alive()))
             self.assertEqual(session.exit_code(), 7)
         finally:
@@ -808,6 +985,88 @@ class CompareTests(unittest.TestCase):
         previous = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 1.0}], PPSA00002=[{"outcome": "rendering", "fps": 1.0}])
         summary = self.summary(PPSA00001=[{"outcome": "rendering", "fps": 2.0}], PPSA00003=[{"outcome": "rendering", "fps": 2.0}])
         self.assertEqual(list(feature("compare_runs")(summary, previous)), ["PPSA00001"])
+
+
+class DiagnosticComparisonTests(unittest.TestCase):
+    def run_summary(self, functions=(), instructions=(), functions_omitted=0, instructions_omitted=0):
+        report = {"missing": list(functions), "unsupported": list(instructions),
+                  "truncated": {"functions": functions_omitted, "unsupported": instructions_omitted}}
+        return {"titles": {"PPSA00001": {"name": "Example", "runs": [
+            {"outcome": "rendering", "fps": 60.0, "report": report}]}}}
+
+    def missing(self, name, calls, library="libSceExample"):
+        return {"library": library, "name": name, "calls": calls}
+
+    def instruction(self, count):
+        return {"encoding": "VOP3", "opcode": "V_EXAMPLE", "opcodeValue": 4, "modifiers": None, "count": count}
+
+    def render(self, before, now):
+        return "\n".join(title_run.render_compare(title_run.compare_runs(now, before)))
+
+    def test_changed_calls_are_visible_with_the_same_function_identity(self):
+        before = self.run_summary([self.missing("shared", 3)])
+        small = self.run_summary([self.missing("shared", 5)])
+        large = self.run_summary([self.missing("shared", 3000)])
+        first, second = self.render(before, small), self.render(before, large)
+        self.assertNotEqual(first, second)
+        self.assertIn("libSceExample/shared: 3 -> 5", first)
+        self.assertIn("libSceExample/shared: 3 -> 3000", second)
+
+    def test_aggregated_calls_and_each_presence_category_are_preserved(self):
+        before = self.run_summary([self.missing("shared", 2), self.missing("shared", 5), self.missing("old", 11)])
+        now = self.run_summary([self.missing("shared", 3), self.missing("shared", 6), self.missing("new", 13)])
+        text = self.render(before, now)
+        self.assertIn("missing functions calls:", text)
+        self.assertIn("only before: libSceExample/old: 11", text)
+        self.assertIn("only now: libSceExample/new: 13", text)
+        self.assertIn("in both: libSceExample/shared: 7 -> 9", text)
+
+    def test_instruction_occurrence_counts_are_preserved(self):
+        before = self.run_summary(instructions=[self.instruction(2), self.instruction(5)])
+        now = self.run_summary(instructions=[self.instruction(1000)])
+        text = self.render(before, now)
+        self.assertIn("unsupported instructions occurrences:", text)
+        self.assertIn("V_EXAMPLE (VOP3, opcode value 4): 7 -> 1000", text)
+
+    def test_partial_function_lists_show_retained_and_omitted_counts(self):
+        before = self.run_summary([self.missing("old", 1)], functions_omitted=3)
+        now = self.run_summary([self.missing("new", 1)], functions_omitted=7)
+        text = self.render(before, now)
+        self.assertIn("| Example | PPSA00001 | Missing functions (retained) | 1 | 1 |", text)
+        self.assertIn("| Example | PPSA00001 | Missing functions omitted | 3 | 7 |", text)
+        self.assertIn("missing functions: lists are partial", text)
+        self.assertIn("not proof of absence from the other run", text)
+
+    def test_one_sided_instruction_truncation_preserves_unknown(self):
+        before = self.run_summary(instructions=[self.instruction(1)])
+        before["titles"]["PPSA00001"]["runs"][0]["report"].pop("truncated")
+        now = self.run_summary(instructions=[self.instruction(1)], instructions_omitted=2)
+        text = self.render(before, now)
+        self.assertIn("| Example | PPSA00001 | Unsupported instructions omitted | not recorded | 2 |", text)
+        self.assertIn("unsupported instructions: lists are partial", text)
+
+    def test_complete_and_legacy_empty_lists_keep_the_existing_output(self):
+        complete = self.run_summary()
+        legacy = copy.deepcopy(complete)
+        legacy["titles"]["PPSA00001"]["runs"][0]["report"].pop("truncated")
+        for summary in (complete, legacy):
+            text = self.render(summary, summary)
+            self.assertIn("| Example | PPSA00001 | Missing functions | 0 | 0 |", text)
+            self.assertNotIn("omitted", text)
+            self.assertNotIn("partial", text)
+            self.assertNotIn("missing functions calls:", text)
+
+    def test_rendering_does_not_change_the_json_comparison(self):
+        before = self.run_summary([self.missing("shared", 3)], functions_omitted=2)
+        now = self.run_summary([self.missing("shared", 5)])
+        compared = title_run.compare_runs(now, before)
+        saved = copy.deepcopy(compared)
+        title_run.render_compare(compared)
+        self.assertEqual(compared, saved)
+        document = json.loads(title_run.compare_json(now, before))
+        self.assertEqual(document["titles"], saved)
+        self.assertEqual(saved["PPSA00001"]["missingFunctions"]["both"][0]["before"], 3)
+        self.assertEqual(saved["PPSA00001"]["missingFunctionsTruncated"], {"before": 2, "now": 0})
 
 
 class RunReportTests(unittest.TestCase):
