@@ -19,7 +19,7 @@ namespace {
 
 constexpr std::uint32_t Writes = 40;
 
-alignas(64) volatile std::uint32_t label = 0;
+alignas(64) volatile std::uint64_t label = 0;
 alignas(64) volatile std::uint32_t done = 0;
 
 void Require(bool condition, const std::string& message) {
@@ -64,7 +64,12 @@ private:
     int saved = -1;
 };
 
-std::array<std::uint32_t, 5> WriteData(volatile std::uint32_t* destination, std::uint32_t value) {
+std::array<std::uint32_t, 8> ReleaseMem64(volatile std::uint64_t* destination, std::uint64_t value) {
+    const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(destination));
+    return {0xc0064900, 0x00000514, 0x40000000, static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), static_cast<std::uint32_t>(value), static_cast<std::uint32_t>(value >> 32u), 0};
+}
+
+std::array<std::uint32_t, 5> WriteData(volatile void* destination, std::uint32_t value) {
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(destination));
     return {0xc0033700, 0x00100200, static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), value};
 }
@@ -81,6 +86,8 @@ void CheckGroupedWriters() {
         const auto packet = WriteData(&label, 1);
         words.insert(words.end(), packet.begin(), packet.end());
     }
+    const auto release = ReleaseMem64(&label, 1);
+    words.insert(words.end(), release.begin(), release.end());
     const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(&label));
     const std::array<std::uint32_t, 7> wait{0xc0053c00, 0x13, static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u), 2, 0xffffffffu, 0x19};
     words.insert(words.end(), wait.begin(), wait.end());
@@ -111,6 +118,7 @@ void CheckGroupedWriters() {
     const std::string writer = std::string("earlier write by queue 0x0 opcode 0x37 at ") + target + "+0x4";
     Require(Count(text, writer) == 1, "wait timeout report: the label's writer was not listed once");
     Require(Count(text, writer + " (" + std::to_string(Writes) + " in the write history)") == 1, "wait timeout report: the writer line does not count the label's " + std::to_string(Writes) + " writes");
+    Require(Count(text, std::string("earlier write by queue 0x0 opcode 0x49 at ") + target + "+0x8 (1 in the write history)") == 1, "wait timeout report: the 64-bit RELEASE_MEM was not listed with its 8 bytes");
     char finishedTarget[32];
     std::snprintf(finishedTarget, sizeof(finishedTarget), "0x%llx", static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(&done)));
     Require(Count(text, std::string("later in this submission: WRITE_DATA at ") + finishedTarget + "+0x4 value 0x1") == 1, "wait timeout report: the write after the wait was not listed");

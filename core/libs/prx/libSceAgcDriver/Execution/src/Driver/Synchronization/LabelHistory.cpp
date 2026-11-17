@@ -171,6 +171,9 @@ void Driver::traceLabel(std::span<const std::uint32_t> packet, std::uint32_t que
     else if ((opcode == 0x3c || opcode == 0x93) && packet.size() >= 7) { target = (packet[2] & (Pm4::WaitAwaitedBytes(packet) == 8 ? ~7u : ~3u)) | (static_cast<std::uint64_t>(packet[3]) << 32u); kind = "WAIT_REG_MEM"; }
     else if (opcode == 0x40 && packet.size() >= 6) { target = packet[4] | (static_cast<std::uint64_t>(packet[5]) << 32u); kind = "COPY_DATA"; }
     std::uint64_t length = 4;
+    if (opcode == 0x49 || opcode == 0x37) {
+        if (const auto label = Pm4::DecodeLabelWrite(packet)) length = label->Bytes().size();
+    }
     if (opcode == 0x50 && packet.size() >= 7) {
         target = packet[4] | (static_cast<std::uint64_t>(packet[5]) << 32u);
         length = packet[6] & 0x3ffffffu;
