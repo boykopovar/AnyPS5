@@ -98,6 +98,7 @@ if(BUILD_TESTING)
         set_tests_properties(guest_harfbuzz_font_nid PROPERTIES ENVIRONMENT_MODIFICATION
             "LD_LIBRARY_PATH=path_list_prepend:${UNPATCHED_DIR};LD_LIBRARY_PATH=path_list_prepend:$<TARGET_FILE_DIR:guest_harfbuzz_font_tests>;LD_LIBRARY_PATH=path_list_prepend:${harfbuzzFontModuleDir}")
     endif()
+    include(ContextualGsubShaping.cmake)
 endif()
 
 include(Shaping.cmake)
