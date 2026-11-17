@@ -11,6 +11,7 @@
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <mutex>
 #include <set>
 #ifdef _WIN32
@@ -450,56 +451,61 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
             warned = true;
             ++outcomes.timedOut;
             const std::uint64_t reference = wide ? packet[4] | (static_cast<std::uint64_t>(packet[5]) << 32u) : packet[4];
+            bool fresh = false;
             {
                 static std::mutex reportedMutex;
-                static std::set<std::tuple<std::uint32_t, std::uint64_t, std::uint64_t>> reported;
+                static std::map<std::pair<std::uint32_t, std::uint64_t>, std::uint64_t> reported;
                 static std::uint64_t timeouts = 0;
                 const std::lock_guard lock(reportedMutex);
                 if (++timeouts % 20 == 0) std::fprintf(stderr, "[gpu] %llu GPU waits have timed out\n", static_cast<unsigned long long>(timeouts));
-                if (!reported.insert({queue, awaited, reference}).second) continue;
+                const auto [entry, inserted] = reported.try_emplace({queue, awaited}, reference);
+                fresh = inserted || entry->second != reference;
+                entry->second = reference;
             }
-            const std::uint64_t mask = wide ? packet[6] | (static_cast<std::uint64_t>(packet[7]) << 32u) : packet[5];
-            const std::uint64_t current = awaitedBytes == 8 ? *reinterpret_cast<const volatile std::uint64_t*>(awaited) : *reinterpret_cast<const volatile std::uint32_t*>(awaited);
-            std::fprintf(stderr, "[gpu] queue 0x%x WAIT_REG_MEM%s%s at 0x%llx timed out after %dms (function %u ref 0x%llx mask 0x%llx value 0x%llx)\n", queue, wide ? "_64" : "", requireMemory ? " (landing)" : "",
-                         static_cast<unsigned long long>(awaited), waitTimeoutMs(), packet[1] & 7u, static_cast<unsigned long long>(reference), static_cast<unsigned long long>(mask), static_cast<unsigned long long>(current));
-            const auto address = awaited;
-            {
-                std::lock_guard historyLock(writeHistoryMutex());
-                std::vector<std::pair<WriteRecord, std::size_t>> writers;
-                for (const auto& record : writeHistory()) {
-                    if (record.length == 0 || record.target > address || address >= record.target + std::max<std::uint64_t>(record.length, 4)) continue;
-                    const auto same = std::ranges::find_if(writers, [&](const auto& writer) {
-                        return writer.first.queue == record.queue && writer.first.opcode == record.opcode && writer.first.target == record.target && writer.first.length == record.length;
-                    });
-                    if (same == writers.end()) {
-                        writers.emplace_back(record, 1u);
-                    } else {
-                        ++same->second;
-                        if (record.order > same->first.order) same->first = record;
+            if (fresh) {
+                const std::uint64_t mask = wide ? packet[6] | (static_cast<std::uint64_t>(packet[7]) << 32u) : packet[5];
+                const std::uint64_t current = awaitedBytes == 8 ? *reinterpret_cast<const volatile std::uint64_t*>(awaited) : *reinterpret_cast<const volatile std::uint32_t*>(awaited);
+                std::fprintf(stderr, "[gpu] queue 0x%x WAIT_REG_MEM%s%s at 0x%llx timed out after %dms (function %u ref 0x%llx mask 0x%llx value 0x%llx)\n", queue, wide ? "_64" : "", requireMemory ? " (landing)" : "",
+                             static_cast<unsigned long long>(awaited), waitTimeoutMs(), packet[1] & 7u, static_cast<unsigned long long>(reference), static_cast<unsigned long long>(mask), static_cast<unsigned long long>(current));
+                const auto address = awaited;
+                {
+                    std::lock_guard historyLock(writeHistoryMutex());
+                    std::vector<std::pair<WriteRecord, std::size_t>> writers;
+                    for (const auto& record : writeHistory()) {
+                        if (record.length == 0 || record.target > address || address >= record.target + std::max<std::uint64_t>(record.length, 4)) continue;
+                        const auto same = std::ranges::find_if(writers, [&](const auto& writer) {
+                            return writer.first.queue == record.queue && writer.first.opcode == record.opcode && writer.first.target == record.target && writer.first.length == record.length;
+                        });
+                        if (same == writers.end()) {
+                            writers.emplace_back(record, 1u);
+                        } else {
+                            ++same->second;
+                            if (record.order > same->first.order) same->first = record;
+                        }
+                    }
+                    for (const auto& [record, count] : writers) {
+                        char last[48] = "";
+                        if (record.valued) std::snprintf(last, sizeof(last), ", the last of value 0x%llx", static_cast<unsigned long long>(record.value));
+                        std::fprintf(stderr, "[gpu]   earlier write by queue 0x%x opcode 0x%x at 0x%llx+0x%llx (%zu in the write history%s)\n", record.queue, record.opcode, static_cast<unsigned long long>(record.target), static_cast<unsigned long long>(record.length), count, last);
                     }
                 }
-                for (const auto& [record, count] : writers) {
-                    char last[48] = "";
-                    if (record.valued) std::snprintf(last, sizeof(last), ", the last of value 0x%llx", static_cast<unsigned long long>(record.value));
-                    std::fprintf(stderr, "[gpu]   earlier write by queue 0x%x opcode 0x%x at 0x%llx+0x%llx (%zu in the write history%s)\n", record.queue, record.opcode, static_cast<unsigned long long>(record.target), static_cast<unsigned long long>(record.length), count, last);
-                }
-            }
-            PrintLaterWrites(following);
+                PrintLaterWrites(following);
 
-            if (const auto reportDevice = device.Load(); reportDevice != nullptr) {
-                Graphics::Recorder::LabelRefusal refusal{};
-                const auto hit = reportDevice->PendingLabel(awaited, awaitedBytes, received, &refusal);
-                const auto since = Graphics::Recorder::PendingLabelSince();
-                const auto age = since.has_value() ? std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - *since).count() : -1.0;
-                std::fprintf(stderr, "[gpu]   recorder: table %s (refusal %u), open batch writes it %d, snapshot write overlaps %d, pending completion labels %llu, write-back completions %llu, pending label age %.1f ms, write generation %llu seen %llu, queue 0 dormant %d, completions pending %d, label due %d\n",
-                             hit.has_value() ? "hit" : "miss", static_cast<unsigned>(refusal), reportDevice->OpenWriteOverlaps(awaited, awaitedBytes) ? 1 : 0, Graphics::Recorder::SnapshotWriteOverlaps(awaited, awaitedBytes) ? 1 : 0,
-                             static_cast<unsigned long long>(Graphics::Recorder::PendingCompletionLabels()), static_cast<unsigned long long>(Graphics::Recorder::PendingWriteBackCompletions()), age,
-                             static_cast<unsigned long long>(Graphics::Recorder::WriteGeneration()), static_cast<unsigned long long>(seenGeneration), queue0Dormant.load(std::memory_order_relaxed) ? 1 : 0, completionsPending() ? 1 : 0, labelFlushDue() ? 1 : 0);
+                if (const auto reportDevice = device.Load(); reportDevice != nullptr) {
+                    Graphics::Recorder::LabelRefusal refusal{};
+                    const auto hit = reportDevice->PendingLabel(awaited, awaitedBytes, received, &refusal);
+                    const auto since = Graphics::Recorder::PendingLabelSince();
+                    const auto age = since.has_value() ? std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - *since).count() : -1.0;
+                    std::fprintf(stderr, "[gpu]   recorder: table %s (refusal %u), open batch writes it %d, snapshot write overlaps %d, pending completion labels %llu, write-back completions %llu, pending label age %.1f ms, write generation %llu seen %llu, queue 0 dormant %d, completions pending %d, label due %d\n",
+                                 hit.has_value() ? "hit" : "miss", static_cast<unsigned>(refusal), reportDevice->OpenWriteOverlaps(awaited, awaitedBytes) ? 1 : 0, Graphics::Recorder::SnapshotWriteOverlaps(awaited, awaitedBytes) ? 1 : 0,
+                                 static_cast<unsigned long long>(Graphics::Recorder::PendingCompletionLabels()), static_cast<unsigned long long>(Graphics::Recorder::PendingWriteBackCompletions()), age,
+                                 static_cast<unsigned long long>(Graphics::Recorder::WriteGeneration()), static_cast<unsigned long long>(seenGeneration), queue0Dormant.load(std::memory_order_relaxed) ? 1 : 0, completionsPending() ? 1 : 0, labelFlushDue() ? 1 : 0);
+                }
+                const auto queuedLabel = DrawPipeline::Queue0().PendingLabel(awaited, awaitedBytes);
+                std::fprintf(stderr, "[gpu]   draw pipeline: %zu outstanding, writes it %d, queued label %s 0x%llx; draw finisher busy %d; this worker holds %zu deferred labels\n", DrawPipeline::Queue0().Outstanding(),
+                             DrawPipeline::Queue0().Overlaps(awaited, awaitedBytes) ? 1 : 0, queuedLabel.has_value() ? "value" : "none", static_cast<unsigned long long>(queuedLabel.value_or(0)), DrawFinisher::Busy() ? 1 : 0, deferredLabels().labels.size());
+                context.Print(stderr, "[gpu]   preceding packet %s\n");
             }
-            const auto queuedLabel = DrawPipeline::Queue0().PendingLabel(awaited, awaitedBytes);
-            std::fprintf(stderr, "[gpu]   draw pipeline: %zu outstanding, writes it %d, queued label %s 0x%llx; draw finisher busy %d; this worker holds %zu deferred labels\n", DrawPipeline::Queue0().Outstanding(),
-                         DrawPipeline::Queue0().Overlaps(awaited, awaitedBytes) ? 1 : 0, queuedLabel.has_value() ? "value" : "none", static_cast<unsigned long long>(queuedLabel.value_or(0)), DrawFinisher::Busy() ? 1 : 0, deferredLabels().labels.size());
-            context.Print(stderr, "[gpu]   preceding packet %s\n");
         }
         if (!stuckReported && std::chrono::steady_clock::now() - entered > std::chrono::milliseconds(10 * waitTimeoutMs())) {
             stuckReported = true;
