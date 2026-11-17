@@ -848,55 +848,10 @@ void APS5_VABI libSceLibcInternalInventory_185_nid_no_patch(void* self) {
 }
 APS5_EXPORT("ImblNB7fVVU", libSceLibcInternalInventory_185_nid_no_patch);
 
-int APS5_VABI libSceLibcInternalInventory_186_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("e5jQyuEE+9U", libSceLibcInternalInventory_186_nid_no_patch);
-
-int APS5_VABI libSceLibcInternalInventory_187_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("y0hzUSFrkng", libSceLibcInternalInventory_187_nid_no_patch);
-
-int APS5_VABI libSceLibcInternalInventory_188_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("J2xO4cttypo", libSceLibcInternalInventory_188_nid_no_patch);
-
-int APS5_VABI libSceLibcInternalInventory_189_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("bU3S1OS1sc0", libSceLibcInternalInventory_189_nid_no_patch);
-
-int APS5_VABI libSceLibcInternalInventory_190_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("p-SW25yE-Q8", libSceLibcInternalInventory_190_nid_no_patch);
-
-int APS5_VABI libSceLibcInternalInventory_191_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("8H3yBUytv-0", libSceLibcInternalInventory_191_nid_no_patch);
-
 int APS5_VABI libSceLibcInternalInventory_192_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("QTgRx1NTp6o", libSceLibcInternalInventory_192_nid_no_patch);
-
-int APS5_VABI libSceLibcInternalInventory_193_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("QdPT7uDTlo0", libSceLibcInternalInventory_193_nid_no_patch);
-
-int APS5_VABI libSceLibcInternalInventory_194_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("6htjEH2Gi-w", libSceLibcInternalInventory_194_nid_no_patch);
-
-int APS5_VABI libSceLibcInternalInventory_195_nid_no_patch() {
-    NotImplemented_nid_no_patch(__func__);
-}
-APS5_EXPORT("WQQlL0n2SpU", libSceLibcInternalInventory_195_nid_no_patch);
 
 int APS5_VABI libSceLibcInternalInventory_197_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
