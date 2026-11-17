@@ -594,6 +594,7 @@ void EmitDirectInstruction(SpirvValueEmitContext& ctx, const IrValue& inst) {
         case IrOpcode::LoadBufferU32x2: return Invoke(EmitLoadBufferU32x2, ctx, inst);
         case IrOpcode::LoadBufferU32x3: return Invoke(EmitLoadBufferU32x3, ctx, inst);
         case IrOpcode::LoadBufferU32x4: return Invoke(EmitLoadBufferU32x4, ctx, inst);
+        case IrOpcode::BufferKeepsDestination: return Invoke(EmitBufferKeepsDestination, ctx, inst);
         case IrOpcode::StoreBufferU8: return Invoke(EmitStoreBufferU8, ctx, inst);
         case IrOpcode::StoreBufferU16: return Invoke(EmitStoreBufferU16, ctx, inst);
         case IrOpcode::StoreBufferU32: return Invoke(EmitStoreBufferU32, ctx, inst);

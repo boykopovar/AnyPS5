@@ -57,6 +57,7 @@ public:
         append(key, request.context.floatMode);
         append(key, request.context.convertedSamples);
         append(key, request.context.layerRowSamples);
+        append(key, request.context.typedBufferLoads);
         appendFallbacks(key, request);
         appendMesh(key, request);
         appendTessellation(key, request);
@@ -98,6 +99,7 @@ private:
         append(key, request.context.floatMode);
         append(key, request.context.convertedSamples);
         append(key, request.context.layerRowSamples);
+        append(key, request.context.typedBufferLoads);
         appendFallbacks(key, request);
         appendMesh(key, request);
         appendTessellation(key, request);

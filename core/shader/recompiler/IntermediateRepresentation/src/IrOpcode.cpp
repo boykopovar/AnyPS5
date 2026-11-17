@@ -398,6 +398,7 @@ constexpr std::array<OpcodeMeta, static_cast<std::size_t>(IrOpcode::Count)> Meta
     makeMeta("LoadBufferU32x2", U32x2, BufferResource, U32, U32, U32, U1),
     makeMeta("LoadBufferU32x3", U32x3, BufferResource, U32, U32, U32, U1),
     makeMeta("LoadBufferU32x4", U32x4, BufferResource, U32, U32, U32, U1),
+    makeMeta("BufferKeepsDestination", U1, BufferResource),
     makeMeta("StoreBufferU8", Void, BufferResource, U32, U32, U32, U8, U1),
     makeMeta("StoreBufferU16", Void, BufferResource, U32, U32, U32, U16, U1),
     makeMeta("StoreBufferU32", Void, BufferResource, U32, U32, U32, U32, U1),
@@ -577,6 +578,7 @@ static constexpr BufferAccess computeBufferAccess(IrOpcode opcode) {
         case IrOpcode::LoadBufferU32x2:
         case IrOpcode::LoadBufferU32x3:
         case IrOpcode::LoadBufferU32x4:
+        case IrOpcode::BufferKeepsDestination:
             return BufferAccess::Read;
         case IrOpcode::StoreBuffer:
         case IrOpcode::StoreBufferU8:

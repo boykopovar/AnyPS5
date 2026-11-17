@@ -1,0 +1,5 @@
+# shader
+
+## change [Buffer descriptor type]
+
+- [Buffer descriptor type](../../../core/shader/recompiler/Optimization/src/ResourceMaterializer.cpp) - a buffer V# whose TYPE (word 3 bits 30-31) is not 0 throws `buffer descriptor uses an unsupported type`, except for vector stores and single-dword vector loads through TYPE 2 or 3. Measured on a PS5 (CFI-1115B, firmware 12.20): through TYPE 2 or 3 with FORMAT 0 or a valid format, `buffer_store_dword` and `buffer_store_format_x` wrote nothing and did not fault, also with an unmapped base; loads and GLC atomics left the destination VGPR unchanged. Such loads are recompiled to keep their destination and the V# is bound as null. TYPE 0 with FORMAT 0 returned 0 for loads and wrote nothing. TYPE 1 faulted the GPU for every access and throws. Atomics through TYPE 2 and 3 still throw. Unmeasured, still throwing: `tbuffer_*`, FORMAT above 77, GCN shaders, V#s loaded at run time, and multi-dword or multi-component loads and stores. Closes when: those cases are measured on a PS5.

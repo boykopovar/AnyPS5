@@ -1850,6 +1850,17 @@ void EmitLoadBufferU32x4(SpirvValueEmitContext& ctx, const IrValue& inst) {
     ctx.Define(inst, EmitRuntimeBufferLoad(ctx, inst, 4u));
 }
 
+void EmitBufferKeepsDestination(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    auto& state = ctx.state;
+    const auto& memory = ctx.Memory(inst);
+    if (memory.gpuDescriptor) {
+        ctx.Define(inst, ConstantBool(state, false));
+        return;
+    }
+    const auto flag = state.module.SpecializationConstant(TypeU32(state), PipelineSpecialization::BufferKeepsDestinationBase + memory.resource, 0u);
+    ctx.Define(inst, Binary(state, spv::OpINotEqual, TypeBool(state), flag, ConstantU32(state, 0u)));
+}
+
 void EmitStoreBufferU8(SpirvValueEmitContext& ctx, const IrValue& inst) {
     EmitRuntimeBufferStore(ctx, inst, 1u);
 }

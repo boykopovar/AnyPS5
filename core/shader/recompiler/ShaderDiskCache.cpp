@@ -144,7 +144,7 @@ constexpr std::size_t fieldCount() {
 }
 
 static_assert(fieldCount<ShaderInfo>() == 24, "ShaderInfo changed: update the info encoder");
-static_assert(fieldCount<BufferResource>() == 12, "BufferResource changed: update the info encoder");
+static_assert(fieldCount<BufferResource>() == 13, "BufferResource changed: update the info encoder");
 static_assert(fieldCount<ImageResource>() == 51, "ImageResource changed: update the info encoder");
 static_assert(fieldCount<SamplerResource>() == 8, "SamplerResource changed: update the info encoder");
 static_assert(fieldCount<SampledResourcePair>() == 4, "SampledResourcePair changed: update the info encoder");
@@ -780,6 +780,7 @@ void encodeShaderInfo(Writer& writer, const ShaderInfo& info) {
         out.Value(buffer.formattedReadMask);
         out.Value(buffer.scalar);
         out.Value(buffer.typedAlignment);
+        out.Value(buffer.typedLoads);
     });
     writer.List(info.images, [](Writer& out, const ImageResource& image) {
         out.Value(image.source);
@@ -897,6 +898,7 @@ void decodeShaderInfo(Reader& reader, ShaderInfo& info) {
         in.Value(buffer.formattedReadMask);
         in.Value(buffer.scalar);
         in.Value(buffer.typedAlignment);
+        in.Value(buffer.typedLoads);
     });
     reader.List(info.images, 77, [](Reader& in, ImageResource& image) {
         in.Value(image.source);

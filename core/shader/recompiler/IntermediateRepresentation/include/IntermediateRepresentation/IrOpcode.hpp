@@ -357,6 +357,7 @@ enum class IrOpcode : std::uint16_t {
     LoadBufferU32x2,
     LoadBufferU32x3,
     LoadBufferU32x4,
+    BufferKeepsDestination,
     StoreBufferU8,
     StoreBufferU16,
     StoreBufferU32,

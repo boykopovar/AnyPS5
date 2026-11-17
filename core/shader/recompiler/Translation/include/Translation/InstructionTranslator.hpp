@@ -41,6 +41,7 @@ struct TranslateOptions {
     bool float32FlushDeclared = false;
     bool float32DenormPreserve = false;
     bool float64 = false;
+    bool typedBufferLoads = false;
     bool gcnLegacyVertexInputs = false;
     bool nativeFloat16Fma = false;
     bool float16HostNans = false;

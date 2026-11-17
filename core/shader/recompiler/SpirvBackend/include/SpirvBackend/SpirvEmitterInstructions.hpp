@@ -275,6 +275,7 @@ void EmitLoadBufferU32(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitLoadBufferU32x2(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitLoadBufferU32x3(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitLoadBufferU32x4(SpirvValueEmitContext& ctx, const IrValue& inst);
+void EmitBufferKeepsDestination(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitStoreBufferU8(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitStoreBufferU16(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitStoreBufferU32(SpirvValueEmitContext& ctx, const IrValue& inst);

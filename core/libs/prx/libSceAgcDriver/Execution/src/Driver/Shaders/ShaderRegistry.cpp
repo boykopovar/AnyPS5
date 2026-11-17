@@ -892,6 +892,10 @@ void ReportPreparedAtUse(const ShaderSnapshot& snapshot, const ShaderRecompiler:
         APS5_LOG_OUT_DEBUG("Shader 0x%llx samples a 1D array past maxImageArrayLayers; preparing its layer-row variant at use", static_cast<unsigned long long>(request.shader.codeAddress));
         return;
     }
+    if (request.context.typedBufferLoads) {
+        APS5_LOG_OUT_DEBUG("Shader 0x%llx loads through a TYPE 2 or 3 buffer descriptor; preparing its typed-buffer variant at use", static_cast<unsigned long long>(request.shader.codeAddress));
+        return;
+    }
     if (snapshot.codeAddress == NullPixelProgramAddress() && request.shader.stage == ShaderRecompiler::ShaderStage::Fragment && request.context.waveSize == 32u) {
         APS5_LOG_ERR("The null pixel program has no wave%u artifact for this draw; preparing it at draw", request.context.waveSize);
         return;
@@ -1317,7 +1321,7 @@ PendingPreparations& pendingPreparations() {
 
 std::shared_ptr<const ShaderRecompiler::SourceHandle> PrepareInBackground(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& source, std::span<const std::uint64_t> key) {
     const auto keyWords = std::span<const std::uint32_t>(reinterpret_cast<const std::uint32_t*>(key.data()), key.size() * 2u);
-    const auto flags = (source.context.convertedSamples ? 1u : 0u) | (source.context.layerRowSamples ? 2u : 0u);
+    const auto flags = (source.context.convertedSamples ? 1u : 0u) | (source.context.layerRowSamples ? 2u : 0u) | (source.context.typedBufferLoads ? 4u : 0u);
     const std::tuple id{&snapshot, codeOffset, ShaderRecompiler::HashSpirvWords(source.shader.code, ShaderRecompiler::HashSpirvWords(keyWords, flags))};
     auto& pending = pendingPreparations();
     std::shared_ptr<PendingPreparation> job;
@@ -1380,6 +1384,7 @@ ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& s
     AwaitRegisteredPreparation(*snapshot.prepared, lock);
     if (std::ranges::find(snapshot.prepared->convertedSamples, codeOffset) != snapshot.prepared->convertedSamples.end()) source.context.convertedSamples = true;
     if (std::ranges::find(snapshot.prepared->layerRowSamples, codeOffset) != snapshot.prepared->layerRowSamples.end()) source.context.layerRowSamples = true;
+    if (std::ranges::find(snapshot.prepared->typedBufferLoads, codeOffset) != snapshot.prepared->typedBufferLoads.end()) source.context.typedBufferLoads = true;
     auto invocationRequest = source;
     struct PreparedKeyStorage {};
     auto& key = HostThreadLocal<std::vector<std::uint64_t>, PreparedKeyStorage>();
@@ -1425,6 +1430,9 @@ std::shared_ptr<const ShaderRecompiler::ResourceCapture> CaptureInvocation(Shade
         } catch (const ShaderRecompiler::LayerRowSamplesRequired&) {
             if (invocation.Request().context.layerRowSamples) throw;
             record(snapshot.prepared->layerRowSamples);
+        } catch (const ShaderRecompiler::TypedBufferLoadsRequired&) {
+            if (invocation.Request().context.typedBufferLoads) throw;
+            record(snapshot.prepared->typedBufferLoads);
         }
         invocation = InvocationFor(snapshot, codeOffset, request, false, linking);
     }

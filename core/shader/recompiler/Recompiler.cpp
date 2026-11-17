@@ -286,6 +286,7 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     translateOptions.inputInfo = inputInfo;
     translateOptions.float32DenormPreserve = request.target.float32DenormPreserve;
     translateOptions.float64 = supports(spv::CapabilityFloat64);
+    translateOptions.typedBufferLoads = request.context.typedBufferLoads;
 
     constexpr InstructionTranslator translator;
 
@@ -405,6 +406,9 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
     }
     if (request.context.layerRowSamples) {
         for (auto& image : program.Resources().info.images) image.maxArrayLayers = request.target.maxImageArrayLayers;
+    }
+    if (request.context.typedBufferLoads) {
+        for (auto& buffer : program.Resources().info.buffers) buffer.typedLoads = true;
     }
 
     return program;
@@ -1238,6 +1242,7 @@ std::shared_ptr<PreparedBindingPlan> preparedBindingPlan(const CompiledVariant& 
         key.push_back(fields.word1);
         key.push_back(fields.word3);
         key.push_back(fields.known ? 4u | fields.misalignment | fields.tail << 3u : 0u);
+        key.push_back(index < snapshot.keepsDestination.size() ? snapshot.keepsDestination[index] : 0u);
     }
     for (std::size_t index = 0; index < variant.info.info.images.size(); ++index) {
         const auto& descriptor = snapshot.images.at(index);
@@ -1707,6 +1712,8 @@ auto CountedCompile(Compile&& compile) {
         return result;
     } catch (const ConvertedSampleRequired&) {
         throw;
+    } catch (const TypedBufferLoadsRequired&) {
+        throw;
     } catch (const std::exception&) {
         NoteFailureOnce();
         throw;
@@ -1813,6 +1820,9 @@ RecompileResult RecompileImpl(const RecompileRequest& request) {
         } catch (const LayerRowSamplesRequired&) {
             if (current.context.layerRowSamples) throw;
             current.context.layerRowSamples = true;
+        } catch (const TypedBufferLoadsRequired&) {
+            if (current.context.typedBufferLoads) throw;
+            current.context.typedBufferLoads = true;
         }
     }
 }
@@ -2329,6 +2339,8 @@ auto recompileReporting(const RecompileRequest& request, Impl&& impl) -> decltyp
     try {
         return impl();
     } catch (const ConvertedSampleRequired&) {
+        throw;
+    } catch (const TypedBufferLoadsRequired&) {
         throw;
     } catch (const std::exception& e) {
         NoteFailureOnce();

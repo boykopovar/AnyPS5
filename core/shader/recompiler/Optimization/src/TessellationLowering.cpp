@@ -998,6 +998,7 @@ private:
                 const auto shared = SharedAccessOf(opcode);
                 const auto buffer = BufferAccessOf(opcode);
                 if (shared == SharedAccess::None && buffer == BufferAccess::None) continue;
+                if (opcode == IrOpcode::BufferKeepsDestination) continue;
                 const auto flags = inst->Flags<MemoryFlags>();
                 const auto& memory = memoryInfo.at(flags.index);
                 const bool half = opcode == IrOpcode::LoadSharedU16 || opcode == IrOpcode::WriteSharedU16;
