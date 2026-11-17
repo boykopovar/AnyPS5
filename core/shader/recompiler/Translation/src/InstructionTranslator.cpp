@@ -953,11 +953,12 @@ IrProgram InstructionTranslator::Translate(const RdnaProgram& decoded, const Con
             ++program.Metadata().nanSpeculationKept;
             MarkNanSpeculationApplied(options.shaderHash);
             std::uint32_t counterOffset = 0u;
-            if (speculation.count) {
+            // The GDS counter is a guest-visible memory write: in a graphics program it makes the driver treat the draw as a memory writer (early-test sample-mask and blend refusals), so only compute programs are counted at run time.
+            if (speculation.count && options.stage == ShaderStageKind::Compute) {
                 const auto slot = NanSpeculationCounterSlot(options.shaderHash, static_cast<std::uint32_t>(options.stage));
                 if (slot < NanSpeculationCounterSlots) {
                     counterOffset = NanSpeculationCounterBase + slot * 8u;
-                    context.CountNanSpeculation(counterOffset, options.stage != ShaderStageKind::Pixel);
+                    context.CountNanSpeculation(counterOffset, true);
                 }
             }
             IrValue* first = before < instructions.size() ? *std::next(instructions.begin(), static_cast<std::ptrdiff_t>(before)) : nullptr;

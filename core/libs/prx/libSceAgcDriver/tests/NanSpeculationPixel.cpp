@@ -17,6 +17,7 @@ struct Shape {
     std::size_t ballots = 0;
     std::size_t blocks = 0;
     std::uint32_t declines = 0;
+    std::size_t gdsEntries = 0;
 };
 
 Shape Translated(ShaderStageKind stage, std::vector<std::uint32_t> code) {
@@ -48,6 +49,7 @@ Shape Translated(ShaderStageKind stage, std::vector<std::uint32_t> code) {
     Shape shape;
     shape.blocks = program.Blocks().size();
     shape.declines = program.Metadata().nanSpeculationDeclines;
+    for (const auto& memory : program.Resources().memoryInfo) shape.gdsEntries += memory.kind == ResourceKind::Gds ? 1u : 0u;
     for (const auto& block : program.Blocks()) {
         for (const auto* inst : block->Instructions()) shape.ballots += inst->Opcode() == IrOpcode::Ballot ? 1u : 0u;
     }
@@ -63,12 +65,14 @@ int main() {
     _putenv_s("APS5_NAN_SPECULATION_MIN_OPS", "0");
     _putenv_s("APS5_NAN_SPECULATION_MIN_DENSITY", "0");
     _putenv_s("APS5_NAN_SPECULATION_STAGES", "all");
+    _putenv_s("APS5_NAN_SPECULATION_COUNT", "1");
 #else
     setenv("APS5_NAN_SPECULATION", "1", 1);
     setenv("APS5_NAN_SPECULATION_MIN", "1", 1);
     setenv("APS5_NAN_SPECULATION_MIN_OPS", "0", 1);
     setenv("APS5_NAN_SPECULATION_MIN_DENSITY", "0", 1);
     setenv("APS5_NAN_SPECULATION_STAGES", "all", 1);
+    setenv("APS5_NAN_SPECULATION_COUNT", "1", 1);
 #endif
     try {
         constexpr std::uint32_t AddF32 = 0x06020300u;
@@ -82,10 +86,12 @@ int main() {
         const auto pixelBase = Translated(ShaderStageKind::Pixel, {Nop});
         if (pixel.blocks != pixelBase.blocks + 2u) return fail("a pixel v_add_f32 region was not speculated with the pixel stage enabled");
         if (pixel.ballots != pixelBase.ballots) return fail("a pixel region branches on a wave ballot; helper lanes may sit out of it, so the branch must read the lane's own flag");
+        if (pixel.gdsEntries != 0u) return fail("a speculated pixel program got a GDS counter; the driver then treats the draw as a memory writer and refuses early-test quad-varying sample masks");
         const auto mixed = Translated(ShaderStageKind::Pixel, {AddF32, CompareEqualF32});
         if (mixed.declines != 1u || mixed.blocks != Translated(ShaderStageKind::Pixel, {Nop, CompareEqualF32}).blocks) return fail("a pixel region that writes a lane mask was speculated; the exact arm would ballot over a subset of the wave");
         const auto compute = Translated(ShaderStageKind::Compute, {AddF32});
         if (compute.ballots <= Translated(ShaderStageKind::Compute, {Nop}).ballots) return fail("a compute region lost its wave ballot");
+        if (compute.gdsEntries == 0u) return fail("the compute counter was not emitted with APS5_NAN_SPECULATION_COUNT set");
         for (const ShaderStageKind stage : {ShaderStageKind::Local, ShaderStageKind::TessellationControl, ShaderStageKind::TessellationEvaluation}) {
             if (Translated(stage, {AddF32}).blocks != Translated(stage, {Nop}).blocks) return fail("a tessellation stage was speculated under the all-stages mask");
         }
