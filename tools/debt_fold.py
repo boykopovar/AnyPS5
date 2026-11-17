@@ -159,6 +159,9 @@ def fold(root, write):
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description="apply the debt fragments in docs/dev/debt/changes/ to the debt files")
     parser.add_argument("--check", action="store_true", help="check that every fragment applies, change nothing")
     parser.add_argument("--show", metavar="LIBRARY", help="print LIBRARY's debt file with the pending fragments applied")
