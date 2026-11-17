@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -230,6 +231,49 @@ int main() {
             second.shader.codeAddress = 0xa005u;
             static_cast<void>(ShaderRecompiler::Recompile(second));
             if (!NanSpeculationApplied(0xa005u)) return fail("a program that reused a speculated variant is not marked as speculated");
+        }
+        {
+            // A prepared capture that fails: the library suppresses speculation so the program can be prepared again, but the
+            // fallback is counted only once that preparation worked, and the suppression goes again when it did not.
+            const auto retryCase = [&](std::uint64_t address, std::span<const std::uint32_t> words, bool secondWorks) -> const char* {
+                auto retrying = prepared;
+                retrying.shader.codeAddress = address;
+                retrying.shader.code = words;
+                const auto handle = PrepareShader(retrying);
+                const auto invocation = PreparedShaderInvocation::TryCreate(retrying, handle);
+                if (!invocation.has_value()) return "a shader prepared for the retry does not match its request";
+                const auto fellBackBefore = stats();
+                NanSpeculationRetryScope scope(address, static_cast<std::uint32_t>(retrying.shader.stage));
+                InjectNanSpeculationFailures(1u, false);
+                bool retried = false;
+                try {
+                    static_cast<void>(invocation->Capture(SrtRuntime{}));
+                } catch (const NanSpeculationRetry&) {
+                    retried = true;
+                    scope.Retried();
+                }
+                InjectNanSpeculationFailures(0u, false);
+                if (!retried) return "a failed speculated capture did not ask for a second preparation";
+                if (!NanSpeculationSuppressed(address)) return "the second preparation was not prepared without speculation";
+                if (stats() != fellBackBefore) return "a fallback was counted before the second preparation succeeded";
+                if (secondWorks) {
+                    const auto again = PrepareShader(retrying);
+                    const auto second = PreparedShaderInvocation::TryCreate(retrying, again);
+                    if (!second.has_value() || second->Capture(SrtRuntime{}) == nullptr) return "the shader prepared again without speculation did not capture";
+                    scope.Succeeded();
+                    if (stats() != fellBackBefore + 1u) return "a fallback that recovered was not counted";
+                    if (!NanSpeculationSuppressed(address)) return "a fallback that recovered lost its suppression";
+                } else {
+                    scope.Abandoned();
+                    if (NanSpeculationSuppressed(address)) return "a failed second preparation left the program suppressed";
+                    if (stats() != fellBackBefore) return "a failed second preparation was counted as a fallback";
+                }
+                return nullptr;
+            };
+            static constexpr std::array<std::uint32_t, 3> recoveredCode{0x06080300u, 0x06080300u, 0xbf810000u};
+            static constexpr std::array<std::uint32_t, 3> abandonedCode{0x060a0300u, 0x060a0300u, 0xbf810000u};
+            if (const auto* problem = retryCase(0xb001u, recoveredCode, true)) return fail(problem);
+            if (const auto* problem = retryCase(0xb002u, abandonedCode, false)) return fail(problem);
         }
         std::puts("nan speculation fallback tests passed");
         return 0;

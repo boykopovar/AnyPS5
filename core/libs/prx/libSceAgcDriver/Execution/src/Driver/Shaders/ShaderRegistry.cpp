@@ -1417,14 +1417,12 @@ std::shared_ptr<const ShaderRecompiler::ResourceCapture> CaptureInvocation(Shade
         if (std::ranges::find(offsets, codeOffset) == offsets.end()) offsets.push_back(codeOffset);
     };
     // The library suppresses speculation before it asks for a second preparation; the fallback only counts, and stays in force, once that preparation captured.
-    bool retried = false;
-    const auto abandon = [&] {
-        if (retried) ShaderRecompiler::RestoreNanSpeculation(request.shader.codeAddress);
-    };
+    ShaderRecompiler::NanSpeculationRetryScope retry(request.shader.codeAddress, static_cast<std::uint32_t>(request.shader.stage));
+    const auto abandon = [&] { retry.Abandoned(); };
     while (true) {
         try {
             auto capture = memory.Capture(invocation);
-            if (retried) ShaderRecompiler::NoteNanSpeculationFallback(static_cast<std::uint32_t>(request.shader.stage));
+            retry.Succeeded();
             return capture;
         } catch (const ShaderRecompiler::ConvertedSampleRequired&) {
             if (invocation.Request().context.convertedSamples) { abandon(); throw; }
@@ -1433,7 +1431,7 @@ std::shared_ptr<const ShaderRecompiler::ResourceCapture> CaptureInvocation(Shade
             if (invocation.Request().context.layerRowSamples) { abandon(); throw; }
             record(snapshot.prepared->layerRowSamples);
         } catch (const ShaderRecompiler::NanSpeculationRetry&) {
-            retried = true;
+            retry.Retried();
         } catch (...) {
             abandon();
             throw;

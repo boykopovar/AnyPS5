@@ -1063,20 +1063,10 @@ struct NanSpeculationConfig {
     std::uint32_t minimumVectorInstructions = 32u;
     std::uint32_t maximumVectorInstructions = 256u;
     std::array<std::uint32_t, 9> stageMinimum{32u, 32u, 32u, 32u, 32u, 32u, 32u, 32u, 32u};
-    bool count = false;
     std::uint32_t minimumFastOps = 0u;
     std::uint32_t minimumDensityPercent = 0u;
 };
 [[nodiscard]] const NanSpeculationConfig& NanSpeculation();
-inline constexpr std::uint32_t NanSpeculationCounterBase = 0xc000u;
-inline constexpr std::uint32_t NanSpeculationCounterSlots = 2048u;
-struct NanSpeculationCounterSite {
-    std::uint64_t address = 0;
-    std::uint32_t stage = 0;
-    std::uint32_t slot = 0;
-};
-[[nodiscard]] std::uint32_t NanSpeculationCounterSlot(std::uint64_t address, std::uint32_t stage);
-[[nodiscard]] std::vector<NanSpeculationCounterSite> NanSpeculationCounterSites();
 [[nodiscard]] bool NanSpeculationSuppressed(std::uint64_t address);
 bool SuppressNanSpeculation(std::uint64_t address);
 void RestoreNanSpeculation(std::uint64_t address);
@@ -1094,6 +1084,30 @@ void NoteNanSpeculationProgram(std::uint32_t stage, bool speculated, bool declin
 void NoteNanSpeculationFallback(std::uint32_t stage);
 // Tests: the next `count` variant compilations of speculated programs throw; `includingExact` also fails the retry without speculation.
 void InjectNanSpeculationFailures(std::uint32_t count, bool includingExact);
+
+// Commit order of a second preparation after NanSpeculationRetry. The library has already suppressed
+// speculation for the program, because the second preparation needs it. The fallback only counts once
+// that preparation succeeded, and the suppression is dropped again if it failed.
+class NanSpeculationRetryScope {
+public:
+    NanSpeculationRetryScope(std::uint64_t address, std::uint32_t stage) : address(address), stage(stage) {}
+    NanSpeculationRetryScope(const NanSpeculationRetryScope&) = delete;
+    NanSpeculationRetryScope& operator=(const NanSpeculationRetryScope&) = delete;
+    void Retried() { retried = true; }
+    void Succeeded() {
+        if (retried) NoteNanSpeculationFallback(stage);
+        retried = false;
+    }
+    void Abandoned() {
+        if (retried) RestoreNanSpeculation(address);
+        retried = false;
+    }
+
+private:
+    std::uint64_t address = 0;
+    std::uint32_t stage = 0;
+    bool retried = false;
+};
 [[nodiscard]] NanSpeculationStageStats NanSpeculationStats(std::uint32_t stage);
 
 class NanSpeculationRetry : public std::runtime_error {

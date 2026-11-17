@@ -996,16 +996,20 @@ InjectedNanFailures& injectedNanFailures() {
     return failures;
 }
 
+void throwInjectedNanFailure(const RecompileRequest& request) {
+    auto& injected = injectedNanFailures();
+    if (injected.remaining.load(std::memory_order_relaxed) == 0u || !NanSpeculationApplied(request.shader.codeAddress)) return;
+    if (!injected.includingExact.load(std::memory_order_relaxed) && NanSpeculationSuppressed(request.shader.codeAddress)) return;
+    auto left = injected.remaining.load(std::memory_order_relaxed);
+    while (left != 0u && !injected.remaining.compare_exchange_weak(left, left - 1u, std::memory_order_relaxed)) {}
+    if (left != 0u) throw std::runtime_error("injected NaN speculation failure");
+}
+
 CompiledVariant compileVariant(const RecompileRequest& request, IrProgram program, std::exception_ptr* emissionFailure = nullptr) {
     return recordEmissionFailure(emissionFailure, [&] {
         prepareInterface(request, program);
         auto variant = emitVariant(request, program);
-        auto& injected = injectedNanFailures();
-        if (injected.remaining.load(std::memory_order_relaxed) != 0u && NanSpeculationApplied(request.shader.codeAddress) && (injected.includingExact.load(std::memory_order_relaxed) || !NanSpeculationSuppressed(request.shader.codeAddress))) {
-            auto left = injected.remaining.load(std::memory_order_relaxed);
-            while (left != 0u && !injected.remaining.compare_exchange_weak(left, left - 1u, std::memory_order_relaxed)) {}
-            if (left != 0u) throw std::runtime_error("injected NaN speculation failure");
-        }
+        throwInjectedNanFailure(request);
         variant.info = std::move(program).TakeCompiledInfo();
         return variant;
     });
@@ -1754,8 +1758,7 @@ std::shared_ptr<const CompiledVariant> findOrCompileVariant(SourceEntry& source,
         if (failure.codeAddress == request.shader.codeAddress && sameLayout(failure.layout, request.layout)) std::rethrow_exception(failure.failure);
     }
     cacheHit = false;
-    // Counter slots are handed out in compile order and baked into the artifact: an artifact counted by one process would write another process's slot.
-    const bool disk = ShaderDiskCache::Enabled() && !DebugProbeActive() && !NanSpeculation().count;
+    const bool disk = ShaderDiskCache::Enabled() && !DebugProbeActive();
     std::vector<std::byte> diskKey;
     std::shared_ptr<const CompiledVariant> variant;
     if (disk) {
@@ -2572,6 +2575,7 @@ std::optional<PreparedShaderInvocation> PreparedShaderInvocation::TryCreate(cons
 
 std::shared_ptr<const ResourceCapture> PreparedShaderInvocation::Capture(const SrtRuntime& runtime) const {
     return retryWithoutNanSpeculation(request, [&] {
+        throwInjectedNanFailure(request);
         auto capture = std::make_shared<ResourceCapture>();
         capture->source = handle->source;
         capture->plan = acquirePlan(request, handle->source, true, handle.get());
@@ -2646,6 +2650,7 @@ std::shared_ptr<const ResourceCapture> CaptureResources(const RecompileRequest& 
     // The whole vertex family (Vertex, Local, TC, TE, Mesh) validates V# fields the memo key does not cover.
     if (request.shader.stage != ShaderStage::Compute && request.shader.stage != ShaderStage::Fragment) ValidateRequestInputs(request);
     return retryWithoutNanSpeculation(request, [&] {
+        throwInjectedNanFailure(request);
         auto capture = std::make_shared<ResourceCapture>();
         capture->source = handle.source;
         capture->plan = acquirePlan(request, handle.source, true, &handle);

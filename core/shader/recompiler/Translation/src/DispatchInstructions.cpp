@@ -165,8 +165,6 @@ const NanSpeculationConfig& NanSpeculation() {
         };
         result.minimumFastOps = percent(std::getenv("APS5_NAN_SPECULATION_MIN_OPS"));
         result.minimumDensityPercent = percent(std::getenv("APS5_NAN_SPECULATION_MIN_DENSITY"));
-        const char* count = std::getenv("APS5_NAN_SPECULATION_COUNT");
-        result.count = result.enabled && count != nullptr && *count != '\0' && std::strcmp(count, "0") != 0;
         return result;
     }();
     return config;
@@ -174,19 +172,10 @@ const NanSpeculationConfig& NanSpeculation() {
 
 namespace {
 
-std::mutex& CounterMutex() {
+std::mutex& RegistryMutex() {
     static std::mutex mutex;
     return mutex;
 }
-
-std::vector<NanSpeculationCounterSite>& CounterSites() {
-    static std::vector<NanSpeculationCounterSite> sites;
-    return sites;
-}
-
-}
-
-namespace {
 
 std::atomic<std::uint32_t>& SuppressedCount() {
     static std::atomic<std::uint32_t> count{0u};
@@ -228,12 +217,12 @@ NanSpeculationStageStats NanSpeculationStats(std::uint32_t stage) {
 
 bool NanSpeculationSuppressed(std::uint64_t address) {
     if (SuppressedCount().load(std::memory_order_acquire) == 0u) return false;
-    const std::lock_guard lock(CounterMutex());
+    const std::lock_guard lock(RegistryMutex());
     return std::ranges::find(SuppressedAddresses(), address) != SuppressedAddresses().end();
 }
 
 bool SuppressNanSpeculation(std::uint64_t address) {
-    const std::lock_guard lock(CounterMutex());
+    const std::lock_guard lock(RegistryMutex());
     if (std::ranges::find(SuppressedAddresses(), address) != SuppressedAddresses().end()) return false;
     SuppressedAddresses().push_back(address);
     SuppressedCount().fetch_add(1u, std::memory_order_release);
@@ -250,18 +239,18 @@ std::vector<std::uint64_t>& AppliedAddresses() {
 }
 
 void MarkNanSpeculationApplied(std::uint64_t address) {
-    const std::lock_guard lock(CounterMutex());
+    const std::lock_guard lock(RegistryMutex());
     auto& addresses = AppliedAddresses();
     if (std::ranges::find(addresses, address) == addresses.end()) addresses.push_back(address);
 }
 
 bool NanSpeculationApplied(std::uint64_t address) {
-    const std::lock_guard lock(CounterMutex());
+    const std::lock_guard lock(RegistryMutex());
     return std::ranges::find(AppliedAddresses(), address) != AppliedAddresses().end();
 }
 
 void RestoreNanSpeculation(std::uint64_t address) {
-    const std::lock_guard lock(CounterMutex());
+    const std::lock_guard lock(RegistryMutex());
     auto& addresses = SuppressedAddresses();
     const auto found = std::ranges::find(addresses, address);
     if (found == addresses.end()) return;
@@ -271,22 +260,6 @@ void RestoreNanSpeculation(std::uint64_t address) {
 
 std::uint32_t NanSpeculationFallbacks() {
     return SuppressedCount().load(std::memory_order_acquire);
-}
-
-std::uint32_t NanSpeculationCounterSlot(std::uint64_t address, std::uint32_t stage) {
-    const std::lock_guard lock(CounterMutex());
-    auto& sites = CounterSites();
-    for (const auto& site : sites) {
-        if (site.address == address && site.stage == stage) return site.slot;
-    }
-    if (sites.size() >= NanSpeculationCounterSlots) return NanSpeculationCounterSlots;
-    sites.push_back({address, stage, static_cast<std::uint32_t>(sites.size())});
-    return sites.back().slot;
-}
-
-std::vector<NanSpeculationCounterSite> NanSpeculationCounterSites() {
-    const std::lock_guard lock(CounterMutex());
-    return CounterSites();
 }
 
 bool ExactF32Arithmetic() {

@@ -1941,7 +1941,6 @@ std::uint64_t SourceVersionFor(const NanSpeculationConfig& speculation, bool exa
     mix(speculation.maximumVectorInstructions);
     mix(speculation.stageMask);
     for (std::size_t stage = 0; stage < speculation.stageMinimum.size(); ++stage) mix((static_cast<std::uint64_t>(stage) << 32u) | speculation.stageMinimum[stage]);
-    mix(speculation.count ? 1u : 0u);
     mix((static_cast<std::uint64_t>(speculation.minimumFastOps) << 32u) | speculation.minimumDensityPercent);
     return version;
 }
