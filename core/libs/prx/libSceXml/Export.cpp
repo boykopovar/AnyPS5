@@ -5,6 +5,7 @@
 #include "prx/libSceXml/src/Document.hpp"
 #include "prx/libSceXml/src/DocumentBuilder.hpp"
 #include "prx/libSceXml/src/NodeList.hpp"
+#include "prx/libSceXml/src/SaxParser.hpp"
 #include "prx/libSceXml/src/Node.hpp"
 #include <algorithm>
 #include <array>
@@ -624,36 +625,36 @@ void APS5_VABI _ZN3sce3Xml3Dom8NodeListD2Ev(XmlHandle* self) {
     XmlDom::NodeListDestroy(self);
 }
 
-int APS5_VABI _ZN3sce3Xml3Sax6Parser10initializeEPKNS0_11InitializerE() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce3Xml3Sax6Parser10initializeEPKNS0_11InitializerE(XmlHandle* self, const XmlHandle* initializer) {
+    return XmlSax::ParserInitialize(self, initializer);
 }
 
-int APS5_VABI _ZN3sce3Xml3Sax6Parser11setUserDataEPv() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN3sce3Xml3Sax6Parser11setUserDataEPv(XmlHandle* self, void* userData) {
+    XmlSax::ParserSetUserData(self, userData);
 }
 
-int APS5_VABI _ZN3sce3Xml3Sax6Parser16setResolveEntityEb() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN3sce3Xml3Sax6Parser16setResolveEntityEb(XmlHandle* self, bool value) {
+    XmlSax::ParserSetOption(self, XmlSax::ParserOption::ResolveEntity, value);
 }
 
-int APS5_VABI _ZN3sce3Xml3Sax6Parser18setDocumentHandlerEPNS1_15DocumentHandlerE() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce3Xml3Sax6Parser18setDocumentHandlerEPNS1_15DocumentHandlerE(XmlHandle* self, void* handler) {
+    return XmlSax::ParserSetDocumentHandler(self, handler);
 }
 
-int APS5_VABI _ZN3sce3Xml3Sax6Parser26setSkipIgnorableWhiteSpaceEb() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN3sce3Xml3Sax6Parser26setSkipIgnorableWhiteSpaceEb(XmlHandle* self, bool value) {
+    XmlSax::ParserSetOption(self, XmlSax::ParserOption::SkipIgnorableWhiteSpace, value);
 }
 
-int APS5_VABI _ZN3sce3Xml3Sax6Parser5parseEPKNS0_6StringEb() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce3Xml3Sax6Parser5parseEPKNS0_6StringEb(XmlHandle* self, const XmlString* text, bool last) {
+    return XmlSax::ParserParse(self, text, last);
 }
 
-int APS5_VABI _ZN3sce3Xml3Sax6Parser5resetEv() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce3Xml3Sax6Parser5resetEv(XmlHandle* self) {
+    return XmlSax::ParserReset(self);
 }
 
-int APS5_VABI _ZN3sce3Xml3Sax6Parser9terminateEv() {
-    NotImplemented_nid_no_patch(__func__);
+int APS5_VABI _ZN3sce3Xml3Sax6Parser9terminateEv(XmlHandle* self) {
+    return XmlSax::ParserTerminate(self);
 }
 
 void APS5_VABI _ZN3sce3Xml3Sax6ParserC1Ev(XmlHandle* self) {
@@ -664,12 +665,12 @@ void APS5_VABI _ZN3sce3Xml3Sax6ParserC2Ev(XmlHandle* self) {
     ClearHandle(self);
 }
 
-int APS5_VABI _ZN3sce3Xml3Sax6ParserD1Ev() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN3sce3Xml3Sax6ParserD1Ev(XmlHandle* self) {
+    XmlSax::ParserDestroy(self);
 }
 
-int APS5_VABI _ZN3sce3Xml3Sax6ParserD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
+void APS5_VABI _ZN3sce3Xml3Sax6ParserD2Ev(XmlHandle* self) {
+    XmlSax::ParserDestroy(self);
 }
 
 int APS5_VABI _ZN3sce3Xml4Attr10initializeEPKNS0_11InitializerE(XmlHandle* self, const XmlHandle* initializer) {

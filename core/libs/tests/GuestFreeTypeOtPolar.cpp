@@ -51,6 +51,7 @@ void Lengths() {
     Require(Length(0, -7) == 7 && Length(-9, 0) == 9 && Length(0, 0) == 0, "an axis vector returns the absolute component");
     Require(Length(0, std::numeric_limits<std::int64_t>::max()) == std::numeric_limits<std::int64_t>::max(), "the axis shortcut takes any magnitude");
     Require(Throws([] { sceFreeTypeOtVectorLength_nid_no_patch(nullptr); }), "a null vector throws");
+    Require(Throws([] { sceFreeTypeOtVectorLength_nid_no_patch(reinterpret_cast<GuestVector*>(0x10)); }), "an unreadable vector throws");
 }
 
 void Polarize() {
@@ -65,7 +66,10 @@ void Polarize() {
     sceFreeTypeOtVectorPolarize_nid_no_patch(&zero, nullptr, nullptr);
     GuestVector vector{3, 4};
     Require(Throws([&] { sceFreeTypeOtVectorPolarize_nid_no_patch(&vector, &length, nullptr); }) && length == 11, "a null angle throws before writing");
+    Require(Throws([&] { sceFreeTypeOtVectorPolarize_nid_no_patch(&vector, reinterpret_cast<std::int64_t*>(0x10), &angle); }) && angle == 22, "an unwritable length throws without mutating angle");
+    Require(Throws([&] { sceFreeTypeOtVectorPolarize_nid_no_patch(&vector, &length, reinterpret_cast<std::int64_t*>(0x10)); }) && length == 11, "an unwritable angle throws without mutating length");
     Require(Throws([&] { sceFreeTypeOtVectorPolarize_nid_no_patch(nullptr, &length, &angle); }), "a null vector throws");
+    Require(Throws([&] { sceFreeTypeOtVectorPolarize_nid_no_patch(reinterpret_cast<GuestVector*>(0x10), &length, &angle); }), "an unreadable vector throws");
 }
 
 void Rotate() {
@@ -78,6 +82,7 @@ void Rotate() {
     Require(Rotates({7, -9}, 0, {7, -9}) && Rotates({0, 0}, 45 * Degree, {0, 0}), "a zero angle or vector is unchanged");
     Require(Rotates({0x7FFFFFFFFFFFLL, 3}, 0, {0x7FFFFFFFFFFFLL, 3}), "a zero angle takes any magnitude");
     Require(Throws([] { sceFreeTypeOtVectorRotate_nid_no_patch(nullptr, Degree); }), "a null vector throws");
+    Require(Throws([] { sceFreeTypeOtVectorRotate_nid_no_patch(reinterpret_cast<GuestVector*>(0x10), Degree); }), "an unwritable vector throws");
 
     GuestVector vector{-1, -1};
     sceFreeTypeOtVectorFromPolar_nid_no_patch(&vector, Degree, 30 * Degree);
@@ -85,6 +90,7 @@ void Rotate() {
     sceFreeTypeOtVectorFromPolar_nid_no_patch(&vector, -5, 0);
     Require(vector.x == -5 && vector.y == 0, "FT_Vector_From_Polar with no angle stores the length");
     Require(Throws([] { sceFreeTypeOtVectorFromPolar_nid_no_patch(nullptr, Degree, 0); }), "FT_Vector_From_Polar throws for a null vector");
+    Require(Throws([] { sceFreeTypeOtVectorFromPolar_nid_no_patch(reinterpret_cast<GuestVector*>(0x10), Degree, 0); }), "an unwritable vector throws");
 }
 
 }
