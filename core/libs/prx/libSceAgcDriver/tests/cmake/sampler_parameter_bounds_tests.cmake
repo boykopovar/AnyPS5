@@ -4,6 +4,7 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/Graphics/include
         ${LIBS_INCLUDE_DIR}
         ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR}
+        ${ANYPS5_SPIRV_HEADERS_INCLUDE_DIR}
         ${CMAKE_SOURCE_DIR}/core/shader/recompiler
         ${CMAKE_SOURCE_DIR}/core/shader/recompiler/RdnaDecoder/include
         ${CMAKE_SOURCE_DIR}/core/shader/recompiler/IntermediateRepresentation/include
