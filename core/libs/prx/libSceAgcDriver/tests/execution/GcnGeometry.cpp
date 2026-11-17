@@ -70,6 +70,14 @@ alignas(256) constexpr std::array<std::uint32_t, 10> GcnCopyStreams{
     0x34000082, 0x900a9802, 0xb48a0000, 0xbf840005, 0xe0305000, 0x80400200, 0xbf8c0000, 0xf80008cf, 0x02020202, 0xbf810000,
 };
 
+alignas(256) constexpr std::array<std::uint32_t, 12> GcnCopySkip{
+    0x34000082, 0xb00a0001, 0xb48a0000, 0xbf840002, 0xf80008cf, 0x00000000, 0xe0305000, 0x80400200, 0xbf8c0000, 0xf80008cf, 0x02020202, 0xbf810000,
+};
+
+alignas(256) constexpr std::array<std::uint32_t, 11> GcnCopySccClobbered{
+    0x34000082, 0x900a9802, 0xb48a0000, 0x80058105, 0xbf840005, 0xe0305000, 0x80400200, 0xbf8c0000, 0xf80008cf, 0x02020202, 0xbf810000,
+};
+
 alignas(256) constexpr std::array<std::uint32_t, 8> GcnCopyComputed{
     0x34020082, 0xe0305000, 0x80400201, 0xbf8c0000, 0x060604f2, 0xf80008cf, 0x02020302, 0xbf810000,
 };
@@ -210,6 +218,15 @@ void RequireCopyLayout() {
     Require(refused, "a copy program read at a slot stride other than VGT_GS_MAX_VERT_OUT times 64 bytes was accepted");
     const auto streams = ShaderRecompiler::ParseGeometryCopyProgram(GcnCopyStreams, 4u, 5u, 2u);
     Require(streams.size() == 1u && streams[0].constants == 0u && streams[0].values == std::array<std::uint32_t, 4>{0u, 0u, 0u, 0u}, "the stream 0 block of a copy program that selects its stream from the stream-out configuration SGPR was not read");
+    const auto skipped = ShaderRecompiler::ParseGeometryCopyProgram(GcnCopySkip, 4u, 5u, std::nullopt);
+    Require(skipped.size() == 1u && skipped[0].values == std::array<std::uint32_t, 4>{0u, 0u, 0u, 0u}, "a taken s_cbranch_scc0 did not skip the export it jumps over");
+    refused = false;
+    try {
+        static_cast<void>(ShaderRecompiler::ParseGeometryCopyProgram(GcnCopySccClobbered, 4u, 5u, 2u));
+    } catch (const std::exception& error) {
+        refused = std::string(error.what()).find("a copy program branch on a condition not known at draw time") != std::string::npos;
+    }
+    Require(refused, "a branch was followed on an SCC that s_add_u32 overwrote after the compare");
     refused = false;
     try {
         static_cast<void>(ShaderRecompiler::ParseGeometryCopyProgram(GcnCopyStreams, 4u, 5u, std::nullopt));
