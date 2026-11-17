@@ -99,7 +99,7 @@ class GuestTestTargets(unittest.TestCase):
         guest_a = self.target("guest_a_tests", source="core/libs/tests/GuestA.cpp", fragment="libc.prx")
         guest_b = self.target("guest_b_tests", source="core/libs/tests/GuestB.cpp", fragment="libc.prx")
         build = self.fixture([guest_a, guest_b])
-        for path in ("3rdparty/ZArchive", "cmake/Opus.cmake", "core/CMakeLists.txt", ".gitmodules"):
+        for path in ("3rdparty/ZArchive", "cmake/Opus.cmake", ".gitmodules"):
             with self.subTest(path=path):
                 self.assertTrue(build_changed_guest_tests.reaches_libs({path}))
                 self.assertEqual(self.selections(build, [path]), ["guest_a_tests", "guest_b_tests"])
@@ -278,6 +278,25 @@ class Main(unittest.TestCase):
             self.assertEqual(self.main(build, ["core/libs/prx/libSceXml/include/Xml.hpp"]), 0)
         self.assertEqual(selections, ["0,0,0,1,2,3,4\n"])
 
+    def test_a_changed_list_with_a_bom_keeps_the_first_path(self):
+        build = self.fixture([self.target("guest_pad_tests", fragment="libc.prx")])
+        listing = json.dumps({"tests": [
+            {"name": "guest_pad", "command": ["C:/b/tests/guest_pad_tests.exe"]},
+            {"name": "public_headers", "command": ["C:/python.exe", "test_public_headers.py"]},
+        ]})
+        changed = Path(self.temporary.name) / "changed.txt"
+        changed.write_bytes(b"\xef\xbb\xbfcore/libs/include/Changed.hpp\r\n")
+        selections = []
+
+        def execute(cmd, **_):
+            if "-I" in cmd:
+                selections.append(Path(cmd[cmd.index("-I") + 1]).read_text())
+            return run_result(listing if "--show-only=json-v1" in cmd else "")
+
+        with mock.patch.object(build_changed_guest_tests.subprocess, "run", side_effect=execute):
+            self.assertEqual(build_changed_guest_tests.main([str(build), str(changed)]), 0)
+        self.assertEqual(selections, ["0,0,0,1,2\n"])
+
     def test_a_production_source_change_does_not_run_the_public_header_tests(self):
         build = self.fixture([self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")])
         listing = json.dumps({"tests": [{"name": "public_headers", "command": ["C:/python.exe", "x.py"]}]})
@@ -352,6 +371,13 @@ class Main(unittest.TestCase):
             '  add_test([=[nid_one]=] "/x/nid_one_tests")\nset_tests_properties("nid_one" PROPERTIES TIMEOUT "5")\n', encoding="utf-8")
         self.assertEqual(build_changed_guest_tests.registered_test_commands(build), {
             "a b": ["/x/a_tests", 'arg "q"'], "nid_one": ["/x/nid_one_tests"]})
+
+    def test_registered_commands_preserve_empty_arguments(self):
+        build = Path(self.temporary.name)
+        (build / "CTestTestfile.cmake").write_text(
+            'add_test([=[fixture]=] "/x/fixture" "" [=[]=] tail "")\n', encoding="utf-8")
+        self.assertEqual(build_changed_guest_tests.registered_test_commands(build),
+                         {"fixture": ["/x/fixture", "", "", "tail", ""]})
 
     def test_a_change_outside_nid_does_not_run_the_nid_script_tests(self):
         build = self.fixture([self.target("guest_pad_tests", source="core/libs/tests/Guest.cpp", fragment="libc.prx")])
@@ -452,6 +478,7 @@ class Main(unittest.TestCase):
         self.assertEqual(sorted(path.name for path in build.glob("ran-*")), sorted(f"ran-{index}" for index in range(11)))
         self.assertFalse((build / "unrelated").exists())
 
+    @unittest.skipUnless(shutil.which("ctest"), "CTest is required to run the selected tests")
     def test_changed_host_fixture_runs_its_cases_and_propagates_failure(self):
         host = self.target("host_tests", source="core/libs/tests/Host.cpp")
         python = Path(sys.executable).as_posix()
@@ -574,6 +601,25 @@ class ArtifactOwnerNames(unittest.TestCase):
         aliases = build_changed_guest_tests.target_artifact_names(target)
         self.assertEqual(build_changed_guest_tests.test_owner(["C:/build/tests/guest.check.EXE"], aliases), "guest_target")
         self.assertEqual(build_changed_guest_tests.test_owner(["python", "C:/build/tests/guest.check.EXE"], aliases), "guest_target")
+
+
+class ChangeClassification(unittest.TestCase):
+    def test_reaches_libs_only_for_library_and_build_inputs(self):
+        for path in ("CMakeLists.txt", "core/libs/a.cpp", ".github/workflows/build.yml", "tools/x.py"):
+            self.assertTrue(build_changed_guest_tests.reaches_libs([path]), path)
+        self.assertFalse(build_changed_guest_tests.reaches_libs(["docs/readme.md", "core/other/a.cpp"]))
+        self.assertFalse(build_changed_guest_tests.reaches_libs([]))
+
+    def test_script_test_patterns_follow_the_changed_inputs(self):
+        patterns = build_changed_guest_tests.script_test_patterns
+        self.assertEqual(patterns(["docs/readme.md"]), [])
+        self.assertEqual(patterns(["core/libs/nid/a.cpp"]), [build_changed_guest_tests.NID_TESTS])
+        self.assertEqual(
+            patterns(["CMakeLists.txt"]),
+            [build_changed_guest_tests.PUBLIC_HEADER_TESTS, build_changed_guest_tests.NID_TESTS])
+
+    def test_test_owner_of_an_empty_command_is_none(self):
+        self.assertIsNone(build_changed_guest_tests.test_owner([], {"guest": "guest"}))
 
 
 if __name__ == "__main__":

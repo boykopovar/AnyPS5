@@ -14,6 +14,9 @@ layout(push_constant) uniform Parameters {
     uint counting;
 } parameters;
 
+const uint LineWords = 8u;
+shared uint lineChanged[64u / LineWords];
+
 uint differingBytes(uint difference) {
     uint folded = difference | (difference >> 1u);
     folded |= folded >> 2u;
@@ -23,13 +26,24 @@ uint differingBytes(uint difference) {
 
 void main() {
     uint index = gl_GlobalInvocationID.x;
-    if (index >= parameters.count) return;
-    uint value = result.words[parameters.resultBase + index];
-    uint before = snapshot.words[parameters.snapshotBase + index];
+    uint lane = gl_LocalInvocationID.x;
+    if (lane < 64u / LineWords) lineChanged[lane] = 0u;
+    barrier();
+    bool inside = index < parameters.count;
+    uint value = 0u;
+    uint before = 0u;
+    uint changed = 0u;
+    if (inside) {
+        value = result.words[parameters.resultBase + index];
+        before = snapshot.words[parameters.snapshotBase + index];
+        changed = differingBytes(value ^ before);
+        if (changed != 0u || parameters.always != 0u) atomicOr(lineChanged[lane / LineWords], 1u);
+    }
+    barrier();
+    if (!inside || lineChanged[lane / LineWords] == 0u) return;
     uint held = target.words[parameters.targetBase + index];
-    uint changed = differingBytes(value ^ before);
     uint kept = differingBytes(held ^ before);
     uint stored = parameters.always != 0u ? 0xffffffffu : changed & ~kept;
-    if (stored != 0u) target.words[parameters.targetBase + index] = (held & ~stored) | (value & stored);
+    target.words[parameters.targetBase + index] = (held & ~stored) | (value & stored);
     if (parameters.counting != 0u && (changed & kept) != 0u) atomicAdd(counter.words[0], 1u);
 }

@@ -25,6 +25,7 @@
  */
 
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
+#include "prx/libc/include/General.hpp"
 
 #include <cstddef>
 #include <mutex>
@@ -55,6 +56,10 @@ StringVector& PreferredLanguagesOverride() {
 std::vector<ObserverEntry>& ObserverMap() {
     static auto* map = new std::vector<ObserverEntry>;
     return *map;
+}
+
+void StoreExactMatch(bool* exactMatch, bool value) {
+    if (!GuestCopyOut_nid_no_patch(exactMatch, &value, sizeof(value))) throw std::invalid_argument("null WTF language match argument");
 }
 
 void CheckContext(void* context) {
@@ -189,7 +194,7 @@ extern "C" std::size_t APS5_VABI _ZN3WTF33indexOfBestMatchingLanguageInListERKNS
         String canonicalizedLanguageFromList = CanonicalLanguageIdentifier(languageList->buffer[i]);
 
         if (_ZN3WTF5equalEPKNS_10StringImplES2_(lowercaseLanguage.impl, canonicalizedLanguageFromList.impl)) {
-            *exactMatch = true;
+            StoreExactMatch(exactMatch, true);
             return i;
         }
 
@@ -208,7 +213,7 @@ extern "C" std::size_t APS5_VABI _ZN3WTF33indexOfBestMatchingLanguageInListERKNS
         }
     }
 
-    *exactMatch = false;
+    StoreExactMatch(exactMatch, false);
 
     if (languageWithoutLocaleMatch) return languageWithoutLocaleMatchIndex;
 

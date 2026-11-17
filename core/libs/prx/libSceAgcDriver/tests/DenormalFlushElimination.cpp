@@ -238,6 +238,19 @@ int main() {
         return b.eliminate() == 2u && !floored.HasUses() && !ceiled.HasUses();
     });
 
+    passed &= run("a fraction of a flushed value needs no flush, a fraction of an unknown value does", [] {
+        Builder b;
+        const auto fraction = [&](IrValue& bits) -> IrValue& {
+            auto& argument = b.emit(IrOpcode::BitCastF32U32, IrType::F32, {&bits});
+            return b.flush(b.emit(IrOpcode::BitCastU32F32, IrType::U32, {&b.emit(IrOpcode::FPFract32, IrType::F32, {&argument})}));
+        };
+        auto& flushed = fraction(b.flush(b.unknown()));
+        auto& raw = fraction(b.unknown());
+        b.keep(flushed);
+        b.keep(raw);
+        return b.eliminate() == 1u && !flushed.HasUses() && raw.HasUses();
+    });
+
     passed &= run("a max carried around a loop without a flush keeps its flush and the search ends", [] {
         Builder b;
         IrBlock& head = *b.block;
@@ -425,6 +438,17 @@ int main() {
             0x10020100u,
             0x10040301u,
             0xe0700000u, 0x80000200u,
+            0xbf810000u,
+        };
+        const auto masks = ExponentMasks(Recompiled(code));
+        if (masks != 1u) std::fprintf(stderr, "  %zu f32 exponent masks, expected 1\n", masks);
+        return masks == 1u;
+    });
+
+    passed &= run("a v_fract_f32 keeps only the flush of its source", [] {
+        const std::array<std::uint32_t, 4> code{
+            0x7e024100u,
+            0xe0700000u, 0x80000100u,
             0xbf810000u,
         };
         const auto masks = ExponentMasks(Recompiled(code));

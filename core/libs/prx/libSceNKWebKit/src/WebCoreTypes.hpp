@@ -1,5 +1,6 @@
 #pragma once
 
+#include "prx/libSceNKWebKit/src/WtfStringAbi.hpp"
 #include "prx/libSceNKWebKit/src/WtfTimeTypes.hpp"
 
 #include <array>
@@ -256,12 +257,93 @@ struct ViewportArguments {
     bool widthWasExplicit{false};
 };
 
+struct ProtectionSpaceBase {
+    NKWebKit::WtfAbi::StringImpl* m_host;
+    NKWebKit::WtfAbi::StringImpl* m_realm;
+    int m_port;
+    std::uint8_t m_serverType;
+    std::uint8_t m_authenticationScheme;
+    bool m_isHashTableDeletedValue;
+};
+
+enum class AutofillFieldName {
+    None,
+    Name,
+    HonorificPrefix,
+    GivenName,
+    AdditionalName,
+    FamilyName,
+    HonorificSuffix,
+    Nickname,
+    Username,
+    NewPassword,
+    CurrentPassword,
+    OrganizationTitle,
+    Organization,
+    StreetAddress,
+    AddressLine1,
+    AddressLine2,
+    AddressLine3,
+    AddressLevel4,
+    AddressLevel3,
+    AddressLevel2,
+    AddressLevel1,
+    Country,
+    CountryName,
+    PostalCode,
+    CcName,
+    CcGivenName,
+    CcAdditionalName,
+    CcFamilyName,
+    CcNumber,
+    CcExp,
+    CcExpMonth,
+    CcExpYear,
+    CcCsc,
+    CcType,
+    TransactionCurrency,
+    TransactionAmount,
+    Language,
+    Bday,
+    BdayDay,
+    BdayMonth,
+    BdayYear,
+    Sex,
+    URL,
+    Photo,
+    Tel,
+    TelCountryCode,
+    TelNational,
+    TelAreaCode,
+    TelLocal,
+    TelLocalPrefix,
+    TelLocalSuffix,
+    TelExtension,
+    Email,
+    Impp,
+    WebAuthn
+};
+
+struct TextureMapper {
+    enum ExposedEdges {
+        NoEdges = 0,
+        LeftEdge = 1 << 0,
+        RightEdge = 1 << 1,
+        TopEdge = 1 << 2,
+        BottomEdge = 1 << 3,
+        AllEdges = LeftEdge | RightEdge | TopEdge | BottomEdge,
+    };
+};
+
 static_assert(sizeof(IntPoint) == 8);
 static_assert(sizeof(IntSize) == 8);
 static_assert(sizeof(IntRect) == 16);
 static_assert(sizeof(FloatPoint) == 8);
 static_assert(sizeof(FloatSize) == 8);
 static_assert(sizeof(FloatRect) == 16);
+static_assert(sizeof(AutofillFieldName) == 4);
+static_assert(static_cast<int>(AutofillFieldName::Email) == 52);
+static_assert(static_cast<int>(AutofillFieldName::WebAuthn) == 54);
 static_assert(sizeof(FloatQuad) == 32);
 static_assert(sizeof(FloatRoundedRect) == 48);
 static_assert(sizeof(VelocityData) == 24);
@@ -317,5 +399,12 @@ static_assert(sizeof(ViewportArguments) == 56);
 static_assert(offsetof(ViewportArguments, width) == 4);
 static_assert(offsetof(ViewportArguments, viewportFit) == 52);
 static_assert(offsetof(ViewportArguments, widthWasExplicit) == 53);
+static_assert(sizeof(ProtectionSpaceBase) == 24);
+static_assert(offsetof(ProtectionSpaceBase, m_host) == 0);
+static_assert(offsetof(ProtectionSpaceBase, m_realm) == 8);
+static_assert(offsetof(ProtectionSpaceBase, m_port) == 16);
+static_assert(offsetof(ProtectionSpaceBase, m_serverType) == 20);
+static_assert(offsetof(ProtectionSpaceBase, m_authenticationScheme) == 21);
+static_assert(offsetof(ProtectionSpaceBase, m_isHashTableDeletedValue) == 22);
 
 }  // namespace WebCore
