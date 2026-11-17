@@ -24,6 +24,7 @@ Submitters& AllSubmitters() {
 }
 
 std::atomic<std::size_t> liveSubmitters{0};
+std::atomic<std::uint64_t> anyFailure{0};
 constexpr std::size_t MaxQueuedJobs = 64;
 
 }
@@ -90,6 +91,16 @@ std::uint64_t QueueSubmitter::FailedSubmits(VkDevice device) {
         if (entry.second->device == device) count += entry.second->failed.load(std::memory_order_acquire);
     }
     return count;
+}
+
+bool QueueSubmitter::FailedThrough(VkDevice device, std::uint64_t serial) {
+    if (anyFailure.load(std::memory_order_acquire) == 0 || liveSubmitters.load(std::memory_order_acquire) == 0) return false;
+    auto& all = AllSubmitters();
+    std::lock_guard lock(all.mutex);
+    for (const auto& entry : all.byQueue) {
+        if (entry.second->device == device && entry.second->firstFailedSerial.load(std::memory_order_acquire) <= serial) return true;
+    }
+    return false;
 }
 
 QueueSubmitter::~QueueSubmitter() {
@@ -182,10 +193,19 @@ void QueueSubmitter::run() {
             timeline.pSignalSemaphoreValues = &job.signalValue;
         }
         if (job.wait != VK_NULL_HANDLE || job.signal != VK_NULL_HANDLE) submission.pNext = &timeline;
-        VkResult result;
-        {
+        VkResult result = stoppedWith;
+        if (result == VK_SUCCESS) {
             std::lock_guard queueLock(queueMutex);
             result = submit(queue, 1, &submission, job.fence);
+        }
+        if (result != VK_SUCCESS) {
+            stoppedWith = result;
+            if (job.signal != VK_NULL_HANDLE) {
+                auto first = firstFailedSerial.load(std::memory_order_relaxed);
+                while (job.signalValue < first && !firstFailedSerial.compare_exchange_weak(first, job.signalValue, std::memory_order_acq_rel)) {
+                }
+            }
+            anyFailure.fetch_add(1, std::memory_order_acq_rel);
         }
         if (job.result != nullptr) *job.result = result;
         if (result != VK_SUCCESS && result != VK_ERROR_DEVICE_LOST) failed.fetch_add(1, std::memory_order_release);

@@ -29,6 +29,7 @@ public:
     static QueueSubmitter* Existing(VkQueue queue);
     static void RetireDevice(VkDevice device);
     static std::uint64_t FailedSubmits(VkDevice device);
+    static bool FailedThrough(VkDevice device, std::uint64_t serial);
 
     ~QueueSubmitter();
 
@@ -60,6 +61,8 @@ private:
     std::uint64_t taken = 0;
     std::atomic<std::uint64_t> returned{0};
     std::atomic<std::uint64_t> failed{0};
+    std::atomic<std::uint64_t> firstFailedSerial{~std::uint64_t{0}};
+    VkResult stoppedWith = VK_SUCCESS;
     std::thread thread;
 };
 

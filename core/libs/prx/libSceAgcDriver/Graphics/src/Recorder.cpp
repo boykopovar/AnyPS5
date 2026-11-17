@@ -4862,11 +4862,12 @@ VkResult WaitTimeline(VkDevice device, VkSemaphore timeline, PFN_vkWaitSemaphore
     wait.pValues = &serial;
     auto result = waitSemaphores(device, &wait, 100'000'000ull);
     for (int slices = 1; result == VK_TIMEOUT; ++slices) {
-        if (QueueSubmitter::FailedSubmits(device) != 0) return VK_ERROR_UNKNOWN;
+        if (QueueSubmitter::FailedThrough(device, serial)) return VK_ERROR_UNKNOWN;
         // As for the fence wait in finish(): a hung batch is reported every 5 s.
         if (slices % 50 == 0) std::fprintf(stderr, "[gpu] recorded batch %llu still running on the GPU after %d s (timeline wait)\n", static_cast<unsigned long long>(serial), slices / 10);
         result = waitSemaphores(device, &wait, 100'000'000ull);
     }
+    if (result == VK_SUCCESS && QueueSubmitter::FailedThrough(device, serial)) return VK_ERROR_UNKNOWN;
     return result;
 }
 
@@ -4894,8 +4895,9 @@ bool Recorder::WaitSerialFor(std::uint64_t serial, std::uint64_t timeoutNanos) {
     wait.semaphoreCount = 1;
     wait.pSemaphores = &timeline;
     wait.pValues = &serial;
-    const auto result = context.Function<PFN_vkWaitSemaphoresKHR>("vkWaitSemaphoresKHR")(context.device, &wait, timeoutNanos);
+    auto result = context.Function<PFN_vkWaitSemaphoresKHR>("vkWaitSemaphoresKHR")(context.device, &wait, timeoutNanos);
     if (result == VK_TIMEOUT) return false;
+    if (result == VK_SUCCESS && QueueSubmitter::FailedThrough(context.device, serial)) result = VK_ERROR_UNKNOWN;
     Check(result, "vkWaitSemaphoresKHR submission progress");
     return true;
 }

@@ -49,12 +49,15 @@ VKAPI_ATTR VkResult VKAPI_CALL SlowSubmit(VkQueue, std::uint32_t, const VkSubmit
     return VK_SUCCESS;
 }
 
+std::atomic<int> failingCalls{0};
+
 VKAPI_ATTR VkResult VKAPI_CALL FailingSubmit(VkQueue, std::uint32_t, const VkSubmitInfo*, VkFence) {
+    failingCalls.fetch_add(1, std::memory_order_relaxed);
     return VK_ERROR_OUT_OF_DEVICE_MEMORY;
 }
 
-QueueSubmitter::Job JobFor(std::uintptr_t commands, VkResult* result = nullptr) {
-    return {Fake<VkCommandBuffer>(commands), VK_NULL_HANDLE, VK_NULL_HANDLE, 0, VK_NULL_HANDLE, 0, result};
+QueueSubmitter::Job JobFor(std::uintptr_t commands, VkResult* result = nullptr, std::uint64_t serial = 0) {
+    return {Fake<VkCommandBuffer>(commands), VK_NULL_HANDLE, VK_NULL_HANDLE, 0, serial != 0 ? Fake<VkSemaphore>(0x7700) : VK_NULL_HANDLE, serial, result};
 }
 
 void ordered() {
@@ -148,14 +151,18 @@ void failureReachesItsJob() {
     const auto device = Fake<VkDevice>(0xc000);
     const auto queue = Fake<VkQueue>(0xd000);
     auto& submitter = QueueSubmitter::For(device, queue, FailingSubmit);
+    Require(!QueueSubmitter::FailedThrough(device, 100), "a device without a failed submit reports one");
     VkResult result = VK_SUCCESS;
-    submitter.WaitSubmitReturned(submitter.Enqueue(JobFor(1, &result)));
+    submitter.WaitSubmitReturned(submitter.Enqueue(JobFor(1, &result, 5)));
     Require(result == VK_ERROR_OUT_OF_DEVICE_MEMORY, "a failed submit did not reach its job");
     Require(QueueSubmitter::FailedSubmits(device) == 1, "a failed submit was not counted for its device");
     Require(QueueSubmitter::FailedSubmits(Fake<VkDevice>(0xe000)) == 0, "a failed submit was counted for another device");
+    Require(QueueSubmitter::FailedThrough(device, 5) && QueueSubmitter::FailedThrough(device, 6), "a wait at or past a failed serial does not see the failure");
+    Require(!QueueSubmitter::FailedThrough(device, 4), "a wait before a failed serial sees the failure");
     VkResult next = VK_ERROR_UNKNOWN;
-    submitter.WaitSubmitReturned(submitter.Enqueue(JobFor(2, &next)));
-    Require(next == VK_ERROR_OUT_OF_DEVICE_MEMORY, "a job after a failed submit was not submitted");
+    submitter.WaitSubmitReturned(submitter.Enqueue(JobFor(2, &next, 6)));
+    Require(next == VK_ERROR_OUT_OF_DEVICE_MEMORY, "a job after a failed submit did not take the failure");
+    Require(failingCalls.load(std::memory_order_relaxed) == 1, "the submitter kept submitting after a failed submit");
     QueueSubmitter::RetireDevice(device);
     Require(QueueSubmitter::FailedSubmits(device) == 0, "a retired device still counts failed submits");
 }
