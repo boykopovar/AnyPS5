@@ -17,6 +17,7 @@ std::optional<std::u16string> DecodeUtf8(const char* text, std::size_t length);
 std::optional<std::u16string> DecodeUtf8(const char* text);
 std::string EncodeUtf8(std::u16string_view text);
 std::size_t ConvertUtf16ToUtf8(std::u16string_view text, char* buffer, std::size_t bufferSize, bool strict);
+std::vector<const void*> CopyGuestRefs(const void* const* values, std::size_t count, const char* function);
 
 class String final : public ObjectOf<ObjectType::String> {
 public:
