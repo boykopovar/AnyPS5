@@ -143,6 +143,8 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/x86_64/CallTrace.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/linux/CrashReport.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/linux/DlIteratePhdr.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/linux/GuestFaultCopy.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/macos/GuestGs.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/specifics/macos/GuestImages.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Strings.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AllocatingStrings.cpp
@@ -155,6 +157,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/VectorAlgorithms.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Math.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/MathExact.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/VersionedExtendedPrecision.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Bessel.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/J0f.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/J1f.cpp
@@ -171,6 +174,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/AtomicBuiltins.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/FileAndHeap.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Mergesort.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Heapsort.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/HostErrno.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/FileLock.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/StdioExtras.cpp
@@ -196,6 +200,7 @@ target_sources(libc PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src/RuntimeSupport.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/IntegerBuiltins.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/LocaleSupport.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/SonyCrt.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Process.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Hostname.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/DeviceName.cpp
@@ -238,6 +243,8 @@ endfunction()
 cmake_language(EVAL CODE "cmake_language(DEFER DIRECTORY [[${CMAKE_SOURCE_DIR}]] CALL run_report_stamp_components [[${runReportRevisionRoot}]])")
 
 set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/MathExact.cpp
+        TARGET_DIRECTORY libc PROPERTIES COMPILE_OPTIONS "-frounding-math")
+set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/VersionedExtendedPrecision.cpp
         TARGET_DIRECTORY libc PROPERTIES COMPILE_OPTIONS "-frounding-math")
 
 target_sources(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/BinaryWordIo.cpp)
@@ -337,14 +344,14 @@ if(BUILD_TESTING)
         set_tests_properties(guest_memcmp_protected PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
-    add_test_executable(guest_update_env_tests NO_RUNTIME_DLL_STAGING ${LIBS_INCLUDE_DIR}/tests/GuestUpdateEnv.cpp)
-    target_include_directories(guest_update_env_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_update_env_tests PRIVATE libc ${CMAKE_DL_LIBS})
-    configure_windows_unwind(guest_update_env_tests)
-    add_test(NAME guest_update_env COMMAND guest_update_env_tests $<TARGET_FILE:libc>)
+    add_test_executable(guest_env_probe_tests NO_RUNTIME_DLL_STAGING ${LIBS_INCLUDE_DIR}/tests/GuestUpdateEnv.cpp)
+    target_include_directories(guest_env_probe_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_env_probe_tests PRIVATE libc ${CMAKE_DL_LIBS})
+    configure_windows_unwind(guest_env_probe_tests)
+    add_test(NAME guest_update_env COMMAND guest_env_probe_tests $<TARGET_FILE:libc>)
     foreach(bit RANGE 0 5)
         foreach(source RANGE 0 2)
-            add_test(NAME guest_update_env_pending_${bit}_${source} COMMAND guest_update_env_tests $<TARGET_FILE:libc> ${bit} ${source})
+            add_test(NAME guest_update_env_pending_${bit}_${source} COMMAND guest_env_probe_tests $<TARGET_FILE:libc> ${bit} ${source})
             set_tests_properties(guest_update_env_pending_${bit}_${source} PROPERTIES TIMEOUT 10 SKIP_RETURN_CODE 77)
             if(WIN32)
                 set_tests_properties(guest_update_env_pending_${bit}_${source} PROPERTIES ENVIRONMENT_MODIFICATION
@@ -359,6 +366,7 @@ if(BUILD_TESTING)
 endif()
 
 target_sources(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/FloatingPoint.cpp)
+target_sources(libc PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/CodecvtUtf.cpp)
 
 if(BUILD_TESTING)
     add_test_executable(guest_memset_extent_tests ${LIBS_INCLUDE_DIR}/tests/GuestMemsetExtent.cpp)
@@ -381,7 +389,7 @@ if(BUILD_TESTING)
         add_test(NAME guest_raise_except_trap_${exceptionBit} COMMAND guest_raise_except_tests $<TARGET_FILE:libc> ${exceptionBit})
         list(APPEND raiseExceptTests guest_raise_except_trap_${exceptionBit})
     endforeach()
-    set_tests_properties(${raiseExceptTests} PROPERTIES TIMEOUT 10)
+    set_tests_properties(${raiseExceptTests} PROPERTIES TIMEOUT 10 SKIP_RETURN_CODE 77)
     if(WIN32)
         set_tests_properties(${raiseExceptTests} PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
@@ -646,6 +654,28 @@ if(BUILD_TESTING)
         set_tests_properties(guest_dynamic_cast PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    if(WIN32)
+        add_test_executable(windows_guest_main_stack_tests ${LIBS_INCLUDE_DIR}/tests/WindowsGuestMainStack.cpp)
+        target_include_directories(windows_guest_main_stack_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(windows_guest_main_stack_tests PRIVATE libc)
+        configure_windows_unwind(windows_guest_main_stack_tests)
+        add_test_executable(windows_guest_main_stack_failure_tests
+            ${LIBS_INCLUDE_DIR}/tests/WindowsGuestMainStackFailure.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/GuestStacks.cpp)
+        target_include_directories(windows_guest_main_stack_failure_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(windows_guest_main_stack_failure_tests PRIVATE libc)
+        configure_windows_unwind(windows_guest_main_stack_failure_tests)
+        add_test(NAME windows_guest_main_stack_failure COMMAND windows_guest_main_stack_failure_tests)
+        set_tests_properties(windows_guest_main_stack_failure PROPERTIES TIMEOUT 20 ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        add_test(NAME windows_guest_main_stack COMMAND windows_guest_main_stack_tests)
+        set_tests_properties(windows_guest_main_stack PROPERTIES TIMEOUT 20 ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        if(Python3_Interpreter_FOUND)
+            add_test(NAME windows_guest_main_stack_entry COMMAND ${Python3_EXECUTABLE}
+                ${LIBS_INCLUDE_DIR}/tests/test_windows_guest_main_stack.py $<TARGET_FILE:relinker> $<TARGET_FILE_DIR:libc>)
+            set_tests_properties(windows_guest_main_stack_entry PROPERTIES TIMEOUT 20)
+        endif()
+    endif()
     add_test_executable(guest_time_conversion_tests ${LIBS_INCLUDE_DIR}/tests/GuestTimeConversion.cpp)
     target_include_directories(guest_time_conversion_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_time_conversion_tests PRIVATE libc)
@@ -693,6 +723,16 @@ if(BUILD_TESTING)
     set_tests_properties(guest_time_return PROPERTIES TIMEOUT 10)
     if(WIN32)
         set_tests_properties(guest_time_return PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_wide_set_boundary_tests ${LIBS_INCLUDE_DIR}/tests/GuestWideSetBoundary.cpp)
+    target_include_directories(guest_wide_set_boundary_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_wide_set_boundary_tests PRIVATE libc)
+    configure_windows_unwind(guest_wide_set_boundary_tests)
+    add_test(NAME guest_wide_set_boundary COMMAND guest_wide_set_boundary_tests)
+    set_tests_properties(guest_wide_set_boundary PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_wide_set_boundary PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_time_extras_tests ${LIBS_INCLUDE_DIR}/tests/GuestTimeExtras.cpp)
@@ -961,7 +1001,7 @@ if(BUILD_TESTING)
     add_test(NAME guest_set_env COMMAND guest_set_env_tests $<TARGET_FILE:libc>)
     foreach(bit RANGE 0 5)
         add_test(NAME guest_set_env_pending_${bit} COMMAND guest_set_env_tests $<TARGET_FILE:libc> ${bit})
-        set_tests_properties(guest_set_env_pending_${bit} PROPERTIES TIMEOUT 10)
+        set_tests_properties(guest_set_env_pending_${bit} PROPERTIES TIMEOUT 10 SKIP_RETURN_CODE 77)
         if(WIN32)
             set_tests_properties(guest_set_env_pending_${bit} PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
@@ -1372,6 +1412,16 @@ if(BUILD_TESTING)
         set_tests_properties(guest_libc_static_imports PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(guest_sce_v2_at_thread_exit_tests ${LIBS_INCLUDE_DIR}/tests/GuestSceV2AtThreadExit.cpp)
+    target_include_directories(guest_sce_v2_at_thread_exit_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_sce_v2_at_thread_exit_tests PRIVATE libc libkernel)
+    configure_windows_unwind(guest_sce_v2_at_thread_exit_tests)
+    add_test(NAME guest_sce_v2_at_thread_exit COMMAND guest_sce_v2_at_thread_exit_tests)
+    set_tests_properties(guest_sce_v2_at_thread_exit PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_sce_v2_at_thread_exit PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test_executable(guest_wcscmp_boundary_tests ${LIBS_INCLUDE_DIR}/tests/GuestWcscmpBoundary.cpp)
     target_include_directories(guest_wcscmp_boundary_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_wcscmp_boundary_tests PRIVATE libc)
@@ -1457,6 +1507,16 @@ if(BUILD_TESTING)
     set_tests_properties(guest_path_drive_component PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_path_drive_component PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_wcsncpy_extent_tests ${LIBS_INCLUDE_DIR}/tests/GuestWcsncpyExtent.cpp)
+    target_include_directories(guest_wcsncpy_extent_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_wcsncpy_extent_tests PRIVATE libc)
+    configure_windows_unwind(guest_wcsncpy_extent_tests)
+    add_test(NAME guest_wcsncpy_extent COMMAND guest_wcsncpy_extent_tests)
+    set_tests_properties(guest_wcsncpy_extent PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(guest_wcsncpy_extent PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_directory_tests ${LIBS_INCLUDE_DIR}/tests/GuestDirectory.cpp)
@@ -1641,6 +1701,15 @@ if(BUILD_TESTING)
         set_tests_properties(guest_sce_v2_binary_scaling PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
+    add_test_executable(guest_sce_v2_extended_precision_tests ${LIBS_INCLUDE_DIR}/tests/GuestSceV2ExtendedPrecision.cpp)
+    target_include_directories(guest_sce_v2_extended_precision_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_sce_v2_extended_precision_tests PRIVATE libc)
+    configure_windows_unwind(guest_sce_v2_extended_precision_tests)
+    add_test(NAME guest_sce_v2_extended_precision COMMAND guest_sce_v2_extended_precision_tests)
+    if(WIN32)
+        set_tests_properties(guest_sce_v2_extended_precision PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     add_test_executable(guest_qsort_tests ${LIBS_INCLUDE_DIR}/tests/GuestQsort.cpp)
     target_include_directories(guest_qsort_tests PRIVATE ${LIBS_INCLUDE_DIR})
     target_link_libraries(guest_qsort_tests PRIVATE libc)
@@ -1670,6 +1739,32 @@ if(BUILD_TESTING)
         set_tests_properties(guest_timespec_getres_${mode} PROPERTIES TIMEOUT 20)
         if(WIN32)
             set_tests_properties(guest_timespec_getres_${mode} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
+
+    add_test_executable(guest_crt_setup_tests ${LIBS_INCLUDE_DIR}/tests/GuestCrtSetup.cpp)
+    target_include_directories(guest_crt_setup_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_crt_setup_tests PRIVATE libc)
+    configure_windows_unwind(guest_crt_setup_tests)
+    foreach(mode table abutting constants)
+        add_test(NAME guest_crt_setup_${mode} COMMAND guest_crt_setup_tests ${mode})
+        set_tests_properties(guest_crt_setup_${mode} PROPERTIES TIMEOUT 20)
+        if(WIN32)
+            set_tests_properties(guest_crt_setup_${mode} PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
+
+    add_test_executable(guest_shared_mutex_instance_tests ${LIBS_INCLUDE_DIR}/tests/GuestSharedMutexInstance.cpp)
+    target_include_directories(guest_shared_mutex_instance_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_shared_mutex_instance_tests PRIVATE libc libkernel)
+    configure_windows_unwind(guest_shared_mutex_instance_tests)
+    foreach(mode identity refcount exclusion shared unknown reacquire)
+        add_test(NAME guest_shared_mutex_instance_${mode} COMMAND guest_shared_mutex_instance_tests ${mode})
+        set_tests_properties(guest_shared_mutex_instance_${mode} PROPERTIES TIMEOUT 20)
+        if(WIN32)
+            set_tests_properties(guest_shared_mutex_instance_${mode} PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         endif()
     endforeach()
@@ -1854,8 +1949,9 @@ if(BUILD_TESTING)
     target_link_libraries(guest_formatting_tests PRIVATE libc)
     configure_windows_unwind(guest_formatting_tests)
     add_test(NAME guest_formatting COMMAND guest_formatting_tests)
+    add_test(NAME guest_sprintf_s_constraints COMMAND guest_formatting_tests --terminated-only)
     if(WIN32)
-        set_tests_properties(guest_formatting PROPERTIES ENVIRONMENT_MODIFICATION
+        set_tests_properties(guest_formatting guest_sprintf_s_constraints PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_new_handler_tests ${LIBS_INCLUDE_DIR}/tests/GuestNewHandler.cpp)
@@ -1938,6 +2034,15 @@ if(BUILD_TESTING)
     configure_windows_unwind(unwind_cursor_tests)
     add_test(NAME unwind_cursor COMMAND unwind_cursor_tests)
     set(unwindCursorTests unwind_cursor)
+    if(WIN32)
+        add_test_executable(unwind_import_queries_tests ${LIBS_INCLUDE_DIR}/tests/UnwindImportQueries.cpp)
+        target_include_directories(unwind_import_queries_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(unwind_import_queries_tests PRIVATE libc)
+        configure_windows_unwind(unwind_import_queries_tests)
+        add_test(NAME unwind_import_queries COMMAND unwind_import_queries_tests)
+        set_tests_properties(unwind_import_queries PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
     foreach(operation IN ITEMS get set)
         add_test(NAME unwind_cursor_${operation}_register COMMAND unwind_cursor_tests ${operation}-register)
         set_tests_properties(unwind_cursor_${operation}_register PROPERTIES TIMEOUT 20
@@ -2107,11 +2212,19 @@ if(BUILD_TESTING)
         target_include_directories(guest_exit_order_tests PRIVATE ${LIBS_INCLUDE_DIR})
         target_link_libraries(guest_exit_order_tests PRIVATE libc)
         add_test(NAME guest_exit_order COMMAND guest_exit_order_tests)
+        add_test_executable(guest_cxa_finalize_handles_tests ${LIBS_INCLUDE_DIR}/tests/GuestCxaFinalizeHandles.cpp)
+        target_include_directories(guest_cxa_finalize_handles_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_cxa_finalize_handles_tests PRIVATE libc)
+        add_test(NAME guest_cxa_finalize_handles COMMAND guest_cxa_finalize_handles_tests)
         add_test_executable(guest_path_lifetime_tests ${LIBS_INCLUDE_DIR}/tests/GuestPathLifetime.cpp)
         target_include_directories(guest_path_lifetime_tests PRIVATE ${LIBS_INCLUDE_DIR})
         target_link_libraries(guest_path_lifetime_tests PRIVATE libc)
         add_test(NAME guest_path_lifetime COMMAND guest_path_lifetime_tests)
         set_tests_properties(guest_path_lifetime PROPERTIES TIMEOUT 20)
+        add_test_executable(guest_atomic_4_tests ${LIBS_INCLUDE_DIR}/tests/GuestAtomic4.cpp)
+        target_include_directories(guest_atomic_4_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_atomic_4_tests PRIVATE libc)
+        add_test(NAME guest_atomic_4 COMMAND guest_atomic_4_tests)
         add_test_executable(guest_heap_lifetime_tests ${LIBS_INCLUDE_DIR}/tests/GuestHeapLifetime.cpp)
         target_include_directories(guest_heap_lifetime_tests PRIVATE ${LIBS_INCLUDE_DIR})
         target_link_libraries(guest_heap_lifetime_tests PRIVATE libc)
@@ -2133,6 +2246,18 @@ if(BUILD_TESTING)
             target_link_libraries(guest_image_anonymous_tests PRIVATE libc)
             add_test(NAME guest_image_anonymous COMMAND guest_image_anonymous_tests)
         endif()
+    endif()
+
+    add_test_executable(unwind_enclosing_function_tests ${LIBS_INCLUDE_DIR}/tests/EnclosingFunction.cpp)
+    target_include_directories(unwind_enclosing_function_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(unwind_enclosing_function_tests PRIVATE libc)
+    configure_windows_unwind(unwind_enclosing_function_tests)
+    configure_macos_unwind(unwind_enclosing_function_tests)
+    add_test(NAME unwind_enclosing_function COMMAND unwind_enclosing_function_tests)
+    set_tests_properties(unwind_enclosing_function PROPERTIES TIMEOUT 20)
+    if(WIN32)
+        set_tests_properties(unwind_enclosing_function PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
 
@@ -2244,6 +2369,9 @@ if(BUILD_TESTING)
             add_test(NAME linux_crash_report_handlers COMMAND linux_crash_report_tests $<TARGET_FILE:libc> handlers)
             add_test(NAME linux_crash_report_logging COMMAND linux_crash_report_tests $<TARGET_FILE:libc> logging)
             set_tests_properties(linux_crash_report linux_crash_report_handlers linux_crash_report_logging PROPERTIES TIMEOUT 30)
+            foreach(test linux_crash_report linux_crash_report_handlers linux_crash_report_logging)
+                add_asan_test_options(${test} handle_segv=0:handle_sigbus=0:handle_sigfpe=0:use_sigaltstack=0:detect_stack_use_after_return=0)
+            endforeach()
         endif()
     endif()
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR APPLE OR WIN32)
@@ -2259,6 +2387,16 @@ if(BUILD_TESTING)
             set_tests_properties(guest_backtrace PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         endif()
+    endif()
+    add_test_executable(host_region_index_tests ${LIBS_INCLUDE_DIR}/tests/HostRegionIndex.cpp)
+    target_include_directories(host_region_index_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(host_region_index_tests PRIVATE libc)
+    configure_windows_unwind(host_region_index_tests)
+    add_test(NAME host_region_index COMMAND host_region_index_tests)
+    set_tests_properties(host_region_index PROPERTIES TIMEOUT 60)
+    if(WIN32)
+        set_tests_properties(host_region_index PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test_executable(guest_strcat_extent_tests ${LIBS_INCLUDE_DIR}/tests/GuestStrcatExtent.cpp)
     target_include_directories(guest_strcat_extent_tests PRIVATE ${LIBS_INCLUDE_DIR})
@@ -2523,3 +2661,9 @@ if(MINGW)
             FAIL_REGULAR_EXPRESSION "stack words from rsp;data at stack words")
     endif()
 endif()
+
+file(GLOB libcTestFragments CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake/*.cmake)
+list(SORT libcTestFragments)
+foreach(libcTestFragment IN LISTS libcTestFragments)
+    include(${libcTestFragment})
+endforeach()

@@ -22,10 +22,12 @@ char versionText[32];
 
 void InitializeInitParams(void* params) {
     if (params == nullptr) return;
-    auto* bytes = static_cast<unsigned char*>(params);
-    std::memset(bytes, 0, InitParamsSize);
-    std::memcpy(bytes, &InitParamsMagic, sizeof(InitParamsMagic));
-    std::memcpy(bytes + sizeof(InitParamsMagic), &InitParamsVersion, sizeof(InitParamsVersion));
+    std::array<unsigned char, InitParamsSize> bytes{};
+    std::memcpy(bytes.data(), &InitParamsMagic, sizeof(InitParamsMagic));
+    std::memcpy(bytes.data() + sizeof(InitParamsMagic), &InitParamsVersion, sizeof(InitParamsVersion));
+    const auto savedErrno = errno;
+    GuestCopyOut_nid_no_patch(params, bytes.data(), bytes.size());
+    errno = savedErrno;
 }
 
 } // namespace
@@ -48,7 +50,11 @@ int APS5_VABI sceBufferFree() {
 }
 
 void APS5_VABI sceBufferInit(void* buffer) {
-    if (buffer != nullptr) std::memset(buffer, 0, BufferSize);
+    if (buffer == nullptr) return;
+    const std::array<unsigned char, BufferSize> zeros{};
+    const auto savedErrno = errno;
+    GuestCopyOut_nid_no_patch(buffer, zeros.data(), zeros.size());
+    errno = savedErrno;
 }
 
 int APS5_VABI sceBufferRealloc() {

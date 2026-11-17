@@ -22,6 +22,9 @@ const void* APS5_VABI WKAXObjectCopyTitle(const void* objectRef);
 const void* APS5_VABI WKAXObjectCopyDescription(const void* objectRef);
 const void* APS5_VABI WKAXObjectCopyHelpText(const void* objectRef);
 const void* APS5_VABI WKAXObjectCopyURL(const void* objectRef);
+void APS5_VABI WKApplicationCacheManagerDeleteAllEntries(const void* managerRef);
+void APS5_VABI WKApplicationCacheManagerDeleteEntriesForOrigin(const void* managerRef, const void* originRef);
+void APS5_VABI WKApplicationCacheManagerGetApplicationCacheOrigins(const void* managerRef, void* context, void (*callback)(const void*, const void*, void*));
 std::uint32_t APS5_VABI WKApplicationCacheManagerGetTypeID();
 void APS5_VABI WKArrayAppendItem(void* arrayRef, const void* itemRef);
 const void* APS5_VABI WKArrayCreate(const void** values, std::size_t numberOfValues);
@@ -30,8 +33,18 @@ const void* APS5_VABI WKArrayGetItemAtIndex(const void* arrayRef, std::size_t in
 std::size_t APS5_VABI WKArrayGetSize(const void* arrayRef);
 std::uint32_t APS5_VABI WKArrayGetTypeID();
 void APS5_VABI WKArrayRemoveItemAtIndex(void* arrayRef, std::size_t index);
+const void* APS5_VABI WKAuthenticationChallengCopyRequestURL(const void* authenticationChallengeRef);
 std::uint32_t APS5_VABI WKAuthenticationChallengeGetTypeID();
+const void* APS5_VABI WKAuthenticationChallengeGetDecisionListener(const void* authenticationChallengeRef);
+int APS5_VABI WKAuthenticationChallengeGetPreviousFailureCount(const void* authenticationChallengeRef);
+const void* APS5_VABI WKAuthenticationChallengeGetProposedCredential(const void* authenticationChallengeRef);
+const void* APS5_VABI WKAuthenticationChallengeGetProtectionSpace(const void* authenticationChallengeRef);
+bool APS5_VABI WKAuthenticationChallengeIsForMainResource(const void* authenticationChallengeRef);
+bool APS5_VABI WKAuthenticationChallengeIsInMainFrame(const void* authenticationChallengeRef);
+void APS5_VABI WKAuthenticationDecisionListenerCancel(const void* decisionListenerRef);
 std::uint32_t APS5_VABI WKAuthenticationDecisionListenerGetTypeID();
+void APS5_VABI WKAuthenticationDecisionListenerRejectProtectionSpaceAndContinue(const void* decisionListenerRef);
+void APS5_VABI WKAuthenticationDecisionListenerUseCredential(const void* decisionListenerRef, const void* credentialRef);
 void APS5_VABI WKBackForwardListClear(const void* listRef);
 const void* APS5_VABI WKBackForwardListCopyBackListWithLimit(const void* listRef, std::uint32_t limit);
 const void* APS5_VABI WKBackForwardListCopyForwardListWithLimit(const void* listRef, std::uint32_t limit);
@@ -56,6 +69,12 @@ const void* APS5_VABI WKBundleDOMWindowExtensionCreate(const void* frameRef, con
 const void* APS5_VABI WKBundleDOMWindowExtensionGetFrame(const void* extensionRef);
 const void* APS5_VABI WKBundleDOMWindowExtensionGetScriptWorld(const void* extensionRef);
 std::uint32_t APS5_VABI WKBundleFrameGetTypeID();
+NKWebKit::RectValue APS5_VABI WKBundleFrameGetContentBounds(const void* frameRef);
+NKWebKit::RectValue APS5_VABI WKBundleFrameGetVisibleContentBounds(const void* frameRef);
+NKWebKit::RectValue APS5_VABI WKBundleFrameGetVisibleContentBoundsExcludingScrollbars(const void* frameRef);
+NKWebKit::SizeValue APS5_VABI WKBundleFrameGetScrollOffset(const void* frameRef);
+bool APS5_VABI WKBundleFrameHasHorizontalScrollbar(const void* frameRef);
+bool APS5_VABI WKBundleFrameHasVerticalScrollbar(const void* frameRef);
 std::uint32_t APS5_VABI WKBundleGetTypeID();
 std::uint32_t APS5_VABI WKBundleHitTestResultGetTypeID();
 const void* APS5_VABI WKBundleHitTestResultCopyAbsoluteImageURL(const void* hitTestResultRef);
@@ -64,10 +83,24 @@ const void* APS5_VABI WKBundleHitTestResultCopyAbsoluteMediaURL(const void* hitT
 const void* APS5_VABI WKBundleHitTestResultCopyAbsolutePDFURL(const void* hitTestResultRef);
 const void* APS5_VABI WKBundleHitTestResultCopyLinkLabel(const void* hitTestResultRef);
 const void* APS5_VABI WKBundleHitTestResultCopyLinkTitle(const void* hitTestResultRef);
+const void* APS5_VABI WKBundleHitTestResultCopyLinkSuggestedFilename(const void* hitTestResultRef);
+bool APS5_VABI WKBundleHitTestResultGetIsSelected(const void* hitTestResultRef);
+std::uint32_t APS5_VABI WKBundleHitTestResultGetMediaType(const void* hitTestResultRef);
+bool APS5_VABI WKBundleHitTestResultIsDownloadableMedia(const void* hitTestResultRef);
+bool APS5_VABI WKBundleHitTestResultMediaHasAudio(const void* hitTestResultRef);
+bool APS5_VABI WKBundleHitTestResultMediaIsInFullscreen(const void* hitTestResultRef);
 std::uint32_t APS5_VABI WKBundleInspectorGetTypeID();
+void APS5_VABI WKBundleInspectorClose(const void* inspectorRef);
+void APS5_VABI WKBundleInspectorEvaluateScriptForTest(const void* inspectorRef, const void* scriptRef);
+void APS5_VABI WKBundleInspectorSetPageProfilingEnabled(const void* inspectorRef, bool enabled);
+void APS5_VABI WKBundleInspectorShow(const void* inspectorRef);
 std::uint32_t APS5_VABI WKBundleNavigationActionGetTypeID();
 std::uint32_t APS5_VABI WKBundleNodeHandleGetTypeID();
+const void* APS5_VABI WKBundleNodeHandleCopyDocument(const void* nodeHandleRef);
+const void* APS5_VABI WKBundleNodeHandleCopyDocumentFrame(const void* nodeHandleRef);
+const void* APS5_VABI WKBundleNodeHandleCopyHTMLIFrameElementContentFrame(const void* nodeHandleRef);
 std::uint32_t APS5_VABI WKBundlePageGetTypeID();
+const void* APS5_VABI WKBundlePageGetInspector(const void* pageRef);
 std::uint32_t APS5_VABI WKBundlePageOverlayGetTypeID();
 std::uint32_t APS5_VABI WKBundleRangeHandleGetTypeID();
 std::uint32_t APS5_VABI WKBundleScriptWorldGetTypeID();
@@ -102,17 +135,27 @@ bool APS5_VABI WKDictionarySetItem(void* dictionaryRef, const void* keyRef, cons
 const void* APS5_VABI WKDoubleCreate(double value);
 std::uint32_t APS5_VABI WKDoubleGetTypeID();
 double APS5_VABI WKDoubleGetValue(const void* doubleRef);
-std::uint32_t APS5_VABI WKDownloadGetTypeID();
-const void* APS5_VABI WKDownloadCopyRequest(const void* downloadRef);
-const void* APS5_VABI WKDownloadGetOriginatingPage(const void* downloadRef);
-bool APS5_VABI WKDownloadGetWasUserInitiated(const void* downloadRef);
 void APS5_VABI WKDownloadCancel(const void* downloadRef);
+const void* APS5_VABI WKDownloadCopyRedirectChain(const void* downloadRef);
+const void* APS5_VABI WKDownloadCopyRequest(const void* downloadRef);
+std::uint64_t APS5_VABI WKDownloadGetID(const void* downloadRef);
+const void* APS5_VABI WKDownloadGetOriginatingPage(const void* downloadRef);
+const void* APS5_VABI WKDownloadGetResumeData(const void* downloadRef);
+std::uint32_t APS5_VABI WKDownloadGetTypeID();
+bool APS5_VABI WKDownloadGetWasUserInitiated(const void* downloadRef);
 const void* APS5_VABI WKErrorCopyWKErrorDomain();
 std::uint32_t APS5_VABI WKErrorGetTypeID();
 std::uint32_t APS5_VABI WKFormSubmissionListenerGetTypeID();
 std::uint32_t APS5_VABI WKFrameGetTypeID();
 std::uint64_t APS5_VABI WKFrameHandleGetFrameID(const void* frameHandleRef);
 bool APS5_VABI WKFrameCanProvideSource(const void* frameRef);
+const void* APS5_VABI WKFrameCopyMIMEType(const void* frameRef);
+const void* APS5_VABI WKFrameCopyProvisionalURL(const void* frameRef);
+const void* APS5_VABI WKFrameCopyTitle(const void* frameRef);
+const void* APS5_VABI WKFrameCopyURL(const void* frameRef);
+const void* APS5_VABI WKFrameCopyUnreachableURL(const void* frameRef);
+const void* APS5_VABI WKFrameCreateFrameHandle(const void* frameRef);
+std::uint32_t APS5_VABI WKFrameGetFrameLoadState(const void* frameRef);
 bool APS5_VABI WKFrameIsDisplayingMarkupDocument(const void* frameRef);
 bool APS5_VABI WKFrameIsDisplayingStandaloneImageDocument(const void* frameRef);
 bool APS5_VABI WKFrameIsMainFrame(const void* frameRef);
@@ -140,22 +183,110 @@ std::uint32_t APS5_VABI WKIconDatabaseGetTypeID();
 const void* APS5_VABI WKImageCreate(NKWebKit::SizeValue size, unsigned options);
 NKWebKit::SizeValue APS5_VABI WKImageGetSize(const void* imageRef);
 std::uint32_t APS5_VABI WKImageGetTypeID();
+void APS5_VABI WKInspectorAttach(const void* inspectorRef);
+void APS5_VABI WKInspectorClose(const void* inspectorRef);
+void APS5_VABI WKInspectorConnect(const void* inspectorRef);
+void APS5_VABI WKInspectorDetach(const void* inspectorRef);
+enum WKInputLanguage : int {
+    InputLanguageUndefined = -1,
+
+    INPUT_LANGUAGE_DANISH,
+    INPUT_LANGUAGE_GERMAN,
+    INPUT_LANGUAGE_ENGLISH_US,
+    INPUT_LANGUAGE_SPANISH,
+    INPUT_LANGUAGE_FRENCH,
+    INPUT_LANGUAGE_ITALIAN,
+    INPUT_LANGUAGE_DUTCH,
+    INPUT_LANGUAGE_NORWEGIAN,
+    INPUT_LANGUAGE_POLISH,
+    INPUT_LANGUAGE_PORTUGUESE_PT,
+    INPUT_LANGUAGE_RUSSIAN,
+    INPUT_LANGUAGE_FINNISH,
+    INPUT_LANGUAGE_SWEDISH,
+    INPUT_LANGUAGE_JAPANESE,
+    INPUT_LANGUAGE_KOREAN,
+    INPUT_LANGUAGE_SIMPLIFIED_CHINESE,
+    INPUT_LANGUAGE_TRADITIONAL_CHINESE,
+    INPUT_LANGUAGE_PORTUGUESE_BR,
+    INPUT_LANGUAGE_ENGLISH_GB,
+    INPUT_LANGUAGE_TURKISH,
+    INPUT_LANGUAGE_SPANISH_LATIN_AMERICA,
+    INPUT_LANGUAGE_ARABIC,
+    INPUT_LANGUAGE_CANADIAN_FRENCH,
+    INPUT_LANGUAGE_THAI,
+    INPUT_LANGUAGE_CZECH,
+    INPUT_LANGUAGE_GREEK,
+    INPUT_LANGUAGE_INDONESIAN,
+    INPUT_LANGUAGE_VIETNAMESE,
+    INPUT_LANGUAGE_ROMANIAN,
+    INPUT_LANGUAGE_HUNGARIAN,
+    INPUT_LANGUAGE_UKRAINIAN,
+
+    InputLanguageCount,
+};
+
+enum WKImeEventType : int {
+    Open,
+    ChangeSize,
+    PressClose,
+    PressEnter,
+    UpdatePreedit,
+    ConfirmPreedit,
+    InsertText,
+    Backspace,
+    DeleteAllBeforeCaret,
+    DeleteAll,
+    CaretMoveLeft,
+    CaretMoveRight,
+    CaretMoveUp,
+    CaretMoveDown,
+    StartSelection,
+    EndSelection,
+    SendSelectionWord,
+    MoveDialog,
+    GetInputText,
+    SetValueToFocusedNode,
+};
+
+struct WKImeEvent {
+    WKImeEventType imeEventType;
+    const char* compositionString;
+    int keyCode;
+    int caretIndex;
+};
+WKInputLanguage APS5_VABI WKImeEventGetInputLanguage(const char* languageCode);
+WKImeEvent* APS5_VABI WKImeEventMake(WKImeEventType imeEventType, const char* compositionString, int keyCode);
+void APS5_VABI WKImeEventRelease(WKImeEvent* imeEvent);
 std::uint32_t APS5_VABI WKInspectorGetTypeID();
+void APS5_VABI WKInspectorHide(const void* inspectorRef);
 bool APS5_VABI WKInspectorIsAttached(const void* inspectorRef);
 bool APS5_VABI WKInspectorIsConnected(const void* inspectorRef);
 bool APS5_VABI WKInspectorIsElementSelectionActive(const void* inspectorRef);
 bool APS5_VABI WKInspectorIsFront(const void* inspectorRef);
 bool APS5_VABI WKInspectorIsProfilingPage(const void* inspectorRef);
 bool APS5_VABI WKInspectorIsVisible(const void* inspectorRef);
+void APS5_VABI WKInspectorShow(const void* inspectorRef);
+void APS5_VABI WKInspectorShowConsole(const void* inspectorRef);
+void APS5_VABI WKInspectorShowResources(const void* inspectorRef);
+void APS5_VABI WKInspectorToggleElementSelection(const void* inspectorRef);
+void APS5_VABI WKInspectorTogglePageProfiling(const void* inspectorRef);
 std::uint32_t APS5_VABI WKKeyValueStorageManagerGetTypeID();
+const void* APS5_VABI WKMediaSessionMetadataCopyAlbum(const void* metadataRef);
+const void* APS5_VABI WKMediaSessionMetadataCopyArtist(const void* metadataRef);
+const void* APS5_VABI WKMediaSessionMetadataCopyArtworkURL(const void* metadataRef);
+const void* APS5_VABI WKMediaSessionMetadataCopyTitle(const void* metadataRef);
+std::uint32_t APS5_VABI WKMediaSessionMetadataGetTypeID();
 std::uint32_t APS5_VABI WKMessageListenerGetTypeID();
 void* APS5_VABI WKMutableArrayCreate();
 void* APS5_VABI WKMutableDictionaryCreate();
 std::uint32_t APS5_VABI WKNavigationActionGetTypeID();
+bool APS5_VABI WKNavigationActionShouldPerformDownload(const void* navigationActionRef);
 const void* APS5_VABI WKNavigationDataCopyNavigationDestinationURL(const void* navigationDataRef);
+const void* APS5_VABI WKNavigationDataCopyOriginalRequest(const void* navigationDataRef);
 const void* APS5_VABI WKNavigationDataCopyTitle(const void* navigationDataRef);
 const void* APS5_VABI WKNavigationDataCopyURL(const void* navigationDataRef);
 std::uint32_t APS5_VABI WKNavigationDataGetTypeID();
+bool APS5_VABI WKNavigationResponseCanShowMIMEType(const void* navigationResponseRef);
 std::uint32_t APS5_VABI WKNavigationGetTypeID();
 std::uint32_t APS5_VABI WKNavigationResponseGetTypeID();
 const void* APS5_VABI WKNotificationCopyBody(const void* notificationRef);
@@ -172,6 +303,7 @@ void APS5_VABI WKNotificationPermissionRequestDeny(const void* permissionRequest
 std::uint32_t APS5_VABI WKNotificationPermissionRequestGetTypeID();
 const void* APS5_VABI WKOpenPanelParametersCopyAcceptedFileExtensions(const void* parametersRef);
 const void* APS5_VABI WKOpenPanelParametersCopyAcceptedMIMETypes(const void* parametersRef);
+const void* APS5_VABI WKOpenPanelParametersCopyAllowedMIMETypes(const void* parametersRef);
 const void* APS5_VABI WKOpenPanelParametersCopySelectedFileNames(const void* parametersRef);
 bool APS5_VABI WKOpenPanelParametersGetAllowsDirectories(const void* parametersRef);
 bool APS5_VABI WKOpenPanelParametersGetAllowsMultipleFiles(const void* parametersRef);
@@ -179,16 +311,61 @@ std::uint32_t APS5_VABI WKOpenPanelParametersGetTypeID();
 void APS5_VABI WKOpenPanelResultListenerCancel(const void* listenerRef);
 void APS5_VABI WKOpenPanelResultListenerChooseFiles(const void* listenerRef, const void* fileURLsRef, const void* allowedMimeTypesRef);
 std::uint32_t APS5_VABI WKOpenPanelResultListenerGetTypeID();
+bool APS5_VABI WKPageAreScrollbarAnimationsSuppressed(const void* pageRef);
 bool APS5_VABI WKPageCanGoBack(const void* page);
 bool APS5_VABI WKPageCanGoForward(const void* page);
 std::uint32_t APS5_VABI WKPageConfigurationGetTypeID();
+NKWebKit::SizeValue APS5_VABI WKPageFixedLayoutSize(const void* pageRef);
+bool APS5_VABI WKPageGetAddsVisitedLinks(const void* pageRef);
+double APS5_VABI WKPageGetGapBetweenPages(const void* pageRef);
+const void* APS5_VABI WKPageGetInspector(const void* pageRef);
+double APS5_VABI WKPageGetPageLength(const void* pageRef);
+double APS5_VABI WKPageGetPageZoomFactor(const void* pageRef);
+bool APS5_VABI WKPageGetPaginationBehavesLikeColumns(const void* pageRef);
+std::uint32_t APS5_VABI WKPageGetPaginationMode(const void* pageRef);
+std::uint32_t APS5_VABI WKPageGetScrollPinningBehavior(const void* pageRef);
+double APS5_VABI WKPageGetTextZoomFactor(const void* pageRef);
 std::uint32_t APS5_VABI WKPageGetTypeID();
+bool APS5_VABI WKPageIsPinnedToLeftSide(const void* pageRef);
+bool APS5_VABI WKPageIsPinnedToRightSide(const void* pageRef);
+bool APS5_VABI WKPageIsPinnedToTopSide(const void* pageRef);
+bool APS5_VABI WKPageIsPinnedToBottomSide(const void* pageRef);
+void APS5_VABI WKPageSetAddsVisitedLinks(const void* pageRef, bool addsVisitedLinks);
+void APS5_VABI WKPageSetFixedLayoutSize(const void* pageRef, NKWebKit::SizeValue size);
+void APS5_VABI WKPageSetGapBetweenPages(const void* pageRef, double gap);
+void APS5_VABI WKPageSetEnableHorizontalRubberBanding(const void* pageRef, bool enable);
+void APS5_VABI WKPageSetEnableVerticalRubberBanding(const void* pageRef, bool enable);
 std::uint32_t APS5_VABI WKPageGroupGetTypeID();
+bool APS5_VABI WKPageHasHorizontalScrollbar(const void* pageRef);
+bool APS5_VABI WKPageHasVerticalScrollbar(const void* pageRef);
+bool APS5_VABI WKPageHorizontalRubberBandingIsEnabled(const void* pageRef);
 std::uint32_t APS5_VABI WKPageRequestStorageAccessConfirmResultListenerGetTypeID();
+bool APS5_VABI WKPageRubberBandsAtBottom(const void* pageRef);
+bool APS5_VABI WKPageRubberBandsAtLeft(const void* pageRef);
+bool APS5_VABI WKPageRubberBandsAtRight(const void* pageRef);
+bool APS5_VABI WKPageRubberBandsAtTop(const void* pageRef);
 std::uint32_t APS5_VABI WKPageRunBeforeUnloadConfirmPanelResultListenerGetTypeID();
 std::uint32_t APS5_VABI WKPageRunJavaScriptAlertResultListenerGetTypeID();
 std::uint32_t APS5_VABI WKPageRunJavaScriptConfirmResultListenerGetTypeID();
 std::uint32_t APS5_VABI WKPageRunJavaScriptPromptResultListenerGetTypeID();
+void APS5_VABI WKPageSetPageAndTextZoomFactors(const void* pageRef, double pageZoomFactor, double textZoomFactor);
+void APS5_VABI WKPageSetPageLength(const void* pageRef, double length);
+void APS5_VABI WKPageSetPageZoomFactor(const void* pageRef, double zoomFactor);
+void APS5_VABI WKPageSetPaginationBehavesLikeColumns(const void* pageRef, bool behavesLikeColumns);
+void APS5_VABI WKPageSetPaginationLineGridEnabled(const void* pageRef, bool lineGridEnabled);
+void APS5_VABI WKPageSetPaginationMode(const void* pageRef, std::uint32_t paginationMode);
+void APS5_VABI WKPageSetRubberBandsAtBottom(const void* pageRef, bool enable);
+void APS5_VABI WKPageSetRubberBandsAtLeft(const void* pageRef, bool enable);
+void APS5_VABI WKPageSetRubberBandsAtRight(const void* pageRef, bool enable);
+void APS5_VABI WKPageSetRubberBandsAtTop(const void* pageRef, bool enable);
+void APS5_VABI WKPageSetScrollPinningBehavior(const void* pageRef, std::uint32_t pinning);
+void APS5_VABI WKPageSetSuppressScrollbarAnimations(const void* pageRef, bool suppressAnimations);
+void APS5_VABI WKPageSetTextZoomFactor(const void* pageRef, double zoomFactor);
+void APS5_VABI WKPageSetUseFixedLayout(const void* pageRef, bool fixed);
+bool APS5_VABI WKPageSupportsTextZoom(const void* pageRef);
+bool APS5_VABI WKPageUseFixedLayout(const void* pageRef);
+bool APS5_VABI WKPageVerticalRubberBandingIsEnabled(const void* pageRef);
+bool APS5_VABI WKPageWillHandleHorizontalScrollEvents(const void* pageRef);
 const void* APS5_VABI WKPointCreate(NKWebKit::PointValue point);
 std::uint32_t APS5_VABI WKPointGetTypeID();
 NKWebKit::PointValue APS5_VABI WKPointGetValue(const void* pointRef);
@@ -197,6 +374,7 @@ const void* APS5_VABI WKPopupMenuItemCopyText(const void* itemRef);
 bool APS5_VABI WKPopupMenuItemIsEnabled(const void* itemRef);
 bool APS5_VABI WKPopupMenuItemIsItem(const void* itemRef);
 bool APS5_VABI WKPopupMenuItemIsSeparator(const void* itemRef);
+std::uint32_t APS5_VABI WKPreferencesGetTypeID();
 const void* APS5_VABI WKProtectionSpaceCopyHost(const void* protectionSpaceRef);
 const void* APS5_VABI WKProtectionSpaceCopyRealm(const void* protectionSpaceRef);
 std::uint32_t APS5_VABI WKProtectionSpaceGetAuthenticationScheme(const void* protectionSpaceRef);
@@ -209,8 +387,32 @@ const void* APS5_VABI WKRectCreate(NKWebKit::RectValue rect);
 std::uint32_t APS5_VABI WKRectGetTypeID();
 NKWebKit::RectValue APS5_VABI WKRectGetValue(const void* rectRef);
 void APS5_VABI WKRelease(const void* object);
-void APS5_VABI WKRenderLayerGetTypeID();
-void APS5_VABI WKRenderObjectGetTypeID();
+const void* APS5_VABI WKRenderLayerCopyElementID(const void* layerRef);
+const void* APS5_VABI WKRenderLayerCopyElementTagName(const void* layerRef);
+const void* APS5_VABI WKRenderLayerCopyRendererName(const void* layerRef);
+NKWebKit::RectValue APS5_VABI WKRenderLayerGetAbsoluteBounds(const void* layerRef);
+std::uint32_t APS5_VABI WKRenderLayerGetBackingStoreMemoryEstimate(const void* layerRef);
+std::uint32_t APS5_VABI WKRenderLayerGetCompositingLayerType(const void* layerRef);
+const void* APS5_VABI WKRenderLayerGetElementClassNames(const void* layerRef);
+const void* APS5_VABI WKRenderLayerGetFrameContentsLayer(const void* layerRef);
+const void* APS5_VABI WKRenderLayerGetNegativeZOrderList(const void* layerRef);
+const void* APS5_VABI WKRenderLayerGetNormalFlowList(const void* layerRef);
+const void* APS5_VABI WKRenderLayerGetPositiveZOrderList(const void* layerRef);
+const void* APS5_VABI WKRenderLayerGetRenderer(const void* layerRef);
+std::uint32_t APS5_VABI WKRenderLayerGetTypeID();
+bool APS5_VABI WKRenderLayerIsClipped(const void* layerRef);
+bool APS5_VABI WKRenderLayerIsClipping(const void* layerRef);
+bool APS5_VABI WKRenderLayerIsReflection(const void* layerRef);
+const void* APS5_VABI WKRenderObjectCopyElementID(const void* objectRef);
+const void* APS5_VABI WKRenderObjectCopyElementTagName(const void* objectRef);
+const void* APS5_VABI WKRenderObjectCopyName(const void* objectRef);
+const void* APS5_VABI WKRenderObjectCopyTextSnippet(const void* objectRef);
+NKWebKit::PointValue APS5_VABI WKRenderObjectGetAbsolutePosition(const void* objectRef);
+const void* APS5_VABI WKRenderObjectGetChildren(const void* objectRef);
+const void* APS5_VABI WKRenderObjectGetElementClassNames(const void* objectRef);
+NKWebKit::RectValue APS5_VABI WKRenderObjectGetFrameRect(const void* objectRef);
+std::uint32_t APS5_VABI WKRenderObjectGetTextLength(const void* objectRef);
+std::uint32_t APS5_VABI WKRenderObjectGetTypeID();
 std::uint32_t APS5_VABI WKResourceCacheManagerGetTypeID();
 const void* APS5_VABI WKRetain(const void* object);
 typedef void (APS5_VABI *WKRunLoopFunction)(void* context);
@@ -272,7 +474,10 @@ std::uint32_t APS5_VABI WKURLResponseGetTypeID();
 int APS5_VABI WKURLResponseHTTPStatusCode(const void* responseRef);
 bool APS5_VABI WKURLResponseIsAttachment(const void* responseRef);
 std::uint32_t APS5_VABI WKUserContentControllerGetTypeID();
+void APS5_VABI WKUserContentExtensionStoreCompile(const void* storeRef, const void* identifierRef, const void* jsonSourceRef, void* context, void (*callback)(const void*, std::uint32_t, void*));
+const void* APS5_VABI WKUserContentExtensionStoreCreate(const void* pathRef);
 std::uint32_t APS5_VABI WKUserContentExtensionStoreGetTypeID();
+void APS5_VABI WKUserContentExtensionStoreLookup(const void* storeRef, const void* identifierRef, void* context, void (*callback)(const void*, std::uint32_t, void*));
 const void* APS5_VABI WKUserContentURLPatternCopyHost(const void* urlPatternRef);
 const void* APS5_VABI WKUserContentURLPatternCopyScheme(const void* urlPatternRef);
 const void* APS5_VABI WKUserContentURLPatternCreate(const void* patternRef);
@@ -305,5 +510,22 @@ void APS5_VABI WKContextDisableProcessTermination(const void* contextRef);
 void APS5_VABI WKContextEnableProcessTermination(const void* contextRef);
 void APS5_VABI WKContextAddVisitedLink(const void* contextRef, const void* visitedURLRef);
 void APS5_VABI WKContextClearVisitedLinks(const void* contextRef);
+void APS5_VABI WKContextSetAlwaysUsesComplexTextCodePath(const void* contextRef, bool alwaysUseComplexText);
+void APS5_VABI WKContextSetMemoryCacheDisabled(const void* contextRef, bool disabled);
+void APS5_VABI WKContextSetHTTPPipeliningEnabled(const void* contextRef, bool enabled);
+void APS5_VABI WKContextSetShouldUseFontSmoothing(const void* contextRef, bool useFontSmoothing);
+bool APS5_VABI WKContextJavaScriptConfigurationFileEnabled(const void* contextRef);
+void APS5_VABI WKContextSetJavaScriptConfigurationFileEnabled(const void* contextRef, bool enable);
+void APS5_VABI WKContextSetJavaScriptGarbageCollectorTimerEnabled(const void* contextRef, bool enable);
+void APS5_VABI WKContextGarbageCollectJavaScriptObjects(const void* contextRef);
+void APS5_VABI WKContextSetStorageAccessAPIEnabled(const void* contextRef, bool enable);
+void APS5_VABI WKContextRegisterURLSchemeAsBypassingContentSecurityPolicy(const void* contextRef, const void* urlSchemeRef);
+void APS5_VABI WKContextRegisterURLSchemeAsCachePartitioned(const void* contextRef, const void* urlSchemeRef);
+void APS5_VABI WKContextRegisterURLSchemeAsCanDisplayOnlyIfCanRequest(const void* contextRef, const void* urlSchemeRef);
+void APS5_VABI WKContextRegisterURLSchemeAsEmptyDocument(const void* contextRef, const void* urlSchemeRef);
+void APS5_VABI WKContextRegisterURLSchemeAsSecure(const void* contextRef, const void* urlSchemeRef);
+void APS5_VABI WKResourceCacheManagerClearCacheForAllOrigins(const void* managerRef, std::uint32_t cachesToClear);
+void APS5_VABI WKResourceCacheManagerClearCacheForOrigin(const void* managerRef, const void* originRef, std::uint32_t cachesToClear);
+void APS5_VABI WKResourceCacheManagerGetCacheOrigins(const void* managerRef, void* context, void (*callback)(const void*, const void*, void*));
 
 }

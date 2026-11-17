@@ -8,6 +8,10 @@
 
 namespace FreeType {
 
+inline constexpr std::int32_t NormalizeAngle_nid_no_patch(std::int64_t angle) {
+    return static_cast<std::int32_t>(angle % (360ll << 16));
+}
+
 struct GuestLibrary;
 struct GuestMemoryRec;
 
@@ -221,6 +225,11 @@ struct GuestRasterParams {
     GuestBBox clipBox;
 };
 
+struct GuestParameter {
+    std::uint64_t tag;
+    void* data;
+};
+
 struct GuestFaceRec {
     std::int64_t num_faces;
     std::int64_t face_index;
@@ -264,6 +273,7 @@ struct GuestPropIncreaseXHeight {
 static_assert(sizeof(GuestMatrix) == 32 && offsetof(GuestMatrix, xy) == 8 && offsetof(GuestMatrix, yx) == 16 && offsetof(GuestMatrix, yy) == 24);
 static_assert(sizeof(GuestOpenArgs) == 64 && offsetof(GuestOpenArgs, memory_base) == 8 && offsetof(GuestOpenArgs, memory_size) == 16 && offsetof(GuestOpenArgs, pathname) == 24 && offsetof(GuestOpenArgs, stream) == 32 && offsetof(GuestOpenArgs, driver) == 40 && offsetof(GuestOpenArgs, num_params) == 48 && offsetof(GuestOpenArgs, params) == 56);
 static_assert(sizeof(GuestRasterParams) == 96 && offsetof(GuestRasterParams, flags) == 16 && offsetof(GuestRasterParams, graySpans) == 24 && offsetof(GuestRasterParams, user) == 56 && offsetof(GuestRasterParams, clipBox) == 64);
+static_assert(sizeof(GuestParameter) == 16 && offsetof(GuestParameter, data) == 8);
 static_assert(sizeof(GuestGeneric) == 16 && offsetof(GuestGeneric, finalizer) == 8);
 static_assert(sizeof(GuestBitmapSize) == 32 && offsetof(GuestBitmapSize, size) == 8);
 static_assert(sizeof(GuestCharMapRec) == 16 && offsetof(GuestCharMapRec, platform_id) == 12);

@@ -3,11 +3,11 @@
 
 #include <sqlite3.h>
 
+#include <cerrno>
 #include <cstring>
 #include <filesystem>
 #include <new>
 #include <string>
-#include <string_view>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -269,6 +269,11 @@ int APS5_VABI sqlite3_bind_parameter_count_nid_postfix(sqlite3_stmt* statement) 
     return sqlite3_bind_parameter_count(statement);
 }
 
+int APS5_VABI sqlite3_bind_text_nid_postfix(sqlite3_stmt* statement, int index, const char* text, int size,
+    NKWebKit::GuestSqliteDestructor destructor) {
+    return sqlite3_bind_text(statement, index, text, size, HostDestructor(destructor));
+}
+
 int APS5_VABI sqlite3_bind_text16_nid_postfix(sqlite3_stmt* statement, int index, const void* text, int size,
     NKWebKit::GuestSqliteDestructor destructor) {
     return sqlite3_bind_text16(statement, index, text, size, HostDestructor(destructor));
@@ -292,6 +297,10 @@ int APS5_VABI sqlite3_busy_handler_nid_postfix(sqlite3* db, NKWebKit::GuestSqlit
 
 int APS5_VABI sqlite3_busy_timeout_nid_postfix(sqlite3* db, int milliseconds) {
     return sqlite3_busy_timeout(db, milliseconds);
+}
+
+int APS5_VABI sqlite3_changes_nid_postfix(sqlite3* db) {
+    return sqlite3_changes(db);
 }
 
 int APS5_VABI sqlite3_clear_bindings_nid_postfix(sqlite3_stmt* statement) {
@@ -330,8 +339,16 @@ std::int64_t APS5_VABI sqlite3_column_int64_nid_postfix(sqlite3_stmt* statement,
     return sqlite3_column_int64(statement, column);
 }
 
+const char* APS5_VABI sqlite3_column_name_nid_postfix(sqlite3_stmt* statement, int column) {
+    return sqlite3_column_name(statement, column);
+}
+
 const void* APS5_VABI sqlite3_column_name16_nid_postfix(sqlite3_stmt* statement, int column) {
     return sqlite3_column_name16(statement, column);
+}
+
+const unsigned char* APS5_VABI sqlite3_column_text_nid_postfix(sqlite3_stmt* statement, int column) {
+    return sqlite3_column_text(statement, column);
 }
 
 const void* APS5_VABI sqlite3_column_text16_nid_postfix(sqlite3_stmt* statement, int column) {
@@ -375,6 +392,10 @@ int APS5_VABI sqlite3_data_count_nid_postfix(sqlite3_stmt* statement) {
     return sqlite3_data_count(statement);
 }
 
+int APS5_VABI sqlite3_db_release_memory_nid_postfix(sqlite3* db) {
+    return sqlite3_db_release_memory(db);
+}
+
 int APS5_VABI sqlite3_errcode_nid_postfix(sqlite3* db) {
     return sqlite3_errcode(db);
 }
@@ -415,33 +436,30 @@ sqlite3_stmt* APS5_VABI sqlite3_next_stmt_nid_postfix(sqlite3* db, sqlite3_stmt*
     return sqlite3_next_stmt(db, statement);
 }
 
-static bool MemoryUri(const char* filename) {
-    const char* path = filename + 5;
-    if (std::strchr(path, '%') != nullptr) return false;
-    const char* end = path + std::strcspn(path, "?#");
-    if (std::string_view(path, static_cast<std::size_t>(end - path)) == ":memory:") return true;
-    if (*end != '?') return false;
-    bool memory = false;
-    for (const char* parameter = end + 1; *parameter != '\0' && *parameter != '#';) {
-        const char* stop = parameter + std::strcspn(parameter, "&#");
-        const std::string_view text(parameter, static_cast<std::size_t>(stop - parameter));
-        if (text.substr(0, 5) == "mode=") memory = text.substr(5) == "memory";
-        parameter = *stop == '&' ? stop + 1 : stop;
-    }
-    return memory;
-}
-
 int APS5_VABI sqlite3_open_v2_nid_postfix(const char* filename, sqlite3** db, int flags, const char* vfs) {
     static_cast<void>(vfs);
-    if (filename && (flags & SQLITE_OPEN_URI) && std::strncmp(filename, "file:", 5) == 0 && !MemoryUri(filename)) {
-        NotImplemented_nid_no_patch("sqlite3_open_v2 file URI");
-    }
+    if (!db) return SQLITE_MISUSE;
+    sqlite3* localDb = nullptr;
+    const int savedErrno = errno;
+    const bool writable = GuestWritable_nid_no_patch(db, sizeof(localDb));
+    errno = savedErrno;
+    if (!writable) return SQLITE_MISUSE;
     const int ready = InitializeGuestVfs();
     if (ready != SQLITE_OK) {
-        *db = nullptr;
+        const int copyErrno = errno;
+        GuestCopyOut_nid_no_patch(db, &localDb, sizeof(localDb));
+        errno = copyErrno;
         return ready;
     }
-    return sqlite3_open_v2(filename, db, flags, nullptr);
+    const int result = sqlite3_open_v2(filename, &localDb, flags, nullptr);
+    const int copyErrno = errno;
+    const bool copiedOut = GuestCopyOut_nid_no_patch(db, &localDb, sizeof(localDb));
+    errno = copyErrno;
+    if (!copiedOut) {
+        if (localDb) sqlite3_close(localDb);
+        return SQLITE_MISUSE;
+    }
+    return result;
 }
 
 int APS5_VABI sqlite3_prepare_v2_nid_postfix(sqlite3* db, const char* sql, int size, sqlite3_stmt** statement,
@@ -486,6 +504,10 @@ int APS5_VABI sqlite3_stmt_busy_nid_postfix(sqlite3_stmt* statement) {
     return sqlite3_stmt_busy(statement);
 }
 
+int APS5_VABI sqlite3_stmt_readonly_nid_postfix(sqlite3_stmt* statement) {
+    return sqlite3_stmt_readonly(statement);
+}
+
 int APS5_VABI sqlite3_total_changes_nid_postfix(sqlite3* db) {
     return sqlite3_total_changes(db);
 }
@@ -494,8 +516,16 @@ void* APS5_VABI sqlite3_user_data_nid_postfix(sqlite3_context* context) {
     return static_cast<GuestFunction*>(sqlite3_user_data(context))->application;
 }
 
+int APS5_VABI sqlite3_value_bytes_nid_postfix(sqlite3_value* value) {
+    return sqlite3_value_bytes(value);
+}
+
 double APS5_VABI sqlite3_value_double_nid_postfix(sqlite3_value* value) {
     return sqlite3_value_double(value);
+}
+
+const unsigned char* APS5_VABI sqlite3_value_text_nid_postfix(sqlite3_value* value) {
+    return sqlite3_value_text(value);
 }
 
 const void* APS5_VABI sqlite3_value_text16_nid_postfix(sqlite3_value* value) {

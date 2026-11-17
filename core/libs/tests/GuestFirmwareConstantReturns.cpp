@@ -11,6 +11,7 @@
 #include "prx/libSceVisionManager/libSceVisionManager.hpp"
 #include "prx/libmdbg_syscore/libmdbg_syscore.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -47,6 +48,10 @@ void CheckAvSettingCallbackFuncs() {
     CheckAvSettingCallbackFuncsInit(sceAvSettingCallbackFuncsInit_, 0x20);
     CheckAvSettingCallbackFuncsInit(sceAvSettingCallbackFuncsInitForLnc, 0x10);
     CheckAvSettingCallbackFuncsInit(sceAvSettingCallbackFuncsInitForLnc_, 0x10);
+    sceAvSettingCallbackFuncsInit(reinterpret_cast<void*>(0x10));
+    sceAvSettingCallbackFuncsInit_(reinterpret_cast<void*>(0x10));
+    sceAvSettingCallbackFuncsInitForLnc(reinterpret_cast<void*>(0x10));
+    sceAvSettingCallbackFuncsInitForLnc_(reinterpret_cast<void*>(0x10));
 }
 
 void CheckAvSettingModeHelpers() {
@@ -73,12 +78,17 @@ void CheckAvSettingModeHelpers() {
     check(sceAvSettingSetAudioOutModeInvalid_, 0x00);
     check(sceAvSettingSetVideoOutModeAny_, 0xff);
     check(sceAvSettingSetVideoOutModeInvalid_, 0x00);
+    sceAvSettingSetAudioOutModeAny_(reinterpret_cast<void*>(0x10), 8);
+    sceAvSettingSetAudioOutModeInvalid_(reinterpret_cast<void*>(0x10), 8);
+    sceAvSettingSetVideoOutModeAny_(reinterpret_cast<void*>(0x10), 8);
+    sceAvSettingSetVideoOutModeInvalid_(reinterpret_cast<void*>(0x10), 8);
     std::int32_t source = 0x12345678;
     sceAvSettingSetVideoOutSource(&source, 7);
     Require(source == 7);
     source = 0x12345678;
     sceAvSettingSetVideoOutSource(nullptr, 7);
     Require(source == 0x12345678);
+    sceAvSettingSetVideoOutSource(reinterpret_cast<std::int32_t*>(0x10), 7);
 }
 
 void CheckComposite() {
@@ -188,6 +198,15 @@ void CheckVisionManager() {
         Require(sceVisionManagerGetWorkingMemorySize(&sizes[0], &sizes[1], &sizes[2]) == 0);
         Require(sizes[0] == 0 && sizes[1] == 0x1600000 && sizes[2] == 0x4200000);
     }
+    std::uint32_t mem1 = 0, mem2 = 0, mem3 = 0;
+    Require(sceVisionManagerGetWorkingMemorySize(nullptr, &mem2, &mem3) == VisionInvalid);
+    Require(sceVisionManagerGetWorkingMemorySize(&mem1, nullptr, &mem3) == VisionInvalid);
+    Require(sceVisionManagerGetWorkingMemorySize(&mem1, &mem2, nullptr) == VisionInvalid);
+    errno = 71;
+    Require(sceVisionManagerGetWorkingMemorySize(reinterpret_cast<std::uint32_t*>(0x10), &mem2, &mem3) == VisionInvalid);
+    Require(sceVisionManagerGetWorkingMemorySize(&mem1, reinterpret_cast<std::uint32_t*>(0x10), &mem3) == VisionInvalid);
+    Require(sceVisionManagerGetWorkingMemorySize(&mem1, &mem2, reinterpret_cast<std::uint32_t*>(0x10)) == VisionInvalid);
+    Require(errno == 71);
 
     int context = 0;
     const std::int32_t parameters[] = {0, 1, 3, 4, 5, 6, -1, 0x7fffffff, static_cast<std::int32_t>(0x80000000)};
