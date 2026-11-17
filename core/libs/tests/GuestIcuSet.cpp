@@ -65,6 +65,16 @@ void Empty() {
     std::int32_t start = 3, end = 4, error = Success;
     Require(uset_getItem_nid_postfix(set, 0, &start, &end, nullptr, 0, &error) == -1 && error == IndexOutOfBounds && start == 3 && end == 4, "no items");
     uset_close_nid_postfix(set);
+    USet* item = uset_openEmpty_nid_postfix();
+    uset_addRange_nid_postfix(item, 0x41, 0x5a);
+    auto* const unmapped = reinterpret_cast<std::int32_t*>(0x10);
+    error = Success;
+    errno = 71;
+    Require(Rejects([&] { uset_getItem_nid_postfix(item, 0, unmapped, &end, nullptr, 0, &error); }), "an unwritable start is rejected");
+    Require(Rejects([&] { uset_getItem_nid_postfix(item, 0, &start, unmapped, nullptr, 0, &error); }), "an unwritable end is rejected");
+    Require(errno == 71 && error == Success, "unwritable item outputs keep errno and the status");
+    Require(uset_getItem_nid_postfix(item, 0, &start, &end, nullptr, 0, &error) == 0 && start == 0x41 && end == 0x5a, "the range is still read");
+    uset_close_nid_postfix(item);
 }
 
 void BinaryPropertySet() {
