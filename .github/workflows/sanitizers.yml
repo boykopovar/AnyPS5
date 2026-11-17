@@ -72,7 +72,7 @@ jobs:
           path: build/externals
           key: ffmpeg-sanitizers-${{ runner.os }}-${{ steps.submodules.outputs.ffmpeg }}
       - id: configure
-        run: cmake -S . -B build $CONFIGURE "-DCMAKE_C_FLAGS=$SANITIZER_FLAGS" "-DCMAKE_CXX_FLAGS=$SANITIZER_FLAGS" "-DANYPS5_AGC_EXECUTION_TESTS=F16ToF32Unpack;F64FmaSubnormals;RegistrationPrepareShutdown;CommandEncoder"
+        run: cmake -S . -B build $CONFIGURE "-DCMAKE_C_FLAGS=$SANITIZER_FLAGS" "-DCMAKE_CXX_FLAGS=$SANITIZER_FLAGS" "-DANYPS5_AGC_EXECUTION_TESTS=F16ToF32Unpack;F64FmaSubnormals;RegistrationPrepareShutdown"
       - if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v6
         continue-on-error: true
@@ -95,7 +95,7 @@ jobs:
           ASAN_OPTIONS: detect_leaks=0
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
           APS5_SKIP_TIMING_TESTS: 1
-        run: ctest --output-on-failure --timeout 300 --parallel 4 --exclude-regex "^agc_driver_command_encoder_bench" --output-log ctest.log --output-junit ctest.xml || true
+        run: ctest --output-on-failure --timeout 300 --parallel 4 --output-log ctest.log --output-junit ctest.xml || true
       - name: Summarize the sanitizer findings
         if: ${{ !cancelled() && steps.configure.outcome == 'success' }}
         run: >-

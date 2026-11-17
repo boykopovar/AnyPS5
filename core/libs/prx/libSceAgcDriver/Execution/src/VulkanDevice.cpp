@@ -702,7 +702,6 @@ struct VulkanDevice::State {
     // built once after setup (see graphicsContext); the context's pool reference is dropped before
     // the pool at teardown.
     Graphics::DeviceFunctions deviceFunctions;
-    Graphics::DeviceDispatch deviceDispatch{&deviceFunctions};
     bool functionsReady = false;
     Graphics::Context context;
     bool contextReady = false;
@@ -838,11 +837,12 @@ struct VulkanDevice::State {
     template<typename TFunction>
     TFunction DeviceFunction(Graphics::FunctionName name) const {
         ++Graphics::DeviceProcLookups();
-        auto function = reinterpret_cast<TFunction>(deviceProc(device, name.Value()));
+        auto function = deviceProc(device, name.Value());
         if (function == nullptr) {
             throw std::runtime_error(std::string("Vulkan device function missing: ") + name.Value());
         }
-        return function;
+        if (Graphics::IsCommandName(name.Value())) function = Graphics::CommandThunk(name.Value(), function);
+        return reinterpret_cast<TFunction>(function);
     }
 
     void CreateWorkgroupMemoryLayout() {
@@ -2735,7 +2735,7 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         if (!GuestMemory::GpuMutex().HeldByThisThread()) gpuLock.lock();
         state->placeholderImages = std::make_unique<Graphics::PlaceholderImages>(graphicsContext());
     }
-    state->recorder = std::make_unique<Graphics::Recorder>(graphicsContext(), state->timelineSemaphores, state->functionsReady ? &state->deviceFunctions : nullptr, family);
+    state->recorder = std::make_unique<Graphics::Recorder>(graphicsContext(), state->timelineSemaphores, state->functionsReady, family);
     state->recorder->Activate();
     state->context = buildContext();
     state->contextReady = true;
@@ -4910,7 +4910,6 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.exactRobustLoads = state->exactRobustLoads;
     context.copiedWriters = state->copiedWriters.get();
     context.functions = state->functionsReady ? &state->deviceFunctions : nullptr;
-    context.dispatch = state->functionsReady ? &state->deviceDispatch : nullptr;
     context.descriptorIndexing = state->descriptorIndexing;
     context.descriptorIndexingLimits = state->descriptorIndexingProperties;
     context.imageInt64Atomics = state->imageInt64Atomics;

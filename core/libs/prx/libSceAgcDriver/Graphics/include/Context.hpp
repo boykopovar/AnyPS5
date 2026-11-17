@@ -7,6 +7,7 @@
 #include <mutex>
 #include <vulkan/vulkan.h>
 #include "prx/libc/include/PrimedSharedMutex.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/CommandList.hpp"
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -136,7 +137,6 @@ public:
 
 private:
     friend struct Context;
-    friend class CommandEncoder;
     TFunction function = nullptr;
 };
 
@@ -197,20 +197,8 @@ struct DeviceFunctions {
     PFN_vkUnmapMemory unmapMemory = nullptr;
 };
 
-struct DeviceDispatch {
-    explicit DeviceDispatch(const DeviceFunctions* patched) : patched(patched), active(patched) {}
-    DeviceDispatch(const DeviceDispatch&) = delete;
-    DeviceDispatch& operator=(const DeviceDispatch&) = delete;
-    const DeviceFunctions* const patched;
-    std::atomic<const DeviceFunctions*> active;
-    DeviceFunctions original;
-    std::mutex mutex;
-    unsigned encoders = 0;
-};
-
 // Per-thread count of vkGetDeviceProcAddr lookups made through Context::Function (the [vk] line).
 std::uint64_t& DeviceProcLookups();
-void BeforeCommandLookup(VkDevice device, std::source_location where = std::source_location::current());
 
 inline constexpr std::size_t EmptyBufferBytes = 16;
 
@@ -299,7 +287,6 @@ struct Context {
     const std::vector<std::shared_ptr<ShaderResources>>* copiedWriters = nullptr;
     // The device's resolved entry points (see DeviceFunctions); null until the device set up.
     const DeviceFunctions* functions = nullptr;
-    DeviceDispatch* dispatch = nullptr;
     // VK_EXT_descriptor_indexing with non-uniform sampled/storage image array indexing enabled
     // (bindless image tables in graphics stages).
     bool descriptorIndexing = false;
@@ -372,7 +359,7 @@ struct Context {
     }
 
     // The table's entry point, or a per-call lookup while the table is absent or lacks it.
-    const DeviceFunctions* Table() const { return dispatch != nullptr && functions == dispatch->patched ? dispatch->active.load(std::memory_order_acquire) : functions; }
+    const DeviceFunctions* Table() const { return functions; }
 
     template<typename TFunction>
     TFunction Resolved(TFunction DeviceFunctions::*member, FunctionName name) const {
@@ -507,13 +494,13 @@ private:
     friend void FillDeviceFunctions(const Context& context, DeviceFunctions& functions);
 
     template<typename TFunction>
-    TFunction lookup(const char* name, std::source_location where = std::source_location::current()) const {
+    TFunction lookup(const char* name, [[maybe_unused]] std::source_location where = std::source_location::current()) const {
         Require(deviceProc != nullptr, "missing Vulkan device function resolver");
         ++DeviceProcLookups();
-        if (name[0] == 'v' && name[1] == 'k' && name[2] == 'C' && name[3] == 'm' && name[4] == 'd') BeforeCommandLookup(device, where);
-        const auto function = reinterpret_cast<TFunction>(deviceProc(device, name));
+        const auto function = deviceProc(device, name);
         if (function == nullptr) throw std::runtime_error(std::string("AGC graphics: missing Vulkan function: ") + name);
-        return function;
+        if (IsCommandName(name)) return reinterpret_cast<TFunction>(CommandThunk(name, function));
+        return reinterpret_cast<TFunction>(function);
     }
 
     template<typename TFunction>

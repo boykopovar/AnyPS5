@@ -16,8 +16,22 @@
 
 namespace AgcDriver::Graphics {
 
-struct DeviceFunctions;
+struct CommandFunctions;
 class WorkBudget;
+class CommandStream;
+
+class StreamMaterializer {
+public:
+    virtual VkCommandBuffer Begin(CommandStream& stream) = 0;
+
+protected:
+    ~StreamMaterializer() = default;
+};
+
+struct Demotion {
+    const char* command = nullptr;
+    VkStructureType chained = VK_STRUCTURE_TYPE_MAX_ENUM;
+};
 
 bool OnReplayThread() noexcept;
 
@@ -34,12 +48,12 @@ private:
 
 class CommandStream {
 public:
-    using Run = void (*)(const std::byte* payload, VkCommandBuffer commands, const DeviceFunctions& functions);
+    using Run = void (*)(const std::byte* payload, VkCommandBuffer commands, const CommandFunctions& functions);
     static constexpr std::size_t RecordAlign = 16;
     static constexpr std::size_t ChunkBytes = 64 * 1024;
     static constexpr std::size_t Aligned(std::size_t bytes) { return (bytes + RecordAlign - 1) / RecordAlign * RecordAlign; }
 
-    explicit CommandStream(WorkBudget* budget = nullptr);
+    explicit CommandStream(const CommandFunctions& functions, WorkBudget* budget = nullptr, StreamMaterializer* materializer = nullptr);
     ~CommandStream();
     CommandStream(const CommandStream&) = delete;
     CommandStream& operator=(const CommandStream&) = delete;
@@ -66,6 +80,10 @@ public:
         ops.fetch_add(1, std::memory_order_relaxed);
     }
 
+    const CommandFunctions& Functions() const noexcept { return functions; }
+    VkCommandBuffer Materialized() const noexcept { return materialized; }
+    const Demotion& DemotedBy() const noexcept { return demotion; }
+    VkCommandBuffer Demote(const char* command, VkStructureType chained = VK_STRUCTURE_TYPE_MAX_ENUM);
     void Poison(std::exception_ptr reason) noexcept;
     bool Poisoned() const noexcept { return poisoned.load(std::memory_order_acquire); }
     std::exception_ptr Reason() const;
@@ -108,7 +126,11 @@ private:
         if (!array.empty()) std::memcpy(at, array.data(), sizeof(T) * array.size());
         return at + Aligned(sizeof(T) * array.size());
     }
+    const CommandFunctions& functions;
     WorkBudget* budget;
+    StreamMaterializer* materializer;
+    VkCommandBuffer materialized = VK_NULL_HANDLE;
+    Demotion demotion;
     std::vector<std::unique_ptr<Chunk>> chunks;
     std::size_t charged = 0;
     std::atomic<std::uint64_t> ops{0};
@@ -119,7 +141,7 @@ private:
     std::exception_ptr reason;
 };
 
-void Replay(const CommandStream& stream, VkCommandBuffer target, const DeviceFunctions& real);
+void Replay(const CommandStream& stream, VkCommandBuffer target, const CommandFunctions& real);
 
 }
 

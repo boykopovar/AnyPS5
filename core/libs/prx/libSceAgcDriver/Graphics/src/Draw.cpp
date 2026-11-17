@@ -2992,7 +2992,6 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
     bool rewritten = false;
     if (!meshIndirect && !inputs.restartTable.empty()) meshArguments = directMeshArguments(context, draw, inputs.restartTable);
     std::vector<std::shared_ptr<void>> reorderKept;
-    std::optional<Recorder::EncodingWindow> encoding(std::in_place, *recorder);
     const auto unwindGuard = recorder->UnwindGuard();
     if (continued) {
         record.pipeline->Continue(recording, state, record.masked);
@@ -3082,7 +3081,6 @@ void recordDraw(const Context& context, const State& state, const Pm4::DrawParam
         record.pipeline->ContinueSecondChannel(recording, state, record.masked);
         recordDrawCommands(context, commands, state, draw, inputs, record.indirect, argumentBuffer, argumentOffset, trace, subdraw);
     }
-    encoding.reset();
     recorder->EndGpuTiming(eachDrawTiming);
     if (meshArguments != nullptr) recorder->Keep(meshArguments);
     if (argumentSnapshot != nullptr) recorder->Keep(argumentSnapshot);

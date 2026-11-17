@@ -1,4 +1,4 @@
-#include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/CommandList.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SealedBatch.hpp"
 #include <array>
 #include <atomic>
@@ -25,7 +25,7 @@ namespace {
 using AgcDriver::Graphics::BatchCancelled;
 using AgcDriver::Graphics::CommandBufferPool;
 using AgcDriver::Graphics::CommandStream;
-using AgcDriver::Graphics::DeviceFunctions;
+using AgcDriver::Graphics::CommandFunctions;
 using AgcDriver::Graphics::FailureLatch;
 using AgcDriver::Graphics::InlineExecutor;
 using AgcDriver::Graphics::RecordingShutDown;
@@ -51,8 +51,8 @@ bool Throws(Call&& call) {
     return false;
 }
 
-const DeviceFunctions& Real() {
-    static const DeviceFunctions functions{};
+const CommandFunctions& Real() {
+    static const CommandFunctions functions{};
     return functions;
 }
 
@@ -73,7 +73,7 @@ struct Value {
     std::uint32_t count;
 };
 
-void runValue(const std::byte* payload, VkCommandBuffer commands, const DeviceFunctions&) {
+void runValue(const std::byte* payload, VkCommandBuffer commands, const CommandFunctions&) {
     Value header;
     std::memcpy(&header, payload, sizeof(header));
     const auto* array = payload + CommandStream::Aligned(sizeof(Value));
@@ -148,7 +148,7 @@ void retireUnsubmitted(SealedBatch& batch) {
 }
 
 void StreamsReplayInOrderAcrossChunks() {
-    CommandStream stream;
+    CommandStream stream(Real());
     Require(CommandStream::IsHandle(stream.Handle()) && &CommandStream::From(stream.Handle()) == &stream, "the stream handle does not round-trip to its stream");
     Require(!CommandStream::IsHandle(fakeBuffer(7)), "a real command buffer reads as a stream handle");
     std::vector<std::uint32_t> large(40000);
@@ -173,13 +173,13 @@ void StreamsReplayInOrderAcrossChunks() {
 }
 
 void SealedAndFailedAppendsPoison() {
-    CommandStream stream;
+    CommandStream stream(Real());
     append(stream, 1);
     stream.Seal();
     Require(Throws<std::logic_error>([&] { append(stream, 2); }), "an append after Seal did not throw");
     Require(stream.Poisoned(), "an append after Seal did not poison the stream even though the caller caught the error");
     Require(Throws<std::logic_error>([&] { AgcDriver::Graphics::Replay(stream, fakeBuffer(1), Real()); }), "a poisoned stream replayed");
-    CommandStream poisoned;
+    CommandStream poisoned(Real());
     append(poisoned, 1);
     poisoned.Poison(std::make_exception_ptr(std::invalid_argument("unknown pNext")));
     poisoned.Poison(std::make_exception_ptr(std::runtime_error("second reason")));
@@ -190,7 +190,7 @@ void InlineReplayFailureReachesTheLatch() {
     FailureLatch latch;
     auto shared = std::make_shared<FakePool::Shared>();
     InlineExecutor executor(std::make_unique<FakePool>(shared));
-    CommandStream good;
+    CommandStream good(Real());
     append(good, 11);
     auto first = std::make_shared<SealedBatch>(1, good, Real(), latch);
     executor.Execute(first);
@@ -200,7 +200,7 @@ void InlineReplayFailureReachesTheLatch() {
     first->GpuDone();
     Require(first->Retirable(), "a submitted batch whose fence signalled is not retirable");
     executor.Retire(first->Commands(), first->Worker());
-    CommandStream bad;
+    CommandStream bad(Real());
     append(bad, 12);
     bad.Poison(std::make_exception_ptr(std::invalid_argument("unknown pNext")));
     auto second = std::make_shared<SealedBatch>(2, bad, Real(), latch);
@@ -209,7 +209,7 @@ void InlineReplayFailureReachesTheLatch() {
     Require(Throws<std::invalid_argument>([&] { second->Await(); }), "Await did not rethrow the replay error");
     Require(latch.FailedSerial() == 2, "the replay failure did not reach the latch");
     retireUnsubmitted(*second);
-    CommandStream later;
+    CommandStream later(Real());
     append(later, 13);
     auto third = std::make_shared<SealedBatch>(3, later, Real(), latch);
     executor.Execute(third);
@@ -217,7 +217,7 @@ void InlineReplayFailureReachesTheLatch() {
     retireUnsubmitted(*third);
     shared->failEnd.store(true);
     FailureLatch fresh;
-    CommandStream ending;
+    CommandStream ending(Real());
     append(ending, 14);
     auto fourth = std::make_shared<SealedBatch>(1, ending, Real(), fresh);
     executor.Execute(fourth);
@@ -230,7 +230,7 @@ void CancelDoesNotImpersonateTheWorker() {
     auto shared = std::make_shared<FakePool::Shared>();
     shared->hold.store(true);
     SingleExecutor executor([shared] { return std::make_unique<FakePool>(shared); });
-    CommandStream stream;
+    CommandStream stream(Real());
     append(stream, 21);
     auto batch = std::make_shared<SealedBatch>(1, stream, Real(), latch);
     executor.Execute(batch);
@@ -243,7 +243,7 @@ void CancelDoesNotImpersonateTheWorker() {
     Require(batch->ReplayReleased() && batch->Commands() != VK_NULL_HANDLE, "a batch cancelled during replay lost the buffer the worker began");
     retireUnsubmitted(*batch);
     executor.Retire(batch->Commands(), batch->Worker());
-    CommandStream unclaimed;
+    CommandStream unclaimed(Real());
     append(unclaimed, 22);
     auto early = std::make_shared<SealedBatch>(2, unclaimed, Real(), latch);
     early->Cancel();
@@ -298,7 +298,7 @@ void DeviceLossHoldsResourcesUntilTheDeviceIsIdle() {
     FailureLatch latch;
     auto shared = std::make_shared<FakePool::Shared>();
     InlineExecutor executor(std::make_unique<FakePool>(shared));
-    CommandStream lostStream;
+    CommandStream lostStream(Real());
     append(lostStream, 31);
     auto lost = std::make_shared<SealedBatch>(1, lostStream, Real(), latch);
     executor.Execute(lost);
@@ -311,14 +311,14 @@ void DeviceLossHoldsResourcesUntilTheDeviceIsIdle() {
     lost->DeviceIdleAfterLoss();
     Require(lost->Retirable(), "the lost-device cleanup did not release the batch");
     FailureLatch other;
-    CommandStream failedStream;
+    CommandStream failedStream(Real());
     append(failedStream, 32);
     auto failed = std::make_shared<SealedBatch>(4, failedStream, Real(), other);
     executor.Execute(failed);
     static_cast<void>(failed->Await());
     failed->Returned(VK_ERROR_OUT_OF_DEVICE_MEMORY);
     Require(failed->Result() == Outcome::SubmitFailed && failed->Retirable() && other.FailedSerial() == 4 && !other.DeviceLost(), "an ordinary failed submit was not retirable at once or did not latch its serial");
-    CommandStream earlyStream;
+    CommandStream earlyStream(Real());
     append(earlyStream, 33);
     auto early = std::make_shared<SealedBatch>(5, earlyStream, Real(), other);
     executor.Execute(early);
@@ -330,7 +330,7 @@ void FenceBeforeReturnStaysHeld() {
     FailureLatch latch;
     auto shared = std::make_shared<FakePool::Shared>();
     InlineExecutor executor(std::make_unique<FakePool>(shared));
-    CommandStream stream;
+    CommandStream stream(Real());
     append(stream, 41);
     auto batch = std::make_shared<SealedBatch>(1, stream, Real(), latch);
     executor.Execute(batch);
@@ -352,7 +352,7 @@ void BudgetBoundsWorkThroughRetirement() {
     for (std::uint64_t serial = 1; serial <= 3; ++serial) {
         Require(budget.Choose() == (serial <= 2 ? WorkBudget::Mode::Deferred : WorkBudget::Mode::Direct), "batch " + std::to_string(serial) + " chose the wrong mode with " + std::to_string(budget.Encoding()) + " batches encoding");
         budget.Open(latch, serial);
-        streams.push_back(std::make_unique<CommandStream>(&budget));
+        streams.push_back(std::make_unique<CommandStream>(Real(), &budget));
         append(*streams.back(), static_cast<std::uint32_t>(serial));
         if (serial <= 2) {
             batches.push_back(std::make_shared<SealedBatch>(serial, *streams.back(), Real(), latch, &budget));
@@ -403,7 +403,7 @@ void SingleExecutorOwnsItsPoolAndThread() {
         takeSeen();
         seen().replayThreadCalls.store(0);
         for (std::uint64_t serial = 1; serial <= 8; ++serial) {
-            streams.push_back(std::make_unique<CommandStream>());
+            streams.push_back(std::make_unique<CommandStream>(Real()));
             append(*streams.back(), static_cast<std::uint32_t>(serial));
             batches.push_back(std::make_shared<SealedBatch>(serial, *streams.back(), Real(), latch));
             executor.Execute(batches.back());
@@ -421,7 +421,7 @@ void SingleExecutorOwnsItsPoolAndThread() {
         std::lock_guard lock(shared->mutex);
         Require(shared->recycled.size() == 8, "retired buffers were not recycled before shutdown returned");
         for (const auto& id : shared->users) Require(id == worker, "a pool was used off its worker thread");
-        CommandStream afterStream;
+        CommandStream afterStream(Real());
         append(afterStream, 9);
         auto after = std::make_shared<SealedBatch>(9, afterStream, Real(), latch);
         executor.Execute(after);
@@ -429,7 +429,7 @@ void SingleExecutorOwnsItsPoolAndThread() {
         retireUnsubmitted(*after);
     }
     FailureLatch broken;
-    CommandStream stream;
+    CommandStream stream(Real());
     append(stream, 10);
     auto batch = std::make_shared<SealedBatch>(1, stream, Real(), broken);
     {
@@ -449,7 +449,7 @@ void ShutdownCancelsQueuedBatches() {
     {
         SingleExecutor executor([shared] { return std::make_unique<FakePool>(shared); });
         for (std::uint64_t serial = 1; serial <= 3; ++serial) {
-            streams.push_back(std::make_unique<CommandStream>());
+            streams.push_back(std::make_unique<CommandStream>(Real()));
             append(*streams.back(), static_cast<std::uint32_t>(serial));
             batches.push_back(std::make_shared<SealedBatch>(serial, *streams.back(), Real(), latch));
             executor.Execute(batches.back());
@@ -468,7 +468,7 @@ void ShutdownCancelsQueuedBatches() {
 
 int destroyUnretired() {
     FailureLatch latch;
-    CommandStream stream;
+    CommandStream stream(Real());
     append(stream, 1);
     auto batch = std::make_unique<SealedBatch>(1, stream, Real(), latch);
     batch->Cancel();
@@ -477,7 +477,7 @@ int destroyUnretired() {
 }
 
 int appendOnReplayThread() {
-    CommandStream stream;
+    CommandStream stream(Real());
     const AgcDriver::Graphics::ReplayThreadScope scope;
     append(stream, 1);
     return 0;
@@ -500,6 +500,41 @@ void DiesWith(const std::string& self, const std::string& mode, const std::strin
 
 }
 
+void AdmissionOpensDirectInsteadOfWaiting() {
+    WorkBudget budget(WorkBudget::Limits{2, 3, 1u << 30});
+    FailureLatch latch;
+    auto shared = std::make_shared<FakePool::Shared>();
+    shared->hold.store(true);
+    SingleExecutor executor([shared] { return std::make_unique<FakePool>(shared); });
+    std::vector<std::unique_ptr<CommandStream>> streams;
+    std::vector<std::shared_ptr<SealedBatch>> batches;
+    for (std::uint64_t serial = 1; serial <= 2; ++serial) {
+        Require(budget.TryOpen(), "batch " + std::to_string(serial) + " was refused under the encoding bound");
+        streams.push_back(std::make_unique<CommandStream>(Real(), &budget));
+        append(*streams.back(), static_cast<std::uint32_t>(serial));
+        batches.push_back(std::make_shared<SealedBatch>(serial, *streams.back(), Real(), latch, &budget));
+        executor.Execute(batches.back());
+    }
+    const auto start = std::chrono::steady_clock::now();
+    Require(!budget.TryOpen(), "a batch was admitted while two sealed batches waited for the replay worker");
+    Require(std::chrono::steady_clock::now() - start < std::chrono::milliseconds(50), "a refused admission waited");
+    Require(budget.Refusals() == 1 && budget.Outstanding() == 2 && budget.RoomWaits() == 0, "a refused admission was not counted, or took a slot");
+    shared->hold.store(false);
+    static_cast<void>(batches[0]->Await());
+    static_cast<void>(batches[1]->Await());
+    Require(budget.TryOpen(), "admission did not reopen once the replays were released");
+    Require(!budget.TryOpen(), "a batch was admitted past the outstanding bound");
+    Require(budget.Refusals() == 2, "the outstanding refusal was not counted");
+    for (auto& batch : batches) {
+        batch->Returned(VK_SUCCESS);
+        batch->GpuDone();
+        executor.Retire(batch->Commands(), 0);
+    }
+    Require(budget.Outstanding() == 1 && budget.TryOpen(), "retired batches did not give their slots back");
+    budget.Retired(0);
+    budget.Retired(0);
+}
+
 int main(int argc, char** argv) {
 #ifdef _WIN32
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
@@ -515,6 +550,7 @@ int main(int argc, char** argv) {
         DeviceLossHoldsResourcesUntilTheDeviceIsIdle();
         FenceBeforeReturnStaysHeld();
         BudgetBoundsWorkThroughRetirement();
+        AdmissionOpensDirectInsteadOfWaiting();
         SingleExecutorOwnsItsPoolAndThread();
         ShutdownCancelsQueuedBatches();
         DiesWith(argv[0], "--destroy-unretired", "destroyed before its submission returned");

@@ -2,7 +2,8 @@
 #define CORE_LIBS_PRX_LIBSCEAGCDRIVER_GRAPHICS_INCLUDE_RECORDER_HPP
 
 #include "prx/libSceAgcDriver/Graphics/include/BarrierBatch.hpp"
-#include "prx/libSceAgcDriver/Graphics/include/CommandEncoder.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/CommandList.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/SealedBatch.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/PassHazards.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Mutex.hpp"
@@ -13,6 +14,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <array>
+#include <exception>
 #include <deque>
 #include <mutex>
 #include <functional>
@@ -147,10 +149,10 @@ private:
 // up to serial S" WITHOUT the mutex (WaitSerial), because the monotonic value cannot be reset or
 // recycled the way the pooled batch fences are, and afterwards run the completions under the mutex
 // (FinishUpTo). Without timeline semaphores callers use the locked Sync as before.
-class Recorder {
+class Recorder : private StreamMaterializer {
 public:
     // `timelineSemaphores`: the device enabled VK_KHR_timeline_semaphore (WaitSerial is usable).
-    explicit Recorder(const Context& context, bool timelineSemaphores = false, DeviceFunctions* encodedFunctions = nullptr, std::uint32_t queueFamily = 0);
+    explicit Recorder(const Context& context, bool timelineSemaphores = false, bool deferredBatches = false, std::uint32_t queueFamily = 0);
     ~Recorder();
     Recorder(const Recorder&) = delete;
     Recorder& operator=(const Recorder&) = delete;
@@ -600,26 +602,34 @@ public:
     // there must not have a publish recorded for it (UnitShadow), see SyncThrough.
     static bool InCompletion();
     void Activate();
-    enum class Encoding : std::uint8_t { None, Encoded, Inline, Span };
-    Encoding BeginEncoding(std::source_location where = std::source_location::current());
-    void EndEncoding(Encoding encoding, std::source_location where = std::source_location::current());
-    bool Encodes() const { return encoder != nullptr; }
-    CommandEncoder::UnwindQuiesce UnwindGuard(std::source_location where = std::source_location::current()) const { return CommandEncoder::UnwindQuiesce(encoder.get(), where); }
-    class EncodingWindow {
+    class UnwindPoison {
     public:
-        explicit EncodingWindow(Recorder& recorder, std::source_location where = std::source_location::current()) : recorder(recorder), where(where), encoding(recorder.BeginEncoding(where)) {}
-        ~EncodingWindow() { recorder.EndEncoding(encoding, where); }
-        bool Encoded() const { return encoding == Encoding::Encoded; }
-        EncodingWindow(const EncodingWindow&) = delete;
-        EncodingWindow& operator=(const EncodingWindow&) = delete;
+        explicit UnwindPoison(Recorder& recorder) : recorder(recorder), exceptions(std::uncaught_exceptions()) {}
+        ~UnwindPoison() {
+            if (std::uncaught_exceptions() > exceptions) recorder.poisonOpen();
+        }
+        UnwindPoison(const UnwindPoison&) = delete;
+        UnwindPoison& operator=(const UnwindPoison&) = delete;
 
     private:
         Recorder& recorder;
-        std::source_location where;
-        Encoding encoding;
+        int exceptions;
     };
-    CommandEncoder::Statistics EncoderCounts() const { return encoder != nullptr ? encoder->Counts() : CommandEncoder::Statistics{}; }
-    std::vector<CommandEncoder::SiteWaits> EncoderWaitsBySite() const { return encoder != nullptr ? encoder->WaitsBySite() : std::vector<CommandEncoder::SiteWaits>{}; }
+    UnwindPoison UnwindGuard() { return UnwindPoison(*this); }
+    struct StreamStatistics {
+        std::uint64_t deferred = 0;
+        std::uint64_t direct = 0;
+        std::uint64_t refused = 0;
+        std::uint64_t demoted = 0;
+        std::uint64_t poisoned = 0;
+        std::uint64_t replayed = 0;
+        std::uint64_t replayFailed = 0;
+    };
+    StreamStatistics StreamCounts() const;
+    std::vector<std::pair<std::string, std::uint64_t>> Demotions() const;
+    std::string StreamReport() const;
+    std::uint64_t StreamOps() const { return open != nullptr && open->stream != nullptr ? open->stream->Ops() : 0; }
+    bool Deferred() const { return open != nullptr && open->stream != nullptr && open->stream->Materialized() == VK_NULL_HANDLE; }
     // APS5_PROFILE_DRAW: syncs by source (0 device idle, 1 CPU access to pending writes, 2 CPU read
     // after a recorded store, 3 address-based dispatch, 4 other). Contract: the call announces the
     // source for the Sync/SyncThrough this thread makes NEXT, which consumes it (a sync without a
@@ -760,18 +770,6 @@ private:
         bool overwritten = false;
         const Batch* batch = nullptr;
     };
-    class BatchCommands {
-    public:
-        enum class Use : std::uint8_t { Compare, Lifetime, Handoff, Interposed, Quiesced };
-        VkCommandBuffer Get(Use) const { return handle; }
-        VkCommandBuffer* Slot(Use) { return &handle; }
-        bool Same(VkCommandBuffer other) const { return handle == other; }
-        bool Empty() const { return handle == VK_NULL_HANDLE; }
-        void Clear() { handle = VK_NULL_HANDLE; }
-
-    private:
-        VkCommandBuffer handle = VK_NULL_HANDLE;
-    };
     struct SampleSegment {
         std::shared_ptr<void> pool;
         VkQueryPool handle;
@@ -780,10 +778,12 @@ private:
     };
     static_assert(std::is_nothrow_move_constructible_v<SampleSegment> && std::is_nothrow_move_assignable_v<SampleSegment>);
     struct Batch {
-        CommandEncoder::Recording recording;
+        std::unique_ptr<CommandStream> stream;
+        std::shared_ptr<SealedBatch> sealed;
+        VkCommandBuffer real = VK_NULL_HANDLE;
         std::uint64_t sampleBatch = 0;
         std::vector<SampleSegment> foldedSamples;
-        BatchCommands commands;
+        VkCommandBuffer commands = VK_NULL_HANDLE;
         CommandState graphicsState;
         VkCommandPool pool = VK_NULL_HANDLE;
         VkFence fence = VK_NULL_HANDLE;
@@ -950,11 +950,10 @@ private:
     void endSamples(Batch& batch);
     void foldSamples(Batch& batch, VkDeviceAddress target);
     bool segmentMode() const;
-    bool encodesSegmentQueries() const;
     bool segmentSlotReady(const Batch& batch) const;
     void takeSegmentPool(Batch& batch);
     void beginSegment(Batch& batch);
-    void endSegment(Batch& batch, std::source_location where = std::source_location::current());
+    void endSegment(Batch& batch);
     void copySegments(VkCommandBuffer commands, std::uint32_t count);
     void reserveSampleRestore(const Batch& batch);
     void retireSegments(std::uint32_t count);
@@ -1007,10 +1006,6 @@ private:
     PFN_vkCmdCopyQueryPoolResults cmdCopyQueryPoolResults = nullptr;
     PFN_vkCmdPushConstants cmdPushConstants = nullptr;
     PFN_vkCmdDispatch cmdDispatch = nullptr;
-    template<typename TFunction>
-    TFunction encodedOr(TFunction direct, TFunction DeviceFunctions::*member) const {
-        return direct != nullptr && encoder != nullptr && !encoder->Quiet() && encodedQueries->*member != nullptr ? encodedQueries->*member : direct;
-    }
     template<typename TFunction>
     TFunction function(TFunction resolved, FunctionName name, std::source_location where = std::source_location::current()) const {
         return resolved != nullptr ? resolved : context.Function<TFunction>(name, where);
@@ -1102,33 +1097,27 @@ private:
     // table is empty (most of the time between label groups).
     std::atomic<std::size_t> recordedLabels{0};
     std::unique_ptr<Batch> open;
-    class OwnedCommandPool {
-    public:
-        OwnedCommandPool() = default;
-        OwnedCommandPool(const OwnedCommandPool&) = delete;
-        OwnedCommandPool& operator=(const OwnedCommandPool&) = delete;
-        ~OwnedCommandPool() { Reset(); }
-        void Create(const Context& context, std::uint32_t queueFamily);
-        void Reset() noexcept;
-        VkCommandPool Get() const { return pool; }
-
-    private:
-        VkDevice device = VK_NULL_HANDLE;
-        PFN_vkDestroyCommandPool destroy = nullptr;
-        VkCommandPool pool = VK_NULL_HANDLE;
-    };
-    OwnedCommandPool encoderPool;
-    std::unique_ptr<CommandEncoder> encoder;
-    const DeviceFunctions* encodedQueries = nullptr;
-    void quiesce(std::source_location where = std::source_location::current()) {
-        if (encoder == nullptr || encoder->Quiet()) return;
-        encoder->Quiesce(where);
-        if (open != nullptr) open->recording.Report();
-    }
-    VkCommandBuffer live(std::source_location where = std::source_location::current()) {
-        quiesce(where);
-        return open->commands.Get(BatchCommands::Use::Quiesced);
-    }
+    VkCommandBuffer Begin(CommandStream& stream) override;
+    VkCommandBuffer allocateBegun();
+    std::unique_ptr<ReplayExecutor> makeExecutor();
+    bool defers() const;
+    void poisonOpen() noexcept;
+    void noteDemotion(const Demotion& demotion);
+    VkCommandBuffer live() { return open->commands; }
+    CommandFunctions realCommands;
+    FailureLatch latch;
+    WorkBudget budget{WorkBudget::Limits{}};
+    std::unique_ptr<ReplayExecutor> executor;
+    std::uint32_t queueFamily = 0;
+    bool deferring = false;
+    std::atomic<std::uint64_t> deferredBatches{0};
+    std::atomic<std::uint64_t> directBatches{0};
+    std::atomic<std::uint64_t> demotedBatches{0};
+    std::atomic<std::uint64_t> poisonedBatches{0};
+    std::atomic<std::uint64_t> replayedBatches{0};
+    std::atomic<std::uint64_t> failedReplays{0};
+    mutable std::mutex demotionMutex;
+    std::map<std::string, std::uint64_t> demotions;
     std::uint64_t passGeneration = 0;
     std::vector<std::shared_ptr<void>> holdKept;
     std::uint64_t holdKeptSerial = 0;

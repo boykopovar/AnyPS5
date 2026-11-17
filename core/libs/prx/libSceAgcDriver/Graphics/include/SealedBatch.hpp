@@ -64,6 +64,7 @@ public:
     explicit WorkBudget(Limits limits) : limits(limits) {}
     Mode Choose() const noexcept;
     void Open(const FailureLatch& latch, std::uint64_t serial, std::chrono::nanoseconds slice = std::chrono::milliseconds(1));
+    bool TryOpen() noexcept;
     void Sealed() noexcept;
     void ReplayReleased() noexcept;
     void Charge(std::size_t bytes) noexcept;
@@ -73,6 +74,7 @@ public:
     std::size_t Outstanding() const noexcept { return outstanding.load(std::memory_order_relaxed); }
     std::size_t OutstandingBytes() const noexcept { return bytes.load(std::memory_order_relaxed); }
     std::uint64_t RoomWaits() const noexcept { return roomWaits.load(std::memory_order_relaxed); }
+    std::uint64_t Refusals() const noexcept { return refusals.load(std::memory_order_relaxed); }
 
 private:
     bool room() const noexcept { return outstanding.load(std::memory_order_relaxed) < limits.outstandingBatches && bytes.load(std::memory_order_relaxed) < limits.outstandingBytes; }
@@ -81,6 +83,7 @@ private:
     std::atomic<std::size_t> outstanding{0};
     std::atomic<std::size_t> bytes{0};
     std::atomic<std::uint64_t> roomWaits{0};
+    std::atomic<std::uint64_t> refusals{0};
     std::mutex mutex;
     std::condition_variable retired;
 };
@@ -88,14 +91,14 @@ private:
 class SealedBatch {
 public:
     enum class Outcome : std::uint8_t { Pending, Encoded, ReplayFailed, Cancelled, Submitted, SubmitFailed, DeviceLost };
-    SealedBatch(std::uint64_t serial, CommandStream& stream, const DeviceFunctions& real, FailureLatch& latch, WorkBudget* budget = nullptr);
+    SealedBatch(std::uint64_t serial, CommandStream& stream, const CommandFunctions& real, FailureLatch& latch, WorkBudget* budget = nullptr);
     ~SealedBatch();
     SealedBatch(const SealedBatch&) = delete;
     SealedBatch& operator=(const SealedBatch&) = delete;
 
     std::uint64_t Serial() const noexcept { return serial; }
     const CommandStream& Stream() const noexcept { return stream; }
-    const DeviceFunctions& Real() const noexcept { return real; }
+    const CommandFunctions& Real() const noexcept { return real; }
 
     bool Superseded() const noexcept;
     bool Claim() noexcept;
@@ -124,7 +127,7 @@ private:
     void maybeRetire() noexcept;
     std::uint64_t serial;
     CommandStream& stream;
-    const DeviceFunctions& real;
+    const CommandFunctions& real;
     FailureLatch& latch;
     WorkBudget* budget;
     std::atomic<std::uint32_t> replay{Unclaimed};

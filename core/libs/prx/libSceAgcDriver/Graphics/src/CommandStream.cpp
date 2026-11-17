@@ -1,10 +1,12 @@
 #include "prx/libSceAgcDriver/Graphics/include/CommandStream.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/CommandList.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/SealedBatch.hpp"
 #include "prx/libc/include/HostThreadSlot.hpp"
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <stdexcept>
+#include <string>
 
 namespace AgcDriver::Graphics {
 
@@ -35,7 +37,7 @@ ReplayThreadScope::~ReplayThreadScope() {
 
 CommandStream::Chunk::Chunk(std::size_t capacity) : bytes(new std::byte[capacity]), capacity(capacity) {}
 
-CommandStream::CommandStream(WorkBudget* budget) : budget(budget) {}
+CommandStream::CommandStream(const CommandFunctions& functions, WorkBudget* budget, StreamMaterializer* materializer) : functions(functions), budget(budget), materializer(materializer) {}
 
 CommandStream::~CommandStream() = default;
 
@@ -43,6 +45,7 @@ std::byte* CommandStream::reserve(Run run, std::size_t payloadBytes) {
     if (OnReplayThread()) refuseReplayThreadAppend();
     try {
         if (Sealed()) throw std::logic_error("AGC graphics: a command was appended to a sealed stream");
+        if (materialized != VK_NULL_HANDLE) throw std::logic_error("AGC graphics: a command was appended to a stream after it was demoted to a command buffer");
         if (Poisoned()) std::rethrow_exception(Reason());
         const std::size_t need = RecordHeader + payloadBytes;
         if (chunks.empty() || chunks.back()->capacity - chunks.back()->used < need) {
@@ -77,13 +80,36 @@ std::exception_ptr CommandStream::Reason() const {
     return reason;
 }
 
+VkCommandBuffer CommandStream::Demote(const char* command, VkStructureType chained) {
+    if (materialized != VK_NULL_HANDLE) return materialized;
+    if (OnReplayThread()) refuseReplayThreadAppend();
+    try {
+        if (Sealed()) throw std::logic_error("AGC graphics: a sealed stream was demoted to a command buffer");
+        if (Poisoned()) std::rethrow_exception(Reason());
+        if (materializer == nullptr) throw std::logic_error(std::string("AGC graphics: ") + command + " needs a command buffer, and this stream has no way to demote to one");
+        const auto target = materializer->Begin(*this);
+        {
+            const ReplayThreadScope scope;
+            ForEach([&](Run run, const std::byte* payload) { run(payload, target, functions); });
+        }
+        materialized = target;
+        demotion = Demotion{command, chained};
+        chunks.clear();
+        return target;
+    } catch (...) {
+        Poison(std::current_exception());
+        throw;
+    }
+}
+
 void CommandStream::ReleaseMemory() noexcept {
     chunks.clear();
 }
 
-void Replay(const CommandStream& stream, VkCommandBuffer target, const DeviceFunctions& real) {
+void Replay(const CommandStream& stream, VkCommandBuffer target, const CommandFunctions& real) {
     if (!stream.Sealed()) throw std::logic_error("AGC graphics: a stream was replayed before it was sealed");
     if (stream.Poisoned()) std::rethrow_exception(stream.Reason());
+    if (stream.Materialized() != VK_NULL_HANDLE) throw std::logic_error("AGC graphics: a stream demoted to a command buffer was replayed");
     if (CommandStream::IsHandle(target)) throw std::logic_error("AGC graphics: a stream was replayed into a stream handle instead of a command buffer");
     const ReplayThreadScope scope;
     stream.ForEach([&](CommandStream::Run run, const std::byte* payload) { run(payload, target, real); });

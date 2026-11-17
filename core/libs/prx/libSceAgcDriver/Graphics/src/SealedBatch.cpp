@@ -65,6 +65,16 @@ void WorkBudget::Open(const FailureLatch& latch, std::uint64_t serial, std::chro
     outstanding.fetch_add(1, std::memory_order_relaxed);
 }
 
+bool WorkBudget::TryOpen() noexcept {
+    std::lock_guard lock(mutex);
+    if (encoding.load(std::memory_order_relaxed) >= limits.encodingBatches || !room()) {
+        refusals.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    outstanding.fetch_add(1, std::memory_order_relaxed);
+    return true;
+}
+
 void WorkBudget::Sealed() noexcept {
     encoding.fetch_add(1, std::memory_order_relaxed);
 }
@@ -86,7 +96,7 @@ void WorkBudget::Retired(std::size_t charge) noexcept {
     retired.notify_all();
 }
 
-SealedBatch::SealedBatch(std::uint64_t serial, CommandStream& stream, const DeviceFunctions& real, FailureLatch& latch, WorkBudget* budget) : serial(serial), stream(stream), real(real), latch(latch), budget(budget) {
+SealedBatch::SealedBatch(std::uint64_t serial, CommandStream& stream, const CommandFunctions& real, FailureLatch& latch, WorkBudget* budget) : serial(serial), stream(stream), real(real), latch(latch), budget(budget) {
     stream.Seal();
     if (budget != nullptr) budget->Sealed();
 }
