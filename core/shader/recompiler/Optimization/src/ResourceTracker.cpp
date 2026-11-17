@@ -1046,7 +1046,7 @@ private:
             if (!TryMakeTableColumn(*heapHandle, false, false, parent, true)) return false;
             if (parent.parentPointer == nullptr) return false;
             const bool rereadable = RereadableVsharp(*heapHandle, parent);
-            if (otherUsers && !rereadable) return false;
+            if ((otherUsers && !rereadable) || (rereadable && WrittenThrough(*heapHandle))) return false;
             if (!std::ranges::all_of(parent.reads, [&](const IrValue* read) {
                 return std::ranges::all_of(read->Uses(), [&](const IrValue* user) {
                     if (user->Opcode() != IrOpcode::GetBufferResource) return false;
