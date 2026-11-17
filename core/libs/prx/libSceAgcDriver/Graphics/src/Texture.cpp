@@ -412,10 +412,8 @@ static std::uint32_t UnmappedLevelsBelowMinLod(const GuestTextureResource& descr
     return levels;
 }
 
-static bool SparseLevelsSupported(const Context& context, const VkImageCreateInfo& info) {
-    if (!context.sparseResidencyImage2D || !context.imageViewMinLod || context.sparseImageFormatProperties == nullptr || info.imageType != VK_IMAGE_TYPE_2D) return false;
-    static const bool disabled = std::getenv("APS5_NO_SPARSE_TEXTURE_LEVELS") != nullptr;
-    if (disabled) return false;
+bool SparseImageSupported(const Context& context, const VkImageCreateInfo& info, VkImageAspectFlags aspect) {
+    if (!context.sparseResidencyImage2D || context.sparseImageFormatProperties == nullptr || info.imageType != VK_IMAGE_TYPE_2D) return false;
     if ((context.sparseQueue == VK_NULL_HANDLE || context.sparseQueueMutex == nullptr) && !GuestMemory::GpuMutex().HeldByThisThread()) return false;
     VkImageFormatProperties limits{};
     if (context.imageFormatProperties(context.physical, info.format, info.imageType, info.tiling, info.usage, info.flags | VK_IMAGE_CREATE_SPARSE_BINDING_BIT | VK_IMAGE_CREATE_SPARSE_RESIDENCY_BIT, &limits) != VK_SUCCESS) return false;
@@ -424,14 +422,19 @@ static bool SparseLevelsSupported(const Context& context, const VkImageCreateInf
     context.sparseImageFormatProperties(context.physical, info.format, info.imageType, VK_SAMPLE_COUNT_1_BIT, info.usage, info.tiling, &count, nullptr);
     std::vector<VkSparseImageFormatProperties> properties(count);
     context.sparseImageFormatProperties(context.physical, info.format, info.imageType, VK_SAMPLE_COUNT_1_BIT, info.usage, info.tiling, &count, properties.data());
-    return std::any_of(properties.begin(), properties.begin() + count, [](const VkSparseImageFormatProperties& format) { return (format.aspectMask & VK_IMAGE_ASPECT_COLOR_BIT) != 0; });
+    return std::any_of(properties.begin(), properties.begin() + count, [aspect](const VkSparseImageFormatProperties& format) { return (format.aspectMask & aspect) != 0; });
 }
 
-std::optional<SparseLevelBinds> PlanSparseLevels(VkExtent3D extent, std::uint32_t mipLevels, std::uint32_t arrayLayers, VkDeviceSize alignment, std::span<const VkSparseImageMemoryRequirements> requirements, std::uint32_t firstLevel) {
+static bool SparseLevelsSupported(const Context& context, const VkImageCreateInfo& info) {
+    static const bool disabled = std::getenv("APS5_NO_SPARSE_TEXTURE_LEVELS") != nullptr;
+    return !disabled && context.imageViewMinLod && SparseImageSupported(context, info, VK_IMAGE_ASPECT_COLOR_BIT);
+}
+
+std::optional<SparseLevelBinds> PlanSparseLevels(VkExtent3D extent, std::uint32_t mipLevels, std::uint32_t arrayLayers, VkDeviceSize alignment, std::span<const VkSparseImageMemoryRequirements> requirements, std::uint32_t firstLevel, VkImageAspectFlags aspect) {
     const VkSparseImageMemoryRequirements* color = nullptr;
     for (const auto& entry : requirements) {
         const auto aspects = entry.formatProperties.aspectMask;
-        if (aspects == VK_IMAGE_ASPECT_COLOR_BIT && color == nullptr) color = &entry;
+        if (aspects == aspect && color == nullptr) color = &entry;
         else if (aspects != VK_IMAGE_ASPECT_METADATA_BIT) return std::nullopt;
     }
     if (color == nullptr || alignment == 0 || color->formatProperties.imageGranularity.width == 0 || color->formatProperties.imageGranularity.height == 0) return std::nullopt;
@@ -445,7 +448,7 @@ std::optional<SparseLevelBinds> PlanSparseLevels(VkExtent3D extent, std::uint32_
             const auto width = std::max(extent.width >> level, 1u);
             const auto height = std::max(extent.height >> level, 1u);
             const VkDeviceSize blocks = static_cast<VkDeviceSize>((width + granularity.width - 1u) / granularity.width) * ((height + granularity.height - 1u) / granularity.height);
-            plan.levels.push_back({{VK_IMAGE_ASPECT_COLOR_BIT, level, layer}, {0, 0, 0}, {width, height, 1u}, VK_NULL_HANDLE, plan.bytes, 0});
+            plan.levels.push_back({{aspect, level, layer}, {0, 0, 0}, {width, height, 1u}, VK_NULL_HANDLE, plan.bytes, 0});
             plan.bytes += blocks * alignment;
         }
         if (tailFirst < mipLevels && (!singleTail || layer == 0)) {
@@ -465,7 +468,7 @@ std::optional<SparseLevelBinds> PlanSparseLevels(VkExtent3D extent, std::uint32_
     return plan;
 }
 
-static std::vector<VkSparseImageMemoryRequirements> SparseRequirements(const Context& context, VkImage image) {
+std::vector<VkSparseImageMemoryRequirements> SparseRequirements(const Context& context, VkImage image) {
     std::uint32_t count = 0;
     context.Function<PFN_vkGetImageSparseMemoryRequirements>("vkGetImageSparseMemoryRequirements")(context.device, image, &count, nullptr);
     std::vector<VkSparseImageMemoryRequirements> sparse(count);
@@ -474,7 +477,7 @@ static std::vector<VkSparseImageMemoryRequirements> SparseRequirements(const Con
     return sparse;
 }
 
-static VkDeviceSize BindSparseLevels(const Context& context, OwnedImage& owned, SparseLevelBinds& plan, const VkMemoryRequirements& requirements) {
+VkDeviceSize BindSparseLevels(const Context& context, OwnedImage& owned, SparseLevelBinds& plan, const VkMemoryRequirements& requirements) {
     auto& levels = plan.levels;
     auto& tails = plan.tails;
     const auto bytes = plan.bytes;

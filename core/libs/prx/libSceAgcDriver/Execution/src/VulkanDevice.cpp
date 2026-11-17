@@ -4865,6 +4865,7 @@ Graphics::Context VulkanDevice::buildContext() const {
     context.sparseResidencyBuffer = state->sparseResidencyBuffer;
     context.sparseResidencyAliased = state->sparseResidencyAliased;
     context.sparseResidencyImage2D = state->sparseResidencyImage2D;
+    context.residencyNonResidentStrict = state->properties.sparseProperties.residencyNonResidentStrict == VK_TRUE;
     context.sparseImageFormatProperties = state->sparseResidencyImage2D ? state->InstanceFunction<PFN_vkGetPhysicalDeviceSparseImageFormatProperties>("vkGetPhysicalDeviceSparseImageFormatProperties") : nullptr;
     context.queueFamily = state->queueFamily;
     context.sparseFamily = state->sparseFamily;

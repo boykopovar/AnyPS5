@@ -509,7 +509,9 @@ void UnbackedTailCase(AgcDriver::VulkanDevice& device, GuestBlock& block, std::s
         Expect(output, Bits(value), "D32 2D array of 256 slices whose last 254 lie past the committed guest memory, slice " + std::to_string(slice));
     }
     const auto held = AgcDriver::Graphics::DepthPlaneCopyBytes();
-    Require(AgcDriver::Graphics::DepthPlaneCopyCount() == 1u && held < 16u * SliceBytes, "a D32 2D array of 256 slices with 2 in committed guest memory holds " + std::to_string(held) + " bytes in " + std::to_string(AgcDriver::Graphics::DepthPlaneCopyCount()) + " depth plane copies, expected one copy of its committed slices and one zero slice");
+    const bool sparse = AgcDriver::Graphics::DepthPlaneCopyCanBeSparse(AgcDriver::VulkanDeviceTestAccess::ContextOf(device), {128, 128}, VK_FORMAT_D32_SFLOAT, lastArray + 1u);
+    std::printf("depth plane copy of uncommitted slices: %s, %zu bytes\n", sparse ? "sparse" : "every slice bound", static_cast<std::size_t>(held));
+    Require(AgcDriver::Graphics::DepthPlaneCopyCount() == 1u && (sparse ? held < 16u * SliceBytes : held >= (lastArray + 1u) * SliceBytes), "a D32 2D array of 256 slices with 2 in committed guest memory holds " + std::to_string(held) + " bytes in " + std::to_string(AgcDriver::Graphics::DepthPlaneCopyCount()) + " depth plane copies, expected " + (sparse ? "memory for its 2 committed slices only" : "every slice"));
 }
 
 void ExpectRefusal(AgcDriver::VulkanDevice& device, GuestBlock& block, std::size_t offset, const Shape& shape, std::uint32_t baseArray, const std::string& expected, const std::string& what) {

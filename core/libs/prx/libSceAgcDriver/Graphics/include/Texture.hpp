@@ -48,7 +48,11 @@ struct SparseLevelBinds {
     VkDeviceSize bytes = 0;
 };
 
-std::optional<SparseLevelBinds> PlanSparseLevels(VkExtent3D extent, std::uint32_t mipLevels, std::uint32_t arrayLayers, VkDeviceSize alignment, std::span<const VkSparseImageMemoryRequirements> requirements, std::uint32_t firstLevel);
+std::optional<SparseLevelBinds> PlanSparseLevels(VkExtent3D extent, std::uint32_t mipLevels, std::uint32_t arrayLayers, VkDeviceSize alignment, std::span<const VkSparseImageMemoryRequirements> requirements, std::uint32_t firstLevel, VkImageAspectFlags aspect = VK_IMAGE_ASPECT_COLOR_BIT);
+bool SparseImageSupported(const Context& context, const VkImageCreateInfo& info, VkImageAspectFlags aspect);
+std::vector<VkSparseImageMemoryRequirements> SparseRequirements(const Context& context, VkImage image);
+struct OwnedImage;
+VkDeviceSize BindSparseLevels(const Context& context, OwnedImage& owned, SparseLevelBinds& plan, const VkMemoryRequirements& requirements);
 bool ClearKeepsDenormals(const Context& context, VkFormat format);
 bool ClearColorForTexel(VkFormat format, std::uint32_t elementBytes, std::span<const std::uint32_t, 4> pattern, VkClearColorValue& clear);
 
