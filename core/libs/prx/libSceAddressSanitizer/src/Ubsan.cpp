@@ -163,7 +163,6 @@ struct Value {
     }
 };
 
-std::string Format(const char* format, ...) __attribute__((format(printf, 1, 2)));
 std::string Format(const char* format, ...) {
     char buffer[64];
     va_list arguments;
