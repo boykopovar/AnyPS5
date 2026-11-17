@@ -180,7 +180,9 @@ int main() {
     Require(sceNpAuthAuthorizedAppDialogGetStatus() == kStatusFinished);
 
     Require(sceNpAuthAuthorizedAppDialogGetResult(nullptr) == kErrArgNull);
+    errno = 71;
     Require(sceNpAuthAuthorizedAppDialogGetResult(reinterpret_cast<std::int32_t*>(0x10)) == invalidArgument);
+    Require(errno == 71);
     Require(sceNpAuthAuthorizedAppDialogGetResult(result) == kResultUserCanceled);
     Require(result[0] == kResultUserCanceled);
     Require(result[1] == -1);
