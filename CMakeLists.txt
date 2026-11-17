@@ -870,6 +870,11 @@ if(BUILD_TESTING)
         add_test(NAME title_run COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_title_run.py)
         set_tests_properties(title_run PROPERTIES TIMEOUT 60)
+        foreach(observation_class ShortObservationTests LongObservationTests)
+            add_test(NAME title_run_observation_${observation_class} COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_title_run_observation.py ${observation_class})
+            set_tests_properties(title_run_observation_${observation_class} PROPERTIES TIMEOUT 30)
+        endforeach()
         foreach(performance_capture_class WindowParsing CaptureEnvironment CompletedCapture InvalidSummaries InvalidTraces BoundsAndLinks LossEvidence)
             add_test(NAME performance_capture_${performance_capture_class} COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_performance_capture.py ${performance_capture_class})

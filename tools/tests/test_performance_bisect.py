@@ -146,7 +146,7 @@ class SummaryValidationTests(unittest.TestCase):
             summary = {"build": {"commit": GOOD[:7], "dirty": False}, "machine": IDENTITY,
                        "titles": {"PPSA00000": {"name": "Example", "version": "01.00",
                                                    "runs": [{"outcome": "stalled", "fps": 60}]}}}
-            for outcome, fps in (("stalled", 60), ("rendering", math.inf), ("rendering", 0)):
+            for outcome, fps in (("stalled", 60), ("incomplete", 60), ("rendering", math.inf), ("rendering", 0)):
                 summary["titles"]["PPSA00000"]["runs"] = [{"outcome": outcome, "fps": fps}]
                 path.write_text(json.dumps(summary), encoding="utf-8")
                 with self.subTest(outcome=outcome, fps=fps), self.assertRaisesRegex(ValueError, "did not render"):
