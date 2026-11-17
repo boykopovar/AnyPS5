@@ -32,7 +32,10 @@ namespace {
 
 void noteIndirectSegment(Submission& submission, std::size_t start, const std::uint32_t* target, std::size_t words) {
     if (submission.commands.size() - start != words || !std::equal(submission.commands.begin() + static_cast<std::ptrdiff_t>(start), submission.commands.end(), target)) return;
-    submission.indirectSegments.push_back({start, target, words});
+    const auto address = reinterpret_cast<std::uint64_t>(target);
+    const auto bytes = words * sizeof(std::uint32_t);
+    const bool underWrite = Graphics::Recorder::SnapshotWriteOverlaps(address, bytes) || (DrawPipeline::Active() && DrawPipeline::Queue0().Busy() && DrawPipeline::Queue0().Overlaps(address, bytes));
+    submission.indirectSegments.push_back({start, target, words, nullptr, GuestMemory::TrackerGeneration(), underWrite});
 }
 
 void collectLabelDwords(std::span<const std::uint32_t> packet, std::set<std::uint64_t>& dwords) {
@@ -308,7 +311,7 @@ bool Driver::refreshIndirectSegment(Submission& submission, std::size_t index) {
         const auto* recorder = Graphics::Recorder::Active();
         return recorder != nullptr && recorder->PendingWriterSerial(address, bytes) != 0;
     }();
-    if (!pipelineWrites && !finisherWrites && !recordedWrites) return false;
+    if (!pipelineWrites && !finisherWrites && !recordedWrites && !segment.copiedUnderWrite && !GuestMemory::DriverStoredOver(address, bytes, segment.copiedAt)) return false;
     if (pipelineWrites) DrawPipeline::Queue0().Drain(DrawPipeline::DrainReason::Packet, 0x3f);
     if (finisherWrites) DrawFinisher::Get().Drain();
     std::vector<std::uint32_t> words(segment.words);

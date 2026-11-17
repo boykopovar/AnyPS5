@@ -1823,6 +1823,25 @@ struct WriteTracker {
         return false;
     }
 
+    bool driverStoredOver(std::uint64_t address, std::uint64_t end, std::uint64_t generation) const {
+        for (auto block = blockOf(address); block <= blockOf(end - 1); ++block) {
+            const auto found = driverPieces.find(block);
+            if (found == driverPieces.end()) continue;
+            const auto begin = blockBegin(block);
+            const auto from = std::max(address, begin) - begin;
+            const auto to = std::min<std::uint64_t>(end, begin + WriteBlockBytes) - begin;
+            const auto& entry = found->second;
+            if (entry.whole > generation || entry.dropped > generation || entry.possibleWhole > generation || entry.possibleDropped > generation) return true;
+            for (const auto& piece : entry.pieces) {
+                if (piece.generation > generation && piece.begin < to && from < piece.end) return true;
+            }
+            for (const auto& piece : entry.possiblePieces) {
+                if (piece.generation > generation && piece.begin < to && from < piece.end) return true;
+            }
+        }
+        return false;
+    }
+
     bool refusedSince(std::uint64_t address, std::uint64_t end, std::uint64_t since) const {
         const auto last = blockOf(end - 1);
         for (auto it = refused.lower_bound(blockOf(address)); it != refused.end() && it->first <= last; ++it) {
@@ -2948,6 +2967,14 @@ bool StoredOver(std::uint64_t address, std::size_t bytes, std::uint64_t generati
     if (GuestArena::GuestArenaHostRegionOverlaps_nid_postfix(address, bytes)) return true;
 #endif
     return tracker.storedOver(address, address + bytes, generation, false);
+}
+
+bool DriverStoredOver(std::uint64_t address, std::size_t bytes, std::uint64_t generation) {
+    auto& tracker = Tracker();
+    const auto lock = lockTracker(tracker);
+    tracker.initialize();
+    if (!tracker.watched || generation == 0 || bytes == 0 || !tracker.covers(address, bytes)) return false;
+    return tracker.driverStoredOver(address, address + bytes, generation);
 }
 
 bool StoredAllSince_nid_no_patch(std::uint64_t address, std::size_t bytes, std::uint64_t generation) {
