@@ -70,13 +70,21 @@ void AudioOut2AccumulatePadFrame(AudioOut2Route route, const float* in, std::uin
     const auto left = route == AudioOut2Route::PadSpeaker ? AUDIO_OUT2_PAD_SPEAKER_LEFT : AUDIO_OUT2_PAD_VIBRATION_LEFT;
     const auto right = route == AudioOut2Route::PadSpeaker ? AUDIO_OUT2_PAD_SPEAKER_RIGHT : AUDIO_OUT2_PAD_VIBRATION_RIGHT;
     const auto rightSource = channels == 2 ? 1u : 0u;
-    pad[left] += in[0] * volume[0];
-    pad[right] += in[rightSource] * volume[rightSource];
+    const auto sanitize = [](float value) { return std::isfinite(value) ? value : 0.0f; };
+    const auto leftProduct = sanitize(in[0]) * sanitize(volume[0]);
+    const auto rightProduct = sanitize(in[rightSource]) * sanitize(volume[rightSource]);
+    const auto leftSum = sanitize(pad[left]) + sanitize(leftProduct);
+    const auto rightSum = sanitize(pad[right]) + sanitize(rightProduct);
+    pad[left] = sanitize(leftSum);
+    pad[right] = sanitize(rightSum);
 }
 
 void AudioOut2FinishPadMix(float* out, std::uint32_t frames) {
     const auto samples = static_cast<std::size_t>(frames) * AUDIO_OUT2_PAD_CHANNELS;
-    for (std::size_t index = 0; index < samples; index++) out[index] = std::clamp(out[index], -1.0f, 1.0f);
+    for (std::size_t index = 0; index < samples; index++) {
+        const auto sample = std::isfinite(out[index]) ? out[index] : 0.0f;
+        out[index] = std::clamp(sample, -1.0f, 1.0f);
+    }
 }
 
 std::array<std::uint8_t, 2> AudioOut2RumbleFromPadFrames(const float* pad, std::uint32_t frames) {
@@ -110,11 +118,16 @@ void AudioOut2WritePadFrames(const float* pad, const AudioOut2PadLayout& layout,
     const float gain = static_cast<float>(vibrationPercent) / 100.0f;
     for (std::uint32_t frame = 0; frame < frames; frame++) {
         for (std::uint32_t channel = 0; channel < AUDIO_OUT2_PAD_CHANNELS; channel++) {
+            const auto sample = pad[static_cast<std::size_t>(frame) * AUDIO_OUT2_PAD_CHANNELS + channel];
+            const auto finiteSample = std::isfinite(sample) ? sample : 0.0f;
             if (scaled && (channel == AUDIO_OUT2_PAD_VIBRATION_LEFT || channel == AUDIO_OUT2_PAD_VIBRATION_RIGHT)) {
-                if (vibrationPercent != 0) out[static_cast<std::size_t>(frame) * layout.channels + layout.position[channel]] = pad[static_cast<std::size_t>(frame) * AUDIO_OUT2_PAD_CHANNELS + channel] * gain;
+                if (vibrationPercent != 0) {
+                    const auto scaledSample = finiteSample * gain;
+                    out[static_cast<std::size_t>(frame) * layout.channels + layout.position[channel]] = std::isfinite(scaledSample) ? scaledSample : 0.0f;
+                }
                 continue;
             }
-            out[static_cast<std::size_t>(frame) * layout.channels + layout.position[channel]] = pad[static_cast<std::size_t>(frame) * AUDIO_OUT2_PAD_CHANNELS + channel];
+            out[static_cast<std::size_t>(frame) * layout.channels + layout.position[channel]] = finiteSample;
         }
     }
 }

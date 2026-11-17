@@ -1198,52 +1198,80 @@ int APS5_VABI sceSaveDataGetParam(const SaveDataMountPoint* mount_point, uint32_
     return rc;
 }
 
-static int getSaveDataMemory2(SaveDataMemoryGet2* get_param) {
+static int getSaveDataMemory2(SaveDataMemoryGet2* get_param, int* traceUser = nullptr, unsigned* traceSlot = nullptr) {
     if (get_param == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
     if (g_initializations == 0) {
         return SAVE_DATA_ERROR_NOT_INITIALIZED;
     }
+    SaveDataMemoryGet2 localParam{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&localParam, get_param, sizeof(localParam));
+    errno = savedErrno;
+    if (!copied) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    if (traceUser != nullptr) {
+        *traceUser = localParam.user_id;
+    }
+    if (traceSlot != nullptr) {
+        *traceSlot = localParam.slot_id;
+    }
     std::lock_guard<std::mutex> lk(g_mem_mutex);
-    replay_memory_journal(get_param->user_id, get_param->slot_id);
-    const std::string path = mem_path(get_param->user_id, get_param->slot_id, "bin");
+    replay_memory_journal(localParam.user_id, localParam.slot_id);
+    const std::string path = mem_path(localParam.user_id, localParam.slot_id, "bin");
     std::size_t size = 0;
     if (!file_size_of(path, &size)) {
         return SAVE_DATA_ERROR_MEMORY_NOT_READY;
     }
-    const SaveDataMemoryData* d = get_param->data;
-    if (d != nullptr && d->buf_size != 0) {
-        if (d->buf == nullptr || d->offset > size || d->buf_size > size - d->offset) {
+    SaveDataMemoryData localData{};
+    if (localParam.data != nullptr && !GuestCopyIn_nid_no_patch(&localData, localParam.data, sizeof(localData))) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    if (localParam.data != nullptr && localData.buf_size != 0) {
+        if (localData.buf == nullptr || localData.offset > size || localData.buf_size > size - localData.offset) {
             return SAVE_DATA_ERROR_PARAMETER;
         }
         std::ifstream f(path, std::ios::binary);
         if (!f) {
             return SAVE_DATA_ERROR_INTERNAL;
         }
-        f.seekg(static_cast<std::streamoff>(d->offset));
-        const GuestArena::HostWrite destination(d->buf, d->buf_size);
+        f.seekg(static_cast<std::streamoff>(localData.offset));
+        const GuestArena::HostWrite destination(localData.buf, localData.buf_size);
         if (!destination.Open()) {
             throw std::runtime_error("SaveData: the memory buffer is not writable");
         }
-        f.read(static_cast<char*>(d->buf), static_cast<std::streamsize>(d->buf_size));
+        f.read(static_cast<char*>(localData.buf), static_cast<std::streamsize>(localData.buf_size));
         if (!f) {
             return SAVE_DATA_ERROR_INTERNAL;
         }
     }
-    if (get_param->param != nullptr) {
-        std::memset(get_param->param, 0, sizeof(SaveDataParam));
-        read_param_file(mem_path(get_param->user_id, get_param->slot_id, "param"), get_param->param);
+    if (localParam.param != nullptr) {
+        SaveDataParam param{};
+        read_param_file(mem_path(localParam.user_id, localParam.slot_id, "param"), &param);
+        if (!GuestCopyOut_nid_no_patch(localParam.param, &param, sizeof(param))) {
+            return SAVE_DATA_ERROR_PARAMETER;
+        }
     }
-    if (get_param->icon != nullptr) {
-        get_param->icon->data_size = 0;
+    if (localParam.icon != nullptr) {
+        SaveDataIcon icon{};
+        if (!GuestCopyIn_nid_no_patch(&icon, localParam.icon, sizeof(icon))) {
+            return SAVE_DATA_ERROR_PARAMETER;
+        }
+        icon.data_size = 0;
+        if (!GuestCopyOut_nid_no_patch(localParam.icon, &icon, sizeof(icon))) {
+            return SAVE_DATA_ERROR_PARAMETER;
+        }
     }
     return SAVE_DATA_OK;
 }
 
 int APS5_VABI sceSaveDataGetSaveDataMemory2(SaveDataMemoryGet2* get_param) {
-    const int rc = getSaveDataMemory2(get_param);
-    SAVEDATA_TRACE("getMemory2 user=%d slot=%u -> 0x%08x", get_param != nullptr ? get_param->user_id : -1, get_param != nullptr ? get_param->slot_id : 0u, static_cast<unsigned>(rc));
+    int traceUser = -1;
+    unsigned traceSlot = 0;
+    const int rc = getSaveDataMemory2(get_param, &traceUser, &traceSlot);
+    SAVEDATA_TRACE("getMemory2 user=%d slot=%u -> 0x%08x", traceUser, traceSlot, static_cast<unsigned>(rc));
     return rc;
 }
 
@@ -1508,66 +1536,114 @@ int APS5_VABI sceSaveDataSetParam(const SaveDataMountPoint* mount_point, uint32_
     return rc;
 }
 
-static int setSaveDataMemory2(const SaveDataMemorySet2* set_param) {
+struct SetMemoryTrace {
+    std::int32_t user_id = -1;
+    std::uint32_t slot_id = 0;
+    std::uint32_t data_num = 0;
+};
+
+static int setSaveDataMemory2(const SaveDataMemorySet2* set_param, SetMemoryTrace* trace) {
     if (set_param == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
+    SaveDataMemorySet2 localSet{};
+    const int savedErrno = errno;
+    if (!GuestCopyIn_nid_no_patch(&localSet, set_param, sizeof(localSet))) {
+        errno = savedErrno;
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    if (trace != nullptr) {
+        trace->user_id = localSet.user_id;
+        trace->slot_id = localSet.slot_id;
+        trace->data_num = localSet.data_num;
+    }
     if (g_initializations == 0) {
+        errno = savedErrno;
         return SAVE_DATA_ERROR_NOT_INITIALIZED;
     }
     std::lock_guard<std::mutex> lk(g_mem_mutex);
-    replay_memory_journal(set_param->user_id, set_param->slot_id);
-    const std::string path = mem_path(set_param->user_id, set_param->slot_id, "bin");
+    replay_memory_journal(localSet.user_id, localSet.slot_id);
+    const std::string path = mem_path(localSet.user_id, localSet.slot_id, "bin");
     std::size_t size = 0;
     if (!file_size_of(path, &size)) {
+        errno = savedErrno;
         return SAVE_DATA_ERROR_MEMORY_NOT_READY;
     }
-    // Validate every range first so a bad entry never leaves a partial write.
-    const std::uint32_t n = set_param->data != nullptr ? (set_param->data_num != 0 ? set_param->data_num : 1u) : 0u;
-    for (std::uint32_t i = 0; i < n; i++) {
-        const SaveDataMemoryData& d = set_param->data[i];
-        if (d.buf_size == 0) {
-            continue;
-        }
-        if (d.buf == nullptr || d.offset > size || d.buf_size > size - d.offset) {
+    SaveDataParam localParam{};
+    if (localSet.param != nullptr) {
+        if (!GuestCopyIn_nid_no_patch(&localParam, localSet.param, sizeof(localParam))) {
+            errno = savedErrno;
             return SAVE_DATA_ERROR_PARAMETER;
         }
     }
+    const std::uint32_t n = localSet.data != nullptr ? (localSet.data_num != 0 ? localSet.data_num : 1u) : 0u;
     std::vector<MemoryWrite> writes;
-    for (std::uint32_t i = 0; i < n; i++) {
-        const SaveDataMemoryData& d = set_param->data[i];
-        if (d.buf_size != 0) {
-            writes.push_back({d.offset, d.buf_size, static_cast<const char*>(d.buf)});
+    std::deque<std::vector<char>> buffers;
+    std::size_t stagedBytes = 0;
+    constexpr std::size_t kChunkSize = 64;
+    std::array<SaveDataMemoryData, kChunkSize> chunk{};
+    try {
+        for (std::uint32_t offset = 0; offset < n; offset += kChunkSize) {
+            const std::uint32_t count = std::min<std::uint32_t>(kChunkSize, n - offset);
+            if (!GuestCopyIn_nid_no_patch(chunk.data(), localSet.data + offset, count * sizeof(SaveDataMemoryData))) {
+                errno = savedErrno;
+                return SAVE_DATA_ERROR_PARAMETER;
+            }
+            for (std::uint32_t i = 0; i < count; i++) {
+                const SaveDataMemoryData& d = chunk[i];
+                if (d.buf_size == 0) {
+                    continue;
+                }
+                if (d.buf == nullptr || d.offset > size || d.buf_size > size - d.offset || stagedBytes > size - d.buf_size) {
+                    errno = savedErrno;
+                    return SAVE_DATA_ERROR_PARAMETER;
+                }
+                stagedBytes += d.buf_size;
+                std::vector<char>& writeBuf = buffers.emplace_back(d.buf_size);
+                if (!GuestCopyIn_nid_no_patch(writeBuf.data(), d.buf, d.buf_size)) {
+                    errno = savedErrno;
+                    return SAVE_DATA_ERROR_PARAMETER;
+                }
+                writes.push_back({d.offset, d.buf_size, writeBuf.data()});
+            }
         }
+        if (!writes.empty()) {
+            std::fstream memory(path, std::ios::binary | std::ios::in | std::ios::out);
+            if (!memory) {
+                errno = savedErrno;
+                return SAVE_DATA_ERROR_INTERNAL;
+            }
+            const std::string journal = mem_path(localSet.user_id, localSet.slot_id, "journal");
+            const std::vector<char> bytes = encode_memory_journal(writes);
+            const bool staged = savedata::replace_file_with(path, bytes.data(), bytes.size(), [&journal](const auto& temporary, const auto&) {
+                return savedata::move_replacing(temporary, journal);
+            });
+            if (!staged) {
+                errno = savedErrno;
+                return SAVE_DATA_ERROR_INTERNAL;
+            }
+            apply_memory_journal(memory, journal, writes);
+        }
+    } catch (const std::bad_alloc&) {
+        errno = savedErrno;
+        return SAVE_DATA_ERROR_PARAMETER;
     }
-    if (!writes.empty()) {
-        std::fstream memory(path, std::ios::binary | std::ios::in | std::ios::out);
-        if (!memory) {
-            return SAVE_DATA_ERROR_INTERNAL;
-        }
-        const std::string journal = mem_path(set_param->user_id, set_param->slot_id, "journal");
-        const std::vector<char> bytes = encode_memory_journal(writes);
-        const bool staged = savedata::replace_file_with(path, bytes.data(), bytes.size(), [&journal](const auto& temporary, const auto&) {
-            return savedata::move_replacing(temporary, journal);
-        });
-        if (!staged) {
-            return SAVE_DATA_ERROR_INTERNAL;
-        }
-        apply_memory_journal(memory, journal, writes);
-    }
-    if (set_param->param != nullptr) {
+    if (localSet.param != nullptr) {
         std::vector<char> pd(sizeof(SaveDataParam));
-        std::memcpy(pd.data(), set_param->param, sizeof(SaveDataParam));
-        if (!write_file_replace(mem_path(set_param->user_id, set_param->slot_id, "param"), pd)) {
+        std::memcpy(pd.data(), &localParam, sizeof(SaveDataParam));
+        if (!write_file_replace(mem_path(localSet.user_id, localSet.slot_id, "param"), pd)) {
+            errno = savedErrno;
             return SAVE_DATA_ERROR_INTERNAL;
         }
     }
+    errno = savedErrno;
     return SAVE_DATA_OK;
 }
 
 int APS5_VABI sceSaveDataSetSaveDataMemory2(const SaveDataMemorySet2* set_param) {
-    const int rc = setSaveDataMemory2(set_param);
-    SAVEDATA_TRACE("setMemory2 user=%d slot=%u num=%u -> 0x%08x", set_param != nullptr ? set_param->user_id : -1, set_param != nullptr ? set_param->slot_id : 0u, set_param != nullptr ? set_param->data_num : 0u, static_cast<unsigned>(rc));
+    SetMemoryTrace trace{};
+    const int rc = setSaveDataMemory2(set_param, &trace);
+    SAVEDATA_TRACE("setMemory2 user=%d slot=%u num=%u -> 0x%08x", trace.user_id, trace.slot_id, trace.data_num, static_cast<unsigned>(rc));
     return rc;
 }
 
@@ -1632,12 +1708,19 @@ int APS5_VABI sceSaveDataSyncSaveDataMemory(const void* sync_param) {
     if (sync_param == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
+    std::uint32_t syncWords[2]{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(syncWords, sync_param, sizeof(syncWords));
+    errno = savedErrno;
+    if (!copied) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
     if (g_initializations == 0) {
         return SAVE_DATA_ERROR_NOT_INITIALIZED;
     }
     // Every Set already writes straight through to disk; sync only has to confirm the memory exists.
-    const std::int32_t user_id = *static_cast<const std::int32_t*>(sync_param);
-    const std::uint32_t slot_id = reinterpret_cast<const std::uint32_t*>(sync_param)[1];
+    const auto user_id = static_cast<std::int32_t>(syncWords[0]);
+    const std::uint32_t slot_id = syncWords[1];
     std::lock_guard<std::mutex> lk(g_mem_mutex);
     replay_memory_journal(user_id, slot_id);
     std::size_t size = 0;
@@ -1674,9 +1757,14 @@ int APS5_VABI sceSaveDataTerminate(void) {
 static int transferringMount(const SaveDataTransferringMount* mount, SaveDataMountResult* mount_result) {
     (void)mount;
     if (mount_result != nullptr) {
-        std::memset(mount_result, 0, sizeof(*mount_result));
+        SaveDataMountResult localResult{};
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(mount_result, &localResult, sizeof(localResult));
+        errno = savedErrno;
+        if (!copied) {
+            return SAVE_DATA_ERROR_PARAMETER;
+        }
     }
-    // No PS4-to-PS5 transfer data exists on this console.
     return SAVE_DATA_ERROR_NOT_FOUND;
 }
 
@@ -1716,18 +1804,35 @@ int APS5_VABI sceSaveDataTransferringMountPs4(const SaveDataTransferringMount* m
     return rc;
 }
 
-static int dirNameSearchPs4(const SaveDataDirNameSearchCond* cond, SaveDataDirNameSearchResult* result) {
+static int dirNameSearchPs4(const SaveDataDirNameSearchCond* cond, SaveDataDirNameSearchResult* result, int* traceUser) {
     if (cond == nullptr || result == nullptr) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
-    result->hit_num = 0;
-    result->set_num = 0;
+    SaveDataDirNameSearchCond localCond{};
+    SaveDataDirNameSearchResult localResult{};
+    const int savedErrno = errno;
+    const bool copiedCond = GuestCopyIn_nid_no_patch(&localCond, cond, sizeof(localCond));
+    const bool copiedResultIn = GuestCopyIn_nid_no_patch(&localResult, result, sizeof(localResult));
+    errno = savedErrno;
+    if (!copiedCond || !copiedResultIn) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
+    if (traceUser != nullptr) *traceUser = localCond.user_id;
+    localResult.hit_num = 0;
+    localResult.set_num = 0;
+    const int savedCopyErrno = errno;
+    const bool copiedResultOut = GuestCopyOut_nid_no_patch(result, &localResult, sizeof(localResult));
+    errno = savedCopyErrno;
+    if (!copiedResultOut) {
+        return SAVE_DATA_ERROR_PARAMETER;
+    }
     return SAVE_DATA_OK;
 }
 
 int APS5_VABI sceSaveDataDirNameSearchPs4(const SaveDataDirNameSearchCond* cond, SaveDataDirNameSearchResult* result) {
-    const int rc = dirNameSearchPs4(cond, result);
-    SAVEDATA_TRACE("dirNameSearchPs4 user=%d -> 0x%08x", cond != nullptr ? cond->user_id : -1, static_cast<unsigned>(rc));
+    int user = -1;
+    const int rc = dirNameSearchPs4(cond, result, &user);
+    SAVEDATA_TRACE("dirNameSearchPs4 user=%d -> 0x%08x", user, static_cast<unsigned>(rc));
     return rc;
 }
 
@@ -1780,7 +1885,10 @@ static int getConvertProgress(float* progress) {
         return SAVE_DATA_ERROR_NOT_INITIALIZED;
     }
     const float current = g_convertProgress.load();
-    if (!GuestCopyOut_nid_no_patch(progress, &current, sizeof(current))) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(progress, &current, sizeof(current));
+    errno = savedErrno;
+    if (!copied) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
     return SAVE_DATA_OK;
@@ -1996,9 +2104,64 @@ int APS5_VABI sceSaveDataDownload(void) {
     return 0;
 }
 
-int APS5_VABI sceSaveDataGetAllSize() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+static bool save_tree_bytes(const std::string& path, std::uint64_t& bytes) {
+    bytes = 0;
+    std::error_code error;
+    std::filesystem::recursive_directory_iterator it(path, error);
+    const std::filesystem::recursive_directory_iterator end;
+    while (!error && it != end) {
+        const bool regular = it->is_regular_file(error);
+        if (error) return false;
+        if (regular) {
+            const auto size = it->file_size(error);
+            if (error) return false;
+            bytes += size;
+        }
+        it.increment(error);
+    }
+    return !error;
+}
+
+static bool save_root_is_directory(std::error_code& error) {
+    const bool exists = std::filesystem::is_directory(save_root(), error);
+    if (error == std::errc::no_such_file_or_directory) {
+        error.clear();
+    }
+    return exists;
+}
+
+static bool save_directory_paths(std::vector<std::filesystem::path>& paths) {
+    paths.clear();
+    std::error_code error;
+    if (!save_root_is_directory(error)) return !error;
+    std::filesystem::directory_iterator it(save_root(), error);
+    const std::filesystem::directory_iterator end;
+    while (!error && it != end) {
+        const bool directory = it->is_directory(error);
+        if (error) return false;
+        if (directory) paths.push_back(it->path());
+        it.increment(error);
+    }
+    return !error;
+}
+
+int APS5_VABI sceSaveDataGetAllSize(std::int32_t reserved, std::uint64_t* size) {
+    static_cast<void>(reserved);
+    if (g_initializations == 0) return SAVE_DATA_ERROR_NOT_INITIALIZED;
+    if (size == nullptr) return SAVE_DATA_ERROR_PARAMETER;
+    std::uint64_t bytes = 0;
+    std::vector<std::filesystem::path> paths;
+    if (!save_directory_paths(paths)) return SAVE_DATA_ERROR_INTERNAL;
+    for (const auto& path : paths) {
+        std::uint64_t entryBytes = 0;
+        if (!save_tree_bytes(path.string(), entryBytes)) return SAVE_DATA_ERROR_INTERNAL;
+        bytes += entryBytes;
+    }
+    const std::uint64_t kib = (bytes + 1023) / 1024;
+    const int savedErrno = errno;
+    const bool written = GuestCopyOut_nid_no_patch(size, &kib, sizeof(kib));
+    errno = savedErrno;
+    return written ? SAVE_DATA_OK : SAVE_DATA_ERROR_PARAMETER;
 }
 
 int APS5_VABI sceSaveDataGetAppLaunchedUser(void) {
@@ -2065,7 +2228,10 @@ static int getProgress(float* progress) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
     const float current = g_backupProgress.load();
-    if (!GuestCopyOut_nid_no_patch(progress, &current, sizeof(current))) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(progress, &current, sizeof(current));
+    errno = savedErrno;
+    if (!copied) {
         return SAVE_DATA_ERROR_PARAMETER;
     }
     return SAVE_DATA_OK;
@@ -2077,9 +2243,18 @@ int APS5_VABI sceSaveDataGetProgress(float* progress) {
     return rc;
 }
 
-int APS5_VABI sceSaveDataGetSaveDataCount() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
+int APS5_VABI sceSaveDataGetSaveDataCount(std::int32_t reserved, std::uint32_t* count) {
+    static_cast<void>(reserved);
+    if (g_initializations == 0) return SAVE_DATA_ERROR_NOT_INITIALIZED;
+    if (count == nullptr) return SAVE_DATA_ERROR_PARAMETER;
+    std::uint32_t total = 0;
+    std::vector<std::filesystem::path> paths;
+    if (!save_directory_paths(paths)) return SAVE_DATA_ERROR_INTERNAL;
+    total = static_cast<std::uint32_t>(paths.size());
+    const int savedErrno = errno;
+    const bool written = GuestCopyOut_nid_no_patch(count, &total, sizeof(total));
+    errno = savedErrno;
+    return written ? SAVE_DATA_OK : SAVE_DATA_ERROR_PARAMETER;
 }
 
 int APS5_VABI sceSaveDataGetSaveDataRootDir(void) {

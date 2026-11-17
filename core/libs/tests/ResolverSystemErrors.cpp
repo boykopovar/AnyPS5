@@ -4,6 +4,7 @@
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <netdb.h>
 #include <sys/socket.h>
 
@@ -32,6 +33,16 @@ extern "C" int __wrap_getaddrinfo(const char*, const char*, const addrinfo*, add
 
 extern "C" int __wrap_getnameinfo(const sockaddr*, socklen_t, char*, socklen_t, char*, socklen_t, int) {
     return Fail();
+}
+
+extern "C" bool GuestCopyOut_nid_no_patch(void* destination, const void* source, std::size_t bytes) {
+    std::memcpy(destination, source, bytes);
+    return true;
+}
+
+extern "C" bool GuestCopyIn_nid_no_patch(void* destination, const void* source, std::size_t bytes) {
+    std::memcpy(destination, source, bytes);
+    return true;
 }
 
 int main() {

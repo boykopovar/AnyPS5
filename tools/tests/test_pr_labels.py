@@ -258,6 +258,16 @@ class NumbersTests(unittest.TestCase):
         broken["presents"] = 0
         self.assertFalse(pr_labels.has_numbers(summary("a") + "\n" + json.dumps(broken)))
 
+    def test_a_graphics_track_count_beyond_the_float_range_is_not_counted(self):
+        for name in ("Graphics.RenderPass", "Graphics.Barrier.Layout", "Graphics.Copy.bytes"):
+            with self.subTest(name=name):
+                first, second = json.loads(summary("a")), json.loads(summary("b"))
+                first["graphics_track"] = {name: 1}
+                second["graphics_track"] = {name: 10 ** 400}
+                self.assertFalse(pr_labels.has_numbers(json.dumps(first) + "\n" + json.dumps(second)))
+                second["graphics_track"] = {name: 2}
+                self.assertTrue(pr_labels.has_numbers(json.dumps(first) + "\n" + json.dumps(second)))
+
 
 class LabelTests(unittest.TestCase):
     def test_tooling_perf_is_labeled_without_asking_for_a_capture(self):
