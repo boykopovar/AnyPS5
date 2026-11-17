@@ -11,11 +11,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <limits>
 #include <source_location>
 #include <stdexcept>
 #include <thread>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 #ifdef _WIN32
 #include <windows.h>
@@ -114,6 +116,7 @@ void Rejects(Function function, std::source_location location = std::source_loca
 
 std::unordered_map<void*, std::size_t> allocations;
 int allocationsUntilFailure = -1;
+std::function<void()> onAllocation;
 
 bool FailAllocation() {
     if (allocationsUntilFailure == 0) {
@@ -135,6 +138,7 @@ void* APS5_VABI Allocate_nid_no_patch(std::size_t size) {
 
 void* APS5_VABI Calloc_nid_no_patch(std::size_t count, std::size_t size) {
     if (FailAllocation()) return nullptr;
+    if (onAllocation) std::exchange(onAllocation, nullptr)();
     void* result = std::calloc(count, size);
     Require(result != nullptr);
     allocations.emplace(result, count * size);
@@ -288,6 +292,14 @@ void TestGuestPointers() {
     storePage.Protect();
     Rejects([&] { X509_STORE_up_ref_nid_postfix(readOnlyStore); });
     Require(readOnlyStore->references == 3);
+
+    Require(allocations.empty());
+    ReadOnlyPage lateContextPage;
+    auto* const lateReadOnlyContext = lateContextPage.Set(contextValue);
+    onAllocation = [&] { lateContextPage.Protect(); };
+    Rejects([&] { X509_STORE_CTX_init_nid_postfix(lateReadOnlyContext, nullptr, nullptr, nullptr); });
+    Require(!onAllocation && std::memcmp(lateReadOnlyContext, &contextValue, sizeof(contextValue)) == 0);
+    Require(allocations.empty());
 }
 
 constexpr std::uint64_t MallocFailure = 0x0bfff041;

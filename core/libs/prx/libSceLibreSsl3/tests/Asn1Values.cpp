@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <limits>
 #include <source_location>
 #include <stdexcept>
@@ -32,11 +33,13 @@ void Require(bool condition, std::source_location location = std::source_locatio
 
 std::unordered_map<void*, std::size_t> allocations;
 bool failAllocation = false;
+std::function<void()> onAllocation;
 void* clearing = nullptr;
 std::size_t clearingLength = 0;
 
 void* APS5_VABI Allocate_nid_no_patch(std::size_t size) {
     if (std::exchange(failAllocation, false)) return nullptr;
+    if (onAllocation) std::exchange(onAllocation, nullptr)();
     void* result = std::malloc(size);
     Require(result != nullptr);
     Require(allocations.emplace(result, size).second);
@@ -316,6 +319,14 @@ void X509VersionGuestPointers() {
     Require(X509_get_version_nid_postfix(&readOnlyCertificate) == 0);
     Rejects([&] { X509_set_version_nid_postfix(&readOnlyCertificate, 1); });
     Require(std::memcmp(readOnly, &info, sizeof(info)) == 0);
+
+    ReadOnlyPage protectedOnAllocation;
+    auto* const lateReadOnly = protectedOnAllocation.Set(info);
+    auto lateCertificate = CertificateWith(*lateReadOnly);
+    onAllocation = [&] { protectedOnAllocation.Protect(); };
+    Rejects([&] { X509_set_version_nid_postfix(&lateCertificate, 1); });
+    Require(!onAllocation && std::memcmp(lateReadOnly, &info, sizeof(info)) == 0);
+    Require(allocations.empty());
 }
 
 } // namespace

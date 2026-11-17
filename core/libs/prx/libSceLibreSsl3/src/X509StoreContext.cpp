@@ -342,8 +342,10 @@ int APS5_VABI X509_STORE_CTX_init_nid_postfix(LibreSslX509StoreContext* context,
     initialised.callbacks[IssuedCallback] = reinterpret_cast<void*>(CheckIssued);
     auto* const param = NewVerifyParam();
     initialised.param = param;
-    if (!CopyGuestOutPreservingErrno(context, initialised))
+    if (!CopyGuestOutPreservingErrno(context, initialised)) {
+        if (param) FreeVerifyParam(param);
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    }
     if (!param) return Fail();
     bool inherited = true;
     if (store)

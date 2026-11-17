@@ -109,8 +109,10 @@ int APS5_VABI X509_set_version_nid_postfix(LibreSsl3X509* certificate, std::int6
         integer = static_cast<Asn1String*>(calloc_nid_postfix(1, sizeof(Asn1String)));
         if (!integer) return 0;
         integer->type = IntegerType;
-        if (!CopyGuestOutPreservingErrno(&info->version, integer))
+        if (!CopyGuestOutPreservingErrno(&info->version, integer)) {
+            free_nid_postfix(integer);
             NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        }
     }
     if (!CopyGuestOutPreservingErrno(&info->encModified, std::int32_t{1}))
         NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
