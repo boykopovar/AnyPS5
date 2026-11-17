@@ -8,6 +8,7 @@
 #include <climits>
 #include <cstdarg>
 #include <cstring>
+#include <memory>
 #include <new>
 #ifdef _WIN32
 #include <io.h>
@@ -32,13 +33,13 @@ GuestWriteHook_nid_no_patch LibcGetGuestWriteHook_nid_no_patch() {
 }
 
 char* APS5_VABI strndup_nid_postfix(const char* source, std::size_t limit) {
-    if (!source) { errno = 22; return nullptr; }
+    if (!source && limit != 0) { errno = 22; return nullptr; }
     std::size_t length = 0;
     while (length < limit && source[length] != '\0') ++length;
     try {
         auto* result = static_cast<char*>(ApplicationHeapAllocate_nid_no_patch(length + 1));
         if (!result) { errno = 12; return nullptr; }
-        std::memcpy(result, source, length);
+        if (length > 0) { std::memcpy(result, source, length); }
         result[length] = '\0';
         return result;
     } catch (const std::bad_alloc&) {
@@ -77,9 +78,11 @@ int APS5_VABI vdprintf_nid_postfix(int descriptor, const char* format, VaList* a
         errno = 9;
         return -1;
     }
+    const int savedCallerErrno = errno;
     char* text = nullptr;
     const int count = vasprintf_nid_postfix(&text, format, args);
     if (count < 0) return -1;
+    std::unique_ptr<char, decltype(&ApplicationHeapFree_nid_no_patch)> owner(text, ApplicationHeapFree_nid_no_patch);
     std::size_t remaining = static_cast<std::size_t>(count);
     const char* ptr = text;
     int writeError = 0;
@@ -110,11 +113,12 @@ int APS5_VABI vdprintf_nid_postfix(int descriptor, const char* format, VaList* a
         ptr += written;
         remaining -= static_cast<std::size_t>(written);
     }
-    ApplicationHeapFree_nid_no_patch(text);
+    owner.reset();
     if (remaining > 0) {
         if (writeError != 0) errno = writeError;
         return -1;
     }
+    errno = savedCallerErrno;
     return count;
 }
 

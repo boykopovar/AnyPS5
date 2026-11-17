@@ -118,6 +118,7 @@ void MatchSize() {
     Require(FT_Match_Size_nid_postfix(&fixture.face, &request, 0, &index) == 0 && index == 0, "a missing width takes the height and both round to pixels");
     request = {0, 12, 0, 96 * 64, 0};
     Require(FT_Match_Size_nid_postfix(&fixture.face, &request, 0, nullptr) == 0, "the resolution scales the request and the index is optional");
+    Require(FT_Match_Size_nid_postfix(&fixture.face, &request, 0, reinterpret_cast<std::uint64_t*>(0x10)) == 0x06, "an unwritable size index is refused");
     request = {3, 16 * 64, 16 * 64, 0, 0};
     Require(FT_Match_Size_nid_postfix(&fixture.face, &request, 0, &index) == 0x07, "only nominal requests are matched");
     Fixture outlineOnly(1);

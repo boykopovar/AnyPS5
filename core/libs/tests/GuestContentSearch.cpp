@@ -1,4 +1,5 @@
 #include "prx/libSceContentSearch/include/Api.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "SceTypes.hpp"
 #include <cerrno>
 #include <cstdint>
@@ -9,6 +10,10 @@
 #include <stdexcept>
 
 namespace {
+
+void ClobberErrno(std::uintptr_t, std::size_t) {
+    errno = 99;
+}
 
 void Require(bool value) { if (!value) std::abort(); }
 
@@ -40,6 +45,8 @@ constexpr int ErrorLimitTooBig = static_cast<int>(0x809D100Au);
 }
 
 int main() {
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     ContentSearchInitParam param{3 * 1024 * 1024};
     ContentSearchColumnValue photo{8, 1};
     ContentSearchContentColumn column{3, 0, &photo, 2};
@@ -80,6 +87,20 @@ int main() {
     Require(sceContentSearchInit(nullptr) == ErrorAlreadyInitialized);
     Require(sceContentSearchInit(&param) == ErrorAlreadyInitialized);
 
+    const auto* invalidSets = reinterpret_cast<const ContentSearchContentColumnSet*>(0x10);
+    const auto* invalidOrders = reinterpret_cast<const ContentSearchContentOrderByCondition*>(0x10);
+    ContentSearchContentColumnSet invalidNestedSet{reinterpret_cast<const ContentSearchContentColumn*>(0x10), 1, 2};
+    ContentSearchContentColumnSet setsWithInvalidSecond[] = {columnSet, invalidNestedSet};
+    count = -1;
+    updateId = -1;
+    errno = 71;
+    Require(sceContentSearchGetNumOfContent(invalidSets, 1, &count, &updateId) == ErrorInvalidArgument);
+    Require(sceContentSearchGetTotalContentSize(&invalidNestedSet, 1, &size, &updateId) == ErrorInvalidArgument);
+    Require(sceContentSearchGetNumOfApplication(&columnSet, 1, invalidOrders, 1, &count, &updateId) == ErrorInvalidArgument);
+    Require(sceContentSearchSearchContent(setsWithInvalidSecond, 2, &orderBy, 1, 0, 1, &count, infos, &updateId) == ErrorInvalidArgument);
+    Require(sceContentSearchSearchContent(&columnSet, 1, invalidOrders, 1, 0, 1, &count, infos, &updateId) == ErrorInvalidArgument);
+    Require(count == -1 && updateId == -1 && size == -1 && errno == 71);
+
     Require(sceContentSearchGetContentLastUpdateId(&updateId) == 0);
     Require(updateId == 0);
     updateId = -1;
@@ -96,6 +117,15 @@ int main() {
     updateId = -1;
     Require(sceContentSearchSearchContent(&columnSet, 1, &orderBy, 1, 0, 92, &count, infos, &updateId) == 0);
     Require(count == 0 && updateId == 0);
+    count = -1;
+    updateId = -1;
+    errno = 71;
+    Require(sceContentSearchSearchContent(nullptr, 0, nullptr, 0, 0, 1,
+        reinterpret_cast<std::int64_t*>(0x10), infos, &updateId) == ErrorInvalidArgument);
+    Require(updateId == -1 && errno == 71);
+    Require(sceContentSearchSearchContent(nullptr, 0, nullptr, 0, 0, 1,
+        &count, infos, reinterpret_cast<std::int64_t*>(0x10)) == ErrorInvalidArgument);
+    Require(count == 0 && errno == 71);
     count = -1;
     updateId = -1;
     Require(sceContentSearchSearchContent(&columnSet, 1, &orderBy, 1, 0, 93, &count, infos, &updateId) == ErrorLimitTooBig);
@@ -115,32 +145,62 @@ int main() {
     Require(count == 0 && updateId == 0);
     count = -1;
     updateId = -1;
+    errno = 71;
+    Require(sceContentSearchGetNumOfApplication(nullptr, 0, nullptr, 0,
+        reinterpret_cast<std::int64_t*>(0x10), &updateId) == ErrorInvalidArgument);
+    Require(updateId == -1 && errno == 71);
+    Require(sceContentSearchGetNumOfApplication(nullptr, 0, nullptr, 0,
+        &count, reinterpret_cast<std::int64_t*>(0x10)) == ErrorInvalidArgument);
+    Require(count == 0 && errno == 71);
+    count = -1;
+    updateId = -1;
 
     Require(sceContentSearchGetContentLastUpdateId(nullptr) == ErrorInvalidArgument);
+    errno = 71;
     Require(sceContentSearchGetContentLastUpdateId(reinterpret_cast<std::int64_t*>(0x10)) == ErrorInvalidArgument);
+    Require(errno == 71);
+    errno = 71;
+    Require(sceContentSearchGetContentLastUpdateId(&updateId) == 0);
+    Require(errno == 71);
     Require(sceContentSearchGetApplicationLastUpdateId(nullptr) == ErrorInvalidArgument);
     Require(sceContentSearchGetMyApplicationIndex(nullptr) == ErrorInvalidArgument);
+    errno = 71;
+    Require(sceContentSearchGetMyApplicationIndex(reinterpret_cast<std::int32_t*>(0x10)) == ErrorInvalidArgument);
+    Require(errno == 71);
     Require(sceContentSearchGetNumOfApplication(&columnSet, 1, &orderBy, 1, nullptr, &updateId) == ErrorInvalidArgument);
     Require(sceContentSearchGetNumOfApplication(&columnSet, 1, &orderBy, 1, &count, nullptr) == ErrorInvalidArgument);
     Require(sceContentSearchGetNumOfApplication(&columnSet, 1, &orderBy, 0, &count, &updateId) == ErrorInvalidArgument);
     Require(sceContentSearchGetNumOfApplication(&columnSet, 0, &orderBy, 1, &count, &updateId) == ErrorInvalidArgument);
     Require(sceContentSearchGetNumOfContent(&columnSet, 1, nullptr, &updateId) == ErrorInvalidArgument);
+    errno = 71;
     Require(sceContentSearchGetNumOfContent(&columnSet, 1, reinterpret_cast<std::int64_t*>(0x10), &updateId) == ErrorInvalidArgument);
+    Require(errno == 71);
     count = -1;
     Require(sceContentSearchGetNumOfContent(&columnSet, 1, &count, nullptr) == ErrorInvalidArgument);
     Require(count == -1);
+    errno = 71;
     Require(sceContentSearchGetNumOfContent(&columnSet, 1, &count, reinterpret_cast<std::int64_t*>(0x10)) == ErrorInvalidArgument);
-    Require(count == 0);
+    Require(count == 0 && errno == 71);
+    errno = 71;
+    Require(sceContentSearchGetNumOfContent(&columnSet, 1, &count, &updateId) == 0);
+    Require(errno == 71);
     Require(sceContentSearchGetTotalContentSize(nullptr, 1, &size, &updateId) == ErrorInvalidArgument);
     Require(sceContentSearchGetTotalContentSize(nullptr, 0, nullptr, &updateId) == ErrorInvalidArgument);
+    errno = 71;
     Require(sceContentSearchGetTotalContentSize(nullptr, 0, reinterpret_cast<std::int64_t*>(0x10), &updateId) == ErrorInvalidArgument);
+    Require(errno == 71);
     size = -1;
     Require(sceContentSearchGetTotalContentSize(nullptr, 0, &size, nullptr) == ErrorInvalidArgument);
     Require(size == -1);
+    errno = 71;
     Require(sceContentSearchGetTotalContentSize(nullptr, 0, &size, reinterpret_cast<std::int64_t*>(0x10)) == ErrorInvalidArgument);
-    Require(size == 0);
+    Require(size == 0 && errno == 71);
+    errno = 71;
+    Require(sceContentSearchGetTotalContentSize(nullptr, 0, &size, &updateId) == 0);
+    Require(errno == 71);
     count = -1;
     size = -1;
+    updateId = -1;
     std::int32_t metadataType = 0, fieldSize = 0;
     Require(sceContentSearchGetMetadataFieldInfo(1, nullptr, nullptr, nullptr) == ErrorInvalidArgument);
     Require(sceContentSearchGetMetadataFieldInfo(1, "field", nullptr, &fieldSize) == ErrorInvalidArgument);
@@ -200,4 +260,6 @@ int main() {
     Require(sceContentBinderTerminate() == binderResult);
 
     Require(ThrowsRuntimeError([] { sceContentSearchSearchApplication(); }));
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
 }

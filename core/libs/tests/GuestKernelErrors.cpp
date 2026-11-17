@@ -5,6 +5,7 @@
 #include "prx/libkernel/Pthread/include/Rwlock.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -164,7 +165,65 @@ static void CheckMutexInitDestroyFaults() {
     Require(scePthreadMutexDestroy(&second) == SCE_OK);
 }
 
+struct PollConsoleCase {
+    std::uint64_t pattern;
+    std::uint32_t mode;
+    int result;
+    std::uint64_t stateAfter;
+};
+
+static std::uint64_t PollState(KernelEventFlag ef) {
+    std::uint64_t state = 0xa5a5a5a5;
+    const int result = sceKernelPollEventFlag(ef, 0xffffffff, EVF_WAITMODE_OR, &state);
+    Require(result == SCE_OK || result == SCE_KERNEL_ERROR_EBUSY);
+    return state;
+}
+
+static void CheckPollEventFlagMatchesConsole() {
+    constexpr std::uint64_t INITIAL = 0x5;
+    constexpr std::uint64_t UNTOUCHED = 0x5a5a5a5a5a5a5a5a;
+    constexpr int OK = SCE_OK;
+    constexpr int BUSY = SCE_KERNEL_ERROR_EBUSY;
+    constexpr int INVALID = SCE_KERNEL_ERROR_EINVAL;
+    constexpr std::uint32_t AND_ALL = EVF_WAITMODE_AND | EVF_WAITMODE_CLEAR_ALL;
+    constexpr std::uint32_t OR_ALL = EVF_WAITMODE_OR | EVF_WAITMODE_CLEAR_ALL;
+    constexpr std::uint32_t AND_PAT = EVF_WAITMODE_AND | EVF_WAITMODE_CLEAR_PAT;
+    constexpr std::uint32_t OR_PAT = EVF_WAITMODE_OR | EVF_WAITMODE_CLEAR_PAT;
+    constexpr std::uint32_t BOTH_CLEARS = EVF_WAITMODE_CLEAR_ALL | EVF_WAITMODE_CLEAR_PAT;
+    const PollConsoleCase cases[] = {
+        {0x1, EVF_WAITMODE_AND, OK, 0x5},   {0x1, EVF_WAITMODE_OR, OK, 0x5},   {0x1, AND_ALL, OK, 0x0},
+        {0x1, OR_ALL, OK, 0x0},             {0x1, AND_PAT, OK, 0x4},           {0x1, OR_PAT, OK, 0x4},
+        {0x1, EVF_WAITMODE_AND | BOTH_CLEARS, INVALID, 0x5}, {0x1, EVF_WAITMODE_OR | BOTH_CLEARS, INVALID, 0x5},
+        {0x3, EVF_WAITMODE_AND, BUSY, 0x5}, {0x3, EVF_WAITMODE_OR, OK, 0x5},   {0x3, AND_ALL, BUSY, 0x5},
+        {0x3, OR_ALL, OK, 0x0},             {0x3, AND_PAT, BUSY, 0x5},         {0x3, OR_PAT, OK, 0x4},
+        {0x3, EVF_WAITMODE_AND | BOTH_CLEARS, INVALID, 0x5}, {0x3, EVF_WAITMODE_OR | BOTH_CLEARS, INVALID, 0x5},
+        {0x4, EVF_WAITMODE_AND, OK, 0x5},   {0x4, EVF_WAITMODE_OR, OK, 0x5},   {0x4, AND_ALL, OK, 0x0},
+        {0x4, OR_ALL, OK, 0x0},             {0x4, AND_PAT, OK, 0x1},           {0x4, OR_PAT, OK, 0x1},
+        {0x4, EVF_WAITMODE_AND | BOTH_CLEARS, INVALID, 0x5}, {0x4, EVF_WAITMODE_OR | BOTH_CLEARS, INVALID, 0x5},
+        {0xffffffff, EVF_WAITMODE_OR, OK, 0x5}, {0x80000000, EVF_WAITMODE_OR, BUSY, 0x5},
+        {0x0, EVF_WAITMODE_AND, INVALID, 0x5},  {0x1, 0x0, INVALID, 0x5}, {0x1, EVF_WAITMODE_AND | EVF_WAITMODE_OR, INVALID, 0x5},
+    };
+    for (const PollConsoleCase& entry : cases) {
+        KernelEventFlag ef = nullptr;
+        Require(sceKernelCreateEventFlag(&ef, "poll_console", EVF_ATTR_MULTI, INITIAL, nullptr) == SCE_OK);
+        std::uint64_t result = UNTOUCHED;
+        Require(sceKernelPollEventFlag(ef, entry.pattern, entry.mode, &result) == entry.result);
+        Require(result == (entry.result == INVALID ? UNTOUCHED : INITIAL));
+        Require(PollState(ef) == entry.stateAfter);
+        Require(sceKernelDeleteEventFlag(ef) == SCE_OK);
+    }
+
+    KernelEventFlag deleted = nullptr;
+    Require(sceKernelCreateEventFlag(&deleted, "poll_deleted", EVF_ATTR_MULTI, INITIAL, nullptr) == SCE_OK);
+    Require(sceKernelDeleteEventFlag(deleted) == SCE_OK);
+    std::uint64_t result = UNTOUCHED;
+    Require(sceKernelPollEventFlag(deleted, 0x1, EVF_WAITMODE_AND, &result) == SCE_KERNEL_ERROR_ESRCH);
+    Require(sceKernelPollEventFlag(nullptr, 0x1, EVF_WAITMODE_AND, &result) == SCE_KERNEL_ERROR_ESRCH);
+    Require(sceKernelPollEventFlag(reinterpret_cast<KernelEventFlag>(0x1234), 0x1, EVF_WAITMODE_AND, &result) == SCE_KERNEL_ERROR_ESRCH);
+}
+
 int main() {
+    CheckPollEventFlagMatchesConsole();
     CheckMutexInitDestroyFaults();
     CheckTimedRwlockWithReader();
     constexpr int maximum = std::numeric_limits<int>::max();
@@ -195,10 +254,13 @@ int main() {
     Require(count == 0);
     Require(sceKernelWaitEqueue(eq, nullptr, 1, &count, &timeout) == SCE_KERNEL_ERROR_EFAULT);
     Require(sceKernelWaitEqueue(eq, &event, 0, &count, &timeout) == SCE_KERNEL_ERROR_EINVAL);
+    Require(sceKernelWaitEqueue(eq, &event, -1, &count, &timeout) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelDeleteUserEvent(eq, 7) == SCE_KERNEL_ERROR_ENOENT);
     Require(sceKernelDeleteEqueue(eq) == SCE_OK);
     Require(sceKernelDeleteEqueue(eq) == SCE_KERNEL_ERROR_EBADF);
     Require(sceKernelWaitEqueue(eq, &event, 1, &count, &timeout) == SCE_KERNEL_ERROR_EBADF);
+    Require(sceKernelWaitEqueue(0, &event, 1, &count, &timeout) == SCE_KERNEL_ERROR_EBADF);
+    Require(sceKernelWaitEqueue(1, &event, 1, &count, &timeout) == SCE_KERNEL_ERROR_EBADF);
     Require(sceKernelCreateEqueue(nullptr, "errors") == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelCreateEqueue(&eq, nullptr) == SCE_KERNEL_ERROR_EINVAL);
 
@@ -329,6 +391,11 @@ int main() {
     KernelEventFlag ef = nullptr;
     Require(sceKernelCreateEventFlag(nullptr, "test", EVF_ATTR_MULTI, 0, nullptr) == SCE_KERNEL_ERROR_EINVAL);
     Require(sceKernelCreateEventFlag(&ef, nullptr, EVF_ATTR_MULTI, 0, nullptr) == SCE_KERNEL_ERROR_EINVAL);
+    MutexFaultPages eventNamePages;
+    const auto* unreadableEventName = static_cast<const char*>(eventNamePages.Unreadable());
+    KernelEventFlag invalidNameHandle = nullptr;
+    Require(sceKernelCreateEventFlag(&invalidNameHandle, unreadableEventName, EVF_ATTR_SINGLE | EVF_ATTR_MULTI, 0, nullptr) == SCE_KERNEL_ERROR_EINVAL && invalidNameHandle == nullptr);
+    Require(sceKernelCreateEventFlag(&invalidNameHandle, unreadableEventName, EVF_ATTR_MULTI, 0, nullptr) == SCE_KERNEL_ERROR_EFAULT && invalidNameHandle == nullptr);
     Require(sceKernelCreateEventFlag(&ef, "test_zero_attr", 0, 0, nullptr) == SCE_OK);
     Require(sceKernelDeleteEventFlag(ef) == SCE_OK);
     Require(sceKernelCreateEventFlag(&ef, "test_fifo", 0x01, 0, nullptr) == SCE_OK);
@@ -362,6 +429,7 @@ int main() {
     KernelEventFlag opened = nullptr;
     Require(sceKernelOpenEventFlag(nullptr, "test") == SCE_KERNEL_ERROR_ESRCH);
     Require(sceKernelOpenEventFlag(&opened, nullptr) == SCE_KERNEL_ERROR_EFAULT && opened == nullptr);
+    Require(sceKernelOpenEventFlag(&opened, unreadableEventName) == SCE_KERNEL_ERROR_EFAULT && opened == nullptr);
     Require(sceKernelOpenEventFlag(&opened, "") == SCE_KERNEL_ERROR_ESRCH && opened == nullptr);
     Require(sceKernelOpenEventFlag(&opened, "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn") == SCE_KERNEL_ERROR_ENAMETOOLONG && opened == nullptr);
     Require(sceKernelOpenEventFlag(&opened, "SceShellCoreUtilAppFocus") == SCE_KERNEL_ERROR_ESRCH && opened == nullptr);
@@ -376,11 +444,14 @@ int main() {
     Require(sceKernelCreateEventFlag(&plainTwin, "test_open", EVF_ATTR_MULTI, 0, nullptr) == SCE_OK);
     Require(sceKernelDeleteEventFlag(plainTwin) == SCE_OK);
 
+    auto* const badFlagOutput = reinterpret_cast<KernelEventFlag*>(1);
+    Require(sceKernelCreateEventFlag(badFlagOutput, "test_open", EVF_ATTR_SHARED | EVF_ATTR_MULTI, 0x05, nullptr) == SCE_KERNEL_ERROR_EFAULT);
     Require(sceKernelCreateEventFlag(&ef, "test_open", EVF_ATTR_SHARED | EVF_ATTR_MULTI, 0x05, nullptr) == SCE_OK);
     KernelEventFlag sharedTwin = nullptr;
     Require(sceKernelCreateEventFlag(&sharedTwin, "test_open", EVF_ATTR_SHARED | EVF_ATTR_MULTI, 0, nullptr) == SCE_KERNEL_ERROR_EPERM && sharedTwin == nullptr);
     Require(sceKernelOpenEventFlag(&opened, "test_open") == SCE_OK && opened != nullptr && opened != ef && opened != plain);
     Require(sceKernelOpenEventFlag(nullptr, "test_open") == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelOpenEventFlag(badFlagOutput, "test_open") == SCE_KERNEL_ERROR_EFAULT);
     KernelEventFlag openedTwice = nullptr;
     Require(sceKernelOpenEventFlag(&openedTwice, "test_open") == SCE_OK && openedTwice != opened && openedTwice != ef);
     Require(sceKernelSetEventFlag(opened, 0x08) == SCE_OK);
@@ -488,6 +559,8 @@ int main() {
     int waitThreads = -1;
     Require(sceKernelCancelEventFlag(ef, 0x42, &waitThreads) == SCE_OK);
     Require(waitThreads == 0);
+    errno = 71;
+    Require(sceKernelCancelEventFlag(ef, 0x99, reinterpret_cast<int*>(0x10)) == SCE_KERNEL_ERROR_EFAULT && errno == 71);
     Require(sceKernelPollEventFlag(ef, 0x42, EVF_WAITMODE_AND, &pattern) == SCE_OK);
     Require(pattern == 0x42);
 
@@ -534,6 +607,28 @@ int main() {
     Require(cancelRes1 == SCE_KERNEL_ERROR_ECANCELED && cancelPat1 == 0);
     Require(cancelRes2 == SCE_KERNEL_ERROR_ECANCELED && cancelPat2 == 0);
     Require(sceKernelPollEventFlag(ef, 0x05, EVF_WAITMODE_AND, &pattern) == SCE_OK && pattern == 0x05);
+    Require(sceKernelDeleteEventFlag(ef) == SCE_OK);
+
+    Require(sceKernelCreateEventFlag(&ef, "zero_timeout", EVF_ATTR_MULTI, 0x05, nullptr) == SCE_OK);
+    efTimeout = 0;
+    pattern = 0xdeadbeef;
+    Require(sceKernelWaitEventFlag(ef, 0x04, EVF_WAITMODE_AND, &pattern, &efTimeout) == SCE_OK && pattern == 0x05 && efTimeout == 0);
+    efTimeout = 0;
+    pattern = 0xdeadbeef;
+    Require(sceKernelWaitEventFlag(ef, 0x08, EVF_WAITMODE_OR, &pattern, &efTimeout) == SCE_KERNEL_ERROR_ETIMEDOUT && pattern == 0x05 && efTimeout == 0);
+    Require(APS5_Test_GetEventFlagWaiterCount(ef) == 0);
+    std::atomic<int> zeroRes{-1};
+    std::uint64_t zeroPat = 0xdeadbeef;
+    std::thread zeroWaiter([&] {
+        zeroRes = sceKernelWaitEventFlag(ef, 0x08, EVF_WAITMODE_OR, &zeroPat, nullptr);
+    });
+    WaitForEventFlagWaiters(ef, 1);
+    efTimeout = 0;
+    Require(sceKernelWaitEventFlag(ef, 0x10, EVF_WAITMODE_OR, &pattern, &efTimeout) == SCE_KERNEL_ERROR_ETIMEDOUT && efTimeout == 0);
+    Require(APS5_Test_GetEventFlagWaiterCount(ef) == 1);
+    Require(sceKernelSetEventFlag(ef, 0x08) == SCE_OK);
+    zeroWaiter.join();
+    Require(zeroRes == SCE_OK && (zeroPat & 0x08) != 0);
     Require(sceKernelDeleteEventFlag(ef) == SCE_OK);
 
     Require(sceKernelCreateEventFlag(&ef, "imm_sat", EVF_ATTR_MULTI, 0x05, nullptr) == SCE_OK);
