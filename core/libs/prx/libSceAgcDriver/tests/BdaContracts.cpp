@@ -1,4 +1,5 @@
 #include "BdaShader.hpp"
+#include "BindlessImageAbi.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ShaderResources.hpp"
 #include "ControlFlow/RequestSerializer.hpp"
 #include "SpirvBackend/SpirvBda.hpp"
@@ -138,8 +139,33 @@ void RunFaultReportScanTests() {
     }), "fault scan: the fault buffer handed to a function was not followed");
 }
 
+void HeapHeaderStore(ScanWords& m, std::uint32_t binding, bool headerHigh) {
+    const auto header = IdBody + 1u;
+    m.Op(spv::OpDecorate, {header, spv::DecorationDescriptorSet, ShaderRecompiler::BindlessImageAbi::HeapDescriptorSet});
+    m.Op(spv::OpDecorate, {header, spv::DecorationBinding, binding});
+    m.Op(spv::OpVariable, {IdPointerFunction, header, spv::StorageClassStorageBuffer});
+    m.Op(spv::OpAccessChain, {IdPointerFunction, IdBody + 2u, header, IdOne});
+    m.Op(spv::OpLoad, {IdUint, IdBody + 3u, IdBody + 2u});
+    m.Op(spv::OpAccessChain, {IdPointerFunction, IdBody + 4u, header, IdOne});
+    m.Op(spv::OpLoad, {IdUint, IdBody + 5u, IdBody + 4u});
+    m.Op(spv::OpUConvert, {IdUlong, IdBody + 6u, IdBody + 3u});
+    m.Op(spv::OpUConvert, {IdUlong, IdBody + 7u, IdBody + 5u});
+    m.Op(spv::OpShiftLeftLogical, {IdUlong, IdBody + 8u, headerHigh ? IdBody + 7u : IdAddress, IdOne});
+    m.Op(spv::OpBitwiseOr, {IdUlong, IdBody + 9u, IdBody + 6u, IdBody + 8u});
+    m.Op(spv::OpIAdd, {IdUlong, IdBody + 10u, IdBody + 9u, IdBody + 6u});
+    m.Op(spv::OpConvertUToPtr, {IdUintPointer, IdBody + 11u, IdBody + 10u});
+    m.Op(spv::OpStore, {IdBody + 11u, IdOne});
+}
+
 void RunAddressStoreScanTests() {
     using AgcDriver::Graphics::Require;
+    Require(!ScanStores([](ScanWords& m) { HeapHeaderStore(m, ShaderRecompiler::BindlessImageAbi::HeaderBinding, true); }), "store scan: a store into the heap's miss ring, through the address in its header, was taken for a guest store");
+    Require(ScanStores([](ScanWords& m) { HeapHeaderStore(m, ShaderRecompiler::BindlessImageAbi::HeaderBinding + 1u, true); }), "store scan: a store through an address read from another binding was taken for a heap header store");
+    Require(ScanStores([](ScanWords& m) { HeapHeaderStore(m, ShaderRecompiler::BindlessImageAbi::HeaderBinding, false); }), "store scan: a store whose high address word is not from the heap header was taken for a heap header store");
+    Require(ScanStores([](ScanWords& m) {
+        HeapHeaderStore(m, ShaderRecompiler::BindlessImageAbi::HeaderBinding, true);
+        m.Op(spv::OpStore, {IdPointer, IdOne});
+    }), "store scan: a guest store next to a heap header store was missed");
     Require(!ScanStores([](ScanWords& m) { m.Op(spv::OpLoad, {IdUint, IdBody, IdPointer}); }), "store scan: a load through a physical pointer was taken for a store");
     Require(!ScanStores([](ScanWords& m) { m.Op(spv::OpAtomicLoad, {IdUint, IdBody, IdPointer, IdDeviceScope, IdNoSemantics}); }), "store scan: an atomic load was taken for a store");
     Require(ScanStores([](ScanWords& m) { m.Op(spv::OpStore, {IdPointer, IdOne}); }), "store scan: a store was missed");
