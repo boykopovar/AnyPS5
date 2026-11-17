@@ -1,5 +1,6 @@
 #include "prx/libkernel_sys/include/Api.hpp"
 #include "prx/libkernel_sys/include/AdditionalExports.hpp"
+#include "prx/libkernel/include/Api.hpp"
 #include "ProcessParametersFixture.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 
@@ -116,6 +117,15 @@ int main() {
     Require(output[0] == 0x07008001, "ps4 own pid version is not ps4 sdk version");
 
     Require(sceKernelGetPs4CompiledSdkVersionByPid(getpid_nid_postfix() + 1000, output.data()) == static_cast<int>(0x80020003), "ps4 other pid is not ESRCH");
+
+    Require(sceKernelGetGenuineProsperoSystemSwVersion(nullptr) == 0, "genuine prospero null output failed");
+    Require(sceKernelGetGenuineProsperoSystemSwVersion(reinterpret_cast<SceKernelProsperoSystemSwVersion*>(0x10)) == static_cast<int>(0x8002000e), "genuine prospero unwritable output is not EFAULT");
+    SceKernelProsperoSystemSwVersion genuineVersion{};
+    genuineVersion.size = sizeof(genuineVersion);
+    Require(sceKernelGetGenuineProsperoSystemSwVersion(&genuineVersion) == 0, "genuine prospero query failed");
+    Require(genuineVersion.size == sizeof(genuineVersion), "genuine prospero size mutated");
+    Require(std::strcmp(genuineVersion.versionString, "01.000.000") == 0, "genuine prospero version string mismatch");
+    Require(genuineVersion.version == 0x01000000, "genuine prospero version code mismatch");
 
     std::puts("KERNEL SYS SDK VERSION tests passed");
     return 0;
