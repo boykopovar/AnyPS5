@@ -135,11 +135,14 @@ bool APS5_VABI WKDictionarySetItem(void* dictionaryRef, const void* keyRef, cons
 const void* APS5_VABI WKDoubleCreate(double value);
 std::uint32_t APS5_VABI WKDoubleGetTypeID();
 double APS5_VABI WKDoubleGetValue(const void* doubleRef);
-std::uint32_t APS5_VABI WKDownloadGetTypeID();
-const void* APS5_VABI WKDownloadCopyRequest(const void* downloadRef);
-const void* APS5_VABI WKDownloadGetOriginatingPage(const void* downloadRef);
-bool APS5_VABI WKDownloadGetWasUserInitiated(const void* downloadRef);
 void APS5_VABI WKDownloadCancel(const void* downloadRef);
+const void* APS5_VABI WKDownloadCopyRedirectChain(const void* downloadRef);
+const void* APS5_VABI WKDownloadCopyRequest(const void* downloadRef);
+std::uint64_t APS5_VABI WKDownloadGetID(const void* downloadRef);
+const void* APS5_VABI WKDownloadGetOriginatingPage(const void* downloadRef);
+const void* APS5_VABI WKDownloadGetResumeData(const void* downloadRef);
+std::uint32_t APS5_VABI WKDownloadGetTypeID();
+bool APS5_VABI WKDownloadGetWasUserInitiated(const void* downloadRef);
 const void* APS5_VABI WKErrorCopyWKErrorDomain();
 std::uint32_t APS5_VABI WKErrorGetTypeID();
 std::uint32_t APS5_VABI WKFormSubmissionListenerGetTypeID();
