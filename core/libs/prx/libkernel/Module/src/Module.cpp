@@ -317,8 +317,14 @@ int APS5_VABI sceKernelStopUnloadModule(KernelModule handle, size_t args, const 
  (void)args;
  (void)argp;
  if (flags != 0 || opt != nullptr || handle == 0) return SCE_KERNEL_ERROR_EINVAL;
+ if (res) {
+  const int savedErrno = errno;
+  int zero = 0;
+  const bool copied = GuestCopyOut_nid_no_patch(res, &zero, sizeof(zero));
+  errno = savedErrno;
+  if (!copied) return SCE_KERNEL_ERROR_EFAULT;
+ }
  if (dlclose_nid_postfix(reinterpret_cast<void*>(static_cast<intptr_t>(handle))) != 0) return SCE_KERNEL_ERROR_ESRCH;
- if (res) *res = 0;
  return 0;
 }
 

@@ -513,5 +513,7 @@ int main() {
     Require(sceSysmoduleLoadModuleByNameInternal("libSceFiber", 0, nullptr, 0, &moduleResult) > 0);
     moduleResult = -1;
     Require(sceSysmoduleLoadModuleByNameInternal("libSceNoSuchModule", 0, nullptr, 0, &moduleResult) < 0);
+    errno = 71;
+    Require(sceKernelStopUnloadModule(byName, 0, nullptr, 0, nullptr, reinterpret_cast<int*>(std::uintptr_t{0x10})) == static_cast<int>(0x8002000E) && errno == 71);
     Require(sceKernelStopUnloadModule(byName, 0, nullptr, 0, nullptr, nullptr) == 0);
 }
