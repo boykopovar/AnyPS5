@@ -77,6 +77,7 @@ alignas(256) std::array<std::uint32_t, 16> TableVertexCode{
 alignas(256) std::array<float, 4> OneConstant{1.0f, 0.0f, 0.0f, 0.0f};
 alignas(256) constexpr std::array<std::uint32_t, 7> CounterCode{0xf4080200u, 0xfa000000u, 0xbf8cc07fu, 0x7e000281u, 0xe0c80000u, 0x80020000u, 0xbf810000u};
 alignas(256) volatile std::uint32_t Done = 0;
+alignas(256) constexpr std::array<std::uint32_t, 11> DescriptorPixelCode{0xf4080100u, 0xfa000000u, 0xbf8cc07fu, 0xf4200202u, 0xfa000000u, 0xbf8cc07fu, 0x7e000208u, 0x7e020280u, 0xf800180fu, 0x00010100u, 0xbf810000u};
 
 struct Header {
     Shader shader{};
@@ -448,6 +449,56 @@ int DispatchReadsQueuedDump() {
     return 0;
 }
 
+
+int DrawReadsQueuedDumpedDescriptor() {
+    constexpr std::uint64_t DescriptorOffset = 0x6000;
+    constexpr std::uint64_t StaleOffset = 0x6100;
+    constexpr std::uint64_t FreshOffset = 0x6200;
+    const GuestBlock block;
+    Register(VertexHeader, TriangleVertexCode.data(), sizeof(TriangleVertexCode), 2);
+    Register(PixelHeader, DescriptorPixelCode.data(), sizeof(DescriptorPixelCode), 1);
+    const float staleConstant = 0.25f;
+    const float freshConstant = 1.0f;
+    std::memcpy(block.Data() + StaleOffset, &staleConstant, sizeof(staleConstant));
+    std::memcpy(block.Data() + FreshOffset, &freshConstant, sizeof(freshConstant));
+    const auto table = block.Address() + DescriptorOffset;
+    const auto stale = BufferDescriptor(block.Address() + StaleOffset, 16u);
+    const auto fresh = BufferDescriptor(block.Address() + FreshOffset, 16u);
+    std::memcpy(block.Data() + DescriptorOffset, stale.data(), stale.size() * 4u);
+
+    std::vector<std::uint32_t> commands;
+    AppendState(commands);
+    const auto pixel = AddressOf(DescriptorPixelCode.data());
+    Append(commands, 0x76, {0x008, Low(pixel >> 8u), Low(pixel >> 40u)});
+    AppendConstantRamDump(commands, fresh, table);
+    AppendConstantDraw(commands, block.Address() + ColorOffsets[0], table);
+
+    WaitUntil([] { return DrawPipeline::QueuedItems() == 0; }, "the pipeline to empty");
+    const auto drainsBefore = DrainRequests();
+    const auto dumpDrainsBefore = DrawPipeline::DrainRequestsByOpcode(DumpOpcode);
+    std::atomic<bool> released{false};
+    struct Release {
+        std::atomic<bool>& flag;
+        ~Release() { flag.store(true, std::memory_order_release); }
+    } release{released};
+    DrawPipeline::Queue0().Enqueue([&released] {
+        while (!released.load(std::memory_order_acquire)) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }, {});
+    Submit(commands, "descriptor dump and draw");
+    WaitUntil([&] { return DrawPipeline::QueuedItems() >= 3 || DrainRequests() != drainsBefore; }, "the dump and the draw queued behind the held committer, or a drain");
+    const auto dumpDrains = DrawPipeline::DrainRequestsByOpcode(DumpOpcode) - dumpDrainsBefore;
+    released.store(true, std::memory_order_release);
+    AgcDriverWaitIdle_nid_postfix();
+
+    AgcDriver::GuestMemory::FlushGpuWrites(table, fresh.size() * 4u);
+    Require(std::memcmp(block.Data() + DescriptorOffset, fresh.data(), fresh.size() * 4u) == 0, "queued constant RAM dump: the dumped descriptor did not land in guest memory");
+    const auto brightest = Brightest(block, ColorOffsets[0]);
+    Require(brightest == 255, "queued constant RAM dump: the draw reading its buffer descriptor from a table a queued dump writes wrote " + std::to_string(brightest) + ", expected 255 (64 is the constant behind the descriptor in memory before the dump)");
+    Require(dumpDrains == 0, "queued constant RAM dump: the DUMP_CONST_RAM of a buffer descriptor drained the draw pipeline " + std::to_string(dumpDrains) + " times");
+    std::cout << "a draw after a queued dump of its buffer descriptor read through the dumped descriptor\n";
+    return 0;
+}
+
 }
 
 int main() {
@@ -464,6 +515,7 @@ int main() {
         auto result = DrawsReadQueuedDumps();
         if (result == 0) result = VertexTableDecodeWaitsForQueuedDump();
         if (result == 0) result = DispatchReadsQueuedDump();
+        if (result == 0) result = DrawReadsQueuedDumpedDescriptor();
         AgcDriverShutdown_nid_postfix();
         return result;
     } catch (const std::exception& error) {
