@@ -806,8 +806,14 @@ void SocketPartialWrites() {
     std::vector<char> sink(Large);
     int pair[2] = {-1, -1};
     Require(socketpair_nid_postfix(AfUnix, SockStream, 0, pair) == 0);
+    Require(fcntl_nid_postfix(pair[0], FSetfl, ONonblock) == 0);
+    while (_write_nid_postfix(pair[0], data.data(), Large) > 0) {
+    }
+    Require(Error() == Eagain);
+    Require(fcntl_nid_postfix(pair[0], FSetfl, 0) == 0);
     auto blocking = Request(pair[0], data.data(), Large);
     Require(aio_write_nid_postfix(&blocking) == 0);
+    Require(recv_nid_postfix(pair[1], sink.data(), 1 << 16, 0) > 0);
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     Require(aio_error_nid_postfix(&blocking) == Einprogress);
     Require(aio_cancel_nid_postfix(pair[0], &blocking) == AioNotCanceled);
