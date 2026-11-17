@@ -818,9 +818,12 @@ void VideoOutDriver::presentLoop(std::stop_token token, std::promise<void>& star
                 while (SDL_PollEvent(&event)) {
                     if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_CLOSE) windowCloseSeen = true;
                     if (event.type == SDL_QUIT) return true;
+                    const bool padOwnedMouse = padInput->MouseModeEnabled();
                     padInput->HandleEvent(event, window);
                     if (window.Handle() != nullptr) {
+                        mouseInput->SetPadOwnsMouse(padOwnedMouse || padInput->MouseModeEnabled());
                         mouseInput->HandleEvent(event, SDL_GetWindowID(window.Handle()));
+                        mouseInput->SetPadOwnsMouse(padInput->MouseModeEnabled());
                         keyboardInput->HandleEvent(event, SDL_GetWindowID(window.Handle()));
                         imeTextInput->HandleEvent(event, SDL_GetWindowID(window.Handle()));
                         dialogInput->HandleEvent(event, SDL_GetWindowID(window.Handle()));
