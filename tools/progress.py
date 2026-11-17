@@ -9,7 +9,7 @@ import xml.etree.ElementTree as ET
 import textwrap
 from fractions import Fraction
 from html import escape
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 tokenizer_spec = importlib.util.spec_from_file_location("anyps5_cpp_tokenizer", Path(__file__).with_name("nid_names.py"))
 tokenizer = importlib.util.module_from_spec(tokenizer_spec)
@@ -498,8 +498,10 @@ def shared_source_owners(path):
 
 def scan_library(path):
     done, todo, inert, live, assembled = set(), set(), set(), set(), set()
+    flavor = PureWindowsPath if os.name == "nt" else Path
+    path_flavored = flavor(str(path))
     sources = [source.read_text(encoding="utf-8", errors="ignore") for source in path.rglob("*.cpp")
-               if "tests" not in source.relative_to(path).parts]
+               if "tests" not in flavor(str(source)).relative_to(path_flavored).parts]
     texts = [code(source) for source in sources]
     exported = {match.group(1) for text in texts for match in EXPORT.finditer(text)}
     for source in sources:
@@ -515,7 +517,7 @@ def scan_library(path):
                 done.add(name)
                 live.add(name)
     headers = [code(header.read_text(encoding="utf-8", errors="ignore")) for pattern in ("*.h", "*.hpp")
-               for header in path.rglob(pattern) if "tests" not in header.relative_to(path).parts]
+               for header in path.rglob(pattern) if "tests" not in flavor(str(header)).relative_to(path_flavored).parts]
     for text, (_, definitions) in zip(texts, reaching_definitions(texts, headers, assembled)):
         wrappers = inert_wrappers(text)
         for definition in definitions:

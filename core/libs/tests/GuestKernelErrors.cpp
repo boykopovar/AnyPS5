@@ -5,6 +5,7 @@
 #include "prx/libkernel/Pthread/include/Rwlock.hpp"
 #include "SceTypes.hpp"
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
@@ -443,11 +444,14 @@ int main() {
     Require(sceKernelCreateEventFlag(&plainTwin, "test_open", EVF_ATTR_MULTI, 0, nullptr) == SCE_OK);
     Require(sceKernelDeleteEventFlag(plainTwin) == SCE_OK);
 
+    auto* const badFlagOutput = reinterpret_cast<KernelEventFlag*>(1);
+    Require(sceKernelCreateEventFlag(badFlagOutput, "test_open", EVF_ATTR_SHARED | EVF_ATTR_MULTI, 0x05, nullptr) == SCE_KERNEL_ERROR_EFAULT);
     Require(sceKernelCreateEventFlag(&ef, "test_open", EVF_ATTR_SHARED | EVF_ATTR_MULTI, 0x05, nullptr) == SCE_OK);
     KernelEventFlag sharedTwin = nullptr;
     Require(sceKernelCreateEventFlag(&sharedTwin, "test_open", EVF_ATTR_SHARED | EVF_ATTR_MULTI, 0, nullptr) == SCE_KERNEL_ERROR_EPERM && sharedTwin == nullptr);
     Require(sceKernelOpenEventFlag(&opened, "test_open") == SCE_OK && opened != nullptr && opened != ef && opened != plain);
     Require(sceKernelOpenEventFlag(nullptr, "test_open") == SCE_KERNEL_ERROR_EFAULT);
+    Require(sceKernelOpenEventFlag(badFlagOutput, "test_open") == SCE_KERNEL_ERROR_EFAULT);
     KernelEventFlag openedTwice = nullptr;
     Require(sceKernelOpenEventFlag(&openedTwice, "test_open") == SCE_OK && openedTwice != opened && openedTwice != ef);
     Require(sceKernelSetEventFlag(opened, 0x08) == SCE_OK);
@@ -555,6 +559,8 @@ int main() {
     int waitThreads = -1;
     Require(sceKernelCancelEventFlag(ef, 0x42, &waitThreads) == SCE_OK);
     Require(waitThreads == 0);
+    errno = 71;
+    Require(sceKernelCancelEventFlag(ef, 0x99, reinterpret_cast<int*>(0x10)) == SCE_KERNEL_ERROR_EFAULT && errno == 71);
     Require(sceKernelPollEventFlag(ef, 0x42, EVF_WAITMODE_AND, &pattern) == SCE_OK);
     Require(pattern == 0x42);
 
