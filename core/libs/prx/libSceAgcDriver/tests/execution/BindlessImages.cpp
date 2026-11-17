@@ -6,6 +6,8 @@
 #include <array>
 #include <cstring>
 #include <iostream>
+#include <stdexcept>
+#include <string_view>
 
 namespace {
 
@@ -28,7 +30,7 @@ std::array<std::uint32_t, 4> Buffer(const void* pointer, std::uint32_t stride, s
     return {static_cast<std::uint32_t>(address), static_cast<std::uint32_t>(address >> 32u) | (stride << 16u), records, stride == 0u ? 0x31016facu : 0x01016facu};
 }
 
-void Run(AgcDriver::VulkanDevice& device) {
+void Run(AgcDriver::VulkanDevice& device, bool heap) {
     textures[0].fill(0x40000000u);
     textures[1].fill(0x40400000u);
     const auto threads = std::min(32u, device.Target().subgroupSize);
@@ -58,9 +60,10 @@ void Run(AgcDriver::VulkanDevice& device) {
         const ShaderComputeStageInfo compute{{threads, 1u, 1u}, 0u, {false, false, false}, false, 1u};
         RecompileRequest request{{ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(code.data()), code, 0u, {}}, {32u, 0u, userData, compute, std::nullopt, std::nullopt, regions}, device.Target(), {0u, 0u, 0u, 128u}};
         const auto shader = Recompile(request);
+        Require(shader.bindlessHeap == heap, "materialization fixture did not select the requested image table ABI");
         if (artifact.variantId == 0u) artifact = shader;
         else Require(shader.cacheHit && shader.variantId == artifact.variantId, "bindless table changed the compiled artifact");
-        if (iteration == 1u) {
+        if (iteration == 1u && !heap) {
             auto invalid = shader;
             auto binding = std::ranges::find_if(invalid.bindings, [](const DescriptorBinding& value) { return value.role == DescriptorRole::ImageTableMap; });
             Require(binding != invalid.bindings.end(), "bindless shader has no image table map");
@@ -85,11 +88,14 @@ void Run(AgcDriver::VulkanDevice& device) {
 
 }
 
-int main() {
+int main(int argc, char** argv) {
     try {
+        const bool heap = argc == 2 && std::string_view(argv[1]) == "--heap";
+        if (argc != 1 && !heap) throw std::invalid_argument("expected --heap");
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        Run(*device);
+        if (heap && !device->BindlessImagesEnabled()) return VulkanTestSkipped;
+        Run(*device, heap);
         std::cout << "bindless image materialization tests passed\n";
         return 0;
     } catch (const std::exception& error) {
