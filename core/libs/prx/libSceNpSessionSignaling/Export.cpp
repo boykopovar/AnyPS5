@@ -1,6 +1,8 @@
 #include "prx/libSceNpSessionSignaling/include/Api.hpp"
+#include "prx/libSceNpManager/include/Api.hpp"
 #include <cerrno>
 #include <cstdint>
+#include <cstring>
 #include <cstddef>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
@@ -70,6 +72,24 @@ static bool CopyOutGuest(T* dst, const T& src) {
     const bool copied = GuestCopyOut_nid_no_patch(dst, &src, sizeof(src));
     errno = savedErrno;
     return copied;
+}
+
+static int OpenManualUdpContext(const void* param) {
+    bool freeSlot = false;
+    for (const auto& context : g_contexts) freeSlot = freeSlot || !context.active;
+    if (!freeSlot) return SCE_NP_SESSION_SIGNALING_ERROR_CONTEXT_LIMIT;
+    std::array<std::byte, 0x28> localParam{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(localParam.data(), param, localParam.size());
+    errno = savedErrno;
+    if (!copied) return SCE_NP_SESSION_SIGNALING_ERROR_INVALID_ARGUMENT;
+    std::int32_t userId = 0;
+    std::memcpy(&userId, localParam.data(), sizeof(userId));
+    NpId npId{};
+    if (const int status = sceNpManagerIntGetNpId(userId, &npId); status < 0) return status;
+    std::uint64_t accountId = 0;
+    if (const int status = sceNpManagerIntGetAccountId(userId, &accountId); status < 0) return status;
+    NotImplemented_nid_no_patch("sceNpSessionSignalingManualUdp registration with the signaling core");
 }
 
 static SessionSignalingContext* FindContext(std::uint32_t contextId) {
@@ -381,7 +401,7 @@ int APS5_VABI sceNpSessionSignalingManualUdpAbortConnection(std::uint32_t contex
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return SCE_NP_SESSION_SIGNALING_ERROR_NOT_INITIALIZED;
     if (!FindContext(contextId)) return SCE_NP_SESSION_SIGNALING_ERROR_CONTEXT_NOT_FOUND;
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_NP_SESSION_SIGNALING_ERROR_GROUP_NOT_FOUND;
 }
 
 int APS5_VABI sceNpSessionSignalingManualUdpCreateJoin(const void* param, std::uint32_t* id, std::uint32_t* extra) {
@@ -389,7 +409,7 @@ int APS5_VABI sceNpSessionSignalingManualUdpCreateJoin(const void* param, std::u
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return SCE_NP_SESSION_SIGNALING_ERROR_NOT_INITIALIZED;
     if (!param || !id) return SCE_NP_SESSION_SIGNALING_ERROR_INVALID_ARGUMENT;
-    NotImplemented_nid_no_patch(__func__);
+    return OpenManualUdpContext(param);
 }
 
 int APS5_VABI sceNpSessionSignalingManualUdpEstablishConnection(std::uint32_t contextId, std::uint32_t value) {
@@ -397,7 +417,7 @@ int APS5_VABI sceNpSessionSignalingManualUdpEstablishConnection(std::uint32_t co
     std::lock_guard lock(g_mutex);
     if (!g_initialized) return SCE_NP_SESSION_SIGNALING_ERROR_NOT_INITIALIZED;
     if (!FindContext(contextId)) return SCE_NP_SESSION_SIGNALING_ERROR_CONTEXT_NOT_FOUND;
-    NotImplemented_nid_no_patch(__func__);
+    return SCE_NP_SESSION_SIGNALING_ERROR_GROUP_NOT_FOUND;
 }
 
 int APS5_VABI sceNpSessionSignalingManualUdpJoin(const void* param, const char* name, std::uint32_t* id, std::uint32_t* extra) {
@@ -410,7 +430,7 @@ int APS5_VABI sceNpSessionSignalingManualUdpJoin(const void* param, const char* 
     const bool copied = GuestCopyIn_nid_no_patch(&first, name, sizeof(first));
     errno = savedErrno;
     if (!copied || first == 0) return SCE_NP_SESSION_SIGNALING_ERROR_INVALID_ARGUMENT;
-    NotImplemented_nid_no_patch(__func__);
+    return OpenManualUdpContext(param);
 }
 
 int APS5_VABI sceNpSessionSignalingRegisterInternalCallback(std::uint32_t contextId, void* callback, void* userData) {
