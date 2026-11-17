@@ -420,7 +420,7 @@ void APS5_VABI ERR_load_X509_strings_nid_postfix(void);
 int APS5_VABI X509_cmp_current_time_nid_postfix(const Asn1String* time);
 int APS5_VABI X509_get_ext_by_NID_nid_postfix(const LibreSsl3Certificate* certificate, int nid, int lastpos);
 int APS5_VABI EVP_PKEY_security_bits_nid_postfix(const LibreSsl3EvpPkey* key);
-int APS5_VABI X509_check_akid_nid_postfix();
+int APS5_VABI X509_check_akid_nid_postfix(void* issuer, void* authorityKeyId);
 void APS5_VABI SSL_set_quic_use_legacy_codepoint_nid_postfix(void* ssl, int useLegacy);
 int APS5_VABI SSL_CTX_set_default_verify_paths_nid_postfix();
 const char* APS5_VABI ERR_lib_error_string_nid_postfix(std::uint64_t error);
