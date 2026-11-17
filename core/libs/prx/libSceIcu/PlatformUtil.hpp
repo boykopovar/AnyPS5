@@ -59,6 +59,4 @@ std::uint8_t* APS5_VABI uprv_eastrncpy_nid_postfix(std::uint8_t*, const std::uin
 std::int32_t APS5_VABI uprv_ebcdicFromAscii_nid_postfix(const Icu::UDataSwapper*, const void*, std::int32_t, void*, std::int32_t*);
 std::int32_t APS5_VABI uprv_itou_nid_postfix(char16_t*, std::int32_t, std::uint32_t, std::uint32_t, std::int32_t);
 std::int8_t APS5_VABI uprv_pathIsAbsolute_nid_postfix(const char*);
-double APS5_VABI uprv_getUTCtime_nid_postfix();
-double APS5_VABI uprv_getRawUTCtime_nid_postfix();
 }
