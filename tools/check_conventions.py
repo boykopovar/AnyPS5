@@ -972,7 +972,7 @@ if __name__ == "__main__":
         if not isinstance(event, dict):
             parser.error(f"--event {args.event}: not a JSON object")
         pr = event.get("pull_request")
-        if pr and not (isinstance(pr, dict) and isinstance(pr.get("title"), str) and isinstance(pr.get("body", 0), (str, type(None)))):
+        if "pull_request" in event and not (isinstance(pr, dict) and isinstance(pr.get("title"), str) and isinstance(pr.get("body", 0), (str, type(None)))):
             parser.error(f"--event {args.event}: pull_request needs a title string and a body string or null")
     body = ""
     if args.body:
