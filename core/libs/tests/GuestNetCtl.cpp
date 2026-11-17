@@ -734,9 +734,13 @@ int main() {
     Require(sceNetCtlCheckCallback() == 0);
     auto* const unwritable = reinterpret_cast<int*>(0x10);
     Require(sceNetCtlGetState(nullptr) == kErrInvalidAddr);
+    errno = 71;
     Require(sceNetCtlGetState(unwritable) == kErrInvalidAddr);
+    Require(errno == 71);
     Require(sceNetCtlGetStateV6(nullptr) == kErrInvalidAddr);
+    errno = 71;
     Require(sceNetCtlGetStateV6(unwritable) == kErrInvalidAddr);
+    Require(errno == 71);
     Require(sceNetCtlGetInfo(0, nullptr) == kErrInvalidAddr);
     Require(sceNetCtlGetResult(0, nullptr) == kErrInvalidAddr);
     Require(sceNetCtlGetResult(0, unwritable) == kErrInvalidAddr);
