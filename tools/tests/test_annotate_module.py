@@ -424,6 +424,52 @@ class AnnotateModuleTests(unittest.TestCase):
         self.assertEqual(instruction(listing, "ret"), listing[header + 1])
         self.assertEqual([], [path.name for path in self.root.iterdir() if path.suffix == ".bin"])
 
+    def test_endbr64_stubs_name_branches_to_both_entry_addresses(self):
+        for address in (0, CODE_ADDRESS, 0x100001000):
+            for prefix in (b"", b"\xf2", b"\x67", b"\xf2\x67"):
+                if address > 0xFFFFFFFF and b"\x67" not in prefix:
+                    continue
+                with self.subTest(address=address, prefix=prefix):
+                    code = b"\xf3\x0f\x1e\xfa" + prefix + b"\xff\x25"
+                    code += struct.pack("<I", (SLOT - address - len(code) - 4) & 0xFFFFFFFF)
+                    branches = []
+                    for opcode in (b"\xe8", b"\xe9"):
+                        for target in (address, address + 4):
+                            location = address + len(code)
+                            branches.append(location)
+                            code += opcode + struct.pack("<i", target - location - 5)
+                    image = bytearray(build_module(code=code + b"\xc3", symbols=[(IMPORT_NAME, 0, 0x12, 0)]))
+                    struct.pack_into("<Q", image, 64 + 16, address)
+                    self.annotate(image)
+                    listing = self.read(".asm").splitlines()
+                    lines = {int(match.group(1), 16): line for line in listing
+                             if (match := annotate_module.LINE_ADDRESS.match(line))}
+                    for location in branches:
+                        self.assertTrue(lines[location].endswith("; -> " + IMPORT_NAME), lines[location])
+                    self.assertTrue(lines[address + 4].endswith("; GOT " + IMPORT_NAME))
+
+    def test_endbr64_followed_by_other_instructions_is_not_a_stub_alias(self):
+        namer = annotate_module.Namer({nid(IMPORT_NAME): IMPORT_NAME})
+        for middle in (b"\x90", b"\x50", b"\xcc"):
+            with self.subTest(middle=middle):
+                code = b"\xf3\x0f\x1e\xfa" + middle + b"\xff\x25"
+                code += struct.pack("<i", SLOT - CODE_ADDRESS - len(code) - 4)
+                listing = annotate_module.disassemble(code, CODE_ADDRESS)
+                self.assertEqual(annotate_module.find_stubs(listing, {SLOT: symbol_name(IMPORT_NAME)}, namer),
+                                 {CODE_ADDRESS + 4 + len(middle): IMPORT_NAME})
+
+    def test_endbr64_stub_alias_requires_a_contiguous_listing(self):
+        namer = annotate_module.Namer({nid(IMPORT_NAME): IMPORT_NAME})
+        for preceding, address in ((["1000: endbr64"], 0x1008), (["1000: endbr64", ""], 0x1004),
+                                   (["1000: endbr64", "; ===== segment 0x1004"], 0x1004),
+                                   (["1000: data16 endbr64"], 0x1004), (["1000: endbr32"], 0x1004)):
+            with self.subTest(preceding=preceding, address=address):
+                listing = preceding + ["%x: jmp *0x17f6(%%rip) # 0x2800" % address]
+                self.assertEqual(annotate_module.find_stubs(listing, {SLOT: symbol_name(IMPORT_NAME)}, namer),
+                                 {address: IMPORT_NAME})
+        listing = ["1000: endbr64", "1004: jmp *%rax"]
+        self.assertEqual(annotate_module.find_stubs(listing, {SLOT: symbol_name(IMPORT_NAME)}, namer), {})
+
     def test_unknown_nid_prints_the_nid(self):
         db = self.root / "db.csv"
         db.write_text("AAAAAAAAAAA some_other_name\n", encoding="utf-8")

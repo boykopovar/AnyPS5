@@ -1,5 +1,6 @@
 import contextlib
 import datetime
+import faulthandler
 import importlib.util
 import io
 import json
@@ -616,4 +617,5 @@ runpy.run_path(sys.argv[0], run_name="__main__")
 
 
 if __name__ == "__main__":
+    faulthandler.dump_traceback_later(20, exit=True)
     unittest.main()

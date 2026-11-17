@@ -399,35 +399,51 @@ int APS5_VABI sceFontClearDeviceCache(FontLibrary library) {
 }
 
 int APS5_VABI sceFontDettachDeviceCacheBuffer(FontLibrary library, void** buffer, std::uint32_t* size) {
-    const auto clearOutputs = [&] {
-        if (buffer) *buffer = nullptr;
-        if (size) *size = 0;
-    };
     auto* lib = static_cast<FontLibNative*>(library);
     std::uint32_t previous = 0;
     if (!lib || lib->magic != LIBRARY_MAGIC || !AcquireLibraryLock(lib, previous)) {
-        clearOutputs();
+        if (buffer) CopyOutGuest(buffer, static_cast<void*>(nullptr));
+        if (size) CopyOutGuest(size, std::uint32_t{0});
         return SCE_FONT_ERROR_INVALID_LIBRARY;
     }
-    std::uint32_t* current = AcquireDeviceCache(lib);
-    ReleaseDeviceCache(lib, nullptr);
-    int result = SCE_FONT_ERROR_NOT_ATTACHED_CACHE_BUFFER;
-    if (current) {
-        const std::uint32_t capacity = current[0];
-        std::memset(current + 1, 0, 5 * sizeof(std::uint32_t));
-        if ((lib->flags & 1u) == 0) {
-            if (buffer) *buffer = current;
-            if (size) *size = capacity;
-            ReleaseLibraryLock(lib, previous);
-            return SCE_FONT_OK;
-        }
-        result = SCE_FONT_ERROR_FATAL;
-        if (lib->iface && lib->iface->dealloc) {
-            lib->iface->dealloc(lib->alloc_ctx, current);
-            result = SCE_FONT_OK;
-        }
+    if ((buffer && !GuestWritable_nid_no_patch(buffer, sizeof(*buffer))) ||
+        (size && !GuestWritable_nid_no_patch(size, sizeof(*size)))) {
+        ReleaseLibraryLock(lib, previous);
+        return SCE_FONT_ERROR_INVALID_PARAMETER;
     }
-    clearOutputs();
+    std::uint32_t* current = AcquireDeviceCache(lib);
+    if (!current) {
+        ReleaseDeviceCache(lib, nullptr);
+        if (buffer) CopyOutGuest(buffer, static_cast<void*>(nullptr));
+        if (size) CopyOutGuest(size, std::uint32_t{0});
+        ReleaseLibraryLock(lib, previous);
+        return SCE_FONT_ERROR_NOT_ATTACHED_CACHE_BUFFER;
+    }
+    if ((lib->flags & 1u) == 0) {
+        const std::uint32_t capacity = current[0];
+        if ((buffer && !CopyOutGuest(buffer, static_cast<void*>(current))) ||
+            (size && !CopyOutGuest(size, capacity))) {
+            ReleaseDeviceCache(lib, current);
+            ReleaseLibraryLock(lib, previous);
+            return SCE_FONT_ERROR_INVALID_PARAMETER;
+        }
+        std::memset(current + 1, 0, 5 * sizeof(std::uint32_t));
+        ReleaseDeviceCache(lib, nullptr);
+        ReleaseLibraryLock(lib, previous);
+        return SCE_FONT_OK;
+    }
+    if ((buffer && !CopyOutGuest(buffer, static_cast<void*>(nullptr))) ||
+        (size && !CopyOutGuest(size, std::uint32_t{0}))) {
+        ReleaseDeviceCache(lib, current);
+        ReleaseLibraryLock(lib, previous);
+        return SCE_FONT_ERROR_INVALID_PARAMETER;
+    }
+    int result = SCE_FONT_ERROR_FATAL;
+    if (lib->iface && lib->iface->dealloc) {
+        lib->iface->dealloc(lib->alloc_ctx, current);
+        result = SCE_FONT_OK;
+    }
+    ReleaseDeviceCache(lib, nullptr);
     ReleaseLibraryLock(lib, previous);
     return result;
 }
