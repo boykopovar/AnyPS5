@@ -280,7 +280,7 @@ struct Window {
     std::uint32_t busiest = 0;
 };
 
-Window Measure(std::vector<std::uint32_t>& commands) {
+Window Measure(std::vector<std::uint32_t>& commands, std::size_t submits) {
     lostThreads.store(0);
     lostSites.store(0);
     for (auto& site : sites) {
@@ -298,7 +298,7 @@ Window Measure(std::vector<std::uint32_t>& commands) {
         struct StopProbe {
             ~StopProbe() { hostProbe.store(nullptr, std::memory_order_release); }
         } stop;
-        Submit(commands);
+        for (std::size_t submit = 0; submit < submits; ++submit) Submit(commands);
     }
     Require(lostSites.load() == 0 && lostThreads.load() == 0, "draw allocations: the counter lost allocation sites or threads");
     Window window;
@@ -347,12 +347,17 @@ struct Shape {
     Ceiling pipelined;
 };
 
+constexpr std::size_t LeadingDrawsPerSubmit = 8;
+constexpr std::size_t MeasuredDrawsPerSubmit = 32;
+
 double ReportAllocations(const Shape& shape, std::size_t draws) {
-    auto empty = shape.build(0);
-    auto repeated = shape.build(draws);
+    const auto submits = std::max<std::size_t>(1, draws / MeasuredDrawsPerSubmit);
+    draws = submits * MeasuredDrawsPerSubmit;
+    auto empty = shape.build(LeadingDrawsPerSubmit);
+    auto repeated = shape.build(LeadingDrawsPerSubmit + MeasuredDrawsPerSubmit);
     for (int warm = 0; warm < 3; ++warm) Submit(repeated);
-    const auto base = Measure(empty);
-    const auto many = Measure(repeated);
+    const auto base = Measure(empty, submits);
+    const auto many = Measure(repeated, submits);
     Require(many.count > 0 && base.count > 0, std::string("draw allocations [") + shape.name + "]: the probe observed no allocations");
     const auto perDraw = PerDraw(many.count, base.count, draws);
     std::printf("draw allocations [%s]: %zu draws: %llu allocations %llu bytes, without them: %llu allocations %llu bytes, busiest thread %llu allocations\n", shape.name, draws, static_cast<unsigned long long>(many.count), static_cast<unsigned long long>(many.bytes), static_cast<unsigned long long>(base.count), static_cast<unsigned long long>(base.bytes), static_cast<unsigned long long>(many.busiestCount));
@@ -431,10 +436,10 @@ int main() {
         Table = &table;
         Output = &output;
         const std::array<Shape, 4> shapes{{
-            {"recipe auto draw", [](std::size_t count) { return Draws(*Vertices, *Target, count); }, false, {45.0, 8100.0, 42}, {48.5, 8200.0, 45}},
-            {"indexed draw, guest indices", [](std::size_t count) { return Draws(*Vertices, *Target, count, DrawKind::Indexed, IndexBlock->At(0)); }, false, {47.5, 8300.0, 44}, {50.5, 8450.0, 47}},
-            {"indexed draw, image indices", [](std::size_t count) { return Draws(*Vertices, *Target, count, DrawKind::Indexed, reinterpret_cast<std::uintptr_t>(ImageIndices.data())); }, false, {47.5, 10250.0, 44}, {50.5, 10450.0, 47}},
-            {"compute dispatch", [](std::size_t count) { return Dispatches(*Table, *Output, count); }, true, {13.5, 1150.0, 10}, {16.0, 1500.0, 13}},
+            {"recipe auto draw", [](std::size_t count) { return Draws(*Vertices, *Target, count); }, false, {43.0, 8462.0, 42}, {46.3, 8649.0, 45}},
+            {"indexed draw, guest indices", [](std::size_t count) { return Draws(*Vertices, *Target, count, DrawKind::Indexed, IndexBlock->At(0)); }, false, {45.1, 8722.0, 44}, {48.3, 8909.0, 47}},
+            {"indexed draw, image indices", [](std::size_t count) { return Draws(*Vertices, *Target, count, DrawKind::Indexed, reinterpret_cast<std::uintptr_t>(ImageIndices.data())); }, false, {45.4, 10757.0, 44}, {48.6, 10930.0, 47}},
+            {"compute dispatch", [](std::size_t count) { return Dispatches(*Table, *Output, count); }, true, {11.3, 1354.0, 10}, {14.6, 1778.0, 13}},
         }};
         const auto draws = static_cast<std::size_t>(std::max(1, std::atoi(std::getenv("APS5_DRAW_ALLOCATIONS_DRAWS") != nullptr ? std::getenv("APS5_DRAW_ALLOCATIONS_DRAWS") : "256")));
         const auto only = std::getenv("APS5_DRAW_ALLOCATIONS_SHAPE");
