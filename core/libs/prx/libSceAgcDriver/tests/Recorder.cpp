@@ -3696,6 +3696,114 @@ bool settleInitialDccTests(const Device& device) {
 }
 #endif
 
+std::atomic<std::uint64_t> multisampleUseWalks{0};
+
+bool multisampleUseCollectTests(const Device& device) {
+    using namespace AgcDriver::GuestMemory;
+    const auto& base = device.GetContext();
+    if (!device.Graphics() || (base.limits.framebufferColorSampleCounts & VK_SAMPLE_COUNT_4_BIT) == 0 || !WriteWatched()) {
+        std::cout << "skipped, watched memory or four-sample colour targets unavailable\n";
+        return false;
+    }
+    const auto run = [&](bool ordered, std::uint32_t samples) {
+        auto context = base;
+        Recorder recorder(context);
+        recorder.Activate();
+        constexpr std::size_t unit = 65536;
+        constexpr std::size_t bytes = 4 * unit;
+        auto* block = static_cast<std::uint8_t*>(AllocateWatched(bytes, unit));
+        Require(block != nullptr, "cannot allocate the multisample-use collect fixture");
+        struct Release {
+            const Context& context;
+            Recorder& recorder;
+            void* block;
+            ~Release() {
+                SetObservationHookForTest(nullptr);
+                {
+                    std::lock_guard gpu(GpuMutex());
+                    recorder.Sync();
+                    ClearMultisampleTargets(context.device);
+                    recorder.FlushDeferredReleases();
+                }
+                {
+                    GuestAllocations::Mutation mutation;
+                    mutation.Remove(block);
+                }
+                ReleaseWatched(block, bytes);
+            }
+        } release{context, recorder, block};
+        std::memset(block, 0, bytes);
+        {
+            GuestAllocations::Mutation mutation;
+            mutation.Add(block, bytes, true, true, true);
+        }
+        std::unique_lock gpu(GpuMutex());
+        ColorTarget target{};
+        target.address = reinterpret_cast<std::uint64_t>(block);
+        target.surfaceAddress = target.address;
+        target.extent = {32, 32};
+        target.surfaceExtent = target.extent;
+        target.format = VK_FORMAT_R8G8B8A8_UNORM;
+        target.elementBytes = 4;
+        target.samples = samples;
+        target.tileMode = ColorTileMode::RenderTarget;
+        target.dccPipeAligned = true;
+        target.bytes = MultisampledColorBytes(target);
+        Require(target.bytes <= unit, "multisample-use colour plane exceeds the fixture");
+        target.dccAddress = target.address + unit;
+        const auto dccBytes = MultisampledDccBytes(target);
+        Require(dccBytes <= unit, "multisample-use DCC plane exceeds the fixture");
+        std::memset(block + unit, 0xc0, dccBytes);
+        if (samples == 8) {
+            target.cmaskAddress = target.address + 2 * unit;
+            target.cmaskBytes = CmaskBytes(target.extent.width, target.extent.height);
+            target.cmaskFastClear = true;
+            target.fmaskAddress = target.address + 3 * unit;
+            std::memset(block + 2 * unit, 0xcc, static_cast<std::size_t>(target.cmaskBytes));
+            std::memset(block + 3 * unit, 0x11, unit);
+        }
+        Require(MultisampleTargetView(context, target) != VK_NULL_HANDLE, "the multisample-use fixture has no view");
+        SetObservationHookForTest(+[](int point) {
+            if (point == 1) multisampleUseWalks.fetch_add(1, std::memory_order_relaxed);
+        });
+        BumpCollectEpoch();
+        multisampleUseWalks.store(0, std::memory_order_relaxed);
+        MultisampleTargetView(context, target);
+        Require(multisampleUseWalks.load(std::memory_order_relaxed) != 0, "the first ordered use did not observe memory");
+        multisampleUseWalks.store(0, std::memory_order_relaxed);
+        MultisampleTargetView(context, target);
+        const auto repeated = multisampleUseWalks.load(std::memory_order_relaxed);
+        Require(ordered ? repeated == 0 : repeated != 0, ordered ? "a repeated GPU use walked unchanged multisample planes again" : "an ordinary host use reused a multisample observation");
+        auto* changed = reinterpret_cast<volatile std::uint8_t*>(samples == 8 ? target.fmaskAddress : target.dccAddress);
+        *changed = samples == 8 ? 0x11 : 0xc0;
+        if (ordered) BumpCollectEpoch();
+        std::string refusal;
+        try {
+            MultisampleTargetView(context, target);
+        } catch (const std::exception& error) {
+            refusal = error.what();
+        }
+        const auto expected = samples == 8 ? "writes to a resident native FMASK" : "writes to a resident multisampled DCC target";
+        Require(refusal.find(expected) != std::string::npos, "a same-value CPU store over a multisample plane was missed: " + refusal);
+        std::cout << "multisample-use samples=" << samples << " ordered=" << ordered << " repeat walks=" << repeated << ", same-value CPU store refused\n";
+    };
+    std::vector<std::uint32_t> sampleCounts{4};
+    if (base.storageImageMultisample && (base.limits.framebufferColorSampleCounts & VK_SAMPLE_COUNT_8_BIT) != 0) sampleCounts.push_back(8);
+    for (const auto samples : sampleCounts) run(false, samples);
+    std::exception_ptr failure;
+    std::thread committer([&] {
+        try {
+            MarkProofThread();
+            for (const auto samples : sampleCounts) run(true, samples);
+        } catch (...) {
+            failure = std::current_exception();
+        }
+    });
+    committer.join();
+    if (failure) std::rethrow_exception(failure);
+    return true;
+}
+
 void remappedImportTests(const Device& device) {
     const auto& context = device.GetContext();
     if (context.hostImportAlignment == 0) {
@@ -17235,6 +17343,7 @@ int main(int argc, char** argv) {
             return 77;
         }
         Device& device = *created;
+        if (argc == 2 && std::string_view(argv[1]) == "--multisample-use-collect-only") return multisampleUseCollectTests(device) ? 0 : 77;
         if (argc == 2 && std::string_view(argv[1]) == "--host-import-lifetime-only") return RunHostImportLifetimeTests(device.GetContext());
         if (argc == 2 && std::string_view(argv[1]) == "--host-import-mutation-race-only") return RunHostImportMutationRaceTests(device.GetContext());
         if (argc == 2 && (std::string_view(argv[1]) == "--gpu-timing-complete-only" || std::string_view(argv[1]) == "--gpu-timing-incomplete-only")) {

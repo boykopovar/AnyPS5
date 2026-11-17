@@ -172,6 +172,7 @@ std::uint64_t CollectEpochBumps();
 std::uint64_t ThreadCollectEpoch();
 std::uint64_t UnwatchSerial();
 std::uint64_t CollectWritesUncached(std::uint64_t address, std::size_t bytes);
+std::uint64_t CollectWritesForGpuUse(std::uint64_t address, std::size_t bytes);
 struct Observation {
     enum class Status { Complete, Refused, Uncovered, Failed };
     Status status = Status::Failed;

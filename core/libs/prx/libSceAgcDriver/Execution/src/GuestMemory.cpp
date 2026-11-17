@@ -2372,6 +2372,10 @@ void MarkProofThread() {
     proofThread = true;
 }
 
+std::uint64_t CollectWritesForGpuUse(std::uint64_t address, std::size_t bytes) {
+    return proofThread ? CollectWrites(address, bytes) : CollectWritesUncached(address, bytes);
+}
+
 std::uint64_t CollectEpoch() {
     return collectMemoEnabled() ? HostThreadSlot<std::uint64_t, CollectEpochSlot>::Get() : 0;
 }
