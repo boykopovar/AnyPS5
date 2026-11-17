@@ -384,9 +384,13 @@ void GuestPointers() {
     ft_mem_free_nid_postfix(&recorder.memory, text);
     char* uncopied = nullptr;
     error = -1;
+    const int allocsBeforeDup = recorder.allocs;
+    const int freesBeforeDup = recorder.frees;
     Require(RejectsKeepingErrno([&] { uncopied = static_cast<char*>(ft_mem_dup_nid_postfix(&recorder.memory, unmappedText, 4, &error)); }),
             "dup refuses an unmapped source");
     Require(uncopied == nullptr && error == -1, "an unmapped source leaves the error untouched");
+    Require(recorder.allocs == allocsBeforeDup + 1 && recorder.frees == freesBeforeDup + 1 && recorder.lastBlock != nullptr,
+            "dup frees its block when the source is unmapped");
 
     char buffer[8];
     std::memset(buffer, 'x', sizeof(buffer));

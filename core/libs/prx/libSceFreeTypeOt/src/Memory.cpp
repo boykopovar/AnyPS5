@@ -133,7 +133,13 @@ void* Duplicate(FreeType::GuestMemoryRec* memory, const void* address, std::uint
     RequireWritable(error, sizeof(*error), caller);
     std::int32_t result = 0;
     void* copy = QuickAllocate<GuestRecord>(memory, static_cast<std::int64_t>(size), result, caller);
-    if (!result && address && size > 0) CopyIn(copy, address, static_cast<std::size_t>(size), caller);
+    if (!result && address && size > 0) {
+        const int savedErrno = errno;
+        const bool copied = GuestCopyIn_nid_no_patch(copy, address, static_cast<std::size_t>(size));
+        if (!copied) Free<GuestRecord>(memory, copy, caller);
+        errno = savedErrno;
+        if (!copied) NotImplementedAt_nid_no_patch(caller, __FILE__, __LINE__);
+    }
     CopyOut(error, &result, sizeof(result), caller);
     return copy;
 }
