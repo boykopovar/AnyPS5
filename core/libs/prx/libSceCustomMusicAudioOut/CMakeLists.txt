@@ -1,0 +1,15 @@
+add_library(libSceCustomMusicAudioOut SHARED EXCLUDE_FROM_ALL Export.cpp)
+target_include_directories(libSceCustomMusicAudioOut PRIVATE ${LIBS_INCLUDE_DIR})
+configure_windows_unwind(libSceCustomMusicAudioOut)
+
+if(BUILD_TESTING)
+    add_test_executable(guest_custom_music_audio_out_tests ${LIBS_INCLUDE_DIR}/tests/GuestCustomMusicAudioOut.cpp)
+    target_include_directories(guest_custom_music_audio_out_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_custom_music_audio_out_tests PRIVATE libSceCustomMusicAudioOut libc)
+    configure_windows_unwind(guest_custom_music_audio_out_tests)
+    add_test(NAME guest_custom_music_audio_out COMMAND guest_custom_music_audio_out_tests)
+    if(WIN32)
+        set_tests_properties(guest_custom_music_audio_out PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceCustomMusicAudioOut>")
+    endif()
+endif()
