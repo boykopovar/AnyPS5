@@ -328,11 +328,18 @@ static void CheckProcessSysctl() {
     Require(std::strcmp(reinterpret_cast<const char*>(buffer + 447), "eboot.bin") == 0);
     Require(buffer[4] == 0 && buffer[80] == 0 && buffer[1087] == 0 && buffer[1088] == 0xaa);
 
-    const int mibForeign[] = {1, 14, 1, callerPid + 1000};
+    const int mibForeign[] = {1, 14, 1, callerPid == 1 ? 2 : 1};
     Require(sysctl_nid_postfix(mibForeign, 4, buffer, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 3);
 
     const int mibSelfAlias[] = {1, 14, 1, -1};
     Require(sysctl_nid_postfix(mibSelfAlias, 4, buffer, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 3);
+
+    const int mibThread[] = {1, 14, 1, scePthreadGetthreadid()};
+    std::memset(buffer, 0xaa, sizeof(buffer));
+    length = sizeof(buffer);
+    Require(sysctl_nid_postfix(mibThread, 4, buffer, &length, nullptr, 0) == 0 && length == 1088);
+    std::memcpy(&pid, buffer + 72, sizeof(pid));
+    Require(pid == callerPid && buffer[1088] == 0xaa);
 
     const int mibTooShort[] = {1, 14, 1};
     Require(sysctl_nid_postfix(mibTooShort, 3, buffer, &length, nullptr, 0) == -1 && *__error_nid_postfix() == 22);
@@ -410,6 +417,9 @@ static void CheckProcessThreadsSysctl() {
         }
     }
     Require(sawSelf && sawWorker);
+    const int mibWorker[] = {1, 14, 17, workerTid};
+    const auto workerRecords = ReadThreadRecords(mibWorker);
+    Require(RecordInt(workerRecords, 0, 72) == callerPid && ListsThread(workerRecords, self) && ListsThread(workerRecords, workerTid));
 
     std::vector<unsigned char> buffer(1100, 0xaa);
     std::size_t length = 100;
@@ -419,7 +429,7 @@ static void CheckProcessThreadsSysctl() {
     length = buffer.size();
     Require(sysctl_nid_postfix(mib, 4, buffer.data(), &length, buffer.data(), buffer.size()) == -1 && *__error_nid_postfix() == 1);
 
-    const int mibForeign[] = {1, 14, 17, callerPid + 1000};
+    const int mibForeign[] = {1, 14, 17, callerPid == 1 ? 2 : 1};
     Require(sysctl_nid_postfix(mibForeign, 4, buffer.data(), &length, nullptr, 0) == -1 && *__error_nid_postfix() == 3);
     const int mibSelfAlias[] = {1, 14, 17, -1};
     Require(sysctl_nid_postfix(mibSelfAlias, 4, buffer.data(), &length, nullptr, 0) == -1 && *__error_nid_postfix() == 3);
@@ -431,6 +441,8 @@ static void CheckProcessThreadsSysctl() {
     worker.release.store(true, std::memory_order_release);
     Require(scePthreadJoin(thread, nullptr) == 0);
     Require(!ListsThread(ReadThreadRecords(mib), workerTid));
+    std::size_t endedLength = 0;
+    Require(workerTid == callerPid || (sysctl_nid_postfix(mibWorker, 4, nullptr, &endedLength, nullptr, 0) == -1 && *__error_nid_postfix() == 3));
 }
 static void CheckProcessListSysctl() {
     const int callerPid = getpid_nid_postfix();
