@@ -58,6 +58,15 @@ int main() {
             Address("::1", 28, protocol, flags);
         }
     }
+    for (int flags : {2, 6}) {
+        GuestResolver::AddressInfo scoped{};
+        scoped.flags = flags;
+        scoped.socketType = 3;
+        GuestResolver::AddressInfo* named = nullptr;
+        Require(getaddrinfo_nid_postfix("fe80::1%1", nullptr, &scoped, &named) == 0 && named, "scoped raw address resolution failed");
+        Require(named->canonicalName && std::strcmp(named->canonicalName, "fe80::1%1") == 0, "scoped numeric canonical name differs");
+        freeaddrinfo_nid_postfix(named);
+    }
     GuestResolver::AddressInfo hints{};
     hints.flags = 4;
     hints.socketType = 3;

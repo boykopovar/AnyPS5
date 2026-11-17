@@ -82,7 +82,15 @@ int main() {
     RequireError(-1, self, 22);
     RequireSet(PrioProcess, 0, 0);
     RequireSet(PrioProcess, self, 5);
-    RequireSet(PrioProcess, self, -20);
+    RequireSetError(PrioProcess, self, -20, 13);
+    RequireSetError(PrioProcess, 0, -1, 13);
+    RequireSetError(PrioGroup, 0, -1, 13);
+    RequireSetError(PrioGroup, self, -20, 13);
+    RequireSetError(PrioUser, 0, -5, 13);
+    RequireSetError(PrioUser, 0, -99, 13);
+    RequireSetError(PrioProcess, self + 1, -5, 3);
+    RequireSetError(3, 0, -5, 22);
+    RequireSet(PrioProcess, self, 0);
     RequireSetError(PrioProcess, self + 1, 0, 3);
     RequireSetError(PrioProcess, -1, 0, 3);
     RequireSetError(PrioGroup, self + 1, 0, 3);
@@ -90,14 +98,15 @@ int main() {
     RequireSetError(3, 0, 0, 22);
     RequireSetError(-1, self, 0, 22);
     for (const int nice : {-25, -5, 5, 10, 25, 99, -99}) {
-        Require(setpriority_nid_postfix(PrioProcess, 0, nice) == 0 && getpriority_nid_postfix(PrioProcess, 0) == 0);
+        *__error_nid_postfix() = 0;
+        Require(nice < 0 ? setpriority_nid_postfix(PrioProcess, 0, nice) == -1 && *__error_nid_postfix() == 13 : setpriority_nid_postfix(PrioProcess, 0, nice) == 0);
+        Require(getpriority_nid_postfix(PrioProcess, 0) == 0);
         Require(getpriority_nid_postfix(PrioProcess, self) == 0 && getpriority_nid_postfix(PrioGroup, 0) == 0 && getpriority_nid_postfix(PrioUser, 0) == 0);
     }
     GuestRtPrio rtprio{7, 7};
     Require(rtprio_thread_nid_postfix(0, 0, &rtprio) == 0 && rtprio.type == 10 && rtprio.prio == 700);
-    bool rtprioThrew = false;
-    try { rtprio_thread_nid_postfix(1, 0, &rtprio); } catch (const std::exception&) { rtprioThrew = true; }
-    Require(rtprioThrew);
+    *__error_nid_postfix() = 0;
+    Require(rtprio_thread_nid_postfix(1, 0, &rtprio) == -1 && *__error_nid_postfix() == 1);
     *__error_nid_postfix() = 0;
     Require(rtprio_thread_nid_postfix(2, 0, &rtprio) == -1 && *__error_nid_postfix() == 3);
     *__error_nid_postfix() = 0;

@@ -9,6 +9,7 @@
 
 namespace {
 
+constexpr int Efault = 14;
 constexpr int Einval = 22;
 constexpr int Eopnotsupp = 45;
 constexpr int NetError = static_cast<int>(0x80410100u);
@@ -53,6 +54,10 @@ int main() {
     Require(sceNetThreadCreate(&untouched, nullptr, "anyps5-net-thread") == (NetError | Einval), "a null parameter was not refused with EINVAL");
     Require(*sceNetErrnoLoc() == Einval && untouched == reinterpret_cast<Pthread>(&run), "a refused create set no errno or wrote the thread");
 
+    *sceNetErrnoLoc() = 0;
+    Require(sceNetThreadCreate(reinterpret_cast<Pthread*>(0x10), &counting, "anyps5-net-thread") == (NetError | Efault), "an unwritable thread output was not refused with EFAULT");
+    Require(*sceNetErrnoLoc() == Efault && run.started == 1, "a refused create with an unwritable output ran its entry or set no errno");
+
     NetThreadParameter exiting{ExitEarly, &run, 0, 1};
     Require(sceNetThreadCreate(&thread, &exiting, nullptr) == 0, "sceNetThreadCreate failed without a name");
     Require(sceNetThreadJoin(thread) == 0, "joining an exited thread failed");
@@ -68,6 +73,10 @@ int main() {
     Require(sceNetEmulationGet(nullptr, 0) == (NetError | Eopnotsupp) && *sceNetErrnoLoc() == Eopnotsupp, "sceNetEmulationGet did not return EOPNOTSUPP");
     *sceNetErrnoLoc() = 0;
     Require(sceNetEmulationSet(nullptr, 0) == (NetError | Eopnotsupp) && *sceNetErrnoLoc() == Eopnotsupp, "sceNetEmulationSet did not return EOPNOTSUPP");
+    *sceNetErrnoLoc() = 0;
+    Require(sceNetEmulationDebugSettingsGet(nullptr, 0) == (NetError | Eopnotsupp) && *sceNetErrnoLoc() == Eopnotsupp, "sceNetEmulationDebugSettingsGet did not return EOPNOTSUPP");
+    *sceNetErrnoLoc() = 0;
+    Require(sceNetEmulationDebugSettingsSet(nullptr, 0) == (NetError | Eopnotsupp) && *sceNetErrnoLoc() == Eopnotsupp, "sceNetEmulationDebugSettingsSet did not return EOPNOTSUPP");
     std::puts("net thread tests passed");
     return 0;
 }

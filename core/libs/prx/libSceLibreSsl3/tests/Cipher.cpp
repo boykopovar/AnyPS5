@@ -67,10 +67,36 @@ void TestIvLength() {
     Require(EVP_CIPHER_iv_length_nid_postfix(&cipher) == 16);
 }
 
+void TestSslCipherId() {
+    Require(SSL_CIPHER_get_id_nid_postfix(nullptr) == 0);
+    LibreSsl3Cipher cipher {};
+    for (const std::uint64_t id : {0ULL, 1ULL, 0x03000035ULL, 0x0300c02fULL, 0x103000035ULL, 0xffffffffffffffffULL}) {
+        cipher.id = id;
+        LibreSsl3Cipher before;
+        std::memcpy(&before, &cipher, sizeof(cipher));
+        Require(SSL_CIPHER_get_id_nid_postfix(&cipher) == id);
+        Require(std::memcmp(&before, &cipher, sizeof(cipher)) == 0);
+    }
+    std::memset(&cipher, 0x5A, sizeof(cipher));
+    cipher.id = 0x0300c02fULL;
+    cipher.valid = 0x1;
+    cipher.keyExchange = 0x80ULL;
+    cipher.authentication = 0x40ULL;
+    cipher.encryption = 0x20ULL;
+    cipher.mac = 0x10ULL;
+    cipher.protocol = 0x08ULL;
+    cipher.strengthFlags = 0x04ULL;
+    cipher.extraFlags = 0x02ULL;
+    cipher.strengthBits = 256;
+    cipher.algorithmBits = 128;
+    Require(SSL_CIPHER_get_id_nid_postfix(&cipher) == 0x0300c02fULL);
+}
+
 }
 
 int main() {
     TestKeyLength();
     TestIvLength();
+    TestSslCipherId();
     std::puts("LibreSSL3 EVP_CIPHER tests passed");
 }

@@ -10,6 +10,7 @@ add_library(libSceAgc SHARED EXCLUDE_FROM_ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/Cb/src/Registers.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Cb/src/Sync.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Command/src/Memory.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/Command/src/Memset.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Command/src/Control.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Command/src/Draw.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/Command/src/RegisterDefaults.cpp
@@ -58,7 +59,7 @@ add_library(libSceAgc SHARED EXCLUDE_FROM_ALL
 )
 
 target_include_directories(libSceAgc PRIVATE ${LIBS_INCLUDE_DIR})
-target_link_libraries(libSceAgc PRIVATE libSceAgcDriver libc)
+target_link_libraries(libSceAgc PRIVATE libSceAgcDriver libkernel libc)
 
 foreach(runtimeLinkFlag IN ITEMS -static-libgcc -static-libstdc++ -static)
     string(REPLACE "${runtimeLinkFlag}" "" CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS}")
@@ -87,6 +88,19 @@ if(BUILD_TESTING)
     add_test(NAME agc_atomic_gds_size COMMAND agc_atomic_gds_size_tests)
     if(WIN32)
         set_tests_properties(agc_atomic_gds_size PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
+add_test_executable(agc_draw_state_tests EXCLUDE_FROM_ALL tests/DrawSetup.cpp)
+target_include_directories(agc_draw_state_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(agc_draw_state_tests PRIVATE libSceAgc libc)
+configure_windows_unwind(agc_draw_state_tests)
+if(BUILD_TESTING)
+    set_target_properties(agc_draw_state_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_draw_setup COMMAND agc_draw_state_tests)
+    if(WIN32)
+        set_tests_properties(agc_draw_setup PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
@@ -129,6 +143,19 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
+
+add_test_executable(agc_copy_data_tests EXCLUDE_FROM_ALL tests/CopyData.cpp)
+target_include_directories(agc_copy_data_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(agc_copy_data_tests PRIVATE libSceAgc libc)
+configure_windows_unwind(agc_copy_data_tests)
+if(BUILD_TESTING)
+    set_target_properties(agc_copy_data_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_copy_data COMMAND agc_copy_data_tests)
+    if(WIN32)
+        set_tests_properties(agc_copy_data PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
 configure_windows_unwind(libSceAgc)
 
 add_test_executable(agc_static_buffer_tests EXCLUDE_FROM_ALL tests/StaticBuffer.cpp)
@@ -166,6 +193,33 @@ if(BUILD_TESTING)
     add_test(NAME agc_semaphore_tests COMMAND agc_semaphore_tests)
     if(WIN32)
         set_tests_properties(agc_semaphore_tests PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
+add_test_executable(agc_nop_and_compute_event_tests EXCLUDE_FROM_ALL tests/NopAndComputeEvent.cpp)
+target_include_directories(agc_nop_and_compute_event_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(agc_nop_and_compute_event_tests PRIVATE libSceAgc libc)
+configure_windows_unwind(agc_nop_and_compute_event_tests)
+if(BUILD_TESTING)
+    set_target_properties(agc_nop_and_compute_event_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_nop_and_compute_event COMMAND agc_nop_and_compute_event_tests)
+    if(WIN32)
+        set_tests_properties(agc_nop_and_compute_event PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+endif()
+
+add_test_executable(agc_concurrent_allocation_tests EXCLUDE_FROM_ALL tests/ConcurrentAllocation.cpp)
+target_include_directories(agc_concurrent_allocation_tests PRIVATE ${LIBS_INCLUDE_DIR})
+target_link_libraries(agc_concurrent_allocation_tests PRIVATE libSceAgc libc)
+configure_windows_unwind(agc_concurrent_allocation_tests)
+if(BUILD_TESTING)
+    set_target_properties(agc_concurrent_allocation_tests PROPERTIES EXCLUDE_FROM_ALL OFF)
+    add_test(NAME agc_concurrent_allocation COMMAND agc_concurrent_allocation_tests)
+    set_tests_properties(agc_concurrent_allocation PROPERTIES TIMEOUT 60)
+    if(WIN32)
+        set_tests_properties(agc_concurrent_allocation PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()

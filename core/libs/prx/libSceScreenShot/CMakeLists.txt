@@ -13,4 +13,14 @@ if(BUILD_TESTING)
         set_tests_properties(guest_screenshot guest_screenshot_large_overlay PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceScreenShot>")
     endif()
+
+    add_test_executable(guest_screenshot_checks_tests ${LIBS_INCLUDE_DIR}/tests/GuestScreenShotChecks.cpp)
+    target_include_directories(guest_screenshot_checks_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_screenshot_checks_tests PRIVATE libSceScreenShot libc)
+    configure_windows_unwind(guest_screenshot_checks_tests)
+    add_test(NAME guest_screenshot_checks COMMAND guest_screenshot_checks_tests)
+    if(WIN32)
+        set_tests_properties(guest_screenshot_checks PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceScreenShot>")
+    endif()
 endif()

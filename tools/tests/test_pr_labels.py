@@ -1,5 +1,7 @@
+import subprocess
 import contextlib
 import copy
+from functools import lru_cache
 import io
 import json
 import sys
@@ -23,6 +25,19 @@ TEMPLATE = ("- [ ] Unblocks: <!-- title ID and Game bring-up discussion, e.g. PP
             "- [ ] Depends on: none\n")
 
 
+@lru_cache(maxsize=2)
+def excessive_json_value(opening, closing):
+    depth = sys.getrecursionlimit() + 64
+    for _ in range(8):
+        value = opening * depth + "0" + closing * depth
+        try:
+            json.loads(value)
+        except RecursionError:
+            return opening * (depth + 128) + "0" + closing * (depth + 128)
+        depth *= 2
+    raise AssertionError("JSON decoder accepted every bounded nesting probe")
+
+
 def summary(commit):
     record = copy.deepcopy(SUMMARY)
     record["commit"] = commit
@@ -31,6 +46,90 @@ def summary(commit):
 
 def pr(title="fix: x", body="", labels=()):
     return {"number": 7, "title": title, "body": body, "labels": list(labels), "state": "open"}
+
+
+class LabelPlanJsonTests(unittest.TestCase):
+    def test_batch_error_is_reported_and_later_items_continue(self):
+        import subprocess
+        records = [{"number": n, "title": "fix(core): example", "body": "", "labels": [], "state": "open"} for n in (1, 2)]
+        def process(repo, pr, dry_run, comment):
+            self.assertTrue(dry_run)
+            self.assertFalse(comment)
+            if pr["number"] == 1:
+                raise subprocess.CalledProcessError(1, ["gh"], stderr="read failed")
+            return set(), set(), False
+        output = io.StringIO()
+        with patch.object(pr_labels, "repository", return_value="test/repo"), patch.object(pr_labels, "gh", return_value=json.dumps(records)), patch.object(pr_labels, "process", side_effect=process) as run, contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(pr_labels.main(["--all", "--dry-run", "--json"]), 1)
+        data = json.loads(output.getvalue())
+        self.assertEqual(data["failed"], [1])
+        self.assertEqual(len(data["plans"]), 2)
+        self.assertEqual(data["plans"][0]["error"], "read failed")
+        self.assertEqual(run.call_count, 2)
+
+    def test_json_requires_dry_run_before_any_access(self):
+        with patch.object(pr_labels, "gh", side_effect=AssertionError("unexpected access")), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:
+            pr_labels.main(["--pr", "42", "--json"])
+        self.assertEqual(error.exception.code, 2)
+
+    def test_plan_reads_only_and_records_comment(self):
+        data = {"number": 42, "title": "perf(core): reduce work", "body": "", "labels": [], "state": "open"}
+        calls = []
+        def gh(*args):
+            calls.append(args)
+            if args == ("api", "repos/test/repo/pulls/42"):
+                return json.dumps(data)
+            if args[:2] == ("api", "--paginate"):
+                return "0"
+            raise AssertionError(args)
+        output = io.StringIO()
+        with patch.object(pr_labels, "repository", return_value="test/repo"), patch.object(pr_labels, "gh", side_effect=gh), contextlib.redirect_stdout(output):
+            self.assertEqual(pr_labels.main(["--pr", "42", "--dry-run", "--json"]), 0)
+        row = json.loads(output.getvalue())["plans"][0]
+        self.assertEqual(row["add"], sorted([pr_labels.PERF_LABEL, pr_labels.MISSING_LABEL]))
+        self.assertEqual(row["remove"], [])
+        self.assertEqual(row["comment_marker"], pr_labels.MARKER)
+        self.assertEqual(len(calls), 2)
+
+    def test_plan_rows_match_the_text_plan(self):
+        body = "Unblocks: PPSA01325"
+        records = [
+            {"number": 11, "title": "fix(core): x", "body": "", "labels": [{"name": n} for n in ("perf numbers missing", "unblocks title", "perf", "bug")], "state": "open"},
+            {"number": 12, "title": "perf(core): x", "body": body, "labels": [], "state": "open"},
+            {"number": 13, "title": "fix(core): x", "body": "", "labels": [], "state": "open"},
+        ]
+        def gh(*args):
+            if args[:2] == ("api", "--paginate") and "pulls?" in args[2]:
+                return json.dumps(records)
+            if args[:2] == ("api", "--paginate") and args[2] == "repos/test/repo/issues/42/comments":
+                return "1"
+            if args == ("api", "repos/test/repo/pulls/42"):
+                return json.dumps(dict(records[1], number=42))
+            if args[:2] == ("api", "--paginate"):
+                raise subprocess.CalledProcessError(1, ["gh"], stderr="read failed")
+            raise AssertionError(args)
+        class Descending(set):
+            def __iter__(self):
+                return iter(sorted(set.__iter__(self), reverse=True))
+        original = pr_labels.process
+        def process(repo, pr, dry_run, comment):
+            if pr["number"] == 13:
+                raise subprocess.CalledProcessError(1, ["gh"], stderr="read failed")
+            add, remove, post = original(repo, pr, dry_run, comment)
+            return Descending(add), Descending(remove), post
+        for argv, expected, code in (
+            (["--all"], {"repository": "test/repo", "failed": [13], "plans": [
+                {"number": 11, "add": [], "remove": sorted(pr_labels.MANAGED), "comment_marker": None},
+                {"number": 12, "add": sorted(pr_labels.MANAGED), "remove": [], "comment_marker": None},
+                {"number": 13, "error": "read failed"}]}, 1),
+            (["--pr", "42"], {"repository": "test/repo", "failed": [], "plans": [
+                {"number": 42, "add": sorted(pr_labels.MANAGED), "remove": [], "comment_marker": None}]}, 0),
+        ):
+            with self.subTest(argv=argv):
+                output = io.StringIO()
+                with patch.object(pr_labels, "repository", return_value="test/repo"), patch.object(pr_labels, "gh", side_effect=gh), patch.object(pr_labels, "process", side_effect=process), contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(pr_labels.main(argv + ["--dry-run", "--json"]), code)
+                self.assertEqual(json.loads(output.getvalue()), expected)
 
 
 class TitleIdTests(unittest.TestCase):
@@ -74,6 +173,20 @@ class TitleIdTests(unittest.TestCase):
             with self.subTest(body=body):
                 self.assertEqual(pr_labels.title_ids(body), expected)
 
+    def test_checklist_unblocks_wins_over_an_earlier_prose_line(self):
+        body = "### Tested\nUnblocks: none in this change.\n### Checklist\n- [x] Unblocks: PPSA01325 #3232\n"
+        self.assertEqual(pr_labels.title_ids(body), {"PPSA01325"})
+
+    def test_checklist_continuation_bullets_are_read(self):
+        cases = [
+            ("- [x] Unblocks: titles below\n  - PPSA01325 #3232\n- [x] Depends on: none\n", {"PPSA01325"}),
+            ("- [x] Unblocks: PPSA01325 #3232\n  - PPSA04609 #4000\n- [x] GPUs tested: n/a\n", {"PPSA01325", "PPSA04609"}),
+            ("Unblocks: none in this change.\n### Checklist\n- [x] Unblocks:\n  - PPSA01325 #3232\n", {"PPSA01325"}),
+        ]
+        for body, expected in cases:
+            with self.subTest(body=body):
+                self.assertEqual(pr_labels.title_ids(body), expected)
+
     def test_none_body(self):
         self.assertEqual(pr_labels.title_ids(None), set())
 
@@ -87,6 +200,38 @@ class PerfTests(unittest.TestCase):
 
 
 class NumbersTests(unittest.TestCase):
+    def test_different_capture_contexts_do_not_satisfy_a_perf_report(self):
+        first = json.loads(summary("a"))
+        changes = (
+            ("gpu", "other GPU"),
+            ("driver", "other driver"),
+            ("os", "other OS"),
+            ("resolution", "2560x1440"),
+            ("cpu", "other CPU"),
+            ("title_id", "PPSA00001"),
+            ("window", {"spec": "frames 601:4", "first_present": 601, "ms": 80.0}),
+            ("env", {"APS5_TRACE_FRAMES": "601:4"}),
+        )
+        for field, value in changes:
+            with self.subTest(field=field):
+                second = json.loads(summary("b"))
+                second[field] = value
+                body = json.dumps(first) + "\n" + json.dumps(second)
+                self.assertFalse(pr_labels.has_numbers(body))
+                self.assertEqual(pr_labels.labels_for(pr("perf(agc): compare", body)),
+                                 ({"perf", "perf numbers missing"}, set()))
+
+    def test_matching_context_from_distinct_commits_still_counts(self):
+        first = json.loads(summary("a"))
+        second = json.loads(summary("b"))
+        first["title_id"] = second["title_id"] = "PPSA00001"
+        first["cpu"] = second["cpu"] = "CPU"
+        body = json.dumps(first) + "\n" + json.dumps(second)
+        self.assertTrue(pr_labels.has_numbers(body))
+        self.assertEqual(pr_labels.labels_for(pr("perf(agc): compare", body,
+                                                  ["perf", "perf numbers missing"])),
+                         (set(), {"perf numbers missing"}))
+
     def test_counts(self):
         cases = [
             ("", False),
@@ -101,6 +246,8 @@ class NumbersTests(unittest.TestCase):
             ("<!-- " + summary("a") + " -->\n" + summary("b"), False),
             (summary("a") + "\r\n" + summary("b") + "\r\n", True),
             (summary("a") + "\n{" + "[" * 100000 + "\n" + summary("b"), True),
+            (summary("a") + '\n{"x": ' + excessive_json_value("[", "]") + "}\n" + summary("b"), True),
+            (summary("a") + '\n{"x": ' + excessive_json_value('{"x":', "}") + "}\n" + summary("b"), True),
         ]
         for body, expected in cases:
             with self.subTest(body=body[:40]):
@@ -111,8 +258,32 @@ class NumbersTests(unittest.TestCase):
         broken["presents"] = 0
         self.assertFalse(pr_labels.has_numbers(summary("a") + "\n" + json.dumps(broken)))
 
+    def test_a_graphics_track_count_beyond_the_float_range_is_not_counted(self):
+        for name in ("Graphics.RenderPass", "Graphics.Barrier.Layout", "Graphics.Copy.bytes"):
+            with self.subTest(name=name):
+                first, second = json.loads(summary("a")), json.loads(summary("b"))
+                first["graphics_track"] = {name: 1}
+                second["graphics_track"] = {name: 10 ** 400}
+                self.assertFalse(pr_labels.has_numbers(json.dumps(first) + "\n" + json.dumps(second)))
+                second["graphics_track"] = {name: 2}
+                self.assertTrue(pr_labels.has_numbers(json.dumps(first) + "\n" + json.dumps(second)))
+
 
 class LabelTests(unittest.TestCase):
+    def test_tooling_perf_is_labeled_without_asking_for_a_capture(self):
+        for title in ("perf(tools): x", "perf(ci): x", "perf(build): x", "perf(Tools): x", "perf( tools ): x"):
+            with self.subTest(title=title):
+                self.assertEqual(pr_labels.labels_for(pr(title, TEMPLATE)), ({"perf"}, set()))
+
+    def test_runtime_perf_still_needs_a_capture(self):
+        for title in ("perf: x", "perf!: x", "perf(agc): x", "perf(libc): x", "perf(toolsy): x"):
+            with self.subTest(title=title):
+                self.assertEqual(pr_labels.labels_for(pr(title, TEMPLATE)), ({"perf", "perf numbers missing"}, set()))
+
+    def test_tooling_perf_drops_an_earlier_missing_label(self):
+        self.assertEqual(pr_labels.labels_for(pr("perf(tools): x", TEMPLATE, ["perf", "perf numbers missing"])),
+                         (set(), {"perf numbers missing"}))
+
     def test_labels(self):
         self.assertEqual(pr_labels.labels_for(pr()), (set(), set()))
         self.assertEqual(pr_labels.labels_for(pr("perf: x", TEMPLATE)), ({"perf", "perf numbers missing"}, set()))
@@ -126,7 +297,7 @@ class ProcessTests(unittest.TestCase):
     def run_process(self, pull, comments=0, dry_run=False, comment=True):
         calls = []
 
-        def fake(*args):
+        def fake(*args, **kwargs):
             calls.append(args)
             return ""
 
@@ -183,6 +354,16 @@ class ProcessTests(unittest.TestCase):
 
 
 class MainTests(unittest.TestCase):
+    def test_missing_github_cli_reports_a_setup_error_without_traceback(self):
+        output = io.StringIO()
+        with patch.dict(pr_labels.os.environ, {"GITHUB_REPOSITORY": "owner/project"}):
+            with patch.object(subprocess, "run", side_effect=FileNotFoundError(2, "No such file or directory", "gh")):
+                with contextlib.redirect_stderr(output), self.assertRaises(SystemExit) as raised:
+                    pr_labels.main(["--pr", "7", "--dry-run"])
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("GitHub CLI 'gh' is required on PATH", output.getvalue())
+        self.assertNotIn("Traceback", output.getvalue())
+
     def test_invalid_pages_fail_before_any_label_or_comment_write(self):
         valid = json.dumps([{"number": 7, "title": "perf: example", "body": "", "labels": [], "state": "open"}])
         for response in ("", " \r\n", "{", "{}", valid + "\n{", "[" * 2000):
@@ -268,6 +449,91 @@ class MainTests(unittest.TestCase):
         self.assertEqual(out.errors, "backslashreplace")
         self.assertEqual(err.encoding, "utf-8")
         self.assertEqual(err.errors, "backslashreplace")
+
+    def test_gh_retries_on_transient_error_and_succeeds(self):
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            if len(calls) == 1:
+                return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="HTTP 502: Bad Gateway")
+            return subprocess.CompletedProcess(cmd, 0, stdout="success\n", stderr="")
+
+        with patch.object(pr_labels.subprocess, "run", side_effect=fake_run), \
+                patch.object(pr_labels.time, "sleep") as sleep_mock:
+            result = pr_labels.gh("test", delay=0.01)
+        self.assertEqual(result, "success\n")
+        self.assertEqual(len(calls), 2)
+        sleep_mock.assert_called_once_with(0.01)
+
+    def test_gh_fails_immediately_on_non_transient_error(self):
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="HTTP 404: Not Found")
+
+        with patch.object(pr_labels.subprocess, "run", side_effect=fake_run), \
+                patch.object(pr_labels.time, "sleep") as sleep_mock:
+            with self.assertRaises(subprocess.CalledProcessError):
+                pr_labels.gh("test", delay=0.01)
+        self.assertEqual(len(calls), 1)
+        sleep_mock.assert_not_called()
+
+    def test_gh_raises_called_process_error_on_retry_exhaustion(self):
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="HTTP 503: Service Unavailable")
+
+        with patch.object(pr_labels.subprocess, "run", side_effect=fake_run), \
+                patch.object(pr_labels.time, "sleep") as sleep_mock:
+            with self.assertRaises(subprocess.CalledProcessError):
+                pr_labels.gh("test", attempts=3, delay=0.01)
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(sleep_mock.call_count, 2)
+
+
+class AmbiguousSummaryTests(unittest.TestCase):
+    def test_duplicate_summary_fields_do_not_count_as_capture_evidence(self):
+        for needle, replacement in (
+            ('"commit": "b"', '"commit": "a", "commit": "b"'),
+            ('"p50": 20.0', '"p50": 999.0, "p50": 20.0'),
+            ('"trace_dropped": false', '"trace_dropped": true, "trace_dropped": false'),
+        ):
+            with self.subTest(field=needle):
+                ambiguous = summary("b").replace(needle, replacement)
+                self.assertNotEqual(ambiguous, summary("b"))
+                body = summary("a") + "\n" + ambiguous
+                self.assertFalse(pr_labels.has_numbers(body))
+                add, remove = pr_labels.labels_for(pr("perf(core): example", body))
+                self.assertIn(pr_labels.MISSING_LABEL, add)
+                self.assertNotIn(pr_labels.MISSING_LABEL, remove)
+
+    def test_unique_fields_and_independent_valid_records_still_count(self):
+        self.assertTrue(pr_labels.has_numbers(summary("a") + "\n" + summary("b")))
+        self.assertFalse(pr_labels.has_numbers(summary("a") + "\n" + summary("a")))
+        ambiguous = summary("c").replace('"p50": 20.0', '"p50": 999.0, "p50": 20.0')
+        self.assertTrue(pr_labels.has_numbers(summary("a") + "\n" + ambiguous + "\n" + summary("b")))
+
+
+class CommentAndScopeTests(unittest.TestCase):
+    def test_strip_comments_removes_html_comments_and_keeps_the_rest(self):
+        self.assertEqual(pr_labels.strip_comments('a<!-- x -->b'), 'ab')
+        self.assertEqual(pr_labels.strip_comments(None), '')
+
+    def test_needs_capture_follows_the_performance_scope(self):
+        self.assertTrue(pr_labels.needs_capture('perf(libc): speed up'))
+        self.assertFalse(pr_labels.needs_capture('perf(tools): x'))
+        self.assertFalse(pr_labels.needs_capture('fix: x'))
+class PageDecodeTests(unittest.TestCase):
+    def test_decode_pages_joins_consecutive_pages(self):
+        self.assertEqual(pr_labels.decode_pages('[1]\n[2]'), [1, 2])
+
+    def test_decode_pages_refuses_output_with_no_pages(self):
+        with self.assertRaisesRegex(Exception, 'no JSON pages'):
+            pr_labels.decode_pages('  ')
 
 
 if __name__ == "__main__":

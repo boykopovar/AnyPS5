@@ -1,4 +1,6 @@
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libkernel/File/include/File.hpp"
+#include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <cstdint>
@@ -22,6 +24,18 @@ bool Fails(long result, int error) { return result == -1 && *__error_nid_postfix
 bool TooLong(const std::string& path) {
     unsigned char status[256];
     return Fails(stat_nid_postfix(path.c_str(), reinterpret_cast<FileStat*>(status)), ErrorNameTooLong);
+}
+
+void RequireSceTooLong(const std::string& path, const char* what) {
+    unsigned char status[256];
+    const char* name = path.c_str();
+    const int results[] = {sceKernelStat(name, reinterpret_cast<FileStat*>(status)), sceKernelUnlink(name), sceKernelMkdir(name, 0755), sceKernelRmdir(name), sceKernelChmod_nid_postfix(name, 0644), sceKernelTruncate_nid_postfix(name, 0), sceKernelUtimes_nid_postfix(name, nullptr)};
+    const char* calls[] = {"sceKernelStat", "sceKernelUnlink", "sceKernelMkdir", "sceKernelRmdir", "sceKernelChmod", "sceKernelTruncate", "sceKernelUtimes"};
+    for (int index = 0; index < 7; ++index) {
+        if (results[index] == SCE_KERNEL_ERROR_ENAMETOOLONG) continue;
+        std::fprintf(stderr, "%s: %s returned 0x%X\n", what, calls[index], static_cast<unsigned>(results[index]));
+        std::abort();
+    }
 }
 
 }
@@ -49,9 +63,11 @@ int main() {
     Require(!TooLong(block + block + block + name255), "a path of exactly 1023 bytes must not be too long");
 #endif
     Require(TooLong(block + block + block + block), "a path of exactly 1024 bytes must fail with ENAMETOOLONG (63)");
+    RequireSceTooLong(block + block + block + block, "the sce path calls must fail a path of exactly 1024 bytes with SCE_KERNEL_ERROR_ENAMETOOLONG");
     Require(rmdir_nid_postfix("anyps5_name_length") == 0, "rmdir of the test directory failed");
     Require(Fails(stat_nid_postfix((longName + "/x").c_str(), reinterpret_cast<FileStat*>(status)), ErrorNameTooLong), "stat of a long first component must fail with ENAMETOOLONG (63)");
     Require(Fails(stat_nid_postfix(longPath.c_str(), reinterpret_cast<FileStat*>(status)), ErrorNameTooLong), "stat of a path of 1100 bytes must fail with ENAMETOOLONG (63)");
+    RequireSceTooLong(longPath, "the sce path calls must fail a path of 1100 bytes with SCE_KERNEL_ERROR_ENAMETOOLONG");
     Require(Fails(access_nid_postfix(longName.c_str(), 0), ErrorNameTooLong), "access of a long name must fail with ENAMETOOLONG (63)");
     Require(Fails(chflags_nid_postfix(longName.c_str(), 0), ErrorNameTooLong), "chflags of a long name must fail with ENAMETOOLONG (63)");
     Require(Fails(unlink_nid_postfix(longName.c_str()), ErrorNameTooLong), "unlink of a long name must fail with ENAMETOOLONG (63)");

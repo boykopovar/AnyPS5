@@ -2,6 +2,7 @@
 #include "SceTypes.hpp"
 #include "prx/libSceSystemService/SystemService.hpp"
 #include "prx/libSceUserService/UserService.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -10,6 +11,15 @@
 #include <initializer_list>
 #include <limits>
 #include <stdexcept>
+#include <thread>
+#include <vector>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -26,6 +36,49 @@ bool Throws(TCall call) {
     }
     return false;
 }
+
+class PageBeforeHole {
+public:
+    PageBeforeHole() {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        memory = static_cast<char*>(VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        Require(memory != nullptr);
+        DWORD previous;
+        Require(VirtualProtect(memory + pageSize, pageSize, PAGE_NOACCESS, &previous) != 0);
+#else
+        const long nativePageSize = sysconf(_SC_PAGESIZE);
+        Require(nativePageSize > 0);
+        pageSize = static_cast<std::size_t>(nativePageSize);
+        void* allocation = mmap(nullptr, pageSize * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(allocation != MAP_FAILED);
+        memory = static_cast<char*>(allocation);
+        Require(mprotect(memory + pageSize, pageSize, PROT_NONE) == 0);
+#endif
+    }
+
+    PageBeforeHole(const PageBeforeHole&) = delete;
+    PageBeforeHole& operator=(const PageBeforeHole&) = delete;
+
+    ~PageBeforeHole() {
+#ifdef _WIN32
+        VirtualFree(memory, 0, MEM_RELEASE);
+#else
+        munmap(memory, pageSize * 2);
+#endif
+    }
+
+    char* Tail(std::size_t length) const {
+        Require(length <= pageSize);
+        return memory + pageSize - length;
+    }
+
+private:
+    char* memory = nullptr;
+    std::size_t pageSize = 0;
+};
 
 bool LaunchAppThrows(const char* titleId, const char* const* arguments, const void* param) {
     try {
@@ -56,6 +109,12 @@ void TestBigAppList(TList list) {
     Require(list(nullptr, 2, &count) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
     Require(list(appIds, 2, nullptr) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
     Require(list(nullptr, 0, nullptr) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    errno = 71;
+    Require(list(reinterpret_cast<std::int32_t*>(0x10), 2, &count) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
+    errno = 71;
+    Require(list(appIds, 2, reinterpret_cast<std::uint32_t*>(0x10)) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
     Require(appIds[0] == Sentinel && appIds[1] == Sentinel && count == 0xdeadbeefu);
 }
 
@@ -77,10 +136,39 @@ void TestRunningAppUser() {
     TestRunningAppAnswer<std::int32_t>(sceShellCoreUtilGetUserFocus, USER_SERVICE_INITIAL_USER_ID, Sentinel, SHELL_CORE_UTIL_ERROR_INVALID_ARGUMENT);
 }
 
+void TestShellCoreUtilLeafCalls() {
+    sceShellCoreUtilLaunchByUriParamInit(nullptr);
+    errno = 71;
+    sceShellCoreUtilLaunchByUriParamInit(reinterpret_cast<void*>(0x10));
+    Require(errno == 71);
+    Require(sceShellCoreUtilDebugGetNumberOfCffItems(nullptr) == static_cast<int>(0x80e30005u));
+    errno = 71;
+    Require(sceShellCoreUtilDebugGetNumberOfCffItems(reinterpret_cast<std::uint32_t*>(0x10)) == static_cast<int>(0x80e30005u));
+    Require(errno == 71);
+    for (const unsigned char fill : {static_cast<unsigned char>(0xaa), static_cast<unsigned char>(0x00), static_cast<unsigned char>(0xff)}) {
+        unsigned char buffer[24];
+        std::memset(buffer, fill, sizeof(buffer));
+        sceShellCoreUtilLaunchByUriParamInit(buffer + 8);
+        const unsigned char launched[8] = {0, 0, 0, 0, 0xff, 0xff, 0xff, 0xff};
+        Require(std::memcmp(buffer + 8, launched, sizeof(launched)) == 0);
+        for (std::size_t i = 0; i < sizeof(buffer); ++i) Require(i >= 8 && i < 16 ? true : buffer[i] == fill);
+
+        std::memset(buffer, fill, sizeof(buffer));
+        Require(sceShellCoreUtilDebugGetNumberOfCffItems(reinterpret_cast<std::uint32_t*>(buffer + 8)) == 0);
+        std::uint32_t count = 0;
+        std::memcpy(&count, buffer + 8, sizeof(count));
+        Require(count == 50);
+        for (std::size_t i = 0; i < sizeof(buffer); ++i) Require(i >= 8 && i < 12 ? true : buffer[i] == fill);
+    }
+}
+
 void TestRunningAppState() {
     TestRunningAppAnswer<bool>(sceLncUtilIsAppSuspended, false, true, LNC_UTIL_ERROR_INVALID_ARGUMENT);
     TestRunningAppAnswer<bool>(sceSystemServiceIsAppSuspended, false, true, LNC_UTIL_ERROR_INVALID_ARGUMENT);
     TestRunningAppAnswer<bool>(sceLncUtilIsSpeculativeLaunch, false, true, LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    errno = 71;
+    Require(sceLncUtilIsSpeculativeLaunch(sceSystemServiceGetAppIdOfRunningBigApp(), reinterpret_cast<bool*>(0x10)) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
 }
 
 void TestRunningBigApp() {
@@ -113,13 +201,73 @@ void TestPlayerDialogParam() {
         threw = true;
     }
     Require(threw);
+    errno = 71;
+    threw = false;
+    try {
+        sceSystemServiceInitializePlayerDialogParam(reinterpret_cast<SystemServicePlayerDialogParam*>(0x10));
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw && errno == 71);
     Require(sceSystemServiceLaunchPlayerDialog(nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
     Require(sceSystemServiceLaunchPlayerDialog(buffer) == SYSTEM_SERVICE_OK);
+}
+
+void TestSuspendConfirmationDialog() {
+    const int runningAppId = sceSystemServiceGetAppIdOfRunningBigApp();
+    Require(sceShellCoreUtilGetSuspendConfirmationDialogFlag(runningAppId));
+    Require(sceSystemServiceDisableSuspendConfirmationDialog() == SYSTEM_SERVICE_OK);
+    Require(!sceShellCoreUtilGetSuspendConfirmationDialogFlag(runningAppId));
+    Require(sceSystemServiceDisableSuspendConfirmationDialog() == SYSTEM_SERVICE_OK);
+    Require(!sceShellCoreUtilGetSuspendConfirmationDialogFlag(runningAppId));
+    Require(sceSystemServiceEnableSuspendConfirmationDialog() == SYSTEM_SERVICE_OK);
+    Require(sceShellCoreUtilGetSuspendConfirmationDialogFlag(runningAppId));
+    std::vector<std::thread> threads;
+    for (unsigned index = 0; index < 4; ++index) {
+        threads.emplace_back([index] {
+            for (unsigned round = 0; round < 1000; ++round) {
+                const int result = ((index + round) & 1u) ? sceSystemServiceEnableSuspendConfirmationDialog() : sceSystemServiceDisableSuspendConfirmationDialog();
+                Require(result == SYSTEM_SERVICE_OK);
+            }
+        });
+    }
+    for (std::thread& thread : threads) thread.join();
+    Require(sceSystemServiceEnableSuspendConfirmationDialog() == SYSTEM_SERVICE_OK);
+    Require(sceShellCoreUtilGetSuspendConfirmationDialogFlag(runningAppId));
+}
+
+void TestGpuLoadEmulationMode() {
+    const int runningAppId = sceSystemServiceGetAppIdOfRunningBigApp();
+    Require(sceSystemServiceGetGpuLoadEmulationMode() == 1);
+    Require(sceShellCoreUtilGetGpuLoadEmulationMode() == 1);
+    Require(sceSystemServiceSetGpuLoadEmulationMode(0) == SYSTEM_SERVICE_OK);
+    Require(sceSystemServiceGetGpuLoadEmulationMode() == 0);
+    Require(sceShellCoreUtilGetGpuLoadEmulationMode() == 0);
+    Require(sceShellCoreUtilGetGpuLoadEmulationModeByAppId(runningAppId) == 0);
+    Require(sceShellCoreUtilSetGpuLoadEmulationMode(1) == SYSTEM_SERVICE_OK);
+    Require(sceSystemServiceGetGpuLoadEmulationMode() == 1);
+    Require(sceShellCoreUtilSetGpuLoadEmulationModeByAppId(runningAppId, 0) == SYSTEM_SERVICE_OK);
+    Require(sceSystemServiceGetGpuLoadEmulationMode() == 0);
+    Require(sceShellCoreUtilGetGpuLoadEmulationModeByAppId(runningAppId) == 0);
+    Require(sceSystemServiceGetGpuLoadEmulationMode() == 0);
+    std::vector<std::thread> threads;
+    for (unsigned index = 0; index < 4; ++index) {
+        threads.emplace_back([index] {
+            for (unsigned round = 0; round < 1000; ++round) {
+                Require(sceSystemServiceSetGpuLoadEmulationMode((index + round) & 1u) == SYSTEM_SERVICE_OK);
+                const int mode = sceSystemServiceGetGpuLoadEmulationMode();
+                Require(mode == 0 || mode == 1);
+            }
+        });
+    }
+    for (std::thread& thread : threads) thread.join();
+    Require(sceSystemServiceSetGpuLoadEmulationMode(1) == SYSTEM_SERVICE_OK);
 }
 
 }
 
 int main() {
+    TestShellCoreUtilLeafCalls();
     Require(sceSystemServicePowerTick() == SYSTEM_SERVICE_OK);
     Require(sceSystemServicePowerTick() == SYSTEM_SERVICE_OK);
     Require(sceSystemServiceReportAbnormalTermination(nullptr) == SYSTEM_SERVICE_OK);
@@ -163,6 +311,9 @@ int main() {
     Require(Throws([] { return sceSystemServiceAddLocalProcessForPsmKit(nullptr, nullptr, nullptr); }));
     Require(Throws([] { return sceSystemServiceKillLocalProcessForPsmKit(1); }));
     Require(sceSystemServiceGetHdrToneMapLuminance(nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    errno = 71;
+    Require(sceSystemServiceGetHdrToneMapLuminance(reinterpret_cast<SystemServiceHdrToneMapLuminance*>(0x10)) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    Require(errno == 71);
     SystemServiceHdrToneMapLuminance luminance{-1.0f, -1.0f, -1.0f};
     Require(sceSystemServiceGetHdrToneMapLuminance(&luminance) == SYSTEM_SERVICE_OK);
     Require(luminance.max_full_frame_tone_map_luminance == 100.0f);
@@ -178,6 +329,9 @@ int main() {
     };
     std::memset(name, 'x', sizeof(name));
     Require(sceSystemServiceParamGetString(SYSTEM_SERVICE_PARAM_ID_SYSTEM_NAME, nullptr, SYSTEM_SERVICE_MAX_SYSTEM_NAME_LENGTH) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    errno = 71;
+    Require(sceSystemServiceParamGetString(SYSTEM_SERVICE_PARAM_ID_SYSTEM_NAME, reinterpret_cast<char*>(0x10), SYSTEM_SERVICE_MAX_SYSTEM_NAME_LENGTH) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    Require(errno == 71);
     for (std::size_t size = 0; size < SYSTEM_SERVICE_MAX_SYSTEM_NAME_LENGTH; ++size) {
         Require(sceSystemServiceParamGetString(SYSTEM_SERVICE_PARAM_ID_SYSTEM_NAME, name, size) == SYSTEM_SERVICE_ERROR_PARAMETER);
     }
@@ -190,32 +344,55 @@ int main() {
     Require(std::strcmp(name, "PS5") == 0);
     for (std::size_t index = 4; index < SYSTEM_SERVICE_MAX_SYSTEM_NAME_LENGTH + 3; ++index) Require(name[index] == '\0');
     for (std::size_t index = SYSTEM_SERVICE_MAX_SYSTEM_NAME_LENGTH + 3; index < sizeof(name); ++index) Require(name[index] == 'x');
+    char large[608];
+    std::memset(large, 'x', sizeof(large));
+    Require(sceSystemServiceParamGetString(SYSTEM_SERVICE_PARAM_ID_SYSTEM_NAME, large, 600) == SYSTEM_SERVICE_OK);
+    Require(std::strcmp(large, "PS5") == 0);
+    for (std::size_t index = 4; index < 600; ++index) Require(large[index] == '\0');
+    for (std::size_t index = 600; index < sizeof(large); ++index) Require(large[index] == 'x');
+    const PageBeforeHole page;
+    char* const tail = page.Tail(300);
+    std::memset(tail, 'x', 300);
+    errno = 71;
+    Require(sceSystemServiceParamGetString(SYSTEM_SERVICE_PARAM_ID_SYSTEM_NAME, tail, 600) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    Require(errno == 71);
 
     Require(sceSystemServiceGetStatus(nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
     SystemServiceStatus status;
     std::memset(&status, 0x5a, sizeof(status));
+    errno = 71;
+    Require(sceSystemServiceGetStatus(reinterpret_cast<SystemServiceStatus*>(0x10)) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    Require(errno == 71);
     Require(sceSystemServiceGetStatus(&status) == SYSTEM_SERVICE_OK);
     Require(status.event_num == 0 && !status.is_system_ui_overlaid && !status.is_in_background_execution && !status.is_vr_play_area_overlaid);
     for (unsigned char byte : status.reserved) Require(byte == 0);
     Require(sceSystemServiceGetDisplaySafeAreaInfo(nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    errno = 71;
+    Require(sceSystemServiceGetDisplaySafeAreaInfo(reinterpret_cast<SystemServiceDisplaySafeAreaInfo*>(0x10)) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    Require(errno == 71);
     SystemServiceDisplaySafeAreaInfo safeArea;
     std::memset(&safeArea, 0x5a, sizeof(safeArea));
     Require(sceSystemServiceGetDisplaySafeAreaInfo(&safeArea) == SYSTEM_SERVICE_OK);
     Require(safeArea.ratio == 1.0f);
     for (unsigned char byte : safeArea.reserved) Require(byte == 0);
     Require(sceSystemServiceGetNoticeScreenSkipFlag(nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    errno = 71;
+    Require(sceSystemServiceGetNoticeScreenSkipFlag(reinterpret_cast<bool*>(0x10)) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    Require(errno == 71);
     bool skip = true;
     Require(sceSystemServiceGetNoticeScreenSkipFlag(&skip) == SYSTEM_SERVICE_OK && !skip);
     Require(sceSystemServiceSetNoticeScreenSkipFlag() == SYSTEM_SERVICE_OK);
     Require(sceSystemServiceDisableNoticeScreenSkipFlagAutoSet() == SYSTEM_SERVICE_OK);
     Require(sceSystemServiceHideSplashScreen() == SYSTEM_SERVICE_OK);
-    Require(sceSystemServiceReceiveEvent(nullptr) == SYSTEM_SERVICE_ERROR_PARAMETER);
+    Require(sceSystemServiceReceiveEvent(nullptr) == SYSTEM_SERVICE_ERROR_NO_EVENT);
     SystemServiceEvent event;
     event.event_type = 7;
-    Require(sceSystemServiceReceiveEvent(&event) == SYSTEM_SERVICE_ERROR_NO_EVENT);
+    Require(sceSystemServiceReceiveEvent(&event) == SYSTEM_SERVICE_ERROR_NO_EVENT && event.event_type == 7);
     TestRunningBigApp();
     TestRunningAppUser();
     TestRunningAppState();
     TestRemoteSharePlayCpuBudget();
     TestPlayerDialogParam();
+    TestGpuLoadEmulationMode();
+    TestSuspendConfirmationDialog();
 }

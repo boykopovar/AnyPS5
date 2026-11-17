@@ -1,10 +1,12 @@
 #include "prx/libSceSysUtil/include/Api.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/include/Api.hpp"
 
 namespace {
@@ -24,9 +26,19 @@ int APS5_VABI sceSysUtilSendSystemNotificationWithText(int32_t type, const char*
     std::memcpy(request.data(), &TextNotificationKind, sizeof(TextNotificationKind));
     std::memcpy(request.data() + TypeOffset, &type, sizeof(type));
     if (message != nullptr) {
+        const int savedErrno = errno;
         std::size_t length = 0;
-        while (length < TextLimit && message[length] != '\0') ++length;
-        std::memcpy(request.data() + TextOffset, message, length);
+        char c = 0;
+        while (length < TextLimit) {
+            const bool copied = GuestCopyIn_nid_no_patch(&c, message + length, sizeof(c));
+            errno = savedErrno;
+            if (!copied) {
+                return SCE_KERNEL_ERROR_EFAULT;
+            }
+            if (c == '\0') break;
+            request[TextOffset + length] = static_cast<unsigned char>(c);
+            ++length;
+        }
     }
     return sceKernelSendNotificationRequest(0, request.data(), request.size(), 0);
 }

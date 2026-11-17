@@ -1,10 +1,14 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
+#include "prx/libc/include/HostThread.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Queues/WorkerAffinity.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/HandoffSpin.hpp"
 #include "prx/libSceAgcDriver/Execution/include/PerformanceTrace.hpp"
+#include "prx/libSceAgcDriver/Execution/include/ProfileCounter.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include "prx/libSceAgcDriver/Execution/include/WorkerSampler.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Draw.hpp"
 #include "prx/libc/include/HostThreadLocal.hpp"
 #include <algorithm>
 #include <array>
@@ -22,15 +26,28 @@ namespace {
 
 constexpr std::array<const char*, static_cast<std::size_t>(DrawPipeline::DrainReason::Count)> DrainNames{"packet", "flush", "labels", "capture", "indirect", "submission"};
 
+constexpr std::array<const char*, static_cast<std::size_t>(DrawPipeline::CommitKind::Count)> KindNames{"other", "draw", "indirect", "colormeta", "dispatch", "sampledump", "dmafill", "dmawrite", "dmacopy", "store", "endofpipe", "seal", "submitend", "completion", "bufferfill"};
+
 std::atomic<unsigned> runningCommitters{0};
+ProfileCounter drawKeys;
+ProfileCounter drawKeysSameAsPrevious;
+ProfileCounter drawKeysSeenRecently;
+ProfileCounter drawShapesSameAsPrevious;
+ProfileCounter drawShapesSeenRecently;
 
 std::uint64_t elapsedNs(std::chrono::steady_clock::time_point since) {
     return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - since).count());
 }
 
-std::atomic<std::uint64_t> heldReadRanges{0};
-std::atomic<std::uint64_t> heldReadQueries{0};
-std::atomic<std::uint64_t> heldReadHits{0};
+ProfileCounter heldReadRanges;
+ProfileCounter heldReadQueries;
+ProfileCounter heldReadHits;
+
+template<typename TItem>
+struct ClearOnExit {
+    std::vector<TItem>& items;
+    ~ClearOnExit() { items.clear(); }
+};
 
 }
 
@@ -53,15 +70,15 @@ bool DrawPipeline::MetadataPassesPipelined() {
 }
 
 namespace {
-std::atomic<std::uint64_t> pipelinedMetadataPasses{0};
+ProfileCounter pipelinedMetadataPasses;
 }
 
 std::uint64_t DrawPipeline::PipelinedMetadataPasses() {
-    return pipelinedMetadataPasses.load(std::memory_order_relaxed);
+    return pipelinedMetadataPasses.Sum();
 }
 
 void DrawPipeline::CountPipelinedMetadataPass() {
-    pipelinedMetadataPasses.fetch_add(1, std::memory_order_relaxed);
+    pipelinedMetadataPasses.Add(1);
 }
 
 bool DrawFinisher::Overlap() {
@@ -169,7 +186,7 @@ void DrawFinisher::Enqueue(Job job, Pending held) {
     constexpr std::size_t depth = 16;
     struct ReclaimStorage {};
     auto& reclaim = HostThreadLocal<std::vector<Job>, ReclaimStorage>();
-    reclaim.clear();
+    const ClearOnExit<Job> clearReclaim{reclaim};
     std::unique_lock lock(mutex);
     if (!ran.empty()) std::swap(ran, reclaim);
     if (failure != nullptr) std::rethrow_exception(std::exchange(failure, nullptr));
@@ -189,7 +206,9 @@ void DrawFinisher::Enqueue(Job job, Pending held) {
 }
 
 void DrawFinisher::run() {
+    NameDriverThread("draw-finish");
     PerformanceTrace::BindThread("draw finisher");
+    ReserveFinisherCore();
     for (;;) {
         Job* job = nullptr;
         bool failed = false;
@@ -249,7 +268,7 @@ std::size_t DrawPipeline::Depth() {
     static const std::size_t depth = [] {
         const char* text = std::getenv("APS5_PIPELINED_DRAWS");
         if (std::getenv("APS5_LOCKED_DRAW_PREPARE") != nullptr || std::getenv("APS5_DRAW_DRAIN") != nullptr || std::getenv("APS5_DRAIN_ALL") != nullptr || std::getenv("APS5_NO_WORDWISE_CAPTURE") != nullptr) return std::size_t{0};
-        if (text == nullptr) return std::size_t{8};
+        if (text == nullptr) return std::size_t{32};
         const auto value = std::strtoull(text, nullptr, 10);
         return value == 0 ? std::size_t{0} : value == 1 ? std::size_t{8} : static_cast<std::size_t>(std::min<unsigned long long>(value, 256));
     }();
@@ -272,11 +291,35 @@ std::atomic<std::uint64_t>& DrawPipeline::EpochToken() {
     return token;
 }
 
+namespace {
+
+struct EpochSince {
+    std::atomic<std::uint64_t> token{0};
+    std::atomic<std::uint64_t> since{0};
+};
+
+std::array<EpochSince, 4096>& epochSinces() {
+    static std::array<EpochSince, 4096> sinces;
+    return sinces;
+}
+
+}
+
+void DrawPipeline::NoteEpochSince(std::uint64_t token, std::uint64_t since) {
+    auto& slot = epochSinces()[token % epochSinces().size()];
+    slot.token.store(0, std::memory_order_relaxed);
+    slot.since.store(since, std::memory_order_relaxed);
+    slot.token.store(token, std::memory_order_release);
+}
+
 void DrawPipeline::FollowEpoch(std::uint64_t token) {
     static thread_local std::uint64_t followed = 0;
     if (followed == token) return;
     followed = token;
-    GuestMemory::BumpCollectEpoch();
+    const auto& slot = epochSinces()[token % epochSinces().size()];
+    const bool noted = slot.token.load(std::memory_order_acquire) == token;
+    const auto since = slot.since.load(std::memory_order_relaxed);
+    GuestMemory::BumpCollectEpochSince(noted && slot.token.load(std::memory_order_acquire) == token ? since : 0);
 }
 
 unsigned DrawPipeline::Committers() {
@@ -290,19 +333,54 @@ void DrawPipeline::rethrowFailure() {
 }
 
 void DrawPipeline::Enqueue(Commit commit, std::vector<Range> writes, std::uint64_t labelAddress, std::vector<std::byte> labelBytes, std::vector<Range> reads, bool draw) {
+    enqueue({std::move(commit), std::move(writes), labelAddress, std::move(labelBytes), std::move(reads), draw});
+}
+
+void DrawPipeline::Enqueue(CommitKind kind, Commit commit, std::vector<Range> writes, std::uint64_t labelAddress, std::vector<std::byte> labelBytes, std::vector<Range> reads, bool draw) {
+    enqueue({std::move(commit), std::move(writes), labelAddress, std::move(labelBytes), std::move(reads), draw, false, kind});
+}
+
+void DrawPipeline::NoteDrawKey(std::uint64_t key, std::uint64_t shape) {
+    constexpr std::size_t RecentSlots = 4096;
+    thread_local std::array<std::uint64_t, RecentSlots> recent{};
+    thread_local std::uint64_t previous = 0;
+    thread_local std::array<std::uint64_t, RecentSlots> recentShapes{};
+    thread_local std::uint64_t previousShape = 0;
+    const auto shapeSlot = static_cast<std::size_t>((shape ^ (shape >> 29u)) % RecentSlots);
+    const auto slot = static_cast<std::size_t>((key ^ (key >> 29u)) % RecentSlots);
+    drawKeys.Add(1);
+    if (key == previous) drawKeysSameAsPrevious.Add(1);
+    if (recent[slot] == key) drawKeysSeenRecently.Add(1);
+    if (shape == previousShape) drawShapesSameAsPrevious.Add(1);
+    if (recentShapes[shapeSlot] == shape) drawShapesSeenRecently.Add(1);
+    recent[slot] = key;
+    previous = key;
+    recentShapes[shapeSlot] = shape;
+    previousShape = shape;
+}
+
+void DrawPipeline::EnqueueStore(Commit commit, std::uint64_t address, std::vector<std::byte> bytes) {
+    const auto end = address + bytes.size();
+    enqueue({std::move(commit), {{address, end}}, address, std::move(bytes), {}, false, true, CommitKind::Store});
+}
+
+void DrawPipeline::enqueue(Item item) {
     if (DrawFinisher::Busy() && !DrawFinisher::OnFinisherThread()) DrawFinisher::Get().Drain();
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     struct ReclaimStorage {};
     auto& reclaim = HostThreadLocal<std::vector<Item>, ReclaimStorage>();
-    reclaim.clear();
+    const ClearOnExit<Item> clearReclaim{reclaim};
     const auto lockStart = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     std::unique_lock lock(mutex);
-    if (!retired.empty()) std::swap(retired, reclaim);
+    if (!retired.empty() && watchers == 0) {
+        reclaimedItems += retired.size();
+        std::swap(retired, reclaim);
+    }
     if (profile) lockWaitNs += elapsedNs(lockStart);
     rethrowFailure();
     if (closing) {
         lock.unlock();
-        commit();
+        item.commit();
         return;
     }
     if (items.size() >= Depth()) {
@@ -318,12 +396,12 @@ void DrawPipeline::Enqueue(Commit commit, std::vector<Range> writes, std::uint64
     }
     depthSum += items.size();
     ++enqueued;
-    heldReadRanges.fetch_add(reads.size(), std::memory_order_relaxed);
-    countWrites(writes, true);
-    items.push_back({std::move(commit), std::move(writes), labelAddress, std::move(labelBytes), std::move(reads), draw});
+    heldReadRanges.Add(item.reads.size());
+    countWrites(item.writes, true);
+    items.push_back(std::move(item));
     outstanding.fetch_add(1, std::memory_order_release);
     if (!thread.joinable()) {
-        thread = std::thread([this] {
+        thread = Libc::StartHostThread([this] {
             GuestMemory::MarkProofThread();
             run();
         });
@@ -362,9 +440,21 @@ void DrawPipeline::report(std::chrono::steady_clock::time_point now) {
     const auto queued = enqueued == 0 ? 0.0 : static_cast<double>(depthSum) / static_cast<double>(enqueued);
     const auto decodeDrainCount = decodeDrains.load(std::memory_order_relaxed);
     char reads[96];
-    std::snprintf(reads, sizeof(reads), " %llu read ranges, %llu stores held, %llu decode drains", static_cast<unsigned long long>(heldReadRanges.load(std::memory_order_relaxed)), static_cast<unsigned long long>(heldReadHits.exchange(0, std::memory_order_relaxed)), static_cast<unsigned long long>(decodeDrainCount - reportedDecodeDrains));
+    std::snprintf(reads, sizeof(reads), " %llu read ranges, %llu stores held, %llu decode drains", static_cast<unsigned long long>(heldReadRanges.Sum()), static_cast<unsigned long long>(heldReadHits.Take()), static_cast<unsigned long long>(decodeDrainCount - reportedDecodeDrains));
     reportedDecodeDrains = decodeDrainCount;
     AgcDriver::ProfilePrint_nid_no_patch("[draw] pipelined (10 s, depth %zu): %llu commits at %.1f us each on the committer, %llu failed; %llu enqueued behind %.2f on average, waiting %.1f us per draw for room, %.2f us for the lock; %llu committer wakes;%s; drains:%s\n", Depth(), static_cast<unsigned long long>(commits), perCommit, static_cast<unsigned long long>(commitErrors), static_cast<unsigned long long>(enqueued), queued, perDraw, enqueued == 0 ? 0.0 : static_cast<double>(lockWaitNs) / 1e3 / static_cast<double>(enqueued), static_cast<unsigned long long>(wakes), reads, drainText.c_str());
+    std::string kindText;
+    for (std::size_t i = 0; i < kindCommits.size(); ++i) {
+        const auto count = kindCommits[i].exchange(0, std::memory_order_relaxed);
+        const auto ns = kindNs[i].exchange(0, std::memory_order_relaxed);
+        if (count == 0) continue;
+        char item[64];
+        std::snprintf(item, sizeof(item), " %s %llu (%.1f us)", KindNames[i], static_cast<unsigned long long>(count), static_cast<double>(ns) / 1e3 / static_cast<double>(count));
+        kindText += item;
+    }
+    AgcDriver::ProfilePrint_nid_no_patch("[commits] by kind (10 s):%s\n", kindText.c_str());
+    const auto vk = Graphics::TakeVkDrawCounts();
+    AgcDriver::ProfilePrint_nid_no_patch("[vkdraw] (10 s): %llu vkCmdDraw, %llu vkCmdDrawIndexed, %llu vkCmdDrawIndirect calls, %llu mesh; draw keys %llu, same as the previous draw %llu, seen within the last 4096 draws %llu; draw shapes (state without per-draw user words) same as the previous %llu, seen within the last 4096 %llu\n", static_cast<unsigned long long>(vk.direct), static_cast<unsigned long long>(vk.indexed), static_cast<unsigned long long>(vk.indirect), static_cast<unsigned long long>(vk.mesh), static_cast<unsigned long long>(drawKeys.Take()), static_cast<unsigned long long>(drawKeysSameAsPrevious.Take()), static_cast<unsigned long long>(drawKeysSeenRecently.Take()), static_cast<unsigned long long>(drawShapesSameAsPrevious.Take()), static_cast<unsigned long long>(drawShapesSeenRecently.Take()));
     commits = commitNs = commitErrors = enqueued = fullWaitNs = depthSum = wakes = lockWaitNs = 0;
     drains = {};
     drainWaitNs = {};
@@ -372,7 +462,9 @@ void DrawPipeline::report(std::chrono::steady_clock::time_point now) {
 
 
 void DrawPipeline::run() {
+    NameDriverThread("draw-commit");
     PerformanceTrace::BindThread("draw committer");
+    ReserveCommitterCore();
     StartCommitterSampler();
     for (;;) {
         Commit* commit = nullptr;
@@ -410,6 +502,9 @@ void DrawPipeline::run() {
         }
         std::lock_guard lock(mutex);
         countWrites(items.front().writes, false);
+        const auto kindIndex = static_cast<std::size_t>(items.front().kind);
+        kindCommits[kindIndex].fetch_add(1, std::memory_order_relaxed);
+        kindNs[kindIndex].fetch_add(spent, std::memory_order_relaxed);
         retired.push_back(std::move(items.front()));
         items.pop_front();
         retiredItems.fetch_add(1, std::memory_order_release);
@@ -440,10 +535,12 @@ void DrawPipeline::ReleaseRetired() {
     std::vector<Item> done;
     std::lock_guard lock(mutex);
     std::swap(done, retired);
+    reclaimedItems += done.size();
 }
 
 void DrawPipeline::Drain(DrainReason reason, std::uint32_t opcode) {
     drainRequests[std::min<std::uint32_t>(opcode, 0x100)].fetch_add(1, std::memory_order_relaxed);
+    reasonRequests[static_cast<std::size_t>(reason)].fetch_add(1, std::memory_order_relaxed);
     const bool finisherBusy = DrawFinisher::Busy() && !DrawFinisher::OnFinisherThread();
     if ((finisherBusy || Busy()) && GuestMemory::GpuMutex().HeldByThisThread()) throw std::runtime_error("draw pipeline drain under the GPU lock (reason " + std::to_string(static_cast<unsigned>(reason)) + ", opcode " + std::to_string(opcode) + ")");
     if (finisherBusy) DrawFinisher::Get().Drain();
@@ -471,11 +568,11 @@ bool DrawPipeline::HeldReads(std::uint64_t address, std::size_t bytes) {
     const auto end = address + bytes;
     auto& pipeline = Queue0();
     std::lock_guard lock(pipeline.mutex);
-    heldReadQueries.fetch_add(1, std::memory_order_relaxed);
+    heldReadQueries.Add(1);
     for (const auto& item : pipeline.items) {
         for (const auto& [begin, limit] : item.reads) {
             if (address >= limit || begin >= end) continue;
-            heldReadHits.fetch_add(1, std::memory_order_relaxed);
+            heldReadHits.Add(1);
             return true;
         }
     }
@@ -483,12 +580,16 @@ bool DrawPipeline::HeldReads(std::uint64_t address, std::size_t bytes) {
 }
 
 std::uint64_t DrawPipeline::HeldReadQueries() {
-    return heldReadQueries.load(std::memory_order_relaxed);
+    return heldReadQueries.Sum();
 }
 
 void DrawPipeline::ReleaseRunningReads() {
     std::lock_guard lock(mutex);
     if (!items.empty()) items.front().reads.clear();
+}
+
+std::uint64_t DrawPipeline::DrainRequestsByReason(DrainReason reason) {
+    return Queue0().reasonRequests[static_cast<std::size_t>(reason)].load(std::memory_order_relaxed);
 }
 
 std::optional<std::uint64_t> DrawPipeline::PendingLabel(std::uint64_t address, std::size_t bytes) {
@@ -512,6 +613,25 @@ std::optional<std::uint64_t> DrawPipeline::PendingLabel(std::uint64_t address, s
     return std::nullopt;
 }
 
+DrawPipeline::QueuedWrite DrawPipeline::StoredBytes(std::uint64_t address, std::size_t bytes, std::span<std::byte> out) {
+    const auto end = address + bytes;
+    if (DrawFinisher::Overlap() && DrawFinisher::Get().PendingOverlaps(address, end)) return QueuedWrite::Unknown;
+    auto answer = QueuedWrite::None;
+    std::lock_guard lock(mutex);
+    for (auto item = items.rbegin(); item != items.rend(); ++item) {
+        if (std::none_of(item->writes.begin(), item->writes.end(), [&](const Range& range) { return address < range.second && range.first < end; })) continue;
+        if (!item->store) return QueuedWrite::Unknown;
+        if (out.empty()) {
+            answer = QueuedWrite::Stored;
+            continue;
+        }
+        if (out.size() != bytes || address < item->labelAddress || end > item->labelAddress + item->labelBytes.size()) return QueuedWrite::Unknown;
+        std::memcpy(out.data(), item->labelBytes.data() + (address - item->labelAddress), bytes);
+        return QueuedWrite::Stored;
+    }
+    return answer;
+}
+
 void DrawPipeline::countWrites(const std::vector<Range>& writes, bool added) {
     for (const auto& range : writes) {
         const auto found = std::find_if(queuedWrites.begin(), queuedWrites.end(), [&](const auto& entry) { return entry.first == range; });
@@ -525,26 +645,78 @@ void DrawPipeline::countWrites(const std::vector<Range>& writes, bool added) {
     }
 }
 
-DrawPipeline::Watch DrawPipeline::WatchWrites() {
-    if (!Busy()) return {Retired(), 0, {}};
+bool DrawPipeline::CountedWatch() {
+    static const bool counted = std::getenv("APS5_NO_DECODE_WATCH_COUNTS") == nullptr;
+    return counted;
+}
+
+DrawPipeline::Watch::~Watch() {
+    if (pinned != nullptr) pinned->releaseWatch(*this);
+}
+
+void DrawPipeline::unpinWatch(Watch& watch) {
+    if (watch.pinned == nullptr) return;
+    --watchers;
+    watch.pinned = nullptr;
+}
+
+void DrawPipeline::releaseWatch(Watch& watch) {
     std::lock_guard lock(mutex);
-    Watch watch{retiredItems.load(std::memory_order_relaxed), items.size(), {}};
+    unpinWatch(watch);
+}
+
+DrawPipeline::Watch DrawPipeline::WatchWrites() {
+    if (!Busy()) return Watch{Retired(), 0};
+    std::lock_guard lock(mutex);
+    Watch watch{retiredItems.load(std::memory_order_relaxed), items.size()};
+    if (CountedWatch()) {
+        if (watch.items != 0) {
+            ++watchers;
+            watch.pinned = this;
+        }
+        return watch;
+    }
     for (const auto& item : items) watch.writes.insert(watch.writes.end(), item.writes.begin(), item.writes.end());
     return watch;
 }
 
-bool DrawPipeline::WrittenSince(const Watch& watch, const std::vector<Range>& reads) {
-    const auto overlaps = [&reads](const std::vector<Range>& writes) {
-        return std::any_of(reads.begin(), reads.end(), [&writes](const Range& read) {
-            return std::any_of(writes.begin(), writes.end(), [&read](const Range& write) { return read.first < write.second && write.first < read.second; });
-        });
+bool DrawPipeline::WrittenSince(Watch& watch, const std::vector<Range>& reads) {
+    auto hullBegin = std::numeric_limits<std::uint64_t>::max();
+    std::uint64_t hullEnd = 0;
+    for (const auto& read : reads) {
+        hullBegin = std::min(hullBegin, read.first);
+        hullEnd = std::max(hullEnd, read.second);
+    }
+    const auto overlaps = [&](const std::vector<Range>& writes) {
+        for (const auto& write : writes) {
+            if (write.second <= hullBegin || hullEnd <= write.first) continue;
+            if (std::any_of(reads.begin(), reads.end(), [&write](const Range& read) { return read.first < write.second && write.first < read.second; })) return true;
+        }
+        return false;
     };
-    if (DrawFinisher::Overlap() && DrawFinisher::Get().PendingOverlapsAny(reads)) return true;
+    if (DrawFinisher::Overlap() && DrawFinisher::Get().PendingOverlapsAny(reads)) {
+        releaseWatch(watch);
+        return true;
+    }
     std::lock_guard lock(mutex);
+    struct Unpin {
+        DrawPipeline& queue;
+        Watch& watch;
+        ~Unpin() { queue.unpinWatch(watch); }
+    } unpin{*this, watch};
     if (std::any_of(items.begin(), items.end(), [&](const Item& item) { return overlaps(item.writes); })) return true;
     const auto retiredNow = retiredItems.load(std::memory_order_relaxed);
     if (retiredNow == watch.retired) return false;
-    return retiredNow - watch.retired > watch.items || overlaps(watch.writes);
+    const auto since = retiredNow - watch.retired;
+    if (since > watch.items) return true;
+    if (watch.pinned == nullptr) return overlaps(watch.writes);
+    if (watch.retired < reclaimedItems || watch.retired - reclaimedItems + since > retired.size()) return true;
+    countedLookups.fetch_add(1, std::memory_order_relaxed);
+    const auto first = static_cast<std::size_t>(watch.retired - reclaimedItems);
+    for (std::size_t index = first; index < first + static_cast<std::size_t>(since); ++index) {
+        if (overlaps(retired[index].writes)) return true;
+    }
+    return false;
 }
 
 bool DrawPipeline::Busy() const {
