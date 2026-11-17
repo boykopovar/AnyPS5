@@ -3,6 +3,9 @@
 #include "ThreadOwned.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ThreadScratch.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Packets/DriverTimed.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Packets/PacketRules.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Queues/LeanFront.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/SynchronizationStatistics.hpp"
@@ -46,6 +49,10 @@ void noteRingPacket(std::uint32_t queueId, std::uint64_t serial, std::uint32_t o
     }
     ringOrder.afterDispatch = false;
 }
+
+}
+
+namespace PacketRules {
 
 bool orderedFills() {
     static const bool ordered = std::getenv("APS5_PIPELINE_DRAIN_FILLS") == nullptr;
@@ -124,7 +131,31 @@ bool& drawnSinceSeal() {
     return drawn;
 }
 
+void dumpQueue(const Submission& submission) {
+    static const long dumpQueue = [] { const char* text = std::getenv("APS5_DUMP_QUEUE"); return text ? std::strtol(text, nullptr, 16) : -1L; }();
+    if (static_cast<long>(submission.queue) == dumpQueue) {
+
+        static int dumped = 0;
+        if (dumped++ < 40) {
+            std::string text = "[queue] submission " + std::to_string(submission.serial) + ":\n";
+            for (std::size_t cursor = 0; cursor < submission.commands.size();) {
+                const auto header = submission.commands[cursor];
+                const auto count = Pm4::PacketWords(header);
+                char line[200];
+                int length = std::snprintf(line, sizeof(line), "[queue]   %s", Pm4::Name(header).c_str());
+                for (std::size_t i = 1; i < count && i < 10 && length < 180; ++i) length += std::snprintf(line + length, sizeof(line) - length, " %08x", submission.commands[cursor + i]);
+                text += line;
+                text += "\n";
+                cursor += count;
+            }
+            std::fputs(text.c_str(), stderr);
+        }
+    }
 }
+
+}
+
+using namespace PacketRules;
 
 void Driver::deliverGuestEopInterrupt(std::uint32_t queue, std::uint32_t context) {
     AgcDriverDeliverEopInterrupt(queue, context);
@@ -140,53 +171,31 @@ std::optional<std::uint32_t> Driver::releaseInterrupt(std::span<const std::uint3
     return context;
 }
 
-template <typename TWork>
-void Driver::timed(double WorkerProfile::*bucket, TWork&& work) {
-    static const bool report = std::getenv("APS5_PROFILE_DRAW") != nullptr;
-    if (!report) {
-        work();
-        return;
+void Driver::abAtFlip() {
+    static const auto abClock = std::chrono::steady_clock::now();
+    std::vector<std::string> abLines;
+    {
+        GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Flush);
+        std::lock_guard gpuLock(GuestMemory::GpuMutex());
+        abLines = Graphics::AbAtPresent(flipsCounted.load(), std::chrono::duration<double>(std::chrono::steady_clock::now() - abClock).count());
     }
-    struct Slot {};
-    auto& profile = ThreadScratch<WorkerProfile, Slot>();
-    const auto begin = std::chrono::steady_clock::now();
-    work();
-    const auto end = std::chrono::steady_clock::now();
-    profile.*bucket += std::chrono::duration<double, std::milli>(end - begin).count();
-    if (end - profile.reported > std::chrono::seconds(10)) {
-        profile.reported = end;
-        AgcDriver::ProfilePrint_nid_no_patch( "[gpu] worker at %.0f s: dispatch %.1f s, draw %.1f s, wait %.1f s\n", std::chrono::duration<double>(end - profile.start).count(), profile.dispatchMs / 1000, profile.drawMs / 1000, profile.waitMs / 1000);
-    }
-    if (report && bucket != &WorkerProfile::waitMs) PerformanceCounters::AddDriverNanoseconds(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(end - begin).count()));
+    for (const auto& line : abLines) AgcDriver::ProfilePrint_nid_no_patch("%s", line.c_str());
+    if (!abLines.empty()) LeanFront::Report(true);
 }
 
 void Driver::execute(Submission& submission) {
+    const auto front = submission.front != FrontMode::Unlatched ? submission.front : latchFront(submission.queue, submission.suspend);
+    if (front == FrontMode::Lean) {
+        executeLean(submission);
+        return;
+    }
     auto* submissionTiming = includeTimingSubmission(submission, true);
-    struct FlipHold {
-        Driver& driver;
-        std::uint32_t queue;
-        bool held;
-        bool working;
-        std::shared_ptr<FlipWork> work;
-        void Release() {
-            if (!held) return;
-            held = false;
-            driver.releaseFlipHold();
-        }
-        void Finish() {
-            if (!working) return;
-            const auto workSerial = driver.submitFlipWork(queue);
-            working = false;
-            driver.finishFlipWork(work, workSerial);
-        }
-        ~FlipHold() {
-            Release();
-            if (working) driver.finishFlipWork(work, 0);
-        }
-    } flipHold{*this, submission.queue, submission.holdsFlip, submission.holdsFlip, submission.flipWork};
+    FlipHold flipHold{*this, submission.queue, submission.holdsFlip, submission.holdsFlip, submission.flipWork};
     const bool pipelined = submission.queue == 0 && DrawPipeline::Depth() != 0;
+    const LeanFront::SegmentNesting nesting(submission.queue == 0 ? &frontLatch : nullptr);
     static const bool orderedWaits = std::getenv("APS5_PIPELINE_DRAIN_LABELS") == nullptr;
     DrawPipeline::Active() = pipelined;
+    if (pipelined && DrawFinisher::Get().Adopt(false)) leanDraws.ReleaseDevice();
     struct PipelineDrain {
         bool pipelined;
         ~PipelineDrain() {
@@ -239,25 +248,7 @@ void Driver::execute(Submission& submission) {
     static const bool traceGpu = std::getenv("APS5_TRACE_GPU") != nullptr;
     if (traceGpu) std::fprintf(stderr, "[gpu] %.1f execute serial=%llu queue=0x%x dwords=%zu\n", TraceMs(), static_cast<unsigned long long>(submission.serial), submission.queue, submission.commands.size());
 
-    static const long dumpQueue = [] { const char* text = std::getenv("APS5_DUMP_QUEUE"); return text ? std::strtol(text, nullptr, 16) : -1L; }();
-    if (static_cast<long>(submission.queue) == dumpQueue) {
-
-        static int dumped = 0;
-        if (dumped++ < 40) {
-            std::string text = "[queue] submission " + std::to_string(submission.serial) + ":\n";
-            for (std::size_t cursor = 0; cursor < submission.commands.size();) {
-                const auto header = submission.commands[cursor];
-                const auto count = Pm4::PacketWords(header);
-                char line[200];
-                int length = std::snprintf(line, sizeof(line), "[queue]   %s", Pm4::Name(header).c_str());
-                for (std::size_t i = 1; i < count && i < 10 && length < 180; ++i) length += std::snprintf(line + length, sizeof(line) - length, " %08x", submission.commands[cursor + i]);
-                text += line;
-                text += "\n";
-                cursor += count;
-            }
-            std::fputs(text.c_str(), stderr);
-        }
-    }
+    dumpQueue(submission);
     PacketHistory recent{submission.commands};
 
     static const bool profilePackets = std::getenv("APS5_PROFILE_DRAW") != nullptr;
@@ -271,7 +262,7 @@ void Driver::execute(Submission& submission) {
     const bool orderedAtSubmit = submission.rewindTail == nullptr && submission.enqueuedAt != std::chrono::steady_clock::time_point{};
     const auto submittedAt = orderedAtSubmit ? static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(submission.enqueuedAt.time_since_epoch()).count()) : 0;
     if (epochEach || submission.enqueuedAt == std::chrono::steady_clock::time_point{} || submission.enqueuedAt > lastEpochBump()) {
-        if (!epochEach) noteReleasedTails(submission);
+        if (!epochEach) noteReleasedTails(submission, front);
         bumpEpochSince(&EpochBumps::submissions, submittedAt);
     } else {
         raiseEpochSince(submittedAt);
@@ -459,16 +450,7 @@ void Driver::execute(Submission& submission) {
             Graphics::NoteHostImportFrame();
             if (batchesAtFlip != 0) flipSerial = batchesAtFlip;
             flipBatchesUnsignaled += unsignaledAtFlip;
-            if (Graphics::AbConfigured()) {
-                static const auto abClock = std::chrono::steady_clock::now();
-                std::vector<std::string> abLines;
-                {
-                    GuestMemory::TagGpuLockSite(GuestMemory::GpuLockSite::Flush);
-                    std::lock_guard gpuLock(GuestMemory::GpuMutex());
-                    abLines = Graphics::AbAtPresent(flipsCounted.load(), std::chrono::duration<double>(std::chrono::steady_clock::now() - abClock).count());
-                }
-                for (const auto& line : abLines) AgcDriver::ProfilePrint_nid_no_patch("%s", line.c_str());
-            }
+            if (Graphics::AbConfigured()) abAtFlip();
 
             timing.Mark("flip_flush");
             timing.FinishPacket(submission.serial, cursor, 0xffffu, count);

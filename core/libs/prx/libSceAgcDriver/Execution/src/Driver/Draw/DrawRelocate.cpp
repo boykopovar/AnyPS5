@@ -264,6 +264,15 @@ void Driver::learnPendingRelocation() {
 }
 
 void Driver::relocateDrawEntry(const QueueState& queue, std::uint64_t alias, std::shared_ptr<DrawEntry>& entry, std::shared_ptr<const DrawDecode>& decode, std::vector<DrawUserPatch>& patches) {
+    relocateDrawEntryWith([&](std::uint32_t offset) { return readUserData(queue.shader, offset); }, alias, entry, decode, patches);
+}
+
+void Driver::relocateDrawEntry(const DrawUserWords& words, std::uint64_t alias, std::shared_ptr<DrawEntry>& entry, std::shared_ptr<const DrawDecode>& decode, std::vector<DrawUserPatch>& patches) {
+    relocateDrawEntryWith([&](std::uint32_t offset) { return words.Value(offset); }, alias, entry, decode, patches);
+}
+
+template <typename TRead>
+void Driver::relocateDrawEntryWith(const TRead& read, std::uint64_t alias, std::shared_ptr<DrawEntry>& entry, std::shared_ptr<const DrawDecode>& decode, std::vector<DrawUserPatch>& patches) {
     auto& counters = drawRelocationCounters;
     ++counters.lookups;
     const auto found = drawAliases.find(alias);
@@ -285,7 +294,7 @@ void Driver::relocateDrawEntry(const QueueState& queue, std::uint64_t alias, std
     for (std::size_t i = 0; i < programs.size(); ++i) {
         const auto& program = programs[i];
         for (std::uint32_t index = program.hiddenUserWords; index < program.userData.size(); ++index) {
-            const auto current = readUserData(queue.shader, program.userDataBase + index - program.hiddenUserWords);
+            const auto current = read(program.userDataBase + index - program.hiddenUserWords);
             if (current != program.userData[index]) moves.push_back({i, index, program.userData[index], current});
         }
     }

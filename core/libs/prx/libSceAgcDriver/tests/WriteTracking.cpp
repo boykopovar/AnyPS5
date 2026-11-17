@@ -252,6 +252,34 @@ void CheckRepeatedNeighbourStores() {
     Require(!StoredOver(freshBase, static_cast<std::size_t>(neighbour - freshBase), thirdStored), "a store that overlaps without containing evicted a newer piece instead of the oldest");
 }
 
+void CheckDriverStoredOver() {
+    void* memory = AllocateWatched(3 * Block);
+    const auto base = reinterpret_cast<std::uint64_t>(memory);
+    std::memset(memory, 0x22, 3 * Block);
+    Require(CollectWrites(base, 3 * Block) != 0, "the driver store test block is not collected");
+    const auto kept = TrackerGeneration();
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 2> commands{{{base + 0x100, 0x200}, {base + 2 * Block + 0x40, 0x80}}};
+    Require(!DriverStoredOver(commands, kept), "untouched command words read as stored over by the driver");
+    Require(!DriverStoredOver({}, kept), "no ranges read as stored over by the driver");
+    std::memset(static_cast<std::uint8_t*>(memory) + 0x180, 0x33, 16);
+    Require(CollectWrites(base, Block) > kept && StoredOver(base + 0x100, 0x200, kept), "the CPU store over the command words was not collected");
+    Require(!DriverStoredOver(commands, kept), "a CPU store over the command words counts as a driver store");
+    Require(MarkWritten(base + 0x400, 0x40) != 0, "a driver store beside the command words is not stamped");
+    Require(!DriverStoredOver(commands, kept), "a driver store beside the command words counts as a store over them");
+    const std::array<std::byte, 8> patch{std::byte{1}, std::byte{2}, std::byte{3}, std::byte{4}, std::byte{5}, std::byte{6}, std::byte{7}, std::byte{8}};
+    Require(StoreOwnBytes(base + 2 * Block + 0x60, patch) != 0, "a driver store over the second command range is not stamped");
+    Require(DriverStoredOver(commands, kept), "a driver store over the second command range is not seen");
+    Require(!DriverStoredOver(std::span(commands).first(1), kept), "a driver store over the second command range is seen over the first");
+    const auto later = TrackerGeneration();
+    Require(!DriverStoredOver(commands, later), "a driver store older than the generation is seen");
+    Require(MarkPossiblyWritten(base + 0x2f0, 4) != 0, "a possible GPU write over the first command range is not stamped");
+    Require(DriverStoredOver(std::span(commands).first(1), later), "a possible GPU write over the first command range is not seen");
+    Require(DriverStoredOver(commands, 0), "a zero generation does not read as stored over");
+    static std::array<std::uint64_t, 4> unwatched{};
+    const std::array<std::pair<std::uint64_t, std::uint64_t>, 1> outside{{{reinterpret_cast<std::uint64_t>(unwatched.data()), sizeof(unwatched)}}};
+    Require(DriverStoredOver(outside, TrackerGeneration()), "memory outside the watched arena does not read as stored over");
+}
+
 void CheckStoredAllSince() {
     constexpr std::size_t bytes = 4 * Block;
     auto* memory = static_cast<std::uint8_t*>(AllocateWatched(bytes));
@@ -2725,6 +2753,7 @@ int main(int argc, char** argv) {
         CheckStoredOverUsesPageEvidence();
         CheckRepeatedNeighbourStores();
         CheckStoredAllSince();
+        CheckDriverStoredOver();
         CheckSharedBlockProofs();
         CheckRepeatedPossibleStores();
         CheckOwnStore();

@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
 #include "prx/libc/include/HostThread.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Queues/LeanFront.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Queues/WorkerAffinity.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/HandoffSpin.hpp"
@@ -13,6 +14,7 @@
 #include <algorithm>
 #include <array>
 #include <limits>
+#include <optional>
 #include <string>
 #include <cstdio>
 #include <cstdlib>
@@ -88,6 +90,17 @@ bool DrawFinisher::Overlap() {
 
 bool DrawFinisher::PendingOverlaps(std::uint64_t begin, std::uint64_t end) {
     if (!Busy() || !finisherProducer) return false;
+    if (ringMode.load(std::memory_order_acquire)) {
+        const auto last = issued.load(std::memory_order_relaxed);
+        for (auto seq = front.load(std::memory_order_acquire); seq < last; ++seq) {
+            const auto& held = leanSlot(seq).pending;
+            if (held.unknown) return true;
+            for (const auto& [first, limit] : held.writes) {
+                if (begin < limit && first < end) return true;
+            }
+        }
+        return false;
+    }
     std::lock_guard lock(mutex);
     for (const auto& held : pending) {
         if (held.unknown) return true;
@@ -101,21 +114,44 @@ bool DrawFinisher::PendingOverlaps(std::uint64_t begin, std::uint64_t end) {
 DrawFinisher::LabelLookup DrawFinisher::PendingLabel(std::uint64_t address, std::size_t bytes, std::uint64_t& value) {
     if (!Busy() || !finisherProducer) return LabelLookup::NotHeld;
     const auto end = address + bytes;
+    const auto lookup = [&](const Pending& held) -> std::optional<LabelLookup> {
+        if (held.unknown) return LabelLookup::Unknown;
+        const bool overlaps = std::any_of(held.writes.begin(), held.writes.end(), [&](const Range& range) { return address < range.second && range.first < end; });
+        if (!overlaps) return std::nullopt;
+        if (held.labelBytes.empty() || address < held.labelAddress || end > held.labelAddress + held.labelBytes.size()) return LabelLookup::Unknown;
+        value = 0;
+        std::memcpy(&value, held.labelBytes.data() + (address - held.labelAddress), bytes);
+        return LabelLookup::Value;
+    };
+    if (ringMode.load(std::memory_order_acquire)) {
+        const auto first = front.load(std::memory_order_acquire);
+        for (auto seq = issued.load(std::memory_order_relaxed); seq-- > first;) {
+            if (const auto answer = lookup(leanSlot(seq).pending)) return *answer;
+        }
+        return LabelLookup::NotHeld;
+    }
     std::lock_guard lock(mutex);
     for (auto held = pending.rbegin(); held != pending.rend(); ++held) {
-        if (held->unknown) return LabelLookup::Unknown;
-        const bool overlaps = std::any_of(held->writes.begin(), held->writes.end(), [&](const Range& range) { return address < range.second && range.first < end; });
-        if (!overlaps) continue;
-        if (held->labelBytes.empty() || address < held->labelAddress || end > held->labelAddress + held->labelBytes.size()) return LabelLookup::Unknown;
-        value = 0;
-        std::memcpy(&value, held->labelBytes.data() + (address - held->labelAddress), bytes);
-        return LabelLookup::Value;
+        if (const auto answer = lookup(*held)) return *answer;
     }
     return LabelLookup::NotHeld;
 }
 
 bool DrawFinisher::PendingOverlapsAny(std::span<const Range> ranges) {
     if (!Busy() || !finisherProducer) return false;
+    if (ringMode.load(std::memory_order_acquire)) {
+        const auto last = issued.load(std::memory_order_relaxed);
+        for (auto seq = front.load(std::memory_order_acquire); seq < last; ++seq) {
+            const auto& held = leanSlot(seq).pending;
+            if (held.unknown) return true;
+            for (const auto& [first, limit] : held.writes) {
+                for (const auto& [begin, end] : ranges) {
+                    if (begin < limit && first < end) return true;
+                }
+            }
+        }
+        return false;
+    }
     std::lock_guard lock(mutex);
     for (const auto& held : pending) {
         if (held.unknown) return true;
@@ -130,8 +166,16 @@ bool DrawFinisher::PendingOverlapsAny(std::span<const Range> ranges) {
 
 bool DrawFinisher::PendingKey(std::uint64_t key, std::uint64_t shape) {
     if (!Busy() || !finisherProducer) return false;
+    const auto matches = [&](const Pending& held) { return held.key == key || (shape != 0 && held.shape == shape); };
+    if (ringMode.load(std::memory_order_acquire)) {
+        const auto last = issued.load(std::memory_order_relaxed);
+        for (auto seq = front.load(std::memory_order_acquire); seq < last; ++seq) {
+            if (matches(leanSlot(seq).pending)) return true;
+        }
+        return false;
+    }
     std::lock_guard lock(mutex);
-    return std::any_of(pending.begin(), pending.end(), [&](const Pending& held) { return held.key == key || (shape != 0 && held.shape == shape); });
+    return std::any_of(pending.begin(), pending.end(), matches);
 }
 
 namespace {
@@ -188,6 +232,24 @@ void DrawFinisher::Enqueue(Job job) {
 
 void DrawFinisher::Enqueue(Job job, Pending held) {
     finisherProducer = true;
+    if (ringMode.load(std::memory_order_acquire)) {
+        rethrowLeanFailure();
+        if (closed.load(std::memory_order_acquire)) {
+            job();
+            return;
+        }
+        awaitLeanRoom();
+        if (closed.load(std::memory_order_acquire)) {
+            job();
+            return;
+        }
+        auto& slot = leanSlot(issued.load(std::memory_order_relaxed));
+        slot.runner = nullptr;
+        slot.closure = std::move(job);
+        slot.pending = std::move(held);
+        publishLean();
+        return;
+    }
     constexpr std::size_t depth = 16;
     struct ReclaimStorage {};
     auto& reclaim = HostThreadLocal<std::vector<Job>, ReclaimStorage>();
@@ -205,6 +267,12 @@ void DrawFinisher::Enqueue(Job job, Pending held) {
     jobs.push_back(std::move(job));
     pending.push_back(std::move(held));
     outstanding.fetch_add(1, std::memory_order_release);
+    issued.fetch_add(1, std::memory_order_release);
+    startFinisher();
+    if (sleeping) wake.notify_one();
+}
+
+void DrawFinisher::startFinisher() {
     if (!running) {
         running = true;
         thread = std::thread([this] {
@@ -213,7 +281,119 @@ void DrawFinisher::Enqueue(Job job, Pending held) {
         });
         runningFinishers.fetch_add(1, std::memory_order_acq_rel);
     }
-    if (sleeping) wake.notify_one();
+    started.store(true, std::memory_order_release);
+}
+
+bool DrawFinisher::Adopt(bool ring) {
+    if (ringMode.load(std::memory_order_relaxed) == ring) return false;
+    if (outstanding.load(std::memory_order_acquire) != 0) return false;
+    std::lock_guard lock(mutex);
+    if (outstanding.load(std::memory_order_acquire) != 0 || !jobs.empty() || closing || failure != nullptr) return false;
+    if (ring && lean == nullptr) lean = std::make_unique<std::array<LeanSlot, LeanSlots>>();
+    leanFailed.store(false, std::memory_order_release);
+    ringMode.store(ring, std::memory_order_release);
+    LeanFront::Add(LeanFront::Counter::StoreSwitches);
+    return true;
+}
+
+void DrawFinisher::rethrowLeanFailure() {
+    if (!leanFailed.load(std::memory_order_acquire)) return;
+    std::exception_ptr error;
+    {
+        std::lock_guard lock(mutex);
+        error = std::exchange(failure, nullptr);
+        leanFailed.store(false, std::memory_order_release);
+    }
+    if (error != nullptr) std::rethrow_exception(error);
+}
+
+void DrawFinisher::awaitLeanRoom() {
+    constexpr std::uint64_t depth = 16;
+    const auto full = [&] { return issued.load(std::memory_order_relaxed) - front.load(std::memory_order_seq_cst) >= depth && !closed.load(std::memory_order_acquire); };
+    if (!full()) return;
+    if (GuestMemory::GpuMutex().HeldByThisThread()) throw std::runtime_error("draw finisher full while the enqueuing thread holds the GPU lock");
+    LeanFront::AddOnWorker(LeanFront::Counter::RingRoomWaits);
+    if (SpinUntil(HandoffSpinWindow(), [&] { return !full(); })) return;
+    frontWaiters.fetch_add(1, std::memory_order_seq_cst);
+    std::atomic_thread_fence(std::memory_order_seq_cst);
+    {
+        std::unique_lock lock(mutex);
+        idle.wait(lock, [&] { return !full(); });
+    }
+    frontWaiters.fetch_sub(1, std::memory_order_relaxed);
+}
+
+void DrawFinisher::awaitLeanIdle() {
+    if (outstanding.load(std::memory_order_seq_cst) == 0) return;
+    frontWaiters.fetch_add(1, std::memory_order_seq_cst);
+    std::atomic_thread_fence(std::memory_order_seq_cst);
+    {
+        std::unique_lock lock(mutex);
+        idle.wait(lock, [&] { return outstanding.load(std::memory_order_seq_cst) == 0; });
+    }
+    frontWaiters.fetch_sub(1, std::memory_order_relaxed);
+}
+
+void DrawFinisher::publishLean() {
+    const auto seq = issued.load(std::memory_order_relaxed);
+    outstanding.fetch_add(1, std::memory_order_acq_rel);
+    issued.store(seq + 1, std::memory_order_seq_cst);
+    if (!started.load(std::memory_order_acquire)) {
+        std::lock_guard lock(mutex);
+        startFinisher();
+    }
+    std::atomic_thread_fence(std::memory_order_seq_cst);
+    if (parked.load(std::memory_order_relaxed) == 0) return;
+    std::lock_guard lock(mutex);
+    wake.notify_one();
+}
+
+std::byte* DrawFinisher::ReserveLean() {
+    finisherProducer = true;
+    rethrowLeanFailure();
+    if (closed.load(std::memory_order_acquire)) return nullptr;
+    awaitLeanRoom();
+    if (closed.load(std::memory_order_acquire)) return nullptr;
+    return leanSlot(issued.load(std::memory_order_relaxed)).payload.data();
+}
+
+void DrawFinisher::PublishLean(LeanRunner runner, std::span<const Range> writes, std::uint64_t key, std::uint64_t shape) {
+    auto& slot = leanSlot(issued.load(std::memory_order_relaxed));
+    slot.runner = runner;
+    slot.closure = nullptr;
+    auto& held = slot.pending;
+    held.key = key;
+    held.shape = shape;
+    held.unknown = false;
+    held.writes.assign(writes.begin(), writes.end());
+    held.labelAddress = 0;
+    held.labelBytes.clear();
+    publishLean();
+}
+
+void DrawFinisher::runLean() {
+    const auto seq = front.load(std::memory_order_acquire);
+    auto& slot = leanSlot(seq);
+    std::exception_ptr error;
+    try {
+        if (!leanFailed.load(std::memory_order_acquire)) {
+            if (slot.runner != nullptr) slot.runner(slot.payload.data());
+            else if (slot.closure) slot.closure();
+        }
+    } catch (...) {
+        error = std::current_exception();
+    }
+    if (error != nullptr) {
+        std::lock_guard lock(mutex);
+        if (failure == nullptr) failure = error;
+        leanFailed.store(true, std::memory_order_release);
+    }
+    front.store(seq + 1, std::memory_order_seq_cst);
+    outstanding.fetch_sub(1, std::memory_order_seq_cst);
+    std::atomic_thread_fence(std::memory_order_seq_cst);
+    if (frontWaiters.load(std::memory_order_relaxed) == 0) return;
+    std::lock_guard lock(mutex);
+    idle.notify_all();
 }
 
 void DrawFinisher::run() {
@@ -221,14 +401,26 @@ void DrawFinisher::run() {
     PerformanceTrace::BindThread("draw finisher");
     ReserveFinisherCore();
     for (;;) {
+        if (leanReady()) {
+            runLean();
+            continue;
+        }
         Job* job = nullptr;
         bool failed = false;
         SpinUntil(HandoffSpinWindow(), [&] { return outstanding.load(std::memory_order_acquire) != 0; });
+        if (leanReady()) {
+            runLean();
+            continue;
+        }
         {
             std::unique_lock lock(mutex);
             sleeping = true;
-            wake.wait(lock, [&] { return !jobs.empty() || closing; });
+            parked.fetch_add(1, std::memory_order_seq_cst);
+            std::atomic_thread_fence(std::memory_order_seq_cst);
+            wake.wait(lock, [&] { return !jobs.empty() || closing || leanReady(); });
+            parked.fetch_sub(1, std::memory_order_relaxed);
             sleeping = false;
+            if (leanReady()) continue;
             if (jobs.empty()) break;
             job = &jobs.front();
             failed = failure != nullptr;
@@ -244,6 +436,7 @@ void DrawFinisher::run() {
         ran.push_back(std::move(jobs.front()));
         jobs.pop_front();
         pending.pop_front();
+        front.fetch_add(1, std::memory_order_release);
         outstanding.fetch_sub(1, std::memory_order_release);
         idle.notify_all();
     }
@@ -253,6 +446,10 @@ void DrawFinisher::run() {
 void DrawFinisher::Settle() {
     if (!Busy() || OnFinisherThread()) return;
     if (GuestMemory::GpuMutex().HeldByThisThread()) throw std::runtime_error("draw finisher settle under the GPU lock");
+    if (ringMode.load(std::memory_order_acquire)) {
+        awaitLeanIdle();
+        return;
+    }
     std::unique_lock lock(mutex);
     idle.wait(lock, [&] { return jobs.empty(); });
 }
@@ -261,6 +458,11 @@ void DrawFinisher::Drain() {
     if (OnFinisherThread()) return;
     if (Busy() && GuestMemory::GpuMutex().HeldByThisThread()) throw std::runtime_error("draw finisher drain under the GPU lock");
     SpinUntil(HandoffSpinWindow() * 2, [&] { return outstanding.load(std::memory_order_acquire) == 0; });
+    if (ringMode.load(std::memory_order_acquire)) {
+        awaitLeanIdle();
+        rethrowLeanFailure();
+        return;
+    }
     std::unique_lock lock(mutex);
     if (!jobs.empty()) idle.wait(lock, [&] { return jobs.empty(); });
     if (failure != nullptr) std::rethrow_exception(std::exchange(failure, nullptr));
@@ -271,9 +473,11 @@ void DrawFinisher::Stop() {
     {
         std::lock_guard lock(mutex);
         closing = true;
+        closed.store(true, std::memory_order_release);
         finisher = std::move(thread);
     }
     wake.notify_all();
+    idle.notify_all();
     if (!finisher.joinable()) return;
     if (finisher.get_id() == std::this_thread::get_id()) finisher.detach();
     else finisher.join();
@@ -283,6 +487,8 @@ void DrawFinisher::ReleaseRan() {
     std::vector<Job> done;
     std::lock_guard lock(mutex);
     std::swap(done, ran);
+    if (lean == nullptr || outstanding.load(std::memory_order_acquire) != 0) return;
+    for (auto& slot : *lean) slot.closure = nullptr;
 }
 
 DrawPipeline& DrawPipeline::Queue0() {

@@ -31,6 +31,7 @@
 #include <atomic>
 #include <exception>
 #include <mutex>
+#include <new>
 #include <set>
 #include <string>
 #include <string_view>
@@ -177,6 +178,7 @@ struct DrawTail {
     std::uint32_t packetOpcode = 0;
     std::uint32_t reg207 = 0;
     std::uint64_t epoch = 0;
+    std::uint64_t slotGeneration = 0;
     QueueState* queue = nullptr;
     std::span<const std::uint32_t> packet;
     std::string* rejected = nullptr;
@@ -188,6 +190,12 @@ struct DrawTail {
 };
 
 namespace {
+
+void checkSegmentSlot(const DrawTail& job, const char* when) {
+    if (job.slotGeneration == 0 || LeanFront::VerifyEvery() == 0) return;
+    if (job.submission->slotGeneration == job.slotGeneration) return;
+    LeanFront::NoteDifference(LeanFront::Field::SlotReuse, "draw at submission " + std::to_string(job.submissionSerial) + " offset " + std::to_string(job.packetOffset) + ": the lean segment slot it reads was taken by another segment when the finisher " + when + " the job");
+}
 
 void noteFinisherHandOff(bool handed) {
     static std::atomic<std::uint64_t> handedOff{0}, kept{0};
@@ -332,6 +340,12 @@ std::unordered_map<std::uint64_t, bool>& CpuIndirectPrograms() {
 }
 
 DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packet, const Submission& submission, std::size_t packetOffset, std::string& rejected) {
+    struct SinkTake {
+        LeanDraws& lean;
+        LeanDrawSink* sink;
+        ~SinkTake() { lean.sink = sink; }
+    } sinkTake{leanDraws, std::exchange(leanDraws.sink, nullptr)};
+    auto* const sink = sinkTake.sink;
     PerformanceTimer timing("Driver.Draw");
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     auto tailHolder = std::make_shared<DrawTail>();
@@ -378,9 +392,15 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
         if (!pipelinedIndirect || overlaps) pipeline.Drain(DrawPipeline::DrainReason::Indirect);
     }
     auto& traceIndirect = tail.traceIndirect;
-    if (const auto verdict = precheckDraw(queue, submission, packetOffset, packet, drawParameters, rejected, traceIndirect)) {
+    const auto prechecked = precheckDraw(queue, submission, packetOffset, packet, drawParameters, rejected, traceIndirect);
+    if (sink != nullptr) {
+        sink->prechecked = true;
+        sink->passed = !prechecked.has_value();
+        if (prechecked) sink->verdict = *prechecked;
+    }
+    if (prechecked) {
         TraceDrawAttemptFailure(traceToken, "precheck", "rejected", submission.serial, submission.queue, packetOffset, rejected);
-        return *verdict;
+        return *prechecked;
     }
     phaseTiming.Phase(DrawRowPrecheck);
     using Stage = ShaderRecompiler::ShaderStage;
@@ -443,6 +463,15 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
             }
         }
         drawKey = drawRegisterKey(queue, *submission.shaders, localDevice->Serial(), &shapeKey, traceDrawCache() ? &drawKeyComponents : nullptr, aliasFirst ? relocation.get() : nullptr, aliasFirst ? &drawAlias : nullptr);
+        if (sink != nullptr) {
+            sink->keyed = true;
+            sink->key = drawKey;
+            sink->shape = shapeKey;
+            sink->identity = drawIdentity;
+            sink->relocation = relocation;
+            sink->aliasAsked = aliasFirst;
+            sink->alias = drawAlias;
+        }
         DrawPipeline::NoteDrawKey(drawKey, shapeKey);
         if (DrawFinisher::Busy()) {
             bool shapeMatters = false;
@@ -469,6 +498,10 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
                 cacheLock.unlock();
                 drawRegisterKey(queue, *submission.shaders, localDevice->Serial(), nullptr, nullptr, relocation.get(), &drawAlias);
                 cacheLock.lock();
+                if (sink != nullptr) {
+                    sink->aliasAsked = true;
+                    sink->alias = drawAlias;
+                }
             }
             if (drawIdentity != 0) drawRelocationPending = {drawKey, drawAlias, drawIdentity};
             if (drawAlias != 0) relocateDrawEntry(queue, drawAlias, entry, decode, userPatches);
@@ -770,13 +803,24 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     if (handOff) {
         tail.epoch = DrawPipeline::EpochToken().load(std::memory_order_relaxed);
         tail.submissionSerial = submission.serial;
+        tail.slotGeneration = submission.slotGeneration;
         tail.packetOffset = static_cast<std::size_t>(packet.data() - submission.commands.data());
         noteFinisherHandOff(true);
         if (DrawTableSnapshotEnabled()) KeepUserDataTables(*shaderMemory, programs);
         DrawFinisher::Pending held;
         if (DrawFinisher::Overlap()) held = heldWrites(tail);
+        if (sink != nullptr) {
+            sink->handed = true;
+            sink->held = held;
+            sink->reg207 = tail.reg207;
+            sink->parameters = tail.drawParameters;
+            sink->decode = decode;
+            sink->dataEntry = dataEntry;
+            sink->device = localDevice.get();
+        }
         DrawFinisher::Get().Enqueue([this, tailHolder] {
             auto& job = *tailHolder;
+            checkSegmentSlot(job, "started");
             DrawPipeline::FollowEpoch(job.epoch);
             DrawPipeline::Active() = job.pipelined;
             GuestMemory::SetCurrentPacket(job.packetOpcode, job.submissionQueue);
@@ -792,6 +836,7 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
                 CaptureTrace::Log("draw-error submission=%llu offset=%zu finisher=1 reason=%.256s", static_cast<unsigned long long>(job.submissionSerial), job.packetOffset, error.what());
                 throw std::runtime_error("draw at submission " + std::to_string(job.submissionSerial) + " offset " + std::to_string(job.packetOffset) + " (finished on the draw finisher): " + error.what());
             }
+            checkSegmentSlot(job, "finished");
         }, std::move(held));
         timing.Mark("draw_handed_off");
         return drawn();
@@ -806,6 +851,248 @@ DrawVerdict Driver::draw(QueueState& queue, std::span<const std::uint32_t> packe
     tail.rejected = &rejected;
     tail.gpuLock = &gpuLock;
     return finishDraw(tail, timing);
+}
+
+void Driver::runLeanDraw(const std::byte* payload) {
+    auto& driver = Get();
+    const auto& job = *std::launder(reinterpret_cast<const LeanDrawJob*>(payload));
+    driver.finishLeanDraw(job, driver.leanDraws.AnchorAt(job.anchor));
+}
+
+void Driver::finishLeanDraw(const LeanDrawJob& job, const LeanAnchor& anchor) {
+    using Stage = ShaderRecompiler::ShaderStage;
+    using Role = ShaderRecompiler::ProgramRole;
+    struct ScratchStorage {};
+    auto& scratch = HostThreadLocal<Submission, ScratchStorage>();
+    if (scratch.shaders.get() != anchor.registry.get()) scratch.shaders = anchor.registry;
+    scratch.serial = job.serial;
+    scratch.queue = job.queue;
+    const Submission& submission = scratch;
+    DrawPipeline::FollowEpoch(job.epoch);
+    DrawPipeline::Active() = true;
+    GuestMemory::SetCurrentPacket(job.opcode, job.queue);
+    PerformanceTimer finishTiming("Driver.DrawFinish");
+    DrawTail tail;
+    const auto prepare = [&]() -> bool {
+        const auto& shape = *job.shape;
+        const auto& words = job.words;
+        const bool profile = false;
+        auto& phaseMs = tail.phaseMs;
+        auto& phaseTiming = tail.phaseTiming;
+        auto& drawParameters = tail.drawParameters;
+        drawParameters = job.parameters;
+        tail.resolvedParameters = job.parameters;
+        tail.pipelined = true;
+        static const bool traceIndirectEnabled = std::getenv("APS5_TRACE_INDIRECT_DRAWS") != nullptr;
+        tail.traceIndirect = traceIndirectEnabled;
+        auto& localDevice = tail.localDevice;
+        localDevice = anchor.device;
+        tail.registerKey = true;
+        const bool registerKey = true;
+        auto& drawKey = tail.drawKey;
+        drawKey = job.drawKey;
+        auto& entry = tail.entry;
+        auto& decode = tail.decode;
+        auto& dataEntry = tail.dataEntry;
+        auto& shapeKey = tail.shapeKey;
+        shapeKey = job.shapeKey;
+        std::uint64_t drawIdentity = 0, drawAlias = 0;
+        auto& userPatches = tail.userPatches;
+        {
+            std::shared_ptr<const DrawRelocation> relocation;
+            bool aliasFirst = false;
+            if (drawRelocationEnabled()) {
+                drawIdentity = LeanIdentityKey(shape, words);
+                std::lock_guard cacheLock(drawCacheMutex);
+                learnPendingRelocation();
+                const auto known = drawRelocations.find(drawIdentity);
+                if (known != drawRelocations.end()) {
+                    auto& trial = drawRelocationTrials[drawIdentity];
+                    if (trial.idle != 0) --trial.idle;
+                    else relocation = known->second;
+                    aliasFirst = relocation != nullptr && trial.productive;
+                }
+            }
+            if (aliasFirst) LeanAliasKey(shape, words, relocation.get(), job.deviceSerial, drawAlias);
+            std::unique_lock cacheLock(drawCacheMutex);
+            ++drawEntryCounters.lookups;
+            ++drawEntryCounters.registerKeyLookups;
+            const auto found = drawCache.find(drawKey);
+            if (found != drawCache.end()) {
+                entry = found->second;
+                decode = entry->decode;
+            } else {
+                ++drawEntryCounters.absent;
+                if (relocation != nullptr && !aliasFirst) {
+                    cacheLock.unlock();
+                    LeanAliasKey(shape, words, relocation.get(), job.deviceSerial, drawAlias);
+                    cacheLock.lock();
+                }
+                if (drawIdentity != 0) drawRelocationPending = {drawKey, drawAlias, drawIdentity};
+                if (drawAlias != 0) relocateDrawEntry(words, drawAlias, entry, decode, userPatches);
+                if (relocation != nullptr) {
+                    auto& trial = drawRelocationTrials[drawIdentity];
+                    ++trial.lookups;
+                    if (trial.lookups >= DrawRelocationTrial::Window) {
+                        trial.productive = trial.hits * DrawRelocationTrial::MinimumHitShare >= trial.lookups;
+                        if (!trial.productive) trial.idle = DrawRelocationTrial::IdleDraws;
+                        trial.lookups = trial.hits = 0;
+                    }
+                }
+                if (decode == nullptr && drawDataHits() && !drawParameters.indirect) {
+                    if (const auto kept = drawShapes.find(shapeKey); kept != drawShapes.end()) {
+                        const auto held = drawCache.find(kept->second);
+                        if (held != drawCache.end() && held->second->decode != nullptr && held->second->shape == shapeKey) dataEntry = held->second;
+                    }
+                    if (dataEntry != nullptr) {
+                        ++drawEntryCounters.dataHits;
+                        drawCacheUseful().fetch_add(1, std::memory_order_relaxed);
+                    }
+                }
+            }
+            maybeReportDrawCache(profile);
+        }
+        if (decode != nullptr && !DecodeProgramsCurrent(*decode, *submission.shaders)) {
+            userPatches.clear();
+            std::lock_guard cacheLock(drawCacheMutex);
+            eraseDrawEntry(drawKey, entry);
+            ++drawEntryCounters.absent;
+            entry = nullptr;
+            decode = nullptr;
+        }
+        if (dataEntry != nullptr && !DecodeProgramsCurrent(*dataEntry->decode, *submission.shaders)) dataEntry = nullptr;
+        if (dataEntry != nullptr) decode = LeanRefreshedDecode(*dataEntry->decode, words);
+        if (decode == nullptr) decode = LeanRefreshedDecode(*shape.decode, words);
+        const auto& graphics = decode->state;
+        auto& pixel = tail.pixel;
+        pixel = decode->pixel;
+        const bool writesPrograms = graphics.stages.mesh || drawParameters.indirect || !userPatches.empty();
+        auto& writablePrograms = tail.writablePrograms;
+        if (writesPrograms) writablePrograms = decode->programs;
+        for (const auto& patch : userPatches) writablePrograms[patch.program].userData[patch.index] = patch.value;
+        tail.programs = writesPrograms ? &writablePrograms : &decode->programs;
+        const auto& programs = *tail.programs;
+        if (std::any_of(programs.begin(), programs.end(), [](const DrawProgram& program) { return SkippedShader(program.binary.codeAddress); })) return false;
+        if (graphics.stages.mesh) {
+            auto& meshWords = writablePrograms.front().userData;
+            require(programs.front().firstUserSgpr == 0 && meshWords.size() >= ShaderRecompiler::MeshIndexBufferUserWord + 4, "mesh program lacks the hidden user words");
+            const auto descriptor = Graphics::MeshIndexBufferDescriptor(drawParameters);
+            std::copy(descriptor.begin(), descriptor.end(), meshWords.begin() + ShaderRecompiler::MeshIndexBufferUserWord);
+        }
+        const std::vector<Role>& roles = decode->roles;
+        auto& memory = tail.memory;
+        auto& linked = tail.linked;
+        memory.reserve(2 * programs.size() + 32);
+        AppendProgramMemory(memory, programs);
+        linked.reserve(programs.size());
+        for (std::size_t i = 0; i < programs.size(); ++i) {
+            const auto& program = programs[i];
+            linked.push_back({roles[i], program.binary, program.userDataBase, program.firstUserSgpr, program.userData});
+        }
+        auto& vertexInfos = tail.vertexInfos;
+        vertexInfos.resize(programs.size());
+        auto& decodeReads = tail.decodeReads;
+        decodeReads.resize(programs.size());
+        const auto decodeVertexInfo = [&](std::size_t i) {
+            const auto& program = programs[i];
+            if (program.binary.stage == Stage::Fragment || roles[i] == Role::GeometryBack) return;
+            vertexInfos[i] = DecodeOrderedVertexStageInfo(program.binary.header, program.binary.headerAddress, program.userData, decodeReads[i], 8u - program.firstUserSgpr);
+            if (vertexInfos[i]) {
+                vertexInfos[i]->paClVsOutCntl = PositionExportLayout(program.snapshot.get(), program.codeOffset, program.binary.code, shape.reg207, program.tailContinuation.get()) | graphics.layerExports | graphics.viewportExports;
+                vertexInfos[i]->depthRemapMode = graphics.depthRemap.mode;
+                Graphics::ApplyPointSize(graphics, *vertexInfos[i]);
+            }
+        };
+        auto& shaderMemory = tail.shaderMemory;
+        shaderMemory = std::make_unique<ShaderMemory>(memory, &queryPendingWrite, &observePendingWrite, hookWaitCounter(), &QueryPendingSpan);
+        tail.compiledStages.reserve(programs.size());
+        tail.stages.reserve(programs.size());
+        tail.programResults.assign(programs.size(), nullptr);
+        auto& stageCaptures = tail.stageCaptures;
+        stageCaptures.resize(programs.size());
+        auto& matched = tail.matched;
+        matched.resize(programs.size());
+        auto& matchedRegions = tail.matchedRegions;
+        matchedRegions.resize(programs.size());
+        tail.fresh.resize(programs.size());
+        tail.recompiled.assign(programs.size(), false);
+        auto& dataCandidates = tail.dataCandidates;
+        dataCandidates.resize(programs.size());
+        tail.reused.assign(programs.size(), false);
+        auto& stageData = tail.stageData;
+        stageData.resize(programs.size());
+        auto& drawHit = tail.drawHit;
+        auto& verifyHit = tail.verifyHit;
+        tail.stageEntries = !(graphics.stages.tessellation && !drawParameters.indirect && drawParameters.instanceCount > 1u);
+        lookupDraw(submission, localDevice, graphics, pixel, programs, roles, vertexInfos, tail.stageEntries, registerKey, profile, drawKey, entry, matched, matchedRegions, drawHit, verifyHit, phaseTiming, phaseMs, dataEntry, dataCandidates, stageData);
+        for (std::size_t i = 0; i < matched.size(); ++i) {
+            if (matched[i] != nullptr) stageCaptures[i].registeredViews = matched[i]->registeredViews;
+            if (matched[i] == nullptr || (matched[i]->shaderDataPatches.empty() && matched[i]->descriptorPatches.empty())) continue;
+            applyShaderDataPatches(*matched[i]);
+            if (stageData[i].compiled != nullptr) stageData[i].compiled = patchDataWords(*matched[i], stageData[i].words);
+        }
+        const auto relocatedDecode = decode;
+        if (!userPatches.empty()) {
+            std::lock_guard cacheLock(drawCacheMutex);
+            if (drawHit || verifyHit) {
+                ++drawRelocationCounters.hits;
+                ++drawRelocationTrials[drawIdentity].hits;
+                if (const auto alias = drawAliases.find(drawAlias); alias != drawAliases.end()) {
+                    const auto donor = drawCache.find(alias->second);
+                    if (donor != drawCache.end() && drawCacheHits - donor->second->touched > drawCacheEntries() / 8) {
+                        drawOrder.splice(drawOrder.begin(), drawOrder, donor->second->order);
+                        donor->second->touched = drawCacheHits;
+                        ++drawEntryCounters.touches;
+                    }
+                }
+            }
+        }
+        if (!userPatches.empty() && !drawHit) {
+            auto current = std::make_shared<DrawDecode>(*decode);
+            for (const auto& patch : userPatches) current->programs[patch.program].userData[patch.index] = patch.value;
+            decode = std::move(current);
+        }
+        tail.patchedStages = std::any_of(stageData.begin(), stageData.end(), [](const StageDataHit& hit) { return hit.compiled != nullptr; });
+        tail.relocatedDecode = relocatedDecode;
+        const auto target = graphics.hasColorTarget ? graphics.color.address : 0;
+        tail.traceToken = 0;
+        tail.trace = VulkanDevice::DrawTraceContext{0, submission.serial, submission.queue, static_cast<std::size_t>(job.packetOffset), target};
+        for (std::size_t i = 0; i < programs.size(); ++i) {
+            if (matched[i] != nullptr && drawHit) {
+                if (matched[i]->vertexInfo != nullptr) vertexInfos[i] = *matched[i]->vertexInfo;
+                continue;
+            }
+            if (!dataCandidates[i].empty()) {
+                const auto& info = dataCandidates[i].front().first->vertexInfo;
+                if (info != nullptr) vertexInfos[i] = *info;
+                continue;
+            }
+            decodeVertexInfo(i);
+        }
+        tail.submission = &submission;
+        tail.submissionQueue = submission.queue;
+        tail.packetOpcode = job.opcode;
+        tail.reg207 = shape.reg207;
+        tail.dumpTarget = 0;
+        tail.dumpSlot1 = 0;
+        tail.packetOffset = static_cast<std::size_t>(job.packetOffset);
+        tail.epoch = job.epoch;
+        tail.submissionSerial = job.serial;
+        tail.slotGeneration = 0;
+        return true;
+    };
+    try {
+        if (!prepare()) return;
+        if (finishDraw(tail, finishTiming) == DrawVerdict::Rejected) throw std::runtime_error(tail.ownRejected);
+    } catch (const DrawCompilePending&) {
+        CaptureTrace::Log("draw-pending submission=%llu offset=%zu finisher=1", static_cast<unsigned long long>(job.serial), static_cast<std::size_t>(job.packetOffset));
+    } catch (const RefusedDraw& refused) {
+        CaptureTrace::Log("draw-refused submission=%llu offset=%zu finisher=1 reason=%.256s", static_cast<unsigned long long>(job.serial), static_cast<std::size_t>(job.packetOffset), refused.what());
+        ReportRefusedDraw(refused);
+    } catch (const std::exception& error) {
+        CaptureTrace::Log("draw-error submission=%llu offset=%zu finisher=1 reason=%.256s", static_cast<unsigned long long>(job.serial), static_cast<std::size_t>(job.packetOffset), error.what());
+        throw std::runtime_error("draw at submission " + std::to_string(job.serial) + " offset " + std::to_string(job.packetOffset) + " (finished on the draw finisher): " + error.what());
+    }
 }
 
 DrawVerdict Driver::finishDraw(DrawTail& tail, PerformanceTimer& timing) {

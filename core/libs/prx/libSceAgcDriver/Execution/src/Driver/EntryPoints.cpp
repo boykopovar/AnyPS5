@@ -1,6 +1,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ThreadPriority.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Queues/RewindKick.hpp"
 #include "prx/libSceAgcDriver/Execution/include/FrameRecorder.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Screenshot.hpp"
@@ -283,4 +284,8 @@ extern "C" void AgcDriverResolveGraphicsStagesAbi_nid_postfix(std::span<const Sh
 extern "C" void AgcDriverPrepareCommandWrite_nid_no_patch(std::uint64_t address, std::size_t bytes) {
     if (AgcDriver::Graphics::Recorder::SnapshotWriteOverlaps(address, bytes))
         AgcDriver::GuestMemory::FlushGpuWrites(address, bytes);
+}
+
+extern "C" void AgcDriverRewindKick_nid_no_patch(const std::uint32_t* control) {
+    AgcDriver::DriverDetail::RewindKick::Get().Kick(control);
 }

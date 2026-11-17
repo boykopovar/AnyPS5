@@ -4,6 +4,7 @@ add_test_executable(agc_driver_pm4_tests EXCLUDE_FROM_ALL
 
 target_include_directories(agc_driver_pm4_tests PRIVATE
         ${LIBS_INCLUDE_DIR}
+        ${ANYPS5_VULKAN_HEADERS_INCLUDE_DIR}
 )
 
 target_link_libraries(agc_driver_pm4_tests PRIVATE
@@ -252,6 +253,71 @@ if(BUILD_TESTING)
             "APS5_TRACE_SECONDS=unset:" "APS5_TRACE_SUMMARY_EVERY=unset:")
     if(WIN32)
         set_property(TEST agc_driver_pm4_rewind_trace APPEND PROPERTY ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test(NAME agc_driver_pm4_rewind_trace_lean_front COMMAND agc_driver_pm4_tests rewind-trace)
+    set_tests_properties(agc_driver_pm4_rewind_trace_lean_front PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_PIPELINED_DRAWS=8;APS5_TRACE_FRAMES=0:1;APS5_TRACE_DIR=${CMAKE_CURRENT_BINARY_DIR}/pm4-rewind-trace-lean-front;APS5_LEAN_FRONT=1;APS5_VERIFY_LEAN_FRONT=2" TIMEOUT 30 FAIL_REGULAR_EXPRESSION "${agcLeanFrontDifference}")
+    set_property(TEST agc_driver_pm4_rewind_trace_lean_front APPEND PROPERTY ENVIRONMENT_MODIFICATION
+            "APS5_TRACE_SECONDS=unset:" "APS5_TRACE_SUMMARY_EVERY=unset:")
+    if(WIN32)
+        set_property(TEST agc_driver_pm4_rewind_trace_lean_front APPEND PROPERTY ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test(NAME agc_driver_pm4_lean_front COMMAND agc_driver_pm4_tests)
+    set_tests_properties(agc_driver_pm4_lean_front PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_LEAN_FRONT=1;APS5_VERIFY_LEAN_FRONT=2"
+            SKIP_RETURN_CODE 77 WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}" FAIL_REGULAR_EXPRESSION "${agcLeanFrontDifference}")
+    add_test(NAME agc_driver_pm4_stall_watchdog_rewind_lean_front COMMAND agc_driver_pm4_tests stall-watchdog-rewind)
+    set_tests_properties(agc_driver_pm4_stall_watchdog_rewind_lean_front PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_STALL_WATCHDOG_SECS=1;APS5_LEAN_FRONT=1;APS5_VERIFY_LEAN_FRONT=2"
+            SKIP_RETURN_CODE 77 TIMEOUT 30 FAIL_REGULAR_EXPRESSION "${agcLeanFrontDifference}")
+    add_test(NAME agc_driver_pm4_rewind_flip COMMAND agc_driver_pm4_tests rewind-flip)
+    set_tests_properties(agc_driver_pm4_rewind_flip PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_VERIFY_LEAN_FRONT=1" SKIP_RETURN_CODE 77 TIMEOUT 60)
+    add_test(NAME agc_driver_pm4_rewind_flip_lean_front COMMAND agc_driver_pm4_tests rewind-flip)
+    set_tests_properties(agc_driver_pm4_rewind_flip_lean_front PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_LEAN_FRONT=1;APS5_VERIFY_LEAN_FRONT=2" SKIP_RETURN_CODE 77 TIMEOUT 60)
+    add_test(NAME agc_driver_pm4_rewind_lists COMMAND agc_driver_pm4_tests rewind-lists)
+    set_tests_properties(agc_driver_pm4_rewind_lists PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 60)
+    add_test(NAME agc_driver_pm4_rewind_lists_lean_front COMMAND agc_driver_pm4_tests rewind-lists)
+    set_tests_properties(agc_driver_pm4_rewind_lists_lean_front PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_LEAN_FRONT=1;APS5_VERIFY_LEAN_FRONT=2"
+            SKIP_RETURN_CODE 77 TIMEOUT 60 FAIL_REGULAR_EXPRESSION "${agcLeanFrontDifference}")
+    add_test(NAME agc_driver_pm4_rewind_lists_lean_front_direct COMMAND agc_driver_pm4_tests rewind-lists)
+    set_tests_properties(agc_driver_pm4_rewind_lists_lean_front_direct PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_LEAN_FRONT=1;APS5_LEAN_LIST_DIRECT=1;APS5_VERIFY_LEAN_FRONT=2"
+            SKIP_RETURN_CODE 77 TIMEOUT 60 FAIL_REGULAR_EXPRESSION "${agcLeanFrontDifference}")
+    foreach(pm4KeptMode IN ITEMS rewind-kept-tails rewind-list-cache)
+        string(REPLACE "-" "_" pm4KeptTest "agc_driver_pm4_${pm4KeptMode}")
+        add_test(NAME ${pm4KeptTest} COMMAND agc_driver_pm4_tests ${pm4KeptMode})
+        set_tests_properties(${pm4KeptTest} PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 60)
+        add_test(NAME ${pm4KeptTest}_lean_front COMMAND agc_driver_pm4_tests ${pm4KeptMode})
+        set_tests_properties(${pm4KeptTest}_lean_front PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_LEAN_FRONT=1;APS5_VERIFY_LEAN_FRONT=2"
+                SKIP_RETURN_CODE 77 TIMEOUT 60 FAIL_REGULAR_EXPRESSION "${agcLeanFrontDifference}")
+        add_test(NAME ${pm4KeptTest}_lean_front_unverified COMMAND agc_driver_pm4_tests ${pm4KeptMode})
+        set_tests_properties(${pm4KeptTest}_lean_front_unverified PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_LEAN_FRONT=1" SKIP_RETURN_CODE 77 TIMEOUT 60)
+        if(WIN32)
+            set_tests_properties(${pm4KeptTest} ${pm4KeptTest}_lean_front ${pm4KeptTest}_lean_front_unverified PROPERTIES ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
+    foreach(pm4LoopMode IN ITEMS rewind-chain rewind-kick rewind-labels rewind-presents)
+        string(REPLACE "-" "_" pm4LoopTest "agc_driver_pm4_${pm4LoopMode}")
+        add_test(NAME ${pm4LoopTest} COMMAND agc_driver_pm4_tests ${pm4LoopMode})
+        set_tests_properties(${pm4LoopTest} PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 60)
+        add_test(NAME ${pm4LoopTest}_lean_front COMMAND agc_driver_pm4_tests ${pm4LoopMode})
+        set_tests_properties(${pm4LoopTest}_lean_front PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_LEAN_FRONT=1;APS5_VERIFY_LEAN_FRONT=2"
+                SKIP_RETURN_CODE 77 TIMEOUT 60 FAIL_REGULAR_EXPRESSION "${agcLeanFrontDifference}")
+        add_test(NAME ${pm4LoopTest}_lean_front_verify_all COMMAND agc_driver_pm4_tests ${pm4LoopMode})
+        set_tests_properties(${pm4LoopTest}_lean_front_verify_all PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_LEAN_FRONT=1;APS5_VERIFY_LEAN_FRONT=1"
+                SKIP_RETURN_CODE 77 TIMEOUT 60 FAIL_REGULAR_EXPRESSION "${agcLeanFrontDifference}")
+        add_test(NAME ${pm4LoopTest}_lean_front_unverified COMMAND agc_driver_pm4_tests ${pm4LoopMode})
+        set_tests_properties(${pm4LoopTest}_lean_front_unverified PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_LEAN_FRONT=1" SKIP_RETURN_CODE 77 TIMEOUT 60)
+        if(WIN32)
+            set_tests_properties(${pm4LoopTest} ${pm4LoopTest}_lean_front ${pm4LoopTest}_lean_front_verify_all ${pm4LoopTest}_lean_front_unverified PROPERTIES ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endforeach()
+    add_test(NAME agc_driver_pm4_rewind_kept_cpu_write COMMAND agc_driver_pm4_tests rewind-kept-cpu-write)
+    set_tests_properties(agc_driver_pm4_rewind_kept_cpu_write PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1" SKIP_RETURN_CODE 77 TIMEOUT 60)
+    add_test(NAME agc_driver_pm4_rewind_kept_cpu_write_lean_front COMMAND agc_driver_pm4_tests rewind-kept-cpu-write)
+    set_tests_properties(agc_driver_pm4_rewind_kept_cpu_write_lean_front PROPERTIES ENVIRONMENT "ANYPS5_NO_SHADER_CACHE=1;APS5_LEAN_FRONT=1;APS5_VERIFY_LEAN_FRONT=1" SKIP_RETURN_CODE 77 TIMEOUT 60)
+    if(WIN32)
+        set_tests_properties(agc_driver_pm4_lean_front agc_driver_pm4_stall_watchdog_rewind_lean_front agc_driver_pm4_rewind_flip agc_driver_pm4_rewind_flip_lean_front agc_driver_pm4_rewind_lists agc_driver_pm4_rewind_lists_lean_front agc_driver_pm4_rewind_lists_lean_front_direct agc_driver_pm4_rewind_kept_cpu_write agc_driver_pm4_rewind_kept_cpu_write_lean_front PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
     add_test(NAME agc_driver_pm4_failure_inline COMMAND agc_driver_pm4_tests failure)

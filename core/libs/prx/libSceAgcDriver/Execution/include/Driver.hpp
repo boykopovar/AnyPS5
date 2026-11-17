@@ -23,6 +23,7 @@ struct AwaitedWait {
 }
 
 extern "C" void AgcDriverPrepareCommandWrite_nid_no_patch(std::uint64_t address, std::size_t bytes);
+extern "C" void AgcDriverRewindKick_nid_no_patch(const std::uint32_t* control);
 extern "C" void AgcDriverWaitIdle_nid_postfix();
 extern "C" void AgcDriverSubmitGraphics_nid_postfix(std::uint32_t* commands, std::uint32_t dwords);
 extern "C" void AgcDriverUseGcnShaders_nid_postfix();

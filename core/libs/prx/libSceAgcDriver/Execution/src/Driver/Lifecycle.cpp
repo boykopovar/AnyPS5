@@ -199,6 +199,7 @@ void Driver::stop() {
     DrawPipeline::Queue0().Stop();
     DrawPipeline::Queue0().ReleaseRetired();
     DrawFinisher::Get().ReleaseRan();
+    leanDraws.Reset();
     StopWorkerSampler();
     CloseRegistrationPreparation();
     Graphics::StopPipelineLibraryWorker();

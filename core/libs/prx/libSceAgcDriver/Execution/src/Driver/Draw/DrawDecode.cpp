@@ -34,6 +34,34 @@ void ReadUserWords(const QueueState& queue, DrawProgram& program, bool staticAbi
     if ((program.binary.stage == ShaderRecompiler::ShaderStage::Vertex || program.binary.stage == ShaderRecompiler::ShaderStage::Fragment) && program.snapshot->header.empty() && program.snapshot->userDataTailRegister) program.tailContinuation = ReadUserDataTailContinuation(program.binary.code, program.firstUserSgpr, program.userData);
 }
 
+void ReadUserWordsFrom(const DrawUserWords& words, DrawProgram& program) {
+    const auto resources = program.nullPixel ? 0u : words.Value(program.resourceRegister);
+    const auto userCount = ((resources >> 1u) & 0x1fu) | (((resources >> 27u) & 1u) << 5u);
+    require(userCount <= 32, "graphics user SGPR count exceeds the register bank");
+    program.userData.clear();
+    program.userData.reserve(userCount + 8u);
+    for (std::uint32_t i = 0; i < userCount; ++i) program.userData.push_back(words.Value(program.userDataBase + i));
+    if ((program.binary.stage == ShaderRecompiler::ShaderStage::Vertex || program.binary.stage == ShaderRecompiler::ShaderStage::Fragment) && program.snapshot->header.empty() && program.snapshot->userDataTailRegister) program.tailContinuation = ReadUserDataTailContinuation(program.binary.code, program.firstUserSgpr, program.userData);
+}
+
+void InitializeMergedFrom(const DrawUserWords& words, DrawProgram& program, std::uint32_t pointerBase, bool pointerRequired) {
+    program.merged = true;
+    program.mergedPointer = pointerBase;
+    program.mergedPointerRequired = pointerRequired;
+    program.firstUserSgpr = 0;
+    program.userData.insert(program.userData.begin(), 8, 0);
+    program.hiddenUserWords = 8;
+    if (!pointerRequired && !words.Contains(pointerBase) && !words.Contains(pointerBase + 1)) return;
+    const auto low = words.Value(pointerBase);
+    const auto high = words.Value(pointerBase + 1);
+    const auto address = static_cast<std::uint64_t>(low) | (static_cast<std::uint64_t>(high) << 32u);
+    require(address != 0 || !pointerRequired, "merged shader user-data address is null");
+    if (address == 0) return;
+    if (pointerRequired) GuestMemory::CheckRange(reinterpret_cast<const void*>(address), 8, 4);
+    program.userData[0] = low;
+    program.userData[1] = high;
+}
+
 ShaderRecompiler::ShaderVertexStageInfo DecodeOrderedVertexStageInfo(std::span<const std::byte> header, std::uint64_t headerAddress, std::span<const std::uint32_t> userData, std::vector<Graphics::DecodeRead>& reads, std::uint32_t hiddenUserWords) {
     const auto decode = [&] {
         reads.clear();

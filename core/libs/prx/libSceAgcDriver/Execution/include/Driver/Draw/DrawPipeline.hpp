@@ -10,6 +10,7 @@
 #include <deque>
 #include <exception>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <thread>
@@ -126,6 +127,9 @@ class DrawFinisher {
 public:
     using Job = std::function<void()>;
     using Range = std::pair<std::uint64_t, std::uint64_t>;
+    using LeanRunner = void (*)(const std::byte* payload);
+    static constexpr std::size_t LeanPayloadBytes = 1024;
+    static constexpr std::size_t LeanSlots = 64;
     struct Pending {
         std::uint64_t key = 0;
         std::uint64_t shape = 0;
@@ -155,10 +159,30 @@ public:
     void Settle();
     void Stop();
     void ReleaseRan();
+    bool Adopt(bool ring);
+    bool RingStore() const { return ringMode.load(std::memory_order_acquire); }
+    std::byte* ReserveLean();
+    void PublishLean(LeanRunner runner, std::span<const Range> writes, std::uint64_t key, std::uint64_t shape);
+    std::uint64_t Issued() const { return issued.load(std::memory_order_acquire); }
+    std::uint64_t Front() const { return front.load(std::memory_order_acquire); }
 
 private:
+    struct LeanSlot {
+        LeanRunner runner = nullptr;
+        Job closure;
+        Pending pending;
+        alignas(16) std::array<std::byte, LeanPayloadBytes> payload{};
+    };
     DrawFinisher() = default;
     void run();
+    void startFinisher();
+    LeanSlot& leanSlot(std::uint64_t seq) { return (*lean)[static_cast<std::size_t>(seq % LeanSlots)]; }
+    bool leanReady() const { return ringMode.load(std::memory_order_acquire) && front.load(std::memory_order_acquire) < issued.load(std::memory_order_acquire); }
+    void runLean();
+    void rethrowLeanFailure();
+    void awaitLeanRoom();
+    void awaitLeanIdle();
+    void publishLean();
     inline static std::atomic<std::size_t> outstanding{0};
     std::mutex mutex;
     std::condition_variable wake;
@@ -171,6 +195,15 @@ private:
     bool sleeping = false;
     bool closing = false;
     std::thread thread;
+    std::atomic<bool> ringMode{false};
+    std::atomic<bool> closed{false};
+    std::atomic<bool> leanFailed{false};
+    std::atomic<bool> started{false};
+    std::atomic<unsigned> parked{0};
+    std::atomic<unsigned> frontWaiters{0};
+    std::atomic<std::uint64_t> issued{0};
+    std::atomic<std::uint64_t> front{0};
+    std::unique_ptr<std::array<LeanSlot, LeanSlots>> lean;
 };
 
 }
