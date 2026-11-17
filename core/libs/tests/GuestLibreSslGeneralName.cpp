@@ -2,6 +2,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -365,6 +366,73 @@ void TestResponseInvalidLengths() {
     }
 }
 
+
+template<typename TAction> void RequireRejected(TAction action, std::source_location where = std::source_location::current()) {
+    errno = 71;
+    bool rejected = false;
+    try { action(); } catch (const std::runtime_error&) { rejected = errno == 71; }
+    Require(rejected, where);
+}
+
+void* const Unmapped = reinterpret_cast<void*>(0x10);
+const unsigned char readOnlyBytes[4]{1, 2, 3, 4};
+
+void TestUnmappedNames() {
+    RequireRejected([] { GENERAL_NAME_free_nid_postfix(static_cast<LibreSslGeneralName*>(Unmapped)); });
+    CheckClean();
+
+    auto* name = Name(1, Unmapped);
+    freed.clear();
+    RequireRejected([&] { GENERAL_NAME_free_nid_postfix(name); });
+    Require(freed.empty());
+    name->value = nullptr;
+    GENERAL_NAME_free_nid_postfix(name);
+    CheckClean();
+
+    auto* other = New<Other>();
+    other->typeId = static_cast<LibreSslAsn1Object*>(Unmapped);
+    name = Name(0, other);
+    freed.clear();
+    RequireRejected([&] { GENERAL_NAME_free_nid_postfix(name); });
+    Require(freed.empty());
+    other->typeId = nullptr;
+    GENERAL_NAME_free_nid_postfix(name);
+    CheckClean();
+
+    auto* string = String(0);
+    string->length = static_cast<int>(sizeof(readOnlyBytes));
+    string->data = const_cast<unsigned char*>(readOnlyBytes);
+    name = Name(2, string);
+    freed.clear();
+    RequireRejected([&] { GENERAL_NAME_free_nid_postfix(name); });
+    Require(freed.empty());
+    string->flags = 0x10;
+    GENERAL_NAME_free_nid_postfix(name);
+    CheckClean();
+}
+
+void TestUnmappedResponses() {
+    RequireRejected([] { OCSP_RESPONSE_free_nid_postfix(static_cast<LibreSslOcspResponse*>(Unmapped)); });
+    CheckClean();
+
+    auto* response = New<LibreSslOcspResponse>();
+    response->responseStatus = static_cast<Asn1String*>(Unmapped);
+    freed.clear();
+    RequireRejected([&] { OCSP_RESPONSE_free_nid_postfix(response); });
+    Require(freed.empty());
+    response->responseStatus = nullptr;
+    response->responseBytes = Unmapped;
+    RequireRejected([&] { OCSP_RESPONSE_free_nid_postfix(response); });
+    Require(freed.empty() && response->responseBytes == Unmapped);
+    auto* bytes = New<LibreSslOcspResponseBytes>();
+    bytes->responseType = static_cast<LibreSslAsn1Object*>(Unmapped);
+    response->responseBytes = bytes;
+    RequireRejected([&] { OCSP_RESPONSE_free_nid_postfix(response); });
+    Require(freed.empty() && response->responseBytes == bytes);
+    bytes->responseType = nullptr;
+    OCSP_RESPONSE_free_nid_postfix(response);
+    CheckClean();
+}
 }
 
 int main(int argc, char** argv) {
@@ -373,6 +441,7 @@ int main(int argc, char** argv) {
         TestResponseOwnership();
         TestResponseBorrowedData();
         TestResponseInvalidLengths();
+        TestUnmappedResponses();
         std::puts("libSceLibreSsl OCSP response free tests passed");
         return 0;
     }
@@ -381,5 +450,6 @@ int main(int argc, char** argv) {
     TestEdiPartyName();
     TestDirectoryName();
     TestOidAndStack();
+    TestUnmappedNames();
     std::puts("libSceLibreSsl GENERAL_NAME tests passed");
 }

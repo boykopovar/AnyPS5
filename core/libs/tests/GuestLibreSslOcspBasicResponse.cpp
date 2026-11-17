@@ -3,6 +3,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -289,6 +290,37 @@ static void AllocationFailures() {
         "a failed huge growth preserves its pointer, count, capacity and certificate reference");
 }
 
+template<typename TAction> static void RequireRejected(TAction action, const char* message) {
+    errno = 71;
+    bool rejected = false;
+    try { action(); } catch (const std::runtime_error&) { rejected = errno == 71; }
+    Require(rejected, message);
+}
+
+static const LibreSslX509 readOnlyCertificate{nullptr, nullptr, nullptr, 0, 5};
+
+static void UnreadablePointers() {
+    auto* const unmapped = reinterpret_cast<void*>(0x10);
+    LibreSslX509 certificate{};
+    certificate.references = 3;
+    RequireRejected([&] { OCSP_basic_add1_cert_nid_postfix(static_cast<LibreSslOcspBasicResponse*>(unmapped), &certificate); },
+        "an unreadable response is rejected");
+    LibreSslOcspBasicResponse response{};
+    RequireRejected([&] { OCSP_basic_add1_cert_nid_postfix(&response, static_cast<LibreSslX509*>(unmapped)); },
+        "an unreadable certificate is rejected");
+    Require(!response.certs, "an unreadable certificate is rejected before a stack is created");
+    RequireRejected([&] { OCSP_basic_add1_cert_nid_postfix(&response, const_cast<LibreSslX509*>(&readOnlyCertificate)); },
+        "a read-only certificate is rejected");
+    Require(!response.certs && readOnlyCertificate.references == 5, "a read-only certificate leaves the response and reference unchanged");
+    response.certs = static_cast<LibreSslStack*>(unmapped);
+    RequireRejected([&] { OCSP_basic_add1_cert_nid_postfix(&response, &certificate); }, "an unreadable certificate stack is rejected");
+    LibreSslStack stack{0, static_cast<char**>(unmapped), 0, 4, nullptr};
+    response.certs = &stack;
+    RequireRejected([&] { OCSP_basic_add1_cert_nid_postfix(&response, &certificate); }, "an unwritable element array is rejected");
+    Require(stack.num == 0 && stack.data == static_cast<char**>(unmapped) && certificate.references == 3,
+        "an unwritable element array leaves the stack and reference unchanged");
+}
+
 static int Count(Guest& guest) {
     return OCSP_resp_count_nid_postfix(guest.basic.data());
 }
@@ -301,6 +333,7 @@ int main() {
     RegisterAllocator();
     AddCertificates();
     AllocationFailures();
+    UnreadablePointers();
     Require(OCSP_resp_count_nid_postfix(nullptr) == -1, "a null basic response counts -1");
     for (const auto index : Indices)
         Require(OCSP_resp_get0_nid_postfix(nullptr, index) == nullptr, "a null basic response has no entries");

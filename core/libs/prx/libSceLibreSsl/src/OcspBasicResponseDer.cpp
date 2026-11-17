@@ -640,6 +640,8 @@
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libSceLibreSsl/include/ObjectTable.hpp"
 #include "prx/libSceLibreSsl/include/OcspResponse.hpp"
+#include <algorithm>
+#include <cerrno>
 #include <climits>
 #include <cstddef>
 #include <cstdint>
@@ -1486,6 +1488,44 @@ const Item& ExtensionValueItem(LibreSslExtensionValue type) {
 
 }
 
+namespace {
+
+template <typename T>
+T LoadGuest(const T* source, const char* function) {
+    T value{};
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(&value, source, sizeof(T));
+    errno = savedErrno;
+    if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return value;
+}
+
+std::vector<unsigned char> LoadGuestBytes(const unsigned char* source, std::size_t size, const char* function) {
+    std::vector<unsigned char> bytes;
+    unsigned char chunk[4096];
+    for (std::size_t done = 0; done < size;) {
+        const std::size_t count = std::min(size - done, sizeof(chunk));
+        const int savedErrno = errno;
+        const bool ok = GuestCopyIn_nid_no_patch(chunk, source + done, count);
+        errno = savedErrno;
+        if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+        bytes.insert(bytes.end(), chunk, chunk + count);
+        done += count;
+    }
+    return bytes;
+}
+
+int GuestObjectNid(const LibreSslAsn1Object* guestObject, const char* function) {
+    if (!guestObject) return LibreSslObjectNid_nid_no_patch(nullptr);
+    LibreSslAsn1Object object = LoadGuest(guestObject, function);
+    if (object.nid != 0 || !object.data || object.length <= 0) return LibreSslObjectNid_nid_no_patch(&object);
+    const std::vector<unsigned char> data = LoadGuestBytes(object.data, static_cast<std::size_t>(object.length), function);
+    object.data = data.data();
+    return LibreSslObjectNid_nid_no_patch(&object);
+}
+
+}
+
 void* LibreSslExtensionValueDecode_nid_no_patch(LibreSslExtensionValue type, const unsigned char* data, std::int64_t length) {
     const Item& item = ExtensionValueItem(type);
     const unsigned char* p = data;
@@ -1502,21 +1542,24 @@ extern "C" {
 
 LibreSslOcspBasicResponse* APS5_VABI OCSP_response_get1_basic_nid_postfix(LibreSslOcspResponse* response) {
     if (!response) throw std::invalid_argument(std::string(__func__) + ": null response");
-    const auto* bytes = static_cast<const LibreSslOcspResponseBytes*>(response->responseBytes);
-    if (!bytes) {
+    const LibreSslOcspResponse fields = LoadGuest(response, __func__);
+    const auto* guestBytes = static_cast<const LibreSslOcspResponseBytes*>(fields.responseBytes);
+    if (!guestBytes) {
         LibreSslPutError_nid_no_patch(OcspLibrary, 0xfff, NoResponseData);
         return nullptr;
     }
-    if (LibreSslObjectNid_nid_no_patch(bytes->responseType) != BasicResponseNid) {
+    const LibreSslOcspResponseBytes bytes = LoadGuest(guestBytes, __func__);
+    if (GuestObjectNid(bytes.responseType, __func__) != BasicResponseNid) {
         LibreSslPutError_nid_no_patch(OcspLibrary, 0xfff, NotBasicResponse);
         return nullptr;
     }
-    const Asn1String* octets = bytes->response;
-    if (!octets) throw std::invalid_argument(std::string(__func__) + ": null response octets");
-    if (!octets->data && octets->length) throw std::invalid_argument(std::string(__func__) + ": null response data");
-    const unsigned char* p = octets->data;
+    if (!bytes.response) throw std::invalid_argument(std::string(__func__) + ": null response octets");
+    const Asn1String octets = LoadGuest(bytes.response, __func__);
+    if (!octets.data && octets.length) throw std::invalid_argument(std::string(__func__) + ": null response data");
+    const std::vector<unsigned char> data = octets.length > 0 ? LoadGuestBytes(octets.data, static_cast<std::size_t>(octets.length), __func__) : std::vector<unsigned char>{};
+    const unsigned char* p = octets.length > 0 ? data.data() : octets.data;
     void* decoded = nullptr;
-    if (ItemDecode(&decoded, p, octets->length, BasicResponseItem, -1, 0, false) > 0) return static_cast<LibreSslOcspBasicResponse*>(decoded);
+    if (ItemDecode(&decoded, p, octets.length, BasicResponseItem, -1, 0, false) > 0) return static_cast<LibreSslOcspBasicResponse*>(decoded);
     Fail(DecodeError);
     return nullptr;
 }

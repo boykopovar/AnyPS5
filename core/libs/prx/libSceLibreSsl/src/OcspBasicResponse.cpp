@@ -1,3 +1,4 @@
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <algorithm>
@@ -56,19 +57,42 @@ LibreSslStack* NewCertificateStack() {
     return stack;
 }
 
-bool PushCertificate(LibreSslStack* stack, LibreSslX509* certificate) {
-    if (stack->num < 0 || stack->num == std::numeric_limits<std::int32_t>::max() || stack->numAlloc <= 0)
+template <typename T>
+T Load(const T* source, const char* function) {
+    T value{};
+    const int savedErrno = errno;
+    const bool ok = GuestCopyIn_nid_no_patch(&value, source, sizeof(T));
+    errno = savedErrno;
+    if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+    return value;
+}
+
+template <typename T>
+void Store(T* destination, const T& value, const char* function) {
+    const int savedErrno = errno;
+    const bool ok = GuestCopyOut_nid_no_patch(destination, &value, sizeof(T));
+    errno = savedErrno;
+    if (!ok) NotImplementedAt_nid_no_patch(function, __FILE__, __LINE__);
+}
+
+bool PushCertificate(LibreSslStack* stack, LibreSslX509* certificate, const char* function) {
+    LibreSslStack value = Load(stack, function);
+    if (value.num < 0 || value.num == std::numeric_limits<std::int32_t>::max() || value.numAlloc <= 0)
         throw std::invalid_argument("sk_push: corrupt stack");
-    if (stack->numAlloc <= stack->num + 1) {
-        auto* const grown = static_cast<char**>(realloc_nid_postfix(stack->data, static_cast<std::size_t>(stack->numAlloc) * 2 * sizeof(char*)));
+    if (value.numAlloc <= value.num + 1) {
+        auto* const grown = static_cast<char**>(realloc_nid_postfix(value.data, static_cast<std::size_t>(value.numAlloc) * 2 * sizeof(char*)));
         if (!grown) return false;
-        stack->data = grown;
-        if (stack->numAlloc > std::numeric_limits<std::int32_t>::max() / 2) throw std::invalid_argument("sk_push: corrupt stack");
-        stack->numAlloc *= 2;
+        value.data = grown;
+        if (value.numAlloc > std::numeric_limits<std::int32_t>::max() / 2) {
+            Store(stack, value, function);
+            throw std::invalid_argument("sk_push: corrupt stack");
+        }
+        value.numAlloc *= 2;
     }
-    stack->data[stack->num] = reinterpret_cast<char*>(certificate);
-    ++stack->num;
-    stack->sorted = 0;
+    Store(value.data + value.num, reinterpret_cast<char*>(certificate), function);
+    ++value.num;
+    value.sorted = 0;
+    Store(stack, value, function);
     return true;
 }
 
@@ -85,20 +109,30 @@ LibreSslStack* LibreSslStackNew_nid_no_patch() {
 }
 
 bool LibreSslStackPush_nid_no_patch(LibreSslStack* stack, void* element) {
-    return PushCertificate(stack, static_cast<LibreSslX509*>(element));
+    return PushCertificate(stack, static_cast<LibreSslX509*>(element), __func__);
 }
 
 extern "C" {
 
 int APS5_VABI OCSP_basic_add1_cert_nid_postfix(LibreSslOcspBasicResponse* response, LibreSslX509* certificate) {
     if (!response) throw std::invalid_argument("OCSP_basic_add1_cert: null response");
-    if (!response->certs) {
-        response->certs = NewCertificateStack();
-        if (!response->certs) return 0;
+    auto* const references = certificate ? reinterpret_cast<std::int32_t*>(reinterpret_cast<std::byte*>(certificate) + offsetof(LibreSslX509, references)) : nullptr;
+    if (references) {
+        Load(references, __func__);
+        const int savedErrno = errno;
+        const bool writable = GuestWritable_nid_no_patch(references, sizeof(*references));
+        errno = savedErrno;
+        if (!writable) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
     }
-    if (!PushCertificate(response->certs, certificate)) return 0;
-    if (!certificate) throw std::invalid_argument("OCSP_basic_add1_cert: null certificate");
-    std::atomic_ref<std::int32_t>(certificate->references).fetch_add(1);
+    LibreSslOcspBasicResponse value = Load(response, __func__);
+    if (!value.certs) {
+        value.certs = NewCertificateStack();
+        if (!value.certs) return 0;
+        Store(response, value, __func__);
+    }
+    if (!PushCertificate(value.certs, certificate, __func__)) return 0;
+    if (!references) throw std::invalid_argument("OCSP_basic_add1_cert: null certificate");
+    std::atomic_ref<std::int32_t>(*references).fetch_add(1);
     return 1;
 }
 
