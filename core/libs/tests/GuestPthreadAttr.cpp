@@ -188,6 +188,7 @@ static void CheckSchedPolicyAndStackGetters() {
         Require(pthread_attr_getstacksize_nid_postfix(invalid, &size) == GUEST_EINVAL && size == 7);
         Require(pthread_attr_getstackaddr_nid_postfix(invalid, &address) == GUEST_EINVAL && address == &policy);
         Require(pthread_attr_getstack_nid_postfix(invalid, &address, &size) == GUEST_EINVAL && address == &policy && size == 7);
+        Require(scePthreadAttrGetstack(invalid, &address, &size) == SCE_KERNEL_ERROR_EINVAL && address == &policy && size == 7);
     }
     int policy = -1;
     void* address = &policy;
@@ -196,6 +197,8 @@ static void CheckSchedPolicyAndStackGetters() {
     Require(pthread_attr_getstackaddr_nid_postfix(&live, nullptr) == GUEST_EINVAL);
     Require(pthread_attr_getstack_nid_postfix(&live, nullptr, &size) == GUEST_EINVAL && size == 7);
     Require(pthread_attr_getstack_nid_postfix(&live, &address, nullptr) == GUEST_EINVAL && address == &policy);
+    Require(scePthreadAttrGetstack(&live, nullptr, &size) == SCE_KERNEL_ERROR_EINVAL && size == 7);
+    Require(scePthreadAttrGetstack(&live, &address, nullptr) == SCE_KERNEL_ERROR_EINVAL && address == &policy);
     Require(scePthreadAttrDestroy(&live) == SCE_OK);
 }
 
@@ -517,6 +520,17 @@ static void CheckBadPointers() {
         Require(pthread_attr_setschedpolicy_nid_postfix(attrs, 1) == GUEST_EFAULT);
         Require(pthread_attr_setscope_nid_postfix(attrs, SCOPE_SYSTEM) == GUEST_EFAULT);
         Require(pthread_attr_setstacksize_nid_postfix(attrs, STACK_SIZE) == GUEST_EFAULT);
+        void* stackAddress = reinterpret_cast<void*>(1);
+        Require(pthread_attr_getstack_nid_postfix(attrs, &stackAddress, &size) == GUEST_EFAULT && stackAddress == reinterpret_cast<void*>(1) && size == 1);
+        *__error_nid_postfix() = 42;
+        Require(pthread_attr_getstackaddr_nid_postfix(attrs, &stackAddress) == GUEST_EFAULT && stackAddress == reinterpret_cast<void*>(1));
+        Require(*__error_nid_postfix() == 42);
+        Require(scePthreadAttrGetstack(attrs, &stackAddress, &size) == SCE_KERNEL_ERROR_EFAULT && stackAddress == reinterpret_cast<void*>(1) && size == 1);
+        Require(*__error_nid_postfix() == 42);
+        Require(pthread_attr_setstack_nid_postfix(attrs, &value, STACK_SIZE) == GUEST_EFAULT);
+        Require(scePthreadAttrSetstack(attrs, &value, STACK_SIZE) == SCE_KERNEL_ERROR_EFAULT);
+        Require(pthread_attr_setsolosched_np_nid_postfix(attrs, 0) == GUEST_EFAULT);
+        Require(pthread_attr_destroy_nid_postfix(attrs) == GUEST_EFAULT);
 
         PthreadAttr attr = nullptr;
         Require(pthread_attr_init_nid_postfix(&attr) == 0);
@@ -528,6 +542,17 @@ static void CheckBadPointers() {
         Require(pthread_attr_getscope_nid_postfix(&attr, ints) == GUEST_EFAULT);
         Require(pthread_attr_getstacksize_nid_postfix(&attr, sizes) == GUEST_EFAULT);
         Require(pthread_attr_setschedparam_nid_postfix(&attr, params) == GUEST_EFAULT);
+        Require(pthread_attr_getstack_nid_postfix(&attr, static_cast<void**>(pointer), sizes) == GUEST_EFAULT);
+        Require(pthread_attr_getstack_nid_postfix(&attr, &stackAddress, sizes) == GUEST_EFAULT);
+        *__error_nid_postfix() = 42;
+        Require(pthread_attr_getstackaddr_nid_postfix(&attr, static_cast<void**>(pointer)) == GUEST_EFAULT);
+        Require(*__error_nid_postfix() == 42);
+        Require(scePthreadAttrGetstack(&attr, static_cast<void**>(pointer), sizes) == SCE_KERNEL_ERROR_EFAULT);
+        Require(*__error_nid_postfix() == 42);
+        Require(scePthreadAttrGetstack(&attr, &stackAddress, sizes) == SCE_KERNEL_ERROR_EFAULT);
+        Require(*__error_nid_postfix() == 42);
+        Require(scePthreadAttrGetstack(&attr, static_cast<void**>(pointer), &size) == SCE_KERNEL_ERROR_EFAULT);
+        Require(*__error_nid_postfix() == 42);
         Require(pthread_attr_destroy_nid_postfix(&attr) == 0);
     }
 }

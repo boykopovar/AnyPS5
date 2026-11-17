@@ -468,6 +468,54 @@ void TestAllocationFailures() {
     Require(allocations.empty());
 }
 
+void TestSetBytesNulTermination() {
+    auto* store = X509_STORE_new_nid_postfix();
+    Require(store != nullptr);
+    const char rawEmail[] {'u', 's', 'e', 'r', '@', 'e', 'x', 'a', 'm', 'p', 'l', 'e', '.', 'c', 'o', 'm'};
+    auto& id = *store->param->id;
+    id.email = static_cast<char*>(malloc_nid_postfix(sizeof(rawEmail)));
+    Require(id.email != nullptr);
+    std::memcpy(id.email, rawEmail, sizeof(rawEmail));
+    id.emailLength = sizeof(rawEmail);
+    auto* context = X509_STORE_CTX_new_nid_postfix();
+    Require(context != nullptr);
+    Require(X509_STORE_CTX_init_nid_postfix(context, store, nullptr, nullptr) == 1);
+    Require(Param(context).id->emailLength == sizeof(rawEmail));
+    Require(std::memcmp(Param(context).id->email, rawEmail, sizeof(rawEmail)) == 0);
+    Require(Param(context).id->email[sizeof(rawEmail)] == '\0');
+    X509_STORE_CTX_free_nid_postfix(context);
+    X509_STORE_free_nid_postfix(store);
+    Require(allocations.empty());
+}
+
+void TestTimeNewBorrowedData() {
+    unsigned char borrowed[16] = "990101000000Z";
+    Asn1String value{13, 23, borrowed, 0x50};
+    const auto baseline = allocations.size();
+    Require(X509_gmtime_adj_nid_postfix(&value, 0) == &value);
+    Require(allocations.size() == baseline + 1);
+    Require(value.data != borrowed);
+    Require(std::memcmp(borrowed, "990101000000Z", 14) == 0);
+    Require((value.flags & 0x10) == 0 && (value.flags & 0x40) == 0x40);
+    Require(value.data != nullptr && value.length > 0 && value.data[value.length] == '\0');
+    allocationsUntilFailure = 0;
+    unsigned char* const oldData = value.data;
+    const int oldLength = value.length;
+    const int oldType = value.type;
+    value.flags |= 0x10;
+    Require(X509_gmtime_adj_nid_postfix(&value, 0) == nullptr);
+    constexpr std::uint64_t Asn1MallocFailure = 0x0dfff041;
+    Require(ERR_get_error_nid_postfix() == Asn1MallocFailure && ERR_get_error_nid_postfix() == 0);
+    Require(value.data == oldData && value.length == oldLength && value.type == oldType);
+    Require((value.flags & 0x10) == 0x10);
+    allocationsUntilFailure = -1;
+    value.flags &= ~0x10;
+    Require(X509_gmtime_adj_nid_postfix(&value, 0) == &value);
+    Require(allocations.size() == baseline + 1);
+    free_nid_postfix(value.data);
+    Require(allocations.size() == baseline);
+}
+
 }
 
 int main() {
@@ -489,6 +537,8 @@ int main() {
     TestInheritStoreParam();
     TestInheritFailures();
     TestAllocationFailures();
+    TestSetBytesNulTermination();
+    TestTimeNewBorrowedData();
     Require(allocations.empty());
     std::puts("libSceLibreSsl3 X509_STORE_CTX tests passed");
     return 0;
