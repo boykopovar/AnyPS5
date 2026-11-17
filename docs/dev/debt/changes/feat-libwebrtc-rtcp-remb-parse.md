@@ -1,0 +1,5 @@
+# libwebrtc
+
+## add Public source implementations
+
+- [webrtc::rtcp::Remb::Parse](../../../core/libs/prx/libwebrtc/src/RtcpRemb.cpp) (libwebrtc) - adapted from [remb.cc](https://webrtc.googlesource.com/src/+/8d78f5de6c27b2c793039989ea381f1428fb0100/modules/rtp_rtcp/source/rtcp_packet/remb.cc) and `ParseCommonFeedback` in `psfb.cc`, retaining both notices. A GCC 15 class-layout probe of the real M134 `remb.h`, `psfb.h` and `rtcp_packet.h`, with type shims for ArrayView, FunctionView and Buffer, verifies size 48, sender/media SSRC at 8/12, bitrate at 16 and vector at 24. The three-pointer vector uses guest new/delete, as CopyOnWriteBuffer does for storage; no host vector is embedded. The default-allocator vector layout is shared by libc++ and libstdc++; the console ABI remains unverified. Overflow preserves the already-written SSRCs and bitrate but leaves the vector untouched. Release DCHECKs and logging are omitted. Null objects, headers and accessed payloads throw. Closes when: layout and behaviour are compared with the console.
