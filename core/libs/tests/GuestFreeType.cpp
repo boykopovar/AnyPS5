@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -29,6 +30,12 @@
 #include <string>
 #include <utility>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 using namespace FreeType;
 
@@ -501,6 +508,43 @@ static void Trigonometry() {
                 scalarCases, vectorCases, differenceCases, rendered);
 }
 
+class GuardedTail {
+public:
+    explicit GuardedTail(std::size_t bytes) {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        page = info.dwPageSize;
+        memory = VirtualAlloc(nullptr, page * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        Require(memory != nullptr);
+        DWORD previous = 0;
+        Require(VirtualProtect(static_cast<unsigned char*>(memory) + page, page, PAGE_NOACCESS, &previous) != 0);
+#else
+        page = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        memory = mmap(nullptr, page * 2, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        Require(memory != MAP_FAILED);
+        Require(mprotect(static_cast<unsigned char*>(memory) + page, page, PROT_NONE) == 0);
+#endif
+        Require(bytes <= page);
+        data = static_cast<unsigned char*>(memory) + page - bytes;
+    }
+    ~GuardedTail() {
+#ifdef _WIN32
+        VirtualFree(memory, 0, MEM_RELEASE);
+#else
+        munmap(memory, page * 2);
+#endif
+    }
+    GuardedTail(const GuardedTail&) = delete;
+    GuardedTail& operator=(const GuardedTail&) = delete;
+    template <class T> T* As() const { return static_cast<T*>(data); }
+
+private:
+    void* memory = nullptr;
+    std::size_t page = 0;
+    void* data = nullptr;
+};
+
 struct DecomposeEvents {
     std::vector<std::array<std::int64_t, 7>> calls;
     std::size_t stopAt = static_cast<std::size_t>(-1);
@@ -729,6 +773,47 @@ static void OutlineDecomposition() {
         points[1] = {INT64_MAX, 0};
         tags[0] = tags[1] = 0;
         Require(ThrowsWith([&] { FT_Outline_Decompose_nid_postfix(&outline, &functions, &events); }, "FT_Outline_Decompose: overflowing midpoint"));
+    }
+    {
+        const auto unmapped = std::uintptr_t{0x10};
+        GuestVector points[]{{0, 0}, {64, 0}, {64, 64}, {0, 64}};
+        unsigned char tags[]{1, 1, 1, 1};
+        std::uint16_t contours[]{3};
+        DecomposeEvents events;
+        Require(FT_Outline_Decompose_nid_postfix(reinterpret_cast<GuestOutline*>(unmapped), &callbacks, &events) == FT_Err_Invalid_Outline);
+        GuestOutline outline{1, 4, points, tags, contours, 0};
+        Require(FT_Outline_Decompose_nid_postfix(&outline, reinterpret_cast<const GuestOutlineFuncs*>(unmapped), &events) == FT_Err_Invalid_Argument);
+        GuestOutline unmappedPoints{1, 4, reinterpret_cast<GuestVector*>(unmapped), tags, contours, 0};
+        GuestOutline unmappedTags{1, 4, points, reinterpret_cast<unsigned char*>(unmapped), contours, 0};
+        GuestOutline unmappedContours{1, 4, points, tags, reinterpret_cast<std::uint16_t*>(unmapped), 0};
+        for (GuestOutline* invalid : {&unmappedPoints, &unmappedTags, &unmappedContours}) {
+            Require(FT_Outline_Decompose_nid_postfix(invalid, &callbacks, &events) == FT_Err_Invalid_Outline);
+        }
+        Require(events.calls.empty());
+        GuardedTail tailPoints(sizeof(points));
+        std::memcpy(tailPoints.As<GuestVector>(), points, sizeof(points));
+        GuardedTail tailTags(sizeof(tags));
+        std::memcpy(tailTags.As<unsigned char>(), tags, sizeof(tags));
+        std::vector<GuestVector> manyPoints(65535, GuestVector{0, 0});
+        std::vector<unsigned char> manyTags(65535, 1);
+        std::uint16_t far[]{65534};
+        GuestOutline oversizedPoints{1, 65535, tailPoints.As<GuestVector>(), manyTags.data(), far, 0};
+        GuestOutline oversizedTags{1, 65535, manyPoints.data(), tailTags.As<unsigned char>(), far, 0};
+        for (GuestOutline* invalid : {&oversizedPoints, &oversizedTags}) {
+            Require(FT_Outline_Decompose_nid_postfix(invalid, &callbacks, &events) == FT_Err_Invalid_Outline);
+        }
+        Require(events.calls.empty());
+        GuardedTail tailContours(sizeof(std::uint16_t));
+        *tailContours.As<std::uint16_t>() = 3;
+        GuestOutline oversizedContours{65535, 4, points, tags, tailContours.As<std::uint16_t>(), 0};
+        Require(FT_Outline_Decompose_nid_postfix(&oversizedContours, &callbacks, &events) == FT_Err_Invalid_Outline);
+        Require(events.calls.size() == 5);
+        events.calls.clear();
+        GuestOutline tail{1, 4, tailPoints.As<GuestVector>(), tailTags.As<unsigned char>(), tailContours.As<std::uint16_t>(), 0};
+        Require(FT_Outline_Decompose_nid_postfix(&tail, &callbacks, &events) == 0);
+        DecomposeEvents expected;
+        Require(FT_Outline_Decompose_nid_postfix(&outline, &callbacks, &expected) == 0);
+        Require(events.calls == expected.calls && events.calls.size() == 5);
     }
     const auto font = SquareGlyphFont('A', 700);
     GuestLibrary* library = nullptr;
