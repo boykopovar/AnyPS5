@@ -6,8 +6,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tools import run_report_summary
-from tools.run_report_summary import render
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import run_report_summary
+from run_report_summary import render
 
 
 ROOT = Path(__file__).resolve().parents[2]
