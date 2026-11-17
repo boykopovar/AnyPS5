@@ -47,10 +47,12 @@ static_assert(sizeof(VkStencilOpState) == 28, "VkStencilOpState changed: update 
 static_assert(sizeof(VkVertexInputBindingDescription) == 12, "VkVertexInputBindingDescription changed: update the recipe codec");
 static_assert(sizeof(VkVertexInputAttributeDescription) == 16, "VkVertexInputAttributeDescription changed: update the recipe codec");
 #if defined(__linux__) && defined(__x86_64__) && defined(__GLIBCXX__)
-static_assert(sizeof(State) == 1008, "State changed: update CanonicalPipelineState and the recipe codec");
-static_assert(sizeof(ShaderStages) == 164, "ShaderStages changed: update the recipe codec");
+static_assert(sizeof(State) == 1064, "State changed: update CanonicalPipelineState and the recipe codec");
+static_assert(sizeof(ShaderStages) == 224, "ShaderStages changed: update the recipe codec");
 static_assert(sizeof(ShaderRecompiler::MeshConfiguration) == 40, "MeshConfiguration changed: update the recipe codec");
 static_assert(sizeof(ShaderRecompiler::TessellationConfiguration) == 40, "TessellationConfiguration changed: update the recipe codec");
+static_assert(sizeof(ShaderRecompiler::GeometryConfiguration) == 48, "GeometryConfiguration changed: update the recipe codec");
+static_assert(sizeof(ShaderRecompiler::GeometryCopyExport) == 32, "GeometryCopyExport changed: update the recipe codec");
 #endif
 
 constexpr std::uint32_t FileMagic = 0x4c4a5041u;
