@@ -13,7 +13,7 @@ REGISTRATION_SPEC = importlib.util.spec_from_file_location("check_test_registrat
 REGISTRATION = importlib.util.module_from_spec(REGISTRATION_SPEC)
 REGISTRATION_SPEC.loader.exec_module(REGISTRATION)
 
-FULL = re.compile(r"^CMakeLists\.txt$|^core/CMakeLists\.txt$|^core/libs/CMakeLists\.txt$|^\.github/workflows/build\.yml$"
+FULL = re.compile(r"^CMakeLists\.txt$|^core/libs/CMakeLists\.txt$|^\.github/workflows/build\.yml$"
                   r"|^3rdparty/|^cmake/|^\.gitmodules$|^tools/select_tests\.py$")
 LOCAL = re.compile(r"(^|/)CMakeLists\.txt$|\.cmake$")
 BATCH = 20000
