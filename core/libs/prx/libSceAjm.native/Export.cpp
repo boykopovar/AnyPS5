@@ -145,33 +145,18 @@ int APS5_VABI sceAjmDecWVorbisCreateHeaderPacket(WVorbisHeaderPacketParameter* p
 }
 
 int APS5_VABI sceAjmDecWVorbisCreateSetupPacket(WVorbisSetupPacketParameter* parameter) {
+    constexpr int InvalidParameter = static_cast<int>(0x8A6E0001u);
+    constexpr int InvalidSize = static_cast<int>(0x8A6E0002u);
+    if (parameter == nullptr) return InvalidParameter;
+    if (parameter->size != sizeof(WVorbisSetupPacketParameter)) return InvalidSize;
+    if (parameter->channels < 0 || parameter->input == nullptr || parameter->output == nullptr) return InvalidParameter;
     NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceAjmBatchGetLog() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceAjmInstanceAvailable() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
 }
 
 uint32_t APS5_VABI sceAjmInstanceCodecType(uint32_t instance_id) {
     return instance_id >> 14;
 }
 
-int APS5_VABI sceAjmInstanceExtend(uint32_t context, uint32_t codec, uint64_t flags, uint32_t instance) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI sceAjmInstanceSwitch(uint32_t context, uint32_t codec, uint64_t flags, uint32_t instance) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
 
 }
 
