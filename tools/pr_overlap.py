@@ -791,7 +791,10 @@ def library_status(ref, library):
     scanner = importlib.import_module("progress")
     with tempfile.TemporaryDirectory() as root:
         with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
-            tar.extractall(root, filter="data")
+            if hasattr(tarfile, "data_filter"):
+                tar.extractall(root, filter="data")
+            else:
+                tar.extractall(root)
         group = scanner.scan_library(Path(root, library))
     status = {canonical(name): "stub" for name in group["todo_names"]}
     status.update({canonical(name): "implemented" for name in group["done_names"]})
