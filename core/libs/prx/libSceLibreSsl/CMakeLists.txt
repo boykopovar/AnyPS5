@@ -17,6 +17,7 @@ if(BUILD_TESTING)
 endif()
 
 target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Asn1.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/ExData.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/X509NamePrintEx.cpp)
+target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/RsaKeygen.cpp)
 target_sources(libSceLibreSsl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/PemReadBioX509.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/PemPrivateKey.cpp)
 
 if(BUILD_TESTING)
@@ -242,7 +243,7 @@ if(BUILD_TESTING)
 
     add_test_executable(guest_libressl_rsa_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslRsa.cpp)
     target_include_directories(guest_libressl_rsa_tests PRIVATE ${LIBS_INCLUDE_DIR})
-    target_link_libraries(guest_libressl_rsa_tests PRIVATE libSceLibreSsl libc)
+    target_link_libraries(guest_libressl_rsa_tests PRIVATE libSceLibreSsl libc mbedcrypto)
     configure_windows_unwind(guest_libressl_rsa_tests)
     add_test(NAME guest_libressl_rsa COMMAND guest_libressl_rsa_tests)
     set_tests_properties(guest_libressl_rsa PROPERTIES TIMEOUT 30)
@@ -302,6 +303,17 @@ if(BUILD_TESTING)
     set_tests_properties(guest_libressl_evp_cipher_ctx PROPERTIES TIMEOUT 30)
     if(WIN32)
         set_tests_properties(guest_libressl_evp_cipher_ctx PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
+    endif()
+
+    add_test_executable(guest_libressl_evp_aes_tests ${LIBS_INCLUDE_DIR}/tests/GuestLibreSslEvpAes.cpp)
+    target_include_directories(guest_libressl_evp_aes_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_libressl_evp_aes_tests PRIVATE libSceLibreSsl libc)
+    configure_windows_unwind(guest_libressl_evp_aes_tests)
+    add_test(NAME guest_libressl_evp_aes COMMAND guest_libressl_evp_aes_tests)
+    set_tests_properties(guest_libressl_evp_aes PROPERTIES TIMEOUT 30)
+    if(WIN32)
+        set_tests_properties(guest_libressl_evp_aes PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceLibreSsl>")
     endif()
 

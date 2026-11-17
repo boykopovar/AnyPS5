@@ -8,6 +8,7 @@
 #include <vector>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libkernel_sys/include/Api.hpp"
 
 static_assert(sizeof(VideoRecordingQueryParam) == 64);
 static_assert(offsetof(VideoRecordingQueryParam, mode) == 12);
@@ -36,6 +37,12 @@ constexpr int MinimumHeapSize = 0x1000;
 constexpr std::uint64_t MinimumParamSize = 0x10;
 constexpr std::uint32_t MaximumDuration = 3600;
 constexpr std::uint32_t MaximumWidth = 16384;
+constexpr std::uint64_t MinimumParam2Size = 0x18;
+constexpr std::uint32_t MaximumHddDuration = 180;
+constexpr std::uint32_t SdkLateBase = 0x2000000;
+constexpr std::uint32_t SdkLargeHeap = 0x3500000;
+constexpr std::uint32_t SdkLateOffsets = 0x4500000;
+constexpr std::uint64_t AuthorityBit = 1ull << 62;
 
 bool IsVideoFormat(std::uint32_t format) {
  switch (format) {
@@ -97,6 +104,32 @@ int CheckParam(const VideoRecordingParam* param) {
     if (option > 1 || (format != 0 && !IsVideoFormat(format))) return ErrorInvalidArgument;
     if (format == 0) return ErrorNoVideoFormat;
     return 0;
+}
+
+int ReadDuration2(const VideoRecordingParam2* param, std::uint32_t* duration) {
+    if (param == nullptr) return ErrorInvalidArgument;
+    std::uint64_t size = 0;
+    const int savedErrno = errno;
+    const bool readable = GuestCopyIn_nid_no_patch(&size, &param->size, sizeof(size)) && size >= MinimumParam2Size &&
+        GuestCopyIn_nid_no_patch(duration, &param->duration, sizeof(*duration));
+    errno = savedErrno;
+    return readable ? 0 : ErrorInvalidArgument;
+}
+
+std::uint32_t CompiledSdkVersion() {
+    std::int32_t version = 0;
+    if (sceKernelGetCompiledSdkVersion(&version) != 0) return 0xffffffffu;
+    return static_cast<std::uint32_t>(version);
+}
+
+int Authority() {
+    KernelAuthInfo info{};
+    if (get_authinfo_nid_postfix(0, &info) != 0) return -1;
+    return (info.capabilities[0] & AuthorityBit) != 0 ? 1 : 0;
+}
+
+bool LargeRecorder() {
+    return Authority() == 1 || sceKernelIsNeoMode() == 1;
 }
 }
 
@@ -243,9 +276,11 @@ int APS5_VABI sceVideoRecordingOpen2(const char* path, const VideoRecordingParam
 }
 
 std::int64_t APS5_VABI sceVideoRecordingQueryHddSize2(const VideoRecordingParam2* param) {
- (void)param;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    std::uint32_t duration = 0;
+    if (const int status = ReadDuration2(param, &duration); status < 0) return status;
+    if (duration > MaximumHddDuration) return ErrorInvalidArgument;
+    const std::int64_t factor = LargeRecorder() ? 20 : 14;
+    return static_cast<std::int64_t>(std::max(duration, 10u)) * factor * 0x20000;
 }
 
 int APS5_VABI sceVideoRecordingQueryMemSize(const VideoRecordingParam* param) {
@@ -255,9 +290,16 @@ int APS5_VABI sceVideoRecordingQueryMemSize(const VideoRecordingParam* param) {
 }
 
 int APS5_VABI sceVideoRecordingQueryMemSize2(const VideoRecordingParam2* param) {
- (void)param;
- NotImplemented_nid_no_patch(__func__);
- return 0;
+    std::uint32_t duration = 0;
+    if (const int status = ReadDuration2(param, &duration); status < 0) return status;
+    if (duration > MaximumDuration) return ErrorInvalidArgument;
+    const std::uint32_t sdk = CompiledSdkVersion();
+    const bool large = LargeRecorder();
+    const std::uint32_t extra = sdk < SdkLargeHeap ? 0x40000 : large ? 0xc0000 : 0x80000;
+    if (sdk < SdkLateBase) return static_cast<int>(duration * 0x278 + 0x22680 + extra);
+    const bool lateOffsets = sdk >= SdkLateOffsets;
+    if (sdk >= SdkLargeHeap && large) return static_cast<int>(duration * 0x2f0 + extra + (lateOffsets ? 0x4d220 : 0x3d220));
+    return static_cast<int>(duration * 0x278 + extra + (lateOffsets ? 0x45220 : 0x35220));
 }
 
 int APS5_VABI sceVideoRecordingRestModeProcessGetStatus(void* status) {
