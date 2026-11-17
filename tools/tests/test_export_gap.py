@@ -87,6 +87,57 @@ def provides(name, nid):
 
 
 class ExportGapTests(unittest.TestCase):
+    def test_test_definitions_aliases_and_macros_do_not_hide_missing_exports(self):
+        missing = ["sceTestDefinition", "sceTestAlias", "sceTestMacro"]
+        present = ["sceProductionHeader", "sceProductionFilename"]
+        for folder in ("test", "tests", "Test", "TESTS", "nested/tests/fixtures"):
+            with self.subTest(folder=folder), tempfile.TemporaryDirectory() as directory:
+                root, prx, tables = tree(Path(directory) / "tests")
+                write_module(prx, MODULE, {
+                    "src/contest/Api.hpp": "int APS5_VABI sceProductionHeader(void) { return 0; }\n",
+                    "src/tests.cpp": "int APS5_VABI sceProductionFilename(void) { return 0; }\n",
+                    folder + "/Mocks.hpp": (
+                        "int APS5_VABI sceTestDefinition(void) { return 0; }\n"
+                        f'APS5_EXPORT("{nid_of(missing[1])}", test_alias);\n'
+                        "#define TEST_EXPORT(NAME) int APS5_VABI NAME(void) { return 0; }\n"
+                        "TEST_EXPORT(sceTestMacro)\n"),
+                })
+                write_table(tables, MODULE, [nid_of(name) for name in missing + present])
+                database = write_db(directory, [(nid_of(name), name) for name in missing + present])
+                output = Path(directory) / "missing.txt"
+                code, report = run_tool(root, prx, ["--module", MODULE, "--export-table", str(tables),
+                                                   "--db", str(database), "--out", str(output)])
+                self.assertEqual(code, 0)
+                self.assertEqual(output.read_text(encoding="utf-8").splitlines(), [nid_of(name) for name in missing])
+                self.assertIn(f"{MODULE}: 3 missing, 2 already provided, 0 unknown", report)
+
+    def test_test_sources_do_not_confirm_shared_library_exports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _, prx, _ = tree(directory)
+            library = write_module(prx, MODULE, {
+                "CMakeLists.txt": "include(${CMAKE_CURRENT_SOURCE_DIR}/../libExample.native/Shared.cmake)\n",
+                "Api.hpp": "int APS5_VABI Present(void);\nint APS5_VABI Missing(void);\n",
+                "tests/Api.hpp": "int APS5_VABI OnlyTestDeclaration(void);\n",
+            })
+            write_module(prx, "libExample.native", {
+                "Export.cpp": "int APS5_VABI Present(void) { return 0; }\nint APS5_VABI OnlyTestDeclaration(void) { return 0; }\n",
+                "tests/Mock.cpp": "int APS5_VABI Missing(void) { return 0; }\n",
+            })
+            self.assertEqual(set(export_gap.collect_provided(library)), {nid_of("Present")})
+
+    def test_self_call_report_excludes_test_callers(self):
+        name = "sceExampleSelfCall"
+        with tempfile.TemporaryDirectory() as directory:
+            root, prx, _ = tree(directory)
+            library = write_module(prx, MODULE, {
+                "src/Caller.cpp": "int use(void) {\n    return sceExampleSelfCall(1);\n}\n",
+                "tests/Caller.cpp": "int test(void) { return sceExampleSelfCall(2); }\n",
+                "nested/test/Fixture.hpp": "int test(void) { return sceExampleSelfCall(3); }\n",
+            })
+            with patch.object(export_gap, "ROOT", root):
+                calls = export_gap.find_self_calls(library, {nid_of(name): name})
+            self.assertEqual(calls, [(name, nid_of(name), f"core/libs/prx/{MODULE}/src/Caller.cpp", 2, "")])
+
     def test_export_table_ignores_comments_strings_and_macro_definitions(self):
         active = nid_of("sceExampleActive")
         commented = nid_of("sceExampleCommented")

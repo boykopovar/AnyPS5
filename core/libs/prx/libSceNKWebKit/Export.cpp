@@ -9932,25 +9932,6 @@ int APS5_VABI WKBundleHitTestResultGetTargetFrame() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-
-
-
-int APS5_VABI WKBundleInspectorClose() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundleInspectorEvaluateScriptForTest() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundleInspectorSetPageProfilingEnabled() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKBundleInspectorShow() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKBundleIsPageBoxVisible() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -10162,11 +10143,6 @@ int APS5_VABI WKBundlePageGetAppCacheUsageForOrigin() {
 int APS5_VABI WKBundlePageGetBackingScaleFactor() {
     NotImplemented_nid_no_patch(__func__);
 }
-
-int APS5_VABI WKBundlePageGetInspector() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 
 int APS5_VABI WKBundlePageGetPageZoomFactor() {
     NotImplemented_nid_no_patch(__func__);
@@ -10482,10 +10458,6 @@ int APS5_VABI WKBundleSetWebNotificationPermission() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKContextAllowSpecificHTTPSCertificateForHost() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKContextClearCurrentModifierStateForTesting() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -10508,27 +10480,11 @@ int APS5_VABI WKContextPostMessageToInjectedBundle() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI WKContextPreconnectToServer() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKContextSetCanHandleHTTPSServerTrustEvaluation() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI WKContextSetClient() {
     NotImplemented_nid_no_patch(__func__);
 }
 
 int APS5_VABI WKContextSetConnectionClient() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKContextSetCustomWebContentServiceBundleIdentifier() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI WKContextSetDiskCacheSpeculativeValidationEnabled() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -10558,10 +10514,6 @@ int APS5_VABI WKContextSetInvalidMessageFunction() {
 }
 
 
-
-int APS5_VABI WKContextSetMaximumNumberOfProcesses() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 
 int APS5_VABI WKContextSetPrewarmsProcessesAutomatically() {
@@ -14309,18 +14261,6 @@ int APS5_VABI _ZN3WTF14FileSystemImpl19filesHaveSameVolumeERKNS_6StringES3_() {
 }
 
 int APS5_VABI _ZN3WTF14FileSystemImpl20deleteEmptyDirectoryERKNS_6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF14FileSystemImpl24fileSystemRepresentationERKNS_6StringE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF14FileSystemImpl25pathByAppendingComponentsENS_10StringViewERKNS_6VectorIS1_Lm0ENS_15CrashOnOverflowELm16ENS_10FastMallocEEE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF14FileSystemImpl34stringFromFileSystemRepresentationEPKc() {
     NotImplemented_nid_no_patch(__func__);
 }
 
