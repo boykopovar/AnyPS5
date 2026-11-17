@@ -57,6 +57,7 @@ _Static_assert(offsetof(PKImageEncode, Initialize) == 0 && offsetof(PKImageEncod
                "JXR WMP encoder slots");
 _Static_assert(offsetof(PKImageEncode, pStream) == 120 && offsetof(PKImageEncode, fHeaderDone) == 176,
                "JXR WMP encoder stream and header flag");
+_Static_assert(offsetof(PKImageEncode, bWMP) == 520, "JXR WMP encoder flag");
 _Static_assert(offsetof(PKImageDecode, GetRawStream) == 48 && offsetof(PKImageDecode, Release) == 80,
                "JXR WMP decoder slots");
 _Static_assert(offsetof(PKImageDecode, pStream) == 88 && offsetof(PKImageDecode, fStreamOwner) == 96,
@@ -229,6 +230,10 @@ int64_t JxrWmpEncodeWritePixels_nid_no_patch(void* encoder, uint32_t lines, uint
     PKImageEncode* pIE = (PKImageEncode*)encoder;
     JxrWmpScope scope;
     ERR err;
+    if (pIE->WMP.eBandedEncState != BANDEDENCSTATE_UNINITIALIZED) {
+        *refusal = JXR_WMP_REFUSE_STATE;
+        return WMP_errSuccess;
+    }
     *refusal = EncoderRefusal(pIE, 1, !pIE->fHeaderDone);
     if (*refusal != JXR_WMP_ACCEPTED) return WMP_errSuccess;
     Enter(&scope, &pIE->pStream);
@@ -237,8 +242,12 @@ int64_t JxrWmpEncodeWritePixels_nid_no_patch(void* encoder, uint32_t lines, uint
     return err;
 }
 
-int64_t JxrWmpEncodeBandedBegin_nid_no_patch(void* encoder, void* temporary) {
+int64_t JxrWmpEncodeBandedBegin_nid_no_patch(void* encoder, void* temporary, int32_t* refusal) {
     PKImageEncode* pIE = (PKImageEncode*)encoder;
+    if (pIE->WMP.eBandedEncState != BANDEDENCSTATE_UNINITIALIZED) {
+        *refusal = JXR_WMP_REFUSE_STATE;
+        return WMP_errSuccess;
+    }
     return PKImageEncode_WritePixelsBandedBegin_WMP(pIE, Retain(pIE, (struct WMPStream*)temporary));
 }
 

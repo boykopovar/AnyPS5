@@ -17,7 +17,7 @@ extern "C" {
 std::size_t JxrWmpReferenceParameterSize();
 void JxrWmpReferenceParameters(void* value, std::int32_t spatial, std::uint8_t alphaMode);
 std::size_t JxrWmpReferenceTranscodeSize();
-void JxrWmpReferenceTranscodeParameters(void* value, std::uint32_t width, std::uint32_t height);
+void JxrWmpReferenceTranscodeParameters(void* value, std::uint32_t width, std::uint32_t height, std::uint8_t alphaMode);
 std::size_t JxrWmpReferenceMetadataSize();
 void JxrWmpReferenceConfigureDecoder(void* value);
 void JxrWmpReferenceMetadata(void* value, const char* software, std::uint16_t rating, std::int32_t wide);
@@ -26,8 +26,8 @@ std::uint32_t JxrWmpReferenceRating(const void* value);
 std::int64_t JxrWmpReferenceEncode(const void* parameters, std::int32_t alpha, std::uint32_t width, std::uint32_t height,
                                    const std::uint8_t* pixels, std::uint32_t stride, std::int32_t banded,
                                    const std::uint8_t* colorContext, std::uint32_t colorContextSize,
-                                   const void* metadata, std::uint8_t* output, std::size_t capacity,
-                                   std::size_t* written);
+                                   const void* metadata, std::uint8_t* temporary, std::uint8_t* output,
+                                   std::size_t capacity, std::size_t* written);
 std::int64_t JxrWmpReferenceDecode(const std::uint8_t* data, std::size_t size, std::uint8_t* pixels,
                                    std::uint32_t stride, std::int32_t* width, std::int32_t* height);
 std::int64_t JxrWmpReferenceTranscode(const std::uint8_t* data, std::size_t size, const void* encodeParameters,
@@ -238,16 +238,21 @@ std::vector<std::uint8_t> Encode(std::int32_t alpha, std::int32_t banded, bool m
     std::vector<std::uint8_t> description(JxrWmpReferenceMetadataSize());
     JxrWmpReferenceMetadata(description.data(), software, 4, 0);
 
+    const bool planarTemporary = alpha && banded;
+    std::vector<std::uint8_t> expectedTemporary(planarTemporary ? Capacity : 0);
     std::vector<std::uint8_t> expected(Capacity);
     std::size_t expectedSize = 0;
     Require(JxrWmpReferenceEncode(parameters.data(), alpha, Width, Height, pixels.data(), stride, banded,
                                   metadata ? colorContext.data() : nullptr, static_cast<std::uint32_t>(colorContext.size()),
-                                  metadata ? description.data() : nullptr, expected.data(), expected.size(),
-                                  &expectedSize) == 0);
+                                  metadata ? description.data() : nullptr,
+                                  planarTemporary ? expectedTemporary.data() : nullptr, expected.data(),
+                                  expected.size(), &expectedSize) == 0);
     Require(expectedSize > 0);
 
     const auto blocksBefore = liveBlocks;
     std::vector<std::uint8_t> output(Capacity);
+    std::vector<std::uint8_t> temporaryBuffer(planarTemporary ? Capacity : 0);
+    Jxr::Stream* temporary = planarTemporary ? MemoryStream(temporaryBuffer, temporaryBuffer.size()) : nullptr;
     auto* stream = MemoryStream(output, output.size());
     auto* encoder = CreateEncoder();
     Require(encoder->initialize(encoder, stream, parameters.data(), parameters.size()) == 0);
@@ -263,13 +268,15 @@ std::vector<std::uint8_t> Encode(std::int32_t alpha, std::int32_t banded, bool m
     }
     auto* writable = const_cast<std::uint8_t*>(pixels.data());
     if (banded) {
-        Require(encoder->writePixelsBandedBegin(encoder, nullptr) == 0);
+        Require(encoder->writePixelsBandedBegin(encoder, temporary) == 0);
         Require(encoder->writePixelsBanded(encoder, 15, writable, stride, 0) == -111);
         Require(encoder->writePixelsBanded(encoder, 16, writable, stride, 0) == 0);
         Require(encoder->writePixelsBanded(encoder, Height - 16, writable + 16 * stride, stride, 1) == 0);
         Require(encoder->writePixelsBandedEnd(encoder) == 0);
     } else {
         Require(encoder->writePixels(encoder, Height, writable, stride) == 0);
+        RequireThrow(std::logic_error, [&] { encoder->writePixels(encoder, Height, writable, stride); });
+        RequireThrow(std::logic_error, [&] { encoder->writePixelsBandedBegin(encoder, nullptr); });
     }
     Require(encoder->stream == stream);
     std::size_t written = 0;
@@ -281,10 +288,12 @@ std::vector<std::uint8_t> Encode(std::int32_t alpha, std::int32_t banded, bool m
     Require(encoder->terminate(encoder) == 0);
     Require(encoder->createNewFrame(encoder, nullptr, 0) == NotYetImplemented);
     Require(encoder->release(&encoder) == 0 && encoder == nullptr);
+    if (temporary != nullptr) Require(temporary->close(&temporary) == 0 && temporary == nullptr);
     Require(liveBlocks == blocksBefore);
 
     Require(written == expectedSize);
     Require(output == expected);
+    Require(temporaryBuffer == expectedTemporary);
     return output;
 }
 
@@ -338,10 +347,10 @@ void TestDecode(std::vector<std::uint8_t> encoded, std::uint32_t bytesPerPixel, 
     Require(liveBlocks == blocksBefore);
 }
 
-void TestTranscode(std::vector<std::uint8_t> encoded) {
-    auto parameters = Parameters(1, 0);
+void TestTranscode(std::vector<std::uint8_t> encoded, std::uint8_t alphaMode) {
+    auto parameters = Parameters(1, alphaMode);
     std::vector<std::uint8_t> transcode(JxrWmpReferenceTranscodeSize());
-    JxrWmpReferenceTranscodeParameters(transcode.data(), Width, Height);
+    JxrWmpReferenceTranscodeParameters(transcode.data(), Width, Height, alphaMode);
     std::vector<std::uint8_t> expected(Capacity);
     std::size_t expectedSize = 0;
     Require(JxrWmpReferenceTranscode(encoded.data(), encoded.size(), parameters.data(), transcode.data(),
@@ -363,6 +372,7 @@ void TestTranscode(std::vector<std::uint8_t> encoded) {
     Require(decoder->release(&decoder) == 0);
     Require(input->close(&input) == 0);
     Require(liveBlocks == blocksBefore);
+    if (alphaMode != 0) return;
 
     void* generic = nullptr;
     Require(PKImageDecode_Create_nid_postfix(&generic) == 0);
@@ -403,6 +413,18 @@ void TestRefusals() {
     RequireThrow(std::runtime_error, [&] { encoder->writePixels(encoder, Height, pixels.data(), Width * 3); });
     Require(encoder->release(&encoder) == 0 && encoder == nullptr);
 
+    std::vector<std::uint8_t> sequenceBuffer(Capacity);
+    auto* sequenceStream = MemoryStream(sequenceBuffer, sequenceBuffer.size());
+    encoder = CreateEncoder();
+    Require(encoder->initialize(encoder, sequenceStream, parameters.data(), parameters.size()) == 0);
+    Require(encoder->setPixelFormat(encoder, JxrGuest_GUID_PKPixelFormat24bppBGR_nid_no_patch) == 0);
+    Require(encoder->setSize(encoder, Width, Height) == 0);
+    Require(encoder->writePixelsBandedBegin(encoder, nullptr) == 0);
+    RequireThrow(std::logic_error, [&] { encoder->writePixelsBandedBegin(encoder, nullptr); });
+    RequireThrow(std::logic_error, [&] { encoder->writePixels(encoder, Height, pixels.data(), Width * 3); });
+    RequireThrow(std::logic_error, [&] { encoder->writePixelsBandedEnd(encoder); });
+    Require(encoder->release(&encoder) == 0 && encoder == nullptr);
+
     auto* decoder = CreateDecoder();
     const Rect rect{0, 0, static_cast<std::int32_t>(Width), static_cast<std::int32_t>(Height)};
     RequireThrow(std::invalid_argument, [&] { decoder->copy(decoder, &rect, pixels.data(), Width * 3); });
@@ -424,7 +446,9 @@ int main() {
     const auto alpha = Encode(1, 0, false);
     TestDecode(plain, 3, true);
     TestDecode(alpha, 4, false);
-    TestTranscode(plain);
+    Encode(1, 1, false);
+    TestTranscode(plain, 0);
+    TestTranscode(alpha, 2);
     TestRefusals();
     Require(liveBlocks == 0);
     return 0;

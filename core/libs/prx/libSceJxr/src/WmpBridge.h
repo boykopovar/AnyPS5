@@ -37,7 +37,7 @@ int64_t JxrWmpEncodeTerminate_nid_no_patch(void* encoder);
 int64_t JxrWmpEncodeSetDescriptiveMetadata_nid_no_patch(void* encoder, const void* metadata, int32_t* refusal);
 int64_t JxrWmpEncodeWritePixels_nid_no_patch(void* encoder, uint32_t lines, uint8_t* pixels, uint32_t stride,
                                              int32_t* refusal);
-int64_t JxrWmpEncodeBandedBegin_nid_no_patch(void* encoder, void* temporary);
+int64_t JxrWmpEncodeBandedBegin_nid_no_patch(void* encoder, void* temporary, int32_t* refusal);
 int64_t JxrWmpEncodeBanded_nid_no_patch(void* encoder, uint32_t lines, uint8_t* pixels, uint32_t stride,
                                         int32_t last, int32_t* refusal);
 int64_t JxrWmpEncodeBandedEnd_nid_no_patch(void* encoder, int32_t* refusal);

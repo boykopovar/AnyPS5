@@ -32,7 +32,7 @@ std::int64_t Checked(std::int64_t result, std::int32_t refusal, const char* func
     case JXR_WMP_REFUSE_STREAM:
         throw std::invalid_argument(std::string(function) + " requires an initialized stream");
     case JXR_WMP_REFUSE_STATE:
-        throw std::logic_error(std::string(function) + " was called outside a banded encode");
+        throw std::logic_error(std::string(function) + " was called in an encode state that jxrlib asserts against");
     case JXR_WMP_REFUSE_CALLBACK:
         throw std::invalid_argument(std::string(function) + " requires the encoder and decoder callbacks it calls");
     default:
@@ -81,7 +81,9 @@ std::int64_t APS5_VABI EncodeWritePixels(Jxr::ImageEncode* encoder, std::uint32_
 
 std::int64_t APS5_VABI EncodeBandedBegin(Jxr::ImageEncode* encoder, Jxr::Stream* temporary) {
     Require(encoder != nullptr, "PKImageEncode_WritePixelsBandedBegin_WMP", "an encoder");
-    return JxrWmpEncodeBandedBegin_nid_no_patch(encoder, temporary);
+    std::int32_t refusal = JXR_WMP_ACCEPTED;
+    const auto result = JxrWmpEncodeBandedBegin_nid_no_patch(encoder, temporary, &refusal);
+    return Checked(result, refusal, "PKImageEncode_WritePixelsBandedBegin_WMP");
 }
 
 std::int64_t APS5_VABI EncodeBanded(Jxr::ImageEncode* encoder, std::uint32_t lines, std::uint8_t* pixels,

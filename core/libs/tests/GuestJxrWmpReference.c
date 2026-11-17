@@ -25,7 +25,7 @@ size_t JxrWmpReferenceTranscodeSize(void) {
     return sizeof(CWMTranscodingParam);
 }
 
-void JxrWmpReferenceTranscodeParameters(void* value, uint32_t width, uint32_t height) {
+void JxrWmpReferenceTranscodeParameters(void* value, uint32_t width, uint32_t height, uint8_t alphaMode) {
     CWMTranscodingParam* parameters = (CWMTranscodingParam*)value;
     memset(parameters, 0, sizeof(*parameters));
     parameters->cWidth = width;
@@ -33,6 +33,7 @@ void JxrWmpReferenceTranscodeParameters(void* value, uint32_t width, uint32_t he
     parameters->bfBitstreamFormat = SPATIAL;
     parameters->sbSubband = SB_ALL;
     parameters->oOrientation = O_FLIPH;
+    parameters->uAlphaMode = alphaMode;
 }
 
 size_t JxrWmpReferenceMetadataSize(void) {
@@ -69,12 +70,16 @@ static const PKPixelFormatGUID* Format(int32_t alpha) {
 
 int64_t JxrWmpReferenceEncode(const void* parameters, int32_t alpha, uint32_t width, uint32_t height,
                               const uint8_t* pixels, uint32_t stride, int32_t banded, const uint8_t* colorContext,
-                              uint32_t colorContextSize, const void* metadata, uint8_t* output, size_t capacity,
-                              size_t* written) {
+                              uint32_t colorContextSize, const void* metadata, uint8_t* temporary, uint8_t* output,
+                              size_t capacity, size_t* written) {
     ERR err = WMP_errSuccess;
     struct WMPStream* stream = NULL;
+    struct WMPStream* alphaStream = NULL;
     PKImageEncode* encoder = NULL;
     *written = 0;
+    if (temporary != NULL) {
+        Call(CreateWS_Memory(&alphaStream, temporary, capacity));
+    }
     Call(CreateWS_Memory(&stream, output, capacity));
     Call(PKImageEncode_Create_WMP(&encoder));
     Call(encoder->Initialize(encoder, stream, (void*)parameters, sizeof(CWMIStrCodecParam)));
@@ -87,7 +92,7 @@ int64_t JxrWmpReferenceEncode(const void* parameters, int32_t alpha, uint32_t wi
         Call(encoder->SetDescriptiveMetadata(encoder, (const DESCRIPTIVEMETADATA*)metadata));
     }
     if (banded) {
-        Call(encoder->WritePixelsBandedBegin(encoder, NULL));
+        Call(encoder->WritePixelsBandedBegin(encoder, alphaStream));
         Call(encoder->WritePixelsBanded(encoder, 16, (U8*)pixels, stride, FALSE));
         Call(encoder->WritePixelsBanded(encoder, height - 16, (U8*)pixels + 16 * stride, stride, TRUE));
         Call(encoder->WritePixelsBandedEnd(encoder));
@@ -98,6 +103,7 @@ int64_t JxrWmpReferenceEncode(const void* parameters, int32_t alpha, uint32_t wi
 Cleanup:
     if (encoder != NULL) encoder->Release(&encoder);
     else if (stream != NULL) stream->Close(&stream);
+    if (alphaStream != NULL) alphaStream->Close(&alphaStream);
     return err;
 }
 
