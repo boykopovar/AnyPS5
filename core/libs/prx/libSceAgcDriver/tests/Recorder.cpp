@@ -536,6 +536,19 @@ public:
                 minLod.pNext = address.pNext;
                 address.pNext = &minLod;
             }
+            VkPhysicalDeviceTimelineSemaphoreFeaturesKHR timelineFeatures{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR};
+            if (hasExtension(VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME)) {
+                VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &timelineFeatures};
+                function<PFN_vkGetPhysicalDeviceFeatures2>("vkGetPhysicalDeviceFeatures2")(context.physical, &features);
+                timelineSemaphores = timelineFeatures.timelineSemaphore == VK_TRUE;
+            }
+            timelineFeatures = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES_KHR};
+            timelineFeatures.timelineSemaphore = VK_TRUE;
+            if (timelineSemaphores) {
+                extensionsEnabled.push_back(VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME);
+                timelineFeatures.pNext = address.pNext;
+                address.pNext = &timelineFeatures;
+            }
             VkPhysicalDeviceExtendedDynamicState3FeaturesEXT dynamicState3{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT};
             if (std::getenv("APS5_NO_DYNAMIC_COLOR_WRITE_MASK") == nullptr && hasExtension(VK_EXT_EXTENDED_DYNAMIC_STATE_3_EXTENSION_NAME)) {
                 VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &dynamicState3};
@@ -661,6 +674,7 @@ public:
     ~Device() { release(); }
     bool NullDescriptors() const { return nullDescriptors; }
     bool PushDescriptors() const { return pushDescriptors; }
+    bool TimelineSemaphores() const { return timelineSemaphores; }
     void UsePushDescriptors() { context.pushDescriptors = pushDescriptors; }
     const Context& GetContext() const { return context; }
     DeviceFunctions* UseFunctionTable() {
@@ -730,6 +744,7 @@ private:
     DeviceFunctions functions{};
     bool memoryBudget = false;
     bool pushDescriptors = false;
+    bool timelineSemaphores = false;
 };
 
 using Kind = Recorder::ReadKind;
@@ -2153,6 +2168,69 @@ void deferredBatchTests(const Device& device) {
         }
         Require(refused && countedSubmits.load() == submitted, "a direct batch reached vkQueueSubmit after the device was lost");
         context.Function<PFN_vkFreeCommandBuffers>("vkFreeCommandBuffers")(context.device, context.pool, 1, &secondary);
+    }
+    if (!device.TimelineSemaphores()) {
+        std::cout << "skipped, no timeline semaphores: held teardown and serial waits under a failed replay not tested\n";
+    } else {
+        Context failing = context;
+        failing.deviceProc = replayFailingDeviceProc;
+        VkSemaphoreTypeCreateInfoKHR type{VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO_KHR};
+        type.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE_KHR;
+        VkSemaphoreCreateInfo info{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO, &type};
+        VkSemaphore gate = VK_NULL_HANDLE;
+        Require(context.Function<PFN_vkCreateSemaphore>("vkCreateSemaphore")(context.device, &info, nullptr, &gate) == VK_SUCCESS, "no timeline semaphore to hold the GPU");
+        std::uint64_t submitted = 0;
+        std::thread release;
+        {
+            Recorder recorder(failing, true, true, context.queueFamily);
+            Require(recorder.HasTimeline(), "the recorder made no timeline semaphore on a device that has them");
+            recordBarrierThrough(failing, recorder.Commands());
+            recorder.HoldNextSubmit(gate, 1);
+            recorder.Submit();
+            submitted = countedSubmits.load();
+            Require(recorder.UnsignaledBatches() == 1, "the held batch was not left running on the GPU");
+            recordBarrierThrough(failing, recorder.Commands());
+            failingEnds.store(1);
+            release = std::thread([&] {
+                std::this_thread::sleep_for(std::chrono::milliseconds(200));
+                VkSemaphoreSignalInfoKHR signal{VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO_KHR};
+                signal.semaphore = gate;
+                signal.value = 1;
+                Require(context.Function<PFN_vkSignalSemaphoreKHR>("vkSignalSemaphoreKHR")(context.device, &signal) == VK_SUCCESS, "the gate was not signaled");
+            });
+        }
+        release.join();
+        Require(failingEnds.load() == 0 && countedSubmits.load() == submitted, "the batch whose replay failed at teardown was submitted, or was never replayed");
+        context.Function<PFN_vkDestroySemaphore>("vkDestroySemaphore")(context.device, gate, nullptr);
+        Recorder recorder(failing, true, true, context.queueFamily);
+        recordBarrierThrough(failing, recorder.Commands());
+        const auto serial = recorder.OpenBatchSerial();
+        std::atomic<bool> waiting{false};
+        auto waited = std::async(std::launch::async, [&] {
+            waiting.store(true);
+            try {
+                recorder.WaitSerial(serial);
+            } catch (const std::exception&) {
+                return true;
+            }
+            return false;
+        });
+        while (!waiting.load()) std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        failingEnds.store(1);
+        bool failed = false;
+        try {
+            recorder.Submit();
+        } catch (const std::exception&) {
+            failed = true;
+        }
+        Require(failed && failingEnds.load() == 0, "the replay of the waited batch did not fail at submit");
+        if (waited.wait_for(std::chrono::seconds(10)) != std::future_status::ready) {
+            std::fprintf(stderr, "a wait on the serial of a batch whose replay failed did not end\n");
+            std::fflush(stderr);
+            std::_Exit(1);
+        }
+        Require(waited.get(), "a wait on the serial of a batch whose replay failed returned as if the batch completed");
     }
     std::cout << "deferred batch tests passed\n";
 }

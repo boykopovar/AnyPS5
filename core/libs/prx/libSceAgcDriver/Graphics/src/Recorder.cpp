@@ -4983,16 +4983,33 @@ struct RestoreSyncSite {
 // The timeline wait itself, on handles copied out of the recorder: the caller holds no mutex, and
 // the recorder may be torn down meanwhile (its destructor waits for the registered waiters to
 // leave after completing every batch, so the handles stay valid until this returns).
-VkResult WaitTimeline(VkDevice device, VkSemaphore timeline, PFN_vkWaitSemaphoresKHR waitSemaphores, std::uint64_t serial) {
+constexpr std::uint64_t TimelineSliceNanos = 100'000'000ull;
+constexpr unsigned TimelineSlicesPerReport = 50;
+
+VkResult WaitTimelineSlice(VkDevice device, VkSemaphore timeline, PFN_vkWaitSemaphoresKHR waitSemaphores, std::uint64_t serial, std::uint64_t nanos) {
     VkSemaphoreWaitInfoKHR wait{VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO_KHR};
     wait.semaphoreCount = 1;
     wait.pSemaphores = &timeline;
     wait.pValues = &serial;
-    auto result = waitSemaphores(device, &wait, 5'000'000'000ull);
-    for (int waited = 5; result == VK_TIMEOUT; waited += 5) {
+    return waitSemaphores(device, &wait, nanos);
+}
+
+std::exception_ptr LatchStops(const FailureLatch& latch, std::uint64_t serial) noexcept {
+    try {
+        latch.ThrowFor(serial);
+    } catch (...) {
+        return std::current_exception();
+    }
+    return nullptr;
+}
+
+VkResult WaitTimeline(VkDevice device, VkSemaphore timeline, PFN_vkWaitSemaphoresKHR waitSemaphores, std::uint64_t serial, const FailureLatch& latch, std::exception_ptr& stopped) {
+    auto result = WaitTimelineSlice(device, timeline, waitSemaphores, serial, TimelineSliceNanos);
+    for (unsigned slices = 1; result == VK_TIMEOUT; ++slices) {
+        if (stopped = LatchStops(latch, serial); stopped != nullptr) return VK_TIMEOUT;
         // As for the fence wait in finish(): a hung batch is reported every 5 s.
-        std::fprintf(stderr, "[gpu] recorded batch %llu still running on the GPU after %d s (timeline wait)\n", static_cast<unsigned long long>(serial), waited);
-        result = waitSemaphores(device, &wait, 5'000'000'000ull);
+        if (slices % TimelineSlicesPerReport == 0) std::fprintf(stderr, "[gpu] recorded batch %llu still running on the GPU after %u s (timeline wait)\n", static_cast<unsigned long long>(serial), slices / 10);
+        result = WaitTimelineSlice(device, timeline, waitSemaphores, serial, TimelineSliceNanos);
     }
     return result;
 }
@@ -5005,11 +5022,13 @@ void Recorder::WaitSerial(std::uint64_t serial) {
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     const auto start = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     const UnlockedWaiter waiter{id};
-    const auto result = WaitTimeline(context.device, timeline, context.Function<PFN_vkWaitSemaphoresKHR>("vkWaitSemaphoresKHR"), serial);
+    std::exception_ptr stopped;
+    const auto result = WaitTimeline(context.device, timeline, context.Function<PFN_vkWaitSemaphoresKHR>("vkWaitSemaphoresKHR"), serial, latch, stopped);
     if (profile) {
         unlockedWaits.fetch_add(1, std::memory_order_relaxed);
         unlockedWaitedUs.fetch_add(static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - start).count()), std::memory_order_relaxed);
     }
+    if (stopped != nullptr) std::rethrow_exception(stopped);
     Check(result, "vkWaitSemaphoresKHR recorder");
 }
 
@@ -5017,12 +5036,15 @@ bool Recorder::WaitSerialFor(std::uint64_t serial, std::uint64_t timeoutNanos) {
     PerformanceTimer frameTiming("Recorder.WaitSerialFor");
     if (timeline == VK_NULL_HANDLE || serial == 0) return false;
     const UnlockedWaiter waiter{id};
-    VkSemaphoreWaitInfoKHR wait{VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO_KHR};
-    wait.semaphoreCount = 1;
-    wait.pSemaphores = &timeline;
-    wait.pValues = &serial;
-    const auto result = context.Function<PFN_vkWaitSemaphoresKHR>("vkWaitSemaphoresKHR")(context.device, &wait, timeoutNanos);
-    if (result == VK_TIMEOUT) return false;
+    const auto waitSemaphores = context.Function<PFN_vkWaitSemaphoresKHR>("vkWaitSemaphoresKHR");
+    auto left = timeoutNanos;
+    auto result = WaitTimelineSlice(context.device, timeline, waitSemaphores, serial, std::min(left, TimelineSliceNanos));
+    while (result == VK_TIMEOUT) {
+        if (const auto stopped = LatchStops(latch, serial); stopped != nullptr) std::rethrow_exception(stopped);
+        left -= std::min(left, TimelineSliceNanos);
+        if (left == 0) return false;
+        result = WaitTimelineSlice(context.device, timeline, waitSemaphores, serial, std::min(left, TimelineSliceNanos));
+    }
     Check(result, "vkWaitSemaphoresKHR submission progress");
     return true;
 }
@@ -5224,6 +5246,7 @@ bool Recorder::syncThroughUnlocked(std::uint64_t address, std::uint64_t end, int
     // teardown running under the GpuMutex (the driver's drain and failure paths reset the device
     // under it; a worker dropping its last device reference outside its lock would not).
     const auto myId = id;
+    const auto& waitLatch = latch;
     const auto device = context.device;
     const auto semaphore = timeline;
     const auto waitSemaphores = context.Function<PFN_vkWaitSemaphoresKHR>("vkWaitSemaphoresKHR");
@@ -5260,11 +5283,12 @@ bool Recorder::syncThroughUnlocked(std::uint64_t address, std::uint64_t end, int
     auto waited = start;
     auto& mutex = GuestMemory::GpuMutex();
     VkResult result = VK_SUCCESS;
+    std::exception_ptr stopped;
     {
         // Registered before the release: a teardown can only start once the mutex is free.
         const UnlockedWaiter waiter{myId};
         mutex.unlock();
-        result = WaitTimeline(device, semaphore, waitSemaphores, targetSerial);
+        result = WaitTimeline(device, semaphore, waitSemaphores, targetSerial, waitLatch, stopped);
         // Read before the relock: the GPU wait, not the wait for the mutex behind it.
         if (profile || trace) waited = std::chrono::steady_clock::now();
     }
@@ -5307,9 +5331,11 @@ bool Recorder::syncThroughUnlocked(std::uint64_t address, std::uint64_t end, int
     if (!RecorderAlive(myId)) {
         // Torn down meanwhile: its destructor's Sync() ran every completion, nothing is pending.
         ++holdCounters.hookUnlockedTornDown;
+        if (stopped != nullptr) std::rethrow_exception(stopped);
         Check(result, "vkWaitSemaphoresKHR recorder");
         return true;
     }
+    if (stopped != nullptr) std::rethrow_exception(stopped);
     Check(result, "vkWaitSemaphoresKHR recorder");
     // The completions up to the target, under the mutex again; the fences are signaled, so the
     // waits inside finish() return at once (charged to the same site entry). Another thread may
