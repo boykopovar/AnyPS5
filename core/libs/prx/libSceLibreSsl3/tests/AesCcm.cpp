@@ -196,8 +196,7 @@ void CheckObject() {
     Require(EVP_CIPHER_key_length_nid_postfix(view) == 16 && EVP_CIPHER_iv_length_nid_postfix(view) == 12);
 }
 
-void CheckVector(const Bytes& nonce, const Bytes& aad, const Bytes& plain, const char* expected) {
-    const Bytes key = Sequence(0x40, 16);
+void CheckVectorKeyed(const Bytes& key, const Bytes& nonce, const Bytes& aad, const Bytes& plain, const char* expected) {
     const Bytes output = Hex(expected);
     const std::size_t tagLength = output.size() - plain.size();
     const Bytes text(output.begin(), output.begin() + static_cast<std::ptrdiff_t>(plain.size()));
@@ -208,8 +207,14 @@ void CheckVector(const Bytes& nonce, const Bytes& aad, const Bytes& plain, const
     Require(EvpOpen(key, nonce, aad, text, tag, opened) && opened == plain);
 }
 
+void CheckVector(const Bytes& nonce, const Bytes& aad, const Bytes& plain, const char* expected) {
+    CheckVectorKeyed(Sequence(0x40, 16), nonce, aad, plain, expected);
+}
+
 void CheckNistVectors() {
     CheckVector(Sequence(0x10, 7), Sequence(0x00, 8), Sequence(0x20, 4), "7162015b4dac255d");
+    CheckVectorKeyed(Hex("c0c1c2c3c4c5c6c7c8c9cacbcccdcecf"), Hex("00000003020100a0a1a2a3a4a5"), Hex("0001020304050607"),
+        Hex("08090a0b0c0d0e0f101112131415161718191a1b1c1d1e"), "588c979a61c663d2f066d0c2c0f989806d5f6b61dac38417e8d12cfdf926e0");
     CheckVector(Sequence(0x10, 8), Sequence(0x00, 16), Sequence(0x20, 16), "d2a1f0e051ea5f62081a7792073d593d1fc64fbfaccd");
     CheckVector(Sequence(0x10, 12), Sequence(0x00, 20), Sequence(0x20, 24), "e3b201a9f5b71a7a9b1ceaeccd97e70b6176aad9a4428aa5484392fbc1b09951");
     Bytes longAad(65536);
