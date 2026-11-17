@@ -353,20 +353,12 @@ std::int64_t APS5_VABI PKImageDecode_Copy_nid_postfix(void*, const void*, std::u
     return WmpErrAbstractMethod;
 }
 
-int APS5_VABI PKImageDecode_Create_WMP_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 std::int64_t APS5_VABI PKImageDecode_SelectFrame_nid_postfix(void* decoder, std::uint32_t frame) {
     return WmpErrSuccess;
 }
 
 std::int64_t APS5_VABI PKImageEncode_CreateNewFrame_nid_postfix(void* encoder, void* param, std::size_t paramSize) {
     return WmpErrSuccess;
-}
-
-int APS5_VABI PKImageEncode_Create_WMP_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
 }
 
 std::int64_t APS5_VABI PKImageEncode_SetEXIFMetadata_WMP_nid_postfix(
