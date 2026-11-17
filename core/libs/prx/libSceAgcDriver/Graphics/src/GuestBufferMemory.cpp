@@ -1589,16 +1589,17 @@ struct ImportWatching {
     bool dmaBuf = false;
 };
 
-ImportWatching importWatching(const Context& context, HostImports& state, bool alias, bool writable, std::uint64_t bytes) {
+ImportWatching importWatching(const Context& context, HostImports& state, bool alias, bool writable, std::uint64_t bytes, bool needsWatch = false) {
     decideImportWatch(context, state);
 #ifdef _WIN32
-    const bool settled = !alias && state.watchPrivateImports && writable && bytes >= settleFloorBytes;
+    const bool settled = !alias && state.watchPrivateImports && writable && (needsWatch || bytes >= settleFloorBytes);
     const bool watched = alias || !state.unwatchImports || settled;
     return {settled, watched, watched};
 #else
     static_cast<void>(alias);
     static_cast<void>(writable);
     static_cast<void>(bytes);
+    static_cast<void>(needsWatch);
     return {false, !state.unwatchImports, !state.unwatchDmaBufImports};
 #endif
 }
@@ -1662,10 +1663,10 @@ bool importStaysWatched(const Context& context, HostImports& state, const Import
     if (!GuestMemory::Watched(run.base, static_cast<std::size_t>(run.bytes))) return false;
 #ifdef _WIN32
     MEMORY_BASIC_INFORMATION first{};
-    if (!importWatching(context, state, false, true, run.bytes).hostPointer && (VirtualQuery(reinterpret_cast<const void*>(run.base), &first, sizeof(first)) == 0 || first.Type != MEM_MAPPED)) return false;
+    if (!importWatching(context, state, false, true, run.bytes, true).hostPointer && (VirtualQuery(reinterpret_cast<const void*>(run.base), &first, sizeof(first)) == 0 || first.Type != MEM_MAPPED)) return false;
     const auto pages = importPages(run.base, run.bytes, true);
     if (!pages.committed || (!pages.writable && !pages.shared)) return false;
-    return importWatching(context, state, !pages.writable, pages.writable, run.bytes).hostPointer;
+    return importWatching(context, state, !pages.writable, pages.writable, run.bytes, true).hostPointer;
 #else
     const auto watching = importWatching(context, state, false, true, run.bytes);
     return sharedBacked(context, run.base, run.bytes) ? watching.dmaBuf && (watching.hostPointer || state.dmaBufSelected) : watching.hostPointer;
@@ -2503,7 +2504,7 @@ const HostImport* importRunAt(const Context& context, HostImports& state, Import
     VkResult result = VK_SUCCESS;
     const char* step = nullptr;
 #ifdef _WIN32
-    const auto watching = importWatching(context, state, entry.alias != nullptr, writable, bytes);
+    const auto watching = importWatching(context, state, entry.alias != nullptr, writable, bytes, requester == ImportRequester::ColorTarget);
     const bool settled = watching.settled;
 #else
     const auto watching = importWatching(context, state, false, true, bytes);
