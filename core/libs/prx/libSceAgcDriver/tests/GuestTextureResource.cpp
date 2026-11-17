@@ -113,7 +113,7 @@ static void RunRememberedRejectionTests() {
     const auto first = TryDecodeTextureResource(invalidWords);
     Require(first.rejection != nullptr && *first.rejection == thrown, "TryDecodeTextureResource must report the decoder's own rejection message");
     const auto remembered = RememberedTextureRejectionCount();
-    Require(remembered == before + 1u || remembered == 1u, "a rejected T# must be remembered once");
+    Require(remembered == (before >= RememberedTextureRejections ? 1u : before + 1u), "a rejected T# must be remembered once");
     const auto repeat = TryDecodeTextureResource(invalidWords);
     Require(repeat.rejection == first.rejection, "a repeated rejected T# must return the remembered rejection");
     Require(RememberedTextureRejectionCount() == remembered, "a repeated rejected T# must not be remembered twice");
