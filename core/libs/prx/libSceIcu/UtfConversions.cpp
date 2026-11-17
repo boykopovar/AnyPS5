@@ -329,26 +329,71 @@ char* APS5_VABI u_strToUTF8WithSub_nid_postfix(char* destination, std::int32_t c
 
 char16_t* APS5_VABI u_strFromUTF8Lenient_nid_postfix(char16_t* destination, std::int32_t capacity, std::int32_t* destinationLength,
     const char* source, std::int32_t sourceLength, std::int32_t* error) {
-    if (!Validate(destination, capacity, source, sourceLength, -1, error)) return nullptr;
-    if (sourceLength >= 0 && capacity < sourceLength) {
-        const OutputAccess<char16_t> access(nullptr, 0, destinationLength, nullptr, error);
-        if (destinationLength) *destinationLength = sourceLength;
-        *error = BufferOverflow;
+    std::int32_t status = 0;
+    if (!GuestCopyIn_nid_no_patch(&status, error, sizeof(status))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (status > 0) return nullptr;
+    const auto writeStatus = [&](std::int32_t value) {
+        if (!GuestCopyOut_nid_no_patch(error, &value, sizeof(value))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    };
+    const auto writeLength = [&](std::int32_t value) {
+        if (destinationLength && !GuestCopyOut_nid_no_patch(destinationLength, &value, sizeof(value)))
+            NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    };
+    if ((!source && sourceLength != 0) || sourceLength < -1 || capacity < 0 || (!destination && capacity > 0)) {
+        writeStatus(IllegalArgument);
         return nullptr;
     }
-    const OutputAccess access(destination, capacity, destinationLength, nullptr, error);
-    const auto length = Length(source, sourceLength);
+    if (!GuestWritable_nid_no_patch(error, sizeof(*error)) ||
+        (destinationLength && !GuestWritable_nid_no_patch(destinationLength, sizeof(*destinationLength))))
+        NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (sourceLength >= 0 && capacity < sourceLength) {
+        writeLength(sourceLength);
+        writeStatus(BufferOverflow);
+        return nullptr;
+    }
+    std::array<std::uint8_t, 0x1000> input;
+    std::int64_t inputBase = 0;
+    std::int64_t inputCount = 0;
+    const auto byte = [&](std::int64_t position) {
+        if (position < inputBase || position >= inputBase + inputCount) {
+            const auto offset = reinterpret_cast<std::uintptr_t>(source + position) % input.size();
+            const auto count = input.size() - offset;
+            if (!GuestCopyIn_nid_no_patch(input.data(), source + position, count)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+            inputBase = position;
+            inputCount = static_cast<std::int64_t>(count);
+        }
+        return input[static_cast<std::size_t>(position - inputBase)];
+    };
+    std::int64_t length = sourceLength;
+    if (length < 0) {
+        length = 0;
+        while (byte(length) != 0) {
+            if (++length > std::numeric_limits<std::int32_t>::max()) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        }
+    }
+    std::array<char16_t, 0x800> output;
+    std::size_t pending = 0;
+    std::int64_t written = 0;
+    const auto flush = [&] {
+        if (!GuestCopyOut_nid_no_patch(destination + written, output.data(), pending * sizeof(char16_t)))
+            NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        written += static_cast<std::int64_t>(pending);
+        pending = 0;
+    };
     std::int64_t count = 0;
     const auto emit = [&](char16_t unit) {
-        if (count < capacity) destination[count] = unit;
+        if (count < capacity) {
+            output[pending++] = unit;
+            if (pending == output.size()) flush();
+        }
         ++count;
     };
-    for (std::int32_t position = 0; position < length;) {
-        const std::uint32_t lead = static_cast<std::uint8_t>(source[position]);
+    for (std::int64_t position = 0; position < length;) {
+        const std::uint32_t lead = byte(position);
         const unsigned units = lead < 0xc0 ? 1 : lead < 0xe0 ? 2 : lead < 0xf0 ? 3 : 4;
-        if (length - position < static_cast<std::int32_t>(units)) { emit(0xfffd); break; }
+        if (length - position < static_cast<std::int64_t>(units)) { emit(0xfffd); break; }
         std::uint32_t value = lead;
-        for (unsigned index = 1; index < units; ++index) value = (value << 6) + static_cast<std::uint8_t>(source[position + index]);
+        for (unsigned index = 1; index < units; ++index) value = (value << 6) + byte(position + index);
         value -= units == 2 ? 0x3080 : units == 3 ? 0x2080 : units == 4 ? 0x3c82080 : 0;
         if (units < 4) emit(static_cast<char16_t>(value));
         else {
@@ -357,7 +402,18 @@ char16_t* APS5_VABI u_strFromUTF8Lenient_nid_postfix(char16_t* destination, std:
         }
         position += units;
     }
-    Finish(destination, capacity, count, destinationLength, error);
+    flush();
+    writeLength(static_cast<std::int32_t>(count));
+    if (!GuestCopyIn_nid_no_patch(&status, error, sizeof(status))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    if (status > 0) return destination;
+    if (count < capacity) {
+        const char16_t terminator = 0;
+        if (!GuestCopyOut_nid_no_patch(destination + count, &terminator, sizeof(terminator)))
+            NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        if (status == NotTerminated) writeStatus(0);
+    } else {
+        writeStatus(count == capacity ? NotTerminated : BufferOverflow);
+    }
     return destination;
 }
 
