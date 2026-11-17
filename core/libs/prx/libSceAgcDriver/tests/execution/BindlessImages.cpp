@@ -94,7 +94,10 @@ int main(int argc, char** argv) {
         if (argc != 1 && !heap) throw std::invalid_argument("expected --heap");
         const auto device = OpenVulkanTestDevice();
         if (!device) return VulkanTestSkipped;
-        if (heap && !device->BindlessImagesEnabled()) return VulkanTestSkipped;
+        if (heap && !device->BindlessImagesEnabled()) {
+            std::cout << "bindless images: skipped, the device lacks the descriptor indexing features for the bindless descriptor heap\n";
+            return VulkanTestSkipped;
+        }
         Run(*device, heap);
         std::cout << "bindless image materialization tests passed\n";
         return 0;
