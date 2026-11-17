@@ -1,4 +1,5 @@
 #include "prx/libSceOpusCeltEnc/include/Api.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include <cerrno>
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <algorithm>
@@ -13,6 +14,10 @@
 #include <opus.h>
 
 namespace {
+
+void ClobberErrno(std::uintptr_t, std::size_t) {
+    errno = 99;
+}
 
 void Require(bool value, const std::source_location& location = std::source_location::current()) {
     if (!value) {
@@ -164,7 +169,12 @@ void RequireEarlyAnswers(int callerApplication) {
     Require(sceOpusCeltEncDestroy(ToState(live)) == 0);
 
     Require(sceOpusCeltEncCtl(nullptr, 4000) == EncoderError(0x01));
+    errno = 71;
     Require(sceOpusCeltEncCtl(ToState(blank), 4000) == EncoderError(0x16));
+    Require(errno == 71);
+    errno = 71;
+    RequireThrows([&] { sceOpusCeltEncCtl(reinterpret_cast<OpusCeltEncoder*>(0x10), 4000); });
+    Require(errno == 71);
     Require(sceOpusCeltEncCtl(ToState(wideMarker), 4000) == EncoderError(0x16));
     for (const int request : std::array<int, 6>{0, 3999, 4048, -3, 2147483647, -2147483647 - 1})
         Require(sceOpusCeltEncCtl(ToState(marked), request) == EncoderError(0x08));
@@ -240,11 +250,19 @@ void RequireEarlyAnswers(int callerApplication) {
         Require(sceOpusCeltMultistreamEncCreateEx(&context, ToMultistreamState(blank), 48000, 2, 1, reversed.data(), application) == EncoderError(0x11));
         Require(sceOpusCeltMultistreamEncCreate(ToMultistreamState(blank), 24000, 12, 0, identity.data(), application) == EncoderError(0x11));
     }
+    errno = 71;
+    Require(sceOpusCeltMultistreamEncCreate(ToMultistreamState(blank), 24000, 2, 1, identity.data(), OPUS_APPLICATION_VOIP) == EncoderError(0x11));
+    Require(errno == 71);
+    errno = 71;
+    RequireThrows([&] { sceOpusCeltMultistreamEncCreate(ToMultistreamState(blank), 24000, 2, 1, reinterpret_cast<const std::uint8_t*>(0x10), lowDelay); });
+    Require(errno == 71);
 }
 
 } // namespace
 
 int main() {
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(ClobberErrno);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(ClobberErrno);
     constexpr std::uint32_t errorBase = 0x813F0000u;
     constexpr std::size_t stateSize = 728;
     constexpr int callerApplication = OPUS_APPLICATION_RESTRICTED_LOWDELAY;
@@ -410,4 +428,6 @@ int main() {
     ++instanceId;
     Require(sceOpusCeltEncDestroy(ToState(liveState)) == 0);
     RequireEarlyAnswers(callerApplication);
+    GuestArena::GuestArenaSetHostReadHook_nid_no_patch(nullptr);
+    GuestArena::GuestArenaSetHostWriteHook_nid_no_patch(nullptr);
 }

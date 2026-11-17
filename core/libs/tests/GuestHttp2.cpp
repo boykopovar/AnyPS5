@@ -1,10 +1,12 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libSceHttp2/include/Http2.hpp"
+#include "prx/libSceHttp2/Transport.hpp"
 #include "SceTypes.hpp"
 #include <array>
 #include <atomic>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <stdexcept>
 #include <thread>
 #include <initializer_list>
@@ -141,7 +143,97 @@ static int APS5_VABI RejectSsl(int, unsigned int, void* const*, int, void*) {
     return -1;
 }
 
-int main() {
+static unsigned offlineLookups = 0;
+
+static int OfflineLookup(const char*) {
+    ++offlineLookups;
+    return static_cast<int>(0x804101e6);
+}
+
+static int TestOfflineRequest(bool asynchronous, bool queued) {
+#ifdef _WIN32
+    _putenv("APS5_NET_DISCONNECTED=1");
+#else
+    setenv("APS5_NET_DISCONNECTED", "1", 1);
+#endif
+    Http2SetLookupHook_nid_no_patch(OfflineLookup);
+    const int networkError = static_cast<int>(0x80431063);
+    const int context = sceHttp2Init(1, 1, 0x10000, 4);
+    const int tmpl = sceHttp2CreateTemplate(context, "offline-test", 3, 0);
+    const int request = sceHttp2CreateRequestWithURL(tmpl, "GET", "https://example.invalid/offline", 0);
+    Require(context > 0 && tmpl > 0 && request > 0);
+    Http2AsyncOption option{};
+    if (queued) {
+        Require(sceKernelCreateEqueue(&option.equeue, "http2-offline-state") == 0);
+        option.user_event_id = request;
+        Require(sceKernelAddUserEventEdge(option.equeue, request) == 0);
+    }
+    for (const int invalid : {0, -1, tmpl, context, request + 1000}) {
+        Require(sceHttp2SendRequest(invalid, nullptr, 0) == InvalidId);
+        Require(sceHttp2SendRequestAsync(invalid, nullptr, 0, nullptr, nullptr) == InvalidId);
+        int status = 123;
+        Require(sceHttp2GetStatusCode(invalid, &status) == InvalidId && status == 123);
+    }
+    if (asynchronous) {
+        Require(sceHttp2SendRequestAsync(request, nullptr, 0, queued ? &option : nullptr, nullptr) == 0);
+        if (queued) {
+            KernelEvent event{};
+            int count = 0;
+            const KernelUseconds poll = 0;
+            Require(sceKernelWaitEqueue(option.equeue, &event, 1, &count, &poll) == 0 && count == 1);
+        }
+        Http2AsyncResult result{};
+        Require(sceHttp2WaitAsync(request, &result, nullptr, nullptr) == 0);
+        Require(result.req_id == request && result.event_type == 0 && result.result == networkError);
+    } else {
+        Require(sceHttp2SendRequest(request, nullptr, 0) == networkError);
+    }
+    for (unsigned repeat = 0; repeat < 2; ++repeat) {
+        int status = 123;
+        Require(sceHttp2GetStatusCode(request, &status) == 0 && status == 0);
+        int kind = 123;
+        std::uint64_t length = 456;
+        Require(sceHttp2GetResponseContentLength(request, &kind, &length) == NotConnected);
+        Require(kind == 123 && length == 456);
+        std::array<char, 4> body{'t', 'e', 's', 't'};
+        Require(sceHttp2ReadData(request, body.data(), body.size()) == NotConnected);
+        Require((body == std::array<char, 4>{'t', 'e', 's', 't'}));
+    }
+    Require(sceHttp2SendRequest(request, nullptr, 0) == networkError);
+    const int aborted = sceHttp2CreateRequestWithURL(tmpl, "GET", "https://example.invalid/aborted", 0);
+    Require(aborted > 0 && sceHttp2AbortRequest(aborted) == 0);
+    Require(sceHttp2SendRequest(aborted, nullptr, 0) == static_cast<int>(0x817B1080));
+    Require(sceHttp2DeleteRequest(aborted) == 0);
+    const int orphan = sceHttp2CreateRequestWithURL(tmpl, "GET", "https://example.invalid/orphan", 0);
+    Require(orphan > 0 && sceHttp2SendRequest(orphan, nullptr, 0) == networkError);
+    const int sibling = sceHttp2CreateTemplate(context, "offline-test", 3, 0);
+    const int child = sceHttp2CreateRequestWithURL(sibling, "GET", "https://example.invalid/child", 0);
+    Require(sibling > 0 && child > 0 && sceHttp2SendRequest(child, nullptr, 0) == networkError);
+#ifdef _WIN32
+    _putenv("APS5_NET_DISCONNECTED=");
+#else
+    unsetenv("APS5_NET_DISCONNECTED");
+#endif
+    Require(sceHttp2SendRequest(request, nullptr, 0) == networkError);
+    Require(sceHttp2AbortRequest(request) == 0);
+    Require(sceHttp2DeleteRequest(request) == 0);
+    int status = 123;
+    Require(sceHttp2GetStatusCode(request, &status) == InvalidId && status == 123);
+    Require(sceHttp2DeleteRequest(request) == InvalidId);
+    if (queued) Require(sceKernelDeleteEqueue(option.equeue) == 0);
+    Require(sceHttp2DeleteTemplate(tmpl) == 0);
+    Require(sceHttp2GetStatusCode(orphan, &status) == InvalidId && status == 123);
+    Require(sceHttp2Term(context) == 0);
+    Require(sceHttp2GetStatusCode(child, &status) == InvalidId && status == 123);
+    Require(offlineLookups == 0);
+    Http2SetLookupHook_nid_no_patch(nullptr);
+    return 0;
+}
+
+int main(int argc, char** argv) {
+    if (argc == 2 && std::strcmp(argv[1], "--offline-sync") == 0) return TestOfflineRequest(false, false);
+    if (argc == 2 && std::strcmp(argv[1], "--offline-async") == 0) return TestOfflineRequest(true, false);
+    if (argc == 2 && std::strcmp(argv[1], "--offline-queued") == 0) return TestOfflineRequest(true, true);
     TestWebSockets();
     Require(sceHttp2CreateCookieBox(0xffff) == static_cast<int>(0x817b121du));
     const int box = sceHttp2CreateCookieBox(0x10000);

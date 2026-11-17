@@ -92,7 +92,7 @@ static_assert(sizeof(ShaderInvocation) == 216, "ShaderInvocation changed: update
 #if defined(__cpp_lib_atomic_shared_ptr)
 static_assert(sizeof(RecompileResult) == 576, "RecompileResult changed: update EncodeResult and DecodeResult");
 #endif
-static_assert(sizeof(DescriptorBinding) == 864, "DescriptorBinding changed: update the binding encoder");
+static_assert(sizeof(DescriptorBinding) == 920, "DescriptorBinding changed: update the binding encoder");
 static_assert(sizeof(VertexAttribute) == 32, "VertexAttribute changed: update the attribute encoder");
 static_assert(sizeof(VertexInput) == 16, "VertexInput changed: update the vertex input encoder");
 static_assert(sizeof(FragmentParameter) == 16, "FragmentParameter changed: update the parameter encoder");
@@ -472,6 +472,7 @@ void encodeBinding(Writer& writer, const DescriptorBinding& binding) {
     writer.Flags(binding.imageDepthCompare);
     writer.Flags(binding.imageAtomic);
     writer.Flags(binding.imageAtomic64);
+    writer.Flags(binding.imageUintStorage);
     writer.List(binding.imageShapes, [](Writer& out, DescriptorImageShape shape) { out.Value(shape); });
     writer.Flags(binding.bufferAtomic);
     writer.Flags(binding.bufferWritten);
@@ -501,6 +502,7 @@ void decodeBinding(Reader& reader, DescriptorBinding& binding) {
     reader.Flags(binding.imageDepthCompare);
     reader.Flags(binding.imageAtomic);
     reader.Flags(binding.imageAtomic64);
+    reader.Flags(binding.imageUintStorage);
     reader.List(binding.imageShapes, 4, [](Reader& in, DescriptorImageShape& shape) { in.Value(shape); });
     reader.Flags(binding.bufferAtomic);
     reader.Flags(binding.bufferWritten);

@@ -108,6 +108,16 @@ class EnvReferenceTests(unittest.TestCase):
         self.assertEqual(found["APS5_POOL_CONSTANT_MIB"], [(source.as_posix(), 4, "integer", "")])
         self.assertNotIn("APS5_NOT_A_MEBIBYTE_READ", found)
 
+    def test_environment_path_reads_use_the_wide_literal_name(self):
+        root = self.fixture()
+        source = root / "core" / "Sample.cpp"
+        source.write_text('static const auto path = EnvironmentPath(L"APS5_PAD_REPLAY", "APS5_PAD_REPLAY");\n'
+                          'static const auto other = EnvironmentPath(L"APS5_PAD_RECORD", "APS5_OTHER_NAME");\n',
+                          encoding="utf-8")
+        found = env_reference.reads([root / "core"])
+        self.assertEqual(found["APS5_PAD_REPLAY"], [(source.as_posix(), 1, "string", "")])
+        self.assertNotIn("APS5_PAD_RECORD", found)
+
     def test_hexadecimal_and_digit_separated_defaults_are_read_whole(self):
         root = self.fixture()
         source = root / "core" / "Sample.cpp"
