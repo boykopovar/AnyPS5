@@ -60,6 +60,9 @@ class CheckCompileModeTests(unittest.TestCase):
     def test_clang_supported_cpu_queries_cannot_report_success(self):
         self.check_driver_queries((("--print-supported-cpus",), ("-print-supported-cpus",)), compiler_names=("clang",))
 
+    def test_clang_autocomplete_cannot_report_success(self):
+        self.check_driver_queries((("--autocomplete=-fsyn",),), compiler_names=("clang",))
+
     def test_clang_cpu_help_queries_cannot_report_success(self):
         self.check_driver_queries((("-mcpu=help",), ("-mtune=help",)), compiler_names=("clang",))
 
@@ -87,6 +90,9 @@ class CheckCompileModeTests(unittest.TestCase):
 
     def test_query_named_include_operand_still_compiles(self):
         self.check_query_named_include_operands(("--version",))
+
+    def test_autocomplete_named_include_operand_still_compiles(self):
+        self.check_query_named_include_operands(("--autocomplete=-fsyn",))
 
     def test_supported_cpu_query_named_include_operands_still_compile(self):
         self.check_query_named_include_operands(("--print-supported-cpus", "-print-supported-cpus"))

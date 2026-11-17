@@ -21,6 +21,7 @@ void Submit(const Packet* packet, std::uint32_t queue) try {
         return;
     }
     GuestMemory::CheckRange(packet, sizeof(Packet), alignof(Packet));
+    recorder->RewindTailFlips(driver.RewindTailFlips());
     const auto flips = driver.FlipSubmissions();
     recorder->Submit(*packet, queue, [&] { driver.Submit(packet, queue); });
     if (driver.FlipSubmissions() != flips) recorder->FrameBoundary();
@@ -150,7 +151,10 @@ extern "C" void AgcDriverSuspendPoint_nid_postfix() try {
 
 extern "C" std::uint32_t AgcDriverReserveEopFlip_nid_postfix(const AgcDriver::FlipInfo& info) {
     const auto token = AgcDriver::DriverDetail::Driver::Get().ReserveEopFlip(info);
-    if (auto* const recorder = AgcDriver::FrameRecorder::Active(); recorder != nullptr && token != 0) recorder->ReserveEopFlip(info, token);
+    if (auto* const recorder = AgcDriver::FrameRecorder::Active(); recorder != nullptr && token != 0) {
+        recorder->RewindTailFlips(AgcDriver::DriverDetail::Driver::Get().RewindTailFlips());
+        recorder->ReserveEopFlip(info, token);
+    }
     return token;
 }
 
@@ -165,6 +169,18 @@ extern "C" std::size_t AgcDriverAwaitedWaits_nid_postfix(AgcDriver::AwaitedWait*
     return count;
 }
 
+extern "C" void AgcDriverTrackRewindTails_nid_postfix() {
+    AgcDriver::DriverDetail::Driver::Get().TrackRewindTails();
+}
+
+extern "C" bool AgcDriverRewindTailsUnread_nid_postfix() {
+    return AgcDriver::DriverDetail::Driver::Get().RewindTailsUnread();
+}
+
+extern "C" void AgcDriverCheckFailure_nid_postfix() {
+    AgcDriver::DriverDetail::Driver::Get().CheckFailure();
+}
+
 extern "C" void AgcDriverWaitForPipelineJournal_nid_postfix() {
     AgcDriver::DriverDetail::Driver::Get().WaitForPipelineJournal();
 }
@@ -175,12 +191,29 @@ extern "C" void AgcDriverSerialProgress_nid_postfix(std::uint64_t* accepted, std
     *completed = done;
 }
 
+extern "C" bool AgcDriverHoldSettled_nid_postfix(std::int64_t milliseconds) {
+    return AgcDriver::DriverDetail::Driver::Get().WaitSettledFor(std::chrono::milliseconds(milliseconds));
+}
+
+extern "C" void AgcDriverReleaseSettled_nid_postfix() {
+    AgcDriver::DriverDetail::Driver::Get().ReleaseSettled();
+}
+
+extern "C" bool AgcDriverSettledHeld_nid_postfix() {
+    return AgcDriver::DriverDetail::Driver::Get().SettledHeld();
+}
+
+extern "C" bool AgcDriverSettled_nid_postfix() {
+    return AgcDriver::DriverDetail::Driver::Get().Settled();
+}
+
 extern "C" void AgcDriverSubmitFlip_nid_postfix(const AgcDriver::FlipInfo& info) try {
     auto* const recorder = AgcDriver::FrameRecorder::Active();
     if (recorder == nullptr) {
         AgcDriver::DriverDetail::Driver::Get().SubmitFlip(info);
         return;
     }
+    recorder->RewindTailFlips(AgcDriver::DriverDetail::Driver::Get().RewindTailFlips());
     recorder->Flip(info, [&] { AgcDriver::DriverDetail::Driver::Get().SubmitFlip(info); });
     recorder->FrameBoundary();
 } catch (const ProcessShutdown&) {
