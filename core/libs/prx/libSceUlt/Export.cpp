@@ -57,6 +57,13 @@ int semaphoreGetState(void* semaphore, std::shared_ptr<UltSemaphoreState>* out) 
     return ULT_OK;
 }
 
+int semaphoreRequest(void* semaphore, std::int32_t numResource, std::shared_ptr<UltSemaphoreState>* out) {
+    if (semaphore == nullptr) return ULT_ERROR_NULL;
+    if ((reinterpret_cast<std::uintptr_t>(semaphore) & 7u) != 0) return ULT_ERROR_ALIGNMENT;
+    if (numResource <= 0) return ULT_ERROR_RANGE;
+    return semaphoreGetState(semaphore, out);
+}
+
 int queueGetState(void* queue, std::shared_ptr<UltQueueState>* out) {
     std::lock_guard<std::mutex> lock(gMutex);
     auto it = gQueues.find(queue);
@@ -845,13 +852,8 @@ int APS5_VABI sceUltSemaphoreCreate(void* semaphore, const char* name, std::uint
 }
 
 int APS5_VABI sceUltSemaphoreAcquire(void* semaphore, std::int32_t numResource) {
-    if (semaphore == nullptr) return ULT_ERROR_NULL;
-    if ((reinterpret_cast<std::uintptr_t>(semaphore) & 7u) != 0) return ULT_ERROR_ALIGNMENT;
-    if (numResource <= 0) {
-        return ULT_ERROR_RANGE;
-    }
     std::shared_ptr<UltSemaphoreState> state;
-    if (int ret = semaphoreGetState(semaphore, &state); ret != ULT_OK) {
+    if (int ret = semaphoreRequest(semaphore, numResource, &state); ret != ULT_OK) {
         return ret;
     }
     std::unique_lock<std::mutex> lock(state->_mutex);
@@ -879,13 +881,8 @@ int APS5_VABI sceUltSemaphoreAcquire(void* semaphore, std::int32_t numResource) 
 }
 
 int APS5_VABI sceUltSemaphoreTryAcquire(void* semaphore, std::int32_t numResource) {
-    if (semaphore == nullptr) return ULT_ERROR_NULL;
-    if ((reinterpret_cast<std::uintptr_t>(semaphore) & 7u) != 0) return ULT_ERROR_ALIGNMENT;
-    if (numResource <= 0) {
-        return ULT_ERROR_RANGE;
-    }
     std::shared_ptr<UltSemaphoreState> state;
-    if (int ret = semaphoreGetState(semaphore, &state); ret != ULT_OK) {
+    if (int ret = semaphoreRequest(semaphore, numResource, &state); ret != ULT_OK) {
         return ret;
     }
     std::lock_guard<std::mutex> lock(state->_mutex);
@@ -900,13 +897,8 @@ int APS5_VABI sceUltSemaphoreTryAcquire(void* semaphore, std::int32_t numResourc
 }
 
 int APS5_VABI sceUltSemaphoreRelease(void* semaphore, std::int32_t numResource) {
-    if (semaphore == nullptr) return ULT_ERROR_NULL;
-    if ((reinterpret_cast<std::uintptr_t>(semaphore) & 7u) != 0) return ULT_ERROR_ALIGNMENT;
-    if (numResource <= 0) {
-        return ULT_ERROR_RANGE;
-    }
     std::shared_ptr<UltSemaphoreState> state;
-    if (int ret = semaphoreGetState(semaphore, &state); ret != ULT_OK) {
+    if (int ret = semaphoreRequest(semaphore, numResource, &state); ret != ULT_OK) {
         return ret;
     }
     {
