@@ -169,12 +169,12 @@ double APS5_VABI j0_nid_postfix(double x) {
     if (magnitude >= 0x7ff00000u) return One / (x * x);
     const double absolute = std::fabs(x);
     if (magnitude >= 0x40000000u) {
-        const double s = std::sin(absolute);
-        const double c = std::cos(x);
+        const double s = sin_nid_postfix(absolute);
+        const double c = cos_nid_postfix(x);
         double ss = s - c;
         double cc = c + s;
         if (magnitude < 0x7fe00000u) {
-            const double z = -std::cos(absolute + absolute);
+            const double z = -cos_nid_postfix(absolute + absolute);
             if (s * c < 0.0) cc = z / ss;
             else ss = z / cc;
         }
@@ -202,12 +202,12 @@ double APS5_VABI y0_nid_postfix(double x) {
     if ((magnitude | LowWord(x)) == 0) return SecondKindAtZero();
     if ((high & 0x80000000u) != 0) return SecondKindOfNegative();
     if (magnitude >= 0x40000000u) {
-        const double s = std::sin(x);
-        const double c = std::cos(x);
+        const double s = sin_nid_postfix(x);
+        const double c = cos_nid_postfix(x);
         double ss = s - c;
         double cc = s + c;
         if (magnitude < 0x7fe00000u) {
-            const double z = -std::cos(x + x);
+            const double z = -cos_nid_postfix(x + x);
             if (s * c < 0.0) cc = z / ss;
             else ss = z / cc;
         }
@@ -216,11 +216,11 @@ double APS5_VABI y0_nid_postfix(double x) {
         const double v = QZero(x, magnitude);
         return Fused(u, ss, cc * v) * InverseSqrtPi / SquareRoot(x);
     }
-    if (magnitude <= 0x3e400000u) return Fused(TwoOverPi, std::log(x), Y0Numerator[0]);
+    if (magnitude <= 0x3e400000u) return Fused(TwoOverPi, log_nid_postfix(x), Y0Numerator[0]);
     const double z = x * x;
     const double u = Horner(z, Y0Numerator);
     const double v = Fused(z, Horner(z, Y0Denominator), One);
-    return Fused(std::log(x) * j0_nid_postfix(x), TwoOverPi, u / v);
+    return Fused(log_nid_postfix(x) * j0_nid_postfix(x), TwoOverPi, u / v);
 }
 
 double APS5_VABI j1_nid_postfix(double x) {
@@ -229,12 +229,12 @@ double APS5_VABI j1_nid_postfix(double x) {
     if (magnitude >= 0x7ff00000u) return One / x;
     if (magnitude >= 0x40000000u) {
         const double y = std::fabs(x);
-        const double s = std::sin(y);
-        const double c = std::cos(x);
+        const double s = sin_nid_postfix(y);
+        const double c = cos_nid_postfix(x);
         double ss = -s - c;
         double cc = s - c;
         if (magnitude < 0x7fe00000u) {
-            const double z = std::cos(y + y);
+            const double z = cos_nid_postfix(y + y);
             if (s * c > 0.0) cc = z / ss;
             else ss = z / cc;
         }
@@ -262,12 +262,12 @@ double APS5_VABI y1_nid_postfix(double x) {
     if ((magnitude | LowWord(x)) == 0) return SecondKindAtZero();
     if ((high & 0x80000000u) != 0) return SecondKindOfNegative();
     if (magnitude >= 0x40000000u) {
-        const double s = std::sin(x);
-        const double c = std::cos(x);
+        const double s = sin_nid_postfix(x);
+        const double c = cos_nid_postfix(x);
         double ss = -s - c;
         double cc = s - c;
         if (magnitude < 0x7fe00000u) {
-            const double z = std::cos(x + x);
+            const double z = cos_nid_postfix(x + x);
             if (s * c > 0.0) cc = z / ss;
             else ss = z / cc;
         }
@@ -280,7 +280,7 @@ double APS5_VABI y1_nid_postfix(double x) {
     const double z = x * x;
     const double u = Horner(z, Y1Numerator);
     const double v = Fused(z, Horner(z, Y1Denominator), One);
-    return Fused(x, u / v, Fused(std::log(x), j1_nid_postfix(x), -One / x) * TwoOverPi);
+    return Fused(x, u / v, Fused(log_nid_postfix(x), j1_nid_postfix(x), -One / x) * TwoOverPi);
 }
 
 double APS5_VABI jn_nid_postfix(int order, double x) {
@@ -301,10 +301,10 @@ double APS5_VABI jn_nid_postfix(int order, double x) {
             if (magnitude >= 0x52d00000u) {
                 double sum;
                 switch (n & 3u) {
-                case 0: sum = std::sin(absolute) + std::cos(argument); break;
-                case 1: sum = std::sin(absolute) - std::cos(argument); break;
-                case 2: sum = -std::cos(argument) - std::sin(absolute); break;
-                default: sum = std::cos(argument) - std::sin(absolute); break;
+                case 0: sum = sin_nid_postfix(absolute) + cos_nid_postfix(argument); break;
+                case 1: sum = sin_nid_postfix(absolute) - cos_nid_postfix(argument); break;
+                case 2: sum = -cos_nid_postfix(argument) - sin_nid_postfix(absolute); break;
+                default: sum = cos_nid_postfix(argument) - sin_nid_postfix(absolute); break;
                 }
                 result = sum * InverseSqrtPi / SquareRoot(absolute);
             } else {
@@ -350,7 +350,7 @@ double APS5_VABI jn_nid_postfix(int order, double x) {
                 t = One / (Signed(index) / absolute - t);
                 index -= 2u;
             } while (static_cast<std::int32_t>(index) >= lowest);
-            const double bound = std::log(std::fabs(h * orderValue)) * orderValue;
+            const double bound = log_nid_postfix(std::fabs(h * orderValue)) * orderValue;
             double a = t;
             double b = One;
             double di = Signed(2u * n - 2u);
@@ -395,8 +395,8 @@ double APS5_VABI yn_nid_postfix(int order, double x) {
     if (magnitude == 0x7ff00000u) return 0.0;
     double result;
     if (magnitude >= 0x52d00000u) {
-        const double s = std::sin(x);
-        const double c = std::cos(x);
+        const double s = sin_nid_postfix(x);
+        const double c = cos_nid_postfix(x);
         double sum;
         switch (n & 3u) {
         case 0: sum = s - c; break;

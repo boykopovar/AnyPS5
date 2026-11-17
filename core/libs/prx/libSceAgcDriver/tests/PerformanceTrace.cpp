@@ -189,6 +189,20 @@ void TotalsOverflow() {
     const auto snapshot = thread.Collect();
     Check(snapshot.totalsFull && snapshot.dropped && snapshot.eventsLost == 0 && !snapshot.eventsFullAt, "a full totals table was not reported apart from the event buffer");
     Check(snapshot.totals.size() == 512 && snapshot.slices.size() == 600, "a full totals table stopped the event buffer or kept more than its entries");
+    TraceThread weighted("weighted", presents, 1);
+    weighted.Count("OwnedDraw.blocks", 17);
+    weighted.Count("OwnedDraw.blocks", 3);
+    weighted.Count("OwnedDraw.zero", 0);
+    const auto weightedSnapshot = weighted.Collect();
+    Check(weightedSnapshot.totals.size() == 1 && weightedSnapshot.totals[0].count == 20 && weightedSnapshot.slices.empty(), "weighted counts were not accumulated without trace slices");
+    TraceThread countThread("count worker", presents, 1);
+    for (std::size_t index = 0; index < 512; ++index) countThread.Count(&scopes[index]);
+    countThread.Count("OwnedDraw.arm_attempt");
+    countThread.Count("OwnedDraw.arm_blocks_requested", 17);
+    const auto counts = countThread.Collect();
+    Check(counts.totalsFull && counts.dropped && counts.slices.empty(), "a lost owned counter did not mark the totals full");
+    const auto line = TraceFormat::Summary(AgcDriver::TraceSummary{}, std::vector<TraceThread::Snapshot>{counts}, {});
+    Check(line.find("\"trace_dropped\":true") != std::string::npos && line.find("\"totals_full\":true") != std::string::npos, "the summary hid a lost owned counter");
 }
 
 void CapacitySettings() {
@@ -339,9 +353,33 @@ void SummaryFields() {
         "\"resolution\":\"1920x1080\",\"window\":{\"spec\":\"frames 3:2\",\"first_present\":3,\"ms\":40.000},\"presents\":2,"
         "\"frame_ms\":{\"p50\":24.000,\"p90\":24.000,\"p99\":24.000,\"max\":24.000},\"gpu_busy_ms_per_present\":10.000,"
         "\"worker_busy_pct\":{\"queue worker 0x0\":35.000},"
+        "\"phase_totals_ms\":{\"Driver.Completion\":2.000,\"Driver.Packet\":12.000,\"Driver.Packet.draw\":10.000,\"Driver.Present\":6.000,\"Driver.Present.inflight_wait\":4.000},"
         "\"top_phases_ms_per_frame\":{\"Driver.Packet\":6.000,\"Driver.Packet.draw\":5.000,\"Driver.Present\":3.000,\"Driver.Present.inflight_wait\":2.000,\"Driver.Completion\":1.000},"
-        "\"trace_dropped\":false,\"trace\":\"aps5-trace-abc-7.json.gz\"}\n";
+        "\"owned_draw_counts\":{},\"graphics_track\":{},\"trace_dropped\":false,\"trace\":\"aps5-trace-abc-7.json.gz\"}\n";
     Check(line == expected, "summary line changed");
+    auto unboundSummary = summary;
+    unboundSummary.ownedDrawUnbound = 3;
+    const auto unboundLine = TraceFormat::Summary(unboundSummary, threads, presents);
+    Check(unboundLine.find("\"owned_draw_counts\":{\"OwnedDraw.unbound\":3},\"graphics_track\":{},\"trace_dropped\":true") != std::string::npos, "unbound draw counts were not marked as incomplete");
+    auto counted = threads;
+    counted[0].totals.push_back({"OwnedDraw.arm_attempt", nullptr, {}, 5});
+    counted[1].totals.push_back({"OwnedDraw.arm_attempt", nullptr, {}, 3});
+    counted[1].totals.push_back({"OwnedDraw.reused", nullptr, {}, 2});
+    counted[0].totals.push_back({"OwnedDraw.arm_blocks_requested", nullptr, {}, 17});
+    const auto countedLine = TraceFormat::Summary(summary, counted, presents);
+    Check(countedLine.find("\"owned_draw_counts\":{\"OwnedDraw.arm_attempt\":8,\"OwnedDraw.arm_blocks_requested\":17,\"OwnedDraw.reused\":2}") != std::string::npos, "named owned counts were not summed across threads");
+    counted[0].totals.push_back({"Graphics.Barrier.draw", nullptr, {}, 4});
+    counted[1].totals.push_back({"Graphics.Barrier.draw", nullptr, {}, 3});
+    counted[1].totals.push_back({"Graphics.Copy.bytes", nullptr, {}, 65536});
+    counted[0].totals.push_back({"Graphics.RenderPass", nullptr, {}, 2});
+    counted[0].totals.push_back({"Graphics.Draw", nullptr, milliseconds(5), 1});
+    const auto graphicsLine = TraceFormat::Summary(summary, counted, presents);
+    Check(graphicsLine.find("\"graphics_track\":{\"Graphics.Barrier.draw\":7,\"Graphics.Copy.bytes\":65536,\"Graphics.RenderPass\":2}") != std::string::npos, "graphics counts were not summed across threads");
+    Check(graphicsLine.find("\"Graphics.Draw\":2.500") != std::string::npos, "a timed Graphics scope was taken out of the phases");
+    const std::vector<TraceThread::Total> before{{"OwnedDraw.arm_attempt", nullptr, {}, 2}};
+    const std::vector<TraceThread::Total> after{{"OwnedDraw.arm_attempt", nullptr, {}, 5}};
+    const auto countDelta = TraceFormat::Since(after, before);
+    Check(countDelta.size() == 1 && countDelta[0].count == 3, "interval owned count was not reduced by its previous total");
     auto dropped = threads;
     dropped[1].dropped = true;
     Check(TraceFormat::Summary(summary, dropped, presents).find("\"trace_dropped\":true") != std::string::npos, "a dropped thread did not mark the summary");
@@ -363,6 +401,23 @@ void SummaryFields() {
     const auto merged = TraceFormat::Summary(summary, shared, presents);
     Check(merged.find("\"trace_dropped_threads\":{\"shader prepare\":{\"events_full_after_s\":0.010,\"events_lost\":12,\"totals_full\":true}},\"trace\":") != std::string::npos, "threads with one name were not merged into one entry");
     Check(merged.find("shader prepare") == merged.rfind("shader prepare"), "threads with one name were listed twice");
+}
+
+void SummaryRetainsAllPhases() {
+    const auto origin = Clock::now();
+    AgcDriver::TraceSummary summary;
+    const std::array<const char*, 9> names{"phase0", "phase1", "phase2", "phase3", "phase4", "phase5", "phase6", "phase7", "rare"};
+    std::vector<TraceThread::Snapshot> threads{{"worker", {}, {}, false}, {"another worker", {}, {{"rare", nullptr, milliseconds(1), 1}}, false}};
+    for (std::size_t index = 0; index < names.size(); ++index) threads[0].totals.push_back({names[index], nullptr, milliseconds(10 - index), 1});
+    const std::vector<Clock::time_point> presents{origin, origin + milliseconds(16), origin + milliseconds(32)};
+    const auto line = TraceFormat::Summary(summary, threads, presents);
+    const auto totals = line.substr(line.find("\"phase_totals_ms\":"), line.find("\"top_phases_ms_per_frame\":") - line.find("\"phase_totals_ms\":"));
+    Check(totals.find("\"phase0\":10.000") != std::string::npos, "raw totals were divided by the present count");
+    Check(totals.find("\"rare\":3.000") != std::string::npos, "a phase outside the top eight was lost or not summed across threads");
+    Check(line.substr(line.find("\"top_phases_ms_per_frame\":")).find("\"rare\"") == std::string::npos, "the top eight phases no longer have their original limit");
+    const auto empty = TraceFormat::Summary(summary, threads, {});
+    Check(empty.find(totals) != std::string::npos, "raw totals were lost without presents");
+    Check(TraceFormat::Summary(summary, {}, {}).find("\"phase_totals_ms\":{}") != std::string::npos, "empty totals did not produce an empty object");
 }
 
 void GpuClock() {
@@ -445,8 +500,9 @@ void IntervalSummaryFields() {
         "\"resolution\":\"1920x1080\",\"window\":{\"spec\":\"summary_every 30\",\"first_present\":120,\"ms\":40.000},\"interval_start_s\":30.500,\"interval_end_s\":60.250,\"presents\":2,"
         "\"frame_ms\":{\"p50\":24.000,\"p90\":24.000,\"p99\":24.000,\"max\":24.000},\"gpu_busy_ms_per_present\":10.000,"
         "\"worker_busy_pct\":{\"queue worker 0x0\":30.000},"
+        "\"phase_totals_ms\":{\"Driver.Packet\":12.000},"
         "\"top_phases_ms_per_frame\":{\"Driver.Packet\":6.000},"
-        "\"trace_dropped\":false,\"trace\":\"\"}\n";
+        "\"owned_draw_counts\":{},\"graphics_track\":{},\"trace_dropped\":false,\"trace\":\"\"}\n";
     Check(line == expected, "interval summary line changed");
 }
 
@@ -609,16 +665,10 @@ void ReplaceGzipFile() {
     const bool blockedKept = std::filesystem::is_directory(blocked);
     const bool temporaryLeft = std::filesystem::exists(blockedTemporary);
     const auto kept = ReadGzip(path);
-#ifndef _WIN32
-    // A directory at <name>.tmp makes the write itself fail, which is the case ReplaceGzip exists
-    // for: the previous file must survive, so an in-place rewrite fails this check. The failure is
-    // a std::ios_base::failure thrown inside libstdc++'s ofstream, which MinGW builds could not
-    // unwind to this catch, so the case runs on the other platforms only.
     std::filesystem::create_directory(temporary);
     bool writeFailed = false;
-    try { AgcDriver::TraceFile::ReplaceGzip(path, "{\"third\":3}\n"); } catch (const std::exception&) { writeFailed = true; }
+    try { AgcDriver::TraceFile::ReplaceGzip(path, "{\"third\":3}\n"); } catch (const std::ios_base::failure&) { writeFailed = true; }
     const auto keptAfterWrite = ReadGzip(path);
-#endif
 #ifdef __linux__
     bool fullFailed = false;
     bool fullLeft = false;
@@ -640,9 +690,7 @@ void ReplaceGzipFile() {
 #ifdef __linux__
     Check(fullFailed && !fullLeft, "a replace whose write failed left its temporary file behind");
 #endif
-#ifndef _WIN32
     Check(writeFailed && keptAfterWrite == "{\"second\":2}\n", "a failed rewrite damaged the previous benchmark file");
-#endif
 }
 
 void BenchSwitch() {
@@ -810,6 +858,7 @@ int main() {
         EventsShape();
         BatchIds();
         SummaryFields();
+        SummaryRetainsAllPhases();
         GpuClock();
         IntervalDue();
         SummaryOnlyThread();
