@@ -14,12 +14,7 @@
 #include <thread>
 #include <vector>
 #ifdef _WIN32
-#include <fcntl.h>
-#include <io.h>
 #include <windows.h>
-#else
-#include <fcntl.h>
-#include <unistd.h>
 #endif
 #include <atomic>
 #include <stdexcept>
@@ -286,44 +281,8 @@ int APS5_VABI at_quick_exit_nid_postfix(GuestExitCallback func) {
 }
 
 int APS5_VABI daemon_nid_postfix(int noChdir, int noClose) {
-    if (!noChdir && chdir_nid_postfix("/") != 0) {
-        return -1;
-    }
-    if (!noClose) {
-#ifdef _WIN32
-        const int fd = ::_open("NUL", _O_RDWR);
-        if (fd < 0) {
-            return -1;
-        }
-        for (int descriptor = 0; descriptor <= 2; ++descriptor) {
-            if (fd != descriptor && ::_dup2(fd, descriptor) != 0) {
-                if (fd > 2) {
-                    ::_close(fd);
-                }
-                return -1;
-            }
-        }
-        if (fd > 2) {
-            ::_close(fd);
-        }
-#else
-        const int fd = ::open("/dev/null", O_RDWR, 0);
-        if (fd < 0) {
-            return -1;
-        }
-        for (int descriptor = 0; descriptor <= 2; ++descriptor) {
-            if (fd != descriptor && ::dup2(fd, descriptor) < 0) {
-                if (fd > 2) {
-                    ::close(fd);
-                }
-                return -1;
-            }
-        }
-        if (fd > 2) {
-            ::close(fd);
-        }
-#endif
-    }
+    (void)noClose;
+    if (!noChdir && chdir_nid_postfix("/") != 0) return -1;
     return 0;
 }
 
