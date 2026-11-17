@@ -81,6 +81,86 @@ void BlocksCrossIntoLibstdcxx() {
     }
 }
 
+#ifdef _WIN32
+void* (*volatile OperatorNew)(std::size_t) = &::operator new;
+void (*volatile SizedDelete)(void*, std::size_t) noexcept = &::operator delete;
+
+void SizedDeletesBetweenGranulesComeBack() {
+    for (std::size_t size = 8; size <= 1024; ++size) {
+        if (size % 16 == 0) continue;
+        auto* first = static_cast<unsigned char*>(OperatorNew(size));
+        FillAndVerify(first, size, 5);
+        SizedDelete(first, size);
+        auto* again = static_cast<unsigned char*>(OperatorNew(size));
+        Check(again == first, "a block freed with its size comes back for that size");
+        Check(_msize(again) >= size, "a reused block holds the bytes asked for");
+        FillAndVerify(again, size, 6);
+        SizedDelete(again, size);
+    }
+    for (std::size_t size = 1025; size < 1040; ++size) {
+        void* room = OperatorNew(1024);
+        auto* big = static_cast<unsigned char*>(OperatorNew(size));
+        SizedDelete(big, size);
+        auto* reused = static_cast<unsigned char*>(OperatorNew(1024));
+        Check(reused == big, "a block less than a granule over the largest class serves that class");
+        Check(_msize(reused) >= 1024, "a block kept in the largest class holds it");
+        FillAndVerify(reused, 1024, 10);
+        SizedDelete(reused, 1024);
+        SizedDelete(room, 1024);
+    }
+}
+
+void OwnBlocksServeTheirWholeGranule() {
+    for (std::size_t size = 8; size <= 1024; ++size) {
+        if (size % 16 == 0) continue;
+        const auto whole = (size + 15) / 16 * 16;
+        auto* block = static_cast<unsigned char*>(OperatorNew(size));
+        SizedDelete(block, size);
+        auto* larger = static_cast<unsigned char*>(OperatorNew(whole));
+        Check(larger == block, "a block freed with fewer bytes than its granule still serves the whole granule");
+        Check(_msize(larger) >= whole, "a block reused for its whole granule holds it");
+        FillAndVerify(larger, whole, 7);
+        SizedDelete(larger, whole);
+    }
+}
+
+void LibstdcxxBlocksServeOnlyTheirBytes() {
+    using Allocation = void* (*)(std::size_t);
+    const auto runtime = GetModuleHandleW(L"libstdc++-6.dll");
+    const auto allocate = runtime != nullptr ? reinterpret_cast<Allocation>(reinterpret_cast<void*>(GetProcAddress(runtime, "_Znwy"))) : nullptr;
+    Check(allocate != nullptr, "libstdc++-6.dll exports operator new");
+    if (allocate == nullptr) return;
+    std::size_t exact = 0;
+    for (std::size_t bytes = 8; bytes <= 1024; ++bytes) {
+        if (bytes % 16 == 0) continue;
+        const auto whole = (bytes + 15) / 16 * 16;
+        void* roomInClass = OperatorNew(whole);
+        void* roomBelow = whole > 16 ? OperatorNew(whole - 16) : nullptr;
+        void* made = allocate(bytes);
+        if (_msize(made) == bytes) ++exact;
+        SizedDelete(made, bytes);
+        void* same = OperatorNew(bytes);
+        Check(same == made, "a block libstdc++ made comes back for the bytes it holds");
+        SizedDelete(same, bytes);
+        auto* larger = static_cast<unsigned char*>(OperatorNew(whole));
+        const bool fits = _msize(larger) >= whole;
+        Check(fits, "a block libstdc++ made is never handed out for more bytes than it holds");
+        if (fits) FillAndVerify(larger, whole, 8);
+        if (roomBelow != nullptr) {
+            auto* lower = static_cast<unsigned char*>(OperatorNew(whole - 16));
+            Check(lower == made, "a block too small for its class serves the class below");
+            Check(_msize(lower) >= whole - 16, "the class below fits in the block");
+            FillAndVerify(lower, whole - 16, 9);
+            SizedDelete(lower, whole - 16);
+            SizedDelete(roomBelow, whole - 16);
+        }
+        SizedDelete(larger, whole);
+        SizedDelete(roomInClass, whole);
+    }
+    Check(exact > 0, "the C runtime heap reports the exact size libstdc++ asked for");
+}
+#endif
+
 void BlocksMoveBetweenThreads() {
     constexpr int perThread = 20000;
     std::vector<std::unique_ptr<std::uint64_t[]>> made(perThread);
@@ -188,6 +268,11 @@ int main() {
     EverySizeRoundTrips();
     SizedDeletesKeepTheirClass();
     BlocksCrossIntoLibstdcxx();
+#ifdef _WIN32
+    SizedDeletesBetweenGranulesComeBack();
+    OwnBlocksServeTheirWholeGranule();
+    LibstdcxxBlocksServeOnlyTheirBytes();
+#endif
     BlocksMoveBetweenThreads();
     BlocksFlowToAnotherThread();
     ThreadsEndWithCachedBlocks();

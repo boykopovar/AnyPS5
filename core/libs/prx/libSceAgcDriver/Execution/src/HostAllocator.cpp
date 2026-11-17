@@ -1,5 +1,6 @@
 #ifdef _WIN32
 
+#include <algorithm>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -8,19 +9,34 @@
 #include <malloc.h>
 #include <new>
 #include <windows.h>
+#include <xmmintrin.h>
 
 namespace {
 
 constexpr std::size_t Granule = 16;
 constexpr std::size_t LargestCached = 1024;
 constexpr std::size_t Classes = LargestCached / Granule;
+constexpr std::size_t SmallestKept = sizeof(void*);
+constexpr std::uintptr_t HeldBits = Granule - 1;
 
 constexpr std::uint16_t Depth(std::size_t sizeClass) {
     return sizeClass < 256 / Granule ? 64 : 16;
 }
 
+struct FreeBlock {
+    std::uintptr_t link;
+};
+
+FreeBlock* Next(const FreeBlock* block) noexcept {
+    return reinterpret_cast<FreeBlock*>(block->link & ~HeldBits);
+}
+
+std::size_t Held(const FreeBlock* block, std::size_t sizeClass) noexcept {
+    return sizeClass * Granule + (block->link & HeldBits) + 1;
+}
+
 struct Cache {
-    void* heads[Classes];
+    FreeBlock* heads[Classes];
     std::uint16_t counts[Classes];
 };
 
@@ -28,33 +44,25 @@ constexpr std::uint16_t KeptLists = 8;
 
 struct Depot {
     SRWLOCK lock = SRWLOCK_INIT;
-    void* lists = nullptr;
+    FreeBlock* lists[KeptLists] = {};
     std::uint16_t count = 0;
 };
 
 Depot depots[Classes];
 
-bool KeepList(std::size_t sizeClass, void* list) noexcept {
+bool KeepList(std::size_t sizeClass, FreeBlock* list) noexcept {
     auto& depot = depots[sizeClass];
     AcquireSRWLockExclusive(&depot.lock);
     const bool kept = depot.count < KeptLists;
-    if (kept) {
-        static_cast<void**>(list)[1] = depot.lists;
-        depot.lists = list;
-        ++depot.count;
-    }
+    if (kept) depot.lists[depot.count++] = list;
     ReleaseSRWLockExclusive(&depot.lock);
     return kept;
 }
 
-void* TakeList(std::size_t sizeClass) noexcept {
+FreeBlock* TakeList(std::size_t sizeClass) noexcept {
     auto& depot = depots[sizeClass];
     AcquireSRWLockExclusive(&depot.lock);
-    void* list = depot.lists;
-    if (list != nullptr) {
-        depot.lists = static_cast<void**>(list)[1];
-        --depot.count;
-    }
+    FreeBlock* list = depot.count != 0 ? depot.lists[--depot.count] : nullptr;
     ReleaseSRWLockExclusive(&depot.lock);
     return list;
 }
@@ -71,8 +79,8 @@ std::atomic<DWORD> flsSlot{FLS_OUT_OF_INDEXES};
 
 void Drain(Cache* cache) noexcept {
     for (std::size_t sizeClass = 0; sizeClass < Classes; ++sizeClass) {
-        while (void* block = cache->heads[sizeClass]) {
-            cache->heads[sizeClass] = *static_cast<void**>(block);
+        while (FreeBlock* block = cache->heads[sizeClass]) {
+            cache->heads[sizeClass] = Next(block);
             std::free(block);
         }
         cache->counts[sizeClass] = 0;
@@ -144,21 +152,37 @@ Cache* CurrentCache() noexcept {
     return cache != nullptr ? cache : CreateCache(slot);
 }
 
+bool Keep(Cache* cache, FreeBlock* block, std::size_t held) noexcept {
+    const auto sizeClass = (held - 1) / Granule;
+    if (cache->counts[sizeClass] == Depth(sizeClass) && KeepList(sizeClass, cache->heads[sizeClass])) {
+        cache->heads[sizeClass] = nullptr;
+        cache->counts[sizeClass] = 0;
+    }
+    if (cache->counts[sizeClass] == Depth(sizeClass)) return false;
+    block->link = reinterpret_cast<std::uintptr_t>(cache->heads[sizeClass]) | ((held - 1) & HeldBits);
+    cache->heads[sizeClass] = block;
+    ++cache->counts[sizeClass];
+    return true;
+}
+
 void* TryAllocate(std::size_t bytes) noexcept {
     if (bytes == 0) bytes = 1;
     if (bytes <= LargestCached) {
         const auto sizeClass = (bytes - 1) / Granule;
         if (auto* cache = CurrentCache()) {
             if (cache->heads[sizeClass] == nullptr) {
-                if (void* list = TakeList(sizeClass)) {
+                if (FreeBlock* list = TakeList(sizeClass)) {
                     cache->heads[sizeClass] = list;
                     cache->counts[sizeClass] = Depth(sizeClass);
                 }
             }
-            if (void* block = cache->heads[sizeClass]) {
-                cache->heads[sizeClass] = *static_cast<void**>(block);
+            if (FreeBlock* block = cache->heads[sizeClass]) {
+                FreeBlock* next = Next(block);
+                cache->heads[sizeClass] = next;
                 --cache->counts[sizeClass];
-                return block;
+                if (next != nullptr) _mm_prefetch(reinterpret_cast<const char*>(next), _MM_HINT_T0);
+                if (Held(block, sizeClass) >= bytes || _msize(block) >= bytes) return block;
+                if (sizeClass == 0 || !Keep(cache, block, sizeClass * Granule)) std::free(block);
             }
         }
         return std::malloc((sizeClass + 1) * Granule);
@@ -177,20 +201,12 @@ void* Allocate(std::size_t bytes) {
 
 void Release(void* block, std::size_t bytes = 0) noexcept {
     if (block == nullptr) return;
-    if (auto* cache = CurrentCache()) {
-        const auto usable = bytes != 0 && bytes % Granule == 0 ? bytes : _msize(block);
-        if (usable >= Granule && usable < LargestCached + Granule) {
-            const auto sizeClass = usable / Granule - 1;
-            if (cache->counts[sizeClass] == Depth(sizeClass) && KeepList(sizeClass, cache->heads[sizeClass])) {
-                cache->heads[sizeClass] = nullptr;
-                cache->counts[sizeClass] = 0;
-            }
-            if (cache->counts[sizeClass] < Depth(sizeClass)) {
-                *static_cast<void**>(block) = cache->heads[sizeClass];
-                cache->heads[sizeClass] = block;
-                ++cache->counts[sizeClass];
+    if ((reinterpret_cast<std::uintptr_t>(block) & HeldBits) == 0) {
+        if (auto* cache = CurrentCache()) {
+            const auto held = bytes >= SmallestKept ? bytes : _msize(block);
+            if (held >= SmallestKept && held < LargestCached + Granule
+                && Keep(cache, static_cast<FreeBlock*>(block), std::min(held, LargestCached)))
                 return;
-            }
         }
     }
     std::free(block);
