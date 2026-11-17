@@ -38,6 +38,7 @@ int main() {
     constexpr int invalidArgument = static_cast<int>(0x80553102u);
     constexpr int invalidParamSize = static_cast<int>(0x80553112u);
     constexpr int nullEvent = static_cast<int>(0x80553116u);
+    constexpr int alreadyInitialized = static_cast<int>(0x80553118u);
     CHECK(sceNpUniversalDataSystemInitialize(nullptr) == invalidArgument);
     errno = EBUSY;
     CHECK(sceNpUniversalDataSystemInitialize(reinterpret_cast<const NpUniversalDataSystemInitParam*>(std::uintptr_t{0x10})) == invalidArgument);
@@ -53,6 +54,10 @@ int main() {
     const NpUniversalDataSystemInitParam wrongSizeEmptyPool{0x18, 0};
     CHECK(sceNpUniversalDataSystemInitialize(&wrongSizeEmptyPool) == invalidParamSize);
     CHECK(sceNpUniversalDataSystemInitialize(&init) == 0);
+    const NpUniversalDataSystemInitParam wrongSize{0x18, 0x10000};
+    CHECK(sceNpUniversalDataSystemInitialize(&init) == alreadyInitialized);
+    CHECK(sceNpUniversalDataSystemInitialize(&wrongSize) == alreadyInitialized);
+    CHECK(sceNpUniversalDataSystemInitialize(nullptr) == alreadyInitialized);
 
     NpUniversalDataSystemMemoryStat memory;
     std::memset(&memory, 0x5a, sizeof(memory));
@@ -156,6 +161,9 @@ int main() {
     CHECK(sceNpUniversalDataSystemEventPropertyObjectSetArray(object, "list", nullptr, reinterpret_cast<NpUniversalDataSystemEventPropertyArray**>(std::uintptr_t{0x10})) == invalidArgument);
     CHECK(errno == EBUSY && object->properties.size() == 1);
     CHECK(sceNpUniversalDataSystemDestroyEventPropertyObject(object) == 0);
+    CHECK(sceNpUniversalDataSystemTerminate() == 0);
+    CHECK(sceNpUniversalDataSystemInitialize(&init) == 0);
+    CHECK(sceNpUniversalDataSystemInitialize(&init) == alreadyInitialized);
 
     std::puts("UDS query tests passed");
     return 0;
