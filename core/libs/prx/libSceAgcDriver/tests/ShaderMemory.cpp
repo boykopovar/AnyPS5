@@ -577,6 +577,199 @@ void verifyResultMemoBudget() {
     require(ResultMemoBytes() > budget, "result memo budget: clearing the budget kept bounding the memo");
 }
 
+struct SharedCapture {
+    std::optional<ShaderRecompiler::PreparedShaderInvocation> invocation;
+    std::shared_ptr<const ShaderRecompiler::ResourceCapture> capture;
+};
+
+SharedCapture captureShared(const ShaderRecompiler::RecompileRequest& request, const std::shared_ptr<const ShaderRecompiler::SourceHandle>& handle, const char* name) {
+    using namespace ShaderRecompiler;
+    SharedCapture shared{PreparedShaderInvocation::TryCreate(request, handle), nullptr};
+    require(shared.invocation.has_value(), (std::string("result memo shared: ") + name + ": the prepared shader refused the request").c_str());
+    AgcDriver::ShaderMemory memory({});
+    shared.capture = memory.Capture(*shared.invocation);
+    return shared;
+}
+
+void requireSharedStage(const char* name, const ShaderRecompiler::RecompileResult& donor, const ShaderRecompiler::StageSideWords& side, const ShaderRecompiler::RecompileResult& full, bool sameVariant) {
+    using namespace ShaderRecompiler;
+    const auto check = [&](bool condition, const char* what) {
+        require(condition, (std::string("result memo shared: ") + name + ": the donor with its side differs from the materialized stage in " + what).c_str());
+    };
+    check((!sameVariant || donor.PipelineVariantId() == full.PipelineVariantId()) && donor.spirv.ContentHash() == full.spirv.ContentHash(), "its module");
+    check(donor.bindings.size() == full.bindings.size(), "its binding count");
+    for (std::size_t index = 0; index < donor.bindings.size(); ++index) {
+        const auto& words = index < side.bindings.size() && !side.bindings[index].empty() ? side.bindings[index] : donor.bindings[index].guestDescriptor;
+        check(donor.bindings[index].role == full.bindings[index].role && words == full.bindings[index].guestDescriptor, "a binding's guest words");
+    }
+    auto push = donor.pushConstants;
+    for (const auto& [dword, value] : side.pushWords) {
+        if ((static_cast<std::size_t>(dword) + 1u) * sizeof(std::uint32_t) <= push.size()) std::memcpy(push.data() + static_cast<std::size_t>(dword) * sizeof(std::uint32_t), &value, sizeof(value));
+    }
+    check(push == full.pushConstants, "its push constants");
+    const auto& attributes = side.vertexAttributes.empty() ? donor.vertexAttributes : side.vertexAttributes;
+    check(attributes.size() == full.vertexAttributes.size(), "its vertex attribute count");
+    for (std::size_t index = 0; index < attributes.size(); ++index) {
+        const auto& left = attributes[index];
+        const auto& right = full.vertexAttributes[index];
+        check(left.location == right.location && left.components == right.components && left.resource.fields == right.resource.fields && left.fetchIndex == right.fetchIndex && left.formatComponents == right.formatComponents, "a vertex attribute");
+    }
+    check(donor.poisonedSrtReads == full.poisonedSrtReads, "its poisoned SRT reads");
+}
+
+void requireSharedStage(const char* name, const ShaderRecompiler::RecompileResult& donor, const ShaderRecompiler::StageSideWords& side, const ShaderRecompiler::PreparedShaderInvocation& invocation, const ShaderRecompiler::ResourceCapture& capture) {
+    auto uncached = invocation.Request();
+    uncached.useCache = false;
+    requireSharedStage(name, donor, side, *invocation.Materialize(capture), true);
+    requireSharedStage(name, donor, side, *ShaderRecompiler::Recompile(uncached, capture), false);
+}
+
+bool sideWritesRole(const ShaderRecompiler::RecompileResult& donor, const ShaderRecompiler::StageSideWords& side, ShaderRecompiler::DescriptorRole role) {
+    for (std::size_t index = 0; index < side.bindings.size(); ++index) {
+        if (!side.bindings[index].empty() && donor.bindings.at(index).role == role) return true;
+    }
+    return false;
+}
+
+void verifyResultMemoShared() {
+    using namespace ShaderRecompiler;
+    StageSideWords side;
+
+    const std::vector<std::uint32_t> pixelCode{0xbf800000u, 0xf4200100u, 0xfa000000u, 0xbf8cc07fu, 0x7e000204u, 0x7e020205u, 0xf800180fu, 0x01000100u, 0xbf810000u};
+    const auto pixelRequest = [&](std::span<const std::uint32_t> userData) {
+        auto request = FrontendRequest(pixelCode, userData);
+        request.shader.stage = ShaderStage::Fragment;
+        request.context.compute.reset();
+        request.context.pixel = ShaderPixelStageInfo{};
+        request.context.pixel->wave32 = true;
+        request.context.pixel->targetOutputMode[0] = 9u;
+        request.context.waveSize = 32u;
+        request.useCache = true;
+        return request;
+    };
+    const std::array<std::uint32_t, 6> pixelBase{0x10000000u, 0u, 0x40u, 0x00027facu, 0u, 0x3f800000u};
+    const std::array<std::uint32_t, 6> pixelMoved{0x20000000u, 0u, 0x80u, 0x00027facu, 0u, 0x40000000u};
+    const std::array<std::uint32_t, 6> pixelTail{0x10000000u, 0u, 0x42u, 0x00027facu, 0u, 0x3f800000u};
+    const auto pixelHandle = PrepareShader(pixelRequest(pixelBase));
+    const auto pixel = captureShared(pixelRequest(pixelBase), pixelHandle, "pixel");
+    const auto pixelKey = pixel.invocation->SharedKey(*pixel.capture);
+    require(pixelKey.has_value(), "result memo shared: pixel: a capture of the prepared shader has no shared key");
+    const auto pixelStage = pixel.invocation->ShareStage(*pixel.capture);
+    require(static_cast<bool>(pixelStage) && pixelStage.patch != nullptr, "result memo shared: pixel: a patchable stage was not shared");
+    for (const auto* userData : {&pixelBase, &pixelMoved}) {
+        const auto moved = captureShared(pixelRequest(*userData), pixelHandle, "pixel");
+        require(moved.invocation->SharedKey(*moved.capture) == pixelKey, "result memo shared: pixel: another buffer address, size or user word changed the shared key");
+        require(moved.invocation->ShareStage(*moved.capture).donor == pixelStage.donor, "result memo shared: pixel: the masked memo's donor was not shared without a copy");
+        require(moved.invocation->FillSharedSide(*moved.capture, *pixelStage.donor, *pixelStage.patch, side), "result memo shared: pixel: the side of a capture with the same key was refused");
+        require(sideWritesRole(*pixelStage.donor, side, DescriptorRole::GuestBuffers) && !side.pushWords.empty(), "result memo shared: pixel: the side carries no buffer words or no user word");
+        requireSharedStage("pixel", *pixelStage.donor, side, *moved.invocation, *moved.capture);
+    }
+    const auto tail = captureShared(pixelRequest(pixelTail), pixelHandle, "pixel");
+    require(tail.invocation->Materialize(*tail.capture)->PipelineVariantId() != pixelStage.donor->PipelineVariantId(), "result memo shared: pixel: a buffer size's tail bytes did not reach the module");
+    require(tail.invocation->SharedKey(*tail.capture) != pixelKey, "result memo shared: pixel: a buffer size's tail bytes kept the shared key");
+
+    alignas(256) static constexpr std::array<std::uint32_t, 7> vertexCode{0xbe822100u, 0x34020a84u, 0xe0781000u, 0x80010801u, 0xf80008cfu, 0x0b0a0908u, 0xbf810000u};
+    alignas(256) static std::array<float, 8> elements{};
+    alignas(256) static std::array<std::uint32_t, 24> outputs{};
+    const auto vertexV = [](const void* data, std::uint32_t records, std::uint32_t selectors) {
+        const auto address = reinterpret_cast<std::uintptr_t>(data);
+        return std::array<std::uint32_t, 4>{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), records, (0x0104dfacu & ~0xfffu) | selectors | (3u << 28u)};
+    };
+    const auto outputUserData = [](const void* data, std::uint32_t bytes) {
+        const auto address = reinterpret_cast<std::uintptr_t>(data);
+        std::array<std::uint32_t, 12> userData{0x10000000u, 1u, 0u, 0u, static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), bytes, 0x31016facu};
+        return userData;
+    };
+    const auto vertexBase = outputUserData(outputs.data(), 48u);
+    const auto vertexMoved = outputUserData(outputs.data() + 12, 32u);
+    const auto vertexRequest = [&](std::span<const std::uint32_t> userData, const std::array<std::uint32_t, 4>& input) {
+        RecompileRequest request{};
+        request.shader = {ShaderStage::Vertex, reinterpret_cast<std::uintptr_t>(vertexCode.data()), vertexCode, 0, {}};
+        request.context.waveSize = 64u;
+        request.context.userDataBaseRegister = 0u;
+        request.context.userData = userData;
+        request.context.vertex = ShaderVertexStageInfo{};
+        auto& info = *request.context.vertex;
+        info.resourcesNum = 1u;
+        info.resources[0].fields = input;
+        info.resourcesDst[0] = {8, 4, 0, 0};
+        info.fetchAttribReg = 8u;
+        info.fetchBufferReg = 10u;
+        info.fetchEmbedded = true;
+        request.target = BufferTarget();
+        request.target.vulkanVersion = 0x00401000u;
+        request.target.spirvVersion = 0x00010300u;
+        request.target.subgroupSize = 64u;
+        request.target.fragmentShaderBarycentricEnabled = false;
+        request.layout.pushConstantSizeBytes = 64u;
+        request.useCache = true;
+        return request;
+    };
+    const auto inputBase = vertexV(elements.data(), 16u, 0xfacu);
+    const auto inputMoved = vertexV(elements.data() + 4, 32u, 0xfacu);
+    const auto inputSwizzled = vertexV(elements.data(), 16u, 7u | (6u << 3u) | (1u << 6u));
+    const auto vertexHandle = PrepareShader(vertexRequest(vertexBase, inputBase));
+    const auto vertex = captureShared(vertexRequest(vertexBase, inputBase), vertexHandle, "vertex");
+    const auto vertexKey = vertex.invocation->SharedKey(*vertex.capture);
+    const auto vertexStage = vertex.invocation->ShareStage(*vertex.capture);
+    require(vertexKey.has_value() && static_cast<bool>(vertexStage) && vertexStage.donor->vertexAttributes.size() == 1u, "result memo shared: vertex: the fetch shader was not shared with its vertex attribute");
+    for (const auto& [userData, input] : {std::pair{&vertexBase, &inputBase}, std::pair{&vertexMoved, &inputMoved}}) {
+        const auto moved = captureShared(vertexRequest(*userData, *input), vertexHandle, "vertex");
+        require(moved.invocation->SharedKey(*moved.capture) == vertexKey, "result memo shared: vertex: another vertex or storage buffer address or size changed the shared key");
+        require(moved.invocation->FillSharedSide(*moved.capture, *vertexStage.donor, *vertexStage.patch, side), "result memo shared: vertex: the side of a capture with the same key was refused");
+        require(sideWritesRole(*vertexStage.donor, side, DescriptorRole::GuestBuffers) && side.vertexAttributes.size() == 1u && side.vertexAttributes[0].resource.fields == *input, "result memo shared: vertex: the side carries no buffer words or not the draw's vertex buffer");
+        requireSharedStage("vertex", *vertexStage.donor, side, *moved.invocation, *moved.capture);
+    }
+    const auto vertexSwizzled = captureShared(vertexRequest(vertexBase, inputSwizzled), vertexHandle, "vertex");
+    require(vertexSwizzled.invocation->SharedKey(*vertexSwizzled.capture) != vertexKey, "result memo shared: vertex: a vertex input's selectors kept the shared key");
+
+    static constexpr std::array<std::uint32_t, 8> flatCode{0xf4040004u, 0xfa000000u, 0xf4000080u, 0xfa000000u, 0x7e000202u, 0xf80008cfu, 0u, 0xbf810000u};
+    struct alignas(4096) FlatGuest {
+        std::uint32_t payload = 0;
+        std::uint64_t table = 0;
+    };
+    static FlatGuest guest;
+    guest.table = reinterpret_cast<std::uintptr_t>(&guest.payload);
+    const auto tableAddress = reinterpret_cast<std::uintptr_t>(&guest.table);
+    const std::array<std::uint32_t, 2> flatUserData{static_cast<std::uint32_t>(tableAddress), static_cast<std::uint32_t>(tableAddress >> 32u)};
+    RecompileRequest flatRequest{};
+    flatRequest.shader = {ShaderStage::Vertex, 0x10000u, flatCode, 0, {}};
+    flatRequest.target = BufferTarget();
+    flatRequest.context.waveSize = 64u;
+    flatRequest.context.userDataBaseRegister = 8u;
+    flatRequest.context.userData = flatUserData;
+    flatRequest.context.vertex = ShaderVertexStageInfo{};
+    flatRequest.target.vulkanVersion = 0x00401000u;
+    flatRequest.target.spirvVersion = 0x00010300u;
+    flatRequest.target.subgroupSize = 64u;
+    flatRequest.target.fragmentShaderBarycentricEnabled = false;
+    flatRequest.layout.pushConstantSizeBytes = 128u;
+    flatRequest.useCache = true;
+    const auto flatHandle = PrepareShader(flatRequest);
+    guest.payload = 0x3f800000u;
+    const auto flat = captureShared(flatRequest, flatHandle, "flattened SRT");
+    const auto flatKey = flat.invocation->SharedKey(*flat.capture);
+    const auto flatStage = flat.invocation->ShareStage(*flat.capture);
+    require(flatKey.has_value() && static_cast<bool>(flatStage), "result memo shared: flattened SRT: the stage was not shared");
+    for (const auto payload : {0x3f800000u, 0x40000000u}) {
+        guest.payload = payload;
+        const auto moved = captureShared(flatRequest, flatHandle, "flattened SRT");
+        require(moved.invocation->SharedKey(*moved.capture) == flatKey, "result memo shared: flattened SRT: another pure slot word changed the shared key");
+        require(moved.invocation->FillSharedSide(*moved.capture, *flatStage.donor, *flatStage.patch, side), "result memo shared: flattened SRT: the side of a capture with the same key was refused");
+        require(sideWritesRole(*flatStage.donor, side, DescriptorRole::FlattenedSrt), "result memo shared: flattened SRT: the side carries no flattened SRT");
+        requireSharedStage("flattened SRT", *flatStage.donor, side, *moved.invocation, *moved.capture);
+    }
+
+    require(!pixel.invocation->SharedKey(*flat.capture).has_value(), "result memo shared: a capture of another prepared shader has a shared key");
+    require(!pixel.invocation->ShareStage(*flat.capture), "result memo shared: a capture of another prepared shader was shared");
+    require(!pixel.invocation->FillSharedSide(*flat.capture, *pixelStage.donor, *pixelStage.patch, side), "result memo shared: a capture of another prepared shader filled a side");
+    guest.table = 0u;
+    const auto poisoned = captureShared(flatRequest, flatHandle, "flattened SRT");
+    require(!poisoned.capture->snapshot.srtPoison.empty(), "result memo shared: a read through a null table pointer was not poisoned");
+    require(!poisoned.invocation->FillSharedSide(*poisoned.capture, *flatStage.donor, *flatStage.patch, side), "result memo shared: a poisoned capture filled the side of a donor without poisoned reads");
+    guest.table = reinterpret_cast<std::uintptr_t>(&guest.payload);
+}
+
 ShaderRecompiler::RecompileRequest LayoutPairRequest(std::span<const std::uint32_t> code, std::span<const std::uint32_t> userData, bool registration, std::uint32_t wordLimit) {
     using namespace ShaderRecompiler;
     auto request = FrontendRequest(code, userData);
@@ -13238,6 +13431,11 @@ int main(int argc, char** argv) {
         if (argc == 2 && std::string_view(argv[1]) == "--result-memo-budget-masked") {
             verifyResultMemoBudgetMasked();
             std::cout << "The result memo budget counts and trims the masked table's entries\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--result-memo-shared") {
+            verifyResultMemoShared();
+            std::cout << "Captures with one shared key read as today's stage through one donor and their sides\n";
             return 0;
         }
         if (argc == 2 && (std::string_view(argv[1]) == "--region-merge" || std::string_view(argv[1]) == "--region-merge-bench")) {

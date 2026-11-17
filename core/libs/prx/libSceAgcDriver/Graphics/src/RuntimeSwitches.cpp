@@ -33,6 +33,11 @@ constexpr std::array<const char*, SwitchCount> SwitchNames{
     "APS5_NO_TARGET_MEMO_OVERLAP_CACHE",
     "APS5_LEAN_FRONT",
     "APS5_LEAN_LIST_DIRECT",
+    "APS5_DIRECT_DRAWS",
+    "APS5_DIRECT_RETRY",
+    "APS5_DIRECT_PASS_TARGETS",
+    "APS5_DIRECT_BUFFERS",
+    "APS5_DIRECT_INPUTS",
 };
 static_assert(SwitchNames.back() != nullptr, "every runtime switch needs a name");
 
@@ -57,6 +62,11 @@ struct SwitchValues {
             std::getenv("APS5_NO_TARGET_MEMO_OVERLAP_CACHE") != nullptr,
             std::getenv("APS5_LEAN_FRONT") != nullptr,
             std::getenv("APS5_LEAN_LIST_DIRECT") != nullptr,
+            std::getenv("APS5_DIRECT_DRAWS") != nullptr,
+            std::getenv("APS5_DIRECT_RETRY") != nullptr,
+            std::getenv("APS5_DIRECT_PASS_TARGETS") != nullptr,
+            std::getenv("APS5_DIRECT_BUFFERS") != nullptr,
+            std::getenv("APS5_DIRECT_INPUTS") != nullptr,
         };
         for (std::size_t index = 0; index < SwitchCount; ++index) set[index].store(environment[index], std::memory_order_relaxed);
     }

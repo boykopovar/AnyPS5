@@ -55,7 +55,12 @@ void registry() {
     Require(RuntimeSwitches::Generation() == generation + 2, "flipping a switch back did not move the switch generation");
     Require(RuntimeSwitches::Find("APS5_LEAN_FRONT") == RuntimeSwitch::LeanFront, "APS5_LEAN_FRONT is not a runtime switch");
     Require(RuntimeSwitches::Find("APS5_LEAN_LIST_DIRECT") == RuntimeSwitch::LeanListDirect, "APS5_LEAN_LIST_DIRECT is not a runtime switch");
-    Require(RuntimeSwitches::Set(RuntimeSwitch::LeanFront), "APS5_LEAN_FRONT set in the environment did not start set");
+    Require(RuntimeSwitches::Find("APS5_DIRECT_DRAWS") == RuntimeSwitch::DirectDraws, "APS5_DIRECT_DRAWS is not a runtime switch");
+    Require(RuntimeSwitches::Find("APS5_DIRECT_RETRY") == RuntimeSwitch::DirectRetry, "APS5_DIRECT_RETRY is not a runtime switch");
+    Require(RuntimeSwitches::Find("APS5_DIRECT_PASS_TARGETS") == RuntimeSwitch::DirectPassTargets && !RuntimeSwitches::Set(RuntimeSwitch::DirectPassTargets), "APS5_DIRECT_PASS_TARGETS is not a runtime switch that starts unset");
+    Require(RuntimeSwitches::Find("APS5_DIRECT_BUFFERS") == RuntimeSwitch::DirectBuffers && !RuntimeSwitches::Set(RuntimeSwitch::DirectBuffers), "APS5_DIRECT_BUFFERS is not a runtime switch that starts unset");
+    Require(RuntimeSwitches::Find("APS5_DIRECT_INPUTS") == RuntimeSwitch::DirectInputs && !RuntimeSwitches::Set(RuntimeSwitch::DirectInputs), "APS5_DIRECT_INPUTS is not a runtime switch that starts unset");
+    Require(RuntimeSwitches::Set(RuntimeSwitch::LeanFront),"APS5_LEAN_FRONT set in the environment did not start set");
 }
 
 void snapshot() {
@@ -88,6 +93,8 @@ void parse() {
     const auto bySeconds = AbSchedule::Parse("60:APS5_NO_BARRIER_BATCH", "90s", "");
     const auto lean = AbSchedule::Parse("30:APS5_LEAN_FRONT+APS5_LEAN_LIST_DIRECT", "", "");
     Require(lean.switches.size() == 2 && lean.switches[0] == RuntimeSwitch::LeanFront && lean.switches[1] == RuntimeSwitch::LeanListDirect, "APS5_AB does not accept the lean front switches");
+    const auto direct = AbSchedule::Parse("30:APS5_DIRECT_PASS_TARGETS+APS5_DIRECT_BUFFERS+APS5_DIRECT_INPUTS", "", "");
+    Require(direct.switches.size() == 3 && direct.switches[0] == RuntimeSwitch::DirectPassTargets && direct.switches[1] == RuntimeSwitch::DirectBuffers && direct.switches[2] == RuntimeSwitch::DirectInputs, "APS5_AB does not accept the direct draw layer switches");
     Require(bySeconds.startSeconds == 90.0 && bySeconds.settleSeconds == 2 && bySeconds.startPresent == 0, "a start in seconds was not parsed");
     Require(Refusal("60:APS5_FULL_BARRIERS").find("APS5_FULL_BARRIERS cannot change while the title runs; switches the A/B can change: APS5_NO_BARRIER_BATCH") != std::string::npos, "a startup-only variable was not refused with the list of switches");
     Require(Refusal("60:APS5_NO_BARRIER_BATCH+APS5_NO_BARRIER_BATCH").find("listed twice") != std::string::npos, "a duplicate switch was not refused");

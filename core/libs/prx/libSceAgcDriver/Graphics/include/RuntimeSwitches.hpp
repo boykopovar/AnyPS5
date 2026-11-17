@@ -28,6 +28,11 @@ enum class RuntimeSwitch : std::size_t {
     NoTargetMemoOverlapCache,
     LeanFront,
     LeanListDirect,
+    DirectDraws,
+    DirectRetry,
+    DirectPassTargets,
+    DirectBuffers,
+    DirectInputs,
     Count,
 };
 

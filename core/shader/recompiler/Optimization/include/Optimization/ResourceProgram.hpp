@@ -58,6 +58,12 @@ struct SourceHandle {
     std::shared_ptr<const CompiledVariant> artifact;
     std::vector<std::uint64_t> staticKey;
 };
+struct MemoPatch;
+struct SharedStage {
+    std::shared_ptr<const RecompileResult> donor;
+    std::shared_ptr<const MemoPatch> patch;
+    explicit operator bool() const { return donor != nullptr; }
+};
 class PreparedShaderInvocation {
 public:
     static std::optional<PreparedShaderInvocation> TryCreate(const RecompileRequest& request, const std::shared_ptr<const SourceHandle>& handle);
@@ -65,6 +71,11 @@ public:
     const RecompileRequest& Request() const { return request; }
     std::shared_ptr<const ResourceCapture> Capture(const SrtRuntime& runtime) const;
     std::shared_ptr<const RecompileResult> Materialize(const ResourceCapture& capture) const;
+    std::uint64_t VariantId() const;
+    const std::shared_ptr<const SourceHandle>& Handle() const { return handle; }
+    std::optional<std::uint64_t> SharedKey(const ResourceCapture& capture) const;
+    SharedStage ShareStage(const ResourceCapture& capture) const;
+    bool FillSharedSide(const ResourceCapture& capture, const RecompileResult& donor, const MemoPatch& patch, StageSideWords& side) const;
     [[nodiscard]] std::shared_ptr<const RecompileResult> MaterializeIfMemoized(const ResourceCapture& capture, bool* contended = nullptr) const;
     [[nodiscard]] PreparedShaderInvocation Rebound(const RecompileRequest& request) const;
     [[nodiscard]] std::uint64_t SnapshotKey(const ResourceCapture& capture) const;

@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <utility>
 #include <vector>
 
 namespace AgcDriver::Graphics {
@@ -36,7 +37,7 @@ struct DrawTraceContext {
 // `recipe`, when given, receives the DrawRecipe a recorded, cacheable, reusable, non-indirect draw
 // built for its draw-cache entry (design_cpu_final M8; null otherwise, and always under
 // APS5_NO_DRAW_RECIPE=1).
-void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots = {}, std::shared_ptr<const DrawRecipe>* recipe = nullptr, const DrawTraceContext* trace = nullptr, std::uint64_t shape = 0, const std::vector<std::uint32_t>* contentKey = nullptr);
+void Draw(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots = {}, std::shared_ptr<const DrawRecipe>* recipe = nullptr, const DrawTraceContext* trace = nullptr, std::uint64_t shape = 0, const std::vector<std::uint32_t>* contentKey = nullptr, bool recordRecipe = false);
 std::vector<std::uint32_t> DrawResourceContentKey(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders);
 
 struct PixelFunctionLdsLayouts {
@@ -80,6 +81,38 @@ struct InPlaceIndices {
     bool reused = false;
 };
 InPlaceIndices InPlaceIndexRange(Recorder& recorder, std::uint64_t address, std::size_t bytes, std::uint32_t indexSize, bool skipRestart);
+
+struct PreparedInputs {
+    enum class Refusal : std::uint8_t { None, NoRecipe, Shape, NotInPlace, Inaccessible, Thrown };
+    struct Range {
+        std::uint64_t begin = 0;
+        std::uint64_t end = 0;
+        std::uint32_t alignment = 1;
+        const HostImport* import = nullptr;
+        VkBuffer handle = VK_NULL_HANDLE;
+        VkDeviceSize offset = 0;
+    };
+    Refusal refusal = Refusal::None;
+    std::shared_ptr<const DrawRecipe> recipe;
+    const State* state = nullptr;
+    const Pm4::DrawParameters* draw = nullptr;
+    const CompiledShader* shaders = nullptr;
+    std::size_t stages = 0;
+    VkDevice device = VK_NULL_HANDLE;
+    std::uint64_t forget = 0;
+    std::uint64_t imports = 0;
+    std::uint64_t mapping = 0;
+    std::uint64_t depthGuards = 0;
+    std::uint64_t indexBytes = 0;
+    std::uint32_t maxIndex = 0;
+    VertexInputLayout vertexInput;
+    std::vector<VkBuffer> vertexHandles;
+    std::vector<VkDeviceSize> vertexOffsets;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> inPlaceReads;
+    std::vector<Range> ranges;
+};
+bool PrepareDrawInputs(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::shared_ptr<const DrawRecipe> recipe, PreparedInputs& prepared);
+DrawRecordInputs VerifyPreparedInputsForTest(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, const DrawRecipe& recipe, PreparedInputs& prepared, std::string& difference, DrawRecordInputs* taken = nullptr);
 
 std::array<std::uint32_t, 4> MeshIndexBufferDescriptor(const Pm4::DrawParameters& draw);
 
@@ -132,6 +165,9 @@ struct DrawRecipeOutcome {
 // from the recipe, then the record as Draw's (pass continued or begun, Kept, MarkGpuWrites). A
 // miss records nothing.
 DrawRecipeOutcome DrawWithRecipe(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, std::span<const GuestMemorySnapshot> snapshots, const DrawRecipe& recipe, const DrawTraceContext* trace = nullptr);
+void FailRecordChecks(DrawRecipeMiss check, std::uint32_t count);
+DrawRecipeOutcome DrawWithRecord(const Context& context, const State& state, const Pm4::DrawParameters& draw, std::span<const CompiledShader> shaders, DrawRecordCommit& record, const DrawTraceContext* trace = nullptr, DrawCommitView* answer = nullptr, const ShaderResources::PreparedBuffers* prepared = nullptr, PreparedInputs* preparedInputs = nullptr);
+bool DrawsRecordable();
 // Whether recorded draws build recipes and draw-cache hits use them (APS5_NO_DRAW_RECIPE unset).
 bool DrawRecipes();
 

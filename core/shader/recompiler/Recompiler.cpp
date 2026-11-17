@@ -2046,7 +2046,13 @@ void reportResultMemo() {
 // Everything materializeResult reads besides the variant: the snapshot (the descriptor words, the
 // flattened SRT, the user data, the uniform fill) and, for the vertex family, the V# table the
 // attributes are resolved from.
-std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapshot& snapshot, bool masked, std::span<const BufferSubstitute> substitutes = {}) {
+struct SnapshotHashScope {
+    bool masked = false;
+    bool perDrawData = true;
+};
+
+std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapshot& snapshot, SnapshotHashScope scope = {}, std::span<const BufferSubstitute> substitutes = {}) {
+    const bool masked = scope.masked;
     std::uint64_t hash = 0xcbf29ce484222325ull;
     const auto mix = [&](std::uint64_t value) {
         hash ^= value;
@@ -2107,7 +2113,7 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
     if (masked) {
         mix(snapshot.flattenedSrt.size());
         mix(snapshot.userData.size());
-    } else {
+    } else if (scope.perDrawData) {
         mixWords(snapshot.flattenedSrt);
         mixWords(snapshot.userData);
     }
@@ -2177,13 +2183,49 @@ std::uint64_t snapshotHash(const RecompileRequest& request, const ResourceSnapsh
         const auto count = std::min<std::uint32_t>(vertex.resourcesNum, ShaderVertexStageInfo::MaxResources);
         mix(count);
         for (std::uint32_t i = 0; i < count; ++i) {
-            for (const auto field : vertex.resources[i].fields) mix(field);
+            if (scope.perDrawData) {
+                for (const auto field : vertex.resources[i].fields) mix(field);
+            } else {
+                mix(vertex.resources[i].fields[3]);
+            }
             mix(vertex.resourcesDst[i].fetchIndex);
         }
     } else {
         mix(1ull << 32u);
     }
     return hash;
+}
+
+std::shared_ptr<const RecompileResult> insertResultMemo(SourceEntry& source, std::unique_ptr<ResultMemoTable>& table, std::uint64_t at, std::uint64_t variantId, std::uint64_t key, const std::shared_ptr<const RecompileResult>& shared, std::uint64_t bytes, std::shared_ptr<const MemoPatch> recipe, bool count) {
+    auto& counters = resultMemoCounters();
+    if (table == nullptr) {
+        table = std::make_unique<ResultMemoTable>();
+        if (source.memo == nullptr || source.maskedMemo == nullptr) {
+            auto& registry = resultMemoRegistry();
+            std::lock_guard registryLock(registry.mutex);
+            registry.sources.push_back(source.weak_from_this());
+        }
+    }
+    auto* set = memoSet(table, at);
+    auto* victim = set;
+    for (std::size_t way = 0; way < ResultMemoWays; ++way) {
+        auto& entry = set[way];
+        if (entry.result != nullptr && entry.variantId == variantId && entry.hash == key) {
+            entry.used = nextMemoUse();
+            return entry.result;
+        }
+        if (entry.used < victim->used) victim = &entry;
+    }
+    if (victim->result != nullptr) {
+        if (count) counters.evictions.fetch_add(1, std::memory_order_relaxed);
+        counters.heldBytes.fetch_sub(victim->bytes, std::memory_order_relaxed);
+        counters.heldEntries.fetch_sub(1, std::memory_order_relaxed);
+    }
+    const auto held = bytes + (recipe != nullptr ? patchBytes(*recipe) : 0u);
+    *victim = {variantId, key, shared, nextMemoUse(), std::move(recipe), held};
+    counters.heldBytes.fetch_add(held, std::memory_order_relaxed);
+    counters.heldEntries.fetch_add(1, std::memory_order_relaxed);
+    return shared;
 }
 
 // The memo'd result of `source`'s variant for the snapshot (design13 R5): a hit returns the shared
@@ -2193,7 +2235,7 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
     static const bool profile = std::getenv("APS5_PROFILE_DRAW") != nullptr;
     const auto variantId = variant->artifact.variantId;
     const auto substitutes = bufferSubstitutesEnabled() && variant->substitutes != nullptr ? variant->substitutes->Slots() : std::vector<BufferSubstitute>{};
-    const auto hash = snapshotHash(request, snapshot, false, substitutes);
+    const auto hash = snapshotHash(request, snapshot, {}, substitutes);
     const auto index = (variantId * 0x9e3779b97f4a7c15ull) ^ hash;
     auto& counters = resultMemoCounters();
     const auto acquire = [&](std::unique_lock<std::mutex>& lock) {
@@ -2221,7 +2263,7 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
         }
     }
     const bool masking = MaskedResultMemo();
-    const auto maskedHash = masking ? snapshotHash(request, snapshot, true, substitutes) : 0u;
+    const auto maskedHash = masking ? snapshotHash(request, snapshot, {.masked = true}, substitutes) : 0u;
     const auto maskedIndex = (variantId * 0x9e3779b97f4a7c15ull) ^ maskedHash;
     std::shared_ptr<const RecompileResult> donor;
     std::shared_ptr<const MemoPatch> donorPatch;
@@ -2262,40 +2304,10 @@ std::shared_ptr<const RecompileResult> materializePreparedMemoized(SourceEntry& 
         return shared;
     }
     const auto bytes = resultBytes(*shared);
-    const auto insert = [&](std::unique_ptr<ResultMemoTable>& table, std::uint64_t at, std::uint64_t key, std::shared_ptr<const MemoPatch> recipe, bool count) {
-        if (table == nullptr) {
-            table = std::make_unique<ResultMemoTable>();
-            if (source.memo == nullptr || source.maskedMemo == nullptr) {
-                auto& registry = resultMemoRegistry();
-                std::lock_guard registryLock(registry.mutex);
-                registry.sources.push_back(source.weak_from_this());
-            }
-        }
-        auto* set = memoSet(table, at);
-        auto* victim = set;
-        for (std::size_t way = 0; way < ResultMemoWays; ++way) {
-            auto& entry = set[way];
-            if (entry.result != nullptr && entry.variantId == variantId && entry.hash == key) {
-                entry.used = nextMemoUse();
-                return entry.result;
-            }
-            if (entry.used < victim->used) victim = &entry;
-        }
-        if (victim->result != nullptr) {
-            if (count) counters.evictions.fetch_add(1, std::memory_order_relaxed);
-            counters.heldBytes.fetch_sub(victim->bytes, std::memory_order_relaxed);
-            counters.heldEntries.fetch_sub(1, std::memory_order_relaxed);
-        }
-        const auto held = bytes + (recipe != nullptr ? patchBytes(*recipe) : 0u);
-        *victim = {variantId, key, shared, nextMemoUse(), std::move(recipe), held};
-        counters.heldBytes.fetch_add(held, std::memory_order_relaxed);
-        counters.heldEntries.fetch_add(1, std::memory_order_relaxed);
-        return shared;
-    };
     {
         std::lock_guard lock(source.mutex);
-        shared = insert(source.memo, index, hash, nullptr, true);
-        if (patch != nullptr && patch->valid) static_cast<void>(insert(source.maskedMemo, maskedIndex, maskedHash, patch, false));
+        shared = insertResultMemo(source, source.memo, index, variantId, hash, shared, bytes, nullptr, true);
+        if (patch != nullptr && patch->valid) static_cast<void>(insertResultMemo(source, source.maskedMemo, maskedIndex, variantId, maskedHash, shared, bytes, patch, false));
     }
     if (const auto budget = resultMemoBudget(); budget != 0 && counters.heldBytes.load(std::memory_order_relaxed) > budget) trimResultMemo(budget);
     reportResultMemo();
@@ -2491,6 +2503,109 @@ std::shared_ptr<const RecompileResult> PreparedShaderInvocation::Materialize(con
     return result;
 }
 
+std::uint64_t PreparedShaderInvocation::VariantId() const {
+    return handle != nullptr && handle->artifact != nullptr ? handle->artifact->artifact.variantId : 0u;
+}
+
+std::optional<std::uint64_t> PreparedShaderInvocation::SharedKey(const ResourceCapture& capture) const {
+    if (capture.source != handle->source) return std::nullopt;
+    const auto& variant = *handle->artifact;
+    struct SharedKeySubstituteStorage {};
+    auto& substitutes = HostThreadLocal<std::vector<BufferSubstitute>, SharedKeySubstituteStorage>();
+    if (bufferSubstitutesEnabled() && variant.substitutes != nullptr) variant.substitutes->LearnedSlots(substitutes);
+    else substitutes.clear();
+    return snapshotHash(request, capture.snapshot, {.masked = true, .perDrawData = false}, substitutes);
+}
+
+SharedStage PreparedShaderInvocation::ShareStage(const ResourceCapture& capture) const {
+    if (capture.source != handle->source) return {};
+    auto& source = *handle->source;
+    const auto& variant = handle->artifact;
+    const auto variantId = variant->artifact.variantId;
+    const auto& snapshot = capture.snapshot;
+    const auto substitutes = bufferSubstitutesEnabled() && variant->substitutes != nullptr ? variant->substitutes->Slots() : std::vector<BufferSubstitute>{};
+    const bool masking = request.useCache && ResultMemo() && MaskedResultMemo();
+    const auto maskedHash = masking ? snapshotHash(request, snapshot, {.masked = true}, substitutes) : 0u;
+    const auto maskedIndex = (variantId * 0x9e3779b97f4a7c15ull) ^ maskedHash;
+    if (masking) {
+        std::lock_guard lock(source.mutex);
+        if (auto* set = memoSet(source.maskedMemo, maskedIndex)) {
+            for (std::size_t way = 0; way < ResultMemoWays; ++way) {
+                auto& entry = set[way];
+                if (entry.result == nullptr || entry.variantId != variantId || entry.hash != maskedHash) continue;
+                entry.used = nextMemoUse();
+                return {entry.result, entry.patch};
+            }
+        }
+    }
+    auto patch = std::make_shared<MemoPatch>();
+    auto result = std::make_shared<RecompileResult>(materializeResult(*variant, request, snapshot, false, patch.get(), &substitutes));
+    if (!patch->valid) return {};
+    result->cacheHit = true;
+    std::shared_ptr<const RecompileResult> donor = std::move(result);
+    if (masking) {
+        const auto bytes = resultBytes(*donor);
+        {
+            std::lock_guard lock(source.mutex);
+            static_cast<void>(insertResultMemo(source, source.maskedMemo, maskedIndex, variantId, maskedHash, donor, bytes, patch, false));
+        }
+        if (const auto budget = resultMemoBudget(); budget != 0 && resultMemoCounters().heldBytes.load(std::memory_order_relaxed) > budget) trimResultMemo(budget);
+    }
+    return {std::move(donor), std::move(patch)};
+}
+
+bool PreparedShaderInvocation::FillSharedSide(const ResourceCapture& capture, const RecompileResult& donor, const MemoPatch& patch, StageSideWords& side) const {
+    const auto& snapshot = capture.snapshot;
+    if (capture.source != handle->source || !patch.valid) return false;
+    if (static_cast<std::uint32_t>(snapshot.srtPoison.size()) + snapshot.nullRootReads != donor.poisonedSrtReads) return false;
+    const auto count = donor.bindings.size();
+    side.pushWords.clear();
+    side.bindings.resize(count);
+    for (auto& words : side.bindings) words.clear();
+    for (const auto& [binding, resources] : patch.buffers) {
+        if (binding >= count || donor.bindings[binding].guestDescriptor.size() != resources.size() * 4u) return false;
+        auto& words = side.bindings[binding];
+        words.resize(resources.size() * 4u);
+        for (std::size_t element = 0; element < resources.size(); ++element) {
+            if (resources[element] >= snapshot.buffers.size()) return false;
+            std::copy_n(snapshot.buffers[resources[element]].dwords.begin(), 4u, words.begin() + element * 4u);
+        }
+    }
+    if (!patch.userWords.empty()) {
+        if (patch.pushData) {
+            if (patch.userWords.size() * sizeof(std::uint32_t) > donor.pushConstants.size()) return false;
+            for (std::size_t word = 0; word < patch.userWords.size(); ++word) {
+                if (patch.userWords[word] >= snapshot.userData.size()) return false;
+                side.pushWords.emplace_back(static_cast<std::uint32_t>(word), snapshot.userData[patch.userWords[word]]);
+            }
+        } else {
+            if (patch.shaderData >= count) return false;
+            const auto& kept = donor.bindings[patch.shaderData].guestDescriptor;
+            if (patch.userWords.size() > kept.size()) return false;
+            auto& words = side.bindings[patch.shaderData];
+            words.assign(kept.begin(), kept.end());
+            for (std::size_t word = 0; word < patch.userWords.size(); ++word) {
+                if (patch.userWords[word] >= snapshot.userData.size()) return false;
+                words[word] = snapshot.userData[patch.userWords[word]];
+            }
+        }
+    }
+    if (patch.flattenedSrt != MemoPatch::NoBinding) {
+        if (patch.flattenedSrt >= count || (snapshot.flattenedSrt.empty() && !donor.bindings[patch.flattenedSrt].guestDescriptor.empty())) return false;
+        side.bindings[patch.flattenedSrt].assign(snapshot.flattenedSrt.begin(), snapshot.flattenedSrt.end());
+    }
+    side.vertexAttributes.clear();
+    if (!request.context.vertex) return donor.vertexAttributes.empty();
+    const auto& vertex = *request.context.vertex;
+    side.vertexAttributes.assign(donor.vertexAttributes.begin(), donor.vertexAttributes.end());
+    for (auto& attribute : side.vertexAttributes) {
+        if (attribute.location >= vertex.resourcesNum || attribute.location >= vertex.resources.size()) return false;
+        attribute.resource = vertex.resources[attribute.location];
+        if (vertex.fetchEmbedded) attribute.fetchIndex = vertex.resourcesDst[attribute.location].fetchIndex;
+    }
+    return true;
+}
+
 std::shared_ptr<const RecompileResult> PreparedShaderInvocation::MaterializeIfMemoized(const ResourceCapture& capture, bool* contended) const {
     if (capture.source != handle->source) throw std::runtime_error("ShaderRecompiler: resource capture belongs to another prepared shader");
     if (!request.useCache || !ResultMemo()) return nullptr;
@@ -2504,7 +2619,7 @@ PreparedShaderInvocation PreparedShaderInvocation::Rebound(const RecompileReques
 std::uint64_t PreparedShaderInvocation::SnapshotKey(const ResourceCapture& capture) const {
     if (capture.source != handle->source) throw std::runtime_error("ShaderRecompiler: resource capture belongs to another prepared shader");
     const auto substitutes = bufferSubstitutesEnabled() && handle->artifact->substitutes != nullptr ? handle->artifact->substitutes->Slots() : std::vector<BufferSubstitute>{};
-    std::uint64_t key = snapshotHash(request, capture.snapshot, false, substitutes);
+    std::uint64_t key = snapshotHash(request, capture.snapshot, {}, substitutes);
     for (const std::uint64_t value : {static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(handle.get())), static_cast<std::uint64_t>(handle->artifact->artifact.variantId), static_cast<std::uint64_t>(request.layout.descriptorSet), static_cast<std::uint64_t>(request.layout.pushConstantSizeBytes)}) {
         key ^= value;
         key *= 0x100000001b3ull;

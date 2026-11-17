@@ -16,6 +16,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/RuntimeSwitches.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/ParallelCompare.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/UnitShadow.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/DeferredDestruction.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/GuestBufferMemory.hpp"
 #include "prx/libSceAgcDriver/Execution/include/SubmissionSnapshots.hpp"
@@ -2033,6 +2034,18 @@ bool Recorder::SnapshotWriteOverlaps(std::uint64_t address, std::size_t bytes) {
 
 std::shared_ptr<const Recorder::WriteRanges> Recorder::PendingWriteSnapshot() {
     return pendingWrites.load(std::memory_order_acquire);
+}
+
+bool Recorder::ReadsSettled(std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, const WriteRanges* before) {
+    if (!HookSnapshotEnabled()) return false;
+    const bool labels = !QueuedLabelRanges().empty();
+    const auto now = pendingWrites.load(std::memory_order_acquire);
+    for (const auto& [begin, end] : ranges) {
+        const auto bytes = static_cast<std::size_t>(end - begin);
+        if (labels && QueuedLabelOverlaps(begin, bytes)) return false;
+        if (AgcDriver::Graphics::SnapshotOverlaps(before, begin, bytes) || AgcDriver::Graphics::SnapshotOverlaps(now.get(), begin, bytes)) return false;
+    }
+    return !StorageTexture::AnyPendingOverlaps(ranges) && !AnyShadowedOverlaps(ranges);
 }
 
 bool Recorder::SnapshotOverlaps(const WriteRanges* snapshot, std::uint64_t address, std::size_t bytes) {
@@ -4140,6 +4153,25 @@ bool Recorder::PendingWriteOverlaps(std::uint64_t address, std::size_t bytes) co
     if (open != nullptr && overlaps(*open, address, end)) return true;
     for (const auto& batch : inFlight) {
         if (overlaps(*batch, address, end)) return true;
+    }
+    return false;
+}
+
+bool Recorder::WriteNotedSince(std::uint64_t note, std::uint64_t address, std::size_t bytes) const {
+    if (note == writeNoteCount || bytes == 0) return false;
+    const auto end = address + bytes;
+    const auto noted = [&](const Batch& batch) {
+        if (batch.writeNotes.size() != batch.writes.size()) return true;
+        for (std::size_t index = batch.writes.size(); index-- > 0;) {
+            if (batch.writeNotes[index] <= note) return false;
+            const auto& [begin, finish] = batch.writes[index];
+            if (begin < end && address < finish) return true;
+        }
+        return false;
+    };
+    if (open != nullptr && noted(*open)) return true;
+    for (const auto& batch : inFlight) {
+        if (noted(*batch)) return true;
     }
     return false;
 }

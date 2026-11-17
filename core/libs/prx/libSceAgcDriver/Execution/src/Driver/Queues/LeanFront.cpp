@@ -1,6 +1,8 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Queues/LeanFront.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DirectDrawReport.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawPipeline.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawRecordReport.hpp"
 #include "prx/libSceAgcDriver/Execution/include/ProfileOutput.hpp"
 #include <atomic>
 #include <chrono>
@@ -124,6 +126,10 @@ FrontMode Take(Latch& latch, bool eligible) {
         latch.mode = FrontMode::Today;
         latch.verifyEvery = 0;
         latch.checkSwitches = false;
+        latch.directDraws = false;
+        latch.directBuffers = false;
+        latch.directInputs = false;
+        latch.directVerifyEvery = 0;
         return FrontMode::Today;
     }
     const auto generation = Graphics::RuntimeSwitches::Generation();
@@ -138,8 +144,17 @@ FrontMode Take(Latch& latch, bool eligible) {
     latch.mode = mode;
     latch.verifyEvery = mode == FrontMode::Lean ? VerifyEvery() : 0;
     latch.checkSwitches = Due(latch, Item::SwitchRead);
+    const bool direct = mode == FrontMode::Lean && latch.switches.Set(Graphics::RuntimeSwitch::DirectDraws);
+    latch.directDraws = direct;
+    latch.directBuffers = direct && latch.switches.Set(Graphics::RuntimeSwitch::DirectBuffers);
+    latch.directInputs = direct && latch.switches.Set(Graphics::RuntimeSwitch::DirectInputs);
+    latch.directVerifyEvery = direct ? DirectDraws::VerifyEvery() : 0;
     AddOnWorker(mode == FrontMode::Lean ? Counter::LeanSegments : Counter::TodaySegments);
-    if ((++latch.latches & 15u) == 0) Report(false);
+    if ((++latch.latches & 15u) == 0) {
+        Report(false);
+        DrawRecords::Report(false);
+        DirectDraws::Report(false);
+    }
     return mode;
 }
 

@@ -4968,6 +4968,20 @@ const HostImport* ExistingHostImportFor(const Context& context, std::uint64_t ad
     return findImport(state, address, address + bytes);
 }
 
+bool ExistingHostImportsFor(const Context& context, std::span<const std::pair<std::uint64_t, std::uint64_t>> ranges, std::span<ExistingHostImport> found) {
+    if (context.hostImportAlignment == 0 || found.size() != ranges.size()) return false;
+    if (std::any_of(ranges.begin(), ranges.end(), [](const auto& range) { return range.second <= range.first; })) return false;
+    auto& state = Imports();
+    std::lock_guard lock(state.mutex);
+    if (importsStale(context, state)) return false;
+    for (std::size_t index = 0; index < ranges.size(); ++index) {
+        const auto* entry = findImport(state, ranges[index].first, ranges[index].second);
+        if (entry == nullptr) return false;
+        found[index] = {entry, entry->buffer, HostImportOffset(*entry, ranges[index].first)};
+    }
+    return true;
+}
+
 bool WatchedAfterSettle(const Context& context, std::uint64_t address, std::size_t bytes) {
 #ifdef _WIN32
     if (context.hostImportAlignment != 0 && bytes != 0 && bytes <= std::numeric_limits<std::uint64_t>::max() - address && GuestMemory::GpuMutex().HeldByThisThread()) {

@@ -264,8 +264,87 @@ public:
     std::shared_ptr<DrawUse> BeginDrawUse(Recorder& recorder) const;
     void CompleteDrawUse(const DrawUse& use) const;
     void BindDrawUse(VkCommandBuffer commands, VkPipelineLayout layout, const DrawUse* use) const;
-    std::shared_ptr<DrawBindings> PrepareDrawBindings(Recorder& recorder, std::span<const MovedBuffer> moved = {}, bool movedOnly = false, const BdaResources* faultRecord = nullptr) const;
-    std::optional<std::vector<MovedBuffer>> MovedReadOnlyBuffers(std::span<const CompiledShader> shaders, Recorder& recorder, const ColorTarget* target, bool* patchedData = nullptr) const;
+    struct BufferPlan {
+        struct Element {
+            std::uint32_t stage = 0;
+            std::uint32_t binding = 0;
+            std::uint32_t slot = 0;
+            std::uint32_t count = 0;
+            std::uint32_t element = 0;
+            ShaderRecompiler::DescriptorRole role = ShaderRecompiler::DescriptorRole::GuestBuffers;
+            bool written = false;
+            std::size_t allocation = 0;
+            std::vector<std::uint32_t> dataWords;
+        };
+        struct Allocation {
+            std::uint64_t address = 0;
+            std::size_t size = 0;
+            std::uint32_t adjustment = 0;
+            bool guest = false;
+            bool written = false;
+            bool inPlace = false;
+            bool templateWrites = false;
+        };
+        struct Patch {
+            std::size_t allocation = 0;
+            std::uint32_t byte = 0;
+            std::uint32_t adjustment = 0;
+        };
+        std::uint32_t stages = 0;
+        std::vector<Element> elements;
+        std::vector<Allocation> allocations;
+        std::vector<Patch> patches;
+        std::uint64_t maxStorageBufferRange = 0;
+        std::size_t maxDrawSnapshotBytes = 0;
+        std::size_t uploadLimit = 0;
+        std::size_t alignment = 16;
+    };
+    const std::shared_ptr<const BufferPlan>& DirectBufferPlan(std::span<const CompiledShader> shaders) const;
+    struct PreparedBuffers {
+        enum class Refusal : std::uint8_t { None, Classification, Inaccessible, UploadLimit, Budget, Count };
+        enum class Selection : std::uint8_t { Taken, Hazard, DepthGuards };
+        struct Selected {
+            std::size_t allocation = 0;
+            std::uint64_t begin = 0;
+            std::size_t bytes = 0;
+            std::size_t offset = 0;
+            bool moved = false;
+        };
+        std::shared_ptr<const BufferPlan> plan;
+        std::vector<MovedBuffer> moved;
+        std::vector<Selected> selected;
+        std::vector<std::byte> blob;
+        Refusal refusal = Refusal::None;
+        std::uint64_t generation = 0;
+        std::uint64_t depthGuards = 0;
+        std::uint64_t forget = 0;
+    };
+    struct PreparedDifference {
+        const char* what = nullptr;
+        std::string detail;
+        bool memoryChanged = false;
+        bool unwatched = false;
+    };
+    static bool PrepareDirectBuffers(const BufferPlan& plan, std::span<const CompiledShader> shaders, const ColorTarget* target, PreparedBuffers& out);
+    bool PreparedSelectionHolds(const Recorder& recorder, const PreparedBuffers& prepared) const;
+    static PreparedDifference ComparePreparedMoves(const PreparedBuffers& prepared, std::span<const MovedBuffer> moved);
+    static PreparedDifference ComparePreparedSelection(const PreparedBuffers& prepared, const DrawBindings* bindings, std::span<const std::size_t> selected);
+    PreparedDifference ComparePreparedBinding(Recorder& recorder, const PreparedBuffers& prepared, const DrawBindings* bindings, std::span<const std::size_t> selected) const;
+    std::shared_ptr<DrawBindings> PrepareDrawBindings(Recorder& recorder, std::span<const MovedBuffer> moved = {}, bool movedOnly = false, const BdaResources* faultRecord = nullptr, std::vector<std::size_t>* selectedOut = nullptr, const PreparedBuffers* prepared = nullptr, PreparedBuffers::Selection* preparedSelection = nullptr) const;
+    struct MoveTicket {
+        bool valid = false;
+        std::uint64_t recorder = 0;
+        std::uint64_t note = 0;
+        std::uint64_t pending = 0;
+        std::uint64_t allocations = 0;
+        std::uint64_t epoch = 0;
+        std::vector<std::pair<std::uint64_t, std::uint64_t>>* ranges = nullptr;
+        std::size_t checked = 0;
+        std::size_t trusted = 0;
+    };
+    std::optional<std::vector<MovedBuffer>> MovedReadOnlyBuffers(std::span<const CompiledShader> shaders, Recorder& recorder, const ColorTarget* target, bool* patchedData = nullptr, MoveTicket* ticket = nullptr) const;
+    bool PreparedMovesClear(const PreparedBuffers& prepared, Recorder& recorder, MoveTicket* ticket) const;
+    static PreparedDifference ComparePreparedTickets(const MoveTicket* prepared, const MoveTicket& today);
     static std::uint64_t BytesUpToTarget(std::uint64_t address, std::uint64_t bytes, std::uint64_t stride, const ColorTarget* target);
     enum class MoveRefusal : std::size_t { None, Shape, NotGuest, Written, Limit, Inaccessible, Overlap, Bindings, Count };
     struct MoveProof {
@@ -554,6 +633,10 @@ private:
     std::size_t addDataBuffer(std::span<const std::uint32_t> words);
     void requireGuestBuffers(std::span<const MovedBuffer> moved = {}) const;
     bool movedInPlace(Recorder& recorder, const Allocation& item, std::uint64_t address, std::uint64_t size, MovedBuffer& entry) const;
+    bool movedRangesClear(Recorder& recorder, std::span<const std::pair<std::uint64_t, std::size_t>> ranges, MoveTicket* ticket, bool accessible) const;
+    PreparedBuffers::Selection preparedGuards(const PreparedBuffers& prepared) const;
+    bool preparedUnmovedClear(const Recorder& recorder, const PreparedBuffers& prepared) const;
+    void takePreparedSnapshots(Recorder& recorder, const PreparedBuffers& prepared, std::vector<std::size_t>& selected, DrawBindings& result, bool binds) const;
     // Stage A: the layout entry of an image binding (samplers are taken at once, the sampler cache
     // locks itself); stage B looks the sampled textures and storage images up (resolveImageBinding).
     void addImageBinding(const ShaderRecompiler::DescriptorBinding& binding, VkShaderStageFlags flags);
@@ -789,6 +872,8 @@ private:
     };
     std::vector<SamplerSource> samplerSources;
     bool reusable = false;
+    mutable std::shared_ptr<const BufferPlan> bufferPlan;
+    mutable bool bufferPlanBuilt = false;
     std::vector<DirectRegion> directRegions;
     std::vector<ValidatedSurface> validatedTextures;
     std::vector<ShaderRecompiler::RegisteredImageView> registeredImageViews;

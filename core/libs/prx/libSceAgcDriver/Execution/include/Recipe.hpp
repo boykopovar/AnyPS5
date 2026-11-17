@@ -10,6 +10,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/State.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/Texture.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/VertexInput.hpp"
+#include "prx/libc/include/general/AtomicSharedPtr.hpp"
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -85,6 +86,84 @@ struct DrawRecipe {
     std::uint32_t fragmentOutputs = 0;
     VkPipelineStageFlags shaderStages = 0;
     bool hasDepth = false;
+};
+
+struct DrawRecordPass {
+    bool valid = false;
+    std::uint64_t recorder = 0;
+    std::uint64_t generation = 0;
+    std::uint64_t epoch = 0;
+    std::uint64_t proof = 0;
+    std::uint64_t pending = 0;
+    std::uint64_t depthSerial = 0;
+    std::uint64_t depthReleased = 0;
+    std::vector<std::uint64_t> versions;
+};
+
+enum class DrawRecordHold : std::uint8_t { Held, First, Pass, Epoch, Proof, Pending, Depth, Target, Count };
+
+enum class DrawRecordBuffers : std::uint8_t { None, Used, PlanDiffers, MovedHazard, UnmovedHazard, DepthGuards, Checked, Differs, MemoryChanged, Unwatched, Count };
+
+enum class DrawRecordInputs : std::uint8_t { None, Used, Rechecked, ImportChanged, Shape, Refused, Checked, Differs, Count };
+
+struct DrawRecordEffects {
+    bool passHeld = false;
+    std::size_t movedChecked = 0;
+    std::size_t movedTrusted = 0;
+    DrawRecordHold hold = DrawRecordHold::Count;
+    bool sharedHold = false;
+    bool proved = false;
+    DrawRecordBuffers buffers = DrawRecordBuffers::None;
+    Graphics::ShaderResources::PreparedDifference bufferDifference;
+    DrawRecordInputs inputs = DrawRecordInputs::None;
+};
+
+struct DrawCommitView {
+    bool filled = false;
+    const void* resources = nullptr;
+    const void* pipeline = nullptr;
+    const void* framebuffer = nullptr;
+    Graphics::ResourceCache::Key key;
+    std::vector<VkImageView> views;
+    std::vector<const void*> targets;
+    std::uint64_t passKey = 0;
+    std::vector<std::pair<std::size_t, std::uint64_t>> moved;
+    std::vector<std::size_t> movedSizes;
+    std::vector<std::vector<std::uint32_t>> movedWords;
+    std::array<std::byte, Graphics::PipelinePushConstantBytes> push{};
+    VkShaderStageFlags pushStages = 0;
+    Graphics::VertexInputLayout vertexInput;
+    std::uint32_t fragmentOutputs = 0;
+    VkPipelineStageFlags shaderStages = 0;
+    bool hasDepth = false;
+};
+
+
+struct DrawRecordCommit {
+    std::shared_ptr<const DrawRecipe> recipe;
+    DrawRecordPass pass;
+    Graphics::ShaderResources::MoveTicket ticket;
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> ticketRanges;
+    DrawRecordEffects effects;
+    std::uint64_t touchedPresent = ~std::uint64_t{0};
+    std::uint64_t builds = 0;
+    bool verifyBuffers = false;
+    AtomicSharedPtr<const Graphics::ShaderResources::BufferPlan> bufferPlan;
+    bool bufferPlanAsked = false;
+    bool verifyInputs = false;
+    AtomicSharedPtr<const DrawRecipe> inputsRecipe;
+    bool inputsRecipeAsked = false;
+
+    void Adopt(std::shared_ptr<const DrawRecipe> built) {
+        recipe = std::move(built);
+        if (std::exchange(bufferPlanAsked, false)) bufferPlan.store(nullptr);
+        if (std::exchange(inputsRecipeAsked, false)) inputsRecipe.store(nullptr);
+        pass = {};
+        ticket = {};
+        ticketRanges.clear();
+        touchedPresent = ~std::uint64_t{0};
+        ++builds;
+    }
 };
 
 }

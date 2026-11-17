@@ -5021,7 +5021,27 @@ std::vector<std::uint32_t> VulkanDevice::DrawContentKey(const Graphics::State& g
     return Graphics::DrawResourceContentKey(state->context, graphics, draw, shaders);
 }
 
-void VulkanDevice::Draw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::shared_ptr<const DrawRecipe>* recipe, const DrawTraceContext* trace, std::uint64_t shape, const std::vector<std::uint32_t>* contentKey) {
+Graphics::DrawRecipeOutcome VulkanDevice::DrawFromRecord(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, DrawRecordCommit& record, const DrawTraceContext* trace, DrawCommitView* answer, const Graphics::ShaderResources::PreparedBuffers* prepared, Graphics::PreparedInputs* preparedInputs) {
+    PerformanceTimer timing("Vulkan.DrawFromRecord");
+    if (record.recipe == nullptr || record.recipe->device != state->device) {
+        Graphics::DrawRecipeOutcome outcome;
+        outcome.miss = Graphics::DrawRecipeMiss::ObjectsGone;
+        return outcome;
+    }
+    startJournalReplay();
+    const auto context = graphicsContext();
+    return Graphics::DrawWithRecord(context, graphics, draw, shaders, record, trace, answer, prepared, preparedInputs);
+}
+
+bool VulkanDevice::PrepareDrawInputs(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::shared_ptr<const DrawRecipe> recipe, Graphics::PreparedInputs& prepared) const {
+    if (!state->contextReady) {
+        prepared.refusal = Graphics::PreparedInputs::Refusal::NotInPlace;
+        return false;
+    }
+    return Graphics::PrepareDrawInputs(state->context, graphics, draw, shaders, std::move(recipe), prepared);
+}
+
+void VulkanDevice::Draw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const Graphics::GuestMemorySnapshot> snapshots, std::shared_ptr<const DrawRecipe>* recipe, const DrawTraceContext* trace, std::uint64_t shape, const std::vector<std::uint32_t>* contentKey, bool recordRecipe) {
     startJournalReplay();
     for (const auto& shader : shaders) {
         require(shader.program != nullptr, "missing compiled shader");
@@ -5032,7 +5052,7 @@ void VulkanDevice::Draw(const Graphics::State& graphics, const Pm4::DrawParamete
     static const bool traceDraws = std::getenv("APS5_TRACE_DRAWS") != nullptr;
     if (traceDraws) APS5_LOG_OUT("VulkanDevice::Draw indices=%u instances=%u indexSize=%u address=0x%llx shaders=%zu colorTarget=%u", draw.indexCount, draw.instanceCount, draw.indexSize, static_cast<unsigned long long>(draw.indexAddress), shaders.size(), static_cast<unsigned>(graphics.hasColorTarget));
     const auto context = graphicsContext();
-    Graphics::Draw(context, graphics, draw, shaders, snapshots, recipe, trace, shape, contentKey);
+    Graphics::Draw(context, graphics, draw, shaders, snapshots, recipe, trace, shape, contentKey, recordRecipe);
     if (traceDraws) APS5_LOG_CHARS_OUT("VulkanDevice::Draw complete");
 }
 

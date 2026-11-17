@@ -3518,6 +3518,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
         else recorder->EndGpuTiming(timing, guestBytes);
         countStorageUpload(0, guestBytes);
         ++version;
+        ++uploads;
         if (profile) LookupOutcomes::Add(LookupOutcomes::UploadClear, start);
         return;
     }
@@ -3559,6 +3560,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
             }
             ++Profile().storageDirectUploads;
             ++version;
+            ++uploads;
             if (profile) LookupOutcomes::Add(LookupOutcomes::UploadDirect, start);
             return;
         }
@@ -3616,6 +3618,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
             countStorageUpload(1, uploadedBytes);
             ++Profile().storageDirectUploads;
             ++version;
+            ++uploads;
             if (profile) LookupOutcomes::Add(LookupOutcomes::UploadDirect, start);
             return;
         }
@@ -3653,6 +3656,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
         countStorageUpload(1, uploadedBytes);
         ++Profile().storageDirectUploads;
         ++version;
+        ++uploads;
         if (profile) LookupOutcomes::Add(LookupOutcomes::UploadDirect, start);
         return;
     }
@@ -3734,6 +3738,7 @@ void StorageTexture::upload(const std::vector<bool>* layers) {
     }
     countStorageUpload(2, uploadedBytes);
     ++version;
+    ++uploads;
     if (profile) LookupOutcomes::Add(LookupOutcomes::UploadCpu, start);
 }
 
@@ -6623,6 +6628,7 @@ bool StorageTexture::clearByKeysFill(DccKeys keys, std::uint8_t key) {
     for (std::uint32_t layer = 0; layer < trackedLayers; ++layer) layerGeneration[layer] = collectedLayerGeneration(layer, now);
     refreshGeneration();
     ++version;
+    ++uploads;
     if (traceKeys) std::fprintf(stderr, "[dcc-keys] key fill %s clears 0x%llx+0x%llx at once (keys 0x%llx, %zu pending units dropped, dirty %d)\n", DccKeysName(keys), static_cast<unsigned long long>(descriptor.baseAddress), static_cast<unsigned long long>(guestBytes), static_cast<unsigned long long>(descriptor.dccAddress), droppedUnits, wasDirty ? 1 : 0);
     return true;
 }
@@ -7311,6 +7317,7 @@ std::uint64_t StorageTexture::borrowUnits(StorageTexture& source, const std::vec
         if (units[unit]) borrowedUnits[unit] = true;
     }
     ++version;
+    ++uploads;
     return bytes;
 }
 

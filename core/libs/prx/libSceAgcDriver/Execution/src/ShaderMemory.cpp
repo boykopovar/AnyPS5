@@ -904,6 +904,11 @@ std::vector<std::shared_ptr<const ShaderRecompiler::SrtGuestWords>> ShaderMemory
     return blocks;
 }
 
+void ShaderMemory::SetImageViewHooks(ShaderRecompiler::SrtRuntime& runtime) {
+    runtime.normalizeImageView = &normalizeImageView;
+    runtime.imageViewGeneration = &imageViewGeneration;
+}
+
 std::shared_ptr<const ShaderRecompiler::ResourceCapture> ShaderMemory::Capture(const ShaderRecompiler::RecompileRequest& request, const ShaderRecompiler::SourceHandle* handle) {
     return captureWaitingOnFailure(request, handle, nullptr);
 }

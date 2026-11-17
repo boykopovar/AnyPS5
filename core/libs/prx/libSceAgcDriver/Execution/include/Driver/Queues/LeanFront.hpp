@@ -97,9 +97,14 @@ struct Latch {
     FrontMode mode = FrontMode::Today;
     FrontMode taken = FrontMode::Unlatched;
     bool checkSwitches = false;
+    bool directDraws = false;
+    bool directBuffers = false;
+    bool directInputs = false;
     std::uint32_t depth = 0;
     std::uint64_t generation = 0;
     std::uint64_t verifyEvery = 0;
+    std::uint64_t directVerifyEvery = 0;
+    std::uint64_t directOrdinal = 0;
     std::uint64_t latches = 0;
     Graphics::SwitchSnapshot switches;
     std::array<std::uint64_t, ItemCount> ordinals{};

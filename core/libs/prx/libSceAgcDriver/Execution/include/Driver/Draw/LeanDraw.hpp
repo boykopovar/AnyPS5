@@ -18,7 +18,7 @@ namespace AgcDriver::DriverDetail {
 
 enum class LeanVerdict : std::uint8_t { Unknown, Normal, Nothing, Live, Fallback };
 
-struct LeanShape {
+struct LeanShape : std::enable_shared_from_this<LeanShape> {
     std::shared_ptr<const DrawDecode> decode;
     DrawShaderSet shaderSet;
     std::uint64_t shape = 0;
@@ -53,6 +53,7 @@ struct LeanDrawJob {
     std::uint64_t deviceSerial;
     std::uint32_t queue;
     std::uint32_t opcode;
+    std::uint16_t recordFlags;
     Pm4::DrawParameters parameters;
     DrawUserWords words;
 };

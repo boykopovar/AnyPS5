@@ -1,6 +1,8 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Draw/LeanDraw.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Driver.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DirectDrawReport.hpp"
+#include "prx/libSceAgcDriver/Execution/include/Driver/Draw/DrawRecords.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Memory/DrawWriteRanges.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Queues/LeanFront.hpp"
 #include "prx/libSceAgcDriver/Execution/include/Driver/Synchronization/DeferredLabels.hpp"
@@ -425,11 +427,18 @@ DrawVerdict Driver::drawLean(QueueState& queue, std::span<const std::uint32_t> p
     job->drawKey = LeanExactKey(shape, job->words);
     job->shapeKey = shape.finalShape;
     job->deviceSerial = record.deviceSerial;
+    job->recordFlags = 0;
     DrawPipeline::NoteDrawKey(job->drawKey, job->shapeKey);
     LeanFront::AddOnWorker(Counter::LeanDraws);
     if (local.has_value()) {
         finishLeanDraw(*local, LeanAnchor{submission.shaders, leanDraws.device, 0});
         return DrawVerdict::Drawn;
+    }
+    if (frontLatch.directDraws) {
+        job->recordFlags = DrawRecordFlags::Direct;
+        if (frontLatch.directBuffers) job->recordFlags |= DrawRecordFlags::DirectBuffers;
+        if (frontLatch.directInputs) job->recordFlags |= DrawRecordFlags::DirectInputs;
+        if (DirectDraws::Due(frontLatch)) job->recordFlags |= DrawRecordFlags::VerifyDue;
     }
     record.lastSeq = finisher.Issued();
     finisher.PublishLean(&Driver::runLeanDraw, shape.writes, job->drawKey, job->shapeKey);
