@@ -96,6 +96,9 @@ int main() {
     Require(scePadGetExtControllerInformation(special, extInfo) == PAD_OK);
     for (std::size_t i = 0; i < 0x2c; ++i) Require(extInfo[i] == 0);
     for (std::size_t i = 0x2c; i < sizeof(extInfo); ++i) Require(extInfo[i] == 0x5a);
+    Require(scePadGetMotionSensorPosition(12345, reinterpret_cast<PadMotionSensorPosition*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(scePadGetSphereRadius(12345, reinterpret_cast<float*>(0x10)) == PAD_ERROR_INVALID_ARG);
+    Require(scePadGetBluetoothAddress(12345, reinterpret_cast<std::uint64_t*>(0x10)) == PAD_ERROR_INVALID_ARG);
     Require(scePadClose_nid_postfix(special) == PAD_OK);
 #ifdef _WIN32
     Require(VirtualFree(page, 0, MEM_RELEASE) != 0);

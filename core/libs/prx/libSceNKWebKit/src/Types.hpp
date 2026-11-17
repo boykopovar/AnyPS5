@@ -169,6 +169,9 @@ public:
 class BundleScriptWorld final : public ObjectOf<ObjectType::BundleScriptWorld> {
 public:
     Retained<String> name;
+    std::uint64_t clearedWrappersCount = 0;
+    bool allShadowRootsOpen = false;
+    bool overrideBuiltinsDisabled = false;
     static BundleScriptWorld* NormalWorld() {
         static auto world = Make<BundleScriptWorld>();
         return world.Get();
@@ -177,6 +180,12 @@ public:
 
 class BundleFrame final : public ObjectOf<ObjectType::BundleFrame> {
 public:
+    RectValue contentBounds{{0.0, 0.0}, {0.0, 0.0}};
+    RectValue visibleContentBounds{{0.0, 0.0}, {0.0, 0.0}};
+    RectValue visibleContentBoundsExcludingScrollbars{{0.0, 0.0}, {0.0, 0.0}};
+    SizeValue scrollOffset{0.0, 0.0};
+    bool hasHorizontalScrollbar = false;
+    bool hasVerticalScrollbar = false;
 };
 
 class BundleDOMWindowExtension final : public ObjectOf<ObjectType::BundleDOMWindowExtension> {
@@ -212,10 +221,25 @@ public:
     Retained<BundleFrame> htmlIFrameElementContentFrame;
 };
 
+class BundleInspector final : public ObjectOf<ObjectType::BundleInspector> {
+public:
+    bool isVisible = false;
+    bool isProfilingPage = false;
+    std::vector<std::string> evaluatedScriptsForTest;
+};
+
+class BundlePage final : public ObjectOf<ObjectType::BundlePage> {
+public:
+    mutable Retained<BundleInspector> inspector;
+};
+
 class Download final : public ObjectOf<ObjectType::Download> {
 public:
     Retained<Object> request;
     Retained<Object> originatingPage;
+    std::uint64_t id = 0;
+    Retained<Data> resumeData;
+    Retained<Array> redirectChain;
     bool wasUserInitiated = false;
     bool isCancelled = false;
 };

@@ -12521,6 +12521,55 @@ void verifyGcnSampleThroughVolume() {
     }
 }
 
+void verifyGcnTableImageConversion() {
+    using namespace ShaderRecompiler;
+    namespace Abi = ImageTableAbi;
+    ImageResource image{};
+    image.resourceClass = ImageResourceClass::Sampled;
+    image.dimension = RdnaImageDimension::Dim2DArray;
+    image.cube = true;
+    image.table = 0u;
+    image.tableOperation = TableOperation::Supported;
+    image.numericClass = IrTextureNumericClass::Float;
+    ResourceSnapshot snapshot{};
+    snapshot.tables.tables.resize(1u);
+    auto& column = snapshot.tables.tables.front();
+    column.records = 2u;
+    column.keys = 2u;
+    column.codes = SharedValues<std::uint32_t>(std::vector<std::uint32_t>{0u, 1u});
+    const DescriptorValue rawCube{{0x02340203u, 0x02800000u, 0x003fc0ffu, 0xb6d803acu, 0u, 0u, 0u, 0u}, 8u, 0xffu};
+    DescriptorValue partialCube = rawCube;
+    partialCube.availableDwordMask = 0x09u;
+    column.words = SharedValues<DescriptorValue>(std::vector<DescriptorValue>{rawCube, partialCube});
+    {
+        GcnGuestShaderScope gcn;
+        ShaderInfo info{};
+        info.images.push_back(image);
+        info.runtimeImageModes.push_back(ResourceMaterializer::RuntimeImageModes(image));
+        const auto resolved = ResourceMaterializer::ResolveImageTables(info, snapshot);
+        const auto mapStart = resolved.map.at(Abi::TableHeader(0u) + Abi::TableMapStart);
+        const auto good = resolved.map.at(mapStart);
+        const auto bad = resolved.map.at(mapStart + 1u);
+        require(resolved.elements.size() == 1u && (resolved.map.at(good + Abi::ImageRecordFlags) & Abi::PoisonFlag) == 0u, "GCN table image conversion: complete GCN cube descriptor was poisoned");
+        const auto fault = resolved.map.at(bad + Abi::ImageRecordFlags);
+        require((fault & Abi::PoisonFlag) != 0u && resolved.faults == 1u, "GCN table image conversion: partial descriptor was not poisoned");
+        const auto& poison = resolved.poison.at(fault & ~Abi::PoisonFlag);
+        require(poison.reason == Abi::PoisonReason::OutsideSnapshot, "GCN table image conversion: partial descriptor lost its OutsideSnapshot reason");
+    }
+    {
+        ShaderInfo ps5Info{};
+        ps5Info.images.push_back(image);
+        ps5Info.runtimeImageModes.push_back(ResourceMaterializer::RuntimeImageModes(image));
+        const auto resolved = ResourceMaterializer::ResolveImageTables(ps5Info, snapshot);
+        const auto mapStart = resolved.map.at(Abi::TableHeader(0u) + Abi::TableMapStart);
+        const auto bad = resolved.map.at(mapStart);
+        const auto fault = resolved.map.at(bad + Abi::ImageRecordFlags);
+        require((fault & Abi::PoisonFlag) != 0u, "GCN table image conversion: raw GCN descriptor in PS5 mode was not poisoned");
+        const auto& poison = resolved.poison.at(fault & ~Abi::PoisonFlag);
+        require(poison.reason == Abi::PoisonReason::NumericClass, "GCN table image conversion: raw GCN descriptor in PS5 mode did not poison on numeric class");
+    }
+}
+
 void verifyPixelQuadPermReads() {
     using namespace ShaderRecompiler;
     constexpr std::array<std::uint32_t, 6> shuffleCapabilities{spv::CapabilityShader, spv::CapabilityInt64, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle, spv::CapabilityGroupNonUniformArithmetic};
@@ -13409,6 +13458,7 @@ int main(int argc, char** argv) {
         verifyGcnSampleAddresses();
         verifyGcnStoreAddresses();
         verifyGcnDimensionQueries();
+        verifyGcnTableImageConversion();
         verifySrgbDepthCompareModes();
         verifyRuntimeImageSwitchDeduplication();
         verifyQuadMaskNeighbourReads();
@@ -13577,6 +13627,35 @@ int main(int argc, char** argv) {
             return std::pair{id.has_value(), decorated};
         };
         require(readOnly("flattened_srt") == std::pair{true, true}, "the flattened SRT is not decorated NonWritable");
+        {
+            std::uint32_t srtId = 0u;
+            for (std::size_t at = 5; at < first.spirv.size() && (first.spirv[at] >> 16u) != 0u; at += first.spirv[at] >> 16u) {
+                if ((first.spirv[at] & 0xffffu) == spv::OpName && std::strcmp(reinterpret_cast<const char*>(&first.spirv[at + 2u]), "flattened_srt") == 0) srtId = first.spirv[at + 1u];
+            }
+            require(srtId != 0u, "the flattened SRT variable is not named");
+            std::set<std::uint32_t> chains;
+            std::size_t srtUses = 0;
+            for (std::size_t at = 5; at < first.spirv.size() && (first.spirv[at] >> 16u) != 0u; at += first.spirv[at] >> 16u) {
+                const auto opcode = first.spirv[at] & 0xffffu;
+                const auto count = first.spirv[at] >> 16u;
+                if (opcode == spv::OpName || opcode == spv::OpDecorate || opcode == spv::OpEntryPoint || opcode == spv::OpVariable) continue;
+                for (std::size_t operand = 1; operand < count; ++operand) {
+                    if (first.spirv[at + operand] != srtId) continue;
+                    ++srtUses;
+                    require((opcode == spv::OpAccessChain || opcode == spv::OpInBoundsAccessChain) && operand == 3u, "the flattened SRT is used by something other than the base of an access chain");
+                    chains.insert(first.spirv[at + 2u]);
+                }
+            }
+            require(srtUses != 0u && !chains.empty(), "the flattened SRT is never read through an access chain");
+            for (std::size_t at = 5; at < first.spirv.size() && (first.spirv[at] >> 16u) != 0u; at += first.spirv[at] >> 16u) {
+                const auto opcode = first.spirv[at] & 0xffffu;
+                const auto count = first.spirv[at] >> 16u;
+                if (opcode == spv::OpName || opcode == spv::OpAccessChain || opcode == spv::OpInBoundsAccessChain) continue;
+                for (std::size_t operand = 1; operand < count; ++operand) {
+                    if (chains.contains(first.spirv[at + operand])) require(opcode == spv::OpLoad && operand == 3u, "a flattened SRT access chain is used by something other than a load");
+                }
+            }
+        }
         for (const auto* table : {"bda_pagetable", "table_map"}) require(!readOnly(table).first || readOnly(table).second, "a read-only BDA page table or image table map is not decorated NonWritable");
         payload = 0x40000000u;
         AgcDriver::ShaderMemory updatedMemory({});

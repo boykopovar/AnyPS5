@@ -25,7 +25,7 @@ GuestMemoryRec* FaceMemory(GuestGlyphSlotRec* slot, const char* function) {
 
 void FreeOwned(GuestMemoryRec* memory, GuestGlyphSlotRec* slot, const char* function) {
     if (slot->bitmap.buffer && !memory) NotImplemented_nid_no_patch(function);
-    ft_mem_free_nid_postfix(memory, slot->bitmap.buffer);
+    OtMemFree(memory, slot->bitmap.buffer);
     slot->bitmap.buffer = nullptr;
 }
 
@@ -66,7 +66,7 @@ int APS5_VABI ft_glyphslot_alloc_bitmap_nid_postfix(GuestGlyphSlotRec* slot, std
     const auto bytes = static_cast<std::int64_t>(size);
     if (bytes > 0 && !memory) NotImplemented_nid_no_patch(function);
     std::int32_t error = 0;
-    slot->bitmap.buffer = static_cast<unsigned char*>(ft_mem_alloc_nid_postfix(memory, bytes, &error));
+    slot->bitmap.buffer = static_cast<unsigned char*>(OtMemAlloc(memory, bytes, &error));
     return error;
 }
 

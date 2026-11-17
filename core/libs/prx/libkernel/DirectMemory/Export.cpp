@@ -716,7 +716,16 @@ int APS5_VABI sceKernelBatchMap2(KernelBatchMapEntry* entries, int num_entries, 
  int processed = 0;
  int result = 0;
  for (; processed < num_entries; ++processed) {
-  auto& entry = entries[processed];
+  KernelBatchMapEntry entry;
+  {
+   const int savedErrno = errno;
+   const bool read = GuestCopyIn_nid_no_patch(&entry, entries + processed, sizeof(entry));
+   errno = savedErrno;
+   if (!read) {
+    result = SCE_KERNEL_ERROR_EFAULT;
+    break;
+   }
+  }
   if (entry.length == 0 || entry.operation < OpMapDirect || entry.operation > OpTypeProtect) {
    result = SCE_KERNEL_ERROR_EINVAL;
    break;
@@ -740,6 +749,13 @@ int APS5_VABI sceKernelBatchMap2(KernelBatchMapEntry* entries, int num_entries, 
    break;
   }
   if (result != 0) break;
+  const int savedErrno = errno;
+  const bool copied = GuestCopyOut_nid_no_patch(&entries[processed].start, &entry.start, sizeof(entry.start));
+  errno = savedErrno;
+  if (!copied) {
+   result = SCE_KERNEL_ERROR_EFAULT;
+   break;
+  }
  }
  if (num_entries_out != nullptr) {
   const int savedErrno = errno;

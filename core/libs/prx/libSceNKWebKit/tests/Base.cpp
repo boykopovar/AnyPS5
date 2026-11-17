@@ -1201,6 +1201,49 @@ static void TestBundleNodeHandle() {
     Require(threw);
 }
 
+static void TestBundleFrameScroll() {
+    Require(WKBundleFrameGetTypeID() == 119);
+    auto frame = NKWebKit::Make<NKWebKit::BundleFrame>();
+    const void* ref = frame.Get();
+
+    auto cb = WKBundleFrameGetContentBounds(ref);
+    Require(cb.origin.x == 0.0 && cb.size.width == 0.0);
+    auto vcb = WKBundleFrameGetVisibleContentBounds(ref);
+    Require(vcb.origin.x == 0.0 && vcb.size.width == 0.0);
+    auto vcbes = WKBundleFrameGetVisibleContentBoundsExcludingScrollbars(ref);
+    Require(vcbes.origin.x == 0.0 && vcbes.size.width == 0.0);
+    auto so = WKBundleFrameGetScrollOffset(ref);
+    Require(so.width == 0.0 && so.height == 0.0);
+    Require(!WKBundleFrameHasHorizontalScrollbar(ref));
+    Require(!WKBundleFrameHasVerticalScrollbar(ref));
+
+    frame->contentBounds = NKWebKit::RectValue{{1.0, 2.0}, {800.0, 600.0}};
+    frame->visibleContentBounds = NKWebKit::RectValue{{3.0, 4.0}, {400.0, 300.0}};
+    frame->visibleContentBoundsExcludingScrollbars = NKWebKit::RectValue{{5.0, 6.0}, {390.0, 290.0}};
+    frame->scrollOffset = NKWebKit::SizeValue{10.0, 20.0};
+    frame->hasHorizontalScrollbar = true;
+    frame->hasVerticalScrollbar = true;
+
+    auto cb2 = WKBundleFrameGetContentBounds(ref);
+    Require(cb2.origin.x == 1.0 && cb2.size.width == 800.0);
+    auto vcb2 = WKBundleFrameGetVisibleContentBounds(ref);
+    Require(vcb2.origin.x == 3.0 && vcb2.size.width == 400.0);
+    auto vcbes2 = WKBundleFrameGetVisibleContentBoundsExcludingScrollbars(ref);
+    Require(vcbes2.origin.x == 5.0 && vcbes2.size.width == 390.0);
+    auto so2 = WKBundleFrameGetScrollOffset(ref);
+    Require(so2.width == 10.0 && so2.height == 20.0);
+    Require(WKBundleFrameHasHorizontalScrollbar(ref));
+    Require(WKBundleFrameHasVerticalScrollbar(ref));
+
+    bool threw = false;
+    try {
+        WKBundleFrameGetContentBounds(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+}
+
 static void TestBundleHitTestResult() {
     Require(WKBundleHitTestResultGetTypeID() == 120);
     auto hit = NKWebKit::Make<NKWebKit::BundleHitTestResult>();
@@ -1355,6 +1398,33 @@ static void TestDownload() {
     Require(!WKDownloadGetWasUserInitiated(ref));
     Require(WKDownloadCopyRequest(ref) == nullptr);
     Require(WKDownloadGetOriginatingPage(ref) == nullptr);
+    Require(WKDownloadGetID(ref) == 0);
+    Require(WKDownloadGetResumeData(ref) == nullptr);
+
+    auto* initialChain = WKDownloadCopyRedirectChain(ref);
+    Require(initialChain != nullptr);
+    Require(WKGetTypeID(initialChain) == WKArrayGetTypeID());
+    Require(WKArrayGetSize(initialChain) == 0);
+    WKRelease(initialChain);
+
+    download->id = 987654321ULL;
+    Require(WKDownloadGetID(ref) == 987654321ULL);
+
+    auto dummyResume = NKWebKit::Make<NKWebKit::Data>(std::vector<std::uint8_t>{10, 20, 30});
+    download->resumeData = dummyResume;
+    auto* resumeData = WKDownloadGetResumeData(ref);
+    Require(resumeData != nullptr);
+    Require(WKGetTypeID(resumeData) == WKDataGetTypeID());
+
+    auto dummyChain = NKWebKit::Make<NKWebKit::Array>();
+    auto itemStr = NKWebKit::Make<NKWebKit::String>(std::u16string(u"https://example.com/redirect"));
+    dummyChain->elements.push_back(std::move(itemStr));
+    download->redirectChain = dummyChain;
+    auto* chain = WKDownloadCopyRedirectChain(ref);
+    Require(chain != nullptr);
+    Require(WKGetTypeID(chain) == WKArrayGetTypeID());
+    Require(WKArrayGetSize(chain) == 1);
+    WKRelease(chain);
 
     download->wasUserInitiated = true;
     Require(WKDownloadGetWasUserInitiated(ref));
@@ -1369,6 +1439,30 @@ static void TestDownload() {
     bool threw = false;
     try {
         WKDownloadGetWasUserInitiated(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKDownloadGetID(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKDownloadGetResumeData(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKDownloadCopyRedirectChain(nullptr);
     } catch (const std::invalid_argument&) {
         threw = true;
     }
@@ -2881,6 +2975,7 @@ int main() {
     TestBundleDOMWindowExtension();
     TestBundleHitTestResult();
     TestBundleNodeHandle();
+    TestBundleFrameScroll();
     TestDownload();
     TestAXObject();
     TestPopupMenuItem();
