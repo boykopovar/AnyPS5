@@ -324,6 +324,7 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_prs.py)
         add_test(NAME shader_scan COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_shader_scan.py)
+        add_test(NAME isa_profiles COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_isa_profiles.py)
         add_test(NAME progress_report_inputs COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_report_inputs.py)
         add_test(NAME tools_compdb_inventory COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_compile_database_inventory.py)
@@ -869,6 +870,19 @@ if(BUILD_TESTING)
         add_test(NAME title_run COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_title_run.py)
         set_tests_properties(title_run PROPERTIES TIMEOUT 60)
+        foreach(performance_capture_class WindowParsing CaptureEnvironment CompletedCapture InvalidSummaries InvalidTraces BoundsAndLinks LossEvidence)
+            add_test(NAME performance_capture_${performance_capture_class} COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_performance_capture.py ${performance_capture_class})
+            set_tests_properties(performance_capture_${performance_capture_class} PROPERTIES TIMEOUT 30)
+        endforeach()
+        add_test(NAME performance_console COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_performance_console.py)
+        set_tests_properties(performance_console PROPERTIES TIMEOUT 30)
+        foreach(performance_runner_class PerformancePhaseTests PerformanceRunTests PerformanceArgumentTests PerformanceMainTests)
+            add_test(NAME performance_runner_${performance_runner_class} COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_title_run_performance.py ${performance_runner_class})
+            set_tests_properties(performance_runner_${performance_runner_class} PROPERTIES TIMEOUT 30)
+        endforeach()
         add_test(NAME relinker_fuzz_seeds COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_relinker_fuzz_seeds.py)
         set_tests_properties(relinker_fuzz_seeds PROPERTIES TIMEOUT 20)
