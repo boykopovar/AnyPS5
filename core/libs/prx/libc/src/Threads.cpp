@@ -1,9 +1,7 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libc/include/General.hpp"
-#ifdef _WIN32
 #include "prx/libc/include/PreciseWait.hpp"
-#endif
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
