@@ -49,7 +49,7 @@ ninja -C build -f select.ninja selected
 python3 tools/select_tests.py ctest build --output-on-failure
 ```
 
-`dump` reads the header dependencies recorded by a built tree, so build before dumping. `select` writes `select.ninja` and `select.tests` into the build directory; `ninja -f select.ninja selected` builds only the selected targets (when the change selects the full run, or the graph file is missing, `select` removes `select.ninja` and writes none, so run `cmake --build build` instead, as CI does), and the `ctest` subcommand runs only the selected tests. A change to `CMakeLists.txt`, `core/CMakeLists.txt`, `core/libs/CMakeLists.txt`, `3rdparty/`, `cmake/`, `.gitmodules`, the build workflow or `tools/select_tests.py` selects the full run. The `select=true` CI build uses the same selection.
+`dump` reads the header dependencies recorded by a built tree, so build before dumping. `select` writes `select.ninja` and `select.tests` into the build directory; `ninja -f select.ninja selected` builds only the selected targets (when the change selects the full run, or the graph file is missing, `select` removes `select.ninja` and writes none, so run `cmake --build build` instead, as CI does), and the `ctest` subcommand runs only the selected tests. A change to `CMakeLists.txt`, `core/libs/CMakeLists.txt`, `3rdparty/`, `cmake/`, `.gitmodules`, the build workflow or `tools/select_tests.py` selects the full run. The `select=true` CI build uses the same selection.
 
 ## Requirements
 
