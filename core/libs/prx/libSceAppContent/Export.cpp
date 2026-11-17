@@ -367,8 +367,11 @@ int APS5_VABI sceAppContentTemporaryDataGetAvailableSpaceKb(const AppContentMoun
     auto& state = Temporary();
     std::lock_guard lock(state.mutex);
     if (!state.mounted || !IsTemporaryMountPoint(*mountPoint)) return SCE_APP_CONTENT_ERROR_NOT_MOUNTED;
-    *availableSpaceKb = static_cast<size_t>(std::filesystem::space(state.directory).available / 1024);
-    return 0;
+    const size_t value = static_cast<size_t>(std::filesystem::space(state.directory).available / 1024);
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(availableSpaceKb, &value, sizeof(value));
+    errno = savedErrno;
+    return copied ? 0 : SCE_APP_CONTENT_ERROR_PARAMETER;
 }
 
 int APS5_VABI sceAppContentTemporaryDataMount2(uint32_t option, AppContentMountPoint* mountPoint) {
