@@ -185,9 +185,9 @@ int main() {
         tableOverflow[18] = 0x80;
         tableOverflow[19] = 0x20;
         Domain::ProgramHeader highLoad{}; highLoad.Type = 1; highLoad.MappedAddress = 0xFFFFFFFFFFFFF000ULL; highLoad.FileSize = 128;
-        Domain::ProgramHeader highEh = highLoad; highEh.Type = 0x6474E550; highEh.FileSize = 32;
+        Domain::ProgramHeader highLoadEh = highLoad; highLoadEh.Type = 0x6474E550; highLoadEh.FileSize = 32;
         bool overflowRejected = false;
-        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(tableOverflow, {highLoad, highEh}, {}, {}); }
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(tableOverflow, {highLoad, highLoadEh}, {}, {}); }
         catch (const Domain::RelinkerException& error) {
             overflowRejected = std::string(error.what()).find("unwind pointer address overflowed") != std::string::npos;
         }
@@ -209,7 +209,7 @@ int main() {
         Io::WriteU32(sdataOverflow, 16, 0x1000);
         Io::WriteU32(sdataOverflow, 20, 0x1000);
         bool sdataRejected = false;
-        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(sdataOverflow, {highLoad, highEh}, {}, {}); }
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(sdataOverflow, {highLoad, highLoadEh}, {}, {}); }
         catch (const Domain::RelinkerException& error) {
             sdataRejected = std::string(error.what()).find("unwind pointer address overflowed") != std::string::npos;
         }
@@ -219,7 +219,7 @@ int main() {
         Io::WriteU64(sdata8Overflow, 16, 0x1000);
         Io::WriteU64(sdata8Overflow, 24, 0x1000);
         bool sdata8Rejected = false;
-        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(sdata8Overflow, {highLoad, highEh}, {}, {}); }
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(sdata8Overflow, {highLoad, highLoadEh}, {}, {}); }
         catch (const Domain::RelinkerException& error) {
             sdata8Rejected = std::string(error.what()).find("unwind pointer address overflowed") != std::string::npos;
         }
@@ -229,7 +229,7 @@ int main() {
         Io::WriteU16(sdata2Overflow, 16, 0x1000);
         Io::WriteU16(sdata2Overflow, 18, 0x1000);
         bool sdata2Rejected = false;
-        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(sdata2Overflow, {highLoad, highEh}, {}, {}); }
+        try { Relinker::UnusedNidFilter::ReadExceptionFunctions(sdata2Overflow, {highLoad, highLoadEh}, {}, {}); }
         catch (const Domain::RelinkerException& error) {
             sdata2Rejected = std::string(error.what()).find("unwind pointer address overflowed") != std::string::npos;
         }
