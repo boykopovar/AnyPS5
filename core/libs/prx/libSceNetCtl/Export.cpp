@@ -35,6 +35,7 @@
 #include <cstring>
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libc/include/HostEntropy.hpp"
 #include <fstream>
 #include <memory>
@@ -1165,16 +1166,32 @@ int APS5_VABI sceNetCtlGetResult(int event, int* result) {
 int APS5_VABI sceNetCtlGetState(int* state) {
     if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
     if (!state) return SCE_NET_CTL_ERROR_INVALID_ADDR;
+    const int savedErrno = errno;
+    const GuestArena::HostWrite write(state, sizeof(*state));
+    if (!write.Open() || !GuestWritable_nid_no_patch(state, sizeof(*state))) {
+        errno = savedErrno;
+        return SCE_NET_CTL_ERROR_INVALID_ADDR;
+    }
     const int val = HostHasAddress(AF_UNSPEC) ? NET_CTL_STATE_IPOBTAINED : NET_CTL_STATE_DISCONNECTED;
-    if (!GuestCopyOut_nid_no_patch(state, &val, sizeof(val))) return SCE_NET_CTL_ERROR_INVALID_ADDR;
+    const bool copied = GuestCopyOut_nid_no_patch(state, &val, sizeof(val));
+    errno = savedErrno;
+    if (!copied) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     return 0;
 }
 
 int APS5_VABI sceNetCtlGetStateV6(int* state) {
     if (!g_initialized.load()) return SCE_NET_CTL_ERROR_NOT_INITIALIZED;
     if (!state) return SCE_NET_CTL_ERROR_INVALID_ADDR;
+    const int savedErrno = errno;
+    const GuestArena::HostWrite write(state, sizeof(*state));
+    if (!write.Open() || !GuestWritable_nid_no_patch(state, sizeof(*state))) {
+        errno = savedErrno;
+        return SCE_NET_CTL_ERROR_INVALID_ADDR;
+    }
     const int val = HostHasAddress(AF_INET6) ? NET_CTL_STATE_IPOBTAINED : NET_CTL_STATE_DISCONNECTED;
-    if (!GuestCopyOut_nid_no_patch(state, &val, sizeof(val))) return SCE_NET_CTL_ERROR_INVALID_ADDR;
+    const bool copied = GuestCopyOut_nid_no_patch(state, &val, sizeof(val));
+    errno = savedErrno;
+    if (!copied) return SCE_NET_CTL_ERROR_INVALID_ADDR;
     return 0;
 }
 
