@@ -149,7 +149,7 @@ class FrameReplayReportTests(unittest.TestCase):
             self.assertTrue(any("fewer than two" in issue for issue in report.parse_replay_result(json.dumps(native), HOST)["issues"]))
 
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory) / "tree"
+            root = Path(directory).resolve() / "tree"
             root.mkdir()
             (root / "sub").mkdir()
             target = root / "sub" / "data.bin"

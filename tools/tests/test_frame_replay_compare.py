@@ -72,7 +72,7 @@ class ReplayFixture(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
-        self.root = Path(self.temporary.name)
+        self.root = Path(self.temporary.name).resolve()
         (self.root / "capture").mkdir()
         (self.root / "capture" / "capture.bin").write_bytes(b"captured bytes")
         (self.root / "capture" / "capture.json").write_text(json.dumps({
@@ -381,7 +381,7 @@ class ProcessTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
-        self.root = Path(self.temporary.name)
+        self.root = Path(self.temporary.name).resolve()
 
     def test_real_child_exit_and_timeout_preserve_bounded_logs(self):
         result = runner.execute_replay_trial([sys.executable, "-c", "import sys;print('kept');sys.exit(7)"],
