@@ -299,11 +299,13 @@ class ReportTests(unittest.TestCase):
         self.assertTrue(report.startswith("\n".join([
             "AnyPS5 `abc1234`, main + #6814. Windows 11, Radeon 860M, driver 32.0.13058.8001, CPU Ryzen AI 7 350. 2 runs per title, 60 s each.",
             "",
+            "Build identity above records the source checkout. Native runtime identity is reported per run below.",
+            "",
             "Regressions: Light (PPSA85300) rendering -> crashed",
             "",
-            "| Title | ID | Version | Cold | Warm | FPS | First error | Before |",
-            "|---|---|---|---|---|---|---|---|",
-            "| Light | PPSA85300 | 0.4 | crashed | rendering | 31.0 | what(): unsupported MIB 1.1 \\| x | rendering |",
+            "| Title | ID | Version | Cold | Warm | FPS | First error | Native runtime provenance | Before |",
+            "|---|---|---|---|---|---|---|---|---|",
+            "| Light | PPSA85300 | 0.4 | crashed | rendering | 31.0 | what(): unsupported MIB 1.1 \\| x | unknown; unknown | rendering |",
             "",
         ])))
         self.assertIn("| Title | ID | Measure | Before | Now |", report)
@@ -1075,6 +1077,157 @@ class RunReportTests(unittest.TestCase):
         report = self.read(self.report(missing={"functions": [1, {"name": "f", "calls": None}]}))
         self.assertEqual(report["missing"], [{"name": "f", "calls": None}])
         self.assertEqual(title_run.tally(report["missing"], ["name"], "calls"), {'["f"]': 0})
+
+
+@unittest.skipUnless(os.name == "posix", "executable script fixture requires POSIX")
+class NativeProvenanceFlowTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory(prefix="anyps5-native-provenance-")
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.source = self.root / "source"
+        self.source.mkdir()
+        subprocess.run(["git", "init", "-q", str(self.source)], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(self.source), "-c", "user.name=Fixture", "-c", "user.email=fixture@invalid",
+                        "-c", "commit.gpgsign=false", "-c", f"core.hooksPath={os.devnull}",
+                        "commit", "-q", "--allow-empty", "-m", "test: source identity"], check=True, capture_output=True)
+        self.commit = subprocess.check_output(["git", "-C", str(self.source), "rev-parse", "HEAD"], text=True).strip()
+
+    def run_fixture(self, identities, report):
+        build = self.root / "build"
+        relinker = build / "core/relinker/relinker"
+        relinker.parent.mkdir(parents=True)
+        (build / "core/libs/libs").mkdir(parents=True)
+        (build / "CMakeCache.txt").write_text(f"CMAKE_HOME_DIRECTORY:INTERNAL={self.source}\n", encoding="utf-8")
+        native = relinker.with_name("native.py")
+        native.write_text("#!" + sys.executable + "\n" + '''import json, os, struct, time
+from pathlib import Path
+evidence = json.loads(os.environ["FIXTURE_NATIVE_EVIDENCE"])
+rows = []
+for index, identity in enumerate(evidence["summary"]):
+    rows.append(dict(identity, interval_start_s=index, interval_end_s=index + 1,
+                     presents=60, window={"ms": 1000}, gpu="Fixture GPU", driver="Fixture driver", os="Fixture OS"))
+Path(os.environ["APS5_TRACE_DIR"], "aps5-summary.jsonl").write_text("\\n".join(map(json.dumps, rows)), encoding="utf-8")
+document = {"format": "anyps5-report", "version": 1, "anyps5": evidence["report"], "run": {"averageFps": 60.0}}
+Path("anyps5-report.json").write_text(json.dumps(document), encoding="utf-8")
+pixels = bytes([0, 0, 0, 255, 255, 255, 255, 255])
+Path("frame_1.bmp").write_bytes(struct.pack("<2sIHHI", b"BM", 62, 0, 0, 54) +
+    struct.pack("<IiiHHIIiiII", 40, 2, -1, 1, 32, 0, 8, 0, 0, 0, 0) + pixels)
+print("host CPU Fixture CPU: has fixture features", flush=True)
+time.sleep(60)
+''', encoding="utf-8")
+        relinker.write_text("#!" + sys.executable + "\nimport os, shutil, sys\nfrom pathlib import Path\n"
+                            "target = Path(sys.argv[-1])\nshutil.copyfile(Path(__file__).with_name('native.py'), target)\n"
+                            "target.chmod(0o700)\n", encoding="utf-8")
+        relinker.chmod(0o700)
+        package = self.root / "games/PPSA00001"
+        (package / "sce_sys").mkdir(parents=True)
+        (package / "eboot.bin").write_bytes(b"\x7fELF" + bytes(60))
+        (package / "sce_sys/param.json").write_text(json.dumps({"titleId": "PPSA00001", "titleName": "Fixture", "contentVersion": "01.00"}), encoding="utf-8")
+        titles = self.root / "titles.json"
+        titles.write_text(json.dumps({"PPSA00001": {"env": {"FIXTURE_NATIVE_EVIDENCE": json.dumps({"summary": identities, "report": report})}}}), encoding="utf-8")
+        out = self.root / "out"
+        command = [sys.executable, str(Path(title_run.__file__)), "--games", str(self.root / "games"),
+                   "--build", str(build), "--titles", str(titles), "--out", str(out), "--runs", "1", "--seconds", "1", "PPSA00001"]
+        completed = subprocess.run(command, capture_output=True, text=True, timeout=15)
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        paths = list(out.glob("*/summary.json"))
+        self.assertEqual(len(paths), 1, completed.stdout)
+        summary = json.loads(paths[0].read_text(encoding="utf-8"))
+        self.assertTrue(self.commit.startswith(summary["build"]["commit"]))
+        run = summary["titles"]["PPSA00001"]["runs"][0]
+        self.assertEqual(run["outcome"], "rendering", run)
+        self.assertEqual(run["fps"], 60.0)
+        return summary, run, paths[0], paths[0].with_name("summary.md").read_text(encoding="utf-8")
+
+    def assert_qualification(self, summary, status):
+        compared = json.loads(title_run.compare_json(summary, summary))["titles"]["PPSA00001"]
+        self.assertIn("provenance", compared)
+        self.assertEqual(compared["provenance"]["now"]["status"], status)
+        self.assertIn(status, "\n".join(title_run.render_compare({"PPSA00001": compared})))
+
+    def test_stale_native_binary_is_retained_and_rejected_by_bisect(self):
+        import performance_bisect
+        native = "b" * 40
+        summary, run, path, markdown = self.run_fixture([{"commit": native[:12], "dirty": False}], {"commit": native, "modified": False})
+        self.assertIn("native", run)
+        self.assertEqual(run["native"]["summary"][0]["commit"], native[:12])
+        self.assertEqual(run["native"]["report"], {"commit": native, "modified": False})
+        self.assert_qualification(summary, "mismatch")
+        self.assertIn("source checkout", markdown.lower())
+        self.assertIn("mismatch", markdown)
+        with self.assertRaisesRegex(ValueError, "native.*mismatch"):
+            performance_bisect.sample_summary(path, "PPSA00001", self.commit)
+
+    def test_matching_native_identity_reaches_comparison_and_bisect(self):
+        import performance_bisect
+        summary, run, path, markdown = self.run_fixture([{"commit": self.commit[:12], "dirty": False}], {"commit": self.commit, "modified": False})
+        self.assert_qualification(summary, "matched")
+        self.assertEqual(performance_bisect.sample_summary(path, "PPSA00001", self.commit)["fps"], 60.0)
+        self.assertIn("matched", markdown)
+
+    def test_unknown_native_identity_does_not_certify_source_commit(self):
+        import performance_bisect
+        summary, run, path, markdown = self.run_fixture([{"commit": "unknown", "dirty": None}], {"commit": None, "modified": None})
+        self.assert_qualification(summary, "unknown")
+        self.assertIn("unknown", markdown)
+        with self.assertRaisesRegex(ValueError, "native.*unknown"):
+            performance_bisect.sample_summary(path, "PPSA00001", self.commit)
+
+    def test_modified_report_components_override_clean_trace(self):
+        import performance_bisect
+        summary, run, path, markdown = self.run_fixture([{"commit": self.commit[:12], "dirty": False}], {"commit": self.commit, "modified": True})
+        self.assert_qualification(summary, "modified")
+        with self.assertRaisesRegex(ValueError, "native.*modified"):
+            performance_bisect.sample_summary(path, "PPSA00001", self.commit)
+
+    def test_conflicting_report_does_not_choose_the_source_matching_commit(self):
+        summary, run, path, markdown = self.run_fixture([{"commit": "b" * 12, "dirty": False}], {"commit": self.commit, "modified": False})
+        self.assert_qualification(summary, "conflicting")
+
+    def test_earlier_conflicting_periodic_identity_is_not_overwritten(self):
+        summary, run, path, markdown = self.run_fixture([{"commit": "b" * 12, "dirty": False},
+            {"commit": self.commit[:12], "dirty": False}], {"commit": self.commit, "modified": False})
+        self.assert_qualification(summary, "conflicting")
+        self.assertEqual(len(run["native"]["summary"]), 2)
+
+
+class NativeProvenanceTests(unittest.TestCase):
+    def test_capture_identity_is_kept_when_only_periodic_frames_are_counted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "summary.jsonl"
+            periodic = {"commit": "a" * 12, "dirty": False, "interval_start_s": 0, "presents": 60, "window": {"ms": 1000}}
+            capture = {"commit": "b" * 12, "dirty": False, "presents": 1000, "window": {"ms": 1000}}
+            path.write_text("\n".join(map(json.dumps, [periodic, capture])), encoding="utf-8")
+            parsed = title_run.read_summary(path)
+            self.assertEqual(parsed["fps"], 60.0)
+            run = {"native": {"summary": parsed.get("native", [])}}
+            result = title_run.title_run_provenance.qualification(run, {"commit": "a" * 40, "dirty": False})
+            self.assertEqual(result["status"], "conflicting")
+
+    def test_integer_dirty_cannot_merge_with_false_during_summary_deduplication(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "summary.jsonl"
+            path.write_text("\n".join(json.dumps({"commit": "a" * 12, "dirty": value}) for value in [False, 0]), encoding="utf-8")
+            parsed = title_run.read_summary(path)
+            result = title_run.title_run_provenance.qualification({"native": {"summary": parsed.get("native", [])}},
+                                                                 {"commit": "a" * 40, "dirty": False})
+            self.assertEqual(result["status"], "unknown")
+
+    def test_legacy_summary_still_compares_metrics_with_unknown_native_provenance(self):
+        legacy = summary({"PPSA00001": {"name": "Fixture", "version": "1", "runs": [run("rendering", fps=60)]}})
+        compared = json.loads(title_run.compare_json(legacy, legacy))["titles"]["PPSA00001"]
+        self.assertEqual(compared["fps"], {"before": 60, "now": 60})
+        self.assertEqual(compared["provenance"]["now"]["status"], "unknown")
+        self.assertIn("unknown", title_run.render_markdown(legacy))
+
+    def test_report_only_clean_identity_and_unknown_or_modified_sources(self):
+        observed = {"native": {"report": {"commit": "a" * 40, "modified": False}}}
+        for source, expected in [({"commit": "a" * 12, "dirty": False}, "matched"),
+                                 ({"commit": "a" * 12, "dirty": True}, "source-modified"),
+                                 ({"commit": "a" * 12, "dirty": 0}, "unknown"), ({}, "unknown")]:
+            with self.subTest(source=source):
+                self.assertEqual(title_run.title_run_provenance.qualification(observed, source)["status"], expected)
 
 
 if __name__ == "__main__":
