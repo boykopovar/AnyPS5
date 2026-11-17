@@ -169,6 +169,63 @@ static void CheckReceiveMessageFaults() {
     Require(sceKernelMprotect(memory, page * 3, 3) == 0 && sceKernelMunmap(reinterpret_cast<std::uint64_t>(memory), page * 3) == 0);
 }
 
+static bool SendFaults(int descriptor, const GuestMsghdr* message) {
+    *__error_nid_postfix() = 0;
+    return sendmsg_nid_postfix(descriptor, message, 0) == -1 && *__error_nid_postfix() == 14;
+}
+
+static void CheckSendMessageFaults() {
+    constexpr std::size_t page = 0x4000;
+    void* memory = nullptr;
+    Require(sceKernelMapFlexibleMemory(&memory, page * 3, 3, 0) == 0 && memory != nullptr);
+    auto* writable = static_cast<char*>(memory);
+    auto* readOnly = writable + page;
+    auto* inaccessible = writable + 2 * page;
+    std::memcpy(readOnly, "ro", 2);
+    auto* readOnlyVector = reinterpret_cast<KernelIovec*>(readOnly + 64);
+    *readOnlyVector = {readOnly, 2};
+    auto* readOnlyMessage = reinterpret_cast<GuestMsghdr*>(readOnly + 128);
+    *readOnlyMessage = {nullptr, 0, readOnlyVector, 1, nullptr, 0, 0};
+    char data[4] = {'a', 'b', 'c', 'd'};
+    KernelIovec good{data, sizeof(data)};
+    Require(sceKernelMprotect(readOnly, page, 1) == 0 && sceKernelMprotect(inaccessible, page, 0) == 0);
+    int pair[2] = {-1, -1};
+    Require(socketpair_nid_postfix(Unix, Datagram, 0, pair) == 0);
+
+    Require(SendFaults(pair[0], reinterpret_cast<GuestMsghdr*>(0x1000)));
+    Require(SendFaults(pair[0], reinterpret_cast<GuestMsghdr*>(inaccessible)));
+    GuestMsghdr message{nullptr, 0, reinterpret_cast<KernelIovec*>(0x1000), 1, nullptr, 0, 0};
+    Require(SendFaults(pair[0], &message));
+    message.iov = reinterpret_cast<KernelIovec*>(inaccessible);
+    Require(SendFaults(pair[0], &message));
+    KernelIovec vector{reinterpret_cast<void*>(0x1000), sizeof(data)};
+    message.iov = &vector;
+    Require(SendFaults(pair[0], &message));
+    vector.base = inaccessible;
+    Require(SendFaults(pair[0], &message));
+    KernelIovec second[2] = {good, {inaccessible, 2}};
+    message.iov = second;
+    message.iovLength = 2;
+    Require(SendFaults(pair[0], &message));
+    message = {reinterpret_cast<void*>(0x1000), 16, &good, 1, nullptr, 0, 0};
+    Require(SendFaults(pair[0], &message));
+    message = {inaccessible, 16, &good, 1, nullptr, 0, 0};
+    Require(SendFaults(pair[0], &message));
+    message = {nullptr, 0, &vector, 1, nullptr, 0, 0};
+    *__error_nid_postfix() = 0;
+    Require(sendmsg_nid_postfix(-1, &message, 0) == -1 && *__error_nid_postfix() == 9);
+    char peeked[4]{};
+    Require(fcntl_nid_postfix(pair[1], 4, 4) == 0);
+    *__error_nid_postfix() = 0;
+    Require(recv_nid_postfix(pair[1], peeked, sizeof(peeked), 0) == -1 && *__error_nid_postfix() == 35);
+    Require(fcntl_nid_postfix(pair[1], 4, 0) == 0);
+
+    Require(sendmsg_nid_postfix(pair[0], readOnlyMessage, 0) == 2);
+    Require(recv_nid_postfix(pair[1], peeked, sizeof(peeked), 0) == 2 && std::memcmp(peeked, "ro", 2) == 0);
+    Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+    Require(sceKernelMprotect(memory, page * 3, 3) == 0 && sceKernelMunmap(reinterpret_cast<std::uint64_t>(memory), page * 3) == 0);
+}
+
 static bool FailsWith(std::int64_t result, int error) {
     return result == -1 && *__error_nid_postfix() == error;
 }
@@ -218,6 +275,32 @@ static void CheckAddressOnPairEnd() {
 #endif
 }
 
+#ifndef _WIN32
+static void CheckFullDatagramReceiver(int type) {
+    constexpr int SolSocket = 0xffff;
+    constexpr int SendTimeout = 0x1005;
+    constexpr int NoBuffers = 55;
+    struct {
+        std::int64_t seconds;
+        std::int64_t microseconds;
+    } timeout{0, 300000};
+    int pair[2] = {-1, -1};
+    Require(socketpair_nid_postfix(Unix, type, 0, pair) == 0);
+    Require(setsockopt_nid_postfix(pair[0], SolSocket, SendTimeout, &timeout, sizeof(timeout)) == 0);
+    int queued = 0;
+    std::int64_t sent = 0;
+    while (queued < 100000 && (sent = send_nid_postfix(pair[0], "d", 1, 0)) == 1) ++queued;
+    Require(queued > 0 && sent == -1 && *__error_nid_postfix() == NoBuffers);
+    Require(sendto_nid_postfix(pair[0], "d", 1, 0, nullptr, 0) == -1 && *__error_nid_postfix() == NoBuffers);
+    Require(write_nid_postfix(pair[0], "d", 1) == -1 && *__error_nid_postfix() == NoBuffers);
+    Require(send_nid_postfix(pair[0], "d", 1, 0x80) == -1 && *__error_nid_postfix() == NoBuffers);
+    char datagram[4]{};
+    Require(recv_nid_postfix(pair[1], datagram, sizeof(datagram), 0) == 1 && datagram[0] == 'd');
+    Require(send_nid_postfix(pair[0], "d", 1, 0) == 1);
+    Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+}
+#endif
+
 static void CheckRecordOverSendBuffer(int type, int sendBuffer) {
     constexpr int SolSocket = 0xffff;
     constexpr int SendBuffer = 0x1001;
@@ -255,6 +338,10 @@ static void CheckRecordOverSendBuffer(int type, int sendBuffer) {
 }
 
 int main(int argc, char** argv) {
+    if (argc == 2 && std::strcmp(argv[1], "sendmsg-memory") == 0) {
+        CheckSendMessageFaults();
+        return 0;
+    }
     if (argc == 2 && std::strcmp(argv[1], "recvmsg-memory") == 0) {
         CheckReceiveMessageFaults();
         return 0;
@@ -417,6 +504,10 @@ int main(int argc, char** argv) {
     CheckRecordOverSendBuffer(Datagram, 2048);
 #if !defined(_WIN32) && !defined(__APPLE__)
     CheckRecordOverSendBuffer(SequencedPacket, 8192);
+#endif
+#ifndef _WIN32
+    CheckFullDatagramReceiver(Datagram);
+    CheckFullDatagramReceiver(Datagram | NonBlocking);
 #endif
 
     Require(Fails(2, Stream, 0, 45));
