@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -10,6 +11,8 @@ namespace {
 constexpr int DuplicateDescriptor = 0;
 constexpr int GetDescriptorFlags = 1;
 constexpr int SetDescriptorFlags = 2;
+constexpr int GetStatusFlags = 3;
+constexpr int SetStatusFlags = 4;
 constexpr int Duplicate2Descriptor = 10;
 constexpr int DuplicateDescriptorCloseOnExec = 17;
 constexpr int Duplicate2DescriptorCloseOnExec = 18;
@@ -19,6 +22,16 @@ constexpr int SocketCloseOnExec = 0x10000000;
 constexpr int GuestEbadf = 9;
 constexpr int GuestEinval = 22;
 constexpr int GuestEopnotsupp = 45;
+constexpr int WriteOnly = 0x1;
+constexpr int ReadWrite = 0x2;
+constexpr int Nonblocking = 0x4;
+constexpr int Append = 0x8;
+constexpr int Asynchronous = 0x40;
+constexpr int Synchronous = 0x80;
+constexpr int ReadAhead = 0x200;
+constexpr int NoControllingTerminal = 0x8000;
+constexpr int Direct = 0x10000;
+constexpr int Kept = Append | Asynchronous | Synchronous | ReadAhead | Direct;
 
 void Require(bool condition, const char* what) {
     if (condition) return;
@@ -26,9 +39,38 @@ void Require(bool condition, const char* what) {
     std::abort();
 }
 
+void StatusFlags() {
+    const int listener = socket_nid_postfix(2, Stream, 0);
+    Require(listener >= 0, "socket failed");
+    Require(fcntl_nid_postfix(listener, SetStatusFlags, Kept | WriteOnly | NoControllingTerminal) == 0,
+        "F_SETFL must keep O_APPEND, O_ASYNC, O_FSYNC, the read-ahead bit and O_DIRECT and ignore the other bits, as kern_fcntl does");
+    Require(fcntl_nid_postfix(listener, GetStatusFlags) == (ReadWrite | Kept), "F_GETFL must report the kept bits after O_RDWR");
+    const int copy = dup_nid_postfix(listener);
+    Require(copy >= 0 && fcntl_nid_postfix(copy, GetStatusFlags) == (ReadWrite | Kept), "dup must share the status flags");
+    Require(fcntl_nid_postfix(copy, SetStatusFlags, Append | Nonblocking) == 0, "F_SETFL through a duplicate must succeed");
+    Require(fcntl_nid_postfix(listener, GetStatusFlags) == (ReadWrite | Append | Nonblocking), "F_SETFL through a duplicate must change the original");
+    Require(close_nid_postfix(copy) == 0, "close failed");
+    Require(fcntl_nid_postfix(listener, SetStatusFlags, Kept) == 0 && fcntl_nid_postfix(listener, GetStatusFlags) == (ReadWrite | Kept),
+        "F_SETFL without O_NONBLOCK must clear it and keep the other bits");
+    std::array<std::uint8_t, 16> address{16, 2, 0, 0, 127, 0, 0, 1};
+    Require(bind_nid_postfix(listener, address.data(), address.size()) == 0 && listen_nid_postfix(listener, 4) == 0, "listen failed");
+    std::uint32_t size = address.size();
+    Require(getsockname_nid_postfix(listener, address.data(), &size) == 0, "getsockname failed");
+    const int client = socket_nid_postfix(2, Stream, 0);
+    Require(client >= 0 && connect_nid_postfix(client, address.data(), address.size()) == 0, "connect failed");
+    Require(fcntl_nid_postfix(client, GetStatusFlags) == ReadWrite, "a new socket must start with O_RDWR alone");
+    const int accepted = accept_nid_postfix(listener, nullptr, nullptr);
+    Require(accepted >= 0 && fcntl_nid_postfix(accepted, GetStatusFlags) == (ReadWrite | Kept),
+        "accept must give the new socket the listener's status flags, as kern_accept4 does with ACCEPT4_INHERIT");
+    Require(fcntl_nid_postfix(listener, SetStatusFlags, 0) == 0 && fcntl_nid_postfix(listener, GetStatusFlags) == ReadWrite, "F_SETFL 0 must clear the kept bits");
+    Require(fcntl_nid_postfix(accepted, GetStatusFlags) == (ReadWrite | Kept), "the accepted socket must keep its own status flags");
+    for (const int descriptor : {accepted, client, listener}) Require(close_nid_postfix(descriptor) == 0, "close failed");
+}
+
 }
 
 int main() {
+    StatusFlags();
     const int plain = socket_nid_postfix(2, Stream, 0);
     Require(plain >= 0, "socket failed");
     Require(fcntl_nid_postfix(plain, GetDescriptorFlags) == 0, "a new socket must not be close-on-exec (F_GETFD 0)");
