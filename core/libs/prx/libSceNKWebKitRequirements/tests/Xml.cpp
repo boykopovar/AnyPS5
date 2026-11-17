@@ -1,5 +1,7 @@
 #include "prx/libSceNKWebKitRequirements/libSceNKWebKitRequirements.hpp"
 
+#include <libxml/parser.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -518,9 +520,159 @@ void TestUnknownContexts() {
     rejects([&] { xmlSAX2EntityDecl_nid_postfix(&stray, reinterpret_cast<const uint8_t*>("e"), 1, nullptr, nullptr, reinterpret_cast<const uint8_t*>("v")); }, "xmlSAX2EntityDecl should reject a context it did not create");
 }
 
+enum class RouteChoice { Keep, Clear, Second };
+
+struct RouteCase {
+    const char* name;
+    bool initialNull = false;
+    RouteChoice before = RouteChoice::Keep;
+    RouteChoice during = RouteChoice::Keep;
+    bool split = false;
+    bool callbacks = true;
+};
+
+struct RouteResult {
+    std::vector<int> events;
+    int created = -1;
+    int final = -1;
+    int status = -1;
+    bool valid = true;
+    bool operator==(const RouteResult&) const = default;
+};
+
+struct RouteRun {
+    int first = 1;
+    int second = 2;
+    void* parser = nullptr;
+    void** slot = nullptr;
+    RouteChoice during = RouteChoice::Keep;
+    RouteResult result;
+
+    int Label(void* value) const {
+        if (!value) return 0;
+        if (value == &first) return 1;
+        if (value == &second) return 2;
+        if (value == parser) return 3;
+        return -1;
+    }
+
+    void Select(RouteChoice choice) {
+        if (choice == RouteChoice::Clear) *slot = nullptr;
+        else if (choice == RouteChoice::Second) *slot = &second;
+    }
+};
+
+RouteRun* activeRoute = nullptr;
+
+void RouteEvent(void* context, int event) {
+    const int label = activeRoute->Label(context);
+    if (label < 0) activeRoute->result.valid = false;
+    activeRoute->result.events.push_back(event * 10 + label);
+    if (event == 2) activeRoute->Select(activeRoute->during);
+}
+
+void NativeRouteStartDoc(void* context) { RouteEvent(context, 1); }
+void NativeRouteEndDoc(void* context) { RouteEvent(context, 5); }
+void NativeRouteCharacters(void* context, const xmlChar*, int) { RouteEvent(context, 3); }
+void NativeRouteStart(void* context, const xmlChar*, const xmlChar*, const xmlChar*, int, const xmlChar**, int, int, const xmlChar**) { RouteEvent(context, 2); }
+void NativeRouteEnd(void* context, const xmlChar*, const xmlChar*, const xmlChar*) { RouteEvent(context, 4); }
+void APS5_VABI GuestRouteStartDoc(void* context) { RouteEvent(context, 1); }
+void APS5_VABI GuestRouteEndDoc(void* context) { RouteEvent(context, 5); }
+void APS5_VABI GuestRouteCharacters(void* context, const uint8_t*, int32_t) { RouteEvent(context, 3); }
+void APS5_VABI GuestRouteStart(void* context, const uint8_t*, const uint8_t*, const uint8_t*, int32_t, const uint8_t**, int32_t, int32_t, const uint8_t**) { RouteEvent(context, 2); }
+void APS5_VABI GuestRouteEnd(void* context, const uint8_t*, const uint8_t*, const uint8_t*) { RouteEvent(context, 4); }
+
+RouteResult ParseRoutes(const RouteCase& scenario, bool guest) {
+    RouteRun run;
+    run.during = scenario.during;
+    activeRoute = &run;
+    xmlSAXHandler nativeSax{};
+    nativeSax.initialized = XML_SAX2_MAGIC;
+    nativeSax.startDocument = NativeRouteStartDoc;
+    nativeSax.endDocument = NativeRouteEndDoc;
+    nativeSax.characters = NativeRouteCharacters;
+    nativeSax.startElementNs = NativeRouteStart;
+    nativeSax.endElementNs = NativeRouteEnd;
+    NKWebKit::GuestSAXHandler guestSax{};
+    guestSax.initialized = XML_SAX2_MAGIC;
+    guestSax.startDocument = GuestRouteStartDoc;
+    guestSax.endDocument = GuestRouteEndDoc;
+    guestSax.characters = GuestRouteCharacters;
+    guestSax.startElementNs = GuestRouteStart;
+    guestSax.endElementNs = GuestRouteEnd;
+    void* initial = scenario.initialNull ? nullptr : &run.first;
+    xmlParserCtxtPtr native = nullptr;
+    NKWebKit::GuestParserCtxt* adapted = nullptr;
+    if (guest) {
+        adapted = xmlCreatePushParserCtxt_nid_postfix(scenario.callbacks ? &guestSax : nullptr, initial, nullptr, 0, "context.xml");
+        if (adapted) {
+            run.parser = adapted;
+            run.slot = &adapted->userData;
+        }
+    } else {
+        native = xmlCreatePushParserCtxt(scenario.callbacks ? &nativeSax : nullptr, initial, nullptr, 0, "context.xml");
+        if (native) {
+            run.parser = native;
+            run.slot = &native->userData;
+        }
+    }
+    if (!run.slot) {
+        run.result.valid = false;
+        activeRoute = nullptr;
+        return run.result;
+    }
+    run.result.created = run.Label(*run.slot);
+    run.Select(scenario.before);
+    const auto parse = [&](const char* text, int terminate) {
+        const int size = static_cast<int>(std::strlen(text));
+        return guest ? xmlParseChunk_nid_postfix(adapted, text, size, terminate) : xmlParseChunk(native, text, size, terminate);
+    };
+    run.result.status = 0;
+    if (scenario.callbacks) {
+        if (scenario.split) {
+            run.result.status = parse("<root>", 0);
+            run.Select(RouteChoice::Second);
+            if (run.result.status == 0) run.result.status = parse("text</root>", 1);
+        } else run.result.status = parse("<root>text</root>", 1);
+    }
+    run.result.final = run.Label(*run.slot);
+    if (guest) xmlFreeParserCtxt_nid_postfix(adapted);
+    else xmlFreeParserCtxt(native);
+    activeRoute = nullptr;
+    return run.result;
+}
+
+bool TestCallbackContext() {
+    const RouteCase scenarios[]{
+        {"default context", true},
+        {"provided context"},
+        {"replace before parse", false, RouteChoice::Second},
+        {"clear before parse", false, RouteChoice::Clear},
+        {"replace default", true, RouteChoice::Second},
+        {"replace during callback", false, RouteChoice::Keep, RouteChoice::Second},
+        {"clear during callback", false, RouteChoice::Keep, RouteChoice::Clear},
+        {"replace between chunks", false, RouteChoice::Keep, RouteChoice::Keep, true},
+        {"default SAX ignores data", false, RouteChoice::Keep, RouteChoice::Keep, false, false},
+        {"default SAX context", true, RouteChoice::Keep, RouteChoice::Keep, false, false},
+    };
+    int matched = 0;
+    for (const auto& scenario : scenarios) {
+        const auto expected = ParseRoutes(scenario, false);
+        const auto observed = ParseRoutes(scenario, true);
+        const bool passed = expected.valid && observed.valid && expected.status == 0
+            && (!scenario.callbacks || !expected.events.empty()) && expected == observed;
+        if (passed) ++matched;
+        else std::fprintf(stderr, "XML context %s: expected created=%d final=%d, observed created=%d final=%d; callback routes equal=%d\n",
+            scenario.name, expected.created, expected.final, observed.created, observed.final, expected.events == observed.events);
+    }
+    std::printf("XML callback context: %d/10 cases match bundled libxml2\n", matched);
+    return matched == 10;
+}
+
 } // namespace
 
 int main() {
+    if (!TestCallbackContext()) return 1;
     TestBasicStringsAndDict();
     TestPushParserChunks();
     TestErrorHandling();

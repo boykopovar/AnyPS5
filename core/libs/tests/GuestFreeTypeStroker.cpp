@@ -188,11 +188,18 @@ struct Pair {
 };
 
 static void TestNew(GuestLibrary& library, FT_Library native) {
-    void* guest = reinterpret_cast<void*>(1);
-    FT_Stroker expected = nullptr;
+    void* const sentinel = reinterpret_cast<void*>(1);
+    void* guest = sentinel;
+    FT_Stroker expected = static_cast<FT_Stroker>(sentinel);
     Require(FT_Stroker_New_nid_postfix(nullptr, &guest) == FT_Stroker_New(nullptr, &expected));
-    Require(guest == nullptr && expected == nullptr);
+    Require(guest == sentinel && expected == sentinel);
+    GuestLibrary empty;
+    Require(FT_Stroker_New_nid_postfix(&empty, &guest) == FT_Stroker_New(nullptr, &expected));
+    Require(guest == sentinel && expected == sentinel);
+    guest = nullptr;
+    expected = nullptr;
     Require(FT_Stroker_New_nid_postfix(&library, nullptr) == FT_Stroker_New(native, nullptr));
+    Require(FT_Stroker_New_nid_postfix(&library, reinterpret_cast<void**>(0x10)) == FT_Err_Invalid_Argument);
     Require(FT_Stroker_New_nid_postfix(&library, &guest) == FT_Stroker_New(native, &expected));
     Require(guest != nullptr && expected != nullptr);
     FT_Stroker_Done(static_cast<FT_Stroker>(guest));
@@ -221,6 +228,8 @@ static void TestGetCounts(GuestLibrary& library, FT_Library native) {
     Require(FT_Stroker_GetCounts_nid_postfix(nullptr, &points, &contours) == FT_Stroker_GetCounts(nullptr, &nativePoints, &nativeContours));
     Require(points == nativePoints && contours == nativeContours);
     Require(FT_Stroker_GetCounts_nid_postfix(pair.guest, nullptr, nullptr) == FT_Stroker_GetCounts(pair.native, nullptr, nullptr));
+    Require(FT_Stroker_GetCounts_nid_postfix(pair.guest, reinterpret_cast<std::uint32_t*>(0x10), &contours) == FT_Err_Invalid_Argument);
+    Require(FT_Stroker_GetCounts_nid_postfix(pair.guest, &points, reinterpret_cast<std::uint32_t*>(0x10)) == FT_Err_Invalid_Argument);
 }
 
 static void TestBeginSubPath(GuestLibrary& library, FT_Library native) {
@@ -309,6 +318,8 @@ static void TestGetBorderCounts(GuestLibrary& library, FT_Library native) {
                 FT_Stroker_GetBorderCounts(pair.native, static_cast<FT_StrokerBorder>(border), &nativePoints, &nativeContours));
         Require(points == nativePoints && contours == nativeContours);
     }
+    Require(FT_Stroker_GetBorderCounts_nid_postfix(pair.guest, 0, reinterpret_cast<std::uint32_t*>(0x10), nullptr) == FT_Err_Invalid_Argument);
+    Require(FT_Stroker_GetBorderCounts_nid_postfix(pair.guest, 0, nullptr, reinterpret_cast<std::uint32_t*>(0x10)) == FT_Err_Invalid_Argument);
     Require(FT_Stroker_GetBorderCounts_nid_postfix(nullptr, 0, nullptr, nullptr) == FT_Stroker_GetBorderCounts(nullptr, FT_STROKER_BORDER_LEFT, nullptr, nullptr));
 }
 
@@ -452,13 +463,30 @@ static void TestParseOutlineArrays(GuestLibrary& library, FT_Library native) {
     endAtCount.n_points = 3;
     GuestOutline endPastCount = valid;
     endPastCount.n_points = 2;
-    for (const GuestOutline& outline : {noContours, noPoints, noTags, endAtCount, endPastCount}) {
+    GuestOutline unmappedContours = valid;
+    unmappedContours.contours = reinterpret_cast<std::uint16_t*>(std::uintptr_t{0x10});
+    GuestOutline unmappedPoints = valid;
+    unmappedPoints.points = reinterpret_cast<GuestVector*>(std::uintptr_t{0x10});
+    GuestOutline unmappedTags = valid;
+    unmappedTags.tags = reinterpret_cast<unsigned char*>(std::uintptr_t{0x10});
+    for (const GuestOutline& outline : {noContours, noPoints, noTags, endAtCount, endPastCount, unmappedContours, unmappedPoints, unmappedTags}) {
         ParseAtHostLimit(library, native, outline, nativeValid, false);
         Require(FT_Stroker_ParseOutline_nid_postfix(nullptr, &outline, 0) == FT_Err_Invalid_Argument);
     }
     std::uint16_t end = 0;
     ParseAtHostLimit(library, native, GuestOutline{1, 1, nullptr, nullptr, &end, 0}, FT_Outline{1, 1, nullptr, nullptr, &end, 0}, false);
     ParseAtHostLimit(library, native, GuestOutline{0, 4, nullptr, nullptr, nullptr, 0}, FT_Outline{0, 4, nullptr, nullptr, nullptr, 0}, true);
+    Pair pair(library, native);
+    pair.Square(0);
+    std::uint32_t points = 0;
+    std::uint32_t contours = 0;
+    Require(FT_Stroker_GetCounts_nid_postfix(pair.guest, &points, &contours) == 0 && points != 0);
+    const auto* unmapped = reinterpret_cast<const GuestOutline*>(std::uintptr_t{0x10});
+    Require(FT_Stroker_ParseOutline_nid_postfix(pair.guest, unmapped, 0) == FT_Stroker_ParseOutline(pair.native, nullptr, 0));
+    Require(FT_Stroker_ParseOutline_nid_postfix(nullptr, unmapped, 1) == FT_Err_Invalid_Outline);
+    std::uint32_t keptPoints = 0;
+    std::uint32_t keptContours = 0;
+    Require(FT_Stroker_GetCounts_nid_postfix(pair.guest, &keptPoints, &keptContours) == 0 && keptPoints == points && keptContours == contours);
 }
 
 static void TestExportBorder(GuestLibrary& library, FT_Library native) {

@@ -171,6 +171,7 @@ here; a result that depends on these differences needs a run on RDNA2.
 | `v_mad_f32`, `v_mac_f32`, `v_madak_f32`, `v_madmk_f32`, `v_mad_f16`, `v_mac_f16`, `v_mad_legacy_f32`, `v_mac_legacy_f32`, `v_mul_lo_i32`, `s_dcache_discard` | Not accepted. |
 | SDWA (`_sdwa`) | Not accepted. |
 | `v_interp_p1_f32`, `v_interp_mov_f32` | Not accepted, so the LDS interpolation under [Limits](#limits) is RDNA2 only. |
+| 16-bit VALU operands named as whole VGPRs, such as `v_add_f16 v10, v4, v5` in [Use](#use) | Not accepted by clang 23.1.4 for gfx1100 (`operands are not valid for this GPU or mode`). Name the half: `v_add_f16 v10.l, v4.l, v5.l` returns `00004000` and `00007e01` for the example rows. |
 
 `v_mul_legacy_f32`, `ds_wrxchg2_rtn_*` and `ds_wrxchg2st64_rtn_*` still assemble under these names and give the same
 results as their gfx11 names `v_mul_dx9_zero_f32`, `ds_storexchg_2addr_rtn_*` and `ds_storexchg_2addr_stride64_rtn_*`.

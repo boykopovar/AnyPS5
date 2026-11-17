@@ -26,7 +26,6 @@
 #include "SceTypes.hpp"
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
-#include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/AppMetadata/include/AppMetadata.hpp"
 #include "prx/libc/include/FilesystemError.hpp"
 #include "prx/libkernel/KernelErrors.hpp"
@@ -36,6 +35,7 @@
 #include "prx/libkernel/File/include/DescriptorControl.hpp"
 #include "prx/libc/include/CreationMask.hpp"
 #include "prx/libkernel/File/include/FileFlags.hpp"
+#include "prx/libkernel/KernelErrors.hpp"
 #include "prx/libkernel/File/include/File.hpp"
 #include "prx/libkernel/Socket/include/SocketPoll.hpp"
 #include "prx/libkernel/File/include/SharedMemory.hpp"
@@ -85,6 +85,7 @@ constexpr int GuestExdev = 18;
 constexpr int GuestEdeadlk = 11;
 constexpr int GuestEopnotsupp = 45;
 constexpr int GuestEagain = 35;
+constexpr int GuestEnosys = 78;
 std::atomic<int> g_gameCpumode{1};
 constexpr int GuestEloop = 62;
 constexpr int GuestEnametoolong = 63;
@@ -282,6 +283,7 @@ int SymbolicLinkLimitError(const std::filesystem::path& native, bool followLast)
 }
 
 std::int64_t ReadNativeLink(const std::filesystem::path& native, char* buffer, std::size_t size) {
+    if (const int error = SymbolicLinkLimitError(native, false)) return Fail(error);
 #ifdef _WIN32
     const DWORD attributes = GetFileAttributesW(native.wstring().c_str());
     if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
@@ -539,6 +541,10 @@ int APS5_VABI setlogin_nid_postfix(const char* name) {
     if (copied != 0) return static_cast<int>(Fail(copied));
     if (const int error = SetLogin_nid_no_patch(copy.c_str())) return static_cast<int>(Fail(error));
     return 0;
+}
+
+int APS5_VABI sceKernelFlock(int d, int operation) {
+    return flock_nid_postfix(d, operation) == 0 ? 0 : SceKernelError(*__error_nid_postfix());
 }
 
 int APS5_VABI fstatfs_nid_postfix(int d, KernelStatfs* buf) {
@@ -844,9 +850,8 @@ int APS5_VABI chroot_nid_postfix(const char* path) {
 }
 
 int APS5_VABI kldfind_nid_postfix(const char* file) {
-    std::string copy;
-    if (const int error = CopyPath(file, copy)) return static_cast<int>(Fail(error));
-    return static_cast<int>(Fail(GuestEnoent));
+    (void)file;
+    return static_cast<int>(Fail(GuestEnosys));
 }
 
 int APS5_VABI kldload_nid_postfix(const char* file) {
@@ -856,13 +861,13 @@ int APS5_VABI kldload_nid_postfix(const char* file) {
 }
 
 int APS5_VABI kldfirstmod_nid_postfix(int fileid) {
-    return static_cast<int>(Fail(GuestEnoent));
+    (void)fileid;
+    return static_cast<int>(Fail(GuestEnosys));
 }
 
 int APS5_VABI kldnext_nid_postfix(int fileid) {
-    if (fileid < 0) return static_cast<int>(Fail(GuestEnoent));
-    if (fileid == 0) return 0;
-    return static_cast<int>(Fail(GuestEnoent));
+    (void)fileid;
+    return static_cast<int>(Fail(GuestEnosys));
 }
 
 int APS5_VABI kldunload_nid_postfix(int fileid) {
@@ -871,41 +876,16 @@ int APS5_VABI kldunload_nid_postfix(int fileid) {
 }
 
 int APS5_VABI kldstat_nid_postfix(int fileid, void* stat) {
-    struct FileStatus {
-        std::int32_t version;
-        char name[GuestPathMax];
-        std::int32_t refs;
-        std::int32_t id;
-        std::uint64_t address;
-        std::uint64_t size;
-        char pathname[GuestPathMax];
-    };
-    constexpr auto Version1 = static_cast<std::int32_t>(offsetof(FileStatus, pathname));
-    constexpr auto Version2 = static_cast<std::int32_t>(sizeof(FileStatus));
-    static_assert(Version1 == 1056 && Version2 == 2080);
-    std::int32_t version = 0;
-    if (!GuestCopyIn_nid_no_patch(&version, stat, sizeof(version))) return static_cast<int>(Fail(GuestEfault));
-    if (version != Version1 && version != Version2) return static_cast<int>(Fail(GuestEinval));
     (void)fileid;
-    return static_cast<int>(Fail(GuestEnoent));
+    (void)stat;
+    return static_cast<int>(Fail(GuestEnosys));
 }
 
 int APS5_VABI kldsym_nid_postfix(int fileid, int cmd, void* data) {
-    struct SymbolLookup {
-        std::int32_t version;
-        const char* name;
-        std::uint64_t value;
-        std::uint64_t size;
-    };
-    static_assert(sizeof(SymbolLookup) == 32);
-    constexpr int LookupCommand = 1;
-    SymbolLookup lookup{};
-    if (!GuestCopyIn_nid_no_patch(&lookup, data, sizeof(lookup))) return static_cast<int>(Fail(GuestEfault));
-    if (lookup.version != static_cast<std::int32_t>(sizeof(lookup)) || cmd != LookupCommand) return static_cast<int>(Fail(GuestEinval));
-    std::string name;
-    if (const int error = CopyGuestPath_nid_no_patch(lookup.name, name)) return static_cast<int>(Fail(error));
-    if (fileid != 0) return static_cast<int>(Fail(GuestEnoent));
-    throw std::runtime_error("kldsym: looking up the symbol " + name + " in every kernel module is not supported");
+    (void)fileid;
+    (void)cmd;
+    (void)data;
+    return static_cast<int>(Fail(GuestEnosys));
 }
 
 int APS5_VABI swapon_nid_postfix(const char* name) {
@@ -1343,9 +1323,9 @@ void APS5_VABI scePthreadSetName(Pthread thread, const char* name) {
 
 }
 
-int APS5_VABI sceKernelTitleWorkaroundIsEnabled(const KernelTitleWorkaround* workaround, std::int32_t bit, std::int32_t* enabled) {
+static int QueryTitleWorkaround(const KernelTitleWorkaround* workaround, std::int32_t bit, std::int32_t* enabled) {
     if (!workaround || !enabled) return static_cast<int>(0x8002000E);
-    if (static_cast<std::uint32_t>(bit) > 0x7F) return static_cast<int>(0x80020016);
+    if (static_cast<std::uint32_t>(bit) > 0x78) return static_cast<int>(0x80020016);
     KernelTitleWorkaround localWorkaround{};
     const int saved = errno;
     if (!GuestCopyIn_nid_no_patch(&localWorkaround, workaround, sizeof(localWorkaround))) {
@@ -1359,14 +1339,18 @@ int APS5_VABI sceKernelTitleWorkaroundIsEnabled(const KernelTitleWorkaround* wor
     return 0;
 }
 
+int APS5_VABI sceKernelTitleWorkaroundIsEnabled(const KernelTitleWorkaround* workaround, std::int32_t bit, std::int32_t* enabled) {
+    return QueryTitleWorkaround(workaround, bit, enabled);
+}
+
 int APS5_VABI sceKernelTitleWorkdaroundIsEnabled(const KernelTitleWorkaround* workaround, std::int32_t bit, std::int32_t* enabled) {
     return sceKernelTitleWorkaroundIsEnabled(workaround, bit, enabled);
 }
 
 int APS5_VABI sceKernelTitleWorkaroundIsEnabled2(const KernelTitleWorkaround* workaround, std::uint64_t selector, std::uint32_t bit, std::int32_t* enabled) {
     if (!workaround || !enabled) return static_cast<int>(0x8002000E);
-    if (bit > 0x7F || selector >= 0x29) return static_cast<int>(0x80020016);
-    return sceKernelTitleWorkaroundIsEnabled(workaround, static_cast<std::int32_t>(bit), enabled);
+    if (selector >= 0x29) return static_cast<int>(0x80020016);
+    return QueryTitleWorkaround(workaround, static_cast<std::int32_t>(bit), enabled);
 }
 
 int APS5_VABI sceKernelGetProcessType(int pid) {

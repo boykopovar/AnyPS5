@@ -227,6 +227,45 @@ class PatchAdvisorTests(unittest.TestCase):
         run.assert_called_once()
 
     @patch.object(suggest_patches.subprocess, "run")
+    def test_duplicate_catalog_keys_cannot_produce_a_recommendation(self, run):
+        entry = json.dumps(self.entry)
+        duplicate_patch = entry.replace('"patch": "patch.toml"',
+                                        '"patch": "missing.toml", "patch": "patch.toml"')
+        catalogs = (
+            '{"format": 0, "format": 1, "entries": [' + entry + ']}',
+            '{"format": 1, "entries": [' + duplicate_patch + ']}',
+        )
+        run.return_value = subprocess.CompletedProcess([], 0, VERIFIED, "")
+        for catalog in catalogs:
+            with self.subTest(catalog=catalog):
+                run.reset_mock()
+                (self.catalog / "index.json").write_text(catalog, encoding="utf-8")
+                output, errors = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                    self.assertEqual(self.advise(), 2)
+                self.assertEqual(output.getvalue(), "")
+                self.assertIn("duplicate JSON key", errors.getvalue())
+                run.assert_not_called()
+
+    @patch.object(suggest_patches.subprocess, "run")
+    def test_duplicate_param_keys_cannot_produce_a_recommendation(self, run):
+        params = (
+            '{"titleId": "OTHER0001", "titleId": "TEST00001", "contentVersion": "01.000.000"}',
+            '{"titleId": "TEST00001", "contentVersion": "00.000.000", "contentVersion": "01.000.000"}',
+        )
+        run.return_value = subprocess.CompletedProcess([], 0, VERIFIED, "")
+        for metadata in params:
+            with self.subTest(metadata=metadata):
+                run.reset_mock()
+                self.param.write_text(metadata, encoding="utf-8")
+                output, errors = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                    self.assertEqual(self.advise(), 2)
+                self.assertEqual(output.getvalue(), "")
+                self.assertIn("duplicate JSON key", errors.getvalue())
+                run.assert_not_called()
+
+    @patch.object(suggest_patches.subprocess, "run")
     def test_matching_malformed_patch_is_rejected(self, run):
         self.entry["patch"] = "missing.toml"
         self.write_index()
@@ -580,6 +619,28 @@ class PatchAdvisorTests(unittest.TestCase):
     def test_invalid_timeout_is_rejected_before_relinker(self, run):
         self.assertEqual(self.advise("--timeout-seconds", "0"), 2)
         run.assert_not_called()
+
+
+    def test_relative_path_rejects_unsafe_names(self):
+        self.assertEqual(suggest_patches.relative_path("a/b.txt"), Path("a", "b.txt"))
+        for name in ("", "/abs/x", "../x", "a/../x", "a\\b", "C:/x", None, "a\x00b"):
+            with self.assertRaises(ValueError, msg=repr(name)):
+                suggest_patches.relative_path(name)
+
+
+    def test_unique_json_keys_rejects_duplicate_keys(self):
+        self.assertEqual(suggest_patches.unique_json_keys([("a", 1), ("b", 2)]), {"a": 1, "b": 2})
+        with self.assertRaises(ValueError):
+            suggest_patches.unique_json_keys([("a", 1), ("a", 2)])
+
+
+    def test_confined_keeps_files_under_the_root(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            (root / "inside.txt").write_text("x", encoding="utf-8")
+            self.assertEqual(suggest_patches.confined(root, "inside.txt"), root / "inside.txt")
+            with self.assertRaises(ValueError):
+                suggest_patches.confined(root, "../outside.txt")
 
 
 if __name__ == "__main__":
