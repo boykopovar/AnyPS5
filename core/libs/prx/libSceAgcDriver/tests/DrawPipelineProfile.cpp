@@ -101,6 +101,7 @@ void TestReport() {
         pipeline.Enqueue([&] { release.acquire(); }, {}, 0, {}, {{0x1000, 0x1010}, {0x2000, 0x2010}}, true);
         Check(DrawPipeline::HeldReads(0x1000, 4), "queued read range was not held");
         for (unsigned i = 0; i < 3; ++i) pipeline.NoteDecodeDrain();
+        for (unsigned i = 0; i < 2; ++i) pipeline.NoteDecodeDrainSkip();
         std::this_thread::sleep_until(reportAfter);
         pipeline.Enqueue([] {}, {}, 0, {}, {}, true);
     } catch (...) {
@@ -112,6 +113,7 @@ void TestReport() {
     const auto report = capture.ReadReport();
     std::cout << report << '\n';
     Check(report.find(" 2 read ranges, 1 stores held, 3 decode drains") != std::string::npos, "pipeline read counters changed");
+    Check(report.find(" 3 decode drains (2 skipped)") != std::string::npos, "pipeline decode-drain skip counter changed");
     Check(Count(report, " read ranges") == 1, "pipeline read-range counters were printed more than once");
     Check(Count(report, " stores held") == 1, "pipeline held-store counters were printed more than once");
     Check(Count(report, " decode drains") == 1, "pipeline decode-drain counters were printed more than once");
@@ -191,9 +193,12 @@ void TestDecodeDrainSkip() {
         queue.Drain(DrawPipeline::DrainReason::Submission);
         return outcome;
     };
+    const auto skipsBefore = DrawPipeline::Queue0().DecodeDrainSkips();
     const auto kept = decodeBehindJobs({}, 0, plainRegisters);
+    Check(DrawPipeline::Queue0().DecodeDrainSkips() == skipsBefore + 1, "decode drain skip: the skipped drain was not counted");
     Check(kept.reads == 0u && !kept.drained, "decode drain skip: a decode that read no guest memory still drained behind a job with unknown writes");
     const auto read = decodeBehindJobs(header, headerAddress, tableRegisters);
+    Check(DrawPipeline::Queue0().DecodeDrainSkips() == skipsBefore + 1, "decode drain skip: a decode that read vertex tables was counted as skipped");
     Check(read.reads != 0u && read.drained, "decode drain skip: a decode that read vertex tables did not drain behind a job with unknown writes");
     Check(read.info.fetchEmbedded && read.info.resourcesNum == 1 && read.info.resources[0].fields[0] == 0x1000u, "decode drain skip: the decode of the vertex tables after the drain lost its buffer");
 }
