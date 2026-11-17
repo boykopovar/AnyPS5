@@ -1128,6 +1128,55 @@ void testDeltaPaths(const std::filesystem::path& directory, std::string_view mod
         "after the second flip the replay keeps the code a shader delta wrote into an unaligned unwatched range, not the code the title restored");
 }
 
+void testRemappedRange(const std::filesystem::path& directory) {
+    constexpr std::size_t Block = FrameCaptureWriter::BlockBytes;
+    auto* recorder = AgcDriver::FrameRecorder::Active();
+    check(recorder != nullptr, "frame recorder is disabled");
+    recorder->FrameBoundary();
+    auto* piece = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(Block, Block));
+    check(piece != nullptr, "guest reservation failed");
+    GuestArena::GuestArenaCommit_nid_postfix(piece, Block, 0x04, Block);
+#ifdef _WIN32
+    AgcDriver::GuestMemory::Unwatch(address(piece), Block);
+#endif
+    check(!AgcDriver::GuestMemory::Watched(address(piece), Block), "the remapped range is write-watched");
+    const auto map = [&] {
+        GuestAllocations::Mutation mutation;
+        mutation.Add(piece, Block, true, true, false);
+    };
+    const std::vector<std::byte> first(Block, std::byte{0x3a});
+    const std::vector<std::byte> second(Block, std::byte{0xc5});
+    std::memcpy(piece, first.data(), Block);
+    map();
+    recorder->Flip(AgcDriver::FlipInfo{}, {});
+    recorder->Flip(AgcDriver::FlipInfo{}, {});
+    {
+        GuestAllocations::Mutation mutation;
+        mutation.Remove(piece);
+    }
+    map();
+    std::memcpy(piece, second.data(), Block);
+    recorder->Flip(AgcDriver::FlipInfo{}, {});
+    std::memcpy(piece, first.data(), Block);
+    recorder->Flip(AgcDriver::FlipInfo{}, {});
+    recorder->FrameBoundary();
+    const FrameCaptureReader reader(directory);
+    CapturedMemory memory(reader);
+    std::map<std::uint64_t, std::vector<const FrameMemoryChunk*>> groups;
+    for (const auto& chunk : reader.Chunks()) {
+        if (chunk.kind == FrameMemoryKind::Delta) groups[chunk.group].push_back(&chunk);
+    }
+    std::vector<std::optional<std::vector<std::byte>>> replayed;
+    for (const auto& call : reader.Calls()) {
+        if (call.kind == FrameCallKind::Flip) replayed.push_back(memory.Read(address(piece), Block));
+        if (call.kind != FrameCallKind::Memory) continue;
+        if (const auto found = groups.find(call.values.at(0)); found != groups.end()) memory.Apply(found->second);
+    }
+    check(replayed.size() == 4, "the capture lost a flip of the test");
+    check(replayed[2] == second, "the replay does not see the bytes the title wrote into the range mapped again at the same address");
+    check(replayed[3] == first, "after the title restored the bytes sampled before the range was mapped again, the replay keeps the bytes written after the remap");
+}
+
 void testHostShaderPageGpuStore(const std::filesystem::path& directory) {
     constexpr std::size_t Page = AgcDriver::FrameRecorder::HostPageBytes;
     constexpr std::size_t CodeBytes = 256;
@@ -1497,6 +1546,7 @@ int main(int argc, char** argv) {
         else if (mode == "forget_unwatched_hashes") testForgottenUnwatchedHashes();
         else if (mode == "unaligned_gpu_fill") testUnalignedGpuFill();
         else if (mode == "captured_spans") testCapturedSpans();
+        else if (mode == "remapped_range") testRemappedRange(directory);
         else if (mode == "reservations" || mode == "reservation_failure") testRepeatedReservations(directory, mode == "reservation_failure");
         else if (mode == "blocking") testBlockingSubmission(directory);
         else if (mode == "environment") testColdPipelines();
