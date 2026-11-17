@@ -319,7 +319,6 @@ void CheckAcceptedIdSet() {
 }
 
 int main() {
-    Require(sceSysmoduleIsCameraPreloaded() == 0);
     CheckUnknownIds();
     CheckAcceptedIdSet();
     Require(sceSysmoduleIsLoaded(0) == kInvalidValue);
@@ -519,4 +518,5 @@ int main() {
     Require(sceSysmoduleUnloadModuleByNameInternal(0x7fffffff, 0, nullptr, 0, &invalidResult) == sceKernelStopUnloadModule(0x7fffffff, 0, nullptr, 0, nullptr, &kernelResult));
     Require(invalidResult == kernelResult);
     Require(sceSysmoduleUnloadModuleByNameInternal(byName, 0, nullptr, 0, nullptr) == 0);
+    Require(sceSysmoduleIsCameraPreloaded() == 0);
 }
