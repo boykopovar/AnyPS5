@@ -5100,7 +5100,11 @@ void Recorder::Sync() {
     while (!inFlight.empty()) {
         auto batch = std::move(inFlight.front());
         inFlight.pop_front();
-        finish(std::move(batch), true, source);
+        try {
+            finish(std::move(batch), true, source);
+        } catch (...) {
+            if (failure == nullptr) failure = std::current_exception();
+        }
     }
     activeSyncSite = previousSite;
     if (failure != nullptr) std::rethrow_exception(failure);

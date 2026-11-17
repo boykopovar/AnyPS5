@@ -2297,6 +2297,29 @@ void deferredBatchTests(const Device& device) {
     {
         Context failing = context;
         failing.deviceProc = replayFailingDeviceProc;
+        Recorder recorder(failing, false, true, context.queueFamily);
+        recordBarrierThrough(failing, recorder.Commands());
+        recorder.Submit();
+        recordBarrierThrough(failing, recorder.Commands());
+        recorder.Submit();
+        recordBarrierThrough(failing, recorder.Commands());
+        Require(recorder.InFlightBatches() == 2, "two submitted batches were not in flight");
+        refusedSubmits.store(true);
+        failingFences.store(1);
+        std::string reason;
+        try {
+            recorder.Sync();
+        } catch (const std::exception& error) {
+            reason = error.what();
+        }
+        refusedSubmits.store(false);
+        Require(failingFences.load() == 0, "Sync did not wait on the first batch's fence");
+        Require(recorder.InFlightBatches() == 0, "Sync left " + std::to_string(recorder.InFlightBatches()) + " batches in flight after a fence wait failed");
+        Require(reason.find("vkQueueSubmit") != std::string::npos, "Sync did not report the submission failure first: " + reason);
+    }
+    {
+        Context failing = context;
+        failing.deviceProc = replayFailingDeviceProc;
         VkCommandBufferAllocateInfo allocation{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
         allocation.commandPool = context.pool;
         allocation.level = VK_COMMAND_BUFFER_LEVEL_SECONDARY;
