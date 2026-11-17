@@ -100,7 +100,9 @@ int main() {
     Require(scePlayerReviewDialogGetStatus() == COMMON_DIALOG_STATUS_FINISHED);
     Require(scePlayerReviewDialogUpdateStatus() == COMMON_DIALOG_STATUS_FINISHED);
     Require(scePlayerReviewDialogGetResult(nullptr) == COMMON_DIALOG_ERROR_ARG_NULL);
+    errno = 71;
     Require(scePlayerReviewDialogGetResult(reinterpret_cast<CommonDialogResultPrefix*>(0x10)) == COMMON_DIALOG_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
     Require(scePlayerReviewDialogGetResult(reinterpret_cast<CommonDialogResultPrefix*>(result)) == COMMON_DIALOG_RESULT_USER_CANCELED);
     Require(result[0] == -1 && result[1] == -1 && result[3] == -1);
     Require(result[2] == COMMON_DIALOG_RESULT_USER_CANCELED);
