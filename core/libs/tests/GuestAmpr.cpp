@@ -806,7 +806,7 @@ void TestResolveFailures() {
         Require(sceKernelAprResolveFilepathsToIds(&invalid, 1, ids, &failed) == -1);
         Require(*__error_nid_postfix() == 2 && failed == 0 && ids[0] == 0xffffffffu);
     }
-    auto** const unreadableTable = reinterpret_cast<const char**>(0x10);
+    const char** const unreadableTable = reinterpret_cast<const char**>(0x10);
     const char* unreadableEntry[]{reinterpret_cast<const char*>(0x10)};
     const auto* const unreadablePrefix = reinterpret_cast<const char*>(0x10);
     const auto faulted = [](int result) {
@@ -824,6 +824,18 @@ void TestResolveFailures() {
     Require(faulted(sceKernelAprResolveFilepathsToIdsForEach(paths, 1, ids, reinterpret_cast<int*>(0x10))));
     ids[1] = 123;
     Require(faulted(sceKernelAprResolveFilepathsToIds(paths, 2, ids, reinterpret_cast<std::uint32_t*>(0x10))) && ids[1] == 0xffffffffu);
+    const std::string longPath(1025, 'a');
+    const char* longPaths[]{longPath.c_str()};
+    ids[0] = 123;
+    failed = 99;
+    *__error_nid_postfix() = 0;
+    Require(sceKernelAprResolveFilepathsToIds(longPaths, 1, ids, &failed) == -1);
+    Require(*__error_nid_postfix() == 2 && failed == 0 && ids[0] == 0xffffffffu);
+    ids[0] = 123;
+    failed = 99;
+    *__error_nid_postfix() = 0;
+    Require(sceKernelAprResolveFilepathsWithPrefixToIds(longPath.c_str(), paths, 1, ids, &failed) == -1);
+    Require(*__error_nid_postfix() == 2 && failed == 0 && ids[0] == 0xffffffffu);
     std::remove(paths[0]);
 }
 
