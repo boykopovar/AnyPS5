@@ -15,6 +15,7 @@ namespace NKWebKit {
 
 class BundleBackForwardList;
 class BundleBackForwardListItem;
+class BundlePageGroup;
 
 std::optional<std::u16string> DecodeUtf8(const char* text, std::size_t length);
 std::optional<std::u16string> DecodeUtf8(const char* text);
@@ -243,6 +244,11 @@ public:
     bool usesEphemeralSession = false;
     std::uint64_t renderTreeSize = 0;
     bool hasComposition = false;
+};
+
+class BundlePageGroup final : public ObjectOf<ObjectType::BundlePageGroup> {
+public:
+    Retained<String> identifier;
 };
 
 class Download final : public ObjectOf<ObjectType::Download> {

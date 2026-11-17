@@ -338,6 +338,8 @@ bool APS5_VABI WKBundleBackForwardListItemHasCachedPageExpired(const void* itemR
 bool APS5_VABI WKBundleBackForwardListItemIsInBackForwardCache(const void* itemRef);
 bool APS5_VABI WKBundleBackForwardListItemIsSame(const void* item1Ref, const void* item2Ref);
 bool APS5_VABI WKBundleBackForwardListItemIsTargetItem(const void* itemRef);
+const void* APS5_VABI WKBundlePageGroupCopyIdentifier(const void* groupRef);
+std::uint32_t APS5_VABI WKBundlePageGroupGetTypeID();
 bool APS5_VABI WKPageAreScrollbarAnimationsSuppressed(const void* pageRef);
 bool APS5_VABI WKPageCanGoBack(const void* page);
 bool APS5_VABI WKPageCanGoForward(const void* page);
