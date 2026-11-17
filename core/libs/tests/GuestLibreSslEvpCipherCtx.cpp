@@ -3,6 +3,7 @@
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "Testing.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -12,6 +13,18 @@
 #include <source_location>
 #include <stdexcept>
 #include <vector>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 constexpr std::size_t ContextBytes = 168;
 constexpr std::size_t CipherOffset = 0;
@@ -105,18 +118,18 @@ static void SetFlags(unsigned char* context, std::uint64_t flags) {
 static bool failCalloc = false;
 static bool failAllocate = false;
 
-static void* APS5_VABI HeapAllocate(std::size_t size) { return failAllocate ? nullptr : std::malloc(size); }
-static void APS5_VABI HeapFree(void* pointer) { std::free(pointer); }
-static void* APS5_VABI HeapCalloc(std::size_t count, std::size_t size) { return failCalloc ? nullptr : std::calloc(count, size); }
-static void* APS5_VABI HeapReallocate(void* pointer, std::size_t size) { return std::realloc(pointer, size); }
-static void* APS5_VABI HeapAlign(std::size_t, std::size_t) { throw std::logic_error("unexpected aligned allocation"); }
-static void* APS5_VABI HeapRealign(void*, std::size_t, std::size_t) { throw std::logic_error("unexpected aligned reallocation"); }
-static int APS5_VABI HeapPosixAlign(void**, std::size_t, std::size_t) { throw std::logic_error("unexpected aligned allocation"); }
+static void* APS5_VABI GuestHeapAllocate(std::size_t size) { return failAllocate ? nullptr : std::malloc(size); }
+static void APS5_VABI GuestHeapFree(void* pointer) { std::free(pointer); }
+static void* APS5_VABI GuestHeapCalloc(std::size_t count, std::size_t size) { return failCalloc ? nullptr : std::calloc(count, size); }
+static void* APS5_VABI GuestHeapReallocate(void* pointer, std::size_t size) { return std::realloc(pointer, size); }
+static void* APS5_VABI GuestHeapAlign(std::size_t, std::size_t) { throw std::logic_error("unexpected aligned allocation"); }
+static void* APS5_VABI GuestHeapRealign(void*, std::size_t, std::size_t) { throw std::logic_error("unexpected aligned reallocation"); }
+static int APS5_VABI GuestHeapPosixAlign(void**, std::size_t, std::size_t) { throw std::logic_error("unexpected aligned allocation"); }
 
 static void InitializeHeap() {
-    void* const api[10] {reinterpret_cast<void*>(HeapAllocate), reinterpret_cast<void*>(HeapFree), reinterpret_cast<void*>(HeapCalloc),
-        reinterpret_cast<void*>(HeapReallocate), reinterpret_cast<void*>(HeapAlign), reinterpret_cast<void*>(HeapRealign),
-        reinterpret_cast<void*>(HeapPosixAlign)};
+    void* const api[10] {reinterpret_cast<void*>(GuestHeapAllocate), reinterpret_cast<void*>(GuestHeapFree), reinterpret_cast<void*>(GuestHeapCalloc),
+        reinterpret_cast<void*>(GuestHeapReallocate), reinterpret_cast<void*>(GuestHeapAlign), reinterpret_cast<void*>(GuestHeapRealign),
+        reinterpret_cast<void*>(GuestHeapPosixAlign)};
     ApplicationHeapRegister_nid_no_patch(api);
 }
 
@@ -1442,6 +1455,82 @@ static void TestInPlaceOverlapAndDecryptFailure() {
     Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(decCtx)) == 1);
 }
 
+template<typename TCall> static void RejectsPreservingErrno(TCall call, std::source_location location = std::source_location::current()) {
+    errno = 71;
+    bool rejected = false;
+    try { call(); } catch (const std::runtime_error&) { rejected = errno == 71; }
+    Require(rejected, location);
+}
+
+static void TestGuestPointers() {
+    const auto* cbc = EvpCipher(EVP_aes_128_cbc_nid_postfix());
+    const auto key = Hex(Sp80038aKey128);
+    const auto iv = Hex("000102030405060708090a0b0c0d0e0f");
+    auto* unmapped = reinterpret_cast<LibreSslEvpCipherCtx*>(std::uintptr_t{0x10});
+    const auto* unmappedCipher = reinterpret_cast<const LibreSslEvpCipher*>(std::uintptr_t{0x10});
+    const auto* unmappedIv = reinterpret_cast<const unsigned char*>(std::uintptr_t{0x10});
+    unsigned char out[32] {};
+    int outl = 0x1234;
+    RejectsPreservingErrno([&] { EVP_CIPHER_CTX_init_nid_postfix(unmapped); });
+    RejectsPreservingErrno([&] { EVP_CIPHER_CTX_set_padding_nid_postfix(unmapped, 0); });
+    RejectsPreservingErrno([&] { EVP_CIPHER_CTX_cleanup_nid_postfix(unmapped); });
+    RejectsPreservingErrno([&] { EVP_CIPHER_CTX_ctrl_nid_postfix(unmapped, 0, 0, nullptr); });
+    RejectsPreservingErrno([&] { EVP_CipherInit_ex_nid_postfix(unmapped, cbc, nullptr, key.data(), iv.data(), 1); });
+    RejectsPreservingErrno([&] { EVP_CipherUpdate_nid_postfix(unmapped, out, &outl, key.data(), 16); });
+    RejectsPreservingErrno([&] { EVP_CipherFinal_ex_nid_postfix(unmapped, out, &outl); });
+    Require(outl == 0x1234);
+
+    unsigned char context[ContextBytes] {};
+    RejectsPreservingErrno([&] { EVP_CipherInit_ex_nid_postfix(Context(context), unmappedCipher, nullptr, key.data(), iv.data(), 1); });
+    Require(Load<const void*>(context, CipherOffset) == nullptr && Load<int>(context, EncryptOffset) == 1);
+    RejectsPreservingErrno([&] { EVP_CipherInit_ex_nid_postfix(Context(context), cbc, nullptr, key.data(), unmappedIv, 1); });
+    Require(Load<const void*>(context, CipherOffset) == cbc);
+    unsigned char zeroIv[16] {};
+    Require(std::memcmp(context + OivOffset, zeroIv, sizeof(zeroIv)) == 0 && std::memcmp(context + IvOffset, zeroIv, sizeof(zeroIv)) == 0);
+    Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(context)) == 1);
+
+#ifdef _WIN32
+    SYSTEM_INFO info {};
+    GetSystemInfo(&info);
+    const std::size_t pageSize = info.dwPageSize;
+    void* page = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    Require(page != nullptr);
+#else
+    const std::size_t pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED);
+#endif
+    auto* readOnly = static_cast<unsigned char*>(page);
+    Require(EVP_CipherInit_ex_nid_postfix(Context(readOnly), cbc, nullptr, key.data(), iv.data(), 1) == 1);
+    unsigned char snapshot[ContextBytes];
+    std::memcpy(snapshot, readOnly, sizeof(snapshot));
+#ifdef _WIN32
+    DWORD previous = 0;
+    Require(VirtualProtect(page, pageSize, PAGE_READONLY, &previous) != 0);
+#else
+    Require(mprotect(page, pageSize, PROT_READ) == 0);
+#endif
+    RejectsPreservingErrno([&] { EVP_CIPHER_CTX_init_nid_postfix(Context(readOnly)); });
+    RejectsPreservingErrno([&] { EVP_CIPHER_CTX_set_padding_nid_postfix(Context(readOnly), 0); });
+    RejectsPreservingErrno([&] { EVP_CIPHER_CTX_cleanup_nid_postfix(Context(readOnly)); });
+    RejectsPreservingErrno([&] { EVP_CipherInit_ex_nid_postfix(Context(readOnly), cbc, nullptr, key.data(), iv.data(), 0); });
+    Require(std::memcmp(snapshot, readOnly, sizeof(snapshot)) == 0);
+#ifdef _WIN32
+    Require(VirtualProtect(page, pageSize, PAGE_READWRITE, &previous) != 0);
+#else
+    Require(mprotect(page, pageSize, PROT_READ | PROT_WRITE) == 0);
+#endif
+    const auto plain = Hex("6bc1bee22e409f96e93d7e117393172a");
+    Require(EVP_CipherUpdate_nid_postfix(Context(readOnly), out, &outl, plain.data(), static_cast<int>(plain.size())) == 1);
+    Require(outl == 16 && Bytes(out, out + outl) == Hex("7649abac8119b246cee98e9b12e9197d"));
+    Require(EVP_CIPHER_CTX_cleanup_nid_postfix(Context(readOnly)) == 1);
+#ifdef _WIN32
+    VirtualFree(page, 0, MEM_RELEASE);
+#else
+    munmap(page, pageSize);
+#endif
+}
+
 int main() {
     InitializeHeap();
     TestInit();
@@ -1471,5 +1560,6 @@ int main() {
     TestAesWrap256();
     TestEvpCleanup();
     TestInPlaceOverlapAndDecryptFailure();
+    TestGuestPointers();
     return 0;
 }

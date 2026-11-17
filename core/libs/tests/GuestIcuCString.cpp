@@ -77,7 +77,9 @@ void InvalidFormatting() {
         Require(std::all_of(buffer.begin(), buffer.end(), [](char value) { return value == '@'; }), "invalid radix leaves the buffer unchanged");
     }
     Require(Rejects([] { T_CString_integerToString_nid_postfix(nullptr, 42, 10); }), "null 32-bit format buffer throws");
+    Require(Rejects([] { T_CString_integerToString_nid_postfix(reinterpret_cast<char*>(0x10), 42, 10); }), "unwritable 32-bit format buffer throws");
     Require(Rejects([] { T_CString_int64ToString_nid_postfix(nullptr, 42, 10); }), "null 64-bit format buffer throws");
+    Require(Rejects([] { T_CString_int64ToString_nid_postfix(reinterpret_cast<char*>(0x10), 42, 10); }), "unwritable 64-bit format buffer throws");
 }
 
 void Parsing() {

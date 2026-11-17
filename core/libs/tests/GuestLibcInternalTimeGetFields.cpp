@@ -686,7 +686,7 @@ void CheckGroup4GetAndGetFmt() {
 } // namespace
 
 int main() {
-    std::array<void*, 7> api{
+    std::array<void*, 10> api{
         reinterpret_cast<void*>(&HeapAllocate),
         reinterpret_cast<void*>(&HeapFree),
         reinterpret_cast<void*>(&HeapCalloc),

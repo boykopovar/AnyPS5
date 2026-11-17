@@ -1,4 +1,5 @@
 #include "prx/libSceAgc/Misc/include/StaticBuffer.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/GuestArena.hpp"
 #include "Testing.hpp"
 #ifdef __APPLE__
@@ -6,6 +7,8 @@
 #endif
 
 #include <array>
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -40,6 +43,36 @@ void testBuffers() {
     Require(slot(0) == fetchShaderTable, "static buffer writes changed slot 0");
 }
 
+void testInvalidGuestPointers() {
+    const auto before = slot(2);
+    errno = E2BIG;
+    Require(sceAgcSetStaticBuffer(2, nullptr) == InvalidStaticBuffer, "static buffer set accepted a null guest pointer");
+    Require(errno == E2BIG, "a rejected static buffer set changed errno");
+    Require(sceAgcSetStaticBuffer(2, reinterpret_cast<const void*>(0x1)) == InvalidStaticBuffer, "static buffer set accepted an unmapped guest pointer");
+    Require(slot(2) == before, "rejected static buffer set changed slot 2");
+    std::array<std::uint8_t, 16> out{};
+    out.fill(0xAA);
+    errno = E2BIG;
+    Require(sceAgcGetStaticBuffer(2, nullptr) == InvalidStaticBuffer, "static buffer get accepted a null guest pointer");
+    Require(errno == E2BIG, "a rejected static buffer get changed errno");
+    Require(sceAgcGetStaticBuffer(2, reinterpret_cast<void*>(0x1)) == InvalidStaticBuffer, "static buffer get accepted an unmapped guest pointer");
+    for (std::uint8_t byte : out) Require(byte == 0xAA, "rejected static buffer get touched the sentinel output");
+}
+
+void testReadOnlyGuestPages() {
+    auto* page = static_cast<std::byte*>(GuestArena::GuestArenaAllocate_nid_postfix(65536u, 4096u));
+    Require(page != nullptr, "cannot reserve a read-only guest page fixture");
+    GuestArena::GuestArenaCommit_nid_postfix(page, 65536u, 0x02, 4096u);
+    const auto before = slot(1);
+    errno = E2BIG;
+    Require(sceAgcGetStaticBuffer(1, page) == InvalidStaticBuffer, "static buffer get wrote into a read-only guest page");
+    Require(errno == E2BIG, "a rejected read-only static buffer get changed errno");
+    GuestArena::GuestArenaReset_nid_postfix(page, 65536u);
+    GuestAllocations::GuestAllocationsInvalidate_nid_postfix(reinterpret_cast<std::uintptr_t>(page), 65536u);
+    GuestArena::GuestArenaRelease_nid_postfix(page, 65536u);
+    Require(slot(1) == before, "rejected static buffer get changed slot 1");
+}
+
 void testQwords() {
     Require(sceAgcSetStaticQword(0, 0x0123456789abcdefull) == 0, "writing static qword 0 failed");
     Require(sceAgcSetStaticQword(3, 0xfedcba9876543210ull) == 0, "writing static qword 3 failed");
@@ -68,6 +101,8 @@ int main() {
 #endif
     try {
         testBuffers();
+        testInvalidGuestPointers();
+        testReadOnlyGuestPages();
         testQwords();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());

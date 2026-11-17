@@ -2,6 +2,8 @@
 #include "Testing.hpp"
 
 #include <array>
+#include <cerrno>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -53,6 +55,18 @@ bool Throws(Call call) {
         return true;
     }
     return false;
+}
+
+template <class Call>
+bool Faults(Call call) {
+    errno = 71;
+    bool threw = false;
+    try {
+        call();
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    return threw && errno == 71;
 }
 
 std::uint8_t* At(std::uint64_t address) {
@@ -451,6 +465,19 @@ void TestReadFields() {
     Require(!stream.cursor && !stream.limit && stream.base == data.data() && stream.pos == 4, "refused fields leave no memory frame");
 }
 
+void TestReadFieldsLongBytes() {
+    std::array<std::uint8_t, 600> data{};
+    for (std::size_t i = 0; i < data.size(); ++i) data[i] = static_cast<std::uint8_t>(i * 7 + 3);
+    auto stream = MemoryStream(data.data(), data.size());
+    const std::array<GuestFrameField, 5> fields{{{4, 0, 511}, {24, 255, 0}, {24, 255, 255}, {24, 1, 510}, {0, 0, 0}}};
+    std::array<std::uint8_t, 520> target{};
+    target.fill(0xEE);
+    Require(api.ReadFields(&stream, fields.data(), target.data()) == 0, "longest byte sequence fields");
+    Require(std::memcmp(target.data(), data.data(), 511) == 0, "longest byte sequences copied in full");
+    Require(target[511] == 0xEE && target[519] == 0xEE, "longest byte sequences write nothing past their fields");
+    Require(!stream.cursor && !stream.limit && stream.pos == 511, "longest byte sequences close their frame");
+}
+
 void TestNullStream() {
     int error = 0;
     std::uint8_t* frame = nullptr;
@@ -463,6 +490,66 @@ void TestNullStream() {
     Require(Throws([&] { api.ReadChar(nullptr, &error); }) && Throws([&] { api.ReadLong(nullptr, &error); }), "readers");
 }
 
+void TestGuestPointers() {
+    static const std::uintptr_t readOnlyFrame = 0x99;
+    static const int readOnlyError = 7;
+    static const GuestStreamRec readOnlyStream{nullptr, 4};
+    auto* badStream = reinterpret_cast<GuestStreamRec*>(At(0x10));
+    auto** badFrame = reinterpret_cast<std::uint8_t**>(At(0x10));
+    auto** readOnly = reinterpret_cast<std::uint8_t**>(const_cast<std::uintptr_t*>(&readOnlyFrame));
+    auto* badFields = reinterpret_cast<const GuestFrameField*>(At(0x10));
+    auto* badMemory = reinterpret_cast<GuestMemoryRec*>(At(0x10));
+    std::array<std::uint8_t, 4> data{{0x81, 0x02, 0x03, 0x04}};
+    std::array<std::uint8_t, 8> target{};
+    int error = 5;
+    std::uint8_t* frame = At(0x99);
+
+    Require(Faults([&] { api.Close(badStream); }), "unreadable stream on close");
+    Require(Faults([&] { api.Free(badStream, 1); }), "unreadable stream on free");
+    auto stream = DeviceStream({}, 0);
+    stream.close = DeviceClose;
+    stream.memory = badMemory;
+    Require(Faults([&] { api.Free(&stream, 0); }) && device.closes == 0, "unreadable allocator on free does not close");
+
+    stream = MemoryStream(data.data(), data.size());
+    Require(Faults([&] { api.ExtractFrame(&stream, 2, badFrame); }), "unwritable frame pointer on extraction");
+    Require(Faults([&] { api.ExtractFrame(&stream, 2, readOnly); }) && readOnlyFrame == 0x99, "read-only frame pointer on extraction");
+    Require(stream.pos == 0 && !stream.cursor && !stream.limit, "refused extraction enters no frame");
+    Require(Faults([&] { api.ExtractFrame(badStream, 2, &frame); }) && frame == At(0x99), "unreadable stream on extraction");
+    Require(Faults([&] { api.ExtractFrame(const_cast<GuestStreamRec*>(&readOnlyStream), 2, &frame); }) && frame == At(0x99), "read-only stream on extraction");
+    Require(readOnlyStream.pos == 0 && !readOnlyStream.cursor, "read-only stream is unchanged");
+    Require(Faults([&] { api.ReleaseFrame(&stream, badFrame); }), "unwritable frame pointer on release");
+    Require(Faults([&] { api.ReleaseFrame(badStream, &frame); }) && frame == At(0x99), "unreadable stream on release");
+    auto deviceStream = DeviceStream({1, 2, 3}, 3);
+    Require(Faults([&] { api.ReleaseFrame(&deviceStream, readOnly); }) && device.releases.empty(), "read-only frame pointer is not released");
+
+    Require(Faults([&] { api.ReadChar(&stream, reinterpret_cast<int*>(At(0x10))); }), "unwritable error on read char");
+    Require(Faults([&] { api.ReadChar(&stream, const_cast<int*>(&readOnlyError)); }) && readOnlyError == 7, "read-only error on read char");
+    Require(Faults([&] { api.ReadChar(badStream, &error); }), "unreadable stream on read char");
+    Require(stream.pos == 0, "refused read char keeps the position");
+    auto unmapped = MemoryStream(At(0x10), 4);
+    Require(Faults([&] { api.ReadChar(&unmapped, &error); }) && error == 0 && unmapped.pos == 0, "unreadable memory base on read char");
+    Require(api.ReadChar(&stream, &error) == -127 && error == 0 && stream.pos == 1, "read char still reads");
+
+    const std::array<GuestFrameField, 3> byteField{{{4, 0, 2}, {8, 1, 0}, {0, 0, 0}}};
+    const std::array<GuestFrameField, 3> bytesField{{{4, 0, 2}, {24, 2, 0}, {0, 0, 0}}};
+    stream.pos = 0;
+    Require(Faults([&] { api.ReadFields(&stream, badFields, target.data()); }), "unreadable fields");
+    Require(Faults([&] { api.ReadFields(badStream, byteField.data(), target.data()); }), "unreadable stream on fields");
+    Require(Faults([&] { api.ReadFields(&stream, byteField.data(), At(0x10)); }), "unwritable structure for a value");
+    Require(!stream.cursor && !stream.limit && stream.pos == 2, "refused value leaves no frame");
+    stream.pos = 0;
+    Require(Faults([&] { api.ReadFields(&stream, bytesField.data(), At(0x10)); }), "unwritable structure for bytes");
+    Require(!stream.cursor && !stream.limit && stream.pos == 2, "refused bytes leave no frame");
+    Require(Faults([&] { api.ReadFields(&unmapped, byteField.data(), target.data()); }), "unreadable frame for a value");
+    Require(Faults([&] { api.ReadFields(&unmapped, bytesField.data(), target.data()); }), "unreadable frame for bytes");
+    Require(!unmapped.cursor && !unmapped.limit, "unreadable frames are left");
+    deviceStream = DeviceStream({1, 2, 3}, 3);
+    Require(Faults([&] { api.ReadFields(&deviceStream, byteField.data(), At(0x10)); }), "unwritable structure in a device frame");
+    Require(device.allocations.size() == 1 && device.releases.size() == 1 && !deviceStream.base && !deviceStream.cursor, "refused device fields release their frame");
+    Require(target == std::array<std::uint8_t, 8>{}, "refused fields write nothing");
+}
+
 void Run() {
     TestOpenMemoryAndPosition();
     TestMemoryReads();
@@ -471,7 +558,9 @@ void Run() {
     TestDeviceStream();
     TestCloseAndFree();
     TestReadFields();
+    TestReadFieldsLongBytes();
     TestNullStream();
+    TestGuestPointers();
 }
 
 }

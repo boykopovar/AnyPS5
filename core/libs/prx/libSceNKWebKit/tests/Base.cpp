@@ -1391,6 +1391,33 @@ static void TestDownload() {
     Require(!WKDownloadGetWasUserInitiated(ref));
     Require(WKDownloadCopyRequest(ref) == nullptr);
     Require(WKDownloadGetOriginatingPage(ref) == nullptr);
+    Require(WKDownloadGetID(ref) == 0);
+    Require(WKDownloadGetResumeData(ref) == nullptr);
+
+    auto* initialChain = WKDownloadCopyRedirectChain(ref);
+    Require(initialChain != nullptr);
+    Require(WKGetTypeID(initialChain) == WKArrayGetTypeID());
+    Require(WKArrayGetSize(initialChain) == 0);
+    WKRelease(initialChain);
+
+    download->id = 987654321ULL;
+    Require(WKDownloadGetID(ref) == 987654321ULL);
+
+    auto dummyResume = NKWebKit::Make<NKWebKit::Data>(std::vector<std::uint8_t>{10, 20, 30});
+    download->resumeData = dummyResume;
+    auto* resumeData = WKDownloadGetResumeData(ref);
+    Require(resumeData != nullptr);
+    Require(WKGetTypeID(resumeData) == WKDataGetTypeID());
+
+    auto dummyChain = NKWebKit::Make<NKWebKit::Array>();
+    auto itemStr = NKWebKit::Make<NKWebKit::String>(std::u16string(u"https://example.com/redirect"));
+    dummyChain->elements.push_back(std::move(itemStr));
+    download->redirectChain = dummyChain;
+    auto* chain = WKDownloadCopyRedirectChain(ref);
+    Require(chain != nullptr);
+    Require(WKGetTypeID(chain) == WKArrayGetTypeID());
+    Require(WKArrayGetSize(chain) == 1);
+    WKRelease(chain);
 
     download->wasUserInitiated = true;
     Require(WKDownloadGetWasUserInitiated(ref));
@@ -1405,6 +1432,30 @@ static void TestDownload() {
     bool threw = false;
     try {
         WKDownloadGetWasUserInitiated(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKDownloadGetID(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKDownloadGetResumeData(nullptr);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    Require(threw);
+
+    threw = false;
+    try {
+        WKDownloadCopyRedirectChain(nullptr);
     } catch (const std::invalid_argument&) {
         threw = true;
     }

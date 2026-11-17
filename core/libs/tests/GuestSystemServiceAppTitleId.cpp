@@ -2,6 +2,7 @@
 #include "prx/libSceSystemService/SystemService.hpp"
 #include "SceTypes.hpp"
 #include "Testing.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -59,6 +60,9 @@ void CheckRunningTitleLookups(const char* titleId, int runningAppId) {
     bool launched = false;
     Require(sceLncUtilIsAppLaunched(titleId, &launched) == 0 && launched);
     Require(sceLncUtilIsAppLaunched(titleId, nullptr) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    errno = 71;
+    Require(sceLncUtilIsAppLaunched(titleId, reinterpret_cast<bool*>(0x10)) == LNC_UTIL_ERROR_INVALID_ARGUMENT);
+    Require(errno == 71);
 }
 
 bool GetAppTitleIdThrows(int appId, GuardedBuffer& buffer) {

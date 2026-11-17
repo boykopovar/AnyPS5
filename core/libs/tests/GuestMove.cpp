@@ -194,8 +194,11 @@ int main() {
     Require(sceMoveSetCalibrationMode(first, 1) == kOk);
     Require(sceMoveSetCalibrationMode(first, -5) == kOk);
     Require(sceMoveGetBluetoothAddress(first, nullptr) == kInvalidArg);
+    Require(sceMoveGetBluetoothAddress(first, reinterpret_cast<uint64_t*>(0x10)) == kInvalidArg);
     Require(sceMoveGetCalibrationInfo(first, nullptr) == kInvalidArg);
     Require(sceMoveGetDeviceId(first, nullptr) == kInvalidArg);
+    Require(sceMoveGetDeviceId(first, reinterpret_cast<uint32_t*>(0x10)) == kInvalidArg);
+    Require(sceMoveReadStateRecent(first, 0, buffer.bytes, reinterpret_cast<int32_t*>(0x10)) == kInvalidArg);
     Require(sceMoveGetBluetoothAddress(first, &address) == kNoControllerConnected && address == 0x5a5a5a5a5a5a5a5a);
     Require(sceMoveGetCalibrationInfo(first, buffer.bytes) == kNoControllerConnected && buffer.Untouched());
     Require(sceMoveGetDeviceId(first, &deviceId) == kNoControllerConnected && deviceId == 0x5a5a5a5a);

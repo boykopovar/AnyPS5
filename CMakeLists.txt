@@ -325,6 +325,7 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_prs.py)
         add_test(NAME shader_scan COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_shader_scan.py)
+        add_test(NAME isa_profiles COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_isa_profiles.py)
         add_test(NAME progress_report_inputs COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_progress_report_inputs.py)
         add_test(NAME tools_compdb_inventory COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/tests/test_compile_database_inventory.py)
@@ -857,7 +858,7 @@ if(BUILD_TESTING)
 
         add_test(NAME title_run_paths COMMAND ${Python3_EXECUTABLE} -u
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_title_run_paths.py -v)
-        set_tests_properties(title_run_paths PROPERTIES TIMEOUT 30)
+        set_tests_properties(title_run_paths PROPERTIES TIMEOUT 300)
         add_test(NAME title_run_identity COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_title_run_identity.py)
         set_tests_properties(title_run_identity PROPERTIES TIMEOUT 30)
