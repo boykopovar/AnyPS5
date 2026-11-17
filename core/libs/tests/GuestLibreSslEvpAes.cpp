@@ -27,18 +27,18 @@ constexpr int GcmSetTag = 0x11;
 constexpr int GcmSetIvFixed = 0x12;
 constexpr int TlsAad = 0x16;
 
-static void* APS5_VABI HeapAllocate(std::size_t size) { return std::malloc(size); }
-static void APS5_VABI HeapFree(void* pointer) { std::free(pointer); }
-static void* APS5_VABI HeapCalloc(std::size_t count, std::size_t size) { return std::calloc(count, size); }
-static void* APS5_VABI HeapReallocate(void* pointer, std::size_t size) { return std::realloc(pointer, size); }
-static void* APS5_VABI HeapAlign(std::size_t, std::size_t) { throw std::logic_error("unexpected aligned allocation"); }
-static void* APS5_VABI HeapRealign(void*, std::size_t, std::size_t) { throw std::logic_error("unexpected aligned reallocation"); }
-static int APS5_VABI HeapPosixAlign(void**, std::size_t, std::size_t) { throw std::logic_error("unexpected aligned allocation"); }
+static void* APS5_VABI GuestHeapAllocate(std::size_t size) { return std::malloc(size); }
+static void APS5_VABI GuestHeapFree(void* pointer) { std::free(pointer); }
+static void* APS5_VABI GuestHeapCalloc(std::size_t count, std::size_t size) { return std::calloc(count, size); }
+static void* APS5_VABI GuestHeapReallocate(void* pointer, std::size_t size) { return std::realloc(pointer, size); }
+static void* APS5_VABI GuestHeapAlign(std::size_t, std::size_t) { throw std::logic_error("unexpected aligned allocation"); }
+static void* APS5_VABI GuestHeapRealign(void*, std::size_t, std::size_t) { throw std::logic_error("unexpected aligned reallocation"); }
+static int APS5_VABI GuestHeapPosixAlign(void**, std::size_t, std::size_t) { throw std::logic_error("unexpected aligned allocation"); }
 
 static void InitializeHeap() {
-    void* const api[10] {reinterpret_cast<void*>(HeapAllocate), reinterpret_cast<void*>(HeapFree), reinterpret_cast<void*>(HeapCalloc),
-        reinterpret_cast<void*>(HeapReallocate), reinterpret_cast<void*>(HeapAlign), reinterpret_cast<void*>(HeapRealign),
-        reinterpret_cast<void*>(HeapPosixAlign)};
+    void* const api[10] {reinterpret_cast<void*>(GuestHeapAllocate), reinterpret_cast<void*>(GuestHeapFree), reinterpret_cast<void*>(GuestHeapCalloc),
+        reinterpret_cast<void*>(GuestHeapReallocate), reinterpret_cast<void*>(GuestHeapAlign), reinterpret_cast<void*>(GuestHeapRealign),
+        reinterpret_cast<void*>(GuestHeapPosixAlign)};
     ApplicationHeapRegister_nid_no_patch(api);
 }
 
