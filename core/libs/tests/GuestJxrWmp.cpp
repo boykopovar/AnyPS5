@@ -372,6 +372,22 @@ void TestTranscode(std::vector<std::uint8_t> encoded, std::uint8_t alphaMode) {
     Require(decoder->release(&decoder) == 0);
     Require(input->close(&input) == 0);
     Require(liveBlocks == blocksBefore);
+    if (alphaMode == 2) {
+        std::vector<std::uint8_t> outOfRange(JxrWmpReferenceTranscodeSize());
+        JxrWmpReferenceTranscodeParameters(outOfRange.data(), Width, Height, 4);
+        input = MemoryStream(encoded, encoded.size());
+        decoder = CreateDecoder();
+        Require(decoder->initialize(decoder, input) == 0);
+        std::vector<std::uint8_t> refused(Capacity);
+        auto* refusedStream = MemoryStream(refused, refused.size());
+        encoder = CreateEncoder();
+        Require(encoder->initialize(encoder, refusedStream, parameters.data(), parameters.size()) == 0);
+        RequireThrow(std::invalid_argument, [&] { encoder->transcode(encoder, decoder, outOfRange.data()); });
+        Require(encoder->release(&encoder) == 0);
+        Require(decoder->release(&decoder) == 0);
+        Require(input->close(&input) == 0);
+        Require(liveBlocks == blocksBefore);
+    }
     if (alphaMode != 0) return;
 
     void* generic = nullptr;

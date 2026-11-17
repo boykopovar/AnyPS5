@@ -33,6 +33,8 @@ std::int64_t Checked(std::int64_t result, std::int32_t refusal, const char* func
         throw std::invalid_argument(std::string(function) + " requires an initialized stream");
     case JXR_WMP_REFUSE_STATE:
         throw std::logic_error(std::string(function) + " was called in an encode state that jxrlib asserts against");
+    case JXR_WMP_REFUSE_ALPHA_MODE:
+        throw std::invalid_argument(std::string(function) + " requires an alpha mode of at most 3");
     case JXR_WMP_REFUSE_CALLBACK:
         throw std::invalid_argument(std::string(function) + " requires the encoder and decoder callbacks it calls");
     default:

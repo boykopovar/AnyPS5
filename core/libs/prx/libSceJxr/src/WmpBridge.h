@@ -15,7 +15,8 @@ enum {
     JXR_WMP_REFUSE_FORMAT = 2,
     JXR_WMP_REFUSE_WIDE_TEXT = 3,
     JXR_WMP_REFUSE_STATE = 4,
-    JXR_WMP_REFUSE_CALLBACK = 5
+    JXR_WMP_REFUSE_CALLBACK = 5,
+    JXR_WMP_REFUSE_ALPHA_MODE = 6
 };
 
 typedef struct JxrWmpDecodeSlots {

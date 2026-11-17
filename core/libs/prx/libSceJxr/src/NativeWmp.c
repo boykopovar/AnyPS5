@@ -336,6 +336,10 @@ int64_t JxrWmpEncodeTranscode_nid_no_patch(void* encoder, void* decoder, void* p
         FALSE == pID->WMP.bHasAlpha, WMP_errAlphaModeCannotBeTranscoded);
     FailIf(!!(PI.grBit & PK_pixfmtHasAlpha) && 3 == pParam->uAlphaMode &&
         pID->WMP.bHasAlpha, WMP_errAlphaModeCannotBeTranscoded);
+    if (pParam->uAlphaMode > 3) {
+        *refusal = JXR_WMP_REFUSE_ALPHA_MODE;
+        goto Cleanup;
+    }
 
     fPlanarAlpha = pIE->WMP.bHasAlpha && (2 == pParam->uAlphaMode);
 
