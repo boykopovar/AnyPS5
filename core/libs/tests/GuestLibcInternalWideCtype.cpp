@@ -285,10 +285,20 @@ void CheckChunkedRanges(Fixture& first) {
         text[0] = u'a';
         text[1] = u'A';
         text[2] = u'!';
-        RequireRejected([&] { sceLibcInternalWideCtypeDoIsRange_nid_no_patch(AsFacet(first), text, text + huge, masks.data()); }, "range classification rejects an oversized range before a guard page");
-        RequireRejected([&] { sceLibcInternalWideCtypeDoScanNot_nid_no_patch(AsFacet(first), ClassA, text, text + huge); }, "scan_not rejects an oversized range before a guard page");
+        std::array<char16_t, 3> expectedUpper{u'a', u'A', u'!'};
+        std::array<short, 3> expectedMasks{-1, -1, -1};
+        sceLibcInternalWideCtypeDoIsRange_nid_no_patch(AsFacet(first), expectedUpper.data(), expectedUpper.data() + 3, expectedMasks.data());
+        sceLibcInternalWideCtypeDoToupperRange_nid_no_patch(AsFacet(first), expectedUpper.data(), expectedUpper.data() + 3);
+        std::array<short, 3> guardedMasks{-1, -1, -1};
+        RequireRejected([&] { sceLibcInternalWideCtypeDoIsRange_nid_no_patch(AsFacet(first), text, text + huge, guardedMasks.data()); }, "range classification rejects an oversized range before a guard page");
+        Require(guardedMasks == expectedMasks, "range classification before a guard page classifies the readable characters");
+        Require(sceLibcInternalWideCtypeDoScanNot_nid_no_patch(AsFacet(first), ClassA, text, text + huge) == text, "scan_not stops at the first mismatch before a guard page");
         RequireRejected([&] { sceLibcInternalWideCtypeDoToupperRange_nid_no_patch(AsFacet(first), text, text + huge); }, "range uppercase rejects an oversized range before a guard page");
-        Require(text[0] == u'a' && text[1] == u'A' && text[2] == u'!', "rejected oversized uppercase writes nothing");
+        Require(text[0] == expectedUpper[0] && text[1] == expectedUpper[1] && text[2] == expectedUpper[2], "range uppercase before a guard page converts the readable characters");
+        text[0] = u'A';
+        text[1] = u'A';
+        text[2] = u'A';
+        RequireRejected([&] { sceLibcInternalWideCtypeDoScanNot_nid_no_patch(AsFacet(first), ClassA, text, text + huge); }, "scan_not rejects an oversized range of matches before a guard page");
 #endif
     });
     Require(masks == std::array<short, 3>{-1, -1, -1}, "rejected oversized classification writes nothing");

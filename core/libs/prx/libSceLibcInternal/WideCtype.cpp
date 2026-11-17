@@ -68,6 +68,7 @@ char16_t Upper(const GuestLocale::Facet* self, unsigned char character) {
 }
 
 constexpr std::size_t ChunkUnits = 0x800;
+constexpr std::uintptr_t PageBytes = 0x1000;
 
 template<typename TVisit>
 void VisitRange(const char* function, const char16_t* first, const char16_t* last, TVisit visit) {
@@ -77,7 +78,9 @@ void VisitRange(const char* function, const char16_t* first, const char16_t* las
     char16_t chunk[ChunkUnits];
     const std::size_t total = (end - start) / sizeof(char16_t);
     for (std::size_t done = 0; done < total;) {
-        const auto count = (std::min)(total - done, ChunkUnits);
+        const auto address = start + done * sizeof(char16_t);
+        const std::size_t pageUnits = (std::max)(std::size_t{1}, static_cast<std::size_t>((PageBytes - address % PageBytes) / sizeof(char16_t)));
+        const auto count = (std::min)({total - done, ChunkUnits, pageUnits});
         if (!GuestCopyIn_nid_no_patch(chunk, first + done, count * sizeof(char16_t))) throw std::invalid_argument(std::string(function) + ": unreadable range");
         if (!visit(chunk, count, done)) return;
         done += count;
