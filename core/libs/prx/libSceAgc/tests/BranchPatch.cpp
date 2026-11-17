@@ -140,11 +140,22 @@ void testMalformedPackets() {
 
 }
 
+void testUnmappedCompareAddressPacket() {
+    Storage storage;
+    static const std::array<std::uint32_t, 14> readOnly{0xc00c3f00u};
+    check(storage.packet[0] == readOnly[0], "read-only branch fixture header differs from a branch packet");
+    auto* unmapped = reinterpret_cast<std::uint32_t*>(std::uintptr_t{0x10});
+    expectFailure([&] { sceAgcBranchPatchSetCompareAddress(unmapped, compareAt(0x1000u)); });
+    expectFailure([&] { sceAgcBranchPatchSetCompareAddress(const_cast<std::uint32_t*>(readOnly.data()), compareAt(0x1000u)); });
+    check(readOnly[2] == 0 && readOnly[3] == 0, "a compare address patch of a read-only packet changed it");
+}
+
 int main() {
     try {
         testWriter();
         testUnusedFields();
         testCompareAddress();
+        testUnmappedCompareAddressPacket();
         testTarget(sceAgcBranchPatchSetThenTarget, 8, 0x10000000u, "then target setter wrote the wrong words");
         testTarget(sceAgcBranchPatchSetElseTarget, 11, 0x20000000u, "else target setter wrote the wrong words");
         testTargetWithCachePolicy(sceAgcBranchPatchSetThenTarget_0300, 8, "3.00 then target setter wrote the wrong words");
