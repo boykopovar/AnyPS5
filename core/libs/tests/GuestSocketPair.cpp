@@ -275,6 +275,32 @@ static void CheckAddressOnPairEnd() {
 #endif
 }
 
+#ifndef _WIN32
+static void CheckFullDatagramReceiver(int type) {
+    constexpr int SolSocket = 0xffff;
+    constexpr int SendTimeout = 0x1005;
+    constexpr int NoBuffers = 55;
+    struct {
+        std::int64_t seconds;
+        std::int64_t microseconds;
+    } timeout{0, 300000};
+    int pair[2] = {-1, -1};
+    Require(socketpair_nid_postfix(Unix, type, 0, pair) == 0);
+    Require(setsockopt_nid_postfix(pair[0], SolSocket, SendTimeout, &timeout, sizeof(timeout)) == 0);
+    int queued = 0;
+    std::int64_t sent = 0;
+    while (queued < 100000 && (sent = send_nid_postfix(pair[0], "d", 1, 0)) == 1) ++queued;
+    Require(queued > 0 && sent == -1 && *__error_nid_postfix() == NoBuffers);
+    Require(sendto_nid_postfix(pair[0], "d", 1, 0, nullptr, 0) == -1 && *__error_nid_postfix() == NoBuffers);
+    Require(write_nid_postfix(pair[0], "d", 1) == -1 && *__error_nid_postfix() == NoBuffers);
+    Require(send_nid_postfix(pair[0], "d", 1, 0x80) == -1 && *__error_nid_postfix() == NoBuffers);
+    char datagram[4]{};
+    Require(recv_nid_postfix(pair[1], datagram, sizeof(datagram), 0) == 1 && datagram[0] == 'd');
+    Require(send_nid_postfix(pair[0], "d", 1, 0) == 1);
+    Require(close_nid_postfix(pair[0]) == 0 && close_nid_postfix(pair[1]) == 0);
+}
+#endif
+
 static void CheckRecordOverSendBuffer(int type, int sendBuffer) {
     constexpr int SolSocket = 0xffff;
     constexpr int SendBuffer = 0x1001;
@@ -478,6 +504,10 @@ int main(int argc, char** argv) {
     CheckRecordOverSendBuffer(Datagram, 2048);
 #if !defined(_WIN32) && !defined(__APPLE__)
     CheckRecordOverSendBuffer(SequencedPacket, 8192);
+#endif
+#ifndef _WIN32
+    CheckFullDatagramReceiver(Datagram);
+    CheckFullDatagramReceiver(Datagram | NonBlocking);
 #endif
 
     Require(Fails(2, Stream, 0, 45));
