@@ -80,6 +80,7 @@ int main() {
     constexpr auto portNotFound = static_cast<std::int32_t>(0x804e0807u);
     Require(sceVoiceGetVolume(128, nullptr) == notInitialized);
     Require(sceVoiceGetBitRate(128, nullptr) == notInitialized);
+    Require(sceVoiceGetMemorySize(0, 0, 0, 0, 0, 0, 0, 0, 0, nullptr) == notInitialized);
     Require(sceVoiceGetMuteFlag(128, nullptr) == notInitialized);
     Require(sceVoiceSetVolume(128, 1.0f) == notInitialized);
     Require(sceVoiceSetMuteFlag(128, 1) == notInitialized);
@@ -159,6 +160,12 @@ int main() {
     scheduled = {1, 700, 0x7f, 700, 0, 0x7f, 700, 0, 0x7f};
     Require(sceVoiceSetThreadsParams(&scheduled) == static_cast<std::int32_t>(0x804e080bu));
     Require(sceVoiceGetResourceInfo(nullptr) == invalidArgument);
+    Require(sceVoiceGetMemorySize(0, 0, 0, 0, 0, 0, 0, 0, 0, nullptr) == invalidArgument);
+    errno = 71;
+    Require(sceVoiceGetMemorySize(0, 0, 0, 0, 0, 0, 0, 0, 0, reinterpret_cast<std::uint32_t*>(0x10)) == invalidArgument);
+    Require(errno == 71);
+    std::uint32_t memSize = 0x5a5a5a5au;
+    Require(sceVoiceGetMemorySize(0, 0, 0, 0, 0, 0, 0, 0, 0, &memSize) == static_cast<std::int32_t>(0x804e080fu) && memSize == 0);
     struct ResourceOutput {
         VoiceResourceInfo info;
         std::uint32_t guard;
@@ -275,7 +282,14 @@ int main() {
     Require(sceVoiceGetVolume(input, reinterpret_cast<float*>(0x10)) == invalidArgument);
     Require(errno == 71);
     Require(sceVoiceGetBitRate(input, &portBitrate) == 0 && portBitrate == 14400);
+    rateInfo.edge = reinterpret_cast<std::uint32_t*>(0x1234);
+    rateInfo.edge_count = 0x5a;
+    rateInfo.reserved = 0x7b;
     Require(sceVoiceGetPortInfo(input, &rateInfo) == 0 && rateInfo.frame_size == 27);
+    Require(rateInfo.edge == reinterpret_cast<std::uint32_t*>(0x1234) && rateInfo.edge_count == 0x5a && rateInfo.reserved == 0x7b);
+    errno = 71;
+    Require(sceVoiceGetPortInfo(input, reinterpret_cast<VoicePortInfo*>(0x10)) == invalidArgument);
+    Require(errno == 71);
     update.voice.bitrate = 1;
     RequireThrows([&] { sceVoiceUpdatePort(input, &update); });
     Require(sceVoiceGetBitRate(input, &portBitrate) == 0 && portBitrate == 14400);
