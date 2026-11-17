@@ -95,6 +95,7 @@ bool CopyGuestBytes(void* destination, const void* source, std::size_t bytes, bo
     const RestoreErrno restore;
     if (prepare) GuestArena::GuestArenaPrepareHostRead_nid_no_patch(source, bytes);
 #ifdef _WIN32
+    if (GuestArena::GuestArenaCopyOwned_nid_no_patch(reinterpret_cast<std::uintptr_t>(source), destination, bytes)) return true;
     SIZE_T copied = 0;
     return ReadProcessMemory(GetCurrentProcess(), source, destination, bytes, &copied) != 0 && copied == bytes;
 #elif defined(__linux__)
