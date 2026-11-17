@@ -247,7 +247,9 @@ void readTrappableImportTests(const Context& context) {
         Require(!ReadTrappableHostImportCovers(hostPointerTraps, first + 2 * half - page, 2 * page, page), "a range past its import was trappable");
     }
     registry(false);
-    Require(!ReadTrappableHostImportCovers(context, first, page, page), "a range was trappable after its import was gone");
+    auto afterImport = importing;
+    afterImport.readTrapsOverHostPointerImports = true;
+    Require(!ReadTrappableHostImportCovers(afterImport, first, page, page), "a range was trappable after its import was gone");
     ::operator delete(block, std::align_val_t{half});
 }
 
