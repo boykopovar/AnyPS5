@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -268,6 +269,14 @@ int main() {
             ReadMatches(face.guest, face.native, 0, offset, 0, false, reads);
         }
         Require(ReadMatches(face.guest, face.native, 0, static_cast<std::int64_t>(font.size() - 3), 8, true, reads) != 0);
+        auto* unmappedLength = reinterpret_cast<std::uint64_t*>(std::uintptr_t{0x10});
+        for (const auto tag : {0ull, 0x54455354ull}) {
+            unsigned char byte = 0xA5;
+            errno = 71;
+            Require(FT_Load_Sfnt_Table_nid_postfix(face.guest, tag, 0, &byte, unmappedLength) == FT_Err_Invalid_Argument && errno == 71 && byte == 0xA5);
+        }
+        errno = 71;
+        Require(FT_Load_Sfnt_Table_nid_postfix(face.guest, 0x4D495353u, 0, nullptr, unmappedLength) == FT_Err_Table_Missing && errno == 71);
         std::array<std::uint64_t, 8> alias{};
         alias.fill(0xA5A5A5A5A5A5A5A5ull);
         alias[0] = 16;

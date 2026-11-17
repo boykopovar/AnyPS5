@@ -1,0 +1,5 @@
+# libSceAgcDriver
+
+## add Functional
+
+- [`agc_hook_clear_access` and `agc_hook_clear_access_off`](../../../core/libs/prx/libSceAgcDriver/tests/Recorder.cpp) skip on a physical device of type `VK_PHYSICAL_DEVICE_TYPE_CPU` (llvmpipe, lavapipe) on Linux. With compared host imports, the publish copy into the unit shadow's import buffer runs as a host memcpy on a Mesa worker thread, and the Linux write watch cannot tell it from a CPU store, so the flush hook drops the pending image's results (`the flush hook did not store the pending image's results it read`). Windows consults the driver's store records and passes. Real GPUs still run both tests. Nothing here affects a player, since no title runs on a CPU device. Marking the copied ranges written at record time was tried and is not enough. Closing the gap needs a Linux counterpart of the Windows store records that attributes a GPU copy to the copy itself, and it has to keep a stale GPU result from overwriting newer CPU data. Found by edubox in #21627.

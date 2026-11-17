@@ -27,6 +27,16 @@ if(BUILD_TESTING)
             add_test(NAME windows_mappings_release_mismatch_${mode} COMMAND windows_mappings_release_tests ${mode})
             set_tests_properties(windows_mappings_release_mismatch_${mode} PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         endforeach()
+
+        add_test_executable(windows_mappings_lock_tests ${LIBS_INCLUDE_DIR}/tests/WindowsMappingsLock.cpp)
+        target_include_directories(windows_mappings_lock_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(windows_mappings_lock_tests PRIVATE libc)
+        configure_windows_unwind(windows_mappings_lock_tests)
+        add_test(NAME windows_mappings_lock COMMAND windows_mappings_lock_tests)
+        add_test(NAME windows_mappings_lock_pthread COMMAND windows_mappings_lock_tests)
+        set_tests_properties(windows_mappings_lock windows_mappings_lock_pthread PROPERTIES TIMEOUT 60
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        set_tests_properties(windows_mappings_lock_pthread PROPERTIES ENVIRONMENT "APS5_MAPPINGS_PTHREAD_LOCK=1")
     endif()
 
     add_test_executable(guest_memmove_snapshot_tests ${LIBS_INCLUDE_DIR}/tests/GuestMemmoveSnapshot.cpp)
@@ -123,6 +133,15 @@ if(BUILD_TESTING)
     set_tests_properties(guest_bounded_search_guards PROPERTIES TIMEOUT 20)
     if(WIN32)
         set_tests_properties(guest_bounded_search_guards PROPERTIES ENVIRONMENT_MODIFICATION
+            "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+    endif()
+    add_test_executable(guest_bounded_copy_blocks_tests ${LIBS_INCLUDE_DIR}/tests/GuestBoundedCopyBlocks.cpp)
+    target_include_directories(guest_bounded_copy_blocks_tests PRIVATE ${LIBS_INCLUDE_DIR})
+    target_link_libraries(guest_bounded_copy_blocks_tests PRIVATE libc)
+    configure_windows_unwind(guest_bounded_copy_blocks_tests)
+    add_test(NAME guest_bounded_copy_blocks COMMAND guest_bounded_copy_blocks_tests)
+    if(WIN32)
+        set_tests_properties(guest_bounded_copy_blocks PROPERTIES ENVIRONMENT_MODIFICATION
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
     endif()
 endif()
@@ -440,6 +459,18 @@ if(BUILD_TESTING)
         set_tests_properties(guest_sce_v2_locimp_references PROPERTIES TIMEOUT 10)
         if(WIN32)
             set_tests_properties(guest_sce_v2_locimp_references PROPERTIES ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+        add_test_executable(guest_sce_v2_makeloc_tests
+            ${LIBS_INCLUDE_DIR}/tests/GuestSceV2Makeloc.cpp
+            ${LIBS_INCLUDE_DIR}/tests/GuestSceV2Exceptions.S)
+        target_include_directories(guest_sce_v2_makeloc_tests PRIVATE ${LIBS_INCLUDE_DIR})
+        target_link_libraries(guest_sce_v2_makeloc_tests PRIVATE libc)
+        configure_windows_unwind(guest_sce_v2_makeloc_tests)
+        add_test(NAME guest_sce_v2_makeloc COMMAND guest_sce_v2_makeloc_tests)
+        set_tests_properties(guest_sce_v2_makeloc PROPERTIES TIMEOUT 10)
+        if(WIN32)
+            set_tests_properties(guest_sce_v2_makeloc PROPERTIES ENVIRONMENT_MODIFICATION
                 "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         endif()
         add_test_executable(guest_filesystem_error_tests
