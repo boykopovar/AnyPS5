@@ -888,6 +888,10 @@ void ReportPreparedAtUse(const ShaderSnapshot& snapshot, const ShaderRecompiler:
         APS5_LOG_OUT_DEBUG("Shader 0x%llx samples a converted image; preparing its converted-sample variant at use", static_cast<unsigned long long>(request.shader.codeAddress));
         return;
     }
+    if (request.context.unsignedPacked32Modes) {
+        APS5_LOG_OUT_DEBUG("Shader 0x%llx selects a packed 32-bit unsigned image from a table; preparing its packed-mode variant at use", static_cast<unsigned long long>(request.shader.codeAddress));
+        return;
+    }
     if (request.context.layerRowSamples) {
         APS5_LOG_OUT_DEBUG("Shader 0x%llx samples a 1D array past maxImageArrayLayers; preparing its layer-row variant at use", static_cast<unsigned long long>(request.shader.codeAddress));
         return;
@@ -1640,7 +1644,7 @@ PendingPreparations& pendingPreparations() {
 
 std::shared_ptr<const ShaderRecompiler::SourceHandle> PrepareInBackground(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& source, std::span<const std::uint64_t> key) {
     const auto keyWords = std::span<const std::uint32_t>(reinterpret_cast<const std::uint32_t*>(key.data()), key.size() * 2u);
-    const auto flags = (source.context.convertedSamples ? 1u : 0u) | (source.context.layerRowSamples ? 2u : 0u);
+    const auto flags = (source.context.convertedSamples ? 1u : 0u) | (source.context.layerRowSamples ? 2u : 0u) | (ShaderRecompiler::UnsignedPacked32ModesWanted(source.context) ? 4u : 0u);
     const std::tuple id{&snapshot, codeOffset, ShaderRecompiler::HashSpirvWords(source.shader.code, ShaderRecompiler::HashSpirvWords(keyWords, flags))};
     auto& pending = pendingPreparations();
     std::shared_ptr<PendingPreparation> job;
@@ -1702,6 +1706,7 @@ ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& s
     std::unique_lock lock(snapshot.prepared->mutex);
     AwaitRegisteredPreparation(*snapshot.prepared, lock);
     if (std::ranges::find(snapshot.prepared->convertedSamples, codeOffset) != snapshot.prepared->convertedSamples.end()) source.context.convertedSamples = true;
+    if (std::ranges::find(snapshot.prepared->unsignedPacked32Modes, codeOffset) != snapshot.prepared->unsignedPacked32Modes.end()) source.context.unsignedPacked32Modes = true;
     if (std::ranges::find(snapshot.prepared->layerRowSamples, codeOffset) != snapshot.prepared->layerRowSamples.end()) source.context.layerRowSamples = true;
     auto invocationRequest = source;
     struct PreparedKeyStorage {};
@@ -1745,6 +1750,10 @@ std::shared_ptr<const ShaderRecompiler::ResourceCapture> CaptureInvocation(Shade
         } catch (const ShaderRecompiler::ConvertedSampleRequired&) {
             if (invocation.Request().context.convertedSamples) throw;
             record(snapshot.prepared->convertedSamples);
+        } catch (const ShaderRecompiler::UnsignedPacked32ModesRequired&) {
+            if (ShaderRecompiler::UnsignedPacked32ModesWanted(invocation.Request().context)) throw;
+            ShaderRecompiler::NoteUnsignedPacked32ModeRetry();
+            record(snapshot.prepared->unsignedPacked32Modes);
         } catch (const ShaderRecompiler::LayerRowSamplesRequired&) {
             if (invocation.Request().context.layerRowSamples) throw;
             record(snapshot.prepared->layerRowSamples);

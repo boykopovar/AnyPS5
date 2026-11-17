@@ -111,6 +111,7 @@ struct ImageResource {
     bool sampledOnly = true;
     bool foldTexelOffsetsOnly = false;
     bool convertedSamples = false;
+    bool unsignedPacked32Modes = false;
     bool remappedDepth1D = false;
     bool gathered = false;
     bool layerRowsCompatible = true;

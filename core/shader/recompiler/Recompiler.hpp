@@ -10,6 +10,7 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <initializer_list>
 #include <iterator>
 #include <memory>
@@ -307,8 +308,14 @@ struct GuestContext {
     std::span<const std::uint32_t> linkedCallFallbacks;
     std::span<const std::uint32_t> splitState;
     bool convertedSamples = false;
+    bool unsignedPacked32Modes = false;
     bool layerRowSamples = false;
 };
+
+[[nodiscard]] inline bool UnsignedPacked32ModesWanted(const GuestContext& context) {
+    static const bool eager = std::getenv("APS5_EAGER_UNSIGNED_PACKED32_MODES") != nullptr;
+    return eager || context.unsignedPacked32Modes;
+}
 
 struct SharedVectorRegisters {
     std::uint32_t base = 0;
@@ -1035,6 +1042,8 @@ struct MeshOutputBudget {
 
 struct ResourceCapture;
 [[nodiscard]] std::shared_ptr<const RecompileResult> Recompile(const RecompileRequest& request, const ResourceCapture& capture, bool* memoHit = nullptr);
+void NoteUnsignedPacked32ModeRetry();
+[[nodiscard]] std::uint64_t UnsignedPacked32ModeRetries();
 void SetResultMemoBudget(std::uint64_t bytes);
 [[nodiscard]] std::uint64_t ResultMemoBytes();
 void SetResultMemoTrimHook(std::function<void()> hook);
