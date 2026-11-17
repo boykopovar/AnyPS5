@@ -642,7 +642,7 @@ int APS5_VABI sceFontWritingInit(FontWriting* fontWriting, FontString fontString
     if (!fontWriting || !fontString || !fontCharacter) return SCE_FONT_ERROR_INVALID_PARAMETER;
     auto* data = GetStringData(fontString);
     if (!data) return SCE_FONT_ERROR_INVALID_STRING;
-    std::memset(fontWriting, 0, sizeof(*fontWriting));
+    if (!Font::CopyOutGuest(fontWriting, FontWriting{})) return SCE_FONT_ERROR_INVALID_PARAMETER;
     auto* writing = new (fontWriting->systemUse) FontWritingData{};
     writing->string = fontString;
     writing->defaultFont = data->defaultFont;
