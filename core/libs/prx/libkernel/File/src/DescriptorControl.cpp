@@ -104,6 +104,7 @@ constexpr std::uint32_t AsynchronousRequest = 0x8004667d;
 constexpr std::uint32_t SetOwnerRequest = 0x8004667c;
 constexpr std::uint32_t GetOwnerRequest = 0x4004667b;
 constexpr std::uint32_t DeviceTypeRequest = 0x4004667a;
+constexpr std::uint32_t DeviceNameRequest = 0x80106678;
 constexpr std::uint32_t ReadableRequest = 0x4004667f;
 constexpr std::uint32_t RequestIn = 0x80000000u;
 constexpr std::uint32_t RequestOut = 0x40000000u;
@@ -622,6 +623,7 @@ int Ioctl(int fd, std::uint64_t request, void* argument) {
     }
     if (((command >> 8) & 0xff) == TerminalGroup) return Fail(GuestEnotty);
     if (*kind == Kind::Pipe && fd > 2 && command != SetOwnerRequest && command != GetOwnerRequest) return Fail(GuestEnotty);
+    if (*kind == Kind::RandomDevice && command != DeviceTypeRequest && command != DeviceNameRequest) return Fail(GuestEnotty);
     char hex[11];
     std::snprintf(hex, sizeof(hex), "0x%08X", command);
     Unsupported("ioctl", std::string("request ") + hex, *kind, fd);

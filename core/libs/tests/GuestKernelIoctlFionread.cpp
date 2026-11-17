@@ -1,6 +1,7 @@
 #include "prx/libkernel/include/Api.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libkernel/File/include/File.hpp"
 #include <array>
 #include <cstdint>
 #include <cstdio>
@@ -34,6 +35,8 @@ constexpr std::uint64_t ForeignWideRequest = 0x80087801;
 constexpr std::uint64_t ForeignIntegerRequest = 0xa0047801;
 constexpr std::uint64_t ForeignOutputRequest = 0x40047801;
 constexpr std::uint64_t TerminalInputRequest = 0x80047401;
+constexpr std::uint64_t SetOwnerRequest = 0x8004667c;
+constexpr std::uint64_t GetOwnerRequest = 0x4004667b;
 
 void Require(bool condition, const char* message) {
     if (condition) return;
@@ -458,12 +461,30 @@ void AuditInputCopiedBeforeDispatch() {
     Require(munmap_nid_postfix(pages, 2 * Page) == 0, "guard page release failed");
 }
 
+void AuditRandomDeviceRequests() {
+    for (const char* path : {"/dev/random", "/dev/urandom"}) {
+        const int device = sceKernelOpen(path, 0, 0);
+        Require(device >= 0, "opening the random device failed");
+        for (const auto call : {ioctl_nid_postfix, _ioctl_nid_postfix}) {
+            for (const std::uint64_t request : {WriteQueueRequest, WriteSpaceRequest, ForeignGroupRequest, SetOwnerRequest, GetOwnerRequest}) {
+                int argument = 0x5a5a5a5a;
+                Require(call(device, request, &argument) == -1 && *__error_nid_postfix() == ErrorNotTerminal && argument == 0x5a5a5a5a,
+                    "a request randomdev_ioctl does not handle must fail with ENOTTY (25) and leave its argument alone");
+            }
+            Require(call(device, ForeignIntegerRequest, nullptr) == -1 && *__error_nid_postfix() == ErrorNotTerminal,
+                "an IOC_VOID request randomdev_ioctl does not handle must fail with ENOTTY (25)");
+        }
+        Require(close_nid_postfix(device) == 0, "close random device failed");
+    }
+}
+
 } // namespace
 
 int main() {
     AuditInvalidDescriptors();
     AuditNullAndFaultPointers();
     AuditInputCopiedBeforeDispatch();
+    AuditRandomDeviceRequests();
     AuditInvalidRequestCodes();
     AuditEmptySocketReadableQuery();
     AuditEmptyPipeReadableQuery();
