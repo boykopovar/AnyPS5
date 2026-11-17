@@ -6,10 +6,15 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
 #include "prx/libc/include/GuestTime.hpp"
+#include <algorithm>
+#include <array>
 #include <atomic>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <stdexcept>
+#include <string>
 #include <vector>
 
 extern "C" {
@@ -22,6 +27,79 @@ namespace {
 
 void RequireArgument(bool condition, const char* caller) {
     if (!condition) NotImplemented_nid_no_patch(caller);
+}
+
+void CopyIn(void* destination, const void* source, std::size_t bytes, const char* caller, const char* what) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument(std::string(caller) + ": unreadable " + what);
+}
+
+void CopyOut(void* destination, const void* source, std::size_t bytes, const char* caller, const char* what) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument(std::string(caller) + ": unwritable " + what);
+}
+
+template<typename TValue>
+TValue Load(const void* source, const char* caller, const char* what) {
+    TValue value{};
+    CopyIn(&value, source, sizeof(value), caller, what);
+    return value;
+}
+
+template<typename TValue>
+void Store(void* destination, const TValue& value, const char* caller, const char* what) {
+    CopyOut(destination, &value, sizeof(value), caller, what);
+}
+
+void OrState(std::int32_t* state, std::int32_t bits, const char* caller) {
+    Store(state, Load<std::int32_t>(state, caller, "state") | bits, caller, "state");
+}
+
+template<typename TChar>
+class GuestFormat {
+public:
+    GuestFormat(const TChar* first, std::size_t count, const char* caller) : first(first), count(count), caller(caller) {}
+
+    GuestFormat(const GuestFormat&) = delete;
+    GuestFormat& operator=(const GuestFormat&) = delete;
+
+    TChar operator[](std::size_t index) {
+        if (index - start >= size) Fill(index);
+        return buffer[index - start];
+    }
+
+private:
+    void Fill(std::size_t index) {
+        const auto address = reinterpret_cast<std::uintptr_t>(first) + index * sizeof(TChar);
+        const std::size_t toPageEnd = (4096 - address % 4096) / sizeof(TChar);
+        const std::size_t length = std::min({count - index, buffer.size(), std::max<std::size_t>(toPageEnd, 1)});
+        CopyIn(buffer.data(), first + index, length * sizeof(TChar), caller, "format");
+        start = index;
+        size = length;
+    }
+
+    std::array<TChar, 256> buffer;
+    const TChar* first;
+    std::size_t count;
+    const char* caller;
+    std::size_t start = 0;
+    std::size_t size = 0;
+};
+
+using TimeGetField = GuestLocale::InputIterator (APS5_VABI*)(const GuestLocale::Facet*, GuestLocale::InputIterator, GuestLocale::InputIterator, GuestLocale::IosBase*, std::int32_t*, GuestTm*, char, char);
+
+const GuestLocale::TimeGetVtable* LoadTimeGetVtable(const GuestLocale::Facet* self, const char* caller) {
+    return Load<const GuestLocale::TimeGetVtable*>(self, caller, "facet vtable");
+}
+
+TimeGetField LoadTimeGetField(const GuestLocale::TimeGetVtable* vtable, const char* caller) {
+    const TimeGetField get = vtable != nullptr ? Load<TimeGetField>(&vtable->get, caller, "facet vtable") : nullptr;
+    RequireArgument(get != nullptr, caller);
+    return get;
 }
 
 static_assert(sizeof(char16_t) == sizeof(std::uint16_t));
@@ -344,26 +422,36 @@ int GetLocaleText(GuestLocale::InputIterator& first, GuestLocale::InputIterator&
 }
 
 template<typename TChar>
+std::int32_t GetTimeField(GuestLocale::InputIterator& first, GuestLocale::InputIterator& last, int lo, int hi, int* field, int& digitsRead, const GuestLocale::Facet* ctype, const char* caller) {
+    int value = 0;
+    const std::int32_t result = GetIntV2<TChar>(first, last, lo, hi, value, digitsRead, ctype);
+    if ((result & IosFailBit) == 0) Store(field, value, caller, "time");
+    return result;
+}
+
+template<typename TChar>
 GuestLocale::InputIterator DoGetTimeImpl(const GuestLocale::Facet* self, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase* stream, std::int32_t* state, GuestTm* time, const char* caller) {
     RequireArgument(self != nullptr && state != nullptr && time != nullptr, caller);
     const GuestLocale::Facet* ctype = CtypeTraits<TChar>::FromStream(stream);
     int dummyDigits = 0;
-    *state |= GetIntV2<TChar>(first, last, 0, 23, time->tm_hour, dummyDigits, ctype);
+    std::int32_t current = GetTimeField<TChar>(first, last, 0, 23, &time->tm_hour, dummyDigits, ctype, caller);
+    current |= Load<std::int32_t>(state, caller, "state");
 
-    if (*state != 0 || CtypeTraits<TChar>::Narrow(ctype, Peek<TChar>(first), '\0') != ':') {
-        *state |= IosFailBit;
+    if (current != 0 || CtypeTraits<TChar>::Narrow(ctype, Peek<TChar>(first), '\0') != ':') {
+        current |= IosFailBit;
     } else {
         Inc<TChar>(first);
-        *state |= GetIntV2<TChar>(first, last, 0, 59, time->tm_min, dummyDigits, ctype);
+        current |= GetTimeField<TChar>(first, last, 0, 59, &time->tm_min, dummyDigits, ctype, caller);
     }
 
-    if (*state != 0 || CtypeTraits<TChar>::Narrow(ctype, Peek<TChar>(first), '\0') != ':') {
-        *state |= IosFailBit;
+    if (current != 0 || CtypeTraits<TChar>::Narrow(ctype, Peek<TChar>(first), '\0') != ':') {
+        current |= IosFailBit;
     } else {
         Inc<TChar>(first);
-        *state |= GetIntV2<TChar>(first, last, 0, 60, time->tm_sec, dummyDigits, ctype);
+        current |= GetTimeField<TChar>(first, last, 0, 60, &time->tm_sec, dummyDigits, ctype, caller);
     }
 
+    Store(state, current, caller, "state");
     return first;
 }
 
@@ -374,12 +462,12 @@ GuestLocale::InputIterator DoGetYearImpl(const GuestLocale::Facet* self, GuestLo
     int ans = 0;
     int digitsRead = 0;
     const std::int32_t res = GetIntV2<TChar>(first, last, 0, 9999, ans, digitsRead, ctype);
-    *state |= res;
+    OrState(state, res, caller);
     if ((res & IosFailBit) == 0) {
         if (digitsRead <= 2) {
-            time->tm_year = ans < 69 ? ans + 100 : ans;
+            Store(&time->tm_year, ans < 69 ? ans + 100 : ans, caller, "time");
         } else {
-            time->tm_year = ans - 1900;
+            Store(&time->tm_year, ans - 1900, caller, "time");
         }
     }
     return first;
@@ -390,9 +478,9 @@ GuestLocale::InputIterator DoGetMonthnameImpl(const GuestLocale::Facet* self, Gu
     RequireArgument(self != nullptr && state != nullptr && time != nullptr && table != nullptr, caller);
     const int num = GetLocaleText<TChar>(first, last, 0, table);
     if (num < 0) {
-        *state |= IosFailBit;
+        OrState(state, IosFailBit, caller);
     } else {
-        time->tm_mon = num >> 1;
+        Store(&time->tm_mon, num >> 1, caller, "time");
     }
     return first;
 }
@@ -559,7 +647,7 @@ void APS5_VABI _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEEC2Em
 
 void APS5_VABI _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEEC1Em_nid_postfix(GuestLocale::Facet* self, std::size_t refs) {
     RequireArgument(self != nullptr, __func__);
-    *self = {&g_timePutWideVtable.facet, static_cast<std::uint32_t>(refs), 0};
+    Store(self, GuestLocale::Facet{&g_timePutWideVtable.facet, static_cast<std::uint32_t>(refs), 0}, __func__, "facet");
 }
 
 void APS5_VABI _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE5_InitERKSt8_Locinfo_nid_postfix(GuestLocale::Facet*, const GuestLocale::LocinfoStorage*) {
@@ -568,8 +656,17 @@ void APS5_VABI _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE5_In
 
 std::int32_t APS5_VABI _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE7_GetintERS3_S5_iiRiRKSt5ctypeIwE_nid_postfix(const GuestLocale::Facet* self, GuestLocale::InputIterator* first, GuestLocale::InputIterator* last, int lo, int hi, int* val, const GuestLocale::Facet* ctype) {
     RequireArgument(self != nullptr && first != nullptr && last != nullptr && val != nullptr && ctype != nullptr, __func__);
+    GuestLocale::InputIterator begin = Load<GuestLocale::InputIterator>(first, __func__, "iterator");
+    GuestLocale::InputIterator end = first == last ? begin : Load<GuestLocale::InputIterator>(last, __func__, "iterator");
+    const GuestLocale::InputIterator beginBefore = begin;
+    const GuestLocale::InputIterator endBefore = end;
+    int value = 0;
     int digitsRead = 0;
-    return GetIntV2<std::uint16_t>(*first, *last, lo, hi, *val, digitsRead, ctype);
+    const std::int32_t result = GetIntV2<std::uint16_t>(begin, first == last ? begin : end, lo, hi, value, digitsRead, ctype);
+    if (std::memcmp(&begin, &beginBefore, sizeof(begin)) != 0) Store(first, begin, __func__, "iterator");
+    if (first != last && std::memcmp(&end, &endBefore, sizeof(end)) != 0) Store(last, end, __func__, "iterator");
+    if ((result & IosFailBit) == 0) Store(val, value, __func__, "value");
+    return result;
 }
 
 GuestLocale::InputIterator APS5_VABI _ZNKSt8time_getIcSt19istreambuf_iteratorIcSt11char_traitsIcEEE11do_get_timeES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix(const GuestLocale::Facet* self, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase* stream, std::int32_t* state, GuestTm* time) {
@@ -593,11 +690,9 @@ GuestLocale::InputIterator APS5_VABI _ZNKSt8time_getIwSt19istreambuf_iteratorIwS
 }
 
 GuestLocale::InputIterator APS5_VABI _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE16do_get_monthnameES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tm_nid_postfix(const GuestLocale::Facet* self, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase*, std::int32_t* state, GuestTm* time) {
-    const std::uint16_t* table = nullptr;
-    if (self != nullptr && self->vtable == &g_wideTimeGetVtable.facet) {
-        table = reinterpret_cast<const std::uint16_t*>(reinterpret_cast<const GuestTimeGetWideFacet*>(self)->months);
-    } else {
-        table = reinterpret_cast<const std::uint16_t*>(kWideMonths);
+    const std::uint16_t* table = reinterpret_cast<const std::uint16_t*>(kWideMonths);
+    if (self != nullptr && LoadTimeGetVtable(self, __func__) == &g_wideTimeGetVtable) {
+        table = reinterpret_cast<const std::uint16_t*>(Load<const char16_t*>(reinterpret_cast<const std::byte*>(self) + offsetof(GuestTimeGetWideFacet, months), __func__, "facet"));
     }
     return DoGetMonthnameImpl<std::uint16_t>(self, first, last, state, time, table, __func__);
 }
@@ -605,46 +700,51 @@ GuestLocale::InputIterator APS5_VABI _ZNKSt8time_getIwSt19istreambuf_iteratorIwS
 GuestLocale::InputIterator APS5_VABI _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE3getES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmPKwSE__nid_postfix(const GuestLocale::Facet* self, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase* stream, std::int32_t* state, GuestTm* time, const std::uint16_t* fmtfirst, const std::uint16_t* fmtlast) {
     RequireArgument(self != nullptr && state != nullptr && time != nullptr && (fmtfirst == nullptr) == (fmtlast == nullptr) && fmtlast >= fmtfirst, __func__);
     const GuestLocale::Facet* ctype = CtypeTraits<std::uint16_t>::FromStream(stream);
-    const auto* vtable = reinterpret_cast<const GuestLocale::TimeGetVtable*>(self->vtable);
-    *state = 0;
+    const auto* vtable = LoadTimeGetVtable(self, __func__);
+    const auto count = static_cast<std::size_t>(fmtlast - fmtfirst);
+    GuestFormat<std::uint16_t> format(fmtfirst, count, __func__);
+    std::int32_t current = 0;
+    Store(state, current, __func__, "state");
+    const auto fail = [&](std::int32_t value) { Store(state, current = value, __func__, "state"); };
 
-    for (; fmtfirst != fmtlast; ++fmtfirst) {
-        if (*state != 0) {
+    for (std::size_t index = 0; index != count; ++index) {
+        if (current != 0) {
             break;
         }
         if (Equal<std::uint16_t>(first, last)) {
-            *state = IosEofBit | IosFailBit;
+            fail(IosEofBit | IosFailBit);
             break;
         }
-        if (CtypeTraits<std::uint16_t>::Narrow(ctype, *fmtfirst, '\0') != '%') {
-            if (CtypeTraits<std::uint16_t>::Is(ctype, CtypeSpaceMask, *fmtfirst)) {
+        const std::uint16_t character = format[index];
+        if (CtypeTraits<std::uint16_t>::Narrow(ctype, character, '\0') != '%') {
+            if (CtypeTraits<std::uint16_t>::Is(ctype, CtypeSpaceMask, character)) {
                 while (!Equal<std::uint16_t>(first, last) &&
                        CtypeTraits<std::uint16_t>::Is(ctype, CtypeSpaceMask, Peek<std::uint16_t>(first))) {
                     Inc<std::uint16_t>(first);
                 }
             } else if (CtypeTraits<std::uint16_t>::ToLower(ctype, Peek<std::uint16_t>(first)) !=
-                       CtypeTraits<std::uint16_t>::ToLower(ctype, *fmtfirst)) {
-                *state |= IosFailBit;
+                       CtypeTraits<std::uint16_t>::ToLower(ctype, character)) {
+                fail(current | IosFailBit);
                 break;
             } else {
                 Inc<std::uint16_t>(first);
             }
-        } else if (++fmtfirst == fmtlast) {
-            *state = IosFailBit;
+        } else if (++index == count) {
+            fail(IosFailBit);
             break;
         } else {
-            char specifier = CtypeTraits<std::uint16_t>::Narrow(ctype, *fmtfirst, '\0');
+            char specifier = CtypeTraits<std::uint16_t>::Narrow(ctype, format[index], '\0');
             char modifier = '\0';
             if (specifier == 'E' || specifier == 'O' || specifier == 'Q' || specifier == '#') {
-                if (++fmtfirst == fmtlast) {
-                    *state = IosFailBit;
+                if (++index == count) {
+                    fail(IosFailBit);
                     break;
                 }
                 modifier = specifier;
-                specifier = CtypeTraits<std::uint16_t>::Narrow(ctype, *fmtfirst, '\0');
+                specifier = CtypeTraits<std::uint16_t>::Narrow(ctype, format[index], '\0');
             }
-            RequireArgument(vtable != nullptr && vtable->get != nullptr, __func__);
-            first = vtable->get(self, first, last, stream, state, time, specifier, modifier);
+            first = LoadTimeGetField(vtable, __func__)(self, first, last, stream, state, time, specifier, modifier);
+            current = Load<std::int32_t>(state, __func__, "state");
         }
     }
     return first;
@@ -653,34 +753,35 @@ GuestLocale::InputIterator APS5_VABI _ZNKSt8time_getIwSt19istreambuf_iteratorIwS
 GuestLocale::InputIterator APS5_VABI _ZNKSt8time_getIwSt19istreambuf_iteratorIwSt11char_traitsIwEEE7_GetfmtES3_S3_RSt8ios_baseRNSt5_IosbIiE8_IostateEP2tmPKc_nid_postfix(const GuestLocale::Facet* self, GuestLocale::InputIterator first, GuestLocale::InputIterator last, GuestLocale::IosBase* stream, std::int32_t* state, GuestTm* time, const char* fmtfirst) {
     RequireArgument(self != nullptr && state != nullptr && time != nullptr && fmtfirst != nullptr, __func__);
     const GuestLocale::Facet* ctype = CtypeTraits<std::uint16_t>::FromStream(stream);
-    const auto* vtable = reinterpret_cast<const GuestLocale::TimeGetVtable*>(self->vtable);
+    const auto* vtable = LoadTimeGetVtable(self, __func__);
+    GuestFormat<char> format(fmtfirst, SIZE_MAX, __func__);
 
-    for (; *fmtfirst != '\0'; ++fmtfirst) {
+    for (std::size_t index = 0; format[index] != '\0'; ++index) {
         if (Equal<std::uint16_t>(first, last)) {
-            *state |= IosFailBit;
+            OrState(state, IosFailBit, __func__);
             break;
         }
-        if (*fmtfirst == '%') {
-            if (*++fmtfirst == '\0') {
-                *state |= IosFailBit;
+        const char character = format[index];
+        if (character == '%') {
+            if (format[++index] == '\0') {
+                OrState(state, IosFailBit, __func__);
                 break;
             }
-            RequireArgument(vtable != nullptr && vtable->get != nullptr, __func__);
-            first = vtable->get(self, first, last, stream, state, time, *fmtfirst, '\0');
-        } else if (*fmtfirst == ' ') {
+            first = LoadTimeGetField(vtable, __func__)(self, first, last, stream, state, time, format[index], '\0');
+        } else if (character == ' ') {
             while (!Equal<std::uint16_t>(first, last) &&
                    CtypeTraits<std::uint16_t>::Is(ctype, CtypeSpaceMask, Peek<std::uint16_t>(first))) {
                 Inc<std::uint16_t>(first);
             }
-        } else if (CtypeTraits<std::uint16_t>::Narrow(ctype, Peek<std::uint16_t>(first), '\0') != *fmtfirst) {
-            *state |= IosFailBit;
+        } else if (CtypeTraits<std::uint16_t>::Narrow(ctype, Peek<std::uint16_t>(first), '\0') != character) {
+            OrState(state, IosFailBit, __func__);
             break;
         } else {
             Inc<std::uint16_t>(first);
         }
     }
     if (Equal<std::uint16_t>(first, last)) {
-        *state |= IosEofBit;
+        OrState(state, IosEofBit, __func__);
     }
     return first;
 }

@@ -1,8 +1,13 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libSceLibcInternal/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
+#include "prx/libc/include/General.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <algorithm>
+#include <array>
+#include <cerrno>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <stdexcept>
@@ -58,10 +63,44 @@ std::string Character(int character) {
     return std::string(1, static_cast<char>(character));
 }
 
+void CopyIn(void* destination, const void* source, std::size_t bytes, const char* function, const char* what) {
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument(std::string(function) + ": unreadable " + what);
+}
+
+char ReadCharacter(const char* place, const char* function) {
+    char character = '\0';
+    CopyIn(&character, place, sizeof(character), function, "string");
+    return character;
+}
+
+char* ReadArgument(char* const* arguments, int index, const char* function) {
+    char* argument = nullptr;
+    CopyIn(&argument, arguments + index, sizeof(argument), function, "argument vector");
+    return argument;
+}
+
+const char* FindCharacter(const char* string, int character, const char* function) {
+    const char target = static_cast<char>(character);
+    std::array<char, 256> buffer;
+    for (const char* cursor = string;;) {
+        const auto address = reinterpret_cast<std::uintptr_t>(cursor);
+        const std::size_t length = std::min<std::size_t>(buffer.size(), 4096 - address % 4096);
+        CopyIn(buffer.data(), cursor, length, function, "string");
+        for (std::size_t index = 0; index < length; ++index) {
+            if (buffer[index] == target) return cursor + index;
+            if (buffer[index] == '\0') return nullptr;
+        }
+        cursor += length;
+    }
+}
+
 char* Argument(char* const* arguments, int index, const char* function) {
     if (!arguments) throw std::invalid_argument(std::string(function) + ": null argument vector");
     if (index < 0) throw std::invalid_argument(std::string(function) + ": negative optind " + std::to_string(index));
-    char* const argument = arguments[index];
+    char* const argument = ReadArgument(arguments, index, function);
     if (!argument) throw std::invalid_argument(std::string(function) + ": null argument " + std::to_string(index));
     return argument;
 }
@@ -305,53 +344,54 @@ int GetoptInternal(int count, char* const* arguments, const char* options, const
 extern "C" {
 
 int APS5_VABI getopt_nid_postfix(int count, char* const* arguments, const char* options) {
+    constexpr const char* Function = "getopt";
     if (!options) throw std::invalid_argument("getopt: null option string");
-    if (optreset_nid_postfix || *g_shortPlace == '\0') {
+    if (optreset_nid_postfix || ReadCharacter(g_shortPlace, Function) == '\0') {
         optreset_nid_postfix = 0;
         if (optind_nid_postfix >= count) {
             g_shortPlace = g_emptyMessage;
             return -1;
         }
-        g_shortPlace = Argument(arguments, optind_nid_postfix, "getopt");
-        if (*g_shortPlace++ != '-') {
+        g_shortPlace = Argument(arguments, optind_nid_postfix, Function);
+        if (ReadCharacter(g_shortPlace++, Function) != '-') {
             g_shortPlace = g_emptyMessage;
             return -1;
         }
-        optopt_nid_postfix = OptionCharacter(g_shortPlace++);
-        if (optopt_nid_postfix == '-' && *g_shortPlace == '\0') {
+        optopt_nid_postfix = static_cast<signed char>(ReadCharacter(g_shortPlace++, Function));
+        if (optopt_nid_postfix == '-' && ReadCharacter(g_shortPlace, Function) == '\0') {
             ++optind_nid_postfix;
             g_shortPlace = g_emptyMessage;
             return -1;
         }
         if (optopt_nid_postfix == 0) {
             g_shortPlace = g_emptyMessage;
-            if (!std::strchr(options, '-')) return -1;
+            if (!FindCharacter(options, '-', Function)) return -1;
             optopt_nid_postfix = '-';
         }
     } else {
-        optopt_nid_postfix = OptionCharacter(g_shortPlace++);
+        optopt_nid_postfix = static_cast<signed char>(ReadCharacter(g_shortPlace++, Function));
     }
 
     const char* found = nullptr;
-    if (optopt_nid_postfix == ':' || (found = std::strchr(options, optopt_nid_postfix)) == nullptr) {
-        if (*g_shortPlace == '\0') ++optind_nid_postfix;
-        if (opterr_nid_postfix && *options != ':') Warn("illegal option -- " + Character(optopt_nid_postfix));
+    if (optopt_nid_postfix == ':' || (found = FindCharacter(options, optopt_nid_postfix, Function)) == nullptr) {
+        if (ReadCharacter(g_shortPlace, Function) == '\0') ++optind_nid_postfix;
+        if (opterr_nid_postfix && ReadCharacter(options, Function) != ':') Warn("illegal option -- " + Character(optopt_nid_postfix));
         return BadCharacter;
     }
 
-    if (found[1] != ':') {
+    if (ReadCharacter(found + 1, Function) != ':') {
         optarg_nid_postfix = nullptr;
-        if (*g_shortPlace == '\0') ++optind_nid_postfix;
+        if (ReadCharacter(g_shortPlace, Function) == '\0') ++optind_nid_postfix;
     } else {
-        if (*g_shortPlace) {
+        if (ReadCharacter(g_shortPlace, Function)) {
             optarg_nid_postfix = g_shortPlace;
-        } else if (found[2] == ':') {
+        } else if (ReadCharacter(found + 2, Function) == ':') {
             optarg_nid_postfix = nullptr;
         } else if (count > ++optind_nid_postfix) {
-            optarg_nid_postfix = arguments[optind_nid_postfix];
+            optarg_nid_postfix = ReadArgument(arguments, optind_nid_postfix, Function);
         } else {
             g_shortPlace = g_emptyMessage;
-            if (*options == ':') return ':';
+            if (ReadCharacter(options, Function) == ':') return ':';
             if (opterr_nid_postfix) Warn("option requires an argument -- " + Character(optopt_nid_postfix));
             return BadCharacter;
         }

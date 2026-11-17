@@ -4,6 +4,7 @@
 #include "prx/libc/include/GuestTime.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -452,6 +453,28 @@ void CheckWideTimePutForwarding() {
     Require(stream.accepted == u"<EY><_F>" && out.failed, "time_put<wchar_t>::put(spec, mod) returns what do_put returns");
 }
 
+void CheckTimePutGuestMemory() {
+    const auto put = Export<TimePutExport>("qkuA-unH7PU");
+    const auto widePut = Export<WideTimePutExport>("Nt6eyVKm+Z4");
+    const auto* unmapped = reinterpret_cast<const GuestLocale::Facet*>(std::uintptr_t{0x10});
+    const GuestLocale::Facet broken{reinterpret_cast<const GuestLocale::FacetVtable*>(std::uintptr_t{0x10}), 1, 0};
+    GuestLocale::IosBase ios{};
+    GuestTm time{};
+    const auto rejects = [](auto call) {
+        errno = 71;
+        try {
+            call();
+        } catch (const std::invalid_argument& error) {
+            return std::strstr(error.what(), "unreadable facet vtable") != nullptr && errno == 71;
+        }
+        return false;
+    };
+    Require(rejects([&] { put(unmapped, GuestLocale::OutputIterator{}, &ios, ' ', &time, 'Y', '\0'); }), "time_put<char>::put rejects an unreadable facet without changing errno");
+    Require(rejects([&] { put(&broken, GuestLocale::OutputIterator{}, &ios, ' ', &time, 'Y', '\0'); }), "time_put<char>::put rejects an unreadable vtable without changing errno");
+    Require(rejects([&] { widePut(unmapped, GuestLocale::OutputIterator{}, &ios, g_wideFill, &time, 'Y', '\0'); }), "time_put<wchar_t>::put rejects an unreadable facet without changing errno");
+    Require(rejects([&] { widePut(&broken, GuestLocale::OutputIterator{}, &ios, g_wideFill, &time, 'Y', '\0'); }), "time_put<wchar_t>::put rejects an unreadable vtable without changing errno");
+}
+
 void CheckWidePatternWalk() {
     GuestLocale::Facet facet{&g_recordingWideTimePut.facet, 1, 0};
     GuestLocale::Implementation** classic = &_ZSt21_sceLibcClassicLocale_nid_postfix;
@@ -668,6 +691,7 @@ int main(int argc, char** argv) {
     CheckWideStreamWrite();
     CheckWideTimePutDoPut();
     CheckWideTimePutGetcat();
+    CheckTimePutGuestMemory();
 
     std::puts("libc internal num_put and time_put put checks passed");
     return 0;

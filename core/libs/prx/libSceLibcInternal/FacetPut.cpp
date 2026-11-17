@@ -1,10 +1,30 @@
 #include "prx/libc/include/GuestLocale.hpp"
 #include "prx/libc/include/General.hpp"
 #include "SceTypes.hpp"
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
+#include <stdexcept>
+#include <string>
 
 namespace {
+
+std::uintptr_t ReadWord(std::uintptr_t address, std::size_t offset, const char* function) {
+    std::uintptr_t word = 0;
+    const int savedErrno = errno;
+    const bool copied = address <= std::numeric_limits<std::uintptr_t>::max() - offset &&
+                        GuestCopyIn_nid_no_patch(&word, reinterpret_cast<const void*>(address + offset), sizeof(word));
+    errno = savedErrno;
+    if (!copied) throw std::invalid_argument(std::string(function) + ": unreadable facet vtable");
+    return word;
+}
+
+template<typename TVtable>
+decltype(TVtable::put) TimePutSlot(const GuestLocale::Facet* self, const char* function) {
+    const std::uintptr_t vtable = ReadWord(reinterpret_cast<std::uintptr_t>(self), 0, function);
+    return reinterpret_cast<decltype(TVtable::put)>(ReadWord(vtable, offsetof(TVtable, put), function));
+}
 
 const GuestLocale::NumPutVtable& NumPut(const GuestLocale::Facet* self) {
     return *reinterpret_cast<const GuestLocale::NumPutVtable*>(self->vtable);
@@ -60,7 +80,7 @@ GuestLocale::OutputIterator APS5_VABI sceLibcInternalTimePutPattern_nid_no_patch
 APS5_EXPORT("j9LU8GsuEGw", sceLibcInternalTimePutPattern_nid_no_patch);
 
 GuestLocale::OutputIterator APS5_VABI sceLibcInternalTimePut_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const GuestTm* time, char format, char modifier) {
-    return reinterpret_cast<const GuestLocale::TimePutVtable*>(self->vtable)->put(self, out, stream, fill, time, format, modifier);
+    return TimePutSlot<GuestLocale::TimePutVtable>(self, __func__)(self, out, stream, fill, time, format, modifier);
 }
 APS5_EXPORT("qkuA-unH7PU", sceLibcInternalTimePut_nid_no_patch);
 
@@ -70,7 +90,7 @@ GuestLocale::OutputIterator APS5_VABI sceLibcInternalWideTimePutPattern_nid_no_p
 APS5_EXPORT("Sc0lXhQG5Ko", sceLibcInternalWideTimePutPattern_nid_no_patch);
 
 GuestLocale::OutputIterator APS5_VABI sceLibcInternalWideTimePut_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, std::uint16_t fill, const GuestTm* time, char format, char modifier) {
-    return reinterpret_cast<const GuestLocale::WideTimePutVtable*>(self->vtable)->put(self, out, stream, fill, time, format, modifier);
+    return TimePutSlot<GuestLocale::WideTimePutVtable>(self, __func__)(self, out, stream, fill, time, format, modifier);
 }
 APS5_EXPORT("Nt6eyVKm+Z4", sceLibcInternalWideTimePut_nid_no_patch);
 
