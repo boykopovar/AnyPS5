@@ -33,11 +33,14 @@ def check(status, what):
 
 
 def load(variable, names):
+    loader = getattr(ctypes, "WinDLL", None)
+    if loader is None:
+        raise OracleError("Windows DLL loading is unavailable on this platform")
     candidates = (os.environ[variable],) if os.environ.get(variable) else names
     errors = []
     for name in candidates:
         try:
-            return ctypes.WinDLL(name)
+            return loader(name)
         except OSError as error:
             errors.append(f"{name}: {error}")
     raise OracleError(f"no library found ({variable} overrides it): " + "; ".join(errors))

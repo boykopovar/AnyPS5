@@ -81,4 +81,21 @@ int main() {
             }
         }
     }
+    for (std::size_t size : {256, 512, 1024}) {
+        const std::string original(size, 'z');
+        auto* source = reinterpret_cast<char*>(input.At(size + 1));
+        std::memcpy(source, original.c_str(), size + 1);
+
+        auto* destination = reinterpret_cast<char*>(output.At(size + 1));
+        std::memset(destination - 16, 0xa5, size + 17);
+        destination[0] = 0;
+
+        Require(strncat_nid_postfix(destination, source, size) == destination);
+        Require(std::memcmp(destination, original.c_str(), size + 1) == 0);
+        for (int i = 1; i <= 16; ++i) Require(static_cast<unsigned char>(destination[-i]) == 0xa5);
+
+        Require(strncat_nid_postfix(destination, source, 0) == destination);
+        Require(std::memcmp(destination, original.c_str(), size + 1) == 0);
+        for (int i = 1; i <= 16; ++i) Require(static_cast<unsigned char>(destination[-i]) == 0xa5);
+    }
 }

@@ -81,6 +81,7 @@ struct DrawArguments {
 // path (which waits for recorded GPU work that writes them).
 DrawArguments ReadDrawArguments(const DrawParameters::IndirectDraw& indirect, std::uint32_t record);
 std::uint32_t ReadDrawCount(const DrawParameters::IndirectDraw& indirect);
+DrawArguments ReadDrawArgumentsUnsynced(const DrawParameters::IndirectDraw& indirect, std::uint32_t record);
 inline bool IndirectDrawOpcode(std::uint32_t opcode) { return opcode == 0x24 || opcode == 0x25 || opcode == 0x2c || opcode == 0x38; }
 inline bool DrawOpcode(std::uint32_t opcode) { return opcode == 0x27 || opcode == 0x2d || opcode == 0x35 || IndirectDrawOpcode(opcode); }
 
@@ -104,6 +105,7 @@ bool UsesGpuCacheBarrier(std::span<const std::uint32_t> packet);
 bool IsTagMarker(std::span<const std::uint32_t> packet);
 inline bool Predicated(std::uint32_t header) { return !FillerPacket(header) && (header & 1u) != 0; }
 bool PredicationPasses(const QueueState& queue);
+std::size_t PredicationBytes(const Predication& predication);
 bool WaitSatisfied(std::span<const std::uint32_t> packet);
 // WaitSatisfied for a polling loop: the caller has validated the address once, so the value is read
 // directly instead of through the checked guest memory path.
@@ -111,6 +113,7 @@ bool WaitSatisfiedUnchecked(std::span<const std::uint32_t> packet);
 // Whether a WAIT_REG_MEM's compare holds for `value` (the 4 or 8 bytes a label the recorder still
 // holds will store), without reading memory.
 bool WaitComparesValue(std::span<const std::uint32_t> packet, std::uint64_t value);
+bool WaitCompares(std::uint32_t function, std::uint64_t reference, std::uint64_t mask, std::uint64_t value);
 std::size_t WaitAwaitedBytes(std::span<const std::uint32_t> packet);
 std::size_t ConditionalWords(std::span<const std::uint32_t> packet);
 std::uint32_t ReadCondition(std::span<const std::uint32_t> packet);
