@@ -1,4 +1,5 @@
 import copy
+import errno
 import json
 import os
 from pathlib import Path
@@ -345,6 +346,233 @@ def package(root, title_id, version="01.000.000", name="Game"):
               "localizedParameters": {"defaultLanguage": "en-US", "en-US": {"titleName": name}}}
     (root / "sce_sys/param.json").write_text(json.dumps(params), encoding="utf-8")
     return root
+
+
+class AssetCopyTests(unittest.TestCase):
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory(dir=Path.cwd())
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        self.source = self.root / "source.bin"
+        self.content = bytes(range(256)) * 256
+        self.source.write_bytes(self.content)
+        self.source.chmod(0o640)
+        os.utime(self.source, ns=(1600000000000000000, 1600000000123456789))
+        self.mode = stat.S_IMODE(self.source.stat().st_mode)
+        self.mtime = self.source.stat().st_mtime_ns
+
+    def require_reflink(self):
+        import fcntl
+        probe = self.root / "clone-probe"
+        try:
+            with self.source.open("rb") as source, probe.open("xb") as target:
+                fcntl.ioctl(target.fileno(), getattr(fcntl, "FICLONE", 0x40049409), source.fileno())
+        except OSError as error:
+            self.skipTest(f"filesystem cannot clone regular files: {error}")
+
+    def assert_source_unchanged(self):
+        self.assertEqual(self.source.read_bytes(), self.content)
+        self.assertEqual(stat.S_IMODE(self.source.stat().st_mode), self.mode)
+        self.assertEqual(self.source.stat().st_mtime_ns, self.mtime)
+
+    @unittest.skipUnless(sys.platform == "linux", "FICLONE is Linux-specific")
+    def test_link_tree_clones_assets_with_independent_bytes_and_metadata(self):
+        import fcntl
+        self.require_reflink()
+        source = self.root / "pkg"
+        (source / "nested").mkdir(parents=True)
+        for name in ("overwrite", "append", "truncate", "chmod", "empty"):
+            path = source / "nested" / name
+            shutil.copy2(self.source, path)
+            if name == "empty":
+                path.write_bytes(b"")
+        (source / "alias").symlink_to(self.source)
+        (source / "sce_module").mkdir()
+        (source / "sce_module/skipped").write_bytes(b"module")
+        target = self.root / "app0"
+        with unittest.mock.patch.dict(fcntl.__dict__), \
+                unittest.mock.patch.object(title_run.shutil, "copy2", side_effect=AssertionError("ordinary copy was used")):
+            fcntl.__dict__.pop("FICLONE", None)
+            title_run.link_tree(source, target, {"sce_module"})
+        self.assertFalse((target / "sce_module").exists())
+        self.assertFalse((target / "alias").is_symlink())
+        self.assertEqual((target / "alias").read_bytes(), self.content)
+        for name in ("overwrite", "append", "truncate", "chmod", "empty"):
+            with self.subTest(name=name):
+                original, staged = source / "nested" / name, target / "nested" / name
+                original_bytes, original_mode = original.read_bytes(), stat.S_IMODE(original.stat().st_mode)
+                self.assertFalse(original.samefile(staged))
+                self.assertEqual(staged.read_bytes(), original_bytes)
+                self.assertEqual(stat.S_IMODE(staged.stat().st_mode), original_mode)
+                self.assertEqual(staged.stat().st_mtime_ns, original.stat().st_mtime_ns)
+                if name == "overwrite":
+                    with staged.open("r+b") as stream:
+                        stream.write(b"working")
+                elif name == "append":
+                    with staged.open("ab") as stream:
+                        stream.write(b"working")
+                elif name == "truncate":
+                    with staged.open("r+b") as stream:
+                        stream.truncate(10)
+                elif name == "chmod":
+                    staged.chmod(0o400)
+                self.assertEqual(original.read_bytes(), original_bytes)
+                self.assertEqual(stat.S_IMODE(original.stat().st_mode), original_mode)
+        self.assert_source_unchanged()
+        self.source.write_bytes(b"source later changed")
+        self.assertEqual((target / "alias").read_bytes(), self.content)
+        (target / "alias").write_bytes(b"changed alias")
+        self.assertEqual(self.source.read_bytes(), b"source later changed")
+
+    @unittest.skipUnless(sys.platform == "linux", "FICLONE is Linux-specific")
+    def test_prepare_clones_assets_and_preserves_module_staging(self):
+        self.require_reflink()
+        source = package(self.root / "pkg", "PPSA00001")
+        (source / "nested").mkdir()
+        asset = source / "nested/config.bin"
+        asset.write_bytes(self.content)
+        (source / "sce_module").mkdir()
+        (source / "sce_module/libc.prx").write_bytes(b"\x7fELF" + bytes(60))
+        build, work = self.root / "build", self.root / "work"
+        (build / "core/libs/libs").mkdir(parents=True)
+        (build / "core/libs/libs/libkernel.prx").write_bytes(b"runtime")
+        work.mkdir()
+
+        def convert(command, **kwargs):
+            Path(command[-1]).write_bytes(b"converted")
+            return subprocess.CompletedProcess(command, 0)
+
+        with unittest.mock.patch.object(title_run.subprocess, "run", side_effect=convert), \
+                unittest.mock.patch.object(title_run.shutil, "copy2", side_effect=AssertionError("ordinary copy was used")):
+            title_run.prepare("PPSA00001", {"package": source}, {}, "linux", build, work)
+        self.assertEqual((work / "input/sce_module/libc.prx").read_bytes(), b"\x7fELF" + bytes(60))
+        self.assertEqual((work / "libs/libkernel.prx").read_bytes(), b"runtime")
+        self.assertFalse((work / "app0/sce_module").exists())
+        (work / "app0/nested/config.bin").write_bytes(b"working")
+        self.assertEqual(asset.read_bytes(), self.content)
+
+    @unittest.skipUnless(sys.platform == "linux", "FICLONE is Linux-specific")
+    def test_clone_errors_fall_back_after_partial_destination_writes(self):
+        import fcntl
+        for error in (errno.EOPNOTSUPP, errno.EXDEV, errno.EINVAL, errno.ENOTTY, errno.EPERM, errno.EIO):
+            with self.subTest(error=error):
+                target = self.root / str(error)
+
+                def fail(destination, request, source):
+                    os.write(destination, b"partial destination" * 10000)
+                    raise OSError(error, "clone refused")
+
+                with unittest.mock.patch.object(fcntl, "ioctl", side_effect=fail) as clone, \
+                        unittest.mock.patch.object(title_run.shutil, "copy2", wraps=shutil.copy2) as fallback:
+                    feature("copy_asset")(self.source, target)
+                clone.assert_called_once()
+                fallback.assert_called_once_with(self.source, target)
+                self.assertEqual(target.read_bytes(), self.content)
+                self.assertFalse(target.samefile(self.source))
+                self.assertEqual(stat.S_IMODE(target.stat().st_mode), self.mode)
+                self.assertEqual(target.stat().st_mtime_ns, self.mtime)
+                self.assert_source_unchanged()
+
+    @unittest.skipUnless(sys.platform == "linux", "FICLONE is Linux-specific")
+    def test_cross_filesystem_falls_back_to_an_independent_copy(self):
+        import fcntl
+        try:
+            directory = tempfile.TemporaryDirectory(dir="/dev/shm")
+        except OSError as error:
+            self.skipTest(f"separate temporary filesystem unavailable: {error}")
+        self.addCleanup(directory.cleanup)
+        target = Path(directory.name) / "copied.bin"
+        if target.parent.stat().st_dev == self.source.stat().st_dev:
+            self.skipTest("temporary directory is not on a different filesystem")
+        with unittest.mock.patch.object(fcntl, "ioctl", wraps=fcntl.ioctl) as clone, \
+                unittest.mock.patch.object(title_run.shutil, "copy2", wraps=shutil.copy2) as fallback:
+            feature("copy_asset")(self.source, target)
+        clone.assert_called_once()
+        fallback.assert_called_once_with(self.source, target)
+        self.assertEqual(target.read_bytes(), self.content)
+        self.assertEqual(stat.S_IMODE(target.stat().st_mode), self.mode)
+        target.write_bytes(b"working")
+        target.chmod(0o400)
+        self.assert_source_unchanged()
+
+    def test_other_platforms_use_copy2_without_importing_fcntl(self):
+        for platform in ("win32", "darwin"):
+            with self.subTest(platform=platform), unittest.mock.patch.object(sys, "platform", platform), \
+                    unittest.mock.patch.dict(sys.modules, {"fcntl": None}), \
+                    unittest.mock.patch.object(title_run.shutil, "copy2", wraps=shutil.copy2) as fallback:
+                target = self.root / platform
+                feature("copy_asset")(self.source, target)
+                fallback.assert_called_once_with(self.source, target)
+                self.assertEqual(target.read_bytes(), self.content)
+                self.assertFalse(target.samefile(self.source))
+                target.write_bytes(b"working")
+                self.assert_source_unchanged()
+
+    @unittest.skipUnless(sys.platform == "linux", "FICLONE is Linux-specific")
+    def test_missing_fcntl_uses_copy2(self):
+        target = self.root / "copied.bin"
+        with unittest.mock.patch.dict(sys.modules, {"fcntl": None}), \
+                unittest.mock.patch.object(title_run.shutil, "copy2", wraps=shutil.copy2) as fallback:
+            feature("copy_asset")(self.source, target)
+        fallback.assert_called_once_with(self.source, target)
+        self.assertEqual(target.read_bytes(), self.content)
+        self.assert_source_unchanged()
+
+    def test_existing_targets_keep_copy2_same_file_protection(self):
+        target = self.root / "existing"
+        target.write_bytes(b"old destination")
+        feature("copy_asset")(self.source, target)
+        self.assertEqual(target.read_bytes(), self.content)
+        for name in ("hardlink", "symlink"):
+            with self.subTest(name=name):
+                alias = self.root / name
+                try:
+                    if name == "hardlink":
+                        os.link(self.source, alias)
+                    else:
+                        alias.symlink_to(self.source)
+                except (OSError, NotImplementedError) as error:
+                    self.skipTest(f"{name} unavailable: {error}")
+                with self.assertRaises(shutil.SameFileError):
+                    feature("copy_asset")(self.source, alias)
+                self.assert_source_unchanged()
+        with self.assertRaises(shutil.SameFileError):
+            feature("copy_asset")(self.source, self.source)
+        self.assert_source_unchanged()
+
+    @unittest.skipUnless(sys.platform == "linux", "FICLONE is Linux-specific")
+    def test_cloned_metadata_failure_propagates_without_copy_fallback(self):
+        import fcntl
+        self.require_reflink()
+        target = self.root / "metadata-error"
+        with unittest.mock.patch.object(title_run.shutil, "copystat", side_effect=PermissionError("metadata refused")), \
+                unittest.mock.patch.object(title_run.shutil, "copy2", side_effect=AssertionError("metadata failure was hidden")):
+            with self.assertRaisesRegex(PermissionError, "metadata refused"):
+                feature("copy_asset")(self.source, target)
+        self.assertFalse(target.samefile(self.source))
+        self.assertEqual(target.read_bytes(), self.content)
+        self.assert_source_unchanged()
+
+    @unittest.skipUnless(sys.platform == "linux", "FIFO validation is POSIX-specific")
+    def test_nonregular_and_missing_sources_keep_copy2_validation(self):
+        import fcntl
+        fifo = self.root / "fifo"
+        os.mkfifo(fifo)
+        with unittest.mock.patch.object(fcntl, "ioctl", side_effect=AssertionError("nonregular source was cloned")):
+            with self.assertRaises(shutil.SpecialFileError):
+                feature("copy_asset")(fifo, self.root / "out")
+            with self.assertRaises(FileNotFoundError):
+                feature("copy_asset")(self.root / "missing", self.root / "out")
+        self.assertFalse((self.root / "out").exists())
+
+    @unittest.skipUnless(sys.platform == "linux", "FICLONE is Linux-specific")
+    def test_copy_fallback_failure_propagates_without_touching_source(self):
+        import fcntl
+        with unittest.mock.patch.object(fcntl, "ioctl", side_effect=OSError(errno.EXDEV, "different filesystem")), \
+                unittest.mock.patch.object(title_run.shutil, "copy2", side_effect=PermissionError("copy refused")):
+            with self.assertRaisesRegex(PermissionError, "copy refused"):
+                feature("copy_asset")(self.source, self.root / "out")
+        self.assert_source_unchanged()
 
 
 class PreparationTests(unittest.TestCase):
