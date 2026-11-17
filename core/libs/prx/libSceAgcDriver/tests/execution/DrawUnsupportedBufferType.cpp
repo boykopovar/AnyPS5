@@ -81,7 +81,7 @@ void Draw(const std::array<std::uint32_t, 4>& descriptor, std::uint32_t* label =
 
 void NamesShaderAndDescriptor() {
     const auto address = reinterpret_cast<std::uintptr_t>(Source.data());
-    const std::array<std::uint32_t, 4> descriptor{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), sizeof(Source), 0xa1b00facu};
+    const std::array<std::uint32_t, 4> descriptor{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), sizeof(Source), 0x61b00facu};
     try {
         Draw(descriptor);
     } catch (const std::exception& error) {
@@ -96,12 +96,12 @@ void NamesShaderAndDescriptor() {
         if (std::getenv("APS5_DRAW_PIPELINE") != nullptr) Require(message.find("draw at submission ") != std::string::npos && message.find("(finished on the draw finisher)") != std::string::npos, "a draw finished on the draw finisher does not name its submission and offset: " + message);
         return;
     }
-    throw std::runtime_error("a pixel shader read a buffer through a descriptor of type 2");
+    throw std::runtime_error("a pixel shader read a buffer through a descriptor of type 1");
 }
 
 void SkipsRefusedDraw() {
     const auto address = reinterpret_cast<std::uintptr_t>(Source.data());
-    const std::array<std::uint32_t, 4> descriptor{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), sizeof(Source), 0xa1b00facu};
+    const std::array<std::uint32_t, 4> descriptor{static_cast<std::uint32_t>(address), static_cast<std::uint32_t>((address >> 32u) & 0xffffu), sizeof(Source), 0x61b00facu};
     alignas(8) static std::uint32_t label = 0;
     for (int submission = 0; submission < 2; ++submission) {
         label = 0;

@@ -233,6 +233,8 @@ void DisabledDescriptors(AgcDriver::VulkanDevice& device) {
     alignas(256) static constexpr std::array<std::uint32_t, 6> rawStore{0x34020082u, 0x7e0402ffu, Value, 0xe0701000u, 0x80000201u, 0xbf810000u};
     alignas(256) static constexpr std::array<std::uint32_t, 7> formattedLoad{0x34020082u, 0xe0002000u, 0x80000200u, 0xbf8c3f70u, 0xe0701000u, 0x80010201u, 0xbf810000u};
     alignas(256) static constexpr std::array<std::uint32_t, 4> atomicAdd{0x34020082u, 0xe0c81000u, 0x80000201u, 0xbf810000u};
+    alignas(256) static constexpr std::array<std::uint32_t, 8> keptRawLoad{0x34020082u, 0x7e040301u, 0xe0301000u, 0x80000201u, 0xbf8c3f70u, 0xe0701000u, 0x80010201u, 0xbf810000u};
+    alignas(256) static constexpr std::array<std::uint32_t, 8> keptFormattedLoad{0x34020082u, 0x7e040301u, 0xe0002000u, 0x80000200u, 0xbf8c3f70u, 0xe0701000u, 0x80010201u, 0xbf810000u};
     std::array<std::uint32_t, 8> userData{};
     auto request = Request(userData, device.ComputeTarget(Lanes), {});
     request.useCache = false;
@@ -281,6 +283,18 @@ void DisabledDescriptors(AgcDriver::VulkanDevice& device) {
     }
     dispatch(formattedStore, {0x02100b00u, 0xc3c00000u, 0x010dc1dfu, 0x91b00facu});
     Require(all(Fill), "store through an image T# read as a V# wrote memory");
+    std::array<std::uint32_t, Lanes> laneOffsets{};
+    for (std::uint32_t lane = 0; lane < Lanes; ++lane) laneOffsets[lane] = lane * 4u;
+    dispatch(keptRawLoad, raw(Input.data(), InputBytes, 0x31016facu));
+    Require(Output == input, "raw load through a TYPE 0 V# after a register move did not read the buffer");
+    dispatch(keptFormattedLoad, strided(Input.data(), 0x31014facu));
+    Require(Output == input, "formatted load through a TYPE 0 V# after a register move did not read the buffer");
+    for (const auto word3 : {0x91000facu, 0x91016facu, 0xd1000facu, 0xd1016facu}) {
+        dispatch(keptRawLoad, raw(Input.data(), InputBytes, word3));
+        Require(Output == laneOffsets, "raw load through V# word 3 " + Hex(word3) + " did not keep its destination");
+        dispatch(keptFormattedLoad, strided(Input.data(), word3));
+        Require(Output == laneOffsets, "formatted load through V# word 3 " + Hex(word3) + " did not keep its destination");
+    }
     const auto rejects = [&](std::span<const std::uint32_t> code, std::uint32_t word3, const char* access) {
         bool rejected = false;
         try {

@@ -317,6 +317,7 @@ struct GuestContext {
     std::span<const std::uint32_t> splitState;
     bool convertedSamples = false;
     bool layerRowSamples = false;
+    bool typedBufferLoads = false;
 };
 
 struct SharedVectorRegisters {
