@@ -20,6 +20,7 @@ void APS5_VABI _ZN7WebCore10LayoutRectC1ERKNS_9FloatRectE(WebCore::LayoutRect* s
 void APS5_VABI _ZN7WebCore10LayoutRectC2ERKNS_9FloatRectE(WebCore::LayoutRect* self, const WebCore::FloatRect& r);
 void APS5_VABI _ZN7WebCore11RoundedRectC1ERKNS_10LayoutRectERKNS_10LayoutSizeES6_S6_S6_( WebCore::RoundedRect* self, const WebCore::LayoutRect& rect, const WebCore::LayoutSize& topLeft, const WebCore::LayoutSize& topRight, const WebCore::LayoutSize& bottomLeft, const WebCore::LayoutSize& bottomRight);
 void APS5_VABI _ZN7WebCore11RoundedRectC2ERKNS_10LayoutRectERKNS_10LayoutSizeES6_S6_S6_( WebCore::RoundedRect* self, const WebCore::LayoutRect& rect, const WebCore::LayoutSize& topLeft, const WebCore::LayoutSize& topRight, const WebCore::LayoutSize& bottomLeft, const WebCore::LayoutSize& bottomRight);
+WebCore::LayoutPoint APS5_VABI _ZN7WebCore14ScrollableArea34constrainScrollPositionForOverhangERKNS_10LayoutRectERKNS_10LayoutSizeERKNS_11LayoutPointES9_ii(const WebCore::LayoutRect& visibleContentRect, const WebCore::LayoutSize& totalContentsSize, const WebCore::LayoutPoint& scrollPosition, const WebCore::LayoutPoint& scrollOrigin, int headerHeight, int footerHeight);
 WebCore::IntRect APS5_VABI _ZN7WebCore14roundedIntRectERKNS_9FloatRectE(const WebCore::FloatRect& rect);
 void APS5_VABI _ZN7WebCore15AffineTransform12makeIdentityEv(WebCore::AffineTransform* self);
 void APS5_VABI _ZN7WebCore15AffineTransformC1Ev(WebCore::AffineTransform* self);
@@ -116,6 +117,9 @@ WebCore::IntSize APS5_VABI _ZNK7WebCore15AffineTransform7mapSizeERKNS_7IntSizeE(
 WebCore::FloatSize APS5_VABI _ZNK7WebCore15AffineTransform7mapSizeERKNS_9FloatSizeE( const WebCore::AffineTransform* self, const WebCore::FloatSize& size);
 WebCore::FloatPoint APS5_VABI _ZNK7WebCore15AffineTransform8mapPointERKNS_10FloatPointE( const WebCore::AffineTransform* self, const WebCore::FloatPoint& point);
 WebCore::IntPoint APS5_VABI _ZNK7WebCore15AffineTransform8mapPointERKNS_8IntPointE( const WebCore::AffineTransform* self, const WebCore::IntPoint& point);
+bool APS5_VABI _ZNK7WebCore19ProtectionSpaceBase15isPasswordBasedEv(const WebCore::ProtectionSpaceBase* self);
+bool APS5_VABI _ZNK7WebCore19ProtectionSpaceBase26receivesCredentialSecurelyEv(const WebCore::ProtectionSpaceBase* self);
+bool APS5_VABI _ZNK7WebCore19ProtectionSpaceBase7isProxyEv(const WebCore::ProtectionSpaceBase* self);
 bool APS5_VABI _ZNK7WebCore20TransformationMatrix12isInvertibleEv(const WebCore::TransformationMatrix* self);
 WebCore::AffineTransform APS5_VABI _ZNK7WebCore20TransformationMatrix17toAffineTransformEv( const WebCore::TransformationMatrix* self);
 WebCore::FloatQuad APS5_VABI _ZNK7WebCore20TransformationMatrix7mapQuadERKNS_9FloatQuadE( const WebCore::TransformationMatrix* self, const WebCore::FloatQuad& q);
