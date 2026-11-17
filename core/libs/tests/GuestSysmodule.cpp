@@ -517,6 +517,6 @@ int main() {
     int kernelResult = 0x5a5a5a5a;
     Require(sceSysmoduleUnloadModuleByNameInternal(0x7fffffff, 0, nullptr, 0, &invalidResult) == sceKernelStopUnloadModule(0x7fffffff, 0, nullptr, 0, nullptr, &kernelResult));
     Require(invalidResult == kernelResult);
-    Require(sceSysmoduleUnloadModuleByNameInternal(byName, 0, nullptr, 0, nullptr) == 0);
     Require(sceSysmoduleIsCameraPreloaded() == 0);
+    Require(sceKernelStopUnloadModule(byName, 0, nullptr, 0, nullptr, nullptr) == 0);
 }
