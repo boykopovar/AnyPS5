@@ -48,6 +48,7 @@ public:
         std::optional<double> startSeconds;
         std::vector<RuntimeSwitch> switches;
         std::vector<Arm> arms;
+        bool rotate = false;
     };
 
     enum class Event { None, Begin, Settled };
@@ -58,13 +59,15 @@ public:
         std::size_t arm = 0;
     };
 
-    static Config Parse(std::string_view ab, std::string_view start, std::string_view settle);
+    static Config Parse(std::string_view ab, std::string_view start, std::string_view settle, bool rotate = false);
 
     explicit AbSchedule(Config config);
 
     Step AtPresent(std::uint64_t present, double seconds);
 
     const Config& Settings() const { return config; }
+
+    std::size_t ArmOfPhase(std::uint64_t index) const;
 
 private:
     Config config;
