@@ -471,11 +471,18 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
                     const auto same = std::ranges::find_if(writers, [&](const auto& writer) {
                         return writer.first.queue == record.queue && writer.first.opcode == record.opcode && writer.first.target == record.target && writer.first.length == record.length;
                     });
-                    if (same == writers.end()) writers.emplace_back(record, 1u);
-                    else ++same->second;
+                    if (same == writers.end()) {
+                        writers.emplace_back(record, 1u);
+                    } else {
+                        ++same->second;
+                        if (record.order > same->first.order) same->first = record;
+                    }
                 }
-                for (const auto& [record, count] : writers)
-                    std::fprintf(stderr, "[gpu]   earlier write by queue 0x%x opcode 0x%x at 0x%llx+0x%llx (%zu in the write history)\n", record.queue, record.opcode, static_cast<unsigned long long>(record.target), static_cast<unsigned long long>(record.length), count);
+                for (const auto& [record, count] : writers) {
+                    char last[48] = "";
+                    if (record.valued) std::snprintf(last, sizeof(last), ", the last of value 0x%llx", static_cast<unsigned long long>(record.value));
+                    std::fprintf(stderr, "[gpu]   earlier write by queue 0x%x opcode 0x%x at 0x%llx+0x%llx (%zu in the write history%s)\n", record.queue, record.opcode, static_cast<unsigned long long>(record.target), static_cast<unsigned long long>(record.length), count, last);
+                }
             }
             PrintLaterWrites(following);
 
