@@ -507,11 +507,6 @@ int APS5_VABI _ZNSt7num_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEEC2ERKS
     return 0;
 }
 
-int APS5_VABI _ZNSt6_WinitD2Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI sceLibcInternalUnknown6_139_dHs7ndrQBiI_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
     return 0;
