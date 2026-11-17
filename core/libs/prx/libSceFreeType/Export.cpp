@@ -145,6 +145,14 @@ void* HostRealloc(FT_Memory, long, long size, void* block) {
     return std::realloc(block, static_cast<std::size_t>(size));
 }
 
+GuestMemoryRec ReadGuestMemory(GuestMemoryRec* memory) {
+    GuestMemoryRec record{};
+    if (!CopyGuestIn(&record, memory, sizeof(record)) || !record.free) {
+        throw std::runtime_error("FT_Done_FreeType: an unreadable guest FT_Memory or one without a free callback is not implemented");
+    }
+    return record;
+}
+
 void SyncFaceMetrics(GuestFace& face) {
     const FT_Face host = face.host;
     auto& rec = face.rec;
@@ -202,8 +210,7 @@ int APS5_VABI FreeTypeReferenceLibrary_nid_no_patch(GuestLibrary* library) {
 int APS5_VABI FT_Done_FreeType_nid_postfix(GuestLibrary* library) {
     if (!library) return FT_Done_FreeType(nullptr);
     GuestMemoryRec* guestMemory = library->guestMemory;
-    GuestMemoryRec record{};
-    if (guestMemory && (!CopyGuestIn(&record, guestMemory, sizeof(record)) || !record.free)) NotImplemented_nid_no_patch(__func__);
+    const GuestMemoryRec record = guestMemory ? ReadGuestMemory(guestMemory) : GuestMemoryRec{};
     if (library->references > 1) {
         const FT_Error error = FT_Done_Library(library->host);
         if (error != 0) return error;
