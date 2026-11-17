@@ -1169,8 +1169,11 @@ class ParallelLibraryScanTests(unittest.TestCase):
             newest.write_text("int APS5_VABI NewestReady() { return 0; }\n")
             older.write_text("int APS5_VABI OlderReady() { return 0; }\n")
             os.utime(older, ns=(1_000_000_000, 1_000_000_000))
-            with patch.object(progress, "ROOT", Path(directory)), patch.object(progress, "PRX", root):
+            with patch.object(progress, "ROOT", Path(directory)), patch.object(progress, "PRX", root), \
+                    patch.object(progress.os, "cpu_count", return_value=4), \
+                    patch.object(progress, "ProcessPoolExecutor", wraps=progress.ProcessPoolExecutor) as pool:
                 first = progress.collect_libraries()
+                self.assertEqual(pool.call_args.kwargs["max_workers"], 4)
                 serial = progress.summarize([progress.scan_library(path) for path in sorted(root.iterdir())])
                 self.assertEqual(first, serial)
                 self.assertIn("OlderReady", first["groups"][0]["done_names"])
