@@ -27,6 +27,7 @@ int checkTarget(const NpUniversalDataSystemEventPropertyObject* object, const ch
 extern "C" {
 
 int APS5_VABI sceNpUniversalDataSystemCreateEventPropertyObject(NpUniversalDataSystemEventPropertyObject** new_object) {
+    if (!Uds::SystemInitialized()) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NOT_INITIALIZED;
     if (new_object == nullptr) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_INVALID_ARGUMENT;
     auto* created = objects().Adopt(std::make_unique<NpUniversalDataSystemEventPropertyObject>());
     const int savedErrno = errno;
@@ -40,6 +41,7 @@ int APS5_VABI sceNpUniversalDataSystemCreateEventPropertyObject(NpUniversalDataS
 }
 
 int APS5_VABI sceNpUniversalDataSystemDestroyEventPropertyObject(NpUniversalDataSystemEventPropertyObject* object) {
+    if (!Uds::SystemInitialized()) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NOT_INITIALIZED;
     objects().Release(object);
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
 }
@@ -47,6 +49,7 @@ int APS5_VABI sceNpUniversalDataSystemDestroyEventPropertyObject(NpUniversalData
 int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetString(
     NpUniversalDataSystemEventPropertyObject* object, const char* key, const char* value)
 {
+    if (!Uds::SystemInitialized()) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NOT_INITIALIZED;
     if (const int error = checkTarget(object, key); error != SCE_NP_UNIVERSAL_DATA_SYSTEM_OK) return error;
     if (value == nullptr) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_VALUE;
     object->Set(key, std::string(value));
@@ -56,6 +59,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetString(
 int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetInt32(
     NpUniversalDataSystemEventPropertyObject* object, const char* key, int32_t value)
 {
+    if (!Uds::SystemInitialized()) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NOT_INITIALIZED;
     if (const int error = checkTarget(object, key); error != SCE_NP_UNIVERSAL_DATA_SYSTEM_OK) return error;
     object->Set(key, value);
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
@@ -64,6 +68,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetInt32(
 int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetUInt32(
     NpUniversalDataSystemEventPropertyObject* object, const char* key, uint32_t value)
 {
+    if (!Uds::SystemInitialized()) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NOT_INITIALIZED;
     if (const int error = checkTarget(object, key); error != SCE_NP_UNIVERSAL_DATA_SYSTEM_OK) return error;
     object->Set(key, value);
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
@@ -72,6 +77,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetUInt32(
 int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetInt64(
     NpUniversalDataSystemEventPropertyObject* object, const char* key, int64_t value)
 {
+    if (!Uds::SystemInitialized()) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NOT_INITIALIZED;
     if (const int error = checkTarget(object, key); error != SCE_NP_UNIVERSAL_DATA_SYSTEM_OK) return error;
     object->Set(key, value);
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
@@ -80,6 +86,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetInt64(
 int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetUInt64(
     NpUniversalDataSystemEventPropertyObject* object, const char* key, uint64_t value)
 {
+    if (!Uds::SystemInitialized()) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NOT_INITIALIZED;
     if (const int error = checkTarget(object, key); error != SCE_NP_UNIVERSAL_DATA_SYSTEM_OK) return error;
     object->Set(key, value);
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
@@ -88,6 +95,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetUInt64(
 int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetFloat32(
     NpUniversalDataSystemEventPropertyObject* object, const char* key, float value)
 {
+    if (!Uds::SystemInitialized()) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NOT_INITIALIZED;
     if (const int error = checkTarget(object, key); error != SCE_NP_UNIVERSAL_DATA_SYSTEM_OK) return error;
     object->Set(key, value);
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
@@ -96,6 +104,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetFloat32(
 int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetFloat64(
     NpUniversalDataSystemEventPropertyObject* object, const char* key, double value)
 {
+    if (!Uds::SystemInitialized()) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NOT_INITIALIZED;
     if (const int error = checkTarget(object, key); error != SCE_NP_UNIVERSAL_DATA_SYSTEM_OK) return error;
     object->Set(key, value);
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
@@ -104,6 +113,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetFloat64(
 int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetBool(
     NpUniversalDataSystemEventPropertyObject* object, const char* key, bool value)
 {
+    if (!Uds::SystemInitialized()) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NOT_INITIALIZED;
     if (const int error = checkTarget(object, key); error != SCE_NP_UNIVERSAL_DATA_SYSTEM_OK) return error;
     object->Set(key, value);
     return SCE_NP_UNIVERSAL_DATA_SYSTEM_OK;
@@ -112,6 +122,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetBool(
 int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetBinary(
     NpUniversalDataSystemEventPropertyObject* object, const char* key, const void* value, size_t value_size)
 {
+    if (!Uds::SystemInitialized()) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NOT_INITIALIZED;
     if (const int error = checkTarget(object, key); error != SCE_NP_UNIVERSAL_DATA_SYSTEM_OK) return error;
     if (value == nullptr) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NULL_VALUE;
     const auto* bytes = static_cast<const std::uint8_t*>(value);
@@ -125,6 +136,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetObject(
     const NpUniversalDataSystemEventPropertyObject* value,
     NpUniversalDataSystemEventPropertyObject** value_ptr)
 {
+    if (!Uds::SystemInitialized()) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NOT_INITIALIZED;
     if (const int error = checkTarget(object, key); error != SCE_NP_UNIVERSAL_DATA_SYSTEM_OK) return error;
     auto child = std::make_shared<NpUniversalDataSystemEventPropertyObject>(value != nullptr ? value->Clone() : NpUniversalDataSystemEventPropertyObject{});
     if (value_ptr != nullptr) {
@@ -144,6 +156,7 @@ int APS5_VABI sceNpUniversalDataSystemEventPropertyObjectSetArray(
     const NpUniversalDataSystemEventPropertyArray* value,
     NpUniversalDataSystemEventPropertyArray** value_ptr)
 {
+    if (!Uds::SystemInitialized()) return SCE_NP_UNIVERSAL_DATA_SYSTEM_ERROR_NOT_INITIALIZED;
     if (const int error = checkTarget(object, key); error != SCE_NP_UNIVERSAL_DATA_SYSTEM_OK) return error;
     auto child = std::make_shared<NpUniversalDataSystemEventPropertyArray>(value != nullptr ? value->Clone() : NpUniversalDataSystemEventPropertyArray{});
     if (value_ptr != nullptr) {

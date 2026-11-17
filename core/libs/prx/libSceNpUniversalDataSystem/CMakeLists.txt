@@ -24,6 +24,7 @@ add_test_executable(np_uds_events_tests EXCLUDE_FROM_ALL
         src/Event.cpp
         src/EventPropertyArray.cpp
         src/EventPropertyObject.cpp
+        src/System.cpp
         src/UdsEvent.cpp
 )
 target_include_directories(np_uds_events_tests PRIVATE ${LIBS_INCLUDE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/src)
