@@ -14059,46 +14059,6 @@ int APS5_VABI _ZN3WTF12CountingLock8lockSlowEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN3WTF13MetaAllocator17addFreshFreeSpaceEPvm() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF13MetaAllocator17currentStatisticsERKNS_6LockerINS_4LockEEE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF13MetaAllocator17freeFreeSpaceNodeEPNS0_13FreeSpaceNodeE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF13MetaAllocator18debugFreeSpaceSizeEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF13MetaAllocator19isInAllocatedMemoryERKNS_14AbstractLockerEPv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF13MetaAllocator7releaseERKNS_6LockerINS_4LockEEERNS_19MetaAllocatorHandleE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF13MetaAllocator8allocateERKNS_6LockerINS_4LockEEEm() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF13MetaAllocatorC2ERNS_4LockEmm() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF13MetaAllocatorD0Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF13MetaAllocatorD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN3WTF13ReadWriteLock10readUnlockEv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -14522,18 +14482,6 @@ int APS5_VABI _ZN3WTF18ParallelHelperPoolD1Ev() {
 }
 
 int APS5_VABI _ZN3WTF18ParallelHelperPoolD2Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF19MetaAllocatorHandle6shrinkEm() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF19MetaAllocatorHandleD1Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN3WTF19MetaAllocatorHandleD2Ev() {
     NotImplemented_nid_no_patch(__func__);
 }
 
