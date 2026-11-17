@@ -2,13 +2,27 @@
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/ApplicationHeap.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include <cerrno>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <source_location>
 #include <stdexcept>
 #include <vector>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 static void Require(bool condition, std::source_location location = std::source_location::current()) {
     if (condition) return;
@@ -148,11 +162,68 @@ static void TestPopFree() {
     sk_pop_free_nid_postfix(stack, nullptr);
 }
 
+template<typename TCall> static void RejectsPreservingErrno(TCall call, std::source_location location = std::source_location::current()) {
+    errno = 71;
+    bool rejected = false;
+    try { call(); } catch (const std::runtime_error&) { rejected = errno == 71; }
+    Require(rejected, location);
+}
+
+static void TestGuestPointers() {
+    auto* unmapped = reinterpret_cast<LibreSslStack*>(std::uintptr_t {0x10});
+    RejectsPreservingErrno([&] { sk_num_nid_postfix(unmapped); });
+    RejectsPreservingErrno([&] { sk_value_nid_postfix(unmapped, 0); });
+    Require(sk_value_nid_postfix(unmapped, -1) == nullptr);
+    RejectsPreservingErrno([&] { sk_pop_nid_postfix(unmapped); });
+    RejectsPreservingErrno([&] { sk_pop_free_nid_postfix(unmapped, Release); });
+
+    char first = 'a';
+    LibreSslStack detached {2, reinterpret_cast<char**>(std::uintptr_t {0x10}), 0, 2, nullptr};
+    RejectsPreservingErrno([&] { sk_value_nid_postfix(&detached, 1); });
+    Require(sk_value_nid_postfix(&detached, 2) == nullptr);
+    RejectsPreservingErrno([&] { sk_pop_nid_postfix(&detached); });
+    Require(detached.num == 2);
+    freed.clear();
+    RejectsPreservingErrno([&] { sk_pop_free_nid_postfix(&detached, Release); });
+    Require(released.empty() && freed.empty());
+
+#ifdef _WIN32
+    SYSTEM_INFO info {};
+    GetSystemInfo(&info);
+    const std::size_t pageSize = info.dwPageSize;
+    void* page = VirtualAlloc(nullptr, pageSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    Require(page != nullptr);
+#else
+    const std::size_t pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+    void* page = mmap(nullptr, pageSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    Require(page != MAP_FAILED);
+#endif
+    char* elements[2] {&first, nullptr};
+    auto* readOnly = static_cast<LibreSslStack*>(page);
+    *readOnly = LibreSslStack {2, elements, 0, 2, nullptr};
+#ifdef _WIN32
+    DWORD previous = 0;
+    Require(VirtualProtect(page, pageSize, PAGE_READONLY, &previous) != 0);
+#else
+    Require(mprotect(page, pageSize, PROT_READ) == 0);
+#endif
+    Require(sk_num_nid_postfix(readOnly) == 2);
+    Require(sk_value_nid_postfix(readOnly, 0) == &first);
+    RejectsPreservingErrno([&] { sk_pop_nid_postfix(readOnly); });
+    Require(readOnly->num == 2);
+#ifdef _WIN32
+    VirtualFree(page, 0, MEM_RELEASE);
+#else
+    munmap(page, pageSize);
+#endif
+}
+
 int main() {
     InitializeHeap();
     TestNum();
     TestValue();
     TestPop();
     TestPopFree();
+    TestGuestPointers();
     std::puts("libSceLibreSsl stack tests passed");
 }
