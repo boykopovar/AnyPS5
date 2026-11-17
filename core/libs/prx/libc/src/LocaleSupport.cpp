@@ -92,6 +92,7 @@ const GuestLocale::FacetVtable g_localeVtable{DestroyClassicLocale, DestroyClass
 const GuestLocale::FacetVtable g_copiedLocaleVtable{DestroyCopiedLocale, DestroyCopiedLocale, RetainCopiedLocale, ReleaseCopiedLocale};
 GuestLocale::Facet* g_classicFacets[1]{};
 GuestLocale::Implementation g_classicLocale{{&g_localeVtable, 1, 0}, g_classicFacets, 1, 0, false, "C"};
+std::atomic<GuestLocale::Implementation*> g_globalLocale{&g_classicLocale};
 
 void ValidateCharacterRange(const char* first, const char* last, const char* function) {
     if ((first == nullptr) != (last == nullptr) || last < first) throw std::invalid_argument(std::string(function) + ": invalid character range");
@@ -114,6 +115,23 @@ GuestLocale::Facet* APS5_VABI ReleaseFacet(GuestLocale::Facet* self) {
     if (self == nullptr) throw std::invalid_argument("facet release: null facet");
     return std::atomic_ref<std::uint32_t>(self->references).fetch_sub(1) == 1 ? self : nullptr;
 }
+
+void APS5_VABI DestroyLocimp(GuestLocale::Facet* self) {
+    if (self == nullptr) throw std::invalid_argument("_Locimp destroy: null object");
+    auto* implementation = reinterpret_cast<GuestLocale::Implementation*>(self);
+    if (implementation->facets != nullptr && implementation->facets != g_classicFacets) {
+        ApplicationHeapFree_nid_no_patch(implementation->facets);
+    }
+    implementation->facets = nullptr;
+    implementation->facetCount = 0;
+}
+
+void APS5_VABI DeleteLocimp(GuestLocale::Facet* self) {
+    DestroyLocimp(self);
+    _ZdlPv_nid_postfix(self);
+}
+
+const GuestLocale::FacetVtable g_locimpVtable{DestroyLocimp, DeleteLocimp, RetainFacet, ReleaseFacet};
 
 int APS5_VABI CollateCompare(const GuestLocale::CollateFacet*, const char* first1, const char* last1, const char* first2, const char* last2) {
     ValidateCharacterRange(first1, last1, "collate::do_compare");
@@ -412,8 +430,7 @@ const GuestLocale::Facet* FindFacet(const GuestLocale::IosBase* stream, std::uin
     const GuestLocale::Implementation* locale = *stream->locale;
     const GuestLocale::Facet* facet = index < locale->facetCount ? locale->facets[index] : nullptr;
     if (facet != nullptr || !locale->transparent) return facet;
-    const GuestLocale::Implementation* global = _ZNSt6locale16_GetgloballocaleEv_nid_postfix();
-    return index < global->facetCount ? global->facets[index] : nullptr;
+    return LibcFindGlobalFacet_nid_no_patch(index);
 }
 
 const GuestLocale::Facet* StreamNumpunct(const GuestLocale::IosBase* stream) {
@@ -1201,7 +1218,7 @@ GuestLocale::Implementation* APS5_VABI _ZNSt6locale5_InitEv_nid_postfix() {
     if (!g_localeInitialized) {
         g_localeInitialized = true;
     }
-    return &g_classicLocale;
+    return g_globalLocale.load();
 }
 
 void APS5_VABI _ZNSt6locale5facet9_RegisterEv_nid_postfix(GuestLocale::Facet* self) {
@@ -1214,7 +1231,7 @@ void APS5_VABI _ZNSt6locale5facet9_RegisterEv_nid_postfix(GuestLocale::Facet* se
 }
 
 GuestLocale::Implementation* APS5_VABI _ZNSt6locale16_GetgloballocaleEv_nid_postfix() {
-    return &g_classicLocale;
+    return g_globalLocale.load();
 }
 
 namespace {
@@ -2037,6 +2054,50 @@ GuestLocaleFacade* APS5_VABI _ZNSt6locale7classicEv_nid_postfix() {
 
 const GuestLocale::CollateVtable* GuestWideCollateVtable_nid_no_patch() {
     return &g_wideCollateVtable;
+}
+
+const GuestLocale::FacetVtable* LibcLocimpVtable_nid_no_patch() {
+    return &g_locimpVtable;
+}
+
+const GuestLocale::Facet* LibcFindGlobalFacet_nid_no_patch(std::uint64_t index) {
+    std::lock_guard<std::mutex> lock(g_localeInitMutex);
+    const GuestLocale::Implementation* global = g_globalLocale.load();
+    return global != nullptr && global->facets != nullptr && index < global->facetCount ? global->facets[index] : nullptr;
+}
+
+GuestLocale::Implementation* LibcSwapGlobalLocale_nid_no_patch(GuestLocale::Implementation* next) {
+    if (next == nullptr || next->base.vtable == nullptr || next->base.vtable->retain == nullptr || next->base.vtable->release == nullptr || next->base.vtable->deleteObject == nullptr) {
+        throw std::invalid_argument("locale::global: null locale");
+    }
+    if (next->facetCount != 0 && next->facets == nullptr) {
+        throw std::invalid_argument("locale::global: null facet vector");
+    }
+    if (next->name == nullptr) {
+        throw std::invalid_argument("locale::global: null locale name");
+    }
+    std::string localeName;
+    if (CopyGuestString_nid_no_patch(next->name, 2, localeName) != 0) {
+        throw std::runtime_error("locale::global: unsupported locale name");
+    }
+    if (localeName != "*" && setlocale_nid_postfix(0, next->name) == nullptr) {
+        throw std::runtime_error("locale::global: unsupported locale name");
+    }
+    GuestLocale::Implementation* previous = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_localeInitMutex);
+        previous = g_globalLocale.load();
+        if (previous == nullptr || previous->base.vtable == nullptr || previous->base.vtable->retain == nullptr || previous->base.vtable->release == nullptr || previous->base.vtable->deleteObject == nullptr) {
+            throw std::runtime_error("locale::global: invalid global locale");
+        }
+        if (previous == next) {
+            previous->base.vtable->retain(&previous->base);
+            return previous;
+        }
+        next->base.vtable->retain(&next->base);
+        g_globalLocale.store(next);
+    }
+    return previous;
 }
 
 std::size_t APS5_VABI _ZNSt7collateIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale) {

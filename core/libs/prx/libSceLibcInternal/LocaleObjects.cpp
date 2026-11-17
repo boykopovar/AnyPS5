@@ -3,6 +3,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libc/include/GuestLocale.hpp"
 #include "SceTypes.hpp"
+#include <stdexcept>
 
 extern "C" {
 
@@ -20,5 +21,30 @@ void APS5_VABI sceLibcInternalLocimpBaseCopyConstructor_nid_no_patch(void* self,
     _ZNSt6locale7_LocimpC1ERKS0__nid_postfix(static_cast<GuestLocale::Implementation*>(self), static_cast<const GuestLocale::Implementation*>(source));
 }
 APS5_EXPORT("dsJKehuajH4", sceLibcInternalLocimpBaseCopyConstructor_nid_no_patch);
+
+GuestLocaleFacade* APS5_VABI _ZNSt6locale6globalERKS__nid_postfix(GuestLocaleFacade* result, const GuestLocaleFacade* locale) {
+    if (result == nullptr || locale == nullptr || locale->implementation == nullptr) {
+        throw std::invalid_argument("locale::global: null locale");
+    }
+    result->implementation = LibcSwapGlobalLocale_nid_no_patch(locale->implementation);
+    return result;
+}
+
+void APS5_VABI _ZNSt6locale7_LocimpC2Eb_nid_postfix(GuestLocale::Implementation* self, bool transparent) {
+    if (self == nullptr) {
+        throw std::invalid_argument("_Locimp: null object");
+    }
+    *self = {{LibcLocimpVtable_nid_no_patch(), 1, 0}, nullptr, 0, 0, transparent, "*"};
+}
+
+void APS5_VABI _ZNSt8_LocinfoC1EiPKc_nid_postfix(GuestLocale::LocinfoStorage* self, int category, const char* localeName) {
+    if (self == nullptr) {
+        throw std::invalid_argument("_Locinfo: null object");
+    }
+    if (category < 0 || (static_cast<unsigned int>(category) & ~0x3fU) != 0) {
+        throw std::invalid_argument("_Locinfo: invalid locale category");
+    }
+    _ZNSt8_LocinfoC1EPKc_nid_postfix(self, localeName);
+}
 
 }

@@ -452,5 +452,8 @@ extern "C" char APS5_VABI CtypeDoToupper_nid_no_patch(const GuestLocale::CtypeFa
 extern "C" const char* APS5_VABI CtypeDoToupperRange_nid_no_patch(const GuestLocale::CtypeFacet* self, char* first, const char* last);
 extern "C" void APS5_VABI CtypeDestroy_nid_no_patch(GuestLocale::CtypeFacet* self);
 extern "C" void APS5_VABI CtypeDelete_nid_no_patch(GuestLocale::CtypeFacet* self);
+extern "C" const GuestLocale::FacetVtable* LibcLocimpVtable_nid_no_patch();
+extern "C" GuestLocale::Implementation* LibcSwapGlobalLocale_nid_no_patch(GuestLocale::Implementation* next);
+extern "C" const GuestLocale::Facet* LibcFindGlobalFacet_nid_no_patch(std::uint64_t index);
 
 #endif
