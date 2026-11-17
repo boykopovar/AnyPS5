@@ -85,6 +85,15 @@ int main() {
     Require(sceSystemLogger2GetEventStatus("", &eventState) == kInvalidArgument);
     Require(sceSystemLogger2GetEventStatus(nullptr, &eventState) == kInvalidArgument);
     Require(sceSystemLogger2GetEventStatus("name", nullptr) == kInvalidArgument);
+    errno = 71;
+    Require(sceSystemLogger2GetTimestamp(reinterpret_cast<SceSystemLogger2Timestamp*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
+    Require(sceSystemLogger2GetEventStatus(reinterpret_cast<const char*>(0x10), &eventState) == kInvalidArgument);
+    Require(errno == 71);
+    Require(sceSystemLogger2GetEventStatus(statusName, reinterpret_cast<std::uint64_t*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
+    Require(sceSystemLogger2SetEventAsyncInternal(record, reinterpret_cast<std::uint32_t*>(0x10)) == kInvalidArgument);
+    Require(errno == 71);
 
     Require(sceSystemLogger2SetEventAsyncInternal(nullptr, &eventStatus) == kInvalidArgument);
     Require(sceSystemLogger2SetEventAsyncInternal(record, nullptr) == kInvalidArgument);

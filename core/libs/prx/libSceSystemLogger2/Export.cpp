@@ -152,9 +152,17 @@ int APS5_VABI sceSystemLogger2GetTimestamp(SceSystemLogger2Timestamp* timestamp)
     std::lock_guard lock(loggerMutex);
     if (!loggerInitialized) return NOT_INITIALIZED;
     if (!timestamp) return INVALID_ARGUMENT;
-    std::memset(timestamp, 0, sizeof(*timestamp));
-    timestamp->tick = currentNetworkTick();
-    std::memcpy(timestamp->clockSource, "networkClock", sizeof("networkClock"));
+    const int savedErrno = errno;
+    if (!GuestWritable_nid_no_patch(timestamp, sizeof(*timestamp))) {
+        errno = savedErrno;
+        return INVALID_ARGUMENT;
+    }
+    SceSystemLogger2Timestamp local{};
+    local.tick = currentNetworkTick();
+    std::memcpy(local.clockSource, "networkClock", sizeof("networkClock"));
+    const bool copied = GuestCopyOut_nid_no_patch(timestamp, &local, sizeof(local));
+    errno = savedErrno;
+    if (!copied) return INVALID_ARGUMENT;
     return 0;
 }
 
@@ -166,9 +174,19 @@ int APS5_VABI sceSystemLogger2IsAvailableMonitor(void) {
 int APS5_VABI sceSystemLogger2GetEventStatus(const char* eventName, std::uint64_t* status) {
     std::lock_guard lock(loggerMutex);
     if (!eventName || !status) return INVALID_ARGUMENT;
-    const std::size_t length = strnlen(eventName, EVENT_STATUS_NAME_LIMIT + 1);
-    if (length == 0 || length > EVENT_STATUS_NAME_LIMIT) return INVALID_ARGUMENT;
-    *status = 0;
+    const int savedErrno = errno;
+    std::string text;
+    const int copyResult = CopyGuestString_nid_no_patch(eventName, EVENT_STATUS_NAME_LIMIT + 1, text);
+    errno = savedErrno;
+    if (copyResult != 0 || text.empty() || text.size() > EVENT_STATUS_NAME_LIMIT) return INVALID_ARGUMENT;
+    if (!GuestWritable_nid_no_patch(status, sizeof(*status))) {
+        errno = savedErrno;
+        return INVALID_ARGUMENT;
+    }
+    const std::uint64_t zero = 0;
+    const bool copied = GuestCopyOut_nid_no_patch(status, &zero, sizeof(zero));
+    errno = savedErrno;
+    if (!copied) return INVALID_ARGUMENT;
     return NOT_AVAILABLE;
 }
 
@@ -176,9 +194,17 @@ int APS5_VABI sceSystemLogger2SetEventAsyncInternal(const void* event, std::uint
     std::lock_guard lock(loggerMutex);
     if (!loggerInitialized) return NOT_INITIALIZED;
     if (!event || !status) return INVALID_ARGUMENT;
+    const int savedErrno = errno;
+    if (!GuestWritable_nid_no_patch(status, sizeof(*status))) {
+        errno = savedErrno;
+        return INVALID_ARGUMENT;
+    }
     const int result = validateEvent(static_cast<const std::uint8_t*>(event));
     if (result != 0) return result;
-    *status = 0;
+    const std::uint32_t zero = 0;
+    const bool copied = GuestCopyOut_nid_no_patch(status, &zero, sizeof(zero));
+    errno = savedErrno;
+    if (!copied) return INVALID_ARGUMENT;
     return NOT_AVAILABLE;
 }
 
