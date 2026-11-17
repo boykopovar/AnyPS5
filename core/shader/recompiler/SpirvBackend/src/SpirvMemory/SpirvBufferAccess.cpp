@@ -1,4 +1,5 @@
 #include "PipelineSpecialization.hpp"
+#include "RuntimeAbi.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvBufferAccess.hpp"
 #include "SpirvBackend/SpirvEmitterHelpers.hpp"
 #include "SpirvBackend/SpirvMemory/SpirvTypes.hpp"
@@ -165,6 +166,20 @@ std::uint32_t EmitLdsBufferU64Pointer(SpirvEmitterState& state, std::uint32_t in
     return pointer;
 }
 
+std::uint32_t EmitAtomicLockPointer(SpirvEmitterState& state, std::uint32_t index) {
+    const auto u32 = TypeU32(state);
+    const auto u64 = TypeScalarU64(state);
+    const auto widen = [&](std::uint32_t value) { return Unary(state, spv::OpUConvert, u64, value); };
+    const auto low = state.module.SpecializationConstant(u32, PipelineSpecialization::AtomicLockTableBase, 0u);
+    const auto high = state.module.SpecializationConstant(u32, PipelineSpecialization::AtomicLockTableBase + 1u, 0u);
+    const auto base = Binary(state, spv::OpBitwiseOr, u64, widen(low), Binary(state, spv::OpShiftLeftLogical, u64, widen(high), ConstantU32(state, 32u)));
+    const auto slot = Binary(state, spv::OpBitwiseAnd, u32, index, ConstantU32(state, RuntimeAbi::AtomicLockCount - 1u));
+    const auto address = Binary(state, spv::OpIAdd, u64, base, Binary(state, spv::OpShiftLeftLogical, u64, widen(slot), ConstantU32(state, 2u)));
+    const auto pointer = state.module.AllocateId();
+    state.module.AddFunction(spv::OpConvertUToPtr, TypePhysicalU32Pointer(state), pointer, address);
+    return pointer;
+}
+
 MemoryResourceAccess PrepareMemoryResourceAccess(SpirvEmitterState& state, const MemoryInfo& mem) {
     MemoryResourceAccess access;
     access.kind = mem.kind;
@@ -199,6 +214,11 @@ MemoryResourceAccess PrepareMemoryResourceAccess(SpirvEmitterState& state, const
         access.length = state.gdsLength;
         return access;
     case ResourceKind::Scratch:
+        if (ScratchPoolActive(state)) {
+            access.objectPointer = state.scratchPoolVariable;
+            access.length = ConstantU32(state, state.program.Info().scratchDwords);
+            return access;
+        }
         if (state.scratchVariable.at(state.laneHalf) == 0) {
             FailEmit("scratch storage was not prepared before function emission");
         }
@@ -259,6 +279,9 @@ std::uint32_t EmitMemoryElementPointer(SpirvEmitterState& state, const MemoryRes
     }
     if (access.kind == ResourceKind::Lds && LdsInDeviceMemory(state)) {
         return EmitStorageBufferElementPointer(state, access, EmitAddU32(state, state.ldsBufferBase, index), TypeStorageBufferElementPointer(state));
+    }
+    if (access.kind == ResourceKind::Scratch && ScratchPoolActive(state)) {
+        return EmitScratchPoolElementPointer(state, index);
     }
     if (access.kind == ResourceKind::Lds || access.kind == ResourceKind::Scratch) {
         const auto pointer = state.module.AllocateId();

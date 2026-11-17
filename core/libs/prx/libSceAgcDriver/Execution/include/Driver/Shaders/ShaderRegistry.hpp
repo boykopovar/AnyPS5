@@ -158,6 +158,13 @@ struct PreparedShaderState {
         std::vector<std::uint64_t> callees;
         std::vector<std::vector<std::uint32_t>> code;
         std::shared_ptr<const ShaderRecompiler::LinkedCalls> linked;
+        std::vector<std::uint32_t> tableUserData;
+        std::vector<std::shared_ptr<const ShaderRecompiler::SrtGuestWords>> dependencies;
+
+        void AppendRegions(std::vector<ShaderRecompiler::MemoryRegion>& regions) const;
+        void VouchRegions(std::span<const ShaderRecompiler::MemoryRegion> regions, std::vector<VouchedRegions>& vouched) const;
+        static bool Restamp(const ShaderRecompiler::SrtGuestWords& block, ShaderMemory::PendingWriteQuery pending);
+        bool Overlaps(std::uint64_t address, std::size_t bytes) const;
     };
     std::vector<Entry> entries;
     std::vector<UserDataLink> userDataLinks;
@@ -177,6 +184,7 @@ struct PreparedShaders : PreparedShaderState {
         std::weak_ptr<VulkanDevice> device;
     };
     std::vector<DeferredAbi> deferredAbis;
+    std::size_t resolving = 0;
     bool deferredPreparing = false;
     std::mutex mutex;
     std::condition_variable settled;
@@ -303,7 +311,7 @@ struct ShaderSnapshot {
 };
 
 
-std::shared_ptr<const ShaderSnapshot> ReadRawShader(std::uint64_t address);
+std::shared_ptr<const ShaderSnapshot> ReadRawShader(std::uint64_t address, const std::shared_ptr<const ShaderSnapshot>& retained = {});
 std::shared_ptr<const ShaderSnapshot> ReadUserDataTailContinuation(std::span<const std::uint32_t> code, std::uint32_t userDataBase, std::span<const std::uint32_t> userData);
 std::shared_ptr<const ShaderSnapshot> ProgramSnapshot(const ShaderRegistry& shaders, std::uint64_t address, std::initializer_list<std::uint8_t> types);
 void NoteRawGraphicsDraw(const ShaderSnapshot& snapshot);
@@ -323,6 +331,9 @@ ShaderSnapshot PrepareNullPixelProgram(const VulkanDevice& device);
 std::uint64_t DepthCopyPixelProgramAddress(bool multisampled);
 std::uint32_t DepthCopyPixelUserWords(bool multisampled);
 ShaderSnapshot PrepareDepthCopyPixelProgram(bool multisampled);
+bool DriverOwnedProgram(std::uint64_t codeAddress);
+std::uint64_t StencilCopyPixelProgramAddress(bool multisampled);
+ShaderSnapshot PrepareStencilCopyPixelProgram(bool multisampled);
 std::optional<ShaderRecompiler::ShaderFloatMode> RegisteredFloatMode(const ShaderSnapshot& snapshot);
 std::optional<ShaderRecompiler::ShaderFloatMode> DispatchFloatMode(const ShaderSnapshot& snapshot, const Registers& live);
 std::shared_ptr<const ShaderSnapshot> RegisteredHeader(const ShaderRegistry& registry, const Shader* shader);
@@ -331,6 +342,7 @@ void PublishRegisteredShader(std::shared_ptr<ShaderRegistry>& registry, const st
 void SubmitRegistrationPreparation(std::function<void()> task, const PreparedShaders* prepared = nullptr);
 void PrioritizeRegistrationPreparation(PreparedShaders& prepared);
 void AwaitRegistrationPreparation();
+void AwaitReferencedPreparations(const ShaderRegistry& registry, std::span<const std::uint64_t> addresses);
 void SubmitLibraryPrebuild(std::function<void()> task, std::uint64_t program = 0);
 bool LibraryPrebuildsWaiting();
 void PrioritizeLibraryPrebuilds(std::span<const std::uint64_t> programs);
@@ -346,8 +358,24 @@ ShaderRecompiler::RectListShaders PreparedRectangle(const ShaderSnapshot& snapsh
 ShaderRecompiler::RectListShaders DrawRectangle(const ShaderSnapshot& front, const std::shared_ptr<const ShaderSnapshot>& fragment, std::uint64_t vertexId, std::uint64_t fragmentId, const ShaderRecompiler::SpirvTarget& target);
 
 std::shared_ptr<const ShaderRecompiler::SourceHandle> SourceHandleFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request);
-ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request);
-std::shared_ptr<const ShaderRecompiler::ResourceCapture> CaptureInvocation(ShaderMemory& memory, const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, ShaderRecompiler::PreparedShaderInvocation& invocation);
+struct OwnedRecompileRequest {
+    ShaderRecompiler::RecompileRequest request;
+    std::vector<std::uint32_t> code;
+    std::vector<std::byte> header;
+    std::vector<std::uint32_t> userData;
+    std::vector<std::uint32_t> fallbacks;
+    std::vector<std::vector<std::byte>> regionBytes;
+    std::vector<ShaderRecompiler::MemoryRegion> regions;
+    std::vector<std::vector<std::uint32_t>> linkedWords;
+    std::vector<std::vector<std::byte>> linkedHeaders;
+    std::vector<ShaderRecompiler::LinkedProgram> linked;
+};
+
+std::shared_ptr<OwnedRecompileRequest> OwnRecompileRequest(const ShaderRecompiler::RecompileRequest& source, ShaderRecompiler::MemoryRegionView memory);
+ShaderRecompiler::PreparedShaderInvocation InvocationFor(const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, bool deferPreparation = false, std::shared_ptr<const PreparedShaderState::UserDataLink>* linking = nullptr);
+std::shared_ptr<const ShaderRecompiler::RecompileResult> MaterializeInBackground(const ShaderRecompiler::PreparedShaderInvocation& invocation, const std::shared_ptr<const ShaderRecompiler::ResourceCapture>& capture, ShaderRecompiler::MemoryRegionView memory, std::uint64_t address);
+std::shared_ptr<const ShaderRecompiler::ResourceCapture> CaptureInvocation(ShaderMemory& memory, const ShaderSnapshot& snapshot, std::size_t codeOffset, const ShaderRecompiler::RecompileRequest& request, ShaderRecompiler::PreparedShaderInvocation& invocation, std::shared_ptr<const PreparedShaderState::UserDataLink>* linking = nullptr);
+bool StageLinksUserDataCallees(const ShaderSnapshot& snapshot, std::size_t codeOffset);
 
 }
 

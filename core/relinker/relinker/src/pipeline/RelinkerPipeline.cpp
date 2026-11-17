@@ -4,6 +4,7 @@
 #include <relinker/analysis/UnusedNidFilter/EhFrameReader.hpp>
 #include <relinker/analysis/SceCodeExtent.hpp>
 #include <relinker/analysis/RelativeJumpTables.hpp>
+#include <relinker/analysis/ReplacedPltStubs.hpp>
 #include <algorithm>
 #include <iterator>
 #include <sstream>
@@ -11,6 +12,7 @@
 #include <cstring>
 #include <limits>
 #include <map>
+#include <set>
 #include <tuple>
 #include <utility>
 #include <domain/ImportModule.hpp>
@@ -30,7 +32,7 @@ constexpr std::uint16_t kEtSceDynamic = 0xfe18;
 
 }
 
-RelinkerPipeline::RelinkerPipeline(std::shared_ptr<IElfReader> elfReader, std::shared_ptr<ISyscallScanner> syscallScanner, std::shared_ptr<ICallSiteResolver> callSiteResolver, std::shared_ptr<IValidationPolicy> validationPolicy, std::shared_ptr<ISysVDynamicSectionBuilder> dynamicSectionBuilder, std::shared_ptr<IUnusedNidFilter> unusedNidFilter, std::uint32_t unusedFilterLevel, Domain::IProgress& progress)
+RelinkerPipeline::RelinkerPipeline(std::shared_ptr<IElfReader> elfReader, std::shared_ptr<ISyscallScanner> syscallScanner, std::shared_ptr<ICallSiteResolver> callSiteResolver, std::shared_ptr<IValidationPolicy> validationPolicy, std::shared_ptr<ISysVDynamicSectionBuilder> dynamicSectionBuilder, std::shared_ptr<IUnusedNidFilter> unusedNidFilter, std::uint32_t unusedFilterLevel, Domain::IProgress& progress, const bool functionSymbolRoots)
     : elfReader(std::move(elfReader))
     , syscallScanner(std::move(syscallScanner))
     , callSiteResolver(std::move(callSiteResolver))
@@ -39,6 +41,7 @@ RelinkerPipeline::RelinkerPipeline(std::shared_ptr<IElfReader> elfReader, std::s
     , unusedNidFilter(std::move(unusedNidFilter))
     , unusedFilterLevel(unusedFilterLevel)
     , progress(progress)
+    , functionSymbolRoots(functionSymbolRoots)
 {
     if (!this->elfReader || !this->syscallScanner || !this->callSiteResolver || !this->validationPolicy || !this->dynamicSectionBuilder || !this->unusedNidFilter) throw RelinkerException("Missing relinker pipeline dependency");
     if (unusedFilterLevel > 2) throw RelinkerException("Unused NID filter level must be 0, 1 or 2");
@@ -87,6 +90,8 @@ RelinkResult RelinkerPipeline::Relink() {
     ByteCount gotSize = 0;
 
     for (const auto& ph : programHeaders) {
+        if (ph.Type == PT_LOAD && (ph.Flags & ~7u) != 0)
+            throw RelinkerException("Unsupported PT_LOAD permission flags", ph.Offset);
         if (ph.Type == PT_LOAD && (ph.Flags & PF_X) != 0) {
             auto segment = elfReader->ReadSegment(ph);
             if (!segment.empty()) {
@@ -100,6 +105,7 @@ RelinkResult RelinkerPipeline::Relink() {
     }
 
     FileByteOffset sceTableBase = 0;
+    ByteCount sceTableSize = 0;
     bool hasSceDynlibData = false;
     for (const auto& ph : programHeaders) {
         if (ph.Type != PT_SCE_DYNLIBDATA)
@@ -108,6 +114,7 @@ RelinkResult RelinkerPipeline::Relink() {
             throw RelinkerException("Multiple PT_SCE_DYNLIBDATA segments", ph.Offset);
         hasSceDynlibData = true;
         sceTableBase = ph.Offset;
+        sceTableSize = ph.FileSize;
     }
 
     std::vector<DynamicTag> dynTags;
@@ -125,6 +132,8 @@ RelinkResult RelinkerPipeline::Relink() {
 
     if (!hasDynamicSegment)
         throw RelinkerException("No PT_DYNAMIC segment found");
+
+    const std::vector<std::uint8_t>& raw = elfReader->GetRawBytes();
 
     bool hasEhFrameSegment = false;
     for (const auto& ph : programHeaders) {
@@ -212,6 +221,13 @@ RelinkResult RelinkerPipeline::Relink() {
         return hasTag(osTag) ? getTagValue(osTag) : getTagValue(sysvTag);
     };
 
+    auto validateSceTableRange = [&](const std::int64_t osTag, const FileByteOffset offset, const ByteCount size, const char* name) {
+        if (!hasSceDynlibData || !hasTag(osTag)) return;
+        if (size == 0 || offset > raw.size() || size > raw.size() - offset) return;
+        if (offset < sceTableBase || offset - sceTableBase > sceTableSize || size > sceTableSize - (offset - sceTableBase))
+            throw RelinkerException(std::string(name) + " is outside PT_SCE_DYNLIBDATA", offset);
+    };
+
     const bool hasPltRelocations = hasTag(DT_OS_PLTRELSZ) || hasTag(DT_PLTRELSZ)
         || hasTag(DT_OS_PLTREL) || hasTag(DT_PLTREL)
         || hasTag(DT_OS_JMPREL) || hasTag(DT_JMPREL);
@@ -223,6 +239,7 @@ RelinkResult RelinkerPipeline::Relink() {
 
     const FileByteOffset dynStrTabOffset = readAsOffset(DT_OS_STRTAB, DT_STRTAB, "DT_STRTAB");
     const ByteCount dynStrTabSize = readAsSize(DT_OS_STRSZ, DT_STRSZ, "DT_STRSZ");
+    validateSceTableRange(DT_OS_STRTAB, dynStrTabOffset, dynStrTabSize, "Dynamic string table");
 
     const FileByteOffset dynSymTabOffset = readAsOffset(DT_OS_SYMTAB, DT_SYMTAB, "DT_SYMTAB");
     constexpr std::size_t symEntSize = 24;
@@ -241,6 +258,7 @@ RelinkResult RelinkerPipeline::Relink() {
         dynJmpRelOffset = readAsOffset(DT_OS_JMPREL, DT_JMPREL, "DT_JMPREL");
         if (gotSize % 24 != 0)
             throw RelinkerException("Invalid DT_PLTRELSZ value: " + std::to_string(gotSize) + " bytes; expected a multiple of 24 bytes");
+        validateSceTableRange(DT_OS_JMPREL, dynJmpRelOffset, gotSize, "Jump relocation table");
     }
     const ByteCount dynJmpRelSize = gotSize;
 
@@ -254,6 +272,7 @@ RelinkResult RelinkerPipeline::Relink() {
     if (hasRelaTable) {
         dynRelaOffset = readAsOffset(DT_OS_RELA, DT_RELA, "DT_RELA");
         dynRelaSize = readAsSize(DT_OS_RELASZ, DT_RELASZ, "DT_RELASZ");
+        validateSceTableRange(DT_OS_RELA, dynRelaOffset, dynRelaSize, "Relocation table");
     }
     constexpr std::size_t relaEntSize = 24;
     if (hasRelaTable || hasTag(DT_OS_RELAENT) || hasTag(DT_RELAENT)) {
@@ -272,10 +291,18 @@ RelinkResult RelinkerPipeline::Relink() {
     std::vector<NidReference> nidRefs;
     std::vector<std::string> neededLibraries;
 
-    const std::vector<std::uint8_t>& raw = elfReader->GetRawBytes();
     const auto relrRelocations = ReadRelrRelocations(raw, programHeaders, dynTags);
     const std::optional<ByteCount> dynSymTabSize = hasTag(DT_OS_SYMTABSZ)
         ? std::optional<ByteCount>(getTagValue(DT_OS_SYMTABSZ)) : std::nullopt;
+    std::optional<ByteCount> dynSymTabBound = dynSymTabSize;
+    if (hasSceDynlibData && hasTag(DT_OS_SYMTAB)) {
+        if (dynSymTabOffset < sceTableBase || dynSymTabOffset - sceTableBase > sceTableSize)
+            throw RelinkerException("Dynamic symbol table is outside PT_SCE_DYNLIBDATA", dynSymTabOffset);
+        const ByteCount sceSymTabSize = sceTableSize - (dynSymTabOffset - sceTableBase);
+        if (!dynSymTabBound || sceSymTabSize < *dynSymTabBound)
+            dynSymTabBound = sceSymTabSize;
+    }
+    validateSceTableRange(DT_OS_SYMTAB, dynSymTabOffset, dynSymTabSize.value_or(0), "Dynamic symbol table");
 
     if (dynStrTabOffset > raw.size() || dynStrTabSize > raw.size() - dynStrTabOffset)
         throw RelinkerException("Dynamic string table is out of bounds", dynStrTabOffset);
@@ -314,7 +341,9 @@ RelinkResult RelinkerPipeline::Relink() {
     }
 
     std::map<std::uint64_t, std::string> importModules;
+    std::set<std::uint64_t> ownModules;
     for (const auto& tag : dynTags) {
+        if (tag.Tag == 0x61000043 || tag.Tag == 0x6100000d) ownModules.insert(tag.Value >> 48);
         if (tag.Tag == 0x61000045 && !importModules.emplace(tag.Value >> 48, readCStr(tag.Value & 0xffffffffu)).second)
             throw RelinkerException("Duplicate import module ID");
     }
@@ -329,7 +358,7 @@ RelinkResult RelinkerPipeline::Relink() {
         const ByteCount off = static_cast<ByteCount>(symIdx) * symEntSize;
         const FileByteOffset symOff = dynSymTabOffset + off;
         if (symOff < dynSymTabOffset || symOff > raw.size() || raw.size() - symOff < symEntSize
-            || (dynSymTabSize && (off > *dynSymTabSize || symEntSize > *dynSymTabSize - off)))
+            || (dynSymTabBound && (off > *dynSymTabBound || symEntSize > *dynSymTabBound - off)))
             throw RelinkerException("Symbol table entry out of bounds", symOff);
         if (symIdx == 0 && std::any_of(raw.begin() + static_cast<std::ptrdiff_t>(symOff), raw.begin() + static_cast<std::ptrdiff_t>(symOff + symEntSize),
                                        [](const std::uint8_t byte) { return byte != 0; }))
@@ -432,10 +461,12 @@ RelinkResult RelinkerPipeline::Relink() {
                                  || std::any_of(raw.begin() + static_cast<std::ptrdiff_t>(symOff), raw.begin() + static_cast<std::ptrdiff_t>(symOff + symEntSize),
                                                 [](const std::uint8_t byte) { return byte != 0; })))
                 throw RelinkerException("Unnamed import symbol is not a null symbol entry", symOff);
+            if (section != SHN_UNDEF && ((raw[symOff + 4] >> 4) < STB_GLOBAL || (raw[symOff + 5] & 3) == 1 || (raw[symOff + 5] & 3) == 2))
+                throw RelinkerException("Relocation names a defined symbol that is local, hidden or internal: " + name, symOff);
             const bool weak = (raw[symOff + 4] >> 4) == STB_WEAK;
             const auto symbolType = static_cast<std::uint8_t>(raw[symOff + 4] & 15);
             const bool function = symbolType == STT_FUNC;
-            nidRefs.push_back({name, Domain::ImportModule(name, importModules, neededLibraries), relType, pos, rOffset, rAddend, weak, function, symbolType});
+            nidRefs.push_back({name, Domain::ImportModule(name, importModules, neededLibraries, ownModules), relType, pos, rOffset, rAddend, weak, function, symbolType});
         }
     };
 
@@ -460,6 +491,16 @@ RelinkResult RelinkerPipeline::Relink() {
             }
     }
 
+    std::vector<std::vector<ReplacedPltStub>> replacedStubs;
+    for (const auto& [segment, segmentVAddr, segmentFileOffset] : executableSegments) {
+        static_cast<void>(segmentFileOffset);
+        for (const auto& stub : replacedStubs.emplace_back(FindReplacedPltStubs(segment, segmentVAddr, gotVAddr, dynJmpRelSize))) {
+            const auto import = std::find_if(nidRefs.begin(), nidRefs.end(), [&](const NidReference& reference) { return reference.RelocationTypeValue == R_X86_64_JUMP_SLOT && reference.RelocationAddress == stub.GotEntry; });
+            const std::string_view name = import == nidRefs.end() ? std::string_view{} : std::string_view{import->Nid};
+            progress.Message(DescribeReplacedPltStub(stub, {}, name.substr(0, name.find('#'))));
+        }
+    }
+
     std::vector<std::vector<std::uint8_t>> scanSegments;
     for (const auto& [segment, segmentVAddr, segmentFileOffset] : executableSegments) {
         static_cast<void>(segmentFileOffset);
@@ -472,7 +513,17 @@ RelinkResult RelinkerPipeline::Relink() {
     for (std::size_t index = 0; index < executableSegments.size(); ++index) {
         auto& [segment, segmentVAddr, segmentFileOffset] = executableSegments[index];
         auto& scanSegment = scanSegments[index];
-        for (const auto offset : syscallScanner->ScanCodeSectionForSyscalls(scanSegment, segmentVAddr, scanSegment.size(), {}, segmentUnwindRanges[index])) {
+        std::vector<std::size_t> syscallTraps;
+        try {
+            syscallTraps = syscallScanner->ScanCodeSectionForSyscalls(scanSegment, segmentVAddr, scanSegment.size(), {}, segmentUnwindRanges[index]);
+        } catch (const RelinkerException& error) {
+            const auto cause = DescribeReplacedPltStubReaching(replacedStubs[index], segment, segmentVAddr, error.FailureOffset);
+            if (cause.empty()) throw;
+            RelinkerException explained(error.what() + cause, error.FailureOffset);
+            explained.InputPath = error.InputPath;
+            throw explained;
+        }
+        for (const auto offset : syscallTraps) {
             if (offset > segment.size() || segment.size() - offset < 2u)
                 throw RelinkerException("Syscall trap patch exceeds executable segment", segmentVAddr + offset);
             segment[offset] = scanSegment[offset] = 0x0F;
@@ -523,10 +574,11 @@ RelinkResult RelinkerPipeline::Relink() {
                 if (section >= SHN_LORESERVE)
                     throw RelinkerException("Unsupported executable export section: " + name, entryOffset);
                 const std::uint32_t flags = type == STT_FUNC ? PF_X : 0;
-                const auto extent = std::max<std::uint64_t>(size, 1);
+                const bool functionRoot = functionSymbolRoots && type == STT_FUNC;
+                const auto extent = functionRoot ? 1 : std::max<std::uint64_t>(size, 1);
                 const bool mapped = std::any_of(programHeaders.begin(), programHeaders.end(), [&](const ProgramHeader& ph) {
                     return ph.Type == PT_LOAD && (ph.Flags & flags) == flags && value >= ph.MappedAddress &&
-                           value - ph.MappedAddress < ph.MemorySize && extent <= ph.MemorySize - (value - ph.MappedAddress);
+                           value - ph.MappedAddress < (functionRoot ? ph.FileSize : ph.MemorySize) && extent <= (functionRoot ? ph.FileSize : ph.MemorySize) - (value - ph.MappedAddress);
                 });
                 if (!mapped) {
                     std::ostringstream message;
@@ -538,7 +590,7 @@ RelinkResult RelinkerPipeline::Relink() {
             }
             exportedSymbols.emplace_back(off, std::move(name));
             const auto binding = symbol[4] >> 4;
-            if ((binding == STB_GLOBAL || binding == STB_WEAK) && type == STT_FUNC)
+            if ((binding == STB_GLOBAL || binding == STB_WEAK) && type == STT_FUNC && section != SHN_ABS)
                 exportedFunctions.push_back(value);
         }
     }
@@ -598,7 +650,7 @@ RelinkResult RelinkerPipeline::Relink() {
     auto dynSection = dynamicSectionBuilder->BuildDynamicSection(dynamicRefs, neededLibraries, dynJmpRelOffset, pltCount);
     for (const auto& ref : dynamicRefs) {
         if (!ref.Library.empty()) continue;
-        if (auto declared = Domain::DeclaredImportModule(ref.Nid, importModules); !declared.empty()) dynSection.UnmatchedImportModules.insert(std::move(declared));
+        if (auto declared = Domain::DeclaredImportModule(ref.Nid, importModules, ownModules); !declared.empty()) dynSection.UnmatchedImportModules.insert(std::move(declared));
     }
 
     for (const auto& [off, name] : exportedSymbols) {

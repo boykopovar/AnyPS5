@@ -48,6 +48,7 @@ constexpr std::size_t SAVE_DATA_MOUNT_SLOTS = 16;
 
 struct MountSlot {
     bool used = false;
+    std::int32_t user_id = 0;
     std::string mount_point;
     std::string real_path;
 };

@@ -522,6 +522,62 @@ constexpr std::array<DitherCase, 56> TwoSampleDitherCases{{
     {0x00007e00u, 4u, {0x00u, 0x00u, 0x00u, 0x00u}},
 }};
 
+void SampleMaskExportCoverage(AgcDriver::VulkanDevice& device, std::uint32_t samples, std::span<const DitherCase> cases) {
+    const ColorTargetLayout layout(Width, Height, ColorTileMode::RenderTarget, 8);
+    const auto all = (1u << samples) - 1u;
+    std::vector<DitherCase> undithered;
+    for (const std::uint32_t bits : {0x3e800000u, 0x3f000000u, 0x3f400000u}) {
+        const auto mask = std::bit_cast<float>(bits) < 0.5f ? 0u : all;
+        undithered.push_back({bits, Float32Export, {mask, mask, mask, mask}});
+    }
+    std::vector<std::unique_ptr<Block>> blocks;
+    for (const bool dithered : {true, false}) {
+        for (const auto& test : dithered ? cases : std::span<const DitherCase>(undithered)) {
+            for (const std::uint32_t exported : {0x00000001u, 0xaaaaaaaau, 0xffffff0fu}) {
+                blocks.push_back(std::make_unique<Block>(layout.Bytes() * samples));
+                auto& source = *blocks.back();
+                std::memset(source.data, 0, source.bytes);
+                const auto multisampled = DecodeTarget(source, samples);
+                for (std::uint32_t sample = 0; sample < samples; ++sample) {
+                    const Color reference{std::ldexp(1.0f, static_cast<int>(sample) - static_cast<int>(samples - 1u)), 0, 0, 1};
+                    Draw(device, multisampled, false, Float32Export, Program(reference, Float32Export, 1u << sample), false, true);
+                }
+                const auto alpha = test.format == Float32Export ? std::bit_cast<float>(test.bits) : 0.0f;
+                const Color color{0, 0, 0, alpha};
+                const auto half = test.format == Float16Export ? std::optional<std::uint16_t>(static_cast<std::uint16_t>(test.bits)) : std::nullopt;
+                const auto code = Program(color, test.format, exported, half);
+                if (dithered) {
+                    Draw(device, multisampled, true, test.format, code, true, true, static_cast<std::uint8_t>(samples));
+                } else {
+                    Draw(device, multisampled, true, test.format, code, false, true);
+                }
+                blocks.push_back(std::make_unique<Block>(layout.Bytes()));
+                auto& resolved = *blocks.back();
+                std::memset(resolved.data, 0, resolved.bytes);
+                AgcDriver::Graphics::ColorMetadataPass pass{};
+                pass.mode = AgcDriver::Graphics::ColorMetadataPass::Mode::Resolve;
+                pass.source = multisampled;
+                pass.targets = {DecodeTarget(resolved)};
+                device.ColorMetadataPass(pass);
+                const auto stored = ReadBack(device, resolved);
+                for (std::uint32_t y = 0; y < Height; ++y) {
+                    for (std::uint32_t x = 0; x < Width; ++x) {
+                        const auto mask = test.masks[2u * (x & 1u) + (y & 1u)] & exported & all;
+                        const auto expected = x < ScissorWidth ? static_cast<float>(all - mask) / static_cast<float>((1u << (samples - 1u)) * samples) : 0.0f;
+                        const auto actual = FromHalf(stored[layout.Offset(x, y) / 2u]);
+                        if (actual == expected) continue;
+                        char detail[224];
+                        std::snprintf(detail, sizeof(detail), "%s coverage export %u alpha 0x%08x with exported mask 0x%08x pixel (%u,%u): resolved %.9g, expected %.9g for mask 0x%02x", dithered ? "dithered" : "undithered", test.format, test.bits, exported, x, y, actual, expected, mask);
+                        throw std::runtime_error(detail);
+                    }
+                }
+                programCount = 0;
+            }
+        }
+    }
+    AgcDriver::Graphics::ClearMultisampleTargets(device.Device());
+}
+
 void DccSrgbClearTests(AgcDriver::VulkanDevice& device, std::uint32_t samples) {
     const ColorTargetLayout layout(Width, Height, ColorTileMode::RenderTarget, 4);
     const ColorTargetLayout allocation(Width, Height, ColorTileMode::RenderTarget, 8);
@@ -1273,6 +1329,18 @@ int main(int argc, char** argv) {
                 return VulkanTestSkipped;
             }
             std::puts("dithered eight-sample alpha-to-coverage tests passed");
+            return 0;
+        }
+        if (argc == 2 && (std::string_view(argv[1]) == "--sample-mask8" || std::string_view(argv[1]) == "--sample-mask2")) {
+            const bool eight = std::string_view(argv[1]) == "--sample-mask8";
+            try {
+                SampleMaskExportCoverage(*device, eight ? 8u : 2u, eight ? std::span<const DitherCase>(EightSampleDitherCases) : std::span<const DitherCase>(TwoSampleDitherCases));
+            } catch (const std::runtime_error& error) {
+                if (std::string_view(error.what()) != "AGC graphics: the device cannot render color with the target's sample count") throw;
+                std::printf("skipped, the device lacks %s-sample color attachments: %s\n", eight ? "eight" : "two", error.what());
+                return VulkanTestSkipped;
+            }
+            std::printf("%s-sample alpha-to-coverage with sample-mask export tests passed\n", eight ? "eight" : "two");
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--dithered2") {

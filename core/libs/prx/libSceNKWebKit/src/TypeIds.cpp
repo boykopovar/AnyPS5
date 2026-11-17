@@ -186,6 +186,10 @@ std::uint32_t APS5_VABI WKKeyValueStorageManagerGetTypeID() {
     return 0;
 }
 
+std::uint32_t APS5_VABI WKMediaSessionMetadataGetTypeID() {
+    return NKWebKit::TypeID(NKWebKit::ObjectType::MediaSessionMetadata);
+}
+
 std::uint32_t APS5_VABI WKMessageListenerGetTypeID() {
     return NKWebKit::TypeID(NKWebKit::ObjectType::MessageListener);
 }
@@ -266,6 +270,10 @@ std::uint32_t APS5_VABI WKPopupMenuItemGetTypeID() {
     return NKWebKit::TypeID(NKWebKit::ObjectType::PopupMenuItem);
 }
 
+std::uint32_t APS5_VABI WKPreferencesGetTypeID() {
+    return NKWebKit::TypeID(NKWebKit::ObjectType::Preferences);
+}
+
 std::uint32_t APS5_VABI WKProtectionSpaceGetTypeID() {
     return NKWebKit::TypeID(NKWebKit::ObjectType::ProtectionSpace);
 }
@@ -274,9 +282,13 @@ std::uint32_t APS5_VABI WKRectGetTypeID() {
     return NKWebKit::TypeID(NKWebKit::ObjectType::Rect);
 }
 
-void APS5_VABI WKRenderLayerGetTypeID() {}
+std::uint32_t APS5_VABI WKRenderLayerGetTypeID() {
+    return NKWebKit::TypeID(NKWebKit::ObjectType::RenderLayer);
+}
 
-void APS5_VABI WKRenderObjectGetTypeID() {}
+std::uint32_t APS5_VABI WKRenderObjectGetTypeID() {
+    return NKWebKit::TypeID(NKWebKit::ObjectType::RenderObject);
+}
 
 std::uint32_t APS5_VABI WKResourceCacheManagerGetTypeID() {
     return 0;

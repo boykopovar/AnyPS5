@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Execution/include/FrameLimit.hpp"
 #include <cmath>
+#include <concepts>
 #include <cstdint>
 #include <cstdio>
 #include <stdexcept>
@@ -15,6 +16,11 @@ void require(bool condition, const std::string& reason) {
     if (!condition) throw std::runtime_error(reason);
 }
 
+template <std::invocable Reason>
+void require(bool condition, Reason&& reason) {
+    if (!condition) throw std::runtime_error(reason());
+}
+
 Nanos exactNanos(std::uint64_t frames, std::uint64_t milliFps) {
     return static_cast<Nanos>(static_cast<unsigned __int128>(frames) * 1'000'000'000'000ull / milliFps);
 }
@@ -26,7 +32,7 @@ void deadlineArithmeticTests() {
         require(pacer.Admit(now) == 0, "the first frame of a run is delayed at " + std::to_string(milliFps));
         for (std::uint64_t frame = 1; frame <= 1'000'000; ++frame) {
             now += pacer.Admit(now);
-            require(now == exactNanos(frame, milliFps), "frame " + std::to_string(frame) + " at limit " + std::to_string(milliFps) + " is presented at " + std::to_string(now) + " instead of " + std::to_string(exactNanos(frame, milliFps)));
+            require(now == exactNanos(frame, milliFps), [&] { return "frame " + std::to_string(frame) + " at limit " + std::to_string(milliFps) + " is presented at " + std::to_string(now) + " instead of " + std::to_string(exactNanos(frame, milliFps)); });
         }
     }
 }
@@ -42,7 +48,7 @@ void overshootDoesNotAccumulateTests() {
         const Nanos overshoot = static_cast<Nanos>((seed >> 33) % 2'000'000);
         now += pacer.Admit(now) + overshoot;
         const Nanos late = now - exactNanos(frame, milliFps);
-        require(late >= 0 && late < 2'000'000, "a sleep that overshoots by under 2 ms leaves frame " + std::to_string(frame) + " " + std::to_string(late) + " ns after its deadline");
+        require(late >= 0 && late < 2'000'000, [&] { return "a sleep that overshoots by under 2 ms leaves frame " + std::to_string(frame) + " " + std::to_string(late) + " ns after its deadline"; });
     }
 }
 
@@ -91,7 +97,7 @@ void slowGameIsNeverDelayedTests() {
         const Nanos period = exactNanos(1, milliFps);
         Nanos now = 5'000'000'000;
         for (int frame = 0; frame < 10'000; ++frame) {
-            require(pacer.Admit(now) == 0, "a game slower than the limit " + std::to_string(milliFps) + " is delayed at frame " + std::to_string(frame));
+            require(pacer.Admit(now) == 0, [&] { return "a game slower than the limit " + std::to_string(milliFps) + " is delayed at frame " + std::to_string(frame); });
             now += period + period / 1000 + 1;
         }
     }

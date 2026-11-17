@@ -103,18 +103,21 @@ function(add_shader_recompiler target runtimeTarget)
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/ConstantFolder.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/DeadCodeEliminator.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/UnobservedPhiEliminator.cpp
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/GotoPhiRefiner.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/HostInterpolationChecker.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/ReadLaneEliminator.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/MaskedSelectEliminator.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/TessellationLowering.cpp
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/QuadHelperProof.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/ResourceTracker.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/ResourceMaterializer.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/BindingAllocator.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/RequestMemoryView.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/DescriptorBindingBuilder.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/ShaderInfoCollector.cpp
-            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/SharedMemoryBarrierInserter.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/DenormalFlushEliminator.cpp
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/VectorWindowIndexNarrower.cpp
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/NanPayloadEliminator.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/VectorWindowStoreEliminator.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/RedundantValueEliminator.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Optimization/src/SrtWalker/SrtAddressArithmetic.cpp
@@ -147,6 +150,7 @@ function(add_shader_recompiler target runtimeTarget)
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvSpannedUniformity.cpp
 
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvMemory/SpirvBufferAccess.cpp
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvMemory/SpirvScratchPool.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvMemory/SpirvConstants.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvMemory/SpirvDescriptors.cpp
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvMemory/SpirvFormatConvert.cpp
@@ -158,6 +162,13 @@ function(add_shader_recompiler target runtimeTarget)
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/SpirvBackend/src/SpirvMemory/SpirvMemoryInstructions.cpp
 
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/tests/DummyShaders.cpp
+    )
+
+    set_source_files_properties(
+            ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Translation/src/VectorInstructions.cpp
+            TARGET_DIRECTORY ${target}
+            PROPERTIES COMPILE_OPTIONS
+            "$<$<AND:$<CXX_COMPILER_ID:GNU>,$<VERSION_GREATER_EQUAL:$<CXX_COMPILER_VERSION>,14>,$<VERSION_LESS:$<CXX_COMPILER_VERSION>,15>>:-fno-tree-pre>"
     )
 
     target_include_directories(${target} PUBLIC
@@ -197,7 +208,10 @@ function(add_shader_recompiler target runtimeTarget)
     list(APPEND shaderCacheRecompilerSources ${shaderCacheCompiledSources})
     list(REMOVE_DUPLICATES shaderCacheRecompilerSources)
     set(shaderCacheKeySources
+            "${PROJECT_SOURCE_DIR}/core/libs/prx/libc/include/HostThread.hpp"
             "${PROJECT_SOURCE_DIR}/core/libs/prx/libc/include/HostThreadLocal.hpp"
+            "${PROJECT_SOURCE_DIR}/core/libs/prx/libc/include/RemoveTree.hpp"
+            "${PROJECT_SOURCE_DIR}/core/libs/prx/libc/include/HostThreadSlot.hpp"
             "${PROJECT_SOURCE_DIR}/core/libs/prx/libc/include/general/AtomicSharedPtr.hpp")
     foreach(source IN LISTS shaderCacheKeySources)
         if(NOT EXISTS "${source}")
@@ -241,6 +255,7 @@ function(add_shader_recompiler target runtimeTarget)
         string(APPEND shaderCacheExtra " system-deps=${ANYPS5_SYSTEM_DEPS_STAMP}")
     endif()
     set(shaderCacheReviewedNames
+            BdaAbi::OtherFaults
             BdaAbi::RangesOrdered
             BuildBarycentricGeometryShader
             BuildBarycentricTessellationShaders
@@ -249,7 +264,9 @@ function(add_shader_recompiler target runtimeTarget)
             BuildTessellationCaptureGeometryShader
             CaptureResources
             DebugProbeActive
+            DecodeRdnaInstruction
             DepthBitsTextureWidth
+            ExactF32Arithmetic
             HashBytes
             LayoutBarycentricEmulation
             MeshBarycentricLayoutOf
@@ -259,6 +276,7 @@ function(add_shader_recompiler target runtimeTarget)
             ImageTableAbi::TableHeader
             FmaskLayoutOf
             IsFmaskTextureFormat
+            PipelineSpecialization::IsAtomicLockTable
             PipelineSpecialization::IsWorkgroupOffset
             PipelineSpecialization::WorkgroupOffsetBase
             PipelineSpecialization::WorkgroupOffsetWords
@@ -267,8 +285,10 @@ function(add_shader_recompiler target runtimeTarget)
             RayTracingStrict
             RayTracingMiss
             ReadWholeFile
+            SetDiagnosticSink
             Recompile
             RecompileCacheKey::ContextHash
+            RecompileCacheKey::SealFeatureDigest
             RecompileResult
             PrepareShader
             GetPreparedCode
@@ -289,6 +309,7 @@ function(add_shader_recompiler target runtimeTarget)
             GcnImagePitch
             GcnImagePow2Pad
             RuntimeAbi::HeapCapacity
+            RuntimeAbi::UintStorageImageBinding
             SampledTextureNumericClass
             SetDebugProbeActive
             SrtEvaluatingBranch
@@ -315,6 +336,7 @@ function(add_shader_recompiler target runtimeTarget)
             FindTableCalls
             LinkCalls
             LoadStamp
+            StoreStamp
             WriteFileAtomically
     )
     set(shaderCacheManifest)
@@ -381,6 +403,42 @@ function(add_shader_recompiler target runtimeTarget)
         if(MINGW)
             target_link_libraries(spanned_uniformity_tests PRIVATE libc)
             set_tests_properties(spanned_uniformity PROPERTIES ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endif()
+    if(BUILD_TESTING AND NOT TARGET ir_opcode_traits_tests)
+        add_test_executable(ir_opcode_traits_tests
+            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/IntermediateRepresentation/tests/IrOpcodeTraits.cpp"
+            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/IntermediateRepresentation/src/IrOpcode.cpp")
+        target_include_directories(ir_opcode_traits_tests PRIVATE
+            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/IntermediateRepresentation/include")
+        set_target_properties(ir_opcode_traits_tests PROPERTIES CXX_EXTENSIONS OFF)
+        configure_windows_unwind(ir_opcode_traits_tests)
+        add_test(NAME ir_opcode_traits COMMAND ir_opcode_traits_tests)
+        set_tests_properties(ir_opcode_traits PROPERTIES TIMEOUT 20)
+        if(MINGW)
+            target_link_libraries(ir_opcode_traits_tests PRIVATE libc)
+            set_tests_properties(ir_opcode_traits PROPERTIES ENVIRONMENT_MODIFICATION
+                    "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
+        endif()
+    endif()
+
+    if(BUILD_TESTING AND NOT TARGET shader_memory_decoder_tolerance_tests)
+        add_test_executable(shader_memory_decoder_tolerance_tests
+            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/tests/ShaderMemoryDecoderToleranceTests.cpp")
+        target_link_libraries(shader_memory_decoder_tolerance_tests PRIVATE ${target} ${runtimeTarget})
+        target_include_directories(shader_memory_decoder_tolerance_tests PRIVATE
+            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/include"
+            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/Translation/include"
+            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/IntermediateRepresentation/include"
+            "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/RdnaDecoder/include")
+        set_target_properties(shader_memory_decoder_tolerance_tests PROPERTIES CXX_EXTENSIONS OFF)
+        configure_windows_unwind(shader_memory_decoder_tolerance_tests)
+        add_test(NAME shader_memory_decoder_tolerance COMMAND shader_memory_decoder_tolerance_tests)
+        set_tests_properties(shader_memory_decoder_tolerance PROPERTIES TIMEOUT 20)
+        if(MINGW)
+            target_link_libraries(shader_memory_decoder_tolerance_tests PRIVATE libc)
+            set_tests_properties(shader_memory_decoder_tolerance PROPERTIES ENVIRONMENT_MODIFICATION
                     "PATH=path_list_prepend:$<TARGET_FILE_DIR:libc>")
         endif()
     endif()

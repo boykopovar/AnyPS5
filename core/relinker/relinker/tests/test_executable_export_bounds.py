@@ -37,6 +37,7 @@ CASES = [
     case("func_last_byte", FUNC, 0xfff, 0),
     case("weak_object", OBJECT, 0x1100, 8, binding=WEAK),
     case("absolute", OBJECT, 0x123456789, 8, section=SHN_ABS),
+    case("absolute_func", FUNC, 0x123456789, 8, section=SHN_ABS),
     case("tls_inside", TLS, 0x10, 4, tls=True),
     case("hidden_outside_ignored", OBJECT, 0x9000, 8, visibility=2),
     case("local_outside_ignored", OBJECT, 0x9000, 8, binding=LOCAL),
@@ -122,6 +123,14 @@ def main():
             if message is not None:
                 expected = [f"FAIL: {message.format(name)} (offset {SYMBOL_OFFSET:#x})"]
                 assert reported == {target: expected for target in TARGETS.values()}, (name, reported)
+        absolute_func = image("absolute_func", FUNC, 0x123456789, 8, GLOBAL, SHN_ABS, 0, False)
+        for flags, target in (((), "linux"), (("--windows",), "windows"), (("--macos",), "macos")):
+            for level in (0, 1, 2):
+                run = f"absolute_func-{target}-filter-{level}"
+                result, output = relink(relinker, directory, run, absolute_func, (*flags, f"unused-filter={level}"))
+                assert result.returncode == 0, (run, result.returncode, result.stdout, result.stderr)
+                assert output.exists(), run
+                output.unlink()
     print("Executable export bounds test passed")
 
 

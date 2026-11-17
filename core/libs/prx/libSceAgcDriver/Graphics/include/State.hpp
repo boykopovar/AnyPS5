@@ -6,6 +6,7 @@
 #include "prx/libSceAgcDriver/Graphics/include/GuestTextureResource.hpp"
 #include "prx/libSceAgcDriver/Execution/include/QueueState.hpp"
 #include <vector>
+#include <bit>
 #include <array>
 #include <atomic>
 #include <cstddef>
@@ -64,6 +65,7 @@ struct ColorTarget {
     std::uint64_t cmaskAddress = 0;
     std::size_t cmaskBytes = 0;
     bool cmaskFastClear = false;
+    std::uint32_t eqaaFragments = 0;
     std::uint64_t surfaceAddress = 0;
     VkExtent2D surfaceExtent{};
     std::uint32_t mipCount = 1;
@@ -86,7 +88,28 @@ struct ColorTarget {
     std::uint32_t dccControl = 0;
     std::uint64_t fmaskAddress = 0;
     std::uint32_t fmaskPipeBankXor = 0;
-    std::uint16_t partialWriteMask = 0;
+    std::uint32_t gcnFmaskBytes = 0;
+    std::uint32_t partialWriteMask = 0;
+    std::uint32_t mergeBlend = 0;
+    bool staged = false;
+    std::uint16_t stagedMask = 0;
+    VkFormat stagedFormat = VK_FORMAT_UNDEFINED;
+
+    bool operator==(const ColorTarget& other) const {
+        return address == other.address && extent.width == other.extent.width && extent.height == other.extent.height && format == other.format &&
+            bytes == other.bytes && componentMapping == other.componentMapping && tileMode == other.tileMode && elementBytes == other.elementBytes &&
+            packing == other.packing && dccAddress == other.dccAddress && chainDccAddress == other.chainDccAddress &&
+            dccAlphaOnMsb == other.dccAlphaOnMsb && dccPipeAligned == other.dccPipeAligned && cmaskAddress == other.cmaskAddress &&
+            cmaskBytes == other.cmaskBytes && cmaskFastClear == other.cmaskFastClear && eqaaFragments == other.eqaaFragments &&
+            surfaceAddress == other.surfaceAddress && surfaceExtent.width == other.surfaceExtent.width &&
+            surfaceExtent.height == other.surfaceExtent.height && mipCount == other.mipCount && mip == other.mip && mipTail == other.mipTail &&
+            clearWords == other.clearWords && slot == other.slot && depth == other.depth && depthSlice == other.depthSlice &&
+            arrayAddress == other.arrayAddress && arrayLastSlice == other.arrayLastSlice && arraySlice == other.arraySlice && layers == other.layers &&
+            exportIndex == other.exportIndex && uintExport == other.uintExport && volume == other.volume && pipeBankXor == other.pipeBankXor &&
+            samples == other.samples && coverageSamples == other.coverageSamples && dccControl == other.dccControl &&
+            fmaskAddress == other.fmaskAddress && fmaskPipeBankXor == other.fmaskPipeBankXor && gcnFmaskBytes == other.gcnFmaskBytes &&
+            partialWriteMask == other.partialWriteMask && mergeBlend == other.mergeBlend && staged == other.staged && stagedMask == other.stagedMask && stagedFormat == other.stagedFormat;
+    }
 
     std::uint64_t MemoryAddress() const {
         return volume && tileMode != ColorTileMode::Linear ? surfaceAddress : address;
@@ -111,6 +134,19 @@ struct DepthTarget {
     bool htilePipeAligned = false;
     std::uint32_t htileVrsEncoding = 0;
     bool htileDepthOnly = false;
+    bool gcn = false;
+    bool depthPartiallyResident = false;
+    bool stencilPartiallyResident = false;
+
+    bool operator==(const DepthTarget& other) const {
+        return address == other.address && stencilAddress == other.stencilAddress && extent.width == other.extent.width &&
+            extent.height == other.extent.height && format == other.format &&
+            std::bit_cast<std::uint32_t>(clearDepth) == std::bit_cast<std::uint32_t>(other.clearDepth) && clearStencil == other.clearStencil &&
+            htileAddress == other.htileAddress && htileStencil == other.htileStencil && samples == other.samples && depthSwizzle == other.depthSwizzle &&
+            pipeBankXor == other.pipeBankXor && firstSlice == other.firstSlice && lastSlice == other.lastSlice && iterate256 == other.iterate256 &&
+            htilePipeAligned == other.htilePipeAligned && htileVrsEncoding == other.htileVrsEncoding && htileDepthOnly == other.htileDepthOnly &&
+            gcn == other.gcn && depthPartiallyResident == other.depthPartiallyResident && stencilPartiallyResident == other.stencilPartiallyResident;
+    }
 };
 
 struct State {
@@ -149,9 +185,12 @@ struct State {
     std::uint32_t meshLayerBase = 0;
     std::uint32_t meshLayerCount = 0xffffffffu;
     std::uint32_t layerExports = 0;
+    std::uint32_t viewportExports = 0;
     VkPrimitiveTopology topology;
     bool primitiveRestart = false;
     VkViewport viewport;
+    std::vector<VkViewport> extraViewports;
+    std::vector<VkRect2D> viewportScissors;
     bool negativeOneToOne;
     bool depthClamp = false;
     float depthScale = 1;
@@ -174,6 +213,7 @@ struct State {
     VkRect2D scissor;
     VkCullModeFlags cullMode;
     VkPolygonMode polygonMode = VK_POLYGON_MODE_FILL;
+    float lineWidth = 1.0f;
     VkFrontFace frontFace;
     VkProvokingVertexModeEXT provokingVertexMode = VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT;
     VkPipelineColorBlendAttachmentState blend;
@@ -196,6 +236,8 @@ struct State {
 // PA_CL_VS_OUT_CNTL bits that place position exports (clip and cull distances, the misc and the two
 // distance vectors); a vertex program that exports pos1..pos3 depends on them.
 inline constexpr std::uint32_t PositionExportLayoutBits = 0xffffu | (1u << 21u) | (1u << 22u) | (1u << 23u);
+inline constexpr std::uint32_t ViewportIndexExport = 1u << 19u;
+inline constexpr std::uint32_t MaxViewports = 16;
 
 inline constexpr std::uint8_t CopyRop = 0xccu;
 VkLogicOp LogicOpFromRop(std::uint8_t rop);
@@ -204,7 +246,10 @@ ShaderStages DecodeShaderStages(const QueueState& queue, bool vertexWorkgroup = 
 void ApplyPointSize(const State& state, ShaderRecompiler::ShaderVertexStageInfo& vertex);
 State DecodeState(const QueueState& queue, bool vertexWorkgroup = false);
 void ApplyDepthRemap(const Context& context, State& state);
+void ApplyViewportIndex(const Context& context, State& state);
+inline std::uint32_t ViewportCount(const State& state) { return 1u + static_cast<std::uint32_t>(state.extraViewports.size()); }
 void ApplyDepthBoundsEmulation(const Context& context, State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel);
+void ApplyReadOnlyDepthBoundsComparison(State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel, bool enabled);
 void NormalizeUnusedViewportDepth(State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel);
 std::uint32_t StageWaveSize(const ShaderStages& stages, ShaderRecompiler::ShaderStage stage);
 std::optional<ShaderRecompiler::MeshConfiguration> StageMeshConfiguration(const ShaderStages& stages, ShaderRecompiler::ShaderStage stage);
@@ -222,8 +267,11 @@ bool SampleMaskFollowsOrder(const State& state, const SampleOrder& order);
 std::array<std::uint16_t, 4> QuadSampleMasks(const State& state, const SampleOrder& order);
 std::array<std::uint8_t, 8> ExportMappings(const State& state);
 std::array<ShaderRecompiler::ColorExportPacking, 8> ExportPackings(const State& state);
-std::uint16_t PackedWriteMask(std::uint8_t componentMapping, std::uint32_t exportedMask);
+std::uint32_t PackedWriteMask(std::uint8_t componentMapping, std::uint32_t exportedMask);
+std::uint32_t PackedWriteMask(ShaderRecompiler::ColorExportPacking packing, std::uint8_t componentMapping, std::uint32_t exportedMask);
+std::uint32_t PackedBlendControl(std::uint32_t blendControl);
 GuestTextureResource TargetMergeSurface(const ColorTarget& color);
+ColorTarget StagedMergeTarget(const ColorTarget& staged);
 bool DepthStencilWrites(const State& state);
 bool DepthStencilTests(const State& state);
 std::vector<ShaderRecompiler::TargetMerge> ExportTargetMerges(const State& state);
@@ -237,11 +285,14 @@ ColorTarget DecodeColorBuffer(const Registers& context, std::uint32_t slot, bool
 struct ReversedBlend {
     VkPipelineColorBlendAttachmentState blend;
     std::uint32_t shaderCode;
+    std::array<float, 4> constants{};
+    std::uint32_t constantMask = 0;
 };
-ReversedBlend TranslateReversedBlend(std::uint32_t blendControl, std::uint8_t componentMapping, VkFormat format, bool forceDestinationAlphaOne);
+ReversedBlend TranslateReversedBlend(std::uint32_t blendControl, std::uint8_t componentMapping, VkFormat format, bool forceDestinationAlphaOne, const std::array<float, 4>& constants);
 std::size_t CmaskBytes(std::uint32_t width, std::uint32_t height);
 std::uint32_t ColorWriteMask(const Registers& context);
 GuestTextureResource SurfaceForTarget(const ColorTarget& color);
+GuestTextureResource ArraySurfaceForTarget(const ColorTarget& color);
 
 struct ColorMetadataPass {
     enum class Mode { EliminateFastClear, DccDecompress, Resolve, FmaskDecompress };
@@ -250,10 +301,17 @@ struct ColorMetadataPass {
     std::optional<ColorTarget> source;
 };
 std::optional<ColorMetadataPass> DecodeColorMetadataPass(const QueueState& queue);
+struct DepthExpandPass {
+    DepthTarget source;
+    std::uint64_t destination;
+    std::uint64_t stencilDestination = 0;
+};
+std::optional<DepthExpandPass> DecodeDepthExpandPass(const QueueState& queue);
 struct DepthCopyPass {
     DepthTarget source;
     std::uint32_t sample;
     ColorTarget color;
+    bool stencil = false;
 };
 std::optional<DepthCopyPass> DecodeDepthCopyPass(const QueueState& queue);
 std::string DepthMaintenanceRejection(const QueueState& queue);
@@ -321,15 +379,15 @@ struct DrawKeyRange {
     std::uint32_t first;
     std::uint32_t count;
 };
-inline constexpr std::array<DrawKeyRange, 52> DrawKeyRegisters{{
+inline constexpr std::array<DrawKeyRange, 53> DrawKeyRegisters{{
     {RegisterBank::Context, 0x000, 1}, {RegisterBank::Context, 0x002, 2}, {RegisterBank::Context, 0x005, 1}, {RegisterBank::Context, 0x007, 7}, {RegisterBank::Context, 0x010, 6}, {RegisterBank::Context, 0x01a, 5},
-    {RegisterBank::Context, 0x080, 4}, {RegisterBank::Context, 0x08c, 4}, {RegisterBank::Context, 0x090, 2}, {RegisterBank::Context, 0x094, 2}, {RegisterBank::Context, 0x0b4, 2}, {RegisterBank::Context, 0x105, 4}, {RegisterBank::Context, 0x10b, 3}, {RegisterBank::Context, 0x10f, 6},
+    {RegisterBank::Context, 0x080, 4}, {RegisterBank::Context, 0x08c, 4}, {RegisterBank::Context, 0x090, 2}, {RegisterBank::Context, 0x094, 0x20}, {RegisterBank::Context, 0x0b4, 2}, {RegisterBank::Context, 0x105, 4}, {RegisterBank::Context, 0x10b, 3}, {RegisterBank::Context, 0x10f, 0x60},
     // SPI_PS_INPUT_CNTL_0..31, SPI_PS_INPUT_ENA/ADDR, SPI_PS_IN_CONTROL .. SPI_BARYC_CNTL, SPI_SHADER_POS/Z/COL_FORMAT,
     // CB_BLEND0..7_CONTROL, GE_MAX_OUTPUT_PER_SUBGROUP.
     {RegisterBank::Context, 0x191, 32}, {RegisterBank::Context, 0x1b3, 2}, {RegisterBank::Context, 0x1b6, 3}, {RegisterBank::Context, 0x1c3, 3}, {RegisterBank::Context, 0x1e0, 8}, {RegisterBank::Context, 0x1ff, 1},
     // DB_DEPTH_CONTROL .. PA_CL_VS_OUT_CNTL, PA_SC_MODE_CNTL_0/1, VGT_GS_MODE, VGT_GS_VERT_ITEMSIZE,
     // PA_SU_VTX_CNTL, the sample masks, PA_SC_CONSERVATIVE_RASTERIZATION_CNTL.
-    {RegisterBank::Context, 0x200, 8}, {RegisterBank::Context, 0x286, 2}, {RegisterBank::Context, 0x292, 2}, {RegisterBank::Context, 0x29b, 1}, {RegisterBank::Context, 0x2a8, 2}, {RegisterBank::Context, 0x2ab, 1}, {RegisterBank::Context, 0x2af, 1}, {RegisterBank::Context, 0x2ce, 1}, {RegisterBank::Context, 0x2d5, 2}, {RegisterBank::Context, 0x2db, 2}, {RegisterBank::Context, 0x2de, 6}, {RegisterBank::Context, 0x2f8, 2}, {RegisterBank::Context, 0x2fe, 16}, {RegisterBank::Context, 0x30e, 2}, {RegisterBank::Context, 0x313, 1},
+    {RegisterBank::Context, 0x200, 8}, {RegisterBank::Context, 0x282, 1}, {RegisterBank::Context, 0x286, 2}, {RegisterBank::Context, 0x292, 2}, {RegisterBank::Context, 0x29b, 1}, {RegisterBank::Context, 0x2a8, 2}, {RegisterBank::Context, 0x2ab, 1}, {RegisterBank::Context, 0x2af, 1}, {RegisterBank::Context, 0x2ce, 1}, {RegisterBank::Context, 0x2d5, 2}, {RegisterBank::Context, 0x2db, 2}, {RegisterBank::Context, 0x2de, 6}, {RegisterBank::Context, 0x2f8, 2}, {RegisterBank::Context, 0x2fe, 16}, {RegisterBank::Context, 0x30e, 2}, {RegisterBank::Context, 0x313, 1},
     // CB_COLOR0..7_BASE .. DCC_BASE (15 words a slot), CB_COLOR0..7_BASE_EXT, DCC_BASE_EXT, ATTRIB2, ATTRIB3.
     {RegisterBank::Context, 0x318, 0x78}, {RegisterBank::Context, 0x390, 8}, {RegisterBank::Context, 0x398, 0x10}, {RegisterBank::Context, 0x3a8, 0x18},
     // The pixel program address, RSRC2 and user words; the geometry-back user pointer and program

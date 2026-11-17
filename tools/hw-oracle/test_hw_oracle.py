@@ -225,6 +225,25 @@ class InputRowsTests(unittest.TestCase):
             results = hw_oracle.run("s_nop 0", [(0, Indexable(), 0x80000000, True)], b"extra", **MODES)
         self.assertEqual(results, [tuple([0] * 16)])
 
+    def test_extra_stays_at_same_offset_across_dispatches(self):
+        for wave64, expected_dispatches in ((False, [1024, 32]), (True, [512, 512, 64])):
+            calls = []
+
+            def dispatch(command, **kwargs):
+                threads = int(command[2])
+                calls.append((threads, Path(command[3]).read_bytes()))
+                Path(command[4]).write_bytes(bytes(threads * 64))
+
+            with self.subTest(wave64=wave64), patch.object(hw_oracle, "assemble", return_value="kernel.co"), \
+                    patch.object(hw_oracle, "oracle", return_value="oracle"), \
+                    patch.object(hw_oracle.subprocess, "run", side_effect=dispatch):
+                hw_oracle.run("s_nop 0", [(0, 0, 0, 0)] * 1025, b"extra", wave64=wave64, **MODES)
+            rows_per_dispatch = 512 if wave64 else 1024
+            self.assertEqual([threads for threads, _ in calls], expected_dispatches)
+            for threads, data in calls:
+                self.assertEqual(data[threads * 16:rows_per_dispatch * 16], bytes((rows_per_dispatch - threads) * 16))
+                self.assertEqual(data[rows_per_dispatch * 16:], b"extra")
+
     def test_cli_accepts_zero_padded_decimal_rows(self):
         with tempfile.TemporaryDirectory() as tmp:
             body, rows = Path(tmp) / "body.s", Path(tmp) / "rows.txt"
@@ -724,6 +743,44 @@ class AssemblyTests(unittest.TestCase):
                 self.assertTrue(code.is_file())
 
 
+class HsaRunnerTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform.startswith("linux"), "HSA runner is built on Linux")
+    def test_invalid_dispatch_sizes_fail_before_hsa_or_file_access(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(hw_oracle, "CACHE", Path(directory)):
+            try:
+                runner = hw_oracle.oracle()
+            except (OSError, subprocess.CalledProcessError, SystemExit) as error:
+                self.skipTest(f"HSA runner cannot be built: {error}")
+            cases = (
+                (["missing.co", "not-an-int", "missing.in", "missing.out", "16"], "THREADS"),
+                (["missing.co", "1x", "missing.in", "missing.out", "16"], "THREADS"),
+                (["missing.co", "0", "missing.in", "missing.out", "16"], "THREADS"),
+                (["missing.co", "1025", "missing.in", "missing.out", "16"], "THREADS"),
+                (["missing.co", "-18446744073709551615", "missing.in", "missing.out", "16"], "THREADS"),
+                (["missing.co", " -18446744073709551615", "missing.in", "missing.out", "16"], "THREADS"),
+                (["missing.co", "1", "missing.in", "missing.out", "not-an-int"], "OUT_DWORDS"),
+                (["missing.co", "1", "missing.in", "missing.out", "1x"], "OUT_DWORDS"),
+                (["missing.co", "1", "missing.in", "missing.out", "0"], "OUT_DWORDS"),
+                (["missing.co", "1", "missing.in", "missing.out", "17"], "OUT_DWORDS"),
+                (["missing.co", "1", "missing.in", "missing.out", "-18446744073709551600"], "OUT_DWORDS"),
+                (["missing.co", "1", "missing.in", "missing.out", " -18446744073709551600"], "OUT_DWORDS"),
+            )
+            for arguments, name in cases:
+                with self.subTest(arguments=arguments):
+                    result = subprocess.run([runner, *arguments], capture_output=True, text=True, timeout=10)
+                    self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                    self.assertIn(f"{name} must be", result.stderr)
+                    self.assertNotIn("hsa_", result.stderr)
+                    self.assertNotIn("missing.co", result.stderr)
+            for threads, out_dwords in (("1", "1"), ("1024", "16")):
+                with self.subTest(threads=threads, out_dwords=out_dwords):
+                    result = subprocess.run(
+                        [runner, "missing.co", threads, "missing.in", "missing.out", out_dwords],
+                        capture_output=True, text=True, timeout=10)
+                    self.assertNotEqual(result.returncode, 2, result.stdout + result.stderr)
+                    self.assertNotIn("must be", result.stderr)
+
+
 class HipRuntimeTests(unittest.TestCase):
     def test_runtime_defaults_to_hip_on_windows_only(self):
         environment = {key: value for key, value in os.environ.items() if key != "HW_ORACLE_RUNTIME"}
@@ -873,6 +930,26 @@ class VulkanRuntimeTests(unittest.TestCase):
                 self.assertRaisesRegex(ValueError, "coarse"):
             hw_oracle.run("s_nop 0", [(0, 0, 0, 0)], coarse=True, **MODES)
 
+    def test_cli_reports_rejected_runtime_settings_as_usage_errors(self):
+        os.environ["HW_ORACLE_VULKAN_RUNNER"] = str(self.runner)
+        body, rows = self.root / "body.s", self.root / "rows.txt"
+        body.write_text("s_nop 0", encoding="utf-8")
+        rows.write_text("1 2 3 4\n", encoding="utf-8")
+        argv = ["hw_oracle.py", str(body), str(rows)]
+        argv += [item for name, value in MODES.items() for item in ["--" + name.replace("_", "-"), str(value)]]
+        for selected, options, message in (("vulkan", ["--coarse"], "coarse has no meaning for the vulkan runtime"),
+                                           ("rocm", [], "HW_ORACLE_RUNTIME must be one of hsa, hip, vulkan")):
+            with self.subTest(runtime=selected):
+                with patch.dict(os.environ, {"HW_ORACLE_RUNTIME": selected}), patch("sys.argv", argv + options), \
+                        patch.object(hw_oracle, "assemble", side_effect=AssertionError("assembler called")), \
+                        contextlib.redirect_stdout(io.StringIO()) as output, \
+                        contextlib.redirect_stderr(io.StringIO()) as errors, \
+                        self.assertRaises(SystemExit) as exited:
+                    hw_oracle.main()
+                self.assertEqual(exited.exception.code, 2)
+                self.assertIn(f"error: {message}", errors.getvalue())
+                self.assertEqual(output.getvalue(), "")
+
     def test_target_needs_override_off_windows_and_probes_hip_on_windows(self):
         with patch.object(hw_oracle.os, "name", "posix"), \
                 patch.object(hw_oracle, "hip_runtime", side_effect=AssertionError("HIP probe")), \
@@ -947,6 +1024,28 @@ class HipOracleTests(unittest.TestCase):
     def setUp(self):
         import oracle_hip
         self.oracle_hip = oracle_hip
+
+    def test_library_loader_reports_unsupported_platform_cleanly(self):
+        for variable, names in (("HW_ORACLE_HIP", self.oracle_hip.HIP_LIBRARIES),
+                                ("HW_ORACLE_COMGR", self.oracle_hip.COMGR_LIBRARIES)):
+            with self.subTest(variable=variable), patch.object(self.oracle_hip.ctypes, "WinDLL", None, create=True), \
+                    self.assertRaisesRegex(self.oracle_hip.OracleError, "Windows DLL loading is unavailable on this platform"):
+                self.oracle_hip.load(variable, names)
+
+    def test_library_loader_preserves_fallback_and_override_selection(self):
+        fallback = unittest.mock.MagicMock(side_effect=[OSError("missing first"), object()])
+        environment = {key: value for key, value in os.environ.items() if key != "HW_ORACLE_HIP"}
+        with patch.object(self.oracle_hip.ctypes, "WinDLL", fallback, create=True), \
+                patch.dict(os.environ, environment, clear=True):
+            self.oracle_hip.load("HW_ORACLE_HIP", self.oracle_hip.HIP_LIBRARIES)
+        self.assertEqual([call.args[0] for call in fallback.call_args_list], list(self.oracle_hip.HIP_LIBRARIES[:2]))
+
+        selected = object()
+        override = unittest.mock.MagicMock(return_value=selected)
+        with patch.object(self.oracle_hip.ctypes, "WinDLL", override, create=True), \
+                patch.dict(os.environ, {"HW_ORACLE_HIP": "custom-hip.dll"}, clear=True):
+            self.assertIs(self.oracle_hip.load("HW_ORACLE_HIP", self.oracle_hip.HIP_LIBRARIES), selected)
+        override.assert_called_once_with("custom-hip.dll")
 
     def test_cli_rejects_mixed_or_incomplete_requests(self):
         for argv in ([], ["--target", "code", "32", "in", "out", "16"], ["--wave64", "code", "32", "in", "out", "16"],

@@ -16,6 +16,10 @@ extern "C" [[noreturn]] void NotImplemented_nid_no_patch(const char* name) {
     throw std::runtime_error(name);
 }
 
+extern "C" [[noreturn]] void NotImplementedAt_nid_no_patch(const char* name, const char*, int) {
+    throw std::runtime_error(name);
+}
+
 namespace {
 
 void Require(bool condition, const char* message) {
@@ -68,7 +72,7 @@ void Read(int descriptor, std::size_t count) {
 
 void ReadEdges(bool socket) {
     Pair pair(socket);
-    auto watch = EdgeWatch::Watch::Open(pair.descriptors[0], false);
+    auto watch = EdgeWatch::Watch::Open(pair.descriptors[0], pair.descriptors[0], false);
     Quiet(watch);
     Send(pair.descriptors[1], 2);
     Edge(watch);
@@ -106,7 +110,7 @@ void ReadEdges(bool socket) {
 void WriteEdges() {
     Pair pair(true);
     Require(::fcntl(pair.descriptors[1], F_SETFL, O_NONBLOCK) == 0, "cannot make socket nonblocking");
-    auto watch = EdgeWatch::Watch::Open(pair.descriptors[1], true);
+    auto watch = EdgeWatch::Watch::Open(pair.descriptors[1], pair.descriptors[1], true);
     Edge(watch);
     Quiet(watch);
     std::array<char, 8192> bytes{};
@@ -133,7 +137,7 @@ void Lifecycle() {
     Pair pair(false);
     int descriptor;
     {
-        auto watch = EdgeWatch::Watch::Open(pair.descriptors[0], false);
+        auto watch = EdgeWatch::Watch::Open(pair.descriptors[0], pair.descriptors[0], false);
         descriptor = watch->Descriptor();
         const int flags = ::fcntl(descriptor, F_GETFD);
         Require(flags >= 0 && (flags & FD_CLOEXEC) != 0, "watch lacks close-on-exec");
@@ -146,7 +150,7 @@ void Lifecycle() {
 void Errors() {
     bool threw = false;
     try {
-        EdgeWatch::Watch::Open(-1, false);
+        EdgeWatch::Watch::Open(-1, -1, false);
     } catch (const std::runtime_error&) {
         threw = true;
     }

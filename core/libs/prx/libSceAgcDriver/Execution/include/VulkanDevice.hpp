@@ -19,6 +19,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace AgcDriver {
@@ -53,6 +54,10 @@ struct DeviceQueuePlan {
 
 DeviceQueuePlan PlanDeviceQueues(std::span<const VkQueueFamilyProperties> families, std::uint32_t family, bool settles, bool sparseBinding, bool presents);
 
+enum class PresentationRejection { None, MissingSwapchain, NoSurfaceQueue };
+
+std::string SoftwareFallbackWarning(VkPhysicalDeviceType selectedType, std::string_view selectedName, std::string_view hardwareName, PresentationRejection rejection, bool requested);
+
 class VulkanUnavailable final : public std::runtime_error {
 public:
     using std::runtime_error::runtime_error;
@@ -80,6 +85,7 @@ public:
     VulkanDevice& operator=(const VulkanDevice&) = delete;
     std::string DeviceName() const;
     std::string DriverInfo() const;
+    VkDriverId DriverId() const;
     bool SupportsImageFormat(VkFormat format, VkImageUsageFlags usage) const;
     bool BdaAtomicsUsable() const;
     bool RasterOrderGroupUsable() const;
@@ -97,6 +103,7 @@ public:
     std::uint64_t Serial() const { return serial; }
     // The Vulkan device handle (a Recipe names the device it was built on).
     VkDevice Device() const;
+    bool DmaBufImportSelected() const;
     // Drains everything under the caller's GpuMutex: recorder Sync plus vkDeviceWaitIdle. For suspend,
     // resize, device replacement, CPU fill fallback and APS5_DRAIN_ALL; the packet-loop drains use the
     // three-step form below so the GPU wait happens without the mutex.
@@ -235,6 +242,7 @@ public:
     bool DualSrcBlend() const;
     bool PrimitiveListRestart() const;
     bool SamplerFilterMinmax() const;
+    bool SamplerMirrorClampToEdge() const;
     bool ConservativeRasterization() const;
     VkShaderStageFlags SubgroupStages() const;
     bool ProvokingVertexLast() const;
@@ -294,6 +302,7 @@ public:
         std::uint64_t checked, presyncs, keyChecks, keyWaits;
     };
     static PresyncStatistics PresyncCounts();
+    static std::uint64_t UpscaledPresents();
     // Stage A of a dispatch's resource build, run WITHOUT GuestMemory::GpuMutex before Dispatch or
     // DispatchIndirect: the binding plan, data buffers, imports already serving the guest buffers,
     // read-only copies and the descriptor set (see ShaderResources). The dispatch completes it
@@ -353,12 +362,15 @@ public:
     enum class DrawRecipePrecheck : std::size_t { NoRecipe, Device };
     static void NoteDrawRecipeMiss(DrawRecipePrecheck miss);
     using DrawTraceContext = Graphics::DrawTraceContext;
+    static std::uint64_t DrawRecipeHits();
     // `recipe`, when given, receives the DrawRecipe a recorded, cacheable, reusable, direct draw
     // built for its draw-cache entry (design_cpu_final M8); null otherwise.
-    void Draw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const Graphics::GuestMemorySnapshot> snapshots = {}, std::shared_ptr<const DrawRecipe>* recipe = nullptr, const DrawTraceContext* trace = nullptr, std::uint64_t shape = 0);
+    void Draw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const Graphics::GuestMemorySnapshot> snapshots = {}, std::shared_ptr<const DrawRecipe>* recipe = nullptr, const DrawTraceContext* trace = nullptr, std::uint64_t shape = 0, const std::vector<std::uint32_t>* contentKey = nullptr);
+    std::vector<std::uint32_t> DrawContentKey(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders) const;
     bool DrawInputsInPlace() const;
     std::optional<std::string> KnownDrawRejection(const Graphics::State& graphics, std::span<const Graphics::CompiledShader> shaders) const;
     void ColorMetadataPass(const Graphics::ColorMetadataPass& pass);
+    void DepthExpandPass(const Graphics::DepthExpandPass& pass);
     // A draw-cache hit recorded from its recipe (Graphics::DrawWithRecipe), under the mutex after
     // the packet's labels; Rebuild when the recipe's device is not this one or DrawWithRecipe
     // missed (nothing recorded: the caller runs Draw with the hit's stages and re-attaches).
@@ -369,6 +381,7 @@ public:
         bool firstInstance;
         bool multi;
         bool count;
+        bool indexedPatches;
     };
     IndirectDrawSupport DrawIndirectSupport() const;
     void EnqueueDraw(const Graphics::State& graphics, const Pm4::DrawParameters& draw, std::span<const Graphics::CompiledShader> shaders, std::span<const Graphics::GuestMemorySnapshot> snapshots = {});
@@ -388,6 +401,7 @@ public:
 private:
     VulkanDevice(const PresentationWindow* window, bool compileOnly);
     friend struct VulkanDeviceTestAccess;
+    std::pair<VkBuffer, std::uint64_t> scratchPoolHeader(const ShaderRecompiler::RecompileResult& shader) const;
     VkPipeline splitComputePipeline(const Graphics::Context& context, const ShaderRecompiler::RecompileResult& shader, ComputePipelineObjects& objects, const std::array<std::uint32_t, 3>& base);
     ShaderRecompiler::SpirvTarget buildTarget() const;
     Graphics::Context buildContext() const;
