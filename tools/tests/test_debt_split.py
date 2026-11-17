@@ -531,6 +531,18 @@ class DebtSplitTests(unittest.TestCase):
         self.assertEqual(text.count(A_STUB), 1)
         self.assertLess(text.index("A hand-written note"), text.index("### Silent stubs"))
 
+    def test_split_keeps_the_paragraphs_and_tables_of_an_existing_debt_file_apart(self):
+        existing = ("# libSceA technical debt\n\nA note above the sections\nthat spans two lines.\n\n### Silent stubs\n\n"
+                    "- [libSceA](../../../core/libs/prx/libSceA/Export.cpp) - `sceAOne` returns 0\n\n"
+                    "A paragraph after the entry.\n\n| Name | NID |\n| --- | --- |\n| `sceAOne` | `abc` |\n\n"
+                    "- [libSceA](../../../core/libs/prx/libSceA/Two.cpp) - `sceATwo` ignores its flags\n")
+        self.write("docs/dev/debt/libSceA.md", existing)
+        extra = "- [libSceA](../../core/libs/prx/libSceA/Export.cpp) - `sceAExtra` returns 1"
+        self.write(INDEX, "# Project technical debt\n\n### Silent stubs\n\n" + extra + "\n")
+        self.split()
+        self.assertEqual(self.read("docs/dev/debt/libSceA.md"),
+                         existing + "- [libSceA](../../../core/libs/prx/libSceA/Export.cpp) - `sceAExtra` returns 1\n")
+
     def test_a_debt_file_with_only_a_note_is_written_and_not_deleted(self):
         debt_split.write_debt(self.root, "libSceA", {}, [], ["A note that belongs to no section."])
         self.assertIn("A note that belongs to no section.", self.read("docs/dev/debt/libSceA.md"))
@@ -543,6 +555,31 @@ class DebtSplitTests(unittest.TestCase):
         self.assertIn("above the first ### section", result.stderr)
         self.assertFalse((self.root / "docs/dev/debt").exists())
         self.assertNotEqual(before, "")
+
+
+    def test_parse_groups_headings_entries_and_text(self):
+        text = "# libX\n\n### change\n\n- [a](../../../core/libs/prx/libX/a.cpp) (libX) gap\n  continued\n\nplain text\n"
+        items = debt_split.parse(text)
+        kinds = [kind for kind, _, _ in items]
+        self.assertEqual(kinds, ["heading", "heading", "entry", "text"])
+        self.assertEqual(items[2][1], "change")
+        self.assertIn("continued", items[2][2])
+        self.assertEqual(items[3][2], "plain text")
+
+
+    def test_key_is_set_for_entries_only(self):
+        entry = "- [a](../../../core/libs/prx/libX/a.cpp) (libX) gap"
+        self.assertIsNone(debt_split.key("heading", "## change"))
+        self.assertIsNone(debt_split.key("text", "plain text"))
+        self.assertEqual(debt_split.key("entry", entry), debt_split.debt_name(entry))
+
+
+    def test_debt_file_is_under_debt_dir(self):
+        self.assertEqual(debt_split.debt_file("libc"), "docs/dev/debt/libc.md")
+
+
+    def test_separated_puts_a_blank_between_entries_and_text(self):
+        self.assertEqual(debt_split.separated(["- a", "- b", "text"]), ["- a", "- b", "", "text"])
 
 
 if __name__ == "__main__":

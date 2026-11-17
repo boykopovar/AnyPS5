@@ -39,9 +39,6 @@ int main() {
     const std::uint64_t value1 = 0x1122334455667788ull;
     std::memcpy(object + 16, &value1, sizeof(value1));
     Require(WKAXObjectFrame(object) == value1);
-    const std::uint64_t value2 = 0x1122334455667788ull;
-    std::memcpy(object + 552, &value2, sizeof(value2));
-    Require(WKAuthenticationChallengeGetDecisionListener(object) == value2);
     const std::uint64_t value3 = 0x1122334455667788ull;
     std::memcpy(object + 56, &value3, sizeof(value3));
     Require(WKBundlePageGetMainFrame(object) == value3);

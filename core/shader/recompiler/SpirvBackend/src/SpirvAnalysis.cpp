@@ -5,6 +5,7 @@
 #include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 namespace ShaderRecompiler {
 
@@ -33,6 +34,14 @@ bool ReadsNeighbourLanes(const IrProgram& program, const IrValue& inst) {
     default:
         return false;
     }
+}
+
+bool ReadsOffsetBarycentric(const IrValue& inst) {
+    if (inst.Opcode() != IrOpcode::GetBuiltin) return false;
+    const auto* kind = inst.Argument(0)->Resolve();
+    if (kind == nullptr || !kind->HasImmediate()) return false;
+    const auto input = static_cast<StageInputKind>(kind->ImmediateU32());
+    return BarycentricInputOf(input) != input;
 }
 
 bool UniformSource(const IrValue& value) {
@@ -114,6 +123,15 @@ public:
         return result;
     }
 
+    std::optional<std::uint64_t> OfWhere(const IrValue* value, const IrValue* condition) {
+        if (condition != nullptr) condition = condition->Resolve();
+        if (condition != assumed) {
+            bounds.clear();
+            assumed = condition;
+        }
+        return Of(value);
+    }
+
 private:
     static constexpr std::size_t MaxDepth = 256;
     static constexpr std::uint64_t Max32 = 0xffffffffull;
@@ -132,6 +150,8 @@ private:
         switch (value.Opcode()) {
         case IrOpcode::LaneId:
             return 63u;
+        case IrOpcode::BitCount32:
+            return 32u;
         case IrOpcode::IAdd32: {
             const auto a = argument(0), b = argument(1);
             if (!a || !b) return std::nullopt;
@@ -175,32 +195,86 @@ private:
             if (!a || !b) return std::nullopt;
             return std::max(*a, *b);
         }
-        case IrOpcode::SelectU32: {
-            const auto a = argument(1), b = argument(2);
-            if (!a || !b) return std::nullopt;
-            return std::max(*a, *b);
-        }
+        case IrOpcode::SelectU32:
+            return merged(value);
         case IrOpcode::BitFieldUExtract: {
             const auto width = argument(2);
             if (width && *width < 32u) return (1ull << *width) - 1u;
             return argument(0);
         }
-        case IrOpcode::Phi: {
-            std::uint64_t result = 0;
-            for (std::size_t index = 0; index < value.ArgumentCount(); ++index) {
-                const auto incoming = Of(value.Argument(index));
-                if (!incoming) return std::nullopt;
-                result = std::max(result, *incoming);
-            }
-            return result;
-        }
+        case IrOpcode::Phi:
+            return merged(value);
         default:
             return std::nullopt;
         }
     }
 
+    static bool same(const IrValue* a, const IrValue* b, std::uint32_t depth = 0) {
+        if (a != nullptr) a = a->Resolve();
+        if (b != nullptr) b = b->Resolve();
+        if (a == nullptr || b == nullptr) return false;
+        if (depth == 0u && (a->HasImmediate() || b->HasImmediate())) return false;
+        if (a == b) return true;
+        if (a->HasImmediate() || b->HasImmediate()) return a->HasImmediate() && b->HasImmediate() && a->Type() == b->Type() && a->ImmediateU32() == b->ImmediateU32();
+        if (depth > 8u || a->Opcode() != b->Opcode() || a->ArgumentCount() != b->ArgumentCount()) return false;
+        switch (a->Opcode()) {
+        case IrOpcode::LogicalAnd:
+        case IrOpcode::LogicalOr:
+        case IrOpcode::LogicalNot:
+        case IrOpcode::IEqual32:
+        case IrOpcode::INotEqual32:
+        case IrOpcode::BitwiseAnd32:
+        case IrOpcode::ShiftRightLogical32:
+            break;
+        default:
+            return false;
+        }
+        for (std::size_t index = 0; index < a->ArgumentCount(); ++index) {
+            if (!same(a->Argument(index), b->Argument(index), depth + 1u)) return false;
+        }
+        return true;
+    }
+
+    std::optional<std::uint64_t> merged(const IrValue& root) {
+        std::vector<const IrValue*> members{&root};
+        std::vector<const IrValue*> leaves;
+        bool bounded = true;
+        for (std::size_t next = 0; next < members.size() && bounded; ++next) {
+            const auto& member = *members[next];
+            const bool select = member.Opcode() == IrOpcode::SelectU32;
+            const std::size_t end = select && assumed != nullptr && member.ArgumentCount() == 3u && same(member.Argument(0), assumed) ? 2u : member.ArgumentCount();
+            for (std::size_t index = select ? 1u : 0u; index < end; ++index) {
+                const IrValue* incoming = member.Argument(index);
+                if (incoming != nullptr) incoming = incoming->Resolve();
+                if (incoming == nullptr) {
+                    bounded = false;
+                    break;
+                }
+                if (incoming->HasImmediate() || (incoming->Opcode() != IrOpcode::Phi && incoming->Opcode() != IrOpcode::SelectU32)) {
+                    leaves.push_back(incoming);
+                    continue;
+                }
+                if (std::find(members.begin(), members.end(), incoming) != members.end()) continue;
+                if (!visiting.insert(incoming).second || members.size() >= MaxDepth) {
+                    bounded = false;
+                    break;
+                }
+                members.push_back(incoming);
+            }
+        }
+        std::uint64_t result = 0;
+        for (std::size_t index = 0; index < leaves.size() && bounded; ++index) {
+            const auto leaf = Of(leaves[index]);
+            if (!leaf) bounded = false;
+            else result = std::max(result, *leaf);
+        }
+        for (std::size_t index = 1; index < members.size(); ++index) visiting.erase(members[index]);
+        return bounded ? std::optional<std::uint64_t>(result) : std::nullopt;
+    }
+
     std::unordered_map<const IrValue*, std::optional<std::uint64_t>> bounds;
     std::unordered_set<const IrValue*> visiting;
+    const IrValue* assumed = nullptr;
 };
 
 std::uint32_t SharedAccessDwords(IrOpcode opcode) {
@@ -266,7 +340,7 @@ std::uint32_t FunctionLdsDwords(const IrProgram& program) {
             }
             const auto dwords = SharedAccessDwords(inst->Opcode());
             if (dwords == 0u || inst->ArgumentCount() == 0) return FunctionLdsDwordLimit;
-            const auto address = bound.Of(inst->Argument(0));
+            const auto address = bound.OfWhere(inst->Argument(0), inst->Argument(inst->ArgumentCount() - 1u));
             if (!address || *address + memory.offset > 0xffffffffull) return FunctionLdsDwordLimit;
             needed = std::max(needed, ((*address + memory.offset) >> 2u) + dwords);
             if (needed >= FunctionLdsDwordLimit) return FunctionLdsDwordLimit;
@@ -356,6 +430,7 @@ SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
             const auto addressAccess = AddressOpcodeInfoOf(inst->Opcode()).access;
             if ((BufferAccessOf(inst->Opcode()) == BufferAccess::Atomic || addressAccess == AddressAccess::Atomic) && inst->Type() == IrType::U64) {
                 requirements.bufferInt64Atomics = true;
+                requirements.addressInt64Atomics = requirements.addressInt64Atomics || addressAccess == AddressAccess::Atomic;
                 if (!IsSplittableBufferAtomic64(inst)) {
                     requirements.bufferInt64AtomicsExact = true;
                 } else if (!splitOpcode) {
@@ -440,6 +515,7 @@ SpirvRequirements AnalyzeProgramRequirements(const IrProgram& program) {
                 }
             }
             requirements.neighbourLaneReads = requirements.neighbourLaneReads || ReadsNeighbourLanes(program, *inst);
+            requirements.offsetBarycentricReads = requirements.offsetBarycentricReads || ReadsOffsetBarycentric(*inst);
             switch (inst->Opcode()) {
             case IrOpcode::Ballot:
                 requirements.subgroupBallot = true;
