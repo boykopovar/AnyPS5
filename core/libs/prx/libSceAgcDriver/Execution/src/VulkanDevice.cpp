@@ -1947,9 +1947,9 @@ VulkanDevice::VulkanDevice(const PresentationWindow* window, bool compileOnly) :
         state->hostImportAlignment = state->hostPointerImport ? hostProperties.minImportedHostPointerAlignment : static_cast<VkDeviceSize>(sysconf(_SC_PAGESIZE));
         constexpr bool windows = false;
 #endif
-        state->drawInputsInPlace = std::getenv("APS5_NO_DRAW_INPUTS_IN_PLACE") == nullptr && (std::getenv("APS5_DRAW_INPUTS_IN_PLACE") != nullptr || DrawInputsInPlaceUsable(driverProperties.driverID, windows));
+        state->drawInputsInPlace = std::getenv("APS5_NO_DRAW_INPUTS_IN_PLACE") == nullptr && (std::getenv("APS5_DRAW_INPUTS_IN_PLACE") != nullptr || DrawInputsInPlaceUsable(driverProperties.driverID, windows, state->properties.deviceType));
         const char* inPlaceBelow = std::getenv("APS5_DRAW_INPUTS_IN_PLACE_BELOW");
-        state->drawInputsInPlaceBelow = std::getenv("APS5_NO_DRAW_INPUTS_IN_PLACE") != nullptr ? 0 : inPlaceBelow != nullptr ? static_cast<std::size_t>(std::strtoull(inPlaceBelow, nullptr, 10)) : DrawInputsInPlaceBelow(driverProperties.driverID, windows);
+        state->drawInputsInPlaceBelow = std::getenv("APS5_NO_DRAW_INPUTS_IN_PLACE") != nullptr ? 0 : inPlaceBelow != nullptr ? static_cast<std::size_t>(std::strtoull(inPlaceBelow, nullptr, 10)) : DrawInputsInPlaceBelow(driverProperties.driverID, windows, state->properties.deviceType);
         if (!compileOnly) Graphics::SetHostImportWindow(8ull << 20u);
         if (!compileOnly) Graphics::SetHostImportMaxBytes(maintenance3.maxMemoryAllocationSize);
         if (!compileOnly) Pm4::RequestImportableGds(state->hostPointerImport && state->properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU);

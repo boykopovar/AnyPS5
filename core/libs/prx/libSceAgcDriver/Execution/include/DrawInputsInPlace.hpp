@@ -6,12 +6,14 @@
 
 namespace AgcDriver {
 
-inline bool DrawInputsInPlaceUsable(VkDriverId driver, bool windows) {
-    return !windows || driver != VK_DRIVER_ID_NVIDIA_PROPRIETARY;
+inline bool DrawInputsInPlaceUsable(VkDriverId driver, bool windows, VkPhysicalDeviceType type) {
+    if (!windows) return true;
+    if (driver == VK_DRIVER_ID_NVIDIA_PROPRIETARY) return false;
+    return driver != VK_DRIVER_ID_AMD_PROPRIETARY || type != VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
 }
 
-inline std::size_t DrawInputsInPlaceBelow(VkDriverId driver, bool windows) {
-    return DrawInputsInPlaceUsable(driver, windows) ? 0 : 1024;
+inline std::size_t DrawInputsInPlaceBelow(VkDriverId driver, bool windows, VkPhysicalDeviceType type) {
+    return DrawInputsInPlaceUsable(driver, windows, type) ? 0 : 1024;
 }
 
 }
