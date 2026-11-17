@@ -349,6 +349,25 @@ void TestRevalidation() {
     Request query{0, 0, "http://stale/a", 0, nullptr};
     std::int32_t result = -1;
     Require(sceHttpCacheRetrieve(exchange.request, &query, nullptr, nullptr, &result) == InvalidValue && result == 2);
+    {
+        const Header badHeaders[] = {{"Cache-Control", "max-age=999"}};
+        const ResponseHeader badReval{304, 0, 1, badHeaders};
+        errno = 71;
+        Require(sceHttpCacheRevalidate(exchange.request, &badReval, &exchange.response,
+                                       reinterpret_cast<std::int32_t*>(static_cast<std::uintptr_t>(0x10))) == InvalidValue &&
+                errno == 71);
+        std::int32_t untouched = -1;
+        errno = 71;
+        Require(sceHttpCacheRevalidate(exchange.request,
+                                       reinterpret_cast<const ResponseHeader*>(static_cast<std::uintptr_t>(0x10)),
+                                       &exchange.response, &untouched) == InvalidValue &&
+                errno == 71);
+        errno = 71;
+        Require(sceHttpCacheRevalidate(exchange.request, &badReval,
+                                       reinterpret_cast<Response*>(static_cast<std::uintptr_t>(0x10)),
+                                       &untouched) == InvalidValue &&
+                errno == 71);
+    }
     Require(exchange.Revalidate(304, {{"Cache-Control", "max-age=600"}, {"ETag", "e2"}, {"X-New", "1"}}) == 0 && exchange.result == 1);
     Require(exchange.response.statusCode == 200 && exchange.response.contentLength == 8);
     Require(Value(exchange.response, "Cache-Control") == "max-age=600" && Value(exchange.response, "ETag") == "e1" && Value(exchange.response, "X-New").empty());

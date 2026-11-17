@@ -35,8 +35,12 @@ int RefuseSet(std::int32_t handle, std::uint32_t channel, bool valid) {
 
 bool ValidTarget(const CameraAutoExposureGainTarget* option) {
     if (!option) return true;
-    if (option->sizeThis != sizeof(CameraAutoExposureGainTarget)) return false;
-    switch (option->target) {
+    CameraAutoExposureGainTarget local{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&local, option, sizeof(local));
+    errno = savedErrno;
+    if (!copied || local.sizeThis != sizeof(CameraAutoExposureGainTarget)) return false;
+    switch (local.target) {
     case 0x0: case 0x2: case 0x4: case 0x6: case 0x8:
     case 0x10: case 0x12: case 0x14: case 0x16:
     case 0x20:
@@ -44,6 +48,16 @@ bool ValidTarget(const CameraAutoExposureGainTarget* option) {
     default:
         return false;
     }
+}
+
+template <typename T>
+bool ValidGuestInput(const T* pointer) {
+    if (!pointer) return false;
+    T local{};
+    const int savedErrno = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(&local, pointer, sizeof(local));
+    errno = savedErrno;
+    return copied;
 }
 
 template <typename TValue>
@@ -211,15 +225,15 @@ int APS5_VABI sceCameraSetHue(std::int32_t handle, std::uint32_t channel, std::i
 }
 
 int APS5_VABI sceCameraSetExposureGain(std::int32_t handle, std::uint32_t channel, const CameraExposureGain* exposureGain, const void* option) {
-    return RefuseSet(handle, channel, exposureGain && !option);
+    return RefuseSet(handle, channel, ValidGuestInput(exposureGain) && !option);
 }
 
 int APS5_VABI sceCameraSetWhiteBalance(std::int32_t handle, std::uint32_t channel, const CameraWhiteBalance* whiteBalance, const void* option) {
-    return RefuseSet(handle, channel, whiteBalance && !option);
+    return RefuseSet(handle, channel, ValidGuestInput(whiteBalance) && !option);
 }
 
 int APS5_VABI sceCameraSetGamma(std::int32_t handle, std::uint32_t channel, const CameraGamma* gamma, const void* option) {
-    return RefuseSet(handle, channel, gamma && !option);
+    return RefuseSet(handle, channel, ValidGuestInput(gamma) && !option);
 }
 
 }

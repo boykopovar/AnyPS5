@@ -13,7 +13,7 @@ Supported input sources are:
 - `WHEEL:Up`, `WHEEL:Down`, `WHEEL:Left` or `WHEEL:Right` for pad buttons. `Left` and `Right` are horizontal scroll steps, such as a tilting wheel's sideways clicks; no action uses them by default.
 - `PAD:Button` or `PAD:Button+Button+...` for emulator actions only: a chord of controller buttons that are all held at once. Button names are `Cross`, `Circle`, `Triangle`, `Square`, `L1`, `R1`, `L2`, `R2`, `L3`, `R3`, `Options`, `Up`, `Right`, `Down`, `Left` and `TouchPad`. The chord fires once, when its last button goes down, and the buttons still reach the title. `PAD:` is accepted for `ToggleFullscreen`, `TogglePerformanceOverlay`, `Screenshot`, `ShowPadStatus`, `VolumeUp`, `VolumeDown`, `ToggleMute` and `ReloadInputMapping`; other actions refuse it. Example: `ToggleFullscreen = PAD:Options+R1`.
 
-While a title has a mouse open (`sceMouseOpen`) and the window is focused, AnyPS5 hides and captures the host cursor, so the title's own cursor is the only one; the capture ends when the window loses focus or when the mouse-to-stick toggle (`ToggleMouse`) is on. Mouse movement reaches the title scaled from the window's presented image to the title's display resolution, so the title's cursor moves as far as the host cursor would.
+While a title has a mouse open (`sceMouseOpen`) and the window is focused, AnyPS5 hides and captures the host cursor, so the title's own cursor is the only one; the capture ends when the window loses focus or when the mouse-to-stick toggle (`ToggleMouse`) is on. While the title has the mouse, mouse clicks and the wheel go to the title instead of their pad bindings. Turning on `ToggleMouse` with its key (F7 by default) hands the whole mouse to the pad until it is turned off again: motion moves the stick, and clicks and the wheel press their pad bindings, while the title's mouse reports no movement, clicks or wheel turns. A title that opens the mouse but ignores it in play can be played this way. Mouse movement reaches the title scaled from the window's presented image to the title's display resolution, so the title's cursor moves as far as the host cursor would.
 
 The window hotkeys (`ToggleFullscreen`, `TogglePerformanceOverlay`, `Screenshot`, `ShowPadStatus`, `VolumeDown`, `VolumeUp` and `ToggleMute`) never reach the game's pad when bound to a key or mouse button. A `PAD:` chord is the one exception: its buttons still reach the title. A key bound to a hotkey and to another action triggers both, as for every other action; the built-in keys of the actions above share none.
 
@@ -124,9 +124,20 @@ Set `APS5_PAD_INPUT_FILE` as described in [Controller input for test runs](USAGE
 python3 tools/pad_timeline.py menu.json /tmp/anyps5-pad --repeat 3 --gap-ms 500
 ```
 
-Events start relative to when the application first observes the new command. Button lists support every name in `pad_input.py`; simultaneous names are combined. An empty list or `["release"]` injects no buttons. An event may also hold `left_stick` and `right_stick` positions as `[x, y]` from 0 to 255 (128 is centred); a stick an event names but the other leaves out stays centred for that event, and an event without either keeps the physical sticks, for example `{"at_ms":0,"hold_ms":400,"buttons":[],"left_stick":[255,128]}` to push the left stick right. Events must be ordered and non-overlapping, hold for 1–5000 ms, and finish within one hour. Repetition adds the specified gap after the last event; at most 4096 events are accepted after repetition. The helper validates the entire sequence before atomically replacing the command file.
+Events start relative to when the application first observes the new command. Button lists support every name in `pad_input.py`; simultaneous names are combined. An empty list or `["release"]` injects no buttons. An event may also hold `left_stick` and `right_stick` positions as `[x, y]` from 0 to 255 (128 is centred); a stick an event names but the other leaves out stays centred for that event, and an event without either keeps the physical sticks, for example `{"at_ms":0,"hold_ms":400,"buttons":[],"left_stick":[255,128]}` to push the left stick right. Events must be ordered and non-overlapping, hold for 1–5000 ms, and finish within one hour. Repetition adds the specified gap after the last event; at most 4096 events are accepted after repetition, and the command file they produce must not exceed the 64 KiB the runtime reads. The helper validates the entire sequence before atomically replacing the command file.
 
 The runtime evaluates scheduled events at each controller read, including their automatic releases. A new pulse or timeline replaces the remaining sequence. Physical controller buttons still add to injected buttons. Existing commands at the application's first controller read are ignored. This schedules wall-time input: events can be missed while the application is not reading its controller, and it does not reproduce frame timing or game state. Use gaps and holds long enough for the title's input loop.
+
+## Recording and replaying controller input
+
+Set `APS5_PAD_RECORD` to a file path to record what a title reads from controller port 0 while you play: every change of its buttons, sticks and analog triggers, whatever device produced it, timed in milliseconds from the title's first controller read. Set `APS5_PAD_REPLAY` to that file on a later run to feed the same states back at the same times from that run's first read, without any device. A replay replaces port 0's buttons, sticks and analog triggers at every read; after the last recorded change it keeps the last state. A recording path that cannot be written, or a replay file that cannot be read or is not in the format below, stops the title at its first controller read with an error naming the variable.
+
+```sh
+APS5_PAD_RECORD=/tmp/fight.txt ./app.elf
+APS5_PAD_REPLAY=/tmp/fight.txt APS5_NO_PAD_INPUT=1 ./app.elf
+```
+
+The file starts with the line `APS5_PAD_RECORDING 1`, followed by one line per change: the time in milliseconds, the buttons in hexadecimal (the values of `pad_input.py`), the left and right stick x and y, and L2 and R2, each 0 to 255. A replay follows the recorded times, not the title's frames: a run that loads more slowly or runs at another frame rate, or a title that draws different random numbers, drifts from the recorded session, so compare runs by scene rather than by second.
 
 ## Controller vibration strength
 
@@ -211,3 +222,8 @@ The translation button selects one of 22 interface and FAQ languages. First visi
 Keyboard capture converts physical browser key codes to SDL scancode names. Escape cancels capture; select Escape manually to assign it. Composition, ambiguous keys and some browser or system shortcuts require manual selection. Names containing `#` or `;` cannot be exported because those characters start INI comments. The key catalogue follows SDL commit `4b69833bc54abf3dd3288d4aa7afbba527775e5b`. The source-contract tests compare actions, restrictions and defaults with the current native input code.
 
 For static hosting, serve `index.html`, `styles.css`, `app.js`, `mapping.js`, `keys.js`, `capture.js`, `validation.js`, `i18n.js` and `dropdown.js` from one directory. The configurator is not published on the project's GitHub Pages site yet.
+
+## Checking a timeline without a controller
+
+- `tools/preview_pad_timeline.py <timeline> [--repeat N] [--gap-ms MS] [--json]` validates a controller timeline and previews it without touching a controller command file. `--json` prints the preview as JSON.
+- `tools/preview_pad_input.py <path> <button> [--hold-ms MS] [--left-stick X Y] [--right-stick X Y] [--touch X Y ID ACTIVE]` prints one controller pulse without modifying the command file at `<path>`.
