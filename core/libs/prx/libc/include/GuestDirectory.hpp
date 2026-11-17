@@ -14,6 +14,10 @@ struct GuestDirectoryEntry {
 static_assert(offsetof(GuestDirectoryEntry, name) == 8);
 static_assert(sizeof(GuestDirectoryEntry) == 264);
 
+extern "C" void* APS5_VABI OpenDirectory_nid_no_patch(const char* path);
+extern "C" GuestDirectoryEntry* APS5_VABI ReadDirectory_nid_no_patch(void* handle);
+extern "C" int APS5_VABI ReadDirectoryEntry_nid_no_patch(void* handle, GuestDirectoryEntry* entry, GuestDirectoryEntry** result);
+extern "C" int APS5_VABI CloseDirectory_nid_no_patch(void* handle);
 extern "C" void* APS5_VABI OpenDescriptorDirectory_nid_no_patch(const char* hostPath, int descriptor, int (APS5_VABI* closeDescriptor)(int), std::uint64_t position,
     int (APS5_VABI* readDescriptor)(int, char*, int), std::int64_t (APS5_VABI* seekDescriptor)(int, std::int64_t, int));
 extern "C" GuestDirectoryEntry* APS5_VABI ReadDirectoryUnlocked_nid_no_patch(void* handle, int skip);
