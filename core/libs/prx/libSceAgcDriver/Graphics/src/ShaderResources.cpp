@@ -742,6 +742,14 @@ std::uint64_t forcedCacheBudget() {
     return forced;
 }
 
+bool demandBudget() {
+    static const bool enabled = [] {
+        const char* text = std::getenv("APS5_TEXTURE_BUDGET_DEMAND");
+        return text != nullptr && *text != '\0' && *text != '0';
+    }();
+    return enabled;
+}
+
 std::uint64_t storageBudget(const Context& context, std::uint64_t required = 0, std::optional<std::chrono::steady_clock::time_point>* calculatedAt = nullptr) {
     if (calculatedAt != nullptr) calculatedAt->reset();
     const auto forced = forcedCacheBudget();
@@ -771,7 +779,7 @@ std::uint64_t storageBudget(const Context& context, std::uint64_t required = 0, 
             const auto sampled = SampledTextureMemory();
             const auto storage = storageCacheBytes();
             const auto owned = UsageWithoutHostImports(context.memory, *reported, HostImportLiveBytes(), context.hostImportsInHeapUsage);
-            snapshot = CalculateStorageTextureBudget(context.memory, &owned, sampled, storage);
+            snapshot = CalculateStorageTextureBudget(context.memory, &owned, sampled, storage, demandBudget());
             cached.budget = snapshot.selectedBudget;
             cached.ceiling = snapshot.ceiling;
             cached.calculatedAt = std::chrono::steady_clock::now();
@@ -808,7 +816,7 @@ std::uint64_t sampledBudget(const Context& context, TextureCache& cache) {
     const auto sampled = SampledTextureMemory();
     const auto storage = storageCacheBytes();
     const auto owned = UsageWithoutHostImports(context.memory, reported, HostImportLiveBytes(), context.hostImportsInHeapUsage);
-    const auto budget = SampledTextureBudget(context.memory, &owned, sampled + storage, storage);
+    const auto budget = SampledTextureBudget(context.memory, &owned, sampled + storage, storage, demandBudget());
     const bool fresh = cache.budgetDevice != context.physical;
     std::optional<std::chrono::steady_clock::time_point> storageCalculatedAt;
     const auto storageLimit = storageBudget(context, 0, &storageCalculatedAt);
@@ -1631,6 +1639,12 @@ std::shared_ptr<StorageTexture> cachedStorageTexture(const Context& context, std
 
 }
 
+namespace {
+constexpr std::uint64_t SampledBudgetFloor = 2048ull << 20u;
+constexpr std::uint64_t DemandStorageSlack = 256ull << 20u;
+constexpr std::uint64_t DemandHeadroomDivisor = 16;
+}
+
 std::uint64_t TextureCacheBudget(const VkPhysicalDeviceMemoryProperties& memory) {
     const auto heap = largestDeviceLocalHeap(memory);
     return std::max<std::uint64_t>(2048ull << 20u, heap ? memory.memoryHeaps[*heap].size / 4u : 0u);
@@ -1640,11 +1654,11 @@ std::uint64_t StorageTextureCeiling(const VkPhysicalDeviceMemoryProperties& memo
     return CalculateStorageTextureBudget(memory, reported, 0, 0).ceiling;
 }
 
-std::uint64_t StorageTextureBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t sampledBytes, std::uint64_t storageBytes) {
-    return CalculateStorageTextureBudget(memory, reported, sampledBytes, storageBytes).selectedBudget;
+std::uint64_t StorageTextureBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t sampledBytes, std::uint64_t storageBytes, bool demand) {
+    return CalculateStorageTextureBudget(memory, reported, sampledBytes, storageBytes, demand).selectedBudget;
 }
 
-StorageTextureBudgetSnapshot CalculateStorageTextureBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t sampledBytes, std::uint64_t storageBytes) {
+StorageTextureBudgetSnapshot CalculateStorageTextureBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t sampledBytes, std::uint64_t storageBytes, bool demand) {
     StorageTextureBudgetSnapshot snapshot;
     snapshot.sampledBytes = sampledBytes;
     snapshot.storageBytes = storageBytes;
@@ -1655,20 +1669,22 @@ StorageTextureBudgetSnapshot CalculateStorageTextureBudget(const VkPhysicalDevic
     snapshot.heap = heap;
     const auto heapBudget = reported->heapBudget[*heap];
     const auto usage = reported->heapUsage[*heap];
-    snapshot.reserved = usage - std::min<std::uint64_t>(usage, sampledBytes + storageBytes) + sampledBytes + heapBudget / 8u;
+    const auto other = usage - std::min<std::uint64_t>(usage, sampledBytes + storageBytes);
+    snapshot.reserved = demand ? other + std::min<std::uint64_t>(sampledBytes, SampledBudgetFloor) + heapBudget / DemandHeadroomDivisor : other + sampledBytes + heapBudget / 8u;
     snapshot.available = heapBudget > snapshot.reserved ? heapBudget - snapshot.reserved : 0u;
     snapshot.ceiling = std::max<std::uint64_t>(512ull << 20u, std::min<std::uint64_t>(memory.memoryHeaps[*heap].size / 2u, heapBudget / 2u));
     snapshot.selectedBudget = std::min<std::uint64_t>(snapshot.ceiling, std::max<std::uint64_t>(512ull << 20u, snapshot.available));
     return snapshot;
 }
 
-std::uint64_t SampledTextureBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t textureBytes, std::uint64_t storageBytes) {
+std::uint64_t SampledTextureBudget(const VkPhysicalDeviceMemoryProperties& memory, const VkPhysicalDeviceMemoryBudgetPropertiesEXT* reported, std::uint64_t textureBytes, std::uint64_t storageBytes, bool demand) {
     const auto heap = largestDeviceLocalHeap(memory);
     if (reported == nullptr || !heap || reported->heapBudget[*heap] == 0) return TextureCacheBudget(memory);
     const auto budget = reported->heapBudget[*heap];
     const auto usage = reported->heapUsage[*heap];
-    const auto reserved = usage - std::min<std::uint64_t>(usage, textureBytes) + std::max(TextureCacheBudget(memory), storageBytes) + budget / 8u;
-    return std::max<std::uint64_t>(2048ull << 20u, budget > reserved ? budget - reserved : 0u);
+    const auto other = usage - std::min<std::uint64_t>(usage, textureBytes);
+    const auto reserved = demand ? other + storageBytes + DemandStorageSlack + budget / DemandHeadroomDivisor : other + std::max(TextureCacheBudget(memory), storageBytes) + budget / 8u;
+    return std::max<std::uint64_t>(SampledBudgetFloor, budget > reserved ? budget - reserved : 0u);
 }
 
 bool SampledBudgetReportDue(std::uint64_t reported, std::uint64_t budget, std::chrono::steady_clock::duration sinceReport) {

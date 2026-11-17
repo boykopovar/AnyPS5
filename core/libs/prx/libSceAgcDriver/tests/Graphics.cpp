@@ -8651,6 +8651,24 @@ void sampledTextureBudgetTests() {
     Require(SampledTextureBudget(memory, &reported, 1 * GiB) == 2 * GiB, "a heap whose other users leave no room does not keep the 2 GiB floor");
     {
         using AgcDriver::Graphics::StorageTextureBudget;
+        auto card = memory;
+        card.memoryHeaps[2].size = 12 * GiB;
+        VkPhysicalDeviceMemoryBudgetPropertiesEXT level{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
+        level.heapBudget[2] = 10112 * MiB;
+        level.heapUsage[2] = (2769 + 3007 + 1282) * MiB;
+        Require(SampledTextureBudget(card, &level, (3007 + 1282) * MiB, 1282 * MiB) == 3007 * MiB, "the fixture no longer shows a 12 GiB card with 1282 MiB of storage images holding the sampled cache at 3007 MiB");
+        Require(SampledTextureBudget(card, &level, (3007 + 1282) * MiB, 1282 * MiB, true) == 5173 * MiB, "the demand budget did not give the sampled cache what the storage images held, 256 MiB of slack and a sixteenth of headroom leave");
+        level.heapUsage[2] = (2769 + 5173 + 1282) * MiB;
+        Require(SampledTextureBudget(card, &level, (5173 + 1282) * MiB, 1282 * MiB, true) == 5173 * MiB, "the demand budget of the sampled cache moved when the cache filled it");
+        Require(StorageTextureBudget(card, &level, 5173 * MiB, 1282 * MiB) == 906 * MiB, "the fixture no longer shows a full sampled cache squeezing the storage cache below the 1282 MiB it holds");
+        Require(StorageTextureBudget(card, &level, 5173 * MiB, 1282 * MiB, true) == 4663 * MiB, "the demand budget of the storage cache counted more of the sampled cache than its 2 GiB floor");
+        level.heapUsage[2] = (2769 + 5173 + 4000) * MiB;
+        Require(SampledTextureBudget(card, &level, (5173 + 4000) * MiB, 4000 * MiB, true) == 2455 * MiB, "the demand budget of the sampled cache did not yield to storage images that grew");
+        level.heapUsage[2] = (9000 + 1282) * MiB;
+        Require(SampledTextureBudget(card, &level, 1282 * MiB, 1282 * MiB, true) == 2 * GiB && StorageTextureBudget(card, &level, 0, 1282 * MiB, true) == 512 * MiB, "the demand budgets lost their floors on a heap other users fill");
+    }
+    {
+        using AgcDriver::Graphics::StorageTextureBudget;
         auto small = memory;
         small.memoryHeaps[2].size = 8 * GiB;
         VkPhysicalDeviceMemoryBudgetPropertiesEXT example{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
