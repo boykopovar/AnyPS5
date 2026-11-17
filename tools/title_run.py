@@ -32,6 +32,8 @@ FIXED_BASE_FLAGS = {"windows": "--windows-fixed-base", "linux": "--linux-fixed-b
 PAD_FIELDS = {"events", "after_s", "repeat", "gap_ms"}
 PAD_AFTER_SECONDS = 5
 REPORT_FILE = "anyps5-report.json"
+SUMMARY_FIELDS = {"commit", "dirty", "presents", "window", "interval_start_s", "interval_end_s", "trace"}
+SUMMARY_JSON = re.compile(r'^\s*(?:\{\s*(?:["}]|$)|\[\s*(?:[\[{"\]0-9-]|true\b|false\b|null\b|$)|")')
 FRAME_PERCENTILES = ("p50", "p90", "p99")
 SHADER_COUNTS = ("compiled", "failed", "cacheHits")
 UNSUPPORTED_KEYS = ("encoding", "opcode", "opcodeValue", "modifiers")
@@ -133,14 +135,20 @@ def warning_counts(text):
 
 
 def read_summary(path):
-    lines = []
+    lines, errors = [], {}
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines() if path.is_file() else []:
         try:
             decoded = json.loads(line)
         except ValueError:
+            if SUMMARY_JSON.match(line):
+                errors["malformed_rows"] = errors.get("malformed_rows", 0) + 1
             continue
         if isinstance(decoded, dict):
-            lines.append(decoded)
+            declared_format = decoded.get("format")
+            if SUMMARY_FIELDS.intersection(decoded) and (not isinstance(declared_format, str) or declared_format in ("", "aps5-bench/1")):
+                lines.append(decoded)
+        else:
+            errors["non_object_rows"] = errors.get("non_object_rows", 0) + 1
     native = {}
     if any("commit" in line or "dirty" in line for line in lines):
         for line in lines:
@@ -154,7 +162,7 @@ def read_summary(path):
     last = lines[-1] if lines else {}
     return {"presents": presents, "fps": round(presents / seconds, 1) if seconds else 0.0,
             "gpu": last.get("gpu", ""), "driver": last.get("driver", ""), "os": last.get("os", ""),
-            **({"native": list(native.values())} if native else {})}
+            **({"native": list(native.values())} if native else {}), **({"native_errors": errors} if errors else {})}
 
 
 def section(document, name):
@@ -1004,7 +1012,8 @@ def run_title(executable, work, run_dir, seconds, extra_env, pad=None):
     age = ended - summary_path.stat().st_mtime if summary_path.is_file() else None
     cpu = re.search(r"host CPU (.+?): has", text)
     native = {"summary": summary.get("native", [{"commit": None, "dirty": None}] if summary_path.is_file() else []),
-              "report": (report or {}).get("native", {"commit": None, "modified": None}) if (run_dir / REPORT_FILE).is_file() else None}
+              "report": (report or {}).get("native", {"commit": None, "modified": None}) if (run_dir / REPORT_FILE).is_file() else None,
+              **({"summary_errors": summary["native_errors"]} if "native_errors" in summary else {})}
     return {"outcome": classify(True, exit_code, age, bool(frames), uniform), "exit_code": exit_code, "seconds": elapsed,
             "presents": summary["presents"], "fps": summary["fps"], "first_error": first_error(text),
             "warnings": warning_counts(text), "frames": frames, "report": report, "native": native, "gpu": summary["gpu"], "driver": summary["driver"],

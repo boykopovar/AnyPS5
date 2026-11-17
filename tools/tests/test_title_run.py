@@ -125,6 +125,19 @@ def bmp(path, width, height, color):
 
 
 class NativeProvenanceTests(unittest.TestCase):
+    def test_non_string_format_cannot_discard_a_conflicting_summary_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "summary.jsonl"
+            clean = {"commit": "a" * 12, "dirty": False, "presents": 60, "window": {"ms": 1000}}
+            for declared_format in [None, 7, [], ""]:
+                conflicting = dict(clean, commit="b" * 12, format=declared_format)
+                path.write_text("\n".join(map(json.dumps, [clean, conflicting])), encoding="utf-8")
+                parsed = title_run.read_summary(path)
+                native = {"native": {"summary": parsed.get("native", [])}}
+                with self.subTest(format=declared_format):
+                    self.assertEqual(title_run.title_run_provenance.qualification(native,
+                        {"commit": "a" * 40, "dirty": False})["status"], "conflicting")
+
     def test_capture_identity_is_kept_when_only_periodic_frames_are_counted(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "summary.jsonl"
@@ -326,7 +339,7 @@ class NativeProvenanceFlowTests(unittest.TestCase):
                         "commit", "-q", "--allow-empty", "-m", "test: source identity"], check=True, capture_output=True)
         self.commit = subprocess.check_output(["git", "-C", str(self.source), "rev-parse", "HEAD"], text=True).strip()
 
-    def run_fixture(self, identities, report):
+    def run_fixture(self, identities, report, summary_rows=(), report_text=None):
         build = self.root / "build"
         relinker = build / "core/relinker/relinker"
         relinker.parent.mkdir(parents=True)
@@ -340,9 +353,10 @@ rows = []
 for index, identity in enumerate(evidence["summary"]):
     rows.append(dict(identity, interval_start_s=index, interval_end_s=index + 1,
                      presents=60, window={"ms": 1000}, gpu="Fixture GPU", driver="Fixture driver", os="Fixture OS"))
-Path(os.environ["APS5_TRACE_DIR"], "aps5-summary.jsonl").write_text("\\n".join(map(json.dumps, rows)), encoding="utf-8")
+serialized = [json.dumps(row) for row in rows] + evidence["summary_rows"]
+Path(os.environ["APS5_TRACE_DIR"], "aps5-summary.jsonl").write_text("\\n".join(serialized), encoding="utf-8")
 document = {"format": "anyps5-report", "version": 1, "anyps5": evidence["report"], "run": {"averageFps": 60.0}}
-Path("anyps5-report.json").write_text(json.dumps(document), encoding="utf-8")
+Path("anyps5-report.json").write_text(evidence["report_text"] if evidence["report_text"] is not None else json.dumps(document), encoding="utf-8")
 pixels = bytes([0, 0, 0, 255, 255, 255, 255, 255])
 Path("frame_1.bmp").write_bytes(struct.pack("<2sIHHI", b"BM", 62, 0, 0, 54) +
     struct.pack("<IiiHHIIiiII", 40, 2, -1, 1, 32, 0, 8, 0, 0, 0, 0) + pixels)
@@ -358,7 +372,8 @@ time.sleep(60)
         (package / "eboot.bin").write_bytes(b"\x7fELF" + bytes(60))
         (package / "sce_sys/param.json").write_text(json.dumps({"titleId": "PPSA00001", "titleName": "Fixture", "contentVersion": "01.00"}), encoding="utf-8")
         titles = self.root / "titles.json"
-        titles.write_text(json.dumps({"PPSA00001": {"env": {"FIXTURE_NATIVE_EVIDENCE": json.dumps({"summary": identities, "report": report})}}}), encoding="utf-8")
+        evidence = {"summary": identities, "report": report, "summary_rows": list(summary_rows), "report_text": report_text}
+        titles.write_text(json.dumps({"PPSA00001": {"env": {"FIXTURE_NATIVE_EVIDENCE": json.dumps(evidence)}}}), encoding="utf-8")
         out = self.root / "out"
         command = [sys.executable, str(Path(title_run.__file__)), "--games", str(self.root / "games"),
                    "--build", str(build), "--titles", str(titles), "--out", str(out), "--runs", "1", "--seconds", "1", "PPSA00001"]
@@ -423,6 +438,48 @@ time.sleep(60)
             {"commit": self.commit[:12], "dirty": False}], {"commit": self.commit, "modified": False})
         self.assert_qualification(summary, "conflicting")
         self.assertEqual(len(run["native"]["summary"]), 2)
+
+    def test_truncated_trace_record_cannot_certify_the_matching_intervals(self):
+        import performance_bisect
+        broken = '{"commit":"bbbbbbbbbbbb","dirty":false,"interval_start_s":1,'
+        summary, run, path, markdown = self.run_fixture([{"commit": self.commit[:12], "dirty": False}],
+            {"commit": self.commit, "modified": False}, summary_rows=[broken])
+        with self.assertRaisesRegex(ValueError, "native.*unknown"):
+            performance_bisect.sample_summary(path, "PPSA00001", self.commit)
+        self.assert_qualification(summary, "unknown")
+        self.assertEqual(run["native"]["summary_errors"], {"malformed_rows": 1})
+        self.assertNotIn("bbbbbbbbbbbb", json.dumps(run["native"]))
+        self.assertIn("unknown", markdown)
+
+    def test_non_object_trace_records_cannot_certify_the_valid_intervals(self):
+        import performance_bisect
+        summary, run, path, markdown = self.run_fixture([{"commit": self.commit[:12], "dirty": False}],
+            {"commit": self.commit, "modified": False}, summary_rows=['[]', 'null', '7', '"not a summary object"'])
+        with self.assertRaisesRegex(ValueError, "native.*unknown"):
+            performance_bisect.sample_summary(path, "PPSA00001", self.commit)
+        self.assert_qualification(summary, "unknown")
+        self.assertEqual(run["native"]["summary_errors"], {"non_object_rows": 4})
+
+    def test_ordinary_log_records_outside_the_summary_protocol_do_not_taint_native_identity(self):
+        import performance_bisect
+        logs = ['worker started', '[notification] ordinary message',
+                '{"level":"info","message":"ordinary JSON log"}',
+                '{"format":"application-log","commit":"bbbbbbbbbbbb","dirty":false,"message":"source log"}',
+                '{"format":"aps5-log/1","commit":"bbbbbbbbbbbb","dirty":false,"message":"ordinary native log"}', '']
+        summary, run, path, markdown = self.run_fixture([{"commit": self.commit[:12], "dirty": False}],
+            {"commit": self.commit, "modified": False}, summary_rows=logs)
+        self.assertEqual(performance_bisect.sample_summary(path, "PPSA00001", self.commit)["fps"], 60.0)
+        self.assert_qualification(summary, "matched")
+        self.assertFalse(run["native"].get("summary_errors"))
+
+    def test_malformed_report_does_not_qualify_from_clean_trace_alone(self):
+        import performance_bisect
+        summary, run, path, markdown = self.run_fixture([{"commit": self.commit[:12], "dirty": False}],
+            {"commit": self.commit, "modified": False}, report_text='{"format":"anyps5-report","anyps5":')
+        self.assertIsNone(run["report"])
+        self.assert_qualification(summary, "unknown")
+        with self.assertRaisesRegex(ValueError, "native.*unknown"):
+            performance_bisect.sample_summary(path, "PPSA00001", self.commit)
 
 
 class ReportTests(unittest.TestCase):

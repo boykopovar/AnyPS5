@@ -14,6 +14,9 @@ def qualification(run, source):
     identities, unknown = [], False
     if not isinstance(native, dict):
         native = {}
+    errors = native.get("summary_errors", {})
+    if not isinstance(errors, dict) or any(type(count) is not int or count != 0 for count in errors.values()):
+        unknown = True
     summaries = native.get("summary", [])
     if not isinstance(summaries, list):
         unknown = True

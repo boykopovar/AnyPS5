@@ -110,6 +110,8 @@ class SummaryValidationTests(unittest.TestCase):
                 {"summary": [{"commit": "2" * 12, "dirty": False}]},
                 {"summary": [{"commit": GOOD[:12], "dirty": True}]},
                 {"summary": [{"commit": GOOD[:12], "dirty": 0}]},
+                {"summary": [{"commit": GOOD[:12], "dirty": False}], "summary_errors": {"malformed_rows": 1}},
+                {"summary": [{"commit": GOOD[:12], "dirty": False}], "summary_errors": {"malformed_rows": False}},
                 {"summary": [{"commit": GOOD[:12], "dirty": False}], "report": {"commit": GOOD, "modified": True}},
                 {"summary": [{"commit": GOOD[:12], "dirty": False}], "report": {"commit": "2" * 40, "modified": False}}]
             for native in rejected:
