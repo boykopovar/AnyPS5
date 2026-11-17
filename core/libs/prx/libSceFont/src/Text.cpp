@@ -543,7 +543,7 @@ const FontTextCharacter* APS5_VABI sceFontStringRefersRenderCharacters(FontStrin
 
 int APS5_VABI sceFontCharacterGetBidiLevel(const FontTextCharacter* textCharacter, int* bidiLevel) {
     if (!textCharacter || !bidiLevel) return SCE_FONT_ERROR_INVALID_PARAMETER;
-    *bidiLevel = static_cast<int>(LevelOf(textCharacter));
+    if (!CopyOutGuest(bidiLevel, static_cast<int>(LevelOf(textCharacter)))) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SCE_FONT_OK;
 }
 
