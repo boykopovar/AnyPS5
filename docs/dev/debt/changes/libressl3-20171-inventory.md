@@ -8,9 +8,7 @@
 
 | `ERR_print_errors_fp` | `4pEl-5DmrrM` |
 
-## change `qGsc6uT6p1E`
-
-| `ECDSA_do_verify` | `qGsc6uT6p1E` |
+## remove `qGsc6uT6p1E`
 
 ## change [libSceLibreSsl3 pending exports]
 
