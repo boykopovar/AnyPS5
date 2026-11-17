@@ -171,7 +171,7 @@ void CheckExp(double x, double y, short offset, double expected, short expectedK
     double result = x;
     const short kind = _Exp_nid_postfix(&result, y, offset);
     const bool same = std::isnan(expected) ? std::isnan(result) : result == expected && std::signbit(result) == std::signbit(expected);
-    Require(kind == expectedKind && same && errno == expectedErrno && (std::fetestexcept(FE_ALL_EXCEPT) & FloatingExceptions) == expectedFlags, message);
+    Require(kind == expectedKind && same && errno == expectedErrno && (std::fetestexcept(FloatingExceptions) & FloatingExceptions) == expectedFlags, message);
 }
 
 void CheckFExp(float x, float y, short offset, float expected, short expectedKind, int expectedErrno, int expectedFlags, const char* message) {
@@ -180,7 +180,7 @@ void CheckFExp(float x, float y, short offset, float expected, short expectedKin
     float result = x;
     const short kind = _FExp_nid_postfix(&result, y, offset);
     const bool same = std::isnan(expected) ? std::isnan(result) : result == expected && std::signbit(result) == std::signbit(expected);
-    Require(kind == expectedKind && same && errno == expectedErrno && (std::fetestexcept(FE_ALL_EXCEPT) & FloatingExceptions) == expectedFlags, message);
+    Require(kind == expectedKind && same && errno == expectedErrno && (std::fetestexcept(FloatingExceptions) & FloatingExceptions) == expectedFlags, message);
 }
 
 void TestStod() {
@@ -393,6 +393,40 @@ void TestIntegerErrors() {
     Require(_Stoulx_nid_postfix("-1", &end, 0, &error) == 18446744073709551615ull && error == 0, "_Stoulx wraps a negative value");
     Require(_Stoullx_nid_postfix("-18446744073709551615", &end, 10, &error) == 1 && error == 0 && *__error_nid_postfix() == 0, "_Stoullx wraps a negated maximum");
     Require(_Stoullx_nid_postfix("18446744073709551616", &end, 10, &error) == 18446744073709551615ull && error == RangeError && *__error_nid_postfix() == RangeError, "_Stoullx overflow");
+    const struct {
+        const char* text;
+        int base;
+        unsigned long long value;
+        std::size_t consumed;
+        int error;
+    } unsignedCases[] = {
+        {"-18446744073709551616!", 10, UINT64_MAX, 21, RangeError},
+        {"18446744073709551616!", 10, UINT64_MAX, 20, RangeError},
+        {"-0x10000000000000000!", 0, UINT64_MAX, 20, RangeError},
+        {"-0x10000000000000000!", 16, UINT64_MAX, 20, RangeError},
+        {"-18446744073709551615!", 10, 1, 21, 0},
+        {"42!", 10, 42, 2, 0},
+        {"", 10, 0, 0, 0},
+        {" \t-!", 10, 0, 0, 0}
+    };
+    const auto checkUnsigned = [&](auto parse) {
+        for (const auto& test : unsignedCases) {
+            for (const int saved : {0, 5, RangeError}) {
+                const int expectedError = test.error != 0 ? test.error : saved;
+                char* parsedEnd = nullptr;
+                int parseError = 99;
+                *__error_nid_postfix() = saved;
+                Require(parse(test.text, &parsedEnd, test.base, &parseError) == test.value, "unsigned integer value before sign on overflow");
+                Require(parsedEnd == test.text + test.consumed, "unsigned integer end pointer");
+                Require(parseError == test.error, "unsigned integer error output reports only this parse");
+                Require(*__error_nid_postfix() == expectedError, "unsigned integer errno preserves incoming errors on success");
+                *__error_nid_postfix() = saved;
+                Require(parse(test.text, nullptr, test.base, nullptr) == test.value && *__error_nid_postfix() == expectedError, "unsigned integer null outputs preserve value and errno");
+            }
+        }
+    };
+    checkUnsigned(_Stoulx_nid_postfix);
+    checkUnsigned(_Stoullx_nid_postfix);
 }
 
 void TestFloatingRounds() {
@@ -491,31 +525,31 @@ void TestDoubleHelpers() {
     errno = 0;
     std::feclearexcept(FE_ALL_EXCEPT);
     result = 1.0;
-    Require(_Exp_nid_postfix(&result, std::numeric_limits<double>::denorm_min(), 0) == Finite && std::fpclassify(result) == FP_SUBNORMAL && errno == 0 && std::fetestexcept(FE_ALL_EXCEPT) == 0, "_Exp subnormal result classification");
+    Require(_Exp_nid_postfix(&result, std::numeric_limits<double>::denorm_min(), 0) == Finite && std::fpclassify(result) == FP_SUBNORMAL && errno == 0 && std::fetestexcept(FloatingExceptions) == 0, "_Exp subnormal result classification");
     errno = 0;
     std::feclearexcept(FE_ALL_EXCEPT);
     result = -740.0;
-    Require(_Exp_nid_postfix(&result, 1.0, 0) == Finite && std::fpclassify(result) == FP_SUBNORMAL && errno == 0 && std::fetestexcept(FE_ALL_EXCEPT) == 0, "_Exp negative exponent subnormal result");
+    Require(_Exp_nid_postfix(&result, 1.0, 0) == Finite && std::fpclassify(result) == FP_SUBNORMAL && errno == 0 && std::fetestexcept(FloatingExceptions) == 0, "_Exp negative exponent subnormal result");
     errno = 0;
     std::feclearexcept(FE_ALL_EXCEPT);
     result = 1.0;
-    Require(_Exp_nid_postfix(&result, std::numeric_limits<double>::max(), 0) == Infinite && std::isinf(result) && errno == ERANGE && (std::fetestexcept(FE_ALL_EXCEPT) & (FE_OVERFLOW | FE_INEXACT)) == (FE_OVERFLOW | FE_INEXACT), "_Exp finite multiplier overflow");
+    Require(_Exp_nid_postfix(&result, std::numeric_limits<double>::max(), 0) == Infinite && std::isinf(result) && errno == ERANGE && (std::fetestexcept(FloatingExceptions) & (FE_OVERFLOW | FE_INEXACT)) == (FE_OVERFLOW | FE_INEXACT), "_Exp finite multiplier overflow");
 
     const double largeExpected = std::scalbn(std::exp(710.0 - 1024.0 * std::log(2.0)) * 1e-100, 1024);
     errno = 0;
     std::feclearexcept(FE_ALL_EXCEPT);
     result = 710.0;
-    Require(_Exp_nid_postfix(&result, 1e-100, 0) == Finite && std::isfinite(result) && std::fabs(result - largeExpected) <= largeExpected * 1e-13 && errno == 0 && (std::fetestexcept(FE_ALL_EXCEPT) & (FE_OVERFLOW | FE_UNDERFLOW)) == 0, "_Exp large exponent stays finite");
+    Require(_Exp_nid_postfix(&result, 1e-100, 0) == Finite && std::isfinite(result) && std::fabs(result - largeExpected) <= largeExpected * 1e-13 && errno == 0 && (std::fetestexcept(FloatingExceptions) & (FE_OVERFLOW | FE_UNDERFLOW)) == 0, "_Exp large exponent stays finite");
     const double smallExpected = std::scalbn(std::exp(-710.0 + 1024.0 * std::log(2.0)) * 1e300, -1024);
     errno = 0;
     std::feclearexcept(FE_ALL_EXCEPT);
     result = -710.0;
-    Require(_Exp_nid_postfix(&result, 1e300, 0) == Finite && std::isfinite(result) && std::fabs(result - smallExpected) <= smallExpected * 1e-13 && errno == 0 && (std::fetestexcept(FE_ALL_EXCEPT) & (FE_OVERFLOW | FE_UNDERFLOW)) == 0, "_Exp small exponent stays finite");
+    Require(_Exp_nid_postfix(&result, 1e300, 0) == Finite && std::isfinite(result) && std::fabs(result - smallExpected) <= smallExpected * 1e-13 && errno == 0 && (std::fetestexcept(FloatingExceptions) & (FE_OVERFLOW | FE_UNDERFLOW)) == 0, "_Exp small exponent stays finite");
     const double multiplierExpected = std::exp(-0.5) * std::numeric_limits<double>::max();
     errno = 0;
     std::feclearexcept(FE_ALL_EXCEPT);
     result = -0.5;
-    Require(_Exp_nid_postfix(&result, std::numeric_limits<double>::max(), 0) == Finite && std::isfinite(result) && std::fabs(result - multiplierExpected) <= multiplierExpected * 1e-13 && errno == 0 && (std::fetestexcept(FE_ALL_EXCEPT) & (FE_OVERFLOW | FE_UNDERFLOW)) == 0, "_Exp large multiplier stays finite");
+    Require(_Exp_nid_postfix(&result, std::numeric_limits<double>::max(), 0) == Finite && std::isfinite(result) && std::fabs(result - multiplierExpected) <= multiplierExpected * 1e-13 && errno == 0 && (std::fetestexcept(FloatingExceptions) & (FE_OVERFLOW | FE_UNDERFLOW)) == 0, "_Exp large multiplier stays finite");
 
     const float ef = 0x1.5bf0a8p+1f;
     CheckFExp(1.0f, 1.0f, 0, ef, Finite, 0, 0, "_FExp e");
@@ -582,31 +616,31 @@ void TestDoubleHelpers() {
     errno = 0;
     std::feclearexcept(FE_ALL_EXCEPT);
     resultf = 1.0f;
-    Require(_FExp_nid_postfix(&resultf, std::numeric_limits<float>::denorm_min(), 0) == Finite && std::fpclassify(resultf) == FP_SUBNORMAL && errno == 0 && std::fetestexcept(FE_ALL_EXCEPT) == 0, "_FExp subnormal result classification");
+    Require(_FExp_nid_postfix(&resultf, std::numeric_limits<float>::denorm_min(), 0) == Finite && std::fpclassify(resultf) == FP_SUBNORMAL && errno == 0 && std::fetestexcept(FloatingExceptions) == 0, "_FExp subnormal result classification");
     errno = 0;
     std::feclearexcept(FE_ALL_EXCEPT);
     resultf = -100.0f;
-    Require(_FExp_nid_postfix(&resultf, 1.0f, 0) == Finite && std::fpclassify(resultf) == FP_SUBNORMAL && errno == 0 && std::fetestexcept(FE_ALL_EXCEPT) == 0, "_FExp negative exponent subnormal result");
+    Require(_FExp_nid_postfix(&resultf, 1.0f, 0) == Finite && std::fpclassify(resultf) == FP_SUBNORMAL && errno == 0 && std::fetestexcept(FloatingExceptions) == 0, "_FExp negative exponent subnormal result");
     errno = 0;
     std::feclearexcept(FE_ALL_EXCEPT);
     resultf = 1.0f;
-    Require(_FExp_nid_postfix(&resultf, std::numeric_limits<float>::max(), 0) == Infinite && std::isinf(resultf) && errno == ERANGE && (std::fetestexcept(FE_ALL_EXCEPT) & (FE_OVERFLOW | FE_INEXACT)) == (FE_OVERFLOW | FE_INEXACT), "_FExp finite multiplier overflow");
+    Require(_FExp_nid_postfix(&resultf, std::numeric_limits<float>::max(), 0) == Infinite && std::isinf(resultf) && errno == ERANGE && (std::fetestexcept(FloatingExceptions) & (FE_OVERFLOW | FE_INEXACT)) == (FE_OVERFLOW | FE_INEXACT), "_FExp finite multiplier overflow");
 
     const float largeExpectedf = static_cast<float>(std::exp(100.0) * 1e-35);
     errno = 0;
     std::feclearexcept(FE_ALL_EXCEPT);
     resultf = 100.0f;
-    Require(_FExp_nid_postfix(&resultf, 1e-35f, 0) == Finite && std::isfinite(resultf) && std::fabs(resultf - largeExpectedf) <= largeExpectedf * 1e-6f && errno == 0 && (std::fetestexcept(FE_ALL_EXCEPT) & (FE_OVERFLOW | FE_UNDERFLOW)) == 0, "_FExp large exponent stays finite");
+    Require(_FExp_nid_postfix(&resultf, 1e-35f, 0) == Finite && std::isfinite(resultf) && std::fabs(resultf - largeExpectedf) <= largeExpectedf * 1e-6f && errno == 0 && (std::fetestexcept(FloatingExceptions) & (FE_OVERFLOW | FE_UNDERFLOW)) == 0, "_FExp large exponent stays finite");
     const float smallExpectedf = static_cast<float>(std::exp(-100.0) * 1e30);
     errno = 0;
     std::feclearexcept(FE_ALL_EXCEPT);
     resultf = -100.0f;
-    Require(_FExp_nid_postfix(&resultf, 1e30f, 0) == Finite && std::isfinite(resultf) && std::fabs(resultf - smallExpectedf) <= smallExpectedf * 1e-6f && errno == 0 && (std::fetestexcept(FE_ALL_EXCEPT) & (FE_OVERFLOW | FE_UNDERFLOW)) == 0, "_FExp small exponent stays finite");
+    Require(_FExp_nid_postfix(&resultf, 1e30f, 0) == Finite && std::isfinite(resultf) && std::fabs(resultf - smallExpectedf) <= smallExpectedf * 1e-6f && errno == 0 && (std::fetestexcept(FloatingExceptions) & (FE_OVERFLOW | FE_UNDERFLOW)) == 0, "_FExp small exponent stays finite");
     const float multiplierExpectedf = static_cast<float>(std::exp(-0.5) * std::numeric_limits<float>::max());
     errno = 0;
     std::feclearexcept(FE_ALL_EXCEPT);
     resultf = -0.5f;
-    Require(_FExp_nid_postfix(&resultf, std::numeric_limits<float>::max(), 0) == Finite && std::isfinite(resultf) && std::fabs(resultf - multiplierExpectedf) <= multiplierExpectedf * 1e-6f && errno == 0 && (std::fetestexcept(FE_ALL_EXCEPT) & (FE_OVERFLOW | FE_UNDERFLOW)) == 0, "_FExp large multiplier stays finite");
+    Require(_FExp_nid_postfix(&resultf, std::numeric_limits<float>::max(), 0) == Finite && std::isfinite(resultf) && std::fabs(resultf - multiplierExpectedf) <= multiplierExpectedf * 1e-6f && errno == 0 && (std::fetestexcept(FloatingExceptions) & (FE_OVERFLOW | FE_UNDERFLOW)) == 0, "_FExp large multiplier stays finite");
 }
 
 void TestDispatch() {
@@ -632,6 +666,9 @@ long double Extended(std::uint64_t mantissa, std::uint16_t signExponent) {
     unsigned char bytes[sizeof(long double)]{};
     std::memcpy(bytes, &mantissa, sizeof(mantissa));
     std::memcpy(bytes + sizeof(mantissa), &signExponent, sizeof(signExponent));
+    volatile unsigned char opaque[sizeof(long double)]{};
+    for (std::size_t index = 0; index < sizeof(bytes); ++index) opaque[index] = bytes[index];
+    for (std::size_t index = 0; index < sizeof(bytes); ++index) bytes[index] = opaque[index];
     long double value;
     std::memcpy(&value, bytes, sizeof(value));
     return value;

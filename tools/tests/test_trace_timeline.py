@@ -1,5 +1,6 @@
 import gzip
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -59,6 +60,22 @@ class TimelineTests(unittest.TestCase):
         laid = trace_timeline.layout(trace_timeline_slices(self.items), 0, 10000, 1000)
         self.assertEqual(laid["threads"], ["presenter", "queue worker"])
 
+    def test_threads_that_share_a_name_get_their_own_rows(self):
+        names = [{"name": "thread_name", "ph": "M", "ts": 0, "pid": 7, "tid": tid, "args": {"name": "shader prepare"}} for tid in (1, 2)]
+        items = names + [complete(tid, "Shader.Prepare", 0, 8000) for tid in (1, 2)]
+        laid = trace_timeline.layout(trace_timeline.window_slices(trace_digest.Trace(items), 0, 10000), 0, 10000, 1000)
+        self.assertEqual(laid["threads"], ["shader prepare", "shader prepare"])
+        self.assertEqual(sorted(bar["y"] for bar in laid["bars"]), [0, trace_timeline.ROW_HEIGHT])
+        path = Path(self.tmp.name) / "a.json"
+        path.write_text(json.dumps(items), encoding="utf-8")
+        out = Path(self.tmp.name) / "a.html"
+        done = subprocess.run([sys.executable, str(Path(trace_timeline.__file__)), str(path), "-o", str(out), "--thread", "shader prepare"],
+                              capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        text = out.read_text(encoding="utf-8")
+        self.assertIn("2 threads, 2 bars", text)
+        self.assertEqual(text.count(">shader prepare</text>"), 2)
+
     def test_layout_keeps_the_longest_slices_and_counts_the_rest(self):
         laid = trace_timeline.layout(trace_timeline_slices(self.items), 0, 10000, 1000, max_slices=1)
         self.assertEqual(len(laid["bars"]), 1)
@@ -104,6 +121,28 @@ class TimelineTests(unittest.TestCase):
                     self.assertIn(option, done.stderr)
                     self.assertFalse(out.exists())
 
+    def test_the_cli_rejects_a_window_ending_before_it_starts(self):
+        path = Path(self.tmp.name) / "capture.json"
+        path.write_text(json.dumps(document(self.items)), encoding="utf-8")
+        tool = Path(trace_timeline.__file__)
+        for label, bounds in (
+            ("explicit", ("--from-ms=6", "--to-ms=2")),
+            ("default", ("--from-ms=10",)),
+        ):
+            with self.subTest(label=label):
+                out = path.with_name(f"{label}.html")
+                done = subprocess.run([sys.executable, str(tool), str(path), "-o", str(out), *bounds],
+                                      capture_output=True, text=True)
+                self.assertEqual(done.returncode, 2, done.stdout + done.stderr)
+                self.assertIn("window end must be at or after its start", done.stderr)
+                self.assertFalse(out.exists())
+
+        out = path.with_name("equal.html")
+        done = subprocess.run([sys.executable, str(tool), str(path), "-o", str(out), "--from-ms=9", "--to-ms=9"],
+                              capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertIn("window 9.000 to 9.000 ms", out.read_text(encoding="utf-8"))
+
     def test_the_cli_rejects_sizes_that_are_not_positive(self):
         path = Path(self.tmp.name) / "a.json.gz"
         with gzip.open(path, "wt", encoding="utf-8") as handle:
@@ -118,6 +157,62 @@ class TimelineTests(unittest.TestCase):
                 self.assertEqual(done.returncode, 2, done.stderr)
                 self.assertIn(option, done.stderr)
                 self.assertFalse(out.exists())
+
+
+    def check_input_alias(self, path, output=None, cwd=None):
+        before = path.read_bytes()
+        arguments = [sys.executable, str(Path(trace_timeline.__file__)), str(path)]
+        if output is not None:
+            arguments += ["-o", str(output)]
+        done = subprocess.run(arguments, capture_output=True, text=True, cwd=cwd)
+        self.assertEqual(done.returncode, 2, done.stdout + done.stderr)
+        self.assertIn("output must not overwrite the input trace", done.stderr)
+        self.assertNotIn("wrote ", done.stdout)
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_cli_preserves_input_with_explicit_or_default_same_output(self):
+        for suffix in (".json", ".html"):
+            with self.subTest(suffix=suffix):
+                path = Path(self.tmp.name) / ("capture" + suffix)
+                path.write_text(json.dumps(document(self.items)), encoding="utf-8")
+                self.check_input_alias(path, path)
+                self.check_input_alias(path, Path(os.path.relpath(path, path.parent)), cwd=path.parent)
+                if suffix == ".html":
+                    self.check_input_alias(path)
+
+    def test_cli_preserves_compressed_input_with_hardlink_output(self):
+        path = Path(self.tmp.name) / "capture.json.gz"
+        with gzip.open(path, "wt", encoding="utf-8") as handle:
+            json.dump(document(self.items), handle)
+        output = Path(self.tmp.name) / "capture.html"
+        try:
+            os.link(path, output)
+        except OSError as error:
+            self.skipTest(f"hard links unavailable: {error}")
+        self.check_input_alias(path, output)
+
+    def test_cli_preserves_input_with_symlink_alias_in_either_direction(self):
+        path = Path(self.tmp.name) / "capture.json"
+        path.write_text(json.dumps(document(self.items)), encoding="utf-8")
+        alias = Path(self.tmp.name) / "capture.html"
+        try:
+            alias.symlink_to(path)
+        except OSError as error:
+            self.skipTest(f"symbolic links unavailable: {error}")
+        self.check_input_alias(path, alias)
+        self.check_input_alias(alias, path)
+
+    def test_cli_allows_distinct_existing_output_with_identical_contents(self):
+        path = Path(self.tmp.name) / "capture.json"
+        path.write_text(json.dumps(document(self.items)), encoding="utf-8")
+        before = path.read_bytes()
+        output = path.with_suffix(".html")
+        output.write_bytes(before)
+        done = subprocess.run([sys.executable, str(Path(trace_timeline.__file__)), str(path), "-o", str(output)],
+                              capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(path.read_bytes(), before)
+        self.assertIn("<svg", output.read_text(encoding="utf-8"))
 
 
 def trace_timeline_slices(items):

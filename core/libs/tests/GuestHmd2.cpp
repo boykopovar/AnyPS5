@@ -447,6 +447,8 @@ void TestReprojection() {
     std::array<std::uint8_t, 0x68> status{};
     status.fill(0xaa);
     Require(sceHmd2ReprojectionGetStatus(nullptr) == Hmd2::ParameterNull, "status into a null output inside a reprojection session");
+    errno = EBUSY;
+    Require(sceHmd2ReprojectionGetStatus(reinterpret_cast<Hmd2::ReprojectionStatus*>(std::uintptr_t{0x10})) == Hmd2::ParameterNull && errno == EBUSY, "status into unwritable output inside a reprojection session");
     Require(sceHmd2ReprojectionGetStatus(reinterpret_cast<Hmd2::ReprojectionStatus*>(status.data())) == 0, "status inside a reprojection session");
     std::array<std::uint64_t, 4> timestamps{};
     std::memcpy(timestamps.data(), status.data() + 0x28, sizeof(timestamps));

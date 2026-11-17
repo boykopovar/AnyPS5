@@ -33,7 +33,7 @@ void testTrinityMode() {
 
 void testRejections() {
     expectFailure([] { sceAgcGetIsTrinityMode(nullptr); });
-    expectFailure([] { sceAgcGetIsTrinityMode(reinterpret_cast<bool*>(std::uintptr_t{0x10000})); });
+    expectFailure([] { sceAgcGetIsTrinityMode(reinterpret_cast<bool*>(std::uintptr_t{0x10})); });
 }
 
 void testExportLinked() {
