@@ -4939,6 +4939,292 @@ void verifySharedImageTableResolution() {
     }
 }
 
+struct PackedTable {
+    std::vector<std::array<std::uint32_t, 8>> records;
+    std::array<std::uint32_t, 4> heap{};
+    std::vector<std::unique_ptr<ShaderRecompiler::IrValue>> values;
+
+    explicit PackedTable(const std::vector<std::uint32_t>& formats) {
+        static TableTexture texture;
+        for (const auto format : formats) records.push_back(TableT(texture.bytes.data(), format, TableType2D, 1u));
+        heap = TableV(records.data(), 32u, static_cast<std::uint32_t>(records.size()));
+    }
+
+    void Set(std::size_t index, std::uint32_t format) {
+        static TableTexture texture;
+        records.at(index) = TableT(texture.bytes.data(), format, TableType2D, 1u);
+    }
+
+    static ShaderRecompiler::ImageResource Image(bool flagged, bool supported = true) {
+        ShaderRecompiler::ImageResource image;
+        image.source = 1u;
+        image.table = 0u;
+        image.resourceClass = ShaderRecompiler::ImageResourceClass::Sampled;
+        image.dimension = ShaderRecompiler::RdnaImageDimension::Dim2D;
+        image.numericClass = ShaderRecompiler::IrTextureNumericClass::Uint;
+        image.read = true;
+        image.tableOperation = supported ? ShaderRecompiler::TableOperation::Supported : ShaderRecompiler::TableOperation::Unsupported;
+        image.srgbDecodeCompatible = true;
+        image.unsignedPacked32Modes = flagged;
+        return image;
+    }
+
+    ShaderRecompiler::IrResourcePlan Plan(bool flagged, std::uint64_t shaderHash, bool supported = true) {
+        using namespace ShaderRecompiler;
+        IrResourcePlan plan;
+        plan.shaderHash = shaderHash;
+        plan.srtPlanComplete = true;
+        plan.resourceTrackingComplete = true;
+        plan.userDataCount = 0u;
+        plan.materializationSources = {1u};
+        plan.descriptorSources.resize(2u);
+        for (std::uint32_t word = 0; word < 4u; ++word) {
+            auto value = std::make_unique<IrValue>(IrOpcode::Void, IrType::U32, word);
+            value->SetImmediateU32(heap[word]);
+            plan.descriptorSources[0].dwords[word] = value.get();
+            values.push_back(std::move(value));
+        }
+        plan.descriptorSources[0].dwordCount = 4u;
+        TableColumn column;
+        column.heapSource = 0u;
+        column.stride = 32u;
+        column.dwordCount = 8u;
+        plan.descriptorSources[1].tableColumn = column;
+        plan.info.images.push_back(Image(flagged, supported));
+        plan.info.runtimeImageModes.push_back(ResourceMaterializer::RuntimeImageModes(plan.info.images[0]));
+        return plan;
+    }
+
+    ShaderRecompiler::ResourceSnapshot Capture(const ShaderRecompiler::IrResourcePlan& plan) {
+        using namespace ShaderRecompiler;
+        SrtRuntime runtime{};
+        runtime.userContext = this;
+        runtime.readMemory = +[](void* context, std::uint64_t address, std::uint32_t* value) {
+            const auto& table = *static_cast<PackedTable*>(context);
+            const auto first = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(table.records.data()));
+            const auto bytes = table.records.size() * sizeof(table.records[0]);
+            if (address < first || address - first > bytes - sizeof(*value)) return false;
+            std::memcpy(value, reinterpret_cast<const void*>(address), sizeof(*value));
+            return true;
+        };
+        ResourceSnapshot snapshot;
+        ResourceMaterializer{}.Materialize(plan, runtime, snapshot);
+        return snapshot;
+    }
+};
+
+struct PackedProgram {
+    bool asked = false;
+    std::uint32_t faults = 0;
+};
+
+PackedProgram CompilePackedProgram(bool modesRequested) {
+    using namespace ShaderRecompiler;
+    alignas(4096) static TableGuest guest;
+    static TableTexture texture;
+    guest.heap[0] = TableT(texture.bytes.data(), TableFormat8888UNorm, TableType2D, 1u);
+    guest.heap[1] = TableT(texture.bytes.data(), 41u, TableType2D, 1u);
+    guest.heap[2] = TableT(texture.bytes.data(), TableFormat8888UNorm, TableType2D, 1u);
+    guest.materials = {{{0u, 1u, 0u, 0u}, {0u, 0u, 0u, 0u}, {0u, 2u, 0u, 0u}}};
+    FillTableSrt(guest, guest.heap.data(), 32u, 3u);
+    const auto userData = TableUserData(guest);
+    auto request = TableRequest(TableMaterialCode, userData);
+    request.context.unsignedPacked32Modes = modesRequested;
+    PackedProgram program;
+    try {
+        program.faults = CompileTable(request).result->imageTableFaults;
+    } catch (const UnsignedPacked32ModesRequired&) {
+        program.asked = true;
+    }
+    return program;
+}
+
+void verifyUnsignedPacked32Modes() {
+    using namespace ShaderRecompiler;
+    namespace Abi = ImageTableAbi;
+    constexpr std::array<std::uint32_t, 4> packedCodes{37u, 41u, 44u, 48u};
+    const auto hasFormat = [](const std::vector<ImageResource>& modes, std::uint32_t code) {
+        return std::ranges::any_of(modes, [&](const ImageResource& mode) { return static_cast<std::uint32_t>(mode.conversionFormat) == code; });
+    };
+    const auto countPacked = [&](const std::vector<ImageResource>& modes) {
+        return static_cast<std::size_t>(std::ranges::count_if(modes, [&](const ImageResource& mode) { return std::ranges::find(packedCodes, static_cast<std::uint32_t>(mode.conversionFormat)) != packedCodes.end(); }));
+    };
+    const auto throwsRequired = [](PackedTable& table, bool flagged, std::uint64_t hash, bool supported = true) {
+        try {
+            static_cast<void>(table.Capture(table.Plan(flagged, hash, supported)));
+        } catch (const UnsignedPacked32ModesRequired&) {
+            return true;
+        }
+        return false;
+    };
+
+    const auto unflagged = ResourceMaterializer::RuntimeImageModes(PackedTable::Image(false));
+    const auto flagged = ResourceMaterializer::RuntimeImageModes(PackedTable::Image(true));
+    for (const auto code : packedCodes) {
+        require(!hasFormat(unflagged, code), "packed32 modes: a table image without the flag listed a packed 32-bit unsigned mode");
+        require(hasFormat(flagged, code), "packed32 modes: a flagged table image lacks a packed 32-bit unsigned mode");
+    }
+    require(hasFormat(unflagged, static_cast<std::uint32_t>(IrBufferFormat::Format11_11_10UInt)) && hasFormat(unflagged, static_cast<std::uint32_t>(IrBufferFormat::Format11_11_10UNorm)), "packed32 modes: the older packed modes left an unflagged table image");
+
+    require(countPacked(flagged) != 0u && flagged.size() == unflagged.size() + countPacked(flagged), "packed32 modes: the flagged list differs from the unflagged list by more than the packed modes");
+    ImageResource direct = PackedTable::Image(false);
+    direct.table = NoTable;
+    const auto directPlain = ResourceMaterializer::RuntimeImageModes(direct);
+    direct.unsignedPacked32Modes = true;
+    const auto directFlagged = ResourceMaterializer::RuntimeImageModes(direct);
+    require(directPlain.size() == directFlagged.size() && countPacked(directPlain) != 0u, "packed32 modes: a direct image's list changed with the flag");
+    for (const auto code : packedCodes) require(hasFormat(directPlain, code), "packed32 modes: a direct image lost a packed 32-bit unsigned mode");
+
+    std::uint64_t hash = 0x7061636b00000000ull;
+    for (const std::uint32_t format : {TableFormat8888UNorm, TableFormat11_11_10UInt, TableFormat32UInt}) {
+        PackedTable table({TableFormat8888UNorm, format});
+        require(!throwsRequired(table, false, ++hash), "packed32 modes: a table without a packed 32-bit unsigned code asked for the modes");
+    }
+    for (const auto code : packedCodes) {
+        PackedTable table({TableFormat8888UNorm, code});
+        require(throwsRequired(table, false, ++hash), "packed32 modes: a table holding a packed 32-bit unsigned code did not ask for the modes");
+        PackedTable ready({TableFormat8888UNorm, code});
+        require(!throwsRequired(ready, true, ++hash), "packed32 modes: a flagged image still asked for the modes");
+        PackedTable unsupported({TableFormat8888UNorm, code});
+        require(!throwsRequired(unsupported, false, ++hash, false), "packed32 modes: an image with an unsupported table operation asked for the modes");
+    }
+
+    {
+        PackedTable table({TableFormat8888UNorm, 41u});
+        const auto captured = table.Capture(table.Plan(true, ++hash));
+        require(captured.tables.tables.at(0).unsignedPacked32, "packed32 modes: the sealed column did not record its packed 32-bit unsigned code");
+        ResourceSnapshot snapshot;
+        snapshot.samplers.push_back({{0x600u, 0x00fff000u, 0x06f03fa0u, 0u}, 4u});
+        snapshot.tables = captured.tables;
+        for (const bool ready : {false, true}) {
+            ShaderInfo info;
+            info.images.push_back(PackedTable::Image(ready));
+            info.runtimeImageModes.push_back(ResourceMaterializer::RuntimeImageModes(info.images[0]));
+            info.samplers.resize(1u);
+            info.sampledPairs.push_back({0u, 0u});
+            const auto resolved = ResourceMaterializer::ResolveImageTablesShared(info, snapshot, 0x7061636b52530000ull + (ready ? 1u : 0u));
+            if (ready) {
+                require(resolved->faults == 0u, "packed32 modes: a flagged image's packed 32-bit unsigned record was poisoned");
+            } else {
+                const auto mapStart = resolved->map.at(Abi::TableHeader(0u) + Abi::TableMapStart);
+                const auto flags = resolved->map.at(resolved->map.at(mapStart + 1u) + Abi::ImageRecordFlags);
+                require(resolved->faults == 1u && (flags & Abi::PoisonFlag) != 0u && resolved->poison.at(flags & ~Abi::PoisonFlag).reason == Abi::PoisonReason::Conversion, "packed32 modes: an unflagged image's packed 32-bit unsigned record was not a conversion poison");
+            }
+        }
+    }
+
+    {
+        PackedTable table({TableFormat8888UNorm, TableFormat8888UNorm});
+        require(!throwsRequired(table, false, ++hash), "packed32 reuse: the first capture asked for the modes");
+        table.Set(1u, 48u);
+        require(throwsRequired(table, false, ++hash), "packed32 reuse: a record rewritten to a packed 32-bit unsigned code was not noticed on the next capture");
+    }
+
+    {
+        PackedTable table({TableFormat8888UNorm, 41u});
+        require(throwsRequired(table, false, ++hash), "packed32 memo: the sealing program did not ask for the modes");
+        const auto before = ResourceMaterializer::TableReuse();
+        require(throwsRequired(table, false, ++hash), "packed32 memo: a second program reading a memoised column did not ask for the modes");
+        const auto after = ResourceMaterializer::TableReuse();
+        require(after.shared > before.shared && after.columns == before.columns, "packed32 memo: the second program did not take the column from the memo");
+        PackedTable plain({TableFormat8888UNorm, TableFormat11_11_10UInt});
+        require(!throwsRequired(plain, false, ++hash) && !throwsRequired(plain, false, ++hash), "packed32 memo: a memoised column without a packed code asked for the modes");
+    }
+
+    for (const std::uint32_t code : {TableFormat8888UNorm, 37u, 41u, 44u, 48u}) {
+        std::vector<std::array<std::uint32_t, 8>> leaves(2u, TableT(reinterpret_cast<const void*>(0x100000000ull), TableFormat8888UNorm, TableType2D, 1u));
+        leaves[1] = TableT(reinterpret_cast<const void*>(0x100000000ull), code, TableType2D, 1u);
+        const auto child = TableV(leaves.data(), 32u, 2u);
+        std::vector<std::uint64_t> parents(2u, reinterpret_cast<std::uintptr_t>(child.data()));
+        const auto root = TableV(parents.data(), 8u, 2u);
+        std::vector<std::unique_ptr<IrValue>> values;
+        IrResourcePlan plan;
+        plan.shaderHash = ++hash;
+        plan.srtPlanComplete = true;
+        plan.resourceTrackingComplete = true;
+        plan.userDataCount = 0u;
+        plan.materializationSources = {2u};
+        plan.descriptorSources.resize(3u);
+        for (std::uint32_t word = 0; word < 4u; ++word) {
+            auto value = std::make_unique<IrValue>(IrOpcode::Void, IrType::U32, word);
+            value->SetImmediateU32(root[word]);
+            plan.descriptorSources[0].dwords[word] = value.get();
+            values.push_back(std::move(value));
+        }
+        plan.descriptorSources[0].dwordCount = 4u;
+        TableColumn parent;
+        parent.heapSource = 0u;
+        parent.stride = 8u;
+        parent.dwordCount = 4u;
+        parent.indirect = true;
+        parent.buffer = true;
+        plan.descriptorSources[1].tableColumn = parent;
+        TableColumn nested;
+        nested.heapSource = 1u;
+        nested.stride = 32u;
+        nested.dwordCount = 8u;
+        plan.descriptorSources[2].tableColumn = nested;
+        const auto packedLeaf = std::ranges::find(packedCodes, code) != packedCodes.end();
+        for (const bool flagged : {false, true}) {
+            auto image = PackedTable::Image(flagged);
+            image.source = 2u;
+            plan.info.images = {image};
+            plan.info.runtimeImageModes = {ResourceMaterializer::RuntimeImageModes(image)};
+            struct Memory {
+                std::array<std::pair<std::uint64_t, std::size_t>, 3> ranges;
+            } memory{{{{reinterpret_cast<std::uintptr_t>(parents.data()), parents.size() * sizeof(parents[0])},
+                       {reinterpret_cast<std::uintptr_t>(child.data()), sizeof(child)},
+                       {reinterpret_cast<std::uintptr_t>(leaves.data()), leaves.size() * sizeof(leaves[0])}}}};
+            SrtRuntime runtime{};
+            runtime.userContext = &memory;
+            runtime.readMemory = +[](void* context, std::uint64_t address, std::uint32_t* value) {
+                for (const auto& [base, size] : static_cast<Memory*>(context)->ranges) {
+                    if (address < base || address - base > size - sizeof(*value)) continue;
+                    std::memcpy(value, reinterpret_cast<const void*>(address), sizeof(*value));
+                    return true;
+                }
+                return false;
+            };
+            ResourceSnapshot snapshot;
+            bool asked = false;
+            try {
+                ResourceMaterializer{}.Materialize(plan, runtime, snapshot);
+            } catch (const UnsignedPacked32ModesRequired&) {
+                asked = true;
+            }
+            require(asked == (packedLeaf && !flagged), "packed32 nested: a nested column holding a packed 32-bit unsigned code did not decide the retry");
+            if (!asked) {
+                const auto& outer = snapshot.tables.tables.at(0);
+                require(outer.nested && !outer.unsignedPacked32 && snapshot.tables.nested.size() == 1u && snapshot.tables.nested[0].unsignedPacked32 == packedLeaf, "packed32 nested: the packed code was not recorded on the nested column alone");
+            }
+        }
+    }
+
+    {
+        const auto plain = CompilePackedProgram(false);
+        const auto prepared = CompilePackedProgram(true);
+        require(plain.asked, "packed32 program: a program selecting a packed 32-bit unsigned entry did not ask for the modes");
+        require(!prepared.asked && prepared.faults == 0u, "packed32 program: a program prepared with the modes asked again or faulted on the entry");
+    }
+
+    {
+        static constexpr std::array<std::uint32_t, 2> noUserData{};
+        auto plainRequest = TableRequest(TableWholeCode, noUserData);
+        auto modesRequest = plainRequest;
+        modesRequest.context.unsignedPacked32Modes = true;
+        std::vector<std::uint64_t> plainKey;
+        std::vector<std::uint64_t> modesKey;
+        RecompileCacheKey::Build(plainRequest, plainKey);
+        RecompileCacheKey::Build(modesRequest, modesKey);
+        require(plainKey != modesKey, "packed32 key: requests that differ only in the packed modes gave the same full key");
+        RecompileCacheKey::BuildInterface(plainRequest, plainKey);
+        RecompileCacheKey::BuildInterface(modesRequest, modesKey);
+        require(plainKey != modesKey, "packed32 key: requests that differ only in the packed modes gave the same interface key");
+        require(RecompileCacheKey::ContextHash(plainRequest) != RecompileCacheKey::ContextHash(modesRequest), "packed32 key: requests that differ only in the packed modes gave the same context hash");
+        require(!UnsignedPacked32ModesWanted(plainRequest.context) && UnsignedPacked32ModesWanted(modesRequest.context), "packed32 key: the retry flag did not decide whether the modes are wanted");
+    }
+}
+
 void verifyImageTableResolutionGrowth() {
     using namespace ShaderRecompiler;
     namespace Abi = ImageTableAbi;
@@ -12660,6 +12946,36 @@ void verifyGcnTableImageConversion() {
     }
 }
 
+void verifyEagerUnsignedPacked32Modes() {
+    using namespace ShaderRecompiler;
+    GuestContext context;
+    require(UnsignedPacked32ModesWanted(context), "packed32 eager: the environment did not make the modes wanted");
+    const auto program = CompilePackedProgram(false);
+    require(!program.asked && program.faults == 0u, "packed32 eager: a program selecting a packed 32-bit unsigned entry still asked for the modes");
+}
+
+void verifyGcnUnsignedPacked32Modes() {
+    using namespace ShaderRecompiler;
+    std::uint64_t hash = 0x67636e7000000000ull;
+    std::vector<std::unique_ptr<PackedTable>> tables;
+    const auto throwsRequired = [&](std::uint32_t dataFormat, std::uint32_t numberFormat) {
+        auto& table = *tables.emplace_back(std::make_unique<PackedTable>(std::vector<std::uint32_t>{TableFormat8888UNorm, dataFormat | (numberFormat << 6u)}));
+        try {
+            static_cast<void>(table.Capture(table.Plan(false, ++hash)));
+        } catch (const UnsignedPacked32ModesRequired&) {
+            return true;
+        }
+        return false;
+    };
+    constexpr std::array<std::array<std::uint32_t, 2>, 4> packed{{{7u, 0u}, {7u, 4u}, {8u, 0u}, {8u, 4u}}};
+    {
+        GcnGuestShaderScope gcn;
+        for (const auto& [data, number] : packed) require(throwsRequired(data, number), "GCN packed32: a GCN-encoded table entry of a packed 32-bit unsigned format did not ask for the modes");
+        require(!throwsRequired(10u, 0u), "GCN packed32: a GCN-encoded 8_8_8_8 table entry asked for the modes");
+    }
+    for (const auto& [data, number] : packed) require(!throwsRequired(data, number), "GCN packed32: a GCN-encoded table entry was read as a packed format outside GCN guest shaders");
+}
+
 void verifyPixelQuadPermReads() {
     using namespace ShaderRecompiler;
     constexpr std::array<std::uint32_t, 6> shuffleCapabilities{spv::CapabilityShader, spv::CapabilityInt64, spv::CapabilityGroupNonUniform, spv::CapabilityGroupNonUniformBallot, spv::CapabilityGroupNonUniformShuffle, spv::CapabilityGroupNonUniformArithmetic};
@@ -13290,6 +13606,17 @@ int main(int argc, char** argv) {
             std::cout << "Specialized programs retain the BDA ABI only while a fault buffer remains\n";
             return 0;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--unsigned-packed32-modes") {
+            verifyUnsignedPacked32Modes();
+            verifyGcnUnsignedPacked32Modes();
+            std::cout << "A table image lists the packed 32-bit unsigned modes only after a captured column held one\n";
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--unsigned-packed32-modes-eager") {
+            verifyEagerUnsignedPacked32Modes();
+            std::cout << "With APS5_EAGER_UNSIGNED_PACKED32_MODES a table program lists the packed 32-bit unsigned modes without a retry\n";
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--shared-table-resolution") {
             verifySharedImageTableResolution();
             std::cout << "Shared image table resolutions reuse allocations and preserve sampler invalidation\n";
@@ -13550,6 +13877,7 @@ int main(int argc, char** argv) {
         verifyGcnStoreAddresses();
         verifyGcnDimensionQueries();
         verifyGcnTableImageConversion();
+        verifyGcnUnsignedPacked32Modes();
         verifySrgbDepthCompareModes();
         verifyRuntimeImageSwitchDeduplication();
         verifyQuadMaskNeighbourReads();
