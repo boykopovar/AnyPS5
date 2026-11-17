@@ -776,7 +776,18 @@ int APS5_VABI sceHttpSetPolicyOption(int id, int policy) {
 }
 
 int APS5_VABI sceHttpRequestGetAllHeaders(int requestId, HttpRequestHeader* headers, std::uint32_t* headerCount, char* contentLength, std::size_t* contentLengthSize) {
-    NotImplemented_nid_no_patch(__func__);
+    (void)headers;
+    if (!FindHttpOptions(requestId)) return ERROR_INVALID_ID;
+    if (!HttpInitialised()) return ERROR_BEFORE_INIT;
+    if (!headerCount) return ERROR_INVALID_VALUE;
+    if (!HttpGuest::Store(headerCount, std::uint32_t{0})) return ERROR_INVALID_VALUE;
+    if (!contentLengthSize) return contentLength ? ERROR_INVALID_VALUE : 0;
+    std::size_t capacity = 0;
+    if (!HttpGuest::CopyIn(&capacity, contentLengthSize, sizeof(capacity))) return ERROR_INVALID_VALUE;
+    if (!HttpGuest::Store(contentLengthSize, std::size_t{1})) return ERROR_INVALID_VALUE;
+    if (!contentLength) return 0;
+    if (capacity < 1) return ERROR_OUT_OF_SIZE;
+    if (!HttpGuest::Store(contentLength, '\0')) return ERROR_INVALID_VALUE;
     return 0;
 }
 
