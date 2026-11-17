@@ -29,17 +29,7 @@ std::uint64_t APS5_VABI ERR_peek_last_error_nid_postfix() {
     return LibreSslPeekLastError_nid_no_patch();
 }
 
-int APS5_VABI ERR_print_errors_cb_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI EVP_CIPHER_CTX_set_flags_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI EVP_PKEY_new_mac_key_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -71,22 +61,12 @@ int APS5_VABI PEM_read_RSAPrivateKey_nid_disambig1_nid_postfix(void) {
     return 0;
 }
 
-int APS5_VABI PKCS7_free_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
 int APS5_VABI SSL_CTX_add0_chain_cert_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI SSL_CTX_clear_chain_certs_nid_postfix(void) {
-    NotImplemented_nid_no_patch(__func__);
-    return 0;
-}
-
-int APS5_VABI d2i_ECParameters_nid_postfix(void) {
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }

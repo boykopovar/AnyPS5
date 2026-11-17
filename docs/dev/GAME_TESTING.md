@@ -120,3 +120,22 @@ Include, in this order:
 8. The date of the test. Leave unknown fields empty rather than filling them from another report.
 
 Keep AI-generated analysis separate from measured data, and say which is which.
+
+## Clean window captures
+
+Use the opt-in performance profile from an interactive terminal to produce the native evidence required by the [performance report](../../.github/ISSUE_TEMPLATE/performance.yml):
+
+```sh
+python tools/title_run.py PPSA00001 --games games --build build --profile performance --trace-seconds 30:10 --warmup-seconds 60 --seconds 120 --runs 1 --scene "Level and position, fixed camera, default settings"
+```
+
+Supply exactly one title ID and either `--trace-frames START:COUNT` or `--trace-seconds START:LENGTH`. The native window starts at presents, as described under [Performance trace](BUILD.md#performance-trace); `--seconds` is the process deadline, so allow time to reach and finish the window. Performance defaults to one capture; `--runs` requests more. Each capture has a bounded warm-up followed by a restart from the same staged work and caches, using one console for the invocation. A warm-up that crashes or requires forced termination prevents the capture. Cache-disabling settings are rejected. `--scene` records the operator's description; a restart does not prove the intended scene was reached or its shaders were warmed. Keep the scene, settings and inputs matched yourself.
+
+This profile removes inherited and recipe tracing, profiling, dumps, sampling, capture diagnostics, pipeline statistics and `ANYPS5_LOG_FILE` from the child environment. It retains runtime options and input recipes, enables one native window, and writes to a fresh per-attempt trace directory. Smoke runs retain their existing settings, logs and screenshot classification. Performance runs default to `build/performance-runs` and are classified from the native trace and summary, independently of screenshots. `--compare`, `--json` and `--smoke` are not combined with this profile; use the existing trace digest and performance comparison tools on its original artifacts.
+
+The launcher verifies output console handles and never tees the native output to files. Windows can allocate an owned visible console when the process has no console association; it never detaches an existing console. An inherited hidden console can prevent allocation, in which case launch the printed command in a normal interactive terminal. POSIX requires terminal file descriptors for both output streams. Titles that redirect their own output internally still need their logging checked separately. The Windows native handle test can be enabled with `ANYPS5_TEST_INTERACTIVE_CONSOLE=1` when running `tools/tests/test_performance_console.py`; it opens and releases its own console.
+
+Each `runN/capture.json` records the capture state, original native summary, report sizes and SHA-256 hashes, operator scene description, removed instrumentation, console provenance, exit code and cleanup. Native commit and dirty state describe the loaded runtime; they are not replaced with the tool checkout's identity. The referenced native process must belong to the owned session. After metadata signals completion, the launcher closes the session and validates the original gzip and summary once. Limits are 1 MiB for the summary, 64 MiB compressed and 256 MiB decoded trace data, and two million events. Missing, malformed, duplicate, mismatched or oversized artifacts fail qualification and remain available for investigation. Original bytes are retained.
+
+Dropped events make slice-based evidence incomplete; lost phase totals are reported separately. A complete artifact pair can therefore carry warnings and incomplete metrics. The tool does not increase trace buffers or choose a faster retry automatically. Review these states before comparing captures, and run the base and change on the same machine and scene.
+

@@ -57,6 +57,17 @@ class UnknownNidTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertNotIn("[unknown-nid]", result.stdout)
 
+    def test_a_binary_file_that_holds_the_export_macro_does_not_stop_the_check(self):
+        export = "int APS5_VABI sceFooBar(int a) {\n    return a + 1;\n}\n"
+        blob = "\x00\x01APS5_VABI\x00\n"
+        for base in ({"README.md": "base\n"}, {"core/libs/prx/libSceFoo/blob.bin": blob}):
+            with self.subTest(base=sorted(base)):
+                result = self.check(base, {"core/libs/prx/libSceFoo/a.cpp": export, "core/libs/prx/libSceFoo/blob.bin": blob})
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertNotIn("[unknown-nid]", result.stdout)
+                self.assertEqual("[binary]" in result.stdout, "README.md" in base, result.stdout + result.stderr)
+                self.assertEqual(result.returncode, 1 if "README.md" in base else 0, result.stdout + result.stderr)
+
     def test_unknown_export_with_the_nid_of_a_helper_in_another_library_fails(self):
         result = self.check(
             {"core/libs/prx/libSceA/Export.cpp": 'extern "C" bool Helper_nid_postfix() {\n    return true;\n}\n'},

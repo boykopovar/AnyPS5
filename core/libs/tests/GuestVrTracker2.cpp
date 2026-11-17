@@ -216,6 +216,9 @@ int main() {
     Require(std::memcmp(defaults.data(), expected.data(), expected.size()) == 0, "defaults layout");
     Require(AllEqual(defaults.data() + 16, defaults.data() + 32, 0xAA), "defaults stop at 16 bytes");
     Require(Throws([] { SceVrTracker2DepthCubeMapInit(nullptr); }), "defaults null");
+    errno = 76;
+    Require(Throws([] { SceVrTracker2DepthCubeMapInit(reinterpret_cast<void*>(0x10)); }), "defaults unwritable");
+    Require(errno == 76, "defaults unwritable errno");
 
     auto word = Filled();
     Require(VrTracker2ClearWord(word.data()) == 0, "clear word return");
