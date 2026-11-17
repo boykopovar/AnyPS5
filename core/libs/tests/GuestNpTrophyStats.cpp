@@ -451,6 +451,8 @@ static void RejectUnsupportedActions(Unlocks& unlocks) {
 }
 
 int main() {
+    const NpUniversalDataSystemInitParam udsInit{sizeof(NpUniversalDataSystemInitParam), 0x10000};
+    Require(sceNpUniversalDataSystemInitialize(&udsInit) == 0, "UDS was not initialized");
     const auto previous = std::filesystem::current_path();
     const auto root = std::filesystem::temp_directory_path() / ("anyps5-trophy-stats-" + std::to_string(std::random_device{}()));
     std::filesystem::create_directories(root);
