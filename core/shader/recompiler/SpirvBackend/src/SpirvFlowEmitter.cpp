@@ -325,6 +325,7 @@ void EmitDirectInstruction(SpirvValueEmitContext& ctx, const IrValue& inst) {
         case IrOpcode::TessellationBase: return Invoke(EmitTessellationBase, ctx, inst);
         case IrOpcode::GetTessellationAttribute: return Invoke(EmitGetTessellationAttribute, ctx, inst);
         case IrOpcode::SetTessellationAttribute: return Invoke(EmitSetTessellationAttribute, ctx, inst);
+        case IrOpcode::EmitVertex: return Invoke(EmitGeometryVertex, ctx, inst);
         case IrOpcode::GetBuiltin: return Invoke(EmitGetBuiltin, ctx, inst);
         case IrOpcode::GetThreadBitScalarRegister: return Invoke(EmitGetThreadBitScalarRegister, ctx, inst);
         case IrOpcode::SetThreadBitScalarRegister: return Invoke(EmitSetThreadBitScalarRegister, ctx, inst);

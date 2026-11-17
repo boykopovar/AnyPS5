@@ -408,7 +408,7 @@ void DefineOutputs(SpirvEmitterState& state) {
     }
     const auto stage = state.program.Resources().stage;
     const bool exportsPosition = std::ranges::any_of(state.outputs, [](const SpirvOutputBinding& output) { return output.kind == StageOutputKind::Position; });
-    if (exportsPosition && (stage == IrShaderStage::Vertex || stage == IrShaderStage::TessellationEvaluation) && clipDistanceCount + cullDistanceCount < MaxClipDistances) {
+    if (exportsPosition && (stage == IrShaderStage::Vertex || stage == IrShaderStage::TessellationEvaluation || stage == IrShaderStage::Geometry) && clipDistanceCount + cullDistanceCount < MaxClipDistances) {
         if (std::ranges::find(state.supportedCapabilities, spv::CapabilityClipDistance) == state.supportedCapabilities.end()) {
             FailEmit("clipping a primitive with an all-zero clip position needs shaderClipDistance on the target device");
         }

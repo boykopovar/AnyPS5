@@ -45,6 +45,7 @@ void ValidateOptions(const IrProgram& program, ShaderStageInputInfo inputInfo) {
         case IrShaderStage::Local:
         case IrShaderStage::TessellationControl:
         case IrShaderStage::TessellationEvaluation:
+        case IrShaderStage::Geometry:
         case IrShaderStage::Mesh:
             if (inputInfo.vertex == nullptr) {
                 return Fail("vertex shader has no input metadata");
@@ -234,7 +235,7 @@ void ValidateValueReferences(const IrProgram& program, ShaderStageInputInfo inpu
                     const auto& exportInfo = program.Metadata().exportInfo[index];
                     const auto stage = program.Resources().stage;
                     if (exportInfo.kind == ExportTargetKind::Position && exportInfo.index != 0u && exportInfo.en != 0u &&
-                        stage != IrShaderStage::Vertex && stage != IrShaderStage::Mesh && stage != IrShaderStage::TessellationEvaluation) {
+                        stage != IrShaderStage::Vertex && stage != IrShaderStage::Mesh && stage != IrShaderStage::TessellationEvaluation && stage != IrShaderStage::Geometry) {
                         return Fail("auxiliary position export requires a vertex, mesh, or tessellation evaluation shader");
                     }
                     break;
@@ -637,6 +638,7 @@ void ShaderInfoCollector::Collect(IrProgram& program, const ShaderStageInputInfo
             break;
         case IrShaderStage::TessellationControl:
         case IrShaderStage::TessellationEvaluation:
+        case IrShaderStage::Geometry:
             break;
         case IrShaderStage::Mesh:
             AddInput(next, StageInputKind::LocalInvocationIndex, 0, 1, "gl_LocalInvocationIndex");

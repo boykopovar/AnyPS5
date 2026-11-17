@@ -15,6 +15,7 @@ IrShaderStage _toIrShaderStage(ShaderStageKind stage) {
     case ShaderStageKind::TessellationControl: return IrShaderStage::TessellationControl;
     case ShaderStageKind::TessellationEvaluation: return IrShaderStage::TessellationEvaluation;
     case ShaderStageKind::Mesh: return IrShaderStage::Mesh;
+    case ShaderStageKind::Geometry: return IrShaderStage::Geometry;
     default: throw std::runtime_error("ShaderInputInfoBuilder: unexpected vertex-family stage");
     }
 }
@@ -68,6 +69,17 @@ void _validateTessellation(const TessellationConfiguration* tessellation) {
     if (tessellation->patchesPerGroup == 0u || tessellation->patchesPerGroup > 256u) throw std::runtime_error("ShaderInputInfoBuilder: invalid tessellation patches per group");
 }
 
+void _validateGeometry(ShaderStageKind stage, const GeometryConfiguration* geometry) {
+    if (geometry == nullptr) {
+        if (stage == ShaderStageKind::Geometry) throw std::runtime_error("ShaderInputInfoBuilder: a geometry program has no geometry configuration");
+        return;
+    }
+    if (stage != ShaderStageKind::Vertex && stage != ShaderStageKind::Geometry) throw std::runtime_error("ShaderInputInfoBuilder: a geometry configuration is given to a stage other than the export or geometry program");
+    if (geometry->inputVertices == 0u || geometry->inputVertices > 3u || geometry->outputTopology > 2u || geometry->maxVertices == 0u || geometry->maxVertices > 1024u || geometry->instances == 0u || geometry->instances > 127u) throw std::runtime_error("ShaderInputInfoBuilder: invalid geometry configuration");
+    if (geometry->esgsItemDwords == 0u || geometry->esgsItemDwords > 0x7fffu || geometry->vertexDwords == 0u || geometry->vertexDwords > 0x7fffu) throw std::runtime_error("ShaderInputInfoBuilder: invalid geometry ring item sizes");
+    if (stage == ShaderStageKind::Geometry && geometry->exports.empty()) throw std::runtime_error("ShaderInputInfoBuilder: a geometry program has no copy-shader exports");
+}
+
 void _validateMesh(const MeshConfiguration* mesh) {
     if (mesh == nullptr) throw std::runtime_error("ShaderInputInfoBuilder: a mesh-stage program has no mesh configuration");
     if (mesh->threadsPerGroup == 0u || mesh->maxVertices == 0u || mesh->maxPrimitives == 0u || (mesh->outputPrimitiveSize != 1u && mesh->outputPrimitiveSize != 2u && mesh->outputPrimitiveSize != 3u) || mesh->provokingVertex >= mesh->outputPrimitiveSize) throw std::runtime_error("ShaderInputInfoBuilder: invalid mesh configuration");
@@ -75,7 +87,7 @@ void _validateMesh(const MeshConfiguration* mesh) {
 
 }
 
-ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const GuestContext& context, std::uint32_t hostSubgroupSize, const MeshConfiguration* mesh, const TessellationConfiguration* tessellation) {
+ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const GuestContext& context, std::uint32_t hostSubgroupSize, const MeshConfiguration* mesh, const TessellationConfiguration* tessellation, const GeometryConfiguration* geometry) {
     switch (stage) {
     case ShaderStageKind::Compute: {
         if (!context.compute.has_value()) {
@@ -192,6 +204,7 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
     case ShaderStageKind::Local:
     case ShaderStageKind::TessellationControl:
     case ShaderStageKind::TessellationEvaluation:
+    case ShaderStageKind::Geometry:
     case ShaderStageKind::Mesh: {
         if (!context.vertex.has_value()) {
             throw std::runtime_error("ShaderInputInfoBuilder: GuestContext.vertex is not set");
@@ -259,6 +272,18 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
             if (target.outputPrimitiveSize == 1u) vertexStorage.pointList = true;
             target.capturedInput = tessellation != nullptr;
         }
+        _validateGeometry(stage, geometry);
+        if (geometry != nullptr) {
+            auto& target = vertexStorage.geometry;
+            target.active = true;
+            target.inputVertices = geometry->inputVertices;
+            target.outputTopology = geometry->outputTopology;
+            target.maxVertices = geometry->maxVertices;
+            target.instances = geometry->instances;
+            target.esgsItemDwords = geometry->esgsItemDwords;
+            target.vertexDwords = geometry->vertexDwords;
+            target.exports = geometry->exports;
+        }
         ShaderStageInputInfo result;
         result.vertex = &vertexStorage;
         return result;
@@ -270,7 +295,7 @@ ShaderStageInputInfo BuildShaderStageInputInfo(ShaderStageKind stage, const Gues
     throw std::runtime_error("ShaderInputInfoBuilder: unexpected stage");
 }
 
-void ValidateVertexStageInputs(ShaderStageKind stage, const GuestContext& context, const MeshConfiguration* mesh, const TessellationConfiguration* tessellation) {
+void ValidateVertexStageInputs(ShaderStageKind stage, const GuestContext& context, const MeshConfiguration* mesh, const TessellationConfiguration* tessellation, const GeometryConfiguration* geometry) {
     if (!context.vertex.has_value()) {
         throw std::runtime_error("ShaderInputInfoBuilder: GuestContext.vertex is not set");
     }
@@ -315,6 +340,7 @@ void ValidateVertexStageInputs(ShaderStageKind stage, const GuestContext& contex
     if (stage == ShaderStageKind::Mesh) {
         _validateMesh(mesh);
     }
+    _validateGeometry(stage, geometry);
 }
 
 }

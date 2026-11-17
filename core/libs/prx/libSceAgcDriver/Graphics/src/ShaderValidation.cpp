@@ -55,6 +55,7 @@ struct Module {
     bool meshCapability = false;
     std::uint32_t primitiveInputs = 0;
     bool pointSizeOutput = false;
+    bool copiedGeometry = false;
     bool pointSize = false;
     bool viewportOutput = false;
     std::map<std::uint32_t, std::vector<std::uint32_t>> modes;
@@ -116,13 +117,15 @@ struct Module {
             Require(input == (stage == Stage::TessellationEvaluation), "invalid tessellation level direction");
             return;
         }
-        if (stage == Stage::Geometry) {
-            Require(value == spv::BuiltInPosition && Signature(type) == "f32x4" && (input || !position), "unsupported geometry built-in");
+        if (stage == Stage::Geometry && !(!input && (value == spv::BuiltInClipDistance || value == spv::BuiltInCullDistance) && copiedGeometry)) {
+            const auto signature = Signature(type);
+            if (copiedGeometry && input && (value == spv::BuiltInPrimitiveId || value == spv::BuiltInInvocationId) && (signature == "i32" || signature == "u32")) return;
+            Require(value == spv::BuiltInPosition && signature == "f32x4" && (input || !position) && !(copiedGeometry && input), "unsupported geometry built-in");
             if (!input) position = true;
             return;
         }
         // One gl_ClipDistance array holds the guest clip distances and the recompiler's all-zero position distance.
-        if (!input && ((value == spv::BuiltInClipDistance && (vertex || stage == Stage::TessellationControl || stage == Stage::TessellationEvaluation || stage == Stage::Mesh)) || (value == spv::BuiltInCullDistance && (vertex || stage == Stage::TessellationEvaluation || stage == Stage::Mesh)))) {
+        if (!input && ((value == spv::BuiltInClipDistance && (vertex || stage == Stage::TessellationControl || stage == Stage::TessellationEvaluation || stage == Stage::Mesh || stage == Stage::Geometry)) || (value == spv::BuiltInCullDistance && (vertex || stage == Stage::TessellationEvaluation || stage == Stage::Mesh || stage == Stage::Geometry)))) {
             const auto signature = Signature(type);
             auto& count = value == spv::BuiltInClipDistance ? clipDistances : cullDistances;
             Require(count == 0 && signature.size() == 6 && signature.starts_with("f32[") && signature[4] >= '1' && signature[4] <= '8' && signature[5] == ']', "invalid or duplicate clip or cull distance output");
@@ -184,6 +187,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
     const bool control = stage == Stage::TessellationControl;
     const bool evaluation = stage == Stage::TessellationEvaluation;
     const bool geometry = stage == Stage::Geometry;
+    const bool copiedGeometry = geometry && state.stages.legacyGeometry.has_value();
     const bool rectListControl = state.rectList && control;
     if (rectListControl) {
         Require(shader.bdaAbiVersion == ShaderRecompiler::BdaAbi::Version, "incompatible rect-list fault ABI version");
@@ -203,6 +207,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
     Module module;
     module.pointSizeOutput = (state.vertexPoints && stage == Stage::Vertex) || (mesh && state.stages.mesh.has_value() && state.stages.mesh->outputPrimitiveSize == 1u);
     module.viewportOutput = !state.extraViewports.empty();
+    module.copiedGeometry = copiedGeometry;
     std::uint32_t entries = 0;
     std::uint32_t memoryModels = 0;
     std::uint32_t entryPoint = 0;
@@ -276,10 +281,10 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
                     fragment &&
                     capability == spv::CapabilityStencilExportEXT;
 
-                if ((vertex || control || evaluation || mesh) && (capability == spv::CapabilityClipDistance || capability == spv::CapabilityCullDistance)) {
+                if ((vertex || control || evaluation || mesh || copiedGeometry) && (capability == spv::CapabilityClipDistance || capability == spv::CapabilityCullDistance)) {
                     char word[16];
                     std::snprintf(word, sizeof(word), "0x%08x", state.paClVsOutCntl);
-                    Require(capability == spv::CapabilityClipDistance ? shaderClipDistance : (vertex || evaluation || mesh) && shaderCullDistance, std::string("vertex clip or cull distance needs shaderClipDistance or shaderCullDistance, which the device lacks (PA_CL_VS_OUT_CNTL=") + word + ")");
+                    Require(capability == spv::CapabilityClipDistance ? shaderClipDistance : (vertex || evaluation || mesh || copiedGeometry) && shaderCullDistance, std::string("vertex clip or cull distance needs shaderClipDistance or shaderCullDistance, which the device lacks (PA_CL_VS_OUT_CNTL=") + word + ")");
                 }
 
                 // Enabled unconditionally or by the device setup in VulkanDevice.
@@ -290,14 +295,14 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
                     capability == spv::CapabilityImageQuery ||
                     (mesh && module.viewportOutput && capability == spv::CapabilityMultiViewport) ||
                     (shaderResourceMinLod && capability == spv::CapabilityMinLod) ||
-                    ((vertex || control || evaluation || mesh) && shaderClipDistance && capability == spv::CapabilityClipDistance) ||
+                    ((vertex || control || evaluation || mesh || copiedGeometry) && shaderClipDistance && capability == spv::CapabilityClipDistance) ||
                     (vertex && capability == spv::CapabilityDrawParameters) ||
                     (fragment && geometryShader && capability == spv::CapabilityGeometry) ||
                     (fragment && sampleRateShading && capability == spv::CapabilitySampleRateShading) ||
                     (fragment && sampleRateShading && capability == spv::CapabilityInterpolationFunction) ||
                     capability == spv::CapabilityImageMSArray ||
                     capability == spv::CapabilityStorageImageMultisample ||
-                    ((vertex || evaluation || mesh) && shaderCullDistance && capability == spv::CapabilityCullDistance) ||
+                    ((vertex || evaluation || mesh || copiedGeometry) && shaderCullDistance && capability == spv::CapabilityCullDistance) ||
                     capability == spv::CapabilityStorageImageWriteWithoutFormat ||
                     capability == spv::CapabilityStorageImageReadWithoutFormat ||
                     capability == spv::CapabilityInt64 ||
@@ -500,6 +505,13 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
         mode(state.rectList || state.stages.tessellation->partitioning == 0u ? spv::ExecutionModeSpacingEqual : state.stages.tessellation->partitioning == 3u ? spv::ExecutionModeSpacingFractionalEven : spv::ExecutionModeSpacingFractionalOdd, {});
         mode(counterClockwise ? spv::ExecutionModeVertexOrderCcw : spv::ExecutionModeVertexOrderCw, {});
         Require(module.modes.size() == 3, "unsupported tessellation-evaluation execution mode");
+    } else if (copiedGeometry) {
+        const auto& config = *state.stages.legacyGeometry;
+        mode(config.inputVertices == 1u ? spv::ExecutionModeInputPoints : config.inputVertices == 2u ? spv::ExecutionModeInputLines : spv::ExecutionModeTriangles, {});
+        mode(spv::ExecutionModeInvocations, {config.instances});
+        mode(config.outputTopology == 0u ? spv::ExecutionModeOutputPoints : config.outputTopology == 1u ? spv::ExecutionModeOutputLineStrip : spv::ExecutionModeOutputTriangleStrip, {});
+        mode(spv::ExecutionModeOutputVertices, {config.maxVertices});
+        Require(module.modes.size() == 4, "unsupported geometry execution mode");
     } else if (geometry) {
         mode(spv::ExecutionModeTriangles, {});
         mode(spv::ExecutionModeInvocations, {1u});
@@ -538,7 +550,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
                 const bool primitive = decoration.perPrimitive || module.perPrimitiveMembers.contains({outer[2], 0u}) || (decoration.builtin && (*decoration.builtin == spv::BuiltInPrimitivePointIndicesEXT || *decoration.builtin == spv::BuiltInPrimitiveLineIndicesEXT || *decoration.builtin == spv::BuiltInPrimitiveTriangleIndicesEXT || *decoration.builtin == spv::BuiltInCullPrimitiveEXT));
                 Require(length->second == (primitive ? state.stages.mesh->maxPrimitives : state.stages.mesh->maxVertices), "mesh interface array disagrees with output limits");
             } else if (geometry) {
-                Require(length->second == 3u, "geometry interface array must hold the three vertices of a triangle");
+                Require(length->second == (copiedGeometry ? state.stages.legacyGeometry->inputVertices : 3u), copiedGeometry ? "geometry interface array disagrees with the input primitive's vertex count" : "geometry interface array must hold the three vertices of a triangle");
             } else {
                 const auto expected = barycentricPatches ? 3u : state.rectList ? (control && input ? 3u : 4u) : control && input ? state.stages.tessellation->inputControlPoints : state.stages.tessellation->outputControlPoints;
                 Require(length->second == expected, "tessellation interface array disagrees with control-point count");
@@ -657,7 +669,7 @@ Module Inspect(const CompiledShader& compiled, const State& state, const VkPhysi
     if (mesh) Require(module.primitiveIndices == state.stages.mesh->outputPrimitiveSize, "mesh shader does not export primitive indices");
     if (fragment) Require(module.primitiveInputs == 0 || !primitiveLocations.empty(), "per-primitive pixel inputs need the barycentric emulation layout");
     if (fragment) Require(!module.meshCapability || module.primitiveInputs != 0, "a pixel shader declares mesh shading without a per-primitive input");
-    if (mesh || ((stage == Stage::Vertex || evaluation || geometry) && !state.rasterizerDiscard)) Require(module.position, "vertex shader does not export position");
+    if (mesh || (((stage == Stage::Vertex && !state.stages.legacyGeometry) || evaluation || geometry) && !state.rasterizerDiscard)) Require(module.position, "vertex shader does not export position");
     return module;
 }
 
@@ -691,7 +703,8 @@ std::set<std::uint32_t> ValidateShaders(std::span<const CompiledShader> shaders,
     Require(!captured || state.rasterizerDiscard, "a captured tessellation pass must discard its primitives");
     Require(geometry || shaders.size() == (tessellation || state.rectList || patches ? 4u : 2u), "incorrect graphics stage count");
     if (patches) Require(state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP, "emulated barycentrics through tessellation require a triangle list or strip");
-    if (geometry) {
+    Require(!state.stages.legacyGeometry || geometry, "a GCN ES-GS-VS draw needs an export, a geometry and a pixel stage");
+    if (geometry && !state.stages.legacyGeometry) {
         Require(shaders.back().program != nullptr && shaders.back().program->barycentricEmulation.active, "a geometry stage is generated only for emulated barycentrics");
         Require(state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN, "emulated barycentrics require triangle primitives");
     }

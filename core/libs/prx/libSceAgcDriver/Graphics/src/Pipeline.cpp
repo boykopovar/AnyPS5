@@ -545,6 +545,11 @@ Pipeline::Pipeline(const Context& context, const State& state, const VertexInput
     const bool barycentricPatches = BarycentricPatches(state, shaders);
     if (barycentricPatches) Require(context.tessellationShader && ((state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST && (!state.primitiveRestart || !context.primitiveListRestart)) || state.topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP), "emulated barycentrics through tessellation require a triangle list or strip, with primitive restart in a list only on a device without VK_EXT_primitive_topology_list_restart");
     if (std::any_of(shaders.begin(), shaders.end(), [](const CompiledShader& shader) { return shader.stage == ShaderRecompiler::ShaderStage::Geometry; })) Require(context.geometryShader, "device does not support geometry shaders");
+    if (state.stages.legacyGeometry) {
+        const auto& geometry = *state.stages.legacyGeometry;
+        const auto outputs = static_cast<std::uint32_t>(geometry.exports.size()) * 4u;
+        Require(geometry.maxVertices <= context.limits.maxGeometryOutputVertices && geometry.instances <= context.limits.maxGeometryShaderInvocations && ((geometry.esgsItemDwords + 3u) & ~3u) <= context.limits.maxGeometryInputComponents && outputs <= context.limits.maxGeometryOutputComponents && outputs * geometry.maxVertices <= context.limits.maxGeometryTotalOutputComponents, "a GCN geometry shader exceeds the device's geometry output vertices, invocations, input or output components");
+    }
     if (state.stages.tessellation) {
         Require(context.tessellationShader, "device does not support tessellation shaders");
         Require(state.stages.tessellation->inputControlPoints <= context.limits.maxTessellationPatchSize && state.stages.tessellation->outputControlPoints <= context.limits.maxTessellationPatchSize, "tessellation patch exceeds device limits");

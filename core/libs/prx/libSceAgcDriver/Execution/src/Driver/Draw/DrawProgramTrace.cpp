@@ -25,6 +25,8 @@ const char* RoleName(ShaderRecompiler::ProgramRole role) {
     switch (role) {
     case ProgramRole::Main: return "main";
     case ProgramRole::GeometryBack: return "geometry-back";
+    case ProgramRole::Geometry: return "geometry";
+    case ProgramRole::Copy: return "copy";
     case ProgramRole::Local: return "local";
     case ProgramRole::Hull: return "hull";
     case ProgramRole::Domain: return "domain";

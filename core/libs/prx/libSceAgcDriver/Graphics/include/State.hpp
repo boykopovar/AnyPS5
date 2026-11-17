@@ -44,6 +44,7 @@ struct ShaderStages {
     std::uint32_t hullWaveSize = 64;
     std::optional<ShaderRecompiler::MeshConfiguration> tessellationGeometry;
     bool legacyVertex = false;
+    std::optional<ShaderRecompiler::GeometryConfiguration> legacyGeometry;
 };
 
 inline constexpr std::uint16_t UnclampedBlendMask = 0xffffu;
@@ -253,6 +254,7 @@ void ApplyReadOnlyDepthBoundsComparison(State& state, const ShaderRecompiler::Sh
 void NormalizeUnusedViewportDepth(State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel);
 std::uint32_t StageWaveSize(const ShaderStages& stages, ShaderRecompiler::ShaderStage stage);
 std::optional<ShaderRecompiler::MeshConfiguration> StageMeshConfiguration(const ShaderStages& stages, ShaderRecompiler::ShaderStage stage);
+std::optional<ShaderRecompiler::GeometryConfiguration> StageGeometryConfiguration(const ShaderStages& stages, ShaderRecompiler::ShaderStage stage);
 std::uint32_t StagePushLimit(const ShaderStages& stages, std::uint32_t pushOffset, bool depthRemap);
 std::array<VkSampleLocationEXT, 32> SampleLocations(const State& state);
 std::array<std::uint8_t, 32> PixelSampleLocations(const State& state, const ShaderRecompiler::ShaderPixelStageInfo& pixel);

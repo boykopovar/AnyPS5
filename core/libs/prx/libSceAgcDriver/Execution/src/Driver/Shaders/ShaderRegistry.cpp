@@ -2288,6 +2288,7 @@ std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decod
         if (decoded.state.stages.path == Graphics::ShaderPath::TessellationGeometry) expected.push_back(ShaderRecompiler::ProgramRole::Main);
     } else {
         expected.push_back(ShaderRecompiler::ProgramRole::Main);
+        if (decoded.state.stages.legacyGeometry) expected.insert(expected.end(), {ShaderRecompiler::ProgramRole::Geometry, ShaderRecompiler::ProgramRole::Copy});
         if (decoded.state.stages.path == Graphics::ShaderPath::Geometry && !decoded.programs.empty() && decoded.programs.front().snapshot->type == 4) expected.push_back(ShaderRecompiler::ProgramRole::GeometryBack);
     }
     if (!decoded.roles.empty() && decoded.roles.back() == ShaderRecompiler::ProgramRole::Fragment) expected.push_back(ShaderRecompiler::ProgramRole::Fragment);
@@ -2307,7 +2308,7 @@ std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decod
     const bool fixedSlots = target.fixedPushSlots;
     const bool hasFragment = !decoded.roles.empty() && decoded.roles.back() == ShaderRecompiler::ProgramRole::Fragment;
     for (std::size_t index = 0; index < decoded.programs.size(); ++index) {
-        if (decoded.roles[index] == ShaderRecompiler::ProgramRole::GeometryBack) continue;
+        if (ShaderRecompiler::LinkedOnlyRole(decoded.roles[index])) continue;
         const auto& program = decoded.programs[index];
         const bool fragment = program.binary.stage == ShaderRecompiler::ShaderStage::Fragment;
         const auto wave = Graphics::StageWaveSize(decoded.state.stages, program.binary.stage);
@@ -2329,11 +2330,13 @@ std::vector<PreparedGraphicsStage> PrepareGraphicsStages(const DrawDecode& decod
             continue;
         }
         if (vertex) {
-            vertex->paClVsOutCntl = PositionExportLayout(program.snapshot.get(), program.codeOffset, program.binary.code, decoded.state.paClVsOutCntl, program.tailContinuation.get()) | decoded.state.layerExports | decoded.state.viewportExports;
+            const bool copied = decoded.roles[index] == ShaderRecompiler::ProgramRole::Geometry && index + 1u < decoded.programs.size() && decoded.roles[index + 1u] == ShaderRecompiler::ProgramRole::Copy;
+            const auto& exporter = copied ? decoded.programs[index + 1u] : program;
+            vertex->paClVsOutCntl = PositionExportLayout(exporter.snapshot.get(), exporter.codeOffset, exporter.binary.code, decoded.state.paClVsOutCntl, exporter.tailContinuation.get()) | decoded.state.layerExports | decoded.state.viewportExports;
             vertex->depthRemapMode = decoded.state.depthRemap.mode;
             Graphics::ApplyPointSize(decoded.state, *vertex);
         }
-        ShaderRecompiler::RecompileRequest request{program.binary, {wave, program.firstUserSgpr, program.userData, {}, fragment ? std::optional(decoded.pixel) : std::nullopt, vertex, memory, RegisteredFloatMode(*program.snapshot)}, target, {0, 0, offset, room}, ShaderRecompiler::GraphicsCompileContext{program.firstUserSgpr, linked, Graphics::StageMeshConfiguration(decoded.state.stages, program.binary.stage), decoded.state.stages.tessellation, {}}};
+        ShaderRecompiler::RecompileRequest request{program.binary, {wave, program.firstUserSgpr, program.userData, {}, fragment ? std::optional(decoded.pixel) : std::nullopt, vertex, memory, RegisteredFloatMode(*program.snapshot)}, target, {0, 0, offset, room}, ShaderRecompiler::GraphicsCompileContext{program.firstUserSgpr, linked, Graphics::StageMeshConfiguration(decoded.state.stages, program.binary.stage), decoded.state.stages.tessellation, {}, std::nullopt, Graphics::StageGeometryConfiguration(decoded.state.stages, program.binary.stage)}};
         std::vector<std::uint64_t> key;
         ShaderRecompiler::BuildPreparedShaderKey(request, key);
         std::shared_ptr<const ShaderRecompiler::SourceHandle> handle;

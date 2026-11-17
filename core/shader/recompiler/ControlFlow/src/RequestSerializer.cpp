@@ -229,7 +229,7 @@ ShaderStage readShaderStage(Reader& reader) {
 
 ProgramRole readProgramRole(Reader& reader) {
     const auto value = reader.ReadU8();
-    if (value > static_cast<std::uint8_t>(ProgramRole::Fragment)) {
+    if (value > static_cast<std::uint8_t>(ProgramRole::Copy)) {
         throw std::runtime_error("RequestSerializer: invalid ProgramRole value");
     }
     return static_cast<ProgramRole>(value);
@@ -818,6 +818,38 @@ BindingLayout readBindingLayout(Reader& reader) {
     return layout;
 }
 
+void writeGeometryConfiguration(Writer& writer, const std::optional<GeometryConfiguration>& geometry) {
+    writer.WriteBool(geometry.has_value());
+    if (!geometry.has_value()) return;
+    for (const auto value : {geometry->inputVertices, geometry->outputTopology, geometry->maxVertices, geometry->instances, geometry->esgsItemDwords, geometry->vertexDwords}) writer.WriteU32(value);
+    writer.WriteU64(geometry->exports.size());
+    for (const auto& copy : geometry->exports) {
+        writer.WriteU32(copy.target);
+        writer.WriteU32(copy.enable);
+        writer.WriteU32(copy.constants);
+        for (const auto value : copy.values) writer.WriteU32(value);
+        writer.WriteBool(copy.done);
+    }
+}
+
+std::optional<GeometryConfiguration> readGeometryConfiguration(Reader& reader) {
+    if (!reader.ReadBool()) return std::nullopt;
+    GeometryConfiguration geometry;
+    for (auto* value : {&geometry.inputVertices, &geometry.outputTopology, &geometry.maxVertices, &geometry.instances, &geometry.esgsItemDwords, &geometry.vertexDwords}) *value = reader.ReadU32();
+    const auto count = reader.ReadU64();
+    reader.Require(count, 29u);
+    for (std::uint64_t i = 0; i < count; i++) {
+        GeometryCopyExport copy;
+        copy.target = reader.ReadU32();
+        copy.enable = reader.ReadU32();
+        copy.constants = reader.ReadU32();
+        for (auto& value : copy.values) value = reader.ReadU32();
+        copy.done = reader.ReadBool();
+        geometry.exports.push_back(copy);
+    }
+    return geometry;
+}
+
 void writeGraphicsCompileContext(Writer& writer, const GraphicsCompileContext& graphics) {
     writer.WriteU32(graphics.firstUserSgpr);
     writer.WriteU64(graphics.linkedPrograms.size());
@@ -916,7 +948,7 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     std::string buffer;
     Writer writer(buffer);
     writer.WriteU32(0x41505335u);
-    writer.WriteU32(62u);
+    writer.WriteU32(63u);
     writeShaderBinary(writer, request.shader);
     writeGuestContext(writer, request.context);
     writeSpirvTarget(writer, request.target);
@@ -970,6 +1002,7 @@ std::string RequestSerializer::Serialize(const RecompileRequest& request) const 
     writer.WriteU32(request.target.maxImageArrayLayers);
     writer.WriteBool(request.target.fixedPushSlots);
     writer.WriteBool(request.target.spannedAnySubgroup);
+    if (request.graphics.has_value()) writeGeometryConfiguration(writer, request.graphics->geometry);
     return base64Encode(buffer);
 }
 
@@ -978,7 +1011,7 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
     Reader reader(decoded);
     if (reader.ReadU32() != 0x41505335u) throw std::runtime_error("invalid recompile request signature");
     const auto version = reader.ReadU32();
-    if (version < 1u || version > 62u || version == 50u || (version >= 58u && version <= 61u)) throw std::runtime_error("unsupported recompile request serialization version");
+    if (version < 1u || version > 63u || version == 50u || (version >= 58u && version <= 61u)) throw std::runtime_error("unsupported recompile request serialization version");
     DeserializedRequest result{};
     result.request.shader = readShaderBinary(reader, result.shaderCode, result.shaderHeader);
     result.request.context = readGuestContext(reader, result, version);
@@ -1054,6 +1087,10 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
         result.request.target.fixedPushSlots = reader.ReadBool();
     }
     if (version >= 62u) result.request.target.spannedAnySubgroup = reader.ReadBool();
+    if (version >= 63u && result.request.graphics.has_value()) {
+        result.graphicsStorage->geometry = readGeometryConfiguration(reader);
+        result.request.graphics->geometry = result.graphicsStorage->geometry;
+    }
     if (version >= 21u && reader.Remaining() != 0u) throw std::runtime_error("RequestSerializer: unexpected trailing data");
     return result;
 }

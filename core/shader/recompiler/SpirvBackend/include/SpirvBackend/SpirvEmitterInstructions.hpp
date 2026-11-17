@@ -80,6 +80,7 @@ std::uint32_t EmitMeshRestartStart(SpirvValueEmitContext& ctx, const IrValue& in
 std::uint32_t EmitMeshCapturedWord(SpirvValueEmitContext& ctx, const IrValue& inst);
 std::uint32_t EmitGetTessellationAttribute(SpirvValueEmitContext& ctx, const IrValue& inst);
 void EmitSetTessellationAttribute(SpirvValueEmitContext& ctx, const IrValue& inst);
+void EmitGeometryVertex(SpirvValueEmitContext& ctx, const IrValue& inst);
 std::uint32_t EmitGetUserData(SpirvEmitterState& state, ScalarReg reg);
 std::uint32_t EmitGetBuiltin(SpirvValueEmitContext& ctx, const IrValue* kind, const IrValue* index);
 std::uint32_t EmitUndefU1(SpirvEmitterState& state, const IrValue& inst);

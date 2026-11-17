@@ -60,6 +60,7 @@ public:
         appendFallbacks(key, request);
         appendMesh(key, request);
         appendTessellation(key, request);
+        appendGeometry(key, request);
         std::uint64_t hash = 0xcbf29ce484222325ull;
         for (const auto value : key) {
             hash ^= value;
@@ -101,6 +102,7 @@ private:
         appendFallbacks(key, request);
         appendMesh(key, request);
         appendTessellation(key, request);
+        appendGeometry(key, request);
         append(key, request.target);
         append(key, DebugProbeActive());
         append(key, RayTracingStrict());
@@ -152,6 +154,19 @@ private:
         append(key, tessellation->patchesPerGroup);
         append(key, tessellation->primitiveGroupSize);
         append(key, TessellationInstancePatches(request));
+    }
+
+    static void appendGeometry(std::vector<std::uint64_t>& key, const RecompileRequest& request) {
+        const auto* geometry = request.graphics && request.graphics->geometry ? &*request.graphics->geometry : nullptr;
+        append(key, geometry != nullptr);
+        if (geometry == nullptr) return;
+        for (const auto value : {geometry->inputVertices, geometry->outputTopology, geometry->maxVertices, geometry->instances, geometry->esgsItemDwords, geometry->vertexDwords}) append(key, value);
+        if (request.shader.stage != ShaderStage::Geometry) return;
+        append(key, geometry->exports.size());
+        for (const auto& copy : geometry->exports) {
+            for (const auto value : {copy.target, copy.enable, copy.constants, static_cast<std::uint32_t>(copy.done)}) append(key, value);
+            append(key, copy.values);
+        }
     }
 
     template<typename TValue>

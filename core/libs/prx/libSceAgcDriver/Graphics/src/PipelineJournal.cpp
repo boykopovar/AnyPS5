@@ -56,7 +56,7 @@ static_assert(sizeof(ShaderRecompiler::TessellationConfiguration) == 40, "Tessel
 constexpr std::uint32_t FileMagic = 0x4c4a5041u;
 // Bumped when the recipe codec, CanonicalPipelineState or the store key change in a way the
 // layout guards above do not catch (a field renumbered or reinterpreted at the same size).
-constexpr std::uint32_t FileFormat = 19u;
+constexpr std::uint32_t FileFormat = 20u;
 constexpr std::uint32_t ModuleRecord = 1u;
 constexpr std::uint32_t GraphicsRecord = 2u;
 constexpr std::uint32_t ComputeRecord = 3u;
@@ -182,6 +182,26 @@ void decodeTessellation(Reader& reader, ShaderRecompiler::TessellationConfigurat
     tessellation.mergedHull = reader.Bool();
 }
 
+void encodeGeometry(Writer& writer, const ShaderRecompiler::GeometryConfiguration& geometry) {
+    for (const auto value : {geometry.inputVertices, geometry.outputTopology, geometry.maxVertices, geometry.instances, geometry.esgsItemDwords, geometry.vertexDwords}) writer.U32(value);
+    writer.U32(static_cast<std::uint32_t>(geometry.exports.size()));
+    for (const auto& copy : geometry.exports) {
+        for (const auto value : {copy.target, copy.enable, copy.constants, copy.values[0], copy.values[1], copy.values[2], copy.values[3]}) writer.U32(value);
+        writer.Bool(copy.done);
+    }
+}
+
+void decodeGeometry(Reader& reader, ShaderRecompiler::GeometryConfiguration& geometry) {
+    for (auto* value : {&geometry.inputVertices, &geometry.outputTopology, &geometry.maxVertices, &geometry.instances, &geometry.esgsItemDwords, &geometry.vertexDwords}) *value = reader.U32();
+    const auto count = reader.U32();
+    if (count > 36u) throw std::runtime_error("pipeline journal: geometry copy export count exceeds the export targets");
+    geometry.exports.resize(count);
+    for (auto& copy : geometry.exports) {
+        for (auto* value : {&copy.target, &copy.enable, &copy.constants, &copy.values[0], &copy.values[1], &copy.values[2], &copy.values[3]}) *value = reader.U32();
+        copy.done = reader.Bool();
+    }
+}
+
 void encodeState(Writer& writer, const State& state) {
     writer.U32(static_cast<std::uint32_t>(state.stages.path));
     writer.U32(state.stages.vertexWaveSize);
@@ -192,6 +212,7 @@ void encodeState(Writer& writer, const State& state) {
     encodeOptional(writer, state.stages.tessellation, encodeTessellation);
     writer.U32(state.stages.hullWaveSize);
     encodeOptional(writer, state.stages.tessellationGeometry, encodeMesh);
+    encodeOptional(writer, state.stages.legacyGeometry, encodeGeometry);
     writer.Bool(state.depth.has_value());
     if (state.depth) {
         writer.U32(static_cast<std::uint32_t>(state.depth->format));
@@ -261,6 +282,7 @@ void decodeState(Reader& reader, State& state) {
     if (reader.Bool()) decodeTessellation(reader, state.stages.tessellation.emplace());
     state.stages.hullWaveSize = reader.U32();
     if (reader.Bool()) decodeMesh(reader, state.stages.tessellationGeometry.emplace());
+    if (reader.Bool()) decodeGeometry(reader, state.stages.legacyGeometry.emplace());
     if (reader.Bool()) {
         auto& depth = state.depth.emplace();
         depth.format = static_cast<VkFormat>(reader.U32());
@@ -1567,6 +1589,7 @@ State CanonicalPipelineState(const State& state) {
     canonical.stages.tessellation = state.stages.tessellation;
     canonical.stages.hullWaveSize = state.stages.hullWaveSize;
     canonical.stages.tessellationGeometry = state.stages.tessellationGeometry;
+    canonical.stages.legacyGeometry = state.stages.legacyGeometry;
     if (state.depth) {
         DepthTarget depth{};
         depth.format = state.depth->format;

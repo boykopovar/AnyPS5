@@ -142,7 +142,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
 
                 std::optional<SampledReadScope> sampling;
                 for (std::size_t i = 0; !miss && i < programs.size(); ++i) {
-                    if (roles[i] == Role::GeometryBack) continue;
+                    if (ShaderRecompiler::LinkedOnlyRole(roles[i])) continue;
                     ++stageValidations;
                     cursor = Graphics::StagePushOffset(cursor, programs[i].binary.stage, fixedSlots);
                     if (cursor > Graphics::PushBlockBytes(fixedSlots)) { miss = DrawMiss::Layout; break; }
@@ -258,7 +258,7 @@ void Driver::lookupDraw(const Submission& submission, const std::shared_ptr<Vulk
             const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::DrawCache);
             std::optional<SampledReadScope> sampling;
             for (std::size_t i = 0; i < programs.size(); ++i) {
-                if (roles[i] == Role::GeometryBack || programs[i].userData.size() != dataEntry->decode->programs[i].userData.size()) continue;
+                if (ShaderRecompiler::LinkedOnlyRole(roles[i]) || programs[i].userData.size() != dataEntry->decode->programs[i].userData.size()) continue;
                 const auto& now = programs[i].userData;
                 const auto& was = dataEntry->decode->programs[i].userData;
                 auto& candidates = dataCandidates[i];

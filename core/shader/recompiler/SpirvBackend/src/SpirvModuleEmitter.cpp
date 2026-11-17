@@ -1112,12 +1112,50 @@ std::uint32_t TessellationOuterFactors(const SpirvEmitterState& state) {
     return state.inputInfo.vertex->tess.domain == 2u ? 4u : 3u;
 }
 
+std::uint32_t GeometryRingElement(SpirvEmitterState& state, std::uint32_t variable, std::uint32_t index) {
+    const auto& geometry = state.inputInfo.vertex->geometry;
+    const auto clamped = state.module.AllocateId();
+    state.module.AddFunction(spv::OpExtInst, TypeU32(state), clamped, GlslStd450(state), GLSLstd450UMin, index, ConstantU32(state, geometry.vertexDwords * geometry.maxVertices - 1u));
+    const auto pointer = state.module.AllocateId();
+    state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassPrivate, TypeU32(state)), pointer, variable, clamped);
+    return pointer;
+}
+
+std::uint32_t GeometryPointer(SpirvValueEmitContext& ctx, const IrValue& inst, TessellationAttribute kind, std::uint32_t variable) {
+    auto& state = ctx.state;
+    const auto& geometry = state.inputInfo.vertex->geometry;
+    const auto address = ctx.Arg(inst, 1);
+    const auto dword = EmitBinaryU32(state, spv::OpShiftRightLogical, address, ConstantU32(state, 2u));
+    if (kind == TessellationAttribute::GeometryRing) return GeometryRingElement(state, variable, dword);
+    if (kind == TessellationAttribute::GeometryEmitted) {
+        const auto count = state.module.AllocateId();
+        state.module.AddFunction(spv::OpLoad, TypeU32(state), count, state.geometryCountVariable);
+        return GeometryRingElement(state, variable, EmitBinaryU32(state, spv::OpIAdd, EmitBinaryU32(state, spv::OpIMul, dword, ConstantU32(state, geometry.maxVertices)), count));
+    }
+    const auto stride = state.program.Metadata().tessellationLocalStride;
+    if (stride == 0u || stride % 4u != 0u) ctx.Fail(inst, "reads an ES record without its ESGS item size");
+    const auto vertex = state.module.AllocateId();
+    state.module.AddFunction(spv::OpExtInst, TypeU32(state), vertex, GlslStd450(state), GLSLstd450UMin, EmitBinaryU32(state, spv::OpUDiv, address, ConstantU32(state, stride)), ConstantU32(state, geometry.inputVertices - 1u));
+    const auto offset = EmitBinaryU32(state, spv::OpUMod, address, ConstantU32(state, stride));
+    const auto attribute = EmitBinaryU32(state, spv::OpShiftRightLogical, offset, ConstantU32(state, 4u));
+    const auto component = EmitBinaryU32(state, spv::OpBitwiseAnd, EmitBinaryU32(state, spv::OpShiftRightLogical, offset, ConstantU32(state, 2u)), ConstantU32(state, 3u));
+    const auto pointer = state.module.AllocateId();
+    state.module.AddFunction(spv::OpAccessChain, TypePointer(state, spv::StorageClassInput, TypeU32(state)), pointer, variable, vertex, attribute, component);
+    return pointer;
+}
+
 std::uint32_t TessellationPointer(SpirvValueEmitContext& ctx, const IrValue& inst) {
     auto& state = ctx.state;
     const auto kind = static_cast<TessellationAttribute>(inst.Argument(0)->ImmediateU32());
     const auto variable = state.tessVariables.at(static_cast<std::uint32_t>(kind));
     if (variable == 0u) {
         throw std::runtime_error("tessellation attribute has no interface variable");
+    }
+    if (kind == TessellationAttribute::GeometryInput || kind == TessellationAttribute::GeometryRing || kind == TessellationAttribute::GeometryEmitted) {
+        if (state.program.Resources().stage != IrShaderStage::Geometry) ctx.Fail(inst, "accesses a geometry record outside a geometry program");
+        if (kind == TessellationAttribute::GeometryEmitted && inst.Opcode() != IrOpcode::GetTessellationAttribute) ctx.Fail(inst, "writes the emitted vertex record");
+        if (kind == TessellationAttribute::GeometryInput && inst.Opcode() != IrOpcode::GetTessellationAttribute) ctx.Fail(inst, "writes an ES record");
+        return GeometryPointer(ctx, inst, kind, variable);
     }
     const bool input = kind == TessellationAttribute::ControlInput || kind == TessellationAttribute::EvaluationInput || kind == TessellationAttribute::PatchInput || kind == TessellationAttribute::InstanceInput;
     const auto storage = input ? spv::StorageClassInput : spv::StorageClassOutput;
@@ -1194,7 +1232,7 @@ std::uint32_t TessellationPointer(SpirvValueEmitContext& ctx, const IrValue& ins
 }
 
 void DefineTessellationInterfaces(SpirvEmitterState& state) {
-    std::array<bool, 11> used {};
+    std::array<bool, 14> used {};
     for (const IrBlock* block : state.program.BlockOrder()) {
         for (const IrValue* inst : block->Instructions()) {
             if (inst->Opcode() != IrOpcode::GetTessellationAttribute && inst->Opcode() != IrOpcode::SetTessellationAttribute) {
@@ -1202,6 +1240,10 @@ void DefineTessellationInterfaces(SpirvEmitterState& state) {
             }
             used.at(inst->Argument(0)->ImmediateU32()) = true;
         }
+    }
+    if (state.program.Resources().stage == IrShaderStage::Geometry) {
+        state.geometryCountVariable = state.module.DefineInitializedGlobalVariable(TypePointer(state, spv::StorageClassPrivate, TypeU32(state)), spv::StorageClassPrivate, ConstantU32(state, 0u));
+        if (state.spirvVersion >= 0x00010400u) state.interfaceVariables.push_back(state.geometryCountVariable);
     }
     if (std::none_of(used.begin(), used.end(), [](bool value) { return value; })) {
         return;
@@ -1215,6 +1257,27 @@ void DefineTessellationInterfaces(SpirvEmitterState& state) {
             continue;
         }
         const auto kind = static_cast<TessellationAttribute>(index);
+        if (kind == TessellationAttribute::GeometryRing || kind == TessellationAttribute::GeometryEmitted) {
+            const auto ring = static_cast<std::uint32_t>(TessellationAttribute::GeometryRing);
+            const auto emitted = static_cast<std::uint32_t>(TessellationAttribute::GeometryEmitted);
+            if (state.tessVariables.at(ring) == 0u) {
+                const auto& geometry = state.inputInfo.vertex->geometry;
+                const auto ringType = array(TypeU32(state), geometry.vertexDwords * geometry.maxVertices);
+                const auto variable = state.module.DefineInitializedGlobalVariable(TypePointer(state, spv::StorageClassPrivate, ringType), spv::StorageClassPrivate, state.module.Constant(spv::OpConstantNull, ringType));
+                if (state.spirvVersion >= 0x00010400u) state.interfaceVariables.push_back(variable);
+                state.tessVariables.at(ring) = variable;
+                state.tessVariables.at(emitted) = variable;
+            }
+            continue;
+        }
+        if (kind == TessellationAttribute::GeometryInput) {
+            const auto& geometry = state.inputInfo.vertex->geometry;
+            const auto type = array(array(TypeU32Vector(state, 4u), (state.program.Metadata().tessellationLocalStride + 15u) / 16u), geometry.inputVertices);
+            auto& variable = state.tessVariables.at(index);
+            variable = DefineInterfaceVariable(state, type, spv::StorageClassInput, "geometry_inputs");
+            state.module.AddAnnotation(spv::OpDecorate, variable, spv::DecorationLocation, 0u);
+            continue;
+        }
         const bool input = kind == TessellationAttribute::ControlInput || kind == TessellationAttribute::EvaluationInput || kind == TessellationAttribute::PatchInput || kind == TessellationAttribute::InstanceInput;
         const bool patch = kind == TessellationAttribute::PatchOutput || kind == TessellationAttribute::PatchInput;
         const auto storage = input ? spv::StorageClassInput : spv::StorageClassOutput;
@@ -1271,6 +1334,18 @@ void DefineTessellationExecutionModes(SpirvEmitterState& state) {
         state.module.AddExecutionMode(state.mainFunc, tess.partitioning == 0u ? spv::ExecutionModeSpacingEqual : tess.partitioning == 3u ? spv::ExecutionModeSpacingFractionalEven : spv::ExecutionModeSpacingFractionalOdd);
         state.module.AddExecutionMode(state.mainFunc, tess.outputTopology == 3u ? spv::ExecutionModeVertexOrderCcw : spv::ExecutionModeVertexOrderCw);
     }
+}
+
+void DefineGeometryExecutionModes(SpirvEmitterState& state) {
+    const auto& geometry = state.inputInfo.vertex->geometry;
+    if (!geometry.active || geometry.inputVertices == 0u || geometry.inputVertices > 3u || geometry.outputTopology > 2u || geometry.maxVertices == 0u || geometry.instances == 0u) {
+        throw std::runtime_error("unsupported geometry input primitive, output topology, vertex count or instance count");
+    }
+    state.module.EmitCapability(spv::CapabilityGeometry);
+    state.module.AddExecutionMode(state.mainFunc, geometry.inputVertices == 1u ? spv::ExecutionModeInputPoints : geometry.inputVertices == 2u ? spv::ExecutionModeInputLines : spv::ExecutionModeTriangles);
+    state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeInvocations, geometry.instances);
+    state.module.AddExecutionMode(state.mainFunc, geometry.outputTopology == 0u ? spv::ExecutionModeOutputPoints : geometry.outputTopology == 1u ? spv::ExecutionModeOutputLineStrip : spv::ExecutionModeOutputTriangleStrip);
+    state.module.AddExecutionMode(state.mainFunc, spv::ExecutionModeOutputVertices, geometry.maxVertices);
 }
 
 void DefineMeshOutputs(SpirvEmitterState& state) {
@@ -2277,6 +2352,25 @@ void EmitSetTessellationAttribute(SpirvValueEmitContext& ctx, const IrValue& ins
             state.module.AddFunction(spv::OpSelect, TypeF32(state), value, inside, clamped, outer ? floating : lowest);
         }
         ctx.state.module.AddFunction(spv::OpStore, TessellationPointer(ctx, inst), value);
+    });
+}
+
+void EmitGeometryVertex(SpirvValueEmitContext& ctx, const IrValue& inst) {
+    auto& state = ctx.state;
+    if (state.program.Resources().stage != IrShaderStage::Geometry || state.geometryCountVariable == 0u || !inst.Argument(1)->HasImmediate()) ctx.Fail(inst, "emits a geometry vertex outside a geometry program");
+    const auto operation = inst.Argument(1)->ImmediateU32();
+    EmitIfCondition(state, ctx.Arg(inst, 0), [&]() {
+        if ((operation & 2u) != 0u) {
+            const auto count = state.module.AllocateId();
+            state.module.AddFunction(spv::OpLoad, TypeU32(state), count, state.geometryCountVariable);
+            const auto room = state.module.AllocateId();
+            state.module.AddFunction(spv::OpULessThan, TypeBool(state), room, count, ConstantU32(state, state.inputInfo.vertex->geometry.maxVertices));
+            EmitIfCondition(state, room, [&]() {
+                state.module.AddFunction(spv::OpEmitVertex);
+                state.module.AddFunction(spv::OpStore, state.geometryCountVariable, EmitBinaryU32(state, spv::OpIAdd, count, ConstantU32(state, 1u)));
+            });
+        }
+        if ((operation & 1u) != 0u) state.module.AddFunction(spv::OpEndPrimitive);
     });
 }
 

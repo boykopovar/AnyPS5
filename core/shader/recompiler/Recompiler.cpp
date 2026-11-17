@@ -50,6 +50,7 @@
 #include "Optimization/include/Optimization/ShaderInfoCollector.hpp"
 #include "Optimization/include/Optimization/SrtWalker.hpp"
 #include "Optimization/include/Optimization/SsaBuilder.hpp"
+#include "Optimization/include/Optimization/GeometryLowering.hpp"
 #include "Optimization/include/Optimization/TessellationLowering.hpp"
 #include "SpirvBackend/include/SpirvBackend/SpirvEmitter.hpp"
 #if ANYPS5_ENABLE_SPIRV_TOOLS
@@ -84,7 +85,7 @@ ShaderStageKind toShaderStageKind(ShaderStage stage) {
     case ShaderStage::Mesh:
         return ShaderStageKind::Mesh;
     case ShaderStage::Geometry:
-        break;
+        return ShaderStageKind::Geometry;
     }
     throw std::runtime_error("ShaderRecompiler::Recompile: unsupported shader stage");
 }
@@ -105,6 +106,7 @@ std::uint32_t HostSubgroupSize(const RecompileRequest& request) {
     if (vertexStage && !request.target.vertexSubgroups) return 1u;
     if (request.shader.stage == ShaderStage::TessellationEvaluation && !request.target.tessellationEvaluationSubgroups && !(request.graphics && request.graphics->mesh)) return 1u;
     if (request.shader.stage == ShaderStage::TessellationControl && MergedHullStage(request)) return 1u;
+    if (request.shader.stage == ShaderStage::Geometry) return 1u;
     static const std::string list = [] { const char* text = std::getenv("APS5_SINGLE_LANE"); return text ? std::string(text) : std::string(); }();
     if (!list.empty()) {
         if (list == "all") return 64u;
@@ -153,19 +155,21 @@ ShaderStageInputInfo RequestInputInfo(const RecompileRequest& request) {
         tessellationCopy->drawParameters = std::find(capabilities.begin(), capabilities.end(), static_cast<std::uint32_t>(spv::CapabilityDrawParameters)) != capabilities.end();
     }
     const auto* tessellation = tessellationCopy ? &*tessellationCopy : nullptr;
-    return BuildShaderStageInputInfo(toShaderStageKind(request.shader.stage), request.context, HostSubgroupSize(request), mesh, tessellation);
+    const auto* geometry = request.graphics && request.graphics->geometry ? &*request.graphics->geometry : nullptr;
+    return BuildShaderStageInputInfo(toShaderStageKind(request.shader.stage), request.context, HostSubgroupSize(request), mesh, tessellation, geometry);
 }
 
 void ValidateRequestInputs(const RecompileRequest& request) {
     const auto stage = toShaderStageKind(request.shader.stage);
-    const bool vertexFamily = stage == ShaderStageKind::Vertex || stage == ShaderStageKind::Local || stage == ShaderStageKind::TessellationControl || stage == ShaderStageKind::TessellationEvaluation || stage == ShaderStageKind::Mesh;
+    const bool vertexFamily = stage == ShaderStageKind::Vertex || stage == ShaderStageKind::Local || stage == ShaderStageKind::TessellationControl || stage == ShaderStageKind::TessellationEvaluation || stage == ShaderStageKind::Mesh || stage == ShaderStageKind::Geometry;
     if (!vertexFamily) {
         static_cast<void>(RequestInputInfo(request));
         return;
     }
     const auto* mesh = request.graphics && request.graphics->mesh ? &*request.graphics->mesh : nullptr;
     const auto* tessellation = request.graphics && request.graphics->tessellation ? &*request.graphics->tessellation : nullptr;
-    ValidateVertexStageInputs(stage, request.context, mesh, tessellation);
+    const auto* geometry = request.graphics && request.graphics->geometry ? &*request.graphics->geometry : nullptr;
+    ValidateVertexStageInputs(stage, request.context, mesh, tessellation, geometry);
 }
 
 std::uint32_t DeviceMemoryLdsBytes(const RecompileRequest& request) {
@@ -378,6 +382,10 @@ IrProgram PrepareResourceProgram(const RecompileRequest& request, ShaderPreparat
         if (nanPayloadEliminator.Eliminate(program).removedSelects != 0u) deadCodeEliminator.Eliminate(program);
     }
 
+    if (inputInfo.vertex != nullptr && inputInfo.vertex->geometry.active) {
+        constexpr GeometryLowering geometryLowering;
+        geometryLowering.Lower(program, inputInfo.vertex->geometry);
+    }
     if (inputInfo.vertex != nullptr) {
         constexpr TessellationLowering tessellationLowering;
         tessellationLowering.Lower(program, inputInfo.vertex->tess, request.target.tessellation ? &*request.target.tessellation : nullptr);

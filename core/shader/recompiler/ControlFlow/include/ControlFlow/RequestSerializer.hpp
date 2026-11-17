@@ -21,6 +21,7 @@ namespace ShaderRecompiler {
         std::vector<LinkedProgram> linkedPrograms;
         std::optional<MeshConfiguration> mesh;
         std::optional<TessellationConfiguration> tessellation;
+        std::optional<GeometryConfiguration> geometry;
         GraphicsDrawParameters draw{};
     };
 

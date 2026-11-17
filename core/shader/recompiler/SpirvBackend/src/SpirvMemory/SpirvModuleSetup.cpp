@@ -32,6 +32,7 @@ std::uint32_t ExecutionModelForStage(IrShaderStage stage) {
     case IrShaderStage::Vertex: return spv::ExecutionModelVertex;
     case IrShaderStage::TessellationControl: return spv::ExecutionModelTessellationControl;
     case IrShaderStage::TessellationEvaluation: return spv::ExecutionModelTessellationEvaluation;
+    case IrShaderStage::Geometry: return spv::ExecutionModelGeometry;
     case IrShaderStage::Mesh: return spv::ExecutionModelMeshEXT;
     case IrShaderStage::Pixel: return spv::ExecutionModelFragment;
     case IrShaderStage::Compute: return spv::ExecutionModelGLCompute;
@@ -368,6 +369,9 @@ void DefineModule(SpirvEmitterState& state) {
     }
     if (StageOf(state) == IrShaderStage::TessellationControl || StageOf(state) == IrShaderStage::TessellationEvaluation) {
         DefineTessellationExecutionModes(state);
+    }
+    if (StageOf(state) == IrShaderStage::Geometry) {
+        DefineGeometryExecutionModes(state);
     }
     state.entryLabel = state.module.AllocateId();
     EmitBaseHeader(state.module, state.program, state.requirements.imageAtomicLocks || state.requirements.bufferAtomicLocks);

@@ -18,14 +18,20 @@ enum class TessellationAttribute {
     InstanceOutput,
     InstanceInput,
     ControlShared,
-    GeometryOutput
+    GeometryOutput,
+    GeometryInput,
+    GeometryRing,
+    GeometryEmitted
 };
 
 enum class TessellationBaseKind {
     OffChip,
     Factor,
     RelativeIndex,
-    PassthroughPrimitive
+    PassthroughPrimitive,
+    EsGsOffset,
+    GsVsOffset,
+    GeometryVertex
 };
 
 enum class StageInputKind {

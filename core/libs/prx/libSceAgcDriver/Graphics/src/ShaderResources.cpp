@@ -2220,7 +2220,7 @@ std::uint32_t IrStage(ShaderRecompiler::ShaderStage stage) {
         case ShaderRecompiler::ShaderStage::Local: return static_cast<std::uint32_t>(Ir::Local);
         case ShaderRecompiler::ShaderStage::TessellationControl: return static_cast<std::uint32_t>(Ir::TessellationControl);
         case ShaderRecompiler::ShaderStage::TessellationEvaluation: return static_cast<std::uint32_t>(Ir::TessellationEvaluation);
-        case ShaderRecompiler::ShaderStage::Geometry: break;
+        case ShaderRecompiler::ShaderStage::Geometry: return static_cast<std::uint32_t>(Ir::Geometry);
     }
     return static_cast<std::uint32_t>(Ir::Unknown);
 }

@@ -2,6 +2,7 @@
 #include "Recompiler.hpp"
 #include "Translation/TranslationContext.hpp"
 #include <algorithm>
+#include <array>
 #include <cstdlib>
 #include <limits>
 #include <stdexcept>
@@ -34,6 +35,8 @@ IrShaderStage toIrShaderStage(ShaderStageKind stage) {
         return IrShaderStage::TessellationControl;
     case ShaderStageKind::TessellationEvaluation:
         return IrShaderStage::TessellationEvaluation;
+    case ShaderStageKind::Geometry:
+        return IrShaderStage::Geometry;
     }
     throw std::runtime_error("InstructionTranslator::Translate unknown shader stage kind");
 }
@@ -54,6 +57,14 @@ void validateTranslateOptions(const TranslateOptions& options) {
     case ShaderStageKind::Mesh:
         if (options.inputInfo.vertex == nullptr) {
             throw std::runtime_error("vertex shader translation has no vertex input metadata");
+        }
+        return;
+    case ShaderStageKind::Geometry:
+        if (options.inputInfo.vertex == nullptr || !options.inputInfo.vertex->geometry.active) {
+            throw std::runtime_error("geometry shader translation has no geometry input metadata");
+        }
+        if (!options.gcnLegacyVertexInputs) {
+            throw std::runtime_error("a geometry program outside a GCN guest's ES-GS-VS routing is unsupported");
         }
         return;
     case ShaderStageKind::Pixel:
@@ -527,10 +538,23 @@ void emitEntryPrologue(IrProgram& program, IrBlock& entryBlock, const TranslateO
         if (options.gcnLegacyVertexInputs) {
             setVector(static_cast<VectorReg>(0), drawIndex(StageInputKind::VertexIndex));
             for (std::uint32_t reg = 1u; reg <= 3u; reg++) setVector(static_cast<VectorReg>(reg), drawIndex(StageInputKind::InstanceIndex));
+            if (options.inputInfo.vertex->geometry.active) entryIr.SetScalarReg(static_cast<ScalarReg>(options.userDataBaseRegister + options.userDataCount), tessellationBase(TessellationBaseKind::EsGsOffset));
         } else {
             setVector(static_cast<VectorReg>(5), drawIndex(StageInputKind::VertexIndex));
             setVector(static_cast<VectorReg>(8), drawIndex(StageInputKind::InstanceIndex));
         }
+    } else if (options.stage == ShaderStageKind::Geometry) {
+        const auto& geometry = options.inputInfo.vertex->geometry;
+        const auto reg = options.userDataBaseRegister + options.userDataCount;
+        entryIr.SetScalarReg(static_cast<ScalarReg>(reg), tessellationBase(TessellationBaseKind::GsVsOffset));
+        entryIr.SetScalarReg(static_cast<ScalarReg>(reg + 1u), entryIr.Constant(0u));
+        constexpr std::array<std::uint32_t, 6> vertexRegisters{0u, 1u, 3u, 4u, 5u, 6u};
+        for (std::uint32_t vertex = 0; vertex < vertexRegisters.size(); ++vertex) {
+            IrValue& offset = vertex < geometry.inputVertices ? tessellationBase(static_cast<TessellationBaseKind>(static_cast<std::uint32_t>(TessellationBaseKind::GeometryVertex) + vertex)) : entryIr.Constant(0u);
+            setVector(static_cast<VectorReg>(vertexRegisters[vertex]), offset);
+        }
+        setVector(static_cast<VectorReg>(2), builtin(StageInputKind::PrimitiveId));
+        setVector(static_cast<VectorReg>(7), builtin(StageInputKind::InvocationId));
     }
 }
 

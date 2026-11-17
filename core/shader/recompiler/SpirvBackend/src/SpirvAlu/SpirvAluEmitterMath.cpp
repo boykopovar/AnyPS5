@@ -341,7 +341,7 @@ bool HelperOrFalseConjunct(const IrValue* bit) {
 }
 
 bool EveryInvocationEnters(IrShaderStage stage) {
-    return stage == IrShaderStage::Vertex || stage == IrShaderStage::Local || stage == IrShaderStage::TessellationControl || stage == IrShaderStage::TessellationEvaluation;
+    return stage == IrShaderStage::Vertex || stage == IrShaderStage::Local || stage == IrShaderStage::TessellationControl || stage == IrShaderStage::TessellationEvaluation || stage == IrShaderStage::Geometry;
 }
 
 class EntryLaneWalk {
