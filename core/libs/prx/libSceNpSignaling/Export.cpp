@@ -109,6 +109,10 @@ int APS5_VABI sceNpSignalingCreateContext(const void* npId, void* callback, void
     if (!initialized) return SCE_NP_SIGNALING_ERROR_NOT_INITIALIZED;
     if (!npId || !outContextId) return SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT;
     const int savedErrno = errno;
+    if (!GuestWritable_nid_no_patch(outContextId, sizeof(*outContextId))) {
+        errno = savedErrno;
+        return SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT;
+    }
     SignalingNpId owner{};
     if (!GuestCopyIn_nid_no_patch(&owner, npId, sizeof(owner))) {
         errno = savedErrno;
@@ -248,9 +252,13 @@ int APS5_VABI sceNpSignalingGetConnectionStatus(int ctxId, int connId, std::uint
     std::lock_guard lock(signalingMutex);
     if (!initialized) return SCE_NP_SIGNALING_ERROR_NOT_INITIALIZED;
     if (!outStatus) return SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT;
+    const int savedErrno = errno;
+    if (!GuestWritable_nid_no_patch(outStatus, sizeof(*outStatus))) {
+        errno = savedErrno;
+        return SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT;
+    }
     if (!FindContext(ctxId)) NotImplemented_nid_no_patch(__func__);
     const std::uint32_t inactive = 0;
-    const int savedErrno = errno;
     const bool copied = GuestCopyOut_nid_no_patch(outStatus, &inactive, sizeof(inactive));
     errno = savedErrno;
     return copied ? 0 : SCE_NP_SIGNALING_ERROR_INVALID_ARGUMENT;

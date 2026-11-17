@@ -128,6 +128,9 @@ int main() {
 
     Require(sceNpSignalingCreateContext(&owner, nullptr, nullptr, &context) == 0 && context == 1, "sceNpSignalingCreateContext", "the first context is not id 1");
     Require(sceNpSignalingGetConnectionStatus(context, 1, nullptr, &peerAddr, &peerPort) == InvalidArgument, "sceNpSignalingGetConnectionStatus", "a null status was taken");
+    errno = 71;
+    Require(sceNpSignalingGetConnectionStatus(context, 1, reinterpret_cast<std::uint32_t*>(static_cast<std::uintptr_t>(0x10)), &peerAddr, &peerPort) == InvalidArgument, "sceNpSignalingGetConnectionStatus", "an unwritable status was taken");
+    Require(errno == 71 && peerAddr == 0xA5A5A5A5u && peerPort == 0xA5A5, "sceNpSignalingGetConnectionStatus", "errno or peer outputs modified on unwritable status");
     Require(sceNpSignalingGetConnectionStatus(99, 1, nullptr, nullptr, nullptr) == InvalidArgument, "sceNpSignalingGetConnectionStatus", "the status was not checked before the context");
     Require(sceNpSignalingGetConnectionStatus(context, 1, &connectionStatus, &peerAddr, &peerPort) == 0 && connectionStatus == 0, "sceNpSignalingGetConnectionStatus", "an unknown connection was not reported inactive");
     Require(peerAddr == 0xA5A5A5A5u && peerPort == 0xA5A5, "sceNpSignalingGetConnectionStatus", "an unknown connection wrote the peer address or port");
