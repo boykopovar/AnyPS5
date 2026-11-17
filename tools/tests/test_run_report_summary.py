@@ -31,6 +31,24 @@ class RunReportSummaryTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Café Game", result.stdout.decode("utf-8"))
 
+    def test_cli_accepts_a_utf8_bom(self):
+        report = self.report("stop-none.json")
+        report["game"]["name"] = "Café Game"
+        text = json.dumps(report, ensure_ascii=False)
+        outputs = []
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "report.json"
+            for encoding in ("utf-8", "utf-8-sig"):
+                path.write_text(text, encoding=encoding)
+                result = subprocess.run(
+                    [sys.executable, str(ROOT / "tools/run_report_summary.py"), str(path)],
+                    capture_output=True, timeout=15,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                outputs.append(result.stdout.decode("utf-8"))
+        self.assertEqual(outputs[0], outputs[1])
+        self.assertIn("Game: Café Game", outputs[0])
+
     def test_summary_includes_run_context_and_missing_import(self):
         summary = render(self.report("stop-missing-function.json"))
         self.assertIn("Game: Example Game (PPSA12345)", summary)

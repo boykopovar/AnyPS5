@@ -668,6 +668,7 @@ static void CheckIfFlags() {
         Require(flags == 0x5a5a5a5a);
     }
     Require(sceNetConfigGetIfFlags(0, nullptr) == static_cast<int>(0x8041130Eu));
+    Require(sceNetConfigGetIfFlags(0, reinterpret_cast<std::uint32_t*>(0x10)) == static_cast<int>(0x8041130Eu));
     Require(sceNetConfigGetIfFlags(10, nullptr) == static_cast<int>(0x8041130Eu));
 }
 
@@ -864,6 +865,10 @@ static void CheckEmptyEpoll() {
     Require(epoll >= 0);
     NetEpollEvent event{};
     Require(sceNetEpollWait(epoll, &event, 1, 0) == 0);
+    Require(Failed(sceNetEpollControl(epoll, 4, 0, nullptr), 22));
+    Require(Failed(sceNetEpollControl(0x7fff, 4, 0, nullptr), 22));
+    NetEpollEvent zeroMask{};
+    Require(Failed(sceNetEpollControl(epoll, 1, 0, &zeroMask), 22));
     std::array<std::chrono::steady_clock::duration, 9> elapsed{};
     for (auto& sample : elapsed) {
         const auto start = std::chrono::steady_clock::now();
@@ -926,6 +931,7 @@ static void CheckResolverEpoll() {
     address = 0;
     Require(sceNetResolverStartNtoa(resolver, "guest-sce-net.resolver-epoll", &address, 0, 0, async) == 0);
     Require(address == 0x0100007fu);
+    Require(Failed(sceNetEpollWait(epoll, reinterpret_cast<NetEpollEvent*>(0x10), 1, 0), 14));
     Require(sceNetEpollWait(epoll, &ready, 1, 0) == 1);
     Require(ready.events == (in | descid) && ready.ident == static_cast<std::uint64_t>(resolver) && ready.data.u64 == 0x1234 && ready.reserved == 0);
     Require(sceNetEpollWait(epoll, &ready, 1, 0) == 0);
@@ -1378,6 +1384,7 @@ static void CheckEpollWritable() {
     registration.data.u32 = 41;
     Require(sceNetEpollControl(epoll, 1, sender, &registration) == 0);
     NetEpollEvent ready{};
+    Require(Failed(sceNetEpollWait(epoll, reinterpret_cast<NetEpollEvent*>(0x10), 1, 1000000), 14));
     Require(sceNetEpollWait(epoll, &ready, 1, 1000000) == 1);
     Require(ready.events == 2 && ready.ident == static_cast<std::uint64_t>(sender) && ready.data.u32 == 41);
     Require(sceNetEpollControl(epoll, 3, sender, nullptr) == 0);
@@ -3030,7 +3037,7 @@ int main(int argc, char** argv) {
     Require(sceNetRecvfrom(udp_receiver, datagram_result, sizeof(datagram_result), 0, nullptr, nullptr) == sizeof(datagram_result));
     const std::int64_t bad_timeout[2]{0, 1000000};
     Require(select_nid_postfix(udp_receiver + 1, readable, nullptr, nullptr, bad_timeout) == -1 && *__error_nid_postfix() == 22);
-    Require(select_nid_postfix(1025, nullptr, nullptr, nullptr, poll_now) == -1 && *__error_nid_postfix() == 22);
+    Require(select_nid_postfix(1025, nullptr, nullptr, nullptr, poll_now) == 0);
     const int random = open_nid_postfix("/dev/urandom", 0, 0);
     Require(random >= 0 && random < 1024);
     std::uint64_t random_readable[16]{};
@@ -3095,10 +3102,12 @@ int main(int argc, char** argv) {
     Require(sceNetResolverStartNtoa(resolver, nullptr, ipv4.data(), 5000000, 1, 0) == static_cast<int>(0x80410116));
     Require(sceNetResolverGetError(resolver, &resolver_error) == 0 &&
         resolver_error == static_cast<int>(0x804101E1));
+    Require(Failed(sceNetResolverStartNtoa(resolver, "localhost", reinterpret_cast<void*>(0x10), 5000000, 1, 0), 14));
     Require(sceNetResolverStartNtoa(resolver, "localhost", ipv4.data(), 5000000, 1, 0) == 0);
     Require(ipv4[0] == 127);
     std::array<std::uint8_t, 16> resolved6{};
     resolved6.fill(0xA5);
+    Require(Failed(sceNetResolverStartNtoa6(resolver, "::1", reinterpret_cast<void*>(0x10), 5000000, 1, 0), 14));
     Require(sceNetResolverStartNtoa6(resolver, "::1", resolved6.data(), 5000000, 1, 0) == 0);
     Require(std::all_of(resolved6.begin(), resolved6.end() - 1, [](std::uint8_t byte) { return byte == 0; }) && resolved6[15] == 1);
     Require(sceNetResolverGetError(resolver, &resolver_error) == 0 && resolver_error == 0);
@@ -3111,6 +3120,7 @@ int main(int argc, char** argv) {
     Require(sceNetResolverGetError(resolver, &resolver_error) == 0 && resolver_error == 0);
     alignas(NetResolverInfo) std::array<std::uint8_t, 512> records{};
     records.fill(0xA5);
+    Require(Failed(sceNetResolverStartNtoaMultipleRecordsEx(resolver, "localhost", reinterpret_cast<NetResolverInfo*>(0x10), 5000000, 1, 0), 14));
     Require(sceNetResolverStartNtoaMultipleRecordsEx(resolver, "localhost", reinterpret_cast<NetResolverInfo*>(records.data()), 5000000, 1, 0) == 0);
     std::int32_t record_family = 0;
     std::int32_t record_count = 0;
