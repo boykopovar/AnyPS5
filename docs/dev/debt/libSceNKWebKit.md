@@ -5,6 +5,7 @@ Inventory prose retains historical counts; use the [generated progress report](h
 ### Silent stubs
 
 - [Navigation helpers](../../../core/libs/prx/libSceNKWebKit/src/NavigationHelpers.cpp) (libSceNKWebKit) - `WKNavigationActionShouldPerformDownload`, `WKNavigationDataCopyOriginalRequest` and `WKNavigationResponseCanShowMIMEType` answer the default object values (`false`, `nullptr` and `true` respectively) until navigation is modelled and creates populated `NavigationAction`, `NavigationData` and `NavigationResponse` objects.
+- [Injected bundle script worlds](../../../core/libs/prx/libSceNKWebKit/src/BundleScriptWorld.cpp) (libSceNKWebKit) - `WKBundleScriptWorldCreateWorld`, `WKBundleScriptWorldClearWrappers`, `WKBundleScriptWorldMakeAllShadowRootsOpen` and `WKBundleScriptWorldDisableOverrideBuiltinsBehavior` create and configure host `BundleScriptWorld` state without executing JS wrapper invalidation or DOM shadow/builtin hooks.
 - [WKBundleInspector controls](../../../core/libs/prx/libSceNKWebKit/src/BundleInspector.cpp) (libSceNKWebKit) - `WKBundleInspectorShow`, `WKBundleInspectorClose`, `WKBundleInspectorSetPageProfilingEnabled` and `WKBundleInspectorEvaluateScriptForTest` record inspector state on the host object without forwarding messages to the UI process; `WKBundlePageGetInspector` provides access to the page's inspector.
 
 ### Unknown function info
@@ -404,10 +405,6 @@ Inventory prose retains historical counts; use the [generated progress report](h
 | `WKBundleReportException` | `JiaW5n2B77U` |
 | `WKBundleResetOriginAccessAllowLists` | `8wD6Sq3WBcA` |
 | `WKBundleResourceLoadStatisticsNotifyObserver` | `HWRP4l2b7pE` |
-| `WKBundleScriptWorldClearWrappers` | `MzpjLnMjdwE` |
-| `WKBundleScriptWorldCreateWorld` | `f2hz+NhGpbw` |
-| `WKBundleScriptWorldDisableOverrideBuiltinsBehavior` | `arhBKRy2grc` |
-| `WKBundleScriptWorldMakeAllShadowRootsOpen` | `MddMup7PwZk` |
 | `WKBundleSetClient` | `6Sajlv-clVQ` |
 | `WKBundleSetDatabaseQuota` | `TIWikmyjjYo` |
 | `WKBundleSetServiceWorkerProxyCreationCallback` | `tow2sT8FF3c` |
