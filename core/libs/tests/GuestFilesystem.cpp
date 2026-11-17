@@ -990,7 +990,7 @@ int main() {
 
             Require(fseek_nid_postfix(directoryStream, 0, 0) == 0 && ftell_nid_postfix(directoryStream) == 0);
             *__error_nid_postfix() = 0;
-            Require(fputc_nid_postfix('x', directoryStream) == -1 && *__error_nid_postfix() == 9 && ferror_nid_postfix(directoryStream) != 0);
+            Require(fputc_nid_postfix('x', directoryStream) == -1 && *__error_nid_postfix() == 0 && ferror_nid_postfix(directoryStream) != 0);
             Require(fclose_nid_postfix(directoryStream) == 0);
 #ifdef _WIN32
             const int reused = open_nid_postfix(listed.string().c_str(), 0, 0);

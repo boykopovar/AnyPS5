@@ -1040,11 +1040,21 @@ static void CheckReadsOnWriteOnlyStreams(const std::string& path) {
             Require(ferror_nid_postfix(stream) == 0, "clearerr after a write-only read");
             errno = 0;
         };
+        const auto untouched = [stream](bool result, const char* message) {
+            Require(result && errno == 77 && ferror_nid_postfix(stream) != 0, message);
+            clearerr_nid_postfix(stream);
+            Require(ferror_nid_postfix(stream) == 0, "clearerr after a write-only read");
+            errno = 0;
+        };
         std::array<char, 4> buffer{};
         errno = 0;
         failed(fread_nid_postfix(buffer.data(), 1, buffer.size(), stream) == 0, "fread on a write-only stream");
-        failed(fgetc_nid_postfix(stream) == EOF, "fgetc on a write-only stream");
-        failed(getc_unlocked_nid_postfix(stream) == EOF, "getc_unlocked on a write-only stream");
+        errno = 77;
+        untouched(fgetc_nid_postfix(stream) == EOF, "fgetc on a write-only stream");
+        errno = 77;
+        untouched(getc_nid_postfix(stream) == EOF, "getc on a write-only stream");
+        errno = 77;
+        untouched(getc_unlocked_nid_postfix(stream) == EOF, "getc_unlocked on a write-only stream");
         failed(fgets_nid_postfix(buffer.data(), static_cast<int>(buffer.size()), stream) == nullptr, "fgets on a write-only stream");
         int value = 0;
         Require(fscanf_nid_postfix(stream, "%d", &value) == EOF, "fscanf on a write-only stream");
@@ -1122,8 +1132,14 @@ static void CheckStreamWritesAfterReads(const std::string& base) {
     });
     CheckWriteAfterRead(path, "rb", "0123456789", [](FileStream* stream) {
         Require(fgetc_nid_postfix(stream) == '0', "fgetc on a read-only stream");
-        errno = 0;
-        Require(fputc_nid_postfix('X', stream) == EOF && errno == EBADF && ferror_nid_postfix(stream) != 0, "fputc after fgetc on a read-only stream");
+        errno = 77;
+        Require(fputc_nid_postfix('X', stream) == EOF && errno == 77 && ferror_nid_postfix(stream) != 0, "fputc after fgetc on a read-only stream");
+        clearerr_nid_postfix(stream);
+        errno = 77;
+        Require(putc_nid_postfix('X', stream) == EOF && errno == 77 && ferror_nid_postfix(stream) != 0, "putc after fgetc on a read-only stream");
+        clearerr_nid_postfix(stream);
+        errno = 77;
+        Require(putc_unlocked_nid_postfix('X', stream) == EOF && errno == 77 && ferror_nid_postfix(stream) != 0, "putc_unlocked after fgetc on a read-only stream");
         clearerr_nid_postfix(stream);
         errno = 0;
         Require(fwrite_nid_postfix("XY", 1, 2, stream) == 0 && errno == EBADF && ferror_nid_postfix(stream) != 0, "fwrite after fgetc on a read-only stream");
