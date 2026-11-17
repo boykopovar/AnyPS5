@@ -4,6 +4,7 @@
 #include "prx/libScePad/include/PadRumbleIntensity.hpp"
 #include "prx/libScePad/include/Pad.hpp"
 #include "prx/libScePad/include/InputCommandFile.hpp"
+#include "prx/libScePad/include/PadRecording.hpp"
 #include "prx/libkernel/Time/include/Time.hpp"
 #include <algorithm>
 #include <atomic>
@@ -322,6 +323,32 @@ Pad::InputCommandFile::Input InjectedTitleInput(std::uint64_t now) {
     return injected;
 }
 
+std::filesystem::path EnvironmentPath(const wchar_t* wide, const char* narrow) {
+#ifdef _WIN32
+    static_cast<void>(narrow);
+    const auto* path = _wgetenv(wide);
+#else
+    static_cast<void>(wide);
+    const auto* path = std::getenv(narrow);
+#endif
+    return path ? std::filesystem::path(path) : std::filesystem::path{};
+}
+
+void ApplyRecording(PadData& data, std::uint64_t now) {
+    static Pad::RecordingPlayer player(EnvironmentPath(L"APS5_PAD_REPLAY", "APS5_PAD_REPLAY"));
+    static Pad::RecordingWriter writer(EnvironmentPath(L"APS5_PAD_RECORD", "APS5_PAD_RECORD"));
+    if (const auto replayed = player.At(now)) {
+        data.buttons = replayed->buttons;
+        data.left_stick_x = replayed->sticks[0];
+        data.left_stick_y = replayed->sticks[1];
+        data.right_stick_x = replayed->sticks[2];
+        data.right_stick_y = replayed->sticks[3];
+        data.analog_buttons_l2 = replayed->triggers[0];
+        data.analog_buttons_r2 = replayed->triggers[1];
+    }
+    if (writer.Active()) writer.Record(now, {data.buttons, {data.left_stick_x, data.left_stick_y, data.right_stick_x, data.right_stick_y}, {data.analog_buttons_l2, data.analog_buttons_r2}});
+}
+
 std::uint64_t LatchExpiry(const PadSlot& slot) {
     return std::clamp(slot.readInterval + slot.readInterval / 2, kLatchExpiry, kLatchExpiryLimit);
 }
@@ -345,6 +372,7 @@ PadData Pad::ReadState(int port) {
     slot.pressedSinceRead = 0;
     if (slot.lastReadAt != 0) slot.readInterval = now - slot.lastReadAt;
     slot.lastReadAt = now;
+    if (port == 0 && !withdrawn) ApplyRecording(data, now);
     return data;
 }
 
@@ -365,6 +393,7 @@ int Pad::Read(PadData* data, int num, int port) {
     }
     if (slot.queue.empty()) {
         data[0] = BuildData(slot, slot.state, now, now, injected, port);
+        if (port == 0) ApplyRecording(data[0], now);
         return 1;
     }
     int count = 0;
@@ -372,6 +401,7 @@ int Pad::Read(PadData* data, int num, int port) {
         const QueuedInput& entry = slot.queue.front();
         const std::uint64_t sample = port == 0 ? std::max(entry.timestamp, injectedTimestamp) : entry.timestamp;
         data[count++] = BuildData(slot, entry.input, sample, sample, injected, port);
+        if (port == 0) ApplyRecording(data[count - 1], now);
         slot.queue.pop_front();
     }
     return count;

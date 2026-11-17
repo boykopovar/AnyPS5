@@ -448,6 +448,8 @@ int Run(const int argc, char* argv[]) {
         if (args.windowsDiagnostics) outputPaths.push_back(windowsDiagnosticsPath);
         std::vector<std::filesystem::path> canonicalOutputPaths(outputPaths.size());
         for (std::size_t index = 0; index < outputPaths.size(); ++index) {
+            if (!args.dryRun && std::filesystem::is_fifo(outputPaths[index]))
+                throw Domain::RelinkerException("Output is a FIFO: " + Io::Utf8Path(outputPaths[index]));
             for (std::size_t previous = 0; previous < index; ++previous) {
                 const auto& first = outputPaths[index];
                 const auto& second = outputPaths[previous];

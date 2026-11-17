@@ -4,6 +4,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import check_conventions
@@ -118,6 +119,7 @@ class DocLinkTests(unittest.TestCase):
         check.tree = {"docs/x.md", "docs/guide with spaces).md"}
         check.dirs = {"docs"}
         check.status = {}
+        check.renamed_from = set()
         check.files = lambda predicate: [("docs/x.md", [(1, text)])]
         check.show = lambda path: text
         check.findings = []
@@ -152,6 +154,7 @@ class DocLinkTests(unittest.TestCase):
         check.tree = {"docs/README.md", "docs/kept.md"}
         check.dirs = {"docs"}
         check.status = {"docs/gone.md": "D"}
+        check.renamed_from = set()
         check.files = lambda predicate: []
         check.show = lambda path: texts[path]
         check.findings = []
@@ -164,6 +167,7 @@ class DocLinkTests(unittest.TestCase):
         check.tree = {"docs/README.md", "docs/guide/README.md"}
         check.dirs = {"docs", "docs/guide"}
         check.status = {"docs/guide": "D", "docs/guide/README.md": "A"}
+        check.renamed_from = set()
         check.files = lambda predicate: []
         check.show = lambda path: texts[path]
         check.findings = []
@@ -176,6 +180,7 @@ class DocLinkTests(unittest.TestCase):
         check.tree = {"docs/README.md"}
         check.dirs = {"docs"}
         check.status = {"docs/gone.md": "D", "docs/README.md": "M"}
+        check.renamed_from = set()
         check.files = lambda predicate: [("docs/README.md", [(2, "footer changed")])]
         check.show = lambda path: texts[path]
         check.findings = []
@@ -188,11 +193,81 @@ class DocLinkTests(unittest.TestCase):
         check.tree = {"docs/README.md"}
         check.dirs = {"docs"}
         check.status = {"docs/gone.md": "D", "docs/README.md": "M"}
+        check.renamed_from = set()
         check.files = lambda predicate: [("docs/README.md", [(1, text.rstrip("\n"))])]
         check.show = lambda path: text
         check.findings = []
         check.docs()
         self.assertEqual(check.findings, [("doc-link", "docs/README.md", 1, "gone.md")])
+
+
+class RemovedDocLinkGitTests(unittest.TestCase):
+    def check_revision(self, base, head):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repository(root, base, head)
+            return subprocess.run(
+                [sys.executable, str(Path(check_conventions.__file__)), "--base", "base", "--head", "HEAD"],
+                cwd=root, capture_output=True, encoding="utf-8", errors="strict",
+                env={key: value for key, value in os.environ.items()
+                     if key not in ("GITHUB_ACTIONS", "GITHUB_EVENT_PATH", "GITHUB_STEP_SUMMARY")},
+            )
+
+    def test_cli_fixture_ignores_inherited_workflow_environment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            summary = Path(directory) / "summary.md"
+            event = Path(directory) / "event.json"
+            with patch.dict(os.environ, {"GITHUB_ACTIONS": "true", "GITHUB_EVENT_PATH": str(event),
+                                         "GITHUB_STEP_SUMMARY": str(summary)}):
+                base = {"README.md": "See [guide](docs/user/old/).\n", "docs/user/old/guide.md": "Guide\n"}
+                result = self.check_revision(base, {"docs/user/old/guide.md": None})
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertEqual(result.stdout.count("[doc-link]"), 1, result.stdout)
+            self.assertNotIn("::error", result.stdout)
+            self.assertFalse(summary.exists())
+
+    def test_deleted_directory_links_are_reported_from_an_unchanged_doc(self):
+        base = {
+            "README.md": "See [archive](docs/user/archive/) and [nested](docs/user/archive/nested).\n",
+            "docs/user/archive/guide.md": "Guide\n",
+            "docs/user/archive/nested/chapter.md": "Chapter\n",
+        }
+        result = self.check_revision(base, {"docs/user/archive/guide.md": None, "docs/user/archive/nested/chapter.md": None})
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("docs/user/archive/", result.stdout)
+        self.assertIn("docs/user/archive/nested", result.stdout)
+        self.assertEqual(result.stdout.count("[doc-link]"), 2, result.stdout)
+
+    def test_renamed_file_links_are_reported_from_an_unchanged_doc(self):
+        base = {"README.md": "See [guide](docs/user/guide.md).\n", "docs/user/guide.md": "Guide\n"}
+        result = self.check_revision(base, {"docs/user/guide.md": None, "docs/user/current.md": "Guide\n"})
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("docs/user/guide.md", result.stdout)
+        self.assertEqual(result.stdout.count("[doc-link]"), 1, result.stdout)
+
+    def test_renamed_directory_links_are_reported_once_from_a_changed_doc(self):
+        base = {"README.md": "See [guide](docs/user/old/).\nFooter\n", "docs/user/old/guide.md": "Guide\n"}
+        head = {"README.md": "See [guide](docs/user/old/).\nNew footer\n", "docs/user/old/guide.md": None,
+                "docs/user/current/guide.md": "Guide\n"}
+        result = self.check_revision(base, head)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("docs/user/old/", result.stdout)
+        self.assertEqual(result.stdout.count("[doc-link]"), 1, result.stdout)
+
+    def test_retained_directory_and_preexisting_missing_link_are_not_reported(self):
+        base = {"README.md": "See [guide](docs/user/guide/) and [missing](docs/user/absent/).\n",
+                "docs/user/guide/old.md": "Old\n", "docs/user/guide/current.md": "Current\n"}
+        result = self.check_revision(base, {"docs/user/guide/old.md": None})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("[doc-link]", result.stdout)
+
+    def test_repaired_and_code_links_are_not_reported(self):
+        base = {"README.md": "See [guide](docs/user/old/).\n", "docs/user/old/guide.md": "Guide\n"}
+        head = {"README.md": f"See [guide](docs/user/current/).\n`[old](docs/user/old/)`\n{FENCE}\n[old](docs/user/old/)\n{FENCE}\n",
+                "docs/user/old/guide.md": None, "docs/user/current/guide.md": "Guide\n"}
+        result = self.check_revision(base, head)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("[doc-link]", result.stdout)
 
 
 if __name__ == "__main__":

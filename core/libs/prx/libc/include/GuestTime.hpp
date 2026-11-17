@@ -2,6 +2,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "prx/libc/include/general/VabiMacros.hpp"
+
 struct GuestTm {
     int tm_sec;
     int tm_min;
@@ -18,3 +20,5 @@ struct GuestTm {
 static_assert(offsetof(GuestTm, tm_gmtoff) == 40);
 static_assert(offsetof(GuestTm, tm_zone) == 48);
 static_assert(sizeof(GuestTm) == 56);
+
+extern "C" void LibcSetProcessTimeSource_nid_no_patch(std::uint64_t (APS5_VABI* source)());

@@ -39,7 +39,6 @@ void testDrawQueueCopy() {
     check(packet == storage.words.data() && std::equal(expected.begin(), expected.end(), packet), "DCB COPY_DATA packet mismatch");
     check(storage.buffer.cursor_up == storage.words.data() + expected.size(), "DCB COPY_DATA cursor advance mismatch");
     check(sceAgcDcbCopyDataGetSize() == expected.size() * sizeof(std::uint32_t), "DCB COPY_DATA size differs from its packet");
-    expectFailure(storage, [&] { sceAgcDcbCopyData(&storage.buffer, 2, 4, 0x1000, 4, 0, 0x2000, 0, 0); }, "a DCB destination cache policy above 3 was accepted");
     expectFailure(storage, [&] { sceAgcDcbCopyData(&storage.buffer, 2, 0, 0x1000, 4, 0, 0x2000, 2, 0); }, "a DCB item size above 1 was accepted");
     expectFailure(storage, [&] { sceAgcDcbCopyData(&storage.buffer, 2, 0, 0x1000, 10, 0, 0x100000000ull, 0, 0); }, "a DCB 32-bit immediate wider than 32 bits was accepted");
 }
@@ -57,6 +56,24 @@ void testComputeQueueCopy() {
     expectFailure(storage, [&] { sceAgcAcbCopyData(&storage.buffer, 1, 0, 0x1000, 5, 0, 0, 0, 2); }, "an ACB write confirm above 1 was accepted");
 }
 
+template <typename TWriter>
+void expectConsolePacket(TWriter writer, const std::array<std::uint32_t, 5>& body) {
+    Storage storage;
+    const auto* packet = writer(&storage.buffer);
+    check(packet == storage.words.data() && packet[0] == 0xc0044000u, "console COPY_DATA arguments were refused");
+    check(std::equal(body.begin(), body.end(), packet + 1), "console COPY_DATA packet mismatch");
+    check(storage.buffer.cursor_up == packet + 6, "console COPY_DATA cursor advance mismatch");
+}
+
+void testConsoleArguments() {
+    expectConsolePacket([](CommandBuffer* buffer) { return sceAgcAcbCopyData(buffer, 0x11, 0x22, 0x33333333u, 0x44, 0x55, 0, 1, 0); }, {0x04012104u, 0, 0, 0x33333333u, 0});
+    expectConsolePacket([](CommandBuffer* buffer) { return sceAgcAcbCopyData(buffer, 1, 2, 3, 4, 5, 0, 1, 0); }, {0x04012104u, 0, 0, 3, 0});
+    expectConsolePacket([](CommandBuffer* buffer) { return sceAgcAcbCopyData(buffer, 0x22, 0x44, 0, 0, 0, 0, 1, 0); }, {0x00010200u, 0, 0, 0, 0});
+    expectConsolePacket([](CommandBuffer* buffer) { return sceAgcDcbCopyData(buffer, 0x11, 0x22, 0x33333333u, 0x44, 0x55, 0, 1, 0); }, {0x04012802u, 0, 0, 0x33333333u, 0});
+    expectConsolePacket([](CommandBuffer* buffer) { return sceAgcDcbCopyData(buffer, 1, 2, 3, 4, 5, 0, 1, 0); }, {0x04012002u, 0, 0, 3, 0});
+    expectConsolePacket([](CommandBuffer* buffer) { return sceAgcDcbCopyData(buffer, 0x22, 0x44, 0, 0, 0, 0, 1, 0); }, {0x00010100u, 0, 0, 0, 0});
+}
+
 void testWriteDataSize() {
     Storage storage;
     const std::array<std::uint32_t, 3> payload{1, 2, 3};
@@ -67,13 +84,48 @@ void testWriteDataSize() {
     check(sceAgcDcbWriteDataGetSize(1) == 20 && sceAgcDcbWriteDataGetSize(0x3ffd) == 0x3ffd * 4 + 16, "DCB WRITE_DATA size is not four header words plus the payload");
 }
 
+struct LargeStorage {
+    std::array<std::uint32_t, 256> words{};
+    CommandBuffer buffer{words.data(), words.data() + words.size(), words.data(), words.data() + words.size(), nullptr, nullptr, 0};
+};
+
+bool APS5_VABI clobberAndMove(CommandBuffer* buffer, std::uint32_t, void* userData) {
+    auto& spare = *static_cast<LargeStorage*>(userData);
+    std::fill(buffer->bottom, buffer->top, 0xdeadbeefu);
+    buffer->bottom = spare.words.data();
+    buffer->top = spare.words.data() + spare.words.size();
+    buffer->cursor_up = buffer->bottom;
+    buffer->cursor_down = buffer->top;
+    return true;
+}
+
+void testWriteDataReadsPayloadBeforeCallback() {
+    for (const auto writer : {sceAgcDcbWriteData, sceAgcAcbWriteData}) {
+        for (const std::uint32_t count : {4u, 64u, 65u, 100u}) {
+            LargeStorage full;
+            LargeStorage spare;
+            for (std::uint32_t i = 0; i < count; ++i) full.words[i] = 0x1000u + i;
+            full.buffer.cursor_up = full.words.data() + count;
+            full.buffer.cursor_down = full.buffer.cursor_up + 1;
+            full.buffer.callback = clobberAndMove;
+            full.buffer.user_data = &spare;
+            const auto* packet = writer(&full.buffer, 5, 0, 0x2000, full.words.data(), count, 1, 0);
+            check(packet == spare.words.data() && packet[0] == (0xc0003700u | ((count + 2u) << 16u)) && packet[2] == 0x2000u, "WRITE_DATA header mismatch after the allocation callback");
+            for (std::uint32_t i = 0; i < count; ++i) check(packet[4 + i] == 0x1000u + i, "WRITE_DATA payload was not read before the allocation callback");
+            check(full.buffer.cursor_up == packet + count + 4u, "WRITE_DATA cursor mismatch after the allocation callback");
+        }
+    }
+}
+
 }
 
 int main() {
     try {
         testDrawQueueCopy();
         testComputeQueueCopy();
+        testConsoleArguments();
         testWriteDataSize();
+        testWriteDataReadsPayloadBeforeCallback();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
         return 1;

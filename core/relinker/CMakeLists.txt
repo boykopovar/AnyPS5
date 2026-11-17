@@ -21,6 +21,7 @@ add_library(relinker_core STATIC
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/windows/WindowsPeWriter.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/macos/MacOsMachOPatcher.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/macos/MacOsImage.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/macos/MacOsCodeSignature.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/macos/MacOsGuestModuleWriter.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/general/SegmentFilter.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/general/EntryStubBuilder.cpp
@@ -61,6 +62,9 @@ add_library(relinker_core STATIC
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/CountLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/MovbeLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/Avx2TwinLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/LaneSplitLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/PermuteLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/WidenBroadcastLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/parsing/ElfReader.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/parsing/RelrRelocations.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/SyscallScanner.cpp
@@ -68,6 +72,7 @@ add_library(relinker_core STATIC
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/CodeInstructionCollector.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/SceCodeExtent.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/RelativeJumpTables.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/ReplacedPltStubs.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/UnusedNidFilter.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/UnusedNidFilter/StrictNidFilter.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/UnusedNidFilter/StrictReachability.cpp
@@ -151,6 +156,21 @@ if(BUILD_TESTING)
     target_link_libraries(avx2_twin_lowering_tests PRIVATE relinker_core)
     add_test(NAME avx2_twin_lowering COMMAND avx2_twin_lowering_tests)
     set_tests_properties(avx2_twin_lowering PROPERTIES TIMEOUT 60)
+
+    add_test_executable(lane_split_lowering_tests ${CMAKE_CURRENT_SOURCE_DIR}/codegen/tests/LaneSplitLoweringTests.cpp)
+    target_link_libraries(lane_split_lowering_tests PRIVATE relinker_core)
+    add_test(NAME lane_split_lowering COMMAND lane_split_lowering_tests)
+    set_tests_properties(lane_split_lowering PROPERTIES TIMEOUT 120)
+
+    add_test_executable(permute_lowering_tests ${CMAKE_CURRENT_SOURCE_DIR}/codegen/tests/PermuteLoweringTests.cpp)
+    target_link_libraries(permute_lowering_tests PRIVATE relinker_core)
+    add_test(NAME permute_lowering COMMAND permute_lowering_tests)
+    set_tests_properties(permute_lowering PROPERTIES TIMEOUT 120)
+
+    add_test_executable(widen_broadcast_lowering_tests ${CMAKE_CURRENT_SOURCE_DIR}/codegen/tests/WidenBroadcastLoweringTests.cpp)
+    target_link_libraries(widen_broadcast_lowering_tests PRIVATE relinker_core)
+    add_test(NAME widen_broadcast_lowering COMMAND widen_broadcast_lowering_tests)
+    set_tests_properties(widen_broadcast_lowering PROPERTIES TIMEOUT 120)
 
     add_test_executable(masked_store_lowering_tests ${CMAKE_CURRENT_SOURCE_DIR}/codegen/tests/MaskedStoreLoweringTests.cpp)
     target_link_libraries(masked_store_lowering_tests PRIVATE relinker_core)
@@ -317,6 +337,9 @@ if(WIN32)
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/CountLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/MovbeLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/Avx2TwinLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/LaneSplitLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/PermuteLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/WidenBroadcastLowering.cpp
     )
     target_include_directories(amd64_only_windows_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/include ${CMAKE_CURRENT_SOURCE_DIR}/domain/include ${CMAKE_CURRENT_SOURCE_DIR}/io/include ${CMAKE_CURRENT_SOURCE_DIR}/codegen/include ${CMAKE_CURRENT_SOURCE_DIR}/../libs/prx/libc/src/specifics/windows)
     if(BUILD_TESTING)
@@ -371,6 +394,17 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/include)
     add_test(NAME sdk_mman_syscall COMMAND sdk_mman_syscall_tests)
     set_tests_properties(sdk_mman_syscall PROPERTIES TIMEOUT 20)
+
+    add_test_executable(replaced_plt_stubs_tests
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/ReplacedPltStubsTests.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/analysis/ReplacedPltStubs.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/X64InstructionDecoder.cpp)
+    target_include_directories(replaced_plt_stubs_tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/domain/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/include)
+    add_test(NAME replaced_plt_stubs COMMAND replaced_plt_stubs_tests)
+    set_tests_properties(replaced_plt_stubs PROPERTIES TIMEOUT 20)
 
     add_test_executable(code_data_scanning_tests
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/CodeDataScanningTests.cpp
@@ -627,6 +661,9 @@ if(BUILD_TESTING)
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/CountLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/MovbeLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/Avx2TwinLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/LaneSplitLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/PermuteLowering.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/WidenBroadcastLowering.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/linux/LinuxElfPatcher.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/general/SegmentFilter.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/general/EntryStubBuilder.cpp
@@ -833,6 +870,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_intel_trampolines.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_syscall_trap COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_syscall_trap.py $<TARGET_FILE:relinker>)
+        add_test(NAME replaced_plt_stubs_conversion COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_replaced_plt_stubs.py $<TARGET_FILE:relinker>)
         add_test(NAME code_analysis_address_data COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_code_analysis_address_data.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_tls COMMAND ${Python3_EXECUTABLE}
@@ -840,6 +879,9 @@ if(BUILD_TESTING)
         add_test(NAME guest_tls_export_references COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_tls_export_references.py $<TARGET_FILE:relinker>)
         set_tests_properties(guest_tls_export_references PROPERTIES TIMEOUT 30)
+        add_test(NAME tls_initial_image COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_tls_initial_image.py $<TARGET_FILE:relinker>)
+        set_tests_properties(tls_initial_image PROPERTIES TIMEOUT 20)
         add_test(NAME guest_needed_modules COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_needed_modules.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_module_dir COMMAND ${Python3_EXECUTABLE}
@@ -893,6 +935,12 @@ if(BUILD_TESTING)
         add_test(NAME macos_gs_traps COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_gs_traps.py $<TARGET_FILE:relinker>)
         set_tests_properties(macos_gs_traps PROPERTIES TIMEOUT 60)
+        add_test(NAME macos_guest_gs COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_guest_gs.py $<TARGET_FILE:relinker>)
+        set_tests_properties(macos_guest_gs PROPERTIES TIMEOUT 60)
+        if(APPLE)
+            set_tests_properties(macos_guest_gs PROPERTIES RUN_SERIAL TRUE)
+        endif()
         add_test(NAME macos_fixed_base COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_fixed_base.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_host_libc COMMAND ${Python3_EXECUTABLE}
@@ -1045,6 +1093,13 @@ if(BUILD_TESTING)
         endforeach()
         add_test(NAME input_file COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_input_file.py $<TARGET_FILE:relinker>)
+        if(UNIX)
+            foreach(outputFormat linux windows macos)
+                add_test(NAME output_fifo_${outputFormat} COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_output_fifo.py $<TARGET_FILE:relinker> ${outputFormat})
+                set_tests_properties(output_fifo_${outputFormat} PROPERTIES TIMEOUT 20)
+            endforeach()
+        endif()
         add_test(NAME null_symbol_relocations COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_null_symbol_relocations.py $<TARGET_FILE:relinker>)
         foreach(symbolInput IN ITEMS executable guest)
@@ -1103,6 +1158,11 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_to_rosetta.py $<TARGET_FILE:relinker>)
         add_test(NAME syscall_number COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_syscall_number.py $<TARGET_FILE:relinker>)
+        add_test(NAME embedded_data_syscalls COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_embedded_data_syscalls.py $<TARGET_FILE:relinker> executable)
+        add_test(NAME guest_embedded_data_syscalls COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_embedded_data_syscalls.py $<TARGET_FILE:relinker> guest)
+        set_tests_properties(embedded_data_syscalls guest_embedded_data_syscalls PROPERTIES TIMEOUT 20)
         add_test(NAME unused_filter_indirect COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_unused_filter_indirect.py $<TARGET_FILE:relinker>)
         add_test(NAME unused_filter_fallthrough_padding COMMAND ${Python3_EXECUTABLE}
@@ -1254,9 +1314,12 @@ if(BUILD_TESTING AND Python3_Interpreter_FOUND)
     add_test(NAME macos_guest_weak_imports COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_guest_weak_imports.py $<TARGET_FILE:relinker>)
     set_property(TEST macos_guest_weak_imports APPEND PROPERTY LABELS relinker)
+    add_test(NAME macos_code_signature COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_macos_code_signature.py $<TARGET_FILE:relinker>)
+    set_tests_properties(macos_code_signature PROPERTIES TIMEOUT 60 LABELS relinker)
     if(APPLE)
         set_tests_properties(macos_trace_imports macos_guest_weak_exports macos_executable_exports macos_guest_weak_imports
-            PROPERTIES RUN_SERIAL TRUE)
+            macos_code_signature PROPERTIES RUN_SERIAL TRUE)
     endif()
 endif()
 
