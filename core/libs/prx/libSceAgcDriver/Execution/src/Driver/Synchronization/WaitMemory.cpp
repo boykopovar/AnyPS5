@@ -113,10 +113,35 @@ void Driver::landPendingWaits(std::uint32_t queue) {
     }
 }
 
+namespace {
+
+void PrintLaterWrites(std::span<const std::uint32_t> following) {
+    constexpr std::size_t ShownLaterWrites = 8;
+    std::size_t laterWrites = 0;
+    for (std::size_t at = 0; at < following.size();) {
+        const auto words = Pm4::PacketWords(following[at]);
+        if (at + words > following.size()) break;
+        if (const auto label = Pm4::DecodeLabelWrite(following.subspan(at, words))) {
+            if (laterWrites < ShownLaterWrites) {
+                const auto bytes = label->Bytes();
+                std::uint64_t value = 0;
+                std::memcpy(&value, bytes.data(), std::min(bytes.size(), sizeof(value)));
+                std::fprintf(stderr, "[gpu]   later in this submission: %s at 0x%llx+0x%zx value 0x%llx\n", Pm4::Name(following[at]).c_str(), static_cast<unsigned long long>(label->address), bytes.size(), static_cast<unsigned long long>(value));
+            }
+            ++laterWrites;
+        }
+        at += words;
+    }
+    if (laterWrites > ShownLaterWrites) std::fprintf(stderr, "[gpu]   later in this submission: %zu more label writes\n", laterWrites - ShownLaterWrites);
+}
+
+}
+
 void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t queue, const PacketHistory& context, std::uint64_t received, bool heldAtSubmit, bool requireMemory, std::span<const std::uint32_t> following) {
     const GuestMemory::ReadSiteScope site(GuestMemory::ReadSite::Wait);
 
     auto start = std::chrono::steady_clock::now();
+    const auto entered = start;
     auto lastDone = packetsDone.load();
 
     GuestMemory::TagGpuLockThread(queue);
@@ -135,6 +160,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
         }
     } waitTrace{traceGpu, queue, awaited, std::chrono::steady_clock::now()};
     bool warned = false;
+    bool stuckReported = false;
 
     struct EpochPoint {
         Driver* driver;
@@ -449,23 +475,7 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
                 for (const auto& [record, count] : writers)
                     std::fprintf(stderr, "[gpu]   earlier write by queue 0x%x opcode 0x%x at 0x%llx+0x%llx (%zu in the write history)\n", record.queue, record.opcode, static_cast<unsigned long long>(record.target), static_cast<unsigned long long>(record.length), count);
             }
-            constexpr std::size_t ShownLaterWrites = 8;
-            std::size_t laterWrites = 0;
-            for (std::size_t at = 0; at < following.size();) {
-                const auto words = Pm4::PacketWords(following[at]);
-                if (at + words > following.size()) break;
-                if (const auto label = Pm4::DecodeLabelWrite(following.subspan(at, words))) {
-                    if (laterWrites < ShownLaterWrites) {
-                        const auto bytes = label->Bytes();
-                        std::uint64_t value = 0;
-                        std::memcpy(&value, bytes.data(), std::min(bytes.size(), sizeof(value)));
-                        std::fprintf(stderr, "[gpu]   later in this submission: %s at 0x%llx+0x%zx value 0x%llx\n", Pm4::Name(following[at]).c_str(), static_cast<unsigned long long>(label->address), bytes.size(), static_cast<unsigned long long>(value));
-                    }
-                    ++laterWrites;
-                }
-                at += words;
-            }
-            if (laterWrites > ShownLaterWrites) std::fprintf(stderr, "[gpu]   later in this submission: %zu more label writes\n", laterWrites - ShownLaterWrites);
+            PrintLaterWrites(following);
 
             if (const auto reportDevice = device.Load(); reportDevice != nullptr) {
                 Graphics::Recorder::LabelRefusal refusal{};
@@ -478,6 +488,14 @@ void Driver::waitMemory(std::span<const std::uint32_t> packet, std::uint32_t que
                              static_cast<unsigned long long>(Graphics::Recorder::WriteGeneration()), static_cast<unsigned long long>(seenGeneration), queue0Dormant.load(std::memory_order_relaxed) ? 1 : 0, completionsPending() ? 1 : 0, labelFlushDue() ? 1 : 0);
             }
             context.Print(stderr, "[gpu]   preceding packet %s\n");
+        }
+        if (!stuckReported && std::chrono::steady_clock::now() - entered > std::chrono::milliseconds(10 * waitTimeoutMs())) {
+            stuckReported = true;
+            const std::uint64_t reference = wide ? packet[4] | (static_cast<std::uint64_t>(packet[5]) << 32u) : packet[4];
+            const std::uint64_t current = awaitedBytes == 8 ? *reinterpret_cast<const volatile std::uint64_t*>(awaited) : *reinterpret_cast<const volatile std::uint32_t*>(awaited);
+            std::fprintf(stderr, "[gpu] queue 0x%x WAIT_REG_MEM%s at 0x%llx still waiting after %dms (function %u ref 0x%llx value 0x%llx)\n", queue, wide ? "_64" : "", static_cast<unsigned long long>(awaited), 10 * waitTimeoutMs(), packet[1] & 7u,
+                         static_cast<unsigned long long>(reference), static_cast<unsigned long long>(current));
+            PrintLaterWrites(following);
         }
     }
     ++outcomes.polled;
