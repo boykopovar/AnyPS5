@@ -4,6 +4,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceAgc/Shader/include/ShaderConstants.hpp"
 #include <array>
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
@@ -78,6 +79,15 @@ int main() {
     Require(context.back().value == 0xcafebabe && primitive.back().value == 0xcafebabe);
     const auto savedContext = context;
     const auto savedPrimitive = primitive;
+    auto* const unmappedRegisters = reinterpret_cast<ShaderRegister*>(0x10);
+    const auto* const unmappedShader = reinterpret_cast<const Shader*>(0x10);
+    errno = 71;
+    Require(sceAgcLinkShaders(unmappedRegisters, primitive.data(), nullptr, &vertex, &pixel, 4) == GRAPHICS5_ERROR_INVALID_SHADER_PROGRAM && errno == 71);
+    Require(sceAgcLinkShaders(context.data(), unmappedRegisters, nullptr, &vertex, &pixel, 4) == GRAPHICS5_ERROR_INVALID_SHADER_PROGRAM && errno == 71);
+    Require(sceAgcLinkShaders(context.data(), primitive.data(), nullptr, unmappedShader, &pixel, 4) == GRAPHICS5_ERROR_INVALID_SHADER_PROGRAM && errno == 71);
+    Require(sceAgcLinkShaders(context.data(), primitive.data(), nullptr, &vertex, unmappedShader, 4) == GRAPHICS5_ERROR_INVALID_SHADER_PROGRAM && errno == 71);
+    Require(std::memcmp(context.data(), savedContext.data(), sizeof(context)) == 0);
+    Require(std::memcmp(primitive.data(), savedPrimitive.data(), sizeof(primitive)) == 0);
     pixel.num_input_semantics = 33;
     Require(sceAgcLinkShaders(context.data(), primitive.data(), nullptr, &vertex, &pixel, 4) == GRAPHICS5_ERROR_INVALID_SHADER_PROGRAM);
     Require(std::memcmp(context.data(), savedContext.data(), sizeof(context)) == 0);
