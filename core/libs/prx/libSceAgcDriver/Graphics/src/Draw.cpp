@@ -2396,10 +2396,10 @@ ResolvedResources resolveDrawResources(const Context& context, const State& stat
             if (moved.has_value()) {
                 if (trimKey) CheckBufferAliases(shaders, state.color, draw.indexAddress, indexBytes);
                 if (counted && verifyAddressDrawReuse()) verifyServedSpace(context, state, draw, shaders, snapshots, indexBytes, *cached);
-                static_cast<void>(heldSpace.release());
                 resolved.resources = std::move(cached);
                 resolved.moved = std::move(*moved);
                 if (resolved.resources->HeapStage()) resolved.resources->RefreshHeapStage(shaders);
+                static_cast<void>(heldSpace.release());
                 outcome.addressBased = resolved.resources->HoldsLease();
                 outcome.kind = KindTemplateHit;
                 countCache(&DrawProfile::cacheHits);

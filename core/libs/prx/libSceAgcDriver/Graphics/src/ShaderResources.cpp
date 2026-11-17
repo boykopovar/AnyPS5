@@ -2466,6 +2466,7 @@ void ShaderResources::buildPrepare(std::span<const CompiledShader> shaders, cons
         allocations.reserve(plannedAllocations);
         std::vector<std::uint32_t> occupied;
         occupied.reserve(plannedBindings);
+        heapStage = AnyHeapShader(shaders);
         for (const auto& shader : shaders) {
             Require(shader.program != nullptr, "missing compiled shader");
             ShaderRecompiler::RuntimeAbi::RequireVersion(shader.program->runtimeAbiVersion);
@@ -7314,6 +7315,8 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedR
                 const auto bytes = static_cast<std::size_t>(GuestBufferMemory::ViewBytes(size, item.adjustment));
                 const bool behind = recorder.PendingWriteOverlaps(begin, bytes);
                 const bool inPlace = (usesBda && heapStage) || (behind && heapShader && addressedBuffers);
+                const auto sharesClassic = [&] { return std::any_of(bindings.begin(), bindings.end(), [&](const Binding& other) { return !(other.heap && other.addressed) && std::find(other.allocations.begin(), other.allocations.end(), index) != other.allocations.end(); }); };
+                if (heapStage && !inPlace && sharesClassic()) return refuse(MoveRefusal::SharedBinding);
                 if (!inPlace && bytes > maxDrawSnapshotBytes - movedBytes) return refuse(MoveRefusal::Limit);
                 if (!GuestMemory::Accessible(reinterpret_cast<const void*>(begin), bytes)) return refuse(MoveRefusal::Inaccessible);
                 if (guestMemory.WritesOverlap(begin, bytes) || PendingStorageOverlaps(begin, bytes, nullptr) || AnyShadowedOverlaps(begin, bytes)) return refuse(MoveRefusal::Overlap);
@@ -7337,7 +7340,7 @@ std::optional<std::vector<ShaderResources::MovedBuffer>> ShaderResources::MovedR
                         VkDeviceAddress handle = 0;
                         found = guestMemory.TryDescriptor(address, static_cast<std::size_t>(size), adjustment, nullptr, &handle).has_value() && handle != 0;
                     }
-                    const bool classic = std::any_of(bindings.begin(), bindings.end(), [&](const Binding& other) { return !(other.heap && other.addressed) && std::find(other.allocations.begin(), other.allocations.end(), index) != other.allocations.end(); });
+                    const bool classic = sharesClassic();
                     if (!found) return refuse(MoveRefusal::NotImported);
                     if (adjustment != item.adjustment) return refuse(MoveRefusal::Alignment);
                     if (classic) return refuse(MoveRefusal::SharedBinding);
@@ -8131,7 +8134,7 @@ void ShaderResources::buildHeapTableMap(std::vector<std::uint32_t>& map, Bindles
             map.push_back(sampledAbsent);
             continue;
         }
-        const auto view = textureFirstLayer[index] ? textures[index]->FirstLayerView() : textures[index]->View();
+        const auto view = textureFirstLayer[index] ? textures[index]->FirstLayerView() : arrayViewTextures.contains(index) ? textures[index]->ArrayView() : textures[index]->View();
         map.push_back(image(takenSlot(heap.TextureSlot(Abi::FirstImageBinding, textures[index].get(), view, textures[index]->Layout()), "the global image heap is full")));
     }
     const auto appendStorageSlots = [&](std::uint32_t kind, std::uint32_t absent, const char* full, const auto& wanted, const auto& viewOf) {
