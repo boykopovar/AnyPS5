@@ -802,6 +802,8 @@ void TestResolveFailures() {
     *__error_nid_postfix() = 0;
     Require(sceKernelAprResolveFilepathsToIds(emptyElements, 2, ids, &failed) == -1);
     Require(*__error_nid_postfix() == 2 && failed == 1 && ids[1] == 0xffffffffu);
+    *__error_nid_postfix() = 0;
+    Require(sceKernelAprResolveFilepathsToIds(emptyElements, 2, ids, reinterpret_cast<uint32_t*>(std::uintptr_t{0x10})) == -1 && *__error_nid_postfix() == 14);
     int results[]{123, 123};
     Require(sceKernelAprResolveFilepathsToIdsAndFileSizesForEach(paths, 2, ids, sizes, results) == 1);
     Require(results[0] == 0 && results[1] == static_cast<int>(0x80020002));

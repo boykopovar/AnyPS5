@@ -883,7 +883,12 @@ int APS5_VABI sceKernelAprResolveFilepathsToIds(const char** paths, uint32_t cou
     for (uint32_t index = 0; index < count; ++index) {
         if (!_resolve(paths[index], &ids[index], nullptr)) {
             ids[index] = INVALID_FILE_ID;
-            if (error_index) *error_index = index;
+            if (error_index) {
+                const int savedErrno = errno;
+                const bool copied = GuestCopyOut_nid_no_patch(error_index, &index, sizeof(index));
+                errno = savedErrno;
+                if (!copied) return _fail(GUEST_EFAULT);
+            }
             return _fail(GUEST_ENOENT);
         }
     }
