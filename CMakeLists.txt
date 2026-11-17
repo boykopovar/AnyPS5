@@ -356,6 +356,9 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_run_report_summary.py)
         set_tests_properties(run_report_summary PROPERTIES TIMEOUT 30)
         set_tests_properties(tools_nid_name_audit PROPERTIES TIMEOUT 20)
+        add_test(NAME tools_library_oracle COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/library-oracle/test_library_oracle.py)
+        set_tests_properties(tools_library_oracle PROPERTIES TIMEOUT 60)
         add_test(NAME tools_frame_capture_minimize COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_frame_capture_minimize.py)
         set_tests_properties(tools_frame_capture_minimize PROPERTIES TIMEOUT 60)
