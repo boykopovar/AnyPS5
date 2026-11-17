@@ -177,6 +177,12 @@ public:
 
 class BundleFrame final : public ObjectOf<ObjectType::BundleFrame> {
 public:
+    RectValue contentBounds{{0.0, 0.0}, {0.0, 0.0}};
+    RectValue visibleContentBounds{{0.0, 0.0}, {0.0, 0.0}};
+    RectValue visibleContentBoundsExcludingScrollbars{{0.0, 0.0}, {0.0, 0.0}};
+    SizeValue scrollOffset{0.0, 0.0};
+    bool hasHorizontalScrollbar = false;
+    bool hasVerticalScrollbar = false;
 };
 
 class BundleDOMWindowExtension final : public ObjectOf<ObjectType::BundleDOMWindowExtension> {
@@ -212,6 +218,18 @@ public:
     Retained<BundleFrame> htmlIFrameElementContentFrame;
 };
 
+class BundleInspector final : public ObjectOf<ObjectType::BundleInspector> {
+public:
+    bool isVisible = false;
+    bool isProfilingPage = false;
+    std::vector<std::string> evaluatedScriptsForTest;
+};
+
+class BundlePage final : public ObjectOf<ObjectType::BundlePage> {
+public:
+    mutable Retained<BundleInspector> inspector;
+};
+
 class Download final : public ObjectOf<ObjectType::Download> {
 public:
     Retained<Object> request;
@@ -226,6 +244,14 @@ public:
     Retained<String> description;
     Retained<String> helpText;
     Retained<String> url;
+};
+
+class MediaSessionMetadata final : public ObjectOf<ObjectType::MediaSessionMetadata> {
+public:
+    Retained<String> title;
+    Retained<String> album;
+    Retained<String> artist;
+    Retained<URL> artworkURL;
 };
 
 class PopupMenuItem final : public ObjectOf<ObjectType::PopupMenuItem> {
@@ -347,6 +373,13 @@ public:
     bool isDisplayingMarkupDocument = false;
     bool isDisplayingStandaloneImageDocument = false;
     bool isMainFrame = false;
+    std::uint64_t frameID = 0;
+    std::uint32_t loadState = 2;
+    Retained<URL> url;
+    Retained<String> title;
+    Retained<String> mimeType;
+    Retained<URL> provisionalURL;
+    Retained<URL> unreachableURL;
 };
 
 class Image final : public ObjectOf<ObjectType::Image> {
@@ -422,6 +455,12 @@ public:
         lastCachesCleared = cachesToClear;
         std::erase(origins, origin);
     }
+};
+
+class ContentRuleListStore final : public ObjectOf<ObjectType::ContentRuleListStore> {
+public:
+    std::u16string path;
+    std::map<std::u16string, Retained<Object>> filters;
 };
 
 }  // namespace NKWebKit

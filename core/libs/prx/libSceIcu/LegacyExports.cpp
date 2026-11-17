@@ -1417,10 +1417,6 @@ int APS5_VABI _ZN6icu_6814ResourceBundleC2ER10UErrorCode_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI uprv_getRawUTCtime_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZNK6icu_6810UnicodeSet9getStringEi_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -2121,10 +2117,6 @@ int APS5_VABI _ZN6icu_6818Normalizer2Factory14getFCDInstanceER10UErrorCode_nid_p
 }
 
 int APS5_VABI _ZN6icu_6818CharStringByteSinkD2Ev_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI uprv_getUTCtime_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -4394,10 +4386,6 @@ int APS5_VABI sceIcuLegacyUnknown_QjkkOo0rsYg_nid_no_patch() {
     NotImplemented_nid_no_patch(__func__);
 }
 APS5_EXPORT("QjkkOo0rsYg", sceIcuLegacyUnknown_QjkkOo0rsYg_nid_no_patch);
-
-int APS5_VABI uprv_getDefaultLocaleID_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZN6icu_685Edits8Iterator8previousER10UErrorCode_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
@@ -6827,10 +6815,6 @@ int APS5_VABI sceIcuLegacyUnknown_h6L3lSaKl0k_nid_no_patch() {
 APS5_EXPORT("h6L3lSaKl0k", sceIcuLegacyUnknown_h6L3lSaKl0k_nid_no_patch);
 
 int APS5_VABI utrace_setFunctions_nid_postfix() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI uloc_setDefault_nid_postfix() {
     NotImplemented_nid_no_patch(__func__);
 }
 

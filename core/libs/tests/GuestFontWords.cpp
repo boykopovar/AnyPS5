@@ -1,4 +1,5 @@
 #include "prx/libSceFont/libSceFont.hpp"
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -129,6 +130,9 @@ static void CreateValidation() {
     Require(sceFontCreateWords(&badMemory, &source, 0, &words) == SCE_FONT_ERROR_INVALID_MEMORY && words == nullptr);
     Require(sceFontCreateWords(&fixture.memory, nullptr, 0, &words) == SCE_FONT_ERROR_INVALID_PARAMETER);
     Require(sceFontCreateWords(&fixture.memory, &source, 0, nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontCreateWords(&fixture.memory, &source, 0, reinterpret_cast<FontWords**>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     FontTextSource noParser = source;
     noParser.textParser = nullptr;
     words = reinterpret_cast<FontWords*>(1);
@@ -204,6 +208,11 @@ static void FindValidation() {
     next = chars[0];
     Require(sceFontWordsFindWordCharacters(words, nullptr, nullptr, &last, &next) == SCE_FONT_ERROR_INVALID_PARAMETER && next == nullptr);
     Require(sceFontWordsFindWordCharacters(words, chars[0], nullptr, nullptr, &next) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    errno = 71;
+    Require(sceFontWordsFindWordCharacters(words, chars[0], nullptr, reinterpret_cast<FontTextCharacter**>(0x10), &next) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
+    Require(sceFontWordsFindWordCharacters(words, chars[0], nullptr, &last, reinterpret_cast<FontTextCharacter**>(0x10)) == SCE_FONT_ERROR_INVALID_PARAMETER);
+    Require(errno == 71);
     std::uint64_t garbage[8]{};
     last = chars[0];
     Require(sceFontWordsFindWordCharacters(reinterpret_cast<FontWords*>(garbage), chars[0], nullptr, &last, nullptr) == SCE_FONT_ERROR_INVALID_WORDS && last == nullptr);

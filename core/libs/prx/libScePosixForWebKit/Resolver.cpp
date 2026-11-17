@@ -346,8 +346,14 @@ int APS5_VABI scePosixForWebKit_gethostbyname_r(const char* name, GuestResolver:
     return error == -1 && errno != 0 ? errno : -1;
 }
 
-GuestResolver::ServiceEntry* APS5_VABI getservbyname_nid_postfix(const char* name, const char* protocol) {
-    if (!name) return nullptr;
+GuestResolver::ServiceEntry* APS5_VABI getservbyname_nid_postfix(const char* guestName, const char* guestProtocol) {
+    if (!guestName) return nullptr;
+    std::string nameText;
+    std::string protocolText;
+    if (CopyGuestString_nid_no_patch(guestName, 64, nameText) != 0) return nullptr;
+    if (guestProtocol && CopyGuestString_nid_no_patch(guestProtocol, 64, protocolText) != 0) return nullptr;
+    const char* const name = nameText.c_str();
+    const char* const protocol = guestProtocol ? protocolText.c_str() : nullptr;
     for (const auto& service : Services) {
         bool named = std::strcmp(name, service.name) == 0;
         for (const char* alias : service.aliases)

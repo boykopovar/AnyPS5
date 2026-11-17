@@ -4,6 +4,7 @@
 
 #include FT_OUTLINE_H
 
+#include <cerrno>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -53,6 +54,11 @@ int main() {
     Require(FT_Outline_New_nid_postfix(&library, 3, 1, nullptr) == FT_Err_Invalid_Argument);
     Require(FT_Outline_Done_nid_postfix(nullptr, &outline) == FT_Err_Invalid_Library_Handle);
     Require(FT_Outline_Done_nid_postfix(&library, nullptr) == FT_Err_Invalid_Outline);
+    auto* const unmapped = reinterpret_cast<GuestOutline*>(0x10);
+    errno = 71;
+    Require(FT_Outline_New_nid_postfix(&library, 3, 1, unmapped) == FT_Err_Invalid_Argument);
+    Require(FT_Outline_Done_nid_postfix(&library, unmapped) == FT_Err_Invalid_Outline);
+    Require(errno == 71);
 
     GuestLibrary uninitialized{};
     GuestOutline untouched{1, 2, nullptr, nullptr, nullptr, 3};

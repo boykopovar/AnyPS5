@@ -299,6 +299,7 @@ struct Context {
     bool imageTableUpdateAfterBind = false;
     bool samplerTableUpdateAfterBind = false;
     bool geometryShader = false;
+    bool multiViewport = false;
     bool largePoints = false;
     bool sampleRateShading = false;
     bool fillModeNonSolid = false;
@@ -311,6 +312,7 @@ struct Context {
     bool shaderCullDistance = false;
     bool nullDescriptors = false;
     bool bufferInt64Atomics = false;
+    VkDeviceAddress atomicLockTable = 0;
     const PlaceholderImages* placeholderImages = nullptr;
     bool viewportIndexLayer = false;
     bool demoteToHelperInvocation = false;
