@@ -1,0 +1,5 @@
+# libc
+
+## change [Reads on a write-only stream]
+
+- [Reads on a write-only stream](../../../core/libs/prx/libc/include/FileStream.hpp) (libc) - `getc`, `getc_unlocked` and, taken as the same code, `fgetc`, `getchar` and `__srget` fail on one with -1 and the error indicator and leave `errno` untouched, as do `putc`, `putc_unlocked`, `fputc`, `putchar` and `__swbuf` on a read-only stream, as a PS5 payload process (firmware 11.60, probe `libc_unlocked_errno`, build `42244fd5f956`) did for these four calls; `putw` shares `putc_unlocked`. Every other read, `fread`, `fgets`, `gets`, `fgetwc`, `fscanf` and `vfscanf` included, still fails with `EBADF` and the error indicator on Linux and Windows, unmeasured. `ungetc` and `ungetwc` return `EOF` without either, as FreeBSD 11.4's [`__srefill`](https://github.com/freebsd/freebsd-src/blob/d106002967eff712894ab8b5337bbbff106ce5e0/lib/libc/stdio/refill.c#L84-L88) and `__ungetc` do. On macOS the BSD stdio still sets `EBADF` for the byte calls above, so errno differs from the console there (not run)
