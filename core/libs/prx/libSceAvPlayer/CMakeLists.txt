@@ -18,6 +18,9 @@ if(BUILD_TESTING)
     add_test(NAME guest_avplayer COMMAND guest_avplayer_tests)
     add_test(NAME guest_avplayer_callback_close COMMAND guest_avplayer_tests --callback-close)
     add_test(NAME guest_avplayer_paused_first_video COMMAND guest_avplayer_tests --paused-first-video)
+    file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/guest_avplayer_ps4)
+    add_test(NAME guest_avplayer_ps4_process COMMAND guest_avplayer_tests --ps4-process
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/guest_avplayer_ps4)
     find_package(Python3 COMPONENTS Interpreter QUIET)
     if(Python3_Interpreter_FOUND)
         add_test_executable(avplayer_http_transport_tests ${LIBS_INCLUDE_DIR}/tests/AvPlayerHttpTransport.cpp
