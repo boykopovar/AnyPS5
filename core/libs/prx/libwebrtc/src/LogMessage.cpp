@@ -44,8 +44,10 @@
 #include "prx/libc/GuestStringStorage.hpp"
 #include "prx/libc/include/Api.hpp"
 #include "prx/libc/include/FileStream.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <charconv>
 #include <climits>
@@ -71,10 +73,20 @@ std::mutex& LoggingLock() {
     return lock;
 }
 
+WebRtcLogSink ReadSink(const WebRtcLogSink* sink) {
+    WebRtcLogSink host{};
+    if (!GuestPtr<WebRtcLogSink>(sink).CopyIn(host))
+        throw std::invalid_argument("LogMessage requires readable registered sinks");
+    return host;
+}
+
 void UpdateMinLogSeverity() {
     std::int32_t minSeverity = g_debugSeverity.load();
-    for (WebRtcLogSink* entry = g_streams; entry != nullptr; entry = entry->next)
-        minSeverity = std::min(minSeverity, entry->minSeverity);
+    for (WebRtcLogSink* entry = g_streams; entry != nullptr;) {
+        const WebRtcLogSink sink = ReadSink(entry);
+        minSeverity = std::min(minSeverity, sink.minSeverity);
+        entry = sink.next;
+    }
     g_minSeverity.store(minSeverity);
 }
 
@@ -82,6 +94,7 @@ constexpr std::size_t StringCapacityMask = 15;
 constexpr std::int64_t MinusInfinity = INT64_MIN;
 constexpr int LineRefSinkSlot = 8;
 constexpr int StringSeveritySinkSlot = 3;
+constexpr std::size_t GuestChunk = 4096;
 
 char* Data(WebRtcGuestString& string) {
     return string.capacity > WebRtcGuestStringInlineCapacity ? string.pointer : string.buffer;
@@ -114,20 +127,39 @@ void Append(WebRtcGuestString& string, std::string_view text) {
         if (string.capacity > WebRtcGuestStringInlineCapacity && string.capacity / 2 > rounded / 3)
             capacity = string.capacity + string.capacity / 2;
         auto* data = static_cast<char*>(GuestStringStorage::Allocate(capacity + 1));
-        std::memcpy(data, Data(string), string.size);
+        if (!GuestCopyIn_nid_no_patch(data, Data(string), string.size)) {
+            GuestStringStorage::Deallocate(data, capacity + 1);
+            throw std::invalid_argument("LogMessage requires readable string data");
+        }
         if (string.capacity > WebRtcGuestStringInlineCapacity)
             GuestStringStorage::Deallocate(string.pointer, string.capacity + 1);
         string.pointer = data;
         string.capacity = capacity;
     }
-    if (!text.empty())
-        std::memcpy(Data(string) + string.size, text.data(), text.size());
+    const char terminator = 0;
+    if (!GuestCopyOut_nid_no_patch(Data(string) + string.size, text.data(), text.size()) || !GuestCopyOut_nid_no_patch(Data(string) + size, &terminator, 1))
+        throw std::invalid_argument("LogMessage requires writable string data");
     string.size = size;
-    Data(string)[size] = 0;
 }
 
 std::string_view View(const WebRtcGuestString& string) {
     return {WebRtcGuestStringData(string), string.size};
+}
+
+std::string ReadText(const char* data, std::size_t size) {
+    std::string text;
+    std::array<char, GuestChunk> chunk{};
+    for (std::size_t offset = 0; offset < size; offset += chunk.size()) {
+        const std::size_t count = std::min(chunk.size(), size - offset);
+        if (!GuestCopyIn_nid_no_patch(chunk.data(), data + offset, count))
+            throw std::invalid_argument("LogMessage requires readable string data");
+        text.append(chunk.data(), count);
+    }
+    return text;
+}
+
+std::string ReadString(const WebRtcGuestString& string) {
+    return ReadText(WebRtcGuestStringData(string), string.size);
 }
 
 template<typename TValue> std::string Decimal(TValue value) {
@@ -163,8 +195,8 @@ std::string DefaultLogLine(const WebRtcLogLineRef& line) {
     if (line.hasThreadId)
         output += "[" + Decimal(line.threadId) + "] ";
     if (line.filename.size != 0)
-        output += "(" + std::string(line.filename.data, line.filename.size) + ":" + Decimal(line.line) + "): ";
-    output += View(line.message);
+        output += "(" + ReadText(line.filename.data, line.filename.size) + ":" + Decimal(line.line) + "): ";
+    output += ReadString(line.message);
     return output;
 }
 
@@ -215,7 +247,20 @@ void OutputToDebug(const WebRtcLogLineRef& line) {
 }
 
 template<typename TFunction> TFunction SinkSlot(const WebRtcLogSink* sink, int slot) {
-    return reinterpret_cast<TFunction>(static_cast<void* const*>(sink->vtable)[slot]);
+    const void* const* vtable = nullptr;
+    const void* function = nullptr;
+    if (!GuestPtr<const void* const*>(sink).CopyIn(vtable) || !vtable || !GuestPtr<const void*>(vtable + slot).CopyIn(function) || !function)
+        throw std::invalid_argument("LogSink requires a readable virtual function");
+    return reinterpret_cast<TFunction>(const_cast<void*>(function));
+}
+
+template<typename TField> TField* MessageField(WebRtcLogMessage* message, std::size_t offset) {
+    return reinterpret_cast<TField*>(reinterpret_cast<std::uintptr_t>(message) + offset);
+}
+
+void WriteMessage(WebRtcLogMessage* message, const WebRtcLogMessage& host) {
+    if (!GuestPtr<WebRtcLogMessage>(message).CopyOut(host))
+        throw std::invalid_argument("LogMessage destructor requires a writable message object");
 }
 
 #ifdef _WIN32
@@ -366,12 +411,17 @@ void APS5_VABI _ZN3rtc10LogMessage14AddLogToStreamEPNS_7LogSinkENS_15LoggingSeve
     if (!stream)
         throw std::invalid_argument("LogMessage::AddLogToStream requires a sink");
     std::lock_guard lock(LoggingLock());
-    for (WebRtcLogSink* entry = g_streams; entry != nullptr; entry = entry->next) {
+    for (WebRtcLogSink* entry = g_streams; entry != nullptr; entry = ReadSink(entry).next) {
         if (entry == stream)
             throw std::invalid_argument("LogMessage::AddLogToStream sink is already registered");
     }
-    stream->minSeverity = minSeverity;
-    stream->next = g_streams;
+    WebRtcLogSink host{};
+    if (!GuestWritable_nid_no_patch(stream, sizeof(*stream)) || !GuestPtr<WebRtcLogSink>(stream).CopyIn(host))
+        throw std::invalid_argument("LogMessage::AddLogToStream requires a writable sink");
+    host.minSeverity = minSeverity;
+    host.next = g_streams;
+    if (!GuestPtr<WebRtcLogSink>(stream).CopyOut(host))
+        throw std::invalid_argument("LogMessage::AddLogToStream requires a writable sink");
     g_streams = stream;
     g_streamsEmpty.store(false);
     UpdateMinLogSeverity();
@@ -379,11 +429,19 @@ void APS5_VABI _ZN3rtc10LogMessage14AddLogToStreamEPNS_7LogSinkENS_15LoggingSeve
 
 void APS5_VABI _ZN3rtc10LogMessage17RemoveLogToStreamEPNS_7LogSinkE_nid_postfix(WebRtcLogSink* stream) {
     std::lock_guard lock(LoggingLock());
-    for (WebRtcLogSink** entry = &g_streams; *entry != nullptr; entry = &(*entry)->next) {
-        if (*entry == stream) {
-            *entry = (*entry)->next;
+    WebRtcLogSink* previous = nullptr;
+    for (WebRtcLogSink* entry = g_streams; entry != nullptr;) {
+        const WebRtcLogSink sink = ReadSink(entry);
+        if (entry == stream) {
+            if (!previous) {
+                g_streams = sink.next;
+            } else if (!GuestPtr<WebRtcLogSink*>(reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(previous) + offsetof(WebRtcLogSink, next))).CopyOut(sink.next)) {
+                throw std::invalid_argument("LogMessage::RemoveLogToStream requires writable registered sinks");
+            }
             break;
         }
+        previous = entry;
+        entry = sink.next;
     }
     g_streamsEmpty.store(g_streams == nullptr);
     UpdateMinLogSeverity();
@@ -402,41 +460,52 @@ void APS5_VABI _ZN3rtc10LogMessageC1EPKciNS_15LoggingSeverityE_nid_postfix(WebRt
 WebRtcGuestString* APS5_VABI _ZN3rtc10LogMessage6streamEv_nid_postfix(WebRtcLogMessage* message) {
     if (!message)
         throw std::invalid_argument("LogMessage::stream requires a message object");
-    return &message->printStream;
+    return MessageField<WebRtcGuestString>(message, offsetof(WebRtcLogMessage, printStream));
 }
 
 void APS5_VABI _ZN3rtc10LogMessageD1Ev_nid_postfix(WebRtcLogMessage* message) {
     if (!message)
         throw std::invalid_argument("LogMessage destructor requires a message object");
-    if (message->extra.size != 0) {
-        Append(message->printStream, " : ");
-        Append(message->printStream, View(message->extra));
+    WebRtcLogMessage host{};
+    if (!GuestWritable_nid_no_patch(message, sizeof(*message)) || !GuestPtr<WebRtcLogMessage>(message).CopyIn(host))
+        throw std::invalid_argument("LogMessage destructor requires a writable message object");
+    if (host.extra.size != 0) {
+        const std::string extra = ReadString(host.extra);
+        Append(host.printStream, " : ");
+        Append(host.printStream, extra);
     }
-    Append(message->printStream, "\n");
-    WebRtcLogLineRef& logLine = message->logLine;
-    MoveString(logLine.message, message->printStream);
+    Append(host.printStream, "\n");
+    WebRtcLogLineRef& logLine = host.logLine;
+    MoveString(logLine.message, host.printStream);
+    WriteMessage(message, host);
     if (logLine.severity >= g_debugSeverity.load())
         OutputToDebug(logLine);
     {
+        const auto* guestLine = MessageField<const WebRtcLogLineRef>(message, offsetof(WebRtcLogMessage, logLine));
         std::lock_guard lock(LoggingLock());
-        for (WebRtcLogSink* entry = g_streams; entry != nullptr; entry = entry->next) {
-            if (logLine.severity >= entry->minSeverity)
-                SinkSlot<void (APS5_VABI*)(WebRtcLogSink*, const WebRtcLogLineRef*)>(entry, LineRefSinkSlot)(entry, &logLine);
+        for (WebRtcLogSink* entry = g_streams; entry != nullptr; entry = ReadSink(entry).next) {
+            if (logLine.severity >= ReadSink(entry).minSeverity)
+                SinkSlot<void (APS5_VABI*)(WebRtcLogSink*, const WebRtcLogLineRef*)>(entry, LineRefSinkSlot)(entry, guestLine);
         }
     }
     ReleaseString(logLine.message);
-    ReleaseString(message->extra);
-    ReleaseString(message->printStream);
+    ReleaseString(host.extra);
+    ReleaseString(host.printStream);
+    WriteMessage(message, host);
 }
 
 void APS5_VABI _ZN3rtc7LogSink12OnLogMessageERKNS_10LogLineRefE_nid_postfix(WebRtcLogSink* sink, const WebRtcLogLineRef* line) {
     if (!sink || !line)
         throw std::invalid_argument("LogSink::OnLogMessage requires a sink and a log line");
+    WebRtcLogLineRef hostLine{};
+    if (!GuestPtr<WebRtcLogLineRef>(line).CopyIn(hostLine))
+        throw std::invalid_argument("LogSink::OnLogMessage requires a readable log line");
+    const std::string formatted = DefaultLogLine(hostLine);
     WebRtcGuestString text;
     InitString(text);
-    Append(text, DefaultLogLine(*line));
+    Append(text, formatted);
     try {
-        SinkSlot<void (APS5_VABI*)(WebRtcLogSink*, const WebRtcGuestString*, std::int32_t)>(sink, StringSeveritySinkSlot)(sink, &text, line->severity);
+        SinkSlot<void (APS5_VABI*)(WebRtcLogSink*, const WebRtcGuestString*, std::int32_t)>(sink, StringSeveritySinkSlot)(sink, &text, hostLine.severity);
     } catch (...) {
         ReleaseString(text);
         throw;

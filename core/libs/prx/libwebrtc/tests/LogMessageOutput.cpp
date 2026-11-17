@@ -10,6 +10,13 @@
 #include <cstring>
 #include <source_location>
 #include <stdexcept>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 #include <string>
 #include <vector>
 
@@ -34,6 +41,63 @@ void Require(bool condition, std::source_location location = std::source_locatio
     if (condition) return;
     std::fprintf(stderr, "libwebrtc LogMessage output check failed at line %u\n", location.line());
     std::abort();
+}
+
+enum class Access { ReadWrite, ReadOnly, None };
+
+struct GuardedPages {
+    std::size_t pageSize = 0;
+    std::size_t size = 0;
+    unsigned char* base = nullptr;
+
+    explicit GuardedPages(std::size_t bytes = 1) {
+#ifdef _WIN32
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        pageSize = info.dwPageSize;
+        size = (bytes + pageSize - 1) / pageSize * pageSize;
+        base = static_cast<unsigned char*>(VirtualAlloc(nullptr, size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+#else
+        pageSize = static_cast<std::size_t>(sysconf(_SC_PAGESIZE));
+        size = (bytes + pageSize - 1) / pageSize * pageSize;
+        void* mapped = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        base = mapped == MAP_FAILED ? nullptr : static_cast<unsigned char*>(mapped);
+#endif
+        Require(base != nullptr);
+    }
+
+    ~GuardedPages() {
+#ifdef _WIN32
+        VirtualFree(base, 0, MEM_RELEASE);
+#else
+        munmap(base, size);
+#endif
+    }
+
+    GuardedPages(const GuardedPages&) = delete;
+    GuardedPages& operator=(const GuardedPages&) = delete;
+
+    template<typename T> T* As(std::size_t offset = 0) const { return reinterpret_cast<T*>(base + offset); }
+
+    void Protect(Access access, std::size_t offset = 0) const {
+#ifdef _WIN32
+        DWORD previous = 0;
+        const DWORD mode = access == Access::ReadWrite ? PAGE_READWRITE : access == Access::ReadOnly ? PAGE_READONLY : PAGE_NOACCESS;
+        Require(VirtualProtect(base + offset, size - offset, mode, &previous) != 0);
+#else
+        const int mode = access == Access::ReadWrite ? PROT_READ | PROT_WRITE : access == Access::ReadOnly ? PROT_READ : PROT_NONE;
+        Require(mprotect(base + offset, size - offset, mode) == 0);
+#endif
+    }
+};
+
+template<typename TAction> bool ThrowsInvalidArgument(TAction action) {
+    try {
+        action();
+    } catch (const std::invalid_argument&) {
+        return true;
+    }
+    return false;
 }
 
 template<typename TAction> void RequireInvalidArgument(TAction action, std::source_location location = std::source_location::current()) {
@@ -230,6 +294,55 @@ void TestNullArgumentsThrow() {
 
 }
 
+void TestInaccessibleMessagesAndLines() {
+    const int before = Outstanding();
+    GuardedPages hidden(sizeof(WebRtcLogMessage));
+    hidden.Protect(Access::None);
+    auto* hiddenMessage = hidden.As<WebRtcLogMessage>();
+    Require(ThrowsInvalidArgument([&] { _ZN3rtc10LogMessageD1Ev_nid_postfix(hiddenMessage); }));
+    Require(_ZN3rtc10LogMessage6streamEv_nid_postfix(hiddenMessage) == hidden.As<WebRtcGuestString>(offsetof(WebRtcLogMessage, printStream)));
+
+    GuardedPages readOnly(sizeof(WebRtcLogMessage));
+    auto* message = readOnly.As<WebRtcLogMessage>();
+    _ZN3rtc10LogMessageC1EPKciNS_15LoggingSeverityE_nid_postfix(message, "ro.cc", 3, WebRtcLsWarning);
+    readOnly.Protect(Access::ReadOnly);
+    Clear();
+    Require(ThrowsInvalidArgument([&] { _ZN3rtc10LogMessageD1Ev_nid_postfix(message); }));
+    Require(lineSink.lines.empty() && defaultSink.strings.empty());
+    readOnly.Protect(Access::ReadWrite);
+    _ZN3rtc10LogMessageD1Ev_nid_postfix(message);
+    Require(lineSink.lines.size() == 1 && lineSink.lines[0].message == "\n" && defaultSink.strings == std::vector<std::string> {"(ro.cc:3): \n"});
+
+    WebRtcLogLineRef line{};
+    line.message.capacity = WebRtcGuestStringInlineCapacity;
+    line.timestampUs = INT64_MIN;
+    line.tag = {"t", 1};
+    line.severity = WebRtcLsWarning;
+    line.line = 1;
+    auto onLogMessage = [&](const WebRtcLogLineRef* reference) { _ZN3rtc7LogSink12OnLogMessageERKNS_10LogLineRefE_nid_postfix(&defaultSink.sink, reference); };
+    Clear();
+    Require(ThrowsInvalidArgument([&] { onLogMessage(hidden.As<WebRtcLogLineRef>()); }));
+    line.filename = {hidden.As<char>(), 5};
+    Require(ThrowsInvalidArgument([&] { onLogMessage(&line); }));
+    GuardedPages tail(2 * hidden.pageSize);
+    std::memcpy(tail.As<char>(tail.pageSize - 3), "abc", 3);
+    tail.Protect(Access::None, tail.pageSize);
+    line.filename = {tail.As<char>(tail.pageSize - 3), std::size_t {1} << 40};
+    Require(ThrowsInvalidArgument([&] { onLogMessage(&line); }));
+    line.filename = {tail.As<char>(tail.pageSize - 3), 3};
+    line.message.pointer = hidden.As<char>();
+    line.message.size = 20;
+    line.message.capacity = 31;
+    Require(ThrowsInvalidArgument([&] { onLogMessage(&line); }));
+    Require(defaultSink.strings.empty());
+    line.message.pointer = nullptr;
+    line.message.size = 0;
+    line.message.capacity = WebRtcGuestStringInlineCapacity;
+    onLogMessage(&line);
+    Require(defaultSink.strings == std::vector<std::string> {"(abc:1): "});
+    Require(Outstanding() == before);
+}
+
 int main(int argc, char** argv) {
     const std::array<void*, 10> api {
         reinterpret_cast<void*>(&TestAllocate), reinterpret_cast<void*>(&TestFree),
@@ -252,6 +365,7 @@ int main(int argc, char** argv) {
     TestLongMessage();
     TestUnknownArgumentStopsTheMessage();
     TestMissingMetadataLogsNothing();
+    TestInaccessibleMessagesAndLines();
     TestNullArgumentsThrow();
     _ZN3rtc10LogMessage17RemoveLogToStreamEPNS_7LogSinkE_nid_postfix(&lineSink.sink);
     _ZN3rtc10LogMessage17RemoveLogToStreamEPNS_7LogSinkE_nid_postfix(&defaultSink.sink);

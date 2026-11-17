@@ -42,7 +42,10 @@
 
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libc/include/General.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
+#include <cstddef>
+#include <cstdint>
 #include <stdexcept>
 
 extern "C" {
@@ -50,9 +53,17 @@ extern "C" {
 void APS5_VABI _ZN6webrtc20AudioFrameOperations4MuteEPNS_10AudioFrameE_nid_postfix(WebRtcAudioFrame* frame) {
     if (!frame)
         throw std::invalid_argument("AudioFrameOperations::Mute requires a frame");
-    if (frame->numChannels != 0 && frame->samplesPerChannel > WebRtcAudioFrameMaxDataSizeSamples / frame->numChannels)
+    const auto base = reinterpret_cast<std::uintptr_t>(frame);
+    std::size_t channels = 0;
+    std::size_t samples = 0;
+    if (!GuestPtr<std::size_t>(reinterpret_cast<const void*>(base + offsetof(WebRtcAudioFrame, numChannels))).CopyIn(channels) ||
+        !GuestPtr<std::size_t>(reinterpret_cast<const void*>(base + offsetof(WebRtcAudioFrame, samplesPerChannel))).CopyIn(samples))
+        throw std::invalid_argument("AudioFrameOperations::Mute requires a readable frame");
+    if (channels != 0 && samples > WebRtcAudioFrameMaxDataSizeSamples / channels)
         NotImplemented_nid_no_patch(__func__);
-    frame->muted = true;
+    const bool muted = true;
+    if (!GuestPtr<bool>(reinterpret_cast<const void*>(base + offsetof(WebRtcAudioFrame, muted))).CopyOut(muted))
+        throw std::invalid_argument("AudioFrameOperations::Mute requires a writable frame");
 }
 
 }

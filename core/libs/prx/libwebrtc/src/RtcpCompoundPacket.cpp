@@ -44,7 +44,10 @@
 #include "prx/libwebrtc/libwebrtc.hpp"
 #include "prx/libwebrtc/include/ModuleStorage.hpp"
 #include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/GuestPtr.hpp"
 
+#include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
@@ -54,6 +57,7 @@ namespace {
 constexpr int DeletingDestructorSlot = 1;
 constexpr int BlockLengthSlot = 2;
 constexpr int CreateSlot = 3;
+constexpr std::size_t PacketPointerChunk = 4096 / sizeof(void*);
 
 using PacketReady = void (APS5_VABI*)(void* function, const std::uint8_t* data, std::size_t size);
 using DeletingDestructor = void (APS5_VABI*)(void* packet);
@@ -64,23 +68,53 @@ template<typename TFunction>
 TFunction Slot(const void* packet, int slot) {
     if (!packet)
         throw std::invalid_argument("CompoundPacket holds a null packet");
-    const auto* vtable = *static_cast<void* const* const*>(packet);
-    return reinterpret_cast<TFunction>(vtable[slot]);
+    const void* const* vtable = nullptr;
+    const void* function = nullptr;
+    if (!GuestPtr<const void* const*>(packet).CopyIn(vtable) || !vtable || !GuestPtr<const void*>(vtable + slot).CopyIn(function) || !function)
+        throw std::invalid_argument("CompoundPacket holds a packet without a readable vtable");
+    return reinterpret_cast<TFunction>(const_cast<void*>(function));
+}
+
+WebRtcRtcpCompoundPacket ReadCompound(const WebRtcRtcpCompoundPacket* compound, const char* message) {
+    WebRtcRtcpCompoundPacket host{};
+    if (!GuestPtr<WebRtcRtcpCompoundPacket>(compound).CopyIn(host))
+        throw std::invalid_argument(message);
+    const auto begin = reinterpret_cast<std::uintptr_t>(host.appendedBegin);
+    const auto end = reinterpret_cast<std::uintptr_t>(host.appendedEnd);
+    const auto capacity = reinterpret_cast<std::uintptr_t>(host.appendedCapacity);
+    if (end < begin || capacity < end || (!begin && capacity) || (end - begin) % sizeof(void*) || (capacity - begin) % sizeof(void*))
+        throw std::invalid_argument(message);
+    return host;
+}
+
+template<typename TVisit> bool ForEachAppended(const WebRtcRtcpCompoundPacket& compound, TVisit visit) {
+    const std::size_t count = static_cast<std::size_t>(compound.appendedEnd - compound.appendedBegin);
+    std::array<void*, PacketPointerChunk> chunk{};
+    for (std::size_t base = 0; base < count; base += chunk.size()) {
+        const std::size_t size = std::min(chunk.size(), count - base);
+        if (!GuestPtr<void*>(compound.appendedBegin + base).CopyIn(chunk.data(), size))
+            throw std::invalid_argument("CompoundPacket holds an unreadable packet vector");
+        for (std::size_t i = 0; i < size; ++i) {
+            if (!visit(chunk[i]))
+                return false;
+        }
+    }
+    return true;
 }
 
 std::size_t APS5_VABI CompoundBlockLength_nid_no_patch(const WebRtcRtcpCompoundPacket* compound) {
     std::size_t length = 0;
-    for (void** appended = compound->appendedBegin; appended != compound->appendedEnd; ++appended)
-        length += Slot<BlockLengthFunction>(*appended, BlockLengthSlot)(*appended);
+    ForEachAppended(ReadCompound(compound, "CompoundPacket::BlockLength requires a valid packet object"), [&](void* appended) {
+        length += Slot<BlockLengthFunction>(appended, BlockLengthSlot)(appended);
+        return true;
+    });
     return length;
 }
 
 bool APS5_VABI CompoundCreate_nid_no_patch(const WebRtcRtcpCompoundPacket* compound, std::uint8_t* packet, std::size_t* index, std::size_t maxLength, void* function, PacketReady call) {
-    for (void** appended = compound->appendedBegin; appended != compound->appendedEnd; ++appended) {
-        if (!Slot<CreateFunction>(*appended, CreateSlot)(*appended, packet, index, maxLength, function, call))
-            return false;
-    }
-    return true;
+    return ForEachAppended(ReadCompound(compound, "CompoundPacket::Create requires a valid packet object"), [&](void* appended) {
+        return Slot<CreateFunction>(appended, CreateSlot)(appended, packet, index, maxLength, function, call);
+    });
 }
 
 void APS5_VABI DeleteCompound_nid_no_patch(WebRtcRtcpCompoundPacket* compound) {
@@ -101,27 +135,41 @@ void* const Vtable[] = {
 extern "C" {
 
 void APS5_VABI _ZN6webrtc4rtcp14CompoundPacketC1Ev_nid_postfix(WebRtcRtcpCompoundPacket* compound) {
-    if (!compound)
-        throw std::invalid_argument("CompoundPacket constructor requires a packet object");
-    compound->vtable = Vtable + 2;
-    compound->senderSsrc = 0;
-    compound->appendedBegin = nullptr;
-    compound->appendedEnd = nullptr;
-    compound->appendedCapacity = nullptr;
+    constexpr const char* message = "CompoundPacket constructor requires a packet object";
+    WebRtcRtcpCompoundPacket host{};
+    if (!compound || !GuestWritable_nid_no_patch(compound, sizeof(*compound)) || !GuestPtr<WebRtcRtcpCompoundPacket>(compound).CopyIn(host))
+        throw std::invalid_argument(message);
+    host.vtable = Vtable + 2;
+    host.senderSsrc = 0;
+    host.appendedBegin = nullptr;
+    host.appendedEnd = nullptr;
+    host.appendedCapacity = nullptr;
+    if (!GuestPtr<WebRtcRtcpCompoundPacket>(compound).CopyOut(host))
+        throw std::invalid_argument(message);
 }
 
 void APS5_VABI _ZN6webrtc4rtcp14CompoundPacketD1Ev_nid_postfix(WebRtcRtcpCompoundPacket* compound) {
-    if (!compound)
-        throw std::invalid_argument("CompoundPacket destructor requires a packet object");
-    for (void** appended = compound->appendedBegin; appended != compound->appendedEnd; ++appended) {
-        if (*appended)
-            Slot<DeletingDestructor>(*appended, DeletingDestructorSlot)(*appended);
-    }
-    const auto capacity = static_cast<std::size_t>(compound->appendedCapacity - compound->appendedBegin) * sizeof(void*);
-    WebRtcModuleStorage::Free(compound->appendedBegin, capacity);
-    compound->appendedBegin = nullptr;
-    compound->appendedEnd = nullptr;
-    compound->appendedCapacity = nullptr;
+    constexpr const char* message = "CompoundPacket destructor requires a packet object";
+    if (!compound || !GuestWritable_nid_no_patch(compound, sizeof(*compound)))
+        throw std::invalid_argument(message);
+    WebRtcRtcpCompoundPacket host = ReadCompound(compound, message);
+    ForEachAppended(host, [](void* appended) {
+        if (appended)
+            Slot<DeletingDestructor>(appended, DeletingDestructorSlot);
+        return true;
+    });
+    ForEachAppended(host, [](void* appended) {
+        if (appended)
+            Slot<DeletingDestructor>(appended, DeletingDestructorSlot)(appended);
+        return true;
+    });
+    const auto capacity = static_cast<std::size_t>(host.appendedCapacity - host.appendedBegin) * sizeof(void*);
+    WebRtcModuleStorage::Free(host.appendedBegin, capacity);
+    host.appendedBegin = nullptr;
+    host.appendedEnd = nullptr;
+    host.appendedCapacity = nullptr;
+    if (!GuestPtr<WebRtcRtcpCompoundPacket>(compound).CopyOut(host))
+        throw std::invalid_argument(message);
 }
 
 }
