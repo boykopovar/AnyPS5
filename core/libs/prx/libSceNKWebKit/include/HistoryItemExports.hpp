@@ -34,5 +34,7 @@ void APS5_VABI _ZN7WebCore11HistoryItem18setPageScaleFactorEf(NKWebKit::WebCoreA
 void APS5_VABI _ZN7WebCore11HistoryItem15setIsTargetItemEb(NKWebKit::WebCoreAbi::HistoryItem* self, bool value);
 void APS5_VABI _ZN7WebCore11HistoryItem30setShouldRestoreScrollPositionEb(NKWebKit::WebCoreAbi::HistoryItem* self, bool value);
 void APS5_VABI _ZN7WebCore11HistoryItem31setShouldOpenExternalURLsPolicyENS_28ShouldOpenExternalURLsPolicyE(NKWebKit::WebCoreAbi::HistoryItem* self, std::uint8_t value);
+void APS5_VABI _ZN7WebCore11HistoryItem9setTargetERKN3WTF6StringE(NKWebKit::WebCoreAbi::HistoryItem* self, const NKWebKit::WtfAbi::String* value);
+NKWebKit::WebCoreAbi::HistoryItem* APS5_VABI _ZN7WebCore11HistoryItem19childItemWithTargetERKN3WTF6StringE(NKWebKit::WebCoreAbi::HistoryItem* self, const NKWebKit::WtfAbi::String* target);
 
 }

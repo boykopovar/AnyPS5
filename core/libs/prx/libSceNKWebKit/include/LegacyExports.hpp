@@ -115,7 +115,6 @@ int APS5_VABI libSceNKWebKitLegacyUnknown_1nQ_plus_8zpQbns_nid_no_patch();
 int APS5_VABI _ZN7WebCore21JSCSSStyleDeclaration23visitAdditionalChildrenERN3JSC11SlotVisitorE();
 int APS5_VABI libSceNKWebKitLegacyUnknown_1w_plus_iLcjzd10_nid_no_patch();
 int APS5_VABI libSceNKWebKitLegacyUnknown_1wgLUOSOs9Q_nid_no_patch();
-int APS5_VABI _ZN7WebCore11HistoryItem9setTargetERKN3WTF6StringE();
 int APS5_VABI _ZNK7WebCore9FrameView10renderViewEv();
 int APS5_VABI _ZNK7WebCore12ISOWebVTTCue16presentationTimeEv();
 int APS5_VABI _ZN7WebCore9FrameView29setShouldUpdateWhileOffscreenEb();
@@ -960,7 +959,6 @@ int APS5_VABI _ZN7WebCore22CSSAnimationController33animationsAreSuspendedForDocu
 int APS5_VABI libSceNKWebKitLegacyUnknown_PBzhGhm9efc_nid_no_patch();
 int APS5_VABI _ZN7WebCore27PlatformMediaSessionManager37processDidReceiveRemoteControlCommandENS_20PlatformMediaSession24RemoteControlCommandTypeEPKNS1_21RemoteCommandArgumentE();
 int APS5_VABI _ZNK7WebCore17CSSPrimitiveValue13primitiveTypeEv();
-int APS5_VABI _ZN7WebCore11HistoryItem19childItemWithTargetERKN3WTF6StringE();
 int APS5_VABI _ZN7WebCore26Matrix3DTransformOperationD2Ev();
 int APS5_VABI _ZN7WebCore8Gradient15setSpreadMethodENS_20GradientSpreadMethodE();
 int APS5_VABI _ZN7WebCore16threadGlobalDataEv();
