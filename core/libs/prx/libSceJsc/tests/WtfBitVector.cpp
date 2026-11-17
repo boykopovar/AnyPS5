@@ -1,5 +1,7 @@
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include "prx/libSceJsc/libSceJsc.hpp"
+#include "prx/libc/include/Api.hpp"
+#include "prx/libc/include/ApplicationHeap.hpp"
 
 #include <array>
 #include <cstddef>
@@ -45,6 +47,67 @@ template<typename Function> bool ThrowsInvalidArgument(Function function) {
         return true;
     }
     return false;
+}
+
+void Resize(BitVector& self, std::size_t numBits) {
+    _ZN3WTF9BitVector15resizeOutOfLineEm(&self, numBits);
+}
+
+std::size_t* Bits(const BitVector& vector) {
+    return reinterpret_cast<std::size_t*>(vector.bitsOrPointer << 1);
+}
+
+std::uintptr_t* Words(const BitVector& vector) {
+    return reinterpret_cast<std::uintptr_t*>(Bits(vector) + 1);
+}
+
+void TestResizeOutOfLine() {
+    auto vector = Inline(0x8000000000000F0FULL);
+    Resize(vector, 100);
+    Check((vector.bitsOrPointer & InlineFlag) == 0, __LINE__);
+    Check(Bits(vector)[0] == 128, __LINE__);
+    Check(Words(vector)[0] == 0x0000000000000F0FULL && Words(vector)[1] == 0, __LINE__);
+
+    Words(vector)[0] = 0x1111111111111111ULL;
+    Words(vector)[1] = 0x2222222222222222ULL;
+    std::size_t* previous = Bits(vector);
+    Resize(vector, 300);
+    Check(Bits(vector) != previous, __LINE__);
+    Check(Bits(vector)[0] == 320, __LINE__);
+    Check(Words(vector)[0] == 0x1111111111111111ULL && Words(vector)[1] == 0x2222222222222222ULL, __LINE__);
+    for (int i = 2; i < 5; ++i) Check(Words(vector)[i] == 0, __LINE__);
+
+    Words(vector)[2] = 0x3333333333333333ULL;
+    Resize(vector, 65);
+    Check(Bits(vector)[0] == 128, __LINE__);
+    Check(Words(vector)[0] == 0x1111111111111111ULL && Words(vector)[1] == 0x2222222222222222ULL, __LINE__);
+
+    Resize(vector, 128);
+    Check(Bits(vector)[0] == 128, __LINE__);
+    Check(Words(vector)[0] == 0x1111111111111111ULL && Words(vector)[1] == 0x2222222222222222ULL, __LINE__);
+    free_nid_postfix(Bits(vector));
+
+    auto exact = Inline(0x7FFFFFFFFFFFFFFFULL);
+    Resize(exact, 64);
+    Check(Bits(exact)[0] == 64 && Words(exact)[0] == 0x7FFFFFFFFFFFFFFFULL, __LINE__);
+    free_nid_postfix(Bits(exact));
+
+    auto small = Inline(0x5);
+    Check(ThrowsInvalidArgument([&] { _ZN3WTF9BitVector15resizeOutOfLineEm(nullptr, 100); }), __LINE__);
+    Check(ThrowsInvalidArgument([&] { Resize(small, 63); }), __LINE__);
+    Check(small.bitsOrPointer == (0x5 | InlineFlag), __LINE__);
+    for (const std::uintptr_t invalid : {std::uintptr_t{0}, std::uintptr_t{1}}) {
+        BitVector copy{invalid};
+        Check(ThrowsInvalidArgument([&] { Resize(copy, 100); }), __LINE__);
+        Check(copy.bitsOrPointer == invalid, __LINE__);
+    }
+    bool overflowed = false;
+    try {
+        Resize(small, SIZE_MAX);
+    } catch (const std::length_error&) {
+        overflowed = true;
+    }
+    Check(overflowed && small.bitsOrPointer == (0x5 | InlineFlag), __LINE__);
 }
 
 }
@@ -121,5 +184,7 @@ int main() {
             Check(a.words[0] == 0xFFULL, __LINE__);
         }
     }
+    ApplicationHeapInitialize_nid_no_patch(ApplicationEmptyProcessParameters_nid_no_patch());
+    TestResizeOutOfLine();
     return 0;
 }

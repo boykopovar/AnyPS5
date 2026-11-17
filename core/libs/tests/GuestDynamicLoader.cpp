@@ -1,4 +1,5 @@
 #include "prx/libkernel/include/Api.hpp"
+#include "prx/libc/include/GuestAllocations.hpp"
 #include "prx/libc/include/general/VabiMacros.hpp"
 #include <array>
 #include <cstdlib>
@@ -14,6 +15,9 @@
 #include <windows.h>
 #else
 #include <dlfcn.h>
+#ifdef __linux__
+#include <link.h>
+#endif
 #endif
 #include <stdexcept>
 #include <source_location>
@@ -121,6 +125,31 @@ static bool CheckGlobalVisibility(const char* path, bool globalFirst) {
     return visible;
 }
 #endif
+#ifdef __linux__
+static int FirstLoadedImage(dl_phdr_info* info, std::size_t, void* data) {
+    *static_cast<std::uintptr_t*>(data) = info->dlpi_addr;
+    return 1;
+}
+
+static void CheckProgramImageStaysRegistered() {
+    std::uintptr_t base = 0;
+    dl_iterate_phdr(FirstLoadedImage, &base);
+    const void* code = reinterpret_cast<const void*>(&CheckProgramImageStaysRegistered);
+    {
+        GuestAllocations::Mutation mutation;
+        if (base != 0) {
+            mutation.RegisterImage(reinterpret_cast<const void*>(base));
+        } else {
+            mutation.RegisterMainImage();
+        }
+        Require(mutation.Overlaps(code, 1));
+    }
+    void* self = dlopen_nid_postfix(nullptr, 2);
+    Require(self != nullptr && dlclose_nid_postfix(self) == 0);
+    GuestAllocations::Mutation mutation;
+    Require(mutation.Overlaps(code, 1));
+}
+#endif
 int main(int argc, char** argv) {
     Require(argc == 2);
     Require(dlerror_nid_postfix() == nullptr);
@@ -142,6 +171,9 @@ int main(int argc, char** argv) {
 
     void* executable = dlopen_nid_postfix(nullptr, 2);
     Require(executable != nullptr && dlclose_nid_postfix(executable) == 0);
+#ifdef __linux__
+    CheckProgramImageStaysRegistered();
+#endif
 #ifdef _WIN32
     CheckGlobalLookupOrder(argv[1]);
     const bool localFirstVisible = CheckGlobalVisibility(argv[1], false);
