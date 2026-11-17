@@ -27,6 +27,7 @@
 #include "prx/libc/include/General.hpp"
 #include "prx/libSceNKWebKit/include/HttpHeaderMapExports.hpp"
 #include "prx/libSceNKWebKit/include/ResourceRequestExports.hpp"
+#include "prx/libSceNKWebKit/include/InventoryExports.hpp"
 #include "prx/libSceNKWebKit/include/WtfExports.hpp"
 
 #include <stdexcept>
@@ -335,6 +336,10 @@ void APS5_VABI _ZN7WebCore19ResourceRequestBase17makeUnconditionalEv(ResourceReq
     };
     for (auto header : conditionalHeaders)
         _ZN7WebCore13HTTPHeaderMap6removeENS_14HTTPHeaderNameE(headers, header);
+}
+
+void APS5_VABI WKURLRequestSetDefaultTimeoutInterval(double timeoutInterval) {
+    _ZN7WebCore19ResourceRequestBase25setDefaultTimeoutIntervalEd(timeoutInterval);
 }
 
 }

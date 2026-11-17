@@ -1,5 +1,6 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -97,6 +98,43 @@ void ExpandKey(const unsigned char* userKey, int bits, AesKey& key) {
     }
 }
 
+void InvertKey(AesKey& key) {
+    auto* w = key.roundKeys;
+    for (int i = 0, j = 4 * key.rounds; i < j; i += 4, j -= 4)
+        for (int k = 0; k < 4; ++k) std::swap(w[i + k], w[j + k]);
+    for (int i = 4; i < 4 * key.rounds; ++i) w[i] = InverseMixWord(w[i]);
+}
+
+bool CopyKeyIn(void* destination, const void* source, std::size_t bytes) {
+    const int saved = errno;
+    const bool copied = GuestCopyIn_nid_no_patch(destination, source, bytes);
+    errno = saved;
+    return copied;
+}
+
+bool CopyKeyOut(void* destination, const void* source, std::size_t bytes) {
+    const int saved = errno;
+    const bool copied = GuestCopyOut_nid_no_patch(destination, source, bytes);
+    errno = saved;
+    return copied;
+}
+
+int SetKey(const unsigned char* userKey, int bits, AesKey* key, bool decrypt, const char* function) {
+    if (!userKey || !key) return -1;
+    const int rounds = RoundsForBits(bits);
+    if (!rounds) return -2;
+    std::array<unsigned char, 32> keyBytes {};
+    if (!CopyKeyIn(keyBytes.data(), userKey, static_cast<std::size_t>(bits / 8)))
+        throw std::invalid_argument(std::string(function) + ": unreadable user key");
+    AesKey expanded;
+    if (!CopyKeyIn(&expanded, key, sizeof(expanded))) throw std::invalid_argument(std::string(function) + ": unreadable key");
+    expanded.rounds = rounds;
+    ExpandKey(keyBytes.data(), bits, expanded);
+    if (decrypt) InvertKey(expanded);
+    if (!CopyKeyOut(key, &expanded, sizeof(expanded))) throw std::invalid_argument(std::string(function) + ": unwritable key");
+    return 0;
+}
+
 const AesKey& RequireKey(const AesKey* key, const char* function) {
     if (!key) throw std::invalid_argument(std::string(function) + ": null key");
     if (key->rounds != 10 && key->rounds != 12 && key->rounds != 14)
@@ -186,22 +224,11 @@ void IncrementCounter(unsigned char* counter) {
 extern "C" {
 
 int APS5_VABI AES_set_encrypt_key_nid_postfix(const unsigned char* userKey, int bits, AesKey* key) {
-    if (!userKey || !key) return -1;
-    const int rounds = RoundsForBits(bits);
-    if (!rounds) return -2;
-    key->rounds = rounds;
-    ExpandKey(userKey, bits, *key);
-    return 0;
+    return SetKey(userKey, bits, key, false, __func__);
 }
 
 int APS5_VABI AES_set_decrypt_key_nid_postfix(const unsigned char* userKey, int bits, AesKey* key) {
-    const int result = AES_set_encrypt_key_nid_postfix(userKey, bits, key);
-    if (result) return result;
-    auto* w = key->roundKeys;
-    for (int i = 0, j = 4 * key->rounds; i < j; i += 4, j -= 4)
-        for (int k = 0; k < 4; ++k) std::swap(w[i + k], w[j + k]);
-    for (int i = 4; i < 4 * key->rounds; ++i) w[i] = InverseMixWord(w[i]);
-    return 0;
+    return SetKey(userKey, bits, key, true, __func__);
 }
 
 void APS5_VABI AES_encrypt_nid_postfix(const unsigned char* in, unsigned char* out, const AesKey* key) {

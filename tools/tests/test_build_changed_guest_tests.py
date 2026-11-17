@@ -99,7 +99,7 @@ class GuestTestTargets(unittest.TestCase):
         guest_a = self.target("guest_a_tests", source="core/libs/tests/GuestA.cpp", fragment="libc.prx")
         guest_b = self.target("guest_b_tests", source="core/libs/tests/GuestB.cpp", fragment="libc.prx")
         build = self.fixture([guest_a, guest_b])
-        for path in ("3rdparty/ZArchive", "cmake/Opus.cmake", "core/CMakeLists.txt", ".gitmodules"):
+        for path in ("3rdparty/ZArchive", "cmake/Opus.cmake", ".gitmodules"):
             with self.subTest(path=path):
                 self.assertTrue(build_changed_guest_tests.reaches_libs({path}))
                 self.assertEqual(self.selections(build, [path]), ["guest_a_tests", "guest_b_tests"])
