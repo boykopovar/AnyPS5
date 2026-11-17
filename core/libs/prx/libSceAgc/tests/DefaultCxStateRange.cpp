@@ -82,7 +82,7 @@ int main() {
     try {
         testReferenceRanges();
         LibcRunShutdown_nid_postfix();
-        std::puts("AGC default context ranges: 39 reference-derived cases and 2 host validation cases passed");
+        std::puts("AGC default context ranges: 36 reference-derived cases, 3 empty null ranges and 2 host validation cases passed");
         return 0;
     } catch (const std::exception& error) {
         std::fprintf(stderr, "%s\n", error.what());
