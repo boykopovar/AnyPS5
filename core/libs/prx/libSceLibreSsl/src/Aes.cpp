@@ -1,4 +1,5 @@
 #include "prx/libSceLibreSsl/include/Api.hpp"
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -142,8 +143,30 @@ const AesKey& RequireKey(const AesKey* key, const char* function) {
     return *key;
 }
 
+AesKey ReadKey(const AesKey* key, const char* function) {
+    if (!key) throw std::invalid_argument(std::string(function) + ": null key");
+    AesKey copy;
+    if (!CopyKeyIn(&copy, key, sizeof(copy))) throw std::invalid_argument(std::string(function) + ": unreadable key");
+    RequireKey(&copy, function);
+    return copy;
+}
+
 void RequireBlocks(const void* in, const void* out, std::size_t length, const char* function) {
     if (length && (!in || !out)) throw std::invalid_argument(std::string(function) + ": null input or output");
+}
+
+constexpr std::size_t Chunk = 4096;
+
+void ReadGuest(void* destination, const void* source, std::size_t bytes, const char* function, const char* name) {
+    if (!CopyKeyIn(destination, source, bytes)) throw std::invalid_argument(std::string(function) + ": unreadable " + name);
+}
+
+void WriteGuest(void* destination, const void* source, std::size_t bytes, const char* function, const char* name) {
+    if (!CopyKeyOut(destination, source, bytes)) throw std::invalid_argument(std::string(function) + ": unwritable " + name);
+}
+
+void WriteChanged(void* destination, const void* before, const void* after, std::size_t bytes, const char* function, const char* name) {
+    if (std::memcmp(before, after, bytes)) WriteGuest(destination, after, bytes, function, name);
 }
 
 void LoadState(std::uint8_t (&state)[16], const unsigned char* in, const std::uint32_t* roundKey) {
@@ -249,67 +272,105 @@ void APS5_VABI AES_ecb_encrypt_nid_postfix(const unsigned char* in, unsigned cha
 }
 
 void APS5_VABI AES_cbc_encrypt_nid_postfix(const unsigned char* in, unsigned char* out, std::size_t length, const AesKey* key, unsigned char* ivec, int encrypt) {
-    const auto& k = RequireKey(key, __func__);
+    const auto k = ReadKey(key, __func__);
     RequireBlocks(in, out, length, __func__);
     if (!ivec) throw std::invalid_argument(std::string(__func__) + ": null iv");
-    std::uint8_t block[BlockSize];
-    if (encrypt) {
-        while (length) {
-            const std::size_t count = length < BlockSize ? length : BlockSize;
-            for (std::size_t n = 0; n < BlockSize; ++n) block[n] = n < count ? in[n] ^ ivec[n] : ivec[n];
-            EncryptBlock(block, out, k);
-            std::memcpy(ivec, out, BlockSize);
-            if (length <= BlockSize) break;
-            length -= BlockSize;
-            in += BlockSize;
-            out += BlockSize;
+    if (!length) return;
+    unsigned char iv[BlockSize];
+    ReadGuest(iv, ivec, BlockSize, __func__, "iv");
+    unsigned char source[Chunk];
+    unsigned char target[Chunk];
+    for (std::size_t done = 0; done < length;) {
+        const std::size_t size = std::min(Chunk, length - done);
+        const std::size_t padded = (size + BlockSize - 1) / BlockSize * BlockSize;
+        ReadGuest(source, in + done, encrypt ? size : padded, __func__, "input");
+        for (std::size_t offset = 0; offset < padded; offset += BlockSize) {
+            const std::size_t count = std::min(BlockSize, size - offset);
+            std::uint8_t block[BlockSize];
+            if (encrypt) {
+                for (std::size_t n = 0; n < BlockSize; ++n) block[n] = n < count ? source[offset + n] ^ iv[n] : iv[n];
+                EncryptBlock(block, target + offset, k);
+                std::memcpy(iv, target + offset, BlockSize);
+            } else {
+                DecryptBlock(source + offset, block, k);
+                for (std::size_t n = 0; n < count; ++n) target[offset + n] = block[n] ^ iv[n];
+                std::memcpy(iv, source + offset, BlockSize);
+            }
         }
-        return;
+        WriteGuest(out + done, target, encrypt ? padded : size, __func__, "output");
+        done += size;
     }
-    while (length) {
-        const std::size_t count = length < BlockSize ? length : BlockSize;
-        std::uint8_t cipher[BlockSize];
-        std::memcpy(cipher, in, BlockSize);
-        DecryptBlock(cipher, block, k);
-        for (std::size_t n = 0; n < count; ++n) out[n] = block[n] ^ ivec[n];
-        std::memcpy(ivec, cipher, BlockSize);
-        if (length <= BlockSize) break;
-        length -= BlockSize;
-        in += BlockSize;
-        out += BlockSize;
-    }
+    WriteGuest(ivec, iv, BlockSize, __func__, "iv");
 }
 
 void APS5_VABI AES_cfb128_encrypt_nid_postfix(const unsigned char* in, unsigned char* out, std::size_t length, const AesKey* key, unsigned char* ivec, int* num, int encrypt) {
-    const auto& k = RequireKey(key, __func__);
+    const auto k = ReadKey(key, __func__);
     RequireBlocks(in, out, length, __func__);
     if (!ivec || !num) throw std::invalid_argument(std::string(__func__) + ": null iv or position");
-    unsigned n = RequirePosition(*num, __func__);
-    for (std::size_t i = 0; i < length; ++i) {
-        if (!n) EncryptBlock(ivec, ivec, k);
-        const auto c = in[i];
-        out[i] = ivec[n] ^ c;
-        ivec[n] = encrypt ? out[i] : c;
-        n = (n + 1) % BlockSize;
+    int position = 0;
+    ReadGuest(&position, num, sizeof(position), __func__, "position");
+    unsigned n = RequirePosition(position, __func__);
+    if (!length) return;
+    unsigned char before[BlockSize];
+    unsigned char iv[BlockSize];
+    ReadGuest(before, ivec, BlockSize, __func__, "iv");
+    std::memcpy(iv, before, BlockSize);
+    unsigned char source[Chunk];
+    unsigned char target[Chunk];
+    for (std::size_t done = 0; done < length;) {
+        const std::size_t size = std::min(Chunk, length - done);
+        ReadGuest(source, in + done, size, __func__, "input");
+        for (std::size_t i = 0; i < size; ++i) {
+            if (!n) EncryptBlock(iv, iv, k);
+            const auto c = source[i];
+            target[i] = iv[n] ^ c;
+            iv[n] = encrypt ? target[i] : c;
+            n = (n + 1) % BlockSize;
+        }
+        WriteGuest(out + done, target, size, __func__, "output");
+        done += size;
     }
-    *num = static_cast<int>(n);
+    WriteChanged(ivec, before, iv, BlockSize, __func__, "iv");
+    const int after = static_cast<int>(n);
+    WriteChanged(num, &position, &after, sizeof(after), __func__, "position");
 }
 
 void APS5_VABI AES_ctr128_encrypt_nid_postfix(const unsigned char* in, unsigned char* out, std::size_t length, const AesKey* key, unsigned char* ivec, unsigned char* ecountBuffer, unsigned* num) {
-    const auto& k = RequireKey(key, __func__);
+    const auto k = ReadKey(key, __func__);
     RequireBlocks(in, out, length, __func__);
     if (!ivec || !ecountBuffer || !num) throw std::invalid_argument(std::string(__func__) + ": null counter, keystream or position");
-    if (*num >= BlockSize) throw std::invalid_argument(std::string(__func__) + ": block position " + std::to_string(*num) + " is outside 0-15");
-    unsigned n = *num;
-    for (std::size_t i = 0; i < length; ++i) {
-        if (!n) {
-            EncryptBlock(ivec, ecountBuffer, k);
-            IncrementCounter(ivec);
+    unsigned position = 0;
+    ReadGuest(&position, num, sizeof(position), __func__, "position");
+    if (position >= BlockSize) throw std::invalid_argument(std::string(__func__) + ": block position " + std::to_string(position) + " is outside 0-15");
+    if (!length) return;
+    unsigned char counterBefore[BlockSize];
+    unsigned char counter[BlockSize];
+    unsigned char keystreamBefore[BlockSize];
+    unsigned char keystream[BlockSize];
+    ReadGuest(counterBefore, ivec, BlockSize, __func__, "counter");
+    ReadGuest(keystreamBefore, ecountBuffer, BlockSize, __func__, "keystream");
+    std::memcpy(counter, counterBefore, BlockSize);
+    std::memcpy(keystream, keystreamBefore, BlockSize);
+    unsigned n = position;
+    unsigned char source[Chunk];
+    unsigned char target[Chunk];
+    for (std::size_t done = 0; done < length;) {
+        const std::size_t size = std::min(Chunk, length - done);
+        ReadGuest(source, in + done, size, __func__, "input");
+        for (std::size_t i = 0; i < size; ++i) {
+            if (!n) {
+                EncryptBlock(counter, keystream, k);
+                IncrementCounter(counter);
+            }
+            target[i] = source[i] ^ keystream[n];
+            n = (n + 1) % BlockSize;
         }
-        out[i] = in[i] ^ ecountBuffer[n];
-        n = (n + 1) % BlockSize;
+        WriteGuest(out + done, target, size, __func__, "output");
+        done += size;
     }
-    *num = n;
+    WriteChanged(ivec, counterBefore, counter, BlockSize, __func__, "counter");
+    WriteChanged(ecountBuffer, keystreamBefore, keystream, BlockSize, __func__, "keystream");
+    WriteChanged(num, &position, &n, sizeof(n), __func__, "position");
 }
 
 }

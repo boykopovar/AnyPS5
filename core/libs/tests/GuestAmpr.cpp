@@ -806,6 +806,49 @@ void TestResolveFailures() {
         Require(sceKernelAprResolveFilepathsToIds(&invalid, 1, ids, &failed) == -1);
         Require(*__error_nid_postfix() == 2 && failed == 0 && ids[0] == 0xffffffffu);
     }
+    const char** const unreadableTable = reinterpret_cast<const char**>(0x10);
+    const char* unreadableEntry[]{reinterpret_cast<const char*>(0x10)};
+    const auto* const unreadablePrefix = reinterpret_cast<const char*>(0x10);
+    const auto faulted = [](int result) {
+        const bool fault = result == -1 && *__error_nid_postfix() == 14;
+        *__error_nid_postfix() = 0;
+        return fault;
+    };
+    Require(faulted(sceKernelAprResolveFilepathsToIds(unreadableTable, 1, ids, &failed)));
+    Require(faulted(sceKernelAprResolveFilepathsToIdsForEach(unreadableEntry, 1, ids, results)));
+    Require(faulted(sceKernelAprResolveFilepathsToIdsAndFileSizes(unreadableEntry, 1, ids, sizes, &failed)));
+    Require(faulted(sceKernelAprResolveFilepathsWithPrefixToIds(unreadablePrefix, paths, 1, ids, &failed)));
+    Require(faulted(sceKernelAprResolveFilepathsWithPrefixToIdsForEach(unreadablePrefix, paths, 1, ids, results)));
+    *__error_nid_postfix() = 0;
+    Require(sceKernelAprResolveFilepathsWithPrefixToIds(unreadablePrefix, paths, 0, ids, &failed) == 0 && *__error_nid_postfix() == 0);
+    Require(sceKernelAprResolveFilepathsWithPrefixToIdsForEach(unreadablePrefix, paths, 0, ids, results) == 0 && *__error_nid_postfix() == 0);
+    Require(faulted(sceKernelAprResolveFilepathsToIds(paths, 1, reinterpret_cast<std::uint32_t*>(0x10), &failed)));
+    Require(faulted(sceKernelAprResolveFilepathsToIdsAndFileSizesForEach(paths, 1, ids, reinterpret_cast<std::uint64_t*>(0x10), results)));
+    Require(faulted(sceKernelAprResolveFilepathsToIdsForEach(paths, 1, ids, reinterpret_cast<int*>(0x10))));
+    ids[1] = 123;
+    Require(faulted(sceKernelAprResolveFilepathsToIds(paths, 2, ids, reinterpret_cast<std::uint32_t*>(0x10))) && ids[1] == 0xffffffffu);
+    const std::string longPath(1025, 'a');
+    const char* longPaths[]{longPath.c_str()};
+    ids[0] = 123;
+    failed = 99;
+    *__error_nid_postfix() = 0;
+    Require(sceKernelAprResolveFilepathsToIds(longPaths, 1, ids, &failed) == -1);
+    Require(*__error_nid_postfix() == 2 && failed == 0 && ids[0] == 0xffffffffu);
+    ids[0] = 123;
+    failed = 99;
+    *__error_nid_postfix() = 0;
+    Require(sceKernelAprResolveFilepathsWithPrefixToIds(longPath.c_str(), paths, 1, ids, &failed) == -1);
+    Require(*__error_nid_postfix() == 2 && failed == 0 && ids[0] == 0xffffffffu);
+    ids[0] = 123;
+    sizes[0] = 123;
+    failed = 99;
+    *__error_nid_postfix() = 0;
+    Require(sceKernelAprResolveFilepathsToIdsAndFileSizes(longPaths, 1, ids, sizes, &failed) == -1);
+    Require(*__error_nid_postfix() == 2 && failed == 0 && ids[0] == 0xffffffffu && sizes[0] == 0);
+    ids[0] = 123;
+    results[0] = 123;
+    Require(sceKernelAprResolveFilepathsToIdsForEach(longPaths, 1, ids, results) == 0);
+    Require(ids[0] == 0xffffffffu && results[0] == static_cast<int>(0x80020002));
     std::remove(paths[0]);
 }
 

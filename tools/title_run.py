@@ -22,7 +22,7 @@ import pad_input
 import pad_timeline
 import unwrap_self
 from audit_dump import comparison_path
-from package_release import windows_runtime
+from package_release import native_auxiliary_runtimes, windows_runtime
 OUTCOMES = ("relink-failed", "crashed", "exited", "stalled", "frame-unreadable", "blank", "rendering")
 TITLE_ID = re.compile(r"[A-Z]{4}[0-9]{5}")
 TITLE_FIELDS = {"relink": list, "fixed_base": str, "executables": list, "seconds": int, "env": dict, "pad": dict, "files": dict, "smoke": bool}
@@ -447,6 +447,8 @@ def discover(directories, wanted=(), packages=None):
             if wanted and title_id not in wanted:
                 continue
             if title_id in found:
+                if package.samefile(found[title_id]["package"]):
+                    continue
                 raise ValueError(f"{title_id} found more than once: {found[title_id]['package']} and {package}")
             localized = data.get("localizedParameters", {})
             name = localized.get(localized.get("defaultLanguage", "en-US"), {}).get("titleName", title_id)
@@ -696,6 +698,7 @@ def validate_layout(args, found, ids, titles, source, platform, packages=None):
                 if directory:
                     pending.append((path, package))
     trees.extend(build_trees)
+    files.extend(native_auxiliary_runtimes(platform, args.build))
     if platform == "windows":
         try:
             runtime = windows_runtime(args.build)
@@ -761,7 +764,7 @@ def prepare(title_id, found, entry, platform, build, work):
     link_tree(package, work / "app0", {"sce_module"})
     libs = work / "libs"
     libs.mkdir()
-    for library in sorted((build / "core/libs/libs").glob("*.prx")):
+    for library in sorted((build / "core/libs/libs").glob("*.prx")) + native_auxiliary_runtimes(platform, build):
         link_file(library, libs / library.name)
     if platform == "windows":
         runtime = windows_runtime(build)

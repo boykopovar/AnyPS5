@@ -7,9 +7,12 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <stdexcept>
+#include <string>
 
 using namespace FreeType;
 
@@ -30,6 +33,16 @@ static int ReadGlyphToScriptMap(FT_Library library, const char* moduleName, cons
 
 static bool IsGlyphToScriptMap(const char* moduleName, const char* propertyName) {
     return moduleName && propertyName && std::strcmp(moduleName, "autofitter") == 0 && std::strcmp(propertyName, "glyph-to-script-map") == 0;
+}
+
+static FT_Library ReadGuestLibrary(GuestLibrary* library, const char* function) {
+    if (!library) return nullptr;
+    FT_Library host = nullptr;
+    const int saved = errno;
+    const bool read = GuestCopyIn_nid_no_patch(&host, &library->host, sizeof(host));
+    errno = saved;
+    if (!read) throw std::invalid_argument(std::string(function) + ": unreadable library handle");
+    return host;
 }
 
 static_assert(sizeof(FT_UInt) == sizeof(std::uint32_t));
@@ -122,9 +135,9 @@ bool InstallsRendererHooks(FT_Library library, const char* moduleName, const cha
 
 extern "C" int APS5_VABI FT_Property_Get_nid_postfix(GuestLibrary* library, const char* moduleName,
     const char* propertyName, void* value) {
-    if (library && library->host && value && IsGlyphToScriptMap(moduleName, propertyName))
-        return ReadGlyphToScriptMap(library->host, moduleName, propertyName, value);
-    const auto host = library ? library->host : nullptr;
+    const FT_Library host = ReadGuestLibrary(library, __func__);
+    if (host && value && IsGlyphToScriptMap(moduleName, propertyName))
+        return ReadGlyphToScriptMap(host, moduleName, propertyName, value);
     if (!host || !moduleName || !propertyName || !value) return FT_Property_Get(host, moduleName, propertyName, value);
     switch (TypeOf(moduleName, propertyName, false)) {
         case PropertyType::Unsigned: return Read<FT_UInt>(host, moduleName, propertyName, value);
@@ -140,11 +153,11 @@ extern "C" int APS5_VABI FT_Property_Get_nid_postfix(GuestLibrary* library, cons
 
 extern "C" int APS5_VABI FT_Property_Set_nid_postfix(GuestLibrary* library, const char* moduleName,
     const char* propertyName, const void* value) {
-    if (library && library->host && value && IsGlyphToScriptMap(moduleName, propertyName)) {
+    const FT_Library host = ReadGuestLibrary(library, __func__);
+    if (host && value && IsGlyphToScriptMap(moduleName, propertyName)) {
         FT_Prop_GlyphToScriptMap property{};
-        return FT_Property_Set(library->host, moduleName, propertyName, &property);
+        return FT_Property_Set(host, moduleName, propertyName, &property);
     }
-    const auto host = library ? library->host : nullptr;
     if (!host || !moduleName || !propertyName || !value) return FT_Property_Set(host, moduleName, propertyName, value);
     switch (TypeOf(moduleName, propertyName, true)) {
         case PropertyType::Unsigned: return Write<FT_UInt>(host, moduleName, propertyName, value);
