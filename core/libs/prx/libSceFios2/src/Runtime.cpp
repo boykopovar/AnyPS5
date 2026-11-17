@@ -128,6 +128,17 @@ bool CancelQueued(const std::shared_ptr<Op>& op) {
     return true;
 }
 
+void RunIfQueued(const std::shared_ptr<Op>& op) {
+    {
+        const std::lock_guard lock(Global().mutex);
+        if (op->done || !op->queued) return;
+        auto& pending = Global().pending;
+        pending.erase(std::remove(pending.begin(), pending.end(), op->id), pending.end());
+        op->queued = false;
+    }
+    Run(op);
+}
+
 }
 
 std::int32_t FromKernelError(std::int64_t kernelResult) {
@@ -240,9 +251,13 @@ std::int64_t SyncCount(SceFiosOp op) {
 bool SyncWait(SceFiosOp op, Completion& completion) {
     std::shared_ptr<Op> found;
     {
-        std::unique_lock lock(Global().mutex);
+        const std::lock_guard lock(Global().mutex);
         found = FindOp(Global(), op);
-        if (!found) return false;
+    }
+    if (!found) return false;
+    RunIfQueued(found);
+    {
+        std::unique_lock lock(Global().mutex);
         Global().finished.wait(lock, [&] { return found->done; });
         completion.error = found->error;
         completion.result = found->result;
