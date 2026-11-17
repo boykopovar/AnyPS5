@@ -35,7 +35,6 @@ namespace {
 
 using NKWebKit::WebCoreAbi::FixedPositionViewportConstraints;
 using NKWebKit::WebCoreAbi::StickyPositionViewportConstraints;
-using NKWebKit::WebCoreAbi::ViewportConstraints;
 using WebCore::FloatPoint;
 using WebCore::FloatRect;
 using WebCore::FloatSize;
@@ -47,8 +46,8 @@ enum AnchorEdgeFlags : unsigned {
     AnchorEdgeBottom = 1 << 3,
 };
 
-bool HasAnchorEdge(const ViewportConstraints& constraints, AnchorEdgeFlags flag) {
-    return constraints.anchorEdges & flag;
+bool HasAnchorEdge(unsigned anchorEdges, AnchorEdgeFlags flag) {
+    return anchorEdges & flag;
 }
 
 float MaxX(const FloatRect& rect) {
@@ -77,7 +76,7 @@ FloatSize ComputeStickyOffset(const StickyPositionViewportConstraints& constrain
     const FloatRect& stickyBoxRect = constraints.stickyBoxRect;
     const FloatRect& containingBlockRect = constraints.containingBlockRect;
 
-    if (HasAnchorEdge(constraints, AnchorEdgeRight)) {
+    if (HasAnchorEdge(constraints.anchorEdges, AnchorEdgeRight)) {
         float rightLimit = MaxX(constrainingRect) - constraints.rightOffset;
         float rightDelta = std::min<float>(0, rightLimit - MaxX(stickyBoxRect));
         float availableSpace = std::min<float>(0, containingBlockRect.x() - stickyBoxRect.x());
@@ -86,7 +85,7 @@ FloatSize ComputeStickyOffset(const StickyPositionViewportConstraints& constrain
         boxRect.m_location.m_x += rightDelta;
     }
 
-    if (HasAnchorEdge(constraints, AnchorEdgeLeft)) {
+    if (HasAnchorEdge(constraints.anchorEdges, AnchorEdgeLeft)) {
         float leftLimit = constrainingRect.x() + constraints.leftOffset;
         float leftDelta = std::max<float>(0, leftLimit - stickyBoxRect.x());
         float availableSpace = std::max<float>(0, MaxX(containingBlockRect) - MaxX(stickyBoxRect));
@@ -95,7 +94,7 @@ FloatSize ComputeStickyOffset(const StickyPositionViewportConstraints& constrain
         boxRect.m_location.m_x += leftDelta;
     }
 
-    if (HasAnchorEdge(constraints, AnchorEdgeBottom)) {
+    if (HasAnchorEdge(constraints.anchorEdges, AnchorEdgeBottom)) {
         float bottomLimit = MaxY(constrainingRect) - constraints.bottomOffset;
         float bottomDelta = std::min<float>(0, bottomLimit - MaxY(stickyBoxRect));
         float availableSpace = std::min<float>(0, containingBlockRect.y() - stickyBoxRect.y());
@@ -104,7 +103,7 @@ FloatSize ComputeStickyOffset(const StickyPositionViewportConstraints& constrain
         boxRect.m_location.m_y += bottomDelta;
     }
 
-    if (HasAnchorEdge(constraints, AnchorEdgeTop)) {
+    if (HasAnchorEdge(constraints.anchorEdges, AnchorEdgeTop)) {
         float topLimit = constrainingRect.y() + constraints.topOffset;
         float topDelta = std::max<float>(0, topLimit - stickyBoxRect.y());
         float availableSpace = std::max<float>(0, MaxY(containingBlockRect) - MaxY(stickyBoxRect));
@@ -127,14 +126,14 @@ FloatPoint APS5_VABI _ZNK7WebCore32FixedPositionViewportConstraints28layerPositi
     const FloatRect& lastLayout = constraints.viewportRectAtLastLayout;
     FloatSize offset;
 
-    if (HasAnchorEdge(constraints, AnchorEdgeLeft))
+    if (HasAnchorEdge(constraints.anchorEdges, AnchorEdgeLeft))
         offset.m_width = viewport.x() - lastLayout.x();
-    else if (HasAnchorEdge(constraints, AnchorEdgeRight))
+    else if (HasAnchorEdge(constraints.anchorEdges, AnchorEdgeRight))
         offset.m_width = MaxX(viewport) - MaxX(lastLayout);
 
-    if (HasAnchorEdge(constraints, AnchorEdgeTop))
+    if (HasAnchorEdge(constraints.anchorEdges, AnchorEdgeTop))
         offset.m_height = viewport.y() - lastLayout.y();
-    else if (HasAnchorEdge(constraints, AnchorEdgeBottom))
+    else if (HasAnchorEdge(constraints.anchorEdges, AnchorEdgeBottom))
         offset.m_height = MaxY(viewport) - MaxY(lastLayout);
 
     return Add(constraints.layerPositionAtLastLayout, offset);

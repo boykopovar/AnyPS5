@@ -4,21 +4,22 @@
 #include "prx/libSceNKWebKit/src/WebCoreTypes.hpp"
 
 #include <cstddef>
+#include <type_traits>
 
 namespace NKWebKit::WebCoreAbi {
 
-struct ViewportConstraints {
+struct FixedPositionViewportConstraints {
     const void* vptr;
     WebCore::FloatSize alignmentOffset;
     unsigned anchorEdges;
-};
-
-struct FixedPositionViewportConstraints : ViewportConstraints {
     WebCore::FloatRect viewportRectAtLastLayout;
     WebCore::FloatPoint layerPositionAtLastLayout;
 };
 
-struct StickyPositionViewportConstraints : ViewportConstraints {
+struct StickyPositionViewportConstraints {
+    const void* vptr;
+    WebCore::FloatSize alignmentOffset;
+    unsigned anchorEdges;
     float leftOffset;
     float rightOffset;
     float topOffset;
@@ -30,13 +31,16 @@ struct StickyPositionViewportConstraints : ViewportConstraints {
     WebCore::FloatPoint layerPositionAtLastLayout;
 };
 
-static_assert(sizeof(ViewportConstraints) == 24);
-static_assert(offsetof(ViewportConstraints, alignmentOffset) == 8);
-static_assert(offsetof(ViewportConstraints, anchorEdges) == 16);
+static_assert(std::is_standard_layout_v<FixedPositionViewportConstraints>);
 static_assert(sizeof(FixedPositionViewportConstraints) == 48);
+static_assert(offsetof(FixedPositionViewportConstraints, alignmentOffset) == 8);
+static_assert(offsetof(FixedPositionViewportConstraints, anchorEdges) == 16);
 static_assert(offsetof(FixedPositionViewportConstraints, viewportRectAtLastLayout) == 20);
 static_assert(offsetof(FixedPositionViewportConstraints, layerPositionAtLastLayout) == 36);
+static_assert(std::is_standard_layout_v<StickyPositionViewportConstraints>);
 static_assert(sizeof(StickyPositionViewportConstraints) == 104);
+static_assert(offsetof(StickyPositionViewportConstraints, alignmentOffset) == 8);
+static_assert(offsetof(StickyPositionViewportConstraints, anchorEdges) == 16);
 static_assert(offsetof(StickyPositionViewportConstraints, leftOffset) == 20);
 static_assert(offsetof(StickyPositionViewportConstraints, constrainingRectAtLastLayout) == 36);
 static_assert(offsetof(StickyPositionViewportConstraints, containingBlockRect) == 52);
