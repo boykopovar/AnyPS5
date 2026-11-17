@@ -398,7 +398,7 @@ std::filesystem::path Resolve(WorkingDirectory& state, const char* path, bool mo
     if (text.size() >= MaxPath) throw std::filesystem::filesystem_error("Guest path is too long", std::make_error_code(std::errc::filename_too_long));
     std::size_t name = 0;
     for (std::size_t index = 0; index < text.size(); ++index) {
-        name = text[index] == '/' || text[index] == '\\' ? 0 : name + 1;
+        name = text[index] == '/' ? 0 : name + 1;
         if (name <= MaxName) continue;
         const std::size_t end = index + 1 - name;
         std::error_code status;
