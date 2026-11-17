@@ -386,6 +386,8 @@ int main() {
     Require(sceAppContentGetPftFlag(&pftFlag) == 0);
     Require(pftFlag == 0);
     Require(sceAppContentGetPftFlag(nullptr) == ErrorParameter);
+    errno = EBUSY;
+    Require(sceAppContentGetPftFlag(reinterpret_cast<uint32_t*>(std::uintptr_t{0x10})) == ErrorParameter && errno == EBUSY);
     AppContentEntitlementKey key;
     std::memset(&key, 0x5a, sizeof(key));
     const AppContentEntitlementKey untouchedKey = key;

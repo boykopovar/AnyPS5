@@ -555,8 +555,11 @@ int APS5_VABI sceAppContentGetEntitlementKey(uint32_t serviceLabel, const NpUnif
 int APS5_VABI sceAppContentGetPftFlag(uint32_t* pftFlag) {
     if (!initialized.load()) return SCE_APP_CONTENT_ERROR_NOT_INITIALIZED;
     if (!pftFlag) return SCE_APP_CONTENT_ERROR_PARAMETER;
-    *pftFlag = 0;
-    return 0;
+    const int savedErrno = errno;
+    uint32_t flag = 0;
+    const bool copied = GuestCopyOut_nid_no_patch(pftFlag, &flag, sizeof(flag));
+    errno = savedErrno;
+    return copied ? 0 : SCE_APP_CONTENT_ERROR_PARAMETER;
 }
 
 int APS5_VABI sceAppContentGetRegion(void* region) {
