@@ -283,7 +283,9 @@ int32_t APS5_VABI sceM4aacEncInitialize(int32_t* context) {
 }
 
 int APS5_VABI sceM4aacEncTerminate(int32_t* context) {
-    (void)context;
+    if (context == nullptr) {
+        return ErrorInvalidPointer;
+    }
     NotImplemented_nid_no_patch(__func__);
 }
 
