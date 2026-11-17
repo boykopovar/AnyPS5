@@ -648,6 +648,10 @@ int ConvertCharacter(int value, bool upper) {
 
 }
 
+extern "C" GuestLocale::OutputIterator LibcTimePutDoPut_nid_no_patch(const GuestLocale::Facet* self, GuestLocale::OutputIterator out, GuestLocale::IosBase* stream, char fill, const GuestTm* time, char format, char modifier) {
+    return TimePutDoPut(self, out, stream, fill, time, format, modifier);
+}
+
 extern "C" GuestLocale::String* LibcAssignCString_nid_no_patch(GuestLocale::String* result, const char* source) {
     return AssignCString(result, source);
 }
@@ -779,7 +783,22 @@ int APS5_VABI tolower_nid_postfix(int c) { return ConvertCharacter(c, false); }
 
 std::uint64_t _ZNSt5ctypeIcE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt5ctypeIwE2idE_nid_postfix = 0;
-std::uintptr_t _ZTVSt5ctypeIcE_nid_postfix[14] {};
+std::uintptr_t _ZTVSt5ctypeIcE_nid_postfix[14] {
+    0,
+    0,
+    reinterpret_cast<std::uintptr_t>(&CtypeDestroy_nid_no_patch),
+    reinterpret_cast<std::uintptr_t>(&CtypeDelete_nid_no_patch),
+    reinterpret_cast<std::uintptr_t>(&RetainFacet),
+    reinterpret_cast<std::uintptr_t>(&ReleaseFacet),
+    reinterpret_cast<std::uintptr_t>(&CtypeDoTolower_nid_no_patch),
+    reinterpret_cast<std::uintptr_t>(&CtypeDoTolowerRange_nid_no_patch),
+    reinterpret_cast<std::uintptr_t>(&CtypeDoToupper_nid_no_patch),
+    reinterpret_cast<std::uintptr_t>(&CtypeDoToupperRange_nid_no_patch),
+    reinterpret_cast<std::uintptr_t>(&_ZNKSt5ctypeIcE8do_widenEc_nid_postfix),
+    reinterpret_cast<std::uintptr_t>(&_ZNKSt5ctypeIcE8do_widenEPKcS2_Pc_nid_postfix),
+    reinterpret_cast<std::uintptr_t>(&_ZNKSt5ctypeIcE9do_narrowEcc_nid_postfix),
+    reinterpret_cast<std::uintptr_t>(&_ZNKSt5ctypeIcE9do_narrowEPKcS2_cPc_nid_postfix),
+};
 std::uintptr_t _ZTVSt5ctypeIwE_nid_postfix[18] {};
 std::uint64_t _ZNSt7collateIwE2idE_nid_postfix = 0;
 std::uint64_t _ZNSt7collateIcE2idE_nid_postfix = 0;
@@ -1309,6 +1328,92 @@ const char* APS5_VABI _ZNKSt5ctypeIcE9do_narrowEPKcS2_cPc_nid_postfix(const Gues
     return CopyCtypeRange(first, last, destination);
 }
 
+static const void* CtypeFieldAddress(const void* base, std::size_t offset) {
+    const auto address = reinterpret_cast<std::uintptr_t>(base);
+    if (!base || offset > std::numeric_limits<std::uintptr_t>::max() - address) APS5_INVALID_ARG_EX;
+    return reinterpret_cast<const void*>(address + offset);
+}
+
+static std::uint8_t MapCtypeCharacter(const GuestLocale::CtypeFacet* self, std::uint8_t character, std::size_t tableOffset) {
+    const std::int16_t* table;
+    if (!GuestCopyIn_nid_no_patch(&table, CtypeFieldAddress(self, tableOffset), sizeof(table))) APS5_INVALID_ARG_EX;
+    std::uint8_t mapped;
+    if (!GuestCopyIn_nid_no_patch(&mapped, CtypeFieldAddress(table, sizeof(std::int16_t) * character), sizeof(mapped))) {
+        APS5_INVALID_ARG_EX;
+    }
+    return mapped;
+}
+
+static const char* MapCtypeRange(const GuestLocale::CtypeFacet* self, char* first, const char* last, std::size_t tableOffset) {
+    auto current = reinterpret_cast<std::uintptr_t>(first);
+    const auto end = reinterpret_cast<std::uintptr_t>(last);
+    if (current > end) APS5_INVALID_ARG_EX;
+    while (current != end) {
+        auto* destination = reinterpret_cast<void*>(current);
+        std::uint8_t character;
+        if (!GuestCopyIn_nid_no_patch(&character, destination, sizeof(character))) APS5_INVALID_ARG_EX;
+        const std::uint8_t mapped = MapCtypeCharacter(self, character, tableOffset);
+        if (!GuestCopyOut_nid_no_patch(destination, &mapped, sizeof(mapped))) APS5_INVALID_ARG_EX;
+        ++current;
+    }
+    return last;
+}
+
+char APS5_VABI CtypeDoTolower_nid_no_patch(const GuestLocale::CtypeFacet* self, char character) {
+    return static_cast<char>(MapCtypeCharacter(self, static_cast<std::uint8_t>(character), offsetof(GuestLocale::CtypeFacet, lower)));
+}
+
+const char* APS5_VABI CtypeDoTolowerRange_nid_no_patch(const GuestLocale::CtypeFacet* self, char* first, const char* last) {
+    return MapCtypeRange(self, first, last, offsetof(GuestLocale::CtypeFacet, lower));
+}
+
+char APS5_VABI CtypeDoToupper_nid_no_patch(const GuestLocale::CtypeFacet* self, char character) {
+    return static_cast<char>(MapCtypeCharacter(self, static_cast<std::uint8_t>(character), offsetof(GuestLocale::CtypeFacet, upper)));
+}
+
+const char* APS5_VABI CtypeDoToupperRange_nid_no_patch(const GuestLocale::CtypeFacet* self, char* first, const char* last) {
+    return MapCtypeRange(self, first, last, offsetof(GuestLocale::CtypeFacet, upper));
+}
+
+void APS5_VABI CtypeDestroy_nid_no_patch(GuestLocale::CtypeFacet* self) {
+    if (self == nullptr) APS5_INVALID_ARG_EX;
+    auto* table = const_cast<std::int16_t*>(self->classification);
+    if (self->deleteTable > 0) {
+        free_nid_postfix(table);
+    } else if (self->deleteTable < 0) {
+        _ZdaPv_nid_postfix(table);
+    }
+}
+
+void APS5_VABI CtypeDelete_nid_no_patch(GuestLocale::CtypeFacet* self) {
+    CtypeDestroy_nid_no_patch(self);
+    _ZdlPv_nid_postfix(self);
+}
+
+char APS5_VABI _ZNKSt5ctypeIcE10do_tolowerEc_nid_postfix(const GuestLocale::CtypeFacet* self, char character) {
+    return CtypeDoTolower_nid_no_patch(self, character);
+}
+
+const char* APS5_VABI _ZNKSt5ctypeIcE10do_tolowerEPcPKc_nid_postfix(const GuestLocale::CtypeFacet* self, char* first, const char* last) {
+    return CtypeDoTolowerRange_nid_no_patch(self, first, last);
+}
+
+char APS5_VABI _ZNKSt5ctypeIcE10do_toupperEc_nid_postfix(const GuestLocale::CtypeFacet* self, char character) {
+    return CtypeDoToupper_nid_no_patch(self, character);
+}
+
+const char* APS5_VABI _ZNKSt5ctypeIcE10do_toupperEPcPKc_nid_postfix(const GuestLocale::CtypeFacet* self, char* first, const char* last) {
+    return CtypeDoToupperRange_nid_no_patch(self, first, last);
+}
+
+void APS5_VABI _ZNSt5ctypeIcED1Ev_nid_postfix(GuestLocale::CtypeFacet* self) {
+    CtypeDestroy_nid_no_patch(self);
+}
+
+void APS5_VABI _ZNSt5ctypeIcED0Ev_nid_postfix(GuestLocale::CtypeFacet* self) {
+    CtypeDelete_nid_no_patch(self);
+}
+
 std::size_t APS5_VABI _ZNSt7collateIcE7_GetcatEPPKNSt6locale5facetEPKS1__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale) {
     if (facet != nullptr && *facet == nullptr) {
         if (locale == nullptr || *locale == nullptr || (*locale)->name == nullptr || std::strcmp((*locale)->name, "C") != 0) throw std::invalid_argument("collate::_Getcat: only the C locale is supported");
@@ -1346,44 +1451,84 @@ std::size_t APS5_VABI _ZNSt8numpunctIwE7_GetcatEPPKNSt6locale5facetEPKS1__nid_po
     return 4;
 }
 
-char APS5_VABI _ZNKSt8numpunctIcE16do_decimal_pointEv_nid_postfix(const GuestLocale::NumpunctFacet* self) {
+char APS5_VABI NumpunctDoDecimalPoint_nid_no_patch(const GuestLocale::NumpunctFacet* self) {
     return RequireNumpunct(self, "numpunct::do_decimal_point")->decimalPoint;
 }
 
-char APS5_VABI _ZNKSt8numpunctIcE16do_thousands_sepEv_nid_postfix(const GuestLocale::NumpunctFacet* self) {
+char APS5_VABI NumpunctDoThousandsSep_nid_no_patch(const GuestLocale::NumpunctFacet* self) {
     return RequireNumpunct(self, "numpunct::do_thousands_sep")->thousandsSep;
 }
 
-GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE11do_groupingEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
+GuestLocale::String* APS5_VABI NumpunctDoGrouping_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
     return AssignCString(result, RequireNumpunct(self, "numpunct::do_grouping")->grouping);
 }
 
-GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE12do_falsenameEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
+GuestLocale::String* APS5_VABI NumpunctDoFalsename_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
     return AssignCString(result, RequireNumpunct(self, "numpunct::do_falsename")->falsename);
 }
 
-GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE11do_truenameEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
+GuestLocale::String* APS5_VABI NumpunctDoTruename_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
     return AssignCString(result, RequireNumpunct(self, "numpunct::do_truename")->truename);
 }
 
-char APS5_VABI _ZNKSt8numpunctIcE13decimal_pointEv_nid_postfix(const GuestLocale::NumpunctFacet* self) {
+char APS5_VABI NumpunctDecimalPoint_nid_no_patch(const GuestLocale::NumpunctFacet* self) {
     return Punctuation(&RequireNumpunct(self, "numpunct::decimal_point")->base).decimalPoint(self);
 }
 
-char APS5_VABI _ZNKSt8numpunctIcE13thousands_sepEv_nid_postfix(const GuestLocale::NumpunctFacet* self) {
+char APS5_VABI NumpunctThousandsSep_nid_no_patch(const GuestLocale::NumpunctFacet* self) {
     return Punctuation(&RequireNumpunct(self, "numpunct::thousands_sep")->base).thousandsSep(self);
 }
 
-GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE8groupingEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
+GuestLocale::String* APS5_VABI NumpunctGrouping_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
     return Punctuation(&RequireNumpunct(self, "numpunct::grouping")->base).grouping(result, self);
 }
 
-GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE9falsenameEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
+GuestLocale::String* APS5_VABI NumpunctFalsename_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
     return Punctuation(&RequireNumpunct(self, "numpunct::falsename")->base).falsename(result, self);
 }
 
-GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE8truenameEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
+GuestLocale::String* APS5_VABI NumpunctTruename_nid_no_patch(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
     return Punctuation(&RequireNumpunct(self, "numpunct::truename")->base).truename(result, self);
+}
+
+char APS5_VABI _ZNKSt8numpunctIcE16do_decimal_pointEv_nid_postfix(const GuestLocale::NumpunctFacet* self) {
+    return NumpunctDoDecimalPoint_nid_no_patch(self);
+}
+
+char APS5_VABI _ZNKSt8numpunctIcE16do_thousands_sepEv_nid_postfix(const GuestLocale::NumpunctFacet* self) {
+    return NumpunctDoThousandsSep_nid_no_patch(self);
+}
+
+GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE11do_groupingEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
+    return NumpunctDoGrouping_nid_no_patch(result, self);
+}
+
+GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE12do_falsenameEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
+    return NumpunctDoFalsename_nid_no_patch(result, self);
+}
+
+GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE11do_truenameEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
+    return NumpunctDoTruename_nid_no_patch(result, self);
+}
+
+char APS5_VABI _ZNKSt8numpunctIcE13decimal_pointEv_nid_postfix(const GuestLocale::NumpunctFacet* self) {
+    return NumpunctDecimalPoint_nid_no_patch(self);
+}
+
+char APS5_VABI _ZNKSt8numpunctIcE13thousands_sepEv_nid_postfix(const GuestLocale::NumpunctFacet* self) {
+    return NumpunctThousandsSep_nid_no_patch(self);
+}
+
+GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE8groupingEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
+    return NumpunctGrouping_nid_no_patch(result, self);
+}
+
+GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE9falsenameEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
+    return NumpunctFalsename_nid_no_patch(result, self);
+}
+
+GuestLocale::String* APS5_VABI _ZNKSt8numpunctIcE8truenameEv_nid_postfix(GuestLocale::String* result, const GuestLocale::NumpunctFacet* self) {
+    return NumpunctTruename_nid_no_patch(result, self);
 }
 
 std::size_t APS5_VABI _ZNSt7num_putIcSt19ostreambuf_iteratorIcSt11char_traitsIcEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const*) {
@@ -1405,9 +1550,9 @@ std::size_t APS5_VABI _ZNSt8time_putIcSt19ostreambuf_iteratorIcSt11char_traitsIc
     return 5;
 }
 
-std::size_t APS5_VABI _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale) {
+extern "C" std::size_t LibcWideTimePutGetcat_nid_no_patch(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale) {
     if (facet != nullptr && *facet == nullptr) {
-        if (locale == nullptr) NotImplemented_nid_no_patch(__func__);
+        if (locale == nullptr) NotImplemented_nid_no_patch("_ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix");
         auto* object = static_cast<GuestLocale::Facet*>(_Znwm_nid_postfix(sizeof(GuestLocale::Facet)));
         *object = {&g_wideTimePutVtable.facet, 0, 0};
         *facet = object;
@@ -1415,8 +1560,14 @@ std::size_t APS5_VABI _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIw
     return 5;
 }
 
+std::size_t APS5_VABI _ZNSt8time_putIwSt19ostreambuf_iteratorIwSt11char_traitsIwEEE7_GetcatEPPKNSt6locale5facetEPKS5__nid_postfix(GuestLocale::Facet** facet, const GuestLocale::Implementation* const* locale) {
+    return LibcWideTimePutGetcat_nid_no_patch(facet, locale);
+}
+
 void APS5_VABI _ZNSt8_LocinfoC1EPKc_nid_postfix(GuestLocale::LocinfoStorage* self, const char* localeName) {
-    if (self == nullptr || localeName == nullptr || std::strcmp(localeName, "C") != 0) throw std::invalid_argument("_Locinfo: only the C locale is supported");
+    std::string name;
+    if (self == nullptr || localeName == nullptr || CopyGuestString_nid_no_patch(localeName, 2, name) != 0 || name != "C")
+        throw std::invalid_argument("_Locinfo: only the C locale is supported");
     new (self) GuestLocale::LocinfoStorage{};
 }
 
