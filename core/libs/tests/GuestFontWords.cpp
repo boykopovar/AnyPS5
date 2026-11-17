@@ -335,6 +335,8 @@ static void CharacterQueries() {
     void* textOrder = nullptr;
     Require(sceFontCharacterGetTextOrder(text[0], &textOrder) == SCE_FONT_OK && textOrder == &order);
     Require(sceFontCharacterGetTextOrder(nullptr, &textOrder) == SCE_FONT_ERROR_INVALID_PARAMETER && textOrder == nullptr);
+    errno = EBUSY;
+    Require(sceFontCharacterGetTextOrder(text[0], reinterpret_cast<void**>(std::uintptr_t{0x10})) == SCE_FONT_ERROR_INVALID_PARAMETER && errno == EBUSY);
     Require(sceFontCharacterGetTextOrder(text[0], nullptr) == SCE_FONT_ERROR_INVALID_PARAMETER);
     Require(sceFontCharacterLooksWhiteSpace(text[1]) == ' ' && sceFontCharacterLooksWhiteSpace(text[0]) == 0 && sceFontCharacterLooksWhiteSpace(nullptr) == 0);
     Require(sceFontCharacterLooksFormatCharacters(text[0]) == 'a' && sceFontCharacterLooksFormatCharacters(text[1]) == 0 && sceFontCharacterLooksFormatCharacters(nullptr) == 0);

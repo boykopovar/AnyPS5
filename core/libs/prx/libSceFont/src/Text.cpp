@@ -572,10 +572,10 @@ int APS5_VABI sceFontCharacterGetTextFontCode(const FontTextCharacter* textChara
 int APS5_VABI sceFontCharacterGetTextOrder(const FontTextCharacter* textCharacter, void** pTextOrder) {
     if (!pTextOrder) return SCE_FONT_ERROR_INVALID_PARAMETER;
     if (!textCharacter) {
-        *pTextOrder = nullptr;
+        (void)CopyOutGuest(pTextOrder, static_cast<void*>(nullptr));
         return SCE_FONT_ERROR_INVALID_PARAMETER;
     }
-    *pTextOrder = textCharacter->textOrder;
+    if (!CopyOutGuest(pTextOrder, textCharacter->textOrder)) return SCE_FONT_ERROR_INVALID_PARAMETER;
     return SCE_FONT_OK;
 }
 
