@@ -219,7 +219,7 @@ std::int32_t APS5_VABI getwc_nid_postfix(FileStream* stream) { return fgetwc_nid
 std::int32_t APS5_VABI getwchar_nid_postfix() { return fgetwc_nid_postfix(__stdinp_nid_postfix); }
 int APS5_VABI getchar_unlocked_nid_postfix() { return getc_unlocked_nid_postfix(__stdinp_nid_postfix); }
 int APS5_VABI fputc_nid_postfix(int value, FileStream* stream) {
-    if (stream && !stream->IsOpen()) { errno = 9; return -1; }
+    if (stream && !stream->IsOpen()) return -1;
     auto* native = GetNativeStream(stream);
     stream->Orientation(-1);
     if (!stream->SwitchToWriting()) return -1;

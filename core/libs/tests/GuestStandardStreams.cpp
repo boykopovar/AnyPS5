@@ -653,10 +653,12 @@ static void CheckDescriptorAccessModes() {
 static void CheckClosedStreamWrites() {
     FileStream stream(TemporaryFile::Open());
     Require(freopen_nid_postfix("missing-closed-stream-dir/out.log", "w", &stream) == nullptr);
-    Require(fputs_nid_postfix("text", &stream) == -1 && *__error_nid_postfix() == 9);
-    Require(fprintf_nid_postfix(&stream, "%d", 1) == -1 && *__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 77;
+    Require(fputs_nid_postfix("text", &stream) == -1 && *__error_nid_postfix() == 77);
+    Require(fprintf_nid_postfix(&stream, "%d", 1) == -1 && *__error_nid_postfix() == 22);
     Require(fwrite_nid_postfix("text", 1, 4, &stream) == 0 && *__error_nid_postfix() == 9);
-    Require(fputc_nid_postfix('t', &stream) == -1 && *__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 77;
+    Require(fputc_nid_postfix('t', &stream) == -1 && *__error_nid_postfix() == 77);
     Require(putc_unlocked_nid_postfix('t', &stream) == -1 && *__error_nid_postfix() == 9);
     Require(fflush_nid_postfix(&stream) == -1 && *__error_nid_postfix() == 9);
     char buffer[8] = {};
@@ -690,10 +692,10 @@ static void CheckClosedStreamReopen() {
     FileStream stream(TemporaryFile::Open());
     Require(fclose_nid_postfix(&stream) == 0);
     Require(freopen_nid_postfix("missing-closed-stream-dir/out.log", "w", &stream) == nullptr && *__error_nid_postfix() == 2);
-    Require(fputs_nid_postfix("text", &stream) == -1 && *__error_nid_postfix() == 9);
+    Require(fputs_nid_postfix("text", &stream) == -1 && *__error_nid_postfix() == 2);
     const std::string overlong(300, 'n');
     Require(freopen_nid_postfix(overlong.c_str(), "w", &stream) == nullptr && *__error_nid_postfix() == 63);
-    Require(fputs_nid_postfix("text", &stream) == -1 && *__error_nid_postfix() == 9);
+    Require(fputs_nid_postfix("text", &stream) == -1 && *__error_nid_postfix() == 63);
     Require(freopen_nid_postfix(nullptr, "w", &stream) == nullptr && *__error_nid_postfix() == 9);
     Require(freopen_nid_postfix(filename.c_str(), "w", &stream) == &stream);
     Require(fputs_nid_postfix("reopened\n", &stream) >= 0 && fflush_nid_postfix(&stream) == 0);
@@ -729,7 +731,8 @@ static int CheckClosedStandardOutput() {
     Require(printf_s_nid_postfix("%d", 1) == -1 && *__error_nid_postfix() == 9);
     *__error_nid_postfix() = 0;
     Require(printf_s_nid_postfix("%p", nullptr) == -1 && *__error_nid_postfix() == 9);
-    Require(fputs_nid_postfix("text", __stdoutp_nid_postfix) == -1 && *__error_nid_postfix() == 9);
+    *__error_nid_postfix() = 77;
+    Require(fputs_nid_postfix("text", __stdoutp_nid_postfix) == -1 && *__error_nid_postfix() == 77);
     *__error_nid_postfix() = 0;
     Require(wprintf_nid_postfix(u"%d", 1) == -1 && *__error_nid_postfix() == 9);
     *__error_nid_postfix() = 0;
