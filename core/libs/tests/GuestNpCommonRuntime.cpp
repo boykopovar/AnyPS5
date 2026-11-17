@@ -1569,6 +1569,16 @@ void TestJid() {
     Require(sceNpUtilJidToNpId(nullptr, &psn) == NpUtilInvalid &&sceNpUtilJidToNpId(&npId, nullptr) == NpUtilInvalid, "conversion needs both pointers");
     errno = 71;
     Require(sceNpUtilJidToNpId(reinterpret_cast<NpIdFull*>(0x10), &psn) == NpUtilInvalid && errno == 71, "an unwritable npid is refused and errno is kept");
+    Require(sceNpUtilJidToNpId(&npId, reinterpret_cast<const NpJid*>(0x10)) == NpUtilInvalid && errno == 71, "an unreadable jid is refused and errno is kept");
+    const auto* const unreadableText = reinterpret_cast<const char*>(0x10);
+    const NpJid unreadable[] = {{unreadableText, psn.domain, nullptr, 0}, {"u", unreadableText, nullptr, 0}, {"u", psn.domain, unreadableText, 0}};
+    for (const NpJid& bad : unreadable) Require(sceNpUtilJidToNpId(&npId, &bad) == NpUtilInvalidJid && errno == 71, "an unreadable user, domain or resource is refused as a missing one is");
+    alignas(4096) static char jidPages[3 * 4096];
+    std::memcpy(jidPages + 4094, "user", 5);
+    std::memcpy(jidPages + 2 * 4096 - 3, "a1.b2.np.playstation.net", 25);
+    const NpJid split{jidPages + 4094, jidPages + 2 * 4096 - 3, nullptr, 0};
+    Require(sceNpUtilJidToNpId(&npId, &split) == 0 && Equals(npId.handle.data, "user") && npId.opt[0] == 'a' && npId.opt[3] == '2',
+        "jid strings across a page boundary are read whole");
 }
 
 void TestLanguagesAndDebugIds() {
