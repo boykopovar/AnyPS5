@@ -2,6 +2,7 @@
 #include "prx/libSceLibreSsl/include/Error.hpp"
 #include "prx/libc/libc.hpp"
 #include "prx/libc/include/General.hpp"
+#include <algorithm>
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
@@ -79,9 +80,14 @@ public:
     }
 
     std::span<const unsigned char> Take(std::size_t count) {
-        taken.resize(count);
-        if (count != 0) CopyIn(taken.data(), count);
-        offset += count;
+        taken.clear();
+        while (count != 0) {
+            const std::size_t step = std::min<std::size_t>(count, ChunkSize);
+            taken.resize(taken.size() + step);
+            CopyIn(taken.data() + taken.size() - step, step);
+            offset += step;
+            count -= step;
+        }
         return taken;
     }
 
@@ -95,6 +101,8 @@ private:
 
     const unsigned char* start;
     std::size_t size;
+    static constexpr std::size_t ChunkSize = 65536;
+
     const char* function;
     std::size_t offset = 0;
     std::vector<unsigned char> taken;
