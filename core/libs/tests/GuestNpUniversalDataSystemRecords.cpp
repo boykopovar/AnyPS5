@@ -65,8 +65,12 @@ int main() {
     void* object = nullptr;
     void* data = nullptr;
     Require(sceNpUniversalDataSystemIntCreateRecordArray(nullptr) == kInvalidArgument, "null array output");
+    errno = 71;
+    Require(sceNpUniversalDataSystemIntCreateRecordArray(reinterpret_cast<void**>(std::uintptr_t{0x10})) == kInvalidArgument && errno == 71, "unwritable array output");
     Require(sceNpUniversalDataSystemIntCreateRecordArray(&array) == 0 && array != nullptr, "create array");
     Require(sceNpUniversalDataSystemIntCreateRecordObject(nullptr) == kInvalidArgument, "null object output");
+    errno = 71;
+    Require(sceNpUniversalDataSystemIntCreateRecordObject(reinterpret_cast<void**>(std::uintptr_t{0x10})) == kInvalidArgument && errno == 71, "unwritable object output");
     Require(sceNpUniversalDataSystemIntCreateRecordObject(&object) == 0 && object != nullptr, "create object");
     Require(sceNpUniversalDataSystemIntCreateRecordData(nullptr, &data) == kInvalidName, "null record type");
     Require(sceNpUniversalDataSystemIntCreateRecordData("", &data) == kInvalidName, "empty record type");

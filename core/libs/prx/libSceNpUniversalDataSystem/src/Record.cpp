@@ -161,7 +161,15 @@ int APS5_VABI sceNpUniversalDataSystemIntCreateRecordArray(void** record) {
     if (!g_initialized.load()) return kNotInitialized;
     if (record == nullptr) return kInvalidArgument;
     try {
-        *record = g_arrays.Adopt(std::make_unique<NpUniversalDataSystemEventPropertyArray>());
+        auto* created = g_arrays.Adopt(std::make_unique<NpUniversalDataSystemEventPropertyArray>());
+        void* outPtr = created;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(record, &outPtr, sizeof(outPtr));
+        errno = savedErrno;
+        if (!copied) {
+            g_arrays.Release(created);
+            return kInvalidArgument;
+        }
     } catch (const std::bad_alloc&) {
         return kOutOfMemory;
     }
@@ -173,7 +181,15 @@ int APS5_VABI sceNpUniversalDataSystemIntCreateRecordObject(void** record) {
     if (!g_initialized.load()) return kNotInitialized;
     if (record == nullptr) return kInvalidArgument;
     try {
-        *record = g_objects.Adopt(std::make_unique<NpUniversalDataSystemEventPropertyObject>());
+        auto* created = g_objects.Adopt(std::make_unique<NpUniversalDataSystemEventPropertyObject>());
+        void* outPtr = created;
+        const int savedErrno = errno;
+        const bool copied = GuestCopyOut_nid_no_patch(record, &outPtr, sizeof(outPtr));
+        errno = savedErrno;
+        if (!copied) {
+            g_objects.Release(created);
+            return kInvalidArgument;
+        }
     } catch (const std::bad_alloc&) {
         return kOutOfMemory;
     }
