@@ -168,7 +168,8 @@ std::size_t Run(AgcDriver::VulkanDevice& device, const std::vector<std::uint32_t
     request.target.supportedCapabilities = capabilities;
     request.useCache = false;
     const auto result = ShaderRecompiler::Recompile(request);
-    const auto words = std::span<const std::uint32_t>(result.spirv.Words());
+    const auto leased = result.spirv.Words();
+    const auto words = std::span<const std::uint32_t>(leased);
     const auto declarations = Int16Declarations(words);
     Require(int16 ? declarations == 2u : declarations == 0u, std::string("packed integer native: the ") + (int16 ? "Int16" : "lane") + " build declares " + std::to_string(declarations) + " Int16 capabilities and 16-bit integer types");
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));

@@ -294,7 +294,7 @@ void RunAlias(AgcDriver::VulkanDevice& device, Form form, bool atomic, std::uint
     std::copy(tableDescriptor.begin(), tableDescriptor.end(), userData.begin() + 4);
     const auto code = AliasKernel(form, atomic);
     const auto result = Compile(device, code, userData, waveSize, waveSize, false, AliasScratchDwords);
-    const auto facts = Inspect(std::span<const std::uint32_t>(result.spirv.data(), result.spirv.size()));
+    const auto facts = Inspect(std::span<const std::uint32_t>(result.spirv.Words()));
     Require(facts.poolBinding && result.scratchPoolSlotDwords != 0u, name + ": the scratch program has no scratch pool binding");
     Require(!facts.functionArrayAccess, name + ": the scratch program indexes a Function array");
     device.Dispatch(result, 1, 1, 1, {}, reinterpret_cast<std::uintptr_t>(code.data()));
@@ -343,7 +343,7 @@ void RunPlain(AgcDriver::VulkanDevice& device) {
     std::copy(tableDescriptor.begin(), tableDescriptor.end(), userData.begin() + 4);
     const auto code = PlainKernel();
     const auto result = Compile(device, code, userData, 32u, 32u, false, 0u);
-    const auto facts = Inspect(std::span<const std::uint32_t>(result.spirv.data(), result.spirv.size()));
+    const auto facts = Inspect(std::span<const std::uint32_t>(result.spirv.Words()));
     Require(!facts.poolBinding && result.scratchPoolSlotDwords == 0u, "scratch pool: a program without scratch got a scratch pool binding");
 }
 

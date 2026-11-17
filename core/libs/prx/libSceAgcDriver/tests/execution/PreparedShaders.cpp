@@ -98,7 +98,7 @@ void RunUnregistered(AgcDriver::VulkanDevice& device, ShaderRecompiler::Recompil
             runtime.userData = request.context.userData;
             const auto capture = repeated.Capture(runtime);
             const auto result = repeated.Materialize(*capture);
-            Require(snapshot.prepared->entries.size() == 1 && result->variantId == artifact.variantId && result->spirv.data() == artifact.spirv.data(), "unregistered compute invocation replaced its cached artifact");
+            Require(snapshot.prepared->entries.size() == 1 && result->variantId == artifact.variantId && result->spirv.Words().data() == artifact.spirv.Words().data(), "unregistered compute invocation replaced its cached artifact");
             device.Dispatch(*result, 1, 1, 1);
         }
         device.WaitIdle();
@@ -149,7 +149,7 @@ void Run(AgcDriver::VulkanDevice& device) {
         runtime.userData = users;
         const auto capture = ShaderRecompiler::CaptureResources(request, runtime, *ready);
         const auto result = ShaderRecompiler::MaterializeShader(request, *capture, *ready);
-        Require(result->variantId == artifact.variantId && result->spirv.data() == artifact.spirv.data(), "invocation replaced the prepared artifact");
+        Require(result->variantId == artifact.variantId && result->spirv.Words().data() == artifact.spirv.Words().data(), "invocation replaced the prepared artifact");
         device.Dispatch(*result, 1, 1, 1);
     }
     device.WaitIdle();
@@ -173,7 +173,7 @@ void Run(AgcDriver::VulkanDevice& device) {
     users[0] += 1;
     const auto changedCapture = invocation.Capture(preparedRuntime);
     const auto changedResult = invocation.Materialize(*changedCapture);
-    Require(changedResult != firstResult && changedResult->spirv.data() == firstResult->spirv.data(), "prepared invocation did not distinguish changed runtime data");
+    Require(changedResult != firstResult && changedResult->spirv.Words().data() == firstResult->spirv.Words().data(), "prepared invocation did not distinguish changed runtime data");
     users[0] -= 1;
     Require(invocation.Materialize(*preparedCapture) == firstResult, "prepared invocation evicted the previous runtime data");
     auto replacement = OpenVulkanTestDevice();
@@ -185,7 +185,7 @@ void Run(AgcDriver::VulkanDevice& device) {
     const auto replacementInvocation = AgcDriver::DriverDetail::InvocationFor(snapshot, 0, replacementRequest);
     const auto replacementCapture = replacementInvocation.Capture(preparedRuntime);
     const auto replacementResult = replacementInvocation.Materialize(*replacementCapture);
-    Require(replacementResult->spirv.data() == artifact.spirv.data(), "device replacement recompiled the prepared shader");
+    Require(replacementResult->spirv.Words().data() == artifact.spirv.Words().data(), "device replacement recompiled the prepared shader");
     replacement->Dispatch(*replacementResult, 1, 1, 1);
     replacement->WaitIdle();
     replacementRequest.target.nonConstantImageOffsets = !replacementRequest.target.nonConstantImageOffsets;
@@ -405,25 +405,26 @@ void PrepareMultisampledStorage(AgcDriver::VulkanDevice& device) {
         }
         const auto handle = PrepareShader(request);
         const auto& artifact = GetPreparedArtifact(*handle);
+        const auto words = artifact.spirv.Words();
         std::vector<std::uint32_t> samples;
-        for (std::size_t offset = 5; offset < artifact.spirv.size(); offset += artifact.spirv[offset] >> 16u) {
-            const auto instruction = artifact.spirv[offset];
+        for (std::size_t offset = 5; offset < words.size(); offset += words[offset] >> 16u) {
+            const auto instruction = words[offset];
             if ((instruction & 0xffffu) == spv::OpImageWrite) {
-                Require(variant < 3u && (instruction >> 16u) == 6u && artifact.spirv[offset + 4] == spv::ImageOperandsSampleMask, "MSAA storage write lost its sample operand");
-                samples.push_back(artifact.spirv[offset + 5]);
+                Require(variant < 3u && (instruction >> 16u) == 6u && words[offset + 4] == spv::ImageOperandsSampleMask, "MSAA storage write lost its sample operand");
+                samples.push_back(words[offset + 5]);
             }
             if ((instruction & 0xffffu) == spv::OpImageTexelPointer) {
                 Require(variant >= 3u && (instruction >> 16u) == 6u, "MSAA atomic lost its sample operand");
-                samples.push_back(artifact.spirv[offset + 5]);
+                samples.push_back(words[offset + 5]);
             }
         }
         Require(!samples.empty(), "MSAA storage shader has no image writes or atomics");
         const auto expectedSample = variant == 0u ? 0u : variant % 2u != 0u ? 3u : 2u;
         for (const auto sample : samples) {
             bool found = false;
-            for (std::size_t offset = 5; offset < artifact.spirv.size(); offset += artifact.spirv[offset] >> 16u) {
-                if ((artifact.spirv[offset] & 0xffffu) != spv::OpConstant || artifact.spirv[offset + 2] != sample) continue;
-                Require(artifact.spirv[offset + 3] == expectedSample, "MSAA storage operation addresses the wrong sample");
+            for (std::size_t offset = 5; offset < words.size(); offset += words[offset] >> 16u) {
+                if ((words[offset] & 0xffffu) != spv::OpConstant || words[offset + 2] != sample) continue;
+                Require(words[offset + 3] == expectedSample, "MSAA storage operation addresses the wrong sample");
                 found = true;
             }
             Require(found, "MSAA sample constant is missing");

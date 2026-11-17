@@ -123,7 +123,8 @@ ShaderRecompiler::RecompileResult Recompile(std::uint32_t waveSize, std::span<co
 }
 
 bool SearchesAnchor(const ShaderRecompiler::SharedSpirv& spirv) {
-    const std::string_view text(reinterpret_cast<const char*>(spirv.data()), spirv.size() * sizeof(std::uint32_t));
+    const auto words = spirv.Words();
+    const std::string_view text(reinterpret_cast<const char*>(words.data()), words.size_bytes());
     return text.find("bda_anchor_range") != std::string_view::npos;
 }
 
