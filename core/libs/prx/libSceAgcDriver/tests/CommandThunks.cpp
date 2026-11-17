@@ -1,5 +1,6 @@
 #include "prx/libSceAgcDriver/Graphics/include/CommandList.hpp"
 #include "prx/libSceAgcDriver/Graphics/include/CommandStream.hpp"
+#include "prx/libSceAgcDriver/Graphics/include/Context.hpp"
 #include <array>
 #include <chrono>
 #include <cstdint>
@@ -17,6 +18,15 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
+
+namespace AgcDriver::Graphics {
+
+std::uint64_t& DeviceProcLookups() {
+    thread_local std::uint64_t count = 0;
+    return count;
+}
+
+}
 
 namespace {
 
@@ -950,12 +960,6 @@ void SpecializedStreamersKeepEveryArgument() {
 
 VKAPI_ATTR void VKAPI_CALL emptyDraw(VkCommandBuffer, std::uint32_t, std::uint32_t, std::uint32_t, std::uint32_t) {}
 
-template<typename Pfn>
-Pfn forBatch(const CommandFunctions* batch, Pfn CommandFunctions::*command, const CommandFunctions* device) {
-    if (batch != nullptr && batch->*command != nullptr) return batch->*command;
-    return device->*command;
-}
-
 struct CommandCosts {
     double raw = 0;
     double thunk = 0;
@@ -979,30 +983,32 @@ double median(std::vector<double> values) {
 CommandCosts MeasureCommandCosts(int directCalls, int streamedCalls, int rounds) {
     CommandFunctions direct{};
     direct.CmdDraw = &emptyDraw;
-    CommandFunctions thunkedTable{};
-    thunkedTable.CmdDraw = thunked("vkCmdDraw", &emptyDraw);
+    AgcDriver::Graphics::DeviceFunctions deviceTable{};
+    deviceTable.cmdDraw = thunked("vkCmdDraw", &emptyDraw);
+    AgcDriver::Graphics::Context device{};
+    device.functions = &deviceTable;
     const CommandFunctions* volatile rawDevice = &direct;
-    const CommandFunctions* volatile thunkDevice = &thunkedTable;
+    const AgcDriver::Graphics::Context* volatile context = &device;
     const CommandFunctions* volatile directBatch = &direct;
     const CommandFunctions* volatile streamedBatch = &AgcDriver::Graphics::StreamedCommands();
     const auto target = fakeBuffer(1);
     std::vector<double> raw, thunk, typed, thunkStreamed, typedStreamed;
     const std::array<std::function<void()>, 3> direct3{
         [&] { raw.push_back(nanosPerCall(directCalls, [&](std::uint32_t call) { rawDevice->CmdDraw(target, call, 1, 0, 0); })); },
-        [&] { thunk.push_back(nanosPerCall(directCalls, [&](std::uint32_t call) { thunkDevice->CmdDraw(target, call, 1, 0, 0); })); },
-        [&] { typed.push_back(nanosPerCall(directCalls, [&](std::uint32_t call) { forBatch(directBatch, &CommandFunctions::CmdDraw, thunkDevice)(target, call, 1, 0, 0); })); },
+        [&] { thunk.push_back(nanosPerCall(directCalls, [&](std::uint32_t call) { context->Resolved(&AgcDriver::Graphics::DeviceFunctions::cmdDraw, "vkCmdDraw")(target, call, 1, 0, 0); })); },
+        [&] { typed.push_back(nanosPerCall(directCalls, [&](std::uint32_t call) { context->ForBatch(directBatch, &CommandFunctions::CmdDraw, &AgcDriver::Graphics::DeviceFunctions::cmdDraw, "vkCmdDraw")(target, call, 1, 0, 0); })); },
     };
     for (int round = 0; round < rounds; ++round) {
         for (std::size_t step = 0; step < direct3.size(); ++step) direct3[(step + static_cast<std::size_t>(round)) % direct3.size()]();
         {
             CommandStream stream(direct);
             const auto handle = stream.Handle();
-            thunkStreamed.push_back(nanosPerCall(streamedCalls, [&](std::uint32_t call) { thunkDevice->CmdDraw(handle, call, 1, 0, 0); }));
+            thunkStreamed.push_back(nanosPerCall(streamedCalls, [&](std::uint32_t call) { context->Resolved(&AgcDriver::Graphics::DeviceFunctions::cmdDraw, "vkCmdDraw")(handle, call, 1, 0, 0); }));
         }
         {
             CommandStream stream(direct);
             const auto handle = stream.Handle();
-            typedStreamed.push_back(nanosPerCall(streamedCalls, [&](std::uint32_t call) { forBatch(streamedBatch, &CommandFunctions::CmdDraw, thunkDevice)(handle, call, 1, 0, 0); }));
+            typedStreamed.push_back(nanosPerCall(streamedCalls, [&](std::uint32_t call) { context->ForBatch(streamedBatch, &CommandFunctions::CmdDraw, &AgcDriver::Graphics::DeviceFunctions::cmdDraw, "vkCmdDraw")(handle, call, 1, 0, 0); }));
         }
     }
     std::vector<double> typedOver, thunkOver;
