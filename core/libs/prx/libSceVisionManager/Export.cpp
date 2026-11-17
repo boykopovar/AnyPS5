@@ -34,7 +34,8 @@ bool CopyOut(void* dst, const void* src, std::size_t size) {
 
 extern "C" {
 
-int APS5_VABI sceVisionManagerApplyCalibrateHmdResult() {
+int APS5_VABI sceVisionManagerApplyCalibrateHmdResult(void* argument1) {
+    if (argument1 == nullptr) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -53,7 +54,8 @@ int APS5_VABI sceVisionManagerFinalize() {
     return 0;
 }
 
-int APS5_VABI sceVisionManagerGenerateRegisterUserData() {
+int APS5_VABI sceVisionManagerGenerateRegisterUserData(void* argument1, void* argument2) {
+    if (argument1 == nullptr || argument2 == nullptr) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -73,12 +75,15 @@ int APS5_VABI sceVisionManagerGetCalibrateTrackingLedInfo() {
     return 0;
 }
 
-int APS5_VABI sceVisionManagerGetCalibrateTrackingLedNecessity() {
+int APS5_VABI sceVisionManagerGetCalibrateTrackingLedNecessity(void* argument1, void* argument2) {
+    if (argument1 == nullptr || argument2 == nullptr) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceVisionManagerGetHitCountOfRegisterUserData() {
+int APS5_VABI sceVisionManagerGetHitCountOfRegisterUserData(void* argument1, void* argument2, std::uint64_t argument3, void* argument4) {
+    (void)argument3;
+    if (argument1 == nullptr || argument2 == nullptr || argument4 == nullptr) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -103,7 +108,8 @@ int APS5_VABI sceVisionManagerGetRegisterUserDataSize() {
     return 0;
 }
 
-int APS5_VABI sceVisionManagerGetRegisterUserDataVersion() {
+int APS5_VABI sceVisionManagerGetRegisterUserDataVersion(void* argument1, void* argument2, void* argument3) {
+    if (argument1 == nullptr || argument2 == nullptr || argument3 == nullptr) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -113,7 +119,8 @@ int APS5_VABI sceVisionManagerGetResultOfCalibrateHmd() {
     return 0;
 }
 
-int APS5_VABI sceVisionManagerGetResultOfCalibrateStereoCamera() {
+int APS5_VABI sceVisionManagerGetResultOfCalibrateStereoCamera(void* argument1, void* argument2) {
+    if (argument1 == nullptr || argument2 == nullptr) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -123,7 +130,8 @@ int APS5_VABI sceVisionManagerGetResultOfCalibrateTrackingLed() {
     return 0;
 }
 
-int APS5_VABI sceVisionManagerGetResultOfFindFace() {
+int APS5_VABI sceVisionManagerGetResultOfFindFace(void* argument1, void* argument2, void* argument3, void* argument4) {
+    if (argument1 == nullptr || argument2 == nullptr || argument3 == nullptr || argument4 == nullptr) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -242,12 +250,14 @@ int APS5_VABI sceVisionManagerRequestHeadDetection() {
     return 0;
 }
 
-int APS5_VABI sceVisionManagerRequestInitializeRegisterUserData() {
+int APS5_VABI sceVisionManagerRequestInitializeRegisterUserData(void* argument1) {
+    if (argument1 == nullptr) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceVisionManagerRequestOpen() {
+int APS5_VABI sceVisionManagerRequestOpen(void* argument1) {
+    if (argument1 == nullptr) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -272,17 +282,20 @@ int APS5_VABI sceVisionManagerRequestStoreCameraImgY() {
     return 0;
 }
 
-int APS5_VABI sceVisionManagerSetCallbackForUpdateCalibrateHmdResult() {
+int APS5_VABI sceVisionManagerSetCallbackForUpdateCalibrateHmdResult(void* argument1) {
+    if (argument1 == nullptr) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceVisionManagerSetCallbackForUpdateCalibrateStereoCameraResult() {
+int APS5_VABI sceVisionManagerSetCallbackForUpdateCalibrateStereoCameraResult(void* argument1) {
+    if (argument1 == nullptr) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
-int APS5_VABI sceVisionManagerSetCallbackForUpdateCalibrateTrackingLedResult() {
+int APS5_VABI sceVisionManagerSetCallbackForUpdateCalibrateTrackingLedResult(void* argument1) {
+    if (argument1 == nullptr) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
@@ -302,7 +315,8 @@ int APS5_VABI sceVisionManagerSetCallbackForUpdateRecog() {
     return 0;
 }
 
-int APS5_VABI sceVisionManagerSetCallbackForUpdateRunningStatus() {
+int APS5_VABI sceVisionManagerSetCallbackForUpdateRunningStatus(void* argument1, void* argument2) {
+    if (argument1 == nullptr || argument2 == nullptr) return ErrorInvalidArgument;
     NotImplemented_nid_no_patch(__func__);
     return 0;
 }
