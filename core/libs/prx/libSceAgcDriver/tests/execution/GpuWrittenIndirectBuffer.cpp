@@ -239,7 +239,11 @@ void CpuRewriteAfterSubmit(const GuestBlock& block, bool conditional) {
     AgcDriver::GuestMemory::FlushGpuWrites(marker, sizeof(std::uint32_t));
     const std::string kind = conditional ? "a COND_INDIRECT_BUFFER" : "an INDIRECT_BUFFER";
     Require(Load(block, LabelOffset) == 1, "the packet after " + kind + " the CPU rewrote after its submission did not run");
-    Require(Load(block, MarkerOffset) == 0, kind + " the CPU rewrote after its submission, with no GPU work before it writing the buffer, ran the rewritten commands instead of running as it was copied");
+    if (AgcDriver::GuestMemory::WriteWatched()) {
+        Require(Load(block, MarkerOffset) == 0, kind + " the CPU rewrote after its submission, with no GPU work before it writing the buffer, ran the rewritten commands instead of running as it was copied");
+    } else {
+        Require(Load(block, MarkerOffset) == 1, kind + " the CPU rewrote after its submission ran as it was copied with write watching off, where the driver cannot tell the rewrite from a GPU write and runs what memory holds");
+    }
 }
 
 void LandedWriteBeforeRun(const GuestBlock& block, std::uint32_t marker, bool conditional) {
