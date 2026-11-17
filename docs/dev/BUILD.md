@@ -187,6 +187,47 @@ python3 tools/check_compile.py --build build-relinker core/relinker/main.cpp
 
 Real compile errors still fail. Syntax checks do not replace a full build and test run.
 
+## Pinned frame replay comparisons
+
+`python tools/frame_replay_compare.py run recipe.json --output replay-results` runs two explicitly supplied Windows or Linux replay runtimes against one capture. The output directory must not exist or overlap an input. Each runtime directory must contain its replay executable, capture-filter executable and project libraries, with ordinary files rather than symlinks, junctions or hardlinks. Keep library search directories inside that runtime. Paths in the recipe resolve relative to the recipe file; tool and library paths inside a runtime use forward slashes.
+
+```json
+{
+  "format": "aps5-frame-replay-recipe/1",
+  "capture": "capture",
+  "arms": {
+    "baseline": {
+      "runtime": "baseline-runtime",
+      "replay": "agc_frame_replay.exe",
+      "inspect": "agc_frame_capture_filter.exe",
+      "commit": "0123456789012345678901234567890123456789",
+      "library_dirs": [".", "libs"]
+    },
+    "candidate": {
+      "runtime": "candidate-runtime",
+      "replay": "agc_frame_replay.exe",
+      "inspect": "agc_frame_capture_filter.exe",
+      "commit": "1234567890123456789012345678901234567890",
+      "library_dirs": [".", "libs"],
+      "environment": {}
+    }
+  },
+  "environment": {},
+  "trials": 3,
+  "warmups": 1,
+  "timeout": 120,
+  "log_mib": 16
+}
+```
+
+Use each runtime's full compiled AGC commit, not the current source checkout's commit. On Linux omit `.exe`. Shared `environment` records GPU/driver selection, Vulkan layers and other declared `APS5_*`, `ANYPS5_*` or `VK_*` settings. Per-arm environments record experimental differences; GPU selection belongs in the shared environment. The runner clears inherited settings in those namespaces and loader overrides, stages the runtime files, sets its library paths, and forces `ANYPS5_REQUIRE_VULKAN=1`, `ANYPS5_HOST_REPORT=1` and its private `ANYPS5_SHADER_CACHE_DIR`. It does not change existing validation gates or infer a source build's cleanliness from a binary hash.
+
+Each invocation uses `--strict --no-synthesize --repeat 1`. Capture inspection rejects truncated or obsolete captures before GPU replay. Each arm warms its own application cache; the resulting seed is copied into a fresh cache directory for every measured trial. Zero warmups starts every trial with an empty application cache. Trials alternate baseline/candidate and candidate/baseline order. Capture and runtime hashes are checked before and after execution. Original logs, process receipts, host reports, cache contents and every attempt remain in the bundle. Commands have a timeout and per-stream log byte bound; their owned Windows job or POSIX process group is terminated on completion, timeout or interruption.
+
+`report.md` and `report.json` show per-arm observations, paired changes and repeatability when no known evidence problem prevents comparison. `python tools/frame_replay_compare.py report replay-results` verifies retained file hashes and regenerates the report from original logs; `--json` prints JSON. Exit 0 means the declared experiment completed without a recorded evidence problem, 2 means setup, execution or evidence was incomplete, and 130 means interrupted. None is a correctness or performance pass threshold.
+
+Replay throughput measures the captured driver workload, not title FPS. The native result rounds `skipped_mib` to 0.1 MiB and truncates its `frame_ms.each` values to whole milliseconds; zero reported skips cannot prove zero skipped bytes. Reference comparisons cover final recorded display buffers, not every frame. Capture omissions, original scheduling and mapping history can remain unknown even when all reported checks match. Fresh processes do not retain in-process draw/resource caches, and per-arm application-cache seeds do not control driver caches, GPU clocks or equal cache warmness across builds. Host reports identify the selected GPU and compiled AGC commit, but do not provide a physical-device UUID or dirty state. Staged file hashes do not independently enumerate every library the OS loaded. Live-title performance claims still need the project's same-machine, same-scene summaries and traces.
+
 ## Repeated Vulkan validation
 
 `tools/vulkan_validation_gate.py` builds two pinned clean source worktrees into a new output directory and alternates the same focused CTests between them. Linux and Windows hardware runs establish GPU behaviour; macOS synthetic tool tests do not establish native Linux/Windows or GPU correctness. Use native Windows Python or a POSIX host; Cygwin and MSYS Python are rejected because they cannot contain native Windows processes. Each configure, build and CTest command runs in its own process group on POSIX and in its own close-terminated job object on Windows, under a close-terminated guard job on the gate process itself so killing the gate also terminates active children and descendants. On Windows the command starts suspended until it has joined its job, waits in short slices so `Ctrl+C` interrupts promptly, and drains the job for up to 10 seconds on completion, timeout or interruption, failing the run with exit code 2 if any process in the job survives termination after normal command exit.

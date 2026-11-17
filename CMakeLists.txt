@@ -867,6 +867,12 @@ if(BUILD_TESTING)
         add_test(NAME benchmark_compare COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_benchmark_compare.py)
         set_tests_properties(benchmark_compare PROPERTIES TIMEOUT 30)
+        add_test(NAME frame_replay_report COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_frame_replay_report.py)
+        set_tests_properties(frame_replay_report PROPERTIES TIMEOUT 30)
+        add_test(NAME frame_replay_compare COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_frame_replay_compare.py)
+        set_tests_properties(frame_replay_compare PROPERTIES TIMEOUT 30)
         add_test(NAME title_run COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/tools/tests/test_title_run.py)
         set_tests_properties(title_run PROPERTIES TIMEOUT 60)
