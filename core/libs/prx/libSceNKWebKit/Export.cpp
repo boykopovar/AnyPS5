@@ -25205,14 +25205,6 @@ int APS5_VABI _ZN7WebCorelsERN3WTF10TextStreamERKNS_9RectEdgesIfEE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7bmalloc11AllIsoHeaps3addEPNS_15IsoHeapImplBaseE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7bmalloc11AllIsoHeaps4headEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
 int APS5_VABI _ZN7bmalloc11Deallocator18deallocateSlowCaseEPv() {
     NotImplemented_nid_no_patch(__func__);
 }
@@ -25221,28 +25213,12 @@ int APS5_VABI _ZN7bmalloc11IsoPageBase18allocatePageMemoryEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7bmalloc11IsoTLSEntryC2Em() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7bmalloc11IsoTLSEntryD0Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 
 
 
-
-
-int APS5_VABI _ZN7bmalloc12IsoTLSLayout3addEPNS_11IsoTLSEntryE() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZN7bmalloc13IsoSharedPage9tryCreateEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7bmalloc15IsoHeapImplBase11didDecommitEPvm() {
     NotImplemented_nid_no_patch(__func__);
 }
 
@@ -25250,35 +25226,11 @@ int APS5_VABI _ZN7bmalloc15IsoHeapImplBase11scavengeNowEv() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7bmalloc15IsoHeapImplBase13isNowFreeableEPvm() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-
-int APS5_VABI _ZN7bmalloc15IsoHeapImplBase16addToAllIsoHeapsEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 int APS5_VABI _ZN7bmalloc15IsoHeapImplBase16finishScavengingERNS_6VectorINS_16DeferredDecommitEEE() {
     NotImplemented_nid_no_patch(__func__);
 }
 
-int APS5_VABI _ZN7bmalloc15IsoHeapImplBase18isNoLongerFreeableEPvm() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7bmalloc15IsoHeapImplBase9didCommitEPvm() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-
-int APS5_VABI _ZN7bmalloc15IsoHeapImplBaseC2ERNS_5MutexE() {
-    NotImplemented_nid_no_patch(__func__);
-}
-
-int APS5_VABI _ZN7bmalloc15IsoHeapImplBaseD0Ev() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 
 
@@ -30892,10 +30844,6 @@ int APS5_VABI _ZNK7WebCore9TreeScope26ancestorElementInThisScopeEPNS_7ElementE()
     NotImplemented_nid_no_patch(__func__);
 }
 
-
-int APS5_VABI _ZNK7bmalloc11IsoTLSEntry6extentEv() {
-    NotImplemented_nid_no_patch(__func__);
-}
 
 
 int APS5_VABI _ZNK9Inspector14ConsoleMessage12globalObjectEv() {
