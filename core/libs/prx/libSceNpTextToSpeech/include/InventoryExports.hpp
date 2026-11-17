@@ -7,7 +7,7 @@ extern "C" {
 int APS5_VABI sceNpTextToSpeechCreateContext();
 int APS5_VABI sceNpTextToSpeechDestroyContext();
 int APS5_VABI sceNpTextToSpeechGetEvent();
-int APS5_VABI sceNpTextToSpeechInitialize();
+int APS5_VABI sceNpTextToSpeechInitialize(const void* param);
 int APS5_VABI sceNpTextToSpeechTerminate();
 int APS5_VABI libSceNpTextToSpeechUnknown__minus_wGjkwcjXWs_nid_no_patch();
 int APS5_VABI libSceNpTextToSpeechUnknown_APYz0RAIugo_nid_no_patch();

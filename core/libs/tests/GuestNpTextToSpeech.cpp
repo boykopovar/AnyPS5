@@ -12,6 +12,14 @@ void Require(bool value) {
 
 int main() {
     constexpr int notInitialized = static_cast<int>(0x8194F009u);
+    constexpr int invalidArgument = static_cast<int>(0x8194F004u);
+    alignas(8) unsigned char param[0x40]{};
+    Require(sceNpTextToSpeechInitialize(nullptr) == invalidArgument);
+    Require(sceNpTextToSpeechInitialize(param) == invalidArgument);
+    param[2] = 0x02;
+    param[0] = 0x01;
+    Require(sceNpTextToSpeechInitialize(param) == invalidArgument);
+    param[0] = 0x00;
     for (int call = 0; call < 2; ++call) {
         Require(sceNpTextToSpeechCreateContext() == notInitialized);
         Require(sceNpTextToSpeechDestroyContext() == notInitialized);
