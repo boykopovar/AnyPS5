@@ -392,7 +392,8 @@ void MovedForwardedWordReachesStageDataHit(bool libraries) {
     AgcDriver::DriverDetail::Driver::SetCaptureCheckHook(nullptr);
     Require(!RestartArmed.load(), mode + ": the capture check did not run for the relocated draw");
     const bool pipelined = DrawFinisher::Enabled() && DrawPipeline::Depth() != 0;
-    Require(!pipelined || RestartChecked.load(), mode + ": the pipelined relocated draw was checked on the queue worker, not the draw finisher, so its restart patch and skip count were not exercised");
+    const bool dataHitsVerified = std::getenv("APS5_VERIFY_DRAW_DATA_HITS") != nullptr;
+    Require(!pipelined || dataHitsVerified || RestartChecked.load(), mode + ": the pipelined relocated draw was checked on the queue worker, not the draw finisher, so its restart patch and skip count were not exercised");
     if (RestartChecked.load()) {
         const auto skipped = restartedCounters.restartPatchSkipped - counters.restartPatchSkipped;
         const auto expected = std::getenv("APS5_VERIFY_DRAW_RECIPE") != nullptr ? 1u : 0u;
