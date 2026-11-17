@@ -158,7 +158,7 @@ class FetchTests(unittest.TestCase):
                 pr_overlap._REPO_ROOTS.clear()
                 redirect = {
                     "GIT_CONFIG_COUNT": "1",
-                    "GIT_CONFIG_KEY_0": f"url.{remote.as_uri()}.insteadOf",
+                    "GIT_CONFIG_KEY_0": f"url.{remote.as_posix()}.insteadOf",
                     "GIT_CONFIG_VALUE_0": "https://github.com/owner/project.git",
                 }
                 with patch.object(pr_overlap, "REPO", "owner/project", create=True), patch.dict(os.environ, redirect):
@@ -513,6 +513,24 @@ class ReportSizeCapTests(unittest.TestCase):
             "| [PR 3](https://example.invalid/pull/3) | `shared.cpp` |\n"
         ))
         self.assertLessEqual(len(report), self.CAP_UNDER_GITHUB_LIMIT)
+
+    def test_uncompared_section_after_main_exports_starts_a_new_paragraph(self):
+        rows = {3: {"added": set(), "uncompared": {"shared.cpp"}}}
+        main_exports = {"sceFoo": {"same_key": {("core/libs/prx/libSceX", "AAAAAAAAAAA")}, "other_libraries": set()}}
+        report = pr_overlap.report(rows, "https://example.invalid/blob/base", main_exports)
+        self.assertEqual(report, (
+            f"{pr_overlap.MARKER}\n"
+            "Exports with a name or library/NID already present in `main`:\n"
+            "\n"
+            "- `sceFoo` (same library/NID already present: core/libs/prx/libSceX (AAAAAAAAAAA))\n"
+            "\n"
+            "Some comparisons could not be completed because a pull request conflicts with the base branch. "
+            "Review these shared files manually before concluding that there is no overlap.\n"
+            "\n"
+            "| Pull request | Shared files not compared |\n"
+            "|---|---|\n"
+            "| [PR 3](https://example.invalid/pull/3) | `shared.cpp` |\n"
+        ))
 
     def test_pathological_report_with_many_overlaps_and_paths_is_capped(self):
         rows = {
