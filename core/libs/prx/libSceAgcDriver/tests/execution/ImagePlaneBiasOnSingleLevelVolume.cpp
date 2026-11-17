@@ -38,6 +38,10 @@ alignas(256) constexpr std::array<std::uint32_t, 9> BiasPixelCode{
     0x10040010, 0x06060300, 0x10060611, 0xf0940f08, 0x00610401, 0xbf8c3f70, 0xf800180f, 0x07060504, 0xbf810000,
 };
 
+constexpr std::array<std::uint32_t, 2> BiasSample{0xf0940f08u, 0x00610401u};
+constexpr std::array<std::uint32_t, 2> LevelZeroSample{0xf09c0f08u, 0x00610402u};
+constexpr std::array<std::uint32_t, 2> ImplicitSample{0xf0800f08u, 0x00610402u};
+
 constexpr std::array<std::array<float, 4>, 3> Triangle{{{-1.0f, -1.0f, 0.5f, 1.0f}, {3.0f, -1.0f, 0.5f, 1.0f}, {-1.0f, 3.0f, 0.5f, 1.0f}}};
 
 std::array<std::uint32_t, 4> BufferDescriptor(const void* data, std::uint32_t stride, std::uint32_t count) {
@@ -80,12 +84,13 @@ void FillTexture() {
     }
 }
 
-std::uint64_t Draw(AgcDriver::VulkanDevice& device, std::array<std::uint32_t, 8> texture, std::array<std::uint32_t, 4> sampler, float bias, bool mixedSamplers = false) {
+std::uint64_t Draw(AgcDriver::VulkanDevice& device, std::array<std::uint32_t, 8> texture, std::array<std::uint32_t, 4> sampler, float bias, bool mixedSamplers = false, std::array<std::uint32_t, 2> sample = BiasSample) {
     const auto& target = device.Target();
     alignas(256) std::array<std::uint32_t, 13> code{};
     std::copy_n(BiasPixelCode.begin(), 3u, code.begin());
     code[3] = 0x7e020212u;
     std::copy(BiasPixelCode.begin() + 3, BiasPixelCode.end(), code.begin() + 4);
+    std::copy(sample.begin(), sample.end(), code.begin() + 4);
     if (mixedSamplers) {
         code[6] = 0xf0940f08u;
         code[7] = 0x00a10801u;
@@ -182,10 +187,10 @@ void Check(bool degamma = false) {
     }
 }
 
-void RequireRefused(AgcDriver::VulkanDevice& device, std::array<std::uint32_t, 8> texture, std::array<std::uint32_t, 4> sampler, const char* expected) {
+void RequireRefused(AgcDriver::VulkanDevice& device, std::array<std::uint32_t, 8> texture, std::array<std::uint32_t, 4> sampler, const char* expected, std::array<std::uint32_t, 2> sample = BiasSample) {
     std::string refusal;
     try {
-        Draw(device, texture, sampler, 0.0f);
+        Draw(device, texture, sampler, 0.0f, false, sample);
     } catch (const std::exception& error) {
         refusal = error.what();
     }
@@ -203,6 +208,13 @@ int main() {
         for (const float bias : {-16.0f, -0.5f, 0.0f, 0.5f, 16.0f}) {
             ordinaryArtifact = Draw(*device, VolumeDescriptor(), SamplerDescriptor(), bias);
             Check();
+        }
+        for (const auto sample : {LevelZeroSample, ImplicitSample}) {
+            Draw(*device, VolumeDescriptor(), SamplerDescriptor(), 0.0f, false, sample);
+            Check();
+            auto twoSlices = VolumeDescriptor();
+            twoSlices[4] = 1u;
+            RequireRefused(*device, twoSlices, SamplerDescriptor(), "one slice and mip level zero only", sample);
         }
         if (!device->SamplerFilterMinmax()) {
             std::puts("the device has no min/max sampler reduction with component mapping: the reduction cases are skipped");

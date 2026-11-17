@@ -12741,6 +12741,7 @@ void verifyVolumeBiasTableRejection() {
     image.resourceClass = ImageResourceClass::Sampled;
     image.dimension = RdnaImageDimension::Dim2D;
     image.singleMipPlaneBiasCompatible = true;
+    image.singleMipPlaneSampleCompatible = true;
     const DescriptorValue volume{{0x100u, TableFormat8888UNorm << 20u, 0u, (TableType3D << 28u) | 0xfacu, 0u, 0u, 0u, 0u}, 8u, 0xffu};
     const auto directModes = ResourceMaterializer::RuntimeImageModes(image);
     require(directModes[ResourceMaterializer::RuntimeImageMode(image, volume, directModes)].dimension == RdnaImageDimension::Dim3D, "volume bias: a supported direct one-slice volume was rejected");

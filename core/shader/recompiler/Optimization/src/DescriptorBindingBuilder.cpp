@@ -312,11 +312,11 @@ UnnormalizedProof ProveUnnormalized(const ShaderInfo& info, const ResourceSnapsh
         for (const auto& pair : info.sampledPairs) {
             if (pair.sampler != r) continue;
             const auto& image = info.images.at(pair.image);
-            if (!image.singleMipPlaneBiasCompatible || image.dimension != RdnaImageDimension::Dim2D) continue;
+            if (!image.singleMipPlaneSampleCompatible || image.dimension != RdnaImageDimension::Dim2D) continue;
             const auto mode = ResourceMaterializer::RuntimeImageMode(image, snapshot.images.at(pair.image), info.runtimeImageModes.at(pair.image));
             if (info.runtimeImageModes.at(pair.image).at(mode).dimension != RdnaImageDimension::Dim3D) continue;
             const auto& words = snapshot.samplers.at(r).dwords;
-            if ((words[0] & ForceUnnormalizedBit) != 0u || ((words[0] >> 29u) & 3u) > 2u || ((words[2] >> 20u) & 0xfu) != 0u || ((words[2] >> 26u) & 3u) > 1u) fail("2D biased sampling of a one-slice volume requires a normalized point sampler");
+            if ((words[0] & ForceUnnormalizedBit) != 0u || ((words[0] >> 29u) & 3u) > 2u || ((words[2] >> 20u) & 0xfu) != 0u || ((words[2] >> 26u) & 3u) > 1u) fail("2D sampling of a one-slice volume requires a normalized point sampler");
         }
         if ((snapshot.samplers[r].dwords[0] & ForceUnnormalizedBit) == 0u) {
             if (sampler.foldTexelOffsetsOnly) {
