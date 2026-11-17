@@ -534,11 +534,18 @@ class AssetCopyTests(unittest.TestCase):
                         alias.symlink_to(self.source)
                 except (OSError, NotImplementedError) as error:
                     self.skipTest(f"{name} unavailable: {error}")
-                with self.assertRaises(shutil.SameFileError):
+                with self.assertRaises((shutil.SameFileError, PermissionError)) as caught:
                     feature("copy_asset")(self.source, alias)
+                if isinstance(caught.exception, PermissionError):
+                    self.assertEqual(os.name, "nt")
+                    self.assertEqual(getattr(caught.exception, "winerror", None), 32)
+                self.assertEqual(alias.read_bytes(), self.content)
                 self.assert_source_unchanged()
-        with self.assertRaises(shutil.SameFileError):
+        with self.assertRaises((shutil.SameFileError, PermissionError)) as caught:
             feature("copy_asset")(self.source, self.source)
+        if isinstance(caught.exception, PermissionError):
+            self.assertEqual(os.name, "nt")
+            self.assertEqual(getattr(caught.exception, "winerror", None), 32)
         self.assert_source_unchanged()
 
     @unittest.skipUnless(sys.platform == "linux", "FICLONE is Linux-specific")
