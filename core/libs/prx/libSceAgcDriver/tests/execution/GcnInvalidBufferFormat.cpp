@@ -85,7 +85,7 @@ void Run(AgcDriver::VulkanDevice& device, const LowBlock& block, std::uint32_t d
     std::copy(output.begin(), output.end(), userData.begin());
     std::copy(source.begin(), source.end(), userData.begin() + 4);
     const std::array<ShaderRecompiler::MemoryRegion, 1> memory{{{reinterpret_cast<std::uintptr_t>(Code.data()), std::as_bytes(std::span(Code))}}};
-    const ShaderRecompiler::ShaderComputeStageInfo compute{{64u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
+    const ShaderRecompiler::ShaderComputeStageInfo compute{{1u, 1u, 1u}, 0u, {false, false, false}, false, 1u};
     ShaderRecompiler::RecompileRequest request{
         {ShaderStage::Compute, reinterpret_cast<std::uintptr_t>(Code.data()), Code, 0, {}},
         {64u, 0, userData, compute, std::nullopt, std::nullopt, memory},
