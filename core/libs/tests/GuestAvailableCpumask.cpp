@@ -12,6 +12,7 @@
 #include <utility>
 
 static constexpr int SCE_OK = 0;
+static constexpr int SCE_KERNEL_ERROR_EFAULT = static_cast<int>(0x8002000eu);
 static constexpr int PS5_LOGICAL_CPUS = 16;
 
 static void Require(bool value) { if (!value) std::abort(); }
@@ -137,7 +138,7 @@ int main() {
     Require(scePthreadAttrInit(&attr) == SCE_OK);
     KernelCpumask defaultAffinity = 0;
     Require(scePthreadAttrGetaffinity(&attr, &defaultAffinity) == SCE_OK);
-    Require(defaultAffinity == available);
+    Require(defaultAffinity == ~KernelCpumask{0});
 
     std::promise<void> release;
     auto released = release.get_future();
@@ -146,6 +147,7 @@ int main() {
     KernelCpumask threadAffinity = 0;
     Require(scePthreadGetaffinity(thread, &threadAffinity) == SCE_OK);
     Require(threadAffinity == available);
+    Require(scePthreadGetaffinity(thread, reinterpret_cast<KernelCpumask*>(0x10)) == SCE_KERNEL_ERROR_EFAULT);
 
     for (KernelCpumask cpu = 1; cpu != 0; cpu <<= 1) {
         if ((available & cpu) == 0) continue;
