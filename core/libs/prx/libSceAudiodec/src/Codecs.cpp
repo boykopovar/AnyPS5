@@ -147,6 +147,12 @@ public:
         result.mp3 = header;
         return result;
     }
+
+    std::size_t InputBytes(const std::uint8_t* data, std::size_t size, std::size_t declared) const override {
+        if (size < 4) return std::min<std::size_t>(declared, 4);
+        Mp3Header header{};
+        return ParseMp3Header(data, size, header) ? std::min(declared, std::max(size, header.frameBytes)) : size;
+    }
 };
 
 struct AacLayout {
@@ -201,8 +207,8 @@ public:
 
     DecodeResult Decode(const std::uint8_t* data, std::size_t size, std::vector<std::uint8_t>& pcm, std::size_t pcmSize) override {
         if (!adts) return decodeAccessUnit(data, size, pcm, pcmSize);
-        if (size < 7 || data[0] != 0xFF || (data[1] & 0xF6) != 0xF0) return {DecodeStatus::InvalidData};
-        const auto frameBytes = static_cast<std::size_t>((data[3] & 3) << 11 | data[4] << 3 | data[5] >> 5);
+        if (size < 7 || !adtsSync(data)) return {DecodeStatus::InvalidData};
+        const std::size_t frameBytes = adtsFrameBytes(data);
         const std::size_t headerBytes = (data[1] & 1) != 0 ? 7 : 9;
         if (frameBytes <= headerBytes) return {DecodeStatus::InvalidData};
         if (frameBytes > size) return {DecodeStatus::PartialInput};
@@ -224,7 +230,16 @@ public:
         return result;
     }
 
+    std::size_t InputBytes(const std::uint8_t* data, std::size_t size, std::size_t declared) const override {
+        if (!adts) return declared;
+        if (size < 7) return std::min<std::size_t>(declared, 7);
+        return adtsSync(data) ? std::min(declared, std::max(size, adtsFrameBytes(data))) : size;
+    }
+
 private:
+    static bool adtsSync(const std::uint8_t* data) { return data[0] == 0xFF && (data[1] & 0xF6) == 0xF0; }
+    static std::size_t adtsFrameBytes(const std::uint8_t* data) { return static_cast<std::size_t>((data[3] & 3) << 11 | data[4] << 3 | data[5] >> 5); }
+
     DecodeResult decodeAccessUnit(const std::uint8_t* data, std::size_t size, std::vector<std::uint8_t>& pcm, std::size_t pcmSize) {
         for (std::size_t index = 0; index < layouts.size(); ++index) {
             if (index != 0 && !tryReopen(audioSpecificConfig(layouts[index], sbr, 0))) continue;
@@ -291,6 +306,10 @@ public:
         result.channels = static_cast<std::uint32_t>(info.channels);
         result.sampleRate = static_cast<std::uint32_t>(info.samplingRate);
         return result;
+    }
+
+    std::size_t InputBytes(const std::uint8_t*, std::size_t, std::size_t declared) const override {
+        return std::min(declared, static_cast<std::size_t>(info.superframeSize));
     }
 
     const Atrac9CodecInfo& Info() const { return info; }
