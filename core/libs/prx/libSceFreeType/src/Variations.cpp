@@ -46,7 +46,7 @@ extern "C" {
 
 int APS5_VABI FT_Get_MM_Var_nid_postfix(GuestFaceRec* face, void** master) {
     const GuestFace* owner = FaceOf(face);
-    if (owner) RequireLp64(__func__);
+    if (master && owner && owner->host && FT_HAS_MULTIPLE_MASTERS(owner->host)) RequireLp64(__func__);
     FT_MM_Var* native = nullptr;
     const FT_Error error = FT_Get_MM_Var(owner ? owner->host : nullptr, master ? &native : nullptr);
     if (error != 0 || !master) return error;
@@ -59,14 +59,18 @@ int APS5_VABI FT_Done_MM_Var_nid_postfix(GuestLibrary* library, void* master) {
     return FT_Done_MM_Var(library ? library->host : nullptr, static_cast<FT_MM_Var*>(master));
 }
 
-int APS5_VABI FT_Set_Var_Design_Coordinates_nid_postfix(GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates) {
+int APS5_VABI FreeTypeSetVarDesignCoordinates_nid_no_patch(GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates) {
     GuestFace* owner = FaceOf(face);
     if (!owner) return FT_Err_Invalid_Face_Handle;
-    std::vector<FT_Fixed> host = HostCoordinates(coordinates, count, __func__);
+    std::vector<FT_Fixed> host = HostCoordinates(coordinates, count, "FT_Set_Var_Design_Coordinates_nid_postfix");
     FT_Fixed placeholder = 0;
     const FT_Error error = FT_Set_Var_Design_Coordinates(owner ? owner->host : nullptr, count, coordinates ? (host.empty() ? &placeholder : host.data()) : nullptr);
     if (owner) SyncFace(*owner);
     return error;
+}
+
+int APS5_VABI FT_Set_Var_Design_Coordinates_nid_postfix(GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates) {
+    return FreeTypeSetVarDesignCoordinates_nid_no_patch(face, count, coordinates);
 }
 
 int APS5_VABI FT_Get_Var_Design_Coordinates_nid_postfix(GuestFaceRec* face, std::uint32_t count, std::int64_t* coordinates) {
@@ -78,13 +82,17 @@ int APS5_VABI FT_Get_Var_Design_Coordinates_nid_postfix(GuestFaceRec* face, std:
     return error;
 }
 
-int APS5_VABI FT_Set_Var_Blend_Coordinates_nid_postfix(GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates) {
+int APS5_VABI FreeTypeSetVarBlendCoordinates_nid_no_patch(GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates) {
     GuestFace* owner = FaceOf(face);
-    std::vector<FT_Fixed> host = HostCoordinates(coordinates, count, __func__);
+    std::vector<FT_Fixed> host = HostCoordinates(coordinates, count, "FT_Set_Var_Blend_Coordinates_nid_postfix");
     FT_Fixed placeholder = 0;
     const FT_Error error = FT_Set_Var_Blend_Coordinates(owner ? owner->host : nullptr, count, coordinates ? (host.empty() ? &placeholder : host.data()) : nullptr);
     if (owner) SyncFace(*owner);
     return error;
+}
+
+int APS5_VABI FT_Set_Var_Blend_Coordinates_nid_postfix(GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates) {
+    return FreeTypeSetVarBlendCoordinates_nid_no_patch(face, count, coordinates);
 }
 
 int APS5_VABI FT_Get_Var_Blend_Coordinates_nid_postfix(GuestFaceRec* face, std::uint32_t count, std::int64_t* coordinates) {
@@ -96,27 +104,35 @@ int APS5_VABI FT_Get_Var_Blend_Coordinates_nid_postfix(GuestFaceRec* face, std::
     return error;
 }
 
-int APS5_VABI FT_Set_MM_Blend_Coordinates_nid_postfix(GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates) {
+int APS5_VABI FreeTypeSetMMBlendCoordinates_nid_no_patch(GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates) {
     GuestFace* owner = FaceOf(face);
-    std::vector<FT_Fixed> host = HostCoordinates(coordinates, count, __func__);
+    std::vector<FT_Fixed> host = HostCoordinates(coordinates, count, "FT_Set_MM_Blend_Coordinates_nid_postfix");
     FT_Fixed placeholder = 0;
     const FT_Error error = FT_Set_MM_Blend_Coordinates(owner ? owner->host : nullptr, count, coordinates ? (host.empty() ? &placeholder : host.data()) : nullptr);
     if (owner) SyncFace(*owner);
     return error;
 }
 
-int APS5_VABI FT_Set_MM_Design_Coordinates_nid_postfix(GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates) {
+int APS5_VABI FT_Set_MM_Blend_Coordinates_nid_postfix(GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates) {
+    return FreeTypeSetMMBlendCoordinates_nid_no_patch(face, count, coordinates);
+}
+
+int APS5_VABI FreeTypeSetMMDesignCoordinates_nid_no_patch(GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates) {
     GuestFace* owner = FaceOf(face);
-    std::vector<FT_Fixed> host = HostCoordinates(coordinates, count, __func__);
+    std::vector<FT_Fixed> host = HostCoordinates(coordinates, count, "FT_Set_MM_Design_Coordinates_nid_postfix");
     FT_Fixed placeholder = 0;
     const FT_Error error = FT_Set_MM_Design_Coordinates(owner ? owner->host : nullptr, count, coordinates ? reinterpret_cast<FT_Long*>(host.empty() ? &placeholder : host.data()) : nullptr);
     if (owner) SyncFace(*owner);
     return error;
 }
 
+int APS5_VABI FT_Set_MM_Design_Coordinates_nid_postfix(GuestFaceRec* face, std::uint32_t count, const std::int64_t* coordinates) {
+    return FreeTypeSetMMDesignCoordinates_nid_no_patch(face, count, coordinates);
+}
+
 int APS5_VABI FT_Get_Multi_Master_nid_postfix(GuestFaceRec* face, void* master) {
     const GuestFace* owner = FaceOf(face);
-    if (owner) RequireLp64(__func__);
+    if (master && owner && owner->host && FT_HAS_MULTIPLE_MASTERS(owner->host)) RequireLp64(__func__);
     FT_Multi_Master native{};
     const FT_Error error = FT_Get_Multi_Master(owner ? owner->host : nullptr, master ? &native : nullptr);
     if (error != 0 || !master) return error;

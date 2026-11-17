@@ -49,7 +49,7 @@ ninja -C build -f select.ninja selected
 python3 tools/select_tests.py ctest build --output-on-failure
 ```
 
-`dump` reads the header dependencies recorded by a built tree, so build before dumping. `select` writes `select.ninja` and `select.tests` into the build directory; `ninja -f select.ninja selected` builds only the selected targets (when the change selects the full run, or the graph file is missing, `select` removes `select.ninja` and writes none, so run `cmake --build build` instead, as CI does), and the `ctest` subcommand runs only the selected tests. A change to `CMakeLists.txt`, `core/CMakeLists.txt`, `core/libs/CMakeLists.txt`, `3rdparty/`, `cmake/`, `.gitmodules`, the build workflow or `tools/select_tests.py` selects the full run. The `select=true` CI build uses the same selection.
+`dump` reads the header dependencies recorded by a built tree, so build before dumping. `select` writes `select.ninja` and `select.tests` into the build directory; `ninja -f select.ninja selected` builds only the selected targets (when the change selects the full run, or the graph file is missing, `select` removes `select.ninja` and writes none, so run `cmake --build build` instead, as CI does), and the `ctest` subcommand runs only the selected tests. A change to `CMakeLists.txt`, `core/libs/CMakeLists.txt`, `3rdparty/`, `cmake/`, `.gitmodules`, the build workflow or `tools/select_tests.py` selects the full run. The `select=true` CI build uses the same selection.
 
 ## Requirements
 
@@ -278,6 +278,7 @@ On Windows use `agc_frame_replay.exe` and prepend `build/core/libs/libs/unpatche
 `agc_driver_frame_capture_rewind` makes the six EOP flips from REWIND tails and checks that they start the capture and that it holds the same three frames. `agc_driver_frame_capture_rewind_held` releases each REWIND only after its thread's next call returns and checks that no call waits at a busy frame boundary and that the capture starts at the first idle one.
 
 Six tests with the driver's Vulkan device set a REWIND control word only after the next flip, so the delta before that flip is read while the REWIND waits, and check that the capture holds its frames: `agc_driver_frame_replay_rewind_store` overwrites the result of a copy gated by a `WAIT_REG_MEM` before the REWIND and checks that the replay keeps the CPU store, `agc_driver_frame_replay_rewind_copy` stores into the first page of a 128 MiB copy still running ahead of the REWIND and checks that the replayed delta holds the store and the copied bytes, and skips when the copy finished before the delta was read, `agc_driver_frame_replay_rewind_compute` parks a compute queue's `WAIT_REG_MEM` on a label the REWIND tail writes and checks that the replay runs the compute queue past it, `agc_driver_frame_replay_rewind_release` opens a queue's `WAIT_REG_MEM` gate from another thread 20 ms into a 256 MiB delta and checks that the delta holds the store, not the copy the queue makes after the gate, and `agc_driver_frame_replay_rewind_fill` submits a REWIND whose tail jumps to address 0 in the snapshot, fills the jump and sets the control word together, and checks that the replay runs the filled tail, and `agc_driver_frame_replay_rewind_split` fills the buffer a REWIND tail jumps to 64 MiB past the control word it sets in the same delta and checks that the replay resumes the REWIND only after both are restored. `agc_driver_frame_replay_rewind` parks a queue on a REWIND whose tail the CPU fills while it waits and checks that the strict replay runs the copy the tail chains to, `agc_driver_frame_replay_fence_reuse` releases and re-arms a fence between two recorded calls in each of two frames and checks that the strict replay runs both copies behind it, and `agc_driver_frame_replay_busy_queue` gates 64 MiB of graphics copies and a label on a fence a delta releases, parks a compute queue on that label, and checks that a replay with a 1 ms pacing timeout neither gives up nor releases the compute queue while the copies run. `agc_driver_frame_replay_wait_label` is the game-independent reproducer from #11157: a compute queue waits on a label, the CPU dirties an unrelated byte once the wait is registered, and a later graphics submission writes the label; it checks that the producer's submission does not wait for the capture and that the replay runs the compute queue past the label.
+- `tools/frame_capture_minimize.py --capture C --replay R --filter F --output O --match-regex RE --expect-exit-code N` minimizes a frame capture while the replay failure that `--match-regex` identifies stays reproducible. `--max-trials`, `--confirm-runs`, `--replay-timeout` and `--temp-dir` bound the search.
 
 ## Pipeline statistics
 
@@ -404,6 +405,12 @@ ctest --test-dir build/register-context --output-on-failure
 ```
 
 On Linux x86-64, omit `CMAKE_OSX_ARCHITECTURES`; the full `BUILD_TESTING` build also registers these tests. Apple silicon runs the x86-64 tests through Rosetta. They cover the unwinder's register transfer, not the complete macOS runtime or guest exception handling.
+
+
+## Test selection tools
+
+- `tools/build_changed_guest_tests.py <build_dir> [changed_paths] [--output-log FILE]` builds and runs the changed guest and host-only `core/libs` tests.
+- `tools/build_mingw_host_only_tests.py <build_dir> [changed_paths] [--list-only]` builds the `core/libs` test executables that do not link guest libc. `--list-only` prints them without building.
 
 ## Checker scripts
 

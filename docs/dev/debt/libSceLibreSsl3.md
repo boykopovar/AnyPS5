@@ -106,6 +106,7 @@
 
 - [Reported firmware 13.42 parser masks](../../../core/libs/prx/libSceLibreSsl3/src/TlsProtocols.cpp) come from a [contributor's disassembly](https://github.com/boykopovar/AnyPS5/pull/15045#pullrequestreview-5736573950) of `libSceLibreSsl3.sprx` (SHA-256 `ee2c529c87fe21b7ef1e5f13d10c47ee90944f52a1f848fe0995e031817c2c3a`), not independent execution here. The report identifies default/aggregate/negation-base mask `0x18` and explicit TLS 1.0/1.1/1.2/1.3 bits `2`/`4`/`8`/`16`, matching this implementation. Other firmware revisions, complete grammar and real TLS configuration use remain unverified.
 
+- [EVP_PKEY_CTX_new_id](../../../core/libs/prx/libSceLibreSsl3/src/PkeyContext.cpp) (libSceLibreSsl3) - not verified on the console. It follows `evp_pkey_ctx_new` in LibreSSL 4.0.0 [pmeth_lib.c](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/evp/pmeth_lib.c#L86-L166) and shares the context allocation and initialisation with `EVP_PKEY_CTX_new`: RSA, RSA-PSS and EC create a keyless native context, -1 returns null without an error, and a type outside LibreSSL's method table returns null with `EVP_R_UNSUPPORTED_ALGORITHM`. The engine is ignored, as in LibreSSL. The eight other types in that table (CMAC, DH, DSA, Ed25519, HKDF, HMAC, TLS1-PRF and X25519) throw because no native method exists for them.
 - [EVP_PKEY_size, EVP_PKEY_security_bits and EVP_PKEY_cmp](../../../core/libs/prx/libSceLibreSsl3/src/PkeyQueries.cpp) have no console ABI or behavior verification. Dispatch follows [LibreSSL 4.0.0](https://github.com/libressl/openbsd/blob/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/evp/p_lib.c) using the existing 32-byte key and the LP64 method slots in that revision's `evp_local.h`: public comparison at 56, size at 96, security bits at 112 and parameter comparison at 160. Tests use caller-owned keys and callbacks; real key-constructor and algorithm-method interoperability remains unverified. Null comparison operands, undefined upstream, throw; null size/security queries and missing callbacks keep upstream's distinct results. Malformed method pointers remain unverified. Closes when: layouts and complete key lifetimes are measured on a console.
 - [OBJ_find_sigid_algs](../../../core/libs/prx/libSceLibreSsl3/src/SignatureAlgorithms.cpp) - console identifiers/mappings and certificate interoperability are unverified. The shared parent registry reserves IDs from 956 for custom objects, so the 18 higher-ID mappings in [LibreSSL 4.0.0](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto/objects) are unavailable: those inputs return no match without changing outputs, before or after object creation/cleanup. The remaining 33 mappings, including zero-digest identifiers, use built-in IDs below that boundary. A match does not establish availability of the named algorithms. Closes when: a compatible modern object registry and firmware mappings are verified.
 
@@ -114,14 +115,13 @@
 
 ### Additional callable export inventory
 
-- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare 53 still-unimplemented callable exports: 50 named and 3 known only by NID. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
+- [Additional exports](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) declare still-unimplemented callable exports, by name or known only by NID; a pull request that implements one removes it there. These entries throw. Parameterless `int` declarations are unknown-signature placeholders, not verified ABI contracts. Names/NIDs match the 13.60 export table. The fourteen libtls lifecycle/config exports are implemented in `LibTls.cpp`; title compatibility beyond preconnection behavior remains unverified.
 
 | Name | NID |
 | --- | --- |
 | `EC_POINT_get_affine_coordinates_GFp` | `+Tu0gXSas9s` |
 | `X509_NAME_add_entry_by_txt` | `0IxWzLyU8PI` |
 | `tls_handshake` | `27Fuliv3Om8` |
-| `X509V3_EXT_d2i` | `2l+JidqxyZQ` |
 | `X509_set_pubkey` | `409ieWBMPUk` |
 | `tls_accept_socket` | `4Q3bvOy4LY8` |
 | `unknown` | `4pEl-5DmrrM` |
@@ -134,7 +134,6 @@
 | `X509_check_akid` | `C7eFtWPfLdk` |
 | `SSL_CTX_set_default_verify_paths` | `DZ6fywqpaik` |
 | `d2i_SSL_SESSION` | `IiG4HLr+cOw` |
-| `EVP_PKEY_CTX_new_id` | `J5ZLHxWkT6k` |
 | `RSAPublicKey_dup` | `JSqFTYGaWhU` |
 | `SSL_CTX_add1_chain_cert` | `L897DuAuXKk` |
 | `X509_print` | `LA1MlgDx80o` |
@@ -154,11 +153,9 @@
 | `SSL_CTX_set_quic_method` | `ZFeTGo4ybcw` |
 | `ECDSA_do_sign` | `ba4o0Ih6kSs` |
 | `SSL_CTX_set_ciphersuites` | `bpOQdoGE2es` |
-| `PEM_write_bio_PrivateKey` | `dQE7FIbNsUE` |
 | `i2d_X509` | `e2ReciVG21w` |
 | `d2i_X509_CRL` | `fVos2kAqfMI` |
 | `tls_write` | `fZJr2OF+KGw` |
-| `PEM_read_bio_PUBKEY` | `gn7mRF71J4k` |
 | `X509_CRL_get_ext_d2i` | `je-ydGAbgFg` |
 | `X509_digest` | `k1AHUWet-oU` |
 | `SSL_provide_quic_data` | `mhAgol4ETgY` |
@@ -187,4 +184,6 @@
 - [`EVP_PKEY_derive_init`, `EVP_PKEY_derive_set_peer` and `EVP_PKEY_derive`](../../../core/libs/prx/libSceLibreSsl3/src/PkeyContext.cpp) (libSceLibreSsl3) - console ABI and error-queue parity are unverified. They follow LibreSSL 4.0.0 `pmeth_fn.c` and `ec_pmeth.c` at [`ce488b78e0bd994780569df718596b9776ff681a`](https://github.com/libressl/openbsd/tree/ce488b78e0bd994780569df718596b9776ff681a/src/lib/libcrypto) for `EVP_PKEY_EC`. Because `libSceLibreSsl` `ECDH_compute_key` rejects short buffers and zeroes long-buffer tails whereas LibreSSL 4.0.0 truncates to `*keylen`, `EcDerive` computes into a 66-byte stack buffer and copies `min(*keylen, secretlen)` without writing past `*keylen`. ECDH KDF (`X9_63`) and cofactor controls are not modelled. Closes when: compared with the console.
 - [`d2i_PUBKEY`, `d2i_PrivateKey_bio`, `d2i_PKCS8_PRIV_KEY_INFO`, `d2i_PKCS8_PRIV_KEY_INFO_bio`, `i2d_PKCS8_PRIV_KEY_INFO`, `PKCS8_PRIV_KEY_INFO_free`, `EVP_PKCS82PKEY` and `EVP_PKEY2PKCS8`](../../../core/libs/prx/libSceLibreSsl3/src/KeyDer.cpp) - console ABI and error-queue parity are unverified. Follows LibreSSL 4.0.0 `x_pubkey.c`, `p8_pkey.c`, `evp_pkey.c` and `a_pkey.c` for RSA and EC P-256/P-384 only (other curves/types fail). `PKCS8_PRIV_KEY_INFO` uses the 32-byte LP64 layout, storing optional `[0]` attributes as raw `Asn1String*` bytes rather than `STACK_OF(X509_ATTRIBUTE)`. `*_bio` reads one definite-length TLV object without over-reading; indefinite-length BER is rejected. RSA keys in `EVP_PKEY` use `RSA_new` and `RsaAsn1Method`. Closes when: compared with the console.
 - [`d2i_RSA_PUBKEY` and `d2i_RSAPublicKey_bio`](../../../core/libs/prx/libSceLibreSsl3/Export.cpp) - remain throwing stubs because `RSA_free` in `ParentExports.cpp` still forwards to `libSceLibreSsl`. Closes when: RSA_free distinguishes native LibreSSL3 RSA objects.
-- [`PEM_read_RSAPrivateKey`](../../../core/libs/prx/libSceLibreSsl3/Export.cpp), [`PEM_write_bio_PrivateKey` and `PEM_read_bio_PUBKEY`](../../../core/libs/prx/libSceLibreSsl3/AdditionalExports.cpp) - remain throwing stubs waiting for the parent library PEM layer. Closes when: the parent PEM layer and key wrappers are implemented.
+- [`X509V3_EXT_d2i`](../../../core/libs/prx/libSceLibreSsl3/src/X509V3ExtD2i.cpp) (libSceLibreSsl3) - console ABI and allocator equivalence are unverified. The `void* (X509_EXTENSION*)` prototype and NID dispatch follow LibreSSL 4.0.0 `x509_lib.c`, `v3_lib.c` and `ext_dat.h`. BIT STRING, OCTET STRING, INTEGER, ENUMERATED, IA5STRING, GENERALIZEDTIME and OBJECT methods decode into the existing 24-byte `ASN1_STRING`/40-byte `ASN1_OBJECT` layouts; the OCSP nonce decoder copies its input unchanged. Standard methods 84-87, 89, 90, 103, 126, 143, 177, 290, 291, 367-369, 371, 398, 401, 663, 666, 747, 770, 771 and 857 throw `NotImplemented_nid_no_patch`; their decoded structures are not modelled and dynamic `X509V3_EXT_add` methods do not exist. Malformed values return null with ASN1 reason codes; queue parity is unverified. Null extensions or values and positive-length null data throw where upstream dereferences them; negative lengths return null. Closes when: compared with the console.
+- [`PEM_read_bio_PrivateKey`, `PEM_read_bio_PUBKEY` and `PEM_write_bio_PrivateKey`](../../../core/libs/prx/libSceLibreSsl3/src/PemKeys.cpp) (libSceLibreSsl3) - encrypted keys stay unimplemented: `ENCRYPTED PRIVATE KEY`, a well-formed `Proc-Type: 4,ENCRYPTED` plus `DEK-Info` header and a non-null cipher in the writer throw through `NotImplemented_nid_no_patch`, so the cipher lookup, `PEM_do_header` and password callbacks have no behaviour. A `DSA PRIVATE KEY` record throws the same way. Other headers follow `PEM_get_EVP_CIPHER_INFO`. Bare `RSA*` labels stay stubs while `RSA_free` forwards to the parent. The `EVP_PKEY_ASN1_METHOD` table is a static list of the 4.0.0 `pem_str` entries, and writes are always PKCS#8. `PEM_read_bio_PrivateKey` keeps its NID behind a `nid_disambig1` name because the parent declares the plain one. The `Expecting: %s` error data is not queued; no console measurement. Closes when: encrypted keys, DSA and native `RSA_free` land.
+- [`PEM_read_RSAPrivateKey`](../../../core/libs/prx/libSceLibreSsl3/Export.cpp) - remains a throwing stub because it returns a bare `RSA*` and `RSA_free` in `ParentExports.cpp` still forwards to `libSceLibreSsl`. Closes when: `RSA_free` distinguishes native LibreSSL3 RSA objects.
