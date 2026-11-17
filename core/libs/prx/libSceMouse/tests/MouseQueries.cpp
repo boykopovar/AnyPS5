@@ -120,7 +120,18 @@ int main() {
     Require(setCursor(1, 0) == NotInitialized && getCursor(1, buffer.data()) == NotInitialized, "the cursor calls answered before sceMouseInit");
     Require(scale(&position, 1920) == NotInitialized && position == 100, "ExtensionScalePosition scaled before sceMouseInit");
 
+    std::array<std::uint8_t, 8> deviceParam{};
+    Require(sceMouseDisconnectAll() == NotInitialized, "DisconnectAll answered before sceMouseInit");
+    Require(sceMouseVirtualDeviceAddDevice(nullptr, nullptr) == NotInitialized, "VirtualDeviceAddDevice answered before sceMouseInit");
+    Require(sceMouseVirtualDeviceDeleteDevice(1) == NotInitialized, "VirtualDeviceDeleteDevice answered before sceMouseInit");
+    Require(sceMouseVirtualDeviceGetCursor(1, nullptr) == NotInitialized, "VirtualDeviceGetCursor answered before sceMouseInit");
+
     Require(sceMouseInit() == Ok, "sceMouseInit failed");
+    Require(sceMouseVirtualDeviceAddDevice(nullptr, buffer.data()) == InvalidArg, "VirtualDeviceAddDevice took a null parameter");
+    Require(sceMouseVirtualDeviceAddDevice(deviceParam.data(), nullptr) == InvalidArg, "VirtualDeviceAddDevice took a null output");
+    deviceParam[4] = 1;
+    Require(sceMouseVirtualDeviceAddDevice(deviceParam.data(), buffer.data()) == static_cast<int>(0x803B0001u), "VirtualDeviceAddDevice took a non-zero byte at +4");
+    Require(sceMouseVirtualDeviceGetCursor(1, nullptr) == InvalidArg, "VirtualDeviceGetCursor took a null cursor");
     Require(getHandle(1, 0, 0) == NoHandle, "GetHandle found a handle before sceMouseOpen");
     const int handle = sceMouseOpen(1, 0, 0, nullptr);
     Require(handle > 0, "sceMouseOpen failed");
