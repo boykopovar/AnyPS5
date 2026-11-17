@@ -9,7 +9,7 @@ struct KeyboardProcessFocus;
 
 extern "C" {
 
-int APS5_VABI sceDbgKeyboardGetHandle();
+int APS5_VABI sceDbgKeyboardGetHandle(std::int32_t userId, std::int32_t type, std::int32_t index);
 
 int APS5_VABI sceKeyboardInit(void);
 int APS5_VABI sceKeyboardOpen(int userId, int32_t type, int32_t index, const void* param);
@@ -30,10 +30,10 @@ int APS5_VABI sceKeyboardMbusInit(void);
 int APS5_VABI sceKeyboardSetProcessFocus(const KeyboardProcessFocus* focus);
 int APS5_VABI sceKeyboardSetProcessPrivilege(std::uint8_t privilege);
 int APS5_VABI sceDbgKeyboardClose(int32_t handle);
-int APS5_VABI sceDbgKeyboardGetKey2Char();
+int APS5_VABI sceDbgKeyboardGetKey2Char(std::int32_t handle, std::int32_t arrange, std::uint8_t led, std::uint8_t modifierKey, std::uint16_t keyCode, KeyboardCharData* charData);
 int APS5_VABI sceDbgKeyboardInit(void);
 int APS5_VABI sceDbgKeyboardOpen(int userId, int32_t type, int32_t index, const void* param);
-int APS5_VABI sceDbgKeyboardRead();
+int APS5_VABI sceDbgKeyboardRead(int32_t handle, KeyboardData* data, int32_t num);
 int APS5_VABI sceDbgKeyboardReadState(std::int32_t handle, KeyboardData* data);
 
 }
