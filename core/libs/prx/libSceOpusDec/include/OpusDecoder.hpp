@@ -73,6 +73,21 @@ public:
         return 0;
     }
 
+    int Create(void* state, int sampleRate, int channels) {
+        if (!state) return error(0);
+        std::uint32_t context = 0;
+        {
+            std::lock_guard lock(mutex);
+            if (moduleContext == 0) {
+                if (nextContext == 0) fail("context identifiers exhausted");
+                moduleContext = nextContext++;
+                contexts.emplace(moduleContext, nullptr);
+            }
+            context = moduleContext;
+        }
+        return CreateEx(&context, state, sampleRate, channels);
+    }
+
     int Decode(void* state, const std::uint8_t* data, int bytes, std::int16_t* pcm, int capacity) {
         if (!state) return error(0);
         if (bytes != 0 && !data) return error(6);
@@ -222,6 +237,7 @@ private:
     std::unordered_map<std::uint32_t, std::uint32_t*> contexts;
     std::unordered_map<void*, std::unique_ptr<Decoder>> decoders;
     std::uint32_t nextContext = 1;
+    std::uint32_t moduleContext = 0;
 
     int error(std::uint32_t offset) const {
         return static_cast<int>((celtOnly ? 0x81400000u : 0x81740000u) + offset);
