@@ -139,15 +139,27 @@ char16_t* APS5_VABI u_memrchr32_nid_postfix(const char16_t* text, std::int32_t v
         if (value >= 0xd800 && value <= 0xdfff) return nullptr;
         NotImplemented_nid_no_patch(__func__);
     }
-    std::u16string units(static_cast<std::size_t>(count), 0);
-    if (!GuestCopyIn_nid_no_patch(units.data(), text, units.size() * sizeof(char16_t))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
-    auto position = units.size();
-    while (position != 0) {
+    const auto total = static_cast<std::size_t>(count);
+    if (total > (UINTPTR_MAX - reinterpret_cast<std::uintptr_t>(text)) / sizeof(char16_t)) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+    char16_t chunk[Icu::GuestChunkUnits];
+    std::size_t start = total;
+    const auto unit = [&](std::size_t index) {
+        if (index < start) {
+            start = index + 1 - (std::min)(index + 1, Icu::GuestChunkUnits);
+            if (!GuestCopyIn_nid_no_patch(chunk, text + start, (index + 1 - start) * sizeof(char16_t))) NotImplementedAt_nid_no_patch(__func__, __FILE__, __LINE__);
+        }
+        return chunk[index - start];
+    };
+    for (auto position = total; position != 0;) {
         --position;
-        std::uint32_t character = units[position];
-        if (Trail(units[position]) && position != 0 && Lead(units[position - 1])) {
-            --position;
-            character = 0x10000u + ((units[position] - 0xd800u) << 10) + (units[position + 1] - 0xdc00u);
+        const auto trail = unit(position);
+        std::uint32_t character = trail;
+        if (Trail(trail) && position != 0) {
+            const auto lead = unit(position - 1);
+            if (Lead(lead)) {
+                --position;
+                character = 0x10000u + ((lead - 0xd800u) << 10) + (trail - 0xdc00u);
+            }
         }
         if (character == static_cast<std::uint32_t>(value)) return const_cast<char16_t*>(text + position);
     }

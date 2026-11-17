@@ -9,9 +9,45 @@
 #include <cstdlib>
 #include <exception>
 #include <limits>
+#include <new>
 #include <source_location>
 #include <string>
+#include <utility>
+#include <vector>
 
+
+#ifndef _WIN32
+std::size_t hostAllocationLimit = SIZE_MAX;
+void* operator new(std::size_t bytes) {
+    if (bytes > hostAllocationLimit) {
+        std::fprintf(stderr, "host allocation of %zu bytes exceeds the test cap\n", bytes);
+        std::abort();
+    }
+    if (void* pointer = std::malloc(bytes ? bytes : 1)) return pointer;
+    throw std::bad_alloc();
+}
+void* operator new(std::size_t bytes, const std::nothrow_t&) noexcept {
+    if (bytes > hostAllocationLimit) {
+        std::fprintf(stderr, "host allocation of %zu bytes exceeds the test cap\n", bytes);
+        std::abort();
+    }
+    return std::malloc(bytes ? bytes : 1);
+}
+void operator delete(void* pointer) noexcept { std::free(pointer); }
+void operator delete(void* pointer, std::size_t) noexcept { std::free(pointer); }
+void operator delete(void* pointer, const std::nothrow_t&) noexcept { std::free(pointer); }
+#endif
+
+template<typename TCall>
+void Capped(TCall call) {
+#ifndef _WIN32
+    hostAllocationLimit = 1 << 20;
+#endif
+    call();
+#ifndef _WIN32
+    hostAllocationLimit = SIZE_MAX;
+#endif
+}
 
 namespace {
 
@@ -141,9 +177,43 @@ void InaccessibleMemory() {
     Throws([&] { u_memmove_nid_postfix(data + unitsPerPage + 4, data, 4); });
     Throws([&] { u_memset_nid_postfix(data + unitsPerPage + 4, 0, 4); });
     Require(std::equal(expected.begin(), expected.end(), data));
+    Require(sceKernelMprotect(data + unitsPerPage, page, 0) == 0);
+    constexpr auto huge = std::numeric_limits<std::int32_t>::max();
+    Capped([&] {
+        Throws([&] { u_memmove_nid_postfix(data, data + unitsPerPage - 4, huge); });
+        Throws([&] { u_memcpy_nid_postfix(data, data + unitsPerPage - 4, huge); });
+        Throws([&] { u_memmove_nid_postfix(data + unitsPerPage - 2, data + unitsPerPage - 4, huge); });
+        Throws([&] { u_memset_nid_postfix(data + unitsPerPage - 4, 0, huge); });
+        Throws([&] { u_memmove_nid_postfix(reinterpret_cast<char16_t*>(UINTPTR_MAX - 7), data, 8); });
+        Throws([&] { u_memcpy_nid_postfix(data, reinterpret_cast<const char16_t*>(UINTPTR_MAX - 7), 8); });
+    });
+    Require(std::equal(expected.begin(), expected.begin() + unitsPerPage - 4, data));
     Require(sceKernelMprotect(data + unitsPerPage, page, 3) == 0);
     Require(sceKernelMunmap(reinterpret_cast<std::uint64_t>(mapping), bytes) == 0);
     Require(sceKernelReleaseDirectMemory(physical, bytes) == 0);
+}
+
+void ChunkedMemory() {
+    constexpr std::size_t count = 0x1803;
+    std::vector<char16_t> original(count + 0x900);
+    for (std::size_t index = 0; index < original.size(); ++index) original[index] = static_cast<char16_t>(index * 40503 + 7);
+    for (const auto [destination, source] : {std::pair<std::size_t, std::size_t>{0, 0x801}, {0x801, 0}, {1, 0}, {0, 1}, {0x900, 0}, {0, 0x900}}) {
+        auto actual = original;
+        auto expected = original;
+        std::copy_n(original.begin() + static_cast<std::ptrdiff_t>(source), count, expected.begin() + static_cast<std::ptrdiff_t>(destination));
+        Capped([&] { Require(u_memmove_nid_postfix(actual.data() + destination, actual.data() + source, count) == actual.data() + destination); });
+        Require(actual == expected);
+        if (destination + count <= source || source + count <= destination) {
+            actual = original;
+            Capped([&] { Require(u_memcpy_nid_postfix(actual.data() + destination, actual.data() + source, count) == actual.data() + destination); });
+            Require(actual == expected);
+        }
+    }
+    auto filled = original;
+    Capped([&] { Require(u_memset_nid_postfix(filled.data() + 3, 0xd834, count) == filled.data() + 3); });
+    auto expected = original;
+    std::fill_n(expected.begin() + 3, count, 0xd834);
+    Require(filled == expected);
 }
 
 void Characters() {
@@ -241,6 +311,7 @@ int main() {
     Memory();
     MappedMemory();
     InaccessibleMemory();
+    ChunkedMemory();
     Characters();
     Substrings();
     Comparisons();
