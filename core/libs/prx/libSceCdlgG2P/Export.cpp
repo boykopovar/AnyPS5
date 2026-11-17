@@ -56,8 +56,12 @@ int APS5_VABI sceG2PDialogGetResult(CommonDialogResultPrefix* result) {
     const int status = g_status.load();
     if (status == COMMON_DIALOG_STATUS_NONE) return COMMON_DIALOG_ERROR_NOT_INITIALIZED;
     if (status != COMMON_DIALOG_STATUS_FINISHED) return COMMON_DIALOG_ERROR_NOT_FINISHED;
-    const std::int32_t cancelResult = COMMON_DIALOG_RESULT_USER_CANCELED;
     const int savedErrno = errno;
+    if (!GuestWritable_nid_no_patch(result, sizeof(*result))) {
+        errno = savedErrno;
+        return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
+    }
+    const std::int32_t cancelResult = COMMON_DIALOG_RESULT_USER_CANCELED;
     const bool copied = GuestCopyOut_nid_no_patch(&result->result, &cancelResult, sizeof(cancelResult));
     errno = savedErrno;
     if (!copied) return COMMON_DIALOG_ERROR_INVALID_ARGUMENT;
